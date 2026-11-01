@@ -3,6 +3,25 @@
   "source": "Capstone disassembly of current binary, bounded functions identified in retained Ghidra output",
   "sites": [
     {
+      "address": "006EF404",
+      "rva": "0x002EF404",
+      "bytes": "E8 E7 32 D1 FF",
+      "operation": "assign",
+      "function": "006EF390",
+      "symbol": "shop_localization.call.006EF404",
+      "option": false,
+      "admitted": true,
+      "product": false,
+      "source_field": "unit record +0x69",
+      "target": "UnitNameStatic",
+      "upstream_callers": [
+        "00812654 CServiceUnitViewCB normal capsule/shared unit preview",
+        "0089751A factory-room unit preview",
+        "008C051C mixing/capsule unit preview",
+        "009CA9D4 CServicePainterItemView/CServiceStickerItemView shop preview"
+      ]
+    },
+    {
       "address": "009C038C",
       "rva": "0x005C038C",
       "bytes": "E8 5F 23 A4 FF",

@@ -22,7 +22,7 @@ unsigned g_hooks = 0, g_nativeCalls = 0;
 int g_mode = 0;
 std::wstring g_directory;
 struct Code { uint8_t* bytes; uint8_t* site; Caller call; };
-Code g_normal{}, g_option{}, g_copyCode{}, g_outside{};
+Code g_normal{}, g_preview{}, g_option{}, g_copyCode{}, g_outside{};
 
 void* __fastcall NativeAssign(void* self, void*, const wchar_t* text, uint32_t length)
 {
@@ -55,13 +55,16 @@ Code MakeCode(bool copy)
 void* Symbol(SdgoMod*, const char* name)
 {
     if (g_mode == 5) return nullptr;
-    for (const auto& s : kSites) if (!strcmp(s.name,name))
+    for (const auto& s : kSites) {
+        if (strcmp(s.name,name)) continue;
+        if (!strcmp(s.name, "shop_localization.call.006EF404")) return g_preview.site;
         return s.operation==Operation::Copy ? g_copyCode.site : s.option ? g_option.site : g_normal.site;
+    }
     return nullptr;
 }
 int Hook(SdgoMod*, const char* name, void* detour, void** original)
 {
-    if (!strcmp(name,"shop_localization.assign")) {g_assign=reinterpret_cast<AssignHook>(detour);*original=reinterpret_cast<void*>(&NativeAssign);SetCall(g_normal,detour);SetCall(g_option,detour);SetCall(g_outside,detour);}
+    if (!strcmp(name,"shop_localization.assign")) {g_assign=reinterpret_cast<AssignHook>(detour);*original=reinterpret_cast<void*>(&NativeAssign);SetCall(g_normal,detour);SetCall(g_preview,detour);SetCall(g_option,detour);SetCall(g_outside,detour);}
     else if (!strcmp(name,"shop_localization.copy")) {g_copy=reinterpret_cast<CopyHook>(detour);*original=reinterpret_cast<void*>(&NativeCopy);SetCall(g_copyCode,detour);}
     else return 0;
     ++g_hooks;return 1;
@@ -92,7 +95,7 @@ int wmain(int argc,wchar_t** argv)
             "[entry:desc]\nKind=description\nSource=Provides ammunition.\nText=\xE8\xA1\xA5\xE5\x85\x85\xE5\xBC\xB9\xE8\x8D\xAF\xE3\x80\x82\n"
             "[entry:term]\nKind=option\nSource=Permanent\nText=\xE6\xB0\xB8\xE4\xB9\x85\n");file.close();
         }
-        g_normal=MakeCode(false);g_option=MakeCode(false);g_copyCode=MakeCode(true);g_outside=MakeCode(false);
+        g_normal=MakeCode(false);g_preview=MakeCode(false);g_option=MakeCode(false);g_copyCode=MakeCode(true);g_outside=MakeCode(false);
         HMODULE dll=LoadLibraryW(argv[1]);auto load=dll?reinterpret_cast<SdgoModLoadFn>(GetProcAddress(dll,"SdgoModLoad")):nullptr;
         SdgoApi api{};api.size=sizeof(api);api.version=1;api.Symbol=Symbol;api.HookCode=Hook;api.SettingInt=Setting;api.ModDirectory=Directory;api.Log=Log;
         int result=load?load(&api,nullptr):0;
@@ -100,9 +103,15 @@ int wmain(int argc,wchar_t** argv)
         Check(result&&g_hooks==2,"actual DLL loaded, converter/populator hooks not taken from shop_labels");
         if(g_mode==6) {
             Destination actual;Call(g_normal,actual,L"Unknown custom host product");Check(actual.text==L"Unknown custom host product","complete production dictionary loads and preserves unknown custom text");
+            Call(g_preview,actual,L"BUILD STRIKE GUNDAM (ENHANCED BEAM RIFLE EQUIP)");Check(actual.text==L"创世强袭高达（强化光束步枪装备）","shared preview leaf translates the reported shop blueprint title");
+            Call(g_preview,actual,L"BUILD STRIKE GUNDAM (ENHANCED BEAM RIFLE)");Check(actual.text==L"创世强袭高达（强化光束步枪装备）","shared preview translates the alternate native blueprint title spelling");
+            Call(g_preview,actual,L"JEGAN (TYPE R)");Check(actual.text==L"杰刚 A型","independent shared preview caller translates the reported normal-capsule title");
+            Call(g_preview,actual,L"Unknown future preview unit");Check(actual.text==L"Unknown future preview unit","unknown shared-preview titles remain original");
+            Call(g_outside,actual,L"JEGAN (TYPE R)");Check(actual.text==L"JEGAN (TYPE R)","the same known unit name remains original outside verified display callers");
             Call(g_option,actual,L"30วัน");Check(actual.text==L"30 天","production dictionary retains numeric option grammar");return 0;
         }
         Destination d;const wchar_t source[]=L"GUNDAM";Call(g_normal,d,source);Check(d.text==(g_mode==1?L"GUNDAM":L"高达"),"name translation and switch");Check(!wcscmp(source,L"GUNDAM"),"original source memory untouched");
+        Call(g_preview,d,source);Check(d.text==(g_mode==1?L"GUNDAM":L"高达"),"independent shared preview caller obeys the existing name switch");
         Call(g_normal,d,L"Provides ammunition.");Check(d.text==(g_mode==2?L"Provides ammunition.":L"补充弹药。"),"description translation and switch");
         Call(g_option,d,L"7วัน");Check(d.text==(g_mode==3?L"7วัน":L"7 天"),"Thai option grammar and switch");
         Call(g_option,d,L"30ชิ้");Check(d.text==(g_mode==3?L"30ชิ้":L"30 件（原文截断）"),"known truncated count option is translated without hiding the damaged unit text");

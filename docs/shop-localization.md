@@ -7,7 +7,10 @@ Names, descriptions and sales options have separate switches. The rental/permane
 
 Known stock English, Thai and Korean text is translated using exact native identifiers and authored text pairs.
 Truncated, damaged and literal creative text is marked honestly; numbers and model codes are retained.
-Only audited shop display callers can use the dictionary. Billing, account, inventory and original archive data are unchanged.
+Only audited shop display callers and the common `UnitNameStatic` preview-title caller can use the dictionary.
+Version 0.1.1 adds the missing upper-left unit name in shop blueprint and capsule previews;
+the same title control also serves factory and mixing previews. The name switch covers these titles.
+Billing, account, inventory and original archive data are unchanged.
 Unknown future text retains its original value.
 
 New offers require a Chinese title and sales label in Manager and in the native publication engine.

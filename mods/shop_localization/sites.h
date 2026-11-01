@@ -1,9 +1,11 @@
 #pragma once
-// Audited shop display callers only. Prices and sprite setup are excluded.
+// Audited display callers only. Prices, sprite setup, chat, and record mutation are excluded.
 namespace sdgo::shop_localization {
 enum class Operation { Assign, Copy };
 struct ReturnSite { const char* name; bool option; bool product; Operation operation; };
 inline constexpr ReturnSite kSites[] = {
+    // Shared UnitNameStatic leaf used by normal capsule, factory-room, mixing, and shop unit previews.
+    {"shop_localization.call.006EF404", false, false, Operation::Assign},
     {"shop_localization.call.009C038C", true, false, Operation::Assign},
     {"shop_localization.call.009C1544", false, true, Operation::Assign},
     {"shop_localization.call.009C24D3", false, true, Operation::Assign},

@@ -61,7 +61,7 @@ and random-unit gameplay belong in this category.
 | Operator supplies and manager (Beta) | Configure portraits and reward rules; five permanent free support officers with in-place migration | `operator_catalog` | Clients + owner assistant/SQL adapter | [Use](docs/operator-assistant.md) |
 | Capsule catalog editor (Beta) | Fixed/custom machine CRUD, native templates, prices, weights and PNG portrait framing; paired client/server configuration | `capsule_catalog` | Clients + owner SQL adapter | [Use](docs/capsule-catalog.md) |
 | Daily double rewards (Beta) | Double normal G points, pilot EXP and unit EXP daily at 18:00–22:00 in configurable server-local time | `daily_rewards` | battle servers | [Guide](docs/daily-rewards.md) |
-| Chinese shop localization (Beta) | Independent client dictionary for shop names, descriptions and options; managed in Mod Manager, unknown text stays original | `shop_localization` | clients | [Guide](docs/shop-localization.md) |
+| Chinese shop localization (Beta) | Translate shop names, descriptions, options and shared shop/capsule preview titles; unknown text stays original; managed in Mod Manager | `shop_localization` | clients | [Guide](docs/shop-localization.md) |
 <!-- /mod-category:gameplay -->
 
 The [capsule panel in Mod Manager](docs/capsule-catalog.md) is part of master. Owners configure their own
