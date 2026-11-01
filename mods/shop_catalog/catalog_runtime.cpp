@@ -84,6 +84,11 @@ Catalog Load(const std::wstring& file, bool headerOnly)
         product.name = Value(file, section, L"Name");
         product.label = Value(file, section, L"Label");
         Text(product.name); Text(product.label);
+        const auto chinese = [](const std::wstring& text) {
+            return std::any_of(text.begin(), text.end(), [](wchar_t c) { return (c >= 0x3400 && c <= 0x9FFF) || (c >= 0xF900 && c <= 0xFAFF); });
+        };
+        if (!chinese(product.name) || !chinese(product.label))
+            throw std::runtime_error("Chinese product name and sales label are required before publication");
         if (!Key(product.key) || !keys.insert(product.key).second || !ids.insert(product.id).second ||
             product.sku.size() != 6 || !std::all_of(product.sku.begin(), product.sku.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; }) ||
             !skus.insert(product.sku).second || product.id == product.templateId)
@@ -227,11 +232,16 @@ bool Apply(const std::wstring& hostIni, const std::wstring& catalogIni,
                     SQLRETURN fetched;
                     while ((fetched = SQLFetch(billing.statement)) != SQL_NO_DATA) {
                         if (!Success(fetched)) throw std::runtime_error("catalog row fetch failed");
-                        billing.Number(1); // Parent product id, retained in the native DB.
+                        const int parent = billing.Number(1);
                         const int option = billing.Number(2), category = billing.Number(3), validity = billing.Number(4);
                         const std::wstring payment = billing.String(5);
                         const int price = billing.Number(6);
                         const std::wstring label = billing.String(7);
+                        const auto definition = std::find_if(catalog.products.begin(), catalog.products.end(), [parent](const Product& p) { return p.id == parent; });
+                        if (definition == catalog.products.end()) throw std::runtime_error("published parent product identity missing");
+                        display += L"\r\n[product:" + std::to_wstring(parent) + L"]\r\nTemplateId=" + std::to_wstring(definition->templateId) +
+                            L"\r\nCategory=" + std::to_wstring(category) + L"\r\nValidity=" + std::to_wstring(validity) +
+                            L"\r\nPayment=" + payment + L"\r\nPrice=" + std::to_wstring(price) + L"\r\nName=" + definition->name + L"\r\n";
                         display += L"\r\n[option:" + std::to_wstring(option) + L"]\r\nCategory=" + std::to_wstring(category) +
                             L"\r\nValidity=" + std::to_wstring(validity) + L"\r\nPayment=" + payment +
                             L"\r\nPrice=" + std::to_wstring(price) + L"\r\nText=" + label + L"\r\n";
