@@ -30,6 +30,7 @@ class CollectionManagerTests(unittest.TestCase):
 
     def build_state(self):
         state = {'build_id': 'a' * 32,
+                 'machine_kind': 'activity',
                  'config_revision': storage.revision(storage.json_bytes(self.provider.config)),
                  'machine_id': 990001, 'eligible_roots': 1}
         storage.atomic(self.provider.state_file, storage.json_bytes(state))
@@ -68,6 +69,12 @@ class CollectionManagerTests(unittest.TestCase):
         self.assertTrue(result['registered'])
         register.assert_called_once_with(database, {'fixture': 'declared-root'})
         database.close.assert_called_once()
+
+    def test_stopped_world_requirement_is_a_readable_operation_error(self):
+        self.build_state()
+        with patch('tools.collection_capsule.install_server', side_effect=RuntimeError('Stop the selected World host')):
+            with self.assertRaisesRegex(ValueError, 'Stop the selected World host'):
+                self.action('install-server')
 
     def test_export_hashes_and_inventory_reject_tampered_player_payload(self):
         output = self.build_state()
