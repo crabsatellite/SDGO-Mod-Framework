@@ -22,6 +22,7 @@ Each fix can be disabled separately.
 | Feature | Purpose | Mods | Install on | Guide |
 |---|---|---|---|---|
 | IME input fix | Correct the length of committed IME text | `ime_fix` | Clients | [Use](docs/ime-fix.md) |
+| Activity capsule currency | Correct machine 9301's coin label to match native billing | `capsule_currency_fix` | Clients | [Use](docs/capsule-currency-fix.md) |
 | Input method freeze fix | Restore window lookup needed by input methods alongside existing plugins | `findwindow_fix` | Clients | [Use](docs/findwindow-fix.md) |
 | Startup crash fix | Avoid loading screens referencing missing units | `startup_crash_fix` | Clients | [Use](docs/startup-crash-fix.md) |
 | Agent relay log fix | Correct native relay logging | `agent_relay_log_fix` | Agent servers | [Use](docs/agent-relay-log-fix.md) |
@@ -52,14 +53,25 @@ and random-unit gameplay belong in this category.
 | PvP AI (Beta) | AI opponents and teammates with scoring, respawn, decks and spectating; [long-title combinations](#long-room-title-commands) | `pvp_ai`, `match_ai` | Battle servers + all participants | [Use](docs/pvp-ai.md) |
 | AI mech catalog (Beta, separate addon) | Expand LV1–LV5 AI pools using paired owner-generated data; restart with it disabled to restore stock pools; [long-title combinations](#long-room-title-commands) | `ai_catalog` | Battle servers + all participants | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards (Beta) | Native contribution settlement, durable MB and owner-controlled multipliers | `battle_rewards` | Battle servers + owner worker | [Use](docs/battle-rewards.md) |
-| Collection capsule (Beta) | Spend 100,000 GP for a never-acquired initial form; configure and distribute through Mod Manager | `collection_capsule` | World server + client machine resources | [Use](docs/collection-capsule.md) |
+| Collection capsule (Beta) | Activity machine: 100,000 GP for a never-acquired initial form, weighted by rank; configure and distribute through Mod Manager | `collection_capsule` | World server + client machine resources | [Use](docs/collection-capsule.md) |
 | Per-round random loadouts (Beta) | Use `!rand` to randomize each human's owned units every battle; deck modes total exactly ten points. Composes with `!ai`; [long-title combinations](#long-room-title-commands) | `room_random` | Battle server | [Use](docs/room-random.md) |
 | Extended room titles (Beta) | Full mission and PvP titles, including rules after byte 20 | `room_titles`, `room_titles_agent`, `room_titles_server` | Clients + Agent + Battle | [Use](docs/room-titles.md) |
+| Battle AI difficulty (Beta) | Default Medium (Lv12), room-selected Easy/Medium/Hard; Hard EX, team tactics, shield defence and legal player SP/parts/items. Requires matching PvP components. | `battle_ai`, `battle_ai_server` | Battle servers + all participants | [Use](docs/battle-ai.md) |
 | Hangar manager (Beta) | Sort movable units and preview duplicate exchanges for native GB or item rewards; confirm before exchanging | `hangar_manager` | Clients | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager (Beta) | Configure portraits and reward rules; five permanent free support officers with in-place migration | `operator_catalog` | Clients + owner assistant/SQL adapter | [Use](docs/operator-assistant.md) |
+| Capsule catalog editor (Beta) | Fixed/custom machine CRUD, native templates, prices, weights and PNG portrait framing; paired client/server configuration | `capsule_catalog` | Clients + owner SQL adapter | [Use](docs/capsule-catalog.md) |
 | Daily double rewards (Beta) | Double normal G points, pilot EXP and unit EXP daily at 18:00–22:00 in configurable server-local time | `daily_rewards` | battle servers | [Guide](docs/daily-rewards.md) |
 | Chinese shop localization (Beta) | Independent client dictionary for shop names, descriptions and options; managed in Mod Manager, unknown text stays original | `shop_localization` | clients | [Guide](docs/shop-localization.md) |
 <!-- /mod-category:gameplay -->
+
+The [capsule panel in Mod Manager](docs/capsule-catalog.md) is part of master. Owners configure their own
+paths and database connection locally, then distribute a generated player package.
+Players install it once and use the normal game launcher. Other Mods can reuse the
+[catalog, compiler and deployment interfaces](docs/capsule-integration.md) rather than
+writing separate client tables or overlapping native file hooks.
+Upload a finished PNG and drag or resize its crop frame to preview the native
+card. The distributed Mod uses the owner’s existing client artwork; this project
+does not bundle restored game artwork, original game archives or AI models.
 
 On the in-game **unit management** page, use **一键整理** (sort) or **重复兑换** (duplicate exchange)
 beside the native lock/delete buttons. Reward selection, paged previews, both confirmations
@@ -77,7 +89,8 @@ See the [setup and manual acceptance guide](docs/daily-rewards.md#manual-accepta
 Open the operator host UI with the included `tools/Start-Assistant.ps1` to configure
 names, portraits and drop probabilities/amounts. Five permanent free support officers
 cover blueprints, experience, cosmetics, upgrade kits and capsule coins. Existing
-holdings migrate in place, preserving equipped references and personal nicknames.
+holdings migrate in place, preserving equipped references. These five use fixed
+Chinese names without a naming prompt; other operators retain personal naming.
 The owner applies server rules and distributes a matching client update; players
 keep their normal launcher. The module registers products for the storefront to
 price and list. In-game display, claiming and settlement still need manual acceptance.
@@ -103,8 +116,15 @@ limits are **128 Unicode scalars / 512 UTF-8 bytes**, including commands after b
 |---|---|
 | Mission: request three level-4 wingmen and randomize humans | `Weekend mission with friends !ai3 lv4 !rand` |
 | PvP: two enemies, one ally and random human loadouts | `Friendly practice for newcomers !ai e2 a1 lv4 !rand` |
+| PvP: Hard combat AI and random human loadouts | `Friends practicing together !ai e2 a1 lv4 hard !rand` |
 
 Existing player-slot limits still apply. Keep `lv4`, `e2` and `a1` after `!ai`, before the next `!command`.
+With [Battle AI](docs/battle-ai.md) installed on Battle and every client, add `easy`,
+`medium` or `hard` in that same argument span. Medium is the default; `lv4` selects
+the NPC pool, while Medium uses unit level 12 and Hard uses EX13. The new difficulty
+Mods and their matching `pvp_ai`/`match_ai` components must be updated together.
+Medium and Hard act on each native decision frame without added reaction/burst
+pauses, and keep facing known threats while moving. Native action and weapon limits apply.
 Enable `room_titles` on clients, `room_titles_agent` on Agents and `room_titles_server` on Battle servers,
 and update the consuming `coop_ai` / `pvp_ai` / `room_random` DLLs. Players use their normal launcher.
 The three title Mods default to off; AI and random-loadout features still need their own installation and settings.
@@ -170,6 +190,8 @@ For development and troubleshooting; disabled by default.
 | Tool | Purpose | Mods | Install on | Guide |
 |---|---|---|---|---|
 | Packet logger | Capture outgoing packets for protocol troubleshooting | `net_probe` | Clients | [Use](docs/net-probe.md) |
+| Capsule price probe (Experimental) | Bounded read-only diagnostics for capsule list price refresh; disabled by default | `capsule_price_probe` | Clients | [Use](docs/capsule-price-probe.md) |
+
 | Native GameTest (Experimental) | Run assertions inside isolated native game instances | `game_test_client`, `game_test_server` | Clients + Battle servers | [Use](docs/game-test.md) |
 <!-- /mod-category:development -->
 

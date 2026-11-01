@@ -53,11 +53,13 @@ function Check-Package([string]$zip, [string[]]$expected) {
     } finally { $archive.Dispose() }
 }
 try {
-    $baseMods = @('findwindow_fix','ime_fix','startup_crash_fix','agent_relay_log_fix','rank_progression_fix','new_account_profile','shop_labels')
+    $baseMods = @('capsule_currency_fix','findwindow_fix','ime_fix','startup_crash_fix','agent_relay_log_fix','rank_progression_fix','new_account_profile','shop_labels')
     $baseZip = Invoke-Package 'Base' '' (Join-Path $work 'base')
     Check-Package $baseZip $baseMods
     $customZip = Invoke-Package 'Full' 'pvp-ai' (Join-Path $work 'custom')
     Check-Package $customZip ($baseMods + @('match_ai','pvp_ai'))
+    $battleZip = Invoke-Package 'Full' 'pvp-ai,battle-ai' (Join-Path $work 'battle-ai')
+    Check-Package $battleZip ($baseMods + @('match_ai','pvp_ai','battle_ai','battle_ai_server'))
     $operatorZip = Invoke-Package 'Full' 'operator-assistant' (Join-Path $work 'operators')
     Check-Package $operatorZip ($baseMods + @('operator_catalog'))
     $operatorArchive = [IO.Compression.ZipFile]::OpenRead($operatorZip)
@@ -83,7 +85,7 @@ try {
         if ($rewardArchive.GetEntry('frp/install_frp.ps1')) { throw 'Reward-only package unexpectedly contains the FRP toolkit' }
     } finally { $rewardArchive.Dispose() }
     $fullZip = Invoke-Package 'Full' '' (Join-Path $work 'full')
-    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','room_random','room_titles','room_titles_agent','room_titles_server','battle_rewards','daily_rewards','operator_catalog','net_probe','net_route','agent_udp_pool','shop_catalog','shop_localization','hangar_manager','collection_capsule','game_test_client','game_test_server'))
+    Check-Package $fullZip ($baseMods + @('capsule_catalog','capsule_price_probe','match_ai','pvp_ai','battle_ai','battle_ai_server','mission_ai','coop_ai','room_random','room_titles','room_titles_agent','room_titles_server','battle_rewards','daily_rewards','operator_catalog','net_probe','net_route','agent_udp_pool','shop_catalog','shop_localization','hangar_manager','collection_capsule','game_test_client','game_test_server'))
     $dailyZip = Invoke-Package 'Full' 'daily-rewards' (Join-Path $work 'daily')
     Check-Package $dailyZip ($baseMods + @('daily_rewards'))
     $dailyFolder = Join-Path $work 'daily-unpacked'
@@ -111,7 +113,7 @@ try {
         if (-not $fullArchive.GetEntry('frp/install_common.ps1') -or -not $fullArchive.GetEntry('frp/install_frp.ps1')) {
             throw 'Full package lost the complete incremental FRP toolkit'
         }
-        foreach ($required in @('tools/game_test.py','sdk/include/sdgo/game_test.h','sdk/include/sdgo/pvp_ai_client_observer.h','sdk/include/sdgo/pvp_ai_observer.h')) {
+        foreach ($required in @('tools/game_test.py','tools/game_test_record.py','tools/game_test_audio.exe','sdk/include/sdgo/game_test.h','sdk/include/sdgo/pvp_ai_client_observer.h','sdk/include/sdgo/pvp_ai_observer.h')) {
             if (-not $fullArchive.GetEntry($required)) { throw "GameTest package lacks $required" }
         }
         foreach ($relative in @('client/sdgo/mods/game_test_client/mod.ini','server/sdgo/mods/game_test_server/mod.ini')) {

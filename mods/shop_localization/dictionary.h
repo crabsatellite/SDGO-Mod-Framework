@@ -20,6 +20,7 @@ inline std::wstring Unescape(const std::wstring& value)
             if (c == L'n') c = L'\n';
             else if (c == L'r') c = L'\r';
             else if (c == L't') c = L'\t';
+            else if (c == L's') c = L' ';
             else if (c != L'\\') throw std::runtime_error("unknown translation escape");
         }
         if (!c) throw std::runtime_error("NUL in translation");

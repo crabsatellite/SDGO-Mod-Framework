@@ -19,6 +19,7 @@
 | 功能 | 作用 | Mod | 安装位置 | 说明 |
 |---|---|---|---|---|
 | 输入法提交修复 | 修正输入法提交内容的长度计算 | `ime_fix` | 客户端 | [使用说明](docs/ime-fix.zh-CN.md) |
+| 活动扭蛋币种显示 | 修正 9301 号机的代币标签，与原生扣费币种一致 | `capsule_currency_fix` | 客户端 | [使用说明](docs/capsule-currency-fix.md) |
 | 输入法卡死修复 | 恢复输入法需要的窗口查找，兼容已有插件 | `findwindow_fix` | 客户端 | [使用说明](docs/findwindow-fix.zh-CN.md) |
 | 启动崩溃修复 | 避开引用缺失机体的随机读取界面 | `startup_crash_fix` | 客户端 | [使用说明](docs/startup-crash-fix.zh-CN.md) |
 | Agent 中继日志修复 | 修正原生中继日志的格式错误 | `agent_relay_log_fix` | Agent 服务器 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
@@ -47,14 +48,22 @@
 | 对战 AI（Beta） | 在 PvP 加入 AI 对手和队友，支持计分、复活、卡组和观战；[长房名组合用法](#long-room-title-commands) | `pvp_ai`、`match_ai` | 对战服务器 + 所有参战客户端 | [使用说明](docs/pvp-ai.zh-CN.md) |
 | AI 机体目录（Beta，独立附加包） | 用服主生成的配套数据扩充 LV1–LV5 机体池，关闭并重启后恢复原池；[长房名组合用法](#long-room-title-commands) | `ai_catalog` | 对战服务器 + 所有参战客户端 | [使用说明](docs/ai-catalog.zh-CN.md) |
 | 战斗贡献奖励（Beta） | 原生贡献结算、持久 MB 入账和服主倍率控制 | `battle_rewards` | 对战服务器 + 服主工作器 | [使用说明](docs/battle-rewards.zh-CN.md) |
-| 收藏扭蛋（Beta） | 十万 GP 抽取未曾获得的初始形态；通过 Mod Manager 配置和分发 | `collection_capsule` | World 服务器 + 客户端机台资源 | [使用说明](docs/collection-capsule.zh-CN.md) |
+| 收藏扭蛋（Beta） | 活动机台十万 GP 抽未曾获得的初始形态，按等级加权；Mod Manager 配置和分发 | `collection_capsule` | World 服务器 + 客户端机台资源 | [使用说明](docs/collection-capsule.zh-CN.md) |
 | 每局随机机体（Beta） | 用 `!rand` 从各自机库每局随机，卡组严格十点，可与 `!ai` 组合；[长房名组合用法](#long-room-title-commands) | `room_random` | 对战服务器 | [使用说明](docs/room-random.zh-CN.md) |
 | 长房名（Beta） | 任务与对战使用完整房名，读取第 20 字节后的规则 | `room_titles`、`room_titles_agent`、`room_titles_server` | 客户端 + Agent + Battle | [说明](docs/room-titles.zh-CN.md) |
+| 战斗 AI 难度（Beta） | 默认 Medium（Lv12），房名选择三档；Hard EX、协同战术、盾面防御及玩家同规则 SP/部件/道具。需配套 PvP 组件。 | `battle_ai`、`battle_ai_server` | 对战服务器 + 所有玩家 | [使用说明](docs/battle-ai.md) |
 | 机库管理（Beta） | 一键整理可移动机体，预览并确认重复机体兑换原生 GB 或道具奖励 | `hangar_manager` | 客户端 | [使用说明](docs/hangar-manager.zh-CN.md) |
 | 副官补给与管理（Beta） | 配置头像与掉落，默认 5 位全员永久补给官，旧记录原位迁移 | `operator_catalog` | 客户端 + 服主助手/SQL 适配器 | [使用说明](docs/operator-assistant.zh-CN.md) |
+| 扭蛋机编辑器（Beta） | 固定/自定义机台增删改查、原生模板、价格、权重、PNG 头像与互动取景，两端配置配套生成 | `capsule_catalog` | 客户端 + 服主 SQL 适配器 | [使用说明](docs/capsule-catalog.zh-CN.md) |
 | 每日双倍时间（Beta） | 默认服务器本地时间 18:00–22:00，正常对战的 G 币、驾驶员与机体经验翻倍，服主可配置时段 | `daily_rewards` | 对战服务器 | [使用说明](docs/daily-rewards.zh-CN.md) |
 | 商城汉化（Beta） | 独立客户端中文字典，替换商城名称、说明和选项；未知文字保留原文，通过 Mod Manager 开关 | `shop_localization` | 客户端 | [使用说明](docs/shop-localization.zh-CN.md) |
 <!-- /mod-category:gameplay -->
+
+[Mod Manager 扭蛋面板](docs/capsule-catalog.zh-CN.md)已纳入 master。服主在本地填写自己的路径与数据库配置，
+生成玩家安装包分发；玩家安装一次后照常启动游戏。其他 Mod 可复用
+[目录、编译和安装接口](docs/capsule-integration.md)，共同生成同一份目录，避免各自覆盖客户端表或重复挂接文件读取。
+可上传自己的 PNG 并拖动、拉角和缩放取景框，预览原生扭蛋卡。默认使用本地原版素材；
+仓库不发布高清化游戏图片、游戏原始资源包或 AI 模型。玩家仍直接使用游戏原生扭蛋页面。
 
 进入游戏「**机体管理**」页，在「机体锁定/解除」「机体解体」旁点击「**一键整理**」「**重复兑换**」。
 兑换奖励选择、分页预览、再次确认和停止都在当前游戏页内完成；偏好设置在统一 Mod Manager。
@@ -66,7 +75,7 @@
 [每日双倍教程](docs/daily-rewards.zh-CN.md#手动验收)。
 
 副官管理通过包内 `tools/Start-Assistant.ps1` 打开服主 UI，可修改名称、头像和掉落概率、数量。
-自带设计图、经验、装饰、强化套件、扭蛋币 5 位全员永久补给官；旧持有记录原位迁移，保留当前装备与个人昵称。
+自带设计图、经验、装饰、强化套件、扭蛋币 5 位全员永久补给官，直接使用固定中文名，免玩家起名；旧记录原位迁移，保留当前装备，其他副官仍可个人命名。
 服主应用服务端配置并分发客户端更新包后，玩家仍使用原启动器。商品只登记，上架和定价由商城模块负责。
 游戏内显示、领取和结算仍需服主手动验收。[完整配置与迁移说明](docs/operator-assistant.zh-CN.md#默认补给副官)。
 
@@ -87,8 +96,14 @@
 |---|---|
 | 任务：请求 3 个 4 级僚机，真人每局随机 | `周末朋友任务房，慢慢打一起练习 !ai3 lv4 !rand` |
 | 对战：2 个敌人、1 个队友，真人每局随机 | `朋友练习局，慢慢打欢迎新手 !ai e2 a1 lv4 !rand` |
+| 对战：Hard 战斗 AI，真人每局随机 | `朋友高手练习局，一起来挑战 !ai e2 a1 lv4 hard !rand` |
 
 人数仍受原有空位限制。`lv4`、`e2`、`a1` 必须放在 `!ai` 后、下一个 `!指令` 前。
+Battle 和所有客户端配齐[战斗 AI](docs/battle-ai.md)后，在同一参数段加入 `easy`、`medium`
+或 `hard` 即可；默认 Medium。`lv4` 选择 NPC 池，Medium 的实际机体等级为 Lv12，Hard 为 EX13。
+难度 Mod 与配套的 `pvp_ai`／`match_ai` 应一起更新，朋友正常启动游戏即可。
+Medium／Hard 每个原生决策帧持续行动，移除人为反应／爆发等待，移动时保持对敌朝向；
+原生动作、武器冷却和换武器限制继续执行。
 服主需要启用客户端 `room_titles`、Agent 的 `room_titles_agent`、Battle 的 `room_titles_server`，
 并更新使用中的 `coop_ai` / `pvp_ai` / `room_random`；玩家使用分发好的客户端正常启动。
 这三个房名 Mod 默认关闭；AI 和随机机体功能仍需各自安装、启用和配置。
@@ -149,6 +164,8 @@
 | 工具 | 作用 | Mod | 安装位置 | 说明 |
 |---|---|---|---|---|
 | 发包日志 | 记录发包，辅助协议排错 | `net_probe` | 客户端 | [使用说明](docs/net-probe.md) |
+| 扭蛋价格探针（Experimental） | 只读记录列表价格刷新，默认关闭 | `capsule_price_probe` | 客户端 | [说明](docs/capsule-price-probe.md) |
+
 | GameTest（Experimental） | 在独立的原生游戏实例里运行断言 | `game_test_client`、`game_test_server` | 客户端 + 战斗服务器 | [使用说明](docs/game-test.zh-CN.md) |
 <!-- /mod-category:development -->
 

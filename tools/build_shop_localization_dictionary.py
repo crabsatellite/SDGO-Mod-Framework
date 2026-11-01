@@ -17,7 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def escape(value):
-    return value.replace('\\', '\\\\').replace('\r', '\\r').replace('\n', '\\n').replace('\t', '\\t')
+    value=value.replace('\\', '\\\\').replace('\r', '\\r').replace('\n', '\\n').replace('\t', '\\t')
+    return re.sub(r'^ +| +$',lambda m:r'\s'*len(m[0]),value)
 
 
 def display_suffix(source, target):

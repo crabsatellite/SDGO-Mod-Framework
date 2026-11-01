@@ -34,6 +34,7 @@ class WordCompiler(unittest.TestCase):
         output=compiler.encode({'Name\\path\nline':{'text':'名称\n第二行','kind':'description'}}).decode('utf-8')
         self.assertIn('Source=Name\\\\path\\nline',output)
         self.assertIn('Text=名称\\n第二行',output)
+        self.assertEqual(compiler.escape('truncated '),'truncated\\s')
 
 
 if __name__=='__main__':unittest.main()
