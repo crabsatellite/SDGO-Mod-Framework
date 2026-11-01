@@ -56,7 +56,7 @@
 | 副官补给与管理（Beta） | 配置头像与掉落，默认 5 位全员永久补给官，旧记录原位迁移 | `operator_catalog` | 客户端 + 服主助手/SQL 适配器 | [使用说明](docs/operator-assistant.zh-CN.md) |
 | 扭蛋机编辑器（Beta） | 固定/自定义机台增删改查、原生模板、价格、权重、PNG 头像与互动取景，两端配置配套生成 | `capsule_catalog` | 客户端 + 服主 SQL 适配器 | [使用说明](docs/capsule-catalog.zh-CN.md) |
 | 每日双倍时间（Beta） | 默认服务器本地时间 18:00–22:00，正常对战的 G 币、驾驶员与机体经验翻倍，服主可配置时段 | `daily_rewards` | 对战服务器 | [使用说明](docs/daily-rewards.zh-CN.md) |
-| 商城汉化（Beta） | 独立客户端中文字典，替换商城名称、说明和选项；未知文字保留原文，通过 Mod Manager 开关 | `shop_localization` | 客户端 | [使用说明](docs/shop-localization.zh-CN.md) |
+| 商城汉化（Beta） | 翻译商城名称、说明、选项及商城/扭蛋等机体预览左上角标题；未知文字保留原文，Mod Manager 管理 | `shop_localization` | 客户端 | [使用说明](docs/shop-localization.zh-CN.md) |
 <!-- /mod-category:gameplay -->
 
 [Mod Manager 扭蛋面板](docs/capsule-catalog.zh-CN.md)已纳入 master。服主在本地填写自己的路径与数据库配置，
