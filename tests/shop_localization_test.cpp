@@ -105,6 +105,9 @@ int wmain(int argc,wchar_t** argv)
         Destination d;const wchar_t source[]=L"GUNDAM";Call(g_normal,d,source);Check(d.text==(g_mode==1?L"GUNDAM":L"高达"),"name translation and switch");Check(!wcscmp(source,L"GUNDAM"),"original source memory untouched");
         Call(g_normal,d,L"Provides ammunition.");Check(d.text==(g_mode==2?L"Provides ammunition.":L"补充弹药。"),"description translation and switch");
         Call(g_option,d,L"7วัน");Check(d.text==(g_mode==3?L"7วัน":L"7 天"),"Thai option grammar and switch");
+        Call(g_option,d,L"30ชิ้");Check(d.text==(g_mode==3?L"30ชิ้":L"30 件（原文截断）"),"known truncated count option is translated without hiding the damaged unit text");
+        Call(g_option,d,L"20น");Check(d.text==(g_mode==3?L"20น":L"20（原文单位不完整）"),"unidentifiable native option unit is explicitly marked rather than invented");
+        Call(g_option,d,L"");Check(d.text==(g_mode==3?L"":L"未提供选项文字"),"blank sales caption is marked without inventing an amount or rental term");
         Call(g_normal,d,L"7วัน");Check(d.text==L"7วัน","option grammar cannot reinterpret a price or other name call");
         Call(g_normal,d,L"Unknown custom product");Check(d.text==L"Unknown custom product","unknown host text preserved");
         Call(g_normal,d,L"9,900");Check(d.text==L"9,900","numeric price text unchanged");

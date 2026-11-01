@@ -46,6 +46,14 @@ def main():
             context=call('/api/ai-context',{'provider':'shop','kind':'bug'})
             assert 'SDGO-Mod-Framework' in context['text'] and 'AI models:' in context['text']
             catalog=call('/api/providers/shop/api/shop/catalog');assert catalog['demo'] and catalog['items']
+            with urllib.request.urlopen(base+'/panels/shop.js',timeout=10) as response:
+                panel=response.read().decode('utf-8')
+            assert '新商品中文名称' in panel and '导出玩家更新包' in panel and 'hasChinese' in panel
+            try:
+                call('/api/providers/shop/api/shop/create',{'category_id':catalog['items'][0]['Id'],'name':'English only'},{'X-Shop-Revision':catalog['revision']})
+                raise AssertionError('Frozen Manager accepted an English-only shop title')
+            except urllib.error.HTTPError as error:
+                assert error.code==400
             created=call('/api/providers/shop/api/shop/create',{'category_id':catalog['items'][0]['Id'],'name':'冻结包测试商品'},{'X-Shop-Revision':catalog['revision']})
             assert len(created['catalog']['products'])==1
             call('/api/exit',{});process.wait(timeout=30)

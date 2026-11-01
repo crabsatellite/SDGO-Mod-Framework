@@ -1,4 +1,7 @@
 import importlib.util
+import configparser
+import json
+import re
 from pathlib import Path
 import unittest
 
@@ -8,6 +11,17 @@ compiler=importlib.util.module_from_spec(spec);spec.loader.exec_module(compiler)
 
 
 class WordCompiler(unittest.TestCase):
+    def test_shipped_stock_bank_has_no_untranslated_Thai_or_Korean_targets(self):
+        parser=configparser.ConfigParser(interpolation=None)
+        parser.read(ROOT/'mods/shop_localization/zh-CN.ini',encoding='utf-8')
+        self.assertGreater(len(parser.sections()),10000)
+        for section in parser.sections():
+            self.assertEqual(set(parser[section]),{'kind','source','text'})
+            self.assertNotRegex(parser[section]['text'],r'[\u0e00-\u0e7f\uac00-\ud7af]')
+        coverage=json.loads((ROOT/'docs/investigations/shop-localization-coverage.json').read_text(encoding='utf-8'))
+        self.assertEqual(coverage['missing_known_names'],0)
+        self.assertEqual(coverage['missing_known_prose'],0)
+        self.assertEqual(coverage['native_category_names'],3299)
     def terms(self):
         return {'schema_version':1,'unit_records':[
             {'unit_id':10001,'chinese':{'value':'高达'},'original_0011':{'slots':['GUNDAM']},'alias_0237_slot2':'GUNDAM'},
