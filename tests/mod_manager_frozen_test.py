@@ -46,7 +46,7 @@ def main():
             context=call('/api/ai-context',{'provider':'shop','kind':'bug'})
             assert 'SDGO-Mod-Framework' in context['text'] and 'AI models:' in context['text']
             catalog=call('/api/providers/shop/api/shop/catalog');assert catalog['demo'] and catalog['items']
-            created=call('/api/providers/shop/api/shop/create',{'category_id':catalog['items'][0]['Id']},{'X-Shop-Revision':catalog['revision']})
+            created=call('/api/providers/shop/api/shop/create',{'category_id':catalog['items'][0]['Id'],'name':'冻结包测试商品'},{'X-Shop-Revision':catalog['revision']})
             assert len(created['catalog']['products'])==1
             call('/api/exit',{});process.wait(timeout=30)
             assert process.returncode==0

@@ -58,6 +58,7 @@ and random-unit gameplay belong in this category.
 | Hangar manager (Beta) | Sort movable units and preview duplicate exchanges for native GB or item rewards; confirm before exchanging | `hangar_manager` | Clients | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager (Beta) | Configure portraits and reward rules; five permanent free support officers with in-place migration | `operator_catalog` | Clients + owner assistant/SQL adapter | [Use](docs/operator-assistant.md) |
 | Daily double rewards (Beta) | Double normal G points, pilot EXP and unit EXP daily at 18:00–22:00 in configurable server-local time | `daily_rewards` | battle servers | [Guide](docs/daily-rewards.md) |
+| Chinese shop localization (Beta) | Independent client dictionary for shop names, descriptions and options; managed in Mod Manager, unknown text stays original | `shop_localization` | clients | [Guide](docs/shop-localization.md) |
 <!-- /mod-category:gameplay -->
 
 On the in-game **unit management** page, use **一键整理** (sort) or **重复兑换** (duplicate exchange)

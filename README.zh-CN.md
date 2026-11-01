@@ -53,6 +53,7 @@
 | 机库管理（Beta） | 一键整理可移动机体，预览并确认重复机体兑换原生 GB 或道具奖励 | `hangar_manager` | 客户端 | [使用说明](docs/hangar-manager.zh-CN.md) |
 | 副官补给与管理（Beta） | 配置头像与掉落，默认 5 位全员永久补给官，旧记录原位迁移 | `operator_catalog` | 客户端 + 服主助手/SQL 适配器 | [使用说明](docs/operator-assistant.zh-CN.md) |
 | 每日双倍时间（Beta） | 默认服务器本地时间 18:00–22:00，正常对战的 G 币、驾驶员与机体经验翻倍，服主可配置时段 | `daily_rewards` | 对战服务器 | [使用说明](docs/daily-rewards.zh-CN.md) |
+| 商城汉化（Beta） | 独立客户端中文字典，替换商城名称、说明和选项；未知文字保留原文，通过 Mod Manager 开关 | `shop_localization` | 客户端 | [使用说明](docs/shop-localization.zh-CN.md) |
 <!-- /mod-category:gameplay -->
 
 进入游戏「**机体管理**」页，在「机体锁定/解除」「机体解体」旁点击「**一键整理**」「**重复兑换**」。

@@ -41,7 +41,9 @@ namespace Sdgo.Manager
                 {
                     int category=Convert.ToInt32(body["category_id"]);var item=service.Snapshot.Items.FirstOrDefault(i=>i.Id==category);
                     if(item==null)throw new InvalidOperationException("物品不存在。");
-                    service.Catalog.products.Add(Model.Create(service.Catalog,service.Snapshot,item));service.SaveDraft();
+                    string name=Text(body,"name").Trim();Model.Chinese(name,"商品中文名称");
+                    var created=Model.Create(service.Catalog,service.Snapshot,item,name);Model.ValidateChinese(created);
+                    service.Catalog.products.Add(created);service.SaveDraft();
                 }
                 else if(action=="update"||action=="delete"||action=="restore")
                 {
@@ -54,6 +56,13 @@ namespace Sdgo.Manager
                         var merged=Model.Json().Deserialize<Dictionary<string,object>>(Model.Json().Serialize(product));
                         foreach(var pair in values)merged[pair.Key]=pair.Value;
                         var changed=Model.Json().Deserialize<Product>(Model.Json().Serialize(merged));
+                        if(changed.validity!=product.validity)
+                        {
+                            var item=service.Snapshot.Items.FirstOrDefault(i=>i.Id==changed.category_id);
+                            if(item==null)throw new InvalidOperationException("物品不存在。");
+                            changed.label=item.Label(changed.validity);
+                        }
+                        Model.ValidateChinese(changed);
                         service.Catalog.products[service.Catalog.products.IndexOf(product)]=changed;
                     }
                     else {product.retired=action=="delete";product.enabled=action=="restore";}
