@@ -81,7 +81,13 @@ bool NativeView(const void* value, uint32_t pos, uint32_t count, const wchar_t**
 }
 const std::wstring* Lookup(const wchar_t* source, uint32_t length, uintptr_t caller)
 {
-    if (!source || !length || length > kMaxText) return nullptr;
+    if (!source || length > kMaxText) return nullptr;
+    if(!length) {
+        if(g_options&&std::binary_search(g_optionReturns.begin(),g_optionReturns.end(),caller)) {
+            g_optionText=L"未提供选项文字";return &g_optionText;
+        }
+        return nullptr;
+    }
     std::wstring text(length, L'\0');
     if (!CopyText(source, length, text.data()) || text.find(L'\0') != std::wstring::npos) return nullptr;
     if(g_names) {

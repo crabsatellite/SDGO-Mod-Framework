@@ -78,6 +78,8 @@ inline std::wstring OptionLabel(const std::wstring& source)
     const auto suffix = source.substr(end);
     if (suffix == L"วัน" || suffix == L"일" || suffix == L"Day" || suffix == L"Days") return digits + L" 天";
     if (suffix == L"ชิ้น" || suffix == L"개" || suffix == L"EA") return digits + L" 件";
+    if (suffix == L"ชิ้") return digits + L" 件（原文截断）";
+    if (suffix == L"น") return digits + L"（原文单位不完整）";
     if (suffix == L"ครั้ง") return digits + L" 次";
     return {};
 }
