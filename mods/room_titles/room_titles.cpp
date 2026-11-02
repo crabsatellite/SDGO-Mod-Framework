@@ -231,7 +231,7 @@ bool Prepare(ui::Surface surface, const std::wstring& text)
         if ((pending && pending->status == titles::PendingStatus::Awaiting) ||
             (queued != g_drafts.end() && !queued->second.request.request_id && queued->second.utf8 != draft.utf8)) {
             error = L"The previous room title is still waiting for server confirmation. Please wait before changing it again.";
-        } else if (g_state.IsReady(connection) && g_state.IsNegotiating(connection)) {
+        } else if (!creating && g_state.IsReady(connection) && g_state.IsNegotiating(connection)) {
             error = L"The room list is still synchronizing. Please try the title again after it finishes. Your text was kept.";
         } else if (!g_state.IsReady(connection)) {
             if (legacyExact) {

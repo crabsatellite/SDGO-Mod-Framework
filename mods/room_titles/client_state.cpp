@@ -295,6 +295,14 @@ bool ClientState::AcceptBatch(ConnectionId connection_id,
         return false;
     }
 
+    // A superseded lobby recheck must not invalidate a newer fresh create,
+    // even when that delayed reply came from the previous Battle provider.
+    if (connection->ready && batch.request_id != 0 &&
+        batch.request_id <= connection->last_response_id) {
+        SetError(connection, Error(ClientError::StaleResponse, batch.request_id));
+        return false;
+    }
+
     if (!connection->ready) {
         if (!connection->hello || batch.request_id == 0 ||
             batch.request_id != connection->hello->request_id) {
@@ -427,6 +435,10 @@ bool ClientState::AcceptMessage(ConnectionId connection_id,
                      Error(ClientError::NotReady, message.request_id));
             return false;
         }
+        if (message.request_id != 0 && message.request_id <= connection->last_response_id) {
+            SetError(connection, Error(ClientError::StaleResponse, message.request_id));
+            return false;
+        }
         if (message.server_epoch != connection->server_epoch) {
             // An Agent connection survives a native Battle-channel switch.
             // A new room has no old server identity to preserve: only its
@@ -448,7 +460,6 @@ bool ClientState::AcceptMessage(ConnectionId connection_id,
         }
         if (!AcceptResponseId(connection, message.request_id))
             return false;
-
         const SnapshotRecord record = RecordFromMessage(message);
         bool completes = false;
         if (!PendingResponseMatches(connection, message.request_id,
@@ -473,6 +484,10 @@ bool ClientState::AcceptMessage(ConnectionId connection_id,
     }
 
     if (message.kind == room_metadata::MessageKind::Error) {
+        if (message.request_id != 0 && message.request_id <= connection->last_response_id) {
+            SetError(connection, Error(ClientError::StaleResponse, message.request_id));
+            return false;
+        }
         if (connection->ready && message.server_epoch != 0 &&
             message.server_epoch != connection->server_epoch) {
             InvalidateEpoch(connection);
@@ -480,7 +495,6 @@ bool ClientState::AcceptMessage(ConnectionId connection_id,
         }
         if (!AcceptResponseId(connection, message.request_id))
             return false;
-
         if (connection->pending &&
             connection->pending->request.request_id == message.request_id) {
             connection->pending->status = PendingStatus::Failed;
@@ -536,7 +550,7 @@ Message ClientState::BeginSetTitle(ConnectionId connection_id,
                        connection->pending->request.request_id));
         return EmptyMessage();
     }
-    if (connection->hello) {
+    if (connection->hello && room_id != 0) {
         SetError(connection, Error(ClientError::NotReady,
                                    connection->hello->request_id));
         return EmptyMessage();
@@ -545,6 +559,14 @@ Message ClientState::BeginSetTitle(ConnectionId connection_id,
         !room_metadata::ValidateTitle(title.data(), title.size()).ok()) {
         SetError(connection, Error(ClientError::InvalidTitle));
         return EmptyMessage();
+    }
+    // An already confirmed connection can create on the selected provider
+    // without waiting for a redundant list recheck. The fresh keyless create
+    // confirms its own provider/room; existing-room edits keep the recheck gate.
+    if (room_id == 0 && connection->hello) {
+        connection->last_response_id = std::max(connection->last_response_id,
+                                               connection->hello->request_id);
+        connection->hello.reset();
     }
 
     const std::uint32_t request_id = AllocateRequestId();

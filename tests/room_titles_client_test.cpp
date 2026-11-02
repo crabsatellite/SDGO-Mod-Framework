@@ -1111,10 +1111,20 @@ void TestNegotiatingDraft()
               transport::SendDecision::Replace && g_state.IsNegotiating(81),
           "mission refresh tracks its outstanding capability offer");
     const std::wstring text = L"a full room title waiting for a refreshed list !ai3";
-    Check(!Prepare(ui::Surface::PvpCreate, text) && !g_notices.empty() &&
+    Check(Prepare(ui::Surface::PvpCreate, text) && g_notices.empty() &&
               g_saved[static_cast<size_t>(ui::Surface::PvpCreate)].text == text &&
-              g_drafts.empty() && !g_state.HasPending(81),
-          "title submitted during refresh reports the wait before native UI closes and keeps text");
+              g_drafts.count(81)==1 && !g_state.HasPending(81),
+          "fresh title submitted during a redundant refresh stages without a player-facing wait error");
+    const auto immediate=SendDraft(81,0x0640,text);
+    Check(immediate.message.request_id && !g_state.IsNegotiating(81) && g_state.HasPending(81),
+          "the original create send supersedes the pending recheck using confirmed capability");
+    AckBatch(81,5,1234,1,1,Utf8Bytes(text),immediate.message.request_id);
+    Check(!g_state.HasPending(81) && g_notices.empty(),
+          "the fresh create completes normally without a confusing synchronization popup");
+    ResetRoot();
+    Check(Ready(81,1234) && BeforeSend(81,list.data(),list.size(),0,&replacement)==
+              transport::SendDecision::Replace,
+          "independent list rejection fixture starts a genuine capability recheck");
     metadata::TrailerView view;
     metadata::Message hello;
     Check(DecodeMessagePacket(replacement, &view, &hello), "refresh offer decodes");
