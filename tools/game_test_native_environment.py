@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse
 import configparser
+import copy
 import contextlib
 import hashlib
 import json
@@ -20,7 +21,7 @@ import xml.etree.ElementTree as ET
 from tools import game_test as gt
 from tools.game_test_environment import Registry, ManagedEnvironment, atomic_json, process_identity, no_reparse_tree, ROOT
 from tools.game_test_sql_bridge import SqlBridge
-from tools.game_test_fixtures import build_accounts, verify_accounts
+from tools.game_test_fixtures import build_accounts, verify_accounts, initialize_battleships
 
 IMAGE = 'mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718'
 DATABASES = ('GameRank','GDClan','GDCommon','GDGameLogView','GDLogDB','GDLongTermGameLogDB',
@@ -38,6 +39,7 @@ def identifier(value):
 
 def docker(*args, env=None, missing=False, timeout=180):
     result = subprocess.run(['docker', *args], env=env, input='', capture_output=True, text=True,
+        encoding='utf-8', errors='replace',
         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), timeout=timeout)
     if result.returncode:
         if missing and any(s in result.stderr.lower() for s in ('no such object', 'no such container', 'no such volume')):
@@ -463,6 +465,53 @@ def build_template(prototype, destination, client_template, registry, stage):
             'runtime_cleanup':'clean'}
 
 
+def upgrade_template(source, destination, registry):
+    """Add required starter fleets to the same five identities; no registration."""
+    source=source.resolve();destination=destination.resolve();data=template_description(source)
+    allowed=(ROOT/'build/game-test-templates').resolve()
+    cache=(Path(os.environ.get('LOCALAPPDATA',Path.home()/'.local/share'))/'SDGO-GameTest/templates').resolve()
+    if (destination.exists() or destination.is_relative_to(source) or
+            not any(destination.is_relative_to(p) for p in (allowed,cache))):
+        raise RuntimeError('A template revision needs a new path inside an allowed private template cache.')
+    lease=registry.allocate(ROOT/'build/game-test-environments','template-revision')
+    driver=NativeDriver(registry)
+    with ManagedEnvironment(registry,lease,driver,ROOT/'build/game-test-receipts'):
+        output=lease.root/'template-output';shutil.copytree(source,output)
+        driver.start_sql(lease);driver.private['app_user']=data['native_db_user']
+        atomic_json(lease.root/'private/instance.json',driver.private)
+        driver.restore(data,source/'backups')
+        original_accounts=copy.deepcopy([(a['account_id'],a['primary_uid'],a['units']) for a in data['accounts']])
+        driver.progress('initializing_existing_account_fleets',accounts=5,new_accounts=0)
+        with driver.connect() as connection:
+            initialize_battleships(connection,data['accounts'],output/'private/accounts',isolated_template=True)
+            connection.commit()
+        if original_accounts!=[(a['account_id'],a['primary_uid'],a['units']) for a in data['accounts']]:
+            raise RuntimeError('Template revision changed an existing identity or owned unit UID.')
+        for entry in data['backups']:
+            driver.progress('sealing_snapshot',database=entry['name'])
+            remote='/var/opt/mssql/backup/gametest/revision_'+entry['file']
+            driver.sql('BACKUP DATABASE '+identifier(entry['name'])+' TO DISK='+quoted(remote)+' WITH COPY_ONLY,CHECKSUM,INIT;')
+            driver.sql('RESTORE VERIFYONLY FROM DISK='+quoted(remote)+' WITH CHECKSUM;')
+            target=output/'backups'/entry['file'];docker('cp',driver.private['container']+':'+remote,str(target))
+            entry['sha256']=gt.sha256(target);entry['bytes']=target.stat().st_size
+        secret=json.loads((output/'private/native.json').read_text(encoding='utf-8'))
+        params={'port':data['native_sql_port'],'app_user':data['native_db_user'],'app_password':secret['native_db_password']}
+        rebase_configuration(output,Path(data['source_root']),destination,data['base_ip'],params,old_ip=data['base_ip'])
+        if str(source)!=data['source_root']:
+            rebase_configuration(output,source,destination,data['base_ip'],params,old_ip=data['base_ip'])
+        data['parent_template_id']=data['id'];data['id']=str(uuid.uuid4());data['source_root']=str(destination)
+        data['data_revision']='Native starter battleships and cost-valid decks; same five existing accounts and unit UIDs'
+        data['files']=[{'path':p.relative_to(output).as_posix(),'sha256':gt.sha256(p)}
+            for p in output.rglob('*') if p.is_file() and p.name!='template.json']
+        atomic_json(output/'template.json',data)
+        destination.parent.mkdir(parents=True,exist_ok=True);shutil.move(str(output),str(destination))
+        template_description(destination);registry.register_template(destination,data['id'])
+        atomic_json(lease.root/'result.json',{'status':'template_ready','template':str(destination),'accounts':5,
+            'new_accounts_created':0,'existing_unit_uids_preserved':True})
+    return {'status':'template_ready','template':str(destination),'template_id':data['id'],
+            'accounts':5,'new_accounts_created':0,'runtime_cleanup':'clean'}
+
+
 def tcp_listeners(pid):
     import ctypes,struct,socket
     from ctypes import wintypes
@@ -602,7 +651,9 @@ def execute_environment(template_path,stage,slot,include_mods,bootstrap_only,reg
             outcome['server_observer']=report
             if report['status']!='pass':outcome['status']='fail'
         atomic_json(lease.root/'result.json',outcome)
-    return {'status':outcome['status'],'environment_id':lease.id,'evidence':str(managed.archive),
+    return {'status':outcome['status'],'environment_id':lease.id,
+            'evidence':None if managed.evidence_deleted else str(managed.archive),
+            'successful_test_records_deleted':managed.evidence_deleted,
             'account_slot':slot,'cleanup':'clean','new_accounts_created_during_run':0}
 
 
@@ -617,6 +668,9 @@ def native_main(argv=None):
     create.add_argument('--output',type=Path,required=True)
     create.add_argument('--client-template',type=Path,required=True)
     create.add_argument('--stage',type=Path,default=ROOT/'build/stage/Release')
+    upgrade=commands.add_parser('upgrade',help='add native starter fleets to the same five existing template accounts')
+    upgrade.add_argument('--template',type=Path,required=True)
+    upgrade.add_argument('--output',type=Path,required=True)
     run=commands.add_parser('run',help='create, test and delete one private loopback environment')
     run.add_argument('--template',type=Path,help='existing sealed template; defaults to latest registered template')
     run.add_argument('--stage',type=Path,default=ROOT/'build/stage/Release')
@@ -628,10 +682,11 @@ def native_main(argv=None):
     registry=Registry()
     if args.command=='templates':
         print(json.dumps(registry.templates(),indent=2));return 0
-    if args.command in ('template','run'):
+    if args.command in ('template','upgrade','run'):
         try:
             if args.command=='template':
                 result=build_template(args.prototype,args.output,args.client_template,registry,args.stage)
+            elif args.command=='upgrade':result=upgrade_template(args.template,args.output,registry)
             else:
                 existing=registry.templates()
                 template=args.template or (Path(existing[0]['path']) if existing else None)
