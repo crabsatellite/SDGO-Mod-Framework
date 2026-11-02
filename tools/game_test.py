@@ -182,7 +182,7 @@ def copy_file_if_missing(source: Path, destination: Path) -> None:
     shutil.copy2(source, destination)
 
 
-def manifest_requires(path: Path) -> set[str]:
+def manifest_mod(path: Path):
     try:
         parser = read_ini(path)
     except GameTestError:
@@ -195,10 +195,18 @@ def manifest_requires(path: Path) -> set[str]:
         if not match:raise GameTestError(f'manifest lacks [mod]: {path}') from None
         parser=ini_parser();parser.read_string('[mod]\n'+match[1])
     try:
-        value = parser["mod"].get("requires", "")
+        return parser["mod"]
     except KeyError as error:
         raise GameTestError(f"manifest lacks [mod]: {path}") from error
+
+
+def manifest_requires(path: Path) -> set[str]:
+    value = manifest_mod(path).get("requires", "")
     return {item.strip() for item in value.split(",") if item.strip()}
+
+
+def manifest_enabled(path: Path) -> bool:
+    return manifest_mod(path).getint('enabled', fallback=1) != 0
 
 
 def merge_required_symbols(stage_symbols: Path, copied_symbols: Path, manifests: list[Path], *, preserve_existing: bool = False) -> None:
@@ -323,7 +331,9 @@ def overlay_observer(root: Path, stage: Path) -> None:
         copied_symbols,
         updated_manifests,
     )
-    retained_manifests=[manifest for manifest in (root/'sdgo/mods').glob('*/mod.ini') if manifest not in updated_manifests]
+    retained_manifests=[manifest for manifest in (root/'sdgo/mods').glob('*/mod.ini')
+                        if manifest not in updated_manifests and
+                        manifest_enabled(manifest)]
     merge_required_symbols(stage_symbols,copied_symbols,retained_manifests,preserve_existing=True)
     enable_test_configuration(root)
 
@@ -699,10 +709,12 @@ def parse_mode_sequence(value: str) -> tuple[int, ...]:
 
 def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                         battleship_only: bool = False, gift_requests_only: bool = False,
-                        deck_only: bool = False, pages_only: bool = False) -> tuple[str, ...]:
+                        deck_only: bool = False, pages_only: bool = False, room_titles_only: bool = False) -> tuple[str, ...]:
     modes = parse_mode_sequence(mode_sequence)
-    if sum((bool(bootstrap_only),bool(battleship_only),bool(gift_requests_only),bool(deck_only),bool(pages_only))) > 1:
+    if sum((bool(bootstrap_only),bool(battleship_only),bool(gift_requests_only),bool(deck_only),bool(pages_only),bool(room_titles_only))) > 1:
         raise GameTestError('choose only one account preparation operation')
+    if room_titles_only:
+        return FLOW_CASES[:3] + tuple('room_titles.'+x for x in ('pvp.create','pvp.rename','pvp.leave','mission.create','mission.settings','mission.rename','mission.leave'))
     if pages_only:
         return FLOW_CASES[:3] + ('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel','catalog.operator','catalog.ai','pages.storage.read','pages.storage.claim','catalog.capsule','pages.capsule.currency')
     if bootstrap_only:
@@ -828,9 +840,9 @@ def write_job(
         "retry_count": str(plan["retry_count"]),
         "expect_first_fail": "1" if plan["expect_first_fail"] else "0",
         "required_cases": ",".join(required_flow_cases(plan["mode_sequence"], plan.get('bootstrap_only', False),
-            plan.get('battleship_only',False),plan.get('gift_requests_only',False),plan.get('deck_only',False),plan.get('pages_only',False))),
+            plan.get('battleship_only',False),plan.get('gift_requests_only',False),plan.get('deck_only',False),plan.get('pages_only',False),plan.get('room_titles_only',False))),
     }
-    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only'):
+    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','room_titles_only'):
         if plan.get(flag):run['run'][flag] = '1'
     if 'network_policy' in plan:run['run']['network_policy']=plan['network_policy']
     if 'quiet' in plan:run['run']['quiet']='1' if plan['quiet'] else '0'
@@ -850,7 +862,8 @@ def read_public_plan(root: Path) -> dict:
         gift_requests_only = run.get('gift_requests_only', '0') == '1'
         deck_only = run.get('deck_only', '0') == '1'
         pages_only = run.get('pages_only', '0') == '1'
-        if any(run.get(flag,'0') not in ('0','1') for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only')):
+        room_titles_only = run.get('room_titles_only','0') == '1'
+        if any(run.get(flag,'0') not in ('0','1') for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','room_titles_only')):
             raise ValueError('invalid preparation flag')
         if (
             run["role"] != "client"
@@ -858,7 +871,7 @@ def read_public_plan(root: Path) -> dict:
             or run["normal_flow"] != "1"
             or run["server_channel_selection"] != "native_automatic"
             or run["account_path"] != "private/account.ini"
-            or run["required_cases"] != ",".join(required_flow_cases(mode_sequence, bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only))
+            or run["required_cases"] != ",".join(required_flow_cases(mode_sequence, bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,room_titles_only))
             or run["auto_nickname"] != "account_name"
             or run["exit_tutorial"] != "1"
             or run["first_unit_draw"] != "1"
@@ -885,7 +898,7 @@ def read_public_plan(root: Path) -> dict:
             "acknowledge_game_windows": run["acknowledge_game_windows"] == "1",
             "launcher_path": "" if process_entry == GAME_EXE else process_entry,
         }
-        for flag,value in (('bootstrap_only',bootstrap_only),('battleship_only',battleship_only),('gift_requests_only',gift_requests_only),('deck_only',deck_only),('pages_only',pages_only)):
+        for flag,value in (('bootstrap_only',bootstrap_only),('battleship_only',battleship_only),('gift_requests_only',gift_requests_only),('deck_only',deck_only),('pages_only',pages_only),('room_titles_only',room_titles_only)):
             if value:plan[flag] = True
         if 'network_policy' in run:
             if run['network_policy'] not in ('direct','preserve'):raise ValueError('invalid network policy')
@@ -1031,6 +1044,7 @@ def prepare(
     gift_requests_only: bool = False,
     deck_only: bool = False,
     pages_only: bool = False,
+    room_titles_only: bool = False,
     network_policy: str = 'direct',
     quiet: bool = True,
     asset_baseline: Path | None = None,
@@ -1109,10 +1123,10 @@ def prepare(
         expected_ai,
         launcher_path,
     )
-    required_flow_cases(mode_sequence,bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only)
+    required_flow_cases(mode_sequence,bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,room_titles_only)
     plan['network_policy']=network_policy
     plan['quiet']=quiet
-    for flag,value in (('bootstrap_only',bootstrap_only),('battleship_only',battleship_only),('gift_requests_only',gift_requests_only),('deck_only',deck_only),('pages_only',pages_only)):
+    for flag,value in (('bootstrap_only',bootstrap_only),('battleship_only',battleship_only),('gift_requests_only',gift_requests_only),('deck_only',deck_only),('pages_only',pages_only),('room_titles_only',room_titles_only)):
         if value:plan[flag] = True
     run_dir.parent.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex
@@ -1148,7 +1162,7 @@ def prepare(
             "run_id": run_id,
             "suite": ('account-bootstrap' if bootstrap_only else 'battleship-acquisition' if battleship_only
                       else 'gift-mail-requests' if gift_requests_only else 'battleship-deck' if deck_only
-                      else 'native-pages' if pages_only else 'pvp-ai-normal-flow'),
+                      else 'native-pages' if pages_only else 'native-room-titles' if room_titles_only else 'pvp-ai-normal-flow'),
             "status": "prepared",
             "created_utc": utc_now(),
             "source": {
@@ -1222,7 +1236,7 @@ def validate_metadata(run_dir: Path) -> dict:
     if not isinstance(plan, dict):
         raise GameTestError("run.json lacks normal-flow plan")
     public_plan = read_public_plan(root)
-    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only'):
+    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','room_titles_only'):
         if (type(plan.get(flag, False)) is not bool or plan.get(flag, False) != public_plan.get(flag, False)):
             raise GameTestError('run.json cannot change the required bootstrap or battle scope')
     for key, value in public_plan.items():
@@ -2034,6 +2048,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--battleship-only', action='store_true',help='acquire the initial battleships through native tutorial business')
     prepare_parser.add_argument('--gift-requests-only', action='store_true',help='send configured native mail gift requests; server processing is verified separately')
     prepare_parser.add_argument('--deck-only', action='store_true',help='save and select a native battleship deck using four genuinely owned unit UIDs from the private account profile')
+    prepare_parser.add_argument('--room-titles-only',action='store_true',help='exercise all live native room-title edit surfaces and server-confirmed full titles')
     prepare_parser.add_argument('--pages-only', action='store_true',help='visit the real hangar and verify Mod inventory, preview and cancel without exchanging units')
     prepare_parser.add_argument('--network-policy',choices=('direct','preserve'),default='direct',
                                 help='direct disables inherited endpoint routes only in the test copy; preserve explicitly tests owner routes')
@@ -2094,6 +2109,7 @@ def main(argv: list[str] | None = None) -> int:
                 gift_requests_only=args.gift_requests_only,
                 deck_only=args.deck_only,
                 pages_only=args.pages_only,
+                room_titles_only=args.room_titles_only,
                 network_policy=args.network_policy,
                 quiet=not args.visible,
                 asset_baseline=args.asset_baseline,
