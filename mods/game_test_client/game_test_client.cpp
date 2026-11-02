@@ -1354,6 +1354,15 @@ int __cdecl ReadCapsuleCurrency(const SdgoGameTestContextV1* context) {
     return SDGO_GAME_TEST_PASS;
 }
 int ReadShopCatalog(const SdgoGameTestContextV1* context) {
+    static bool diagnosticRequested=false,diagnosticComplete=false;
+    if(diagnosticRequested && !diagnosticComplete) {
+        const auto captured=quietGraphics.CaptureFrameResult();
+        if(captured==E_PENDING)return SDGO_GAME_TEST_WAIT;
+        diagnosticComplete=true;
+        context->Observe(SUCCEEDED(captured)?"native shop diagnostic backbuffer saved (not a passing case)":"native shop diagnostic frame was unavailable");
+        context->Assert(0,"native stock catalog and preview controls must match the sealed read-only assertions");
+        return SDGO_GAME_TEST_FAIL;
+    }
     const auto before=shopCatalog.State();
     if(before.stage==ShopCatalogActions::kStageIdle || before.stage==ShopCatalogActions::kStageBaseline) {
         // The unit-management popup only loads briefs. Enter the original
@@ -1372,6 +1381,9 @@ int ReadShopCatalog(const SdgoGameTestContextV1* context) {
             ShopCatalogActions::ResultName(result),state.stage,state.verified,state.configured,state.current_page,state.max_page,
             state.product_id,state.option_id,state.category,state.validity,state.price,state.payment,state.buy_previews,state.gift_previews,
             state.cancellations,state.wallet_unchanged,state.inventory_unchanged,state.native_page_nonempty,state.native_page_slots,state.native_page_bytes,state.native_request_pending,sent.opcode,sent.packet_size,sent.send_sequence);context->Observe(message);previous=result;verified=state.verified;lastPending=state.native_request_pending;
+        char rows[160];sprintf_s(rows,"native shop page products=%u,%u,%u,%u,%u,%u,%u,%u",
+            state.native_page_product_ids[0],state.native_page_product_ids[1],state.native_page_product_ids[2],state.native_page_product_ids[3],
+            state.native_page_product_ids[4],state.native_page_product_ids[5],state.native_page_product_ids[6],state.native_page_product_ids[7]);context->Observe(rows);
         if(state.inventory_failure) {
             char inventory[320];sprintf_s(inventory,"native shop inventory failure=%u ready=%u capacity=%d probeSlot=%u brief=%u/%u/%llu full=%u/%u/%llu",
                 state.inventory_failure,state.inventory_ready,state.inventory_capacity,state.inventory_probe_slot,
@@ -1380,6 +1392,12 @@ int ReadShopCatalog(const SdgoGameTestContextV1* context) {
         }
     }
     if(result>=ShopCatalogActions::kInvalidContext || result==ShopCatalogActions::kUnbound || result==ShopCatalogActions::kUnconfigured) {
+        if(captureNativeFrames && !diagnosticRequested) {
+            const auto folder=sdgo_test::directory+L"\\visual";
+            if(CreateDirectoryW(folder.c_str(),nullptr) || GetLastError()==ERROR_ALREADY_EXISTS)
+                diagnosticRequested=quietGraphics.CaptureNextFrame((folder+L"\\diagnostic-shop.bmp").c_str());
+            if(diagnosticRequested)return SDGO_GAME_TEST_WAIT;
+        }
         context->Assert(0,"native stock catalog and preview controls must match the sealed read-only assertions");return SDGO_GAME_TEST_FAIL;
     }
     if(result!=ShopCatalogActions::kComplete)return SDGO_GAME_TEST_WAIT;

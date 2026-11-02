@@ -208,6 +208,7 @@ public:
         uint32_t native_page_slots = 0;
         uint32_t native_page_nonempty = 0;
         uint32_t native_page_bytes = 0;
+        std::array<uint32_t,8> native_page_product_ids{};
         uint32_t native_request_pending = 0;
         uint32_t wallet_unchanged = 0;
         uint32_t inventory_unchanged = 0;
@@ -2654,6 +2655,7 @@ private:
                 (end - begin) /
                 kProductStride);
         observation_.native_page_slots=count;observation_.native_page_nonempty=0;
+        observation_.native_page_product_ids.fill(0);
         rows.reserve(count);
         for (uint32_t index = 0;
              index < count;
@@ -2666,6 +2668,7 @@ private:
                     &productId))
                 return false;
             if (!productId)continue; // native pages retain empty display slots
+            observation_.native_page_product_ids[index]=productId;
             ++observation_.native_page_nonempty;
             for (const ProductRow& row : rows) {
                 if (row.productId ==
