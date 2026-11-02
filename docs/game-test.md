@@ -157,6 +157,10 @@ For a single host in an eight-player room, exercise automatic commands with
 `--expected-ai 7 --ai-allies 3 --ai-policy fill`, or
 `--expected-ai 7 --ai-allies 0 --ai-policy enemy`. These test `!ai fill` and
 `!ai enemy` directly and can combine with `--random-teams` or `--random-loadout`.
+Ordinary Grid/Tag runs validate the already-selected fleet without editing it:
+one to four distinct owned units, an included leader and at most ten native
+points. The explicit `--deck-only` editor scenario still uses its four-unit
+fixture and genuine Save/GoOut replies.
 Install `Send2Trash` in the developer environment; reuse has no permanent-delete
 fallback. The same account cannot run concurrently. The default endpoint is
 `127.0.0.1:5001`; change it with `--target-host` and `--login-port`. The original
