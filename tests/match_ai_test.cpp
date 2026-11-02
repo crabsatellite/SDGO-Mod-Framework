@@ -69,6 +69,8 @@ uint8_t* __fastcall Create(uint8_t*, void*, uint32_t npc, float, float, float, i
     Put(unit, kUnitDeckEnd, decks[created].data() + kUnitDeckEntry);
     Put(unit, kUnitObjectId, 1001u + created);
     Put(unit, kUnitNpcDataId, npc);
+    unit[0x326C] = 1; // real CNPC construction can return with AI enabled
+    Put<uint32_t>(unit, kUnitPendingControl, 123);
     ++created;
     return unit;
 }
@@ -89,6 +91,8 @@ void __fastcall AddAi(void*, void*, uint8_t*) {}
 void __fastcall Calculate(void*, void*) { ++calculated; }
 void __fastcall Count(void*, void*, int count) { playerCount = count; }
 void __fastcall Enable(uint8_t* unit, void*) { ++enabled; unit[0x326C] = 1; }
+void __fastcall Disable(uint8_t* unit, void*) { unit[0x326C] = 0; }
+void __fastcall StopNativeInput(uint8_t*, void*) {}
 void __fastcall NativeReady(uint8_t* svc, void*) {
     ++nativeReadyCalls;
     if (nativeReadyState >= 0) Put<uint32_t>(svc, kServiceReadyState, nativeReadyState);
@@ -322,6 +326,8 @@ void Reset(int classIndex = 0, int roomMode = 1) {
     g_game.addObject = reinterpret_cast<AddObjectFn>(&AddObject);
     g_game.calculateTeam = reinterpret_cast<CalculateTeamFn>(&Calculate);
     g_game.enableAi = reinterpret_cast<EnableAiFn>(&Enable);
+    g_game.disableAi = reinterpret_cast<EnableAiFn>(&Disable);
+    g_game.releaseAttack = g_game.moveStop = g_game.resetInputs = reinterpret_cast<EnableAiFn>(&StopNativeInput);
     g_setPlayerCount = reinterpret_cast<SetPlayerCountFn>(&Count);
     g_originalPlayerSlot = reinterpret_cast<PlayerSlotFn>(&Slot);
     g_findObject = reinterpret_cast<FindObjectFn>(&Find);
@@ -369,6 +375,8 @@ int main() {
     CHECK(MH_EnableHook(reinterpret_cast<void*>(&NativeTeamOnlyGate)) == MH_OK);
     SCENARIO("master, remote, slot cap and AI enable once");
     Spawn(); CHECK(g_botTable.size() == 2 && playerCount == 3 && calculated == 1);
+    CHECK(!units[0][0x326C] && !units[1][0x326C]);
+    CHECK(Get<uint32_t>(units[0].data(), kUnitPendingControl) == 0);
     CHECK(g_soloAiMode == mode.data());
     CHECK(units[0][kUnitRemote] == 0 && units[0][kUnitLocalControl] == 1 && units[0][kUnitMasterNpc] == 1);
     CHECK(starts[0] == std::make_pair(1, 0) && starts[1] == std::make_pair(1, 1));
