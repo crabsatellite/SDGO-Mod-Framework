@@ -167,6 +167,10 @@ sdgo_add_mod(daily_rewards SERVER DESCRIPTION "daily double battle rewards (Beta
              SOURCES mods/daily_rewards/daily_rewards.cpp FILES config.example.ini)
 sdgo_add_mod(rank_progression_fix SERVER DESCRIPTION "native World battle rank progression fix"
              SOURCES mods/rank_progression_fix/rank_progression_fix.cpp LIBS ole32 oleaut32 bcrypt uuid)
+sdgo_add_mod(friend_list_fix SERVER DESCRIPTION "native offline friend list and pilot names"
+             SOURCES mods/friend_list_fix/friend_list_fix.cpp LIBS ole32 oleaut32 bcrypt uuid)
+sdgo_add_mod(friend_list_client_fix DESCRIPTION "native offline friend conversation opener"
+             SOURCES mods/friend_list_client_fix/friend_list_client_fix.cpp)
 
 
 # Private feature libraries; no room metadata or gameplay state enters the core.
@@ -680,6 +684,19 @@ if(BUILD_TESTING)
     target_link_libraries(rank_progression_fix_test PRIVATE sdgo_api ole32 oleaut32 bcrypt uuid)
     sdgo_strict(rank_progression_fix_test)
     add_test(NAME rank_progression_fix_offline COMMAND rank_progression_fix_test)
+    add_executable(friend_list_fix_test tests/friend_list_fix_test.cpp)
+    target_link_libraries(friend_list_fix_test PRIVATE sdgo_api ole32 oleaut32 bcrypt uuid)
+    sdgo_strict(friend_list_fix_test)
+    add_test(NAME friend_list_fix_offline COMMAND friend_list_fix_test)
+    add_executable(friend_list_client_fix_test tests/friend_list_client_fix_test.cpp)
+    target_link_libraries(friend_list_client_fix_test PRIVATE sdgo_api minhook friend_list_client_fix)
+    sdgo_strict(friend_list_client_fix_test)
+    add_test(NAME friend_list_client_fix_offline COMMAND friend_list_client_fix_test)
+    add_executable(friend_list_sql_emit tests/friend_list_sql_emit.cpp)
+    sdgo_strict(friend_list_sql_emit)
+    add_executable(friend_list_db_test tests/friend_list_db_test.cpp)
+    target_link_libraries(friend_list_db_test PRIVATE ole32 oleaut32 bcrypt uuid)
+    sdgo_strict(friend_list_db_test)
     set_tests_properties(rank_progression_fix_offline PROPERTIES TIMEOUT 30)
     add_executable(rank_progression_db_test tests/rank_progression_db_test.cpp)
     target_link_libraries(rank_progression_db_test PRIVATE ole32 oleaut32 bcrypt uuid)
