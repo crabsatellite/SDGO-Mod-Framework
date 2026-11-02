@@ -20,7 +20,7 @@ Beta and Experimental labels indicate release channels.
 | Input method freeze fix <!-- catalog: `findwindow_fix` --> | Stop input methods such as iFlytek from freezing or crashing the repack client | [Use](docs/findwindow-fix.md) |
 | Startup crash fix <!-- catalog: `startup_crash_fix` --> | Stop random crashes on the loading screen at game start | [Use](docs/startup-crash-fix.md) |
 | Agent relay log fix <!-- catalog: `agent_relay_log_fix` --> | Fix an Agent relay log that reads invalid memory | [Use](docs/agent-relay-log-fix.md) |
-| Battle rank regression fix <!-- catalog: `rank_progression_fix` --> | Rank progression compatibility | [Use](docs/rank-progression-fix.md) |
+| Battle rank regression fix <!-- catalog: `rank_progression_fix` --> | Stop battle settlement from lowering a pilot's rank (WorldServer) | [Use](docs/rank-progression-fix.md) |
 | New-account starter profile <!-- catalog: `new_account_profile` --> | New-account defaults | [Use](docs/new-account-profile.md) |
 | Shop rental and Unicode labels <!-- catalog: `shop_labels` --> | Shop display compatibility | [Use](docs/shop-labels.md) |
 

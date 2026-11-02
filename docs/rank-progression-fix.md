@@ -1,107 +1,65 @@
-# Battle rank progression Mod
+# Battle rank progression fix
 
 [简体中文](rank-progression-fix.zh-CN.md)
 
-`rank_progression_fix` is a default-enabled core fix for
-`WorldServer-548A86E3-0010C000`. Install it through the normal Mod framework.
-Players need no client update, Python, ODBC driver or extra connection configuration.
+Core fix for `WorldServer-548A86E3-0010C000`: battle settlement no longer lowers a pilot's rank.
+Players need no client update.
+
+## The problem
+
+The native procedures `dbo.sp_SetBattleExp_V4` and `dbo.sp_SetGridBattleExp_V2` decide whether to
+change rank with a faulty comparison. When the EXP-derived rank has a higher sublevel, a higher
+major rank is overwritten: for example rank **15-1** with 30,090 EXP gains 20 EXP and becomes **5-2**.
 
 ## Install
 
-Stop the target WorldServer, then use the Base or Full package:
+Stop the target WorldServer, install the server package with the World role, then start it normally:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SDGO\Server\WorldServer" -Role World
 ```
 
-Start WorldServer normally. The Mod payload is
-`sdgo/mods/rank_progression_fix/{mod.ini,rank_progression_fix.dll}`. It shares the
-existing `winmm.dll` loader, `sdgo/core.dll`, symbols and global configuration.
-There is no separate maintenance tool to run.
+The fix is on by default and SDGO Mod Manager lists it under **修复归档** (fix archive). Every
+WorldServer that settles battles must load it; sharing a database is not enough.
 
-The Mod reads only the database name from WorldServer's existing `[DB Game]`
-configuration and borrows its leased OLE DB session. It never reads or exports
-the connection password and opens no separate game-database connection.
-The existing database identity needs permission to read the two native procedure
-definitions and create the Mod-owned schema, state table and procedures.
-Each participating WorldServer must load the Mod; sharing a database alone does
-not redirect calls made by an unmodified process.
+The mod reads only the database name from WorldServer's `[DB Game]` section and uses the server's
+existing database session. It never reads the password. That database account must be able to read
+the two native procedures and create the mod's own schema, state table and procedures.
 
-## Behavior and scope
+## What it changes
 
-The native `dbo.sp_SetBattleExp_V4` and `dbo.sp_SetGridBattleExp_V2` can lower a
-pilot's major rank when the EXP-derived rank has a higher sublevel. For example,
-rank **15-1** with 30,090 EXP plus 20 EXP becomes **5-2**. The Mod derives private
-copies from the installed definitions, replacing only the procedure identity and
-the faulty rank comparison with:
+On the first matching battle settlement, the mod creates corrected copies of the two procedures in
+its own schema `sdgo_rank_progression_fix`, changing only the rank comparison:
 
 ```sql
 IF(@UserLevelNumber < @newlevel OR
    (@UserLevelNumber = @newlevel AND @UserLevelStep < @NewLevelStep))
 ```
 
-On a matching battle settlement, it prepares both copies in the
-`sdgo_rank_progression_fix` schema under one transaction and application lock.
-Preparation checks ownership, supported comparison, hashes and SQL options.
-Unsupported definitions, foreign schemas and external edits are refused.
-The native `dbo` definitions remain unchanged. No native SQL dump is bundled.
+Those two settlement calls are then routed to the copies. EXP, rewards, counters, normal promotions,
+the native 15-5 and ranked-tier limits and leaderboard recalculation are unchanged. The original `dbo`
+procedures are not modified. Ranks lost before installing the fix are not restored.
 
-Only the two exact native command strings are redirected. Native parameter
-binding, output processing, EXP awards, rewards and counters stay in place.
-The descriptor's command pointer is restored after the call. Normal promotions,
-the native 15-5/ranked-tier limits and login-time leaderboard recalculation are
-preserved. Past lost ranks are not reconstructed.
+## Logs
 
-`sdgo/logs/sdgo.log` distinguishes installed hooks from an active policy.
-`rank policy active` appears when the corresponding command is redirected.
-If preparation fails, an error is logged and the native command is retained;
-on an affected native database that call still has the original rank bug.
+| log line | meaning |
+|---|---|
+| `rank progression routing installed ...` | loaded; waiting for the first battle settlement |
+| `rank policy active for normal battle` / `Grid/Tag` | settlements of that kind now use the corrected procedure |
+| `rank policy unavailable; native command retained: ...` | the copy could not be prepared; that call used the original procedure |
+| `host INI needs [DB Game] DBName ...` | the WorldServer INI has no database name; the mod stays inactive |
 
-## Disable or remove
+## Turn off
 
-Set this in `sdgo/sdgo.ini`, then restart the target WorldServer:
+In the Manager click **显示开发信息** (show developer info), clear the switch in **修复归档** and
+restart WorldServer. Settlement then uses the original procedures again; the mod's unused SQL objects
+can stay in the database.
 
-```ini
-[mods]
-rank_progression_fix=0
-```
+## Developer tests
 
-The standard `[features] rank-progression-fix=0` or `[categories] fixes=0` switch
-also disables it. Inactive private SQL objects may stay in the database; original
-calls do not use them. Disabling does not undo SQL changes made by an older
-standalone repair or another administrator.
-
-## Developer verification
-
-```powershell
-cmake -S . -B build -G "Visual Studio 17 2022" -A Win32
-cmake --build build --config Release --parallel
-ctest --test-dir build -C Release --output-on-failure
-```
-
-The C++ fixture covers SQL transformation, framework entry, both hooks, exact
-matching, fallback and descriptor/output preservation. Packaging tests check
-Base/Full catalogs and the packaged World installer.
-
-The optional integration fixture needs the existing server INI and a private
-recovery backup containing the original two native definitions:
+`ctest` runs the offline C++ tests. The optional database test creates an isolated scratch database
+with synthetic pilots and needs a backup of the two original procedure definitions:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tests\rank_progression_db_test.ps1 -ServerIni "D:\SDGO\Server\WorldServer\WorldServer.ini" -OriginalBackup "D:\Maintenance\original-rank-procedures.json" -BuildDir build
 ```
-
-It creates an ownership-marked scratch database, copies schemas and level
-configuration, and uses synthetic pilots/decks without copying source player rows.
-It executes full native procedures through real SQLOLEDB and production policy code.
-With the tested 65-interval configuration, 152 native calls cover the regression,
-enabled/disabled SQL paths, interval starts, normal promotions and rank caps.
-Tests also check idempotence, ownership/edit refusal, atomic rollback if the
-second procedure creation fails, and unchanged source definitions. Only Haro
-bookkeeping is a no-op; unexpected dependencies fail.
-Four additional bound RPC calls exercise the exact OLE DB escape syntax with
-native parameters and return codes, including policy preparation on a session
-whose command already owns parameter bindings. Existing transactions are left alone.
-
-Temporary credential files are deleted on success or failure. Successful fixtures
-drop only their ownership-marked database; failed database names are recorded in
-local `result.json`. These checks do not constitute live game/login acceptance.
