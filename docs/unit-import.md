@@ -68,3 +68,11 @@ The stock framework ships the mod disabled, without owner content. Resource thum
 are not screenshots and do not certify actual game rendering. Native login, inventory, encyclopedia and sortie checks use the separate original GameTest workflow.
 Static checks and native table registration tests do not certify live combat,
 transformation, multiplayer, ammunition or settlement behavior.
+
+For a non-purchasing check of an installed collection machine, enable
+`CollectionPreviewOnly=1` in the sealed GameTest component and run with
+`--pages-only`, without `--collection-draw`. This reuses the existing native
+preview case and checks that no purchase transport was submitted. Activity and
+collection machines display one native poster per machine; they do not list
+every unit portrait in their pools. Verify root registrations, machine posters,
+and fixed/custom candidate portraits separately.
