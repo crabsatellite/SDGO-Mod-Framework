@@ -15,6 +15,9 @@ Missing skills remain blocking by default. An explicit **remove missing skill** 
 for verified skill slots 1/2: it zeros the reference in every affected form on both sides, preserves
 the source files, records the omission, and invalidates prior preview approvals. That skill's effect
 is lost. Known skills and the unverified third client slot are not removed by this action.
+The source-only Type-13 profile validates paired record layouts and dependency evidence;
+it does not enable new skill registration. All such records remain blocked pending
+initialization, dependency, server-field and runtime verification.
 
 See [the Chinese guide](unit-import.zh-CN.md) for the full workflow and boundaries.
 
