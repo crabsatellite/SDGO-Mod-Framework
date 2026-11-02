@@ -22,7 +22,7 @@ import xml.etree.ElementTree as ET
 from tools import game_test as gt
 from tools.game_test_environment import Registry, ManagedEnvironment, atomic_json, process_identity, no_reparse_tree, ROOT
 from tools.game_test_sql_bridge import SqlBridge
-from tools.game_test_fixtures import build_accounts, verify_accounts, initialize_battleships
+from tools.game_test_fixtures import build_accounts, verify_accounts, initialize_battleships, initialize_operators
 
 IMAGE = 'mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718'
 DATABASES = ('GameRank','GDClan','GDCommon','GDGameLogView','GDLogDB','GDLongTermGameLogDB',
@@ -65,6 +65,17 @@ def check_labels(description, lease):
     labels = description.get('Config', {}).get('Labels') if 'Config' in description else description.get('Labels')
     if any((labels or {}).get(k) != v for k, v in labels_for(lease).items()):
         raise RuntimeError('Refusing an unowned Docker resource.')
+
+
+def upload_snapshot(container,source,destination,expected_hash):
+    """Stream exact snapshot bytes, then verify inside the owned container."""
+    with source.open('rb') as stream:
+        result=subprocess.run(['docker','exec','-i',container,'sh','-c','cat > "$1"','snapshot-input',destination],
+            stdin=stream,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,timeout=180,
+            creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+    if result.returncode:raise RuntimeError('Owned SQL snapshot upload failed.')
+    actual=docker('exec',container,'sha256sum',destination).split()[0]
+    if actual!=expected_hash:raise RuntimeError('Container snapshot bytes differ from the sealed template.')
 
 
 def child_environment():
@@ -205,8 +216,7 @@ class NativeDriver:
                 raise RuntimeError('Owned SQL input copy differs from its sealed template.')
             destination = '/var/opt/mssql/backup/gametest/' + entry['file']
             self.progress('copying_snapshot',database=entry['name'],bytes=source.stat().st_size)
-            docker('cp', str(staged), self.private['container']+':'+destination,timeout=600)
-
+            upload_snapshot(self.private['container'],staged,destination,entry['sha256'])
             moves = ','.join('MOVE '+quoted(f['name'])+' TO '+quoted(
                 '/var/opt/mssql/data/gt_'+entry['name']+'_'+str(i)+('.ldf' if f['type']=='L' else '.mdf'))
                 for i, f in enumerate(entry['files']))
@@ -520,6 +530,7 @@ def upgrade_template(source, destination, registry):
         driver.progress('initializing_existing_account_fleets',accounts=5,new_accounts=0)
         with driver.connect() as connection:
             initialize_battleships(connection,data['accounts'],output/'private/accounts',isolated_template=True)
+            initialize_operators(connection,data['accounts'],isolated_template=True)
             connection.commit()
         if original_accounts!=[(a['account_id'],a['primary_uid'],a['units']) for a in data['accounts']]:
             raise RuntimeError('Template revision changed an existing identity or owned unit UID.')

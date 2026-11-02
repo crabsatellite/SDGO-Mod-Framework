@@ -545,7 +545,12 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
 int __cdecl Start(const SdgoGameTestContextV1* context) {
     SdgoPvpAiClientSnapshotV1 snapshot{};
     static uint64_t lastStartAttempt=0;
-    if(!context->tick)lastStartAttempt=0;
+    static uint32_t startSendBaseline=0,startReplyBaseline=0;
+    if(!context->tick){lastStartAttempt=0;startSendBaseline=actions.GameStartSendCount();startReplyBaseline=rooms.NativeStartReplySequence();}
+    if(rooms.NativeStartReplySequence()>startReplyBaseline && rooms.NativeStartReplyError()!=0) {
+        char failure[96];sprintf_s(failure,"native server rejected battle start: 07B5/%04X",rooms.NativeStartReplyError());
+        context->Assert(0,failure);return SDGO_GAME_TEST_FAIL;
+    }
     static uint64_t nextStartObservation=0;
     if(context->elapsed_ms>=nextStartObservation) {
         const auto transport=actions.TransportState();
@@ -553,6 +558,7 @@ int __cdecl Start(const SdgoGameTestContextV1* context) {
         context->Observe(message);nextStartObservation=context->elapsed_ms+1000;
     }
     if (!startRequested) {
+        startSendBaseline=actions.GameStartSendCount();startReplyBaseline=rooms.NativeStartReplySequence();
         Snapshot(snapshot); startSequence = snapshot.received_battle_start_count;
         endSequence = rooms.BattleEndState().sequence;
         if (!rooms.StartBattleNativeHost()) return SDGO_GAME_TEST_WAIT;
@@ -562,7 +568,7 @@ int __cdecl Start(const SdgoGameTestContextV1* context) {
     // Native 00731240 also repeats AddState while 0x0C has not entered the
     // active queue. A queue request during scene initialization can be lost;
     // only retry the unchanged native business when no command progressed.
-    else if(context->elapsed_ms-lastStartAttempt>=1000 && rooms.NativeStartQueueState()==0 &&
+    else if(actions.GameStartSendCount()==startSendBaseline && context->elapsed_ms-lastStartAttempt>=1000 && rooms.NativeStartQueueState()==0 &&
             rooms.NativeStartPrerequisite()==0 && rooms.StartBattleNativeHost()) {
         lastStartAttempt=context->elapsed_ms;
         context->Observe("native start command has not progressed; retried its original queue business without a packet or state write");
