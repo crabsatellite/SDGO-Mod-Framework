@@ -50,3 +50,46 @@ def product_name(path):
         if not pointer.value or not 0<length.value<=32768:raise ValueError('Invalid product-name version string')
         return ctypes.wstring_at(pointer,length.value).split('\0',1)[0].strip() or None
     return None
+
+
+def process_image_paths(image_name):
+    """Enumerate exact Windows images, failing closed on inaccessible matches."""
+    if os.name!='nt':return []
+    if Path(image_name).name!=image_name or not image_name:raise ValueError('Expected an executable basename')
+    import ctypes
+    from ctypes import wintypes as w
+    class Entry(ctypes.Structure):
+        _fields_=[('dwSize',w.DWORD),('cntUsage',w.DWORD),('pid',w.DWORD),
+                  ('heap',ctypes.c_size_t),('module',w.DWORD),('threads',w.DWORD),
+                  ('parent',w.DWORD),('priority',w.LONG),('flags',w.DWORD),('name',w.WCHAR*260)]
+    k=ctypes.WinDLL('kernel32',use_last_error=True)
+    k.CreateToolhelp32Snapshot.argtypes=(w.DWORD,w.DWORD);k.CreateToolhelp32Snapshot.restype=w.HANDLE
+    k.Process32FirstW.argtypes=(w.HANDLE,ctypes.POINTER(Entry));k.Process32FirstW.restype=w.BOOL
+    k.Process32NextW.argtypes=(w.HANDLE,ctypes.POINTER(Entry));k.Process32NextW.restype=w.BOOL
+    k.OpenProcess.argtypes=(w.DWORD,w.BOOL,w.DWORD);k.OpenProcess.restype=w.HANDLE
+    k.QueryFullProcessImageNameW.argtypes=(w.HANDLE,w.DWORD,w.LPWSTR,ctypes.POINTER(w.DWORD));k.QueryFullProcessImageNameW.restype=w.BOOL
+    k.CloseHandle.argtypes=(w.HANDLE,);k.CloseHandle.restype=w.BOOL
+    snapshot=k.CreateToolhelp32Snapshot(2,0)
+    if snapshot==ctypes.c_void_p(-1).value:raise ctypes.WinError(ctypes.get_last_error())
+    result=[]
+    try:
+        entry=Entry();entry.dwSize=ctypes.sizeof(Entry)
+        available=k.Process32FirstW(snapshot,ctypes.byref(entry))
+        if not available and ctypes.get_last_error()!=18:raise ctypes.WinError(ctypes.get_last_error())
+        while available:
+            if entry.name.casefold()==image_name.casefold():
+                process=k.OpenProcess(0x1000,False,entry.pid)
+                if not process:
+                    error=ctypes.get_last_error()
+                    if error not in (87,1168):raise ctypes.WinError(error)
+                else:
+                    try:
+                        buffer=ctypes.create_unicode_buffer(32768);size=w.DWORD(len(buffer))
+                        if not k.QueryFullProcessImageNameW(process,0,buffer,ctypes.byref(size)):
+                            raise ctypes.WinError(ctypes.get_last_error())
+                        if Path(buffer.value).name.casefold()==image_name.casefold():result.append(buffer.value)
+                    finally:k.CloseHandle(process)
+            available=k.Process32NextW(snapshot,ctypes.byref(entry))
+        if ctypes.get_last_error()!=18:raise ctypes.WinError(ctypes.get_last_error())
+    finally:k.CloseHandle(snapshot)
+    return result
