@@ -543,7 +543,7 @@ int __cdecl Start(const SdgoGameTestContextV1* context) {
     static uint64_t nextStartObservation=0;
     if(context->elapsed_ms>=nextStartObservation) {
         const auto transport=actions.TransportState();
-        char message[160];sprintf_s(message,"native start prerequisite=%d transport=%04X/%u/%u queued=%u",rooms.NativeStartPrerequisite(),transport.opcode,transport.packet_size,transport.send_sequence,startRequested?1u:0u);
+        char message[192];sprintf_s(message,"native start prerequisite=%d command_state_and_queue=%d transport=%04X/%u/%u attempted=%u",rooms.NativeStartPrerequisite(),rooms.NativeStartQueueState(),transport.opcode,transport.packet_size,transport.send_sequence,startRequested?1u:0u);
         context->Observe(message);nextStartObservation=context->elapsed_ms+1000;
     }
     if (!startRequested) {
