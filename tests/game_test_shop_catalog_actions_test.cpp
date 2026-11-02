@@ -1424,7 +1424,8 @@ int wmain(int argc, wchar_t** argv)
     Setup();retainEmptyNativeSlots=true;LoadPage(0);
     actions=Driver(assertions,display);
     Check(PollTo(actions,ShopCatalogActions::kComplete)==ShopCatalogActions::kComplete &&
-        actions.State().native_page_slots==8 && actions.State().native_page_nonempty==1,
+        actions.State().native_page_slots==8 && actions.State().native_page_nonempty==1 &&
+        actions.State().native_page_product_ids[0]==1019002 && actions.State().native_page_product_ids[1]==0,
         "eight native display slots can retain blank entries while row identities and previews remain exact");
 
     Setup();
