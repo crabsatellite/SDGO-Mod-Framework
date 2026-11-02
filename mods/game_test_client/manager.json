@@ -55,6 +55,17 @@
       "activation": "restart_required"
     },
     {
+      "id": "collection_preview_only",
+      "key": "CollectionPreviewOnly",
+      "label": "仅检查收藏扭蛋原生预览（不抽取）",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
       "id": "unit_portraits",
       "key": "UnitPortraits",
       "label": "原生准备动作截图",

@@ -86,6 +86,7 @@ uint16_t missionMode=0;
 SdgoMissionAiClientGetSnapshotV1Fn getMissionSnapshot=nullptr;
 uint64_t playUnitUid=0;
 bool collectionDraw=false;
+bool collectionPreviewOnly=false;
 std::vector<SdgoHangarGameTestUnitV1> collectionBeforeUnits;
 const void* roomListVtable=nullptr;
 const void* modalLoadingVtable=nullptr;
@@ -159,6 +160,8 @@ bool LoadPlan() {
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
     captureUnitPortraits=GetPrivateProfileIntW(L"settings",L"UnitPortraits",0,
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
+    collectionPreviewOnly=GetPrivateProfileIntW(L"settings",L"CollectionPreviewOnly",0,
+        (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
     wchar_t networkPolicy[24]{};
     GetPrivateProfileStringW(L"run",L"network_policy",L"legacy",networkPolicy,24,job.c_str());
     verifyRoutedNetwork=!wcscmp(networkPolicy,L"routed_loopback");
@@ -166,6 +169,7 @@ bool LoadPlan() {
     verifyQuietRuntime=GetPrivateProfileIntW(L"run",L"quiet",0,job.c_str())!=0;
     quietLoopback=verifyQuietRuntime && GetPrivateProfileIntW(L"run",L"quiet_loopback",0,job.c_str())==1;
     fpsOnly=sdgo_test::suiteId=="native-fps-limit";
+    if(collectionPreviewOnly && fpsOnly)return false;
     if (fpsOnly) {
         fpsRequested=GetPrivateProfileIntW(L"run",L"fps_cap",0,job.c_str());
         const int enabled=GetPrivateProfileIntW(L"run",L"fps_mod_enabled",-1,job.c_str());
@@ -189,6 +193,7 @@ bool LoadPlan() {
         wcscmp(shopDisplay,L"inputs/shop-runtime-display.ini")))return false;
     collectionDraw=GetPrivateProfileIntW(L"run",L"collection_draw",0,job.c_str())!=0;
     if(collectionDraw && !pagesOnly)return false;
+    if(collectionPreviewOnly && (!pagesOnly || collectionDraw))return false;
     missionMode=static_cast<uint16_t>(GetPrivateProfileIntW(L"run",L"mission_mode",0,job.c_str()));
     if(missionMode && (missionMode!=5 && missionMode!=8))return false;
     wchar_t playUid[32]{};
@@ -1404,6 +1409,8 @@ int __cdecl PreviewCollection(const SdgoGameTestContextV1* context) {
     const auto s=collection.State();
     context->Assert(s.target_machine==990001 && s.target_price==100000 && s.preview_ready && !s.buy_attempted,
         "original activity controls selected the real collection machine and initialized its own confirmation without purchasing");
+    context->Assert(!s.buy_submitted && !s.request_transport_sequence,
+        "the preview has not submitted an activity-capsule purchase transport");
     return SDGO_GAME_TEST_PASS;
 }
 int __cdecl DrawCollection(const SdgoGameTestContextV1* context) {
@@ -1777,6 +1784,7 @@ void RegisterPlannedCases() {
         if(testShopCatalog)plannedCases.push_back(shopCatalogCase);
         plannedCases.insert(plannedCases.end(),std::begin(pageCases)+5,std::end(pageCases));
         if(collectionDraw)plannedCases.insert(plannedCases.end(),std::begin(collectionCases),std::end(collectionCases));
+        else if(collectionPreviewOnly)plannedCases.push_back(collectionCases[0]);
         provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
     }
     const bool needsShip = battleshipOnly || deckOnly || std::find(requestedModes.begin(),requestedModes.end(),6)!=requestedModes.end() ||
@@ -2009,7 +2017,7 @@ SDGO_MOD_ENTRY {
         (pagesOnly && !aiCatalog.Bind(api,mod)) ||
         (pagesOnly && !storage.Bind()) ||
         (pagesOnly && !capsules.Bind(api,mod)) ||
-        (collectionDraw && !collection.Bind(api,mod,&actions)) ||
+        ((collectionDraw || collectionPreviewOnly) && !collection.Bind(api,mod,&actions)) ||
         (playUnitUid && !unitSelection.Bind(api,mod,&actions)) ||
         ((randomLoadout || playUnitUid) && !activeSelection.Bind(api,mod)) ||
         (testShopCatalog && (!shopCatalog.Bind(api,mod) || !shopCatalog.Configure(
