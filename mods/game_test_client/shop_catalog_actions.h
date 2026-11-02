@@ -22,7 +22,7 @@
 // Ordinary, read-only Shop GameTest adapter.
 //
 // This adapter reaches the shop through the shipped lobby callback, selects
-// the shipped AllSerchRadio, pages with the shipped room-manager callback and
+// the shipped AllSerchRadio and its FilterBtn, pages with the shipped room-manager callback and
 // opens the shipped buy/gift option services. It invokes only each popup's
 // BuyCancelBtn. It never invokes a popup BuyBtn, writes a wallet/inventory,
 // constructs a reply, or treats callback return as completion.
@@ -46,6 +46,7 @@ public:
         kWaitingForGiftPreview = 12,
         kCancellingGiftPreview = 13,
         kComplete = 14,
+        kSubmittingSearch = 15,
 
         kInvalidContext = 0x100,
         kRunChanged = 0x101,
@@ -89,6 +90,7 @@ public:
         kStageCancelGift,
         kStageWaitGiftGone,
         kStageDone,
+        kStageSubmitSearch,
     };
 
     using GameAppFn = uint8_t*(__cdecl*)();
@@ -140,6 +142,8 @@ public:
         UiCallbackFn downmenu_callback = nullptr;
         void* room_vtable = nullptr;
         UiCallbackFn room_callback = nullptr;
+        void* search_vtable = nullptr;
+        UiCallbackFn search_callback = nullptr;
         void* buy_vtable = nullptr;
         PopupCallbackFn buy_callback = nullptr;
         void* gift_vtable = nullptr;
@@ -269,6 +273,8 @@ public:
         bindings.room_callback =
             Symbol<UiCallbackFn>(
                 api, mod, "flow.shop_room_manager_callback");
+        bindings.search_vtable=api->Symbol(mod,"flow.shop_search_vtable");
+        bindings.search_callback=Symbol<UiCallbackFn>(api,mod,"flow.shop_search_callback");
         bindings.buy_vtable =
             api->Symbol(mod, "flow.shop_buy_options_vtable");
         bindings.buy_callback =
@@ -307,6 +313,7 @@ public:
             bindings_.downmenu_callback &&
             bindings_.room_vtable &&
             bindings_.room_callback &&
+            bindings_.search_vtable && bindings_.search_callback &&
             bindings_.buy_vtable &&
             bindings_.buy_callback &&
             bindings_.gift_vtable &&
@@ -318,6 +325,7 @@ public:
             CallbackMatches(
                 bindings_.room_vtable,
                 bindings_.room_callback) &&
+            CallbackMatches(bindings_.search_vtable,bindings_.search_callback) &&
             CallbackMatches(
                 bindings_.buy_vtable,
                 bindings_.buy_callback) &&
@@ -389,6 +397,8 @@ public:
             return SelectAll();
         case kStageWaitAll:
             return WaitForAll(context);
+        case kStageSubmitSearch:
+            return SubmitSearch();
         case kStageScanPage:
             return ScanPage(context);
         case kStageWaitPage:
@@ -473,6 +483,7 @@ public:
         case kWaitingForGiftPreview: return "waiting-for-gift-preview";
         case kCancellingGiftPreview: return "cancelling-gift-preview";
         case kComplete: return "complete";
+        case kSubmittingSearch: return "submitting-search";
         case kInvalidContext: return "invalid-context";
         case kRunChanged: return "run-changed";
         case kThreadChanged: return "thread-changed";
@@ -1320,8 +1331,36 @@ private:
             return Publish(kNativeFault);
         ++observation_.original_actions;
         allSelectedAt_ = lastElapsed_;
-        stage_ = kStageWaitAll;
+        // Native 009E6350 opens an empty search view. It does not send a
+        // stock query; 009E02D0/009CD9E0 handles the real FilterBtn click.
+        stage_ = kStageSubmitSearch;
         return Publish(kSelectingAll);
+    }
+
+    Result SubmitSearch()
+    {
+        if(!RoomStillMatches())return Publish(kServiceMismatch);
+        const auto request=CatalogRequestReady();
+        if(request!=kComplete)return Publish(request);
+        PopupList popups={};
+        const auto popupResult=ReadPopupList(&popups);
+        if(popupResult!=kComplete)return Publish(popupResult);
+        if(popups.count)return Publish(kUnsafeModalPresent);
+        void* service=nullptr;
+        const auto resolved=ResolveService(L"subTabDlg",bindings_.search_vtable,&service);
+        if(resolved==kServiceAbsent)return Publish(kWaitingForCatalog);
+        if(resolved!=kServiceMatched)return Publish(kServiceMismatch);
+        uint32_t active=0;void* root=nullptr;void* cached=nullptr;
+        if(!ReadValue(service,0xD0,&active) || !ReadPointer(service,0x58,&root) ||
+           !ReadPointer(service,0xB8,&cached))return Publish(kNativeFault);
+        if(active!=1 || !root || !cached)return Publish(kWaitingForCatalog);
+        void* found=FindControl(root,L"FilterBtn",kButtonKind);
+        if(found!=cached || !ControlIdentity(found,root,L"FilterBtn"))return Publish(kControlMismatch);
+        if(!Invoke(bindings_.search_callback,service,kClickEvent,found))return Publish(kNativeFault);
+        ++observation_.original_actions;
+        allSelectedAt_=lastElapsed_;
+        stage_=kStageWaitAll;
+        return Publish(kSubmittingSearch);
     }
 
     Result WaitForAll(
@@ -1329,6 +1368,8 @@ private:
     {
         if (!RoomStillMatches())
             return Publish(kServiceMismatch);
+        const auto request=CatalogRequestReady();
+        if(request!=kComplete)return Publish(request);
         const uint64_t signature =
             CatalogSignature();
         if (!signature)
