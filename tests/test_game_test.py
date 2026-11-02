@@ -66,6 +66,11 @@ class RoomTitlePlanTests(unittest.TestCase):
         cases=game_test.required_flow_cases('1',room_titles_only=True)
         self.assertEqual(cases,game_test.FLOW_CASES[:3]+tuple('room_titles.'+x for x in (
             'pvp.create','pvp.rename','pvp.leave','team.create','team.settings','team.rename','team.leave','grid.create','grid.rename','grid.leave','mission.create','mission.settings','mission.rename','mission.leave')))
+    def test_room_title_fixture_can_select_an_existing_owned_unit(self):
+        normal=game_test.required_flow_cases('1',room_titles_only=True)
+        selected=game_test.required_flow_cases('1',play_unit_uid=123,room_titles_only=True)
+        self.assertEqual(selected,normal[:3]+('setup.active_unit',)+normal[3:])
+
     def test_disabled_retained_diagnostic_uses_native_manifest_encoding(self):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'mod.ini'
