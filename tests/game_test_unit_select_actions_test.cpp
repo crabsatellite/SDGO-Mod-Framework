@@ -26,6 +26,8 @@ constexpr uint64_t kSecondUid = 100002;
 constexpr uint64_t kThirdUid = 100003;
 constexpr uint64_t kTargetUid = 100004;
 constexpr uint64_t kSeventhUid = 100007;
+constexpr uint64_t kThirtyFirstUid = 100031;
+constexpr size_t kFixtureSlots = 64;
 
 using NetworkSendDetour =
     int(__fastcall*)(
@@ -63,11 +65,12 @@ void* g_unitManagerVtable[32] = {};
 void* g_wrongVtable[32] = {};
 uint8_t g_unitRoot = 0;
 uint8_t g_unitList[0x280] = {};
-uint8_t g_rows[8][0x40] = {};
-uint8_t g_rowControls[8][0x180] = {};
+uint8_t g_pageControls[4][0x180] = {};
+uint8_t g_rows[kFixtureSlots][0x40] = {};
+uint8_t g_rowControls[kFixtureSlots][0x180] = {};
 uint8_t g_unitInfo[0x80] = {};
 void* g_unitInfoObject = g_unitInfo;
-uint8_t g_inventory[8][0x19] = {};
+uint8_t g_inventory[kFixtureSlots][0x19] = {};
 
 NetworkSendDetour g_networkSendDetour = nullptr;
 LoginDispatchDetour g_loginDispatchDetour = nullptr;
@@ -84,6 +87,9 @@ bool g_syncReply = false;
 bool g_replyHookFails = false;
 bool g_descriptorValid = true;
 bool g_networkPacketValid = true;
+bool g_pageControlsAvailable = true;
+bool g_pageCallbackPending = false;
+bool g_pageCallbackAbiValid = true;
 const char* g_missingSymbol = nullptr;
 int g_networkResult = 1;
 int g_selectedIndex = -1;
@@ -93,7 +99,9 @@ unsigned g_businessCalls = 0;
 unsigned g_replyOriginalCalls = 0;
 unsigned g_serviceLookups = 0;
 unsigned g_controlLookups = 0;
+unsigned g_pageCallbackCalls = 0;
 uint32_t g_lastControlKind = UINT32_MAX;
+wchar_t g_lastPageControl[32] = {};
 
 void Check(bool condition, const char* message)
 {
@@ -217,7 +225,10 @@ void WriteBrief(
     uint64_t uid,
     uint16_t slot)
 {
-    if (index < 0 || index >= 8)
+    if (index < 0 ||
+        index >=
+            static_cast<int>(
+                kFixtureSlots))
         return;
     std::memset(
         g_inventory[index],
@@ -359,7 +370,7 @@ void __fastcall FakeUnitBriefBySlot(
         !slot) {
         return;
     }
-    if (slot > 8) {
+    if (slot > kFixtureSlots) {
         std::memset(
             output,
             0,
@@ -375,7 +386,7 @@ void __fastcall FakeUnitBriefBySlot(
 void __fastcall FakeUnitFullBySlot(void*,void*,void* output,uint16_t slot)
 {
     std::memset(output,0,0x99);
-    if(!g_fullReady || slot<1 || slot>8)return;
+    if(!g_fullReady || slot<1 || slot>kFixtureSlots)return;
     auto* full=static_cast<uint8_t*>(output);
     std::memcpy(full,g_inventory[slot-1],4);
     std::memcpy(full+8,g_inventory[slot-1]+4,8);
@@ -412,6 +423,29 @@ void* __fastcall FakeServiceFindByName(
         : nullptr;
 }
 
+const wchar_t* const kPageControlNames[4] = {
+    L"LeftBtn",
+    L"RightBtn",
+    L"LeftOneBtn",
+    L"RightOneBtn",
+};
+
+void* PageControlByName(
+    const wchar_t* name)
+{
+    if (!name)
+        return nullptr;
+    for (size_t index = 0;
+         index < 4;
+         ++index) {
+        if (std::wcscmp(
+                name,
+                kPageControlNames[index]) == 0)
+            return g_pageControls[index];
+    }
+    return nullptr;
+}
+
 void* __fastcall FakeUiFindControl(
     void* root,
     void*,
@@ -422,15 +456,121 @@ void* __fastcall FakeUiFindControl(
     g_lastControlKind = kind;
     const wchar_t* name =
         ReadNativeString(nativeName);
-    if (!g_listVisible ||
-        root != &g_unitRoot ||
-        kind != 7 ||
-        !name ||
-        std::wcscmp(
-            name,
-            L"UnitList") != 0)
+    if (root != &g_unitRoot ||
+        !name)
         return nullptr;
-    return g_unitList;
+    if (kind == 7)
+        return g_listVisible &&
+                   std::wcscmp(
+                       name,
+                       L"UnitList") == 0
+            ? g_unitList
+            : nullptr;
+    if (kind == 4 &&
+        g_pageControlsAvailable)
+        return PageControlByName(name);
+    return nullptr;
+}
+
+void RefreshOccupied(uint32_t page)
+{
+    for (uint32_t index = 0;
+         index < 6;
+         ++index) {
+        const uint32_t slot =
+            page * 6 +
+            index;
+        g_unitManager[0xD4 + index] =
+            slot < kFixtureSlots &&
+                    *reinterpret_cast<uint32_t*>(
+                        g_inventory[slot]) != 0
+                ? 1
+                : 0;
+    }
+}
+
+uint32_t __stdcall FakeUnitManagerCallback(
+    void* service,
+    uint32_t event,
+    const void* nativeName,
+    void* control)
+{
+    ++g_pageCallbackCalls;
+    const wchar_t* name =
+        ReadNativeString(nativeName);
+    const bool valid =
+        service == g_unitManager &&
+        event == 0x101 &&
+        control &&
+        name &&
+        nativeName ==
+            static_cast<uint8_t*>(control) +
+                0x118 &&
+        PageControlByName(name) == control &&
+        *reinterpret_cast<void**>(
+            static_cast<uint8_t*>(control) +
+            0x15C) == &g_unitRoot;
+    if (!valid) {
+        g_pageCallbackAbiValid = false;
+        return 0;
+    }
+    std::wcsncpy(
+        g_lastPageControl,
+        name,
+        31);
+    g_lastPageControl[31] = L'\0';
+    if (g_pageCallbackPending)
+        return 0;
+
+    auto& group =
+        *reinterpret_cast<int32_t*>(
+            g_unitManager + 0x6C);
+    const int32_t maximumGroup =
+        *reinterpret_cast<int32_t*>(
+            g_unitManager + 0x70);
+    auto& page =
+        *reinterpret_cast<int32_t*>(
+            g_unitManager + 0x74);
+    const int32_t maximumPage =
+        *reinterpret_cast<int32_t*>(
+            g_unitManager + 0x78);
+    int32_t nextPage = page;
+    if (std::wcscmp(
+            name,
+            L"LeftBtn") == 0) {
+        if (group <= 0)
+            return 0;
+        --group;
+        nextPage = group * 5;
+    } else if (std::wcscmp(
+                   name,
+                   L"RightBtn") == 0) {
+        if (group >= maximumGroup)
+            return 0;
+        ++group;
+        nextPage = group * 5;
+    } else if (std::wcscmp(
+                   name,
+                   L"LeftOneBtn") == 0) {
+        if (page <= 0)
+            return 0;
+        nextPage = page - 1;
+    } else if (std::wcscmp(
+                   name,
+                   L"RightOneBtn") == 0) {
+        if (page >= maximumPage)
+            return 0;
+        nextPage = page + 1;
+    } else {
+        g_pageCallbackAbiValid = false;
+        return 0;
+    }
+    page = nextPage;
+    *reinterpret_cast<int32_t*>(
+        g_unitManager + 0x68) = -1;
+    RefreshOccupied(
+        static_cast<uint32_t>(page));
+    return 0;
 }
 
 uint8_t __fastcall FakeUnitListMouseBusiness(
@@ -446,8 +586,8 @@ uint8_t __fastcall FakeUnitListMouseBusiness(
     if (self != g_unitList)
         return 0;
     int hit = -1;
-    for (int index = 0;
-         index < 8;
+    for (size_t index = 0;
+         index < kFixtureSlots;
          ++index) {
         const float nativeLeft =
             *reinterpret_cast<float*>(
@@ -475,7 +615,8 @@ uint8_t __fastcall FakeUnitListMouseBusiness(
             x < left + width &&
             y >= top &&
             y < top + height) {
-            hit = index;
+            hit =
+                static_cast<int>(index);
             break;
         }
     }
@@ -504,7 +645,9 @@ void* __fastcall FakeUnitListItemByIndex(
     if (self != g_unitList ||
         !g_rowsReady ||
         index < 0 ||
-        index >= 8)
+        index >=
+            static_cast<int>(
+                kFixtureSlots))
         return nullptr;
     return g_rows[index];
 }
@@ -680,6 +823,12 @@ void* LookupSymbol(const char* name)
         return g_unitManagerVtable;
     if (std::strcmp(
             name,
+            "flow.battleship_lobby_select_business") ==
+        0)
+        return reinterpret_cast<void*>(
+            &FakeUnitManagerCallback);
+    if (std::strcmp(
+            name,
             "flow.unit_list_mouse_business") == 0)
         return reinterpret_cast<void*>(
             &FakeUnitListMouseBusiness);
@@ -757,6 +906,9 @@ void ResetFixture(
 {
     DestroyNativeString(
         g_unitList + 0x118);
+    for (auto& control : g_pageControls)
+        DestroyNativeString(
+            control + 0x118);
     std::memset(g_app, 0, sizeof(g_app));
     std::memset(
         g_profileStorage,
@@ -770,6 +922,10 @@ void ResetFixture(
         g_unitList,
         0,
         sizeof(g_unitList));
+    std::memset(
+        g_pageControls,
+        0,
+        sizeof(g_pageControls));
     std::memset(
         g_rows,
         0,
@@ -800,14 +956,20 @@ void ResetFixture(
     *reinterpret_cast<void**>(
         g_unitManager + 0x64) =
             &g_unitRoot;
-    *reinterpret_cast<uint16_t*>(
+    const int32_t maximumPage =
+        capacity > 0
+            ? (capacity - 1) / 6
+            : 0;
+    *reinterpret_cast<int32_t*>(
+        g_unitManager + 0x6C) = 0;
+    *reinterpret_cast<int32_t*>(
+        g_unitManager + 0x70) =
+            maximumPage / 5;
+    *reinterpret_cast<int32_t*>(
         g_unitManager + 0x74) = 0;
-    for (int index = 0;
-         index < 6;
-         ++index) {
-        g_unitManager[0xD4 + index] =
-            index < capacity ? 1 : 0;
-    }
+    *reinterpret_cast<int32_t*>(
+        g_unitManager + 0x78) =
+            maximumPage;
 
     *reinterpret_cast<void**>(
         g_unitList + 0x15C) =
@@ -825,8 +987,22 @@ void ResetFixture(
     WriteNativeString(
         g_unitList + 0x118,
         L"UnitList");
-    for (int index = 0;
-         index < 8;
+    for (size_t index = 0;
+         index < 4;
+         ++index) {
+        *reinterpret_cast<void**>(
+            g_pageControls[index] +
+            0x15C) =
+                &g_unitRoot;
+        g_pageControls[index][0x162] = 1;
+        g_pageControls[index][0x167] = 1;
+        WriteNativeString(
+            g_pageControls[index] +
+                0x118,
+            kPageControlNames[index]);
+    }
+    for (size_t index = 0;
+         index < kFixtureSlots;
          ++index) {
         *reinterpret_cast<void**>(
             g_rows[index] + 0x1C) =
@@ -843,7 +1019,9 @@ void ResetFixture(
             g_rowControls[index] +
             0x14C) =
                 50.25f +
-                index * 30.0f;
+                static_cast<float>(
+                    index) *
+                    30.0f;
         *reinterpret_cast<int32_t*>(
             g_rowControls[index] +
             0x154) = 20;
@@ -865,6 +1043,7 @@ void ResetFixture(
         WriteBrief(3, 22097, kTargetUid, 4);
     if (capacity > 6)
         WriteBrief(6, 24402, kSeventhUid, 7);
+    RefreshOccupied(0);
 
     *reinterpret_cast<void**>(
         g_network + 0x14) =
@@ -878,6 +1057,9 @@ void ResetFixture(
     g_syncReply = false;
     g_descriptorValid = true;
     g_networkPacketValid = true;
+    g_pageControlsAvailable = true;
+    g_pageCallbackPending = false;
+    g_pageCallbackAbiValid = true;
     g_networkResult = 1;
     g_selectedIndex = -1;
     g_mouseCalls = 0;
@@ -886,7 +1068,12 @@ void ResetFixture(
     g_replyOriginalCalls = 0;
     g_serviceLookups = 0;
     g_controlLookups = 0;
+    g_pageCallbackCalls = 0;
     g_lastControlKind = UINT32_MAX;
+    std::memset(
+        g_lastPageControl,
+        0,
+        sizeof(g_lastPageControl));
 }
 
 void TestBindFailures(
@@ -903,6 +1090,35 @@ void TestBindFailures(
             &native),
         "binding fails closed when the native list mouse-business symbol is absent");
     g_missingSymbol = nullptr;
+
+    g_missingSymbol =
+        "flow.battleship_lobby_select_business";
+    UnitSelectActions missingPageCallback;
+    Check(
+        !missingPageCallback.Bind(
+            &api,
+            reinterpret_cast<SdgoMod*>(1),
+            &native),
+        "binding fails closed when the shipped unitmgr page callback is absent");
+    g_missingSymbol = nullptr;
+
+    void* const originalCallback =
+        g_unitManagerVtable[
+            0x38 / sizeof(void*)];
+    g_unitManagerVtable[
+        0x38 / sizeof(void*)] =
+            reinterpret_cast<void*>(
+                &FakeSelectBusiness);
+    UnitSelectActions mismatchedPageCallback;
+    Check(
+        !mismatchedPageCallback.Bind(
+            &api,
+            reinterpret_cast<SdgoMod*>(1),
+            &native),
+        "binding verifies the original stdcall callback at unitmgr vtable plus 0x38");
+    g_unitManagerVtable[
+        0x38 / sizeof(void*)] =
+            originalCallback;
 
     g_replyHookFails = true;
     UnitSelectActions hookFailure;
@@ -1318,10 +1534,236 @@ void TestPreRequestBoundaries(
     Check(
         actions.Poll(kSeventhUid) ==
                 UnitSelectActions::
-                    kTargetPageMismatch &&
+                    kNavigatingUnitPage &&
+            *reinterpret_cast<int32_t*>(
+                g_unitManager + 0x74) == 1 &&
+            std::wcscmp(
+                g_lastPageControl,
+                L"RightOneBtn") == 0 &&
+            g_pageCallbackAbiValid &&
+            g_pageCallbackCalls == 1 &&
             g_mouseCalls == 0 &&
             g_businessCalls == 0,
-        "the adapter refuses off-page direct state writes and reports the native page boundary");
+        "an off-page target enters the shipped right-page callback instead of reporting a writable page mismatch");
+}
+
+void TestNativePageNavigation(
+    UnitSelectActions& actions)
+{
+    actions.Reset();
+    ResetFixture(1, 7);
+    g_fullReady = false;
+    Check(
+        actions.Poll(kSeventhUid) ==
+                UnitSelectActions::
+                    kNavigatingUnitPage &&
+            *reinterpret_cast<int32_t*>(
+                g_unitManager + 0x74) == 1 &&
+            std::wcscmp(
+                g_lastPageControl,
+                L"RightOneBtn") == 0 &&
+            g_pageCallbackAbiValid &&
+            g_pageCallbackCalls == 1 &&
+            g_mouseCalls == 0 &&
+            g_businessCalls == 0,
+        "the original stdcall RightOneBtn callback owns the first six-slot page transition");
+    Check(
+        actions.Poll(kSeventhUid) ==
+                UnitSelectActions::
+                    kWaitingForFullUnit &&
+            g_pageCallbackCalls == 1 &&
+            g_mouseCalls == 0 &&
+            g_businessCalls == 0,
+        "a callback-owned target page is still incomplete until its matching full record arrives");
+    g_fullReady = true;
+    Check(
+        actions.Poll(kSeventhUid) ==
+                UnitSelectActions::kSelecting &&
+            g_selectedIndex == 6 &&
+            g_businessCalls == 1,
+        "the page reply full cache releases the existing native row-selection and active-wait path");
+
+    actions.Reset();
+    ResetFixture(7, 7);
+    *reinterpret_cast<int32_t*>(
+        g_unitManager + 0x74) = 1;
+    RefreshOccupied(1);
+    Check(
+        actions.Poll(kSecondUid) ==
+                UnitSelectActions::
+                    kNavigatingUnitPage &&
+            *reinterpret_cast<int32_t*>(
+                g_unitManager + 0x74) == 0 &&
+            std::wcscmp(
+                g_lastPageControl,
+                L"LeftOneBtn") == 0 &&
+            g_pageCallbackCalls == 1 &&
+            g_businessCalls == 0,
+        "an earlier target page uses the shipped LeftOneBtn direction without selecting early");
+
+    actions.Reset();
+    ResetFixture(1, 31);
+    WriteBrief(
+        30,
+        31031,
+        kThirtyFirstUid,
+        31);
+    g_fullReady = false;
+    Check(
+        actions.Poll(kThirtyFirstUid) ==
+                UnitSelectActions::
+                    kNavigatingUnitPage &&
+            *reinterpret_cast<int32_t*>(
+                g_unitManager + 0x6C) == 1 &&
+            *reinterpret_cast<int32_t*>(
+                g_unitManager + 0x74) == 5 &&
+            std::wcscmp(
+                g_lastPageControl,
+                L"RightBtn") == 0 &&
+            g_pageCallbackCalls == 1,
+        "a target in another five-page group uses RightBtn instead of six one-page requests");
+    Check(
+        actions.Poll(kThirtyFirstUid) ==
+                UnitSelectActions::
+                    kWaitingForFullUnit &&
+            g_pageCallbackCalls == 1,
+        "cross-group navigation also waits for the target page full cache");
+    g_fullReady = true;
+    Check(
+        actions.Poll(kThirtyFirstUid) ==
+                UnitSelectActions::kSelecting &&
+            g_selectedIndex == 30,
+        "cross-group completion selects the original absolute UnitList row");
+
+    actions.Reset();
+    ResetFixture(2, 31);
+    *reinterpret_cast<int32_t*>(
+        g_unitManager + 0x6C) = 1;
+    *reinterpret_cast<int32_t*>(
+        g_unitManager + 0x74) = 5;
+    RefreshOccupied(5);
+    Check(
+        actions.Poll(kTrainingUid) ==
+                UnitSelectActions::
+                    kNavigatingUnitPage &&
+            *reinterpret_cast<int32_t*>(
+                g_unitManager + 0x6C) == 0 &&
+            *reinterpret_cast<int32_t*>(
+                g_unitManager + 0x74) == 0 &&
+            std::wcscmp(
+                g_lastPageControl,
+                L"LeftBtn") == 0,
+        "reverse cross-group navigation uses the shipped LeftBtn business");
+
+    actions.Reset();
+    ResetFixture(1, 7);
+    g_pageCallbackPending = true;
+    uint8_t profileBefore[
+        sizeof(g_profileStorage)] = {};
+    uint8_t inventoryBefore[
+        sizeof(g_inventory)] = {};
+    uint8_t pageStateBefore[0x14] = {};
+    std::memcpy(
+        profileBefore,
+        g_profileStorage,
+        sizeof(profileBefore));
+    std::memcpy(
+        inventoryBefore,
+        g_inventory,
+        sizeof(inventoryBefore));
+    std::memcpy(
+        pageStateBefore,
+        g_unitManager + 0x68,
+        sizeof(pageStateBefore));
+    Check(
+        actions.Poll(kSeventhUid) ==
+                UnitSelectActions::
+                    kNavigatingUnitPage &&
+            g_pageCallbackCalls == 1 &&
+            std::memcmp(
+                pageStateBefore,
+                g_unitManager + 0x68,
+                sizeof(pageStateBefore)) == 0 &&
+            std::memcmp(
+                profileBefore,
+                g_profileStorage,
+                sizeof(profileBefore)) == 0 &&
+            std::memcmp(
+                inventoryBefore,
+                g_inventory,
+                sizeof(inventoryBefore)) == 0 &&
+            g_mouseCalls == 0 &&
+            g_businessCalls == 0,
+        "a pending native page request can reject the callback without any adapter page, profile, or inventory write");
+    Check(
+        actions.Poll(kSeventhUid) ==
+                UnitSelectActions::
+                    kNavigatingUnitPage &&
+            g_pageCallbackCalls == 2 &&
+            *reinterpret_cast<int32_t*>(
+                g_unitManager + 0x74) == 0,
+        "polling waits and retries the real callback while native pending state owns admission");
+
+    actions.Reset();
+    ResetFixture(1, 7);
+    *reinterpret_cast<void**>(
+        g_pageControls[3] +
+        0x15C) =
+            g_unitManager;
+    Check(
+        actions.Poll(kSeventhUid) ==
+                UnitSelectActions::
+                    kPageControlMismatch &&
+            g_pageCallbackCalls == 0 &&
+            *reinterpret_cast<int32_t*>(
+                g_unitManager + 0x74) == 0,
+        "a page button owned by another root is rejected before the callback");
+
+    actions.Reset();
+    ResetFixture(1, 7);
+    WriteNativeString(
+        g_pageControls[3] +
+            0x118,
+        L"WrongPageBtn");
+    Check(
+        actions.Poll(kSeventhUid) ==
+                UnitSelectActions::
+                    kPageControlMismatch &&
+            g_pageCallbackCalls == 0,
+        "a page control with the wrong native name cannot select a direction");
+
+    actions.Reset();
+    ResetFixture(1, 7);
+    g_pageControls[3][0x162] = 0;
+    Check(
+        actions.Poll(kSeventhUid) ==
+                UnitSelectActions::
+                    kPageControlMissing &&
+            g_pageCallbackCalls == 0,
+        "a hidden native page button remains unavailable");
+
+    actions.Reset();
+    ResetFixture(1, 7);
+    g_pageControls[3][0x167] = 0;
+    Check(
+        actions.Poll(kSeventhUid) ==
+                UnitSelectActions::
+                    kPageControlMissing &&
+            g_pageCallbackCalls == 0,
+        "a disabled native page button remains unavailable");
+
+    actions.Reset();
+    ResetFixture(1, 7);
+    *reinterpret_cast<int32_t*>(
+        g_unitManager + 0x78) = 0;
+    Check(
+        actions.Poll(kSeventhUid) ==
+                UnitSelectActions::
+                    kTargetPageMismatch &&
+            g_pageCallbackCalls == 0 &&
+            *reinterpret_cast<int32_t*>(
+                g_unitManager + 0x74) == 0,
+        "a target beyond the native maximum page fails closed without a synthetic page write");
 }
 
 void TestIdentityAndLifecycleBoundaries(
@@ -1420,6 +1862,10 @@ int main()
         g_wrongVtable,
         0,
         sizeof(g_wrongVtable));
+    g_unitManagerVtable[
+        0x38 / sizeof(void*)] =
+            reinterpret_cast<void*>(
+                &FakeUnitManagerCallback);
     ResetFixture();
 
     SdgoApi api = {};
@@ -1467,6 +1913,7 @@ int main()
             TestSynchronousReply(actions);
             TestReplyFailures(actions);
             TestPreRequestBoundaries(actions);
+            TestNativePageNavigation(actions);
             TestIdentityAndLifecycleBoundaries(
                 actions);
             TestResultNames();
@@ -1475,6 +1922,9 @@ int main()
 
     DestroyNativeString(
         g_unitList + 0x118);
+    for (auto& control : g_pageControls)
+        DestroyNativeString(
+            control + 0x118);
     if (g_failures) {
         std::fprintf(
             stderr,

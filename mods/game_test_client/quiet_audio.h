@@ -43,7 +43,13 @@ private:
         if (self->api_->Log) self->api_->Log(self->mod_,SDGO_LOG_INFO,"quiet Miles native WaveOut open: rate=%u bits=%d channels=%d flags=%u",rate,bits,channels,flags|1u);
         void* driver=self->original_(rate,bits,channels,flags|1u);
         if (self->api_->Log) self->api_->Log(self->mod_,SDGO_LOG_INFO,"quiet Miles native driver returned %p",driver);
-        if (!driver) {InterlockedIncrement(&self->failed_);return nullptr;}
+        if (!driver) {
+            using ErrorFn=const char*(WINAPI*)();
+            const auto miles=GetModuleHandleW(L"Mss32.dll");
+            const auto error=miles ? reinterpret_cast<ErrorFn>(GetProcAddress(miles,"_AIL_last_error@0")):nullptr;
+            if(self->api_->Log)self->api_->Log(self->mod_,SDGO_LOG_ERROR,"quiet Miles native open failed: %s",error ? error():"native error API unavailable");
+            InterlockedIncrement(&self->failed_);return nullptr;
+        }
         InterlockedIncrement(&self->opened_);
         self->bindings_.volume(driver,0.0f);
         if (self->bindings_.read_volume(driver)==0.0f)InterlockedIncrement(&self->muted_);
