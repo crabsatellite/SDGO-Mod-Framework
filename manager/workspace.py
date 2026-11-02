@@ -97,6 +97,7 @@ class Workspace:
                            'enabled': enabled and not blocked, 'manifest_enabled': enabled,
                            'blocked_by': blocked, 'registered': contract is not None,
                            'version': value.get('mod', 'version', fallback=''),
+                           'provider': contract.get('provider') if contract else None,
                            'revision': storage.revision(raw),
                            'archived': (contract.get('presentation')=='automatic_fix' if contract else category=='fixes'),
                            'configured': 'installed', 'runtime_status': 'unverified',

@@ -6,7 +6,7 @@
   "hosts": [
     "world"
   ],
-  "description": "服主为新角色设置的初始内容。",
+  "description": "设置新角色的初始 GP、点券、军衔和首次赠送机体数量。",
   "settings": [
     {
       "id": "initial_g_p",
