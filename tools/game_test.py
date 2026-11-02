@@ -178,7 +178,7 @@ def git_source_ref(root: Path) -> dict:
             check=True,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=30,
         ).stdout.strip()
         status = subprocess.run(
             ["git", "status", "--porcelain"],
@@ -186,7 +186,7 @@ def git_source_ref(root: Path) -> dict:
             check=True,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=30,
         ).stdout
         return {"commit": commit, "dirty": bool(status.strip())}
     except (OSError, subprocess.SubprocessError):
