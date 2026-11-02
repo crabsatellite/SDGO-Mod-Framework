@@ -42,9 +42,11 @@ using MessageBoxAFn=int(WINAPI*)(HWND,LPCSTR,LPCSTR,UINT);
 AppMethod originalUpdate;
 using ErrorNameFn = const char*(__cdecl*)(int);
 ErrorNameFn originalErrorName = nullptr;
+volatile LONG nativeErrorSequence=0,nativeLastError=0;
 const char* __cdecl ObserveNativeErrorName(int code) {
     const char* name=originalErrorName(code);
-    if (code) {
+    if (code && InterlockedExchange(&nativeLastError,code)!=code) {
+        InterlockedIncrement(&nativeErrorSequence);
         char message[224];sprintf_s(message,"native error code=%04X name=%s",code,name ? name:"unknown");
         sdgo_test::Observe(message);
     }
@@ -559,16 +561,23 @@ int __cdecl Start(const SdgoGameTestContextV1* context) {
     SdgoPvpAiClientSnapshotV1 snapshot{};
     const auto flags=rooms.NativeStartFlags();const auto sent=actions.TransportState();
     static uint32_t lastFlags=0,lastSend=0;
+    static LONG errorBaseline=0;
     if (!context->tick || flags!=lastFlags || sent.send_sequence!=lastSend) {
         char state[176];sprintf_s(state,"native Start app=%u main/ready/lock/started=%08X queued=%u transport=%u opcode=%04X",
             actions.AppState(),flags,startRequested ? 1u:0u,sent.send_sequence,sent.opcode);
         context->Observe(state);lastFlags=flags;lastSend=sent.send_sequence;
     }
     if (!startRequested) {
+        errorBaseline=InterlockedCompareExchange(&nativeErrorSequence,0,0);
         Snapshot(snapshot); startSequence = snapshot.received_battle_start_count;
         endSequence = rooms.BattleEndState().sequence;
         if (!rooms.StartBattleNativeHost()) return SDGO_GAME_TEST_WAIT;
         startRequested = true; context->Observe("called the original room-host Start business routine");
+    }
+    const LONG rejection=InterlockedCompareExchange(&nativeLastError,0,0);
+    if (InterlockedCompareExchange(&nativeErrorSequence,0,0)>errorBaseline && rejection>=0x0FAC && rejection<=0x0FC0) {
+        char message[112];sprintf_s(message,"the original client received native battle-start rejection %04X",static_cast<unsigned>(rejection));
+        context->Assert(0,message);return SDGO_GAME_TEST_FAIL;
     }
     if (!Snapshot(snapshot) || snapshot.native_app_state != 22 || snapshot.received_battle_start_count <= startSequence) return SDGO_GAME_TEST_WAIT;
     activeBattleStartSequence = snapshot.received_battle_start_count;
