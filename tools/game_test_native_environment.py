@@ -4,6 +4,7 @@ import argparse
 import configparser
 import copy
 import contextlib
+import gzip
 import hashlib
 import json
 import ipaddress
@@ -14,6 +15,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 import xml.etree.ElementTree as ET
@@ -31,6 +33,24 @@ LABEL = 'sdgo.gametest.environment'
 
 def quoted(value):
     return "N'" + str(value).replace("'", "''") + "'"
+
+
+def copy_snapshot(container, source, destination):
+    """Stream a verified backup without Docker's Windows tar-copy path.
+
+    Several isolated restores can otherwise stall `docker cp` on larger
+    snapshots. A plain stdin transfer stays inside the owned SQL container;
+    RESTORE WITH CHECKSUM below still validates the original backup bytes.
+    """
+    with tempfile.TemporaryFile() as stream:
+        with source.open('rb') as original, gzip.GzipFile(fileobj=stream,mode='wb',compresslevel=1,mtime=0) as compressed:
+            shutil.copyfileobj(original,compressed,1024*1024)
+        stream.seek(0)
+        result = subprocess.run(['docker', 'exec', '-i', container, 'sh', '-c',
+            'gzip -dc > "$1"', 'snapshot-transfer', destination], stdin=stream,
+            capture_output=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), timeout=600)
+    if result.returncode:
+        raise RuntimeError('Private SQL snapshot transfer failed: '+result.stderr.decode('utf-8',errors='replace')[-1000:])
 
 
 def identifier(value):
@@ -140,6 +160,10 @@ class NativeDriver:
             '-b', '-l', '5', '-t', '120', '-h', '-1', '-W', '-Q', statement, env=env)
 
     def start_sql(self, lease):
+        raise RuntimeError(
+            'Docker GameTest creation is retired. Reuse the isolated local test '
+            'client/server/native SQL; copy test only for concurrency. '
+            'Use game_test.py prepare/run. environment list/recover remain for legacy cleanup.')
         self.environment = lease
         self.progress('sql_starting')
         prefix = 'sdgo-gt-' + lease.id.replace('-', '')[:20]
@@ -450,6 +474,7 @@ def build_template(prototype, destination, client_template, registry, stage):
         with driver.connect() as connection:
             driver.progress('preparing_five_accounts')
             accounts=build_accounts(connection,output/'private/accounts',template_id,isolated_template=True)
+            initialize_operators(connection,accounts,isolated_template=True)
         driver.progress('five_accounts_verified', accounts=len(accounts))
         # Keep the proven native runtime, not active processes or historical
         # logs. All copied references are moved into the immutable template.
@@ -534,7 +559,7 @@ def upgrade_template(source, destination, registry):
         if str(source)!=data['source_root']:
             rebase_configuration(output,source,destination,data['base_ip'],params,old_ip=data['base_ip'])
         data['parent_template_id']=data['id'];data['id']=str(uuid.uuid4());data['source_root']=str(destination)
-        data['data_revision']='Native starter battleships and cost-valid decks; same five existing accounts and unit UIDs'
+        data['data_revision']='Native fleets and selected owned operators; same five existing accounts, units and holdings'
         data['files']=[{'path':p.relative_to(output).as_posix(),'sha256':gt.sha256(p)}
             for p in output.rglob('*') if p.is_file() and p.name!='template.json']
         atomic_json(output/'template.json',data)
@@ -635,10 +660,30 @@ def start_native_services(driver,lease,template,client,account):
         driver.progress('service_ready', service=service['folder'], pid=process.pid, listeners=listeners)
 
 
-def execute_environment(template_path,stage,slot,include_mods,bootstrap_only,registry,apsalus_roundtrip=False):
+def scenario_options(account, *, bootstrap_only=False, mode_sequence='1', pages_only=False,
+                     shop_assertions=None, shop_display=None):
+    gt.parse_mode_sequence(mode_sequence)
+    if bootstrap_only and pages_only:
+        raise RuntimeError('Bootstrap and native-page scenarios are separate runs.')
+    if (bootstrap_only or pages_only) and mode_sequence!='1':
+        raise RuntimeError('A non-battle scenario cannot request a battle-mode matrix.')
+    if (shop_assertions is not None or shop_display is not None) and not pages_only:
+        raise RuntimeError('Read-only shop assertions require the native-page scenario.')
+    if (shop_assertions is None)!=(shop_display is None):
+        raise RuntimeError('Shop assertions and display inputs must be provided together.')
+    return {'mode_sequence':mode_sequence,'bootstrap_only':bootstrap_only,'pages_only':pages_only,
+        'play_unit_uid':None if bootstrap_only or pages_only else account['primary_uid'],
+        'shop_assertions':shop_assertions,'shop_display':shop_display}
+
+
+def execute_environment(template_path,stage,slot,include_mods,bootstrap_only,registry,apsalus_roundtrip=False,
+                        *,mode_sequence='1',pages_only=False,shop_assertions=None,shop_display=None,timeout=600):
     template_path=template_path.resolve();template=template_description(template_path)
     account=next((a for a in template['accounts'] if a['slot']==slot),None)
     if account is None:raise RuntimeError('Choose one of the five prepared account slots.')
+    scenario=scenario_options(account,bootstrap_only=bootstrap_only,mode_sequence=mode_sequence,
+        pages_only=pages_only,shop_assertions=shop_assertions,shop_display=shop_display)
+    if timeout<=0:raise RuntimeError('The native run timeout must be positive.')
     gt.validate_observer_stage(Path(template['client_template']),stage.resolve(),tuple(include_mods))
     lease=registry.allocate(ROOT/'build/game-test-environments',template['id'])
     driver=NativeDriver(registry);outcome=None
@@ -667,18 +712,17 @@ def execute_environment(template_path,stage,slot,include_mods,bootstrap_only,reg
         profiles=lease.root/'private/accounts';copy_tree(template_path/'private/accounts',profiles)
         run=lease.root/'client-run'
         meta=gt.prepare(Path(template['client_template']),stage,run,target_host=lease.ip,network_policy='direct',
-            mode_sequence='1',account_profile=profiles/account['profile'],
-            play_unit_uid=None if bootstrap_only else account['primary_uid'],bootstrap_only=bootstrap_only,
-            extra_mods=tuple(include_mods),apsalus_roundtrip=apsalus_roundtrip)
+            account_profile=profiles/account['profile'],extra_mods=tuple(include_mods),
+            apsalus_roundtrip=apsalus_roundtrip,**scenario)
         atomic_json(lease.root/'fixture-binding.json',{'template_id':template['id'],'account_slot':slot,
             'account_id':account['account_id'],'units':account['units'],'primary_uid':account['primary_uid'],
             'new_accounts_created_during_run':0,'global_account_profile_used':False})
         start_native_services(driver,lease,template,meta,account)
         registry.update(lease,'running')
         driver.progress('client_running', account_slot=slot)
-        outcome=gt.run_prepared(run,600,30,on_process=lambda pid,exe:driver.record_pid(lease,pid,exe),
+        outcome=gt.run_prepared(run,timeout,30,on_process=lambda pid,exe:driver.record_pid(lease,pid,exe),
             on_poll=lambda:verify_native_loopback(driver,lease))
-        if not bootstrap_only:
+        if not bootstrap_only and not pages_only:
             from tools.game_test_server_report import evaluate
             report=evaluate(meta,list((native/'Server').glob('BattleServer*/sdgo/gametest/server-observer-events.jsonl')),account['account_id'])
             atomic_json(run/'receipts/server-report.json',report)
@@ -711,6 +755,11 @@ def native_main(argv=None):
     run.add_argument('--account',type=int,choices=range(1,6),default=1)
     run.add_argument('--include-mod',action='append',default=[])
     run.add_argument('--bootstrap-only',action='store_true')
+    run.add_argument('--mode-sequence',default='1',help='existing native PvP matrix, e.g. 1,3,6,7,9')
+    run.add_argument('--pages-only',action='store_true',help='real native pages; reuse prepared inventory without equipping or acquiring units')
+    run.add_argument('--shop-assertions',type=Path)
+    run.add_argument('--shop-display',type=Path)
+    run.add_argument('--timeout',type=int,default=600)
     run.add_argument('--apsalus-roundtrip',action='store_true',help='verify two original transform requests and releases during a full battle')
     args=parser.parse_args(argv)
     registry=Registry()
@@ -725,7 +774,9 @@ def native_main(argv=None):
                 existing=registry.templates()
                 template=args.template or (Path(existing[0]['path']) if existing else None)
                 if template is None:raise RuntimeError('No prepared template is registered. Restore the shared template; ordinary tests never create accounts.')
-                result=execute_environment(template,args.stage,args.account,args.include_mod,args.bootstrap_only,registry,args.apsalus_roundtrip)
+                result=execute_environment(template,args.stage,args.account,args.include_mod,args.bootstrap_only,registry,args.apsalus_roundtrip,
+                    mode_sequence=args.mode_sequence,pages_only=args.pages_only,shop_assertions=args.shop_assertions,
+                    shop_display=args.shop_display,timeout=args.timeout)
             print(json.dumps(result,indent=2));return 0 if result['status'] in ('pass','template_ready') else 1
         except Exception as error:
             print(json.dumps({'status':'fail','reason':str(error),'error_type':type(error).__name__}));return 1
