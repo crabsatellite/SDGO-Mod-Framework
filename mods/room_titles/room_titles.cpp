@@ -43,6 +43,8 @@ uint32_t g_activeRoom = 0;
 constexpr uint32_t kBattleDomain = 0x80000000u;
 using NoticeFn = void (*)(const wchar_t*);
 NoticeFn g_notice = nullptr; // test injection only; production uses the native message box
+const SdgoApi* g_api = nullptr;
+SdgoMod* g_mod = nullptr;
 
 struct Lock {
     Lock() { AcquireSRWLockExclusive(&g_lock); }
@@ -57,6 +59,8 @@ struct Draft {
     std::string utf8;
     std::string native_full;
     std::string native_short;
+    std::wstring confirmed_native_cache;
+    bool native_queued = false;
     metadata::Message request;
 };
 std::unordered_map<uint32_t, Draft> g_drafts;
@@ -198,7 +202,9 @@ bool Prepare(ui::Surface surface, const std::wstring& text)
         saved.room = draft.room;
         saved.text = text;
         const auto pending = g_state.Pending(connection);
-        if (pending && pending->status == titles::PendingStatus::Awaiting) {
+        const auto queued = g_drafts.find(connection);
+        if ((pending && pending->status == titles::PendingStatus::Awaiting) ||
+            (queued != g_drafts.end() && !queued->second.request.request_id && queued->second.utf8 != draft.utf8)) {
             error = L"The previous room title is still waiting for server confirmation. Please wait before changing it again.";
         } else if (g_state.IsReady(connection) && g_state.IsNegotiating(connection)) {
             error = L"The room list is still synchronizing. Please try the title again after it finishes. Your text was kept.";
@@ -309,33 +315,69 @@ int __fastcall TitleEvent(void* self, void*, void* event)
             Explain(L"The room identity is no longer available. Your title was not submitted.");
             return 1;
         }
+        std::wstring title;
+        if (!ui::ReadNativeString(static_cast<const uint8_t*>(event) + 0x2C, &title))
+            return 1;
         bool restoreCache = false;
+        std::wstring nativeCache;
+        if (!ui::ReadTitleBarCachedTitle(self, &nativeCache)) {
+            Explain(L"The room title is still updating. Your text was kept; reopen the title editor to retry.");
+            return 1;
+        }
         {
             Lock lock;
             g_activeRoom = nativeId | (battleDomain ? kBattleDomain : 0);
             const auto pending = g_state.Pending(g_activeConnection);
-            restoreCache = pending && pending->status != titles::PendingStatus::Awaiting;
+            const auto staged = g_drafts.find(g_activeConnection);
+            if (staged != g_drafts.end() && staged->second.native_queued &&
+                staged->second.room == g_activeRoom && staged->second.text == title &&
+                (!pending || pending->status == titles::PendingStatus::Awaiting))
+                return 1; // an identical command already owns the original native queue
+            restoreCache = (pending && pending->status != titles::PendingStatus::Awaiting) ||
+                (staged != g_drafts.end() && !staged->second.request.request_id && !staged->second.native_queued);
             const auto record = g_state.Query(g_activeConnection, g_activeRoom);
-            if (restoreCache && record && !record->title.empty())
+            if (record && !record->title.empty())
                 Wide(record->title, &confirmed);
+            else if (restoreCache) {
+                const auto previous = g_drafts.find(g_activeConnection);
+                if (previous != g_drafts.end())
+                    confirmed = previous->second.confirmed_native_cache;
+            }
         }
-        std::wstring title;
-        if (!ui::ReadNativeString(static_cast<const uint8_t*>(event) + 0x2C, &title))
-            return 1;
+        if (!restoreCache && nativeCache == title)
+            return g_titleEvent(self, event); // the original handler consumes an unchanged title without sending
         // The native handler compares its cache before sending. Restore the
         // confirmed value so an identical failed draft can actually be retried.
-        if (restoreCache && !ui::SetTitleBarCachedTitle(self, confirmed))
-            return 1;
         if (!Prepare(ui::Surface::PvpTitleEdit, title))
             return 1;
+        {
+            Lock lock;
+            const auto draft = g_drafts.find(g_activeConnection);
+            if (draft != g_drafts.end())
+                draft->second.confirmed_native_cache = restoreCache ? confirmed : nativeCache;
+        }
+        // Retrying the confirmed value must also obtain a real ACK: a timed-out
+        // earlier request may already have changed the server. Emptying only
+        // this local comparison cache forces the original nonempty command to
+        // queue even when the requested value equals the restored cache.
+        if (restoreCache && !ui::SetTitleBarCachedTitle(self, confirmed == title ? L"" : confirmed)) {
+            Explain(L"The room-title control could not queue the change. Your text was kept; reopen the title editor to retry.");
+            return 1;
+        }
         const int result = g_titleEvent(self, event);
-        // An unchanged title or native validation can consume the event without
-        // sending. Keep the editable text, but do not leave a phantom operation.
+        if (!result)
+            ui::SetTitleBarCachedTitle(self, nativeCache);
+        // A46380 queues its native title command through 994DE0. Retain the
+        // draft until that later send, rather than erasing it when this UI
+        // callback returns before the transport observes the command.
         Lock lock;
         const auto draft = g_drafts.find(g_activeConnection);
-        if (draft != g_drafts.end() && draft->second.surface == ui::Surface::PvpTitleEdit &&
-            !draft->second.request.request_id)
+        if (result && draft != g_drafts.end() && draft->second.surface == ui::Surface::PvpTitleEdit)
+            draft->second.native_queued = true;
+        if (!result && !restoreCache && draft != g_drafts.end() && draft->second.surface == ui::Surface::PvpTitleEdit &&
+            !draft->second.request.request_id) {
             g_drafts.erase(draft);
+        }
         return result;
     } catch (const std::bad_alloc&) {
         return 1;
@@ -388,6 +430,8 @@ transport::SendDecision BeforeSend(uint32_t connection, const uint8_t* packet, s
             return transport::SendDecision::Pass;
         const auto hello = g_state.BeginHello(connection, GetTickCount64());
         g_activeConnection = connection;
+        if (g_api && g_api->Log) g_api->Log(g_mod, SDGO_LOG_DEBUG,
+            "title capability send connection=%u opcode=%04X request=%u ready=%u", connection, opcode, hello.request_id, g_state.IsReady(connection));
         if (!hello.request_id)
             return transport::SendDecision::Pass;
         return metadata::EncodePacket(packet, size, hello, replacement) ? transport::SendDecision::Replace :
@@ -522,6 +566,11 @@ void OnReceive(uint32_t connection, const uint8_t* packet, size_t size, const ui
     const auto pending = g_state.Pending(connection);
     failed = previous && previous->status == titles::PendingStatus::Awaiting &&
              pending && pending->status == titles::PendingStatus::Failed;
+    if (g_api && g_api->Log && (opcode==0x0617 || opcode==0x0824 || opcode==0x0709 || opcode==0x0916 || opcode==0x0918))
+        g_api->Log(g_mod, SDGO_LOG_DEBUG,
+            "title capability receive connection=%u opcode=%04X bytes=%u metadata=%u ready=%u negotiating=%u pending=%u",
+            connection, opcode, static_cast<unsigned>(size), static_cast<unsigned>(bodySize),
+            g_state.IsReady(connection), g_state.IsNegotiating(connection), g_state.HasPending(connection));
     if (size >= 10 && (opcode == 0x0A33 || opcode == 0x06C1)) {
         g_activeConnection = connection;
         g_activeRoom = Dword(packet + 6);
@@ -593,6 +642,7 @@ extern "C" __declspec(dllexport) uint32_t __cdecl SdgoRoomTitleCurrentV1(char* o
 }
 SDGO_MOD_ENTRY
 {
+    g_api=api;g_mod=mod;
     if (!ui::Bind(api, mod) || !Bind(api, mod, &g_nativeWide, "room_titles.ui_legacy_to_wide") ||
         !Bind(api, mod, &g_missionRoom, "room_titles.ui_mission_current_room"))
         return 0;

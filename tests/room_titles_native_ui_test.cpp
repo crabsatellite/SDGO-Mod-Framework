@@ -794,6 +794,20 @@ int wmain(int argc, wchar_t** argv)
                "shared titlebar PvP identity and legacy title"))
         return 1;
 
+    std::wstring cachedTitle;
+    if (!Check(native_ui::ReadTitleBarCachedTitle(titleBar.bytes.data(), &cachedTitle) &&
+                   cachedTitle == L"Full PvP title longer than twenty bytes",
+               "read the native full title cache before deciding whether an edit is unchanged"))
+        return 1;
+    pvpRoom.bytes[0x7A] = 0;
+    titleBarLegacyTitle = L"stale value";
+    if (!Check(native_ui::ReadTitleBarRoom(titleBar.bytes.data(), &titleBarBattleDomain,
+                                         &titleBarRoomId, &titleBarLegacyTitle) &&
+                   titleBarBattleDomain && titleBarRoomId == pvpId && titleBarLegacyTitle.empty(),
+               "a missing legacy display projection cannot erase a verified native room identity"))
+        return 1;
+    std::memcpy(pvpRoom.bytes.data() + 0x7A, "Short", 6);
+
     FakeRoom missionRoom;
     const std::uint32_t missionId = 17;
     std::memcpy(missionRoom.bytes.data(), &missionId, sizeof(missionId));

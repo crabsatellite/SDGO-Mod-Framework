@@ -529,6 +529,36 @@ void TestRetryAfterRoomChanged()
           "editing after a room change uses a new nonce and current revision");
 }
 
+void TestDelayedNativeDispatch()
+{
+    rt::ClientState state;
+    const auto hello = state.BeginHello(19, 100);
+    state.AdvanceTime(19, 9400);
+    Check(state.IsNegotiating(19) && !state.IsReady(19),
+          "native loading delay beyond nine seconds keeps the matching capability offer");
+    Check(!state.AcceptBatch(19, Batch(991, hello.request_id + 1, {})) &&
+              !state.IsReady(19) && state.IsNegotiating(19),
+          "delayed capability still rejects an unrelated request nonce");
+    Check(state.AcceptBatch(19, Batch(991, hello.request_id,
+                                    {Record(991, 4, 1, 1, "old title")})) && state.IsReady(19),
+          "the actual delayed server confirmation establishes capability");
+    const std::string full = "confirmed long title beyond twenty characters";
+    const auto request = state.BeginSetTitle(19, 4, full, 9500);
+    state.AdvanceTime(19, 20000);
+    Check(state.Pending(19)->status == rt::PendingStatus::Awaiting && !state.CanStartBattle(19),
+          "a delayed native title reply remains pending without silently starting stale rules");
+    Check(state.AcceptMessage(19, Snapshot(Record(991, 4, 1, 2, full), request.request_id)) &&
+              !state.HasPending(19) && state.CanStartBattle(19),
+          "the exact delayed title confirmation completes and unblocks battle start");
+    const auto expired = state.BeginHello(20, 0);
+    state.AdvanceTime(20, rt::kHelloTimeoutMilliseconds);
+    const auto fresh = state.BeginHello(20, rt::kHelloTimeoutMilliseconds + 1);
+    Check(fresh.request_id != expired.request_id &&
+              !state.AcceptBatch(20, Batch(992, expired.request_id, {})) &&
+              !state.IsReady(20),
+          "a reply to an expired superseded offer cannot authorize a later connection");
+}
+
 }  // namespace
 
 int main()
@@ -542,6 +572,7 @@ int main()
     TestCacheBounds();
     TestConnectionBound();
     TestRetryAfterRoomChanged();
+    TestDelayedNativeDispatch();
     std::printf("%s: %d failure(s)\n",
                 g_failures == 0 ? "PASS" : "FAIL", g_failures);
     return g_failures == 0 ? 0 : 1;

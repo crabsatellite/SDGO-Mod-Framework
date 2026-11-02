@@ -22,8 +22,10 @@ using ConnectionId = std::uint32_t;
 
 constexpr std::size_t kMaximumClientConnections = 32;
 constexpr std::size_t kMaximumRoomsPerConnection = 2048;
-constexpr std::uint64_t kHelloTimeoutMilliseconds = 5000;
-constexpr std::uint64_t kSetTitleTimeoutMilliseconds = 5000;
+// Native loading/room transitions can delay main-thread response dispatch well
+// beyond five seconds even when the serving Mods replied successfully.
+constexpr std::uint64_t kHelloTimeoutMilliseconds = 30000;
+constexpr std::uint64_t kSetTitleTimeoutMilliseconds = 30000;
 
 enum class PendingStatus {
     Awaiting,
