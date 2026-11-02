@@ -9,6 +9,19 @@
   "description": "开发测试组件，默认关闭。仅在显式测试任务中运行；支持无登录 FPS 参数与频率测试。安装或启用本身不会开始测试。",
   "settings": [
     {
+      "id": "fps_gameplay_cap",
+      "key": "FpsGameplayCap",
+      "label": "对局 FPS 回归上限（0 关闭）",
+      "type": "integer",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 1000,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
       "id": "apsalus_roundtrip",
       "key": "ApsalusRoundtrip",
       "label": "阿普萨拉斯 III 原生变形回归",

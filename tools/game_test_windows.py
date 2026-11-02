@@ -616,13 +616,14 @@ class _Win32Api:
             error=self._error("TerminateProcess failed")
             # Exit can race GetExitCodeProcess: a terminating process may
             # still report STILL_ACTIVE but reject a second termination.
-            if self.kernel.WaitForSingleObject(wintypes.HANDLE(process_handle),1000)==WAIT_OBJECT_0:
+            grace=30000 if error.errno==5 else 1000
+            if self.kernel.WaitForSingleObject(wintypes.HANDLE(process_handle),grace)==WAIT_OBJECT_0:
                 return
             raise error
         if self.kernel.WaitForSingleObject(
-            wintypes.HANDLE(process_handle), 5000,
+            wintypes.HANDLE(process_handle), 30000,
         ) != WAIT_OBJECT_0:
-            raise TimeoutError("terminated process did not signal within five seconds")
+            raise TimeoutError("terminated process did not signal within thirty seconds")
 
     def _desktop_windows(
         self, desktop: int, target_pid: int,
