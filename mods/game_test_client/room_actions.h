@@ -163,6 +163,7 @@ public:
             Symbol<ThreeDRoomHasStateFn>("flow.three_d_room_has_state");
         threeDRoomAddState_ =
             Symbol<ThreeDRoomAddStateFn>("flow.three_d_room_add_state");
+        threeDStartBusiness_ = Symbol<WaitMenuUpdateFn>("flow.normal_3d_start_business");
         nativeWStringCtor_ =
             Symbol<NativeWStringCtorFn>("flow.native_wstring_ctor");
         nativeWStringDtor_ =
@@ -440,7 +441,7 @@ public:
         if (!gameApp_ || !startOrReady_ || !isRoomMaster_ ||
             !profilePointer_ || !threeDWaitRoomVtable_ ||
             !threeDStartCommandVtable_ || !threeDRoomHasState_ ||
-            !threeDRoomAddState_)
+            !threeDRoomAddState_ || !threeDStartBusiness_)
             return false;
         __try {
             uint8_t* profile = *profilePointer_;
@@ -492,12 +493,10 @@ public:
                         kThreeDStartState,
                         0))
                     return false;
-                threeDRoomAddState_(
-                    roomObject,
-                    kThreeDStartState,
-                    nullptr,
-                    kThreeDQueueBack,
-                    0);
+                // The real Main-state Start business (message 0x0BE3) also
+                // checks the native room's ready capability and host identity.
+                // A direct AddState can reach the server before those checks.
+                threeDStartBusiness_(main);
                 return true;
             }
 
@@ -1450,6 +1449,7 @@ private:
     void* threeDStartCommandVtable_ = nullptr;
     ThreeDRoomHasStateFn threeDRoomHasState_ = nullptr;
     ThreeDRoomAddStateFn threeDRoomAddState_ = nullptr;
+    WaitMenuUpdateFn threeDStartBusiness_ = nullptr;
     NativeWStringCtorFn nativeWStringCtor_ = nullptr;
     NativeWStringDtorFn nativeWStringDtor_ = nullptr;
     GridDataFn gridData_ = nullptr;
