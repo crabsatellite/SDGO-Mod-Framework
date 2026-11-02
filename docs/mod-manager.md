@@ -32,3 +32,15 @@ no game art.
 
 See the [full guide](mod-manager.zh-CN.md), [contribution guidance](contributing.zh-CN.md)
 and [registration design](mod-manager-design.zh-CN.md).
+
+## Updates
+
+Open **更新** (Update) in the sidebar. New installations default to **Stable**: only published stable features are installed. **Beta** includes Stable and Beta features and follows the newest available release; development diagnostics are excluded from both channels. Switching back to Stable leaves existing Beta and custom Mods in place and updates only the features in the Stable package.
+
+Automatic checking and installation are enabled while Manager runs. It checks at startup and hourly afterward. Use **检查更新** to check now or **立即更新** to install. GitHub Release assets are verified against their SHA-256 and the complete file manifest before installation. Network errors leave the current installation usable and can be retried. Automatic updates can be disabled without disabling manual checks.
+
+Updates apply to registered client and server directories. Running games/servers are never stopped: their update waits until they close. Mod switches, settings, separately declared configuration files, custom Mods, game resources and private data are preserved. Failed writes roll back the affected host; recovery copies stay in the local Manager workspace.
+
+When Manager itself has an update, choose **重启 Manager 完成更新**. The downloaded Manager waits for the old process to close, replaces the verified executable and reopens the same workspace. Ordinary Mod updates do not require restarting Manager.
+
+For publishers, `python tools/build_release.py --build --channel stable --version X.Y.Z` creates a Stable asset, and `--channel beta --version X.Y.Z-beta.N` includes Beta features. Both contain only Manager and declared framework payloads. The release workflow tests update/install contracts, builds selected code and checks the standalone Manager before publishing. Pushes to `master` create Beta releases; stable version tags create Stable releases. Never include copied clients, native servers, databases or owner settings.

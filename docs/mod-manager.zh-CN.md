@@ -68,3 +68,20 @@ powershell -ExecutionPolicy Bypass -File tools/build_mod_manager.ps1
 
 构建的 EXE 包含内部业务库和所需运行时。游戏运行库继续独立加载，Manager 不替代原游戏启动器。
 源代码版本也可用 `python tools/mod_manager.py` 调试。开发设计见[注册和迁移设计](mod-manager-design.zh-CN.md)。
+
+## 更新
+
+左侧的「更新」按钮提供两个通道：
+
+- **只更新 Stable（默认）**：仅安装正式发布的 Stable 功能。
+- **更新 Beta 功能**：同时安装 Stable 与 Beta 功能，跟进最新可用版本。
+
+两种通道都不安装开发诊断工具。切回 Stable 不会删除已经安装的 Beta 或自定义 Mod，只更新 Stable 包包含的功能。通道与自动更新开关保存在当前 Manager 工作区，新安装默认 Stable。
+
+Manager 运行时默认在启动后及每小时自动检查并安装。可用「检查更新」立即检查、「立即更新」安装已发现版本，也可关闭自动更新继续手动检查。下载来源为本项目 GitHub Releases；先校验 release 文件 SHA-256 和完整清单，再安装。断网时保留已安装版本，恢复网络后可重试。
+
+更新对象为已登记的客户端和服务器目录。正在运行的游戏或服务不会被停止，下载完成后等待其关闭再自动安装。保留 Mod 开关、已有参数、独立配置文件、自定义 Mod、机体资源与私人数据；文件写入失败时回滚对应目录，恢复副本位于本地 Manager 工作区。
+
+管理器本身有更新时，点击「重启 Manager 完成更新」。新程序等待旧 Manager 正常退出，校验并替换程序，再打开相同工作区；普通 Mod 更新无需重启 Manager。
+
+发布者使用 `python tools/build_release.py --build --channel stable --version X.Y.Z` 构建 Stable，或 `--channel beta --version X.Y.Z-beta.N` 构建 Beta。包里只有 Manager 与登记的框架文件，不含原版客户端、服务端、数据库、测试副本或账号配置。发布工作流先验证更新安装、构建对应代码并检查 Manager 成品；master 后续提交自动生成 Beta release，正式版本标签生成 Stable release。

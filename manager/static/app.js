@@ -25,6 +25,7 @@ function renderFrame(){
  $('host-select').replaceChildren(...state.hosts.map(h=>{const o=new Option(h.name+' · '+(dev?h.role:ROLES[h.role]),h.id);o.selected=h.id===hostId;return o;}));
  $('host-select').hidden=!state.hosts.length;
  $('nav-mods').classList.toggle('selected',activePanel===null&&!archiveView);$('nav-archive').classList.toggle('selected',activePanel===null&&archiveView);$('nav-services').classList.toggle('selected',activePanel==='services');
+ $('nav-updates').classList.toggle('selected',activePanel==='updates');
  $('provider-nav').replaceChildren();for(const panel of state.panels||[]){const item=button(panel.title,()=>showProvider(panel.id),'nav-item ui-nav-item'+(activePanel===panel.id?' selected':''));item.prepend(icon(panel.id));$('provider-nav').append(item);}
  $('owner-group').hidden=!owner;$('owner-show').hidden=owner;$('owner-hide').hidden=dev||hasServer();
  document.body.classList.toggle('is-developer',dev);$('ui-kit-link').hidden=!dev;enhance();
@@ -133,10 +134,33 @@ async function showServices(){
  if(developer())for(const item of data.resources){const card=element('section',undefined,'manager-card');card.append(element('h2',item.id==='shop.bridge'?'商城业务通道':'内部业务通道'),element('p',item.running?'按需运行，由 Manager 管理':'已停止','muted'));root.append(card);}
 }
 $('nav-services').onclick=()=>showServices().catch(e=>message(e.message,true));
+async function showUpdates(){
+ ++navigation;activePanel='updates';clear();renderFrame();$('page-title').textContent='更新';document.querySelector('.host-tools').hidden=true;
+ const root=$('content'),card=element('section',undefined,'manager-card');root.append(card);
+ let pending=false;
+ const refresh=async()=>{if(pending)return;pending=true;try{
+  const u=await request('/api/updates');card.replaceChildren(element('h2','版本更新'),element('p','Stable 提供正式功能；Beta 同时更新正式与测试功能。游戏或服务器运行时先下载，关闭后自动安装。','intro'));
+  const channels=element('div',undefined,'actions');
+  for(const [id,label] of [['stable','只更新 Stable（默认）'],['beta','更新 Beta 功能']]){const b=button(label,async()=>{await request('/api/updates',{action:'channel',channel:id});await refresh();},u.channel===id?'ui-btn is-primary':'ui-btn is-ghost');b.setAttribute('aria-pressed',String(u.channel===id));channels.append(b);}
+  const auto=element('input');auto.type='checkbox';auto.className='ui-switch';auto.checked=u.automatic;auto.onchange=async()=>{try{await request('/api/updates',{action:'automatic',enabled:auto.checked});}catch(e){message(e.message,true)}};
+  const autoLabel=element('label',undefined,'update-auto');autoLabel.append(auto,document.createTextNode('自动检查并安装更新'));card.append(channels,autoLabel);
+  card.append(element('p','Manager '+u.current_version+(u.latest_version?' · 可用版本 '+u.latest_version:''),'muted'),element('p',u.message,'update-status'));
+  if(u.error)card.append(element('p',u.error,'error'));
+  const actions=element('div',undefined,'actions');actions.append(button('检查更新',async()=>{await request('/api/updates',{action:'check'});},'ui-btn is-blue'));
+  if(u.latest_version)actions.append(button('立即更新',async()=>{await request('/api/updates',{action:'install'});},'ui-btn is-primary'));
+  if(u.manager_restart)actions.append(button('重启 Manager 完成更新',async()=>{await request('/api/updates',{action:'restart'});message('Manager 正在重启，新页面会自动打开。');},'ui-btn is-primary'));
+  card.append(actions);
+  for(const h of u.hosts||[])card.append(element('p',h.name+' · '+({installed:'已更新',waiting:'等待关闭',newer:'已安装较新版本',error:'暂未更新'}[h.status]||h.status)+(h.message?'：'+h.message:''),h.status==='error'?'error':'muted'));
+  if(u.notes){const details=element('details');details.append(element('summary','版本说明'),element('pre',u.notes,'release-notes'));card.append(details);}
+  card.append(element('p','保留 Mod 开关、自定义参数、机体资源和本地数据。Beta 通道不会安装开发诊断工具。','muted'));enhance();
+ }finally{pending=false;}};
+ await refresh();const timer=setInterval(()=>refresh().catch(e=>message(e.message,true)),3000);panelCleanup=()=>clearInterval(timer);
+}
+$('nav-updates').onclick=()=>showUpdates().catch(e=>message(e.message,true));
 $('nav-mods').onclick=()=>showMods(false);$('nav-archive').onclick=()=>showMods(true);$('host-select').onchange=()=>{hostId=$('host-select').value;showMods(archiveView);};$('add-host').onclick=openPath;
 $('owner-show').onclick=()=>{localStorage.setItem(OWNER_KEY,'1');renderFrame();};
-$('owner-hide').onclick=()=>{localStorage.removeItem(OWNER_KEY);if(activePanel!==null){showMods(false);}else renderFrame();};
+ $('owner-hide').onclick=()=>{localStorage.removeItem(OWNER_KEY);if(activePanel!==null){showMods(false);}else renderFrame();};
 $('confirm-host').onclick=async event=>{event.preventDefault();try{accept(await request('/api/hosts',{path:$('host-path').value.trim()}));$('path-dialog').close();showMods();}catch(e){message(e.message,true);}};
-$('change-mode').onclick=async()=>{try{accept(await request('/api/mode',{mode:state.mode==='standard'?'developer':'standard'}));if(activePanel==='services'&&ownerTools())await showServices();else if(activePanel&&activePanel!=='services'&&ownerTools())await showProvider(activePanel);else showMods(archiveView);}catch(e){message(e.message,true);}};
+$('change-mode').onclick=async()=>{try{accept(await request('/api/mode',{mode:state.mode==='standard'?'developer':'standard'}));if(activePanel==='updates')await showUpdates();else if(activePanel==='services'&&ownerTools())await showServices();else if(activePanel&&activePanel!=='services'&&ownerTools())await showProvider(activePanel);else showMods(archiveView);}catch(e){message(e.message,true);}};
 $('exit-manager').onclick=async()=>{if(!confirm('请先保存正在编辑的内容。退出管理器？游戏不会关闭。'))return;try{await request('/api/exit',{});$('content').replaceChildren(element('section','管理器已退出，可以关闭本页。','empty-state'));}catch(e){message(e.message,true);}};
 try{const initial=await request('/api/state');token=initial.session_token;accept(initial);showMods();}catch(e){message(e.message,true);}
