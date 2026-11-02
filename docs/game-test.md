@@ -49,8 +49,13 @@ python tools/game_test.py run --run-dir build/gametest/pvp --timeout 3600
 ```
 
 Add `--create-test-account` to `prepare` only when creating the first account
-profile. Later runs reuse that profile. Use a fresh `run-dir` for each receipt;
-the same account cannot run concurrently. The default endpoint is
+profile. Later runs reuse that profile. After the first preparation, add
+`--reuse-client` for the same `run-dir` to validate and reuse its stopped client
+with a new run UUID. The previous receipt and binary hashes are consolidated;
+retired jobs go to the Recycle Bin instead of keeping another full client.
+An archive baseline referenced by another capsule cannot be reused this way.
+Install `Send2Trash` in the developer environment; reuse has no permanent-delete
+fallback. The same account cannot run concurrently. The default endpoint is
 `127.0.0.1:5001`; change it with `--target-host` and `--login-port`. The original
 client selects its server and channel through the normal native flow.
 The default `--network-policy direct` disables inherited routing only in the
@@ -88,6 +93,25 @@ currency-fix Mods plus the server's 1200-slot capacity Mod. It reads every confi
 native grid and compares the configured names, category references, NPC bytes
 and source unit hashes. These catalog checks do not claim shop interaction or
 mission completion.
+
+For stock shop checks, pass both `--shop-assertions` and `--shop-display` with
+`--pages-only`. These developer inputs describe existing stock and are copied
+into the isolated client with fixed paths, SHA-256 and revision binding. The
+case checks native names and permanent/rental options, opens and cancels buy
+and gift previews, and compares the complete inventory and wallet. It does
+not install products, purchase or send gifts.
+
+`--play-unit-uid` selects a genuinely owned unit through the native hangar
+before page, PvP or mission cases. The adapter waits for the full native unit
+record, invokes the original equip business, and requires the genuine reply
+plus matching active UID. `--random-loadout` exercises the native `!rand` PvP
+room command.
+
+`--mission-mode 5` or `8` registers bounded mission smoke cases: native channel
+and mission admission, room creation, start, three level-2 wingmen, movement,
+target acquisition and native combat observations. These cases do not claim
+mission clear, settlement or active exit. Unavailable native missions or
+channels fail without fabricated admission data.
 
 For `--gift-requests-only`, the private account profile may specify existing
 owner mail commands in `[gift] body0` through `body3`, or use `page0/position0`
