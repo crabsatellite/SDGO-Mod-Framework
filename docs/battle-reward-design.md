@@ -1,10 +1,8 @@
-# Battle rewards: approved rules and native settlement
+# Battle rewards: rules and native settlement
 
 [中文完整规则](battle-reward-design.zh-CN.md)
 
-The Beta runtime Mod, durable wallet worker and owner controls are integrated.
-See [deployment and recovery](battle-rewards.md). The calculator remains a source
-utility; authenticated gameplay and HUD acceptance remain manual.
+See [deployment and recovery](battle-rewards.md) for installation.
 
 ## Policy
 
@@ -59,6 +57,6 @@ one-times policy values must replace, not additionally multiply, existing booste
 currency rewards. The native adapter and owner worker coordinate GB/MB delivery receipts,
 duplicate settlement prevention, client display and verified packet field widths.
 Experience, login gifts, compensation and purchases remain outside this currency
-policy. Native integration is implemented; authenticated real match acceptance remains manual.
+policy.
 The reserved objective-event coefficients are zero because the current native adapter
 does not supply that statistic; unverified Stars are never treated as objective counts.
