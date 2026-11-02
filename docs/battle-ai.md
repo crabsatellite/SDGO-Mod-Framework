@@ -1,264 +1,97 @@
-# Battle AI 0.4.2 / 通用战斗 AI（开发预览）
+# Battle AI difficulty (Beta)
 
-这套插件为现有对战 Mod 的机器人提供三档 AI，按当前机体、形态、武装数据选择打法。
-随正常游戏启动生效，没有额外的“开始联机”入口。插件不保存 FRP 地址、账号或本机专用路径。
+[简体中文](battle-ai.zh-CN.md)
 
-## 默认难度与房间控制
+Easy, Medium and Hard AI for the bots of [PvP AI](pvp-ai.md), choosing tactics from each bot's current
+unit, form and weapons. It starts with the game and stores no FRP address, account or local path.
 
-客户端装包后默认使用 **Medium**。房主沿用对战 Mod 的房名命令，朋友不必逐人改配置。
-
-| 房名例子 | 效果 |
-|---|---|
-| `!ai` / `!ai3` | 原有机器人数量规则，默认 Medium |
-| `!ai3 easy` | Easy：原版 AI |
-| `!ai e3 a1 medium` | Medium：Lv12、连续进攻决策、瞄准/预判、合法必杀、移动防背击 |
-| `!ai3 hard` | Hard：EX13、通用战术、高级动作、盾面防御、一个合法部件和一种限次道具 |
-
-### Medium 与 Hard 的定位
-
-两档都不靠人为 idle、延迟反应或随机打空降难度；保留用户选定的精准方向与实弹预判。
-
-| 能力 | Medium：普通高手 | Hard：极致高手 |
+| mod | host | part |
 |---|---|---|
-| 基础输出 | 连续决策、原生许可后立即出手、集火残血 | 相同基础，增加合法高级衔接 |
-| 普通走位 | 可移动射击武器做地面横移，固定射击武器停下开火 | 空中横摆、探头、绕后、走 A |
-| 必杀 | 被抓或受到明确压力时解围 | 另在对手受控／近战动作的明确机会主动使用 |
-| 必杀取舍 | 有普通收头机会时不浪费；反控例外 | 不抢队友抓取、不因满 SP 中断辅助火力或逃生 |
-| 防御移位 | 单次压力事件的目的地半径 480 | 半径 1200；均持续朝向实际威胁，不无限逃离战区 |
-| 专家技巧与资源 | 不用甩刀、编织，不额外加装部件／道具 | 甩刀、刀枪编织、完整盾姿态、玩家可用部件及限次道具 |
+| `battle_ai` | client | decisions, aiming, movement and tactics |
+| `battle_ai_server` | battle server | player resource rules for AI (SP, parts, items) |
 
-这是行为分档，不是实测胜率承诺；普通玩家是否吃力、Hard 是否达到预期仍需实际对局调校。
-NPC 燃料保留原来的补满逻辑，两档都不采用 2 倍／4 倍燃料规则。防卡墙通过检测水平进展、
-释放跳跃／推进请求和重新寻路实现，不依赖耗尽燃料。
+PvP AI's `pvp_ai` (server) and `match_ai` (client) are also required. All participants use components
+from the same package.
 
-`lv1`–`lv5` 仍是既有 NPC 池筛选，不代表机体真实等级，也不代表难度。
-房名优先于本机 `Difficulty` 设置；房名没有难度时，未自定义的客户端使用 Medium。
-切换房间后读取新难度。只由拥有 AI 控制权的客户端执行决策。
+## Choosing difficulty in the room title
 
-原生短房名仍受 20 字节限制。使用[长房名扩展](room-titles.zh-CN.md)时，更新并启用客户端
-`room_titles`、Agent 的 `room_titles_agent` 与 Battle 的 `room_titles_server`，并使用同一版
-AI 组件，即可从已确认的完整房名读取难度，例如 `朋友高手练习局 !ai e2 a1 lv4 hard !rand`。
-`easy`／`medium`／`hard` 必须放在 `!ai` 后、下一个 `!指令` 前；`!ai !rand hard` 不会选择 Hard。
-没有房名扩展时自动回退原生标题，不依赖房主电脑的路径或配置。
+Clients default to **Medium**. The host writes the difficulty in the `!ai` arguments, so friends need
+no per-client configuration.
 
-Easy 保留原生机体等级、决策、瞄准与资源规则。新等级、部件、道具和服务端 SP 规则作用于
-保留编号范围内的 PvP 机器人；原生任务、原生 AI 模式和 Boss 不接管这些玩家资源规则。
-机体等级/部件在生成、换机和复活时走原生初始化，不能通过同一 generation 的重复调用叠加部件。
+| Title | Effect |
+|---|---|
+| `!ai` / `!ai3` | usual bot counts, Medium |
+| `!ai3 easy` | Easy: the original AI |
+| `!ai e3 a1 medium` | Medium: level 12, continuous decisions, accurate aim and lead, legal specials, front-facing movement |
+| `!ai3 hard` | Hard: EX13, advanced tactics, shield facing, one legal part and one limited item |
 
-## 进阶行为与资源规则
+Keep `easy`/`medium`/`hard` after `!ai` and before the next `!command`; `!ai !rand hard` does not select
+Hard. `lv1`–`lv5` still select NPC unit pools, not unit level or difficulty. The title overrides the
+local `Difficulty` setting. With [extended room titles](room-titles.md) the difficulty is read from the
+full title, e.g. `Friends practicing together !ai e2 a1 lv4 hard !rand`.
 
-- Hard 发现队友的当前刀已送达目标且目标处于真实受击状态时，尝试绕后并继续射击。
-  被近战压制时优先远程，不能越过受击硬直强行射击。
-- 有同目标队友远程支援时，Hard 在倒数第二刀确认接触后释放续段，合法离开近战动作，
-  观察到一至两次真实出枪后重新连段并完成最后一刀。不会拿上一刀回执或计时器冒充命中/出枪。
-- 甩刀默认每次合格近战起手有 80% 概率，跳过刀推并给机体短暂侧向动作，再恢复朝敌。
-  原生出刀前摇、碰撞、冷却和受击仍执行，不改变玩家摄像机。
-- 掩体机会默认 90% 选择，寻找较小暴露的可射击边缘；真实出枪后请求回撤，路线失败则放弃该次机会并继续普通战斗。
-  遮挡后使用最后可见位置，重新取得真实射线后才射击。
-- 走 A 使用真实出枪回执与原生动画开放的移动取消窗口；近战敌人接近或敌人正被牵制时，短步/推进与射击交替。
-  它不改写真实武器 CD，也不伪造弹药。
-- Medium 以上持续维持对敌朝向，移动目标与转向分开处理，后退、侧移不会因寻路主动转身露背。
-  前后夹击时优先选能把所有已知威胁放在正面半球的朝向，并持续短途脱离；无法完全避免时减少最坏背击暴露。
-  合法移动时优先维持正面；被刀抓住等不能移动的防御窗口，Hard 按当前形态、武器姿态、盾的方向和命中类型使用完好背盾、侧盾。
-  盾值归零后立即放弃盾面朝向，分步快速转回正面防御。位移继续受原生硬直限制。
-- 倒地、起身和原生无敌期间不发起攻击、不追加近战续刀；普通受击硬直仍允许合法连段。
-  有其它可攻击敌人时转火，否则保持朝敌，在有效射程附近后退／侧移准备下一次交战；保护结束的
-  首个合法帧恢复攻击。已进入原生刀推时请求正常退回中立状态，不强行中断已经出刀的动作。
-- Medium 以上按玩家资源和动作许可请求必杀，普通攻击不会被 SP 门槛阻挡。
-  开局 SP 为零，通过原生攻/受击收益积累，复活不清掉已积累的 SP。
-  服务端沿用玩家的原生入场/完成扣费及技能修正；合法受击取消窗口可优先反击实际砍自己的敌人。
-  有支援的近战补枪连段不会被主动必杀中断。
-  Medium 保留防御性使用；Hard 的主动机会要求目标有真实受控／近战动作，且普通准备好的武器不能预计一击收头。
-  队友真实抓住的目标、正在执行的防御逃生路线不被非紧急必杀抢占。服务器已经接受的必杀不会因先扣 SP、后更新动作状态而被误取消。
-  必杀开始后只释放持续攻击输入，不调用会强制排入中立状态的普通停止接口；动画和伤害过程仍由原生 FSM 完成。
-  正常结束、放空或丢失结束通知后，按实际中立／普通武器状态在首个合法决策归还控制，不盲等额外计时器。
-  历史必杀确认不会释放后续普通近战连段的输入。
-- Hard 部件使用普通玩家可正常装备的新人类觉醒/格斗术，按武装潜力选择单个预设。
-  混合近战主导武装也可选择格斗术；普通远程侧重推进。不会使用隐藏增强部件。
-  部件遵守原生激活条件：新人类觉醒需 SP 20000 且 HP 不高于 40%，格斗术需 SP 10000。
-  RangeType 3 不等于狙击资格，未证明资格时不自动给狙击专用部件。
-- Hard 首次合格近战 HP 伤害可选择瞬移；三秒内两名不同敌人造成 HP 伤害可选择海市蜃楼。
-  第一次成功装备后整局固定一种，复活不会补次数或改种类。次数由原生数据限制；
-  瞬移/海市蜃楼的原生冷却分别为 50/45 秒，禁道具模式和死亡状态不使用。
+## Medium and Hard
 
-这是原生接口与受控场景验证的开发预览。真实命中率、动画、复杂地形和多人同步仍需手动验收。
-被四面包围时不能让所有方向同时处于正面；策略会减少最坏暴露并寻找移位机会。
+Neither level is weakened with artificial idle, delayed reactions or deliberate misses. Ammo, cooldowns,
+physics and damage remain native.
 
-## 真人与 AI 的目标范围（0.3.3）
+| | Medium: skilled player | Hard: expert player |
+|---|---|---|
+| Output | continuous decisions, fires as soon as native rules allow, focuses low HP | same, plus legal advanced chains |
+| Movement | ground strafing with move-and-fire weapons | air strafing, peeking, flanking, orbwalking |
+| Specials | to escape grabs or clear pressure | also on confirmed openings (target stunned or in melee) |
+| Defensive repositioning | within radius 480 per pressure event | radius 1200; both keep facing the actual threat |
+| Expert techniques and resources | none | swing cancels, melee/ranged weaving, shield posture, a normal player part and a limited item |
 
-敌方机器人应同时考虑本机真人、远端真人和对方 AI；同队机体不会成为攻击目标。
-Medium／Hard 按实际对象链和真实对象编号枚举，不按“房主”身份筛选，并保留原生可攻击状态检查。
+Hard picks one ordinary player part (New-type awakening or martial arts, with their native SP/HP
+activation rules) and, on its first qualifying trigger, either Teleport or Mirage for the whole battle,
+with native use counts and cooldowns (50/45 s). SP starts at zero and is earned through native hits;
+the server applies the native player costs. Easy keeps native level, decisions, aim and resources. The
+new rules apply only to PvP bots in the reserved NPC range; native missions, AI modes and bosses are
+unchanged. Bots on either team target opposing humans and AI and never teammates.
 
-`match_ai 0.1.2` 同时修复 Easy／未启用增强控制器的原版搜索兼容：原生按 `1..玩家数` 枚举，
-但 Mod AI 的对象编号为 `1001+`；原生 team 1 还存在仅搜 NPC 的分支。
-现在只在 PvP 目标搜索期间补齐参与者及重复资格／视线查询，两队都使用原生参与者筛选。
-搜索结束立即恢复精确编号语义，不改机体阵营、对象表、HUD 或网络包编号。
-原生敌我、可攻击、活动状态、朝向／视线和距离规则继续执行，AI 对 AI 不等于友军误伤。
-原生搜索的根因、适配范围和离线证据见[目标兼容修复记录](battle-ai-target-selection.zh-CN.md)。
+General behaviour: real weapon-slot data drives weapon choice and range; aim removes the native NPC
+offset and leads projectiles whose speed is known or learned from stable samples (curved or variable
+trajectories are not linearly predicted); navigation uses the client's native path search with stuck
+detection and re-planning; line of sight is checked per target with the client's collision primitives.
 
-`match_ai 0.1.3` 另修正 Tab 面板把 CNPC 一律过滤掉的问题，只为当前槽位仍匹配的已注册 PvP
-机器人保留原生统计行；普通任务 NPC 和过期槽位保持原生规则，不伪造击破、死亡或分数。
-任务队友的近战索敌和脚本换区传送由 `mission_ai 2.0.1` 修正，见[任务僚机文档](coop-wingmen.zh-CN.md)。
+## Install
 
-源码合并、文件安装和游戏当前已加载的 DLL 是三种状态。旧 `match_ai 0.1.0` 且没有 `battle_ai`
-的客户端不会因 Git 合并自动变成新版；需要把配套包安装到已停止的目标副本并正常重启。
-
-## 已实现功能
-
-- **通用武器选择**：读取当前形态的真实 0-based 武器槽、射程、弹量、冷却、估计伤害和移动射击标志，
-  比较当前距离与武器输出；空弹切换其它可用武器。切枪使用原生内部消息，避免 NPC 武器提示缓存吞掉重试。
-  未完成切换时继续使用当前真正绑定的合法武器攻击；当前武器够不到敌人就接近，而不是绕圈等待。
-  普通／必杀切换均逐帧观察实际绑定结果，不把请求当成新武器已生效；必杀准备期间当前枪仍可合法射击。
-  近战倾向读取机体原生擅长武器属性（配套 `ai_catalog 0.1.2`）；没有该元数据时保守使用真实武装推导，
-  不按机体编号或脚本名字硬编码。近战机在枪程内边射击边接近，进入合法刀程后换刀；受近战压制仍优先退射。
-  不按 Gunfighter/Infighter 等脚本名决定远近战，不要求为每台机体手写配置。
-- **攻击频率与意图**：Medium／Hard 每次原生 Think 都决策，取消反应等待、爆发停顿、
-  目标／武器保持时间和额外发起攻击间隔；合法换武器、受击恢复后首个可行动帧继续进攻。
-  没有目标时巡逻、冷却或弹药不足时寻找走位；原生硬直、前摇、武器冷却和真实换武器提交仍执行。
-  只在原生中立状态调节发起下一次攻击的意图；充能、持续光束、funnel、rush、连段等活动状态保留原生按住输入。
-  实际弹药、武器冷却、动作和伤害仍由原生 FSM 执行。
-- **低血量集火**：在可见、可攻击、处于可用武器有效射程的候选中，优先剩余 HP 少的敌人。
-  极远残血不会抢走眼前可交战目标；已开始的原生近战动作维持目标，没有额外目标保持计时。死亡或失效立即重选。
-- **Hard 对射升空与横移**：观察原生射击事件，记住短促射击；对射时交替左右移动，并按间隔请求跳跃。
-  尊重原生跳跃请求许可、推进余量及运动 FSM；移动射击受限的武器在射击时保持其原有限制。
-  这里验证的是正确发出动作请求，是否在某台机体和地图上实际升空仍需实机确认。
-- **瞄准与预判**：移除受控 NPC 的人为瞄偏，保留原始射线起点，修正射击方向。
-  对有已验证速度的物理弹体求拦截提前量；脚本弹体通过连续三次稳定、非曲线/非变速的实际飞行样本学习速度。
-  未知速度、Bezier 或变速轨迹不硬套直线模型；导弹原生引导和所有实际碰撞继续执行。
-  用户选择的是“消除误差、实弹/导弹预判，朝约 90% 命中调校”，不是强制命中或补发伤害。
-- **导航与恢复**：使用本客户端的原生路径搜索，逐点前进，释放原生路径数组时使用游戏自己的分配器。
-  停滞检测先于武器就绪、空弹、换枪和防御分支执行；按实际水平位移判断，原地反复跳跃不算前进。
-  还保留移动意图，避免原生 moving 标志被清掉后漏检。停滞后释放旧路线和跳跃／推进，左右步行脱困，
-  再重新规划；短期移动所有权防止防御逻辑同帧写回旧路线。合法移动射击继续，固定射击等待真实取消窗口。
-  暂时不可达的目标有独立冷却。
-  任务区域没有导航节点时，改用有界原生步行短步追敌，保持当前高度并释放推进／跳跃；失败重试独立节流，
-  不再每帧重复停止。相同移动目标在 motor 停止后也会重新启动；防御、受击和原生动作所有权继续优先。
-  目标被遮挡后仅短暂追踪最后可见位置；记忆过期后使用原生随机巡逻，不实时跟踪墙后位置。
-- **逐目标视线**：使用本客户端的纯碰撞原语和 Mod 自有查询缓冲，分别检查每个目标；
-  避免复用旧 AI 的两秒共享缓存，也不调用会改变移动/仇恨的“射击测试”作为只读查询。
-  枪口到原生目标球／盒中心计算远程射线与射程，近战从自身原生球中心单独判定。
-  自身附加碰撞体不挡自己；友军遮挡遵守原生远程与近战的不同规则，真实地形和墙仍会挡住。
-  目标处于导航地图外不影响合法射击，感知上限也不再裁掉武器实际射程。
-
-只作用于负责模拟的本机战斗机器人（保留的 AI NPC 编号范围）；远端副本、真人控制和任务 Boss AI 不接管。
-“任意机体”指机器人引用的合法原生机体/武装记录，不会自动修补缺失模型、武器或非法数据库内容。
-原生生成机器人仍由既有 `match_ai` / `mission_ai` / 服务端配套 Mod 负责。
-
-## 安装和分发
-
-先安装本项目 Mod 框架。客户端支持 `GOnline-54BE1568-00C97000`，服务端支持
-`BattleServer-548A891D-0046C000`。客户端与主机需要使用同包对应组件。
-关闭要更新的那一份副本后运行：
+Requires the framework; client `GOnline-54BE1568-00C97000`, server `BattleServer-548A891D-0046C000`.
+Friend-server players receive the client part through `update.bat`. Manual install, with the copy stopped:
 
 ```powershell
 ./tools/install_battle_ai.ps1 -GameDir D:/Games/SDGO -Source ./build/stage/Release/client
-# 房主在每个需要更新的 BattleServer 副本安装服务端组件：
 ./tools/install_battle_ai.ps1 -GameDir D:/Servers/BattleServer1 -Side Server -Source ./build/stage/Release/server
 ```
 
-客户端更新 `battle_ai 0.4.2`、`match_ai 0.1.3`、`mission_ai 2.0.1` 与目录运行代码 `ai_catalog 0.1.2`；服务端更新
-`battle_ai_server 0.3.1` 与 `pvp_ai 0.2.1`。增量包同时更新配套核心和加载器，避免只更新 AI 后仍使用旧加载器。
-已安装第三方同名加载器时先由框架安装器处理链式加载，不直接覆盖。
-更新目录代码会保留服主的 `catalog.bin` 与原有启用状态，不自动生成机体数据或修改数据库。
-服务端装有 `ai_catalog` 时仍由它独占原生 AI 构建钩子；`pvp_ai` 在构建成功后调用可选的进程内
-配装接口，因此不会与目录 Mod 争抢同一钩子。未安装增强资源组件时保持原来的构建结果。
-增量安装合并各清单要求的符号，保留其它符号、其它 Mod、全局配置、用户 `config.ini` 及清单中的用户设置。
-不会停止进程、启动游戏、修改 SQL/SIP 或设置隧道。预览包不含游戏文件、账号、SQL、FRP 配置或测试 VM。
-同包安装器默认能找到 `client/` 或 `server/`；朋友只需要客户端部分，房主负责服务端部分。
+The client package contains `battle_ai`, `match_ai`, `mission_ai` and the `ai_catalog` runtime; the server
+package contains `battle_ai_server` and `pvp_ai`, together with the matching core and loader. Owner
+catalogs, enable states, user `config.ini` and other mods are preserved.
 
-`config.example.ini` 列出默认值。需要调整时复制成同目录 `config.ini`；未创建时使用默认值。
-更新覆盖示例而保留用户文件。`mod.ini` 是开发者清单，不要求玩家写 IP、端口或本机路径。
+## Settings
 
-关键设置：
+In SDGO Mod Manager, **战斗 AI 难度** (client) has **启用战斗 AI** (enable) and **默认战斗难度** (default
+difficulty); changes apply within two seconds. Tuning parameters and the decision log appear after
+**显示开发信息**. Values live in `sdgo/mods/battle_ai/config.ini`, with defaults in `config.example.ini`;
+see the Chinese guide for the full list. The server part **战斗 AI 资源规则** only has an enable switch.
+Turning the AI off returns control to the native AI within two seconds.
 
-| 设置 | 含义 |
-|---|---|
-| `Difficulty=Medium` | 默认；可写 Easy/Medium/Hard，房名有明确难度时优先使用房名 |
-| `DecisionMs` / `ReactionMs` / `AttackIntervalMs` | Medium／Hard 强制为零，旧配置也不会加回决策／攻击等待 |
-| `BurstMs` / `BurstPauseMs` | Medium／Hard 取消人为爆发停顿，保持原生连续／充能攻击 |
-| `TargetHoldMs` / `WeaponHoldMs` | Medium／Hard 不按时间锁定目标或武器，立即响应新状态；原生攻击动作仍优先 |
-| `FarTargetSlack` / `FarTargetRatioPercent` | 防止极远残血引走正在近距离交战的 AI |
-| `AirStrafe` / `StrafeSwitchMs` | 对射横移与换向间隔 |
-| `SwingCancelChance` / `CoverChance` | Hard 每次近战起手/掩体机会的概率，默认 80/90 |
-| `OrbwalkStep` / `OrbwalkMs` | Hard 原生取消窗口后的短步距离和时长，不修改武器 CD |
-| `JumpMs` / `JumpCooldownMs` / `BoostReservePercent` | 跳跃请求时长、间隔与推进余量 |
-| `AimAssist` / `ProjectileLead` | 精准方向与弹体提前量开关 |
-| `MaxLeadMs` | 最大外推时间，避免不可信的长距离预判 |
-| `RepathMs` / `StuckMs` | 重新规划间隔与停滞检测时间 |
-| `TargetMemoryMs` / `PatrolMs` | 最后可见位置记忆和无目标巡逻间隔 |
-| `LogDecisions=1` | 记录目标、攻击、规避、路径等变化原因，不逐帧刷日志 |
+## Developer notes
 
-`Enabled=0` 在两秒内交还原生控制并取消增强层的移动/射击意图；
-或在全局 `sdgo.ini` 的 `[mods]` 下写 `battle_ai=0` 后重启客户端。
-观察/数据读取或策略失败会回退原生；代码符号签名不符时由框架拒绝加载。
+Only locally simulated bots in the reserved AI NPC range are controlled; remote copies, humans and mission
+bosses are not. The Easy-path target search fix in `match_ai` (native enumeration of `1..playerCount`
+versus mod AI object IDs `1001+`, and the native team-1 NPC-only branch) is documented in the
+[target selection notes (Chinese)](battle-ai-target-selection.zh-CN.md).
 
-## 自动验证
-
-0.3.3 的敌对审查还修正了旧路线覆盖直接侧移、空弹抢掉逃生路线、绕后状态已失效仍占有移动、
-补枪无第二发仍等待、无效必杀归位槽无限租约，以及单机体报错让整场 AI 熔断的问题。
-掩体搜索拆成每个原生 Think 一个隐藏点候选（最多 46 条几何射线，含最终验证），期间普通输出继续。
-候选完成后用当前目标重验；不可见目标不开始探头，失去视线或路线失败就交还普通战斗。
-
-计算优化保留每帧策略：朝向循环预归一化、能力快照内复用内存区域校验、去除防御重复能力采样、复用目标记忆表。
-Win32 Release 的局部基准中，120 组场景与旧朝向算法结果一致；12 威胁的 450 次完整移位求解约从 424ms 降到 80ms。
-这不代表整场 FPS 提升同样比例。实际地图的持续视线检测、脚本武装完整动画周期和跨重生消息时序仍需实机验证。
-
-测试在独立目录和可执行文件中进行，不连接任何游戏后端。
-
-```text
-测试用官方 Lua 5.0.3: https://www.lua.org/ftp/lua-5.0.3.tar.gz
-SHA256 1193a61b0e08acaa6eee0eecf29709179ee49c71baebc59b682a25c3b5a45671
-```
+Tests need the official Lua 5.0.3 sources (`-DSDGO_LUA50_SOURCE=...`), which are not distributed:
 
 ```powershell
 cmake -S . -B build -G "Visual Studio 17 2022" -A Win32 -DSDGO_LUA50_SOURCE=D:/deps/lua-5.0.3
 cmake --build build --config Release --parallel 2
-./tests/battle_ai_test.ps1 -NativeScriptDir D:/extracted-client/scp -GameExe D:/Games/SDGO/GOnline.exe
 ./tests/battle_ai_test.ps1 -GameExe D:/Games/SDGO/GOnline.exe -ServerExe D:/Servers/BattleServer1/BattleServer.exe -AgentExe D:/Servers/AgentServer1/AgentServer.exe
 ./tests/battle_ai_install_test.ps1 -GameExe D:/Games/SDGO/GOnline.exe -ServerExe D:/Servers/BattleServer1/BattleServer.exe
-python tools/verify_symbols.py D:/Games/SDGO/GOnline.exe
 ```
 
-覆盖通用目标/武器决策、形态切换、升空横移请求、充能保持、真实 core/DLL 接入夹具、
-原始 Lua 字节码兼容回放、Boost/弹药库布局、逐目标纯视线、弹道数学、安装升级保留配置。
-原生夹具验证调用约定、opaque 参数/AL 返回、射线起点、运行时弹速学习、曲线排除、原生路径分配器及禁用清理。
-另行读取支持版本的实际 EXE，核对虚表的字节偏移、函数清栈和返回值约定，避免夹具重复了错误接口假设。
-服务端与 Agent 的原始代码校验还覆盖 SP 分支、限次道具、原生锁和状态包转发；
-状态同步不生成命中或伤害，特殊状态包只更新原生 SP，不触碰 HP、受击状态或攻击动作。
-这些是接口与受控场景验证，不是实际游戏引擎或真实地图已经验收。
-
-独立弹道基准把目标按固定速度移动、弹体按固定速度积分，在 225 个三维场景中全部进入半径 8 的目标范围，
-最大离散误差约 4.134 世界单位。该结果检验预判公式与单位一致性，不能解释为实战命中率 100% 或已达 90%。
-变向、加速、掩体、曲线弹道、原生引导与网络状态仍需实际游戏调校。
-
-## 隔离环境与手动验收
-
-`tools/prepare_battle_ai_sandbox.ps1 -ClientDir D:/Games/SDGO` 只在当前工作树
-`build/battle_ai_sandbox/client` 复制资产、清除保存的登录数据并安装当前构建；
-不启动客户端，不复制启动器或聊天记录，不连接 FRP 或任何现有后端。
-手动登录/对战须另行指定独立测试后端。
-
-隔离准备工具不会修改原客户端、FRP 工作树、运行服务、数据库、端口和隧道；正式安装须针对实际使用的副本执行。
-仍需手测：不同机体/变形、对射横摆及推进消耗、充能/持续光束、同脚本多台机器人、
-拐角/狭道/高低差/可破坏障碍、多人端同步、受击/死亡/复活，以及有真实分母的实战命中率。
-原生导航数据缺失或路径不可达时保守处理，不承诺所有地图都能完成三维飞行寻路。
-
-手动验收重点：
-
-1. `!ai3`、`!ai3 easy`、`!ai3 hard` 切换房间，检查默认 Medium、Lv12/EX 与无配置分发。
-2. Hard 对射横摆、接近、卡墙恢复、掩体射击后回撤、走 A；使用不同射击/近战/变形机体。
-3. 队友抓住敌人时的绕后射击、倒数第二刀停段、一至两枪后完整连段；没有真实接触/支援时不误触发。
-4. 背盾/两侧盾受击转向、盾破当帧开始回正、换形态/武器后的方向更新；夹击时重新站位。
-5. SP 从零积累、受击许可窗口反击、完成/中断后扣费与技能关闭；普通射击不受 SP 影响。
-6. 瞬移和海市蜃楼分别触发，检查同局互斥、复活不补次数、禁道具模式、次数耗尽和冷却。
-7. 房主与朋友端同时观察动作、HP/SP、道具效果和复活/换机；实际命中率需记录真实分母。
-
-## English summary
-
-The matching client/host add-ons default to Medium and accept room-title difficulty.
-Medium uses level 12, continuous decisions without artificial idle, accurate aim,
-legal specials and front-facing movement. Hard adds
-EX13, teamwork, melee weaving, dash cancellation, cover/orbwalking, live shield posture,
-one ordinary player part and one limited native consumable. Native player SP checks,
-costs and activation rules apply. Ammo, cooldowns, physics and damage remain native.
-Automated fixtures do not prove real-map/multiplayer acceptance or a live 90% hit rate.
+`tools/prepare_battle_ai_sandbox.ps1 -ClientDir D:/Games/SDGO` prepares a logged-out test copy under
+`build/battle_ai_sandbox/client` without starting the game or connecting to a backend.

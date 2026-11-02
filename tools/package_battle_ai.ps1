@@ -38,7 +38,7 @@ foreach($side in 'client','server') {
 }
 New-Item -ItemType Directory -Force -Path (Join-Path $out 'tools'),(Join-Path $out 'docs') | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo 'tools\install_battle_ai.ps1') -Destination (Join-Path $out 'tools')
-foreach($guide in 'battle-ai.md','battle-ai-target-selection.zh-CN.md','battle-ai-adversarial-review.zh-CN.md','coop-wingmen.md','coop-wingmen.zh-CN.md') {
+foreach($guide in 'battle-ai.md','battle-ai.zh-CN.md','battle-ai-target-selection.zh-CN.md','coop-wingmen.md','coop-wingmen.zh-CN.md') {
     Copy-Item -LiteralPath (Join-Path $repo ('docs\'+$guide)) -Destination (Join-Path $out 'docs')
 }
 Copy-Item -LiteralPath (Join-Path $repo 'LICENSE') -Destination $out
