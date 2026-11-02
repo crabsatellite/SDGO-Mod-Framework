@@ -28,6 +28,7 @@ public:
         if(!(manager_&&find_&&get_&&focus_&&notify_&&input_&&clearFocus_&&imeFilter_))return false;
         active_=this;
         return api_->HookCode(mod_,"room_titles.ui_input_limit",reinterpret_cast<void*>(&ObserveInputLimit),reinterpret_cast<void**>(&inputLimit_)) &&
+            api_->HookCode(mod_,"room_titles.ui_edit_set_text",reinterpret_cast<void*>(&ObserveEditSetText),reinterpret_cast<void**>(&editSetText_)) &&
             api_->HookCode(mod_,"title_test.edit_input_focus",reinterpret_cast<void*>(&ObserveEditInputFocus),reinterpret_cast<void**>(&editInputFocus_)) &&
             api_->HookCode(mod_,"title_test.key_pressed",reinterpret_cast<void*>(&TitleKeyPulse),reinterpret_cast<void**>(&keyPressed_));
     }
@@ -78,8 +79,14 @@ private:
     using InputLimit=void(__thiscall*)(void*,uint32_t,int);
     using ImeFilter=bool(__stdcall*)(void*,HWND*,UINT*,WPARAM*,LPARAM*);
     using EditInputFocus=void(__thiscall*)(void*);
+    using EditSetText=void(__thiscall*)(void*,const WString*,int);
+    static void __fastcall ObserveEditSetText(void* edit,void*,const WString* text,int selection){
+        auto* owner=active_;
+        if(edit==owner->edit_&&Readable(text,sizeof(WString))){owner->lastEditSetCaller_=reinterpret_cast<uintptr_t>(_ReturnAddress());owner->lastEditSetUnits_=text->size;}
+        owner->editSetText_(edit,text,selection);
+    }
     static void __fastcall ObserveEditInputFocus(void* edit,void*) {
-        auto* owner=active_;owner->editInputFocus_(edit);
+        auto* owner=active_;owner->lastEditFocusCaller_=reinterpret_cast<uintptr_t>(_ReturnAddress());owner->editInputFocus_(edit);
         if(Readable(edit,0x168)&&static_cast<uint8_t*>(edit)[0x165])owner->actualInputEdit_=edit;
     }
     using KeyPressed=bool(__cdecl*)(uint32_t);
@@ -288,7 +295,7 @@ private:
             if(Text(get_(edit_))!=tests_[inputIndex_]){
                 if(++polls_<120)return SDGO_GAME_TEST_WAIT;
                 HWND hwnd=*reinterpret_cast<HWND*>(*input_+0x134);
-                char line[320];sprintf_s(line,"input lengths: expected=%zu native_edit=%zu hwnd=%d hwnd_limit=%lld edit_limit=%u setter=%08X requested=%u clear=%d ime_committed=%u ime_display=%u native_cache=%u",tests_[inputIndex_].size(),Text(get_(edit_)).size(),GetWindowTextLengthW(hwnd),static_cast<long long>(SendMessageW(hwnd,EM_GETLIMITTEXT,0,0)),*reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(edit_)+0x2A0),static_cast<unsigned>(lastLimitCaller_),lastLimit_,lastClear_,*reinterpret_cast<uint32_t*>(*input_+0x80),*reinterpret_cast<uint32_t*>(*input_+0xD4),*reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(edit_)+0x22C));c->Observe(line);
+                char line[448];sprintf_s(line,"input lengths: expected=%zu native_edit=%zu hwnd=%d hwnd_limit=%lld edit_limit=%u setter=%08X requested=%u clear=%d ime_committed=%u ime_display=%u native_cache=%u text_setter=%08X/%u focus_caller=%08X service_state=%u edited_flag=%u ime_mode=%u",tests_[inputIndex_].size(),Text(get_(edit_)).size(),GetWindowTextLengthW(hwnd),static_cast<long long>(SendMessageW(hwnd,EM_GETLIMITTEXT,0,0)),*reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(edit_)+0x2A0),static_cast<unsigned>(lastLimitCaller_),lastLimit_,lastClear_,*reinterpret_cast<uint32_t*>(*input_+0x80),*reinterpret_cast<uint32_t*>(*input_+0xD4),*reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(edit_)+0x22C),static_cast<unsigned>(lastEditSetCaller_),lastEditSetUnits_,static_cast<unsigned>(lastEditFocusCaller_),*reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(dialog_)+0x44),IsPvpCreate(s)?static_cast<uint8_t*>(dialog_)[0x125]:0,*reinterpret_cast<uint32_t*>(*input_+0x64));c->Observe(line);
                 throw std::runtime_error("typed/pasted title was truncated or absent in the real native edit");
             }
             c->Assert(1,inputIndex_==0?"21 keyboard characters survive in the real game edit":inputIndex_==1?"Chinese title beyond twenty characters survives native input":"128 Chinese characters survive native input without truncation");
@@ -314,6 +321,7 @@ private:
     void** manager_=nullptr;FindControl find_=nullptr;GetText get_=nullptr;Focus focus_=nullptr;Notify notify_=nullptr;uint8_t** input_=nullptr;
     inline static RoomTitleActions* active_=nullptr;InputLimit inputLimit_=nullptr;
     EditInputFocus editInputFocus_=nullptr,clearFocus_=nullptr;void* actualInputEdit_=nullptr;
+    EditSetText editSetText_=nullptr;uintptr_t lastEditSetCaller_=0,lastEditFocusCaller_=0;uint32_t lastEditSetUnits_=0;
     uintptr_t lastLimitCaller_=0;uint32_t lastLimit_=0;int lastClear_=0;unsigned uiRestarts_=0;
     KeyPressed keyPressed_=nullptr;uint32_t pendingTitleKey_=0;
     ImeFilter imeFilter_=nullptr;
