@@ -26,7 +26,7 @@ python tools/game_test_fps.py --client-template D:\Games\SDGO --stage build/stag
 
 每轮读取真实应用的 FPS 字段及已初始化的计时器间隔，再以独立的 QueryPerformanceCounter
 测量原生更新和成功 D3D9 Present 的频率，连续采样三段，每段三秒，保留全部窗口及平均值。
-逻辑更新须达到目标的 80–110%；成功 Present 须有正值，平均不超过启用上限的 110%。
+逻辑更新须保持原生 60 Hz 的 80–110%，不随渲染上限提高；成功 Present 须有正值，平均不超过启用上限的 110%。
 最小提交间隔须符合实际限速周期，允许 0.5 毫秒与周期 10% 两者较大的调度误差。
 正式 Mod 的观察接口独立确认逻辑/渲染目标与实际周期；30 FPS 对照须真正触发等待。
 禁用对照不检查渲染上限。渲染低于上限时照实记录，不承诺达到该吞吐量。
@@ -36,6 +36,10 @@ python tools/game_test_fps.py --client-template D:\Games\SDGO --stage build/stag
 模板和其他测试保留；换环境复测时指定新的工作及结果目录即可。
 单独验证一档也可使用 `game_test.py prepare --fps-cap 160` 后执行通常的 `run`；
 添加 `--fps-mod-disabled` 可取得原生强制 60 的对照。
+
+完整原生对战回归可在常规已有账号的准备命令中加入 `prepare --fps-gameplay-cap 160`。
+运行前会封存渲染上限与观察器配置。实际 AI 移动后，场景核对 60 Hz 逻辑更新；
+选择高于 60 的上限时，渲染还必须实测超过 60 FPS，之后继续正常对战、结算和返回流程。
 
 ### 重建本地后端
 

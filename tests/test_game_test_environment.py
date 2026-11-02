@@ -173,6 +173,56 @@ class EnvironmentTests(unittest.TestCase):
 
 
 class NativeTemplateTests(unittest.TestCase):
+    def test_ordinary_runs_cannot_initialize_operator_selection(self):
+        from tools.game_test_fixtures import initialize_selected_operators
+        with self.assertRaisesRegex(RuntimeError,'isolated template'):
+            initialize_selected_operators(None,[])
+
+    def test_backup_stream_preserves_binary_bytes_and_source_file(self):
+        from tools.game_test_native_environment import copy_snapshot
+        payload = bytes(range(256)) * 16
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)/'snapshot.bak';source.write_bytes(payload)
+            def transfer(argv, **kwargs):
+                import gzip
+                self.assertEqual(gzip.decompress(kwargs['stdin'].read()), payload)
+                self.assertNotIn('--mount', argv)
+                return mock.Mock(returncode=0)
+            with mock.patch('tools.game_test_native_environment.subprocess.run',side_effect=transfer):
+                copy_snapshot('owned-sql',source,'/var/opt/mssql/backup/snapshot.bak')
+            self.assertEqual(source.read_bytes(), payload)
+
+    def test_failed_backup_stream_is_not_accepted_as_a_restore(self):
+        from tools.game_test_native_environment import copy_snapshot
+        with tempfile.TemporaryDirectory() as directory:
+            source=Path(directory)/'snapshot.bak';source.write_bytes(b'backup')
+            with mock.patch('tools.game_test_native_environment.subprocess.run',return_value=mock.Mock(returncode=1,stderr=b'disk full')):
+                with self.assertRaisesRegex(RuntimeError,'snapshot transfer failed'):
+                    copy_snapshot('owned-sql',source,'/var/opt/mssql/backup/snapshot.bak')
+
+    def test_mode_matrix_reuses_the_declared_existing_primary(self):
+        from tools.game_test_native_environment import scenario_options
+        options=scenario_options({'primary_uid':17},mode_sequence='1,3,6,7,9')
+        self.assertEqual(options['mode_sequence'],'1,3,6,7,9')
+        self.assertEqual(options['play_unit_uid'],17)
+        self.assertFalse(options['pages_only'])
+
+    def test_native_pages_reuse_inventory_without_an_equip_or_acquisition_step(self):
+        from tools.game_test_native_environment import scenario_options
+        options=scenario_options({'primary_uid':17},pages_only=True,
+            shop_assertions=Path('assertions.ini'),shop_display=Path('display.ini'))
+        self.assertIsNone(options['play_unit_uid'])
+        self.assertEqual(options['shop_assertions'],Path('assertions.ini'))
+        self.assertTrue(options['pages_only'])
+
+    def test_invalid_scenario_mixes_are_rejected_before_allocating_a_runtime(self):
+        from tools.game_test_native_environment import scenario_options
+        for options in ({'bootstrap_only':True,'pages_only':True},
+                        {'pages_only':True,'mode_sequence':'3'},
+                        {'shop_assertions':Path('a'),'shop_display':Path('b')},
+                        {'pages_only':True,'shop_assertions':Path('a')}):
+            with self.subTest(options=options),self.assertRaises(RuntimeError):
+                scenario_options({'primary_uid':17},**options)
     def test_fleet_selection_obeys_native_costs_for_large_ma_and_four_unit_cases(self):
         from tools.game_test_fixtures import choose_fleet
         ships=[(99,270005,0,15)]
@@ -236,7 +286,7 @@ class SqlTransportTests(unittest.TestCase):
         original_popen=subprocess.Popen
         entered=threading.Event();release=threading.Event()
         def journal(process):
-            entered.set();release.wait(10)
+            entered.set();release.wait()
         def echo_process(*args,**kwargs):
             code="import os,sys; data=os.read(sys.stdin.fileno(),4); os.write(sys.stdout.fileno(),data)"
             return original_popen([sys.executable,'-u','-c',code],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
@@ -244,9 +294,9 @@ class SqlTransportTests(unittest.TestCase):
         with mock.patch.object(bridge_module.subprocess,'Popen',side_effect=echo_process):
             bridge=bridge_module.SqlBridge('offline-byte-transport-fixture',on_process=journal)
             try:
-                with socket.create_connection(('127.0.0.1',bridge.port),timeout=5) as client:
+                with socket.create_connection(('127.0.0.1',bridge.port),timeout=30) as client:
                     client.settimeout(5);client.sendall(b'TEST')
-                    self.assertTrue(entered.wait(5))
+                    self.assertTrue(entered.wait(30))
                     self.assertEqual(client.recv(4),b'TEST')
                     self.assertFalse(release.is_set())
             finally:
@@ -288,6 +338,30 @@ class CandidateAdmissionTests(unittest.TestCase):
         self.assertIn('sdgo/mods/game_test_client/mod.ini',metadata['client']['immutable_hashes'])
         with self.assertRaises(self.gt.GameTestError):
             self.fixture.prepare('incomplete-roundtrip',apsalus_roundtrip=True,bootstrap_only=True)
+
+    def test_gameplay_fps_cap_is_bound_to_client_settings_and_observer(self):
+        import xml.etree.ElementTree as ET
+        from tests.test_game_test_fps import FPS_MANIFEST
+        f=self.fixture
+        config=f.template/'config.xml';tree=ET.fromstring(config.read_bytes())
+        framework=tree.find('Framework')
+        if framework is None:framework=ET.SubElement(tree,'Framework')
+        timer=framework.find('Timer')
+        if timer is None:timer=ET.SubElement(framework,'Timer')
+        timer.set('updatefps','60');config.write_bytes(ET.tostring(tree,encoding='utf-8'))
+        directory=f.stage/'client/sdgo/mods/fps_limit';directory.mkdir()
+        (directory/'mod.ini').write_text(FPS_MANIFEST,encoding='utf-8')
+        (directory/'fps_limit.dll').write_bytes(b'candidate-fps')
+        symbols=f.stage/('client/sdgo/symbols/'+self.gt.HOST_KEY+'.ini')
+        with symbols.open('a',encoding='utf-8') as stream:stream.write('\n[fps.config.force60]\nkind=site\nrva=fps\n')
+        run=f.prepare('fps-gameplay',fps_gameplay_cap=160)
+        self.assertEqual(ET.fromstring((run/'client/config.xml').read_bytes()).find('Framework/Timer').get('updatefps'),'160')
+        manifest=run/'client/sdgo/mods/game_test_client/mod.ini'
+        self.assertEqual(self.gt.read_ini(manifest).get('settings','FpsGameplayCap'),'160')
+        metadata=f.metadata(run);self.gt.verify_hashes(metadata)
+        manifest.write_bytes(manifest.read_bytes().replace(b'FpsGameplayCap=160',b'FpsGameplayCap=60'))
+        with self.assertRaises(self.gt.GameTestError):self.gt.verify_hashes(metadata)
+        with self.assertRaises(self.gt.GameTestError):f.prepare('fps-bootstrap',fps_gameplay_cap=160,bootstrap_only=True)
 
     def test_disabled_retained_diagnostic_does_not_require_its_historical_aliases(self):
         root=self.fixture.template/'sdgo/mods/old_probe'

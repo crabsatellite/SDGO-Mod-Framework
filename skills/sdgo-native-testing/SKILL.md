@@ -29,7 +29,9 @@ Mod 源码库保存框架、Mod、测试代码、fixture 声明、配置范本�
 | `tools/game_test.py prepare/run/report` | 准备或复用客户端，绑定现有账号、封存候选输入，后台运行并校验 JSON/JUnit 和原生事件 |
 | `mods/game_test_client` | 原生登录、机库、房间、战斗与指定场景观察和断言 |
 | `mods/game_test_server`、`tools/game_test_server_report.py` | 观察真实服务端战斗、结算和返回流程 |
+| `tools/game_test_backend.py serve` | 启动已配置的本地 `test/server`；复用原生 SQL，按真实频道启动服务，并等待本次启动的原生表加载完成 |
 | `tools/game_test_fps.py` | 不登录的 FPS 参数矩阵；战斗速度须另用相关战斗检查 |
+| `tools/game_test_local_sql.py`、`tools/native_sql` | 复用复制的原生 SQL；配置只写任务自己的 HKCU 分支，SQL进程内重定向，不安装系统实例或修改生产登记 |
 | `tools/game_test_environment.py` | 已有环境归属与回收记录；`environment list/recover` 可检查和回收旧遗留环境 |
 | `tools/game_test_fixtures.py` | 已有五账号和公共机体数据的声明/核验；普通测试不调用账号创建函数 |
 
@@ -47,6 +49,8 @@ Mod 源码库保存框架、Mod、测试代码、fixture 声明、配置范本�
    ```
 
    需要服务端观察时，在本任务 test 后端使用匹配的观察组件和本次运行 ID，核实原生启动 XML 与 `tbl_ChannelInfo` 共同启用的 Battle 端口。不要因目录存在而启动全部频道，也不要放宽原生数据校验。
+   已配置的 `test/server` 使用 `game_test_backend.py serve --work <test/server> --client-run <prepared-run> --stage <stage> --startup-xml <test/server/ServerStartUp/ServerStartUp.xml> --host-pilot-id <existing-account-id>`；运行 `run` 前等它返回 `backend_ready`。TCP 开放不代表 Battle 数据可用：必须等本次启动日志的 `Table Download OK.. Time Procedure Ready..`，不能用旧日志或固定延时替代。已有共享服务正在使用时先复用或复制自己的并发副本。
+   客户端迭代可持续复用已就绪的服务进程：从实际 `server-observer-events.jsonl` 首行读取同一会话的 `run_id`、`nonce` 和各 Battle 的 `pid`，传入 `game_test.prepare/reuse_prepared(..., server_session={'run_id': ..., 'nonce': ..., 'pids': [...]})`。框架封存一个带新随机后缀的完整房名，客户端读取该房名；服务端报告按会话、进程和本轮精确房名验证，旧房间记录不能算本轮通过。账号须与观察器的实际 host 绑定一致。服务端候选 DLL 或配置变更时才重启所属服务并建立新会话，保留 SQL、程序与测试数据。
 4. 读取并核验本次真实登录、房间、原生事件、JSON/JUnit 与服务端报告。完整战斗保留结算和返回流程；编译、模拟/回放、登录 smoke 或 bootstrap 不能代替相关完整 GameTest。阿普萨拉斯需实测首次 R、变形释放、移动/攻击和再次变回。
 5. 成功验证及必要部署读回后，删除这次测试记录、日志、截图、回执和临时研究文件；失败诊断暂留到问题解决后删除。保留测试源码、公共账号资产、配置和统一 test。并发任务结束后额外删除整个所属副本，读回其进程已停止、临时文件已清除。不要清除他人运行中的环境。
 
@@ -66,6 +70,6 @@ Mod 源码库保存框架、Mod、测试代码、fixture 声明、配置范本�
 
 不新增独立的测试总结、部署报告或日期式验证记录来替代 README 和功能文档。GameTest 自动生成的 JSON、JUnit 和日志留在本地被 Git 忽略的测试输出目录，用于排错；不将它们复制成公开功能文档或最终交付入口。
 
-结束前清理所属临时环境，保留可复用模板、测试代码和必要的本地日志。最终回复简要说明功能、部署和提交结果。
+结束前清理所属临时环境，保留统一 test、公共资产、测试代码和未解决问题的必要诊断；成功测试记录删除。最终回复简要说明功能、部署和提交结果。
 
 测试框架迁移不取消上述已授权交付。公开文档不添加本机端点、临时报告或账号数据。结束时简要说明真实验收、部署/提交和清理状态；未通过的机体问题继续推进，不能因框架已提交就宣布修复完成。

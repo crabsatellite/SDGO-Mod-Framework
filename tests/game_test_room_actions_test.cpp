@@ -37,6 +37,9 @@ uint8_t* g_profile = nullptr;
 void* g_serviceManager = nullptr;
 uint8_t g_app[0x500] = {};
 uint8_t g_nonNullObject = 0;
+unsigned g_startQueued = 0;
+unsigned g_startBusinessCalls = 0;
+bool g_startBusinessReady = true;
 
 void Check(bool condition, const char* message)
 {
@@ -181,6 +184,12 @@ void __fastcall FakeThreeDRoomAddState(
     int,
     int)
 {
+    ++g_startQueued;
+}
+void __fastcall FakeThreeDStartBusiness(void*, void*)
+{
+    ++g_startBusinessCalls;
+    if (g_startBusinessReady) ++g_startQueued;
 }
 
 void* __cdecl FakeGridData()
@@ -245,6 +254,8 @@ void* LookupSymbol(const char* name)
         return reinterpret_cast<void*>(&FakeThreeDRoomHasState);
     if (std::strcmp(name, "flow.three_d_room_add_state") == 0)
         return reinterpret_cast<void*>(&FakeThreeDRoomAddState);
+    if (std::strcmp(name, "flow.normal_3d_start_business") == 0)
+        return reinterpret_cast<void*>(&FakeThreeDStartBusiness);
     if (std::strcmp(name, "flow.native_wstring_ctor") == 0)
         return reinterpret_cast<void*>(&FakeNativeWStringCtor);
     if (std::strcmp(name, "flow.native_wstring_dtor") == 0)
@@ -270,6 +281,30 @@ void* LookupSymbol(const char* name)
 void* ApiSymbol(SdgoMod*, const char* name)
 {
     return LookupSymbol(name);
+}
+
+void TestStartWaitsForOriginalMainState(RoomActions& rooms)
+{
+    uint8_t profile[0x100] = {}, owner[16] = {}, manager[0x80] = {}, main[0x30] = {}, command[16] = {};
+    uint8_t* states[13] = {};
+    auto put=[](void* p,size_t offset,const auto& value){std::memcpy(static_cast<uint8_t*>(p)+offset,&value,sizeof(value));};
+    const uint32_t appState=18, readyStage=2;void* vtable=&g_nonNullObject;
+    uint8_t* managerPointer=manager;uint8_t* ownerPointer=owner;uint8_t* context=manager+0x24;
+    uint8_t** statePointer=states;void* room=&g_nonNullObject;
+    put(g_app,0x4A0,appState);put(g_app,0x4A4,ownerPointer);put(owner,0,vtable);put(owner,4,managerPointer);
+    put(profile,0xEC,room);g_profile=profile;put(manager,0x0C,statePointer);
+    put(main,0,vtable);put(main,0x0C,context);put(main,0x10,managerPointer);put(command,0,vtable);
+    states[0]=main;states[12]=command;context[2]=1;g_startQueued=0;
+    Check(!rooms.StartBattleNativeHost() && g_startQueued==0,"factory completion alone cannot queue Start before Main is ready");
+    put(main,8,readyStage);context[0x24]=1;
+    Check(!rooms.StartBattleNativeHost() && g_startQueued==0,"native busy/locked room does not queue Start");
+    context[0x24]=0;
+    g_startBusinessReady=false;g_startBusinessCalls=0;
+    Check(rooms.StartBattleNativeHost() && g_startQueued==0 && g_startBusinessCalls==1,
+        "native Start business retains its own server-ready capability check before queuing");
+    g_startBusinessReady=true;
+    Check(rooms.StartBattleNativeHost() && g_startQueued==1,"the ready original Main state queues the normal Start command once");
+    g_profile=nullptr;std::memset(g_app,0,sizeof(g_app));
 }
 
 int ApiHookCode(
@@ -539,6 +574,7 @@ int main()
         config);
     Check(bound, "RoomActions bound to offline Symbol/HookCode stubs");
     if (bound) {
+        TestStartWaitsForOriginalMainState(rooms);
         TestBattleEndAbi(rooms);
         TestLeavePacketLifetime(rooms);
         TestNormalThreeDLeaveReply(rooms);
