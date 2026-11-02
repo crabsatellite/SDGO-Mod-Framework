@@ -48,6 +48,8 @@ Put a command in the co-op mission room title:
   Without `lvN` the room uses `DefaultLevel` (2).
 * Mission enemies normally only target human players; the client mod lets an enemy switch
   to a wingman that is closer than its current target (`EnemiesTargetWingmen`).
+* Melee enemies whose scripts only search for human players also find wingmen.
+* When a stage moves the players to a new area (`PlayerWarp`), living wingmen move with them.
 
 ## Longer names and combined commands
 
@@ -62,14 +64,9 @@ See [combined commands](room-commands.md) for both mission and PvP examples.
 
 ## Settings
 
-`mission_ai 2.0.1` redirects player-only melee searches to the native mission enemy
-search for registered wingmen. Native `PlayerWarp` stage transitions also carry
-locally simulated, living wingmen to the actual human destinations and clear their
-old attack/movement requests. Human counts, mission objectives and remote copies
-are preserved; this does not provide arbitrary combat teleports or revive bots.
-Transitions that move players without `PlayerWarp` still require separate testing.
-
-Values go in the `[settings]` section of each `mod.ini` and cannot carry inline comments.
+Edit them in SDGO Mod Manager under **任务 AI 队友 · 服务端** (battle server) and
+**任务 AI 队友 · 客户端** (client). Log switches appear after **显示开发信息**. The values are
+stored in the `[settings]` section of each `mod.ini`; values cannot carry inline comments.
 
 `coop_ai`, battle server, `sdgo\mods\coop_ai\mod.ini` (changes need a battle server restart):
 
@@ -79,7 +76,7 @@ Values go in the `[settings]` section of each `mod.ini` and cannot carry inline 
 | `DefaultCount` | 0 | wingmen for a bare `!ai`; 0 fills the free slots |
 | `SquadSize` | 4 | player slots of a co-op room; wingmen never exceed SquadSize minus humans |
 | `DefaultLevel` | 2 | level when the title has no `lvN` |
-| `LogRoom` | 1 | log the lobby room and title at every mission start |
+| `LogRoom` | 1 | developer: log the lobby room and title at every mission start |
 | `Level1`..`Level5` | see file | NPC data ids per level; ids not in the AI-NPC list are skipped |
 
 `mission_ai`, client, `sdgo\mods\mission_ai\mod.ini` (applies within 2 seconds, even
@@ -89,7 +86,7 @@ mid-mission):
 |---|---|---|
 | `EnemiesTargetWingmen` | 1 | 1: an enemy may switch to a wingman closer than its target |
 | `EnemyAggroRange` | 2500 | farthest wingman an enemy switches to |
-| `LogCombat` | 0 | 1: log every wingman's HP and target every 5 s |
+| `LogCombat` | 0 | developer: 1 logs every wingman's HP and target every 5 s |
 
 ## Adding more bot units
 
@@ -205,6 +202,11 @@ deaths go through the normal battle code. The wingmen reuse exactly that.
   and the server id at `unit+0x2B68`; then `um.calculate_team`.
 * The player count stays at the humans: mission scripts loop over `GetPlayer(1..n)`, which
   only knows humans.
+* Some `VSAI_*` melee families only call `SearchLockOnlyPlayer`. For registered wingmen the script
+  redirects that call to the native `SearchLockPlayer` mission search, which still applies side, range and line-of-sight checks.
+* When a stage script calls the native `PlayerWarp`, locally simulated living wingmen use the
+  same warp to the humans' actual destinations and their old attack/move requests are cleared.
+  Dead wingmen are not revived, remote copies are not taken over and `GetNumPlayer()` is unchanged.
 * AI battle mode and its relatives derive from `CMissionMode` and spawn their AI themselves;
   `mission_ai` only acts on a plain `CMissionMode` (checked by vtable).
 * `mission_ai.lua` runs in the game's Lua 5.0 state each frame of a mission. Mission enemy
