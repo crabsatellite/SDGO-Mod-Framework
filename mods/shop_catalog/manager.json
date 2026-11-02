@@ -7,7 +7,7 @@
     "world"
   ],
   "provider": "shop",
-  "description": "服主商城目录，由配套配置提供内容。",
+  "description": "按服主在 Manager 中编辑的内容上架、改价和下架商城商品。",
   "settings": [],
   "presentation": "configurable",
   "mechanism": "商城配置由 Manager 发布，WorldServer 启动不应用 SQL，也不读取服主凭据。原生购买、计费和交付仍由游戏处理。"

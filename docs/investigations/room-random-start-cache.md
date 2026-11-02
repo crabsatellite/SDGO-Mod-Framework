@@ -1,9 +1,8 @@
 # Random loadout start-cache synchronization
 
-The reported mission and PvP failures were not command-parsing failures. A live
-mission readback showed the selected model in the server room's full unit record,
-constructed battle pilot and native start-packet model source. The user still
-controlled the previously selected model on the stock client.
+Changing server-side room records alone can leave a client controlling its
+previous model. The server's room, battle pilot and start packet may agree while
+the client's cached full unit record remains stale.
 
 The original `room_random` only changed the server's temporary records. In the
 supported client, `0x06C3` enters `CServiceWaitRoomMgr::OnPacket` at `0x00A3F329`.
@@ -25,11 +24,11 @@ retains the native Agent delivery path. The server's existing builders at
 `0x004B45F2` and `0x004D8A0C` establish these packet layouts. No selection request,
 database write or private opcode is used.
 
-The 0.1.5 live retest still failed. Its original regression exercised copy
-instructions while omitting the 3D room's command dispatcher. The 3D handler at
+Version 0.1.5 could still fail because copying the records omitted the 3D room's
+command dispatcher. The 3D handler at
 `0x00733840` translates a unit notification to a per-participant command; its
 operation is subject to room/start state and queue processing. Correct packet
-bytes and successful queueing were not sufficient acceptance evidence.
+bytes and successful queueing alone do not ensure that a room applies the update.
 
 The required 0.1.6 `room_random_client` companion applies validated full records
 at an interior site of `CServiceManaged::OnPacket`, before service command queues.
@@ -81,34 +80,21 @@ instructions `0x00720E48..0x00720E69` and model/attribute projection instruction
 `0x00720EA3..0x00720EBB` in private memory. These narrow spans omit strings,
 callbacks and other game setup; complete UIDs/skill/appearance preservation is
 checked on the supplied full record, not inferred from those projection spans.
-Passing these checks still does not establish live gameplay acceptance.
+To test the complete flow, verify the controlled unit after mission and PvP
+starts, scene transitions and re-entry. Client 0.1.10 removes the global factory
+diagnostic hook; functional dispatch and final-construction hooks remain.
 
-The 0.1.9 manual mission retest succeeded: the user confirmed a changed controlled
-unit. Server selection and native factory both recorded model 11044; the final
-human construction log recorded the frozen source changing from 11016 to 11044.
-Client 0.1.10 removes the temporary global factory observer and its symbol/state.
-The functional dispatch and final-construction hooks remain covered by the real
-core/DLL and native-instruction regressions.
+The post-round skill-part consumption notice is separate from start-cache
+synchronization. Error `4509` (`ERR_WAITTEAM_IN_BATTLE`) instead identifies an
+in-battle room-change rejection on the queued room path. Use `match_ai.LogErrors`
+to distinguish these conditions and restore the diagnostic setting after testing.
 
-The reported post-round Korean notice says the equipped skill part has been
-fully consumed and asks the player to equip a new skill. Its appearance alone
-does not establish which unit was charged, nor identify the transient start
-notice. Do not suppress consumption or alter owned records to hide that popup.
-The temporary existing `match_ai.LogErrors` diagnostic subsequently captured
-4509 (`ERR_WAITTEAM_IN_BATTLE`) during start, before successful human construction.
-It identifies an in-battle room-change rejection on the queued room path; this
-is separate from the post-round skill-part notice. Restore the diagnostic setting
-after retaining the narrow evidence; do not ship an enabled debug configuration.
-
-The subsequent re-entry test exposed a separate server lifecycle failure:
-`previous battle has not released its loadouts`. Resource release is not a
-universal disconnect/abort callback. Native human setup clears its battle-pilot
-region before a valid new constructor call; server 0.1.7 uses this verified reset
-boundary to retire older bookkeeping without restoring an old snapshot over the
-fresh room. A non-random new start synchronizes its current authoritative choices.
-Live native unit records continue to prevent replacement. Regression cases retain
-old bookkeeping across all fourteen mode values, omit release callbacks, and test
-changed selections plus re-entry without `!rand`.
+A missing resource-release callback can leave the error
+`previous battle has not released its loadouts` on re-entry. Native human setup
+clears its battle-pilot region before a valid new constructor call. Server 0.1.7
+uses that reset boundary to retire old bookkeeping without restoring a stale
+snapshot over the new room. A non-random start keeps its current selections.
+Live native unit records still prevent replacement.
 
 The full ship leader and four inventory UIDs match the chosen unit records.
 Partial notification or later start failure restores original records; native

@@ -59,8 +59,7 @@ The [client evidence](friend-list-investigation-client.md) and
 [server evidence](friend-list-investigation-server.md) describe the supported
 builds, packet/cache behavior and exact boundaries. Developer checks include
 the actual client detour, exact host signatures, and an opt-in disposable SQL
-fixture with synthetic accounts. Real two-client login/logout, UI display and
-message exchange remain separate acceptance checks.
+fixture with synthetic accounts. Use two clients to test login/logout, friend-list display and message exchange.
 
 ```powershell
 cmake --build build --config Release --target friend_list_fix friend_list_client_fix friend_list_fix_test friend_list_client_fix_test friend_list_db_test

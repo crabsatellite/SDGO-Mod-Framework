@@ -13,6 +13,7 @@
 #include "storage_test_actions.h"
 #include "capsule_catalog_actions.h"
 #include "battle_combat_actions.h"
+#include "apsalus_transform_probe.h"
 #include "capsule_draw_actions.h"
 #include "unit_select_actions.h"
 #include "active_selection_observer.h"
@@ -26,6 +27,8 @@
 #include "onboarding_actions.h"
 #include "onboarding_gate.h"
 #include "friend_session.h"
+#include "fps_test_actions.h"
+
 #include "sdgo/pvp_ai_client_observer.h"
 #include <cwchar>
 #include <array>
@@ -85,6 +88,10 @@ bool expectFirstFailure = false;
 bool passwordIsMd5 = false;
 bool importedExistingAccount = false;
 bool bootstrapOnly = false;
+bool fpsOnly = false;
+int fpsRequested = 60;
+bool fpsModEnabled = true;
+FpsTestActions fpsActions;
 bool verifyDirectNetwork = false;
 bool verifyRoutedNetwork = false;
 bool verifyQuietRuntime = false;
@@ -129,6 +136,17 @@ bool LoadPlan() {
     verifyDirectNetwork = !wcscmp(networkPolicy,L"direct") || verifyRoutedNetwork;
     verifyQuietRuntime=GetPrivateProfileIntW(L"run",L"quiet",0,job.c_str())!=0;
     quietLoopback=verifyQuietRuntime && GetPrivateProfileIntW(L"run",L"quiet_loopback",0,job.c_str())==1;
+    fpsOnly=sdgo_test::suiteId=="native-fps-limit";
+    if (fpsOnly) {
+        fpsRequested=GetPrivateProfileIntW(L"run",L"fps_cap",0,job.c_str());
+        const int enabled=GetPrivateProfileIntW(L"run",L"fps_mod_enabled",-1,job.c_str());
+        fpsModEnabled=enabled==1;
+        // The FPS-only suite stops on the real login page. No account file,
+        // credentials or authentication binding is required. The native client
+        // still performs its ordinary transport connection to the backend.
+        verifyDirectNetwork=false;
+        return verifyQuietRuntime && fpsRequested>=1 && fpsRequested<=1000 && (enabled==0 || enabled==1);
+    }
     bootstrapOnly = GetPrivateProfileIntW(L"run", L"bootstrap_only", 0, job.c_str()) != 0;
     battleshipOnly = GetPrivateProfileIntW(L"run", L"battleship_only", 0, job.c_str()) != 0;
     giftRequestsOnly = GetPrivateProfileIntW(L"run", L"gift_requests_only", 0, job.c_str()) != 0;
@@ -257,7 +275,7 @@ bool LoadPlan() {
 }
 
 int __cdecl Bootstrap(const SdgoGameTestContextV1* context) {
-    const uint32_t state = actions.AppState();
+    const uint32_t state = fpsOnly ? fpsActions.State():actions.AppState();
     if (state == UINT32_MAX || state < 4) return SDGO_GAME_TEST_WAIT;
     if (verifyQuietRuntime) {
         const auto file=sdgo_test::directory+L"\\quiet-verified.ini";
@@ -530,11 +548,34 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
 }
 int __cdecl Start(const SdgoGameTestContextV1* context) {
     SdgoPvpAiClientSnapshotV1 snapshot{};
+    static uint64_t lastStartAttempt=0;
+    static uint32_t startSendBaseline=0,startReplyBaseline=0;
+    if(!context->tick){lastStartAttempt=0;startSendBaseline=actions.GameStartSendCount();startReplyBaseline=rooms.NativeStartReplySequence();}
+    if(rooms.NativeStartReplySequence()>startReplyBaseline && rooms.NativeStartReplyError()!=0) {
+        char failure[96];sprintf_s(failure,"native server rejected battle start: 07B5/%04X",rooms.NativeStartReplyError());
+        context->Assert(0,failure);return SDGO_GAME_TEST_FAIL;
+    }
+    static uint64_t nextStartObservation=0;
+    if(context->elapsed_ms>=nextStartObservation) {
+        const auto transport=actions.TransportState();
+        char message[192];sprintf_s(message,"native start prerequisite=%d command_state_and_queue=%d transport=%04X/%u/%u attempted=%u",rooms.NativeStartPrerequisite(),rooms.NativeStartQueueState(),transport.opcode,transport.packet_size,transport.send_sequence,startRequested?1u:0u);
+        context->Observe(message);nextStartObservation=context->elapsed_ms+1000;
+    }
     if (!startRequested) {
+        startSendBaseline=actions.GameStartSendCount();startReplyBaseline=rooms.NativeStartReplySequence();
         Snapshot(snapshot); startSequence = snapshot.received_battle_start_count;
         endSequence = rooms.BattleEndState().sequence;
         if (!rooms.StartBattleNativeHost()) return SDGO_GAME_TEST_WAIT;
-        startRequested = true; context->Observe("called the original room-host Start business routine");
+        startRequested = true;lastStartAttempt=context->elapsed_ms;
+        context->Observe("queued the original room-host Start business; await native command progress and server reply");
+    }
+    // Native 00731240 also repeats AddState while 0x0C has not entered the
+    // active queue. A queue request during scene initialization can be lost;
+    // only retry the unchanged native business when no command progressed.
+    else if(actions.GameStartSendCount()==startSendBaseline && context->elapsed_ms-lastStartAttempt>=1000 && rooms.NativeStartQueueState()==0 &&
+            rooms.NativeStartPrerequisite()==0 && rooms.StartBattleNativeHost()) {
+        lastStartAttempt=context->elapsed_ms;
+        context->Observe("native start command has not progressed; retried its original queue business without a packet or state write");
     }
     if (!Snapshot(snapshot) || snapshot.native_app_state != 22 || snapshot.received_battle_start_count <= startSequence) return SDGO_GAME_TEST_WAIT;
     activeBattleStartSequence = snapshot.received_battle_start_count;
@@ -555,6 +596,8 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
     SdgoPvpAiClientSnapshotV1 snapshot{};
     if (!context->tick) motionSamples.clear();
     if (!Snapshot(snapshot) || snapshot.native_app_state != 22) return SDGO_GAME_TEST_WAIT;
+    const int transformProbe = apsalus_probe::Poll(context, sdgo_test::api, sdgo_test::mod);
+    if (transformProbe != SDGO_GAME_TEST_PASS) return transformProbe;
     bool ready = snapshot.bot_count == expectedAi;
     unsigned allies = 0, enemies = 0, moved = 0;
     for (unsigned i = 0; i < snapshot.bot_count && i < 12; ++i) {
@@ -1304,6 +1347,16 @@ int __cdecl DeliverCollection(const SdgoGameTestContextV1* context) {
     return SDGO_GAME_TEST_PASS;
 }
 int __cdecl SelectPlayUnit(const SdgoGameTestContextV1* context) {
+    ActiveSelectionObserver::Snapshot equipped;
+    const bool observed=activeSelection.Read(authenticatedPilot,&equipped);
+    if(observed && equipped.inventory_matches && equipped.uid==playUnitUid) {
+        char message[192];sprintf_s(message,"native active unit already equipped: pilot=%u unit=%u uid=%llu slot=%u; no hangar transition or selection request",equipped.pilot,equipped.unit,static_cast<unsigned long long>(equipped.uid),equipped.slot);
+        context->Observe(message);
+        context->Assert(equipped.pilot==authenticatedPilot && equipped.inventory_matches,
+            "the server-loaded active unit matches the authenticated pilot and its real owned inventory record");
+        return SDGO_GAME_TEST_PASS;
+    }
+    if(!observed && context->elapsed_ms<5000)return SDGO_GAME_TEST_WAIT;
     static bool diagnosticFailure=false;static uint64_t failureAt=0;
     if(diagnosticFailure) {
         if(context->elapsed_ms-failureAt<10000)return SDGO_GAME_TEST_WAIT;
@@ -1419,6 +1472,21 @@ const SdgoGameTestCaseV1 realCases[] = {
     {"pvp.ai_spawn", 60000, &AiSpawn},
     {"pvp.return", 600000, &Return},
 };
+int __cdecl FpsCap(const SdgoGameTestContextV1* context) {
+    const auto graphics=quietGraphics.State();
+    return fpsActions.Cap(context,graphics.present_qpc_frequency,
+        graphics.successful_present_min_gap_ticks,graphics.successful_present_max_gap_ticks);
+}
+int __cdecl FpsCadence(const SdgoGameTestContextV1* context) {
+    const auto graphics=quietGraphics.State();
+    return fpsActions.Cadence(context,graphics.successful_presents,graphics.present_qpc_frequency,
+        graphics.successful_present_min_gap_ticks,graphics.successful_present_max_gap_ticks);
+}
+const SdgoGameTestCaseV1 fpsCases[]={
+    {"framework.bootstrap",60000,&Bootstrap},
+    {"fps.native_cap",10000,&FpsCap},
+    {"fps.native_cadence",150000,&FpsCadence},
+};
 SdgoGameTestProviderV1 provider{sizeof(provider), SDGO_GAME_TEST_VERSION, "pvp-ai", "client", 7, realCases};
 std::vector<std::string> caseNames;
 std::vector<SdgoGameTestCaseV1> plannedCases;
@@ -1439,6 +1507,9 @@ int __cdecl FriendFlow(const SdgoGameTestContextV1* context) {
     return friendSession.Poll(context);
 }
 void RegisterPlannedCases() {
+    if (fpsOnly) {
+        provider.suite="native-fps-limit";provider.count=3;provider.cases=fpsCases;return;
+    }
     if(missionMode) {
         plannedCases.assign(realCases,realCases+3);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
@@ -1526,14 +1597,19 @@ void PublishQuietSocketReceipt(bool force) {
     fprintf(file,"[run]\nid=%s\n[policy]\npid=%lu\nactive=%u\nloopback_only=%u\n[sockets]\nbinds=%u\nredirected=%u\nfailed=%u\nescaped=%u\n[audio]\nactive=%u\nopened=%u\nmuted=%u\nfailed=%u\n",
         sdgo_test::runId.c_str(),GetCurrentProcessId(),observed.active,quietLoopback ? 1u:0u,observed.binds,observed.redirected,observed.failed,observed.escaped,
         audio.active,audio.opened,audio.muted,audio.failed);
-    fprintf(file,"[graphics]\nactive=%u\nworker_ready=%u\ndispatch_failures=%u\ncreated_devices=%u\nfailed_devices=%u\ncreate_hresult=%ld\npresents=%u\nproxy_hwnd=%lu\nproxy_visible=%u\nproxy_noactivate=%u\nproxy_toolwindow=%u\nproxy_appwindow=%u\n",
+    fprintf(file,"[graphics]\nactive=%u\nworker_ready=%u\ndispatch_failures=%u\ncreated_devices=%u\nfailed_devices=%u\ncreate_hresult=%ld\npresents=%u\nsuccessful_presents=%u\npresent_qpc_frequency=%llu\nsuccessful_present_min_gap_ticks=%llu\nsuccessful_present_max_gap_ticks=%llu\nproxy_hwnd=%lu\nproxy_visible=%u\nproxy_noactivate=%u\nproxy_toolwindow=%u\nproxy_appwindow=%u\n",
         graphics.active,graphics.worker_ready,graphics.dispatch_failures,graphics.created_devices,graphics.failed_devices,
-        static_cast<long>(graphics.last_create_hresult),graphics.presents,reinterpret_cast<unsigned long>(graphics.proxy_hwnd),
+        static_cast<long>(graphics.last_create_hresult),graphics.presents,graphics.successful_presents,
+        static_cast<unsigned long long>(graphics.present_qpc_frequency),
+        static_cast<unsigned long long>(graphics.successful_present_min_gap_ticks),
+        static_cast<unsigned long long>(graphics.successful_present_max_gap_ticks),
+        reinterpret_cast<unsigned long>(graphics.proxy_hwnd),
         graphics.proxy_visible,graphics.proxy_noactivate,graphics.proxy_toolwindow,graphics.proxy_appwindow);
     fprintf(file,"ime_disabled=%u\nrequested_width=%u\nrequested_height=%u\nclient_width=%u\nclient_height=%u\nresolved_width=%u\nresolved_height=%u\nactual_width=%u\nactual_height=%u\nbackbuffer_hresult=%ld\ncooperative_checks=%u\ncooperative_hresult=%ld\n",
         graphics.ime_disabled,graphics.last_requested_width,graphics.last_requested_height,graphics.last_client_width,graphics.last_client_height,
         graphics.last_resolved_width,graphics.last_resolved_height,graphics.last_actual_width,graphics.last_actual_height,
         static_cast<long>(graphics.last_backbuffer_hresult),graphics.cooperative_checks,static_cast<long>(graphics.last_cooperative_hresult));
+    fprintf(file,"named_desktop_fallback=%u\n",graphics.named_desktop_fallback);
     fprintf(file,"texture_calls=%u\ntexture_failures=%u\nrender_target_calls=%u\nrender_target_failures=%u\nrender_target_null=%u\nlast_rt_width=%u\nlast_rt_height=%u\nlast_rt_format=%u\nlast_rt_usage=%u\nlast_rt_hresult=%ld\nlast_rt_return_address=%lu\n",
         graphics.texture_calls,graphics.texture_failures,graphics.render_target_texture_calls,graphics.render_target_texture_failures,
         graphics.render_target_texture_null_results,graphics.last_render_target_width,graphics.last_render_target_height,
@@ -1640,6 +1716,9 @@ SDGO_MOD_ENTRY {
     // actual map and participants remain provided by the server.
     if (!loaded) sdgo_test::Fail("invalid private account or native scenario configuration");
     RegisterPlannedCases();
+    if (fpsOnly) {
+        if (!fpsActions.Bind(api,mod,fpsRequested,fpsModEnabled))sdgo_test::Fail("native FPS readback binding is unavailable");
+    } else {
     const NativeActions::Config config{
         accountName,
         accountPassword,
@@ -1660,7 +1739,7 @@ SDGO_MOD_ENTRY {
         (pagesOnly && !capsules.Bind(api,mod)) ||
         (collectionDraw && !collection.Bind(api,mod,&actions)) ||
         (playUnitUid && !unitSelection.Bind(api,mod,&actions)) ||
-        (randomLoadout && !activeSelection.Bind(api,mod)) ||
+        ((randomLoadout || playUnitUid) && !activeSelection.Bind(api,mod)) ||
         (testShopCatalog && (!shopCatalog.Bind(api,mod) || !shopCatalog.Configure(
             sdgo_test::directory+L"\\inputs\\shop-assertions.ini",sdgo_test::directory+L"\\inputs\\shop-runtime-display.ini"))) ||
         (!missionMode && !rooms.Bind(api, mod, &actions, config)) ||
@@ -1682,12 +1761,13 @@ SDGO_MOD_ENTRY {
         getMissionSnapshot=reinterpret_cast<SdgoMissionAiClientGetSnapshotV1Fn>(GetProcAddress(GetModuleHandleW(L"mission_ai.dll"),SDGO_MISSION_AI_CLIENT_SNAPSHOT_EXPORT));
         if(!getMissionSnapshot)sdgo_test::Fail("production native mission observation export is unavailable");
     }
+    } // normal authenticated scenarios
     if (!AddVectoredExceptionHandler(1, &NativeFault)) return 0;
     if (!api->HookImport(mod, "user32.dll", "FindWindowW", reinterpret_cast<void*>(&FindOwnInstance), reinterpret_cast<void**>(&originalFindWindow)) ||
         !api->HookCode(mod, "test.client_update", reinterpret_cast<void*>(&Update), reinterpret_cast<void**>(&originalUpdate)))
         return 0;
-    if (verifyQuietRuntime && !quietGraphics.Install(api,mod))return 0;
+    if (verifyQuietRuntime && !quietGraphics.Install(api,mod,fpsOnly))return 0;
     PublishQuietSocketReceipt();
-    api->Log(mod, SDGO_LOG_INFO, "observing normal launcher/login/room/battle flow");
+    api->Log(mod, SDGO_LOG_INFO, fpsOnly ? "observing native FPS cap and cadence without authentication":"observing normal launcher/login/room/battle flow");
     return 1;
 }

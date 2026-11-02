@@ -522,5 +522,5 @@
     }
   ],
   "presentation": "configurable",
-  "description": "配置原生战斗 AI 的难度与资源规则。高级调试字段位于开发信息。"
+  "description": "Easy / Medium / Hard 三档对战 AI，房主可在房名里写难度。需要同时启用对战 AI。"
 }

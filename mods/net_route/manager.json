@@ -6,7 +6,7 @@
   "hosts": [
     "client"
   ],
-  "description": "使用服主提供的连接配置。",
+  "description": "通过服主的 FRP 转发连接服务器，需要服主给你的连接配置包。",
   "settings": [
     {
       "id": "login_i_pv4",
