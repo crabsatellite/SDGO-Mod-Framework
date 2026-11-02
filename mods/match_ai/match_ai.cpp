@@ -81,6 +81,7 @@ namespace
     constexpr size_t kUnitNpcState = 0x3070;    // u32, 0x0065EEF0
     constexpr size_t kUnitMasterNpc = 0x3074;   // u8
     constexpr size_t kUnitNpcFlag = 0x31ED;     // u8
+    constexpr size_t kUnitPendingControl = 0x30D8;
     constexpr size_t kSlotName = 0x08;          // std::wstring in the player slot
     constexpr size_t kModeCreateNpcSlot = 13;
 
@@ -166,6 +167,10 @@ namespace
         AddObjectFn addObject;
         CalculateTeamFn calculateTeam;
         EnableAiFn enableAi;
+        EnableAiFn disableAi;
+        EnableAiFn releaseAttack;
+        EnableAiFn moveStop;
+        EnableAiFn resetInputs;
     };
     GameCalls g_game = {};
     GameReadyFn g_originalGameReady = nullptr;
@@ -684,6 +689,14 @@ namespace
         }
         bot.generation = NextUnitGeneration();
         InitializeBattleAiUnit(bot, true);
+        // Native CreateNpc/InitNPCAI may already enable the controller. Apply
+        // the per-unit steps of AllNpcStopControl (0x00AE5A20), scoped to this
+        // newly created match_ai participant, before the first world update.
+        g_game.disableAi(unit);
+        g_game.releaseAttack(unit);
+        g_game.moveStop(unit);
+        g_game.resetInputs(unit);
+        *reinterpret_cast<uint32_t*>(unit + kUnitPendingControl) = 0;
         g_botTable.push_back(bot);
         g_logPackets = true;
         ++c.spawned;
@@ -2042,6 +2055,8 @@ SDGO_MOD_ENTRY
                  Bind(g_game.playerSlot, "um.player_slot") && Bind(g_game.assign, "wstring.assign") &&
                  Bind(g_game.addAiUnit, "um.add_ai_unit") && Bind(g_game.addObject, "um.add_object") &&
                  Bind(g_game.calculateTeam, "um.calculate_team") && Bind(g_game.enableAi, "npc.enable_ai") &&
+                 Bind(g_game.disableAi, "npc.disable_ai") && Bind(g_game.releaseAttack, "npc.freeze_release_attack") &&
+                 Bind(g_game.moveStop, "npc.move_stop") && Bind(g_game.resetInputs, "npc.freeze_reset_inputs") &&
                  Bind(g_registerLuaBindings, "lua.register_bindings") && Bind(g_gameApp, "game.app") &&
                  Bind(g_lockTarget, "ainormal.lock_target") && Bind(g_runLuaFunction, "ainormal.run_lua_function") &&
                  Bind(g_targetParticipants, "ainormal.target_participants") &&
