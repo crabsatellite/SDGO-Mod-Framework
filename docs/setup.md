@@ -91,23 +91,21 @@ WorldServer first):
 powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SDGO-Server\Server\WorldServer" -Role World
 ```
 
-Base and Full packages built from current master include the default-enabled [new-account policy](new-account-profile.md)
-and [rank repair](rank-progression-fix.md). Neither needs a client component. Install
-on each independent World instance, restart World, and check `loaded` plus the
-new-account `new-account defaults active` line in `sdgo/logs/sdgo.log`.
-If a downloaded release does not yet contain `server/sdgo/mods/new_account_profile/`,
-[build a package from current source](#building-from-source).
+Base and Full packages built from current master include the default-enabled World core fixes:
+[new-account policy](new-account-profile.md), [rank repair](rank-progression-fix.md) and the server part
+of the [friend list fix](friend-list-fix.md) (its client part ships with the client framework). Full
+packages also include World gameplay features such as automatic hangar capacity, the collection capsule
+and the shop catalog. Install on each independent World instance, restart World, and check `loaded` plus
+the `new-account defaults active` line in `sdgo/logs/sdgo.log`.
 
 New-account defaults are 5,000 GP, zero cash and Corporal 1, with at most one automatic
-unit gift from first profile creation. Copy the bundled `config.example.ini` to
-`sdgo/mods/new_account_profile/config.ini` to customize them, then restart World.
-`InitialUnitLimit=0` removes only those automatic gifts; normal starter selection and
+unit gift from first profile creation. Change them under **新账号默认配置** in SDGO Mod Manager,
+then restart World. `InitialUnitLimit=0` removes only those automatic gifts; normal starter selection and
 later unit acquisition remain available. Existing pilots and hangars keep their data;
 test with a fresh account (see [new-account starter profile](new-account-profile.md)).
 
-To disable only the new-account policy, set `new_account_profile=0` under `[mods]`
-in World's `sdgo/sdgo.ini` and restart. Use `-Role World -Uninstall` only when removing
-the entire World framework.
+To disable one feature, switch it off in the Manager and restart World. Use `-Role World -Uninstall`
+only when removing the entire World framework.
 
 ## Uninstall
 
