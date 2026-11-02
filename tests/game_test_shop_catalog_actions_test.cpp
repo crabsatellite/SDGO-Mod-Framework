@@ -41,6 +41,7 @@ struct Node
 int failures = 0;
 unsigned downmenuCalls = 0;
 unsigned roomCalls = 0;
+unsigned searchCalls = 0;
 unsigned buyCancelCalls = 0;
 unsigned giftCancelCalls = 0;
 bool suppressPopup = false;
@@ -54,6 +55,8 @@ Bytes unitInfo(0x40);
 Bytes manager(0xB0);
 Bytes downmenu(0x400);
 Bytes room(0x400);
+Bytes search(0x200);
+Bytes searchRoot(4);
 Bytes buyPopup(0x200);
 Bytes giftPopup(0x200);
 Bytes downmenuRoot(4);
@@ -63,6 +66,7 @@ Bytes giftRoot(4);
 Bytes gridObject(4);
 std::array<void*, 20> downmenuVtable = {};
 std::array<void*, 20> roomVtable = {};
+std::array<void*, 20> searchVtable = {};
 std::array<void*, 20> buyVtable = {};
 std::array<void*, 20> giftVtable = {};
 std::array<void*, 20> staticVtable = {};
@@ -92,6 +96,7 @@ std::array<uint8_t, 0x99> fullUnit = {};
 
 Control* shopRadio = nullptr;
 Control* allRadio = nullptr;
+Control* filterButton = nullptr;
 Control* rightButton = nullptr;
 Control* buyButton = nullptr;
 Control* giftButton = nullptr;
@@ -346,6 +351,8 @@ void* __fastcall ServiceFind(
     if (name == L"roommgr" &&
         Read<uint32_t>(app.get(), 0x4A0) == 9)
         return room.get();
+    if (name == L"subTabDlg" && Read<uint32_t>(app.get(), 0x4A0) == 9)
+        return search.get();
     return nullptr;
 }
 
@@ -459,7 +466,11 @@ uint32_t __stdcall RoomCallback(
         return 0;
     if (event == 0x301 &&
         control == allRadio->bytes.data()) {
-        LoadPage(0);
+        // The shipped AllSerchRadio only opens the search view with eight
+        // empty slots. A real FilterBtn click sends the stock query.
+        EmptyVector(room.get(), 0x78, 0x7C);
+        EmptyVector(room.get(), 0x88, 0x8C);
+        Put(search.get(),0xD0,uint32_t{1});
         return 0;
     }
     if (event != 0x101)
@@ -490,6 +501,16 @@ uint32_t __stdcall RoomCallback(
                 product);
             AttachPopup(giftPopup.get());
         }
+    }
+    return 0;
+}
+
+uint32_t __stdcall SearchCallback(void* service,uint32_t event,const void*,void* control)
+{
+    if(service==search.get() && event==0x101 && control==filterButton->bytes.data()) {
+        ++searchCalls;
+        LoadPage(0);
+        SetVector(room.get(),0x88,0x8C,roomOptions.data(),roomOptions.size()*sizeof(sdgo::shop::Option));
     }
     return 0;
 }
@@ -738,6 +759,8 @@ ShopCatalogActions::Bindings Bindings()
         roomVtable.data();
     value.room_callback =
         &RoomCallback;
+    value.search_vtable=searchVtable.data();
+    value.search_callback=&SearchCallback;
     value.buy_vtable =
         buyVtable.data();
     value.buy_callback =
@@ -761,12 +784,14 @@ void Setup()
     manager.data.assign(manager.data.size(), 0);
     downmenu.data.assign(downmenu.data.size(), 0);
     room.data.assign(room.data.size(), 0);
+    search.data.assign(search.data.size(),0);
     buyPopup.data.assign(buyPopup.data.size(), 0);
     giftPopup.data.assign(giftPopup.data.size(), 0);
     strings.clear();
     controls.clear();
     controlCount = 0;
     downmenuCalls = roomCalls = 0;
+    searchCalls=0;
     buyCancelCalls = giftCancelCalls = 0;
     suppressPopup = false;
     suppressPageAdvance = false;
@@ -776,6 +801,7 @@ void Setup()
 
     downmenuVtable.fill(nullptr);
     roomVtable.fill(nullptr);
+    searchVtable.fill(nullptr);
     buyVtable.fill(nullptr);
     giftVtable.fill(nullptr);
     staticVtable.fill(nullptr);
@@ -785,6 +811,7 @@ void Setup()
     roomVtable[kCallbackSlot] =
         reinterpret_cast<void*>(
             &RoomCallback);
+    searchVtable[kCallbackSlot]=reinterpret_cast<void*>(&SearchCallback);
     buyVtable[kCallbackSlot] =
         reinterpret_cast<void*>(
             &BuyCallback);
@@ -835,6 +862,8 @@ void Setup()
         0x44,
         downmenuRoot.get());
     Put(room.get(), 0x64, roomRoot.get());
+    Put(search.get(),0,searchVtable.data());
+    Put(search.get(),0x58,searchRoot.get());
     Put(
         buyPopup.get(),
         0x4C,
@@ -856,6 +885,8 @@ void Setup()
     allRadio = AddControl(
         roomRoot.get(),
         L"AllSerchRadio");
+    filterButton=AddControl(searchRoot.get(),L"FilterBtn");
+    Put(search.get(),0xB8,filterButton->bytes.data());
     rightButton = AddControl(
         roomRoot.get(),
         L"RightBtn");
@@ -1036,6 +1067,9 @@ int wmain(int argc, wchar_t** argv)
             actions,
             ShopCatalogActions::kComplete);
     const auto state = actions.State();
+    if(completed!=ShopCatalogActions::kComplete)
+        std::printf("first shop run result=%s stage=%u verified=%u search=%u room=%u\n",
+                    ShopCatalogActions::ResultName(completed),state.stage,state.verified,searchCalls,roomCalls);
     Check(
         completed ==
             ShopCatalogActions::kComplete,
@@ -1055,6 +1089,7 @@ int wmain(int argc, wchar_t** argv)
     Check(
         downmenuCalls == 1 &&
             roomCalls == 6 &&
+            searchCalls == 1 &&
             buyCancelCalls == 2 &&
             giftCancelCalls == 2,
         "one original action per transition without retries");
@@ -1084,6 +1119,39 @@ int wmain(int argc, wchar_t** argv)
     uint64_t resumedRequest=400;
     Check(PollTo(actions,ShopCatalogActions::kComplete,&resumedRequest)==ShopCatalogActions::kComplete,
         "the real selection callback runs after the prior native query finishes");
+
+    Setup();
+    actions=Driver(assertions,display);
+    uint64_t searchElapsed=0;
+    Check(PollTo(actions,ShopCatalogActions::kSelectingAll,&searchElapsed)==ShopCatalogActions::kSelectingAll &&
+          searchCalls==0 && actions.State().verified==0,
+          "opening the original empty search tab cannot stand in for a query response");
+    Put(search.get(),0xD0,uint32_t{0});
+    for(unsigned n=0;n<3;++n) {
+        const auto step=Context(searchElapsed);searchElapsed+=100;
+        Check(actions.Poll(&step)==ShopCatalogActions::kWaitingForCatalog && searchCalls==0,
+              "wait for the real search service readiness before clicking FilterBtn");
+    }
+    Put(search.get(),0xD0,uint32_t{1});
+    auto searchStep=Context(searchElapsed);searchElapsed+=100;
+    Check(actions.Poll(&searchStep)==ShopCatalogActions::kSubmittingSearch && searchCalls==1,
+          "the exact original FilterBtn callback submits the query once");
+    catalogRequestPending=true;
+    searchStep=Context(searchElapsed);searchElapsed+=100;
+    Check(actions.Poll(&searchStep)==ShopCatalogActions::kWaitingForCatalog &&
+          actions.State().verified==0 && searchCalls==1,
+          "even populated display rows cannot bypass native query ownership or repeat the search");
+    catalogRequestPending=false;
+    Check(PollTo(actions,ShopCatalogActions::kComplete,&searchElapsed)==ShopCatalogActions::kComplete && searchCalls==1,
+          "native query completion permits stock and preview validation");
+
+    Setup();
+    actions=Driver(assertions,display);searchElapsed=0;
+    PollTo(actions,ShopCatalogActions::kSelectingAll,&searchElapsed);
+    SetHostString(filterButton->bytes.data(),kControlName,L"BuyBtn");
+    searchStep=Context(searchElapsed);
+    Check(actions.Poll(&searchStep)==ShopCatalogActions::kControlMismatch && searchCalls==0,
+          "a different action at the cached search address cannot be clicked");
 
     Setup();
     actions = Driver(assertions, display);

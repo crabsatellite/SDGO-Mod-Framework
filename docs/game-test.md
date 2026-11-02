@@ -100,6 +100,9 @@ into the isolated client with fixed paths, SHA-256 and revision binding. The
 case checks native names and permanent/rental options, opens and cancels buy
 and gift previews, and compares the complete inventory and wallet. It does
 not install products, purchase or send gifts.
+The adapter opens the native search view, clicks its original `FilterBtn`, and
+waits for native query completion. Selecting `AllSerchRadio` alone opens an
+empty view and is not evidence that a stock query succeeded.
 
 `--play-unit-uid` selects a genuinely owned unit through the native hangar
 before page, PvP or mission cases. The adapter waits for the full native unit
