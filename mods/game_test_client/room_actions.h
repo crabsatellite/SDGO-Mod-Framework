@@ -98,6 +98,15 @@ public:
         uint8_t reserved[3];
     };
 
+    // The original scene enters app state 18 before installing its room data.
+    // Do not mistake that temporarily empty model for a lost room or host.
+    static bool SettledRoomReady(const NativeRoomObservation& room)
+    {
+        return (room.native_app_state == 18 || room.native_app_state == 20) &&
+            room.model_present && room.room_id && room.room_mode &&
+            room.player_count;
+    }
+
     struct FreshRoomObservation
     {
         uint32_t sequence;

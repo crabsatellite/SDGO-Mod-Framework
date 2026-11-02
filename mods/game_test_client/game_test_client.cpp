@@ -868,7 +868,7 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
     const auto state = actions.AppState();
     if (!leaveRequested && (state == 18 || state == 20)) {
         const auto waiting=rooms.NativeRoomState();
-        if(!waiting.model_present)return SDGO_GAME_TEST_WAIT;
+        if(!RoomActions::SettledRoomReady(waiting))return SDGO_GAME_TEST_WAIT;
         char ownership[192];
         sprintf_s(ownership,"settled room=%u host=%08X authenticated=%u players=%u mode=%u local_host=%u",
             waiting.room_id,waiting.host_pilot_id,authenticatedPilot,waiting.player_count,
