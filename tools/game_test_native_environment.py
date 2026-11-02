@@ -553,6 +553,7 @@ def execute_environment(template_path,stage,slot,include_mods,bootstrap_only,reg
     template_path=template_path.resolve();template=template_description(template_path)
     account=next((a for a in template['accounts'] if a['slot']==slot),None)
     if account is None:raise RuntimeError('Choose one of the five prepared account slots.')
+    gt.validate_observer_stage(Path(template['client_template']),stage.resolve(),tuple(include_mods))
     lease=registry.allocate(ROOT/'build/game-test-environments',template['id'])
     driver=NativeDriver(registry);outcome=None
     managed=ManagedEnvironment(registry,lease,driver,ROOT/'build/game-test-receipts')
