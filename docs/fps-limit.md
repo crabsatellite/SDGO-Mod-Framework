@@ -1,4 +1,4 @@
-# FPS cap (Beta)
+# FPS cap
 
 Set the rendering ceiling in **SDGO Mod Manager** while keeping the game's
 native speed. For example, 160 allows rendering up to 160 FPS; logic updates
