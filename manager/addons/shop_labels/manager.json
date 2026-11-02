@@ -7,7 +7,7 @@
     "client"
   ],
   "provider": "shop",
-  "description": "商城物品显示，由配套配置提供内容。",
+  "description": "商城中显示租赁/永久标签和中文选项名。",
   "settings": [
     {
       "id": "showpermanent",

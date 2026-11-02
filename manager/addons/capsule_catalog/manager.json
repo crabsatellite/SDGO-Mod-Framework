@@ -7,7 +7,7 @@
     "client"
   ],
   "provider": "capsules",
-  "description": "扭蛋机目录，由配套配置提供内容。",
+  "description": "显示服主配置的扭蛋机和奖池，需要服主生成的配套资源。",
   "settings": [],
   "presentation": "configurable"
 }

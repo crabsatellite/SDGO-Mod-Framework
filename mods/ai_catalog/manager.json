@@ -7,7 +7,7 @@
     "battle",
     "client"
   ],
-  "description": "使用配套的 AI 机体清单。",
+  "description": "把服务器可出击的机体加入 AI 机体池，需要服主生成的机体清单。",
   "settings": [],
   "presentation": "configurable",
   "provider": "ai_catalog",

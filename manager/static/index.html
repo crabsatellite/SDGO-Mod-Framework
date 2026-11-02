@@ -11,15 +11,17 @@
 <div class="manager-shell">
   <aside class="manager-nav" data-ui-art="plating">
     <a class="brand" href="/" data-ui-mark><span class="brand-text"><b>SDGO</b><span>MOD HANGAR</span></span></a>
-    <div class="mode-badge"><i class="ui-led is-on"></i><span id="mode-label">日常管理</span></div>
+    <div class="mode-badge"><i class="ui-led is-on"></i><span id="mode-label">开发信息已展开</span></div>
     <nav class="nav-groups">
-      <div class="ui-nav-label">HANGAR</div>
+      <div class="ui-nav-label">游戏</div>
       <button class="nav-item ui-nav-item selected" id="nav-mods" data-ui-icon="mods">游戏功能</button>
-      <div class="ui-nav-label provider-label">MANAGEMENT</div>
-      <div id="provider-nav"></div>
-      <div class="ui-nav-label">SYSTEM</div>
-      <button class="nav-item ui-nav-item" id="nav-services" data-ui-icon="services">后台任务</button>
       <button class="nav-item ui-nav-item" id="nav-archive" data-ui-icon="archive">修复归档</button>
+      <div id="owner-group">
+        <div class="ui-nav-label owner-label"><span>服主工具</span><button id="owner-hide" class="owner-link" type="button">收起</button></div>
+        <div id="provider-nav"></div>
+        <button class="nav-item ui-nav-item" id="nav-services" data-ui-icon="services">后台任务</button>
+      </div>
+      <button id="owner-show" class="owner-link owner-show" type="button">我是服主：显示服主工具</button>
     </nav>
     <div class="nav-bottom">
       <button id="change-mode" class="ui-btn is-ghost is-small" data-ui-icon="developer">显示开发信息</button>
@@ -35,9 +37,9 @@
         <h1 id="page-title" class="ui-title">我的 Mod</h1>
       </div>
       <div class="host-tools">
-        <span class="host-label" data-ui-icon="host">TARGET</span>
-        <select id="host-select" class="ui-select" aria-label="选择客户端"></select>
-        <button id="add-host" class="ui-btn is-blue" data-ui-icon="add">添加客户端</button>
+        <span class="host-label" data-ui-icon="host">管理对象</span>
+        <select id="host-select" class="ui-select" aria-label="选择客户端或服务器"></select>
+        <button id="add-host" class="ui-btn is-blue" data-ui-icon="add" title="添加游戏客户端或服务器目录">添加目录</button>
       </div>
     </header>
     <div id="manager-message" class="ui-log" role="status"></div>

@@ -8,5 +8,6 @@
   ],
   "settings": [],
   "presentation": "configurable",
-  "provider": "capsules"
+  "provider": "capsules",
+  "description": "显示服主配置的扭蛋机和奖池，需要服主生成的配套资源。"
 }

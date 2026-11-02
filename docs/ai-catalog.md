@@ -20,11 +20,10 @@ It also works with [extended room titles](https://github.com/crabsatellite/SDGO-
 
 Open **AI 机体清单** (AI catalog) in SDGO Mod Manager:
 
-1. Choose the source: a JSON export of the `GOnlineGame` catalog tables, or the native server INI
-   (reads the database directly).
-2. Choose the matching client folder (the Manager reads its unit and NPC tables) or an extracted
-   `gdrs` folder.
-3. Optional: an owner rules JSON, and the previous `catalog.json` when updating.
+1. Choose the native server INI (the Manager reads the database directly).
+2. Choose the matching client folder (the Manager reads its unit and NPC tables).
+3. A JSON table export, an extracted `gdrs` folder or an owner rules file are developer fields:
+   click **显示开发信息** (show developer info) first.
 4. **检查** (check) only writes a report; **生成** (generate) writes an installable catalog to a new folder.
 5. With the targets stopped, install to the client and to every participating BattleServer.
 6. **导出** (export) creates the player package.
@@ -32,8 +31,9 @@ Open **AI 机体清单** (AI catalog) in SDGO Mod Manager:
 The servers and all participating clients must use the same generated catalog and be switched on or
 off together. Clients without the addon should not join expanded-AI rooms.
 
-Keep `catalog.json`: it records ID allocations, including retired units, and must be passed as the
-previous catalog on every update. Do not commit an owner's generated catalog to the repository.
+Keep `catalog.json`: it records ID allocations, including retired units. Generating again in the
+Manager automatically uses the last generated catalog as the previous one; on the command line it must
+be passed explicitly. Do not commit an owner's generated catalog to the repository.
 
 ## Players: install the exported package
 
