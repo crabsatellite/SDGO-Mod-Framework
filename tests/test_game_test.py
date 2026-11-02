@@ -460,6 +460,30 @@ rva=state
         game_test.atomic_write(run_dir/'run.json',json.dumps(meta))
         with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run_dir)
 
+    def test_random_loadout_retains_native_title_limit_and_immutable_plan(self):
+        run_dir=self.prepare('random-loadout',random_loadout=True)
+        meta=self.metadata(run_dir)
+        self.assertEqual(len(meta['plan']['room_title'].encode('ascii')),20)
+        self.assertEqual(meta['plan']['room_title'],f"{meta['plan']['title_nonce']} !ai e2 a1 !rand")
+        self.assertTrue(game_test.validate_metadata(run_dir)['plan']['random_loadout'])
+        meta['plan']['random_loadout']=False
+        game_test.atomic_write(run_dir/'run.json',json.dumps(meta))
+        with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run_dir)
+        with self.assertRaises(game_test.GameTestError):self.prepare('random-pages',pages_only=True,random_loadout=True)
+
+    def test_collection_draw_is_explicit_and_bound_to_the_same_plan(self):
+        with self.assertRaises(game_test.GameTestError):
+            game_test.required_flow_cases('1',collection_draw=True)
+        base=game_test.required_flow_cases('1',pages_only=True)
+        run_dir=self.prepare('collection-draw',pages_only=True,collection_draw=True)
+        meta=self.metadata(run_dir)
+        self.assertEqual(game_test.required_flow_cases('1',pages_only=True,collection_draw=True),
+                         base+('pages.collection.preview','pages.collection.draw','pages.collection.delivery'))
+        self.assertTrue(game_test.validate_metadata(run_dir)['plan']['collection_draw'])
+        meta['plan']['collection_draw']=False
+        game_test.atomic_write(run_dir/'run.json',json.dumps(meta))
+        with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run_dir)
+
     def test_pages_plan_binds_its_own_cases_and_cannot_claim_battle_acceptance(self):
         run_dir=self.prepare('pages-only',pages_only=True)
         meta=self.metadata(run_dir)

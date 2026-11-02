@@ -461,6 +461,8 @@ public:
         return observed;
     }
 
+    const std::vector<SdgoHangarGameTestUnitV1>& BaselineUnits() const { return beforeUnits_; }
+
     bool HangarAvailable() const
     {
         return bound_ && hangarAvailable_;
