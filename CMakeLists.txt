@@ -514,6 +514,16 @@ if(BUILD_TESTING)
     sdgo_strict(game_test_server_test)
     add_test(NAME game_test_server_offline COMMAND game_test_server_test)
     set_tests_properties(game_test_server_offline PROPERTIES TIMEOUT 30)
+    add_executable(game_test_native_death_probe_test
+                   tests/game_test_native_death_probe_test.cpp)
+    target_link_libraries(game_test_native_death_probe_test PRIVATE sdgo_api)
+    target_include_directories(game_test_native_death_probe_test
+                               PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(game_test_native_death_probe_test)
+    add_test(NAME game_test_native_death_probe_offline
+             COMMAND game_test_native_death_probe_test)
+    set_tests_properties(game_test_native_death_probe_offline
+                         PROPERTIES TIMEOUT 30)
 
     if(SDGO_BUILD_MANAGER)
         add_test(NAME shop_owner_domain_service COMMAND "${CMAKE_BINARY_DIR}/manager-services/ShopUiTests.exe")

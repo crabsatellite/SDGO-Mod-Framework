@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <intrin.h>
 #include <string>
 #include <vector>
 #include <thread>
@@ -308,9 +309,21 @@ int wmain(int argc,wchar_t** argv) {
                 Check(native_world::lastPart==75003,"native melee-only weapon properties select the full-width fighting part on the client");
                 native_world::weapons[1][0x6A]=range1;native_world::weapons[2][0x6A]=range2;
             }
+            auto freshDefenceLifecycle=[&](uintptr_t spawn) {
+                auto attackFsm=native_world::fsms[0].data();
+                auto movementFsm=native_world::movements[0].data();
+                const auto position=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x88);
+                native_world::Put(attackFsm,4,attackFsm+0x20);native_world::Put(attackFsm,8,uint32_t(0));
+                native_world::Put(movementFsm,4,movementFsm+0x20);native_world::Put(movementFsm,8,uint32_t(0));
+                native_world::Put(unit.bytes,0x3078,position);
+                unit.bytes[0x30DC]=0;unit.bytes[0x312A]=0;native_world::Put(unit.bytes,0xDCD,uint16_t(0));
+                unit.Init(reinterpret_cast<void*>(spawn));
+            };
             native_world::Put(native_world::enemy1.data(),0x38,int32_t(0));
             native_world::Put(native_world::nodes[2].data(),0x88,native_world::Vec3{0,0,-500});
-            native_world::Put(unit.bytes,0x3090,native_world::Vec3{-1,0,0});Sleep(90);unit.Think();
+            native_world::Put(unit.bytes,0x3090,native_world::Vec3{-1,0,0});
+            freshDefenceLifecycle(6);
+            Sleep(90);unit.Think();
             auto facing=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x6C);
             Check(facing.z>0.95f&&std::abs(facing.x)>0.01f,"Medium rear defence requests a bounded native scene turn even when old desired cache points elsewhere");
             for(int i=0;i<16;++i) {Sleep(16);unit.Think();}
@@ -320,23 +333,9 @@ int wmain(int argc,wchar_t** argv) {
             native_world::Put(native_world::nodes[1].data(),0x88,native_world::Vec3{0,0,1000});
             native_world::Put(native_world::nodes[2].data(),0x88,native_world::Vec3{0,0,-1000});
             native_world::Put(native_world::nodes[0].data(),0x6C,native_world::Vec3{0,0,1});native_world::Put(unit.bytes,0x3090,native_world::Vec3{0,0,1});
-            int beforeDefenceMoves=native_world::moves,beforeDefencePaths=native_world::pathCalls;Sleep(90);unit.Think();
-            const auto crossfireGoal=*reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078);
-            const bool crossfireMoved=native_world::moves>beforeDefenceMoves&&std::abs(crossfireGoal.x)>1;
-            if(!crossfireMoved) {
-                auto attackFsm=native_world::fsms[0].data(),movementFsm=native_world::movements[0].data();
-                auto attackCurrent=*reinterpret_cast<uint8_t**>(attackFsm+4),attackPending=*reinterpret_cast<uint8_t**>(attackFsm+8);
-                auto movementCurrent=*reinterpret_cast<uint8_t**>(movementFsm+4),movementPending=*reinterpret_cast<uint8_t**>(movementFsm+8);
-                std::printf("DIAG crossfire moves=%d->%d paths=%d->%d goal=(%.3f,%.3f,%.3f) motor=%u attack=(%ld,%ld) movement=(%ld,%ld) slot=%d movingShot=%u\n",
-                    beforeDefenceMoves,native_world::moves,beforeDefencePaths,native_world::pathCalls,
-                    crossfireGoal.x,crossfireGoal.y,crossfireGoal.z,static_cast<unsigned>(unit.bytes[0x30DC]),
-                    attackCurrent?static_cast<long>(attackCurrent-attackFsm):-1L,
-                    attackPending?static_cast<long>(attackPending-attackFsm):-1L,
-                    movementCurrent?static_cast<long>(movementCurrent-movementFsm):-1L,
-                    movementPending?static_cast<long>(movementPending-movementFsm):-1L,
-                    *reinterpret_cast<int*>(attackFsm+0x240),static_cast<unsigned>(native_world::weapons[1][0x8F]));
-            }
-            Check(crossfireMoved,
+            freshDefenceLifecycle(7);
+            int beforeDefenceMoves=native_world::moves;Sleep(90);unit.Think();
+            Check(native_world::moves>beforeDefenceMoves&&std::abs(reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078)->x)>1,
                   "Medium proposes a native lateral route to reduce front/rear crossfire");
             native_world::Put(native_world::nodes[1].data(),0x88,native_world::Vec3{1000,0,0});
             native_world::Put(native_world::nodes[2].data(),0x88,native_world::Vec3{1400,0,100});
@@ -368,7 +367,9 @@ int wmain(int argc,wchar_t** argv) {
             unit.Think();Check(unit.bytes[0x312A]!=0,"Medium waits for special selection commit then requests native attack");
             native_world::Put(pressureMotor,4,pressureMotor+0x20);
             requestSpecial();Check(native_world::attackAdmissions==beforeRequests+1,"legal native special request forwards to original authorization path");
-            native_world::Put(unit.bytes,0x2B68,uint32_t(0x80000014));uint8_t accepted[0x18]={};
+            native_world::Put(unit.bytes,0x2B68,uint32_t(0x80000014));
+            native_world::Put(native_world::enemy1.data(),0x2B68,uint32_t(0x80000001));
+            uint8_t accepted[0x18]={};
             native_world::Put(accepted,6,uint32_t(0x80000014));native_world::Put(accepted,0xA,uint32_t(104));native_world::Put(accepted,0x12,int32_t(20000));
             using NoticeFn=int(__thiscall*)(uint8_t*,const uint8_t*);
             NoticeFn volatile notify=reinterpret_cast<NoticeFn>(native_world::Address(&native_world::Callbacks::SpecialNotice));
@@ -388,7 +389,9 @@ int wmain(int argc,wchar_t** argv) {
             native_world::Put(fsm,4,fsm+0x20);native_world::Put(fsm,8,static_cast<uint8_t*>(nullptr));
             native_world::Put(unit.bytes,0xBC8,int32_t(15000));notify(native_world::document.data(),accepted);unit.Think();
             Check(*reinterpret_cast<int*>(unit.bytes+0xBC8)==15000,"duplicate special notice without a pending request cannot refund NPC SP");
-            uint8_t terminal[0x20]={};native_world::Put(terminal,6,uint32_t(0x80000014));native_world::Put(terminal,0xE,int32_t(0));
+            uint8_t terminal[0x28]={};native_world::Put(terminal,0,uint16_t(606));
+            native_world::Put(terminal,6,uint32_t(0x80000014));native_world::Put(terminal,0xE,int32_t(0));
+            native_world::Put(terminal,0x12,uint32_t(0x80000001));
             NoticeFn volatile meleeNotice=reinterpret_cast<NoticeFn>(native_world::Address(&native_world::Callbacks::MeleeNotice));
             int terminalResult=meleeNotice(native_world::document.data(),terminal);unit.Think();
             Check(terminalResult==0x51B1&&*reinterpret_cast<int*>(unit.bytes+0xBC8)==0,"actual melee completion606 applies authoritative remaining SP through native command18");
@@ -396,13 +399,100 @@ int wmain(int argc,wchar_t** argv) {
                   "authoritative completion immediately restores the ordinary weapon without waiting for a missed busy-state sample");
             native_world::Put(terminal,0xE,int32_t(20000));meleeNotice(native_world::document.data(),terminal);unit.Think();
             Check(*reinterpret_cast<int*>(unit.bytes+0xBC8)==0,"duplicate terminal notification cannot refund a finished special");
+            auto completionResult=native_world::specialResults[0].data();
+            uint32_t completionAction=0x7000;
+            auto stageCompletion=[&](uint32_t damage) {
+                native_world::Put(unit.bytes,0xBC8,int32_t(30000));requestSpecial();
+                notify(native_world::document.data(),accepted);unit.Think();
+                native_world::Put(fsm,4,fsm+0xAC);native_world::Put(fsm,8,static_cast<uint8_t*>(nullptr));
+                native_world::Put(fsm,0x224,++completionAction);fsm[0x9B3]=1;fsm[0x9B5]=0;
+                native_world::Put(native_world::enemy1.data(),0x38,int32_t(1000));
+                native_world::Put(native_world::enemy1.data(),0x9D8,uint32_t(4));
+                native_world::Put(native_world::enemy1.data(),0xEB8,uint32_t(20));
+                memset(completionResult,0,0x24);
+                native_world::Put(completionResult,0x10,damage);
+                native_world::Put(completionResult,0x14,uint32_t(1));
+                native_world::Put(completionResult,0x18,int32_t(1000));
+                native_world::Put(completionResult,0x1C,int32_t(0));
+                native_world::Put(terminal,0xE,int32_t(0));
+                native_world::Put(terminal,0x24,damage);
+                meleeNotice(native_world::document.data(),terminal);unit.Think();
+            };
+            native_world::specialCompletionCalls=0;
+            native_world::Put(fsm,4,fsm+0xAC);native_world::Put(fsm,0x224,++completionAction);
+            fsm[0x9B3]=1;fsm[0x9B5]=0;memset(completionResult,0,0x24);
+            native_world::Put(completionResult,0x14,uint32_t(1));
+            native_world::Put(native_world::enemy1.data(),0x38,int32_t(1000));
+            native_world::Put(native_world::enemy1.data(),0x9D8,uint32_t(4));
+            native_world::Put(native_world::enemy1.data(),0xEB8,uint32_t(20));
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==0&&native_world::specialCompletionCalls==0,
+                  "zero damage without a matched terminal receipt retains the native JBE exit");
+            stageCompletion(0);
+            const unsigned priorMxcsr=_mm_getcsr(),expectedMxcsr=(priorMxcsr&~0x6000u)|0x4000u;
+            _mm_setcsr(expectedMxcsr);
+            double fpValue=123.5,fpRestored=0;
+            __asm { fld qword ptr [fpValue] }
+            int repaired=native_world::InvokeSpecialCompletionGate(fsm);
+            __asm { fstp qword ptr [fpRestored] }
+            Check(repaired==1&&native_world::specialCompletionCalls==1&&native_world::specialCompletionDamage==0&&
+                  fsm[0x9B5]==1&&*reinterpret_cast<uint32_t*>(native_world::enemy1.data()+0x9D8)==2&&
+                  *reinterpret_cast<uint32_t*>(native_world::enemy1.data()+0xEB8)==0,
+                  "matched zero-damage 606 crosses the native JBE and 9B5 branch boundary into fixture completion");
+            Check(native_world::specialCompletionOwner==reinterpret_cast<uintptr_t>(unit.bytes)&&
+                  native_world::specialCompletionResult==reinterpret_cast<uintptr_t>(completionResult)&&
+                  native_world::specialCompletionFsm==reinterpret_cast<uintptr_t>(fsm)&&
+                  native_world::specialCompletionEdx==0x12345678&&native_world::specialCompletionEdi==0x23456789&&
+                  native_world::specialCompletionEbp==0x3456789A&&fpRestored==fpValue&&_mm_getcsr()==expectedMxcsr,
+                  "completion branch HookSite preserves live registers plus x87 and SIMD state");
+            _mm_setcsr(priorMxcsr);
+            fsm[0x9B5]=0;native_world::Put(native_world::enemy1.data(),0x9D8,uint32_t(4));
+            native_world::Put(native_world::enemy1.data(),0xEB8,uint32_t(20));
+            native_world::Put(completionResult,0x10,uint32_t(0));native_world::Put(completionResult,0x14,uint32_t(1));
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==0&&native_world::specialCompletionCalls==1,
+                  "the matched zero-damage receipt is consumed once");
+            stageCompletion(0);native_world::Put(native_world::enemy1.data(),0xEB8,uint32_t(999));
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==0,
+                  "a zero-damage receipt cannot release a victim no longer captured by that caster");
+            stageCompletion(0);native_world::Put(native_world::enemy1.data(),0x38,int32_t(0));
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==0,
+                  "a zero-damage receipt cannot run completion for a dead victim");
+            stageCompletion(0);native_world::Put(fsm,0x224,++completionAction);
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==0,
+                  "a terminal receipt cannot outlive its bound special action");
+            stageCompletion(0);native_world::Put(completionResult,0x14,uint32_t(2));
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==0,
+                  "a terminal receipt cannot release an unmatched result victim");
+            stageCompletion(0);
+            auto replacementResult=native_world::specialResults[1].data();
+            memset(replacementResult,0,0x24);
+            native_world::Put(replacementResult,0x14,uint32_t(1));
+            native_world::Put(fsm,0x9BC,replacementResult);
+            const int beforeReplacement=native_world::specialCompletionCalls;
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==0&&
+                  native_world::specialCompletionCalls==beforeReplacement,
+                  "a terminal receipt cannot follow a replacement result buffer");
+            native_world::Put(fsm,0x9BC,completionResult);
+            stageCompletion(5);
+            const int beforePositive=native_world::specialCompletionCalls;
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==1&&
+                  native_world::specialCompletionCalls==beforePositive+1&&native_world::specialCompletionDamage==5,
+                  "positive damage retains the native branch boundary into fixture completion without a repair receipt");
+            native_world::Put(completionResult,0x10,uint32_t(5));fsm[0x9B5]=1;
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==0&&native_world::specialCompletionCalls==beforePositive+1,
+                  "the native 9B5 applied guard still rejects an already completed result");
+            native_world::Put(fsm,4,fsm+0x20);native_world::Put(fsm,8,static_cast<uint8_t*>(nullptr));
+            fsm[0x9B3]=0;fsm[0x9B5]=0;memset(completionResult,0,0x24);
+            native_world::Put(native_world::enemy1.data(),0x38,int32_t(1000));
+            native_world::Put(native_world::enemy1.data(),0x9D8,uint32_t(1));
+            native_world::Put(native_world::enemy1.data(),0xEB8,uint32_t(0));
+            const int gatedRequests=native_world::attackAdmissions;
             unit.bytes[0x31C4]=1;requestSpecial();unit.bytes[0x31C4]=0;
-            Check(native_world::attackAdmissions==beforeRequests+1,"native special gate rejects explicit unit restriction");
+            Check(native_world::attackAdmissions==gatedRequests,"native special gate rejects explicit unit restriction");
             native_world::Put(native_world::movements[0].data(),0x2C0,int32_t(1));requestSpecial();
-            Check(native_world::attackAdmissions==beforeRequests+1,"native special gate rejects controller override");
+            Check(native_world::attackAdmissions==gatedRequests,"native special gate rejects controller override");
             native_world::Put(native_world::movements[0].data(),0x2C0,int32_t(0));
             native_world::Put(unit.bytes,0xBC8,int32_t(0));requestSpecial();
-            Check(native_world::attackAdmissions==beforeRequests+1,"final native special gate enforces SP, restriction and controller permissions despite NPC overrides");
+            Check(native_world::attackAdmissions==gatedRequests,"final native special gate enforces SP, restriction and controller permissions despite NPC overrides");
             native_world::Put(unit.bytes,0xBC8,int32_t(30000));requestSpecial();notify(native_world::document.data(),accepted);unit.Think();
             NoticeFn volatile rangedNotice=reinterpret_cast<NoticeFn>(native_world::Address(&native_world::Callbacks::RangedNotice));
             native_world::Put(terminal,0xA,int32_t(0));
@@ -782,9 +872,23 @@ int wmain(int argc,wchar_t** argv) {
         native_world::Put(native_world::nodes[0].data(),0x6C,native_world::Vec3{0,0,1});native_world::Put(unit.bytes,0x3090,native_world::Vec3{0,0,1});
         native_world::Put(message,0x3C,uint32_t(2));message[0x19]=1;message[0x1A]=2;
         native_world::EmitContact(native_world::document.data(),20,message,0);
+        const auto hitTypeStarted=GetTickCount64();
+        const int hitTypeRotations=native_world::rotations;
         for(int i=0;i<16;++i) {Sleep(16);unit.Think();}
         shieldFacing=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x6C);
-        Check(shieldFacing.z<-0.98f,"a recent delivered attacker uses message HitType at +1A, not adjacent RangeType +19, when visibility is lost");
+        const bool hitTypeFacing=shieldFacing.z<-0.98f;
+        if(!hitTypeFacing) {
+            std::printf("DIAG hit-type elapsed=%llu rotations=%d->%d facing=(%.3f,%.3f,%.3f) message=(range:%u hit:%u) shield=(%.1f/%.1f type:%u mode:%u) obbDir=(%.3f,%.3f,%.3f)\n",
+                static_cast<unsigned long long>(GetTickCount64()-hitTypeStarted),hitTypeRotations,native_world::rotations,
+                shieldFacing.x,shieldFacing.y,shieldFacing.z,
+                static_cast<unsigned>(message[0x19]),static_cast<unsigned>(message[0x1A]),
+                *reinterpret_cast<float*>(unit.bytes+0x2B70),*reinterpret_cast<float*>(unit.bytes+0x2B74),
+                static_cast<unsigned>(native_world::definitions[0][0x149]),
+                static_cast<unsigned>(native_world::definitions[0][0x14E+*reinterpret_cast<int*>(fsm+0x240)]),
+                native_world::lastObbRay.direction.x,native_world::lastObbRay.direction.y,native_world::lastObbRay.direction.z);
+            Eval("local t=nil; for _,v in ipairs(sample.targets or {}) do if v.id==2 then t=v end end; print(string.format('DIAG hit-type observation attacker=%s hurt=%s targetVisible=%s ranged=%s melee=%s targetHit=%s known=%s', tostring(sample.meleeAttacker),tostring(sample.hurt),tostring(t and t.visible),tostring(t and t.rangedVisible),tostring(t and t.meleeVisible),tostring(t and t.hitType),tostring(t and t.hitKnown)))");
+        }
+        Check(hitTypeFacing,"a recent delivered attacker uses message HitType at +1A, not adjacent RangeType +19, when visibility is lost");
         native_world::blocked=false;native_world::definitions[0][0x149]=0;
         for(uint8_t sideMode:{uint8_t(2),uint8_t(1)}) {
             native_world::definitions[0][0x14E]=sideMode;native_world::definitions[0][0x14F]=sideMode;

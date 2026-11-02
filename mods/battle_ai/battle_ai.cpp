@@ -1,6 +1,7 @@
 // Installs Lua decorators before native CNPC::Think. Native movement, weapons,
 // damage and networking remain the executor. Never reads another process.
 #include <windows.h>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cwchar>
@@ -27,6 +28,8 @@
 #include "sdgo/battle_ai_observer.h"
 
 namespace {
+static_assert(sizeof(SdgoBattleAiUnitSnapshotV1)==168);
+static_assert(offsetof(SdgoBattleAiUnitSnapshotV1,special_zero_completions)==164);
 struct lua_State;
 using LuaFn = int(__cdecl*)(lua_State*);
 using Reader = const char*(__cdecl*)(lua_State*, void*, size_t*);
@@ -90,6 +93,7 @@ StateEventFn g_trackingEntry=nullptr,g_trackingUpdate=nullptr,g_swingEntry=nullp
 StateEventFn g_swingUpdate=nullptr;
 MessageFn g_message=nullptr;
 void* g_contactReturn=nullptr;
+void* g_specialCompletionGateOriginal=nullptr;
 IntentFn g_queueSwing=nullptr,g_faceTarget=nullptr;
 IntentFn g_attackAdmission=nullptr;
 IntentFn g_facingUpdate=nullptr;
@@ -124,6 +128,13 @@ struct DefencePlan {
     bool threatened=false,shielding=false,meleeBusy=false,specialBusy=false,hurt=false;
     bool shieldHitKnown=false;uint8_t shieldHitType=0;
 };
+struct SpecialCompletionReceipt {
+    uint64_t generation=0,acceptedSequence=0,terminalSequence=0;
+    uint8_t* fsm=nullptr;
+    uint8_t* result=nullptr;
+    uint32_t action=0,caster=0,victim=0,damage=0;
+    bool armed=false;
+};
 struct Actor {
     uint64_t generation=0;
     ULONGLONG seen=0,aimAt=0,nextPulse=0;
@@ -154,6 +165,8 @@ struct Actor {
     ULONGLONG specialAcknowledgedAt=0;
     uint64_t specialAcknowledgedSequence=0;
     uint64_t specialFinished=0;
+    SpecialCompletionReceipt specialCompletion;
+    uint64_t zeroCompletionCount=0;
     uint64_t thinkSerial=0;
     uint32_t observedTarget=0,observedFarTargets=0;
     bool observedTargetVisible=false;
@@ -174,6 +187,7 @@ struct Actor {
 };
 std::unordered_map<uint8_t*,Actor> g_actors;
 void ClearStartup(uint8_t*,Actor&,bool);
+bool PlayerBotRulesMode();
 struct Motion { uint8_t* unit=nullptr; Vec3 point,velocity; ULONGLONG at=0; };
 std::unordered_map<uint32_t,Motion> g_motion;
 struct RangedActivity {ULONGLONG time=0,primaryAt=0;uint32_t target=0,weapon=0,primaryTarget=0;uint64_t calls=0,shots=0;};
@@ -191,7 +205,13 @@ thread_local bool g_nativeFallback=false;
 std::atomic<DWORD> g_gameThread{0};
 std::mutex g_pendingMutex;
 std::vector<uint8_t*> g_pendingInit;
-struct SpNotice {uint32_t pilot=0,weapon=0;int32_t value=-1;ULONGLONG time=0;uint64_t sequence=0;bool begin=false,stateOnly=false,finish=false;};
+struct SpNotice {
+    uint32_t pilot=0,weapon=0,victimPilot=0,damage=0;
+    int32_t value=-1;
+    ULONGLONG time=0;
+    uint64_t sequence=0;
+    bool begin=false,stateOnly=false,finish=false,meleeCompletion=false;
+};
 std::mutex g_spMutex;
 std::vector<SpNotice> g_pendingSp;
 std::atomic<uint64_t> g_spSequence{0};
@@ -332,6 +352,89 @@ bool ControlBlocked(uint8_t* unit) {
     for(size_t offset:{size_t(0xD4),size_t(0xE8),size_t(0xFC),size_t(0x110),size_t(0x138)})
         if(battle_ai::native::detail::InState(movement,offset)) return true;
     return false;
+}
+bool ArmMeleeCompletion(uint8_t* unit,Actor& actor,const SpNotice& notice,uint64_t acceptedSequence) {
+    __try {
+        auto generation=g_generations.find(unit);
+        auto fsm=*reinterpret_cast<uint8_t**>(unit+0x9CC);
+        if(generation==g_generations.end()||!actor.generation||actor.generation!=generation->second||
+           !fsm||*reinterpret_cast<uint8_t**>(fsm+4)!=fsm+0xAC||fsm[0x9B5]!=0) return false;
+        auto action=*reinterpret_cast<uint32_t*>(fsm+0x224);
+        auto result=*reinterpret_cast<uint8_t**>(fsm+0x9BC);
+        auto victimId=g_canonical(*g_document,notice.victimPilot);
+        auto victim=FindObject(victimId);
+        if(notice.damage!=0||!action||!result||!victimId||!victim||
+           *reinterpret_cast<int32_t*>(victim+0x38)<=0||
+           *reinterpret_cast<uint32_t*>(result+0x10)!=notice.damage||
+           *reinterpret_cast<uint32_t*>(result+0x14)!=victimId||
+           *reinterpret_cast<uint32_t*>(victim+0x9D8)!=4||
+           *reinterpret_cast<uint32_t*>(victim+0xEB8)!=*reinterpret_cast<uint32_t*>(unit+4)) return false;
+        actor.specialCompletion={actor.generation,acceptedSequence,notice.sequence,fsm,result,action,
+                                 *reinterpret_cast<uint32_t*>(unit+4),victimId,notice.damage,true};
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+}
+bool AllowZeroDamageCompletion(uint8_t* fsm,uint8_t* owner,uint8_t* result) {
+    if(GetCurrentThreadId()!=g_gameThread||!g_runtime.enabled||g_runtime.difficulty<1||
+       g_preparationFault||!PlayerBotRulesMode()) return false;
+    __try {
+        if(!Owned(owner)||!fsm||!result||owner[0xEC8]!=0||*reinterpret_cast<uint8_t**>(owner+0x9CC)!=fsm||
+           *reinterpret_cast<uint8_t**>(fsm+0x9BC)!=result||*reinterpret_cast<uint8_t**>(fsm+4)!=fsm+0xAC||
+           fsm[0x9B3]!=1||fsm[0x9B5]!=0||*reinterpret_cast<uint32_t*>(result+0x10)!=0) return false;
+        auto found=g_actors.find(owner);
+        auto generation=g_generations.find(owner);
+        if(found==g_actors.end()||generation==g_generations.end()) return false;
+        auto& actor=found->second;auto& receipt=actor.specialCompletion;
+        auto action=*reinterpret_cast<uint32_t*>(fsm+0x224);
+        auto caster=*reinterpret_cast<uint32_t*>(owner+4);
+        auto victimId=*reinterpret_cast<uint32_t*>(result+0x14);
+        if(!receipt.armed||!action||receipt.generation!=actor.generation||receipt.generation!=generation->second||
+           receipt.acceptedSequence!=actor.specialAcknowledgedSequence||
+           receipt.terminalSequence!=actor.specialFinished||receipt.fsm!=fsm||receipt.result!=result||
+           receipt.action!=action||
+           receipt.caster!=caster||receipt.victim!=victimId||receipt.damage!=0) return false;
+        auto victim=FindObject(victimId);
+        if(!victim||*reinterpret_cast<int32_t*>(victim+0x38)<=0||
+           *reinterpret_cast<uint32_t*>(victim+0x9D8)!=4||
+           *reinterpret_cast<uint32_t*>(victim+0xEB8)!=caster) return false;
+        receipt.armed=false;++actor.zeroCompletionCount;return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+}
+const DWORD g_specialCompletionDefaultMxcsr=0x1F80;
+void __stdcall DispatchSpecialCompletionGate(BYTE* frame) noexcept {
+    const DWORD error=GetLastError();
+    __try {
+        auto& flags=*reinterpret_cast<DWORD*>(frame+0x20);
+        if((flags&0x40)!=0) {
+            auto fsm=*reinterpret_cast<uint8_t**>(frame+4);
+            auto result=*reinterpret_cast<uint8_t**>(frame+0x18);
+            auto owner=*reinterpret_cast<uint8_t**>(frame+0x1C);
+            if(AllowZeroDamageCompletion(fsm,owner,result)) flags&=~DWORD(0x41);
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    SetLastError(error);
+}
+__declspec(naked) void SpecialCompletionGate() {
+    __asm {
+        pushfd
+        pushad
+        mov eax,esp
+        sub esp,210h
+        and esp,0FFFFFFF0h
+        mov [esp+200h],eax
+        fxsave [esp]
+        fninit
+        ldmxcsr dword ptr [g_specialCompletionDefaultMxcsr]
+        cld
+        mov eax,[esp+200h]
+        push eax
+        call DispatchSpecialCompletionGate
+        fxrstor [esp]
+        mov esp,[esp+200h]
+        popad
+        popfd
+        jmp dword ptr [g_specialCompletionGateOriginal]
+    }
 }
 bool HurtState(uint8_t* unit) {
     uint8_t* movement=nullptr;
@@ -1375,6 +1478,7 @@ void ApplySpNotice(const SpNotice& notice) {
         if(notice.stateOnly) {
             if(notice.finish&&found!=g_actors.end()) {
                 found->second.specialAcknowledged=false;found->second.specialFinished=notice.sequence;
+                found->second.specialCompletion={};
             }
             if(g_spSnapshots.size()>2048) g_spSnapshots.clear();
             g_spSnapshots[unit]={notice.sequence,notice.value};
@@ -1386,10 +1490,12 @@ void ApplySpNotice(const SpNotice& notice) {
         if(notice.begin) {
             if(!notice.weapon||actor.expectedSpecialWeapon!=notice.weapon||notice.time<actor.expectedSpecialAt||notice.time-actor.expectedSpecialAt>3000) return;
             actor.expectedSpecialWeapon=0;actor.specialAcknowledged=true;actor.specialAcknowledgedAt=notice.time;
-            actor.specialAcknowledgedSequence=notice.sequence;
+            actor.specialAcknowledgedSequence=notice.sequence;actor.specialCompletion={};
         } else {
             if(!actor.specialAcknowledged||notice.time<actor.specialAcknowledgedAt||notice.time-actor.specialAcknowledgedAt>60000) return;
-            actor.specialAcknowledged=false;actor.specialFinished=notice.sequence;
+            auto acceptedSequence=actor.specialAcknowledgedSequence;
+            actor.specialAcknowledged=false;actor.specialFinished=notice.sequence;actor.specialCompletion={};
+            if(notice.meleeCompletion) ArmMeleeCompletion(unit,actor,notice,acceptedSequence);
         }
         if(g_spSnapshots.size()>2048) g_spSnapshots.clear();
         g_spSnapshots[unit]={notice.sequence,notice.value};
@@ -1407,6 +1513,19 @@ bool ParseSpNotice(const uint8_t* packet,size_t valueOffset,bool begin,SpNotice&
         return notice.value>=0&&notice.value<=30000;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
+bool ParseMeleeCompletion(const uint8_t* packet,SpNotice& notice,uint64_t sequence) {
+    if(!ParseSpNotice(packet,0xE,false,notice,sequence)) return false;
+    __try {
+        if(*reinterpret_cast<const uint16_t*>(packet)==606) {
+            notice.victimPilot=*reinterpret_cast<const uint32_t*>(packet+0x12);
+            notice.damage=*reinterpret_cast<const uint32_t*>(packet+0x24);
+            notice.meleeCompletion=notice.victimPilot!=0;
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        notice.victimPilot=0;notice.damage=0;notice.meleeCompletion=false;
+    }
+    return true;
+}
 void SubmitSpNotice(const SpNotice& notice) {
     std::lock_guard<std::mutex> lock(g_spMutex);
     if(g_pendingSp.size()>=256) g_pendingSp.erase(g_pendingSp.begin());
@@ -1423,7 +1542,7 @@ int __fastcall SpecialNotice(uint8_t* handler,void*,const uint8_t* packet) {
     int result=g_specialNotice(handler,packet);if(valid) SubmitSpNotice(notice);return result;
 }
 int __fastcall MeleeNotice(uint8_t* handler,void*,const uint8_t* packet) {
-    SpNotice notice;bool valid=ParseSpNotice(packet,0xE,false,notice,NextSpSequence());
+    SpNotice notice;bool valid=ParseMeleeCompletion(packet,notice,NextSpSequence());
     int result=g_meleeNotice(handler,packet);if(valid) SubmitSpNotice(notice);return result;
 }
 int __fastcall RangedNotice(uint8_t* handler,void*,const uint8_t* packet) {
@@ -1978,6 +2097,8 @@ extern "C" __declspec(dllexport) int __cdecl SdgoBattleAiGetUnitSnapshotV1(uint3
         result.captured_by=*reinterpret_cast<uint32_t*>(unit+0xEB8);result.control_blocked=ControlBlocked(unit);result.special_busy=caps.specialBusy;
         result.ai_enabled=unit[0x326C]!=0;
         result.selected_slot=caps.selectedSlot;result.special_finished=actor.specialFinished;
+        result.special_zero_completions=static_cast<uint32_t>(
+            std::min<uint64_t>(actor.zeroCompletionCount,UINT32_MAX));
         auto shot=g_rangedShots.find(unit);if(shot!=g_rangedShots.end()) result.ranged_shots=shot->second.shots;
         auto attack=*reinterpret_cast<uint8_t**>(unit+0x9CC);auto movement=*reinterpret_cast<uint8_t**>(unit+0x9C8);
         result.target_id=attack?*reinterpret_cast<uint32_t*>(attack+0x200):0;
@@ -2000,14 +2121,21 @@ extern "C" __declspec(dllexport) int __cdecl SdgoBattleAiGetUnitSnapshotV1(uint3
         result.movement_state=offset(movement,4);result.movement_pending=offset(movement,8);
         if(attack) {
             result.special_end_event=attack[0x9B3];result.special_result_applied=attack[0x9B5];
-            result.special_result_victim=*reinterpret_cast<uint32_t*>(attack+0x9BC+0x14);
-            result.special_result_ready=*reinterpret_cast<uint32_t*>(attack+0x9BC+0x10);result.special_owner_flag=unit[0xEC8];
+            uint8_t* specialResult=nullptr;
+            if(battle_ai::native::detail::ReadPointer(attack,0x9BC,specialResult)) {
+                battle_ai::native::detail::Read(specialResult,0x14,result.special_result_victim);
+                battle_ai::native::detail::Read(specialResult,0x10,result.special_result_damage);
+            }
+            result.special_owner_flag=unit[0xEC8];
         }
         *output=result;return 1;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return 0;}
 }
 SDGO_MOD_ENTRY {
     g_api = api; g_mod = mod;
+    if(!api||api->version!=SDGO_API_VERSION||
+       api->size<offsetof(SdgoApi,HookSite)+sizeof(api->HookSite)||!api->Symbol||!api->HookSite||
+       !api->Symbol(mod,"combat.special_melee_completion_layout")) return 0;
     if (!Bind(g_lua.state,"lua_tinker.state") || !Bind(g_lua.gettop,"lua.gettop") ||
         !Bind(g_lua.type,"lua.type") || !Bind(g_lua.tonumber,"lua.tonumber") ||
         !Bind(g_lua.settop,"lua.settop") || !Bind(g_lua.tostring,"lua.tostring") ||
@@ -2051,7 +2179,9 @@ SDGO_MOD_ENTRY {
         !api->HookCode(mod,"npc.swing_entry",reinterpret_cast<void*>(&SwingEntry),reinterpret_cast<void**>(&g_swingEntry)) ||
         !api->HookCode(mod,"npc.swing_update",reinterpret_cast<void*>(&SwingUpdate),reinterpret_cast<void**>(&g_swingUpdate)) ||
         !api->HookCode(mod,"um.deliver_message",reinterpret_cast<void*>(&DeliverMessage),reinterpret_cast<void**>(&g_message)) ||
-        !api->HookCode(mod,"combat.projectile_update",reinterpret_cast<void*>(&ProjectileUpdate),reinterpret_cast<void**>(&g_projectile))) return 0;
+        !api->HookCode(mod,"combat.projectile_update",reinterpret_cast<void*>(&ProjectileUpdate),reinterpret_cast<void**>(&g_projectile)) ||
+        !api->HookSite(mod,"combat.special_melee_completion_gate",reinterpret_cast<void*>(&SpecialCompletionGate),
+                       &g_specialCompletionGateOriginal)) return 0;
     api->Log(mod,SDGO_LOG_INFO,"ready: capability-driven local battle bots; native projectiles and collisions");
     return 1;
 }

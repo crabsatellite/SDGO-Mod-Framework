@@ -30,6 +30,7 @@
 #include "sdgo/pvp_ai_client_observer.h"
 #include "scoreboard_actions.h"
 #include "battle_ai_behavior_probe.h"
+#include "native_death_probe.h"
 #include <cwchar>
 
 namespace {
@@ -98,6 +99,7 @@ SdgoPvpAiClientGetStartStatusV1Fn getStartStatus;
 SdgoPvpAiClientGetScoreboardStatusV1Fn getScoreboardStatus;
 ScoreboardActions scoreboardInput;
 BattleAiBehaviorProbe battleAiBehavior;
+NativeDeathProbe nativeDeathProbe;
 uint32_t scoreboardCombatSequence = 0, scoreboardCombatChanges = 0;
 SdgoPvpAiClientScoreboardStatusV1 scoreboardLast{};
 char accountName[32] = {}, accountPassword[128] = {}, roomTitle[21] = {};
@@ -766,6 +768,7 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
     SdgoPvpAiClientSnapshotV1 live{};
     if(Snapshot(live) && live.native_app_state==22) {
         if(!battleAiBehavior.Observe(context,live)) return SDGO_GAME_TEST_FAIL;
+        if(!nativeDeathProbe.Observe(context)) return SDGO_GAME_TEST_FAIL;
         SdgoPvpAiClientScoreboardStatusV1 roster{};
         roster.size = sizeof(roster); roster.version = SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
         if (getScoreboardStatus && getScoreboardStatus(&roster) && roster.battle_start_sequence == activeBattleStartSequence) {
@@ -813,6 +816,7 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
         context->Assert(ended.reply_opcode == 0x0871, "the original client consumed the genuine server battle-end reply");
         context->Assert(1, "Lua observation stayed available with zero errors through the entire real battle");
         battleAiBehavior.Finish(context);
+        nativeDeathProbe.Finish(context);
         context->Assert(scoreboardCombatSequence == activeBattleStartSequence && scoreboardCombatChanges > 0,
             "the native TAB kill/assist/points renderer reflected actual AI combat-counter changes during this full battle");
         const auto combat=battleCombat.State();char evidence[256];
@@ -1785,14 +1789,20 @@ SDGO_GAME_TEST_PROVIDER_ENTRY { return &provider; }
 SDGO_MOD_ENTRY {
     if (!sdgo_test::Open(api, mod, "client")) return 0;
     const bool loaded = LoadPlan();
+    if (!nativeDeathProbe.Install(api,mod)) return 0;
     if (verifyQuietRuntime) {
         if (!quietAudio.Install(api,mod) || (quietLoopback && !quietSockets.Install(api,mod)) ||
             !api->HookImport(mod,"user32.dll","MessageBoxW",reinterpret_cast<void*>(&QuietMessageBoxW),reinterpret_cast<void**>(&originalMessageBoxW)) ||
             !api->HookImport(mod,"user32.dll","MessageBoxA",reinterpret_cast<void*>(&QuietMessageBoxA),reinterpret_cast<void**>(&originalMessageBoxA)))return 0;
         PublishQuietSocketReceipt();
     }
-    // Map 0 selects the game's normal quick-room random-map policy; the
-    // actual map and participants remain provided by the server.
+    // Select the configured map through the normal native room page. Zero
+    // keeps the game's quick-room random-map policy.
+    const int battleMap = api->SettingInt(mod,"BattleMap",0);
+    if (battleMap < 0 || battleMap > UINT16_MAX) {
+        api->Log(mod,SDGO_LOG_ERROR,"invalid native GameTest BattleMap");
+        return 0;
+    }
     if (!loaded) sdgo_test::Fail("invalid private account or native scenario configuration");
     RegisterPlannedCases();
     if (fpsOnly) {
@@ -1803,7 +1813,7 @@ SDGO_MOD_ENTRY {
         accountPassword,
         roomTitle,
         static_cast<uint16_t>(loaded ? (missionMode?missionMode:RequestedMode()) : 1),
-        0,
+        static_cast<uint32_t>(battleMap),
         passwordIsMd5};
     if (!loaded || !actions.Bind(api, mod, config) ||
         (!missionMode && !channels.Bind(api, mod, &actions)) ||

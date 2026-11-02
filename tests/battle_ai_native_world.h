@@ -22,6 +22,7 @@ inline wchar_t title[32]={};
 inline std::array<uint8_t,0x3300> enemy1{},enemy2{},remoteHuman{},sameTeamNpc{};
 inline std::array<std::array<uint8_t,0x1400>,5> definitions{},fsms{};
 inline std::array<std::array<uint8_t,0x1400>,5> movements{};
+inline std::array<std::array<uint8_t,0x24>,5> specialResults{};
 inline std::array<std::array<uint8_t,0x300>,5> nodes{},scenes{};
 inline std::array<std::array<uint8_t,0x100>,5> targetShapes{};
 inline std::array<uint8_t*,5> configuredUnits{};
@@ -88,7 +89,11 @@ struct Callbacks {
             Put(source,0xBC8,*reinterpret_cast<const int32_t*>(packet+0xB));
         return 0x51D0;
     }
-    __declspec(noinline) uint32_t Canonical(uint32_t pilot) {return source&&*reinterpret_cast<uint32_t*>(source+0x2B68)==pilot?20:0;}
+    __declspec(noinline) uint32_t Canonical(uint32_t pilot) {
+        for(auto unit:configuredUnits)
+            if(unit&&*reinterpret_cast<uint32_t*>(unit+0x2B68)==pilot) return *reinterpret_cast<uint32_t*>(unit+4);
+        return 0;
+    }
     __declspec(noinline) void Receive(const uint8_t* message) {
         auto unit=reinterpret_cast<uint8_t*>(this);
         if(*reinterpret_cast<const uint16_t*>(message)==0x18) Put(unit,0xBC8,*reinterpret_cast<const int32_t*>(message+0x10));
@@ -207,6 +212,66 @@ __declspec(naked) inline bool __cdecl EmitContact(uint8_t*,uint32_t,void*,uint32
         ret
     }
 }
+inline int specialCompletionCalls=0;
+inline uint32_t specialCompletionDamage=0;
+inline uintptr_t specialCompletionOwner=0,specialCompletionResult=0,specialCompletionFsm=0;
+inline uint32_t specialCompletionEdx=0,specialCompletionEdi=0,specialCompletionEbp=0;
+// The fixture completion body records the native branch boundary and models
+// its observable cleanup. Full original-finalizer acceptance stays in GameTest.
+__declspec(noinline) inline int __cdecl NativeSpecialCompletion(uint8_t* fsm,uint32_t damage) {
+    ++specialCompletionCalls;specialCompletionDamage=damage;
+    auto result=*reinterpret_cast<uint8_t**>(fsm+0x9BC);
+    auto victimId=*reinterpret_cast<uint32_t*>(result+0x14);
+    for(auto unit:configuredUnits) if(unit&&*reinterpret_cast<uint32_t*>(unit+4)==victimId) {
+        Put(unit,0x9D8,uint32_t(2));Put(unit,0xEB8,uint32_t(0));break;
+    }
+    memset(result,0,0x24);fsm[0x9B5]=1;return 1;
+}
+// Entry is the exact native branch boundary: flags come from result damage
+// compared with zero, then the untouched 9B5 check gates fixture completion.
+__declspec(naked) inline int __cdecl SpecialCompletionGateSite() {
+    __asm {
+        jbe completion_blocked
+        cmp byte ptr [esi+9B5h],1
+        je completion_blocked
+        mov specialCompletionOwner,eax
+        mov specialCompletionResult,ecx
+        mov specialCompletionFsm,esi
+        mov specialCompletionEdx,edx
+        mov specialCompletionEdi,edi
+        mov specialCompletionEbp,ebp
+        push dword ptr [ecx+10h]
+        push esi
+        call NativeSpecialCompletion
+        add esp,8
+        jmp finish
+    completion_blocked:
+        xor eax,eax
+    finish:
+        pop ebp
+        pop edi
+        pop esi
+        pop ebx
+        ret
+    }
+}
+__declspec(naked) inline int __cdecl InvokeSpecialCompletionGate(uint8_t*) {
+    __asm {
+        push ebx
+        push esi
+        push edi
+        push ebp
+        mov esi,dword ptr [esp+14h]
+        xor ebx,ebx
+        mov eax,dword ptr [esi+0B2Ch]
+        mov ecx,dword ptr [esi+09BCh]
+        mov edx,12345678h
+        mov edi,23456789h
+        mov ebp,3456789Ah
+        cmp dword ptr [ecx+10h],ebx
+        jmp SpecialCompletionGateSite
+    }
+}
 __declspec(noinline) inline void __cdecl Free(void* p) {
     ++frees;
     if(p==protectedPath) {VirtualFree(p,0,MEM_RELEASE);protectedPath=nullptr;}
@@ -238,6 +303,7 @@ inline void Encode(uint8_t* unit,size_t perm,size_t bytes,size_t key,float value
 inline void Configure(uint8_t* unit,size_t index,uint32_t id,int team,int hp,float x,float z) {
     memset(unit,0,0x3300);
     auto def=definitions[index].data(),fsm=fsms[index].data(),node=nodes[index].data(),scene=scenes[index].data();
+    specialResults[index].fill(0);
     configuredUnits[index]=unit;unitKinds[index]=0;targetShapes[index].fill(0);
     Put(node,0xD8,static_cast<uint8_t*>(nullptr));Put(node,0xE0,static_cast<uint8_t*>(nullptr));
     Put(unit,0,unitVtable.data());Put(unit,4,id);Put(unit,0x20,team);Put(unit,0x38,hp);Put(unit,0x3C,1000);
@@ -253,7 +319,7 @@ inline void Configure(uint8_t* unit,size_t index,uint32_t id,int team,int hp,flo
         Put(fsm,0x24C+i*0xC8,int16_t(30));Put(fsm,0x254+i*0xC8,int16_t(0));
         Put(fsm,0x258+i*0xC8,weapons[i].data());
     }
-    Put(fsm,4,fsm+0x20);Put(fsm,8,uint32_t(0));Put(fsm,0x240,int32_t(1));Put(fsm,0x248,weapons[1].data());Put(fsm,0xB2C,unit);Put(fsm,0xB30,movement);Put(unit,0xDD0,int32_t(1));
+    Put(fsm,4,fsm+0x20);Put(fsm,8,uint32_t(0));Put(fsm,0x240,int32_t(1));Put(fsm,0x248,weapons[1].data());Put(fsm,0x9BC,specialResults[index].data());Put(fsm,0xB2C,unit);Put(fsm,0xB30,movement);Put(unit,0xDD0,int32_t(1));
     Encode(unit,0xBE1,0xBE5,0xBF5,100);Encode(unit,0xBCC,0xBD0,0xBE0,100);
     unit[0x326C]=1;Put(unit,0x3238,uint32_t(3604001));
     unit[0x3291]=1;
@@ -286,6 +352,8 @@ inline void Initialize(uint8_t* unit,lua_State* L) {
     state=L;source=unit;blocked=coverWall=nullRay=terrainWall=forceObbBlock=false;
     jumps=moves=goalCalls=lastGoalMode=frees=queries=obbCalls=terrainCalls=0;
     stopMotorCalls=message41Calls=0;
+    specialCompletionCalls=0;specialCompletionDamage=0;specialCompletionOwner=specialCompletionResult=specialCompletionFsm=0;
+    specialCompletionEdx=specialCompletionEdi=specialCompletionEbp=0;
     lastObbRay={};lastTerrainRay={};configuredUnits.fill(nullptr);unitKinds.fill(0);
     wall.fill(0);
     unitVtable[1]=Address(&Callbacks::UnitIsA);
@@ -351,6 +419,15 @@ inline void Symbols(FILE* f,void(*symbol)(FILE*,const char*,void*,bool)) {
     symbol(f,"collision.ray_obb",reinterpret_cast<void*>(&Obb),false);
     symbol(f,"collision.ray_sphere",reinterpret_cast<void*>(&Sphere),false);
     auto base=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    auto site=[&](const char* name,void* address) {
+        std::fprintf(f,"[%s]\nkind=site\nrva=0x%08lX\nexpect=",name,
+                     static_cast<unsigned long>(reinterpret_cast<uintptr_t>(address)-base));
+        auto bytes=static_cast<const unsigned char*>(address);
+        for(int i=0;i<16;++i) std::fprintf(f,"%02X ",bytes[i]);
+        std::fprintf(f,"\n\n");
+    };
+    site("combat.special_melee_completion_layout",reinterpret_cast<void*>(&InvokeSpecialCompletionGate));
+    site("combat.special_melee_completion_gate",reinterpret_cast<void*>(&SpecialCompletionGateSite));
     std::fprintf(f,"[game.document]\nkind=data\nrva=0x%08lX\n\n",static_cast<unsigned long>(reinterpret_cast<uintptr_t>(&documentPointer)-base));
 }
 }
