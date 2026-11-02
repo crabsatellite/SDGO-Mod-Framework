@@ -21,7 +21,9 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
     }
     auto* unit = find(*manager, 1);
     if (!unit) return SDGO_GAME_TEST_WAIT;
-    auto* move = *reinterpret_cast<unsigned char**>(unit + 0x9cc);
+    // Native unit command 0x1d reads unit[0x272] before calling 006D8B90.
+    // unit+9CC is the attack FSM; the movement/transform FSM is unit+9C8.
+    auto* move = *reinterpret_cast<unsigned char**>(unit + 0x9c8);
     auto* spec = *reinterpret_cast<unsigned char**>(unit + 0x9c4);
     if (!move || !spec || *reinterpret_cast<unsigned char**>(move + 0x21c) != unit) {
         static bool reported=false;
