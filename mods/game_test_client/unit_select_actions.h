@@ -1275,22 +1275,28 @@ private:
             targetGroup > maximumGroup)
             return Publish(kTargetPageMismatch);
 
-        const wchar_t* controlName = nullptr;
-        if (targetGroup < currentGroup)
-            controlName = L"LeftBtn";
-        else if (targetGroup > currentGroup)
-            controlName = L"RightBtn";
-        else if (targetPage < currentPage)
-            controlName = L"LeftOneBtn";
-        else if (targetPage > currentPage)
-            controlName = L"RightOneBtn";
-        else
+        const wchar_t* dispatchName = nullptr;
+        const wchar_t* anchorName = nullptr;
+        if (targetGroup < currentGroup) {
+            dispatchName = L"LeftBtn";
+            anchorName = dispatchName;
+        } else if (targetGroup > currentGroup) {
+            dispatchName = L"RightBtn";
+            anchorName = dispatchName;
+        } else if (targetPage < currentPage) {
+            dispatchName = L"LeftOneBtn";
+            anchorName = L"LeftBtn";
+        } else if (targetPage > currentPage) {
+            dispatchName = L"RightOneBtn";
+            anchorName = L"RightBtn";
+        } else {
             return Publish(kWaitingForFullUnit);
+        }
 
         void* control =
             FindControl(
                 root,
-                controlName,
+                anchorName,
                 kButtonControlKind);
         if (!control)
             return Publish(kPageControlMissing);
@@ -1301,19 +1307,47 @@ private:
                 kControlParent) != root ||
             !ControlHasName(
                 control,
-                controlName))
+                anchorName))
             return Publish(kPageControlMismatch);
 
         // This is the shipped stdcall callback at unitmgr vtable +0x38.
-        // Its return value is always zero and is not completion evidence.
-        // The callback may also reject the action while a page request is
-        // pending, so subsequent polls must observe native page/full state.
-        unitManagerCallback_(
-            unitManager,
-            kClickEvent,
+        // The current shipped UIR exposes the root-owned group arrows but not
+        // the legacy one-page arrow controls. The callback ABI validates the
+        // fourth-argument control's root, then dispatches the independent
+        // third-argument native name through the original business method.
+        // Use a real directional button as that validated anchor and construct
+        // only the retained one-page dispatch name. No control or page state is
+        // synthesized. The callback return is always zero and is not evidence
+        // of completion.
+        alignas(4) uint8_t nativeDispatchName[
+            kNativeWStringSize] = {};
+        bool dispatchNameConstructed = false;
+        const void* nativeName =
             controlBytes +
-                kControlName,
-            control);
+            kControlName;
+        __try {
+            if (std::wcscmp(
+                    dispatchName,
+                    anchorName) != 0) {
+                dispatchNameConstructed =
+                    nativeWStringCtor_(
+                        nativeDispatchName,
+                        dispatchName) != nullptr;
+                if (!dispatchNameConstructed)
+                    return Publish(kNativeFault);
+                nativeName =
+                    nativeDispatchName;
+            }
+            unitManagerCallback_(
+                unitManager,
+                kClickEvent,
+                nativeName,
+                control);
+        } __finally {
+            if (dispatchNameConstructed)
+                nativeWStringDtor_(
+                    nativeDispatchName);
+        }
         const int32_t observedPage =
             *reinterpret_cast<const int32_t*>(
                 managerBytes +

@@ -65,7 +65,7 @@ void* g_unitManagerVtable[32] = {};
 void* g_wrongVtable[32] = {};
 uint8_t g_unitRoot = 0;
 uint8_t g_unitList[0x280] = {};
-uint8_t g_pageControls[4][0x180] = {};
+uint8_t g_pageControls[2][0x180] = {};
 uint8_t g_rows[kFixtureSlots][0x40] = {};
 uint8_t g_rowControls[kFixtureSlots][0x180] = {};
 uint8_t g_unitInfo[0x80] = {};
@@ -102,6 +102,7 @@ unsigned g_controlLookups = 0;
 unsigned g_pageCallbackCalls = 0;
 uint32_t g_lastControlKind = UINT32_MAX;
 wchar_t g_lastPageControl[32] = {};
+wchar_t g_lastPageAnchor[32] = {};
 
 void Check(bool condition, const char* message)
 {
@@ -423,11 +424,9 @@ void* __fastcall FakeServiceFindByName(
         : nullptr;
 }
 
-const wchar_t* const kPageControlNames[4] = {
+const wchar_t* const kPageControlNames[2] = {
     L"LeftBtn",
     L"RightBtn",
-    L"LeftOneBtn",
-    L"RightOneBtn",
 };
 
 void* PageControlByName(
@@ -436,7 +435,7 @@ void* PageControlByName(
     if (!name)
         return nullptr;
     for (size_t index = 0;
-         index < 4;
+         index < 2;
          ++index) {
         if (std::wcscmp(
                 name,
@@ -498,15 +497,21 @@ uint32_t __stdcall FakeUnitManagerCallback(
     ++g_pageCallbackCalls;
     const wchar_t* name =
         ReadNativeString(nativeName);
+    const wchar_t* anchorName =
+        control
+            ? ReadNativeString(
+                  static_cast<uint8_t*>(
+                      control) +
+                  0x118)
+            : nullptr;
     const bool valid =
         service == g_unitManager &&
         event == 0x101 &&
         control &&
         name &&
-        nativeName ==
-            static_cast<uint8_t*>(control) +
-                0x118 &&
-        PageControlByName(name) == control &&
+        anchorName &&
+        PageControlByName(anchorName) ==
+            control &&
         *reinterpret_cast<void**>(
             static_cast<uint8_t*>(control) +
             0x15C) == &g_unitRoot;
@@ -519,6 +524,11 @@ uint32_t __stdcall FakeUnitManagerCallback(
         name,
         31);
     g_lastPageControl[31] = L'\0';
+    std::wcsncpy(
+        g_lastPageAnchor,
+        anchorName,
+        31);
+    g_lastPageAnchor[31] = L'\0';
     if (g_pageCallbackPending)
         return 0;
 
@@ -988,7 +998,7 @@ void ResetFixture(
         g_unitList + 0x118,
         L"UnitList");
     for (size_t index = 0;
-         index < 4;
+         index < 2;
          ++index) {
         *reinterpret_cast<void**>(
             g_pageControls[index] +
@@ -1074,6 +1084,10 @@ void ResetFixture(
         g_lastPageControl,
         0,
         sizeof(g_lastPageControl));
+    std::memset(
+        g_lastPageAnchor,
+        0,
+        sizeof(g_lastPageAnchor));
 }
 
 void TestBindFailures(
@@ -1540,6 +1554,10 @@ void TestPreRequestBoundaries(
             std::wcscmp(
                 g_lastPageControl,
                 L"RightOneBtn") == 0 &&
+            std::wcscmp(
+                g_lastPageAnchor,
+                L"RightBtn") == 0 &&
+            g_lastControlKind == 4 &&
             g_pageCallbackAbiValid &&
             g_pageCallbackCalls == 1 &&
             g_mouseCalls == 0 &&
@@ -1575,6 +1593,10 @@ void TestNativePageNavigation(
             std::wcscmp(
                 g_lastPageControl,
                 L"RightOneBtn") == 0 &&
+            std::wcscmp(
+                g_lastPageAnchor,
+                L"RightBtn") == 0 &&
+            g_lastControlKind == 4 &&
             g_pageCallbackAbiValid &&
             g_pageCallbackCalls == 1 &&
             g_mouseCalls == 0 &&
@@ -1610,6 +1632,9 @@ void TestNativePageNavigation(
             std::wcscmp(
                 g_lastPageControl,
                 L"LeftOneBtn") == 0 &&
+            std::wcscmp(
+                g_lastPageAnchor,
+                L"LeftBtn") == 0 &&
             g_pageCallbackCalls == 1 &&
             g_businessCalls == 0,
         "an earlier target page uses the shipped LeftOneBtn direction without selecting early");
@@ -1632,6 +1657,9 @@ void TestNativePageNavigation(
                 g_unitManager + 0x74) == 5 &&
             std::wcscmp(
                 g_lastPageControl,
+                L"RightBtn") == 0 &&
+            std::wcscmp(
+                g_lastPageAnchor,
                 L"RightBtn") == 0 &&
             g_pageCallbackCalls == 1,
         "a target in another five-page group uses RightBtn instead of six one-page requests");
@@ -1665,6 +1693,9 @@ void TestNativePageNavigation(
                 g_unitManager + 0x74) == 0 &&
             std::wcscmp(
                 g_lastPageControl,
+                L"LeftBtn") == 0 &&
+            std::wcscmp(
+                g_lastPageAnchor,
                 L"LeftBtn") == 0,
         "reverse cross-group navigation uses the shipped LeftBtn business");
 
@@ -1720,7 +1751,7 @@ void TestNativePageNavigation(
     actions.Reset();
     ResetFixture(1, 7);
     *reinterpret_cast<void**>(
-        g_pageControls[3] +
+        g_pageControls[1] +
         0x15C) =
             g_unitManager;
     Check(
@@ -1735,7 +1766,7 @@ void TestNativePageNavigation(
     actions.Reset();
     ResetFixture(1, 7);
     WriteNativeString(
-        g_pageControls[3] +
+        g_pageControls[1] +
             0x118,
         L"WrongPageBtn");
     Check(
@@ -1747,7 +1778,7 @@ void TestNativePageNavigation(
 
     actions.Reset();
     ResetFixture(1, 7);
-    g_pageControls[3][0x162] = 0;
+    g_pageControls[1][0x162] = 0;
     Check(
         actions.Poll(kSeventhUid) ==
                 UnitSelectActions::
@@ -1757,7 +1788,7 @@ void TestNativePageNavigation(
 
     actions.Reset();
     ResetFixture(1, 7);
-    g_pageControls[3][0x167] = 0;
+    g_pageControls[1][0x167] = 0;
     Check(
         actions.Poll(kSeventhUid) ==
                 UnitSelectActions::
