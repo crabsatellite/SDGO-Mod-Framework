@@ -29,6 +29,7 @@
 #include "fps_test_actions.h"
 #include "sdgo/pvp_ai_client_observer.h"
 #include "scoreboard_actions.h"
+#include "sealed_room_title.h"
 #include <cwchar>
 
 namespace {
@@ -262,6 +263,7 @@ bool LoadPlan() {
         const std::wstring expectedTitle(roomTitle,roomTitle+strlen(roomTitle));
         if(expectedTitle!=actualTitle)return false;
     }
+    if (!missionMode && !ReadSealedRoomTitle(job,roomTitle)) return false;
     retryCount = static_cast<unsigned>(GetPrivateProfileIntW(L"run", L"retry_count", 1, job.c_str()));
     if (retryCount < 1 || retryCount > 2) return false;
     expectFirstFailure = GetPrivateProfileIntW(L"run", L"expect_first_fail", 0, job.c_str()) != 0;
