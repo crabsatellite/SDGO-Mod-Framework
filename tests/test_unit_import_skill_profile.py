@@ -46,26 +46,21 @@ class UnitImportSkillTarget1132Tests(unittest.TestCase):
         self.assertFalse(result["admission"]["native_runtime_accepted"])
 
     def test_unknown_dispatch_is_preserved_and_fails_closed(self):
-        source = source_record(71097, 165)
-        target = projected(source)
-        result = profile.validate_projected_record(
-            source=source,
-            target=target,
-            skill_id=71097,
-            source_row=362,
-            source_sha256=hashlib.sha256(source).hexdigest(),
-            target_sha256=hashlib.sha256(target).hexdigest(),
-        )
-
-        self.assertEqual(target[1131], 165)
-        self.assertFalse(result["dispatch"]["supported"])
-        self.assertTrue(
-            result["admission"]["dispatch_compatibility_blocked"]
-        )
-        self.assertIn(
-            "dispatch value is outside the observed target branch domain",
-            result["admission"]["blockers"],
-        )
+        for skill_id, dispatch in ((71097, 165), (71135, 107)):
+            with self.subTest(skill_id=skill_id, dispatch=dispatch):
+                source = source_record(skill_id, dispatch)
+                target = projected(source)
+                result = profile.validate_projected_record(
+                    source=source, target=target, skill_id=skill_id, source_row=362,
+                    source_sha256=hashlib.sha256(source).hexdigest(),
+                    target_sha256=hashlib.sha256(target).hexdigest(),
+                )
+                self.assertEqual(target[1131], dispatch)
+                self.assertFalse(result["dispatch"]["supported"])
+                self.assertTrue(result["admission"]["dispatch_compatibility_blocked"])
+                self.assertTrue(result["admission"]["native_registration_blocked"])
+                self.assertIn("dispatch value is outside the observed target branch domain",
+                              result["admission"]["blockers"])
 
     def test_target_only_capacity_and_hash_drift_are_rejected(self):
         source = source_record()
