@@ -92,7 +92,16 @@ class BackendBackgroundProcess(WindowsBackgroundProcess):
         return receipt
 
 def emit(phase,**values): print(json.dumps({'phase':phase,**values}),flush=True)
-def write(path,value): game_test.atomic_write(path,json.dumps(value,indent=2))
+def write(path,value):
+    # Readers/antivirus can briefly hold Windows JSON files. A private temp
+    # name also avoids colliding with a previous controller's interrupted write.
+    for attempt in range(20):
+        try:
+            atomic_bytes(path,json.dumps(value,indent=2).encode('utf-8'))
+            return
+        except PermissionError:
+            if attempt==19:raise
+            time.sleep(.05)
 def literal(value): return "N'"+value.replace("'","''")+"'"
 def docker(*args,env=None,input=None,timeout=180):
     r=subprocess.run(['docker',*args],env=env,input=input if input is not None else '',text=True,capture_output=True,
