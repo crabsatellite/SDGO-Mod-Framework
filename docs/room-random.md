@@ -1,87 +1,90 @@
 # Per-round random owned loadouts (Beta)
 
-Add the standalone token `!rand` or `!random` to a room title. Every human is
-assigned a new loadout from their own eligible inventory each round. Single-unit
-modes retain that unit through respawns. Native deck modes 6/7 get distinct owned serials,
-at most four slots and exactly ten native points. When alternatives exist, the next
-round excludes the previous model or model set. Insufficient inventories cancel
-the whole start; they never borrow another account's units or silently use eight points.
+[简体中文](room-random.zh-CN.md)
 
-This feature needs `room_random` on BattleServer and `room_random_client` on every
-participating client. It uses native constructors and messages and does not update
-`GoUserUnitNum`, inventory or saved decks. AI mods retain their own pools.
-The core's shared room-command service scopes arguments to each command. Both
-`!rand !ai3 lv4` and `!ai3 lv4 !rand` work; keep AI options immediately after
-`!ai`, before the next `!command`. Native short titles retain their 20-byte limit.
-For longer descriptive names, enable [extended room titles](room-titles.md) on clients,
-Agents and Battle servers and update `room_random` plus the AI Mods you use. For example:
-`Friendly practice for newcomers !ai e2 a1 lv4 !rand` (128 Unicode scalars / 512 UTF-8 bytes maximum).
-The whole title is read, including commands after byte 20; randomization itself remains server-side.
-Title transport does not install or enable the AI or random-loadout features.
-See [combined commands](room-commands.md).
+Add the standalone token `!rand` or `!random` to a room title. Every human in the room gets a new
+loadout from **their own hangar** each round, without leaving or recreating the room. Commands are
+case-insensitive.
 
-`!ai !rand` is valid. The server sends native `0x0861` full-unit and, for deck modes,
-`0x098B` full-ship notifications before `0x06C3` battle start. Version 0.1.5 alone
-was insufficient in real gameplay: the 3D room handles those notices as queued
-commands. Client 0.1.8 updated the visible 3D cache, but live testing still created
-the old model from a separate pre-start snapshot. Client 0.1.9 also supplies the
-shared native human converter with a private complete source matched to this
-round's start entry and owner. It preserves unit UIDs, skills, appearance and full
-decks without overwriting the frozen snapshot. Failed starts and teardown restore originals.
-The mission retest confirmed a changed controlled unit, matching the server and
-native factory logs. Client 0.1.10 removes that temporary factory observer; the
-functional dispatch and human-construction hooks remain. Full PvP, multiplayer,
-respawn and reward-persistence acceptance is still pending.
+| mod | host | part |
+|---|---|---|
+| `room_random` | battle server | draws each human's unit or deck at round start |
+| `room_random_client` | client | applies the round's result to the client's start data |
 
-Server 0.1.7 also retires stale bookkeeping when a disconnect/abort skipped the
-resource-release callback. It requires the native setup's cleared human pilot
-records before accepting the next round, preserves newly populated selections
-and rejects overwriting genuinely live loadouts. This prevents a stale round
-from causing `ERR_BATTLE_START_FAIL` on re-entry.
+Both are required: `room_random` on BattleServer and `room_random_client` on every participating client.
 
-Close the client and run its existing `update.bat` / `update-client.ps1`. Player
-updates come from the client repository's `main` through Git/Codeup; the host
-publishes the matching server runtime to the server repository. Then use the
-normal launcher. No extra client settings or separate patch archive is needed.
-Mod Manager retains normal feature enablement and server-owner configuration.
+## Room-title commands
 
-The 3D path does not use the legacy profile room pointer. It resolves the current
-3D manager and calls the native room/slot accessors; mission and ordinary room
-layouts differ. The runtime fixture covers a null legacy pointer and a separate
-mission-slot layout. Missing live context remains a logged rejection.
-The final converter resolves its supplied model directly, including after a
-scene transition. A missing notice, changed owner/room/start entry or incomplete
-deck leaves the native source unchanged.
+Combinations such as `!ai !rand`, `!ai3 lv4 !rand` and `!rand !ai e2 a1 lv4` work. Separate commands with
+spaces and keep AI options right after `!ai`, before the next `!command`; see
+[combined commands](room-commands.md). AI keep their own pools.
 
-The optional command `build/Release/room_random_test.exe D:/Server/BattleServer.exe D:/Client/GOnline.exe`
-executes the actual server model-selection and client cache-copy instructions
-in private fixture memory, without game entry points, imports or networking.
-Beyond the confirmed mission model change, other modes, weapon/skill fidelity,
-respawn, multiplayer and reward persistence remain manual acceptance.
-The real core/DLL regression also covers frozen mission/PvP sources and complete
-deck conversion. Supply a local client to execute the authenticated native source
-selection and model/attribute projection spans as well:
+Native titles are limited to 20 bytes. With [extended room titles](room-titles.md) on clients, Agents and
+Battle servers and updated `room_random` and AI mods, titles of up to 128 Unicode scalars / 512 UTF-8
+bytes are read in full, for example `Friendly practice for newcomers !ai e2 a1 lv4 !rand`.
 
-```powershell
-powershell -File tests/room_random_client_runtime_test.ps1 -GameExe "D:\Client\GOnline.exe"
-```
+Without the command, rounds use the native sortie flow.
 
-The incremental installer updates core and already installed `pvp_ai` / `coop_ai`
-DLLs together, preserving their manifests and settings. It does not install missing
-AI mods. Updated mods also share the same SDK parser when run under an older core.
+## Rules
 
-See [the Chinese guide](room-random.zh-CN.md) for host configuration, installation,
-the exact supported executable, source evidence, limits and manual acceptance.
-Automatic checks are not live multiplayer proof.
-The feature is catalogued as `gameplay` / `room-random` / `beta` / `room-title`.
-Category installers can select `-Features room-random`; the category, feature and
-per-mod switches retain their normal precedence. Keep both components enabled;
-AI composition retains the AI mods' existing client requirements.
+- Single-unit modes (normal, death match, leader, missions): one unit per round, kept through respawns.
+- Native deck modes 6/7: distinct owned serials, at most four slots and **exactly ten points**
+  (usually C=2, B=3, A=4, S=5), e.g. `5+5`, `5+3+2`, `4+4+2`, `4+3+3`, `4+2+2+2`, `3+3+2+2`.
+- Room rank limits and C-only rules apply to every human's candidates; native ready, team, mode and
+  battleship checks still apply.
+- Disabled, expired, out-of-energy, training or non-sortie units are never drawn. Locked units (sale
+  protection) can be drawn.
+- When alternatives exist, the next round avoids the previous model or model set.
+- If any player has no usable unit or cannot reach ten points, the whole start is cancelled. C-only
+  decks reach at most eight points.
+
+The result applies to this round only; `GoUserUnitNum`, inventory, saved decks and locks are not changed.
+Drawn units keep their level, upgrades, skills, paint, emblem, experience and serial.
+
+## Install
+
+Friend-server players close the client and run `update.bat`; the client part has no settings.
+
+The server supports `BattleServer-548A891D-0046C000` with the framework installed. Stop the target
+BattleServer, then:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\install_room_random.ps1 `
   -ServerRoot "D:\Server\BattleServer1" -DatabaseIni "D:\Server\WorldServer\WorldServer.ini"
 ```
 
-Install into a stopped instance with the mod framework already installed. The
-incremental package includes no game files, account data or database credentials.
+Install on every BattleServer that hosts rooms. The installer also updates already installed
+`pvp_ai` / `coop_ai` DLLs to the shared title parser, keeping their settings; it does not install
+missing AI mods or start/stop services. Replaced files are backed up to `sdgo/backups/room_random/`.
+
+## Settings
+
+Set **原生服务器 INI 路径** (the WorldServer INI) under **每局随机机体** in SDGO Mod Manager. Only the
+path is stored, never the credentials; keep it and `config.ini` out of client packages. Driver, query
+timeout and per-player row limit are developer settings. The 32-bit `SQL Server` ODBC driver is used.
+
+## Developer notes
+
+The mod runs one read-only, parameterized hangar query for the whole room before the native start
+validation, computes every human's plan, then feeds it to the native human battle constructor; any
+failure restores everything. Releasing battle pilots restores the room's original sortie data, and
+respawns do not redraw. Decks are enumerated by dynamic programming over exact ten-point sets. All four
+native human start paths (normal/mission, AI 11, AI 12, 13/14, the last with its own outer entry) are
+covered. If a disconnect skipped the release callback, the previous round's cache is retired only after
+the native start has cleared the human pilot records, which prevents `ERR_BATTLE_START_FAIL` on re-entry.
+
+The server sends native `0x0861` full-unit records and, for modes 6/7, `0x098B` full-ship records before
+the `0x06C3` battle start, to humans and observers only. The client's 3D room queues those notices and
+builds units from a separate frozen start snapshot, so updating the visible cache is not enough.
+`room_random_client` syncs the cache after the native message dispatcher and, at the human construction
+entry, supplies a private copy of the complete record matched to this round's start entry, room and owner;
+the frozen snapshot is not modified. The 3D path resolves the room through the current 3D manager, not
+the legacy profile room pointer; mission and normal rooms store slots differently. A missing notice or a
+changed owner, room or start entry leaves the native input unchanged and is logged.
+
+Logs: server `native loadout notices queued`; client `battle start cache` and
+`human construction ... snapshot ... -> ...`.
+
+Tests: `ctest`, plus `room_random_test.exe <BattleServer.exe> <GOnline.exe>`,
+`tests/room_random_client_runtime_test.ps1 -GameExe <GOnline.exe>` and
+`tests/room_random_install_test.ps1 -NativeExe <BattleServer.exe>` with locally supplied executables.
