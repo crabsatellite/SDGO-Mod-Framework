@@ -14,7 +14,7 @@
 // input-limit write, native room write, packet synthesis or fake reply is used.
 class RoomTitleActions {
 public:
-    enum Surface { PvpCreate, PvpRename, MissionCreate, MissionSettings, MissionRename, PvpGridCreate, PvpTeamCreate, TeamSettings };
+    enum Surface { PvpCreate, PvpRename, MissionCreate, MissionSettings, MissionRename, PvpGridCreate, PvpTeamCreate, TeamSettings, TeamRename };
     bool Bind(const SdgoApi* api,SdgoMod* mod,NativeActions* actions) {
         api_=api;mod_=mod;actions_=actions;
         manager_=Symbol<void**>("flow.service_managed_pointer");
@@ -54,12 +54,13 @@ public:
     }
     bool Leave(const SdgoGameTestContextV1* context) {
         if(actions_->AppState()==6)return true;
-        void* menu=Service("flow.wait_menu_vtable");
-        for(size_t off:{0x44u,0x48u,0x4Cu}) {
-            void* root=Root(menu,off);
-            if(!Readable(root,0x238))continue;
-            for(const auto* name:{L"ExitBtn",L"ExitRoomBtn",L"LeaveRoomBtn",L"RoomOutBtn"})
-                if(Click(menu,root,name)){context->Observe("clicked native room-exit control");return false;}
+        // These are verified room-header roots, not arbitrary readable fields
+        // in the bottom unit/start menu (whose +0x4C is a static control).
+        for(const auto& entry:std::array<std::pair<const char*,size_t>,3>{{
+            {"title_test.team_titlebar_vtable",0x48},{"title_test.coop_titlebar_vtable",0x44},
+            {"room_titles.ui_titlebar_vtable",0x48}}}) {
+            void* owner=Service(entry.first);void* root=Root(owner,entry.second);
+            if(Click(owner,root,L"ExitBtn")){context->Observe("clicked native room-header exit control");return false;}
         }
         return false;
     }
@@ -155,7 +156,8 @@ private:
     }
     static bool IsPvpCreate(Surface s){return s==PvpCreate||s==PvpGridCreate;}
     static bool IsVsCreate(Surface s){return IsPvpCreate(s)||s==PvpTeamCreate;}
-    static const char* DialogSymbol(Surface s){return s==TeamSettings?"title_test.team_settings_vtable": s==PvpTeamCreate?"title_test.team_create_vtable":s==PvpGridCreate?"title_test.grid_create_vtable":s==PvpCreate?"title_test.pvp_create_vtable":s==MissionCreate?"title_test.mission_create_vtable":s==MissionSettings?"title_test.mission_settings_vtable":"title_test.rename_vtable";}
+    static bool IsTeamSettings(Surface s){return s==TeamSettings||s==TeamRename;}
+    static const char* DialogSymbol(Surface s){return IsTeamSettings(s)?"title_test.team_settings_vtable": s==PvpTeamCreate?"title_test.team_create_vtable":s==PvpGridCreate?"title_test.grid_create_vtable":s==PvpCreate?"title_test.pvp_create_vtable":s==MissionCreate?"title_test.mission_create_vtable":s==MissionSettings?"title_test.mission_settings_vtable":"title_test.rename_vtable";}
     void Observe(const SdgoGameTestContextV1* c,const char* stage,Surface s)const {
         char line[192];sprintf_s(line,"room-title surface=%u stage=%s app=%u phase=%u input=%u",s,stage,actions_->AppState(),phase_,inputIndex_);c->Observe(line);
     }
@@ -166,20 +168,21 @@ private:
             if(lobby&&static_cast<uint8_t*>(lobby)[0x64]!=3)return Click(lobby,root,L"MultiRadio",12);
             return Click(lobby,root,L"MakeRoomBtn");
         }
-        if(s==MissionSettings||s==TeamSettings){
-            void* menu=Service("flow.wait_menu_vtable");
-            for(size_t off:{0x44u,0x48u,0x4Cu}){void* root=Root(menu,off);if(Click(menu,root,L"SettingBtn"))return true;}
-            return false;
+        if(s==MissionSettings||IsTeamSettings(s)){
+            void* bar=Service(IsTeamSettings(s)?"title_test.team_titlebar_vtable":"title_test.coop_titlebar_vtable");
+            if(Click(bar,Root(bar,IsTeamSettings(s)?0x48:0x44),L"SettingBtn"))return true;
+            bar=Service("room_titles.ui_titlebar_vtable");
+            return Click(bar,Root(bar,0x48),L"OptionBtn");
         }
         void* bar=Service("room_titles.ui_titlebar_vtable");return Click(bar,Root(bar,0x48),L"TitleChangeBtn");
     }
     bool Close(Surface s) {
-        void* root=Root(dialog_,s==TeamSettings?0x7C:s==MissionSettings?0x5C:IsVsCreate(s)?0x50:0x4C);
-        for(const auto* name:{L"MakeCancelBtnW",L"SettingCancelBtn",L"CancelBtn",L"TitleCancelBtn",L"CloseBtn"})if(Click(dialog_,root,name))return true;
+        void* root=Root(dialog_,IsTeamSettings(s)?0x7C:s==MissionSettings?0x5C:IsVsCreate(s)?0x50:0x4C);
+        for(const auto* name:{L"MakeCancelBtnW",L"SettingCancelBtn",L"CancelBtn",L"TitleCancelBtn",L"CloseBtnW",L"CloseBtn"})if(Click(dialog_,root,name))return true;
         return false;
     }
     bool Submit(Surface s) {
-        void* root=Root(dialog_,s==TeamSettings?0x7C:s==MissionSettings?0x5C:IsVsCreate(s)?0x50:0x4C);
+        void* root=Root(dialog_,IsTeamSettings(s)?0x7C:s==MissionSettings?0x5C:IsVsCreate(s)?0x50:0x4C);
         for(const auto* name:{L"SettingOkBtn",L"OkBtn",L"TitleOkBtn",L"ConfirmBtn"})if(Click(dialog_,root,name))return true;
         return false;
     }
@@ -198,13 +201,13 @@ private:
             if(s==MissionCreate&&!Service("title_test.mission_lobby_vtable")){MissionEntry();return SDGO_GAME_TEST_WAIT;}
             void* live=Service(DialogSymbol(s));
             if(!live){
-                if(!opened_ || s==MissionCreate || s==MissionSettings || s==TeamSettings || s==PvpRename || s==MissionRename){
+                if(!opened_ || s==MissionCreate || s==MissionSettings || IsTeamSettings(s) || s==PvpRename || s==MissionRename){
                     if(Open(s)){opened_=true;Observe(c,"open-requested",s);}
                 }
                 if(++polls_%300==0){Observe(c,"waiting-for-native-service",s);DumpServices(c);}
                 return SDGO_GAME_TEST_WAIT;
             }
-            dialog_=live;void* root=Root(live,s==TeamSettings?0x7C:s==MissionSettings?0x5C:IsVsCreate(s)?0x50:0x4C);
+            dialog_=live;void* root=Root(live,IsTeamSettings(s)?0x7C:s==MissionSettings?0x5C:IsVsCreate(s)?0x50:0x4C);
             // Registration/Init precedes the native state-3 update that creates
             // controls, fills defaults and shows this dialog. Observe readiness.
             if(IsPvpCreate(s)&&(!Readable(live,0x48)||*reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(live)+0x44)<4))return SDGO_GAME_TEST_WAIT;

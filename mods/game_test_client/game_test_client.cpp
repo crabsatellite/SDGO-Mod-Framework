@@ -1405,6 +1405,7 @@ int __cdecl TitleMissionCreate(const SdgoGameTestContextV1* c){
     }
     return roomTitles.Poll(RoomTitleActions::MissionCreate,c);
 }
+int __cdecl TitleTeamRename(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::TeamRename,c);}
 int __cdecl TitleTeamSettings(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::TeamSettings,c);}
 int __cdecl TitleMissionSettings(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::MissionSettings,c);}
 int __cdecl TitleMissionRename(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::MissionRename,c);}
@@ -1419,7 +1420,7 @@ const SdgoGameTestCaseV1 titleCases[]={
     {"room_titles.pvp.leave",60000,&TitleLeave},
     {"room_titles.team.create",120000,&TitleTeamCreate},
     {"room_titles.team.settings",120000,&TitleTeamSettings},
-    {"room_titles.team.rename",120000,&TitlePvpRename},
+    {"room_titles.team.rename",120000,&TitleTeamRename},
     {"room_titles.team.leave",60000,&TitleLeave},
     {"room_titles.grid.create",120000,&TitleGridCreate},
     {"room_titles.grid.rename",120000,&TitlePvpRename},
@@ -1526,9 +1527,9 @@ void PublishQuietSocketReceipt(bool force) {
     const auto temporary=path+L".tmp";
     FILE* file=_wfopen(temporary.c_str(),L"wb");
     if (!file)return;
-    fprintf(file,"[run]\nid=%s\n[policy]\npid=%lu\nactive=%u\nloopback_only=%u\n[sockets]\nbinds=%u\nredirected=%u\nfailed=%u\nescaped=%u\n[audio]\nactive=%u\nopened=%u\nmuted=%u\nfailed=%u\n",
+    fprintf(file,"[run]\nid=%s\n[policy]\npid=%lu\nactive=%u\nloopback_only=%u\n[sockets]\nbinds=%u\nredirected=%u\nfailed=%u\nescaped=%u\n[audio]\nactive=%u\nopened=%u\nmuted=%u\nfailed=%u\nopen_failed=%u\n",
         sdgo_test::runId.c_str(),GetCurrentProcessId(),observed.active,quietLoopback ? 1u:0u,observed.binds,observed.redirected,observed.failed,observed.escaped,
-        audio.active,audio.opened,audio.muted,audio.failed);
+        audio.active,audio.opened,audio.muted,audio.failed,audio.open_failed);
     fprintf(file,"[graphics]\nactive=%u\nworker_ready=%u\ndispatch_failures=%u\ncreated_devices=%u\nfailed_devices=%u\ncreate_hresult=%ld\npresents=%u\nproxy_hwnd=%lu\nproxy_visible=%u\nproxy_noactivate=%u\nproxy_toolwindow=%u\nproxy_appwindow=%u\n",
         graphics.active,graphics.worker_ready,graphics.dispatch_failures,graphics.created_devices,graphics.failed_devices,
         static_cast<long>(graphics.last_create_hresult),graphics.presents,reinterpret_cast<unsigned long>(graphics.proxy_hwnd),

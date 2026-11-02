@@ -594,7 +594,8 @@ class QuietRuntime:
         if guard.getint('audio','active',fallback=0)!=1 or opened<1:return None
         if guard.getint('audio','muted',fallback=0)!=opened or guard.getint('audio','failed',fallback=0):
             raise GameTestError('native Miles audio drivers did not verify zero master volume')
-        proof.update(audio_driver='native_miles_waveout',audio_drivers_opened=opened,audio_drivers_muted=opened)
+        proof.update(audio_driver='native_miles_waveout',audio_drivers_opened=opened,audio_drivers_muted=opened,
+                     native_audio_open_failures=guard.getint('audio','open_failed',fallback=0))
         network_verified=self.firewall.get('status')=='installed'
         if self.firewall.get('status')=='loopback_only':
             if (guard.getint('policy','loopback_only',fallback=0)!=1 or
