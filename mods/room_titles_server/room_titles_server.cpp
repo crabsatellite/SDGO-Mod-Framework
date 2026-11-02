@@ -66,6 +66,8 @@ void** g_teamPool = nullptr;
 void** g_battlePool = nullptr;
 std::unique_ptr<server::ServerState> g_state;
 bool g_active = false;
+const SdgoApi* g_api = nullptr;
+SdgoMod* g_mod = nullptr;
 
 constexpr std::uint16_t kCreateTeam = 0x0640;
 constexpr std::uint16_t kCreateBattle = 0x0525;
@@ -849,6 +851,9 @@ int ForwardSend(void* self,
         return g_send(self, destination, packet, size, flags);
     const std::uint16_t opcode = Word(packet);
     DispatchContext* context = g_context;
+    if (g_api && context && context->opcode == kCreateTeam)
+        g_api->Log(g_mod, SDGO_LOG_DEBUG,
+            "title create Battle response opcode=%04X bytes=%d destination=%u", opcode, size, destination);
     if (g_sendGate.context == context && g_sendGate.packet == packet &&
         g_sendGate.destination == destination &&
         g_sendGate.opcode == opcode)
@@ -1052,6 +1057,9 @@ int __cdecl Dispatch(DWORD argument0,
         return g_dispatch(argument0, argument1, connection, packet, size);
     const std::uint16_t opcode = Word(packet);
     const std::size_t expected = ExactRequestBytes(opcode);
+    if (g_api && opcode == kCreateTeam)
+        g_api->Log(g_mod, SDGO_LOG_DEBUG,
+            "title create Battle dispatch connection=%u bytes=%d", connection, size);
     const bool passiveVariable =
         opcode == kMissionConversion || opcode == kPvpConversion;
     bool nativeDispatched = false;
@@ -1112,11 +1120,27 @@ int __cdecl Dispatch(DWORD argument0,
         DispatchContext context;
         if (!PrepareContext(&context, opcode, pilot, nativePacket,
                             nativeSize, messagePointer, body, bodySize)) {
+            if (g_api && opcode == kCreateTeam)
+                g_api->Log(g_mod, SDGO_LOG_DEBUG, "title create Battle context rejected metadata=%u", messagePointer != nullptr);
             if (messagePointer)
                 return 1;
             return g_dispatch(argument0, argument1, connection, packet, size);
         }
         context.route = static_cast<std::uintptr_t>(connection);
+        // Native channel admission can move the same Agent client connection
+        // to another Battle provider after its lobby Hello. A validated fresh
+        // SetTitle create is itself an explicit protocol offer from the pilot
+        // stamped by the Agent. Bind it here; its exact create ACK confirms
+        // this provider to the client. Never bootstrap an existing-room edit.
+        if (context.kind == ContextKind::Create && context.extended) {
+            if (!g_state->HasCapability(pilot) &&
+                !g_state->BeginCapabilityRound(pilot, context.route))
+                return 1;
+            // Changing an existing Agent route requires an explicit Hello.
+            // Do not erase completed create deduplication on an implicit rebind.
+            if (!g_state->HasCapability(pilot, context.route))
+                return 1;
+        }
         if (context.kind == ContextKind::Hello &&
             !g_state->BeginCapabilityRound(pilot, context.route) &&
             !g_state->HasCapability(pilot, context.route))
@@ -1126,6 +1150,10 @@ int __cdecl Dispatch(DWORD argument0,
             const server::RequestDecision decision =
                 g_state->BeginRequest(
                     pilot, message.request_id, opcode, body, bodySize);
+            if (g_api && opcode == kCreateTeam)
+                g_api->Log(g_mod, SDGO_LOG_DEBUG,
+                    "title create Battle request=%u disposition=%u", message.request_id,
+                    static_cast<unsigned>(decision.disposition));
             switch (decision.disposition) {
             case server::RequestDisposition::Proceed:
                 break;
@@ -1146,6 +1174,9 @@ int __cdecl Dispatch(DWORD argument0,
         nativeDispatched = true;
         DispatchScoped(g_dispatch, argument0, argument1, connection,
                        nativePacket, static_cast<int>(nativeSize), &context);
+        if (g_api && opcode == kCreateTeam)
+            g_api->Log(g_mod, SDGO_LOG_DEBUG,
+                "title create Battle native returned committed=%u completed=%u", context.committed, context.request_completed);
         if (context.mutation && !context.request_completed) {
             if (context.committed) {
                 g_state->CompleteRequest(
@@ -1603,6 +1634,8 @@ const SdgoRoomTitleApi* __cdecl SdgoRoomTitleApiV1()
 
 SDGO_MOD_ENTRY
 {
+    g_api = api;
+    g_mod = mod;
     try {
         g_state = std::make_unique<server::ServerState>(MakeEpoch());
     } catch (const std::bad_alloc&) {

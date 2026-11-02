@@ -44,6 +44,7 @@ public:
         kStartQueued = 16,
         kStartRequestSent = 17,
         kBattleStartConsumed = 18,
+        kCreateDialogReady = 19,
 
         kInvalidMode = 0x100,
         kInvalidTitle = 0x101,
@@ -386,6 +387,7 @@ public:
         topEntryInvoked_ = false;
         makeRoomInvoked_ = false;
         createDialogObserved_ = false;
+        prepareOnly_ = false;
         createControlKind_=0;createControlFlags_=0;
         nativeMainVtable_=0;nativeCommandVtable_=0;nativeMainState_=UINT32_MAX;
         nativeContextFlags_=0;
@@ -405,7 +407,8 @@ public:
     // multiplayer mission flow. A different mode/title requires Reset().
     Result EnsureRoom(
         uint16_t mode,
-        const char* roomTitle)
+        const char* roomTitle,
+        bool submit = true)
     {
         if (!bound_ || !native_)
             return Publish(kUnbound);
@@ -418,6 +421,7 @@ public:
                 requestedMode_ == mode
                     ? kInvalidTitle
                     : kInvalidMode);
+        prepareOnly_ = !submit;
 
         if (InterlockedCompareExchange(
                 &createReplyConsumed_, 0, 0) != 0)
@@ -822,6 +826,7 @@ public:
         case kStartQueued: return "start-queued";
         case kStartRequestSent: return "start-request-sent";
         case kBattleStartConsumed: return "battle-start-consumed";
+        case kCreateDialogReady: return "create-dialog-ready";
         case kInvalidMode: return "invalid-mode";
         case kInvalidTitle: return "invalid-title";
         case kTopMenuMismatch: return "top-menu-mismatch";
@@ -1344,6 +1349,11 @@ private:
             return kCyclingMission;
         }
 
+        if (prepareOnly_) {
+            void* edit=FindControl(root,L"GameRoomNameEdit",kEditKind);
+            const auto ready=InspectCreateControl(root,edit,L"GameRoomNameEdit",2);
+            return ready==kRoomReady ? kCreateDialogReady : ready;
+        }
         if (!titleSet_) {
             void* edit = FindControl(
                 root,
@@ -2400,6 +2410,7 @@ private:
     bool topEntryInvoked_ = false;
     bool makeRoomInvoked_ = false;
     bool createDialogObserved_ = false;
+    bool prepareOnly_ = false;
     uint32_t createControlKind_=0,createControlFlags_=0;
     uint32_t nativeMainVtable_=0,nativeCommandVtable_=0,nativeMainState_=UINT32_MAX;
     uint32_t nativeContextFlags_=0;

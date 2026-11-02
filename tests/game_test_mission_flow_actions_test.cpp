@@ -1615,6 +1615,23 @@ void TestBoundaryAndTopEntry(
         "original JoinChannel built 0x04FA and entered native pending state");
 }
 
+void TestCreationDialogHandoff(MissionFlowActions& actions)
+{
+    ResetFixture(actions, 0);
+    Check(OpenCreateDialog(actions, 5), "native mission admission opens the dialog before typed-input handoff");
+    Check(actions.EnsureRoom(5, "mission-ai", false) == MissionFlowActions::kCyclingMission,
+          "typed-input preparation still selects the requested real mission mode");
+    ApplyPendingDescriptor();
+    Check(actions.EnsureRoom(5, "mission-ai", false) == MissionFlowActions::kCreateDialogReady &&
+              g_setTitle[0] == L'\0' && !actions.PollSnapshot().create_submitted,
+          "dialog handoff neither assigns the title nor submits a request before keyboard tests");
+    Check(actions.EnsureRoom(5, "mission-ai", false) == MissionFlowActions::kCreateDialogReady &&
+              g_setTitle[0] == L'\0',
+          "repeated preparation keeps the original mission dialog ready for real character input");
+    Check(actions.EnsureRoom(5, "mission-ai") == MissionFlowActions::kSettingRoomTitle,
+          "the existing complete mission flow retains its default submission behavior");
+}
+
 void TestCompleteMode5Flow(
     MissionFlowActions& actions)
 {
@@ -2554,6 +2571,7 @@ int main()
 
     TestBoundaryAndTopEntry(actions);
     TestChannelListReadiness(actions);
+    TestCreationDialogHandoff(actions);
     TestCompleteMode5Flow(actions);
     TestStartRejectAndLatchedSend(actions);
     TestMode8AndMissionWrap(actions);

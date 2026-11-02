@@ -1037,6 +1037,32 @@ void TestUncertainTitleRecovery()
           "legacy recovery completes only after its full authoritative title returns");
 }
 
+void TestBareListRefreshKeepsConfirmedTitle()
+{
+    ResetRoot();
+    const uint32_t room = kBattleDomainForTest | 9;
+    const std::string full = "confirmed native title beyond twenty bytes";
+    Check(Ready(94, 9200, {Record(9200, room, 1, 1, full)}),
+          "bare-refresh fixture has confirmed extended title support");
+    auto bare = NativePacket(ReceiveSize(kRoomList), kRoomList);
+    OnReceive(94, bare.data(), bare.size(), nullptr, 0);
+    Check(g_state.IsReady(94) && g_state.Query(94, room)->title == full,
+          "an unsolicited legacy list update cannot erase the confirmed full title");
+    const auto refresh = g_state.BeginHello(94, GetTickCount64());
+    OnReceive(94, bare.data(), bare.size(), nullptr, 0);
+    Check(g_state.IsNegotiating(94) && g_state.Query(94, room)->title == full,
+          "a bare list broadcast cannot consume the outstanding capability nonce");
+    metadata::SnapshotBatch batch;
+    batch.server_epoch = 9200;
+    batch.request_id = refresh.request_id;
+    batch.rooms.push_back(Record(9200, room, 1, 1, full));
+    std::vector<uint8_t> body;
+    Check(metadata::EncodeSnapshotBatchBody(batch, &body), "matching capability refresh encodes");
+    OnReceive(94, bare.data(), bare.size(), body.data(), body.size());
+    Check(g_state.IsReady(94) && !g_state.IsNegotiating(94) && g_state.Query(94, room)->title == full,
+          "the actual matching refresh still completes after an interleaved native broadcast");
+}
+
 void TestAutoCreateCapability()
 {
     ResetRoot();
@@ -1204,6 +1230,7 @@ void RunTests()
     TestNegotiatingDraft();
     TestMissionTitleEventRetry();
     TestUncertainTitleRecovery();
+    TestBareListRefreshKeepsConfirmedTitle();
     TestAutoCreateCapability();
     ResetRoot();
     const uint32_t room = kBattleDomainForTest | 5;
@@ -1230,16 +1257,57 @@ void RunTests()
           "another room never inherits the previous room difficulty");
     Put32(joined.data() + 6, 5);
     OnReceive(111, joined.data(), joined.size(), nullptr, 0);
-    auto left = NativePacket(2, 0x087A);
+    auto leaveAck = NativePacket(8, 0x057B);
+    Put16(leaveAck.data()+6, 1);
+    OnReceive(111, leaveAck.data(), leaveAck.size(), nullptr, 0);
+    Check(SdgoRoomTitleCurrentV1(copy, sizeof(copy)) == full.size(),
+          "a rejected native leave preserves the active room's confirmed title");
+    Put16(leaveAck.data()+6, 0);
+    OnReceive(112, leaveAck.data(), leaveAck.size(), nullptr, 0);
+    Check(SdgoRoomTitleCurrentV1(copy, sizeof(copy)) == full.size(),
+          "another connection's leave ACK cannot clear this room's title");
+    OnReceive(111, leaveAck.data(), leaveAck.size(), nullptr, 0);
+    Check(ReceiveSize(0x057B) == 8 && SdgoRoomTitleCurrentV1(copy, sizeof(copy)) == 0,
+          "the real successful 057B leave ACK deactivates the previous room's full title");
+    OnReceive(111, joined.data(), joined.size(), nullptr, 0);
+    auto left = NativePacket(6, 0x087A);
     OnReceive(111, left.data(), left.size(), nullptr, 0);
     Check(SdgoRoomTitleCurrentV1(copy, sizeof(copy)) == 0,
           "leaving the room stops the AI title provider");
 }
 }  // namespace
 
+void TestCreateSnapshotCarrier()
+{
+    Draft draft;
+    draft.opcode = 0x0640;
+    auto packet = NativePacket(0x21FC, 0x0A33);
+    Put32(packet.data() + 6, 9);
+    metadata::Message snapshot;
+    snapshot.kind = metadata::MessageKind::Snapshot;
+    snapshot.room_id = 9;
+    Check(CreateSnapshotMatchesCarrier(draft, packet.data(), packet.size(), snapshot),
+          "a mission create snapshot is bound to the actual 0A33 native room ID");
+    snapshot.room_id = 10;
+    Check(!CreateSnapshotMatchesCarrier(draft, packet.data(), packet.size(), snapshot),
+          "a full-title snapshot cannot confirm another native room");
+    snapshot.room_id = 9 | kBattleDomain;
+    Check(!CreateSnapshotMatchesCarrier(draft, packet.data(), packet.size(), snapshot),
+          "a mission create ACK cannot be rebound to the Battle room domain");
+    draft.opcode = 0x0525;
+    Check(!CreateSnapshotMatchesCarrier(draft, packet.data(), packet.size(), snapshot),
+          "a PvP create cannot complete on a mission create carrier");
+    packet = NativePacket(0x3CE1, 0x0918);
+    Put32(packet.data() + 6, 9);
+    Check(CreateSnapshotMatchesCarrier(draft, packet.data(), packet.size(), snapshot) &&
+              !CreateSnapshotMatchesCarrier(draft, packet.data(), 8, snapshot),
+          "a PvP create requires the complete 0918 carrier and its native Battle-domain identity");
+}
+
 int main()
 {
     RunTests();
+    TestCreateSnapshotCarrier();
     std::printf("%s: %d failure(s)\n",
                 g_failures ? "FAIL" : "PASS", g_failures);
     return g_failures ? 1 : 0;

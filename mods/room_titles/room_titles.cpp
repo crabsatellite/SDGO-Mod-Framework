@@ -250,6 +250,8 @@ bool Prepare(ui::Surface surface, const std::wstring& text)
 void Submit(SubmitFn original, void* service, ui::Surface surface)
 {
     try {
+        if (g_api && g_api->Log) g_api->Log(g_mod, SDGO_LOG_DEBUG,
+            "native title submit hook surface=%u", static_cast<unsigned>(surface));
         void* edit = ui::FindRoomNameEdit(service, surface);
         std::wstring title;
         if (!edit || !ui::ReadEditText(edit, &title)) {
@@ -418,6 +420,10 @@ transport::SendDecision BeforeSend(uint32_t connection, const uint8_t* packet, s
     }
     Lock lock;
     g_state.AdvanceTime(connection, GetTickCount64());
+    if (g_api && g_api->Log && (opcode==0x0640 || opcode==0x0525))
+        g_api->Log(g_mod, SDGO_LOG_DEBUG,
+            "native title create send connection=%u active=%u opcode=%04X bytes=%u draft=%u",
+            connection, g_activeConnection, opcode, static_cast<unsigned>(size), static_cast<unsigned>(g_drafts.count(connection)));
     const auto parsed = metadata::ParseTrailer(packet, size);
     if (parsed.status == metadata::TrailerStatus::Valid)
         return transport::SendDecision::Pass; // a native deferred queue already owns this extension
@@ -510,6 +516,7 @@ size_t ReceiveSize(uint16_t opcode, const uint8_t* packet = nullptr, size_t size
     case 0x091F: return 0x13E;
     case 0x06BA: return 0x1C;
     case 0x087A: return 6;
+    case 0x057B: return 8; // native leave-room ACK, including its result word
     default: return 0;
     }
 }
@@ -525,6 +532,21 @@ uint16_t ErrorOpcode(uint16_t request)
     }
 }
 
+bool CreateSnapshotMatchesCarrier(const Draft& draft, const uint8_t* packet, size_t size,
+                                  const metadata::Message& message)
+{
+    if (!packet || message.kind != metadata::MessageKind::Snapshot)
+        return false;
+    const bool battle = draft.opcode == 0x0525;
+    if ((!battle && draft.opcode != 0x0640) ||
+        size != (battle ? 0x3CE1u : 0x21FCu) ||
+        Word(packet) != (battle ? 0x0918 : 0x0A33))
+        return false;
+    const auto nativeId = Dword(packet + 6);
+    return nativeId && !(nativeId & kBattleDomain) &&
+        message.room_id == (nativeId | (battle ? kBattleDomain : 0));
+}
+
 void OnReceive(uint32_t connection, const uint8_t* packet, size_t size, const uint8_t* body, size_t bodySize)
 {
     if (!packet || size < 2)
@@ -537,8 +559,17 @@ void OnReceive(uint32_t connection, const uint8_t* packet, size_t size, const ui
     if (body && bodySize) {
         metadata::Message message;
         metadata::SnapshotBatch batch;
-        if (metadata::DecodeMessageBody(body, bodySize, &message))
-            g_state.AcceptMessage(connection, message);
+        if (metadata::DecodeMessageBody(body, bodySize, &message)) {
+            const bool createReply = previous && previous->status == titles::PendingStatus::Awaiting &&
+                previous->request.room_id == 0 && message.kind == metadata::MessageKind::Snapshot &&
+                message.request_id == previous->request.request_id;
+            const auto draft = g_drafts.find(connection);
+            if (createReply && (draft == g_drafts.end() ||
+                !CreateSnapshotMatchesCarrier(draft->second, packet, size, message)))
+                g_state.FailPending(connection, message.request_id, titles::ClientError::TransportError);
+            else
+                g_state.AcceptMessage(connection, message);
+        }
         else if (metadata::DecodeSnapshotBatchBody(body, bodySize, &batch))
             g_state.AcceptBatch(connection, batch);
         if (!g_state.HasPending(connection)) {
@@ -548,10 +579,13 @@ void OnReceive(uint32_t connection, const uint8_t* packet, size_t size, const ui
                 g_drafts.erase(draft);
             }
         }
-    } else if ((opcode == 0x0617 || opcode == 0x0824 || opcode == 0x0709 || opcode == 0x0916 ||
-                ((opcode == 0x0A33 || opcode == 0x054E || opcode==0x0918) && g_state.IsNegotiating(connection))) &&
+    } else if (g_state.IsNegotiating(connection) &&
+               (((opcode == 0x0709 || opcode == 0x0916) && size == 8 && Word(packet + 6) != 0) ||
+                opcode == 0x0A33 || opcode == 0x054E || opcode == 0x0918) &&
                !g_state.HasPending(connection) && !g_drafts.count(connection)) {
-        // A bare list response proves this path did not negotiate the extension.
+        // Explicit failure or a bare bootstrap-create reply cannot authorize
+        // extended titles. Ordinary untagged list broadcasts are independent
+        // of the outstanding nonce and must not erase a valid confirmation.
         g_state.DropConnection(connection);
     } else if ((opcode == 0x0A33 || opcode==0x0918 || opcode == 0x0809 || opcode == 0x06BA) && g_state.HasPending(connection)) {
         const auto pending = g_state.Pending(connection);
@@ -577,10 +611,15 @@ void OnReceive(uint32_t connection, const uint8_t* packet, size_t size, const ui
     } else if (size >= 10 && (opcode == 0x0550 || opcode==0x0918 || opcode == 0x0680 || opcode == 0x086F)) {
         g_activeConnection = connection;
         g_activeRoom = Dword(packet + 6) | kBattleDomain;
-    } else if (opcode == 0x087A && connection == g_activeConnection) {
+    } else if ((opcode == 0x087A || (opcode == 0x057B && size == 8 && Word(packet + 6) == 0)) &&
+               connection == g_activeConnection) {
+        const auto previousRoom = g_activeRoom;
         g_activeRoom = 0;
         g_state.CancelPending(connection);
         g_drafts.erase(connection);
+        for (auto& saved : g_saved)
+            if (previousRoom && saved.valid && saved.connection == connection && saved.room == previousRoom)
+                saved = SavedDraft{};
     }
     }
     // A notice may run a Windows message loop. Never show it while owning the

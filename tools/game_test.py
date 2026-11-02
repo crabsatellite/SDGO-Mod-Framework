@@ -36,6 +36,8 @@ import importlib.util
 
 SCHEMA_VERSION = 2
 OWNED_BUILD_ROOT=Path(__file__).resolve().parents[1]/'build'
+if str(OWNED_BUILD_ROOT.parent) not in sys.path:
+    sys.path.insert(0, str(OWNED_BUILD_ROOT.parent))
 HOST_KEY = "GOnline-54BE1568-00C97000"
 GAME_EXE = "GOnline.exe"
 STARTUP_EVENT_NAME = "9YOU SDGO"
@@ -178,7 +180,7 @@ def git_source_ref(root: Path) -> dict:
             check=True,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=30,
         ).stdout.strip()
         status = subprocess.run(
             ["git", "status", "--porcelain"],
@@ -186,7 +188,7 @@ def git_source_ref(root: Path) -> dict:
             check=True,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=30,
         ).stdout
         return {"commit": commit, "dirty": bool(status.strip())}
     except (OSError, subprocess.SubprocessError):
@@ -1457,7 +1459,7 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         if mission_mode is not None or collection_draw or shop_catalog:
             raise GameTestError('room-title input scope cannot contain mission combat or shop operations')
         selection=('setup.active_unit',) if play_unit_uid is not None else ()
-        return FLOW_CASES[:3]+selection+tuple('room_titles.'+x for x in ('pvp.create','pvp.rename','pvp.leave','team.create','team.settings','team.rename','team.leave','grid.create','grid.rename','grid.leave','mission.create','mission.settings','mission.rename','mission.leave'))
+        return FLOW_CASES[:3]+selection+tuple('room_titles.'+x for x in ('pvp.create','pvp.rename','pvp.leave','grid.create','grid.rename','grid.leave','mission.create','mission.rename','mission.leave','team.create','team.native_view','team.leave','start.create','start.rename','start'))
     selection = ('setup.active_unit',) if play_unit_uid is not None else ()
     if mission_mode is not None:
         if mode_sequence != "1":
@@ -1771,7 +1773,7 @@ def write_job(
     write_ini(directory / "run.ini", run)
 
 
-def read_public_plan(root: Path) -> dict:
+def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
     parser = read_ini(root / "sdgo" / "gametest" / "run.ini")
     try:
         run = parser["run"]
@@ -1916,6 +1918,12 @@ def read_public_plan(root: Path) -> dict:
                 play_unit_uid, shop_catalog=shop_plan is not None, room_titles_only=room_titles_only,
             )
 
+        if historical_cases:
+            recorded_cases = tuple(run["required_cases"].split(','))
+            if (not recorded_cases or len(recorded_cases) > 256 or len(set(recorded_cases)) != len(recorded_cases) or
+                any(not re.fullmatch(r'[a-z][a-z0-9_.]{0,127}', case) for case in recorded_cases)):
+                raise ValueError('invalid historical native case contract')
+            expected_cases = recorded_cases
         if (
             run["role"] != "client"
             or run["normal_flow"] != "1"
@@ -2505,6 +2513,15 @@ def prepare(
         recording = configure_sfx_only(client) if sfx_only else None
         if quiet:configure_muted_audio(client)
         if fps_only:configure_fps_test(client, fps_cap)
+        if room_titles_only:
+            # Bind protocol diagnostics before collecting immutable hashes.
+            # The runner must never toggle logging in a sealed client.
+            settings_path = client / "sdgo" / "sdgo.ini"
+            settings = read_ini(settings_path)
+            if not settings.has_section("core"):
+                settings.add_section("core")
+            settings["core"]["log_level"] = "0"
+            write_ini(settings_path, settings)
         write_job(client, run_id, plan, profile, profile_path)
 
         entry = client / (launcher_path or GAME_EXE)
@@ -2586,7 +2603,10 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
     # Preflight the recycler before changing paths or accounts.
     try:__import__('send2trash')
     except ImportError as error:raise GameTestError('install Send2Trash before client reuse; no files changed') from error
-    previous=validate_metadata(run_dir);verify_hashes(previous)
+    # File transfer does not execute the previous observer. Its original sealed
+    # contract can predate new/reordered cases; the new preparation below is
+    # still validated against the complete current contract before it can run.
+    previous=validate_metadata(run_dir, for_reuse=True);verify_hashes(previous)
     client_root=run_dir/'client'
     if options.get('extra_mods'):validate_observer_stage(client_root,stage.resolve(),options['extra_mods'])
     else:validate_observer_stage(client_root,stage.resolve())
@@ -2624,6 +2644,7 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
         account_lock,account_token=acquire_exclusive_lock(account_lock_path,'persistent account')
         prior={'run_id':previous['run_id'],'source':previous.get('source'),'plan':previous['plan'],
                'immutable_hashes':previous['client']['immutable_hashes'],'execution':previous.get('execution')}
+        prior['required_cases']=read_ini(client_root/'sdgo/gametest/run.ini')['run']['required_cases'].split(',')
         proofs=archive/'proof-binaries';proofs.mkdir(exist_ok=True)
         if proofs.is_symlink() or (hasattr(proofs,'is_junction') and proofs.is_junction()):
             raise GameTestError('client reuse rejects a linked binary proof archive')
@@ -2665,7 +2686,7 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
         if account_lock is not None:release_owned_lock(account_lock,account_token)
 
 
-def validate_metadata(run_dir: Path) -> dict:
+def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
     if run_dir.is_symlink() or (hasattr(run_dir,'is_junction') and run_dir.is_junction()):
         raise GameTestError('run directory is linked rather than an owned capsule')
     run_dir = run_dir.resolve()
@@ -2703,7 +2724,7 @@ def validate_metadata(run_dir: Path) -> dict:
     plan = metadata.get("plan")
     if not isinstance(plan, dict):
         raise GameTestError("run.json lacks normal-flow plan")
-    public_plan = read_public_plan(root)
+    public_plan = read_public_plan(root, historical_cases=for_reuse)
     public_run = read_ini(root / "sdgo" / "gametest" / "run.ini")["run"]
     if public_run.get("id") != run_id:
         raise GameTestError("run.json run_id disagrees with run.ini")

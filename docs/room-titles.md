@@ -8,9 +8,11 @@ The client, Agent bridge and Battle provider must all be installed and enabled.
 It uses the authenticated game connection and needs no additional ports, account,
 database migration, FRP settings or launcher.
 
-Client 0.2.3 covers both native PvP creation forms and team creation, and refreshes
-the input limit after deferred control initialization, including an already
-focused title edit. The matching creation transport requires Agent and Battle
+Client 0.2.3 covers normal, AI, team and mission room creation, settings and
+rename controls. It refreshes the input limit after deferred initialization,
+including an already focused title edit, and prevents the native per-frame
+width check from shortening a room name. Other text inputs retain their native
+limits. The matching creation transport requires Agent and Battle
 components 0.2.1.
 The normal, AI and team creation entries are selected through the room list's
 native tabs. The inline waiting-room editor confirms with Enter and cancels
@@ -29,13 +31,17 @@ SDGO Mod Manager, then start them. Owners distribute the enabled client Mod with
 their ordinary client package (`update.bat` for friend servers); players start the
 game normally. No computer-specific configuration belongs in it.
 
-Open the room-title button in the waiting room to view the complete title in
-the native scrollable edit control; cancel after viewing if no change is needed.
+Open the room-title button in the waiting room to edit the title in the native
+control. Input fields keep their original size; text beyond their width is
+retained. Cancel if no change is needed.
 Lobby selected-room details and mission rows also expand overflowing static text
 on hover. Native edit availability and host authorization remain in force.
 Mode 10 creates its initial title automatically; after entering its waiting room,
 use the same title dialog. Its native auto-create can negotiate capability on
 the create ACK, so visiting another lobby first is unnecessary.
+Native channel changes can select another Battle provider behind the same
+Agent connection. Fresh room creation confirms the selected provider together
+with the full title; no manual reset of the room-title feature is required.
 
 The server confirms full titles before the client permits starting a battle with
 an unresolved title change. Failed text remains available for editing and retry.
