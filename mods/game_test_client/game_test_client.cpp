@@ -28,6 +28,7 @@
 #include "friend_session.h"
 #include "sdgo/pvp_ai_client_observer.h"
 #include <cwchar>
+#include <array>
 
 namespace {
 static_assert(static_cast<uint32_t>(TutorialActions::kLeftGame) == sdgo_game_test::kTutorialLeftGame, "tutorial observation contract changed");
@@ -73,6 +74,7 @@ RoomActions rooms;
 TutorialActions tutorial;
 OnboardingActions onboarding;
 friends::FriendActions friendActions;
+friends::FriendExtraActions friendExtras;
 friends::FriendSession friendSession;
 SdgoPvpAiClientGetSnapshotV1Fn getSnapshot;
 SdgoPvpAiClientGetLuaStatusV1Fn getLuaStatus;
@@ -151,6 +153,7 @@ bool LoadPlan() {
         if(!playUnitUid || errno || !end || *end)return false;
     }
     if (static_cast<unsigned>(bootstrapOnly) + battleshipOnly + giftRequestsOnly + deckOnly + pagesOnly + friendsOnly > 1) return false;
+    if (friendsOnly && (missionMode || playUnitUid || collectionDraw || testShopCatalog))return false;
     wchar_t relative[512] = {}, nonce[16] = {}, user[32] = {}, password[128] = {};
     GetPrivateProfileStringW(L"run", L"account_path", L"private/account.ini", relative, 512, job.c_str());
     std::wstring accountPath = relative;
@@ -794,6 +797,28 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
         context->Assert(0, "the backend rejected initial-loading completion"); return SDGO_GAME_TEST_FAIL;
     }
     const auto inventory = onboarding.InventoryState();
+    const std::array<uint32_t,7> buyingGate{
+        starter.buying_clone_sequence,starter.buying_captured_app_state,starter.buying_ui_state,
+        starter.buying_captured,starter.buying_named_identity_matched,starter.buying_control_ready,
+        starter.buying_validation_failed};
+    static std::array<uint32_t,7> previousBuyingGate{UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX};
+    if(buyingGate!=previousBuyingGate) {
+        char message[256];sprintf_s(message,"native starter buying clone=%u captured_app=%u state=%u captured=%u named=%u control_ready=%u validation_failed=%u",
+            buyingGate[0],buyingGate[1],buyingGate[2],buyingGate[3],buyingGate[4],buyingGate[5],buyingGate[6]);
+        context->Observe(message);previousBuyingGate=buyingGate;
+    }
+    if(state.tutorial_level>=2 && !inventory.initialized &&
+       (actions.AppState()==5 || actions.AppState()==6)) {
+        const auto navigation=hangarNavigation.EnsureHangar();
+        static uint32_t previousInventoryEntry=UINT32_MAX;
+        if(navigation!=previousInventoryEntry) {
+            char entry[128];sprintf_s(entry,"native onboarding inventory entry=%s",HangarNavigation::ResultName(navigation));
+            context->Observe(entry);previousInventoryEntry=navigation;
+        }
+        if(navigation==HangarNavigation::kUnbound || navigation>=HangarNavigation::kDownmenuServiceMismatch) {
+            context->Assert(0,"the original hangar entry must initialize the real onboarding inventory");return SDGO_GAME_TEST_FAIL;
+        }
+    }
     static uint32_t previousOwned = UINT32_MAX;
     if (inventory.initialized && inventory.owned_unit_count != previousOwned) {
         char message[128]; sprintf_s(message, "real inventory owned=%u first_unit=%u slot=%u scanned=%u/%u", inventory.owned_unit_count, inventory.first_unit_id, inventory.first_unit_slot, inventory.slots_examined, inventory.slot_capacity);
@@ -801,6 +826,18 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
     }
     if (inventory.native_fault) {
         context->Assert(0, "the read-only native inventory observation failed"); return SDGO_GAME_TEST_FAIL;
+    }
+    const std::array<uint32_t,12> gate{
+        starter.result_popup_clone_sequence,starter.result_popup_captured_app_state,
+        starter.result_popup_captured,starter.result_popup_ready,starter.result_confirm_attempted,
+        starter.result_confirm_sequence,initial.popup_state,initial.confirm_sequence,
+        inventory.manager_present,inventory.initialized,inventory.scan_complete,inventory.owned_unit_count};
+    static std::array<uint32_t,12> previousGate{};static bool gateObserved=false;
+    if(!gateObserved||gate!=previousGate) {
+        char detail[320];
+        sprintf_s(detail,"native onboarding gates popup_clone=%u captured_app=%u captured=%u ready=%u confirm_attempted=%u confirm_sequence=%u initial_popup=%u initial_confirm=%u inventory_manager=%u initialized=%u scanned=%u owned=%u",
+            gate[0],gate[1],gate[2],gate[3],gate[4],gate[5],gate[6],gate[7],gate[8],gate[9],gate[10],gate[11]);
+        context->Observe(detail);previousGate=gate;gateObserved=true;
     }
     const sdgo_game_test::OnboardingCompletionEvidence completion{
         nicknameRequested,
@@ -1385,6 +1422,22 @@ const SdgoGameTestCaseV1 realCases[] = {
 SdgoGameTestProviderV1 provider{sizeof(provider), SDGO_GAME_TEST_VERSION, "pvp-ai", "client", 7, realCases};
 std::vector<std::string> caseNames;
 std::vector<SdgoGameTestCaseV1> plannedCases;
+int __cdecl FriendFlow(const SdgoGameTestContextV1* context) {
+    static bool hangarExitRequested=false;
+    if(actions.AppState()==5) {
+        if(!hangarExitRequested) {
+            const auto result=hangarNavigation.ClickBottomRadio(L"GameRoomRadio",0x48);
+            if(result>=HangarNavigation::kDownmenuServiceMismatch || result==HangarNavigation::kUnbound) {
+                context->Assert(0,"native GameRoomRadio must enter the lobby before friend operations");return SDGO_GAME_TEST_FAIL;
+            }
+            if(result==HangarNavigation::kReady) {
+                hangarExitRequested=true;context->Observe("original GameRoomRadio requested after onboarding inventory initialization");
+            }
+        }
+        return SDGO_GAME_TEST_WAIT;
+    }
+    return friendSession.Poll(context);
+}
 void RegisterPlannedCases() {
     if(missionMode) {
         plannedCases.assign(realCases,realCases+3);
@@ -1395,7 +1448,7 @@ void RegisterPlannedCases() {
     if (bootstrapOnly) { provider.count = 3; return; }
     if (friendsOnly) {
         plannedCases.assign(realCases,realCases+3);
-        plannedCases.push_back({"friends.session",3600000,[](const SdgoGameTestContextV1* context)->int{return friendSession.Poll(context);}});
+        plannedCases.push_back({"friends.session",3600000,&FriendFlow});
         provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
     }
     if (pagesOnly) {
@@ -1614,8 +1667,8 @@ SDGO_MOD_ENTRY {
         !tutorial.Bind(api, mod, &actions) || !onboarding.Bind(api, mod, &actions))
         sdgo_test::Fail("normal-flow native request bindings or private account configuration are unavailable");
     if (friendsOnly) {
-        if (!friendActions.Bind(api,mod,&actions))sdgo_test::Fail("native friend operation bindings are unavailable");
-        friendSession.Bind(&friendActions);
+        if (!friendActions.Bind(api,mod,&actions)||!friendExtras.Bind(api,mod))sdgo_test::Fail("native friend operation bindings are unavailable");
+        friendSession.Bind(&friendActions,&friendExtras,api,mod);
     }
     roomListVtable=api->Symbol(mod,"flow.native_room_list_vtable");
     modalLoadingVtable=api->Symbol(mod,"flow.native_modal_loading_vtable");

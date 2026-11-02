@@ -127,6 +127,9 @@ class GameTestRunnerTests(unittest.TestCase):
         with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run_dir)
         with self.assertRaises(game_test.GameTestError):
             game_test.required_flow_cases('1',bootstrap_only=True,friends_only=True)
+        for scope in ({'mission_mode':5},{'play_unit_uid':1},{'collection_draw':True},{'shop_catalog':True}):
+            with self.subTest(scope=scope),self.assertRaises(game_test.GameTestError):
+                game_test.required_flow_cases('1',friends_only=True,**scope)
 
     def test_real_manifest_merges_the_optional_production_observer_profile_alias(self):
         # An older normal installation may have only flow.profile_pointer.

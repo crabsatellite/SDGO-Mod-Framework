@@ -29,9 +29,18 @@ public:
         uint32_t conversation_count_before;
         uint32_t conversation_count_after;
         uint32_t profile_enqueue_count;
+        uint32_t profile_reply_target_id;
+        uint16_t profile_reply_opcode;
         uint8_t selected_target_matched;
         uint8_t profile_constructed;
         uint8_t profile_enqueued;
+        uint8_t profile_clone_created;
+        uint8_t profile_clone_identity_matched;
+        uint8_t profile_initialized;
+        uint8_t profile_request_started;
+        uint8_t profile_reply_consumed;
+        uint8_t profile_reply_target_matched;
+        uint8_t profile_destroyed;
         uint8_t reserved;
         char target_name[17];
     };
@@ -61,16 +70,66 @@ public:
         profilePopupDtor_ =
             Symbol<ProfilePopupDtorFn>(
                 "friends.extra.profile_popup_dtor");
+        profilePopupVtable_ =
+            Symbol<void*>(
+                "friends.extra.profile_popup_vtable");
+        profilePopupClone_ =
+            Symbol<ProfilePopupCloneFn>(
+                "friends.extra.profile_popup_clone");
+        profilePopupInitialize_ =
+            Symbol<ProfilePopupInitializeFn>(
+                "friends.extra.profile_popup_initialize");
+        profilePopupDispatch_ =
+            Symbol<ProfilePopupDispatchFn>(
+                "friends.extra.profile_popup_dispatch");
+        profilePopupScalarDtor_ =
+            Symbol<ProfilePopupScalarDtorFn>(
+                "friends.extra.profile_popup_scalar_dtor");
         enqueueUiObject_ =
             Symbol<EnqueueUiObjectFn>("flow.enqueue_ui_object");
         Reset();
         bound_ =
-            api_ && mod_ && playerDataPointer_ &&
+            api_ && api_->HookCode && mod_ && playerDataPointer_ &&
             serviceManagedPointer_ && serviceFindByName_ &&
             nativeWStringCtor_ && nativeWStringDtor_ &&
             messengerVtable_ && closeConversation_ &&
             profilePopupCtor_ && profilePopupDtor_ &&
+            profilePopupVtable_ && profilePopupClone_ &&
+            profilePopupInitialize_ && profilePopupDispatch_ &&
+            profilePopupScalarDtor_ &&
             enqueueUiObject_;
+        if (!bound_ || (active_ && active_ != this))
+            return false;
+        active_ = this;
+        if (!api_->HookCode(
+                mod_,
+                "friends.extra.profile_popup_clone",
+                reinterpret_cast<void*>(&ObserveProfilePopupClone),
+                reinterpret_cast<void**>(&profilePopupClone_)) ||
+            !api_->HookCode(
+                mod_,
+                "friends.extra.profile_popup_initialize",
+                reinterpret_cast<void*>(
+                    &ObserveProfilePopupInitialize),
+                reinterpret_cast<void**>(
+                    &profilePopupInitialize_)) ||
+            !api_->HookCode(
+                mod_,
+                "friends.extra.profile_popup_dispatch",
+                reinterpret_cast<void*>(
+                    &ObserveProfilePopupDispatch),
+                reinterpret_cast<void**>(
+                    &profilePopupDispatch_)) ||
+            !api_->HookCode(
+                mod_,
+                "friends.extra.profile_popup_scalar_dtor",
+                reinterpret_cast<void*>(
+                    &ObserveProfilePopupScalarDtor),
+                reinterpret_cast<void**>(
+                    &profilePopupScalarDtor_))) {
+            active_ = nullptr;
+            bound_ = false;
+        }
         return bound_;
     }
 
@@ -78,12 +137,25 @@ public:
     {
         std::memset(&observation_, 0, sizeof(observation_));
         observation_.selected_conversation = -1;
+        std::memset(
+            expectedProfileName_,
+            0,
+            sizeof(expectedProfileName_));
+        expectedProfileNameLength_ = 0;
+        expectedProfileTargetId_ = 0;
+        managedProfilePopup_ = nullptr;
+        profileCloneSource_ = nullptr;
+        profileCloneThreadId_ = 0;
+        profileCloneScope_ = false;
+        profilePending_ = false;
     }
 
     Observation State() const { return observation_; }
 
     FriendActions::Result Submit(const FriendActions::Command& command)
     {
+        if (profilePending_)
+            return FriendActions::kBusy;
         Reset();
         observation_.command_sequence = command.sequence;
         observation_.operation = command.operation;
@@ -112,7 +184,13 @@ private:
     static constexpr size_t kNativeWStringSize = 0x1C;
     static constexpr size_t kServiceDescriptorSize =
         sizeof(uint32_t) + kNativeWStringSize;
-    static constexpr size_t kProfilePopupSize = 0x214;
+    static constexpr size_t kProfilePopupSize = 0x210;
+    static constexpr size_t kProfileNameOffset = 0x50;
+    static constexpr size_t kMaximumProfileNameLength = 64;
+    static constexpr size_t kProfileDataOffset = 0x70;
+    static constexpr size_t kProfileDataSize = 0x10D;
+    static constexpr size_t kProfileReplyTargetOffset = 0x180;
+    static constexpr uint16_t kProfileReplyOpcode = 0x084B;
     static constexpr uint32_t kRelationshipAccepted = 7;
     static constexpr uint32_t kMaximumNativeEntries = 100;
 
@@ -125,6 +203,19 @@ private:
     using ProfilePopupCtorFn =
         void(__thiscall*)(void*, const void*, int);
     using ProfilePopupDtorFn = void(__thiscall*)(void*);
+    using ProfilePopupCloneFn = void*(__thiscall*)(void*);
+    using ProfilePopupInitializeFn =
+        void(__thiscall*)(void*, int);
+    using ProfilePopupDispatchFn =
+        int(__thiscall*)(
+            void*,
+            int,
+            int,
+            int,
+            int,
+            void*);
+    using ProfilePopupScalarDtorFn =
+        void*(__thiscall*)(void*, uint32_t);
     using EnqueueUiObjectFn = void*(__cdecl*)(void*, int);
 
     template <typename T>
@@ -133,6 +224,78 @@ private:
         if (!api_ || !mod_ || !name)
             return nullptr;
         return reinterpret_cast<T>(api_->Symbol(mod_, name));
+    }
+
+    static const wchar_t* NativeStringData(const void* storage)
+    {
+        if (!storage)
+            return nullptr;
+        const auto* bytes =
+            static_cast<const uint8_t*>(storage);
+        const uint32_t capacity =
+            *reinterpret_cast<const uint32_t*>(
+                bytes + 0x14);
+        return capacity < 8
+            ? reinterpret_cast<const wchar_t*>(bytes)
+            : *reinterpret_cast<wchar_t* const*>(bytes);
+    }
+
+    static bool CaptureNativeString(
+        const void* storage,
+        wchar_t* destination,
+        size_t capacity,
+        size_t* capturedLength)
+    {
+        if (!storage || !destination || capacity == 0 ||
+            !capturedLength)
+            return false;
+        const auto* bytes =
+            static_cast<const uint8_t*>(storage);
+        const uint32_t length =
+            *reinterpret_cast<const uint32_t*>(
+                bytes + 0x10);
+        const uint32_t nativeCapacity =
+            *reinterpret_cast<const uint32_t*>(
+                bytes + 0x14);
+        if (length > nativeCapacity ||
+            length >= capacity)
+            return false;
+        const wchar_t* value = NativeStringData(storage);
+        if (!value)
+            return false;
+        std::memcpy(
+            destination,
+            value,
+            length * sizeof(wchar_t));
+        destination[length] = L'\0';
+        *capturedLength = length;
+        return true;
+    }
+
+    static bool NativeStringMatches(
+        const void* storage,
+        const wchar_t* expected,
+        size_t expectedLength)
+    {
+        if (!storage || !expected)
+            return false;
+        const auto* bytes =
+            static_cast<const uint8_t*>(storage);
+        const uint32_t length =
+            *reinterpret_cast<const uint32_t*>(
+                bytes + 0x10);
+        const uint32_t capacity =
+            *reinterpret_cast<const uint32_t*>(
+                bytes + 0x14);
+        if (length != expectedLength ||
+            length > capacity)
+            return false;
+        const wchar_t* value = NativeStringData(storage);
+        return value &&
+            std::memcmp(
+                value,
+                expected,
+                expectedLength * sizeof(wchar_t)) == 0;
     }
 
     void* ResolveMessenger() const
@@ -151,7 +314,7 @@ private:
         __try {
             nativeWStringCtor_(
                 descriptor + sizeof(uint32_t),
-                L"Messenger");
+                L"MessengerPopup");
             constructed = true;
             service = serviceFindByName_(manager, descriptor);
         } __finally {
@@ -188,10 +351,25 @@ private:
             *reinterpret_cast<const uint32_t*>(record);
         const char* name =
             reinterpret_cast<const char*>(record + 0x0A);
-        return
-            (command.target_id && id == command.target_id) ||
-            (command.target_name[0] &&
-             std::strncmp(name, command.target_name, 16) == 0);
+        bool specified = false;
+        if (command.target_id) {
+            specified = true;
+            if (id != command.target_id)
+                return false;
+        }
+        const size_t nameLength =
+            BoundedLength(command.target_name, 16);
+        if (nameLength > 16)
+            return false;
+        if (nameLength != 0) {
+            specified = true;
+            if (std::strncmp(
+                    name,
+                    command.target_name,
+                    16) != 0)
+                return false;
+        }
+        return specified;
     }
 
     static uint8_t* NodeAt(
@@ -288,32 +466,239 @@ private:
     FriendActions::Result OpenProfile(
         const FriendActions::Command& command)
     {
+        const size_t targetNameLength =
+            BoundedLength(command.target_name, 16);
+        if (targetNameLength > 16)
+            return Publish(FriendActions::kInvalidTarget);
         if (!command.target_id &&
-            BoundedLength(command.target_name, 16) == 0)
+            targetNameLength == 0)
             return Publish(FriendActions::kInvalidTarget);
         uint8_t* record = FindFriendRecord(command);
         if (!record || record[0x1B] != kRelationshipAccepted)
             return Publish(FriendActions::kFriendNotFound);
+        expectedProfileTargetId_ =
+            *reinterpret_cast<uint32_t*>(record);
         alignas(4) uint8_t popup[kProfilePopupSize] = {};
         bool constructed = false;
+        bool targetCaptured = false;
         void* queued = nullptr;
         __try {
             profilePopupCtor_(popup, record + 0x38, 0);
             constructed = true;
             observation_.profile_constructed = 1;
-            queued = enqueueUiObject_(popup, 1);
-            if (queued) {
-                observation_.profile_enqueued = 1;
-                ++observation_.profile_enqueue_count;
+            targetCaptured =
+                CaptureNativeString(
+                    popup + kProfileNameOffset,
+                    expectedProfileName_,
+                    sizeof(expectedProfileName_) /
+                        sizeof(expectedProfileName_[0]),
+                    &expectedProfileNameLength_);
+            if (targetCaptured) {
+                profileCloneSource_ = popup;
+                profileCloneThreadId_ = GetCurrentThreadId();
+                profileCloneScope_ = true;
+                queued = enqueueUiObject_(popup, 1);
+                profileCloneScope_ = false;
+                profileCloneThreadId_ = 0;
+                profileCloneSource_ = nullptr;
+                if (queued) {
+                    observation_.profile_enqueued = 1;
+                    ++observation_.profile_enqueue_count;
+                }
             }
         } __finally {
+            profileCloneScope_ = false;
+            profileCloneThreadId_ = 0;
+            profileCloneSource_ = nullptr;
             if (constructed)
                 profilePopupDtor_(popup);
         }
-        return Publish(
-            queued
-                ? FriendActions::kReady
-                : FriendActions::kNativeRequestNotSent);
+        if (!targetCaptured || !queued ||
+            !observation_.profile_clone_created ||
+            !observation_.profile_clone_identity_matched ||
+            !observation_.profile_initialized ||
+            !observation_.profile_request_started) {
+            managedProfilePopup_ = nullptr;
+            profilePending_ = false;
+            return Publish(
+                FriendActions::kNativeRequestNotSent);
+        }
+        if (observation_.profile_reply_consumed) {
+            profilePending_ = false;
+            return static_cast<FriendActions::Result>(
+                observation_.result);
+        }
+        profilePending_ = true;
+        return Publish(FriendActions::kWaitingForReply);
+    }
+
+    static void* __fastcall ObserveProfilePopupClone(
+        void* self,
+        void*)
+    {
+        FriendExtraActions* actions = active_;
+        if (!actions || !actions->profilePopupClone_)
+            return nullptr;
+        void* clone =
+            actions->profilePopupClone_(self);
+        const DWORD error = GetLastError();
+        if (actions->profileCloneScope_ &&
+            actions->profileCloneThreadId_ ==
+                GetCurrentThreadId() &&
+            actions->profileCloneSource_ == self) {
+            actions->observation_.profile_clone_created =
+                clone && clone != self ? 1 : 0;
+            if (clone && clone != self) {
+                __try {
+                    const uint8_t* bytes =
+                        static_cast<const uint8_t*>(clone);
+                    const bool identityMatched =
+                        *reinterpret_cast<void* const*>(bytes) ==
+                            actions->profilePopupVtable_ &&
+                        NativeStringMatches(
+                            bytes + kProfileNameOffset,
+                            actions->expectedProfileName_,
+                            actions->
+                                expectedProfileNameLength_);
+                    actions->observation_
+                        .profile_clone_identity_matched =
+                        identityMatched ? 1 : 0;
+                    if (identityMatched)
+                        actions->managedProfilePopup_ = clone;
+                } __except (EXCEPTION_EXECUTE_HANDLER) {
+                    actions->observation_
+                        .profile_clone_identity_matched = 0;
+                }
+            }
+        }
+        SetLastError(error);
+        return clone;
+    }
+
+    static void __fastcall ObserveProfilePopupInitialize(
+        void* self,
+        void*,
+        int compare)
+    {
+        FriendExtraActions* actions = active_;
+        if (!actions || !actions->profilePopupInitialize_)
+            return;
+        actions->profilePopupInitialize_(self, compare);
+        const DWORD error = GetLastError();
+        if (actions->managedProfilePopup_ == self) {
+            actions->observation_.profile_initialized = 1;
+            actions->observation_.profile_request_started = 1;
+        }
+        SetLastError(error);
+    }
+
+    static int __fastcall ObserveProfilePopupDispatch(
+        void* self,
+        void*,
+        int a,
+        int b,
+        int c,
+        int opcode,
+        void* packet)
+    {
+        FriendExtraActions* actions = active_;
+        if (!actions || !actions->profilePopupDispatch_)
+            return 0;
+        const uint16_t normalized =
+            static_cast<uint16_t>(opcode);
+        uint8_t replyProfile[kProfileDataSize] = {};
+        uint32_t replyTargetId = 0;
+        bool captured = false;
+        if (actions->managedProfilePopup_ == self &&
+            normalized == kProfileReplyOpcode &&
+            packet) {
+            __try {
+                const uint8_t* bytes =
+                    static_cast<const uint8_t*>(packet) + 6;
+                std::memcpy(
+                    replyProfile,
+                    bytes,
+                    sizeof(replyProfile));
+                std::memcpy(
+                    &replyTargetId,
+                    bytes,
+                    sizeof(replyTargetId));
+                captured = true;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                captured = false;
+            }
+        }
+        const int result =
+            actions->profilePopupDispatch_(
+                self,
+                a,
+                b,
+                c,
+                opcode,
+                packet);
+        const DWORD error = GetLastError();
+        if (actions->managedProfilePopup_ == self &&
+            normalized == kProfileReplyOpcode) {
+            actions->observation_.profile_reply_opcode =
+                normalized;
+            actions->observation_.profile_reply_target_id =
+                replyTargetId;
+            actions->observation_.profile_reply_consumed = 1;
+            bool targetMatched = false;
+            if (captured) {
+                __try {
+                    const uint8_t* bytes =
+                        static_cast<const uint8_t*>(self);
+                    targetMatched =
+                        replyTargetId ==
+                            actions->expectedProfileTargetId_ &&
+                        *reinterpret_cast<const uint32_t*>(
+                            bytes +
+                            kProfileReplyTargetOffset) ==
+                            replyTargetId &&
+                        std::memcmp(
+                            bytes + kProfileDataOffset,
+                            replyProfile,
+                            sizeof(replyProfile)) == 0;
+                } __except (EXCEPTION_EXECUTE_HANDLER) {
+                    targetMatched = false;
+                }
+            }
+            actions->observation_
+                .profile_reply_target_matched =
+                targetMatched ? 1 : 0;
+            actions->profilePending_ = false;
+            actions->Publish(
+                targetMatched
+                    ? FriendActions::kReplyObserved
+                    : FriendActions::kReplyRejected);
+        }
+        SetLastError(error);
+        return result;
+    }
+
+    static void* __fastcall ObserveProfilePopupScalarDtor(
+        void* self,
+        void*,
+        uint32_t flags)
+    {
+        FriendExtraActions* actions = active_;
+        if (!actions || !actions->profilePopupScalarDtor_)
+            return self;
+        const bool matched =
+            actions->managedProfilePopup_ == self;
+        if (matched) {
+            actions->observation_.profile_destroyed = 1;
+            actions->managedProfilePopup_ = nullptr;
+            if (actions->profilePending_) {
+                actions->profilePending_ = false;
+                actions->Publish(
+                    FriendActions::kReplyRejected);
+            }
+        }
+        return actions->profilePopupScalarDtor_(
+            self,
+            flags);
     }
 
     FriendActions::Result Publish(FriendActions::Result result)
@@ -333,9 +718,24 @@ private:
     CloseConversationFn closeConversation_ = nullptr;
     ProfilePopupCtorFn profilePopupCtor_ = nullptr;
     ProfilePopupDtorFn profilePopupDtor_ = nullptr;
+    void* profilePopupVtable_ = nullptr;
+    ProfilePopupCloneFn profilePopupClone_ = nullptr;
+    ProfilePopupInitializeFn profilePopupInitialize_ = nullptr;
+    ProfilePopupDispatchFn profilePopupDispatch_ = nullptr;
+    ProfilePopupScalarDtorFn profilePopupScalarDtor_ = nullptr;
     EnqueueUiObjectFn enqueueUiObject_ = nullptr;
+    wchar_t expectedProfileName_[
+        kMaximumProfileNameLength + 1] = {};
+    size_t expectedProfileNameLength_ = 0;
+    uint32_t expectedProfileTargetId_ = 0;
+    void* managedProfilePopup_ = nullptr;
+    void* profileCloneSource_ = nullptr;
+    DWORD profileCloneThreadId_ = 0;
+    bool profileCloneScope_ = false;
+    bool profilePending_ = false;
     bool bound_ = false;
     Observation observation_ = {};
+    inline static FriendExtraActions* active_ = nullptr;
 };
 
 } // namespace friends

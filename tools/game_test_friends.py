@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import io
 from pathlib import Path
 import time
 import uuid
@@ -53,7 +54,11 @@ class FriendActor:
                         **{key:str(value) for key,value in fields.items()}}
         for value in cfg['command'].values():
             if any(c in value for c in '\r\n\0'):raise game_test.GameTestError('friend command contains an invalid delimiter')
-        game_test.write_ini(self.directory/'friend-command.ini',cfg)
+        # GetPrivateProfileStringW reads UTF-16 INIs independently of the
+        # Windows ANSI code page. Non-ASCII pilot names must survive IPC.
+        text=io.StringIO();cfg.write(text,space_around_delimiters=False)
+        path=self.directory/'friend-command.ini';temporary=path.with_name(path.name+'.tmp')
+        temporary.write_bytes(b'\xff\xfe'+text.getvalue().encode('utf-16-le'));temporary.replace(path)
         return self.wait(lambda s:int(s.get('command',{}).get('sequence','0'))==self.sequence and
                          s.get('command',{}).get('done')=='1',timeout)
 
@@ -91,13 +96,22 @@ def find_friend(state,pilot):
 def assert_receipt(state,*,sent=None,error=None):
     command=state.get('command',{})
     if command.get('done')!='1':raise game_test.GameTestError('native command has not finished')
-    if int(command.get('result','0')) in (0x109,0x10B,0x10C):
+    result=int(command.get('result','0'))
+    if result in (0x109,0x10B,0x10C):
         raise game_test.GameTestError('native friend command faulted, malformed its cache or is unsupported')
+    if error is None and result not in (4,5,6,7):
+        raise game_test.GameTestError('native friend command did not complete successfully: '+str(result))
     if sent is not None and command.get('request_sent')!=str(int(sent)):
         raise game_test.GameTestError('native friend transport observation differs from the expected action')
-    if error is not None and int(command.get('reply_status','0'))!=error:
+    if error is not None and (int(command.get('reply_status','0'))!=error or command.get('reply_consumed')!='1'):
         raise game_test.GameTestError('native friend server result differs from the expected status')
     return state
+
+
+def native_rejection(state):
+    command=state.get('command',{})
+    return command.get('local_validation_rejected')=='1' or (
+        command.get('reply_consumed')=='1' and int(command.get('reply_status','0'))!=0)
 
 
 class Campaign:
@@ -115,11 +129,12 @@ class Campaign:
         number=self.counts.get(label,0)+1;self.counts[label]=number
         run=self.root/(label+'-'+str(number).zfill(2));profile=self.root/'profiles'/(label+'.ini')
         metadata=prepare_actor(self.template,self.stage,run,profile,self.host,baseline=self.baseline)
-        future=self.pool.submit(game_test.run_prepared,run,3900,60)
+        future=self.pool.submit(game_test.run_prepared,run,9000,60)
         actor=FriendActor(run);self.running[label]=(actor,future,profile)
-        state=actor.wait(lambda s:s.get('run',{}).get('ready')=='1',360)
+        state=actor.wait(lambda s:s.get('run',{}).get('ready')=='1',900)
         promote_profile(run,profile)
-        account=game_test.read_ini(profile)['account']['username']
+        account=state['state'].get('own_name','')
+        if not account:raise game_test.GameTestError('native friend actor has no observed pilot nickname')
         self.receipt['actors'].append({'label':label,'run_dir':str(run),'run_id':metadata['run_id']})
         self.save()
         return actor,int(state['state']['pilot']),account
@@ -151,6 +166,11 @@ class Campaign:
         self.check('mutual native acceptance retains names',find_friend(a.state(),bid)['name']==bname and find_friend(b.state(),aid)['name']==aname)
         assert_receipt(a.command('open',target_name=bname,target_id=bid))
         self.check('online native conversation opens',find_friend(a.state(),bid).get('conversation_open')=='1')
+        close=a.command('close',target_name=bname,target_id=bid)
+        self.check('native conversation close removes its tab only',close.get('extra',{}).get('selected_target_matched')=='1' and
+                   int(close['extra']['conversation_count_after'])==int(close['extra']['conversation_count_before'])-1)
+        assert_receipt(a.command('open',target_name=bname,target_id=bid))
+        self.check('closed conversation can reopen without losing friendship',bool(find_friend(a.state(),bid)) and find_friend(a.state(),bid)['conversation_open']=='1')
         body='FriendTestA'+uuid.uuid4().hex[:12]
         assert_receipt(a.command('send',target_name=bname,target_id=bid,body=body),sent=True)
         b.wait(lambda s:s.get('state',{}).get('last_message')==body)
@@ -160,15 +180,30 @@ class Campaign:
         assert_receipt(b.command('send',target_name=aname,target_id=aid,body=reply),sent=True)
         a.wait(lambda s:s.get('state',{}).get('last_message')==reply)
         self.check('reverse whisper reaches original handler',a.state()['state'].get('last_sender')==bname)
+        chinese='好友消息测试'+uuid.uuid4().hex[:8]
+        assert_receipt(a.command('send',target_name=bname,target_id=bid,body=chinese),sent=True)
+        b.wait(lambda s:s.get('state',{}).get('last_message')==chinese)
+        self.check('Chinese whisper survives original UI serialization and peer consumption',b.state()['state'].get('last_sender')==aname)
         self.stop('b')
         a.command('refresh');self.state_friend(a,bid,0)
+        assert_receipt(a.command('close',target_name=bname,target_id=bid))
+        self.check('offline conversation tab closes before the reopen test',find_friend(a.state(),bid).get('conversation_open')=='0')
         assert_receipt(a.command('open',target_name=bname,target_id=bid))
         self.check('offline friend retains identity/name/conversation',find_friend(a.state(),bid)['name']==bname and find_friend(a.state(),bid).get('conversation_open')=='1')
-        assert_receipt(a.command('send',target_name=bname,target_id=bid,body='OfflineProbe'),sent=True,error=0x1407)
+        assert_receipt(a.command('send',target_name=bname,target_id=bid,body='OfflineProbe'),sent=True)
+        rejected=a.wait(lambda s:s.get('command',{}).get('reply_consumed')=='1' and int(s['command'].get('reply_status','0'))==0x1407)
+        assert_receipt(rejected,sent=True,error=0x1407)
         self.check('offline send has native rejection',int(a.state()['command']['reply_status'])==0x1407)
         self.stop('a')
         a,aid2,_=self.start('a');self.state_friend(a,bid,0)
         self.check('relogin preserves offline friendship',aid2==aid and find_friend(a.state(),bid)['name']==bname)
+        profile=a.command('profile',target_id=bid,target_name=bname)
+        assert_receipt(profile)
+        observed=profile.get('extra',{})
+        self.check('selected offline friend profile consumes native data in the managed popup',
+                   all(observed.get(key)=='1' for key in ('profile_clone_created','profile_clone_identity_matched',
+                       'profile_initialized','profile_request_started','profile_reply_consumed','profile_reply_target_matched')) and
+                   int(observed.get('profile_reply_opcode','0'))==0x084B and int(observed.get('profile_reply_target_id','0'))==bid)
         self.stop('a')
         self.receipt['status']='primary_flow_passed';self.save()
 
@@ -178,12 +213,12 @@ class Campaign:
         before=int(a.state()['state']['friend_count'])
         duplicate=a.command('add',target_id=bid,target_name=bname)
         self.check('duplicate friend is rejected without adding another row',
-                   (int(duplicate['command']['result'])>=0x100 or int(duplicate['command']['reply_status'])!=0) and
+                   native_rejection(duplicate) and
                    int(duplicate['state']['friend_count'])==before)
         own=a.command('add',target_id=aid,target_name=aname)
-        self.check('self friendship is rejected',int(own['command']['result'])>=0x100 or int(own['command']['reply_status'])!=0)
+        self.check('self friendship is rejected',native_rejection(own))
         unknown=a.command('add',target_name='NoUser'+uuid.uuid4().hex[:8])
-        self.check('unknown pilot receives a native rejection',int(unknown['command']['result'])>=0x100 or int(unknown['command']['reply_status'])!=0)
+        self.check('unknown pilot receives a native rejection',native_rejection(unknown))
         removed=a.command('remove',target_id=bid,target_name=bname)
         assert_receipt(removed,sent=True)
         a.command('refresh')
@@ -227,7 +262,7 @@ def main():
     campaign.add_argument('--stage',type=Path,required=True)
     campaign.add_argument('--work-root',type=Path,required=True)
     campaign.add_argument('--asset-baseline',type=Path,required=True)
-    campaign.add_argument('--target-host',default='127.92.0.1')
+    campaign.add_argument('--target-host',required=True,help='the verified unique loopback IP of this campaign backend')
     state=subs.add_parser('state');state.add_argument('--run-dir',type=Path,required=True)
     command=subs.add_parser('command');command.add_argument('--run-dir',type=Path,required=True)
     command.add_argument('--operation',required=True)
@@ -237,7 +272,10 @@ def main():
     args=parser.parse_args()
     if args.action=='campaign':
         run=Campaign(args.client_template,args.stage,args.work_root,args.target_host,args.asset_baseline)
-        try:run.smoke()
+        try:
+            run.smoke()
+            run.edges()
+            run.pagination()
         except Exception as error:
             run.receipt['status']='failed';run.receipt['error_type']=type(error).__name__;run.receipt['error']=str(error);run.save()
             for label in list(run.running):
