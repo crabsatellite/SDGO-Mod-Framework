@@ -1,24 +1,69 @@
-# AI catalog addon
+# AI mech catalog (Beta, separate addon)
 
-`ai_catalog` provides an optional owner-generated roster for the existing co-op
-and PvP AI mods. Install its server DLL in each battle server and its client DLL
-in every participating client. Both sides use the same generated `catalog.bin`.
-Players keep their normal launcher. [中文与完整命令](ai-catalog.zh-CN.md).
+[中文](ai-catalog.zh-CN.md)
 
-The addon is disabled by default. It requires `coop_ai` + `mission_ai` for missions
-or `pvp_ai` + `match_ai` for PvP. It does not change the native mode 11/12 roster.
+`ai_catalog` adds the sortie-ready player units from the owner's database to the LV1–LV5 pools of
+`coop_ai` / `pvp_ai`. The owner generates one catalog and installs it on the battle servers and every
+participating client; players keep their normal launcher.
 
-It also works with [extended room titles](https://github.com/crabsatellite/SDGO-Mod-Framework/blob/master/docs/room-titles.md): for example,
-`Friendly practice for newcomers !ai e2 a1 lv4 !rand` selects the catalog's level-4
-pool while `room_random` randomizes humans when installed and enabled. Enable the
-separate client/Agent/Battle title Mods and update the consuming AI/random DLLs
-for commands after byte 20. Catalog data and both catalog DLLs remain independently required.
-See [combined commands](https://github.com/crabsatellite/SDGO-Mod-Framework/blob/master/docs/room-commands.md).
+It needs the existing AI features: `coop_ai` + `mission_ai` for missions, `pvp_ai` + `match_ai` for
+PvP. It only enlarges the random pools: there is no unit selection screen and the native AI modes
+11/12 keep their roster. For example `!ai e2 a1 lv2` draws two enemies and one ally from the
+enlarged LV2 pool.
 
-## Owner workflow
+It also works with [extended room titles](https://github.com/crabsatellite/SDGO-Mod-Framework/blob/master/docs/room-titles.md):
+`Friendly practice for newcomers !ai e2 a1 lv4 !rand` uses the catalog's level-4 pool while
+`room_random` randomizes humans when installed and enabled. See
+[combined commands](https://github.com/crabsatellite/SDGO-Mod-Framework/blob/master/docs/room-commands.md).
 
-Python 3.10+ is required only for owner tools. Generate from your own public
-catalog JSON exports and the complete extracted GDT tables of the matching client:
+## Owner: generate and install in the Manager
+
+Open **AI 机体清单** (AI catalog) in SDGO Mod Manager:
+
+1. Choose the source: a JSON export of the `GOnlineGame` catalog tables, or the native server INI
+   (reads the database directly).
+2. Choose the matching client folder (the Manager reads its unit and NPC tables) or an extracted
+   `gdrs` folder.
+3. Optional: an owner rules JSON, and the previous `catalog.json` when updating.
+4. **检查** (check) only writes a report; **生成** (generate) writes an installable catalog to a new folder.
+5. With the targets stopped, install to the client and to every participating BattleServer.
+6. **导出** (export) creates the player package.
+
+The servers and all participating clients must use the same generated catalog and be switched on or
+off together. Clients without the addon should not join expanded-AI rooms.
+
+Keep `catalog.json`: it records ID allocations, including retired units, and must be passed as the
+previous catalog on every update. Do not commit an owner's generated catalog to the repository.
+
+## Players: install the exported package
+
+Install the matching framework and AI features first, close the game, extract the package next to
+`GOnline.exe` and run once:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-AiCatalog.ps1
+```
+
+It only adds the symbols this mod needs, refuses conflicts and keeps a backup of the original file.
+Then use the normal launcher. Players do not need Python.
+
+## Pools and owner rules
+
+By default only `tbl_Units` rows with `SallyReady=1` and HP > 0 are used, grouped C→LV1, B→LV2,
+A→LV3, other S→LV4 and SS/SR→LV5. These are roster groups, not measured AI difficulty.
+`backend/ai_catalog.rules.example.json` shows per-unit `exclude`, `levels` and native NPC `templates`.
+Templates must exist on both server and client. By default the native AI script is chosen from weapon
+type, grade and HP.
+
+## Toggle and remove
+
+The addon is off by default and is switched in the Manager; restart the affected processes after a
+change. With it off, `coop_ai` / `pvp_ai` use their own `LevelN` settings again. It is not part of
+the Base/Full packages.
+
+## Command line (optional)
+
+Without the Manager, the owner tools need Python 3.10+:
 
 ```powershell
 python backend/ai_catalog.py --db-export D:/OwnerData/GOnlineGame --client-gdrs D:/OwnerData/gdrs --generate --out my-roster
@@ -27,83 +72,26 @@ python backend/install_ai_catalog.py install --role client --target D:/Games/SDG
 python backend/export_ai_catalog.py --source . --catalog my-roster/client/sdgo/mods/ai_catalog/catalog.bin --out players.zip
 ```
 
-Install the framework and AI gameplay mods first. Close each selected host before
-installing or changing its state. `--source` is the standalone addon package root,
-or the matching `build/catalog/stage/Release` tree. No shared core or loader is
-replaced. Existing server AI DLLs receive the small optional provider bridge;
-their manifests, settings and enabled states are preserved. Missing AI mods are
-not installed by the addon.
+Use `--previous-catalog my-roster/catalog.json` and a new output folder for updates. Without
+`--generate` the tool only writes an audit. `--connection-env SDGO_SQL_CONNECTION` reads an ODBC
+connection string from a local environment variable (needs `pyodbc`). `install_ai_catalog.py` also
+has `disable`, `enable`, `uninstall`, `recover` and `--host-exe`.
 
-The player export contains the enabled client addon, generated catalog, required
-symbol fragment, one-time PowerShell setup, checksums and instructions. After
-extracting into the stopped game's folder, run
-`powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-AiCatalog.ps1`
-once. Setup adds missing symbols without replacing other mods' definitions,
-refuses conflicts and preserves the original symbol file. Players then use their
-normal launcher; no Python/ODBC, owner backend, accounts or database settings
-are included.
+## Developer notes
 
-Keep `catalog.json` as the owner's allocation ledger. Pass it with
-`--previous-catalog my-roster/catalog.json` on updates and choose a new output
-directory. Retired IDs stay reserved. `--rules` supports per-unit `exclude`,
-`levels`, and native NPC `templates`. Defaults group sortie-ready C/B/A/S/SS-SR
-units into LV1/2/3/4/5; these are roster groups, not measured AI difficulty.
-Without `--generate`, the tool remains a read-only audit/planner.
+Supported builds: `GOnline-54BE1568-00C97000` and `BattleServer-548A891D-0046C000`. No database rows
+or encrypted game archives are changed.
 
-An ODBC catalog source is optional: use `--connection-env SDGO_SQL_CONNECTION`
-instead of `--db-export`. Only the owner needs `pyodbc` and an SQL Server driver.
-The connection string stays local; the reader executes fixed catalog SELECTs.
-
-## Toggle and remove
-
-Set `[mod] enabled=0/1` in `sdgo/mods/ai_catalog/mod.ini`, or use:
-
-```powershell
-python backend/install_ai_catalog.py disable --target D:/Games/SDGO
-python backend/install_ai_catalog.py enable --target D:/Games/SDGO
-python backend/install_ai_catalog.py uninstall --target D:/Games/SDGO
-```
-
-Apply to the server and every participating client, then restart them. There is
-no live unloading. `[mods] ai_catalog=0` in `sdgo.ini` is also respected. With the
-addon off, the AI mods use their original `LevelN` settings and native filtering.
-On framework 1.1.4+, `[features] ai-catalog=0` or `[categories] gameplay=0`
-also disables it. The separate addon remains outside the Base/Full package catalog.
-
-The installer records originals and restores them on uninstall. It refuses to
-overwrite another updater's subsequent changes; disabling remains available.
-`recover --target ...` handles an interrupted installation when its scoped files
-still match the recorded old/new values. It never modifies unrelated settings.
-
-## Implementation and limits
-
-No database rows or encrypted game archives are changed.
-The server provides additional NPC records and private unit data only during an
-expanded AI build, restoring thread-local context even on native exceptions.
-After the last native NPC table loads, the client registers generated NPCs in
-the process's native map and integrity registry. This also serves native creators
-that bypass `grid.find` with an inline map lookup. Records, wrappers and nodes
-use the game's allocator and are released by its normal table destructor.
-Original unit bytes and ordinary lookups remain unchanged. All source hashes
-and collisions are checked before publication; conflicts abort registration
-without replacing native records. Creator guards refuse missing or different
-catalog data. Restarting with the addon off loads only original archive records.
-Generated owner data is not part of the generic addon distribution.
-
-The addon expands the existing random LV pools; it does not add a mech selection
-screen. For example, `!ai e2 a1 lv2` uses the expanded LV2 pool for two enemies
-and one ally.
-
-Supported builds: `GOnline-54BE1568-00C97000` and
-`BattleServer-548A891D-0046C000`. Native AI script templates are selected
-heuristically with owner overrides. Rendering, weapon behavior, transformations,
-respawn gameplay and real multiplayer still require manual acceptance with the
-paired client/server setup. Do not mix clients without the addon into expanded
-AI rooms.
+- The server supplies the extra NPC records and private unit copies only while building an expanded
+  AI pilot (`battle.build_ai_pilot`), restoring thread-local context even on native exceptions.
+  Installed `coop_ai` / `pvp_ai` receive a small optional provider bridge; their settings are kept.
+- After the last native NPC table loads (`grid.load_npc_table`), the client registers the generated
+  NPCs in the process's native map and integrity registry (`grid.make_node`, `grid.insert_node`,
+  `grid.register_record`), which also serves creators that bypass `grid.find` with an inline lookup.
+  Records and nodes use the game's allocator and are released by its normal table destructor.
+- Source hashes and ID collisions are checked before registration; a conflict aborts registration
+  without replacing native records, and creators refuse missing or different catalog data.
 
 Build/package: `cmake --build build/catalog --config Release`, then
-`python tools/package_ai_catalog.py`. Tests: Python `test_ai_catalog.py`, CTest's
-`ai_catalog_integration`, and the optional caller-supplied-image tests
-`ai_catalog_native_test` (server) and `ai_catalog_client_map_test` (client).
-These tests do not execute the game's entry point or connect to a game server.
-Automated checks are not gameplay evidence.
+`python tools/package_ai_catalog.py`. Tests: `test_ai_catalog.py`, CTest `ai_catalog_integration`, and
+the caller-supplied-image tests `ai_catalog_native_test` (server) and `ai_catalog_client_map_test` (client).
