@@ -59,6 +59,9 @@ Human team selection and AI population are independent:
 - **Native teams** (default, or explicit `versus`): preserve manual choices, or resolve native random human teams first. AI placement then follows the host's final side. Humans on the other side remain opponents.
 - **Humans together** (`coop`): at start, group every human on the host's selected side, then add AI. This overrides native random teams; other humans' temporary side selections cannot separate friends. The host can choose either side.
 
+If a random-team room has not assigned the host a side yet, `coop` uses team 1.
+To choose a color, use manual teams and let the host select that side.
+
 Bare `coop` defaults to opponents only. Combine it with `fill`, `enemy` or exact
 `eN aN`, such as `!ai coop e4 a1`. Bare `versus` defaults to both-side fill.
 Choose one human policy; omitting it preserves native teams. `!rand` chooses

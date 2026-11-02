@@ -476,6 +476,31 @@ namespace
     constexpr size_t kTeamColour1=0x2EF0C;
     constexpr size_t kRandomPattern=0x3CC3;
     constexpr size_t kLastRandomHumanCount=0x3CD7;
+    RoomView CooperativeRoomView(uint8_t* room) {
+        auto view=ViewRoom(room);
+        if(!room[8])return view;
+        // Native random rooms can have team zero until AssignHumanTeams runs.
+        // Coop replaces that assignment, so count the real occupied identities
+        // before grouping. Keep an explicit host side; otherwise choose team 1.
+        memset(view.humans,0,sizeof(view.humans));
+        memset(view.ai,0,sizeof(view.ai));
+        view.hostTeam=0;view.validTeams=true;
+        const auto host=*reinterpret_cast<const uint32_t*>(room+kRoomHost);
+        uint32_t seen[kSlots]{};int count=0,hostCount=0;
+        for(int slot=0;slot<kSlots;++slot) {
+            const auto id=SlotPilotId(room,slot);
+            if(!id)continue;
+            for(int i=0;i<count;++i)if(seen[i]==id)view.validTeams=false;
+            seen[count++]=id;
+            const auto team=SlotTeam(room,slot);
+            if((id&kAiPilotBit) || team>2) {view.validTeams=false;continue;}
+            const uint8_t assigned=team ? team:uint8_t{1};
+            ++view.humans[assigned];
+            if(id==host){view.hostTeam=assigned;++hostCount;}
+        }
+        if(hostCount!=1)view.validTeams=false;
+        return view;
+    }
     sdgo::pvp_teams::Room PopulationInput(uint8_t* room,const RoomView& view,bool cooperative=false) {
         sdgo::pvp_teams::Room input;
         const int capacity=room[kRoomCapacity];
@@ -532,9 +557,9 @@ namespace
     }
     int __fastcall AssignHumanTeams(void* proc,void*,uint8_t* room) {
         if(room && IsPvpMode(room[kRoomMode])) {
-            const auto view=ViewRoom(room);
-            const auto plan=ParseTitle(view.title);
+            const auto plan=ParseTitle(ViewRoom(room).title);
             if(plan.enabled && plan.cooperative) {
+                const auto view=CooperativeRoomView(room);
                 if(!CoopPreflight(room,plan,view))return 0;
                 const uint8_t colour=room[kTeamColour1+view.hostTeam-1];
                 for(int slot=0;slot<kSlots;++slot) {
@@ -1465,9 +1490,9 @@ namespace
         uint8_t humanTeams[kSlots]{},humanColours[kSlots]{};
         bool cooperative=false;
         if(room && IsPvpMode(room[kRoomMode])) {
-            const auto view=ViewRoom(room);
-            const auto requested=ParseTitle(view.title);
+            const auto requested=ParseTitle(ViewRoom(room).title);
             cooperative=requested.enabled && requested.cooperative;
+            const auto view=cooperative ? CooperativeRoomView(room):ViewRoom(room);
             const bool singleRandom=!cooperative && SingleRandomAiRoom(room);
             const int humanSlot=singleRandom ? SingleRandomHumanSlot(room):-1;
             if(requested.enabled && (!requested.valid || (cooperative && !CoopPreflight(room,requested,view)) || (singleRandom &&

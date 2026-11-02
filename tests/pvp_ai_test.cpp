@@ -321,6 +321,30 @@ int wmain(int argc,wchar_t** argv) {
         CHECK(view.humans[2]==3 && view.humans[1]==0 && view.ai[1]==4);
         CHECK(view.ai[2]==(std::strstr(title,"a1")?1:0));
     }
+    SCENARIO("native random rooms can group real unassigned humans before native team assignment");
+    for(int humans:{1,3,4,7})for(int hostTeam:{0,1,2}) {
+        Reset();Title("!ai coop");room[8]=1;
+        const int occupied[]={6,0,11,3,9,1,7};
+        for(int i=0;i<humans;++i)Human(occupied[i],i?0:hostTeam);
+        Put<uint32_t>(room.data(),kRoomPlayers,static_cast<uint32_t>(humans));
+        nativeAssignDuringSetup=true;
+        CHECK(AddUsingNativePoolFixture(true)==0);
+        const int side=hostTeam ? hostTeam:1;
+        const auto view=ViewRoom(room.data());
+        CHECK(view.hostTeam==side && view.humans[side]==humans && view.humans[3-side]==0);
+        CHECK(view.ai[side]==0 && view.ai[3-side]==8-humans && room[8]==1 && nativeRandomSeen==0);
+    }
+    SCENARIO("unassigned manual teams and malformed random identities remain invalid");
+    for(int bad=0;bad<4;++bad) {
+        Reset();Title("!ai coop");Human(0,0);Human(6,0);
+        Put<uint32_t>(room.data(),kRoomPlayers,2);nativeAssignDuringSetup=true;
+        if(bad)room[8]=1;
+        if(bad==1)SlotPilotId(room.data(),6)=SlotPilotId(room.data(),0);
+        if(bad==2)room[kSlotInfo+6*kSlotInfoStride+kSlotInfoTeamA]=3;
+        if(bad==3)Put<uint32_t>(room.data(),kRoomHost,9999);
+        const auto before=room;
+        CHECK(AddUsingNativePoolFixture(true)==0x0FBE && room==before && nativeHumanCalls==0);
+    }
     SCENARIO("invalid cooperative starts are rejected before native setup or changing human sides");
     for(int bad=0;bad<7;++bad) {
         Reset();Title("!ai coop");Human(0,1);Human(6,2);Human(11,2);
