@@ -309,7 +309,7 @@ class NativeDriver:
                 for encoding in ('utf-8','utf-16-le'):
                     raw=raw.replace(secret.encode(encoding),'[redacted]'.encode(encoding))
             target.write_bytes(raw)
-        for relative in ('result.json','fixture-binding.json','progress.json','launch-selection.json','client-run/run.json'):
+        for relative in ('result.json','fixture-binding.json','progress.json','launch-selection.json','native-network.json','client-run/run.json'):
             source=lease.root/relative
             if source.is_file():
                 copy_evidence(source)
