@@ -1125,7 +1125,7 @@ state=pending_first_login
         self.assertEqual(selected["pid"], 7002)
         self.assertNotEqual(selected["pid"], 47616)
 
-    def test_termination_failure_still_releases_locks_closes_quiet_runtime_and_reports_failure(self):
+    def test_termination_failure_still_closes_quiet_runtime_but_retains_live_account_locks(self):
         run_dir=self.prepare('cleanup-failure');meta=self.metadata(run_dir);process=FakeProcess()
         process.kill=mock.Mock(side_effect=OSError(5,'synthetic access denied'))
         closed=[]
@@ -1145,6 +1145,27 @@ state=pending_first_login
         self.assertEqual(report['layers']['launch']['execution']['status'],'cleanup_error')
         self.assertIn('synthetic access denied',' '.join(report['layers']['launch']['execution']['cleanup_errors']))
         self.assertEqual(closed,[True])
+        self.assertTrue((run_dir/'.run.lock').exists())
+        self.assertTrue(game_test.account_profile_lock_path(self.account_profile).exists())
+
+    def test_exit_race_is_accepted_only_after_the_owned_handle_confirms_termination(self):
+        run_dir=self.prepare('termination-race');meta=self.metadata(run_dir);process=FakeProcess()
+        process.kill=mock.Mock(side_effect=OSError(5,'already terminating'))
+        def wait(timeout=None):process.returncode=1;return 1
+        process.wait=mock.Mock(side_effect=wait)
+        calls=[]
+        def completed(path):
+            calls.append(True)
+            if len(calls)==1:return False
+            self.write_events(run_dir,game_test.FLOW_CASES,include_end=True,pid=process.pid);return True
+        with mock.patch.object(game_test.subprocess,'Popen',return_value=process),mock.patch.object(
+            game_test,'NamedStartupEvent',FakeStartupEvent),mock.patch.object(
+            game_test,'has_run_end',side_effect=completed),mock.patch.object(
+            game_test,'owned_tcp_peers',return_value=[{'remote_ipv4':'127.0.0.1','remote_port':5001}]),mock.patch.object(
+            game_test,'process_image_path',return_value=meta['client']['game']):
+            report=game_test.run_prepared(run_dir,timeout=1,launch_timeout=0)
+        self.assertEqual(report['status'],'pass')
+        process.kill.assert_called_once();process.wait.assert_called_once_with(timeout=10)
         self.assertFalse((run_dir/'.run.lock').exists())
         self.assertFalse(game_test.account_profile_lock_path(self.account_profile).exists())
 

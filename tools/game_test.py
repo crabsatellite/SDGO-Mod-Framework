@@ -2768,13 +2768,20 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
         metadata['status']='executed'
         atomic_write(run_dir/'run.json',json.dumps(metadata,indent=2,sort_keys=True))
     finally:
+        if not isinstance(metadata.get('execution'),dict):metadata['execution']={}
         cleanup_errors=[]
         def cleanup(label,action):
             try:action()
             except Exception as error:cleanup_errors.append(f'{label}: {type(error).__name__}: {error}')
         def stop_entry():
             if entry_process and entry_process.poll() is None:
-                entry_process.kill()
+                try:entry_process.kill()
+                except OSError:
+                    # Windows can reject a second termination while the first
+                    # exit is still pending. Accept only a confirmed exit.
+                    entry_process.wait(timeout=10)
+                    if entry_process.poll() is None:raise
+                    return
                 entry_process.wait(timeout=10)
         if game_process:
             if entry_process and game_process["pid"] == entry_process.pid:
@@ -2788,9 +2795,18 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
             cleanup('entry exit readback',lambda:metadata['execution'].update(entry_exit_code=entry_process.poll()))
         if quiet_runtime:
             cleanup('quiet runtime close',lambda:metadata.setdefault('execution',{}).update(quiet_cleanup=quiet_runtime.close()))
-        if account_lock is not None and account_token is not None:
-            cleanup('account lock release',lambda:release_owned_lock(account_lock,account_token))
-        cleanup('run lock release',lambda:release_owned_lock(lock,token))
+        owned_alive=True
+        try:
+            owned_alive=bool(entry_process and entry_process.poll() is None)
+            if game_process and (not entry_process or game_process['pid']!=entry_process.pid):
+                owned_alive=owned_alive or any(row['pid']==game_process['pid'] for row in process_snapshot())
+        except Exception as error:cleanup_errors.append(f'owned exit readback: {type(error).__name__}: {error}')
+        if not owned_alive:
+            if account_lock is not None and account_token is not None:
+                cleanup('account lock release',lambda:release_owned_lock(account_lock,account_token))
+            cleanup('run lock release',lambda:release_owned_lock(lock,token))
+        else:
+            cleanup_errors.append('owned process exit is unconfirmed; account and run locks retained')
         if cleanup_errors:
             metadata.setdefault('execution',{}).update(status='cleanup_error',cleanup_errors=cleanup_errors,
                                                        finished_utc=utc_now())
@@ -3059,6 +3075,7 @@ def build_report(run_dir: Path) -> dict:
                 or {
                     "game_exited": "normal copied client exited before GameTest completed",
                     "timeout": "normal copied client timed out before GameTest completed",
+                    "cleanup_error": 'owned runtime cleanup failed: '+'; '.join(execution.get('cleanup_errors',[])),
                 }.get(execution_status, f"unexpected execution status: {execution_status!r}")
             )
             if execution_status=='game_exited':
