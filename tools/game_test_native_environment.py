@@ -336,6 +336,15 @@ def copy_tree(source, target):
     shutil.copytree(source,target,ignore=ignored)
 
 
+def publish_template_copy(output,destination):
+    # A cross-volume shutil.move copies successfully and then may fail while
+    # deleting read-only native files. Copy/verify first; the owned lifecycle
+    # removes its source with the existing safe read-only cleanup callback.
+    no_reparse_tree(output)
+    shutil.copytree(output,destination)
+    template_description(destination)
+
+
 def rebase_configuration(root, old_root, new_root, ip, private, *, old_ip, old_sql_port=None, old_password=None):
     old_forms=(str(old_root),old_root.as_posix(),json.dumps(str(old_root))[1:-1])
     new_forms=(str(new_root),new_root.as_posix(),json.dumps(str(new_root))[1:-1])
@@ -458,7 +467,7 @@ def build_template(prototype, destination, client_template, registry, stage):
         data['files'].append({'path':'private/native.json','sha256':gt.sha256(output/'private/native.json')})
         atomic_json(output/'template.json',data)
         destination.parent.mkdir(parents=True,exist_ok=True)
-        shutil.move(str(output),str(destination))
+        publish_template_copy(output,destination)
         registry.register_template(destination,template_id)
         atomic_json(lease.root/'result.json',{'status':'template_ready','template':str(destination),'accounts':5})
     return {'status':'template_ready','template':str(destination),'template_id':template_id,'accounts':5,
@@ -504,7 +513,7 @@ def upgrade_template(source, destination, registry):
         data['files']=[{'path':p.relative_to(output).as_posix(),'sha256':gt.sha256(p)}
             for p in output.rglob('*') if p.is_file() and p.name!='template.json']
         atomic_json(output/'template.json',data)
-        destination.parent.mkdir(parents=True,exist_ok=True);shutil.move(str(output),str(destination))
+        destination.parent.mkdir(parents=True,exist_ok=True);publish_template_copy(output,destination)
         template_description(destination);registry.register_template(destination,data['id'])
         atomic_json(lease.root/'result.json',{'status':'template_ready','template':str(destination),'accounts':5,
             'new_accounts_created':0,'existing_unit_uids_preserved':True})
