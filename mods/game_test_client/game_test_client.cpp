@@ -1293,6 +1293,16 @@ int __cdecl DeliverCollection(const SdgoGameTestContextV1* context) {
     return SDGO_GAME_TEST_PASS;
 }
 int __cdecl SelectPlayUnit(const SdgoGameTestContextV1* context) {
+    ActiveSelectionObserver::Snapshot equipped;
+    const bool observed=activeSelection.Read(authenticatedPilot,&equipped);
+    if(observed && equipped.inventory_matches && equipped.uid==playUnitUid) {
+        char message[192];sprintf_s(message,"native active unit already equipped: pilot=%u unit=%u uid=%llu slot=%u; no hangar transition or selection request",equipped.pilot,equipped.unit,static_cast<unsigned long long>(equipped.uid),equipped.slot);
+        context->Observe(message);
+        context->Assert(equipped.pilot==authenticatedPilot && equipped.inventory_matches,
+            "the server-loaded active unit matches the authenticated pilot and its real owned inventory record");
+        return SDGO_GAME_TEST_PASS;
+    }
+    if(!observed && context->elapsed_ms<5000)return SDGO_GAME_TEST_WAIT;
     static bool diagnosticFailure=false;static uint64_t failureAt=0;
     if(diagnosticFailure) {
         if(context->elapsed_ms-failureAt<10000)return SDGO_GAME_TEST_WAIT;
@@ -1720,7 +1730,7 @@ SDGO_MOD_ENTRY {
         (pagesOnly && !capsules.Bind(api,mod)) ||
         (collectionDraw && !collection.Bind(api,mod,&actions)) ||
         (playUnitUid && !unitSelection.Bind(api,mod,&actions)) ||
-        (randomLoadout && !activeSelection.Bind(api,mod)) ||
+        ((randomLoadout || playUnitUid) && !activeSelection.Bind(api,mod)) ||
         (testShopCatalog && (!shopCatalog.Bind(api,mod) || !shopCatalog.Configure(
             sdgo_test::directory+L"\\inputs\\shop-assertions.ini",sdgo_test::directory+L"\\inputs\\shop-runtime-display.ini"))) ||
         (roomTitlesOnly && !roomTitles.Bind(api,mod,&actions)) ||

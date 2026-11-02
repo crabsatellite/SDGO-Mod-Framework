@@ -1,75 +1,57 @@
-# Configured FPS cap (Beta)
+# FPS cap (Beta)
 
-The client uses the FPS cap in its own `config.xml` instead of overwriting it
-with 60 during initialization. A value of 160 requests a cap of 160 FPS.
+Set one value in **SDGO Mod Manager** to control the client's logic-update
+frequency and rendering ceiling. For example, 160 selects 160 logic updates
+per second and a maximum rendering rate of 160 FPS.
 
-| mod | host | part |
+The shared logic/render setting requires `fps_limit` 1.0.2 or newer.
+
+[简体中文](fps-limit.zh-CN.md)
+
+| Mod | Install on | Purpose |
 |---|---|---|
-| `fps_limit` | client | Use `Framework/Timer@updatefps` for logic updates and the rendering ceiling |
+| `fps_limit` | Client | Use the configured rate instead of the native forced 60 Hz |
 
 ## Use
 
-Enable **FPS cap** in SDGO Mod Manager and set the limit there. The Manager reads
-and updates the existing client `config.xml`; there is no second FPS setting in
-the mod manifest. Close and restart that client after changing the value.
-Existing `updatefps="160"` remains 160 when this mod is installed.
-Use the matching updated Manager; close an older running Manager before updating
-the client. The client Git update also includes the shared Manager executable.
+1. Close the game and open **SDGO Mod Manager**.
+2. Select the client, enable **FPS cap (FPS 上限)**, and save the desired limit.
+3. Start the game with its usual launcher. Restart the game after changing the limit.
+
+The Manager updates the existing `config.xml`. Installing the Mod preserves
+your current value and other client settings. No server component is required.
 
 ## Settings
 
-| key | default | meaning |
-|---|---|---|
-| `config.xml`, `Framework/Timer@updatefps` | 60 | Integer FPS cap, 1–1000; takes effect at client startup |
+| Setting | Default | Allowed values | Takes effect |
+|---|---|---|---|
+| FPS cap | 60 | Integer, 1–1000 | After restarting the client |
 
-Missing/invalid numeric values use the native 60 FPS fallback. This is a cap,
-not a promise that the computer will reach that rate. The same value sets the
-native logic-update frequency and a separate ceiling at the native Present
-wrapper. Vertical sync and rendering load can limit presentation further. The mod does
-not change resolution or the game's time source.
+The value is stored in `Framework/Timer@updatefps` in `config.xml`; the Mod
+does not maintain a separate FPS value. Missing or invalid values use 60.
 
-## Logs and troubleshooting
+This setting changes logic updates as well as the rendering ceiling. Set it
+to 60 to use 60 Hz logic updates and a 60 FPS rendering cap. Resolution, aspect
+ratio and the native clock source are unchanged.
 
-`fps_limit: config.xml updatefps=160; effective FPS cap=160`
+The cap is a maximum. Rendering load, vertical sync and display refresh rate
+can reduce the rate you see. Raising the cap does not guarantee higher performance.
 
-| symptom or log | cause |
+## Compatibility and troubleshooting
+
+The supported client is `GOnline-54BE1568-00C97000`. An unsupported executable
+or changed hook signature causes the Mod to stay disabled. See [setup](setup.md)
+for installation and version checks.
+
+Logs are written to `sdgo/logs/sdgo.log` in the client folder. For a setting of 160,
+the startup log includes `effective FPS cap=160`.
+
+| Symptom | Check |
 |---|---|
-| Mod skipped because a symbol did not verify | Unsupported or modified client; no FPS hook is installed |
-| `invalid value; using 60` | Parsed cap is outside 1–1000 |
-| Setting saved, running game unchanged | Restart the selected client |
-| Effective cap is 160, measured FPS is lower | Check load, presentation sync and the actual render rate |
+| Saved value has no effect | Restart the selected client and check that the Mod is enabled |
+| `invalid value; using 60` | Enter an integer from 1 to 1000 |
+| Required symbol did not verify | Use a supported client and matching framework files |
+| Rendering stays below the limit | Check rendering load, vertical sync and display settings |
 
-## How it works
-
-On the supported client, the native XML reader fills `CApplication+0x80`, then
-the instruction at `fps.config.force60` overwrites it with 60. A verified site
-hook skips exactly that ten-byte instruction and preserves native CPU, flags
-and floating-point state. The original startup code creates the timer with
-`interval = 1.0f / configured_fps`. Version 1.0.2 checks that interval and the
-native independent-render mode at the original app-idle boundary. It writes only
-when a native state transition has reset a value; steady idle calls do not
-rewrite it. Accumulated time and the clock source remain native.
-
-The verified `fps.device.present` wrapper is paced immediately before its
-original Present call using QueryPerformanceCounter and an unnamed waitable
-timer (high resolution where available). Each deadline starts from the actual
-presentation start, preventing catch-up bursts after stalls. The original
-graphics object, window, HRESULT and LastError behavior are preserved.
-The passive `SdgoFpsLimitGetSnapshotV1` observer reports the configured update
-and render targets, actual pacing period and wait count for tests.
-A different signature disables the mod.
-
-The account-free [native GameTest matrix](game-test.md) runs the real login page
-with the mod disabled at configured 160, then enabled at 30, 60, 120 and 160.
-It retains all sample-window averages and checks actual update cadence,
-successful D3D9 presentations, their minimum spacing and the production pacing
-period. The 30 FPS case must exercise real waits. A lower measured render rate
-does not invalidate a ceiling; it is retained in the report.
-Full combat acceptance at higher rates remains a
-separate check; Beta does not claim that acceptance.
-
-The eleven real-core/production-DLL fixture cases cover 160/120/60, range
-boundaries, invalid-value fallback, disabled mode and rejected symbols, including
-registers, flags, floating-point state, last error and unrelated memory guards.
-They also check the native Present ABI, real waits and stall recovery.
-Run `ctest --test-dir build -C Release -R "^fps_limit_runtime$" --output-on-failure`.
+Developers can reproduce the parameter and pacing checks with the
+[native GameTest FPS suite](game-test.md#fps-cap-without-account-login).

@@ -1,17 +1,16 @@
 # Client exits before displaying a window
 
-The reported quick-launch failure loaded all enabled Mods, then exited before NPC
-and capsule data registration. No new Windows fault report was produced.
+The client can exit with code zero before displaying a window when its launcher
+coordination event is missing, even after enabled Mods have loaded.
 
 In the pinned client, WinMain at `0x004914D0` opens the named event `9YOU SDGO`
 at `0x00491521`. If it is missing, `0x00491529` takes the early return with exit
 code zero. The success path only signals the event and closes the native handle.
 It is launcher coordination, not a login or account check.
 
-A direct isolated launch without the event reproduced this early exit. With the
-event held open, both the ordinary and enhanced-AI configurations registered the
-owner-provided data and remained alive for 35 seconds. Those tests do not establish
-the original launcher's exact timeout or prove a new gameplay session.
+When testing launcher compatibility, compare direct startup with and without the
+event, and check that native data registration finishes with the intended Mods.
+The handshake alone does not test login or gameplay.
 
 The loader now creates or retains this event before synchronous Mod initialization
 for `GOnline-54BE1568-00C97000`, and releases its own handle when native WinMain has
