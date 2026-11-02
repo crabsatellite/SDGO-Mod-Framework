@@ -19,6 +19,8 @@ constexpr std::size_t kHostHeapThreshold = 8;
 constexpr std::size_t kMaximumTitleCodeUnits = 256;
 constexpr std::uint32_t kTitleLimitBytes = 512;
 constexpr std::size_t kEditLimitOffset = 0x2A0;
+constexpr std::size_t kEditFocusOffset = 0x165;
+constexpr std::size_t kInputContextBytes = 0x138;
 constexpr std::size_t kPvpCreateDialogOffset = 0x4C;
 constexpr std::size_t kMissionCreateDialogOffset = 0x4C;
 constexpr std::size_t kMissionSettingsDialogOffset = 0x5C;
@@ -78,6 +80,7 @@ static_assert(offsetof(HostWString24, capacity) == 0x14, "unexpected native stri
 using FindControlFn = void* (__thiscall*)(void*, const HostWString24*, int);
 using GetTextFn = const HostWString24* (__thiscall*)(void*);
 using SetTextFn = void (__thiscall*)(void*, const HostWString24*, int);
+using InputLimitFn = void (__thiscall*)(void*, std::uint32_t, int);
 using WideToNarrowFn = const char* (__cdecl*)(UINT, LPCWSTR);
 using NarrowToWideFn = const wchar_t* (__cdecl*)(UINT, const char*);
 using NativeStringAssignFn =
@@ -96,6 +99,9 @@ SdgoMod* g_mod = nullptr;
 FindControlFn g_findControl = nullptr;
 GetTextFn g_getText = nullptr;
 SetTextFn g_setText = nullptr;
+InputLimitFn g_inputLimit = nullptr;
+void* g_inputContext = nullptr; // address of the host's shared input pointer
+CRITICAL_SECTION* g_inputLock = nullptr;
 WideToNarrowFn g_wideToNarrow = nullptr;
 NarrowToWideFn g_narrowToWide = nullptr;
 NativeStringAssignFn g_nativeStringAssign = nullptr;
@@ -656,6 +662,9 @@ bool Bind(const SdgoApi* api, SdgoMod* mod)
     const auto findControl = reinterpret_cast<FindControlFn>(api->Symbol(mod, "room_titles.ui_find_control"));
     const auto getText = reinterpret_cast<GetTextFn>(api->Symbol(mod, "room_titles.ui_edit_get_text"));
     const auto setText = reinterpret_cast<SetTextFn>(api->Symbol(mod, "room_titles.ui_edit_set_text"));
+    const auto inputLimit = reinterpret_cast<InputLimitFn>(api->Symbol(mod, "room_titles.ui_input_limit"));
+    void* inputContext = api->Symbol(mod, "room_titles.ui_input_context");
+    auto* inputLock = reinterpret_cast<CRITICAL_SECTION*>(api->Symbol(mod, "room_titles.ui_input_lock"));
     const auto wideToNarrow =
         reinterpret_cast<WideToNarrowFn>(api->Symbol(mod, "room_titles.ui_wide_to_narrow"));
     const auto narrowToWide =
@@ -674,7 +683,8 @@ bool Bind(const SdgoApi* api, SdgoMod* mod)
     const void* staticTextVtable = api->Symbol(mod, "room_titles.ui_static_text_vtable");
     const void* titleBarVtable =
         api->Symbol(mod, "room_titles.ui_titlebar_vtable");
-    if (!findControl || !getText || !setText || !wideToNarrow || !narrowToWide ||
+    if (!findControl || !getText || !setText || !inputLimit || !inputContext || !inputLock ||
+        !wideToNarrow || !narrowToWide ||
         !nativeStringAssign || !buttonTextItem || !staticTextSet ||
         !staticTextWordSkip || !editVtable || !buttonVtable ||
         !staticTextVtable || !titleBarVtable)
@@ -685,6 +695,9 @@ bool Bind(const SdgoApi* api, SdgoMod* mod)
     g_findControl = findControl;
     g_getText = getText;
     g_setText = setText;
+    g_inputLimit = inputLimit;
+    g_inputContext = inputContext;
+    g_inputLock = inputLock;
     g_wideToNarrow = wideToNarrow;
     g_narrowToWide = narrowToWide;
     g_nativeStringAssign = nativeStringAssign;
@@ -784,9 +797,28 @@ bool SetRoomNameLimit(void* edit)
         return false;
     auto* limit = reinterpret_cast<std::uint32_t*>(
         reinterpret_cast<std::uint8_t*>(edit) + kEditLimitOffset);
-    if (!IsAccessibleRange(limit, sizeof(*limit), true))
+    const auto* focused = static_cast<const std::uint8_t*>(edit) + kEditFocusOffset;
+    if (!IsAccessibleRange(limit, sizeof(*limit), true) ||
+        !IsAccessibleRange(focused, sizeof(*focused), false))
         return false;
     *limit = kTitleLimitBytes;
+
+    // Native init may have already focused this edit and copied its old limit
+    // into the shared Win32 input. Updating +0x2A0 only takes effect on the next
+    // focus change. Refresh that live copy under the same lock as CUIEditBox,
+    // only for this focused room edit. Passing clear=0 preserves text/caret.
+    if (*focused) {
+        if (!IsAccessibleRange(g_inputLock, sizeof(*g_inputLock), true))
+            return false;
+        EnterCriticalSection(g_inputLock);
+        void* input = nullptr;
+        const bool ready = ReadPointer(g_inputContext, 0, &input) &&
+            IsAccessibleRange(input, kInputContextBytes, true);
+        if (ready && *focused)
+            g_inputLimit(input, kTitleLimitBytes / sizeof(wchar_t), 0);
+        LeaveCriticalSection(g_inputLock);
+        return ready;
+    }
     return true;
 }
 

@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import threading
 import uuid
+import xml.etree.ElementTree as ET
 
 LOCK = threading.RLock()
 
@@ -111,6 +112,55 @@ def patch_ini(raw, changes):
     if not bom and any(ord(c)>127 for _,_,value in changes for c in str(value)):
         return b'\xff\xfe'+text.encode('utf-16-le')
     return bom + text.encode(encoding)
+
+
+def client_timer_fps(raw):
+    """Read the one supported client-root XML setting."""
+    try:
+        root = ET.fromstring(raw)
+    except (ET.ParseError, ValueError) as error:
+        raise ValueError('客户端 config.xml 无效') from error
+    timers = root.findall('./Framework/Timer') if root.tag == 'Config' else []
+    if len(timers) != 1:
+        raise ValueError('客户端 config.xml 缺少唯一的 Framework/Timer')
+    value = timers[0].get('updatefps')
+    if value is None:
+        raise ValueError('客户端 config.xml 缺少 updatefps')
+    return value
+
+
+def patch_client_timer_fps(raw, value):
+    """Patch only Framework/Timer@updatefps while preserving all other bytes."""
+    current = client_timer_fps(raw)
+    value = str(value)
+    if not re.fullmatch(r'[0-9]+', value):
+        raise ValueError('FPS 上限无效')
+    framework = list(re.finditer(br'<Framework(?=[\s>])[^>]*>(.*?)</Framework\s*>', raw, re.DOTALL))
+    if len(framework) != 1:
+        raise ValueError('客户端 config.xml 的 Framework 结构无法安全修改')
+    start, end = framework[0].span(1)
+    body = raw[start:end]
+    timers = list(re.finditer(br'<Timer(?=[\s/>])[^>]*?/?>', body, re.DOTALL))
+    if len(timers) != 1:
+        raise ValueError('客户端 config.xml 的 Timer 结构无法安全修改')
+    timer_start, timer_end = timers[0].span()
+    tag = body[timer_start:timer_end]
+    attributes = list(re.finditer(
+        br'(?<![A-Za-z0-9_.:-])updatefps(?P<space>\s*=\s*)(?P<quote>["\'])(?P<value>[^"\']*)(?P=quote)',
+        tag,
+    ))
+    if len(attributes) != 1:
+        raise ValueError('客户端 config.xml 的 updatefps 无法安全修改')
+    match = attributes[0]
+    observed = match.group('value').decode('ascii', errors='strict')
+    if observed != current:
+        raise ValueError('客户端 config.xml 的 updatefps 结构不一致')
+    value_start = start + timer_start + match.start('value')
+    value_end = start + timer_start + match.end('value')
+    candidate = raw[:value_start] + value.encode('ascii') + raw[value_end:]
+    if client_timer_fps(candidate) != value:
+        raise ValueError('客户端 config.xml 修改校验失败')
+    return candidate
 
 
 def safe_child(root, relative):

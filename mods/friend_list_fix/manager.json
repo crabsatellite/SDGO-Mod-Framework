@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "friend_list_fix",
+  "title": "好友列表修复",
+  "category": "fixes",
+  "hosts": ["world"],
+  "description": "修复原生好友名单中的离线好友、角色名及私信目标资料。",
+  "settings": [],
+  "presentation": "automatic_fix",
+  "mechanism": "在 WorldServer 自有 schema 的查询副本中补齐离线与附加资料的非空值，优先读取当前角色名；保留原存储过程与玩家数据。首次请求借用原生会员库会话初始化，安装后需重启并重新登录。配套客户端修复恢复离线好友聊天入口；原服务端不提供离线私信队列。"
+}

@@ -52,7 +52,9 @@ bool InstallTitleDisplayHooks(TitleLookupCallback callback);
 void* FindRoomNameEdit(void* service, Surface surface);
 
 // The host limit is measured in UTF-16 bytes. This sets only a verified room
-// title edit to 512 bytes (256 UTF-16 code units).
+// title edit to 512 bytes (256 UTF-16 code units), including the shared native
+// input's cached limit when this edit was already focused during initialization.
+// Existing text and selection are preserved; unrelated active inputs are untouched.
 bool SetRoomNameLimit(void* edit);
 
 // Copy the edit's current native UTF-16 value into Mod-owned storage.

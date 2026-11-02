@@ -125,6 +125,8 @@ class Workspace:
             contract = registry.load(mod_dir.parent).get(mod_id)
         if contract is None:
             raise ValueError('此 Mod 尚未登记详细配置')
+        if host['role'] not in contract.get('hosts', []):
+            raise ValueError('此 Mod 不属于所选宿主')
         contract=copy.deepcopy(contract)
         contract['settings']=[field for field in contract.get('settings',[]) if field['audience']=='user' or self.mode=='developer']
         files = {}
@@ -132,10 +134,15 @@ class Workspace:
         for field in contract.get('settings', []):
             name = field['file']
             if name not in files:
-                target = mod_dir / name
+                target = storage.safe_child(host['path'], name) if self._client_xml_field(field) else storage.safe_child(mod_dir, name)
                 raw = target.read_bytes() if target.exists() else b''
-                files[name] = {'raw': raw, 'revision': storage.revision(raw), 'values': storage.ini_values(raw)}
-            value = files[name]['values'].get('settings', field['key'], fallback=None)
+                files[name] = {'raw': raw, 'revision': storage.revision(raw)}
+                if not self._client_xml_field(field):
+                    files[name]['values'] = storage.ini_values(raw)
+            if self._client_xml_field(field):
+                value = storage.client_timer_fps(files[name]['raw'])
+            else:
+                value = files[name]['values'].get('settings', field['key'], fallback=None)
             if value is None and name == 'config.ini':
                 value = storage.ini_values((mod_dir / 'mod.ini').read_bytes()).get('settings', field['key'], fallback=None)
             if value is None:
@@ -149,6 +156,10 @@ class Workspace:
             values[field['id']] = value
         return {'contract': contract, 'values': values, 'revisions': {name: entry['revision'] for name, entry in files.items()}}
 
+    @staticmethod
+    def _client_xml_field(field):
+        return (field['file'], field.get('section', 'settings'), field['key']) == registry.CLIENT_XML_SETTING
+
     def configure(self, host_id, mod_id, values, revisions):
         with storage.LOCK:
             current = self.details(host_id, mod_id)
@@ -158,16 +169,25 @@ class Workspace:
             updates = {}
             for key, value in values.items():
                 field = fields[key]
-                updates.setdefault(field['file'], []).append(('settings', field['key'], registry.validate(field, value)))
+                updates.setdefault(field['file'], []).append((field, registry.validate(field, value)))
             host = self.host(host_id)
             root = storage.safe_child(host['path'], 'sdgo/mods/'+mod_id)
             candidates = {}
             for name, changes in updates.items():
-                path = root / name
+                xml = self._client_xml_field(changes[0][0])
+                if any(self._client_xml_field(field) != xml for field, _ in changes):
+                    raise ValueError('配置文件类型冲突')
+                path = storage.safe_child(host['path'], name) if xml else storage.safe_child(root, name)
                 raw = path.read_bytes() if path.exists() else b''
                 if revisions.get(name) != storage.revision(raw):
                     raise storage.Conflict('配置已被其他工具改变，请刷新后重试')
-                candidates[path] = (raw, storage.patch_ini(raw, changes))
+                if xml:
+                    if host['role'] != 'client' or name != 'config.xml' or len(changes) != 1:
+                        raise ValueError('客户端 XML 配置目标无效')
+                    new = storage.patch_client_timer_fps(raw, changes[0][1])
+                else:
+                    new = storage.patch_ini(raw, [('settings', field['key'], value) for field, value in changes])
+                candidates[path] = (raw, new)
             written = []
             try:
                 for path, (old, new) in candidates.items():
