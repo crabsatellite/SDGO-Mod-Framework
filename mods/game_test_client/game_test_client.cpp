@@ -40,6 +40,16 @@ using FindWindowFn = HWND(WINAPI*)(LPCWSTR, LPCWSTR);
 using MessageBoxWFn=int(WINAPI*)(HWND,LPCWSTR,LPCWSTR,UINT);
 using MessageBoxAFn=int(WINAPI*)(HWND,LPCSTR,LPCSTR,UINT);
 AppMethod originalUpdate;
+using ErrorNameFn = const char*(__cdecl*)(int);
+ErrorNameFn originalErrorName = nullptr;
+const char* __cdecl ObserveNativeErrorName(int code) {
+    const char* name=originalErrorName(code);
+    if (code) {
+        char message[224];sprintf_s(message,"native error code=%04X name=%s",code,name ? name:"unknown");
+        sdgo_test::Observe(message);
+    }
+    return name;
+}
 FindWindowFn originalFindWindow;
 MessageBoxWFn originalMessageBoxW;
 MessageBoxAFn originalMessageBoxA;
@@ -1014,6 +1024,17 @@ int __cdecl SendGiftRequests(const SdgoGameTestContextV1* context) {
 }
 
 int __cdecl ConfigureDeck(const SdgoGameTestContextV1* context) {
+    if (!deckOnly) {
+        BattleShipDeckActions::Observation prepared{};
+        const auto result=decks.ObserveExistingDeck(deckUnitUids,prepared);
+        if (result==BattleShipDeckActions::kWaitingForShipData || result==BattleShipDeckActions::kWaitingForInventory)
+            return SDGO_GAME_TEST_WAIT;
+        context->Assert(result==BattleShipDeckActions::kAccepted && prepared.profile_matches && prepared.selected_count==4,
+            "the server-loaded selected four-unit fleet matches the sealed fixture and every UID exists in this account's native inventory");
+        char state[160];sprintf_s(state,"existing native fleet ship=%llu leader=%llu units=%u cost=%u; no acquisition or deck edit requested",
+            prepared.ship_uid,prepared.leader_uid,prepared.selected_count,prepared.total_cost);context->Observe(state);
+        return result==BattleShipDeckActions::kAccepted ? SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+    }
     if (actions.AppState()!=20) {
         const auto result=hangarNavigation.EnsureHangar();
         const auto navigation=hangarNavigation.State();
@@ -1743,6 +1764,7 @@ SDGO_MOD_ENTRY {
     if (!modalLoadingVtable)sdgo_test::Fail("native modal-loading page identity is unavailable");
     if (!roomListVtable)sdgo_test::Fail("native Game Room page identity is unavailable");
     getSnapshot = reinterpret_cast<SdgoPvpAiClientGetSnapshotV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_SNAPSHOT_EXPORT));
+    api->HookCode(mod,"game.error_name",reinterpret_cast<void*>(&ObserveNativeErrorName),reinterpret_cast<void**>(&originalErrorName));
     getStartStatus = reinterpret_cast<SdgoPvpAiClientGetStartStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_START_STATUS_EXPORT));
     getScoreboardStatus = reinterpret_cast<SdgoPvpAiClientGetScoreboardStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_SCOREBOARD_STATUS_EXPORT));
     if (!missionMode && !fpsOnly && !bootstrapOnly && !pagesOnly && !scoreboardInput.Install(api, mod)) return 0;
