@@ -44,3 +44,25 @@ When a loading screen with a unit is shown, the game looks the unit up and uses 
 checking that it was found. The mod checks first. If the unit is missing, it switches to the nearest
 earlier loading set whose unit exists (or the nearest later one), as if the random pick had landed
 there, so the screen and the login animation always have a valid unit.
+
+## Developer notes
+
+While the game starts (`CGameApp::SetState`, `SERVICE_LOGO`), the gate loading screen (`0x0090C320`)
+picks a loading set at random (`0x00904180`: grid data type 5, one of the ids from 27102 on, as many
+as there are sets with a unit; `srand(timeGetTime())`) and keeps its id at `+0x20E0`. It then walks
+the loading sets from 27101 and shows each set without a unit and the picked set (`0x008FE380`,
+symbol `gate.show_set_unit`). For a set with a unit, that function looks the unit up in the unit data
+(grid data type 2, `0x0059D2B0`, symbol `grid.find`), creates the unit's model at `+0x207C`, and reads
+the unit record's name at `+0x264` without checking that the unit was found (access violation at
+`0x008FE610`, also present in the game's own `zoa_log\Exp_*.txt`).
+
+When logging in, `0x008FEE30` plays an animation of the set whose id is at `+0x20E0` on the model at
+`+0x207C`, without checking either. So the mod hooks `gate.show_set_unit` and writes the replacement
+set's id to `+0x20E0`. A replacement before the picked set has already been passed by the walk and is
+shown at once; one after it is shown when the walk reaches it. Either way exactly one unit is set up.
+
+Version 1.0.0 showed no unit instead, which left `+0x207C` unset and crashed at login
+(`0x008FEE6B`) whenever a set with a missing unit had been picked.
+
+On the reference client, 2 of 9 loading sets have a missing unit: set 27106 (unit 25452) and set
+27107 (unit 25454).
