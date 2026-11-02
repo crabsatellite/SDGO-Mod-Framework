@@ -16,6 +16,7 @@
 #include <vector>
 #include "sdgo/sdgo_api.h"
 #include "sdgo/mod_settings.h"
+#include "sdgo/battle_eligibility_observer.h"
 #include "sdgo/battle_reward_stats.h"
 #include "sdgo/battle_reward_mission.h"
 #include "boss_catalog.h"
@@ -44,6 +45,11 @@ std::string g_boot, g_error;
 PayoutCounters g_counters;
 uint64_t g_serial = 0;
 std::array<BYTE*, 11> g_sites{};
+std::atomic<unsigned> g_nativeSettlementSamples{0};
+eligibility_observer::GameTestGate g_eligibilityGate;
+eligibility_observer::BattleRowLimiter g_eligibilityLimiter;
+SRWLOCK g_eligibilityLock = SRWLOCK_INIT;
+constexpr char kEligibilitySymbol[] = "battle.rewards.observe_eligibility.team";
 
 bool MissionMode(uint8_t mode) { return mode == 5 || mode == 8 || mode == 10; }
 
@@ -53,6 +59,96 @@ bool ReadNativeBytes(const void* base, size_t offset, void* output, size_t size)
         !native_stats::AddOffset(base, static_cast<ptrdiff_t>(offset), &address)) return false;
     __try { memcpy(output, address, size); return true; }
     __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+bool ReadEligibilityAscii(const std::wstring& path, const wchar_t* section,
+                          const wchar_t* key, char* output, size_t capacity) {
+    if (!output || capacity == 0) return false;
+    wchar_t wide[128] = {};
+    const DWORD length = GetPrivateProfileStringW(
+        section, key, L"", wide, static_cast<DWORD>(_countof(wide)), path.c_str());
+    if (length == 0 || static_cast<size_t>(length) >= capacity) return false;
+    for (DWORD i = 0; i < length; ++i) {
+        if (wide[i] > 0x7F) return false;
+        output[i] = static_cast<char>(wide[i]);
+    }
+    output[length] = '\0';
+    return true;
+}
+
+bool LoadEligibilityGate(eligibility_observer::GameTestGate* gate) {
+    if (!gate) return false;
+    char environmentRun[64] = {};
+    char environmentRole[16] = {};
+    const DWORD runLength = GetEnvironmentVariableA(
+        "SDGO_GAME_TEST_RUN", environmentRun, static_cast<DWORD>(sizeof(environmentRun)));
+    const DWORD roleLength = GetEnvironmentVariableA(
+        "SDGO_GAME_TEST_ROLE", environmentRole, static_cast<DWORD>(sizeof(environmentRole)));
+    if (runLength == 0 && roleLength == 0) return false;
+    if (runLength == 0 || runLength >= sizeof(environmentRun) ||
+        roleLength == 0 || roleLength >= sizeof(environmentRole)) {
+        return false;
+    }
+
+    wchar_t executable[32768] = {};
+    const DWORD executableLength = GetModuleFileNameW(
+        nullptr, executable, static_cast<DWORD>(_countof(executable)));
+    if (executableLength == 0 || executableLength >= _countof(executable)) return false;
+    std::wstring runIni(executable, executableLength);
+    const size_t slash = runIni.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) return false;
+    runIni.resize(slash);
+    runIni += L"\\sdgo\\gametest\\run.ini";
+
+    char configuredRun[64] = {};
+    char configuredRole[16] = {};
+    char nonce[16] = {};
+    if (!ReadEligibilityAscii(runIni, L"run", L"id",
+                              configuredRun, sizeof(configuredRun)) ||
+        !ReadEligibilityAscii(runIni, L"run", L"role",
+                              configuredRole, sizeof(configuredRole)) ||
+        !ReadEligibilityAscii(runIni, L"observer", L"nonce",
+                              nonce, sizeof(nonce))) {
+        return false;
+    }
+    return eligibility_observer::ValidateGate(
+        environmentRun, environmentRole, configuredRun, configuredRole, nonce, gate);
+}
+
+void __stdcall ObserveEligibility(BYTE* frame) noexcept {
+    __try {
+        eligibility_observer::Row row{};
+        eligibility_observer::CaptureError capture =
+            eligibility_observer::CaptureError::None;
+        if (!eligibility_observer::ReadTeamFrame(
+                frame, g_eligibilityGate.title_nonce, &row, &capture)) {
+            return;
+        }
+        AcquireSRWLockExclusive(&g_eligibilityLock);
+        const bool accepted =
+            g_eligibilityLimiter.TryAccept(row.battle, row.native_rank);
+        ReleaseSRWLockExclusive(&g_eligibilityLock);
+        if (!accepted) return;
+        g_api->Log(
+            g_mod, SDGO_LOG_INFO,
+            "battle eligibility runUUID=%s nativeRoomCookie=%u "
+            "nativeRoomTitleNonce=%s native_id=%u AIbit=%u slot=%u rank=%u "
+            "pilotState=%u eligibility_flags=%u selectedUnit=%u branch=%s",
+            g_eligibilityGate.run_uuid,
+            row.battle.room_cookie,
+            row.title_nonce,
+            row.native_id,
+            row.ai ? 1u : 0u,
+            row.physical_slot,
+            row.native_rank,
+            static_cast<unsigned>(row.pilot_state),
+            row.eligibility_flags,
+            row.selected_unit,
+            row.branch == eligibility_observer::Branch::SkipParticipant
+                ? "skip" : "continue");
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        // This GameTest-only observer must never alter native settlement flow.
+    }
 }
 
 struct Session {
@@ -251,6 +347,11 @@ void SettleImpl(unsigned site, BYTE* frame) {
         g_contract_failure = true;
         ++g_counters.settlements_failed; return;
     }
+    if (g_trace && g_nativeSettlementSamples.fetch_add(1,std::memory_order_relaxed)<64)
+        g_api->Log(g_mod,SDGO_LOG_INFO,
+            "native settlement sample site=%u account=%u native_id=%u kind=%u eligible=%u state=%u duration=%u",
+            site,native.account,native.native_id,static_cast<unsigned>(native.kind),native.native_eligible?1u:0u,
+            static_cast<unsigned>(native.pilot_state),native.duration_seconds);
     if (native.kind != native_stats::ParticipantKind::Human || !native.native_eligible) return;
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_contract_failure) return;
@@ -444,6 +545,28 @@ SDGO_MOD_ENTRY {
     for (unsigned i = 0; i < kSettlementSites.size(); ++i) {
         g_sites[i] = static_cast<BYTE*>(api->Symbol(mod, kSettlementSites[i].symbol));
         if (!g_sites[i] || !api->HookSite(mod, kSettlementSites[i].symbol, bridge::detours[i], bridge::originals[i])) return 0;
+    }
+    if (LoadEligibilityGate(&g_eligibilityGate)) {
+        BYTE* eligibilitySite =
+            static_cast<BYTE*>(api->Symbol(mod, kEligibilitySymbol));
+        if (!eligibilitySite) {
+            api->Log(
+                mod, SDGO_LOG_WARN,
+                "GameTest eligibility observer inactive: proposed native symbol is unavailable");
+        } else if (!api->HookSite(
+                       mod, kEligibilitySymbol,
+                       reinterpret_cast<void*>(&eligibility_observer::bridge::Site),
+                       &eligibility_observer::bridge::original)) {
+            api->Log(
+                mod, SDGO_LOG_WARN,
+                "GameTest eligibility observer inactive: native hook installation failed");
+        } else {
+            eligibility_observer::bridge::callback = &ObserveEligibility;
+            api->Log(
+                mod, SDGO_LOG_INFO,
+                "GameTest eligibility observer active for run %s and title nonce %s",
+                g_eligibilityGate.run_uuid, g_eligibilityGate.title_nonce);
+        }
     }
     g_sites[10] = static_cast<BYTE*>(api->Symbol(mod, "battle.rewards.record_damage"));
     if (!g_sites[10] || !api->HookCode(mod, "battle.rewards.record_damage", reinterpret_cast<void*>(&native_combat_hook::Detour), reinterpret_cast<void**>(&native_combat_hook::original))) return 0;

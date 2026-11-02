@@ -1,9 +1,10 @@
 """Prepare and run an isolated normal-client SDGO GameTest.
 
-The runner copies a real client, keeps its installed Mods and assets, overlays
-the native observer Mod and, when staged, the current production match_ai DLL,
-then starts the copied normal client against an already-running backend. It
-never edits the source client or starts a server.
+The first preparation copies a real client. Later capsules can move and reuse
+the stopped owned client, retaining compact receipts instead of another full
+copy. Built versions of installed Mods and the native observer are overlaid
+before running against an already-running backend. The player template is
+never edited, and this runner never starts a server.
 """
 from __future__ import annotations
 
@@ -39,6 +40,28 @@ GAME_EXE = "GOnline.exe"
 STARTUP_EVENT_NAME = "9YOU SDGO"
 TEST_MOD = "game_test_client"
 TARGET_MOD = "match_ai"
+ROUTED_LOOPBACK_POLICY = "routed_loopback"
+ROUTE_PROFILE_RELATIVE = Path("sdgo/mods/net_route/config.ini")
+ROUTE_PLAN_FIELDS = (
+    "route_profile_path",
+    "route_profile_sha256",
+    "route_profile_route_count",
+    "logical_login_ipv4",
+    "logical_login_port",
+    "physical_login_ipv4",
+    "physical_login_port",
+)
+SHOP_ASSERTIONS_JOB_PATH = "inputs/shop-assertions.ini"
+SHOP_DISPLAY_JOB_PATH = "inputs/shop-runtime-display.ini"
+SHOP_ASSERTIONS_RELATIVE = Path("sdgo/gametest") / SHOP_ASSERTIONS_JOB_PATH
+SHOP_DISPLAY_RELATIVE = Path("sdgo/gametest") / SHOP_DISPLAY_JOB_PATH
+SHOP_PLAN_FIELDS = (
+    "shop_assertions_path",
+    "shop_assertions_sha256",
+    "shop_display_path",
+    "shop_display_sha256",
+    "shop_revision",
+)
 FLOW_CASES = (
     "framework.bootstrap",
     "flow.login",
@@ -50,6 +73,23 @@ FLOW_CASES = (
 )
 SUPPORTED_PVP_MODES = (1, 3, 6, 7, 9)
 MODE_FLOW_STEPS = ("room", "start", "ai_spawn", "return")
+MISSION_SUITE = "native-mission-smoke"
+SUPPORTED_MISSION_MODES = (5, 8)
+MISSION_FLOW_CASES = (
+    "mission.room",
+    "mission.start",
+    "mission.ai_spawn",
+    "mission.combat",
+)
+MISSION_SCOPE = "bounded_native_smoke"
+MISSION_AI_COUNT = 3
+MISSION_AI_LEVEL = 2
+MISSION_EXISTING_ACCOUNT_STATES = frozenset(("registered", "existing_account"))
+MISSION_CLAIM_FIELDS = (
+    "mission_clear_claim",
+    "mission_result_claim",
+    "mission_active_exit_claim",
+)
 IGNORED_DIRECTORIES = {
     ".git",
     ".sdgo-updater",
@@ -244,7 +284,44 @@ def enable_test_configuration(root: Path) -> None:
     write_ini(settings_path, settings)
 
 
+def validate_observer_stage(root: Path, stage: Path) -> None:
+    """Validate overlay dependencies before changing or moving an owned client."""
+    client=stage/'client';mods=client/'sdgo/mods'
+    observer=mods/TEST_MOD
+    for required in (observer/f'{TEST_MOD}.dll',observer/'mod.ini',client/'sdgo/core.dll',
+                     root/f'sdgo/mods/{TARGET_MOD}/mod.ini',root/f'sdgo/mods/{TARGET_MOD}/{TARGET_MOD}.dll'):
+        if not required.is_file():raise GameTestError(f'stage or normal client lacks required payload: {required}')
+    if read_ini(observer/'mod.ini').get('mod','id',fallback='')!=TEST_MOD:
+        raise GameTestError('invalid staged observer manifest')
+    updated={TEST_MOD:observer/'mod.ini'}
+    for manifest in sorted(mods.glob('*/mod.ini')):
+        identifier=manifest.parent.name
+        if identifier==TEST_MOD:continue
+        if not (root/f'sdgo/mods/{identifier}/mod.ini').is_file():continue
+        parser=read_ini(manifest)
+        if identifier!=TARGET_MOD and parser.get('mod','category',fallback='')=='development':continue
+        if parser.get('mod','id',fallback='')!=identifier:
+            raise GameTestError(f'staged Mod identity mismatch: {identifier}')
+        updated[identifier]=manifest
+    target=mods/TARGET_MOD/f'{TARGET_MOD}.dll'
+    if target.is_file() and TARGET_MOD not in updated:
+        raise GameTestError('staged production match_ai DLL requires its matching manifest')
+    if not target.is_file():updated[TARGET_MOD]=root/f'sdgo/mods/{TARGET_MOD}/mod.ini'
+    source=read_ini(client/f'sdgo/symbols/{HOST_KEY}.ini')
+    required={'host'}
+    for manifest in updated.values():required.update(manifest_requires(manifest))
+    missing=sorted(required-set(source.sections()))
+    if missing:raise GameTestError(f"stage host symbols lack required sections: {', '.join(missing)}")
+    existing_path=root/f'sdgo/symbols/{HOST_KEY}.ini'
+    existing=read_ini(existing_path) if existing_path.is_file() else ini_parser()
+    for manifest in (root/'sdgo/mods').glob('*/mod.ini'):
+        if manifest.parent.name not in updated:
+            missing=sorted(manifest_requires(manifest)-set(source.sections())-set(existing.sections()))
+            if missing:raise GameTestError(f"retained Mod symbols lack required sections: {', '.join(missing)}")
+
+
 def overlay_observer(root: Path, stage: Path) -> None:
+    validate_observer_stage(root,stage)
     stage_client = stage / "client"
     observer_source = stage_client / "sdgo" / "mods" / TEST_MOD
     if not (observer_source / f"{TEST_MOD}.dll").is_file() or not (observer_source / "mod.ini").is_file():
@@ -433,7 +510,7 @@ class QuietRuntime:
         try:ipaddress.IPv4Address(self.metadata['plan']['target_host'])
         except ipaddress.AddressValueError as error:raise GameTestError('quiet tests require an explicit IPv4 server endpoint') from error
         if (ipaddress.IPv4Address(self.metadata['plan']['target_host']).is_loopback and
-            self.metadata['plan'].get('network_policy')=='direct'):
+            self.metadata['plan'].get('network_policy') in ('direct', ROUTED_LOOPBACK_POLICY)):
             # Local GameTest has no reason to listen on a public interface.
             # The native Mod constrains its own bind calls before game startup.
             self.firewall={'status':'loopback_only','system_policy_changed':False}
@@ -472,6 +549,11 @@ class QuietRuntime:
         if self.receipt.get('desktop_probe')!=proof:
             self.receipt['desktop_probe']=proof
             self.save()
+        if proof.get('error'):
+            # A locked/secure desktop can deny observation. Keep the safety
+            # stop, but do not turn missing evidence into a claim that the
+            # owned game actually took the foreground.
+            raise GameTestError(f"quiet desktop observation unavailable: {proof['error']}")
         if not proof.get('foreground_safe',False):raise GameTestError('owned game attempted to take the user foreground')
         if self.proof_file_written and (proof.get('input_desktop_unchanged') is False or
             proof.get('unexpected_input_window_count',0)>0 or
@@ -546,9 +628,205 @@ def random_account() -> tuple[str, str]:
     )
 
 
-def configure_test_network(root: Path, policy: str) -> None:
-    if policy == 'preserve':return
+def _route_port(field: str, value: str) -> int:
+    if not re.fullmatch(r"[0-9]+", value):
+        raise GameTestError(f"{field} must be a decimal port")
+    port = int(value)
+    if not 1 <= port <= 65535:
+        raise GameTestError(f"{field} must be between 1 and 65535")
+    return port
+
+
+def load_routed_loopback_profile(path: Path, target_host: str, login_port: int) -> dict:
+    path = path.expanduser().resolve()
+    if not path.is_file():
+        raise GameTestError(f"routed loopback profile does not exist: {path}")
+    parser = read_ini(path)
+    if parser.defaults() or parser.sections() != ["settings"]:
+        raise GameTestError("routed loopback profile must contain only one [settings] section")
+    settings = parser["settings"]
+    try:
+        count = int(settings["RouteCount"])
+    except (KeyError, ValueError) as error:
+        raise GameTestError("routed loopback profile requires RouteCount=1..32") from error
+    if not re.fullmatch(r"[0-9]+", settings["RouteCount"]) or not 1 <= count <= 32:
+        raise GameTestError("routed loopback profile requires RouteCount=1..32")
+    expected_keys = {"LoginIPv4", "LoginPort", "RouteCount", "Trace"} | {
+        f"Route{index}" for index in range(1, count + 1)
+    }
+    actual_keys = set(settings)
+    if actual_keys != expected_keys:
+        unknown = sorted(actual_keys - expected_keys)
+        missing = sorted(expected_keys - actual_keys)
+        details = []
+        if unknown:
+            details.append("unknown keys: " + ", ".join(unknown))
+        if missing:
+            details.append("missing keys: " + ", ".join(missing))
+        raise GameTestError("routed loopback profile has an unsafe schema; " + "; ".join(details))
+    if settings["Trace"] not in {"0", "1"}:
+        raise GameTestError("routed loopback profile Trace must be 0 or 1")
+
+    try:
+        login_ip = str(ipaddress.IPv4Address(settings["LoginIPv4"]))
+        requested_ip = str(ipaddress.IPv4Address(target_host))
+    except ipaddress.AddressValueError as error:
+        raise GameTestError("routed loopback login must use an IPv4 literal") from error
+    configured_port = _route_port("LoginPort", settings["LoginPort"])
+    if not ipaddress.IPv4Address(login_ip).is_loopback:
+        raise GameTestError("routed loopback login must stay within IPv4 127/8")
+    if login_ip != requested_ip or configured_port != login_port:
+        raise GameTestError("routed loopback profile login disagrees with the requested logical endpoint")
+
+    routes = []
+    logicals: set[tuple[str, str, int]] = set()
+    externals: set[tuple[str, str, int]] = set()
+    for index in range(1, count + 1):
+        field = f"Route{index}"
+        cells = [cell.strip() for cell in settings[field].split(",")]
+        if len(cells) != 5 or cells[0] not in {"tcp", "udp"}:
+            raise GameTestError(
+                f"{field} must be tcp|udp,logicalIPv4,port,externalIPv4,port"
+            )
+        protocol = cells[0]
+        try:
+            logical_ip = str(ipaddress.IPv4Address(cells[1]))
+            external_ip = str(ipaddress.IPv4Address(cells[3]))
+        except ipaddress.AddressValueError as error:
+            raise GameTestError(f"{field} must use exact IPv4 literals; DNS and wildcards are forbidden") from error
+        if not ipaddress.IPv4Address(logical_ip).is_loopback or not ipaddress.IPv4Address(
+            external_ip
+        ).is_loopback:
+            raise GameTestError(f"{field} endpoints must stay within IPv4 127/8")
+        logical_port = _route_port(f"{field} logical port", cells[2])
+        external_port = _route_port(f"{field} external port", cells[4])
+        logical = (protocol, logical_ip, logical_port)
+        external = (protocol, external_ip, external_port)
+        if logical in logicals:
+            raise GameTestError(f"{field} duplicates a logical route")
+        if external in externals:
+            raise GameTestError(f"{field} creates an ambiguous reverse mapping")
+        logicals.add(logical)
+        externals.add(external)
+        routes.append(
+            {
+                "protocol": protocol,
+                "logical_ipv4": logical_ip,
+                "logical_port": logical_port,
+                "physical_ipv4": external_ip,
+                "physical_port": external_port,
+            }
+        )
+
+    login_routes = [
+        route
+        for route in routes
+        if route["protocol"] == "tcp"
+        and route["logical_ipv4"] == login_ip
+        and route["logical_port"] == configured_port
+    ]
+    if len(login_routes) != 1:
+        raise GameTestError(
+            "routed loopback profile requires exactly one TCP route for the logical login endpoint"
+        )
+    physical = login_routes[0]
+    return {
+        "route_profile_path": ROUTE_PROFILE_RELATIVE.as_posix(),
+        "route_profile_sha256": sha256(path),
+        "route_profile_route_count": count,
+        "logical_login_ipv4": login_ip,
+        "logical_login_port": configured_port,
+        "physical_login_ipv4": physical["physical_ipv4"],
+        "physical_login_port": physical["physical_port"],
+    }
+
+
+def validate_routed_loopback_install(root: Path, plan: dict) -> dict:
+    root = root.resolve()
+    if plan.get("route_profile_path") != ROUTE_PROFILE_RELATIVE.as_posix():
+        raise GameTestError("routed loopback profile path is not the fixed copied-client location")
+    profile = (root / ROUTE_PROFILE_RELATIVE).resolve()
+    if not is_relative_to(profile, root):
+        raise GameTestError("routed loopback profile escapes the copied client")
+    target_host = plan.get("target_host", plan.get("logical_login_ipv4"))
+    login_port = plan.get("login_port", plan.get("logical_login_port"))
+    if not isinstance(target_host, str) or isinstance(login_port, bool) or not isinstance(
+        login_port, int
+    ):
+        raise GameTestError("routed loopback plan lacks its logical login endpoint")
+    binding = load_routed_loopback_profile(profile, target_host, login_port)
+    for field in ROUTE_PLAN_FIELDS:
+        if plan.get(field) != binding[field]:
+            raise GameTestError(f"routed loopback profile disagrees with the sealed plan for {field}")
+
+    route_dir = profile.parent
+    manifest = route_dir / "mod.ini"
+    dll = route_dir / "net_route.dll"
+    if not manifest.is_file() or not dll.is_file():
+        raise GameTestError("copied client lacks the installed net_route Mod")
+    mod = read_ini(manifest)
+    if mod.get("mod", "id", fallback="") != "net_route" or mod.get(
+        "mod", "enabled", fallback=""
+    ) != "1":
+        raise GameTestError("copied client net_route manifest is not explicitly enabled")
+    global_settings = read_ini(root / "sdgo" / "sdgo.ini")
+    required = (
+        ("categories", "network", "1"),
+        ("features", "frp-distribution", "1"),
+        ("mods", "net_route", "1"),
+        ("mods", "net_probe", "0"),
+    )
+    for section, key, expected in required:
+        if global_settings.get(section, key, fallback="") != expected:
+            raise GameTestError(f"copied client network gate {section}.{key} must equal {expected}")
+    return binding
+
+
+def configure_test_network(
+    root: Path,
+    policy: str,
+    *,
+    route_profile: Path | None = None,
+    route_binding: dict | None = None,
+) -> dict | None:
+    if policy == 'preserve':
+        if route_profile is not None or route_binding is not None:
+            raise GameTestError("route_profile is valid only for routed_loopback")
+        return None
+    if policy == ROUTED_LOOPBACK_POLICY:
+        if route_profile is None or route_binding is None:
+            raise GameTestError("routed_loopback requires a validated route profile")
+        root = root.resolve()
+        route_dir = root / ROUTE_PROFILE_RELATIVE.parent
+        if not route_dir.is_dir() or not is_relative_to(route_dir.resolve(), root):
+            raise GameTestError("copied client net_route directory is missing or escapes the client")
+        manifest = route_dir / "mod.ini"
+        dll = route_dir / "net_route.dll"
+        if not manifest.is_file() or not dll.is_file():
+            raise GameTestError("routed_loopback requires net_route to be installed in the client template")
+        config = read_ini(manifest)
+        if config.get("mod", "id", fallback="") != "net_route":
+            raise GameTestError("copied client has an invalid net_route manifest")
+        shutil.copyfile(route_profile, root / ROUTE_PROFILE_RELATIVE)
+        config["mod"]["enabled"] = "1"
+        write_ini(manifest, config)
+        path = root / "sdgo" / "sdgo.ini"
+        settings = read_ini(path)
+        for section in ("categories", "features", "mods"):
+            if not settings.has_section(section):
+                settings.add_section(section)
+        settings["categories"]["network"] = "1"
+        settings["features"]["frp-distribution"] = "1"
+        settings["mods"]["net_route"] = "1"
+        settings["mods"]["net_probe"] = "0"
+        write_ini(path, settings)
+        installed = validate_routed_loopback_install(root, route_binding)
+        if installed != route_binding:
+            raise GameTestError("copied routed loopback profile changed while it was being installed")
+        return installed
     if policy != 'direct':raise GameTestError('unknown test network policy')
+    if route_profile is not None or route_binding is not None:
+        raise GameTestError("route_profile is valid only for routed_loopback")
     # Owner routing can override explicit command-line endpoints. Only the
     # copied translator is disabled; the source client is never changed.
     manifest = root/'sdgo/mods/net_route/mod.ini'
@@ -557,6 +835,197 @@ def configure_test_network(root: Path, policy: str) -> None:
     path=root/'sdgo/sdgo.ini';settings=read_ini(path)
     if not settings.has_section('mods'):settings.add_section('mods')
     settings['mods']['net_route']='0';write_ini(path,settings)
+    return None
+
+
+def _shop_key(field: str, value: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", value):
+        raise GameTestError(f"{field} must be a 1..64 character stable identifier")
+    return value
+
+
+def _shop_integer(field: str, value: str, minimum: int, maximum: int) -> int:
+    if not re.fullmatch(r"[0-9]+", value):
+        raise GameTestError(f"{field} must be canonical decimal")
+    parsed = int(value)
+    if not minimum <= parsed <= maximum or str(parsed) != value:
+        raise GameTestError(f"{field} is outside its supported range")
+    return parsed
+
+
+def _exact_ini_keys(
+    parser: configparser.ConfigParser,
+    section: str,
+    expected: set[str],
+    label: str,
+) -> configparser.SectionProxy:
+    if not parser.has_section(section):
+        raise GameTestError(f"{label} lacks [{section}]")
+    actual = set(parser[section])
+    if actual != expected:
+        raise GameTestError(f"{label} has missing or unknown keys in [{section}]")
+    return parser[section]
+
+
+def load_shop_test_inputs(assertions_path: Path, display_path: Path) -> dict:
+    assertions_path = assertions_path.expanduser().resolve()
+    display_path = display_path.expanduser().resolve()
+    if not assertions_path.is_file() or not display_path.is_file():
+        raise GameTestError("shop assertions and runtime display must both be readable files")
+    assertions = read_ini(assertions_path)
+    display = read_ini(display_path)
+    if assertions.defaults() or display.defaults():
+        raise GameTestError("shop GameTest inputs cannot use INI defaults")
+
+    shop = _exact_ini_keys(
+        assertions,
+        "shop",
+        {"Schema", "Scope", "CatalogId", "Revision"},
+        "shop assertions",
+    )
+    if shop["Schema"] != "1" or shop["Scope"] != "StockAssertions":
+        raise GameTestError("shop assertions require [shop] Schema=1 and Scope=StockAssertions")
+    _shop_key("shop CatalogId", shop["CatalogId"])
+    revision = _shop_key("shop Revision", shop["Revision"])
+
+    product_keys = {
+        "ProductId", "ItemId", "TemplateId", "Category", "Price",
+        "Currency", "Validity", "Enabled", "Name", "Label",
+    }
+    products = 0
+    product_ids: set[int] = set()
+    item_ids: set[int] = set()
+    for section in assertions.sections():
+        if section == "shop":
+            continue
+        if not section.startswith("product:"):
+            raise GameTestError("shop assertions contain an unsupported section")
+        _shop_key("shop product key", section[len("product:"):])
+        product = _exact_ini_keys(assertions, section, product_keys, "shop assertions")
+        product_id = _shop_integer(f"{section}.ProductId", product["ProductId"], 1, 2**31 - 1)
+        template_id = _shop_integer(f"{section}.TemplateId", product["TemplateId"], 1, 2**31 - 1)
+        if product_id != template_id:
+            raise GameTestError("StockAssertions products must reference native stock IDs, not owner SKUs")
+        item = product["ItemId"]
+        if not re.fullmatch(r"[0-9]{6}", item):
+            raise GameTestError(f"{section}.ItemId must be six decimal digits")
+        item_id = int(item)
+        _shop_integer(f"{section}.Category", product["Category"], 1, 2**31 - 1)
+        _shop_integer(f"{section}.Price", product["Price"], 1, 2**31 - 1)
+        _shop_integer(f"{section}.Validity", product["Validity"], 1, 1_000_000)
+        if product["Currency"] not in {"GB", "MB"}:
+            raise GameTestError(f"{section}.Currency must be GB or MB")
+        if product["Enabled"] not in {"0", "1"}:
+            raise GameTestError(f"{section}.Enabled must be 0 or 1")
+        for field in ("Name", "Label"):
+            value = product[field]
+            if not value or len(value) > 50 or any(character in "\r\n\x00" for character in value):
+                raise GameTestError(f"{section}.{field} is not bounded display text")
+        if product_id in product_ids or item_id in item_ids:
+            raise GameTestError("shop assertions contain duplicate product or item IDs")
+        product_ids.add(product_id)
+        item_ids.add(item_id)
+        if product["Enabled"] == "1":
+            products += 1
+    if products == 0:
+        raise GameTestError("shop assertions require at least one enabled stock product")
+
+    display_shop = _exact_ini_keys(
+        display, "shop", {"Revision"}, "shop runtime display"
+    )
+    display_revision = _shop_key("shop runtime Revision", display_shop["Revision"])
+    if display_revision != revision:
+        raise GameTestError("shop assertions and runtime display revisions do not match")
+    option_keys = {"Category", "Validity", "Payment", "Price", "Text"}
+    options = 0
+    for section in display.sections():
+        if section == "shop":
+            continue
+        if not section.startswith("option:"):
+            raise GameTestError("shop runtime display contains an unsupported section")
+        _shop_integer(
+            "shop runtime option id",
+            section[len("option:"):],
+            1,
+            2**31 - 1,
+        )
+        option = _exact_ini_keys(display, section, option_keys, "shop runtime display")
+        _shop_integer(f"{section}.Category", option["Category"], 1, 2**31 - 1)
+        _shop_integer(f"{section}.Validity", option["Validity"], 1, 1_000_000)
+        _shop_integer(f"{section}.Payment", option["Payment"], 1, 2)
+        _shop_integer(f"{section}.Price", option["Price"], 1, 2**31 - 1)
+        text = option["Text"]
+        if not text or len(text) > 50 or any(character in "\r\n\x00" for character in text):
+            raise GameTestError(f"{section}.Text is not bounded display text")
+        options += 1
+    if options == 0:
+        raise GameTestError("shop runtime display requires at least one expected option")
+
+    return {
+        "shop_assertions_path": SHOP_ASSERTIONS_JOB_PATH,
+        "shop_assertions_sha256": sha256(assertions_path),
+        "shop_display_path": SHOP_DISPLAY_JOB_PATH,
+        "shop_display_sha256": sha256(display_path),
+        "shop_revision": revision,
+    }
+
+
+def install_shop_test_inputs(
+    root: Path,
+    assertions_source: Path,
+    display_source: Path,
+    expected: dict,
+) -> dict:
+    root = root.resolve()
+    assertions_target = (root / SHOP_ASSERTIONS_RELATIVE).resolve()
+    display_target = (root / SHOP_DISPLAY_RELATIVE).resolve()
+    if not is_relative_to(assertions_target, root) or not is_relative_to(display_target, root):
+        raise GameTestError("shop GameTest input path escapes the copied client")
+    assertions_target.parent.mkdir(parents=True, exist_ok=True)
+    if assertions_target.exists() or display_target.exists():
+        raise GameTestError("fresh copied client already contains shop GameTest inputs")
+    shutil.copyfile(assertions_source, assertions_target)
+    shutil.copyfile(display_source, display_target)
+    installed = load_shop_test_inputs(assertions_target, display_target)
+    if installed != expected:
+        raise GameTestError("shop GameTest inputs changed while copied into the isolated client")
+    return installed
+
+
+def validate_shop_test_install(root: Path, plan: dict) -> dict:
+    if {field for field in SHOP_PLAN_FIELDS if field in plan} != set(SHOP_PLAN_FIELDS):
+        raise GameTestError("shop GameTest plan must contain all sealed input fields")
+    if (
+        plan["shop_assertions_path"] != SHOP_ASSERTIONS_JOB_PATH
+        or plan["shop_display_path"] != SHOP_DISPLAY_JOB_PATH
+    ):
+        raise GameTestError("shop GameTest inputs do not use their fixed copied-client paths")
+    root = Path(root).resolve()
+    inputs = []
+    for relative in (SHOP_ASSERTIONS_RELATIVE, SHOP_DISPLAY_RELATIVE):
+        lexical = root / relative
+        resolved = lexical.resolve()
+        if (
+            lexical.is_symlink()
+            or (lexical.exists() and lexical.stat().st_nlink != 1)
+            or not is_relative_to(resolved, root)
+            or any(
+                parent.is_symlink()
+                or (hasattr(parent, "is_junction") and parent.is_junction())
+                for parent in lexical.parents
+                if parent != root and is_relative_to(parent, root)
+            )
+        ):
+            raise GameTestError("shop GameTest input is linked or escapes the copied client")
+        inputs.append(resolved)
+    installed = load_shop_test_inputs(
+        inputs[0],
+        inputs[1],
+    )
+    for field in SHOP_PLAN_FIELDS:
+        if type(plan[field]) is not type(installed[field]) or plan[field] != installed[field]:
+            raise GameTestError(f"shop GameTest input disagrees with the sealed plan for {field}")
+    return installed
 
 
 def owned_tcp_peers(pid: int) -> list[dict]:
@@ -582,16 +1051,55 @@ def owned_tcp_peers(pid: int) -> list[dict]:
     return peers
 
 
-def verify_direct_peer(metadata: dict, pid: int) -> dict | None:
-    expected=metadata['plan']['target_host'];port=metadata['plan']['login_port']
+def verify_login_peer(metadata: dict, pid: int) -> dict | None:
+    plan = metadata["plan"]
+    policy = plan.get("network_policy")
+    if policy == "direct":
+        physical_ip = plan["target_host"]
+        physical_port = plan["login_port"]
+    elif policy == ROUTED_LOOPBACK_POLICY:
+        physical_ip = plan["physical_login_ipv4"]
+        physical_port = plan["physical_login_port"]
+    else:
+        return None
     peers=owned_tcp_peers(pid)
-    match=next((p for p in peers if p['remote_ipv4']==expected and p['remote_port']==port),None)
+    match=next((p for p in peers if p['remote_ipv4']==physical_ip and p['remote_port']==physical_port),None)
     if match is None:return None
-    proof={'verified':True,'pid':pid,'remote_ipv4':expected,'remote_port':port,'observed':peers}
+    proof={
+        'verified':True,
+        'pid':pid,
+        'network_policy':policy,
+        'logical_ipv4':plan['target_host'],
+        'logical_port':plan['login_port'],
+        'physical_ipv4':physical_ip,
+        'physical_port':physical_port,
+        # Retain the established receipt names for direct-run consumers.
+        'remote_ipv4':physical_ip,
+        'remote_port':physical_port,
+        'observed':peers,
+    }
+    if policy == ROUTED_LOOPBACK_POLICY:
+        proof['route_profile_sha256'] = plan['route_profile_sha256']
     receipt=ini_parser();receipt['run']={'id':metadata['run_id']}
-    receipt['network']={'verified':'1','pid':str(pid),'ipv4':expected,'port':str(port)}
+    receipt['network']={
+        'verified':'1',
+        'pid':str(pid),
+        'policy':policy,
+        'ipv4':physical_ip,
+        'port':str(physical_port),
+        'logical_ipv4':plan['target_host'],
+        'logical_port':str(plan['login_port']),
+        'physical_ipv4':physical_ip,
+        'physical_port':str(physical_port),
+    }
+    if policy == ROUTED_LOOPBACK_POLICY:
+        receipt['network']['route_profile_sha256'] = plan['route_profile_sha256']
     write_ini(Path(metadata['client']['root'])/'sdgo/gametest/network-verified.ini',receipt)
     return proof
+
+
+def verify_direct_peer(metadata: dict, pid: int) -> dict | None:
+    return verify_login_peer(metadata, pid)
 
 
 def owned_udp_endpoints(pid: int) -> list[dict]:
@@ -697,21 +1205,63 @@ def parse_mode_sequence(value: str) -> tuple[int, ...]:
     return modes
 
 
+def validate_play_unit_uid(value: int | None) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 < value < 2**64:
+        raise GameTestError("play_unit_uid must be a non-zero uint64 owned unit UID")
+    return value
+
+
+def validate_mission_mode(value: int | None) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value not in SUPPORTED_MISSION_MODES:
+        supported = ",".join(str(mode) for mode in SUPPORTED_MISSION_MODES)
+        raise GameTestError(f"mission_mode must be one of: {supported}")
+    return value
+
+
+def mission_room_title(title_nonce: str) -> str:
+    return f"{title_nonce} !ai{MISSION_AI_COUNT} lv{MISSION_AI_LEVEL}"
+
+
 def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                         battleship_only: bool = False, gift_requests_only: bool = False,
-                        deck_only: bool = False, pages_only: bool = False) -> tuple[str, ...]:
-    modes = parse_mode_sequence(mode_sequence)
+                        deck_only: bool = False, pages_only: bool = False,
+                        collection_draw: bool = False,
+                         play_unit_uid: int | None = None,
+                         mission_mode: int | None = None,
+                         shop_catalog: bool = False) -> tuple[str, ...]:
+    mission_mode = validate_mission_mode(mission_mode)
+    play_unit_uid = validate_play_unit_uid(play_unit_uid)
     if sum((bool(bootstrap_only),bool(battleship_only),bool(gift_requests_only),bool(deck_only),bool(pages_only))) > 1:
         raise GameTestError('choose only one account preparation operation')
+    if play_unit_uid is not None and any((bootstrap_only,battleship_only,gift_requests_only,deck_only)):
+        raise GameTestError('--play-unit-uid is supported only for PvP and pages scenarios, or mission smoke')
+    if collection_draw and not pages_only:
+        raise GameTestError('collection draw requires the explicit pages-only scenario')
+    if shop_catalog and not pages_only:
+        raise GameTestError('shop catalog assertions require the explicit pages-only scenario')
+    selection = ('setup.active_unit',) if play_unit_uid is not None else ()
+    if mission_mode is not None:
+        if mode_sequence != "1":
+            raise GameTestError("--mission-mode cannot be combined with a PvP mode sequence")
+        if any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,collection_draw)):
+            raise GameTestError("--mission-mode cannot be combined with pages or account preparation scopes")
+        return FLOW_CASES[:3] + selection + MISSION_FLOW_CASES
+    modes = parse_mode_sequence(mode_sequence)
     if pages_only:
-        return FLOW_CASES[:3] + ('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel','catalog.operator','catalog.ai','pages.storage.read','pages.storage.claim','catalog.capsule','pages.capsule.currency')
+        shop_cases = ('pages.shop.catalog',) if shop_catalog else ()
+        return FLOW_CASES[:3] + selection + ('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel','catalog.operator','catalog.ai') + shop_cases + ('pages.storage.read','pages.storage.claim','catalog.capsule','pages.capsule.currency') + (
+            ('pages.collection.preview','pages.collection.draw','pages.collection.delivery') if collection_draw else ())
     if bootstrap_only:
         return FLOW_CASES[:3]
     if gift_requests_only:
         return FLOW_CASES[:3] + ('setup.gift_requests',)
     if deck_only:
         return FLOW_CASES[:3] + ('flow.battleship','setup.deck')
-    prefix = FLOW_CASES[:3]
+    prefix = FLOW_CASES[:3] + selection
     if battleship_only or any(mode in (6,7) for mode in modes):
         prefix += ('flow.battleship',)
     if battleship_only:
@@ -721,6 +1271,65 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
     return prefix + tuple(
         f"pvp.mode{mode}.{step}" for mode in modes for step in MODE_FLOW_STEPS
     )
+
+
+def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
+    shop_fields = {field for field in SHOP_PLAN_FIELDS if field in plan}
+    if shop_fields and shop_fields != set(SHOP_PLAN_FIELDS):
+        raise GameTestError("shop GameTest plan is missing sealed input fields")
+    shop_catalog = bool(shop_fields)
+    if "mission_mode" in plan:
+        forbidden = {
+            "mode_sequence", "expected_ai", "bootstrap_only",
+            "battleship_only", "gift_requests_only", "deck_only",
+            "pages_only", "collection_draw", "random_loadout",
+            *SHOP_PLAN_FIELDS,
+        }
+        if forbidden.intersection(plan):
+            raise GameTestError("mission smoke plan cannot contain PvP, pages, or preparation scope")
+        required = {
+            "mission_mode", "mission_scope", "mission_ai_count",
+            "mission_ai_level", *MISSION_CLAIM_FIELDS,
+        }
+        if not required.issubset(plan):
+            raise GameTestError("mission smoke plan is missing sealed scope fields")
+        if (
+            plan["mission_scope"] != MISSION_SCOPE
+            or type(plan["mission_ai_count"]) is not int
+            or plan["mission_ai_count"] != MISSION_AI_COUNT
+            or type(plan["mission_ai_level"]) is not int
+            or plan["mission_ai_level"] != MISSION_AI_LEVEL
+            or any(type(plan[field]) is not bool or plan[field] for field in MISSION_CLAIM_FIELDS)
+        ):
+            raise GameTestError("mission smoke plan changes its bounded native scope")
+    return required_flow_cases(
+        plan.get("mode_sequence", "1"),
+        plan.get("bootstrap_only", False),
+        plan.get("battleship_only", False),
+        plan.get("gift_requests_only", False),
+        plan.get("deck_only", False),
+        plan.get("pages_only", False),
+        plan.get("collection_draw", False),
+        plan.get("play_unit_uid"),
+        plan.get("mission_mode"),
+        shop_catalog,
+    )
+
+
+def metadata_suite_for_plan(plan: dict) -> str:
+    if "mission_mode" in plan:
+        return MISSION_SUITE
+    if plan.get("bootstrap_only"):
+        return "account-bootstrap"
+    if plan.get("battleship_only"):
+        return "battleship-acquisition"
+    if plan.get("gift_requests_only"):
+        return "gift-mail-requests"
+    if plan.get("deck_only"):
+        return "battleship-deck"
+    if plan.get("pages_only"):
+        return "native-pages"
+    return "pvp-ai-normal-flow"
 
 
 def account_profile_lock_path(path: Path) -> Path:
@@ -737,6 +1346,8 @@ def make_plan(
     expect_first_fail: bool,
     expected_ai: int,
     launcher_path: str | None,
+    play_unit_uid: int | None = None,
+    mission_mode: int | None = None,
 ) -> dict:
     if not 1 <= login_port <= 65535:
         raise GameTestError("login_port must be between 1 and 65535")
@@ -744,30 +1355,55 @@ def make_plan(
         raise GameTestError("retry_count must be 1 or 2")
     if expect_first_fail and retry_count != 2:
         raise GameTestError("expect_first_fail requires retry_count=2")
-    if expected_ai < 1 or expected_ai > 7:
-        raise GameTestError("expected_ai must be between 1 and 7")
-    modes = parse_mode_sequence(mode_sequence)
+    mission_mode = validate_mission_mode(mission_mode)
+    if mission_mode is not None:
+        if mode_sequence != "1":
+            raise GameTestError("--mission-mode cannot be combined with a PvP mode sequence")
+        if expected_ai != 3:
+            raise GameTestError("--expected-ai is a PvP setting and cannot change a mission smoke plan")
+        modes = ()
+    else:
+        if expected_ai < 1 or expected_ai > 7:
+            raise GameTestError("expected_ai must be between 1 and 7")
+        modes = parse_mode_sequence(mode_sequence)
     title_nonce = "gt" + secrets.token_hex(2)
-    enemies = (expected_ai + 1) // 2
-    allies = expected_ai - enemies
     plan = {
         "target_host": validate_public_value("target_host", target_host),
         "login_port": login_port,
         "target_server": validate_public_value("target_server", target_server),
         "target_channel": validate_public_value("target_channel", target_channel),
         "server_channel_selection": "native_automatic",
-        "mode_sequence": ",".join(str(mode) for mode in modes),
         "retry_count": retry_count,
         "expect_first_fail": bool(expect_first_fail),
-        "expected_ai": expected_ai,
         "title_nonce": title_nonce,
-        "room_title": f"{title_nonce} !ai e{enemies} a{allies}",
         "auto_nickname": "account_name",
         "exit_tutorial": True,
         "first_unit_draw": True,
         "acknowledge_game_windows": True,
         "launcher_path": launcher_path or "",
     }
+    if mission_mode is not None:
+        plan.update({
+            "mission_mode": mission_mode,
+            "mission_scope": MISSION_SCOPE,
+            "mission_ai_count": MISSION_AI_COUNT,
+            "mission_ai_level": MISSION_AI_LEVEL,
+            "mission_clear_claim": False,
+            "mission_result_claim": False,
+            "mission_active_exit_claim": False,
+            "room_title": mission_room_title(title_nonce),
+        })
+    else:
+        enemies = (expected_ai + 1) // 2
+        allies = expected_ai - enemies
+        plan.update({
+            "mode_sequence": ",".join(str(mode) for mode in modes),
+            "expected_ai": expected_ai,
+            "room_title": f"{title_nonce} !ai e{enemies} a{allies}",
+        })
+    play_unit_uid = validate_play_unit_uid(play_unit_uid)
+    if play_unit_uid is not None:
+        plan["play_unit_uid"] = play_unit_uid
     if launcher_path:
         relative = Path(launcher_path)
         if relative.is_absolute() or ".." in relative.parts:
@@ -815,10 +1451,8 @@ def write_job(
         "target_server": plan["target_server"],
         "target_channel": plan["target_channel"],
         "server_channel_selection": plan["server_channel_selection"],
-        "mode_sequence": plan["mode_sequence"],
         "title_nonce": plan["title_nonce"],
         "room_title": plan["room_title"],
-        "expected_ai": str(plan["expected_ai"]),
         "auto_nickname": plan["auto_nickname"],
         "exit_tutorial": "1" if plan["exit_tutorial"] else "0",
         "first_unit_draw": "1" if plan["first_unit_draw"] else "0",
@@ -827,16 +1461,39 @@ def write_job(
         "account_path": "private/account.ini",
         "retry_count": str(plan["retry_count"]),
         "expect_first_fail": "1" if plan["expect_first_fail"] else "0",
-        "required_cases": ",".join(required_flow_cases(plan["mode_sequence"], plan.get('bootstrap_only', False),
-            plan.get('battleship_only',False),plan.get('gift_requests_only',False),plan.get('deck_only',False),plan.get('pages_only',False))),
+        "required_cases": ",".join(required_cases_for_plan(plan)),
     }
-    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only'):
+    if "mission_mode" in plan:
+        run["run"].update({
+            "mission_mode": str(plan["mission_mode"]),
+            "mission_scope": plan["mission_scope"],
+            "mission_ai_count": str(plan["mission_ai_count"]),
+            "mission_ai_level": str(plan["mission_ai_level"]),
+            "mission_clear_claim": "0",
+            "mission_result_claim": "0",
+            "mission_active_exit_claim": "0",
+        })
+    else:
+        run["run"]["mode_sequence"] = plan["mode_sequence"]
+        run["run"]["expected_ai"] = str(plan["expected_ai"])
+    if 'play_unit_uid' in plan:
+        run['run']['play_unit_uid'] = str(plan['play_unit_uid'])
+    if all(field in plan for field in SHOP_PLAN_FIELDS):
+        for field in SHOP_PLAN_FIELDS:
+            run['run'][field] = str(plan[field])
+    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','collection_draw','random_loadout'):
         if plan.get(flag):run['run'][flag] = '1'
     if 'network_policy' in plan:run['run']['network_policy']=plan['network_policy']
+    if plan.get('network_policy') == ROUTED_LOOPBACK_POLICY:
+        for field in ROUTE_PLAN_FIELDS:
+            run['run'][field] = str(plan[field])
     if 'quiet' in plan:run['run']['quiet']='1' if plan['quiet'] else '0'
     if plan.get('quiet'):
-        run['run']['quiet_loopback']='1' if (plan.get('network_policy')=='direct' and
-            ipaddress.IPv4Address(plan['target_host']).is_loopback) else '0'
+        run['run']['quiet_loopback']='1' if (
+            plan.get('network_policy') == ROUTED_LOOPBACK_POLICY or
+            (plan.get('network_policy')=='direct' and
+             ipaddress.IPv4Address(plan['target_host']).is_loopback)
+        ) else '0'
     write_ini(directory / "run.ini", run)
 
 
@@ -844,28 +1501,146 @@ def read_public_plan(root: Path) -> dict:
     parser = read_ini(root / "sdgo" / "gametest" / "run.ini")
     try:
         run = parser["run"]
-        mode_sequence = ",".join(str(mode) for mode in parse_mode_sequence(run["mode_sequence"]))
+        suite = run["suite"]
+        if suite != "pvp-ai":
+            raise ValueError("unknown native provider suite")
+        mission_plan = "mission_mode" in run
+
         bootstrap_only = run.get('bootstrap_only', '0') == '1'
         battleship_only = run.get('battleship_only', '0') == '1'
         gift_requests_only = run.get('gift_requests_only', '0') == '1'
         deck_only = run.get('deck_only', '0') == '1'
         pages_only = run.get('pages_only', '0') == '1'
-        if any(run.get(flag,'0') not in ('0','1') for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only')):
+        collection_draw = run.get('collection_draw', '0') == '1'
+        preparation_fields = (
+            'bootstrap_only', 'battleship_only', 'gift_requests_only',
+            'deck_only', 'pages_only', 'collection_draw', 'random_loadout',
+        )
+        if any(run.get(flag, '0') not in ('0', '1') for flag in preparation_fields):
             raise ValueError('invalid preparation flag')
+
+        play_unit_uid = None
+        if 'play_unit_uid' in run:
+            raw_play_unit_uid = run['play_unit_uid']
+            if not re.fullmatch(r'[1-9][0-9]*', raw_play_unit_uid):
+                raise ValueError('play_unit_uid must be canonical non-zero decimal')
+            play_unit_uid = int(raw_play_unit_uid)
+            if play_unit_uid >= 2**64:
+                raise ValueError('play_unit_uid exceeds uint64')
+
+        unknown_shop_fields = {
+            field for field in run if field.startswith("shop_")
+        } - set(SHOP_PLAN_FIELDS)
+        if unknown_shop_fields:
+            raise ValueError('unknown shop GameTest fields are forbidden')
+        shop_fields_present = {field for field in SHOP_PLAN_FIELDS if field in run}
+        shop_plan = None
+        if shop_fields_present:
+            if shop_fields_present != set(SHOP_PLAN_FIELDS):
+                raise ValueError('shop GameTest inputs must provide every sealed field')
+            if not pages_only:
+                raise ValueError('shop GameTest inputs require pages_only')
+            if (
+                run['shop_assertions_path'] != SHOP_ASSERTIONS_JOB_PATH
+                or run['shop_display_path'] != SHOP_DISPLAY_JOB_PATH
+            ):
+                raise ValueError('shop GameTest inputs must use fixed copied-client paths')
+            if not re.fullmatch(r'[0-9a-f]{64}', run['shop_assertions_sha256']):
+                raise ValueError('invalid shop assertions hash')
+            if not re.fullmatch(r'[0-9a-f]{64}', run['shop_display_sha256']):
+                raise ValueError('invalid shop display hash')
+            if not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', run['shop_revision']):
+                raise ValueError('invalid shop revision')
+            shop_plan = {field: run[field] for field in SHOP_PLAN_FIELDS}
+
+        mission_mode = None
+        if mission_plan:
+            required_mission_fields = {
+                'mission_mode', 'mission_scope', 'mission_ai_count',
+                'mission_ai_level', *MISSION_CLAIM_FIELDS,
+                'network_policy', 'quiet',
+            }
+            if not required_mission_fields.issubset(run.keys()):
+                raise ValueError('mission smoke plan is missing sealed scope fields')
+            if any(field in run for field in ('mode_sequence', 'expected_ai', *preparation_fields)):
+                raise ValueError('mission smoke plan contains PvP, pages, or preparation scope')
+            if run['mission_mode'] not in tuple(str(mode) for mode in SUPPORTED_MISSION_MODES):
+                raise ValueError('invalid mission mode')
+            mission_mode = validate_mission_mode(int(run['mission_mode']))
+            if run['mission_scope'] != MISSION_SCOPE:
+                raise ValueError('invalid mission smoke scope')
+            if (
+                run['mission_ai_count'] != str(MISSION_AI_COUNT)
+                or run['mission_ai_level'] != str(MISSION_AI_LEVEL)
+            ):
+                raise ValueError('mission AI count or level differs from the sealed native plan')
+            if any(run[field] != '0' for field in MISSION_CLAIM_FIELDS):
+                raise ValueError('mission smoke cannot claim clear, result, or active exit')
+            if run['retry_count'] != '1' or run['expect_first_fail'] != '0':
+                raise ValueError('mission smoke requires one existing-account login attempt')
+            canonical_run_id = str(uuid.UUID(run['id']))
+            if run['id'] != canonical_run_id:
+                raise ValueError('mission run id must use canonical lowercase UUID form')
+            if not re.fullmatch(r'gt[0-9a-f]{4}', run['title_nonce']):
+                raise ValueError('invalid mission title nonce')
+            if run['room_title'] != mission_room_title(run['title_nonce']):
+                raise ValueError('mission room title differs from the sealed native plan')
+            expected_cases = required_flow_cases(
+                '1', play_unit_uid=play_unit_uid, mission_mode=mission_mode,
+            )
+            allowed = {
+                'id', 'role', 'suite', 'normal_flow', 'endpoint',
+                'target_server', 'target_channel', 'server_channel_selection',
+                'title_nonce', 'room_title', 'auto_nickname', 'exit_tutorial',
+                'first_unit_draw', 'acknowledge_game_windows', 'process_entry',
+                'account_path', 'retry_count', 'expect_first_fail',
+                'required_cases', 'mission_mode', 'mission_scope',
+                'mission_ai_count', 'mission_ai_level', *MISSION_CLAIM_FIELDS,
+                'play_unit_uid', 'network_policy',
+                *ROUTE_PLAN_FIELDS, 'quiet', 'quiet_loopback',
+            }
+            unexpected = set(run.keys()) - allowed
+            if unexpected:
+                raise ValueError(
+                    'mission smoke run.ini contains unsealed fields: ' +
+                    ', '.join(sorted(unexpected))
+                )
+            mode_sequence = None
+        else:
+            if any(field in run for field in (
+                'mission_scope', 'mission_ai_count', 'mission_ai_level',
+                *MISSION_CLAIM_FIELDS,
+            )):
+                raise ValueError('mission fields require native-mission-smoke suite')
+            mode_sequence = ",".join(
+                str(mode) for mode in parse_mode_sequence(run["mode_sequence"])
+            )
+            expected_cases = required_flow_cases(
+                mode_sequence, bootstrap_only, battleship_only,
+                gift_requests_only, deck_only, pages_only, collection_draw,
+                play_unit_uid, shop_catalog=shop_plan is not None,
+            )
+
         if (
             run["role"] != "client"
-            or run["suite"] != "pvp-ai"
             or run["normal_flow"] != "1"
             or run["server_channel_selection"] != "native_automatic"
             or run["account_path"] != "private/account.ini"
-            or run["required_cases"] != ",".join(required_flow_cases(mode_sequence, bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only))
+            or run["required_cases"] != ",".join(expected_cases)
             or run["auto_nickname"] != "account_name"
             or run["exit_tutorial"] != "1"
             or run["first_unit_draw"] != "1"
             or run["acknowledge_game_windows"] != "1"
         ):
             raise ValueError("run contract does not describe the required normal client flow")
+
         host, port = run["endpoint"].rsplit(":", 1)
+        if mission_plan and (
+            not re.fullmatch(r'[1-9][0-9]*', port)
+            or not 1 <= int(port) <= 65535
+            or str(int(port)) != port
+        ):
+            raise ValueError('mission endpoint port must be canonical and in range')
         process_entry = run["process_entry"]
         plan = {
             "target_host": host,
@@ -873,10 +1648,8 @@ def read_public_plan(root: Path) -> dict:
             "target_server": run["target_server"],
             "target_channel": run["target_channel"],
             "server_channel_selection": run["server_channel_selection"],
-            "mode_sequence": mode_sequence,
             "retry_count": int(run["retry_count"]),
             "expect_first_fail": run["expect_first_fail"] == "1",
-            "expected_ai": int(run["expected_ai"]),
             "title_nonce": run["title_nonce"],
             "room_title": run["room_title"],
             "auto_nickname": run["auto_nickname"],
@@ -885,14 +1658,98 @@ def read_public_plan(root: Path) -> dict:
             "acknowledge_game_windows": run["acknowledge_game_windows"] == "1",
             "launcher_path": "" if process_entry == GAME_EXE else process_entry,
         }
-        for flag,value in (('bootstrap_only',bootstrap_only),('battleship_only',battleship_only),('gift_requests_only',gift_requests_only),('deck_only',deck_only),('pages_only',pages_only)):
-            if value:plan[flag] = True
+        if mission_plan:
+            plan.update({
+                'mission_mode': mission_mode,
+                'mission_scope': MISSION_SCOPE,
+                'mission_ai_count': MISSION_AI_COUNT,
+                'mission_ai_level': MISSION_AI_LEVEL,
+                'mission_clear_claim': False,
+                'mission_result_claim': False,
+                'mission_active_exit_claim': False,
+            })
+        else:
+            plan['mode_sequence'] = mode_sequence
+            plan['expected_ai'] = int(run['expected_ai'])
+        if play_unit_uid is not None:
+            plan['play_unit_uid'] = play_unit_uid
+        if shop_plan is not None:
+            plan.update(shop_plan)
+        for flag, value in (
+            ('bootstrap_only', bootstrap_only),
+            ('battleship_only', battleship_only),
+            ('gift_requests_only', gift_requests_only),
+            ('deck_only', deck_only),
+            ('pages_only', pages_only),
+            ('collection_draw', collection_draw),
+        ):
+            if value:
+                plan[flag] = True
+
+        if not mission_plan and 'random_loadout' in run:
+            if run['random_loadout'] not in ('0', '1'):
+                raise ValueError('invalid random loadout policy')
+            if run['random_loadout'] == '1':
+                if any((bootstrap_only, battleship_only, gift_requests_only, deck_only, pages_only)):
+                    raise ValueError('random scenario requires PvP')
+                nonce = run['title_nonce']
+                expected_ai = int(run["expected_ai"])
+                if (
+                    not re.fullmatch(r'[0-9a-f]{4}', nonce)
+                    or run['room_title'] !=
+                    f'{nonce} !ai e{(expected_ai + 1) // 2} a{expected_ai // 2} !rand'
+                ):
+                    raise ValueError('random native room command differs')
+                plan['random_loadout'] = True
+
         if 'network_policy' in run:
-            if run['network_policy'] not in ('direct','preserve'):raise ValueError('invalid network policy')
-            plan['network_policy']=run['network_policy']
+            if run['network_policy'] not in ('direct', 'preserve', ROUTED_LOOPBACK_POLICY):
+                raise ValueError('invalid network policy')
+            plan['network_policy'] = run['network_policy']
+        route_fields_present = {field for field in ROUTE_PLAN_FIELDS if field in run}
+        if plan.get('network_policy') == ROUTED_LOOPBACK_POLICY:
+            if route_fields_present != set(ROUTE_PLAN_FIELDS):
+                raise ValueError('routed loopback plan is missing sealed route fields')
+            if run['route_profile_path'] != ROUTE_PROFILE_RELATIVE.as_posix():
+                raise ValueError('invalid routed loopback profile path')
+            route_hash = run['route_profile_sha256']
+            if not re.fullmatch(r'[0-9a-f]{64}', route_hash):
+                raise ValueError('invalid routed loopback profile hash')
+            route_count = int(run['route_profile_route_count'])
+            logical_ip = str(ipaddress.IPv4Address(run['logical_login_ipv4']))
+            logical_port = int(run['logical_login_port'])
+            physical_ip = str(ipaddress.IPv4Address(run['physical_login_ipv4']))
+            physical_port = int(run['physical_login_port'])
+            if not 1 <= route_count <= 32 or not 1 <= logical_port <= 65535 or not 1 <= physical_port <= 65535:
+                raise ValueError('invalid routed loopback count or port')
+            if not ipaddress.IPv4Address(logical_ip).is_loopback or not ipaddress.IPv4Address(physical_ip).is_loopback:
+                raise ValueError('routed loopback endpoints must stay within IPv4 127/8')
+            if logical_ip != host or logical_port != int(port):
+                raise ValueError('routed logical login disagrees with endpoint')
+            plan.update({
+                'route_profile_path': run['route_profile_path'],
+                'route_profile_sha256': route_hash,
+                'route_profile_route_count': route_count,
+                'logical_login_ipv4': logical_ip,
+                'logical_login_port': logical_port,
+                'physical_login_ipv4': physical_ip,
+                'physical_login_port': physical_port,
+            })
+        elif route_fields_present:
+            raise ValueError('route fields require routed_loopback')
         if 'quiet' in run:
-            if run['quiet'] not in ('0','1'):raise ValueError('invalid quiet policy')
-            plan['quiet']=run['quiet']=='1'
+            if run['quiet'] not in ('0', '1'):
+                raise ValueError('invalid quiet policy')
+            plan['quiet'] = run['quiet'] == '1'
+            expected_quiet_loopback = (
+                plan.get('network_policy') == ROUTED_LOOPBACK_POLICY or
+                (plan.get('network_policy') == 'direct' and
+                 ipaddress.IPv4Address(host).is_loopback)
+            )
+            if run.get('quiet_loopback', '') != ('1' if expected_quiet_loopback else '0'):
+                raise ValueError('quiet loopback policy disagrees with the network plan')
+        elif 'quiet_loopback' in run:
+            raise ValueError('quiet_loopback requires a quiet run')
         return plan
     except (KeyError, ValueError) as error:
         raise GameTestError(f"invalid normal-flow run.ini: {error}") from error
@@ -923,8 +1780,18 @@ def validate_private_account(root: Path, plan: dict) -> Path:
     validate_account_credentials(parser, username, password)
     if plan.get('deck_only'):
         validate_deck_profile(parser)
-    if parser.get('registration', 'state', fallback='') == 'existing_account' and (retry_count != 1 or expect_first_fail):
-        raise GameTestError('existing account imports cannot use registration retries')
+    registration_state = parser.get('registration', 'state', fallback='')
+    if registration_state in MISSION_EXISTING_ACCOUNT_STATES and (
+        retry_count != 1 or expect_first_fail
+    ):
+        raise GameTestError('registered accounts cannot use registration retries')
+    if (
+        "mission_mode" in plan
+        and registration_state not in MISSION_EXISTING_ACCOUNT_STATES
+    ):
+        raise GameTestError(
+            "mission smoke requires a registered or explicitly imported existing account profile"
+        )
     if retry_count != plan["retry_count"] or expect_first_fail != plan["expect_first_fail"]:
         raise GameTestError("private GameTest registration plan disagrees with run.ini")
     lock_path = Path(raw_lock_path)
@@ -960,6 +1827,10 @@ def collect_hashes(root: Path) -> tuple[dict, dict]:
     for path in sorted(mods.rglob("*"), key=lambda item: item.as_posix().lower()):
         if path.is_file() and path.suffix.lower() in {".dll", ".lua", ".ini", ".tsv", ".json",
                                                       ".bin", ".gdt", ".zsd", ".spr", ".txr", ".uir", ".zpk", ".zdx"}:
+            bind(path, immutable)
+    for relative in (SHOP_ASSERTIONS_RELATIVE, SHOP_DISPLAY_RELATIVE):
+        path = root / relative
+        if path.exists():
             bind(path, immutable)
     for name in ("config.xml", "閰嶇疆鏂囦欢.ini"):
         path = root / name
@@ -1022,6 +1893,8 @@ def prepare(
     retry_count: int | None = None,
     expect_first_fail: bool | None = None,
     expected_ai: int = 3,
+    play_unit_uid: int | None = None,
+    mission_mode: int | None = None,
     launcher_path: str | None = None,
     account_profile: Path | None = None,
     create_test_account: bool = False,
@@ -1031,19 +1904,57 @@ def prepare(
     gift_requests_only: bool = False,
     deck_only: bool = False,
     pages_only: bool = False,
+    collection_draw: bool = False,
+    shop_assertions: Path | None = None,
+    shop_display: Path | None = None,
+    random_loadout: bool = False,
     network_policy: str = 'direct',
+    route_profile: Path | None = None,
     quiet: bool = True,
     asset_baseline: Path | None = None,
+    _owned_client_transfer: tuple[Path, str] | None = None,
 ) -> dict:
     client_template = client_template.resolve()
+    play_unit_uid = validate_play_unit_uid(play_unit_uid)
+    mission_mode = validate_mission_mode(mission_mode)
+    if play_unit_uid is not None and create_test_account:
+        raise GameTestError('--play-unit-uid requires an existing account and cannot create a test account')
+    if mission_mode is not None and create_test_account:
+        raise GameTestError('--mission-mode requires an existing account and cannot create a test account')
+    if (shop_assertions is None) != (shop_display is None):
+        raise GameTestError('--shop-assertions and --shop-display must be provided together')
+    shop_binding = None
+    if shop_assertions is not None:
+        if not pages_only:
+            raise GameTestError('shop catalog assertions require --pages-only')
+        shop_assertions = shop_assertions.expanduser().resolve()
+        shop_display = shop_display.expanduser().resolve()
+        shop_binding = load_shop_test_inputs(shop_assertions, shop_display)
+    required_flow_cases(mode_sequence,bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,
+                        collection_draw,play_unit_uid,mission_mode,shop_binding is not None)
+    if mission_mode is not None:
+        if random_loadout:
+            raise GameTestError('--mission-mode cannot be combined with the PvP random-loadout scope')
+        if expected_ai != 3:
+            raise GameTestError('--expected-ai is a PvP setting and cannot change a mission smoke plan')
     if quiet and sfx_only:raise GameTestError('SFX capture requires explicit --visible; ordinary tests are background and silent')
     if quiet:
         try:ipaddress.IPv4Address(target_host)
         except ipaddress.AddressValueError as error:raise GameTestError('quiet tests require an explicit IPv4 server endpoint') from error
-    if network_policy not in ('direct','preserve'):raise GameTestError('invalid network policy')
-    if network_policy=='direct':
+    if network_policy not in ('direct','preserve',ROUTED_LOOPBACK_POLICY):raise GameTestError('invalid network policy')
+    if network_policy in ('direct', ROUTED_LOOPBACK_POLICY):
         try:target_host=str(ipaddress.IPv4Address(target_host))
-        except ipaddress.AddressValueError as error:raise GameTestError('direct tests require an explicit IPv4 login endpoint') from error
+        except ipaddress.AddressValueError as error:raise GameTestError('direct and routed tests require an explicit IPv4 login endpoint') from error
+    route_binding = None
+    if network_policy == ROUTED_LOOPBACK_POLICY:
+        if not ipaddress.IPv4Address(target_host).is_loopback:
+            raise GameTestError('routed_loopback logical login must stay within IPv4 127/8')
+        if route_profile is None:
+            raise GameTestError('routed_loopback requires --route-profile')
+        route_profile = route_profile.expanduser().resolve()
+        route_binding = load_routed_loopback_profile(route_profile, target_host, login_port)
+    elif route_profile is not None:
+        raise GameTestError('--route-profile requires --network-policy routed_loopback')
     stage = stage.resolve()
     run_dir = run_dir.resolve()
     shared_assets={}
@@ -1074,6 +1985,7 @@ def prepare(
         raise GameTestError(f"run directory already exists: {run_dir}")
     if is_relative_to(run_dir, client_template):
         raise GameTestError("run directory cannot be inside the client template")
+    validate_observer_stage(_owned_client_transfer[0]/'client' if _owned_client_transfer else client_template,stage)
 
     profile_path = (account_profile or default_account_profile()).expanduser().resolve()
     if create_test_account:
@@ -1086,15 +1998,26 @@ def prepare(
         profile = create_account_profile(profile_path)
     else:
         profile = load_account_profile(profile_path)
-        pending_first_login = (
-            profile.get("registration", "state", fallback="").strip()
-            == "pending_first_login"
-        )
+        registration_state = profile.get(
+            "registration", "state", fallback=""
+        ).strip()
+        pending_first_login = registration_state == "pending_first_login"
         default_retry_count = 2 if pending_first_login else 1
         resolved_retry_count = default_retry_count if retry_count is None else retry_count
         resolved_expect_first_fail = False if expect_first_fail is None else expect_first_fail
-        if profile.get('registration', 'state', fallback='') == 'existing_account' and (resolved_retry_count != 1 or resolved_expect_first_fail):
-            raise GameTestError('existing account imports cannot use registration retries')
+        if registration_state in MISSION_EXISTING_ACCOUNT_STATES and (
+            resolved_retry_count != 1 or resolved_expect_first_fail
+        ):
+            raise GameTestError('registered accounts cannot use registration retries')
+        if play_unit_uid is not None and pending_first_login:
+            raise GameTestError('--play-unit-uid requires an already registered account profile')
+        if mission_mode is not None:
+            if registration_state not in MISSION_EXISTING_ACCOUNT_STATES:
+                raise GameTestError(
+                    '--mission-mode requires a registered or explicitly imported existing account profile'
+                )
+            if resolved_retry_count != 1 or resolved_expect_first_fail:
+                raise GameTestError('--mission-mode forbids registration retry behavior')
 
     if deck_only:
         validate_deck_profile(profile)
@@ -1108,11 +2031,25 @@ def prepare(
         resolved_expect_first_fail,
         expected_ai,
         launcher_path,
+        play_unit_uid,
+        mission_mode,
     )
-    required_flow_cases(mode_sequence,bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only)
+    if random_loadout and any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,mission_mode is not None)):
+        raise GameTestError('random loadout requires a real PvP scenario')
+    if random_loadout:
+        # Keep the real title within the native twenty-byte limit. The run
+        # UUID still owns all receipts; this four-hex nonce has the same
+        # sixteen random bits as the ordinary gt-prefixed nonce.
+        plan['title_nonce']=secrets.token_hex(2)
+        plan['room_title']=f"{plan['title_nonce']} !ai e{(expected_ai+1)//2} a{expected_ai//2} !rand"
+        plan['random_loadout']=True
     plan['network_policy']=network_policy
+    if route_binding is not None:
+        plan.update(route_binding)
+    if shop_binding is not None:
+        plan.update(shop_binding)
     plan['quiet']=quiet
-    for flag,value in (('bootstrap_only',bootstrap_only),('battleship_only',battleship_only),('gift_requests_only',gift_requests_only),('deck_only',deck_only),('pages_only',pages_only)):
+    for flag,value in (('bootstrap_only',bootstrap_only),('battleship_only',battleship_only),('gift_requests_only',gift_requests_only),('deck_only',deck_only),('pages_only',pages_only),('collection_draw',collection_draw)):
         if value:plan[flag] = True
     run_dir.parent.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex
@@ -1131,9 +2068,39 @@ def prepare(
                 os.link(shared_assets[original.name],destination)
                 return str(destination)
             return shutil.copy2(source,destination)
-        shutil.copytree(client_template, client, ignore=copy_ignore,copy_function=copy_client_file)
+        if _owned_client_transfer is None:
+            shutil.copytree(client_template, client, ignore=copy_ignore,copy_function=copy_client_file)
+        else:
+            holding, reuse_token = _owned_client_transfer
+            marker=read_json(holding/'.gametest-reusing.json')
+            if (holding.parent!=run_dir.parent or not holding.name.startswith('.gametest-reusing-') or
+                marker.get('token')!=reuse_token or marker.get('target')!=str(run_dir) or
+                not is_relative_to(holding,OWNED_BUILD_ROOT.resolve()) or
+                (holding/'client').is_symlink() or
+                (hasattr(holding/'client','is_junction') and (holding/'client').is_junction()) or
+                (holding/'client').resolve().parent!=holding.resolve()):
+                raise GameTestError('owned client transfer marker or scope differs')
+            os.replace(holding/'client',client)
+            recycle_owned_artifact(client/'sdgo/gametest',preparing)
+            recycle_owned_artifact(client/'sdgo/mods'/TEST_MOD,preparing)
         overlay_observer(client, stage)
-        configure_test_network(client,network_policy)
+        installed_route = configure_test_network(
+            client,
+            network_policy,
+            route_profile=route_profile,
+            route_binding=route_binding,
+        )
+        if installed_route is not None and installed_route != route_binding:
+            raise GameTestError('installed route binding differs from the validated source profile')
+        if shop_binding is not None:
+            installed_shop = install_shop_test_inputs(
+                client,
+                shop_assertions,
+                shop_display,
+                shop_binding,
+            )
+            if installed_shop != shop_binding:
+                raise GameTestError('installed shop inputs differ from their sealed source bytes')
         recording = configure_sfx_only(client) if sfx_only else None
         if quiet:configure_muted_audio(client)
         write_job(client, run_id, plan, profile, profile_path)
@@ -1146,9 +2113,7 @@ def prepare(
         metadata = {
             "schema": SCHEMA_VERSION,
             "run_id": run_id,
-            "suite": ('account-bootstrap' if bootstrap_only else 'battleship-acquisition' if battleship_only
-                      else 'gift-mail-requests' if gift_requests_only else 'battleship-deck' if deck_only
-                      else 'native-pages' if pages_only else 'pvp-ai-normal-flow'),
+            "suite": metadata_suite_for_plan(plan),
             "status": "prepared",
             "created_utc": utc_now(),
             "source": {
@@ -1190,7 +2155,116 @@ def prepare(
         raise
 
 
+def recycle_owned_artifact(path: Path, owner_root: Path) -> None:
+    """Use the OS Recycle Bin; never fall back to permanent removal."""
+    if not path.exists():return
+    if path.is_symlink() or (hasattr(path,'is_junction') and path.is_junction()):
+        raise GameTestError('refusing to recycle a linked GameTest artifact')
+    resolved=path.resolve();owner=owner_root.resolve()
+    if resolved==owner or not is_relative_to(resolved,owner):
+        raise GameTestError('recycle target escapes its owned GameTest scope')
+    try:
+        from send2trash import send2trash
+    except ImportError as error:
+        raise GameTestError('client reuse requires Send2Trash; install it before reuse; no permanent-delete fallback') from error
+    send2trash(str(resolved))
+    if resolved.exists():raise GameTestError('owned artifact was not moved to the Recycle Bin')
+
+
+def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options) -> dict:
+    """Move one stopped owned client into a fresh capsule, keeping its file IDs."""
+    raw=run_dir.absolute()
+    if raw.is_symlink() or (hasattr(raw,'is_junction') and raw.is_junction()):
+        raise GameTestError('client reuse rejects linked run directories')
+    run_dir=raw.resolve();owned=OWNED_BUILD_ROOT.resolve()
+    if run_dir==owned or not is_relative_to(run_dir,owned):
+        raise GameTestError('client reuse requires an owned build run, never the player client')
+    if options.get('create_test_account'):
+        raise GameTestError('client reuse cannot register another account')
+    # Preflight the recycler before changing paths or accounts.
+    try:__import__('send2trash')
+    except ImportError as error:raise GameTestError('install Send2Trash before client reuse; no files changed') from error
+    previous=validate_metadata(run_dir);verify_hashes(previous)
+    client_root=run_dir/'client'
+    validate_observer_stage(client_root,stage.resolve())
+    for directory,dirs,files in os.walk(client_root,followlinks=False):
+        for name in dirs+files:
+            path=Path(directory)/name
+            if path.is_symlink() or (hasattr(path,'is_junction') and path.is_junction()):
+                raise GameTestError('client reuse rejects linked client files/directories')
+            if path.is_file() and path.stat().st_nlink>1 and path.relative_to(client_root).as_posix() not in ('GPackData.zpk','GPackData.zdx'):
+                raise GameTestError('client reuse rejects shared mutable runtime files')
+    for other in owned.glob('*/run.json'):
+        if other.parent==run_dir:continue
+        data=read_json(other);baseline=data.get('assets',{}).get('baseline')
+        if baseline and Path(baseline).resolve()==run_dir:
+            raise GameTestError('this run is an archive baseline referenced by another capsule')
+    image=Path(previous['client']['game']).resolve()
+    previous_pid=(previous.get('execution') or {}).get('game_pid')
+    for row in process_snapshot():
+        value=row.get('image_path')
+        if (value and is_relative_to(Path(value).resolve(),run_dir)) or (row['pid']==previous_pid and not value):
+            raise GameTestError('the owned client may still be running; reuse made no changes')
+    account_lock_path=validate_private_account(Path(previous['client']['root']),previous['plan'])
+    profile=account_lock_path.with_name(account_lock_path.name.removesuffix('.run.lock'))
+    if options.get('account_profile') and Path(options['account_profile']).resolve()!=profile:
+        raise GameTestError('reuse keeps the same persistent account profile')
+    options['account_profile']=profile
+    if previous.get('assets') and options.get('asset_baseline') is None:
+        options['asset_baseline']=Path(previous['assets']['baseline'])
+    archive=owned/'gametest-current';archive.mkdir(exist_ok=True)
+    if archive.is_symlink() or (hasattr(archive,'is_junction') and archive.is_junction()):
+        raise GameTestError('client reuse rejects a linked receipt archive')
+    lock,token=acquire_lock(run_dir);account_lock=None;account_token=None
+    holding=run_dir.parent/('.gametest-reusing-'+uuid.uuid4().hex)
+    try:
+        account_lock,account_token=acquire_exclusive_lock(account_lock_path,'persistent account')
+        prior={'run_id':previous['run_id'],'source':previous.get('source'),'plan':previous['plan'],
+               'immutable_hashes':previous['client']['immutable_hashes'],'execution':previous.get('execution')}
+        proofs=archive/'proof-binaries';proofs.mkdir(exist_ok=True)
+        if proofs.is_symlink() or (hasattr(proofs,'is_junction') and proofs.is_junction()):
+            raise GameTestError('client reuse rejects a linked binary proof archive')
+        prior['binaries']={}
+        for identifier in (TEST_MOD,TARGET_MOD,'room_random_client'):
+            payload=client_root/f'sdgo/mods/{identifier}/{identifier}.dll'
+            if not payload.is_file():continue
+            digest=sha256(payload);target=proofs/(digest+'.dll')
+            if target.exists() and (target.is_symlink() or sha256(target)!=digest):
+                raise GameTestError('existing binary proof is linked or has changed')
+            if not target.exists():shutil.copy2(payload,target)
+            prior['binaries'][identifier]={'sha256':digest,'path':target.relative_to(archive).as_posix()}
+        report=run_dir/'receipts/report.json'
+        if report.exists():prior['report']=read_json(report)
+        events=Path(previous['client']['events'])
+        if events.exists():prior['events']=events.read_text(encoding='utf-8')
+        old=archive/'previous-run.json'
+        recycle_owned_artifact(old,archive)
+        atomic_write(old,json.dumps(prior,indent=2)+'\n')
+        rename_prepared_directory(run_dir,holding)
+        atomic_write(holding/'.gametest-reusing.json',json.dumps({'token':token,'target':str(run_dir)}))
+        release_owned_lock(holding/lock.name,token)
+        metadata=prepare(client_template,stage,run_dir,
+                         _owned_client_transfer=(holding,token),**options)
+        metadata['reuse']={'previous_run_id':previous['run_id'],'mode':'move_owned_client_no_copy'}
+        atomic_write(run_dir/'run.json',json.dumps(metadata,indent=2,sort_keys=True))
+        recycle_owned_artifact(holding,owned)
+        return metadata
+    except BaseException:
+        # A preflight failure before the transfer leaves a complete old capsule.
+        # Restore its path; a transferred/partially updated client stays in the
+        # token-marked preparation for recovery, never gets deleted.
+        if holding.is_dir() and (holding/'client').is_dir() and not run_dir.exists():
+            release_owned_lock(holding/lock.name,token)
+            rename_prepared_directory(holding,run_dir)
+        raise
+    finally:
+        release_owned_lock(run_dir/lock.name,token)
+        if account_lock is not None:release_owned_lock(account_lock,account_token)
+
+
 def validate_metadata(run_dir: Path) -> dict:
+    if run_dir.is_symlink() or (hasattr(run_dir,'is_junction') and run_dir.is_junction()):
+        raise GameTestError('run directory is linked rather than an owned capsule')
     run_dir = run_dir.resolve()
     metadata = read_json(run_dir / "run.json")
     if metadata.get("schema") != SCHEMA_VERSION:
@@ -1205,7 +2279,12 @@ def validate_metadata(run_dir: Path) -> dict:
     client = metadata.get("client")
     if not isinstance(client, dict):
         raise GameTestError("run.json lacks client metadata")
-    root = (run_dir / "client").resolve()
+    raw_root=run_dir/'client'
+    if raw_root.is_symlink() or (hasattr(raw_root,'is_junction') and raw_root.is_junction()):
+        raise GameTestError('client root is linked rather than an owned copy')
+    root = raw_root.resolve()
+    if root.parent!=run_dir:
+        raise GameTestError('client root escapes this run directory')
     if Path(client.get("root", "")).resolve() != root:
         raise GameTestError("client root escapes this run directory")
     if Path(client.get("game", "")).resolve() != root / GAME_EXE:
@@ -1222,12 +2301,57 @@ def validate_metadata(run_dir: Path) -> dict:
     if not isinstance(plan, dict):
         raise GameTestError("run.json lacks normal-flow plan")
     public_plan = read_public_plan(root)
-    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only'):
+    public_run = read_ini(root / "sdgo" / "gametest" / "run.ini")["run"]
+    if public_run.get("id") != run_id:
+        raise GameTestError("run.json run_id disagrees with run.ini")
+    expected_suite = metadata_suite_for_plan(public_plan)
+    if metadata.get("suite") != expected_suite:
+        raise GameTestError("run.json suite disagrees with the sealed normal-flow plan")
+    if "mission_mode" in public_plan:
+        forbidden = {
+            "mode_sequence", "expected_ai", "bootstrap_only",
+            "battleship_only", "gift_requests_only", "deck_only",
+            "pages_only", "collection_draw", "random_loadout",
+        }
+        if forbidden.intersection(plan):
+            raise GameTestError("run.json adds PvP, pages, or preparation scope to a mission smoke")
+        if set(plan) != set(public_plan):
+            raise GameTestError("run.json mission plan fields disagree with the sealed public plan")
+        for key, value in public_plan.items():
+            if type(plan[key]) is not type(value) or plan[key] != value:
+                raise GameTestError(f"run.json mission plan disagrees with run.ini for {key}")
+    elif any(field in plan for field in (
+        "mission_mode", "mission_scope", "mission_ai_count",
+        "mission_ai_level", *MISSION_CLAIM_FIELDS,
+    )):
+        raise GameTestError("run.json cannot add mission scope to a non-mission plan")
+    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','collection_draw','random_loadout'):
         if (type(plan.get(flag, False)) is not bool or plan.get(flag, False) != public_plan.get(flag, False)):
             raise GameTestError('run.json cannot change the required bootstrap or battle scope')
+    if 'play_unit_uid' in plan:
+        validate_play_unit_uid(plan['play_unit_uid'])
+    if ('play_unit_uid' in plan) != ('play_unit_uid' in public_plan):
+        raise GameTestError('run.json cannot add or remove the configured owned unit UID')
+    unknown_plan_shop_fields = {
+        field for field in plan if field.startswith("shop_")
+    } - set(SHOP_PLAN_FIELDS)
+    if unknown_plan_shop_fields:
+        raise GameTestError('run.json contains unknown shop GameTest fields')
+    plan_shop_fields = {field for field in SHOP_PLAN_FIELDS if field in plan}
+    public_shop_fields = {field for field in SHOP_PLAN_FIELDS if field in public_plan}
+    if plan_shop_fields not in (set(), set(SHOP_PLAN_FIELDS)):
+        raise GameTestError('run.json has a partial shop GameTest input plan')
+    if plan_shop_fields != public_shop_fields:
+        raise GameTestError('run.json cannot add or remove shop GameTest inputs')
     for key, value in public_plan.items():
         if plan.get(key) != value:
             raise GameTestError(f"run.json plan disagrees with run.ini for {key}")
+    if public_shop_fields:
+        if not plan.get('pages_only'):
+            raise GameTestError('shop GameTest inputs require the native pages suite')
+        validate_shop_test_install(root, plan)
+    if plan.get('network_policy') == ROUTED_LOOPBACK_POLICY:
+        validate_routed_loopback_install(root, plan)
     expected_launcher = plan.get("launcher_path", "")
     expected_entry = (root / (expected_launcher or GAME_EXE)).resolve()
     if entry != expected_entry or not is_relative_to(expected_entry, root):
@@ -1241,6 +2365,22 @@ def verify_hashes(metadata: dict) -> None:
     hashes = metadata["client"].get("immutable_hashes")
     if not isinstance(hashes, dict) or not hashes:
         raise GameTestError("client has no immutable payload hashes")
+    plan = metadata.get("plan")
+    if not isinstance(plan, dict):
+        raise GameTestError("run.json lacks normal-flow plan")
+    shop_fields = {field for field in SHOP_PLAN_FIELDS if field in plan}
+    if shop_fields and shop_fields != set(SHOP_PLAN_FIELDS):
+        raise GameTestError("shop GameTest plan is missing sealed input fields")
+    if shop_fields:
+        required_shop_hashes = {
+            SHOP_ASSERTIONS_RELATIVE.as_posix(): plan["shop_assertions_sha256"],
+            SHOP_DISPLAY_RELATIVE.as_posix(): plan["shop_display_sha256"],
+        }
+        for relative, expected in required_shop_hashes.items():
+            if hashes.get(relative) != expected:
+                raise GameTestError(
+                    f"immutable payload map does not bind sealed shop input: {relative}"
+                )
     for relative, expected in hashes.items():
         if not isinstance(relative, str) or not relative:
             raise GameTestError("invalid immutable payload path in run.json")
@@ -1604,8 +2744,8 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
                     if proof and not metadata['execution'].get('quiet_verified'):
                         metadata['execution']['quiet_verified']=proof
                         atomic_write(run_dir/'run.json',json.dumps(metadata,indent=2,sort_keys=True))
-                if metadata['plan'].get('network_policy')=='direct' and not metadata['execution'].get('network_verified'):
-                    proof=verify_direct_peer(metadata,game_process['pid'])
+                if metadata['plan'].get('network_policy') in ('direct', ROUTED_LOOPBACK_POLICY) and not metadata['execution'].get('network_verified'):
+                    proof=verify_login_peer(metadata,game_process['pid'])
                     if proof:
                         metadata['execution']['network_verified']=proof
                         atomic_write(run_dir/'run.json',json.dumps(metadata,indent=2,sort_keys=True))
@@ -1628,32 +2768,50 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
         metadata['status']='executed'
         atomic_write(run_dir/'run.json',json.dumps(metadata,indent=2,sort_keys=True))
     finally:
+        if not isinstance(metadata.get('execution'),dict):metadata['execution']={}
+        cleanup_errors=[]
+        def cleanup(label,action):
+            try:action()
+            except Exception as error:cleanup_errors.append(f'{label}: {type(error).__name__}: {error}')
+        def stop_entry():
+            if entry_process and entry_process.poll() is None:
+                try:entry_process.kill()
+                except OSError:
+                    # Windows can reject a second termination while the first
+                    # exit is still pending. Accept only a confirmed exit.
+                    entry_process.wait(timeout=10)
+                    if entry_process.poll() is None:raise
+                    return
+                entry_process.wait(timeout=10)
         if game_process:
             if entry_process and game_process["pid"] == entry_process.pid:
-                if entry_process.poll() is None:
-                    entry_process.kill()
-                    try:
-                        entry_process.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        pass
+                cleanup('owned game stop',stop_entry)
             else:
-                terminate_verified_process(game_process["pid"], Path(metadata["client"]["game"]))
-        if entry_process and entry_process.poll() is None:
-            entry_process.kill()
-            try:
-                entry_process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                pass
+                cleanup('verified child stop',lambda:terminate_verified_process(game_process["pid"], Path(metadata["client"]["game"])))
+        cleanup('owned entry stop',stop_entry)
         for handle in handles:
-            handle.close()
+            cleanup('output stream close',handle.close)
         if entry_process and metadata.get('execution') is not None:
-            metadata['execution']['entry_exit_code']=entry_process.poll()
+            cleanup('entry exit readback',lambda:metadata['execution'].update(entry_exit_code=entry_process.poll()))
         if quiet_runtime:
-            metadata.setdefault('execution',{})['quiet_cleanup']=quiet_runtime.close()
-            atomic_write(run_dir/'run.json',json.dumps(metadata,indent=2,sort_keys=True))
-        if account_lock is not None and account_token is not None:
-            release_owned_lock(account_lock, account_token)
-        release_owned_lock(lock, token)
+            cleanup('quiet runtime close',lambda:metadata.setdefault('execution',{}).update(quiet_cleanup=quiet_runtime.close()))
+        owned_alive=True
+        try:
+            owned_alive=bool(entry_process and entry_process.poll() is None)
+            if game_process and (not entry_process or game_process['pid']!=entry_process.pid):
+                owned_alive=owned_alive or any(row['pid']==game_process['pid'] for row in process_snapshot())
+        except Exception as error:cleanup_errors.append(f'owned exit readback: {type(error).__name__}: {error}')
+        if not owned_alive:
+            if account_lock is not None and account_token is not None:
+                cleanup('account lock release',lambda:release_owned_lock(account_lock,account_token))
+            cleanup('run lock release',lambda:release_owned_lock(lock,token))
+        else:
+            cleanup_errors.append('owned process exit is unconfirmed; account and run locks retained')
+        if cleanup_errors:
+            metadata.setdefault('execution',{}).update(status='cleanup_error',cleanup_errors=cleanup_errors,
+                                                       finished_utc=utc_now())
+            metadata['status']='executed'
+        atomic_write(run_dir/'run.json',json.dumps(metadata,indent=2,sort_keys=True))
     return build_report(run_dir)
 
 
@@ -1917,6 +3075,7 @@ def build_report(run_dir: Path) -> dict:
                 or {
                     "game_exited": "normal copied client exited before GameTest completed",
                     "timeout": "normal copied client timed out before GameTest completed",
+                    "cleanup_error": 'owned runtime cleanup failed: '+'; '.join(execution.get('cleanup_errors',[])),
                 }.get(execution_status, f"unexpected execution status: {execution_status!r}")
             )
             if execution_status=='game_exited':
@@ -1926,11 +3085,26 @@ def build_report(run_dir: Path) -> dict:
                             if 'game_test_client: native exception ' in line]
                     if faults:launch_errors.append(faults[-1])
     launch_status = "fail" if launch_errors else ("pending" if launch_pending else "pass")
-    if execution is not None and execution.get('status')=='completed' and metadata['plan'].get('network_policy')=='direct':
+    if execution is not None and execution.get('status')=='completed' and metadata['plan'].get('network_policy') in ('direct', ROUTED_LOOPBACK_POLICY):
         proof=execution.get('network_verified',{})
+        policy=metadata['plan'].get('network_policy')
+        expected_ip=(metadata['plan']['physical_login_ipv4'] if policy==ROUTED_LOOPBACK_POLICY
+                     else metadata['plan']['target_host'])
+        expected_port=(metadata['plan']['physical_login_port'] if policy==ROUTED_LOOPBACK_POLICY
+                       else metadata['plan']['login_port'])
         if (proof.get('verified') is not True or proof.get('pid')!=execution.get('game_pid') or
-            proof.get('remote_ipv4')!=metadata['plan']['target_host'] or proof.get('remote_port')!=metadata['plan']['login_port']):
+            proof.get('remote_ipv4')!=expected_ip or proof.get('remote_port')!=expected_port):
             launch_errors.append('the actual native login TCP peer was not verified against the requested endpoint')
+            launch_status='fail'
+        elif policy==ROUTED_LOOPBACK_POLICY and (
+            proof.get('network_policy')!=ROUTED_LOOPBACK_POLICY or
+            proof.get('logical_ipv4')!=metadata['plan']['target_host'] or
+            proof.get('logical_port')!=metadata['plan']['login_port'] or
+            proof.get('physical_ipv4')!=expected_ip or
+            proof.get('physical_port')!=expected_port or
+            proof.get('route_profile_sha256')!=metadata['plan']['route_profile_sha256']
+        ):
+            launch_errors.append('routed login evidence does not preserve the sealed logical and physical endpoints')
             launch_status='fail'
     if execution is not None and execution.get('status')=='completed' and metadata['plan'].get('quiet'):
         proof=execution.get('quiet_verified',{})
@@ -1942,8 +3116,7 @@ def build_report(run_dir: Path) -> dict:
             launch_errors.append('quiet desktop, muted audio, scoped firewall and cleanup evidence are incomplete')
             launch_status='fail'
 
-    required_cases = required_flow_cases(metadata["plan"]["mode_sequence"], metadata['plan'].get('bootstrap_only', False),
-        metadata['plan'].get('battleship_only',False),metadata['plan'].get('gift_requests_only',False),metadata['plan'].get('deck_only',False),metadata['plan'].get('pages_only',False))
+    required_cases = required_cases_for_plan(metadata["plan"])
     native = evaluate_events(
         Path(metadata["client"]["events"]),
         metadata["run_id"],
@@ -1951,6 +3124,16 @@ def build_report(run_dir: Path) -> dict:
         Path(metadata["client"]["game"]),
         required_cases,
     )
+    if 'play_unit_uid' in metadata['plan']:
+        native['requested_play_unit_uid'] = metadata['plan']['play_unit_uid']
+    if 'mission_mode' in metadata['plan']:
+        native['mission_mode'] = metadata['plan']['mission_mode']
+        native['mission_scope'] = metadata['plan']['mission_scope']
+        native['mission_claims'] = {
+            'clear': False,
+            'result': False,
+            'active_exit': False,
+        }
     if (
         execution is not None
         and execution.get("status") == "completed"
@@ -2024,9 +3207,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "native automatic channel selection"
         ),
     )
-    prepare_parser.add_argument("--mode-sequence", default="1")
+    battle_scope = prepare_parser.add_mutually_exclusive_group()
+    battle_scope.add_argument("--mode-sequence", default="1")
+    battle_scope.add_argument(
+        "--mission-mode",
+        type=int,
+        choices=SUPPORTED_MISSION_MODES,
+        default=None,
+        help=(
+            "bounded native mission smoke for mode 5 or 8: real room, start, "
+            "AI spawn and combat only; no clear, result, or active-exit claim"
+        ),
+    )
     prepare_parser.add_argument("--retry-count", type=int, choices=(1, 2))
     prepare_parser.add_argument("--expected-ai", type=int, default=3)
+    prepare_parser.add_argument('--play-unit-uid',type=int,
+                                help='select an existing genuinely owned non-zero uint64 unit UID through native hangar UI before PvP, pages, or mission tests')
     prepare_parser.add_argument("--sfx-only", action="store_true",
                                 help="mute BGM and enable effects only in the isolated client")
     prepare_parser.add_argument('--bootstrap-only', action='store_true',
@@ -2035,10 +3231,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--gift-requests-only', action='store_true',help='send configured native mail gift requests; server processing is verified separately')
     prepare_parser.add_argument('--deck-only', action='store_true',help='save and select a native battleship deck using four genuinely owned unit UIDs from the private account profile')
     prepare_parser.add_argument('--pages-only', action='store_true',help='visit the real hangar and verify Mod inventory, preview and cancel without exchanging units')
-    prepare_parser.add_argument('--network-policy',choices=('direct','preserve'),default='direct',
-                                help='direct disables inherited endpoint routes only in the test copy; preserve explicitly tests owner routes')
+    prepare_parser.add_argument('--collection-draw',action='store_true',help='explicit pages-only extension: purchase one collection draw with existing native funds and verify delivery')
+    prepare_parser.add_argument('--shop-assertions',type=Path,
+                                help='read-only StockAssertions INI copied into a pages-only GameTest capsule')
+    prepare_parser.add_argument('--shop-display',type=Path,
+                                help='matching read-only runtime display INI copied into a pages-only GameTest capsule')
+    prepare_parser.add_argument('--random-loadout',action='store_true',help='use the native !rand room command with the actually owned inventory in the PvP scenario')
+    prepare_parser.add_argument('--network-policy',choices=('direct','preserve',ROUTED_LOOPBACK_POLICY),default='direct',
+                                help='direct disables inherited routes; routed_loopback installs a sealed 127/8 profile in the copy; preserve tests owner routes')
+    prepare_parser.add_argument('--route-profile',type=Path,
+                                help='strict net_route INI used only with --network-policy routed_loopback')
     prepare_parser.add_argument('--visible',action='store_true',help='explicit developer opt-in to a visible client; default tests use an isolated desktop and muted audio')
     prepare_parser.add_argument('--asset-baseline',type=Path,help='reuse verified read-only native archives from a passed owned build run; never links original player files')
+    prepare_parser.add_argument('--reuse-client',action='store_true',help='reuse the stopped owned run-dir client in place with a fresh run UUID and compact prior receipt; no full client copy')
     prepare_parser.add_argument(
         "--expect-first-fail",
         action=argparse.BooleanOptionalAction,
@@ -2073,7 +3278,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         if args.command == "prepare":
-            result = prepare(
+            preparation = reuse_prepared if args.reuse_client else prepare
+            result = preparation(
                 args.client_template,
                 args.stage,
                 args.run_dir,
@@ -2085,6 +3291,8 @@ def main(argv: list[str] | None = None) -> int:
                 retry_count=args.retry_count,
                 expect_first_fail=args.expect_first_fail,
                 expected_ai=args.expected_ai,
+                play_unit_uid=args.play_unit_uid,
+                mission_mode=args.mission_mode,
                 launcher_path=args.launcher_path,
                 account_profile=args.account_profile,
                 create_test_account=args.create_test_account,
@@ -2094,7 +3302,12 @@ def main(argv: list[str] | None = None) -> int:
                 gift_requests_only=args.gift_requests_only,
                 deck_only=args.deck_only,
                 pages_only=args.pages_only,
+                collection_draw=args.collection_draw,
+                shop_assertions=args.shop_assertions,
+                shop_display=args.shop_display,
+                random_loadout=args.random_loadout,
                 network_policy=args.network_policy,
+                route_profile=args.route_profile,
                 quiet=not args.visible,
                 asset_baseline=args.asset_baseline,
             )

@@ -30,7 +30,7 @@ void Check(bool ok,const char* name){std::printf("%s %s\n",ok?"PASS":"FAIL",name
 __declspec(noinline) void* __cdecl NativeFactory(int type,uint32_t modelId) {
     ++factoryCalls;return type==15 ? reinterpret_cast<void*>(static_cast<uintptr_t>(modelId)+0x1000) : nullptr;
 }
-__declspec(noinline) void __fastcall NativeFill(uint8_t*,void*,uint8_t* output,
+__declspec(noinline) void __stdcall NativeFill(uint8_t* output,
     const uint8_t* source,const uint8_t*,uint8_t deck) {
     ++fillCalls;std::memcpy(lastConstruction.data(),source,lastConstruction.size());
     for(size_t i=0;i<(deck ? 4u : 1u);++i) {
@@ -43,9 +43,23 @@ __declspec(noinline) void __fastcall NativeFill(uint8_t*,void*,uint8_t* output,
         }
     }
 }
+__declspec(naked) void __stdcall StaticFillWithUnrelatedEcx(uint8_t*,const uint8_t*,const uint8_t*,uint8_t) {
+    __asm {
+        push ebp
+        mov ebp,esp
+        push dword ptr [ebp+14h]
+        push dword ptr [ebp+10h]
+        push dword ptr [ebp+0Ch]
+        push dword ptr [ebp+08h]
+        mov ecx,12345678h
+        call NativeFill
+        pop ebp
+        ret 10h
+    }
+}
 void Construct(const uint8_t* entry,const uint8_t* source,uint8_t deck) {
     std::array<uint8_t,0x344> output{};
-    NativeFill(model.data(),nullptr,output.data(),source,entry,deck);lastOutput=output;
+    StaticFillWithUnrelatedEcx(output.data(),source,entry,deck);lastOutput=output;
     startedModel=static_cast<int>(room_random_client::Read<uint32_t>(output.data(),0x44));
     NativeFactory(15,static_cast<uint32_t>(startedModel));
 }
@@ -159,6 +173,9 @@ int wmain(int argc,wchar_t** argv) {
     dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
     Check(startedModel==(enabled?11032:15019),"start uses the authoritative model only when synchronization is enabled");
     Check(factoryCalls==1,"native factory still executes once");
+    Put<uint32_t>(frozen[0].data(),0x429,1001);Put<uint32_t>(frozen[0].data(),0x49,15019);
+    Construct(start.data()+0x20,frozen[0].data(),0);
+    Check(startedModel==(enabled?11032:15019),"the static converter's unrelated ECX cannot replace the verified lobby packet context");
     if(enabled) {
         Check(room_random_client::Read<uint64_t>(profile.data(),0x1B1)==0x123456789ABCULL,"own profile receives the complete 64-bit inventory identity");
         Put<uint32_t>(unit.data(),0,15019);Put<uint64_t>(unit.data(),8,777);
@@ -190,6 +207,11 @@ int wmain(int argc,wchar_t** argv) {
     Check(lastConstruction==expected && frozen[0]==original,"complete construction input changes without mutating the frozen source");
     Check(room_random_client::Read<uint8_t*>(profile.data(),0xEC)==nullptr,"3D synchronization never fabricates a legacy room publication");
     Check(room_random_client::Read<uint32_t>(room.data(),0x57C)==15019,"3D mission updates never write the unrelated normal-layout row");
+    const auto verifiedVtable=modelVtable;
+    Put<void*>(modelVtable.data(),0x1C,nullptr);
+    Construct(start.data()+0x20,frozen[0].data(),0);
+    Check(lastConstruction==original,"a captured model address must still pass its complete live native vtable before reuse");
+    modelVtable=verifiedVtable;
     // Switch to the normal-room native interface; final conversion is shared.
     Put<void*>(modelVtable.data(),0x20,reinterpret_cast<void*>(&NormalOwner));
     Put<void*>(modelVtable.data(),0x84,reinterpret_cast<void*>(&NormalSetUnit));

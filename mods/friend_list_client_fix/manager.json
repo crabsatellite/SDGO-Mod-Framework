@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "friend_list_client_fix",
+  "title": "离线好友聊天入口修复",
+  "category": "fixes",
+  "hosts": [
+    "client"
+  ],
+  "description": "让资料完整的离线好友继续打开游戏原生聊天界面。",
+  "settings": [],
+  "presentation": "automatic_fix",
+  "mechanism": "只在已验证的好友树聊天入口放行真实好友记录；消息发送、拒绝和投递仍由原生客户端与服务器处理。"
+}

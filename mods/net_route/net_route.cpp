@@ -13,24 +13,38 @@
 #include <string>
 
 #include "sdgo/sdgo_api.h"
+#include "sdgo/game_test_page_observer.h"
 #include "sdgo/mod_settings.h"
+#include "sdgo/net_route_observer.h"
 
 #pragma intrinsic(_ReturnAddress)
 
 namespace
 {
     constexpr size_t kMaxRoutes = 32;
+    struct alignas(8) ObserverCounters {
+        volatile LONG64 sendCalls = 0;
+        volatile LONG64 sendBytes = 0;
+        volatile LONG64 receiveCalls = 0;
+        volatile LONG64 receiveBytes = 0;
+        volatile LONG64 restoreSuccesses = 0;
+        volatile LONG64 restoreFailures = 0;
+    };
     struct Route {
         int type = 0;
         sockaddr_in logical = {};
         sockaddr_in external = {};
-        LONG sent = 0;
-        LONG received = 0;
+        LONG traceSent = 0;
+        LONG traceReceived = 0;
+        ObserverCounters observed;
     };
     std::array<Route, kMaxRoutes> g_routes;
     size_t g_count = 0;
     bool g_trace = false;
-    LONG g_unmapped = 0;
+    LONG g_traceUnmapped = 0;
+    uint64_t g_observerRunHash = 0;
+    alignas(8) volatile LONG64 g_unmatchedSend = 0;
+    alignas(8) volatile LONG64 g_unmatchedReceive = 0;
     const SdgoApi* g_api = nullptr;
     SdgoMod* g_mod = nullptr;
     using ConnectFn = int(WSAAPI*)(SOCKET, const sockaddr*, int);
@@ -93,7 +107,7 @@ namespace
     void Trace(Route* route, bool reverse)
     {
         if (!g_trace) return;
-        LONG count = InterlockedIncrement(reverse ? &route->received : &route->sent);
+        LONG count = InterlockedIncrement(reverse ? &route->traceReceived : &route->traceSent);
         if (count <= 8)
             g_api->Log(g_mod, SDGO_LOG_INFO, "route %u %s %s #%ld",
                        static_cast<unsigned>(route - g_routes.data() + 1),
@@ -102,11 +116,39 @@ namespace
 
     void TraceUnmapped(const sockaddr_in& address, int type)
     {
-        if (!g_trace || InterlockedIncrement(&g_unmapped) > 32) return;
+        if (!g_trace || InterlockedIncrement(&g_traceUnmapped) > 32) return;
         char ip[INET_ADDRSTRLEN] = {};
         InetNtopA(AF_INET, const_cast<IN_ADDR*>(&address.sin_addr), ip, sizeof(ip));
         g_api->Log(g_mod, SDGO_LOG_INFO, "unmapped %s %s:%u (unchanged)",
                    type == SOCK_STREAM ? "TCP" : "UDP", ip, ntohs(address.sin_port));
+    }
+
+    void AddCounter(volatile LONG64* counter, uint64_t value = 1)
+    {
+        InterlockedExchangeAdd64(counter, static_cast<LONG64>(value));
+    }
+
+    uint64_t ReadCounter(volatile LONG64* counter)
+    {
+        return static_cast<uint64_t>(InterlockedCompareExchange64(counter, 0, 0));
+    }
+
+    void ObserveSend(Route* route, int result)
+    {
+        if (!g_observerRunHash) return;
+        AddCounter(&route->observed.sendCalls);
+        if (result >= 0) AddCounter(&route->observed.sendBytes, static_cast<uint64_t>(result));
+    }
+
+    void ObserveReceive(Route* route, int result, int resultError, int requestedSize, bool restored)
+    {
+        if (!g_observerRunHash) return;
+        AddCounter(&route->observed.receiveCalls);
+        if (result >= 0)
+            AddCounter(&route->observed.receiveBytes, static_cast<uint64_t>(result));
+        else if (resultError == WSAEMSGSIZE && requestedSize > 0)
+            AddCounter(&route->observed.receiveBytes, static_cast<uint64_t>(requestedSize));
+        AddCounter(restored ? &route->observed.restoreSuccesses : &route->observed.restoreFailures);
     }
 
     int WSAAPI Connect(SOCKET socket, const sockaddr* address, int length)
@@ -118,10 +160,19 @@ namespace
             int type = SocketType(socket);
             route = Find(local, type, false);
             if (route) { Trace(route, false); local = route->external; }
-            else if (type) TraceUnmapped(local, type);
+            else if (type) {
+                if (g_observerRunHash) AddCounter(&g_unmatchedSend);
+                TraceUnmapped(local, type);
+            }
         }
         WSASetLastError(incomingError);
-        return g_connect(socket, route ? reinterpret_cast<const sockaddr*>(&local) : address, route ? sizeof(local) : length);
+        const int result = g_connect(socket, route ? reinterpret_cast<const sockaddr*>(&local) : address,
+                                     route ? sizeof(local) : length);
+        if (!g_observerRunHash || !route) return result;
+        const int resultError = WSAGetLastError();
+        ObserveSend(route, result);
+        WSASetLastError(resultError);
+        return result;
     }
 
     int WSAAPI SendTo(SOCKET socket, const char* data, int size, int flags, const sockaddr* address, int length)
@@ -135,11 +186,20 @@ namespace
             // never change such a call just because its port happens to match.
             if (type == SOCK_DGRAM) route = Find(local, type, false);
             if (route) { Trace(route, false); local = route->external; }
-            else if (type) TraceUnmapped(local, type);
+            else if (type) {
+                if (g_observerRunHash) AddCounter(&g_unmatchedSend);
+                TraceUnmapped(local, type);
+            }
         }
         WSASetLastError(incomingError);
-        return g_sendTo(socket, data, size, flags, route ? reinterpret_cast<const sockaddr*>(&local) : address,
-                        route ? sizeof(local) : length);
+        const int result = g_sendTo(socket, data, size, flags,
+                                    route ? reinterpret_cast<const sockaddr*>(&local) : address,
+                                    route ? sizeof(local) : length);
+        if (!g_observerRunHash || !route) return result;
+        const int resultError = WSAGetLastError();
+        ObserveSend(route, result);
+        WSASetLastError(resultError);
+        return result;
     }
 
     int WSAAPI RecvFrom(SOCKET socket, char* data, int size, int flags, sockaddr* source, int* sourceLength)
@@ -151,13 +211,78 @@ namespace
         // must get the same source translation, while retaining SOCKET_ERROR.
         if ((result >= 0 || resultError == WSAEMSGSIZE) && ReadSource(source, sourceLength, &address)) {
             Route* route = Find(address, SOCK_DGRAM, true);
-            if (route && SocketType(socket) == SOCK_DGRAM) {
+            const int type = (route || g_observerRunHash) ? SocketType(socket) : 0;
+            if (route && type == SOCK_DGRAM) {
                 WriteSource(source, &route->logical);
+                bool restored = false;
+                if (g_observerRunHash) {
+                    sockaddr_in readback = {};
+                    restored = ReadSource(source, sourceLength, &readback) && Same(readback, route->logical);
+                }
                 Trace(route, true);
-            }
+                ObserveReceive(route, result, resultError, size, restored);
+            } else if (!route && type == SOCK_DGRAM && g_observerRunHash)
+                AddCounter(&g_unmatchedReceive);
         }
         WSASetLastError(resultError);
         return result;
+    }
+
+    uint64_t CurrentClientRunHash()
+    {
+        char run[64] = {}, role[16] = {};
+        const DWORD runLength = GetEnvironmentVariableA("SDGO_GAME_TEST_RUN", run, sizeof(run));
+        const DWORD roleLength = GetEnvironmentVariableA("SDGO_GAME_TEST_ROLE", role, sizeof(role));
+        if (!runLength || runLength >= sizeof(run) || !roleLength || roleLength >= sizeof(role)) return 0;
+        return sdgo::game_test_page_observer::ClientRunHash(run, runLength, role, roleLength);
+    }
+
+    SdgoNetRouteEndpointV1 ObservedEndpoint(const sockaddr_in& address)
+    {
+        SdgoNetRouteEndpointV1 result = {};
+        std::memcpy(result.ipv4, &address.sin_addr, sizeof(result.ipv4));
+        result.port = ntohs(address.sin_port);
+        return result;
+    }
+
+    int GetSnapshot(uint64_t runHash, SdgoNetRouteSnapshotV1* output)
+    {
+        uint32_t size = 0, version = 0;
+        __try {
+            if (!output) return 0;
+            size = output->size;
+            version = output->version;
+        } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+        if (size < sizeof(SdgoNetRouteSnapshotV1) ||
+            version != SDGO_NET_ROUTE_OBSERVER_VERSION ||
+            !runHash || runHash != g_observerRunHash) return 0;
+        SdgoNetRouteSnapshotV1 result = {};
+        result.size = sizeof(result);
+        result.version = SDGO_NET_ROUTE_OBSERVER_VERSION;
+        result.run_hash = g_observerRunHash;
+        result.process_id = GetCurrentProcessId();
+        result.route_count = static_cast<uint32_t>(g_count);
+        result.observation_active = 1;
+        result.unmatched_send_calls = ReadCounter(&g_unmatchedSend);
+        result.unmatched_receive_calls = ReadCounter(&g_unmatchedReceive);
+        for (size_t i = 0; i < g_count; ++i) {
+            Route& route = g_routes[i];
+            SdgoNetRouteEntryV1& entry = result.routes[i];
+            entry.route_index = static_cast<uint32_t>(i + 1);
+            entry.socket_type = static_cast<uint32_t>(route.type);
+            entry.logical = ObservedEndpoint(route.logical);
+            entry.physical = ObservedEndpoint(route.external);
+            entry.translated_send_calls = ReadCounter(&route.observed.sendCalls);
+            entry.translated_send_bytes = ReadCounter(&route.observed.sendBytes);
+            entry.translated_receive_calls = ReadCounter(&route.observed.receiveCalls);
+            entry.translated_receive_bytes = ReadCounter(&route.observed.receiveBytes);
+            entry.source_restore_successes = ReadCounter(&route.observed.restoreSuccesses);
+            entry.source_restore_failures = ReadCounter(&route.observed.restoreFailures);
+        }
+        __try {
+            std::memcpy(output, &result, sizeof(result));
+            return 1;
+        } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
     }
 
     std::string Trim(const std::string& value)
@@ -348,6 +473,13 @@ namespace
     }
 }
 
+extern "C" __declspec(dllexport) int __cdecl SdgoNetRouteGetSnapshotV1(
+    uint64_t runHash, SdgoNetRouteSnapshotV1* output)
+{
+    __try { return GetSnapshot(runHash, output); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+
 SDGO_MOD_ENTRY
 {
     if (!api || api->version != SDGO_API_VERSION || api->size < offsetof(SdgoApi, ModDirectory) + sizeof(api->ModDirectory))
@@ -363,6 +495,7 @@ SDGO_MOD_ENTRY
         return 0;
     if (g_loginReturn && !api->HookImport(mod, "shell32.dll", "CommandLineToArgvW",
             reinterpret_cast<void*>(&ParseLoginArgs), reinterpret_cast<void**>(&g_parseArgs))) return 0;
+    g_observerRunHash = CurrentClientRunHash();
     if (g_loginReturn) api->Log(mod, SDGO_LOG_INFO, "configured login active in native argument parser; existing launcher supported");
     api->Log(mod, SDGO_LOG_INFO, "endpoint translation active (%u routes); peer relay is separate", static_cast<unsigned>(g_count));
     return 1;

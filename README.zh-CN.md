@@ -21,6 +21,7 @@ Beta、Experimental 表示发布阶段。
 | 启动崩溃修复 <!-- catalog: `startup_crash_fix` --> | 修复开游戏时读取界面随机闪退 | [使用说明](docs/startup-crash-fix.zh-CN.md) |
 | Agent 中继日志修复 <!-- catalog: `agent_relay_log_fix` --> | 修复 Agent 中继日志读取无效内存 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
 | 军衔回退修复 <!-- catalog: `rank_progression_fix` --> | 防止战斗结算降低已有军衔（WorldServer） | [使用说明](docs/rank-progression-fix.zh-CN.md) |
+| 好友列表修复 <!-- catalog: `friend_list_fix`、`friend_list_client_fix` --> | 保留离线好友、当前角色名和原生聊天入口 | [使用说明](docs/friend-list-fix.zh-CN.md) |
 | 新账号起始资料修复 <!-- catalog: `new_account_profile` --> | 可配置的初始 GP、点券、军衔和赠送机体，替代原服的 9,999,999 / 15 级 | [使用说明](docs/new-account-profile.zh-CN.md) |
 | 商城租赁与中文选项修复 <!-- catalog: `shop_labels` --> | 商城中显示可读的租赁/永久标签和中文选项名 | [使用说明](docs/shop-labels.zh-CN.md) |
 
@@ -38,6 +39,7 @@ Beta、Experimental 表示发布阶段。
 | 战斗贡献奖励（Beta） <!-- catalog: `battle_rewards` --> | 按胜负、击杀、伤害、助攻和 Boss 贡献发放 GB/MB | [使用说明](docs/battle-rewards.zh-CN.md) |
 | 收藏扭蛋（Beta） <!-- catalog: `collection_capsule` --> | 十万 GP 活动机台，优先抽尚未解锁的图鉴机体 | [使用说明](docs/collection-capsule.zh-CN.md) |
 | 每局随机机体（Beta） <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组 | [使用说明](docs/room-random.zh-CN.md) |
+| FPS 上限（Beta） <!-- catalog: `fps_limit` --> | 按现有 config.xml 设置帧率上限，绕过启动时强制覆盖的 60 | [使用说明](docs/fps-limit.zh-CN.md) |
 | 长房名（Beta） <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 任务和对战房名最长 128 字，指令可写在任意位置 | [使用说明](docs/room-titles.zh-CN.md) |
 | 战斗 AI 难度（Beta） <!-- catalog: `battle_ai`、`battle_ai_server` --> | 对战 AI 的 Easy / Medium / Hard 三档，房名可选 | [使用说明](docs/battle-ai.zh-CN.md) |
 | 自动机库容量（Beta） <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） | [使用说明](docs/hangar-capacity.zh-CN.md) |
