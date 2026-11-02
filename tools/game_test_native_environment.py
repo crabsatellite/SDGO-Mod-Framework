@@ -71,7 +71,7 @@ def upload_snapshot(container,source,destination,expected_hash):
     """Stream exact snapshot bytes, then verify inside the owned container."""
     with source.open('rb') as stream:
         result=subprocess.run(['docker','exec','-i',container,'sh','-c','cat > "$1"','snapshot-input',destination],
-            stdin=stream,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,timeout=180,
+            stdin=stream,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,timeout=600,
             creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
     if result.returncode:raise RuntimeError('Owned SQL snapshot upload failed.')
     actual=docker('exec',container,'sha256sum',destination).split()[0]
