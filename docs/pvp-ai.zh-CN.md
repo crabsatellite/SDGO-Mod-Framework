@@ -30,7 +30,7 @@ English: [pvp-ai.md](pvp-ai.md)
 | `!ai3` | 加 3 个敌方 AI |
 | `!ai e2 a1 lv2` | 加 2 个敌人、1 个队友，使用 2 级机体池 |
 | `!ai e3 a2 lv4` | 加 3 个敌人、2 个队友，使用 4 级机体池 |
-| `!ai e3 lv4 hard` | 3 个 4 级机体池的敌人，使用 Hard [战斗 AI](battle-ai.md)（可写 `easy`、`medium`、`hard`，默认 medium） |
+| `!ai e3 lv4 hard` | 3 个 4 级机体池的敌人，使用 Hard [战斗 AI](battle-ai.zh-CN.md)（可写 `easy`、`medium`、`hard`，默认 medium） |
 | `!ai0` 或没有 `!ai` | 不加 AI |
 
 `eN` 是房主对面队伍的 AI 数，`aN` 是房主同队的 AI 数。指令不区分大小写，

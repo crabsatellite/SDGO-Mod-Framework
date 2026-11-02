@@ -19,7 +19,7 @@ core 提供统一的 `FindRoomCommand` 公共接口；`room_random`、`pvp_ai`�
 未知的 `!指令` 同样划分参数范围，避免以后增加 Mod 时发生参数串用。
 同名命令重复时使用第一个有效命令。`!aim`、`房间!ai3`、`!ai3x`、`!rand!ai3` 不会当作 `!ai`。
 
-配齐[战斗 AI](battle-ai.md)后，对战的 `!ai` 参数段还支持 `easy`、`medium`、`hard`，
+配齐[战斗 AI](battle-ai.zh-CN.md)后，对战的 `!ai` 参数段还支持 `easy`、`medium`、`hard`，
 例如 `!ai3 hard`，默认 Medium。`lv1`–`lv5` 仍选择 NPC 池；实际机体等级 Medium 为 Lv12，
 Hard 为 EX13。`!ai !rand hard` 中的 `hard` 不会改变 AI 难度。
 
