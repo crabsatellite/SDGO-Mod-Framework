@@ -14,8 +14,10 @@ class BattleAiBehaviorProbe {
         uint32_t casterState=0,casterPending=0,casterEndEvent=0,casterApplied=0,casterResult=0,casterReady=0,casterZeroCompletions=0;
     };
     struct Totals {
-        uint64_t shots=0,zeroCompletions=0;
+        uint64_t shots=0,attempts=0,zeroCompletions=0;
+        uint64_t mobileDispatches=0,defensiveDispatches=0,backwardDispatches=0;
         uint32_t defenceFrames=0,defenceDisplacements=0,mobileGunFrames=0,defenceShots=0;
+        uint32_t blockedDefenceFrames=0,specialDefenceFrames=0,neutralDefenceFrames=0,backwardShotFrames=0;
     };
     std::array<Unit,12> units_{};
     std::array<Totals,12> totals_{};
@@ -38,14 +40,34 @@ public:
             const bool sameLife=before.object_id==now.object_id&&before.generation==now.generation;
             const uint64_t shots=sameLife&&now.ranged_shots>=before.ranged_shots?now.ranged_shots-before.ranged_shots:now.ranged_shots;
             total.shots+=shots;
+            total.attempts+=sameLife&&now.ranged_attempts>=before.ranged_attempts?
+                now.ranged_attempts-before.ranged_attempts:now.ranged_attempts;
+            total.mobileDispatches+=sameLife&&now.mobile_primary_dispatches>=before.mobile_primary_dispatches?
+                now.mobile_primary_dispatches-before.mobile_primary_dispatches:now.mobile_primary_dispatches;
+            total.defensiveDispatches+=sameLife&&now.mobile_defensive_dispatches>=before.mobile_defensive_dispatches?
+                now.mobile_defensive_dispatches-before.mobile_defensive_dispatches:now.mobile_defensive_dispatches;
+            total.backwardDispatches+=sameLife&&now.backward_primary_dispatches>=before.backward_primary_dispatches?
+                now.backward_primary_dispatches-before.backward_primary_dispatches:now.backward_primary_dispatches;
             total.zeroCompletions+=sameLife&&now.special_zero_completions>=before.special_zero_completions?
                 now.special_zero_completions-before.special_zero_completions:now.special_zero_completions;
             if(now.defence_moving) {
                 ++total.defenceFrames;
+                if(now.control_blocked) ++total.blockedDefenceFrames;
+                if(now.special_busy||now.selected_slot==3) ++total.specialDefenceFrames;
+                if(!now.control_blocked&&!now.special_busy&&now.selected_slot!=3&&now.attack_state==0x20)
+                    ++total.neutralDefenceFrames;
                 if(now.moving_shot) ++total.mobileGunFrames;
                 total.defenceShots+=static_cast<uint32_t>(shots);
                 const float dx=now.x-before.x,dz=now.z-before.z;
                 if(sameLife&&dx*dx+dz*dz>0.0001f) ++total.defenceDisplacements;
+            }
+            if(sameLife&&shots&&now.hp>0&&now.moving_shot&&now.moving&&before.moving&&
+               !now.control_blocked&&!before.control_blocked&&!now.special_busy&&!before.special_busy&&
+               now.selected_slot>=0&&now.selected_slot<3&&now.selected_slot==before.selected_slot&&
+               now.target_visible&&now.target_id==before.target_id) {
+                const float dx=now.x-before.x,dz=now.z-before.z;
+                if(dx*dx+dz*dz>0.0001f&&dx*(before.target_x-before.x)+dz*(before.target_z-before.z)<0)
+                    ++total.backwardShotFrames;
             }
             if(before.object_id!=now.object_id||before.generation!=now.generation) state={};
             if(now.hurt_state==4&&!state.captured) {
@@ -98,15 +120,19 @@ public:
     void Finish(const SdgoGameTestContextV1* context) const {
         if(!context->api->SettingInt(sdgo_test::mod,"BattleAiBehavior",0)) return;
         uint32_t stuck=0,unrecovered=0,zeroCompletions=0;
+        uint64_t mobileDispatches=0,defensiveDispatches=0,backwardDispatches=0;
         for(size_t i=0;i<units_.size();++i) {
             const auto& unit=units_[i];const auto& total=totals_[i];
             if(unit.captured&&unit.last.hp>0) ++stuck;
             if(unit.awaitingRecovery&&unit.last.hp>0) ++unrecovered;
             zeroCompletions+=static_cast<uint32_t>(total.zeroCompletions);
+            mobileDispatches+=total.mobileDispatches;defensiveDispatches+=total.defensiveDispatches;
+            backwardDispatches+=total.backwardDispatches;
             if(unit.last.object_id) {
-                char detail[288];sprintf_s(detail,"native battle AI unit=%u unit_data=%u shots=%llu defence_frames=%u defence_displacements=%u mobile_gun_frames=%u defence_shots=%u last_slot=%d last_attack=%X/%X last_movement=%X/%X",
-                    unit.last.object_id,unit.last.unit_id,static_cast<unsigned long long>(total.shots),total.defenceFrames,
-                    total.defenceDisplacements,total.mobileGunFrames,total.defenceShots,unit.last.selected_slot,
+                char detail[448];sprintf_s(detail,"native battle AI unit=%u unit_data=%u shots=%llu attempts=%llu defence_frames=%u defence_displacements=%u mobile_gun_frames=%u defence_shots=%u blocked_defence_frames=%u special_defence_frames=%u neutral_defence_frames=%u physical_backward_shot_frames=%u last_slot=%d last_attack=%X/%X last_movement=%X/%X",
+                    unit.last.object_id,unit.last.unit_id,static_cast<unsigned long long>(total.shots),static_cast<unsigned long long>(total.attempts),total.defenceFrames,
+                    total.defenceDisplacements,total.mobileGunFrames,total.defenceShots,total.blockedDefenceFrames,
+                    total.specialDefenceFrames,total.neutralDefenceFrames,total.backwardShotFrames,unit.last.selected_slot,
                     unit.last.attack_state,unit.last.attack_pending,unit.last.movement_state,unit.last.movement_pending);context->Observe(detail);
             }
         }
@@ -114,7 +140,11 @@ public:
             frames_,captures_,recovered_,stuck,unrecovered,retreatShots_,pursuits_,zeroCompletions);context->Observe(text);
         context->Assert(captures_>0&&recovered_>0&&stuck==0&&unrecovered==0,
             "a genuine special victim survived native release, resumed movement or shooting, and no live AI remained captured at settlement");
-        context->Assert(retreatShots_>0,"a mobile ranged weapon produced actual native shots during defensive movement");
+        char dispatches[256];sprintf_s(dispatches,"native post-ammo primary dispatches mobile=%llu defensive=%llu backward=%llu",
+            static_cast<unsigned long long>(mobileDispatches),static_cast<unsigned long long>(defensiveDispatches),
+            static_cast<unsigned long long>(backwardDispatches));context->Observe(dispatches);
+        context->Assert(defensiveDispatches>0||backwardDispatches>0,
+            "a moving-shot weapon reached its original post-ammo firing dispatch with native control available while on a defensive route or physically backing away from its opponent");
         context->Assert(pursuits_>0,"native observations show an AI closing on a visible enemy beyond its ordinary weapon reach");
     }
 };

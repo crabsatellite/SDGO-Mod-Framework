@@ -739,6 +739,43 @@ namespace
         }
     }
 
+    const char* DamageSourceName(DamageSource source)
+    {
+        switch (source) {
+        case DamageSource::BattleRewardsBridge:
+            return "battle_rewards_bridge";
+        case DamageSource::DirectHook:
+            return "direct_native_hook";
+        default:
+            return "disabled";
+        }
+    }
+
+    std::string ObserverReadyJson(uint32_t processId, const char* hostKey)
+    {
+        return
+            "{\"run_id\":\"" + EscapeJson(g_config.runId) +
+            "\",\"role\":\"server\",\"suite\":\"" +
+            EscapeJson(g_config.suite) +
+            "\",\"event\":\"observer_ready\",\"status\":\"running\"" +
+            ",\"normal_server_main\":true,\"pid\":" +
+            std::to_string(processId) +
+            ",\"host_key\":\"" + EscapeJson(hostKey) +
+            "\",\"nonce\":\"" + EscapeJson(g_config.nonce) +
+            "\",\"expected_host_pilot_id\":" +
+            std::to_string(ExpectedHost()) +
+            ",\"mode\":" + std::to_string(g_config.mode) +
+            ",\"minimum_ai\":" +
+            std::to_string(g_config.minimumAi) +
+            ",\"require_end\":" +
+            (g_config.requireEnd ? "true" : "false") +
+            ",\"battle_ai_deaths\":" +
+            (g_deathEnabled ? "true" : "false") +
+            ",\"death_source\":\"" +
+            std::string(DamageSourceName(g_damageSource)) +
+            "\"}\n";
+    }
+
     bool WriteStatus(const Lifecycle& lifecycle)
     {
         const std::wstring temporary = g_statusPath + L".tmp";
@@ -904,28 +941,8 @@ namespace
         else if (selectedHost != 0)
             lifecycle.reason = "waiting for matching room request";
 
-        const std::string ready =
-            "{\"run_id\":\"" + EscapeJson(g_config.runId) +
-            "\",\"role\":\"server\",\"suite\":\"" + EscapeJson(g_config.suite) +
-            "\",\"event\":\"observer_ready\",\"status\":\"running\"" +
-            ",\"normal_server_main\":true,\"pid\":" +
-            std::to_string(GetCurrentProcessId()) +
-            ",\"host_key\":\"" + EscapeJson(g_api->host_key) +
-            "\",\"nonce\":\"" + EscapeJson(g_config.nonce) +
-            "\",\"expected_host_pilot_id\":" + std::to_string(ExpectedHost()) +
-            ",\"mode\":" + std::to_string(g_config.mode) +
-            ",\"minimum_ai\":" + std::to_string(g_config.minimumAi) +
-            ",\"require_end\":" + (g_config.requireEnd ? "true" : "false") +
-             ",\"battle_ai_deaths\":" +
-             (g_deathEnabled ? "true" : "false") +
-            ",\"death_source\":\"" +
-            std::string(
-                g_damageSource == DamageSource::BattleRewardsBridge
-                    ? "battle_rewards_bridge"
-                    : g_damageSource == DamageSource::DirectHook
-                        ? "direct_native_hook"
-                        : "disabled") +
-            "}\n";
+        const std::string ready = ObserverReadyJson(
+            GetCurrentProcessId(), g_api->host_key);
         if (!WriteReceipt(ready))
             Fail(&lifecycle, "observer_ready receipt could not be flushed");
         if (g_deathSetupFailed)

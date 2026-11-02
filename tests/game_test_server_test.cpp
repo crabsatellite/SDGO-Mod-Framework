@@ -106,6 +106,32 @@ namespace
         CHECK(EscapeJson("\"\\\n\t") == "\\\"\\\\\\n\\t");
     }
 
+    bool EmitObserverReadyJson(const char* source)
+    {
+        ResetConfig("T7x", 9229, 3, 2, true);
+        strcpy_s(
+            g_config.runId,
+            "01234567-89ab-cdef-0123-456789abcdef");
+        strcpy_s(g_config.suite, "pvp-ai");
+        if (strcmp(source, "battle_rewards_bridge") == 0) {
+            g_deathEnabled = true;
+            g_damageSource = DamageSource::BattleRewardsBridge;
+        } else if (strcmp(source, "direct_native_hook") == 0) {
+            g_deathEnabled = true;
+            g_damageSource = DamageSource::DirectHook;
+        } else if (strcmp(source, "disabled") == 0) {
+            g_deathEnabled = false;
+            g_damageSource = DamageSource::None;
+        } else {
+            return false;
+        }
+        const std::string ready = ObserverReadyJson(
+            12345, "BattleServer-548A891D-0046C000");
+        return std::fwrite(
+                   ready.data(), 1, ready.size(), stdout) ==
+            ready.size();
+    }
+
     void TestObserverFiltering()
     {
         ResetConfig();
@@ -575,8 +601,12 @@ namespace
     }
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 3 &&
+        strcmp(argv[1], "--emit-ready-json") == 0) {
+        return EmitObserverReadyJson(argv[2]) ? 0 : 2;
+    }
     std::puts(
         "OFFLINE ONLY: no BattleServer/client/authentication/room/gameplay is exercised.");
     InitializeCriticalSection(&g_queueLock);

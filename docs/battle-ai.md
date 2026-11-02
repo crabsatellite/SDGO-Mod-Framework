@@ -43,6 +43,20 @@ physics and damage remain native.
 | Defensive repositioning | within radius 480 per pressure event | radius 1200; both keep facing the actual threat |
 | Expert techniques and resources | none | swing cancels, melee/ranged weaving, shield posture, a normal player part and a limited item |
 
+During defensive movement, a bot with a usable gun releases an uncommitted knife chase through the
+native Neutral transition, waits for the gun's actual binding and keeps firing when the weapon permits
+moving shots. A queued slash, active combo or special retains its native ownership. Visible enemies
+outside ordinary weapon range remain pursuit candidates; firing still obeys the weapon's real range.
+
+Acknowledged zero-damage melee specials complete through the original native finalizer, so a surviving
+victim can leave capture normally. Teleport notifications move locally controlled PvP bots through the
+same native relocation path as players, instead of the stock NPC destruction fallback. Normal damage,
+death, ammo and cooldown rules remain native.
+
+Generated movement checks the unit's swept collision bounds against native DeathZone blocks before
+direct steps and route following. Unsafe directions try bounded alternatives; this does not disable
+map hazards or prevent legitimate deaths.
+
 Hard picks one ordinary player part (New-type awakening or martial arts, with their native SP/HP
 activation rules) and, on its first qualifying trigger, either Teleport or Mirage for the whole battle,
 with native use counts and cooldowns (50/45 s). SP starts at zero and is earned through native hits;

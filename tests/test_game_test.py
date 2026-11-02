@@ -471,6 +471,318 @@ rva=state
         with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run_dir)
         with self.assertRaises(game_test.GameTestError):self.prepare('random-pages',pages_only=True,random_loadout=True)
 
+    def test_ai_pool_level_uses_compact_sealed_one_ai_title(self):
+        run_dir = self.prepare('ai-pool-level', expected_ai=1, ai_pool_level=4)
+        meta = self.metadata(run_dir)
+        plan = meta['plan']
+        self.assertEqual(plan['ai_pool_level'], 4)
+        self.assertRegex(plan['room_title'], r'^gt[0-9a-f]{4} !ai1 lv4$')
+        run = game_test.read_ini(
+            run_dir/'client/sdgo/gametest/run.ini'
+        )['run']
+        self.assertEqual(run['ai_pool_level'], '4')
+        self.assertEqual(game_test.validate_metadata(run_dir)['plan'], plan)
+
+        reused = self.prepare(
+            'ai-pool-level-reused',
+            expected_ai=1,
+            ai_pool_level=4,
+            server_session={
+                'run_id': '00000000-0000-0000-0000-000000000001',
+                'nonce': 'gtbeef',
+                'pids': [1234],
+            },
+        )
+        reused_plan = self.metadata(reused)['plan']
+        self.assertRegex(
+            reused_plan['room_title'],
+            r'^gtbeef[0-9a-f]{4} !ai1 lv4$',
+        )
+        self.assertEqual(len(reused_plan['room_title'].encode('ascii')), 19)
+        game_test.validate_metadata(reused)
+
+        meta['plan']['ai_pool_level'] = True
+        game_test.atomic_write(run_dir/'run.json', json.dumps(meta))
+        with self.assertRaises(game_test.GameTestError):
+            game_test.validate_metadata(run_dir)
+        meta['plan']['ai_pool_level'] = 4
+        game_test.atomic_write(run_dir/'run.json', json.dumps(meta))
+        run_path = run_dir/'client/sdgo/gametest/run.ini'
+        tampered_run = game_test.read_ini(run_path)
+        tampered_run['run']['ai_pool_level'] = '04'
+        game_test.write_ini(run_path, tampered_run)
+        with self.assertRaises(game_test.GameTestError):
+            game_test.validate_metadata(run_dir)
+
+        reused_path = reused/'client/sdgo/gametest/run.ini'
+        tampered_reused = game_test.read_ini(reused_path)
+        tampered_reused['run']['room_title'] = (
+            tampered_reused['run']['room_title'].replace('!ai1', '!ai2')
+        )
+        game_test.write_ini(reused_path, tampered_reused)
+        with self.assertRaises(game_test.GameTestError):
+            game_test.validate_metadata(reused)
+
+    def test_ai_pool_level_rejects_noncanonical_values_and_other_scopes(self):
+        for invalid in (0, 6, True, '4'):
+            with self.subTest(ai_pool_level=invalid), self.assertRaises(game_test.GameTestError):
+                game_test.make_plan(
+                    '127.0.0.1', 5001, '1', '1', '1', 1, False, 1, None,
+                    ai_pool_level=invalid,
+                )
+        with self.assertRaisesRegex(game_test.GameTestError, 'expected_ai=1'):
+            game_test.make_plan(
+                '127.0.0.1', 5001, '1', '1', '1', 1, False, 2, None,
+                ai_pool_level=4,
+            )
+        with self.assertRaisesRegex(game_test.GameTestError, 'ordinary PvP'):
+            game_test.make_plan(
+                '127.0.0.1', 5001, '1', '1', '1', 1, False, 3, None,
+                mission_mode=5,
+                ai_pool_level=4,
+            )
+        with self.assertRaisesRegex(game_test.GameTestError, 'ordinary PvP'):
+            self.prepare(
+                'ai-pool-pages',
+                expected_ai=1,
+                ai_pool_level=4,
+                pages_only=True,
+            )
+        with self.assertRaisesRegex(game_test.GameTestError, 'ordinary PvP'):
+            self.prepare(
+                'ai-pool-random',
+                expected_ai=1,
+                ai_pool_level=4,
+                random_loadout=True,
+            )
+
+        baseline = self.prepare('ai-pool-none')
+        baseline_meta = self.metadata(baseline)
+        baseline_run = game_test.read_ini(
+            baseline/'client/sdgo/gametest/run.ini'
+        )['run']
+        self.assertNotIn('ai_pool_level', baseline_meta['plan'])
+        self.assertNotIn('ai_pool_level', baseline_run)
+        self.assertNotIn('ai_difficulty', baseline_meta['plan'])
+        self.assertNotIn('ai_difficulty', baseline_run)
+        self.assertNotIn('ai_layout', baseline_meta['plan'])
+        self.assertNotIn('ai_layout', baseline_run)
+
+    def test_ai_difficulty_seals_native_five_ai_room_command(self):
+        for difficulty in ('Easy', 'Medium', 'Hard'):
+            with self.subTest(ai_difficulty=difficulty):
+                plan = game_test.make_plan(
+                    '127.0.0.1', 5001, '1', '1', '1', 1, False, 5, None,
+                    ai_difficulty=difficulty,
+                )
+                self.assertRegex(
+                    plan['room_title'],
+                    rf'^gt[0-9a-f]{{4}} !ai {difficulty.lower()}$',
+                )
+                self.assertEqual(plan['ai_difficulty'], difficulty)
+
+        run_dir = self.prepare(
+            'ai-difficulty-hard',
+            expected_ai=5,
+            ai_difficulty='Hard',
+        )
+        meta = self.metadata(run_dir)
+        run_path = run_dir/'client/sdgo/gametest/run.ini'
+        run = game_test.read_ini(run_path)['run']
+        self.assertEqual(run['ai_difficulty'], 'Hard')
+        self.assertRegex(meta['plan']['room_title'], r'^gt[0-9a-f]{4} !ai hard$')
+        self.assertEqual(game_test.validate_metadata(run_dir)['plan'], meta['plan'])
+
+        reused = self.prepare(
+            'ai-difficulty-hard-reused',
+            expected_ai=5,
+            ai_difficulty='Hard',
+            server_session={
+                'run_id': '00000000-0000-0000-0000-000000000002',
+                'nonce': 'gtcafe',
+                'pids': [1234],
+            },
+        )
+        reused_plan = self.metadata(reused)['plan']
+        self.assertRegex(
+            reused_plan['room_title'],
+            r'^gtcafe[0-9a-f]{4} !ai hard$',
+        )
+        self.assertEqual(len(reused_plan['room_title'].encode('ascii')), 19)
+        game_test.validate_metadata(reused)
+        with self.assertRaisesRegex(game_test.GameTestError, 'exceeds twenty bytes'):
+            self.prepare(
+                'ai-difficulty-medium-reused',
+                expected_ai=5,
+                ai_difficulty='Medium',
+                server_session={
+                    'run_id': '00000000-0000-0000-0000-000000000003',
+                    'nonce': 'gtface',
+                    'pids': [1234],
+                },
+            )
+
+        meta['plan']['ai_difficulty'] = True
+        game_test.atomic_write(run_dir/'run.json', json.dumps(meta))
+        with self.assertRaises(game_test.GameTestError):
+            game_test.validate_metadata(run_dir)
+        meta['plan']['ai_difficulty'] = 'Hard'
+        game_test.atomic_write(run_dir/'run.json', json.dumps(meta))
+        tampered = game_test.read_ini(run_path)
+        tampered['run']['ai_difficulty'] = 'hard'
+        game_test.write_ini(run_path, tampered)
+        with self.assertRaises(game_test.GameTestError):
+            game_test.validate_metadata(run_dir)
+
+    def test_ai_difficulty_rejects_wrong_count_types_and_scopes(self):
+        for invalid in ('hard', 'HARD', '', 4, True):
+            with self.subTest(ai_difficulty=invalid), self.assertRaises(game_test.GameTestError):
+                game_test.make_plan(
+                    '127.0.0.1', 5001, '1', '1', '1', 1, False, 5, None,
+                    ai_difficulty=invalid,
+                )
+        with self.assertRaisesRegex(game_test.GameTestError, 'expected_ai=5'):
+            game_test.make_plan(
+                '127.0.0.1', 5001, '1', '1', '1', 1, False, 6, None,
+                ai_difficulty='Hard',
+            )
+        with self.assertRaisesRegex(game_test.GameTestError, 'cannot be combined'):
+            game_test.make_plan(
+                '127.0.0.1', 5001, '1', '1', '1', 1, False, 5, None,
+                ai_pool_level=4,
+                ai_difficulty='Hard',
+            )
+        with self.assertRaisesRegex(game_test.GameTestError, 'ordinary PvP'):
+            self.prepare(
+                'ai-difficulty-pages',
+                expected_ai=5,
+                ai_difficulty='Hard',
+                pages_only=True,
+            )
+        with self.assertRaisesRegex(game_test.GameTestError, 'ordinary PvP'):
+            self.prepare(
+                'ai-difficulty-random',
+                expected_ai=5,
+                ai_difficulty='Hard',
+                random_loadout=True,
+            )
+
+    def test_ai_allied_layout_seals_fresh_hard_six_ai_room(self):
+        plan = game_test.make_plan(
+            '127.0.0.1', 5001, '1', '1', '1', 1, False, 6, None,
+            ai_difficulty='Hard',
+            ai_layout='allied',
+        )
+        self.assertEqual(plan['expected_ai'], 6)
+        self.assertEqual(plan['ai_difficulty'], 'Hard')
+        self.assertEqual(plan['ai_layout'], 'allied')
+        self.assertRegex(plan['room_title'], r'^gt[0-9a-f]{4} !ai1 a6 hard$')
+        self.assertEqual(len(plan['room_title'].encode('ascii')), 19)
+
+        run_dir = self.prepare(
+            'ai-allied-hard-six',
+            expected_ai=6,
+            ai_difficulty='Hard',
+            ai_layout='allied',
+        )
+        meta = self.metadata(run_dir)
+        run_path = run_dir/'client/sdgo/gametest/run.ini'
+        public = game_test.read_ini(run_path)['run']
+        self.assertEqual(public['expected_ai'], '6')
+        self.assertEqual(public['ai_difficulty'], 'Hard')
+        self.assertEqual(public['ai_layout'], 'allied')
+        self.assertRegex(public['room_title'], r'^gt[0-9a-f]{4} !ai1 a6 hard$')
+        self.assertEqual(game_test.validate_metadata(run_dir)['plan'], meta['plan'])
+
+        with self.assertRaisesRegex(game_test.GameTestError, 'exceeds twenty bytes'):
+            self.prepare(
+                'ai-allied-hard-six-reused',
+                expected_ai=6,
+                ai_difficulty='Hard',
+                ai_layout='allied',
+                server_session={
+                    'run_id': '00000000-0000-0000-0000-000000000004',
+                    'nonce': 'gtcafe',
+                    'pids': [1234],
+                },
+            )
+
+        meta['plan']['ai_layout'] = True
+        game_test.atomic_write(run_dir/'run.json', json.dumps(meta))
+        with self.assertRaises(game_test.GameTestError):
+            game_test.validate_metadata(run_dir)
+        meta['plan']['ai_layout'] = 'allied'
+        game_test.atomic_write(run_dir/'run.json', json.dumps(meta))
+        tampered = game_test.read_ini(run_path)
+        tampered['run']['ai_layout'] = 'Allied'
+        game_test.write_ini(run_path, tampered)
+        with self.assertRaises(game_test.GameTestError):
+            game_test.validate_metadata(run_dir)
+
+    def test_ai_allied_layout_rejects_other_values_counts_and_scopes(self):
+        for invalid in ('Allied', '', True, 6):
+            with self.subTest(ai_layout=invalid), self.assertRaises(game_test.GameTestError):
+                game_test.make_plan(
+                    '127.0.0.1', 5001, '1', '1', '1', 1, False, 6, None,
+                    ai_difficulty='Hard',
+                    ai_layout=invalid,
+                )
+        for expected_ai, difficulty in (
+            (5, 'Hard'),
+            (7, 'Hard'),
+            (6, None),
+            (6, 'Easy'),
+            (6, 'Medium'),
+        ):
+            with (
+                self.subTest(expected_ai=expected_ai, difficulty=difficulty),
+                self.assertRaisesRegex(game_test.GameTestError, 'ai_layout=allied'),
+            ):
+                game_test.make_plan(
+                    '127.0.0.1', 5001, '1', '1', '1', 1, False, expected_ai, None,
+                    ai_difficulty=difficulty,
+                    ai_layout='allied',
+                )
+        with self.assertRaisesRegex(game_test.GameTestError, 'ai_pool_level and ai_difficulty'):
+            game_test.make_plan(
+                '127.0.0.1', 5001, '1', '1', '1', 1, False, 6, None,
+                ai_pool_level=4,
+                ai_difficulty='Hard',
+                ai_layout='allied',
+            )
+        with self.assertRaisesRegex(game_test.GameTestError, 'ordinary PvP'):
+            game_test.make_plan(
+                '127.0.0.1', 5001, '1', '1', '1', 1, False, 3, None,
+                mission_mode=5,
+                ai_difficulty='Hard',
+                ai_layout='allied',
+            )
+        for name, scope in (
+            ('pages', {'pages_only': True}),
+            ('random', {'random_loadout': True}),
+            ('fps-gameplay', {'fps_gameplay_cap': 120}),
+        ):
+            with (
+                self.subTest(scope=name),
+                self.assertRaisesRegex(game_test.GameTestError, 'ordinary PvP'),
+            ):
+                self.prepare(
+                    'ai-allied-'+name,
+                    expected_ai=6,
+                    ai_difficulty='Hard',
+                    ai_layout='allied',
+                    **scope,
+                )
+        with self.assertRaises(game_test.GameTestError):
+            game_test.prepare(
+                self.template,
+                self.stage,
+                self.root/'ai-allied-fps-only',
+                account_profile=None,
+                fps_cap=120,
+                ai_layout='allied',
+            )
+
     def test_collection_draw_is_explicit_and_bound_to_the_same_plan(self):
         with self.assertRaises(game_test.GameTestError):
             game_test.required_flow_cases('1',collection_draw=True)
