@@ -26,7 +26,8 @@ when the host CPU is saturated; background desktop/audio isolation remains in us
 Each run reads the real application's FPS field and initialized timer interval,
 then independently measures native update and successful D3D9 Present cadence
 against QueryPerformanceCounter in three three-second windows. All windows and
-averages are retained. Updates must reach 80–110% of their target; successful
+averages are retained. Logic updates must remain within 80–110% of native 60 Hz,
+independently of the configured rendering cap; successful
 Present calls must be positive and average no more than 110% of the active cap.
 Their minimum spacing must match the actual pacing period within scheduling
 jitter (the larger of 0.5 ms and 10%). The production observer independently
@@ -42,6 +43,12 @@ its process has exited. The template and other tests are preserved. Use fresh
 work/results directories for a later machine or environment. A single case can
 also use `game_test.py prepare --fps-cap 160` followed by its ordinary `run`
 command; `--fps-mod-disabled` selects the native forced-60 control.
+
+For a full native PvP regression, add `prepare --fps-gameplay-cap 160` to the
+normal existing-account battle preparation. It seals the configured render cap
+and the observer setting before startup. After real AI movement is observed,
+the case checks 60 Hz gameplay and requires rendering above 60 FPS when selecting
+a higher cap, then continues the ordinary battle, settlement and return flow.
 
 ### Recreate a local backend
 
