@@ -618,6 +618,45 @@ void TestNewClientSessionRequests()
           "the new session accepts only its actual fresh room on the selected Battle provider");
 }
 
+void TestFreshCreateDuringLobbyRecheck()
+{
+    rt::ClientState state;
+    Check(ReadyWithEmptyBatch(&state,41,1001,0),"recheck creation fixture has verified server support");
+    const auto recheck=state.BeginHello(41,10);
+    const std::string full="full room title created while a redundant lobby recheck is pending";
+    const auto create=state.BeginSetTitle(41,0,full,20);
+    Check(create.request_id && !state.IsNegotiating(41) && state.HasPending(41),
+          "fresh creation uses existing confirmed capability and supersedes the redundant lobby recheck");
+    Check(!state.AcceptBatch(41,Batch(1002,recheck.request_id)) && state.IsReady(41) &&
+              state.Pending(41)->status==rt::PendingStatus::Awaiting,
+          "a late old-provider recheck cannot invalidate the actual pending create");
+    Check(!state.AcceptMessage(41,HelloAck(1002,recheck.request_id)) && state.IsReady(41) &&
+              state.Pending(41)->status==rt::PendingStatus::Awaiting,
+          "a superseded HelloAck cannot complete or cancel the fresh creation");
+    Check(!state.AcceptMessage(41,ErrorMessage(1002,{},0,recheck.request_id,rm::RemoteError::InvalidRequest)) &&
+              state.IsReady(41) && state.Pending(41)->status==rt::PendingStatus::Awaiting,
+          "a superseded old-provider rejection cannot cancel a newer creation");
+    Check(state.AcceptMessage(41,Snapshot(Record(1003,5,1,1,full),create.request_id)) &&
+              !state.HasPending(41) && state.CanStartBattle(41),
+          "the exact fresh-room confirmation completes on its actual selected provider");
+
+    const auto updateRecheck=state.BeginHello(41,30);
+    Check(updateRecheck.request_id && !state.BeginSetTitle(41,5,"changed existing title",40).request_id &&
+              state.IsNegotiating(41),
+          "existing-room edits retain the recheck gate and cannot bypass their current identity validation");
+    rt::ClientState unknown;
+    unknown.BeginHello(42,0);
+    Check(!unknown.BeginSetTitle(42,0,full,10).request_id && unknown.IsNegotiating(42),
+          "an unconfirmed server never receives a long create before capability negotiation");
+    rt::ClientState unrelated;
+    Check(ReadyWithEmptyBatch(&unrelated,43,1101,0),"unrelated new-epoch fixture is ready");
+    unrelated.BeginHello(43,10);
+    const auto pending=unrelated.BeginSetTitle(43,0,full,20);
+    Check(!unrelated.AcceptBatch(43,Batch(1102,pending.request_id+1)) &&
+              !unrelated.IsReady(43) && !unrelated.CanStartBattle(43),
+          "an unrelated future response from another provider still invalidates old capability");
+}
+
 }  // namespace
 
 int main()
@@ -634,6 +673,7 @@ int main()
     TestDelayedNativeDispatch();
     TestCreateAfterNativeChannelSwitch();
     TestNewClientSessionRequests();
+    TestFreshCreateDuringLobbyRecheck();
     std::printf("%s: %d failure(s)\n",
                 g_failures == 0 ? "PASS" : "FAIL", g_failures);
     return g_failures == 0 ? 0 : 1;
