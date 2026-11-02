@@ -122,6 +122,10 @@ python tools/game_test.py run --run-dir build/gametest/pvp --timeout 3600
 `registered` 或 `existing_account`，且不使用注册重试。框架同时锁定旧、新账号配置，保留两份配置，
 复用客户端文件；需要服务端回执时，观察器也须绑定目标账号的实际驾驶员 ID。
 复用功能需要开发环境安装 `Send2Trash`，缺少时会停止，不会降级为永久删除。
+自动补位指令也可直接纳入原生回归：单人 8 人房使用
+`--expected-ai 7 --ai-allies 3 --ai-policy fill` 验证 `!ai fill`，或
+`--expected-ai 7 --ai-allies 0 --ai-policy enemy` 验证 `!ai enemy`。
+这些参数可与 `--random-teams`、`--random-loadout` 组合，敌友仍相对房主最终阵营。
 连接地址默认 `127.0.0.1:5001`，可用 `--target-host` 和 `--login-port` 修改；
 服务器和频道由原客户端正常流程自动选择。
 默认 `--network-policy direct` 仅在测试副本关闭继承的地址转发，并在登录前核对
