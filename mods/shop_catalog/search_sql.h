@@ -185,8 +185,17 @@ BEGIN
                 OR
                 (
                     @IsChinese = 0
-                    AND S.f_itemNm LIKE
-                        N'%' + CONVERT(NVARCHAR(100), @search4) + N'%'
+                    AND
+                    (
+                        S.f_itemNm LIKE N'%' + CONVERT(NVARCHAR(100), @search4) + N'%'
+                        OR EXISTS
+                        (
+                            SELECT 1 FROM dbo.sdgo_ShopSearchAliases AS A
+                            WHERE A.ProductId = S.f_productID
+                                AND A.OriginalName COLLATE Thai_CI_AS = S.f_itemNm COLLATE Thai_CI_AS
+                                AND A.Name LIKE N'%' + CONVERT(NVARCHAR(100), @search4) + N'%'
+                        )
+                    )
                 )
                 OR
                 (
