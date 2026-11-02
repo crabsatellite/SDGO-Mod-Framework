@@ -410,6 +410,8 @@ public:
 
     const Config& GetConfig() const { return config_; }
 
+    uint32_t GameStartSendCount() const {return static_cast<uint32_t>(InterlockedCompareExchange(&gameStartSends_,0,0));}
+
 private:
     static constexpr int kLoginRejectedOpcode = 0x232A;
     static constexpr int kLoginAcceptedOpcode = 0x232B;
@@ -560,6 +562,7 @@ private:
         InterlockedExchange(&actions->transportResult_, result);
         InterlockedIncrement(&actions->transportSequence_);
         InterlockedIncrement(&actions->transportWriteVersion_);
+        if(opcode==0x08a7 && size==8 && result>0)InterlockedIncrement(&actions->gameStartSends_);
         return result;
     }
 
@@ -666,5 +669,6 @@ private:
     mutable volatile LONG transportOpcode_ = 0;
     mutable volatile LONG transportSize_ = 0;
     mutable volatile LONG transportResult_ = 0;
+    mutable volatile LONG gameStartSends_ = 0;
     inline static NativeActions* active_ = nullptr;
 };
