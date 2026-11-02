@@ -22,7 +22,7 @@ Beta and Experimental labels indicate release channels.
 | Agent relay log fix <!-- catalog: `agent_relay_log_fix` --> | Fix an Agent relay log that reads invalid memory | [Use](docs/agent-relay-log-fix.md) |
 | Battle rank regression fix <!-- catalog: `rank_progression_fix` --> | Stop battle settlement from lowering a pilot's rank (WorldServer) | [Use](docs/rank-progression-fix.md) |
 | New-account starter profile <!-- catalog: `new_account_profile` --> | Configurable starting GP, cash, rank and unit gifts instead of the stock 9,999,999 / rank 15 | [Use](docs/new-account-profile.md) |
-| Shop rental and Unicode labels <!-- catalog: `shop_labels` --> | Shop display compatibility | [Use](docs/shop-labels.md) |
+| Shop rental and Unicode labels <!-- catalog: `shop_labels` --> | Readable rental/permanent labels and Chinese option names in the shop | [Use](docs/shop-labels.md) |
 
 <!-- /mod-category:fixes -->
 

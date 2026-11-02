@@ -1,13 +1,38 @@
 # Shop rental and Unicode labels
 
-`shop_labels` is a client fix for native GOnline build `54BE1568-00C97000`.
-It displays numeric rental terms and permanent unit status in hover, purchase and gift options,
-and supports a host-generated UTF-16LE display profile. Price, currency and purchase data are unchanged.
+[简体中文](shop-labels.zh-CN.md)
 
-The fix is included with base fixes and also has its own incremental package. Its installer preserves
-other mods and existing framework configuration. Unicode overrides are used only when the native
-option ID, category, price, currency and validity match. A custom caption cannot conceal a rental.
+Client fix for `GOnline-54BE1568-00C97000`. Shop sale options such as the Thai `7วัน` turn into
+question marks in this client. The fix shows clear labels such as "7-day rental" and "permanent" in
+the hover details, purchase window and gift window, and can show Chinese option names exported by
+the server's shop catalog. Prices, currency, durations and purchases are unchanged.
 
-See the [Chinese installation guide](shop-labels.zh-CN.md) and [manual checks](shop-testing.zh-CN.md).
-This is a shop option fix, not a global font/chat or product-title converter. Activity capsule currency
-display is a separate feature. Visual gameplay acceptance and real purchases remain manual checks.
+| mod | host | part |
+|---|---|---|
+| `shop_labels` | client | the whole feature |
+
+## Install
+
+It is installed with the core fixes of the client framework, and friend-server players receive it
+through `update.bat`. A standalone `SDGO-ShopLabels-Patch` package with its own `Install.ps1` is also
+available; see the [Chinese guide](shop-labels.zh-CN.md).
+
+## Settings
+
+Under **商城物品显示** in SDGO Mod Manager; restart the game after saving.
+
+| Manager label | key | default | meaning |
+|---|---|---|---|
+| 显示租赁物品标签 | `ShowRental` | 1 | show the actual rental duration |
+| 显示永久物品标签 | `ShowPermanent` | 1 | mark permanent units as permanent |
+| 使用自定义中文名称 | `UseUnicodeOverrides` | 1 | read option names from `display.ini` |
+
+`display.ini` is the UTF-16LE file exported by the [shop catalog](shop-catalog.md). A custom name is
+used only when the option's ID, category, duration, price and currency still match, so a custom name
+can never hide a rental. Otherwise the numeric label is shown.
+
+This is not a global font or chat fix, and it cannot recover product names already stored as question
+marks in the database. The activity capsule currency label is handled by the separate
+[capsule currency fix](capsule-currency-fix.md).
+
+Log line when active: `rental/permanent labels enabled; <n> Unicode option overrides; prices and currency untouched`.
