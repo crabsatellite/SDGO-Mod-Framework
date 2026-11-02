@@ -259,6 +259,7 @@ class ManagedEnvironment:
         if self.archive.is_relative_to(lease.root):
             raise ValueError('Evidence archive must be outside the disposable runtime.')
         self.closed = False
+        self.evidence_deleted = False
 
     def __enter__(self):
         self.registry.validate(self.lease)
@@ -282,12 +283,15 @@ class ManagedEnvironment:
         self.registry.update(lease, 'cleaning')
         self.archive.mkdir(parents=True, exist_ok=True)
         try:
+            result_path=lease.root/'result.json'
+            result=json.loads(result_path.read_text(encoding='utf-8')) if result_path.is_file() else {}
+            discard_success=result.get('status') in ('pass','template_ready')
             cleanup = self.driver.cleanup(lease, data['resources'])
             atomic_json(self.archive / 'cleanup.json', cleanup)
             if cleanup.get('status') != 'clean':
                 raise RuntimeError('Owned runtime cleanup needs attention; lease retained.')
             self.driver.archive(lease, self.archive)
-            atomic_json(self.archive / 'environment.json', lease.public())
+            atomic_json(self.archive / 'environment.json', {**lease.public(),'result_status':result.get('status')})
             # Delete only the verified temporary tree. Templates, source files,
             # reusable accounts and the final evidence archive are outside it.
             self.registry.validate(lease)
@@ -307,6 +311,9 @@ class ManagedEnvironment:
             self.registry.update(lease, 'closed')
             (self.archive / 'agent-action.json').unlink(missing_ok=True)
             self.closed = True
+            if discard_success:
+                purge_success_evidence(self.registry,lease.id,self.archive)
+                self.evidence_deleted=True
         except BaseException as error:
             self.registry.update(lease, 'cleanup_required', type(error).__name__)
             atomic_json(self.archive / 'agent-action.json', {
@@ -315,6 +322,26 @@ class ManagedEnvironment:
                 'reason': type(error).__name__, 'runtime_root': str(lease.root),
             })
             raise
+
+
+def purge_success_evidence(registry: Registry,identifier: str,archive: Path) -> None:
+    """Delete only a closed, successful, clean run's exact owned evidence tree."""
+    lease=registry.get(identifier)
+    row=next(r for r in registry.list() if r['id']==identifier)
+    if row['state']!='closed' or lease.root.exists():
+        raise RuntimeError('Evidence cleanup requires a closed environment with no remaining runtime.')
+    # Tests and callers may choose a different archive parent; its child must
+    # still carry this exact environment identity and clean-success markers.
+    if archive.name!=identifier or archive.parent==lease.root or archive.resolve().is_relative_to(lease.root):
+        raise RuntimeError('Evidence cleanup path or ownership mismatch.')
+    if not archive.exists():return
+    no_reparse_tree(archive)
+    marker=json.loads((archive/'environment.json').read_text(encoding='utf-8'))
+    cleanup=json.loads((archive/'cleanup.json').read_text(encoding='utf-8'))
+    if (marker.get('id')!=identifier or marker.get('root')!=str(lease.root) or
+        marker.get('result_status') not in ('pass','template_ready') or cleanup.get('status')!='clean'):
+        raise RuntimeError('Only verified successful, clean evidence may be discarded.')
+    shutil.rmtree(archive)
 
 
 def main(argv=None):
