@@ -547,6 +547,13 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
 }
 int __cdecl Start(const SdgoGameTestContextV1* context) {
     SdgoPvpAiClientSnapshotV1 snapshot{};
+    const auto flags=rooms.NativeStartFlags();const auto sent=actions.TransportState();
+    static uint32_t lastFlags=0,lastSend=0;
+    if (!context->tick || flags!=lastFlags || sent.send_sequence!=lastSend) {
+        char state[176];sprintf_s(state,"native Start app=%u main/ready/lock/started=%08X queued=%u transport=%u opcode=%04X",
+            actions.AppState(),flags,startRequested ? 1u:0u,sent.send_sequence,sent.opcode);
+        context->Observe(state);lastFlags=flags;lastSend=sent.send_sequence;
+    }
     if (!startRequested) {
         Snapshot(snapshot); startSequence = snapshot.received_battle_start_count;
         endSequence = rooms.BattleEndState().sequence;

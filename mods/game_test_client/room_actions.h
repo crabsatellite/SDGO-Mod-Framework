@@ -418,6 +418,23 @@ public:
     // sends PT_REQ_GAME_START (0x08A7). No UI event, packet replica, direct
     // command call or room/model write is used. Older non-3D rooms retain
     // their original wait-menu business routine below.
+    uint32_t NativeStartFlags() const
+    {
+        __try {
+            const uint8_t* app=gameApp_ ? gameApp_():nullptr;
+            if (!app || *reinterpret_cast<const uint32_t*>(app+kGameAppState)!=kThreeDWaitRoomState) return UINT32_MAX;
+            const uint8_t* owner=*reinterpret_cast<const uint8_t* const*>(app+kGameAppStateObject);
+            const uint8_t* manager=owner ? *reinterpret_cast<const uint8_t* const*>(owner+kWaitRoomObject):nullptr;
+            const uint8_t* const* states=manager ? *reinterpret_cast<const uint8_t* const* const*>(manager+kThreeDRoomStateArray):nullptr;
+            const uint8_t* main=states ? states[0]:nullptr;
+            if (!main) return UINT32_MAX;
+            const uint8_t* context=manager+0x24;
+            return (*reinterpret_cast<const uint32_t*>(main+8)&255u) |
+                (static_cast<uint32_t>(context[2])<<8) | (static_cast<uint32_t>(context[0x24])<<16) |
+                (static_cast<uint32_t>(context[0x25])<<24);
+        } __except(EXCEPTION_EXECUTE_HANDLER) { return UINT32_MAX; }
+    }
+
     bool StartBattleNativeHost() const
     {
         if (!gameApp_ || !startOrReady_ || !isRoomMaster_ ||
