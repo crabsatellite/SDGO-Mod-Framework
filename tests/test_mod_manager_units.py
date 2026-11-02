@@ -219,6 +219,34 @@ class UnitManagerTests(unittest.TestCase):
         self.assertNotIn('native_ui',response['draft']['confirmation'])
         self.assertEqual(response['draft']['confirmation']['presentation_review']['method'],'shared_asset_generators')
 
+    def test_preview_rebuild_does_not_reuse_an_imported_roots_old_card(self):
+        import struct
+        from types import SimpleNamespace
+        from owner.units.native_preview import _capsule_catalog
+        from manager.engines.capsules import capsule_client_compile
+        row=bytearray(1019);ids=list(range(90001,90007));struct.pack_into('<I',row,5,101)
+        struct.pack_into('<I',row,15,1200);struct.pack_into('<6I',row,27,*ids)
+        for slot in range(6):
+            for variant in range(2):
+                path=('sprs/previous'+str(slot)+str(variant)+'.spr').encode('utf-16-le')
+                start=59+(slot*2+variant)*60;row[start:start+60]=path.ljust(60,b'\0')
+        units={uid:{'UnitModelName':'Fixture','UnitGradeNumber':1,'UnitGradeNumber2':1} for uid in ids}
+        raw=png();sha=hashlib.sha256(raw).hexdigest()
+        family={'root_unit_id':ids[0],'name':'New artwork','forms':[{'id':ids[0],'server':units[ids[0]]}],
+                'presentation':{'capsule':{'asset_sha':sha}}}
+        engine=SimpleNamespace(repository=SimpleNamespace(catalog={'units':units}),blob=lambda value:raw)
+        with patch('manager.engines.capsules.capsule_catalog.ClientData') as reader, \
+             patch('manager.engines.capsules.capsule_catalog.gdt_records',return_value=(1019,[bytes(row)])), \
+             patch.object(capsule_client_compile,'compile_catalog') as compile_:
+            reader.return_value.read_resource.return_value=b'fixture'
+            _capsule_catalog(engine,family,self.root/'client',self.root/'output')
+        catalog=compile_.call_args.args[0]
+        root=next(unit for unit in catalog['units'] if unit['id']==ids[0])
+        self.assertEqual(root['capsule_sprites'],[])
+        self.assertEqual(root['unit_import']['image_sha256'],sha)
+        other=next(unit for unit in catalog['units'] if unit['id']==ids[1])
+        self.assertEqual(len(other['capsule_sprites']),2)
+
     def test_native_receipts_are_bound_to_revision_nonce_and_staged_resources(self):
         from owner.units.native_preview import status,require_seen,RENDERER_CONTRACT
         from owner.units.model import content_revision
