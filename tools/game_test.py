@@ -1457,7 +1457,8 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                         collection_draw: bool = False,
                          play_unit_uid: int | None = None,
                          mission_mode: int | None = None,
-                         shop_catalog: bool = False, room_titles_only: bool = False) -> tuple[str, ...]:
+                         shop_catalog: bool = False, room_titles_only: bool = False,
+                         room_style_preview: str | None = None) -> tuple[str, ...]:
     mission_mode = validate_mission_mode(mission_mode)
     play_unit_uid = validate_play_unit_uid(play_unit_uid)
     if sum((bool(bootstrap_only),bool(battleship_only),bool(gift_requests_only),bool(deck_only),bool(pages_only),bool(room_titles_only))) > 1:
@@ -1468,6 +1469,14 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         raise GameTestError('collection draw requires the explicit pages-only scenario')
     if shop_catalog and not pages_only:
         raise GameTestError('shop catalog assertions require the explicit pages-only scenario')
+    if room_style_preview is not None:
+        if room_style_preview not in ('pvp', 'mission') or not room_titles_only:
+            raise GameTestError('room-style preview requires the room-title scope and pvp or mission')
+        if mission_mode is not None or collection_draw or shop_catalog:
+            raise GameTestError('room-style preview cannot contain combat or shop operations')
+        selection = ('setup.active_unit',) if play_unit_uid is not None else ()
+        return FLOW_CASES[:3] + selection + (
+            f'room_titles.{room_style_preview}.create', f'room_style.{room_style_preview}.preview')
     if room_titles_only:
         if mission_mode is not None or collection_draw or shop_catalog:
             raise GameTestError('room-title input scope cannot contain mission combat or shop operations')
@@ -1544,10 +1553,13 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         plan.get("mission_mode"),
         shop_catalog,
         room_titles_only=plan.get("room_titles_only",False),
+        room_style_preview=plan.get("room_style_preview"),
     )
 
 
 def metadata_suite_for_plan(plan: dict) -> str:
+    if plan.get("room_style_preview"):
+        return "native-room-style-preview"
     if plan.get("room_titles_only"):
         return "native-room-titles"
     if "mission_mode" in plan:
@@ -1772,6 +1784,8 @@ def write_job(
             run['run'][field] = str(plan[field])
     for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','room_titles_only','collection_draw','random_loadout'):
         if plan.get(flag):run['run'][flag] = '1'
+    if 'room_style_preview' in plan:
+        run['run']['room_style_preview'] = plan['room_style_preview']
     if 'network_policy' in plan:run['run']['network_policy']=plan['network_policy']
     if plan.get('network_policy') == ROUTED_LOOPBACK_POLICY:
         for field in ROUTE_PLAN_FIELDS:
@@ -1821,6 +1835,9 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
         deck_only = run.get('deck_only', '0') == '1'
         pages_only = run.get('pages_only', '0') == '1'
         room_titles_only = run.get('room_titles_only','0') == '1'
+        room_style_preview = run.get('room_style_preview')
+        if mission_plan and room_style_preview is not None:
+            raise ValueError('room-style preview cannot be a mission combat plan')
         collection_draw = run.get('collection_draw', '0') == '1'
         preparation_fields = (
             'bootstrap_only', 'battleship_only', 'gift_requests_only',
@@ -1929,6 +1946,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 mode_sequence, bootstrap_only, battleship_only,
                 gift_requests_only, deck_only, pages_only, collection_draw,
                 play_unit_uid, shop_catalog=shop_plan is not None, room_titles_only=room_titles_only,
+                room_style_preview=room_style_preview,
             )
 
         if historical_cases:
@@ -1991,6 +2009,8 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             plan['play_unit_uid'] = play_unit_uid
         if shop_plan is not None:
             plan.update(shop_plan)
+        if room_style_preview is not None:
+            plan['room_style_preview'] = room_style_preview
         for flag, value in (
             ('bootstrap_only', bootstrap_only),
             ('battleship_only', battleship_only),
@@ -2260,6 +2280,7 @@ def prepare(
     deck_only: bool = False,
     pages_only: bool = False,
     room_titles_only: bool = False,
+    room_style_preview: str | None = None,
     collection_draw: bool = False,
     shop_assertions: Path | None = None,
     shop_display: Path | None = None,
@@ -2309,6 +2330,7 @@ def prepare(
             or retry_count is not None
             or expect_first_fail is not None
             or expected_ai != 3
+            or room_style_preview is not None
         ):
             raise GameTestError("native FPS tests cannot request an authenticated account flow")
     elif fps_mod_enabled is not True:
@@ -2333,6 +2355,7 @@ def prepare(
             mode_sequence, bootstrap_only, battleship_only, gift_requests_only,
             deck_only, pages_only, collection_draw, play_unit_uid, mission_mode,
             shop_binding is not None, room_titles_only=room_titles_only,
+            room_style_preview=room_style_preview,
         )
         if mission_mode is not None:
             if random_loadout:
@@ -2478,6 +2501,8 @@ def prepare(
         if shop_binding is not None:
             plan.update(shop_binding)
         plan['quiet']=quiet
+        if room_style_preview is not None:
+            plan['room_style_preview'] = room_style_preview
         for flag,value in (
             ('bootstrap_only',bootstrap_only),
             ('battleship_only',battleship_only),
@@ -2784,6 +2809,8 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
         raise GameTestError("run.json suite disagrees with the sealed normal-flow plan")
 
     public_shop_fields = set()
+    if plan.get('room_style_preview') != public_plan.get('room_style_preview'):
+        raise GameTestError('run.json cannot change the sealed room-style preview scope')
     if fps_only:
         if set(plan) != set(public_plan):
             raise GameTestError("run.json adds fields outside the native FPS plan")
@@ -3738,6 +3765,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--gift-requests-only', action='store_true',help='send configured native mail gift requests; server processing is verified separately')
     prepare_parser.add_argument('--deck-only', action='store_true',help='save and select a native battleship deck using four genuinely owned unit UIDs from the private account profile')
     prepare_parser.add_argument('--room-titles-only',action='store_true',help='test all live room-title inputs, reopen and full server-confirmed titles')
+    prepare_parser.add_argument('--room-style-preview', choices=('pvp', 'mission'), help='capture the genuine legacy room after native creation; requires --room-titles-only and a preview Mod')
     prepare_parser.add_argument('--pages-only', action='store_true',help='visit the real hangar and verify Mod inventory, preview and cancel without exchanging units')
     prepare_parser.add_argument('--collection-draw',action='store_true',help='explicit pages-only extension: purchase one collection draw with existing native funds and verify delivery')
     prepare_parser.add_argument('--shop-assertions',type=Path,
@@ -3829,6 +3857,7 @@ def main(argv: list[str] | None = None) -> int:
                 deck_only=args.deck_only,
                 pages_only=args.pages_only,
                 room_titles_only=args.room_titles_only,
+                room_style_preview=args.room_style_preview,
                 collection_draw=args.collection_draw,
                 shop_assertions=args.shop_assertions,
                 shop_display=args.shop_display,

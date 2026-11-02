@@ -62,6 +62,18 @@ hosts=*
 
 
 class RoomTitlePlanTests(unittest.TestCase):
+    def test_style_preview_is_bounded_to_one_native_create_and_capture(self):
+        for mode in ('pvp', 'mission'):
+            plan = {'room_titles_only': True, 'room_style_preview': mode, 'play_unit_uid': 123}
+            self.assertEqual(game_test.required_cases_for_plan(plan), game_test.FLOW_CASES[:3] + (
+                'setup.active_unit', f'room_titles.{mode}.create', f'room_style.{mode}.preview'))
+            self.assertEqual(game_test.metadata_suite_for_plan(plan), 'native-room-style-preview')
+        for mode in ('', 'team', '3d', True, 1):
+            with self.assertRaises(game_test.GameTestError):
+                game_test.required_flow_cases('1', room_titles_only=True, room_style_preview=mode)
+        with self.assertRaises(game_test.GameTestError):
+            game_test.required_flow_cases('1', room_style_preview='pvp')
+
     def test_standalone_entry_resolves_runtime_helpers_outside_the_checkout(self):
         with tempfile.TemporaryDirectory() as temporary:
             probe = "import runpy,sys;runpy.run_path(sys.argv[1],run_name='standalone_probe');import tools.game_test_environment;print('runtime helpers resolved')"
@@ -286,6 +298,16 @@ rva=state
 
     def metadata(self, run_dir):
         return game_test.read_json(run_dir / "run.json")
+
+    def test_room_style_preview_roundtrips_through_the_sealed_job(self):
+        for mode in ('pvp', 'mission'):
+            run_dir = self.prepare('style-' + mode, room_titles_only=True, room_style_preview=mode)
+            metadata = self.metadata(run_dir)
+            public = game_test.read_public_plan(run_dir / 'client')
+            self.assertEqual(public['room_style_preview'], mode)
+            self.assertEqual(metadata['plan']['room_style_preview'], mode)
+            self.assertEqual(metadata['suite'], 'native-room-style-preview')
+            self.assertEqual(game_test.required_cases_for_plan(public)[-1], f'room_style.{mode}.preview')
 
     def private_account(self, run_dir):
         parser = configparser.ConfigParser()
