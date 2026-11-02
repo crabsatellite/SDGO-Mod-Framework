@@ -173,6 +173,11 @@ class EnvironmentTests(unittest.TestCase):
 
 
 class NativeTemplateTests(unittest.TestCase):
+    def test_ordinary_runs_cannot_initialize_operator_selection(self):
+        from tools.game_test_fixtures import initialize_selected_operators
+        with self.assertRaisesRegex(RuntimeError,'isolated template'):
+            initialize_selected_operators(None,[])
+
     def test_backup_stream_preserves_binary_bytes_and_source_file(self):
         from tools.game_test_native_environment import copy_snapshot
         payload = bytes(range(256)) * 16
