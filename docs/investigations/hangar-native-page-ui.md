@@ -47,22 +47,21 @@ matching fragment. Other Mods' symbols are preserved.
   The second confirmation revalidates the snapshot. There is no delete request
   during preview or the first confirmation.
 
-## Validation boundary
+## Developer tests
 
-Win32 Release builds and the planner, native adapter and native-page fixtures
-pass. The adapter fixture exercises production page events through synthetic
+The planner, native adapter and native-page fixtures exercise page events through synthetic
 detail replies, both confirmations, exchange and sorting replies. It also checks
 that a changed snapshot or closed page cannot execute a stale plan. Page fixtures
 check host ownership, bounds, pagination, visibility restoration, reinitialization
-and unsupported-layout rejection. All 246 client symbols in this repair branch match the image.
+and unsupported-layout rejection.
 
-No real unit is sorted or recycled by automated tests. The deleted Win32 preview capture is not evidence
-for this native UI.
+The automated tests do not sort or recycle real units. Test native mouse input
+and page layout separately in a client with the supported resources.
 
 ## 0.2.1: visible controls that cannot click
 
-The reported screenshot shows the 0.2.0 injected controls, including square-bracket
-captions and unrelated red/cyan rectangles. The original fixture called the
+In version 0.2.0, injected controls could display square-bracket captions and
+red/cyan debug rectangles while remaining unclickable. The original fixture called the
 service button callback directly and did not test native mouse dispatch.
 
 Current PE bytes and retained decompilation establish two connected omissions:

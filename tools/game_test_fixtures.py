@@ -6,6 +6,7 @@ inventory loading, requests and replies; it never fabricates client state.
 from __future__ import annotations
 import configparser
 import hashlib
+import itertools
 from pathlib import Path
 import secrets
 
@@ -107,6 +108,7 @@ def build_accounts(connection, destination: Path, template_id: str, *, isolated_
             accounts.append({'slot': slot, 'role': ROLES[slot-1], 'account_id': account,
                              'nickname': nickname, 'profile': path.name,
                              'primary_unit': primary, 'primary_uid': primary_uid, 'units': units})
+        initialize_battleships(connection,accounts,destination,isolated_template=True)
         verify_accounts(connection, accounts)
         connection.commit()
         return accounts
@@ -131,3 +133,70 @@ def verify_accounts(connection, accounts):
                              account['account_id']).fetchone()
         if row is None or row[0] != 2 or int(row[1]) != account['primary_uid']:
             raise RuntimeError('Fixture account is not initialized with its declared active unit.')
+        fleet=account.get('battleship')
+        if fleet:
+            ship=cursor.execute('SELECT SelectPointUnit,UserUnitNumber_1,UserUnitNumber_2,'
+                'UserUnitNumber_3,UserUnitNumber_4 FROM GOnlineGame.dbo.tbl_UserBattleShips '
+                'WHERE AccountNumber=? AND UserBattleShipNumber=?',account['account_id'],fleet['uid']).fetchone()
+            go=cursor.execute('SELECT GoUserBattleShipNumber FROM GOnlineGame.dbo.tbl_Users WHERE AccountNumber=?',account['account_id']).fetchone()
+            padded=fleet['deck_uids']+[0]*(4-len(fleet['deck_uids']))
+            if (ship is None or int(ship[0])!=account['primary_uid'] or
+                [int(v) for v in ship[1:]]!=padded or int(go[0])!=fleet['uid']):
+                raise RuntimeError('Fixture battleship, leader or owned deck units do not match.')
+
+
+def choose_fleet(ships,primary,available,stars):
+    # Large MAs can consume most of a native fleet's capacity. Preserve its
+    # actual Star value and choose the largest legal deck, never inflate caps.
+    for count in range(min(4,len(available)+1),0,-1):
+        for ship in ships:
+            for rest in itertools.combinations(available,count-1):
+                deck=(primary,*rest)
+                cost=sum(stars[u['unit_id']] for u in deck)
+                if int(ship[2])<=cost<=int(ship[3]):return ship,deck
+    return None
+
+
+def initialize_battleships(connection,accounts,profiles,*,isolated_template=False):
+    """Native starter fleets, only during explicit offline template creation/revision."""
+    if not isolated_template:raise RuntimeError('Shared fleet initialization requires an isolated template revision.')
+    verify_accounts(connection,accounts)
+    cursor=connection.cursor()
+    account_count=cursor.execute('SELECT COUNT(*) FROM GDCommon.dbo.tbl_Account').fetchone()[0]
+    for account in accounts:
+        who=account['account_id']
+        count=cursor.execute('SELECT COUNT(*) FROM GOnlineGame.dbo.tbl_UserBattleShips WHERE AccountNumber=?',who).fetchone()[0]
+        if not count:
+            cursor.execute('DECLARE @r int;EXEC @r=GOnlineGame.dbo.sp_CreateBattleShipTutorial ?;SELECT @r AS fixture_ships;',who)
+            if result(cursor,'fixture_ships')['fixture_ships']!=0:
+                raise RuntimeError('Native starter battleship creation failed.')
+        ships=cursor.execute('SELECT u.UserBattleShipNumber,u.BattleShipNumber,d.MinCost,d.MaxCost '
+            'FROM GOnlineGame.dbo.tbl_UserBattleShips u JOIN GOnlineGame.dbo.tbl_BattleShipData d '
+            'ON u.BattleShipNumber=d.BattleShipNumber WHERE u.AccountNumber=? ORDER BY u.BattleShipNumber,u.UserBattleShipNumber',who).fetchall()
+        stars={int(r[0]):int(r[1]) for r in cursor.execute('SELECT u.UnitNumber,d.Star FROM GOnlineGame.dbo.tbl_UserUnits u '
+            'JOIN GOnlineGame.dbo.tbl_Units d ON u.UnitNumber=d.UnitNumber WHERE u.AccountNumber=?',who).fetchall()}
+        primary=next(u for u in account['units'] if u['uid']==account['primary_uid'])
+        available=[u for u in account['units'] if u!=primary and u['unit_id'] not in (24787,24788)]
+        choice=choose_fleet(ships,primary,available,stars)
+        if choice is None:raise RuntimeError(f'No legal native fleet for fixture slot {account["slot"]}; unit stars={stars}; bounds={[(int(s[1]),int(s[2]),int(s[3])) for s in ships]}')
+        ship,deck=choice;uids=[u['uid'] for u in deck];padded=uids+[0]*(4-len(uids))
+        cursor.execute('DECLARE @previous_unit1 bigint,@previous_unit2 bigint,@previous_unit3 bigint,@previous_unit4 bigint,'
+            '@previous_count1 smallint,@previous_count2 smallint,@previous_count3 smallint,@previous_count4 smallint,@fixture_result int; '
+            'EXEC GOnlineGame.dbo.sp_SetUserBattleShipData ?,?,?,?,?,?,?,?,@previous_unit1 OUTPUT,@previous_unit2 OUTPUT,@previous_unit3 OUTPUT,@previous_unit4 OUTPUT,'
+            '@previous_count1 OUTPUT,@previous_count2 OUTPUT,@previous_count3 OUTPUT,@previous_count4 OUTPUT,@fixture_result OUTPUT;SELECT @fixture_result AS fixture_deck;',who,int(ship[0]),account['primary_uid'],*padded,len(uids))
+        status=result(cursor,'fixture_deck')['fixture_deck']
+        if status!=0:raise RuntimeError(f'Native fleet assignment refused fixture slot {account["slot"]}: {status}')
+        cursor.execute('DECLARE @n int,@u bigint,@r int;EXEC GOnlineGame.dbo.sp_SetUserBattleShip_GoOut ?,?,@n OUTPUT,@u OUTPUT,@r OUTPUT;'
+                       'SELECT @r AS fixture_go,@u AS leader;',who,int(ship[0]))
+        ready=result(cursor,'fixture_go')
+        if ready['fixture_go']!=0 or int(ready['leader'])!=account['primary_uid']:
+            raise RuntimeError('Native fleet go-out did not preserve the declared primary unit.')
+        account['battleship']={'uid':int(ship[0]),'unit_id':int(ship[1]),'deck_uids':uids,'leader_uid':account['primary_uid']}
+        path=profiles/account['profile'];profile=configparser.ConfigParser(interpolation=None)
+        profile.read(path,encoding='utf-8')
+        if len(uids)==4:profile['deck']={f'unit_uid{i}':str(uid) for i,uid in enumerate(uids)}
+        elif profile.has_section('deck'):profile.remove_section('deck')
+        with path.open('w',encoding='utf-8') as stream:profile.write(stream)
+    verify_accounts(connection,accounts)
+    if cursor.execute('SELECT COUNT(*) FROM GDCommon.dbo.tbl_Account').fetchone()[0]!=account_count:
+        raise RuntimeError('Shared fleet initialization created or removed an account.')

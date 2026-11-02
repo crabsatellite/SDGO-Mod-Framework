@@ -99,6 +99,15 @@ class EnvironmentTests(unittest.TestCase):
         self.assertFalse(lease.root.exists())
         self.assertEqual(self.registry.list()[0]['state'], 'closed')
 
+    def test_success_deletes_test_records_after_runtime_cleanup(self):
+        lease=self.lease();driver=Driver()
+        with ManagedEnvironment(self.registry,lease,driver,self.archive) as managed:
+            (lease.root/'result.json').write_text('{"status":"pass"}',encoding='utf-8')
+        self.assertTrue(managed.evidence_deleted)
+        self.assertFalse((self.archive/lease.id).exists())
+        self.assertFalse(lease.root.exists())
+        self.assertEqual(self.registry.list()[0]['state'],'closed')
+
     def test_live_foreign_controller_cannot_be_recovered(self):
         lease, driver = self.lease(), Driver()
         with self.assertRaisesRegex(RuntimeError, 'live controller'):
@@ -187,6 +196,20 @@ class NativeTemplateTests(unittest.TestCase):
                         {'pages_only':True,'shop_assertions':Path('a')}):
             with self.subTest(options=options),self.assertRaises(RuntimeError):
                 scenario_options({'primary_uid':17},**options)
+    def test_fleet_selection_obeys_native_costs_for_large_ma_and_four_unit_cases(self):
+        from tools.game_test_fixtures import choose_fleet
+        ships=[(99,270005,0,15)]
+        primary={'uid':1,'unit_id':24788}
+        others=[{'uid':i+2,'unit_id':100+i} for i in range(4)]
+        stars={24788:14,**{100+i:3 for i in range(4)}}
+        ship,deck=choose_fleet(ships,primary,others,stars)
+        self.assertEqual(ship[0],99);self.assertEqual(len(deck),1)
+        stars[24788]=4
+        _,deck=choose_fleet(ships,primary,others,stars)
+        self.assertEqual(len(deck),4)
+        self.assertEqual(deck[0],primary)
+        stars[24788]=16
+        self.assertIsNone(choose_fleet(ships,primary,others,stars))
 
     def test_native_database_key_spelling_and_unrelated_values_survive_rebase(self):
         from tools.game_test_native_environment import rebase_configuration
