@@ -1,47 +1,18 @@
-# IME input fix
+# IME candidates and text commit
 
-Fixes text typed with an IME (Chinese, Japanese, Korean input) at one place where the client
-reads a byte count as a character count.
-中文：[ime-fix.zh-CN.md](ime-fix.zh-CN.md)
+`ime_fix` 1.1.1 restores Chinese IME candidate requests and fixes residual preedit letters after word selection.
+The original single-call-site UTF-16 commit-length correction remains for Chinese, Japanese and Korean input.
 
-| mod | host | part |
-|---|---|---|
-| `ime_fix` | client | the whole feature |
+Run `update.bat` in an existing client, then start the client normally. The automatic fix appears in
+Mod Manager's Fix archive; older Managers may retain its IME commit fix label. Developer toggles and
+length-only diagnostics are available under Show developer information and take effect after restart.
 
-## Use
+The Mod restores only the candidate UI bits requested for the game's own Chinese EDIT. Before a result
+message it snapshots the old preedit and corrects the erase count at the verified result caller only
+when the display range, objects, source, position and UTF-16 contents match exactly. Other native string
+operations and legitimate English/numeric prefixes and suffixes are preserved. Composition end clears
+the native preedit cache. Windows settings, keyboard layouts and the server remain unchanged.
 
-Nothing to do: it works automatically once the framework is installed on the client. SDGO Mod
-Manager lists it under **修复归档** (fix archive). To switch it off while troubleshooting, click
-**显示开发信息** (show developer info), clear its switch and restart the game. The switch writes
-`enabled=0` to the mod's `mod.ini` and `ime_fix=0` under `[mods]` in `sdgo\sdgo.ini`.
-
-## Settings
-
-Developer setting, shown in the Manager after **显示开发信息**. Stored in
-`sdgo\mods\ime_fix\mod.ini` and read when the game starts:
-
-| key | default | meaning |
-|---|---|---|
-| `Trace` | 0 | 1: log the length of every string the IME commits at that call site |
-
-## Logs and troubleshooting
-
-```
-ime_fix: loaded IME commit fix 1.0.0
-ime_fix: GCS_RESULTSTR 4 bytes -> 2 chars (hkl 08040804)     (Trace=1)
-```
-
-| log line | meaning |
-|---|---|
-| `loaded IME commit fix ...` | active |
-| `GCS_RESULTSTR <n> bytes -> <m> chars` | `Trace=1`: one committed string, as the game now receives it |
-| `GCS_RESULTSTR error <n> normalized to 0` | `Trace=1`: the IME returned an error; the game gets an empty string |
-| `required symbol ime.result_call ...` | this client build differs at that call site; the mod stays off |
-
-## How it works
-
-One call site reads `GCS_RESULTSTR` from `ImmGetCompositionStringW` and then treats the
-returned byte count as a character count. `ime_fix` hooks the import and, for that call site
-only (checked by return address, symbol `ime.result_call`), returns the length in characters,
-with the string terminated inside the caller's buffer; an error result becomes an empty
-string. Every other caller gets the system function's result unchanged.
+Logs contain events and lengths, not typed text. A preedit/display guard mismatch keeps the native path
+and requires investigation. See the [Chinese guide](ime-fix.zh-CN.md) and
+[implementation record](investigations/windows-pinyin-input.md).

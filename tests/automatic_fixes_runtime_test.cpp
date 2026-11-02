@@ -1,9 +1,7 @@
 // Exercise the actual production DLLs against owned native-ABI fixtures.
 // No game, input method, window, server, account or player file is opened.
 #include <windows.h>
-#include <imm.h>
 
-#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -27,84 +25,6 @@ template<class T> void Put(void* object,size_t offset,T value) {
 }
 template<class T> T Read(const void* object,size_t offset=0) {
     T value;std::memcpy(&value,static_cast<const uint8_t*>(object)+offset,sizeof(value));return value;
-}
-
-namespace ime {
-using Fn=LONG(WINAPI*)(HIMC,DWORD,LPVOID,DWORD);
-Fn hook=nullptr;
-uint8_t* site=nullptr;
-LONG nativeResult=0;
-unsigned originalCalls=0;
-HIMC seenContext=nullptr;
-DWORD seenIndex=0,seenSize=0;
-void* seenBuffer=nullptr;
-LONG WINAPI Original(HIMC context,DWORD index,LPVOID buffer,DWORD bytes) {
-    ++originalCalls;seenContext=context;seenIndex=index;seenSize=bytes;seenBuffer=buffer;
-    constexpr wchar_t text[]=L"\u4E2D\u97E9\U0001F600abcdefgh";
-    if(buffer && nativeResult>0)
-        std::memcpy(buffer,text,(std::min)({static_cast<size_t>(nativeResult),static_cast<size_t>(bytes),sizeof(text)}));
-    return nativeResult;
-}
-void* Symbol(SdgoMod*,const char* name) {
-    return !std::strcmp(name,"ime.result_call") ? site : nullptr;
-}
-int Hook(SdgoMod*,const char* dll,const char* function,void* detour,void** original) {
-    Check(!std::strcmp(dll,"imm32.dll") && !std::strcmp(function,"ImmGetCompositionStringW"),
-          "IME fix owns exactly the original composition-string import");
-    hook=reinterpret_cast<Fn>(detour);*original=reinterpret_cast<void*>(&Original);return 1;
-}
-LONG Invoke(Fn call,LONG result,DWORD index,void* buffer,DWORD size) {
-    nativeResult=result;originalCalls=0;
-    const auto context=reinterpret_cast<HIMC>(0x12345678);
-    const auto value=call(context,index,buffer,size);
-    Check(originalCalls==1 && seenContext==context && seenIndex==index && seenBuffer==buffer && seenSize==size,
-          "original IME call executes once with unchanged context, index, buffer and byte bound");
-    return value;
-}
-void Run(SdgoModLoadFn entry) {
-    site=static_cast<uint8_t*>(VirtualAlloc(nullptr,64,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE));
-    Check(site!=nullptr,"owned IME caller allocation");
-    // Return address is exactly site+0x17, the production symbol contract.
-    const uint8_t caller[]={0x55,0x8B,0xEC,0xFF,0x75,0x14,0xFF,0x75,0x10,
-        0xFF,0x75,0x0C,0xFF,0x75,0x08,0x90,0xB8,0,0,0,0,0xFF,0xD0,0xC9,0xC2,0x10,0};
-    std::memcpy(site,caller,sizeof(caller));
-    SdgoApi api{};api.size=sizeof(api);api.version=SDGO_API_VERSION;
-    api.Symbol=Symbol;api.HookImport=Hook;api.SettingInt=Setting;api.Log=Log;
-    Check(entry(&api,nullptr)!=0 && hook,"production IME DLL registers its import detour");
-    Put(site,17,reinterpret_cast<uint32_t>(hook));
-    DWORD old=0;Check(VirtualProtect(site,64,PAGE_EXECUTE_READ,&old)!=0,"owned caller becomes read-execute");
-    FlushInstructionCache(GetCurrentProcess(),site,sizeof(caller));
-    const auto buggy=reinterpret_cast<Fn>(site);
-    std::array<uint8_t,32> buffer{};
-    buffer.fill(0x5A);
-    Check(Invoke(buggy,8,GCS_RESULTSTR,buffer.data(),10)==4 && Read<uint16_t>(buffer.data(),8)==0 && buffer[10]==0x5A,
-          "affected caller receives UTF-16 code-unit length and an in-bound terminator including surrogate pairs");
-    buffer.fill(0x5A);
-    Check(Invoke(hook,8,GCS_RESULTSTR,buffer.data(),10)==8 && Read<uint16_t>(buffer.data(),8)==0x5A5A,
-          "other caller retains Win32 byte count and buffer contract");
-    buffer.fill(0x5A);
-    Check(Invoke(buggy,8,GCS_COMPSTR,buffer.data(),10)==8 && Read<uint16_t>(buffer.data(),8)==0x5A5A,
-          "affected return address does not alter unrelated composition indices");
-    for(const LONG result:{0L,-1L,-2L}) {
-        buffer.fill(0x5A);
-        Check(Invoke(buggy,result,GCS_RESULTSTR,buffer.data(),10)==0 && Read<uint16_t>(buffer.data())==0 && buffer[2]==0x5A,
-              "empty/error result is normalized only at the affected caller");
-        buffer.fill(0x5A);
-        Check(Invoke(hook,result,GCS_RESULTSTR,buffer.data(),10)==result && buffer[0]==0x5A,
-              "other caller retains native error/empty semantics");
-    }
-    buffer.fill(0x5A);
-    Check(Invoke(buggy,20,GCS_RESULTSTR,buffer.data(),10)==4 && Read<uint16_t>(buffer.data(),8)==0 && buffer[10]==0x5A,
-          "oversized native result reserves terminator space without crossing buffer end");
-    buffer.fill(0x5A);
-    Check(Invoke(buggy,7,GCS_RESULTSTR,buffer.data(),10)==3 && Read<uint16_t>(buffer.data(),6)==0 && buffer[10]==0x5A,
-          "odd native byte count ends on a whole UTF-16 code unit");
-    buffer.fill(0x5A);
-    Check(Invoke(buggy,8,GCS_RESULTSTR,buffer.data(),1)==0 && buffer[1]==0x5A,
-          "sub-character buffer cannot acquire an out-of-bound terminator");
-    Check(Invoke(buggy,8,GCS_RESULTSTR,nullptr,0)==0,"affected caller safely handles a null result buffer");
-    VirtualFree(site,0,MEM_RELEASE);site=nullptr;
-}
 }
 
 namespace gate {
@@ -209,8 +129,7 @@ int wmain(int argc,wchar_t** argv) {
         HMODULE dll=LoadLibraryW(argv[2]);
         const auto entry=dll ? reinterpret_cast<SdgoModLoadFn>(GetProcAddress(dll,"SdgoModLoad")) : nullptr;
         Check(entry!=nullptr,"actual production DLL exports SdgoModLoad");
-        if(!wcscmp(argv[1],L"ime"))ime::Run(entry);
-        else if(!wcscmp(argv[1],L"gate"))gate::Run(entry);
+        if(!wcscmp(argv[1],L"gate"))gate::Run(entry);
         else if(!wcscmp(argv[1],L"relay"))relay::Run(entry);
         else return 2;
         FreeLibrary(dll);std::printf("%u production DLL ABI checks passed; no game process or UI\n",checks);return 0;

@@ -99,3 +99,32 @@ one-time WordSkip activation and rejection of an out-of-range details index.
 
 The native byte signatures used by the shipping Mod are in `symbols/GOnline-54BE1568-00C97000.ini`;
 `tools/verify_symbols.py` validates them without starting the client.
+
+## Already-focused create-room input (client 0.2.1, 2026-11-02)
+
+The native edit has two relevant limits. `CUIEditBox +0x2A0` stores UTF-16
+bytes, while the shared input at pointer `0x010887E0` caches UTF-16 code units
+at `+0xFC` and applies them to its Win32 EDIT at `+0x134`. Focus setup
+`0x00C61840` reads the edit's byte limit at `0x00C6186C`, divides by two and
+calls `0x00C47F90` under the critical section at `0x00FF3368`.
+
+The old post-init hook only changed `+0x2A0`. An edit already focused during
+initialization could therefore retain the old 20-character live input limit
+until another focus transition. Version 0.2.1 also calls the native input-limit
+setter under that same lock when the verified room edit's focus byte `+0x165`
+is set. The setter's `clear` argument is zero: only the limit is refreshed,
+preserving text and selection. An unfocused room edit never changes another
+control's active input limit.
+
+The fixture covers keyboard character 21, 128-character mixed input, preserved
+text/selection, all four dialog init hooks and repeated opens, unfocused-input
+isolation and a missing shared input. With the optional supported client path,
+it replays the pinned 92-byte setter at `0x00C47F90` on a hidden fixture EDIT.
+Its reached SendMessageW import is redirected to User32; the clear branch and
+its game-string calls are never executed.
+
+```powershell
+cmake -S . -B build -DSDGO_ROOM_TITLE_NATIVE_CLIENT="<supported client>\GOnline.exe"
+cmake --build build --config Release --target room_titles_native_ui_test room_titles
+ctest --test-dir build -C Release -R "^room_titles_(native_input|native_ui|client|transport|client_state)_offline$" --output-on-failure
+```
