@@ -120,11 +120,12 @@ def verify_accounts(connection, accounts):
         raise RuntimeError('An environment template requires exactly five distinct fixture accounts.')
     cursor = connection.cursor()
     for account in accounts:
-        actual = {int(r[0]): int(r[1]) for r in cursor.execute(
+        rows = cursor.execute(
             'SELECT UnitNumber,UserUnitNumber FROM GOnlineGame.dbo.tbl_UserUnits WHERE AccountNumber=?',
-            account['account_id']).fetchall()}
+            account['account_id']).fetchall()
+        actual = {int(r[0]): int(r[1]) for r in rows}
         expected = {u['unit_id']: u['uid'] for u in account['units']}
-        if actual != expected or set(actual) != set(ROSTER):
+        if len(rows)!=len(ROSTER) or actual != expected or set(actual) != set(ROSTER):
             raise RuntimeError('Fixture roster does not match the actual owned unit records.')
         row = cursor.execute('SELECT TutorLv,GoUserUnitNum FROM GOnlineGame.dbo.tbl_Users WHERE AccountNumber=?',
                              account['account_id']).fetchone()
