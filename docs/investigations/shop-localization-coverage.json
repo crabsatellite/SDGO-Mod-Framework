@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "dictionary_entries": 17265,
+  "native_category_names": 3299,
+  "native_parent_records": 2489,
+  "missing_known_names": 0,
+  "missing_known_prose": 0,
+  "Thai_or_Korean_target_remnants": 0,
+  "literal_source_numeric_fields": "preserved unchanged",
+  "descriptions": 3309,
+  "original_resource_sha256": {
+    "gdrs/0031.gdt": "b7fb10ae776fb22948c2f22c2d3364f984f7d45c1a24757276007282cbb66ea0",
+    "gdrs/0011.gdt": "b0ba4702c30b634a7bc0bdfa0c4506db50a14b6221b733c56e917e49414ac8c1",
+    "gdrs/0237.gdt": "82feeb2764ec01f29afaa7de9a6895e0458c58b1041ae97335dc67b73ad9f695",
+    "gdrs/0255.gdt": "73b0040d3d0240a4181a27243ff887d795781767395b3e01593491f6370425b4"
+  },
+  "native_executable_sha256": "e2dba73c10302b50cb0e6f2e58dd0a14effa8d224989ae570a7f8e05af79ff92",
+  "manual_visual_acceptance": false,
+  "verification": {
+    "scope": "Text source coverage and bounded native/DLL/SQL fixtures; full native game search and updated UI still manual",
+    "dictionary_target_scripts": "No Thai, Hangul, Jamo or replacement characters",
+    "unit_identity": "1071/1071 hangar UnitIDs, no fuzzy English alias joins",
+    "native_server_search": "Original global rank filtering ignores rank; ordinary category filtering is correct",
+    "isolated_SQL2014": "10 checks passed; products unchanged; unique test database removed",
+    "actual_helper_SQL": "Known original definition gate, idempotence, Chinese+rank+payment, invalid inputs and product preservation passed",
+    "exact_billing_names": "Additional guarded aliases bind current server originals to the same displayed ProductID titles, including model codes"
+  },
+  "stable_unit_names": 1073,
+  "hangar_unit_names_covered": 1071,
+  "revised_translation_values": 341,
+  "billing_name_aliases": 122
+}

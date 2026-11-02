@@ -43,6 +43,15 @@ class CatalogTests(unittest.TestCase):
         self.assertTrue({"findwindow_fix", "ime_fix", "startup_crash_fix"}.issubset({m["id"] for m in c["mods"]}))
         self.assertTrue(all(m["category"] == "fixes" for m in c["mods"]))
 
+    def test_shop_localization_is_an_optional_manager_registered_client_feature(self):
+        c=catalog.read_catalog(self.root)
+        mod=next(m for m in c['mods'] if m['id']=='shop_localization')
+        self.assertEqual(mod['category'],'gameplay')
+        self.assertEqual(mod['target'],'client')
+        self.assertIn('zh-CN.ini',mod['files'])
+        base=catalog.select_catalog(c,'base')
+        self.assertNotIn('shop_localization',{m['id'] for m in base['mods']})
+
     def test_shop_components_are_classified_and_generated_helper_is_declared(self):
         c = catalog.read_catalog(self.root)
         label = next(m for m in c["mods"] if m["id"] == "shop_labels")

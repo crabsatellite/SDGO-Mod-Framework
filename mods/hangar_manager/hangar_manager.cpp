@@ -15,6 +15,7 @@
 #include "sdgo/hangar_sort_request.h"
 #include "sdgo/inventory_app_state.h"
 #include "sdgo/game_test_page_observer.h"
+#include "sdgo/localization.h"
 #include "native_ui.h"
 
 namespace {
@@ -172,9 +173,12 @@ std::wstring Label(const Unit& u) {
     auto r=g_rules.find(u.type);
     if(r==g_rules.end())return L"未知机体 #"+std::to_wstring(u.type);
     const auto& v=r->second;
+    std::wstring name;
+    if(!sdgo::localization::TryLookup(sdgo::localization::Kind::UnitName,u.type,v.name,&name))
+        name=v.name;
     std::wstring g=v.rank==4?L"S":v.rank==3?L"A":v.rank==2?L"B":L"C";
     if(v.subrank==3)g+=L"S";else if(v.subrank==4)g+=L"R";else if(v.subrank==5)g+=L"U";
-    return L"槽位 "+std::to_wstring(u.slot)+L" ["+g+L"] "+v.name;
+    return L"槽位 "+std::to_wstring(u.slot)+L" ["+g+L"] "+name;
 }
 void Preview(Plan p) {
     g_preview=std::move(p);g_hasPreview=true;
@@ -188,6 +192,10 @@ void Preview(Plan p) {
     else for(const auto& item:g_preview.expectedItems){
         std::wstring name=L"原生道具";
         for(const auto& rule:g_rules)if(rule.second.item==item.first && !rule.second.rewardName.empty()){name=rule.second.rewardName;break;}
+        std::wstring translated;
+        if(sdgo::localization::TryLookup(sdgo::localization::Kind::ItemName,
+                                        static_cast<uint32_t>(item.first),name,&translated))
+            name.swap(translated);
         s+=name+L" × "+std::to_wstring(item.second)+L"  ";
     }
     s+=L"（实际奖励按服务器原生配置）。\r\n锁定、出击中、舰队、租赁及已培养机体不兑换。\r\n不同涂装按同型号计数，想保留的机体请先锁定。";

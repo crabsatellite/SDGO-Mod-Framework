@@ -95,5 +95,4 @@ with `tools/verify_symbols.py`; the complete WorldServer profile reported 23
 symbols and zero rejections. Database inspection was read-only. Synthetic SQL
 fixtures, rather than player data, cover all-offline pagination, missing
 optional rows, canonical-name refresh, fallback names, online/logout
-transitions, empty lists, and clamped pages. Actual in-game server/client
-runtime acceptance remains a separate gate.
+transitions, empty lists, and clamped pages.

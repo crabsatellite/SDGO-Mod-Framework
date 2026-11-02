@@ -28,8 +28,13 @@ def main():
                 if process.poll() is not None:raise RuntimeError('Frozen Manager exited before publishing its session')
                 session=state/'manager-session.json'
                 if session.exists():
-                    base=json.loads(session.read_text(encoding='utf-8'))['url'].rstrip('/')
-                    break
+                    try:
+                        base=json.loads(session.read_text(encoding='utf-8'))['url'].rstrip('/')
+                        break
+                    except (OSError, json.JSONDecodeError):
+                        # Atomic publication can briefly hold a Windows sharing
+                        # lock. Existence alone does not mean it is readable yet.
+                        pass
                 time.sleep(.1)
             if not base:raise RuntimeError('Frozen Manager did not start')
             def call(path,body=None,headers=None):
@@ -46,7 +51,15 @@ def main():
             context=call('/api/ai-context',{'provider':'shop','kind':'bug'})
             assert 'SDGO-Mod-Framework' in context['text'] and 'AI models:' in context['text']
             catalog=call('/api/providers/shop/api/shop/catalog');assert catalog['demo'] and catalog['items']
-            created=call('/api/providers/shop/api/shop/create',{'category_id':catalog['items'][0]['Id']},{'X-Shop-Revision':catalog['revision']})
+            with urllib.request.urlopen(base+'/panels/shop.js',timeout=10) as response:
+                panel=response.read().decode('utf-8')
+            assert '新商品中文名称' in panel and '导出玩家更新包' in panel and 'hasChinese' in panel
+            try:
+                call('/api/providers/shop/api/shop/create',{'category_id':catalog['items'][0]['Id'],'name':'English only'},{'X-Shop-Revision':catalog['revision']})
+                raise AssertionError('Frozen Manager accepted an English-only shop title')
+            except urllib.error.HTTPError as error:
+                assert error.code==400
+            created=call('/api/providers/shop/api/shop/create',{'category_id':catalog['items'][0]['Id'],'name':'冻结包测试商品'},{'X-Shop-Revision':catalog['revision']})
             assert len(created['catalog']['products'])==1
             rewards=call('/api/providers/rewards/api/rewards')
             assert not rewards['progression']['config']['enabled']
