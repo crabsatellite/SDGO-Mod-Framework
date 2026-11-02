@@ -332,6 +332,12 @@ class NativeDriver:
             copy_evidence(report)
 
 
+def writable_owned_copy(target):
+    no_reparse_tree(target)
+    for copied in target.rglob('*'):
+        if copied.is_file():copied.chmod(copied.stat().st_mode | stat.S_IWUSR)
+
+
 def copy_tree(source, target):
     no_reparse_tree(source)
     def ignored(folder,names):
@@ -340,8 +346,7 @@ def copy_tree(source, target):
     # Reusable templates may carry Windows read-only attributes. Only these
     # owned copies are writable; rebasing and candidate symbol merging must
     # never attempt to replace a read-only destination inherited by copy2.
-    for copied in target.rglob('*'):
-        if copied.is_file():copied.chmod(copied.stat().st_mode | stat.S_IWUSR)
+    writable_owned_copy(target)
 
 
 def rebase_configuration(root, old_root, new_root, ip, private, *, old_ip, old_sql_port=None, old_password=None):
@@ -484,7 +489,7 @@ def upgrade_template(source, destination, registry):
     lease=registry.allocate(ROOT/'build/game-test-environments','template-revision')
     driver=NativeDriver(registry)
     with ManagedEnvironment(registry,lease,driver,ROOT/'build/game-test-receipts'):
-        output=lease.root/'template-output';shutil.copytree(source,output)
+        output=lease.root/'template-output';shutil.copytree(source,output);writable_owned_copy(output)
         driver.start_sql(lease);driver.private['app_user']=data['native_db_user']
         atomic_json(lease.root/'private/instance.json',driver.private)
         driver.restore(data,source/'backups')
@@ -500,7 +505,7 @@ def upgrade_template(source, destination, registry):
             remote='/var/opt/mssql/backup/gametest/revision_'+entry['file']
             driver.sql('BACKUP DATABASE '+identifier(entry['name'])+' TO DISK='+quoted(remote)+' WITH COPY_ONLY,CHECKSUM,INIT;')
             driver.sql('RESTORE VERIFYONLY FROM DISK='+quoted(remote)+' WITH CHECKSUM;')
-            target=output/'backups'/entry['file'];docker('cp',driver.private['container']+':'+remote,str(target))
+            target=output/'backups'/entry['file'];docker('cp',driver.private['container']+':'+remote,str(target),timeout=600)
             entry['sha256']=gt.sha256(target);entry['bytes']=target.stat().st_size
         secret=json.loads((output/'private/native.json').read_text(encoding='utf-8'))
         params={'port':data['native_sql_port'],'app_user':data['native_db_user'],'app_password':secret['native_db_password']}
