@@ -229,3 +229,12 @@ passed battle, using only the owned game window and its process audio. Failed,
 silent or black clips are deleted. Retained clips still need visual review for
 combat activity and framing before editing; a passed AI assertion alone does
 not guarantee a useful shot.
+
+## Release status after acceptance
+
+After a feature passes its complete acceptance scenarios and the matching runtime is deployed and
+published to the main branch, update its release status as part of the delivery. Remove obsolete
+Beta, testing or pending-release labels from the bilingual feature index and guides, and align the
+Mod channel (`stable`), Manager labels, version suffixes and package templates. Verify the installed
+and published metadata agree. A build, fixture or partial scenario alone does not promote a feature;
+other features retain their existing status until their own acceptance and publication are complete.

@@ -1,4 +1,4 @@
-# Extended room titles (Beta)
+# Extended room titles
 
 [简体中文](room-titles.zh-CN.md)
 
