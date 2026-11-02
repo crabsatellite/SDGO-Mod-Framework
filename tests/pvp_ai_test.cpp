@@ -15,6 +15,7 @@ uint32_t failBuild = 0;
 uint32_t failSetup = 0;
 int buildCalls = 0, setupCalls = 0, respawns = 0, refreshes = 0, stateRespawns = 0;
 int originals = 0;
+int nativeTeamCalls=0,nativeHumanCalls=0;
 bool revive = true;
 bool clearIdentityAtEnd = false;
 bool originalReturnedBeforeObserver = false;
@@ -26,11 +27,13 @@ const wchar_t* ModDirectory(SdgoMod*) {return modDirectory.c_str();}
 
 void Human(int slot, int team, int colour = 0) {
     SlotPilotId(room.data(), slot) = 10u + slot;
+    if(!Get<uint32_t>(room.data(),kRoomHost))Put<uint32_t>(room.data(),kRoomHost,10u+slot);
     room[kSlotInfo + slot * kSlotInfoStride + kSlotInfoTeamA] = static_cast<uint8_t>(team);
     room[kSlotInfo + slot * kSlotInfoStride + kSlotInfoColour] = static_cast<uint8_t>(colour ? colour : team);
 }
 uint8_t* Pilot(int slot) { return room.data() + kPilots + slot * kPilotStride; }
 uint8_t* Unit(int slot, int form = 0) { return Pilot(slot) + kPilotUnits + form * kUnitStride; }
+int __fastcall NativeTeamAssignment(void*,void*,uint8_t*) {++nativeTeamCalls;return 37;}
 void Title(const char* title) {
     const auto n = (std::min)(std::strlen(title), kRoomTitleMax);
     room[kRoomTitleLength] = static_cast<uint8_t>(n);
@@ -90,10 +93,14 @@ void __cdecl Observe(const SdgoPvpAiObserverEventV1* event, void*) {
 void Reset(int mode = 1) {
     std::fill(room.begin(), room.end(), uint8_t{});
     room[kRoomMode] = static_cast<uint8_t>(mode);
+    room[kRoomCapacity] = 8;
+    room[kTeamColour1]=1;room[kTeamColour1+1]=2;
     g_settings = Settings{};
     g_settings.gradeCost[3] = 455;
     g_settings.logRoom = 0;
     g_random = 1234567;
+    nativeTeamCalls=nativeHumanCalls=0;
+    g_assignHumanTeams=reinterpret_cast<AssignHumanTeamsFn>(&NativeTeamAssignment);
     g_api = &ai_test::api;
     g_mod = nullptr;
     g_battleAiServerModule = nullptr;
@@ -125,6 +132,20 @@ void Reset(int mode = 1) {
     clearIdentityAtEnd = false;
     originalReturnedBeforeObserver = false;
     observerEvents.clear();
+}
+int __fastcall NativeHumanSetup(void*,void*,uint8_t*,uint32_t*,uint32_t*,uint8_t) {++nativeHumanCalls;return 0;}
+int AddUsingNativePoolFixture(bool throughStart=false) {
+    struct Node {uint32_t* data;void* reserved;Node* next;};
+    alignas(4) uint8_t list[0x30]{};
+    auto* lock=reinterpret_cast<CRITICAL_SECTION*>(list+0x18);InitializeCriticalSection(lock);
+    std::vector<Node> nodes(npcIds.size()+2);
+    for(size_t i=0;i+1<nodes.size();++i)nodes[i].next=&nodes[i+1];
+    for(size_t i=0;i<npcIds.size();++i)nodes[i+1].data=&npcIds[i];
+    Put(list,4,nodes.data());Put(list,8,&nodes.back());Put<int>(list,0xC,static_cast<int>(npcIds.size()));
+    uint8_t* nativeList=list;g_aiNpcList=&nativeList;g_settings.levels[2]=npcIds;
+    if(throughStart)g_setupHumans=reinterpret_cast<SetupHumansFn>(&NativeHumanSetup);
+    const int result=throughStart ? SetupHumans(nullptr,nullptr,room.data(),nullptr,nullptr,0) : (AddPvpAi(room.data())?1:0);
+    g_aiNpcList=nullptr;DeleteCriticalSection(lock);return result;
 }
 }
 
@@ -197,10 +218,10 @@ int wmain(int argc,wchar_t** argv) {
     p = ParseTitle("!ai"); CHECK(p.enemies == kFill && p.allies == kFill);
     p = ParseTitle("!ai3 a1"); CHECK(p.enemies == 3 && p.allies == 1);
     p = ParseTitle("!ai0"); CHECK(p.enemies == 0 && p.allies == 0);
-    p = ParseTitle("!ai e2x a3 lv9"); CHECK(p.enemies == 0 && p.allies == 3 && p.level == 2);
-    p = ParseTitle("!ai4294967296"); CHECK(p.enemies == kSlotsPerTeam && p.allies == 0);
-    p = ParseTitle("!ai e99999999999999"); CHECK(p.enemies == kSlotsPerTeam);
-    p = ParseTitle("!ai a99999999999999"); CHECK(p.allies == kSlotsPerTeam);
+    p = ParseTitle("!ai e2x a3 lv9"); CHECK(!p.valid && p.enemies == 0 && p.allies == 3 && p.level == 2);
+    p = ParseTitle("!ai4294967296"); CHECK(!p.valid);
+    p = ParseTitle("!ai e99999999999999"); CHECK(!p.valid);
+    p = ParseTitle("!ai a99999999999999"); CHECK(!p.valid);
     SCENARIO("PvP AI and random commands compose in either order with scoped arguments");
     for(const char* title:{"!rand !ai3 a1 lv4","!ai3 a1 lv4 !rand","!rand !ai e3 a1 lv4","!AI e3 a1 LV4 !RaNd"}) {
         p=ParseTitle(title);CHECK(p.enabled && p.enemies==3 && p.allies==1 && p.level==4);
@@ -219,6 +240,115 @@ int wmain(int argc,wchar_t** argv) {
     CHECK(ParseIds("4294967296, 100") == (std::vector<uint32_t>{100}));
     CHECK(ParseIds("18446744073709551616100,101") == (std::vector<uint32_t>{101}));
     CHECK(ParseIds("").empty());
+
+    SCENARIO("single human random teams avoid the native negative pattern index without a phantom player");
+    for(uint8_t colour:{uint8_t{1},uint8_t{2}}) {
+        Reset();Human(6,2,3-colour);Title("!ai e7 a0");room[8]=1;
+        Put<uint32_t>(room.data(),kRoomPlayers,1);room[kTeamColour1]=colour;
+        Put<uint32_t>(room.data(),0x3CCF,0x11223344);Put<uint32_t>(room.data(),0x3CD3,0x55667788);
+        CHECK(AssignHumanTeams(nullptr,nullptr,room.data())==1 && nativeTeamCalls==0);
+        CHECK(SlotTeam(room.data(),6)==1 && room[kSlotInfo+6*kSlotInfoStride+kSlotInfoColour]==colour);
+        CHECK(Get<uint32_t>(room.data(),kRoomPlayers)==1 && SlotPilotId(room.data(),6)==16 && room[8]==1);
+        CHECK(Get<uint32_t>(room.data(),kLastRandomHumanCount)==1);
+        CHECK(Get<uint32_t>(room.data(),0x3CCF)==0x11223344 && Get<uint32_t>(room.data(),0x3CD3)==0x55667788);
+    }
+    for(int humans:{2,3,5}) {
+        Reset();Title("!ai enemy");room[8]=1;Put<uint32_t>(room.data(),kRoomPlayers,static_cast<uint32_t>(humans));
+        for(int i=0;i<humans;++i)Human(i,i%2+1);
+        const auto unchanged=room;
+        CHECK(AssignHumanTeams(nullptr,nullptr,room.data())==37 && nativeTeamCalls==1 && room==unchanged);
+    }
+    Reset();Human(0,2);Title("!ai enemy");Put<uint32_t>(room.data(),kRoomPlayers,1);
+    CHECK(AssignHumanTeams(nullptr,nullptr,room.data())==37 && SlotTeam(room.data(),0)==2);
+    for(const char* title:{"ordinary room","!ai0","!ai e0 a0"}) {
+        Reset();Human(0,2);Title(title);room[8]=1;Put<uint32_t>(room.data(),kRoomPlayers,1);
+        CHECK(AssignHumanTeams(nullptr,nullptr,room.data())==37 && nativeTeamCalls==1 && SlotTeam(room.data(),0)==2);
+    }
+    Reset();Human(0,1);Title("!ai enemy");room[8]=1;room[kTeamColour1]=0;Put<uint32_t>(room.data(),kRoomPlayers,1);
+    CHECK(AddUsingNativePoolFixture(true)==0x0FBE && nativeTeamCalls==0 && nativeHumanCalls==0);
+
+    SCENARIO("asymmetric host-relative AI populations preserve native human sides and occupied slots");
+    for(int mode:{1,3,6,7,9})for(uint8_t hostTeam:{uint8_t{1},uint8_t{2}})for(int humans:{1,3,4})for(uint8_t randomTeams:{uint8_t{0},uint8_t{1}}) {
+        Reset(mode);Title("!ai e* a0");
+        room[8]=randomTeams; // Native randomization has already resolved the human sides.
+        const int occupied[]={0,6,11,4};
+        for(int i=0;i<humans;++i)Human(occupied[i],hostTeam,static_cast<int>(3-hostTeam));
+        Put<uint32_t>(room.data(),kRoomPlayers,static_cast<uint32_t>(humans));
+        std::vector<std::vector<uint8_t>> before;
+        for(int i=0;i<humans;++i) {
+            const auto* info=room.data()+kSlotInfo+occupied[i]*kSlotInfoStride;
+            before.emplace_back(info,info+kSlotInfoStride);
+        }
+        const uint8_t enemyTeam=static_cast<uint8_t>(3-hostTeam);
+        CHECK(AddUsingNativePoolFixture());
+        const auto after=ViewRoom(room.data());
+        CHECK(after.hostTeam==hostTeam && after.humans[hostTeam]==humans && after.humans[enemyTeam]==0);
+        CHECK(after.ai[hostTeam]==0 && after.ai[enemyTeam]==8-humans);
+        CHECK(room[8]==randomTeams);
+        for(int i=0;i<humans;++i)CHECK(std::memcmp(before[i].data(),room.data()+kSlotInfo+occupied[i]*kSlotInfoStride,kSlotInfoStride)==0);
+        RecountBattle(room.data());
+        CHECK(room[kRoomTeamSize1]==(hostTeam==1 ? humans:8-humans));
+        CHECK(room[kRoomTeamSize2]==(hostTeam==2 ? humans:8-humans));
+        if(mode==3) {
+            CHECK(Get<uint32_t>(room.data(),hostTeam==1?kRoomPower1:kRoomPower2)==static_cast<uint32_t>(humans*1000));
+            CHECK(Get<uint32_t>(room.data(),enemyTeam==1?kRoomPower1:kRoomPower2)==static_cast<uint32_t>((8-humans)*1000));
+        }
+        if(mode==6) {
+            const int expected=humans==1 ? 160:humans==3 ? 120:80;
+            CHECK(Get<int32_t>(room.data(),kRoomGauge1)==expected && Get<int32_t>(room.data(),kRoomGauge2)==expected);
+        }
+    }
+    Reset();
+
+    SCENARIO("room fill and exact commands retain human choices on either host side");
+    for(const char* title:{"!ai","!ai fill","!ai e* a*"})
+      for(uint8_t hostTeam:{uint8_t{1},uint8_t{2}})
+      for(int allies=1;allies<=4;++allies)for(int enemies=0;enemies<=4;++enemies) {
+        Reset();Title(title);
+        for(int i=0;i<allies;++i)Human(i,hostTeam);
+        for(int i=0;i<enemies;++i)Human(6+i,3-hostTeam);
+        auto original=room;
+        CHECK(AddUsingNativePoolFixture());
+        const auto filled=ViewRoom(room.data());
+        CHECK(filled.hostTeam==hostTeam && filled.humans[hostTeam]==allies && filled.humans[3-hostTeam]==enemies);
+        CHECK(filled.ai[hostTeam]==4-allies && filled.ai[3-hostTeam]==4-enemies);
+        for(int i=0;i<kSlots;++i)if(SlotPilotId(original.data(),i))
+            CHECK(std::memcmp(original.data()+kSlotInfo+i*kSlotInfoStride,room.data()+kSlotInfo+i*kSlotInfoStride,kSlotInfoStride)==0);
+      }
+    for(uint8_t hostTeam:{uint8_t{1},uint8_t{2}}) {
+        Reset();Human(0,hostTeam);Human(6,3-hostTeam);Title("!ai e4 a2");
+        CHECK(AddUsingNativePoolFixture());
+        const auto exact=ViewRoom(room.data());
+        CHECK(exact.ai[hostTeam]==2 && exact.ai[3-hostTeam]==4);
+    }
+    Reset();
+
+    SCENARIO("invalid populations do not silently start with fewer AI and failed partial setup can retry");
+    Human(0,1);Title("!ai e8 a0");
+    auto originalHumanRoom=room;
+    CHECK(AddUsingNativePoolFixture(true)==0x0FBE);
+    CHECK(room==originalHumanRoom && buildCalls==0);
+    Reset();Human(0,1);Title("!ai e* a0");
+    const auto normalPool=npcIds;npcIds={100,101};failBuild=100;
+    originalHumanRoom=room;
+    CHECK(AddUsingNativePoolFixture(true)==0x0FBE);
+    CHECK(ViewRoom(room.data()).ai[1]==0 && ViewRoom(room.data()).ai[2]==0);
+    CHECK(std::memcmp(room.data()+kSlotInfo,originalHumanRoom.data()+kSlotInfo,kSlotInfoStride)==0);
+    failBuild=0;
+    CHECK(AddUsingNativePoolFixture(true)==0);
+    CHECK(ViewRoom(room.data()).ai[1]==0 && ViewRoom(room.data()).ai[2]==7);
+    npcIds=normalPool;
+    Reset();
+
+    SCENARIO("enemy-only fill respects the native two four and six player room limits");
+    for(uint8_t capacity:{uint8_t{2},uint8_t{4},uint8_t{6}}) {
+        Reset();Human(0,2);room[kRoomCapacity]=capacity;Title("!ai enemy");
+        CHECK(AddUsingNativePoolFixture());
+        CHECK(ViewRoom(room.data()).ai[1]==capacity-1 && ViewRoom(room.data()).ai[2]==0);
+    }
+    Reset();Human(0,1);room[kRoomCapacity]=0;Title("!ai enemy");
+    CHECK(!AddUsingNativePoolFixture() && buildCalls==0);
+    Reset();
 
     SCENARIO("room view, host team and spawn colours");
     Human(0, 2, 1); Human(1, 1, 2); Put(room.data(), kRoomHost, 10u); Title("!ai e2 a1");
@@ -284,19 +414,19 @@ int wmain(int argc,wchar_t** argv) {
     }
     CHECK(laterUnits.count(101) && laterUnits.count(102) && laterUnits.count(103));
 
-    SCENARIO("team capacity and human preservation");
+    SCENARIO("native storage capacity is separate from team identity and preserves humans");
     Reset(); for (int i = 0; i < 5; ++i) Human(i, 1);
     auto before = std::vector<uint8_t>(Pilot(0), Pilot(0) + kPilotStride);
-    CHECK(AddTeam(room.data(), 1, 100, {100}, {}) == 1);
+    CHECK(AddTeam(room.data(), 1, 100, {100}, {}) == 7);
     CHECK(SlotPilotId(room.data(), 5) & kAiPilotBit);
     CHECK(std::equal(before.begin(), before.end(), Pilot(0)));
-    CHECK(SlotPilotId(room.data(), 6) == 0);
+    CHECK(SlotPilotId(room.data(), 6) & kAiPilotBit);
 
     SCENARIO("server gauges use the HUD's shared scale, including asymmetric teams");
-    const int gauge[] = {0, 80, 80, 60, 80, 120, 160};
-    for (int n = 1; n <= 6; ++n) {
+    const int gauge[] = {0, 80, 80, 60, 80, 120, 160,160};
+    for (int n = 1; n <= 7; ++n) {
         Reset(6); for (int i = 0; i < n; ++i) Human(i, 1);
-        Human(6, 2); RecountBattle(room.data());
+        Human(11, 2); RecountBattle(room.data());
         CHECK(Get<int32_t>(room.data(), kRoomGauge1) == gauge[n]);
         CHECK(Get<int32_t>(room.data(), kRoomGauge2) == gauge[n]);
         CHECK(room[kRoomTeamSize1] == n && room[kRoomTeamSize2] == 1);

@@ -3,6 +3,11 @@
 默认复用本机从生产复制、数据库完全隔离的原生 `test`，不用 Docker。
 并发有冲突时复制 test 并配置独立端口和原生 SQL，完成后删除整个任务副本。
 普通测试绑定已有账号与机体；保留已有代码和有效结果，测试程序/数据库副本只留本地。
+
+对战人数回归可在 `prepare` 中组合 `--expected-ai 7 --ai-allies 0 --random-teams`，
+请求原生随机真人分队，并验证房主对面恰有 7 个 AI、本方没有 AI。
+省略 `--ai-allies` 时沿用原有的平衡测试布局；这两个参数描述本轮完整对战场景，不适用于页面或任务烟雾测试。
+可同时加 `--random-loadout` 验证随机机体和该人数布局组合，所有参数写入封存任务。
 流程、命令和数据维护见 [`sdgo-native-testing` guide](../skills/sdgo-native-testing/SKILL.md)。
 
 ## 无需登录的 FPS 参数验证

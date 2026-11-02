@@ -137,6 +137,8 @@ bool endObserved = false;
 std::vector<uint16_t> requestedModes;
 size_t modeIndex = 0;
 unsigned expectedAi = 3;
+unsigned expectedAllies=1,expectedEnemies=2;
+bool randomTeams=false;
 uint16_t RequestedMode() { return missionMode?missionMode:requestedModes.at(modeIndex); }
 struct MotionSample {
     uint32_t pilot, object, npc;
@@ -251,9 +253,15 @@ bool LoadPlan() {
     if (strlen(narrowNonce) > 8) return false;
     expectedAi = GetPrivateProfileIntW(L"run", L"expected_ai", 3, job.c_str());
     if (expectedAi < 1 || expectedAi > 7) return false;
+    expectedAllies=GetPrivateProfileIntW(L"run",L"ai_allies",expectedAi/2,job.c_str());
+    if(expectedAllies>=expectedAi)return false;
+    expectedEnemies=expectedAi-expectedAllies;
+    const auto randomTeamFlag=GetPrivateProfileIntW(L"run",L"random_teams",0,job.c_str());
+    if(randomTeamFlag>1)return false;
+    randomTeams=randomTeamFlag==1;
     randomLoadout=GetPrivateProfileIntW(L"run",L"random_loadout",0,job.c_str())!=0;
     if(randomLoadout && strlen(narrowNonce)!=4)return false;
-    if(sprintf_s(roomTitle,randomLoadout?"%s !ai e%u a%u !rand":"%s !ai e%u a%u",narrowNonce,(expectedAi+1)/2,expectedAi/2)<0)return false;
+    if(sprintf_s(roomTitle,randomLoadout?"%s !ai e%u a%u !rand":"%s !ai e%u a%u",narrowNonce,expectedEnemies,expectedAllies)<0)return false;
     if(missionMode) {
         expectedAi=GetPrivateProfileIntW(L"run",L"mission_ai_count",0,job.c_str());
         const auto level=GetPrivateProfileIntW(L"run",L"mission_ai_level",0,job.c_str());
@@ -690,7 +698,7 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
     context->Assert(snapshot.human_participant_count == 1, "the real room contains the authenticated test player");
     context->Assert(snapshot.ai_participant_count == expectedAi && snapshot.bot_count == expectedAi, "all server-provided AI participants spawned as native units");
     context->Assert(snapshot.unit_manager_player_count == 1 + expectedAi, "native player and HUD count includes the real player and every AI unit");
-    context->Assert(snapshot.local_team >= 1 && snapshot.local_team <= 2 && allies == expectedAi / 2 && enemies == (expectedAi + 1) / 2, "actual AI team placement matches the requested allies and enemies");
+    context->Assert(snapshot.local_team >= 1 && snapshot.local_team <= 2 && allies == expectedAllies && enemies == expectedEnemies, "actual AI team placement matches the requested allies and enemies relative to the authenticated host");
     std::set<uint32_t> pilotIds, objectIds;
     for (unsigned i = 0; i < snapshot.bot_count && i < 12; ++i) {
         const auto& bot = snapshot.bots[i];
@@ -1769,7 +1777,7 @@ SDGO_MOD_ENTRY {
         roomTitle,
         static_cast<uint16_t>(loaded ? (missionMode?missionMode:RequestedMode()) : 1),
         0,
-        passwordIsMd5};
+        passwordIsMd5,randomTeams};
     if (!loaded || !actions.Bind(api, mod, config) ||
         (!missionMode && !channels.Bind(api, mod, &actions)) ||
         (missionMode && !mission.Bind(api,mod,&actions)) ||

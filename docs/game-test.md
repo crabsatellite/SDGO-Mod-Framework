@@ -1,5 +1,13 @@
 # Native GameTest
 
+For asymmetric population regression, `prepare` accepts
+`--expected-ai 7 --ai-allies 0 --random-teams`: request native human team
+randomization and verify seven opponents with no allied AI relative to the host.
+Without `--ai-allies`, the existing balanced test layout remains the default.
+These are full PvP scenario options; page/mission smoke plans reject them.
+Combine with `--random-loadout` to exercise owned units and team placement in the
+same sealed native scenario.
+
 ## FPS cap without account login
 
 Build `game_test_client`, `fps_limit`, `sdgo_core`, `d3d9_shim` and `sdgo_data`,

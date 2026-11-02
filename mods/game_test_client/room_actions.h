@@ -369,7 +369,7 @@ public:
                     MaxPlayers(config_.room_mode),
                     mapSelection,
                     map,
-                    0,
+                    config_.random_teams ? 1:0,
                     1,
                     4,
                     0,

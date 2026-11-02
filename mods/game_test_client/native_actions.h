@@ -84,6 +84,7 @@ public:
         uint16_t room_mode;
         uint32_t map_id;
         bool password_is_md5 = false;
+        bool random_teams=false;
     };
 
     bool Bind(const SdgoApi* api, SdgoMod* mod, const Config& config)

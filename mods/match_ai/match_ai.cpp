@@ -630,6 +630,20 @@ namespace
         int spawned = 0;
     };
 
+    uint8_t* AiStartPoint(void* um,int colour,int index)
+    {
+        if((colour!=1 && colour!=2) || index<0 || index>=kPlayerSlots)return nullptr;
+        if(auto* exact=g_game.findStartPoint(um,colour,index))return exact;
+        // Asymmetric teams may outnumber a map's start points. Reuse only
+        // existing native points, cycling over them instead of stacking every
+        // overflow participant on point zero. No invented map coordinates.
+        uint8_t* points[kPlayerSlots]{};
+        int count=0;
+        for(int candidate=0;candidate<kPlayerSlots;++candidate)
+            if(auto* point=g_game.findStartPoint(um,colour,candidate))points[count++]=point;
+        return count ? points[index%count]:nullptr;
+    }
+
     void SpawnAiPlayer(SpawnContext& c, uint8_t* record, int k)
     {
         uint32_t serverId = *reinterpret_cast<uint32_t*>(record + kRecordServerId);
@@ -637,9 +651,7 @@ namespace
         int colour = record[kRecordColour];
         uint32_t npcData = *reinterpret_cast<uint32_t*>(record + kRecordNpcData);
         int index = (colour == 1 || colour == 2) ? c.nextIndex[colour]++ : k;
-        uint8_t* start = g_game.findStartPoint(c.um, colour, index);
-        if (!start)
-            start = g_game.findStartPoint(c.um, colour, 0);
+        uint8_t* start = AiStartPoint(c.um,colour,index);
         if (!start) {
             g_api->Log(g_mod, SDGO_LOG_ERROR, "AI player %08lX: the map has no colour %d start point",
                        static_cast<unsigned long>(serverId), colour);
