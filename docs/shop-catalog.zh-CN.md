@@ -50,3 +50,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -Target "D:\Se
 ```
 
 卸载先下架本 catalog 的商品，再备份移出 Mod；数据库不可连接时保留模块供恢复。共享框架和其他模块保留。
+
+## 中文名称与说明
+
+新增商品必须填写中文名称，销售选项也必须有中文。旧配置缺中文时先补齐再修改或发布；已有数据不会被重置。
+客户端的商品、说明与机体预览汉化由独立的 [商城汉化 Mod](shop-localization.zh-CN.md) 提供，配套内容通过客户端 Git 更新同步。

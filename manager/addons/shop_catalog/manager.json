@@ -7,8 +7,8 @@
     "world"
   ],
   "provider": "shop",
-  "description": "服主商城目录，由配套配置提供内容。",
+  "description": "在 Mod Manager 管理商城商品，并独立更新中文检索索引和组合筛选。",
   "settings": [],
   "presentation": "configurable",
-  "mechanism": "商城配置由 Manager 发布，WorldServer 启动不应用 SQL，也不读取服主凭据。原生购买、计费和交付仍由游戏处理。"
+  "mechanism": "Manager 是唯一发布入口：商品应用与检索更新分开执行。检索助手只更新带归属记录的中文别名、备份和检索存储过程，未知原版或外部修改拒绝覆盖；不改商品、定价、库存或钱包，无需重启 World。"
 }

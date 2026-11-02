@@ -7,8 +7,16 @@ using System.Text;
 
 namespace Sdgo.Shop
 {
+    public sealed class SearchIndexResult
+    {
+        public bool installed { get; set; }
+        public int name_count { get; set; }
+        public string revision { get; set; }
+    }
     public sealed class ShopService : IDisposable
     {
+        const long SearchIndexMaximumBytes=8L*1024*1024;
+        const long SearchResultMaximumBytes=64L*1024;
         public readonly string DirectoryPath;
         public Settings Settings;
         public Catalog Catalog;
@@ -74,6 +82,88 @@ namespace Sdgo.Shop
             var b=new StringBuilder("\"");int slashes=0;
             foreach(char c in value) {if(c=='\\') {slashes++;continue;} if(c=='\"') b.Append('\\',slashes*2+1);else b.Append('\\',slashes);slashes=0;b.Append(c);}
             b.Append('\\',slashes*2);return b.Append('"').ToString();
+        }
+        static string RequiredFile(string root,string relative,string label,long maximum=0,string maximumText="")
+        {
+            if(String.IsNullOrWhiteSpace(root)) throw new InvalidOperationException("请先在商城设置中选择"+label+"所在目录。");
+            string basePath=Path.GetFullPath(root);
+            string file=Path.GetFullPath(Path.Combine(basePath,relative));
+            string prefix=basePath.EndsWith(Path.DirectorySeparatorChar.ToString())||
+                basePath.EndsWith(Path.AltDirectorySeparatorChar.ToString())?basePath:basePath+Path.DirectorySeparatorChar;
+            if(!file.StartsWith(prefix,StringComparison.OrdinalIgnoreCase)||!File.Exists(file))
+                throw new InvalidOperationException("所选目录缺少"+label+"。");
+            var info=new FileInfo(file);
+            if((info.Attributes&FileAttributes.ReparsePoint)!=0)
+                throw new InvalidOperationException(label+"不能使用链接文件。");
+            if(info.Length<=0) throw new InvalidOperationException(label+"为空。");
+            if(maximum>0&&info.Length>maximum)
+                throw new InvalidOperationException(label+"超过"+(maximumText==""?"大小限制":maximumText)+"，未执行中文检索更新。");
+            return file;
+        }
+        static SearchIndexResult ReadSearchIndexResult(string file)
+        {
+            string label="中文检索更新回执";
+            string resultFile=RequiredFile(Path.GetDirectoryName(file),Path.GetFileName(file),label,SearchResultMaximumBytes);
+            Dictionary<string,object> raw;
+            try {raw=Model.Json().Deserialize<Dictionary<string,object>>(File.ReadAllText(resultFile,Encoding.UTF8));}
+            catch {throw new InvalidOperationException(label+"无效，服务器效果未确认。");}
+            object installedValue,countValue,revisionValue;
+            if(raw==null||!raw.TryGetValue("installed",out installedValue)||!(installedValue is bool)||
+                !raw.TryGetValue("name_count",out countValue))
+                throw new InvalidOperationException(label+"字段不完整，服务器效果未确认。");
+            long count;
+            try
+            {
+                if(countValue is bool||countValue is string) throw new InvalidCastException();
+                decimal number=Convert.ToDecimal(countValue);
+                if(number!=Decimal.Truncate(number)) throw new InvalidCastException();
+                count=Convert.ToInt64(number);
+            }
+            catch {throw new InvalidOperationException(label+"中的名称数量无效，服务器效果未确认。");}
+            if(count<0||count>1000000) throw new InvalidOperationException(label+"中的名称数量越界，服务器效果未确认。");
+            string revision="";
+            if(raw.TryGetValue("revision",out revisionValue)&&revisionValue!=null)
+            {
+                revision=revisionValue as string;
+                if(revision==null||revision.Length>128||revision.IndexOfAny(new[]{'\r','\n','\0'})>=0)
+                    throw new InvalidOperationException(label+"中的版本无效，服务器效果未确认。");
+            }
+            var result=new SearchIndexResult {installed=(bool)installedValue,name_count=(int)count,revision=revision};
+            if(!result.installed) throw new InvalidOperationException("服务器未确认中文检索已安装。");
+            return result;
+        }
+        public SearchIndexResult SyncSearchIndex()
+        {
+            Unchanged();
+            if(Demo) return new SearchIndexResult {installed=false,name_count=0,revision=""};
+            string host=RequiredFile(Settings.WorldDirectory,"WorldServer.ini","WorldServer.ini");
+            string helper=RequiredFile(Settings.WorldDirectory,Path.Combine("sdgo","mods","shop_catalog","shop_catalog_apply.exe"),"商城服务器组件");
+            RequiredFile(Settings.ClientDirectory,"GOnline.exe","游戏客户端");
+            RequiredFile(Settings.ClientDirectory,Path.Combine("sdgo","mods","shop_localization","shop_localization.dll"),"商城汉化 Mod");
+            string searchIndex=RequiredFile(Settings.ClientDirectory,Path.Combine("sdgo","mods","shop_localization","zh-CN.ini"),"商城汉化词典",SearchIndexMaximumBytes," 8 MB");
+            string displayProfilePath=Path.Combine(Path.GetFullPath(Settings.ClientDirectory),"sdgo","mods","shop_labels","display.ini");
+            string displayProfile=File.Exists(displayProfilePath)?
+                RequiredFile(Settings.ClientDirectory,Path.Combine("sdgo","mods","shop_labels","display.ini"),"商城显示配置",SearchIndexMaximumBytes," 8 MB"):null;
+            Probe(DirectoryPath);
+            string run=Path.Combine(DirectoryPath,"search-index-history",DateTime.UtcNow.ToString("yyyyMMddTHHmmssfffffff")+"-"+Guid.NewGuid().ToString("N").Substring(0,8));
+            Directory.CreateDirectory(run);
+            string arguments="--host-ini "+QuoteArg(host)+" --search-index "+QuoteArg(searchIndex)+" --output "+QuoteArg(run);
+            if(displayProfile!=null) arguments+=" --display-profile "+QuoteArg(displayProfile);
+            var start=new ProcessStartInfo(helper) {
+                UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,
+                StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8,Arguments=arguments
+            };
+            int exit;
+            using(var process=Process.Start(start))
+            {
+                if(process==null) throw new InvalidOperationException("中文检索更新工具未启动。");
+                var stdout=process.StandardOutput.ReadToEndAsync();var stderr=process.StandardError.ReadToEndAsync();
+                if(!process.WaitForExit(60000))
+                    throw new InvalidOperationException("中文检索更新工具仍在处理，结果尚未确认。请稍后检查服务器状态，勿重复执行。记录目录："+run);
+                stdout.Wait();stderr.Wait();exit=process.ExitCode;
+            }
+            if(exit!=0) throw new InvalidOperationException("服务器未返回可验证的中文检索更新结果。请检查记录目录："+run);
+            return ReadSearchIndexResult(Path.Combine(run,"search-index-result.json"));
         }
         public void Apply()
         {

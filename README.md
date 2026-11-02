@@ -47,6 +47,8 @@ Beta and Experimental labels indicate release channels.
 | Daily double rewards (Beta) <!-- catalog: `daily_rewards` --> | Double battle GB and EXP in a daily window (default 18:00–22:00) | [Use](docs/daily-rewards.md) |
 | Storage claim all (Beta) <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation | [Use](docs/storage-claim.md) |
 
+| Chinese shop localization (Beta) <!-- catalog: `shop_localization` --> | Translate shop text and shared shop/capsule unit preview titles | [Guide](docs/shop-localization.md) |
+
 <!-- /mod-category:gameplay -->
 
 <a id="long-room-title-commands"></a>

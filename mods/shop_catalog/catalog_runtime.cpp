@@ -1,19 +1,31 @@
 #include <windows.h>
+#include <bcrypt.h>
 #include <sql.h>
 #include <sqlext.h>
 
 #include <algorithm>
+#include <array>
+#include <cstdint>
 #include <cwchar>
+#include <limits>
+#include <map>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "../shop_localization/dictionary.h"
 #include "catalog_contract.h"
 #include "catalog_runtime.h"
+#include "search_sql.h"
 
 namespace sdgo::shop_catalog {
 namespace {
+constexpr std::uint64_t kMaximumSearchIndexBytes = 8ull * 1024 * 1024;
+constexpr char kOriginalSearchDefinitionHash[] =
+    "595974c93de41196927d7cc665d6154a9932713182d0c1824246d57d579a43b6";
+
 bool Success(SQLRETURN value) { return value == SQL_SUCCESS || value == SQL_SUCCESS_WITH_INFO; }
 std::wstring Absolute(const std::wstring& path)
 {
@@ -29,6 +41,92 @@ std::wstring Value(const std::wstring& file, const wchar_t* section, const wchar
     const DWORD count = GetPrivateProfileStringW(section, key, fallback, text, 2048, file.c_str());
     if (count >= 2047) throw std::runtime_error("INI value too long");
     return text;
+}
+std::vector<std::uint8_t> ReadBytes(
+    const std::wstring& path, std::uint64_t maximum, const char* label)
+{
+    WIN32_FILE_ATTRIBUTE_DATA attributes = {};
+    if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attributes) ||
+        (attributes.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
+        throw std::runtime_error(std::string(label) + " missing or is not a regular file");
+    ULARGE_INTEGER size = {};
+    size.HighPart = attributes.nFileSizeHigh;
+    size.LowPart = attributes.nFileSizeLow;
+    if (!size.QuadPart || size.QuadPart > maximum ||
+        size.QuadPart > static_cast<std::uint64_t>(std::numeric_limits<DWORD>::max()))
+        throw std::runtime_error(std::string(label) + " size outside supported range");
+    HANDLE file = CreateFileW(
+        path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        throw std::runtime_error(std::string("cannot open ") + label);
+    std::vector<std::uint8_t> result(static_cast<std::size_t>(size.QuadPart));
+    DWORD read = 0;
+    const bool ok = ReadFile(
+        file, result.data(), static_cast<DWORD>(result.size()), &read, nullptr) &&
+        read == result.size();
+    CloseHandle(file);
+    if (!ok) throw std::runtime_error(std::string("incomplete ") + label + " read");
+    return result;
+}
+std::wstring Utf8(const std::vector<std::uint8_t>& input)
+{
+    const char* data = reinterpret_cast<const char*>(input.data());
+    int size = static_cast<int>(input.size());
+    if (size >= 3 && static_cast<std::uint8_t>(data[0]) == 0xEF &&
+        static_cast<std::uint8_t>(data[1]) == 0xBB &&
+        static_cast<std::uint8_t>(data[2]) == 0xBF) {
+        data += 3;
+        size -= 3;
+    }
+    if (!size) throw std::runtime_error("empty UTF-8 shop search dictionary");
+    const int units = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, data, size, nullptr, 0);
+    if (units <= 0) throw std::runtime_error("invalid UTF-8 shop search dictionary");
+    std::wstring result(static_cast<std::size_t>(units), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, data, size, result.data(), units) != units)
+        throw std::runtime_error("incomplete UTF-8 shop search dictionary conversion");
+    return result;
+}
+std::string Utf8(const std::wstring& input)
+{
+    if (input.empty()) return {};
+    const int size = WideCharToMultiByte(
+        CP_UTF8, WC_ERR_INVALID_CHARS, input.data(), static_cast<int>(input.size()),
+        nullptr, 0, nullptr, nullptr);
+    if (size <= 0) throw std::runtime_error("invalid UTF-16 SQL definition");
+    std::string result(static_cast<std::size_t>(size), '\0');
+    if (WideCharToMultiByte(
+            CP_UTF8, WC_ERR_INVALID_CHARS, input.data(), static_cast<int>(input.size()),
+            result.data(), size, nullptr, nullptr) != size)
+        throw std::runtime_error("incomplete UTF-8 SQL definition conversion");
+    return result;
+}
+std::string Sha256(const void* data, std::size_t size)
+{
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    std::array<std::uint8_t, 32> digest = {};
+    if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(
+            &algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0)))
+        throw std::runtime_error("SHA256 provider unavailable");
+    const NTSTATUS status = BCryptHash(
+        algorithm, nullptr, 0,
+        const_cast<PUCHAR>(reinterpret_cast<const UCHAR*>(data)),
+        static_cast<ULONG>(size), digest.data(),
+        static_cast<ULONG>(digest.size()));
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+    if (!BCRYPT_SUCCESS(status)) throw std::runtime_error("SHA256 failed");
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string result;
+    result.reserve(digest.size() * 2);
+    for (const auto value : digest) {
+        result.push_back(hex[value >> 4]);
+        result.push_back(hex[value & 0x0F]);
+    }
+    return result;
+}
+std::wstring WidenAscii(const std::string& value)
+{
+    return {value.begin(), value.end()};
 }
 int Integer(const std::wstring& file, const wchar_t* section, const wchar_t* key, int fallback,
             int minimum, int maximum)
@@ -156,6 +254,14 @@ public:
             throw std::runtime_error(utf8);
         }
     }
+    void Complete()
+    {
+        for (;;) {
+            const SQLRETURN result = SQLMoreResults(statement);
+            if (result == SQL_NO_DATA) return;
+            if (!Success(result)) throw std::runtime_error("SQL shop search batch did not complete");
+        }
+    }
     int Number(int column)
     {
         SQLINTEGER number = 0; SQLLEN length = 0;
@@ -169,6 +275,27 @@ public:
         if (!Success(SQLGetData(statement, static_cast<SQLUSMALLINT>(column), SQL_C_WCHAR, text, sizeof(text), &length)) || length == SQL_NULL_DATA || length >= sizeof(text))
             throw std::runtime_error("invalid SQL Unicode label result");
         return text;
+    }
+    std::wstring LongString(int column)
+    {
+        std::wstring result;
+        for (;;) {
+            wchar_t text[2048] = {};
+            SQLLEN length = 0;
+            const SQLRETURN status = SQLGetData(
+                statement, static_cast<SQLUSMALLINT>(column), SQL_C_WCHAR,
+                text, sizeof(text), &length);
+            if (status == SQL_NO_DATA && !result.empty()) break;
+            if (!Success(status) || length == SQL_NULL_DATA)
+                throw std::runtime_error("invalid SQL long Unicode result");
+            const std::size_t units = wcsnlen_s(text, std::size(text));
+            result.append(text, units);
+            if (result.size() > 1024 * 1024)
+                throw std::runtime_error("SQL definition exceeds supported size");
+            if (status == SQL_SUCCESS) break;
+        }
+        if (result.empty()) throw std::runtime_error("empty SQL definition");
+        return result;
     }
 };
 void Metadata(Database& game, Product& product)
@@ -196,7 +323,83 @@ void WriteUnicode(const std::wstring& path, const std::wstring& text)
     CloseHandle(file);
     if (!ok) throw std::runtime_error("incomplete generated Unicode profile");
 }
+void WriteUtf8(const std::wstring& path, const std::string& text)
+{
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) throw std::runtime_error("cannot write shop search result");
+    DWORD written = 0;
+    const bool ok = text.size() <= std::numeric_limits<DWORD>::max() &&
+                    WriteFile(file, text.data(), static_cast<DWORD>(text.size()), &written, nullptr) &&
+                    written == text.size() && FlushFileBuffers(file);
+    CloseHandle(file);
+    if (!ok) throw std::runtime_error("incomplete shop search result");
+}
+bool HasChinese(const std::wstring& text)
+{
+    return std::any_of(text.begin(), text.end(), [](wchar_t value) {
+        return (value >= 0x3400 && value <= 0x9FFF) ||
+               (value >= 0xF900 && value <= 0xFAFF);
+    });
+}
+std::vector<sdgo::shop_search::Alias> ParseAliases(const std::wstring& text)
+{
+    const auto dictionary = sdgo::shop_localization::Parse(text);
+    std::vector<sdgo::shop_search::Alias> result;
+    for (const auto& entry : dictionary) {
+        if (entry.second.kind != sdgo::shop_localization::Kind::Name ||
+            entry.first.rfind(L"@product:", 0) != 0)
+            continue;
+        const std::size_t separator = entry.first.find(L':', 9);
+        if (separator == std::wstring::npos || separator == 9 ||
+            separator + 1 == entry.first.size())
+            throw std::runtime_error("invalid product-scoped shop search alias");
+        const std::wstring productText = entry.first.substr(9, separator - 9);
+        if (!std::all_of(productText.begin(), productText.end(), [](wchar_t value) {
+                return value >= L'0' && value <= L'9';
+            }))
+            throw std::runtime_error("invalid product id in shop search alias");
+        wchar_t* end = nullptr;
+        const unsigned long long product = _wcstoui64(productText.c_str(), &end, 10);
+        if (!end || *end || !product ||
+            product > static_cast<unsigned long long>(std::numeric_limits<std::int32_t>::max()))
+            throw std::runtime_error("product id outside shop search range");
+        const std::wstring original = entry.first.substr(separator + 1);
+        if (original.size() > 512 || original.find_first_of(L"\r\n\0") != std::wstring::npos ||
+            entry.second.text.size() > 512 ||
+            entry.second.text.find_first_of(L"\r\n\0") != std::wstring::npos)
+            throw std::runtime_error("shop search alias exceeds 512 UTF-16 units or contains a line break");
+        // Model-code translations such as FAZZ or GN-XIII add no Chinese
+        // search value. The native original name remains searchable.
+        if (!HasChinese(entry.second.text))
+            continue;
+        result.push_back({
+            static_cast<std::uint32_t>(product), original, entry.second.text});
+    }
+    if (result.empty()) throw std::runtime_error("shop search dictionary has no product aliases");
+    std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
+        if (left.product != right.product) return left.product < right.product;
+        if (left.original != right.original) return left.original < right.original;
+        return left.name < right.name;
+    });
+    std::vector<sdgo::shop_search::Alias> normalized;
+    for (auto& alias : result) {
+        if (!normalized.empty() && normalized.back().product == alias.product &&
+            normalized.back().original == alias.original) {
+            if (normalized.back().name != alias.name)
+                throw std::runtime_error("conflicting shop search alias for product and original name");
+            continue;
+        }
+        normalized.push_back(std::move(alias));
+    }
+    return normalized;
+}
 } // namespace
+
+std::vector<sdgo::shop_search::Alias> ParseSearchAliases(
+    const std::wstring& dictionaryText)
+{
+    return ParseAliases(dictionaryText);
+}
 
 bool Apply(const std::wstring& hostIni, const std::wstring& catalogIni,
            const std::wstring& outputDirectory, bool disable, LogFn log)
@@ -275,6 +478,114 @@ bool Apply(const std::wstring& hostIni, const std::wstring& catalogIni,
         MultiByteToWideChar(CP_UTF8, 0, error.what(), -1, decoded, 2048);
         const std::wstring text = decoded;
         log(true, text + (committed ? L"; previous client overrides are guarded by exact business fields" : L"; transaction not committed"));
+        return false;
+    }
+}
+
+bool ApplySearchIndex(
+    const std::wstring& hostIni, const std::wstring& dictionary,
+    const std::wstring& displayProfile, const std::wstring& outputDirectory,
+    LogFn log)
+{
+    std::wstring resultFile;
+    try {
+        const std::wstring hostFile = Absolute(hostIni);
+        if (GetFileAttributesW(hostFile.c_str()) == INVALID_FILE_ATTRIBUTES)
+            throw std::runtime_error("host database INI missing; no connection attempted");
+        const std::wstring dictionaryFile = Absolute(dictionary);
+        const std::wstring output = Absolute(outputDirectory);
+        resultFile = output + L"\\search-index-result.json";
+        DeleteFileW(resultFile.c_str());
+        const auto bytes = ReadBytes(
+            dictionaryFile, kMaximumSearchIndexBytes, "shop search dictionary");
+        const std::wstring revision = WidenAscii(Sha256(bytes.data(), bytes.size()));
+        auto aliases = ParseAliases(Utf8(bytes));
+        if (!displayProfile.empty()) {
+            // The profile is deliberately not a source of draft aliases. It is
+            // only an optional future source after exact server-field readback.
+            ReadBytes(
+                Absolute(displayProfile), kMaximumSearchIndexBytes,
+                "published shop display profile");
+        }
+
+        Database billing(hostFile, L"DB StoreBilling");
+        billing.Execute(
+            L"SELECT OBJECT_DEFINITION(OBJECT_ID(N'dbo.sp_StoreItemsList',N'P')),"
+            L"CASE WHEN OBJECT_ID(N'dbo.sdgo_ShopSearchState',N'U') IS NULL THEN 0 ELSE 1 END");
+        if (!Success(SQLFetch(billing.statement)))
+            throw std::runtime_error("native shop search definition unavailable");
+        const std::wstring currentDefinition = billing.LongString(1);
+        const bool hasState = billing.Number(2) != 0;
+        if (SQLFetch(billing.statement) != SQL_NO_DATA)
+            throw std::runtime_error("ambiguous native shop search definition");
+        if (hasState) {
+            billing.Execute(
+                L"SELECT InstalledDefinition FROM dbo.sdgo_ShopSearchState "
+                L"WHERE ObjectName=N'dbo.sp_StoreItemsList'");
+            if (!Success(SQLFetch(billing.statement)))
+                throw std::runtime_error("shop search ownership state incomplete");
+            const std::wstring installedDefinition = billing.LongString(1);
+            if (SQLFetch(billing.statement) != SQL_NO_DATA ||
+                installedDefinition != currentDefinition)
+                throw std::runtime_error("owned shop search procedure has an external edit");
+        } else {
+            const std::string originalUtf8 = Utf8(currentDefinition);
+            if (Sha256(originalUtf8.data(), originalUtf8.size()) !=
+                kOriginalSearchDefinitionHash)
+                throw std::runtime_error("unsupported native shop search procedure; no changes made");
+        }
+
+        // Only aliases whose exact product/name pair is currently published can
+        // affect search. This drops event placeholders and stale dictionary rows
+        // without changing products or importing a catalog draft.
+        std::set<std::uint32_t> currentProducts;
+        billing.Execute(
+            L"SELECT DISTINCT f_productid FROM dbo.tbls_StoreItems "
+            L"WHERE f_display='1'");
+        for (;;) {
+            const SQLRETURN fetched = SQLFetch(billing.statement);
+            if (fetched == SQL_NO_DATA) break;
+            if (!Success(fetched))
+                throw std::runtime_error("cannot read current shop product ids");
+            const int product = billing.Number(1);
+            if (product > 0) currentProducts.insert(static_cast<std::uint32_t>(product));
+        }
+        aliases.erase(
+            std::remove_if(aliases.begin(), aliases.end(), [&](const auto& alias) {
+                return currentProducts.find(alias.product) == currentProducts.end();
+            }),
+            aliases.end());
+        if (aliases.empty())
+            throw std::runtime_error("no dictionary aliases match current published shop products");
+
+        billing.Execute(
+            sdgo::shop_search::BuildInstallSql(
+                aliases, currentDefinition, revision));
+        billing.Complete();
+        billing.Execute(
+            L"SELECT COUNT(*) FROM dbo.sdgo_ShopSearchAliases");
+        if (!Success(SQLFetch(billing.statement)))
+            throw std::runtime_error("shop search alias readback unavailable");
+        const int installedAliases = billing.Number(1);
+        if (installedAliases <= 0 ||
+            SQLFetch(billing.statement) != SQL_NO_DATA)
+            throw std::runtime_error("shop search alias readback invalid");
+
+        const std::string result =
+            "{\"installed\":true,\"name_count\":" +
+            std::to_string(installedAliases) + ",\"revision\":\"" +
+            Utf8(revision) + "\"}\n";
+        WriteUtf8(resultFile, result);
+        log(
+            false, L"Chinese shop search installed for " +
+                       std::to_wstring(installedAliases) +
+                       L" current product aliases");
+        return true;
+    } catch (const std::exception& error) {
+        if (!resultFile.empty()) DeleteFileW(resultFile.c_str());
+        wchar_t decoded[2048] = {};
+        MultiByteToWideChar(CP_UTF8, 0, error.what(), -1, decoded, 2048);
+        log(true, std::wstring(decoded) + L"; search index not confirmed");
         return false;
     }
 }

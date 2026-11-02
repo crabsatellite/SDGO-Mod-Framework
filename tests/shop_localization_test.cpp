@@ -55,6 +55,9 @@ Code MakeCode(bool copy)
 void* Symbol(SdgoMod*, const char* name)
 {
     if (g_mode == 5) return nullptr;
+    if (!strcmp(name,"shop_localization.search.resource_to_string") || !strcmp(name,"shop_localization.assign")) return reinterpret_cast<void*>(&NativeAssign);
+    if (!strcmp(name,"shop_localization.search.edit_text")) return reinterpret_cast<void*>(&NativeAssign);
+    if (!strcmp(name,"shop_localization.search.call.submit_convert") || !strcmp(name,"shop_localization.search.call.page_convert") || !strcmp(name,"shop_localization.search.call.rank_all") || !strcmp(name,"shop_localization.search.call.payment_all")) return g_outside.site;
     for (const auto& s : kSites) {
         if (strcmp(s.name,name)) continue;
         if (!strcmp(s.name, "shop_localization.call.006EF404")) return g_preview.site;
@@ -66,6 +69,7 @@ int Hook(SdgoMod*, const char* name, void* detour, void** original)
 {
     if (!strcmp(name,"shop_localization.assign")) {g_assign=reinterpret_cast<AssignHook>(detour);*original=reinterpret_cast<void*>(&NativeAssign);SetCall(g_normal,detour);SetCall(g_preview,detour);SetCall(g_option,detour);SetCall(g_outside,detour);}
     else if (!strcmp(name,"shop_localization.copy")) {g_copy=reinterpret_cast<CopyHook>(detour);*original=reinterpret_cast<void*>(&NativeCopy);SetCall(g_copyCode,detour);}
+    else if (!strcmp(name,"shop_localization.search.submit") || !strcmp(name,"shop_localization.search.wide_to_cp") || !strcmp(name,"shop_localization.search.resource_to_string")) {*original=reinterpret_cast<void*>(&NativeAssign);++g_hooks;return 1;}
     else return 0;
     ++g_hooks;return 1;
 }
@@ -100,8 +104,23 @@ int wmain(int argc,wchar_t** argv)
         SdgoApi api{};api.size=sizeof(api);api.version=1;api.Symbol=Symbol;api.HookCode=Hook;api.SettingInt=Setting;api.ModDirectory=Directory;api.Log=Log;
         int result=load?load(&api,nullptr):0;
         if(g_mode==4||g_mode==5) {Check(!result&&g_hooks==0,"invalid dictionary or unverified caller refuses before installing hooks");return 0;}
-        Check(result&&g_hooks==2,"actual DLL loaded, converter/populator hooks not taken from shop_labels");
+        Check(result&&g_hooks==5,"actual DLL loaded with scoped search hooks; converter/populator hooks not taken from shop_labels");
+        using Service=uint32_t(__cdecl*)(uint32_t,uint32_t,const wchar_t*,uint32_t,wchar_t*,uint32_t);
+        const auto service=reinterpret_cast<Service>(GetProcAddress(dll,"SdgoLocalizationLookupV1"));
+        Check(service!=nullptr,"optional localization C ABI is exported by the actual DLL");
+        wchar_t shared[128];std::fill(std::begin(shared),std::end(shared),L'X');
+        if(g_mode!=6) {
+            const auto required=service(1,10001,L"GUNDAM",6,nullptr,0);
+            Check(required==(g_mode==1?0U:3U),"name service follows the existing name switch");
+            if(required) {
+                Check(service(1,10001,L"GUNDAM",6,shared,2)==3&&shared[0]==L'X',"undersized C ABI output remains untouched");
+                Check(service(1,10001,L"GUNDAM",6,shared,128)==3&&!wcscmp(shared,L"高达"),"caller-owned C ABI output receives the complete translation");
+            }
+            Check(service(4,0,L"GUNDAM",6,shared,128)==0&&service(1,0,nullptr,1,shared,128)==0,"invalid C ABI kind or source refuses safely");
+        }
         if(g_mode==6) {
+            Check(service(1,10001,L"Gundam",6,shared,128)>0&&!wcscmp(shared,L"高达"),"stable UnitID resolves independently of the English alias casing");
+            Check(service(2,2220008,L"unknown reward alias",20,shared,128)>0&&wcsstr(shared,L"200"),"stable ItemID resolves reward names without rewriting quantity");
             Destination actual;Call(g_normal,actual,L"Unknown custom host product");Check(actual.text==L"Unknown custom host product","complete production dictionary loads and preserves unknown custom text");
             Call(g_preview,actual,L"BUILD STRIKE GUNDAM (ENHANCED BEAM RIFLE EQUIP)");Check(actual.text==L"创世强袭高达（强化光束步枪装备）","shared preview leaf translates the reported shop blueprint title");
             Call(g_preview,actual,L"BUILD STRIKE GUNDAM (ENHANCED BEAM RIFLE)");Check(actual.text==L"创世强袭高达（强化光束步枪装备）","shared preview translates the alternate native blueprint title spelling");

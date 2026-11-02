@@ -13,11 +13,12 @@ namespace Sdgo.Manager
         static bool demo;
         static readonly HashSet<string> Editable=new HashSet<string>{"name","label","price","currency","validity","enabled"};
         static string Text(Dictionary<string,object> d,string key,string fallback="") {return d.ContainsKey(key)?Convert.ToString(d[key]):fallback;}
-        static object State()
+        static object State(SearchIndexResult searchIndex=null)
         {
             return new {catalog=service.Catalog,revision=Model.FileHash(service.CatalogFile),demo=service.Demo,
                 items=service.Snapshot==null?new List<Item>():service.Snapshot.Items,
-                products=service.Catalog.products.Select(p=>new {product=p,status=service.Status(p)}).ToArray()};
+                products=service.Catalog.products.Select(p=>new {product=p,status=service.Status(p)}).ToArray(),
+                search_index=searchIndex};
         }
         static void Open(Dictionary<string,object> request)
         {
@@ -69,6 +70,11 @@ namespace Sdgo.Manager
                     service.SaveDraft();
                 }
                 else if(action=="apply")service.Apply();
+                else if(action=="search-index")
+                {
+                    var result=service.SyncSearchIndex();
+                    return Model.Json().Serialize(new {ok=true,value=State(result)});
+                }
                 else if(action=="import")
                 {
                     var incoming=Model.Json().Deserialize<Catalog>(Model.Json().Serialize(body["catalog"]));Model.Validate(incoming,service.Snapshot);

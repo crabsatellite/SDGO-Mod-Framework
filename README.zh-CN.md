@@ -47,6 +47,8 @@ Beta、Experimental 表示发布阶段。
 | 每日双倍时间（Beta） <!-- catalog: `daily_rewards` --> | 每天固定时段（默认 18:00–22:00）战斗 GB 和经验翻倍 | [使用说明](docs/daily-rewards.zh-CN.md) |
 | 保管库一键领取（Beta） <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
 
+| 商城汉化（Beta） <!-- catalog: `shop_localization` --> | 汉化商城商品与商城/扭蛋机体预览名称、说明和选项 | [使用说明](docs/shop-localization.zh-CN.md) |
+
 <!-- /mod-category:gameplay -->
 
 <a id="long-room-title-commands"></a>
