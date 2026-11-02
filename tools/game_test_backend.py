@@ -687,12 +687,6 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                 console=work/(spec['folder']+'.console.log')
                 with console.open('ab') as output:
                     process=BackendBackgroundProcess([str(exe)],cwd=folder,env=env,stdout=output,stderr=subprocess.STDOUT,run_id=client['run_id'])
-                    if native_local:
-                        # Idle native hosts busy-poll. Leave the actual client
-                        # at normal priority while copied background services
-                        # yield CPU to concurrent tasks and their game clients.
-                        import psutil
-                        psutil.Process(process.pid).nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
                 owned_processes.append(process)
                 state_row={'folder':spec['folder'],'pid':process.pid,'exe':str(exe),
                     'desktop':process.desktop_path,'attempt':attempt}
