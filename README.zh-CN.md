@@ -4,6 +4,7 @@
 非官方爱好者项目，不包含游戏文件。[English](README.md)
 
 [安装说明](docs/setup.zh-CN.md) · [统一 Mod Manager](docs/mod-manager.zh-CN.md) · [最新发布](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
+Manager 提供「更新」按钮：默认 Stable，可切换 Beta，自动检查和安装；详见管理器指南。
 
 通过 **SDGO Mod Manager** 管理功能，游戏仍使用原启动器。
 本页仅列出功能概览。具体配置、玩法操作、兼容性与排错方法见各功能文档。
