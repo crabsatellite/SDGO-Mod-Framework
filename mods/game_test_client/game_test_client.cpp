@@ -1141,6 +1141,12 @@ int ReadShopCatalog(const SdgoGameTestContextV1* context) {
             ShopCatalogActions::ResultName(result),state.stage,state.verified,state.configured,state.current_page,state.max_page,
             state.product_id,state.option_id,state.category,state.validity,state.price,state.payment,state.buy_previews,state.gift_previews,
             state.cancellations,state.wallet_unchanged,state.inventory_unchanged,state.native_page_nonempty,state.native_page_slots,state.native_page_bytes,state.native_request_pending,sent.opcode,sent.packet_size,sent.send_sequence);context->Observe(message);previous=result;verified=state.verified;lastPending=state.native_request_pending;
+        if(state.inventory_failure) {
+            char inventory[320];sprintf_s(inventory,"native shop inventory failure=%u ready=%u capacity=%d probeSlot=%u brief=%u/%u/%llu full=%u/%u/%llu",
+                state.inventory_failure,state.inventory_ready,state.inventory_capacity,state.inventory_probe_slot,
+                state.inventory_brief_unit,state.inventory_brief_slot,static_cast<unsigned long long>(state.inventory_brief_uid),
+                state.inventory_full_unit,state.inventory_full_slot,static_cast<unsigned long long>(state.inventory_full_uid));context->Observe(inventory);
+        }
     }
     if(result>=ShopCatalogActions::kInvalidContext || result==ShopCatalogActions::kUnbound || result==ShopCatalogActions::kUnconfigured) {
         context->Assert(0,"native stock catalog and preview controls must match the sealed read-only assertions");return SDGO_GAME_TEST_FAIL;

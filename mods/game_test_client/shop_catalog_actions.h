@@ -208,6 +208,16 @@ public:
         uint32_t native_request_pending = 0;
         uint32_t wallet_unchanged = 0;
         uint32_t inventory_unchanged = 0;
+        uint32_t inventory_failure = 0;
+        uint32_t inventory_probe_slot = 0;
+        uint32_t inventory_ready = 0;
+        int32_t inventory_capacity = 0;
+        uint32_t inventory_brief_unit = 0;
+        uint32_t inventory_full_unit = 0;
+        uint32_t inventory_brief_slot = 0;
+        uint32_t inventory_full_slot = 0;
+        uint64_t inventory_brief_uid = 0;
+        uint64_t inventory_full_uid = 0;
         uint32_t process_id = 0;
         uint32_t ui_thread_id = 0;
         std::vector<uint32_t> duplicate_native_product_ids;
@@ -2050,6 +2060,7 @@ private:
 
     Result CaptureIntegrity(IntegrityImage* output)
     {
+        observation_.inventory_failure=1;
         if (!output)
             return kInventoryUnavailable;
         uint8_t* profile = nullptr;
@@ -2074,6 +2085,9 @@ private:
                 kUnitInfoReady,
                 &ready))
             return kInventoryUnavailable;
+        observation_.inventory_ready=ready;
+        observation_.inventory_capacity=capacity;
+        observation_.inventory_failure=2;
         if (!ready ||
             capacity <= 0 ||
             capacity >
@@ -2081,6 +2095,7 @@ private:
                     kMaximumInventorySlots))
             return kInventoryUnavailable;
         IntegrityImage image;
+        observation_.inventory_failure=3;
         if (!ReadValue(
                 profile,
                 kProfileGp,
@@ -2095,6 +2110,7 @@ private:
                 &image.active_slot))
             return kInventoryUnavailable;
         image.capacity = capacity;
+        observation_.inventory_failure=4;
         if (image.active_slot >
             static_cast<uint16_t>(capacity))
             return kInventoryUnavailable;
@@ -2103,6 +2119,8 @@ private:
         for (int32_t index = 0;
              index < capacity;
              ++index) {
+            observation_.inventory_failure=5;
+            observation_.inventory_probe_slot=static_cast<uint32_t>(index+1);
             UnitImage unit;
             if (!ReadUnit(
                     info,
@@ -2141,6 +2159,13 @@ private:
                     &fullUid,
                     unit.full.data() + 8,
                     sizeof(fullUid));
+                observation_.inventory_failure=6;
+                observation_.inventory_brief_unit=type;
+                observation_.inventory_full_unit=fullType;
+                observation_.inventory_brief_slot=slot;
+                observation_.inventory_full_slot=fullSlot;
+                observation_.inventory_brief_uid=uid;
+                observation_.inventory_full_uid=fullUid;
                 if (!uid ||
                     slot != index + 1 ||
                     fullType != type ||
@@ -2155,6 +2180,7 @@ private:
                 std::move(unit);
         }
         *output = std::move(image);
+        observation_.inventory_failure=0;
         return kComplete;
     }
 
