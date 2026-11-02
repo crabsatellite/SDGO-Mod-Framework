@@ -251,16 +251,14 @@ private:
             if(!Readable(edit_,0x2A4)||*reinterpret_cast<void**>(edit_)!=api_->Symbol(mod_,"room_titles.ui_edit_vtable"))throw std::runtime_error("expected live room-name edit is absent");
             if(!static_cast<uint8_t*>(edit_)[0x162]||!static_cast<uint8_t*>(edit_)[0x167])return SDGO_GAME_TEST_WAIT;
             c->Assert(*reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(edit_)+0x2A0)==512,"room-name edit exposes the extended UTF-16 byte limit");
-            if(MessengerReset()){
-                if(++uiRestarts_>2||!Close(s))throw std::runtime_error("native Messenger initialization prevented room input readiness");
-                c->Observe("late native Messenger initialization owns the shared input; reopen the native room form before testing its first focus");
-                phase_=5;return SDGO_GAME_TEST_WAIT;
-            }
-            if(static_cast<uint8_t*>(edit_)[0x165]) {
+            if(static_cast<uint8_t*>(edit_)[0x165]&&actualInputEdit_==edit_&&!MessengerReset()) {
                 HWND inputWindow=*reinterpret_cast<HWND*>(*input_+0x134);
                 c->Assert(SendMessageW(inputWindow,EM_GETLIMITTEXT,0,0)>=128,"initially focused room edit already has the expanded real input limit");
             }
-            else focus_(root,edit_);
+            // The shipped UI uses CUIDialog::SetFocus followed by the edit's
+            // input-focus method (for example at 007B2A29/007B2A37). The focus
+            // flag alone does not bind the shared IME context to this root.
+            focus_(root,edit_);ObserveEditInputFocus(edit_,nullptr);
             tests_={std::wstring(21,L'A'),L"\u4efb\u52a1\u623f\u95f4\u540d\u79f0"+std::wstring(40,L'\u4e2d'),std::wstring(128,L'\u623f')};
             tests_.back()[0]=static_cast<wchar_t>(0x623F+s);
             if(!reopened_){std::array<char,513> before{};const auto n=sdgo::CurrentRoomTitle(api_->ModDirectory(mod_),before.data(),static_cast<uint32_t>(before.size()));beforeCancel_.assign(before.data(),n);}
@@ -268,6 +266,7 @@ private:
         }
         if(phase_==1){
             if(!static_cast<uint8_t*>(edit_)[0x165])throw std::runtime_error("room edit did not receive native focus");
+            ObserveEditInputFocus(edit_,nullptr);
             HWND hwnd=*reinterpret_cast<HWND*>(*input_+0x134);
             if(!IsWindow(hwnd))throw std::runtime_error("native input HWND absent");
             SendMessageW(hwnd,EM_SETSEL,0,-1);
