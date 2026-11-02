@@ -115,6 +115,12 @@ sdgo_add_mod(mission_ai DESCRIPTION "co-op mission wingmen (client)"
 sdgo_add_mod(ime_fix DESCRIPTION "Chinese IME candidate and commit fixes" SOURCES mods/ime_fix/ime_fix.cpp FILES symbols.fragment.ini)
 sdgo_add_mod(findwindow_fix DESCRIPTION "FindWindowW fix" SOURCES mods/findwindow_fix/findwindow_fix.cpp LIBS user32)
 sdgo_add_mod(startup_crash_fix DESCRIPTION "random crash at game start fix" SOURCES mods/startup_crash_fix/startup_crash_fix.cpp)
+sdgo_add_mod(fps_limit DESCRIPTION "native config.xml FPS cap" SOURCES mods/fps_limit/fps_limit.cpp)
+
+add_executable(fps_limit_runtime_test tests/fps_limit_runtime_test.cpp)
+target_link_libraries(fps_limit_runtime_test PRIVATE sdgo_api)
+sdgo_strict(fps_limit_runtime_test)
+add_dependencies(fps_limit_runtime_test fps_limit sdgo_core)
 sdgo_add_mod(net_probe DESCRIPTION "packet logger" SOURCES mods/net_probe/net_probe.cpp)
 sdgo_add_mod(shop_labels DESCRIPTION "shop rental and Unicode labels" SOURCES mods/shop_labels/shop_labels.cpp FILES display.example.ini)
 add_library(shop_catalog_engine STATIC mods/shop_catalog/catalog_runtime.cpp)
@@ -756,6 +762,10 @@ if(BUILD_TESTING)
 
     find_program(SDGO_POWERSHELL NAMES powershell pwsh)
     if(SDGO_POWERSHELL)
+        add_test(NAME fps_limit_runtime COMMAND "${SDGO_POWERSHELL}"
+            -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/fps_limit_test.ps1"
+            -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
+        set_tests_properties(fps_limit_runtime PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
         add_test(NAME daily_rewards_runtime COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/daily_rewards_runtime_test.ps1"
             -Config "$<CONFIG>")

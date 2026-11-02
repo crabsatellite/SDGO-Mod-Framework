@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "fps_limit",
+  "title": "FPS 上限",
+  "category": "gameplay",
+  "hosts": ["client"],
+  "description": "让客户端按 config.xml 的 updatefps 设置帧率上限，修改后重新启动游戏。",
+  "presentation": "configurable",
+  "mechanism": "保留原生 XML 读取器得到的 FPS 上限，绕过随后强制写回 60 的指令。仅支持已校验的客户端版本，不改变游戏时间或分辨率。",
+  "settings": [
+    {
+      "id": "frame_limit",
+      "label": "FPS 上限",
+      "type": "integer",
+      "default": 60,
+      "minimum": 1,
+      "maximum": 1000,
+      "audience": "user",
+      "file": "config.xml",
+      "section": "Framework/Timer",
+      "key": "updatefps",
+      "activation": "restart"
+    }
+  ]
+}
