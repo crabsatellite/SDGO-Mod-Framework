@@ -9,6 +9,23 @@ from tools import game_test_native_environment as native
 
 
 class ServerCandidateTests(unittest.TestCase):
+    def test_snapshot_upload_streams_exact_bytes_and_rejects_a_container_mismatch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source=Path(temporary)/'snapshot.bak'
+            source.write_bytes(b'\x00SQL snapshot\xff\n'*1024)
+            expected=gt.sha256(source)
+            uploaded=[]
+            def transfer(*args,**kwargs):
+                uploaded.append(kwargs['stdin'].read())
+                self.assertEqual(kwargs['timeout'],600)
+                return mock.Mock(returncode=0)
+            with mock.patch.object(native.subprocess,'run',side_effect=transfer), mock.patch.object(native,'docker',return_value=expected+'  snapshot.bak'):
+                native.upload_snapshot('owned-fixture',source,'/owned/snapshot.bak',expected)
+            self.assertEqual(uploaded,[source.read_bytes()])
+            with mock.patch.object(native.subprocess,'run',side_effect=transfer), mock.patch.object(native,'docker',return_value='0'*64+'  snapshot.bak'):
+                with self.assertRaisesRegex(RuntimeError,'snapshot bytes differ'):
+                    native.upload_snapshot('owned-fixture',source,'/owned/snapshot.bak',expected)
+
     def test_runtime_copy_is_writable_while_the_template_stays_read_only(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary); source=root/'template'; source.mkdir()
