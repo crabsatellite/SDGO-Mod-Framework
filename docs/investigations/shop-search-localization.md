@@ -1,8 +1,7 @@
 # Shop search, filters and shared localization
 
-This round extends the existing shop_localization feature on current Mod master.
-The previously accepted IME 1.1.1 repair is already on source master and player main.
-Native observations use the supported GOnline SHA-256 e2dba73c10302b50cb0e6f2e58dd0a14effa8d224989ae570a7f8e05af79ff92
+The shop_localization feature supplies display translations, a bounded Chinese query transport and optional
+localization for cooperating Mods. Static native analysis targets GOnline SHA-256 e2dba73c10302b50cb0e6f2e58dd0a14effa8d224989ae570a7f8e05af79ff92
 and current WorldServer SHA-256 82d3c4cf09679a431b9bfa639795b148f932642d8774ff66021785115dc53d46.
 Saved decompilation was corroborated against current-file instructions; unavailable deep REA providers
 were not presented as runtime traces.
@@ -15,9 +14,9 @@ at 0x009CDB79 destroys Chinese before sending native opcode 0x72D. Pagination co
 0x009BE804 uses the same query state. World copies at most 100 keyword bytes unchanged, binds
 adChar size 101, and calls dbo.sp_StoreItemsList.
 
-Read-only production queries established that ordinary unit-category rank/payment filtering is correct:
-S and A requests return distinct 36/54 rows. Global depth1=0 ignores rank, so the same S/A requests
-both return 558 rows containing both ranks. Hot depth1=99 ignores all optional filters. This is a
+The original procedure applies rank/payment filtering to ordinary unit categories.
+Global depth1=0 ignores rank, so S/A requests can return the same rows containing both ranks.
+Hot depth1=99 ignores all optional filters. This is a
 server predicate defect beyond display localization. Combo selection itself does not submit: the shop
 callback ignores the Combo event 0x201 and the magnifier applies the selected values. No broad event hook
 is introduced, because open/cancel/reset also emits that event.
@@ -29,8 +28,8 @@ search procedure decodes through SQL2014 XML, matches Unicode substrings against
 product-bound aliases, applies rank/subfilter/payment consistently and computes page results and total
 from the same set. Native category/hot membership, event exclusion, 10 output columns and sort order are preserved.
 
-Manager owns an independent Update Chinese search action. The helper accepts only exact product-scoped
-word-bank entries, skips pure model-code aliases, canonicalizes at SQL ProductID/original-name boundaries,
+Manager owns an independent Update Chinese search action. The helper accepts only exact product/search-scoped
+word-bank entries, retains displayed model-code aliases, canonicalizes at SQL ProductID/original-name boundaries,
 backs up the known native procedure and validates owned state before subsequent updates. Definitions
 are checked with binary collation plus byte length under a transaction lock; unknown or externally
 modified definitions refuse. Empty/mismatched aliases cannot silently commit an empty installation.
@@ -38,9 +37,9 @@ The helper never invokes catalog Apply or changes product rows, pricing, invento
 
 ## Text and cooperating Mods
 
-The previous key-coverage report did not establish complete translation quality: mixed English prose
-remained despite source keys being present. This round revises 334 descriptions and seven name values,
-adds Korean Jamo checks, and generates 17,143 entries including stable ID keys. Thai/Hangul/Jamo and
+Key coverage alone does not establish translation quality: mixed English prose can
+remain despite source keys being present. The authored vocabulary revises 334 descriptions and seven name values,
+adds Korean Jamo checks, and generates 17,265 entries including stable ID keys. Thai/Hangul/Jamo and
 replacement-character targets are absent; legitimate technical/model identifiers remain explicit.
 All 1071 hangar rule UnitIDs are mapped from 1073 available unit IDs. Six plain borrowed names are
 localized, while seven actual model codes remain unchanged.
@@ -64,3 +63,8 @@ SQL, native records, credentials and raw local receipts remain outside source co
 These fixtures do not render actual game search results or execute player purchases/exchanges. Final
 verification must distinguish installed hashes, server procedure readback, client load logs and manual
 search/filter/confirmation visuals.
+
+Billing names can differ from native display names through English/Thai rental prefixes, whitespace, legacy
+spelling, model-code formatting or festival-key word ordering. Explicit @search:ProductID:Original
+entries bind these current billing names to the already rendered titles; they never replace native display
+records or product identities. English/model queries also consult the same guarded aliases.

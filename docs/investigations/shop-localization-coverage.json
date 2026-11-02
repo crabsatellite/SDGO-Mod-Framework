@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "dictionary_entries": 17143,
+  "dictionary_entries": 17265,
   "native_category_names": 3299,
   "native_parent_records": 2489,
   "missing_known_names": 0,
@@ -22,9 +22,11 @@
     "unit_identity": "1071/1071 hangar UnitIDs, no fuzzy English alias joins",
     "native_server_search": "Original global rank filtering ignores rank; ordinary category filtering is correct",
     "isolated_SQL2014": "10 checks passed; products unchanged; unique test database removed",
-    "actual_helper_SQL": "Known original definition gate, idempotence, Chinese+rank+payment, invalid inputs and product preservation passed"
+    "actual_helper_SQL": "Known original definition gate, idempotence, Chinese+rank+payment, invalid inputs and product preservation passed",
+    "exact_billing_names": "Additional guarded aliases bind current server originals to the same displayed ProductID titles, including model codes"
   },
   "stable_unit_names": 1073,
   "hangar_unit_names_covered": 1071,
-  "revised_translation_values": 341
+  "revised_translation_values": 341,
+  "billing_name_aliases": 122
 }

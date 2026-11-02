@@ -334,26 +334,21 @@ void WriteUtf8(const std::wstring& path, const std::string& text)
     CloseHandle(file);
     if (!ok) throw std::runtime_error("incomplete shop search result");
 }
-bool HasChinese(const std::wstring& text)
-{
-    return std::any_of(text.begin(), text.end(), [](wchar_t value) {
-        return (value >= 0x3400 && value <= 0x9FFF) ||
-               (value >= 0xF900 && value <= 0xFAFF);
-    });
-}
 std::vector<sdgo::shop_search::Alias> ParseAliases(const std::wstring& text)
 {
     const auto dictionary = sdgo::shop_localization::Parse(text);
     std::vector<sdgo::shop_search::Alias> result;
     for (const auto& entry : dictionary) {
-        if (entry.second.kind != sdgo::shop_localization::Kind::Name ||
-            entry.first.rfind(L"@product:", 0) != 0)
+        const bool productKey = entry.first.rfind(L"@product:", 0) == 0;
+        const bool searchKey = entry.first.rfind(L"@search:", 0) == 0;
+        if (entry.second.kind != sdgo::shop_localization::Kind::Name || (!productKey && !searchKey))
             continue;
-        const std::size_t separator = entry.first.find(L':', 9);
-        if (separator == std::wstring::npos || separator == 9 ||
+        const std::size_t prefix = productKey ? 9 : 8;
+        const std::size_t separator = entry.first.find(L':', prefix);
+        if (separator == std::wstring::npos || separator == prefix ||
             separator + 1 == entry.first.size())
             throw std::runtime_error("invalid product-scoped shop search alias");
-        const std::wstring productText = entry.first.substr(9, separator - 9);
+        const std::wstring productText = entry.first.substr(prefix, separator - prefix);
         if (!std::all_of(productText.begin(), productText.end(), [](wchar_t value) {
                 return value >= L'0' && value <= L'9';
             }))
@@ -368,10 +363,6 @@ std::vector<sdgo::shop_search::Alias> ParseAliases(const std::wstring& text)
             entry.second.text.size() > 512 ||
             entry.second.text.find_first_of(L"\r\n\0") != std::wstring::npos)
             throw std::runtime_error("shop search alias exceeds 512 UTF-16 units or contains a line break");
-        // Model-code translations such as FAZZ or GN-XIII add no Chinese
-        // search value. The native original name remains searchable.
-        if (!HasChinese(entry.second.text))
-            continue;
         result.push_back({
             static_cast<std::uint32_t>(product), original, entry.second.text});
     }

@@ -28,8 +28,13 @@ def main():
                 if process.poll() is not None:raise RuntimeError('Frozen Manager exited before publishing its session')
                 session=state/'manager-session.json'
                 if session.exists():
-                    base=json.loads(session.read_text(encoding='utf-8'))['url'].rstrip('/')
-                    break
+                    try:
+                        base=json.loads(session.read_text(encoding='utf-8'))['url'].rstrip('/')
+                        break
+                    except (OSError, json.JSONDecodeError):
+                        # Atomic publication can briefly hold a Windows sharing
+                        # lock. Existence alone does not mean it is readable yet.
+                        pass
                 time.sleep(.1)
             if not base:raise RuntimeError('Frozen Manager did not start')
             def call(path,body=None,headers=None):

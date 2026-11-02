@@ -51,10 +51,10 @@ int main()
                  L"[entry:a]\nKind=name\n"
                  L"Source=@product:1019001:Gundam\nText=Gundam\n"
                  L"[entry:b]\nKind=name\n"
-                 L"Source=@product:1019002:FAZZ\nText=FAZZ\n"
+                 L"Source=@search:1019002:FAZZ\nText=FAZZ\n"
                  L"[entry:c]\nKind=name\n"
-                 L"Source=@product:1019003:Zaku\nText=扎古\n").size() == 1,
-             "model-code-only aliases are skipped while Chinese aliases remain") &&
+                 L"Source=@product:1019003:Zaku\nText=扎古\n").size() == 3,
+             "displayed model codes and exact billing aliases participate alongside Chinese names") &&
         ok;
     ok = Check(
              Rejects(
