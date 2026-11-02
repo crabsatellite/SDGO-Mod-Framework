@@ -1,11 +1,21 @@
 ---
 name: sdgo-native-testing
-description: Run and diagnose original SDGO native GameTest with isolated environments, reusable account templates and verified cleanup, then complete authorized client delivery and public documentation for SDGO mod work. Not for Minecraft GameTest or ordinary gameplay.
+description: Fix and verify original SDGO Mods using available local runtimes first, protecting production data and reusing test accounts; isolate only for actual conflicts or required test-data writes, then finish authorized delivery and cleanup. Not for Minecraft GameTest or ordinary gameplay.
 ---
 
 # SDGO 原生测试 guide
 
 使用当前测试框架验证指定的 SDGO 功能。先读当前源码工作区的 `AGENTS.md`，在包含配套工具版本的仓库内运行命令。单独测试请求限定于测试、日志收集和清理；已授权的开发或修复任务在测试通过后继续完成下述部署、发布与文档步骤。测试本身不扩大生产数据修改或远端写入权限。
+
+## 工作优先级与环境选择
+
+这是内部游戏的修复与测试流程，目标是尽快把指定问题做好。**生产数据不做测试准备、脚本修补或实验性修改**；读取诊断可以进行，需要改数据的测试使用已有测试库或最小必要副本。保留真实账号、机库、经济、存档及生产配置。不要把“保护生产数据”扩展为所有本地操作都需要重建、审批或重复确认。
+
+先检查已有本地服务、测试库、客户端和账号是否可直接复用。可用就复用同一套环境，在整个任务中连续调试与验证；不因换一个测试用例、客户端重启或改了一个 DLL 就重建数据库、还原 11 库或新开多套后端。共享本地测试服务可以容纳不同测试账号；遵守真实账号占用和已有服务的归属，不停止其他任务的进程。
+
+只有已确认端口/账号冲突、现有环境不可用，或测试需要写入实验数据且无法使用现成测试库时，才建立最小必要隔离环境。隔离是解决具体冲突的手段，不是每次测试的前置要求。优先修复功能和获得有效游戏内验证；不要顺手扩建测试框架、生成报告或重新制作公共资产。环境故障应定位精确原因，不反复完整重建而不取得新证据。
+
+原生 GameTest、必要部署、Git 推送和实际读回仍按已授权流程完成；这些验证要求不等于必须同时启动多套环境。任务持续推进至问题解决，有真实外部阻断时如实说明，不能因框架代码已交付就把尚未解决的机体问题当作停点。
 
 ## 框架里有什么
 
@@ -27,9 +37,9 @@ description: Run and diagnose original SDGO native GameTest with isolated enviro
 
 ## 普通测试
 
-1. 检查本 worktree Git 状态和构建配置，保留他人的修改及运行环境。Windows 用 PowerShell、x86 MSVC；Python 最低 3.10，原生后端需 Docker Desktop 和 `pyodbc`。沿用已缓存的固定 SQL 镜像，不为排错启动全局 LiteSQL 或弹 UAC。
+1. 先检查并复用可用的本地环境，再检查本 worktree Git 状态和构建配置，保留他人的修改及运行环境。Windows 用 PowerShell、x86 MSVC；Python 最低 3.10，原生后端需 Docker Desktop 和 `pyodbc`。沿用已缓存的固定 SQL 镜像，不为排错启动全局 LiteSQL 或弹 UAC。
 2. 构建目标 Mod、`game_test_client`，涉及服务端观察时也构建 `game_test_server`。构建会自动写入 `build/stage/Release`，没有名为 `stage` 的构建目标。
-3. 发现模板、查看并恢复**已无活跃拥有者**的遗留环境：
+3. 已有本地环境可用时，直接使用底层 `prepare/run` 准备客户端副本并绑定已有测试账号；同一任务复用后端。只有需要独立后端时才发现模板、查看并恢复**已无活跃拥有者**的遗留环境：
 
    ```powershell
    python tools/game_test.py environment templates
@@ -38,7 +48,7 @@ description: Run and diagnose original SDGO native GameTest with isolated enviro
    ```
 
    模板缺失时定位或恢复公共模板。不要改用 `--create-test-account`、全局账号配置或其他 agent 的服务来绕过。
-4. 从已有模板运行。`--template` 可省略，默认用最新登记模板；明确指定便于复现。按需要选择一次 bootstrap 或完整测试：
+4. 确实需要独立后端时，从已有模板运行。`--template` 可省略，默认用最新登记模板；明确指定便于复现。按需要选择一次 bootstrap 或完整测试：
 
    ```powershell
    python tools/game_test.py environment run --template <existing-template> --account 3 --bootstrap-only
@@ -49,7 +59,7 @@ description: Run and diagnose original SDGO native GameTest with isolated enviro
 5. 运行器先读取并核验 JSON/JUnit、原生事件和清理结果，再返回成功摘要；成功后删除该次测试记录，不保留研究日志。失败时阅读返回的 `evidence` 中 `result.json`、`client-run/receipts/report.json`、原生 `events.jsonl` 和 `cleanup.json`。结果必须绑定本次源代码、二进制/资源、账号、真实登录和房间；缺失、超时或原生异常按失败报告。编译、模拟/回放或 bootstrap 通过不能代替完整战斗。
 6. 结束后再次 `environment list`，本次环境必须为 `closed`，`cleanup.json` 为 `clean`，临时目录/私有容器/卷及拥有的进程已清除。保留公共模板、账号和源码。成功验收并完成必要部署读回后，删除这项任务的成功测试记录、日志、截图、回执及临时研究文件；失败记录只留到问题解决，随后一并删除。出现 `agent-action.json` 或 `cleanup_required` 时由 agent 执行回收并读回结果；最终答复写清仍未清理的环境 ID，不能把清理留给用户而不说明。
 
-多个进程可以同时运行上述命令；每次都新建环境，不把别人的活跃后端当共享测试服务，不按进程名批量结束进程。恢复依据 PID 加创建时间、租约和 Docker 标签，不能凭目录年龄删除资源。中断后重新执行 `recover`，活跃拥有者会被跳过。
+多个任务需要独立后端时可并发运行上述命令；同一任务优先复用其已有后端。明确可共享的本地测试服务可按不同账号复用，不擅自修改或停止别人的专用后端，不按进程名批量结束进程。恢复依据 PID 加创建时间、租约和 Docker 标签，不能凭目录年龄删除资源。中断后重新执行 `recover`，活跃拥有者会被跳过。
 
 ## 现有五个账号
 
