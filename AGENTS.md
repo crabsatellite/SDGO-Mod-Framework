@@ -15,5 +15,7 @@
 - Reuse the Manager's session, revision, path, panel and export contracts. Preserve authored workspaces and do not publish credentials, real account data or game assets.
 - Keep each feature's AI configuration/debug and bug-report handoff accurate. Repair PR bodies must include actual `AI models:` names/versions (explicit Unknown if undisclosed), AI scope, human verification and remaining uncertainty.
 - Commits are authored solely by the user. NEVER add `Co-Authored-By` lines.
+- Native tests use the existing five-account sealed database template and `python tools/game_test.py environment run`. Each task owns a separate loopback backend/SQL copy/UDP pool/account-profile lock. Never share another agent's active backend or register/acquire new accounts/units during ordinary tests. Public test assets belong in the initial template; extend it only when necessary, preserving the five existing identities. Read `skills/sdgo-native-testing/SKILL.md` for the guide and template-data procedure.
+- Every test agent must complete cleanup: inspect `environment list`, retain evidence outside the temporary runtime, and run `environment recover` for abandoned leases or structured `agent-action.json` reminders. Never stop a live owner or delete reusable templates. Report any remaining environment ID and cleanup action explicitly.
 
 See `docs/mod-manager.zh-CN.md`, `docs/mod-manager-design.zh-CN.md` and `docs/contributing.zh-CN.md`.

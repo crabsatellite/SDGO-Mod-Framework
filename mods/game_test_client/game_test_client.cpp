@@ -13,6 +13,7 @@
 #include "storage_test_actions.h"
 #include "capsule_catalog_actions.h"
 #include "battle_combat_actions.h"
+#include "apsalus_transform_probe.h"
 #include "capsule_draw_actions.h"
 #include "unit_select_actions.h"
 #include "active_selection_observer.h"
@@ -548,6 +549,8 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
     SdgoPvpAiClientSnapshotV1 snapshot{};
     if (!context->tick) motionSamples.clear();
     if (!Snapshot(snapshot) || snapshot.native_app_state != 22) return SDGO_GAME_TEST_WAIT;
+    const int transformProbe = apsalus_probe::Poll(context, sdgo_test::api, sdgo_test::mod);
+    if (transformProbe != SDGO_GAME_TEST_PASS) return transformProbe;
     bool ready = snapshot.bot_count == expectedAi;
     unsigned allies = 0, enemies = 0, moved = 0;
     for (unsigned i = 0; i < snapshot.bot_count && i < 12; ++i) {

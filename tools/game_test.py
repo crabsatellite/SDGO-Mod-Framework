@@ -4,7 +4,8 @@ The first preparation copies a real client. Later capsules can move and reuse
 the stopped owned client, retaining compact receipts instead of another full
 copy. Built versions of installed Mods and the native observer are overlaid
 before running against an already-running backend. The player template is
-never edited, and this runner never starts a server.
+never edited. The environment subcommand owns separate native service copies;
+the lower-level prepare/run commands use an already-running backend.
 """
 from __future__ import annotations
 
@@ -222,7 +223,7 @@ def copy_file_if_missing(source: Path, destination: Path) -> None:
     shutil.copy2(source, destination)
 
 
-def manifest_requires(path: Path) -> set[str]:
+def manifest_configuration(path: Path) -> configparser.ConfigParser:
     try:
         parser = read_ini(path)
     except GameTestError:
@@ -234,6 +235,17 @@ def manifest_requires(path: Path) -> set[str]:
         match=re.search(r'(?ims)^\s*\[mod\]\s*\n(.*?)(?=^\s*\[|\Z)',decoded)
         if not match:raise GameTestError(f'manifest lacks [mod]: {path}') from None
         parser=ini_parser();parser.read_string('[mod]\n'+match[1])
+    return parser
+
+
+def retained_manifest_enabled(path: Path) -> bool:
+    # Native core never overrides a manifest's own off switch. Inactive
+    # diagnostics may retain historical aliases and are not runtime consumers.
+    return manifest_configuration(path).get('mod','enabled',fallback='1').strip()!='0'
+
+
+def manifest_requires(path: Path) -> set[str]:
+    parser=manifest_configuration(path)
     try:
         value = parser["mod"].get("requires", "")
     except KeyError as error:
@@ -284,7 +296,7 @@ def enable_test_configuration(root: Path) -> None:
     write_ini(settings_path, settings)
 
 
-def validate_observer_stage(root: Path, stage: Path) -> None:
+def validate_observer_stage(root: Path, stage: Path, extra_mods: tuple[str, ...] = ()) -> None:
     """Validate overlay dependencies before changing or moving an owned client."""
     client=stage/'client';mods=client/'sdgo/mods'
     observer=mods/TEST_MOD
@@ -294,6 +306,16 @@ def validate_observer_stage(root: Path, stage: Path) -> None:
     if read_ini(observer/'mod.ini').get('mod','id',fallback='')!=TEST_MOD:
         raise GameTestError('invalid staged observer manifest')
     updated={TEST_MOD:observer/'mod.ini'}
+    for identifier in extra_mods:
+        if not re.fullmatch(r'[a-z][a-z0-9_]{0,63}', identifier):
+            raise GameTestError('invalid explicit test Mod ID')
+        manifest=mods/identifier/'mod.ini'
+        if not manifest.is_file() or not (manifest.parent/(identifier+'.dll')).is_file():
+            raise GameTestError('explicit test Mod is not fully staged: '+identifier)
+        cfg=read_ini(manifest)
+        if cfg.get('mod','id',fallback='')!=identifier or HOST_KEY not in cfg.get('mod','hosts',fallback='').split(','):
+            raise GameTestError('explicit test Mod identity/host mismatch: '+identifier)
+        updated[identifier]=manifest
     for manifest in sorted(mods.glob('*/mod.ini')):
         identifier=manifest.parent.name
         if identifier==TEST_MOD:continue
@@ -315,13 +337,13 @@ def validate_observer_stage(root: Path, stage: Path) -> None:
     existing_path=root/f'sdgo/symbols/{HOST_KEY}.ini'
     existing=read_ini(existing_path) if existing_path.is_file() else ini_parser()
     for manifest in (root/'sdgo/mods').glob('*/mod.ini'):
-        if manifest.parent.name not in updated:
+        if manifest.parent.name not in updated and retained_manifest_enabled(manifest):
             missing=sorted(manifest_requires(manifest)-set(source.sections())-set(existing.sections()))
             if missing:raise GameTestError(f"retained Mod symbols lack required sections: {', '.join(missing)}")
 
 
-def overlay_observer(root: Path, stage: Path) -> None:
-    validate_observer_stage(root,stage)
+def overlay_observer(root: Path, stage: Path, extra_mods: tuple[str, ...] = ()) -> None:
+    validate_observer_stage(root,stage,extra_mods)
     stage_client = stage / "client"
     observer_source = stage_client / "sdgo" / "mods" / TEST_MOD
     if not (observer_source / f"{TEST_MOD}.dll").is_file() or not (observer_source / "mod.ini").is_file():
@@ -370,6 +392,22 @@ def overlay_observer(root: Path, stage: Path) -> None:
     # including its Lua policy, while keeping private owner settings local.
     # An unrelated installed addon without a staged counterpart is preserved.
     updated_manifests=[observer_target/'mod.ini',target_manifest]
+    for identifier in extra_mods:
+        if identifier in (TEST_MOD,TARGET_MOD):
+            continue
+        source=stage_client/'sdgo/mods'/identifier
+        destination=root/'sdgo/mods'/identifier
+        destination.mkdir(parents=True,exist_ok=True)
+        from tools.game_test_environment import no_reparse_tree
+        no_reparse_tree(source)
+        shutil.copytree(source,destination,dirs_exist_ok=True)
+        current=read_ini(destination/'mod.ini');current['mod']['enabled']='1'
+        write_ini(destination/'mod.ini',current)
+        settings=read_ini(root/'sdgo/sdgo.ini')
+        if not settings.has_section('mods'):settings.add_section('mods')
+        settings['mods'][identifier]='1'
+        write_ini(root/'sdgo/sdgo.ini',settings)
+        updated_manifests.append(destination/'mod.ini')
     for staged_manifest in sorted((stage_client/'sdgo/mods').glob('*/mod.ini')):
         identifier=staged_manifest.parent.name
         if identifier in (TEST_MOD,TARGET_MOD):continue
@@ -400,7 +438,8 @@ def overlay_observer(root: Path, stage: Path) -> None:
         copied_symbols,
         updated_manifests,
     )
-    retained_manifests=[manifest for manifest in (root/'sdgo/mods').glob('*/mod.ini') if manifest not in updated_manifests]
+    retained_manifests=[manifest for manifest in (root/'sdgo/mods').glob('*/mod.ini')
+                        if manifest not in updated_manifests and retained_manifest_enabled(manifest)]
     merge_required_symbols(stage_symbols,copied_symbols,retained_manifests,preserve_existing=True)
     enable_test_configuration(root)
 
@@ -1912,9 +1951,14 @@ def prepare(
     route_profile: Path | None = None,
     quiet: bool = True,
     asset_baseline: Path | None = None,
+    extra_mods: tuple[str, ...] = (),
+    apsalus_roundtrip: bool = False,
     _owned_client_transfer: tuple[Path, str] | None = None,
 ) -> dict:
     client_template = client_template.resolve()
+    if apsalus_roundtrip and (mode_sequence != '1' or play_unit_uid is None or any((bootstrap_only,
+            battleship_only,gift_requests_only,deck_only,pages_only)) or mission_mode is not None):
+        raise GameTestError('Apsalus roundtrip requires one complete ordinary battle and an existing owned unit UID')
     play_unit_uid = validate_play_unit_uid(play_unit_uid)
     mission_mode = validate_mission_mode(mission_mode)
     if play_unit_uid is not None and create_test_account:
@@ -1985,7 +2029,10 @@ def prepare(
         raise GameTestError(f"run directory already exists: {run_dir}")
     if is_relative_to(run_dir, client_template):
         raise GameTestError("run directory cannot be inside the client template")
-    validate_observer_stage(_owned_client_transfer[0]/'client' if _owned_client_transfer else client_template,stage)
+    if extra_mods:
+        validate_observer_stage(_owned_client_transfer[0]/'client' if _owned_client_transfer else client_template,stage,extra_mods)
+    else:
+        validate_observer_stage(_owned_client_transfer[0]/'client' if _owned_client_transfer else client_template,stage)
 
     profile_path = (account_profile or default_account_profile()).expanduser().resolve()
     if create_test_account:
@@ -2083,7 +2130,13 @@ def prepare(
             os.replace(holding/'client',client)
             recycle_owned_artifact(client/'sdgo/gametest',preparing)
             recycle_owned_artifact(client/'sdgo/mods'/TEST_MOD,preparing)
-        overlay_observer(client, stage)
+        if extra_mods:overlay_observer(client,stage,extra_mods)
+        else:overlay_observer(client,stage)
+        observer_manifest=client/'sdgo/mods'/TEST_MOD/'mod.ini'
+        observer_config=read_ini(observer_manifest)
+        if not observer_config.has_section('settings'):observer_config.add_section('settings')
+        observer_config['settings']['ApsalusRoundtrip']='1' if apsalus_roundtrip else '0'
+        write_ini(observer_manifest,observer_config)
         installed_route = configure_test_network(
             client,
             network_policy,
@@ -2186,7 +2239,8 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
     except ImportError as error:raise GameTestError('install Send2Trash before client reuse; no files changed') from error
     previous=validate_metadata(run_dir);verify_hashes(previous)
     client_root=run_dir/'client'
-    validate_observer_stage(client_root,stage.resolve())
+    if options.get('extra_mods'):validate_observer_stage(client_root,stage.resolve(),options['extra_mods'])
+    else:validate_observer_stage(client_root,stage.resolve())
     for directory,dirs,files in os.walk(client_root,followlinks=False):
         for name in dirs+files:
             path=Path(directory)/name
@@ -2653,7 +2707,7 @@ def startup_info():
     return info
 
 
-def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 30.0) -> dict:
+def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 30.0, *, on_process=None, on_poll=None) -> dict:
     run_dir = run_dir.resolve()
     metadata = validate_metadata(run_dir)
     verify_hashes(metadata)
@@ -2684,6 +2738,8 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
             try:
                 entry_process, stdout, stderr = spawn_entry(metadata, receipt_dir,quiet_runtime)
                 handles.extend((stdout, stderr))
+                if on_process:
+                    on_process(entry_process.pid, Path(metadata['client']['entry']))
             except OSError as error:
                 metadata["execution"] = {
                     "started_utc": started,
@@ -2728,12 +2784,15 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
                 "timed_out": False,
                 "error": None,
             }
+            if on_process:
+                on_process(game_process['pid'], Path(game_process['image_path']))
             metadata["status"] = "running"
             atomic_write(run_dir / "run.json", json.dumps(metadata, indent=2, sort_keys=True))
 
             deadline = time.monotonic() + max(0.0, timeout)
             status = "running"
             while time.monotonic() < deadline:
+                if on_poll:on_poll()
                 if has_run_end(events):
                     status = "completed"
                     break
@@ -3244,6 +3303,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--visible',action='store_true',help='explicit developer opt-in to a visible client; default tests use an isolated desktop and muted audio')
     prepare_parser.add_argument('--asset-baseline',type=Path,help='reuse verified read-only native archives from a passed owned build run; never links original player files')
     prepare_parser.add_argument('--reuse-client',action='store_true',help='reuse the stopped owned run-dir client in place with a fresh run UUID and compact prior receipt; no full client copy')
+    prepare_parser.add_argument('--include-mod',action='append',default=[],help='explicit staged client Mod to install before runtime hashes freeze')
     prepare_parser.add_argument(
         "--expect-first-fail",
         action=argparse.BooleanOptionalAction,
@@ -3275,6 +3335,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    effective = sys.argv[1:] if argv is None else argv
+    if effective and effective[0] == 'environment':
+        if str(Path(__file__).resolve().parents[1]) not in sys.path:
+            sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+        from tools.game_test_environment import main as environment_main
+        return environment_main(effective[1:])
     args = parse_args(argv)
     try:
         if args.command == "prepare":
@@ -3310,6 +3376,7 @@ def main(argv: list[str] | None = None) -> int:
                 route_profile=args.route_profile,
                 quiet=not args.visible,
                 asset_baseline=args.asset_baseline,
+                extra_mods=tuple(args.include_mod),
             )
         elif args.command == "run":
             result = run_prepared(args.run_dir, args.timeout, args.launch_timeout)
