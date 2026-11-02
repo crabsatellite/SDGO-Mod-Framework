@@ -12,9 +12,13 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
     if (!enabled) return SDGO_GAME_TEST_PASS;
     using Find = unsigned char*(__thiscall*)(void*, unsigned);
     using Request = unsigned(__thiscall*)(void*);
+    using InputBusiness = void(__thiscall*)(unsigned char*);
+    using NativeTick = void(__thiscall*)(unsigned char*, void*);
     static auto manager = reinterpret_cast<void**>(api->Symbol(mod, "game.unit_manager"));
     static auto find = reinterpret_cast<Find>(api->Symbol(mod, "um.find_object"));
     static auto request = reinterpret_cast<Request>(api->Symbol(mod, "test.apsalus_transform_request"));
+    static auto moveInput = reinterpret_cast<InputBusiness>(api->Symbol(mod, "test.apsalus_move_input"));
+    static auto fireInput = reinterpret_cast<InputBusiness>(api->Symbol(mod, "test.apsalus_primary_input"));
     static unsigned issued = 0, completed = 0, initialId = 0, lastMode = ~0u, lastId = 0;
     static uint64_t issuedAt = 0;
     static unsigned controlsVerified = 0;
@@ -22,7 +26,7 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
     static float baseline[3] = {};
     static bool moved = false, attacked = false;
     static uint32_t moveQueries = 0, fireQueries = 0;
-    if (!manager || !find || !request || !*manager) {
+    if (!manager || !find || !request || !moveInput || !fireInput || !*manager) {
         context->Assert(0, "Apsalus probe requires verified native request and unit-manager bindings");
         return SDGO_GAME_TEST_FAIL;
     }
@@ -71,6 +75,15 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
         const uint64_t elapsed = context->elapsed_ms - controlAt;
         input.HoldGameplay(0, elapsed < 1500);
         input.HoldGameplay(9, elapsed < 1500);
+        // A hidden client does not receive foreground keyboard polling. Drive
+        // the same native keyboard/left-button consumers and the same FSM
+        // dispatch used by CUnit's native command-0x1d path, on its real control
+        // context (unit[0x370]). No position, state, eligibility or ammo write.
+        moveInput(unit); fireInput(unit);
+        auto dispatchMove = reinterpret_cast<NativeTick>((*reinterpret_cast<void***>(move))[1]);
+        auto dispatchAttack = reinterpret_cast<NativeTick>((*reinterpret_cast<void***>(attack))[1]);
+        dispatchMove(move, unit + 0xdc0);
+        dispatchAttack(attack, unit + 0xdc0);
         const float dx=position[0]-baseline[0],dy=position[1]-baseline[1],dz=position[2]-baseline[2];
         moved = moved || (std::isfinite(dx+dy+dz) && dx*dx+dy*dy+dz*dz > 1.0f && input.GameplayQueries(0)>moveQueries);
         // The active native FSM state is at +4, with Wait at +20. Observe a
