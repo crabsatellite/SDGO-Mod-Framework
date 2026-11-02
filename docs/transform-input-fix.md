@@ -1,54 +1,21 @@
 # Apsalus III transformation input recovery
 
-`transform_input_fix` is an automatic client fix, listed in Mod Manager's
-automatic-fix archive. Restart the client after installation. There are no
-player settings or database changes.
+`transform_input_fix` fixes the Apsalus III transformation state that can remain stuck and block movement and attacks. It is an automatic client fix: install it, restart the game, and view its status in SDGO Mod Manager's repair archive. No settings are required.
 
-When Apsalus III is owned as form `24788`, its first transformation swaps to
-model `1957`, which has no `change_ma` action. The reciprocal request also
-encounters its missing `change_ms`. The stock animation wrapper returns handle
-zero but can retain the preceding animation's raw slots. Nonempty events for
-that old handle prevent `TransformUpdate` from taking its empty-event fallback
-or matching the requested handle, so movement and attack stay locked.
+## Compatibility
 
-The Mod recognizes only the `24787`/`24788` pair, active transformation mode 3,
-a null requested animation handle, a nonempty event list and a latched target
-in that pair. It queues the same native WAIT signal and state selection used
-by the existing empty-event path. Native `TransformRelease` retains ownership
-of the pending form commit, mode reset, weapon changes and cleanup. Resolved
-animations and other units keep their original update path.
+The supported original client is `GOnline-54BE1568-00C97000`. Recovery is limited to the `24787/24788` pair. Inventory, levels, experience, upgrades and paint retain their original data. Normal transformations and other units keep their native behavior.
 
-The original missing animation remains absent; this repair restores the exit
-from that state using the existing native fallback semantics.
+## Native behavior
 
-## Source and validation
+An alternate-form sortie can swap models before requesting a missing `change_ma` animation; the reverse edge can similarly request a missing `change_ms`. The animation request returns zero while previous animation events remain, so the original transformation update can wait indefinitely.
 
-Supported host: `GOnline-54BE1568-00C97000`, executable SHA-256
-`e2dba73c10302b50cb0e6f2e58dd0a14effa8d224989ae570a7f8e05af79ff92`.
+The Mod calls the original update once. It intervenes only for the exact unit pair in transformation mode 3, a zero requested animation handle, retained animation events and a valid latched target. It uses the native empty-event WAIT path and normal transformation release. The native functions retain responsibility for form commits, weapons and cleanup. Existing animation resources are used.
 
-- `0x006DBB90`: selects target `change_ma` after the early swap, or current
-  `change_ms` before the delayed swap.
-- `0x00C571F0`: a missing action returns zero while previous raw playback can
-  survive.
-- `0x006D9AD0`: completion requires the matching handle and terminal event;
-  the empty-event path signals WAIT through `0x00BE3920` and virtual `+0xD8`.
-- `0x006D8E40`: native release commits an uncommitted target and clears mode.
+The supported native functions are `TransformUpdate` at `0x006D9AD0`, `TransformRelease` at `0x006D8E40`, `CUnit::Transform` at `0x006798F0`, and the state signal at `0x00BE3920`. Symbol signatures bind the implementation to the supported executable. The movement FSM is `CUnit+0x9C8`; the native transform-request business reads its owner at `+0x21C`.
 
-The actual production DLL test exercises its Win32 ABI, recovery ordering,
-both pair orientations, exclusion conditions and byte preservation. A bounded
-native-function replay executes 740 observations with the shipping DLL: the
-96 retained-slot null-handle consumers that previously failed to request WAIT
-all recover, while the other observations retain their results. Ten original
-bodies/tables remain unchanged. These checks are not whole-client gameplay.
+## Troubleshooting and testing
 
-**Delivery gate remains open:** complete background native combat acceptance
-is still pending. Direct loopback testing has already logged in and read the
-real inventory without firewall changes. The earlier access-denied error was
-specific to remote firewall-rule setup. The managed test environment now uses
-private SQL and native service copies, with five preinitialized fixture accounts
-and mandatory cleanup. No deployment or master push is claimed yet.
+Check that the client is updated, the fix is installed and the game has restarted. Include the starting form, transformation direction, battle mode and client version in a bug report. A log entry containing `Apsalus III null transform animation` identifies a recovered missing-animation transition.
 
-```powershell
-cmake --build build --config Release --target transform_input_fix_runtime_test
-ctest --test-dir build -C Release --output-on-failure -R '^transform_input_fix_actual_dll$'
-```
+The native regression exercises a real transformation round trip, native movement and primary-attack consumers, and the full battle/return flow. Follow the [GameTest guide](../skills/sdgo-native-testing/SKILL.md) for the isolated local test workflow. Offline ABI and original-function replay checks supplement gameplay verification.
