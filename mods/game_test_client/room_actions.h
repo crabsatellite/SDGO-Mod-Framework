@@ -483,6 +483,23 @@ public:
         }
     }
 
+    int NativeStartPrerequisite() const
+    {
+        __try {
+            auto* app=gameApp_ ? gameApp_():nullptr;
+            if(!app || *reinterpret_cast<uint32_t*>(app+kGameAppState)!=kThreeDWaitRoomState)return -1;
+            auto* state=*reinterpret_cast<uint8_t**>(app+kGameAppStateObject);
+            if(!state || *reinterpret_cast<void**>(state)!=threeDWaitRoomVtable_)return -2;
+            auto* object=*reinterpret_cast<uint8_t**>(state+kWaitRoomObject);
+            if(!object)return -3;
+            auto* nativeRoom=*reinterpret_cast<uint8_t**>(object+0x38);
+            if(!nativeRoom)return -4;
+            using Check=int(__thiscall*)(void*);
+            auto check=reinterpret_cast<Check>((*reinterpret_cast<void***>(nativeRoom))[0x7c/4]);
+            return check(nativeRoom);
+        } __except(EXCEPTION_EXECUTE_HANDLER) {return -5;}
+    }
+
     // The 3D UI queues the local pilot's MyLeaveRoom command through its
     // original Main-state business routine. Merely sending its request leaves
     // the registered reply consumer outside stage 2 and cannot leave the room.

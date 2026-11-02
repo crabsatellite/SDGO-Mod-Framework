@@ -540,6 +540,12 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
 }
 int __cdecl Start(const SdgoGameTestContextV1* context) {
     SdgoPvpAiClientSnapshotV1 snapshot{};
+    static uint64_t nextStartObservation=0;
+    if(context->elapsed_ms>=nextStartObservation) {
+        const auto transport=actions.TransportState();
+        char message[160];sprintf_s(message,"native start prerequisite=%d transport=%04X/%u/%u queued=%u",rooms.NativeStartPrerequisite(),transport.opcode,transport.packet_size,transport.send_sequence,startRequested?1u:0u);
+        context->Observe(message);nextStartObservation=context->elapsed_ms+1000;
+    }
     if (!startRequested) {
         Snapshot(snapshot); startSequence = snapshot.received_battle_start_count;
         endSequence = rooms.BattleEndState().sequence;
