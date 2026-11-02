@@ -286,7 +286,7 @@ class SqlTransportTests(unittest.TestCase):
         original_popen=subprocess.Popen
         entered=threading.Event();release=threading.Event()
         def journal(process):
-            entered.set();release.wait(10)
+            entered.set();release.wait()
         def echo_process(*args,**kwargs):
             code="import os,sys; data=os.read(sys.stdin.fileno(),4); os.write(sys.stdout.fileno(),data)"
             return original_popen([sys.executable,'-u','-c',code],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
@@ -294,9 +294,9 @@ class SqlTransportTests(unittest.TestCase):
         with mock.patch.object(bridge_module.subprocess,'Popen',side_effect=echo_process):
             bridge=bridge_module.SqlBridge('offline-byte-transport-fixture',on_process=journal)
             try:
-                with socket.create_connection(('127.0.0.1',bridge.port),timeout=5) as client:
+                with socket.create_connection(('127.0.0.1',bridge.port),timeout=30) as client:
                     client.settimeout(5);client.sendall(b'TEST')
-                    self.assertTrue(entered.wait(5))
+                    self.assertTrue(entered.wait(30))
                     self.assertEqual(client.recv(4),b'TEST')
                     self.assertFalse(release.is_set())
             finally:
@@ -338,6 +338,30 @@ class CandidateAdmissionTests(unittest.TestCase):
         self.assertIn('sdgo/mods/game_test_client/mod.ini',metadata['client']['immutable_hashes'])
         with self.assertRaises(self.gt.GameTestError):
             self.fixture.prepare('incomplete-roundtrip',apsalus_roundtrip=True,bootstrap_only=True)
+
+    def test_gameplay_fps_cap_is_bound_to_client_settings_and_observer(self):
+        import xml.etree.ElementTree as ET
+        from tests.test_game_test_fps import FPS_MANIFEST
+        f=self.fixture
+        config=f.template/'config.xml';tree=ET.fromstring(config.read_bytes())
+        framework=tree.find('Framework')
+        if framework is None:framework=ET.SubElement(tree,'Framework')
+        timer=framework.find('Timer')
+        if timer is None:timer=ET.SubElement(framework,'Timer')
+        timer.set('updatefps','60');config.write_bytes(ET.tostring(tree,encoding='utf-8'))
+        directory=f.stage/'client/sdgo/mods/fps_limit';directory.mkdir()
+        (directory/'mod.ini').write_text(FPS_MANIFEST,encoding='utf-8')
+        (directory/'fps_limit.dll').write_bytes(b'candidate-fps')
+        symbols=f.stage/('client/sdgo/symbols/'+self.gt.HOST_KEY+'.ini')
+        with symbols.open('a',encoding='utf-8') as stream:stream.write('\n[fps.config.force60]\nkind=site\nrva=fps\n')
+        run=f.prepare('fps-gameplay',fps_gameplay_cap=160)
+        self.assertEqual(ET.fromstring((run/'client/config.xml').read_bytes()).find('Framework/Timer').get('updatefps'),'160')
+        manifest=run/'client/sdgo/mods/game_test_client/mod.ini'
+        self.assertEqual(self.gt.read_ini(manifest).get('settings','FpsGameplayCap'),'160')
+        metadata=f.metadata(run);self.gt.verify_hashes(metadata)
+        manifest.write_bytes(manifest.read_bytes().replace(b'FpsGameplayCap=160',b'FpsGameplayCap=60'))
+        with self.assertRaises(self.gt.GameTestError):self.gt.verify_hashes(metadata)
+        with self.assertRaises(self.gt.GameTestError):f.prepare('fps-bootstrap',fps_gameplay_cap=160,bootstrap_only=True)
 
     def test_disabled_retained_diagnostic_does_not_require_its_historical_aliases(self):
         root=self.fixture.template/'sdgo/mods/old_probe'

@@ -137,7 +137,7 @@ namespace {
         __asm { test eax, eax }
         __asm { je no_timer_write }
         // The shipped initializer resets the simulation timer to exactly 60 Hz.
-        // The next production Idle restores the configured update/render cap.
+        // The production Idle preserves the native gameplay rate.
         __asm { mov dword ptr [eax + 0x18], 0x3C888889 }
         __asm { no_timer_write: }
         __asm { push 0x51A7E112 }
@@ -281,7 +281,7 @@ namespace {
         const BYTE initialRenderSync = g_app[kRenderSyncOffset];
         const float expectedInterval =
             g_active && withTimer
-                ? 1.0f / static_cast<float>(g_expectedPresentCap)
+                ? 1.0f / static_cast<float>(kNativeDefaultFps)
                 : initialInterval;
         const BYTE expectedRenderSync = g_active && withTimer ? 0 : initialRenderSync;
         const bool writeExpected = g_active && withTimer &&
@@ -331,7 +331,7 @@ namespace {
         IDLE_CHECK(g_app[kRenderSyncOffset] == expectedRenderSync,
                    "RenderSync matches the active timer policy");
         IDLE_CHECK(std::fabs(TimerInterval() - expectedInterval) < 0.0000001f,
-                   "timer interval matches the configured update cap");
+                   "timer interval retains the native 60 Hz gameplay rate");
         IDLE_CHECK(g_idleObservedTimer == (withTimer ? 1 : 0),
                    "original Idle observes the expected timer presence");
         IDLE_CHECK(g_idleObservedRenderSync == expectedRenderSync,
@@ -340,7 +340,7 @@ namespace {
             float observed = 0.0f;
             memcpy(&observed, &g_idleObservedInterval, sizeof(observed));
             IDLE_CHECK(std::fabs(observed - expectedInterval) < 0.0000001f,
-                       "original Idle observes the configured update interval");
+                       "original Idle observes the native 60 Hz update interval");
         }
 #undef IDLE_CHECK
     }
@@ -348,8 +348,7 @@ namespace {
     void RunIdleSuite()
     {
         RunNativeReset();
-        RunIdleOnce("Idle after native 60 Hz reset", true,
-                    !g_active || g_expectedPresentCap == kNativeDefaultFps);
+        RunIdleOnce("Idle after native 60 Hz reset", true, true);
         RunIdleOnce("repeated idempotent Idle", true, true);
 
         const int wrongCap =
@@ -357,7 +356,7 @@ namespace {
         SetTimerInterval(1.0f / static_cast<float>(wrongCap));
         RunIdleOnce("Idle after corrupted native timer", true, false);
 
-        SetTimerInterval(1.0f / static_cast<float>(g_expectedPresentCap));
+        SetTimerInterval(1.0f / static_cast<float>(kNativeDefaultFps));
         g_app[kRenderSyncOffset] = 1;
         RunIdleOnce("Idle after native RenderSync reset", true, false);
 
@@ -540,8 +539,8 @@ namespace {
               "observer returns the requested snapshot ABI");
         Check(state.render_cap == static_cast<uint32_t>(g_expectedPresentCap),
               "observer reports the configured Present cap");
-        Check(state.update_hz == static_cast<uint32_t>(g_expectedPresentCap),
-              "observer reports the configured update cap");
+        Check(state.update_hz == static_cast<uint32_t>(kNativeDefaultFps),
+              "observer reports native 60 Hz independently of the render cap");
         Check(state.qpc_frequency == static_cast<uint64_t>(frequency.QuadPart) &&
               state.period_ticks == static_cast<uint64_t>(period),
               "observer period is exactly ceil(QPC frequency / Present cap)");
@@ -556,8 +555,8 @@ namespace {
         const DWORD error = GetLastError();
         int observed = 0;
         memcpy(&observed, g_app + kFpsOffset, sizeof(observed));
-        Check(observed == g_expectedPresentCap,
-              "configured Present cap survives the native forced-60 site");
+        Check(observed == kNativeDefaultFps,
+              "native forced-60 gameplay field is preserved while capturing the render cap");
 
         bool guards = true;
         for (size_t i = 0; i < kAppBytes; ++i) {
