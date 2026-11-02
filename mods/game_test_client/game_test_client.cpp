@@ -28,6 +28,7 @@
 #include "onboarding_gate.h"
 #include "fps_test_actions.h"
 #include "sdgo/pvp_ai_client_observer.h"
+#include "scoreboard_actions.h"
 #include <cwchar>
 
 namespace {
@@ -39,6 +40,23 @@ using FindWindowFn = HWND(WINAPI*)(LPCWSTR, LPCWSTR);
 using MessageBoxWFn=int(WINAPI*)(HWND,LPCWSTR,LPCWSTR,UINT);
 using MessageBoxAFn=int(WINAPI*)(HWND,LPCSTR,LPCSTR,UINT);
 AppMethod originalUpdate;
+using ErrorNameFn = const char*(__cdecl*)(int);
+ErrorNameFn originalErrorName = nullptr;
+volatile LONG nativeErrorSequence=0,nativeLastError=0;
+const char* __cdecl ObserveNativeErrorName(int code) {
+    const char* name=originalErrorName(code);
+    if (code && InterlockedExchange(&nativeLastError,code)!=code) {
+        InterlockedIncrement(&nativeErrorSequence);
+        char safeName[160]{};size_t used=0;
+        if (name) for (const unsigned char* p=reinterpret_cast<const unsigned char*>(name);*p && used+5<sizeof(safeName);++p) {
+            if (*p>=32 && *p<127) safeName[used++]=static_cast<char>(*p);
+            else used+=sprintf_s(safeName+used,sizeof(safeName)-used,"\\x%02X",static_cast<unsigned>(*p));
+        }
+        char message[224];sprintf_s(message,"native error code=%04X name=%s",code,name ? safeName:"unknown");
+        sdgo_test::Observe(message);
+    }
+    return name;
+}
 FindWindowFn originalFindWindow;
 MessageBoxWFn originalMessageBoxW;
 MessageBoxAFn originalMessageBoxA;
@@ -75,6 +93,11 @@ TutorialActions tutorial;
 OnboardingActions onboarding;
 SdgoPvpAiClientGetSnapshotV1Fn getSnapshot;
 SdgoPvpAiClientGetLuaStatusV1Fn getLuaStatus;
+SdgoPvpAiClientGetStartStatusV1Fn getStartStatus;
+SdgoPvpAiClientGetScoreboardStatusV1Fn getScoreboardStatus;
+ScoreboardActions scoreboardInput;
+uint32_t scoreboardCombatSequence = 0, scoreboardCombatChanges = 0;
+SdgoPvpAiClientScoreboardStatusV1 scoreboardLast{};
 char accountName[32] = {}, accountPassword[128] = {}, roomTitle[21] = {};
 unsigned loginAttempts = 0, retryCount = 1;
 uint32_t loginReplySeen = 0;
@@ -497,9 +520,10 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
             context->Observe(message); lastReply = replies.create_reply_sequence;
         }
         if (replies.create_reply_opcode == 0x0A0A || (replies.create_reply_opcode == 0x0918 && !replies.create_reply_room_id)) {
-            if ((RequestedMode()==6 || RequestedMode()==7) && replies.create_reply_error==0x0BC2 &&
+            if ((replies.create_reply_error==0x0BC2 || replies.create_reply_error==0x08A5 ||
+                 replies.create_reply_error==0x08A4) &&
                 !replies.create_reply_room_id && channels.ExcludeSelectedChannel()) {
-                context->Observe("native server rejected this ship-room setting; testing the next server-provided regular VS channel without changing its restrictions");
+                context->Observe("native server requires an available ship/deck on this channel; testing the next server-provided regular VS channel without changing its restrictions");
                 roomRequested=false;
                 return SDGO_GAME_TEST_WAIT;
             }
@@ -540,6 +564,7 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
 }
 int __cdecl Start(const SdgoGameTestContextV1* context) {
     SdgoPvpAiClientSnapshotV1 snapshot{};
+    static LONG errorBaseline=0;
     static uint64_t lastStartAttempt=0;
     static uint32_t startSendBaseline=0,startReplyBaseline=0;
     if(!context->tick){lastStartAttempt=0;startSendBaseline=actions.GameStartSendCount();startReplyBaseline=rooms.NativeStartReplySequence();}
@@ -555,6 +580,7 @@ int __cdecl Start(const SdgoGameTestContextV1* context) {
     }
     if (!startRequested) {
         startSendBaseline=actions.GameStartSendCount();startReplyBaseline=rooms.NativeStartReplySequence();
+        errorBaseline=InterlockedCompareExchange(&nativeErrorSequence,0,0);
         Snapshot(snapshot); startSequence = snapshot.received_battle_start_count;
         endSequence = rooms.BattleEndState().sequence;
         if (!rooms.StartBattleNativeHost()) return SDGO_GAME_TEST_WAIT;
@@ -568,6 +594,11 @@ int __cdecl Start(const SdgoGameTestContextV1* context) {
             rooms.NativeStartPrerequisite()==0 && rooms.StartBattleNativeHost()) {
         lastStartAttempt=context->elapsed_ms;
         context->Observe("native start command has not progressed; retried its original queue business without a packet or state write");
+    }
+    const LONG rejection=InterlockedCompareExchange(&nativeLastError,0,0);
+    if (InterlockedCompareExchange(&nativeErrorSequence,0,0)>errorBaseline && rejection>=0x0FAC && rejection<=0x0FC0) {
+        char message[112];sprintf_s(message,"the original client received native battle-start rejection %04X",static_cast<unsigned>(rejection));
+        context->Assert(0,message);return SDGO_GAME_TEST_FAIL;
     }
     if (!Snapshot(snapshot) || snapshot.native_app_state != 22 || snapshot.received_battle_start_count <= startSequence) return SDGO_GAME_TEST_WAIT;
     activeBattleStartSequence = snapshot.received_battle_start_count;
@@ -588,6 +619,7 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
     SdgoPvpAiClientSnapshotV1 snapshot{};
     if (!context->tick) motionSamples.clear();
     if (!Snapshot(snapshot) || snapshot.native_app_state != 22) return SDGO_GAME_TEST_WAIT;
+    scoreboardInput.Hold(true);
     const int transformProbe = apsalus_probe::Poll(context, sdgo_test::api, sdgo_test::mod);
     if (transformProbe != SDGO_GAME_TEST_PASS) return transformProbe;
     bool ready = snapshot.bot_count == expectedAi;
@@ -613,6 +645,45 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
     char observation[160];
     sprintf_s(observation, "real AI mode=%u bots=%u allies=%u enemies=%u moved=%u lua=%u observer=%u", RequestedMode(), snapshot.bot_count, allies, enemies, moved, snapshot.lua_error_count, snapshot.lua_error_observer_available);
     context->Observe(observation);
+    SdgoPvpAiClientStartStatusV1 startStatus{};
+    startStatus.size = sizeof(startStatus); startStatus.version = SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
+    if (!getStartStatus || !getStartStatus(&startStatus)) {
+        context->Assert(0, "native opening-freeze observation is available");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    char opening[224];
+    sprintf_s(opening, "native opening mode=%u sequence=%u phase=%u frozen_frames=%u early=%u releases=%u release_phase=%u player_control=%u bots=%u enabled=%u",
+        RequestedMode(), startStatus.battle_start_sequence, startStatus.native_ready_state,
+        startStatus.frozen_update_count, startStatus.early_enabled_count, startStatus.release_count,
+        startStatus.release_ready_state, startStatus.player_control_enabled, startStatus.bot_count, startStatus.ai_enabled_count);
+    context->Observe(opening);
+    context->Assert(startStatus.battle_start_sequence == activeBattleStartSequence && startStatus.bot_count == expectedAi,
+        "opening-freeze observation belongs to this genuine battle and its AI participants");
+    context->Assert(startStatus.frozen_update_count > 0 && startStatus.early_enabled_count == 0,
+        "AI stayed disabled on every observed native opening-freeze frame");
+    context->Assert(startStatus.release_count == 1 && startStatus.release_ready_state == 3 &&
+        startStatus.player_control_enabled && startStatus.ai_enabled_count == expectedAi,
+        "all AI were enabled once on the native frame that released player control");
+    SdgoPvpAiClientScoreboardStatusV1 roster{};
+    roster.size = sizeof(roster); roster.version = SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
+    if (!getScoreboardStatus || !getScoreboardStatus(&roster)) {
+        context->Assert(0, "the actual native TAB roster observer is available"); return SDGO_GAME_TEST_FAIL;
+    }
+    bool allRendered = roster.panel_visible && roster.panel_state == 2;
+    for (uint32_t i = 0; i < roster.bot_count && i < 12; ++i) allRendered = allRendered && roster.bots[i].render_count > 0;
+    if (!allRendered && context->elapsed_ms < 30000) return SDGO_GAME_TEST_WAIT;
+    context->Assert(scoreboardInput.Queries() > 0 && allRendered && roster.battle_start_sequence == activeBattleStartSequence &&
+        roster.bot_count == expectedAi && roster.native_row_count == 1 + expectedAi,
+        "native TAB input opened the animated battle roster and its original kill/assist/points renderer drew every AI row");
+    char tab[180]; sprintf_s(tab, "native TAB mode=%u rows=%u original=%u bots=%u visible=%u state=%u input_queries=%u",
+        RequestedMode(),roster.native_row_count,roster.original_row_count,roster.bot_count,roster.panel_visible,roster.panel_state,scoreboardInput.Queries());
+    context->Observe(tab);
+    for (uint32_t i = 0; i < roster.bot_count && i < 12; ++i) {
+        const auto& row = roster.bots[i];
+        context->Assert(row.pilot_id == snapshot.bots[i].pilot_id && row.object_id == snapshot.bots[i].object_id &&
+            row.team == snapshot.bots[i].team && row.render_count && row.kills >= 0 && row.assists >= 0,
+            "the actual native TAB row retains this AI pilot, object, team and native combat counters");
+    }
     context->Assert(authenticatedPilot && snapshot.profile_pilot_id == authenticatedPilot, "the battle uses the pilot captured after this run's accepted login");
     const std::wstring expectedTitle(roomTitle, roomTitle + strlen(roomTitle));
     context->Assert(!wcscmp(snapshot.room_title, expectedTitle.c_str()), "the actual battle belongs to this run's server-created room");
@@ -661,6 +732,23 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
 int __cdecl Return(const SdgoGameTestContextV1* context) {
     SdgoPvpAiClientSnapshotV1 live{};
     if(Snapshot(live) && live.native_app_state==22) {
+        SdgoPvpAiClientScoreboardStatusV1 roster{};
+        roster.size = sizeof(roster); roster.version = SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
+        if (getScoreboardStatus && getScoreboardStatus(&roster) && roster.battle_start_sequence == activeBattleStartSequence) {
+            if (scoreboardCombatSequence != activeBattleStartSequence) {
+                scoreboardCombatSequence = activeBattleStartSequence; scoreboardCombatChanges = 0; scoreboardLast = {};
+            }
+            for (uint32_t i = 0; i < roster.bot_count && i < 12; ++i) {
+                const auto& row = roster.bots[i]; const auto& before = scoreboardLast.bots[i];
+                if (row.render_count && (row.kills != before.kills || row.assists != before.assists || row.points != before.points)) {
+                    ++scoreboardCombatChanges;
+                    char stats[192]; sprintf_s(stats, "native TAB stats mode=%u AI=%08X team=%u row=%u kills=%d assists=%d points=%d draws=%u",
+                        RequestedMode(),row.pilot_id,row.team,row.row_index,row.kills,row.assists,row.points,row.render_count);
+                    context->Observe(stats);
+                }
+            }
+            scoreboardLast = roster;
+        }
         const std::wstring title(roomTitle,roomTitle+strlen(roomTitle));
         const auto result=battleCombat.Observe(live,{activeBattleStartSequence,authenticatedPilot,RequestedMode(),title.c_str()});
         if(result==BattleCombatActions::kInvalidExpectation || result==BattleCombatActions::kInvalidSnapshot ||
@@ -683,12 +771,15 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
     }
     const auto ended = rooms.BattleEndState();
     if (!endObserved && ended.sequence > endSequence && ended.original_handler_completed) {
+        scoreboardInput.Hold(false);
         endObserved = true;
         char message[128];
         sprintf_s(message, "real battle end opcode=%04X result=%u app=%u sequence=%u", ended.reply_opcode, ended.result_type, ended.native_app_state, ended.sequence);
         context->Observe(message);
         context->Assert(ended.reply_opcode == 0x0871, "the original client consumed the genuine server battle-end reply");
         context->Assert(1, "Lua observation stayed available with zero errors through the entire real battle");
+        context->Assert(scoreboardCombatSequence == activeBattleStartSequence && scoreboardCombatChanges > 0,
+            "the native TAB kill/assist/points renderer reflected actual AI combat-counter changes during this full battle");
         const auto combat=battleCombat.State();char evidence[256];
         sprintf_s(evidence,"native combat frames=%u targets=%u moved=%u hp_events=%u hp_total=%llu witness=%u:%d->%d",
             combat.validated_frame_count,combat.target_acquisition_events,combat.moved_identity_count,combat.hp_decrease_events,
@@ -898,10 +989,15 @@ int __cdecl AcquireBattleship(const SdgoGameTestContextV1* context) {
     if (result == BattleShipActions::kAlreadyCompleted || result == BattleShipActions::kConfirmed) {
         context->Assert(state.profile_pilot_id == authenticatedPilot && authenticatedPilot,
                         "the native battleship belongs to this authenticated test account");
-        context->Assert(state.tutorial_level >= 4 && (state.ship_uid_low || state.ship_uid_high),
-                        "the original game profile contains a real acquired and selected battleship");
+        // A sealed fixture can already own a native starter fleet while its
+        // tutorial stays at the template's declared level 2. This scenario
+        // verifies that real asset; tutorial completion belongs to the path
+        // that actually acquired a fleet through the popup.
+        context->Assert(state.ship_id && (state.ship_uid_low || state.ship_uid_high) &&
+                        (state.leader_uid_low || state.leader_uid_high),
+                        "the server-loaded native profile contains a selected battleship and its real leader unit");
         if (result == BattleShipActions::kConfirmed)
-            context->Assert(state.reply_opcode == 0x08EF && state.reply_consumed && state.confirm_sequence,
+            context->Assert(state.tutorial_level >= 4 && state.reply_opcode == 0x08EF && state.reply_consumed && state.confirm_sequence,
                             "the real acquisition reply and original result confirmation completed");
         return SDGO_GAME_TEST_PASS;
     }
@@ -958,6 +1054,17 @@ int __cdecl SendGiftRequests(const SdgoGameTestContextV1* context) {
 }
 
 int __cdecl ConfigureDeck(const SdgoGameTestContextV1* context) {
+    if (!deckOnly) {
+        BattleShipDeckActions::Observation prepared{};
+        const auto result=decks.ObserveExistingDeck(deckUnitUids,prepared);
+        if (result==BattleShipDeckActions::kWaitingForShipData || result==BattleShipDeckActions::kWaitingForInventory)
+            return SDGO_GAME_TEST_WAIT;
+        context->Assert(result==BattleShipDeckActions::kAccepted && prepared.profile_matches && prepared.selected_count==4,
+            "the server-loaded selected four-unit fleet matches the sealed fixture and every UID exists in this account's native inventory");
+        char state[160];sprintf_s(state,"existing native fleet ship=%llu leader=%llu units=%u cost=%u; no acquisition or deck edit requested",
+            prepared.ship_uid,prepared.leader_uid,prepared.selected_count,prepared.total_cost);context->Observe(state);
+        return result==BattleShipDeckActions::kAccepted ? SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+    }
     if (actions.AppState()!=20) {
         const auto result=hangarNavigation.EnsureHangar();
         const auto navigation=hangarNavigation.State();
@@ -1687,6 +1794,10 @@ SDGO_MOD_ENTRY {
     if (!modalLoadingVtable)sdgo_test::Fail("native modal-loading page identity is unavailable");
     if (!roomListVtable)sdgo_test::Fail("native Game Room page identity is unavailable");
     getSnapshot = reinterpret_cast<SdgoPvpAiClientGetSnapshotV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_SNAPSHOT_EXPORT));
+    api->HookCode(mod,"game.error_name",reinterpret_cast<void*>(&ObserveNativeErrorName),reinterpret_cast<void**>(&originalErrorName));
+    getStartStatus = reinterpret_cast<SdgoPvpAiClientGetStartStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_START_STATUS_EXPORT));
+    getScoreboardStatus = reinterpret_cast<SdgoPvpAiClientGetScoreboardStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_SCOREBOARD_STATUS_EXPORT));
+    if (!missionMode && !fpsOnly && !bootstrapOnly && !pagesOnly && !scoreboardInput.Install(api, mod)) return 0;
     if (!getSnapshot) sdgo_test::Fail("production PvP AI observation export is unavailable");
     getLuaStatus = reinterpret_cast<SdgoPvpAiClientGetLuaStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_LUA_STATUS_EXPORT));
     if (!getLuaStatus) sdgo_test::Fail("production whole-battle Lua counter export is unavailable");

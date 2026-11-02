@@ -173,6 +173,56 @@ class EnvironmentTests(unittest.TestCase):
 
 
 class NativeTemplateTests(unittest.TestCase):
+    def test_ordinary_runs_cannot_initialize_operator_selection(self):
+        from tools.game_test_fixtures import initialize_selected_operators
+        with self.assertRaisesRegex(RuntimeError,'isolated template'):
+            initialize_selected_operators(None,[])
+
+    def test_backup_stream_preserves_binary_bytes_and_source_file(self):
+        from tools.game_test_native_environment import copy_snapshot
+        payload = bytes(range(256)) * 16
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)/'snapshot.bak';source.write_bytes(payload)
+            def transfer(argv, **kwargs):
+                import gzip
+                self.assertEqual(gzip.decompress(kwargs['stdin'].read()), payload)
+                self.assertNotIn('--mount', argv)
+                return mock.Mock(returncode=0)
+            with mock.patch('tools.game_test_native_environment.subprocess.run',side_effect=transfer):
+                copy_snapshot('owned-sql',source,'/var/opt/mssql/backup/snapshot.bak')
+            self.assertEqual(source.read_bytes(), payload)
+
+    def test_failed_backup_stream_is_not_accepted_as_a_restore(self):
+        from tools.game_test_native_environment import copy_snapshot
+        with tempfile.TemporaryDirectory() as directory:
+            source=Path(directory)/'snapshot.bak';source.write_bytes(b'backup')
+            with mock.patch('tools.game_test_native_environment.subprocess.run',return_value=mock.Mock(returncode=1,stderr=b'disk full')):
+                with self.assertRaisesRegex(RuntimeError,'snapshot transfer failed'):
+                    copy_snapshot('owned-sql',source,'/var/opt/mssql/backup/snapshot.bak')
+
+    def test_mode_matrix_reuses_the_declared_existing_primary(self):
+        from tools.game_test_native_environment import scenario_options
+        options=scenario_options({'primary_uid':17},mode_sequence='1,3,6,7,9')
+        self.assertEqual(options['mode_sequence'],'1,3,6,7,9')
+        self.assertEqual(options['play_unit_uid'],17)
+        self.assertFalse(options['pages_only'])
+
+    def test_native_pages_reuse_inventory_without_an_equip_or_acquisition_step(self):
+        from tools.game_test_native_environment import scenario_options
+        options=scenario_options({'primary_uid':17},pages_only=True,
+            shop_assertions=Path('assertions.ini'),shop_display=Path('display.ini'))
+        self.assertIsNone(options['play_unit_uid'])
+        self.assertEqual(options['shop_assertions'],Path('assertions.ini'))
+        self.assertTrue(options['pages_only'])
+
+    def test_invalid_scenario_mixes_are_rejected_before_allocating_a_runtime(self):
+        from tools.game_test_native_environment import scenario_options
+        for options in ({'bootstrap_only':True,'pages_only':True},
+                        {'pages_only':True,'mode_sequence':'3'},
+                        {'shop_assertions':Path('a'),'shop_display':Path('b')},
+                        {'pages_only':True,'shop_assertions':Path('a')}):
+            with self.subTest(options=options),self.assertRaises(RuntimeError):
+                scenario_options({'primary_uid':17},**options)
     def test_fleet_selection_obeys_native_costs_for_large_ma_and_four_unit_cases(self):
         from tools.game_test_fixtures import choose_fleet
         ships=[(99,270005,0,15)]
