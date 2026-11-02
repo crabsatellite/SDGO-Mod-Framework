@@ -10,12 +10,15 @@ reads a byte count as a character count.
 
 ## Use
 
-Nothing to do: it is on after the client install. Turn it off with `ime_fix=0` under
-`[mods]` in `sdgo\sdgo.ini`.
+Nothing to do: it works automatically once the framework is installed on the client. SDGO Mod
+Manager lists it under **修复归档** (fix archive). To switch it off while troubleshooting, click
+**显示开发信息** (show developer info), clear its switch and restart the game. The switch writes
+`enabled=0` to the mod's `mod.ini` and `ime_fix=0` under `[mods]` in `sdgo\sdgo.ini`.
 
 ## Settings
 
-`sdgo\mods\ime_fix\mod.ini`, read when the game starts:
+Developer setting, shown in the Manager after **显示开发信息**. Stored in
+`sdgo\mods\ime_fix\mod.ini` and read when the game starts:
 
 | key | default | meaning |
 |---|---|---|
