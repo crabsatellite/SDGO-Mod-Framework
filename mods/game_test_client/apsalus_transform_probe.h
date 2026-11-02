@@ -24,6 +24,12 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
     auto* move = *reinterpret_cast<unsigned char**>(unit + 0x9cc);
     auto* spec = *reinterpret_cast<unsigned char**>(unit + 0x9c4);
     if (!move || !spec || *reinterpret_cast<unsigned char**>(move + 0x21c) != unit) {
+        static bool reported=false;
+        if(!reported) {
+            char message[160];sprintf_s(message,"apsalus native object readiness: unit=%p move=%p spec=%p owner=%p",unit,move,spec,move?*reinterpret_cast<void**>(move+0x21c):nullptr);
+            context->Observe(message);reported=true;
+        }
+        if(context->elapsed_ms<10000)return SDGO_GAME_TEST_WAIT;
         context->Assert(0, "Apsalus probe observed the actual local movement-FSM owner");
         return SDGO_GAME_TEST_FAIL;
     }
