@@ -82,6 +82,9 @@ Friend-server players receive the client part through `update.bat`. Manual insta
 The client package contains `battle_ai`, `match_ai`, `mission_ai` and the `ai_catalog` runtime; the server
 package contains `battle_ai_server` and `pvp_ai`, together with the matching core and loader. Owner
 catalogs, enable states, user `config.ini` and other mods are preserved.
+For a Manager framework template that contains no native game executable, use
+the same installer with `-FrameworkOnly`. This option rejects a normal game
+directory; normal client and server installs still verify the executable hash.
 
 ## Settings
 
