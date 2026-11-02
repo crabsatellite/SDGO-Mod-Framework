@@ -66,6 +66,8 @@ void* g_buttonVtable[32] = {};
 void* g_staticTextVtable[40] = {};
 void* g_titleBarVtable[8] = {};
 void* g_titleEditVtable[8] = {};
+void* g_serviceVtable[8] = {};
+int g_widthTrimCalls = 0;
 NativeString g_native = {};
 std::wstring g_heapText;
 std::wstring g_setText;
@@ -302,6 +304,12 @@ void __fastcall FakeOriginal(void*, void*, std::uint32_t argument)
     SendMessageW(g_inputWindow, EM_SETLIMITTEXT, 20, 0);
 }
 
+void __fastcall FakeWidthTrim(void*, void*, NativeString* text)
+{
+    ++g_widthTrimCalls;
+    SetNative(text, GetNative(*text).substr(0, 13));
+}
+
 void __fastcall FakeCreateUpdate(void* self, void*)
 {
     g_originalRan = true;
@@ -402,7 +410,9 @@ int FakeHookSlot(SdgoMod*, const char* name, void* detour, void** original)
 int FakeHookCode(SdgoMod*, const char* name, void* detour, void** original)
 {
     g_detours[name] = detour;
-    if (!std::strcmp(name, "room_titles.ui_pvp_titlebar_render"))
+    if (!std::strcmp(name, "room_titles.ui_edit_width_trim"))
+        *original = reinterpret_cast<void*>(&FakeWidthTrim);
+    else if (!std::strcmp(name, "room_titles.ui_pvp_titlebar_render"))
         *original = reinterpret_cast<void*>(&FakePvpRender);
     else if (!std::strcmp(name, "room_titles.ui_mission_titlebar_render"))
         *original = reinterpret_cast<void*>(&FakeMissionRender);
@@ -618,8 +628,8 @@ int wmain(int argc, wchar_t** argv)
                "reject overlong edit text"))
         return 1;
 
-    if (!Check(native_ui::InstallInitHooks(&InitCallback) && g_detours.size() == 9,
-               "install seven init and two late create-update slots"))
+    if (!Check(native_ui::InstallInitHooks(&InitCallback) && g_detours.size() == 10,
+               "install seven init slots, two late create updates and width policy hook"))
         return 1;
     g_callbackEdit = &edit;
 
@@ -651,6 +661,7 @@ int wmain(int argc, wchar_t** argv)
         return 1;
 
     FakeService nativePvpCreate;
+    SetPointer(nativePvpCreate.bytes.data(), 0, g_serviceVtable);
     SetPointer(nativePvpCreate.bytes.data(), 0x54, &edit);
     if (!Check(Invoke("room_titles.ui_native_pvp_create_init", Surface::PvpNativeCreate, &nativePvpCreate, 7) &&
                    Invoke("room_titles.ui_grid_pvp_create_init", Surface::PvpNativeCreate, &nativePvpCreate, 8) &&
@@ -680,6 +691,30 @@ int wmain(int argc, wchar_t** argv)
         if (!Check(g_callbacks == before + 1, "ordinary updates do not restore a draft over typing"))
             return 1;
     }
+
+    using WidthDetour = void (__fastcall*)(void*, void*, NativeString*);
+    auto widthTrim = reinterpret_cast<WidthDetour>(g_detours.at("room_titles.ui_edit_width_trim"));
+    NativeString wideName = {};
+    SetNative(&wideName, std::wstring(128, L'\u623f'));
+    widthTrim(&edit, nullptr, &wideName);
+    if (!Check(g_widthTrimCalls == 0 && GetNative(wideName).size() == 128 && edit.bytes[0x29F] == 0,
+               "verified room title bypasses only width truncation without enabling multiline behavior"))
+        return 1;
+    FakeEdit unrelated;
+    InitEdit(&unrelated);
+    const std::uint32_t sameLimit = 512;
+    std::memcpy(unrelated.bytes.data() + 0x2A0, &sameLimit, sizeof(sameLimit));
+    widthTrim(&unrelated, nullptr, &wideName);
+    if (!Check(g_widthTrimCalls == 1 && GetNative(wideName).size() == 13,
+               "same-limit unrelated edit still runs the native width policy"))
+        return 1;
+    SetNative(&wideName, std::wstring(128, L'\u623f'));
+    SetPointer(nativePvpCreate.bytes.data(), 0, g_buttonVtable);
+    widthTrim(&edit, nullptr, &wideName);
+    if (!Check(g_widthTrimCalls == 2 && GetNative(wideName).size() == 13,
+               "reused service storage cannot grant a stale room-edit exemption"))
+        return 1;
+    SetPointer(nativePvpCreate.bytes.data(), 0, g_serviceVtable);
 
     FakeService teamSettings;
     SetPointer(teamSettings.bytes.data(), 0x7C, &dialog);
