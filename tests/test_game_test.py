@@ -653,6 +653,24 @@ rva=state
             'input_desktop_safe':False,'input_desktop_unchanged':True,'unexpected_input_window_count':1}
         with self.assertRaisesRegex(game_test.GameTestError,'private-desktop'):runtime.verify(1234)
 
+    def test_unreadable_input_desktop_stops_without_claiming_foreground_theft(self):
+        run_dir=self.prepare('quiet-desktop-access-denied');receipt=run_dir/'receipts';receipt.mkdir(exist_ok=True)
+        runtime=REAL_QUIET_RUNTIME(self.metadata(run_dir),receipt);runtime.process=mock.Mock()
+        proof={'verified':False,'foreground_safe':False,'input_desktop_safe':False,
+               'input_desktop_unchanged':False,'error':'OSError: [Errno 5] OpenInputDesktop failed: access denied'}
+        runtime.process.verify_background.return_value=proof
+        for bootstrapped in (False,True):
+            with self.subTest(bootstrapped=bootstrapped):
+                runtime.proof_file_written=bootstrapped
+                with self.assertRaisesRegex(game_test.GameTestError,'quiet desktop observation unavailable') as raised:
+                    runtime.verify(1234)
+                self.assertNotIn('attempted to take',str(raised.exception))
+                self.assertEqual(game_test.read_json(receipt/'quiet-runtime.json')['desktop_probe'],proof)
+                self.assertFalse((run_dir/'client/sdgo/gametest/quiet-verified.ini').exists())
+        runtime.process.verify_background.return_value={**proof,'error':None}
+        with self.assertRaisesRegex(game_test.GameTestError,'attempted to take the user foreground'):
+            runtime.verify(1234)
+
     def test_disappearing_windows_are_not_misreported_as_public_desktop_escape(self):
         run_dir=self.prepare('quiet-window-disappearance');receipt=run_dir/'receipts';receipt.mkdir(exist_ok=True)
         runtime=REAL_QUIET_RUNTIME(self.metadata(run_dir),receipt);runtime.process=mock.Mock();runtime.proof_file_written=True
