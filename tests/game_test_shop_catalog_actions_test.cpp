@@ -47,6 +47,8 @@ unsigned giftCancelCalls = 0;
 bool suppressPopup = false;
 bool suppressPageAdvance = false;
 bool catalogRequestPending=false;
+bool pageReplyQueued=false;
+unsigned pageReplyPendingPolls=0;
 bool retainEmptyNativeSlots=false;
 bool secondInventoryPage=false;
 bool fullInventoryReply=false;
@@ -338,6 +340,15 @@ uint32_t __fastcall RequestPending(void* self,void*,ShopCatalogActions::NativeRe
     Check(self==manager.get() && (text==L"REQ_GET_STORE_ITEM_LIST" || text==L"REQ_UNIT_SLOT_PAGE"),
           "native pending-query receives the exact manager and by-value string ABI");
     if(text==L"REQ_UNIT_SLOT_PAGE")return unitPagePending ? 1u : 0u;
+    if(pageReplyQueued) {
+        if(pageReplyPendingPolls) {
+            --pageReplyPendingPolls;
+            return 1u;
+        }
+        pageReplyQueued=false;
+        catalogRequestPending=false;
+        LoadPage(1);
+    }
     return catalogRequestPending ? 1u : 0u;
 }
 
@@ -493,8 +504,17 @@ uint32_t __stdcall RoomCallback(
     if (event != 0x101)
         return 0;
     if (control == rightButton->bytes.data()) {
-        if (!suppressPageAdvance)
-            LoadPage(1);
+        // Native 009DFBF0 changes room+68 synchronously, then 009BE6B0
+        // owns REQ_GET_STORE_ITEM_LIST until the 0549 reply rebuilds rows.
+        // A second click during that interval is silently ignored.
+        if (catalogRequestPending)
+            return 0;
+        if (!suppressPageAdvance) {
+            Put(room.get(), 0x68, uint32_t{1});
+            catalogRequestPending=true;
+            pageReplyQueued=true;
+            pageReplyPendingPolls=1;
+        }
         return 0;
     }
     const uint32_t page =
@@ -795,6 +815,8 @@ ShopCatalogActions::Bindings Bindings()
 void Setup()
 {
     catalogRequestPending=false;
+    pageReplyQueued=false;
+    pageReplyPendingPolls=0;
     retainEmptyNativeSlots=false;
     secondInventoryPage=fullInventoryReply=unitPagePending=false;unitPageRequests=0;
     app.data.assign(app.data.size(), 0);
