@@ -138,6 +138,8 @@ def validate_readmes(root: Path, catalog: dict) -> None:
                 raise ValueError(f"README feature/category/mods mismatch: {feature} in {filename}")
             if info["channel"] != "stable" and info["channel"] not in rows[0].lower():
                 raise ValueError(f"Missing README release channel for {feature}: {filename}")
+            if info["channel"] == "stable" and re.search(r"\b(?:beta|experimental)\b", rows[0], re.I):
+                raise ValueError(f"Stale README release channel for {feature}: {filename}")
 
 
 def select_catalog(catalog: dict, profile: str = "full", features: list[str] | None = None) -> dict:
