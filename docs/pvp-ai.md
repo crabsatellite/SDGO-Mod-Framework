@@ -21,6 +21,10 @@ Both parts are in the full framework package; friend-server players receive `mat
 
 Follow the [installation guide](setup.md#install), then use your usual launcher.
 
+Update every participating client, including the host, to `match_ai 0.1.4` or
+later and restart the client. The opening freeze and TAB roster fixes take
+effect in the next battle; Easy, Medium and Hard use the same release point.
+
 ## Use
 
 Set the room title, ready up and start normally. AI join at battle start.
