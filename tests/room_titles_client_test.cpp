@@ -22,6 +22,7 @@ struct FakeEdit
     unsigned writes = 0;
 };
 std::wstring g_title_bar_cache;
+std::wstring g_original_title;
 }  // namespace
 
 bool Bind(const SdgoApi*, SdgoMod*) { return true; }
@@ -55,6 +56,8 @@ bool SetEditText(void* edit, const std::wstring& text, bool)
     ++target->writes;
     return true;
 }
+
+bool SetTitleEditOriginalTitle(void*, const std::wstring& title) { g_original_title=title;return true; }
 
 bool SetTitleBarCachedTitle(void*, const std::wstring& title) { g_title_bar_cache = title; return true; }
 
@@ -252,6 +255,7 @@ void ResetRoot()
     g_title_event_callback = nullptr;
     g_title_event_message = {};
     ui::g_title_bar_cache.clear();
+    ui::g_original_title.clear();
     g_titleEvent = reinterpret_cast<EventFn>(&FakeTitleEvent);
 }
 
@@ -1074,8 +1078,23 @@ void TestTeamSettingsCallback()
           "unnegotiated team settings does not silently submit a truncated long title");
 }
 
+void TestInlineCancelKeepsConfirmedTitle()
+{
+    ResetRoot();
+    const uint32_t room=kBattleDomainForTest|22;
+    Check(Ready(86,2002,{Record(2002,room,1,1,"confirmed long title beyond twenty bytes")}),"inline cancel fixture");
+    g_activeRoom=room;
+    auto& saved=g_saved[static_cast<size_t>(ui::Surface::PvpTitleEdit)];
+    saved={true,86,room,L"unsent draft that must not become the cancel value"};
+    ui::FakeEdit edit;
+    OnInit(ui::Surface::PvpTitleEdit,nullptr,&edit);
+    Check(edit.text==saved.text && ui::g_original_title==L"confirmed long title beyond twenty bytes",
+          "Escape original cache retains confirmed full metadata independently of the visible retry draft");
+}
+
 void RunTests()
 {
+    TestInlineCancelKeepsConfirmedTitle();
     TestTeamSettingsCallback();
     TestNativePvpCreateCarrier();
     TestCapabilityAndLegacyFallback();

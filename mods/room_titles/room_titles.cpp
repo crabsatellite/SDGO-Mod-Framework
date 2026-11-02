@@ -540,25 +540,27 @@ void OnReceive(uint32_t connection, const uint8_t* packet, size_t size, const ui
         Explain(L"The server did not confirm this room title. Your text was kept; reopen the title settings to retry.");
 }
 
-void OnInit(ui::Surface surface, void*, void* edit)
+void OnInit(ui::Surface surface, void* service, void* edit)
 {
     if (!edit)
         return;
-    std::wstring value;
+    std::wstring value, confirmed;
     {
         Lock lock;
         const auto& saved = g_saved[static_cast<size_t>(surface)];
         const bool editing = surface == ui::Surface::MissionSettings || surface == ui::Surface::TeamSettings || surface == ui::Surface::PvpTitleEdit;
         const uint32_t room = surface == ui::Surface::MissionSettings ? SafeRoomId(g_missionRoom) :
                               editing ? g_activeRoom : 0;
+        if (editing) {
+            const auto record = g_state.Query(g_activeConnection, room);
+            if (record && !record->title.empty())Wide(record->title, &confirmed);
+        }
         if (saved.valid && saved.connection == g_activeConnection && saved.room == room)
             value = saved.text;
-        else if (editing) {
-            const auto record = g_state.Query(g_activeConnection, room);
-            if (record && !record->title.empty())
-                Wide(record->title, &value);
-        }
+        else value = confirmed;
     }
+    if (surface == ui::Surface::PvpTitleEdit && !confirmed.empty())
+        ui::SetTitleEditOriginalTitle(service, confirmed);
     if (!value.empty())
         ui::SetEditText(edit, value);
 }
