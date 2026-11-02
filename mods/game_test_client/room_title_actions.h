@@ -10,7 +10,7 @@
 #include <intrin.h>
 
 // Drives live registered services and their original UI callbacks. Text enters
-// the game's actual shared Win32 EDIT via WM_CHAR/EM_REPLACESEL; no SetText,
+// the game's actual shared Win32 EDIT via queued WM_CHAR messages; no SetText,
 // input-limit write, native room write, packet synthesis or fake reply is used.
 class RoomTitleActions {
 public:
