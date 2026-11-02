@@ -81,6 +81,9 @@ function markClean(){
   dirty=false;
   $("save-state").textContent="没有未保存的修改";
   $("save-state").classList.remove("dirty");
+  // Dirty edits display their source art. Once saved, replace it with the
+  // revision-bound generator output before icon confirmation is possible.
+  if(draft)for(const role of ["shop","capsule"])renderPreview(role);
   syncActions();
 }
 
@@ -824,7 +827,7 @@ async function confirmDraft(){
     const serverApplied=Boolean(confirmed&&confirmed.server_result&&confirmed.server_result.applied);
     await refreshDraftAfterWrite(response);
     message(serverApplied
-      ?"原生界面已核对，服务端定义已应用；原生缓存需按正常流程刷新。现在可以下载玩家客户端包和服务端计划。"
+      ?"生成图标已确认，服务端定义已应用；原生缓存需按正常流程刷新。现在可以下载玩家客户端包和服务端计划。"
       :"原生界面已核对并登记到本模块目录，但未写入游戏服务端。现在可以下载玩家客户端包和服务端计划。");
   }catch(error){
     resetConfirmations();
