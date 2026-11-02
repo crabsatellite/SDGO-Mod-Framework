@@ -20,10 +20,11 @@ enum class Surface : std::uint8_t {
     // The host reuses this dialog for both PvP and mission wait rooms. Keep
     // the stable identifier because the controller also uses it as the
     // native 0x089E title-change operation.
-    PvpTitleEdit
+    PvpTitleEdit,
+    PvpNativeCreate
 };
 
-// Called after the native init returns and after the edit limit is expanded.
+// Called after native control initialization and after the edit limit is expanded.
 // edit is null when the verified surface did not expose its expected control.
 using InitCallback = void (*)(Surface surface, void* service, void* edit);
 
@@ -36,7 +37,7 @@ using TitleLookupCallback = bool (*)(bool battle_domain,
 // Resolve the verified host helpers used below. This does not install hooks.
 bool Bind(const SdgoApi* api, SdgoMod* mod);
 
-// Hook all four verified init vtable slots. A false result must make the
+// Hook the six verified init slots and both late PvP create updates. A false result must make the
 // containing Mod decline to load so the core rolls back any earlier slot swap.
 bool InstallInitHooks(InitCallback callback = nullptr);
 

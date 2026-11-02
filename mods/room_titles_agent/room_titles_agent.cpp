@@ -27,6 +27,7 @@ size_t RequestBytes(uint16_t opcode)
 {
     switch (opcode) {
     case kCreateRoom: return kCreateRoomBytes;
+    case 0x0525: return 0x50;
     case kListRooms: return kListRoomsBytes;
     case 0x0A08: return kListRoomsBytes; // Team / mission lobby list
     case 0x050F: return 0x37; // battle room settings
@@ -83,9 +84,9 @@ int __cdecl Dispatch(DWORD argument0, DWORD argument1, DWORD handle, void* packe
         metadata::Message message;
         if (!metadata::DecodeMessageBody(parsed.view.body_data, parsed.view.body_size, &message))
             return 0;
-        const bool create = opcode == kCreateRoom && message.kind == metadata::MessageKind::SetTitle &&
+        const bool create = (opcode == kCreateRoom || opcode==0x0525) && message.kind == metadata::MessageKind::SetTitle &&
                             !message.server_epoch && !message.room_id && !message.generation && !message.revision;
-        const bool hello = (opcode == kListRooms || opcode == 0x0A08 || opcode == kCreateRoom) &&
+        const bool hello = (opcode == kListRooms || opcode == 0x0A08 || opcode == kCreateRoom || opcode==0x0525) &&
                            message.kind == metadata::MessageKind::Hello;
         const bool titleChange = opcode == 0x050F || opcode == 0x09ED ||
                                  (opcode == 0x089E && (parsed.view.native_data[6] == 1 ||
@@ -158,7 +159,8 @@ size_t ResponseBytes(uint16_t opcode, const uint8_t* packet, size_t size)
         return size >= 0x13 && packet[0x12] <= 10 ?
                0x13 + static_cast<size_t>(packet[0x12]) * 0x123 : 0x13;
     case 0x0617: return 0x5B5; // private room-list response
-    case 0x0A33: return 0x21FC; // successful create-room response
+    case 0x0A33: return 0x21FC;
+    case 0x0918: return 0x3CE1; // successful create-room response
     case 0x06C1: return 0x21FC; // Team room details
     case 0x0550: return 0x0B;   // Battle room join confirmation
     case 0x0680: return 0x3CE1; // mission Team-to-Battle conversion

@@ -27,6 +27,8 @@ using EventFn = int(__thiscall*)(void*, void*);
 using NativeWideFn = const wchar_t*(__cdecl*)(UINT, const char*);
 
 SubmitFn g_pvpCreate = nullptr;
+SubmitFn g_nativePvpCreate = nullptr;
+SubmitFn g_gridPvpCreate = nullptr;
 SubmitFn g_missionCreate = nullptr;
 SubmitFn g_missionSettings = nullptr;
 EventFn g_titleEvent = nullptr;
@@ -63,7 +65,7 @@ struct SavedDraft {
     uint32_t room = 0;
     std::wstring text;
 };
-std::array<SavedDraft, 4> g_saved;
+std::array<SavedDraft, 5> g_saved;
 
 uint16_t Word(const uint8_t* bytes)
 {
@@ -168,7 +170,8 @@ bool Prepare(ui::Surface surface, const std::wstring& text)
     Draft draft;
     draft.surface = surface;
     draft.opcode = surface == ui::Surface::MissionSettings ? 0x09ED :
-                   surface == ui::Surface::PvpTitleEdit ? 0x089E : 0x0640;
+                   surface == ui::Surface::PvpTitleEdit ? 0x089E :
+                   surface == ui::Surface::PvpNativeCreate ? 0x0525 : 0x0640;
     draft.text = text;
     bool legacyExact = false;
     if (!Utf8(text, &draft.utf8) || !Projection(text, &draft.native_full, &draft.native_short, &legacyExact)) {
@@ -180,7 +183,7 @@ bool Prepare(ui::Surface surface, const std::wstring& text)
         Lock lock;
         const uint32_t connection = g_activeConnection;
         g_state.AdvanceTime(connection, GetTickCount64());
-        const bool creating = draft.opcode == 0x0640;
+        const bool creating = draft.opcode == 0x0640 || draft.opcode==0x0525;
         draft.room = creating ? 0 : g_activeRoom;
         if (surface == ui::Surface::MissionSettings) {
             const uint32_t nativeId = SafeRoomId(g_missionRoom);
@@ -261,6 +264,8 @@ void Submit(SubmitFn original, void* service, ui::Surface surface)
 }
 
 void __fastcall PvpCreate(void* self, void*) { Submit(g_pvpCreate, self, ui::Surface::PvpCreate); }
+void __fastcall NativePvpCreate(void* self, void*) { Submit(g_nativePvpCreate, self, ui::Surface::PvpNativeCreate); }
+void __fastcall GridPvpCreate(void* self, void*) { Submit(g_gridPvpCreate, self, ui::Surface::PvpNativeCreate); }
 void __fastcall MissionCreate(void* self, void*) { Submit(g_missionCreate, self, ui::Surface::MissionCreate); }
 void __fastcall MissionSettings(void* self, void*) { Submit(g_missionSettings, self, ui::Surface::MissionSettings); }
 
@@ -314,6 +319,7 @@ TitleField Field(uint16_t opcode)
 {
     switch (opcode) {
     case 0x0640: return {0x53, 0x15, 0x16};
+    case 0x0525: return {0x50, 0x12, 0x13};
     case 0x09ED: return {0x3E, 0x12, 0x13};
     case 0x050F: return {0x37, 0x0B, 0x0C};
     case 0x089E: return {0x1D, 7, 8};
@@ -345,8 +351,8 @@ transport::SendDecision BeforeSend(uint32_t connection, const uint8_t* packet, s
     const auto parsed = metadata::ParseTrailer(packet, size);
     if (parsed.status == metadata::TrailerStatus::Valid)
         return transport::SendDecision::Pass; // a native deferred queue already owns this extension
-    const bool bootstrapCreate = opcode == 0x0640 && size == 0x53 &&
-        packet[6] == 2 && packet[7] == 10 && // native single-mission automatic create
+    const bool bootstrapCreate = ((opcode == 0x0640 && size == 0x53 &&
+        packet[6] == 2 && packet[7] == 10) || (opcode==0x0525 && size==0x50)) && // native single-mission automatic create
         !g_state.IsNegotiating(connection) &&
         !g_state.HasPending(connection) && !g_drafts.count(connection);
     if (((opcode == 0x07FB || opcode == 0x0A08) && size == 0x16) || bootstrapCreate) {
@@ -421,6 +427,7 @@ size_t ReceiveSize(uint16_t opcode, const uint8_t* packet = nullptr, size_t size
                0x13 + static_cast<size_t>(packet[0x12]) * 0x123 : 0x13;
     case 0x0617: return 0x5B5;
     case 0x0A33: return 0x21FC;
+    case 0x0918: return 0x3CE1;
     case 0x06C1: return 0x21FC;
     case 0x0550: return 0x0B;
     case 0x0680: return 0x3CE1;
@@ -470,11 +477,11 @@ void OnReceive(uint32_t connection, const uint8_t* packet, size_t size, const ui
             }
         }
     } else if ((opcode == 0x0617 || opcode == 0x0824 || opcode == 0x0709 || opcode == 0x0916 ||
-                ((opcode == 0x0A33 || opcode == 0x054E) && g_state.IsNegotiating(connection))) &&
+                ((opcode == 0x0A33 || opcode == 0x054E || opcode==0x0918) && g_state.IsNegotiating(connection))) &&
                !g_state.HasPending(connection) && !g_drafts.count(connection)) {
         // A bare list response proves this path did not negotiate the extension.
         g_state.DropConnection(connection);
-    } else if ((opcode == 0x0A33 || opcode == 0x0809 || opcode == 0x06BA) && g_state.HasPending(connection)) {
+    } else if ((opcode == 0x0A33 || opcode==0x0918 || opcode == 0x0809 || opcode == 0x06BA) && g_state.HasPending(connection)) {
         const auto pending = g_state.Pending(connection);
         if (pending)
             g_state.FailPending(connection, pending->request.request_id, titles::ClientError::TransportError);
@@ -490,7 +497,7 @@ void OnReceive(uint32_t connection, const uint8_t* packet, size_t size, const ui
     if (size >= 10 && (opcode == 0x0A33 || opcode == 0x06C1)) {
         g_activeConnection = connection;
         g_activeRoom = Dword(packet + 6);
-    } else if (size >= 10 && (opcode == 0x0550 || opcode == 0x0680 || opcode == 0x086F)) {
+    } else if (size >= 10 && (opcode == 0x0550 || opcode==0x0918 || opcode == 0x0680 || opcode == 0x086F)) {
         g_activeConnection = connection;
         g_activeRoom = Dword(packet + 6) | kBattleDomain;
     } else if (opcode == 0x087A && connection == g_activeConnection) {
@@ -560,6 +567,10 @@ SDGO_MOD_ENTRY
         !Bind(api, mod, &g_missionRoom, "room_titles.ui_mission_current_room"))
         return 0;
     if (!ui::InstallInitHooks(&OnInit) || !ui::InstallTitleDisplayHooks(&LookupTitle) ||
+        !api->HookCode(mod, "room_titles.ui_native_pvp_create_submit", reinterpret_cast<void*>(&NativePvpCreate),
+                       reinterpret_cast<void**>(&g_nativePvpCreate)) ||
+        !api->HookCode(mod, "room_titles.ui_grid_pvp_create_submit", reinterpret_cast<void*>(&GridPvpCreate),
+                       reinterpret_cast<void**>(&g_gridPvpCreate)) ||
         !api->HookCode(mod, "room_titles.ui_pvp_create_submit", reinterpret_cast<void*>(&PvpCreate),
                        reinterpret_cast<void**>(&g_pvpCreate)) ||
         !api->HookCode(mod, "room_titles.ui_mission_create_submit", reinterpret_cast<void*>(&MissionCreate),

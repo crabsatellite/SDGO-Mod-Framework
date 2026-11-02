@@ -9,19 +9,20 @@
 #include <vector>
 
 // Drives live registered services and their original UI callbacks. Text enters
-// the game's actual shared Win32 EDIT via WM_CHAR/EM_REPLACESEL; no SetText,
+// the game's actual shared Win32 EDIT via committed WM_CHAR messages; no SetText,
 // input-limit write, native room write, packet synthesis or fake reply is used.
 class RoomTitleActions {
 public:
-    enum Surface { PvpCreate, PvpRename, MissionCreate, MissionSettings, MissionRename };
+    enum Surface { PvpCreate, PvpRename, MissionCreate, MissionSettings, MissionRename, PvpGridCreate, PvpTeamCreate };
     bool Bind(const SdgoApi* api,SdgoMod* mod,NativeActions* actions) {
         api_=api;mod_=mod;actions_=actions;
         manager_=Symbol<void**>("flow.service_managed_pointer");
         find_=Symbol<FindControl>("room_titles.ui_find_control");
         get_=Symbol<GetText>("room_titles.ui_edit_get_text");
         focus_=Symbol<Focus>("title_test.dialog_focus");
+        notify_=Symbol<Notify>("title_test.dialog_notify");
         input_=Symbol<uint8_t**>("room_titles.ui_input_context");
-        return manager_&&find_&&get_&&focus_&&input_;
+        return manager_&&find_&&get_&&focus_&&notify_&&input_;
     }
     void Reset() { phase_=0;inputIndex_=0;opened_=false;reopened_=false;dialog_=nullptr;edit_=nullptr; }
     int Poll(Surface surface,const SdgoGameTestContextV1* context) {
@@ -34,8 +35,9 @@ public:
         if(!control)return false;
         auto* bytes=static_cast<uint8_t*>(control);
         if(!bytes[0x162]||!bytes[0x167]||*reinterpret_cast<void**>(bytes+0x15C)!=root)return false;
-        auto table=*reinterpret_cast<void***>(service);
-        reinterpret_cast<Callback>(table[0x38/4])(service,kind==12?0x301:0x101,bytes+0x118,control);
+        if(!static_cast<uint8_t*>(root)[0x162])return false;
+        (void)service;
+        notify_(root,kind==12?0x301:0x101,1,control);
         return true;
     }
     void* Service(const char* symbol) const {return FindService(api_->Symbol(mod_,symbol));}
@@ -64,7 +66,7 @@ private:
     using FindControl=void*(__thiscall*)(void*,const WString*,int);
     using GetText=const WString*(__thiscall*)(void*);
     using Focus=void(__thiscall*)(void*,void*);
-    using Callback=uint32_t(__stdcall*)(void*,uint32_t,const void*,void*);
+    using Notify=void(__thiscall*)(void*,uint32_t,int,void*);
     template<class T>T Symbol(const char* name){return reinterpret_cast<T>(api_->Symbol(mod_,name));}
     static bool Readable(const void* address,size_t size) {
         if(!address)return false;MEMORY_BASIC_INFORMATION m{};
@@ -96,7 +98,7 @@ private:
             if(!Readable(node,12))break;
             auto* service=*reinterpret_cast<uint8_t**>(node+8);
             if(Readable(service,0x50)){
-                char line[128];sprintf_s(line,"live service vtable=%08X root44=%08X root4C=%08X",*reinterpret_cast<uint32_t*>(service),*reinterpret_cast<uint32_t*>(service+0x44),*reinterpret_cast<uint32_t*>(service+0x4C));c->Observe(line);
+                char line[128];sprintf_s(line,"live service vtable=%08X",*reinterpret_cast<uint32_t*>(service));c->Observe(line);
             }
             node=*reinterpret_cast<uint8_t**>(node);
         }
@@ -113,16 +115,38 @@ private:
         if(!Readable(chars,(value->size+1)*2))throw std::runtime_error("unreadable live edit text");
         return std::wstring(chars,value->size);
     }
+    void DumpControls(const SdgoGameTestContextV1* c,void* root)const {
+        if(!Readable(root,0x240))return;
+        auto* head=*reinterpret_cast<uint8_t**>(static_cast<uint8_t*>(root)+0x23C);
+        if(!Readable(head,12))return;
+        auto* node=*reinterpret_cast<uint8_t**>(head);
+        for(unsigned i=0;node&&node!=head&&i<96;++i){
+            if(!Readable(node,12))break;
+            auto* control=*reinterpret_cast<uint8_t**>(node+8);
+            if(Readable(control,0x168)){
+                try{
+                    const auto name=Text(reinterpret_cast<const WString*>(control+0x118));
+                    if(!name.empty()){
+                        std::string ascii;for(auto ch:name)ascii+=ch>=32&&ch<127?static_cast<char>(ch):'?';
+                        c->Observe(("native room-title control="+ascii).c_str());
+                    }
+                }catch(const std::exception&){}
+            }
+            node=*reinterpret_cast<uint8_t**>(node);
+        }
+    }
     std::string Utf8(const std::wstring& text)const {
         int n=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0,nullptr,nullptr);
         std::string result(n,'\0');WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),result.data(),n,nullptr,nullptr);return result;
     }
-    static const char* DialogSymbol(Surface s){return s==PvpCreate?"title_test.pvp_create_vtable":s==MissionCreate?"title_test.mission_create_vtable":s==MissionSettings?"title_test.mission_settings_vtable":"title_test.rename_vtable";}
+    static bool IsPvpCreate(Surface s){return s==PvpCreate||s==PvpGridCreate;}
+    static bool IsVsCreate(Surface s){return IsPvpCreate(s)||s==PvpTeamCreate;}
+    static const char* DialogSymbol(Surface s){return s==PvpTeamCreate?"title_test.team_create_vtable":s==PvpGridCreate?"title_test.grid_create_vtable":s==PvpCreate?"title_test.pvp_create_vtable":s==MissionCreate?"title_test.mission_create_vtable":s==MissionSettings?"title_test.mission_settings_vtable":"title_test.rename_vtable";}
     void Observe(const SdgoGameTestContextV1* c,const char* stage,Surface s)const {
         char line[192];sprintf_s(line,"room-title surface=%u stage=%s app=%u phase=%u input=%u",s,stage,actions_->AppState(),phase_,inputIndex_);c->Observe(line);
     }
     bool Open(Surface s) {
-        if(s==PvpCreate){void* list=Service("flow.native_room_list_vtable");return Click(list,Root(list,0x44),L"MakeRoomBtn");}
+        if(IsVsCreate(s)){void* list=Service("flow.native_room_list_vtable");void* button=Root(list,s==PvpTeamCreate?0x88:0x84);return Click(list,Root(button,0x15C),s==PvpTeamCreate?L"MakeTeamBtn":L"MakeRoomBtn");}
         if(s==MissionCreate){
             void* lobby=Service("title_test.mission_lobby_vtable");void* root=Root(lobby,0x60);
             if(lobby&&static_cast<uint8_t*>(lobby)[0x64]!=3)return Click(lobby,root,L"MultiRadio",12);
@@ -136,12 +160,12 @@ private:
         void* bar=Service("room_titles.ui_titlebar_vtable");return Click(bar,Root(bar,0x48),L"TitleChangeBtn");
     }
     bool Close(Surface s) {
-        void* root=Root(dialog_,s==MissionSettings?0x5C:0x4C);
+        void* root=Root(dialog_,s==MissionSettings?0x5C:IsVsCreate(s)?0x50:0x4C);
         for(const auto* name:{L"MakeCancelBtnW",L"SettingCancelBtn",L"CancelBtn",L"TitleCancelBtn",L"CloseBtn"})if(Click(dialog_,root,name))return true;
         return false;
     }
     bool Submit(Surface s) {
-        void* root=Root(dialog_,s==MissionSettings?0x5C:0x4C);
+        void* root=Root(dialog_,s==MissionSettings?0x5C:IsVsCreate(s)?0x50:0x4C);
         for(const auto* name:{L"SettingOkBtn",L"OkBtn",L"TitleOkBtn",L"ConfirmBtn"})if(Click(dialog_,root,name))return true;
         return false;
     }
@@ -156,9 +180,14 @@ private:
                 if(++polls_%300==0){Observe(c,"waiting-for-native-service",s);DumpServices(c);}
                 return SDGO_GAME_TEST_WAIT;
             }
-            dialog_=live;void* root=Root(live,s==MissionSettings?0x5C:0x4C);
-            edit_=s==PvpRename||s==MissionRename?Root(live,0x50):Control(root,L"GameRoomNameEdit",8);
+            dialog_=live;void* root=Root(live,s==MissionSettings?0x5C:IsVsCreate(s)?0x50:0x4C);
+            // Registration/Init precedes the native state-3 update that creates
+            // controls, fills defaults and shows this dialog. Observe readiness.
+            if(IsPvpCreate(s)&&(!Readable(live,0x48)||*reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(live)+0x44)<4))return SDGO_GAME_TEST_WAIT;
+            if(!Readable(root,0x238)||!static_cast<uint8_t*>(root)[0x162])return SDGO_GAME_TEST_WAIT;
+            edit_=IsPvpCreate(s)?Root(live,0x54):s==PvpRename||s==MissionRename?Root(live,0x50):Control(root,L"GameRoomNameEdit",8);
             if(!Readable(edit_,0x2A4)||*reinterpret_cast<void**>(edit_)!=api_->Symbol(mod_,"room_titles.ui_edit_vtable"))throw std::runtime_error("expected live room-name edit is absent");
+            if(!static_cast<uint8_t*>(edit_)[0x162]||!static_cast<uint8_t*>(edit_)[0x167])return SDGO_GAME_TEST_WAIT;
             c->Assert(*reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(edit_)+0x2A0)==512,"room-name edit exposes the extended UTF-16 byte limit");
             if(static_cast<uint8_t*>(edit_)[0x165]) {
                 HWND inputWindow=*reinterpret_cast<HWND*>(*input_+0x134);
@@ -166,8 +195,8 @@ private:
             }
             else focus_(root,edit_);
             tests_={std::wstring(21,L'A'),L"\u4efb\u52a1\u623f\u95f4\u540d\u79f0"+std::wstring(40,L'\u4e2d'),std::wstring(128,L'\u623f')};
-            tests_.back()[0]=static_cast<wchar_t>(L'A'+s);
-            phase_=1;Observe(c,"live-dialog-ready",s);return SDGO_GAME_TEST_WAIT;
+            tests_.back()[0]=static_cast<wchar_t>(0x623F+s);
+            phase_=1;Observe(c,"live-dialog-ready",s);DumpControls(c,root);return SDGO_GAME_TEST_WAIT;
         }
         if(phase_==1){
             if(!static_cast<uint8_t*>(edit_)[0x165])throw std::runtime_error("room edit did not receive native focus");
@@ -175,12 +204,19 @@ private:
             if(!IsWindow(hwnd))throw std::runtime_error("native input HWND absent");
             SendMessageW(hwnd,EM_SETSEL,0,-1);
             SendMessageW(hwnd,EM_REPLACESEL,FALSE,reinterpret_cast<LPARAM>(L""));
-            if(inputIndex_==0){for(wchar_t ch:tests_[0])SendMessageW(hwnd,WM_CHAR,ch,0);}
-            else SendMessageW(hwnd,EM_REPLACESEL,FALSE,reinterpret_cast<LPARAM>(tests_[inputIndex_].c_str()));
+            // The game's IME model consumes committed character notifications.
+            // EM_REPLACESEL alone changes the hidden EDIT without notifying that
+            // model, so use the same committed-character path for Chinese too.
+            for(wchar_t ch:tests_[inputIndex_])SendMessageW(hwnd,WM_CHAR,ch,0);
             phase_=2;polls_=0;return SDGO_GAME_TEST_WAIT;
         }
         if(phase_==2){
-            if(Text(get_(edit_))!=tests_[inputIndex_]){if(++polls_<120)return SDGO_GAME_TEST_WAIT;throw std::runtime_error("typed/pasted title was truncated or absent in the real native edit");}
+            if(Text(get_(edit_))!=tests_[inputIndex_]){
+                if(++polls_<120)return SDGO_GAME_TEST_WAIT;
+                HWND hwnd=*reinterpret_cast<HWND*>(*input_+0x134);
+                char line[192];sprintf_s(line,"input lengths: expected=%zu native_edit=%zu hwnd=%d hwnd_limit=%lld",tests_[inputIndex_].size(),Text(get_(edit_)).size(),GetWindowTextLengthW(hwnd),static_cast<long long>(SendMessageW(hwnd,EM_GETLIMITTEXT,0,0)));c->Observe(line);
+                throw std::runtime_error("committed characters were truncated or absent in the real native edit");
+            }
             c->Assert(1,inputIndex_==0?"21 keyboard characters survive in the real game edit":inputIndex_==1?"Chinese title beyond twenty characters survives native input":"128 Chinese characters survive native input without truncation");
             if(++inputIndex_<tests_.size()){phase_=1;return SDGO_GAME_TEST_WAIT;}
             if(!reopened_){if(!Close(s))throw std::runtime_error("native cancel control unavailable");phase_=3;Observe(c,"cancel-requested",s);return SDGO_GAME_TEST_WAIT;}
@@ -196,7 +232,7 @@ private:
         Observe(c,"server-confirmed",s);Reset();return SDGO_GAME_TEST_PASS;
     }
     const SdgoApi* api_=nullptr;SdgoMod* mod_=nullptr;NativeActions* actions_=nullptr;
-    void** manager_=nullptr;FindControl find_=nullptr;GetText get_=nullptr;Focus focus_=nullptr;uint8_t** input_=nullptr;
+    void** manager_=nullptr;FindControl find_=nullptr;GetText get_=nullptr;Focus focus_=nullptr;Notify notify_=nullptr;uint8_t** input_=nullptr;
     unsigned phase_=0,inputIndex_=0,polls_=0;bool opened_=false,reopened_=false;void* dialog_=nullptr;void* edit_=nullptr;
     std::vector<std::wstring> tests_;std::string expected_;
 };

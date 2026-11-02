@@ -21,7 +21,7 @@ constexpr std::uint32_t kTitleLimitBytes = 512;
 constexpr std::size_t kEditLimitOffset = 0x2A0;
 constexpr std::size_t kEditFocusOffset = 0x165;
 constexpr std::size_t kInputContextBytes = 0x138;
-constexpr std::size_t kPvpCreateDialogOffset = 0x4C;
+constexpr std::size_t kPvpCreateDialogOffset = 0x50;
 constexpr std::size_t kMissionCreateDialogOffset = 0x4C;
 constexpr std::size_t kMissionSettingsDialogOffset = 0x5C;
 constexpr std::size_t kPvpTitleEditOffset = 0x50;
@@ -89,6 +89,7 @@ using ButtonTextItemFn = HostWString24* (__thiscall*)(void*, std::uint32_t);
 using StaticTextSetFn = void (__thiscall*)(void*, const HostWString24*);
 using StaticTextWordSkipFn = void (__thiscall*)(void*, std::uint8_t);
 using InitFn = void (__thiscall*)(void*, std::uint32_t);
+using UpdateFn = void (__thiscall*)(void*);
 using TitleRenderFn = void (__thiscall*)(void*, const void*);
 using PvpRoomListFn = void (__thiscall*)(void*, const void*);
 using MissionRoomRowFn = void (__thiscall*)(void*, int);
@@ -118,6 +119,10 @@ InitFn g_pvpCreateInit = nullptr;
 InitFn g_missionCreateInit = nullptr;
 InitFn g_missionSettingsInit = nullptr;
 InitFn g_pvpTitleEditInit = nullptr;
+InitFn g_nativePvpCreateInit = nullptr;
+InitFn g_gridPvpCreateInit = nullptr;
+UpdateFn g_nativePvpCreateUpdate = nullptr;
+UpdateFn g_gridPvpCreateUpdate = nullptr;
 TitleRenderFn g_pvpTitleRender = nullptr;
 TitleRenderFn g_missionTitleRender = nullptr;
 PvpRoomListFn g_pvpRoomList = nullptr;
@@ -551,7 +556,8 @@ void ProjectRoomDetails(void* service, void* dialog, int index, RoomKind kind)
 const char* SurfaceName(Surface surface)
 {
     switch (surface) {
-    case Surface::PvpCreate: return "PvP create";
+    case Surface::PvpCreate: return "team PvP create";
+    case Surface::PvpNativeCreate: return "native PvP create";
     case Surface::MissionCreate: return "mission create";
     case Surface::MissionSettings: return "mission settings";
     case Surface::PvpTitleEdit: return "PvP title edit";
@@ -576,6 +582,38 @@ void __fastcall PvpCreateInit(void* self, void*, std::uint32_t argument)
 {
     g_pvpCreateInit(self, argument);
     CompleteInit(Surface::PvpCreate, self);
+}
+
+void __fastcall NativePvpCreateInit(void* self, void*, std::uint32_t argument)
+{
+    g_nativePvpCreateInit(self, argument);
+    CompleteInit(Surface::PvpNativeCreate, self);
+}
+void __fastcall GridPvpCreateInit(void* self, void*, std::uint32_t argument)
+{
+    g_gridPvpCreateInit(self, argument);
+    CompleteInit(Surface::PvpNativeCreate, self);
+}
+
+// These services allocate/cache the edit during their first state-3 update,
+// after Init has only loaded a hidden root. Run after defaults and focus too.
+void CompleteCreateUpdate(void* self, UpdateFn original)
+{
+    const bool initializing = IsAccessibleRange(self, 0x48, false) &&
+        *reinterpret_cast<const std::uint32_t*>(static_cast<const std::uint8_t*>(self) + 0x44) == 3;
+    original(self);
+    if (initializing)
+        CompleteInit(Surface::PvpNativeCreate, self);
+}
+
+void __fastcall NativePvpCreateUpdate(void* self, void*)
+{
+    CompleteCreateUpdate(self, g_nativePvpCreateUpdate);
+}
+
+void __fastcall GridPvpCreateUpdate(void* self, void*)
+{
+    CompleteCreateUpdate(self, g_gridPvpCreateUpdate);
 }
 
 void __fastcall MissionCreateInit(void* self, void*, std::uint32_t argument)
@@ -718,7 +756,19 @@ bool InstallInitHooks(InitCallback callback)
         return false;
     g_callback = callback;
 
-    if (!g_api->HookSlot(g_mod, "room_titles.ui_pvp_create_init",
+    if (!g_api->HookSlot(g_mod, "room_titles.ui_native_pvp_create_update",
+                         reinterpret_cast<void*>(&NativePvpCreateUpdate),
+                         reinterpret_cast<void**>(&g_nativePvpCreateUpdate)) ||
+        !g_api->HookSlot(g_mod, "room_titles.ui_grid_pvp_create_update",
+                         reinterpret_cast<void*>(&GridPvpCreateUpdate),
+                         reinterpret_cast<void**>(&g_gridPvpCreateUpdate)) ||
+        !g_api->HookSlot(g_mod, "room_titles.ui_native_pvp_create_init",
+                         reinterpret_cast<void*>(&NativePvpCreateInit),
+                         reinterpret_cast<void**>(&g_nativePvpCreateInit)) ||
+        !g_api->HookSlot(g_mod, "room_titles.ui_grid_pvp_create_init",
+                         reinterpret_cast<void*>(&GridPvpCreateInit),
+                         reinterpret_cast<void**>(&g_gridPvpCreateInit)) ||
+        !g_api->HookSlot(g_mod, "room_titles.ui_pvp_create_init",
                          reinterpret_cast<void*>(&PvpCreateInit),
                          reinterpret_cast<void**>(&g_pvpCreateInit)) ||
         !g_api->HookSlot(g_mod, "room_titles.ui_mission_create_init",
@@ -769,9 +819,10 @@ void* FindRoomNameEdit(void* service, Surface surface)
     if (!g_bound || !service)
         return nullptr;
 
-    if (surface == Surface::PvpTitleEdit) {
+    if (surface == Surface::PvpTitleEdit || surface == Surface::PvpNativeCreate) {
         void* edit = nullptr;
-        return ReadPointer(service, kPvpTitleEditOffset, &edit) && IsEdit(edit) ? edit : nullptr;
+        const auto offset=surface==Surface::PvpNativeCreate ? 0x54u : kPvpTitleEditOffset;
+        return ReadPointer(service, offset, &edit) && IsEdit(edit) ? edit : nullptr;
     }
 
     std::size_t dialogOffset = 0;
