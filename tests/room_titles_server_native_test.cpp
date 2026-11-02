@@ -102,7 +102,8 @@ int __cdecl NativeDispatch(DWORD,
         Write16(response.data(), 0x0617);
         break;
     case NativeScenario::CreateSuccess:
-        g_state->ObserveLegacyRoom(server::RoomDomain::Team, 5, pilot, Native("native title"));
+        if (!g_teamPool)
+            g_state->ObserveLegacyRoom(server::RoomDomain::Team, 5, pilot, Native("native title"));
         response.assign(0x21FC, 0);
         Write16(response.data(), 0x0A33);
         Write32(response.data() + 6, 5);
@@ -133,6 +134,8 @@ int __cdecl NativeDispatch(DWORD,
 void Reset(std::uint64_t epoch)
 {
     g_state = std::make_unique<server::ServerState>(epoch);
+    g_teamPool = nullptr;
+    g_battlePool = nullptr;
     g_dispatch = &NativeDispatch;
     g_send = reinterpret_cast<SendFn>(&CaptureSend);
     g_native_dispatches = 0;
@@ -433,6 +436,76 @@ void TestAutoCreateHello()
           "legacy lobby entry on the same pilot and Agent route clears stale unjoined capability");
 }
 
+void TestCreateOnNewProvider()
+{
+    Reset(880);
+    constexpr std::uint32_t pilot = 1003;
+    constexpr DWORD route = 125;
+    const std::string full = "full mission title after native Battle channel admission";
+    // CommitContext reads the real pinned native layout, not the metadata
+    // cache used by list-only fixtures. Supply the room the native ACK names.
+    std::vector<std::uint8_t> pool(kTeamStride * 5, 0);
+    void* poolBase = pool.data();
+    g_teamPool = &poolBase;
+    auto* roomRecord = pool.data() + kTeamStride * 4;
+    Write32(roomRecord, 5);
+    Write32(roomRecord + kTeamHostPilot, pilot);
+    roomRecord[kTeamTitleLength] = 12;
+    std::memcpy(roomRecord + kTeamTitleText, "native title", 12);
+    std::vector<std::uint8_t> native(0x53, 0);
+    Write16(native.data(), kCreateTeam);
+    Write32(native.data() + 2, pilot);
+    native[7] = 5;
+    native[0x15] = 12;
+    std::memcpy(native.data() + 0x16, "native title", 12);
+    metadata::Message create;
+    create.kind = metadata::MessageKind::SetTitle;
+    create.request_id = 13;
+    create.title = full;
+    std::vector<std::uint8_t> request;
+    Check(metadata::EncodePacket(native.data(), native.size(), create, &request),
+          "new-provider fresh create fixture encodes without an old room identity");
+    g_scenario = NativeScenario::CreateSuccess;
+    Dispatch(0, 0, route, request.data(), static_cast<int>(request.size()));
+    metadata::TrailerView view;
+    metadata::Message reply;
+    Check(g_native_dispatches == 1 && g_state->HasCapability(pilot, route) &&
+              metadata::DecodePacket(g_sent.data(), g_sent.size(), &view, &reply) &&
+              view.native_size == 0x21FC && reply.kind == metadata::MessageKind::Snapshot &&
+              reply.server_epoch == 880 && reply.request_id == create.request_id &&
+              reply.revision == 1 && reply.title == full,
+          "authenticated fresh create establishes the newly selected provider and returns its exact full-title ACK");
+    const auto firstReply = g_sent;
+    g_sent.clear();
+    Dispatch(0, 0, route, request.data(), static_cast<int>(request.size()));
+    Check(g_native_dispatches == 1 && g_sent == firstReply,
+          "a duplicate fresh create replays its confirmed ACK instead of allocating another room");
+    g_sent.clear();
+    Dispatch(0, 0, route + 1, request.data(), static_cast<int>(request.size()));
+    Check(g_native_dispatches == 1 && g_sent.empty() &&
+              g_state->HasCapability(pilot, route) && !g_state->HasCapability(pilot, route + 1),
+          "another Agent route cannot erase a completed create and allocate a duplicate room");
+
+    Reset(881);
+    const auto room = g_state->CreateRoom(server::RoomDomain::Team, 7, pilot,
+                                        Native("native title"), &full, true);
+    auto update = RenamePacket(pilot, room.snapshot, 14, full + " edited");
+    g_scenario = NativeScenario::RenameSuccess;
+    Dispatch(0, 0, route, update.data(), static_cast<int>(update.size()));
+    Check(g_native_dispatches == 0 && !g_state->HasCapability(pilot) && g_sent.empty(),
+          "an existing-room edit cannot establish capability without negotiation");
+
+    create.server_epoch = room.snapshot.key.server_epoch;
+    create.room_id = room.snapshot.key.room_id;
+    create.generation = room.snapshot.key.generation;
+    create.revision = room.snapshot.revision;
+    Check(metadata::EncodePacket(native.data(), native.size(), create, &request),
+          "invalid create carrying an old room identity fixture encodes structurally");
+    Dispatch(0, 0, route, request.data(), static_cast<int>(request.size()));
+    Check(g_native_dispatches == 0 && !g_state->HasCapability(pilot),
+          "a create carrying an existing identity cannot bootstrap another provider");
+}
+
 } // namespace
 
 int main()
@@ -447,6 +520,7 @@ int main()
     TestSuffixOnlyRenameAndReplay();
     TestNativeBattleCreateCarrier();
     TestAutoCreateHello();
+    TestCreateOnNewProvider();
     std::printf("%s (%d failures)\n",
                 g_failures ? "FAILED" : "PASSED", g_failures);
     return g_failures ? 1 : 0;

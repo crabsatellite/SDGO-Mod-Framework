@@ -1433,7 +1433,7 @@ const SdgoGameTestCaseV1 collectionCases[]={
     {"pages.collection.delivery",180000,&DeliverCollection},
 };
 int TitleCreateVs(const SdgoGameTestContextV1* c,uint32_t type,RoomTitleActions::Surface surface) {
-    if(actions.AppState()==5){
+    if(!roomTitles.Running() && actions.AppState()==5){
         static bool requested=false;
         if(!requested){
             const auto result=hangarNavigation.ClickBottomRadio(L"GameRoomRadio",0x48);
@@ -1442,7 +1442,7 @@ int TitleCreateVs(const SdgoGameTestContextV1* c,uint32_t type,RoomTitleActions:
         }
         return SDGO_GAME_TEST_WAIT;
     }
-    if(actions.AppState()==6){
+    if(!roomTitles.Running() && actions.AppState()==6){
         const auto channel=channels.EnsureVsType(type);
         if(channel>=ChannelActions::kInvalidTarget){c->Assert(0,"native PvP channel selection failed");return SDGO_GAME_TEST_FAIL;}
         if(channel!=ChannelActions::kAccepted && channel!=ChannelActions::kAlreadySelected)return SDGO_GAME_TEST_WAIT;
@@ -1457,12 +1457,12 @@ int __cdecl TitleTeamCreate(const SdgoGameTestContextV1* c){return TitleCreateVs
 int __cdecl TitleGridCreate(const SdgoGameTestContextV1* c){return TitleCreateVs(c,1,RoomTitleActions::PvpGridCreate);}
 int __cdecl TitlePvpRename(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::PvpRename,c);}
 int __cdecl TitleMissionCreate(const SdgoGameTestContextV1* c){
-    if(actions.AppState()==6 && !roomTitles.Service("title_test.mission_lobby_vtable")){
-        const auto result=mission.EnsureRoom(5,"GTRoomTitleInput");
+    if(!roomTitles.Running()){
+        const auto result=mission.EnsureRoom(5,"GTRoomTitleInput",false);
         if(result>=MissionFlowActions::kInvalidMode || result==MissionFlowActions::kUnbound){
             c->Observe(MissionFlowActions::ResultName(result));c->Assert(0,"native mission channel admission failed");return SDGO_GAME_TEST_FAIL;
         }
-        return SDGO_GAME_TEST_WAIT;
+        if(result!=MissionFlowActions::kCreateDialogReady)return SDGO_GAME_TEST_WAIT;
     }
     return roomTitles.Poll(RoomTitleActions::MissionCreate,c);
 }
@@ -1471,25 +1471,87 @@ int __cdecl TitleTeamSettings(const SdgoGameTestContextV1* c){return roomTitles.
 int __cdecl TitleMissionSettings(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::MissionSettings,c);}
 int __cdecl TitleMissionRename(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::MissionRename,c);}
 int __cdecl TitleLeave(const SdgoGameTestContextV1* c){
-    if(actions.AppState()==6){roomTitles.Reset();channels.Reset();return SDGO_GAME_TEST_PASS;}
+    if(actions.AppState()==6){
+        std::array<char,513> title{};
+        const auto size=sdgo::CurrentRoomTitle(c->api->ModDirectory(sdgo_test::mod),title.data(),static_cast<uint32_t>(title.size()));
+        if(size && c->elapsed_ms<5000)return SDGO_GAME_TEST_WAIT;
+        c->Assert(1,"the original room-exit flow returned the client to its native lobby state");
+        c->Assert(size==0,"the previous room's confirmed full title is no longer active after leaving");
+        roomTitles.Reset();channels.Reset();return size?SDGO_GAME_TEST_FAIL:SDGO_GAME_TEST_PASS;
+    }
     static uint64_t last=0;if(GetTickCount64()-last>2000){last=GetTickCount64();if(!rooms.Leave())roomTitles.Leave(c);}
     return SDGO_GAME_TEST_WAIT;
+}
+int __cdecl TitleTeamNativeView(const SdgoGameTestContextV1* c) {
+    if(actions.AppState()!=18)return SDGO_GAME_TEST_WAIT;
+    void* bar=roomTitles.Service("room_titles.ui_titlebar_vtable");
+    const auto* room=static_cast<const uint8_t*>(roomTitles.Root(bar,0x10C));
+    if(!bar || !room)return SDGO_GAME_TEST_WAIT;
+    c->Assert(room[4]==4,"the created team uses the original modern3D matchmaking view");
+    c->Assert(roomTitles.Service("title_test.team_titlebar_vtable")==nullptr,
+              "the legacy2D team settings header is absent from this supported modern room scene");
+    return room[4]==4?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+}
+int __cdecl TitleStartSmoke(const SdgoGameTestContextV1* c) {
+    static uint32_t startBaseline=0,sendBaseline=0,replyBaseline=0;
+    static uint64_t lastAttempt=0;
+    static bool requested=false;
+    static std::string confirmedTitle;
+    SdgoPvpAiClientSnapshotV1 snapshot{};
+    if (!c->tick) {
+        std::array<char,513> title{};
+        const auto size=sdgo::CurrentRoomTitle(c->api->ModDirectory(sdgo_test::mod),title.data(),static_cast<uint32_t>(title.size()));
+        c->Assert(size>20,"battle-start smoke begins with the server-confirmed extended native input");
+        if (size<=20) return SDGO_GAME_TEST_FAIL;
+        confirmedTitle.assign(title.data(),size);
+        Snapshot(snapshot);startBaseline=snapshot.received_battle_start_count;
+        sendBaseline=actions.GameStartSendCount();replyBaseline=rooms.NativeStartReplySequence();
+        requested=false;lastAttempt=0;
+    }
+    if (rooms.NativeStartReplySequence()>replyBaseline && rooms.NativeStartReplyError()!=0) {
+        char failure[96];sprintf_s(failure,"native long-title battle start rejected: 07B5/%04X",rooms.NativeStartReplyError());
+        c->Assert(0,failure);return SDGO_GAME_TEST_FAIL;
+    }
+    if ((!requested || (actions.GameStartSendCount()==sendBaseline && c->elapsed_ms-lastAttempt>=1000 &&
+                       rooms.NativeStartQueueState()==0 && rooms.NativeStartPrerequisite()==0)) && rooms.StartBattleNativeHost()) {
+        requested=true;lastAttempt=c->elapsed_ms;
+        c->Observe("original room-host Start business requested for the confirmed long-title AI room");
+    }
+    if (!Snapshot(snapshot) || snapshot.native_app_state!=22 || snapshot.received_battle_start_count<=startBaseline)
+        return SDGO_GAME_TEST_WAIT;
+    std::array<char,513> current{};
+    const auto size=sdgo::CurrentRoomTitle(c->api->ModDirectory(sdgo_test::mod),current.data(),static_cast<uint32_t>(current.size()));
+    c->Assert(actions.AppState()==22 && snapshot.received_battle_start_count>startBaseline,
+              "a real server battle-start packet admitted the long-title room into native GAME_MAIN");
+    c->Assert(std::string(current.data(),size)==confirmedTitle,"the confirmed full title survives the genuine battle-start transition");
+    c->Observe("bounded battle-start smoke only; combat, results and natural battle return are not claimed");
+    return SDGO_GAME_TEST_PASS;
 }
 const SdgoGameTestCaseV1 titleCases[]={
     {"room_titles.pvp.create",120000,&TitlePvpCreate},
     {"room_titles.pvp.rename",120000,&TitlePvpRename},
     {"room_titles.pvp.leave",60000,&TitleLeave},
-    {"room_titles.team.create",120000,&TitleTeamCreate},
-    {"room_titles.team.settings",120000,&TitleTeamSettings},
-    {"room_titles.team.rename",120000,&TitleTeamRename},
-    {"room_titles.team.leave",60000,&TitleLeave},
     {"room_titles.grid.create",120000,&TitleGridCreate},
     {"room_titles.grid.rename",120000,&TitlePvpRename},
     {"room_titles.grid.leave",60000,&TitleLeave},
     {"room_titles.mission.create",180000,&TitleMissionCreate},
-    {"room_titles.mission.settings",120000,&TitleMissionSettings},
     {"room_titles.mission.rename",120000,&TitleMissionRename},
     {"room_titles.mission.leave",60000,&TitleLeave},
+    {"room_titles.team.create",120000,&TitleTeamCreate},
+    {"room_titles.team.native_view",60000,&TitleTeamNativeView},
+    {"room_titles.team.leave",60000,&TitleLeave},
+    {"room_titles.start.create",120000,&TitleGridCreate},
+    {"room_titles.start.rename",120000,&TitlePvpRename},
+    {"room_titles.start",180000,&TitleStartSmoke},
+};
+// These original windows belong to the compiled legacy APP14/APP16 graph.
+// Current creation success always enters APP18, whose mission rename uses
+// TitleDlg instead. Retain legacy adapters with the protocol/ABI regressions;
+// do not construct hidden scenes to manufacture end-to-end coverage.
+const SdgoGameTestCaseV1 legacyTitleCases[]={
+    {"room_titles.team.settings",120000,&TitleTeamSettings},
+    {"room_titles.team.rename",120000,&TitleTeamRename},
+    {"room_titles.mission.settings",120000,&TitleMissionSettings},
 };
 const SdgoGameTestCaseV1 realCases[] = {
     {"framework.bootstrap", 60000, &Bootstrap},
@@ -1530,6 +1592,7 @@ void RegisterPlannedCases() {
     }
     if (bootstrapOnly) { provider.count = 3; return; }
     if (roomTitlesOnly) {
+        static_cast<void>(legacyTitleCases);
         plannedCases.assign(realCases,realCases+3);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
         plannedCases.insert(plannedCases.end(),std::begin(titleCases),std::end(titleCases));
@@ -1721,9 +1784,13 @@ SDGO_MOD_ENTRY {
     if (!sdgo_test::Open(api, mod, "client")) return 0;
     const bool loaded = LoadPlan();
     if (verifyQuietRuntime) {
-        if (!quietAudio.Install(api,mod) || (quietLoopback && !quietSockets.Install(api,mod)) ||
-            !api->HookImport(mod,"user32.dll","MessageBoxW",reinterpret_cast<void*>(&QuietMessageBoxW),reinterpret_cast<void**>(&originalMessageBoxW)) ||
-            !api->HookImport(mod,"user32.dll","MessageBoxA",reinterpret_cast<void*>(&QuietMessageBoxA),reinterpret_cast<void**>(&originalMessageBoxA)))return 0;
+        // DLLs have their own import tables. Observe every dialog in this
+        // isolated test process so a Mod cannot leak a desktop prompt while
+        // the runner waits for its assertion failure.
+        if (api->size < offsetof(SdgoApi,HookSystemExport)+sizeof(api->HookSystemExport) || !api->HookSystemExport ||
+            !quietAudio.Install(api,mod) || (quietLoopback && !quietSockets.Install(api,mod)) ||
+            !api->HookSystemExport(mod,L"user32.dll","MessageBoxW",reinterpret_cast<void*>(&QuietMessageBoxW),reinterpret_cast<void**>(&originalMessageBoxW)) ||
+            !api->HookSystemExport(mod,L"user32.dll","MessageBoxA",reinterpret_cast<void*>(&QuietMessageBoxA),reinterpret_cast<void**>(&originalMessageBoxA)))return 0;
         PublishQuietSocketReceipt();
     }
     // Map 0 selects the game's normal quick-room random-map policy; the

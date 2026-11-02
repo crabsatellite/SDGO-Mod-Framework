@@ -428,8 +428,23 @@ bool ClientState::AcceptMessage(ConnectionId connection_id,
             return false;
         }
         if (message.server_epoch != connection->server_epoch) {
-            InvalidateEpoch(connection);
-            return false;
+            // An Agent connection survives a native Battle-channel switch.
+            // A new room has no old server identity to preserve: only its
+            // exact pending create nonce and complete title can confirm the
+            // newly selected provider. Existing-room updates never use this.
+            const auto& pending = connection->pending;
+            const bool confirms_create = pending &&
+                pending->status == PendingStatus::Awaiting &&
+                pending->request.room_id == 0 &&
+                pending->request.request_id == message.request_id &&
+                message.request_id > connection->last_response_id &&
+                message.revision == 1 && pending->request.title == message.title;
+            if (!confirms_create) {
+                InvalidateEpoch(connection);
+                return false;
+            }
+            connection->rooms.clear();
+            connection->server_epoch = message.server_epoch;
         }
         if (!AcceptResponseId(connection, message.request_id))
             return false;
@@ -580,7 +595,7 @@ void ClientState::AdvanceTime(ConnectionId connection_id,
         Expired(connection->hello->started_at_ms, now_ms,
                 kHelloTimeoutMilliseconds)) {
         const std::uint32_t request_id = connection->hello->request_id;
-        connection->hello.reset();
+        InvalidateEpoch(connection);
         SetError(connection, Error(ClientError::Timeout, request_id));
     }
     if (connection->pending &&

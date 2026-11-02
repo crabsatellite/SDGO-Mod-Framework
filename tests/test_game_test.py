@@ -62,10 +62,19 @@ hosts=*
 
 
 class RoomTitlePlanTests(unittest.TestCase):
+    def test_standalone_entry_resolves_runtime_helpers_outside_the_checkout(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            probe = "import runpy,sys;runpy.run_path(sys.argv[1],run_name='standalone_probe');import tools.game_test_environment;print('runtime helpers resolved')"
+            result = game_test.subprocess.run(
+                [game_test.sys.executable, '-I', '-c', probe, str(Path(game_test.__file__).resolve())],
+                cwd=temporary, capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('runtime helpers resolved', result.stdout)
+
     def test_room_title_scope_requires_every_surface_and_leave(self):
         cases=game_test.required_flow_cases('1',room_titles_only=True)
         self.assertEqual(cases,game_test.FLOW_CASES[:3]+tuple('room_titles.'+x for x in (
-            'pvp.create','pvp.rename','pvp.leave','team.create','team.settings','team.rename','team.leave','grid.create','grid.rename','grid.leave','mission.create','mission.settings','mission.rename','mission.leave')))
+            'pvp.create','pvp.rename','pvp.leave','grid.create','grid.rename','grid.leave','mission.create','mission.rename','mission.leave','team.create','team.native_view','team.leave','start.create','start.rename','start')))
     def test_room_title_fixture_can_select_an_existing_owned_unit(self):
         normal=game_test.required_flow_cases('1',room_titles_only=True)
         selected=game_test.required_flow_cases('1',play_unit_uid=123,room_titles_only=True)

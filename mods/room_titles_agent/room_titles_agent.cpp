@@ -17,6 +17,8 @@ DispatchFn g_dispatch = nullptr;
 SendFn g_send = nullptr;
 DispatchFn g_serverDispatch = nullptr;
 SendFn g_sendClient = nullptr;
+const SdgoApi* g_api = nullptr;
+SdgoMod* g_mod = nullptr;
 
 constexpr uint16_t kCreateRoom = 0x0640;
 constexpr size_t kCreateRoomBytes = 0x53;
@@ -103,6 +105,10 @@ int __cdecl Dispatch(DWORD argument0, DWORD argument1, DWORD handle, void* packe
         context.native_packet = native.data();
         context.native_size = native.size();
         context.native_opcode = opcode;
+        if (g_api && opcode == kCreateRoom)
+            g_api->Log(g_mod, SDGO_LOG_DEBUG,
+                "title create Agent dispatch handle=%u native=%u metadata=%u", handle,
+                static_cast<unsigned>(native.size()), static_cast<unsigned>(context.body.size()));
         return DispatchScoped(g_dispatch, &g_forward, argument0, argument1, handle, native.data(),
                                static_cast<int>(native.size()), &context);
     } catch (const std::bad_alloc&) {
@@ -127,6 +133,11 @@ int SendScoped(SendFn original, ForwardContext* context, void* self, DWORD desti
 int Forward(SendFn original, ForwardContext* context, void* self, DWORD destination,
             const void* packet, int size, DWORD flags)
 {
+    if (g_api && context && context->native_opcode == kCreateRoom)
+        g_api->Log(g_mod, SDGO_LOG_DEBUG,
+            "title create Agent forward opcode=%04X bytes=%d destination=%u identity=%u",
+            packet && size >= 2 ? Opcode(packet) : 0, size, destination,
+            packet == context->native_packet);
     if (!context || !packet || packet != context->native_packet ||
         size != static_cast<int>(context->native_size) || Opcode(packet) != context->native_opcode)
         return original(self, destination, packet, size, flags);
@@ -219,6 +230,8 @@ int __fastcall SendClient(void* self, void*, DWORD destination, const void* pack
 
 SDGO_MOD_ENTRY
 {
+    g_api = api;
+    g_mod = mod;
     if (!api->HookCode(mod, "room_titles.agent_client_dispatch", reinterpret_cast<void*>(&Dispatch),
                        reinterpret_cast<void**>(&g_dispatch)) ||
         !api->HookCode(mod, "room_titles.agent_send_server", reinterpret_cast<void*>(&Send),

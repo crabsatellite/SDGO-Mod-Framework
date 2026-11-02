@@ -156,3 +156,64 @@ server-confirmed full titles. It does not synthesize rooms, title replies or
 inventory. Offline fixtures also cover missing controls before the first update,
 the state-3 initialization, focused input refresh and no draft rewrite on later
 updates. Runtime receipts and private accounts remain outside Git.
+
+## Independent width truncation
+
+The focused edit update at `0x00C629F0` calls `0x00C627E0` after synchronizing
+the shared Win32 input. This `void __thiscall(Edit*, HostWString24*)` routine
+measures the text against `edit[+0x25C] - edit[+0x254]` and replaces an overflowing
+value with a fitting prefix. Raising `+0x2A0` alone does not disable it.
+
+The Mod bypasses this width policy only for an initialized room-name edit whose
+registered service, live service vtable, expected edit identity and 512-byte
+limit still match. Other edits run the original function, including unrelated
+edits with the same limit. It leaves `+0x29F` unchanged because that flag also
+changes Enter and multiline handling. The native single-line geometry has no
+horizontal scroll offset; retaining the full value does not enlarge the field.
+The offline regression covers an overflowing room name, an unrelated edit and
+service-storage reuse. Native GameTest checks complete text after later updates
+and requires the exact full title in the server confirmation.
+
+## Title confirmation and native command queues
+
+Native loading can defer response dispatch on the client main thread beyond
+five seconds. Capability and title requests retain their nonce for a bounded
+30-second window. A delayed matching response can complete the request; an
+unrelated or superseded nonce still cannot authorize a title or battle start.
+
+The inline title event `0x0BDB` reaches `0x00A53670`, then `0x00A46380`.
+The latter clones a title command into the native queue at `0x00994DE0`.
+Returning from the UI callback does not prove that the transport already sent
+it. A changed title keeps its draft until the original send observes it and the
+server confirms it. An unchanged native cache remains a no-op. Room identity is
+validated from the native room id and service layout independently of whether
+the optional short display projection can currently be converted.
+
+## Native channel changes and provider identity
+
+Agent session `+0x444` holds the current Battle connection. Both `0x07FB` and
+`0x0640` resolve it at dispatch time; a successful Battle `0x09DF` can replace
+that handle between the lobby Hello and room creation. Capability cannot be
+assumed to belong to the same Battle merely because the client-to-Agent
+connection remains unchanged.
+
+A validated fresh `SetTitle` create, whose epoch, room, generation and revision
+are all zero, is an explicit protocol offer from the Agent-authenticated pilot
+to the newly selected provider. It establishes capability only when this
+provider has no existing capability for that pilot. An existing Agent route
+cannot be implicitly rebound, because restarting its capability round would
+erase completed request deduplication. Existing-room updates keep their normal
+negotiation, owner, generation and revision checks.
+
+The client can adopt a different provider epoch only for an awaiting fresh
+create with the exact request nonce, complete title and initial revision. Its
+snapshot must also match the native carrier, room ID and Team/Battle domain:
+`0x0640` uses `0x0A33`, while `0x0525` uses `0x0918`. Expired creates, unrelated
+snapshots and existing-room edits cannot authorize that change. Old-provider
+room caches are removed when the matching fresh creation is confirmed.
+
+Modern Team category `4` has no reachable inline rename input: population
+`0x00A45A70` initially disables `TitleChangeBtn`, and event handler `0x00A53830`
+explicitly rejects that category even if a later host refresh enables the
+button. Native tests cover its creation form and original modern view; the
+compiled legacy settings adapters remain separate ABI/protocol regressions.

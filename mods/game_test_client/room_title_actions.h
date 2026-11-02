@@ -32,8 +32,10 @@ public:
             api_->HookCode(mod_,"title_test.edit_input_focus",reinterpret_cast<void*>(&ObserveEditInputFocus),reinterpret_cast<void**>(&editInputFocus_)) &&
             api_->HookCode(mod_,"title_test.key_pressed",reinterpret_cast<void*>(&TitleKeyPulse),reinterpret_cast<void**>(&keyPressed_));
     }
-    void Reset() { phase_=0;inputIndex_=0;opened_=false;reopened_=false;dialog_=nullptr;edit_=nullptr;uiRestarts_=0;pendingTitleKey_=0; }
+    void Reset() { phase_=0;inputIndex_=0;opened_=false;reopened_=false;started_=false;dialog_=nullptr;edit_=nullptr;uiRestarts_=0;pendingTitleKey_=0; }
+    bool Running() const { return started_; }
     int Poll(Surface surface,const SdgoGameTestContextV1* context) {
+        started_=true;
         try { return Step(surface,context); }
         catch(const std::exception& error){context->Assert(0,error.what());return SDGO_GAME_TEST_FAIL;}
     }
@@ -200,7 +202,9 @@ private:
             if(!current)return false;
             if(*current!=mode){
                 void* radio=Root(list,mode==0?0x64:mode==1?0x68:0x6C);
-                Click(list,Root(radio,0x15C),mode==0?L"Radio1":mode==1?L"Radio2":L"Radio3",12);
+                // Native cached order is Radio1, Radio3, Radio2 (team,
+                // ordinary, AI), rather than the numeric name order.
+                Click(list,Root(radio,0x15C),mode==0?L"Radio1":mode==1?L"Radio3":L"Radio2",12);
                 return false; // let the original list request/UI transition finish
             }
             void* button=Root(list,s==PvpTeamCreate?0x88:0x84);
@@ -214,8 +218,7 @@ private:
         if(s==MissionSettings||IsTeamSettings(s)){
             void* bar=Service(IsTeamSettings(s)?"title_test.team_titlebar_vtable":"title_test.coop_titlebar_vtable");
             if(Click(bar,Root(bar,IsTeamSettings(s)?0x48:0x44),L"SettingBtn"))return true;
-            bar=Service("room_titles.ui_titlebar_vtable");
-            return Click(bar,Root(bar,0x48),L"OptionBtn");
+            return false; // the 3D titlebar's OptionBtn opens preferences, not room settings
         }
         void* bar=Service("room_titles.ui_titlebar_vtable");return Click(bar,Root(bar,0x48),L"TitleChangeBtn");
     }
@@ -303,6 +306,8 @@ private:
             if(!reopened_){if(!Close(s))throw std::runtime_error("native cancel control unavailable");cancelAt_=GetTickCount64();phase_=3;Observe(c,"cancel-requested",s);return SDGO_GAME_TEST_WAIT;}
             expected_=Utf8(tests_.back());
             if(!Submit(s))throw std::runtime_error("native title confirmation control unavailable");
+            const auto sent=actions_->TransportState();
+            char line[128];sprintf_s(line,"native title submit transport opcode=%04X bytes=%u sequence=%u result=%d",sent.opcode,sent.packet_size,sent.send_sequence,sent.result);c->Observe(line);
             phase_=4;Observe(c,"submit-requested",s);return SDGO_GAME_TEST_WAIT;
         }
         if(phase_==3){
@@ -319,6 +324,7 @@ private:
     }
     const SdgoApi* api_=nullptr;SdgoMod* mod_=nullptr;NativeActions* actions_=nullptr;
     void** manager_=nullptr;FindControl find_=nullptr;GetText get_=nullptr;Focus focus_=nullptr;Notify notify_=nullptr;uint8_t** input_=nullptr;
+    bool started_=false;
     inline static RoomTitleActions* active_=nullptr;InputLimit inputLimit_=nullptr;
     EditInputFocus editInputFocus_=nullptr,clearFocus_=nullptr;void* actualInputEdit_=nullptr;
     EditSetText editSetText_=nullptr;uintptr_t lastEditSetCaller_=0,lastEditFocusCaller_=0;uint32_t lastEditSetUnits_=0;

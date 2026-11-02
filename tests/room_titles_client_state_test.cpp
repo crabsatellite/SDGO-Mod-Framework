@@ -557,6 +557,43 @@ void TestDelayedNativeDispatch()
               !state.AcceptBatch(20, Batch(992, expired.request_id, {})) &&
               !state.IsReady(20),
           "a reply to an expired superseded offer cannot authorize a later connection");
+    Check(ReadyWithEmptyBatch(&state, 21, 993, 0), "capability expiry fixture starts with a confirmed connection");
+    state.BeginHello(21, 100);
+    state.AdvanceTime(21, 100 + rt::kHelloTimeoutMilliseconds);
+    Check(!state.IsReady(21) && !state.IsNegotiating(21),
+          "an unanswered recheck expires the old capability instead of trusting a reused connection indefinitely");
+}
+
+void TestCreateAfterNativeChannelSwitch()
+{
+    const std::string title = "complete title on a different native Battle provider";
+    rt::ClientState state;
+    Check(ReadyWithEmptyBatch(&state, 31, 701, 0) &&
+              state.AcceptMessage(31, Snapshot(Record(701, 9, 1, 1, "old channel"), 0)),
+          "channel-switch fixture has a confirmed provider and an old cached room");
+    const auto create = state.BeginSetTitle(31, 0, title, 100);
+    Check(state.AcceptMessage(31, Snapshot(Record(702, 4, 3, 1, title), create.request_id)) &&
+              state.IsReady(31) && !state.HasPending(31) && state.CanStartBattle(31) &&
+              !state.Query(31, 9) && state.Query(31, 4)->key.server_epoch == 702,
+          "the exact fresh-room ACK adopts the selected provider and removes old-channel cache");
+    const auto update = state.BeginSetTitle(31, 4, title + " renamed", 200);
+    Check(!state.AcceptMessage(31, Snapshot(Record(703, 4, 3, 2, title + " renamed"), update.request_id)) &&
+              !state.IsReady(31) && !state.CanStartBattle(31),
+          "an existing-room update cannot authorize another provider epoch");
+
+    for (unsigned mismatch = 0; mismatch < 4; ++mismatch) {
+        rt::ClientState rejected;
+        Check(ReadyWithEmptyBatch(&rejected, 32, 801, 0), "mismatched create fixture is ready");
+        const auto request = rejected.BeginSetTitle(32, 0, title, 100);
+        auto reply = Snapshot(Record(802, 1, 1, 1, title), request.request_id);
+        if (mismatch == 0) ++reply.request_id;
+        if (mismatch == 1) reply.title += " different";
+        if (mismatch == 2) reply.revision = 2;
+        if (mismatch == 3) rejected.AdvanceTime(32, 100 + rt::kSetTitleTimeoutMilliseconds);
+        Check(!rejected.AcceptMessage(32, reply) && !rejected.IsReady(32) &&
+                  !rejected.CanStartBattle(32),
+              "another nonce, title, revision or expired create cannot authorize a provider switch");
+    }
 }
 
 }  // namespace
@@ -573,6 +610,7 @@ int main()
     TestConnectionBound();
     TestRetryAfterRoomChanged();
     TestDelayedNativeDispatch();
+    TestCreateAfterNativeChannelSwitch();
     std::printf("%s: %d failure(s)\n",
                 g_failures == 0 ? "PASS" : "FAIL", g_failures);
     return g_failures == 0 ? 0 : 1;
