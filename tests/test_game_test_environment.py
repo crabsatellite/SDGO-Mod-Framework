@@ -164,6 +164,30 @@ class EnvironmentTests(unittest.TestCase):
 
 
 class NativeTemplateTests(unittest.TestCase):
+    def test_mode_matrix_reuses_the_declared_existing_primary(self):
+        from tools.game_test_native_environment import scenario_options
+        options=scenario_options({'primary_uid':17},mode_sequence='1,3,6,7,9')
+        self.assertEqual(options['mode_sequence'],'1,3,6,7,9')
+        self.assertEqual(options['play_unit_uid'],17)
+        self.assertFalse(options['pages_only'])
+
+    def test_native_pages_reuse_inventory_without_an_equip_or_acquisition_step(self):
+        from tools.game_test_native_environment import scenario_options
+        options=scenario_options({'primary_uid':17},pages_only=True,
+            shop_assertions=Path('assertions.ini'),shop_display=Path('display.ini'))
+        self.assertIsNone(options['play_unit_uid'])
+        self.assertEqual(options['shop_assertions'],Path('assertions.ini'))
+        self.assertTrue(options['pages_only'])
+
+    def test_invalid_scenario_mixes_are_rejected_before_allocating_a_runtime(self):
+        from tools.game_test_native_environment import scenario_options
+        for options in ({'bootstrap_only':True,'pages_only':True},
+                        {'pages_only':True,'mode_sequence':'3'},
+                        {'shop_assertions':Path('a'),'shop_display':Path('b')},
+                        {'pages_only':True,'shop_assertions':Path('a')}):
+            with self.subTest(options=options),self.assertRaises(RuntimeError):
+                scenario_options({'primary_uid':17},**options)
+
     def test_native_database_key_spelling_and_unrelated_values_survive_rebase(self):
         from tools.game_test_native_environment import rebase_configuration
         with tempfile.TemporaryDirectory() as directory:
