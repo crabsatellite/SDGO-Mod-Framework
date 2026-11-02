@@ -4,6 +4,8 @@ Set one value in **SDGO Mod Manager** to control the client's logic-update
 frequency and rendering ceiling. For example, 160 selects 160 logic updates
 per second and a maximum rendering rate of 160 FPS.
 
+The shared logic/render setting requires `fps_limit` 1.0.2 or newer.
+
 [简体中文](fps-limit.zh-CN.md)
 
 | Mod | Install on | Purpose |
