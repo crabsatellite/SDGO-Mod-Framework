@@ -1,5 +1,84 @@
 # Native GameTest
 
+## FPS cap without account login
+
+Build `game_test_client`, `fps_limit`, `sdgo_core`, `d3d9_shim` and `sdgo_data`,
+then run the FPS matrix using a normal installed client as a read-only template:
+
+```powershell
+python tools/game_test_fps.py --client-template D:\Games\SDGO --stage build/stage/Release --work-dir build/fps-runs --results-dir build/fps-results
+```
+
+The matrix uses the same private-desktop GameTest launcher, genuine D3D9 device,
+muted Miles audio and loopback-only policy. It stops at the native login page,
+does not load an account profile, and clears saved login credentials in the
+copy. It compares disabled/configured-160 with enabled 30, 60, 120 and 160.
+The native login page still needs a reachable compatible backend. Select the
+existing local test endpoint with `--target-host` and `--login-port`; this does
+not create an account or submit credentials.
+The default whole-client timeout is 600 seconds to allow native resource loading;
+`--timeout` can override it. The cadence assertions and sampling windows are
+unchanged by that startup allowance.
+Background processes use normal Windows priority, matching ordinary game
+launches. Below-normal priority can starve native loading and timing samples
+when the host CPU is saturated; background desktop/audio isolation remains in use.
+
+Each run reads the real application's FPS field and initialized timer interval,
+then independently measures native update and successful D3D9 Present cadence
+against QueryPerformanceCounter in three three-second windows. All windows and
+averages are retained. Updates must reach 80–110% of their target; successful
+Present calls must be positive and average no more than 110% of the active cap.
+Their minimum spacing must match the actual pacing period within scheduling
+jitter (the larger of 0.5 ms and 10%). The production observer independently
+confirms both targets and the period; enabled 30 must actually wait. The disabled
+control has no rendering ceiling assertion. Rendering below the ceiling is
+reported as measured, without a throughput guarantee. The native
+GameTest assertions produce JSON and JUnit results. This measures the native
+login-page renderer; combat timing and visual quality are separate tests.
+
+The wrapper exports reports, native events and quiet-runtime proofs to the
+results directory, then removes each owned client copy after verifying that
+its process has exited. The template and other tests are preserved. Use fresh
+work/results directories for a later machine or environment. A single case can
+also use `game_test.py prepare --fps-cap 160` followed by its ordinary `run`
+command; `--fps-mod-disabled` selects the native forced-60 control.
+
+### Recreate a local backend
+
+`tools/game_test_backend.py` owns copied native services and an isolated SQL
+container. It requires Docker, a compatible local native server tree, the server
+stage, and verified database backups (`backend.json` plus its `backups` folder).
+Build `winmm_shim`, `sdgo_core`, `sdgo_data`, `pvp_ai` and `game_test_server` for
+that server stage. Missing loader, observer or symbol files fail preflight
+before SQL resources are created or databases are restored.
+Use a fresh work directory and an unused IPv4 loopback address. For example:
+
+```powershell
+python tools/game_test_backend.py prepare --source-server D:\SDGO\Server --stage build/stage/Release --backup-source D:\Tests\verified-backend --work build/fps-backend --target-ip 127.93.0.1
+python tools/game_test.py prepare --client-template D:\Games\SDGO --stage build/stage/Release --run-dir build/fps-probe --target-host 127.93.0.1 --login-port 5001 --fps-cap 160
+python tools/game_test_backend.py serve --work build/fps-backend --client-run build/fps-probe --stage build/stage/Release --startup-xml D:\SDGO\ServerStartUp\ServerStartUp.xml --lifetime 1800
+```
+
+Run the matrix from another terminal after `backend_ready`, specifying that
+same `--target-host`. Service startup retries and database readiness probes are
+bounded; launch selection uses both the startup XML and native channel table.
+The FPS suite never needs an account. Other suites reuse their private account
+profile by default; authenticated backend observers also require
+`serve --host-pilot-id <actual native pilot ID>` for that account. No account ID
+is embedded in the backend tool. Live COPY_ONLY backup is an explicit opt-in
+(`--allow-live-copy-only`) when a verified backup source is unavailable.
+
+```powershell
+python tools/game_test_backend.py stop --work build/fps-backend
+python tools/game_test_backend.py cleanup --work build/fps-backend --remove-runtime
+```
+
+Cleanup verifies owned service exit and the SQL container/volume identity, then
+removes private credentials and copied runtime while retaining public receipts.
+The separately prepared `fps-probe` belongs only to that test: remove it after
+its process has exited and evidence is exported. Shared backups and source
+servers remain available for later environments.
+
 An optional development Mod, disabled by default. Test cases run inside the
 real client and use its normal business requests against a real server.
 The external runner prepares a separate client, starts it and collects results.
