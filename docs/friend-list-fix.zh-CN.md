@@ -39,5 +39,5 @@ Mod 借用已认证的会员库会话，通过原生 INI 的 `[DB Member] DBName
 
 [客户端调查](friend-list-investigation-client.md)和[服务端调查](friend-list-investigation-server.md)
 记录了当前支持版本、协议、缓存和修复边界。开发验证覆盖实际客户端 detour、两端签名，
-以及使用合成账号的独立 SQL 测试。真实双客户端登录／下线、界面与互发消息仍需单独验收。
+以及使用合成账号的独立 SQL 测试。测试界面和消息功能时，应使用两个客户端检查登录、下线、好友显示和互发消息。
 开发验证命令见[英文说明](friend-list-fix.md)。
