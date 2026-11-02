@@ -41,10 +41,12 @@ native-function replay executes 740 observations with the shipping DLL: the
 all recover, while the other observations retain their results. Ten original
 bodies/tables remain unchanged. These checks are not whole-client gameplay.
 
-**Delivery gate remains open:** background native GameTest has not reached the
-combat scenario. The local test backend is stopped; starting its database
-requires elevation, and the remote lane cannot establish its required scoped
-firewall rule in the current session. No deployment or master push is claimed.
+**Delivery gate remains open:** complete background native combat acceptance
+is still pending. Direct loopback testing has already logged in and read the
+real inventory without firewall changes. The earlier access-denied error was
+specific to remote firewall-rule setup. The managed test environment now uses
+private SQL and native service copies, with five preinitialized fixture accounts
+and mandatory cleanup. No deployment or master push is claimed yet.
 
 ```powershell
 cmake --build build --config Release --target transform_input_fix_runtime_test
