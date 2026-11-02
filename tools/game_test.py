@@ -34,8 +34,14 @@ import xml.etree.ElementTree as ET
 import importlib.util
 
 
+# Direct CLI entry points start with tools/ on sys.path. Candidate overlays
+# also import repository packages, independently of the caller's directory.
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 SCHEMA_VERSION = 2
 OWNED_BUILD_ROOT=Path(__file__).resolve().parents[1]/'build'
+OWNED_PROCESS_EXIT_TIMEOUT = 30
 HOST_KEY = "GOnline-54BE1568-00C97000"
 GAME_EXE = "GOnline.exe"
 STARTUP_EVENT_NAME = "9YOU SDGO"
@@ -3113,6 +3119,31 @@ def startup_info():
     return info
 
 
+def stop_owned_entry_process(process, timeout: float = OWNED_PROCESS_EXIT_TIMEOUT) -> int:
+    """Stop one held owned process; allow bounded pending kernel teardown."""
+    if process is None or process.poll() is not None:
+        return 0
+    termination_error = None
+    try:
+        process.kill()
+    except OSError as error:
+        # A repeated termination can be rejected while the first is pending.
+        # Accept it only after the held process handle confirms actual exit.
+        termination_error = error
+    for attempt in range(2):
+        try:
+            process.wait(timeout=timeout)
+            if process.poll() is None:
+                if termination_error is not None:
+                    raise termination_error
+                raise GameTestError('owned process exit was not confirmed after waiting')
+            return attempt
+        except subprocess.TimeoutExpired:
+            if attempt:
+                raise
+    raise AssertionError('unreachable owned process wait state')
+
+
 def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 30.0, *, on_process=None, on_poll=None) -> dict:
     run_dir = run_dir.resolve()
     metadata = validate_metadata(run_dir)
@@ -3242,20 +3273,11 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
             try:action()
             except Exception as error:cleanup_errors.append(f'{label}: {type(error).__name__}: {error}')
         def stop_entry():
-            if entry_process and entry_process.poll() is None:
-                try:entry_process.kill()
-                except OSError:
-                    # Windows can reject a second termination while the first
-                    # exit is still pending. Accept only a confirmed exit.
-                    entry_process.wait(timeout=10)
-                    if entry_process.poll() is None:raise
-                    return
-                entry_process.wait(timeout=10)
-        if game_process:
-            if entry_process and game_process["pid"] == entry_process.pid:
-                cleanup('owned game stop',stop_entry)
-            else:
-                cleanup('verified child stop',lambda:terminate_verified_process(game_process["pid"], Path(metadata["client"]["game"])))
+            retries=stop_owned_entry_process(entry_process)
+            if retries:
+                metadata['execution']['exit_wait_retries']=retries
+        if game_process and (not entry_process or game_process['pid'] != entry_process.pid):
+            cleanup('verified child stop',lambda:terminate_verified_process(game_process["pid"], Path(metadata["client"]["game"])))
         cleanup('owned entry stop',stop_entry)
         for handle in handles:
             cleanup('output stream close',handle.close)

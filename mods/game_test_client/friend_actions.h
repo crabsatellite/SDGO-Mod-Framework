@@ -8,6 +8,7 @@
 
 #include "friend_service_lookup.h"
 #include "native_actions.h"
+#include "friend_message_history.h"
 
 namespace friends {
 
@@ -168,6 +169,35 @@ public:
         uint32_t reply_sequence;
         uint32_t reply_result;
         uint32_t local_validation_code;
+        uint32_t add_dialog_list_valid;
+        uint32_t add_dialog_class_matches;
+        uint32_t add_dialog_root_ready;
+        uint32_t add_dialog_edit_ready;
+        uint32_t add_button_match;
+        uint32_t add_button_parent;
+        uint32_t add_button_visible;
+        uint32_t add_button_enabled;
+        uint32_t add_button_hit_test;
+        uint32_t add_callback_invoked;
+        uint32_t pending_dialog_list_valid;
+        uint32_t pending_dialog_class_matches;
+        uint32_t pending_dialog_packet_matches;
+        uint32_t pending_dialog_target_matches;
+        uint32_t pending_dialog_root_ready;
+        uint32_t pending_dialog_sender_id;
+        uint32_t pending_dialog_recipient_id;
+        uint32_t pending_button_match;
+        uint32_t pending_button_parent;
+        uint32_t pending_button_visible;
+        uint32_t pending_button_enabled;
+        uint32_t pending_button_hit_test;
+        uint32_t pending_callback_invoked;
+        uint32_t message_application_status;
+        uint32_t message_sender_pilot;
+        uint32_t message_before_lines;
+        uint32_t message_after_lines;
+        uint32_t message_online_flag;
+        uint32_t message_applied;
         uint16_t request_opcode;
         uint16_t reply_opcode;
         uint16_t reply_status;
@@ -213,18 +243,12 @@ public:
             Symbol<SimpleBusinessFn>("friends.open_messenger");
         openAddDialog_ =
             Symbol<SimpleBusinessFn>("friends.open_add_dialog");
-        addFriend_ =
-            Symbol<BoolBusinessFn>("friends.add_friend_business");
         acceptedDuplicateValidator_ =
             Symbol<NativeWStringValidatorFn>(
                 "friends.accepted_duplicate_validator");
         pendingDuplicateValidator_ =
             Symbol<AnsiValidatorFn>(
                 "friends.pending_duplicate_validator");
-        acceptPending_ =
-            Symbol<SimpleBusinessFn>("friends.accept_pending_business");
-        rejectPending_ =
-            Symbol<SimpleBusinessFn>("friends.reject_pending_business");
         removeFriend_ =
             Symbol<SimpleBusinessFn>("friends.remove_friend_business");
         deleteDialogCtor_ =
@@ -240,9 +264,9 @@ public:
         nativeUiFindControl_ =
             Symbol<NativeUiFindControlFn>(
                 "flow.native_ui_find_control");
-        treeItemByIndex_ =
-            Symbol<TreeItemByIndexFn>(
-                "friends.tree_item_by_index");
+        treeFindByData_ =
+            Symbol<TreeFindByDataFn>(
+                "friends.tree_find_by_data");
         treeItemData_ =
             Symbol<TreeItemDataFn>("friends.tree_item_data");
         treeSelect_ =
@@ -267,13 +291,13 @@ public:
             pendingDialogVtable_ &&
             initialListRequest_ &&
             messengerDispatch_ && openMessenger_ &&
-            openAddDialog_ && addFriend_ &&
+            openAddDialog_ &&
             acceptedDuplicateValidator_ &&
             pendingDuplicateValidator_ &&
-            acceptPending_ && rejectPending_ && removeFriend_ &&
+            removeFriend_ &&
             deleteDialogCtor_ && deleteDialogDtor_ &&
             openConversation_ && sendMessage_ && uiEditSetText_ &&
-            nativeUiFindControl_ && treeItemByIndex_ &&
+            nativeUiFindControl_ && treeFindByData_ &&
             treeItemData_ && treeSelect_ && openSelectedFriend_;
         if (!bound_ || (active_ && active_ != this))
             return false;
@@ -322,6 +346,8 @@ public:
         commandStarted_ = false;
         messengerOpenRequested_ = false;
         addDialogRequested_ = false;
+        addTextAssigned_ = false;
+        addTextDialog_ = nullptr;
         localValidationScope_ = false;
         localValidationDialog_ = nullptr;
         localValidationThreadId_ = 0;
@@ -370,6 +396,8 @@ public:
         commandStarted_ = false;
         messengerOpenRequested_ = false;
         addDialogRequested_ = false;
+        addTextAssigned_ = false;
+        addTextDialog_ = nullptr;
         localValidationObservedCode_ = kLocalValidationNone;
         replyBaseline_ = matchedReplySequence_;
         commandPending_ = true;
@@ -405,7 +433,6 @@ private:
     using NativeWStringDtorFn = void(__thiscall*)(void*);
     using InitialListRequestFn = void(__cdecl*)();
     using SimpleBusinessFn = void(__thiscall*)(void*);
-    using BoolBusinessFn = bool(__thiscall*)(void*);
     using NativeWStringValidatorFn =
         bool(__thiscall*)(void*, const void*);
     using AnsiValidatorFn =
@@ -418,8 +445,14 @@ private:
         void(__thiscall*)(void*, const void*, int);
     using NativeUiFindControlFn =
         void*(__thiscall*)(void*, const void*, uint32_t);
-    using TreeItemByIndexFn =
-        void*(__thiscall*)(void*, uint32_t);
+    using NativeUiCallbackFn =
+        uint32_t(__stdcall*)(
+            void*,
+            uint32_t,
+            const void*,
+            void*);
+    using TreeFindByDataFn =
+        void*(__thiscall*)(void*, void*);
     using TreeItemDataFn =
         void*(__thiscall*)(void*);
     using TreeSelectFn =
@@ -511,7 +544,7 @@ private:
         return ResolveMessenger(service);
     }
 
-    void* ResolveAddDialog() const
+    void* ResolveAddDialog()
     {
         void* manager =
             serviceManagedPointer_
@@ -521,9 +554,39 @@ private:
             friend_service_lookup::FindUniqueByVtable(
                 manager,
                 addDialogVtable_);
-        return found.list_valid && found.matches == 1
-            ? found.service
-            : nullptr;
+        observation_.add_dialog_list_valid =
+            found.list_valid ? 1u : 0u;
+        observation_.add_dialog_class_matches = found.matches;
+        observation_.add_dialog_root_ready = 0;
+        observation_.add_dialog_edit_ready = 0;
+        observation_.add_button_match = 0;
+        observation_.add_button_parent = 0;
+        observation_.add_button_visible = 0;
+        observation_.add_button_enabled = 0;
+        observation_.add_button_hit_test = 0;
+        observation_.add_callback_invoked = 0;
+        if (!found.list_valid || found.matches != 1 ||
+            !found.service)
+            return nullptr;
+        __try {
+            const auto* bytes =
+                static_cast<const uint8_t*>(found.service);
+            observation_.add_dialog_root_ready =
+                *reinterpret_cast<void* const*>(
+                    bytes + 0x4C)
+                    ? 1u
+                    : 0u;
+            observation_.add_dialog_edit_ready =
+                *reinterpret_cast<void* const*>(
+                    bytes + 0x50)
+                    ? 1u
+                    : 0u;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            observation_.add_dialog_root_ready = 0;
+            observation_.add_dialog_edit_ready = 0;
+            return nullptr;
+        }
+        return found.service;
     }
 
     static bool FixedNameMatches(
@@ -551,22 +614,52 @@ private:
 
     bool PendingDialogMatches(
         void* dialog,
-        const Command& command) const
+        const Command& command)
     {
-        if (!dialog || !PendingCommandMatches(command))
+        const bool targetMatches =
+            PendingCommandMatches(command);
+        observation_.pending_dialog_packet_matches = 0;
+        observation_.pending_dialog_target_matches =
+            targetMatches ? 1u : 0u;
+        observation_.pending_dialog_root_ready = 0;
+        observation_.pending_dialog_sender_id = 0;
+        observation_.pending_dialog_recipient_id = 0;
+        observation_.pending_button_match = 0;
+        observation_.pending_button_parent = 0;
+        observation_.pending_button_visible = 0;
+        observation_.pending_button_enabled = 0;
+        observation_.pending_button_hit_test = 0;
+        observation_.pending_callback_invoked = 0;
+        if (!dialog || !targetMatches)
             return false;
         __try {
             const auto* bytes =
                 static_cast<const uint8_t*>(dialog);
             const auto* packet = bytes + 0x60;
-            return *reinterpret_cast<void* const*>(bytes + 0x4C) &&
+            const bool rootReady =
+                *reinterpret_cast<void* const*>(bytes + 0x4C) !=
+                nullptr;
+            const bool packetMatches =
                 memcmp(
                     packet,
                     pendingPacket_,
-                    sizeof(pendingPacket_)) == 0 &&
-                *reinterpret_cast<const uint32_t*>(packet + 2) ==
+                    kPendingPacketSize) == 0;
+            const uint32_t senderId =
+                *reinterpret_cast<const uint32_t*>(packet + 6);
+            const uint32_t recipientId =
+                *reinterpret_cast<const uint32_t*>(packet + 2);
+            observation_.pending_dialog_root_ready =
+                rootReady ? 1u : 0u;
+            observation_.pending_dialog_packet_matches =
+                packetMatches ? 1u : 0u;
+            observation_.pending_dialog_sender_id = senderId;
+            observation_.pending_dialog_recipient_id =
+                recipientId;
+            return rootReady &&
+                packetMatches &&
+                senderId ==
                     command.target_id &&
-                *reinterpret_cast<const uint32_t*>(packet + 6) ==
+                recipientId ==
                     observation_.pending.recipient_id &&
                 FixedNameMatches(
                     reinterpret_cast<const char*>(packet + 0x0E),
@@ -575,11 +668,15 @@ private:
                     reinterpret_cast<const char*>(packet + 0x1F),
                     observation_.pending.recipient);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
+            observation_.pending_dialog_packet_matches = 0;
+            observation_.pending_dialog_root_ready = 0;
+            observation_.pending_dialog_sender_id = 0;
+            observation_.pending_dialog_recipient_id = 0;
             return false;
         }
     }
 
-    void* ResolvePendingDialog(const Command& command) const
+    void* ResolvePendingDialog(const Command& command)
     {
         void* manager =
             serviceManagedPointer_
@@ -589,6 +686,15 @@ private:
             friend_service_lookup::FindUniqueByVtable(
                 manager,
                 pendingDialogVtable_);
+        observation_.pending_dialog_list_valid =
+            found.list_valid ? 1u : 0u;
+        observation_.pending_dialog_class_matches =
+            found.matches;
+        observation_.pending_dialog_packet_matches = 0;
+        observation_.pending_dialog_target_matches = 0;
+        observation_.pending_dialog_root_ready = 0;
+        observation_.pending_dialog_sender_id = 0;
+        observation_.pending_dialog_recipient_id = 0;
         if (!found.list_valid || found.matches != 1 ||
             !PendingDialogMatches(found.service, command))
             return nullptr;
@@ -646,6 +752,86 @@ private:
         return control;
     }
 
+    struct ButtonState
+    {
+        uint32_t match = 0;
+        uint32_t parent = 0;
+        uint32_t visible = 0;
+        uint32_t enabled = 0;
+        uint32_t hit_test = 0;
+        uint32_t callback_invoked = 0;
+    };
+
+    bool InvokeButtonCallback(
+        void* dialog,
+        void* expectedVtable,
+        void* root,
+        const wchar_t* name,
+        ButtonState& state,
+        void* expectedControl = nullptr) const
+    {
+        state = {};
+        if (!dialog || !expectedVtable || !root || !name ||
+            !nativeUiFindControl_ || !nativeWStringCtor_ ||
+            !nativeWStringDtor_)
+            return false;
+        alignas(4) uint8_t nativeName[kNativeWStringSize] = {};
+        bool constructed = false;
+        bool invoked = false;
+        __try {
+            nativeWStringCtor_(nativeName, name);
+            constructed = true;
+            void* control =
+                nativeUiFindControl_(root, nativeName, 4);
+            if (!control)
+                __leave;
+            state.match =
+                !expectedControl ||
+                        control == expectedControl
+                    ? 1u
+                    : 0u;
+            const auto* controlBytes =
+                static_cast<const uint8_t*>(control);
+            state.parent =
+                *reinterpret_cast<void* const*>(
+                    controlBytes + 0x15C) == root
+                    ? 1u
+                    : 0u;
+            state.visible =
+                controlBytes[0x162] != 0 ? 1u : 0u;
+            state.enabled =
+                controlBytes[0x163] != 0 ? 1u : 0u;
+            state.hit_test =
+                controlBytes[0x167] != 0 ? 1u : 0u;
+            if (!state.match || !state.parent ||
+                !state.visible || !state.enabled ||
+                !state.hit_test)
+                __leave;
+            void** vtable =
+                *reinterpret_cast<void***>(dialog);
+            if (vtable != expectedVtable)
+                __leave;
+            const NativeUiCallbackFn callback =
+                reinterpret_cast<NativeUiCallbackFn>(
+                    *reinterpret_cast<void**>(
+                        reinterpret_cast<uint8_t*>(vtable) +
+                        0x38));
+            if (!callback)
+                __leave;
+            (void)callback(
+                dialog,
+                0x101,
+                nativeName,
+                control);
+            state.callback_invoked = 1;
+            invoked = true;
+        } __finally {
+            if (constructed)
+                nativeWStringDtor_(nativeName);
+        }
+        return invoked;
+    }
+
     Result Execute(const Command& command)
     {
         if (!native_)
@@ -655,10 +841,12 @@ private:
         if (nativeState.native_app_state != kLobbyAppState)
             return Publish(kWaitingForLobby, command);
 
-        void* messenger = ResolveOrOpenMessenger(
-            command.operation == kEnsureInitialized);
+        // Native lobby transitions may replace the UI while retaining the
+        // initialized friend cache. Use the normal opener and wait for its
+        // managed clone before operating on a newly requested window.
+        void* messenger = ResolveOrOpenMessenger(true);
         if (!messenger)
-            return Publish(command.operation==kEnsureInitialized ? kWaitingForMessenger : kMessengerUnavailable, command);
+            return Publish(kWaitingForMessenger, command);
 
         __try {
             switch (command.operation) {
@@ -724,19 +912,11 @@ private:
             return Publish(kNativeRequestNotSent, command);
         const NativeActions::TransportObservation after =
             native_->TransportState();
-        observation_.request_transport_sequence =
-            after.send_sequence;
-        observation_.request_opcode = after.opcode;
-        observation_.request_sent =
-            after.send_sequence != before.send_sequence &&
-            after.opcode == 0x0697;
-        commandStarted_ = observation_.request_sent != 0;
-        replyBaseline_ = observation_.reply_sequence;
-        return Publish(
-            observation_.request_sent
-                ? kRequestSent
-                : kNativeRequestNotSent,
-            command);
+        return ArmRequest(
+            command,
+            before,
+            after,
+            0x0697);
     }
 
     Result AddFriend(void* messenger, const Command& command)
@@ -762,22 +942,55 @@ private:
         void* edit =
             *reinterpret_cast<void**>(
                 static_cast<uint8_t*>(dialog) + 0x50);
-        if (!root || !edit)
+        void* okButton =
+            *reinterpret_cast<void**>(
+                static_cast<uint8_t*>(dialog) + 0x58);
+        if (!root || !edit || !okButton)
             return Publish(kWaitingForMessenger, command);
-        if (!SetEditText(edit, command.target_name))
-            return Publish(kNativeRequestNotSent, command);
+        if (addTextDialog_ != dialog) {
+            addTextDialog_ = dialog;
+            addTextAssigned_ = false;
+        }
+        if (!addTextAssigned_) {
+            if (!SetEditText(edit, command.target_name))
+                return Publish(kNativeRequestNotSent, command);
+            addTextAssigned_ = true;
+        }
         const NativeActions::TransportObservation before =
             native_->TransportState();
+        ButtonState button = {};
+        bool invoked = false;
         BeginLocalValidationScope(dialog, command);
         __try {
-            (void)addFriend_(dialog);
+            invoked = InvokeButtonCallback(
+                dialog,
+                addDialogVtable_,
+                root,
+                L"OkBtn",
+                button,
+                okButton);
         } __finally {
             EndLocalValidationScope();
         }
+        observation_.add_button_match = button.match;
+        observation_.add_button_parent = button.parent;
+        observation_.add_button_visible = button.visible;
+        observation_.add_button_enabled = button.enabled;
+        observation_.add_button_hit_test = button.hit_test;
+        observation_.add_callback_invoked =
+            button.callback_invoked;
+        if (!invoked)
+            return Publish(kWaitingForMessenger, command);
         const NativeActions::TransportObservation after =
             native_->TransportState();
         CommitLocalValidationReceipt(before, after);
-        return ArmRequest(command, before, after, 0x0829);
+        const Result result =
+            ArmRequest(command, before, after, 0x0829);
+        if (result == kRequestSent) {
+            commandPending_ = false;
+            commandStarted_ = false;
+        }
+        return result;
     }
 
     Result RespondToPending(const Command& command, bool accept)
@@ -791,19 +1004,40 @@ private:
         void* dialog = ResolvePendingDialog(command);
         if (!dialog)
             return Publish(kWaitingForMessenger, command);
+        void* root =
+            *reinterpret_cast<void**>(
+                static_cast<uint8_t*>(dialog) + 0x4C);
         const NativeActions::TransportObservation before =
             native_->TransportState();
-        if (accept)
-            acceptPending_(dialog);
-        else
-            rejectPending_(dialog);
+        ButtonState button = {};
+        const bool invoked = InvokeButtonCallback(
+            dialog,
+            pendingDialogVtable_,
+            root,
+            accept ? L"Btn0" : L"Btn1",
+            button);
+        observation_.pending_button_match = button.match;
+        observation_.pending_button_parent = button.parent;
+        observation_.pending_button_visible = button.visible;
+        observation_.pending_button_enabled = button.enabled;
+        observation_.pending_button_hit_test =
+            button.hit_test;
+        observation_.pending_callback_invoked =
+            button.callback_invoked;
+        if (!invoked)
+            return Publish(kWaitingForMessenger, command);
         const NativeActions::TransportObservation after =
             native_->TransportState();
-        return ArmRequest(
+        const Result result = ArmRequest(
             command,
             before,
             after,
             accept ? 0x0645 : 0x0737);
+        if (result == kRequestSent) {
+            commandPending_ = false;
+            commandStarted_ = false;
+        }
+        return result;
     }
 
     Result OpenConversation(void* messenger, const Command& command)
@@ -817,19 +1051,14 @@ private:
         void* tree = FindControl(treeRoot, L"FriendTree", 0x12);
         if (!tree)
             return Publish(kMessengerUnavailable, command);
-        void* item = nullptr;
-        const uint32_t count =
-            observation_.friend_count < 100
-                ? observation_.friend_count
-                : 100;
-        for (uint32_t index = 0; index < count; ++index) {
-            void* candidate = treeItemByIndex_(tree, index);
-            if (candidate && treeItemData_(candidate) == record) {
-                item = candidate;
-                break;
-            }
-        }
-        if (!item)
+        void* nativeRoot =
+            *reinterpret_cast<void**>(
+                static_cast<uint8_t*>(tree) + 0x21C);
+        void* item =
+            nativeRoot
+                ? treeFindByData_(nativeRoot, record)
+                : nullptr;
+        if (!item || treeItemData_(item) != record)
             return Publish(kFriendNotFound, command);
         treeSelect_(tree, item);
         openSelectedFriend_(messenger);
@@ -874,11 +1103,11 @@ private:
 
     Result Remove(const Command& command)
     {
+        if (commandStarted_)
+            return PollReply(command);
         void* record = FindFriendRecord(command);
         if (!record)
             return Publish(kFriendNotFound, command);
-        if (commandStarted_)
-            return PollReply(command);
         alignas(4) uint8_t dialog[0x70] = {};
         bool constructed = false;
         const NativeActions::TransportObservation before =
@@ -902,18 +1131,45 @@ private:
         const NativeActions::TransportObservation& after,
         uint16_t expectedOpcode)
     {
+        const NativeActions::TransportObservation request =
+            FindRequestSince(
+                before,
+                after,
+                expectedOpcode);
         observation_.request_transport_sequence =
-            after.send_sequence;
-        observation_.request_opcode = after.opcode;
+            request.send_sequence;
+        observation_.request_opcode = request.opcode;
         observation_.request_sent =
-            after.send_sequence != before.send_sequence &&
-            after.opcode == expectedOpcode &&
-            after.result != 0;
+            request.send_sequence != 0 &&
+            request.opcode == expectedOpcode &&
+            request.result != 0;
         if (!observation_.request_sent)
             return Publish(kNativeRequestNotSent, command);
         commandStarted_ = true;
         replyBaseline_ = matchedReplySequence_;
         return Publish(kRequestSent, command);
+    }
+
+    NativeActions::TransportObservation FindRequestSince(
+        const NativeActions::TransportObservation& before,
+        const NativeActions::TransportObservation& after,
+        uint16_t expectedOpcode) const
+    {
+        NativeActions::TransportObservation request = {};
+        if (native_) {
+            request = native_->FindTransportSince(
+                before.send_sequence,
+                expectedOpcode);
+        }
+        if (request.send_sequence != 0)
+            return request;
+
+        // Compatibility for narrow fixtures that only model the legacy latest
+        // transport snapshot. Live proof comes from the observer history above.
+        if (after.send_sequence != before.send_sequence &&
+            after.opcode == expectedOpcode)
+            return after;
+        return {};
     }
 
     Result PollReply(const Command& command)
@@ -1166,9 +1422,12 @@ private:
         const NativeActions::TransportObservation& before,
         const NativeActions::TransportObservation& after)
     {
+        const NativeActions::TransportObservation request =
+            FindRequestSince(before, after, 0x0829);
         if (localValidationObservedCode_ !=
                 kLocalValidationNone &&
-            after.send_sequence == before.send_sequence) {
+            (request.send_sequence == 0 ||
+             request.result == 0)) {
             observation_.local_validation_rejected = 1;
             observation_.local_validation_code =
                 localValidationObservedCode_;
@@ -1334,11 +1593,17 @@ private:
         FriendActions* actions = active_;
         if (!actions || !actions->messengerDispatch_)
             return 0;
+        const DWORD incomingError = GetLastError();
         const uint16_t normalized =
             static_cast<uint16_t>(opcode);
         uint16_t status = 0;
         uint32_t total = 0;
         uint32_t entries = 0;
+        friend_message_history::Snapshot historyBefore = {};
+        wchar_t expectedBody[79] = {};
+        uint32_t expectedLength = 0;
+        uint32_t onlineFlag = 0;
+        bool inspectHistory = false;
         if (packet) {
             __try {
                 const uint8_t* bytes =
@@ -1347,14 +1612,14 @@ private:
                     memcpy(
                         actions->pendingPacket_,
                         bytes,
-                        sizeof(actions->pendingPacket_));
+                        kPendingPacketSize);
                     PendingRequest& pending =
                         actions->observation_.pending;
                     ++pending.sequence;
-                    pending.sender_id =
+                    pending.recipient_id =
                         *reinterpret_cast<const uint32_t*>(
                             bytes + 2);
-                    pending.recipient_id =
+                    pending.sender_id =
                         *reinterpret_cast<const uint32_t*>(
                             bytes + 6);
                     memcpy(pending.sender, bytes + 0x0E, 16);
@@ -1388,6 +1653,17 @@ private:
                         length);
                     actions->observation_
                         .last_message[length] = '\0';
+                    actions->observation_.message_applied = 0;
+                    onlineFlag = *reinterpret_cast<const uint32_t*>(
+                        bytes + friend_message_history::kPacketOnlineFlagOffset);
+                    const int converted = MultiByteToWideChar(CP_ACP,MB_ERR_INVALID_CHARS,
+                        actions->observation_.last_message,static_cast<int>(length),expectedBody,78);
+                    if(converted>0 && actions->playerDataPointer_ && *actions->playerDataPointer_) {
+                        expectedLength=static_cast<uint32_t>(converted);
+                        historyBefore=friend_message_history::Inspect(*actions->playerDataPointer_,
+                            actions->observation_.last_sender,expectedBody,expectedLength);
+                        inspectHistory=true;
+                    }
                 } else if (normalized == 0x0A45) {
                     status =
                         *reinterpret_cast<const uint16_t*>(
@@ -1404,6 +1680,7 @@ private:
                 status = UINT16_MAX;
             }
         }
+        SetLastError(incomingError);
         const int result = actions->messengerDispatch_(
             self,
             a,
@@ -1411,13 +1688,28 @@ private:
             c,
             opcode,
             packet);
+        const DWORD nativeError = GetLastError();
         actions->observation_.reply_sequence++;
         actions->observation_.reply_opcode = normalized;
         actions->observation_.reply_status = status;
         actions->observation_.reply_result =
             static_cast<uint32_t>(result);
-        if (normalized == 0x0953)
+        if (normalized == 0x0953) {
             actions->observation_.message_observed = 1;
+            actions->observation_.message_online_flag = onlineFlag;
+            actions->observation_.message_applied = 0;
+            if(inspectHistory) {
+                const auto after=friend_message_history::Inspect(
+                    actions->playerDataPointer_ ? *actions->playerDataPointer_ : nullptr,
+                    actions->observation_.last_sender,expectedBody,expectedLength);
+                const auto proof=friend_message_history::Compare(historyBefore,after,onlineFlag);
+                actions->observation_.message_applied=proof.applied;
+                actions->observation_.message_application_status=proof.status;
+                actions->observation_.message_sender_pilot=proof.accepted_friend_id;
+                actions->observation_.message_before_lines=proof.before_line_count;
+                actions->observation_.message_after_lines=proof.after_line_count;
+            }
+        }
         if (normalized == 0x0A45)
             actions->observation_.reply_consumed = 1;
         if (normalized == 0x04B3) {
@@ -1433,6 +1725,7 @@ private:
             actions->ReplyMatchesActiveCommand(normalized))
             ++actions->matchedReplySequence_;
         actions->RefreshPassiveState();
+        SetLastError(nativeError);
         return result;
     }
 
@@ -1497,12 +1790,9 @@ private:
     MessengerDispatchFn messengerDispatch_ = nullptr;
     SimpleBusinessFn openMessenger_ = nullptr;
     SimpleBusinessFn openAddDialog_ = nullptr;
-    BoolBusinessFn addFriend_ = nullptr;
     NativeWStringValidatorFn acceptedDuplicateValidator_ =
         nullptr;
     AnsiValidatorFn pendingDuplicateValidator_ = nullptr;
-    SimpleBusinessFn acceptPending_ = nullptr;
-    SimpleBusinessFn rejectPending_ = nullptr;
     SimpleBusinessFn removeFriend_ = nullptr;
     DeleteDialogCtorFn deleteDialogCtor_ = nullptr;
     SimpleBusinessFn deleteDialogDtor_ = nullptr;
@@ -1510,13 +1800,17 @@ private:
     SimpleBusinessFn sendMessage_ = nullptr;
     UiEditSetTextFn uiEditSetText_ = nullptr;
     NativeUiFindControlFn nativeUiFindControl_ = nullptr;
-    TreeItemByIndexFn treeItemByIndex_ = nullptr;
+    TreeFindByDataFn treeFindByData_ = nullptr;
     TreeItemDataFn treeItemData_ = nullptr;
     TreeSelectFn treeSelect_ = nullptr;
     SimpleBusinessFn openSelectedFriend_ = nullptr;
     Observation observation_ = {};
     Command command_ = {};
-    uint8_t pendingPacket_[0x30] = {};
+    // FUN_00955AC0, the shipped 0829 model constructor, copies exactly
+    // twelve DWORDs into the dialog model at +0x60. Both 17-byte names end
+    // at packet byte 0x2F; the status WORD at +0x30 belongs to 0737.
+    static constexpr size_t kPendingPacketSize = 0x30;
+    uint8_t pendingPacket_[kPendingPacketSize] = {};
     uint32_t replyBaseline_ = 0;
     uint32_t matchedReplySequence_ = 0;
     char localValidationTarget_[17] = {};
@@ -1532,6 +1826,8 @@ private:
     bool commandStarted_ = false;
     bool messengerOpenRequested_ = false;
     bool addDialogRequested_ = false;
+    bool addTextAssigned_ = false;
+    void* addTextDialog_ = nullptr;
     bool localValidationScope_ = false;
     inline static FriendActions* active_ = nullptr;
 };

@@ -238,12 +238,25 @@ public:
             ++*reinterpret_cast<uint32_t*>(network + 0x58);
             *reinterpret_cast<uint32_t*>(network + 0x5C) +=
                 static_cast<uint32_t>(size);
-            return networkSend_(
-                       network,
-                       stream,
-                       packet,
-                       static_cast<int>(size),
-                       0) != 0;
+            const int result =
+                networkObserverInstalled_ &&
+                        active_ == this
+                    ? ObserveNetworkSend(
+                          network,
+                          nullptr,
+                          stream,
+                          packet,
+                          static_cast<int>(size),
+                          0)
+                    : networkSend_(
+                          network,
+                          stream,
+                          packet,
+                          static_cast<int>(size),
+                          0);
+            const DWORD error = GetLastError();
+            SetLastError(error);
+            return result != 0;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return false;
         }
@@ -408,6 +421,80 @@ public:
         return observed;
     }
 
+    TransportObservation FindTransportSince(
+        uint32_t baseline,
+        uint16_t opcode) const
+    {
+        TransportObservation matched = {};
+        const uint32_t current =
+            TransportState().send_sequence;
+        if (current <= baseline)
+            return matched;
+
+        for (size_t index = 0;
+             index < kTransportHistoryCapacity;
+             ++index) {
+            TransportObservation observed = {};
+            bool stable = false;
+            TransportEventSlot& slot =
+                transportHistory_[index];
+            for (int attempt = 0;
+                 attempt < 3;
+                 ++attempt) {
+                const LONG before =
+                    InterlockedCompareExchange(
+                        &slot.version,
+                        0,
+                        0);
+                if (before & 1)
+                    continue;
+                observed.send_sequence =
+                    static_cast<uint32_t>(
+                        InterlockedCompareExchange(
+                            &slot.sequence,
+                            0,
+                            0));
+                observed.packet_size =
+                    static_cast<uint32_t>(
+                        InterlockedCompareExchange(
+                            &slot.size,
+                            0,
+                            0));
+                observed.result =
+                    static_cast<uint32_t>(
+                        InterlockedCompareExchange(
+                            &slot.result,
+                            0,
+                            0));
+                observed.opcode =
+                    static_cast<uint16_t>(
+                        InterlockedCompareExchange(
+                            &slot.opcode,
+                            0,
+                            0));
+                const LONG after =
+                    InterlockedCompareExchange(
+                        &slot.version,
+                        0,
+                        0);
+                if (before == after && !(after & 1)) {
+                    stable = true;
+                    break;
+                }
+            }
+            if (!stable ||
+                observed.send_sequence <= baseline ||
+                observed.send_sequence > current ||
+                observed.opcode != opcode)
+                continue;
+            if (matched.send_sequence == 0 ||
+                observed.send_sequence <
+                    matched.send_sequence)
+                matched = observed;
+        }
+        return matched;
+    }
+
     const Config& GetConfig() const { return config_; }
 
     uint32_t GameStartSendCount() const {return static_cast<uint32_t>(InterlockedCompareExchange(&gameStartSends_,0,0));}
@@ -424,6 +511,16 @@ private:
     static constexpr size_t kProfilePilotId = 0x138;
     static constexpr uint32_t kLoginServiceAppState = 4;
     static constexpr uint32_t kLoginServiceTransitionAppState = 25;
+    static constexpr size_t kTransportHistoryCapacity = 64;
+
+    struct TransportEventSlot
+    {
+        volatile LONG version;
+        volatile LONG sequence;
+        volatile LONG size;
+        volatile LONG result;
+        volatile LONG opcode;
+    };
 
     using GameAppFn = uint8_t*(__cdecl*)();
     using LoginPacketCtorFn = void*(__thiscall*)(void*, const char*, const char*);
@@ -556,13 +653,47 @@ private:
         // Never delay, suppress or rewrite the original transport call.
         const int result =
             actions->networkSend_(network, stream, packet, size, flag);
+        const DWORD error = GetLastError();
+
+        while (InterlockedCompareExchange(
+                   &actions->transportPublishGuard_,
+                   1,
+                   0) != 0)
+            YieldProcessor();
+
         InterlockedIncrement(&actions->transportWriteVersion_);
+        const uint32_t sequence =
+            static_cast<uint32_t>(
+                InterlockedCompareExchange(
+                    &actions->transportSequence_,
+                    0,
+                    0)) +
+            1;
+        TransportEventSlot& slot =
+            actions->transportHistory_[
+                (sequence - 1) %
+                kTransportHistoryCapacity];
+        InterlockedIncrement(&slot.version);
+        InterlockedExchange(
+            &slot.sequence,
+            static_cast<LONG>(sequence));
+        InterlockedExchange(&slot.size, size);
+        InterlockedExchange(&slot.result, result);
+        InterlockedExchange(&slot.opcode, opcode);
+        InterlockedIncrement(&slot.version);
+
         InterlockedExchange(&actions->transportOpcode_, opcode);
         InterlockedExchange(&actions->transportSize_, size);
         InterlockedExchange(&actions->transportResult_, result);
-        InterlockedIncrement(&actions->transportSequence_);
+        InterlockedExchange(
+            &actions->transportSequence_,
+            static_cast<LONG>(sequence));
         InterlockedIncrement(&actions->transportWriteVersion_);
         if(opcode==0x08a7 && size==8 && result>0)InterlockedIncrement(&actions->gameStartSends_);
+        InterlockedExchange(
+            &actions->transportPublishGuard_,
+            0);
+        SetLastError(error);
         return result;
     }
 
@@ -670,5 +801,8 @@ private:
     mutable volatile LONG transportSize_ = 0;
     mutable volatile LONG transportResult_ = 0;
     mutable volatile LONG gameStartSends_ = 0;
+    mutable volatile LONG transportPublishGuard_ = 0;
+    mutable TransportEventSlot
+        transportHistory_[kTransportHistoryCapacity] = {};
     inline static NativeActions* active_ = nullptr;
 };

@@ -46,8 +46,19 @@ creation and metadata read permissions are required. A changed native query
 is rechecked on the next WorldServer restart. Disabling the Mod restores native
 routing on restart; it leaves its owned query objects available for inspection.
 
-`friend_list_client_fix` selectively allows a complete, accepted offline friend
-to open the existing conversation UI. It retains actual offline presence,
+`friend_list_client_fix` 1.1.1 restores the native messenger service and
+conversation panels to the friend layout already shipped in the supported
+client archive. The executable still asks for `uirs\1364.uir`, which that
+archive now uses for the parts-exchange popup; the orphaned
+`uirs\0553.uir` contains the messenger's required `Edit`, `Slider` and
+`Static0` through `Static19` controls. The Mod redirects only the two verified
+friend calls. It leaves the shared string-assignment entry available to shop
+localization and other Mods. The parts-exchange caller and other native string
+assignments remain unchanged. It does not patch the executable on disk or rewrite
+`GPackData`.
+
+The same client Mod selectively allows a complete, accepted offline friend to
+open the restored conversation UI. It retains actual offline presence,
 selection guards, normal online behavior and native message errors.
 
 **Offline whisper delivery is not added.** WorldServer returns native error
@@ -57,12 +68,16 @@ that needs to be read later.
 
 The [client evidence](friend-list-investigation-client.md) and
 [server evidence](friend-list-investigation-server.md) describe the supported
-builds, packet/cache behavior and exact boundaries. Developer checks include
-the actual client detour, exact host signatures, and an opt-in disposable SQL
-fixture with synthetic accounts. Use two clients to test login/logout, friend-list display and message exchange.
+builds, packet/cache behavior and exact boundaries. Developer checks load the
+production client DLL, install both real MinHook detours, exercise the two
+accepted messenger resource callers plus a forwarded exchange caller, and
+verify the exact host signatures. SQL contract checks cover offline rows and
+pagination in a dedicated test database. Use two updated native clients against
+the isolated local test backend to check login/logout, friend-list display and
+message exchange; see the [native testing guide](../skills/sdgo-native-testing/SKILL.md).
+
 
 ```powershell
 cmake --build build --config Release --target friend_list_fix friend_list_client_fix friend_list_fix_test friend_list_client_fix_test friend_list_db_test
 ctest --test-dir build -C Release -R friend_list --output-on-failure
-python tests/run_friend_list_sql_test.py --build-dir build --work-root build/sql-fixtures --native-source "<private UTF-8 procedure export>" --image "<locally cached SQL Server image>"
 ```
