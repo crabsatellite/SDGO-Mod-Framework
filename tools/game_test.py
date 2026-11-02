@@ -173,15 +173,26 @@ def copy_ignore(directory: str, names: list[str]) -> set[str]:
 
 
 def git_source_ref(root: Path) -> dict:
+    result = {"commit": None, "dirty": None}
+    # Git is read-only here. Bound its scheduling priority as well as its
+    # timeout on busy native-test hosts, where child processes otherwise start
+    # at normal priority even when the runner itself has been prioritized.
+    process_options = {}
+    if os.name == "nt":
+        process_options["creationflags"] = subprocess.ABOVE_NORMAL_PRIORITY_CLASS
     try:
-        commit = subprocess.run(
+        result["commit"] = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=root,
             check=True,
             capture_output=True,
             text=True,
             timeout=30,
+            **process_options,
         ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return result
+    try:
         status = subprocess.run(
             ["git", "status", "--porcelain"],
             cwd=root,
@@ -189,10 +200,12 @@ def git_source_ref(root: Path) -> dict:
             capture_output=True,
             text=True,
             timeout=30,
+            **process_options,
         ).stdout
-        return {"commit": commit, "dirty": bool(status.strip())}
+        result["dirty"] = bool(status.strip())
     except (OSError, subprocess.SubprocessError):
-        return {"commit": None, "dirty": None}
+        pass  # preserve the verified commit; unknown cleanliness stays unknown
+    return result
 
 
 def ini_parser() -> configparser.ConfigParser:

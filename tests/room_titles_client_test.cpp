@@ -246,6 +246,7 @@ void ResetRoot()
     g_activeConnection = 0;
     g_activeRoom = 0;
     g_drafts.clear();
+    g_nativeLeaves.clear();
     for (SavedDraft& saved : g_saved)
         saved = SavedDraft();
     g_notices.clear();
@@ -1277,6 +1278,51 @@ void RunTests()
 }
 }  // namespace
 
+void TestModernRoomLeaveConfirmation()
+{
+    ResetRoot();
+    const uint32_t connection = 121, room = 5;
+    const std::string full = "confirmed full title for the modern mission room";
+    Check(Ready(connection, 4500, {Record(4500, room, 1, 1, full)}),
+          "modern leave fixture has confirmed full room metadata");
+    g_activeConnection=connection;g_activeRoom=room;
+    InterlockedExchange(&g_currentTitleReady,1);
+    char current[513] = {};
+    auto request=NativePacket(10,0x05C4);
+    auto ack=NativePacket(10,0x09B7);
+    std::vector<uint8_t> replacement;
+    Put32(request.data()+6,room+1);
+    BeforeSend(connection,request.data(),request.size(),0,&replacement);
+    Check(g_nativeLeaves.empty(),"another room's removal cannot become the current room's exit intent");
+    Put32(request.data()+6,room);
+    Check(BeforeSend(connection,request.data(),request.size(),0,&replacement)==transport::SendDecision::Pass &&
+              g_nativeLeaves.count(connection)==1,
+          "the actual local 05C4 request records its current room generation without rewriting the packet");
+    Put32(ack.data()+6,room+1);
+    OnReceive(connection,ack.data(),ack.size(),nullptr,0);
+    Put32(ack.data()+6,room);
+    OnReceive(connection+1,ack.data(),ack.size(),nullptr,0);
+    Check(SdgoRoomTitleCurrentV1(current,sizeof(current))==full.size(),
+          "another room or connection's 09B7 cannot clear this room's title");
+    auto rejected=NativePacket(8,0x04D2);Put16(rejected.data()+6,1);
+    OnReceive(connection,rejected.data(),rejected.size(),nullptr,0);
+    OnReceive(connection,ack.data(),ack.size(),nullptr,0);
+    Check(g_nativeLeaves.empty() && SdgoRoomTitleCurrentV1(current,sizeof(current))==full.size(),
+          "a rejected exit preserves the title and cannot later consume an unrelated departure broadcast");
+    BeforeSend(connection,request.data(),request.size(),0,&replacement);
+    Seed(connection,4500,{Record(4500,room,2,1,full)});
+    OnReceive(connection,ack.data(),ack.size(),nullptr,0);
+    Check(SdgoRoomTitleCurrentV1(current,sizeof(current))==full.size(),
+          "an old exit confirmation cannot clear a reused native room generation");
+    BeforeSend(connection,request.data(),request.size(),0,&replacement);
+    auto& saved=g_saved[static_cast<size_t>(ui::Surface::PvpTitleEdit)];
+    saved={true,connection,room,L"saved room edit"};
+    OnReceive(connection,ack.data(),ack.size(),nullptr,0);
+    Check(ReceiveSize(0x09B7)==10 && ReceiveSize(0x04D2)==8 &&
+              SdgoRoomTitleCurrentV1(current,sizeof(current))==0 && !saved.valid && g_nativeLeaves.empty(),
+          "the genuine local modern-room departure deactivates its confirmed title and editing draft");
+}
+
 void TestCreateSnapshotCarrier()
 {
     Draft draft;
@@ -1307,6 +1353,7 @@ void TestCreateSnapshotCarrier()
 int main()
 {
     RunTests();
+    TestModernRoomLeaveConfirmation();
     TestCreateSnapshotCarrier();
     std::printf("%s: %d failure(s)\n",
                 g_failures ? "FAIL" : "PASS", g_failures);

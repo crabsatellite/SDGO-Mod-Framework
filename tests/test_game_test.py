@@ -1568,5 +1568,22 @@ class ExistingCredentialProfileTests(unittest.TestCase):
                 game_test.validate_account_credentials(p,username,password)
 
 
+class GitSourceRefTests(unittest.TestCase):
+    def test_status_timeout_keeps_verified_commit_and_unknown_cleanliness(self):
+        commit = "a" * 40
+        with mock.patch.object(game_test.subprocess, "run", side_effect=[
+            game_test.subprocess.CompletedProcess([], 0, stdout=commit + "\n"),
+            game_test.subprocess.TimeoutExpired(["git", "status"], 30),
+        ]) as run:
+            self.assertEqual(game_test.git_source_ref(ROOT), {"commit": commit, "dirty": None})
+        if game_test.os.name == "nt":
+            self.assertTrue(all(call.kwargs["creationflags"] == game_test.subprocess.ABOVE_NORMAL_PRIORITY_CLASS
+                                for call in run.call_args_list))
+
+    def test_failed_head_does_not_invent_a_commit_or_clean_state(self):
+        with mock.patch.object(game_test.subprocess, "run", side_effect=FileNotFoundError):
+            self.assertEqual(game_test.git_source_ref(ROOT), {"commit": None, "dirty": None})
+
+
 if __name__ == "__main__":
     unittest.main()

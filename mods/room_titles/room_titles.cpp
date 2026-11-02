@@ -64,6 +64,10 @@ struct Draft {
     metadata::Message request;
 };
 std::unordered_map<uint32_t, Draft> g_drafts;
+struct NativeLeaveIntent {
+    metadata::RoomKey key;
+};
+std::unordered_map<uint32_t, NativeLeaveIntent> g_nativeLeaves;
 
 struct SavedDraft {
     bool valid = false;
@@ -420,6 +424,14 @@ transport::SendDecision BeforeSend(uint32_t connection, const uint8_t* packet, s
     }
     Lock lock;
     g_state.AdvanceTime(connection, GetTickCount64());
+    if (opcode == 0x05C4 && size == 10) {
+        g_nativeLeaves.erase(connection);
+        const auto room = g_state.Query(connection, g_activeRoom);
+        if (connection == g_activeConnection && g_activeRoom && !(g_activeRoom & kBattleDomain) &&
+            Dword(packet + 6) == g_activeRoom && room)
+            g_nativeLeaves[connection] = NativeLeaveIntent{room->key};
+        return transport::SendDecision::Pass;
+    }
     if (g_api && g_api->Log && (opcode==0x0640 || opcode==0x0525))
         g_api->Log(g_mod, SDGO_LOG_DEBUG,
             "native title create send connection=%u active=%u opcode=%04X bytes=%u draft=%u",
@@ -517,6 +529,8 @@ size_t ReceiveSize(uint16_t opcode, const uint8_t* packet = nullptr, size_t size
     case 0x06BA: return 0x1C;
     case 0x087A: return 6;
     case 0x057B: return 8; // native leave-room ACK, including its result word
+    case 0x09B7: return 10; // modern Team/Mission departure, +6 native room id
+    case 0x04D2: return 8; // modern Team/Mission leave rejection
     default: return 0;
     }
 }
@@ -600,6 +614,17 @@ void OnReceive(uint32_t connection, const uint8_t* packet, size_t size, const ui
     const auto pending = g_state.Pending(connection);
     failed = previous && previous->status == titles::PendingStatus::Awaiting &&
              pending && pending->status == titles::PendingStatus::Failed;
+    bool modernLeave = false;
+    const auto leaving = g_nativeLeaves.find(connection);
+    if (opcode == 0x09B7 && size == 10 && leaving != g_nativeLeaves.end() &&
+        connection == g_activeConnection && Dword(packet + 6) == leaving->second.key.room_id) {
+        const auto current = g_state.Query(connection, g_activeRoom);
+        modernLeave = current && current->key.server_epoch == leaving->second.key.server_epoch &&
+            current->key.room_id == leaving->second.key.room_id &&
+            current->key.generation == leaving->second.key.generation;
+    }
+    if (opcode == 0x04D2 && size == 8 && Word(packet + 6) != 0)
+        g_nativeLeaves.erase(connection);
     if (g_api && g_api->Log && (opcode==0x0617 || opcode==0x0824 || opcode==0x0709 || opcode==0x0916 || opcode==0x0918))
         g_api->Log(g_mod, SDGO_LOG_DEBUG,
             "title capability receive connection=%u opcode=%04X bytes=%u metadata=%u ready=%u negotiating=%u pending=%u",
@@ -611,12 +636,13 @@ void OnReceive(uint32_t connection, const uint8_t* packet, size_t size, const ui
     } else if (size >= 10 && (opcode == 0x0550 || opcode==0x0918 || opcode == 0x0680 || opcode == 0x086F)) {
         g_activeConnection = connection;
         g_activeRoom = Dword(packet + 6) | kBattleDomain;
-    } else if ((opcode == 0x087A || (opcode == 0x057B && size == 8 && Word(packet + 6) == 0)) &&
+    } else if ((modernLeave || opcode == 0x087A || (opcode == 0x057B && size == 8 && Word(packet + 6) == 0)) &&
                connection == g_activeConnection) {
         const auto previousRoom = g_activeRoom;
         g_activeRoom = 0;
         g_state.CancelPending(connection);
         g_drafts.erase(connection);
+        g_nativeLeaves.erase(connection);
         for (auto& saved : g_saved)
             if (previousRoom && saved.valid && saved.connection == connection && saved.room == previousRoom)
                 saved = SavedDraft{};
