@@ -26,5 +26,4 @@ previous slot. Native hurt, ammo, cooldown and action restrictions still apply.
 
 Regression evidence includes Lua controller cases, a real core/DLL/Lua fixture
 with a stale hint, deferred native acknowledgement and an out-of-context request,
-plus exact native instruction contracts. Real mission combat after installation
-remains a separate manual acceptance step.
+plus exact native instruction contracts.

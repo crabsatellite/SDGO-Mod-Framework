@@ -90,7 +90,7 @@ powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SD
 新账号默认 5,000 GP、0 点券、下士 1 阶，首次建档的自动机体赠送最多一台。
 配置位于 `sdgo/mods/new_account_profile/config.ini`，可从同目录的 `config.example.ini` 复制创建；
 修改后重启 World。`InitialUnitLimit=0` 只取消这部分自动赠送，不限制正常初始机体选择和后续获得机体。
-已有角色与机库不重置，测试时请使用全新账号；详细步骤见[手动验收](new-account-profile.zh-CN.md#手动验收)。
+已有角色与机库不重置，测试时请使用全新账号；详见[新账号起始资料修复](new-account-profile.zh-CN.md)。
 
 只停用新账号规则时，在 World 的 `sdgo/sdgo.ini` 的 `[mods]` 段设置 `new_account_profile=0` 并重启；
 不要为此卸载整个框架。卸载整个 World 框架时才使用 `-Role World -Uninstall`。

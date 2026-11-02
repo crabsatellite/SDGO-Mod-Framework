@@ -103,7 +103,7 @@ unit gift from first profile creation. Copy the bundled `config.example.ini` to
 `sdgo/mods/new_account_profile/config.ini` to customize them, then restart World.
 `InitialUnitLimit=0` removes only those automatic gifts; normal starter selection and
 later unit acquisition remain available. Existing pilots and hangars keep their data;
-use a fresh account for [manual acceptance](new-account-profile.md#verification).
+test with a fresh account (see [new-account starter profile](new-account-profile.md)).
 
 To disable only the new-account policy, set `new_account_profile=0` under `[mods]`
 in World's `sdgo/sdgo.ini` and restart. Use `-Role World -Uninstall` only when removing
