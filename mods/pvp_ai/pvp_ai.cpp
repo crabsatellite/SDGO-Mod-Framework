@@ -1406,11 +1406,23 @@ namespace
     {
         if(room && IsPvpMode(room[kRoomMode])) {
             const auto requested=ParseTitle(ViewRoom(room).title);
-            if(requested.enabled && (!requested.valid || (SingleRandomAiRoom(room) &&
-                (SingleRandomHumanSlot(room)<0 || (room[kTeamColour1]!=1 && room[kTeamColour1]!=2)))))
+            const bool singleRandom=SingleRandomAiRoom(room);
+            const int humanSlot=singleRandom ? SingleRandomHumanSlot(room):-1;
+            if(requested.enabled && (!requested.valid || (singleRandom &&
+                (humanSlot<0 || (room[kTeamColour1]!=1 && room[kTeamColour1]!=2))))) {
+                g_api->Log(g_mod,SDGO_LOG_ERROR,
+                    "AI room preflight rejected: valid=%u singleRandom=%u humanSlot=%d humans=%lu host=%lu colours=%u/%u capacity=%u",
+                    requested.valid,singleRandom,humanSlot,*reinterpret_cast<const uint32_t*>(room+kRoomPlayers),
+                    *reinterpret_cast<const uint32_t*>(room+kRoomHost),room[kTeamColour1],room[kTeamColour1+1],room[kRoomCapacity]);
                 return 0x0FBE;
+            }
         }
         int result = g_setupHumans(proc, room, a, b, c);
+        if(result!=0 && room && IsPvpMode(room[kRoomMode]) && ParseTitle(ViewRoom(room).title).enabled)
+            g_api->Log(g_mod,SDGO_LOG_ERROR,
+                "original human pilot setup rejected AI room: error=%04X humans=%lu host=%lu random=%u colours=%u/%u",
+                result,*reinterpret_cast<const uint32_t*>(room+kRoomPlayers),*reinterpret_cast<const uint32_t*>(room+kRoomHost),
+                room[8],room[kTeamColour1],room[kTeamColour1+1]);
         if (result == 0 && room) {
             GuardedObserverForget(room);
             GuardedObserverEmit(SDGO_PVP_AI_EVENT_REQUEST_ACCEPTED, room);
