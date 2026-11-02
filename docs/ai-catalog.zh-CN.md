@@ -92,6 +92,19 @@ python .\backend\export_ai_catalog.py --source "." --catalog ".\my-roster\client
 - 注册前预检全部源机体指纹和编号冲突，有冲突或源数据变化时放弃本次注册，不覆盖原记录；创建函数遇到缺失或不同的
   目录记录会拒绝创建。
 
+相关逆向结论：
+
+- 客户端 `FUN_00414090` 依次把 `0237/0242/0243/0244/0246/0245` 作为 type 2 机体数据加载，把
+  `0020/0105/0128/0162/0198/0222` 作为 type 41 NPC 数据加载；目录在 `0222.gdt` 加载后注册。
+  `FUN_004230D0` 解析 598 字节的 NPC 记录，跳过 security level 非零的记录。NPC 记录布局见
+  [任务 AI 僚机](coop-wingmen.zh-CN.md#增加更多僚机机体)。
+- 原生客户端创建函数会内联查树，不经过 `grid.find`，因此必须注册到原生树，单纯 detour `grid.find` 不够。
+  原生 `Find` 用 AL 返回 bool，失败时 EAX 高位未定义。
+- `BattleServer.exe` 的 `0x00485720` 先按 NPC ID 查记录，再按其机体 ID 查数据，任一步缺失即失败，之后还读取机体的
+  武器/技能引用，所以服务端和客户端的数据必须配套。
+- 普通玩家机体在服务端 `tbl_UnitNpc` 中没有对应项，这由服务端私有副本补上。完整 LV 池若写成单行 `LevelN=`
+  会超过 `coop_ai` / `pvp_ai` 1024 字节的 INI 读取缓冲区，因此改由可选 provider 提供等级池。
+
 构建与打包：`cmake --build build/catalog --config Release`，然后 `python tools/package_ai_catalog.py`。
 测试：`test_ai_catalog.py`、CTest 的 `ai_catalog_integration`，以及需要自备 EXE 的 `ai_catalog_native_test`（服务器）
 和 `ai_catalog_client_map_test`（客户端）。

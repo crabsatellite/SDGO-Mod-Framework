@@ -92,6 +92,24 @@ or encrypted game archives are changed.
 - Source hashes and ID collisions are checked before registration; a conflict aborts registration
   without replacing native records, and creators refuse missing or different catalog data.
 
+Reverse-engineering notes:
+
+- The client's `FUN_00414090` loads `0237/0242/0243/0244/0246/0245` as type 2 unit data and
+  `0020/0105/0128/0162/0198/0222` as type 41 NPC data; the catalog registers after `0222.gdt`.
+  `FUN_004230D0` parses the 598-byte NPC records and skips those with a non-zero security level.
+  The NPC record layout is in [co-op wingmen](coop-wingmen.md#adding-more-bot-units).
+- Native client creators look the NPC up in the tree inline instead of calling `grid.find`, so the
+  records must be registered in the native tree; a `grid.find` detour alone is not enough. Native
+  `Find` returns a bool in AL with the upper EAX bits unspecified on failure.
+- `BattleServer.exe` `0x00485720` looks up the NPC record, then its unit, failing if either is missing,
+  and then reads the unit's weapon and skill references; server and client data must therefore match.
+- Player units have no `tbl_UnitNpc` rows on the server; the private server copies supply them. A full
+  LV pool written as one `LevelN=` line would exceed the 1024-byte INI buffer of `coop_ai` / `pvp_ai`,
+  so pools come from the optional provider instead.
+
+The owner-data client test takes a fixture of `SDGOUN1` plus NUL, a little-endian u32 count, then that
+many original 4976-byte unit records; keep it private.
+
 Build/package: `cmake --build build/catalog --config Release`, then
 `python tools/package_ai_catalog.py`. Tests: `test_ai_catalog.py`, CTest `ai_catalog_integration`, and
 the caller-supplied-image tests `ai_catalog_native_test` (server) and `ai_catalog_client_map_test` (client).
