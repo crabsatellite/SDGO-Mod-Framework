@@ -51,13 +51,24 @@ def results(cur):
 
 def create_table(source, target, name):
     source.execute("""SELECT c.name,t.name AS type_name,c.max_length,c.precision,c.scale,
-        c.is_nullable,c.is_identity,dc.definition FROM sys.columns c
+        c.is_nullable,c.is_identity,c.is_computed,
+        cc.definition AS computed_definition,cc.is_persisted,
+        dc.definition AS default_definition FROM sys.columns c
         JOIN sys.types t ON c.user_type_id=t.user_type_id
+        LEFT JOIN sys.computed_columns cc ON cc.object_id=c.object_id AND cc.column_id=c.column_id
         LEFT JOIN sys.default_constraints dc ON dc.object_id=c.default_object_id
         WHERE c.object_id=OBJECT_ID(?) ORDER BY c.column_id""", "dbo." + name)
     columns = rows(source)
     definitions = []
     for c in columns:
+        if c["is_computed"]:
+            if not c["computed_definition"]:
+                raise ValueError("Computed column definition missing: " + name + "." + c["name"])
+            definition = ident(c["name"]) + " AS " + c["computed_definition"]
+            if c["is_persisted"]:
+                definition += " PERSISTED"
+            definitions.append(definition)
+            continue
         kind = c["type_name"]
         if kind.lower() == "itemid": kind = "char"
         if kind in ["char", "varchar", "binary", "varbinary"]:
@@ -69,12 +80,13 @@ def create_table(source, target, name):
         definition = ident(c["name"]) + " " + kind
         if c["is_identity"]: definition += " IDENTITY(1,1)"
         definition += " NULL" if c["is_nullable"] else " NOT NULL"
-        if c["definition"] is not None: definition += " DEFAULT " + c["definition"]
+        if c["default_definition"] is not None: definition += " DEFAULT " + c["default_definition"]
         definitions.append(definition)
     if not definitions:
         raise ValueError("Native table metadata missing: " + name)
     target.execute("CREATE TABLE dbo." + ident(name) + "(" + ",".join(definitions) + ")")
-    source.execute("SELECT * FROM dbo." + ident(name))
+    writable = [c["name"] for c in columns if not c["is_computed"]]
+    source.execute("SELECT " + ",".join(map(ident, writable)) + " FROM dbo." + ident(name))
     data = source.fetchall()
     names = [d[0] for d in source.description]
     if any(c["is_identity"] for c in columns): target.execute("SET IDENTITY_INSERT dbo." + ident(name) + " ON")
@@ -112,12 +124,21 @@ def main():
     t = target.cursor()
     native = connection(cfg, "DB StoreBilling")
     source = native.cursor()
+    t.execute("CREATE TYPE dbo.ItemID FROM char(6) NOT NULL")
     copied = {}
-    for name in ["tbls_StoreItems", "tbls_SubItems", "tbls_StoreItemsPlus"]:
+    for name in ["tbls_SubItems", "tbls_StoreItemsPlus"]:
         copied[name] = create_table(source, t, name)
+    functions = {}
+    for name in ["udf_Scalar_CntSubItems", "udf_Scalar_ItemValidity", "udf_Scalar_PriceItems", "udf_Scalar_ItemPayment"]:
+        source.execute("SELECT OBJECT_DEFINITION(OBJECT_ID(?))", "dbo." + name)
+        definition = source.fetchone()[0]
+        if not definition:
+            raise ValueError("Native function definition missing: " + name)
+        t.execute(definition)
+        functions[name] = hashlib.sha256(definition.encode("utf-8")).hexdigest()
+    copied["tbls_StoreItems"] = create_table(source, t, "tbls_StoreItems")
     t.execute("SELECT * FROM dbo.tbls_StoreItems ORDER BY f_idx")
     baseline_native_products = json.dumps(rows(t), ensure_ascii=False, default=str, sort_keys=True)
-    t.execute("CREATE TYPE dbo.ItemID FROM char(6) NOT NULL")
     procedures = {}
     for name in ["sp_StoreItemsList", "sp_StoreSubItemsList", "sp_SubItemsDetail", "sp_GetItemBillingCode", "sp_StoreItemInfo", "sp_ShopDisplayChk", "sp_PocketGP_IO", "sp_PocketGC_IO"]:
         source.execute("SELECT OBJECT_DEFINITION(OBJECT_ID(?))", "dbo." + name)
@@ -156,6 +177,7 @@ def main():
     import shop_catalog as model
     data = {"schema_version": 1, "catalog_id": "integration", "products": products}
     receipt = {"database": database, "scope": "new isolated configuration database and synthetic account only", "copied_config_rows": copied,
+               "native_function_sha256": functions,
                "native_procedure_sha256": procedures, "checks": []}
     def run(expected=True):
         model.compile_catalog(data, catalog)
@@ -169,6 +191,15 @@ def main():
         if not value: raise AssertionError(name)
         receipt["checks"].append(name)
         print("PASS", name, flush=True)
+    t.execute("""SELECT c.name,cc.definition FROM sys.computed_columns cc
+        JOIN sys.columns c ON c.object_id=cc.object_id AND c.column_id=cc.column_id
+        WHERE cc.object_id=OBJECT_ID(N'dbo.tbls_StoreItems')
+        AND c.name IN(N'f_subitemCnt',N'f_validity',N'f_price',N'f_payment')
+        ORDER BY c.column_id""")
+    computed = rows(t)
+    check([r["name"] for r in computed] == ["f_subitemCnt", "f_validity", "f_price", "f_payment"] and
+          all(r["definition"] for r in computed),
+          "isolated_fixture_preserves_native_computed_store_columns")
     run()
     t.execute("SELECT p.f_productid,p.f_payment,p.f_price,s.f_itemtblidx,s.f_payment,s.f_price,s.f_validity,s.f_itemNm FROM dbo.tbls_StoreItems p JOIN dbo.tbls_SubItems s ON p.f_itemid=s.f_itemid WHERE p.f_productid IN (1019001,1019002) ORDER BY p.f_productid")
     managed = rows(t)
