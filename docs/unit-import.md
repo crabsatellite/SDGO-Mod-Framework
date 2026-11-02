@@ -52,7 +52,8 @@ Offline drafts cannot become live candidates. Approved imported C/B/A units may 
 The fixed-card generator calls the existing `Assets.card` crop/frame/rank/rare-silhouette implementation;
 it no longer pads a whole robot image into an empty rectangle. SR custom candidates retain their native portrait
 and let the existing game's custom selector draw the grade frame. Capsule compiler v9 retains master's uploaded portrait/crop overrides and resident activity resources, and invalidates the old cache.
-The product generator preserves the distinct native unit sprite consumers instead of assigning one image to all three.
+The product preview uses the same 122×122 owned encyclopedia icon as the ordinary shop list.
+The generator preserves the distinct native detail, alternate-list and custom-candidate sprite consumers instead of assigning one image to all three.
 Manager serves the same generator output used in publication; complete SKU pricing stays owned by the shop module.
 
 Generated client packages contain the mod, approved native records and a sealed native

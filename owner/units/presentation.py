@@ -4,6 +4,8 @@ import base64
 import io
 from .assets import normalize_png
 
+GENERATOR_VERSION = 3
+
 
 def _png(image):
     stream=io.BytesIO();image.save(stream,'PNG');return stream.getvalue()
@@ -76,7 +78,21 @@ def unit_images(engine,family):
 
 
 def shop_image(engine,family,variant=0):
-    return unit_images(engine,family)['unit_primary' if variant else 'shop']
+    images=unit_images(engine,family)
+    # The ordinary eight-row shop resolves kind 0x55 +14, not unit +4754.
+    # Keep its preview identical to the owned icon written by the compiler.
+    return images['unit_primary'] if variant else _index_images(images)['index_owned']
+
+
+def _index_images(images):
+    from PIL import Image,ImageOps
+    colored=Image.open(io.BytesIO(images['unit_primary'])).convert('RGBA')
+    colored=ImageOps.contain(colored,(122,122),Image.Resampling.LANCZOS)
+    icon=Image.new('RGBA',(122,122))
+    icon.alpha_composite(colored,((122-colored.width)//2,(122-colored.height)//2))
+    gray=ImageOps.grayscale(icon).convert('RGBA')
+    gray.putalpha(icon.getchannel('A'))
+    return {'index_owned':_png(icon),'index_missing':_png(gray)}
 
 
 def publication_images(engine,family):
@@ -85,21 +101,14 @@ def publication_images(engine,family):
     # Fixed cards share the capsule module's renderer; S custom cards receive
     # their frame in the original native custom selector, using unit+0x12F6.
     images['capsule_fixed']=capsule_card(engine,family) if unit['rank']<=3 else None
-    from PIL import Image,ImageOps
-    colored=Image.open(io.BytesIO(images['unit_primary'])).convert('RGBA')
-    colored=ImageOps.contain(colored,(122,122),Image.Resampling.LANCZOS)
-    icon=Image.new('RGBA',(122,122))
-    icon.alpha_composite(colored,((122-colored.width)//2,(122-colored.height)//2))
-    gray=ImageOps.grayscale(icon).convert('RGBA')
-    gray.putalpha(icon.getchannel('A'))
-    images['index_owned']=_png(icon)
-    images['index_missing']=_png(gray)
+    images.update(_index_images(images))
     return images
 
 
 def contract(engine,family):
     unit=capsule_unit(engine,family)
-    return {'schema_version':2,'shop':{'generator':'native-unit-sprite-consumers','alternate_list_offset':4654,
+    return {'schema_version':GENERATOR_VERSION,'shop':{'generator':'native-shop-owned-index-icon','index_kind':85,'index_icon_offset':14,
+        'normal_shop_canvas':[122,122],'alternate_list_offset':4654,
         'shop_2d_offset':4754,'model_renderer':'CServiceSecretStore::SetNomalItemView_Unit',
         'product_economics_owner':'shop_catalog'},
         'capsule':{'generator':'native-capsule-Assets.card' if unit['rank']<=3 else 'native-custom-candidate-controls',

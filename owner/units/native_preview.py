@@ -21,7 +21,7 @@ from .compiler import HOST, HOST_SHA256, ROOT, publish
 from .model import content_revision
 from .workspace import save_json
 
-RENDERER_CONTRACT='native-unit-presentations-3-index-122-capsule-frames-9'
+RENDERER_CONTRACT='native-unit-presentations-4-normal-shop-index-capsule-frames-9'
 
 
 class StartupEvent:

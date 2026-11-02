@@ -37,7 +37,8 @@ class PresentationTests(unittest.TestCase):
                   'custom':((92,92),(0,0,255,255))}
         for key,(size,color) in expected.items():
             image=Image.open(io.BytesIO(images[key]));self.assertEqual(image.size,size);self.assertEqual(image.getpixel((20,20)),color)
-        self.assertEqual(shop_image(engine,family),images['shop'])
+        self.assertEqual(Image.open(io.BytesIO(shop_image(engine,family))).size,(122,122))
+        self.assertEqual(Image.open(io.BytesIO(shop_image(engine,family))).getpixel((20,20)),(255,0,0,255))
         self.assertEqual(shop_image(engine,family,1),images['unit_primary'])
         self.assertEqual(capsule_source(engine,family),images['custom'])
 
@@ -46,6 +47,8 @@ class PresentationTests(unittest.TestCase):
         images=unit_images(engine,family)
         self.assertEqual(Image.open(io.BytesIO(images['shop'])).size,(256,256))
         self.assertEqual(Image.open(io.BytesIO(images['shop'])).getpixel((128,128)),(255,165,0,255))
+        self.assertEqual(Image.open(io.BytesIO(shop_image(engine,family))).size,(122,122))
+        self.assertEqual(Image.open(io.BytesIO(shop_image(engine,family))).getpixel((61,61)),(255,165,0,255))
         self.assertEqual(Image.open(io.BytesIO(images['custom'])).getpixel((20,20)),(0,0,255,255))
 
 
