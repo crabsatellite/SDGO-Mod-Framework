@@ -67,8 +67,6 @@ def main():
             copy(gui, "SDGO Mod Manager.exe")
         copy(ROOT/"tools/install_shop.ps1", "Install.ps1")
         copy(ROOT/("docs/shop-labels.zh-CN.md" if role == "Labels" else "docs/shop-catalog.zh-CN.md"), "README.zh-CN.md")
-        copy(ROOT/"docs/shop-validation.zh-CN.md", "shop-validation.zh-CN.md")
-        copy(ROOT/"docs/shop-testing.zh-CN.md", "shop-testing.zh-CN.md")
         copy(ROOT/"LICENSE", "LICENSE")
         copy(ROOT/"THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.md")
         copy(ROOT/"third_party/minhook/LICENSE.txt", "licenses/MinHook-LICENSE.txt")
