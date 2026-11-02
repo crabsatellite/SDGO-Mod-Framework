@@ -1288,6 +1288,24 @@ void TestInventoryAndCarouselBoundaries(
             BattleShipDeckActions::kCarouselMismatch,
         "carousel count cannot read beyond the verified 15-record region");
 }
+void TestPreparedFleetReadOnly(BattleShipDeckActions& decks)
+{
+    ResetFixture(decks);
+    uint8_t* ship=g_profileStorage+kProfileBattleShip;
+    WriteUid(ship,kShipUid);WriteUid(ship+kShipLeader,kTargetUids[0]);
+    for (unsigned i=0;i<4;++i) WriteUid(ship+kShipUnitUids+i*8,kTargetUids[i]);
+    BattleShipDeckActions::Observation observed{};
+    Check(decks.ObserveExistingDeck(kTargetUids,observed)==BattleShipDeckActions::kAccepted &&
+        observed.profile_matches && observed.selected_count==4,"prepared fleet observes the real profile and four owned brief UIDs");
+    Check(!g_lobbyCalls && !g_selectCalls && !g_saveCalls && !g_goOutCalls,
+        "prepared fleet observation performs no UI, selection, Save or GoOut action");
+    WriteUid(ship+kShipUnitUids,999999);
+    Check(decks.ObserveExistingDeck(kTargetUids,observed)==BattleShipDeckActions::kRequiredUnitChanged,
+        "a mismatched native fleet is rejected instead of rewritten");
+    WriteUid(ship+kShipUnitUids,kTargetUids[0]);WriteUid(g_briefInventory[2]+4,999999);
+    Check(decks.ObserveExistingDeck(kTargetUids,observed)==BattleShipDeckActions::kRequiredUnitMissing,
+        "a profile UID absent from the real inventory cannot satisfy prepared-fleet validation");
+}
 } // namespace
 
 int main()
@@ -1343,6 +1361,7 @@ int main()
         "transport, login, Save, and GoOut detours were captured");
 
     if (nativeBound && deckBound) {
+        TestPreparedFleetReadOnly(decks);
         TestLobbyEntry(decks);
         TestExistingDeckCleaningUsesUidOffset(decks);
         TestFullRecordSaveAndDoubleGoOut(decks);

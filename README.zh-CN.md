@@ -34,7 +34,7 @@ Beta、Experimental 表示发布阶段。
 | 功能 | 简介 | 文档 |
 |---|---|---|
 | 任务 AI 僚机 <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai`，由 AI 僚机补位 | [使用说明](docs/coop-wingmen.zh-CN.md) |
-| 对战 AI（Beta） <!-- catalog: `pvp_ai`、`match_ai` --> | 对战房名写 `!ai`，加入 AI 对手和队友 | [使用说明](docs/pvp-ai.zh-CN.md) |
+| 对战 AI（Beta） <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友，同步解除开局控制并显示 TAB 战绩 | [使用说明](docs/pvp-ai.zh-CN.md) |
 | AI 机体目录（Beta，独立附加包） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |
 | 战斗贡献奖励（Beta） <!-- catalog: `battle_rewards` --> | 按胜负、击杀、伤害、助攻和 Boss 贡献发放 GB/MB | [使用说明](docs/battle-rewards.zh-CN.md) |
 | 收藏扭蛋（Beta） <!-- catalog: `collection_capsule` --> | 十万 GP 活动机台，优先抽尚未解锁的图鉴机体 | [使用说明](docs/collection-capsule.zh-CN.md) |
