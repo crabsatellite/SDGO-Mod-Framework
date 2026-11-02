@@ -1,7 +1,13 @@
 # 中文输入法候选与提交修复
 
-`ime_fix` 1.1.1 修复 Windows 中文输入法候选窗请求被隐藏、选词后残留拼音字母的问题，
-并保留原有中日韩输入法提交长度修复。中文提交按原来的拼音范围替换，保留合法的英文、数字前后缀。
+[English](ime-fix.md) · [返回功能目录](../README.zh-CN.md)
+
+修复游戏里 Windows 中文输入法的候选窗不显示、选词后残留拼音字母的问题，并保留中日韩输入法上屏长度修复。
+中文按原来的拼音范围替换，合法的英文、数字前后缀保持不变。需要 `ime_fix` 1.1.1 或更新版本。
+
+| mod | 运行在 | 负责 |
+|---|---|---|
+| `ime_fix` | 客户端 | 整个功能 |
 
 ## 使用
 
@@ -27,4 +33,4 @@ Manager 开发信息中的 `Trace` 默认关闭。日志只记录事件与长度
 `native IME result erase count corrected` 表示结果替换长度已纠正；
 `preedit/display guard mismatch` 表示范围未精确匹配，保留原生处理，需要按该轮日志排查。
 
-开发路径及验证边界见[调查记录](investigations/windows-pinyin-input.md)。
+实现细节和原生地址见[调查记录](investigations/windows-pinyin-input.md)。
