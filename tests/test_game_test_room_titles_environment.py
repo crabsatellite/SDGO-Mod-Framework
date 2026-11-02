@@ -1,4 +1,5 @@
 from pathlib import Path
+import gzip
 import tempfile
 import stat
 import unittest
@@ -16,7 +17,7 @@ class ServerCandidateTests(unittest.TestCase):
             expected=gt.sha256(source)
             uploaded=[]
             def transfer(*args,**kwargs):
-                uploaded.append(kwargs['stdin'].read())
+                uploaded.append(gzip.decompress(kwargs['stdin'].read()))
                 self.assertEqual(kwargs['timeout'],600)
                 return mock.Mock(returncode=0)
             with mock.patch.object(native.subprocess,'run',side_effect=transfer), mock.patch.object(native,'docker',return_value=expected+'  snapshot.bak'):
