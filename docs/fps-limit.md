@@ -5,7 +5,7 @@ with 60 during initialization. A value of 160 requests a cap of 160 FPS.
 
 | mod | host | part |
 |---|---|---|
-| `fps_limit` | client | Preserve the native `Framework/Timer@updatefps` value |
+| `fps_limit` | client | Use `Framework/Timer@updatefps` for logic updates and the rendering ceiling |
 
 ## Use
 
@@ -23,8 +23,9 @@ the client. The client Git update also includes the shared Manager executable.
 | `config.xml`, `Framework/Timer@updatefps` | 60 | Integer FPS cap, 1–1000; takes effect at client startup |
 
 Missing/invalid numeric values use the native 60 FPS fallback. This is a cap,
-not a promise that the computer will reach that rate. Existing render/vertical
-sync settings are preserved and can limit presentation further. The mod does
+not a promise that the computer will reach that rate. The same value sets the
+native logic-update frequency and a separate ceiling at the native Present
+wrapper. Vertical sync and rendering load can limit presentation further. The mod does
 not change resolution or the game's time source.
 
 ## Logs and troubleshooting
@@ -44,13 +45,31 @@ On the supported client, the native XML reader fills `CApplication+0x80`, then
 the instruction at `fps.config.force60` overwrites it with 60. A verified site
 hook skips exactly that ten-byte instruction and preserves native CPU, flags
 and floating-point state. The original startup code creates the timer with
-`interval = 1.0f / configured_fps`. A different signature disables the mod.
+`interval = 1.0f / configured_fps`. Version 1.0.2 checks that interval and the
+native independent-render mode at the original app-idle boundary. It writes only
+when a native state transition has reset a value; steady idle calls do not
+rewrite it. Accumulated time and the clock source remain native.
 
-Validation distinguishes native core/mod fixtures from actual game rendering
-and multiplayer timing. Full combat acceptance at higher rates remains a
+The verified `fps.device.present` wrapper is paced immediately before its
+original Present call using QueryPerformanceCounter and an unnamed waitable
+timer (high resolution where available). Each deadline starts from the actual
+presentation start, preventing catch-up bursts after stalls. The original
+graphics object, window, HRESULT and LastError behavior are preserved.
+The passive `SdgoFpsLimitGetSnapshotV1` observer reports the configured update
+and render targets, actual pacing period and wait count for tests.
+A different signature disables the mod.
+
+The account-free [native GameTest matrix](game-test.md) runs the real login page
+with the mod disabled at configured 160, then enabled at 30, 60, 120 and 160.
+It retains all sample-window averages and checks actual update cadence,
+successful D3D9 presentations, their minimum spacing and the production pacing
+period. The 30 FPS case must exercise real waits. A lower measured render rate
+does not invalidate a ceiling; it is retained in the report.
+Full combat acceptance at higher rates remains a
 separate check; Beta does not claim that acceptance.
 
 The eleven real-core/production-DLL fixture cases cover 160/120/60, range
 boundaries, invalid-value fallback, disabled mode and rejected symbols, including
 registers, flags, floating-point state, last error and unrelated memory guards.
+They also check the native Present ABI, real waits and stall recovery.
 Run `ctest --test-dir build -C Release -R "^fps_limit_runtime$" --output-on-failure`.

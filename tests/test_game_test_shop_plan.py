@@ -8,9 +8,35 @@ from tests import test_game_test as runner_tests
 
 
 game_test = runner_tests.game_test
-ROOT = Path(__file__).resolve().parents[1]
-STOCK_ASSERTIONS = ROOT / "build" / "stock-shop-assertions.ini"
-STOCK_DISPLAY = ROOT / "build" / "stock-shop-runtime-display.ini"
+FIXTURE_REVISION = "test-stock-native-v1"
+SHOP_ASSERTIONS_FIXTURE = f"""[shop]
+Schema=1
+Scope=StockAssertions
+CatalogId=test-stock
+Revision={FIXTURE_REVISION}
+
+[product:fixture-1001]
+ProductId=1001
+ItemId=123456
+TemplateId=1001
+Category=1
+Price=250
+Currency=GB
+Validity=30
+Enabled=1
+Name=Fixture Product
+Label=Fixture Product Label
+"""
+SHOP_DISPLAY_FIXTURE = f"""[shop]
+Revision={FIXTURE_REVISION}
+
+[option:1]
+Category=1
+Validity=30
+Payment=1
+Price=250
+Text=Fixture Option
+"""
 
 
 class ShopPlanTests(unittest.TestCase):
@@ -18,6 +44,10 @@ class ShopPlanTests(unittest.TestCase):
         self.fixture = runner_tests.GameTestRunnerTests(methodName="runTest")
         self.fixture.setUp()
         self.addCleanup(self._cleanup_fixture)
+        self.stock_assertions = self.fixture.root / "synthetic-shop-assertions.ini"
+        self.stock_display = self.fixture.root / "synthetic-shop-display.ini"
+        self.stock_assertions.write_text(SHOP_ASSERTIONS_FIXTURE, encoding="utf-8")
+        self.stock_display.write_text(SHOP_DISPLAY_FIXTURE, encoding="utf-8")
 
     def _cleanup_fixture(self):
         try:
@@ -32,8 +62,8 @@ class ShopPlanTests(unittest.TestCase):
         return self.prepare(
             name,
             pages_only=True,
-            shop_assertions=STOCK_ASSERTIONS,
-            shop_display=STOCK_DISPLAY,
+            shop_assertions=self.stock_assertions,
+            shop_display=self.stock_display,
         )
 
     def test_default_pages_plan_has_no_shop_fields_or_case(self):
@@ -44,13 +74,9 @@ class ShopPlanTests(unittest.TestCase):
         self.assertFalse(any(field in job for field in game_test.SHOP_PLAN_FIELDS))
         self.assertNotIn("pages.shop.catalog", job["required_cases"].split(","))
 
-    @unittest.skipUnless(
-        STOCK_ASSERTIONS.is_file() and STOCK_DISPLAY.is_file(),
-        "stock shop GameTest inputs have not been generated",
-    )
-    def test_real_stock_inputs_are_copied_read_only_and_bound_to_native_pages(self):
-        assertions_before = STOCK_ASSERTIONS.read_bytes()
-        display_before = STOCK_DISPLAY.read_bytes()
+    def test_synthetic_stock_inputs_are_copied_read_only_and_bound_to_native_pages(self):
+        assertions_before = self.stock_assertions.read_bytes()
+        display_before = self.stock_display.read_bytes()
         run_dir = self.shop_prepare("stock-shop")
         metadata = game_test.read_json(run_dir / "run.json")
         plan = metadata["plan"]
@@ -59,19 +85,19 @@ class ShopPlanTests(unittest.TestCase):
         display_copy = client / game_test.SHOP_DISPLAY_RELATIVE
         job = game_test.read_ini(client / "sdgo/gametest/run.ini")["run"]
 
-        self.assertEqual(STOCK_ASSERTIONS.read_bytes(), assertions_before)
-        self.assertEqual(STOCK_DISPLAY.read_bytes(), display_before)
+        self.assertEqual(self.stock_assertions.read_bytes(), assertions_before)
+        self.assertEqual(self.stock_display.read_bytes(), display_before)
         self.assertEqual(assertions_copy.read_bytes(), assertions_before)
         self.assertEqual(display_copy.read_bytes(), display_before)
         self.assertEqual(metadata["suite"], "native-pages")
         self.assertEqual(job["suite"], "pvp-ai")
         self.assertEqual(plan["shop_assertions_path"], game_test.SHOP_ASSERTIONS_JOB_PATH)
         self.assertEqual(plan["shop_display_path"], game_test.SHOP_DISPLAY_JOB_PATH)
-        self.assertEqual(plan["shop_assertions_sha256"], game_test.sha256(STOCK_ASSERTIONS))
-        self.assertEqual(plan["shop_display_sha256"], game_test.sha256(STOCK_DISPLAY))
+        self.assertEqual(plan["shop_assertions_sha256"], game_test.sha256(self.stock_assertions))
+        self.assertEqual(plan["shop_display_sha256"], game_test.sha256(self.stock_display))
         self.assertEqual(
             plan["shop_revision"],
-            "stock-native-788389b13903-b7fb10ae776f",
+            FIXTURE_REVISION,
         )
         for field in game_test.SHOP_PLAN_FIELDS:
             self.assertEqual(job[field], str(plan[field]))
@@ -109,17 +135,17 @@ class ShopPlanTests(unittest.TestCase):
         for name, options in (
             (
                 "assertions-only",
-                {"pages_only": True, "shop_assertions": STOCK_ASSERTIONS},
+                {"pages_only": True, "shop_assertions": self.stock_assertions},
             ),
             (
                 "display-only",
-                {"pages_only": True, "shop_display": STOCK_DISPLAY},
+                {"pages_only": True, "shop_display": self.stock_display},
             ),
             (
                 "not-pages",
                 {
-                    "shop_assertions": STOCK_ASSERTIONS,
-                    "shop_display": STOCK_DISPLAY,
+                    "shop_assertions": self.stock_assertions,
+                    "shop_display": self.stock_display,
                 },
             ),
         ):
@@ -127,10 +153,9 @@ class ShopPlanTests(unittest.TestCase):
                 self.prepare(name, **options)
             self.assertFalse((self.fixture.root / name).exists())
 
-    @unittest.skipUnless(STOCK_ASSERTIONS.is_file() and STOCK_DISPLAY.is_file(), 'private stock catalog inputs are unavailable')
     def test_schema_rejects_owner_catalog_mismatch_empty_products_and_unknown_keys(self):
-        assertions = STOCK_ASSERTIONS.read_text(encoding="utf-8")
-        display = STOCK_DISPLAY.read_text(encoding="utf-8")
+        assertions = self.stock_assertions.read_text(encoding="utf-8")
+        display = self.stock_display.read_text(encoding="utf-8")
         variants = {
             "owner-sku": (
                 assertions.replace("Scope=StockAssertions", "Scope=OwnerCatalog"),
@@ -139,7 +164,7 @@ class ShopPlanTests(unittest.TestCase):
             "revision-mismatch": (
                 assertions,
                 display.replace(
-                    "stock-native-788389b13903-b7fb10ae776f",
+                    FIXTURE_REVISION,
                     "stock-native-different",
                 ),
             ),
@@ -149,8 +174,8 @@ class ShopPlanTests(unittest.TestCase):
             ),
             "unknown-secret": (
                 assertions.replace(
-                    "Revision=stock-native-788389b13903-b7fb10ae776f",
-                    "Revision=stock-native-788389b13903-b7fb10ae776f\nPassword=forbidden",
+                    f"Revision={FIXTURE_REVISION}",
+                    f"Revision={FIXTURE_REVISION}\nPassword=forbidden",
                 ),
                 display,
             ),
@@ -166,10 +191,6 @@ class ShopPlanTests(unittest.TestCase):
                     with self.assertRaises(game_test.GameTestError):
                         game_test.load_shop_test_inputs(assertion_path, display_path)
 
-    @unittest.skipUnless(
-        STOCK_ASSERTIONS.is_file() and STOCK_DISPLAY.is_file(),
-        "stock shop GameTest inputs have not been generated",
-    )
     def test_path_content_and_optional_field_tampering_all_fail_closed(self):
         run_dir = self.shop_prepare("missing-public-field")
         job_path = run_dir / "client/sdgo/gametest/run.ini"
@@ -208,10 +229,6 @@ class ShopPlanTests(unittest.TestCase):
         with self.assertRaisesRegex(game_test.GameTestError, "unknown shop"):
             game_test.validate_metadata(run_dir)
 
-    @unittest.skipUnless(
-        STOCK_ASSERTIONS.is_file() and STOCK_DISPLAY.is_file(),
-        "stock shop GameTest inputs have not been generated",
-    )
     def test_copied_input_link_fails_closed(self):
         run_dir = self.shop_prepare("linked-input")
         copied = run_dir / "client" / game_test.SHOP_ASSERTIONS_RELATIVE
@@ -222,10 +239,6 @@ class ShopPlanTests(unittest.TestCase):
         with self.assertRaisesRegex(game_test.GameTestError, "linked or escapes"):
             game_test.validate_metadata(run_dir)
 
-    @unittest.skipUnless(
-        STOCK_ASSERTIONS.is_file() and STOCK_DISPLAY.is_file(),
-        "stock shop GameTest inputs have not been generated",
-    )
     def test_immutable_map_tampering_fails_closed(self):
         for name, mutate in (
             (
@@ -270,13 +283,13 @@ class ShopPlanTests(unittest.TestCase):
             base
             + [
                 "--shop-assertions",
-                str(STOCK_ASSERTIONS),
+                str(self.stock_assertions),
                 "--shop-display",
-                str(STOCK_DISPLAY),
+                str(self.stock_display),
             ]
         )
-        self.assertEqual(configured.shop_assertions, STOCK_ASSERTIONS)
-        self.assertEqual(configured.shop_display, STOCK_DISPLAY)
+        self.assertEqual(configured.shop_assertions, self.stock_assertions)
+        self.assertEqual(configured.shop_display, self.stock_display)
 
 
 if __name__ == "__main__":

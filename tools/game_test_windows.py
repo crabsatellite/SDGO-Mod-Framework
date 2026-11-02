@@ -30,6 +30,7 @@ from typing import BinaryIO, Mapping, Sequence
 CREATE_NO_WINDOW = 0x08000000
 CREATE_UNICODE_ENVIRONMENT = 0x00000400
 BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+NORMAL_PRIORITY_CLASS = 0x00000020
 EXTENDED_STARTUPINFO_PRESENT = 0x00080000
 STARTF_USESHOWWINDOW = 0x00000001
 STARTF_USESTDHANDLES = 0x00000100
@@ -56,6 +57,7 @@ DESKTOP_READOBJECTS = 0x0001
 GENERIC_ALL = 0x10000000
 UOI_NAME = 2
 PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002
+ERROR_ACCESS_DENIED = 5
 
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 
@@ -168,6 +170,13 @@ def _environment_block(environment: Mapping[str, str] | None) -> ctypes.Array | 
     return ctypes.create_unicode_buffer("\x00".join(entries) + "\x00")
 
 
+def _is_access_denied(error: OSError) -> bool:
+    return getattr(error, "winerror", None) == ERROR_ACCESS_DENIED or (
+        getattr(error, "winerror", None) is None
+        and getattr(error, "errno", None) == ERROR_ACCESS_DENIED
+    )
+
+
 class _Win32Api:
     def __init__(self) -> None:
         if os.name != "nt":
@@ -251,6 +260,10 @@ class _Win32Api:
             wintypes.DWORD, wintypes.BOOL, wintypes.DWORD,
         ]
         u.OpenInputDesktop.restype = wintypes.HANDLE
+        u.OpenDesktopW.argtypes = [
+            wintypes.LPCWSTR, wintypes.DWORD, wintypes.BOOL, wintypes.DWORD,
+        ]
+        u.OpenDesktopW.restype = wintypes.HANDLE
         u.GetWindowThreadProcessId.argtypes = [
             wintypes.HWND, ctypes.POINTER(wintypes.DWORD),
         ]
@@ -512,7 +525,7 @@ class _Win32Api:
                 if environment_buffer is not None else None
             )
             flags = (
-                CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | BELOW_NORMAL_PRIORITY_CLASS |
+                CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | NORMAL_PRIORITY_CLASS |
                 EXTENDED_STARTUPINFO_PRESENT
             )
             if not self.kernel.CreateProcessW(
@@ -606,6 +619,10 @@ class _Win32Api:
             if self.kernel.WaitForSingleObject(wintypes.HANDLE(process_handle),1000)==WAIT_OBJECT_0:
                 return
             raise error
+        if self.kernel.WaitForSingleObject(
+            wintypes.HANDLE(process_handle), 5000,
+        ) != WAIT_OBJECT_0:
+            raise TimeoutError("terminated process did not signal within five seconds")
 
     def _desktop_windows(
         self, desktop: int, target_pid: int,
@@ -634,7 +651,7 @@ class _Win32Api:
                 class_name=ctypes.create_unicode_buffer(256)
                 self.user.GetClassNameW(wintypes.HWND(window),class_name,256)
                 extended_style=self.user.GetWindowLongW(wintypes.HWND(window),-20)&0xFFFFFFFF
-                target_windows.append({'hwnd':int(window),'class_name':class_name.value,
+                target_windows.append({'hwnd':int(window),'pid':int(owner.value),'class_name':class_name.value,
                     'visible':bool(self.user.IsWindowVisible(wintypes.HWND(window))),
                     'noactivate':bool(extended_style&0x08000000),'toolwindow':bool(extended_style&0x80),
                     'appwindow':bool(extended_style&0x40000)})
@@ -664,6 +681,17 @@ class _Win32Api:
         finally:
             self.close_desktop(int(desktop))
 
+    def named_desktop_state(self, name: str, target_pid: int) -> _DesktopState:
+        if name.casefold() != "default":
+            raise ValueError("only the fixed WinSta0\\Default audit desktop is supported")
+        desktop = self.user.OpenDesktopW(name, 0, False, DESKTOP_READOBJECTS)
+        if not self._valid_handle(desktop):
+            raise self._error("OpenDesktopW(Default) failed")
+        try:
+            return self.desktop_state(int(desktop), target_pid)
+        finally:
+            self.close_desktop(int(desktop))
+
     def foreground_pid(self) -> int:
         window = self.user.GetForegroundWindow()
         if not window:
@@ -688,9 +716,14 @@ class WindowsBackgroundProcess:
         stdout: object,
         stderr: object,
         run_id: str,
+        *,
+        allow_named_desktop_fallback: bool = False,
     ) -> None:
+        if type(allow_named_desktop_fallback) is not bool:
+            raise TypeError("allow_named_desktop_fallback must be boolean")
         self.args = _argument_list(arguments)
         self.run_id = run_id
+        self.allow_named_desktop_fallback = allow_named_desktop_fallback
         self.desktop_name = _desktop_name(run_id)
         self.desktop_path = f"WinSta0\\{self.desktop_name}"
         self.returncode: int | None = None
@@ -703,12 +736,28 @@ class WindowsBackgroundProcess:
         self._api = self._new_api()
 
         self._api.assert_window_station()
-        self._input_desktop_at_launch = self._api.input_desktop_name()
+        self._input_desktop_at_launch: str | None = None
+        self._input_desktop_launch_error: str | None = None
+        try:
+            self._input_desktop_at_launch = self._api.input_desktop_name()
+        except OSError as error:
+            if not self.allow_named_desktop_fallback or not _is_access_denied(error):
+                raise
+            self._input_desktop_launch_error = f"{type(error).__name__}: {error}"
         desktop = self._api.create_desktop(self.desktop_name)
         self._desktop_handle = desktop
         try:
-            current_input = self._api.input_desktop_name()
-            if current_input.casefold() == self.desktop_name.casefold():
+            current_input = None
+            try:
+                current_input = self._api.input_desktop_name()
+            except OSError as error:
+                if not self.allow_named_desktop_fallback or not _is_access_denied(error):
+                    raise
+                self._input_desktop_launch_error = f"{type(error).__name__}: {error}"
+            if (
+                current_input is not None
+                and current_input.casefold() == self.desktop_name.casefold()
+            ):
                 raise RuntimeError(
                     "CreateDesktopW unexpectedly made the background desktop input"
                 )
@@ -769,11 +818,13 @@ class WindowsBackgroundProcess:
             "background_window_count": 0,
             "target_background_window_count": 0,
             "input_desktop_name": None,
-            "input_desktop_unchanged": False,
-            "input_target_window_count": 0,
+            "input_desktop_unchanged": None,
+            "input_target_window_count": None,
             "foreground_pid": 0,
             "foreground_safe": False,
-            "input_desktop_safe": False,
+            "input_desktop_safe": None,
+            "isolation_mode": "private_desktop",
+            "isolation_safe": False,
             "error": None,
         }
         if selected_pid <= 0:
@@ -786,9 +837,56 @@ class WindowsBackgroundProcess:
             background = self._api.desktop_state(
                 self._desktop_handle, selected_pid
             )
-            current_input = self._api.input_desktop_state(selected_pid)
             foreground_pid = self._api.foreground_pid()
-            allowed=set(allowed_input_windows)
+            allowed={int(window) for window in allowed_input_windows if int(window)>0}
+            receipt.update(
+                background_window_count=background.window_count,
+                target_background_window_count=background.target_window_count,
+                foreground_pid=foreground_pid,
+                foreground_safe=foreground_pid != selected_pid,
+            )
+            try:
+                current_input = self._api.input_desktop_state(selected_pid)
+            except OSError as error:
+                if not self.allow_named_desktop_fallback or not _is_access_denied(error):
+                    raise
+                default = self._api.named_desktop_state("Default", selected_pid)
+                accepted = [
+                    row for row in default.target_windows
+                    if row["hwnd"] in allowed
+                    and row.get("pid") == selected_pid
+                    and row["class_name"] == "SDGO.GameTest.GraphicsProxy"
+                    and not row["visible"]
+                    and row["noactivate"]
+                    and row["toolwindow"]
+                    and not row["appwindow"]
+                ]
+                proxy_safe = (
+                    default.name.casefold() == "default"
+                    and len(allowed) == 1
+                    and default.target_window_count == 1
+                    and len(accepted) == 1
+                    and {row["hwnd"] for row in accepted} == allowed
+                )
+                receipt.update(
+                    input_desktop_error=f"{type(error).__name__}: {error}",
+                    named_desktop_name=default.name,
+                    named_desktop_window_count=default.window_count,
+                    named_desktop_target_window_count=default.target_window_count,
+                    named_desktop_proxy_windows=accepted,
+                    unexpected_named_desktop_window_count=(
+                        default.target_window_count - len(accepted)
+                    ),
+                    isolation_mode="private_desktop_with_hidden_default_proxy",
+                )
+                receipt["isolation_safe"] = bool(
+                    receipt["target_background_window_count"] > 0
+                    and receipt["foreground_safe"]
+                    and proxy_safe
+                )
+                receipt["verified"] = receipt["isolation_safe"]
+                return receipt
+
             # Only the native graphics worker's single, independently read-back
             # hidden window can live on the input desktop. All game UI remains
             # on its private desktop; a visible or unidentified proxy fails.
@@ -798,13 +896,10 @@ class WindowsBackgroundProcess:
             input_windows_safe=(len(allowed)<=1 and len(accepted)==current_input.target_window_count and
                                 {row['hwnd'] for row in accepted}==allowed)
             receipt.update(
-                background_window_count=background.window_count,
-                target_background_window_count=(
-                    background.target_window_count
-                ),
                 input_desktop_name=current_input.name,
                 input_desktop_unchanged=(
-                    current_input.name.casefold() ==
+                    self._input_desktop_at_launch is not None
+                    and current_input.name.casefold() ==
                     self._input_desktop_at_launch.casefold()
                 ),
                 input_target_window_count=(
@@ -823,8 +918,10 @@ class WindowsBackgroundProcess:
             receipt["verified"] = bool(
                 receipt["target_background_window_count"] > 0 and
                 receipt["foreground_safe"] and
+                receipt["input_desktop_unchanged"] is True and
                 receipt["input_desktop_safe"]
             )
+            receipt["isolation_safe"] = receipt["verified"]
         except OSError as error:
             receipt["error"] = f"{type(error).__name__}: {error}"
         return receipt
