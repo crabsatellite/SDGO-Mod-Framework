@@ -56,9 +56,7 @@ that a changed snapshot or closed page cannot execute a stale plan. Page fixture
 check host ownership, bounds, pagination, visibility restoration, reinitialization
 and unsupported-layout rejection. All 246 client symbols in this repair branch match the image.
 
-Real-client typography, input placement, full-screen/resolution behavior, reward
-delivery and persistence still require manual acceptance. No real unit is sorted
-or recycled by automated tests. The deleted Win32 preview capture is not evidence
+No real unit is sorted or recycled by automated tests. The deleted Win32 preview capture is not evidence
 for this native UI.
 
 ## 0.2.1: visible controls that cannot click
@@ -95,11 +93,7 @@ the old empty-skin failure and executes hover/down/up with the production page's
 new controls, disabled gates, cancel and outside release. The two snippets are
 also individually hash-pinned; no game bytes enter source or packages.
 
-The REA target inventory confirmed the client's identity. Fresh decompilation was
-unavailable because the configured Ghidra/JDK paths are missing; conclusions use
-the current PE/Capstone instructions and retained decompilation, not a fresh REA
-decompiler run. Actual on-screen appearance and live-account operations remain
-manual acceptance tasks.
+Conclusions use the current PE/Capstone instructions and retained decompilation.
 
 ## 0.2.2: publish only a complete page
 
@@ -112,5 +106,4 @@ of swallowing lock/delete clicks. Fixtures inject a failure after the first
 button's three skins and verify hidden partial controls plus native-event
 forwarding with no Mod network request. Manager import tests now import every
 actual manifest prerequisite, including `hangar.ui_add_skin`, and read them back
-with the installed version. These are automatic initialization and delivery
-checks; live screen and account acceptance remain separate.
+with the installed version.

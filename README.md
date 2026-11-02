@@ -44,8 +44,8 @@ Beta and Experimental labels indicate release channels.
 | Hangar manager (Beta) <!-- catalog: `hangar_manager` --> | One-click sorting and duplicate exchange on the unit-management page, with server-side GB batches | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager (Beta) <!-- catalog: `operator_catalog` --> | Five free supply officers, plus operator names, portraits and drops | [Use](docs/operator-assistant.md) |
 | Capsule catalog editor (Beta) <!-- catalog: `capsule_catalog` --> | Create, edit and retire capsule machines, pools, prices and weights in the Manager | [Use](docs/capsule-catalog.md) |
-| Daily double rewards (Beta) <!-- catalog: `daily_rewards` --> | Scheduled reward events | [Use](docs/daily-rewards.md) |
-| Storage claim all (Beta) <!-- catalog: `storage_claim` --> | Batch storage reward collection; 0.1.1 fixes lobby clicks and hover between confirmation clicks | [Use](docs/storage-claim.md) |
+| Daily double rewards (Beta) <!-- catalog: `daily_rewards` --> | Double battle GB and EXP in a daily window (default 18:00–22:00) | [Use](docs/daily-rewards.md) |
+| Storage claim all (Beta) <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation | [Use](docs/storage-claim.md) |
 
 <!-- /mod-category:gameplay -->
 
@@ -59,8 +59,8 @@ Additional reference: [room-title commands](docs/room-commands.md).
 
 | Feature | Overview | Documentation |
 |---|---|---|
-| FRP connectivity (Beta) <!-- catalog: `net_route`, `agent_udp_pool` --> | Network connectivity | [Use](docs/frp-distribution.md) |
-| Shop catalog manager (Beta) <!-- catalog: `shop_catalog` --> | Shop content management | [Use](docs/shop-catalog.md) |
+| FRP connectivity (Beta) <!-- catalog: `net_route`, `agent_udp_pool` --> | Connect through the owner's Sakura FRP or other TCP/UDP forwarding | [Use](docs/frp-distribution.md) |
+| Shop catalog manager (Beta) <!-- catalog: `shop_catalog` --> | List, price and retire the owner's own shop offers from the Manager (WorldServer) | [Use](docs/shop-catalog.md) |
 
 <!-- /mod-category:network -->
 
@@ -72,9 +72,9 @@ Optional development and diagnostic features.
 
 | Feature | Overview | Documentation |
 |---|---|---|
-| Packet logger <!-- catalog: `net_probe` --> | Protocol diagnostics | [Use](docs/net-probe.md) |
-| Capsule price probe (Experimental) <!-- catalog: `capsule_price_probe` --> | Capsule diagnostics | [Use](docs/capsule-price-probe.md) |
-| Native GameTest (Experimental) <!-- catalog: `game_test_client`, `game_test_server` --> | Native integration testing | [Use](docs/game-test.md) |
+| Packet logger <!-- catalog: `net_probe` --> | Log the client's outgoing packets for protocol work | [Use](docs/net-probe.md) |
+| Capsule price probe (Experimental) <!-- catalog: `capsule_price_probe` --> | Read-only log of capsule list price label refreshes | [Use](docs/capsule-price-probe.md) |
+| Native GameTest (Experimental) <!-- catalog: `game_test_client`, `game_test_server` --> | Automated login, room, battle and page scenarios in the real client and server | [Use](docs/game-test.md) |
 
 <!-- /mod-category:development -->
 

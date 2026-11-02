@@ -7,5 +7,6 @@ change text, currency, SQL, resource files or account state.
 
 The production price fix belongs to `capsule_catalog`: its compiler clears only
 the eight known default price strings in `uirs/1161.uir`, forcing the native text
-cache to build the first label. Do not enable the probe for normal play. See the
+cache to build the first label. Do not enable the probe for normal play; when needed, switch it
+on in SDGO Mod Manager after **显示开发信息** and restart the client. See the
 [probe contract](../mods/capsule_price_probe/README.md) for scope and symbols.

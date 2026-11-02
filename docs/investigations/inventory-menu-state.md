@@ -32,6 +32,4 @@ events; the previous handler reset it on any unrelated event between clicks.
 
 New info logs distinguish native page attachment and accepted button events from
 Mod startup. No inventory IDs, account names, credentials or packet payloads are
-logged. Real window/receiver acceptance remains separate from native snippet
-and synthetic adapter tests; no live sorting, deletion or reward claim is used
-to establish this fix.
+logged.

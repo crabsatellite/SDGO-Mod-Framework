@@ -5,7 +5,8 @@ to 22:00 exclusive in the server's local time**. It doubles the normal final G-p
 pilot EXP/rank-star and unit EXP rewards. Clients need no additional Mod or launcher.
 See the [Chinese setup tutorial](daily-rewards.zh-CN.md) for installation and switches.
 
-Settings are `StartTime=18:00`, `EndTime=22:00`, `Trace=0` in the Mod's `config.ini`.
+Set the window under **每日双倍奖励** in SDGO Mod Manager (`StartTime=18:00`, `EndTime=22:00`;
+`Trace=0` is a developer setting). Values are stored in the Mod's `config.ini`.
 The existing manifest settings remain the fallback when that file is absent. A present
 configuration is authoritative. Times use strict `HH:MM`; overnight windows are supported;
 equal endpoints and invalid values reject the Mod before any hook is installed.
@@ -50,13 +51,7 @@ x87/SSE state, the native stack and Win32 last error, then jump into the origina
 trampoline. Clock/log callbacks receive a normal FP and direction-flag environment.
 No raw EXE file is patched and no global native event rate is modified.
 
-REA evidence for the current dispatcher: `ev_17e0f1164d256b782a9855b5f6869810c4811150c23688e211081329f6a35f68`.
-The complete personal settlement pipeline is recorded as
-`ev_ec1037dced2caa31196002a189c2cddbd6e5f3b09554a9d657afa810008eb981`;
-the native event calculation as `ev_156609a6758b93b985404833e5328c26394defddf0f3709286a41feff5dd0f96`.
-These are static decompiler observations, not original source or gameplay execution.
-
-## Automated verification
+## Developer tests
 
 ```powershell
 cmake -S . -B build -A Win32
@@ -73,27 +68,9 @@ and partial-registration rollback. The fixture uses a separately captured native
 frame contract and replays the actual first MOV instruction for each trampoline.
 It checks native registers, FP/SIMD state, last error, guard bytes and payout breakdown.
 
-The feature is **Beta**. Real account balances, client presentation, match completion
-and reconnect persistence remain manual acceptance. No automatic test executes a game
-or mutates a live account/database. Disable `[features] daily-rewards=0` or
-`[mods] daily_rewards=0`; remove only this Mod directory with the server closed to
-uninstall it. Other framework components remain installed.
+To disable it, close the server and switch it off in the Manager. To remove only this mod, delete
+`sdgo/mods/daily_rewards/` with the server closed; other framework components remain installed.
 
-## Manual acceptance
-
-1. Check `sdgo/logs/sdgo.log` for this Mod, existing Mods and the configured window;
-   confirm the server's timezone.
-2. To test outside the default window, back up `config.ini`, temporarily choose a
-   window containing the current server time, and restart the test BattleServer.
-   Keep all BattleServers serving test matches consistent; leave the OS clock alone.
-3. With `Trace=1`, the first 32 active settlements log before/after values for all
-   three rewards. Compare those values and the native event-bonus breakdown for
-   that same settlement, rather than comparing totals from different matches.
-4. Check the actual G balance, pilot rank stars and unit EXP, then reconnect and
-   check persistence. Include PvP, missions, failed missions, native bonuses,
-   capped units and both time boundaries. Native no-reward cases must stay so.
-5. Restore `18:00` to `22:00`, optionally set `Trace=0`, and restart the affected
-   BattleServers after the edits.
-
-Startup and offline checks confirm installation and hook behavior. Actual account
-rewards, client presentation and reconnect persistence still require this manual check.
+To check it live, temporarily set a window containing the current server time and enable `Trace=1`:
+the first 32 active settlements log before/after values (e.g. `pilot EXP 100->200, G 200->400,
+unit EXP 300->600`). Compare them with the same settlement's event-bonus breakdown.

@@ -88,8 +88,7 @@ unit. Server selection and native factory both recorded model 11044; the final
 human construction log recorded the frozen source changing from 11016 to 11044.
 Client 0.1.10 removes the temporary global factory observer and its symbol/state.
 The functional dispatch and final-construction hooks remain covered by the real
-core/DLL and native-instruction regressions. PvP, multiple clients, respawn and
-reward-persistence acceptance remain separate and have not been claimed passed.
+core/DLL and native-instruction regressions.
 
 The reported post-round Korean notice says the equipped skill part has been
 fully consumed and asks the player to equip a new skill. Its appearance alone
@@ -123,7 +122,7 @@ partial send failures, late failures and restoration. With explicitly supplied
 native files it runs the actual server model-selection branch and client memory
 copy instructions in private fixture memory. It omits the handlers' unrelated
 logging, UI callbacks and stack cleanup; it does not run entry points, imports,
-sockets or authenticated game flows. Full gameplay remains manual acceptance.
+sockets or authenticated game flows.
 
 Supported native files:
 

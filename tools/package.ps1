@@ -94,7 +94,7 @@ if ($catalog.features.PSObject.Properties.Name -contains 'shop-catalog') {
     $shopDestination=Join-Path $out 'shop'
     New-Item -ItemType Directory -Path $shopDestination -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $repo 'docs\shop-catalog.zh-CN.md') -Destination (Join-Path $shopDestination 'README.zh-CN.md')
-    foreach ($guide in @('shop-testing.zh-CN.md','shop-validation.zh-CN.md','shop-labels.zh-CN.md')) {
+    foreach ($guide in @('shop-catalog.md','shop-labels.zh-CN.md','shop-labels.md')) {
         Copy-Item -LiteralPath (Join-Path $repo "docs\$guide") -Destination $shopDestination
     }
 }

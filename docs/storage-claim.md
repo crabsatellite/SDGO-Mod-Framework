@@ -3,9 +3,6 @@
 Client Mod `storage_claim` adds **一键领取** beside the two native storage tabs.
 [简体中文](storage-claim.zh-CN.md)
 
-Version 0.1.1 fixes the menu-state guard and keeps the first confirmation armed
-across native hover/leave events. The Mod logs page attachment and received
-clicks separately from successful loading.
 
 Select the items or gifts tab, click the new button, then **确认领取** once for
 the entire batch. Timed rewards may begin their validity period when claimed.
@@ -20,7 +17,8 @@ IDs distinguish separate copies of the same item. Choice-required gifts pause
 for individual native handling. Capacity errors, refusal, disconnect, page closure
 and timeout stop the batch. Unconfirmed claims are never retried automatically.
 
-Install the client portion of a Full package, or close the target client and
+Friend-server players receive it through `update.bat`. Otherwise install the
+client portion of a Full package, or close the target client and
 import the dedicated overlay using SDGO Mod Manager. Start the game normally.
 No server Mod, account settings, database access, additional skins, background
 Manager or alternate launcher is required. The supported host is
@@ -33,8 +31,7 @@ The 450×540 native `1396.uir` layout places the new 124×23 button at (291,64)
 and the status line at y=520, clear of existing rows, pagination, expiration
 warning and close controls. The Mod uses host-allocated skins and controls.
 Delayed cancelled preflight replies are consumed to prevent native auto-claim.
-Successful claims still pass through the game's grant/inventory handlers.
+Successful claims still pass through the game's grant/inventory handlers. Page
+attachment and received clicks are logged separately from loading.
 
 Automated fixtures use synthetic inventories, packet replies and UI boundaries.
-They do not start a game or claim real rewards. Live typography, placement,
-delivery, timed items and capacity errors remain manual acceptance tasks.
