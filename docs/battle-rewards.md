@@ -1,67 +1,56 @@
 # Battle contribution rewards (Beta)
 
+[完整中文安装教程](battle-rewards.zh-CN.md) · [Rule tables](battle-reward-design.md)
+
+BattleServer mod wired to the native final settlement. It computes GB/MB from the outcome, kills,
+effective damage, assists and, in missions, minion and Boss contribution; PvP MVP earns extra MB.
+Owners adjust the multipliers in SDGO Mod Manager; players keep their normal client and launcher.
+
 The optional [solo MB progression preset](solo-mb-progression.zh-CN.md) adds mission MB floors,
-3,000 MB for the first qualifying match each day, another 27,000 for three daily matches,
-and 15,000 for twelve weekly matches. Fixed bonuses do not multiply. Three-minute native
-participation and real combat contribution are required; solo AI matches and missions count.
-It targets 49,900–79,900 MB units in two or three daily sessions. Existing configurations
-remain disabled until reviewed in Manager; update the native DLL and wallet worker together.
+3,000 MB for the first qualifying match each day, another 27,000 for three daily matches and 15,000
+for twelve weekly matches. Fixed bonuses do not multiply. It is off until reviewed in the Manager.
 
-[完整中文安装教程](battle-rewards.zh-CN.md) · [Approved rule tables](battle-reward-design.md)
+## Install and manage in the Manager
 
-This server Mod is wired to native final settlement, effective HP-loss statistics,
-the original G delivery path and an idempotent native MB wallet worker. Owners can
-change the base multiplier from the assistant; players retain their normal client
-and launcher. Authenticated gameplay, HUD and reconnect acceptance remain manual.
+Open **SDGO Mod Manager.exe** and choose **战斗奖励** (battle rewards). Select the existing reward
+workspace, native server INI, the stopped BattleServer target and the extracted framework/reward kit.
+Click **检查安装 / 更新** (check install/update), resolve any blockers, then apply the reviewed plan.
+The installer keeps configuration, symbols and recovery receipts and adds only this feature's
+versioned wallet objects; native wallet procedures and balances are not modified.
 
-## Unified owner interface
-
-Open **SDGO Mod Manager.exe** and choose Battle rewards. Select the existing reward
-workspace, native server INI, stopped BattleServer target and extracted framework/
-reward kit. Review the installation plan before applying it. The installer keeps
-configuration, symbols and recovery receipts, and does not issue test money to real accounts.
-
-Start the Manager-owned wallet service in the same panel, then start the game server
-normally. Edit multipliers, policy and previews there. Python, a separate reward page
-and per-feature launch scripts are no longer user requirements. The Manager reports
-real native/worker health; saving a file does not imply a live connection. See the
-[Manager guide](mod-manager.md).
+Start the Manager-owned wallet service in the same panel, then start the game server normally.
+Multipliers, rules and previews are edited there and apply to later settlements without restarting
+BattleServer. The panel shows a connection only when the policy, native settlement and wallet
+heartbeat are all confirmed. See the [Manager guide](mod-manager.md).
 
 ## Delivery and recovery
 
-G is replaced at the verified native final amount and continues through the normal
-World/wallet path. The native result animation adds its base and bonus rows, while
-skipping uses the total directly. Both paths now receive the complete policy GB
-in the base row, with superseded legacy GB bonuses cleared. This base row includes
-contribution, MVP, multipliers and time scaling; it is not the old table's outcome
-minimum. Pilot/unit EXP details and separately awarded system rewards are preserved.
-MB uses durable jobs and a database receipt keyed by match/account
-and bound to the plan. A lost post-commit response can be retried without another
-credit. The worker queries fresh current MB and sends the normal `0x064B` absolute
-balance update through the existing Agent route. Recycled/offline sessions are not
-notified; normal login/store cash queries refresh their authoritative balance.
+GB replaces the native final amount and continues through the normal World/wallet path. The complete
+policy GB goes into the native base reward row and superseded legacy GB bonus rows are cleared, so the
+animated and skipped result screens show the same total. Pilot/unit EXP and other systems' rewards
+are unchanged.
 
-Keep queued jobs and wallet receipts during recovery. Stop only the owned worker:
+MB uses durable jobs and a database receipt keyed by match and account, calling the native
+`sp_PocketGC_IO`. A lost response can be retried without a second credit. The worker then reads the
+current MB and sends the normal `0x064B` balance update through the Agent; offline players see the new
+balance at their next login or shop cash query. Keep queued jobs and receipts during recovery.
 
-Use Stop Manager-owned wallet service in the reward panel.
+To stop the worker, use **停止本 Manager 的钱包服务** in the reward panel; it only stops the worker this
+Manager started.
 
-After closing the selected BattleServer, disable `battle_rewards=0` under `[mods]`
-or plan a scoped uninstall with `tools/install_battle_rewards.py --battle-dir ...
---workspace ... --uninstall`; add `--apply` to archive only this Mod. The framework,
-other mods, queue, configuration and wallet history are retained.
+## Disable or remove
 
-## Verification boundary
+Close the BattleServer, switch the feature off in the Manager and start the server again. To remove
+it, plan a scoped uninstall and then add `--apply`:
 
-Automated checks cover exact arithmetic, all native frame families, real core/DLL
-hooks, PvE Boss identity, policy freezing, the durable worker and native balance
-notification. A copied native wallet procedure was tested in new isolated SQL
-Databases. A copied real Agent forwarded the exact ten-byte cash packet from its
-BATTLE connection to a synthetic client connection twice. Installation, owner
-entry lifecycle and Windows file-sharing races have explicit regression tests.
-A copied real BattleServer also starts with all eleven hooks owned by the current
-reward DLL; its probe blocks outbound connections and does not start a real match.
+```powershell
+python tools/install_battle_rewards.py --battle-dir "D:\SDGO\Server\BattleServer1" --workspace "D:\SDGO-Owner\Rewards" --uninstall
+```
 
-From a Windows source checkout with the Visual Studio C++ tools installed:
+The framework, other mods, queue, configuration and wallet history are kept. Rewards already paid are
+not rolled back.
+
+## Developer tests
 
 ```powershell
 cmake -S . -B build -A Win32
@@ -69,11 +58,5 @@ cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-Default runtime checks use the real core/Mod DLLs, synthetic native frames and an
-isolated ledger. Optional native SQL checks require a local server INI and scratch
-database create/drop privileges; original account wallets are not credited.
-The Agent and native-host probes also require locally owned game executables,
-which are not distributed with the source or owner toolkit.
-
-These are not authenticated real-client combat/HUD proof. See the Chinese tutorial
-for manual match, event-window, multiplier, party-size and reconnect acceptance.
+Default checks use the real core/mod DLLs, synthetic native frames and an isolated ledger. Optional
+native SQL checks need a local server INI and permission to create and drop scratch databases.
