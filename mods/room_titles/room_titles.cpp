@@ -46,6 +46,27 @@ NoticeFn g_notice = nullptr; // test injection only; production uses the native 
 const SdgoApi* g_api = nullptr;
 SdgoMod* g_mod = nullptr;
 
+bool InitializeSessionRequests()
+{
+    // Agent routes and pilot IDs can outlive a client process. Starting every
+    // process at nonce 1 can replay an earlier login's cached room creation on
+    // a Battle provider reached without another lobby Hello.
+    using RandomFn = LONG(WINAPI*)(void*, unsigned char*, unsigned long, unsigned long);
+    HMODULE library = LoadLibraryExW(L"bcrypt.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!library)
+        return false;
+    const auto random = reinterpret_cast<RandomFn>(GetProcAddress(library, "BCryptGenRandom"));
+    uint32_t nonce = 0;
+    const bool generated = random && random(nullptr, reinterpret_cast<unsigned char*>(&nonce),
+                                            sizeof(nonce), 2u) >= 0;
+    FreeLibrary(library);
+    if (!generated)
+        return false;
+    // Keep more than three billion monotonically increasing IDs available.
+    g_state = titles::ClientState((nonce & 0x3FFFFFFFu) + 1);
+    return true;
+}
+
 struct Lock {
     Lock() { AcquireSRWLockExclusive(&g_lock); }
     ~Lock() { ReleaseSRWLockExclusive(&g_lock); }
@@ -708,6 +729,10 @@ extern "C" __declspec(dllexport) uint32_t __cdecl SdgoRoomTitleCurrentV1(char* o
 SDGO_MOD_ENTRY
 {
     g_api=api;g_mod=mod;
+    if (!InitializeSessionRequests()) {
+        api->Log(mod, SDGO_LOG_ERROR, "cannot initialize unique room-title session requests");
+        return 0;
+    }
     if (!ui::Bind(api, mod) || !Bind(api, mod, &g_nativeWide, "room_titles.ui_legacy_to_wide") ||
         !Bind(api, mod, &g_missionRoom, "room_titles.ui_mission_current_room"))
         return 0;

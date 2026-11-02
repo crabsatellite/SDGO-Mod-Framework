@@ -596,6 +596,28 @@ void TestCreateAfterNativeChannelSwitch()
     }
 }
 
+void TestNewClientSessionRequests()
+{
+    rt::ClientState first(100000), restarted(700000);
+    const auto firstHello=first.BeginHello(1,0);
+    const auto secondHello=restarted.BeginHello(1,0);
+    Check(firstHello.request_id==100000 && secondHello.request_id==700000 &&
+              first.AcceptBatch(1,Batch(9001,firstHello.request_id)) &&
+              restarted.AcceptBatch(1,Batch(9001,secondHello.request_id)),
+          "separate native client sessions start in independently seeded monotonic request ranges");
+    const std::string title="same full room title used after restarting the client";
+    const auto oldCreate=first.BeginSetTitle(1,0,title,100);
+    const auto newCreate=restarted.BeginSetTitle(1,0,title,100);
+    Check(newCreate.request_id!=oldCreate.request_id && newCreate.request_id==700001,
+          "identical title and reused Agent connection do not repeat the previous login's create nonce");
+    Check(!restarted.AcceptMessage(1,Snapshot(Record(9001,5,1,1,title),oldCreate.request_id)) &&
+              restarted.HasPending(1) && restarted.IsReady(1),
+          "a cached previous-login creation cannot confirm the new session's pending room");
+    Check(restarted.AcceptMessage(1,Snapshot(Record(9002,6,2,1,title),newCreate.request_id)) &&
+              !restarted.HasPending(1) && restarted.Query(1,6),
+          "the new session accepts only its actual fresh room on the selected Battle provider");
+}
+
 }  // namespace
 
 int main()
@@ -611,6 +633,7 @@ int main()
     TestRetryAfterRoomChanged();
     TestDelayedNativeDispatch();
     TestCreateAfterNativeChannelSwitch();
+    TestNewClientSessionRequests();
     std::printf("%s: %d failure(s)\n",
                 g_failures == 0 ? "PASS" : "FAIL", g_failures);
     return g_failures == 0 ? 0 : 1;

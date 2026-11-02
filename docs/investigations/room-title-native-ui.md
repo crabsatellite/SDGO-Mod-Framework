@@ -211,6 +211,11 @@ snapshot must also match the native carrier, room ID and Team/Battle domain:
 `0x0640` uses `0x0A33`, while `0x0525` uses `0x0918`. Expired creates, unrelated
 snapshots and existing-room edits cannot authorize that change. Old-provider
 room caches are removed when the matching fresh creation is confirmed.
+Each client process seeds its monotonic request range from the Windows system
+RNG. A reused pilot and Agent route must not restart at request `1`: another
+Battle provider can still remember an earlier login's same-title create, and
+replaying that old native room reply would leave the new waiting room without
+its current model. In-process retries keep their exact nonce for deduplication.
 
 Modern Team category `4` has no reachable inline rename input: population
 `0x00A45A70` initially disables `TitleChangeBtn`, and event handler `0x00A53830`
