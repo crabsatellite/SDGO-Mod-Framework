@@ -1075,6 +1075,7 @@ if(BUILD_TESTING)
     sdgo_strict(hangar_capacity_sql_test)
     target_compile_options(hangar_capacity_sql_test PRIVATE /Ob0)
     add_custom_target(pvp_population_regression_build DEPENDS
+    sdgo_core d3d9_shim winmm_shim fps_limit
         pvp_ai match_ai room_random room_random_client game_test_client game_test_server
         pvp_ai_test match_ai_test pvp_team_plan_test pvp_title_rules_test
         room_random_test random_loadout_regression_test room_random_client_policy_test

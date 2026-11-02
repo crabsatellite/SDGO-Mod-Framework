@@ -15,7 +15,7 @@ uint32_t failBuild = 0;
 uint32_t failSetup = 0;
 int buildCalls = 0, setupCalls = 0, respawns = 0, refreshes = 0, stateRespawns = 0;
 int originals = 0;
-int nativeTeamCalls=0,nativeHumanCalls=0;
+int nativeTeamCalls=0,nativeHumanCalls=0,nativeHumanError=0;
 bool revive = true;
 bool clearIdentityAtEnd = false;
 bool originalReturnedBeforeObserver = false;
@@ -99,7 +99,7 @@ void Reset(int mode = 1) {
     g_settings.gradeCost[3] = 455;
     g_settings.logRoom = 0;
     g_random = 1234567;
-    nativeTeamCalls=nativeHumanCalls=0;
+    nativeTeamCalls=nativeHumanCalls=nativeHumanError=0;
     g_assignHumanTeams=reinterpret_cast<AssignHumanTeamsFn>(&NativeTeamAssignment);
     g_api = &ai_test::api;
     g_mod = nullptr;
@@ -133,7 +133,7 @@ void Reset(int mode = 1) {
     originalReturnedBeforeObserver = false;
     observerEvents.clear();
 }
-int __fastcall NativeHumanSetup(void*,void*,uint8_t*,uint32_t*,uint32_t*,uint8_t) {++nativeHumanCalls;return 0;}
+int __fastcall NativeHumanSetup(void*,void*,uint8_t*,uint32_t*,uint32_t*,uint8_t) {++nativeHumanCalls;return nativeHumanError;}
 int AddUsingNativePoolFixture(bool throughStart=false) {
     struct Node {uint32_t* data;void* reserved;Node* next;};
     alignas(4) uint8_t list[0x30]{};
@@ -324,6 +324,12 @@ int wmain(int argc,wchar_t** argv) {
     Reset();
 
     SCENARIO("invalid populations do not silently start with fewer AI and failed partial setup can retry");
+    for(int error:{0x0FBE,0x0FBA}) {
+        Reset();Human(0,1);Title("!ai enemy");nativeHumanError=error;
+        const auto before=room;
+        CHECK(AddUsingNativePoolFixture(true)==error && nativeHumanCalls==1 && buildCalls==0 && room==before);
+    }
+    Reset();
     Human(0,1);Title("!ai e8 a0");
     auto originalHumanRoom=room;
     CHECK(AddUsingNativePoolFixture(true)==0x0FBE);
