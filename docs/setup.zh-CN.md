@@ -82,18 +82,16 @@ WorldServer 基础修复使用同一安装器的 `-Role World`，先停止目标
 powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SDGO-Server\Server\WorldServer" -Role World
 ```
 
-当前 master 构建的 Base 和 Full 包均包含默认启用的[新账号规则](new-account-profile.zh-CN.md)和
-[军衔修复](rank-progression-fix.zh-CN.md)，两者都无需客户端组件。每套独立 World 实例分别安装，
+当前 master 构建的 Base 和 Full 包均包含默认启用的 World 基础修复：[新账号规则](new-account-profile.zh-CN.md)、
+[军衔修复](rank-progression-fix.zh-CN.md)和[好友列表修复](friend-list-fix.zh-CN.md)的服务端部分（客户端部分随客户端框架安装）。
+Full 包另含自动机库容量、收藏扭蛋和商城商品管理等 World 玩法功能。每套独立 World 实例分别安装，
 装完重启 World，并在 `sdgo/logs/sdgo.log` 确认 `loaded` 与新账号的 `new-account defaults active` 记录。
-若下载的发布包中还没有 `server/sdgo/mods/new_account_profile/`，请按[源码构建说明](#从源码构建)生成新包。
 
-新账号默认 5,000 GP、0 点券、下士 1 阶，首次建档的自动机体赠送最多一台。
-配置位于 `sdgo/mods/new_account_profile/config.ini`，可从同目录的 `config.example.ini` 复制创建；
-修改后重启 World。`InitialUnitLimit=0` 只取消这部分自动赠送，不限制正常初始机体选择和后续获得机体。
+新账号默认 5,000 GP、0 点券、下士 1 阶，首次建档的自动机体赠送最多一台。在 SDGO Mod Manager 的“新账号默认配置”中修改，
+保存后重启 World。`InitialUnitLimit=0` 只取消这部分自动赠送，不限制正常初始机体选择和后续获得机体。
 已有角色与机库不重置，测试时请使用全新账号；详见[新账号起始资料修复](new-account-profile.zh-CN.md)。
 
-只停用新账号规则时，在 World 的 `sdgo/sdgo.ini` 的 `[mods]` 段设置 `new_account_profile=0` 并重启；
-不要为此卸载整个框架。卸载整个 World 框架时才使用 `-Role World -Uninstall`。
+只停用某个功能时，在 Manager 中关闭它并重启 World；不要为此卸载整个框架。卸载整个 World 框架时才使用 `-Role World -Uninstall`。
 
 ## 卸载
 
