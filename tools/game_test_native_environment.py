@@ -119,12 +119,12 @@ class NativeDriver:
         atomic_json(self.environment.root / 'progress.json', value)
         print(json.dumps(value), file=sys.stderr, flush=True)
 
-    def sql(self, statement):
+    def sql(self, statement, timeout=120):
         env = os.environ.copy()
         env['SQLCMDPASSWORD'] = self.private['sa_password']
         return docker('exec', '-e', 'SQLCMDPASSWORD', self.private['container'],
             '/opt/mssql-tools18/bin/sqlcmd', '-S', 'tcp:127.0.0.1,1433', '-U', 'sa', '-C', '-I',
-            '-b', '-l', '5', '-t', '120', '-h', '-1', '-W', '-Q', statement, env=env)
+            '-b', '-l', '5', '-t', str(timeout), '-h', '-1', '-W', '-Q', statement, env=env,timeout=timeout+30)
 
     def start_sql(self, lease):
         self.environment = lease
@@ -188,12 +188,14 @@ class NativeDriver:
             if gt.sha256(source) != entry['sha256']:
                 raise RuntimeError('Native snapshot bytes differ from the frozen manifest.')
             destination = '/var/opt/mssql/backup/gametest/' + entry['file']
-            docker('cp', str(source), self.private['container']+':'+destination)
+            self.progress('copying_snapshot',database=entry['name'],bytes=source.stat().st_size)
+            docker('cp', str(source), self.private['container']+':'+destination,timeout=600)
             moves = ','.join('MOVE '+quoted(f['name'])+' TO '+quoted(
                 '/var/opt/mssql/data/gt_'+entry['name']+'_'+str(i)+('.ldf' if f['type']=='L' else '.mdf'))
                 for i, f in enumerate(entry['files']))
             name = identifier(entry['name'])
-            self.sql('RESTORE DATABASE '+name+' FROM DISK='+quoted(destination)+' WITH CHECKSUM,RECOVERY,'+moves+';')
+            self.progress('restoring_database',database=entry['name'])
+            self.sql('RESTORE DATABASE '+name+' FROM DISK='+quoted(destination)+' WITH CHECKSUM,RECOVERY,'+moves+';',timeout=600)
         user = self.private['app_user']
         self.sql('CREATE LOGIN '+identifier(user)+' WITH PASSWORD='+quoted(self.private['app_password'])+
                  ',CHECK_POLICY=OFF;GRANT VIEW SERVER STATE TO '+identifier(user)+

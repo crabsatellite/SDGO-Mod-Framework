@@ -1042,7 +1042,7 @@ int __fastcall FakeTeamSettings(void*, void*, void*, uint32_t, const void*, void
     ++g_team_callback_calls;
     const auto draft = g_drafts.find(g_activeConnection);
     g_team_callback_had_draft = draft != g_drafts.end() &&
-        draft->second.surface == ui::Surface::TeamSettings && draft->second.opcode == 0x09ED;
+        draft->second.surface == ui::Surface::TeamSettings && draft->second.opcode == 0x09ED && draft->second.room == 21;
     return 71;
 }
 
@@ -1050,7 +1050,7 @@ void TestTeamSettingsCallback()
 {
     ResetRoot();
     Check(Ready(85,2001,{Record(2001,21,4,1,"old team title")}),"team settings capability fixture");
-    g_fake_mission_room = 21;
+    g_fake_mission_room = 999; // a previous mission must not redirect this Team edit
     g_activeRoom = 21;
     g_teamSettings = reinterpret_cast<DialogFn>(&FakeTeamSettings);
     ui::FakeEdit edit; edit.text=std::wstring(128,L'\u623f');

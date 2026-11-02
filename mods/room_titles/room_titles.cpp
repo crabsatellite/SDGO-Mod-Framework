@@ -187,7 +187,7 @@ bool Prepare(ui::Surface surface, const std::wstring& text)
         g_state.AdvanceTime(connection, GetTickCount64());
         const bool creating = draft.opcode == 0x0640 || draft.opcode==0x0525;
         draft.room = creating ? 0 : g_activeRoom;
-        if (surface == ui::Surface::MissionSettings || surface == ui::Surface::TeamSettings) {
+        if (surface == ui::Surface::MissionSettings) {
             const uint32_t nativeId = SafeRoomId(g_missionRoom);
             if (nativeId && !(nativeId & kBattleDomain))
                 draft.room = nativeId;
@@ -548,9 +548,8 @@ void OnInit(ui::Surface surface, void*, void* edit)
     {
         Lock lock;
         const auto& saved = g_saved[static_cast<size_t>(surface)];
-        const bool teamSettings = surface == ui::Surface::MissionSettings || surface == ui::Surface::TeamSettings;
-        const bool editing = teamSettings || surface == ui::Surface::PvpTitleEdit;
-        const uint32_t room = teamSettings ? SafeRoomId(g_missionRoom) :
+        const bool editing = surface == ui::Surface::MissionSettings || surface == ui::Surface::TeamSettings || surface == ui::Surface::PvpTitleEdit;
+        const uint32_t room = surface == ui::Surface::MissionSettings ? SafeRoomId(g_missionRoom) :
                               editing ? g_activeRoom : 0;
         if (saved.valid && saved.connection == g_activeConnection && saved.room == room)
             value = saved.text;
