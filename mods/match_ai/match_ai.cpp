@@ -1230,7 +1230,7 @@ namespace
         return nullptr;
     }
 
-    // Observe the actual native TAB K/D/points renderer, rather than infer
+    // Observe the actual native TAB kill/assist/points renderer, rather than infer
     // visibility from unit registration or from the separate teammate HUD.
     void __fastcall ScoreboardRow(uint8_t* panel, void*, uint8_t* slot, int row)
     {
@@ -1248,7 +1248,7 @@ namespace
             const uint8_t* record = *reinterpret_cast<const uint8_t* const*>(slot + kSlotRecord);
             recorded.team = record[kRecordTeam];
             recorded.kills = *reinterpret_cast<int32_t*>(slot + 0x4C);
-            recorded.deaths = *reinterpret_cast<int32_t*>(slot + 0x54);
+            recorded.assists = *reinterpret_cast<int32_t*>(slot + 0x54);
             recorded.points = *reinterpret_cast<int32_t*>(slot + 0x58);
             recorded.row_index = static_cast<uint32_t>(row);
             ++recorded.render_count;

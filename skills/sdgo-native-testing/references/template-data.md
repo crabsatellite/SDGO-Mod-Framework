@@ -18,13 +18,13 @@ python tools/game_test.py environment template --prototype <stopped-owned-protot
 
 ## 如何增加新的公共数据
 
-若已有五账号模板缺少原生新手战舰/合法编组，可运行明确的维护命令：
+若已有五账号模板缺少原生新手战舰/合法编组/出击操作员，可运行明确的维护命令：
 
 ```powershell
 python tools/game_test.py environment upgrade --template <existing-template> --output <private-template-cache>/native-v3
 ```
 
-它只还原旧模板、调用原生新手战舰/编组/出击存储过程、封存新版并清理；保留原来的五个账号和每台机体 UID，新增账号数为零。编组按原生 Star/MinCost/MaxCost 选择已有机体，优先四台；大型 MA 的容量限制允许更少成员。此命令不能用来给普通测试临时补库存；已有完整模板就直接测试。
+它只还原旧模板、调用原生新手战舰/编组/出击及已有操作员选择存储过程、封存新版并清理；保留原来的五个账号和每台机体 UID，新增账号数为零。编组按原生 Star/MinCost/MaxCost 选择已有机体，优先四台；大型 MA 的容量限制允许更少成员。此命令不能用来给普通测试临时补库存；已有完整模板就直接测试。
 
 先确认模板实际缺少什么：机体 ID、必需的原始模型/表项、库存类型或某场景资源。已有数据足够时直接选择对应账号/机体做测试，停止数据维护。
 

@@ -441,7 +441,7 @@ int main() {
         CHECK(status.native_row_count == 3 && status.original_row_count == 1 && status.roster_sync_count == 1);
         CHECK(status.panel_visible && status.panel_state == 2 && status.bot_count == 2 && rosterDraws == 2);
         CHECK(status.bots[0].team == 1 && status.bots[1].team == 2);
-        CHECK(status.bots[0].kills == 7 && status.bots[1].deaths == 3 && status.bots[1].points == 201);
+        CHECK(status.bots[0].kills == 7 && status.bots[1].assists == 3 && status.bots[1].points == 201);
         const uint32_t priorDraws = status.bots[0].render_count;
         Put<uint32_t>(slots[g_botTable[0].slot].data(), kSlotObjectId, 9000);
         ScoreboardRow(rosterPanel.data(), nullptr, slots[g_botTable[0].slot].data(), 1);

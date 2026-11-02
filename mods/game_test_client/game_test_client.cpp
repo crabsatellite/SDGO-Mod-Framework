@@ -47,7 +47,12 @@ const char* __cdecl ObserveNativeErrorName(int code) {
     const char* name=originalErrorName(code);
     if (code && InterlockedExchange(&nativeLastError,code)!=code) {
         InterlockedIncrement(&nativeErrorSequence);
-        char message[224];sprintf_s(message,"native error code=%04X name=%s",code,name ? name:"unknown");
+        char safeName[160]{};size_t used=0;
+        if (name) for (const unsigned char* p=reinterpret_cast<const unsigned char*>(name);*p && used+5<sizeof(safeName);++p) {
+            if (*p>=32 && *p<127) safeName[used++]=static_cast<char>(*p);
+            else used+=sprintf_s(safeName+used,sizeof(safeName)-used,"\\x%02X",static_cast<unsigned>(*p));
+        }
+        char message[224];sprintf_s(message,"native error code=%04X name=%s",code,name ? safeName:"unknown");
         sdgo_test::Observe(message);
     }
     return name;
@@ -559,20 +564,36 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
 }
 int __cdecl Start(const SdgoGameTestContextV1* context) {
     SdgoPvpAiClientSnapshotV1 snapshot{};
-    const auto flags=rooms.NativeStartFlags();const auto sent=actions.TransportState();
-    static uint32_t lastFlags=0,lastSend=0;
     static LONG errorBaseline=0;
-    if (!context->tick || flags!=lastFlags || sent.send_sequence!=lastSend) {
-        char state[176];sprintf_s(state,"native Start app=%u main/ready/lock/started=%08X queued=%u transport=%u opcode=%04X",
-            actions.AppState(),flags,startRequested ? 1u:0u,sent.send_sequence,sent.opcode);
-        context->Observe(state);lastFlags=flags;lastSend=sent.send_sequence;
+    static uint64_t lastStartAttempt=0;
+    static uint32_t startSendBaseline=0,startReplyBaseline=0;
+    if(!context->tick){lastStartAttempt=0;startSendBaseline=actions.GameStartSendCount();startReplyBaseline=rooms.NativeStartReplySequence();}
+    if(rooms.NativeStartReplySequence()>startReplyBaseline && rooms.NativeStartReplyError()!=0) {
+        char failure[96];sprintf_s(failure,"native server rejected battle start: 07B5/%04X",rooms.NativeStartReplyError());
+        context->Assert(0,failure);return SDGO_GAME_TEST_FAIL;
+    }
+    static uint64_t nextStartObservation=0;
+    if(context->elapsed_ms>=nextStartObservation) {
+        const auto transport=actions.TransportState();
+        char message[192];sprintf_s(message,"native start prerequisite=%d command_state_and_queue=%d transport=%04X/%u/%u attempted=%u",rooms.NativeStartPrerequisite(),rooms.NativeStartQueueState(),transport.opcode,transport.packet_size,transport.send_sequence,startRequested?1u:0u);
+        context->Observe(message);nextStartObservation=context->elapsed_ms+1000;
     }
     if (!startRequested) {
+        startSendBaseline=actions.GameStartSendCount();startReplyBaseline=rooms.NativeStartReplySequence();
         errorBaseline=InterlockedCompareExchange(&nativeErrorSequence,0,0);
         Snapshot(snapshot); startSequence = snapshot.received_battle_start_count;
         endSequence = rooms.BattleEndState().sequence;
         if (!rooms.StartBattleNativeHost()) return SDGO_GAME_TEST_WAIT;
-        startRequested = true; context->Observe("called the original room-host Start business routine");
+        startRequested = true;lastStartAttempt=context->elapsed_ms;
+        context->Observe("queued the original room-host Start business; await native command progress and server reply");
+    }
+    // Native 00731240 also repeats AddState while 0x0C has not entered the
+    // active queue. A queue request during scene initialization can be lost;
+    // only retry the unchanged native business when no command progressed.
+    else if(actions.GameStartSendCount()==startSendBaseline && context->elapsed_ms-lastStartAttempt>=1000 && rooms.NativeStartQueueState()==0 &&
+            rooms.NativeStartPrerequisite()==0 && rooms.StartBattleNativeHost()) {
+        lastStartAttempt=context->elapsed_ms;
+        context->Observe("native start command has not progressed; retried its original queue business without a packet or state write");
     }
     const LONG rejection=InterlockedCompareExchange(&nativeLastError,0,0);
     if (InterlockedCompareExchange(&nativeErrorSequence,0,0)>errorBaseline && rejection>=0x0FAC && rejection<=0x0FC0) {
@@ -653,14 +674,14 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
     if (!allRendered && context->elapsed_ms < 30000) return SDGO_GAME_TEST_WAIT;
     context->Assert(scoreboardInput.Queries() > 0 && allRendered && roster.battle_start_sequence == activeBattleStartSequence &&
         roster.bot_count == expectedAi && roster.native_row_count == 1 + expectedAi,
-        "native TAB input opened the animated battle roster and its original K/D/points renderer drew every AI row");
+        "native TAB input opened the animated battle roster and its original kill/assist/points renderer drew every AI row");
     char tab[180]; sprintf_s(tab, "native TAB mode=%u rows=%u original=%u bots=%u visible=%u state=%u input_queries=%u",
         RequestedMode(),roster.native_row_count,roster.original_row_count,roster.bot_count,roster.panel_visible,roster.panel_state,scoreboardInput.Queries());
     context->Observe(tab);
     for (uint32_t i = 0; i < roster.bot_count && i < 12; ++i) {
         const auto& row = roster.bots[i];
         context->Assert(row.pilot_id == snapshot.bots[i].pilot_id && row.object_id == snapshot.bots[i].object_id &&
-            row.team == snapshot.bots[i].team && row.render_count && row.kills >= 0 && row.deaths >= 0,
+            row.team == snapshot.bots[i].team && row.render_count && row.kills >= 0 && row.assists >= 0,
             "the actual native TAB row retains this AI pilot, object, team and native combat counters");
     }
     context->Assert(authenticatedPilot && snapshot.profile_pilot_id == authenticatedPilot, "the battle uses the pilot captured after this run's accepted login");
@@ -719,10 +740,10 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
             }
             for (uint32_t i = 0; i < roster.bot_count && i < 12; ++i) {
                 const auto& row = roster.bots[i]; const auto& before = scoreboardLast.bots[i];
-                if (row.render_count && (row.kills != before.kills || row.deaths != before.deaths || row.points != before.points)) {
+                if (row.render_count && (row.kills != before.kills || row.assists != before.assists || row.points != before.points)) {
                     ++scoreboardCombatChanges;
-                    char stats[192]; sprintf_s(stats, "native TAB stats mode=%u AI=%08X team=%u row=%u kills=%d deaths=%d points=%d draws=%u",
-                        RequestedMode(),row.pilot_id,row.team,row.row_index,row.kills,row.deaths,row.points,row.render_count);
+                    char stats[192]; sprintf_s(stats, "native TAB stats mode=%u AI=%08X team=%u row=%u kills=%d assists=%d points=%d draws=%u",
+                        RequestedMode(),row.pilot_id,row.team,row.row_index,row.kills,row.assists,row.points,row.render_count);
                     context->Observe(stats);
                 }
             }
@@ -758,7 +779,7 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
         context->Assert(ended.reply_opcode == 0x0871, "the original client consumed the genuine server battle-end reply");
         context->Assert(1, "Lua observation stayed available with zero errors through the entire real battle");
         context->Assert(scoreboardCombatSequence == activeBattleStartSequence && scoreboardCombatChanges > 0,
-            "the native TAB K/D/points renderer reflected actual AI combat-counter changes during this full battle");
+            "the native TAB kill/assist/points renderer reflected actual AI combat-counter changes during this full battle");
         const auto combat=battleCombat.State();char evidence[256];
         sprintf_s(evidence,"native combat frames=%u targets=%u moved=%u hp_events=%u hp_total=%llu witness=%u:%d->%d",
             combat.validated_frame_count,combat.target_acquisition_events,combat.moved_identity_count,combat.hp_decrease_events,

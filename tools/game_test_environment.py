@@ -112,6 +112,7 @@ class Registry:
                   environment_id TEXT NOT NULL, descriptor TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS templates(
                   id TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL, created REAL NOT NULL);
+                CREATE INDEX IF NOT EXISTS owned_resources ON resources(environment_id);
             ''')
 
     def connection(self):
@@ -182,13 +183,13 @@ class Registry:
         return Lease(row['id'], row['token'], Path(row['root']), Path(row['parent']), row['ip'],
                      row['udp_first'], row['owner_pid'], row['owner_birth'], row['template'])
 
-    def validate(self, lease: Lease) -> dict:
+    def validate(self, lease: Lease, *, include_resources=True) -> dict:
         current = self.get(lease.id)
         if current != lease or lease.root.parent.resolve() != lease.parent.resolve() or lease.root.name != lease.id:
             raise RuntimeError('Environment ownership or cleanup path mismatch.')
         with self.connection() as cn:
             resources = [json.loads(r[0]) for r in cn.execute(
-                'SELECT descriptor FROM resources WHERE environment_id=? ORDER BY sequence', (lease.id,))]
+                'SELECT descriptor FROM resources WHERE environment_id=? ORDER BY sequence', (lease.id,))] if include_resources else []
             state = cn.execute('SELECT state FROM environments WHERE id=?', (lease.id,)).fetchone()[0]
         # A controller can die after deleting its tree but before closing the
         # lease. The registry still proves the exact path and resource owner.
@@ -229,7 +230,7 @@ class Registry:
         return self.get(identifier)
 
     def record(self, lease: Lease, resource: dict):
-        self.validate(lease)
+        self.validate(lease,include_resources=False)
         with self.connection() as cn:
             cn.execute('INSERT INTO resources(environment_id,descriptor) VALUES(?,?)',
                        (lease.id, json.dumps(resource)))
@@ -249,6 +250,17 @@ class Registry:
     def templates(self) -> list[dict]:
         with self.connection() as cn:
             return [dict(row) for row in cn.execute('SELECT * FROM templates ORDER BY created DESC')]
+
+    def forget_closed(self,lease: Lease):
+        if lease.root.exists():raise RuntimeError('Cannot forget an environment with remaining runtime files.')
+        with self.connection() as cn:
+            cn.execute('BEGIN IMMEDIATE')
+            row=cn.execute('SELECT state,token FROM environments WHERE id=?',(lease.id,)).fetchone()
+            if row is None:return
+            if row['state']!='closed' or row['token']!=lease.token:
+                raise RuntimeError('Only the exact closed environment can be forgotten.')
+            cn.execute('DELETE FROM resources WHERE environment_id=?',(lease.id,))
+            cn.execute('DELETE FROM environments WHERE id=?',(lease.id,))
 
 
 class ManagedEnvironment:
@@ -342,6 +354,7 @@ def purge_success_evidence(registry: Registry,identifier: str,archive: Path) -> 
         marker.get('result_status') not in ('pass','template_ready') or cleanup.get('status')!='clean'):
         raise RuntimeError('Only verified successful, clean evidence may be discarded.')
     shutil.rmtree(archive)
+    registry.forget_closed(lease)
 
 
 def main(argv=None):
