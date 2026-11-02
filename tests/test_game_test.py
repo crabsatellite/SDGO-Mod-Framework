@@ -100,6 +100,34 @@ class FakeQuietRuntime:
 
 
 class GameTestRunnerTests(unittest.TestCase):
+    def test_retained_addon_uses_its_matching_fragment_and_skips_disabled_diagnostic(self):
+        base=self.root/'symbols.ini';staged=self.root/'staged.ini'
+        text='[host]\nimage=GOnline.exe\ntimestamp=0x54BE1568\nsize_of_image=0x00C97000\n'
+        base.write_text(text);staged.write_text(text)
+        addon=self.root/'addon';addon.mkdir()
+        manifest=addon/'mod.ini';manifest.write_text('[mod]\nid=addon\nenabled=1\nrequires=addon.call\n')
+        fragment=addon/'symbols.fragment.ini';fragment.write_text(text+'[addon.call]\nkind=code\nrva=0x1234\nexpect=55 8B EC 90 90\n')
+        diagnostic=self.root/'diagnostic.ini';diagnostic.write_text('[mod]\nenabled=0\nrequires=missing.disabled\n')
+        game_test.merge_retained_addon_symbols(staged,base,[manifest,diagnostic])
+        self.assertIn('addon.call',game_test.read_ini(base))
+        base.write_text(text);fragment.write_text(text.replace('0x54BE1568','0x11111111')+'[addon.call]\nkind=data\nrva=0\n')
+        with self.assertRaisesRegex(game_test.GameTestError,'different host'):
+            game_test.merge_retained_addon_symbols(staged,base,[manifest])
+
+    def test_friends_scope_is_bound_to_native_session_and_exclusive(self):
+        run_dir=self.prepare('friends-only',friends_only=True)
+        meta=self.metadata(run_dir)
+        expected=game_test.FLOW_CASES[:3]+('friends.session',)
+        self.assertEqual(meta['suite'],'native-friends')
+        self.assertEqual(game_test.required_flow_cases('1',friends_only=True),expected)
+        self.assertEqual(game_test.read_ini(run_dir/'client/sdgo/gametest/run.ini')['run']['required_cases'],','.join(expected))
+        self.assertEqual(game_test.validate_metadata(run_dir)['plan'],meta['plan'])
+        meta['plan']['friends_only']=False
+        (run_dir/'run.json').write_text(json.dumps(meta),encoding='utf-8')
+        with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run_dir)
+        with self.assertRaises(game_test.GameTestError):
+            game_test.required_flow_cases('1',bootstrap_only=True,friends_only=True)
+
     def test_real_manifest_merges_the_optional_production_observer_profile_alias(self):
         # An older normal installation may have only flow.profile_pointer.
         # match_ai binds game.profile_pointer optionally, but the real test

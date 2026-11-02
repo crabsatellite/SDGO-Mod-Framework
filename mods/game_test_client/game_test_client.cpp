@@ -17,6 +17,7 @@
 #include "tutorial_actions.h"
 #include "onboarding_actions.h"
 #include "onboarding_gate.h"
+#include "friend_session.h"
 #include "sdgo/pvp_ai_client_observer.h"
 #include <cwchar>
 
@@ -49,6 +50,8 @@ GiftActions gifts;
 RoomActions rooms;
 TutorialActions tutorial;
 OnboardingActions onboarding;
+friends::FriendActions friendActions;
+friends::FriendSession friendSession;
 SdgoPvpAiClientGetSnapshotV1Fn getSnapshot;
 SdgoPvpAiClientGetLuaStatusV1Fn getLuaStatus;
 char accountName[32] = {}, accountPassword[128] = {}, roomTitle[21] = {};
@@ -65,7 +68,7 @@ QuietSockets quietSockets;
 QuietAudio quietAudio;
 QuietGraphics quietGraphics;
 void PublishQuietSocketReceipt(bool force=false);
-bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false, pagesOnly = false;
+bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false, pagesOnly = false, friendsOnly = false;
 uint64_t deckUnitUids[4]{};
 char giftRecipient[17]{};
 uint32_t giftSenderPilot = 0, giftRecipientPilot = 0, giftCount = 0, giftSent = 0;
@@ -105,7 +108,8 @@ bool LoadPlan() {
     giftRequestsOnly = GetPrivateProfileIntW(L"run", L"gift_requests_only", 0, job.c_str()) != 0;
     deckOnly = GetPrivateProfileIntW(L"run", L"deck_only", 0, job.c_str()) != 0;
     pagesOnly = GetPrivateProfileIntW(L"run", L"pages_only", 0, job.c_str()) != 0;
-    if (static_cast<unsigned>(bootstrapOnly) + battleshipOnly + giftRequestsOnly + deckOnly + pagesOnly > 1) return false;
+    friendsOnly = GetPrivateProfileIntW(L"run", L"friends_only", 0, job.c_str()) != 0;
+    if (static_cast<unsigned>(bootstrapOnly) + battleshipOnly + giftRequestsOnly + deckOnly + pagesOnly + friendsOnly > 1) return false;
     wchar_t relative[512] = {}, nonce[16] = {}, user[32] = {}, password[128] = {};
     GetPrivateProfileStringW(L"run", L"account_path", L"private/account.ini", relative, 512, job.c_str());
     std::wstring accountPath = relative;
@@ -988,6 +992,11 @@ std::vector<std::string> caseNames;
 std::vector<SdgoGameTestCaseV1> plannedCases;
 void RegisterPlannedCases() {
     if (bootstrapOnly) { provider.count = 3; return; }
+    if (friendsOnly) {
+        plannedCases.assign(realCases,realCases+3);
+        plannedCases.push_back({"friends.session",3600000,[](const SdgoGameTestContextV1* context)->int{return friendSession.Poll(context);}});
+        provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+    }
     if (pagesOnly) {
         plannedCases.assign(realCases,realCases+3);
         plannedCases.insert(plannedCases.end(),std::begin(pageCases),std::end(pageCases));
@@ -1192,6 +1201,10 @@ SDGO_MOD_ENTRY {
         !rooms.Bind(api, mod, &actions, config) ||
         !tutorial.Bind(api, mod, &actions) || !onboarding.Bind(api, mod, &actions))
         sdgo_test::Fail("normal-flow native request bindings or private account configuration are unavailable");
+    if (friendsOnly) {
+        if (!friendActions.Bind(api,mod,&actions))sdgo_test::Fail("native friend operation bindings are unavailable");
+        friendSession.Bind(&friendActions);
+    }
     roomListVtable=api->Symbol(mod,"flow.native_room_list_vtable");
     modalLoadingVtable=api->Symbol(mod,"flow.native_modal_loading_vtable");
     if (!modalLoadingVtable)sdgo_test::Fail("native modal-loading page identity is unavailable");
