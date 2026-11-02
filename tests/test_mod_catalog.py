@@ -154,6 +154,11 @@ class CatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "channel"):
             catalog.read_catalog(self.root)
 
+    def test_stable_readme_cannot_keep_a_beta_label(self):
+        self.replace("README.md", "| FPS cap <!--", "| FPS cap (Beta) <!--")
+        with self.assertRaisesRegex(ValueError, "Stale README release channel"):
+            catalog.read_catalog(self.root)
+
     def test_network_tools_share_a_complete_feature(self):
         c = catalog.read_catalog(self.root)
         self.assertEqual(set(c["features"]["frp-distribution"]["mods"]), {"net_route", "agent_udp_pool"})
