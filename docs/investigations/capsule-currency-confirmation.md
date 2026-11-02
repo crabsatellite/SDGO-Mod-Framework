@@ -27,15 +27,8 @@ then resolves Grid 145093 with verified native `grid.data`/`grid.find` APIs for 
 in both client-memory records changed from 0 to 2. No global API is hooked, disk
 resource replaced, wallet value assigned, or server charging path changed.
 
-Automatic evidence: actual DLL detour execution with the deployed decoded 94 rows
+Automated tests execute the DLL detour with a decoded 94-row sample
 and mocked native lookup/list objects, byte-difference checks, idempotency, foreign
 lookup rejection and unexpected-price rejection. This does not execute the game's
-confirmation controls; visual acceptance and any real purchase remain manual.
-
-Local installation readback (2026-11-01): the stopped primary client received the
-1.0.1 script-free package through Manager's standard import API. The Fix archive
-reports enabled/registered/version 1.0.1. All installed Mod file hashes match the
-package, all 192 existing symbol sections retain their values, and only
-`capsule.activity.load_items` was added. Framework, global settings, shared capsule
-runtime/overlay/table and the localization DLL retained their pre-import hashes.
-No new client session or visual result is claimed by this installation receipt.
+confirmation controls. Check the displayed currency in both the list and purchase
+confirmation when testing in the client.

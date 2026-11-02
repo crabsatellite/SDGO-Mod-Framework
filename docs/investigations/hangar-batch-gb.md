@@ -1,7 +1,7 @@
 # GB batch exchange and account-specific login overflow (0.4.0)
 
 0.3.0 still requested fresh details and waited for each native dismantle reply.
-The user confirmed server sorting worked but reported slow GB preview/execution.
+Per-unit round trips make GB previews and batch execution slow for large selections.
 0.4.0 previews from the native summary, retaining identity, type, slot, protection
 and KeepCopies rules. Two confirmations precede any network submission. A small
 bounded set of native requests transfers eight selected records per fragment;
@@ -25,17 +25,12 @@ checks complete rollback of inventory, recovery logging and GB. Native producer
 replay checks the full 345-byte messages against the shipped client constructor.
 No real inventory is exchanged by these tests.
 
-During this work an account-specific login crash was separately diagnosed.
-Two native exception records ended at 006159AF through 00615D98 / 00617D02.
-The supported image at 006178DE reads the expanded slot count and adds 0x18,
-then calls CreateGroup. InsertOrUpdateSlot does not bound the returned slot.
-The affected inventory had 951 distinct valid slots, while its profile registered
-906 expanded slots, allocating only 930 in total. The last 21 records therefore
-exceeded the native group list. Unit IDs/slots were unique, definitions existed,
-and active/assist/deck references were valid. After a private local backup, only
-the expansion metadata was raised to 930 (954 total), and every unit column,
-other profile column and GB value was read back unchanged. No account name or
-private snapshot is published in this report.
+## Native slot capacity
+
+The supported image at `006178DE` reads the expanded slot count and adds `0x18`
+before calling `CreateGroup`. `InsertOrUpdateSlot` does not bound the returned
+slot, so imported inventories that exceed the allocated capacity can crash at login.
+Capacity must cover every stored slot even when unit IDs and references are valid.
 
 The server sort procedure now keeps capacity sufficient for its dense result,
 using the minimum native six-slot blocks and preserving higher existing capacity.

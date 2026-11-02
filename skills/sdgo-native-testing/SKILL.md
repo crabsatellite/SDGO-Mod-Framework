@@ -1,83 +1,71 @@
 ---
 name: sdgo-native-testing
-description: Run and diagnose original SDGO native GameTest using isolated loopback environments, shared five-account database templates, real client/server flows and verified cleanup. Use for SDGO Mods and native test-framework work, not Minecraft GameTest or ordinary gameplay.
+description: Fix and verify original SDGO Mods in the shared local test copy, using its existing accounts and isolated native database without Docker; copy test only for concurrent conflicts, then finish authorized delivery and cleanup. Not for Minecraft GameTest or ordinary gameplay.
 ---
 
 # SDGO 原生测试 guide
 
-目标是使用当前测试框架验证用户指定的功能。默认只做测试、收集证据和清理；测试本身不扩大功能开发或生产数据修改范围。先读当前源码 worktree 的 `AGENTS.md`。常见仓库根为 `E:\Dev\sd-re\SDGO-d3d9-proxy`，并行开发 worktree 位于 `E:\Dev\sd-re-worktrees`；在实际含有本 skill 对应工具版本的 worktree 内运行命令。
+先读当前源码工作区的 `AGENTS.md`。目标是完成指定修复和相关完整原生 GameTest，继续已授权的部署与 Git 交付。测试不是扩建基础设施的任务。
 
-## 框架里有什么
+## 统一的本地 test
 
-| 组件 | 职责 |
+- 默认复用 `E:\Dev\sd-re\test`。它由生产客户端和服务端复制而来，含本地客户端、原生服务程序、**独立的原生 SQL 实例和数据文件**、已有账号及机体。生产端只作为复制来源；不得把测试客户端、服务端或维护脚本连接到生产数据库。仅改测试目录名不算数据库隔离。
+- **不用 Docker**，不创建 SQL 容器、卷或容器传输通道。旧 Docker 路径只用于回收已有遗留资源，不作为新测试入口。不要为每次重试还原 11 库、创建专用测试服务器或重做公共资产。
+- 同一任务一直复用自己的测试客户端和后端，改 DLL、重启或换测试用例都不需要重新复制全套。先核实 test 的本地状态和实际 SQL 文件路径，再开始测试；尚未就绪时定位具体问题，不能回退到生产测试。
+- 串行任务可复用统一 test。确需并发或测试状态相互冲突时，复制 test 文件夹（或所需客户端/服务端），给副本配置独立回环地址、端口、SQL 实例及数据目录，再运行。副本不得共享生产或基础 test 的可写数据库文件；账号使用副本里已有身份，不注册新账号。
+- 本机其他 agent 的客户端、服务和账号正在使用时，不覆盖其候选 DLL、不抢同一账号、不停止其进程。并发副本标明任务归属，测试完停止所属进程并删除**整个任务测试客户端、服务端和数据库副本**。保留统一 test 与仍在使用的文件。
+- 继承已有代码、修复和有效测试结果；只补缺失或被新改动影响的验收，不因迁移测试环境而把所有检查重做。
+
+## 仓库和本地文件的边界
+
+Mod 源码库保存框架、Mod、测试代码、fixture 声明、配置范本和指南。完整客户端、服务端、原始模型/归档、SQL 程序/备份/数据、真实账号资料和凭据都只保存在本地，并受 Git ignore 保护；不能上传到 Mod 仓库、报告附件或测试包。
+
+测试副本与正式运行文件发布是两个用途。后者沿用已授权的客户端/服务端专用仓库与现有发布流程，不能将临时 test 树当作发布来源。
+
+## 现有框架
+
+| 组件 | 用途 |
 | --- | --- |
-| `tools/game_test.py` | 准备正常客户端副本、封存运行输入和哈希、启动、校验回执、生成 JSON/JUnit 报告 |
-| `mods/game_test_client` | 真实客户端主线程上的登录、页面、机体选择、建房、战斗、任务等请求和回包断言 |
-| `mods/game_test_server` | 真实 BattleServer 内的被动观察，按运行 ID、房间 nonce、真实玩家和战斗事件关联 |
-| `tools/game_test_native_environment.py` | 从已有模板复制私有原生后端、SQL 数据库和账号配置，运行测试并清理 |
-| `tools/game_test_environment.py` | SQLite 跨进程租约、独立回环 IP/UDP 池、资源归属日志、失败证据暂存、成功记录删除、遗留回收 |
-| `tools/game_test_sql_bridge.py` | 旧版私有 SQL 容器的透明字节传输，供兼容诊断；普通环境使用 Docker 原生回环端口映射，不逐连接启动代理进程 |
-| `tools/game_test_fixtures.py` | 仅供初次制作公共模板时初始化并核验五账号及机体；普通测试不调用创建流程 |
-| `tools/game_test_backend.py` | 既有显式后端准备/服务运行工具；保留其原生频道、后台与来源校验，日常并发测试优先走带租约的 `environment run` |
-| `tools/game_test_fps.py`、`mods/game_test_client/fps_test_actions.h` | 不需要账号的原生 FPS 矩阵；绑定实际帧时间、稳定窗口、输入参数和后台证据，不为性能测试注册账号 |
+| `tools/game_test.py prepare/run/report` | 准备或复用客户端，绑定现有账号、封存候选输入，后台运行并校验 JSON/JUnit 和原生事件 |
+| `mods/game_test_client` | 原生登录、机库、房间、战斗与指定场景观察和断言 |
+| `mods/game_test_server`、`tools/game_test_server_report.py` | 观察真实服务端战斗、结算和返回流程 |
+| `tools/game_test_fps.py` | 不登录的 FPS 参数矩阵；战斗速度须另用相关战斗检查 |
+| `tools/game_test_environment.py` | 已有环境归属与回收记录；`environment list/recover` 可检查和回收旧遗留环境 |
+| `tools/game_test_fixtures.py` | 已有五账号和公共机体数据的声明/核验；普通测试不调用账号创建函数 |
 
-模板是本地私有、带文件 SHA-256 清单的只读输入，含原生服务程序、11 个完整 SQL 快照、共享资源和五个已初始化账号。数据库、账号配置和游戏原始文件不进入 Mod 源码 Git。查询 `environment templates` 获取现有模板路径，不能从历史记录猜服务地址或密码。
-
-每次 `environment run` 初始创建：唯一租约和临时目录、独立 `127/8` 地址和 UDP 池、带归属标签、仅发布 `127.0.0.1` 端口的 SQL 容器及卷、还原的 11 库、重定位后的原生服务副本、私有账号配置副本、正常客户端测试副本以及运行 ID/哈希/回执目录。它绑定模板中的已有账号，**不会注册账号、抽机体或写真实玩家数据库**。副本中的账号 UID 与模板相同，账号锁文件归本环境所有，不会锁住另一个环境。
+`environment run/template/upgrade` 的旧实现会创建 Docker SQL，已停用新建。不要把旧模板命令写成当前原生 test 已实现的启动方式。统一 test 的真实启动方式和端点以本地配置为准，不从历史对话猜密码、端口或就绪状态。
 
 ## 普通测试
 
-1. 检查本 worktree Git 状态和构建配置，保留他人的修改及运行环境。Windows 用 PowerShell、x86 MSVC；Python 最低 3.10，原生后端需 Docker Desktop 和 `pyodbc`。沿用已缓存的固定 SQL 镜像，不为排错启动全局 LiteSQL 或弹 UAC。
-2. 构建目标 Mod、`game_test_client`，涉及服务端观察时也构建 `game_test_server`。构建会自动写入 `build/stage/Release`，没有名为 `stage` 的构建目标。
-3. 发现模板、查看并恢复**已无活跃拥有者**的遗留环境：
+1. 在对应源码 worktree 检查 Git 状态，构建候选 Mod 和 `game_test_client`；需要服务端观察时构建 `game_test_server`。Windows 使用 x86 MSVC，Python 3.10+。构建产物在 `build/stage/Release`，没有名为 `stage` 的构建目标。
+2. 选择已有本地 test，读取实际账号绑定与已有机体 UID。账号/机体不足时才按[公共测试数据维护](references/template-data.md)补必要数据，只操作测试数据库。日常测试不注册账号、不重新获得机体、不重走新手资产创建。
+3. 使用 `prepare`，将目标地址和私有账号配置明确指向 test。已有停止的本任务客户端用 `--reuse-client`；候选 DLL 用 `--include-mod` 在封存前安装。例如：
 
    ```powershell
-   python tools/game_test.py environment templates
-   python tools/game_test.py environment list
-   python tools/game_test.py environment recover
+   python tools/game_test.py prepare --client-template <local-test-client> --stage build/stage/Release --run-dir build/game-test-runs/<task> --target-host <test-loopback-ip> --login-port <test-login-port> --account-profile <private-existing-test-account.ini> --include-mod <mod_id>
+   python tools/game_test.py run --run-dir build/game-test-runs/<task> --timeout 600
    ```
 
-   模板缺失时定位或恢复公共模板。不要改用 `--create-test-account`、全局账号配置或其他 agent 的服务来绕过。
-4. 从已有模板运行。`--template` 可省略，默认用最新登记模板；明确指定便于复现。按需要选择一次 bootstrap 或完整测试：
+   需要服务端观察时，在本任务 test 后端使用匹配的观察组件和本次运行 ID，核实原生启动 XML 与 `tbl_ChannelInfo` 共同启用的 Battle 端口。不要因目录存在而启动全部频道，也不要放宽原生数据校验。
+4. 读取并核验本次真实登录、房间、原生事件、JSON/JUnit 与服务端报告。完整战斗保留结算和返回流程；编译、模拟/回放、登录 smoke 或 bootstrap 不能代替相关完整 GameTest。阿普萨拉斯需实测首次 R、变形释放、移动/攻击和再次变回。
+5. 成功验证及必要部署读回后，删除这次测试记录、日志、截图、回执和临时研究文件；失败诊断暂留到问题解决后删除。保留测试源码、公共账号资产、配置和统一 test。并发任务结束后额外删除整个所属副本，读回其进程已停止、临时文件已清除。不要清除他人运行中的环境。
 
-   ```powershell
-   python tools/game_test.py environment run --template <existing-template> --account 3 --bootstrap-only
-   python tools/game_test.py environment run --template <existing-template> --account 3 --include-mod <mod_id>
-   ```
+测试隐藏、静音并隔离输入，核实实际 sockets 和服务监听为回环。网络错误按精确步骤排查；建防火墙规则的 `0x80070005` 不能推断全部本地测试不可用。原生 INI 保留 `DBServerName`、`DBName` 等键的大小写；`manager.storage.ini_values` 仅用于查询，重写使用 `game_test.read_ini`。
 
-   `--include-mod` 把已构建候选 Mod 及资源放进副本，合并所需符号，并在启动前冻结哈希。不要运行后替换 DLL、改数据库或修改被封存的输入。普通对战保留完整结算和返回流程，超时默认 600 秒。
-5. 运行器先读取并核验 JSON/JUnit、原生事件和清理结果，再返回成功摘要；成功后删除该次测试记录，不保留研究日志。失败时阅读返回的 `evidence` 中 `result.json`、`client-run/receipts/report.json`、原生 `events.jsonl` 和 `cleanup.json`。结果必须绑定本次源代码、二进制/资源、账号、真实登录和房间；缺失、超时或原生异常按失败报告。编译、模拟/回放或 bootstrap 通过不能代替完整战斗。
-6. 结束后再次 `environment list`，本次环境必须为 `closed`，`cleanup.json` 为 `clean`，临时目录/私有容器/卷及拥有的进程已清除。保留公共模板、账号和源码。成功验收并完成必要部署读回后，删除这项任务的成功测试记录、日志、截图、回执及临时研究文件；失败记录只留到问题解决，随后一并删除。出现 `agent-action.json` 或 `cleanup_required` 时由 agent 执行回收并读回结果；最终答复写清仍未清理的环境 ID，不能把清理留给用户而不说明。
+## 开发完成后的交付顺序
 
-多个进程可以同时运行上述命令；每次都新建环境，不把别人的活跃后端当共享测试服务，不按进程名批量结束进程。恢复依据 PID 加创建时间、租约和 Docker 标签，不能凭目录年龄删除资源。中断后重新执行 `recover`，活跃拥有者会被跳过。
+在已授权的功能开发或修复任务中，按以下顺序完成交付：
 
-## 现有五个账号
+1. 完成代码和相关 GameTest。若框架或环境导致失败，修复相应问题并取得有效测试结果。
+2. 将配套运行文件部署到实际客户端和 Manager 框架副本，保留登录、画面等个人设置，核对安装版本及文件。涉及服务端时同步检查对应组件。
+3. 按仓库的完整运行文件发布流程提交、推送客户端 `main`，再通过实际更新器核对安装提交与配置。
+4. 更新现有 `README.md`、`README.zh-CN.md` 的功能索引，以及该功能已有的中英文独立文档。内容应与刚部署的行为一致，说明用途、操作、默认值、范围、生效方式、兼容性和排错方法。
+5. 将源码、测试及上述文档合入最新 `master` 并推送，保留并行提交。文档更新是交付步骤的一部分。
 
-| 槽位 | 用途 | 默认机体 |
-| --- | --- | --- |
-| 1 | 阿普萨拉斯 III 异常初始形态回归 | 24788 |
-| 2 | 阿普萨拉斯 III 正常形态对照 | 24787 |
-| 3 | 通用战斗 | 10003 |
-| 4 | 远程战斗 | 22042 |
-| 5 | 第二参与者/其他场景 | 22097 |
+公开仓库的文档面向玩家、服主或外部开发者。使用可独立理解的说明，避免任务对话、单机部署记录、临时路径、运行 ID、逐次测试计数、内部完成状态和待办式措辞。开发文档可以说明接口、实现与可复现的测试命令，但应写成通用参考。
 
-每个账号预装 `10003,22040,22042,22097,24402,24787,24788`，完整模板还包含原生新手战舰、按原生容量限制的合法编组和默认出击和已选择的可用操作员。实际身份、UID 和归属读模板 `accounts` 和本次 `fixture-binding.json`，不要硬编码真实玩家 UID。24788 是明确声明的异常形态测试资产，不是正常购买形态。
+不新增独立的测试总结、部署报告或日期式验证记录来替代 README 和功能文档。GameTest 自动生成的 JSON、JUnit 和日志留在本地被 Git 忽略的测试输出目录，用于排错；不将它们复制成公开功能文档或最终交付入口。
 
-阿普萨拉斯完整回归：
+结束前清理所属临时环境，保留可复用模板、测试代码和必要的本地日志。最终回复简要说明功能、部署和提交结果。
 
-```powershell
-python tools/game_test.py environment run --template <existing-template> --account 1 --include-mod transform_input_fix --apsalus-roundtrip
-python tools/game_test.py environment run --template <existing-template> --account 2 --include-mod transform_input_fix --apsalus-roundtrip
-```
-
-该开关在副本 observer 的 `mod.ini` 中封存，调用原始变形准入业务并观察两次实际形态提交/退出，随后完成正常战斗；不要靠进程环境变量偷偷注入未封存场景。没有加候选修复的 before 测试可以失败；如模板已安装该修复，必须明确从 before 副本禁用并重新封存，不能把已修复的模板叫作 before。
-
-## 排错和扩展
-
-- 先读 `progress.json`、native 日志和精确失败步骤。核实本次独立 IP、登录端口、账号绑定、服务 readiness，再诊断网络。`0x80070005` 建防火墙规则失败只说明那条远程路径权限不足，不能推断回环、Docker 或全部测试不可用。
-- Battle 启动集合必须同时满足原生 `ServerStartUp.xml` 的 Run 配置和数据库 `tbl_ChannelInfo.AddrPT`；不得因目录存在而启动未登记 Battle 频道，也不得放宽原生行数校验。
-- 原生服务器 INI 保留 `DBServerName`、`DBName` 等键的原始大小写。`manager.storage.ini_values` 是折叠大小写的查询视图，不能用于重写这些文件；使用保留键名的 `game_test.read_ini`。`08001` 也可能是配置被读成空地址，先查原生 `LogData`，不要直接归因防火墙。
-- 模板复制时按 manifest 的 `source_root` 字面路径重定位，同时处理实际访问路径；Windows 打包应用的 LocalAppData 别名可能与磁盘访问路径拼写不同。运行副本里的可写 Mod 数据目录必须归本环境，不得残留对另一模板或其他环境的路径。
-- 测试隐藏、静音并隔离输入；真实客户端 sockets 和服务端监听要读回为回环。不得操作用户桌面或以交互客户端代替失败的后台测试。
-- 现有模板和现有账号优先。**只有已确认场景缺少必要公共数据时**，才读 [公共模板数据维护](references/template-data.md)。普通 bug 验证不能顺手注册新账号、补库存或开发功能。
-- 修复后的交付沿用仓库 `AGENTS.md` 和用户当前授权。本项目已授权通过相关完整 GameTest 后常规合入/push 和本地部署；完整运行时发布和实际读回是独立证据，不从测试通过推断已部署。
+测试框架迁移不取消上述已授权交付。公开文档不添加本机端点、临时报告或账号数据。结束时简要说明真实验收、部署/提交和清理状态；未通过的机体问题继续推进，不能因框架已提交就宣布修复完成。
