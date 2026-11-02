@@ -179,6 +179,7 @@ AI 断言通过本身不代表画面适合剪辑。
 英文通过实际 Win32 EDIT 的 `WM_CHAR` 输入，长中文通过 `EM_REPLACESEL` 输入，并读回游戏自己的编辑框文本。
 若原生好友聊天窗口延迟初始化并清空共用输入框，测试记录该原生调用，取消重开房名窗口后重新执行全部断言，最多重开两次。
 测试观察器不修改输入上限；系统输入法候选窗和剪贴板不在此场景范围内。
+内联改名框没有确认按钮。测试向其已核对的原生输入查询提供一次 Enter 或 Esc，随后仍由原生窗口处理、构包并等待真实服务器确认；其他窗口和按键查询不变。
 完整隔离运行可使用 `environment run --account 3 --room-titles-only --include-mod room_titles
 --include-server-mod room_titles_agent --include-server-mod room_titles_server --timeout 1200`。
 模板提供已初始化账号及已有机体，场景通过原生换机流程选择该账号已有的默认机体。
