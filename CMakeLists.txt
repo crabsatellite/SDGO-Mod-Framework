@@ -850,10 +850,10 @@ if(BUILD_TESTING)
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/net_route_observer_test.ps1"
             -Config $<CONFIG>)
         set_tests_properties(net_route_observer_runtime PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
-        add_test(NAME fps_limit_runtime COMMAND "${SDGO_POWERSHELL}"
-            -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/fps_limit_test.ps1"
-            -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
-        set_tests_properties(fps_limit_runtime PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+        add_test(NAME fps_limit_runtime COMMAND "${Python3_EXECUTABLE}" -X utf8
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fps_limit_test.py"
+            --config "$<CONFIG>" --build-dir "${CMAKE_BINARY_DIR}")
+        set_tests_properties(fps_limit_runtime PROPERTIES TIMEOUT 240 RUN_SERIAL TRUE)
         add_test(NAME daily_rewards_runtime COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/daily_rewards_runtime_test.ps1"
             -Config "$<CONFIG>")

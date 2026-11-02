@@ -134,3 +134,31 @@ python -B -m unittest discover -s tests -p "test_battle_reward_http.py" -v
 
 计算使用精确有理数；连有效时长的 1/3 也不先转浮点数，避免本应是整数的奖励少发一币。
 交互预览使用统一 Manager 的战斗奖励面板。
+
+## GB 补偿计划
+
+`tools/recover_battle_reward_gb.py` 读取本地私有 JSON 对象，字段如下：
+
+| 字段 | 含义 |
+| --- | --- |
+| `schema_version`、`method` | 分别为 `1` 和 `healthy_average_gb` |
+| `expected_scope` | 所选钱包 `SdgoBattleRewardWalletMeta` 中的小写 `ScopeId` |
+| `expected_data_root` | 包含所选 StoreBilling 库全部数据文件的绝对目录 |
+| `samples` | 正常样本，含 `source`、`event_multiplier`、`match_id`、`plan_hash` |
+| `sources` | 受影响入账，含 `source`、`event_multiplier` |
+| `entries` | `owner.rewards.gb_recovery.build_entries(samples, sources)` 的计算结果 |
+
+每个 `source` 必须且只能包含 `account`、`gb`、`after`、`local_time`、`table`：分别是账号编号、
+原生入账 GB、入账后余额、数据库本地 ISO 时间（毫秒）及原生 GB 日志表名。只接受战斗入账
+（`f_from=2`、`f_etc=1`）。正常样本还须按本局、账号、策略摘要匹配已成功的 `SdgoBattleRewardMbReceipt`。
+选样本前应独立核对该回执的时间、奖励策略和原生 GB 入账。活动倍率填结算当时规则确认的 `1` 或 `2`，
+不能仅凭到账金额猜测。账号记录、证明材料和补偿计划不得提交到版本库。
+
+命令会重算 `entries`，拒绝手改金额、重复证据、错误钱包范围或不能唯一匹配的原始入账。
+原 LiteSQL 的相对 Data 路径使用该实例经核实的数据目录解析。成功执行后写入 `SdgoBattleRewardGbRecovery`
+收据，并通过原生原因码 `31603` 补差，不修改原生钱包过程。收据的来源键只标识原始入账，不随补偿金额改变。
+
+计算检查命令为 `python -B -m unittest discover -s tests -p test_reward_gb_recovery.py -v`。
+在已有隔离测试库中，可运行
+`tests/run_reward_gb_recovery_sql.py --test-root <带测试标记的副本> --server-ini <测试配置> --account <已有且空闲的测试账号>`，
+验证原生入账、重复执行和失败回滚。该检查始终回滚测试事务，并确认余额和原生日志条数恢复。
