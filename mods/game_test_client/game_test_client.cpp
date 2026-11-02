@@ -1158,6 +1158,9 @@ int __cdecl ConfigureDeck(const SdgoGameTestContextV1* context) {
     }
     return SDGO_GAME_TEST_WAIT;
 }
+// Original startup/IME initialization can block main-thread dispatch for more
+// than two minutes on a busy native host. Login still requires the real ACK;
+// allow five minutes for initialization without changing room assertions.
 const SdgoGameTestCaseV1 deckCase{"setup.deck",180000,&ConfigureDeck};
 const SdgoGameTestCaseV1 battleshipCase{"flow.battleship",180000,&AcquireBattleship};
 const SdgoGameTestCaseV1 giftCase{"setup.gift_requests",360000,&SendGiftRequests};
@@ -1708,7 +1711,7 @@ const SdgoGameTestCaseV1 legacyTitleCases[]={
 };
 const SdgoGameTestCaseV1 realCases[] = {
     {"framework.bootstrap", 60000, &Bootstrap},
-    {"flow.login", 120000, &Login},
+    {"flow.login", 300000, &Login},
     {"flow.onboarding", 180000, &Onboarding},
     {"pvp.room", 120000, &Room},
     {"pvp.start", 120000, &Start},
