@@ -80,6 +80,12 @@ public:
             for(unsigned i=0;i<21;++i)if(Read<uint32_t>(list+0x3F8+4*i))++state_.visible_count;
             state_.phase=2;
             if(list[0x472] || list[0x473])return Waiting;
+            // 005D2280 changes the selected rank immediately, then queues
+            // command 9 through 005CAEF0. The vectors behind the old page are
+            // not replaced until that queue completes. Submitting SearchBtn
+            // meanwhile queues a search against the unfinished vectors and
+            // the native 005D1EE0 renderer can dereference a null entry.
+            if(Read<uint32_t>(list+0x300))return Waiting;
             // The native open queue slides the root from offscreen and then
             // builds its first page. Searching earlier is reset by that queue.
             if(!searched_ && (Read<uint32_t>(root+0x148)!=Read<uint32_t>(list+0x2F0) || !state_.visible_count))
