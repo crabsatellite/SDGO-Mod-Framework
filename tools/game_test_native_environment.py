@@ -21,7 +21,7 @@ import xml.etree.ElementTree as ET
 from tools import game_test as gt
 from tools.game_test_environment import Registry, ManagedEnvironment, atomic_json, process_identity, no_reparse_tree, ROOT
 from tools.game_test_sql_bridge import SqlBridge
-from tools.game_test_fixtures import build_accounts, verify_accounts, initialize_battleships
+from tools.game_test_fixtures import build_accounts, verify_accounts, initialize_battleships, initialize_operators
 
 IMAGE = 'mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718'
 DATABASES = ('GameRank','GDClan','GDCommon','GDGameLogView','GDLogDB','GDLongTermGameLogDB',
@@ -506,6 +506,7 @@ def upgrade_template(source, destination, registry):
         driver.progress('initializing_existing_account_fleets',accounts=5,new_accounts=0)
         with driver.connect() as connection:
             initialize_battleships(connection,data['accounts'],output/'private/accounts',isolated_template=True)
+            initialize_operators(connection,data['accounts'],isolated_template=True)
             connection.commit()
         if original_accounts!=[(a['account_id'],a['primary_uid'],a['units']) for a in data['accounts']]:
             raise RuntimeError('Template revision changed an existing identity or owned unit UID.')
