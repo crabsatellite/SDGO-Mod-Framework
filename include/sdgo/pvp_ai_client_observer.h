@@ -127,3 +127,47 @@ struct SdgoPvpAiClientLuaStatusV1 {
 };
 static_assert(sizeof(SdgoPvpAiClientLuaStatusV1) == 20, "unexpected Lua status ABI");
 typedef int(__cdecl* SdgoPvpAiClientGetLuaStatusV1Fn)(SdgoPvpAiClientLuaStatusV1* status);
+
+// Separate read-only ABI: preserve the existing room snapshot layout.
+#define SDGO_PVP_AI_CLIENT_START_STATUS_EXPORT "SdgoPvpAiClientGetStartStatusV1"
+struct SdgoPvpAiClientStartStatusV1 {
+    uint32_t size;
+    uint32_t version;
+    uint32_t battle_start_sequence;
+    uint32_t native_ready_state;
+    uint32_t frozen_update_count;
+    uint32_t early_enabled_count;
+    uint32_t release_count;
+    uint32_t release_ready_state;
+    uint32_t bot_count;
+    uint32_t ai_enabled_count;
+    uint32_t player_control_enabled;
+};
+static_assert(sizeof(SdgoPvpAiClientStartStatusV1) == 44, "unexpected start status ABI");
+typedef int(__cdecl* SdgoPvpAiClientGetStartStatusV1Fn)(SdgoPvpAiClientStartStatusV1* status);
+
+#define SDGO_PVP_AI_CLIENT_SCOREBOARD_STATUS_EXPORT "SdgoPvpAiClientGetScoreboardStatusV1"
+struct SdgoPvpAiClientScoreboardRowV1 {
+    uint32_t pilot_id;
+    uint32_t object_id;
+    uint32_t team;
+    int32_t kills;
+    int32_t deaths;
+    int32_t points;
+    uint32_t render_count;
+    uint32_t row_index;
+};
+struct SdgoPvpAiClientScoreboardStatusV1 {
+    uint32_t size;
+    uint32_t version;
+    uint32_t battle_start_sequence;
+    uint32_t roster_sync_count;
+    uint32_t original_row_count;
+    uint32_t native_row_count;
+    uint32_t panel_visible;
+    uint32_t panel_state;
+    uint32_t bot_count;
+    SdgoPvpAiClientScoreboardRowV1 bots[12];
+};
+static_assert(sizeof(SdgoPvpAiClientScoreboardStatusV1) == 420, "unexpected scoreboard status ABI");
+typedef int(__cdecl* SdgoPvpAiClientGetScoreboardStatusV1Fn)(SdgoPvpAiClientScoreboardStatusV1* status);
