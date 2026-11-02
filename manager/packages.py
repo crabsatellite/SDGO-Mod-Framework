@@ -14,13 +14,8 @@ ALLOWED = {'.ini','.json','.bin','.dll','.spr','.txr','.png','.lua','.tsv'}
 def _running(executable):
     if __import__('os').name != 'nt': return False
     # Read-only process inventory. Never terminate a game to import a package.
-    import subprocess
-    from .windows import powershell_environment,powershell_executable
-    script = 'Get-CimInstance Win32_Process -Filter "Name=\'GOnline.exe\'" | Select-Object -ExpandProperty ExecutablePath | ConvertTo-Json -Compress'
-    result = subprocess.run([powershell_executable(),'-NoProfile','-NonInteractive','-Command',script],capture_output=True,text=True,encoding='utf-8',creationflags=subprocess.CREATE_NO_WINDOW,env=powershell_environment())
-    if result.returncode: raise ValueError('无法确认客户端是否已关闭')
-    values=json.loads(result.stdout) if result.stdout.strip() else []
-    if isinstance(values,str):values=[values]
+    from .windows import process_image_paths
+    values=process_image_paths('GOnline.exe')
     return any(Path(value).resolve()==executable.resolve() for value in values if value)
 
 
