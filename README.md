@@ -38,7 +38,7 @@ Beta and Experimental labels indicate release channels.
 | Battle contribution rewards (Beta) <!-- catalog: `battle_rewards` --> | GB/MB from wins, kills, damage, assists and Boss contribution | [Use](docs/battle-rewards.md) |
 | Collection capsule (Beta) <!-- catalog: `collection_capsule` --> | 100,000 GP activity machine that fills missing catalog units first | [Use](docs/collection-capsule.md) |
 | Per-round random loadouts (Beta) <!-- catalog: `room_random`, `room_random_client` --> | `!rand` in a room title draws each player's unit or deck from their own hangar every round | [Use](docs/room-random.md) |
-| Extended room titles (Beta) <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Room title extensions | [Use](docs/room-titles.md) |
+| Extended room titles (Beta) <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Mission and PvP room titles up to 128 characters, with commands anywhere in the title | [Use](docs/room-titles.md) |
 | Battle AI difficulty (Beta) <!-- catalog: `battle_ai`, `battle_ai_server` --> | Combat AI behavior | [Use](docs/battle-ai.md) |
 | Automatic hangar capacity (Beta) <!-- catalog: `hangar_capacity` --> | Ensure at least 1200 native slots at login | [Use](docs/hangar-capacity.md) |
 | Hangar manager (Beta) <!-- catalog: `hangar_manager` --> | Server sorting and GB batch exchange; 0.4.0 adds immediate GB preview and atomic server credit | [Use](docs/hangar-manager.md) |

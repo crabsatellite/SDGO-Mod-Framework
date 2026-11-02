@@ -58,8 +58,7 @@ the event type.
 The in-room full-title view does not depend on the button fitting 128
 characters. `TitleChangeBtn` is the entry; opening it creates the shared edit,
 and the init hook puts the full metadata title into that edit. Native anchors
-cover both PvP and mission/mode 10. A live non-host click remains manual
-acceptance because this investigation did not run the client.
+cover both PvP and mission/mode 10.
 
 `0x00A46380` compares an incoming title with the owned cache at
 `self+0x110`. For a changed title it updates that cache before dispatching the
@@ -87,27 +86,16 @@ ordinary title bar and PvP rows, but no claim is made that a fixed-width button
 can display every 128-character title without opening the shared edit or the
 static detail view.
 
-## Focused verification
-
-Commands:
+## Tests
 
 ```powershell
 cmake --build build --config Release --target room_titles_native_ui_test room_titles
 .\build\Release\room_titles_native_ui_test.exe
 ```
 
-Result:
+The fixture covers both title domains, a mission record with mode byte 10, shared title-bar identity
+and legacy-title recovery, full-title projection, selected-room vector bounds, exact static vtables,
+one-time WordSkip activation and rejection of an out-of-range details index.
 
-```text
-room_titles_native_ui_test passed
-```
-
-The fixture covers both title domains, a mission record with mode byte 10,
-shared title-bar identity and legacy-title recovery, full-title projection,
-selected-room vector bounds, exact static vtables, one-time WordSkip
-activation, and rejection of an out-of-range details index. The actual Release
-`room_titles.dll` also built successfully. No client runtime, server login, or
-gameplay was performed here.
-
-
-The native byte signatures used by the shipping Mod are in `symbols/GOnline-54BE1568-00C97000.ini`; `tools/verify_symbols.py` validates them without starting the client. Local disassembly files above are investigation artifacts and are not bundled game assets.
+The native byte signatures used by the shipping Mod are in `symbols/GOnline-54BE1568-00C97000.ini`;
+`tools/verify_symbols.py` validates them without starting the client.

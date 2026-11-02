@@ -38,7 +38,7 @@ Beta、Experimental 表示发布阶段。
 | 战斗贡献奖励（Beta） <!-- catalog: `battle_rewards` --> | 按胜负、击杀、伤害、助攻和 Boss 贡献发放 GB/MB | [使用说明](docs/battle-rewards.zh-CN.md) |
 | 收藏扭蛋（Beta） <!-- catalog: `collection_capsule` --> | 十万 GP 活动机台，优先抽尚未解锁的图鉴机体 | [使用说明](docs/collection-capsule.zh-CN.md) |
 | 每局随机机体（Beta） <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组 | [使用说明](docs/room-random.zh-CN.md) |
-| 长房名（Beta） <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 房间标题扩展 | [使用说明](docs/room-titles.zh-CN.md) |
+| 长房名（Beta） <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 任务和对战房名最长 128 字，指令可写在任意位置 | [使用说明](docs/room-titles.zh-CN.md) |
 | 战斗 AI 难度（Beta） <!-- catalog: `battle_ai`、`battle_ai_server` --> | 战斗 AI 行为 | [使用说明](docs/battle-ai.md) |
 | 自动机库容量（Beta） <!-- catalog: `hangar_capacity` --> | 登录时保障至少 1200 格，只增不减 | [使用说明](docs/hangar-capacity.zh-CN.md) |
 | 机库管理（Beta） <!-- catalog: `hangar_manager` --> | 服务端排序及 GB 批量回收；0.4.0 支持快速预览和统一入账 | [使用说明](docs/hangar-manager.zh-CN.md) |

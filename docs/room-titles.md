@@ -16,10 +16,10 @@ database migration, FRP settings or launcher.
 
 Install using the [normal framework installers](setup.md), including
 `install_server.ps1 -Role Agent` for Agent folders. With the relevant processes
-stopped, set `[mod] enabled=1` in each feature's `sdgo/mods/<id>/mod.ini`.
-Existing category, feature and per-mod disable switches still apply.
-Owners can distribute the enabled client Mod with their ordinary client package;
-players start the game normally. No computer-specific configuration belongs in it.
+stopped, turn on **长房名 · 客户端**, **长房名 · Agent** and **长房名 · 对战服** in
+SDGO Mod Manager, then start them. Owners distribute the enabled client Mod with
+their ordinary client package (`update.bat` for friend servers); players start the
+game normally. No computer-specific configuration belongs in it.
 
 Open the room-title button in the waiting room to view the complete title in
 the native scrollable edit control; cancel after viewing if no change is needed.
@@ -63,9 +63,6 @@ pilot, and restores it at forwarding. The Battle provider owns full titles;
 clients cache only confirmed snapshots. `include/sdgo/room_titles.h` is the
 bounded C ABI for optional gameplay consumers. No allocation crosses DLLs.
 
-Automatic verification covers protocol and Unicode boundaries, native adapters,
-permission and lifecycle logic, isolated real-core Agent forwarding, command
-composition, default-disabled packaging and installer preservation. The bounded
-native fixture executes only a known room-info constructor, not a game session.
-Actual mission/PvP play and two-client visual acceptance remain manual.
-The exact checklist and final receipts are in [verification](room-titles-verification.md).
+Native addresses of the 20-byte limit and the extension design are in the
+[developer notes (Chinese)](room-title-extension.zh-CN.md) and
+[native UI notes](investigations/room-title-native-ui.md).
