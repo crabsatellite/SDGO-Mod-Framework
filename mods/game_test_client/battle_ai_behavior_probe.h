@@ -11,9 +11,14 @@ class BattleAiBehaviorProbe {
         bool captured=false,awaitingRecovery=false;
         float releaseX=0,releaseZ=0;
         uint64_t releaseShots=0;
-        uint32_t casterState=0,casterPending=0,casterEndEvent=0,casterApplied=0,casterResult=0,casterReady=0;
+        uint32_t casterState=0,casterPending=0,casterEndEvent=0,casterApplied=0,casterResult=0,casterReady=0,casterZeroCompletions=0;
+    };
+    struct Totals {
+        uint64_t shots=0,zeroCompletions=0;
+        uint32_t defenceFrames=0,defenceDisplacements=0,mobileGunFrames=0,defenceShots=0;
     };
     std::array<Unit,12> units_{};
+    std::array<Totals,12> totals_{};
     uint32_t sequence_=0,captures_=0,recovered_=0,retreatShots_=0,pursuits_=0,frames_=0;
     SdgoBattleAiGetUnitSnapshotV1Fn get_=nullptr;
 public:
@@ -22,13 +27,26 @@ public:
         if(!get_) get_=reinterpret_cast<SdgoBattleAiGetUnitSnapshotV1Fn>(GetProcAddress(GetModuleHandleW(L"battle_ai.dll"),SDGO_BATTLE_AI_UNIT_OBSERVER_EXPORT));
         if(!get_) {context->Assert(0,"the candidate battle AI read-only observer is loaded");return false;}
         if(sequence_!=battle.received_battle_start_count) {
-            sequence_=battle.received_battle_start_count;units_={};captures_=recovered_=retreatShots_=pursuits_=frames_=0;
+            sequence_=battle.received_battle_start_count;units_={};totals_={};captures_=recovered_=retreatShots_=pursuits_=frames_=0;
         }
         ++frames_;
         for(uint32_t i=0;i<battle.bot_count&&i<12;++i) {
             SdgoBattleAiUnitSnapshotV1 now{};now.size=sizeof(now);now.version=1;
             if(!get_(battle.bots[i].object_id,&now)) continue;
             auto& state=units_[i];const auto before=state.last;
+            auto& total=totals_[i];
+            const bool sameLife=before.object_id==now.object_id&&before.generation==now.generation;
+            const uint64_t shots=sameLife&&now.ranged_shots>=before.ranged_shots?now.ranged_shots-before.ranged_shots:now.ranged_shots;
+            total.shots+=shots;
+            total.zeroCompletions+=sameLife&&now.special_zero_completions>=before.special_zero_completions?
+                now.special_zero_completions-before.special_zero_completions:now.special_zero_completions;
+            if(now.defence_moving) {
+                ++total.defenceFrames;
+                if(now.moving_shot) ++total.mobileGunFrames;
+                total.defenceShots+=static_cast<uint32_t>(shots);
+                const float dx=now.x-before.x,dz=now.z-before.z;
+                if(sameLife&&dx*dx+dz*dz>0.0001f) ++total.defenceDisplacements;
+            }
             if(before.object_id!=now.object_id||before.generation!=now.generation) state={};
             if(now.hurt_state==4&&!state.captured) {
                 state.captured=true;state.caster=now.captured_by;++captures_;
@@ -45,14 +63,16 @@ public:
                 if(get_(state.caster,&caster)&&
                    (state.casterState!=caster.attack_state||state.casterPending!=caster.attack_pending||
                     state.casterEndEvent!=caster.special_end_event||state.casterApplied!=caster.special_result_applied||
-                    state.casterResult!=caster.special_result_victim||state.casterReady!=caster.special_result_ready)) {
-                    char text[256];sprintf_s(text,"native captured victim=%u caster=%u state=%X/%X end_event=%u result_applied=%u result_victim=%u ready=%u owner_flag=%u finished=%llu",
+                    state.casterResult!=caster.special_result_victim||state.casterReady!=caster.special_result_damage||
+                    state.casterZeroCompletions!=caster.special_zero_completions)) {
+                    char text[288];sprintf_s(text,"native captured victim=%u caster=%u state=%X/%X end_event=%u result_applied=%u result_victim=%u result_damage=%u owner_flag=%u finished=%llu zero_completions=%u",
                         now.object_id,state.caster,caster.attack_state,caster.attack_pending,caster.special_end_event,
-                        caster.special_result_applied,caster.special_result_victim,caster.special_result_ready,caster.special_owner_flag,
-                        static_cast<unsigned long long>(caster.special_finished));context->Observe(text);
+                        caster.special_result_applied,caster.special_result_victim,caster.special_result_damage,caster.special_owner_flag,
+                        static_cast<unsigned long long>(caster.special_finished),caster.special_zero_completions);context->Observe(text);
                     state.casterState=caster.attack_state;state.casterPending=caster.attack_pending;state.casterEndEvent=caster.special_end_event;
                     state.casterApplied=caster.special_result_applied;state.casterResult=caster.special_result_victim;
-                    state.casterReady=caster.special_result_ready;
+                    state.casterReady=caster.special_result_damage;
+                    state.casterZeroCompletions=caster.special_zero_completions;
                 }
             }
             if(state.awaitingRecovery&&now.hp>0&&!now.control_blocked) {
@@ -77,11 +97,22 @@ public:
     }
     void Finish(const SdgoGameTestContextV1* context) const {
         if(!context->api->SettingInt(sdgo_test::mod,"BattleAiBehavior",0)) return;
-        uint32_t stuck=0;
-        for(const auto& unit:units_) if(unit.captured&&unit.last.hp>0) ++stuck;
-        char text[224];sprintf_s(text,"native battle AI behavior frames=%u captures=%u recovered=%u live_captured=%u defensive_shot_frames=%u far_pursuit_frames=%u",
-            frames_,captures_,recovered_,stuck,retreatShots_,pursuits_);context->Observe(text);
-        context->Assert(captures_>0&&recovered_>0&&stuck==0,
+        uint32_t stuck=0,unrecovered=0,zeroCompletions=0;
+        for(size_t i=0;i<units_.size();++i) {
+            const auto& unit=units_[i];const auto& total=totals_[i];
+            if(unit.captured&&unit.last.hp>0) ++stuck;
+            if(unit.awaitingRecovery&&unit.last.hp>0) ++unrecovered;
+            zeroCompletions+=static_cast<uint32_t>(total.zeroCompletions);
+            if(unit.last.object_id) {
+                char detail[288];sprintf_s(detail,"native battle AI unit=%u unit_data=%u shots=%llu defence_frames=%u defence_displacements=%u mobile_gun_frames=%u defence_shots=%u last_slot=%d last_attack=%X/%X last_movement=%X/%X",
+                    unit.last.object_id,unit.last.unit_id,static_cast<unsigned long long>(total.shots),total.defenceFrames,
+                    total.defenceDisplacements,total.mobileGunFrames,total.defenceShots,unit.last.selected_slot,
+                    unit.last.attack_state,unit.last.attack_pending,unit.last.movement_state,unit.last.movement_pending);context->Observe(detail);
+            }
+        }
+        char text[288];sprintf_s(text,"native battle AI behavior frames=%u captures=%u recovered=%u live_captured=%u live_unrecovered=%u defensive_shot_frames=%u far_pursuit_frames=%u zero_completions=%u",
+            frames_,captures_,recovered_,stuck,unrecovered,retreatShots_,pursuits_,zeroCompletions);context->Observe(text);
+        context->Assert(captures_>0&&recovered_>0&&stuck==0&&unrecovered==0,
             "a genuine special victim survived native release, resumed movement or shooting, and no live AI remained captured at settlement");
         context->Assert(retreatShots_>0,"a mobile ranged weapon produced actual native shots during defensive movement");
         context->Assert(pursuits_>0,"native observations show an AI closing on a visible enemy beyond its ordinary weapon reach");

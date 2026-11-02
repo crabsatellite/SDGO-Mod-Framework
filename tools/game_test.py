@@ -34,6 +34,10 @@ import xml.etree.ElementTree as ET
 import importlib.util
 
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+
 SCHEMA_VERSION = 2
 OWNED_BUILD_ROOT=Path(__file__).resolve().parents[1]/'build'
 HOST_KEY = "GOnline-54BE1568-00C97000"

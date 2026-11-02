@@ -9,6 +9,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 namespace
 {
@@ -70,8 +71,14 @@ namespace
         g_queueRead = 0;
         g_queueWrite = 0;
         g_queueCount = 0;
+        memset(g_damageQueue, 0, sizeof(g_damageQueue));
+        g_damageQueueRead = 0;
+        g_damageQueueWrite = 0;
+        g_damageQueueCount = 0;
         LeaveCriticalSection(&g_queueLock);
         InterlockedExchange(&g_dropped, 0);
+        InterlockedExchange(&g_damageDropped, 0);
+        InterlockedExchange(&g_damageSequence, 0);
     }
 
     void TestAbiAndValidation()
@@ -450,6 +457,122 @@ namespace
         CHECK(expectedSequence == kQueueCapacity + 1);
         CHECK(g_queueCount == 0);
     }
+
+    template <typename T>
+    void Put(void* base, size_t offset, T value)
+    {
+        *reinterpret_cast<T*>(
+            static_cast<uint8_t*>(base) + offset) = value;
+    }
+
+    void TestNativeDamageIdentityReceipts()
+    {
+        ResetConfig("T7x", 9229, 3);
+        ResetQueue();
+        g_deathEnabled = true;
+        std::vector<uint8_t> room(0x20000);
+        std::vector<uint8_t> unit(0x100);
+        room[kRoomMode] = 3;
+        room[kRoomTitleLength] = 10;
+        memcpy(room.data() + kRoomTitle, "!ai e2 T7x", 10);
+        Put(room.data(), kRoomHost, uint32_t{9229});
+
+        const int attackerSlot = 1;
+        const int victimSlot = 6;
+        uint8_t* attacker =
+            room.data() + kBattlePilots +
+            attackerSlot * kBattlePilotStride;
+        uint8_t* victim =
+            room.data() + kBattlePilots +
+            victimSlot * kBattlePilotStride;
+        const uint32_t attackerId = 401;
+        const uint32_t victimId = 0x80000123u;
+        Put(attacker, kPilotEntity, attackerId);
+        Put(attacker, kPilotTeam, uint8_t{1});
+        Put(victim, kPilotEntity, victimId);
+        Put(victim, kPilotTeam, uint8_t{2});
+        Put(
+            room.data(),
+            kSlotInfo + attackerSlot * kSlotInfoStride + kSlotPilotId,
+            attackerId);
+        Put(
+            room.data(),
+            kSlotInfo + victimSlot * kSlotInfoStride + kSlotPilotId,
+            victimId);
+        Put(unit.data(), kUnitKey, uint32_t{7321});
+        Put(unit.data(), kUnitMaxHp, uint32_t{14000});
+        Put(unit.data(), kUnitHp, uint32_t{0});
+        Put(unit.data(), kUnitData, uintptr_t{0x12345678u});
+
+        DamageEvent event = {};
+        CHECK(CaptureDamage(
+            room.data(), victim, attacker, unit.data(), 875, 1, &event));
+        CHECK(event.attackerSlot == attackerSlot);
+        CHECK(event.victimSlot == victimSlot);
+        CHECK(event.attackerPilotId == attackerId);
+        CHECK(event.victimPilotId == victimId);
+        CHECK(event.attackerSlotPilotId == attackerId);
+        CHECK(event.victimSlotPilotId == victimId);
+        CHECK(event.attackerTeam == 1);
+        CHECK(event.victimTeam == 2);
+        CHECK(event.attackerIsAi == 0);
+        CHECK(event.victimIsAi == 1);
+        CHECK(event.identityValid == 1);
+        CHECK(event.samePilot == 0);
+        CHECK(event.sameSlot == 0);
+        CHECK(event.friendly == 0);
+        CHECK(event.effectiveLoss == 875);
+        CHECK(event.deathFlag == 1);
+        CHECK(event.victimHp == 0);
+        CHECK(event.victimMaxHp == 14000);
+        CHECK(event.victimUnitKey == 7321);
+        CHECK(event.victimUnitData == 0x12345678u);
+
+        QueueDamage(event);
+        CHECK(g_damageQueueCount == 1);
+        DamageEvent output[kDamageDrainBatch] = {};
+        CHECK(DrainDamage(output) == 1);
+        CHECK(output[0].sequence == 1);
+        const std::string json = DamageJson(output[0]);
+        CHECK(json.find("\"event\":\"native_effective_hp_loss\"") !=
+              std::string::npos);
+        CHECK(json.find("\"victim_pilot_id\":2147483939") !=
+              std::string::npos);
+        CHECK(json.find("\"death_flag\":1") != std::string::npos);
+        CHECK(json.find("\"same_pilot\":false") != std::string::npos);
+
+        const SdgoBattleRewardsDamageEventV1 bridged = {
+            sizeof(bridged),
+            SDGO_BATTLE_REWARDS_DAMAGE_OBSERVER_VERSION,
+            room.data(),
+            victim,
+            attacker,
+            unit.data(),
+            425,
+            0};
+        ObserveBattleRewardsDamage(&bridged, nullptr);
+        CHECK(DrainDamage(output) == 1);
+        CHECK(output[0].effectiveLoss == 425);
+        CHECK(output[0].deathFlag == 0);
+        CHECK(output[0].attackerPilotId == attackerId);
+        CHECK(output[0].victimPilotId == victimId);
+
+        DamageEvent self = {};
+        CHECK(CaptureDamage(
+            room.data(), victim, victim, unit.data(), 200, 1, &self));
+        CHECK(self.samePilot == 1);
+        CHECK(self.sameSlot == 1);
+        CHECK(self.friendly == 1);
+        CHECK(self.identityValid == 1);
+
+        room[kRoomTitleLength] = 5;
+        memcpy(room.data() + kRoomTitle, "other", 5);
+        DamageEvent unrelated = {};
+        CHECK(!CaptureDamage(
+            room.data(), victim, attacker, unit.data(), 100, 0,
+            &unrelated));
+        g_deathEnabled = false;
+    }
 }
 
 int main()
@@ -468,6 +591,7 @@ int main()
     TestLifecycleFailures();
     TestLifecycleDuplicatesAndTerminalOutcomes();
     TestQueueCapacityAndOrder();
+    TestNativeDamageIdentityReceipts();
 
     DeleteCriticalSection(&g_queueLock);
     std::printf("%u checks, %u failures\n", g_checks, g_failures);
