@@ -11,9 +11,13 @@ using ai_test::Get;
 std::array<uint8_t, 0x100> room{}, service{};
 std::array<uint8_t, 0x500> mode{}, app{};
 std::array<uint8_t, 0x400> camera{};
-std::array<uint8_t, 0x40> hud{}, start{};
+std::array<uint8_t, 0x1D40> hud{};
+std::array<uint8_t, 0x3F0> rosterPanel{};
+std::array<uint8_t, 0x40> start{};
 std::array<uint8_t, 12 * kRecordSize> humans{}, ais{};
 std::array<std::array<uint8_t, 0x3400>, 12> units{};
+std::array<uint8_t, 0x3400> localPlayer{};
+int nativeReadyState = -1, nativeReadyCalls = 0;
 std::array<std::array<uint8_t, 0x3400>, 2> searchHumans{};
 bool searchHumanLookup = false, throwLockSearch = false;
 uint32_t selectedSearchTarget = 0;
@@ -29,9 +33,9 @@ std::array<std::array<uint8_t, 0xA0>, 12> nodes{};
 std::array<std::array<uint8_t, 0x200>, 12> npcs{};
 std::array<std::array<uint8_t, 0x70>, 12> slots{};
 std::array<std::array<uint8_t, 4 * kUnitDeckEntry>, 12> decks{};
-std::array<void*, 32> vtable{}, hudVtable{};
+std::array<void*, 32> vtable{}, hudVtable{}, rosterVtable{};
 std::array<uint8_t, 0xCD4> packet{};
-int manager = 0;
+std::array<uint8_t, 0x100> manager{};
 void* um = &manager;
 bool network = true, observer = false, failAppend = false, throwCamera = false, throwUdp = false;
 int created = 0, playerCount = 0, enabled = 0, calculated = 0, hudGauge = 0, hudCalls = 0;
@@ -65,6 +69,8 @@ uint8_t* __fastcall Create(uint8_t*, void*, uint32_t npc, float, float, float, i
     Put(unit, kUnitDeckEnd, decks[created].data() + kUnitDeckEntry);
     Put(unit, kUnitObjectId, 1001u + created);
     Put(unit, kUnitNpcDataId, npc);
+    unit[0x326C] = 1; // real CNPC construction can return with AI enabled
+    Put<uint32_t>(unit, kUnitPendingControl, 123);
     ++created;
     return unit;
 }
@@ -84,7 +90,17 @@ void __fastcall Assign(void*, void*, const wchar_t*, size_t) {}
 void __fastcall AddAi(void*, void*, uint8_t*) {}
 void __fastcall Calculate(void*, void*) { ++calculated; }
 void __fastcall Count(void*, void*, int count) { playerCount = count; }
-void __fastcall Enable(uint8_t*, void*) { ++enabled; }
+void __fastcall Enable(uint8_t* unit, void*) { ++enabled; unit[0x326C] = 1; }
+void __fastcall Disable(uint8_t* unit, void*) { unit[0x326C] = 0; }
+void __fastcall StopNativeInput(uint8_t*, void*) {}
+void __fastcall NativeReady(uint8_t* svc, void*) {
+    ++nativeReadyCalls;
+    if (nativeReadyState >= 0) Put<uint32_t>(svc, kServiceReadyState, nativeReadyState);
+    if (Get<uint32_t>(svc, kServiceReadyState) == 3) localPlayer[kPlayerControlEnabled] = 1;
+}
+void __fastcall RosterInit(uint8_t*, void*, void*, void*) {}
+int rosterDraws = 0;
+void __fastcall RosterDraw(uint8_t*, void*, uint8_t*, int) { ++rosterDraws; }
 void __fastcall Gauge(uint8_t*, void*, int value) { hudGauge = value; ++hudCalls; }
 void* __fastcall Find(void*, void*, uint32_t id) {
     for (int i = 0; i < created; ++i)
@@ -284,12 +300,19 @@ void Reset(int classIndex = 0, int roomMode = 1) {
     room.fill(0); service.fill(0); mode.fill(0); app.fill(0); camera.fill(0); hud.fill(0);
     humans.fill(0); ais.fill(0); packet.fill(0); units = {}; slots = {}; decks = {}; nodes = {}; npcs = {};
     for (int i = 0; i < 12; ++i) { Put<int32_t>(npcs[i].data(), kNpcPoints, 4); Put<uint32_t>(npcs[i].data(), kNpcUnitDataId, 2000u + i); }
-    vtable.fill(nullptr); hudVtable.fill(nullptr);
+    vtable.fill(nullptr); hudVtable.fill(nullptr); rosterVtable.fill(nullptr); rosterPanel.fill(0);
+    g_rosterInit = reinterpret_cast<RosterInitFn>(&RosterInit);
+    g_originalRosterRow = reinterpret_cast<RosterRowFn>(&RosterDraw); rosterDraws = 0;
+    rosterVtable[10] = reinterpret_cast<void*>(g_rosterInit);
+    Put(rosterPanel.data(), 0, rosterVtable.data()); Put(hud.data(), 0x1C08, rosterPanel.data());
     vtable[kModeCreateNpcSlot] = reinterpret_cast<void*>(&Create);
     hudVtable[kInterfaceSetGaugeSlot] = reinterpret_cast<void*>(&Gauge);
     Put(mode.data(), 0, vtable.data()); Put(mode.data(), kModeRoom, room.data());
     Put(mode.data(), kModeInterface, hud.data()); Put(hud.data(), 0, hudVtable.data());
     Put(service.data(), kServiceMode, mode.data()); Put(app.data(), kAppGameMain, service.data());
+    localPlayer.fill(0); manager.fill(0); Put(manager.data(), kManagerPlayer, localPlayer.data());
+    nativeReadyState = -1; nativeReadyCalls = 0;
+    g_originalGameReady = reinterpret_cast<GameReadyFn>(&NativeReady);
     Put<uint16_t>(room.data(), kModeRoomMode, static_cast<uint16_t>(roomMode));
     std::fill(std::begin(g_vtables), std::end(g_vtables), nullptr); g_vtables[classIndex] = vtable.data();
     g_api = &ai_test::api; g_gameApp = &App; g_game.unitManager = &um;
@@ -303,6 +326,8 @@ void Reset(int classIndex = 0, int roomMode = 1) {
     g_game.addObject = reinterpret_cast<AddObjectFn>(&AddObject);
     g_game.calculateTeam = reinterpret_cast<CalculateTeamFn>(&Calculate);
     g_game.enableAi = reinterpret_cast<EnableAiFn>(&Enable);
+    g_game.disableAi = reinterpret_cast<EnableAiFn>(&Disable);
+    g_game.releaseAttack = g_game.moveStop = g_game.resetInputs = reinterpret_cast<EnableAiFn>(&StopNativeInput);
     g_setPlayerCount = reinterpret_cast<SetPlayerCountFn>(&Count);
     g_originalPlayerSlot = reinterpret_cast<PlayerSlotFn>(&Slot);
     g_findObject = reinterpret_cast<FindObjectFn>(&Find);
@@ -350,15 +375,79 @@ int main() {
     CHECK(MH_EnableHook(reinterpret_cast<void*>(&NativeTeamOnlyGate)) == MH_OK);
     SCENARIO("master, remote, slot cap and AI enable once");
     Spawn(); CHECK(g_botTable.size() == 2 && playerCount == 3 && calculated == 1);
+    CHECK(!units[0][0x326C] && !units[1][0x326C]);
+    CHECK(Get<uint32_t>(units[0].data(), kUnitPendingControl) == 0);
     CHECK(g_soloAiMode == mode.data());
     CHECK(units[0][kUnitRemote] == 0 && units[0][kUnitLocalControl] == 1 && units[0][kUnitMasterNpc] == 1);
     CHECK(starts[0] == std::make_pair(1, 0) && starts[1] == std::make_pair(1, 1));
+    Put<uint32_t>(service.data(), kServiceReadyState, 3);
     EnableBots(service.data()); EnableBots(service.data()); CHECK(enabled == 2);
     Reset(); Records(2, 1); humans[kRecordMaster] = 0; SpawnAiPlayers(mode.data(), "remote");
     CHECK(units[0][kUnitRemote] == 1 && units[0][kUnitLocalControl] == 0);
     Spawn(0, 1, 11, 3); CHECK(g_botTable.size() == 1 && playerCount == 12);
     Reset(); Records(1, 2); network = false; SpawnAiPlayers(mode.data(), "offline"); CHECK(created == 0);
     Reset(); Records(1, 0); SpawnAiPlayers(mode.data(), "none"); CHECK(g_botTable.empty());
+
+    SCENARIO("all five PvP modes freeze bots through waiting/countdown and release on the native player frame");
+    const int nativeModes[] = {1, 3, 6, 9, 7};
+    for (int i = 0; i < 5; ++i) {
+        Spawn(i, nativeModes[i]);
+        for (uint32_t phase : {0u, 1u, 2u, 2u}) {
+            Put(service.data(), kServiceReadyState, phase);
+            GameReady(service.data(), nullptr);
+            CHECK(enabled == 0 && !g_aiEnabled && !units[0][0x326C] && !units[1][0x326C]);
+        }
+        SdgoPvpAiClientStartStatusV1 status{};
+        status.size = sizeof(status); status.version = SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
+        CHECK(SdgoPvpAiClientGetStartStatusV1(&status) == 1);
+        CHECK(status.frozen_update_count == 4 && status.early_enabled_count == 0 && status.release_count == 0);
+        // The original routine changes 2 -> 3 and releases the player inside this call.
+        nativeReadyState = 3;
+        GameReady(service.data(), nullptr);
+        CHECK(nativeReadyCalls == 5 && localPlayer[kPlayerControlEnabled] && enabled == 2 && g_aiEnabled);
+        CHECK(SdgoPvpAiClientGetStartStatusV1(&status) == 1);
+        CHECK(status.release_count == 1 && status.release_ready_state == 3 && status.player_control_enabled == 1);
+        CHECK(status.ai_enabled_count == 2 && status.early_enabled_count == 0);
+        GameReady(service.data(), nullptr); CHECK(enabled == 2);
+        // A subsequent battle resets the gate, even with reused mode/unit addresses.
+        SpawnAiPlayers(mode.data(), "next battle");
+        Put<uint32_t>(service.data(), kServiceReadyState, 2); nativeReadyState = -1;
+        GameReady(service.data(), nullptr);
+        CHECK(!g_aiEnabled && g_startStatus.release_count == 0);
+    }
+    CHECK(SdgoPvpAiClientGetStartStatusV1(nullptr) == 0);
+
+    SCENARIO("all PvP TAB rosters refresh the cached human-only count and render real AI stats on both teams");
+    for (int i = 0; i < 5; ++i) {
+        Reset(i, nativeModes[i]); Records(1, 2);
+        ais[kRecordTeam] = 1; ais[kRecordSize + kRecordTeam] = 2;
+        Put<int32_t>(rosterPanel.data(), 0x150, 1);
+        Put<float>(rosterPanel.data(), 0x48, -300.0f);
+        SpawnAiPlayers(mode.data(), "native TAB");
+        CHECK(Get<int32_t>(rosterPanel.data(), 0x150) == 3);
+        CHECK(Get<float>(rosterPanel.data(), 0x170 + 12) == -300.0f);
+        CHECK(Get<float>(rosterPanel.data(), 0x170 + 24) == -300.0f);
+        rosterPanel[0x3C] = rosterPanel[0x3D] = 1; Put<uint32_t>(rosterPanel.data(), 0x38, 2);
+        for (size_t j = 0; j < g_botTable.size(); ++j) {
+            auto slot = slots[g_botTable[j].slot].data();
+            Put<int32_t>(slot, 0x4C, 7 + static_cast<int>(j));
+            Put<int32_t>(slot, 0x54, 2 + static_cast<int>(j));
+            Put<int32_t>(slot, 0x58, 200 + static_cast<int>(j));
+            ScoreboardRow(rosterPanel.data(), nullptr, slot, static_cast<int>(j + 1));
+        }
+        SdgoPvpAiClientScoreboardStatusV1 status{};
+        status.size = sizeof(status); status.version = SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
+        CHECK(SdgoPvpAiClientGetScoreboardStatusV1(&status) == 1);
+        CHECK(status.native_row_count == 3 && status.original_row_count == 1 && status.roster_sync_count == 1);
+        CHECK(status.panel_visible && status.panel_state == 2 && status.bot_count == 2 && rosterDraws == 2);
+        CHECK(status.bots[0].team == 1 && status.bots[1].team == 2);
+        CHECK(status.bots[0].kills == 7 && status.bots[1].assists == 3 && status.bots[1].points == 201);
+        const uint32_t priorDraws = status.bots[0].render_count;
+        Put<uint32_t>(slots[g_botTable[0].slot].data(), kSlotObjectId, 9000);
+        ScoreboardRow(rosterPanel.data(), nullptr, slots[g_botTable[0].slot].data(), 1);
+        CHECK(g_scoreboardStatus.bots[0].render_count == priorDraws);
+    }
+    CHECK(SdgoPvpAiClientGetScoreboardStatusV1(nullptr) == 0);
 
     SCENARIO("record and deck ranges reject partial records and impossible counts");
     Reset(); Records(1, 0);

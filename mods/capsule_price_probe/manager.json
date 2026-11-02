@@ -8,5 +8,6 @@
   ],
   "settings": [],
   "presentation": "diagnostic",
-  "provider": "capsules"
+  "provider": "capsules",
+  "description": "开发诊断：只读记录扭蛋列表价格标签的刷新。"
 }

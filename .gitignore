@@ -31,3 +31,17 @@ __pycache__/
 # Owner-generated game data; generic distributions contain tools and code only.
 catalog.bin
 catalog.json
+
+# Local native GameTest runtimes and private databases are never source payloads.
+/test/
+/test-copies/
+/SDGO-client/
+/SDGO-server/
+*.bak
+*.mdf
+*.ldf
+*.ndf
+*.exe
+*.zpk
+*.zdx
+*.dmp

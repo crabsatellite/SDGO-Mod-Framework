@@ -60,3 +60,35 @@ Experience, login gifts, compensation and purchases remain outside this currency
 policy.
 The reserved objective-event coefficients are zero because the current native adapter
 does not supply that statistic; unverified Stars are never treated as objective counts.
+
+## GB compensation plan
+
+`tools/recover_battle_reward_gb.py` consumes a private JSON object with these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `schema_version`, `method` | `1` and `healthy_average_gb` |
+| `expected_scope` | Lowercase `ScopeId` from the selected wallet's `SdgoBattleRewardWalletMeta` |
+| `expected_data_root` | Absolute directory containing all files of the selected StoreBilling database |
+| `samples` | Healthy records: `source`, `event_multiplier`, `match_id` and `plan_hash` |
+| `sources` | Affected records: `source` and `event_multiplier` |
+| `entries` | Output of `owner.rewards.gb_recovery.build_entries(samples, sources)` |
+
+Each `source` contains exactly `account`, `gb`, `after`, `local_time` and `table`: the account,
+native credit, resulting balance, database-local ISO timestamp with milliseconds and native GB log
+table name. Only battle credits (`f_from=2`, `f_etc=1`) qualify. Each sample must also match an
+acknowledged `SdgoBattleRewardMbReceipt` by match, account and plan hash. Before selecting samples,
+independently match that receipt's time and reward policy to the native GB credit. Use an event
+multiplier of `1` or `2` from the rules active at each settlement, rather than guessing from the amount.
+Keep account records, proofs and plans outside version control.
+
+The command recalculates `entries` and rejects edited amounts, duplicate evidence, foreign wallet
+scopes and ambiguous original credits. Original LiteSQL relative Data paths are resolved using the
+instance's verified data directory. Successful execution writes `SdgoBattleRewardGbRecovery` receipts
+and native credit reason `31603`; it does not change original wallet procedures. A receipt's source
+key identifies the original native transaction independently of the requested compensation.
+
+Run calculation checks with `python -B -m unittest discover -s tests -p test_reward_gb_recovery.py -v`.
+`tests/run_reward_gb_recovery_sql.py --test-root <marked-test-copy> --server-ini <test-ini> --account <existing-unused-test-account>`
+checks native credit, replay and rollback in the existing isolated test database. It always rolls back
+the test transaction and verifies that the account balance and native log count are restored.

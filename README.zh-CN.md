@@ -6,7 +6,7 @@
 [安装说明](docs/setup.zh-CN.md) · [统一 Mod Manager](docs/mod-manager.zh-CN.md) · [最新发布](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
 
 通过 **SDGO Mod Manager** 管理功能，游戏仍使用原启动器。
-本页仅列出功能概览。具体配置、玩法操作、示例与验证范围见各功能文档。
+本页仅列出功能概览。具体配置、玩法操作、兼容性与排错方法见各功能文档。
 Beta、Experimental 表示发布阶段。
 
 ## 基础修复
@@ -19,6 +19,7 @@ Beta、Experimental 表示发布阶段。
 | 活动扭蛋币种显示 <!-- catalog: `capsule_currency_fix` --> | 9301 号机在列表和购买确认框中显示为 99 代币 | [使用说明](docs/capsule-currency-fix.zh-CN.md) |
 | 输入法卡死修复 <!-- catalog: `findwindow_fix` --> | 防止讯飞等输入法让整合包客户端卡死或崩溃 | [使用说明](docs/findwindow-fix.zh-CN.md) |
 | 启动崩溃修复 <!-- catalog: `startup_crash_fix` --> | 修复开游戏时读取界面随机闪退 | [使用说明](docs/startup-crash-fix.zh-CN.md) |
+| 阿普萨拉斯 III 变形卡死修复 <!-- catalog: `transform_input_fix` --> | 缺少变形动画时恢复原生状态退出，解除移动与攻击锁定 | [使用说明](docs/transform-input-fix.zh-CN.md) |
 | Agent 中继日志修复 <!-- catalog: `agent_relay_log_fix` --> | 修复 Agent 中继日志读取无效内存 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
 | 军衔回退修复 <!-- catalog: `rank_progression_fix` --> | 防止战斗结算降低已有军衔（WorldServer） | [使用说明](docs/rank-progression-fix.zh-CN.md) |
 | 好友列表修复 <!-- catalog: `friend_list_fix`、`friend_list_client_fix` --> | 保留离线好友、当前角色名和原生聊天入口 | [使用说明](docs/friend-list-fix.zh-CN.md) |
@@ -34,12 +35,12 @@ Beta、Experimental 表示发布阶段。
 | 功能 | 简介 | 文档 |
 |---|---|---|
 | 任务 AI 僚机 <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai`，由 AI 僚机补位 | [使用说明](docs/coop-wingmen.zh-CN.md) |
-| 对战 AI（Beta） <!-- catalog: `pvp_ai`、`match_ai` --> | 对战房名写 `!ai`，加入 AI 对手和队友 | [使用说明](docs/pvp-ai.zh-CN.md) |
+| 对战 AI（Beta） <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友，同步解除开局控制并显示 TAB 战绩 | [使用说明](docs/pvp-ai.zh-CN.md) |
 | AI 机体目录（Beta，独立附加包） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |
-| 战斗贡献奖励（Beta） <!-- catalog: `battle_rewards` --> | 按胜负、击杀、伤害、助攻和 Boss 贡献发放 GB/MB | [使用说明](docs/battle-rewards.zh-CN.md) |
+| 战斗贡献奖励 <!-- catalog: `battle_rewards` --> | 按战斗贡献发放 GB/MB，含钱包服务管理与历史 GB 补偿 | [使用说明](docs/battle-rewards.zh-CN.md) |
 | 收藏扭蛋（Beta） <!-- catalog: `collection_capsule` --> | 十万 GP 活动机台，优先抽尚未解锁的图鉴机体 | [使用说明](docs/collection-capsule.zh-CN.md) |
 | 每局随机机体（Beta） <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组 | [使用说明](docs/room-random.zh-CN.md) |
-| FPS 上限（Beta） <!-- catalog: `fps_limit` --> | 按现有 config.xml 设置帧率上限，绕过启动时强制覆盖的 60 | [使用说明](docs/fps-limit.zh-CN.md) |
+| FPS 上限 <!-- catalog: `fps_limit` --> | 提高渲染帧率上限，保留原生游戏速度 | [使用说明](docs/fps-limit.zh-CN.md) |
 | 长房名（Beta） <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 任务和对战房名最长 128 字，指令可写在任意位置 | [使用说明](docs/room-titles.zh-CN.md) |
 | 战斗 AI 难度（Beta） <!-- catalog: `battle_ai`、`battle_ai_server` --> | 对战 AI 的 Easy / Medium / Hard 三档，房名可选 | [使用说明](docs/battle-ai.zh-CN.md) |
 | 自动机库容量（Beta） <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） | [使用说明](docs/hangar-capacity.zh-CN.md) |

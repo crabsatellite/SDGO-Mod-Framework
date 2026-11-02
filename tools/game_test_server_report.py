@@ -59,6 +59,9 @@ def participants(event, pilot, expected_ai, setup):
 def evaluate(metadata: dict, paths: list[Path], pilot: int) -> dict:
     integer(pilot,'expected host pilot',1)
     plan=metadata['plan'];run_id=metadata['run_id']
+    session=metadata.get('server_session')
+    server_run_id=session['run_id'] if session else run_id
+    server_nonce=session['nonce'] if session else plan['title_nonce']
     modes=game_test.parse_mode_sequence(plan['mode_sequence'])
     expected_ai=integer(plan['expected_ai'],'expected AI',1)
     errors=[];battles=[];sources=[];seen_paths=set()
@@ -73,16 +76,20 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int) -> dict:
             if not records:raise ValueError('empty server observer stream')
             if not all(isinstance(record,dict) for record in records):raise ValueError('server observer records must be objects')
             ready=records[0]
-            if any(r.get('run_id')!=run_id or r.get('role')!='server' or r.get('suite')!='pvp-ai' for r in records):
+            if any(r.get('run_id')!=server_run_id or r.get('role')!='server' or r.get('suite')!='pvp-ai' for r in records):
                 raise ValueError('server observer stream belongs to another run or role')
             if (ready.get('event')!='observer_ready' or ready.get('host_key')!=BATTLE_HOST or
                 ready.get('normal_server_main') is not True or ready.get('require_end') is not True or
-                ready.get('nonce')!=plan['title_nonce'] or integer(ready.get('expected_host_pilot_id'),'observer host',1)!=pilot or
+                ready.get('nonce')!=server_nonce or integer(ready.get('expected_host_pilot_id'),'observer host',1)!=pilot or
                 integer(ready.get('minimum_ai'),'observer AI count',1)!=expected_ai):
                 raise ValueError('server observer startup binding does not match the client plan')
             pid=integer(ready.get('pid'),'native server PID',1)
+            if session and pid not in session['pids']:raise ValueError('reused server process differs from the sealed session')
             sources.append({'path':str(path),'sha256':hashlib.sha256(raw).hexdigest(),'pid':pid,'host_key':BATTLE_HOST})
             for event in records[1:]:
+                # A reusable server keeps earlier rooms in its append-only
+                # native log. The current sealed title contains a fresh nonce.
+                if session and event.get('title')!=plan['room_title']:continue
                 name=event.get('event')
                 if name not in STEPS:raise ValueError('unexpected or failed native observer event')
                 sequence=integer(event.get('sequence'),'native sequence',1)

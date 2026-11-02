@@ -19,6 +19,7 @@ public:
     struct Observation {
         uint32_t active,worker_ready,ime_disabled,dispatch_failures,factory_calls,factories;
         uint32_t query_calls,create_attempts,created_devices,failed_devices,resets,presents,cooperative_checks;
+        uint32_t successful_presents;
         HRESULT last_create_hresult,last_reset_hresult,last_present_hresult,last_cooperative_hresult;
         HWND proxy_hwnd;
         DWORD proxy_thread_id;
@@ -36,12 +37,17 @@ public:
         uint32_t last_render_target_null;
         HRESULT last_render_target_hresult;
         uintptr_t last_render_target_return_address;
+        uint32_t named_desktop_fallback;
+        uint32_t present_timing_version;
+        uint64_t present_qpc_frequency;
+        uint64_t successful_present_min_gap_ticks;
+        uint64_t successful_present_max_gap_ticks;
     };
 
-    bool Install(const SdgoApi* api,SdgoMod* mod) {
+    bool Install(const SdgoApi* api,SdgoMod* mod,bool allowNamedDesktopFallback=false) {
         if (installed_)return true;
         if (!api || !api->HookImport || (active_ && active_!=this))return false;
-        api_=api;mod_=mod;
+        api_=api;mod_=mod;allowNamedDesktopFallback_=allowNamedDesktopFallback;
         active_=this;
         if (!api->HookImport(mod,"d3d9.dll","Direct3DCreate9",reinterpret_cast<void*>(&Create9),
                             reinterpret_cast<void**>(&original_)) || !original_) {
@@ -68,7 +74,7 @@ public:
         return {
             installed_ ? 1u:0u,Read(workerReady_),Read(imeDisabled_),Read(dispatchFailures_),Read(factoryCalls_),Read(factories_),
             Read(queryCalls_),Read(createAttempts_),Read(createdDevices_),Read(failedDevices_),
-            Read(resets_),Read(presents_),Read(cooperativeChecks_),ReadResult(lastCreateResult_),ReadResult(lastResetResult_),
+            Read(resets_),Read(presents_),Read(cooperativeChecks_),Read(successfulPresents_),ReadResult(lastCreateResult_),ReadResult(lastResetResult_),
             ReadResult(lastPresentResult_),ReadResult(lastCooperativeResult_),proxy,proxyThreadId_,
             proxy && IsWindowVisible(proxy) ? 1u:0u,
             (style&WS_EX_NOACTIVATE) ? 1u:0u,(style&WS_EX_TOOLWINDOW) ? 1u:0u,
@@ -83,7 +89,9 @@ public:
             Read(lastRenderTargetUsage_),Read(lastRenderTargetFormat_),Read(lastRenderTargetPool_),
             Read(lastRenderTargetNull_),ReadResult(lastRenderTargetResult_),
             reinterpret_cast<uintptr_t>(InterlockedCompareExchangePointer(
-                &lastRenderTargetReturnAddress_,nullptr,nullptr))
+                &lastRenderTargetReturnAddress_,nullptr,nullptr)),Read(namedDesktopFallback_),
+            1,Read64(presentQpcFrequency_),Read64(successfulPresentMinGap_),
+            Read64(successfulPresentMaxGap_)
         };
     }
 
@@ -205,6 +213,16 @@ private:
     }
     DWORD Worker() {
         HDESK desktop=OpenInputDesktop(0,FALSE,GENERIC_ALL);
+        const DWORD inputError=desktop ? ERROR_SUCCESS:GetLastError();
+        if (!desktop && inputError==ERROR_ACCESS_DENIED && allowNamedDesktopFallback_) {
+            // The input desktop can be inaccessible while Windows is locked.
+            // Never unlock or switch desktops: use only a never-shown proxy on
+            // the accessible named Default desktop. The Python owner verifies
+            // its exact HWND/PID/class/styles separately and records input
+            // observations as unavailable, not as unchanged.
+            desktop=OpenDesktopW(L"Default",0,FALSE,DESKTOP_READOBJECTS|DESKTOP_WRITEOBJECTS|DESKTOP_CREATEWINDOW);
+            if (desktop)InterlockedExchange(&namedDesktopFallback_,1);
+        }
         if (!desktop || !SetThreadDesktop(desktop)) {
             if (desktop)CloseDesktop(desktop);
             SetEvent(workerReadyEvent_);return 1;
@@ -250,6 +268,29 @@ private:
     }
     static HRESULT ReadResult(volatile LONG& value) {
         return static_cast<HRESULT>(InterlockedCompareExchange(&value,0,0));
+    }
+    static uint64_t Read64(volatile LONG64& value) {
+        return static_cast<uint64_t>(InterlockedCompareExchange64(&value,0,0));
+    }
+    static void UpdateMinimum(volatile LONG64& destination,LONG64 value) {
+        LONG64 current=InterlockedCompareExchange64(&destination,0,0);
+        while ((!current || value<current) &&
+               InterlockedCompareExchange64(&destination,value,current)!=current)
+            current=InterlockedCompareExchange64(&destination,0,0);
+    }
+    static void UpdateMaximum(volatile LONG64& destination,LONG64 value) {
+        LONG64 current=InterlockedCompareExchange64(&destination,0,0);
+        while (value>current &&
+               InterlockedCompareExchange64(&destination,value,current)!=current)
+            current=InterlockedCompareExchange64(&destination,0,0);
+    }
+    void ObserveSuccessfulPresent(LONGLONG invocation,LONGLONG frequency) {
+        if (frequency>0)InterlockedExchange64(&presentQpcFrequency_,frequency);
+        const LONG64 previous=InterlockedExchange64(&lastSuccessfulPresentQpc_,invocation);
+        if (previous<=0 || invocation<=previous)return;
+        const LONG64 gap=invocation-previous;
+        UpdateMinimum(successfulPresentMinGap_,gap);
+        UpdateMaximum(successfulPresentMaxGap_,gap);
     }
     void CountQuery() {InterlockedIncrement(&queryCalls_);}
     D3DPRESENT_PARAMETERS ProxyParameters(const D3DPRESENT_PARAMETERS& input,HWND fallbackWindow,
@@ -995,17 +1036,30 @@ private:
     }
     static HRESULT STDMETHODCALLTYPE DevicePresent(IDirect3DDevice9* device,const RECT* source,
                                                    const RECT* destination,HWND,const RGNDATA* dirty) {
+        const DWORD entryError=GetLastError();
+        LARGE_INTEGER invocation{},frequency{};
+        QueryPerformanceCounter(&invocation);
+        QueryPerformanceFrequency(&frequency);
         QuietGraphics* owner=active_;
         DeviceVtable record{};
-        if (!owner || !owner->CopyDeviceVtable(device,&record))return D3DERR_INVALIDCALL;
+        if (!owner || !owner->CopyDeviceVtable(device,&record)) {
+            SetLastError(entryError);
+            return D3DERR_INVALIDCALL;
+        }
         const LONG presentNumber=InterlockedIncrement(&owner->presents_);
         const uintptr_t returnAddress=reinterpret_cast<uintptr_t>(_ReturnAddress());
         const HRESULT result=record.present(device,source,destination,owner->proxyWindow_,dirty);
+        const DWORD presentError=GetLastError();
+        if (SUCCEEDED(result)) {
+            InterlockedIncrement(&owner->successfulPresents_);
+            owner->ObserveSuccessfulPresent(invocation.QuadPart,frequency.QuadPart);
+        }
         InterlockedExchange(&owner->lastPresentResult_,result);
         if (owner->api_ && owner->api_->Log && (presentNumber<=4 || FAILED(result)))
             owner->api_->Log(owner->mod_,FAILED(result) ? SDGO_LOG_WARN:SDGO_LOG_INFO,
                 "quiet D3D9 Present #%ld caller=%p hr=0x%08lX",presentNumber,
                 reinterpret_cast<void*>(returnAddress),static_cast<unsigned long>(result));
+        SetLastError(presentError);
         return result;
     }
 
@@ -1040,6 +1094,8 @@ private:
     HWND proxyWindow_=nullptr;
     DWORD proxyThreadId_=0;
     wchar_t proxyDesktop_[64]{};
+    bool allowNamedDesktopFallback_=false;
+    mutable volatile LONG namedDesktopFallback_=0;
     SRWLOCK deviceLock_=SRWLOCK_INIT;
     DeviceVtable deviceVtables_[DeviceVtableCapacity]{};
     uint32_t deviceVtableCount_=0;
@@ -1053,7 +1109,7 @@ private:
     PVOID volatile backBufferSurfaces_[8]{};
     PVOID volatile backBufferDevices_[8]{};
     mutable volatile LONG dispatchFailures_=0,factoryCalls_=0,factories_=0,queryCalls_=0;
-    mutable volatile LONG createAttempts_=0,createdDevices_=0,failedDevices_=0,resets_=0,presents_=0;
+    mutable volatile LONG createAttempts_=0,createdDevices_=0,failedDevices_=0,resets_=0,presents_=0,successfulPresents_=0;
     mutable volatile LONG cooperativeChecks_=0;
     mutable PVOID volatile lastFocusWindow_=nullptr,lastDeviceWindow_=nullptr;
     mutable volatile LONG lastRequestedWidth_=0,lastRequestedHeight_=0,lastClientWidth_=0,lastClientHeight_=0;
@@ -1069,4 +1125,6 @@ private:
     mutable volatile LONG lastCreateResult_=E_PENDING,lastResetResult_=E_PENDING,lastPresentResult_=E_PENDING;
     mutable volatile LONG lastCooperativeResult_=E_PENDING,lastBackbufferResult_=E_PENDING;
     mutable volatile LONG lastRenderTargetResult_=E_PENDING;
+    alignas(8) mutable volatile LONG64 presentQpcFrequency_=0,lastSuccessfulPresentQpc_=0;
+    alignas(8) mutable volatile LONG64 successfulPresentMinGap_=0,successfulPresentMaxGap_=0;
 };
