@@ -55,10 +55,10 @@ class LocalizationManager(unittest.TestCase):
         mod = next(m for m in state['mods'] if m['id']=='shop_localization')
         self.assertTrue(mod['registered'])
         self.assertFalse(mod['archived'])
-        self.assertEqual(mod['settings_count'], 3)
+        self.assertEqual(mod['settings_count'], 5)
         details = self.ws.details(self.host, 'shop_localization')
         self.assertNotIn('provider', details['contract'])
-        self.assertEqual(set(details['values']), {'translatenames', 'translatedescriptions', 'translateoptions'})
+        self.assertEqual(set(details['values']), {'translatenames', 'translatedescriptions', 'translateoptions', 'translateinterface', 'searchchinese'})
         self.assertTrue(all(details['values'].values()))
 
     def test_registered_toggles_and_mod_switch_use_revision_contract(self):

@@ -17,7 +17,11 @@ class WordCompiler(unittest.TestCase):
         self.assertGreater(len(parser.sections()),10000)
         for section in parser.sections():
             self.assertEqual(set(parser[section]),{'kind','source','text'})
-            self.assertNotRegex(parser[section]['text'],r'[\u0e00-\u0e7f\uac00-\ud7af]')
+            self.assertNotRegex(
+                parser[section]['text'],
+                r'[\u0e00-\u0e7f\u1100-\u11ff\u3130-\u318f'
+                r'\ua960-\ua97f\uac00-\ud7af\ud7b0-\ud7ff]',
+            )
         coverage=json.loads((ROOT/'docs/investigations/shop-localization-coverage.json').read_text(encoding='utf-8'))
         self.assertEqual(coverage['missing_known_names'],0)
         self.assertEqual(coverage['missing_known_prose'],0)

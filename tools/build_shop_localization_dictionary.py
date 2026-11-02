@@ -49,13 +49,22 @@ def choose(source, rows):
     return None
 
 
-def compile_words(terms, phrases=None, native_names=None, extra=None):
+def compile_words(terms, phrases=None, native_names=None, extra=None, unit_names=None):
     if terms.get('schema_version') != 1:
         raise ValueError('Unsupported private term-extract schema')
     candidates = collections.defaultdict(list)
     ignored = []
     identities = set()
     units = {u['unit_id']: u['chinese']['value'] for u in terms['unit_records']}
+    renamed = {}
+    if unit_names is not None:
+        replacements = collections.defaultdict(set)
+        for unit in terms['unit_records']:
+            target = unit_names.get(str(unit['unit_id']), unit_names.get(unit['unit_id']))
+            if target:
+                units[unit['unit_id']] = target
+                replacements[unit['chinese']['value']].add(target)
+        renamed = {source: next(iter(values)) for source, values in replacements.items() if len(values) == 1}
     categories = terms['categories']
     refs = {c['ref_index'] for c in categories if c['kind']==11}
 
@@ -77,6 +86,7 @@ def compile_words(terms, phrases=None, native_names=None, extra=None):
         ref = c.get('resolved_reference') or {}
         if ref.get('type') in ('unit','operator'):
             target = ref.get('chinese_name')
+            if target: target = renamed.get(target, target)
             if target and ref['type']=='operator' and '副官' not in target:
                 target += '副官'
             if target:
@@ -88,13 +98,14 @@ def compile_words(terms, phrases=None, native_names=None, extra=None):
             # that literal meaning in the shared text bank; the product-scoped
             # title below still explicitly identifies a blueprint.
             suffix='设计图' if re.search(r'plan|mix|조합식|设计图',source,re.I) else ''
-            add(source, ref['target_unit_chinese_name']+suffix)
-            add('@category:'+str(c['catalogue_id'])+':'+source,ref['target_unit_chinese_name']+'设计图',priority=200)
+            target = renamed.get(ref['target_unit_chinese_name'], ref['target_unit_chinese_name'])
+            add(source, target+suffix)
+            add('@category:'+str(c['catalogue_id'])+':'+source,target+'设计图',priority=200)
 
     for unit in terms['unit_records']:
         if unit['unit_id'] not in refs:
             continue
-        target = unit['chinese']['value']
+        target = units[unit['unit_id']]
         original = unit.get('original_0011') or {}
         for slot, source in enumerate(original.get('slots',[])):
             if isinstance(source, dict): source=source.get('value','')
@@ -125,6 +136,7 @@ def compile_words(terms, phrases=None, native_names=None, extra=None):
             target=ref.get('chineseName',ref.get('chinese_name'))
             if ref.get('type')=='blueprint':target=ref.get('targetUnitChineseName',ref.get('target_unit_chinese_name',target))
             if target:
+                target = renamed.get(target, target)
                 if link['kind']==15:target+='设计图'
                 elif link['kind']==12 and '副官' not in target:target+='副官'
                 resolved.append(target)
@@ -152,11 +164,26 @@ def compile_words(terms, phrases=None, native_names=None, extra=None):
     for kind,entries in (extra or {}).items():
         for source,text in entries.items():add(source,text,kind,priority=130)
 
+    # Stable identifiers serve optional in-game Mod consumers. Never derive
+    # these by fuzzy source-name matching: several forms share English aliases.
+    indexed_units = unit_names if unit_names is not None else units
+    for unit_id, target in indexed_units.items():
+        if not str(unit_id).isdigit() or not target:
+            raise ValueError('Invalid stable unit-name entry')
+        add('@unit:'+str(unit_id), target, priority=200)
+    for category in categories:
+        source = category['source']['name']
+        scoped = '@category:'+str(category['catalogue_id'])+':'+source
+        choices = candidates.get(scoped) or candidates.get(source)
+        selected = choose(scoped, choices) if choices else None
+        if selected is not None and selected[1] == 'name':
+            add('@item:'+str(category['catalogue_id']),selected[0],priority=200)
+
     unit_aliases=collections.defaultdict(list)
     for unit in terms['unit_records']:
         if unit['unit_id'] not in refs:continue
         for source in unit.get('original_0011',{}).get('slots',[])+[unit.get('alias_0237_slot2','')]:
-            if isinstance(source,str) and source:unit_aliases[source].append((100,unit['chinese']['value'],'name'))
+            if isinstance(source,str) and source:unit_aliases[source].append((100,units[unit['unit_id']],'name'))
     unit_words={source:value[0] for source,rows in unit_aliases.items() if (value:=choose(source,rows)) is not None and len(source)>=5 and not re.fullmatch(r'[A-Z0-9 -]{1,6}',source)}
     # Translate already-reviewed proper-name aliases within Chinese prose as
     # well. Numeric model identifiers are retained when the canonical Chinese
@@ -234,7 +261,14 @@ def main():
             for source,text in value.get(kind,{}).items():
                 if source in extra[kind] and extra[kind][source]!=text:raise ValueError('Conflicting authored translation: '+source)
                 extra[kind][source]=text
-    words,report=compile_words(json.loads(args.terms.read_text(encoding='utf-8')),phrases,native,extra)
+    unit_names = None
+    unit_file = ROOT/'mods/shop_localization/unit-names.json'
+    if unit_file.is_file():
+        bank = json.loads(unit_file.read_text(encoding='utf-8'))
+        if bank.get('schema_version') != 1 or not isinstance(bank.get('units'),dict):
+            raise ValueError('Unsupported stable unit-name bank')
+        unit_names = bank['units']
+    words,report=compile_words(json.loads(args.terms.read_text(encoding='utf-8')),phrases,native,extra,unit_names)
     args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_bytes(encode(words))
     args.report.parent.mkdir(parents=True,exist_ok=True);args.report.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps({k:v for k,v in report.items() if k not in ('unresolved_source_conflicts','untranslated_names','parent_text_missing')},ensure_ascii=False))

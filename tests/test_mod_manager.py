@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 import zipfile
 from manager.workspace import Workspace
 from manager.server import make_server
@@ -19,6 +20,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ManagerTests(unittest.TestCase):
     def setUp(self):
+        # These HTTP fixtures own fake executable files, never game processes.
+        # Keep the process inventory boundary deterministic under Windows load.
+        inventory = patch('manager.packages._running', return_value=False)
+        inventory.start()
+        self.addCleanup(inventory.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.workspace = Workspace(self.root/'state', ROOT/'mods')

@@ -1,25 +1,23 @@
-# Chinese shop localization (Beta)
+# Shop localization and Chinese search (Beta)
 
-`shop_localization` is an independent client Mod managed by **SDGO Mod Manager**.
-Import its script-free client ZIP into a stopped client with the base framework installed.
-Enable **Chinese shop localization** under Game features and restart the game.
-Names, descriptions and sales options have separate switches. The rental/permanent label fix remains independent.
+`shop_localization` translates native shop text, shared unit-preview titles, unit names in hangar exchange
+previews and fixed messages from cooperating Mods. Manage its five scopes in SDGO Mod Manager and restart
+the client after changing them. Missing or disabled localization preserves original consumer text.
+Player-authored room titles, drafts and chat are never translated.
 
-Known stock English, Thai and Korean text is translated using exact native identifiers and authored text pairs.
-Truncated, damaged and literal creative text is marked honestly; numbers and model codes are retained.
-Only audited shop display callers and the common `UnitNameStatic` preview-title caller can use the dictionary.
-Version 0.1.1 adds the missing upper-left unit name in shop blueprint and capsule previews;
-the same title control also serves factory and mixing previews. The name switch covers these titles.
-Billing, account, inventory and original archive data are unchanged.
-Unknown future text retains its original value.
+Clients update through the existing `update.bat` Git runtime. Owners configure the Shop panel's existing
+workspace/World/client paths and click **Update Chinese search**. This independent action publishes only
+owned search aliases and a backed-up, guarded search procedure; it does not publish a catalog draft,
+change products/prices, or touch inventories and wallets. Unknown or externally edited procedures refuse.
+World does not need a restart; the corresponding client Mod must also be updated.
 
-New offers require a Chinese title and sales label in Manager and in the native publication engine.
-Existing workspaces stay readable for correction; they are never reset. The Manager can export the matching
-client update ZIP without host paths or database credentials. Players import it in their own Manager and keep their launcher.
+Choose category, rank and payment, enter part of a Chinese name or an English/model name, then click the
+native magnifier. Native dropdown selection alone does not submit. Pagination retains conditions.
+The paired server procedure applies rank/payment in global and hot searches as well as ordinary categories.
+Chinese/mixed queries support 36 UTF-16 units without truncation; ordinary English/Thai queries retain their
+native encoding. Until a server is updated, disable Chinese search and use its original English query.
 
-For new ProductIds, the Mod appends a bounded native display record with template art. Custom titles are admitted
-only while rendering an authoritative reply matching category, price, currency and term, and verification is cleared afterward.
-Native faults/conflicts are isolated. Disabling the general translation bank does not erase an owner's Chinese offer title.
-
-See the [Chinese guide and manual checks](shop-localization.zh-CN.md). DLL, native ABI fixtures, Manager import/export,
-Chinese publication checks and isolated SQL are automated; real gameplay visuals, purchases and delivery are manual acceptance.
+New offers require Chinese names and sales labels. Existing owner state remains readable and intact.
+Known descriptions are translated while preserving numeric terms and model codes; unknown future text
+stays original. See the [Chinese guide](shop-localization.zh-CN.md) and
+[engineering record](investigations/shop-search-localization.md).

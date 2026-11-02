@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "dictionary_entries": 12757,
+  "dictionary_entries": 17143,
   "native_category_names": 3299,
   "native_parent_records": 2489,
   "missing_known_names": 0,
@@ -17,13 +17,14 @@
   "native_executable_sha256": "e2dba73c10302b50cb0e6f2e58dd0a14effa8d224989ae570a7f8e05af79ff92",
   "manual_visual_acceptance": false,
   "verification": {
-    "native_DLL_and_display_contracts": "10/10 passed",
-    "Chinese_Manager_API_contracts": "14/14 passed",
-    "shop_Python_contracts": "27/27 passed",
-    "category_catalog_contracts": "29/29 passed",
-    "isolated_SQL_contracts": "24/24 passed, plus standalone English sales-label rejection",
-    "native_symbol_signatures": "311 passed, 0 rejected",
-    "self_contained_Manager": "launch, Chinese UI assets, English-only API rejection and Chinese creation passed",
-    "gameplay_visuals": "manual acceptance, not performed"
-  }
+    "scope": "Text source coverage and bounded native/DLL/SQL fixtures; full native game search and updated UI still manual",
+    "dictionary_target_scripts": "No Thai, Hangul, Jamo or replacement characters",
+    "unit_identity": "1071/1071 hangar UnitIDs, no fuzzy English alias joins",
+    "native_server_search": "Original global rank filtering ignores rank; ordinary category filtering is correct",
+    "isolated_SQL2014": "10 checks passed; products unchanged; unique test database removed",
+    "actual_helper_SQL": "Known original definition gate, idempotence, Chinese+rank+payment, invalid inputs and product preservation passed"
+  },
+  "stable_unit_names": 1073,
+  "hangar_unit_names_covered": 1071,
+  "revised_translation_values": 341
 }

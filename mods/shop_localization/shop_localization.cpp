@@ -11,6 +11,7 @@
 #include "dictionary.h"
 #include "sites.h"
 #include "custom_products.h"
+#include "shop_search.h"
 
 namespace {
 using namespace sdgo::shop_localization;
@@ -21,6 +22,7 @@ CopyFn g_copy = nullptr;
 Dictionary g_words;
 std::vector<uintptr_t> g_returns, g_optionReturns, g_productReturns;
 bool g_names = true, g_descriptions = true, g_options = true;
+bool g_interfaces = true, g_ready = false, g_searchChinese = true;
 thread_local std::wstring g_optionText;
 CustomProducts g_custom;
 const SdgoApi* g_api=nullptr;SdgoMod* g_mod=nullptr;
@@ -156,10 +158,55 @@ Dictionary Load(const wchar_t* directory)
     MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, raw.data(), static_cast<int>(raw.size()), text.data(), length);
     return Parse(text);
 }
+
+const std::wstring* StableText(uint32_t kind, uint32_t id, const std::wstring& source)
+{
+    if ((kind == 1 || kind == 2) && !g_names) return nullptr;
+    if (kind == 3 && !g_interfaces) return nullptr;
+    auto get = [&](const std::wstring& key, Kind type) -> const std::wstring* {
+        const auto found = g_words.find(key);
+        return found != g_words.end() && found->second.kind == type ? &found->second.text : nullptr;
+    };
+    if (kind == 3) return get(L"@ui:" + source, Kind::Option);
+    if (id) {
+        if (const auto* text = get((kind == 1 ? L"@unit:" : L"@item:") + std::to_wstring(id), Kind::Name))
+            return text;
+        if (kind == 2) {
+            if (const auto* text = get(L"@category:" + std::to_wstring(id) + L":" + source, Kind::Name))
+                return text;
+        }
+    }
+    return get(source, Kind::Name);
+}
+
+bool WriteTranslation(wchar_t* output, const std::wstring& value)
+{
+    __try { memcpy(output, value.c_str(), (value.size() + 1) * sizeof(wchar_t)); return true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 } // namespace
+
+// Optional C ABI for other Mods. Required capacity includes NUL; a query or
+// undersized buffer is never written. No C++ object crosses the DLL boundary.
+extern "C" __declspec(dllexport) uint32_t __cdecl SdgoLocalizationLookupV1(
+    uint32_t kind, uint32_t stableId, const wchar_t* source, uint32_t sourceChars,
+    wchar_t* output, uint32_t outputChars)
+{
+    if (!g_ready || kind < 1 || kind > 3 || sourceChars > kMaxText || (!source && sourceChars)) return 0;
+    try {
+        std::wstring original(sourceChars, L'\0');
+        if (sourceChars && (!CopyText(source, sourceChars, original.data()) || original.find(L'\0') != std::wstring::npos)) return 0;
+        const auto* value = StableText(kind, stableId, original);
+        if (!value) return 0;
+        const auto required = static_cast<uint32_t>(value->size() + 1);
+        if (output && outputChars >= required && !WriteTranslation(output, *value)) return 0;
+        return required;
+    } catch (const std::exception&) { return 0; }
+}
 
 SDGO_MOD_ENTRY
 {
+    g_ready = false;
     if (!api || api->version != 1 || !api->Symbol || !api->HookCode || !api->ModDirectory || !api->SettingInt || !api->Log) return 0;
     try {
         g_words = Load(api->ModDirectory(mod));
@@ -168,6 +215,8 @@ SDGO_MOD_ENTRY
         g_names = api->SettingInt(mod, "TranslateNames", 1) != 0;
         g_descriptions = api->SettingInt(mod, "TranslateDescriptions", 1) != 0;
         g_options = api->SettingInt(mod, "TranslateOptions", 1) != 0;
+        g_interfaces = api->SettingInt(mod, "TranslateInterface", 1) != 0;
+        g_searchChinese = api->SettingInt(mod, "SearchChinese", 1) != 0;
         g_returns.clear(); g_optionReturns.clear();g_productReturns.clear();
         for (const auto& site : kSites) {
             const auto address = reinterpret_cast<uintptr_t>(api->Symbol(mod, site.name));
@@ -179,6 +228,7 @@ SDGO_MOD_ENTRY
         std::sort(g_returns.begin(), g_returns.end()); std::sort(g_optionReturns.begin(), g_optionReturns.end());std::sort(g_productReturns.begin(),g_productReturns.end());
         if (!api->HookCode(mod, "shop_localization.assign", reinterpret_cast<void*>(&Assign), reinterpret_cast<void**>(&g_assign)) ||
             !api->HookCode(mod, "shop_localization.copy", reinterpret_cast<void*>(&Copy), reinterpret_cast<void**>(&g_copy))) return 0;
+        if (!BindSearchHooks(api, mod, &g_searchChinese, &g_interfaces)) return 0;
         if(!g_custom.Empty()&&(!api->HookCode(mod,"shop_localization.load_store",reinterpret_cast<void*>(&LoadStore),reinterpret_cast<void**>(&g_load))||
            !api->HookCode(mod,"shop_localization.render_list",reinterpret_cast<void*>(&RenderList),reinterpret_cast<void**>(&g_render))||
            !api->HookCode(mod,"shop_localization.buy_popup",reinterpret_cast<void*>(&BuyPopup),reinterpret_cast<void**>(&g_buyPopup))||
@@ -187,6 +237,7 @@ SDGO_MOD_ENTRY
            !api->HookCode(mod,"shop_localization.hover_alt",reinterpret_cast<void*>(&HoverTooltipAlt),reinterpret_cast<void**>(&g_hoverAlt))))return 0;
         api->Log(mod, SDGO_LOG_INFO, "Chinese shop localization ready: %u dictionary entries, %u verified shop callers; original records and billing untouched",
                  static_cast<unsigned>(g_words.size()), static_cast<unsigned>(g_returns.size()));
+        g_ready = true;
         return 1;
     } catch (const std::exception& error) {
         api->Log(mod, SDGO_LOG_ERROR, "shop localization refused: %s", error.what()); return 0;
