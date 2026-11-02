@@ -374,6 +374,18 @@ int __cdecl Bootstrap(const SdgoGameTestContextV1* context) {
 }
 int __cdecl Login(const SdgoGameTestContextV1* context) {
     const auto auth = actions.LoginState();
+    static uint64_t nextProgress=0;
+    if(!context->tick)nextProgress=0;
+    if(context->elapsed_ms>=nextProgress) {
+        const auto transport=actions.TransportState();
+        const auto progress=actions.OnboardingState();
+        char message[256];
+        sprintf_s(message,"native login progress app=%u service=%u auth=%u replies=%u pilot=%u pending=%u path=%u transport=%04X/%u/%u/%u",
+            auth.native_app_state,auth.native_login_state,auth.result,auth.reply_sequence,auth.profile_pilot_id,
+            progress.pending_login_event_count,progress.login_path_state,transport.opcode,transport.packet_size,
+            transport.send_sequence,transport.result);
+        context->Observe(message);nextProgress=context->elapsed_ms+3000;
+    }
     if (auth.reply_sequence != loginReplySeen) {
         loginReplySeen = auth.reply_sequence;
         char message[128];
