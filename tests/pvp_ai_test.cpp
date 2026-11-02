@@ -16,6 +16,8 @@ uint32_t failSetup = 0;
 int buildCalls = 0, setupCalls = 0, respawns = 0, refreshes = 0, stateRespawns = 0;
 int originals = 0;
 int nativeTeamCalls=0,nativeHumanCalls=0,nativeHumanError=0;
+bool nativeAssignDuringSetup=false;
+int nativeRandomSeen=-1;
 bool revive = true;
 bool clearIdentityAtEnd = false;
 bool originalReturnedBeforeObserver = false;
@@ -33,7 +35,9 @@ void Human(int slot, int team, int colour = 0) {
 }
 uint8_t* Pilot(int slot) { return room.data() + kPilots + slot * kPilotStride; }
 uint8_t* Unit(int slot, int form = 0) { return Pilot(slot) + kPilotUnits + form * kUnitStride; }
-int __fastcall NativeTeamAssignment(void*,void*,uint8_t*) {++nativeTeamCalls;return 37;}
+int __fastcall NativeTeamAssignment(void*,void*,uint8_t* value) {
+    ++nativeTeamCalls;nativeRandomSeen=value[8];return 37;
+}
 void Title(const char* title) {
     const auto n = (std::min)(std::strlen(title), kRoomTitleMax);
     room[kRoomTitleLength] = static_cast<uint8_t>(n);
@@ -100,6 +104,7 @@ void Reset(int mode = 1) {
     g_settings.logRoom = 0;
     g_random = 1234567;
     nativeTeamCalls=nativeHumanCalls=nativeHumanError=0;
+    nativeAssignDuringSetup=false;nativeRandomSeen=-1;
     g_assignHumanTeams=reinterpret_cast<AssignHumanTeamsFn>(&NativeTeamAssignment);
     g_api = &ai_test::api;
     g_mod = nullptr;
@@ -133,7 +138,11 @@ void Reset(int mode = 1) {
     originalReturnedBeforeObserver = false;
     observerEvents.clear();
 }
-int __fastcall NativeHumanSetup(void*,void*,uint8_t*,uint32_t*,uint32_t*,uint8_t) {++nativeHumanCalls;return nativeHumanError;}
+int __fastcall NativeHumanSetup(void* proc,void*,uint8_t* value,uint32_t*,uint32_t*,uint8_t) {
+    ++nativeHumanCalls;
+    if(nativeAssignDuringSetup)AssignHumanTeams(proc,nullptr,value);
+    return nativeHumanError;
+}
 int AddUsingNativePoolFixture(bool throughStart=false) {
     struct Node {uint32_t* data;void* reserved;Node* next;};
     alignas(4) uint8_t list[0x30]{};
@@ -266,6 +275,93 @@ int wmain(int argc,wchar_t** argv) {
     }
     Reset();Human(0,1);Title("!ai enemy");room[8]=1;room[kTeamColour1]=0;Put<uint32_t>(room.data(),kRoomPlayers,1);
     CHECK(AddUsingNativePoolFixture(true)==0x0FBE && nativeTeamCalls==0 && nativeHumanCalls==0);
+
+    SCENARIO("cooperative grouping and AI population are independent on either chosen host side");
+    for(int mode:{1,3,6,7,9})for(uint8_t hostTeam:{uint8_t{1},uint8_t{2}})
+      for(int humans=1;humans<=7;++humans)for(uint8_t randomTeams:{uint8_t{0},uint8_t{1}})
+      for(bool fill:{false,true}) {
+        // Population rules are mode-independent; exhaust counts in deathmatch,
+        // then cover both policies, host sides and room settings in every mode.
+        if(mode!=3 && humans!=3)continue;
+        Reset(mode);Title(fill?"!ai coop fill":"!ai coop");
+        room[8]=randomTeams;room[kTeamColour1]=2;room[kTeamColour1+1]=1;
+        const int occupied[]={6,0,11,3,9,1,7};
+        for(int i=0;i<humans;++i)Human(occupied[i],i ? (i%2+1):hostTeam);
+        Put<uint32_t>(room.data(),kRoomPlayers,static_cast<uint32_t>(humans));
+        Put<uint32_t>(room.data(),kLastRandomHumanCount,5);
+        memset(room.data()+kRandomPattern,0xA5,kSlots);
+        const auto before=room;
+        nativeAssignDuringSetup=true;
+        CHECK(AddUsingNativePoolFixture(true)==0);
+        const auto grouped=ViewRoom(room.data());
+        CHECK(grouped.hostTeam==hostTeam && grouped.humans[hostTeam]==humans && grouped.humans[3-hostTeam]==0);
+        const int alliedAi=fill ? (std::max)(4-humans,0):0;
+        CHECK(grouped.ai[hostTeam]==alliedAi && grouped.ai[3-hostTeam]==8-humans-alliedAi);
+        CHECK(nativeTeamCalls==1 && nativeRandomSeen==0 && room[8]==randomTeams);
+        CHECK(Get<uint32_t>(room.data(),kLastRandomHumanCount)==5 &&
+              std::memcmp(room.data()+kRandomPattern,before.data()+kRandomPattern,kSlots)==0);
+        for(int i=0;i<humans;++i) {
+            const int slot=occupied[i];
+            const auto* info=room.data()+kSlotInfo+slot*kSlotInfoStride;
+            const auto* original=before.data()+kSlotInfo+slot*kSlotInfoStride;
+            CHECK(SlotPilotId(room.data(),slot)==Get<uint32_t>(original,kSlotInfoPilotId));
+            CHECK(info[kSlotInfoColour]==3-hostTeam);
+            bool unchanged=true;
+            for(size_t offset=0;offset<kSlotInfoStride;++offset)
+                if(offset!=kSlotInfoTeamA && offset!=kSlotInfoColour && info[offset]!=original[offset])unchanged=false;
+            CHECK(unchanged);
+        }
+    }
+    SCENARIO("cooperative exact counts can leave vacancies and add optional AI teammates");
+    for(const char* title:{"!ai coop e4 a0","!ai coop e4 a1"}) {
+        Reset();Title(title);Human(0,2);Human(6,1);Human(11,1);
+        Put<uint32_t>(room.data(),kRoomPlayers,3);nativeAssignDuringSetup=true;
+        CHECK(AddUsingNativePoolFixture(true)==0);
+        const auto view=ViewRoom(room.data());
+        CHECK(view.humans[2]==3 && view.humans[1]==0 && view.ai[1]==4);
+        CHECK(view.ai[2]==(std::strstr(title,"a1")?1:0));
+    }
+    SCENARIO("invalid cooperative starts are rejected before native setup or changing human sides");
+    for(int bad=0;bad<7;++bad) {
+        Reset();Title("!ai coop");Human(0,1);Human(6,2);Human(11,2);
+        Put<uint32_t>(room.data(),kRoomPlayers,3);nativeAssignDuringSetup=true;
+        if(bad==0)Title("!ai coop e6");
+        if(bad==1)Put<uint32_t>(room.data(),kRoomHost,9999);
+        if(bad==2)room[kTeamColour1+1]=1;
+        if(bad==3)room[kRoomType]=1;
+        if(bad==4)Put<uint32_t>(room.data(),kRoomPlayers,2);
+        if(bad==5)room[kRoomCapacity]=2;
+        if(bad==6)for(int slot:{1,2,3,4,5})Human(slot,2);
+        if(bad==6)Put<uint32_t>(room.data(),kRoomPlayers,8);
+        const auto before=room;
+        CHECK(AddUsingNativePoolFixture(true)==0x0FBE);
+        CHECK(room==before && nativeHumanCalls==0 && nativeTeamCalls==0 && buildCalls==0);
+    }
+    SCENARIO("failed original human setup restores cooperative sides and permits a normal retry");
+    Reset();Title("!ai coop");Human(0,2);Human(6,1);Human(11,1);room[8]=1;
+    Put<uint32_t>(room.data(),kRoomPlayers,3);nativeAssignDuringSetup=true;nativeHumanError=0x0FBA;
+    auto coopBefore=room;
+    CHECK(AddUsingNativePoolFixture(true)==0x0FBA && room==coopBefore && nativeRandomSeen==0);
+    nativeHumanError=0;
+    CHECK(AddUsingNativePoolFixture(true)==0 && ViewRoom(room.data()).humans[2]==3 && room[8]==1);
+    CHECK(GuardedRemove(room.data()));
+    SCENARIO("cooperative failed AI population restores human sides for a retry");
+    Reset();Title("!ai coop");Human(0,1);Human(6,2);Human(11,2);room[8]=1;
+    Put<uint32_t>(room.data(),kRoomPlayers,3);nativeAssignDuringSetup=true;failBuild=100;
+    const auto coopPool=npcIds;npcIds={100,101};coopBefore=room;
+    CHECK(AddUsingNativePoolFixture(true)==0x0FBE);
+    for(int slot:{0,6,11}) {
+        CHECK(SlotTeam(room.data(),slot)==SlotTeam(coopBefore.data(),slot));
+        CHECK(room[kSlotInfo+slot*kSlotInfoStride+kSlotInfoColour]==coopBefore[kSlotInfo+slot*kSlotInfoStride+kSlotInfoColour]);
+    }
+    CHECK(ViewRoom(room.data()).ai[1]==0 && ViewRoom(room.data()).ai[2]==0 && room[8]==1);
+    failBuild=0;
+    CHECK(AddUsingNativePoolFixture(true)==0 && ViewRoom(room.data()).humans[1]==3);
+    CHECK(GuardedRemove(room.data()));npcIds=coopPool;
+    SCENARIO("cooperative intent is recalculated after host side and room capacity change");
+    Human(6,2);Put<uint32_t>(room.data(),kRoomHost,16);room[kRoomCapacity]=6;
+    CHECK(AddUsingNativePoolFixture(true)==0);
+    CHECK(ViewRoom(room.data()).humans[2]==3 && ViewRoom(room.data()).ai[1]==3 && ViewRoom(room.data()).ai[2]==0);
 
     SCENARIO("asymmetric host-relative AI populations preserve native human sides and occupied slots");
     for(int mode:{1,3,6,7,9})for(uint8_t hostTeam:{uint8_t{1},uint8_t{2}})for(int humans:{1,3,4})for(uint8_t randomTeams:{uint8_t{0},uint8_t{1}}) {

@@ -156,7 +156,10 @@ reused. Bind the server observer to the target account's actual pilot ID too.
 For a single host in an eight-player room, exercise automatic commands with
 `--expected-ai 7 --ai-allies 3 --ai-policy fill`, or
 `--expected-ai 7 --ai-allies 0 --ai-policy enemy`. These test `!ai fill` and
-`!ai enemy` directly and can combine with `--random-teams` or `--random-loadout`.
+`!ai enemy` directly. Add `--ai-teams coop` to exercise human grouping; omit it
+or use `versus` to retain native manual/random teams. These options can combine
+with `--random-teams` or `--random-loadout` when the sealed native title fits
+20 bytes; split longer combinations into separate scenarios.
 Ordinary Grid/Tag runs validate the already-selected fleet without editing it:
 one to four distinct owned units, an included leader and at most ten native
 points. The explicit `--deck-only` editor scenario still uses its four-unit

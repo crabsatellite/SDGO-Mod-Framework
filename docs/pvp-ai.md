@@ -21,7 +21,7 @@ Both parts are in the full framework package; friend-server players receive `mat
 
 Follow the [installation guide](setup.md#install), then use your usual launcher.
 
-These population rules require `pvp_ai 0.3.0-beta.1` on Battle servers and
+These population rules require `pvp_ai 0.3.0-beta.2` on Battle servers and
 `match_ai 0.1.5` or later on every participating client, including the host.
 Restart the affected programs. Easy, Medium and Hard use the same release point.
 
@@ -36,6 +36,10 @@ names, kills, assists and points with normal scoring and sorting.
 
 | Title | Effect |
 |---|---|
+| `!ai coop` | Group humans with the host at start; add no allied AI and fill all remaining room places with opponents |
+| `!ai coop fill` | Group humans, then fill both sides; three humans in an eight-player room get one AI ally versus four AI |
+| `!ai coop e4 a0` | Group humans and add exactly four opponents; three humans get 3v4 with one place left empty |
+| `!ai versus fill` | Preserve manual/random human teams and fill both sides; same as `!ai fill` |
 | `!ai` or `!ai fill` | Fill both teams within the room capacity, normally 4v4 in an eight-player room |
 | `!ai3` | Add three enemies |
 | `!ai e* a0` or `!ai enemy` | Add no allied AI; fill remaining room places with enemy AI |
@@ -50,15 +54,22 @@ names, kills, assists and points with normal scoring and sorting.
 and ally mean opposite or alongside the host's final team at each start, rather
 than a fixed red/blue color. Commands are case-insensitive.
 
-Manual or random human team selection remains authoritative. Native random
-teams are resolved first, then AI are placed relative to the host. The Mod never
-moves humans or randomizes the requested AI placement. `!rand` randomizes owned
-units, independently of human team selection.
+Human team selection and AI population are independent:
 
-For friends versus computers, choose manual teams, stand alongside the host and
-use `!ai enemy`: one human produces 1v7, three produce 3v5, four produce 4v4.
-Humans on the other side remain enemies. With one human on each side,
-`!ai e4 a2` produces three on the host's side versus five.
+- **Native teams** (default, or explicit `versus`): preserve manual choices, or resolve native random human teams first. AI placement then follows the host's final side. Humans on the other side remain opponents.
+- **Humans together** (`coop`): at start, group every human on the host's selected side, then add AI. This overrides native random teams; other humans' temporary side selections cannot separate friends. The host can choose either side.
+
+Bare `coop` defaults to opponents only. Combine it with `fill`, `enemy` or exact
+`eN aN`, such as `!ai coop e4 a1`. Bare `versus` defaults to both-side fill.
+Choose one human policy; omitting it preserves native teams. `!rand` chooses
+owned units and does not select teams or decide which side receives AI.
+The title identifies the rules; grouping and AI insertion happen at battle
+start, with actual teams visible on the native TAB roster.
+
+For friends versus computers, use `!ai coop`: one human produces 1v7, three
+produce 3v5, four produce 4v4. Use `!ai coop e4 a0` for three humans versus four
+computers, or `!ai coop fill` to add one AI ally for 4v4. For opposing humans,
+keep native teams: with one human on each side, `!ai e4 a2` produces 3v5.
 
 For an eight-player room, counts below list the host's side first:
 
@@ -70,9 +81,13 @@ For an eight-player room, counts below list the host's side first:
 | 4 / 0 | Add 0 / 4 AI for 4v4 | Add 0 / 4 AI for 4v4 |
 
 Each start resolves the current humans, host and room capacity again. Automatic
-fill follows side changes, joins, departures and host changes. Exact counts stay
+fill follows side changes, joins, departures and host changes. Leaving during
+battle does not insert replacement AI. A room full of humans cannot start in
+`coop` because no opponent place remains; free a place or use native teams. Exact counts stay
 exact instead of becoming balanced counts. Native random teams can separate
-friends; choose manual teams when friends should stay together. Two-side fill
+friends; use `coop` to group them automatically. `!ai coop e5 a0` gives three
+humans 3v5, but a fourth human makes that exact request exceed capacity and
+cancels start; `!ai coop` instead adapts to 4v4. Two-side fill
 aims for half the room on each side without moving humans already over that
 target. Bots use participant slots and never replace humans or use observer seats.
 

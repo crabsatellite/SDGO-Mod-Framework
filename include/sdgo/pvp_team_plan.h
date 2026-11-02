@@ -5,7 +5,7 @@
 
 namespace sdgo::pvp_teams {
 // Counts always describe additional AI pilots, relative to the host's final
-// native team. Native human team choices and randomization are not changed.
+// team. Callers supply the humans after native assignment or cooperative grouping.
 constexpr int kFillSide=-1;
 constexpr int kFillRoom=-2;
 constexpr int kStorageSlots=12;

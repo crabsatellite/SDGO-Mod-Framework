@@ -125,7 +125,8 @@ python tools/game_test.py run --run-dir build/gametest/pvp --timeout 3600
 自动补位指令也可直接纳入原生回归：单人 8 人房使用
 `--expected-ai 7 --ai-allies 3 --ai-policy fill` 验证 `!ai fill`，或
 `--expected-ai 7 --ai-allies 0 --ai-policy enemy` 验证 `!ai enemy`。
-这些参数可与 `--random-teams`、`--random-loadout` 组合，敌友仍相对房主最终阵营。
+`--ai-teams coop` 验证真人跟随房主同队；省略或写 `versus` 沿用原生手选／随机。
+这些参数可与 `--random-teams`、`--random-loadout` 组合，敌友仍相对房主最终阵营；封存后的原生房名须在 20 字节内，过长组合应分场景测试。
 普通 Grid/Tag 回归只读核对账号已选的战舰：1–4 台各不重复的已有机体、有效旗舰和不超过 10 的原生点数。
 不要求先重建四机体编队；专门的 `--deck-only` 编辑场景仍使用显式四机体声明，走原生 Save/GoOut 回执。
 连接地址默认 `127.0.0.1:5001`，可用 `--target-host` 和 `--login-port` 修改；
