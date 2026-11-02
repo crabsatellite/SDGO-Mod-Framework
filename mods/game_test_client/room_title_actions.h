@@ -23,7 +23,8 @@ public:
         focus_=Symbol<Focus>("title_test.dialog_focus");
         notify_=Symbol<Notify>("title_test.dialog_notify");
         input_=Symbol<uint8_t**>("room_titles.ui_input_context");
-        if(!(manager_&&find_&&get_&&focus_&&notify_&&input_))return false;
+        clearFocus_=Symbol<EditInputFocus>("title_test.clear_input_focus");
+        if(!(manager_&&find_&&get_&&focus_&&notify_&&input_&&clearFocus_))return false;
         active_=this;
         return api_->HookCode(mod_,"room_titles.ui_input_limit",reinterpret_cast<void*>(&ObserveInputLimit),reinterpret_cast<void**>(&inputLimit_)) &&
             api_->HookCode(mod_,"title_test.edit_input_focus",reinterpret_cast<void*>(&ObserveEditInputFocus),reinterpret_cast<void**>(&editInputFocus_)) &&
@@ -258,7 +259,7 @@ private:
             // The shipped UI uses CUIDialog::SetFocus followed by the edit's
             // input-focus method (for example at 007B2A29/007B2A37). The focus
             // flag alone does not bind the shared IME context to this root.
-            focus_(root,edit_);ObserveEditInputFocus(edit_,nullptr);
+            clearFocus_(*manager_);focus_(root,edit_);ObserveEditInputFocus(edit_,nullptr);
             tests_={std::wstring(21,L'A'),L"\u4efb\u52a1\u623f\u95f4\u540d\u79f0"+std::wstring(40,L'\u4e2d'),std::wstring(128,L'\u623f')};
             tests_.back()[0]=static_cast<wchar_t>(0x623F+s);
             if(!reopened_){std::array<char,513> before{};const auto n=sdgo::CurrentRoomTitle(api_->ModDirectory(mod_),before.data(),static_cast<uint32_t>(before.size()));beforeCancel_.assign(before.data(),n);}
@@ -273,6 +274,13 @@ private:
             SendMessageW(hwnd,EM_REPLACESEL,FALSE,reinterpret_cast<LPARAM>(L""));
             if(inputIndex_==0){for(wchar_t ch:tests_[0])SendMessageW(hwnd,WM_CHAR,ch,0);}
             else SendMessageW(hwnd,EM_REPLACESEL,FALSE,reinterpret_cast<LPARAM>(tests_[inputIndex_].c_str()));
+            // Consume the actual HWND contents through the native getter, then
+            // deliver the edit's ordinary change notification to its parent.
+            // Some creation services otherwise retain their default-title state.
+            const auto immediate=Text(get_(edit_));
+            char lengths[160];sprintf_s(lengths,"native edit insertion expected=%zu immediate=%zu hwnd=%d",tests_[inputIndex_].size(),immediate.size(),GetWindowTextLengthW(hwnd));c->Observe(lengths);
+            void* root=Root(dialog_,IsTeamSettings(s)?0x7C:s==MissionSettings?0x5C:IsVsCreate(s)?0x50:0x4C);
+            notify_(root,0x602,1,edit_);
             phase_=2;polls_=0;return SDGO_GAME_TEST_WAIT;
         }
         if(phase_==2){
@@ -304,7 +312,7 @@ private:
     const SdgoApi* api_=nullptr;SdgoMod* mod_=nullptr;NativeActions* actions_=nullptr;
     void** manager_=nullptr;FindControl find_=nullptr;GetText get_=nullptr;Focus focus_=nullptr;Notify notify_=nullptr;uint8_t** input_=nullptr;
     inline static RoomTitleActions* active_=nullptr;InputLimit inputLimit_=nullptr;
-    EditInputFocus editInputFocus_=nullptr;void* actualInputEdit_=nullptr;
+    EditInputFocus editInputFocus_=nullptr,clearFocus_=nullptr;void* actualInputEdit_=nullptr;
     uintptr_t lastLimitCaller_=0;uint32_t lastLimit_=0;int lastClear_=0;unsigned uiRestarts_=0;
     KeyPressed keyPressed_=nullptr;uint32_t pendingTitleKey_=0;
     unsigned phase_=0,inputIndex_=0,polls_=0;bool opened_=false,reopened_=false;void* dialog_=nullptr;void* edit_=nullptr;
