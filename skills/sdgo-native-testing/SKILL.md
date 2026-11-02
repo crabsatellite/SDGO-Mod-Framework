@@ -16,14 +16,14 @@ description: Run and diagnose original SDGO native GameTest with isolated enviro
 | `mods/game_test_server` | 真实 BattleServer 内的被动观察，按运行 ID、房间 nonce、真实玩家和战斗事件关联 |
 | `tools/game_test_native_environment.py` | 从已有模板复制私有原生后端、SQL 数据库和账号配置，运行测试并清理 |
 | `tools/game_test_environment.py` | SQLite 跨进程租约、独立回环 IP/UDP 池、资源归属日志、失败证据暂存、成功记录删除、遗留回收 |
-| `tools/game_test_sql_bridge.py` | 回环 TCP 到 `network=none` 私有 SQL 容器的透明字节传输，不编造 SQL 或游戏回复 |
+| `tools/game_test_sql_bridge.py` | 旧版私有 SQL 容器的透明字节传输，供兼容诊断；普通环境使用 Docker 原生回环端口映射，不逐连接启动代理进程 |
 | `tools/game_test_fixtures.py` | 仅供初次制作公共模板时初始化并核验五账号及机体；普通测试不调用创建流程 |
 | `tools/game_test_backend.py` | 既有显式后端准备/服务运行工具；保留其原生频道、后台与来源校验，日常并发测试优先走带租约的 `environment run` |
 | `tools/game_test_fps.py`、`mods/game_test_client/fps_test_actions.h` | 不需要账号的原生 FPS 矩阵；绑定实际帧时间、稳定窗口、输入参数和后台证据，不为性能测试注册账号 |
 
 模板是本地私有、带文件 SHA-256 清单的只读输入，含原生服务程序、11 个完整 SQL 快照、共享资源和五个已初始化账号。数据库、账号配置和游戏原始文件不进入 Mod 源码 Git。查询 `environment templates` 获取现有模板路径，不能从历史记录猜服务地址或密码。
 
-每次 `environment run` 初始创建：唯一租约和临时目录、独立 `127/8` 地址和 UDP 池、带归属标签的 SQL 容器及卷、还原的 11 库、重定位后的原生服务副本、私有账号配置副本、正常客户端测试副本以及运行 ID/哈希/回执目录。它绑定模板中的已有账号，**不会注册账号、抽机体或写真实玩家数据库**。副本中的账号 UID 与模板相同，账号锁文件归本环境所有，不会锁住另一个环境。
+每次 `environment run` 初始创建：唯一租约和临时目录、独立 `127/8` 地址和 UDP 池、带归属标签、仅发布 `127.0.0.1` 端口的 SQL 容器及卷、还原的 11 库、重定位后的原生服务副本、私有账号配置副本、正常客户端测试副本以及运行 ID/哈希/回执目录。它绑定模板中的已有账号，**不会注册账号、抽机体或写真实玩家数据库**。副本中的账号 UID 与模板相同，账号锁文件归本环境所有，不会锁住另一个环境。
 
 ## 普通测试
 
