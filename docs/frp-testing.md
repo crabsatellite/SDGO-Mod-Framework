@@ -16,8 +16,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests/frp_install_test.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/package.ps1
 ```
 
-The workflow in `.github/workflows/frp-tests.yml` runs the same suites. A workflow
-definition is not evidence that a remote run passed; check its result on the PR.
+The workflow in `.github/workflows/frp-tests.yml` runs the same suites.
 CTest includes the existing native AI contracts, framework regressions and staged
 metadata repair checks. The optional Lua simulation uses the source configured by
 `SDGO_LUA50_SOURCE`; without it the eight native/framework CTest checks still run.
@@ -39,7 +38,4 @@ installing into a minimal copy of a supplied client. It never executes the game 
 writes to the reference client. Its reference core must predate the candidate kit
 for the downgrade check. Tests and game files are not shipped in the Mod kit.
 
-Real launcher behavior, account login, room creation, complete multiplayer matches
-and reconnects remain manual acceptance. The network mods are in Beta and
-disabled in the general framework package until the owner configures them through
-the incremental installer. See [the distribution tutorial](frp-distribution.zh-CN.md).
+See [the distribution tutorial](frp-distribution.zh-CN.md) for installation.

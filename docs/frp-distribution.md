@@ -14,7 +14,10 @@ The owner supplies public endpoints and the matching UDP tunnels, generates the
 owner/player configuration, and distributes only the client-side profile to
 players. Service addresses and tunnel ports are not built into the mod.
 
-The standalone `frp/` kit includes installers and the owner's profile generator.
+Owners edit the profile and export the player connection package in **FRP 配置与分发**
+(FRP configuration) in SDGO Mod Manager. The standalone `frp/` kit includes installers and the
+same profile generator. Address mapping details: [net_route](net-route.md). Developer tests:
+[FRP build and verification](frp-testing.md).
 The feature is disabled until configured. Runtime category `network` and feature
 `frp-distribution` switches control the networking mods together. The core relay
 log fix remains in `fixes` and is managed separately.

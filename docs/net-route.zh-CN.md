@@ -1,8 +1,7 @@
 # 客户端地址与端口映射（Beta）
 
 `net_route` 把游戏尝试连接的逻辑地址转换为 Sakura 分配的公网地址和端口，并在
-UDP 收包时恢复游戏期望的来源地址。它是Beta 客户端 Mod，默认关闭。
-**当前地址映射层不等同于真人 PvP relay 已接通。**
+UDP 收包时恢复游戏期望的来源地址。它是 Beta 客户端 Mod，默认关闭。
 
 请按[增量分发指南](frp-distribution.zh-CN.md)安装，更新框架，保留其他 Mod 和设置。
 服主填写自己的隧道端点，玩家收到连接配置后沿用原启动器，无需专用启动脚本。
@@ -47,4 +46,3 @@ flags；UDP 来源还原覆盖空包、窥读及截断包。Mod 不操作 frpc �
 Sakura 启动器管理隧道。
 
 主机原生 UDP 端口池与配置生成方式见 [Sakura 设置说明](sakura-frp-setup.zh-CN.md)。
-原生 relay 与双真人外网验收边界见[分发指南](frp-distribution.zh-CN.md#验证边界)。

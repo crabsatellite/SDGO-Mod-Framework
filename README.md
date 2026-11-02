@@ -59,7 +59,7 @@ Additional reference: [room-title commands](docs/room-commands.md).
 
 | Feature | Overview | Documentation |
 |---|---|---|
-| FRP connectivity (Beta) <!-- catalog: `net_route`, `agent_udp_pool` --> | Network connectivity | [Use](docs/frp-distribution.md) |
+| FRP connectivity (Beta) <!-- catalog: `net_route`, `agent_udp_pool` --> | Connect through the owner's Sakura FRP or other TCP/UDP forwarding | [Use](docs/frp-distribution.md) |
 | Shop catalog manager (Beta) <!-- catalog: `shop_catalog` --> | Shop content management | [Use](docs/shop-catalog.md) |
 
 <!-- /mod-category:network -->
