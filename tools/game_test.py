@@ -284,7 +284,44 @@ def enable_test_configuration(root: Path) -> None:
     write_ini(settings_path, settings)
 
 
+def validate_observer_stage(root: Path, stage: Path) -> None:
+    """Validate overlay dependencies before changing or moving an owned client."""
+    client=stage/'client';mods=client/'sdgo/mods'
+    observer=mods/TEST_MOD
+    for required in (observer/f'{TEST_MOD}.dll',observer/'mod.ini',client/'sdgo/core.dll',
+                     root/f'sdgo/mods/{TARGET_MOD}/mod.ini',root/f'sdgo/mods/{TARGET_MOD}/{TARGET_MOD}.dll'):
+        if not required.is_file():raise GameTestError(f'stage or normal client lacks required payload: {required}')
+    if read_ini(observer/'mod.ini').get('mod','id',fallback='')!=TEST_MOD:
+        raise GameTestError('invalid staged observer manifest')
+    updated={TEST_MOD:observer/'mod.ini'}
+    for manifest in sorted(mods.glob('*/mod.ini')):
+        identifier=manifest.parent.name
+        if identifier==TEST_MOD:continue
+        if not (root/f'sdgo/mods/{identifier}/mod.ini').is_file():continue
+        parser=read_ini(manifest)
+        if identifier!=TARGET_MOD and parser.get('mod','category',fallback='')=='development':continue
+        if parser.get('mod','id',fallback='')!=identifier:
+            raise GameTestError(f'staged Mod identity mismatch: {identifier}')
+        updated[identifier]=manifest
+    target=mods/TARGET_MOD/f'{TARGET_MOD}.dll'
+    if target.is_file() and TARGET_MOD not in updated:
+        raise GameTestError('staged production match_ai DLL requires its matching manifest')
+    if not target.is_file():updated[TARGET_MOD]=root/f'sdgo/mods/{TARGET_MOD}/mod.ini'
+    source=read_ini(client/f'sdgo/symbols/{HOST_KEY}.ini')
+    required={'host'}
+    for manifest in updated.values():required.update(manifest_requires(manifest))
+    missing=sorted(required-set(source.sections()))
+    if missing:raise GameTestError(f"stage host symbols lack required sections: {', '.join(missing)}")
+    existing_path=root/f'sdgo/symbols/{HOST_KEY}.ini'
+    existing=read_ini(existing_path) if existing_path.is_file() else ini_parser()
+    for manifest in (root/'sdgo/mods').glob('*/mod.ini'):
+        if manifest.parent.name not in updated:
+            missing=sorted(manifest_requires(manifest)-set(source.sections())-set(existing.sections()))
+            if missing:raise GameTestError(f"retained Mod symbols lack required sections: {', '.join(missing)}")
+
+
 def overlay_observer(root: Path, stage: Path) -> None:
+    validate_observer_stage(root,stage)
     stage_client = stage / "client"
     observer_source = stage_client / "sdgo" / "mods" / TEST_MOD
     if not (observer_source / f"{TEST_MOD}.dll").is_file() or not (observer_source / "mod.ini").is_file():
@@ -1948,6 +1985,7 @@ def prepare(
         raise GameTestError(f"run directory already exists: {run_dir}")
     if is_relative_to(run_dir, client_template):
         raise GameTestError("run directory cannot be inside the client template")
+    validate_observer_stage(_owned_client_transfer[0]/'client' if _owned_client_transfer else client_template,stage)
 
     profile_path = (account_profile or default_account_profile()).expanduser().resolve()
     if create_test_account:
@@ -2148,6 +2186,7 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
     except ImportError as error:raise GameTestError('install Send2Trash before client reuse; no files changed') from error
     previous=validate_metadata(run_dir);verify_hashes(previous)
     client_root=run_dir/'client'
+    validate_observer_stage(client_root,stage.resolve())
     for directory,dirs,files in os.walk(client_root,followlinks=False):
         for name in dirs+files:
             path=Path(directory)/name
