@@ -554,6 +554,7 @@ int __cdecl Start(const SdgoGameTestContextV1* context) {
         context->Observe(message);nextStartObservation=context->elapsed_ms+1000;
     }
     if (!startRequested) {
+        startSendBaseline=actions.GameStartSendCount();startReplyBaseline=rooms.NativeStartReplySequence();
         Snapshot(snapshot); startSequence = snapshot.received_battle_start_count;
         endSequence = rooms.BattleEndState().sequence;
         if (!rooms.StartBattleNativeHost()) return SDGO_GAME_TEST_WAIT;
