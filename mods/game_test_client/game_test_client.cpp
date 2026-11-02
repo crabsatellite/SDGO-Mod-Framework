@@ -869,6 +869,11 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
     if (!leaveRequested && (state == 18 || state == 20)) {
         const auto waiting=rooms.NativeRoomState();
         if(!waiting.model_present)return SDGO_GAME_TEST_WAIT;
+        char ownership[192];
+        sprintf_s(ownership,"settled room=%u host=%08X authenticated=%u players=%u mode=%u local_host=%u",
+            waiting.room_id,waiting.host_pilot_id,authenticatedPilot,waiting.player_count,
+            waiting.room_mode,waiting.local_is_host);
+        context->Observe(ownership);
         context->Assert(waiting.local_is_host,
             "after settlement the sole authenticated human remains room host; an AI MVP cannot receive room ownership");
         if(!waiting.local_is_host)return SDGO_GAME_TEST_FAIL;

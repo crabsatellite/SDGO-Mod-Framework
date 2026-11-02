@@ -89,6 +89,7 @@ public:
         uint32_t native_app_state;
         uint32_t room_id;
         uint32_t player_count;
+        uint32_t host_pilot_id;
         uint8_t room_variant;
         uint8_t room_mode;
         uint8_t model_present;
@@ -761,6 +762,8 @@ public:
                 *reinterpret_cast<const uint32_t*>(bytes);
             observed.player_count =
                 static_cast<uint32_t>(waitRoomPlayerCount_(room));
+            observed.host_pilot_id =
+                *reinterpret_cast<const uint32_t*>(bytes + 0x4CE);
             observed.room_variant = *(bytes + 4);
             observed.room_mode = *(bytes + 5);
             observed.model_present = 1;
