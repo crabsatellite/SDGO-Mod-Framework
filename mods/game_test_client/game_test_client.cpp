@@ -14,6 +14,7 @@
 #include "capsule_catalog_actions.h"
 #include "gift_actions.h"
 #include "room_actions.h"
+#include "room_title_actions.h"
 #include "tutorial_actions.h"
 #include "onboarding_actions.h"
 #include "onboarding_gate.h"
@@ -47,6 +48,8 @@ const void* roomListVtable=nullptr;
 const void* modalLoadingVtable=nullptr;
 GiftActions gifts;
 RoomActions rooms;
+RoomTitleActions roomTitles;
+bool roomTitlesOnly=false;
 TutorialActions tutorial;
 OnboardingActions onboarding;
 SdgoPvpAiClientGetSnapshotV1Fn getSnapshot;
@@ -105,7 +108,8 @@ bool LoadPlan() {
     giftRequestsOnly = GetPrivateProfileIntW(L"run", L"gift_requests_only", 0, job.c_str()) != 0;
     deckOnly = GetPrivateProfileIntW(L"run", L"deck_only", 0, job.c_str()) != 0;
     pagesOnly = GetPrivateProfileIntW(L"run", L"pages_only", 0, job.c_str()) != 0;
-    if (static_cast<unsigned>(bootstrapOnly) + battleshipOnly + giftRequestsOnly + deckOnly + pagesOnly > 1) return false;
+    roomTitlesOnly = GetPrivateProfileIntW(L"run", L"room_titles_only", 0, job.c_str()) != 0;
+    if (static_cast<unsigned>(bootstrapOnly) + battleshipOnly + giftRequestsOnly + deckOnly + pagesOnly + roomTitlesOnly > 1) return false;
     wchar_t relative[512] = {}, nonce[16] = {}, user[32] = {}, password[128] = {};
     GetPrivateProfileStringW(L"run", L"account_path", L"private/account.ini", relative, 512, job.c_str());
     std::wstring accountPath = relative;
@@ -974,6 +978,31 @@ const SdgoGameTestCaseV1 pageCases[]={
     {"catalog.capsule",60000,&ReadCapsuleCatalog},
     {"pages.capsule.currency",60000,&ReadCapsuleCurrency},
 };
+int __cdecl TitlePvpCreate(const SdgoGameTestContextV1* c) {
+    if(actions.AppState()==6){
+        const auto result=hangarNavigation.EnsureGameRoom(roomListVtable,modalLoadingVtable,rooms.NativeRoomPageGeneration());
+        if(result!=HangarNavigation::kReady)return SDGO_GAME_TEST_WAIT;
+    }
+    return roomTitles.Poll(RoomTitleActions::PvpCreate,c);
+}
+int __cdecl TitlePvpRename(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::PvpRename,c);}
+int __cdecl TitleMissionCreate(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::MissionCreate,c);}
+int __cdecl TitleMissionSettings(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::MissionSettings,c);}
+int __cdecl TitleMissionRename(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::MissionRename,c);}
+int __cdecl TitleLeave(const SdgoGameTestContextV1* c){
+    if(actions.AppState()==6){roomTitles.Reset();return SDGO_GAME_TEST_PASS;}
+    static uint64_t last=0;if(GetTickCount64()-last>2000){last=GetTickCount64();if(!rooms.Leave())roomTitles.Leave(c);}
+    return SDGO_GAME_TEST_WAIT;
+}
+const SdgoGameTestCaseV1 titleCases[]={
+    {"room_titles.pvp.create",120000,&TitlePvpCreate},
+    {"room_titles.pvp.rename",120000,&TitlePvpRename},
+    {"room_titles.pvp.leave",60000,&TitleLeave},
+    {"room_titles.mission.create",180000,&TitleMissionCreate},
+    {"room_titles.mission.settings",120000,&TitleMissionSettings},
+    {"room_titles.mission.rename",120000,&TitleMissionRename},
+    {"room_titles.mission.leave",60000,&TitleLeave},
+};
 const SdgoGameTestCaseV1 realCases[] = {
     {"framework.bootstrap", 60000, &Bootstrap},
     {"flow.login", 120000, &Login},
@@ -988,6 +1017,11 @@ std::vector<std::string> caseNames;
 std::vector<SdgoGameTestCaseV1> plannedCases;
 void RegisterPlannedCases() {
     if (bootstrapOnly) { provider.count = 3; return; }
+    if (roomTitlesOnly) {
+        plannedCases.assign(realCases,realCases+3);
+        plannedCases.insert(plannedCases.end(),std::begin(titleCases),std::end(titleCases));
+        provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+    }
     if (pagesOnly) {
         plannedCases.assign(realCases,realCases+3);
         plannedCases.insert(plannedCases.end(),std::begin(pageCases),std::end(pageCases));
@@ -1189,6 +1223,7 @@ SDGO_MOD_ENTRY {
         (pagesOnly && !aiCatalog.Bind(api,mod)) ||
         (pagesOnly && !storage.Bind()) ||
         (pagesOnly && !capsules.Bind(api,mod)) ||
+        (roomTitlesOnly && !roomTitles.Bind(api,mod,&actions)) ||
         !rooms.Bind(api, mod, &actions, config) ||
         !tutorial.Bind(api, mod, &actions) || !onboarding.Bind(api, mod, &actions))
         sdgo_test::Fail("normal-flow native request bindings or private account configuration are unavailable");

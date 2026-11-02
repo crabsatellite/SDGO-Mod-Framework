@@ -61,6 +61,24 @@ hosts=*
 """
 
 
+class RoomTitlePlanTests(unittest.TestCase):
+    def test_room_title_scope_requires_every_surface_and_leave(self):
+        cases=game_test.required_flow_cases('1',room_titles_only=True)
+        self.assertEqual(cases,game_test.FLOW_CASES[:3]+tuple('room_titles.'+x for x in (
+            'pvp.create','pvp.rename','pvp.leave','mission.create','mission.settings','mission.rename','mission.leave')))
+    def test_disabled_retained_diagnostic_uses_native_manifest_encoding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'mod.ini'
+            path.write_text('[mod]\nenabled=0\nrequires=retired.probe\n',encoding='utf-16')
+            self.assertFalse(game_test.manifest_enabled(path))
+            path.write_text('[mod]\nenabled=1\n[settings]\nenabled=0\n[settings]\nlegacy=1\n',encoding='utf-8')
+            self.assertTrue(game_test.manifest_enabled(path))
+
+    def test_room_title_scope_cannot_be_combined_with_other_operations(self):
+        with self.assertRaises(game_test.GameTestError):
+            game_test.required_flow_cases('1',pages_only=True,room_titles_only=True)
+
+
 class FakeProcess:
     next_pid = 5100
 
@@ -502,6 +520,14 @@ rva=state
             self.assertEqual(game_test.sha256(linked/'client'/name),game_test.sha256(self.template/name))
         self.assertEqual(self.metadata(linked)['assets']['mode'],'owned_readonly_hardlinks')
         with self.assertRaises(game_test.GameTestError):self.prepare('outside-owned-baseline',asset_baseline=baseline)
+
+    def test_disabled_retained_probe_does_not_require_retired_symbols(self):
+        folder=self.template/'sdgo/mods/retired_probe'
+        folder.mkdir()
+        (folder/'mod.ini').write_text('[mod]\nid=retired_probe\nenabled=0\nrequires=retired.native.symbol\n',encoding='utf-16')
+        (folder/'retired_probe.dll').write_bytes(b'disabled diagnostic')
+        run_dir=self.prepare('disabled-retained-probe')
+        self.assertTrue((run_dir/'client/sdgo/mods/retired_probe/mod.ini').is_file())
 
     def test_native_installer_utf16_manifest_is_read_without_changing_the_source(self):
         manifest=self.template/'sdgo/mods/other_mod/mod.ini'
