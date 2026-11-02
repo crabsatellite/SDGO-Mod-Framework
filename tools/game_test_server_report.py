@@ -27,7 +27,7 @@ def integer(value, name, minimum=0):
     return value
 
 
-def participants(event, pilot, expected_ai, setup):
+def participants(event, pilot, expected_ai, setup,expected_allies=None):
     slots=event.get('slots')
     if not isinstance(slots,list):raise ValueError('missing native participant slots')
     ids=set(); seats=set(); humans=0; bots=0; teams={1:[0,0],2:[0,0]}
@@ -51,7 +51,8 @@ def participants(event, pilot, expected_ai, setup):
             raise ValueError('native team totals disagree with slots')
     if setup:
         own=next(s['team'] for s in slots if not s['is_ai'])
-        if teams[own][1]!=expected_ai//2 or teams[3-own][1]!=(expected_ai+1)//2:
+        allies=expected_ai//2 if expected_allies is None else expected_allies
+        if teams[own][1]!=allies or teams[3-own][1]!=expected_ai-allies:
             raise ValueError('native ally/enemy placement disagrees with plan')
     return ids
 
@@ -102,7 +103,7 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int) -> dict:
                 battle=current.get(cookie)
                 if not battle or battle['mode']!=mode or battle['phase']>=4 or STEPS[battle['phase']]!=name:
                     raise ValueError('native battle lifecycle is missing a step or out of order')
-                ids=participants(event,pilot,expected_ai,name!=STEPS[0])
+                ids=participants(event,pilot,expected_ai,name!=STEPS[0],plan.get('ai_allies'))
                 if name==STEPS[1]:battle['participant_ids']=sorted(ids)
                 if name in STEPS[2:] and sorted(ids)!=battle['participant_ids']:
                     raise ValueError('native participants changed across the active battle')

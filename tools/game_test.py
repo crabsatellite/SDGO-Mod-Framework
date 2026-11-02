@@ -1554,6 +1554,8 @@ def make_plan(
     launcher_path: str | None,
     play_unit_uid: int | None = None,
     mission_mode: int | None = None,
+    ai_allies: int | None = None,
+    random_teams: bool = False,
 ) -> dict:
     if not 1 <= login_port <= 65535:
         raise GameTestError("login_port must be between 1 and 65535")
@@ -1563,6 +1565,8 @@ def make_plan(
         raise GameTestError("expect_first_fail requires retry_count=2")
     mission_mode = validate_mission_mode(mission_mode)
     if mission_mode is not None:
+        if ai_allies is not None or random_teams:
+            raise GameTestError('custom PvP AI teams cannot be used in a mission smoke plan')
         if mode_sequence != "1":
             raise GameTestError("--mission-mode cannot be combined with a PvP mode sequence")
         if expected_ai != 3:
@@ -1602,6 +1606,13 @@ def make_plan(
     else:
         enemies = (expected_ai + 1) // 2
         allies = expected_ai - enemies
+        if ai_allies is not None:
+            if type(ai_allies) is not int or not 0<=ai_allies<expected_ai:
+                raise GameTestError('ai_allies must leave at least one enemy in the single-host PvP scenario')
+            allies=ai_allies;enemies=expected_ai-ai_allies
+            plan['ai_allies']=allies
+        if type(random_teams) is not bool:raise GameTestError('random_teams must be a boolean')
+        if random_teams:plan['random_teams']=True
         plan.update({
             "mode_sequence": ",".join(str(mode) for mode in modes),
             "expected_ai": expected_ai,
@@ -1738,6 +1749,8 @@ def write_job(
     else:
         run["run"]["mode_sequence"] = plan["mode_sequence"]
         run["run"]["expected_ai"] = str(plan["expected_ai"])
+        if 'ai_allies' in plan:run['run']['ai_allies']=str(plan['ai_allies'])
+        if plan.get('random_teams'):run['run']['random_teams']='1'
     if 'play_unit_uid' in plan:
         run['run']['play_unit_uid'] = str(plan['play_unit_uid'])
     if all(field in plan for field in SHOP_PLAN_FIELDS):
@@ -1953,6 +1966,13 @@ def read_public_plan(root: Path) -> dict:
         else:
             plan['mode_sequence'] = mode_sequence
             plan['expected_ai'] = int(run['expected_ai'])
+            if 'ai_allies' in run:
+                allies=int(run['ai_allies'])
+                if not 0<=allies<plan['expected_ai']:raise ValueError('invalid custom AI ally count')
+                plan['ai_allies']=allies
+            if 'random_teams' in run:
+                if run['random_teams']!='1':raise ValueError('invalid native random-team flag')
+                plan['random_teams']=True
         if play_unit_uid is not None:
             plan['play_unit_uid'] = play_unit_uid
         if shop_plan is not None:
@@ -1976,10 +1996,11 @@ def read_public_plan(root: Path) -> dict:
                     raise ValueError('random scenario requires PvP')
                 nonce = run['title_nonce']
                 expected_ai = int(run["expected_ai"])
+                allies=plan.get('ai_allies',expected_ai//2)
                 if (
                     not re.fullmatch(r'[0-9a-f]{4}', nonce)
                     or run['room_title'] !=
-                    f'{nonce} !ai e{(expected_ai + 1) // 2} a{expected_ai // 2} !rand'
+                    f'{nonce} !ai e{expected_ai-allies} a{allies} !rand'
                 ):
                     raise ValueError('random native room command differs')
                 plan['random_loadout'] = True
@@ -2213,6 +2234,8 @@ def prepare(
     retry_count: int | None = None,
     expect_first_fail: bool | None = None,
     expected_ai: int = 3,
+    ai_allies: int | None = None,
+    random_teams: bool = False,
     play_unit_uid: int | None = None,
     mission_mode: int | None = None,
     launcher_path: str | None = None,
@@ -2239,6 +2262,9 @@ def prepare(
     _owned_client_transfer: tuple[Path, str] | None = None,
 ) -> dict:
     client_template = client_template.resolve()
+    if (ai_allies is not None or random_teams) and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,
+            battleship_only,gift_requests_only,deck_only,pages_only))):
+        raise GameTestError('custom AI team counts require a complete native PvP battle')
     if apsalus_roundtrip and (mode_sequence != '1' or play_unit_uid is None or any((bootstrap_only,
             battleship_only,gift_requests_only,deck_only,pages_only)) or mission_mode is not None):
         raise GameTestError('Apsalus roundtrip requires one complete ordinary battle and an existing owned unit UID')
@@ -2401,6 +2427,8 @@ def prepare(
             launcher_path,
             play_unit_uid,
             mission_mode,
+            ai_allies,
+            random_teams,
         )
         if random_loadout and any((
             bootstrap_only, battleship_only, gift_requests_only, deck_only,
@@ -2412,7 +2440,8 @@ def prepare(
             # UUID still owns all receipts; this four-hex nonce has the same
             # sixteen random bits as the ordinary gt-prefixed nonce.
             plan['title_nonce']=secrets.token_hex(2)
-            plan['room_title']=f"{plan['title_nonce']} !ai e{(expected_ai+1)//2} a{expected_ai//2} !rand"
+            allies=plan.get('ai_allies',expected_ai//2)
+            plan['room_title']=f"{plan['title_nonce']} !ai e{expected_ai-allies} a{allies} !rand"
             plan['random_loadout']=True
         plan['network_policy']=network_policy
         if route_binding is not None:
@@ -3638,6 +3667,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     prepare_parser.add_argument("--retry-count", type=int, choices=(1, 2))
     prepare_parser.add_argument("--expected-ai", type=int, default=3)
+    prepare_parser.add_argument('--ai-allies',type=int,help='exact allied AI count for the single host; remaining --expected-ai are enemies')
+    prepare_parser.add_argument('--random-teams',action='store_true',help='request original native random human teams before AI placement')
     prepare_parser.add_argument('--play-unit-uid',type=int,
                                 help='select an existing genuinely owned non-zero uint64 unit UID through native hangar UI before PvP, pages, or mission tests')
     prepare_parser.add_argument("--sfx-only", action="store_true",
@@ -3725,6 +3756,8 @@ def main(argv: list[str] | None = None) -> int:
                 retry_count=args.retry_count,
                 expect_first_fail=args.expect_first_fail,
                 expected_ai=args.expected_ai,
+                ai_allies=args.ai_allies,
+                random_teams=args.random_teams,
                 play_unit_uid=args.play_unit_uid,
                 mission_mode=args.mission_mode,
                 launcher_path=args.launcher_path,
