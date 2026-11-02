@@ -24,6 +24,7 @@
 #include "gift_actions.h"
 #include "room_actions.h"
 #include "room_title_actions.h"
+#include "room_style_preview_actions.h"
 #include "tutorial_actions.h"
 #include "onboarding_actions.h"
 #include "onboarding_gate.h"
@@ -93,6 +94,8 @@ GiftActions gifts;
 RoomActions rooms;
 RoomTitleActions roomTitles;
 bool roomTitlesOnly=false;
+uint32_t roomStylePreview=0;
+RoomStylePreviewActions roomStylePreviewActions;
 TutorialActions tutorial;
 OnboardingActions onboarding;
 SdgoPvpAiClientGetSnapshotV1Fn getSnapshot;
@@ -174,6 +177,12 @@ bool LoadPlan() {
     deckOnly = GetPrivateProfileIntW(L"run", L"deck_only", 0, job.c_str()) != 0;
     pagesOnly = GetPrivateProfileIntW(L"run", L"pages_only", 0, job.c_str()) != 0;
     roomTitlesOnly = GetPrivateProfileIntW(L"run", L"room_titles_only", 0, job.c_str()) != 0;
+    wchar_t stylePreview[16]{};
+    GetPrivateProfileStringW(L"run",L"room_style_preview",L"",stylePreview,16,job.c_str());
+    if (stylePreview[0]) {
+        roomStylePreview = !wcscmp(stylePreview,L"pvp") ? 1 : !wcscmp(stylePreview,L"mission") ? 2 : 0;
+        if (!roomStylePreview || !roomTitlesOnly) return false;
+    }
     wchar_t shopAssertions[128]{},shopDisplay[128]{};
     GetPrivateProfileStringW(L"run",L"shop_assertions_path",L"",shopAssertions,128,job.c_str());
     GetPrivateProfileStringW(L"run",L"shop_display_path",L"",shopDisplay,128,job.c_str());
@@ -1626,6 +1635,9 @@ int __cdecl TitleTeamRename(const SdgoGameTestContextV1* c){return roomTitles.Po
 int __cdecl TitleTeamSettings(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::TeamSettings,c);}
 int __cdecl TitleMissionSettings(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::MissionSettings,c);}
 int __cdecl TitleMissionRename(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::MissionRename,c);}
+int __cdecl RoomStylePreview(const SdgoGameTestContextV1* c) {
+    return roomStylePreviewActions.Poll(c,roomStylePreview==2,actions,quietGraphics,sdgo_test::directory);
+}
 int __cdecl TitleLeave(const SdgoGameTestContextV1* c){
     if(actions.AppState()==6){
         std::array<char,513> title{};
@@ -1767,6 +1779,11 @@ void RegisterPlannedCases() {
         static_cast<void>(legacyTitleCases);
         plannedCases.assign(realCases,realCases+3);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
+        if (roomStylePreview) {
+            plannedCases.push_back(roomStylePreview==2 ? titleCases[6] : titleCases[0]);
+            plannedCases.push_back({roomStylePreview==2 ? "room_style.mission.preview" : "room_style.pvp.preview", 90000, &RoomStylePreview});
+            provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+        }
         plannedCases.insert(plannedCases.end(),std::begin(titleCases),std::end(titleCases));
         provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
     }
@@ -1952,6 +1969,12 @@ void __fastcall Update(uint8_t* app, void*) {
 }
 }
 SDGO_GAME_TEST_PROVIDER_ENTRY { return &provider; }
+extern "C" __declspec(dllexport) int __cdecl SdgoGameTestCaptureFrameV1(const wchar_t* path) {
+    return quietGraphics.RequestFrameCapture(path) ? 1 : 0;
+}
+extern "C" __declspec(dllexport) LONG __cdecl SdgoGameTestCaptureStatusV1(HRESULT* result) {
+    return quietGraphics.FrameCaptureState(result);
+}
 SDGO_MOD_ENTRY {
     if (!sdgo_test::Open(api, mod, "client")) return 0;
     const bool loaded = LoadPlan();
