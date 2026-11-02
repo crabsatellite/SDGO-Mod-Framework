@@ -1,4 +1,5 @@
 #include "../mods/room_titles/native_ui.h"
+#include "native_title_image.h"
 
 #include <windows.h>
 
@@ -83,6 +84,69 @@ bool g_renderOriginalRan = false;
 bool g_lastBattleDomain = false;
 std::uint32_t g_lastRoomId = 0;
 int g_wordSkipCalls = 0;
+std::array<std::uint8_t, 0x138> g_input = {};
+void* g_inputContext = g_input.data();
+CRITICAL_SECTION g_inputLock;
+HWND g_inputWindow = nullptr;
+int g_inputLimitCalls = 0;
+using InputLimitFn = void (__thiscall*)(void*, std::uint32_t, int);
+InputLimitFn g_nativeInputLimit = nullptr;
+decltype(&SendMessageW) g_sendMessage = &SendMessageW;
+
+// Replay only the pinned limit setter, on a private context and hidden EDIT.
+// clear=0 skips both game-string calls. Redirect its one reached import to
+// real User32; no game entry point, renderer, account or network is started.
+void* LoadNativeInputLimit(const wchar_t* path)
+{
+    using namespace room_title_native::detail;
+    const auto file = ReadFile(path);
+    Require(Sha256(file.data(), file.size()) ==
+        "e2dba73c10302b50cb0e6f2e58dd0a14effa8d224989ae570a7f8e05af79ff92",
+        "unsupported client identity");
+    const auto dos = ReadStruct<IMAGE_DOS_HEADER>(file, 0);
+    const auto nt = ReadStruct<IMAGE_NT_HEADERS32>(file, dos.e_lfanew);
+    const std::size_t sections = dos.e_lfanew + 24 + nt.FileHeader.SizeOfOptionalHeader;
+    constexpr std::uint32_t rva = 0x847F90;
+    constexpr std::size_t size = 0x5C;
+    const std::uint8_t* source = nullptr;
+    for (unsigned i = 0; i < nt.FileHeader.NumberOfSections; ++i) {
+        const auto section = ReadStruct<IMAGE_SECTION_HEADER>(
+            file, sections + i * sizeof(IMAGE_SECTION_HEADER));
+        if (rva >= section.VirtualAddress &&
+            rva - section.VirtualAddress + size <= section.SizeOfRawData) {
+            const std::size_t offset = section.PointerToRawData + rva - section.VirtualAddress;
+            Require(offset <= file.size() && size <= file.size() - offset, "invalid setter span");
+            source = file.data() + offset;
+        }
+    }
+    Require(source && source[0x51] == 0xFF && source[0x52] == 0x15,
+            "native limit setter import changed");
+    auto* code = static_cast<std::uint8_t*>(
+        VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    Require(code != nullptr, "native setter allocation failed");
+    std::memcpy(code, source, size);
+    const auto import = &g_sendMessage;
+    std::memcpy(code + 0x53, &import, sizeof(import));
+    DWORD previous = 0;
+    Require(VirtualProtect(code, size, PAGE_EXECUTE_READ, &previous) != 0,
+            "native setter protection failed");
+    FlushInstructionCache(GetCurrentProcess(), code, size);
+    g_nativeInputLimit = reinterpret_cast<InputLimitFn>(code);
+    return code;
+}
+
+void __fastcall FakeInputLimit(void* input, void*, std::uint32_t units, int clear)
+{
+    if (input != g_inputContext || clear)
+        std::abort();
+    ++g_inputLimitCalls;
+    if (g_nativeInputLimit) {
+        g_nativeInputLimit(input, units, clear);
+        return;
+    }
+    std::memcpy(static_cast<std::uint8_t*>(input) + 0xFC, &units, sizeof(units));
+    SendMessageW(g_inputWindow, EM_SETLIMITTEXT, units, 0);
+}
 
 void SetPointer(void* owner, std::size_t offset, void* value)
 {
@@ -229,6 +293,12 @@ void __fastcall FakeOriginal(void*, void*, std::uint32_t argument)
 {
     g_originalRan = true;
     g_originalArgument = argument;
+    // Native creation can focus the edit before the post-init hook runs. The
+    // shared Win32 input has already copied the old limit at that point.
+    g_callbackEdit->bytes[0x165] = 1;
+    const std::uint32_t oldLimit = 40;
+    std::memcpy(g_callbackEdit->bytes.data() + 0x2A0, &oldLimit, sizeof(oldLimit));
+    SendMessageW(g_inputWindow, EM_SETLIMITTEXT, 20, 0);
 }
 
 void __fastcall FakePvpRender(void*, void*, const void*)
@@ -276,6 +346,12 @@ void* FakeSymbol(SdgoMod*, const char* name)
         return reinterpret_cast<void*>(&FakeGetText);
     if (!std::strcmp(name, "room_titles.ui_edit_set_text"))
         return reinterpret_cast<void*>(&FakeSetText);
+    if (!std::strcmp(name, "room_titles.ui_input_limit"))
+        return reinterpret_cast<void*>(&FakeInputLimit);
+    if (!std::strcmp(name, "room_titles.ui_input_context"))
+        return &g_inputContext;
+    if (!std::strcmp(name, "room_titles.ui_input_lock"))
+        return &g_inputLock;
     if (!std::strcmp(name, "room_titles.ui_wide_to_narrow"))
         return reinterpret_cast<void*>(&FakeWideToNarrow);
     if (!std::strcmp(name, "room_titles.ui_legacy_to_wide"))
@@ -366,13 +442,32 @@ bool Invoke(const char* symbol, Surface surface, FakeService* service, std::uint
     g_expectedSurface = surface;
     g_originalRan = false;
     reinterpret_cast<Detour>(g_detours.at(symbol))(service->bytes.data(), nullptr, argument);
-    return g_originalRan && g_originalArgument == argument;
+    return g_originalRan && g_originalArgument == argument &&
+        SendMessageW(g_inputWindow, EM_GETLIMITTEXT, 0, 0) == 256;
 }
 
 }  // namespace
 
-int main()
+int wmain(int argc, wchar_t** argv)
 {
+    void* nativeCode = nullptr;
+    try {
+        if (argc == 2)
+            nativeCode = LoadNativeInputLimit(argv[1]);
+        else if (argc != 1)
+            throw std::runtime_error("usage: room_titles_native_ui_test [known GOnline.exe]");
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+    InitializeCriticalSection(&g_inputLock);
+    g_inputWindow = CreateWindowExW(0, L"EDIT", L"existing title", ES_AUTOHSCROLL,
+                                    0, 0, 100, 20, nullptr, nullptr,
+                                    GetModuleHandleW(nullptr), nullptr);
+    if (!Check(g_inputWindow != nullptr, "create hidden native input"))
+        return 1;
+    std::memcpy(g_input.data() + 0x134, &g_inputWindow, sizeof(g_inputWindow));
+    SendMessageW(g_inputWindow, EM_SETLIMITTEXT, 20, 0);
     g_buttonVtable[0x70 / sizeof(void*)] =
         reinterpret_cast<void*>(&FakeButtonTextItem);
     SdgoApi api = {};
@@ -395,6 +490,48 @@ int main()
                "find create edit") ||
         !Check(native_ui::SetRoomNameLimit(&edit) && Limit(edit) == 512, "set UTF-16 byte limit"))
         return 1;
+
+    if (!Check(g_inputLimitCalls == 0 &&
+                   SendMessageW(g_inputWindow, EM_GETLIMITTEXT, 0, 0) == 20,
+               "unfocused room edit leaves the active password/other input alone"))
+        return 1;
+    edit.bytes[0x165] = 1;
+    SendMessageW(g_inputWindow, EM_SETSEL, 2, 5);
+    if (!Check(native_ui::SetRoomNameLimit(&edit) &&
+                   SendMessageW(g_inputWindow, EM_GETLIMITTEXT, 0, 0) == 256,
+               "already-focused room edit refreshes the live 20-character input limit"))
+        return 1;
+    DWORD selectionStart = 0, selectionEnd = 0;
+    SendMessageW(g_inputWindow, EM_GETSEL, reinterpret_cast<WPARAM>(&selectionStart),
+                 reinterpret_cast<LPARAM>(&selectionEnd));
+    wchar_t originalText[32] = {};
+    GetWindowTextW(g_inputWindow, originalText, 32);
+    if (!Check(selectionStart == 2 && selectionEnd == 5 &&
+                   std::wstring(originalText) == L"existing title",
+               "refreshing the live limit preserves text and selection"))
+        return 1;
+    // EM_REPLACESEL uses the actual Windows edit limit, unlike WM_SETTEXT.
+    const std::wstring longInput = L"\u4efb\u52a1\u5bf9\u6218" + std::wstring(124, L'x');
+    SendMessageW(g_inputWindow, EM_SETSEL, 0, -1);
+    SendMessageW(g_inputWindow, EM_REPLACESEL, FALSE,
+                 reinterpret_cast<LPARAM>(longInput.c_str()));
+    std::array<wchar_t, 257> entered = {};
+    GetWindowTextW(g_inputWindow, entered.data(), static_cast<int>(entered.size()));
+    if (!Check(std::wstring(entered.data()) == longInput,
+               "focused native input accepts a full 128-character mixed title"))
+        return 1;
+    SendMessageW(g_inputWindow, EM_SETSEL, 0, -1);
+    SendMessageW(g_inputWindow, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(L""));
+    for (int i = 0; i < 21; ++i)
+        SendMessageW(g_inputWindow, WM_CHAR, L'A', 0);
+    if (!Check(GetWindowTextLengthW(g_inputWindow) == 21,
+               "keyboard input passes the old 20-character boundary"))
+        return 1;
+    void* savedContext = g_inputContext;
+    g_inputContext = nullptr;
+    if (!Check(!native_ui::SetRoomNameLimit(&edit), "focused edit rejects a missing native input"))
+        return 1;
+    g_inputContext = savedContext;
 
     g_native = {};
     std::memcpy(g_native.value.small, L"short", 6 * sizeof(wchar_t));
@@ -489,6 +626,11 @@ int main()
                       &pvpTitleEdit, 4),
                "PvP title-edit ABI") ||
         !Check(g_callbacks == 4, "callback after every original init"))
+        return 1;
+    if (!Check(Invoke("room_titles.ui_pvp_create_init", Surface::PvpCreate, &pvpCreate, 5) &&
+                   Invoke("room_titles.ui_mission_create_init", Surface::MissionCreate, &missionCreate, 6) &&
+                   g_callbacks == 6,
+               "cancel/reopen refreshes both create dialogs without an extra focus change"))
         return 1;
 
     NativeString normalText = {};
@@ -698,6 +840,10 @@ int main()
                "reject out-of-range mission details projection"))
         return 1;
 
+    DestroyWindow(g_inputWindow);
+    DeleteCriticalSection(&g_inputLock);
+    if (nativeCode)
+        VirtualFree(nativeCode, 0, MEM_RELEASE);
     std::cout << "room_titles_native_ui_test passed\n";
     return 0;
 }
