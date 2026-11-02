@@ -33,6 +33,21 @@ def quoted(value):
     return "N'" + str(value).replace("'", "''") + "'"
 
 
+def copy_snapshot(container, source, destination):
+    """Stream a verified backup without Docker's Windows tar-copy path.
+
+    Several isolated restores can otherwise stall `docker cp` on larger
+    snapshots. A plain stdin transfer stays inside the owned SQL container;
+    RESTORE WITH CHECKSUM below still validates the original backup bytes.
+    """
+    with source.open('rb') as stream:
+        result = subprocess.run(['docker', 'exec', '-i', container, 'dd',
+            'of='+destination, 'bs=1048576', 'status=none'], stdin=stream,
+            capture_output=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), timeout=600)
+    if result.returncode:
+        raise RuntimeError('Private SQL snapshot transfer failed: '+result.stderr.decode('utf-8',errors='replace')[-1000:])
+
+
 def identifier(value):
     return '[' + value.replace(']', ']]') + ']'
 
@@ -190,7 +205,7 @@ class NativeDriver:
             if gt.sha256(source) != entry['sha256']:
                 raise RuntimeError('Native snapshot bytes differ from the frozen manifest.')
             destination = '/var/opt/mssql/backup/gametest/' + entry['file']
-            docker('cp', str(source), self.private['container']+':'+destination)
+            copy_snapshot(self.private['container'], source, destination)
             moves = ','.join('MOVE '+quoted(f['name'])+' TO '+quoted(
                 '/var/opt/mssql/data/gt_'+entry['name']+'_'+str(i)+('.ldf' if f['type']=='L' else '.mdf'))
                 for i, f in enumerate(entry['files']))
