@@ -55,6 +55,7 @@ Code MakeCode(bool copy)
 void* Symbol(SdgoMod*, const char* name)
 {
     if (g_mode == 5) return nullptr;
+    if (!strcmp(name,"shop_localization.search.submit") || !strcmp(name,"shop_localization.search.wide_to_cp")) return reinterpret_cast<void*>(&NativeAssign);
     if (!strcmp(name,"shop_localization.search.resource_to_string") || !strcmp(name,"shop_localization.assign")) return reinterpret_cast<void*>(&NativeAssign);
     if (!strcmp(name,"shop_localization.search.edit_text")) return reinterpret_cast<void*>(&NativeAssign);
     if (!strcmp(name,"shop_localization.search.call.submit_convert") || !strcmp(name,"shop_localization.search.call.page_convert") || !strcmp(name,"shop_localization.search.call.rank_all") || !strcmp(name,"shop_localization.search.call.payment_all")) return g_outside.site;
