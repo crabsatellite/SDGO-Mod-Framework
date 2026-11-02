@@ -7,7 +7,7 @@
     "client"
   ],
   "provider": "operators",
-  "description": "副官目录，由配套配置提供内容。",
+  "description": "显示服主配置的副官名称、头像和新增副官，以及免费补给副官的固定名称。",
   "settings": [
     {
       "id": "enabled",
