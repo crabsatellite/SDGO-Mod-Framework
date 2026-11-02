@@ -22,6 +22,18 @@ struct Plan {
     uint8_t allyTeam=0,enemyTeam=0;
     int allies=0,enemies=0;
 };
+// Room ownership is separate from the MVP and result. Inputs are actual room
+// slot identities; the caller still performs the native ownership transaction.
+inline uint32_t SelectHumanHost(uint32_t nativeCandidate,uint32_t previousHost,
+                               const std::array<uint32_t,kStorageSlots>& slots) {
+    const auto humanPresent=[&](uint32_t pilot) {
+        return pilot && !(pilot&0x80000000u) && std::find(slots.begin(),slots.end(),pilot)!=slots.end();
+    };
+    if(humanPresent(nativeCandidate))return nativeCandidate;
+    if(humanPresent(previousHost))return previousHost;
+    for(const auto pilot:slots)if(humanPresent(pilot))return pilot;
+    return 0;
+}
 inline Plan Resolve(Request request,const Room& room) {
     Plan plan;
     if(room.capacity<2 || room.capacity>kStorageSlots || room.perTeamCapacity<1 ||

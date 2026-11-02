@@ -4,6 +4,28 @@ using namespace sdgo::pvp_teams;
 int failures=0;
 void Check(bool value,const char* label) {if(!value){++failures;std::printf("FAIL %s\n",label);}}
 int main() {
+    std::array<uint32_t,kStorageSlots> slots{};
+    slots[0]=31;slots[6]=0x80000001u;
+    Check(SelectHumanHost(0x80000001u,31,slots)==31,
+          "an AI MVP cannot replace the sole human room host");
+    slots[0]=0;slots[11]=31;slots[1]=32;
+    Check(SelectHumanHost(0x80000001u,31,slots)==31,
+          "AI winner retains the previous human regardless of storage slot");
+    Check(SelectHumanHost(32,31,slots)==32,
+          "ordinary native transfer to an existing human keeps its original behavior");
+    slots[11]=0;
+    Check(SelectHumanHost(0x80000001u,31,slots)==32,
+          "departed previous host falls back to a real remaining human");
+    Check(SelectHumanHost(999,0x80000001u,slots)==32,
+          "absent candidates and AI identities are not eligible for ownership");
+    slots[1]=0;
+    Check(SelectHumanHost(0x80000001u,31,slots)==0,
+          "no humans means no invented or AI replacement host");
+    for(int position=0;position<kStorageSlots;++position) {
+        slots.fill(0x80000001u);slots[position]=31;
+        Check(SelectHumanHost(0x80000001u,0,slots)==31,
+              "every native room storage position can retain the real human host");
+    }
     Room room;room.hostTeam=1;room.humans[1]=1;
     auto plan=Resolve({0,kFillRoom},room);
     Check(plan.error==Error::None && plan.allies==0 && plan.enemies==7,"one host versus seven AI within eight total slots");
