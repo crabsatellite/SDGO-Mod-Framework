@@ -1475,6 +1475,10 @@ private:
             return Publish(kComplete);
         }
         if (page < maximum) {
+            const Result request =
+                CatalogRequestReady();
+            if (request != kComplete)
+                return Publish(request);
             void* control =
                 FindControl(
                     roomRoot_,
@@ -1494,6 +1498,19 @@ private:
                     control))
                 return Publish(kNativeFault);
             ++observation_.original_actions;
+            uint32_t invokedPage = 0;
+            if (!ReadValue(
+                    room_,
+                    kRoomPage,
+                    &invokedPage))
+                return Publish(kNativeFault);
+            observation_.current_page =
+                invokedPage;
+            const Result invokedRequest =
+                CatalogRequestReady();
+            if (invokedRequest ==
+                kNativeFault)
+                return Publish(kNativeFault);
             stage_ = kStageWaitPage;
             return Publish(kChangingPage);
         }
@@ -1509,14 +1526,32 @@ private:
     {
         if (!RoomStillMatches())
             return Publish(kServiceMismatch);
-        uint32_t page = 0;
-        if (!ReadValue(
-                room_,
-                kRoomPage,
-                &page))
+        const Result request =
+            CatalogRequestReady();
+        if (request == kNativeFault)
             return Publish(kNativeFault);
-        if (page == pageBefore_)
+        std::vector<ProductRow> rows;
+        uint32_t page = 0;
+        uint32_t maximum = 0;
+        if (!ReadProductRows(
+                &rows,
+                &page,
+                &maximum))
+            return Publish(
+                request ==
+                        kWaitingForCatalog
+                    ? kChangingPage
+                    : kMalformedCatalog);
+        if (request ==
+            kWaitingForCatalog)
             return Publish(kChangingPage);
+        // 009DFBF0 advances room+68 before 009BE6B0 sends 072D.  The
+        // 0549 reply later clears REQ_GET_STORE_ITEM_LIST ownership and
+        // rebuilds the 0x11-byte rows through 009DADC0.  Do not scan the
+        // synchronously advanced page while it still contains prior rows:
+        // a second RightBtn click would be ignored by the pending guard.
+        if (page == pageBefore_)
+            return Publish(kPageDidNotAdvance);
         if (page != pageBefore_ + 1)
             return Publish(kPageDidNotAdvance);
         stage_ = kStageScanPage;
