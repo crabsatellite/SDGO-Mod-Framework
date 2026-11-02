@@ -180,9 +180,10 @@ def initialize_battleships(connection,accounts,profiles,*,isolated_template=Fals
         choice=choose_fleet(ships,primary,available,stars)
         if choice is None:raise RuntimeError(f'No legal native fleet for fixture slot {account["slot"]}; unit stars={stars}; bounds={[(int(s[1]),int(s[2]),int(s[3])) for s in ships]}')
         ship,deck=choice;uids=[u['uid'] for u in deck];padded=uids+[0]*(4-len(uids))
-        cursor.execute('DECLARE @p1 bigint,@p2 bigint,@p3 bigint,@p4 bigint,@c1 smallint,@c2 smallint,@c3 smallint,@c4 smallint,@r int; '
-            'EXEC GOnlineGame.dbo.sp_SetUserBattleShipData ?,?,?,?,?,?,?,?,@p1 OUTPUT,@p2 OUTPUT,@p3 OUTPUT,@p4 OUTPUT,'
-            '@c1 OUTPUT,@c2 OUTPUT,@c3 OUTPUT,@c4 OUTPUT,@r OUTPUT;SELECT @r AS fixture_deck;',who,int(ship[0]),account['primary_uid'],*padded,len(uids))
+        cursor.execute('DECLARE @previous_unit1 bigint,@previous_unit2 bigint,@previous_unit3 bigint,@previous_unit4 bigint,'
+            '@previous_count1 smallint,@previous_count2 smallint,@previous_count3 smallint,@previous_count4 smallint,@fixture_result int; '
+            'EXEC GOnlineGame.dbo.sp_SetUserBattleShipData ?,?,?,?,?,?,?,?,@previous_unit1 OUTPUT,@previous_unit2 OUTPUT,@previous_unit3 OUTPUT,@previous_unit4 OUTPUT,'
+            '@previous_count1 OUTPUT,@previous_count2 OUTPUT,@previous_count3 OUTPUT,@previous_count4 OUTPUT,@fixture_result OUTPUT;SELECT @fixture_result AS fixture_deck;',who,int(ship[0]),account['primary_uid'],*padded,len(uids))
         status=result(cursor,'fixture_deck')['fixture_deck']
         if status!=0:raise RuntimeError(f'Native fleet assignment refused fixture slot {account["slot"]}: {status}')
         cursor.execute('DECLARE @n int,@u bigint,@r int;EXEC GOnlineGame.dbo.sp_SetUserBattleShip_GoOut ?,?,@n OUTPUT,@u OUTPUT,@r OUTPUT;'
