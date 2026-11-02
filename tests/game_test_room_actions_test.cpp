@@ -551,6 +551,23 @@ int main()
     std::puts(
         "OFFLINE ONLY: RoomActions ABI regression; no game, server, or database");
 
+    RoomActions::NativeRoomObservation returned = {};
+    returned.native_app_state=18;returned.model_present=1;
+    Check(!RoomActions::SettledRoomReady(returned),
+        "entering the waiting scene with an empty model cannot prove host loss");
+    returned.room_id=23;returned.room_mode=3;
+    Check(!RoomActions::SettledRoomReady(returned),
+        "partially loaded room still waits for the native player list");
+    returned.player_count=1;
+    Check(RoomActions::SettledRoomReady(returned) && !returned.local_is_host,
+        "a populated room with missing human ownership must reach the failing host assertion instead of being hidden by the readiness gate");
+    returned.native_app_state=22;
+    Check(!RoomActions::SettledRoomReady(returned),
+        "old battle room data on the result page cannot prove a returned room");
+    returned.native_app_state=20;
+    Check(RoomActions::SettledRoomReady(returned),
+        "the native 2D waiting room is eligible for the same host regression");
+
     SdgoApi api = {};
     api.size = sizeof(api);
     api.version = SDGO_API_VERSION;
