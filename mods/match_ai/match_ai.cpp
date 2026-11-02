@@ -25,8 +25,8 @@
 //   on the room master: +0x31ED = 0, +0x2B64 = 1, +0x3074 = 1, +0x2B65 = 0, +0x3070 = 2.
 //
 // A unit's AI runs only once it is switched on (CNPC::EnableAI, unit+0x326C). The game does
-// that for every AI unit at game ready, but only in the script modes; for a PvP battle with
-// AI players this mod does it at the same moment (GameReady, 0x004B2390). The AI scripts
+// that for every AI unit at GameReady phase 3, but only in the script modes; for a PvP battle with
+// AI players this mod waits for the same player-control release (GameReady, 0x004B2390). The AI scripts
 // need the Lua bindings the script modes register in their Init (0x0050FAB0), and their
 // target searches call script mode vftable slots; both are provided for the PvP modes.
 //
@@ -133,6 +133,15 @@ namespace
 
     constexpr size_t kAppGameMain = 0x4A4;      // game-main service* of the game application
     constexpr size_t kServiceMode = 0x0C;       // game mode* of the game-main service
+    constexpr size_t kServiceReadyState = 0x3C; // GameReady phases: 1 waiting, 2 countdown, 3 released
+    constexpr size_t kManagerPlayer = 0x88;
+    constexpr size_t kPlayerControlEnabled = 0x31E9; // set by native 0x00671170 at phase 2 -> 3
+    using RosterInitFn = void(__thiscall*)(uint8_t*, void*, void*);
+    using RosterRowFn = void(__thiscall*)(uint8_t*, uint8_t*, int);
+    RosterInitFn g_rosterInit = nullptr;
+    RosterRowFn g_originalRosterRow = nullptr;
+    uint8_t* g_rosterPanel = nullptr;
+    SdgoPvpAiClientScoreboardStatusV1 g_scoreboardStatus{};
     constexpr size_t kUnitOwner = 0x3268;       // owning script mode*, 0 from the CBaseGameMode CreateNpc
     constexpr int kModeIsASlot = 1;
     constexpr int kModeInitSlot = 4;
@@ -206,6 +215,7 @@ namespace
     // on at game ready.
     uint8_t* g_botMode = nullptr;
     bool g_aiEnabled = false; // the AI players' AI was switched on at game ready
+    SdgoPvpAiClientStartStatusV1 g_startStatus{};
     // The game mode of a battle with AI players whose only human is this client.
     uint8_t* g_soloAiMode = nullptr;
 
@@ -697,10 +707,38 @@ namespace
         }
     }
 
+    // The real TAB panel caches UM::playerCount in its Init (0x00532C00),
+    // before the PvP mode Init returns and we add AI. Its own row count and
+    // slide-in offsets must include the newly registered slots as well.
+    void SyncScoreboardRoster(uint8_t* mode, int count)
+    {
+        if (count < 1 || count > 12 || g_botTable.empty()) return;
+        uint8_t* hud = *reinterpret_cast<uint8_t**>(mode + 0x0C);
+        uint8_t* panel = hud ? *reinterpret_cast<uint8_t**>(hud + 0x1C08) : nullptr;
+        if (!panel || (*reinterpret_cast<void***>(panel))[10] != reinterpret_cast<void*>(g_rosterInit)) {
+            g_api->Log(g_mod, SDGO_LOG_WARN, "native TAB roster panel unavailable after AI spawn");
+            return;
+        }
+        auto& rows = *reinterpret_cast<int32_t*>(panel + 0x150);
+        if (rows < 0 || rows > count) return;
+        g_scoreboardStatus.original_row_count = static_cast<uint32_t>(rows);
+        for (int i = rows; i < count; ++i) {
+            auto offset = reinterpret_cast<float*>(panel + 0x170 + i * 12);
+            offset[0] = *reinterpret_cast<float*>(panel + 0x48);
+            offset[1] = offset[2] = 0;
+        }
+        rows = count;
+        g_rosterPanel = panel;
+        ++g_scoreboardStatus.roster_sync_count;
+    }
+
     void SpawnAiPlayers(uint8_t* mode, const char* className)
     {
         g_botTable.clear();
         g_aiEnabled = false;
+        g_startStatus = {};
+        g_scoreboardStatus = {};
+        g_rosterPanel = nullptr;
         g_logPackets = false;
         g_viewStateLogs = 0;
         g_botMode = mode;
@@ -759,6 +797,7 @@ namespace
                        c.spawned);
         }
         g_game.calculateTeam(um);
+        SyncScoreboardRoster(mode, c.humans + c.spawned);
     }
 
     // ---- grid match: the gauge counts the AI players ---------------------------------------
@@ -854,26 +893,54 @@ namespace
 
     // ---- game ready: switch the AI on --------------------------------------------------
     //
-    // GameReady (0x004B2390) switches on the AI of the unit manager's AI units only for the
-    // script modes (game mode kind 9 or 10, 0x004B2716). For a PvP mode with AI players the
-    // same step runs here, right after it: CNPC::EnableAI on each of them.
+    // GameReady (0x004B2390) runs every frame, including while players are frozen.
+    // At 0x004B25DA it commits phase 3, then releases player control (0x00671170)
+    // and enables script-mode AI (0x004B272B). PvP bots must wait for that same
+    // native phase, regardless of difficulty or whether battle_ai is installed.
 
     void EnableBots(uint8_t* service)
     {
         uint8_t* mode = *reinterpret_cast<uint8_t**>(service + kServiceMode);
         if (!mode || mode != g_botMode || g_aiEnabled || g_botTable.empty())
             return;
+        if (*reinterpret_cast<const uint32_t*>(service + kServiceReadyState) != 3)
+            return;
         for (const Bot& bot : g_botTable)
             g_game.enableAi(bot.unit);
         g_aiEnabled = true;
+        ++g_startStatus.release_count;
+        g_startStatus.release_ready_state = *reinterpret_cast<uint32_t*>(service + kServiceReadyState);
         g_api->Log(g_mod, SDGO_LOG_INFO, "game ready: AI switched on for %u AI player(s)",
                    static_cast<unsigned>(g_botTable.size()));
+    }
+
+    void ObserveStart(uint8_t* service, bool releasedNow)
+    {
+        if (*reinterpret_cast<uint8_t**>(service + kServiceMode) != g_botMode || g_botTable.empty())
+            return;
+        g_startStatus.native_ready_state = *reinterpret_cast<uint32_t*>(service + kServiceReadyState);
+        g_startStatus.bot_count = static_cast<uint32_t>(g_botTable.size());
+        g_startStatus.ai_enabled_count = 0;
+        for (const Bot& bot : g_botTable)
+            if (bot.unit[0x326C]) ++g_startStatus.ai_enabled_count;
+        const uint8_t* manager = static_cast<const uint8_t*>(*g_game.unitManager);
+        const uint8_t* player = manager ? *reinterpret_cast<const uint8_t* const*>(manager + kManagerPlayer) : nullptr;
+        if (!g_startStatus.release_count || releasedNow)
+            g_startStatus.player_control_enabled = player && player[kPlayerControlEnabled] ? 1u : 0u;
+        if (g_startStatus.native_ready_state != 3) {
+            ++g_startStatus.frozen_update_count;
+            if (g_startStatus.ai_enabled_count) ++g_startStatus.early_enabled_count;
+        }
+        if (releasedNow && !g_startStatus.player_control_enabled && !g_game.isObserver(*g_game.unitManager))
+            ++g_startStatus.early_enabled_count;
     }
 
     bool GuardedEnable(uint8_t* service)
     {
         __try {
+            const bool enabledBefore = g_aiEnabled;
             EnableBots(service);
+            ObserveStart(service, !enabledBefore && g_aiEnabled);
             return true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return false;
@@ -1150,7 +1217,32 @@ namespace
         return nullptr;
     }
 
-    // The battle Tab panel builds one row per player slot, but after FindPlayer it
+    // Observe the actual native TAB K/D/points renderer, rather than infer
+    // visibility from unit registration or from the separate teammate HUD.
+    void __fastcall ScoreboardRow(uint8_t* panel, void*, uint8_t* slot, int row)
+    {
+        g_originalRosterRow(panel, slot, row);
+        if (panel != g_rosterPanel || !slot || row < 0 || row >= 12) return;
+        __try {
+            void* um = *g_game.unitManager;
+            const Bot* bot = BotByObject(um, *reinterpret_cast<uint32_t*>(slot + kSlotObjectId));
+            if (!bot || g_originalPlayerSlot(um, bot->slot) != slot) return;
+            const size_t index = static_cast<size_t>(bot - g_botTable.data());
+            if (index >= 12) return;
+            auto& recorded = g_scoreboardStatus.bots[index];
+            recorded.pilot_id = bot->pilotId;
+            recorded.object_id = bot->objectId;
+            const uint8_t* record = *reinterpret_cast<const uint8_t* const*>(slot + kSlotRecord);
+            recorded.team = record[kRecordTeam];
+            recorded.kills = *reinterpret_cast<int32_t*>(slot + 0x4C);
+            recorded.deaths = *reinterpret_cast<int32_t*>(slot + 0x54);
+            recorded.points = *reinterpret_cast<int32_t*>(slot + 0x58);
+            recorded.row_index = static_cast<uint32_t>(row);
+            ++recorded.render_count;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    }
+
+    // The teammate HUD builds one row per player slot, but after FindPlayer it
     // rejects every IsA(10) unit.  match_ai participants are CNPCs, so that native
     // check hides every AI row even though the exact 1001+ object-id lookup succeeds.
     // Override only the saved IsA result for a live, registered match_ai participant;
@@ -1957,6 +2049,10 @@ SDGO_MOD_ENTRY
                  Bind(g_gridData, "grid.data") && Bind(g_gridFind, "grid.find") &&
                  Bind(g_addDeckUnit, "unit.add_deck_unit") && Bind(g_switchDeck, "unit.switch_deck");
     if (!bound)
+        return 0;
+    if (!Bind(g_rosterInit, "hud.battle_roster_init") ||
+        !api->HookCode(mod, "hud.battle_roster_row", reinterpret_cast<void*>(&ScoreboardRow),
+                       reinterpret_cast<void**>(&g_originalRosterRow)))
         return 0;
     if (api->size < offsetof(SdgoApi, HookSite) + sizeof(api->HookSite) || !api->HookSite ||
         !api->HookSite(mod, "ainormal.target_team_gate", reinterpret_cast<void*>(&TargetTeamGate), &g_targetTeamOriginal))
