@@ -153,6 +153,26 @@ class UnitManagerTests(unittest.TestCase):
         self.assertEqual(result['catalog']['products'], [])
         self.assertIn('/api/providers/units/', result['unit_imports']['1119000']['shop_image_url'])
 
+    def test_shop_serves_generated_published_icon_and_rejects_stale_binding(self):
+        from PIL import Image
+        from urllib.parse import urlsplit,parse_qs
+        state=self.publish();draft=state['draft'];registered=self.units.registrations()[0]
+        path=registered['shop_image_url'].removeprefix('/api/providers/units')
+        image=self.units.request('GET',path,{},{}).data
+        self.assertEqual(Image.open(io.BytesIO(image)).size,(122,122))
+        self.assertEqual(hashlib.sha256(image).hexdigest(),registered['shop_image_sha256'])
+        self.assertNotEqual(registered['shop_image_sha256'],registered['shop_source_sha256'])
+        self.assertEqual(registered['shop_sprite'],'sprs/u90001o.spr')
+        self.engine.update(draft['id'],{'name':'Unapproved draft edit'},state['revision'])
+        self.assertEqual(self.units.request('GET',path,{},{}).data,image)
+        self.assertEqual(self.units.registrations()[0]['shop_image_url'],registered['shop_image_url'])
+        query=parse_qs(urlsplit(path).query)
+        stale=path.replace(query['image'][0],'0'*64)
+        with self.assertRaises(ValueError):self.units.request('GET',stale,{}, {})
+        current=self.engine.public(draft['id'])
+        self.engine.disable(draft['id'],current['revision'])
+        with self.assertRaises(ValueError):self.units.request('GET',path,{}, {})
+
     def test_custom_imported_common_candidates_keep_high_grade_policy(self):
         self.publish(); self.sync(); catalog = json.loads(self.catalog.read_bytes())
         catalog['custom_candidate_policy'] = {'version': 1, 'native_candidate_unit_ids': []}

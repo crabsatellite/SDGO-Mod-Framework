@@ -154,11 +154,12 @@ def publish(workspace,state,selected,transaction):
             'unit_index_id':index_id,
             'index_owned_sprite':display['index_owned'],'index_missing_sprite':display['index_missing'],
             'display_name':family['name'],'forms':[r['id'] for r in family['forms']],
-            'shop_sprite':display['shop'],'capsule_sprite':display['capsule'],
+            'shop_sprite':display['index_owned'],'secret_store_sprite':display['shop'],'capsule_sprite':display['capsule'],
             'unit_primary_sprite':display['unit_primary'],'custom_candidate_sprite':display['custom'],
             'capsule_fixed_sprite':display.get('capsule_fixed'),
             'presentation':contract(workspace,family),
-            'shop_image_sha256':family['presentation']['shop']['asset_sha'],'capsule_image_sha256':family['presentation']['capsule']['asset_sha'],
+            'shop_image_sha256':hashlib.sha256(generated['index_owned']).hexdigest(),
+            'shop_source_sha256':family['presentation']['shop']['asset_sha'],'capsule_image_sha256':family['presentation']['capsule']['asset_sha'],
             'enabled':state['drafts'][family['id']]['status']!='disabled','storefront_changes':False,'gacha_changes':False})
     catalog=native_catalog(records)
     content_revision=model.revision({'families':published,'record_hash':hashlib.sha256(catalog).hexdigest()})

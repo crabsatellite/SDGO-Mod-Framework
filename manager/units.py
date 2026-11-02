@@ -33,6 +33,18 @@ class Units(Provider):
               'archive_executable': '7-Zip 程序（可选）'}
     developer_fields = Provider.developer_fields | {'archive_executable'}
 
+    def _published_shop(self, engine, family):
+        from owner.units.model import content_revision
+        from owner.units.presentation import GENERATOR_VERSION,shop_image
+        key=(id(engine),content_revision(family),GENERATOR_VERSION)
+        cache=getattr(self,'_shop_previews',None)
+        if cache is None:self._shop_previews=cache={}
+        if key not in cache:
+            raw=shop_image(engine,family)
+            if len(cache)>=128:cache.pop(next(iter(cache)))
+            cache[key]=(raw,hashlib.sha256(raw).hexdigest())
+        return cache[key]
+
     def get_engine(self):
         if self.engine is None:
             from owner.units.workspace import Workspace
@@ -62,19 +74,20 @@ class Units(Provider):
                 root = family['root_unit_id']
                 form = next(r for r in family['forms'] if r['id'] == root)
                 from owner.units.model import content_revision
+                _,shop_sha=self._published_shop(engine,family)
                 result.append({'key': 'unit:'+str(root), 'provider': 'unit_catalog', 'kind': 'unit',
                     'unit_id': root, 'category_id': family['category_id'], 'family_key': family['family_key'],
                     'revision': content_revision(family), 'display_name': family['name'],
                     'forms': [r['id'] for r in family['forms']],
                     'rank': form['server']['UnitGradeNumber'], 'subgrade': form['server']['UnitGradeNumber2'],
-                    'shop_sprite': f'sprs/u{root}s.spr', 'unit_primary_sprite':f'sprs/u{root}p.spr',
+                    'shop_sprite': f'sprs/u{root}o.spr', 'secret_store_sprite':f'sprs/u{root}s.spr', 'unit_primary_sprite':f'sprs/u{root}p.spr',
                     'capsule_sprite':f'sprs/u{root}{"c" if form["server"]["UnitGradeNumber"]<=3 else "i"}.spr',
                     'custom_candidate_sprite':f'sprs/u{root}i.spr',
-                    'shop_image_sha256': family['presentation']['shop']['asset_sha'],
+                    'shop_image_sha256': shop_sha, 'shop_source_sha256':family['presentation']['shop']['asset_sha'],
                     'capsule_image_sha256': family['presentation']['capsule']['asset_sha'],
                     'server_applied': bool(draft.get('published_server_result', draft.get('server_result', {})).get('applied')),
                     'server_target': draft.get('published_server_result', draft.get('server_result', {})).get('server_target'),
-                    'shop_image_url': f'/api/providers/units/api/units/assets/{family["presentation"]["shop"]["asset_sha"]}',
+                    'shop_image_url': f'/api/providers/units/api/units/published/{draft["id"]}/presentation/shop?revision={content_revision(family)}&image={shop_sha}',
                     'capsule_image_url': f'/api/providers/units/api/units/assets/{family["presentation"]["capsule"]["asset_sha"]}'})
             return result
 
@@ -108,6 +121,17 @@ class Units(Provider):
             if method == 'GET':
                 from urllib.parse import urlsplit,parse_qs
                 split=urlsplit(path)
+                published=re.fullmatch(r'/api/units/published/([0-9a-f]{32})/presentation/shop',split.path)
+                if published:
+                    with engine.lock:
+                        draft=engine._get(engine.read(),published[1]);family=draft.get('published')
+                        if not family or draft['status']=='disabled':raise ValueError('已确认的商城图标不存在')
+                        from owner.units.model import content_revision
+                        query=parse_qs(split.query)
+                        raw,digest=self._published_shop(engine,family)
+                        if query.get('revision',[''])[0]!=content_revision(family) or query.get('image',[''])[0]!=digest:
+                            raise ValueError('已确认的商城图标版本已变化，请刷新商品列表')
+                        return Binary(raw,'image/png')
                 presentation=re.fullmatch(r'/api/units/drafts/([0-9a-f]{32})/presentation/(shop|capsule)',split.path)
                 if presentation:
                     from owner.units import presentation as generator
