@@ -55,6 +55,27 @@
       "activation": "restart_required"
     },
     {
+      "id": "unit_acquisition_kind",
+      "key": "UnitAcquisitionKind",
+      "label": "机体候选检查（0关闭、1固定、3自定义）",
+      "type": "integer", "default": 0, "minimum": 0, "maximum": 3,
+      "file": "mod.ini", "section": "settings", "audience": "developer", "activation": "restart_required"
+    },
+    {
+      "id": "unit_acquisition_machine",
+      "key": "UnitAcquisitionMachine",
+      "label": "候选检查的机台编号",
+      "type": "integer", "default": 0, "minimum": 0, "maximum": 9999999,
+      "file": "mod.ini", "section": "settings", "audience": "developer", "activation": "restart_required"
+    },
+    {
+      "id": "unit_acquisition_unit",
+      "key": "UnitAcquisitionUnit",
+      "label": "候选检查的机体编号",
+      "type": "integer", "default": 0, "minimum": 0, "maximum": 9999999,
+      "file": "mod.ini", "section": "settings", "audience": "developer", "activation": "restart_required"
+    },
+    {
       "id": "collection_preview_only",
       "key": "CollectionPreviewOnly",
       "label": "仅检查收藏扭蛋原生预览（不抽取）",

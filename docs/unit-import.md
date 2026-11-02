@@ -79,3 +79,9 @@ preview case and checks that no purchase transport was submitted. Activity and
 collection machines display one native poster per machine; they do not list
 every unit portrait in their pools. Verify root registrations, machine posters,
 and fixed/custom candidate portraits separately.
+
+For a specific fixed/custom candidate, seal `UnitPresentations=1`,
+`UnitAcquisitionKind=1` or `3`, its machine and unit IDs, and an actually owned
+unit UID before a pages-only run. `pages.unit_acquisition` uses the original
+controls and unit-view event consumer, without purchasing or changing custom
+selections. Capture native frames to review the real card and model.
