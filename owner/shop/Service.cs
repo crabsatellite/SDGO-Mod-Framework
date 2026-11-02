@@ -16,6 +16,7 @@ namespace Sdgo.Shop
         public List<Applied> Applied=new List<Applied>();
         public bool Demo;
         string savedHash;
+        Dictionary<string,string> savedProducts;
         readonly FileStream lease;
         readonly DemoRepository demoRepository=new DemoRepository();
         public string CatalogFile { get {return Path.Combine(DirectoryPath,"shop.json");} }
@@ -32,7 +33,7 @@ namespace Sdgo.Shop
                 if(File.Exists(Path.Combine(world,"WorldServer.ini"))) Settings.WorldDirectory=world;
                 if(File.Exists(Path.Combine(client,"GOnline.exe"))) Settings.ClientDirectory=client;
             }
-            Catalog=File.Exists(CatalogFile)?Model.Read<Catalog>(CatalogFile):Catalog.Empty();Model.Validate(Catalog);savedHash=Model.FileHash(CatalogFile);
+            Catalog=File.Exists(CatalogFile)?Model.Read<Catalog>(CatalogFile):Catalog.Empty();Model.Validate(Catalog);savedHash=Model.FileHash(CatalogFile);CaptureProducts();
         }
         public void Dispose() {lease.Dispose();}
         public void Connect()
@@ -47,7 +48,22 @@ namespace Sdgo.Shop
             if(!Demo) Applied=new SqlRepository(Settings.WorldDirectory).ReadApplied(Catalog.catalog_id);
         }
         void Unchanged() {if(Model.FileHash(CatalogFile)!=savedHash) throw new InvalidOperationException("配置文件已被其他工具修改。请关闭并重新打开窗口后再应用，避免覆盖新内容。");}
-        public void SaveDraft() {Unchanged();Model.Validate(Catalog,Snapshot);Model.Save(CatalogFile,Catalog);savedHash=Model.FileHash(CatalogFile);}
+        static string ProductState(Product product) {return Model.Json().Serialize(product);}
+        void CaptureProducts() {savedProducts=Catalog.products.ToDictionary(p=>p.key,p=>ProductState(p));}
+        public void ValidateDraftChinese()
+        {
+            foreach(var product in Catalog.products.Where(p=>!Model.HasChinese(p.name)||!Model.HasChinese(p.label)))
+            {
+                string saved;
+                if(!savedProducts.TryGetValue(product.key,out saved)) Model.ValidateChinese(product);
+                else if(!product.retired&&saved!=ProductState(product)) Model.ValidateChinese(product);
+            }
+        }
+        public void SaveDraft()
+        {
+            Unchanged();Model.Validate(Catalog,Snapshot);ValidateDraftChinese();Model.Save(CatalogFile,Catalog);
+            savedHash=Model.FileHash(CatalogFile);CaptureProducts();
+        }
         static void Probe(string dir)
         {
             Directory.CreateDirectory(dir);string test=Path.Combine(dir,".shop-write-"+Guid.NewGuid().ToString("N"));
@@ -61,15 +77,19 @@ namespace Sdgo.Shop
         }
         public void Apply()
         {
-            Unchanged();Model.Validate(Catalog,Snapshot);
+            Unchanged();Model.Validate(Catalog,Snapshot);Model.ValidateChinese(Catalog);
+            string displayDir=String.IsNullOrEmpty(Settings.ClientDirectory)?null:Path.Combine(Settings.ClientDirectory,"sdgo","mods","shop_labels");
+            string localizationDir=String.IsNullOrEmpty(Settings.ClientDirectory)?null:Path.Combine(Settings.ClientDirectory,"sdgo","mods","shop_localization");
+            if(localizationDir!=null&&!File.Exists(Path.Combine(localizationDir,"shop_localization.dll")))
+                throw new InvalidOperationException("所选客户端没有安装商城汉化 Mod（shop_localization.dll），请先安装玩家更新包，或清空客户端设置。");
+            if(displayDir!=null&&!File.Exists(Path.Combine(displayDir,"shop_labels.dll")))
+                throw new InvalidOperationException("所选客户端没有安装显示补丁，请重新选择客户端，或清空客户端设置。");
             if(Demo)
             {
                 Applied=Catalog.products.Where(p=>!p.retired).Select(p=>new Applied {Id=p.product_id,Sku=p.item_id,Category=p.category_id,Price=p.price,Validity=p.validity,Currency=p.currency,Visible=p.enabled,Label=p.label,Name=p.name}).ToList();demoRepository.Applied=Applied;SaveDraft();return;
             }
             string helper=Path.Combine(ModDirectory,"shop_catalog_apply.exe");
             if(!File.Exists(helper)) throw new InvalidOperationException("所选 WorldServer 尚未安装商城 Mod，请先安装服务器组件。");
-            string displayDir=String.IsNullOrEmpty(Settings.ClientDirectory)?null:Path.Combine(Settings.ClientDirectory,"sdgo","mods","shop_labels");
-            if(displayDir!=null&&!File.Exists(Path.Combine(displayDir,"shop_labels.dll"))) throw new InvalidOperationException("所选客户端没有安装显示补丁，请重新选择客户端，或清空客户端设置。");
             Probe(DirectoryPath);Probe(ModDirectory);if(displayDir!=null) Probe(displayDir);
             string run=Path.Combine(DirectoryPath,"apply-history",DateTime.UtcNow.ToString("yyyyMMddTHHmmssfffffff")+"-"+Guid.NewGuid().ToString("N").Substring(0,8));Directory.CreateDirectory(run);
             string candidate=Path.Combine(run,"catalog.ini");File.WriteAllText(candidate,Model.Ini(Catalog),Encoding.Unicode);Model.Save(Path.Combine(run,"shop.json"),Catalog);
@@ -109,7 +129,9 @@ namespace Sdgo.Shop
                 }
                 Model.Validate(incoming,Snapshot);
             }
-            Catalog=incoming;
+            var previous=Catalog;Catalog=incoming;
+            try {ValidateDraftChinese();}
+            catch {Catalog=previous;throw;}
         }
         public string Status(Product p)
         {
