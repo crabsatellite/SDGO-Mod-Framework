@@ -68,6 +68,14 @@ class ReuseOwnedClientTests(unittest.TestCase):
             game_test.reuse_prepared(self.fixture.template,self.fixture.stage,run)
         self.assertTrue((run/'client/GOnline.exe').exists());self.assertFalse(self.recycled)
 
+    def test_nested_friend_campaign_also_protects_its_archive_baseline(self):
+        run=self.fixture.prepare('baseline')
+        actor=self.base/'friends/campaign/a-01';actor.mkdir(parents=True)
+        (actor/'run.json').write_text(json.dumps({'assets':{'baseline':str(run)}}))
+        with self.assertRaisesRegex(game_test.GameTestError,'baseline'):
+            game_test.reuse_prepared(self.fixture.template,self.fixture.stage,run)
+        self.assertTrue((run/'client/GOnline.exe').exists());self.assertFalse(self.recycled)
+
     def test_tampered_payload_and_player_directory_are_rejected(self):
         with self.assertRaisesRegex(game_test.GameTestError,'owned build'):
             game_test.reuse_prepared(self.fixture.template,self.fixture.stage,self.base.parent/'player')

@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <cwchar>
 
 #include "native_actions.h"
 
@@ -28,10 +29,25 @@ public:
         kInitialLoadingAccepted = 2,
     };
 
+    enum StarterBuyingUiState : uint32_t
+    {
+        kStarterBuyingAbsent = 0,
+        kStarterBuyingWaiting = 1,
+        kStarterBuyingReady = 2,
+        kStarterBuyingIdentityMismatch = 3,
+        kStarterBuyingControlMismatch = 4,
+        kStarterBuyingNativeFault = 5,
+    };
+
     struct StarterObservation
     {
         uint32_t reply_sequence;
         uint32_t result_confirm_sequence;
+        uint32_t buying_clone_sequence;
+        uint32_t buying_captured_app_state;
+        uint32_t buying_ui_state;
+        uint32_t result_popup_clone_sequence;
+        uint32_t result_popup_captured_app_state;
         uint32_t result;
         uint32_t native_app_state;
         uint32_t onboarding_stage;
@@ -45,6 +61,11 @@ public:
         uint8_t picked_unit_slot;
         uint8_t starter_draw_busy;
         uint8_t request_attempted;
+        uint8_t buying_captured;
+        uint8_t buying_named_identity_matched;
+        uint8_t buying_control_ready;
+        uint8_t buying_validation_failed;
+        uint8_t result_popup_captured;
         uint8_t result_popup_ready;
         uint8_t result_confirm_attempted;
         uint8_t native_fault;
@@ -97,6 +118,19 @@ public:
         onboardingCapsuleClone_ =
             Symbol<OnboardingCapsuleCloneFn>(
                 "flow.onboarding_capsule_clone");
+        serviceManagedPointer_ =
+            Symbol<void**>("flow.service_managed_pointer");
+        serviceFindByName_ =
+            Symbol<ServiceFindByNameFn>(
+                "flow.service_find_by_name");
+        nativeUiFindControl_ =
+            Symbol<NativeUiFindControlFn>(
+                "flow.native_ui_find_control");
+        starterBuyingVtable_ =
+            Symbol<void*>("flow.onboarding_buying_vtable");
+        starterBuyingClone_ =
+            Symbol<StarterBuyingCloneFn>(
+                "flow.onboarding_buying_clone");
         capsuleBuyAction_ =
             Symbol<CapsuleBuyActionFn>("flow.capsule_buy_action");
         starterDispatch_ =
@@ -120,7 +154,10 @@ public:
 
         if (!api_ || !mod_ || !native_ || !nativeWStringCtor_ ||
             !nativeWStringDtor_ || !onboardingUpdate_ ||
-            !onboardingCapsuleClone_ || !capsuleBuyAction_ ||
+            !onboardingCapsuleClone_ || !serviceManagedPointer_ ||
+            !serviceFindByName_ || !nativeUiFindControl_ ||
+            !starterBuyingVtable_ || !starterBuyingClone_ ||
+            !capsuleBuyAction_ ||
             !starterDispatch_ || !starterResultPopupClone_ ||
             !starterResultPopupAction_ || !unitInfoPointer_ ||
             !unitBriefBySlot_ ||
@@ -129,6 +166,21 @@ public:
             return false;
         if (active_ && active_ != this)
             return false;
+        __try {
+            if (!SlotMatches(
+                    starterBuyingVtable_,
+                    kUiCallbackVtableSlot,
+                    reinterpret_cast<void*>(
+                        capsuleBuyAction_)) ||
+                !SlotMatches(
+                    starterBuyingVtable_,
+                    kCloneVtableSlot,
+                    reinterpret_cast<void*>(
+                        starterBuyingClone_)))
+                return false;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
 
         active_ = this;
         if (!api_->HookCode(
@@ -141,6 +193,11 @@ public:
                 "flow.onboarding_capsule_clone",
                 reinterpret_cast<void*>(&ObserveOnboardingCapsuleClone),
                 reinterpret_cast<void**>(&onboardingCapsuleClone_)) ||
+            !api_->HookCode(
+                mod_,
+                "flow.onboarding_buying_clone",
+                reinterpret_cast<void*>(&ObserveStarterBuyingClone),
+                reinterpret_cast<void**>(&starterBuyingClone_)) ||
             !api_->HookCode(
                 mod_,
                 "flow.starter_dispatch",
@@ -168,11 +225,13 @@ public:
         return true;
     }
 
-    // Invokes the shipped BuyBtn business callback on the actual onboarding
-    // capsule object cloned by the UI manager. The original callback owns its
-    // busy guard, pending-request registration and exact 0x072E send. The real
-    // 0x054A handler remains solely responsible for granting the unit, 600 GP
-    // and tutorial-level progression.
+    // The onboarding capsule's native FSM creates a separate
+    // CServiceCoinBuying named "buying". Invoke the shipped BuyBtn business
+    // callback only on that manager-owned live clone after its f_buy_dlg root
+    // and real visible/enabled BuyBtn control are ready. The original callback
+    // owns its busy guard, pending-request registration and exact 0x072E send.
+    // The real 0x054A handler remains solely responsible for granting the unit,
+    // 600 GP and tutorial-level progression.
     bool DrawStarterUnit()
     {
         if (!native_ ||
@@ -184,38 +243,41 @@ public:
         if (!state.profile_pilot_id || state.tutorial_level >= 2 ||
             state.starter_draw_busy ||
             InterlockedCompareExchange(&starterReplySequence_, 0, 0) != 0 ||
-            InterlockedCompareExchange(&starterRequestAttempted_, 1, 0) != 0)
+            InterlockedCompareExchange(&starterRequestAttempted_, 0, 0) != 0)
             return false;
 
-        void* capsule = InterlockedCompareExchangePointer(
-            &onboardingCapsule_, nullptr, nullptr);
-        if (!capsule) {
-            InterlockedExchange(&starterRequestAttempted_, 0);
+        void* buying = nullptr;
+        void* buyControl = nullptr;
+        bool namedIdentityMatched = false;
+        const StarterBuyingUiState uiState =
+            ResolveStarterBuying(
+                &buying,
+                &buyControl,
+                &namedIdentityMatched);
+        InterlockedExchange(
+            &starterBuyingUiState_,
+            static_cast<LONG>(uiState));
+        InterlockedExchange(
+            &starterBuyingNamedIdentityMatched_,
+            namedIdentityMatched ? 1 : 0);
+        if (uiState != kStarterBuyingReady)
             return false;
-        }
+        if (InterlockedCompareExchange(
+                &starterRequestAttempted_, 1, 0) != 0)
+            return false;
 
-        alignas(4) uint8_t command[kNativeWStringSize] = {};
-        bool constructed = false;
         bool invoked = false;
         __try {
-            nativeWStringCtor_(command, L"BuyBtn");
-            constructed = true;
             capsuleBuyAction_(
-                capsule,
+                buying,
                 kUiButtonPressed,
-                command,
-                0);
+                static_cast<uint8_t*>(
+                    buyControl) +
+                    kControlName,
+                buyControl);
             invoked = true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             InterlockedExchange(&starterNativeFault_, 1);
-        }
-        if (constructed) {
-            __try {
-                nativeWStringDtor_(command);
-            } __except (EXCEPTION_EXECUTE_HANDLER) {
-                InterlockedExchange(&starterNativeFault_, 1);
-                invoked = false;
-            }
         }
         return invoked;
     }
@@ -256,6 +318,7 @@ public:
         popup = InterlockedExchangePointer(&starterResultPopup_, nullptr);
         if (!popup)
             return false;
+        InterlockedExchangePointer(&starterBuying_, nullptr);
 
         alignas(4) uint8_t command[kNativeWStringSize] = {};
         bool constructed = false;
@@ -330,6 +393,18 @@ public:
             observed.result_confirm_sequence = static_cast<uint32_t>(
                 InterlockedCompareExchange(
                     &starterResultConfirmSequence_, 0, 0));
+            observed.buying_clone_sequence =
+                static_cast<uint32_t>(InterlockedCompareExchange(
+                    &starterBuyingCloneSequence_, 0, 0));
+            observed.buying_captured_app_state =
+                static_cast<uint32_t>(InterlockedCompareExchange(
+                    &starterBuyingCapturedAppState_, 0, 0));
+            observed.result_popup_clone_sequence =
+                static_cast<uint32_t>(InterlockedCompareExchange(
+                    &starterResultPopupCloneSequence_, 0, 0));
+            observed.result_popup_captured_app_state =
+                static_cast<uint32_t>(InterlockedCompareExchange(
+                    &starterResultPopupCapturedAppState_, 0, 0));
             observed.result = static_cast<uint32_t>(
                 InterlockedCompareExchange(&starterResult_, 0, 0));
             observed.onboarding_stage = static_cast<uint32_t>(
@@ -352,8 +427,46 @@ public:
             observed.request_attempted = static_cast<uint8_t>(
                 InterlockedCompareExchange(
                     &starterRequestAttempted_, 0, 0) != 0);
+            void* buying = InterlockedCompareExchangePointer(
+                &starterBuying_, nullptr, nullptr);
+            observed.buying_captured =
+                static_cast<uint8_t>(buying != nullptr);
+            if (!observed.request_attempted) {
+                void* resolved = nullptr;
+                void* control = nullptr;
+                bool namedIdentityMatched = false;
+                const StarterBuyingUiState uiState =
+                    ResolveStarterBuying(
+                        &resolved,
+                        &control,
+                        &namedIdentityMatched);
+                InterlockedExchange(
+                    &starterBuyingUiState_,
+                    static_cast<LONG>(uiState));
+                InterlockedExchange(
+                    &starterBuyingNamedIdentityMatched_,
+                    namedIdentityMatched ? 1 : 0);
+            }
+            observed.buying_ui_state =
+                static_cast<uint32_t>(InterlockedCompareExchange(
+                    &starterBuyingUiState_, 0, 0));
+            observed.buying_named_identity_matched =
+                static_cast<uint8_t>(InterlockedCompareExchange(
+                    &starterBuyingNamedIdentityMatched_, 0, 0) != 0);
+            observed.buying_control_ready =
+                static_cast<uint8_t>(
+                    observed.buying_ui_state ==
+                    static_cast<uint32_t>(
+                        kStarterBuyingReady));
+            observed.buying_validation_failed =
+                static_cast<uint8_t>(
+                    observed.buying_ui_state >=
+                    static_cast<uint32_t>(
+                        kStarterBuyingIdentityMismatch));
             void* resultPopup = InterlockedCompareExchangePointer(
                 &starterResultPopup_, nullptr, nullptr);
+            observed.result_popup_captured =
+                static_cast<uint8_t>(resultPopup != nullptr);
             if (resultPopup) {
                 __try {
                     observed.result_popup_ready =
@@ -526,14 +639,43 @@ private:
     static constexpr size_t kOnboardingStage = 0x40;
     static constexpr size_t kPcRoomPopupState = 0x44;
     static constexpr uint32_t kPcRoomPopupReady = 3;
+    static constexpr uint32_t kButtonControlKind = 4;
+    static constexpr size_t kServiceDescriptorSize =
+        sizeof(uint32_t) + kNativeWStringSize;
+    static constexpr size_t kNativeStringSize = 0x10;
+    static constexpr size_t kNativeStringCapacity = 0x14;
+    static constexpr size_t kControlName = 0x118;
+    static constexpr size_t kControlParent = 0x15C;
+    static constexpr size_t kControlVisible = 0x162;
+    static constexpr size_t kControlEnabled = 0x167;
+    static constexpr size_t kUiCallbackVtableSlot =
+        0x38 / sizeof(void*);
+    static constexpr size_t kCloneVtableSlot =
+        0x54 / sizeof(void*);
+    static constexpr size_t kFindChildVtableSlot =
+        0x5C / sizeof(void*);
 
+    using ServiceFindByNameFn =
+        void*(__thiscall*)(void*, const void*);
     using NativeWStringCtorFn =
         void*(__thiscall*)(void*, const wchar_t*);
     using NativeWStringDtorFn = void(__thiscall*)(void*);
+    using NativeUiFindControlFn =
+        void*(__thiscall*)(
+            void*,
+            const void*,
+            uint32_t);
+    using FindChildFn =
+        void*(__thiscall*)(void*, const void*);
     using OnboardingUpdateFn = void(__thiscall*)(void*);
     using OnboardingCapsuleCloneFn = void*(__thiscall*)(void*);
+    using StarterBuyingCloneFn = void*(__thiscall*)(void*);
     using CapsuleBuyActionFn =
-        void(__stdcall*)(void*, int, void*, int);
+        uint32_t(__stdcall*)(
+            void*,
+            uint32_t,
+            const void*,
+            void*);
     using StarterResultPopupCloneFn = void*(__thiscall*)(void*);
     using StarterResultPopupActionFn =
         void(__stdcall*)(void*, int, void*, int);
@@ -543,6 +685,267 @@ private:
         int(__thiscall*)(void*, int, int, int, int, void*);
     using PcRoomPopupCloneFn = void*(__thiscall*)(void*);
     using PcRoomPopupConfirmFn = void(__thiscall*)(void*);
+
+    static bool SlotMatches(
+        void* vtable,
+        size_t slot,
+        void* function)
+    {
+        return vtable && function &&
+            static_cast<void**>(vtable)[slot] ==
+                function;
+    }
+
+    void* FindNamedService(
+        const wchar_t* name) const
+    {
+        if (!name || !serviceManagedPointer_ ||
+            !serviceFindByName_ ||
+            !nativeWStringCtor_ ||
+            !nativeWStringDtor_)
+            return nullptr;
+        void* manager = *serviceManagedPointer_;
+        if (!manager)
+            return nullptr;
+
+        alignas(4) uint8_t descriptor[
+            kServiceDescriptorSize] = {};
+        *reinterpret_cast<uint32_t*>(
+            descriptor) = 1;
+        bool constructed = false;
+        void* service = nullptr;
+        __try {
+            constructed =
+                nativeWStringCtor_(
+                    descriptor +
+                        sizeof(uint32_t),
+                    name) != nullptr;
+            if (constructed) {
+                service =
+                    serviceFindByName_(
+                        manager,
+                        descriptor);
+            }
+        } __finally {
+            if (constructed) {
+                nativeWStringDtor_(
+                    descriptor +
+                        sizeof(uint32_t));
+            }
+        }
+        return service;
+    }
+
+    void* FindNamedChild(
+        void* object,
+        const wchar_t* name) const
+    {
+        if (!object || !name ||
+            !nativeWStringCtor_ ||
+            !nativeWStringDtor_)
+            return nullptr;
+        void** vtable =
+            *static_cast<void***>(object);
+        if (!vtable)
+            return nullptr;
+        const auto find =
+            reinterpret_cast<FindChildFn>(
+                vtable[kFindChildVtableSlot]);
+        if (!find)
+            return nullptr;
+
+        alignas(4) uint8_t nativeName[
+            kNativeWStringSize] = {};
+        bool constructed = false;
+        void* child = nullptr;
+        __try {
+            constructed =
+                nativeWStringCtor_(
+                    nativeName,
+                    name) != nullptr;
+            if (constructed)
+                child = find(
+                    object,
+                    nativeName);
+        } __finally {
+            if (constructed)
+                nativeWStringDtor_(
+                    nativeName);
+        }
+        return child;
+    }
+
+    void* FindControl(
+        void* root,
+        const wchar_t* name,
+        uint32_t kind) const
+    {
+        if (!root || !name ||
+            !nativeUiFindControl_ ||
+            !nativeWStringCtor_ ||
+            !nativeWStringDtor_)
+            return nullptr;
+
+        alignas(4) uint8_t nativeName[
+            kNativeWStringSize] = {};
+        bool constructed = false;
+        void* control = nullptr;
+        __try {
+            constructed =
+                nativeWStringCtor_(
+                    nativeName,
+                    name) != nullptr;
+            if (constructed) {
+                control =
+                    nativeUiFindControl_(
+                        root,
+                        nativeName,
+                        kind);
+            }
+        } __finally {
+            if (constructed)
+                nativeWStringDtor_(
+                    nativeName);
+        }
+        return control;
+    }
+
+    static bool ControlHasName(
+        const void* control,
+        const wchar_t* expected)
+    {
+        if (!control || !expected)
+            return false;
+        const auto* nativeName =
+            static_cast<const uint8_t*>(
+                control) +
+            kControlName;
+        const uint32_t size =
+            *reinterpret_cast<const uint32_t*>(
+                nativeName +
+                kNativeStringSize);
+        const uint32_t capacity =
+            *reinterpret_cast<const uint32_t*>(
+                nativeName +
+                kNativeStringCapacity);
+        const size_t expectedSize =
+            wcslen(expected);
+        if (size != expectedSize ||
+            size > 63)
+            return false;
+        const wchar_t* value =
+            capacity < 8
+                ? reinterpret_cast<
+                      const wchar_t*>(
+                      nativeName)
+                : *reinterpret_cast<
+                      wchar_t* const*>(
+                      nativeName);
+        return value &&
+            wmemcmp(
+                value,
+                expected,
+                size) == 0;
+    }
+
+    bool ValidateControl(
+        void* root,
+        void* control,
+        const wchar_t* name,
+        uint32_t kind) const
+    {
+        if (!root || !control || !name)
+            return false;
+        if (FindControl(root, name, kind) !=
+            control)
+            return false;
+        const auto* bytes =
+            static_cast<const uint8_t*>(
+                control);
+        return *reinterpret_cast<void* const*>(
+                   bytes +
+                   kControlParent) ==
+                root &&
+            ControlHasName(
+                control,
+                name);
+    }
+
+    StarterBuyingUiState ResolveStarterBuying(
+        void** buyingOutput,
+        void** controlOutput,
+        bool* namedIdentityMatched) const
+    {
+        if (buyingOutput)
+            *buyingOutput = nullptr;
+        if (controlOutput)
+            *controlOutput = nullptr;
+        if (namedIdentityMatched)
+            *namedIdentityMatched = false;
+        if (!buyingOutput || !controlOutput ||
+            !namedIdentityMatched)
+            return kStarterBuyingControlMismatch;
+
+        __try {
+            void* captured =
+                InterlockedCompareExchangePointer(
+                    &starterBuying_,
+                    nullptr,
+                    nullptr);
+            if (!captured)
+                return kStarterBuyingAbsent;
+            if (*reinterpret_cast<void**>(
+                    captured) !=
+                starterBuyingVtable_)
+                return kStarterBuyingIdentityMismatch;
+
+            void* named =
+                FindNamedService(L"buying");
+            if (!named)
+                return kStarterBuyingWaiting;
+            if (named != captured ||
+                *reinterpret_cast<void**>(
+                    named) !=
+                    starterBuyingVtable_)
+                return kStarterBuyingIdentityMismatch;
+            *namedIdentityMatched = true;
+
+            void* root =
+                FindNamedChild(
+                    named,
+                    L"f_buy_dlg");
+            if (!root)
+                return kStarterBuyingWaiting;
+            void* control =
+                FindControl(
+                    root,
+                    L"BuyBtn",
+                    kButtonControlKind);
+            if (!control)
+                return kStarterBuyingWaiting;
+            if (!ValidateControl(
+                    root,
+                    control,
+                    L"BuyBtn",
+                    kButtonControlKind))
+                return kStarterBuyingControlMismatch;
+            const auto* bytes =
+                static_cast<const uint8_t*>(
+                    control);
+            if (!bytes[kControlVisible] ||
+                !bytes[kControlEnabled])
+                return kStarterBuyingWaiting;
+
+            *buyingOutput = named;
+            *controlOutput = control;
+            return kStarterBuyingReady;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            InterlockedExchange(
+                &starterNativeFault_,
+                1);
+            return kStarterBuyingNativeFault;
+        }
+    }
 
     static void __fastcall ObserveOnboardingUpdate(void* self, void*)
     {
@@ -573,6 +976,77 @@ private:
         if (live)
             InterlockedExchangePointer(
                 &actions->onboardingCapsule_, live);
+        return live;
+    }
+
+    static void* __fastcall ObserveStarterBuyingClone(
+        void* self,
+        void*)
+    {
+        OnboardingActions* actions = active_;
+        if (!actions ||
+            !actions->starterBuyingClone_)
+            return nullptr;
+        void* live =
+            actions->starterBuyingClone_(self);
+        if (!live ||
+            InterlockedCompareExchange(
+                &actions->onboardingStage_,
+                0,
+                0) !=
+                kStarterMachineStage)
+            return live;
+
+        bool target = false;
+        __try {
+            const NativeActions::OnboardingObservation
+                state =
+                    actions->native_
+                        ? actions->native_->
+                              OnboardingState()
+                        : NativeActions::
+                              OnboardingObservation{};
+            target =
+                state.profile_pilot_id != 0 &&
+                state.tutorial_level < 2 &&
+                *reinterpret_cast<void**>(
+                    self) ==
+                    actions->starterBuyingVtable_ &&
+                *reinterpret_cast<void**>(
+                    live) ==
+                    actions->starterBuyingVtable_;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            InterlockedExchange(
+                &actions->starterNativeFault_,
+                1);
+        }
+        if (!target) {
+            InterlockedExchange(
+                &actions->starterBuyingUiState_,
+                static_cast<LONG>(
+                    kStarterBuyingIdentityMismatch));
+            return live;
+        }
+
+        InterlockedExchange(
+            &actions->starterBuyingCapturedAppState_,
+            actions->native_
+                ? static_cast<LONG>(
+                      actions->native_->AppState())
+                : -1);
+        InterlockedExchangePointer(
+            &actions->starterBuying_,
+            live);
+        InterlockedExchange(
+            &actions->starterBuyingUiState_,
+            static_cast<LONG>(
+                kStarterBuyingWaiting));
+        InterlockedExchange(
+            &actions->
+                starterBuyingNamedIdentityMatched_,
+            0);
+        InterlockedIncrement(
+            &actions->starterBuyingCloneSequence_);
         return live;
     }
 
@@ -668,9 +1142,17 @@ private:
         if (!actions || !actions->starterResultPopupClone_)
             return nullptr;
         void* live = actions->starterResultPopupClone_(self);
-        if (live)
+        if (live) {
+            InterlockedExchange(
+                &actions->starterResultPopupCapturedAppState_,
+                actions->native_
+                    ? static_cast<LONG>(actions->native_->AppState())
+                    : -1);
             InterlockedExchangePointer(
                 &actions->starterResultPopup_, live);
+            InterlockedIncrement(
+                &actions->starterResultPopupCloneSequence_);
+        }
         return live;
     }
 
@@ -767,6 +1249,11 @@ private:
     NativeWStringDtorFn nativeWStringDtor_ = nullptr;
     OnboardingUpdateFn onboardingUpdate_ = nullptr;
     OnboardingCapsuleCloneFn onboardingCapsuleClone_ = nullptr;
+    void** serviceManagedPointer_ = nullptr;
+    ServiceFindByNameFn serviceFindByName_ = nullptr;
+    NativeUiFindControlFn nativeUiFindControl_ = nullptr;
+    void* starterBuyingVtable_ = nullptr;
+    StarterBuyingCloneFn starterBuyingClone_ = nullptr;
     CapsuleBuyActionFn capsuleBuyAction_ = nullptr;
     PacketDispatchFn starterDispatch_ = nullptr;
     StarterResultPopupCloneFn starterResultPopupClone_ = nullptr;
@@ -777,6 +1264,7 @@ private:
     PcRoomPopupConfirmFn pcRoomPopupConfirm_ = nullptr;
     PacketDispatchFn pcRoomPopupDispatch_ = nullptr;
     mutable PVOID volatile onboardingCapsule_ = nullptr;
+    mutable PVOID volatile starterBuying_ = nullptr;
     mutable PVOID volatile starterResultPopup_ = nullptr;
     mutable PVOID volatile pcRoomPopup_ = nullptr;
     mutable volatile LONG onboardingStage_ = 0;
@@ -785,6 +1273,13 @@ private:
     mutable volatile LONG starterWriteVersion_ = 0;
     mutable volatile LONG starterReplySequence_ = 0;
     mutable volatile LONG starterResultConfirmSequence_ = 0;
+    mutable volatile LONG starterBuyingCloneSequence_ = 0;
+    mutable volatile LONG starterBuyingCapturedAppState_ = -1;
+    mutable volatile LONG starterBuyingUiState_ =
+        kStarterBuyingAbsent;
+    mutable volatile LONG starterBuyingNamedIdentityMatched_ = 0;
+    mutable volatile LONG starterResultPopupCloneSequence_ = 0;
+    mutable volatile LONG starterResultPopupCapturedAppState_ = -1;
     mutable volatile LONG starterResultConfirmAttempted_ = 0;
     mutable volatile LONG starterReply_ = 0;
     mutable volatile LONG starterResult_ = kStarterNone;

@@ -6,6 +6,19 @@ An independent automatic fix for the native friend list. Friendship and messagin
 actions stay in the game's existing friend page. The Mod Manager lists this fix
 in its repair archive; no additional launcher or background service is needed.
 
+The distributed fix consists of `friend_list_client_fix` on the client and
+`friend_list_fix` on WorldServer, with their matching manifests, Manager
+contracts and verified host symbol files. The World Mod creates and upgrades
+its own SQL objects automatically; there is no separate hand-applied database
+patch. Clients connecting to an updated WorldServer receive its repaired list
+responses. Owners of a separate server must install the server component too.
+Native executable files and native `dbo` procedure definitions are retained.
+
+The development test backend, database snapshots, temporary IP addresses and
+test-account files are verification infrastructure and are not player runtime
+dependencies. Publication verifies the complete owner runtime against the
+client Git payload and its mirror, together with the matching server files.
+
 Install both components on the corresponding hosts, then restart WorldServer
 and log in again with the updated client. The native messenger fetches membership
 once per login; reopening its tab does not reload a broken cached list.
@@ -17,6 +30,11 @@ offline or incomplete row can truncate the list. The Mod returns non-null
 defaults of the original types, reads the current pilot name with the saved
 friendship name as a fallback, and preserves relationships, sorting, paging,
 and the five-parameter/17-column native contract.
+
+Version 0.1.2 also derives the canonical pilot-name column's collation and
+applies it to both fallback operands before ANSI conversion. This handles
+native member databases with a Thai default and a Chinese Unicode name column,
+without changing either column or losing canonical Chinese names.
 
 It borrows the authenticated member database session. `[DB Member] DBName` in
 the host INI selects the expected database; credentials are not copied. On the

@@ -287,6 +287,15 @@ def merge_retained_addon_symbols(stage_symbols:Path,copied_symbols:Path,manifest
     merge_required_symbols(stage_symbols,copied_symbols,active,preserve_existing=True)
 
 
+def retained_manifest_enabled(manifest:Path) -> bool:
+    raw=manifest.read_bytes()
+    decoded=raw.decode('utf-16' if raw.startswith((b'\xff\xfe',b'\xfe\xff')) else 'utf-8-sig')
+    match=re.search(r'(?ims)^\s*\[mod\]\s*\n(.*?)(?=^\s*\[|\Z)',decoded)
+    if not match:raise GameTestError('retained addon lacks its native manifest')
+    config=ini_parser();config.read_string('[mod]\n'+match[1])
+    return config.getint('mod','enabled',fallback=1)!=0
+
+
 def enable_test_configuration(root: Path) -> None:
     manifest = root / "sdgo" / "mods" / TEST_MOD / "mod.ini"
     parser = read_ini(manifest)
@@ -341,7 +350,15 @@ def validate_observer_stage(root: Path, stage: Path) -> None:
     existing=read_ini(existing_path) if existing_path.is_file() else ini_parser()
     for manifest in (root/'sdgo/mods').glob('*/mod.ini'):
         if manifest.parent.name not in updated:
-            missing=sorted(manifest_requires(manifest)-set(source.sections())-set(existing.sections()))
+            if not retained_manifest_enabled(manifest):continue
+            available=set(source.sections())|set(existing.sections())
+            fragment=manifest.parent/'symbols.fragment.ini'
+            if fragment.is_file():
+                extra=read_ini(fragment)
+                if not extra.has_section('host') or dict(extra['host'])!=dict(source['host']):
+                    raise GameTestError('retained addon symbol fragment describes a different host')
+                available.update(extra.sections())
+            missing=sorted(manifest_requires(manifest)-available)
             if missing:raise GameTestError(f"retained Mod symbols lack required sections: {', '.join(missing)}")
 
 
@@ -2230,7 +2247,7 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
                 raise GameTestError('client reuse rejects linked client files/directories')
             if path.is_file() and path.stat().st_nlink>1 and path.relative_to(client_root).as_posix() not in ('GPackData.zpk','GPackData.zdx'):
                 raise GameTestError('client reuse rejects shared mutable runtime files')
-    for other in owned.glob('*/run.json'):
+    for other in owned.rglob('run.json'):
         if other.parent==run_dir:continue
         data=read_json(other);baseline=data.get('assets',{}).get('baseline')
         if baseline and Path(baseline).resolve()==run_dir:
@@ -2347,7 +2364,7 @@ def validate_metadata(run_dir: Path) -> dict:
         forbidden = {
             "mode_sequence", "expected_ai", "bootstrap_only",
             "battleship_only", "gift_requests_only", "deck_only",
-            "pages_only", "collection_draw", "random_loadout",
+            "pages_only", "friends_only", "collection_draw", "random_loadout",
         }
         if forbidden.intersection(plan):
             raise GameTestError("run.json adds PvP, pages, or preparation scope to a mission smoke")
@@ -2361,7 +2378,7 @@ def validate_metadata(run_dir: Path) -> dict:
         "mission_ai_level", *MISSION_CLAIM_FIELDS,
     )):
         raise GameTestError("run.json cannot add mission scope to a non-mission plan")
-    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','collection_draw','random_loadout'):
+    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','friends_only','collection_draw','random_loadout'):
         if (type(plan.get(flag, False)) is not bool or plan.get(flag, False) != public_plan.get(flag, False)):
             raise GameTestError('run.json cannot change the required bootstrap or battle scope')
     if 'play_unit_uid' in plan:

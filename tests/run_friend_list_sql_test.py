@@ -37,10 +37,10 @@ def run(args):
         harness.create_container();harness.wait_ready()
         print('fixture: owned SQL Server ready',flush=True)
         source=args.native_source.resolve().read_text(encoding='utf-8-sig')
-        harness.sql(f'CREATE DATABASE [{harness.database}];\nGO\nUSE [{harness.database}];\n'+SCHEMA+'\nGO\n'+source+'\nGO\n')
+        harness.sql(f'CREATE DATABASE [{harness.database}] COLLATE Thai_CI_AS;\nGO\nUSE [{harness.database}];\n'+SCHEMA+'\nGO\n'+source+'\nGO\n')
         if args.sql_only:
             emitted=work/'query.sql'
-            subprocess.run([str(artifacts/'friend_list_sql_emit.exe'),str(args.native_source.resolve()),str(emitted)],check=True,timeout=30)
+            subprocess.run([str(artifacts/'friend_list_sql_emit.exe'),str(args.native_source.resolve()),str(emitted),'Chinese_PRC_CS_AI'],check=True,timeout=30)
             harness.sql(f'USE [{harness.database}];\nGO\nCREATE SCHEMA sdgo_friend_list_fix AUTHORIZATION dbo;\nGO\n'+emitted.read_text(encoding='utf-8')+'\nGO\n')
             receipt['oledb_session']='not exercised (--sql-only)'
         else:
@@ -57,7 +57,7 @@ def run(args):
             receipt['checks'].append(result.stdout.strip())
         harness.sql(f'USE [{harness.database}];\n'+CHECKS+'\nGO\n')
         print('fixture: SQL scenarios passed',flush=True)
-        receipt['checks'].append('all-offline pagination, missing optional records, canonical rename, missing-profile fallback, online/logout transitions, empty list, clamped page, unchanged cached names and relationships')
+        receipt['checks'].append('mixed Thai default/legacy and Chinese canonical collations, Chinese rename, all-offline pagination, missing optional records, missing-profile fallback, online/logout transitions, empty list, clamped page, unchanged cached names and relationships')
         receipt['status']='passed'
     except Exception as error:
         receipt['status']='failed';receipt['error']=_redact(str(error),harness.private_values)
@@ -73,7 +73,7 @@ def run(args):
 
 SCHEMA=r"""
 CREATE TABLE tbl_Friend(f_idx int NOT NULL,f_idx2 int NOT NULL,f_pilot varchar(20) NOT NULL,f_relation int NOT NULL,f_gender char(1),f_cutoff char(1),f_regdate datetime);
-CREATE TABLE tbl_Account_Pilot(f_idx int NOT NULL PRIMARY KEY,f_pilot nvarchar(20) NOT NULL UNIQUE);
+CREATE TABLE tbl_Account_Pilot(f_idx int NOT NULL PRIMARY KEY,f_pilot nvarchar(20) COLLATE Chinese_PRC_CS_AI NOT NULL UNIQUE);
 CREATE TABLE tblg_UserGameInfo(f_idx int NOT NULL PRIMARY KEY,f_level int,f_levelname varchar(10),f_levelstep int);
 CREATE TABLE tblg_OnUser(f_idx int NOT NULL PRIMARY KEY,f_channel int NOT NULL,f_loc tinyint NOT NULL,f_room int,f_team int,f_agent int NOT NULL);
 CREATE TABLE tblc_ClanMain(f_cIdx int PRIMARY KEY,f_cName varchar(20),f_mark1 int,f_mark2 int);
@@ -89,7 +89,7 @@ END;
 
 CHECKS=r"""
 SET NOCOUNT ON;
-CREATE TABLE #rows(id int NOT NULL,name varchar(20) NOT NULL,relation int NOT NULL,gender char(1) NOT NULL,cutoff char(1) NOT NULL,level int NOT NULL,levelname varchar(10) NOT NULL,mark1 int NOT NULL,mark2 int NOT NULL,channel int NOT NULL,loc tinyint NOT NULL,room int NOT NULL,team int NOT NULL,agent int NOT NULL,regdate datetime NOT NULL,emblem int NOT NULL,levelstep int NOT NULL);
+CREATE TABLE #rows(id int NOT NULL,name varchar(20) COLLATE Chinese_PRC_CS_AI NOT NULL,relation int NOT NULL,gender char(1) NOT NULL,cutoff char(1) NOT NULL,level int NOT NULL,levelname varchar(10) NOT NULL,mark1 int NOT NULL,mark2 int NOT NULL,channel int NOT NULL,loc tinyint NOT NULL,room int NOT NULL,team int NOT NULL,agent int NOT NULL,regdate datetime NOT NULL,emblem int NOT NULL,levelstep int NOT NULL);
 DECLARE @ret int,@total int,@page int=1;
 CREATE TABLE #seen(id int PRIMARY KEY);
 WHILE @page<=3 BEGIN
@@ -109,11 +109,11 @@ TRUNCATE TABLE #rows;
 INSERT #rows EXEC sdgo_friend_list_fix.sp_FriendsList 1,1,8,@ret OUTPUT,@total OUTPUT;
 IF NOT EXISTS(SELECT 1 FROM #rows WHERE id=19 AND channel=9 AND loc=3 AND room=401 AND team=2 AND agent=8) THROW 51000,'online presence',1;
 DELETE tblg_OnUser WHERE f_idx=19;
-UPDATE tbl_Account_Pilot SET f_pilot=N'ChangedPilot' WHERE f_idx=2;
+UPDATE tbl_Account_Pilot SET f_pilot=N'测试好友' WHERE f_idx=2;
 DELETE tbl_Account_Pilot WHERE f_idx=3;
 TRUNCATE TABLE #rows;
 INSERT #rows EXEC sdgo_friend_list_fix.sp_FriendsList 1,1,8,@ret OUTPUT,@total OUTPUT;
-IF @total<>18 OR NOT EXISTS(SELECT 1 FROM #rows WHERE id=2 AND name='ChangedPilot' AND channel=0) OR NOT EXISTS(SELECT 1 FROM #rows WHERE id=3 AND name='Old0003') THROW 51000,'rename/fallback/logout',1;
+IF @total<>18 OR NOT EXISTS(SELECT 1 FROM #rows WHERE id=2 AND name=N'测试好友' AND channel=0) OR NOT EXISTS(SELECT 1 FROM #rows WHERE id=3 AND name='Old0003') THROW 51000,'rename/fallback/logout',1;
 IF (SELECT COUNT(*) FROM tbl_Friend)<>18 OR EXISTS(SELECT 1 FROM tbl_Friend WHERE f_pilot NOT LIKE 'Old%') THROW 51000,'friend rows modified',1;
 TRUNCATE TABLE #rows;
 INSERT #rows EXEC sdgo_friend_list_fix.sp_FriendsList 99,1,8,@ret OUTPUT,@total OUTPUT;
