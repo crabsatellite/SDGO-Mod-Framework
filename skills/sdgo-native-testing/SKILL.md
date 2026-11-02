@@ -49,7 +49,8 @@ Mod 源码库保存框架、Mod、测试代码、fixture 声明、配置范本�
    ```
 
    需要服务端观察时，在本任务 test 后端使用匹配的观察组件和本次运行 ID，核实原生启动 XML 与 `tbl_ChannelInfo` 共同启用的 Battle 端口。不要因目录存在而启动全部频道，也不要放宽原生数据校验。
-   已配置的 `test/server` 使用 `game_test_backend.py serve --work <test/server> --client-run <prepared-run> --stage <stage> --startup-xml <test/server/ServerStartUp/ServerStartUp.xml> --host-pilot-id <existing-account-id>`；运行 `run` 前等它返回 `backend_ready`。TCP 开放不代表 Battle 数据可用：必须等本次启动日志的 `Table Download OK.. Time Procedure Ready..`，不能用旧日志或固定延时替代。已有共享服务正在使用时先复用或复制自己的并发副本；只有绑定新一轮服务端观察回执时才重启所属测试服务，保留原生 SQL、程序和数据。
+   已配置的 `test/server` 使用 `game_test_backend.py serve --work <test/server> --client-run <prepared-run> --stage <stage> --startup-xml <test/server/ServerStartUp/ServerStartUp.xml> --host-pilot-id <existing-account-id>`；运行 `run` 前等它返回 `backend_ready`。TCP 开放不代表 Battle 数据可用：必须等本次启动日志的 `Table Download OK.. Time Procedure Ready..`，不能用旧日志或固定延时替代。已有共享服务正在使用时先复用或复制自己的并发副本。
+   客户端迭代可持续复用已就绪的服务进程：从实际 `server-observer-events.jsonl` 首行读取同一会话的 `run_id`、`nonce` 和各 Battle 的 `pid`，传入 `game_test.prepare/reuse_prepared(..., server_session={'run_id': ..., 'nonce': ..., 'pids': [...]})`。框架封存一个带新随机后缀的完整房名，客户端读取该房名；服务端报告按会话、进程和本轮精确房名验证，旧房间记录不能算本轮通过。账号须与观察器的实际 host 绑定一致。服务端候选 DLL 或配置变更时才重启所属服务并建立新会话，保留 SQL、程序与测试数据。
 4. 读取并核验本次真实登录、房间、原生事件、JSON/JUnit 与服务端报告。完整战斗保留结算和返回流程；编译、模拟/回放、登录 smoke 或 bootstrap 不能代替相关完整 GameTest。阿普萨拉斯需实测首次 R、变形释放、移动/攻击和再次变回。
 5. 成功验证及必要部署读回后，删除这次测试记录、日志、截图、回执和临时研究文件；失败诊断暂留到问题解决后删除。保留测试源码、公共账号资产、配置和统一 test。并发任务结束后额外删除整个所属副本，读回其进程已停止、临时文件已清除。不要清除他人运行中的环境。
 
