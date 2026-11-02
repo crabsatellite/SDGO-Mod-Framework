@@ -2768,32 +2768,34 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
         metadata['status']='executed'
         atomic_write(run_dir/'run.json',json.dumps(metadata,indent=2,sort_keys=True))
     finally:
+        cleanup_errors=[]
+        def cleanup(label,action):
+            try:action()
+            except Exception as error:cleanup_errors.append(f'{label}: {type(error).__name__}: {error}')
+        def stop_entry():
+            if entry_process and entry_process.poll() is None:
+                entry_process.kill()
+                entry_process.wait(timeout=10)
         if game_process:
             if entry_process and game_process["pid"] == entry_process.pid:
-                if entry_process.poll() is None:
-                    entry_process.kill()
-                    try:
-                        entry_process.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        pass
+                cleanup('owned game stop',stop_entry)
             else:
-                terminate_verified_process(game_process["pid"], Path(metadata["client"]["game"]))
-        if entry_process and entry_process.poll() is None:
-            entry_process.kill()
-            try:
-                entry_process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                pass
+                cleanup('verified child stop',lambda:terminate_verified_process(game_process["pid"], Path(metadata["client"]["game"])))
+        cleanup('owned entry stop',stop_entry)
         for handle in handles:
-            handle.close()
+            cleanup('output stream close',handle.close)
         if entry_process and metadata.get('execution') is not None:
-            metadata['execution']['entry_exit_code']=entry_process.poll()
+            cleanup('entry exit readback',lambda:metadata['execution'].update(entry_exit_code=entry_process.poll()))
         if quiet_runtime:
-            metadata.setdefault('execution',{})['quiet_cleanup']=quiet_runtime.close()
-            atomic_write(run_dir/'run.json',json.dumps(metadata,indent=2,sort_keys=True))
+            cleanup('quiet runtime close',lambda:metadata.setdefault('execution',{}).update(quiet_cleanup=quiet_runtime.close()))
         if account_lock is not None and account_token is not None:
-            release_owned_lock(account_lock, account_token)
-        release_owned_lock(lock, token)
+            cleanup('account lock release',lambda:release_owned_lock(account_lock,account_token))
+        cleanup('run lock release',lambda:release_owned_lock(lock,token))
+        if cleanup_errors:
+            metadata.setdefault('execution',{}).update(status='cleanup_error',cleanup_errors=cleanup_errors,
+                                                       finished_utc=utc_now())
+            metadata['status']='executed'
+        atomic_write(run_dir/'run.json',json.dumps(metadata,indent=2,sort_keys=True))
     return build_report(run_dir)
 
 
