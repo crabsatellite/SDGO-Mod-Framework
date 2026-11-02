@@ -7,18 +7,19 @@
 |---|---|---|
 | `findwindow_fix` | 客户端 | 整个功能 |
 
-与 [`ime_fix`](ime-fix.md)（修正游戏读取已提交文字的长度）相互独立。
+与 [`ime_fix`](ime-fix.zh-CN.md)（修正游戏读取已提交文字的长度）相互独立。
 
 ![游戏大厅中使用输入法](findwindow-fix-ime.png)
 
 ## 使用
 
-无需操作，安装客户端后即生效。本 mod 需要同一版本的 `sdgo\core.dll`（使用 `HookSystemExport`），
-客户端安装脚本会一起更新。关闭：在 `sdgo\sdgo.ini` 的 `[mods]` 下写 `findwindow_fix=0`。
+无需操作，客户端安装框架后自动生效。本 mod 需要同一版本的 `sdgo\core.dll`（使用 `HookSystemExport`），
+客户端安装脚本和 `update.bat` 会一起更新。它在 SDGO Mod Manager 的“修复归档”中列出。排查问题需要临时关闭时，
+点“显示开发信息”，再关闭它的开关并重启游戏；这会在 `sdgo\sdgo.ini` 的 `[mods]` 下写入 `findwindow_fix=0`。
 
 ## 设置
 
-`sdgo\mods\findwindow_fix\mod.ini`：
+开发设置，在 Manager 点“显示开发信息”后显示。保存在 `sdgo\mods\findwindow_fix\mod.ini`，游戏启动时读取：
 
 | 键 | 默认 | 含义 |
 |---|---|---|
