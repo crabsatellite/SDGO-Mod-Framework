@@ -40,7 +40,7 @@ Beta and Experimental labels indicate release channels.
 | Per-round random loadouts (Beta) <!-- catalog: `room_random`, `room_random_client` --> | `!rand` in a room title draws each player's unit or deck from their own hangar every round | [Use](docs/room-random.md) |
 | Extended room titles (Beta) <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Mission and PvP room titles up to 128 characters, with commands anywhere in the title | [Use](docs/room-titles.md) |
 | Battle AI difficulty (Beta) <!-- catalog: `battle_ai`, `battle_ai_server` --> | Easy / Medium / Hard PvP bots, selectable in the room title | [Use](docs/battle-ai.md) |
-| Automatic hangar capacity (Beta) <!-- catalog: `hangar_capacity` --> | Ensure at least 1200 native slots at login | [Use](docs/hangar-capacity.md) |
+| Automatic hangar capacity (Beta) <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) | [Use](docs/hangar-capacity.md) |
 | Hangar manager (Beta) <!-- catalog: `hangar_manager` --> | Server sorting and GB batch exchange; 0.4.0 adds immediate GB preview and atomic server credit | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager (Beta) <!-- catalog: `operator_catalog` --> | Operator content management | [Use](docs/operator-assistant.md) |
 | Capsule catalog editor (Beta) <!-- catalog: `capsule_catalog` --> | Capsule content management | [Use](docs/capsule-catalog.md) |

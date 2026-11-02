@@ -13,9 +13,9 @@ Install a build containing `hangar_capacity` with the normal server installer:
 powershell -ExecutionPolicy Bypass -File install_server.ps1 -ServerRoot "D:\Server\WorldServer" -Role World
 ```
 
-Install into a stopped instance. The feature defaults to **off**. Enable
-`[mod] enabled=1` in `sdgo/mods/hangar_capacity/mod.ini`, then start the selected
-WorldServer normally. Category/feature/per-Mod disable switches still apply.
+Install into a stopped instance. The feature defaults to **off**: turn on
+**自动机库容量** for that WorldServer in SDGO Mod Manager, then start it normally.
+The two timeouts are developer settings shown after **显示开发信息**.
 The host's own `<exe-name>.ini` must contain `[DB Game] DBName`; the Mod borrows
 the already authenticated native SQL session and does not copy credentials.
 SQL table read/update and slot-pool insert rights are required.
@@ -31,7 +31,7 @@ Failures roll back the policy and use the native database-failure reply rather
 than publishing a partially prepared inventory. The same account can retry.
 Transaction/implicit-transaction sessions and incompatible database layouts are
 rejected. Error logs omit account identities, SQL text and credentials.
-This version also rejects enabled DML triggers on the two capacity tables, and
+It also rejects enabled DML triggers on the two capacity tables, and
 identity/computed slot or expansion columns, so an unknown database addon cannot
 silently change unrelated data through this policy.
 
@@ -42,16 +42,13 @@ silently change unrelated data through this policy.
 
 Capacity is applied before the client's initial inventory allocation. An
 already initialized client sees the new policy on its next normal login;
-this version does not resize a live inventory. Disabling/uninstalling stops
+a live inventory is not resized. Disabling/uninstalling stops
 future policy calls. Added slots and acquired units remain saved, with no
 automatic shrinking or destructive rollback.
 
 The unique native count adapter is separate from the rank and starter-profile
 hook sites. Hangar Manager's native 1200-slot preference remains applicable.
-Above-1200 custom capacities and online growth are separate compatibility work.
-
-Build/tests use isolated fixtures. Actual slot-1200 display, acquisition,
-save/reload and multiplayer acceptance remain manual until recorded otherwise.
+Custom capacities above 1200 and online growth are not supported.
 
 Developers can run the opt-in SQL suite against a locally cached SQL Server
 Docker image. It creates a new ownership-labeled container with no published
@@ -67,5 +64,3 @@ to an existing game database.
 
 The [native contract](investigations/hangar-capacity-native.md) records the
 1200-slot boundary, packet/adapter ABI and symbol verification command.
-The [verification scope and manual checklist](hangar-capacity-verification.md)
-separate fixture evidence from gameplay acceptance.
