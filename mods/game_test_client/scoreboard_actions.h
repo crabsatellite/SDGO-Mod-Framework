@@ -14,12 +14,19 @@ public:
     }
     void Hold(bool value) { if (value && !held_) pressed_ = true; held_ = value; }
     uint32_t Queries() const { return queries_; }
+    void HoldGameplay(uint32_t action, bool value) {
+        if (action >= 32) return;
+        if (value) gameplayMask_ |= 1u << action;
+        else gameplayMask_ &= ~(1u << action);
+    }
+    uint32_t GameplayQueries(uint32_t action) const { return action < 32 ? gameplayQueries_[action] : 0; }
 private:
     using Query = uint32_t(__thiscall*)(void*, uint32_t);
     inline static ScoreboardActions* active_ = nullptr;
     Query pressedOriginal_ = nullptr, heldOriginal_ = nullptr;
     bool held_ = false, pressed_ = false;
     uint32_t queries_ = 0;
+    uint32_t gameplayMask_ = 0, gameplayQueries_[32] = {};
     static uint32_t __fastcall Pressed(void* input, void*, uint32_t action) {
         if (active_->held_ && action == 13) {
             ++active_->queries_;
@@ -29,6 +36,9 @@ private:
         return active_->pressedOriginal_(input, action);
     }
     static uint32_t __fastcall Held(void* input, void*, uint32_t action) {
+        if (action < 32 && (active_->gameplayMask_ & (1u << action))) {
+            ++active_->gameplayQueries_[action]; return 1;
+        }
         if (active_->held_ && action == 13) { ++active_->queries_; return 1; }
         return active_->heldOriginal_(input, action);
     }

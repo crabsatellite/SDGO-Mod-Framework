@@ -1,11 +1,13 @@
 #pragma once
+#include <cmath>
+#include "scoreboard_actions.h"
 
 // Opt-in native GameTest scenario, sealed in the copied observer manifest.
 // Uses the normal, owned unit selected by
 // --play-unit-uid and the original transform admission/request business.
 // No keyboard, profile, inventory, model, FSM or server state is fabricated.
 namespace apsalus_probe {
-inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMod* mod) {
+inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMod* mod, ScoreboardActions& input) {
     static const bool enabled = api->SettingInt(mod, "ApsalusRoundtrip", 0) != 0;
     if (!enabled) return SDGO_GAME_TEST_PASS;
     using Find = unsigned char*(__thiscall*)(void*, unsigned);
@@ -15,6 +17,11 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
     static auto request = reinterpret_cast<Request>(api->Symbol(mod, "test.apsalus_transform_request"));
     static unsigned issued = 0, completed = 0, initialId = 0, lastMode = ~0u, lastId = 0;
     static uint64_t issuedAt = 0;
+    static unsigned controlsVerified = 0;
+    static uint64_t controlAt = 0, settleAt = 0;
+    static float baseline[3] = {};
+    static bool moved = false, attacked = false;
+    static uint32_t moveQueries = 0, fireQueries = 0;
     if (!manager || !find || !request || !*manager) {
         context->Assert(0, "Apsalus probe requires verified native request and unit-manager bindings");
         return SDGO_GAME_TEST_FAIL;
@@ -48,6 +55,39 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
         sprintf_s(message, "apsalus native probe unit=%u bank=%u mode=%u handle=%u issued=%u completed=%u", id, unit[0xe34], mode, handle, issued, completed);
         context->Observe(message); lastMode = mode; lastId = id;
     }
+    if (completed > controlsVerified) {
+        // 00670E10 consumes held actions 0..3 as native movement commands;
+        // 00672FD0 consumes action 9 in MouseLButtonControl. Supply mapped
+        // inputs only: actual control, motion, attack and rendering run normally.
+        auto* node = *reinterpret_cast<unsigned char**>(unit + 8);
+        auto* attack = *reinterpret_cast<unsigned char**>(unit + 0x9cc);
+        if (!node || !attack) return SDGO_GAME_TEST_WAIT;
+        const auto* position = reinterpret_cast<const float*>(node + 0x88);
+        if (!controlAt) {
+            for (unsigned i = 0; i < 3; ++i) baseline[i] = position[i];
+            moved = attacked = false; controlAt = context->elapsed_ms;
+            moveQueries = input.GameplayQueries(0); fireQueries = input.GameplayQueries(9);
+        }
+        const uint64_t elapsed = context->elapsed_ms - controlAt;
+        input.HoldGameplay(0, elapsed < 1500);
+        input.HoldGameplay(9, elapsed < 1500);
+        const float dx=position[0]-baseline[0],dy=position[1]-baseline[1],dz=position[2]-baseline[2];
+        moved = moved || (std::isfinite(dx+dy+dz) && dx*dx+dy*dy+dz*dz > 1.0f && input.GameplayQueries(0)>moveQueries);
+        // The active native FSM state is at +4, with Wait at +20. Observe a
+        // real attack state entered while the original fire consumer runs.
+        const auto state = reinterpret_cast<uintptr_t>(*reinterpret_cast<void**>(attack + 4));
+        const auto first = reinterpret_cast<uintptr_t>(attack + 0x20);
+        attacked = attacked || (state > first && state < first+0x200 && input.GameplayQueries(9)>fireQueries);
+        if (elapsed < 2500) return SDGO_GAME_TEST_WAIT;
+        input.HoldGameplay(0, false); input.HoldGameplay(9, false);
+        if (!moved || !attacked) {
+            char message[192];sprintf_s(message,"Apsalus form %u native controls: moved=%u attack_state=%u move_queries=%u fire_queries=%u",id,moved,attacked,input.GameplayQueries(0)-moveQueries,input.GameplayQueries(9)-fireQueries);
+            context->Assert(0,message);return SDGO_GAME_TEST_FAIL;
+        }
+        context->Assert(1,"after the genuine transformation, native mapped movement changed the real scene position and primary fire entered its real attack state");
+        ++controlsVerified; controlAt=0; settleAt=context->elapsed_ms;
+        return SDGO_GAME_TEST_WAIT;
+    }
     if (issued > completed) {
         if (mode == 0 && id != (completed % 2 == 0 ? initialId : (initialId == 24787 ? 24788u : 24787u))) {
             ++completed;
@@ -58,8 +98,8 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
         }
         return SDGO_GAME_TEST_WAIT;
     }
-    if (completed == 2) return SDGO_GAME_TEST_PASS;
-    if (context->elapsed_ms > 500 && mode == 0) {
+    if (completed == 2 && controlsVerified == 2) return SDGO_GAME_TEST_PASS;
+    if (context->elapsed_ms > 500 && context->elapsed_ms-settleAt > 500 && mode == 0) {
         const unsigned result = request(move);
         ++issued; issuedAt = context->elapsed_ms;
         // The network path returns zero after dispatch. Only the subsequent
