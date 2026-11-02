@@ -20,6 +20,8 @@ class SqlBridge(socketserver.ThreadingTCPServer):
         self.container, self.on_process = container, on_process
         self.processes = set()
         self.connections = set()
+        self.journals = []
+        self.journal_errors = []
         self.guard = threading.Lock()
         super().__init__(('127.0.0.1', port), _Handler)
         self.thread = threading.Thread(target=self.serve_forever, daemon=True)
@@ -45,6 +47,10 @@ class SqlBridge(socketserver.ThreadingTCPServer):
                 process.kill()
             process.wait(timeout=10)
         self.thread.join(timeout=10)
+        for worker in self.journals:
+            worker.join(timeout=35)
+            if worker.is_alive():raise RuntimeError('SQL transport resource journal did not finish.')
+        if self.journal_errors:raise RuntimeError('SQL transport resource journal failed.')
 
 
 class _Handler(socketserver.BaseRequestHandler):
@@ -57,7 +63,16 @@ class _Handler(socketserver.BaseRequestHandler):
             self.server.processes.add(process)
             self.server.connections.add(self.request)
         if self.server.on_process:
-            self.server.on_process(process)
+            # Durable accounting must not sit on the TDS handshake path.
+            # The bridge already owns live handles; close drains both the
+            # pumps and these journal workers before deleting its runtime.
+            def journal():
+                try:self.server.on_process(process)
+                except Exception as error:
+                    with self.server.guard:self.server.journal_errors.append(type(error).__name__)
+            worker=threading.Thread(target=journal,daemon=True)
+            with self.server.guard:self.server.journals.append(worker)
+            worker.start()
 
         def receive():
             try:
@@ -92,6 +107,8 @@ class _Handler(socketserver.BaseRequestHandler):
                 process.kill()
                 process.wait(timeout=5)
             reader.join(timeout=5)
+            if not reader.is_alive():
+                with contextlib.suppress(OSError):process.stdout.close()
             with self.server.guard:
                 self.server.processes.discard(process)
                 self.server.connections.discard(self.request)
