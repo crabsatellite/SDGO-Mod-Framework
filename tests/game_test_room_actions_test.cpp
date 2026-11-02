@@ -38,6 +38,8 @@ void* g_serviceManager = nullptr;
 uint8_t g_app[0x500] = {};
 uint8_t g_nonNullObject = 0;
 unsigned g_startQueued = 0;
+unsigned g_startBusinessCalls = 0;
+bool g_startBusinessReady = true;
 
 void Check(bool condition, const char* message)
 {
@@ -184,6 +186,11 @@ void __fastcall FakeThreeDRoomAddState(
 {
     ++g_startQueued;
 }
+void __fastcall FakeThreeDStartBusiness(void*, void*)
+{
+    ++g_startBusinessCalls;
+    if (g_startBusinessReady) ++g_startQueued;
+}
 
 void* __cdecl FakeGridData()
 {
@@ -247,6 +254,8 @@ void* LookupSymbol(const char* name)
         return reinterpret_cast<void*>(&FakeThreeDRoomHasState);
     if (std::strcmp(name, "flow.three_d_room_add_state") == 0)
         return reinterpret_cast<void*>(&FakeThreeDRoomAddState);
+    if (std::strcmp(name, "flow.normal_3d_start_business") == 0)
+        return reinterpret_cast<void*>(&FakeThreeDStartBusiness);
     if (std::strcmp(name, "flow.native_wstring_ctor") == 0)
         return reinterpret_cast<void*>(&FakeNativeWStringCtor);
     if (std::strcmp(name, "flow.native_wstring_dtor") == 0)
@@ -290,6 +299,10 @@ void TestStartWaitsForOriginalMainState(RoomActions& rooms)
     put(main,8,readyStage);context[0x24]=1;
     Check(!rooms.StartBattleNativeHost() && g_startQueued==0,"native busy/locked room does not queue Start");
     context[0x24]=0;
+    g_startBusinessReady=false;g_startBusinessCalls=0;
+    Check(rooms.StartBattleNativeHost() && g_startQueued==0 && g_startBusinessCalls==1,
+        "native Start business retains its own server-ready capability check before queuing");
+    g_startBusinessReady=true;
     Check(rooms.StartBattleNativeHost() && g_startQueued==1,"the ready original Main state queues the normal Start command once");
     g_profile=nullptr;std::memset(g_app,0,sizeof(g_app));
 }
