@@ -1129,6 +1129,10 @@ int wmain(int argc, wchar_t** argv)
 
     Setup();secondInventoryPage=true;Put(unitInfo.get(),0x0C,int32_t{12});
     actions=Driver(assertions,display);uint64_t fullElapsed=0;
+    auto lobbyPage=Context(fullElapsed);fullElapsed+=100;
+    Check(actions.Poll(&lobbyPage)==ShopCatalogActions::kWaitingForFullInventory && unitPageRequests==0,
+          "the lobby cannot send a full-page request without the original hangar reply consumer");
+    Put(app.get(),0x4A0,uint32_t{5});
     unitPagePending=true;
     auto fullStep=Context(fullElapsed);fullElapsed+=100;
     Check(actions.Poll(&fullStep)==ShopCatalogActions::kWaitingForCatalog && unitPageRequests==0 && downmenuCalls==0,
