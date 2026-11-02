@@ -949,10 +949,15 @@ int __cdecl AcquireBattleship(const SdgoGameTestContextV1* context) {
     if (result == BattleShipActions::kAlreadyCompleted || result == BattleShipActions::kConfirmed) {
         context->Assert(state.profile_pilot_id == authenticatedPilot && authenticatedPilot,
                         "the native battleship belongs to this authenticated test account");
-        context->Assert(state.tutorial_level >= 4 && (state.ship_uid_low || state.ship_uid_high),
-                        "the original game profile contains a real acquired and selected battleship");
+        // A sealed fixture can already own a native starter fleet while its
+        // tutorial stays at the template's declared level 2. This scenario
+        // verifies that real asset; tutorial completion belongs to the path
+        // that actually acquired a fleet through the popup.
+        context->Assert(state.ship_id && (state.ship_uid_low || state.ship_uid_high) &&
+                        (state.leader_uid_low || state.leader_uid_high),
+                        "the server-loaded native profile contains a selected battleship and its real leader unit");
         if (result == BattleShipActions::kConfirmed)
-            context->Assert(state.reply_opcode == 0x08EF && state.reply_consumed && state.confirm_sequence,
+            context->Assert(state.tutorial_level >= 4 && state.reply_opcode == 0x08EF && state.reply_consumed && state.confirm_sequence,
                             "the real acquisition reply and original result confirmation completed");
         return SDGO_GAME_TEST_PASS;
     }
