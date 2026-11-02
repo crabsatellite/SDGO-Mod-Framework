@@ -50,46 +50,19 @@ different cause.
 
 ## How it works
 
-`SDPlus.dll` (the repack's localization plugin, imported by its `GOnline.exe`) patches
-`user32!FindWindowW` with a routine at `SDPlus.dll+0x3020` that never looks for a window:
+The repack's localization plugin `SDPlus.dll` replaces `user32!FindWindowW` with a routine that
+never really looks for a window. It only answers the game's own single-instance check (which is
+what lets several clients run at once); any other caller gets a fake handle, or crashes when the
+class name is NULL or an atom.
 
-* class `_GONLINE_` with title `Gundam Online` returns NULL ("not running");
-* any other query returns -1 or +1 (the sign of a string comparison), which is not a window;
-* a NULL or atom class name is read as a string and crashes the game.
+Input methods run inside the game process. One that looks up a window, such as iFlytek looking
+for its background `iFlyPlatform.exe`, then sends its start-up request to the fake handle and waits
+forever on the game's UI thread. Input methods that never look up a window, such as Microsoft
+Pinyin, were not affected.
 
-`GOnline.exe` calls `FindWindowW` once (`0x004914F6`), with exactly that class and title: its
-single-instance check. SDPlus's answer lets several clients run at once. Any other code in
-the process that looks up a window gets a bogus handle or crashes. Input methods run inside
-the game process, so any input method that looks up a window (for example the window of its
-own background process) hangs or crashes the game as soon as it is switched on. The case
-found and tested in game was iFlytek: its text service looks up its server window
-(`iFlyPlatform.exe`), sends its start-up request to the bogus handle and then waits forever
-for the reply, on the game's UI thread. Input methods that never look up a window, such as
-Microsoft Pinyin, were not affected.
+`findwindow_fix` hooks the same function through the core and checks who is calling. Calls from
+`GOnline.exe` and `SDPlus.dll` keep SDPlus's behaviour, so multi-client still works. Every other
+caller gets a normal top-level window lookup. It does not matter which input method or DLL is
+calling.
 
-The fix does not check which input method (or other DLL) is calling; it restores the normal
-lookup for every caller outside the game and SDPlus.
-
-`findwindow_fix` detours the same export through the core's `HookSystemExport` (MinHook; the
-trampoline keeps SDPlus's patch as the previous hook). It records the address ranges of
-`GOnline.exe` and `SDPlus.dll` at load and checks each call's return address:
-
-* calls from those two modules go to SDPlus's routine, so the single-instance check is
-  unchanged;
-* every other call, including DLLs loaded later and generated code, gets
-  `FindWindowExW(GetDesktopWindow(), NULL, class, title)`. That is `FindWindowW`'s search:
-  top-level windows only (with a NULL parent `FindWindowExW` would also return message-only
-  windows), class atoms and NULL arguments with their usual meaning, and the last error left
-  unchanged.
-
-SDPlus also patches `MultiByteToWideChar` and `WideCharToMultiByte`, but only to swap code
-page 874 (Thai) for another; other code pages pass through, so input methods are not
-affected by those.
-
-Tests: `tests/findwindow_fix_test.ps1` (after a build) runs the real core and mod against a
-copy of SDPlus's routine on a private desktop, with caller fixtures named `SDPlus.dll` and
-`generic_input_method.dll`. It checks that the game's single-instance query still returns
-NULL with a game window present, that external lookups (late servers, missing servers,
-message-only windows, atoms, NULL class, case) behave like `FindWindowW` and never reach
-SDPlus's routine, the last error, the disable switch, the refusal of an old core, and the
-rollback of a failed `HookSystemExport` load.
+Developer test: `tests/findwindow_fix_test.ps1` (after a build).
