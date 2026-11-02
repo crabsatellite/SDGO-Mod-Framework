@@ -25,9 +25,10 @@ public:
         input_=Symbol<uint8_t**>("room_titles.ui_input_context");
         if(!(manager_&&find_&&get_&&focus_&&notify_&&input_))return false;
         active_=this;
-        return api_->HookCode(mod_,"room_titles.ui_input_limit",reinterpret_cast<void*>(&ObserveInputLimit),reinterpret_cast<void**>(&inputLimit_))!=0;
+        return api_->HookCode(mod_,"room_titles.ui_input_limit",reinterpret_cast<void*>(&ObserveInputLimit),reinterpret_cast<void**>(&inputLimit_)) &&
+            api_->HookCode(mod_,"title_test.key_pressed",reinterpret_cast<void*>(&TitleKeyPulse),reinterpret_cast<void**>(&keyPressed_));
     }
-    void Reset() { phase_=0;inputIndex_=0;opened_=false;reopened_=false;dialog_=nullptr;edit_=nullptr;uiRestarts_=0; }
+    void Reset() { phase_=0;inputIndex_=0;opened_=false;reopened_=false;dialog_=nullptr;edit_=nullptr;uiRestarts_=0;pendingTitleKey_=0; }
     int Poll(Surface surface,const SdgoGameTestContextV1* context) {
         try { return Step(surface,context); }
         catch(const std::exception& error){context->Assert(0,error.what());return SDGO_GAME_TEST_FAIL;}
@@ -72,6 +73,18 @@ private:
     using Focus=void(__thiscall*)(void*,void*);
     using Notify=void(__thiscall*)(void*,uint32_t,int,void*);
     using InputLimit=void(__thiscall*)(void*,uint32_t,int);
+    using KeyPressed=bool(__cdecl*)(uint32_t);
+    static bool __cdecl TitleKeyPulse(uint32_t scan) {
+        auto* owner=active_;const auto caller=reinterpret_cast<uintptr_t>(_ReturnAddress());
+        // The shipped inline title edit has no buttons. Deliver one requested
+        // Enter/Escape pulse only to its pinned native Update input query.
+        // All other services and keys retain their real keyboard result.
+        if(owner->pendingTitleKey_==scan && ((scan==0x1C&&caller==0x00A46A5F)||(scan==1&&caller==0x00A46AF8)) &&
+           owner->dialog_==owner->Service("title_test.rename_vtable")){
+            owner->pendingTitleKey_=0;return true;
+        }
+        return owner->keyPressed_(scan);
+    }
     static void __fastcall ObserveInputLimit(void* self,void*,uint32_t units,int clear) {
         auto* owner=active_;
         owner->lastLimitCaller_=reinterpret_cast<uintptr_t>(_ReturnAddress());
@@ -189,11 +202,13 @@ private:
         void* bar=Service("room_titles.ui_titlebar_vtable");return Click(bar,Root(bar,0x48),L"TitleChangeBtn");
     }
     bool Close(Surface s) {
+        if(s==PvpRename||s==MissionRename){pendingTitleKey_=1;return true;}
         void* root=Root(dialog_,IsTeamSettings(s)?0x7C:s==MissionSettings?0x5C:IsVsCreate(s)?0x50:0x4C);
         for(const auto* name:{L"MakeCancelBtnW",L"SettingCancelBtn",L"CancelBtn",L"TitleCancelBtn",L"CloseBtnW",L"CloseBtn"})if(Click(dialog_,root,name))return true;
         return false;
     }
     bool Submit(Surface s) {
+        if(s==PvpRename||s==MissionRename){pendingTitleKey_=0x1C;return true;}
         void* root=Root(dialog_,IsTeamSettings(s)?0x7C:s==MissionSettings?0x5C:IsVsCreate(s)?0x50:0x4C);
         for(const auto* name:{L"SettingOkBtn",L"OkBtn",L"TitleOkBtn",L"ConfirmBtn"})if(Click(dialog_,root,name))return true;
         return false;
@@ -277,6 +292,7 @@ private:
     void** manager_=nullptr;FindControl find_=nullptr;GetText get_=nullptr;Focus focus_=nullptr;Notify notify_=nullptr;uint8_t** input_=nullptr;
     inline static RoomTitleActions* active_=nullptr;InputLimit inputLimit_=nullptr;
     uintptr_t lastLimitCaller_=0;uint32_t lastLimit_=0;int lastClear_=0;unsigned uiRestarts_=0;
+    KeyPressed keyPressed_=nullptr;uint32_t pendingTitleKey_=0;
     unsigned phase_=0,inputIndex_=0,polls_=0;bool opened_=false,reopened_=false;void* dialog_=nullptr;void* edit_=nullptr;
     std::vector<std::wstring> tests_;std::string expected_;
 };
