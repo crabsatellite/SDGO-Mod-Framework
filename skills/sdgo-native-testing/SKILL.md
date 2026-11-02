@@ -1,11 +1,11 @@
 ---
 name: sdgo-native-testing
-description: Run and diagnose original SDGO native GameTest using isolated loopback environments, shared five-account database templates, real client/server flows and verified cleanup. Use for SDGO Mods and native test-framework work, not Minecraft GameTest or ordinary gameplay.
+description: Run and diagnose original SDGO native GameTest with isolated environments, reusable account templates and verified cleanup, then complete authorized client delivery and public documentation for SDGO mod work. Not for Minecraft GameTest or ordinary gameplay.
 ---
 
 # SDGO 原生测试 guide
 
-目标是使用当前测试框架验证用户指定的功能。默认只做测试、收集证据和清理；测试本身不扩大功能开发或生产数据修改范围。先读当前源码 worktree 的 `AGENTS.md`。常见仓库根为 `E:\Dev\sd-re\SDGO-d3d9-proxy`，并行开发 worktree 位于 `E:\Dev\sd-re-worktrees`；在实际含有本 skill 对应工具版本的 worktree 内运行命令。
+使用当前测试框架验证指定的 SDGO 功能。先读当前源码工作区的 `AGENTS.md`，在包含配套工具版本的仓库内运行命令。单独测试请求限定于测试、日志收集和清理；已授权的开发或修复任务在测试通过后继续完成下述部署、发布与文档步骤。测试本身不扩大生产数据修改或远端写入权限。
 
 ## 框架里有什么
 
@@ -15,9 +15,11 @@ description: Run and diagnose original SDGO native GameTest using isolated loopb
 | `mods/game_test_client` | 真实客户端主线程上的登录、页面、机体选择、建房、战斗、任务等请求和回包断言 |
 | `mods/game_test_server` | 真实 BattleServer 内的被动观察，按运行 ID、房间 nonce、真实玩家和战斗事件关联 |
 | `tools/game_test_native_environment.py` | 从已有模板复制私有原生后端、SQL 数据库和账号配置，运行测试并清理 |
-| `tools/game_test_environment.py` | SQLite 跨进程租约、独立回环 IP/UDP 池、资源归属日志、证据归档、遗留回收 |
+| `tools/game_test_environment.py` | SQLite 跨进程租约、独立回环 IP/UDP 池、资源归属日志、失败证据暂存、成功记录删除、遗留回收 |
 | `tools/game_test_sql_bridge.py` | 回环 TCP 到 `network=none` 私有 SQL 容器的透明字节传输，不编造 SQL 或游戏回复 |
 | `tools/game_test_fixtures.py` | 仅供初次制作公共模板时初始化并核验五账号及机体；普通测试不调用创建流程 |
+| `tools/game_test_backend.py` | 既有显式后端准备/服务运行工具；保留其原生频道、后台与来源校验，日常并发测试优先走带租约的 `environment run` |
+| `tools/game_test_fps.py`、`mods/game_test_client/fps_test_actions.h` | 不需要账号的原生 FPS 矩阵；绑定实际帧时间、稳定窗口、输入参数和后台证据，不为性能测试注册账号 |
 
 模板是本地私有、带文件 SHA-256 清单的只读输入，含原生服务程序、11 个完整 SQL 快照、共享资源和五个已初始化账号。数据库、账号配置和游戏原始文件不进入 Mod 源码 Git。查询 `environment templates` 获取现有模板路径，不能从历史记录猜服务地址或密码。
 
@@ -44,8 +46,8 @@ description: Run and diagnose original SDGO native GameTest using isolated loopb
    ```
 
    `--include-mod` 把已构建候选 Mod 及资源放进副本，合并所需符号，并在启动前冻结哈希。不要运行后替换 DLL、改数据库或修改被封存的输入。普通对战保留完整结算和返回流程，超时默认 600 秒。
-5. 阅读命令返回的 `evidence` 下 `result.json`、`client-run/receipts/report.json`、原生 `events.jsonl` 和 `cleanup.json`。结果必须绑定本次源代码、二进制/资源、账号、真实登录和房间；缺失、超时或原生异常按失败报告。编译、模拟/回放或 bootstrap 通过不能代替完整战斗。
-6. 结束后再次 `environment list`，本次环境必须为 `closed`，`cleanup.json` 为 `clean`，临时目录/私有容器/卷及拥有的进程已清除。保留模板和紧凑证据。出现 `agent-action.json` 或 `cleanup_required` 时由 agent 执行回收并读回结果；最终答复写清仍未清理的环境 ID，不能把清理留给用户而不说明。
+5. 运行器先读取并核验 JSON/JUnit、原生事件和清理结果，再返回成功摘要；成功后删除该次测试记录，不保留研究日志。失败时阅读返回的 `evidence` 中 `result.json`、`client-run/receipts/report.json`、原生 `events.jsonl` 和 `cleanup.json`。结果必须绑定本次源代码、二进制/资源、账号、真实登录和房间；缺失、超时或原生异常按失败报告。编译、模拟/回放或 bootstrap 通过不能代替完整战斗。
+6. 结束后再次 `environment list`，本次环境必须为 `closed`，`cleanup.json` 为 `clean`，临时目录/私有容器/卷及拥有的进程已清除。保留公共模板、账号和源码。成功验收并完成必要部署读回后，删除这项任务的成功测试记录、日志、截图、回执及临时研究文件；失败记录只留到问题解决，随后一并删除。出现 `agent-action.json` 或 `cleanup_required` 时由 agent 执行回收并读回结果；最终答复写清仍未清理的环境 ID，不能把清理留给用户而不说明。
 
 多个进程可以同时运行上述命令；每次都新建环境，不把别人的活跃后端当共享测试服务，不按进程名批量结束进程。恢复依据 PID 加创建时间、租约和 Docker 标签，不能凭目录年龄删除资源。中断后重新执行 `recover`，活跃拥有者会被跳过。
 
@@ -59,7 +61,7 @@ description: Run and diagnose original SDGO native GameTest using isolated loopb
 | 4 | 远程战斗 | 22042 |
 | 5 | 第二参与者/其他场景 | 22097 |
 
-每个账号预装 `10003,22040,22042,22097,24402,24787,24788`。实际身份、UID 和归属读模板 `accounts` 和本次 `fixture-binding.json`，不要硬编码真实玩家 UID。24788 是明确声明的异常形态测试资产，不是正常购买形态。
+每个账号预装 `10003,22040,22042,22097,24402,24787,24788`，完整模板还包含原生新手战舰、按原生容量限制的合法编组和默认出击。实际身份、UID 和归属读模板 `accounts` 和本次 `fixture-binding.json`，不要硬编码真实玩家 UID。24788 是明确声明的异常形态测试资产，不是正常购买形态。
 
 阿普萨拉斯完整回归：
 
@@ -69,6 +71,22 @@ python tools/game_test.py environment run --template <existing-template> --accou
 ```
 
 该开关在副本 observer 的 `mod.ini` 中封存，调用原始变形准入业务并观察两次实际形态提交/退出，随后完成正常战斗；不要靠进程环境变量偷偷注入未封存场景。没有加候选修复的 before 测试可以失败；如模板已安装该修复，必须明确从 before 副本禁用并重新封存，不能把已修复的模板叫作 before。
+
+## 开发完成后的交付顺序
+
+在已授权的功能开发或修复任务中，按以下顺序完成交付：
+
+1. 完成代码和相关 GameTest。若框架或环境导致失败，修复相应问题并取得有效测试结果。
+2. 将配套运行文件部署到实际客户端和 Manager 框架副本，保留登录、画面等个人设置，核对安装版本及文件。涉及服务端时同步检查对应组件。
+3. 按仓库的完整运行文件发布流程提交、推送客户端 `main`，再通过实际更新器核对安装提交与配置。
+4. 更新现有 `README.md`、`README.zh-CN.md` 的功能索引，以及该功能已有的中英文独立文档。内容应与刚部署的行为一致，说明用途、操作、默认值、范围、生效方式、兼容性和排错方法。
+5. 将源码、测试及上述文档合入最新 `master` 并推送，保留并行提交。文档更新是交付步骤的一部分。
+
+公开仓库的文档面向玩家、服主或外部开发者。使用可独立理解的说明，避免任务对话、单机部署记录、临时路径、运行 ID、逐次测试计数、内部完成状态和待办式措辞。开发文档可以说明接口、实现与可复现的测试命令，但应写成通用参考。
+
+不新增独立的测试总结、部署报告或日期式验证记录来替代 README 和功能文档。GameTest 自动生成的 JSON、JUnit 和日志留在本地被 Git 忽略的测试输出目录，用于排错；不将它们复制成公开功能文档或最终交付入口。
+
+结束前清理所属临时环境，保留可复用模板、测试代码和必要的本地日志。最终回复简要说明功能、部署和提交结果。
 
 ## 排错和扩展
 
