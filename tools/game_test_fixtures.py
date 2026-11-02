@@ -143,6 +143,50 @@ def verify_accounts(connection, accounts):
             if (ship is None or int(ship[0])!=account['primary_uid'] or
                 [int(v) for v in ship[1:]]!=padded or int(go[0])!=fleet['uid']):
                 raise RuntimeError('Fixture battleship, leader or owned deck units do not match.')
+        operator=account.get('operator')
+        if operator:
+            row=cursor.execute('SELECT P.GoUserOperatorNum,U.OperatorNumber,U.RunOut,U.Forbidden '
+                'FROM GOnlineGame.dbo.tbl_Users P LEFT JOIN GOnlineGame.dbo.tbl_UserOperators U '
+                'ON U.AccountNumber=P.AccountNumber AND U.UserOperatorNumber=P.GoUserOperatorNum '
+                'WHERE P.AccountNumber=?',account['account_id']).fetchone()
+            if (row is None or int(row[0] or 0)!=operator['uid'] or row[1]!=operator['operator_id'] or
+                    row[2]!=0 or row[3]!=0):
+                raise RuntimeError('Fixture selected operator does not match an owned usable native record.')
+
+
+def initialize_selected_operators(connection,accounts,*,isolated_template=False):
+    """Select an already-owned stock operator; never grant or copy holdings."""
+    if not isolated_template:raise RuntimeError('Operator initialization requires an isolated template revision.')
+    verify_accounts(connection,accounts)
+    cursor=connection.cursor()
+    account_count=cursor.execute('SELECT COUNT(*) FROM GDCommon.dbo.tbl_Account').fetchone()[0]
+    for account in accounts:
+        who=account['account_id']
+        count=cursor.execute('SELECT COUNT(*) FROM GOnlineGame.dbo.tbl_UserOperators WHERE AccountNumber=?',who).fetchone()[0]
+        selected=int(cursor.execute('SELECT GoUserOperatorNum FROM GOnlineGame.dbo.tbl_Users WHERE AccountNumber=?',who).fetchone()[0] or 0)
+        row=cursor.execute('SELECT TOP 1 U.UserOperatorNumber,U.OperatorNumber FROM GOnlineGame.dbo.tbl_UserOperators U '
+            'JOIN GOnlineGame.dbo.tbl_OperatorData D ON D.OperatorID=U.OperatorNumber '
+            'WHERE U.AccountNumber=? AND U.RunOut=0 AND U.Forbidden=0 AND '
+            '(U.DateEnd IS NULL OR U.DateEnd>GETDATE()) AND '
+            '((?<>0 AND U.UserOperatorNumber=?) OR (?=0 AND U.OperatorNumber=60003)) '
+            'ORDER BY U.UserOperatorNumber',who,selected,selected,selected).fetchone()
+        if row is None:raise RuntimeError('The fixture has no usable owned stock operator to select.')
+        uid,identity=int(row[0]),int(row[1])
+        if not selected:
+            cursor.execute('DECLARE @op int,@category int,@slot int,@nickname varchar(16),@got datetime,@ends datetime,'
+                '@shop tinyint,@runout tinyint,@forbidden tinyint,@kind tinyint,@item int,@named tinyint,@remaining smallint,@rc int;'
+                'EXEC @rc=GOnlineGame.dbo.sp_SetUserOperator_GoOut ?,?,@op OUTPUT,@category OUTPUT,@slot OUTPUT,'
+                '@nickname OUTPUT,@got OUTPUT,@ends OUTPUT,@shop OUTPUT,@runout OUTPUT,@forbidden OUTPUT,@kind OUTPUT,'
+                '@item OUTPUT,@named OUTPUT,@remaining OUTPUT;SELECT @rc AS fixture_operator_select,@op AS operator_id;',who,uid)
+            selected_result=result(cursor,'fixture_operator_select')
+            if selected_result['fixture_operator_select']!=0 or selected_result['operator_id']!=identity:
+                raise RuntimeError('Native operator selection rejected the existing fixture holding.')
+        account['operator']={'uid':uid,'operator_id':identity}
+        if cursor.execute('SELECT COUNT(*) FROM GOnlineGame.dbo.tbl_UserOperators WHERE AccountNumber=?',who).fetchone()[0]!=count:
+            raise RuntimeError('Operator initialization changed the existing holdings.')
+    verify_accounts(connection,accounts)
+    if cursor.execute('SELECT COUNT(*) FROM GDCommon.dbo.tbl_Account').fetchone()[0]!=account_count:
+        raise RuntimeError('Operator initialization created or removed an account.')
 
 
 def choose_fleet(ships,primary,available,stars):
