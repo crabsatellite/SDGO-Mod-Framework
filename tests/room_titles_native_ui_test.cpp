@@ -65,6 +65,7 @@ void* g_editVtable[8] = {};
 void* g_buttonVtable[32] = {};
 void* g_staticTextVtable[40] = {};
 void* g_titleBarVtable[8] = {};
+void* g_titleEditVtable[8] = {};
 NativeString g_native = {};
 std::wstring g_heapText;
 std::wstring g_setText;
@@ -382,6 +383,8 @@ void* FakeSymbol(SdgoMod*, const char* name)
         return g_buttonVtable;
     if (!std::strcmp(name, "room_titles.ui_static_text_vtable"))
         return g_staticTextVtable;
+    if (!std::strcmp(name, "room_titles.ui_title_edit_vtable"))
+        return g_titleEditVtable;
     if (!std::strcmp(name, "room_titles.ui_titlebar_vtable"))
         return g_titleBarVtable;
     return nullptr;
@@ -683,6 +686,13 @@ int wmain(int argc, wchar_t** argv)
     if (!Check(Invoke("room_titles.ui_team_settings_init", Surface::TeamSettings,
                        &teamSettings, 9), "team settings expands its name edit at root +0x7C"))
         return 1;
+
+    FakeService inlineTitle;
+    SetPointer(inlineTitle.bytes.data(),0,g_titleEditVtable);
+    SetNative(NativeAt(inlineTitle.bytes.data(),0x54),L"short original");
+    if (!Check(native_ui::SetTitleEditOriginalTitle(inlineTitle.bytes.data(),std::wstring(128,L'\u623f')) &&
+                   GetNative(*NativeAt(inlineTitle.bytes.data(),0x54))==std::wstring(128,L'\u623f'),
+               "native original title is deeply copied for Escape without a modern CRT string"))return 1;
 
     NativeString normalText = {};
     NativeString alternateStateText = {};

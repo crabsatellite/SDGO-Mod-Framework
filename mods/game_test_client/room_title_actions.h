@@ -255,6 +255,7 @@ private:
             else focus_(root,edit_);
             tests_={std::wstring(21,L'A'),L"\u4efb\u52a1\u623f\u95f4\u540d\u79f0"+std::wstring(40,L'\u4e2d'),std::wstring(128,L'\u623f')};
             tests_.back()[0]=static_cast<wchar_t>(0x623F+s);
+            if(!reopened_){std::array<char,513> before{};const auto n=sdgo::CurrentRoomTitle(api_->ModDirectory(mod_),before.data(),static_cast<uint32_t>(before.size()));beforeCancel_.assign(before.data(),n);}
             phase_=1;Observe(c,"live-dialog-ready",s);DumpControls(c,root);return SDGO_GAME_TEST_WAIT;
         }
         if(phase_==1){
@@ -276,12 +277,17 @@ private:
             }
             c->Assert(1,inputIndex_==0?"21 keyboard characters survive in the real game edit":inputIndex_==1?"Chinese title beyond twenty characters survives native input":"128 Chinese characters survive native input without truncation");
             if(++inputIndex_<tests_.size()){phase_=1;return SDGO_GAME_TEST_WAIT;}
-            if(!reopened_){if(!Close(s))throw std::runtime_error("native cancel control unavailable");phase_=3;Observe(c,"cancel-requested",s);return SDGO_GAME_TEST_WAIT;}
+            if(!reopened_){if(!Close(s))throw std::runtime_error("native cancel control unavailable");cancelAt_=GetTickCount64();phase_=3;Observe(c,"cancel-requested",s);return SDGO_GAME_TEST_WAIT;}
             expected_=Utf8(tests_.back());
             if(!Submit(s))throw std::runtime_error("native title confirmation control unavailable");
             phase_=4;Observe(c,"submit-requested",s);return SDGO_GAME_TEST_WAIT;
         }
-        if(phase_==3){if(Service(DialogSymbol(s)))return SDGO_GAME_TEST_WAIT;reopened_=true;opened_=false;inputIndex_=0;phase_=0;Observe(c,"cancel-consumed-reopen",s);return SDGO_GAME_TEST_WAIT;}
+        if(phase_==3){
+            if(Service(DialogSymbol(s))||GetTickCount64()-cancelAt_<500)return SDGO_GAME_TEST_WAIT;
+            std::array<char,513> current{};const auto n=sdgo::CurrentRoomTitle(api_->ModDirectory(mod_),current.data(),static_cast<uint32_t>(current.size()));
+            c->Assert(std::string(current.data(),n)==beforeCancel_,"native cancel preserves the previously confirmed full room title");
+            reopened_=true;opened_=false;inputIndex_=0;phase_=0;Observe(c,"cancel-consumed-reopen",s);return SDGO_GAME_TEST_WAIT;
+        }
         std::array<char,513> confirmed{};
         const uint32_t length=sdgo::CurrentRoomTitle(api_->ModDirectory(mod_),confirmed.data(),static_cast<uint32_t>(confirmed.size()));
         if(length!=expected_.size()||std::string(confirmed.data())!=expected_)return SDGO_GAME_TEST_WAIT;
@@ -294,5 +300,5 @@ private:
     uintptr_t lastLimitCaller_=0;uint32_t lastLimit_=0;int lastClear_=0;unsigned uiRestarts_=0;
     KeyPressed keyPressed_=nullptr;uint32_t pendingTitleKey_=0;
     unsigned phase_=0,inputIndex_=0,polls_=0;bool opened_=false,reopened_=false;void* dialog_=nullptr;void* edit_=nullptr;
-    std::vector<std::wstring> tests_;std::string expected_;
+    std::vector<std::wstring> tests_;std::string expected_,beforeCancel_;uint64_t cancelAt_=0;
 };

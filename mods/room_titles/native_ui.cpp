@@ -113,6 +113,7 @@ const void* g_editVtable = nullptr;
 const void* g_buttonVtable = nullptr;
 const void* g_staticTextVtable = nullptr;
 const void* g_titleBarVtable = nullptr;
+const void* g_titleEditVtable = nullptr;
 InitCallback g_callback = nullptr;
 TitleLookupCallback g_titleLookup = nullptr;
 InitFn g_pvpCreateInit = nullptr;
@@ -729,11 +730,12 @@ bool Bind(const SdgoApi* api, SdgoMod* mod)
     const void* staticTextVtable = api->Symbol(mod, "room_titles.ui_static_text_vtable");
     const void* titleBarVtable =
         api->Symbol(mod, "room_titles.ui_titlebar_vtable");
+    const void* titleEditVtable = api->Symbol(mod, "room_titles.ui_title_edit_vtable");
     if (!findControl || !getText || !setText || !inputLimit || !inputContext || !inputLock ||
         !wideToNarrow || !narrowToWide ||
         !nativeStringAssign || !buttonTextItem || !staticTextSet ||
         !staticTextWordSkip || !editVtable || !buttonVtable ||
-        !staticTextVtable || !titleBarVtable)
+        !staticTextVtable || !titleBarVtable || !titleEditVtable)
         return false;
 
     g_api = api;
@@ -754,6 +756,7 @@ bool Bind(const SdgoApi* api, SdgoMod* mod)
     g_buttonVtable = buttonVtable;
     g_staticTextVtable = staticTextVtable;
     g_titleBarVtable = titleBarVtable;
+    g_titleEditVtable = titleEditVtable;
     g_bound = true;
     return true;
 }
@@ -919,6 +922,15 @@ bool SetTitleBarCachedTitle(void* title_bar, const std::wstring& text)
     auto* cached = reinterpret_cast<HostWString24*>(
         static_cast<std::uint8_t*>(title_bar) + kTitleBarCachedTitleOffset);
     return AssignNativeString(cached, text);
+}
+
+bool SetTitleEditOriginalTitle(void* service, const std::wstring& text)
+{
+    if (!g_bound || !IsObjectWithVtable(service, g_titleEditVtable) ||
+        text.empty() || text.size() > kMaximumTitleCodeUnits)
+        return false;
+    return AssignNativeString(reinterpret_cast<HostWString24*>(
+        static_cast<std::uint8_t*>(service) + 0x54), text);
 }
 
 bool ReadTitleBarRoom(void* title_bar,

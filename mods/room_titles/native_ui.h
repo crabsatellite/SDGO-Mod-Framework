@@ -74,6 +74,9 @@ bool SetEditText(void* edit, const std::wstring& text, bool selection_flag = fal
 // allocator. This keeps title-edit cancel/reopen behavior on the full title
 // without changing either room structure's fixed legacy field.
 bool SetTitleBarCachedTitle(void* title_bar, const std::wstring& text);
+// The inline editor emits this original value on Escape. Keep its host-owned
+// cache consistent with confirmed metadata so cancel never restores a prefix.
+bool SetTitleEditOriginalTitle(void* service, const std::wstring& text);
 
 // Resolve the native room selected by the shared wait-room title bar. The
 // host checks its PvP room pointer at +0x108 first, then its mission room
