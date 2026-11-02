@@ -6,7 +6,7 @@ export async function mount(root,ctx){
  const select=document.createElement('select');select.ariaLabel='新增商品的原生物品';
  controls.append(select,button('新增商品',async()=>{if(!select.value)throw Error('请选择原生物品');await action('create',{category_id:Number(select.value)});},ctx,'primary'),button('应用到游戏',async()=>{if(!confirm('将当前商城草稿应用到已选择的服务器和客户端？'))return;await action('apply',{});ctx.message('服务器已返回应用结果。游戏内显示与购买由你手动检查。');},ctx),button('导出配置',async()=>download(await ctx.fetch('/api/shop/export'),'shop.json'),ctx));
  const importFile=document.createElement('input');importFile.type='file';importFile.accept='.json';importFile.hidden=true;importFile.onchange=async()=>{try{await action('import',{catalog:JSON.parse(await importFile.files[0].text())});}catch(error){ctx.message(error.message,true);}};
- controls.append(button('导入配置',()=>importFile.click(),ctx),importFile);root.append(controls);
+ controls.append(button('导入配置',()=>importFile.click(),ctx),button('刷新物品目录',()=>load(),ctx),importFile);root.append(controls);
  const layout=e('div',undefined,'settings-grid'),list=e('section',undefined,'manager-card'),editor=e('section',undefined,'manager-card');layout.append(list,editor);root.append(layout);
  async function load(){state=await ctx.request('/api/shop/catalog');const options=state.items.map(item=>new Option(item.Name+' · '+item.Id,item.Id));select.replaceChildren(...options);render();}
  async function action(name,body){state=await ctx.request('/api/shop/'+name,body,'POST',{'X-Shop-Revision':state.revision});render();}
@@ -17,6 +17,7 @@ export async function mount(root,ctx){
   if(!rows.length)list.append(e('p','还没有管理商品。选择一个原生物品，然后新增。','muted'));
   editor.replaceChildren();const product=state.catalog.products.find(p=>p.key===selected);if(!product){editor.append(e('p','选择商品查看和编辑。','muted'));return;}
   editor.append(e('h2',product.name),e('p','商品 '+product.product_id+' · 物品 '+product.category_id,'muted'));
+  const imported=state.unit_imports?.[String(product.category_id)];if(imported){const image=document.createElement('img');image.src=imported.shop_image_url;image.alt=imported.display_name;image.style.cssText='width:183px;height:140px;object-fit:contain';editor.append(image,e('p','使用机体导入时确认的商城头像','muted'));}
   const fields={};for(const [key,label,type] of [['name','商品名称'],['label','选项标签'],['price','售价','number'],['validity','数量 / 租赁天数','number'],['enabled','上架','checkbox']]){fields[key]=field(label,product[key],type);editor.append(fields[key].box);}
   const currency=e('label','币种'),value=document.createElement('select');for(const name of ['GB','MB'])value.append(new Option(name,name));value.value=product.currency;currency.append(value);editor.append(currency);
   editor.append(button('保存商品',async()=>{const values={currency:value.value};for(const [key,entry] of Object.entries(fields))values[key]=entry.input.type==='checkbox'?entry.input.checked:entry.input.type==='number'?Number(entry.input.value):entry.input.value;await action('update',{key:product.key,values});ctx.message('商品草稿已保存，应用到游戏后才会更改服务器商品。');},ctx,'primary'),button(product.retired?'恢复商品':'删除商品',()=>action(product.retired?'restore':'delete',{key:product.key}),ctx));

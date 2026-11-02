@@ -61,6 +61,8 @@ foreach ($file in @('README.md','README.zh-CN.md','THIRD_PARTY_NOTICES.md','LICE
     Copy-Item -LiteralPath (Join-Path $repo $file) -Destination $out
 }
 Copy-Item -LiteralPath (Join-Path $repo 'docs') -Destination $out -Recurse
+$privateUnitExample=Join-Path $out 'docs\examples\unit-family.heine-destiny.draft.json'
+if(Test-Path -LiteralPath $privateUnitExample -PathType Leaf){Remove-Item -LiteralPath $privateUnitExample}
 New-Item -ItemType Directory -Force -Path (Join-Path $out 'licenses') | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo 'third_party\minhook\LICENSE.txt') -Destination (Join-Path $out 'licenses\MinHook-LICENSE.txt')
 $contents = @('# Included features', '', '| Category | Feature | Channel | Mods |', '|---|---|---|---|')
@@ -99,6 +101,10 @@ if ($catalog.features.PSObject.Properties.Name -contains 'shop-catalog') {
     }
 }
 Add-Type -AssemblyName System.IO.Compression
+if ($catalog.features.PSObject.Properties.Name -contains 'unit-import') {
+    & python (Join-Path $PSScriptRoot 'package_unit_import.py') --out (Join-Path $out 'unit-import') --binaries (Join-Path $buildRoot $Config) --directory-only
+    if ($LASTEXITCODE -ne 0) { throw 'Unit import toolkit packaging failed' }
+}
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::Open($zip, [IO.Compression.ZipArchiveMode]::Create)
 try {

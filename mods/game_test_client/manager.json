@@ -31,6 +31,39 @@
       "section": "settings",
       "audience": "developer",
       "activation": "restart_required"
+    },
+    {
+      "id": "capture_native_frames",
+      "key": "CaptureNativeFrames",
+      "label": "采集真实原生页面画面",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "unit_presentations",
+      "key": "UnitPresentations",
+      "label": "导入机体的原生图鉴与模型测试",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "unit_portraits",
+      "key": "UnitPortraits",
+      "label": "原生准备动作截图",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
     }
   ],
   "presentation": "configurable",

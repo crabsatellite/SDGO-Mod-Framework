@@ -49,6 +49,8 @@ Beta and Experimental labels indicate release channels.
 | Daily double rewards (Beta) <!-- catalog: `daily_rewards` --> | Double battle GB and EXP in a daily window (default 18:00–22:00) | [Use](docs/daily-rewards.md) |
 | Storage claim all (Beta) <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation | [Use](docs/storage-claim.md) |
 
+| Unit family import (Beta) <!-- catalog: `unit_catalog` --> | Import unit archives, complete required data and generate paired unit, encyclopedia and shop/capsule resources in Mod Manager | [Use](docs/unit-import.md) |
+
 <!-- /mod-category:gameplay -->
 
 <a id="long-room-title-commands"></a>

@@ -49,6 +49,8 @@ Beta、Experimental 表示发布阶段。
 | 每日双倍时间（Beta） <!-- catalog: `daily_rewards` --> | 每天固定时段（默认 18:00–22:00）战斗 GB 和经验翻倍 | [使用说明](docs/daily-rewards.zh-CN.md) |
 | 保管库一键领取（Beta） <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
 
+| 机体族导入（Beta） <!-- catalog: `unit_catalog` --> | 在 Mod Manager 导入机体包，补齐信息并生成两端定义、图鉴和商城／扭蛋资源 | [使用](docs/unit-import.zh-CN.md) |
+
 <!-- /mod-category:gameplay -->
 
 <a id="long-room-title-commands"></a>

@@ -15,8 +15,9 @@ def _running(executable):
     if __import__('os').name != 'nt': return False
     # Read-only process inventory. Never terminate a game to import a package.
     import subprocess
+    from .windows import powershell_environment,powershell_executable
     script = 'Get-CimInstance Win32_Process -Filter "Name=\'GOnline.exe\'" | Select-Object -ExpandProperty ExecutablePath | ConvertTo-Json -Compress'
-    result = subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-Command',script],capture_output=True,text=True,encoding='utf-8',creationflags=subprocess.CREATE_NO_WINDOW)
+    result = subprocess.run([powershell_executable(),'-NoProfile','-NonInteractive','-Command',script],capture_output=True,text=True,encoding='utf-8',creationflags=subprocess.CREATE_NO_WINDOW,env=powershell_environment())
     if result.returncode: raise ValueError('无法确认客户端是否已关闭')
     values=json.loads(result.stdout) if result.stdout.strip() else []
     if isinstance(values,str):values=[values]
@@ -28,8 +29,16 @@ def import_client(workspace, host_id, encoded):
     if host['role']!='client': raise ValueError('玩家配置包只能安装到客户端')
     root=Path(host['path']).resolve()
     if _running(root/'GOnline.exe'): raise ValueError('请先关闭这个客户端，再导入配置包')
-    if not isinstance(encoded,str) or len(encoded)>96*1024*1024:raise ValueError('客户端配置包过大')
+    if not isinstance(encoded,str) or len(encoded)>224*1024*1024:raise ValueError('客户端配置包过大')
     raw=base64.b64decode(encoded,validate=True)
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        if 'manifest.json' in archive.namelist():
+            if archive.getinfo('manifest.json').file_size > 2*1024*1024:raise ValueError('发布清单过大')
+            manifest=json.loads(archive.read('manifest.json'))
+            if manifest.get('module')=='unit_catalog':
+                from owner.units.deployment import install_package
+                return {**install_package(root,raw),'state':workspace.public()}
+    if len(encoded)>96*1024*1024:raise ValueError('客户端配置包过大')
     pending={};total=0
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
         if len(archive.infolist())>4096:raise ValueError('配置包条目过多')

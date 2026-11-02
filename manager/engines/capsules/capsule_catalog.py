@@ -12,6 +12,7 @@ import hashlib
 import itertools
 import json
 import math
+import re
 from pathlib import Path
 import struct
 import zlib
@@ -333,6 +334,19 @@ def custom_candidate_allowed(catalog, unit):
     if policy is None:
         return True
     if unit.get("id") in policy.get("native_candidate_unit_ids", []):
+        return True
+    # The importer supplies a same-database approved inventory root and its
+    # presentation metadata. Native ordinary custom slots accept C/B/A units;
+    # the machine's slot_rules still govern their placement, including the two
+    # rare slots. Imported lower grades must not be mislabeled as SR to enter.
+    imported = unit.get('unit_import')
+    if (isinstance(imported, dict) and isinstance(imported.get('family_key'), str)
+            and imported['family_key']
+            and re.fullmatch(r'[0-9a-f]{64}', str(imported.get('revision', '')))
+            and type(imported.get('category_id')) is int
+            and 1_119_000 <= imported['category_id'] <= 1_119_999
+            and unit.get('rank') in (1,2,3)
+            and unit.get('eligible') is True):
         return True
     if unit["rank"] == 4 and unit["subgrade"] == 4:
         return True

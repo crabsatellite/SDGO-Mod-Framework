@@ -14,6 +14,7 @@
 #include "capsule_catalog_actions.h"
 #include "battle_combat_actions.h"
 #include "apsalus_transform_probe.h"
+#include "unit_presentations_actions.h"
 #include "capsule_draw_actions.h"
 #include "unit_select_actions.h"
 #include "active_selection_observer.h"
@@ -116,6 +117,10 @@ bool quietLoopback = false;
 QuietSockets quietSockets;
 QuietAudio quietAudio;
 QuietGraphics quietGraphics;
+bool captureNativeFrames=false;
+bool testUnitPresentations=false;
+bool captureUnitPortraits=false;
+UnitPresentationsActions unitPresentations;
 void PublishQuietSocketReceipt(bool force=false);
 bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false, pagesOnly = false;
 uint64_t deckUnitUids[4]{};
@@ -147,6 +152,12 @@ std::vector<MotionSample> motionSamples;
 
 bool LoadPlan() {
     const std::wstring job = sdgo_test::directory + L"\\run.ini";
+    captureNativeFrames=GetPrivateProfileIntW(L"settings",L"CaptureNativeFrames",0,
+        (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
+    testUnitPresentations=GetPrivateProfileIntW(L"settings",L"UnitPresentations",0,
+        (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
+    captureUnitPortraits=GetPrivateProfileIntW(L"settings",L"UnitPortraits",0,
+        (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
     wchar_t networkPolicy[24]{};
     GetPrivateProfileStringW(L"run",L"network_policy",L"legacy",networkPolicy,24,job.c_str());
     verifyRoutedNetwork=!wcscmp(networkPolicy,L"routed_loopback");
@@ -186,6 +197,8 @@ bool LoadPlan() {
         wchar_t* end=nullptr;errno=0;playUnitUid=_wcstoui64(playUid,&end,10);
         if(!playUnitUid || errno || !end || *end)return false;
     }
+    if(testUnitPresentations && !playUnitUid)return false;
+    if(captureUnitPortraits && (!testUnitPresentations || !captureNativeFrames))return false;
     if (static_cast<unsigned>(bootstrapOnly) + battleshipOnly + giftRequestsOnly + deckOnly + pagesOnly > 1) return false;
     wchar_t relative[512] = {}, nonce[16] = {}, user[32] = {}, password[128] = {};
     GetPrivateProfileStringW(L"run", L"account_path", L"private/account.ini", relative, 512, job.c_str());
@@ -1486,6 +1499,97 @@ int __cdecl SelectPlayUnit(const SdgoGameTestContextV1* context) {
     return SDGO_GAME_TEST_PASS;
 }
 const SdgoGameTestCaseV1 playUnitCase{"setup.active_unit",120000,&SelectPlayUnit};
+int PresentationResult(const SdgoGameTestContextV1* context,UnitPresentationsActions::Result result) {
+    const auto& s=unitPresentations.State();
+    static uint32_t previous=0,phase=0,flags=0,first=0,detailFlags=0;static uintptr_t model=0,detail=0;
+    const uint32_t currentDetailFlags=s.detail_active|(s.detail_visible<<8)|(s.projection_mode<<16)|(s.pending_actions<<24);
+    if(previous!=result || model!=s.model || phase!=s.phase || flags!=s.list_flags || first!=s.first_visible_id || detail!=s.detail || detailFlags!=currentDetailFlags) {
+        char message[448];sprintf_s(message,"original unit presentations result=%u unit=%u index=%u slot=%u form=%u animation=%.2f list=%08X detail=%08X model=%08X select=%u switch=%u phase=%u rank=%u flags=%04X shown=%u first=%u detail_unit=%u active=%u visible=%u projection=%u pending=%u",
+            result,s.unit,s.index_id,s.slot,s.form,s.animation_state,static_cast<uint32_t>(s.list),
+            static_cast<uint32_t>(s.detail),static_cast<uint32_t>(s.model),s.selection_calls,s.form_calls,
+            s.phase,s.rank,s.list_flags,s.visible_count,s.first_visible_id,s.detail_unit,s.detail_active,s.detail_visible,s.projection_mode,s.pending_actions);
+        context->Observe(message);previous=result;model=s.model;phase=s.phase;flags=s.list_flags;first=s.first_visible_id;detail=s.detail;detailFlags=currentDetailFlags;
+    }
+    if(result>=UnitPresentationsActions::Invalid) {
+        context->Assert(0,"the original encyclopedia service, control, requested unit and model identities remain valid");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if(result!=UnitPresentationsActions::Ready)return SDGO_GAME_TEST_WAIT;
+    context->Assert(1,"the original unit UI reached the requested state through its own callbacks");
+    return SDGO_GAME_TEST_PASS;
+}
+int __cdecl ImportedIndex(const SdgoGameTestContextV1* context) {
+    static bool diagnosticRequested=false,diagnosticComplete=false;
+    if(diagnosticRequested && !diagnosticComplete) {
+        const auto captured=quietGraphics.CaptureFrameResult();
+        if(captured==E_PENDING)return SDGO_GAME_TEST_WAIT;
+        diagnosticComplete=true;
+        context->Observe(SUCCEEDED(captured)?"native encyclopedia diagnostic backbuffer saved (not a passing case)":"native encyclopedia diagnostic frame was unavailable");
+    }
+    ActiveSelectionObserver::Snapshot s;
+    if(!activeSelection.Read(authenticatedPilot,&s) || !s.inventory_matches || s.uid!=playUnitUid) {
+        context->Assert(0,"encyclopedia checks use the genuinely equipped owned unit");return SDGO_GAME_TEST_FAIL;
+    }
+    const auto result=unitPresentations.EnsureList(s.unit);
+    if(captureNativeFrames && !diagnosticRequested && result==UnitPresentationsActions::Waiting &&
+            unitPresentations.State().phase==5 && context->elapsed_ms>=3000) {
+        const auto folder=sdgo_test::directory+L"\\visual";
+        if(CreateDirectoryW(folder.c_str(),nullptr) || GetLastError()==ERROR_ALREADY_EXISTS)
+            diagnosticRequested=quietGraphics.CaptureNextFrame((folder+L"\\diagnostic-unit-index.bmp").c_str());
+    }
+    return PresentationResult(context,result);
+}
+int __cdecl ImportedDetail(const SdgoGameTestContextV1* context) {
+    return PresentationResult(context,unitPresentations.OpenDetail());
+}
+bool ImportedTransformTarget(uint32_t& target) {
+    using Grid=void*(__cdecl*)();using Find=uint8_t(__thiscall*)(void*,const uint8_t**,uint32_t,int,char);
+    const auto grid=reinterpret_cast<Grid>(sdgo_test::api->Symbol(sdgo_test::mod,"grid.data"));
+    const auto find=reinterpret_cast<Find>(sdgo_test::api->Symbol(sdgo_test::mod,"grid.find"));
+    const uint8_t* row=nullptr;
+    if(!grid || !find || !find(grid(),&row,unitPresentations.State().unit,2,0) || !row)return false;
+    memcpy(&target,row+316,4);return true;
+}
+int ImportedForm(const SdgoGameTestContextV1* context,uint32_t form) {
+    uint32_t target=0;
+    if(!ImportedTransformTarget(target)) {context->Assert(0,"native imported unit has a readable transform reference");return SDGO_GAME_TEST_FAIL;}
+    if(!target) {context->Assert(1,"single-form native unit declares no transformation; no form action is submitted");return SDGO_GAME_TEST_PASS;}
+    return PresentationResult(context,unitPresentations.SwitchForm(form));
+}
+int __cdecl ImportedAlternate(const SdgoGameTestContextV1* context){return ImportedForm(context,1);}
+int __cdecl ImportedBase(const SdgoGameTestContextV1* context){return ImportedForm(context,0);}
+int __cdecl ImportedClose(const SdgoGameTestContextV1* context){return PresentationResult(context,unitPresentations.Close());}
+const SdgoGameTestCaseV1 unitPresentationCases[]={
+    {"pages.unit_index.list",120000,&ImportedIndex},
+    {"pages.unit_index.detail",120000,&ImportedDetail},
+    {"pages.unit_index.alternate",60000,&ImportedAlternate},
+    {"pages.unit_index.base",60000,&ImportedBase},
+    {"pages.unit_index.close",60000,&ImportedClose},
+};
+int UnitPortrait(const SdgoGameTestContextV1* context,bool choice) {
+    static std::string current;static bool issued=false;static uint64_t issuedAt=0;
+    if(current!=context->case_id){current=context->case_id;issued=false;issuedAt=0;}
+    if(!issued) {
+        const auto result=unitPresentations.ReadyPose(choice);
+        if(result>=UnitPresentationsActions::Invalid)return PresentationResult(context,result);
+        if(result!=UnitPresentationsActions::Ready)return SDGO_GAME_TEST_WAIT;
+        issued=true;issuedAt=context->elapsed_ms;return SDGO_GAME_TEST_WAIT;
+    }
+    if(context->elapsed_ms-issuedAt<150)return SDGO_GAME_TEST_WAIT;
+    const auto folder=sdgo_test::directory+L"\\visual";
+    if(!CreateDirectoryW(folder.c_str(),nullptr) && GetLastError()!=ERROR_ALREADY_EXISTS) {
+        context->Assert(0,"native portrait output directory is available");return SDGO_GAME_TEST_FAIL;
+    }
+    const std::wstring name(current.begin(),current.end());
+    const bool saved=unitPresentations.WritePortraitSource((folder+L"\\"+name+L".json").c_str(),choice?"choice_01":"wait_01");
+    context->Assert(saved,"original detail entity plays its actual ready/selection animation and exposes its real pixel viewport");
+    return saved?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+}
+int __cdecl PortraitWait(const SdgoGameTestContextV1* context){return UnitPortrait(context,false);}
+int __cdecl PortraitReady(const SdgoGameTestContextV1* context){return UnitPortrait(context,true);}
+const SdgoGameTestCaseV1 portraitCases[]={
+    {"pages.unit_index.pose_wait",60000,&PortraitWait},{"pages.unit_index.pose_ready",60000,&PortraitReady},
+};
 int MissionProgress(const SdgoGameTestContextV1* context,MissionFlowActions::Result result) {
     static uint32_t previous=UINT32_MAX;
     if(previous!=result) {
@@ -1586,6 +1690,65 @@ const SdgoGameTestCaseV1 fpsCases[]={
 SdgoGameTestProviderV1 provider{sizeof(provider), SDGO_GAME_TEST_VERSION, "pvp-ai", "client", 7, realCases};
 std::vector<std::string> caseNames;
 std::vector<SdgoGameTestCaseV1> plannedCases;
+void AppendUnitPresentations() {
+    if(!testUnitPresentations)return;
+    plannedCases.insert(plannedCases.end(),std::begin(unitPresentationCases),std::begin(unitPresentationCases)+2);
+    if(captureUnitPortraits)plannedCases.insert(plannedCases.end(),std::begin(portraitCases),std::end(portraitCases));
+    plannedCases.insert(plannedCases.end(),std::begin(unitPresentationCases)+2,std::end(unitPresentationCases));
+}
+std::vector<SdgoGameTestCaseV1> capturedOriginalCases,capturedCases;
+int __cdecl ObserveThenCapture(const SdgoGameTestContextV1* context) {
+    static std::string current;
+    static bool nativeComplete=false,requested=false;
+    static unsigned frame=0;
+    static uint64_t capturedAt=0;
+    if(current!=context->case_id) {
+        current=context->case_id;nativeComplete=false;requested=false;frame=0;capturedAt=0;
+    }
+    if(!nativeComplete) {
+        const auto found=std::find_if(capturedOriginalCases.begin(),capturedOriginalCases.end(),
+            [&](const auto& test){return current==test.id;});
+        if(found==capturedOriginalCases.end())return SDGO_GAME_TEST_FAIL;
+        const int result=found->poll(context);
+        if(result!=SDGO_GAME_TEST_PASS)return result;
+        nativeComplete=true;
+    }
+    const unsigned target=current=="pages.unit_index.pose_ready" ? 3u:2u;
+    const uint64_t interval=current.find("pages.unit_index.pose_")==0 ? 350:800;
+    if(frame==target)return SDGO_GAME_TEST_PASS;
+    if(frame && context->elapsed_ms-capturedAt<interval)return SDGO_GAME_TEST_WAIT;
+    if(!requested) {
+        const auto folder=sdgo_test::directory+L"\\visual";
+        if(!CreateDirectoryW(folder.c_str(),nullptr) && GetLastError()!=ERROR_ALREADY_EXISTS) {
+            context->Assert(0,"the owned native frame output directory is writable");return SDGO_GAME_TEST_FAIL;
+        }
+        const std::wstring name(current.begin(),current.end());
+        const auto path=folder+L"\\"+name+L"-"+std::to_wstring(frame)+L".bmp";
+        if(!quietGraphics.CaptureNextFrame(path.c_str())) {
+            context->Assert(0,"the real native D3D frame observation is available");return SDGO_GAME_TEST_FAIL;
+        }
+        requested=true;return SDGO_GAME_TEST_WAIT;
+    }
+    const HRESULT result=quietGraphics.CaptureFrameResult();
+    if(result==E_PENDING)return SDGO_GAME_TEST_WAIT;
+    context->Assert(SUCCEEDED(result),"the real native backbuffer was read before Present without another renderer");
+    if(FAILED(result))return SDGO_GAME_TEST_FAIL;
+    char captured[128];sprintf_s(captured,"native visual frame %u captured after genuine business assertions and ordinary updates",frame);
+    context->Observe(captured);
+    ++frame;requested=false;capturedAt=context->elapsed_ms;
+    return frame==target ? SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_WAIT;
+}
+void WrapNativeCaptures() {
+    if(!captureNativeFrames)return;
+    capturedOriginalCases.assign(provider.cases,provider.cases+provider.count);
+    capturedCases=capturedOriginalCases;
+    // Login/bootstrap can finish before the native renderer starts presenting.
+    // Capture the requested native pages without holding authentication behind
+    // a screenshot of an initialization state.
+    for(auto& test:capturedCases)
+        if(std::strncmp(test.id,"pages.",6)==0)test.poll=&ObserveThenCapture;
+    provider.cases=capturedCases.data();
+}
 void RegisterPlannedCases() {
     if (fpsOnly) {
         provider.suite="native-fps-limit";provider.count=3;provider.cases=fpsCases;return;
@@ -1600,6 +1763,7 @@ void RegisterPlannedCases() {
     if (pagesOnly) {
         plannedCases.assign(realCases,realCases+3);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
+        AppendUnitPresentations();
         plannedCases.insert(plannedCases.end(),std::begin(pageCases),std::begin(pageCases)+5);
         if(testShopCatalog)plannedCases.push_back(shopCatalogCase);
         plannedCases.insert(plannedCases.end(),std::begin(pageCases)+5,std::end(pageCases));
@@ -1613,6 +1777,7 @@ void RegisterPlannedCases() {
     caseNames.reserve(count); plannedCases.reserve(count);
     for (unsigned i = 0; i < 3; ++i) plannedCases.push_back(realCases[i]);
     if(playUnitUid)plannedCases.push_back(playUnitCase);
+    AppendUnitPresentations();
     if (giftRequestsOnly) plannedCases.push_back(giftCase);
     else if (needsShip) plannedCases.push_back(battleshipCase);
     if (deckOnly) plannedCases.push_back(deckCase);
@@ -1714,6 +1879,27 @@ LONG CALLBACK NativeFault(EXCEPTION_POINTERS* fault) {
             sdgo_test::api->Log(sdgo_test::mod, SDGO_LOG_ERROR,
                 "native exception %08lX at %p thread=%lu: eax %08lX ebx %08lX ecx %08lX edx %08lX esi %08lX edi %08lX ebp %08lX esp %08lX",
                 code, fault->ExceptionRecord->ExceptionAddress, GetCurrentThreadId(),c->Eax, c->Ebx, c->Ecx, c->Edx, c->Esi, c->Edi, c->Ebp, c->Esp);
+            if(code==EXCEPTION_ACCESS_VIOLATION && fault->ExceptionRecord->NumberParameters>=2)
+                sdgo_test::api->Log(sdgo_test::mod,SDGO_LOG_ERROR,"native access kind=%lu address=%p",
+                    static_cast<DWORD>(fault->ExceptionRecord->ExceptionInformation[0]),
+                    reinterpret_cast<void*>(fault->ExceptionRecord->ExceptionInformation[1]));
+            // Keep bounded code/frame diagnostics independent of game singleton
+            // access, which may itself be unavailable during the original fault.
+            __try {
+                const auto* bytes=reinterpret_cast<const uint8_t*>(c->Eip);
+                char instruction[97]{};
+                for(unsigned i=0;i<32;++i)sprintf_s(instruction+i*3,sizeof(instruction)-i*3,"%02X ",bytes[i]);
+                sdgo_test::api->Log(sdgo_test::mod,SDGO_LOG_ERROR,"native fault code=%s",instruction);
+                uintptr_t frame=c->Ebp;
+                for(unsigned i=0;i<16 && frame>=c->Esp && frame-c->Esp<0x10000 && !(frame&3);++i) {
+                    const auto* words=reinterpret_cast<const uint32_t*>(frame);
+                    const uintptr_t next=words[0],address=words[1];
+                    sdgo_test::api->Log(sdgo_test::mod,SDGO_LOG_ERROR,"native frame[%u] base=%p return=%p",i,
+                        reinterpret_cast<void*>(frame),reinterpret_cast<void*>(address));
+                    if(next<=frame)break;
+                    frame=next;
+                }
+            } __except(EXCEPTION_EXECUTE_HANDLER) {}
             HMODULE faultModule=nullptr;
             if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                     reinterpret_cast<LPCWSTR>(fault->ExceptionRecord->ExceptionAddress),&faultModule)) {
@@ -1791,6 +1977,7 @@ SDGO_MOD_ENTRY {
     // actual map and participants remain provided by the server.
     if (!loaded) sdgo_test::Fail("invalid private account or native scenario configuration");
     RegisterPlannedCases();
+    WrapNativeCaptures();
     if (fpsOnly) {
         if (!fpsActions.Bind(api,mod,fpsRequested,fpsModEnabled))sdgo_test::Fail("native FPS readback binding is unavailable");
     } else {
@@ -1807,6 +1994,7 @@ SDGO_MOD_ENTRY {
         !battleships.Bind(api,mod,&actions) || !gifts.Bind(api,mod,&actions) ||
         (deckOnly && !decks.Bind(api,mod,&actions)) ||
         (!hangarNavigation.Bind(api,mod,&actions)) ||
+        (testUnitPresentations && !unitPresentations.Bind(api,mod,&hangarNavigation)) ||
         (pagesOnly && !pages.Bind()) ||
         (pagesOnly && !operatorCatalog.Bind(api,mod)) ||
         (pagesOnly && !aiCatalog.Bind(api,mod)) ||

@@ -34,6 +34,12 @@ import xml.etree.ElementTree as ET
 import importlib.util
 
 
+# Keep direct ``python tools/game_test.py`` invocations equivalent to -m.
+# Deferred package imports are also used when installing optional staged Mods.
+if __package__ in (None, ''):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+
 SCHEMA_VERSION = 2
 OWNED_BUILD_ROOT=Path(__file__).resolve().parents[1]/'build'
 HOST_KEY = "GOnline-54BE1568-00C97000"
@@ -2127,6 +2133,8 @@ def collect_hashes(root: Path) -> tuple[dict, dict]:
     def bind(path: Path, collection: dict) -> None:
         if not path.is_file():
             raise GameTestError(f"missing copied GameTest payload: {path}")
+        if not is_relative_to(path.resolve(),root.resolve()):
+            raise GameTestError('copied native resource escapes the owned client')
         collection[path.relative_to(root).as_posix()] = sha256(path)
 
     bind(root / GAME_EXE, immutable)
@@ -2152,6 +2160,13 @@ def collect_hashes(root: Path) -> tuple[dict, dict]:
         path = root / relative
         if path.exists():
             bind(path, immutable)
+    # Imported native assets live beside the game, not only under sdgo/mods.
+    # Bind the complete explicit resource trees before the process starts.
+    for tree in ('gdrs','mdrs','anrs','txrs','sprs','fxrs','sdrs','scp','sol','trns','uirs'):
+        folder=root/tree
+        if not folder.exists():continue
+        for path in sorted(folder.rglob('*'),key=lambda item:item.as_posix().lower()):
+            if path.is_file():bind(path,immutable)
     for name in ("config.xml", "閰嶇疆鏂囦欢.ini"):
         path = root / name
         if path.is_file():
@@ -3212,13 +3227,13 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
         def stop_entry():
             if entry_process and entry_process.poll() is None:
                 try:entry_process.kill()
-                except OSError:
+                except (OSError, subprocess.TimeoutExpired):
                     # Windows can reject a second termination while the first
                     # exit is still pending. Accept only a confirmed exit.
-                    entry_process.wait(timeout=10)
+                    entry_process.wait(timeout=30)
                     if entry_process.poll() is None:raise
                     return
-                entry_process.wait(timeout=10)
+                entry_process.wait(timeout=30)
         if game_process:
             if entry_process and game_process["pid"] == entry_process.pid:
                 cleanup('owned game stop',stop_entry)

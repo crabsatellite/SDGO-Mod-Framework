@@ -35,7 +35,7 @@ namespace Sdgo.Manager
                 var request=Model.Json().Deserialize<Dictionary<string,object>>(input);Open(request);
                 string action=Text(request,"action");
                 var body=request.ContainsKey("body")?(Dictionary<string,object>)request["body"]:new Dictionary<string,object>();
-                if(action=="read")return Model.Json().Serialize(new {ok=true,value=State()});
+                if(action=="read") {service.Connect();return Model.Json().Serialize(new {ok=true,value=State()});}
                 if(Text(request,"revision")!=Model.FileHash(service.CatalogFile))throw new InvalidOperationException("商城配置已改变，请刷新后重试。");
                 if(action=="create")
                 {

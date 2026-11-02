@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <d3d9.h>
 #include <cstdint>
+#include <cstdio>
 #include <cwchar>
 #include <intrin.h>
 #include <new>
@@ -107,7 +108,70 @@ public:
         return result;
     }
 
+    // Explicit test-only observation of the real native backbuffer. Captured
+    // immediately before Present, while a DISCARD swap chain is still valid.
+    // No desktop capture, alternate renderer, compositing or UI simulation.
+    bool CaptureNextFrame(const wchar_t* path) {
+        if (!installed_ || !path || !*path || wcslen(path)>=MAX_PATH)return false;
+        AcquireSRWLockExclusive(&captureLock_);
+        const bool free=Read(capturePending_)==0;
+        if (free) {
+            wcscpy_s(capturePath_,path);
+            InterlockedExchange(&captureResult_,E_PENDING);
+            InterlockedExchange(&capturePending_,1);
+        }
+        ReleaseSRWLockExclusive(&captureLock_);
+        return free;
+    }
+
+    HRESULT CaptureFrameResult() const {return ReadResult(captureResult_);}
+
 private:
+    void CaptureRequestedFrame(IDirect3DDevice9* device) {
+        if (!Read(capturePending_))return;
+        AcquireSRWLockExclusive(&captureLock_);
+        if (!InterlockedExchange(&capturePending_,0)) {
+            ReleaseSRWLockExclusive(&captureLock_);return;
+        }
+        IDirect3DSurface9* source=nullptr;
+        IDirect3DSurface9* copy=nullptr;
+        D3DSURFACE_DESC desc{};
+        HRESULT status=device->GetBackBuffer(0,0,D3DBACKBUFFER_TYPE_MONO,&source);
+        if (SUCCEEDED(status))status=source->GetDesc(&desc);
+        if (SUCCEEDED(status) && (!desc.Width || !desc.Height || desc.Width>4096 || desc.Height>4096 ||
+                (desc.Format!=D3DFMT_A8R8G8B8 && desc.Format!=D3DFMT_X8R8G8B8)))status=D3DERR_NOTAVAILABLE;
+        if (SUCCEEDED(status))status=device->CreateOffscreenPlainSurface(desc.Width,desc.Height,desc.Format,D3DPOOL_SYSTEMMEM,&copy,nullptr);
+        if (SUCCEEDED(status))status=device->GetRenderTargetData(source,copy);
+        D3DLOCKED_RECT pixels{};
+        if (SUCCEEDED(status))status=copy->LockRect(&pixels,nullptr,D3DLOCK_READONLY);
+        if (SUCCEEDED(status)) {
+            const DWORD rowBytes=desc.Width*4;
+            if (!pixels.pBits || pixels.Pitch<static_cast<int>(rowBytes))status=E_FAIL;
+            FILE* file=SUCCEEDED(status) ? _wfopen(capturePath_,L"wb"):nullptr;
+            if (!file)status=E_FAIL;
+            if (file) {
+                BITMAPFILEHEADER header{};
+                header.bfType=0x4D42;header.bfOffBits=sizeof(header)+sizeof(BITMAPINFOHEADER);
+                header.bfSize=header.bfOffBits+rowBytes*desc.Height;
+                BITMAPINFOHEADER info{};
+                info.biSize=sizeof(info);info.biWidth=desc.Width;
+                info.biHeight=-static_cast<LONG>(desc.Height);info.biPlanes=1;info.biBitCount=32;
+                info.biCompression=BI_RGB;info.biSizeImage=rowBytes*desc.Height;
+                if (fwrite(&header,sizeof(header),1,file)!=1 || fwrite(&info,sizeof(info),1,file)!=1)status=E_FAIL;
+                for (UINT y=0;y<desc.Height && SUCCEEDED(status);++y) {
+                    const auto* row=static_cast<const uint8_t*>(pixels.pBits)+static_cast<size_t>(pixels.Pitch)*y;
+                    if (fwrite(row,rowBytes,1,file)!=1)status=E_FAIL;
+                }
+                if (fclose(file)!=0)status=E_FAIL;
+                if (FAILED(status))DeleteFileW(capturePath_);
+            }
+            copy->UnlockRect();
+        }
+        if (copy)copy->Release();
+        if (source)source->Release();
+        InterlockedExchange(&captureResult_,status);
+        ReleaseSRWLockExclusive(&captureLock_);
+    }
     static constexpr DWORD DispatchTimeoutMs=30000;
     static constexpr uint32_t DeviceHookCount=7;
     static constexpr uint32_t DeviceVtableCapacity=64;
@@ -1048,6 +1112,7 @@ private:
         }
         const LONG presentNumber=InterlockedIncrement(&owner->presents_);
         const uintptr_t returnAddress=reinterpret_cast<uintptr_t>(_ReturnAddress());
+        owner->CaptureRequestedFrame(device);
         const HRESULT result=record.present(device,source,destination,owner->proxyWindow_,dirty);
         const DWORD presentError=GetLastError();
         if (SUCCEEDED(result)) {
@@ -1097,6 +1162,9 @@ private:
     bool allowNamedDesktopFallback_=false;
     mutable volatile LONG namedDesktopFallback_=0;
     SRWLOCK deviceLock_=SRWLOCK_INIT;
+    SRWLOCK captureLock_=SRWLOCK_INIT;
+    wchar_t capturePath_[MAX_PATH]{};
+    mutable volatile LONG capturePending_=0,captureResult_=E_PENDING;
     DeviceVtable deviceVtables_[DeviceVtableCapacity]{};
     uint32_t deviceVtableCount_=0;
     DeviceBinding deviceBindings_[DeviceBindingCapacity]{};
