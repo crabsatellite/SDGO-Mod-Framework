@@ -92,6 +92,21 @@ class ReuseOwnedClientTests(unittest.TestCase):
         self.assertEqual(original.read_bytes(),(run/'client/sdgo/core.dll').read_bytes())
         self.assertFalse(self.recycled)
 
+    def test_stale_stage_symbols_cannot_consume_the_existing_client_or_evidence(self):
+        run=self.fixture.prepare('stale-stage');old=(run/'run.json').read_bytes()
+        event=run/'client/sdgo/gametest/events.jsonl';event.write_text('keep original evidence\n')
+        identity=(run/'client/GOnline.exe').stat().st_ino
+        symbols=self.fixture.stage/f'client/sdgo/symbols/{game_test.HOST_KEY}.ini'
+        ini=game_test.read_ini(symbols);ini.remove_section('test.client_update');game_test.write_ini(symbols,ini)
+        with self.assertRaisesRegex(game_test.GameTestError,'stage host symbols lack'):
+            game_test.reuse_prepared(self.fixture.template,self.fixture.stage,run)
+        self.assertEqual(old,(run/'run.json').read_bytes())
+        self.assertEqual(identity,(run/'client/GOnline.exe').stat().st_ino)
+        self.assertEqual(event.read_text(),'keep original evidence\n')
+        self.assertFalse(self.recycled)
+        self.assertFalse(list(self.base.glob('.gametest-*')))
+        game_test.verify_hashes(game_test.validate_metadata(run))
+
     def test_linked_player_directory_cannot_be_validated_or_reused(self):
         run=self.fixture.prepare('linked');client=run/'client';saved=run/'owned-original'
         client.rename(saved)
