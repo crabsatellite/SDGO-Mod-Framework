@@ -8,6 +8,10 @@ The client, Agent bridge and Battle provider must all be installed and enabled.
 It uses the authenticated game connection and needs no additional ports, account,
 database migration, FRP settings or launcher.
 
+Client 0.2.1 refreshes the live input limit when a create-room dialog has already
+focused its title edit. Mission and PvP creation accept long input on first open
+and after cancel/reopen, without an extra focus change.
+
 | Host | Mod | Default |
 |---|---|---|
 | Every participating client | `room_titles` | Disabled |
