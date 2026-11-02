@@ -189,8 +189,15 @@ class NativeDriver:
             source = snapshots / entry['file']
             if gt.sha256(source) != entry['sha256']:
                 raise RuntimeError('Native snapshot bytes differ from the frozen manifest.')
+            # Docker Desktop does not consistently read packaged-app local
+            # cache aliases. Stage verified inputs in this owned worktree,
+            # leaving the immutable shared template untouched.
+            staged=self.environment.root/'private/sql-input'/entry['file']
+            staged.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,staged)
+            if gt.sha256(staged)!=entry['sha256']:
+                raise RuntimeError('Owned SQL input copy differs from its sealed template.')
             destination = '/var/opt/mssql/backup/gametest/' + entry['file']
-            docker('cp', str(source), self.private['container']+':'+destination)
+            docker('cp', str(staged), self.private['container']+':'+destination)
             moves = ','.join('MOVE '+quoted(f['name'])+' TO '+quoted(
                 '/var/opt/mssql/data/gt_'+entry['name']+'_'+str(i)+('.ldf' if f['type']=='L' else '.mdf'))
                 for i, f in enumerate(entry['files']))
