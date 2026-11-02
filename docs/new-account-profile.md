@@ -1,151 +1,72 @@
 # New-account starter profile
 
-`new_account_profile` is an optional server fix, enabled by default in the fixes
-package. It applies a modest starting balance and a consistent starting rank to
-new accounts and first game-profile creation. Players need no client Mod.
+[简体中文](new-account-profile.zh-CN.md)
 
-Defaults are **5,000 GP, 0 cash, Corporal (rank 5, step 1)**. Starting experience is
-read from the server's `tbl_Levelname` row rather than hard-coded; in the inspected
-pack rank 5/1 starts at 25,700 experience and meets the Expert channel minimum 5.
-Automatic unit gifts during first profile creation are capped at **one** by default.
-Ordinary rank/channel restrictions, starter selection and later earnings remain in charge.
+Server-side fix for `WorldServer-548A86E3-0010C000`, on by default. The stock server gives a new
+account 9,999,999 GP and cash and writes rank 15/1 into a new profile. With this mod, new players
+start with **5,000 GP, 0 cash and Corporal (rank 5, step 1)**, and an automatic unit gift at first
+profile creation keeps at most **one** unit. Players need no client mod.
 
-## Install and configure
+## Install
 
-The feature is included in Base and Full packages built from current master. If
-a release lacks `server/sdgo/mods/new_account_profile/`, first
-[build a current package](setup.md#building-from-source).
-Stop the World server you intend to update, then use the framework package:
+Stop the World server, install the server package with the World role, then start it again:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File install_server.ps1 -ServerRoot D:\SDGO\WorldServer -Role World
 ```
 
-Install on each independent World instance that handles new-player creation.
-The World server owns this initialization; it is not necessary to install this
-Mod in every Battle channel, Agent, Store server or player client.
+Install it on every World instance that creates new players. Battle, Agent, Store servers and player
+clients do not need it. Check that `sdgo/logs/sdgo.log` shows `new-account defaults active: ...`.
 
-Owner settings live at `sdgo/mods/new_account_profile/config.ini`. Copy the bundled
-`config.example.ini` there if you want a separate settings file:
+## Settings
 
-```ini
-[settings]
-InitialGP=5000
-InitialCash=0
-RankNumber=5
-RankStep=1
-InitialUnitLimit=1
-```
+Edit these under **新账号默认配置** in SDGO Mod Manager, then restart World. They are stored in
+`sdgo/mods/new_account_profile/config.ini`.
 
-Without `config.ini`, the legacy `[settings]` in `mod.ini` is used. Restart the
-World server after edits. `RankNumber` is 0..20, `RankStep` is 1..5, and the selected
-rank/step must have exactly one non-negative experience row in `tbl_Levelname`.
-Currency settings and `InitialUnitLimit` must be non-negative 32-bit integers.
-### Initial automatic unit grants
+| Manager label | key | default | meaning |
+|---|---|---|---|
+| 初始 GB | `InitialGP` | 5000 | starting GP |
+| 初始 MB | `InitialCash` | 0 | starting cash |
+| 初始军衔 | `RankNumber` | 5 | starting rank, 1..15 in the Manager |
+| 初始军衔子等级 | `RankStep` | 1 | starting step, 1..5 |
+| 初始机体数量上限 | `InitialUnitLimit` | 1 | automatic units kept at first profile creation |
 
-`InitialUnitLimit` determines how many automatically granted units to keep when a
-pilot is first created. **It does not limit how many units a player can own.**
+Starting experience is read from the server's `tbl_Levelname` row for that rank and step; the row
+must exist.
 
-| Setting | First-profile behavior |
-|---|---|
-| `InitialUnitLimit=1` (default) | If the server automatically grants 100 units, retain one |
-| `InitialUnitLimit=3` | Retain three from the same automatic grant |
-| `InitialUnitLimit=0` | Remove those extra automatic gifts; normal starter selection follows the native flow |
+`InitialUnitLimit` is **not** a limit on how many units a player can own. If the server grants
+100 units automatically when a pilot is first created, `1` keeps one and `0` keeps none. Units the
+player already owned, normal starter selection and later purchases, capsules and rewards are not
+affected. If the server grants no units at that step, the mod does not add one.
 
-This applies only to rows newly inserted by the native first-profile call.
-It keeps the earliest hangar slots (then unit identity), preserves units already owned
-before that call, and updates unit counters and any dangling selected-unit reference
-in the same transaction. A value of 0 removes those automatic gifts entirely; normal
-starter selection and later purchases, capsule draws and rewards are not capped.
-This is a ceiling, not a guaranteed extra unit: if the native profile call grants
-no units, the Mod does not create one. Keeping one is this Mod's current default
-starting policy, which the owner can change.
+## What it changes
 
-### Database access
+- New accounts get the configured wallet when they are registered. The stock first-login retry
+  behaviour stays as it was.
+- A pilot created for the first time gets the configured rank, matching experience and wallet.
+  This also covers accounts registered earlier that never created a pilot.
+- Existing pilots are never reset: their money, experience, rank, units and rewards stay as they are.
+- If creation fails, it is rolled back as a whole; a half-initialized profile is never kept.
+- If the server's database session is unavailable, creation fails with a database error instead of
+  falling back to the stock 9,999,999 defaults.
 
-The Mod reads only `[DB StoreBilling] DBName` from the host's own INI. It borrows
-the already authenticated OLE DB session and its local transactions; it does not
-read, copy or export database passwords. The normal pack's Common, Game and
-Billing catalogs must be accessible on that native SQL instance. Its database
-identity needs reads/writes on the affected account, profile, wallet, unit inventory and rank
-reference tables, as well as transaction support.
+Native starter items, skills and operators are kept. The stored procedures themselves are not
+modified; the mod applies its values around the verified World calls in a database transaction.
 
-## Scope and recovery
+The mod reads only `[DB StoreBilling] DBName` from the World INI and uses the server's existing
+database session; it never reads passwords. The Common, Game and Billing databases must be on that
+SQL instance, as in the stock server.
 
-The inspected registration procedure gives both cash and GP the value 9,999,999.
-The initial profile procedure inserts rank 15/1 while returning a different rank.
-The Mod does not change those stored-procedure definitions. Instead it wraps the
-verified World registration/profile calls in a transaction, applies the configured
-values, and publishes a consistent profile result only after commit. Native starter
-items, skills, operators and unrelated fields are retained; automatic unit gifts are
-limited separately. The inspected local database already comments out the four
-`sp_InsertUserUnitAll*` calls. The Mod also enforces the cap on packs where these
-bulk grants remain enabled, without changing those procedures or editing old hangars.
+## Turn off
 
-- A newly auto-registered account gets the configured wallet before its native
-  registration transaction is committed. The original first-login retry result is retained.
-- A profile that does not yet exist gets the configured rank, matching starting
-  experience and wallet before first play. This also covers accounts registered
-  elsewhere or registered earlier but never given a game profile.
-- Existing game profiles are not initialized again. Their currency, XP, rank, units and
-  later rewards are not reset. A concurrent initialization is rechecked under locks.
-- Failure rolls back incomplete account/profile creation and its grants. No partial
-  high-rank/large-wallet profile is published as a success.
-- If the native database session is unavailable, the intercepted call fails with a
-  database error rather than running creation with the original generous defaults.
-  Confirm the activation line in `sdgo/logs/sdgo.log` after installation; unsupported
-  builds, a disabled category/feature, or rejected settings leave the Mod inactive.
+Clear its switch in the Manager and restart World. New accounts then use the stock rules again.
+Existing pilots keep their current data. `install_server.ps1 -Uninstall` removes the whole
+framework, not just this mod.
 
-Disable only this Mod in `sdgo/sdgo.ini`:
+## Developer tests
 
-```ini
-[mods]
-new_account_profile=0
-```
-
-Or stop the World server and move `sdgo/mods/new_account_profile/` out of `mods/`.
-After restart, future registrations/creations use the original server rules again.
-Existing accounts keep their current data; uninstall does not inject the old huge
-balances into them or roll back earned progress. Keep the common loader, core and
-other Mods. `install_server.ps1 -Uninstall` removes the entire framework.
-
-Supported native World build: `WorldServer-548A86E3-0010C000`. Other builds are skipped
-until their hooks/layouts are verified. No original game executable is patched on disk.
-
-## Verification
-
-- `new_account_policy_test`: new/existing profiles, rechecks, failure and exception
-  rollback, preservation of grants/earnings and bypass behavior.
-- `tests/run_new_account_sql_test.py`: actual core + actual Mod + OLE DB sessions
-  with synthetic native callbacks in uniquely owned test databases in a supplied
-  SQL Docker container. It verifies owner `config.ini` overrides, bulk unit caps,
-  pre-owned/earned units, 64-bit identities, commit/rollback, bound usernames and disabled
-  defaults, then removes only its owned databases/login. No game runs.
-- Native hook ABI and layouts are checked against the exact PE and retained Ghidra
-  evidence; `tools/verify_symbols.py <WorldServer.exe>` verifies all five symbols.
-
-Real account login, client presentation and gameplay remain manual acceptance.
-SQL/ABI fixtures are not evidence that a live game session has been exercised.
-
-For manual acceptance on a test World instance:
-
-1. Install, start World and confirm `new-account defaults active` in its log.
-2. Register a fresh test account (the native auto-registration may require a login
-   retry), create a pilot, and check 5,000 GP, 0 cash and Corporal 1. Check that no full-catalog unit gift appeared,
-   then try the Expert channel. Existing hangars must remain intact.
-3. Earn some GP/experience and acquire another unit, log out and back in, and confirm that progress persists.
-   An existing pilot must keep its previous progress too.
-4. To check restoration, disable this Mod on the test instance, restart and create
-   another fresh account. It should use native defaults. Re-enable and restart to
-   apply the configured defaults to future creations again.
-
-To repeat the isolated SQL check after building Win32 Release:
+`ctest` runs `new_account_policy_test`. The SQL test needs a disposable SQL Server container:
 
 ```powershell
 python tests/run_new_account_sql_test.py --container <isolated-sql-container> --credential-file <local-private.json> --out build/starter-sql-check
 ```
-
-Use an existing disposable SQL Server Docker container and a local JSON file with
-its `sa_password`. The output directory must be new. The harness creates uniquely
-marked fixture databases and removes them afterwards; it does not need production
-database names, modify an existing database, restart the container or run the game.
