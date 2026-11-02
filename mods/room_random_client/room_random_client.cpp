@@ -12,7 +12,9 @@ void* g_original=nullptr;
 const DWORD g_defaultMxcsr=0x1F80;
 room_random_client::CacheSync g_sync;
 CRITICAL_SECTION g_lock;
-using FillFn=void(__thiscall*)(uint8_t*,uint8_t*,const uint8_t*,const uint8_t*,uint8_t);
+// The shipped converter is a static four-stack-argument function (RET 10h).
+// ECX is volatile scratch, not a CBaseRoomData receiver.
+using FillFn=void(__stdcall*)(uint8_t*,const uint8_t*,const uint8_t*,uint8_t);
 FillFn g_fill=nullptr;
 
 room_random_client::Result GuardedPacket(BYTE* frame,uint16_t* opcode) {
@@ -59,19 +61,26 @@ __declspec(naked) void DispatchSite() {
     __asm { popfd }
     __asm { jmp dword ptr [g_original] }
 }
-room_random_client::Construction GuardedConstruction(uint8_t* model,const uint8_t* source,
+room_random_client::Construction GuardedConstruction(const uint8_t* source,
                                                      const uint8_t* entry,uint8_t deck) {
     __try {
-        return g_sync.PrepareConstruction(room_random_client::ResolveModel(g_bindings,model),source,entry,deck);
+        auto result=g_sync.PrepareConstruction(room_random_client::Resolve(g_bindings),source,entry,deck);
+        if(result.reason==1 && g_sync.ObservedModel()) {
+            // A 3D start command can advance the app state before conversion.
+            // Revalidate the model observed by the actual start packet rather
+            // than interpreting the static converter's unrelated ECX value.
+            result=g_sync.PrepareConstruction(room_random_client::ResolveModel(g_bindings,g_sync.ObservedModel()),source,entry,deck);
+        }
+        return result;
     } __except(EXCEPTION_EXECUTE_HANDLER) {
         room_random_client::Construction r;r.reason=7;return r;
     }
 }
-void __fastcall FillHuman(uint8_t* model,void*,uint8_t* output,const uint8_t* source,
+void __stdcall FillHuman(uint8_t* output,const uint8_t* source,
                           const uint8_t* entry,uint8_t deck) {
     const DWORD error=GetLastError();
     EnterCriticalSection(&g_lock);
-    const auto replacement=GuardedConstruction(model,source,entry,deck);
+    const auto replacement=GuardedConstruction(source,entry,deck);
     LeaveCriticalSection(&g_lock);
     if(replacement.applied) g_api->Log(g_mod,SDGO_LOG_INFO,
         "human construction owner %lu: snapshot %lu -> %lu, complete %s record",
@@ -83,7 +92,7 @@ void __fastcall FillHuman(uint8_t* model,void*,uint8_t* output,const uint8_t* so
     SetLastError(error);
     // Original runs once, outside the diagnostic SEH/lock. Its strings and unit
     // attributes are constructed normally from the matching complete source.
-    g_fill(model,output,replacement.applied ? replacement.pilot.data() : source,entry,deck);
+    g_fill(output,replacement.applied ? replacement.pilot.data() : source,entry,deck);
 }
 }
 SDGO_MOD_ENTRY {

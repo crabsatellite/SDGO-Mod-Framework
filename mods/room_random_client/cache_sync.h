@@ -50,6 +50,9 @@ class CacheSync {
         if(p.owner==c.local) std::memcpy(c.profile+0x2A6,p.deck.data(),p.deck.size());
     }
 public:
+    // This is only a candidate captured from a verified native packet context.
+    // The caller must resolve its complete live vtable/room identity again.
+    uint8_t* ObservedModel() const {return model_;}
     Result Process(const Context& c,uint16_t opcode,const uint8_t* packet) {
         Result result;result.source=c.source;
         if(!c.profile || !c.room || !c.local || !packet) {result.reason=1;return result;}
@@ -102,10 +105,11 @@ public:
     Construction PrepareConstruction(const Context& c,const uint8_t* source,
                                      const uint8_t* entry,uint8_t deck) const {
         Construction out;
-        if(!c.profile || !c.room || !source || !entry || c.room!=room_ ||
-           c.model!=model_ || Read<uint32_t>(c.room,0)!=key_) {out.reason=1;return out;}
+        if(!source || !entry) {out.reason=1;return out;}
         out.owner=Read<uint32_t>(entry,0);
         if(!out.owner || (out.owner&0x80000000u)) return out;
+        if(!c.profile || !c.room || c.room!=room_ ||
+           c.model!=model_ || Read<uint32_t>(c.room,0)!=key_) {out.reason=1;return out;}
         if(Read<uint32_t>(source,kOwner)!=out.owner) {out.reason=2;return out;}
         if(deck>1 || bool(deck)!=(c.room[5]==6 || c.room[5]==7)) {out.reason=3;return out;}
         for(size_t slot=0;slot<kSlots;++slot) {
