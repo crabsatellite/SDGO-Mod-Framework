@@ -129,7 +129,7 @@ cmake --build build --config Release --target room_titles_native_ui_test room_ti
 ctest --test-dir build -C Release -R "^room_titles_(native_input|native_ui|client|transport|client_state)_offline$" --output-on-failure
 ```
 
-## Real creation services and deferred controls (client 0.2.2)
+## Real creation services and deferred controls (client 0.2.3)
 
 The three RTTI-backed creation vtables are `CServiceMakeRoom` at `0x00EA6414`,
 `CServiceMakeRoomAI` at `0x00EA6484`, and `CServiceMakeRoomMatchmaking` at
