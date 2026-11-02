@@ -89,5 +89,31 @@ class ServerReportTests(unittest.TestCase):
         self.assertEqual(result['status'],'pass')
         self.assertEqual(len(result['sources']),1)
 
+    def reused_stream(self):
+        old=self.stream()
+        session_id=self.metadata['run_id']
+        self.metadata['run_id']='93836df5-d230-4aa0-9e5c-ea8a9e8fdd59'
+        self.metadata['server_session']={'run_id':session_id,'nonce':'gt1234','pids':[123]}
+        self.metadata['plan']['title_nonce']='gtabcd'
+        self.metadata['plan']['room_title']='gt1234abcd !ai e2 a1'
+        fresh=self.stream()[1:]
+        for event in fresh:
+            event['run_id']=session_id
+            event['sequence']+=4;event['qpc']+=4
+        return old,fresh
+
+    def test_reused_process_requires_a_fresh_complete_room(self):
+        old,fresh=self.reused_stream()
+        self.assertEqual(self.evaluate(old+fresh)['status'],'pass')
+        self.assertEqual(self.evaluate(old)['status'],'fail')
+        self.assertEqual(self.evaluate(old+fresh[:-1])['status'],'fail')
+
+    def test_reused_process_keeps_session_pid_and_native_run_identity(self):
+        old,fresh=self.reused_stream()
+        wrong_pid=copy.deepcopy(old+fresh);wrong_pid[0]['pid']=124
+        self.assertEqual(self.evaluate(wrong_pid)['status'],'fail')
+        wrong_run=copy.deepcopy(old+fresh);wrong_run[-1]['run_id']=self.metadata['run_id']
+        self.assertEqual(self.evaluate(wrong_run)['status'],'fail')
+
 
 if __name__=='__main__':unittest.main()

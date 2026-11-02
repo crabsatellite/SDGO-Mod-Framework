@@ -154,6 +154,8 @@ sdgo_add_mod(battle_rewards SERVER DESCRIPTION "native contribution rewards and 
              SOURCES mods/battle_rewards/battle_rewards.cpp LIBS bcrypt FILES config.example.ini)
 sdgo_add_mod(room_random_client DESCRIPTION "native random loadout client synchronization"
              SOURCES mods/room_random_client/room_random_client.cpp)
+sdgo_add_mod(transform_input_fix DESCRIPTION "Apsalus III missing-animation transform input recovery"
+             SOURCES mods/transform_input_fix/transform_input_fix.cpp)
 sdgo_add_mod(room_random SERVER DESCRIPTION "per-round random owned human loadouts"
              SOURCES mods/room_random/room_random.cpp mods/room_random/inventory.cpp
              LIBS odbc32 bcrypt FILES config.example.ini)
@@ -446,8 +448,18 @@ if(BUILD_TESTING)
 endif()
 if(BUILD_TESTING)
     add_executable(core_ini_test tests/core_ini_test.cpp)
+    add_executable(game_test_sealed_room_title_test tests/game_test_sealed_room_title_test.cpp)
+    sdgo_strict(game_test_sealed_room_title_test)
+    add_test(NAME game_test_sealed_room_title COMMAND game_test_sealed_room_title_test)
+    set_tests_properties(game_test_sealed_room_title PROPERTIES TIMEOUT 30)
     sdgo_strict(core_ini_test)
     add_test(NAME core_ini_offline COMMAND core_ini_test)
+    add_executable(transform_input_fix_runtime_test tests/transform_input_fix_runtime_test.cpp)
+    target_link_libraries(transform_input_fix_runtime_test PRIVATE sdgo_api)
+    sdgo_strict(transform_input_fix_runtime_test)
+    add_dependencies(transform_input_fix_runtime_test transform_input_fix)
+    add_test(NAME transform_input_fix_actual_dll COMMAND transform_input_fix_runtime_test "$<TARGET_FILE:transform_input_fix>")
+    set_tests_properties(transform_input_fix_actual_dll PROPERTIES TIMEOUT 30)
     add_executable(automatic_fixes_runtime_test tests/automatic_fixes_runtime_test.cpp)
     target_link_libraries(automatic_fixes_runtime_test PRIVATE sdgo_api)
     sdgo_strict(automatic_fixes_runtime_test)
