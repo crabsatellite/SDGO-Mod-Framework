@@ -43,7 +43,7 @@ Beta and Experimental labels indicate release channels.
 | Automatic hangar capacity (Beta) <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) | [Use](docs/hangar-capacity.md) |
 | Hangar manager (Beta) <!-- catalog: `hangar_manager` --> | One-click sorting and duplicate exchange on the unit-management page, with server-side GB batches | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager (Beta) <!-- catalog: `operator_catalog` --> | Five free supply officers, plus operator names, portraits and drops | [Use](docs/operator-assistant.md) |
-| Capsule catalog editor (Beta) <!-- catalog: `capsule_catalog` --> | Capsule content management | [Use](docs/capsule-catalog.md) |
+| Capsule catalog editor (Beta) <!-- catalog: `capsule_catalog` --> | Create, edit and retire capsule machines, pools, prices and weights in the Manager | [Use](docs/capsule-catalog.md) |
 | Daily double rewards (Beta) <!-- catalog: `daily_rewards` --> | Scheduled reward events | [Use](docs/daily-rewards.md) |
 | Storage claim all (Beta) <!-- catalog: `storage_claim` --> | Batch storage reward collection; 0.1.1 fixes lobby clicks and hover between confirmation clicks | [Use](docs/storage-claim.md) |
 

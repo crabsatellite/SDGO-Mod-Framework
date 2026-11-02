@@ -98,8 +98,7 @@ compiler/runtime/installer changes and corresponding version checks.
 
 Keep tests focused on public behavior: CRUD and retirement, source-bound policy,
 revision conflicts, compile round trips, overlay scope, SQL persistence and
-installation rollback. Actual account charging, delivery and gameplay remain
-manual acceptance steps.
+installation rollback.
 
 ## Uploaded PNG portraits
 
