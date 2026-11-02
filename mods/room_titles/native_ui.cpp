@@ -412,11 +412,10 @@ void ProjectTitleBar(void* titleBar, const void* room, RoomKind kind)
     if (!LookupFullTitle(kind, room, &fullTitle))
         return;
 
+    SetTitleBarCachedTitle(titleBar, fullTitle);
     std::wstring legacyTitle;
     if (!ReadLegacyRoomTitle(room, kind, &legacyTitle))
         return;
-
-    SetTitleBarCachedTitle(titleBar, fullTitle);
     if (fullTitle == legacyTitle)
         return;
 
@@ -953,7 +952,7 @@ bool SetTitleBarCachedTitle(void* title_bar, const std::wstring& text)
 {
     if (!g_bound ||
         !IsObjectWithVtable(title_bar, g_titleBarVtable) ||
-        text.empty() || text.size() > kMaximumTitleCodeUnits ||
+        text.size() > kMaximumTitleCodeUnits ||
         text.find(L'\0') != std::wstring::npos)
         return false;
     auto* cached = reinterpret_cast<HostWString24*>(
@@ -975,9 +974,16 @@ bool ReadTitleBarRoom(void* title_bar,
                       std::uint32_t* native_room_id,
                       std::wstring* legacy_title)
 {
-    if (!g_bound || !battle_domain || !native_room_id || !legacy_title ||
-        !IsObjectWithVtable(title_bar, g_titleBarVtable))
+    if (!g_bound || !battle_domain || !native_room_id || !legacy_title)
         return false;
+    if (!IsObjectWithVtable(title_bar, g_titleBarVtable)) {
+        void* actual = nullptr;
+        if (IsAccessibleRange(title_bar, sizeof(actual), false))
+            std::memcpy(&actual, title_bar, sizeof(actual));
+        if (g_api->Log) g_api->Log(g_mod, SDGO_LOG_WARN,
+            "title event owner mismatch: actual=%p expected=%p", actual, g_titleBarVtable);
+        return false;
+    }
 
     void* room = nullptr;
     RoomKind kind = RoomKind::Pvp;
@@ -991,14 +997,31 @@ bool ReadTitleBarRoom(void* title_bar,
 
     std::uint32_t roomId = 0;
     std::memcpy(&roomId, room, sizeof(roomId));
+    if (g_api->Log) g_api->Log(g_mod, SDGO_LOG_DEBUG,
+        "title event native identity: domain=%u id=%u", static_cast<unsigned>(kind), roomId);
     std::wstring title;
-    if (!roomId || !ReadLegacyRoomTitle(room, kind, &title))
+    if (!roomId || roomId > 400) {
+        if (g_api->Log) g_api->Log(g_mod, SDGO_LOG_WARN,
+            "title event native room unavailable: domain=%u id=%u", static_cast<unsigned>(kind), roomId);
         return false;
+    }
+    // Room identity and the optional bounded display projection are separate.
+    // Editing can make the host conversion buffer temporarily unavailable;
+    // the authenticated metadata key still identifies this native room.
+    ReadLegacyRoomTitle(room, kind, &title);
 
     *battle_domain = kind == RoomKind::Pvp;
     *native_room_id = roomId;
     legacy_title->swap(title);
     return true;
+}
+
+bool ReadTitleBarCachedTitle(void* title_bar, std::wstring* text)
+{
+    return g_bound && text && IsObjectWithVtable(title_bar, g_titleBarVtable) &&
+        CopyNativeString(reinterpret_cast<const HostWString24*>(
+            static_cast<const std::uint8_t*>(title_bar) + kTitleBarCachedTitleOffset),
+            kMaximumTitleCodeUnits, text);
 }
 
 bool LegacyTitleBytes(const std::wstring& text, std::string* copy)

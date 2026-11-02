@@ -23,6 +23,9 @@ struct FakeEdit
 };
 std::wstring g_title_bar_cache;
 std::wstring g_original_title;
+bool g_legacy_projection_available = true;
+bool g_title_cache_write_enabled = true;
+bool g_title_cache_read_enabled = true;
 }  // namespace
 
 bool Bind(const SdgoApi*, SdgoMod*) { return true; }
@@ -59,7 +62,8 @@ bool SetEditText(void* edit, const std::wstring& text, bool)
 
 bool SetTitleEditOriginalTitle(void*, const std::wstring& title) { g_original_title=title;return true; }
 
-bool SetTitleBarCachedTitle(void*, const std::wstring& title) { g_title_bar_cache = title; return true; }
+bool SetTitleBarCachedTitle(void*, const std::wstring& title) { if (!g_title_cache_write_enabled) return false; g_title_bar_cache = title; return true; }
+bool ReadTitleBarCachedTitle(void*, std::wstring* title) { if (!g_title_cache_read_enabled) return false; *title = g_title_bar_cache; return true; }
 
 bool ReadTitleBarRoom(void* self, bool* battle, uint32_t* id, std::wstring* legacy)
 {
@@ -71,7 +75,7 @@ bool ReadTitleBarRoom(void* self, bool* battle, uint32_t* id, std::wstring* lega
     if (!room) std::memcpy(&room, bytes + 0x10C, sizeof(room));
     if (!room) return false;
     std::memcpy(id, room, sizeof(*id));
-    *legacy = L"native title";
+    *legacy = g_legacy_projection_available ? L"native title" : L"";
     return *id != 0;
 }
 
@@ -256,6 +260,9 @@ void ResetRoot()
     g_title_event_message = {};
     ui::g_title_bar_cache.clear();
     ui::g_original_title.clear();
+    ui::g_legacy_projection_available = true;
+    ui::g_title_cache_write_enabled = true;
+    ui::g_title_cache_read_enabled = true;
     g_titleEvent = reinterpret_cast<EventFn>(&FakeTitleEvent);
 }
 
@@ -842,6 +849,7 @@ void TestTitleEventNoSendAndServerError()
     FakeBdbEvent event;
     Put16(event.prefix.data() + 4, 0x0BDB);
     event.title.text = L"unchanged title event must not stage forever";
+    ui::g_title_bar_cache = event.title.text;
     g_title_event_result = 73;
     const int event_result =
         TitleEvent(&title_bar, nullptr, &event);
@@ -850,6 +858,32 @@ void TestTitleEventNoSendAndServerError()
               !g_state.HasPending(70) &&
               StartDecision(70) == transport::SendDecision::Pass,
           "PvP title event consumed without a native send clears its phantom draft and does not block battle start");
+
+    event.title.text = L"queued native title keeps its complete metadata beyond the UI callback";
+    g_title_event_result = 1;
+    ui::g_title_cache_read_enabled = false;
+    const auto callsBeforeUnreadable = g_title_event_calls;
+    Check(TitleEvent(&title_bar, nullptr, &event) == 1 && g_title_event_calls == callsBeforeUnreadable &&
+              !g_drafts.count(70) && StartDecision(70) == transport::SendDecision::Pass,
+          "an unreadable native cache cannot stage or claim a command that was never queued");
+    ui::g_title_cache_read_enabled = true;
+    Check(TitleEvent(&title_bar, nullptr, &event) == 1 &&
+              g_drafts.count(70) == 1 && !g_state.HasPending(70) &&
+              StartDecision(70) == transport::SendDecision::Reject,
+          "a handled native title queued for a later frame retains its unsent draft");
+    const auto callsAfterQueue = g_title_event_calls;
+    ui::g_title_bar_cache = L"confirmed title"; // a native render can restore the confirmed view before the queue pumps
+    Check(TitleEvent(&title_bar, nullptr, &event) == 1 && g_title_event_calls == callsAfterQueue &&
+              g_drafts.at(70).native_queued,
+          "an identical event cannot enqueue a second legacy command while the first native command is pending");
+    const auto queued = SendDraft(70, kPvpTitleEdit, event.title.text);
+    Check(queued.decision == transport::SendDecision::Replace &&
+              queued.message.title == Utf8Bytes(event.title.text),
+          "the later original native send still carries the complete queued title");
+    AckSnapshot(70, Record(1100, battle_room, 2, 2, Utf8Bytes(event.title.text)), queued.message.request_id);
+    Check(!g_state.HasPending(70) && !g_drafts.count(70) &&
+              StartDecision(70) == transport::SendDecision::Pass,
+          "the queued title's exact acknowledgement releases the battle-start gate");
 
     ResetRoot();
     Check(Ready(71, 1101,
@@ -937,6 +971,70 @@ void TestMissionTitleEventRetry()
     Check(!g_state.HasPending(91) && g_state.Query(91, 5)->title == Utf8Bytes(event.title.text) &&
               g_state.Query(91, kBattleDomainForTest | 5)->title == "unrelated battle title",
           "replayed mission confirmation completes without changing another room domain");
+}
+
+void TestUncertainTitleRecovery()
+{
+    struct TitleBar { std::array<uint8_t, 0x108> prefix{}; void* battle = nullptr; void* mission = nullptr; };
+    struct Event { std::array<uint8_t, 0x2C> prefix{}; ui::FakeEdit title; };
+    const uint32_t room = kBattleDomainForTest | 6;
+    uint32_t nativeId = 6;
+    TitleBar titleBar;
+    titleBar.battle = &nativeId;
+    Event event;
+    Put16(event.prefix.data() + 4, 0x0BDB);
+    ResetRoot();
+    Check(Ready(92, 9101, {Record(9101, room, 1, 1, "confirmed original")}),
+          "uncertain recovery fixture has an authoritative confirmed title");
+    ActivatePvpRoom(92, nativeId);
+    g_title_event_callback = &NativeTitleApplyFixture;
+    ui::g_title_bar_cache = L"confirmed original";
+    event.title.text = L"uncertain replacement title beyond twenty characters";
+    Check(TitleEvent(&titleBar, nullptr, &event) == 1, "first uncertain edit uses the native title handler");
+    const auto uncertain = g_title_event_message.request_id;
+    g_state.AdvanceTime(92, GetTickCount64() + titles::kSetTitleTimeoutMilliseconds);
+    event.title.text = L"confirmed original";
+    g_title_event_callback = nullptr;
+    g_title_event_result = 0;
+    const auto beforeInactive = ui::g_title_bar_cache;
+    Check(TitleEvent(&titleBar, nullptr, &event) == 0 && ui::g_title_bar_cache == beforeInactive &&
+              StartDecision(92) == transport::SendDecision::Reject,
+          "an inactive recovery callback restores the native cache and cannot release an uncertain title");
+    g_title_event_callback = &NativeTitleApplyFixture;
+    Check(TitleEvent(&titleBar, nullptr, &event) == 1 &&
+              g_title_event_message.request_id != uncertain &&
+              g_title_event_message.title == "confirmed original" &&
+              StartDecision(92) == transport::SendDecision::Reject,
+          "recovering the confirmed value forces a compensating native request and still requires its ACK");
+    AckSnapshot(92, Record(9101, room, 1, 2, "confirmed original"), g_title_event_message.request_id);
+    Check(!g_state.HasPending(92) && !g_drafts.count(92) &&
+              StartDecision(92) == transport::SendDecision::Pass,
+          "only the compensating confirmation releases uncertain-title recovery");
+
+    ResetRoot();
+    Check(Ready(93, 9102, {Record(9102, room, 1, 1, "")}),
+          "legacy recovery fixture has only the authenticated room identity");
+    ActivatePvpRoom(93, nativeId);
+    ui::g_legacy_projection_available = false;
+    ui::g_title_bar_cache = L"native legacy name";
+    g_title_event_callback = &NativeTitleApplyFixture;
+    event.title.text = L"first full title for a legacy room beyond twenty characters";
+    Check(TitleEvent(&titleBar, nullptr, &event) == 1, "legacy upgrade begins through the original native handler");
+    const auto legacyRequest = g_title_event_message.request_id;
+    g_state.AdvanceTime(93, GetTickCount64() + titles::kSetTitleTimeoutMilliseconds);
+    ui::g_title_cache_write_enabled = false;
+    const auto callsBeforeFailure = g_title_event_calls;
+    Check(TitleEvent(&titleBar, nullptr, &event) == 1 &&
+              g_title_event_calls == callsBeforeFailure && StartDecision(93) == transport::SendDecision::Reject,
+          "cache restoration failure preserves blocked recovery without invoking an unprepared native command");
+    ui::g_title_cache_write_enabled = true;
+    Check(TitleEvent(&titleBar, nullptr, &event) == 1 &&
+              g_title_event_message.request_id == legacyRequest &&
+              g_state.Pending(93)->status == titles::PendingStatus::Awaiting,
+          "an unavailable short projection does not prevent retrying the exact legacy-upgrade nonce");
+    AckSnapshot(93, Record(9102, room, 1, 2, Utf8Bytes(event.title.text)), legacyRequest);
+    Check(!g_state.HasPending(93) && StartDecision(93) == transport::SendDecision::Pass,
+          "legacy recovery completes only after its full authoritative title returns");
 }
 
 void TestAutoCreateCapability()
@@ -1105,6 +1203,7 @@ void RunTests()
     TestTitleEventNoSendAndServerError();
     TestNegotiatingDraft();
     TestMissionTitleEventRetry();
+    TestUncertainTitleRecovery();
     TestAutoCreateCapability();
     ResetRoot();
     const uint32_t room = kBattleDomainForTest | 5;
