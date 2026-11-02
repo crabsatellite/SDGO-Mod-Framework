@@ -1177,6 +1177,9 @@ private:
            !observation_.inventory_full_uid &&
            observation_.inventory_brief_slot==observation_.inventory_probe_slot &&
            observation_.inventory_full_slot==observation_.inventory_probe_slot) {
+            // The original unitmgr service in the real 3D hangar consumes the
+            // page reply. Sending from the lobby alone cannot load that cache.
+            if(state!=kHangarState)return Publish(kWaitingForFullInventory);
             const uint32_t page=(observation_.inventory_probe_slot-1)/6;
             if(!requestedInventoryPages_.count(page)) {
                 const auto ready=CatalogRequestReady(L"REQ_UNIT_SLOT_PAGE");

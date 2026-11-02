@@ -1133,6 +1133,16 @@ int __cdecl ReadCapsuleCurrency(const SdgoGameTestContextV1* context) {
     return SDGO_GAME_TEST_PASS;
 }
 int ReadShopCatalog(const SdgoGameTestContextV1* context) {
+    const auto before=shopCatalog.State();
+    if(before.stage==ShopCatalogActions::kStageIdle || before.stage==ShopCatalogActions::kStageBaseline) {
+        // The unit-management popup only loads briefs. Enter the original
+        // 3D unitmgr so its genuine REQ_UNIT_SLOT_PAGE consumer is present.
+        const auto navigation=hangarNavigation.EnsureHangar();
+        if(navigation>=HangarNavigation::kDownmenuServiceMismatch || navigation==HangarNavigation::kUnbound) {
+            context->Assert(0,"the original hangar unitmgr must own full inventory replies before shop validation");return SDGO_GAME_TEST_FAIL;
+        }
+        if(navigation!=HangarNavigation::kReady)return SDGO_GAME_TEST_WAIT;
+    }
     const auto result=shopCatalog.Poll(context);const auto state=shopCatalog.State();
     static uint32_t previous=UINT32_MAX,verified=UINT32_MAX,lastPending=UINT32_MAX;
     if(previous!=result || verified!=state.verified || lastPending!=state.native_request_pending) {
