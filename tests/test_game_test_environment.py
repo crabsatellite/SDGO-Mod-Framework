@@ -164,6 +164,19 @@ class EnvironmentTests(unittest.TestCase):
 
 
 class NativeTemplateTests(unittest.TestCase):
+    def test_native_database_key_spelling_and_unrelated_values_survive_rebase(self):
+        from tools.game_test_native_environment import rebase_configuration
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);folder=root/'Server/StoreServer';folder.mkdir(parents=True)
+            ini=folder/'StoreServer.ini'
+            ini.write_bytes(b'[DB Member]\r\nDBServerName=127.0.0.1,12345\r\nDBName=GDCommon\r\nID=old\r\nPWD=old-secret\r\nUnknownMixedCase=0015\r\n')
+            rebase_configuration(root,root,root,'127.84.2.1',{'port':54321,'app_user':'native','app_password':'new-secret'},old_ip='127.91.0.1',old_sql_port=12345,old_password='old-secret')
+            text=ini.read_text(encoding='cp936')
+            self.assertIn('DBServerName=127.0.0.1,54321',text)
+            self.assertIn('DBName=GDCommon',text)
+            self.assertIn('UnknownMixedCase=0015',text)
+            self.assertNotIn('dbservername=',text)
+
     def test_five_account_roles_have_their_primaries_in_the_shared_roster(self):
         from tools.game_test_fixtures import ROSTER,PRIMARIES,ROLES,build_accounts
         self.assertEqual(len(PRIMARIES),5)
