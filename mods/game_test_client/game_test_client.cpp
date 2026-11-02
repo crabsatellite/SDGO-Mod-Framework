@@ -620,7 +620,7 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
     if (!context->tick) motionSamples.clear();
     if (!Snapshot(snapshot) || snapshot.native_app_state != 22) return SDGO_GAME_TEST_WAIT;
     scoreboardInput.Hold(true);
-    const int transformProbe = apsalus_probe::Poll(context, sdgo_test::api, sdgo_test::mod);
+    const int transformProbe = apsalus_probe::Poll(context, sdgo_test::api, sdgo_test::mod, scoreboardInput);
     if (transformProbe != SDGO_GAME_TEST_PASS) return transformProbe;
     bool ready = snapshot.bot_count == expectedAi;
     unsigned allies = 0, enemies = 0, moved = 0;
