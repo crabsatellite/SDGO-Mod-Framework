@@ -20,5 +20,5 @@ E2DBA73C10302B50CB0E6F2E58DD0A14EFFA8D224989AE570A7F8E05AF79FF92。
 本 Mod 只拥有 capsule.activity.load_items Hook，查找 API 为普通调用，
 与共享扭蛋目录入口互不冲突。
 
-停用时在 Manager 关闭本修复并重启游戏。内存中的改动会随进程退出清除，
+停用时在 Manager 点“显示开发信息”，于「修复归档」关闭本修复并重启游戏。内存中的改动会随进程退出清除，
 磁盘 GDT、服务端配置和玩家钱包均未被补丁写入。
