@@ -144,7 +144,40 @@ bool Bindings::Bind(const SdgoApi* api, SdgoMod* mod) noexcept {
         api->Symbol(mod, "friend_unit_gift.ui_add_skin"));
     button_vtable =
         api->Symbol(mod, "friend_unit_gift.ui_button_vtable");
-    return add && find && text && skin && button_vtable;
+    edit_vtable = api->Symbol(mod, "friend_unit_gift.ui_edit_vtable");
+    input_limit = reinterpret_cast<InputLimit>(
+        api->Symbol(mod, "friend_unit_gift.ui_input_limit"));
+    input_context = reinterpret_cast<void**>(
+        api->Symbol(mod, "friend_unit_gift.ui_input_context"));
+    input_lock = api->Symbol(mod, "friend_unit_gift.ui_input_lock");
+    return add && find && text && skin && button_vtable &&
+           edit_vtable && input_limit && input_context && input_lock;
+}
+
+bool Bindings::SetNoteLimit(void* edit) const noexcept {
+    if (!edit || !edit_vtable || !input_limit ||
+        !input_context || !input_lock) return false;
+    __try {
+        if (Read<void*>(edit) != edit_vtable) return false;
+        Put<std::uint32_t>(edit, 0x2A0,
+            kMaximumNoteCodeUnits * sizeof(wchar_t));
+        if (!Read<std::uint8_t>(edit, 0x165)) return true;
+        auto* lock = static_cast<CRITICAL_SECTION*>(input_lock);
+        EnterCriticalSection(lock);
+        __try {
+            auto* input = *input_context;
+            if (!input) return false;
+            // Native focus already copied the old limit into this shared
+            // input. clear=0 preserves its text and caret while changing it.
+            if (Read<std::uint8_t>(edit, 0x165))
+                input_limit(input, kMaximumNoteCodeUnits, 0);
+            return true;
+        } __finally {
+            LeaveCriticalSection(lock);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
 }
 
 void* Bindings::FindNamed(

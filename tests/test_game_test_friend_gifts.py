@@ -11,6 +11,12 @@ gifts=importlib.util.module_from_spec(spec);spec.loader.exec_module(gifts)
 
 
 class GiftNativeProofContracts(unittest.TestCase):
+    def test_empty_or_foreign_sql_metadata_cannot_prove_owned_files(self):
+        root=ROOT/'build/native-proof-contract'
+        self.assertFalse(gifts.native_paths_owned(root,[]))
+        self.assertFalse(gifts.native_paths_owned(root,[root.parent/'other-copy/Game.mdf']))
+        self.assertTrue(gifts.native_paths_owned(root,[root/'data/Game.mdf',root/'data/Game.ldf']))
+
     def test_source_time_is_utc_and_does_not_shift_naive_sql_datetime(self):
         sql_time=dt.datetime(2026,11,3,0,1,59,999000)
         self.assertEqual(gifts.provenance_timestamp(sql_time),'2026-11-03 00:01 UTC')
