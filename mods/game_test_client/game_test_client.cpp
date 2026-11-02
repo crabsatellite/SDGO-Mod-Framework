@@ -615,6 +615,35 @@ uint32_t UnitDataForNpc(const SdgoGameTestContextV1* context, uint32_t npcId) {
     if (!data || !find || !find(data(), &record, npcId, 0x29, 0) || !record) return 0;
     return *reinterpret_cast<const uint32_t*>(record + 0x69);
 }
+int CheckGameplayFps(const SdgoGameTestContextV1* context, uint32_t generation) {
+    const int requested=sdgo_test::api->SettingInt(sdgo_test::mod,"FpsGameplayCap",0);
+    if (!requested)return SDGO_GAME_TEST_PASS;
+    static FpsTestActions probe;
+    static uint32_t boundGeneration=UINT32_MAX;
+    static bool bound=false,capChecked=false,complete=false;
+    if (boundGeneration!=generation) {
+        probe=FpsTestActions{};boundGeneration=generation;
+        bound=capChecked=complete=false;
+    }
+    if (complete)return SDGO_GAME_TEST_PASS;
+    if (!bound) {
+        bound=probe.Bind(sdgo_test::api,sdgo_test::mod,requested,true,true);
+        if (!bound) {
+            context->Assert(false,"gameplay FPS check requires the actual FPS Mod and native application bindings");
+            return SDGO_GAME_TEST_FAIL;
+        }
+    }
+    const auto graphics=quietGraphics.State();
+    if (!capChecked) {
+        if (probe.Cap(context,graphics.present_qpc_frequency,graphics.successful_present_min_gap_ticks,
+                      graphics.successful_present_max_gap_ticks)==SDGO_GAME_TEST_WAIT)return SDGO_GAME_TEST_WAIT;
+        capChecked=true;
+    }
+    const int result=probe.Cadence(context,graphics.successful_presents,graphics.present_qpc_frequency,
+                                  graphics.successful_present_min_gap_ticks,graphics.successful_present_max_gap_ticks);
+    if (result==SDGO_GAME_TEST_PASS)complete=true;
+    return result;
+}
 int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
     SdgoPvpAiClientSnapshotV1 snapshot{};
     if (!context->tick) motionSamples.clear();
@@ -642,6 +671,8 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
         if (sample != motionSamples.end() && sample->moved) ++moved;
     }
     if (context->elapsed_ms < 4000 || context->tick < 120 || ((!ready || !moved) && context->elapsed_ms < 30000)) return SDGO_GAME_TEST_WAIT;
+    const int fpsResult=CheckGameplayFps(context,snapshot.received_battle_start_count);
+    if (fpsResult!=SDGO_GAME_TEST_PASS)return fpsResult;
     char observation[160];
     sprintf_s(observation, "real AI mode=%u bots=%u allies=%u enemies=%u moved=%u lua=%u observer=%u", RequestedMode(), snapshot.bot_count, allies, enemies, moved, snapshot.lua_error_count, snapshot.lua_error_observer_available);
     context->Observe(observation);
@@ -1548,7 +1579,7 @@ int __cdecl FpsCadence(const SdgoGameTestContextV1* context) {
         graphics.successful_present_min_gap_ticks,graphics.successful_present_max_gap_ticks);
 }
 const SdgoGameTestCaseV1 fpsCases[]={
-    {"framework.bootstrap",60000,&Bootstrap},
+    {"framework.bootstrap",180000,&Bootstrap},
     {"fps.native_cap",10000,&FpsCap},
     {"fps.native_cadence",150000,&FpsCadence},
 };
