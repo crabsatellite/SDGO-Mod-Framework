@@ -92,7 +92,16 @@ class BackendBackgroundProcess(WindowsBackgroundProcess):
         return receipt
 
 def emit(phase,**values): print(json.dumps({'phase':phase,**values}),flush=True)
-def write(path,value): game_test.atomic_write(path,json.dumps(value,indent=2))
+def write(path,value):
+    # Readers/antivirus can briefly hold Windows JSON files. A private temp
+    # name also avoids colliding with a previous controller's interrupted write.
+    for attempt in range(20):
+        try:
+            atomic_bytes(path,json.dumps(value,indent=2).encode('utf-8'))
+            return
+        except PermissionError:
+            if attempt==19:raise
+            time.sleep(.05)
 def literal(value): return "N'"+value.replace("'","''")+"'"
 def docker(*args,env=None,input=None,timeout=180):
     r=subprocess.run(['docker',*args],env=env,input=input if input is not None else '',text=True,capture_output=True,
@@ -568,7 +577,7 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
     host_pilot_id=observer_host_id(fps_suite,host_pilot_id)
     native_local=private.get('kind')=='native-local-test'
     if native_local:validate_local_native_sql(private,work)
-    else:identity(private)
+    else:raise RuntimeError('Docker service startup is retired; use a copied native-local-test backend. Legacy cleanup remains available.')
     lock,lock_token=game_test.acquire_lock(work)
     owned_processes=[];ready_services=[];started=False
     state={'phase':'starting','pid':os.getpid(),'services':[],'client_run':str(client_run.resolve())}
