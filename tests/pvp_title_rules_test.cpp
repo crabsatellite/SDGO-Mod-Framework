@@ -66,6 +66,28 @@ int main()
     plan=ParseTitle("!ai ENEMY hard !rand");
     Check(plan.valid && plan.enemies==sdgo::pvp_teams::kFillRoom && plan.allies==0,
           "readable enemy-only fill composes with random units and difficulty");
+    plan=ParseTitle("!ai coop");
+    Check(plan.valid && plan.cooperative && plan.enemies==sdgo::pvp_teams::kFillRoom && plan.allies==0,
+          "cooperative default groups humans and fills only opponents");
+    plan=ParseTitle("!AI COOP FiLl hard !rand");
+    Check(plan.valid && plan.cooperative && plan.enemies==kFill && plan.allies==kFill &&
+          plan.difficulty==battle_ai::Difficulty::Hard,"human grouping is independent from two-side AI fill");
+    for(const char* title:{"!ai coop enemy","!ai enemy coop","!ai coop e* a0"}) {
+        plan=ParseTitle(title);
+        Check(plan.valid && plan.cooperative && plan.enemies==sdgo::pvp_teams::kFillRoom && plan.allies==0,
+              "cooperative enemy fill is order independent");
+    }
+    plan=ParseTitle("!ai3 coop a1 lv4");
+    Check(plan.valid && plan.cooperative && plan.enemies==3 && plan.allies==1 && plan.level==4,
+          "cooperative mode composes with exact counts and shorthand");
+    plan=ParseTitle("!ai versus e5 a0");
+    Check(plan.valid && !plan.cooperative && plan.enemies==5 && plan.allies==0,
+          "versus explicitly preserves native manual or random human teams");
+    Check(!ParseTitle("!ai versus").cooperative && !ParseTitle("!ai !rand coop").cooperative,
+          "team policy remains scoped to the AI command");
+    for(const char* title:{"!ai coop versus","!ai versus coop","!ai coop coop","!ai versus versus",
+                          "!ai co-op","!ai cooper","!ai0 coop","!ai coop e0 a0"})
+        Check(!ParseTitle(title).valid,"ambiguous human policies and zero-opponent co-op cannot start");
     Check(!ParseTitle("!ai e2 e3").valid,"conflicting enemy requests are not silently overridden");
     for(const char* title:{"!ai fill enemy","!ai enemy fill","!ai fill a0","!ai e2 fill","!ai3 fill","!ai fill fill"})
         Check(!ParseTitle(title).valid,"named policies cannot conflict with each other or numeric requests");

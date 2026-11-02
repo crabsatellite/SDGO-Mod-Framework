@@ -56,6 +56,41 @@ class NativeAiTeamPlanTests(unittest.TestCase):
             with self.subTest(args=args),self.assertRaises(self.gt.GameTestError):
                 self.fixture.prepare('invalid-policy-'+str(len(str(args))),**args)
 
+    def test_cooperative_grouping_is_sealed_independently_from_ai_population(self):
+        for policy,allies,title in (('enemy',0,'!ai coop'),('fill',3,'!ai coop fill')):
+            run=self.fixture.prepare('coop-'+policy,expected_ai=7,ai_allies=allies,
+                ai_policy=policy,ai_teams='coop',random_teams=True)
+            metadata=self.fixture.metadata(run)
+            self.assertEqual(metadata['plan']['room_title'],metadata['plan']['title_nonce']+' '+title)
+            self.assertEqual(metadata['plan']['ai_teams'],'coop')
+            self.assertLessEqual(len(metadata['plan']['room_title'].encode('ascii')),20)
+            self.assertEqual(self.gt.read_ini(run/'client/sdgo/gametest/run.ini')['run']['ai_teams'],'coop')
+            self.assertEqual(self.gt.validate_metadata(run)['plan'],metadata['plan'])
+
+    def test_cooperative_exact_population_keeps_counts_and_explicit_versus_keeps_native_teams(self):
+        for teams,title in (('coop','!ai5 coop a1'),('versus','!ai e5 a1')):
+            run=self.fixture.prepare('team-exact-'+teams,expected_ai=6,ai_allies=1,ai_teams=teams)
+            metadata=self.fixture.metadata(run)
+            self.assertTrue(metadata['plan']['room_title'].endswith(title))
+            self.assertEqual(self.gt.validate_metadata(run)['plan'],metadata['plan'])
+
+    def test_cooperative_random_units_keep_the_grouping_command_and_reject_long_native_titles(self):
+        run=self.fixture.prepare('coop-random',expected_ai=7,ai_allies=0,
+            ai_policy='enemy',ai_teams='coop',random_loadout=True,random_teams=True)
+        metadata=self.fixture.metadata(run)
+        self.assertTrue(metadata['plan']['room_title'].endswith('!ai coop !rand'))
+        self.assertLessEqual(len(metadata['plan']['room_title'].encode('ascii')),20)
+        self.assertEqual(self.gt.validate_metadata(run)['plan'],metadata['plan'])
+        with self.assertRaisesRegex(self.gt.GameTestError,'twenty bytes'):
+            self.fixture.prepare('coop-fill-random',expected_ai=7,ai_allies=3,
+                ai_policy='fill',ai_teams='coop',random_loadout=True)
+
+    def test_cooperative_policy_cannot_leak_into_non_battle_cases(self):
+        for args in ({'ai_teams':'random'},{'ai_teams':'coop','pages_only':True},
+                     {'ai_teams':'coop','mission_mode':5},{'ai_teams':'coop','bootstrap_only':True}):
+            with self.subTest(args=args),self.assertRaises(self.gt.GameTestError):
+                self.fixture.prepare('bad-team-'+str(len(str(args))),**args)
+
     def test_invalid_or_non_battle_team_counts_fail_before_launch(self):
         for arguments in ({'expected_ai':7,'ai_allies':-1},{'expected_ai':7,'ai_allies':7},
                           {'ai_allies':0,'pages_only':True},{'ai_allies':0,'bootstrap_only':True},
