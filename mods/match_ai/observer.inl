@@ -262,3 +262,34 @@ extern "C" __declspec(dllexport) int __cdecl SdgoPvpAiClientGetLuaStatusV1(
         return 0;
     }
 }
+
+extern "C" __declspec(dllexport) int __cdecl SdgoPvpAiClientGetStartStatusV1(
+    SdgoPvpAiClientStartStatusV1* status)
+{
+    if (!status || status->size < sizeof(*status) || status->version != SDGO_PVP_AI_CLIENT_OBSERVER_VERSION)
+        return 0;
+    *status = g_startStatus;
+    status->size = sizeof(*status);
+    status->version = SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
+    status->battle_start_sequence = static_cast<uint32_t>(InterlockedCompareExchange(&g_receivedBattleStartCount, 0, 0));
+    return 1;
+}
+
+extern "C" __declspec(dllexport) int __cdecl SdgoPvpAiClientGetScoreboardStatusV1(
+    SdgoPvpAiClientScoreboardStatusV1* status)
+{
+    __try {
+        if (!status || status->size < sizeof(*status) || status->version != SDGO_PVP_AI_CLIENT_OBSERVER_VERSION ||
+            !g_rosterPanel || !g_botMode || CurrentMode() != g_botMode)
+            return 0;
+        *status = g_scoreboardStatus;
+        status->size = sizeof(*status);
+        status->version = SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
+        status->battle_start_sequence = static_cast<uint32_t>(InterlockedCompareExchange(&g_receivedBattleStartCount, 0, 0));
+        status->native_row_count = *reinterpret_cast<uint32_t*>(g_rosterPanel + 0x150);
+        status->panel_visible = g_rosterPanel[0x3C] && g_rosterPanel[0x3D] ? 1u : 0u;
+        status->panel_state = *reinterpret_cast<uint32_t*>(g_rosterPanel + 0x38);
+        status->bot_count = static_cast<uint32_t>(g_botTable.size());
+        return 1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}

@@ -394,6 +394,49 @@ public:
         }
     }
 
+    // Ordinary battle scenarios reuse the sealed fixture's selected fleet.
+    // Observe server-loaded profile UIDs and original inventory getters;
+    // the separate deck-editor scenario continues to exercise Save/GoOut.
+    Result ObserveExistingDeck(const uint64_t required[4], Observation& observed) const
+    {
+        observed = {};
+        observed.native_app_state = native_ ? native_->AppState() : UINT32_MAX;
+        __try {
+            const uint8_t* profile=profilePointer_ ? *profilePointer_:nullptr;
+            const uint8_t* ship=profile ? profile+kProfileBattleShip:nullptr;
+            if (!ship || !(observed.ship_uid=ReadUid(ship))) return kWaitingForShipData;
+            observed.leader_uid=ReadUid(ship+kShipLeader);
+            if (observed.leader_uid!=required[0]) return kRequiredUnitChanged;
+            for (uint32_t i=0;i<4;++i) {
+                if (!required[i]) return kInvalidTarget;
+                for (uint32_t j=0;j<i;++j) if (required[j]==required[i]) return kRequiredUnitDuplicate;
+                observed.unit_uids[i]=ReadUid(ship+kShipUnitUids+i*kShipUnitUidStride);
+                if (observed.unit_uids[i]!=required[i]) return kRequiredUnitChanged;
+                ++observed.selected_count;
+            }
+            void* inventory=unitInfoPointer_ ? *unitInfoPointer_:nullptr;
+            if (!inventory || !static_cast<const uint8_t*>(inventory)[kUnitInfoReady]) return kWaitingForInventory;
+            const int capacity=*reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(inventory)+kUnitInfoCapacity);
+            if (capacity<1 || capacity>static_cast<int>(kMaxInventorySlots)) return kInventoryUnavailable;
+            bool found[4]={};
+            for (int slot=1;slot<=capacity;++slot) {
+                uint8_t brief[kBriefUnitSize]={};unitBriefBySlot_(inventory,brief,static_cast<uint16_t>(slot));
+                const uint32_t id=*reinterpret_cast<const uint32_t*>(brief);
+                const uint64_t uid=ReadUid(brief+4);
+                if (!id) continue;
+                for (uint32_t i=0;i<4;++i) if (uid==required[i]) {
+                    if (found[i]) return kRequiredUnitDuplicate;
+                    void* grid=nullptr;
+                    if (!FindUnitGrid(id,&grid) || !grid) return kRequiredUnitTypeMismatch;
+                    observed.total_cost+=static_cast<const uint8_t*>(grid)[kGridCost];found[i]=true;
+                }
+            }
+            for (bool present:found) if (!present) return kRequiredUnitMissing;
+            observed.profile_matches=1;observed.result=kAccepted;
+            return kAccepted;
+        } __except(EXCEPTION_EXECUTE_HANDLER) { return kNativeFault; }
+    }
+
     void Reset()
     {
         targetInitialized_ = false;
