@@ -453,6 +453,17 @@ public:
                         roomObject + kThreeDRoomStateArray);
                 if (!stateArray)
                     return false;
+                // The room factory publishes its model before the original
+                // Main state finishes loading. Queueing Start during that
+                // transition can discard the command without sending 08A7.
+                uint8_t* main = *reinterpret_cast<uint8_t**>(stateArray);
+                const uint8_t* context = roomObject + 0x24;
+                if (!main || *reinterpret_cast<void**>(main) != normalThreeDMainVtable_ ||
+                    *reinterpret_cast<const uint32_t*>(main + 8) != 2 ||
+                    *reinterpret_cast<const uint8_t* const*>(main + 0x0C) != context ||
+                    *reinterpret_cast<const uint8_t* const*>(main + 0x10) != roomObject ||
+                    !context[2] || context[0x24] == 1 || context[0x25] == 1)
+                    return false;
                 void* command = *reinterpret_cast<void**>(
                     stateArray + kThreeDStartCommand);
                 if (!command ||
