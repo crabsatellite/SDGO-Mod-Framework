@@ -697,6 +697,14 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                 state_row={'folder':spec['folder'],'pid':process.pid,'exe':str(exe),
                     'desktop':process.desktop_path,'attempt':attempt}
                 state['services'].append(state_row);publish('starting_'+spec['folder'])
+                if native_local:
+                    # Original hosts connect to each other asynchronously.
+                    # Start the copied set first, then verify every listener;
+                    # waiting for each host before starting its peers causes
+                    # minutes of avoidable startup delay under concurrent load.
+                    ready_services.append((process,state_row))
+                    state_row['port']=spec['port']
+                    break
                 deadline=time.monotonic()+startup_timeout
                 while (target_ip,spec['port']) not in listeners(process.pid):
                     if (work/'stop.request').exists(): raise InterruptedError('Owned backend stop requested')
@@ -715,6 +723,19 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                     raise RuntimeError('Owned native service not ready: '+spec['folder'])
                 emit('service_retry',folder=spec['folder'],category=state_row['failure_category'])
                 time.sleep(3)
+        if native_local:
+            deadline=time.monotonic()+startup_timeout
+            for process,row in ready_services:
+                while (target_ip,row['port']) not in listeners(process.pid):
+                    if (work/'stop.request').exists():raise InterruptedError('Owned backend stop requested')
+                    if process.poll() is not None or time.monotonic()>deadline:
+                        raise RuntimeError('Copied native service not ready: '+row['folder'])
+                    time.sleep(.2)
+                proof=process.verify_background()
+                if not (proof['verified'] and proof['private_desktop_verified'] and proof['foreground_safe']):
+                    raise RuntimeError('Copied native service background policy failed: '+row['folder'])
+                row['quiet_proof']=proof
+                emit('service_ready',folder=row['folder'],pid=process.pid,port=row['port'],attempt=1)
         deadline=time.monotonic()+30
         while not any((target_ip,login_port) in listeners(process.pid) for process,_ in ready_services):
             if any(process.poll() is not None for process,_ in ready_services) or time.monotonic()>deadline:
