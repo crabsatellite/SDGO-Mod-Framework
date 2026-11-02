@@ -142,6 +142,10 @@ class UnitManagerTests(unittest.TestCase):
         try: self.assertEqual(len(reopened.read()['drafts']), 1)
         finally: reopened.close()
 
+    def test_capsule_install_defaults_do_not_require_hidden_developer_paths(self):
+        self.capsules.configure({'install_client':str(self.root/'client'),'client':str(self.root/'client')})
+        self.assertIsNotNone(self.capsules.get_engine().store.apply_callback)
+
     def test_shop_uses_confirmed_image_but_never_creates_products(self):
         self.publish(); shop = self.manager.providers['shop']
         shop.configure({'workspace': str(self.root/'shop'), 'world': str(self.ini.parent)})
