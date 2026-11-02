@@ -9,11 +9,13 @@ English: [ime-fix.md](ime-fix.md)
 
 ## 使用
 
-无需操作，安装客户端后即生效。关闭：在 `sdgo\sdgo.ini` 的 `[mods]` 下写 `ime_fix=0`。
+无需操作，客户端安装框架后自动生效。它在 SDGO Mod Manager 的“修复归档”中列出。排查问题需要临时关闭时，
+点“显示开发信息”，再关闭它的开关并重启游戏。该开关会把本 Mod `mod.ini` 写成 `enabled=0`，
+并在 `sdgo\sdgo.ini` 的 `[mods]` 下写入 `ime_fix=0`。
 
 ## 设置
 
-`sdgo\mods\ime_fix\mod.ini`，游戏启动时读取：
+开发设置，在 Manager 点“显示开发信息”后显示。保存在 `sdgo\mods\ime_fix\mod.ini`，游戏启动时读取：
 
 | 键 | 默认值 | 含义 |
 |---|---|---|

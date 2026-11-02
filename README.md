@@ -15,7 +15,7 @@ Beta and Experimental labels indicate release channels.
 
 | Feature | Overview | Documentation |
 |---|---|---|
-| IME input fix <!-- catalog: `ime_fix` --> | Input compatibility | [Use](docs/ime-fix.md) |
+| IME input fix <!-- catalog: `ime_fix` --> | Commit Chinese, Japanese and Korean IME text at the correct length | [Use](docs/ime-fix.md) |
 | Activity capsule currency <!-- catalog: `capsule_currency_fix` --> | Correct the known 9301 list and confirmation currency; install and restart required | [Use](docs/capsule-currency-fix.md) |
 | Input method freeze fix <!-- catalog: `findwindow_fix` --> | Input method compatibility | [Use](docs/findwindow-fix.md) |
 | Startup crash fix <!-- catalog: `startup_crash_fix` --> | Client startup compatibility | [Use](docs/startup-crash-fix.md) |
