@@ -250,6 +250,17 @@ class Registry:
         with self.connection() as cn:
             return [dict(row) for row in cn.execute('SELECT * FROM templates ORDER BY created DESC')]
 
+    def forget_closed(self,lease: Lease):
+        if lease.root.exists():raise RuntimeError('Cannot forget an environment with remaining runtime files.')
+        with self.connection() as cn:
+            cn.execute('BEGIN IMMEDIATE')
+            row=cn.execute('SELECT state,token FROM environments WHERE id=?',(lease.id,)).fetchone()
+            if row is None:return
+            if row['state']!='closed' or row['token']!=lease.token:
+                raise RuntimeError('Only the exact closed environment can be forgotten.')
+            cn.execute('DELETE FROM resources WHERE environment_id=?',(lease.id,))
+            cn.execute('DELETE FROM environments WHERE id=?',(lease.id,))
+
 
 class ManagedEnvironment:
     """The only runtime owner: success, failure and interruption all close it."""
@@ -342,6 +353,7 @@ def purge_success_evidence(registry: Registry,identifier: str,archive: Path) -> 
         marker.get('result_status') not in ('pass','template_ready') or cleanup.get('status')!='clean'):
         raise RuntimeError('Only verified successful, clean evidence may be discarded.')
     shutil.rmtree(archive)
+    registry.forget_closed(lease)
 
 
 def main(argv=None):

@@ -106,7 +106,7 @@ class EnvironmentTests(unittest.TestCase):
         self.assertTrue(managed.evidence_deleted)
         self.assertFalse((self.archive/lease.id).exists())
         self.assertFalse(lease.root.exists())
-        self.assertEqual(self.registry.list()[0]['state'],'closed')
+        self.assertEqual(self.registry.list(),[])
 
     def test_live_foreign_controller_cannot_be_recovered(self):
         lease, driver = self.lease(), Driver()
