@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "battle_rewards",
-  "title": "战斗贡献奖励（Beta）",
+  "title": "战斗贡献奖励",
   "category": "gameplay",
   "hosts": [
     "battle"
