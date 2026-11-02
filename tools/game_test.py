@@ -182,7 +182,7 @@ def git_source_ref(root: Path) -> dict:
             check=True,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=30,
         ).stdout.strip()
         status = subprocess.run(
             ["git", "status", "--porcelain"],
@@ -190,7 +190,7 @@ def git_source_ref(root: Path) -> dict:
             check=True,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=30,
         ).stdout
         return {"commit": commit, "dirty": bool(status.strip())}
     except (OSError, subprocess.SubprocessError):
@@ -2239,6 +2239,7 @@ def prepare(
     extra_mods: tuple[str, ...] = (),
     apsalus_roundtrip: bool = False,
     fps_gameplay_cap: int | None = None,
+    server_session: dict | None = None,
     fps_cap: int | None = None,
     fps_mod_enabled: bool = True,
     _owned_client_transfer: tuple[Path, str] | None = None,
@@ -2413,6 +2414,19 @@ def prepare(
             play_unit_uid,
             mission_mode,
         )
+        if server_session is not None:
+            if (not isinstance(server_session,dict) or
+                    not re.fullmatch(r'gt[0-9a-f]{4}',str(server_session.get('nonce',''))) or
+                    not re.fullmatch(r'[0-9a-f-]{36}',str(server_session.get('run_id',''))) or
+                    not server_session.get('pids') or
+                    any(type(p) is not int or p<=0 for p in server_session['pids']) or
+                    any((random_loadout,bootstrap_only,pages_only,mission_mode is not None))):
+                raise GameTestError('Reusable server session requires a verified ordinary PvP observer binding')
+            # Keep the server's existing nonce while adding this fresh run's
+            # full random suffix: twenty native bytes, unique per client run.
+            plan['room_title']=server_session['nonce']+plan['room_title'][2:]
+            if len(plan['room_title'].encode('ascii'))>20:
+                raise GameTestError('Reusable native room title exceeds twenty bytes')
         if random_loadout and any((
             bootstrap_only, battleship_only, gift_requests_only, deck_only,
             pages_only, mission_mode is not None,
@@ -2538,6 +2552,8 @@ def prepare(
             },
             "execution": None,
         }
+        if server_session is not None:
+            metadata['server_session']=server_session
         if shared_assets:
             metadata['assets']={'mode':'owned_readonly_hardlinks','baseline_run_id':asset_owner,
                                 'baseline':str(asset_baseline),'files':sorted(shared_assets)}
