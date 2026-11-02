@@ -49,6 +49,7 @@ FakeTexture fakeTexture{textureTable,1};
 
 ULONG STDMETHODCALLTYPE FakeDeviceRelease(IDirect3DDevice9* raw) {
     InterlockedIncrement(&deviceReleaseCalls);
+    lastWorkerThread=GetCurrentThreadId();
     auto* device=reinterpret_cast<FakeDevice*>(raw);return --device->references;
 }
 HRESULT STDMETHODCALLTYPE FakeCooperativeLevel(IDirect3DDevice9*) {
@@ -89,7 +90,13 @@ HRESULT STDMETHODCALLTYPE FakeAdditionalSwapChain(IDirect3DDevice9*,D3DPRESENT_P
 HRESULT STDMETHODCALLTYPE FakeReset(IDirect3DDevice9*,D3DPRESENT_PARAMETERS* parameters) {
     InterlockedIncrement(&resetCalls);
     lastWorkerThread=GetCurrentThreadId();
-    if (parameters)lastParameters=*parameters;
+    if (parameters) {
+        lastParameters=*parameters;
+        parameters->BackBufferCount=0;
+        parameters->BackBufferWidth=0;
+        parameters->BackBufferHeight=0;
+        if (parameters->Windowed)parameters->BackBufferFormat=D3DFMT_UNKNOWN;
+    }
     return resetResult;
 }
 HRESULT STDMETHODCALLTYPE FakePresent(IDirect3DDevice9*,const RECT*,const RECT*,HWND window,const RGNDATA*) {
@@ -349,6 +356,8 @@ int main() {
                                   D3DPOOL_DEFAULT,&texture,nullptr)!=D3DERR_INVALIDCALL ||
             texture || lastWorkerThread!=GetCurrentThreadId())++failures;
         D3DPRESENT_PARAMETERS reset{};
+        reset.BackBufferWidth=1111;reset.BackBufferHeight=777;reset.BackBufferCount=2;
+        reset.BackBufferFormat=D3DFMT_X8R8G8B8;
         reset.Windowed=TRUE;reset.hDeviceWindow=sourceWindow;
 
         void* originalClone[119]{};
@@ -358,6 +367,8 @@ int main() {
         lastWorkerThread=0;
         if (!quiet.RefreshDeviceHooks() || HasOriginalDeviceSlot(originalClone) ||
             device->Reset(&reset)!=resetResult || lastWorkerThread!=state.proxy_thread_id ||
+            reset.BackBufferWidth || reset.BackBufferHeight || reset.BackBufferCount ||
+            reset.BackBufferFormat!=D3DFMT_UNKNOWN || reset.hDeviceWindow!=sourceWindow ||
             resetCalls!=1)++failures;
 
         void* inheritedHookClone[119]{};
@@ -368,7 +379,9 @@ int main() {
         if (!quiet.RefreshDeviceHooks() ||
             device->Reset(&reset)!=resetResult || lastWorkerThread!=state.proxy_thread_id ||
             lastParameters.hDeviceWindow!=state.proxy_hwnd ||
-            reset.BackBufferWidth!=640 || reset.BackBufferHeight!=480 ||
+            lastParameters.BackBufferWidth!=640 || lastParameters.BackBufferHeight!=480 ||
+            reset.BackBufferWidth || reset.BackBufferHeight || reset.BackBufferCount ||
+            reset.BackBufferFormat!=D3DFMT_UNKNOWN ||
             reset.hDeviceWindow!=sourceWindow || resetCalls!=2)++failures;
 
         inheritedHookClone[2]=reinterpret_cast<void*>(&FakeDeviceRelease);
@@ -396,9 +409,13 @@ int main() {
                 resetCalls!=static_cast<LONG>(5+i))++failures;
         }
         fakeDevice.references=2;
+        lastWorkerThread=0;
         if (device->Release()!=1 || deviceReleaseCalls!=1 ||
+            lastWorkerThread!=state.proxy_thread_id ||
             !quiet.RefreshDeviceHooks())++failures;
-        if (device->Release()!=0 || deviceReleaseCalls!=2)++failures;
+        lastWorkerThread=0;
+        if (device->Release()!=0 || deviceReleaseCalls!=2 ||
+            lastWorkerThread!=state.proxy_thread_id)++failures;
         void* afterRelease[119]{};
         InitializeDeviceTable(afterRelease);
         fakeDevice.table=afterRelease;

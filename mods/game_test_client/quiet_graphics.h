@@ -782,7 +782,13 @@ private:
         void** const previousTable=record->table;
         owner->ForgetDeviceLocked(device);
         ReleaseSRWLockExclusive(&owner->deviceLock_);
-        const ULONG references=original(device);
+        struct R{IDirect3DDevice9* device;DeviceReleaseFn original;ULONG references;};
+        R r{device,original,0};
+        if (!owner->Dispatch(r,[](QuietGraphics*,R* v){
+                v->references=v->original(v->device);
+            }))
+            return 0;
+        const ULONG references=r.references;
         if (references) {
             AcquireSRWLockExclusive(&owner->deviceLock_);
             if (!owner->FindDeviceBindingLocked(device) &&
@@ -1020,7 +1026,7 @@ private:
             v->result=v->original(v->device,v->hasParameters ? &v->parameters:nullptr);
         });
         if (!completed)r.result=D3DERR_NOTAVAILABLE;
-        if (completed && SUCCEEDED(r.result) && parameters) {
+        if (completed && parameters) {
             *parameters=r.parameters;parameters->hDeviceWindow=originalDeviceWindow;
         }
         InterlockedExchange(&owner->lastResetResult_,r.result);
