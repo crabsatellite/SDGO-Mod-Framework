@@ -1418,11 +1418,25 @@ namespace
             }
         }
         int result = g_setupHumans(proc, room, a, b, c);
-        if(result!=0 && room && IsPvpMode(room[kRoomMode]) && ParseTitle(ViewRoom(room).title).enabled)
+        if(result!=0 && room && IsPvpMode(room[kRoomMode]) && ParseTitle(ViewRoom(room).title).enabled) {
             g_api->Log(g_mod,SDGO_LOG_ERROR,
                 "original human pilot setup rejected AI room: error=%04X humans=%lu host=%lu random=%u colours=%u/%u",
                 result,*reinterpret_cast<const uint32_t*>(room+kRoomPlayers),*reinterpret_cast<const uint32_t*>(room+kRoomHost),
                 room[8],room[kTeamColour1],room[kTeamColour1+1]);
+            for(int slot=0;slot<kSlots;++slot) {
+                const auto id=SlotPilotId(room,slot);
+                if(!id || (id&kAiPilotBit))continue;
+                const uint8_t* info=room+kSlotInfo+slot*kSlotInfoStride;
+                const uint8_t* pilot=room+kPilots+slot*kPilotStride;
+                g_api->Log(g_mod,SDGO_LOG_ERROR,
+                    "native human setup input: slot=%d pilot=%lu team=%u lookupKey=%lu userRecord=%u unit=%lu serial=%llu",
+                    slot,static_cast<unsigned long>(id),info[kSlotInfoTeamA],
+                    static_cast<unsigned long>(*reinterpret_cast<const uint32_t*>(info+0xEA)),
+                    *reinterpret_cast<const uintptr_t*>(pilot+kPilotUserRecord)!=0,
+                    static_cast<unsigned long>(*reinterpret_cast<const uint32_t*>(info+0x146)),
+                    static_cast<unsigned long long>(*reinterpret_cast<const uint64_t*>(info+0x14E)));
+            }
+        }
         if (result == 0 && room) {
             GuardedObserverForget(room);
             GuardedObserverEmit(SDGO_PVP_AI_EVENT_REQUEST_ACCEPTED, room);

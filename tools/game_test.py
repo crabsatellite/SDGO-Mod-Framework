@@ -2259,11 +2259,14 @@ def prepare(
     apsalus_roundtrip: bool = False,
     fps_gameplay_cap: int | None = None,
     server_session: dict | None = None,
+    rebind_existing_account: bool = False,
     fps_cap: int | None = None,
     fps_mod_enabled: bool = True,
     _owned_client_transfer: tuple[Path, str] | None = None,
 ) -> dict:
     client_template = client_template.resolve()
+    if rebind_existing_account:
+        raise GameTestError('existing-account rebinding requires --reuse-client')
     if (ai_allies is not None or random_teams) and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,
             battleship_only,gift_requests_only,deck_only,pages_only))):
         raise GameTestError('custom AI team counts require a complete native PvP battle')
@@ -2614,6 +2617,9 @@ def recycle_owned_artifact(path: Path, owner_root: Path) -> None:
 
 def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options) -> dict:
     """Move one stopped owned client into a fresh capsule, keeping its file IDs."""
+    rebind_existing_account=options.pop('rebind_existing_account',False)
+    if type(rebind_existing_account) is not bool:
+        raise GameTestError('existing-account rebind flag must be boolean')
     raw=run_dir.absolute()
     if raw.is_symlink() or (hasattr(raw,'is_junction') and raw.is_junction()):
         raise GameTestError('client reuse rejects linked run directories')
@@ -2650,26 +2656,38 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
         value=row.get('image_path')
         if (value and is_relative_to(Path(value).resolve(),run_dir)) or (row['pid']==previous_pid and not value):
             raise GameTestError('the owned client may still be running; reuse made no changes')
-    account_lock_path=None
+    account_lock_path=None;target_account_lock_path=None;account_rebound=False
     if fps_only:
         if options.get('account_profile') is not None:
             raise GameTestError('account-free FPS reuse does not accept an account profile')
+        if rebind_existing_account:
+            raise GameTestError('account-free FPS reuse cannot rebind an account')
     else:
         account_lock_path=validate_private_account(Path(previous['client']['root']),previous['plan'])
         profile=account_lock_path.with_name(account_lock_path.name.removesuffix('.run.lock'))
-        if options.get('account_profile') and Path(options['account_profile']).resolve()!=profile:
-            raise GameTestError('reuse keeps the same persistent account profile')
+        requested=Path(options.get('account_profile') or profile).expanduser().resolve()
+        if requested!=profile:
+            if not rebind_existing_account:
+                raise GameTestError('reuse keeps the same persistent account profile; explicit existing-account rebinding is required')
+            candidate=load_account_profile(requested)
+            if (candidate.get('registration','state',fallback='') not in MISSION_EXISTING_ACCOUNT_STATES or
+                    options.get('retry_count') not in (None,1) or options.get('expect_first_fail')):
+                raise GameTestError('rebinding requires an already registered account without registration retries')
+            profile=requested;account_rebound=True
+            target_account_lock_path=account_profile_lock_path(profile)
+        elif rebind_existing_account and options.get('account_profile') is None:
+            raise GameTestError('existing-account rebinding requires an explicit account profile')
         options['account_profile']=profile
     if previous.get('assets') and options.get('asset_baseline') is None:
         options['asset_baseline']=Path(previous['assets']['baseline'])
     archive=owned/'gametest-current';archive.mkdir(exist_ok=True)
     if archive.is_symlink() or (hasattr(archive,'is_junction') and archive.is_junction()):
         raise GameTestError('client reuse rejects a linked receipt archive')
-    lock,token=acquire_lock(run_dir);account_lock=None;account_token=None
+    lock,token=acquire_lock(run_dir);account_locks=[]
     holding=run_dir.parent/('.gametest-reusing-'+uuid.uuid4().hex)
     try:
-        if account_lock_path is not None:
-            account_lock,account_token=acquire_exclusive_lock(account_lock_path,'persistent account')
+        for path in sorted({p for p in (account_lock_path,target_account_lock_path) if p is not None},key=lambda p:str(p).casefold()):
+            account_locks.append(acquire_exclusive_lock(path,'persistent account'))
         prior={'run_id':previous['run_id'],'source':previous.get('source'),'plan':previous['plan'],
                'immutable_hashes':previous['client']['immutable_hashes'],'execution':previous.get('execution')}
         proofs=archive/'proof-binaries';proofs.mkdir(exist_ok=True)
@@ -2697,6 +2715,7 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
         metadata=prepare(client_template,stage,run_dir,
                          _owned_client_transfer=(holding,token),**options)
         metadata['reuse']={'previous_run_id':previous['run_id'],'mode':'move_owned_client_no_copy'}
+        if account_rebound:metadata['reuse']['rebound_existing_account']=True
         atomic_write(run_dir/'run.json',json.dumps(metadata,indent=2,sort_keys=True))
         recycle_owned_artifact(holding,owned)
         return metadata
@@ -2710,7 +2729,7 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
         raise
     finally:
         release_owned_lock(run_dir/lock.name,token)
-        if account_lock is not None:release_owned_lock(account_lock,account_token)
+        for account_lock,account_token in reversed(account_locks):release_owned_lock(account_lock,account_token)
 
 
 def validate_metadata(run_dir: Path) -> dict:
@@ -3729,6 +3748,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--visible',action='store_true',help='explicit developer opt-in to a visible client; default tests use an isolated desktop and muted audio')
     prepare_parser.add_argument('--asset-baseline',type=Path,help='reuse verified read-only native archives from a passed owned build run; never links original player files')
     prepare_parser.add_argument('--reuse-client',action='store_true',help='reuse the stopped owned run-dir client in place with a fresh run UUID and compact prior receipt; no full client copy')
+    prepare_parser.add_argument('--rebind-existing-account',action='store_true',help='with --reuse-client and --account-profile, switch the stopped client to another already registered account')
     prepare_parser.add_argument('--include-mod',action='append',default=[],help='explicit staged client Mod to install before runtime hashes freeze')
     prepare_parser.add_argument('--fps-gameplay-cap',type=int,help='verify native 60 Hz gameplay and the selected render cap during a full PvP battle')
     prepare_parser.add_argument(
@@ -3794,6 +3814,7 @@ def main(argv: list[str] | None = None) -> int:
                 retry_count=args.retry_count,
                 expect_first_fail=args.expect_first_fail,
                 expected_ai=args.expected_ai,
+                rebind_existing_account=args.rebind_existing_account,
                 ai_allies=args.ai_allies,
                 random_teams=args.random_teams,
                 play_unit_uid=args.play_unit_uid,

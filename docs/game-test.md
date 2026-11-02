@@ -148,6 +148,11 @@ profile. Later runs reuse that profile. After the first preparation, add
 with a new run UUID. The previous receipt and binary hashes are consolidated;
 retired jobs go to the Recycle Bin instead of keeping another full client.
 An archive baseline referenced by another capsule cannot be reused this way.
+To switch a stopped client to another existing test identity, combine
+`--reuse-client --rebind-existing-account --account-profile <existing-profile>`.
+The target must declare `registered` or `existing_account`, without registration
+retries. Both profiles are locked and preserved while the same client files are
+reused. Bind the server observer to the target account's actual pilot ID too.
 Install `Send2Trash` in the developer environment; reuse has no permanent-delete
 fallback. The same account cannot run concurrently. The default endpoint is
 `127.0.0.1:5001`; change it with `--target-host` and `--login-port`. The original

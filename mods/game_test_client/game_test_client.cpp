@@ -1658,12 +1658,13 @@ int WINAPI QuietMessageBoxW(HWND owner,LPCWSTR text,LPCWSTR caption,UINT type) {
     if (!verifyQuietRuntime)return originalMessageBoxW(owner,text,caption,type);
     char message[1024]="native Windows dialog during quiet test";
     if (text)WideCharToMultiByte(CP_UTF8,0,text,-1,message,sizeof(message),nullptr,nullptr);
-    PublishQuietSocketReceipt();
+    PublishQuietSocketReceipt(true);
     sdgo_test::Fail(message);
     return IDCANCEL;
 }
 int WINAPI QuietMessageBoxA(HWND owner,LPCSTR text,LPCSTR caption,UINT type) {
     if (!verifyQuietRuntime)return originalMessageBoxA(owner,text,caption,type);
+    PublishQuietSocketReceipt(true);
     sdgo_test::Fail(text ? text:"native Windows dialog during quiet test");
     return IDCANCEL;
 }
