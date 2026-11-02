@@ -45,7 +45,7 @@ Beta and Experimental labels indicate release channels.
 | Operator supplies and manager (Beta) <!-- catalog: `operator_catalog` --> | Five free supply officers, plus operator names, portraits and drops | [Use](docs/operator-assistant.md) |
 | Capsule catalog editor (Beta) <!-- catalog: `capsule_catalog` --> | Create, edit and retire capsule machines, pools, prices and weights in the Manager | [Use](docs/capsule-catalog.md) |
 | Daily double rewards (Beta) <!-- catalog: `daily_rewards` --> | Double battle GB and EXP in a daily window (default 18:00–22:00) | [Use](docs/daily-rewards.md) |
-| Storage claim all (Beta) <!-- catalog: `storage_claim` --> | Batch storage reward collection; 0.1.1 fixes lobby clicks and hover between confirmation clicks | [Use](docs/storage-claim.md) |
+| Storage claim all (Beta) <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation | [Use](docs/storage-claim.md) |
 
 <!-- /mod-category:gameplay -->
 

@@ -45,7 +45,7 @@ Beta、Experimental 表示发布阶段。
 | 副官补给与管理（Beta） <!-- catalog: `operator_catalog` --> | 五位免费补给副官，以及副官名称、头像和掉落的管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
 | 扭蛋机编辑器（Beta） <!-- catalog: `capsule_catalog` --> | 在 Manager 中新增、修改、下架扭蛋机，设置奖池、价格和权重 | [使用说明](docs/capsule-catalog.zh-CN.md) |
 | 每日双倍时间（Beta） <!-- catalog: `daily_rewards` --> | 每天固定时段（默认 18:00–22:00）战斗 GB 和经验翻倍 | [使用说明](docs/daily-rewards.zh-CN.md) |
-| 保管库一键领取（Beta） <!-- catalog: `storage_claim` --> | 自动分页领取奖品；0.1.1 修复大厅点击及鼠标经过取消确认 | [使用说明](docs/storage-claim.zh-CN.md) |
+| 保管库一键领取（Beta） <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
 
 <!-- /mod-category:gameplay -->
 
