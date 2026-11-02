@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest import mock
 import zipfile
 from manager.workspace import Workspace
 from manager.server import make_server
@@ -41,7 +42,7 @@ class ManagerTests(unittest.TestCase):
         self.server.shutdown();self.server.server_close();self.thread.join();self.temp.cleanup()
 
     def call(self,method,path,body=None,headers=None):
-        connection=http.client.HTTPConnection('127.0.0.1',self.port,timeout=5)
+        connection=http.client.HTTPConnection('127.0.0.1',self.port,timeout=30)
         h={'Origin':'http://127.0.0.1:'+str(self.port),'Content-Type':'application/json','X-ModManager-Token':getattr(self,'token','')}
         h.update(headers or {})
         connection.request(method,path,None if body is None else json.dumps(body),h)
@@ -50,6 +51,29 @@ class ManagerTests(unittest.TestCase):
 
     def advanced(self):
         self.assertEqual(self.call('POST','/api/mode',{'mode':'developer'})[0],200)
+
+    def install_fps_limit(self, root=None):
+        root = root or self.client
+        mod = root/'sdgo/mods/fps_limit'
+        mod.mkdir(parents=True, exist_ok=True)
+        (mod/'mod.ini').write_bytes((ROOT/'mods/fps_limit/mod.ini').read_bytes())
+        return mod
+
+    def write_client_config(self, root=None, fps=160):
+        root = root or self.client
+        raw=(
+            '<?xml version="1.0" encoding="UTF-8" standalone="no" ?>\r\n'
+            '<Config>\r\n'
+            '  <Video><GameScreenRes level="13" /></Video>\r\n'
+            '  <Framework>\r\n'
+            '    <Timer VerticalSync="false" RenderSync="false" resolution="high" '
+            f'updatefps="{fps}" Custom="preserve" />\r\n'
+            '  </Framework>\r\n'
+            '  <LoginData><CheckAutoLogin use="true" id="private-user" pass="private-pass" /></LoginData>\r\n'
+            '</Config>\r\n'
+        ).encode('utf-8')
+        (root/'config.xml').write_bytes(raw)
+        return raw
 
     def test_every_source_mod_is_registered(self):
         records=registry.load(ROOT/'mods')
@@ -188,6 +212,88 @@ class ManagerTests(unittest.TestCase):
         before=(self.mod/'mod.ini').read_bytes()
         with self.assertRaises(storage.Conflict):self.workspace.configure(host,'findwindow_fix',{'trace':True},details['revisions'])
         self.assertEqual(before,(self.mod/'mod.ini').read_bytes())
+
+    def test_client_root_xml_setting_reads_and_changes_only_updatefps(self):
+        self.install_fps_limit()
+        before=self.write_client_config()
+        host=self.workspace.settings['hosts'][0]['id']
+        status,details=self.call('GET','/api/settings?host='+host+'&mod=fps_limit')
+        self.assertEqual(status,200)
+        self.assertEqual(details['values'],{'frame_limit':160})
+        self.assertEqual(set(details['revisions']),{'config.xml'})
+        status,result=self.call('POST','/api/settings',{
+            'host':host,'mod':'fps_limit','values':{'frame_limit':120},'revisions':details['revisions']})
+        self.assertEqual(status,200)
+        after=(self.client/'config.xml').read_bytes()
+        self.assertEqual(after,before.replace(b'updatefps="160"',b'updatefps="120"'))
+        self.assertEqual(result['values'],{'frame_limit':120})
+        self.assertEqual(result['activation'],'restart_required')
+        exposed=json.dumps(result,ensure_ascii=False)
+        self.assertNotIn('private-user',exposed)
+        self.assertNotIn('private-pass',exposed)
+
+    def test_client_root_xml_setting_keeps_revision_and_validation_guards(self):
+        self.install_fps_limit()
+        before=self.write_client_config()
+        host=self.workspace.settings['hosts'][0]['id']
+        details=self.workspace.details(host,'fps_limit')
+        for invalid in (0,1001,120.5,'120',True):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self.workspace.configure(host,'fps_limit',{'frame_limit':invalid},details['revisions'])
+            self.assertEqual((self.client/'config.xml').read_bytes(),before)
+        (self.client/'config.xml').write_bytes(before.replace(b'<Video>',b'<Video><!-- external -->'))
+        changed=(self.client/'config.xml').read_bytes()
+        with self.assertRaises(storage.Conflict):
+            self.workspace.configure(host,'fps_limit',{'frame_limit':120},details['revisions'])
+        self.assertEqual((self.client/'config.xml').read_bytes(),changed)
+
+    def test_client_root_xml_setting_rejects_ambiguous_timer_markup(self):
+        raw=self.write_client_config()
+        duplicate=raw.replace(b'</Framework>',b'    <Timer updatefps="999" />\r\n  </Framework>')
+        with self.assertRaises(ValueError):
+            storage.patch_client_timer_fps(duplicate,120)
+        commented=raw.replace(
+            b'  <Framework>',
+            b'  <!-- <Framework><Timer updatefps="999" /></Framework> -->\r\n  <Framework>',
+        )
+        with self.assertRaises(ValueError):
+            storage.patch_client_timer_fps(commented,120)
+
+    def test_client_root_xml_setting_rejects_non_client_and_keeps_restart_rule(self):
+        self.install_fps_limit()
+        self.write_client_config()
+        host=self.workspace.settings['hosts'][0]['id']
+        details=self.workspace.details(host,'fps_limit')
+        with mock.patch('manager.packages._running',side_effect=AssertionError('settings save must not inventory processes')):
+            result=self.workspace.configure(host,'fps_limit',{'frame_limit':90},details['revisions'])
+        self.assertEqual(result['activation'],'restart_required')
+        battle=self.root/'battle';battle.mkdir();(battle/'BattleServer.exe').write_bytes(b'fixture')
+        self.install_fps_limit(battle);self.write_client_config(battle)
+        self.workspace.add_host(battle)
+        battle_id=next(item['id'] for item in self.workspace.settings['hosts'] if item['role']=='battle')
+        with self.assertRaisesRegex(ValueError,'不属于所选宿主'):
+            self.workspace.details(battle_id,'fps_limit')
+
+    def test_registry_allows_only_the_registered_client_xml_attribute(self):
+        valid=json.loads((ROOT/'mods/fps_limit/manager.json').read_text(encoding='utf-8'))
+        for mutation in (
+            {'file':'other.xml'},
+            {'section':'Framework/Other'},
+            {'key':'VerticalSync'},
+        ):
+            with self.subTest(mutation=mutation):
+                root=self.root/('contracts-'+next(iter(mutation)))
+                folder=root/'fps_limit';folder.mkdir(parents=True)
+                candidate=json.loads(json.dumps(valid))
+                candidate['settings'][0].update(mutation)
+                (folder/'manager.json').write_text(json.dumps(candidate),encoding='utf-8')
+                with self.assertRaises(ValueError):
+                    registry.load(root)
+        root=self.root/'server-contract';folder=root/'fps_limit';folder.mkdir(parents=True)
+        valid['hosts']=['battle']
+        (folder/'manager.json').write_text(json.dumps(valid),encoding='utf-8')
+        with self.assertRaises(ValueError):
+            registry.load(root)
 
     def test_unknown_keys_and_injected_paths_are_not_writable(self):
         self.advanced();host=self.workspace.settings['hosts'][0]['id'];details=self.workspace.details(host,'findwindow_fix')

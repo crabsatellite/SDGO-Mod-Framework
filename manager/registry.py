@@ -6,6 +6,7 @@ import re
 
 ID = re.compile(r'[a-z][a-z0-9_-]{0,63}\Z')
 ROLES = {'client', 'battle', 'agent', 'world'}
+CLIENT_XML_SETTING = ('config.xml', 'Framework/Timer', 'updatefps')
 
 
 def load(root):
@@ -25,7 +26,10 @@ def load(root):
             seen.add(key)
             if field['type'] not in ('boolean', 'integer', 'number', 'string', 'integer_list', 'choice'):
                 raise ValueError('字段类型不受支持：' + identity)
-            if field['file'] not in ('mod.ini', 'config.ini') or field.get('section', 'settings') != 'settings':
+            location = (field['file'], field.get('section', 'settings'), field['key'])
+            ini_setting = field['file'] in ('mod.ini', 'config.ini') and location[1] == 'settings'
+            client_xml_setting = location == CLIENT_XML_SETTING and value.get('hosts') == ['client']
+            if not ini_setting and not client_xml_setting:
                 raise ValueError('字段不能写入运行代码或任意文件：' + identity)
         records[identity] = value
     return records
