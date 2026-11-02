@@ -39,5 +39,4 @@ test zero-action and stopped plans, and preserve duplicate confirmation checks.
 
 Other lobby/room views have independent lifecycles. This change does not claim a
 whole-client reload. The result explicitly asks for a new login to synchronize
-other views. Actual refreshed-client appearance, room behavior and persistence
-remain manual acceptance; automated tests never sort or exchange real units.
+other views. Automated tests never sort or exchange real units.

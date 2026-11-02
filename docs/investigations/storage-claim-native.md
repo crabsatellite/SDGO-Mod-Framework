@@ -54,5 +54,4 @@ the complete file and individual snippet hashes, and executes the native button
 mouse/update logic plus all success/error routes in the native storage router.
 Only hit testing, focus, drawing, locks and final service-handler boundaries are
 synthetic. The main executable entry point, imports, networking and account are
-never started. Live display, server grants, item timing and reconnect persistence
-remain manual acceptance tasks.
+never started.
