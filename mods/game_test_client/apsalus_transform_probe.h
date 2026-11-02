@@ -12,7 +12,9 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
     if (!enabled) return SDGO_GAME_TEST_PASS;
     using Find = unsigned char*(__thiscall*)(void*, unsigned);
     using Request = unsigned(__thiscall*)(void*);
-    using InputBusiness = void(__thiscall*)(unsigned char*);
+    // Both original input consumers take the real InputSlotSystem on stack
+    // and return with RET 4; their CUnit owner is ECX.
+    using InputBusiness = void(__thiscall*)(unsigned char*, void*);
     using NativeTick = void(__thiscall*)(unsigned char*, void*);
     static auto manager = reinterpret_cast<void**>(api->Symbol(mod, "game.unit_manager"));
     static auto find = reinterpret_cast<Find>(api->Symbol(mod, "um.find_object"));
@@ -65,7 +67,8 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
         // inputs only: actual control, motion, attack and rendering run normally.
         auto* node = *reinterpret_cast<unsigned char**>(unit + 8);
         auto* attack = *reinterpret_cast<unsigned char**>(unit + 0x9cc);
-        if (!node || !attack) return SDGO_GAME_TEST_WAIT;
+        void* nativeInput = input.NativeInput();
+        if (!node || !attack || !nativeInput) return SDGO_GAME_TEST_WAIT;
         const auto* position = reinterpret_cast<const float*>(node + 0x88);
         if (!controlAt) {
             for (unsigned i = 0; i < 3; ++i) baseline[i] = position[i];
@@ -79,7 +82,7 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
         // the same native keyboard/left-button consumers and the same FSM
         // dispatch used by CUnit's native command-0x1d path, on its real control
         // context (unit[0x370]). No position, state, eligibility or ammo write.
-        moveInput(unit); fireInput(unit);
+        moveInput(unit, nativeInput); fireInput(unit, nativeInput);
         auto dispatchMove = reinterpret_cast<NativeTick>((*reinterpret_cast<void***>(move))[1]);
         auto dispatchAttack = reinterpret_cast<NativeTick>((*reinterpret_cast<void***>(attack))[1]);
         dispatchMove(move, unit + 0xdc0);
