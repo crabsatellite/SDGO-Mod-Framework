@@ -12,6 +12,14 @@
 #include "ai_catalog_actions.h"
 #include "storage_test_actions.h"
 #include "capsule_catalog_actions.h"
+#include "battle_combat_actions.h"
+#include "capsule_draw_actions.h"
+#include "unit_select_actions.h"
+#include "active_selection_observer.h"
+#include "shop_catalog_actions.h"
+#include "sdgo/net_route_observer.h"
+#include "mission_flow_actions.h"
+#include "sdgo/mission_ai_client_observer.h"
 #include "gift_actions.h"
 #include "room_actions.h"
 #include "room_title_actions.h"
@@ -44,6 +52,20 @@ OperatorCatalogActions operatorCatalog;
 AiCatalogActions aiCatalog;
 StorageTestActions storage;
 CapsuleCatalogActions capsules;
+BattleCombatActions battleCombat;
+CapsuleDrawActions collection;
+UnitSelectActions unitSelection;
+ActiveSelectionObserver activeSelection;
+ActiveSelectionObserver::Snapshot selectionBeforeRound;
+bool randomLoadout=false;
+ShopCatalogActions shopCatalog;
+bool testShopCatalog=false;
+MissionFlowActions mission;
+uint16_t missionMode=0;
+SdgoMissionAiClientGetSnapshotV1Fn getMissionSnapshot=nullptr;
+uint64_t playUnitUid=0;
+bool collectionDraw=false;
+std::vector<SdgoHangarGameTestUnitV1> collectionBeforeUnits;
 const void* roomListVtable=nullptr;
 const void* modalLoadingVtable=nullptr;
 GiftActions gifts;
@@ -62,6 +84,7 @@ bool passwordIsMd5 = false;
 bool importedExistingAccount = false;
 bool bootstrapOnly = false;
 bool verifyDirectNetwork = false;
+bool verifyRoutedNetwork = false;
 bool verifyQuietRuntime = false;
 bool quietLoopback = false;
 QuietSockets quietSockets;
@@ -88,7 +111,7 @@ bool endObserved = false;
 std::vector<uint16_t> requestedModes;
 size_t modeIndex = 0;
 unsigned expectedAi = 3;
-uint16_t RequestedMode() { return requestedModes.at(modeIndex); }
+uint16_t RequestedMode() { return missionMode?missionMode:requestedModes.at(modeIndex); }
 struct MotionSample {
     uint32_t pilot, object, npc;
     float x, z;
@@ -100,7 +123,8 @@ bool LoadPlan() {
     const std::wstring job = sdgo_test::directory + L"\\run.ini";
     wchar_t networkPolicy[24]{};
     GetPrivateProfileStringW(L"run",L"network_policy",L"legacy",networkPolicy,24,job.c_str());
-    verifyDirectNetwork = !wcscmp(networkPolicy,L"direct");
+    verifyRoutedNetwork=!wcscmp(networkPolicy,L"routed_loopback");
+    verifyDirectNetwork = !wcscmp(networkPolicy,L"direct") || verifyRoutedNetwork;
     verifyQuietRuntime=GetPrivateProfileIntW(L"run",L"quiet",0,job.c_str())!=0;
     quietLoopback=verifyQuietRuntime && GetPrivateProfileIntW(L"run",L"quiet_loopback",0,job.c_str())==1;
     bootstrapOnly = GetPrivateProfileIntW(L"run", L"bootstrap_only", 0, job.c_str()) != 0;
@@ -109,6 +133,23 @@ bool LoadPlan() {
     deckOnly = GetPrivateProfileIntW(L"run", L"deck_only", 0, job.c_str()) != 0;
     pagesOnly = GetPrivateProfileIntW(L"run", L"pages_only", 0, job.c_str()) != 0;
     roomTitlesOnly = GetPrivateProfileIntW(L"run", L"room_titles_only", 0, job.c_str()) != 0;
+    wchar_t shopAssertions[128]{},shopDisplay[128]{};
+    GetPrivateProfileStringW(L"run",L"shop_assertions_path",L"",shopAssertions,128,job.c_str());
+    GetPrivateProfileStringW(L"run",L"shop_display_path",L"",shopDisplay,128,job.c_str());
+    testShopCatalog=shopAssertions[0] || shopDisplay[0];
+    if(testShopCatalog && (!pagesOnly || wcscmp(shopAssertions,L"inputs/shop-assertions.ini") ||
+        wcscmp(shopDisplay,L"inputs/shop-runtime-display.ini")))return false;
+    collectionDraw=GetPrivateProfileIntW(L"run",L"collection_draw",0,job.c_str())!=0;
+    if(collectionDraw && !pagesOnly)return false;
+    missionMode=static_cast<uint16_t>(GetPrivateProfileIntW(L"run",L"mission_mode",0,job.c_str()));
+    if(missionMode && (missionMode!=5 && missionMode!=8))return false;
+    wchar_t playUid[32]{};
+    GetPrivateProfileStringW(L"run",L"play_unit_uid",L"",playUid,32,job.c_str());
+    if(playUid[0]) {
+        if(wcsspn(playUid,L"0123456789")!=wcslen(playUid))return false;
+        wchar_t* end=nullptr;errno=0;playUnitUid=_wcstoui64(playUid,&end,10);
+        if(!playUnitUid || errno || !end || *end)return false;
+    }
     if (static_cast<unsigned>(bootstrapOnly) + battleshipOnly + giftRequestsOnly + deckOnly + pagesOnly + roomTitlesOnly > 1) return false;
     wchar_t relative[512] = {}, nonce[16] = {}, user[32] = {}, password[128] = {};
     GetPrivateProfileStringW(L"run", L"account_path", L"private/account.ini", relative, 512, job.c_str());
@@ -174,12 +215,29 @@ bool LoadPlan() {
     if (strlen(narrowNonce) > 8) return false;
     expectedAi = GetPrivateProfileIntW(L"run", L"expected_ai", 3, job.c_str());
     if (expectedAi < 1 || expectedAi > 7) return false;
-    sprintf_s(roomTitle, "%s !ai e%u a%u", narrowNonce, (expectedAi + 1) / 2, expectedAi / 2);
+    randomLoadout=GetPrivateProfileIntW(L"run",L"random_loadout",0,job.c_str())!=0;
+    if(randomLoadout && strlen(narrowNonce)!=4)return false;
+    if(sprintf_s(roomTitle,randomLoadout?"%s !ai e%u a%u !rand":"%s !ai e%u a%u",narrowNonce,(expectedAi+1)/2,expectedAi/2)<0)return false;
+    if(missionMode) {
+        expectedAi=GetPrivateProfileIntW(L"run",L"mission_ai_count",0,job.c_str());
+        const auto level=GetPrivateProfileIntW(L"run",L"mission_ai_level",0,job.c_str());
+        if(expectedAi!=3 || level!=2 || sprintf_s(roomTitle,"%s !ai3 lv2",narrowNonce)<0)return false;
+        wchar_t actualTitle[32]{};GetPrivateProfileStringW(L"run",L"room_title",L"",actualTitle,32,job.c_str());
+        const std::wstring expectedTitle(roomTitle,roomTitle+strlen(roomTitle));
+        if(expectedTitle!=actualTitle)return false;
+    }
     retryCount = static_cast<unsigned>(GetPrivateProfileIntW(L"run", L"retry_count", 1, job.c_str()));
     if (retryCount < 1 || retryCount > 2) return false;
     expectFirstFailure = GetPrivateProfileIntW(L"run", L"expect_first_fail", 0, job.c_str()) != 0;
     if (importedExistingAccount && (retryCount != 1 || expectFirstFailure)) return false;
     if (expectFirstFailure && retryCount != 2) return false;
+    if(missionMode) {
+        wchar_t forbidden[128]{};
+        if(GetPrivateProfileStringW(L"run",L"mode_sequence",L"",forbidden,128,job.c_str()) ||
+            GetPrivateProfileStringW(L"run",L"expected_ai",L"",forbidden,128,job.c_str()))return false;
+        if(bootstrapOnly || battleshipOnly || giftRequestsOnly || deckOnly || pagesOnly || roomTitlesOnly || randomLoadout)return false;
+        return true;
+    }
     wchar_t modes[128] = {};
     GetPrivateProfileStringW(L"run", L"mode_sequence", L"1", modes, 128, job.c_str());
     for (const wchar_t* p = modes; *p;) {
@@ -220,10 +278,49 @@ int __cdecl Bootstrap(const SdgoGameTestContextV1* context) {
         GetPrivateProfileStringW(L"network",L"ipv4",L"",actualIP,32,file.c_str());
         const auto actualPort=GetPrivateProfileIntW(L"network",L"port",0,file.c_str());
         const std::wstring actualEndpoint=std::wstring(actualIP)+L":"+std::to_wstring(actualPort);
+        if(verifyRoutedNetwork) {
+            wchar_t logical[32]{},physical[32]{},profileHash[65]{},receiptHash[65]{},policy[32]{},receiptLogical[32]{},receiptPhysical[32]{};
+            GetPrivateProfileStringW(L"run",L"logical_login_ipv4",L"",logical,32,planFile.c_str());
+            GetPrivateProfileStringW(L"run",L"physical_login_ipv4",L"",physical,32,planFile.c_str());
+            GetPrivateProfileStringW(L"run",L"route_profile_sha256",L"",profileHash,65,planFile.c_str());
+            const auto logicalPort=GetPrivateProfileIntW(L"run",L"logical_login_port",0,planFile.c_str());
+            const auto physicalPort=GetPrivateProfileIntW(L"run",L"physical_login_port",0,planFile.c_str());
+            GetPrivateProfileStringW(L"network",L"policy",L"",policy,32,file.c_str());
+            GetPrivateProfileStringW(L"network",L"logical_ipv4",L"",receiptLogical,32,file.c_str());
+            GetPrivateProfileStringW(L"network",L"physical_ipv4",L"",receiptPhysical,32,file.c_str());
+            GetPrivateProfileStringW(L"network",L"route_profile_sha256",L"",receiptHash,65,file.c_str());
+            if(wcscmp(policy,L"routed_loopback") || !logicalPort || logicalPort>65535 || !physicalPort || physicalPort>65535 ||
+                wcsncmp(logical,L"127.",4) || wcsncmp(physical,L"127.",4) || wcslen(profileHash)!=64 ||
+                wcsspn(profileHash,L"0123456789abcdef")!=64 || wcscmp(profileHash,receiptHash) ||
+                std::wstring(logical)+L":"+std::to_wstring(logicalPort)!=expectedEndpoint ||
+                wcscmp(logical,receiptLogical) || wcscmp(physical,receiptPhysical) ||
+                GetPrivateProfileIntW(L"network",L"logical_port",0,file.c_str())!=logicalPort ||
+                GetPrivateProfileIntW(L"network",L"physical_port",0,file.c_str())!=physicalPort)return SDGO_GAME_TEST_WAIT;
+            swprintf_s(expectedEndpoint,L"%s:%u",physical,physicalPort);
+            const auto routing=GetModuleHandleW(L"net_route.dll");
+            const auto observe=routing?reinterpret_cast<SdgoNetRouteGetSnapshotV1Fn>(GetProcAddress(routing,SDGO_NET_ROUTE_SNAPSHOT_EXPORT)):nullptr;
+            SdgoNetRouteSnapshotV1 routes{};routes.size=sizeof(routes);routes.version=SDGO_NET_ROUTE_OBSERVER_VERSION;
+            const auto hash=sdgo::game_test_page_observer::ClientRunHash(sdgo_test::runId.c_str(),sdgo_test::runId.size(),"client",6);
+            bool matched=false;
+            if(observe && observe(hash,&routes) && routes.run_hash==hash && routes.process_id==GetCurrentProcessId() && routes.observation_active &&
+                routes.route_count==GetPrivateProfileIntW(L"run",L"route_profile_route_count",0,planFile.c_str()) && routes.route_count<=SDGO_NET_ROUTE_OBSERVER_MAX_ROUTES) {
+                for(uint32_t index=0;index<routes.route_count;++index) {
+                    const auto& route=routes.routes[index];wchar_t from[32]{},to[32]{};
+                    swprintf_s(from,L"%u.%u.%u.%u",route.logical.ipv4[0],route.logical.ipv4[1],route.logical.ipv4[2],route.logical.ipv4[3]);
+                    swprintf_s(to,L"%u.%u.%u.%u",route.physical.ipv4[0],route.physical.ipv4[1],route.physical.ipv4[2],route.physical.ipv4[3]);
+                    matched=matched || (route.socket_type==1 && !wcscmp(from,logical) && !wcscmp(to,physical) && route.logical.port==logicalPort &&
+                        route.physical.port==physicalPort && route.translated_send_calls>0);
+                }
+            }
+            context->Assert(matched,"the same-run production translator observed the exact logical-to-physical native login connection");
+            if(!matched)return SDGO_GAME_TEST_FAIL;
+        }
         if (expected!=id || GetPrivateProfileIntW(L"network",L"pid",0,file.c_str())!=GetCurrentProcessId() ||
             GetPrivateProfileIntW(L"network",L"verified",0,file.c_str())!=1 || actualEndpoint!=expectedEndpoint)
             return SDGO_GAME_TEST_WAIT;
-        context->Assert(1,"the owned process established its actual TCP login peer at the explicit test endpoint before authentication");
+        context->Assert(1,verifyRoutedNetwork?
+            "the actual routed TCP peer matches the immutable exact loopback profile, logical endpoint, physical endpoint and configuration hash before authentication":
+            "the owned process established its actual TCP login peer at the explicit test endpoint before authentication");
     }
     context->Assert(GetCurrentThreadId() == mainThread, "test polling runs on the observed original app-update thread");
     context->Observe("the original client update reached the login stage without supplied game data or an application-state write");
@@ -270,6 +367,19 @@ bool Snapshot(SdgoPvpAiClientSnapshotV1& snapshot) {
 }
 int __cdecl Room(const SdgoGameTestContextV1* context) {
     static size_t roomPageBaselineMode=SIZE_MAX;
+    static size_t hangarExitMode=SIZE_MAX;
+    if(actions.AppState()==5) {
+        if(hangarExitMode!=modeIndex) {
+            const auto transition=hangarNavigation.ClickBottomRadio(L"GameRoomRadio",0x48);
+            if(transition>=HangarNavigation::kDownmenuServiceMismatch || transition==HangarNavigation::kUnbound) {
+                context->Assert(0,"the native GameRoomRadio must return from equipped-unit hangar before VS selection");return SDGO_GAME_TEST_FAIL;
+            }
+            if(transition==HangarNavigation::kReady) {
+                hangarExitMode=modeIndex;context->Observe("original GameRoomRadio invoked after native unit selection; waiting for actual lobby arrival");
+            }
+        }
+        return SDGO_GAME_TEST_WAIT;
+    }
     static uint32_t roomPageBaselineGeneration=0;
     if(roomPageBaselineMode!=modeIndex){roomPageBaselineMode=modeIndex;roomPageBaselineGeneration=rooms.NativeRoomPageGeneration();}
     if (!roomRequested) {
@@ -351,6 +461,12 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
         roomReplySequence = before.create_reply_sequence;
         rooms.ResetObservations();
         roomCreationSequence = rooms.FreshRoomState().sequence;
+        if(randomLoadout) {
+            if(!activeSelection.Read(authenticatedPilot,&selectionBeforeRound) || !selectionBeforeRound.inventory_matches)
+                return SDGO_GAME_TEST_WAIT;
+            char selected[160];sprintf_s(selected,"native selection before round pilot=%u unit=%u uid=%llu slot=%u",
+                selectionBeforeRound.pilot,selectionBeforeRound.unit,static_cast<unsigned long long>(selectionBeforeRound.uid),selectionBeforeRound.slot);context->Observe(selected);
+        }
         roomRequested = true;
         char selection[128];
         sprintf_s(selection, "native create plan mode=%u channel=%u group=%u", RequestedMode(), state.channel_id, state.channel_group);
@@ -425,7 +541,7 @@ int __cdecl Start(const SdgoGameTestContextV1* context) {
 }
 uint32_t UnitDataForNpc(const SdgoGameTestContextV1* context, uint32_t npcId) {
     using GridData = void*(__cdecl*)();
-    using GridFind = int(__thiscall*)(void*, const uint8_t**, uint32_t, int, char);
+    using GridFind = uint8_t(__thiscall*)(void*, const uint8_t**, uint32_t, int, char);
     const auto data = reinterpret_cast<GridData>(context->api->Symbol(sdgo_test::mod, "grid.data"));
     const auto find = reinterpret_cast<GridFind>(context->api->Symbol(sdgo_test::mod, "grid.find"));
     const uint8_t* record = nullptr;
@@ -505,6 +621,16 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
     return SDGO_GAME_TEST_PASS;
 }
 int __cdecl Return(const SdgoGameTestContextV1* context) {
+    SdgoPvpAiClientSnapshotV1 live{};
+    if(Snapshot(live) && live.native_app_state==22) {
+        const std::wstring title(roomTitle,roomTitle+strlen(roomTitle));
+        const auto result=battleCombat.Observe(live,{activeBattleStartSequence,authenticatedPilot,RequestedMode(),title.c_str()});
+        if(result==BattleCombatActions::kInvalidExpectation || result==BattleCombatActions::kInvalidSnapshot ||
+           result==BattleCombatActions::kForeignBattle || result==BattleCombatActions::kLuaError) {
+            context->Assert(0,"whole-battle target/HP observations must retain the genuine battle identity and error-free native snapshot");
+            return SDGO_GAME_TEST_FAIL;
+        }
+    }
     SdgoPvpAiClientLuaStatusV1 lua{sizeof(lua), SDGO_PVP_AI_CLIENT_OBSERVER_VERSION, 0, 0, 0};
     if (!getLuaStatus || !getLuaStatus(&lua) || !lua.observer_available ||
         !activeBattleStartSequence || lua.battle_start_sequence != activeBattleStartSequence) {
@@ -525,6 +651,13 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
         context->Observe(message);
         context->Assert(ended.reply_opcode == 0x0871, "the original client consumed the genuine server battle-end reply");
         context->Assert(1, "Lua observation stayed available with zero errors through the entire real battle");
+        const auto combat=battleCombat.State();char evidence[256];
+        sprintf_s(evidence,"native combat frames=%u targets=%u moved=%u hp_events=%u hp_total=%llu witness=%u:%d->%d",
+            combat.validated_frame_count,combat.target_acquisition_events,combat.moved_identity_count,combat.hp_decrease_events,
+            static_cast<unsigned long long>(combat.total_hp_decrease),combat.damaged_target_object_id,
+            combat.damaged_target_hp_before,combat.damaged_target_hp_after);context->Observe(evidence);
+        context->Assert(combat.complete_evidence!=0,
+            "continuous genuine frames show a validated AI acquiring a target, moving, and a target losing HP; this does not attribute a damage source or tactical quality");
     }
     if (!endObserved) return SDGO_GAME_TEST_WAIT;
     const auto state = actions.AppState();
@@ -541,6 +674,18 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
     }
     if (!leaveRequested || left.reply_sequence <= leaveSequence || left.result != RoomActions::kLeaveAccepted || state != 6)
         return SDGO_GAME_TEST_WAIT;
+    if(randomLoadout) {
+        static size_t returnedMode=SIZE_MAX;static uint64_t firstLobbyRead=0;
+        if(returnedMode!=modeIndex){returnedMode=modeIndex;firstLobbyRead=context->elapsed_ms;}
+        ActiveSelectionObserver::Snapshot after;
+        const bool readable=activeSelection.Read(authenticatedPilot,&after);
+        const bool restored=readable && after.inventory_matches && after.SameSelection(selectionBeforeRound);
+        if(!restored && context->elapsed_ms-firstLobbyRead<2000)return SDGO_GAME_TEST_WAIT;
+        char selected[192];sprintf_s(selected,"native selection after round readable=%u inventory_matches=%u pilot=%u unit=%u uid=%llu slot=%u restored=%u",
+            readable?1u:0u,after.inventory_matches?1u:0u,after.pilot,after.unit,static_cast<unsigned long long>(after.uid),after.slot,restored?1u:0u);context->Observe(selected);
+        context->Assert(restored,"after genuine leave and lobby return, the client profile and owned inventory expose the original equipped UID, model and slot");
+        if(!restored)return SDGO_GAME_TEST_FAIL;
+    }
     context->Assert(1, "the original client consumed the real leave-room reply and returned to its lobby");
     ++modeIndex;
     channels.Reset();
@@ -917,9 +1062,27 @@ int __cdecl ReadStoragePage(const SdgoGameTestContextV1* context) {
     return SDGO_GAME_TEST_WAIT;
 }
 int __cdecl ClaimStoragePage(const SdgoGameTestContextV1* context) {
+    static bool verifyingInventory=false;
+    static std::vector<SdgoHangarGameTestUnitV1> beforeClaim;
+    if(verifyingInventory) {
+        const auto navigation=hangarNavigation.EnsureUnitManagementPage();
+        if(navigation>=HangarNavigation::kDownmenuServiceMismatch || navigation==HangarNavigation::kUnbound){context->Assert(0,"native inventory entry remains available after the claim");return SDGO_GAME_TEST_FAIL;}
+        if(navigation!=HangarNavigation::kReady)return SDGO_GAME_TEST_WAIT;
+        const auto read=pages.PollHangarRead(context);
+        if(read>=PageTestActions::kInvalidContext){context->Assert(0,"native inventory readback after claim is valid");return SDGO_GAME_TEST_FAIL;}
+        if(read!=PageTestActions::kReadReady)return SDGO_GAME_TEST_WAIT;
+        const auto& current=pages.CurrentUnits();bool retained=true;unsigned added=0;
+        for(const auto& old:beforeClaim)retained=retained && std::any_of(current.begin(),current.end(),[&](const auto& u){return u.uid==old.uid && u.unit_id==old.unit_id && u.slot==old.slot;});
+        for(const auto& u:current)if(std::none_of(beforeClaim.begin(),beforeClaim.end(),[&](const auto& old){return old.uid==u.uid;})) {
+            ++added;char message[128];sprintf_s(message,"claimed native inventory added UID=%llu unit=%u slot=%u",static_cast<unsigned long long>(u.uid),u.unit_id,u.slot);context->Observe(message);
+        }
+        context->Assert(retained && current.size()>=beforeClaim.size(),"normal post-claim hangar readback preserves every original owned UID, unit and slot");
+        char message[96];sprintf_s(message,"native inventory after positive claim before=%u after=%u added=%u",static_cast<unsigned>(beforeClaim.size()),static_cast<unsigned>(current.size()),added);context->Observe(message);
+        return SDGO_GAME_TEST_PASS;
+    }
     const auto result=storage.Claim(context);const auto state=storage.State();
     static uint32_t previous=UINT32_MAX,previousReplies=UINT32_MAX;
-    if(previous!=result || previousReplies!=state.reply_sequence) {
+    if(previous!=static_cast<uint32_t>(result) || previousReplies!=state.reply_sequence) {
         char message[256];
         sprintf_s(message,"native storage claim result=%u actions=%u replies=%u preflight=%u phase=%u reason=%u complete=%u armed=%u outstanding=%u total=%u",
             result,state.action_sequence,state.reply_sequence,state.preflight_reply_sequence,state.batch_phase,state.batch_reason,
@@ -934,9 +1097,15 @@ int __cdecl ClaimStoragePage(const SdgoGameTestContextV1* context) {
     context->Assert(state.action_sequence==2 && state.reply_sequence>0 && !state.outstanding,
         "exactly two original button actions confirm one native list/claim batch and retain its server replies");
     context->Observe(state.completed?"positive native storage claim completed; delivery/readback is a separate assertion":"empty native storage list completed without any item claim; positive delivery remains untested");
+    if(state.completed) {
+        beforeClaim=pages.BaselineUnits();
+        if(!hangarNavigation.Bind(sdgo_test::api,sdgo_test::mod,&actions) || !pages.Bind()){context->Assert(0,"native inventory observer rebinds after positive claim");return SDGO_GAME_TEST_FAIL;}
+        verifyingInventory=true;return SDGO_GAME_TEST_WAIT;
+    }
     return SDGO_GAME_TEST_PASS;
 }
 int __cdecl ReadCapsuleCatalog(const SdgoGameTestContextV1* context) {
+    if(collectionDraw)collectionBeforeUnits=pages.BaselineUnits();
     const bool ready=capsules.Check(sdgo_test::directory+L"\\..\\mods\\capsule_catalog\\runtime.ini");
     const auto state=capsules.State();char message[192];
     sprintf_s(message,"native capsule tables=%u rows=%u/%u collection=%u price=%u error=%u",state.tables,state.verified,state.expected,
@@ -967,6 +1136,43 @@ int __cdecl ReadCapsuleCurrency(const SdgoGameTestContextV1* context) {
         "machine 9301 uses token currency in both its loaded UI list and the registry used by the original confirmation lookup, with price 99 retained");
     return SDGO_GAME_TEST_PASS;
 }
+int ReadShopCatalog(const SdgoGameTestContextV1* context) {
+    const auto before=shopCatalog.State();
+    if(before.stage==ShopCatalogActions::kStageIdle || before.stage==ShopCatalogActions::kStageBaseline) {
+        // The unit-management popup only loads briefs. Enter the original
+        // 3D unitmgr so its genuine REQ_UNIT_SLOT_PAGE consumer is present.
+        const auto navigation=hangarNavigation.EnsureHangar();
+        if(navigation>=HangarNavigation::kDownmenuServiceMismatch || navigation==HangarNavigation::kUnbound) {
+            context->Assert(0,"the original hangar unitmgr must own full inventory replies before shop validation");return SDGO_GAME_TEST_FAIL;
+        }
+        if(navigation!=HangarNavigation::kReady)return SDGO_GAME_TEST_WAIT;
+    }
+    const auto result=shopCatalog.Poll(context);const auto state=shopCatalog.State();
+    static uint32_t previous=UINT32_MAX,verified=UINT32_MAX,lastPending=UINT32_MAX;
+    if(previous!=result || verified!=state.verified || lastPending!=state.native_request_pending) {
+        const auto sent=actions.TransportState();
+        char message[512];sprintf_s(message,"native shop result=%s stage=%u verified=%u/%u page=%u/%u product=%u option=%u category=%u validity=%d price=%d payment=%u previews=%u/%u cancel=%u wallet=%u inventory=%u slots=%u/%u bytes=%u pending=%u send=%04X/%u seq=%u",
+            ShopCatalogActions::ResultName(result),state.stage,state.verified,state.configured,state.current_page,state.max_page,
+            state.product_id,state.option_id,state.category,state.validity,state.price,state.payment,state.buy_previews,state.gift_previews,
+            state.cancellations,state.wallet_unchanged,state.inventory_unchanged,state.native_page_nonempty,state.native_page_slots,state.native_page_bytes,state.native_request_pending,sent.opcode,sent.packet_size,sent.send_sequence);context->Observe(message);previous=result;verified=state.verified;lastPending=state.native_request_pending;
+        if(state.inventory_failure) {
+            char inventory[320];sprintf_s(inventory,"native shop inventory failure=%u ready=%u capacity=%d probeSlot=%u brief=%u/%u/%llu full=%u/%u/%llu",
+                state.inventory_failure,state.inventory_ready,state.inventory_capacity,state.inventory_probe_slot,
+                state.inventory_brief_unit,state.inventory_brief_slot,static_cast<unsigned long long>(state.inventory_brief_uid),
+                state.inventory_full_unit,state.inventory_full_slot,static_cast<unsigned long long>(state.inventory_full_uid));context->Observe(inventory);
+        }
+    }
+    if(result>=ShopCatalogActions::kInvalidContext || result==ShopCatalogActions::kUnbound || result==ShopCatalogActions::kUnconfigured) {
+        context->Assert(0,"native stock catalog and preview controls must match the sealed read-only assertions");return SDGO_GAME_TEST_FAIL;
+    }
+    if(result!=ShopCatalogActions::kComplete)return SDGO_GAME_TEST_WAIT;
+    context->Assert(state.stock_assertions && state.configured && state.verified==state.configured &&
+        state.buy_previews==state.configured && state.gift_previews==state.configured && state.cancellations==2*state.configured &&
+        state.wallet_unchanged && state.inventory_unchanged,
+        "native stock names, options, permanent/rental labels and buy/gift previews match; cancellation preserves wallet and complete inventory");
+    return SDGO_GAME_TEST_PASS;
+}
+const SdgoGameTestCaseV1 shopCatalogCase{"pages.shop.catalog",300000,&ReadShopCatalog};
 const SdgoGameTestCaseV1 pageCases[]={
     {"pages.hangar.read",120000,&ReadHangarPage},
     {"pages.hangar.preview",60000,&PreviewHangarPage},
@@ -977,6 +1183,195 @@ const SdgoGameTestCaseV1 pageCases[]={
     {"pages.storage.claim",120000,&ClaimStoragePage},
     {"catalog.capsule",60000,&ReadCapsuleCatalog},
     {"pages.capsule.currency",60000,&ReadCapsuleCurrency},
+};
+int CollectionResult(const SdgoGameTestContextV1* context,CapsuleDrawActions::Result result) {
+    static uint32_t previous=UINT32_MAX,reply=UINT32_MAX;
+    const auto s=collection.State();
+    if(previous!=result || reply!=s.acknowledgement_sequence) {
+        char message[384];sprintf_s(message,"native collection result=%u page=%u/%u target=%u slot=%u price=%u clone=%u request=%04X/%u/%u reply=%04X/%u ack=%04X serial=%llu category=%u amount=%u remainingGP=%u",
+            static_cast<unsigned>(result),s.current_page,s.target_page,s.target_machine,s.target_slot,s.target_price,s.dialog_clone_sequence,
+            s.request_opcode,s.request_size,s.request_result,s.result_reply_opcode,s.result_reply_status,s.acknowledgement_opcode,
+            static_cast<unsigned long long>(s.dropbox_serial),s.reward_item_category,s.reward_amount,s.remaining_gp);
+        context->Observe(message);previous=result;reply=s.acknowledgement_sequence;
+    }
+    if(result>=CapsuleDrawActions::kMachineServiceMismatch || result==CapsuleDrawActions::kUnbound) {
+        context->Assert(0,"activity capsule native action/reply identity is valid and no failed purchase is retried");return SDGO_GAME_TEST_FAIL;
+    }
+    return SDGO_GAME_TEST_WAIT;
+}
+int __cdecl PreviewCollection(const SdgoGameTestContextV1* context) {
+    const auto result=collection.EnsurePreview();const int pending=CollectionResult(context,result);
+    if(pending==SDGO_GAME_TEST_FAIL)return pending;
+    if(result!=CapsuleDrawActions::kPreviewReady)return SDGO_GAME_TEST_WAIT;
+    const auto s=collection.State();
+    context->Assert(s.target_machine==990001 && s.target_price==100000 && s.preview_ready && !s.buy_attempted,
+        "original activity controls selected the real collection machine and initialized its own confirmation without purchasing");
+    return SDGO_GAME_TEST_PASS;
+}
+int __cdecl DrawCollection(const SdgoGameTestContextV1* context) {
+    auto state=collection.State();
+    auto result=state.buy_attempted?collection.Poll():collection.DrawOnce();
+    if(result==CapsuleDrawActions::kResultReady || result==CapsuleDrawActions::kClosingResult)result=collection.CloseResult();
+    const int pending=CollectionResult(context,result);if(pending==SDGO_GAME_TEST_FAIL)return pending;
+    if(result!=CapsuleDrawActions::kComplete)return SDGO_GAME_TEST_WAIT;
+    state=collection.State();
+    context->Assert(state.buy_attempted && state.buy_submitted && state.request_opcode==0x05D3 && state.request_size==10 &&
+        !state.result_reply_status && state.acknowledgement_opcode==0x09C6 &&
+        state.original_reply_completed && state.dropbox_serial && state.reward_item_category>=1100000 &&
+        state.reward_item_category<1200000 && state.reward_amount==1,
+        "one original activity purchase consumed genuine delivery acknowledgements and its original result-close callback was accepted");
+    return SDGO_GAME_TEST_PASS;
+}
+int __cdecl DeliverCollection(const SdgoGameTestContextV1* context) {
+    static uint32_t stage=0;static bool clicked=false;
+    if(stage==0) {
+        if(actions.AppState()==6) { if(!storage.Bind()){context->Assert(0,"native storage export binding remains available");return SDGO_GAME_TEST_FAIL;}stage=1;clicked=false; }
+        else if(!clicked) { const auto r=hangarNavigation.ClickBottomRadio(L"GameRoomRadio",0x48);
+            if(r>=HangarNavigation::kDownmenuServiceMismatch || r==HangarNavigation::kUnbound){context->Assert(0,"original GameRoomRadio returns from capsule before claim");return SDGO_GAME_TEST_FAIL;}
+            clicked=r==HangarNavigation::kReady; }
+        return SDGO_GAME_TEST_WAIT;
+    }
+    if(stage==1) {
+        const auto r=storage.Read(context);
+        if(r>=StorageTestActions::Invalid){context->Assert(0,"same-run native storage opened after collection delivery");return SDGO_GAME_TEST_FAIL;}
+        if(r==StorageTestActions::Ready && storage.State().timer_observed) {context->Assert(storage.State().total==1,"the freshly delivered collection reward is the only pending item");stage=2;}
+        else if(!clicked) {const auto n=hangarNavigation.ClickOperatorMenuButton(L"SalaryBtn",0x74);if(n>=HangarNavigation::kDownmenuServiceMismatch || n==HangarNavigation::kUnbound){context->Assert(0,"original SalaryBtn opens native drop-box");return SDGO_GAME_TEST_FAIL;}clicked=n==HangarNavigation::kReady;}
+        return SDGO_GAME_TEST_WAIT;
+    }
+    if(stage==2) {
+        const auto r=storage.Claim(context);
+        if(r>=StorageTestActions::Invalid){context->Assert(0,"collection claim requires native preflight and correlated claim reply");return SDGO_GAME_TEST_FAIL;}
+        if(r!=StorageTestActions::Complete)return SDGO_GAME_TEST_WAIT;
+        context->Assert(storage.State().completed==1 && storage.State().preflight_reply_sequence>0,"one native drop-box item was actually claimed after its server preflight");
+        if(!hangarNavigation.Bind(sdgo_test::api,sdgo_test::mod,&actions) || !pages.Bind()){context->Assert(0,"native page observers rebind after claim");return SDGO_GAME_TEST_FAIL;}
+        stage=3;return SDGO_GAME_TEST_WAIT;
+    }
+    const auto navigation=hangarNavigation.EnsureUnitManagementPage();
+    if(navigation>=HangarNavigation::kDownmenuServiceMismatch || navigation==HangarNavigation::kUnbound){context->Assert(0,"original unit-management entry returns after claim");return SDGO_GAME_TEST_FAIL;}
+    if(navigation!=HangarNavigation::kReady)return SDGO_GAME_TEST_WAIT;
+    const auto read=pages.PollHangarRead(context);
+    if(read>=PageTestActions::kInvalidContext){context->Assert(0,"native hangar readback remains valid after claim");return SDGO_GAME_TEST_FAIL;}
+    if(read!=PageTestActions::kReadReady)return SDGO_GAME_TEST_WAIT;
+    const auto& current=pages.CurrentUnits();bool retained=true;
+    for(const auto& old:collectionBeforeUnits)retained=retained && std::any_of(current.begin(),current.end(),[&](const auto& u){return u.uid==old.uid && u.unit_id==old.unit_id && u.slot==old.slot;});
+    context->Assert(retained && current.size()==collectionBeforeUnits.size()+1,"real native inventory contains one added unit and every original UID/unit/slot is retained");
+    using DataFn=void*(__cdecl*)();using FindFn=uint8_t(__thiscall*)(void*,const uint8_t**,uint32_t,int,char);
+    const auto data=reinterpret_cast<DataFn>(context->api->Symbol(sdgo_test::mod,"grid.data"));
+    const auto find=reinterpret_cast<FindFn>(context->api->Symbol(sdgo_test::mod,"grid.find"));
+    const uint8_t* category=nullptr;uint32_t unit=0;
+    const auto delivery=collection.State();
+    if(data && find && find(data(),&category,delivery.reward_item_category,0x22,0) && category)memcpy(&unit,category+0x69,4);
+    const auto added=std::find_if(current.begin(),current.end(),[&](const auto& candidate){return candidate.unit_id==unit &&
+        std::none_of(collectionBeforeUnits.begin(),collectionBeforeUnits.end(),[&](const auto& old){return old.uid==candidate.uid;});});
+    context->Assert(unit && added!=current.end(),"the added native unit matches the exact item category in the genuine activity delivery acknowledgement");
+    return SDGO_GAME_TEST_PASS;
+}
+int __cdecl SelectPlayUnit(const SdgoGameTestContextV1* context) {
+    static bool diagnosticFailure=false;static uint64_t failureAt=0;
+    if(diagnosticFailure) {
+        if(context->elapsed_ms-failureAt<10000)return SDGO_GAME_TEST_WAIT;
+        context->Assert(0,"owned unit selection failed; diagnostic pause performed no further native actions");return SDGO_GAME_TEST_FAIL;
+    }
+    const auto navigation=hangarNavigation.EnsureHangar();
+    if(navigation>=HangarNavigation::kDownmenuServiceMismatch || navigation==HangarNavigation::kUnbound){context->Assert(0,"native hangar entry precedes owned unit selection");return SDGO_GAME_TEST_FAIL;}
+    if(navigation!=HangarNavigation::kReady)return SDGO_GAME_TEST_WAIT;
+    const auto result=unitSelection.Poll(playUnitUid);const auto state=unitSelection.State();
+    static uint32_t previous=UINT32_MAX,reply=UINT32_MAX;
+    if(previous!=result || reply!=state.reply_sequence) {
+        char message[448];sprintf_s(message,"native unit select result=%u target=%llu unit=%u slot=%u current=%llu/%u request=%04X/%u/%u reply=%04X/%u consumed=%u inventory=%u/%u badslot=%u raw=%u/%llu/%u click=%d/%d accepted=%u/%u",
+            static_cast<unsigned>(result),static_cast<unsigned long long>(state.target_uid),state.target_unit_id,state.target_slot,
+            static_cast<unsigned long long>(state.current_uid),state.current_slot,state.request_opcode,state.request_size,state.request_result,
+            state.reply_opcode,state.reply_status,state.reply_consumed,state.inventory_ready,state.inventory_capacity,state.inventory_bad_slot,
+            state.inventory_bad_unit_id,static_cast<unsigned long long>(state.inventory_bad_uid),state.inventory_bad_record_slot,
+            state.native_click_x,state.native_click_y,state.native_mouse_down_accepted,state.native_mouse_up_accepted);context->Observe(message);previous=result;reply=state.reply_sequence;
+        char graph[384];sprintf_s(graph,"unit graph root=%08X list=%08X row=%08X control=%08X getter=%u xybits=%08X/%08X finite=%u/%u indices=%d/%d page=%u occupied=%u rowbefore=%u rowafter=%u",
+            state.native_root_pointer,state.native_list_pointer,state.native_row_pointer,state.native_row_control_pointer,state.native_row_getter_return,
+            state.native_row_x_bits,state.native_row_y_bits,state.native_row_x_finite,state.native_row_y_finite,
+            state.native_list_pressed_index,state.native_list_selected_index,state.unit_manager_page,state.native_target_occupied,state.native_row_selected_before,state.native_row_selected);
+        context->Observe(graph);
+    }
+    if(result>=UnitSelectActions::kInvalidTarget || result==UnitSelectActions::kUnbound){diagnosticFailure=true;failureAt=context->elapsed_ms;context->Observe("unit selection failure latched; ten-second read-only diagnostic pause with no more input/business calls");return SDGO_GAME_TEST_WAIT;}
+    if(result==UnitSelectActions::kAlreadySelected) {
+        context->Assert(state.current_uid==playUnitUid && state.target_matches,"native inventory and profile already expose the configured owned unit; no new change is claimed");return SDGO_GAME_TEST_PASS;
+    }
+    if(result!=UnitSelectActions::kComplete)return SDGO_GAME_TEST_WAIT;
+    context->Assert(state.request_opcode==0x04CF && state.request_size==14 && state.reply_opcode==0x09B4 && state.reply_consumed &&
+        !state.reply_status && state.current_uid==playUnitUid && state.target_matches,"the original equip request and genuine reply select exactly the configured owned unit in the real profile");
+    return SDGO_GAME_TEST_PASS;
+}
+const SdgoGameTestCaseV1 playUnitCase{"setup.active_unit",120000,&SelectPlayUnit};
+int MissionProgress(const SdgoGameTestContextV1* context,MissionFlowActions::Result result) {
+    static uint32_t previous=UINT32_MAX;
+    if(previous!=result) {
+        const auto s=mission.PollSnapshot();char message[384];
+        sprintf_s(message,"native mission result=%s app=%u channel=%u/%u mission=%u mode=%u room=%u/%u create=%04X consumed=%u start=%04X queued=%u consumed=%u control=%u/%u main=%08X/%u command=%08X ctx=%u reply=%04X/%04X",
+            MissionFlowActions::ResultName(result),s.native_app_state,s.selected_channel_group,s.selected_channel,s.selected_mission_id,
+            s.native_room_mode,s.requested_room_id,s.native_room_id,s.create_opcode,s.create_reply_consumed,s.start_opcode,s.start_queued,s.battle_start_consumed,s.create_control_kind,s.create_control_flags,s.native_main_vtable,s.native_main_state,s.native_command_vtable,s.native_context_flags,s.last_start_reply_opcode,s.last_start_reply_status);
+        context->Observe(message);previous=result;
+        char channel[384];sprintf_s(channel,"mission channel scan=%u ready=%u valid=%u polls=%u callbacks=%u pageMode=%u request=%u groups=%u raw=%u mode2=%u eligible=%u rejected=%u/%u/%u/%u/%u",
+            s.channel_scan_status,s.channel_list_ready,s.channel_scan_valid,s.channel_wait_polls,s.channel_choice_callbacks,
+            s.channel_page_mode,s.channel_request_state,s.advertised_group_count,s.advertised_raw_count,s.advertised_mode2_count,s.advertised_eligible_count,
+            s.rejected_zero_id_count,s.rejected_non_mode2_count,s.rejected_disabled_count,s.rejected_zero_capacity_count,s.rejected_full_count);context->Observe(channel);
+    }
+    if(result>=MissionFlowActions::kInvalidMode || result==MissionFlowActions::kUnbound){context->Assert(0,"native mission admission preserves actual channel, descriptor, request and reply ownership");return SDGO_GAME_TEST_FAIL;}
+    return SDGO_GAME_TEST_WAIT;
+}
+int __cdecl CreateMission(const SdgoGameTestContextV1* context) {
+    const auto result=mission.EnsureRoom(missionMode,roomTitle);const auto pending=MissionProgress(context,result);
+    if(pending==SDGO_GAME_TEST_FAIL || result!=MissionFlowActions::kRoomReady)return pending;
+    const auto s=mission.PollSnapshot();
+    context->Assert(s.native_room_id && s.native_room_id==s.requested_room_id && s.native_room_mode==missionMode && s.local_is_host &&
+        s.create_reply_consumed && s.create_opcode==0x0640,"a genuine server-created mission room and original reply consumer retain the selected listed mission and real host");
+    return SDGO_GAME_TEST_PASS;
+}
+int __cdecl StartMission(const SdgoGameTestContextV1* context) {
+    const auto result=mission.Start();const auto pending=MissionProgress(context,result);
+    if(pending==SDGO_GAME_TEST_FAIL || result!=MissionFlowActions::kBattleStartConsumed)return pending;
+    const auto s=mission.PollSnapshot();
+    context->Assert(s.start_request_sent && s.start_opcode==0x08A7 && s.battle_start_consumed,
+        "the original mission start command sent 08A7 and consumed its own genuine 06C3 before stage-three entry");
+    return SDGO_GAME_TEST_PASS;
+}
+bool MissionSnapshot(SdgoMissionAiClientSnapshotV1& s) {
+    s={};s.size=sizeof(s);s.version=SDGO_MISSION_AI_CLIENT_OBSERVER_VERSION;return getMissionSnapshot && getMissionSnapshot(&s)!=0;
+}
+int __cdecl SpawnMissionAi(const SdgoGameTestContextV1* context) {
+    SdgoMissionAiClientSnapshotV1 s{};if(!MissionSnapshot(s) || !s.active)return SDGO_GAME_TEST_WAIT;
+    if(s.room_mode!=missionMode || !s.exact_plain_mission || !s.room_records_valid || s.lua_pcall_error_count || s.native_exception_count) {
+        context->Assert(0,"the exact current native mission and whole-generation Lua/native observer remain valid");return SDGO_GAME_TEST_FAIL;
+    }
+    bool ready=s.ai_record_count==expectedAi && s.spawned_wingman_count==expectedAi;
+    for(uint32_t i=0;i<s.ai_record_count && i<12;++i)ready=ready && s.participants[i].mapping_valid && s.participants[i].valid_registered_object && s.participants[i].ai_enabled;
+    if(!ready)return SDGO_GAME_TEST_WAIT;
+    context->Assert(s.battle_generation && s.local_is_host && !s.local_is_observer && s.local_wingman_count==expectedAi && s.human_participant_count==1 &&
+        s.unit_manager_player_count==1,"the actual co-op room spawned every server wingman while preserving the original human-count contract");
+    context->Assert(ready,"each real mission AI maps its pilot/NPC to its uniquely registered native object");
+    return SDGO_GAME_TEST_PASS;
+}
+int __cdecl ObserveMissionCombat(const SdgoGameTestContextV1* context) {
+    SdgoMissionAiClientSnapshotV1 s{};
+    if(!MissionSnapshot(s) || !s.active)return SDGO_GAME_TEST_WAIT;
+    if(s.room_mode!=missionMode || s.lua_pcall_error_count || s.native_exception_count){context->Assert(0,"whole native mission smoke observation remains error-free and same-mode");return SDGO_GAME_TEST_FAIL;}
+    unsigned moved=0,targets=0;
+    for(uint32_t i=0;i<s.ai_record_count && i<12;++i) {
+        const auto& p=s.participants[i];if(!p.mapping_valid || !p.valid_registered_object)continue;
+        if(p.movement_observed)++moved;if(p.target_valid && p.target_hp>0)++targets;
+    }
+    if(context->elapsed_ms<15000 || !moved || !targets)return SDGO_GAME_TEST_WAIT;
+    char message[192];sprintf_s(message,"native mission bounded observation mode=%u generation=%u spawned=%u moved=%u targets=%u lua=%u tick=%u",
+        s.room_mode,s.battle_generation,s.spawned_wingman_count,moved,targets,s.lua_pcall_error_count,s.lua_tick_count);context->Observe(message);
+    context->Assert(moved && targets && s.lua_successful_tick_count>0,"real mission wingmen move and acquire living native targets across ordinary updates with zero cumulative Lua error");
+    context->Observe("bounded native mission smoke ends here; objective clear, natural results, active exit and a remote peer are not claimed");
+    return SDGO_GAME_TEST_PASS;
+}
+const SdgoGameTestCaseV1 missionCases[]={
+    {"mission.room",180000,&CreateMission},{"mission.start",180000,&StartMission},
+    {"mission.ai_spawn",120000,&SpawnMissionAi},{"mission.combat",120000,&ObserveMissionCombat},
+};
+const SdgoGameTestCaseV1 collectionCases[]={
+    {"pages.collection.preview",120000,&PreviewCollection},
+    {"pages.collection.draw",120000,&DrawCollection},
+    {"pages.collection.delivery",180000,&DeliverCollection},
 };
 int __cdecl TitlePvpCreate(const SdgoGameTestContextV1* c) {
     if(actions.AppState()==6){
@@ -1016,6 +1411,12 @@ SdgoGameTestProviderV1 provider{sizeof(provider), SDGO_GAME_TEST_VERSION, "pvp-a
 std::vector<std::string> caseNames;
 std::vector<SdgoGameTestCaseV1> plannedCases;
 void RegisterPlannedCases() {
+    if(missionMode) {
+        plannedCases.assign(realCases,realCases+3);
+        if(playUnitUid)plannedCases.push_back(playUnitCase);
+        plannedCases.insert(plannedCases.end(),std::begin(missionCases),std::end(missionCases));
+        provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+    }
     if (bootstrapOnly) { provider.count = 3; return; }
     if (roomTitlesOnly) {
         plannedCases.assign(realCases,realCases+3);
@@ -1024,15 +1425,20 @@ void RegisterPlannedCases() {
     }
     if (pagesOnly) {
         plannedCases.assign(realCases,realCases+3);
-        plannedCases.insert(plannedCases.end(),std::begin(pageCases),std::end(pageCases));
+        if(playUnitUid)plannedCases.push_back(playUnitCase);
+        plannedCases.insert(plannedCases.end(),std::begin(pageCases),std::begin(pageCases)+5);
+        if(testShopCatalog)plannedCases.push_back(shopCatalogCase);
+        plannedCases.insert(plannedCases.end(),std::begin(pageCases)+5,std::end(pageCases));
+        if(collectionDraw)plannedCases.insert(plannedCases.end(),std::begin(collectionCases),std::end(collectionCases));
         provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
     }
     const bool needsShip = battleshipOnly || deckOnly || std::find(requestedModes.begin(),requestedModes.end(),6)!=requestedModes.end() ||
         std::find(requestedModes.begin(),requestedModes.end(),7)!=requestedModes.end();
-    if (requestedModes.size() == 1 && !needsShip && !giftRequestsOnly) return;
+    if (requestedModes.size() == 1 && !needsShip && !giftRequestsOnly && !playUnitUid) return;
     const size_t count = 4 + requestedModes.size() * 4;
     caseNames.reserve(count); plannedCases.reserve(count);
     for (unsigned i = 0; i < 3; ++i) plannedCases.push_back(realCases[i]);
+    if(playUnitUid)plannedCases.push_back(playUnitCase);
     if (giftRequestsOnly) plannedCases.push_back(giftCase);
     else if (needsShip) plannedCases.push_back(battleshipCase);
     if (deckOnly) plannedCases.push_back(deckCase);
@@ -1210,11 +1616,12 @@ SDGO_MOD_ENTRY {
         accountName,
         accountPassword,
         roomTitle,
-        static_cast<uint16_t>(loaded ? RequestedMode() : 1),
+        static_cast<uint16_t>(loaded ? (missionMode?missionMode:RequestedMode()) : 1),
         0,
         passwordIsMd5};
     if (!loaded || !actions.Bind(api, mod, config) ||
-        !channels.Bind(api, mod, &actions) ||
+        (!missionMode && !channels.Bind(api, mod, &actions)) ||
+        (missionMode && !mission.Bind(api,mod,&actions)) ||
         !battleships.Bind(api,mod,&actions) || !gifts.Bind(api,mod,&actions) ||
         (deckOnly && !decks.Bind(api,mod,&actions)) ||
         (!hangarNavigation.Bind(api,mod,&actions)) ||
@@ -1223,8 +1630,13 @@ SDGO_MOD_ENTRY {
         (pagesOnly && !aiCatalog.Bind(api,mod)) ||
         (pagesOnly && !storage.Bind()) ||
         (pagesOnly && !capsules.Bind(api,mod)) ||
+        (collectionDraw && !collection.Bind(api,mod,&actions)) ||
+        (playUnitUid && !unitSelection.Bind(api,mod,&actions)) ||
+        (randomLoadout && !activeSelection.Bind(api,mod)) ||
+        (testShopCatalog && (!shopCatalog.Bind(api,mod) || !shopCatalog.Configure(
+            sdgo_test::directory+L"\\inputs\\shop-assertions.ini",sdgo_test::directory+L"\\inputs\\shop-runtime-display.ini"))) ||
         (roomTitlesOnly && !roomTitles.Bind(api,mod,&actions)) ||
-        !rooms.Bind(api, mod, &actions, config) ||
+        (!missionMode && !rooms.Bind(api, mod, &actions, config)) ||
         !tutorial.Bind(api, mod, &actions) || !onboarding.Bind(api, mod, &actions))
         sdgo_test::Fail("normal-flow native request bindings or private account configuration are unavailable");
     roomListVtable=api->Symbol(mod,"flow.native_room_list_vtable");
@@ -1235,6 +1647,10 @@ SDGO_MOD_ENTRY {
     if (!getSnapshot) sdgo_test::Fail("production PvP AI observation export is unavailable");
     getLuaStatus = reinterpret_cast<SdgoPvpAiClientGetLuaStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_LUA_STATUS_EXPORT));
     if (!getLuaStatus) sdgo_test::Fail("production whole-battle Lua counter export is unavailable");
+    if(missionMode) {
+        getMissionSnapshot=reinterpret_cast<SdgoMissionAiClientGetSnapshotV1Fn>(GetProcAddress(GetModuleHandleW(L"mission_ai.dll"),SDGO_MISSION_AI_CLIENT_SNAPSHOT_EXPORT));
+        if(!getMissionSnapshot)sdgo_test::Fail("production native mission observation export is unavailable");
+    }
     if (!AddVectoredExceptionHandler(1, &NativeFault)) return 0;
     if (!api->HookImport(mod, "user32.dll", "FindWindowW", reinterpret_cast<void*>(&FindOwnInstance), reinterpret_cast<void**>(&originalFindWindow)) ||
         !api->HookCode(mod, "test.client_update", reinterpret_cast<void*>(&Update), reinterpret_cast<void**>(&originalUpdate)))

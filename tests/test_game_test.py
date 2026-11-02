@@ -478,6 +478,30 @@ rva=state
         game_test.atomic_write(run_dir/'run.json',json.dumps(meta))
         with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run_dir)
 
+    def test_random_loadout_retains_native_title_limit_and_immutable_plan(self):
+        run_dir=self.prepare('random-loadout',random_loadout=True)
+        meta=self.metadata(run_dir)
+        self.assertEqual(len(meta['plan']['room_title'].encode('ascii')),20)
+        self.assertEqual(meta['plan']['room_title'],f"{meta['plan']['title_nonce']} !ai e2 a1 !rand")
+        self.assertTrue(game_test.validate_metadata(run_dir)['plan']['random_loadout'])
+        meta['plan']['random_loadout']=False
+        game_test.atomic_write(run_dir/'run.json',json.dumps(meta))
+        with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run_dir)
+        with self.assertRaises(game_test.GameTestError):self.prepare('random-pages',pages_only=True,random_loadout=True)
+
+    def test_collection_draw_is_explicit_and_bound_to_the_same_plan(self):
+        with self.assertRaises(game_test.GameTestError):
+            game_test.required_flow_cases('1',collection_draw=True)
+        base=game_test.required_flow_cases('1',pages_only=True)
+        run_dir=self.prepare('collection-draw',pages_only=True,collection_draw=True)
+        meta=self.metadata(run_dir)
+        self.assertEqual(game_test.required_flow_cases('1',pages_only=True,collection_draw=True),
+                         base+('pages.collection.preview','pages.collection.draw','pages.collection.delivery'))
+        self.assertTrue(game_test.validate_metadata(run_dir)['plan']['collection_draw'])
+        meta['plan']['collection_draw']=False
+        game_test.atomic_write(run_dir/'run.json',json.dumps(meta))
+        with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run_dir)
+
     def test_pages_plan_binds_its_own_cases_and_cannot_claim_battle_acceptance(self):
         run_dir=self.prepare('pages-only',pages_only=True)
         meta=self.metadata(run_dir)
@@ -654,6 +678,24 @@ rva=state
         runtime.process.verify_background.return_value={'verified':False,'foreground_safe':True,
             'input_desktop_safe':False,'input_desktop_unchanged':True,'unexpected_input_window_count':1}
         with self.assertRaisesRegex(game_test.GameTestError,'private-desktop'):runtime.verify(1234)
+
+    def test_unreadable_input_desktop_stops_without_claiming_foreground_theft(self):
+        run_dir=self.prepare('quiet-desktop-access-denied');receipt=run_dir/'receipts';receipt.mkdir(exist_ok=True)
+        runtime=REAL_QUIET_RUNTIME(self.metadata(run_dir),receipt);runtime.process=mock.Mock()
+        proof={'verified':False,'foreground_safe':False,'input_desktop_safe':False,
+               'input_desktop_unchanged':False,'error':'OSError: [Errno 5] OpenInputDesktop failed: access denied'}
+        runtime.process.verify_background.return_value=proof
+        for bootstrapped in (False,True):
+            with self.subTest(bootstrapped=bootstrapped):
+                runtime.proof_file_written=bootstrapped
+                with self.assertRaisesRegex(game_test.GameTestError,'quiet desktop observation unavailable') as raised:
+                    runtime.verify(1234)
+                self.assertNotIn('attempted to take',str(raised.exception))
+                self.assertEqual(game_test.read_json(receipt/'quiet-runtime.json')['desktop_probe'],proof)
+                self.assertFalse((run_dir/'client/sdgo/gametest/quiet-verified.ini').exists())
+        runtime.process.verify_background.return_value={**proof,'error':None}
+        with self.assertRaisesRegex(game_test.GameTestError,'attempted to take the user foreground'):
+            runtime.verify(1234)
 
     def test_disappearing_windows_are_not_misreported_as_public_desktop_escape(self):
         run_dir=self.prepare('quiet-window-disappearance');receipt=run_dir/'receipts';receipt.mkdir(exist_ok=True)
@@ -1108,6 +1150,50 @@ state=pending_first_login
         )
         self.assertEqual(selected["pid"], 7002)
         self.assertNotEqual(selected["pid"], 47616)
+
+    def test_termination_failure_still_closes_quiet_runtime_but_retains_live_account_locks(self):
+        run_dir=self.prepare('cleanup-failure');meta=self.metadata(run_dir);process=FakeProcess()
+        process.kill=mock.Mock(side_effect=OSError(5,'synthetic access denied'))
+        closed=[]
+        class Runtime(FakeQuietRuntime):
+            def close(self):closed.append(True);return super().close()
+        self.write_events(run_dir,game_test.FLOW_CASES,include_end=True,pid=process.pid)
+        # Events are written at native completion, never left stale at entry.
+        events=Path(meta['client']['events']);saved=events.read_bytes();events.unlink()
+        def complete(path):events.write_bytes(saved);return True
+        with mock.patch.object(game_test,'QuietRuntime',Runtime),mock.patch.object(
+            game_test.subprocess,'Popen',return_value=process),mock.patch.object(
+            game_test,'NamedStartupEvent',FakeStartupEvent),mock.patch.object(
+            game_test,'has_run_end',side_effect=complete),mock.patch.object(
+            game_test,'process_image_path',return_value=meta['client']['game']):
+            report=game_test.run_prepared(run_dir,timeout=1,launch_timeout=0)
+        self.assertEqual(report['status'],'fail')
+        self.assertEqual(report['layers']['launch']['execution']['status'],'cleanup_error')
+        self.assertIn('synthetic access denied',' '.join(report['layers']['launch']['execution']['cleanup_errors']))
+        self.assertEqual(closed,[True])
+        self.assertTrue((run_dir/'.run.lock').exists())
+        self.assertTrue(game_test.account_profile_lock_path(self.account_profile).exists())
+
+    def test_exit_race_is_accepted_only_after_the_owned_handle_confirms_termination(self):
+        run_dir=self.prepare('termination-race');meta=self.metadata(run_dir);process=FakeProcess()
+        process.kill=mock.Mock(side_effect=OSError(5,'already terminating'))
+        def wait(timeout=None):process.returncode=1;return 1
+        process.wait=mock.Mock(side_effect=wait)
+        calls=[]
+        def completed(path):
+            calls.append(True)
+            if len(calls)==1:return False
+            self.write_events(run_dir,game_test.FLOW_CASES,include_end=True,pid=process.pid);return True
+        with mock.patch.object(game_test.subprocess,'Popen',return_value=process),mock.patch.object(
+            game_test,'NamedStartupEvent',FakeStartupEvent),mock.patch.object(
+            game_test,'has_run_end',side_effect=completed),mock.patch.object(
+            game_test,'owned_tcp_peers',return_value=[{'remote_ipv4':'127.0.0.1','remote_port':5001}]),mock.patch.object(
+            game_test,'process_image_path',return_value=meta['client']['game']):
+            report=game_test.run_prepared(run_dir,timeout=1,launch_timeout=0)
+        self.assertEqual(report['status'],'pass')
+        process.kill.assert_called_once();process.wait.assert_called_once_with(timeout=10)
+        self.assertFalse((run_dir/'.run.lock').exists())
+        self.assertFalse(game_test.account_profile_lock_path(self.account_profile).exists())
 
     def test_report_is_pending_until_real_flow_completes(self):
         run_dir = self.prepare("pending")
