@@ -26,6 +26,7 @@ public:
         if(!(manager_&&find_&&get_&&focus_&&notify_&&input_))return false;
         active_=this;
         return api_->HookCode(mod_,"room_titles.ui_input_limit",reinterpret_cast<void*>(&ObserveInputLimit),reinterpret_cast<void**>(&inputLimit_)) &&
+            api_->HookCode(mod_,"title_test.edit_input_focus",reinterpret_cast<void*>(&ObserveEditInputFocus),reinterpret_cast<void**>(&editInputFocus_)) &&
             api_->HookCode(mod_,"title_test.key_pressed",reinterpret_cast<void*>(&TitleKeyPulse),reinterpret_cast<void**>(&keyPressed_));
     }
     void Reset() { phase_=0;inputIndex_=0;opened_=false;reopened_=false;dialog_=nullptr;edit_=nullptr;uiRestarts_=0;pendingTitleKey_=0; }
@@ -73,6 +74,11 @@ private:
     using Focus=void(__thiscall*)(void*,void*);
     using Notify=void(__thiscall*)(void*,uint32_t,int,void*);
     using InputLimit=void(__thiscall*)(void*,uint32_t,int);
+    using EditInputFocus=void(__thiscall*)(void*);
+    static void __fastcall ObserveEditInputFocus(void* edit,void*) {
+        auto* owner=active_;owner->editInputFocus_(edit);
+        if(Readable(edit,0x168)&&static_cast<uint8_t*>(edit)[0x165])owner->actualInputEdit_=edit;
+    }
     using KeyPressed=bool(__cdecl*)(uint32_t);
     static bool __cdecl TitleKeyPulse(uint32_t scan) {
         auto* owner=active_;const auto caller=reinterpret_cast<uintptr_t>(_ReturnAddress());
@@ -93,7 +99,9 @@ private:
         owner->inputLimit_(self,units,clear);
     }
     bool MessengerReset()const {
-        return lastLimitCaller_==0x0096200Bu&&lastLimit_==39&&lastClear_!=0;
+        const bool otherEdit=edit_&&Readable(edit_,0x168)&&static_cast<uint8_t*>(edit_)[0x165]&&
+            actualInputEdit_&&actualInputEdit_!=edit_;
+        return (lastLimitCaller_==0x0096200Bu&&lastLimit_==39&&lastClear_!=0)||otherEdit;
     }
     template<class T>T Symbol(const char* name){return reinterpret_cast<T>(api_->Symbol(mod_,name));}
     static bool Readable(const void* address,size_t size) {
@@ -221,7 +229,7 @@ private:
         }
         if((phase_==1||phase_==2)&&MessengerReset()){
             if(++uiRestarts_>2||!Close(s))throw std::runtime_error("unrelated native Messenger initialization repeatedly interrupted room input");
-            c->Observe("original Messenger init at 0096200B cleared the shared EDIT with limit 39; cancel/reopen the room dialog and repeat every input assertion");
+            c->Observe("another original edit claimed the shared native input; cancel/reopen the room dialog and repeat every input assertion");
             phase_=5;return SDGO_GAME_TEST_WAIT;
         }
         if(phase_==0){
@@ -297,6 +305,7 @@ private:
     const SdgoApi* api_=nullptr;SdgoMod* mod_=nullptr;NativeActions* actions_=nullptr;
     void** manager_=nullptr;FindControl find_=nullptr;GetText get_=nullptr;Focus focus_=nullptr;Notify notify_=nullptr;uint8_t** input_=nullptr;
     inline static RoomTitleActions* active_=nullptr;InputLimit inputLimit_=nullptr;
+    EditInputFocus editInputFocus_=nullptr;void* actualInputEdit_=nullptr;
     uintptr_t lastLimitCaller_=0;uint32_t lastLimit_=0;int lastClear_=0;unsigned uiRestarts_=0;
     KeyPressed keyPressed_=nullptr;uint32_t pendingTitleKey_=0;
     unsigned phase_=0,inputIndex_=0,polls_=0;bool opened_=false,reopened_=false;void* dialog_=nullptr;void* edit_=nullptr;
