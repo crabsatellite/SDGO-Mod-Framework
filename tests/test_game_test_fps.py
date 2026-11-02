@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 import os
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -326,6 +327,23 @@ class NativeFpsGameTestTests(unittest.TestCase):
             stderr.close()
         self.assertEqual(process.pid, FakeProcess.pid)
         self.assertNotIn("SDGO_GAME_TEST_ACCOUNT", captured)
+
+    def test_reuse_moves_the_fps_client_without_reading_or_locking_an_account(self):
+        import types,uuid
+        run=self.prepare('reuse-fps');old=game_test.read_json(run/'run.json')
+        identity=(run/'client/GOnline.exe').stat().st_ino
+        recycled=self.root/'recycled';recycled.mkdir()
+        def recycle(value):
+            path=Path(value);path.rename(recycled/(uuid.uuid4().hex+'-'+path.name))
+        with mock.patch.object(game_test,'OWNED_BUILD_ROOT',self.root), \
+             mock.patch.object(game_test,'process_snapshot',return_value=[]), \
+             mock.patch.object(game_test,'validate_private_account',side_effect=AssertionError('FPS must never read accounts')), \
+             mock.patch.dict(sys.modules,{'send2trash':types.SimpleNamespace(send2trash=recycle)}):
+            new=game_test.reuse_prepared(self.template,self.stage,run,fps_cap=160)
+        self.assertNotEqual(old['run_id'],new['run_id'])
+        self.assertEqual(identity,(run/'client/GOnline.exe').stat().st_ino)
+        self.assertFalse((run/'client/sdgo/gametest/private/account.ini').exists())
+        game_test.verify_hashes(game_test.validate_metadata(run))
 
     def test_fps_events_reuse_report_and_junit_paths(self):
         run_dir = self.prepare("report")
