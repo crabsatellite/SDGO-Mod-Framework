@@ -459,7 +459,7 @@ bool SetNote(
     if (!wire::ValidUtf16(utf16, codeUnits)) return false;
     auto* root = Read<void*>(service, 0x4C);
     auto* edit = g_ui.FindNamed(root, L"DescEdit", 8);
-    if (!edit) return false;
+    if (!edit || !g_ui.SetNoteLimit(edit)) return false;
     std::wstring text;
     text.reserve(codeUnits);
     for (std::uint16_t index = 0; index < codeUnits; ++index) {
@@ -467,7 +467,12 @@ bool SetNote(
     }
     const auto native = NativeView(text);
     g_edit_set(edit, &native, 0);
-    return true;
+    std::array<char16_t, kMaximumNoteCodeUnits> actual{};
+    std::uint16_t actualUnits = 0;
+    return ReadNote(service, &actual, &actualUnits) &&
+           actualUnits == codeUnits &&
+           std::memcmp(actual.data(), note,
+               codeUnits * sizeof(char16_t)) == 0;
 }
 
 void SetComposerPrimary(
@@ -1131,6 +1136,9 @@ bool OpenComposer() {
 void PopulateComposer(void* service) {
     auto* root = Read<void*>(service, 0x4C);
     if (!root) return;
+    auto* note = g_ui.FindNamed(root, L"DescEdit", 8);
+    const bool noteReady = g_ui.SetNoteLimit(note);
+    g_ui.SetState(note, true, noteReady);
     if (auto* title =
             g_ui.FindNamed(root, L"TitleStatic", 3)) {
         g_ui.SetText(title, L"向 " + g_receiver_name + L" 赠送机体");
@@ -1145,7 +1153,7 @@ void PopulateComposer(void* service) {
     }
     auto* combo = Read<void*>(service, 0xAC);
     const bool unitsReady =
-        combo && SnapshotUnits(&g_units) && !g_units.empty();
+        noteReady && combo && SnapshotUnits(&g_units) && !g_units.empty();
     if (combo && g_combo_clear) {
         g_combo_clear(combo);
         for (std::size_t i = 0; unitsReady && i < g_units.size(); ++i) {

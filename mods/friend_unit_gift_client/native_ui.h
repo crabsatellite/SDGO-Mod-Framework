@@ -30,6 +30,7 @@ struct Bindings {
     using Skin = void(__thiscall*)(
         void*, const NativeString*, std::uint8_t,
         std::uint32_t, std::uint32_t);
+    using InputLimit = void(__thiscall*)(void*, std::uint32_t, int);
 
     bool Bind(const SdgoApi* api, SdgoMod* mod) noexcept;
     void* FindNamed(void* dialog, const wchar_t* name, int type) const;
@@ -58,12 +59,17 @@ struct Bindings {
         void* control,
         bool visible,
         bool enabled) const noexcept;
+    bool SetNoteLimit(void* edit) const noexcept;
 
     Add add = nullptr;
     Find find = nullptr;
     Text text = nullptr;
     Skin skin = nullptr;
     void* button_vtable = nullptr;
+    void* edit_vtable = nullptr;
+    InputLimit input_limit = nullptr;
+    void** input_context = nullptr;
+    void* input_lock = nullptr;
 };
 
 class FriendEntry {

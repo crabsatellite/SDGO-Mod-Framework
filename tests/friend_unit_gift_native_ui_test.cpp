@@ -1,5 +1,6 @@
 #include "../mods/friend_unit_gift_client/native_ui.h"
 
+#include <windows.h>
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -63,6 +64,18 @@ std::map<
 std::map<void*, std::array<std::uint8_t*, 16>>
     g_added_skin_pointers;
 void* g_button_vtable = reinterpret_cast<void*>(0x12345678);
+void* g_input_seen = nullptr;
+std::uint32_t g_input_units = 0;
+int g_input_clear = -1;
+unsigned g_input_limit_calls = 0;
+
+void __fastcall InputLimitShim(
+    void* input, void*, std::uint32_t units, int clear) {
+    g_input_seen = input;
+    g_input_units = units;
+    g_input_clear = clear;
+    ++g_input_limit_calls;
+}
 
 Control* NewControl(
     const std::wstring& name,
@@ -190,6 +203,36 @@ int main() {
     bindings.skin =
         reinterpret_cast<Bindings::Skin>(&SkinShim);
     bindings.button_vtable = g_button_vtable;
+
+    Control noteEdit;
+    Control nativeInput;
+    void* input = nativeInput.bytes.data();
+    CRITICAL_SECTION inputLock;
+    InitializeCriticalSection(&inputLock);
+    bindings.edit_vtable = reinterpret_cast<void*>(0x23456789);
+    bindings.input_limit =
+        reinterpret_cast<Bindings::InputLimit>(&InputLimitShim);
+    bindings.input_context = &input;
+    bindings.input_lock = &inputLock;
+    Put<void*>(noteEdit.bytes.data(), 0, bindings.edit_vtable);
+    Check(bindings.SetNoteLimit(noteEdit.bytes.data()) &&
+              Read<std::uint32_t>(noteEdit.bytes.data(), 0x2A0) == 400 &&
+              g_input_limit_calls == 0,
+          "unfocused note supports 200 UTF-16 units without changing another input");
+    Put<std::uint8_t>(noteEdit.bytes.data(), 0x165, 1);
+    Check(bindings.SetNoteLimit(noteEdit.bytes.data()) &&
+              g_input_limit_calls == 1 && g_input_seen == input &&
+              g_input_units == 200 && g_input_clear == 0,
+          "focused note refreshes the real input limit without clearing text or caret");
+    input = nullptr;
+    Check(!bindings.SetNoteLimit(noteEdit.bytes.data()) &&
+              g_input_limit_calls == 1,
+          "focused note fails closed when the native input is unavailable");
+    input = nativeInput.bytes.data();
+    Put<void*>(noteEdit.bytes.data(), 0, g_button_vtable);
+    Check(!bindings.SetNoteLimit(noteEdit.bytes.data()),
+          "note length writes require the exact original edit class");
+    DeleteCriticalSection(&inputLock);
 
     Control viewport;
     Put<int>(viewport.bytes.data(), 0x154, 800);

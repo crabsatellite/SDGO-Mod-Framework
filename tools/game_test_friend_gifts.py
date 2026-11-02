@@ -36,8 +36,13 @@ def provenance_timestamp(value: dt.datetime) -> str:
     return value.strftime('%Y-%m-%d %H:%M UTC')
 
 
+def native_paths_owned(root: Path, paths) -> bool:
+    paths=list(paths)
+    return bool(paths) and all(Path(path).resolve().is_relative_to(root.resolve()) for path in paths)
+
+
 class InventoryReadback:
-    def __init__(self,test_root:Path):
+    def __init__(self,test_root:Path,sql_readback_ini:Path|None=None):
         import pyodbc
         self.root=test_root.resolve()
         if not (self.root/'TEST-ONLY.txt').is_file():
@@ -46,18 +51,20 @@ class InventoryReadback:
         if Path(native['root']).resolve()!=self.root:
             raise game_test.GameTestError('native SQL belongs to another test copy')
         settings=game_test.read_ini(self.root/'server/Server/WorldServer/WorldServer.ini')['DB Game']
+        credentials=(game_test.read_ini(sql_readback_ini)['DB Member']
+                     if sql_readback_ini else settings)
         quote=lambda value:'{'+str(value).replace('}','}}')+'}'
         self.connection=pyodbc.connect(
             'DRIVER={SQL Server};SERVER=127.0.0.1,'+str(int(native['port']))+
-            ';DATABASE='+quote(settings['DBName'])+';UID='+quote(settings.get('ID',settings.get('id')))+
-            ';PWD='+quote(settings.get('PWD',settings.get('pwd')))+';',
+            ';DATABASE='+quote(settings['DBName'])+';UID='+quote(credentials.get('ID',credentials.get('id')))+
+            ';PWD='+quote(credentials.get('PWD',credentials.get('pwd')))+';',
             timeout=10,autocommit=True)
         cursor=self.connection.cursor()
         if int(cursor.execute("SELECT CAST(SERVERPROPERTY('ProcessID') AS int)").fetchval())!=int(native['pid']):
             raise game_test.GameTestError('SQL process identity does not match the selected native test')
         paths=cursor.execute('SELECT f.physical_name FROM sys.master_files f JOIN sys.databases d ON d.database_id=f.database_id WHERE d.state=0').fetchall()
-        if not all(Path(row[0]).resolve().is_relative_to(self.root) for row in paths):
-            raise game_test.GameTestError('an online SQL file lies outside the selected test copy')
+        if not native_paths_owned(self.root,(row[0] for row in paths)):
+            raise game_test.GameTestError('SQL file ownership is unavailable or outside this test copy; use a local metadata readback credential INI')
 
     def unit(self,uid:int):
         cursor=self.connection.cursor()
@@ -110,8 +117,8 @@ class GiftCampaign:
                 raise game_test.GameTestError('gift actor profile identity changed')
             if not destination.exists():shutil.copy2(source,destination)
         self.native=Campaign(args.client_template,args.stage,self.root,args.target_host,args.asset_baseline,
-                             extra_mods=('friend_list_client_fix','friend_unit_gift_client'),peer_labels=())
-        self.db=InventoryReadback(args.test_root)
+                             extra_mods=('friend_list_client_fix','storage_claim','friend_unit_gift_client'),peer_labels=())
+        self.db=InventoryReadback(args.test_root,getattr(args,'sql_readback_ini',None))
         self.receipt={'schema':1,'status':'running','checks':[],'actors':[]}
         self.save()
 
@@ -185,6 +192,9 @@ class GiftCampaign:
             actor.wait(lambda state:state.get('unit_gift',{}).get('valid')=='1' and
                        state['unit_gift'].get('ready')=='1' and
                        int(state['unit_gift'].get('capabilities','0'))&4,120)
+            self.check('gift controls share the published Storage extension broker',
+                       self.view(actor).get('storage_broker')=='1' and
+                       self.view(actor).get('storage_fallback')=='0')
         before=self.db.unit(self.uid)
         self.check('fixture is the sender exact existing native instance',
                    before and int(before['AccountNumber'])==aid and
@@ -259,6 +269,8 @@ def main():
     parser.add_argument('--stage',type=Path,required=True)
     parser.add_argument('--work-root',type=Path,required=True)
     parser.add_argument('--fixture-binding',type=Path,required=True)
+    parser.add_argument('--sql-readback-ini',type=Path,
+                        help='existing private DB Member credential INI for read-only SQL metadata verification')
     parser.add_argument('--pair',choices=('primary_friend_pair','all_payload_groups_pair'),default='all_payload_groups_pair')
     parser.add_argument('--asset-baseline',type=Path)
     parser.add_argument('--target-host',required=True)
