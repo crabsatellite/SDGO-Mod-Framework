@@ -17,3 +17,8 @@ the standalone `Install.ps1`. It updates only its own single-item offers in a tr
 listing, billing and delivery; accounts, balances, inventory and history are untouched. Prices must be
 positive; GB is native currency 1 (GP), MB native currency 2 (GC). Only the Manager publishes the
 configuration; the WorldServer component applies nothing at startup.
+
+New product names and sale-option labels require Chinese text. Existing owner data remains intact;
+fill missing names before editing or publishing. The separate [shop localization Mod](shop-localization.md)
+provides translated descriptions and shared preview names. Its **Update Chinese search** action refreshes
+only the guarded search procedure and aliases; it does not apply catalog drafts or prices.

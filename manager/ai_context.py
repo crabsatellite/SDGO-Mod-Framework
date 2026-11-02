@@ -64,6 +64,9 @@ def build(workspace, base_url, *, host_id=None, mod_id=None, provider_id=None, k
         installed=next((mod for mod in workspace._installed(host) if mod['id']==mod_id),None)
         if installed is None: raise ValueError('当前宿主没有这个功能')
         contract=workspace.contracts.get(mod_id,{})
+        if not contract:
+            from .registry import load
+            contract=load(Path(host['path'])/'sdgo/mods').get(mod_id,{})
         title=installed['title'];version=installed['version']
         mechanism=contract.get('mechanism',contract.get('description','通过已安装的 Mod 及框架提供此功能。'))
         root=storage.safe_child(host['path'],'sdgo/mods/'+mod_id)
