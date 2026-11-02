@@ -227,6 +227,17 @@ class CandidateAdmissionTests(unittest.TestCase):
         with self.assertRaises(self.gt.GameTestError):
             self.fixture.prepare('incomplete-roundtrip',apsalus_roundtrip=True,bootstrap_only=True)
 
+    def test_disabled_retained_diagnostic_does_not_require_its_historical_aliases(self):
+        root=self.fixture.template/'sdgo/mods/old_probe'
+        root.mkdir()
+        manifest=root/'mod.ini'
+        manifest.write_text('[mod]\nid=old_probe\nenabled=0\nrequires=old.unavailable\n',encoding='utf-8')
+        (root/'old_probe.dll').write_bytes(b'old-inactive-probe')
+        self.fixture.prepare('disabled-probe')
+        manifest.write_text('[mod]\nid=old_probe\nenabled=1\nrequires=old.unavailable\n',encoding='utf-8')
+        with self.assertRaisesRegex(self.gt.GameTestError,'retained Mod symbols'):
+            self.fixture.prepare('active-probe')
+
 
 if __name__ == '__main__':
     unittest.main()

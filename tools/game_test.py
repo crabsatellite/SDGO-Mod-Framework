@@ -223,7 +223,7 @@ def copy_file_if_missing(source: Path, destination: Path) -> None:
     shutil.copy2(source, destination)
 
 
-def manifest_requires(path: Path) -> set[str]:
+def manifest_configuration(path: Path) -> configparser.ConfigParser:
     try:
         parser = read_ini(path)
     except GameTestError:
@@ -235,6 +235,17 @@ def manifest_requires(path: Path) -> set[str]:
         match=re.search(r'(?ims)^\s*\[mod\]\s*\n(.*?)(?=^\s*\[|\Z)',decoded)
         if not match:raise GameTestError(f'manifest lacks [mod]: {path}') from None
         parser=ini_parser();parser.read_string('[mod]\n'+match[1])
+    return parser
+
+
+def retained_manifest_enabled(path: Path) -> bool:
+    # Native core never overrides a manifest's own off switch. Inactive
+    # diagnostics may retain historical aliases and are not runtime consumers.
+    return manifest_configuration(path).get('mod','enabled',fallback='1').strip()!='0'
+
+
+def manifest_requires(path: Path) -> set[str]:
+    parser=manifest_configuration(path)
     try:
         value = parser["mod"].get("requires", "")
     except KeyError as error:
@@ -326,7 +337,7 @@ def validate_observer_stage(root: Path, stage: Path, extra_mods: tuple[str, ...]
     existing_path=root/f'sdgo/symbols/{HOST_KEY}.ini'
     existing=read_ini(existing_path) if existing_path.is_file() else ini_parser()
     for manifest in (root/'sdgo/mods').glob('*/mod.ini'):
-        if manifest.parent.name not in updated:
+        if manifest.parent.name not in updated and retained_manifest_enabled(manifest):
             missing=sorted(manifest_requires(manifest)-set(source.sections())-set(existing.sections()))
             if missing:raise GameTestError(f"retained Mod symbols lack required sections: {', '.join(missing)}")
 
@@ -427,7 +438,8 @@ def overlay_observer(root: Path, stage: Path, extra_mods: tuple[str, ...] = ()) 
         copied_symbols,
         updated_manifests,
     )
-    retained_manifests=[manifest for manifest in (root/'sdgo/mods').glob('*/mod.ini') if manifest not in updated_manifests]
+    retained_manifests=[manifest for manifest in (root/'sdgo/mods').glob('*/mod.ini')
+                        if manifest not in updated_manifests and retained_manifest_enabled(manifest)]
     merge_required_symbols(stage_symbols,copied_symbols,retained_manifests,preserve_existing=True)
     enable_test_configuration(root)
 
