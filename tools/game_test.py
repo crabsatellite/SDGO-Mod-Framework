@@ -40,6 +40,13 @@ GAME_EXE = "GOnline.exe"
 STARTUP_EVENT_NAME = "9YOU SDGO"
 TEST_MOD = "game_test_client"
 TARGET_MOD = "match_ai"
+FPS_MOD = "fps_limit"
+FPS_SUITE = "native-fps-limit"
+FPS_CASES = (
+    "framework.bootstrap",
+    "fps.native_cap",
+    "fps.native_cadence",
+)
 ROUTED_LOOPBACK_POLICY = "routed_loopback"
 ROUTE_PROFILE_RELATIVE = Path("sdgo/mods/net_route/config.ini")
 ROUTE_PLAN_FIELDS = (
@@ -241,7 +248,14 @@ def manifest_requires(path: Path) -> set[str]:
     return {item.strip() for item in value.split(",") if item.strip()}
 
 
-def merge_required_symbols(stage_symbols: Path, copied_symbols: Path, manifests: list[Path], *, preserve_existing: bool = False) -> None:
+def merge_required_symbols(
+    stage_symbols: Path,
+    copied_symbols: Path,
+    manifests: list[Path],
+    *,
+    preserve_existing: bool = False,
+    allow_missing: bool = False,
+) -> None:
     source = read_ini(stage_symbols)
     destination = read_ini(copied_symbols) if copied_symbols.is_file() else ini_parser()
     required = {"host"}
@@ -249,7 +263,7 @@ def merge_required_symbols(stage_symbols: Path, copied_symbols: Path, manifests:
         required.update(manifest_requires(manifest))
     missing = sorted(section for section in required if not source.has_section(section) and
                      not (preserve_existing and destination.has_section(section)))
-    if missing:
+    if missing and not allow_missing:
         raise GameTestError(f"stage host symbols lack required sections: {', '.join(missing)}")
     for section in sorted(required):
         if not source.has_section(section):continue
@@ -262,7 +276,7 @@ def merge_required_symbols(stage_symbols: Path, copied_symbols: Path, manifests:
     write_ini(copied_symbols, destination)
 
 
-def enable_test_configuration(root: Path) -> None:
+def enable_test_configuration(root: Path, fps_mod_enabled: bool | None = None) -> None:
     manifest = root / "sdgo" / "mods" / TEST_MOD / "mod.ini"
     parser = read_ini(manifest)
     if not parser.has_section("mod") or parser["mod"].get("id") != TEST_MOD:
@@ -275,21 +289,58 @@ def enable_test_configuration(root: Path) -> None:
     for section in ("categories", "features", "mods"):
         if not settings.has_section(section):
             settings.add_section(section)
-    settings["categories"]["development"] = "1"
-    settings["categories"]["gameplay"] = "1"
     settings["features"]["game-test"] = "1"
-    settings["features"]["pvp-ai"] = "1"
     settings["mods"][TEST_MOD] = "1"
-    settings["mods"][TARGET_MOD] = "1"
+    if fps_mod_enabled is None:
+        settings["categories"]["development"] = "1"
+        settings["categories"]["gameplay"] = "1"
+        settings["features"]["pvp-ai"] = "1"
+        settings["mods"][TARGET_MOD] = "1"
+    else:
+        # Opening a category for the observer/FPS Mod must not accidentally
+        # activate unrelated Mods that the source client disabled globally.
+        for category, required in (
+            ("development", {TEST_MOD}),
+            ("gameplay", {FPS_MOD} if fps_mod_enabled else set()),
+        ):
+            originally_enabled = settings.get("categories", category, fallback="1") != "0"
+            if not originally_enabled:
+                for candidate in (root / "sdgo" / "mods").glob("*/mod.ini"):
+                    manifest = read_ini(candidate)
+                    identifier = manifest.get("mod", "id", fallback="")
+                    if (
+                        identifier
+                        and identifier not in required
+                        and manifest.get("mod", "category", fallback="") == category
+                    ):
+                        settings["mods"][identifier] = "0"
+            if required:
+                settings["categories"][category] = "1"
+        value = "1" if fps_mod_enabled else "0"
+        settings["features"]["fps-limit"] = value
+        settings["mods"][FPS_MOD] = value
     write_ini(settings_path, settings)
 
 
-def validate_observer_stage(root: Path, stage: Path) -> None:
+def validate_observer_stage(
+    root: Path,
+    stage: Path,
+    fps_mod_enabled: bool | None = None,
+) -> None:
     """Validate overlay dependencies before changing or moving an owned client."""
     client=stage/'client';mods=client/'sdgo/mods'
     observer=mods/TEST_MOD
-    for required in (observer/f'{TEST_MOD}.dll',observer/'mod.ini',client/'sdgo/core.dll',
-                     root/f'sdgo/mods/{TARGET_MOD}/mod.ini',root/f'sdgo/mods/{TARGET_MOD}/{TARGET_MOD}.dll'):
+    required_payloads = [
+        observer/f'{TEST_MOD}.dll',
+        observer/'mod.ini',
+        client/'sdgo/core.dll',
+    ]
+    if fps_mod_enabled is None:
+        required_payloads.extend((
+            root/f'sdgo/mods/{TARGET_MOD}/mod.ini',
+            root/f'sdgo/mods/{TARGET_MOD}/{TARGET_MOD}.dll',
+        ))
+    for required in required_payloads:
         if not required.is_file():raise GameTestError(f'stage or normal client lacks required payload: {required}')
     if read_ini(observer/'mod.ini').get('mod','id',fallback='')!=TEST_MOD:
         raise GameTestError('invalid staged observer manifest')
@@ -297,31 +348,67 @@ def validate_observer_stage(root: Path, stage: Path) -> None:
     for manifest in sorted(mods.glob('*/mod.ini')):
         identifier=manifest.parent.name
         if identifier==TEST_MOD:continue
+        if fps_mod_enabled is not None and identifier==TARGET_MOD:continue
         if not (root/f'sdgo/mods/{identifier}/mod.ini').is_file():continue
         parser=read_ini(manifest)
         if identifier!=TARGET_MOD and parser.get('mod','category',fallback='')=='development':continue
         if parser.get('mod','id',fallback='')!=identifier:
             raise GameTestError(f'staged Mod identity mismatch: {identifier}')
         updated[identifier]=manifest
-    target=mods/TARGET_MOD/f'{TARGET_MOD}.dll'
-    if target.is_file() and TARGET_MOD not in updated:
-        raise GameTestError('staged production match_ai DLL requires its matching manifest')
-    if not target.is_file():updated[TARGET_MOD]=root/f'sdgo/mods/{TARGET_MOD}/mod.ini'
+    if fps_mod_enabled is None:
+        target=mods/TARGET_MOD/f'{TARGET_MOD}.dll'
+        if target.is_file() and TARGET_MOD not in updated:
+            raise GameTestError('staged production match_ai DLL requires its matching manifest')
+        if not target.is_file():updated[TARGET_MOD]=root/f'sdgo/mods/{TARGET_MOD}/mod.ini'
+    else:
+        staged_fps=mods/FPS_MOD
+        installed_fps=root/'sdgo/mods'/FPS_MOD
+        staged_manifest=staged_fps/'mod.ini'
+        staged_dll=staged_fps/f'{FPS_MOD}.dll'
+        staged_partial=staged_manifest.exists()!=staged_dll.exists()
+        if staged_partial:
+            raise GameTestError('staged fps_limit requires a matching DLL and manifest')
+        if staged_manifest.is_file():
+            if read_ini(staged_manifest).get('mod','id',fallback='')!=FPS_MOD:
+                raise GameTestError('fps_limit manifest has the wrong identity')
+            updated[FPS_MOD]=staged_manifest
+        else:
+            installed_manifest=installed_fps/'mod.ini'
+            installed_dll=installed_fps/f'{FPS_MOD}.dll'
+            if not installed_manifest.is_file() or not installed_dll.is_file():
+                raise GameTestError(
+                    'native FPS GameTest requires installed fps_limit or a staged matching DLL and manifest'
+                )
+            if read_ini(installed_manifest).get('mod','id',fallback='')!=FPS_MOD:
+                raise GameTestError('fps_limit manifest has the wrong identity')
     source=read_ini(client/f'sdgo/symbols/{HOST_KEY}.ini')
     required={'host'}
     for manifest in updated.values():required.update(manifest_requires(manifest))
-    missing=sorted(required-set(source.sections()))
-    if missing:raise GameTestError(f"stage host symbols lack required sections: {', '.join(missing)}")
     existing_path=root/f'sdgo/symbols/{HOST_KEY}.ini'
     existing=read_ini(existing_path) if existing_path.is_file() else ini_parser()
-    for manifest in (root/'sdgo/mods').glob('*/mod.ini'):
-        if manifest.parent.name not in updated:
-            missing=sorted(manifest_requires(manifest)-set(source.sections())-set(existing.sections()))
-            if missing:raise GameTestError(f"retained Mod symbols lack required sections: {', '.join(missing)}")
+    missing=sorted(
+        section for section in required
+        if section not in source.sections()
+        and not (
+            fps_mod_enabled is not None
+            and FPS_MOD not in updated
+            and section in existing.sections()
+        )
+    )
+    if missing:raise GameTestError(f"stage host symbols lack required sections: {', '.join(missing)}")
+    if fps_mod_enabled is None:
+        for manifest in (root/'sdgo/mods').glob('*/mod.ini'):
+            if manifest.parent.name not in updated:
+                missing=sorted(manifest_requires(manifest)-set(source.sections())-set(existing.sections()))
+                if missing:raise GameTestError(f"retained Mod symbols lack required sections: {', '.join(missing)}")
 
 
-def overlay_observer(root: Path, stage: Path) -> None:
-    validate_observer_stage(root,stage)
+def overlay_observer(
+    root: Path,
+    stage: Path,
+    fps_mod_enabled: bool | None = None,
+) -> None:
+    validate_observer_stage(root,stage,fps_mod_enabled)
     stage_client = stage / "client"
     observer_source = stage_client / "sdgo" / "mods" / TEST_MOD
     if not (observer_source / f"{TEST_MOD}.dll").is_file() or not (observer_source / "mod.ini").is_file():
@@ -343,36 +430,69 @@ def overlay_observer(root: Path, stage: Path) -> None:
 
     target_manifest = root / "sdgo" / "mods" / TARGET_MOD / "mod.ini"
     target_dll = root / "sdgo" / "mods" / TARGET_MOD / f"{TARGET_MOD}.dll"
-    if not target_manifest.is_file() or not target_dll.is_file():
-        raise GameTestError(
-            "normal copied client lacks match_ai; install the normal compiled target before preparing GameTest"
+    if fps_mod_enabled is None:
+        if not target_manifest.is_file() or not target_dll.is_file():
+            raise GameTestError(
+                "normal copied client lacks match_ai; install the normal compiled target before preparing GameTest"
+            )
+        staged_target_dll = (
+            stage_client / "sdgo" / "mods" / TARGET_MOD / f"{TARGET_MOD}.dll"
         )
-    staged_target_dll = (
-        stage_client / "sdgo" / "mods" / TARGET_MOD / f"{TARGET_MOD}.dll"
-    )
-    if staged_target_dll.is_file():
-        staged_target_manifest=staged_target_dll.with_name('mod.ini')
-        if not staged_target_manifest.is_file():
-            raise GameTestError('staged production match_ai DLL requires its matching manifest')
-        previous_manifest=read_ini(target_manifest)
-        current_manifest=read_ini(staged_target_manifest)
-        if current_manifest.get('mod','id',fallback='')!=TARGET_MOD:
-            raise GameTestError('staged production match_ai manifest has the wrong identity')
-        current_manifest['mod']['enabled']='1'
-        if previous_manifest.has_section('settings'):
-            if not current_manifest.has_section('settings'):current_manifest.add_section('settings')
-            for key,value in previous_manifest.items('settings',raw=True):
-                current_manifest['settings'][key]=value
-        write_ini(target_manifest,current_manifest)
-        shutil.copy2(staged_target_dll, target_dll)
+        if staged_target_dll.is_file():
+            staged_target_manifest=staged_target_dll.with_name('mod.ini')
+            if not staged_target_manifest.is_file():
+                raise GameTestError('staged production match_ai DLL requires its matching manifest')
+            previous_manifest=read_ini(target_manifest)
+            current_manifest=read_ini(staged_target_manifest)
+            if current_manifest.get('mod','id',fallback='')!=TARGET_MOD:
+                raise GameTestError('staged production match_ai manifest has the wrong identity')
+            current_manifest['mod']['enabled']='1'
+            if previous_manifest.has_section('settings'):
+                if not current_manifest.has_section('settings'):current_manifest.add_section('settings')
+                for key,value in previous_manifest.items('settings',raw=True):
+                    current_manifest['settings'][key]=value
+            write_ini(target_manifest,current_manifest)
+            shutil.copy2(staged_target_dll, target_dll)
 
     # Exercise the built master implementation of every already-installed Mod,
     # including its Lua policy, while keeping private owner settings local.
     # An unrelated installed addon without a staged counterpart is preserved.
-    updated_manifests=[observer_target/'mod.ini',target_manifest]
+    updated_manifests=[observer_target/'mod.ini']
+    if fps_mod_enabled is None:
+        updated_manifests.append(target_manifest)
+    fps_manifest = None
+    if fps_mod_enabled is not None:
+        installed_fps = root / "sdgo" / "mods" / FPS_MOD
+        staged_fps = stage_client / "sdgo" / "mods" / FPS_MOD
+        installed_complete = (
+            (installed_fps / "mod.ini").is_file()
+            and (installed_fps / f"{FPS_MOD}.dll").is_file()
+        )
+        staged_complete = (
+            (staged_fps / "mod.ini").is_file()
+            and (staged_fps / f"{FPS_MOD}.dll").is_file()
+        )
+        staged_partial = (staged_fps / "mod.ini").exists() != (staged_fps / f"{FPS_MOD}.dll").exists()
+        if staged_partial:
+            raise GameTestError("staged fps_limit requires a matching DLL and manifest")
+        if staged_complete:
+            if installed_fps.exists():
+                shutil.rmtree(installed_fps)
+            shutil.copytree(staged_fps, installed_fps)
+            installed_complete = True
+        if not installed_complete:
+            raise GameTestError(
+                "native FPS GameTest requires installed fps_limit or a staged matching DLL and manifest"
+            )
+        fps_manifest = installed_fps / "mod.ini"
+        fps_config = read_ini(fps_manifest)
+        if fps_config.get("mod", "id", fallback="") != FPS_MOD:
+            raise GameTestError("fps_limit manifest has the wrong identity")
+        fps_config["mod"]["enabled"] = "1" if fps_mod_enabled else "0"
+        write_ini(fps_manifest, fps_config)
     for staged_manifest in sorted((stage_client/'sdgo/mods').glob('*/mod.ini')):
         identifier=staged_manifest.parent.name
-        if identifier in (TEST_MOD,TARGET_MOD):continue
+        if identifier in (TEST_MOD,TARGET_MOD) or (fps_mod_enabled is not None and identifier == FPS_MOD):continue
         destination=root/'sdgo/mods'/identifier
         installed_manifest=destination/'mod.ini'
         if not installed_manifest.is_file():continue
@@ -400,9 +520,18 @@ def overlay_observer(root: Path, stage: Path) -> None:
         copied_symbols,
         updated_manifests,
     )
-    retained_manifests=[manifest for manifest in (root/'sdgo/mods').glob('*/mod.ini') if manifest not in updated_manifests]
-    merge_required_symbols(stage_symbols,copied_symbols,retained_manifests,preserve_existing=True)
-    enable_test_configuration(root)
+    if fps_manifest is not None:
+        merge_required_symbols(stage_symbols,copied_symbols,[fps_manifest],preserve_existing=True)
+    retained_manifests=[manifest for manifest in (root/'sdgo/mods').glob('*/mod.ini')
+                        if manifest not in updated_manifests and manifest != fps_manifest]
+    merge_required_symbols(
+        stage_symbols,
+        copied_symbols,
+        retained_manifests,
+        preserve_existing=True,
+        allow_missing=fps_mod_enabled is not None,
+    )
+    enable_test_configuration(root, fps_mod_enabled)
 
 
 def configure_sfx_only(root: Path) -> dict:
@@ -460,6 +589,35 @@ def configure_muted_audio(root: Path) -> dict:
         return {'audio':'muted','bgm_volume':0,'effect_volume':0,'voice_volume':0}
     except (OSError,ET.ParseError,ValueError) as error:
         raise GameTestError(f'cannot prepare a silent test client: {error}') from error
+
+
+def configure_fps_test(root: Path, fps_cap: int) -> None:
+    path = root / "config.xml"
+    try:
+        tree = ET.parse(path)
+        document = tree.getroot()
+        timer = document.find("Framework/Timer")
+        if timer is None:
+            raise ValueError("missing Framework/Timer settings")
+        timer.set("VerticalSync", "false")
+        timer.set("RenderSync", "false")
+        timer.set("updatefps", str(fps_cap))
+
+        # The copied client must stop at the login page without authenticating
+        # any saved player identity from the source template.
+        login = document.find("LoginData")
+        if login is None:
+            login = ET.SubElement(document, "LoginData")
+        last_server = login.find("LastJoinServer")
+        for child in list(login):
+            if child is not last_server:
+                login.remove(child)
+        login.attrib.clear()
+        ET.SubElement(login, "CheckLoginIdSave", {"use": "false", "id": ""})
+        ET.SubElement(login, "CheckAutoLogin", {"use": "false", "id": "", "pass": ""})
+        tree.write(path, encoding="utf-8", xml_declaration=True)
+    except (OSError, ET.ParseError, ValueError) as error:
+        raise GameTestError(f"cannot configure native FPS test client: {error}") from error
 
 
 def validate_muted_audio(root: Path) -> None:
@@ -527,7 +685,8 @@ class QuietRuntime:
         spec=importlib.util.spec_from_file_location('sdgo_game_test_windows',Path(__file__).with_name('game_test_windows.py'))
         module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
         self.process=module.WindowsBackgroundProcess(arguments,cwd=kwargs['cwd'],env=kwargs['env'],
-            stdout=kwargs['stdout'],stderr=kwargs['stderr'],run_id=self.metadata['run_id'])
+            stdout=kwargs['stdout'],stderr=kwargs['stderr'],run_id=self.metadata['run_id'],
+            allow_named_desktop_fallback=self.metadata.get('suite')==FPS_SUITE)
         return self.process
 
     def verify(self,pid: int) -> dict | None:
@@ -555,6 +714,11 @@ class QuietRuntime:
             # owned game actually took the foreground.
             raise GameTestError(f"quiet desktop observation unavailable: {proof['error']}")
         if not proof.get('foreground_safe',False):raise GameTestError('owned game attempted to take the user foreground')
+        if proof.get('verified') and proof.get('isolation_safe',True) is not True:
+            raise GameTestError('quiet desktop isolation proof is internally inconsistent')
+        if (proof.get('isolation_mode')=='private_desktop_with_hidden_default_proxy' and
+            self.metadata.get('suite')!=FPS_SUITE):
+            raise GameTestError('named-desktop fallback is restricted to the native FPS suite')
         if self.proof_file_written and (proof.get('input_desktop_unchanged') is False or
             proof.get('unexpected_input_window_count',0)>0 or
             (proof.get('input_desktop_safe') is False and proof.get('input_target_window_count',0)>0)):
@@ -1411,16 +1575,72 @@ def make_plan(
     return plan
 
 
+def make_fps_plan(
+    target_host: str,
+    login_port: int,
+    fps_cap: int,
+    fps_mod_enabled: bool,
+) -> dict:
+    if type(fps_cap) is not int or not 1 <= fps_cap <= 1000:
+        raise GameTestError("fps_cap must be between 1 and 1000")
+    if type(fps_mod_enabled) is not bool:
+        raise GameTestError("fps_mod_enabled must be boolean")
+    if not 1 <= login_port <= 65535:
+        raise GameTestError("login_port must be between 1 and 65535")
+    try:
+        host = str(ipaddress.IPv4Address(target_host))
+    except ipaddress.AddressValueError as error:
+        raise GameTestError("native FPS tests require an explicit loopback IPv4 endpoint") from error
+    if not ipaddress.IPv4Address(host).is_loopback:
+        raise GameTestError("native FPS tests require a loopback endpoint and never contact a game server")
+    return {
+        "target_host": host,
+        "login_port": login_port,
+        "network_policy": "direct",
+        "quiet": True,
+        "launcher_path": "",
+        "fps_cap": fps_cap,
+        "fps_mod_enabled": fps_mod_enabled,
+    }
+
+
+def required_plan_cases(plan: dict) -> tuple[str, ...]:
+    if "fps_cap" in plan:
+        return FPS_CASES
+    return required_cases_for_plan(plan)
+
+
 def write_job(
     root: Path,
     run_id: str,
     plan: dict,
-    account_profile: configparser.ConfigParser,
-    profile_path: Path,
+    account_profile: configparser.ConfigParser | None,
+    profile_path: Path | None,
 ) -> None:
     directory = root / "sdgo" / "gametest"
+    directory.mkdir(parents=True, exist_ok=True)
+    if "fps_cap" in plan:
+        run = ini_parser()
+        run["run"] = {
+            "id": run_id,
+            "role": "client",
+            "suite": FPS_SUITE,
+            "normal_flow": "0",
+            "endpoint": f"{plan['target_host']}:{plan['login_port']}",
+            "network_policy": "direct",
+            "quiet": "1",
+            "quiet_loopback": "1",
+            "process_entry": GAME_EXE,
+            "fps_cap": str(plan["fps_cap"]),
+            "fps_mod_enabled": "1" if plan["fps_mod_enabled"] else "0",
+            "required_cases": ",".join(FPS_CASES),
+        }
+        write_ini(directory / "run.ini", run)
+        return
+    if account_profile is None or profile_path is None:
+        raise GameTestError("normal-flow GameTest requires a private account profile")
     private = directory / "private"
-    private.mkdir(parents=True)
+    private.mkdir()
 
     account = ini_parser()
     for section in account_profile.sections():
@@ -1501,6 +1721,26 @@ def read_public_plan(root: Path) -> dict:
     parser = read_ini(root / "sdgo" / "gametest" / "run.ini")
     try:
         run = parser["run"]
+        if run.get("suite") == FPS_SUITE:
+            if (
+                run["role"] != "client"
+                or run["normal_flow"] != "0"
+                or run["process_entry"] != GAME_EXE
+                or run["network_policy"] != "direct"
+                or run["quiet"] != "1"
+                or run["quiet_loopback"] != "1"
+                or run["required_cases"] != ",".join(FPS_CASES)
+                or "account_path" in run
+            ):
+                raise ValueError("run contract does not describe the native FPS suite")
+            host, port = run["endpoint"].rsplit(":", 1)
+            plan = make_fps_plan(
+                host,
+                int(port),
+                int(run["fps_cap"]),
+                {"0": False, "1": True}[run["fps_mod_enabled"]],
+            )
+            return plan
         suite = run["suite"]
         if suite != "pvp-ai":
             raise ValueError("unknown native provider suite")
@@ -1800,6 +2040,44 @@ def validate_private_account(root: Path, plan: dict) -> Path:
     return lock_path.resolve()
 
 
+def validate_fps_prepared_client(root: Path, plan: dict) -> None:
+    try:
+        document = ET.parse(root / "config.xml").getroot()
+        timer = document.find("Framework/Timer")
+        if (
+            timer is None
+            or timer.get("updatefps") != str(plan["fps_cap"])
+            or timer.get("VerticalSync") != "false"
+            or timer.get("RenderSync") != "false"
+        ):
+            raise ValueError("Timer settings disagree with the FPS plan")
+        login = document.find("LoginData")
+        saved = login.find("CheckLoginIdSave") if login is not None else None
+        automatic = login.find("CheckAutoLogin") if login is not None else None
+        if (
+            saved is None
+            or saved.get("use") != "false"
+            or saved.get("id", "") != ""
+            or automatic is None
+            or automatic.get("use") != "false"
+            or automatic.get("id", "") != ""
+            or automatic.get("pass", "") != ""
+        ):
+            raise ValueError("saved login identity was not removed from the copied client")
+        manifest = read_ini(root / "sdgo" / "mods" / FPS_MOD / "mod.ini")
+        expected = "1" if plan["fps_mod_enabled"] else "0"
+        settings = read_ini(root / "sdgo" / "sdgo.ini")
+        if (
+            manifest.get("mod", "id", fallback="") != FPS_MOD
+            or manifest.get("mod", "enabled", fallback="") != expected
+            or settings.get("features", "fps-limit", fallback="") != expected
+            or settings.get("mods", FPS_MOD, fallback="") != expected
+        ):
+            raise ValueError("fps_limit activation disagrees with the FPS plan")
+    except (OSError, ET.ParseError, KeyError, ValueError, GameTestError) as error:
+        raise GameTestError(f"invalid prepared native FPS client: {error}") from error
+
+
 def collect_hashes(root: Path) -> tuple[dict, dict]:
     immutable: dict[str, str] = {}
     initial: dict[str, str] = {}
@@ -1912,31 +2190,64 @@ def prepare(
     route_profile: Path | None = None,
     quiet: bool = True,
     asset_baseline: Path | None = None,
+    fps_cap: int | None = None,
+    fps_mod_enabled: bool = True,
     _owned_client_transfer: tuple[Path, str] | None = None,
 ) -> dict:
     client_template = client_template.resolve()
-    play_unit_uid = validate_play_unit_uid(play_unit_uid)
-    mission_mode = validate_mission_mode(mission_mode)
-    if play_unit_uid is not None and create_test_account:
-        raise GameTestError('--play-unit-uid requires an existing account and cannot create a test account')
-    if mission_mode is not None and create_test_account:
-        raise GameTestError('--mission-mode requires an existing account and cannot create a test account')
-    if (shop_assertions is None) != (shop_display is None):
-        raise GameTestError('--shop-assertions and --shop-display must be provided together')
+    fps_only = fps_cap is not None
+    if fps_only:
+        if not quiet or sfx_only:
+            raise GameTestError("native FPS tests are always background and silent")
+        if network_policy != "direct":
+            raise GameTestError("native FPS tests require the quiet loopback network policy")
+        if account_profile is not None or create_test_account:
+            raise GameTestError("native FPS tests do not read or create an account profile")
+        if launcher_path:
+            raise GameTestError("native FPS tests start only the copied GOnline.exe")
+        if (
+            any((
+                bootstrap_only, battleship_only, gift_requests_only, deck_only,
+                pages_only, collection_draw, random_loadout,
+            ))
+            or play_unit_uid is not None
+            or mission_mode is not None
+            or shop_assertions is not None
+            or shop_display is not None
+            or mode_sequence != "1"
+            or retry_count is not None
+            or expect_first_fail is not None
+            or expected_ai != 3
+        ):
+            raise GameTestError("native FPS tests cannot request an authenticated account flow")
+    elif fps_mod_enabled is not True:
+        raise GameTestError("fps_mod_enabled is valid only with fps_cap")
     shop_binding = None
-    if shop_assertions is not None:
-        if not pages_only:
-            raise GameTestError('shop catalog assertions require --pages-only')
-        shop_assertions = shop_assertions.expanduser().resolve()
-        shop_display = shop_display.expanduser().resolve()
-        shop_binding = load_shop_test_inputs(shop_assertions, shop_display)
-    required_flow_cases(mode_sequence,bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,
-                        collection_draw,play_unit_uid,mission_mode,shop_binding is not None)
-    if mission_mode is not None:
-        if random_loadout:
-            raise GameTestError('--mission-mode cannot be combined with the PvP random-loadout scope')
-        if expected_ai != 3:
-            raise GameTestError('--expected-ai is a PvP setting and cannot change a mission smoke plan')
+    if not fps_only:
+        play_unit_uid = validate_play_unit_uid(play_unit_uid)
+        mission_mode = validate_mission_mode(mission_mode)
+        if play_unit_uid is not None and create_test_account:
+            raise GameTestError('--play-unit-uid requires an existing account and cannot create a test account')
+        if mission_mode is not None and create_test_account:
+            raise GameTestError('--mission-mode requires an existing account and cannot create a test account')
+        if (shop_assertions is None) != (shop_display is None):
+            raise GameTestError('--shop-assertions and --shop-display must be provided together')
+        if shop_assertions is not None:
+            if not pages_only:
+                raise GameTestError('shop catalog assertions require --pages-only')
+            shop_assertions = shop_assertions.expanduser().resolve()
+            shop_display = shop_display.expanduser().resolve()
+            shop_binding = load_shop_test_inputs(shop_assertions, shop_display)
+        required_flow_cases(
+            mode_sequence, bootstrap_only, battleship_only, gift_requests_only,
+            deck_only, pages_only, collection_draw, play_unit_uid, mission_mode,
+            shop_binding is not None,
+        )
+        if mission_mode is not None:
+            if random_loadout:
+                raise GameTestError('--mission-mode cannot be combined with the PvP random-loadout scope')
+            if expected_ai != 3:
+                raise GameTestError('--expected-ai is a PvP setting and cannot change a mission smoke plan')
     if quiet and sfx_only:raise GameTestError('SFX capture requires explicit --visible; ordinary tests are background and silent')
     if quiet:
         try:ipaddress.IPv4Address(target_host)
@@ -1985,72 +2296,91 @@ def prepare(
         raise GameTestError(f"run directory already exists: {run_dir}")
     if is_relative_to(run_dir, client_template):
         raise GameTestError("run directory cannot be inside the client template")
-    validate_observer_stage(_owned_client_transfer[0]/'client' if _owned_client_transfer else client_template,stage)
-
-    profile_path = (account_profile or default_account_profile()).expanduser().resolve()
-    if create_test_account:
-        resolved_retry_count = 2 if retry_count is None else retry_count
-        resolved_expect_first_fail = True if expect_first_fail is None else expect_first_fail
-        if resolved_retry_count != 2 or not resolved_expect_first_fail:
-            raise GameTestError(
-                "--create-test-account requires retry_count=2 and expect_first_fail=true"
-            )
-        profile = create_account_profile(profile_path)
-    else:
-        profile = load_account_profile(profile_path)
-        registration_state = profile.get(
-            "registration", "state", fallback=""
-        ).strip()
-        pending_first_login = registration_state == "pending_first_login"
-        default_retry_count = 2 if pending_first_login else 1
-        resolved_retry_count = default_retry_count if retry_count is None else retry_count
-        resolved_expect_first_fail = False if expect_first_fail is None else expect_first_fail
-        if registration_state in MISSION_EXISTING_ACCOUNT_STATES and (
-            resolved_retry_count != 1 or resolved_expect_first_fail
-        ):
-            raise GameTestError('registered accounts cannot use registration retries')
-        if play_unit_uid is not None and pending_first_login:
-            raise GameTestError('--play-unit-uid requires an already registered account profile')
-        if mission_mode is not None:
-            if registration_state not in MISSION_EXISTING_ACCOUNT_STATES:
-                raise GameTestError(
-                    '--mission-mode requires a registered or explicitly imported existing account profile'
-                )
-            if resolved_retry_count != 1 or resolved_expect_first_fail:
-                raise GameTestError('--mission-mode forbids registration retry behavior')
-
-    if deck_only:
-        validate_deck_profile(profile)
-    plan = make_plan(
-        target_host,
-        login_port,
-        target_server,
-        target_channel,
-        mode_sequence,
-        resolved_retry_count,
-        resolved_expect_first_fail,
-        expected_ai,
-        launcher_path,
-        play_unit_uid,
-        mission_mode,
+    validate_observer_stage(
+        _owned_client_transfer[0]/'client' if _owned_client_transfer else client_template,
+        stage,
+        fps_mod_enabled if fps_only else None,
     )
-    if random_loadout and any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,mission_mode is not None)):
-        raise GameTestError('random loadout requires a real PvP scenario')
-    if random_loadout:
-        # Keep the real title within the native twenty-byte limit. The run
-        # UUID still owns all receipts; this four-hex nonce has the same
-        # sixteen random bits as the ordinary gt-prefixed nonce.
-        plan['title_nonce']=secrets.token_hex(2)
-        plan['room_title']=f"{plan['title_nonce']} !ai e{(expected_ai+1)//2} a{expected_ai//2} !rand"
-        plan['random_loadout']=True
-    plan['network_policy']=network_policy
-    if route_binding is not None:
-        plan.update(route_binding)
-    if shop_binding is not None:
-        plan.update(shop_binding)
-    plan['quiet']=quiet
-    for flag,value in (('bootstrap_only',bootstrap_only),('battleship_only',battleship_only),('gift_requests_only',gift_requests_only),('deck_only',deck_only),('pages_only',pages_only),('collection_draw',collection_draw)):
-        if value:plan[flag] = True
+
+    profile_path = None
+    profile = None
+    if fps_only:
+        plan = make_fps_plan(target_host,login_port,fps_cap,fps_mod_enabled)
+    else:
+        profile_path = (account_profile or default_account_profile()).expanduser().resolve()
+        if create_test_account:
+            resolved_retry_count = 2 if retry_count is None else retry_count
+            resolved_expect_first_fail = True if expect_first_fail is None else expect_first_fail
+            if resolved_retry_count != 2 or not resolved_expect_first_fail:
+                raise GameTestError(
+                    "--create-test-account requires retry_count=2 and expect_first_fail=true"
+                )
+            profile = create_account_profile(profile_path)
+        else:
+            profile = load_account_profile(profile_path)
+            registration_state = profile.get(
+                "registration", "state", fallback=""
+            ).strip()
+            pending_first_login = registration_state == "pending_first_login"
+            default_retry_count = 2 if pending_first_login else 1
+            resolved_retry_count = default_retry_count if retry_count is None else retry_count
+            resolved_expect_first_fail = False if expect_first_fail is None else expect_first_fail
+            if registration_state in MISSION_EXISTING_ACCOUNT_STATES and (
+                resolved_retry_count != 1 or resolved_expect_first_fail
+            ):
+                raise GameTestError('registered accounts cannot use registration retries')
+            if play_unit_uid is not None and pending_first_login:
+                raise GameTestError('--play-unit-uid requires an already registered account profile')
+            if mission_mode is not None:
+                if registration_state not in MISSION_EXISTING_ACCOUNT_STATES:
+                    raise GameTestError(
+                        '--mission-mode requires a registered or explicitly imported existing account profile'
+                    )
+                if resolved_retry_count != 1 or resolved_expect_first_fail:
+                    raise GameTestError('--mission-mode forbids registration retry behavior')
+
+        if deck_only:
+            validate_deck_profile(profile)
+        plan = make_plan(
+            target_host,
+            login_port,
+            target_server,
+            target_channel,
+            mode_sequence,
+            resolved_retry_count,
+            resolved_expect_first_fail,
+            expected_ai,
+            launcher_path,
+            play_unit_uid,
+            mission_mode,
+        )
+        if random_loadout and any((
+            bootstrap_only, battleship_only, gift_requests_only, deck_only,
+            pages_only, mission_mode is not None,
+        )):
+            raise GameTestError('random loadout requires a real PvP scenario')
+        if random_loadout:
+            # Keep the real title within the native twenty-byte limit. The run
+            # UUID still owns all receipts; this four-hex nonce has the same
+            # sixteen random bits as the ordinary gt-prefixed nonce.
+            plan['title_nonce']=secrets.token_hex(2)
+            plan['room_title']=f"{plan['title_nonce']} !ai e{(expected_ai+1)//2} a{expected_ai//2} !rand"
+            plan['random_loadout']=True
+        plan['network_policy']=network_policy
+        if route_binding is not None:
+            plan.update(route_binding)
+        if shop_binding is not None:
+            plan.update(shop_binding)
+        plan['quiet']=quiet
+        for flag,value in (
+            ('bootstrap_only',bootstrap_only),
+            ('battleship_only',battleship_only),
+            ('gift_requests_only',gift_requests_only),
+            ('deck_only',deck_only),
+            ('pages_only',pages_only),
+            ('collection_draw',collection_draw),
+        ):
+            if value:plan[flag] = True
     run_dir.parent.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex
     preparing = run_dir.parent / f".gametest-preparing-{token}"
@@ -2083,7 +2413,7 @@ def prepare(
             os.replace(holding/'client',client)
             recycle_owned_artifact(client/'sdgo/gametest',preparing)
             recycle_owned_artifact(client/'sdgo/mods'/TEST_MOD,preparing)
-        overlay_observer(client, stage)
+        overlay_observer(client, stage, fps_mod_enabled if fps_only else None)
         installed_route = configure_test_network(
             client,
             network_policy,
@@ -2103,6 +2433,7 @@ def prepare(
                 raise GameTestError('installed shop inputs differ from their sealed source bytes')
         recording = configure_sfx_only(client) if sfx_only else None
         if quiet:configure_muted_audio(client)
+        if fps_only:configure_fps_test(client, fps_cap)
         write_job(client, run_id, plan, profile, profile_path)
 
         entry = client / (launcher_path or GAME_EXE)
@@ -2113,7 +2444,7 @@ def prepare(
         metadata = {
             "schema": SCHEMA_VERSION,
             "run_id": run_id,
-            "suite": metadata_suite_for_plan(plan),
+            "suite": FPS_SUITE if fps_only else metadata_suite_for_plan(plan),
             "status": "prepared",
             "created_utc": utc_now(),
             "source": {
@@ -2304,59 +2635,78 @@ def validate_metadata(run_dir: Path) -> dict:
     public_run = read_ini(root / "sdgo" / "gametest" / "run.ini")["run"]
     if public_run.get("id") != run_id:
         raise GameTestError("run.json run_id disagrees with run.ini")
-    expected_suite = metadata_suite_for_plan(public_plan)
+    fps_only = "fps_cap" in public_plan
+    expected_suite = FPS_SUITE if fps_only else metadata_suite_for_plan(public_plan)
     if metadata.get("suite") != expected_suite:
         raise GameTestError("run.json suite disagrees with the sealed normal-flow plan")
-    if "mission_mode" in public_plan:
-        forbidden = {
-            "mode_sequence", "expected_ai", "bootstrap_only",
-            "battleship_only", "gift_requests_only", "deck_only",
-            "pages_only", "collection_draw", "random_loadout",
-        }
-        if forbidden.intersection(plan):
-            raise GameTestError("run.json adds PvP, pages, or preparation scope to a mission smoke")
+
+    public_shop_fields = set()
+    if fps_only:
         if set(plan) != set(public_plan):
-            raise GameTestError("run.json mission plan fields disagree with the sealed public plan")
-        for key, value in public_plan.items():
-            if type(plan[key]) is not type(value) or plan[key] != value:
-                raise GameTestError(f"run.json mission plan disagrees with run.ini for {key}")
-    elif any(field in plan for field in (
-        "mission_mode", "mission_scope", "mission_ai_count",
-        "mission_ai_level", *MISSION_CLAIM_FIELDS,
-    )):
-        raise GameTestError("run.json cannot add mission scope to a non-mission plan")
-    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','collection_draw','random_loadout'):
-        if (type(plan.get(flag, False)) is not bool or plan.get(flag, False) != public_plan.get(flag, False)):
-            raise GameTestError('run.json cannot change the required bootstrap or battle scope')
-    if 'play_unit_uid' in plan:
-        validate_play_unit_uid(plan['play_unit_uid'])
-    if ('play_unit_uid' in plan) != ('play_unit_uid' in public_plan):
-        raise GameTestError('run.json cannot add or remove the configured owned unit UID')
-    unknown_plan_shop_fields = {
-        field for field in plan if field.startswith("shop_")
-    } - set(SHOP_PLAN_FIELDS)
-    if unknown_plan_shop_fields:
-        raise GameTestError('run.json contains unknown shop GameTest fields')
-    plan_shop_fields = {field for field in SHOP_PLAN_FIELDS if field in plan}
-    public_shop_fields = {field for field in SHOP_PLAN_FIELDS if field in public_plan}
-    if plan_shop_fields not in (set(), set(SHOP_PLAN_FIELDS)):
-        raise GameTestError('run.json has a partial shop GameTest input plan')
-    if plan_shop_fields != public_shop_fields:
-        raise GameTestError('run.json cannot add or remove shop GameTest inputs')
+            raise GameTestError("run.json adds fields outside the native FPS plan")
+    else:
+        if "mission_mode" in public_plan:
+            forbidden = {
+                "mode_sequence", "expected_ai", "bootstrap_only",
+                "battleship_only", "gift_requests_only", "deck_only",
+                "pages_only", "collection_draw", "random_loadout",
+            }
+            if forbidden.intersection(plan):
+                raise GameTestError("run.json adds PvP, pages, or preparation scope to a mission smoke")
+            if set(plan) != set(public_plan):
+                raise GameTestError("run.json mission plan fields disagree with the sealed public plan")
+            for key, value in public_plan.items():
+                if type(plan[key]) is not type(value) or plan[key] != value:
+                    raise GameTestError(f"run.json mission plan disagrees with run.ini for {key}")
+        elif any(field in plan for field in (
+            "mission_mode", "mission_scope", "mission_ai_count",
+            "mission_ai_level", *MISSION_CLAIM_FIELDS,
+        )):
+            raise GameTestError("run.json cannot add mission scope to a non-mission plan")
+        for flag in (
+            'bootstrap_only','battleship_only','gift_requests_only','deck_only',
+            'pages_only','collection_draw','random_loadout',
+        ):
+            if (
+                type(plan.get(flag, False)) is not bool
+                or plan.get(flag, False) != public_plan.get(flag, False)
+            ):
+                raise GameTestError('run.json cannot change the required bootstrap or battle scope')
+        if 'play_unit_uid' in plan:
+            validate_play_unit_uid(plan['play_unit_uid'])
+        if ('play_unit_uid' in plan) != ('play_unit_uid' in public_plan):
+            raise GameTestError('run.json cannot add or remove the configured owned unit UID')
+        unknown_plan_shop_fields = {
+            field for field in plan if field.startswith("shop_")
+        } - set(SHOP_PLAN_FIELDS)
+        if unknown_plan_shop_fields:
+            raise GameTestError('run.json contains unknown shop GameTest fields')
+        plan_shop_fields = {field for field in SHOP_PLAN_FIELDS if field in plan}
+        public_shop_fields = {field for field in SHOP_PLAN_FIELDS if field in public_plan}
+        if plan_shop_fields not in (set(), set(SHOP_PLAN_FIELDS)):
+            raise GameTestError('run.json has a partial shop GameTest input plan')
+        if plan_shop_fields != public_shop_fields:
+            raise GameTestError('run.json cannot add or remove shop GameTest inputs')
     for key, value in public_plan.items():
         if plan.get(key) != value:
             raise GameTestError(f"run.json plan disagrees with run.ini for {key}")
-    if public_shop_fields:
-        if not plan.get('pages_only'):
-            raise GameTestError('shop GameTest inputs require the native pages suite')
-        validate_shop_test_install(root, plan)
-    if plan.get('network_policy') == ROUTED_LOOPBACK_POLICY:
-        validate_routed_loopback_install(root, plan)
+    if not fps_only:
+        if public_shop_fields:
+            if not plan.get('pages_only'):
+                raise GameTestError('shop GameTest inputs require the native pages suite')
+            validate_shop_test_install(root, plan)
+        if plan.get('network_policy') == ROUTED_LOOPBACK_POLICY:
+            validate_routed_loopback_install(root, plan)
     expected_launcher = plan.get("launcher_path", "")
     expected_entry = (root / (expected_launcher or GAME_EXE)).resolve()
     if entry != expected_entry or not is_relative_to(expected_entry, root):
         raise GameTestError("run.json entry disagrees with its normal-flow plan")
-    validate_private_account(root, plan)
+    if fps_only:
+        if (root / "sdgo" / "gametest" / "private" / "account.ini").exists():
+            raise GameTestError("native FPS GameTest unexpectedly contains a private account")
+        validate_fps_prepared_client(root, plan)
+    else:
+        validate_private_account(root, plan)
     return metadata
 
 
@@ -2619,9 +2969,12 @@ def spawn_entry(metadata: dict, receipt_dir: Path, quiet_runtime=None):
     environment["SDGO_GAME_TEST_PLAN"] = str(
         Path(client["root"]) / "sdgo" / "gametest" / "run.ini"
     )
-    environment["SDGO_GAME_TEST_ACCOUNT"] = str(
-        Path(client["root"]) / "sdgo" / "gametest" / "private" / "account.ini"
-    )
+    if "fps_cap" not in plan:
+        environment["SDGO_GAME_TEST_ACCOUNT"] = str(
+            Path(client["root"]) / "sdgo" / "gametest" / "private" / "account.ini"
+        )
+    else:
+        environment.pop("SDGO_GAME_TEST_ACCOUNT", None)
     environment["__COMPAT_LAYER"] = "RunAsInvoker"
     stdout = (receipt_dir / "client.stdout.log").open("wb")
     stderr = (receipt_dir / "client.stderr.log").open("wb")
@@ -2674,9 +3027,10 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
     started = utc_now()
     try:
         receipt_dir.mkdir(exist_ok=True)
-        account_lock, account_token = acquire_account_lock(
-            Path(metadata["client"]["root"]), metadata["plan"]
-        )
+        if "fps_cap" not in metadata["plan"]:
+            account_lock, account_token = acquire_account_lock(
+                Path(metadata["client"]["root"]), metadata["plan"]
+            )
         if metadata['plan'].get('quiet'):
             quiet_runtime=QuietRuntime(metadata,receipt_dir)
             quiet_runtime.start()
@@ -2744,7 +3098,9 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
                     if proof and not metadata['execution'].get('quiet_verified'):
                         metadata['execution']['quiet_verified']=proof
                         atomic_write(run_dir/'run.json',json.dumps(metadata,indent=2,sort_keys=True))
-                if metadata['plan'].get('network_policy') in ('direct', ROUTED_LOOPBACK_POLICY) and not metadata['execution'].get('network_verified'):
+                if ("fps_cap" not in metadata["plan"] and
+                    metadata['plan'].get('network_policy') in ('direct', ROUTED_LOOPBACK_POLICY) and
+                    not metadata['execution'].get('network_verified')):
                     proof=verify_login_peer(metadata,game_process['pid'])
                     if proof:
                         metadata['execution']['network_verified']=proof
@@ -3085,7 +3441,9 @@ def build_report(run_dir: Path) -> dict:
                             if 'game_test_client: native exception ' in line]
                     if faults:launch_errors.append(faults[-1])
     launch_status = "fail" if launch_errors else ("pending" if launch_pending else "pass")
-    if execution is not None and execution.get('status')=='completed' and metadata['plan'].get('network_policy') in ('direct', ROUTED_LOOPBACK_POLICY):
+    if (execution is not None and execution.get('status')=='completed' and
+        "fps_cap" not in metadata["plan"] and
+        metadata['plan'].get('network_policy') in ('direct', ROUTED_LOOPBACK_POLICY)):
         proof=execution.get('network_verified',{})
         policy=metadata['plan'].get('network_policy')
         expected_ip=(metadata['plan']['physical_login_ipv4'] if policy==ROUTED_LOOPBACK_POLICY
@@ -3116,7 +3474,7 @@ def build_report(run_dir: Path) -> dict:
             launch_errors.append('quiet desktop, muted audio, scoped firewall and cleanup evidence are incomplete')
             launch_status='fail'
 
-    required_cases = required_cases_for_plan(metadata["plan"])
+    required_cases = required_plan_cases(metadata["plan"])
     native = evaluate_events(
         Path(metadata["client"]["events"]),
         metadata["run_id"],
@@ -3245,6 +3603,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--asset-baseline',type=Path,help='reuse verified read-only native archives from a passed owned build run; never links original player files')
     prepare_parser.add_argument('--reuse-client',action='store_true',help='reuse the stopped owned run-dir client in place with a fresh run UUID and compact prior receipt; no full client copy')
     prepare_parser.add_argument(
+        "--fps-cap",
+        type=int,
+        help="prepare the unauthenticated native FPS cap/cadence suite at 1..1000 FPS",
+    )
+    prepare_parser.add_argument(
+        "--fps-mod-disabled",
+        action="store_true",
+        help="for --fps-cap, disable fps_limit and verify the native 60 FPS baseline",
+    )
+    prepare_parser.add_argument(
         "--expect-first-fail",
         action=argparse.BooleanOptionalAction,
         default=None,
@@ -3310,6 +3678,8 @@ def main(argv: list[str] | None = None) -> int:
                 route_profile=args.route_profile,
                 quiet=not args.visible,
                 asset_baseline=args.asset_baseline,
+                fps_cap=args.fps_cap,
+                fps_mod_enabled=not args.fps_mod_disabled,
             )
         elif args.command == "run":
             result = run_prepared(args.run_dir, args.timeout, args.launch_timeout)

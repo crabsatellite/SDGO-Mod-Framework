@@ -25,6 +25,7 @@
 #include "tutorial_actions.h"
 #include "onboarding_actions.h"
 #include "onboarding_gate.h"
+#include "fps_test_actions.h"
 #include "sdgo/pvp_ai_client_observer.h"
 #include <cwchar>
 
@@ -80,6 +81,10 @@ bool expectFirstFailure = false;
 bool passwordIsMd5 = false;
 bool importedExistingAccount = false;
 bool bootstrapOnly = false;
+bool fpsOnly = false;
+int fpsRequested = 60;
+bool fpsModEnabled = true;
+FpsTestActions fpsActions;
 bool verifyDirectNetwork = false;
 bool verifyRoutedNetwork = false;
 bool verifyQuietRuntime = false;
@@ -124,6 +129,17 @@ bool LoadPlan() {
     verifyDirectNetwork = !wcscmp(networkPolicy,L"direct") || verifyRoutedNetwork;
     verifyQuietRuntime=GetPrivateProfileIntW(L"run",L"quiet",0,job.c_str())!=0;
     quietLoopback=verifyQuietRuntime && GetPrivateProfileIntW(L"run",L"quiet_loopback",0,job.c_str())==1;
+    fpsOnly=sdgo_test::suiteId=="native-fps-limit";
+    if (fpsOnly) {
+        fpsRequested=GetPrivateProfileIntW(L"run",L"fps_cap",0,job.c_str());
+        const int enabled=GetPrivateProfileIntW(L"run",L"fps_mod_enabled",-1,job.c_str());
+        fpsModEnabled=enabled==1;
+        // The FPS-only suite stops on the real login page. No account file,
+        // credentials or authentication binding is required. The native client
+        // still performs its ordinary transport connection to the backend.
+        verifyDirectNetwork=false;
+        return verifyQuietRuntime && fpsRequested>=1 && fpsRequested<=1000 && (enabled==0 || enabled==1);
+    }
     bootstrapOnly = GetPrivateProfileIntW(L"run", L"bootstrap_only", 0, job.c_str()) != 0;
     battleshipOnly = GetPrivateProfileIntW(L"run", L"battleship_only", 0, job.c_str()) != 0;
     giftRequestsOnly = GetPrivateProfileIntW(L"run", L"gift_requests_only", 0, job.c_str()) != 0;
@@ -250,7 +266,7 @@ bool LoadPlan() {
 }
 
 int __cdecl Bootstrap(const SdgoGameTestContextV1* context) {
-    const uint32_t state = actions.AppState();
+    const uint32_t state = fpsOnly ? fpsActions.State():actions.AppState();
     if (state == UINT32_MAX || state < 4) return SDGO_GAME_TEST_WAIT;
     if (verifyQuietRuntime) {
         const auto file=sdgo_test::directory+L"\\quiet-verified.ini";
@@ -1378,10 +1394,28 @@ const SdgoGameTestCaseV1 realCases[] = {
     {"pvp.ai_spawn", 60000, &AiSpawn},
     {"pvp.return", 600000, &Return},
 };
+int __cdecl FpsCap(const SdgoGameTestContextV1* context) {
+    const auto graphics=quietGraphics.State();
+    return fpsActions.Cap(context,graphics.present_qpc_frequency,
+        graphics.successful_present_min_gap_ticks,graphics.successful_present_max_gap_ticks);
+}
+int __cdecl FpsCadence(const SdgoGameTestContextV1* context) {
+    const auto graphics=quietGraphics.State();
+    return fpsActions.Cadence(context,graphics.successful_presents,graphics.present_qpc_frequency,
+        graphics.successful_present_min_gap_ticks,graphics.successful_present_max_gap_ticks);
+}
+const SdgoGameTestCaseV1 fpsCases[]={
+    {"framework.bootstrap",60000,&Bootstrap},
+    {"fps.native_cap",10000,&FpsCap},
+    {"fps.native_cadence",150000,&FpsCadence},
+};
 SdgoGameTestProviderV1 provider{sizeof(provider), SDGO_GAME_TEST_VERSION, "pvp-ai", "client", 7, realCases};
 std::vector<std::string> caseNames;
 std::vector<SdgoGameTestCaseV1> plannedCases;
 void RegisterPlannedCases() {
+    if (fpsOnly) {
+        provider.suite="native-fps-limit";provider.count=3;provider.cases=fpsCases;return;
+    }
     if(missionMode) {
         plannedCases.assign(realCases,realCases+3);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
@@ -1464,14 +1498,19 @@ void PublishQuietSocketReceipt(bool force) {
     fprintf(file,"[run]\nid=%s\n[policy]\npid=%lu\nactive=%u\nloopback_only=%u\n[sockets]\nbinds=%u\nredirected=%u\nfailed=%u\nescaped=%u\n[audio]\nactive=%u\nopened=%u\nmuted=%u\nfailed=%u\n",
         sdgo_test::runId.c_str(),GetCurrentProcessId(),observed.active,quietLoopback ? 1u:0u,observed.binds,observed.redirected,observed.failed,observed.escaped,
         audio.active,audio.opened,audio.muted,audio.failed);
-    fprintf(file,"[graphics]\nactive=%u\nworker_ready=%u\ndispatch_failures=%u\ncreated_devices=%u\nfailed_devices=%u\ncreate_hresult=%ld\npresents=%u\nproxy_hwnd=%lu\nproxy_visible=%u\nproxy_noactivate=%u\nproxy_toolwindow=%u\nproxy_appwindow=%u\n",
+    fprintf(file,"[graphics]\nactive=%u\nworker_ready=%u\ndispatch_failures=%u\ncreated_devices=%u\nfailed_devices=%u\ncreate_hresult=%ld\npresents=%u\nsuccessful_presents=%u\npresent_qpc_frequency=%llu\nsuccessful_present_min_gap_ticks=%llu\nsuccessful_present_max_gap_ticks=%llu\nproxy_hwnd=%lu\nproxy_visible=%u\nproxy_noactivate=%u\nproxy_toolwindow=%u\nproxy_appwindow=%u\n",
         graphics.active,graphics.worker_ready,graphics.dispatch_failures,graphics.created_devices,graphics.failed_devices,
-        static_cast<long>(graphics.last_create_hresult),graphics.presents,reinterpret_cast<unsigned long>(graphics.proxy_hwnd),
+        static_cast<long>(graphics.last_create_hresult),graphics.presents,graphics.successful_presents,
+        static_cast<unsigned long long>(graphics.present_qpc_frequency),
+        static_cast<unsigned long long>(graphics.successful_present_min_gap_ticks),
+        static_cast<unsigned long long>(graphics.successful_present_max_gap_ticks),
+        reinterpret_cast<unsigned long>(graphics.proxy_hwnd),
         graphics.proxy_visible,graphics.proxy_noactivate,graphics.proxy_toolwindow,graphics.proxy_appwindow);
     fprintf(file,"ime_disabled=%u\nrequested_width=%u\nrequested_height=%u\nclient_width=%u\nclient_height=%u\nresolved_width=%u\nresolved_height=%u\nactual_width=%u\nactual_height=%u\nbackbuffer_hresult=%ld\ncooperative_checks=%u\ncooperative_hresult=%ld\n",
         graphics.ime_disabled,graphics.last_requested_width,graphics.last_requested_height,graphics.last_client_width,graphics.last_client_height,
         graphics.last_resolved_width,graphics.last_resolved_height,graphics.last_actual_width,graphics.last_actual_height,
         static_cast<long>(graphics.last_backbuffer_hresult),graphics.cooperative_checks,static_cast<long>(graphics.last_cooperative_hresult));
+    fprintf(file,"named_desktop_fallback=%u\n",graphics.named_desktop_fallback);
     fprintf(file,"texture_calls=%u\ntexture_failures=%u\nrender_target_calls=%u\nrender_target_failures=%u\nrender_target_null=%u\nlast_rt_width=%u\nlast_rt_height=%u\nlast_rt_format=%u\nlast_rt_usage=%u\nlast_rt_hresult=%ld\nlast_rt_return_address=%lu\n",
         graphics.texture_calls,graphics.texture_failures,graphics.render_target_texture_calls,graphics.render_target_texture_failures,
         graphics.render_target_texture_null_results,graphics.last_render_target_width,graphics.last_render_target_height,
@@ -1578,6 +1617,9 @@ SDGO_MOD_ENTRY {
     // actual map and participants remain provided by the server.
     if (!loaded) sdgo_test::Fail("invalid private account or native scenario configuration");
     RegisterPlannedCases();
+    if (fpsOnly) {
+        if (!fpsActions.Bind(api,mod,fpsRequested,fpsModEnabled))sdgo_test::Fail("native FPS readback binding is unavailable");
+    } else {
     const NativeActions::Config config{
         accountName,
         accountPassword,
@@ -1616,12 +1658,13 @@ SDGO_MOD_ENTRY {
         getMissionSnapshot=reinterpret_cast<SdgoMissionAiClientGetSnapshotV1Fn>(GetProcAddress(GetModuleHandleW(L"mission_ai.dll"),SDGO_MISSION_AI_CLIENT_SNAPSHOT_EXPORT));
         if(!getMissionSnapshot)sdgo_test::Fail("production native mission observation export is unavailable");
     }
+    } // normal authenticated scenarios
     if (!AddVectoredExceptionHandler(1, &NativeFault)) return 0;
     if (!api->HookImport(mod, "user32.dll", "FindWindowW", reinterpret_cast<void*>(&FindOwnInstance), reinterpret_cast<void**>(&originalFindWindow)) ||
         !api->HookCode(mod, "test.client_update", reinterpret_cast<void*>(&Update), reinterpret_cast<void**>(&originalUpdate)))
         return 0;
-    if (verifyQuietRuntime && !quietGraphics.Install(api,mod))return 0;
+    if (verifyQuietRuntime && !quietGraphics.Install(api,mod,fpsOnly))return 0;
     PublishQuietSocketReceipt();
-    api->Log(mod, SDGO_LOG_INFO, "observing normal launcher/login/room/battle flow");
+    api->Log(mod, SDGO_LOG_INFO, fpsOnly ? "observing native FPS cap and cadence without authentication":"observing normal launcher/login/room/battle flow");
     return 1;
 }
