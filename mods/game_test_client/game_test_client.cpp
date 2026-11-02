@@ -31,6 +31,7 @@
 #include "scoreboard_actions.h"
 #include "battle_ai_behavior_probe.h"
 #include "native_death_probe.h"
+#include "sealed_room_title.h"
 #include <cwchar>
 
 namespace {
@@ -266,6 +267,7 @@ bool LoadPlan() {
         const std::wstring expectedTitle(roomTitle,roomTitle+strlen(roomTitle));
         if(expectedTitle!=actualTitle)return false;
     }
+    if (!missionMode && !ReadSealedRoomTitle(job,roomTitle)) return false;
     retryCount = static_cast<unsigned>(GetPrivateProfileIntW(L"run", L"retry_count", 1, job.c_str()));
     if (retryCount < 1 || retryCount > 2) return false;
     expectFirstFailure = GetPrivateProfileIntW(L"run", L"expect_first_fail", 0, job.c_str()) != 0;
@@ -653,7 +655,14 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
     if (!context->tick) motionSamples.clear();
     if (!Snapshot(snapshot) || snapshot.native_app_state != 22) return SDGO_GAME_TEST_WAIT;
     scoreboardInput.Hold(true);
-    const int transformProbe = apsalus_probe::Poll(context, sdgo_test::api, sdgo_test::mod);
+    if (sdgo_test::api->SettingInt(sdgo_test::mod, "ApsalusRoundtrip", 0)) {
+        SdgoPvpAiClientStartStatusV1 control{};
+        control.size=sizeof(control);control.version=SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
+        if (!getStartStatus || !getStartStatus(&control) ||
+            control.battle_start_sequence!=activeBattleStartSequence || !control.player_control_enabled)
+            return SDGO_GAME_TEST_WAIT;
+    }
+    const int transformProbe = apsalus_probe::Poll(context, sdgo_test::api, sdgo_test::mod, scoreboardInput);
     if (transformProbe != SDGO_GAME_TEST_PASS) return transformProbe;
     bool ready = snapshot.bot_count == expectedAi;
     unsigned allies = 0, enemies = 0, moved = 0;
