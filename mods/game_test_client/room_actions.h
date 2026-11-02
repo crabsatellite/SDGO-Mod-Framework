@@ -516,6 +516,9 @@ public:
         } __except(EXCEPTION_EXECUTE_HANDLER) {return -5;}
     }
 
+    uint32_t NativeStartReplySequence() const {return static_cast<uint32_t>(InterlockedCompareExchange(&startReplySequence_,0,0));}
+    uint16_t NativeStartReplyError() const {return static_cast<uint16_t>(InterlockedCompareExchange(&startReplyError_,0,0));}
+
     // The 3D UI queues the local pilot's MyLeaveRoom command through its
     // original Main-state business routine. Merely sending its request leaves
     // the registered reply consumer outside stage 2 and cannot leave the room.
@@ -1148,6 +1151,14 @@ private:
         if (!actions || !actions->waitRoomAlwaysDispatch_)
             return;
 
+        if((opcode&0xffff)==0x07b5 && packet) {
+            __try {
+                const uint16_t startError=*reinterpret_cast<const uint16_t*>(static_cast<const uint8_t*>(packet)+6);
+                InterlockedExchange(&actions->startReplyError_,startError);
+                InterlockedIncrement(&actions->startReplySequence_);
+                actions->api_->Log(actions->mod_,SDGO_LOG_INFO,"native battle-start reply opcode=07B5 error=%04X",startError);
+            } __except(EXCEPTION_EXECUTE_HANDLER) {}
+        }
         const bool isLeaveReply =
             (opcode & 0xFFFF) == kLeaveRoomReplyOpcode && packet;
         uint16_t error = UINT16_MAX;
@@ -1438,5 +1449,7 @@ private:
     mutable volatile LONG freshRoomSequence_ = 0;
     mutable volatile LONG freshRoomOwner_ = 0;
     mutable volatile LONG freshRoomDetails_ = 0;
+    mutable volatile LONG startReplySequence_ = 0;
+    mutable volatile LONG startReplyError_ = 0;
     inline static RoomActions* active_ = nullptr;
 };
