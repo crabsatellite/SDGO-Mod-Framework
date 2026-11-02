@@ -1,4 +1,4 @@
-# Battle contribution rewards (Beta)
+# Battle contribution rewards
 
 [完整中文安装教程](battle-rewards.zh-CN.md) · [Rule tables](battle-reward-design.md)
 
