@@ -140,6 +140,9 @@ size_t modeIndex = 0;
 unsigned expectedAi = 3;
 unsigned expectedAllies=1,expectedEnemies=2;
 bool randomTeams=false;
+bool sameRoomRematch=false;
+unsigned sameRoomRound=0;
+uint32_t sameRoomId=0;
 uint16_t RequestedMode() { return missionMode?missionMode:requestedModes.at(modeIndex); }
 struct MotionSample {
     uint32_t pilot, object, npc;
@@ -261,6 +264,10 @@ bool LoadPlan() {
     if(randomTeamFlag>1)return false;
     randomTeams=randomTeamFlag==1;
     randomLoadout=GetPrivateProfileIntW(L"run",L"random_loadout",0,job.c_str())!=0;
+    const auto rematchFlag=GetPrivateProfileIntW(L"run",L"same_room_rematch",0,job.c_str());
+    if(rematchFlag>1)return false;
+    sameRoomRematch=rematchFlag==1;
+    if(sameRoomRematch && (missionMode || bootstrapOnly || battleshipOnly || giftRequestsOnly || deckOnly || pagesOnly || randomLoadout))return false;
     if(randomLoadout && strlen(narrowNonce)!=4)return false;
     if(sprintf_s(roomTitle,randomLoadout?"%s !ai e%u a%u !rand":"%s !ai e%u a%u",narrowNonce,expectedEnemies,expectedAllies)<0)return false;
     if(missionMode) {
@@ -424,6 +431,14 @@ bool Snapshot(SdgoPvpAiClientSnapshotV1& snapshot) {
     return getSnapshot && getSnapshot(&snapshot) != 0;
 }
 int __cdecl Room(const SdgoGameTestContextV1* context) {
+    if(sameRoomRematch && sameRoomRound==1) {
+        const auto waiting=rooms.NativeRoomState();
+        if((actions.AppState()!=18 && actions.AppState()!=20) || !waiting.model_present)return SDGO_GAME_TEST_WAIT;
+        const bool valid=sameRoomId && waiting.room_id==sameRoomId && waiting.room_mode==RequestedMode() &&
+            waiting.local_is_host && waiting.player_count==1;
+        context->Assert(valid,"the second battle reuses the exact settled native room with its sole real human host; no new create request");
+        return valid ? SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+    }
     static size_t roomPageBaselineMode=SIZE_MAX;
     static size_t hangarExitMode=SIZE_MAX;
     if(actions.AppState()==5) {
@@ -577,6 +592,7 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
         return SDGO_GAME_TEST_WAIT;
     context->Assert(freshRoom.room_id == nativeRoom.room_id && freshRoom.room_mode == RequestedMode(), "a new native room factory completion belongs to this create request and room model");
     context->Assert(nativeRoom.room_id != 0, "the server-created native room model supplied a room id");
+    if(sameRoomRematch)sameRoomId=nativeRoom.room_id;
     context->Assert(actions.OnboardingState().profile_pilot_id == authenticatedPilot, "the waiting room retains this run's authenticated pilot");
     context->Assert(nativeRoom.model_present && nativeRoom.local_is_host && nativeRoom.player_count >= 1 && nativeRoom.player_count <= 12,
                     "the normal native room model contains the authenticated host");
@@ -851,6 +867,21 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
     if (!endObserved) return SDGO_GAME_TEST_WAIT;
     const auto state = actions.AppState();
     if (!leaveRequested && (state == 18 || state == 20)) {
+        const auto waiting=rooms.NativeRoomState();
+        if(!waiting.model_present)return SDGO_GAME_TEST_WAIT;
+        context->Assert(waiting.local_is_host,
+            "after settlement the sole authenticated human remains room host; an AI MVP cannot receive room ownership");
+        if(!waiting.local_is_host)return SDGO_GAME_TEST_FAIL;
+        if(sameRoomRematch && sameRoomRound==0) {
+            const bool valid=waiting.room_id==sameRoomId && waiting.room_mode==RequestedMode() && waiting.player_count==1;
+            context->Assert(valid,"settlement returned to the same waiting room with only the real human; AI battle-only participants have left");
+            if(!valid)return SDGO_GAME_TEST_FAIL;
+            context->Observe("kept the settled native room open for a second real Start instead of leaving and recreating it");
+            sameRoomRound=1;
+            activeBattleStartSequence=0;
+            startRequested=leaveRequested=endObserved=false;
+            return SDGO_GAME_TEST_PASS;
+        }
         leaveSequence = rooms.LeaveState().reply_sequence;
         if (!rooms.Leave()) return SDGO_GAME_TEST_WAIT;
         leaveRequested = true;
@@ -877,6 +908,7 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
     }
     context->Assert(1, "the original client consumed the real leave-room reply and returned to its lobby");
     ++modeIndex;
+    sameRoomRound=0;sameRoomId=0;
     channels.Reset();
     activeBattleStartSequence = 0;
     roomRequested = startRequested = leaveRequested = endObserved = false;
@@ -1641,8 +1673,8 @@ void RegisterPlannedCases() {
     }
     const bool needsShip = battleshipOnly || deckOnly || std::find(requestedModes.begin(),requestedModes.end(),6)!=requestedModes.end() ||
         std::find(requestedModes.begin(),requestedModes.end(),7)!=requestedModes.end();
-    if (requestedModes.size() == 1 && !needsShip && !giftRequestsOnly && !playUnitUid) return;
-    const size_t count = 4 + requestedModes.size() * 4;
+    if (requestedModes.size() == 1 && !needsShip && !giftRequestsOnly && !playUnitUid && !sameRoomRematch) return;
+    const size_t count = 4 + requestedModes.size() * (sameRoomRematch?8:4);
     caseNames.reserve(count); plannedCases.reserve(count);
     for (unsigned i = 0; i < 3; ++i) plannedCases.push_back(realCases[i]);
     if(playUnitUid)plannedCases.push_back(playUnitCase);
@@ -1651,13 +1683,17 @@ void RegisterPlannedCases() {
     if (deckOnly) plannedCases.push_back(deckCase);
     const char* suffixes[] = {"room", "start", "ai_spawn", "return"};
     if (!giftRequestsOnly && !battleshipOnly && !deckOnly) for (const auto mode : requestedModes) {
+      for(unsigned round=0;round<(sameRoomRematch?2u:1u);++round) {
         for (unsigned i = 0; i < 4; ++i) {
-            if (requestedModes.size()==1) { plannedCases.push_back(realCases[3+i]);continue; }
-            caseNames.push_back("pvp.mode" + std::to_string(mode) + "." + suffixes[i]);
+            if (requestedModes.size()==1 && !sameRoomRematch) { plannedCases.push_back(realCases[3+i]);continue; }
+            const std::string prefix=requestedModes.size()==1 ? "pvp":"pvp.mode"+std::to_string(mode);
+            const char* step=sameRoomRematch && !round && i==3 ? "waiting":suffixes[i];
+            caseNames.push_back(prefix+(round?".rematch.":".")+step);
             auto test = realCases[3 + i];
             test.id = caseNames.back().c_str();
             plannedCases.push_back(test);
         }
+      }
     }
     provider.count = static_cast<uint32_t>(plannedCases.size());
     provider.cases = plannedCases.data();

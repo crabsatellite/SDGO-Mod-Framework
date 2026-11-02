@@ -147,8 +147,9 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int) -> dict:
             errors.append(f'{path}: {error}')
     for mode in modes:
         matches=[b for b in battles if b['mode']==mode]
-        if len(matches)!=1 or matches[0]['phase']!=4:
-            errors.append(f'mode {mode} requires exactly one complete four-event native battle lifecycle')
+        expected=2 if plan.get('same_room_rematch') else 1
+        if len(matches)!=expected or any(b['phase']!=4 for b in matches):
+            errors.append(f'mode {mode} requires exactly {expected} complete four-event native battle lifecycle(s)')
     return {'schema':1,'run_id':run_id,'scope':'passive_native_server_lifecycle',
             'status':'fail' if errors else 'pass','expected_host_pilot_id':pilot,
             'expected_human_pilot_ids':sorted(human_roster(pilot,expected_humans)),

@@ -1438,9 +1438,13 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                         collection_draw: bool = False,
                          play_unit_uid: int | None = None,
                          mission_mode: int | None = None,
-                         shop_catalog: bool = False) -> tuple[str, ...]:
+                         shop_catalog: bool = False,
+                         same_room_rematch: bool = False) -> tuple[str, ...]:
     mission_mode = validate_mission_mode(mission_mode)
     play_unit_uid = validate_play_unit_uid(play_unit_uid)
+    if type(same_room_rematch) is not bool:raise GameTestError('same_room_rematch must be a boolean')
+    if same_room_rematch and (mission_mode is not None or any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,collection_draw,shop_catalog))):
+        raise GameTestError('same-room rematch requires a complete native PvP scenario')
     if sum((bool(bootstrap_only),bool(battleship_only),bool(gift_requests_only),bool(deck_only),bool(pages_only))) > 1:
         raise GameTestError('choose only one account preparation operation')
     if play_unit_uid is not None and any((bootstrap_only,battleship_only,gift_requests_only,deck_only)):
@@ -1472,6 +1476,13 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         prefix += ('flow.battleship',)
     if battleship_only:
         return prefix
+    if same_room_rematch:
+        cases=[]
+        for mode in modes:
+            name='pvp' if len(modes)==1 else f'pvp.mode{mode}'
+            cases.extend(f'{name}.{step}' for step in ('room','start','ai_spawn','waiting'))
+            cases.extend(f'{name}.rematch.{step}' for step in MODE_FLOW_STEPS)
+        return prefix+tuple(cases)
     if len(modes) == 1:
         return prefix + FLOW_CASES[3:]
     return prefix + tuple(
@@ -1488,7 +1499,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         forbidden = {
             "mode_sequence", "expected_ai", "bootstrap_only",
             "battleship_only", "gift_requests_only", "deck_only",
-            "pages_only", "collection_draw", "random_loadout",
+            "pages_only", "collection_draw", "random_loadout", "same_room_rematch",
             *SHOP_PLAN_FIELDS,
         }
         if forbidden.intersection(plan):
@@ -1519,6 +1530,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         plan.get("play_unit_uid"),
         plan.get("mission_mode"),
         shop_catalog,
+        plan.get("same_room_rematch",False),
     )
 
 
@@ -1784,7 +1796,7 @@ def write_job(
     if all(field in plan for field in SHOP_PLAN_FIELDS):
         for field in SHOP_PLAN_FIELDS:
             run['run'][field] = str(plan[field])
-    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','collection_draw','random_loadout'):
+    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','collection_draw','random_loadout','same_room_rematch'):
         if plan.get(flag):run['run'][flag] = '1'
     if 'network_policy' in plan:run['run']['network_policy']=plan['network_policy']
     if plan.get('network_policy') == ROUTED_LOOPBACK_POLICY:
@@ -1835,9 +1847,10 @@ def read_public_plan(root: Path) -> dict:
         deck_only = run.get('deck_only', '0') == '1'
         pages_only = run.get('pages_only', '0') == '1'
         collection_draw = run.get('collection_draw', '0') == '1'
+        same_room_rematch = run.get('same_room_rematch','0')=='1'
         preparation_fields = (
             'bootstrap_only', 'battleship_only', 'gift_requests_only',
-            'deck_only', 'pages_only', 'collection_draw', 'random_loadout',
+            'deck_only', 'pages_only', 'collection_draw', 'random_loadout', 'same_room_rematch',
         )
         if any(run.get(flag, '0') not in ('0', '1') for flag in preparation_fields):
             raise ValueError('invalid preparation flag')
@@ -1942,6 +1955,7 @@ def read_public_plan(root: Path) -> dict:
                 mode_sequence, bootstrap_only, battleship_only,
                 gift_requests_only, deck_only, pages_only, collection_draw,
                 play_unit_uid, shop_catalog=shop_plan is not None,
+                same_room_rematch=same_room_rematch,
             )
 
         if (
@@ -2020,6 +2034,7 @@ def read_public_plan(root: Path) -> dict:
             ('deck_only', deck_only),
             ('pages_only', pages_only),
             ('collection_draw', collection_draw),
+            ('same_room_rematch', same_room_rematch),
         ):
             if value:
                 plan[flag] = True
@@ -2289,6 +2304,7 @@ def prepare(
     shop_assertions: Path | None = None,
     shop_display: Path | None = None,
     random_loadout: bool = False,
+    same_room_rematch: bool = False,
     network_policy: str = 'direct',
     route_profile: Path | None = None,
     quiet: bool = True,
@@ -2303,6 +2319,8 @@ def prepare(
     _owned_client_transfer: tuple[Path, str] | None = None,
 ) -> dict:
     client_template = client_template.resolve()
+    if type(same_room_rematch) is not bool or (same_room_rematch and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,random_loadout)))):
+        raise GameTestError('same-room rematch requires complete PvP without random loadout or preparation-only scopes')
     if rebind_existing_account:
         raise GameTestError('existing-account rebinding requires --reuse-client')
     if (ai_allies is not None or random_teams or ai_policy is not None or ai_teams is not None) and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,
@@ -2507,6 +2525,7 @@ def prepare(
             allies=plan.get('ai_allies',expected_ai//2)
             plan['room_title']=f"{plan['title_nonce']} {ai_room_command(expected_ai,allies,plan.get('ai_policy'),plan.get('ai_teams'))} !rand"
             plan['random_loadout']=True
+        if same_room_rematch:plan['same_room_rematch']=True
         if len(plan['room_title'].encode('utf-8'))>20:
             raise GameTestError('Native GameTest room title exceeds twenty bytes; use a shorter rule or separate scenarios')
         plan['network_policy']=network_policy
@@ -3769,6 +3788,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--random-teams',action='store_true',help='request original native random human teams before AI placement')
     prepare_parser.add_argument('--ai-policy',choices=('fill','enemy'),help='exercise an automatic population command; requires --expected-ai 7 and matching --ai-allies')
     prepare_parser.add_argument('--ai-teams',choices=('coop','versus'),help='exercise cooperative human grouping or preserve native room teams independently of AI counts')
+    prepare_parser.add_argument('--same-room-rematch',action='store_true',help='finish a battle, retain the same native room and human host, and start a second full battle before leaving')
     prepare_parser.add_argument('--play-unit-uid',type=int,
                                 help='select an existing genuinely owned non-zero uint64 unit UID through native hangar UI before PvP, pages, or mission tests')
     prepare_parser.add_argument("--sfx-only", action="store_true",
@@ -3863,6 +3883,7 @@ def main(argv: list[str] | None = None) -> int:
                 random_teams=args.random_teams,
                 ai_policy=args.ai_policy,
                 ai_teams=args.ai_teams,
+                same_room_rematch=args.same_room_rematch,
                 play_unit_uid=args.play_unit_uid,
                 mission_mode=args.mission_mode,
                 launcher_path=args.launcher_path,

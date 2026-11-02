@@ -1,5 +1,10 @@
 # Native GameTest
 
+`prepare --same-room-rematch` checks that the human retains room ownership after
+settlement, starts a second full battle in that same room, and leaves only after
+the rematch. It cannot combine with random loadouts, pages or account preparation.
+The passive server report requires two complete battle lifecycles per mode.
+
 For asymmetric population regression, `prepare` accepts
 `--expected-ai 7 --ai-allies 0 --random-teams`: request native human team
 randomization and verify seven opponents with no allied AI relative to the host.
