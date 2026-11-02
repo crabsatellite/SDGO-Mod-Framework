@@ -37,6 +37,10 @@ uint8_t* g_profile = nullptr;
 void* g_serviceManager = nullptr;
 uint8_t g_app[0x500] = {};
 uint8_t g_nonNullObject = 0;
+uint8_t g_missionManagerIdentity = 0, g_missionMainIdentity = 0;
+uint8_t g_teamManagerIdentity = 0, g_teamMainIdentity = 0;
+unsigned g_leaveBusinessCalls = 0;
+void* g_leaveBusinessSelf = nullptr;
 unsigned g_startQueued = 0;
 unsigned g_startBusinessCalls = 0;
 bool g_startBusinessReady = true;
@@ -54,6 +58,12 @@ void Check(bool condition, const char* message)
 uint8_t* __cdecl FakeGameApp()
 {
     return g_app;
+}
+
+void __fastcall FakeLeaveBusiness(void* self, void*)
+{
+    ++g_leaveBusinessCalls;
+    g_leaveBusinessSelf = self;
 }
 
 bool __fastcall FakeCreateRoomInit(
@@ -267,7 +277,15 @@ void* LookupSymbol(const char* name)
     if (std::strcmp(name, "flow.battle_end_handler") == 0)
         return reinterpret_cast<void*>(&FakeBattleEndHandler);
     if (std::strcmp(name, "flow.normal_3d_leave_business") == 0)
-        return reinterpret_cast<void*>(&FakeStartOrReady);
+        return reinterpret_cast<void*>(&FakeLeaveBusiness);
+    if (std::strcmp(name, "flow.mission_3d_manager_vtable") == 0)
+        return &g_missionManagerIdentity;
+    if (std::strcmp(name, "flow.mission_3d_main_vtable") == 0)
+        return &g_missionMainIdentity;
+    if (std::strcmp(name, "flow.team_3d_manager_vtable") == 0)
+        return &g_teamManagerIdentity;
+    if (std::strcmp(name, "flow.team_3d_main_state_vtable") == 0)
+        return &g_teamMainIdentity;
     if (std::strcmp(name, "flow.normal_3d_leave_reply_dispatch") == 0)
         return reinterpret_cast<void*>(&FakeNormalThreeDLeaveReply);
     if (std::strcmp(name, "flow.normal_3d_main_state_vtable") == 0 ||
@@ -544,6 +562,44 @@ void TestNormalThreeDLeaveReply(RoomActions& rooms)
         afterStageTwo.result == RoomActions::kLeaveRejected,
         "normal 3D saved error produced the expected rejected result");
 }
+void TestMissionLeaveWithoutLegacyProfile(RoomActions& rooms)
+{
+    uint8_t owner[16] = {}, manager[0x80] = {}, main[0x30] = {};
+    uint8_t* states[13] = {};
+    auto put=[](void* p,size_t offset,const auto& value){std::memcpy(static_cast<uint8_t*>(p)+offset,&value,sizeof(value));};
+    const uint32_t appState=18, ready=2, loading=1;
+    void* ownerVtable=&g_nonNullObject;
+    void* managerVtable=&g_missionManagerIdentity;
+    void* mainVtable=&g_missionMainIdentity;
+    uint8_t* ownerPointer=owner;
+    uint8_t* managerPointer=manager;
+    uint8_t* context=manager+0x24;
+    uint8_t** statePointer=states;
+    put(g_app,0x4A0,appState);put(g_app,0x4A4,ownerPointer);
+    put(owner,0,ownerVtable);put(owner,4,managerPointer);
+    put(manager,0,managerVtable);put(manager,0x0C,statePointer);
+    put(main,0,mainVtable);put(main,8,ready);
+    put(main,0x0C,context);put(main,0x10,managerPointer);
+    states[0]=main;manager[0x26]=1;
+    g_profile=nullptr;g_leaveBusinessCalls=0;g_leaveBusinessSelf=nullptr;
+    Check(rooms.Leave() && g_leaveBusinessCalls==1 && g_leaveBusinessSelf==main,
+          "modern Mission leaves through original shared business without a legacy profile-room pointer");
+    put(main,8,loading);
+    Check(!rooms.Leave() && g_leaveBusinessCalls==1,
+          "Mission exit waits for the original Main state to finish loading");
+    put(main,8,ready);put(main,0x0C,managerPointer);
+    Check(!rooms.Leave() && g_leaveBusinessCalls==1,
+          "Mission exit rejects a mismatched native manager context");
+    put(main,0x0C,context);
+    managerVtable=&g_teamManagerIdentity;mainVtable=&g_teamMainIdentity;
+    put(manager,0,managerVtable);put(main,0,mainVtable);
+    Check(rooms.Leave() && g_leaveBusinessCalls==2 && g_leaveBusinessSelf==main,
+          "modern Team uses its own validated Main state and the original shared leave business");
+    mainVtable=&g_missionMainIdentity;put(main,0,mainVtable);
+    Check(!rooms.Leave() && g_leaveBusinessCalls==2,
+          "Team exit cannot accept the Mission Main state in another manager");
+    std::memset(g_app,0,sizeof(g_app));
+}
 } // namespace
 
 int main()
@@ -578,6 +634,7 @@ int main()
         TestBattleEndAbi(rooms);
         TestLeavePacketLifetime(rooms);
         TestNormalThreeDLeaveReply(rooms);
+        TestMissionLeaveWithoutLegacyProfile(rooms);
         TestFactoryReturnPassthrough();
     }
 

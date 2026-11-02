@@ -217,3 +217,15 @@ Modern Team category `4` has no reachable inline rename input: population
 explicitly rejects that category even if a later host refresh enables the
 button. Native tests cover its creation form and original modern view; the
 compiled legacy settings adapters remain separate ABI/protocol regressions.
+
+Modern Mission and Team Main states dispatch `0x0BE1` to the shared original
+leave business at `0x00741950`. Their validated manager/state/context graph is
+sufficient; they need not publish the legacy profile-room pointer. Mission
+uses manager/Main vtables `0x00E89D28` / `0x00E86824`, while Team uses
+`0x00E89CC8` / `0x00E867C4`.
+
+The modern close path sends `0x05C4` with its native room ID at `+6` and accepts
+`0x09B7` for that same ID. The title cache records the actual outgoing close
+intent and clears only the matching connection, epoch, room and generation.
+An unrelated room, a reused generation or a rejected `0x04D2` close cannot clear
+the current confirmed title. These fields identify a room, not a pilot.
