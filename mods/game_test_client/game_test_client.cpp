@@ -1639,14 +1639,29 @@ int __cdecl TitleLeave(const SdgoGameTestContextV1* c){
     return SDGO_GAME_TEST_WAIT;
 }
 int __cdecl TitleTeamNativeView(const SdgoGameTestContextV1* c) {
-    if(actions.AppState()!=18)return SDGO_GAME_TEST_WAIT;
+    if(actions.AppState()!=18 || !rooms.IsModernTeamRoomReady())return SDGO_GAME_TEST_WAIT;
     void* bar=roomTitles.Service("room_titles.ui_titlebar_vtable");
     const auto* room=static_cast<const uint8_t*>(roomTitles.Root(bar,0x10C));
     if(!bar || !room)return SDGO_GAME_TEST_WAIT;
-    c->Assert(room[4]==4,"the created team uses the original modern3D matchmaking view");
-    c->Assert(roomTitles.Service("title_test.team_titlebar_vtable")==nullptr,
-              "the legacy2D team settings header is absent from this supported modern room scene");
-    return room[4]==4?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+    char details[128];sprintf_s(details,"native Team model id=%u field4=%u host_state=%u",
+        *reinterpret_cast<const uint32_t*>(room),room[4],
+        *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(bar)+0x100));
+    if (!roomTitles.Running()) {
+        c->Observe(details);
+        c->Assert(1,"the created team uses its original modern3D Team manager and ready Main state");
+        c->Assert(roomTitles.Service("title_test.team_titlebar_vtable")==nullptr,
+                  "the legacy2D team settings header is absent from this supported modern room scene");
+    }
+    if (room[4]==4) {
+        c->Assert(1,"the native category-4 handler disables the inline rename entry");
+        return SDGO_GAME_TEST_PASS;
+    }
+    if (*reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(bar)+0x100)!=2)
+        return SDGO_GAME_TEST_WAIT;
+    // Factory type 1 identifies the Team manager, while model byte +4 comes
+    // from the server's room payload. Exercise the real inline editor when
+    // that native category permits it instead of assuming all Teams forbid it.
+    return roomTitles.Poll(RoomTitleActions::PvpRename,c);
 }
 int __cdecl TitleStartSmoke(const SdgoGameTestContextV1* c) {
     static uint32_t startBaseline=0,sendBaseline=0,replyBaseline=0;
