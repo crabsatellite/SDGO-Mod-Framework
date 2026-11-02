@@ -222,6 +222,31 @@ def merge_required_symbols(stage_symbols: Path, copied_symbols: Path, manifests:
     write_ini(copied_symbols, destination)
 
 
+def merge_retained_addon_symbols(stage_symbols:Path,copied_symbols:Path,manifests:list[Path]) -> None:
+    """Retain installed addons through their declared, matching-host fragments."""
+    active=[]
+    destination=read_ini(copied_symbols)
+    for manifest in manifests:
+        raw=manifest.read_bytes()
+        decoded=raw.decode('utf-16' if raw.startswith((b'\xff\xfe',b'\xfe\xff')) else 'utf-8-sig')
+        match=re.search(r'(?ims)^\s*\[mod\]\s*\n(.*?)(?=^\s*\[|\Z)',decoded)
+        if not match:raise GameTestError('retained addon lacks its native manifest')
+        config=ini_parser();config.read_string('[mod]\n'+match[1])
+        if config.getint('mod','enabled',fallback=1)==0:continue
+        active.append(manifest)
+        required=manifest_requires(manifest)
+        if all(destination.has_section(key) for key in required):continue
+        fragment=manifest.parent/'symbols.fragment.ini'
+        if not fragment.is_file():continue
+        source=read_ini(fragment)
+        if not source.has_section('host') or dict(source['host'])!=dict(destination['host']):
+            raise GameTestError('retained addon symbol fragment describes a different host')
+        for key in required:
+            if not destination.has_section(key) and source.has_section(key):destination[key]=dict(source[key])
+    write_ini(copied_symbols,destination)
+    merge_required_symbols(stage_symbols,copied_symbols,active,preserve_existing=True)
+
+
 def enable_test_configuration(root: Path) -> None:
     manifest = root / "sdgo" / "mods" / TEST_MOD / "mod.ini"
     parser = read_ini(manifest)
@@ -324,7 +349,7 @@ def overlay_observer(root: Path, stage: Path) -> None:
         updated_manifests,
     )
     retained_manifests=[manifest for manifest in (root/'sdgo/mods').glob('*/mod.ini') if manifest not in updated_manifests]
-    merge_required_symbols(stage_symbols,copied_symbols,retained_manifests,preserve_existing=True)
+    merge_retained_addon_symbols(stage_symbols,copied_symbols,retained_manifests)
     enable_test_configuration(root)
 
 
@@ -699,10 +724,13 @@ def parse_mode_sequence(value: str) -> tuple[int, ...]:
 
 def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                         battleship_only: bool = False, gift_requests_only: bool = False,
-                        deck_only: bool = False, pages_only: bool = False) -> tuple[str, ...]:
+                        deck_only: bool = False, pages_only: bool = False,
+                        friends_only: bool = False) -> tuple[str, ...]:
     modes = parse_mode_sequence(mode_sequence)
-    if sum((bool(bootstrap_only),bool(battleship_only),bool(gift_requests_only),bool(deck_only),bool(pages_only))) > 1:
+    if sum((bool(bootstrap_only),bool(battleship_only),bool(gift_requests_only),bool(deck_only),bool(pages_only),bool(friends_only))) > 1:
         raise GameTestError('choose only one account preparation operation')
+    if friends_only:
+        return FLOW_CASES[:3] + ('friends.session',)
     if pages_only:
         return FLOW_CASES[:3] + ('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel','catalog.operator','catalog.ai','pages.storage.read','pages.storage.claim','catalog.capsule','pages.capsule.currency')
     if bootstrap_only:
@@ -828,9 +856,9 @@ def write_job(
         "retry_count": str(plan["retry_count"]),
         "expect_first_fail": "1" if plan["expect_first_fail"] else "0",
         "required_cases": ",".join(required_flow_cases(plan["mode_sequence"], plan.get('bootstrap_only', False),
-            plan.get('battleship_only',False),plan.get('gift_requests_only',False),plan.get('deck_only',False),plan.get('pages_only',False))),
+            plan.get('battleship_only',False),plan.get('gift_requests_only',False),plan.get('deck_only',False),plan.get('pages_only',False),plan.get('friends_only',False))),
     }
-    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only'):
+    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','friends_only'):
         if plan.get(flag):run['run'][flag] = '1'
     if 'network_policy' in plan:run['run']['network_policy']=plan['network_policy']
     if 'quiet' in plan:run['run']['quiet']='1' if plan['quiet'] else '0'
@@ -850,7 +878,8 @@ def read_public_plan(root: Path) -> dict:
         gift_requests_only = run.get('gift_requests_only', '0') == '1'
         deck_only = run.get('deck_only', '0') == '1'
         pages_only = run.get('pages_only', '0') == '1'
-        if any(run.get(flag,'0') not in ('0','1') for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only')):
+        friends_only = run.get('friends_only', '0') == '1'
+        if any(run.get(flag,'0') not in ('0','1') for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','friends_only')):
             raise ValueError('invalid preparation flag')
         if (
             run["role"] != "client"
@@ -858,7 +887,7 @@ def read_public_plan(root: Path) -> dict:
             or run["normal_flow"] != "1"
             or run["server_channel_selection"] != "native_automatic"
             or run["account_path"] != "private/account.ini"
-            or run["required_cases"] != ",".join(required_flow_cases(mode_sequence, bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only))
+            or run["required_cases"] != ",".join(required_flow_cases(mode_sequence, bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,friends_only))
             or run["auto_nickname"] != "account_name"
             or run["exit_tutorial"] != "1"
             or run["first_unit_draw"] != "1"
@@ -885,7 +914,7 @@ def read_public_plan(root: Path) -> dict:
             "acknowledge_game_windows": run["acknowledge_game_windows"] == "1",
             "launcher_path": "" if process_entry == GAME_EXE else process_entry,
         }
-        for flag,value in (('bootstrap_only',bootstrap_only),('battleship_only',battleship_only),('gift_requests_only',gift_requests_only),('deck_only',deck_only),('pages_only',pages_only)):
+        for flag,value in (('bootstrap_only',bootstrap_only),('battleship_only',battleship_only),('gift_requests_only',gift_requests_only),('deck_only',deck_only),('pages_only',pages_only),('friends_only',friends_only)):
             if value:plan[flag] = True
         if 'network_policy' in run:
             if run['network_policy'] not in ('direct','preserve'):raise ValueError('invalid network policy')
@@ -1031,6 +1060,7 @@ def prepare(
     gift_requests_only: bool = False,
     deck_only: bool = False,
     pages_only: bool = False,
+    friends_only: bool = False,
     network_policy: str = 'direct',
     quiet: bool = True,
     asset_baseline: Path | None = None,
@@ -1109,10 +1139,10 @@ def prepare(
         expected_ai,
         launcher_path,
     )
-    required_flow_cases(mode_sequence,bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only)
+    required_flow_cases(mode_sequence,bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,friends_only)
     plan['network_policy']=network_policy
     plan['quiet']=quiet
-    for flag,value in (('bootstrap_only',bootstrap_only),('battleship_only',battleship_only),('gift_requests_only',gift_requests_only),('deck_only',deck_only),('pages_only',pages_only)):
+    for flag,value in (('bootstrap_only',bootstrap_only),('battleship_only',battleship_only),('gift_requests_only',gift_requests_only),('deck_only',deck_only),('pages_only',pages_only),('friends_only',friends_only)):
         if value:plan[flag] = True
     run_dir.parent.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex
@@ -1148,7 +1178,7 @@ def prepare(
             "run_id": run_id,
             "suite": ('account-bootstrap' if bootstrap_only else 'battleship-acquisition' if battleship_only
                       else 'gift-mail-requests' if gift_requests_only else 'battleship-deck' if deck_only
-                      else 'native-pages' if pages_only else 'pvp-ai-normal-flow'),
+                      else 'native-pages' if pages_only else 'native-friends' if friends_only else 'pvp-ai-normal-flow'),
             "status": "prepared",
             "created_utc": utc_now(),
             "source": {
@@ -1222,7 +1252,7 @@ def validate_metadata(run_dir: Path) -> dict:
     if not isinstance(plan, dict):
         raise GameTestError("run.json lacks normal-flow plan")
     public_plan = read_public_plan(root)
-    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only'):
+    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','friends_only'):
         if (type(plan.get(flag, False)) is not bool or plan.get(flag, False) != public_plan.get(flag, False)):
             raise GameTestError('run.json cannot change the required bootstrap or battle scope')
     for key, value in public_plan.items():
@@ -1943,7 +1973,7 @@ def build_report(run_dir: Path) -> dict:
             launch_status='fail'
 
     required_cases = required_flow_cases(metadata["plan"]["mode_sequence"], metadata['plan'].get('bootstrap_only', False),
-        metadata['plan'].get('battleship_only',False),metadata['plan'].get('gift_requests_only',False),metadata['plan'].get('deck_only',False),metadata['plan'].get('pages_only',False))
+        metadata['plan'].get('battleship_only',False),metadata['plan'].get('gift_requests_only',False),metadata['plan'].get('deck_only',False),metadata['plan'].get('pages_only',False),metadata['plan'].get('friends_only',False))
     native = evaluate_events(
         Path(metadata["client"]["events"]),
         metadata["run_id"],
@@ -2035,6 +2065,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--gift-requests-only', action='store_true',help='send configured native mail gift requests; server processing is verified separately')
     prepare_parser.add_argument('--deck-only', action='store_true',help='save and select a native battleship deck using four genuinely owned unit UIDs from the private account profile')
     prepare_parser.add_argument('--pages-only', action='store_true',help='visit the real hangar and verify Mod inventory, preview and cancel without exchanging units')
+    prepare_parser.add_argument('--friends-only',action='store_true',help='run the native multi-client friend session; coordinator commands remain in the owned test directory')
     prepare_parser.add_argument('--network-policy',choices=('direct','preserve'),default='direct',
                                 help='direct disables inherited endpoint routes only in the test copy; preserve explicitly tests owner routes')
     prepare_parser.add_argument('--visible',action='store_true',help='explicit developer opt-in to a visible client; default tests use an isolated desktop and muted audio')
@@ -2094,6 +2125,7 @@ def main(argv: list[str] | None = None) -> int:
                 gift_requests_only=args.gift_requests_only,
                 deck_only=args.deck_only,
                 pages_only=args.pages_only,
+                friends_only=args.friends_only,
                 network_policy=args.network_policy,
                 quiet=not args.visible,
                 asset_baseline=args.asset_baseline,
