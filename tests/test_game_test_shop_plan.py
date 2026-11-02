@@ -127,6 +127,7 @@ class ShopPlanTests(unittest.TestCase):
                 self.prepare(name, **options)
             self.assertFalse((self.fixture.root / name).exists())
 
+    @unittest.skipUnless(STOCK_ASSERTIONS.is_file() and STOCK_DISPLAY.is_file(), 'private stock catalog inputs are unavailable')
     def test_schema_rejects_owner_catalog_mismatch_empty_products_and_unknown_keys(self):
         assertions = STOCK_ASSERTIONS.read_text(encoding="utf-8")
         display = STOCK_DISPLAY.read_text(encoding="utf-8")
