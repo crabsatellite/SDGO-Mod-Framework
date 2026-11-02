@@ -31,6 +31,7 @@
 #include "scoreboard_actions.h"
 #include "battle_ai_behavior_probe.h"
 #include "native_death_probe.h"
+#include "native_player_combat_probe.h"
 #include "sealed_room_title.h"
 #include <cwchar>
 
@@ -101,6 +102,7 @@ SdgoPvpAiClientGetScoreboardStatusV1Fn getScoreboardStatus;
 ScoreboardActions scoreboardInput;
 BattleAiBehaviorProbe battleAiBehavior;
 NativeDeathProbe nativeDeathProbe;
+NativePlayerCombatProbe nativePlayerCombat;
 uint32_t scoreboardCombatSequence = 0, scoreboardCombatChanges = 0;
 SdgoPvpAiClientScoreboardStatusV1 scoreboardLast{};
 char accountName[32] = {}, accountPassword[128] = {}, roomTitle[21] = {};
@@ -778,6 +780,10 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
     if(Snapshot(live) && live.native_app_state==22) {
         if(!battleAiBehavior.Observe(context,live)) return SDGO_GAME_TEST_FAIL;
         if(!nativeDeathProbe.Observe(context)) return SDGO_GAME_TEST_FAIL;
+        SdgoPvpAiClientStartStatusV1 nativeControl{};
+        nativeControl.size=sizeof(nativeControl);nativeControl.version=SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
+        if(getStartStatus) getStartStatus(&nativeControl);
+        if(!nativePlayerCombat.Poll(context,live,nativeControl,scoreboardInput)) return SDGO_GAME_TEST_FAIL;
         SdgoPvpAiClientScoreboardStatusV1 roster{};
         roster.size = sizeof(roster); roster.version = SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
         if (getScoreboardStatus && getScoreboardStatus(&roster) && roster.battle_start_sequence == activeBattleStartSequence) {
@@ -826,6 +832,7 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
         context->Assert(1, "Lua observation stayed available with zero errors through the entire real battle");
         battleAiBehavior.Finish(context);
         nativeDeathProbe.Finish(context);
+        nativePlayerCombat.Finish(context,scoreboardInput);
         context->Assert(scoreboardCombatSequence == activeBattleStartSequence && scoreboardCombatChanges > 0,
             "the native TAB kill/assist/points renderer reflected actual AI combat-counter changes during this full battle");
         const auto combat=battleCombat.State();char evidence[256];
@@ -1799,6 +1806,7 @@ SDGO_MOD_ENTRY {
     if (!sdgo_test::Open(api, mod, "client")) return 0;
     const bool loaded = LoadPlan();
     if (!nativeDeathProbe.Install(api,mod)) return 0;
+    if (!nativePlayerCombat.Install(api,mod)) return 0;
     if (verifyQuietRuntime) {
         if (!quietAudio.Install(api,mod) || (quietLoopback && !quietSockets.Install(api,mod)) ||
             !api->HookImport(mod,"user32.dll","MessageBoxW",reinterpret_cast<void*>(&QuietMessageBoxW),reinterpret_cast<void**>(&originalMessageBoxW)) ||

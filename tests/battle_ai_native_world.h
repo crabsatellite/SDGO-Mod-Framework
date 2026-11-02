@@ -53,6 +53,8 @@ inline int ordinaryNotices=0;
 inline std::atomic<bool> stallOrdinary{false},ordinaryEntered{false},releaseOrdinary{false};
 inline bool deferSwitch=false;
 inline int requestedSlot=-1,switchRequests=0;
+inline uint32_t shotReturn=0xBEEFF00D;
+inline bool replaceShotAction=false,replaceShotWeapon=false;
 inline void* messageEntry=nullptr;
 inline void* contactReturn=nullptr;
 inline std::array<uint8_t,0x300> wall{};
@@ -152,8 +154,17 @@ struct Callbacks {
     __declspec(noinline) int AttackIntent(char on) { reinterpret_cast<uint8_t*>(this)[0x312A]=on?1:0;return 1; }
     __declspec(noinline) void StopMotor() { ++stopMotorCalls;reinterpret_cast<uint8_t*>(this)[0x30DC]=0; }
     __declspec(noinline) uint32_t Shot(uint32_t event,char chain,char force) {
-        Put(reinterpret_cast<uint8_t*>(this),0x100,event+static_cast<uint32_t>(chain)+static_cast<uint32_t>(force));
-        return 0xBEEFF00D;
+        auto fsm=reinterpret_cast<uint8_t*>(this);
+        Put(fsm,0x100,event+static_cast<uint32_t>(chain)+static_cast<uint32_t>(force));
+        if(replaceShotAction) {
+            replaceShotAction=false;
+            Put(fsm,0x224,*reinterpret_cast<uint32_t*>(fsm+0x224)+1);
+        }
+        if(replaceShotWeapon) {
+            replaceShotWeapon=false;
+            Put(fsm,0x248,weapons[2].data());
+        }
+        return shotReturn;
     }
     __declspec(noinline) void Intent() {
         auto unit=reinterpret_cast<uint8_t*>(this);
@@ -350,6 +361,7 @@ inline int Mode(lua_State*){return 0;}
 inline int Jump(lua_State*){++jumps;return 0;}
 inline void Initialize(uint8_t* unit,lua_State* L) {
     state=L;source=unit;blocked=coverWall=nullRay=terrainWall=forceObbBlock=false;
+    shotReturn=0xBEEFF00D;replaceShotAction=replaceShotWeapon=false;
     jumps=moves=goalCalls=lastGoalMode=frees=queries=obbCalls=terrainCalls=0;
     stopMotorCalls=message41Calls=0;
     specialCompletionCalls=0;specialCompletionDamage=0;specialCompletionOwner=specialCompletionResult=specialCompletionFsm=0;
@@ -369,7 +381,8 @@ inline void Initialize(uint8_t* unit,lua_State* L) {
     Configure(enemy2.data(),2,2,1,100,1400,100);enemy2[0xDCD]=1;
     head={&a,&b,nullptr};a={&b,&head,enemy1.data()};b={&head,&a,enemy2.data()};
     Put(document.data(),0x48,&head);Put(document.data(),0x82C4,document.data());Put(document.data(),0x8364,document.data());
-    Put(wall.data(),0,sceneVtable.data());Put(wall.data(),0xD4,int(1));Put(wall.data(),0xD8,wall.data()+0x180);
+    Put(wall.data(),0,sceneVtable.data());Put(wall.data(),0x0C,enemy1.data());
+    Put(wall.data(),0xD4,int(1));Put(wall.data(),0xD8,wall.data()+0x180);
     lua_getglobal(L,"npc");
     auto method=[&](const char* name,lua_CFunction fn){lua_pushstring(L,name);lua_pushcfunction(L,fn);lua_settable(L,-3);};
     method("SetAttackOnOff",SetFire);method("SetAttackTarget",SetTarget);method("MoveStop",Stop);

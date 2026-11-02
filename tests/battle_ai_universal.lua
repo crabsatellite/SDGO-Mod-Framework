@@ -2,13 +2,21 @@
 local now,generation,observation=0,1,nil
 local checks=0
 local calls={}
-UNIT_MOVE_DIR_LEFT=3;UNIT_MOVE_DIR_RIGHT=4;UNIT_MOVE_DIR_BACKWARD=2
+UNIT_MOVE_DIR_FORWARD=1;UNIT_MOVE_DIR_LEFT=3;UNIT_MOVE_DIR_RIGHT=4;UNIT_MOVE_DIR_BACKWARD=2
 UNIT_MOVE_EVENT_MOVE=1;UNIT_MOVE_EVENT_DASH=4
 function SDGO_BattleAI_Now() return now end
 function SDGO_BattleAI_Authority() return 1 end
 function SDGO_BattleAI_Generation() return generation end
 function SDGO_BattleAI_Observe() return observation end
 function SDGO_BattleAI_Native() calls.native=calls.native+1; return 123 end
+function SDGO_BattleAI_SafeDirection(dir,distance,forward,backward,left,right)
+  assert(distance>0 and forward==UNIT_MOVE_DIR_FORWARD and
+    backward==UNIT_MOVE_DIR_BACKWARD and left==UNIT_MOVE_DIR_LEFT and
+    right==UNIT_MOVE_DIR_RIGHT)
+  calls.safeDirections=(calls.safeDirections or 0)+1
+  if calls.safeDirectionResult~=nil then return calls.safeDirectionResult end
+  return dir
+end
 function SDGO_BattleAI_AimTarget(id) calls.aim=id end
 function SDGO_BattleAI_Cadence(ms) calls.cadence=ms end
 function SDGO_BattleAI_ReleaseHeldIntent()
@@ -16,7 +24,9 @@ function SDGO_BattleAI_ReleaseHeldIntent()
   return 1
 end
 function SDGO_BattleAI_RecoveryMode(active) calls.recoveryMode=active end
-function SDGO_BattleAI_MeleeGate(value) calls.meleeGate=value end
+function SDGO_BattleAI_MeleeGate(value,cancel)
+  calls.meleeGate=value;calls.cancelTracking=cancel
+end
 function SDGO_BattleAI_Chance(percent) calls.rolls=(calls.rolls or 0)+1;return calls.roll or 0 end
 function SDGO_BattleAI_Cover(id,x,y,z) calls.coverQueries=(calls.coverQueries or 0)+1;calls.coverX=x;return calls.coverCandidate end
 function SDGO_BattleAI_CancelRoute()
@@ -162,8 +172,18 @@ Reset();observation.targets[2].groundPos={x=1000,y=0,z=10};Tick(0)
 observation.targets[1].visible=0;observation.targets[2].visible=0
 observation.targets[2].groundPos={x=3000,y=0,z=999};Tick(100)
 Check(calls.routes==1 and calls.routeX==1000 and not calls.fire,'occluded known enemy is pursued through last visible position rather than live hidden position')
-Tick(3000)
-Check((calls.patrol or 0)>0 and calls.aim==0,'lost target memory expires and native patrol replaces stationary waiting')
+local priorPatrolMoves=calls.moves;local priorPatrolSafety=calls.safeDirections or 0;Tick(3000)
+Check(calls.moves==priorPatrolMoves+1 and calls.safeDirections==priorPatrolSafety+1 and
+      calls.mode==UNIT_MOVE_EVENT_MOVE and calls.aim==0 and calls.fire==false and
+      not calls.patrol,
+      'lost target memory expires and safe bounded patrol replaces stationary waiting')
+Reset();observation.targets={};Tick(0)
+local beforeUnavailableNative=calls.native;local beforeUnavailableMoves=calls.moves
+calls.safeDirectionResult=-1;observation.goal=observation.pos;Tick(1)
+Check(calls.native==beforeUnavailableNative+1 and calls.moves==beforeUnavailableMoves and
+      calls.aim==0 and calls.fire==false and
+      not calls.patrol,
+      'unavailable safe patrol delegates once to native AI without an unsafe movement command')
 Reset();Tick(0);observation.alternate=1
 for _,candidate in pairs(observation.targets) do candidate.hp=10000 end
 observation.weapons[1]=Weapon(0,'projectile',1800,5000,200)
@@ -173,9 +193,19 @@ Reset();observation.targets={Target(1,1000,3000)};observation.moving=1;Tick(0)
 for t=100,1500,100 do observation.pos={x=0,y=t/10,z=0};Tick(t) end
 Check(calls.moves>0 and (calls.cancelled or 0)>0,'hopping against a wall triggers recovery and releases the previous navigation owner')
 Reset({ReactionMs=0});observation.targets={Target(2,100,100)};observation.selectedSlot=0;observation.meleePressure=1;Tick(0)
-Check(calls.switch==1 and calls.meleeGate==1 and calls.fire==false,'melee pressure selects ranged and suppresses a sword counter')
+Check(calls.switch==1 and calls.meleeGate==1 and calls.cancelTracking==1 and calls.fire==false,
+      'melee pressure selects ranged and can release uncommitted knife tracking for a usable gun')
 Reset({ReactionMs=0});observation.targets={Target(2,100,100)};observation.meleePressure=1;observation.weapons[2].ammoReady=0;Tick(0)
-Check(calls.fire==false and calls.switch==nil,'empty ranged loadout under melee pressure does not fall back to a forbidden sword counter')
+Check(calls.fire==false and calls.switch==nil and calls.cancelTracking==0,
+      'empty ranged loadout suppresses a forbidden sword counter without cancelling the only viable tracking action')
+Reset({ReactionMs=0});observation.defenceMoving=1;observation.selectedSlot=0
+observation.meleeBusy=1;observation.meleeTracking=1;Tick(0)
+Check(calls.cancelTracking==1 and calls.switch==nil,
+      'crossfire retreat requests release of uncommitted knife tracking only after confirming a mobile gun')
+observation.meleeBusy=0;observation.meleeTracking=0;Tick(1)
+Check(calls.switch==1,'native tracking-to-Neutral acknowledgement permits the gun request on the next decision')
+observation.selectedSlot=1;Tick(2)
+Check(calls.fire==true,'confirmed gun acknowledgement resumes fire without an added policy delay')
 Reset({ReactionMs=0});calls.staticRouteObservation=true;local t=observation.targets[2]
 t.pos={x=1000,y=100,z=0};t.groundPos={x=1000,y=0,z=0};t.forward={x=1,y=0,z=0};t.hurt=1
 observation.allies={{id=40,meleeSwinging=1,contactTarget=2,contactAt=0}};Tick(0)
@@ -353,9 +383,12 @@ for _,difficulty in pairs({1,2}) do
   Check(calls.fire==true and SDGO_BattleAI_Universal.states[20].recoverUntil==nil,'an orphaned recovery timestamp without motor ownership is discarded: '..difficulty)
   observation.weapons[3].ready=0;Tick(11)
   Check(not calls.fire and calls.moves>0,'native weapon cooldown uses movement without inventing an attack: '..difficulty)
-  Reset({Difficulty=difficulty});observation.targets={};Tick(0);local patrols=calls.patrol
+  Reset({Difficulty=difficulty});observation.targets={};Tick(0)
+  local patrolMoves=calls.moves;local patrolSafety=calls.safeDirections
   observation.goal=observation.pos;Tick(1)
-  Check(calls.patrol==patrols+1,'arriving at a patrol goal selects the next goal without a patrol pause: '..difficulty)
+  Check(calls.moves==patrolMoves+1 and calls.safeDirections==patrolSafety+1 and
+        calls.mode==UNIT_MOVE_EVENT_MOVE and not calls.patrol,
+        'arriving at a patrol goal selects the next safe bounded goal without a patrol pause: '..difficulty)
   Reset({Difficulty=difficulty});observation.defenceMoving=1;Tick(0)
   Check(calls.fire==true and not calls.stop and not calls.cancelled,
         'ordinary firing never cancels the native front/rear escape route: '..difficulty)
@@ -653,9 +686,11 @@ protected.pos={x=100,y=100,z=0};protected.groundPos={x=100,y=0,z=0};Tick(0)
 Check(calls.fire==false and calls.direction==UNIT_MOVE_DIR_BACKWARD and calls.mode==UNIT_MOVE_EVENT_MOVE,
       'a protected target inside the current weapon spacing causes a fuel-free walking retreat')
 Reset();observation.targets={Target(2,200,1000)};Tick(0)
-observation.targets[1].damageProtected=1;observation.targets[1].visible=0;calls.fire=nil;Tick(1)
+observation.targets[1].damageProtected=1;observation.targets[1].visible=0;calls.fire=nil
+priorPatrolMoves=calls.moves;priorPatrolSafety=calls.safeDirections or 0;Tick(1)
 Check(SDGO_BattleAI_Universal.states[20].memory[2]==nil and calls.fire==false and calls.aim==0 and
-      (calls.patrol or 0)>0,
+      calls.moves==priorPatrolMoves+1 and calls.safeDirections==priorPatrolSafety+1 and
+      not calls.patrol,
       'live protection deletes stale target memory instead of resurrecting an invulnerable chase')
 Reset();Tick(0)
 observation.targets[2].damageProtected=1;observation.meleeBusy=1;observation.selectedSlot=0

@@ -42,7 +42,7 @@ Beta and Experimental labels indicate release channels.
 | Per-round random loadouts (Beta) <!-- catalog: `room_random`, `room_random_client` --> | `!rand` in a room title draws each player's unit or deck from their own hangar every round | [Use](docs/room-random.md) |
 | FPS cap (Beta) <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed | [Use](docs/fps-limit.md) |
 | Extended room titles (Beta) <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Mission and PvP room titles up to 128 characters, with commands anywhere in the title | [Use](docs/room-titles.md) |
-| Battle AI difficulty (Beta) <!-- catalog: `battle_ai`, `battle_ai_server` --> | Easy / Medium / Hard PvP bots, selectable in the room title | [Use](docs/battle-ai.md) |
+| Battle AI difficulty (Beta) <!-- catalog: `battle_ai`, `battle_ai_server` --> | Room-selected difficulty, ranged retreat, distant pursuit and native special/Teleport recovery | [Use](docs/battle-ai.md) |
 | Automatic hangar capacity (Beta) <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) | [Use](docs/hangar-capacity.md) |
 | Hangar manager (Beta) <!-- catalog: `hangar_manager` --> | One-click sorting and duplicate exchange on the unit-management page, with server-side GB batches | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager (Beta) <!-- catalog: `operator_catalog` --> | Five free supply officers, plus operator names, portraits and drops | [Use](docs/operator-assistant.md) |

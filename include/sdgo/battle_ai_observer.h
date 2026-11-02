@@ -16,5 +16,10 @@ struct SdgoBattleAiUnitSnapshotV1 {
     uint32_t attack_state, attack_pending, movement_state, movement_pending;
     uint32_t special_end_event, special_result_applied, special_result_victim, special_result_damage, special_owner_flag;
     uint32_t special_zero_completions;
+    uint64_t ranged_attempts;
+    uint64_t ranged_nonzero_returns;
+    uint64_t mobile_primary_dispatches;
+    uint64_t mobile_defensive_dispatches;
+    uint64_t backward_primary_dispatches;
 };
 typedef int(__cdecl* SdgoBattleAiGetUnitSnapshotV1Fn)(uint32_t, SdgoBattleAiUnitSnapshotV1*);

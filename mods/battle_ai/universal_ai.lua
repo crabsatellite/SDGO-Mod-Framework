@@ -47,6 +47,15 @@ local function Log(s,reason,now)
 end
 local function DirectMove(npc,o,dir,distance,mode,recovery)
   if Flag(o.defenceMoving) and not recovery then return false end
+  if SDGO_BattleAI_SafeDirection then
+    dir=SDGO_BattleAI_SafeDirection(
+      dir,distance,UNIT_MOVE_DIR_FORWARD,UNIT_MOVE_DIR_BACKWARD,
+      UNIT_MOVE_DIR_LEFT,UNIT_MOVE_DIR_RIGHT)
+    if not dir or dir<0 then
+      if SDGO_BattleAI_Native then SDGO_BattleAI_Native(1) end
+      return false
+    end
+  end
   -- A direct step owns the motor now. Otherwise Think's trailing FollowPath
   -- can immediately overwrite this command with an old pursuit waypoint.
   SDGO_BattleAI_CancelRoute()
@@ -237,8 +246,10 @@ end
 local function Chance(percent)
   return SDGO_BattleAI_Chance and SDGO_BattleAI_Chance(percent)==1
 end
-local function MeleeGate(value)
-  if SDGO_BattleAI_MeleeGate then SDGO_BattleAI_MeleeGate(value and 1 or 0) end
+local function MeleeGate(value,cancelTracking)
+  if SDGO_BattleAI_MeleeGate then
+    SDGO_BattleAI_MeleeGate(value and 1 or 0,cancelTracking and 1 or 0)
+  end
 end
 local function Support(o,t,now)
   for _,a in pairs(o.allies or {}) do
@@ -559,7 +570,11 @@ local function Recover(npc,o,s,t,now)
   else
     s.recoveryDir=nil
     if t then Move(npc,o,s,t,now,true)
-    else npc:SetMoveTargetPosRandom();npc:SetMoveType(UNIT_MOVE_EVENT_MOVE) end
+    else
+      s.patrolLeft=not s.patrolLeft
+      DirectMove(npc,o,s.patrolLeft and UNIT_MOVE_DIR_LEFT or UNIT_MOVE_DIR_RIGHT,
+        C.RecoveryDistance,UNIT_MOVE_EVENT_MOVE,true)
+    end
     s.attempt=0;s.anchor=o.pos;s.progressAt=now;s.recoverUntil=now+C.RecoveryMs;s.recovering=true
   end
   Log(s,'stuck recovery',now)
@@ -936,10 +951,13 @@ local function Tick(npc)
     MeleeGate(Flag(s.protectedMeleeGate))
     if not Flag(o.meleeBusy) and not Flag(o.specialBusy) then
       if not s.patrolling or not o.goal or Distance2(o.pos,o.goal)<=C.ArrivalDistance*C.ArrivalDistance or now>=s.patrolAt then
-        npc:SetMoveTargetPosRandom();s.patrolAt=now+C.PatrolMs;s.patrolling=true
-        s.movementIntent=true;s.movementIntentAt=now
+        s.patrolLeft=not s.patrolLeft
+        DirectMove(npc,o,
+          s.patrolLeft and UNIT_MOVE_DIR_LEFT or UNIT_MOVE_DIR_RIGHT,
+          C.StrafeDistance,UNIT_MOVE_EVENT_MOVE)
+        s.patrolling=true
+        s.patrolAt=now+C.PatrolMs
       end
-      npc:SetMoveType(UNIT_MOVE_EVENT_MOVE)
     end
     Log(s,'no visible reachable opponent',now)
     return 123
@@ -1012,10 +1030,17 @@ local function Tick(npc)
   end
   local selectionKind=forced
   if Flag(o.rangedResponse) then
-    selectionKind='ranged';MeleeGate(true)
+    selectionKind='ranged'
   end
   if not selectionKind and MeleeOpportunity(o,t) then selectionKind='melee' end
   local w=PickWeapon(o,s,t,threat,now,selectionKind)
+  if selectionKind=='ranged' then
+    -- A held knife tracking state can otherwise retain the native chase
+    -- forever while the defensive motor retreats. Request its existing
+    -- tracking-to-Neutral release only after a usable gun is known.
+    -- PickWeapon returns only weapons that passed Usable/WeaponScore.
+    MeleeGate(true,w and w.kind~='melee')
+  end
   if not w then
     if Flag(o.meleeBusy) or Flag(o.specialBusy) then
       Log(s,'weapons unavailable: current native action retains ownership',now)
