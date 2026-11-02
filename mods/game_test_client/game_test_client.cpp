@@ -1400,6 +1400,15 @@ const SdgoGameTestCaseV1 collectionCases[]={
     {"pages.collection.delivery",180000,&DeliverCollection},
 };
 int TitleCreateVs(const SdgoGameTestContextV1* c,uint32_t type,RoomTitleActions::Surface surface) {
+    if(actions.AppState()==5){
+        static bool requested=false;
+        if(!requested){
+            const auto result=hangarNavigation.ClickBottomRadio(L"GameRoomRadio",0x48);
+            if(result>=HangarNavigation::kDownmenuServiceMismatch || result==HangarNavigation::kUnbound){c->Assert(0,"native GameRoomRadio must return from the owned-unit hangar before title tests");return SDGO_GAME_TEST_FAIL;}
+            if(result==HangarNavigation::kReady){requested=true;c->Observe("native GameRoomRadio requested after fixture unit selection");}
+        }
+        return SDGO_GAME_TEST_WAIT;
+    }
     if(actions.AppState()==6){
         const auto channel=channels.EnsureVsType(type);
         if(channel>=ChannelActions::kInvalidTarget){c->Assert(0,"native PvP channel selection failed");return SDGO_GAME_TEST_FAIL;}
@@ -1412,7 +1421,7 @@ int TitleCreateVs(const SdgoGameTestContextV1* c,uint32_t type,RoomTitleActions:
 }
 int __cdecl TitlePvpCreate(const SdgoGameTestContextV1* c){return TitleCreateVs(c,1,RoomTitleActions::PvpCreate);}
 int __cdecl TitleTeamCreate(const SdgoGameTestContextV1* c){return TitleCreateVs(c,1,RoomTitleActions::PvpTeamCreate);}
-int __cdecl TitleGridCreate(const SdgoGameTestContextV1* c){return TitleCreateVs(c,2,RoomTitleActions::PvpGridCreate);}
+int __cdecl TitleGridCreate(const SdgoGameTestContextV1* c){return TitleCreateVs(c,1,RoomTitleActions::PvpGridCreate);}
 int __cdecl TitlePvpRename(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::PvpRename,c);}
 int __cdecl TitleMissionCreate(const SdgoGameTestContextV1* c){
     if(actions.AppState()==6 && !roomTitles.Service("title_test.mission_lobby_vtable")){

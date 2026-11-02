@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -334,6 +335,11 @@ def copy_tree(source, target):
     def ignored(folder,names):
         return gt.copy_ignore(folder,names) | {n for n in names if n.lower()=='logdata' or n.lower().endswith('.dmp')}
     shutil.copytree(source,target,ignore=ignored)
+    # Reusable templates may carry Windows read-only attributes. Only these
+    # owned copies are writable; rebasing and candidate symbol merging must
+    # never attempt to replace a read-only destination inherited by copy2.
+    for copied in target.rglob('*'):
+        if copied.is_file():copied.chmod(copied.stat().st_mode | stat.S_IWUSR)
 
 
 def rebase_configuration(root, old_root, new_root, ip, private, *, old_ip, old_sql_port=None, old_password=None):

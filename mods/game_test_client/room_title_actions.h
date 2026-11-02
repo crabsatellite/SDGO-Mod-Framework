@@ -162,7 +162,19 @@ private:
         char line[192];sprintf_s(line,"room-title surface=%u stage=%s app=%u phase=%u input=%u",s,stage,actions_->AppState(),phase_,inputIndex_);c->Observe(line);
     }
     bool Open(Surface s) {
-        if(IsVsCreate(s)){void* list=Service("flow.native_room_list_vtable");void* button=Root(list,s==PvpTeamCreate?0x88:0x84);return Click(list,Root(button,0x15C),s==PvpTeamCreate?L"MakeTeamBtn":L"MakeRoomBtn");}
+        if(IsVsCreate(s)){
+            void* list=Service("flow.native_room_list_vtable");if(!list)return false;
+            const uint32_t mode=s==PvpTeamCreate?0:s==PvpGridCreate?2:1;
+            auto* current=Symbol<const uint32_t*>("title_test.room_list_mode");
+            if(!current)return false;
+            if(*current!=mode){
+                void* radio=Root(list,mode==0?0x64:mode==1?0x68:0x6C);
+                Click(list,Root(radio,0x15C),mode==0?L"Radio1":mode==1?L"Radio2":L"Radio3",12);
+                return false; // let the original list request/UI transition finish
+            }
+            void* button=Root(list,s==PvpTeamCreate?0x88:0x84);
+            return Click(list,Root(button,0x15C),s==PvpTeamCreate?L"MakeTeamBtn":L"MakeRoomBtn");
+        }
         if(s==MissionCreate){
             void* lobby=Service("title_test.mission_lobby_vtable");void* root=Root(lobby,0x60);
             if(lobby&&static_cast<uint8_t*>(lobby)[0x64]!=3)return Click(lobby,root,L"MultiRadio",12);
