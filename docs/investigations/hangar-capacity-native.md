@@ -1,7 +1,6 @@
 # Native hangar-capacity contract
 
-Static artifact analysis on 2026-11-01. These observations do not establish
-visual or multiplayer acceptance. No game/server entry point was executed.
+Static analysis of the supported WorldServer and GOnline executables.
 
 ## Supported first-version boundary
 
