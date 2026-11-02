@@ -12,6 +12,9 @@ Client 0.2.2 covers both native PvP creation forms and team creation, and refres
 the input limit after deferred control initialization, including an already
 focused title edit. The matching creation transport requires Agent and Battle
 components 0.2.1.
+The normal, AI and team creation entries are selected through the room list's
+native tabs. The inline waiting-room editor confirms with Enter and cancels
+with Esc; cancelling retains the last server-confirmed full title.
 
 | Host | Mod | Default |
 |---|---|---|
