@@ -17,7 +17,7 @@ Beta and Experimental labels indicate release channels.
 |---|---|---|
 | IME input fix <!-- catalog: `ime_fix` --> | Commit Chinese, Japanese and Korean IME text at the correct length | [Use](docs/ime-fix.md) |
 | Activity capsule currency <!-- catalog: `capsule_currency_fix` --> | Show machine 9301 as 99 coins in the list and purchase confirmation | [Use](docs/capsule-currency-fix.md) |
-| Input method freeze fix <!-- catalog: `findwindow_fix` --> | Input method compatibility | [Use](docs/findwindow-fix.md) |
+| Input method freeze fix <!-- catalog: `findwindow_fix` --> | Stop input methods such as iFlytek from freezing or crashing the repack client | [Use](docs/findwindow-fix.md) |
 | Startup crash fix <!-- catalog: `startup_crash_fix` --> | Client startup compatibility | [Use](docs/startup-crash-fix.md) |
 | Agent relay log fix <!-- catalog: `agent_relay_log_fix` --> | Relay logging compatibility | [Use](docs/agent-relay-log-fix.md) |
 | Battle rank regression fix <!-- catalog: `rank_progression_fix` --> | Rank progression compatibility | [Use](docs/rank-progression-fix.md) |
