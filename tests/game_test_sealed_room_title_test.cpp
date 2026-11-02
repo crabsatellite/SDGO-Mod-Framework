@@ -1,0 +1,17 @@
+#include <windows.h>
+#include <cstdio>
+#include <cstring>
+#include "../mods/game_test_client/sealed_room_title.h"
+int main() {
+    wchar_t temporary[MAX_PATH]={},file[MAX_PATH]={};
+    if(!GetTempPathW(MAX_PATH,temporary)||!GetTempFileNameW(temporary,L"sdt",0,file))return 2;
+    char title[21]="gt1234 !ai e2 a1";
+    bool ok=ReadSealedRoomTitle(file,title)&&!strcmp(title,"gt1234 !ai e2 a1");
+    ok=ok&&WritePrivateProfileStringW(L"run",L"room_title",L"gt1234abcd !ai e2 a1",file);
+    ok=ok&&ReadSealedRoomTitle(file,title)&&!strcmp(title,"gt1234abcd !ai e2 a1");
+    ok=ok&&WritePrivateProfileStringW(L"run",L"room_title",L"gt1234abcde !ai e2 a1",file);
+    ok=ok&&!ReadSealedRoomTitle(file,title);
+    DeleteFileW(file);
+    std::puts(ok?"PASS sealed native room title: fallback, exact twenty bytes, overflow rejection":"FAIL sealed native room title");
+    return ok?0:1;
+}

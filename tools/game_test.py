@@ -184,7 +184,7 @@ def git_source_ref(root: Path) -> dict:
             check=True,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=30,
         ).stdout.strip()
         status = subprocess.run(
             ["git", "status", "--porcelain"],
@@ -192,7 +192,7 @@ def git_source_ref(root: Path) -> dict:
             check=True,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=30,
         ).stdout
         return {"commit": commit, "dirty": bool(status.strip())}
     except (OSError, subprocess.SubprocessError):
@@ -2294,11 +2294,19 @@ def prepare(
     asset_baseline: Path | None = None,
     extra_mods: tuple[str, ...] = (),
     apsalus_roundtrip: bool = False,
+    fps_gameplay_cap: int | None = None,
+    server_session: dict | None = None,
     fps_cap: int | None = None,
     fps_mod_enabled: bool = True,
     _owned_client_transfer: tuple[Path, str] | None = None,
 ) -> dict:
     client_template = client_template.resolve()
+    if fps_gameplay_cap is not None:
+        if type(fps_gameplay_cap) is not int or not 1<=fps_gameplay_cap<=1000:
+            raise GameTestError('gameplay FPS cap must be an integer from 1 to 1000')
+        if fps_cap is not None or any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,collection_draw)) or mission_mode is not None:
+            raise GameTestError('gameplay FPS checks require a complete native PvP battle')
+        extra_mods=tuple(dict.fromkeys((*extra_mods,FPS_MOD)))
     if apsalus_roundtrip and (mode_sequence != '1' or play_unit_uid is None or any((bootstrap_only,
             battleship_only,gift_requests_only,deck_only,pages_only,friends_only)) or mission_mode is not None):
         raise GameTestError('Apsalus roundtrip requires one complete ordinary battle and an existing owned unit UID')
@@ -2461,6 +2469,19 @@ def prepare(
             play_unit_uid,
             mission_mode,
         )
+        if server_session is not None:
+            if (not isinstance(server_session,dict) or
+                    not re.fullmatch(r'gt[0-9a-f]{4}',str(server_session.get('nonce',''))) or
+                    not re.fullmatch(r'[0-9a-f-]{36}',str(server_session.get('run_id',''))) or
+                    not server_session.get('pids') or
+                    any(type(p) is not int or p<=0 for p in server_session['pids']) or
+                    any((random_loadout,bootstrap_only,pages_only,mission_mode is not None))):
+                raise GameTestError('Reusable server session requires a verified ordinary PvP observer binding')
+            # Keep the server's existing nonce while adding this fresh run's
+            # full random suffix: twenty native bytes, unique per client run.
+            plan['room_title']=server_session['nonce']+plan['room_title'][2:]
+            if len(plan['room_title'].encode('ascii'))>20:
+                raise GameTestError('Reusable native room title exceeds twenty bytes')
         if random_loadout and any((
             bootstrap_only, battleship_only, gift_requests_only, deck_only,
             pages_only, friends_only, mission_mode is not None,
@@ -2526,6 +2547,7 @@ def prepare(
         observer_config=read_ini(observer_manifest)
         if not observer_config.has_section('settings'):observer_config.add_section('settings')
         observer_config['settings']['ApsalusRoundtrip']='1' if apsalus_roundtrip else '0'
+        observer_config['settings']['FpsGameplayCap']=str(fps_gameplay_cap or 0)
         write_ini(observer_manifest,observer_config)
         installed_route = configure_test_network(
             client,
@@ -2547,6 +2569,10 @@ def prepare(
         recording = configure_sfx_only(client) if sfx_only else None
         if quiet:configure_muted_audio(client)
         if fps_only:configure_fps_test(client, fps_cap)
+        if fps_gameplay_cap is not None:
+            from manager.storage import atomic as atomic_bytes, patch_client_timer_fps
+            config=client/'config.xml'
+            atomic_bytes(config,patch_client_timer_fps(config.read_bytes(),fps_gameplay_cap))
         write_job(client, run_id, plan, profile, profile_path)
 
         entry = client / (launcher_path or GAME_EXE)
@@ -2582,6 +2608,8 @@ def prepare(
             },
             "execution": None,
         }
+        if server_session is not None:
+            metadata['server_session']=server_session
         if shared_assets:
             metadata['assets']={'mode':'owned_readonly_hardlinks','baseline_run_id':asset_owner,
                                 'baseline':str(asset_baseline),'files':sorted(shared_assets)}
@@ -2630,8 +2658,11 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
     except ImportError as error:raise GameTestError('install Send2Trash before client reuse; no files changed') from error
     previous=validate_metadata(run_dir);verify_hashes(previous)
     client_root=run_dir/'client'
-    if options.get('extra_mods'):validate_observer_stage(client_root,stage.resolve(),options['extra_mods'])
-    else:validate_observer_stage(client_root,stage.resolve())
+    fps_only=options.get('fps_cap') is not None
+    if fps_only!=(previous.get('suite')==FPS_SUITE):
+        raise GameTestError('reuse cannot switch between account-free FPS and authenticated suites')
+    validate_observer_stage(client_root,stage.resolve(),options.get('extra_mods',()),
+        fps_mod_enabled=options.get('fps_mod_enabled',True) if fps_only else None)
     for directory,dirs,files in os.walk(client_root,followlinks=False):
         for name in dirs+files:
             path=Path(directory)/name
@@ -2650,11 +2681,16 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
         value=row.get('image_path')
         if (value and is_relative_to(Path(value).resolve(),run_dir)) or (row['pid']==previous_pid and not value):
             raise GameTestError('the owned client may still be running; reuse made no changes')
-    account_lock_path=validate_private_account(Path(previous['client']['root']),previous['plan'])
-    profile=account_lock_path.with_name(account_lock_path.name.removesuffix('.run.lock'))
-    if options.get('account_profile') and Path(options['account_profile']).resolve()!=profile:
-        raise GameTestError('reuse keeps the same persistent account profile')
-    options['account_profile']=profile
+    account_lock_path=None
+    if fps_only:
+        if options.get('account_profile') is not None:
+            raise GameTestError('account-free FPS reuse does not accept an account profile')
+    else:
+        account_lock_path=validate_private_account(Path(previous['client']['root']),previous['plan'])
+        profile=account_lock_path.with_name(account_lock_path.name.removesuffix('.run.lock'))
+        if options.get('account_profile') and Path(options['account_profile']).resolve()!=profile:
+            raise GameTestError('reuse keeps the same persistent account profile')
+        options['account_profile']=profile
     if previous.get('assets') and options.get('asset_baseline') is None:
         options['asset_baseline']=Path(previous['assets']['baseline'])
     archive=owned/'gametest-current';archive.mkdir(exist_ok=True)
@@ -2663,7 +2699,8 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
     lock,token=acquire_lock(run_dir);account_lock=None;account_token=None
     holding=run_dir.parent/('.gametest-reusing-'+uuid.uuid4().hex)
     try:
-        account_lock,account_token=acquire_exclusive_lock(account_lock_path,'persistent account')
+        if account_lock_path is not None:
+            account_lock,account_token=acquire_exclusive_lock(account_lock_path,'persistent account')
         prior={'run_id':previous['run_id'],'source':previous.get('source'),'plan':previous['plan'],
                'immutable_hashes':previous['client']['immutable_hashes'],'execution':previous.get('execution')}
         proofs=archive/'proof-binaries';proofs.mkdir(exist_ok=True)
@@ -3738,6 +3775,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--asset-baseline',type=Path,help='reuse verified read-only native archives from a passed owned build run; never links original player files')
     prepare_parser.add_argument('--reuse-client',action='store_true',help='reuse the stopped owned run-dir client in place with a fresh run UUID and compact prior receipt; no full client copy')
     prepare_parser.add_argument('--include-mod',action='append',default=[],help='explicit staged client Mod to install before runtime hashes freeze')
+    prepare_parser.add_argument('--fps-gameplay-cap',type=int,help='verify native 60 Hz gameplay and the selected render cap during a full PvP battle')
     prepare_parser.add_argument(
         "--fps-cap",
         type=int,
@@ -3824,6 +3862,7 @@ def main(argv: list[str] | None = None) -> int:
                 fps_cap=args.fps_cap,
                 fps_mod_enabled=not args.fps_mod_disabled,
                 extra_mods=tuple(args.include_mod),
+                fps_gameplay_cap=args.fps_gameplay_cap,
             )
         elif args.command == "run":
             result = run_prepared(args.run_dir, args.timeout, args.launch_timeout)

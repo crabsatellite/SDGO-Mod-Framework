@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 3.20)
+project(sdgo_native_test_sql LANGUAGES C CXX)
+if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+  message(FATAL_ERROR "The bundled native SQL engine requires -A x64")
+endif()
+set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
+set(MINHOOK ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/minhook)
+add_library(sql_registry SHARED registry.cpp
+  ${MINHOOK}/src/buffer.c ${MINHOOK}/src/hook.c
+  ${MINHOOK}/src/trampoline.c ${MINHOOK}/src/hde/hde64.c)
+target_include_directories(sql_registry PRIVATE ${MINHOOK}/include)
+target_link_libraries(sql_registry PRIVATE advapi32)
+add_executable(sql_local launch.cpp)
+target_compile_features(sql_registry PRIVATE cxx_std_17)
+target_compile_features(sql_local PRIVATE cxx_std_17)
+target_compile_definitions(sql_registry PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_definitions(sql_local PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)

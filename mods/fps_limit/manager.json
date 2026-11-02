@@ -3,10 +3,12 @@
   "id": "fps_limit",
   "title": "FPS 上限",
   "category": "gameplay",
-  "hosts": ["client"],
-  "description": "按 config.xml 的 updatefps 同时设置逻辑更新频率和渲染帧率上限，修改后重新启动游戏。",
+  "hosts": [
+    "client"
+  ],
+  "description": "按 config.xml 的 updatefps 设置渲染帧率上限，逻辑更新保持原生 60 Hz。修改后重新启动游戏。",
   "presentation": "configurable",
-  "mechanism": "保留原生 FPS 配置，在页面切换后恢复逻辑计时器，并在原生 Present 入口限制渲染提交。仅支持已校验的客户端版本，保留原生时钟和累计时间，不改变分辨率。",
+  "mechanism": "单独保存渲染上限，在原生 Present 入口限制画面提交；逻辑更新及页面切换后的计时器保持 60 Hz，避免高帧率加速移动和 AI。保留原生时钟与累计时间，不改变分辨率。",
   "settings": [
     {
       "id": "frame_limit",
@@ -19,6 +21,17 @@
       "file": "config.xml",
       "section": "Framework/Timer",
       "key": "updatefps",
+      "activation": "restart"
+    },
+    {
+      "id": "log_fps",
+      "label": "帧率采样日志",
+      "type": "boolean",
+      "default": false,
+      "audience": "developer",
+      "file": "mod.ini",
+      "section": "settings",
+      "key": "LogFps",
       "activation": "restart"
     }
   ]

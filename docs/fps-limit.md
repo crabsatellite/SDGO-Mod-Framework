@@ -1,16 +1,17 @@
-# FPS cap (Beta)
+# FPS cap
 
-Set one value in **SDGO Mod Manager** to control the client's logic-update
-frequency and rendering ceiling. For example, 160 selects 160 logic updates
-per second and a maximum rendering rate of 160 FPS.
+Set the rendering ceiling in **SDGO Mod Manager** while keeping the game's
+native speed. For example, 160 allows rendering up to 160 FPS; logic updates
+remain at the original 60 Hz so movement and AI do not accelerate.
 
-The shared logic/render setting requires `fps_limit` 1.0.2 or newer.
+Independent rendering with native gameplay speed requires `fps_limit` 1.0.3 or newer.
+Update older versions before selecting a higher cap.
 
 [简体中文](fps-limit.zh-CN.md)
 
 | Mod | Install on | Purpose |
 |---|---|---|
-| `fps_limit` | Client | Use the configured rate instead of the native forced 60 Hz |
+| `fps_limit` | Client | Apply the configured rendering cap independently of 60 Hz gameplay |
 
 ## Use
 
@@ -30,8 +31,8 @@ your current value and other client settings. No server component is required.
 The value is stored in `Framework/Timer@updatefps` in `config.xml`; the Mod
 does not maintain a separate FPS value. Missing or invalid values use 60.
 
-This setting changes logic updates as well as the rendering ceiling. Set it
-to 60 to use 60 Hz logic updates and a 60 FPS rendering cap. Resolution, aspect
+Only the rendering ceiling follows this setting. Logic updates remain at the
+native 60 Hz for every cap, including 30, 60, 120 and 160. Resolution, aspect
 ratio and the native clock source are unchanged.
 
 The cap is a maximum. Rendering load, vertical sync and display refresh rate
@@ -51,7 +52,13 @@ the startup log includes `effective FPS cap=160`.
 | Saved value has no effect | Restart the selected client and check that the Mod is enabled |
 | `invalid value; using 60` | Enter an integer from 1 to 1000 |
 | Required symbol did not verify | Use a supported client and matching framework files |
-| Rendering stays below the limit | Check rendering load, vertical sync and display settings |
+| Rendering stays below the limit | Check scene complexity, AI load, vertical sync and display settings |
+
+For performance diagnosis, enable **帧率采样日志** under **Show developer information**
+and restart the client. `render FPS sample` records a five-second average of
+successful Present calls. Occluded or failed submissions are counted separately;
+this measures rendering submissions rather than the monitor's physical refresh
+rate. The diagnostic is off by default and can be disabled after testing.
 
 Developers can reproduce the parameter and pacing checks with the
 [native GameTest FPS suite](game-test.md#fps-cap-without-account-login).

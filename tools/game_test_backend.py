@@ -92,7 +92,16 @@ class BackendBackgroundProcess(WindowsBackgroundProcess):
         return receipt
 
 def emit(phase,**values): print(json.dumps({'phase':phase,**values}),flush=True)
-def write(path,value): game_test.atomic_write(path,json.dumps(value,indent=2))
+def write(path,value):
+    # Readers/antivirus can briefly hold Windows JSON files. A private temp
+    # name also avoids colliding with a previous controller's interrupted write.
+    for attempt in range(20):
+        try:
+            atomic_bytes(path,json.dumps(value,indent=2).encode('utf-8'))
+            return
+        except PermissionError:
+            if attempt==19:raise
+            time.sleep(.05)
 def literal(value): return "N'"+value.replace("'","''")+"'"
 def docker(*args,env=None,input=None,timeout=180):
     r=subprocess.run(['docker',*args],env=env,input=input if input is not None else '',text=True,capture_output=True,
@@ -533,6 +542,26 @@ def observer_host_id(fps_suite,value):
         raise RuntimeError('Authenticated suites require --host-pilot-id from the actual reused test account')
     return value
 
+def validate_local_native_sql(private, work):
+    """Verify the selected copied native instance without touching production."""
+    root=work.parent.resolve()
+    if work.name!='server' or not (root/'TEST-ONLY.txt').is_file():
+        raise RuntimeError('Native backend must belong to a marked local test/server copy')
+    instance=json.loads((root/'database/native-sql.json').read_text())
+    if instance['root']!=str(root) or int(instance['port'])!=int(private['port']):
+        raise RuntimeError('Native SQL binding belongs to another test copy')
+    db=sql_connect(private)
+    try:
+        cursor=db.cursor()
+        pid=int(cursor.execute("SELECT CAST(SERVERPROPERTY('ProcessID') AS int)").fetchone()[0])
+        if pid!=instance.get('pid'):
+            raise RuntimeError('Native test SQL process identity changed')
+        for row in cursor.execute('SELECT physical_name FROM sys.master_files').fetchall():
+            if not Path(row[0]).resolve().is_relative_to(root):
+                raise RuntimeError('Native SQL still references data outside its test copy')
+    finally:db.close()
+
+
 def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_id=None):
     work=work.resolve();stage=stage.resolve();startup_xml=startup_xml.resolve()
     private=json.loads((work/'private.json').read_text())
@@ -546,7 +575,10 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
     suite=client.get('suite') or client['plan'].get('suite','')
     fps_suite=suite=='native-fps-limit'
     host_pilot_id=observer_host_id(fps_suite,host_pilot_id)
-    identity(private);lock,lock_token=game_test.acquire_lock(work)
+    native_local=private.get('kind')=='native-local-test'
+    if native_local:validate_local_native_sql(private,work)
+    else:raise RuntimeError('Docker service startup is retired; use a copied native-local-test backend. Legacy cleanup remains available.')
+    lock,lock_token=game_test.acquire_lock(work)
     owned_processes=[];ready_services=[];started=False
     state={'phase':'starting','pid':os.getpid(),'services':[],'client_run':str(client_run.resolve())}
     def publish(phase):
@@ -554,7 +586,8 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
     try:
         (work/'stop.request').unlink(missing_ok=True)
         publish('starting_sql')
-        docker('start',private['container']);started=True
+        if not native_local:
+            docker('start',private['container']);started=True
         deadline=time.monotonic()+180
         while True:
             try:
@@ -572,7 +605,10 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                 source=stage_server/core_file
                 if source.is_file():
                     destination=owned_folder/core_file
+                    destination.parent.mkdir(parents=True,exist_ok=True)
                     shutil.copy2(source,destination)
+            if not (owned_folder/'sdgo/sdgo.ini').is_file():
+                shutil.copy2(stage_server/'sdgo/sdgo.ini',owned_folder/'sdgo/sdgo.ini')
             manifests=[]
             for source_manifest in (stage_server/'sdgo/mods').glob('*/mod.ini'):
                 target_folder=owned_folder/'sdgo/mods'/source_manifest.parent.name
@@ -658,12 +694,22 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                 game_test.write_ini(folder/'sdgo/sdgo.ini',settings)
             for attempt in range(1,3):
                 console=work/(spec['folder']+'.console.log')
+                log_offsets={str(p):p.stat().st_size for p in (folder/'LogData').glob('*.txt')}
                 with console.open('ab') as output:
                     process=BackendBackgroundProcess([str(exe)],cwd=folder,env=env,stdout=output,stderr=subprocess.STDOUT,run_id=client['run_id'])
                 owned_processes.append(process)
                 state_row={'folder':spec['folder'],'pid':process.pid,'exe':str(exe),
                     'desktop':process.desktop_path,'attempt':attempt}
                 state['services'].append(state_row);publish('starting_'+spec['folder'])
+                if native_local:
+                    # Original hosts connect to each other asynchronously.
+                    # Start the copied set first, then verify every listener;
+                    # waiting for each host before starting its peers causes
+                    # minutes of avoidable startup delay under concurrent load.
+                    ready_services.append((process,state_row))
+                    state_row['port']=spec['port']
+                    state_row['startup_log_offsets']=log_offsets
+                    break
                 deadline=time.monotonic()+startup_timeout
                 while (target_ip,spec['port']) not in listeners(process.pid):
                     if (work/'stop.request').exists(): raise InterruptedError('Owned backend stop requested')
@@ -682,6 +728,41 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                     raise RuntimeError('Owned native service not ready: '+spec['folder'])
                 emit('service_retry',folder=spec['folder'],category=state_row['failure_category'])
                 time.sleep(3)
+        if native_local:
+            deadline=time.monotonic()+startup_timeout
+            for process,row in ready_services:
+                while (target_ip,row['port']) not in listeners(process.pid):
+                    if (work/'stop.request').exists():raise InterruptedError('Owned backend stop requested')
+                    if process.poll() is not None or time.monotonic()>deadline:
+                        raise RuntimeError('Copied native service not ready: '+row['folder'])
+                    time.sleep(.2)
+                proof=process.verify_background()
+                if not (proof['verified'] and proof['private_desktop_verified'] and proof['foreground_safe']):
+                    raise RuntimeError('Copied native service background policy failed: '+row['folder'])
+                row['quiet_proof']=proof
+                emit('service_ready',folder=row['folder'],pid=process.pid,port=row['port'],attempt=1)
+            # Native Battle opens TCP before its asynchronous table loader
+            # enables Time Procedure. A socket alone can yield 0FBC on Start.
+            # Bind the readiness marker to bytes written by this launch only.
+            tables_deadline=time.monotonic()+600
+            for process,row in ready_services:
+                if not row['folder'].startswith('Battle'):continue
+                folder=Path(row['exe']).parent
+                offsets=row['startup_log_offsets']
+                while True:
+                    loaded=False
+                    for log in (folder/'LogData').glob('*.txt'):
+                        with log.open('rb') as stream:
+                            stream.seek(offsets.get(str(log),0))
+                            loaded=loaded or b'Table Download OK.. Time Procedure Ready..' in stream.read()
+                    if loaded:break
+                    if (work/'stop.request').exists():raise InterruptedError('Owned backend stop requested')
+                    if process.poll() is not None or time.monotonic()>tables_deadline:
+                        raise RuntimeError('Native Battle table loading did not complete: '+row['folder'])
+                    time.sleep(.5)
+                row['native_tables_ready']=True
+                publish('tables_ready_'+row['folder'])
+                emit('native_tables_ready',folder=row['folder'],pid=process.pid)
         deadline=time.monotonic()+30
         while not any((target_ip,login_port) in listeners(process.pid) for process,_ in ready_services):
             if any(process.poll() is not None for process,_ in ready_services) or time.monotonic()>deadline:
