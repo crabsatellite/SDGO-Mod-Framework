@@ -7,7 +7,7 @@
     "client"
   ],
   "provider": "capsules",
-  "description": "扭蛋价格诊断，由配套配置提供内容。",
+  "description": "开发诊断：只读记录扭蛋列表价格标签的刷新。",
   "settings": [],
   "presentation": "configurable"
 }

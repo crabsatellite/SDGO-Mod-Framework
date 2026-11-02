@@ -20,5 +20,5 @@
     }
   ],
   "presentation": "configurable",
-  "description": "配置原生战斗 AI 的难度与资源规则。高级调试字段位于开发信息。"
+  "description": "让对战 AI 按玩家规则使用 SP、部件和道具（对战服务器）。"
 }
