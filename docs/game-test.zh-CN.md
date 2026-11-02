@@ -1,9 +1,9 @@
 # 原生 GameTest
 
-并行的登录/业务测试优先使用已有五账号模板和自动回收的独立环境，见
-[`sdgo-native-testing` guide](../skills/sdgo-native-testing/SKILL.md)。普通测试不注册账号或补库存；
-每个任务独立复制回环后端和 SQL，按账号槽位绑定模板已有资产。FPS 参数测试无需登录，
-使用下述独立后端与矩阵；同样保留证据并清理所属环境。
+默认复用本机从生产复制、数据库完全隔离的原生 `test`，不用 Docker。
+并发有冲突时复制 test 并配置独立端口和原生 SQL，完成后删除整个任务副本。
+普通测试绑定已有账号与机体；保留已有代码和有效结果，测试程序/数据库副本只留本地。
+流程、命令和数据维护见 [`sdgo-native-testing` guide](../skills/sdgo-native-testing/SKILL.md)。
 
 ## 无需登录的 FPS 参数验证
 

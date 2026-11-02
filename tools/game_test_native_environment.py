@@ -140,6 +140,10 @@ class NativeDriver:
             '-b', '-l', '5', '-t', '120', '-h', '-1', '-W', '-Q', statement, env=env)
 
     def start_sql(self, lease):
+        raise RuntimeError(
+            'Docker GameTest creation is retired. Reuse the isolated local test '
+            'client/server/native SQL; copy test only for concurrency. '
+            'Use game_test.py prepare/run. environment list/recover remain for legacy cleanup.')
         self.environment = lease
         self.progress('sql_starting')
         prefix = 'sdgo-gt-' + lease.id.replace('-', '')[:20]
