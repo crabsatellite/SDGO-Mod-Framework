@@ -419,6 +419,9 @@ def rebase_configuration(root, old_root, new_root, ip, private, *, old_ip, old_s
         for path in folder.glob('*.ini'):
             # The native server reader treats DBServerName/DBName literally.
             # Manager's case-folded view is for querying, never serialization.
+            if b'DBServerName' not in path.read_bytes():
+                # SdgoMonitorAgent.ini uses a colon-based format, not INI.
+                continue
             cfg=gt.read_ini(path)
             for section in cfg.sections():
                 if cfg.has_option(section,'DBServerName'):

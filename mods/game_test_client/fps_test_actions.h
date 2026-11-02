@@ -10,9 +10,10 @@
 // frames, changes application state or modifies the production FPS value.
 class FpsTestActions {
 public:
-    bool Bind(const SdgoApi* api, SdgoMod* mod, int requested, bool enabled) {
+    bool Bind(const SdgoApi* api, SdgoMod* mod, int requested, bool enabled, bool requireHighRender=false) {
         app_ = reinterpret_cast<AppFn>(api->Symbol(mod,"game.app"));
         requested_=requested; effective_=enabled ? requested:60; enabled_=enabled;
+        requireHighRender_=requireHighRender;
         if (enabled_) {
             const HMODULE module=GetModuleHandleW(L"fps_limit.dll");
             snapshot_=module ? reinterpret_cast<SdgoFpsLimitGetSnapshotV1Fn>(
@@ -32,9 +33,9 @@ public:
         if (!timer)return SDGO_GAME_TEST_WAIT;
         const int cap=*reinterpret_cast<const int*>(app+0x80);
         const float interval=*reinterpret_cast<const float*>(timer+0x18);
-        context->Assert(cap==effective_,"the real application's FPS field matches the configured or disabled baseline cap");
-        context->Assert(std::isfinite(interval) && std::abs(double(interval)-1.0/double(effective_))<0.0000001,
-            "the real native simulation timer interval equals one divided by the configured update cap");
+        context->Assert(cap==60,"the real application's simulation frequency remains at native 60 Hz");
+        context->Assert(std::isfinite(interval) && std::abs(double(interval)-1.0/60.0)<0.0000001,
+            "the real native simulation timer remains at one sixtieth of a second");
         context->Assert((GetModuleHandleW(L"fps_limit.dll")!=nullptr)==enabled_,
             "the production FPS Mod load state matches the explicit test plan");
         context->Assert(app[0x44A]==0,
@@ -53,8 +54,8 @@ public:
                 static_cast<uint64_t>(effective_);
             context->Assert(production.render_cap==static_cast<uint32_t>(effective_),
                 "the production pacing snapshot uses the configured render cap");
-            context->Assert(production.update_hz==static_cast<uint32_t>(effective_),
-                "the production pacing snapshot uses the configured update cap");
+            context->Assert(production.update_hz==60,
+                "the production snapshot keeps gameplay at 60 Hz independently of rendering");
             context->Assert(production.qpc_frequency>0 && production.period_ticks==expectedPeriod,
                 "the production pacing period is the exact QPC ceiling for the configured render cap");
             if (effective_==30)context->Assert(production.waited_calls>0,
@@ -64,7 +65,7 @@ public:
             "fps native requested=%d mod_enabled=%u effective=%d interval_seconds=%.9f expected_interval=%.9f "
             "update_cap=%d production_present_calls=%u waited_calls=%u production_qpc=%llu period_ticks=%llu "
             "period_ms=%.6f successful_present_qpc=%llu min_success_gap_ticks=%llu max_success_gap_ticks=%llu",
-            requested_,enabled_ ? 1u:0u,cap,interval,1.0/double(effective_),effective_,
+            requested_,enabled_ ? 1u:0u,cap,interval,1.0/60.0,60,
             production.present_calls,production.waited_calls,
             static_cast<unsigned long long>(production.qpc_frequency),
             static_cast<unsigned long long>(production.period_ticks),
@@ -86,7 +87,7 @@ public:
             const double gap=lastPoll_ ? double(now.QuadPart-lastPoll_)/double(frequency_.QuadPart):1.0;
             responsive_=gap<=0.2 ? responsive_+1:0;
             lastPoll_=now.QuadPart;
-            if (responsive_<static_cast<unsigned>(effective_) || presents<30)return SDGO_GAME_TEST_WAIT;
+            if (responsive_<60 || presents<30)return SDGO_GAME_TEST_WAIT;
             sampling_=true;start_=totalStart_=now.QuadPart;startTick_=totalStartTick_=context->tick;
             startPresents_=totalStartPresents_=presents;
             context->Observe("fps warmup completed: responsive native updates and at least 30 successful D3D9 Presents");
@@ -122,7 +123,7 @@ public:
                 "update_cap=%d min_success_gap_ms=%.6f max_success_gap_ms=%.6f "
                 "production_present_calls=%u waited_calls=%u period_ticks=%llu",
                 totalSeconds,totalUpdates,totalPresents,effective_,enabled_ ? 1u:0u,
-                effective_,
+                60,
                 minimumGapSeconds*1000.0,maximumGapSeconds*1000.0,
                 production.present_calls,production.waited_calls,
                 static_cast<unsigned long long>(production.period_ticks));
@@ -130,8 +131,8 @@ public:
             // The original timer catches up after scheduler stalls. Keep all
             // individual windows visible; judge cadence over the entire sample
             // rather than incorrectly treating a catch-up burst as a new cap.
-            context->Assert(totalUpdates>=effective_*0.80 && totalUpdates<=effective_*1.10,
-                "real native simulation cadence across all sample windows follows the configured update cap");
+            context->Assert(totalUpdates>=60.0*0.80 && totalUpdates<=60.0*1.10,
+                "real native gameplay cadence remains at 60 Hz rather than accelerating with the render cap");
             context->Assert(totalPresents>1.0,"the real native renderer completed successful D3D9 Presents");
             context->Assert(presentFrequency>0 && minimumPresentGap>0 && maximumPresentGap>=minimumPresentGap,
                 "independent successful D3D9 Present invocation gaps were measured with QPC");
@@ -143,6 +144,8 @@ public:
                     "the production FPS pacing snapshot remains readable after all cadence windows");
                 context->Assert(totalPresents<=effective_*1.10,
                     "actual D3D9 Present throughput does not exceed the configured render cap");
+                if (requireHighRender_ && effective_>60)context->Assert(totalPresents>60.0,
+                    "real native rendering exceeds 60 frames per second while gameplay remains at native speed");
                 context->Assert(minimumGapSeconds+allowedJitter>=configuredPeriod,
                     "the minimum successful D3D9 Present gap prevents unbounded over-frequency rendering");
                 if (effective_==30)context->Assert(production.waited_calls>0,
@@ -171,4 +174,5 @@ private:
     int requested_=60,effective_=60;
     bool enabled_=false;
     bool sampling_=false;
+    bool requireHighRender_=false;
 };

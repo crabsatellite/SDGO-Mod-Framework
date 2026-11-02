@@ -1,4 +1,4 @@
-# Battle contribution rewards (Beta)
+# Battle contribution rewards
 
 [完整中文安装教程](battle-rewards.zh-CN.md) · [Rule tables](battle-reward-design.md)
 
@@ -23,6 +23,14 @@ Multipliers, rules and previews are edited there and apply to later settlements 
 BattleServer. The panel shows a connection only when the policy, native settlement and wallet
 heartbeat are all confirmed. See the [Manager guide](mod-manager.md).
 
+Keep the Manager running while the server is available. It remembers enabled services, restores them
+when it starts and retries a failed wallet worker. A listening BattleServer port alone does not prove
+reward readiness: check both the wallet service and the reward panel. If the wallet heartbeat expires,
+the Mod retains the original game reward path instead of applying the contribution policy. A small
+GB credit can therefore be a real native payment. Restoring the worker affects later settlements;
+it does not reconstruct earlier combat statistics. For unattended operation, include the existing
+Manager in the operating system's normal startup configuration with its existing workspace.
+
 ## Delivery and recovery
 
 GB replaces the native final amount and continues through the normal World/wallet path. The complete
@@ -37,6 +45,29 @@ balance at their next login or shop cash query. Keep queued jobs and receipts du
 
 To stop the worker, use **停止本 Manager 的钱包服务** in the reward panel; it only stops the worker this
 Manager started.
+
+## Historical GB compensation
+
+When complete combat snapshots are unavailable, an administrator can compensate verified battle
+payments using comparable healthy settlements under the same GB rules. Normalize each sample by
+its event multiplier, take the exact average, then multiply by the affected battle's event factor and
+round down once. Pay only `max(0, target - already_paid)`. Larger original payments are kept.
+This is an administrative compensation, not an exact reconstruction of kills, damage or MVP.
+
+The source checkout and reward owner toolkit include a maintenance command (Python 3.10+, `pyodbc`
+and a SQL Server ODBC driver). Prepare and review a private plan using the
+[recovery plan format](battle-reward-design.md#gb-compensation-plan), then preview it:
+
+```powershell
+python tools/recover_battle_reward_gb.py --plan "D:\SDGO-Owner\Recovery\gb-plan.json" --server-ini "D:\SDGO\Server\WorldServer\WorldServer.ini"
+```
+
+The preview validates the arithmetic without database writes. Add `--apply` to execute the reviewed
+plan. Execution checks the selected database's file scope, wallet identity, healthy sample receipts
+and original native credits, then uses the unchanged `sp_PocketGP_IO` to credit the difference.
+The batch is transactional. Each original payment has an immutable compensation receipt; retrying
+the same plan pays nothing again, while changing already-applied terms is rejected. Keep the private
+plan and database receipts, and refresh the GB balance through a normal game login after compensation.
 
 ## Disable or remove
 
