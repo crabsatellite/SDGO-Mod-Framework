@@ -33,6 +33,10 @@ WINDOW_PROBE = textwrap.dedent(
     import time
 
     user = ctypes.WinDLL("user32", use_last_error=True)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel.GetPriorityClass.argtypes = [wintypes.HANDLE]
+    kernel.GetPriorityClass.restype = wintypes.DWORD
     user.CreateWindowExW.argtypes = [
         wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
         ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
@@ -51,6 +55,7 @@ WINDOW_PROBE = textwrap.dedent(
         "marker": os.environ["SDGO_BACKGROUND_PROBE"],
         "cwd": os.getcwd(),
         "window": int(window),
+        "priority_class": int(kernel.GetPriorityClass(kernel.GetCurrentProcess())),
     }), flush=True)
     time.sleep(30)
     """
@@ -156,6 +161,7 @@ class BackgroundProcessWin32Tests(unittest.TestCase):
                 ready = json.loads(process.stdout.readline())
                 self.assertEqual(ready["pid"], process.pid)
                 self.assertEqual(ready["marker"], "isolated")
+                self.assertEqual(ready["priority_class"], game_test_windows.BELOW_NORMAL_PRIORITY_CLASS)
                 self.assertEqual(Path(ready["cwd"]), Path(temporary))
 
                 receipt = process.verify_background(process.pid)
