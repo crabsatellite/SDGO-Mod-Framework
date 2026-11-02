@@ -1,143 +1,74 @@
 # Hangar manager (Beta)
 
-Server-persisted sorting and native duplicate exchange.
 [简体中文](hangar-manager.zh-CN.md)
 
-Version 0.4.0 makes GB preview immediate from the native inventory summary.
-It no longer requests every full unit record or waits for one network dismantle
-reply per unit. After two confirmations it transfers the exact selected IDs,
-types and slots, then submits one server transaction. The server rechecks owner,
-slot, active/locked/deck/rental/training protection, KeepCopies and reward rates;
-calls native dismantling and credits GB atomically. Incomplete selections do
-nothing; stale or failed batches roll back. Repeated messages do not repeat
-deletion or rewards. Update the server adapter through Manager as well as the
-client; log in again after submission. Experience-capsule exchange retains its
-separate native per-unit path.
+The client mod `hangar_manager` adds **Sort** and **Exchange duplicates** buttons next to the lock and
+dismantle buttons on the game's unit-management page. Everything happens in that native page; there is
+no separate window, overlay or hotkey, and the Manager does not need to stay open. Sorting and GB batch
+exchange run on the server, so the owner installs the server adapter first.
 
-Sorting also ensures the registered capacity covers the resulting inventory in
-six-slot blocks, within the native 1200-slot limit. An imported inventory larger
-than `24 + ExpandSlotCount` can crash the native login slot writer.
+## Sort
 
-Version 0.3.0 requires the owner to install the server sort adapter once through
-Manager's hangar server panel, using the native INI with DB Game and DB Member.
-Players submit one request through their existing game connection and log in
-again. No client SQL credentials, extra port or resident Manager are needed.
-The installer preserves normal native mail and can restore the original procedure.
-It reads back SQL module hashes without sorting any player's inventory.
+The server orders all units by grade (S/A/B/C), sub-level, unit number, acquisition time and instance
+ID, changing only slot numbers. Locks, sortie units, decks, training and other unit data are kept.
+Sorting also raises the registered capacity in six-slot blocks to fit the inventory, up to 1200
+(an imported inventory larger than `24 + ExpandSlotCount` can crash the native login slot writer).
+After submitting, **log in again** to see the result.
 
-Duplicates now use UnitNumber/type, counting protected copies toward KeepCopies.
-Full records remain exact-instance freshness guards. Untrained paint variants
-count as the same type; lock copies you intend to retain before previewing.
-Buttons leave the native page selector clear and long status text stays within
-the right-hand panel. The following 0.2.x notes describe historical behavior.
+## Exchange duplicates
 
-Version 0.2.1 fixes non-clickable buttons and random colored rectangles on the
-native page. Action buttons now use the adjacent native button's normal, hover
-and pressed skins, font and text color. Import the repair overlay in Manager and
-restart the target client to load it; no server restart is needed.
+- Copies are counted by unit number; at least two of each are kept by default (`KeepCopies`, 1–20),
+  and protected copies count toward that. Paint variants count as the same unit; lock any copy you
+  want to keep.
+- Locked, sortie, deck, rental and trained units are never exchanged; unknown units are skipped.
+- Choose native GB or the native item reward (usually experience capsules). The server's
+  `tbl_UnitGradeInfo` and native dismantling decide the actual reward.
+- Preview and the first confirmation delete nothing; two confirmations are required.
 
-Version 0.2.2 publishes the action buttons only after all controls, skins and
-captions initialize successfully. A partial failure leaves the Mod controls hidden
-and preserves the original lock/delete event handler. Initialization is automatic
-and uses the client's native assets; players supply no skin files or settings.
-Distribute the new DLL with its symbol fragment. An already running old DLL still
-requires the normal close, update and restart sequence.
+**GB exchange** builds the list from the native inventory summary. After confirmation the exact
+instances, unit numbers and slots go to the server, which rechecks ownership, protection, KeepCopies and
+rewards, dismantles natively and credits GB in one transaction. Incomplete or stale lists and any failure
+change nothing; repeated submissions do not pay twice. Log in again afterwards.
 
-Version 0.2.3 fixes clicks rejected by the old battle-pointer guard. The app's
-state number identifies menu services; lobby objects have no game-mode field at
-offset `+0C`. Page attachment and received clicks are logged separately from
-successful Mod loading.
+**Item exchange** keeps the native per-unit flow and stops, without retrying, when a reply cannot be
+confirmed, the connection changes or the hangar is modified elsewhere. Confirmed steps are not undone.
 
-Version 0.2.4 keeps the native unit grid visible during sorting and returns to it
-after exchange. Sorting no longer opens the empty duplicate preview. The same
-sort entry becomes a stop button while sorting; status appears below the grid.
-Preview controls follow the actual right-hand grid origin in the full-screen
-native dialog. Refresh follows the original list, icon and page-visibility order.
-Zero changes means eligible units already match the selected order. Other menu
-or room inventory views may retain their cache; log in again to synchronize them.
+## Install
 
-## Install and open
+**Server:** in SDGO Mod Manager open **机库整理与批量回收服务端** (hangar server), choose the server INI
+containing `DB Game` and `DB Member` (same SQL instance) and install or update. Normal native mail keeps
+working; the panel can check the installed procedure hashes and restore the original procedure. No game
+server restart is needed.
 
-This gameplay extension is included in Full framework packages and omitted from
-Base packages. Install the client portion with the [normal installer](setup.md#install).
-Only `GOnline-54BE1568-00C97000` is supported. Sorting requires the server SQL
-adapter; players need no account configuration or Python runtime.
+**Client:** friend-server players update with `update.bat`. The Full framework package includes this mod
+(Base does not). Alternatively import the mod's overlay with **导入客户端配置包** in the Manager, or close
+the client and run `install_hangar.ps1 -GameDir "D:\Games\SDGO"` from the standalone package
+(`-RefreshRules` refreshes the reward preview rules). Supported client: `GOnline-54BE1568-00C97000`.
 
-The dedicated hangar addon preserves existing core files and unrelated Mods.
-Close the target client, extract that addon, then run:
+## Settings
 
-```powershell
-powershell -ExecutionPolicy Bypass -File install_hangar.ps1 -GameDir "D:\Games\SDGO"
-```
+Under **机库整理与回收** in the Manager: **至少保留机体份数** (`KeepCopies`, default 2) and **回收后整理机库**
+(`SortAfterExchange`, default 1). `RequestIntervalMs`, `ReplyTimeoutMs`, `MaxSlots` and `RulesFile` are
+developer settings. The rules file only affects the preview; it cannot raise server rewards. Owners can
+export it read-only with `python export_hangar_rules.py --server-ini "D:\Server\StoreServer.ini" --output units.tsv`
+(needs `pyodbc`; `--snapshot` reads table JSON instead).
 
-On the in-game **unit management** page, click **一键整理** (sort) or **重复兑换**
-(duplicate exchange) beside the native lock/delete buttons. Reward selection,
-paged previews, both confirmations and stopping remain inside the same game page.
-Closing it invalidates the preview. There is no desktop popup, global toolbar or
-F8 shortcut, and the unified Manager does not need to stay open.
-Disable it using `[features] hangar-manager=0` or `[mods] hangar_manager=0` in
-`sdgo/sdgo.ini`; the gameplay category switch also applies.
+## Developer notes
 
-## Sorting, preview and confirmation
+- Sort and GB batch requests use the native mail send `0x0891` (345 bytes); the server derives the owner
+  from its own session. Native mail has no completion acknowledgement, so the client only reports
+  "submitted"; the server writes a separate receipt that the Manager reads back.
+- The sort transaction changes only `tbl_UserUnits.UserUnitSlotNumber` and verifies all other columns.
+- Item exchange uses native dismantle `0x06D2` (19 bytes; reward 1 = GB, 2 = item) and detail `0x078B`
+  (14 bytes), always addressed by the stable `UserUnitNumber`.
 
-Sorting transactionally changes UserUnitSlotNumber on the server, following the
-existing script's grade, subgrade, unit type, acquisition date and stable-ID order.
-Every other inventory column, active stable UID, lock, deck, GB and drop box is
-preserved. Duplicate preview fetches fresh details, counts copies by type and
-keeps at least two in total by default. Locked, active, deck-assigned, rental and
-trained copies cannot be exchanged, but count toward that minimum. No exchange
-runs until both confirmations.
-
-Choose native GB or native item rewards. The server controls the actual reward
-through `tbl_UnitGradeInfo`; the bundled `units.tsv` only supplies preview/filtering
-data. Items use the normal dismantling reward/claim flow, not a direct inventory
-write. This server version generally uses filled experience capsules. Unknown units
-are excluded from exchange; server sorting retains unknown types after known grades.
-
-Every change revalidates the stable unit ID, slot and state, sends one request and
-waits for the native inventory to match the expected result. A changed layout,
-disconnect or timeout stops the batch without retry. Stop cancels future requests;
-already confirmed operations are not rolled back.
-
-## Refresh and verification limits
-
-The native mail transport has no proven sort-completion acknowledgement. The
-client says submitted, never completed on send alone; server SQL records committed
-requests independently. Relog after sorting; further Mod operations stay blocked
-until the cache/session resets. Native exchange replies still drive per-item
-confirmation and grid redraw.
-
-Offline planner, native-adapter, native-page and installer fixtures pass. Page tests
-cover host-owned child controls, layout bounds, pagination, confirmation, restoring
-original visibility and invalidating stale pages. They use synthetic
-inventories and do not prove live-game refresh or reward delivery. Manual acceptance
-should begin with sorting, then known expendable duplicates for both reward choices,
-followed by relogging to check persistence. No real account is modified by the tests.
-
-## Settings and owner rules
-
-Edit everyday preferences in the unified Mod Manager. The underlying
-`sdgo/mods/hangar_manager/mod.ini` `[settings]` supports:
-
-| Key | Default | Meaning |
-|---|---|---|
-| `KeepCopies` | 2 | Minimum copies per unit type, including protected copies, from 1 to 20 |
-| `SortAfterExchange` | 1 | Submit server sorting after exchange; relog required |
-| `RequestIntervalMs` | 150 | Minimum native request interval |
-| `ReplyTimeoutMs` | 10000 | Maximum wait for inventory synchronization |
-| `MaxSlots` | 1200 | Verified native movable slot limit |
-| `RulesFile` | units.tsv | Preview table, relative to the Mod folder |
-
-Installers preserve existing settings and `units.tsv`. The dedicated installer can
-explicitly refresh rules with `-RefreshRules`; the full installer uses
-`-OverwriteConfig` to replace preserved configuration. A server owner can regenerate
-the non-user rules locally using an installed ODBC driver and `pyodbc`:
+Build and test:
 
 ```powershell
-python tools/export_hangar_rules.py --server-ini "D:\Server\StoreServer.ini" --output units.tsv
+cmake -S . -B build/hangar -G "Visual Studio 17 2022" -A Win32
+cmake --build build/hangar --config Release
+ctest --test-dir build/hangar -C Release --output-on-failure
 ```
 
-The standalone addon puts `export_hangar_rules.py` at its root. Database credentials
-stay in the owner's existing local INI; only unit definitions and reward metadata
-are exported. See the [Chinese guide](hangar-manager.zh-CN.md) for native packet
-details and build/test commands.
+Native mouse replay needs `-DSDGO_HANGAR_NATIVE_HOST="D:/Games/SDGO/GOnline.exe"` and the
+`hangar_native_input_replay` test.
