@@ -49,7 +49,7 @@ def contents(repo, binaries, include_manager=True):
             return "](https://github.com/crabsatellite/SDGO-Mod-Framework/blob/master/"+relative+("#"+anchor if anchor else "")+")"
         files["docs/"+name]=re.sub(r"\]\(([^)]+)\)",link,text).encode("utf-8")
     files["README.md"] = (
-        "# Battle contribution rewards (Beta)\n\n"
+        "# Battle contribution rewards\n\n"
         "Owner toolkit for the native BattleServer Mod. No game files, credentials or private runtime configuration are included.\n\n"
         "Read [deployment and acceptance](docs/battle-rewards.md) before applying.\n"
         "Open SDGO Mod Manager.exe and choose Battle rewards. No separate reward UI or Python installation is needed.\n"

@@ -1,4 +1,4 @@
-# 长房名（Beta）
+# 长房名
 
 [English](room-titles.md)
 
