@@ -1,22 +1,19 @@
-# Owner shop catalog manager (Beta)
+# Shop catalog manager (Beta)
 
-Open `SDGO Mod Manager.exe` and choose Shop to manage native shop offers in a unified Manager shop panel.
-Select the WorldServer folder and connect using its existing host INI. Add an existing item,
-set its price, GB/MB currency and term, then save the draft. Use **Apply to shop** to publish it.
-Search, editing, reversible listing/unlisting, retirement, and portable JSON import/export are built in.
+[简体中文（完整说明）](shop-catalog.zh-CN.md)
 
-The WorldServer module starts disabled until configured. It updates only its owned single-item offers
-and keeps native listing, billing and delivery paths. Existing native offers, accounts, balances,
-inventory and purchase history are preserved. IDs are stable; retirement hides offers without reuse.
-The supported World build is `548A86E3-0010C000`. Renamed copies are supported by the standalone installer.
+Owners manage their own native shop offers in the **商城商品** (shop) panel of SDGO Mod Manager:
+add, search, edit, list/unlist, retire and restore. Players keep buying in the native in-game shop.
+Chinese option names and rental labels come from the separate [shop labels fix](shop-labels.md).
 
-The Full framework package includes the module and helper, with the shared Manager entry at the package root.
-Base fixes include only the independent label patch. Separate incremental packages are also available
-through `tools/package_shop.py`. Configuration exports contain no credentials or local host paths.
-The owner window uses Windows .NET Framework 4.x and needs no Python during normal use.
+Set the existing shop workspace, the `WorldServer` folder and optionally a local client folder (for
+display labels). Pick a native item and click **新增商品** (add); edit name, option label, price, GB/MB
+currency, quantity or rental days and listing, then **保存商品** (save). Changes are drafts until
+**应用到游戏** (apply to game). Retired offers keep their IDs and purchase history. JSON import/export
+contains no credentials or local paths.
 
-See the [complete Chinese guide](shop-catalog.zh-CN.md), [button-based manual checks](shop-testing.zh-CN.md),
-and [verification scope](shop-validation.zh-CN.md). Native gameplay and actual delivery are user acceptance steps.
-
-
-Configuration publication and background ownership belong to the unified Manager. The WorldServer component performs no startup SQL application and is not re-enabled by publishing.
+The WorldServer module (`548A86E3-0010C000`) starts disabled until configured and is installed once with
+the standalone `Install.ps1`. It updates only its own single-item offers in a transaction and keeps native
+listing, billing and delivery; accounts, balances, inventory and history are untouched. Prices must be
+positive; GB is native currency 1 (GP), MB native currency 2 (GC). Only the Manager publishes the
+configuration; the WorldServer component applies nothing at startup.
