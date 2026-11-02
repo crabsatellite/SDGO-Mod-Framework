@@ -59,7 +59,7 @@ Beta、Experimental 表示发布阶段。
 
 | 功能 | 简介 | 文档 |
 |---|---|---|
-| FRP 联机（Beta） <!-- catalog: `net_route`、`agent_udp_pool` --> | 网络联机 | [使用说明](docs/frp-distribution.zh-CN.md) |
+| FRP 联机（Beta） <!-- catalog: `net_route`、`agent_udp_pool` --> | 通过服主的 Sakura FRP 等 TCP/UDP 转发连接服务器 | [使用说明](docs/frp-distribution.zh-CN.md) |
 | 商城商品管理（Beta） <!-- catalog: `shop_catalog` --> | 商城内容管理 | [使用说明](docs/shop-catalog.zh-CN.md) |
 
 <!-- /mod-category:network -->
