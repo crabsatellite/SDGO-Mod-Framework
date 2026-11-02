@@ -1493,6 +1493,9 @@ int __cdecl SelectPlayUnit(const SdgoGameTestContextV1* context) {
             state.native_row_x_bits,state.native_row_y_bits,state.native_row_x_finite,state.native_row_y_finite,
             state.native_list_pressed_index,state.native_list_selected_index,state.unit_manager_page,state.native_target_occupied,state.native_row_selected_before,state.native_row_selected);
         context->Observe(graph);
+        char pager[192];sprintf_s(pager,"native unit page raw=%d max=%d group=%d maxgroup=%d target=%u",
+            state.unit_manager_page_raw,state.unit_manager_max_page_raw,state.unit_manager_page_group_raw,
+            state.unit_manager_max_page_group_raw,state.target_page);context->Observe(pager);
     }
     if(result>=UnitSelectActions::kInvalidTarget || result==UnitSelectActions::kUnbound){diagnosticFailure=true;failureAt=context->elapsed_ms;context->Observe("unit selection failure latched; ten-second read-only diagnostic pause with no more input/business calls");return SDGO_GAME_TEST_WAIT;}
     if(result==UnitSelectActions::kAlreadySelected) {
