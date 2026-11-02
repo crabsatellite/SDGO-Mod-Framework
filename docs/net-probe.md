@@ -1,7 +1,7 @@
 # Packet logger (development)
 
 Logs the client's outgoing packets, for mapping the network protocol while developing mods.
-Off by default. 中文：开发用的发包日志，默认关闭。
+Off by default.
 
 | mod | host | part |
 |---|---|---|
@@ -9,9 +9,12 @@ Off by default. 中文：开发用的发包日志，默认关闭。
 
 ## Use
 
-Set `enabled=1` in `sdgo\mods\net_probe\mod.ini` and start the game. The packets go to
-`sdgo\logs\sdgo.log`. Turn it off again with `enabled=0` (or `net_probe=0` under `[mods]` in
-`sdgo\sdgo.ini`).
+In SDGO Mod Manager click **显示开发信息** (show developer info), switch on the packet logger for
+the client and start the game. Packets go to `sdgo\logs\sdgo.log`. Switch it off the same way.
+Keep it off while using [FRP connectivity](frp-distribution.md): both hook `sendto`.
+
+中文：在 Manager 点“显示开发信息”后打开客户端的发包日志，启动游戏后查看 `sdgo\logs\sdgo.log`；
+使用 FRP 联机时保持关闭。
 
 ## Settings
 
