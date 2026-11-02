@@ -25,7 +25,7 @@ bonus category is introduced. XP fields and the separate native operator reward
 field at packet `+0x59` are left intact. MB delivery and policy calculation are
 unchanged.
 
-## Local native verification
+## Developer tests
 
 The optional probe requires explicitly supplied local game images. It checks
 their complete SHA-256 before extracting any executable slice:
@@ -49,7 +49,6 @@ along with preservation of every unrelated input-frame byte.
 
 The regular real-core reward runtime fixture additionally checks the repaired
 rows for all ten settlement entries, daily double coexistence and duplicate
-settlement. The old deployed DLL must fail these additional assertions, while
-the repaired DLL passes. This is packet/data-reader verification, not a rendered
-HUD or authenticated gameplay recording. Game images are not bundled in source,
+settlement. These checks exercise packet fields and data readers. Test the
+rendered result screen and authenticated gameplay separately. Game images are not bundled in source,
 CI or distribution packages.

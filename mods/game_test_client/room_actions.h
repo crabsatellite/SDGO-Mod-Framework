@@ -163,6 +163,7 @@ public:
             Symbol<ThreeDRoomHasStateFn>("flow.three_d_room_has_state");
         threeDRoomAddState_ =
             Symbol<ThreeDRoomAddStateFn>("flow.three_d_room_add_state");
+        threeDStartBusiness_ = Symbol<WaitMenuUpdateFn>("flow.normal_3d_start_business");
         nativeWStringCtor_ =
             Symbol<NativeWStringCtorFn>("flow.native_wstring_ctor");
         nativeWStringDtor_ =
@@ -418,12 +419,29 @@ public:
     // sends PT_REQ_GAME_START (0x08A7). No UI event, packet replica, direct
     // command call or room/model write is used. Older non-3D rooms retain
     // their original wait-menu business routine below.
+    uint32_t NativeStartFlags() const
+    {
+        __try {
+            const uint8_t* app=gameApp_ ? gameApp_():nullptr;
+            if (!app || *reinterpret_cast<const uint32_t*>(app+kGameAppState)!=kThreeDWaitRoomState) return UINT32_MAX;
+            const uint8_t* owner=*reinterpret_cast<const uint8_t* const*>(app+kGameAppStateObject);
+            const uint8_t* manager=owner ? *reinterpret_cast<const uint8_t* const*>(owner+kWaitRoomObject):nullptr;
+            const uint8_t* const* states=manager ? *reinterpret_cast<const uint8_t* const* const*>(manager+kThreeDRoomStateArray):nullptr;
+            const uint8_t* main=states ? states[0]:nullptr;
+            if (!main) return UINT32_MAX;
+            const uint8_t* context=manager+0x24;
+            return (*reinterpret_cast<const uint32_t*>(main+8)&255u) |
+                (static_cast<uint32_t>(context[2])<<8) | (static_cast<uint32_t>(context[0x24])<<16) |
+                (static_cast<uint32_t>(context[0x25])<<24);
+        } __except(EXCEPTION_EXECUTE_HANDLER) { return UINT32_MAX; }
+    }
+
     bool StartBattleNativeHost() const
     {
         if (!gameApp_ || !startOrReady_ || !isRoomMaster_ ||
             !profilePointer_ || !threeDWaitRoomVtable_ ||
             !threeDStartCommandVtable_ || !threeDRoomHasState_ ||
-            !threeDRoomAddState_)
+            !threeDRoomAddState_ || !threeDStartBusiness_)
             return false;
         __try {
             uint8_t* profile = *profilePointer_;
@@ -453,6 +471,17 @@ public:
                         roomObject + kThreeDRoomStateArray);
                 if (!stateArray)
                     return false;
+                // The room factory publishes its model before the original
+                // Main state finishes loading. Queueing Start during that
+                // transition can discard the command without sending 08A7.
+                uint8_t* main = *reinterpret_cast<uint8_t**>(stateArray);
+                const uint8_t* context = roomObject + 0x24;
+                if (!main || *reinterpret_cast<void**>(main) != normalThreeDMainVtable_ ||
+                    *reinterpret_cast<const uint32_t*>(main + 8) != 2 ||
+                    *reinterpret_cast<const uint8_t* const*>(main + 0x0C) != context ||
+                    *reinterpret_cast<const uint8_t* const*>(main + 0x10) != roomObject ||
+                    !context[2] || context[0x24] == 1 || context[0x25] == 1)
+                    return false;
                 void* command = *reinterpret_cast<void**>(
                     stateArray + kThreeDStartCommand);
                 if (!command ||
@@ -464,12 +493,10 @@ public:
                         kThreeDStartState,
                         0))
                     return false;
-                threeDRoomAddState_(
-                    roomObject,
-                    kThreeDStartState,
-                    nullptr,
-                    kThreeDQueueBack,
-                    0);
+                // The real Main-state Start business (message 0x0BE3) also
+                // checks the native room's ready capability and host identity.
+                // A direct AddState can reach the server before those checks.
+                threeDStartBusiness_(main);
                 return true;
             }
 
@@ -482,6 +509,42 @@ public:
             return false;
         }
     }
+
+    int NativeStartPrerequisite() const
+    {
+        __try {
+            auto* app=gameApp_ ? gameApp_():nullptr;
+            if(!app || *reinterpret_cast<uint32_t*>(app+kGameAppState)!=kThreeDWaitRoomState)return -1;
+            auto* state=*reinterpret_cast<uint8_t**>(app+kGameAppStateObject);
+            if(!state || *reinterpret_cast<void**>(state)!=threeDWaitRoomVtable_)return -2;
+            auto* object=*reinterpret_cast<uint8_t**>(state+kWaitRoomObject);
+            if(!object)return -3;
+            auto* nativeRoom=*reinterpret_cast<uint8_t**>(object+0x38);
+            if(!nativeRoom)return -4;
+            using Check=int(__thiscall*)(void*);
+            auto check=reinterpret_cast<Check>((*reinterpret_cast<void***>(nativeRoom))[0x7c/4]);
+            return check(nativeRoom);
+        } __except(EXCEPTION_EXECUTE_HANDLER) {return -5;}
+    }
+
+    int NativeStartQueueState() const
+    {
+        __try {
+            auto* app=gameApp_ ? gameApp_():nullptr;
+            if(!app || *reinterpret_cast<uint32_t*>(app+kGameAppState)!=kThreeDWaitRoomState)return -1;
+            auto* state=*reinterpret_cast<uint8_t**>(app+kGameAppStateObject);
+            if(!state || *reinterpret_cast<void**>(state)!=threeDWaitRoomVtable_)return -2;
+            auto* object=*reinterpret_cast<uint8_t**>(state+kWaitRoomObject);
+            if(!object)return -3;
+            auto* array=*reinterpret_cast<uint8_t**>(object+kThreeDRoomStateArray);
+            auto* command=array ? *reinterpret_cast<uint8_t**>(array+kThreeDStartCommand):nullptr;
+            if(!command || *reinterpret_cast<void**>(command)!=threeDStartCommandVtable_)return -4;
+            return *reinterpret_cast<int*>(command+8)+(threeDRoomHasState_(object,kThreeDStartState,0)?256:0);
+        } __except(EXCEPTION_EXECUTE_HANDLER) {return -5;}
+    }
+
+    uint32_t NativeStartReplySequence() const {return static_cast<uint32_t>(InterlockedCompareExchange(&startReplySequence_,0,0));}
+    uint16_t NativeStartReplyError() const {return static_cast<uint16_t>(InterlockedCompareExchange(&startReplyError_,0,0));}
 
     // The 3D UI queues the local pilot's MyLeaveRoom command through its
     // original Main-state business routine. Merely sending its request leaves
@@ -1102,6 +1165,20 @@ private:
         return result;
     }
 
+    static int __fastcall ObserveStartCommandPacket(void* self,void*,int a,int b,int c,int opcode,void* packet) {
+        RoomActions* actions=active_;
+        if(!actions || !actions->startCommandPacket_)return 0;
+        if((opcode&0xffff)==0x07b5 && packet) {
+            __try {
+                uint16_t error=*reinterpret_cast<const uint16_t*>(static_cast<const uint8_t*>(packet)+6);
+                InterlockedExchange(&actions->startReplyError_,error);
+                InterlockedIncrement(&actions->startReplySequence_);
+                if(actions->api_->Log)actions->api_->Log(actions->mod_,SDGO_LOG_INFO,"native start command received 07B5/%04X",error);
+            } __except(EXCEPTION_EXECUTE_HANDLER) {}
+        }
+        return actions->startCommandPacket_(self,a,b,c,opcode,packet);
+    }
+
     static void __fastcall ObserveWaitRoomAlwaysDispatch(
         void* self,
         void*,
@@ -1115,6 +1192,14 @@ private:
         if (!actions || !actions->waitRoomAlwaysDispatch_)
             return;
 
+        if((opcode&0xffff)==0x07b5 && packet) {
+            __try {
+                const uint16_t startError=*reinterpret_cast<const uint16_t*>(static_cast<const uint8_t*>(packet)+6);
+                InterlockedExchange(&actions->startReplyError_,startError);
+                InterlockedIncrement(&actions->startReplySequence_);
+                actions->api_->Log(actions->mod_,SDGO_LOG_INFO,"native battle-start reply opcode=07B5 error=%04X",startError);
+            } __except(EXCEPTION_EXECUTE_HANDLER) {}
+        }
         const bool isLeaveReply =
             (opcode & 0xFFFF) == kLeaveRoomReplyOpcode && packet;
         uint16_t error = UINT16_MAX;
@@ -1364,6 +1449,7 @@ private:
     void* threeDStartCommandVtable_ = nullptr;
     ThreeDRoomHasStateFn threeDRoomHasState_ = nullptr;
     ThreeDRoomAddStateFn threeDRoomAddState_ = nullptr;
+    WaitMenuUpdateFn threeDStartBusiness_ = nullptr;
     NativeWStringCtorFn nativeWStringCtor_ = nullptr;
     NativeWStringDtorFn nativeWStringDtor_ = nullptr;
     GridDataFn gridData_ = nullptr;
@@ -1405,5 +1491,9 @@ private:
     mutable volatile LONG freshRoomSequence_ = 0;
     mutable volatile LONG freshRoomOwner_ = 0;
     mutable volatile LONG freshRoomDetails_ = 0;
+    mutable volatile LONG startReplySequence_ = 0;
+    mutable volatile LONG startReplyError_ = 0;
+    using StartCommandPacketFn=int(__thiscall*)(void*,int,int,int,int,void*);
+    StartCommandPacketFn startCommandPacket_=nullptr;
     inline static RoomActions* active_ = nullptr;
 };

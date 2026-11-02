@@ -11,10 +11,10 @@ from package_frp import file_version, validate_markdown_links
 
 OWNER_FILES = (
     "__init__.py", "model.py", "policy.example.json", "workspace.py", "runtime_control.py",
-    "boss_catalog.py", "sql_repository.py", "worker.py", "deployment.py", "progression.py", "sql/battle_reward_wallet.sql",
+    "boss_catalog.py", "sql_repository.py", "worker.py", "deployment.py", "progression.py", "gb_recovery.py", "sql/battle_reward_wallet.sql",
     "sql/battle_reward_progression.sql", "examples/pvp-mvp.json", "examples/mission-clear.json",
 )
-TOOLS = ("install_battle_rewards.py",)
+TOOLS = ("install_battle_rewards.py", "recover_battle_reward_gb.py")
 
 
 def contents(repo, binaries, include_manager=True):
@@ -49,7 +49,7 @@ def contents(repo, binaries, include_manager=True):
             return "](https://github.com/crabsatellite/SDGO-Mod-Framework/blob/master/"+relative+("#"+anchor if anchor else "")+")"
         files["docs/"+name]=re.sub(r"\]\(([^)]+)\)",link,text).encode("utf-8")
     files["README.md"] = (
-        "# Battle contribution rewards (Beta)\n\n"
+        "# Battle contribution rewards\n\n"
         "Owner toolkit for the native BattleServer Mod. No game files, credentials or private runtime configuration are included.\n\n"
         "Read [deployment and acceptance](docs/battle-rewards.md) before applying.\n"
         "Open SDGO Mod Manager.exe and choose Battle rewards. No separate reward UI or Python installation is needed.\n"

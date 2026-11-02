@@ -6,9 +6,13 @@ Open **SDGO Mod Manager.exe** from the framework package. Client/server selectio
 mod configuration, shop, operators, capsule machines, rewards, FRP and AI catalogs
 share one local interface. Users do not install Python or launch per-feature UIs.
 
-Daily management includes hosting servers, adding content and editing rules.
-Automatic bug fixes appear in the archive. The developer view only expands internal
-identifiers, low-level settings and diagnostics; it is not a server-owner permission gate.
+Each feature card shows only its name, a one-line description and its switch, with
+**设置** (settings) when it has adjustable values. Automatic bug fixes appear in the
+archive as always on. With only a client added, the sidebar shows just the game
+features and the archive; adding a server directory (or clicking **我是服主**) reveals the
+owner tools: shop, operators, capsules, rewards, FRP, AI catalog, collection capsule,
+hangar server and background tasks. The developer view expands internal identifiers,
+versions, low-level settings and diagnostics; it is not a server-owner permission gate.
 
 Choose existing workspaces to preserve authored data. Configuration writes retain
 unknown keys and comments, validate registered values and reject stale revisions.

@@ -1,5 +1,76 @@
 # 原生 GameTest
 
+默认复用本机从生产复制、数据库完全隔离的原生 `test`，不用 Docker。
+并发有冲突时复制 test 并配置独立端口和原生 SQL，完成后删除整个任务副本。
+普通测试绑定已有账号与机体；保留已有代码和有效结果，测试程序/数据库副本只留本地。
+流程、命令和数据维护见 [`sdgo-native-testing` guide](../skills/sdgo-native-testing/SKILL.md)。
+
+## 无需登录的 FPS 参数验证
+
+构建 `game_test_client`、`fps_limit`、`sdgo_core`、`d3d9_shim` 和 `sdgo_data` 后，
+以正常客户端为只读模板运行矩阵：
+
+```powershell
+python tools/game_test_fps.py --client-template D:\Games\SDGO --stage build/stage/Release --work-dir build/fps-runs --results-dir build/fps-results
+```
+
+矩阵使用同一个 GameTest 后台桌面、真实 D3D9 设备、静音 Miles 驱动和回环网络策略，
+停在原生登录页，不读取账号配置，并清空测试副本的已保存登录资料。
+依次对照「禁用 Mod、配置 160」与启用后的 30、60、120、160。
+原生登录页仍需要连接兼容的真实后端；可通过 `--target-host`、`--login-port`
+选择已有本地测试入口，不会因此创建账号或提交凭据。
+整轮默认超时为 600 秒，为原生资源加载预留时间，可用 `--timeout` 调整；
+这不改变频率断言或采样窗口。
+后台进程使用与普通游戏相同的 Windows 正常优先级；宿主 CPU 满载时，低于正常优先级会使
+原生加载及计时采样长期得不到调度。后台桌面与静音隔离继续生效。
+
+每轮读取真实应用的 FPS 字段及已初始化的计时器间隔，再以独立的 QueryPerformanceCounter
+测量原生更新和成功 D3D9 Present 的频率，连续采样三段，每段三秒，保留全部窗口及平均值。
+逻辑更新须保持原生 60 Hz 的 80–110%，不随渲染上限提高；成功 Present 须有正值，平均不超过启用上限的 110%。
+最小提交间隔须符合实际限速周期，允许 0.5 毫秒与周期 10% 两者较大的调度误差。
+正式 Mod 的观察接口独立确认逻辑/渲染目标与实际周期；30 FPS 对照须真正触发等待。
+禁用对照不检查渲染上限。渲染低于上限时照实记录，不承诺达到该吞吐量。
+断言和结果沿用 GameTest 的 JSON/JUnit；该场景验证登录页原生渲染，战斗计时和画质另行测试。
+
+运行器先导出报告、原生事件及后台环境回执，再核对本轮进程已退出并删除所属客户端副本。
+模板和其他测试保留；换环境复测时指定新的工作及结果目录即可。
+单独验证一档也可使用 `game_test.py prepare --fps-cap 160` 后执行通常的 `run`；
+添加 `--fps-mod-disabled` 可取得原生强制 60 的对照。
+
+完整原生对战回归可在常规已有账号的准备命令中加入 `prepare --fps-gameplay-cap 160`。
+运行前会封存渲染上限与观察器配置。实际 AI 移动后，场景核对 60 Hz 逻辑更新；
+选择高于 60 的上限时，渲染还必须实测超过 60 FPS，之后继续正常对战、结算和返回流程。
+
+### 重建本地后端
+
+`tools/game_test_backend.py` 管理复制的原生服务和独立 SQL 容器。需要 Docker、兼容的
+本地原生服务端、server stage，以及已校验的数据库备份（`backend.json` 和 `backups` 目录）。
+server stage 须构建 `winmm_shim`、`sdgo_core`、`sdgo_data`、`pvp_ai` 和 `game_test_server`。
+缺少加载器、观察器或符号时，会在创建 SQL 资源和恢复数据库之前报告预检失败。
+使用新的工作目录和未占用的 IPv4 回环地址，例如：
+
+```powershell
+python tools/game_test_backend.py prepare --source-server D:\SDGO\Server --stage build/stage/Release --backup-source D:\Tests\verified-backend --work build/fps-backend --target-ip 127.93.0.1
+python tools/game_test.py prepare --client-template D:\Games\SDGO --stage build/stage/Release --run-dir build/fps-probe --target-host 127.93.0.1 --login-port 5001 --fps-cap 160
+python tools/game_test_backend.py serve --work build/fps-backend --client-run build/fps-probe --stage build/stage/Release --startup-xml D:\SDGO\ServerStartUp\ServerStartUp.xml --lifetime 1800
+```
+
+出现 `backend_ready` 后，在另一终端运行矩阵并指定相同的 `--target-host`。
+服务启动重试和数据库探测均有超时；启动集合同时读取原生启动 XML 和频道表。
+FPS 套件无需账号；其他套件默认复用私有账号配置，后端观察器另需通过
+`serve --host-pilot-id <账号实际原生驾驶员 ID>` 指定对应账号，不在工具中固定账号 ID。
+缺少已校验备份时，只有显式
+`--allow-live-copy-only` 才允许向源 SQL 发起 COPY_ONLY 备份。
+
+```powershell
+python tools/game_test_backend.py stop --work build/fps-backend
+python tools/game_test_backend.py cleanup --work build/fps-backend --remove-runtime
+```
+
+清理先核对所属服务已退出及 SQL 容器/卷身份，再删除私有凭据和复制的运行环境，保留公开回执。
+单独准备的 `fps-probe` 仅属于该次测试，进程退出、证据导出后再删除。共享备份和源服务端保留，
+后续可换目录、地址或机器复测。
+
 开发用可选 Mod，默认关闭。测试在真实客户端进程内执行，通过正常业务请求
 与真实服务端通信。外部运行器负责准备独立客户端、启动和收集结果，不操作桌面。
 
@@ -13,7 +84,7 @@
 归属有独立回执；不满足条件就失败。旧 D3D9 的设备在专用图形线程上创建，仅使用
 不可见、不可激活的代理窗口；真实游戏页面仍留在后台桌面。禁止全屏，逐窗口验证
 代理身份和前台归属。原生 Miles 驱动使用 WaveOut，按驱动验证主音量为零。逻辑测试副本关闭原生
-后处理效果，同时将各项原生特效等级设为零，并读取实际运行标志；这类后台回执不代表视觉或后处理效果验收。
+后处理效果，同时将各项原生特效等级设为零，并读取实际运行标志；该配置用于逻辑与协议测试，画质和后处理应在可见客户端中单独测试。
 本机直连测试只绑定回环地址，不创建公网监听，
 不修改系统防火墙或通知设置。非本机测试需要预先具备其专用防火墙规则的管理权限；
 准备失败时不会弹出提权窗口或回退到交互运行。
@@ -104,3 +175,10 @@ Grid（`6`）和 Tag（`7`）会通过原生业务切换 VS 频道，并要求�
 仅测试副本关闭 BGM、启用音效。每场通过开局和 AI 断言后录制最多 25 秒，画面和声音
 只取自该测试游戏进程。失败、静音或黑屏片段会清理；保留素材仍需检查交战情况与构图，
 AI 断言通过本身不代表画面适合剪辑。
+
+## 验收完成后的发布状态
+
+功能通过相关完整验收场景、配套运行文件已实际部署并发布到主线后，必须在交付中同步更新该功能的状态。
+清除中英文功能索引与指南中过时的 Beta、测试中或待发布标记，对齐 Mod 的 `stable` 发布渠道、Manager 标签、
+版本后缀及打包模板，并读回已安装和已发布的元数据。仅构建、夹具或部分场景通过不代表功能可以转为稳定版；
+其他功能保留各自状态，直到完成对应验收和发布。

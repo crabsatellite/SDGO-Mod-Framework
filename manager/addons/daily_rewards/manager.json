@@ -7,7 +7,7 @@
     "battle"
   ],
   "provider": "rewards",
-  "description": "每日双倍奖励，由配套配置提供内容。",
+  "description": "每天固定时段（默认 18:00–22:00）战斗 GB 和经验翻倍。",
   "settings": [
     {
       "id": "starttime",
