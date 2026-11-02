@@ -40,4 +40,4 @@ private snapshot is published in this report.
 The server sort procedure now keeps capacity sufficient for its dense result,
 using the minimum native six-slot blocks and preserving higher existing capacity.
 The fixture also reproduces an imported 952-unit inventory and verifies 954-slot
-capacity after sorting. Actual login and native GB use remain manual acceptance.
+capacity after sorting.

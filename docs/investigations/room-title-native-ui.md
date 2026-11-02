@@ -128,4 +128,3 @@ cmake -S . -B build -DSDGO_ROOM_TITLE_NATIVE_CLIENT="<supported client>\GOnline.
 cmake --build build --config Release --target room_titles_native_ui_test room_titles
 ctest --test-dir build -C Release -R "^room_titles_(native_input|native_ui|client|transport|client_state)_offline$" --output-on-failure
 ```
-

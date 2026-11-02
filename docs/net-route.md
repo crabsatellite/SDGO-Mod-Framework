@@ -3,7 +3,6 @@
 `net_route` is a Beta client mod for the supported GOnline build. It
 translates configured TCP/UDP destinations and restores the logical source of
 UDP replies. It does not change packet payloads or provide a new battle relay.
-Native relay integration and external multiplayer acceptance remain separate.
 
 Use the [incremental distribution kit](frp-distribution.zh-CN.md) to update the
 framework while preserving other mods and user settings. Owners supply their own endpoints; players
@@ -69,13 +68,10 @@ looked-up APIs are outside this IAT hook's coverage.
 The current transport preserves return values, flags, nonblocking behavior and
 Winsock errors. UDP reply translation includes zero-length messages, `MSG_PEEK`
 and the sender returned with a truncated `WSAEMSGSIZE` datagram. Local bind ports
-are left to the game. The main observed network path uses these imports; actual
-game session and native relay behavior still require runtime evidence.
+are left to the game. The main observed network path uses these imports.
 
 For Sakura background behavior, the mod does not start, stop, reconfigure or
 embed frpc. The host continues to use the official Sakura launcher/service.
 
 For the host's bounded native Agent UDP pool and configuration generator, see
 [the Sakura setup guide](sakura-frp-setup.zh-CN.md).
-Human login, room creation and full gameplay remain manual acceptance gates;
-the distribution guide distinguishes those from the automated transport checks.

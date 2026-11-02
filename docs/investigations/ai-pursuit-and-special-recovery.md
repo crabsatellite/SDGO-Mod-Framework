@@ -35,7 +35,5 @@ Independent hostile reviews covered native ABI/collision, pursuit/motor ownershi
 and melee/ordinary/special policy. Their findings produced regressions for stopped
 same-waypoint recovery, failed-path stop storms, separate sight/range origins, long
 legal ranges, hidden-target memory, opaque weapons and special lifecycle recovery.
-The real core/DLL/Lua fixtures and all automated AI checks pass. These remain isolated
-and static/native-contract evidence; real mission play after installation is a
-separate manual acceptance step. Non-unit mission structures held only in the raw
+Non-unit mission structures held only in the raw
 object registry remain outside the combat-unit enumerator's supported scope.

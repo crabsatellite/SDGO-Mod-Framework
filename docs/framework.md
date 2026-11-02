@@ -410,8 +410,8 @@ cmake --build build --config Release
 * `new_account_policy_test`: new/existing-account policy, gift limits and rollback.
   `tests/run_new_account_sql_test.py` is an opt-in actual-core/OLE DB fixture against
   owned test databases in an isolated SQL container; it checks enabled/configured/
-  disabled behavior, preserved ownership and 64-bit unit identities. Native client
-  login remains manual acceptance; see the [test instructions](new-account-profile.md#verification).
+  disabled behavior, preserved ownership and 64-bit unit identities; see the
+  [developer tests](new-account-profile.md#developer-tests).
 * `tools/package.ps1`: a full package by default; `-Edition Base` selects core fixes,
   and `-Features pvp-ai` selects the fixes plus that complete client/server feature.
   `-BuildDir` chooses the staged build and `-OutputDir` chooses a fresh destination.

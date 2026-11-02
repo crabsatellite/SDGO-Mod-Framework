@@ -32,7 +32,7 @@
 `pvp_ai`。运行器只启动独立客户端，不重启现有服务器。
 
 ```powershell
-python tools/game_test.py prepare --client-template E:\Games\SDGO --stage build/stage/Release --run-dir build/gametest/pvp --mode-sequence 1,3,9
+python tools/game_test.py prepare --client-template D:\Games\SDGO --stage build/stage/Release --run-dir build/gametest/pvp --mode-sequence 1,3,9
 python tools/game_test.py run --run-dir build/gametest/pvp --timeout 3600
 ```
 
@@ -81,7 +81,7 @@ Grid（`6`）和 Tag（`7`）会通过原生业务切换 VS 频道，并要求�
 开发命令，不是玩家启动器或常驻服务。账号配置和运行回执不得放入分发包或源码仓库。
 
 开发者明确需要可见录制时，`prepare` 加 `--visible --sfx-only`，构建 `game_test_audio` 目标，再运行
-`python tools/game_test_record.py --run-dir build/gametest/pvp --output E:\videos\SDGO-Mod-GameTest`。
+`python tools/game_test_record.py --run-dir build/gametest/pvp --output D:\Videos\SDGO-GameTest`。
 仅测试副本关闭 BGM、启用音效。每场通过开局和 AI 断言后录制最多 25 秒，画面和声音
 只取自该测试游戏进程。失败、静音或黑屏片段会清理；保留素材仍需检查交战情况与构图，
 AI 断言通过本身不代表画面适合剪辑。

@@ -44,7 +44,7 @@ template. The target server needs `pvp_ai`. The runner starts a separate client
 and does not restart existing servers.
 
 ```powershell
-python tools/game_test.py prepare --client-template E:\Games\SDGO --stage build/stage/Release --run-dir build/gametest/pvp --mode-sequence 1,3,9
+python tools/game_test.py prepare --client-template D:\Games\SDGO --stage build/stage/Release --run-dir build/gametest/pvp --mode-sequence 1,3,9
 python tools/game_test.py run --run-dir build/gametest/pvp --timeout 3600
 ```
 
@@ -110,7 +110,7 @@ packages and source control.
 
 For explicitly visible developer footage, add `--visible --sfx-only` to `prepare`, build the
 `game_test_audio` target, then use `python tools/game_test_record.py --run-dir
-build/gametest/pvp --output E:\videos\SDGO-Mod-GameTest`. The copied client's BGM
+build/gametest/pvp --output D:\Videos\SDGO-GameTest`. The copied client's BGM
 is muted and effects remain enabled. Recording is bounded to 25 seconds per
 passed battle, using only the owned game window and its process audio. Failed,
 silent or black clips are deleted. Retained clips still need visual review for

@@ -1,12 +1,18 @@
-# FRP 网络 Mod（Beta）
+# FRP 联机（Beta）
 
-本功能为 **Beta**，通过服主配置启用；真人登录、房间、完整对局与重连仍由用户手动验收。
+[English](https://github.com/crabsatellite/SDGO-Mod-Framework/blob/master/docs/frp-distribution.md) · [返回功能目录](https://github.com/crabsatellite/SDGO-Mod-Framework/blob/master/README.zh-CN.md)
 
-此包沿用 SDGO Mod Framework。客户端安装 `net_route`，Agent 安装
-`agent_udp_pool` 和 `agent_relay_log_fix`。公共框架为本分支最新的 1.1.3 开发版本，
-沿用 master 的 Mod API。每次安装、更新都替换为随包最新 core 和 loader，完成哈希回读；
-旧包低于已安装框架时拒绝降级，提示取得新版包。AI、输入法、启动修复和全局开关保持原样。
-现有真人多人游戏验收仍由服主手动完成。
+让玩家通过服主的 Sakura FRP 或其他 TCP/UDP 转发连接服务器，默认关闭，由服主配置后启用。
+客户端安装 `net_route`，Agent 安装 `agent_udp_pool` 和 `agent_relay_log_fix`。
+
+| mod | 运行在 | 负责 |
+|---|---|---|
+| `net_route` | 每个参与的客户端 | 把游戏连接的逻辑地址映射到公网入口，见[地址映射说明](https://github.com/crabsatellite/SDGO-Mod-Framework/blob/master/docs/net-route.zh-CN.md) |
+| `agent_udp_pool` | Agent 服务器 | 原生 UDP 端口池 |
+| `agent_relay_log_fix` | Agent 服务器 | [中继日志修复](https://github.com/crabsatellite/SDGO-Mod-Framework/blob/master/docs/agent-relay-log-fix.zh-CN.md)，启用端口池时需要 |
+
+安装和更新会一起替换为随包的 core 和 loader 并回读哈希；包里的框架比已安装的旧时拒绝降级。
+AI、输入法、启动修复和全局开关保持原样。
 
 ## 从哪里开始
 
@@ -34,8 +40,9 @@ FRP Mod 包内容相同。以下命令均在该文件夹中执行。客户端和
    | UDP | `192.0.2.10:10003` | `node.example.invalid:28842` |
    | UDP | `192.0.2.10:10004` | `node.example.invalid:29531` |
 
-   公网端口不必等于本地端口，也不必连续。这里展示四个 UDP 槽；实际多人会话仍需手动验收。
-3. 可选的离线工具生成配置：
+   公网端口不必等于本地端口，也不必连续。
+3. 在 SDGO Mod Manager 左侧的「FRP 配置与分发」中编辑这份服主配置并导出玩家连接包；
+   也可以用离线工具生成：
 
    ```powershell
    python owner-tools/make_frp_profile.py --profile 我的服主配置.json --out 我的导出目录
@@ -93,8 +100,7 @@ Mod 只在启动时读取配置，不支持运行中装卸；修改配置后重�
 
 ## 单独禁用和卸载
 
-在 `sdgo/sdgo.ini` 的 `[mods]` 中写 `net_route=0` 可禁用客户端路由。
-Agent 对应 `agent_udp_pool=0`；该池启用时需要 `agent_relay_log_fix`。
+在 Manager 中关闭客户端的 `net_route` 或 Agent 的 `agent_udp_pool` 即可禁用；端口池启用时需要 `agent_relay_log_fix`。
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install_frp.ps1 -Target D:\Games\SDGO -Role Client -Uninstall
@@ -106,11 +112,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install_frp.ps1 -Target D:
 连接 FRP，应保留路由 Mod。通用 `install_client.ps1 -Uninstall` / `install_server.ps1 -Uninstall`
 是卸载整套框架，不适用于只移除 FRP。
 
-## 验证边界
+## 限制
 
-精确地址映射不会把未知 P2P 地址全部重定向到 Agent。原生直连/转发策略仍由游戏执行。
-普通启动入口、配置隔离、框架更新、安装保护和 TCP/UDP 传输可在无游戏测试程序里验证；
-登录实际账号、真人加入房间和完整多人对局需由用户手动验收。构建或模拟传输通过不代表
-所有游戏模式已完成外网验收。最多 32 条映射，其中 UDP 池最多 31 个端口。
-
-正式 Mod 包不依赖 Sakura SDK、特定盘符、隧道名称、SQL、客户端副本或桌面快捷方式。
+只对配置的精确地址做映射，不会把未知 P2P 地址全部重定向到 Agent；原生直连/转发策略仍由游戏执行。
+最多 32 条映射，其中 UDP 池最多 31 个端口。正式 Mod 包不依赖 Sakura SDK、特定盘符、隧道名称、SQL、客户端副本或桌面快捷方式。
+开发构建和测试命令见 [FRP build and verification](https://github.com/crabsatellite/SDGO-Mod-Framework/blob/master/docs/frp-testing.md)。

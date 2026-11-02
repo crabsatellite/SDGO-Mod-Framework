@@ -27,7 +27,6 @@ account, SQL credential or management API participates.
 No specific native mail completion acknowledgement was established. Consequently
 the UI reports submission and requires a new login, never success merely because
 the send returned nonzero. The committed SQL receipt is separate evidence.
-End-to-end real native transport and persistence remain manual acceptance.
 
 The previous duplicate planner treated the whole normalized 153-byte record as
 identity, retaining KeepCopies independently in every state group. Protected or
