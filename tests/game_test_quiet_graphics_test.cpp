@@ -20,6 +20,7 @@ HRESULT getBackBufferResult=S_OK;
 HRESULT cooperativeResult=static_cast<HRESULT>(0x08761232u);
 HRESULT resetResult=static_cast<HRESULT>(0x88761230u);
 HRESULT presentResult=static_cast<HRESULT>(0x08761231u);
+DWORD presentLastError=ERROR_SUCCESS;
 LONG diagnosticLogs=0;
 LONG deviceReleaseCalls=0;
 LONG resetCalls=0;
@@ -92,7 +93,7 @@ HRESULT STDMETHODCALLTYPE FakeReset(IDirect3DDevice9*,D3DPRESENT_PARAMETERS* par
     return resetResult;
 }
 HRESULT STDMETHODCALLTYPE FakePresent(IDirect3DDevice9*,const RECT*,const RECT*,HWND window,const RGNDATA*) {
-    lastWindow=window;return presentResult;
+    lastWindow=window;SetLastError(presentLastError);return presentResult;
 }
 ULONG STDMETHODCALLTYPE FakeSurfaceRelease(IDirect3DSurface9* raw) {
     auto* surface=reinterpret_cast<FakeSurface*>(raw);
@@ -225,12 +226,14 @@ int main() {
     textureTable[2]=reinterpret_cast<void*>(&FakeTextureRelease);
     SdgoApi api{};api.Log=&Log;api.HookImport=&Hook;
     QuietGraphics quiet;
-    if (!quiet.Install(&api,reinterpret_cast<SdgoMod*>(1)) || !detour)return 1;
+    if (!quiet.Install(&api,reinterpret_cast<SdgoMod*>(1),true) || !detour)return 1;
     auto state=quiet.State();
     if (!state.active || !state.worker_ready || !state.ime_disabled || !state.proxy_hwnd || state.proxy_visible ||
         !state.proxy_noactivate || !state.proxy_toolwindow || state.proxy_appwindow ||
         std::wcscmp(state.proxy_class,QuietGraphics::ProxyClassName()) || !*state.proxy_desktop)++failures;
-    HDESK input=OpenInputDesktop(0,FALSE,DESKTOP_READOBJECTS);
+    HDESK input=state.named_desktop_fallback ? OpenDesktopW(L"Default",0,FALSE,DESKTOP_READOBJECTS):
+        OpenInputDesktop(0,FALSE,DESKTOP_READOBJECTS);
+    if (state.named_desktop_fallback && std::wcscmp(state.proxy_desktop,L"Default"))++failures;
     WindowCount windows{GetCurrentProcessId(),state.proxy_hwnd,0,0};
     if (!input || !EnumDesktopWindows(input,&CountInputWindows,reinterpret_cast<LPARAM>(&windows)) ||
         windows.proxies!=1 || windows.ime)++failures;
@@ -296,8 +299,28 @@ int main() {
         if (device->TestCooperativeLevel()!=cooperativeResult ||
             lastWorkerThread!=state.proxy_thread_id)++failures;
         lastWindow=nullptr;
+        presentLastError=ERROR_RETRY;
+        SetLastError(ERROR_ACCESS_DENIED);
         if (device->Present(nullptr,nullptr,gameWindow,nullptr)!=presentResult ||
-            lastWindow!=state.proxy_hwnd)++failures;
+            lastWindow!=state.proxy_hwnd || GetLastError()!=presentLastError)++failures;
+        if (quiet.State().successful_presents!=1)++failures;
+        presentResult=D3DERR_DEVICELOST;
+        presentLastError=ERROR_DEVICE_NOT_AVAILABLE;
+        SetLastError(ERROR_ACCESS_DENIED);
+        if (device->Present(nullptr,nullptr,gameWindow,nullptr)!=presentResult ||
+            GetLastError()!=presentLastError || quiet.State().successful_presents!=1)++failures;
+        presentResult=static_cast<HRESULT>(0x08761231u);
+        presentLastError=ERROR_SUCCESS;
+        Sleep(2);
+        if (device->Present(nullptr,nullptr,gameWindow,nullptr)!=presentResult ||
+            GetLastError()!=presentLastError || quiet.State().successful_presents!=2)++failures;
+        Sleep(4);
+        if (device->Present(nullptr,nullptr,gameWindow,nullptr)!=presentResult ||
+            GetLastError()!=presentLastError || quiet.State().successful_presents!=3)++failures;
+        const auto presentTiming=quiet.State();
+        if (presentTiming.present_timing_version!=1 || !presentTiming.present_qpc_frequency ||
+            !presentTiming.successful_present_min_gap_ticks ||
+            presentTiming.successful_present_max_gap_ticks<presentTiming.successful_present_min_gap_ticks)++failures;
         IDirect3DSurface9* backbuffer=nullptr;
         lastWorkerThread=0;
         if (device->GetBackBuffer(0,0,D3DBACKBUFFER_TYPE_MONO,&backbuffer)!=S_OK ||
@@ -388,7 +411,7 @@ int main() {
     state=quiet.State();
     if (state.factory_calls!=2 || state.factories!=1 || state.create_attempts!=4 ||
         state.created_devices!=1 || state.failed_devices!=3 || state.resets!=14 ||
-        state.presents!=1 || state.cooperative_checks!=2 || state.last_create_hresult!=S_OK ||
+        state.presents!=4 || state.successful_presents!=3 || state.cooperative_checks!=2 || state.last_create_hresult!=S_OK ||
         state.last_reset_hresult!=resetResult || state.last_present_hresult!=presentResult ||
         state.last_cooperative_hresult!=cooperativeResult || state.last_backbuffer_hresult!=S_OK ||
         state.last_actual_width!=640 || state.last_actual_height!=480 ||
@@ -401,7 +424,9 @@ int main() {
         state.last_render_target_pool!=D3DPOOL_DEFAULT || !state.last_render_target_null ||
         state.last_render_target_hresult!=D3DERR_INVALIDCALL ||
         !state.last_render_target_return_address ||
-        resetCalls!=14 || deviceReleaseCalls!=2 || diagnosticLogs!=38 ||
+        state.present_timing_version!=1 || !state.present_qpc_frequency || !state.successful_present_min_gap_ticks ||
+        state.successful_present_max_gap_ticks<state.successful_present_min_gap_ticks ||
+        resetCalls!=14 || deviceReleaseCalls!=2 || diagnosticLogs!=41 ||
         state.dispatch_failures || state.proxy_visible)++failures;
     std::printf("Quiet input-desktop D3D9 proxy policy: %d failures\n",failures);
     return failures ? 1:0;

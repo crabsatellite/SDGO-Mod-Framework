@@ -1,5 +1,72 @@
 # 原生 GameTest
 
+并行的登录/业务测试优先使用已有五账号模板和自动回收的独立环境，见
+[`sdgo-native-testing` guide](../skills/sdgo-native-testing/SKILL.md)。普通测试不注册账号或补库存；
+每个任务独立复制回环后端和 SQL，按账号槽位绑定模板已有资产。FPS 参数测试无需登录，
+使用下述独立后端与矩阵；同样保留证据并清理所属环境。
+
+## 无需登录的 FPS 参数验证
+
+构建 `game_test_client`、`fps_limit`、`sdgo_core`、`d3d9_shim` 和 `sdgo_data` 后，
+以正常客户端为只读模板运行矩阵：
+
+```powershell
+python tools/game_test_fps.py --client-template D:\Games\SDGO --stage build/stage/Release --work-dir build/fps-runs --results-dir build/fps-results
+```
+
+矩阵使用同一个 GameTest 后台桌面、真实 D3D9 设备、静音 Miles 驱动和回环网络策略，
+停在原生登录页，不读取账号配置，并清空测试副本的已保存登录资料。
+依次对照「禁用 Mod、配置 160」与启用后的 30、60、120、160。
+原生登录页仍需要连接兼容的真实后端；可通过 `--target-host`、`--login-port`
+选择已有本地测试入口，不会因此创建账号或提交凭据。
+整轮默认超时为 600 秒，为原生资源加载预留时间，可用 `--timeout` 调整；
+这不改变频率断言或采样窗口。
+后台进程使用与普通游戏相同的 Windows 正常优先级；宿主 CPU 满载时，低于正常优先级会使
+原生加载及计时采样长期得不到调度。后台桌面与静音隔离继续生效。
+
+每轮读取真实应用的 FPS 字段及已初始化的计时器间隔，再以独立的 QueryPerformanceCounter
+测量原生更新和成功 D3D9 Present 的频率，连续采样三段，每段三秒，保留全部窗口及平均值。
+逻辑更新须达到目标的 80–110%；成功 Present 须有正值，平均不超过启用上限的 110%。
+最小提交间隔须符合实际限速周期，允许 0.5 毫秒与周期 10% 两者较大的调度误差。
+正式 Mod 的观察接口独立确认逻辑/渲染目标与实际周期；30 FPS 对照须真正触发等待。
+禁用对照不检查渲染上限。渲染低于上限时照实记录，不承诺达到该吞吐量。
+断言和结果沿用 GameTest 的 JSON/JUnit；该场景验证登录页原生渲染，战斗计时和画质另行测试。
+
+运行器先导出报告、原生事件及后台环境回执，再核对本轮进程已退出并删除所属客户端副本。
+模板和其他测试保留；换环境复测时指定新的工作及结果目录即可。
+单独验证一档也可使用 `game_test.py prepare --fps-cap 160` 后执行通常的 `run`；
+添加 `--fps-mod-disabled` 可取得原生强制 60 的对照。
+
+### 重建本地后端
+
+`tools/game_test_backend.py` 管理复制的原生服务和独立 SQL 容器。需要 Docker、兼容的
+本地原生服务端、server stage，以及已校验的数据库备份（`backend.json` 和 `backups` 目录）。
+server stage 须构建 `winmm_shim`、`sdgo_core`、`sdgo_data`、`pvp_ai` 和 `game_test_server`。
+缺少加载器、观察器或符号时，会在创建 SQL 资源和恢复数据库之前报告预检失败。
+使用新的工作目录和未占用的 IPv4 回环地址，例如：
+
+```powershell
+python tools/game_test_backend.py prepare --source-server D:\SDGO\Server --stage build/stage/Release --backup-source D:\Tests\verified-backend --work build/fps-backend --target-ip 127.93.0.1
+python tools/game_test.py prepare --client-template D:\Games\SDGO --stage build/stage/Release --run-dir build/fps-probe --target-host 127.93.0.1 --login-port 5001 --fps-cap 160
+python tools/game_test_backend.py serve --work build/fps-backend --client-run build/fps-probe --stage build/stage/Release --startup-xml D:\SDGO\ServerStartUp\ServerStartUp.xml --lifetime 1800
+```
+
+出现 `backend_ready` 后，在另一终端运行矩阵并指定相同的 `--target-host`。
+服务启动重试和数据库探测均有超时；启动集合同时读取原生启动 XML 和频道表。
+FPS 套件无需账号；其他套件默认复用私有账号配置，后端观察器另需通过
+`serve --host-pilot-id <账号实际原生驾驶员 ID>` 指定对应账号，不在工具中固定账号 ID。
+缺少已校验备份时，只有显式
+`--allow-live-copy-only` 才允许向源 SQL 发起 COPY_ONLY 备份。
+
+```powershell
+python tools/game_test_backend.py stop --work build/fps-backend
+python tools/game_test_backend.py cleanup --work build/fps-backend --remove-runtime
+```
+
+清理先核对所属服务已退出及 SQL 容器/卷身份，再删除私有凭据和复制的运行环境，保留公开回执。
+单独准备的 `fps-probe` 仅属于该次测试，进程退出、证据导出后再删除。共享备份和源服务端保留，
+后续可换目录、地址或机器复测。
+
 开发用可选 Mod，默认关闭。测试在真实客户端进程内执行，通过正常业务请求
 与真实服务端通信。外部运行器负责准备独立客户端、启动和收集结果，不操作桌面。
 
