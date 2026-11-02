@@ -65,4 +65,31 @@ Pinyin, were not affected.
 caller gets a normal top-level window lookup. It does not matter which input method or DLL is
 calling.
 
-Developer test: `tests/findwindow_fix_test.ps1` (after a build).
+## Developer notes
+
+`SDPlus.dll` is imported by the repack's `GOnline.exe` and patches `user32!FindWindowW` with the
+routine at `SDPlus.dll+0x3020`:
+
+* class `_GONLINE_` with title `Gundam Online` returns NULL ("not running");
+* any other query returns -1 or +1 (the sign of a string comparison), which is not a window;
+* a NULL or atom class name is dereferenced as a string and crashes.
+
+`GOnline.exe` calls `FindWindowW` once, at `0x004914F6`, with exactly that class and title: its
+single-instance check.
+
+`findwindow_fix` detours the export with the core's `HookSystemExport` (MinHook), so the trampoline
+keeps SDPlus's patch as the previous hook. At load it records the address ranges of `GOnline.exe`
+and `SDPlus.dll` and dispatches on each call's return address:
+
+* calls from those two modules go to SDPlus's routine;
+* every other call, including DLLs loaded later and generated code, gets
+  `FindWindowExW(GetDesktopWindow(), NULL, class, title)`: top-level windows only (a NULL parent
+  would also return message-only windows), atoms and NULL arguments with their usual meaning, and
+  the last error left unchanged.
+
+SDPlus also patches `MultiByteToWideChar` and `WideCharToMultiByte`, but only to remap code page 874
+(Thai); other code pages pass through, so they do not affect input methods.
+
+Test: `tests/findwindow_fix_test.ps1` (after a build) runs the real core and mod against a copy of
+SDPlus's routine on a private desktop, with caller fixtures named `SDPlus.dll` and
+`generic_input_method.dll`.

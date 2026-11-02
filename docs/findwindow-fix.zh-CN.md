@@ -54,4 +54,26 @@ findwindow_fix: window lookup for an external caller: 000105DC
 `findwindow_fix` 通过核心 hook 同一个函数，并按调用方区分：来自 `GOnline.exe` 和 `SDPlus.dll` 的调用保持
 SDPlus 的行为，多开不受影响；其它调用方一律恢复正常的顶层窗口查找，不区分是哪个输入法或 DLL。
 
-开发测试：构建后运行 `tests/findwindow_fix_test.ps1`。
+## 开发者说明
+
+`SDPlus.dll` 由整合包的 `GOnline.exe` 导入，把 `user32!FindWindowW` 改为 `SDPlus.dll+0x3020` 处的代码：
+
+* 类名 `_GONLINE_` 且标题 `Gundam Online` 时返回 NULL（"没有在运行"）；
+* 其它任何查询返回 -1 或 +1（字符串比较的符号），不是窗口句柄；
+* 类名为 NULL 或 atom 时按字符串读取，直接崩溃。
+
+`GOnline.exe` 只在 `0x004914F6` 调用一次 `FindWindowW`，参数正是这组类名和标题，即单开检查。
+
+`findwindow_fix` 通过核心的 `HookSystemExport`（MinHook）hook 该导出，trampoline 把 SDPlus 的改动保留为上一层。
+加载时记录 `GOnline.exe` 和 `SDPlus.dll` 的地址范围，按每次调用的返回地址分派：
+
+* 来自这两个模块的调用交给 SDPlus 的代码；
+* 其它所有调用（包括之后加载的 DLL 和动态生成的代码）改用
+  `FindWindowExW(GetDesktopWindow(), NULL, class, title)`：只找顶层窗口（父窗口为 NULL 时还会返回
+  message-only 窗口），atom 和 NULL 参数含义不变，不改动 last error。
+
+SDPlus 还改了 `MultiByteToWideChar` 和 `WideCharToMultiByte`，只是把代码页 874（泰文）换成另一个，
+其它代码页原样通过，不影响输入法。
+
+测试：构建后运行 `tests/findwindow_fix_test.ps1`，在独立桌面上用真实核心和 mod 对照 SDPlus 代码副本，
+调用方模拟为 `SDPlus.dll` 和 `generic_input_method.dll`。
