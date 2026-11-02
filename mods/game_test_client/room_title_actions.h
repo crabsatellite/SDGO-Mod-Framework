@@ -272,15 +272,12 @@ private:
             if(!IsWindow(hwnd))throw std::runtime_error("native input HWND absent");
             SendMessageW(hwnd,EM_SETSEL,0,-1);
             SendMessageW(hwnd,EM_REPLACESEL,FALSE,reinterpret_cast<LPARAM>(L""));
-            if(inputIndex_==0){for(wchar_t ch:tests_[0])SendMessageW(hwnd,WM_CHAR,ch,0);}
-            else SendMessageW(hwnd,EM_REPLACESEL,FALSE,reinterpret_cast<LPARAM>(tests_[inputIndex_].c_str()));
-            // Consume the actual HWND contents through the native getter, then
-            // deliver the edit's ordinary change notification to its parent.
-            // Some creation services otherwise retain their default-title state.
-            const auto immediate=Text(get_(edit_));
-            char lengths[160];sprintf_s(lengths,"native edit insertion expected=%zu immediate=%zu hwnd=%d",tests_[inputIndex_].size(),immediate.size(),GetWindowTextLengthW(hwnd));c->Observe(lengths);
-            void* root=Root(dialog_,IsTeamSettings(s)?0x7C:s==MissionSettings?0x5C:IsVsCreate(s)?0x50:0x4C);
-            notify_(root,0x602,1,edit_);
+            // Queue committed characters through the original message pump.
+            // Synchronous EDIT replacement bypasses the game's IME filter and
+            // can be replaced by its still-uncommitted default on the next tick.
+            for(wchar_t ch:tests_[inputIndex_])
+                if(!PostMessageW(hwnd,WM_CHAR,ch,1))throw std::runtime_error("native character message could not be queued");
+            char lengths[128];sprintf_s(lengths,"queued native character input expected=%zu",tests_[inputIndex_].size());c->Observe(lengths);
             phase_=2;polls_=0;return SDGO_GAME_TEST_WAIT;
         }
         if(phase_==2){
