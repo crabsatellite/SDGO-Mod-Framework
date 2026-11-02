@@ -34,22 +34,10 @@ English: [capsule-currency-fix.md](capsule-currency-fix.md)
 | `activity machine 9301 display fix refused (<原因>)` | 某项检查未通过，未写入任何数据，需要排查 |
 | `required symbol capsule.activity.load_items ...` | 客户端版本不受支持，本 Mod 不启用 |
 
-只有 `loaded` 行只能说明 DLL 已加载，不能说明页面已纠正。
-
 ## 原理
 
-Mod 挂接 `CapsuleMachineUI::LoadCapsuleItemData`。原函数生成活动机列表后，检查向量边界、
-179 字节记录、`页数 × 8` 的槽位形状（不超过 4096）、唯一的 9301 条目、价格 99，以及币种为 0（错误）或 2（已正确）。
+活动机列表加载完成后，Mod 找到 9301 这一条，确认它仍是 99 价格、记录格式符合预期，再把列表和购买确认框
+共同读取的客户端内存记录中的币种改为代币。数据不符合预期时不做任何修改。
 
-确认框不读取这份列表副本：它会重新查找 GridData type `0x3C`，从注册记录 `+9` 取币种、`+15` 取价格。
-因此还要求该条目的 Grid ID 为 `145093`、原生 `grid.find` 返回同一条 type `0x3C` 记录、两处内存可写且
-179 字节完全一致，之后才各修改一个币种字节。其他情况一律不改。
-
-不修改磁盘 GDT、catalog overlay、服务器数据表、价格、奖池、钱包数值、扣款或退款逻辑。
-
-## 验证范围
-
-单元测试覆盖单字节修改、重复执行，以及重复、缺失、价格错误或未知币种记录的拒绝。DLL 测试用模拟注册表
-实际执行 Hook，覆盖当前 94 台机器 / 96 槽列表和 100000 G币收藏机。独立包经过 Manager 导入和归档读回。
-确认框读取路径来自静态分析；实际画面和真实抽取仍由玩家手动验收。
-实现说明见 [mods/capsule_currency_fix/README.md](../mods/capsule_currency_fix/README.md)。
+只改客户端内存中的显示，不修改游戏文件、服务器数据、价格、奖池或扣款逻辑。
+开发细节见 [mods/capsule_currency_fix/README.md](../mods/capsule_currency_fix/README.md)。
