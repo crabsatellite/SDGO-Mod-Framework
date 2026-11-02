@@ -39,9 +39,7 @@ The player package contains no server INI, database connection, account, catalog
 unlock rows, or FRP credential. The owner distributes only `player\`; players
 close their client and run its installer.
 
-This feature requires the current framework/core. Retaining an old core instead
-of installing the matched current build is an update failure, not a supported
-compatibility mode.
+This feature requires the framework/core from the same build; install them together.
 
 ## Mod Manager owner tutorial
 
@@ -378,44 +376,13 @@ Restart the selected WorldServer after disabling, and have players run the match
 does not erase `CatalogUnlocks` or pending native prize-box rows. A later reinstall
 can continue from the same minimal unlock state.
 
-## Verification status and manual acceptance
-
-Automated evidence has three distinct scopes:
-
-- Python/offline tests cover form resolution, the dynamic pool, preservation of
-  the shared registry, the player package, and receipt-based install/uninstall;
-- isolated SQL tests cover catalog baseline seeding, both selection tiers,
-  pending-prize reservation, concurrent non-repetition, dynamic imported families,
-  transaction rollback, cross-collation installation, and a failure-compensation model;
-- a native fixture has exercised the actual `core.dll`, `collection_capsule.dll`,
-  and OLE DB sessions for the ABI, separate sessions, publish-after-commit, and
-  malformed-result rollback.
-
-The Python World-payment fixture simulates wallet prepayment and refund. Static
-native-path evidence separately supports the stock prepay/nonzero-return refund
-behavior. Neither is a real WorldServer + GOnline gameplay draw. The feature remains
-Beta; real UI, animation, wallet movement, and restart persistence have not yet
-been marked as gameplay-verified.
-
-Basic source-tree checks:
+## Developer tests
 
 ```powershell
 cmake --build build --config Release
 python -m unittest discover -s tests -p "test_collection*.py" -v
 ctest --test-dir build -C Release -R "^collection_capsule_offline$" --output-on-failure
 ```
-
-Manual acceptance should confirm:
-
-1. the activity page/slot reported by the build shows the poster and fixed 100,000 GP price;
-2. a draw awards a permanent level-1 initial-form prize, which appears in inventory after native prize-box claim;
-3. tier 1 unlocks missing catalog families, and a pending prize cannot be selected again before claim;
-4. success produces exactly one net 100,000 GP charge;
-5. after the catalog is complete, selling or deleting a claimed unit makes that family eligible in tier 2, while currently held and pending families stay excluded;
-6. all-families-held exhaustion, incomplete metadata, and failed draws leave a net charge of zero; failed claims keep the prize and do not charge again;
-7. unit, catalog unlock, pending-prize, and machine state survive client and WorldServer restarts;
-8. disabling keeps pending prizes claimable; after claiming them, player uninstall leaves unrelated Mods, shared machines, and the current framework/core working.
-
 ## Automatic setup and imported content
 
 Manager installation/update automatically runs the validated schema migration,

@@ -29,8 +29,7 @@
 玩家包不包含服务器 INI、数据库连接、账号、图鉴解锁数据或 FRP 凭据。服主只需把
 `player\` 目录发给玩家；玩家关闭客户端后双击安装脚本即可。
 
-本功能要求当前最新 framework/core。构建或安装时保留旧 core 而没有换成配套的新版本，
-属于更新失败，不是受支持的兼容模式。
+本功能需要同一次构建的 framework/core，请一起安装。
 
 ## Mod Manager 服主教程
 
@@ -310,39 +309,13 @@ python tools/collection_capsule.py disable `
 停用后重启目标 WorldServer，并让玩家运行对应包的 `Uninstall-Client.cmd`。停用或移除
 客户端资源不会删除最小图鉴解锁集合或原生领取箱中的待领奖品；以后重新安装时可继续使用该状态。
 
-## 验证状态与手动验收
-
-自动验证分成三类：
-
-- Python/offline 测试覆盖形态解析、动态奖池、共享 registry 保留、玩家包、安装和卸载回执；
-- 隔离 SQL 测试覆盖图鉴基线、两阶段选择、待领奖品预留、并发不重复、动态新机体族、事务回滚、
-  跨排序规则安装和失败补偿模型；
-- 原生 fixture 已通过实际 `core.dll`、`collection_capsule.dll` 和 OLE DB 会话验证 ABI、
-  独立会话、提交后发布结果以及错误结果回滚。
-
-其中钱包预扣/退款由 Python World-payment fixture 模拟；原生预扣及非零返回退款的判断另有
-静态原生路径证据。它们都不是实际 WorldServer + GOnline 的真人游戏抽取。本功能目前仍是
-Beta，尚未把真实游戏画面、动画、余额变化和重启持久化标记为已验证。
-
-源码树的基本检查：
+## 开发测试
 
 ```powershell
 cmake --build build --config Release
 python -m unittest discover -s tests -p "test_collection*.py" -v
 ctest --test-dir build -C Release -R "^collection_capsule_offline$" --output-on-failure
 ```
-
-手动验收至少应确认：
-
-1. 活动列表在构建回执指定的页/格出现收藏海报，显示固定 100,000 GP；
-2. 抽到的永久1级初始形态奖品进入领取箱，领取后正确加入机库；
-3. 第一阶段会补齐尚未解锁的机体族，待领奖品在领取前不会重复抽到；
-4. 成功只净扣一次 100,000 GP；
-5. 图鉴全部解锁后，已出售或删除且当前不在机库/领取箱的机体族会进入第二阶段，仍在手或待领的不会进入；
-6. 所有机体都在手或待领、元数据缺失和抽取失败时净扣款为 0；领取失败时奖品保留，领取不会再次扣费；
-7. 客户端和 WorldServer 重启后机体、图鉴解锁、待领奖品和机台状态一致；
-8. 停用收藏后待领奖品仍可领取；全部领取后卸载玩家包，其他 Mod、共享机台和最新 framework/core 仍可正常使用。
-
 ## 自动化安装与新增内容
 
 服主在 Mod Manager 点击安装/更新时，工具会自动执行受校验的建表、迁移、图鉴初始化与机台配置。

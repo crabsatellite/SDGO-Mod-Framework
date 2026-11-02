@@ -36,7 +36,7 @@ Beta and Experimental labels indicate release channels.
 | PvP AI (Beta) <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` in a PvP room title adds AI opponents and teammates | [Use](docs/pvp-ai.md) |
 | AI mech catalog (Beta, separate addon) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards (Beta) <!-- catalog: `battle_rewards` --> | GB/MB from wins, kills, damage, assists and Boss contribution | [Use](docs/battle-rewards.md) |
-| Collection capsule (Beta) <!-- catalog: `collection_capsule` --> | Collection gameplay | [Use](docs/collection-capsule.md) |
+| Collection capsule (Beta) <!-- catalog: `collection_capsule` --> | 100,000 GP activity machine that fills missing catalog units first | [Use](docs/collection-capsule.md) |
 | Per-round random loadouts (Beta) <!-- catalog: `room_random`, `room_random_client` --> | Randomized mission and PvP loadouts | [Use](docs/room-random.md) |
 | Extended room titles (Beta) <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Room title extensions | [Use](docs/room-titles.md) |
 | Battle AI difficulty (Beta) <!-- catalog: `battle_ai`, `battle_ai_server` --> | Combat AI behavior | [Use](docs/battle-ai.md) |
