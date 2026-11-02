@@ -86,6 +86,17 @@ def check_labels(description, lease):
         raise RuntimeError('Refusing an unowned Docker resource.')
 
 
+def upload_snapshot(container,source,destination,expected_hash):
+    """Stream exact snapshot bytes, then verify inside the owned container."""
+    with source.open('rb') as stream:
+        result=subprocess.run(['docker','exec','-i',container,'sh','-c','cat > "$1"','snapshot-input',destination],
+            stdin=stream,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,timeout=180,
+            creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+    if result.returncode:raise RuntimeError('Owned SQL snapshot upload failed.')
+    actual=docker('exec',container,'sha256sum',destination).split()[0]
+    if actual!=expected_hash:raise RuntimeError('Container snapshot bytes differ from the sealed template.')
+
+
 def child_environment():
     env = os.environ.copy()
     env.update(CommonProgramFiles=r'C:\Program Files (x86)\Common Files',
@@ -149,6 +160,10 @@ class NativeDriver:
             '-b', '-l', '5', '-t', '120', '-h', '-1', '-W', '-Q', statement, env=env)
 
     def start_sql(self, lease):
+        raise RuntimeError(
+            'Docker GameTest creation is retired. Reuse the isolated local test '
+            'client/server/native SQL; copy test only for concurrency. '
+            'Use game_test.py prepare/run. environment list/recover remain for legacy cleanup.')
         self.environment = lease
         self.progress('sql_starting')
         prefix = 'sdgo-gt-' + lease.id.replace('-', '')[:20]
@@ -223,7 +238,7 @@ class NativeDriver:
             if gt.sha256(staged)!=entry['sha256']:
                 raise RuntimeError('Owned SQL input copy differs from its sealed template.')
             destination = '/var/opt/mssql/backup/gametest/' + entry['file']
-            copy_snapshot(self.private['container'], staged, destination)
+            upload_snapshot(self.private['container'],staged,destination,entry['sha256'])
             moves = ','.join('MOVE '+quoted(f['name'])+' TO '+quoted(
                 '/var/opt/mssql/data/gt_'+entry['name']+'_'+str(i)+('.ldf' if f['type']=='L' else '.mdf'))
                 for i, f in enumerate(entry['files']))

@@ -370,6 +370,7 @@ def prepare(work,stage,source_server,target_ip,backup_source=None,allow_live_cop
     # Validate all later copy dependencies before creating SQL resources or
     # restoring databases. A core DLL alone is not a complete server stage.
     validate_backend_inputs(stage,source_server)
+    raise RuntimeError('Docker backend creation is retired. Reuse the isolated local native test. See skills/sdgo-native-testing/SKILL.md.')
     docker('info','--format','{{.ServerVersion}}',timeout=30)
     work.mkdir(parents=True);backups=work/'backups';backups.mkdir()
     private={'owner':str(work),'container':'sdgo-gametest-'+secrets.token_hex(6),
