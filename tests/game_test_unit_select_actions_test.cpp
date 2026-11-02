@@ -27,7 +27,7 @@ constexpr uint64_t kThirdUid = 100003;
 constexpr uint64_t kTargetUid = 100004;
 constexpr uint64_t kSeventhUid = 100007;
 constexpr uint64_t kThirtyFirstUid = 100031;
-constexpr size_t kFixtureSlots = 64;
+constexpr size_t kFixtureSlots = 1200;
 
 using NetworkSendDetour =
     int(__fastcall*)(
@@ -1553,12 +1553,25 @@ void TestNativePageNavigation(
     actions.Reset();
     ResetFixture(1, 7);
     g_fullReady = false;
+    const auto firstNavigation =
+        actions.Poll(kSeventhUid);
+    const auto firstNavigationState =
+        actions.State();
     Check(
-        actions.Poll(kSeventhUid) ==
+        firstNavigation ==
                 UnitSelectActions::
                     kNavigatingUnitPage &&
             *reinterpret_cast<int32_t*>(
                 g_unitManager + 0x74) == 1 &&
+            firstNavigationState.
+                    unit_manager_page_raw == 0 &&
+            firstNavigationState.
+                    unit_manager_max_page_raw == 1 &&
+            firstNavigationState.
+                    unit_manager_page_group_raw == 0 &&
+            firstNavigationState.
+                    unit_manager_max_page_group_raw == 0 &&
+            firstNavigationState.target_page == 1 &&
             std::wcscmp(
                 g_lastPageControl,
                 L"RightOneBtn") == 0 &&
@@ -1756,14 +1769,51 @@ void TestNativePageNavigation(
     ResetFixture(1, 7);
     *reinterpret_cast<int32_t*>(
         g_unitManager + 0x78) = 0;
+    const auto uninitializedResult =
+        actions.Poll(kSeventhUid);
+    const auto uninitializedState =
+        actions.State();
+    Check(
+        uninitializedResult ==
+                UnitSelectActions::
+                    kWaitingForUnitPageState &&
+            uninitializedState.
+                    unit_manager_page_raw == 0 &&
+            uninitializedState.
+                    unit_manager_max_page_raw == 0 &&
+            uninitializedState.
+                    unit_manager_page_group_raw == 0 &&
+            uninitializedState.
+                    unit_manager_max_page_group_raw == 0 &&
+            uninitializedState.target_page == 1 &&
+            g_pageCallbackCalls == 0 &&
+            *reinterpret_cast<int32_t*>(
+                g_unitManager + 0x74) == 0,
+        "constructor-default pagination fields wait for the native inventory-derived initialization");
+
+    *reinterpret_cast<int32_t*>(
+        g_unitManager + 0x78) = 1;
+    g_rowsReady = false;
+    Check(
+        actions.Poll(kSeventhUid) ==
+                UnitSelectActions::
+                    kWaitingForListItems &&
+            g_pageCallbackCalls == 0,
+        "matching small-inventory page maxima still wait for the complete native UnitList");
+
+    g_rowsReady = true;
+    *reinterpret_cast<int32_t*>(
+        g_unitManager + 0x74) = 2;
     Check(
         actions.Poll(kSeventhUid) ==
                 UnitSelectActions::
                     kTargetPageMismatch &&
-            g_pageCallbackCalls == 0 &&
-            *reinterpret_cast<int32_t*>(
-                g_unitManager + 0x74) == 0,
-        "a target beyond the native maximum page fails closed without a synthetic page write");
+            actions.State().
+                    unit_manager_page_raw == 2 &&
+            actions.State().
+                    unit_manager_max_page_raw == 1 &&
+            g_pageCallbackCalls == 0,
+        "an initialized native page outside its confirmed maximum remains a hard mismatch");
 }
 
 void TestIdentityAndLifecycleBoundaries(
@@ -1830,6 +1880,12 @@ void TestResultNames()
                     UnitSelectActions::
                         kReplyMismatch),
                 "reply-mismatch") == 0 &&
+            std::strcmp(
+                UnitSelectActions::Name(
+                    UnitSelectActions::
+                        kWaitingForUnitPageState),
+                "waiting-for-unit-page-state") ==
+                0 &&
             std::strcmp(
                 UnitSelectActions::Name(
                     static_cast<

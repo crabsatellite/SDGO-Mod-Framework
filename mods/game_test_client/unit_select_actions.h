@@ -37,6 +37,7 @@ public:
         kWaitingForListItems = 8,
         kWaitingForFullUnit = 9,
         kNavigatingUnitPage = 10,
+        kWaitingForUnitPageState = 11,
 
         kInvalidTarget = 0x100,
         kUnitManagerMismatch = 0x101,
@@ -108,6 +109,11 @@ public:
         uint8_t reply_consumed;
         uint8_t target_matches;
         uint8_t reserved;
+        int32_t unit_manager_page_raw;
+        int32_t unit_manager_max_page_raw;
+        int32_t unit_manager_page_group_raw;
+        int32_t unit_manager_max_page_group_raw;
+        uint32_t target_page;
     };
 
     bool Bind(
@@ -323,21 +329,89 @@ public:
                 *reinterpret_cast<const int32_t*>(
                     managerBytes +
                     kUnitManagerPage);
-            if (page < 0 ||
-                page >
-                    static_cast<int32_t>(
-                        UINT16_MAX))
-                return Publish(kTargetPageMismatch);
+            const int32_t maximumPage =
+                *reinterpret_cast<const int32_t*>(
+                    managerBytes +
+                    kUnitManagerMaximumPage);
+            const int32_t currentGroup =
+                *reinterpret_cast<const int32_t*>(
+                    managerBytes +
+                    kUnitManagerPageGroup);
+            const int32_t maximumGroup =
+                *reinterpret_cast<const int32_t*>(
+                    managerBytes +
+                    kUnitManagerMaximumPageGroup);
             InterlockedExchange(
                 &unitManagerPage_,
                 page);
+            InterlockedExchange(
+                &unitManagerPageRaw_,
+                page);
+            InterlockedExchange(
+                &unitManagerMaximumPageRaw_,
+                maximumPage);
+            InterlockedExchange(
+                &unitManagerPageGroupRaw_,
+                currentGroup);
+            InterlockedExchange(
+                &unitManagerMaximumPageGroupRaw_,
+                maximumGroup);
+            InterlockedExchange(
+                &targetPageObservation_,
+                static_cast<LONG>(
+                    targetPage));
+
+            const int32_t inventoryCapacity =
+                static_cast<int32_t>(
+                    InterlockedCompareExchange(
+                        &inventoryCapacity_,
+                        0,
+                        0));
+            const int32_t expectedMaximumPage =
+                (inventoryCapacity - 1) /
+                static_cast<int32_t>(
+                    kUnitsPerPage);
+            const int32_t expectedMaximumGroup =
+                expectedMaximumPage /
+                static_cast<int32_t>(
+                    kPagesPerGroup);
+            if (maximumPage !=
+                    expectedMaximumPage ||
+                maximumGroup !=
+                    expectedMaximumGroup)
+                return Publish(
+                    kWaitingForUnitPageState);
+            if (page < 0 ||
+                currentGroup < 0 ||
+                page > maximumPage ||
+                currentGroup > maximumGroup ||
+                targetPage >
+                    static_cast<uint32_t>(
+                        maximumPage))
+                return Publish(kTargetPageMismatch);
+
+            // Native initialization creates the complete UnitList before it
+            // commits the final page-group state. The maximum values alone
+            // are not a sufficient ready receipt for inventories whose final
+            // maximum group is also the constructor default zero.
+            if (!unitListItemByIndex_(
+                    list,
+                    inventoryCapacity - 1))
+                return Publish(
+                    kWaitingForListItems);
             if (static_cast<uint32_t>(page) !=
                 targetPage)
                 return NavigateToPage(
                     unitManager,
                     root,
                     static_cast<uint32_t>(page),
-                    targetPage);
+                    targetPage,
+                    static_cast<uint32_t>(
+                        currentGroup),
+                    static_cast<uint32_t>(
+                        maximumGroup),
+                    static_cast<uint32_t>(
+                        maximumPage));
 
             // The native page callback owns REQ_UNIT_SLOT_PAGE and its reply
             // cache. Reaching the requested page is only navigation evidence;
@@ -900,6 +974,41 @@ public:
                     state.target_slot &&
                 state.current_uid ==
                     state.target_uid;
+        state.unit_manager_page_raw =
+            static_cast<int32_t>(
+                InterlockedCompareExchange(
+                    const_cast<volatile LONG*>(
+                        &unitManagerPageRaw_),
+                    0,
+                    0));
+        state.unit_manager_max_page_raw =
+            static_cast<int32_t>(
+                InterlockedCompareExchange(
+                    const_cast<volatile LONG*>(
+                        &unitManagerMaximumPageRaw_),
+                    0,
+                    0));
+        state.unit_manager_page_group_raw =
+            static_cast<int32_t>(
+                InterlockedCompareExchange(
+                    const_cast<volatile LONG*>(
+                        &unitManagerPageGroupRaw_),
+                    0,
+                    0));
+        state.unit_manager_max_page_group_raw =
+            static_cast<int32_t>(
+                InterlockedCompareExchange(
+                    const_cast<volatile LONG*>(
+                        &unitManagerMaximumPageGroupRaw_),
+                    0,
+                    0));
+        state.target_page =
+            static_cast<uint32_t>(
+                InterlockedCompareExchange(
+                    const_cast<volatile LONG*>(
+                        &targetPageObservation_),
+                    0,
+                    0));
         return state;
     }
 
@@ -928,6 +1037,8 @@ public:
             return "waiting-for-full-unit";
         case kNavigatingUnitPage:
             return "navigating-unit-page";
+        case kWaitingForUnitPageState:
+            return "waiting-for-unit-page-state";
         case kInvalidTarget:
             return "invalid-target";
         case kUnitManagerMismatch:
@@ -1145,54 +1256,29 @@ private:
         void* unitManager,
         void* root,
         uint32_t currentPage,
-        uint32_t targetPage)
+        uint32_t targetPage,
+        uint32_t currentGroup,
+        uint32_t maximumGroup,
+        uint32_t maximumPage)
     {
         if (!unitManager || !root ||
             !unitManagerCallback_)
             return Publish(kNativeFault);
         auto* managerBytes =
             static_cast<uint8_t*>(unitManager);
-        const int32_t maximumPage =
-            *reinterpret_cast<const int32_t*>(
-                managerBytes +
-                kUnitManagerMaximumPage);
-        const int32_t currentGroup =
-            *reinterpret_cast<const int32_t*>(
-                managerBytes +
-                kUnitManagerPageGroup);
-        const int32_t maximumGroup =
-            *reinterpret_cast<const int32_t*>(
-                managerBytes +
-                kUnitManagerMaximumPageGroup);
         const uint32_t targetGroup =
             targetPage /
             kPagesPerGroup;
-        if (maximumPage < 0 ||
-            currentGroup < 0 ||
-            maximumGroup < 0 ||
-            currentPage >
-                static_cast<uint32_t>(
-                    maximumPage) ||
-            targetPage >
-                static_cast<uint32_t>(
-                    maximumPage) ||
-            static_cast<uint32_t>(
-                currentGroup) >
-                static_cast<uint32_t>(
-                    maximumGroup) ||
-            targetGroup >
-                static_cast<uint32_t>(
-                    maximumGroup))
+        if (currentPage > maximumPage ||
+            targetPage > maximumPage ||
+            currentGroup > maximumGroup ||
+            targetGroup > maximumGroup)
             return Publish(kTargetPageMismatch);
 
         const wchar_t* controlName = nullptr;
-        if (targetGroup <
-            static_cast<uint32_t>(
-                currentGroup))
+        if (targetGroup < currentGroup)
             controlName = L"LeftBtn";
-        else if (targetGroup >
-                 static_cast<uint32_t>(
-                     currentGroup))
+        else if (targetGroup > currentGroup)
             controlName = L"RightBtn";
         else if (targetPage < currentPage)
             controlName = L"LeftOneBtn";
@@ -1832,6 +1918,21 @@ private:
             &unitManagerPage_,
             0);
         InterlockedExchange(
+            &unitManagerPageRaw_,
+            0);
+        InterlockedExchange(
+            &unitManagerMaximumPageRaw_,
+            0);
+        InterlockedExchange(
+            &unitManagerPageGroupRaw_,
+            0);
+        InterlockedExchange(
+            &unitManagerMaximumPageGroupRaw_,
+            0);
+        InterlockedExchange(
+            &targetPageObservation_,
+            0);
+        InterlockedExchange(
             &unitManagerPresent_,
             0);
         InterlockedExchange(
@@ -1940,6 +2041,11 @@ private:
     volatile LONG replyPacketSlot_ = 0;
     volatile LONG replyCurrentSlot_ = 0;
     volatile LONG unitManagerPage_ = 0;
+    volatile LONG unitManagerPageRaw_ = 0;
+    volatile LONG unitManagerMaximumPageRaw_ = 0;
+    volatile LONG unitManagerPageGroupRaw_ = 0;
+    volatile LONG unitManagerMaximumPageGroupRaw_ = 0;
+    volatile LONG targetPageObservation_ = 0;
     volatile LONG unitManagerPresent_ = 0;
     volatile LONG unitListPresent_ = 0;
     volatile LONG nativeRowSelected_ = 0;
