@@ -173,6 +173,27 @@ class EnvironmentTests(unittest.TestCase):
 
 
 class NativeTemplateTests(unittest.TestCase):
+    def test_backup_stream_preserves_binary_bytes_and_source_file(self):
+        from tools.game_test_native_environment import copy_snapshot
+        payload = bytes(range(256)) * 16
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)/'snapshot.bak';source.write_bytes(payload)
+            def transfer(argv, **kwargs):
+                self.assertEqual(kwargs['stdin'].read(), payload)
+                self.assertNotIn('--mount', argv)
+                return mock.Mock(returncode=0)
+            with mock.patch('tools.game_test_native_environment.subprocess.run',side_effect=transfer):
+                copy_snapshot('owned-sql',source,'/var/opt/mssql/backup/snapshot.bak')
+            self.assertEqual(source.read_bytes(), payload)
+
+    def test_failed_backup_stream_is_not_accepted_as_a_restore(self):
+        from tools.game_test_native_environment import copy_snapshot
+        with tempfile.TemporaryDirectory() as directory:
+            source=Path(directory)/'snapshot.bak';source.write_bytes(b'backup')
+            with mock.patch('tools.game_test_native_environment.subprocess.run',return_value=mock.Mock(returncode=1,stderr=b'disk full')):
+                with self.assertRaisesRegex(RuntimeError,'snapshot transfer failed'):
+                    copy_snapshot('owned-sql',source,'/var/opt/mssql/backup/snapshot.bak')
+
     def test_mode_matrix_reuses_the_declared_existing_primary(self):
         from tools.game_test_native_environment import scenario_options
         options=scenario_options({'primary_uid':17},mode_sequence='1,3,6,7,9')
