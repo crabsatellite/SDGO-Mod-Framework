@@ -92,7 +92,16 @@ class BackendBackgroundProcess(WindowsBackgroundProcess):
         return receipt
 
 def emit(phase,**values): print(json.dumps({'phase':phase,**values}),flush=True)
-def write(path,value): game_test.atomic_write(path,json.dumps(value,indent=2))
+def write(path,value):
+    # Readers/antivirus can briefly hold Windows JSON files. A private temp
+    # name also avoids colliding with a previous controller's interrupted write.
+    for attempt in range(20):
+        try:
+            atomic_bytes(path,json.dumps(value,indent=2).encode('utf-8'))
+            return
+        except PermissionError:
+            if attempt==19:raise
+            time.sleep(.05)
 def literal(value): return "N'"+value.replace("'","''")+"'"
 def docker(*args,env=None,input=None,timeout=180):
     r=subprocess.run(['docker',*args],env=env,input=input if input is not None else '',text=True,capture_output=True,
@@ -685,6 +694,7 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                 game_test.write_ini(folder/'sdgo/sdgo.ini',settings)
             for attempt in range(1,3):
                 console=work/(spec['folder']+'.console.log')
+                log_offsets={str(p):p.stat().st_size for p in (folder/'LogData').glob('*.txt')}
                 with console.open('ab') as output:
                     process=BackendBackgroundProcess([str(exe)],cwd=folder,env=env,stdout=output,stderr=subprocess.STDOUT,run_id=client['run_id'])
                 owned_processes.append(process)
@@ -698,6 +708,7 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                     # minutes of avoidable startup delay under concurrent load.
                     ready_services.append((process,state_row))
                     state_row['port']=spec['port']
+                    state_row['startup_log_offsets']=log_offsets
                     break
                 deadline=time.monotonic()+startup_timeout
                 while (target_ip,spec['port']) not in listeners(process.pid):
@@ -730,6 +741,28 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                     raise RuntimeError('Copied native service background policy failed: '+row['folder'])
                 row['quiet_proof']=proof
                 emit('service_ready',folder=row['folder'],pid=process.pid,port=row['port'],attempt=1)
+            # Native Battle opens TCP before its asynchronous table loader
+            # enables Time Procedure. A socket alone can yield 0FBC on Start.
+            # Bind the readiness marker to bytes written by this launch only.
+            tables_deadline=time.monotonic()+600
+            for process,row in ready_services:
+                if not row['folder'].startswith('Battle'):continue
+                folder=Path(row['exe']).parent
+                offsets=row['startup_log_offsets']
+                while True:
+                    loaded=False
+                    for log in (folder/'LogData').glob('*.txt'):
+                        with log.open('rb') as stream:
+                            stream.seek(offsets.get(str(log),0))
+                            loaded=loaded or b'Table Download OK.. Time Procedure Ready..' in stream.read()
+                    if loaded:break
+                    if (work/'stop.request').exists():raise InterruptedError('Owned backend stop requested')
+                    if process.poll() is not None or time.monotonic()>tables_deadline:
+                        raise RuntimeError('Native Battle table loading did not complete: '+row['folder'])
+                    time.sleep(.5)
+                row['native_tables_ready']=True
+                publish('tables_ready_'+row['folder'])
+                emit('native_tables_ready',folder=row['folder'],pid=process.pid)
         deadline=time.monotonic()+30
         while not any((target_ip,login_port) in listeners(process.pid) for process,_ in ready_services):
             if any(process.poll() is not None for process,_ in ready_services) or time.monotonic()>deadline:

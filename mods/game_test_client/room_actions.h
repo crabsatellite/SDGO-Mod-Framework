@@ -354,7 +354,7 @@ public:
 
             // This is the normal quick-room baseline from 0x008CB1A0:
             // 2, mode, 5, max, map selection/map, 0, 1, 4, 0, 0.
-            // Only the title/map are supplied by the GameTest plan.
+            // The GameTest plan supplies title/map and the native random-team flag.
             RecordCreateDiagnostics(
                 kCreateStagePacketInit,
                 kCreateErrorNone,

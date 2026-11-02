@@ -36,10 +36,10 @@ Beta and Experimental labels indicate release channels.
 | Mission AI wingmen <!-- catalog: `coop_ai`, `mission_ai` --> | `!ai` in a co-op room title adds AI wingmen to the team | [Use](docs/coop-wingmen.md) |
 | PvP AI (Beta) <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` fills both teams; `!ai enemy` fills opponents only, preserving human sides with asymmetric teams and native TAB records | [Use](docs/pvp-ai.md) |
 | AI mech catalog (Beta, separate addon) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools | [Use](docs/ai-catalog.md) |
-| Battle contribution rewards (Beta) <!-- catalog: `battle_rewards` --> | GB/MB from wins, kills, damage, assists and Boss contribution | [Use](docs/battle-rewards.md) |
+| Battle contribution rewards (Beta) <!-- catalog: `battle_rewards` --> | GB/MB from battle contribution, supervised wallet delivery and historical GB compensation | [Use](docs/battle-rewards.md) |
 | Collection capsule (Beta) <!-- catalog: `collection_capsule` --> | 100,000 GP activity machine that fills missing catalog units first | [Use](docs/collection-capsule.md) |
 | Per-round random loadouts (Beta) <!-- catalog: `room_random`, `room_random_client` --> | `!rand` in a room title draws each player's unit or deck from their own hangar every round | [Use](docs/room-random.md) |
-| FPS cap (Beta) <!-- catalog: `fps_limit` --> | Set logic-update frequency and the rendering ceiling together in Mod Manager | [Use](docs/fps-limit.md) |
+| FPS cap (Beta) <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed | [Use](docs/fps-limit.md) |
 | Extended room titles (Beta) <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Mission and PvP room titles up to 128 characters, with commands anywhere in the title | [Use](docs/room-titles.md) |
 | Battle AI difficulty (Beta) <!-- catalog: `battle_ai`, `battle_ai_server` --> | Easy / Medium / Hard PvP bots, selectable in the room title | [Use](docs/battle-ai.md) |
 | Automatic hangar capacity (Beta) <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) | [Use](docs/hangar-capacity.md) |
