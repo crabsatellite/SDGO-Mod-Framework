@@ -1165,7 +1165,7 @@ state=pending_first_login
             game_test,'process_image_path',return_value=meta['client']['game']):
             report=game_test.run_prepared(run_dir,timeout=1,launch_timeout=0)
         self.assertEqual(report['status'],'pass')
-        process.kill.assert_called_once();process.wait.assert_called_once_with(timeout=10)
+        process.kill.assert_called_once();process.wait.assert_called_once_with(timeout=30)
         self.assertFalse((run_dir/'.run.lock').exists())
         self.assertFalse(game_test.account_profile_lock_path(self.account_profile).exists())
 

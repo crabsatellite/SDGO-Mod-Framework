@@ -116,6 +116,7 @@ IGNORED_DIRECTORIES = {
 }
 IGNORED_SUFFIXES = {".bak", ".dmp", ".log", ".tmp"}
 IMMUTABLE_ROOT_SUFFIXES = {".dll", ".exe", ".zdx", ".zpk"}
+RUNTIME_OUTPUTS = frozenset({"sdgo/mods/capsule_catalog/runtime-receipt.ini"})
 ALNUM = string.ascii_letters + string.digits
 
 
@@ -2153,6 +2154,8 @@ def collect_hashes(root: Path) -> tuple[dict, dict]:
             bind(path, immutable)
     mods = root / "sdgo" / "mods"
     for path in sorted(mods.rglob("*"), key=lambda item: item.as_posix().lower()):
+        if path.relative_to(root).as_posix().lower() in RUNTIME_OUTPUTS:
+            continue
         if path.is_file() and path.suffix.lower() in {".dll", ".lua", ".ini", ".tsv", ".json",
                                                       ".bin", ".gdt", ".zsd", ".spr", ".txr", ".uir", ".zpk", ".zdx"}:
             bind(path, immutable)
