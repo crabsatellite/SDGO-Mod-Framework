@@ -1,8 +1,8 @@
 #pragma once
 
-// Supply only the mapped TAB action to the original input consumers inside
-// this isolated test client. Native HUD input, animation, sorting and drawing
-// still execute normally; no panel visibility or score field is fabricated.
+// Supply mapped TAB input and opt-in gameplay input to the original consumers
+// inside this isolated client. Native input, animation, motion and drawing
+// still execute normally; no panel, score, position or FSM state is fabricated.
 class ScoreboardActions {
 public:
     bool Install(const SdgoApi* api, SdgoMod* mod) {
