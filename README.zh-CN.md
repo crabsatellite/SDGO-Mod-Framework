@@ -15,7 +15,7 @@ Beta、Experimental 表示发布阶段。
 
 | 功能 | 简介 | 文档 |
 |---|---|---|
-| 输入法提交修复 <!-- catalog: `ime_fix` --> | 中日韩输入法上屏文字按正确长度提交 | [使用说明](docs/ime-fix.zh-CN.md) |
+| 中文输入法候选与提交修复 <!-- catalog: `ime_fix` --> | 恢复候选窗请求，按旧拼音范围提交中文，保留英文和数字前后缀 | [使用说明](docs/ime-fix.zh-CN.md) |
 | 活动扭蛋币种显示 <!-- catalog: `capsule_currency_fix` --> | 9301 号机在列表和购买确认框中显示为 99 代币 | [使用说明](docs/capsule-currency-fix.zh-CN.md) |
 | 输入法卡死修复 <!-- catalog: `findwindow_fix` --> | 防止讯飞等输入法让整合包客户端卡死或崩溃 | [使用说明](docs/findwindow-fix.zh-CN.md) |
 | 启动崩溃修复 <!-- catalog: `startup_crash_fix` --> | 修复开游戏时读取界面随机闪退 | [使用说明](docs/startup-crash-fix.zh-CN.md) |

@@ -15,7 +15,7 @@ Beta and Experimental labels indicate release channels.
 
 | Feature | Overview | Documentation |
 |---|---|---|
-| IME input fix <!-- catalog: `ime_fix` --> | Commit Chinese, Japanese and Korean IME text at the correct length | [Use](docs/ime-fix.md) |
+| IME candidates and commit fix <!-- catalog: `ime_fix` --> | Restore Chinese candidates and replace the old preedit range without residual letters | [Use](docs/ime-fix.md) |
 | Activity capsule currency <!-- catalog: `capsule_currency_fix` --> | Show machine 9301 as 99 coins in the list and purchase confirmation | [Use](docs/capsule-currency-fix.md) |
 | Input method freeze fix <!-- catalog: `findwindow_fix` --> | Stop input methods such as iFlytek from freezing or crashing the repack client | [Use](docs/findwindow-fix.md) |
 | Startup crash fix <!-- catalog: `startup_crash_fix` --> | Stop random crashes on the loading screen at game start | [Use](docs/startup-crash-fix.md) |
