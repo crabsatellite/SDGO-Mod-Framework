@@ -343,7 +343,7 @@ class BackgroundProcessWin32Tests(unittest.TestCase):
                 ready = json.loads(process.stdout.readline())
                 self.assertEqual(ready["pid"], process.pid)
                 self.assertEqual(ready["marker"], "isolated")
-                self.assertEqual(ready["priority_class"], game_test_windows.BELOW_NORMAL_PRIORITY_CLASS)
+                self.assertEqual(ready["priority_class"], game_test_windows.NORMAL_PRIORITY_CLASS)
                 self.assertEqual(Path(ready["cwd"]), Path(temporary))
 
                 receipt = process.verify_background(

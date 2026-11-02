@@ -19,6 +19,9 @@ not create an account or submit credentials.
 The default whole-client timeout is 600 seconds to allow native resource loading;
 `--timeout` can override it. The cadence assertions and sampling windows are
 unchanged by that startup allowance.
+Background processes use normal Windows priority, matching ordinary game
+launches. Below-normal priority can starve native loading and timing samples
+when the host CPU is saturated; background desktop/audio isolation remains in use.
 
 Each run reads the real application's FPS field and initialized timer interval,
 then independently measures native update and successful D3D9 Present cadence
