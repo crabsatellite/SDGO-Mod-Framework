@@ -1,5 +1,6 @@
 from pathlib import Path
 import tempfile
+import stat
 import unittest
 from unittest import mock
 
@@ -8,6 +9,18 @@ from tools import game_test_native_environment as native
 
 
 class ServerCandidateTests(unittest.TestCase):
+    def test_runtime_copy_is_writable_while_the_template_stays_read_only(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary); source=root/'template'; source.mkdir()
+            original=source/'symbols.ini'; original.write_text('sealed input',encoding='utf-8');original.chmod(stat.S_IRUSR)
+            try:
+                native.copy_tree(source,root/'owned-copy')
+                self.assertFalse(original.stat().st_mode & stat.S_IWUSR)
+                copied=root/'owned-copy/symbols.ini'
+                self.assertTrue(copied.stat().st_mode & stat.S_IWUSR)
+                self.assertEqual(copied.read_bytes(),original.read_bytes())
+            finally:original.chmod(stat.S_IRUSR|stat.S_IWUSR)
+
     def test_overlay_preserves_private_configuration_and_unrelated_hosts(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary); stage=root/'stage'; instance=root/'instance'
