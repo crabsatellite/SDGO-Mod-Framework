@@ -33,7 +33,7 @@ Beta and Experimental labels indicate release channels.
 | Feature | Overview | Documentation |
 |---|---|---|
 | Mission AI wingmen <!-- catalog: `coop_ai`, `mission_ai` --> | `!ai` in a co-op room title adds AI wingmen to the team | [Use](docs/coop-wingmen.md) |
-| PvP AI (Beta) <!-- catalog: `pvp_ai`, `match_ai` --> | Multiplayer AI participants | [Use](docs/pvp-ai.md) |
+| PvP AI (Beta) <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` in a PvP room title adds AI opponents and teammates | [Use](docs/pvp-ai.md) |
 | AI mech catalog (Beta, separate addon) <!-- catalog: `ai_catalog` --> | Custom AI rosters | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards (Beta) <!-- catalog: `battle_rewards` --> | Combat reward management | [Use](docs/battle-rewards.md) |
 | Collection capsule (Beta) <!-- catalog: `collection_capsule` --> | Collection gameplay | [Use](docs/collection-capsule.md) |
