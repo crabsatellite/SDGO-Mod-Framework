@@ -2053,6 +2053,41 @@ void TestChannelListReadiness(
         "missing native list replies fail after a bounded wait and suppress a late fallback");
 }
 
+void TestSharedNativeStartReceipt(MissionFlowActions& actions)
+{
+    ResetFixture(actions);
+    InstallNativeRoom(4,kRoomId);
+    const auto baseline=actions.NativeStartConsumedSequence();
+    uint16_t opcode=0x06C3;
+    uint8_t foreign[sizeof(g_startCommand)]{};
+    std::memcpy(foreign,g_startCommand,sizeof(foreign));
+    g_startReplyDetour(foreign,nullptr,0,0,0,opcode,&opcode);
+    Check(actions.NativeStartConsumedSequence()==baseline,
+          "another command cannot satisfy the current native room's start receipt");
+    *reinterpret_cast<uint32_t*>(g_startCommand+8)=1;
+    g_startReplyDetour(g_startCommand,nullptr,0,0,0,opcode,&opcode);
+    Check(actions.NativeStartConsumedSequence()==baseline,
+          "a native start reply before command stage 2 is not consumed");
+    *reinterpret_cast<uint32_t*>(g_startCommand+8)=2;
+    *reinterpret_cast<uint8_t**>(g_startCommand+0x0C)=nullptr;
+    g_startReplyDetour(g_startCommand,nullptr,0,0,0,opcode,&opcode);
+    Check(actions.NativeStartConsumedSequence()==baseline,
+          "a mismatched command context cannot complete native start observation");
+    *reinterpret_cast<uint32_t*>(g_startCommand+8)=2;
+    *reinterpret_cast<uint8_t**>(g_startCommand+0x0C)=g_manager+0x24;
+    auto* storage=AllocateGuardedReply(0,0);
+    Check(storage!=nullptr,"shared native start allocates a guarded two-byte reply header");
+    if(!storage)return;
+    auto* packet=storage+8;
+    *reinterpret_cast<uint16_t*>(packet)=opcode;
+    const auto result=g_startReplyDetour(g_startCommand,nullptr,0,0,0,opcode,packet);
+    Check(result==41 && g_replyPacketReleased && actions.NativeStartConsumedSequence()==baseline+1,
+          "the genuine current command publishes 06C3 only after original consumption, independently of mission/PvP AI snapshots");
+    g_startReplyDetour(g_startCommand,nullptr,0,0,0,opcode,&opcode);
+    Check(actions.NativeStartConsumedSequence()==baseline+1,
+          "an already consumed native command cannot publish another success");
+}
+
 void TestStartRejectAndLatchedSend(MissionFlowActions& actions)
 {
     ResetFixture(actions);
@@ -2573,6 +2608,7 @@ int main()
     TestChannelListReadiness(actions);
     TestCreationDialogHandoff(actions);
     TestCompleteMode5Flow(actions);
+    TestSharedNativeStartReceipt(actions);
     TestStartRejectAndLatchedSend(actions);
     TestMode8AndMissionWrap(actions);
     TestFailClosedBoundaries(actions);

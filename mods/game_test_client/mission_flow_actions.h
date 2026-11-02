@@ -82,6 +82,11 @@ public:
         kChannelScanChannelCountInvalid = 0x105,
     };
 
+    uint32_t NativeStartConsumedSequence() const
+    {
+        return static_cast<uint32_t>(InterlockedCompareExchange(&nativeStartConsumedSequence_,0,0));
+    }
+
     struct Observation
     {
         uint32_t result;
@@ -2283,6 +2288,27 @@ private:
         if (!actions ||
             !actions->missionStartReplyDispatch_)
             return 0;
+        // This original Start command is shared by native room types. Record
+        // its genuine active-owner success independently of this adapter's
+        // optional mission scenario and the PvP-only AI world snapshot.
+        bool activeNativeStart=false;
+        if ((opcode&0xFFFF)==kStartReplyOpcode && packet) {
+            __try {
+                auto* app=actions->gameApp_();
+                auto* owner=app && *reinterpret_cast<uint32_t*>(app+kGameAppState)==kWaitRoomAppState ?
+                    *reinterpret_cast<uint8_t**>(app+kGameAppStateObject) : nullptr;
+                auto* manager=owner && *reinterpret_cast<void**>(owner)==actions->threeDWaitRoomVtable_ ?
+                    *reinterpret_cast<uint8_t**>(owner+kWaitRoomManager) : nullptr;
+                auto** states=manager ? *reinterpret_cast<uint8_t***>(manager+kManagerStateArray) : nullptr;
+                auto* command=static_cast<uint8_t*>(self);
+                activeNativeStart=command && states && states[kStartState]==command &&
+                    *reinterpret_cast<void**>(command)==actions->threeDStartCommandVtable_ &&
+                    *reinterpret_cast<uint32_t*>(command+8)==2 &&
+                    *reinterpret_cast<uint8_t**>(command+0x0C)==manager+0x24 &&
+                    *reinterpret_cast<uint8_t**>(command+0x10)==manager &&
+                    *reinterpret_cast<const uint16_t*>(packet)==kStartReplyOpcode;
+            } __except(EXCEPTION_EXECUTE_HANDLER) {activeNativeStart=false;}
+        }
         const bool owned =
             InterlockedCompareExchange(
                 &actions->startQueued_,
@@ -2337,6 +2363,12 @@ private:
                 c,
                 opcode,
                 packet);
+        if (activeNativeStart) {
+            __try {
+                if (*reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(self)+8)==3)
+                    InterlockedIncrement(&actions->nativeStartConsumedSequence_);
+            } __except(EXCEPTION_EXECUTE_HANDLER) {}
+        }
         bool consumed = false;
         if (matched) {
             __try {
@@ -2461,6 +2493,7 @@ private:
     volatile LONG startRequestSent_ = 0;
     volatile LONG startReplySequence_ = 0;
     volatile LONG lastStartReplyOpcode_=0,lastStartReplyStatus_=0;
+    mutable volatile LONG nativeStartConsumedSequence_=0;
     volatile LONG battleStartConsumed_ = 0;
     void* volatile topOwner_ = nullptr;
     void* volatile missionLobbyOwner_ = nullptr;

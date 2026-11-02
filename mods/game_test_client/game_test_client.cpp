@@ -1668,14 +1668,13 @@ int __cdecl TitleStartSmoke(const SdgoGameTestContextV1* c) {
     static uint64_t lastAttempt=0;
     static bool requested=false;
     static std::string confirmedTitle;
-    SdgoPvpAiClientSnapshotV1 snapshot{};
     if (!c->tick) {
         std::array<char,513> title{};
         const auto size=sdgo::CurrentRoomTitle(c->api->ModDirectory(sdgo_test::mod),title.data(),static_cast<uint32_t>(title.size()));
         c->Assert(size>20,"battle-start smoke begins with the server-confirmed extended native input");
         if (size<=20) return SDGO_GAME_TEST_FAIL;
         confirmedTitle.assign(title.data(),size);
-        Snapshot(snapshot);startBaseline=snapshot.received_battle_start_count;
+        startBaseline=mission.NativeStartConsumedSequence();
         sendBaseline=actions.GameStartSendCount();replyBaseline=rooms.NativeStartReplySequence();
         requested=false;lastAttempt=0;
     }
@@ -1688,11 +1687,13 @@ int __cdecl TitleStartSmoke(const SdgoGameTestContextV1* c) {
         requested=true;lastAttempt=c->elapsed_ms;
         c->Observe("original room-host Start business requested for the confirmed long-title AI room");
     }
-    if (!Snapshot(snapshot) || snapshot.native_app_state!=22 || snapshot.received_battle_start_count<=startBaseline)
+    if (actions.AppState()!=22 || mission.NativeStartConsumedSequence()<=startBaseline ||
+        actions.GameStartSendCount()<=sendBaseline)
         return SDGO_GAME_TEST_WAIT;
     std::array<char,513> current{};
     const auto size=sdgo::CurrentRoomTitle(c->api->ModDirectory(sdgo_test::mod),current.data(),static_cast<uint32_t>(current.size()));
-    c->Assert(actions.AppState()==22 && snapshot.received_battle_start_count>startBaseline,
+    c->Assert(actions.AppState()==22 && mission.NativeStartConsumedSequence()>startBaseline &&
+                  actions.GameStartSendCount()>sendBaseline,
               "a real server battle-start packet admitted the long-title room into native GAME_MAIN");
     c->Assert(std::string(current.data(),size)==confirmedTitle,"the confirmed full title survives the genuine battle-start transition");
     c->Observe("bounded battle-start smoke only; combat, results and natural battle return are not claimed");
