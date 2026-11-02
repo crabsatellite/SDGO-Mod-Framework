@@ -19,6 +19,7 @@ enum class NativeScenario {
     TeamList,
     BattleList,
     CreateSuccess,
+    BattleCreateSuccess,
     NativeError,
     RenameSuccess,
     NoSend
@@ -106,6 +107,10 @@ int __cdecl NativeDispatch(DWORD,
         Write16(response.data(), 0x0A33);
         Write32(response.data() + 6, 5);
         break;
+    case NativeScenario::BattleCreateSuccess:
+        g_state->ObserveLegacyRoom(server::RoomDomain::Battle,5,pilot,Native("native title"));
+        response.assign(0x3CE1,0);Write16(response.data(),0x0918);Write32(response.data()+6,5);
+        break;
     case NativeScenario::NativeError:
         response.assign(8, 0);
         Write16(response.data(), 0x0916);
@@ -143,7 +148,7 @@ std::vector<std::uint8_t> HelloPacket(std::uint16_t opcode,
                                       std::uint32_t pilot,
                                       std::uint32_t requestId)
 {
-    std::vector<std::uint8_t> native(opcode == kCreateTeam ? 0x53 : 0x16, 0);
+    std::vector<std::uint8_t> native(opcode == kCreateTeam ? 0x53 : opcode==kCreateBattle ? 0x50 : 0x16, 0);
     Write16(native.data(), opcode);
     Write32(native.data() + 2, pilot);
     if (opcode == kCreateTeam) {
@@ -151,6 +156,7 @@ std::vector<std::uint8_t> HelloPacket(std::uint16_t opcode,
         native[0x15] = 12;
         std::memcpy(native.data() + 0x16, "native title", 12);
     }
+    if(opcode==kCreateBattle){native[0x12]=12;std::memcpy(native.data()+0x13,"native title",12);}
     metadata::Message hello;
     hello.kind = metadata::MessageKind::Hello;
     hello.request_id = requestId;
@@ -385,6 +391,23 @@ void TestSuffixOnlyRenameAndReplay()
           "exact retry replays the cached carrier on its original native route");
 }
 
+void TestNativeBattleCreateCarrier()
+{
+    Reset(779);g_scenario=NativeScenario::BattleCreateSuccess;
+    auto packet=HelloPacket(kCreateBattle,1002,1);
+    Dispatch(0,0,124,packet.data(),static_cast<int>(packet.size()));
+    metadata::TrailerView view;metadata::SnapshotBatch batch;
+    Check(g_native_input.size()==0x50 && metadata::DecodeSnapshotBatchPacket(g_sent.data(),g_sent.size(),&view,&batch) &&
+              view.native_size==0x3CE1 && batch.rooms.size()==1 && batch.rooms[0].key.room_id==(0x80000000u|5),
+          "real 0x525/0x918 native create negotiates a Battle-domain identity with the unchanged carrier layout");
+    std::vector<uint8_t> native(0x50,0);Write16(native.data(),kCreateBattle);Write32(native.data()+2,1002);native[0x12]=20;std::memset(native.data()+0x13,'N',20);
+    metadata::Message title;title.kind=metadata::MessageKind::SetTitle;title.title="a native PvP create title longer than twenty bytes";title.request_id=2;
+    std::vector<uint8_t> body;metadata::EncodeMessageBody(title,&body);DispatchContext context;
+    Check(PrepareContext(&context,kCreateBattle,1002,native.data(),native.size(),&title,body.data(),body.size()) &&
+              context.kind==ContextKind::Create && context.native_title.size==20 && RequestDomain(kCreateBattle,native.data())==server::RoomDomain::Battle,
+          "extended native PvP create uses the actual title offsets and Battle-domain request context");
+}
+
 void TestAutoCreateHello()
 {
     Reset(778);
@@ -422,6 +445,7 @@ int main()
     TestNativeErrorWhitelist();
     TestLegacyIsolationAndOversizedPassThrough();
     TestSuffixOnlyRenameAndReplay();
+    TestNativeBattleCreateCarrier();
     TestAutoCreateHello();
     std::printf("%s (%d failures)\n",
                 g_failures ? "FAILED" : "PASSED", g_failures);

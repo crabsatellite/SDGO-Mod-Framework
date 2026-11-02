@@ -1014,8 +1014,30 @@ void TestNegotiatingDraft()
           "bare native create rejection fails the matching title without losing its text");
 }
 
+void TestNativePvpCreateCarrier()
+{
+    ResetRoot();
+    Check(Ready(84, 2000), "native PvP create negotiates its real connection");
+    const std::wstring title(128,L'房');
+    Check(Prepare(ui::Surface::PvpNativeCreate,title), "actual PvP form stages the complete Unicode title");
+    const auto sent=SendDraft(84,0x0525,title,0);
+    Check(sent.decision==transport::SendDecision::Replace && sent.native.size()==0x50 &&
+              sent.native[0x12]==20 && sent.message.title==Utf8Bytes(title) &&
+              OnlyTitleProjectionChanged(sent,0x0525,title),
+          "real 0x525 carrier preserves all non-title fields and repairs the native 256-byte length wrap");
+    std::vector<uint8_t> body;
+    Check(metadata::EncodeMessageBody(Snapshot(Record(2000,kBattleDomainForTest|19,4,1,Utf8Bytes(title)),sent.message.request_id),&body),"native PvP ACK encodes");
+    auto ack=NativePacket(0x3CE1,0x0918);Put32(ack.data()+6,19);
+    OnReceive(84,ack.data(),ack.size(),body.data(),body.size());
+    std::wstring confirmed;
+    Check(!g_state.HasPending(84) && LookupTitle(true,19,&confirmed) && confirmed==title &&
+              g_activeRoom==(kBattleDomainForTest|19),
+          "native 0x918 ACK confirms the full title in the Battle domain");
+}
+
 void RunTests()
 {
+    TestNativePvpCreateCarrier();
     TestCapabilityAndLegacyFallback();
     TestCreateMissionAndPvpUpdates();
     TestProjectionBoundaries();

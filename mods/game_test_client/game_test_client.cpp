@@ -794,6 +794,13 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
         context->Assert(0, "the backend rejected initial-loading completion"); return SDGO_GAME_TEST_FAIL;
     }
     const auto inventory = onboarding.InventoryState();
+    if(roomTitlesOnly){
+        static uint32_t appSeen=UINT32_MAX,initializedSeen=UINT32_MAX,managerSeen=UINT32_MAX,capacitySeen=UINT32_MAX;
+        if(appSeen!=state.native_app_state || initializedSeen!=inventory.initialized || managerSeen!=inventory.manager_present || capacitySeen!=inventory.slot_capacity){
+            char message[192];sprintf_s(message,"room-title precondition app=%u inventory_manager=%u initialized=%u capacity=%u complete=%u owned=%u",state.native_app_state,inventory.manager_present,inventory.initialized,inventory.slot_capacity,inventory.scan_complete,inventory.owned_unit_count);context->Observe(message);
+            appSeen=state.native_app_state;initializedSeen=inventory.initialized;managerSeen=inventory.manager_present;capacitySeen=inventory.slot_capacity;
+        }
+    }
     static uint32_t previousOwned = UINT32_MAX;
     if (inventory.initialized && inventory.owned_unit_count != previousOwned) {
         char message[128]; sprintf_s(message, "real inventory owned=%u first_unit=%u slot=%u scanned=%u/%u", inventory.owned_unit_count, inventory.first_unit_id, inventory.first_unit_slot, inventory.slots_examined, inventory.slot_capacity);
@@ -1373,19 +1380,35 @@ const SdgoGameTestCaseV1 collectionCases[]={
     {"pages.collection.draw",120000,&DrawCollection},
     {"pages.collection.delivery",180000,&DeliverCollection},
 };
-int __cdecl TitlePvpCreate(const SdgoGameTestContextV1* c) {
+int TitleCreateVs(const SdgoGameTestContextV1* c,uint32_t type,RoomTitleActions::Surface surface) {
     if(actions.AppState()==6){
+        const auto channel=channels.EnsureVsType(type);
+        if(channel>=ChannelActions::kInvalidTarget){c->Assert(0,"native PvP channel selection failed");return SDGO_GAME_TEST_FAIL;}
+        if(channel!=ChannelActions::kAccepted && channel!=ChannelActions::kAlreadySelected)return SDGO_GAME_TEST_WAIT;
+        if(channels.TakeSceneReloadRequirement())hangarNavigation.RequireGameRoomReentry(rooms.NativeRoomPageGeneration());
         const auto result=hangarNavigation.EnsureGameRoom(roomListVtable,modalLoadingVtable,rooms.NativeRoomPageGeneration());
         if(result!=HangarNavigation::kReady)return SDGO_GAME_TEST_WAIT;
     }
-    return roomTitles.Poll(RoomTitleActions::PvpCreate,c);
+    return roomTitles.Poll(surface,c);
 }
+int __cdecl TitlePvpCreate(const SdgoGameTestContextV1* c){return TitleCreateVs(c,1,RoomTitleActions::PvpCreate);}
+int __cdecl TitleTeamCreate(const SdgoGameTestContextV1* c){return TitleCreateVs(c,1,RoomTitleActions::PvpTeamCreate);}
+int __cdecl TitleGridCreate(const SdgoGameTestContextV1* c){return TitleCreateVs(c,2,RoomTitleActions::PvpGridCreate);}
 int __cdecl TitlePvpRename(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::PvpRename,c);}
-int __cdecl TitleMissionCreate(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::MissionCreate,c);}
+int __cdecl TitleMissionCreate(const SdgoGameTestContextV1* c){
+    if(actions.AppState()==6 && !roomTitles.Service("title_test.mission_lobby_vtable")){
+        const auto result=mission.EnsureRoom(5,"GTRoomTitleInput");
+        if(result>=MissionFlowActions::kInvalidMode || result==MissionFlowActions::kUnbound){
+            c->Observe(MissionFlowActions::ResultName(result));c->Assert(0,"native mission channel admission failed");return SDGO_GAME_TEST_FAIL;
+        }
+        return SDGO_GAME_TEST_WAIT;
+    }
+    return roomTitles.Poll(RoomTitleActions::MissionCreate,c);
+}
 int __cdecl TitleMissionSettings(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::MissionSettings,c);}
 int __cdecl TitleMissionRename(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::MissionRename,c);}
 int __cdecl TitleLeave(const SdgoGameTestContextV1* c){
-    if(actions.AppState()==6){roomTitles.Reset();return SDGO_GAME_TEST_PASS;}
+    if(actions.AppState()==6){roomTitles.Reset();channels.Reset();return SDGO_GAME_TEST_PASS;}
     static uint64_t last=0;if(GetTickCount64()-last>2000){last=GetTickCount64();if(!rooms.Leave())roomTitles.Leave(c);}
     return SDGO_GAME_TEST_WAIT;
 }
@@ -1393,6 +1416,12 @@ const SdgoGameTestCaseV1 titleCases[]={
     {"room_titles.pvp.create",120000,&TitlePvpCreate},
     {"room_titles.pvp.rename",120000,&TitlePvpRename},
     {"room_titles.pvp.leave",60000,&TitleLeave},
+    {"room_titles.team.create",120000,&TitleTeamCreate},
+    {"room_titles.team.rename",120000,&TitlePvpRename},
+    {"room_titles.team.leave",60000,&TitleLeave},
+    {"room_titles.grid.create",120000,&TitleGridCreate},
+    {"room_titles.grid.rename",120000,&TitlePvpRename},
+    {"room_titles.grid.leave",60000,&TitleLeave},
     {"room_titles.mission.create",180000,&TitleMissionCreate},
     {"room_titles.mission.settings",120000,&TitleMissionSettings},
     {"room_titles.mission.rename",120000,&TitleMissionRename},
@@ -1621,7 +1650,7 @@ SDGO_MOD_ENTRY {
         passwordIsMd5};
     if (!loaded || !actions.Bind(api, mod, config) ||
         (!missionMode && !channels.Bind(api, mod, &actions)) ||
-        (missionMode && !mission.Bind(api,mod,&actions)) ||
+        ((missionMode || roomTitlesOnly) && !mission.Bind(api,mod,&actions)) ||
         !battleships.Bind(api,mod,&actions) || !gifts.Bind(api,mod,&actions) ||
         (deckOnly && !decks.Bind(api,mod,&actions)) ||
         (!hangarNavigation.Bind(api,mod,&actions)) ||

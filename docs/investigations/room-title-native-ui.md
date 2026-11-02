@@ -128,3 +128,31 @@ cmake -S . -B build -DSDGO_ROOM_TITLE_NATIVE_CLIENT="<supported client>\GOnline.
 cmake --build build --config Release --target room_titles_native_ui_test room_titles
 ctest --test-dir build -C Release -R "^room_titles_(native_input|native_ui|client|transport|client_state)_offline$" --output-on-failure
 ```
+
+## Real creation services and deferred controls (client 0.2.2)
+
+The three RTTI-backed creation vtables are `CServiceMakeRoom` at `0x00EA6414`,
+`CServiceMakeRoomAI` at `0x00EA6484`, and `CServiceMakeRoomMatchmaking` at
+`0x00EA64F4`. The first two use root `+0x50` and cached edit `+0x54`.
+Their early init at `0x008D0380` only loads a hidden root. Updates
+`0x008E5AA0` / `0x008E5BB0` change lifecycle `+0x44` from 3 to 4, populate
+controls through `0x008CF890` / `0x008D0B30`, then set default text and focus.
+The limit and saved draft must therefore be applied after that update returns,
+only for the initialization transition, never over later user typing.
+
+The team form initializes its visible controls at `0x008E4700`, root `+0x50`.
+The old `0x00EA3CD4` / `0x008E0C60` pair belongs to the separate rule-selection
+service (`uirs\1306.uir`), not the name edit. The native room list opens the
+ordinary/AI forms through `MakeRoomBtn` and the team form through `MakeTeamBtn`.
+
+Ordinary/AI submit uses `0x0525` (80 bytes, length/title at `+0x12/+0x13`);
+its `0x0918` ACK is `0x3CE1` bytes with Battle room ID at `+6`. Team and mission
+creation continue to use the existing `0x0640` carrier. Native short fields stay
+bounded; full metadata is committed only on the corresponding native ACK.
+
+The retained `--room-titles-only` GameTest drives original dialog notifications,
+committed characters in the real Win32 EDIT, cancellation/reopen, and exact
+server-confirmed full titles. It does not synthesize rooms, title replies or
+inventory. Offline fixtures also cover missing controls before the first update,
+the state-3 initialization, focused input refresh and no draft rewrite on later
+updates. Runtime receipts and private accounts remain outside Git.
