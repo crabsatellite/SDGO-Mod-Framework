@@ -559,6 +559,31 @@ public:
     // matchmaking, clan and mission rooms use the team variant 0x0487.
     // The original always-packet handler consumes the real 0x057B reply and
     // performs the normal client transition.
+    bool IsModernTeamRoomReady() const
+    {
+        if (!gameApp_ || !teamThreeDManagerVtable_ || !teamThreeDMainVtable_)
+            return false;
+        __try {
+            auto* app=gameApp_();
+            if (!app || *reinterpret_cast<const uint32_t*>(app+kGameAppState)!=kThreeDWaitRoomState)
+                return false;
+            auto* owner=*reinterpret_cast<uint8_t**>(app+kGameAppStateObject);
+            if (!owner || *reinterpret_cast<void**>(owner)!=threeDWaitRoomVtable_)
+                return false;
+            auto* manager=*reinterpret_cast<uint8_t**>(owner+kWaitRoomObject);
+            if (!manager || *reinterpret_cast<void**>(manager)!=teamThreeDManagerVtable_)
+                return false;
+            auto** states=*reinterpret_cast<uint8_t***>(manager+kThreeDRoomStateArray);
+            auto* main=states ? states[0] : nullptr;
+            return main && *reinterpret_cast<void**>(main)==teamThreeDMainVtable_ &&
+                *reinterpret_cast<const uint32_t*>(main+8)==2 &&
+                *reinterpret_cast<uint8_t**>(main+0x0C)==manager+0x24 &&
+                *reinterpret_cast<uint8_t**>(main+0x10)==manager && manager[0x26]!=0;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
     bool Leave() const
     {
         if (!native_ || !profilePointer_)

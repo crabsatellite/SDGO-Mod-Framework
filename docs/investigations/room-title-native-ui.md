@@ -217,11 +217,14 @@ Battle provider can still remember an earlier login's same-title create, and
 replaying that old native room reply would leave the new waiting room without
 its current model. In-process retries keep their exact nonce for deduplication.
 
-Modern Team category `4` has no reachable inline rename input: population
+Native model category `4` has no reachable inline rename input: population
 `0x00A45A70` initially disables `TitleChangeBtn`, and event handler `0x00A53830`
 explicitly rejects that category even if a later host refresh enables the
-button. Native tests cover its creation form and original modern view; the
-compiled legacy settings adapters remain separate ABI/protocol regressions.
+button. This model byte is copied from the `0x0A33` server payload; it is not
+the factory object type that selects the Team manager. Native tests confirm
+the original Team manager/Main graph and exercise its inline title input when
+the native model category permits it. Compiled legacy settings adapters remain
+separate ABI/protocol regressions.
 
 Modern Mission and Team Main states dispatch `0x0BE1` to the shared original
 leave business at `0x00741950`. Their validated manager/state/context graph is

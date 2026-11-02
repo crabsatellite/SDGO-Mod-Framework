@@ -593,10 +593,10 @@ void TestMissionLeaveWithoutLegacyProfile(RoomActions& rooms)
     put(main,0x0C,context);
     managerVtable=&g_teamManagerIdentity;mainVtable=&g_teamMainIdentity;
     put(manager,0,managerVtable);put(main,0,mainVtable);
-    Check(rooms.Leave() && g_leaveBusinessCalls==2 && g_leaveBusinessSelf==main,
+    Check(rooms.IsModernTeamRoomReady() && rooms.Leave() && g_leaveBusinessCalls==2 && g_leaveBusinessSelf==main,
           "modern Team uses its own validated Main state and the original shared leave business");
     mainVtable=&g_missionMainIdentity;put(main,0,mainVtable);
-    Check(!rooms.Leave() && g_leaveBusinessCalls==2,
+    Check(!rooms.IsModernTeamRoomReady() && !rooms.Leave() && g_leaveBusinessCalls==2,
           "Team exit cannot accept the Mission Main state in another manager");
     std::memset(g_app,0,sizeof(g_app));
 }
