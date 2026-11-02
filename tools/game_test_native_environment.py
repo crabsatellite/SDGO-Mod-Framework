@@ -132,7 +132,7 @@ class NativeDriver:
         prefix = 'sdgo-gt-' + lease.id.replace('-', '')[:20]
         self.private = {'container': prefix, 'volume': prefix + '-data',
                         'sa_password': 'Native+' + secrets.token_urlsafe(24),
-                        'app_user': 'native_game_test', 'app_password': 'Native+' + secrets.token_urlsafe(24)}
+                        'app_user': 'native_game_test', 'app_password': 'Gt1!' + secrets.token_hex(6)}
         atomic_json(lease.root / 'private/instance.json', self.private)
         labels = labels_for(lease)
         flags = [x for k, v in labels.items() for x in ('--label', k+'='+v)]
@@ -314,11 +314,13 @@ class NativeDriver:
             if source.is_file():
                 copy_evidence(source)
         for source in lease.root.rglob('*'):
-            if not source.is_file() or source.suffix.lower() not in ('.jsonl','.log','.dmp','.xml'):
+            if not source.is_file() or source.suffix.lower() not in ('.jsonl','.log','.dmp','.xml','.txt'):
                 continue
             if 'private' in source.relative_to(lease.root).parts:
                 continue
             if source.suffix.lower()=='.xml' and 'receipts' not in source.parts:
+                continue
+            if source.suffix.lower()=='.txt' and not any(part.lower() in ('logdata','app_log','zoa_log') for part in source.parts):
                 continue
             copy_evidence(source)
         for report in lease.root.glob('client-run/receipts/*.json'):
@@ -354,10 +356,11 @@ def rebase_configuration(root, old_root, new_root, ip, private, *, old_ip, old_s
             if old_password:
                 updated=updated.replace(old_password.encode(encoding),private['app_password'].encode(encoding))
         if updated!=raw:file.write_bytes(updated)
-    from manager.storage import ini_values
     for folder in (root/'Server').iterdir():
         for path in folder.glob('*.ini'):
-            cfg=ini_values(path.read_bytes())
+            # The native server reader treats DBServerName/DBName literally.
+            # Manager's case-folded view is for querying, never serialization.
+            cfg=gt.read_ini(path)
             for section in cfg.sections():
                 if cfg.has_option(section,'DBServerName'):
                     cfg[section]['DBServerName']='127.0.0.1,'+str(private['port'])
@@ -566,8 +569,11 @@ def execute_environment(template_path,stage,slot,include_mods,bootstrap_only,reg
         for name in ('Server','reward-owner','reward-runtime','ServerStartUp'):
             if (template_path/name).is_dir():copy_tree(template_path/name,native/name)
         secret=json.loads((template_path/'private/native.json').read_text(encoding='utf-8'))
-        rebase_configuration(native,template_path,native,lease.ip,driver.private,
+        rebase_configuration(native,Path(template['source_root']),native,lease.ip,driver.private,
             old_ip=template['base_ip'],old_sql_port=template['native_sql_port'],old_password=secret['native_db_password'])
+        if str(template_path)!=template['source_root']:
+            rebase_configuration(native,template_path,native,lease.ip,driver.private,
+                old_ip=template['base_ip'],old_sql_port=template['native_sql_port'],old_password=secret['native_db_password'])
         with driver.connect() as connection:
             verify_accounts(connection,template['accounts'])
             connection.cursor().execute('UPDATE dbo.tbl_ChannelInfo SET AddrIP=?',lease.ip);connection.commit()
