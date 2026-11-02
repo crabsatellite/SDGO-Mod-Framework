@@ -568,7 +568,7 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
     host_pilot_id=observer_host_id(fps_suite,host_pilot_id)
     native_local=private.get('kind')=='native-local-test'
     if native_local:validate_local_native_sql(private,work)
-    else:identity(private)
+    else:raise RuntimeError('Docker service startup is retired; use a copied native-local-test backend. Legacy cleanup remains available.')
     lock,lock_token=game_test.acquire_lock(work)
     owned_processes=[];ready_services=[];started=False
     state={'phase':'starting','pid':os.getpid(),'services':[],'client_run':str(client_run.resolve())}
