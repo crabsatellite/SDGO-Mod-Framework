@@ -8,7 +8,7 @@ The client, Agent bridge and Battle provider must all be installed and enabled.
 It uses the authenticated game connection and needs no additional ports, account,
 database migration, FRP settings or launcher.
 
-Client 0.2.2 covers both native PvP creation forms and team creation, and refreshes
+Client 0.2.3 covers both native PvP creation forms and team creation, and refreshes
 the input limit after deferred control initialization, including an already
 focused title edit. The matching creation transport requires Agent and Battle
 components 0.2.1.
