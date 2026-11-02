@@ -16,6 +16,8 @@ python tools/game_test_fps.py --client-template D:\Games\SDGO --stage build/stag
 选择已有本地测试入口，不会因此创建账号或提交凭据。
 整轮默认超时为 600 秒，为原生资源加载预留时间，可用 `--timeout` 调整；
 这不改变频率断言或采样窗口。
+后台进程使用与普通游戏相同的 Windows 正常优先级；宿主 CPU 满载时，低于正常优先级会使
+原生加载及计时采样长期得不到调度。后台桌面与静音隔离继续生效。
 
 每轮读取真实应用的 FPS 字段及已初始化的计时器间隔，再以独立的 QueryPerformanceCounter
 测量原生更新和成功 D3D9 Present 的频率，连续采样三段，每段三秒，保留全部窗口及平均值。
