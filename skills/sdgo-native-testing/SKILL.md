@@ -1,11 +1,11 @@
 ---
 name: sdgo-native-testing
-description: Run and diagnose original SDGO native GameTest using isolated loopback environments, shared five-account database templates, real client/server flows and verified cleanup. Use for SDGO Mods and native test-framework work, not Minecraft GameTest or ordinary gameplay.
+description: Run and diagnose original SDGO native GameTest with isolated environments, reusable account templates and verified cleanup, then complete authorized client delivery and public documentation for SDGO mod work. Not for Minecraft GameTest or ordinary gameplay.
 ---
 
 # SDGO 原生测试 guide
 
-目标是使用当前测试框架验证用户指定的功能。默认只做测试、收集证据和清理；测试本身不扩大功能开发或生产数据修改范围。先读当前源码 worktree 的 `AGENTS.md`。常见仓库根为 `E:\Dev\sd-re\SDGO-d3d9-proxy`，并行开发 worktree 位于 `E:\Dev\sd-re-worktrees`；在实际含有本 skill 对应工具版本的 worktree 内运行命令。
+使用当前测试框架验证指定的 SDGO 功能。先读当前源码工作区的 `AGENTS.md`，在包含配套工具版本的仓库内运行命令。单独测试请求限定于测试、日志收集和清理；已授权的开发或修复任务在测试通过后继续完成下述部署、发布与文档步骤。测试本身不扩大生产数据修改或远端写入权限。
 
 ## 框架里有什么
 
@@ -69,6 +69,22 @@ python tools/game_test.py environment run --template <existing-template> --accou
 ```
 
 该开关在副本 observer 的 `mod.ini` 中封存，调用原始变形准入业务并观察两次实际形态提交/退出，随后完成正常战斗；不要靠进程环境变量偷偷注入未封存场景。没有加候选修复的 before 测试可以失败；如模板已安装该修复，必须明确从 before 副本禁用并重新封存，不能把已修复的模板叫作 before。
+
+## 开发完成后的交付顺序
+
+在已授权的功能开发或修复任务中，按以下顺序完成交付：
+
+1. 完成代码和相关 GameTest。若框架或环境导致失败，修复相应问题并取得有效测试结果。
+2. 将配套运行文件部署到实际客户端和 Manager 框架副本，保留登录、画面等个人设置，核对安装版本及文件。涉及服务端时同步检查对应组件。
+3. 按仓库的完整运行文件发布流程提交、推送客户端 `main`，再通过实际更新器核对安装提交与配置。
+4. 更新现有 `README.md`、`README.zh-CN.md` 的功能索引，以及该功能已有的中英文独立文档。内容应与刚部署的行为一致，说明用途、操作、默认值、范围、生效方式、兼容性和排错方法。
+5. 将源码、测试及上述文档合入最新 `master` 并推送，保留并行提交。文档更新是交付步骤的一部分。
+
+公开仓库的文档面向玩家、服主或外部开发者。使用可独立理解的说明，避免任务对话、单机部署记录、临时路径、运行 ID、逐次测试计数、内部完成状态和待办式措辞。开发文档可以说明接口、实现与可复现的测试命令，但应写成通用参考。
+
+不新增独立的测试总结、部署报告或日期式验证记录来替代 README 和功能文档。GameTest 自动生成的 JSON、JUnit 和日志留在本地被 Git 忽略的测试输出目录，用于排错；不将它们复制成公开功能文档或最终交付入口。
+
+结束前清理所属临时环境，保留可复用模板、测试代码和必要的本地日志。最终回复简要说明功能、部署和提交结果。
 
 ## 排错和扩展
 
