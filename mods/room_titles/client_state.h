@@ -69,6 +69,8 @@ struct PendingDraft {
 // packet inspection, account handling, or synchronization.
 class ClientState {
 public:
+    explicit ClientState(std::uint32_t first_request_id = 1)
+        : next_request_id_(first_request_id ? first_request_id : 1) {}
     Message BeginHello(ConnectionId connection, std::uint64_t now_ms);
     bool AcceptBatch(ConnectionId connection, const SnapshotBatch& batch);
     bool AcceptMessage(ConnectionId connection, const Message& message);

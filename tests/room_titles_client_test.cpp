@@ -1352,6 +1352,7 @@ void TestCreateSnapshotCarrier()
 
 int main()
 {
+    Check(InitializeSessionRequests(),"the installed Windows system RNG initializes the process's room-title request range");
     RunTests();
     TestModernRoomLeaveConfirmation();
     TestCreateSnapshotCarrier();
