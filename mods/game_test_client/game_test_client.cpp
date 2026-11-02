@@ -1591,7 +1591,13 @@ int TitleCreateVs(const SdgoGameTestContextV1* c,uint32_t type,RoomTitleActions:
     }
     if(!roomTitles.Running() && actions.AppState()==6){
         const auto channel=channels.EnsureVsType(type);
-        if(channel>=ChannelActions::kInvalidTarget){c->Assert(0,"native PvP channel selection failed");return SDGO_GAME_TEST_FAIL;}
+        if(channel==ChannelActions::kNativeRequestPending)return SDGO_GAME_TEST_WAIT;
+        if(channel>=ChannelActions::kInvalidTarget){
+            const auto state=channels.State();
+            char line[160];sprintf_s(line,"native PvP channel result=%u selected=%u/%u target=%u/%u",channel,
+                state.selected_group,state.selected_channel,state.target_group,state.target_channel);
+            c->Observe(line);c->Assert(0,"native PvP channel selection failed");return SDGO_GAME_TEST_FAIL;
+        }
         if(channel!=ChannelActions::kAccepted && channel!=ChannelActions::kAlreadySelected)return SDGO_GAME_TEST_WAIT;
         if(channels.TakeSceneReloadRequirement())hangarNavigation.RequireGameRoomReentry(rooms.NativeRoomPageGeneration());
         const auto result=hangarNavigation.EnsureGameRoom(roomListVtable,modalLoadingVtable,rooms.NativeRoomPageGeneration());
