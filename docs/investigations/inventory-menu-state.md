@@ -1,9 +1,8 @@
 # Visible inventory buttons rejected in the live menu
 
-The live client log confirmed `hangar_manager 0.2.2` and `storage_claim 0.1.0`
-loaded. The user reported no response in both native pages. The previous native
-mouse replay verified skin state transitions, but replaced the service receiver
-and did not exercise the menu gate with the real app-state object layout.
+In `hangar_manager` 0.2.2 and `storage_claim` 0.1.0, visible buttons could reject
+clicks because the menu guard read the wrong service layout. A mouse replay
+that replaces the service receiver cannot detect this app-state layout error.
 
 Both Mods read `CGameApp+4A4 -> service+0C` unconditionally and rejected any
 nonzero value as an active battle. The current PE and retained `0048E6D0`

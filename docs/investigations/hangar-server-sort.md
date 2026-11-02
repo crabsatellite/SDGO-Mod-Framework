@@ -1,7 +1,7 @@
 # Server persistence, duplicate counting and panel overflow (0.3.0)
 
-The user reported no visible sorting even after a new login, and a GB preview
-of zero. The 0.2.4 display repair does not close either report. Legacy local
+A display-only sort repair cannot persist slot order or correct duplicate-counting
+rules that produce a zero GB preview. Legacy
 `*_Sorting.sql` and `sp_Daily_SortAndDedup.sql` sort the server's
 `tbl_UserUnits.UserUnitSlotNumber`. Some legacy scripts also clear a drop box or
 delete duplicates; those side effects are not used for sorting.
