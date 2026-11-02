@@ -1254,7 +1254,7 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
     if room_titles_only:
         if mission_mode is not None or play_unit_uid is not None or collection_draw or shop_catalog:
             raise GameTestError('room-title input scope cannot contain mission combat, selected units or shop operations')
-        return FLOW_CASES[:3]+tuple('room_titles.'+x for x in ('pvp.create','pvp.rename','pvp.leave','team.create','team.rename','team.leave','grid.create','grid.rename','grid.leave','mission.create','mission.settings','mission.rename','mission.leave'))
+        return FLOW_CASES[:3]+tuple('room_titles.'+x for x in ('pvp.create','pvp.rename','pvp.leave','team.create','team.settings','team.rename','team.leave','grid.create','grid.rename','grid.leave','mission.create','mission.settings','mission.rename','mission.leave'))
     selection = ('setup.active_unit',) if play_unit_uid is not None else ()
     if mission_mode is not None:
         if mode_sequence != "1":

@@ -1035,8 +1035,48 @@ void TestNativePvpCreateCarrier()
           "native 0x918 ACK confirms the full title in the Battle domain");
 }
 
+int g_team_callback_calls = 0;
+bool g_team_callback_had_draft = false;
+int __fastcall FakeTeamSettings(void*, void*, void*, uint32_t, const void*, void*)
+{
+    ++g_team_callback_calls;
+    const auto draft = g_drafts.find(g_activeConnection);
+    g_team_callback_had_draft = draft != g_drafts.end() &&
+        draft->second.surface == ui::Surface::TeamSettings && draft->second.opcode == 0x09ED;
+    return 71;
+}
+
+void TestTeamSettingsCallback()
+{
+    ResetRoot();
+    Check(Ready(85,2001,{Record(2001,21,4,1,"old team title")}),"team settings capability fixture");
+    g_fake_mission_room = 21;
+    g_activeRoom = 21;
+    g_teamSettings = reinterpret_cast<DialogFn>(&FakeTeamSettings);
+    ui::FakeEdit edit; edit.text=std::wstring(128,L'\u623f');
+    ui::FakeEdit name; name.text=L"CancelBtn";
+    g_team_callback_calls=0;
+    Check(TeamSettings(&edit,nullptr,nullptr,0x101,&name,nullptr)==71 &&
+              g_team_callback_calls==1 && g_drafts.empty(),
+          "team callback preserves non-confirm actions and its four-argument ABI");
+    name.text=L"SettingOkBtn";
+    Check(TeamSettings(&edit,nullptr,nullptr,0x101,&name,nullptr)==71 &&
+              g_team_callback_calls==2 && g_team_callback_had_draft && g_drafts.empty() &&
+              !g_state.HasPending(85),
+          "team confirmation exposes the complete draft during native callback and clears a no-send action");
+    ui::FakeEdit reopened;
+    OnInit(ui::Surface::TeamSettings,nullptr,&reopened);
+    Check(reopened.text==edit.text,"team settings restores the full saved edit against its actual Team room");
+    ResetRoot();
+    g_team_callback_calls=0;
+    Check(TeamSettings(&edit,nullptr,nullptr,0x101,&name,nullptr)==0 &&
+              g_team_callback_calls==0 && !g_notices.empty(),
+          "unnegotiated team settings does not silently submit a truncated long title");
+}
+
 void RunTests()
 {
+    TestTeamSettingsCallback();
     TestNativePvpCreateCarrier();
     TestCapabilityAndLegacyFallback();
     TestCreateMissionAndPvpUpdates();

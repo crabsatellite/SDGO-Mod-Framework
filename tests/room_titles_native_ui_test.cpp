@@ -499,7 +499,7 @@ int wmain(int argc, wchar_t** argv)
     InitEdit(&edit);
     FakeDialog dialog = {&edit, nullptr, nullptr};
     FakeService service;
-    SetPointer(service.bytes.data(), 0x4C, &dialog);
+    SetPointer(service.bytes.data(), 0x50, &dialog);
     if (!Check(native_ui::FindRoomNameEdit(service.bytes.data(), Surface::PvpCreate) == &edit,
                "find create edit") ||
         !Check(native_ui::SetRoomNameLimit(&edit) && Limit(edit) == 512, "set UTF-16 byte limit"))
@@ -615,8 +615,8 @@ int wmain(int argc, wchar_t** argv)
                "reject overlong edit text"))
         return 1;
 
-    if (!Check(native_ui::InstallInitHooks(&InitCallback) && g_detours.size() == 8,
-               "install six init and two late create-update slots"))
+    if (!Check(native_ui::InstallInitHooks(&InitCallback) && g_detours.size() == 9,
+               "install seven init and two late create-update slots"))
         return 1;
     g_callbackEdit = &edit;
 
@@ -677,6 +677,12 @@ int wmain(int argc, wchar_t** argv)
         if (!Check(g_callbacks == before + 1, "ordinary updates do not restore a draft over typing"))
             return 1;
     }
+
+    FakeService teamSettings;
+    SetPointer(teamSettings.bytes.data(), 0x7C, &dialog);
+    if (!Check(Invoke("room_titles.ui_team_settings_init", Surface::TeamSettings,
+                       &teamSettings, 9), "team settings expands its name edit at root +0x7C"))
+        return 1;
 
     NativeString normalText = {};
     NativeString alternateStateText = {};

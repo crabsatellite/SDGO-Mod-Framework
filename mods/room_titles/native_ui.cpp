@@ -121,6 +121,7 @@ InitFn g_missionSettingsInit = nullptr;
 InitFn g_pvpTitleEditInit = nullptr;
 InitFn g_nativePvpCreateInit = nullptr;
 InitFn g_gridPvpCreateInit = nullptr;
+InitFn g_teamSettingsInit = nullptr;
 UpdateFn g_nativePvpCreateUpdate = nullptr;
 UpdateFn g_gridPvpCreateUpdate = nullptr;
 TitleRenderFn g_pvpTitleRender = nullptr;
@@ -558,6 +559,7 @@ const char* SurfaceName(Surface surface)
     switch (surface) {
     case Surface::PvpCreate: return "team PvP create";
     case Surface::PvpNativeCreate: return "native PvP create";
+    case Surface::TeamSettings: return "team room settings";
     case Surface::MissionCreate: return "mission create";
     case Surface::MissionSettings: return "mission settings";
     case Surface::PvpTitleEdit: return "PvP title edit";
@@ -626,6 +628,12 @@ void __fastcall MissionSettingsInit(void* self, void*, std::uint32_t argument)
 {
     g_missionSettingsInit(self, argument);
     CompleteInit(Surface::MissionSettings, self);
+}
+
+void __fastcall TeamSettingsInit(void* self, void*, std::uint32_t argument)
+{
+    g_teamSettingsInit(self, argument);
+    CompleteInit(Surface::TeamSettings, self);
 }
 
 void __fastcall PvpTitleEditInit(void* self, void*, std::uint32_t argument)
@@ -777,6 +785,9 @@ bool InstallInitHooks(InitCallback callback)
         !g_api->HookSlot(g_mod, "room_titles.ui_mission_settings_init",
                          reinterpret_cast<void*>(&MissionSettingsInit),
                          reinterpret_cast<void**>(&g_missionSettingsInit)) ||
+        !g_api->HookSlot(g_mod, "room_titles.ui_team_settings_init",
+                         reinterpret_cast<void*>(&TeamSettingsInit),
+                         reinterpret_cast<void**>(&g_teamSettingsInit)) ||
         !g_api->HookSlot(g_mod, "room_titles.ui_pvp_title_edit_init",
                          reinterpret_cast<void*>(&PvpTitleEditInit),
                          reinterpret_cast<void**>(&g_pvpTitleEditInit)))
@@ -830,6 +841,7 @@ void* FindRoomNameEdit(void* service, Surface surface)
     case Surface::PvpCreate: dialogOffset = kPvpCreateDialogOffset; break;
     case Surface::MissionCreate: dialogOffset = kMissionCreateDialogOffset; break;
     case Surface::MissionSettings: dialogOffset = kMissionSettingsDialogOffset; break;
+    case Surface::TeamSettings: dialogOffset = 0x7C; break;
     default: return nullptr;
     }
 

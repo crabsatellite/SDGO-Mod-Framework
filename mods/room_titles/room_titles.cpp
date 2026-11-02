@@ -25,12 +25,14 @@ namespace transport = titles::native_transport;
 using SubmitFn = void(__thiscall*)(void*);
 using EventFn = int(__thiscall*)(void*, void*);
 using NativeWideFn = const wchar_t*(__cdecl*)(UINT, const char*);
+using DialogFn = int(__thiscall*)(void*, void*, uint32_t, const void*, void*);
 
 SubmitFn g_pvpCreate = nullptr;
 SubmitFn g_nativePvpCreate = nullptr;
 SubmitFn g_gridPvpCreate = nullptr;
 SubmitFn g_missionCreate = nullptr;
 SubmitFn g_missionSettings = nullptr;
+DialogFn g_teamSettings = nullptr;
 EventFn g_titleEvent = nullptr;
 NativeWideFn g_nativeWide = nullptr;
 void** g_missionRoom = nullptr;
@@ -65,7 +67,7 @@ struct SavedDraft {
     uint32_t room = 0;
     std::wstring text;
 };
-std::array<SavedDraft, 5> g_saved;
+std::array<SavedDraft, 6> g_saved;
 
 uint16_t Word(const uint8_t* bytes)
 {
@@ -169,7 +171,7 @@ bool Prepare(ui::Surface surface, const std::wstring& text)
 {
     Draft draft;
     draft.surface = surface;
-    draft.opcode = surface == ui::Surface::MissionSettings ? 0x09ED :
+    draft.opcode = (surface == ui::Surface::MissionSettings || surface == ui::Surface::TeamSettings) ? 0x09ED :
                    surface == ui::Surface::PvpTitleEdit ? 0x089E :
                    surface == ui::Surface::PvpNativeCreate ? 0x0525 : 0x0640;
     draft.text = text;
@@ -185,7 +187,7 @@ bool Prepare(ui::Surface surface, const std::wstring& text)
         g_state.AdvanceTime(connection, GetTickCount64());
         const bool creating = draft.opcode == 0x0640 || draft.opcode==0x0525;
         draft.room = creating ? 0 : g_activeRoom;
-        if (surface == ui::Surface::MissionSettings) {
+        if (surface == ui::Surface::MissionSettings || surface == ui::Surface::TeamSettings) {
             const uint32_t nativeId = SafeRoomId(g_missionRoom);
             if (nativeId && !(nativeId & kBattleDomain))
                 draft.room = nativeId;
@@ -268,6 +270,32 @@ void __fastcall NativePvpCreate(void* self, void*) { Submit(g_nativePvpCreate, s
 void __fastcall GridPvpCreate(void* self, void*) { Submit(g_gridPvpCreate, self, ui::Surface::PvpNativeCreate); }
 void __fastcall MissionCreate(void* self, void*) { Submit(g_missionCreate, self, ui::Surface::MissionCreate); }
 void __fastcall MissionSettings(void* self, void*) { Submit(g_missionSettings, self, ui::Surface::MissionSettings); }
+
+int __fastcall TeamSettings(void* self, void*, void* root, uint32_t event,
+                            const void* name, void* control)
+{
+    if (event != 0x101)
+        return g_teamSettings(self, root, event, name, control);
+    try {
+        std::wstring id;
+        if (!ui::ReadNativeString(name, &id) || id != L"SettingOkBtn")
+            return g_teamSettings(self, root, event, name, control);
+        std::wstring title;
+        if (!ui::ReadEditText(ui::FindRoomNameEdit(self, ui::Surface::TeamSettings), &title) ||
+            !Prepare(ui::Surface::TeamSettings, title))
+            return 0;
+        const int result = g_teamSettings(self, root, event, name, control);
+        Lock lock;
+        const auto draft = g_drafts.find(g_activeConnection);
+        if (draft != g_drafts.end() && draft->second.surface == ui::Surface::TeamSettings &&
+            !draft->second.request.request_id)
+            g_drafts.erase(draft);
+        return result;
+    } catch (const std::bad_alloc&) {
+        Explain(L"There is not enough memory to submit the room title. Your text was not truncated.");
+        return 0;
+    }
+}
 
 int __fastcall TitleEvent(void* self, void*, void* event)
 {
@@ -520,8 +548,9 @@ void OnInit(ui::Surface surface, void*, void* edit)
     {
         Lock lock;
         const auto& saved = g_saved[static_cast<size_t>(surface)];
-        const bool editing = surface == ui::Surface::MissionSettings || surface == ui::Surface::PvpTitleEdit;
-        const uint32_t room = surface == ui::Surface::MissionSettings ? SafeRoomId(g_missionRoom) :
+        const bool teamSettings = surface == ui::Surface::MissionSettings || surface == ui::Surface::TeamSettings;
+        const bool editing = teamSettings || surface == ui::Surface::PvpTitleEdit;
+        const uint32_t room = teamSettings ? SafeRoomId(g_missionRoom) :
                               editing ? g_activeRoom : 0;
         if (saved.valid && saved.connection == g_activeConnection && saved.room == room)
             value = saved.text;
@@ -567,6 +596,8 @@ SDGO_MOD_ENTRY
         !Bind(api, mod, &g_missionRoom, "room_titles.ui_mission_current_room"))
         return 0;
     if (!ui::InstallInitHooks(&OnInit) || !ui::InstallTitleDisplayHooks(&LookupTitle) ||
+        !api->HookCode(mod, "room_titles.ui_team_settings_event", reinterpret_cast<void*>(&TeamSettings),
+                       reinterpret_cast<void**>(&g_teamSettings)) ||
         !api->HookCode(mod, "room_titles.ui_native_pvp_create_submit", reinterpret_cast<void*>(&NativePvpCreate),
                        reinterpret_cast<void**>(&g_nativePvpCreate)) ||
         !api->HookCode(mod, "room_titles.ui_grid_pvp_create_submit", reinterpret_cast<void*>(&GridPvpCreate),
