@@ -55,6 +55,13 @@ class ServerReportTests(unittest.TestCase):
         events[2],events[3]=events[3],events[2]
         self.assertEqual(self.evaluate(events)['status'],'fail')
 
+    def test_rematch_requires_two_complete_native_battles_instead_of_reusing_the_first_result(self):
+        self.metadata['plan']['same_room_rematch']=True
+        self.assertEqual(self.evaluate(self.stream())['status'],'fail')
+        complete=self.stream((1,1))
+        self.assertEqual(self.evaluate(complete)['status'],'pass')
+        self.assertEqual(self.evaluate(complete[:-1])['status'],'fail')
+
     def test_duplicate_battles_and_duplicate_native_sequences_fail(self):
         self.assertEqual(self.evaluate(self.stream((1,1)))['status'],'fail')
         events=self.stream();events[3]['sequence']=events[2]['sequence']

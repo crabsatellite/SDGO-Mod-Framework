@@ -91,6 +91,33 @@ class NativeAiTeamPlanTests(unittest.TestCase):
             with self.subTest(args=args),self.assertRaises(self.gt.GameTestError):
                 self.fixture.prepare('bad-team-'+str(len(str(args))),**args)
 
+    def test_same_room_rematch_requires_waiting_host_and_a_second_complete_battle(self):
+        run=self.fixture.prepare('same-room',expected_ai=7,ai_allies=0,ai_policy='enemy',same_room_rematch=True)
+        metadata=self.fixture.metadata(run)
+        self.assertIs(metadata['plan']['same_room_rematch'],True)
+        expected=('framework.bootstrap','flow.login','flow.onboarding','pvp.room','pvp.start','pvp.ai_spawn',
+            'pvp.waiting','pvp.rematch.room','pvp.rematch.start','pvp.rematch.ai_spawn','pvp.rematch.return')
+        self.assertEqual(self.gt.required_cases_for_plan(metadata['plan']),expected)
+        job=self.gt.read_ini(run/'client/sdgo/gametest/run.ini')
+        self.assertEqual(job['run']['same_room_rematch'],'1')
+        self.assertEqual(job['run']['required_cases'],','.join(expected))
+        self.assertEqual(self.gt.validate_metadata(run)['plan'],metadata['plan'])
+
+    def test_rematch_matrix_repeats_each_mode_before_leaving_its_room(self):
+        cases=self.gt.required_flow_cases('3,9',same_room_rematch=True)
+        self.assertEqual(len(cases),19)
+        self.assertLess(cases.index('pvp.mode3.rematch.return'),cases.index('pvp.mode9.room'))
+        self.assertIn('pvp.mode9.waiting',cases)
+        self.assertIn('pvp.mode9.rematch.start',cases)
+
+    def test_same_room_rematch_rejects_non_battle_or_random_restore_scopes(self):
+        for args in ({'bootstrap_only':True},{'pages_only':True},{'mission_mode':5},
+                     {'battleship_only':True},{'random_loadout':True}):
+            with self.subTest(args=args),self.assertRaises(self.gt.GameTestError):
+                self.fixture.prepare('bad-rematch-'+str(len(str(args))),same_room_rematch=True,**args)
+        with self.assertRaises(self.gt.GameTestError):
+            self.fixture.prepare('integer-rematch',same_room_rematch=1)
+
     def test_invalid_or_non_battle_team_counts_fail_before_launch(self):
         for arguments in ({'expected_ai':7,'ai_allies':-1},{'expected_ai':7,'ai_allies':7},
                           {'ai_allies':0,'pages_only':True},{'ai_allies':0,'bootstrap_only':True},
