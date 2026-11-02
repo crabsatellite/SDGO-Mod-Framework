@@ -97,6 +97,9 @@ OnboardingActions onboarding;
 friends::FriendActions friendActions;
 friends::FriendExtraActions friendExtras;
 friends::FriendSession friendSession;
+friends::FriendInviteSender friendInviteSender;
+friends::FriendInviteReceiver friendInviteReceiver;
+friends::FriendRoomActions friendRoomActions;
 SdgoPvpAiClientGetSnapshotV1Fn getSnapshot;
 SdgoPvpAiClientGetLuaStatusV1Fn getLuaStatus;
 SdgoPvpAiClientGetStartStatusV1Fn getStartStatus;
@@ -912,7 +915,7 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
         context->Assert(0, "the normal first-unit business callback raised a native exception"); return SDGO_GAME_TEST_FAIL;
     }
     if (state.tutorial_level < 2 && !starter.request_attempted && onboarding.DrawStarterUnit())
-        context->Observe("invoked the original first-unit Buy business callback on the live onboarding capsule");
+        context->Observe("invoked the original first-unit Buy business callback on the live native buying dialog");
     if (starter.reply_sequence != previousStarterReply) {
         previousStarterReply = starter.reply_sequence;
         char message[144]; sprintf_s(message, "real starter reply opcode=%04X error=%u unit=%u slot=%u tutorial=%u", starter.reply_opcode, starter.reply_error, starter.picked_unit_id, starter.picked_unit_slot, starter.tutorial_level);
@@ -922,6 +925,8 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
         }
         context->Assert(starter.picked_unit_id != 0, "the real first-unit reply supplied a unit id");
     }
+    if (onboarding.AdvanceStarterCapsuleResult())
+        context->Observe("invoked the original live CapsuleClick callback after the accepted first-unit reply; native state advanced from 2 to 4");
     if (onboarding.ConfirmStarterResultPopup())
         context->Observe("invoked the original starter-result confirmation business callback on the real result popup");
     if (onboarding.ConfirmInitialLoadingPopup())
@@ -931,6 +936,27 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
         context->Assert(0, "the backend rejected initial-loading completion"); return SDGO_GAME_TEST_FAIL;
     }
     const auto inventory = onboarding.InventoryState();
+    const std::array<uint32_t,7> unitResultGate{
+        starter.unit_result_clone_sequence,starter.unit_result_captured_app_state,starter.unit_result_ui_state,
+        starter.unit_result_unit_id,starter.unit_result_captured,starter.unit_result_named_identity_matched,
+        starter.unit_result_control_ready};
+    static std::array<uint32_t,7> previousUnitResultGate{UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX};
+    if(unitResultGate!=previousUnitResultGate) {
+        char message[256];sprintf_s(message,"native starter unit-result clone=%u app=%u ui=%u unit=%u captured=%u named=%u control_ready=%u confirm=%u/%u",
+            unitResultGate[0],unitResultGate[1],unitResultGate[2],unitResultGate[3],unitResultGate[4],unitResultGate[5],unitResultGate[6],
+            starter.result_confirm_attempted,starter.result_confirm_sequence);
+        context->Observe(message);previousUnitResultGate=unitResultGate;
+    }
+    const std::array<uint32_t,8> capsuleGate{
+        starter.capsule_clone_sequence,starter.capsule_ui_state,starter.capsule_native_state,
+        starter.capsule_click_sequence,starter.capsule_captured,starter.capsule_named_identity_matched,
+        starter.capsule_control_ready,starter.capsule_click_attempted};
+    static std::array<uint32_t,8> previousCapsuleGate{UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX};
+    if(capsuleGate!=previousCapsuleGate) {
+        char message[256];sprintf_s(message,"native starter capsule clone=%u ui=%u state=%u clicks=%u captured=%u named=%u control_ready=%u attempted=%u",
+            capsuleGate[0],capsuleGate[1],capsuleGate[2],capsuleGate[3],capsuleGate[4],capsuleGate[5],capsuleGate[6],capsuleGate[7]);
+        context->Observe(message);previousCapsuleGate=capsuleGate;
+    }
     const std::array<uint32_t,7> buyingGate{
         starter.buying_clone_sequence,starter.buying_captured_app_state,starter.buying_ui_state,
         starter.buying_captured,starter.buying_named_identity_matched,starter.buying_control_ready,
@@ -952,6 +978,20 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
         if(navigation==HangarNavigation::kUnbound || navigation>=HangarNavigation::kDownmenuServiceMismatch) {
             context->Assert(0,"the original hangar entry must initialize the real onboarding inventory");return SDGO_GAME_TEST_FAIL;
         }
+    }
+    const std::array<uint32_t,8> inventoryPage{
+        inventory.manager_present,inventory.initialized,inventory.allocated_block_count,
+        inventory.slot_capacity,inventory.page_count,inventory.tail_count,
+        inventory.last_uid_cursor_low,inventory.last_uid_cursor_high};
+    static std::array<uint32_t,8> previousInventoryPage{};
+    static bool inventoryPageObserved=false;
+    if(!inventoryPageObserved || inventoryPage!=previousInventoryPage) {
+        char detail[256];
+        sprintf_s(detail,"native inventory pagination manager=%u initialized=%u blocks=%u capacity=%u pages=%u tail=%u cursor_low=%u cursor_high=%u",
+            inventoryPage[0],inventoryPage[1],inventoryPage[2],inventoryPage[3],
+            inventoryPage[4],inventoryPage[5],inventoryPage[6],inventoryPage[7]);
+        context->Observe(detail);
+        previousInventoryPage=inventoryPage;inventoryPageObserved=true;
     }
     static uint32_t previousOwned = UINT32_MAX;
     if (inventory.initialized && inventory.owned_unit_count != previousOwned) {
@@ -1597,6 +1637,11 @@ const SdgoGameTestCaseV1 fpsCases[]={
 SdgoGameTestProviderV1 provider{sizeof(provider), SDGO_GAME_TEST_VERSION, "pvp-ai", "client", 7, realCases};
 std::vector<std::string> caseNames;
 std::vector<SdgoGameTestCaseV1> plannedCases;
+friends::FriendActions::Result CreateFriendInviteRoom(void*,const SdgoGameTestContextV1* context) {
+    const auto result=Room(context);
+    return result==SDGO_GAME_TEST_PASS ? friends::FriendActions::kReady :
+        result==SDGO_GAME_TEST_FAIL ? friends::FriendActions::kNativeRequestNotSent : friends::FriendActions::kWaitingForReply;
+}
 int __cdecl FriendFlow(const SdgoGameTestContextV1* context) {
     static bool hangarExitRequested=false;
     if(actions.AppState()==5) {
@@ -1853,8 +1898,11 @@ SDGO_MOD_ENTRY {
         !tutorial.Bind(api, mod, &actions) || !onboarding.Bind(api, mod, &actions))
         sdgo_test::Fail("normal-flow native request bindings or private account configuration are unavailable");
     if (friendsOnly) {
-        if (!friendActions.Bind(api,mod,&actions)||!friendExtras.Bind(api,mod))sdgo_test::Fail("native friend operation bindings are unavailable");
-        friendSession.Bind(&friendActions,&friendExtras,api,mod);
+        if (!friendActions.Bind(api,mod,&actions)||!friendExtras.Bind(api,mod)||
+            !friendInviteSender.Bind(api,mod,&actions)||!friendInviteReceiver.Bind(api,mod,&actions)||
+            !friendRoomActions.Bind(&actions,&rooms,&friendInviteSender,&friendInviteReceiver,&CreateFriendInviteRoom))
+            sdgo_test::Fail("native friend operation bindings are unavailable");
+        friendSession.Bind(&friendActions,&friendExtras,api,mod,&friendRoomActions);
     }
     roomListVtable=api->Symbol(mod,"flow.native_room_list_vtable");
     modalLoadingVtable=api->Symbol(mod,"flow.native_modal_loading_vtable");

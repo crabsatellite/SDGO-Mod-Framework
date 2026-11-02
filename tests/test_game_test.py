@@ -81,6 +81,30 @@ class FakeProcess:
         return self.returncode if self.returncode is not None else 0
 
 
+class OwnedProcessExitTests(unittest.TestCase):
+    def test_pending_termination_is_confirmed_without_terminating_twice(self):
+        process=mock.Mock();process.poll.side_effect=[None,1]
+        process.wait.side_effect=[game_test.subprocess.TimeoutExpired('owned',30),1]
+        self.assertEqual(game_test.stop_owned_entry_process(process),1)
+        process.kill.assert_called_once_with()
+        self.assertEqual(process.wait.call_args_list,[mock.call(timeout=30),mock.call(timeout=30)])
+
+    def test_denied_repeated_termination_still_requires_confirmed_exit(self):
+        process=mock.Mock();process.poll.side_effect=[None,1]
+        process.kill.side_effect=PermissionError('termination already pending')
+        process.wait.return_value=1
+        self.assertEqual(game_test.stop_owned_entry_process(process),0)
+        process.wait.assert_called_once_with(timeout=30)
+
+    def test_exhausted_exit_budget_remains_a_cleanup_failure(self):
+        process=mock.Mock();process.poll.return_value=None
+        process.wait.side_effect=game_test.subprocess.TimeoutExpired('owned',30)
+        with self.assertRaises(game_test.subprocess.TimeoutExpired):
+            game_test.stop_owned_entry_process(process)
+        self.assertEqual(process.wait.call_count,2)
+        process.kill.assert_called_once_with()
+
+
 class FakeStartupEvent:
     def __enter__(self):
         return self
@@ -1196,7 +1220,7 @@ state=pending_first_login
             game_test,'process_image_path',return_value=meta['client']['game']):
             report=game_test.run_prepared(run_dir,timeout=1,launch_timeout=0)
         self.assertEqual(report['status'],'pass')
-        process.kill.assert_called_once();process.wait.assert_called_once_with(timeout=10)
+        process.kill.assert_called_once();process.wait.assert_called_once_with(timeout=game_test.OWNED_PROCESS_EXIT_TIMEOUT)
         self.assertFalse((run_dir/'.run.lock').exists())
         self.assertFalse(game_test.account_profile_lock_path(self.account_profile).exists())
 
