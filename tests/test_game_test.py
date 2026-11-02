@@ -1125,6 +1125,29 @@ state=pending_first_login
         self.assertEqual(selected["pid"], 7002)
         self.assertNotEqual(selected["pid"], 47616)
 
+    def test_termination_failure_still_releases_locks_closes_quiet_runtime_and_reports_failure(self):
+        run_dir=self.prepare('cleanup-failure');meta=self.metadata(run_dir);process=FakeProcess()
+        process.kill=mock.Mock(side_effect=OSError(5,'synthetic access denied'))
+        closed=[]
+        class Runtime(FakeQuietRuntime):
+            def close(self):closed.append(True);return super().close()
+        self.write_events(run_dir,game_test.FLOW_CASES,include_end=True,pid=process.pid)
+        # Events are written at native completion, never left stale at entry.
+        events=Path(meta['client']['events']);saved=events.read_bytes();events.unlink()
+        def complete(path):events.write_bytes(saved);return True
+        with mock.patch.object(game_test,'QuietRuntime',Runtime),mock.patch.object(
+            game_test.subprocess,'Popen',return_value=process),mock.patch.object(
+            game_test,'NamedStartupEvent',FakeStartupEvent),mock.patch.object(
+            game_test,'has_run_end',side_effect=complete),mock.patch.object(
+            game_test,'process_image_path',return_value=meta['client']['game']):
+            report=game_test.run_prepared(run_dir,timeout=1,launch_timeout=0)
+        self.assertEqual(report['status'],'fail')
+        self.assertEqual(report['layers']['launch']['execution']['status'],'cleanup_error')
+        self.assertIn('synthetic access denied',' '.join(report['layers']['launch']['execution']['cleanup_errors']))
+        self.assertEqual(closed,[True])
+        self.assertFalse((run_dir/'.run.lock').exists())
+        self.assertFalse(game_test.account_profile_lock_path(self.account_profile).exists())
+
     def test_report_is_pending_until_real_flow_completes(self):
         run_dir = self.prepare("pending")
         report = game_test.build_report(run_dir)
