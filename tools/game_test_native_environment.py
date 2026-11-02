@@ -4,6 +4,7 @@ import argparse
 import configparser
 import copy
 import contextlib
+import gzip
 import hashlib
 import json
 import ipaddress
@@ -15,6 +16,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 import xml.etree.ElementTree as ET
@@ -68,10 +70,15 @@ def check_labels(description, lease):
 
 
 def upload_snapshot(container,source,destination,expected_hash):
-    """Stream exact snapshot bytes, then verify inside the owned container."""
-    with source.open('rb') as stream:
-        result=subprocess.run(['docker','exec','-i',container,'sh','-c','cat > "$1"','snapshot-input',destination],
-            stdin=stream,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,timeout=600,
+    """Compress owned SQL input in transit; verify exact decompressed bytes."""
+    # Docker Desktop stdin can be slow under concurrent native test load. SQL
+    # backups compress well; keep both the source and native restore unchanged.
+    with source.open('rb') as stream, tempfile.TemporaryFile(dir=source.parent) as compressed:
+        with gzip.GzipFile(fileobj=compressed,mode='wb',compresslevel=1,mtime=0) as encoder:
+            shutil.copyfileobj(stream,encoder)
+        compressed.seek(0)
+        result=subprocess.run(['docker','exec','-i',container,'sh','-c','gzip -dc > "$1"','snapshot-input',destination],
+            stdin=compressed,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,timeout=600,
             creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
     if result.returncode:raise RuntimeError('Owned SQL snapshot upload failed.')
     actual=docker('exec',container,'sha256sum',destination).split()[0]
