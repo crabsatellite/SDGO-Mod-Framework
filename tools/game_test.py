@@ -512,6 +512,11 @@ class QuietRuntime:
         if self.receipt.get('desktop_probe')!=proof:
             self.receipt['desktop_probe']=proof
             self.save()
+        if proof.get('error'):
+            # A locked/secure desktop can deny observation. Keep the safety
+            # stop, but do not turn missing evidence into a claim that the
+            # owned game actually took the foreground.
+            raise GameTestError(f"quiet desktop observation unavailable: {proof['error']}")
         if not proof.get('foreground_safe',False):raise GameTestError('owned game attempted to take the user foreground')
         if self.proof_file_written and (proof.get('input_desktop_unchanged') is False or
             proof.get('unexpected_input_window_count',0)>0 or
