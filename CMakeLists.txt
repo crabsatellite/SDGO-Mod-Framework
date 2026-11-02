@@ -115,6 +115,12 @@ sdgo_add_mod(mission_ai DESCRIPTION "co-op mission wingmen (client)"
 sdgo_add_mod(ime_fix DESCRIPTION "Chinese IME candidate and commit fixes" SOURCES mods/ime_fix/ime_fix.cpp FILES symbols.fragment.ini)
 sdgo_add_mod(findwindow_fix DESCRIPTION "FindWindowW fix" SOURCES mods/findwindow_fix/findwindow_fix.cpp LIBS user32)
 sdgo_add_mod(startup_crash_fix DESCRIPTION "random crash at game start fix" SOURCES mods/startup_crash_fix/startup_crash_fix.cpp)
+sdgo_add_mod(fps_limit DESCRIPTION "native config.xml FPS cap" SOURCES mods/fps_limit/fps_limit.cpp)
+
+add_executable(fps_limit_runtime_test tests/fps_limit_runtime_test.cpp)
+target_link_libraries(fps_limit_runtime_test PRIVATE sdgo_api)
+sdgo_strict(fps_limit_runtime_test)
+add_dependencies(fps_limit_runtime_test fps_limit sdgo_core)
 sdgo_add_mod(net_probe DESCRIPTION "packet logger" SOURCES mods/net_probe/net_probe.cpp)
 sdgo_add_mod(shop_labels DESCRIPTION "shop rental and Unicode labels" SOURCES mods/shop_labels/shop_labels.cpp FILES display.example.ini)
 sdgo_add_mod(shop_localization DESCRIPTION "Chinese shop localization" SOURCES mods/shop_localization/shop_localization.cpp mods/shop_localization/shop_search.cpp FILES zh-CN.ini symbols.fragment.ini LIBS user32)
@@ -162,6 +168,10 @@ sdgo_add_mod(daily_rewards SERVER DESCRIPTION "daily double battle rewards (Beta
              SOURCES mods/daily_rewards/daily_rewards.cpp FILES config.example.ini)
 sdgo_add_mod(rank_progression_fix SERVER DESCRIPTION "native World battle rank progression fix"
              SOURCES mods/rank_progression_fix/rank_progression_fix.cpp LIBS ole32 oleaut32 bcrypt uuid)
+sdgo_add_mod(friend_list_fix SERVER DESCRIPTION "native offline friend list and pilot names"
+             SOURCES mods/friend_list_fix/friend_list_fix.cpp LIBS ole32 oleaut32 bcrypt uuid)
+sdgo_add_mod(friend_list_client_fix DESCRIPTION "native offline friend conversation opener"
+             SOURCES mods/friend_list_client_fix/friend_list_client_fix.cpp)
 
 
 # Private feature libraries; no room metadata or gameplay state enters the core.
@@ -249,6 +259,9 @@ add_custom_target(sdgo_data ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/config/sdgo.ini" "${SDGO_STAGE}/server/sdgo/"
     COMMENT "Staging symbol files and sdgo.ini"
 )
+# A GameTest build must ship the symbol map required by its current manifest,
+# including when only this target is built instead of ALL_BUILD.
+add_dependencies(game_test_client sdgo_data)
 
 # The same manifests drive package selection and runtime category/feature gates.
 add_custom_target(sdgo_catalog ALL
@@ -336,6 +349,9 @@ endforeach()
 add_executable(net_route_test tests/net_route_test.cpp)
 target_link_libraries(net_route_test PRIVATE sdgo_api ws2_32)
 sdgo_strict(net_route_test)
+add_executable(net_route_observer_test tests/net_route_observer_test.cpp)
+target_link_libraries(net_route_observer_test PRIVATE sdgo_api ws2_32)
+sdgo_strict(net_route_observer_test)
 add_executable(net_login_test tests/net_login_test.cpp)
 target_link_libraries(net_login_test PRIVATE sdgo_api ws2_32 shell32)
 sdgo_strict(net_login_test)
@@ -376,6 +392,13 @@ if(BUILD_TESTING)
     add_executable(core_ini_test tests/core_ini_test.cpp)
     sdgo_strict(core_ini_test)
     add_test(NAME core_ini_offline COMMAND core_ini_test)
+    add_executable(automatic_fixes_runtime_test tests/automatic_fixes_runtime_test.cpp)
+    target_link_libraries(automatic_fixes_runtime_test PRIVATE sdgo_api)
+    sdgo_strict(automatic_fixes_runtime_test)
+    add_dependencies(automatic_fixes_runtime_test startup_crash_fix agent_relay_log_fix)
+    add_test(NAME startup_crash_fix_actual_dll COMMAND automatic_fixes_runtime_test gate "$<TARGET_FILE:startup_crash_fix>")
+    add_test(NAME agent_relay_log_fix_actual_dll COMMAND automatic_fixes_runtime_test relay "$<TARGET_FILE:agent_relay_log_fix>")
+    set_tests_properties(startup_crash_fix_actual_dll agent_relay_log_fix_actual_dll PROPERTIES TIMEOUT 30)
     add_executable(game_test_quiet_sockets_test tests/game_test_quiet_sockets_test.cpp)
     target_link_libraries(game_test_quiet_sockets_test PRIVATE sdgo_api ws2_32)
     sdgo_strict(game_test_quiet_sockets_test)
@@ -390,7 +413,8 @@ if(BUILD_TESTING)
     add_test(NAME game_test_quiet_graphics_offline COMMAND game_test_quiet_graphics_test)
     add_test(NAME game_test_windows_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p test_game_test_windows.py)
-    set_tests_properties(game_test_windows_offline PROPERTIES TIMEOUT 30)
+    # The real child uses below-normal priority on a shared development host.
+    set_tests_properties(game_test_windows_offline PROPERTIES TIMEOUT 90)
     add_test(NAME launcher_handshake_offline COMMAND launcher_handshake_test)
     add_test(NAME capsule_currency_actual_dll COMMAND capsule_currency_dll_test "$<TARGET_FILE:capsule_currency_fix>")
     set_tests_properties(capsule_currency_actual_dll PROPERTIES TIMEOUT 30)
@@ -486,6 +510,35 @@ if(BUILD_TESTING)
     target_link_libraries(game_test_storage_test_actions_test PRIVATE sdgo_api)
     sdgo_strict(game_test_storage_test_actions_test)
     add_test(NAME game_test_storage_test_actions_offline COMMAND game_test_storage_test_actions_test)
+    add_executable(game_test_battle_combat_actions_test tests/game_test_battle_combat_actions_test.cpp)
+    target_link_libraries(game_test_battle_combat_actions_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_battle_combat_actions_test)
+    add_test(NAME game_test_battle_combat_actions_offline COMMAND game_test_battle_combat_actions_test)
+    add_executable(game_test_capsule_draw_actions_test tests/game_test_capsule_draw_actions_test.cpp)
+    target_link_libraries(game_test_capsule_draw_actions_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_capsule_draw_actions_test)
+    add_test(NAME game_test_capsule_draw_actions_offline COMMAND game_test_capsule_draw_actions_test --suite)
+    add_executable(game_test_unit_select_actions_test tests/game_test_unit_select_actions_test.cpp)
+    target_link_libraries(game_test_unit_select_actions_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_unit_select_actions_test)
+    add_test(NAME game_test_unit_select_actions_offline COMMAND game_test_unit_select_actions_test)
+    add_executable(game_test_active_selection_observer_test tests/game_test_active_selection_observer_test.cpp)
+    target_link_libraries(game_test_active_selection_observer_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_active_selection_observer_test)
+    add_test(NAME game_test_active_selection_observer_offline COMMAND game_test_active_selection_observer_test)
+    add_executable(game_test_room_join_actions_test tests/game_test_room_join_actions_test.cpp)
+    target_link_libraries(game_test_room_join_actions_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_room_join_actions_test)
+    add_test(NAME game_test_room_join_actions_offline COMMAND game_test_room_join_actions_test)
+    add_executable(game_test_mission_flow_actions_test tests/game_test_mission_flow_actions_test.cpp)
+    target_link_libraries(game_test_mission_flow_actions_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_mission_flow_actions_test)
+    add_test(NAME game_test_mission_flow_actions_offline COMMAND game_test_mission_flow_actions_test)
+    add_executable(game_test_shop_catalog_actions_test tests/game_test_shop_catalog_actions_test.cpp)
+    target_link_libraries(game_test_shop_catalog_actions_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_shop_catalog_actions_test)
+    target_compile_options(game_test_shop_catalog_actions_test PRIVATE /utf-8)
+    add_test(NAME game_test_shop_catalog_actions_offline COMMAND game_test_shop_catalog_actions_test)
     add_executable(game_test_operator_catalog_actions_test tests/game_test_operator_catalog_actions_test.cpp)
     target_link_libraries(game_test_operator_catalog_actions_test PRIVATE sdgo_api)
     sdgo_strict(game_test_operator_catalog_actions_test)
@@ -646,6 +699,14 @@ if(BUILD_TESTING)
     target_include_directories(battle_reward_mission_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     sdgo_strict(battle_reward_mission_test)
     add_test(NAME battle_reward_mission_offline COMMAND battle_reward_mission_test)
+    add_executable(battle_eligibility_observer_test tests/battle_eligibility_observer_test.cpp)
+    target_link_libraries(battle_eligibility_observer_test PRIVATE sdgo_api)
+    sdgo_strict(battle_eligibility_observer_test)
+    add_test(NAME battle_eligibility_observer_offline COMMAND battle_eligibility_observer_test)
+    set(SDGO_BATTLE_ELIGIBILITY_NATIVE_HOST "" CACHE FILEPATH "Optional local supported BattleServer.exe for eligibility PE checks")
+    if(SDGO_BATTLE_ELIGIBILITY_NATIVE_HOST)
+        add_test(NAME battle_eligibility_native_pe COMMAND battle_eligibility_observer_test "${SDGO_BATTLE_ELIGIBILITY_NATIVE_HOST}")
+    endif()
     set_tests_properties(battle_reward_mission_offline PROPERTIES TIMEOUT 30)
     add_executable(battle_reward_stats_test tests/battle_reward_stats_test.cpp)
     target_link_libraries(battle_reward_stats_test PRIVATE sdgo_api)
@@ -723,6 +784,19 @@ if(BUILD_TESTING)
     target_link_libraries(rank_progression_fix_test PRIVATE sdgo_api ole32 oleaut32 bcrypt uuid)
     sdgo_strict(rank_progression_fix_test)
     add_test(NAME rank_progression_fix_offline COMMAND rank_progression_fix_test)
+    add_executable(friend_list_fix_test tests/friend_list_fix_test.cpp)
+    target_link_libraries(friend_list_fix_test PRIVATE sdgo_api ole32 oleaut32 bcrypt uuid)
+    sdgo_strict(friend_list_fix_test)
+    add_test(NAME friend_list_fix_offline COMMAND friend_list_fix_test)
+    add_executable(friend_list_client_fix_test tests/friend_list_client_fix_test.cpp)
+    target_link_libraries(friend_list_client_fix_test PRIVATE sdgo_api minhook friend_list_client_fix)
+    sdgo_strict(friend_list_client_fix_test)
+    add_test(NAME friend_list_client_fix_offline COMMAND friend_list_client_fix_test)
+    add_executable(friend_list_sql_emit tests/friend_list_sql_emit.cpp)
+    sdgo_strict(friend_list_sql_emit)
+    add_executable(friend_list_db_test tests/friend_list_db_test.cpp)
+    target_link_libraries(friend_list_db_test PRIVATE ole32 oleaut32 bcrypt uuid)
+    sdgo_strict(friend_list_db_test)
     set_tests_properties(rank_progression_fix_offline PROPERTIES TIMEOUT 30)
     add_executable(rank_progression_db_test tests/rank_progression_db_test.cpp)
     target_link_libraries(rank_progression_db_test PRIVATE ole32 oleaut32 bcrypt uuid)
@@ -778,6 +852,11 @@ if(BUILD_TESTING)
     add_test(NAME game_test_runner_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_game_test.py" -v)
     set_tests_properties(game_test_runner_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
+    foreach(plan routes mission_plan shop_plan unit_selection reuse)
+        add_test(NAME game_test_${plan}_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+            -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_game_test_${plan}.py" -v)
+        set_tests_properties(game_test_${plan}_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
+    endforeach()
     add_test(NAME game_test_server_report_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_game_test_server_report.py" -v)
     set_tests_properties(game_test_server_report_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
@@ -805,6 +884,14 @@ if(BUILD_TESTING)
 
     find_program(SDGO_POWERSHELL NAMES powershell pwsh)
     if(SDGO_POWERSHELL)
+        add_test(NAME net_route_observer_runtime COMMAND "${SDGO_POWERSHELL}"
+            -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/net_route_observer_test.ps1"
+            -Config $<CONFIG>)
+        set_tests_properties(net_route_observer_runtime PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+        add_test(NAME fps_limit_runtime COMMAND "${SDGO_POWERSHELL}"
+            -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/fps_limit_test.ps1"
+            -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
+        set_tests_properties(fps_limit_runtime PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
         add_test(NAME daily_rewards_runtime COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/daily_rewards_runtime_test.ps1"
             -Config "$<CONFIG>")
@@ -812,7 +899,8 @@ if(BUILD_TESTING)
         add_test(NAME ai_catalog_integration COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/ai_catalog_test.ps1"
             -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
-        set_tests_properties(ai_catalog_integration PROPERTIES TIMEOUT 60)
+        # This runs the complete client/server fixture matrix in child shells.
+        set_tests_properties(ai_catalog_integration PROPERTIES TIMEOUT 180)
         add_test(NAME battle_ai_server_native_integration COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass
             -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/battle_ai_server_native_test.ps1"

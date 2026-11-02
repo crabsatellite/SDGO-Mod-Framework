@@ -141,7 +141,7 @@ void __fastcall FakeStartOrReady(void*, void*)
 {
 }
 
-bool __fastcall FakeIsRoomMaster(void*, void*, void*)
+bool __stdcall FakeIsRoomMaster(void*)
 {
     return true;
 }

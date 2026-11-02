@@ -430,7 +430,7 @@ public:
             if (!profile)
                 return false;
             void* room = *reinterpret_cast<void**>(profile + kProfileRoom);
-            if (!room || !isRoomMaster_(profile, room))
+            if (!room || !isRoomMaster_(room))
                 return false;
 
             uint8_t* app = gameApp_();
@@ -702,7 +702,7 @@ public:
             observed.room_mode = *(bytes + 5);
             observed.model_present = 1;
             observed.local_is_host =
-                isRoomMaster_(profile, room) ? 1 : 0;
+                isRoomMaster_(room) ? 1 : 0;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             observed.native_app_state = UINT32_MAX;
             observed.room_id = 0;
@@ -909,7 +909,7 @@ private:
         bool(__thiscall*)(void*, int, int);
     using ThreeDRoomAddStateFn =
         void(__thiscall*)(void*, int, void*, int, int);
-    using IsRoomMasterFn = bool(__thiscall*)(void*, void*);
+    using IsRoomMasterFn = bool(__stdcall*)(void*);
     using WaitRoomPlayerCountFn = int(__stdcall*)(void*);
     using ServiceFindByNameFn =
         void*(__thiscall*)(void*, const void*);
