@@ -63,6 +63,19 @@ Clear its switch in the Manager and restart World. New accounts then use the sto
 Existing pilots keep their current data. `install_server.ps1 -Uninstall` removes the whole
 framework, not just this mod.
 
+## Developer notes
+
+Hook symbols: `starter.login`, `starter.login_layout`, `starter.profile`, `starter.profile_layout` and
+`starter.connection_command`. The stock registration procedure sets both cash and GP to 9,999,999; the
+first-profile procedure inserts rank 15/1 while returning a different rank. The mod wraps the
+verified registration and first-profile calls in a transaction on the borrowed OLE DB session,
+applies the configured values and publishes the profile result only after commit. A concurrent
+initialization is rechecked under locks.
+
+The unit cap applies only to rows inserted by the native first-profile call, including the bulk
+`sp_InsertUserUnitAll*` grants on servers where they are enabled. It keeps the earliest hangar slots
+(then unit identity), and updates the unit counters and any dangling selected-unit reference in the
+same transaction. The runtime accepts `RankNumber` 0..20 if `config.ini` is edited by hand.
 ## Developer tests
 
 `ctest` runs `new_account_policy_test`. The SQL test needs a disposable SQL Server container:

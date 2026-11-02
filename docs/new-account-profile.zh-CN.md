@@ -54,6 +54,16 @@ Common、Game、Billing 数据库需与原服一样位于同一 SQL 实例。
 在 Manager 中关闭它的开关并重启 World，之后的新账号恢复原服规则，已有角色保持现状。
 `install_server.ps1 -Uninstall` 会卸载整个框架，不是只卸载本 Mod。
 
+## 开发者说明
+
+Hook 符号：`starter.login`、`starter.login_layout`、`starter.profile`、`starter.profile_layout` 和
+`starter.connection_command`。原服注册过程把点券和 GP 都设为 9,999,999；首次建档过程插入 15/1 军衔，返回的却是另一军衔。
+Mod 在借用的 OLE DB 会话上用事务包住已核对的注册和首次建档调用，写入配置值，提交成功后才发布角色资料；
+并发初始化会在锁内重新检查。
+
+机体上限只作用于原生首次建档调用新插入的行，包括服务器启用了 `sp_InsertUserUnitAll*` 批量赠送时的情况。
+按机库位置、再按机体实例编号保留，并在同一事务中更新机体数量统计和失效的出击机体引用。
+手动编辑 `config.ini` 时，运行时接受 `RankNumber` 0..20。
 ## 开发测试
 
 `ctest` 运行 `new_account_policy_test`。SQL 测试需要一个可丢弃的 SQL Server 容器：
