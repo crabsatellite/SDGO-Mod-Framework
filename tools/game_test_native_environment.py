@@ -23,7 +23,7 @@ import xml.etree.ElementTree as ET
 from tools import game_test as gt
 from tools.game_test_environment import Registry, ManagedEnvironment, atomic_json, process_identity, no_reparse_tree, ROOT
 from tools.game_test_sql_bridge import SqlBridge
-from tools.game_test_fixtures import build_accounts, verify_accounts, initialize_battleships, initialize_selected_operators
+from tools.game_test_fixtures import build_accounts, verify_accounts, initialize_battleships, initialize_operators
 
 IMAGE = 'mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718'
 DATABASES = ('GameRank','GDClan','GDCommon','GDGameLogView','GDLogDB','GDLongTermGameLogDB',
@@ -163,7 +163,8 @@ class NativeDriver:
         self.registry.record(lease, {'kind': 'container', 'name': prefix})
         env = os.environ.copy()
         env['MSSQL_SA_PASSWORD'] = self.private['sa_password']
-        cid = docker('create', '--name', prefix, *flags, '--network', 'none', '--cpus', '1.5', '--memory', '4g',
+        cid = docker('create', '--name', prefix, *flags, '--network', 'bridge',
+            '--publish','127.0.0.1::1433','--cpus', '1.5', '--memory', '4g',
             '--env', 'ACCEPT_EULA=Y', '--env', 'MSSQL_PID=Developer', '--env', 'MSSQL_SA_PASSWORD',
             '--env', 'MSSQL_COLLATION=Chinese_PRC_CI_AS',
             '--env', 'MSSQL_MEMORY_LIMIT_MB=2048', '--mount',
@@ -172,9 +173,16 @@ class NativeDriver:
         atomic_json(lease.root / 'private/instance.json', self.private)
         description = json.loads(docker('inspect', prefix))[0]
         check_labels(description, lease)
-        if description['HostConfig']['NetworkMode'] != 'none' or any(x['Type'] != 'volume' for x in description['Mounts']):
-            raise RuntimeError('Private SQL must have network=none and no host bind mounts.')
+        bindings=description['HostConfig'].get('PortBindings') or {}
+        if (description['HostConfig']['NetworkMode'] != 'bridge' or
+            any(x['Type'] != 'volume' for x in description['Mounts']) or set(bindings)!={'1433/tcp'} or
+            len(bindings['1433/tcp'])!=1 or bindings['1433/tcp'][0].get('HostIp')!='127.0.0.1'):
+            raise RuntimeError('Private SQL must publish only its owned loopback endpoint and have no host bind mounts.')
         docker('start', prefix)
+        published=json.loads(docker('inspect',prefix))[0]['NetworkSettings']['Ports'].get('1433/tcp') or []
+        if len(published)!=1 or published[0].get('HostIp')!='127.0.0.1':
+            raise RuntimeError('Private SQL published endpoint escaped loopback.')
+        self.private['port']=int(published[0]['HostPort'])
         deadline = time.monotonic() + 150
         while True:
             try:
@@ -185,8 +193,6 @@ class NativeDriver:
             if time.monotonic() > deadline:
                 raise RuntimeError('Owned private SQL startup timed out.')
             time.sleep(1)
-        self.bridge = SqlBridge(prefix, on_process=lambda p: self.record_process(lease, p, shutil.which('docker'), 'sql_transport'))
-        self.private['port'] = self.bridge.port
         atomic_json(lease.root / 'private/instance.json', self.private)
         self.progress('sql_ready')
 
@@ -209,8 +215,15 @@ class NativeDriver:
             source = snapshots / entry['file']
             if gt.sha256(source) != entry['sha256']:
                 raise RuntimeError('Native snapshot bytes differ from the frozen manifest.')
+            # Docker Desktop does not consistently read packaged-app local
+            # cache aliases. Stage verified inputs in this owned worktree,
+            # leaving the immutable shared template untouched.
+            staged=self.environment.root/'private/sql-input'/entry['file']
+            staged.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,staged)
+            if gt.sha256(staged)!=entry['sha256']:
+                raise RuntimeError('Owned SQL input copy differs from its sealed template.')
             destination = '/var/opt/mssql/backup/gametest/' + entry['file']
-            copy_snapshot(self.private['container'], source, destination)
+            copy_snapshot(self.private['container'], staged, destination)
             moves = ','.join('MOVE '+quoted(f['name'])+' TO '+quoted(
                 '/var/opt/mssql/data/gt_'+entry['name']+'_'+str(i)+('.ldf' if f['type']=='L' else '.mdf'))
                 for i, f in enumerate(entry['files']))
@@ -356,6 +369,15 @@ def copy_tree(source, target):
     shutil.copytree(source,target,ignore=ignored)
 
 
+def publish_template_copy(output,destination):
+    # A cross-volume shutil.move copies successfully and then may fail while
+    # deleting read-only native files. Copy/verify first; the owned lifecycle
+    # removes its source with the existing safe read-only cleanup callback.
+    no_reparse_tree(output)
+    shutil.copytree(output,destination)
+    template_description(destination)
+
+
 def rebase_configuration(root, old_root, new_root, ip, private, *, old_ip, old_sql_port=None, old_password=None):
     old_forms=(str(old_root),old_root.as_posix(),json.dumps(str(old_root))[1:-1])
     new_forms=(str(new_root),new_root.as_posix(),json.dumps(str(new_root))[1:-1])
@@ -437,7 +459,7 @@ def build_template(prototype, destination, client_template, registry, stage):
         with driver.connect() as connection:
             driver.progress('preparing_five_accounts')
             accounts=build_accounts(connection,output/'private/accounts',template_id,isolated_template=True)
-            initialize_selected_operators(connection,accounts,isolated_template=True)
+            initialize_operators(connection,accounts,isolated_template=True)
         driver.progress('five_accounts_verified', accounts=len(accounts))
         # Keep the proven native runtime, not active processes or historical
         # logs. All copied references are moved into the immutable template.
@@ -479,7 +501,7 @@ def build_template(prototype, destination, client_template, registry, stage):
         data['files'].append({'path':'private/native.json','sha256':gt.sha256(output/'private/native.json')})
         atomic_json(output/'template.json',data)
         destination.parent.mkdir(parents=True,exist_ok=True)
-        shutil.move(str(output),str(destination))
+        publish_template_copy(output,destination)
         registry.register_template(destination,template_id)
         atomic_json(lease.root/'result.json',{'status':'template_ready','template':str(destination),'accounts':5})
     return {'status':'template_ready','template':str(destination),'template_id':template_id,'accounts':5,
@@ -505,7 +527,7 @@ def upgrade_template(source, destination, registry):
         driver.progress('initializing_existing_account_fleets',accounts=5,new_accounts=0)
         with driver.connect() as connection:
             initialize_battleships(connection,data['accounts'],output/'private/accounts',isolated_template=True)
-            initialize_selected_operators(connection,data['accounts'],isolated_template=True)
+            initialize_operators(connection,data['accounts'],isolated_template=True)
             connection.commit()
         if original_accounts!=[(a['account_id'],a['primary_uid'],a['units']) for a in data['accounts']]:
             raise RuntimeError('Template revision changed an existing identity or owned unit UID.')
@@ -526,7 +548,7 @@ def upgrade_template(source, destination, registry):
         data['files']=[{'path':p.relative_to(output).as_posix(),'sha256':gt.sha256(p)}
             for p in output.rglob('*') if p.is_file() and p.name!='template.json']
         atomic_json(output/'template.json',data)
-        destination.parent.mkdir(parents=True,exist_ok=True);shutil.move(str(output),str(destination))
+        destination.parent.mkdir(parents=True,exist_ok=True);publish_template_copy(output,destination)
         template_description(destination);registry.register_template(destination,data['id'])
         atomic_json(lease.root/'result.json',{'status':'template_ready','template':str(destination),'accounts':5,
             'new_accounts_created':0,'existing_unit_uids_preserved':True})

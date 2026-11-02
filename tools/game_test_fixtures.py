@@ -109,6 +109,7 @@ def build_accounts(connection, destination: Path, template_id: str, *, isolated_
                              'nickname': nickname, 'profile': path.name,
                              'primary_unit': primary, 'primary_uid': primary_uid, 'units': units})
         initialize_battleships(connection,accounts,destination,isolated_template=True)
+        initialize_operators(connection,accounts,isolated_template=True)
         verify_accounts(connection, accounts)
         connection.commit()
         return accounts
@@ -168,8 +169,8 @@ def initialize_selected_operators(connection,accounts,*,isolated_template=False)
             'JOIN GOnlineGame.dbo.tbl_OperatorData D ON D.OperatorID=U.OperatorNumber '
             'WHERE U.AccountNumber=? AND U.RunOut=0 AND U.Forbidden=0 AND '
             '(U.DateEnd IS NULL OR U.DateEnd>GETDATE()) AND '
-            '((?<>0 AND U.UserOperatorNumber=?) OR (?=0 AND U.OperatorNumber=60003)) '
-            'ORDER BY U.UserOperatorNumber',who,selected,selected,selected).fetchone()
+            '((?<>0 AND U.UserOperatorNumber=?) OR (?=0 AND U.OperatorNumber IN (60001,60003))) '
+            'ORDER BY CASE WHEN U.OperatorNumber=60001 THEN 0 ELSE 1 END,U.UserOperatorNumber',who,selected,selected,selected).fetchone()
         if row is None:raise RuntimeError('The fixture has no usable owned stock operator to select.')
         uid,identity=int(row[0]),int(row[1])
         if not selected:
@@ -199,6 +200,10 @@ def choose_fleet(ships,primary,available,stars):
                 cost=sum(stars[u['unit_id']] for u in deck)
                 if int(ship[2])<=cost<=int(ship[3]):return ship,deck
     return None
+
+
+def initialize_operators(connection,accounts,*,isolated_template=False):
+    return initialize_selected_operators(connection,accounts,isolated_template=isolated_template)
 
 
 def initialize_battleships(connection,accounts,profiles,*,isolated_template=False):

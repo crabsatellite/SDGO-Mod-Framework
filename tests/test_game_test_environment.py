@@ -106,7 +106,7 @@ class EnvironmentTests(unittest.TestCase):
         self.assertTrue(managed.evidence_deleted)
         self.assertFalse((self.archive/lease.id).exists())
         self.assertFalse(lease.root.exists())
-        self.assertEqual(self.registry.list()[0]['state'],'closed')
+        self.assertEqual(self.registry.list(),[])
 
     def test_live_foreign_controller_cannot_be_recovered(self):
         lease, driver = self.lease(), Driver()
@@ -277,6 +277,31 @@ class NativeTemplateTests(unittest.TestCase):
                 self.assertIn('127.84.2.3',text)
                 self.assertIn('127.0.0.1,54321',text)
                 self.assertNotIn('old-secret',text)
+
+
+class SqlTransportTests(unittest.TestCase):
+    def test_slow_resource_journal_does_not_block_byte_transport(self):
+        import socket,subprocess,sys
+        from tools import game_test_sql_bridge as bridge_module
+        original_popen=subprocess.Popen
+        entered=threading.Event();release=threading.Event()
+        def journal(process):
+            entered.set();release.wait(10)
+        def echo_process(*args,**kwargs):
+            code="import os,sys; data=os.read(sys.stdin.fileno(),4); os.write(sys.stdout.fileno(),data)"
+            return original_popen([sys.executable,'-u','-c',code],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+                                  creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        with mock.patch.object(bridge_module.subprocess,'Popen',side_effect=echo_process):
+            bridge=bridge_module.SqlBridge('offline-byte-transport-fixture',on_process=journal)
+            try:
+                with socket.create_connection(('127.0.0.1',bridge.port),timeout=5) as client:
+                    client.settimeout(5);client.sendall(b'TEST')
+                    self.assertTrue(entered.wait(5))
+                    self.assertEqual(client.recv(4),b'TEST')
+                    self.assertFalse(release.is_set())
+            finally:
+                release.set();bridge.close()
+        self.assertFalse(bridge.journal_errors)
 
 
 class CandidateAdmissionTests(unittest.TestCase):

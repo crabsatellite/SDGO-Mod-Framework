@@ -28,7 +28,7 @@ Set the room title, ready up and start normally. AI join at battle start.
 Normal, death match, Grid, leader and Tag modes enable AI on the same native
 countdown frame that releases player control. AI cannot move or attack early.
 Hold TAB to see AI on both teams in the native battle roster, including their
-names, kills, deaths and points with normal scoring and sorting.
+names, kills, assists and points with normal scoring and sorting.
 
 | Title | Effect |
 |---|---|

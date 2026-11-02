@@ -511,6 +511,42 @@ public:
         }
     }
 
+    int NativeStartPrerequisite() const
+    {
+        __try {
+            auto* app=gameApp_ ? gameApp_():nullptr;
+            if(!app || *reinterpret_cast<uint32_t*>(app+kGameAppState)!=kThreeDWaitRoomState)return -1;
+            auto* state=*reinterpret_cast<uint8_t**>(app+kGameAppStateObject);
+            if(!state || *reinterpret_cast<void**>(state)!=threeDWaitRoomVtable_)return -2;
+            auto* object=*reinterpret_cast<uint8_t**>(state+kWaitRoomObject);
+            if(!object)return -3;
+            auto* nativeRoom=*reinterpret_cast<uint8_t**>(object+0x38);
+            if(!nativeRoom)return -4;
+            using Check=int(__thiscall*)(void*);
+            auto check=reinterpret_cast<Check>((*reinterpret_cast<void***>(nativeRoom))[0x7c/4]);
+            return check(nativeRoom);
+        } __except(EXCEPTION_EXECUTE_HANDLER) {return -5;}
+    }
+
+    int NativeStartQueueState() const
+    {
+        __try {
+            auto* app=gameApp_ ? gameApp_():nullptr;
+            if(!app || *reinterpret_cast<uint32_t*>(app+kGameAppState)!=kThreeDWaitRoomState)return -1;
+            auto* state=*reinterpret_cast<uint8_t**>(app+kGameAppStateObject);
+            if(!state || *reinterpret_cast<void**>(state)!=threeDWaitRoomVtable_)return -2;
+            auto* object=*reinterpret_cast<uint8_t**>(state+kWaitRoomObject);
+            if(!object)return -3;
+            auto* array=*reinterpret_cast<uint8_t**>(object+kThreeDRoomStateArray);
+            auto* command=array ? *reinterpret_cast<uint8_t**>(array+kThreeDStartCommand):nullptr;
+            if(!command || *reinterpret_cast<void**>(command)!=threeDStartCommandVtable_)return -4;
+            return *reinterpret_cast<int*>(command+8)+(threeDRoomHasState_(object,kThreeDStartState,0)?256:0);
+        } __except(EXCEPTION_EXECUTE_HANDLER) {return -5;}
+    }
+
+    uint32_t NativeStartReplySequence() const {return static_cast<uint32_t>(InterlockedCompareExchange(&startReplySequence_,0,0));}
+    uint16_t NativeStartReplyError() const {return static_cast<uint16_t>(InterlockedCompareExchange(&startReplyError_,0,0));}
+
     // The 3D UI queues the local pilot's MyLeaveRoom command through its
     // original Main-state business routine. Merely sending its request leaves
     // the registered reply consumer outside stage 2 and cannot leave the room.
@@ -1130,6 +1166,20 @@ private:
         return result;
     }
 
+    static int __fastcall ObserveStartCommandPacket(void* self,void*,int a,int b,int c,int opcode,void* packet) {
+        RoomActions* actions=active_;
+        if(!actions || !actions->startCommandPacket_)return 0;
+        if((opcode&0xffff)==0x07b5 && packet) {
+            __try {
+                uint16_t error=*reinterpret_cast<const uint16_t*>(static_cast<const uint8_t*>(packet)+6);
+                InterlockedExchange(&actions->startReplyError_,error);
+                InterlockedIncrement(&actions->startReplySequence_);
+                if(actions->api_->Log)actions->api_->Log(actions->mod_,SDGO_LOG_INFO,"native start command received 07B5/%04X",error);
+            } __except(EXCEPTION_EXECUTE_HANDLER) {}
+        }
+        return actions->startCommandPacket_(self,a,b,c,opcode,packet);
+    }
+
     static void __fastcall ObserveWaitRoomAlwaysDispatch(
         void* self,
         void*,
@@ -1143,6 +1193,14 @@ private:
         if (!actions || !actions->waitRoomAlwaysDispatch_)
             return;
 
+        if((opcode&0xffff)==0x07b5 && packet) {
+            __try {
+                const uint16_t startError=*reinterpret_cast<const uint16_t*>(static_cast<const uint8_t*>(packet)+6);
+                InterlockedExchange(&actions->startReplyError_,startError);
+                InterlockedIncrement(&actions->startReplySequence_);
+                actions->api_->Log(actions->mod_,SDGO_LOG_INFO,"native battle-start reply opcode=07B5 error=%04X",startError);
+            } __except(EXCEPTION_EXECUTE_HANDLER) {}
+        }
         const bool isLeaveReply =
             (opcode & 0xFFFF) == kLeaveRoomReplyOpcode && packet;
         uint16_t error = UINT16_MAX;
@@ -1433,5 +1491,9 @@ private:
     mutable volatile LONG freshRoomSequence_ = 0;
     mutable volatile LONG freshRoomOwner_ = 0;
     mutable volatile LONG freshRoomDetails_ = 0;
+    mutable volatile LONG startReplySequence_ = 0;
+    mutable volatile LONG startReplyError_ = 0;
+    using StartCommandPacketFn=int(__thiscall*)(void*,int,int,int,int,void*);
+    StartCommandPacketFn startCommandPacket_=nullptr;
     inline static RoomActions* active_ = nullptr;
 };

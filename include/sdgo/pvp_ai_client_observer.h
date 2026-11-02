@@ -152,7 +152,7 @@ struct SdgoPvpAiClientScoreboardRowV1 {
     uint32_t object_id;
     uint32_t team;
     int32_t kills;
-    int32_t deaths;
+    int32_t assists;
     int32_t points;
     uint32_t render_count;
     uint32_t row_index;
