@@ -172,6 +172,35 @@ void Run(SdgoModLoadFn entry) {
     Check(originalCalls==0,"unreadable null set is contained without forwarding a null native display call");
 }
 }
+
+namespace relay {
+char* format=nullptr;
+void* Symbol(SdgoMod*,const char* name) {return !std::strcmp(name,"agent.relay_log_format") ? format : nullptr;}
+void Run(SdgoModLoadFn entry) {
+    constexpr char unsafe[]="UDP_RELAY_DATA : SEND TO DATA.. to p:%d %s:%d\n";
+    constexpr char safe[]="UDP_RELAY_DATA : SEND TO DATA.. to p:%d %u:%d\n";
+    auto* memory=static_cast<char*>(VirtualAlloc(nullptr,4096,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE));
+    Check(memory!=nullptr,"owned relay format allocation");
+    std::memset(memory,0x5A,4096);format=memory+16;std::memcpy(format,unsafe,sizeof(unsafe));
+    const std::array<char,sizeof(unsafe)> before=[&]{std::array<char,sizeof(unsafe)> value{};std::memcpy(value.data(),format,value.size());return value;}();
+    DWORD old=0;Check(VirtualProtect(memory,4096,PAGE_READONLY,&old)!=0,"fixture native format starts read-only");
+    SdgoApi api{};api.size=sizeof(api);api.version=SDGO_API_VERSION;api.Symbol=Symbol;api.Log=Log;
+    Check(entry(&api,nullptr)!=0 && !std::strcmp(format,safe),"actual relay-fix DLL replaces pointer conversion with an unsigned integer conversion");
+    unsigned changed=0;for(size_t n=0;n<before.size();++n)changed+=before[n]!=format[n] ? 1u : 0u;
+    MEMORY_BASIC_INFORMATION protection{};VirtualQuery(memory,&protection,sizeof(protection));
+    Check(changed==1 && memory[15]==0x5A && memory[16+sizeof(unsafe)]==0x5A && protection.Protect==PAGE_READONLY,
+          "only the verified conversion character changes and original page protection is restored");
+    Check(entry(&api,nullptr)!=0,"already-safe native format is idempotent");
+    char rendered[160]{};std::snprintf(rendered,sizeof(rendered),format,7,2130706433u,19001);
+    Check(!std::strcmp(rendered,"UDP_RELAY_DATA : SEND TO DATA.. to p:7 2130706433:19001\n"),
+          "corrected actual format consumes the native integer IP without dereferencing it");
+    Check(VirtualProtect(memory,4096,PAGE_READWRITE,&old)!=0,"fixture can prepare an unrelated native string");
+    std::strcpy(format,"unrelated %s");VirtualProtect(memory,4096,PAGE_READONLY,&old);
+    Check(entry(&api,nullptr)==0 && !std::strcmp(format,"unrelated %s"),"unknown native format is rejected without modification");
+    format=nullptr;Check(entry(&api,nullptr)==0,"missing verified native format is rejected");
+    VirtualFree(memory,0,MEM_RELEASE);
+}
+}
 }
 
 int wmain(int argc,wchar_t** argv) {
@@ -182,6 +211,7 @@ int wmain(int argc,wchar_t** argv) {
         Check(entry!=nullptr,"actual production DLL exports SdgoModLoad");
         if(!wcscmp(argv[1],L"ime"))ime::Run(entry);
         else if(!wcscmp(argv[1],L"gate"))gate::Run(entry);
+        else if(!wcscmp(argv[1],L"relay"))relay::Run(entry);
         else return 2;
         FreeLibrary(dll);std::printf("%u production DLL ABI checks passed; no game process or UI\n",checks);return 0;
     } catch(const std::exception& e) {std::printf("FAIL: %s\n",e.what());return 1;}
