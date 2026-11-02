@@ -43,8 +43,8 @@ restored game artwork, game archives or AI models are published by this feature.
 Give players the complete generated `player` directory, including its manifest
 and `Install-Client.cmd`. Every catalog change requires matching generated client
 data; updating only the framework DLL does not update prize pictures or slots.
-For a Git-based player updater, publish that data and its updated file manifest
-to the client repository's update branch instead of creating another ZIP.
+For friend servers using `update.bat`, publish that data and its updated file
+manifest to the client repository.
 Read back the published payload, installed client `runtime.ini` and server
 `sdgo_mod_CapsuleRuntimeState.CatalogRevision`: all must have the same
 `catalog_revision`. Keep the owner workspace on that catalog too. Check first,
@@ -69,7 +69,6 @@ candidates may be SR, or SS with no blueprint recipe record. Ordinary S and
 recipe-bearing SS are excluded. The six base slots and two extension slots keep
 their native selection constraints; adding candidates does not add SR slots.
 
-Other Mods should use the [integration contract](capsule-integration.md). Source
-and synthetic runtime tests do not establish account charging or prize delivery;
-those checks are performed manually in the game. Recent accepted display repairs
-are described in the [display notes](capsule-display-fix.zh-CN.md).
+Other Mods should use the [integration contract](capsule-integration.md). Native
+card, list-position and price-display details are in the
+[developer notes (Chinese)](capsule-display-fix.zh-CN.md).

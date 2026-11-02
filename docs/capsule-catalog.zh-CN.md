@@ -1,9 +1,11 @@
 # 扭蛋机编辑器（Beta）
 
+[English](capsule-catalog.md) · [返回功能目录](../README.zh-CN.md)
+
 服主用 SDGO Mod Manager 的扭蛋面板管理固定和自定义扭蛋机：新增、查询、修改、下架、恢复、排序、选择原生六格模板、
 设置价格与权重、增删自定义候选、查看头像、导出、编译和导入配套配置。玩家仍在游戏原生扭蛋界面操作。
 
-此功能已纳入 master。仓库只提供功能和工具；游戏素材、数据库、玩家数据和连接凭据由服主本地提供。
+仓库只提供功能和工具；游戏素材、数据库、玩家数据和连接凭据由服主本地提供。
 `capsule_catalog` 默认关闭，服主生成完整运行时后才启用。路径和服务器配置不绑定开发者电脑。
 发行版 Manager 自带工具依赖，SQL 操作需本机 ODBC 驱动；源码开发使用 Python 3.10+、Pillow 与 pyodbc。玩家安装器不需要 Python。
 
@@ -20,8 +22,7 @@ A/B/C 机体可上传处理好的 PNG，拖动取景框、拉角或滑杆缩放�
 安装前关闭目标游戏。服主向朋友分发生成的整个 `player` 目录，玩家运行其中的
 `Install-Client.cmd -GameDir "D:\Game"`，以后照常用原启动器进入游戏，无需额外的“开始联机”按钮。
 每次修改奖池都要同步配套客户端数据；只更新框架 DLL 不会同步奖池图片和槽位。
-玩家通过 client Git 更新时，将这些数据和更新后的文件 manifest 提交并推送到更新分支，
-不再另做更新 ZIP。服主核对已发布的 manifest、客户端 `runtime.ini` 和服务端
+朋友服通过 `update.bat` 分发时，把这些数据和更新后的文件 manifest 发布到客户端仓库即可。服主核对已发布的 manifest、客户端 `runtime.ini` 和服务端
 `sdgo_mod_CapsuleRuntimeState.CatalogRevision` 的 `catalog_revision` 完全一致，
 Manager 工作区也应指向同一份目录配置。
 
@@ -32,4 +33,4 @@ SR，或没有任何设计图配方记录的 SS；普通 S 与有配方 SS 不�
 权重一致不代表出奖顺序与原版完全一致，见[分布核对记录](investigations/capsule-weighted-distribution.zh-CN.md)。
 
 其他 Mod 请参考[共用接口与资源边界](capsule-integration.md)，通过同一目录编译两端，避免重复覆盖同一份资源。
-显示修复见[修订记录](capsule-display-fix.zh-CN.md)。自动测试与安装读回不能代替实际账号扣费、发货的游戏内手动验收。
+卡面、列表位置和价格显示的原生细节见[开发者说明](capsule-display-fix.zh-CN.md)。
