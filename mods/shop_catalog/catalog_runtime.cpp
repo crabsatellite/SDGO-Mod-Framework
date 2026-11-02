@@ -179,6 +179,31 @@ void Metadata(Database& game, Product& product)
     if (product.timeLimit == 1 && product.validity > 36500)
         throw std::runtime_error("rental duration exceeds supported display range");
 }
+StoreItemsLayout StoreItemsMetadata(Database& billing)
+{
+    billing.Execute(
+        L"SELECT c.name,CONVERT(int,c.is_computed) "
+        L"FROM sys.columns c "
+        L"WHERE c.object_id=OBJECT_ID(N'dbo.tbls_StoreItems') "
+        L"AND c.name IN(N'f_subitemCnt',N'f_validity',N'f_price',N'f_payment') "
+        L"ORDER BY c.column_id");
+    StoreItemsLayout layout;
+    std::set<std::wstring> seen;
+    SQLRETURN fetched = SQL_SUCCESS;
+    while ((fetched = SQLFetch(billing.statement)) != SQL_NO_DATA) {
+        if (!Success(fetched)) throw std::runtime_error("cannot read native shop column metadata");
+        const std::wstring name = billing.String(1);
+        const bool computed = billing.Number(2) != 0;
+        if (!seen.insert(name).second) throw std::runtime_error("duplicate native shop column metadata");
+        if (name == L"f_subitemCnt") layout.subitemCountComputed = computed;
+        else if (name == L"f_validity") layout.validityComputed = computed;
+        else if (name == L"f_price") layout.priceComputed = computed;
+        else if (name == L"f_payment") layout.paymentComputed = computed;
+        else throw std::runtime_error("unexpected native shop column metadata");
+    }
+    if (seen.size() != 4) throw std::runtime_error("native shop business columns missing");
+    return layout;
+}
 void WriteUnicode(const std::wstring& path, const std::wstring& text)
 {
     HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -214,7 +239,8 @@ bool Apply(const std::wstring& hostIni, const std::wstring& catalogIni,
         }
         Database billing(hostFile, L"DB StoreBilling");
         try {
-            billing.Execute(ApplySql(catalog));
+            const StoreItemsLayout layout = StoreItemsMetadata(billing);
+            billing.Execute(ApplySql(catalog, layout));
             bool contract = false;
             std::wstring display = L"; Generated from the committed server definitions. UTF-16LE.\r\n[shop]\r\nRevision=" + catalog.revision + L"\r\n";
             unsigned count = 0;
