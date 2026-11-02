@@ -38,6 +38,7 @@ inline int pathCalls=0;
 inline bool directPathFixture=false;
 inline void* protectedPath=nullptr;
 inline int jumps=0,moves=0,goalCalls=0,lastGoalMode=0,frees=0,queries=0;
+inline int stopMotorCalls=0,message41Calls=0;
 inline int obbCalls=0,terrainCalls=0;
 inline Ray3 lastObbRay{},lastTerrainRay{};
 inline int lastWait=0;
@@ -127,12 +128,12 @@ struct Callbacks {
     __declspec(noinline) bool CanAttack(uint8_t* attacker) {
         auto candidate=reinterpret_cast<uint8_t*>(this);
         if(candidate==attacker) return false;
-        const int state=*reinterpret_cast<int*>(candidate+0x9D8);
-        if(state==1) {
+        const int eligibilityState=*reinterpret_cast<int*>(candidate+0x9D8);
+        if(eligibilityState==1) {
             const int own=*reinterpret_cast<int*>(candidate+0x20),other=*reinterpret_cast<int*>(attacker+0x20);
             return own==0||own==5||other==0||other==5||own!=other;
         }
-        return state==4&&*reinterpret_cast<uint32_t*>(candidate+0xEB8)==*reinterpret_cast<uint32_t*>(attacker+4);
+        return eligibilityState==4&&*reinterpret_cast<uint32_t*>(candidate+0xEB8)==*reinterpret_cast<uint32_t*>(attacker+4);
     }
     __declspec(noinline) bool Projectile(void* opaque) {
         auto p=reinterpret_cast<uint8_t*>(this);
@@ -144,7 +145,7 @@ struct Callbacks {
     }
     __declspec(noinline) bool Homing(void* opaque) { return Projectile(opaque); }
     __declspec(noinline) int AttackIntent(char on) { reinterpret_cast<uint8_t*>(this)[0x312A]=on?1:0;return 1; }
-    __declspec(noinline) void StopMotor() { reinterpret_cast<uint8_t*>(this)[0x30DC]=0; }
+    __declspec(noinline) void StopMotor() { ++stopMotorCalls;reinterpret_cast<uint8_t*>(this)[0x30DC]=0; }
     __declspec(noinline) uint32_t Shot(uint32_t event,char chain,char force) {
         Put(reinterpret_cast<uint8_t*>(this),0x100,event+static_cast<uint32_t>(chain)+static_cast<uint32_t>(force));
         return 0xBEEFF00D;
@@ -262,6 +263,10 @@ inline ListNode head{},a{},b{};
 inline ListNode remoteHead{},remoteEntry{},friendlyHead{},friendlyEntry{};
 inline int SetFire(lua_State* L){
     const uint8_t next=lua_toboolean(L,2)?1:0;
+    // The real Lua method emits native command 0x41. Count the request even
+    // when the fixture's held bit already matches so sustained blocked-state
+    // policy calls cannot hide behind this fixture's idempotent shortcut.
+    if(!next) ++message41Calls;
     if(source[0x312A]==next) return 0;
     source[0x312A]=next;
     if(!next) {
@@ -272,7 +277,7 @@ inline int SetFire(lua_State* L){
     return 0;
 }
 inline int SetTarget(lua_State* L){Put(fsms[0].data(),0x200,uint32_t(lua_tonumber(L,2)));return 0;}
-inline int Stop(lua_State*){source[0x30DC]=0;return 0;}
+inline int Stop(lua_State*){++stopMotorCalls;source[0x30DC]=0;return 0;}
 inline int Change(lua_State* L){int i=static_cast<int>(lua_tonumber(L,2));if(*reinterpret_cast<int*>(source+0xDD0)!=i){uint8_t message[0x14]={};Put(message,0,uint16_t(0x48));message[0x10]=static_cast<uint8_t>(i);reinterpret_cast<Callbacks*>(source)->Receive(message);}return 0;}
 inline int Direction(lua_State*){++moves;source[0x30DC]=1;return 0;}
 inline int Mode(lua_State*){return 0;}
@@ -280,6 +285,7 @@ inline int Jump(lua_State*){++jumps;return 0;}
 inline void Initialize(uint8_t* unit,lua_State* L) {
     state=L;source=unit;blocked=coverWall=nullRay=terrainWall=forceObbBlock=false;
     jumps=moves=goalCalls=lastGoalMode=frees=queries=obbCalls=terrainCalls=0;
+    stopMotorCalls=message41Calls=0;
     lastObbRay={};lastTerrainRay={};configuredUnits.fill(nullptr);unitKinds.fill(0);
     wall.fill(0);
     unitVtable[1]=Address(&Callbacks::UnitIsA);

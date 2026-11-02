@@ -129,9 +129,10 @@ Check(calls.routes==2 and calls.fire==false,'out-of-range pursuit uses bounded n
 Reset();calls.routeResult=0;observation.targets={Target(1,1000,3000)};Tick(0);Tick(100)
 Check(calls.routes==1 and calls.aim==0,'failed route is temporarily excluded from chase')
 Reset();observation.hurt=1;Tick(0)
-Check(calls.fire==false and calls.routes==0 and calls.jumps==0,'hurt state cancels controller intent')
+Check(calls.fire==nil and not calls.stop and calls.routes==0 and calls.jumps==0,
+      'hurt state drops policy ownership without replacing native attack or movement transitions')
 Reset();observation.hp=0;Tick(0)
-Check(calls.fire==false and calls.routes==0,'dead actor does not attack or move')
+Check(calls.fire==nil and not calls.stop and calls.routes==0,'dead actor receives no attack or movement request')
 Reset();observation.valid=0;Tick(0)
 Check(calls.native==1 and calls.target==nil,'unknown native data fails back to original script')
 Reset();Tick(0);Tick(100);Tick(200)
@@ -344,7 +345,8 @@ for _,difficulty in pairs({1,2}) do
   Check(calls.switches==before+1,'uncommitted native weapon requests have no extra retry wait: '..difficulty)
   observation.selectedSlot=2;Tick(7)
   Check(calls.fire==true,'the first confirmed weapon frame fires without a reaction timer: '..difficulty)
-  observation.hurt=1;Tick(8);Check(not calls.fire,'native hurt still blocks attacks: '..difficulty)
+  observation.hurt=1;calls.fire=nil;Tick(8)
+  Check(calls.fire==nil,'native hurt owns attack input without a policy message: '..difficulty)
   observation.hurt=0;Tick(9)
   Check(calls.fire==true,'native hurt recovery resumes attack on its first legal frame: '..difficulty)
   SDGO_BattleAI_Universal.states[20].recoverUntil=10000;Tick(10)
@@ -818,4 +820,58 @@ observation.targets={Target(1,5000,800)}
 Tick(0)
 Check(calls.fire==false and calls.aim==0,
       'attack-style two remains excluded even if an inconsistent opaque record claims ordinary')
+for difficulty=1,2 do
+  Reset({Difficulty=difficulty});observation.hurt=1;observation.routeActive=1
+  for time=0,10 do Tick(time) end
+  Check(calls.fire==nil and not calls.stop and not calls.releaseIntent,
+        'native captured/hurt control receives no repeated attack-off or movement-stop requests: '..difficulty)
+  observation.hurt=0;observation.routeActive=0;Tick(11)
+  Check(calls.fire==true,
+        'the first natively released victim decision resumes legal ordinary attack: '..difficulty)
+
+end
+for difficulty=1,2 do
+  Reset({Difficulty=difficulty});observation.selectedSlot=0;observation.meleeRole=1
+  observation.targets={Target(1,100,100),Target(2,5000,800)}
+  observation.defenceMoving=1;observation.routeActive=1;calls.staticRouteObservation=true
+  Tick(0)
+  Check(calls.switch==1 and calls.meleeGate==1,
+        'crossfire escape requests a ranged weapon instead of retaining the previous sword: '..difficulty)
+  observation.selectedSlot=1;calls.fire=nil;Tick(1)
+  Check(calls.fire==true and calls.aim==1 and observation.routeActive==1,
+        'acknowledged mobile gun fires during the existing defensive retreat: '..difficulty)
+
+  Reset({Difficulty=difficulty});observation.defenceMoving=1;observation.routeActive=1
+  observation.targets={Target(1,5000,700)}
+  observation.weapons[3]=Weapon(2,'hitscan',2200,4000,100);observation.weapons[3].movingShot=0
+  Tick(0)
+  Check(not calls.switch and calls.fire==true,
+        'retreat keeps an immediately fireable mobile gun rather than swapping to a stronger fixed gun: '..difficulty)
+
+  Reset({Difficulty=difficulty});observation.defenceMoving=1;observation.routeActive=1
+  observation.targets={Target(1,1,200),Target(2,5000,900)}
+  observation.targets[1].rangedVisible=0;observation.targets[1].meleeVisible=1
+  observation.targets[2].rangedVisible=1;observation.targets[2].meleeVisible=0
+  Tick(0)
+  Check(calls.target==2 and calls.fire==true,
+        'defensive ranged response selects the visible shootable enemy instead of a sword-only target: '..difficulty)
+
+  Reset({Difficulty=difficulty});observation.meleeRole=1;observation.selectedSlot=0
+  observation.targets={Target(1,5000,1200)};observation.targets[1].pos={x=1200,y=0,z=0}
+  observation.moving=1;Tick(0)
+  observation.defenceMoving=1;observation.routeActive=1;calls.switch=nil;calls.fire=nil;Tick(1500)
+  Check(SDGO_BattleAI_Universal.states[20].recovering and calls.switch==1 and not calls.fire,
+        'wall-recovery retreat requests its gun immediately but waits for the native binding: '..difficulty)
+  observation.defenceMoving=0;observation.movementRecovery=1;calls.switch=nil;Tick(1501)
+  Check(calls.switch==1,
+        'recovery retries an uncommitted gun after native observation masks defensive movement: '..difficulty)
+  observation.selectedSlot=1;calls.fire=nil;Tick(1502)
+  Check(calls.fire==true and SDGO_BattleAI_Universal.states[20].recovering,
+        'the acknowledged mobile gun fires while bounded wall recovery continues: '..difficulty)
+
+  Reset({Difficulty=difficulty});observation.targets={Target(1,5000,12000)}
+  observation.targets[1].groundPos={x=12000,y=0,z=0};Tick(0)
+  Check(calls.target==1 and calls.routeId==1 and not calls.fire,
+        'a distant visible opponent is pursued without firing beyond native weapon range: '..difficulty)
+end
 print(string.format('ALL %d UNIVERSAL CONTROLLER CHECKS PASSED (Lua 5.0)',checks))

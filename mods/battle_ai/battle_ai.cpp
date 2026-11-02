@@ -24,6 +24,7 @@
 #include "native_loadout.h"
 #include "sdgo/room_titles_current.h"
 #include "sdgo/ai_catalog_provider.h"
+#include "sdgo/battle_ai_observer.h"
 
 namespace {
 struct lua_State;
@@ -154,6 +155,10 @@ struct Actor {
     uint64_t specialAcknowledgedSequence=0;
     uint64_t specialFinished=0;
     uint64_t thinkSerial=0;
+    uint32_t observedTarget=0,observedFarTargets=0;
+    bool observedTargetVisible=false;
+    float observedTargetDistance=0,observedMaxRange=0;
+    Vec3 observedTargetPoint{};
     uint32_t roleUnit=0;
     bool roleAlternate=false,meleeRole=false;
     uint64_t coverQueryFrame=0;
@@ -521,12 +526,10 @@ bool CaptureUnsafe(Observation& o) {
     o.hurt=ControlBlocked(unit);
     if(actor.lastHp>0 && o.hp<actor.lastHp) actor.hurtAt=now;
     actor.lastHp=o.hp;o.hurtRecently=actor.hurtAt && now-actor.hurtAt<1600;
-    float maxRange=0,meleeRange=0;
+    float meleeRange=0;
     for(const auto& w:o.caps.weapons) if(w.valid&&w.ordinary&&w.slot<3) {
-        maxRange=(std::max)(maxRange,w.range);
         if(w.kind==battle_ai::native::WeaponKind::Melee) meleeRange=(std::max)(meleeRange,w.range);
     }
-    float perception=(std::max)(maxRange,(std::min)(24000.0f,(std::max)(1500.0f,maxRange*1.5f)));
     int ownTeam=*reinterpret_cast<int*>(unit+0x20);
     using CanAttack=bool(__thiscall*)(uint8_t*,uint8_t*);
     Ray3 ray={};
@@ -580,9 +583,11 @@ bool CaptureUnsafe(Observation& o) {
             Vec3 point=AimPoint(candidate);
             float rangedDistance=static_cast<float>(battle_ai::Length(point-ray.origin));
             float meleeDistance=static_cast<float>(battle_ai::Length(point-meleeOrigin));
+            // Weapon reach constrains firing, not noticing a distant visible
+            // combatant to pursue. Fresh collision queries below still own
+            // visibility; Lua retains only the last visible point behind cover.
             if(!battle_ai::Finite(point)||!std::isfinite(rangedDistance)||
-               !std::isfinite(meleeDistance)||
-               (rangedDistance>perception&&meleeDistance>perception)) continue;
+               !std::isfinite(meleeDistance)) continue;
             auto vtable=*reinterpret_cast<void***>(candidate);
             if(!vtable||!vtable[10]) continue;
             const auto protection=battle_ai::native::ReadDamageProtection(candidate);
@@ -624,6 +629,17 @@ bool CaptureUnsafe(Observation& o) {
         if(traversed>=4096) return false;
     }
     if(!battle_ai::Finite(o.pos)||!battle_ai::Finite(o.goal)) return false;
+    actor.observedTarget=*reinterpret_cast<uint32_t*>(fsm+0x200);
+    actor.observedTargetVisible=false;actor.observedTargetDistance=0;actor.observedFarTargets=0;actor.observedMaxRange=0;
+    for(const auto& weapon:o.caps.weapons)
+        if(weapon.valid&&weapon.ordinary&&weapon.slot<3) actor.observedMaxRange=(std::max)(actor.observedMaxRange,weapon.range);
+    for(size_t i=0;i<o.count;++i) {
+        const auto& target=o.targets[i];
+        if(target.id==actor.observedTarget) {
+            actor.observedTargetVisible=target.visible;actor.observedTargetDistance=target.distance;actor.observedTargetPoint=target.point;
+        }
+        if(target.visible&&target.attackable&&!target.damageProtected&&target.distance>actor.observedMaxRange) ++actor.observedFarTargets;
+    }
     PlanDefence(o,actor,now);return true;
 }
 bool Capture(Observation& o) {
@@ -777,7 +793,7 @@ int __cdecl AimTarget(lua_State* L) {
 int __cdecl CancelRoute(lua_State*) {
     if(Owned(g_current)) {
         auto& a=ActorFor(g_current);
-        if(!a.path.empty()) g_stop(g_current);
+        if(!a.path.empty()&&!ControlBlocked(g_current)) g_stop(g_current);
         a.path.clear();a.defenceMoveOwned=false;
     }
     return 0;
@@ -1948,6 +1964,47 @@ extern "C" __declspec(dllexport) void __cdecl SdgoBattleAiInitializeUnit(uint8_t
     if(g_api&&result!=battle_ai::loadout::ApplyResult::Applied&&result!=battle_ai::loadout::ApplyResult::AlreadyApplied&&
        result!=battle_ai::loadout::ApplyResult::InvalidArgument)
         g_api->Log(g_mod,SDGO_LOG_WARN,"native bot loadout initialization incomplete (%d)",static_cast<int>(result));
+}
+extern "C" __declspec(dllexport) int __cdecl SdgoBattleAiGetUnitSnapshotV1(uint32_t id,SdgoBattleAiUnitSnapshotV1* output) {
+    __try {
+        if(!output||output->size<sizeof(*output)||output->version!=1||GetCurrentThreadId()!=g_gameThread) return 0;
+        auto unit=FindObject(id);auto found=g_actors.find(unit);
+        if(!unit||found==g_actors.end()||unit[0x2B65]!=0||
+           *reinterpret_cast<uint32_t*>(unit+0x3238)<3604001||*reinterpret_cast<uint32_t*>(unit+0x3238)>3607000) return 0;
+        battle_ai::native::Capabilities caps={};if(!battle_ai::native::ReadCapabilities(unit,caps)) return 0;
+        const auto& actor=found->second;SdgoBattleAiUnitSnapshotV1 result{};
+        result.size=sizeof(result);result.version=1;result.object_id=id;result.unit_id=caps.unitId;result.generation=actor.generation;
+        result.hp=*reinterpret_cast<int32_t*>(unit+0x38);result.hurt_state=*reinterpret_cast<uint32_t*>(unit+0x9D8);
+        result.captured_by=*reinterpret_cast<uint32_t*>(unit+0xEB8);result.control_blocked=ControlBlocked(unit);result.special_busy=caps.specialBusy;
+        result.ai_enabled=unit[0x326C]!=0;
+        result.selected_slot=caps.selectedSlot;result.special_finished=actor.specialFinished;
+        auto shot=g_rangedShots.find(unit);if(shot!=g_rangedShots.end()) result.ranged_shots=shot->second.shots;
+        auto attack=*reinterpret_cast<uint8_t**>(unit+0x9CC);auto movement=*reinterpret_cast<uint8_t**>(unit+0x9C8);
+        result.target_id=attack?*reinterpret_cast<uint32_t*>(attack+0x200):0;
+        if(result.target_id==actor.observedTarget) {
+            result.target_visible=actor.observedTargetVisible;result.target_distance=actor.observedTargetDistance;
+            result.target_x=actor.observedTargetPoint.x;result.target_y=actor.observedTargetPoint.y;result.target_z=actor.observedTargetPoint.z;
+        }
+        result.defence_moving=actor.defenceMoveOwned||actor.defence.movement.relocate;
+        result.moving=unit[0x30DC]!=0;
+        if(caps.selectedSlot>=0&&caps.selectedSlot<4) {
+            result.moving_shot=caps.weapons[caps.selectedSlot].movingShot;result.weapon_range=caps.weapons[caps.selectedSlot].range;
+        }
+        result.max_ordinary_range=actor.observedMaxRange;result.visible_far_targets=actor.observedFarTargets;
+        const Vec3 pos=Position(unit);result.x=pos.x;result.y=pos.y;result.z=pos.z;
+        auto offset=[](uint8_t* fsm,size_t field)->uint32_t {
+            if(!fsm) return 0;auto state=*reinterpret_cast<uint8_t**>(fsm+field);
+            return state>=fsm&&state<fsm+0x210?static_cast<uint32_t>(state-fsm):0;
+        };
+        result.attack_state=offset(attack,4);result.attack_pending=offset(attack,8);
+        result.movement_state=offset(movement,4);result.movement_pending=offset(movement,8);
+        if(attack) {
+            result.special_end_event=attack[0x9B3];result.special_result_applied=attack[0x9B5];
+            result.special_result_victim=*reinterpret_cast<uint32_t*>(attack+0x9BC+0x14);
+            result.special_result_ready=*reinterpret_cast<uint32_t*>(attack+0x9BC+0x10);result.special_owner_flag=unit[0xEC8];
+        }
+        *output=result;return 1;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return 0;}
 }
 SDGO_MOD_ENTRY {
     g_api = api; g_mod = mod;
