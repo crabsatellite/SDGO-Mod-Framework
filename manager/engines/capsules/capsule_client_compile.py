@@ -15,7 +15,7 @@ from .capsule_ui_layout import patch_capsule_price_defaults
 
 
 TABLE_BASES = {"0033": 155001, "0101": 135001, "0154": 3519001, "0155": 3520001}
-COMPILER_VERSION = 8
+COMPILER_VERSION = 9
 
 
 def resident_extensions(client, reader):
@@ -249,7 +249,7 @@ def compile_catalog(catalog, client, lookup, output):
                 generated_cards.append({"unit_id": uid, "variant": variant,
                     "sprite": sprite_path, "png_sha256": hashlib.sha256(stream.getvalue()).hexdigest(),
                     "texture_size": list(texture.size), "uv": list(uv),
-                    "source": "native_frame_and_uploaded_png" if provenance else "native_frame_and_cropped_unit_sprite",
+                    "source": "native_frame_and_uploaded_png" if provenance else "native_frame_and_imported_art" if units[uid].get("unit_import") else "native_frame_and_cropped_unit_sprite",
                     **provenance})
                 paths.append(sprite_path.replace("/", "\\"))
         cards[uid] = paths
