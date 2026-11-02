@@ -50,6 +50,15 @@ IF(@UserLevelNumber < @newlevel OR
 在 Manager 点“显示开发信息”，于“修复归档”关闭开关并重启 WorldServer。之后结算重新使用原生过程；
 Mod 留在数据库里的闲置 SQL 对象可以保留。
 
+## 开发者说明
+
+Hook 符号为 `rank.execute`、`rank.execute_rows`、`rank.connection_layout`、`rank.command.battle` 和
+`rank.command.grid`。只有两个完全匹配的原生命令字符串会被重定向；参数绑定、输出处理、经验、奖励和战斗次数
+仍由原生流程处理，调用后恢复命令描述中的原始指针。
+
+副本由当前数据库中的原生定义生成，只替换过程名称和军衔比较式。两个过程在同一事务和应用锁内准备，
+检查归属、比较式版本、定义指纹和 SQL 选项；未知定义、他人的同名 `sdgo_rank_progression_fix` schema 或被外部修改的副本
+都会拒绝覆盖。分发包不携带原生 SQL。借用会话上已有的事务不会被 Mod 提交或回滚。
 ## 开发测试
 
 `ctest` 运行离线 C++ 测试。可选的数据库测试会创建隔离的临时库并使用合成角色，需要两个原生过程定义的备份：

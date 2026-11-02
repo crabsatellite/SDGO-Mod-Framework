@@ -55,6 +55,18 @@ In the Manager click **显示开发信息** (show developer info), clear the swi
 restart WorldServer. Settlement then uses the original procedures again; the mod's unused SQL objects
 can stay in the database.
 
+## Developer notes
+
+The hook symbols are `rank.execute`, `rank.execute_rows`, `rank.connection_layout`,
+`rank.command.battle` and `rank.command.grid`. Only the two exact native command strings are
+redirected; native parameter binding, output processing, EXP awards, rewards and counters stay in
+place, and the descriptor's command pointer is restored after the call.
+
+The copies are derived from the installed definitions, replacing only the procedure identity and the
+rank comparison. Both are prepared in one transaction under an application lock. Preparation checks
+ownership, the supported comparison, definition hashes and SQL options, and refuses unknown
+definitions, a foreign `sdgo_rank_progression_fix` schema or externally edited copies. No native SQL
+is bundled. An existing transaction on the borrowed session is neither committed nor rolled back.
 ## Developer tests
 
 `ctest` runs the offline C++ tests. The optional database test creates an isolated scratch database
