@@ -1405,6 +1405,7 @@ int __cdecl TitleMissionCreate(const SdgoGameTestContextV1* c){
     }
     return roomTitles.Poll(RoomTitleActions::MissionCreate,c);
 }
+int __cdecl TitleTeamSettings(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::TeamSettings,c);}
 int __cdecl TitleMissionSettings(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::MissionSettings,c);}
 int __cdecl TitleMissionRename(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::MissionRename,c);}
 int __cdecl TitleLeave(const SdgoGameTestContextV1* c){
@@ -1417,6 +1418,7 @@ const SdgoGameTestCaseV1 titleCases[]={
     {"room_titles.pvp.rename",120000,&TitlePvpRename},
     {"room_titles.pvp.leave",60000,&TitleLeave},
     {"room_titles.team.create",120000,&TitleTeamCreate},
+    {"room_titles.team.settings",120000,&TitleTeamSettings},
     {"room_titles.team.rename",120000,&TitlePvpRename},
     {"room_titles.team.leave",60000,&TitleLeave},
     {"room_titles.grid.create",120000,&TitleGridCreate},
