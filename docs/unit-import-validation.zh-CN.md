@@ -64,6 +64,12 @@ python -m tools.game_test_portraits --run-dir build/game-test-runs/unit-check --
 不会追加抽取和领取场景。活动与收藏共用原生机台海报页面，该页面不枚举奖池中每台机体的头像。
 奖池根形态登记、机台海报与固定／自定义候选头像需要分别核验，不能用一张海报证明整个奖池。
 
+检查指定候选时，在封存前启用 `UnitPresentations=1`，设置 `UnitAcquisitionKind=1`（固定）或 `3`（自定义）、
+`UnitAcquisitionMachine` 和 `UnitAcquisitionUnit`，并绑定该玩家实际持有的机体 UID，使用 `--pages-only`。
+`pages.unit_acquisition` 通过原生机台／候选控件打开机体视图，核验真实 `0x01F8` 消费事件和可见模型实体；
+不购买，也不修改自定义机台的已选槽位。配合 `CaptureNativeFrames=1` 检查实际卡面与模型截图。
+独立候选配置可以明确声明空表，但仍逐表核对注册范围、条目身份和表末边界。
+
 成功记录按 guide 在验证及必要交付读回后删除；失败证据保留于临时运行目录之外以便排错。
 不得停止其他活跃环境，结束前核对本次环境已回收。
 

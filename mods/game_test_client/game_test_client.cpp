@@ -15,6 +15,7 @@
 #include "battle_combat_actions.h"
 #include "apsalus_transform_probe.h"
 #include "unit_presentations_actions.h"
+#include "unit_acquisition_actions.h"
 #include "capsule_draw_actions.h"
 #include "unit_select_actions.h"
 #include "active_selection_observer.h"
@@ -123,6 +124,8 @@ bool captureNativeFrames=false;
 bool testUnitPresentations=false;
 bool captureUnitPortraits=false;
 UnitPresentationsActions unitPresentations;
+UnitAcquisitionActions unitAcquisition;
+UnitAcquisitionActions::Config unitAcquisitionConfig{};
 void PublishQuietSocketReceipt(bool force=false);
 bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false, pagesOnly = false;
 uint64_t deckUnitUids[4]{};
@@ -162,6 +165,10 @@ bool LoadPlan() {
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
     collectionPreviewOnly=GetPrivateProfileIntW(L"settings",L"CollectionPreviewOnly",0,
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
+    const std::wstring acquisitionIni=sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini";
+    unitAcquisitionConfig.machine_kind=GetPrivateProfileIntW(L"settings",L"UnitAcquisitionKind",0,acquisitionIni.c_str());
+    unitAcquisitionConfig.machine_id=GetPrivateProfileIntW(L"settings",L"UnitAcquisitionMachine",0,acquisitionIni.c_str());
+    unitAcquisitionConfig.unit_id=GetPrivateProfileIntW(L"settings",L"UnitAcquisitionUnit",0,acquisitionIni.c_str());
     wchar_t networkPolicy[24]{};
     GetPrivateProfileStringW(L"run",L"network_policy",L"legacy",networkPolicy,24,job.c_str());
     verifyRoutedNetwork=!wcscmp(networkPolicy,L"routed_loopback");
@@ -194,6 +201,10 @@ bool LoadPlan() {
     collectionDraw=GetPrivateProfileIntW(L"run",L"collection_draw",0,job.c_str())!=0;
     if(collectionDraw && !pagesOnly)return false;
     if(collectionPreviewOnly && (!pagesOnly || collectionDraw))return false;
+    if(unitAcquisitionConfig.machine_kind && (!pagesOnly || collectionDraw || collectionPreviewOnly ||
+        !testUnitPresentations || !unitAcquisitionConfig.machine_id || !unitAcquisitionConfig.unit_id ||
+        (unitAcquisitionConfig.machine_kind!=UnitAcquisitionActions::kFixedMachine &&
+         unitAcquisitionConfig.machine_kind!=UnitAcquisitionActions::kCustomMachine)))return false;
     missionMode=static_cast<uint16_t>(GetPrivateProfileIntW(L"run",L"mission_mode",0,job.c_str()));
     if(missionMode && (missionMode!=5 && missionMode!=8))return false;
     wchar_t playUid[32]{};
@@ -1309,12 +1320,15 @@ int __cdecl ClaimStoragePage(const SdgoGameTestContextV1* context) {
 }
 int __cdecl ReadCapsuleCatalog(const SdgoGameTestContextV1* context) {
     if(collectionDraw)collectionBeforeUnits=pages.BaselineUnits();
-    const bool ready=capsules.Check(sdgo_test::directory+L"\\..\\mods\\capsule_catalog\\runtime.ini");
+    const bool acquisition=unitAcquisitionConfig.machine_kind!=0;
+    const bool ready=capsules.Check(sdgo_test::directory+L"\\..\\mods\\capsule_catalog\\runtime.ini",acquisition);
     const auto state=capsules.State();char message[192];
     sprintf_s(message,"native capsule tables=%u rows=%u/%u collection=%u price=%u error=%u",state.tables,state.verified,state.expected,
         state.collection_machine,state.collection_price,state.error);context->Observe(message);
-    context->Assert(ready,"all five configured capsule tables are registered in the actual native grid with exact counts and row identities");
-    context->Assert(state.collection_machine==990001 && state.collection_price==100000,"the collection machine has its original 100000 GP price in the real client registry");
+    context->Assert(ready,acquisition
+        ? "the isolated acquisition profile matches every declared native table, including explicitly empty tables, with exact row identities"
+        : "all five configured capsule tables are registered in the actual native grid with exact counts and row identities");
+    if(!acquisition)context->Assert(state.collection_machine==990001 && state.collection_price==100000,"the collection machine has its original 100000 GP price in the real client registry");
     return ready?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
 }
 int __cdecl ReadCapsuleCurrency(const SdgoGameTestContextV1* context) {
@@ -1575,6 +1589,31 @@ int ImportedForm(const SdgoGameTestContextV1* context,uint32_t form) {
 int __cdecl ImportedAlternate(const SdgoGameTestContextV1* context){return ImportedForm(context,1);}
 int __cdecl ImportedBase(const SdgoGameTestContextV1* context){return ImportedForm(context,0);}
 int __cdecl ImportedClose(const SdgoGameTestContextV1* context){return PresentationResult(context,unitPresentations.Close());}
+int __cdecl ImportedAcquisition(const SdgoGameTestContextV1* context) {
+    if(unitPresentations.State().unit!=unitAcquisitionConfig.unit_id) {
+        context->Assert(0,"the sealed acquisition target matches the genuinely owned unit already inspected");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    const auto result=unitAcquisition.Poll();const auto s=unitAcquisition.State();
+    static uint32_t previous=UINT32_MAX,sequence=UINT32_MAX;
+    if(previous!=result || sequence!=s.unitview_event_sequence) {
+        char message[512];sprintf_s(message,"native acquisition result=%u kind=%u machine=%u unit=%u machine_page=%u slot=%u candidate_page=%u slot=%u control=%08X view=%08X event=%u/%u model=%08X dimensions=%d/%d",
+            static_cast<unsigned>(result),s.machine_kind,s.machine_id,s.unit_id,s.machine_page,s.machine_slot,
+            s.candidate_page,s.candidate_slot,s.candidate_control_pointer,s.unitview_pointer,
+            s.unitview_event_sequence,s.unitview_event_unit,s.unitview_model_pointer,s.render_width,s.render_height);
+        context->Observe(message);previous=result;sequence=s.unitview_event_sequence;
+    }
+    if(result==UnitAcquisitionActions::kUnbound || result>=UnitAcquisitionActions::kInvalidConfig) {
+        context->Assert(0,"the native capsule machine, candidate control and unitview consumer identities remain valid");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if(result!=UnitAcquisitionActions::kReady)return SDGO_GAME_TEST_WAIT;
+    context->Assert(s.unitview_event_consumed && s.unitview_event_unit==unitAcquisitionConfig.unit_id &&
+        s.unitview_model_ready && s.unitview_dialog_visible && s.unitview_render_visible,
+        "the original candidate callback reached its actual unitview consumer and visible native model without purchasing");
+    return SDGO_GAME_TEST_PASS;
+}
+const SdgoGameTestCaseV1 unitAcquisitionCase{"pages.unit_acquisition",180000,&ImportedAcquisition};
 const SdgoGameTestCaseV1 unitPresentationCases[]={
     {"pages.unit_index.list",120000,&ImportedIndex},
     {"pages.unit_index.detail",120000,&ImportedDetail},
@@ -1785,6 +1824,7 @@ void RegisterPlannedCases() {
         plannedCases.insert(plannedCases.end(),std::begin(pageCases)+5,std::end(pageCases));
         if(collectionDraw)plannedCases.insert(plannedCases.end(),std::begin(collectionCases),std::end(collectionCases));
         else if(collectionPreviewOnly)plannedCases.push_back(collectionCases[0]);
+        if(unitAcquisitionConfig.machine_kind)plannedCases.push_back(unitAcquisitionCase);
         provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
     }
     const bool needsShip = battleshipOnly || deckOnly || std::find(requestedModes.begin(),requestedModes.end(),6)!=requestedModes.end() ||
@@ -2012,6 +2052,7 @@ SDGO_MOD_ENTRY {
         (deckOnly && !decks.Bind(api,mod,&actions)) ||
         (!hangarNavigation.Bind(api,mod,&actions)) ||
         (testUnitPresentations && !unitPresentations.Bind(api,mod,&hangarNavigation)) ||
+        (unitAcquisitionConfig.machine_kind && !unitAcquisition.Bind(api,mod,&hangarNavigation,unitAcquisitionConfig)) ||
         (pagesOnly && !pages.Bind()) ||
         (pagesOnly && !operatorCatalog.Bind(api,mod)) ||
         (pagesOnly && !aiCatalog.Bind(api,mod)) ||
