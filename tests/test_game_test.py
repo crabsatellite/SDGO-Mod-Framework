@@ -617,6 +617,17 @@ rva=state
                 self.assertTrue(runtime.verify(1234)['firewall_verified'])
                 self.assertTrue(runtime.verify(1234)['firewall_verified'])
                 self.assertEqual(write.call_count,1,'the sealed login proof must not race repeated native INI reads')
+            runtime.process.verify_background.return_value={
+                'verified':True,'foreground_safe':True,'isolation_safe':True,
+                'isolation_mode':'private_desktop_with_hidden_default_proxy',
+                'input_desktop_unchanged':None,'input_desktop_safe':None,
+                'input_desktop_error':'PermissionError: OpenInputDesktop access denied',
+                'named_desktop_target_window_count':1}
+            proof=runtime.verify(1234)
+            self.assertTrue(proof['audio_muted'])
+            self.assertTrue(proof['firewall_verified'])
+            self.assertIsNone(proof['input_desktop_unchanged'])
+            self.assertIn('access denied',proof['input_desktop_error'])
 
     @unittest.skipUnless(game_test.os.name=='nt','Windows process-owned UDP table')
     def test_actual_windows_udp_table_finds_the_owned_loopback_socket(self):
