@@ -48,6 +48,10 @@ bool suppressPopup = false;
 bool suppressPageAdvance = false;
 bool catalogRequestPending=false;
 bool retainEmptyNativeSlots=false;
+bool secondInventoryPage=false;
+bool fullInventoryReply=false;
+bool unitPagePending=false;
+unsigned unitPageRequests=0;
 
 Bytes app(0x600);
 Bytes profile(0x7000);
@@ -331,9 +335,15 @@ void Check(bool,const char*);
 uint32_t __fastcall RequestPending(void* self,void*,ShopCatalogActions::NativeRequestName name)
 {
     const auto text=HostString(name.bytes.data());
-    Check(self==manager.get() && text==L"REQ_GET_STORE_ITEM_LIST",
+    Check(self==manager.get() && (text==L"REQ_GET_STORE_ITEM_LIST" || text==L"REQ_UNIT_SLOT_PAGE"),
           "native pending-query receives the exact manager and by-value string ABI");
+    if(text==L"REQ_UNIT_SLOT_PAGE")return unitPagePending ? 1u : 0u;
     return catalogRequestPending ? 1u : 0u;
+}
+
+void __stdcall RequestUnitPage(uint32_t page) {
+    Check(page==1,"original page request uses the zero-based six-slot page containing slot7");
+    ++unitPageRequests;
 }
 
 void* __fastcall ServiceFind(
@@ -416,6 +426,9 @@ void __fastcall UnitBrief(
     std::memset(output, 0, 0x19);
     if (slot == 1)
         std::memcpy(output, briefUnit.data(), 0x19);
+    if(slot==7 && secondInventoryPage) {
+        Put(output,0,uint32_t{102});Put(output,4,uint64_t{10007});Put(output,12,uint16_t{7});
+    }
 }
 
 void __fastcall UnitFull(
@@ -427,6 +440,10 @@ void __fastcall UnitFull(
     std::memset(output, 0, 0x99);
     if (slot == 1)
         std::memcpy(output, fullUnit.data(), 0x99);
+    if(slot==7 && secondInventoryPage) {
+        Put(output,4,uint16_t{7});
+        if(fullInventoryReply){Put(output,0,uint32_t{102});Put(output,8,uint64_t{10007});}
+    }
 }
 
 void* __fastcall ButtonTextItem(
@@ -721,6 +738,7 @@ ShopCatalogActions::Bindings Bindings()
     value.service_managed_pointer =
         &managerPointer;
     value.request_pending=reinterpret_cast<ShopCatalogActions::RequestPendingFn>(&RequestPending);
+    value.request_unit_page=&RequestUnitPage;
     value.service_find_by_name =
         reinterpret_cast<
             ShopCatalogActions::
@@ -778,6 +796,7 @@ void Setup()
 {
     catalogRequestPending=false;
     retainEmptyNativeSlots=false;
+    secondInventoryPage=fullInventoryReply=unitPagePending=false;unitPageRequests=0;
     app.data.assign(app.data.size(), 0);
     profile.data.assign(profile.data.size(), 0);
     unitInfo.data.assign(unitInfo.data.size(), 0);
@@ -1107,6 +1126,27 @@ int wmain(int argc, wchar_t** argv)
     Check(PollTo(actions,ShopCatalogActions::kComplete)==ShopCatalogActions::kComplete &&
               downmenuCalls==1 && actions.State().wallet_unchanged && actions.State().inventory_unchanged,
           "hangar shop entry preserves adjacent full-unit flag bytes instead of treating them as slot bits");
+
+    Setup();secondInventoryPage=true;Put(unitInfo.get(),0x0C,int32_t{12});
+    actions=Driver(assertions,display);uint64_t fullElapsed=0;
+    unitPagePending=true;
+    auto fullStep=Context(fullElapsed);fullElapsed+=100;
+    Check(actions.Poll(&fullStep)==ShopCatalogActions::kWaitingForCatalog && unitPageRequests==0 && downmenuCalls==0,
+          "unloaded full inventory waits for the original page-query ownership before issuing a request");
+    unitPagePending=false;fullStep=Context(fullElapsed);fullElapsed+=100;
+    Check(actions.Poll(&fullStep)==ShopCatalogActions::kWaitingForFullInventory && unitPageRequests==1 && downmenuCalls==0,
+          "a real brief and native unloaded full placeholder trigger one original page business request");
+    fullStep=Context(fullElapsed);fullElapsed+=100;
+    Check(actions.Poll(&fullStep)==ShopCatalogActions::kWaitingForFullInventory && unitPageRequests==1 && downmenuCalls==0,
+          "request return is not a full-inventory response and never starts the shop or repeats the request");
+    fullInventoryReply=true;
+    Check(PollTo(actions,ShopCatalogActions::kComplete,&fullElapsed)==ShopCatalogActions::kComplete && unitPageRequests==1,
+          "only the genuine filled full-record cache can become the complete immutable shop baseline");
+
+    Setup();fullUnit[8]^=1;actions=Driver(assertions,display);
+    const auto malformedInventory=Context(0);
+    Check(actions.Poll(&malformedInventory)==ShopCatalogActions::kInventoryUnavailable && unitPageRequests==0 && downmenuCalls==0,
+          "a populated full record with the wrong UID remains a hard failure and cannot be treated as unloaded");
 
     Setup();
     actions = Driver(assertions, display);
