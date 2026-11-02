@@ -143,7 +143,10 @@ class UnitManagerTests(unittest.TestCase):
         finally: reopened.close()
 
     def test_capsule_install_defaults_do_not_require_hidden_developer_paths(self):
-        self.capsules.configure({'install_client':str(self.root/'client'),'client':str(self.root/'client')})
+        from test_collection_client import make_client
+        client=make_client(self.root/'client')
+        lookup=self.root/'lookup.json';lookup.write_text('{}')
+        self.capsules.configure({'install_client':str(client),'client':str(client),'lookup':str(lookup)})
         self.assertIsNotNone(self.capsules.get_engine().store.apply_callback)
 
     def test_shop_uses_confirmed_image_but_never_creates_products(self):
