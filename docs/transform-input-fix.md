@@ -1,5 +1,7 @@
 # Apsalus III transformation input recovery
 
+[简体中文](transform-input-fix.zh-CN.md)
+
 `transform_input_fix` fixes the Apsalus III transformation state that can remain stuck and block movement and attacks. It is an automatic client fix: install it, restart the game, and view its status in SDGO Mod Manager's repair archive. No settings are required.
 
 ## Compatibility
@@ -16,6 +18,6 @@ The supported native functions are `TransformUpdate` at `0x006D9AD0`, `Transform
 
 ## Troubleshooting and testing
 
-Check that the client is updated, the fix is installed and the game has restarted. Include the starting form, transformation direction, battle mode and client version in a bug report. A log entry containing `Apsalus III null transform animation` identifies a recovered missing-animation transition.
+Check that the client is updated and the game has restarted. `Apsalus III missing-animation transform input recovery active` in `sdgo/logs/sdgo.log` means the fix loaded; `Apsalus III null transform animation` identifies a recovered transition. Include the starting form, transformation direction, battle mode and client version in a bug report.
 
-The native regression exercises a real transformation round trip, native movement and primary-attack consumers, and the full battle/return flow. Follow the [GameTest guide](../skills/sdgo-native-testing/SKILL.md) for the isolated local test workflow. Offline ABI and original-function replay checks supplement gameplay verification.
+The native regression performs a real transformation round trip and checks native movement and primary attack afterwards; see [native GameTest](game-test.md).
