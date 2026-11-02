@@ -27,12 +27,21 @@ Under **商城物品显示** in SDGO Mod Manager; restart the game after saving.
 | 显示永久物品标签 | `ShowPermanent` | 1 | mark permanent units as permanent |
 | 使用自定义中文名称 | `UseUnicodeOverrides` | 1 | read option names from `display.ini` |
 
-`display.ini` is the UTF-16LE file exported by the [shop catalog](shop-catalog.md). A custom name is
-used only when the option's ID, category, duration, price and currency still match, so a custom name
-can never hide a rental. Otherwise the numeric label is shown.
+`display.ini` is the UTF-16LE file exported by the [shop catalog](shop-catalog.md). When the rental or
+permanent label is enabled for an option, that label is shown. Otherwise a custom name is used, and only
+while the option's ID, category, duration, price and currency still match.
 
 This is not a global font or chat fix, and it cannot recover product names already stored as question
 marks in the database. The activity capsule currency label is handled by the separate
 [capsule currency fix](capsule-currency-fix.md).
 
 Log line when active: `rental/permanent labels enabled; <n> Unicode option overrides; prices and currency untouched`.
+
+## Developer notes
+
+The client converts sale option names with code page 874 (Thai), which turns them into question marks.
+The mod hooks `shop.buy_options.populate`, `shop.gift_options.populate` and `shop.tooltip.option` to
+record which option rows are being drawn, and `text.ansi_to_wide` to replace the CP874 conversion of
+those rows only. The rental flag comes from the option category's client metadata (GridData type `0x22`, byte `+0x6D`, looked up
+through `shop_labels.grid_data` / `shop_labels.grid_find`); the duration comes from the option's numeric validity.
+Other text conversions are passed to the original function.

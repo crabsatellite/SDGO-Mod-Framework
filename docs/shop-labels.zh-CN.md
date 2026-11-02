@@ -45,10 +45,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -Target "D:\Ga
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -Target "D:\Game" -ConfigFile "D:\Share\runtime-display.ini"
 ```
 
-只有选项 ID、类别、期限、价格和币种都匹配时才使用自定义名称，因此自定义文字不会遮盖实际的租赁状态；
-不匹配时显示数值期限标签。
+某个选项启用了租赁或永久标签时，显示该标签；否则才使用自定义名称，且仅在选项 ID、类别、期限、价格和币种都仍然匹配时使用。
 
 这不是全局字体或聊天编码修复，也无法恢复数据库里已经变成问号的商品名。活动扭蛋的币种显示由独立的
 [活动扭蛋币种显示修复](capsule-currency-fix.zh-CN.md)处理。
 
 生效时日志为 `rental/permanent labels enabled; <n> Unicode option overrides; prices and currency untouched`。
+
+## 开发者说明
+
+客户端用代码页 874（泰文）转换销售选项名，因此变成问号。Mod 挂钩 `shop.buy_options.populate`、
+`shop.gift_options.populate` 和 `shop.tooltip.option` 记录正在绘制的选项行，再挂钩 `text.ansi_to_wide`，只替换这些行的
+CP874 转换。租赁标志来自选项类别的客户端元数据（GridData type `0x22` 的 `+0x6D` 字节，通过 `shop_labels.grid_data` / `shop_labels.grid_find` 查询），
+期限来自选项的数值有效期。其它文字转换交回原函数。
