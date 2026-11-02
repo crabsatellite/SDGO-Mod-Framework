@@ -19,7 +19,7 @@ Beta and Experimental labels indicate release channels.
 | Activity capsule currency <!-- catalog: `capsule_currency_fix` --> | Show machine 9301 as 99 coins in the list and purchase confirmation | [Use](docs/capsule-currency-fix.md) |
 | Input method freeze fix <!-- catalog: `findwindow_fix` --> | Stop input methods such as iFlytek from freezing or crashing the repack client | [Use](docs/findwindow-fix.md) |
 | Startup crash fix <!-- catalog: `startup_crash_fix` --> | Stop random crashes on the loading screen at game start | [Use](docs/startup-crash-fix.md) |
-| Agent relay log fix <!-- catalog: `agent_relay_log_fix` --> | Relay logging compatibility | [Use](docs/agent-relay-log-fix.md) |
+| Agent relay log fix <!-- catalog: `agent_relay_log_fix` --> | Fix an Agent relay log that reads invalid memory | [Use](docs/agent-relay-log-fix.md) |
 | Battle rank regression fix <!-- catalog: `rank_progression_fix` --> | Rank progression compatibility | [Use](docs/rank-progression-fix.md) |
 | New-account starter profile <!-- catalog: `new_account_profile` --> | New-account defaults | [Use](docs/new-account-profile.md) |
 | Shop rental and Unicode labels <!-- catalog: `shop_labels` --> | Shop display compatibility | [Use](docs/shop-labels.md) |
