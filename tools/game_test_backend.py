@@ -533,6 +533,26 @@ def observer_host_id(fps_suite,value):
         raise RuntimeError('Authenticated suites require --host-pilot-id from the actual reused test account')
     return value
 
+def validate_local_native_sql(private, work):
+    """Verify the selected copied native instance without touching production."""
+    root=work.parent.resolve()
+    if work.name!='server' or not (root/'TEST-ONLY.txt').is_file():
+        raise RuntimeError('Native backend must belong to a marked local test/server copy')
+    instance=json.loads((root/'database/native-sql.json').read_text())
+    if instance['root']!=str(root) or int(instance['port'])!=int(private['port']):
+        raise RuntimeError('Native SQL binding belongs to another test copy')
+    db=sql_connect(private)
+    try:
+        cursor=db.cursor()
+        pid=int(cursor.execute("SELECT CAST(SERVERPROPERTY('ProcessID') AS int)").fetchone()[0])
+        if pid!=instance.get('pid'):
+            raise RuntimeError('Native test SQL process identity changed')
+        for row in cursor.execute('SELECT physical_name FROM sys.master_files').fetchall():
+            if not Path(row[0]).resolve().is_relative_to(root):
+                raise RuntimeError('Native SQL still references data outside its test copy')
+    finally:db.close()
+
+
 def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_id=None):
     work=work.resolve();stage=stage.resolve();startup_xml=startup_xml.resolve()
     private=json.loads((work/'private.json').read_text())
@@ -546,7 +566,10 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
     suite=client.get('suite') or client['plan'].get('suite','')
     fps_suite=suite=='native-fps-limit'
     host_pilot_id=observer_host_id(fps_suite,host_pilot_id)
-    identity(private);lock,lock_token=game_test.acquire_lock(work)
+    native_local=private.get('kind')=='native-local-test'
+    if native_local:validate_local_native_sql(private,work)
+    else:identity(private)
+    lock,lock_token=game_test.acquire_lock(work)
     owned_processes=[];ready_services=[];started=False
     state={'phase':'starting','pid':os.getpid(),'services':[],'client_run':str(client_run.resolve())}
     def publish(phase):
@@ -554,7 +577,8 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
     try:
         (work/'stop.request').unlink(missing_ok=True)
         publish('starting_sql')
-        docker('start',private['container']);started=True
+        if not native_local:
+            docker('start',private['container']);started=True
         deadline=time.monotonic()+180
         while True:
             try:
@@ -572,7 +596,10 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                 source=stage_server/core_file
                 if source.is_file():
                     destination=owned_folder/core_file
+                    destination.parent.mkdir(parents=True,exist_ok=True)
                     shutil.copy2(source,destination)
+            if not (owned_folder/'sdgo/sdgo.ini').is_file():
+                shutil.copy2(stage_server/'sdgo/sdgo.ini',owned_folder/'sdgo/sdgo.ini')
             manifests=[]
             for source_manifest in (stage_server/'sdgo/mods').glob('*/mod.ini'):
                 target_folder=owned_folder/'sdgo/mods'/source_manifest.parent.name
@@ -660,6 +687,12 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                 console=work/(spec['folder']+'.console.log')
                 with console.open('ab') as output:
                     process=BackendBackgroundProcess([str(exe)],cwd=folder,env=env,stdout=output,stderr=subprocess.STDOUT,run_id=client['run_id'])
+                    if native_local:
+                        # Idle native hosts busy-poll. Leave the actual client
+                        # at normal priority while copied background services
+                        # yield CPU to concurrent tasks and their game clients.
+                        import psutil
+                        psutil.Process(process.pid).nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
                 owned_processes.append(process)
                 state_row={'folder':spec['folder'],'pid':process.pid,'exe':str(exe),
                     'desktop':process.desktop_path,'attempt':attempt}
