@@ -30,6 +30,7 @@ Mod 源码库保存框架、Mod、测试代码、fixture 声明、配置范本�
 | `mods/game_test_client` | 原生登录、机库、房间、战斗与指定场景观察和断言 |
 | `mods/game_test_server`、`tools/game_test_server_report.py` | 观察真实服务端战斗、结算和返回流程 |
 | `tools/game_test_fps.py` | 不登录的 FPS 参数矩阵；战斗速度须另用相关战斗检查 |
+| `tools/game_test_local_sql.py`、`tools/native_sql` | 复用复制的原生 SQL；配置只写任务自己的 HKCU 分支，SQL进程内重定向，不安装系统实例或修改生产登记 |
 | `tools/game_test_environment.py` | 已有环境归属与回收记录；`environment list/recover` 可检查和回收旧遗留环境 |
 | `tools/game_test_fixtures.py` | 已有五账号和公共机体数据的声明/核验；普通测试不调用账号创建函数 |
 
@@ -66,6 +67,6 @@ Mod 源码库保存框架、Mod、测试代码、fixture 声明、配置范本�
 
 不新增独立的测试总结、部署报告或日期式验证记录来替代 README 和功能文档。GameTest 自动生成的 JSON、JUnit 和日志留在本地被 Git 忽略的测试输出目录，用于排错；不将它们复制成公开功能文档或最终交付入口。
 
-结束前清理所属临时环境，保留可复用模板、测试代码和必要的本地日志。最终回复简要说明功能、部署和提交结果。
+结束前清理所属临时环境，保留统一 test、公共资产、测试代码和未解决问题的必要诊断；成功测试记录删除。最终回复简要说明功能、部署和提交结果。
 
 测试框架迁移不取消上述已授权交付。公开文档不添加本机端点、临时报告或账号数据。结束时简要说明真实验收、部署/提交和清理状态；未通过的机体问题继续推进，不能因框架已提交就宣布修复完成。
