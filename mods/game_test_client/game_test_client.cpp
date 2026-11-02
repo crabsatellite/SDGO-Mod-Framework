@@ -1107,8 +1107,9 @@ int __cdecl ConfigureDeck(const SdgoGameTestContextV1* context) {
         const auto result=decks.ObserveExistingDeck(deckUnitUids,prepared);
         if (result==BattleShipDeckActions::kWaitingForShipData || result==BattleShipDeckActions::kWaitingForInventory)
             return SDGO_GAME_TEST_WAIT;
-        context->Assert(result==BattleShipDeckActions::kAccepted && prepared.profile_matches && prepared.selected_count==4,
-            "the server-loaded selected four-unit fleet matches the sealed fixture and every UID exists in this account's native inventory");
+        context->Assert(result==BattleShipDeckActions::kAccepted && prepared.profile_matches &&
+            prepared.selected_count>=1 && prepared.selected_count<=4 && prepared.total_cost<=10,
+            "the server-loaded selected fleet has one to four unique owned units within the native ten-point budget");
         char state[160];sprintf_s(state,"existing native fleet ship=%llu leader=%llu units=%u cost=%u; no acquisition or deck edit requested",
             prepared.ship_uid,prepared.leader_uid,prepared.selected_count,prepared.total_cost);context->Observe(state);
         return result==BattleShipDeckActions::kAccepted ? SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;

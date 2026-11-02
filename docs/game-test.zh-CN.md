@@ -126,6 +126,8 @@ python tools/game_test.py run --run-dir build/gametest/pvp --timeout 3600
 `--expected-ai 7 --ai-allies 3 --ai-policy fill` 验证 `!ai fill`，或
 `--expected-ai 7 --ai-allies 0 --ai-policy enemy` 验证 `!ai enemy`。
 这些参数可与 `--random-teams`、`--random-loadout` 组合，敌友仍相对房主最终阵营。
+普通 Grid/Tag 回归只读核对账号已选的战舰：1–4 台各不重复的已有机体、有效旗舰和不超过 10 的原生点数。
+不要求先重建四机体编队；专门的 `--deck-only` 编辑场景仍使用显式四机体声明，走原生 Save/GoOut 回执。
 连接地址默认 `127.0.0.1:5001`，可用 `--target-host` 和 `--login-port` 修改；
 服务器和频道由原客户端正常流程自动选择。
 默认 `--network-policy direct` 仅在测试副本关闭继承的地址转发，并在登录前核对
