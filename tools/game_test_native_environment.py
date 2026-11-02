@@ -143,7 +143,8 @@ class NativeDriver:
         self.registry.record(lease, {'kind': 'container', 'name': prefix})
         env = os.environ.copy()
         env['MSSQL_SA_PASSWORD'] = self.private['sa_password']
-        cid = docker('create', '--name', prefix, *flags, '--network', 'none', '--cpus', '1.5', '--memory', '4g',
+        cid = docker('create', '--name', prefix, *flags, '--network', 'bridge',
+            '--publish','127.0.0.1::1433','--cpus', '1.5', '--memory', '4g',
             '--env', 'ACCEPT_EULA=Y', '--env', 'MSSQL_PID=Developer', '--env', 'MSSQL_SA_PASSWORD',
             '--env', 'MSSQL_COLLATION=Chinese_PRC_CI_AS',
             '--env', 'MSSQL_MEMORY_LIMIT_MB=2048', '--mount',
@@ -152,9 +153,16 @@ class NativeDriver:
         atomic_json(lease.root / 'private/instance.json', self.private)
         description = json.loads(docker('inspect', prefix))[0]
         check_labels(description, lease)
-        if description['HostConfig']['NetworkMode'] != 'none' or any(x['Type'] != 'volume' for x in description['Mounts']):
-            raise RuntimeError('Private SQL must have network=none and no host bind mounts.')
+        bindings=description['HostConfig'].get('PortBindings') or {}
+        if (description['HostConfig']['NetworkMode'] != 'bridge' or
+            any(x['Type'] != 'volume' for x in description['Mounts']) or set(bindings)!={'1433/tcp'} or
+            len(bindings['1433/tcp'])!=1 or bindings['1433/tcp'][0].get('HostIp')!='127.0.0.1'):
+            raise RuntimeError('Private SQL must publish only its owned loopback endpoint and have no host bind mounts.')
         docker('start', prefix)
+        published=json.loads(docker('inspect',prefix))[0]['NetworkSettings']['Ports'].get('1433/tcp') or []
+        if len(published)!=1 or published[0].get('HostIp')!='127.0.0.1':
+            raise RuntimeError('Private SQL published endpoint escaped loopback.')
+        self.private['port']=int(published[0]['HostPort'])
         deadline = time.monotonic() + 150
         while True:
             try:
@@ -165,8 +173,6 @@ class NativeDriver:
             if time.monotonic() > deadline:
                 raise RuntimeError('Owned private SQL startup timed out.')
             time.sleep(1)
-        self.bridge = SqlBridge(prefix, on_process=lambda p: self.record_process(lease, p, shutil.which('docker'), 'sql_transport'))
-        self.private['port'] = self.bridge.port
         atomic_json(lease.root / 'private/instance.json', self.private)
         self.progress('sql_ready')
 
