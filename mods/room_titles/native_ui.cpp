@@ -90,6 +90,7 @@ using StaticTextSetFn = void (__thiscall*)(void*, const HostWString24*);
 using StaticTextWordSkipFn = void (__thiscall*)(void*, std::uint8_t);
 using InitFn = void (__thiscall*)(void*, std::uint32_t);
 using UpdateFn = void (__thiscall*)(void*);
+using WidthTrimFn = void (__thiscall*)(void*, HostWString24*);
 using TitleRenderFn = void (__thiscall*)(void*, const void*);
 using PvpRoomListFn = void (__thiscall*)(void*, const void*);
 using MissionRoomRowFn = void (__thiscall*)(void*, int);
@@ -125,6 +126,13 @@ InitFn g_gridPvpCreateInit = nullptr;
 InitFn g_teamSettingsInit = nullptr;
 UpdateFn g_nativePvpCreateUpdate = nullptr;
 UpdateFn g_gridPvpCreateUpdate = nullptr;
+WidthTrimFn g_widthTrim = nullptr;
+struct RegisteredEdit {
+    void* service = nullptr;
+    void* edit = nullptr;
+    const void* serviceVtable = nullptr;
+};
+RegisteredEdit g_registeredEdits[static_cast<std::size_t>(Surface::TeamSettings) + 1] = {};
 TitleRenderFn g_pvpTitleRender = nullptr;
 TitleRenderFn g_missionTitleRender = nullptr;
 PvpRoomListFn g_pvpRoomList = nullptr;
@@ -577,8 +585,34 @@ void CompleteInit(Surface surface, void* service)
                        SurfaceName(surface));
         edit = nullptr;
     }
+    auto& registered = g_registeredEdits[static_cast<std::size_t>(surface)];
+    registered = {};
+    if (edit && IsAccessibleRange(service, sizeof(void*), false)) {
+        registered.service = service;
+        registered.edit = edit;
+        std::memcpy(&registered.serviceVtable, service, sizeof(void*));
+    }
     if (g_callback)
         g_callback(surface, service, edit);
+}
+
+void __fastcall TrimEditToWidth(void* self, void*, HostWString24* text)
+{
+    if (IsEdit(self)) {
+        std::uint32_t bytes = 0;
+        if (IsAccessibleRange(static_cast<std::uint8_t*>(self) + kEditLimitOffset, sizeof(bytes), false))
+            std::memcpy(&bytes, static_cast<std::uint8_t*>(self) + kEditLimitOffset, sizeof(bytes));
+        if (bytes == kTitleLimitBytes) {
+            for (std::size_t i = 0; i < std::size(g_registeredEdits); ++i) {
+                const auto& registered = g_registeredEdits[i];
+                if (registered.edit == self &&
+                    IsObjectWithVtable(registered.service, registered.serviceVtable) &&
+                    FindRoomNameEdit(registered.service, static_cast<Surface>(i)) == self)
+                    return; // preserve the full room title instead of a width-sized prefix
+            }
+        }
+    }
+    g_widthTrim(self, text);
 }
 
 void __fastcall PvpCreateInit(void* self, void*, std::uint32_t argument)
@@ -767,7 +801,10 @@ bool InstallInitHooks(InitCallback callback)
         return false;
     g_callback = callback;
 
-    if (!g_api->HookSlot(g_mod, "room_titles.ui_native_pvp_create_update",
+    if (!g_api->HookCode(g_mod, "room_titles.ui_edit_width_trim",
+                         reinterpret_cast<void*>(&TrimEditToWidth),
+                         reinterpret_cast<void**>(&g_widthTrim)) ||
+        !g_api->HookSlot(g_mod, "room_titles.ui_native_pvp_create_update",
                          reinterpret_cast<void*>(&NativePvpCreateUpdate),
                          reinterpret_cast<void**>(&g_nativePvpCreateUpdate)) ||
         !g_api->HookSlot(g_mod, "room_titles.ui_grid_pvp_create_update",

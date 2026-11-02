@@ -38,7 +38,8 @@ using TitleLookupCallback = bool (*)(bool battle_domain,
 // Resolve the verified host helpers used below. This does not install hooks.
 bool Bind(const SdgoApi* api, SdgoMod* mod);
 
-// Hook the seven verified init slots and both late PvP create updates. A false result must make the
+// Hook the verified init slots, late PvP create updates and scoped width policy.
+// A false result must make the
 // containing Mod decline to load so the core rolls back any earlier slot swap.
 bool InstallInitHooks(InitCallback callback = nullptr);
 
