@@ -179,7 +179,8 @@ class NativeTemplateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory)/'snapshot.bak';source.write_bytes(payload)
             def transfer(argv, **kwargs):
-                self.assertEqual(kwargs['stdin'].read(), payload)
+                import gzip
+                self.assertEqual(gzip.decompress(kwargs['stdin'].read()), payload)
                 self.assertNotIn('--mount', argv)
                 return mock.Mock(returncode=0)
             with mock.patch('tools.game_test_native_environment.subprocess.run',side_effect=transfer):

@@ -4,6 +4,7 @@ import argparse
 import configparser
 import copy
 import contextlib
+import gzip
 import hashlib
 import json
 import ipaddress
@@ -14,6 +15,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 import xml.etree.ElementTree as ET
@@ -40,9 +42,12 @@ def copy_snapshot(container, source, destination):
     snapshots. A plain stdin transfer stays inside the owned SQL container;
     RESTORE WITH CHECKSUM below still validates the original backup bytes.
     """
-    with source.open('rb') as stream:
-        result = subprocess.run(['docker', 'exec', '-i', container, 'dd',
-            'of='+destination, 'bs=1048576', 'status=none'], stdin=stream,
+    with tempfile.TemporaryFile() as stream:
+        with source.open('rb') as original, gzip.GzipFile(fileobj=stream,mode='wb',compresslevel=1,mtime=0) as compressed:
+            shutil.copyfileobj(original,compressed,1024*1024)
+        stream.seek(0)
+        result = subprocess.run(['docker', 'exec', '-i', container, 'sh', '-c',
+            'gzip -dc > "$1"', 'snapshot-transfer', destination], stdin=stream,
             capture_output=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), timeout=600)
     if result.returncode:
         raise RuntimeError('Private SQL snapshot transfer failed: '+result.stderr.decode('utf-8',errors='replace')[-1000:])
