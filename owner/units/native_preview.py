@@ -205,6 +205,9 @@ def _capsule_catalog(engine, family, client, output):
         if record['UnitGradeNumber'] in (1,2,3,4) and record['UnitGradeNumber2'] in (1,2,3,4,5)}
     units[root]=capsule_unit(engine,family)
     for index,uid in enumerate(native_ids):
+        # An earlier preview can already contain this root. Its resident
+        # card must not override the author's newly selected source image.
+        if uid==root:continue
         units[uid]['capsule_sprites']=[source[59+(index*2+j)*60:59+(index*2+j+1)*60].decode('utf-16-le').split('\0')[0] for j in (0,1)]
     machine_id=struct.unpack_from('<I',source,5)[0]
     catalog={'schema_version':1,'units':list(units.values()),'custom_machines':[],'fixed_machines':[
