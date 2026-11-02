@@ -58,41 +58,42 @@ and the observer setting before startup. After real AI movement is observed,
 the case checks 60 Hz gameplay and requires rendering above 60 FPS when selecting
 a higher cap, then continues the ordinary battle, settlement and return flow.
 
-### Recreate a local backend
+### Reuse a local native backend
 
-`tools/game_test_backend.py` owns copied native services and an isolated SQL
-container. It requires Docker, a compatible local native server tree, the server
-stage, and verified database backups (`backend.json` plus its `backups` folder).
+`tools/game_test_backend.py serve` runs an already configured local test server
+with its independent native SQL instance. It does not use Docker or recopy and
+restore databases on every retry. The backend's `backend.json`, `private.json`
+and actual SQL files must identify the same test copy; startup checks the live
+SQL process and data-file paths. See the [guide](../skills/sdgo-native-testing/SKILL.md)
+for test-copy preparation and existing accounts.
+
 Build `winmm_shim`, `sdgo_core`, `sdgo_data`, `pvp_ai` and `game_test_server` for
-that server stage. Missing loader, observer or symbol files fail preflight
-before SQL resources are created or databases are restored.
-Use a fresh work directory and an unused IPv4 loopback address. For example:
+the server stage. This example assumes the test copy already uses `127.93.0.1`
+and its private database configuration is ready:
 
 ```powershell
-python tools/game_test_backend.py prepare --source-server D:\SDGO\Server --stage build/stage/Release --backup-source D:\Tests\verified-backend --work build/fps-backend --target-ip 127.93.0.1
-python tools/game_test.py prepare --client-template D:\Games\SDGO --stage build/stage/Release --run-dir build/fps-probe --target-host 127.93.0.1 --login-port 5001 --fps-cap 160
-python tools/game_test_backend.py serve --work build/fps-backend --client-run build/fps-probe --stage build/stage/Release --startup-xml D:\SDGO\ServerStartUp\ServerStartUp.xml --lifetime 1800
+python tools/game_test.py prepare --client-template D:\SDGO-Test\client --stage build/stage/Release --run-dir build/fps-probe --target-host 127.93.0.1 --login-port 5001 --fps-cap 160
+python tools/game_test_backend.py serve --work D:\SDGO-Test\server --client-run build/fps-probe --stage build/stage/Release --startup-xml D:\SDGO-Test\server\ServerStartUp\ServerStartUp.xml --lifetime 1800
 ```
 
-Run the matrix from another terminal after `backend_ready`, specifying that
-same `--target-host`. Service startup retries and database readiness probes are
-bounded; launch selection uses both the startup XML and native channel table.
-The FPS suite never needs an account. Other suites reuse their private account
-profile by default; authenticated backend observers also require
-`serve --host-pilot-id <actual native pilot ID>` for that account. No account ID
-is embedded in the backend tool. Live COPY_ONLY backup is an explicit opt-in
-(`--allow-live-copy-only`) when a verified backup source is unavailable.
+Launch selection reads both the native startup XML and channel table. Wait for
+each Battle's new `Table Download OK.. Time Procedure Ready..` marker and
+`backend_ready` before starting clients; an open TCP port is insufficient.
+The FPS suite needs no account. Other suites bind an existing private account
+profile, and authenticated observers also require
+`serve --host-pilot-id <actual native pilot ID>`. No account ID is embedded.
+Client-only scenarios can reuse a ready server session; restart owned services
+when their candidate DLLs change.
 
 ```powershell
-python tools/game_test_backend.py stop --work build/fps-backend
-python tools/game_test_backend.py cleanup --work build/fps-backend --remove-runtime
+python tools/game_test_backend.py stop --work D:\SDGO-Test\server
 ```
 
-Cleanup verifies owned service exit and the SQL container/volume identity, then
-removes private credentials and copied runtime while retaining public receipts.
-The separately prepared `fps-probe` belongs only to that test: remove it after
-its process has exited and evidence is exported. Shared backups and source
-servers remain available for later environments.
+Verify owned service exit after stopping. Preserve the shared test copy, native
+SQL, existing accounts and common assets. After acceptance and required deployment
+readback, move successful temporary records and owned concurrent copies to the
+Recycle Bin; retain failure diagnostics until resolved. Test runtimes, databases
+and private configuration stay local and are not runtime publication sources.
 
 An optional development Mod, disabled by default. Test cases run inside the
 real client and use its normal business requests against a real server.
