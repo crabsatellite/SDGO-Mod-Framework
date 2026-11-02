@@ -24,7 +24,8 @@ public:
         notify_=Symbol<Notify>("title_test.dialog_notify");
         input_=Symbol<uint8_t**>("room_titles.ui_input_context");
         clearFocus_=Symbol<EditInputFocus>("title_test.clear_input_focus");
-        if(!(manager_&&find_&&get_&&focus_&&notify_&&input_&&clearFocus_))return false;
+        imeFilter_=Symbol<ImeFilter>("ime.message_filter");
+        if(!(manager_&&find_&&get_&&focus_&&notify_&&input_&&clearFocus_&&imeFilter_))return false;
         active_=this;
         return api_->HookCode(mod_,"room_titles.ui_input_limit",reinterpret_cast<void*>(&ObserveInputLimit),reinterpret_cast<void**>(&inputLimit_)) &&
             api_->HookCode(mod_,"title_test.edit_input_focus",reinterpret_cast<void*>(&ObserveEditInputFocus),reinterpret_cast<void**>(&editInputFocus_)) &&
@@ -75,6 +76,7 @@ private:
     using Focus=void(__thiscall*)(void*,void*);
     using Notify=void(__thiscall*)(void*,uint32_t,int,void*);
     using InputLimit=void(__thiscall*)(void*,uint32_t,int);
+    using ImeFilter=bool(__stdcall*)(void*,HWND*,UINT*,WPARAM*,LPARAM*);
     using EditInputFocus=void(__thiscall*)(void*);
     static void __fastcall ObserveEditInputFocus(void* edit,void*) {
         auto* owner=active_;owner->editInputFocus_(edit);
@@ -272,19 +274,21 @@ private:
             if(!IsWindow(hwnd))throw std::runtime_error("native input HWND absent");
             SendMessageW(hwnd,EM_SETSEL,0,-1);
             SendMessageW(hwnd,EM_REPLACESEL,FALSE,reinterpret_cast<LPARAM>(L""));
-            // Queue committed characters through the original message pump.
-            // Synchronous EDIT replacement bypasses the game's IME filter and
-            // can be replaced by its still-uncommitted default on the next tick.
-            for(wchar_t ch:tests_[inputIndex_])
-                if(!PostMessageW(hwnd,WM_CHAR,ch,1))throw std::runtime_error("native character message could not be queued");
-            char lengths[128];sprintf_s(lengths,"queued native character input expected=%zu",tests_[inputIndex_].size());c->Observe(lengths);
+            // Match the original message-loop ordering: the actual CIMEHandler
+            // sees committed characters before Windows dispatch. Posting only
+            // to its hidden EDIT skips this game's outer input filter.
+            for(wchar_t ch:tests_[inputIndex_]){
+                HWND target=hwnd;UINT message=WM_CHAR;WPARAM value=ch;LPARAM flags=1;
+                if(!imeFilter_(*input_,&target,&message,&value,&flags))SendMessageW(target,message,value,flags);
+            }
+            char lengths[160];sprintf_s(lengths,"native IME character input expected=%zu immediate=%zu hwnd=%d",tests_[inputIndex_].size(),Text(get_(edit_)).size(),GetWindowTextLengthW(hwnd));c->Observe(lengths);
             phase_=2;polls_=0;return SDGO_GAME_TEST_WAIT;
         }
         if(phase_==2){
             if(Text(get_(edit_))!=tests_[inputIndex_]){
                 if(++polls_<120)return SDGO_GAME_TEST_WAIT;
                 HWND hwnd=*reinterpret_cast<HWND*>(*input_+0x134);
-                char line[240];sprintf_s(line,"input lengths: expected=%zu native_edit=%zu hwnd=%d hwnd_limit=%lld edit_limit=%u setter=%08X requested=%u clear=%d",tests_[inputIndex_].size(),Text(get_(edit_)).size(),GetWindowTextLengthW(hwnd),static_cast<long long>(SendMessageW(hwnd,EM_GETLIMITTEXT,0,0)),*reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(edit_)+0x2A0),static_cast<unsigned>(lastLimitCaller_),lastLimit_,lastClear_);c->Observe(line);
+                char line[320];sprintf_s(line,"input lengths: expected=%zu native_edit=%zu hwnd=%d hwnd_limit=%lld edit_limit=%u setter=%08X requested=%u clear=%d ime_committed=%u ime_display=%u native_cache=%u",tests_[inputIndex_].size(),Text(get_(edit_)).size(),GetWindowTextLengthW(hwnd),static_cast<long long>(SendMessageW(hwnd,EM_GETLIMITTEXT,0,0)),*reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(edit_)+0x2A0),static_cast<unsigned>(lastLimitCaller_),lastLimit_,lastClear_,*reinterpret_cast<uint32_t*>(*input_+0x80),*reinterpret_cast<uint32_t*>(*input_+0xD4),*reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(edit_)+0x22C));c->Observe(line);
                 throw std::runtime_error("typed/pasted title was truncated or absent in the real native edit");
             }
             c->Assert(1,inputIndex_==0?"21 keyboard characters survive in the real game edit":inputIndex_==1?"Chinese title beyond twenty characters survives native input":"128 Chinese characters survive native input without truncation");
@@ -312,6 +316,7 @@ private:
     EditInputFocus editInputFocus_=nullptr,clearFocus_=nullptr;void* actualInputEdit_=nullptr;
     uintptr_t lastLimitCaller_=0;uint32_t lastLimit_=0;int lastClear_=0;unsigned uiRestarts_=0;
     KeyPressed keyPressed_=nullptr;uint32_t pendingTitleKey_=0;
+    ImeFilter imeFilter_=nullptr;
     unsigned phase_=0,inputIndex_=0,polls_=0;bool opened_=false,reopened_=false;void* dialog_=nullptr;void* edit_=nullptr;
     std::vector<std::wstring> tests_;std::string expected_,beforeCancel_;uint64_t cancelAt_=0;
 };
