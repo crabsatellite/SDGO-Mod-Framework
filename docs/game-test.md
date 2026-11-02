@@ -118,8 +118,12 @@ Tests default to a separate background desktop with BGM, effects and voice
 muted in the copied client. Desktop/window ownership is checked separately and
 missing evidence fails the run. A dedicated graphics thread creates the real
 D3D9 device through one invisible, nonactivating proxy; actual game pages stay
-on the private desktop. Fullscreen is rejected. The native Miles WaveOut
-driver's zero master gain is read back independently. The copied logic-test
+on the private desktop. Fullscreen is rejected.
+If Windows denies access to the locked input desktop, the launcher instead
+verifies the private game windows and the single, hidden graphics proxy on
+the named Default desktop. Other observation errors or unrecognized windows
+still fail the run; inaccessible input-desktop state remains explicitly unknown.
+The native Miles WaveOut driver's zero master gain is read back independently. The copied logic-test
 profile disables native postprocessing, sets all five native effect levels to
 zero and checks the effective runtime flags. These checks do not claim visual or
 postprocessing acceptance. Local direct tests bind only loopback and do
