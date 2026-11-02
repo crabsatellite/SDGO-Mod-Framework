@@ -179,7 +179,9 @@ class Capsules(Provider):
             if c.get('install_client'):
                 from .engines.capsules.capsule_deployment import DeploymentTarget
                 callback = DeploymentTarget(client_target=c['install_client'], server_ini=c.get('server_ini'),
-                    framework_stage=c.get('framework_stage'), symbol_fragment=c.get('symbol_fragment')).apply
+                    framework_stage=c.get('framework_stage') or c.get('client') or c['install_client'],
+                    symbol_fragment=c.get('symbol_fragment') or
+                        Path(__file__).resolve().parents[1]/'mods/capsule_catalog/symbol-proposal.ini').apply
             store = CatalogStore(c['catalog'], patterns_path=c.get('patterns'), assets_path=c.get('assets'),
                 bundle_path=c.get('bundle_output'), snapshot_path=c.get('snapshot'), client_path=c.get('client'),
                 lookup_path=c.get('lookup'), apply_callback=callback)
