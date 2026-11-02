@@ -74,6 +74,8 @@ python tools/game_test.py environment run --template <existing-template> --accou
 
 - 先读 `progress.json`、native 日志和精确失败步骤。核实本次独立 IP、登录端口、账号绑定、服务 readiness，再诊断网络。`0x80070005` 建防火墙规则失败只说明那条远程路径权限不足，不能推断回环、Docker 或全部测试不可用。
 - Battle 启动集合必须同时满足原生 `ServerStartUp.xml` 的 Run 配置和数据库 `tbl_ChannelInfo.AddrPT`；不得因目录存在而启动未登记 Battle 频道，也不得放宽原生行数校验。
+- 原生服务器 INI 保留 `DBServerName`、`DBName` 等键的原始大小写。`manager.storage.ini_values` 是折叠大小写的查询视图，不能用于重写这些文件；使用保留键名的 `game_test.read_ini`。`08001` 也可能是配置被读成空地址，先查原生 `LogData`，不要直接归因防火墙。
+- 模板复制时按 manifest 的 `source_root` 字面路径重定位，同时处理实际访问路径；Windows 打包应用的 LocalAppData 别名可能与磁盘访问路径拼写不同。运行副本里的可写 Mod 数据目录必须归本环境，不得残留对另一模板或其他环境的路径。
 - 测试隐藏、静音并隔离输入；真实客户端 sockets 和服务端监听要读回为回环。不得操作用户桌面或以交互客户端代替失败的后台测试。
 - 现有模板和现有账号优先。**只有已确认场景缺少必要公共数据时**，才读 [公共模板数据维护](references/template-data.md)。普通 bug 验证不能顺手注册新账号、补库存或开发功能。
 - 修复后的交付沿用仓库 `AGENTS.md` 和用户当前授权。本项目已授权通过相关完整 GameTest 后常规合入/push 和本地部署；完整运行时发布和实际读回是独立证据，不从测试通过推断已部署。
