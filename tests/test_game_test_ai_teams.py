@@ -36,6 +36,26 @@ class NativeAiTeamPlanTests(unittest.TestCase):
         self.assertNotIn('ai_allies',plan)
         self.assertTrue(plan['room_title'].endswith('!ai e3 a2'))
 
+    def test_named_population_policies_are_exercised_instead_of_replaced_with_exact_counts(self):
+        for policy,allies in (('enemy',0),('fill',3)):
+            for random in (False,True):
+                run=self.fixture.prepare(policy+str(random),expected_ai=7,ai_allies=allies,
+                    ai_policy=policy,random_loadout=random,random_teams=True)
+                metadata=self.fixture.metadata(run)
+                self.assertTrue(metadata['plan']['room_title'].endswith('!ai '+policy+(' !rand' if random else '')))
+                self.assertEqual(self.gt.validate_metadata(run)['plan'],metadata['plan'])
+                job=self.gt.read_ini(run/'client/sdgo/gametest/run.ini')
+                self.assertEqual(job['run']['ai_policy'],policy)
+
+    def test_automatic_policy_cannot_claim_a_different_population_or_skip_native_battle(self):
+        for args in ({'expected_ai':3,'ai_policy':'enemy','ai_allies':0},
+                     {'expected_ai':7,'ai_policy':'fill','ai_allies':0},
+                     {'expected_ai':7,'ai_policy':'enemy','ai_allies':3},
+                     {'expected_ai':7,'ai_policy':'enmey','ai_allies':0},
+                     {'ai_policy':'fill','pages_only':True}):
+            with self.subTest(args=args),self.assertRaises(self.gt.GameTestError):
+                self.fixture.prepare('invalid-policy-'+str(len(str(args))),**args)
+
     def test_invalid_or_non_battle_team_counts_fail_before_launch(self):
         for arguments in ({'expected_ai':7,'ai_allies':-1},{'expected_ai':7,'ai_allies':7},
                           {'ai_allies':0,'pages_only':True},{'ai_allies':0,'bootstrap_only':True},

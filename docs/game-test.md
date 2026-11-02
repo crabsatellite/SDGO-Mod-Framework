@@ -153,6 +153,10 @@ To switch a stopped client to another existing test identity, combine
 The target must declare `registered` or `existing_account`, without registration
 retries. Both profiles are locked and preserved while the same client files are
 reused. Bind the server observer to the target account's actual pilot ID too.
+For a single host in an eight-player room, exercise automatic commands with
+`--expected-ai 7 --ai-allies 3 --ai-policy fill`, or
+`--expected-ai 7 --ai-allies 0 --ai-policy enemy`. These test `!ai fill` and
+`!ai enemy` directly and can combine with `--random-teams` or `--random-loadout`.
 Install `Send2Trash` in the developer environment; reuse has no permanent-delete
 fallback. The same account cannot run concurrently. The default endpoint is
 `127.0.0.1:5001`; change it with `--target-host` and `--login-port`. The original

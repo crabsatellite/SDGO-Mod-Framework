@@ -1542,6 +1542,16 @@ def account_profile_lock_path(path: Path) -> Path:
     return path.with_name(path.name + ".run.lock")
 
 
+def ai_room_command(expected_ai: int, allies: int, policy: str | None = None) -> str:
+    if policy is None:return f'!ai e{expected_ai-allies} a{allies}'
+    if policy not in ('fill','enemy'):
+        raise GameTestError('AI population policy must be fill or enemy')
+    expected_allies=3 if policy=='fill' else 0
+    if expected_ai!=7 or allies!=expected_allies:
+        raise GameTestError('automatic AI policies require seven bots with three allies for fill or zero for enemy in the single-host eight-player room')
+    return '!ai '+policy
+
+
 def make_plan(
     target_host: str,
     login_port: int,
@@ -1556,6 +1566,7 @@ def make_plan(
     mission_mode: int | None = None,
     ai_allies: int | None = None,
     random_teams: bool = False,
+    ai_policy: str | None = None,
 ) -> dict:
     if not 1 <= login_port <= 65535:
         raise GameTestError("login_port must be between 1 and 65535")
@@ -1565,7 +1576,7 @@ def make_plan(
         raise GameTestError("expect_first_fail requires retry_count=2")
     mission_mode = validate_mission_mode(mission_mode)
     if mission_mode is not None:
-        if ai_allies is not None or random_teams:
+        if ai_allies is not None or random_teams or ai_policy is not None:
             raise GameTestError('custom PvP AI teams cannot be used in a mission smoke plan')
         if mode_sequence != "1":
             raise GameTestError("--mission-mode cannot be combined with a PvP mode sequence")
@@ -1613,10 +1624,12 @@ def make_plan(
             plan['ai_allies']=allies
         if type(random_teams) is not bool:raise GameTestError('random_teams must be a boolean')
         if random_teams:plan['random_teams']=True
+        command=ai_room_command(expected_ai,allies,ai_policy)
+        if ai_policy is not None:plan['ai_policy']=ai_policy
         plan.update({
             "mode_sequence": ",".join(str(mode) for mode in modes),
             "expected_ai": expected_ai,
-            "room_title": f"{title_nonce} !ai e{enemies} a{allies}",
+            "room_title": f"{title_nonce} {command}",
         })
     play_unit_uid = validate_play_unit_uid(play_unit_uid)
     if play_unit_uid is not None:
@@ -1751,6 +1764,7 @@ def write_job(
         run["run"]["expected_ai"] = str(plan["expected_ai"])
         if 'ai_allies' in plan:run['run']['ai_allies']=str(plan['ai_allies'])
         if plan.get('random_teams'):run['run']['random_teams']='1'
+        if 'ai_policy' in plan:run['run']['ai_policy']=plan['ai_policy']
     if 'play_unit_uid' in plan:
         run['run']['play_unit_uid'] = str(plan['play_unit_uid'])
     if all(field in plan for field in SHOP_PLAN_FIELDS):
@@ -1973,6 +1987,12 @@ def read_public_plan(root: Path) -> dict:
             if 'random_teams' in run:
                 if run['random_teams']!='1':raise ValueError('invalid native random-team flag')
                 plan['random_teams']=True
+            if 'ai_policy' in run:
+                policy=run['ai_policy']
+                command=ai_room_command(plan['expected_ai'],plan.get('ai_allies',plan['expected_ai']//2),policy)
+                suffix=' !rand' if run.get('random_loadout')=='1' else ''
+                if not run['room_title'].endswith(' '+command+suffix):raise ValueError('automatic AI policy differs from the sealed room command')
+                plan['ai_policy']=policy
         if play_unit_uid is not None:
             plan['play_unit_uid'] = play_unit_uid
         if shop_plan is not None:
@@ -2000,7 +2020,7 @@ def read_public_plan(root: Path) -> dict:
                 if (
                     not re.fullmatch(r'[0-9a-f]{4}', nonce)
                     or run['room_title'] !=
-                    f'{nonce} !ai e{expected_ai-allies} a{allies} !rand'
+                    f"{nonce} {ai_room_command(expected_ai,allies,plan.get('ai_policy'))} !rand"
                 ):
                     raise ValueError('random native room command differs')
                 plan['random_loadout'] = True
@@ -2236,6 +2256,7 @@ def prepare(
     expected_ai: int = 3,
     ai_allies: int | None = None,
     random_teams: bool = False,
+    ai_policy: str | None = None,
     play_unit_uid: int | None = None,
     mission_mode: int | None = None,
     launcher_path: str | None = None,
@@ -2267,7 +2288,7 @@ def prepare(
     client_template = client_template.resolve()
     if rebind_existing_account:
         raise GameTestError('existing-account rebinding requires --reuse-client')
-    if (ai_allies is not None or random_teams) and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,
+    if (ai_allies is not None or random_teams or ai_policy is not None) and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,
             battleship_only,gift_requests_only,deck_only,pages_only))):
         raise GameTestError('custom AI team counts require a complete native PvP battle')
     if fps_gameplay_cap is not None:
@@ -2440,6 +2461,7 @@ def prepare(
             mission_mode,
             ai_allies,
             random_teams,
+            ai_policy,
         )
         if server_session is not None:
             if (not isinstance(server_session,dict) or
@@ -2465,7 +2487,7 @@ def prepare(
             # sixteen random bits as the ordinary gt-prefixed nonce.
             plan['title_nonce']=secrets.token_hex(2)
             allies=plan.get('ai_allies',expected_ai//2)
-            plan['room_title']=f"{plan['title_nonce']} !ai e{expected_ai-allies} a{allies} !rand"
+            plan['room_title']=f"{plan['title_nonce']} {ai_room_command(expected_ai,allies,plan.get('ai_policy'))} !rand"
             plan['random_loadout']=True
         plan['network_policy']=network_policy
         if route_binding is not None:
@@ -3725,6 +3747,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument("--expected-ai", type=int, default=3)
     prepare_parser.add_argument('--ai-allies',type=int,help='exact allied AI count for the single host; remaining --expected-ai are enemies')
     prepare_parser.add_argument('--random-teams',action='store_true',help='request original native random human teams before AI placement')
+    prepare_parser.add_argument('--ai-policy',choices=('fill','enemy'),help='exercise an automatic population command; requires --expected-ai 7 and matching --ai-allies')
     prepare_parser.add_argument('--play-unit-uid',type=int,
                                 help='select an existing genuinely owned non-zero uint64 unit UID through native hangar UI before PvP, pages, or mission tests')
     prepare_parser.add_argument("--sfx-only", action="store_true",
@@ -3817,6 +3840,7 @@ def main(argv: list[str] | None = None) -> int:
                 rebind_existing_account=args.rebind_existing_account,
                 ai_allies=args.ai_allies,
                 random_teams=args.random_teams,
+                ai_policy=args.ai_policy,
                 play_unit_uid=args.play_unit_uid,
                 mission_mode=args.mission_mode,
                 launcher_path=args.launcher_path,
