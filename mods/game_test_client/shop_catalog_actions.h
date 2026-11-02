@@ -47,6 +47,7 @@ public:
         kCancellingGiftPreview = 13,
         kComplete = 14,
         kSubmittingSearch = 15,
+        kWaitingForFullInventory = 16,
 
         kInvalidContext = 0x100,
         kRunChanged = 0x101,
@@ -121,6 +122,7 @@ public:
     struct alignas(4) NativeRequestName {std::array<uint8_t,0x1C> bytes{};};
     static_assert(sizeof(NativeRequestName)==0x1C,"native query string stack size changed");
     using RequestPendingFn=uint32_t(__thiscall*)(void*,NativeRequestName);
+    using UnitPageRequestFn=void(__stdcall*)(uint32_t);
 
     struct Bindings
     {
@@ -134,6 +136,7 @@ public:
         NativeWStringCtorFn native_wstring_ctor = nullptr;
         NativeWStringDtorFn native_wstring_dtor = nullptr;
         RequestPendingFn request_pending=nullptr;
+        UnitPageRequestFn request_unit_page=nullptr;
         NativeUiFindControlFn native_ui_find_control = nullptr;
         GridDataFn grid_data = nullptr;
         GridFindFn grid_find = nullptr;
@@ -261,6 +264,7 @@ public:
             Symbol<NativeWStringDtorFn>(
                 api, mod, "flow.native_wstring_dtor");
         bindings.request_pending=Symbol<RequestPendingFn>(api,mod,"flow.native_request_pending");
+        bindings.request_unit_page=Symbol<UnitPageRequestFn>(api,mod,"flow.unit_page_request");
         bindings.native_ui_find_control =
             Symbol<NativeUiFindControlFn>(
                 api, mod, "flow.native_ui_find_control");
@@ -315,6 +319,7 @@ public:
             bindings_.native_wstring_ctor &&
             bindings_.native_wstring_dtor &&
             bindings_.request_pending &&
+            bindings_.request_unit_page &&
             bindings_.native_ui_find_control &&
             bindings_.grid_data &&
             bindings_.grid_find &&
@@ -456,6 +461,7 @@ public:
         observedCatalogChange_ = false;
         initialCatalogSignature_ = 0;
         verifiedKeys_.clear();
+        requestedInventoryPages_.clear();
         nativeNames_.clear();
         observation_ = {};
         observation_.result =
@@ -494,6 +500,7 @@ public:
         case kCancellingGiftPreview: return "cancelling-gift-preview";
         case kComplete: return "complete";
         case kSubmittingSearch: return "submitting-search";
+        case kWaitingForFullInventory: return "waiting-for-full-inventory";
         case kInvalidContext: return "invalid-context";
         case kRunChanged: return "run-changed";
         case kThreadChanged: return "thread-changed";
@@ -1165,6 +1172,23 @@ private:
         IntegrityImage image;
         const Result captured =
             CaptureIntegrity(&image);
+        if(captured==kInventoryUnavailable && observation_.inventory_failure==6 &&
+           observation_.inventory_brief_uid && !observation_.inventory_full_unit &&
+           !observation_.inventory_full_uid &&
+           observation_.inventory_brief_slot==observation_.inventory_probe_slot &&
+           observation_.inventory_full_slot==observation_.inventory_probe_slot) {
+            const uint32_t page=(observation_.inventory_probe_slot-1)/6;
+            if(!requestedInventoryPages_.count(page)) {
+                const auto ready=CatalogRequestReady(L"REQ_UNIT_SLOT_PAGE");
+                if(ready!=kComplete)return Publish(ready);
+                // Shipped0096EBF0 is a static one-stack-argument RET4 function.
+                // It requests genuinely unloaded six-slot pages, then the
+                // original reply consumer fills the cache. No record writes.
+                if(!RequestUnitPage(bindings_.request_unit_page,page))return Publish(kNativeFault);
+                requestedInventoryPages_.insert(page);
+            }
+            return Publish(kWaitingForFullInventory);
+        }
         if (captured != kComplete)
             return Publish(captured);
         baseline_ = std::move(image);
@@ -1283,14 +1307,14 @@ private:
         return Publish(kWaitingForShop);
     }
 
-    Result CatalogRequestReady()
+    Result CatalogRequestReady(const wchar_t* requestName=L"REQ_GET_STORE_ITEM_LIST")
     {
         void* manager=nullptr;
         if(!ReadIndirect(reinterpret_cast<uint8_t**>(bindings_.service_managed_pointer),
                          reinterpret_cast<uint8_t**>(&manager)) || !manager)return kNativeFault;
         NativeRequestName name;
         __try {
-            if(!bindings_.native_wstring_ctor(name.bytes.data(),L"REQ_GET_STORE_ITEM_LIST"))return kNativeFault;
+            if(!bindings_.native_wstring_ctor(name.bytes.data(),requestName))return kNativeFault;
             // Native6FB930 takes and destroys this 28-byte string by value.
             // The local POD is not a second owning std::wstring.
             const auto pending=bindings_.request_pending(manager,name);
@@ -2908,6 +2932,11 @@ private:
         return result;
     }
 
+    static bool RequestUnitPage(UnitPageRequestFn request,uint32_t page) {
+        __try {request(page);return true;}
+        __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+    }
+
     Bindings bindings_ = {};
     bool bound_ = false;
     bool configured_ = false;
@@ -2922,6 +2951,7 @@ private:
     std::map<uint32_t, RuntimeOption> runtime_;
     std::map<uint32_t, std::wstring> nativeNames_;
     std::set<std::wstring> verifiedKeys_;
+    std::set<uint32_t> requestedInventoryPages_;
     bool stockAssertions_ = false;
     IntegrityImage baseline_;
     bool hasBaseline_ = false;
