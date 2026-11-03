@@ -57,6 +57,8 @@ Beta、Experimental 表示发布阶段。
 
 <!-- /mod-category:gameplay -->
 
+服主还可以使用独立的 [节日与生日赠礼 Manager 模块](docs/calendar-gifts.zh-CN.md)：默认提供节日一台未拥有机体、生日 12 档各一台的规则；本服生日和定向玩家名单不随通用规则分发。
+
 <a id="long-room-title-commands"></a>
 
 补充参考：[房名指令文档](docs/room-commands.zh-CN.md)。
