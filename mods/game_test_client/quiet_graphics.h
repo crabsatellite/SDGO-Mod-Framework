@@ -45,6 +45,7 @@ public:
         uint64_t present_qpc_frequency;
         uint64_t successful_present_min_gap_ticks;
         uint64_t successful_present_max_gap_ticks;
+        uint32_t dispatch_message_pumps;
     };
 
     bool Install(const SdgoApi* api,SdgoMod* mod,bool allowNamedDesktopFallback=false) {
@@ -94,7 +95,7 @@ public:
             reinterpret_cast<uintptr_t>(InterlockedCompareExchangePointer(
                 &lastRenderTargetReturnAddress_,nullptr,nullptr)),Read(namedDesktopFallback_),
             1,Read64(presentQpcFrequency_),Read64(successfulPresentMinGap_),
-            Read64(successfulPresentMaxGap_)
+            Read64(successfulPresentMaxGap_),Read(dispatchMessagePumps_)
         };
     }
 
@@ -161,6 +162,12 @@ private:
     bool Dispatch(Request& request,Invoke invoke) {
         if (!worker_ || !workerReady_ || dispatchBroken_)return false;
         if (GetCurrentThreadId()==proxyThreadId_) {invoke(this,&request);return true;}
+        const LONG caller=static_cast<LONG>(GetCurrentThreadId());
+        if(InterlockedCompareExchange(&dispatchCallerThread_,0,0)==caller) {
+            InterlockedExchange(&dispatchBroken_,1);InterlockedIncrement(&dispatchFailures_);
+            if(api_ && api_->Log)api_->Log(mod_,SDGO_LOG_ERROR,"quiet graphics dispatch reentered: %s",__FUNCSIG__);
+            return false;
+        }
         Request* payload=new(std::nothrow) Request(request);
         DispatchItem* item=new(std::nothrow) DispatchItem{};
         HANDLE done=CreateEventW(nullptr,TRUE,FALSE,nullptr);
@@ -173,15 +180,41 @@ private:
         item->payload=payload;item->done=done;item->references=2;
         item->destroy=[](void* value){delete static_cast<Request*>(value);};
         EnterCriticalSection(&dispatchLock_);
+        if(dispatchBroken_) {
+            LeaveCriticalSection(&dispatchLock_);
+            ReleaseItem(item);ReleaseItem(item);return false;
+        }
+        InterlockedExchange(&dispatchCallerThread_,caller);
         pending_=item;SetEvent(requestEvent_);
         HANDLE waits[2]={done,worker_};
-        const DWORD wait=WaitForMultipleObjects(2,waits,FALSE,DispatchTimeoutMs);
+        const ULONGLONG deadline=GetTickCount64()+DispatchTimeoutMs;
+        DWORD wait=WAIT_FAILED;
+        for(;;) {
+            const ULONGLONG now=GetTickCount64();
+            const DWORD remaining=now>=deadline ? 0:static_cast<DWORD>(deadline-now);
+            wait=MsgWaitForMultipleObjectsEx(2,waits,remaining,QS_SENDMESSAGE,MWMO_INPUTAVAILABLE);
+            if(wait!=WAIT_OBJECT_0+2)break;
+            // Drivers may synchronously message the original window thread.
+            // Process only sent messages: posted game/input/timer work stays
+            // queued until the native graphics request has completed.
+            MSG message{};
+            PeekMessageW(&message,nullptr,0,0,PM_NOREMOVE|PM_QS_SENDMESSAGE);
+            InterlockedIncrement(&dispatchMessagePumps_);
+            if(GetTickCount64()>=deadline) {
+                wait=WaitForMultipleObjects(2,waits,FALSE,0);break;
+            }
+        }
         const bool completed=wait==WAIT_OBJECT_0;
         if (completed)request=*payload;
         else {
             InterlockedExchange(&dispatchBroken_,1);
             InterlockedIncrement(&dispatchFailures_);
+            if(api_ && api_->Log)api_->Log(mod_,SDGO_LOG_ERROR,
+                "quiet graphics dispatch incomplete wait=%lu caller=%lu worker=%lu operation=%s",
+                static_cast<unsigned long>(wait),static_cast<unsigned long>(caller),
+                static_cast<unsigned long>(proxyThreadId_),__FUNCSIG__);
         }
+        InterlockedExchange(&dispatchCallerThread_,0);
         LeaveCriticalSection(&dispatchLock_);
         ReleaseItem(item);
         return completed;
@@ -1102,6 +1135,8 @@ private:
     volatile DispatchItem* pending_=nullptr;
     mutable volatile LONG workerReady_=0,imeDisabled_=0;
     volatile LONG dispatchBroken_=0;
+    volatile LONG dispatchCallerThread_=0;
+    mutable volatile LONG dispatchMessagePumps_=0;
     HWND proxyWindow_=nullptr;
     DWORD proxyThreadId_=0;
     wchar_t proxyDesktop_[64]{};
