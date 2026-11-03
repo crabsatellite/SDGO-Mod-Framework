@@ -55,6 +55,7 @@ uint8_t g_otherControl[0x180] = {};
 uint8_t g_unitRadioControl[0x180] = {};
 uint8_t g_gameRoomControl[0x180] = {};
 uint8_t g_makeRoomControl[0x180] = {};
+uint8_t g_makeTeamControl[0x180] = {};
 uint8_t g_roomList[0x100] = {},g_serviceHead[12] = {},g_serviceNode[12] = {};
 void* g_roomListVtable[32] = {};
 
@@ -364,6 +365,7 @@ void* __fastcall FakeUiFindControl(
     g_lastControlKind = type;
     if (type==4 && root==g_operatorRoot && wcscmp(ReadNativeString(nativeName),L"UnitBtn")==0)return g_makeRoomControl;
     if (type==4 && root==&g_mainframeRoot && wcscmp(ReadNativeString(nativeName),L"MakeRoomBtn")==0)return g_makeRoomControl;
+    if (type==4 && root==&g_mainframeRoot && wcscmp(ReadNativeString(nativeName),L"MakeTeamBtn")==0)return g_makeTeamControl;
     if (type != 0x0C)
         return nullptr;
     const wchar_t* name =
@@ -644,12 +646,12 @@ void InitializeVtables()
 
 void ResetFixture(uint32_t appState)
 {
-    DestroyNativeString(g_gameRoomControl+0x118);DestroyNativeString(g_makeRoomControl+0x118);
+    DestroyNativeString(g_gameRoomControl+0x118);DestroyNativeString(g_makeRoomControl+0x118);DestroyNativeString(g_makeTeamControl+0x118);
     memset(g_serviceManagerObject,0,sizeof(g_serviceManagerObject));
     memset(g_serviceHead,0,sizeof(g_serviceHead));memset(g_serviceNode,0,sizeof(g_serviceNode));memset(g_roomList,0,sizeof(g_roomList));
     *reinterpret_cast<void**>(g_serviceManagerObject+0x44)=g_serviceHead;
     *reinterpret_cast<void**>(g_serviceHead)=g_serviceHead;
-    memset(g_gameRoomControl,0,sizeof(g_gameRoomControl));memset(g_makeRoomControl,0,sizeof(g_makeRoomControl));
+    memset(g_gameRoomControl,0,sizeof(g_gameRoomControl));memset(g_makeRoomControl,0,sizeof(g_makeRoomControl));memset(g_makeTeamControl,0,sizeof(g_makeTeamControl));
     DestroyNativeString(
         g_myRoomControl + 0x118);
     DestroyNativeString(
@@ -1147,6 +1149,29 @@ void TestGameRoomRestoration(const SdgoApi& api,NativeActions& native)
         "a wrong-parent radio cannot invoke the native callback");
 }
 
+void TestTeamGameRoomReadiness(const SdgoApi& api,NativeActions& native)
+{
+    ResetFixture(6);HangarNavigation navigation;
+    Check(navigation.Bind(&api,reinterpret_cast<SdgoMod*>(1),&native),"Team list readiness binds native callbacks");
+    *reinterpret_cast<void**>(g_serviceHead)=g_serviceNode;
+    *reinterpret_cast<void**>(g_serviceNode)=g_serviceHead;
+    *reinterpret_cast<void**>(g_serviceNode+8)=g_roomList;
+    *reinterpret_cast<void***>(g_roomList)=g_roomListVtable;
+    *reinterpret_cast<void**>(g_roomList+0x88)=g_makeTeamControl;
+    *reinterpret_cast<void**>(g_makeTeamControl+0x15C)=&g_mainframeRoot;
+    WriteNativeString(g_makeTeamControl+0x118,L"MakeTeamBtn");
+    g_makeTeamControl[0x162]=g_makeTeamControl[0x167]=1;
+    Check(navigation.EnsureGameRoom(g_roomListVtable)==HangarNavigation::kReady && !g_downmenuCalls,
+          "the real enabled Team creation tab is ready even when ordinary MakeRoom is absent");
+    *reinterpret_cast<void**>(g_makeTeamControl+0x15C)=&g_unitManagerRoot;
+    Check(navigation.EnsureGameRoom(g_roomListVtable)!=HangarNavigation::kReady,
+          "a foreign-parent MakeTeam button cannot prove native room-list readiness");
+    *reinterpret_cast<void**>(g_makeTeamControl+0x15C)=&g_mainframeRoot;
+    g_makeTeamControl[0x167]=0;
+    Check(navigation.EnsureGameRoom(g_roomListVtable)!=HangarNavigation::kReady,
+          "a disabled Team creation button does not satisfy native page admission");
+}
+
 void TestUnitManagementNavigation(SdgoApi& api,NativeActions& native)
 {
     ResetFixture(5);g_unitManagerVisible=true;g_gridPresent=false;g_operatorCalls=0;
@@ -1255,6 +1280,7 @@ int main()
             native);
         TestResultNames();
         TestGameRoomRestoration(api,native);
+        TestTeamGameRoomReadiness(api,native);
         TestUnitManagementNavigation(api,native);
         TestBottomRadioValidation(api,native);
     }

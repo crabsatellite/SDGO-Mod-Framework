@@ -4,6 +4,7 @@ Core fixes and optional extensions for SD Gundam Online clients and private serv
 Unofficial fan project; no game files are included. [简体中文](README.zh-CN.md)
 
 [Installation](docs/setup.md) · [SDGO Mod Manager](docs/mod-manager.md) · [Latest release](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
+Manager includes an **Update** button with Stable (default) and Beta channels, automatic checks and installation. See the Manager guide.
 
 Manage features through **SDGO Mod Manager** and use your normal game launcher.
 This page is a feature index. Configuration, gameplay instructions, compatibility and troubleshooting are in each feature's documentation.
@@ -42,7 +43,7 @@ Release labels describe the published version; later feature work is accepted se
 | Collection capsule (Beta) <!-- catalog: `collection_capsule` --> | 100,000 GP activity machine that fills missing catalog units first | [Use](docs/collection-capsule.md) |
 | Per-round random loadouts (Beta) <!-- catalog: `room_random`, `room_random_client` --> | `!rand` in a room title draws each player's unit or deck from their own hangar every round | [Use](docs/room-random.md) |
 | FPS cap <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed | [Use](docs/fps-limit.md) |
-| Extended room titles (Beta) <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Mission and PvP room titles up to 128 characters, with commands anywhere in the title | [Use](docs/room-titles.md) |
+| Extended room titles <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Enter up to 128 characters in normal, AI, team and mission room creation, settings and rename controls | [Use](docs/room-titles.md) |
 | Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Easy / Medium / Hard PvP bots, selectable in the room title | [Use](docs/battle-ai.md) |
 | Automatic hangar capacity <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) | [Use](docs/hangar-capacity.md) |
 | Hangar manager (Beta) <!-- catalog: `hangar_manager` --> | One-click sorting and duplicate exchange on the unit-management page, with server-side GB batches | [Use](docs/hangar-manager.md) |

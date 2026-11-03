@@ -4,6 +4,7 @@
 非官方爱好者项目，不包含游戏文件。[English](README.md)
 
 [安装说明](docs/setup.zh-CN.md) · [统一 Mod Manager](docs/mod-manager.zh-CN.md) · [最新发布](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
+Manager 提供「更新」按钮：默认 Stable，可切换 Beta，自动检查和安装；详见管理器指南。
 
 通过 **SDGO Mod Manager** 管理功能，游戏仍使用原启动器。
 本页仅列出功能概览。具体配置、玩法操作、兼容性与排错方法见各功能文档。
@@ -42,7 +43,7 @@ Beta、Experimental 表示发布阶段。
 | 收藏扭蛋（Beta） <!-- catalog: `collection_capsule` --> | 十万 GP 活动机台，优先抽尚未解锁的图鉴机体 | [使用说明](docs/collection-capsule.zh-CN.md) |
 | 每局随机机体（Beta） <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组 | [使用说明](docs/room-random.zh-CN.md) |
 | FPS 上限 <!-- catalog: `fps_limit` --> | 提高渲染帧率上限，保留原生游戏速度 | [使用说明](docs/fps-limit.zh-CN.md) |
-| 长房名（Beta） <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 任务和对战房名最长 128 字，指令可写在任意位置 | [使用说明](docs/room-titles.zh-CN.md) |
+| 长房名 <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 普通、AI、队伍及任务房的建房、设置和改名入口支持最长 128 字 | [使用说明](docs/room-titles.zh-CN.md) |
 | 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | 对战 AI 的 Easy / Medium / Hard 三档，房名可选 | [使用说明](docs/battle-ai.zh-CN.md) |
 | 自动机库容量 <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） | [使用说明](docs/hangar-capacity.zh-CN.md) |
 | 机库管理（Beta） <!-- catalog: `hangar_manager` --> | 机体管理页内一键整理和重复机体兑换（GB 服务端批量入账） | [使用说明](docs/hangar-manager.zh-CN.md) |
