@@ -92,14 +92,18 @@ class ResourceDepot:
         if limits!={'compressedBytesPerChunk':CHUNK_LIMIT,'rawBytesPerChunk':RAW_LIMIT,'filesPerChunk':FILE_LIMIT}:
             raise DepotError('unsupported resource chunk limits')
         if index.get('metadataPageByteLimit')!=PAGE_LIMIT:raise DepotError('unsupported metadata page budget')
-        policy=index.get('programActivationPolicy',{})
-        if policy.get('activationAllowed') is not False or policy.get('originalLuaJitDirectExecutionAllowed') is not False or policy.get('registrationRequired') is not True:
-            raise DepotError('source programs need a separate registration authority')
         chunks=index.get('chunks');pages=index.get('metadataPages');counts=index.get('sectionCounts')
         if not isinstance(chunks,list) or not 1<=len(chunks)<=128 or not isinstance(pages,list) or not 1<=len(pages)<=128:
             raise DepotError('resource depot index count exceeds its budget')
         if not isinstance(counts,dict) or set(counts)!=set(SECTION_KEYS):raise DepotError('resource metadata section inventory differs')
         for count in counts.values():_integer(count,0,1000000,'section count')
+        policy=index.get('programActivationPolicy')
+        # A material-only addendum may omit the program section. Absence never
+        # grants execution, and transported program declarations need the full
+        # explicit deny-by-default policy.
+        if policy is not None or counts['opaqueSourceGamePrograms']:
+            if not isinstance(policy,dict) or policy.get('activationAllowed') is not False or policy.get('originalLuaJitDirectExecutionAllowed') is not False or policy.get('registrationRequired') is not True:
+                raise DepotError('source programs need a separate registration authority')
         self.chunk_index={};self.page_index={key:[] for key in SECTION_KEYS};paths=set()
         for chunk in chunks:
             if not isinstance(chunk,dict):raise DepotError('invalid chunk declaration')
