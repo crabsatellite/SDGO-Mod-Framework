@@ -53,7 +53,7 @@ bool OriginalBody(const std::uint8_t* bytes) {
 
 extern "C" __declspec(dllexport) int __cdecl SdgoWaitroomWindowSnapshotV1(
     struct SdgoWaitroomWindowSnapshotV1* out) {
-    if (!out || out->size != sizeof(*out) || out->version != 1) return 0;
+    if (!out || out->size != sizeof(*out) || out->version != 1 || !g_original) return 0;
     *out = {sizeof(*out), 1, GetCurrentProcessId(),
         static_cast<std::uint32_t>(InterlockedCompareExchange(&g_guarded, 0, 0)),
         static_cast<std::uint32_t>(InterlockedCompareExchange(&g_forwarded, 0, 0)),

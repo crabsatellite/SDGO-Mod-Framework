@@ -48,6 +48,8 @@ int wmain(int argc,wchar_t** argv) {
         auto entry=reinterpret_cast<SdgoModLoadFn>(GetProcAddress(module,"SdgoModLoad"));
         auto snapshot=reinterpret_cast<SdgoWaitroomWindowSnapshotFn>(GetProcAddress(module,SDGO_WAITROOM_WINDOW_SNAPSHOT_EXPORT));
         Check(entry && snapshot,"entry and passive observation export are present");
+        SdgoWaitroomWindowSnapshotV1 inactive{};inactive.size=sizeof(inactive);inactive.version=1;
+        Check(!snapshot(&inactive),"an unbound DLL does not advertise an active guard");
         SdgoApi api{};api.size=sizeof(api);api.version=SDGO_API_VERSION;api.Log=Log;api.Symbol=Symbol;api.HookCode=Hook;
         const auto originalByte=body.back();body.back()^=1;
         Check(!entry(&api,nullptr) && !hookCalls,"modified callback tail is refused before any hook");
