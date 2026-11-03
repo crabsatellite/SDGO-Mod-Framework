@@ -66,7 +66,7 @@ powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SD
 
 ### Agent 服务器
 
-联机工具和中继日志修复使用同一个服务器安装器，指定 Agent 角色：
+联机工具、中继日志修复和[好友机体赠送](friend-unit-gift.zh-CN.md)的 Agent 部分使用同一个服务器安装器，指定 Agent 角色：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SDGO-Server\Server\AgentServer1" -Role Agent
@@ -82,9 +82,9 @@ WorldServer 基础修复使用同一安装器的 `-Role World`，先停止目标
 powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SDGO-Server\Server\WorldServer" -Role World
 ```
 
-当前 master 构建的 Base 和 Full 包均包含默认启用的 World 基础修复：[新账号规则](new-account-profile.zh-CN.md)、
+Base 和 Full 包均包含默认启用的 World 基础修复：[新账号规则](new-account-profile.zh-CN.md)、
 [军衔修复](rank-progression-fix.zh-CN.md)和[好友列表修复](friend-list-fix.zh-CN.md)的服务端部分（客户端部分随客户端框架安装）。
-Full 包另含自动机库容量、收藏扭蛋和商城商品管理等 World 玩法功能。每套独立 World 实例分别安装，
+Full 包另含自动机库容量、收藏扭蛋、商城商品管理和好友机体赠送（默认关闭，由服主在 Manager 开启）等 World 玩法功能。每套独立 World 实例分别安装，
 装完重启 World，并在 `sdgo/logs/sdgo.log` 确认 `loaded` 与新账号的 `new-account defaults active` 记录。
 
 新账号默认 5,000 GP、0 点券、下士 1 阶，首次建档的自动机体赠送最多一台。在 SDGO Mod Manager 的“新账号默认配置”中修改，

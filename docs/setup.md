@@ -73,7 +73,8 @@ of `server\` into each battle server folder.
 
 ### Agent servers
 
-Use the same server installer with the Agent role for networking tools and the relay log fix:
+Use the same server installer with the Agent role for networking tools, the relay log fix and the Agent part of
+[friend unit gifts](friend-unit-gift.md):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SDGO-Server\Server\AgentServer1" -Role Agent
@@ -91,11 +92,11 @@ WorldServer first):
 powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SDGO-Server\Server\WorldServer" -Role World
 ```
 
-Base and Full packages built from current master include the default-enabled World core fixes:
+Base and Full packages include the default-enabled World core fixes:
 [new-account policy](new-account-profile.md), [rank repair](rank-progression-fix.md) and the server part
 of the [friend list fix](friend-list-fix.md) (its client part ships with the client framework). Full
-packages also include World gameplay features such as automatic hangar capacity, the collection capsule
-and the shop catalog. Install on each independent World instance, restart World, and check `loaded` plus
+packages also include World gameplay features such as automatic hangar capacity, the collection capsule,
+the shop catalog and friend unit gifts (off until the owner enables them in Manager). Install on each independent World instance, restart World, and check `loaded` plus
 the `new-account defaults active` line in `sdgo/logs/sdgo.log`.
 
 New-account defaults are 5,000 GP, zero cash and Corporal 1, with at most one automatic
