@@ -6,6 +6,7 @@ import re
 
 ID = re.compile(r'[a-z][a-z0-9_-]{0,63}\Z')
 ROLES = {'client', 'battle', 'agent', 'world'}
+DISTIBUTIONS = {'public', 'local_only'}
 CLIENT_XML_SETTING = ('config.xml', 'Framework/Timer', 'updatefps')
 
 
@@ -18,6 +19,8 @@ def load(root):
             raise ValueError('管理注册无效：' + str(path))
         if identity in records or not value.get('title') or not set(value.get('hosts', [])) <= ROLES:
             raise ValueError('管理注册重复或宿主无效：' + identity)
+        if value.get('distribution') is not None and value['distribution'] not in DISTIBUTIONS:
+            raise ValueError('Mod 分发范围无效：' + identity)
         seen = set()
         for field in value.get('settings', []):
             key = field['id']

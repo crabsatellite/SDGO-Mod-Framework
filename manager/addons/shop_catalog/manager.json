@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "shop_catalog",
   "title": "服主商城目录",
   "category": "gameplay",

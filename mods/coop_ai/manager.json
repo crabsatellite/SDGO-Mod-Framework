@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "coop_ai",
   "title": "任务 AI 队友 · 服务端",
   "category": "gameplay",

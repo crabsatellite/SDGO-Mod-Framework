@@ -11,6 +11,10 @@ from pathlib import Path, PurePosixPath
 import re
 import sys
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from manager import distribution
+
 CATEGORIES = {
     "fixes": {"en": "Core fixes", "zh-CN": "基础修复"},
     "gameplay": {"en": "Gameplay extensions", "zh-CN": "玩法扩展"},
@@ -49,11 +53,18 @@ def read_catalog(root: Path, *, check_build: bool = True) -> dict:
         category = cfg["category"]
         channel = cfg["channel"]
         activation = cfg["activation"]
+        scope = cfg["distribution"]
         toolkit = cfg.get("toolkit", "")
         if not ID.fullmatch(mod_id) or mod_id != path.parent.name or not ID.fullmatch(feature):
             raise ValueError(f"Invalid mod/feature id in {path}")
-        if category not in CATEGORIES or channel not in CHANNELS or activation not in ACTIVATIONS:
+        if (category not in CATEGORIES or channel not in CHANNELS or activation not in ACTIVATIONS
+                or scope != distribution.PUBLIC):
             raise ValueError(f"Invalid category/channel/activation in {path}")
+        manager_path = path.parent / "manager.json"
+        distribution.require_public(
+            path.read_bytes(),
+            manager_path.read_bytes() if manager_path.is_file() else None,
+        )
         if toolkit not in {"", "frp"}:
             raise ValueError(f"Unknown package toolkit in {path}")
         dll = cfg.get("dll", f"{mod_id}.dll")
@@ -93,6 +104,7 @@ def read_catalog(root: Path, *, check_build: bool = True) -> dict:
         if not guide.is_file():
             raise ValueError(f"Missing feature guide: {guide.name}")
         mods.append({"id": mod_id, "feature": feature, "category": category,
+                     "distribution": scope,
                      "channel": channel, "activation": activation,
                      "toolkit": toolkit,
                      "hosts": list_value(cfg.get("hosts", "")), "version": cfg.get("version", "0"),
@@ -112,8 +124,9 @@ def read_catalog(root: Path, *, check_build: bool = True) -> dict:
     features = {}
     for mod in mods:
         old = features.setdefault(mod["feature"], {"category": mod["category"], "channel": mod["channel"],
+                                                   "distribution": mod["distribution"],
                                                    "activation": mod["activation"], "toolkit": mod["toolkit"], "mods": [], "guide": mod["guide"]})
-        if any(old[key] != mod[key] for key in ("category", "channel", "activation", "toolkit")):
+        if any(old[key] != mod[key] for key in ("category", "channel", "activation", "toolkit", "distribution")):
             raise ValueError(f"Feature metadata disagrees: {mod['feature']}")
         old["mods"].append(mod["id"])
     catalog = {"schema_version": 1, "categories": CATEGORIES, "features": features, "mods": mods}
@@ -168,8 +181,14 @@ def validate_stage(root: Path, stage: Path, catalog: dict) -> None:
             path = folder / name
             if not path.is_file():
                 raise ValueError(f"Missing staged mod payload: {mod['id']}/{name}")
+            distribution.require_redistributable(f"{mod['id']}/{name}", path.read_bytes())
             if name not in mod["runtime_files"] and not name.endswith(".dll") and path.read_bytes() != (root / "mods" / mod["id"] / name).read_bytes():
                 raise ValueError(f"Stale staged mod data: {mod['id']}/{name}")
+        distribution.require_public(
+            (folder / "mod.ini").read_bytes(),
+            (folder / "manager.json").read_bytes()
+            if (folder / "manager.json").is_file() else None,
+        )
 
 
 def write_catalog(catalog: dict, path: Path) -> None:

@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "hangar_capacity",
   "title": "自动机库容量",
   "category": "gameplay",

@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "room_random_client",
   "title": "每局随机机体 · 客户端同步",
   "category": "gameplay",

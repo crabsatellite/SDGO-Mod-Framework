@@ -15,6 +15,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
@@ -31,6 +33,14 @@ jobs:
           }
           "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
           "RELEASE_CHANNEL=$channel" >> $env:GITHUB_ENV
+      - name: Reject local-only source from public publication
+        run: python tools/distribution_guard.py --git-tree $env:GITHUB_SHA
+      - name: Reject local-only bytes in every newly published commit
+        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: python tools/distribution_guard.py --git-range "$env:BEFORE..$env:AFTER"
       - name: Update integrity and install regression
         timeout-minutes: 3
         run: python -m unittest discover -s tests -p "test_manager_updates*.py" -v

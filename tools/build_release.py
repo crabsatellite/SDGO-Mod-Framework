@@ -11,6 +11,7 @@ import zipfile
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from tools.mod_catalog import read_catalog, validate_stage
+from manager.distribution import require_redistributable
 from manager.updates import REPOSITORY, MANAGER, version, unpack
 
 
@@ -37,6 +38,7 @@ def build(channel, release_version, stage, manager, output, commit=None):
         base=mod['target']+'/sdgo/mods/'+mod['id']+'/'
         for name in (mod['id']+'.dll','mod.ini',*mod['files'],*mod.get('runtime_files',[])):
             payload[base+name]=(stage/base/name).read_bytes()
+    for name,raw in payload.items():require_redistributable(name,raw)
     commit=commit or subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
     manifest={'schema_version':1,'repository':REPOSITORY,'version':release_version,'channel':channel,
               'source_commit':commit,'files':{n:{'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()} for n,b in sorted(payload.items())}}

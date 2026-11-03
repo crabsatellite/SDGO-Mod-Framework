@@ -70,6 +70,7 @@ function showMods(isArchive=false){
   top.append(locked?chip(mod.enabled?'自动生效':'已关闭',mod.enabled?'green':undefined):toggle);card.append(top,element('p',mod.description||'暂无说明。'));
   const foot=element('div',undefined,'mod-foot'),notes=element('div',undefined,'mod-meta');
   if(mod.blocked_by.length)notes.append(chip('已被批量开关关闭','amber'));
+  if(!mod.redistributable)notes.append(chip('仅本地 · 禁止导出','amber'));
   const configurable=!archiveView&&mod.settings_count>0;
   const open=button(configurable?'设置':'说明',()=>showSettings(host.id,mod.id),configurable?'ui-btn is-blue is-small':'ui-btn is-ghost is-small');open.prepend(icon(configurable?'settings':'archive'));
   foot.append(notes,open);card.append(foot);grid.append(card);

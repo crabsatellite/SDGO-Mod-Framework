@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "new_account_profile",
   "title": "新账号默认配置",
   "category": "fixes",

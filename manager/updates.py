@@ -14,7 +14,7 @@ import threading
 import time
 import urllib.request
 import zipfile
-from . import storage
+from . import distribution, storage
 
 REPOSITORY = 'crabsatellite/SDGO-Mod-Framework'
 LATEST = 'https://api.github.com/repos/' + REPOSITORY + '/releases/latest'
@@ -136,15 +136,27 @@ def unpack(raw, asset, destination):
             data=archive.read(name)
             if len(data)!=expected.get('bytes') or digest(data)!=expected.get('sha256'):
                 raise ValueError('更新包内文件校验失败：'+name)
+            distribution.require_redistributable(name, data)
             payload[name]=data
         for tree in ('client','server'):
             catalog=json.loads(payload[tree+'/sdgo/catalog.json'])
             channels={'stable','beta'} if manifest['channel']=='beta' else {'stable'}
-            if any(m.get('channel') not in channels or m.get('category')=='development' for m in catalog['mods']):
+            legacy_public=version(manifest['version'])[:3] < (1,2,0)
+            if any(m.get('channel') not in channels or m.get('category')=='development'
+                   or m.get('distribution') != distribution.PUBLIC
+                   and not (legacy_public and m.get('distribution') is None)
+                   for m in catalog['mods']):
                 raise ValueError('更新包包含当前通道以外的 Mod')
             for mod in catalog['mods']:
                 if mod['target']!=tree: continue
                 base=tree+'/sdgo/mods/'+mod['id']+'/'
+                scope=distribution.resolve(
+                    payload.get(base+'mod.ini', b''),
+                    payload.get(base+'manager.json'),
+                    allow_legacy_public=legacy_public,
+                )
+                if scope != distribution.PUBLIC:
+                    raise ValueError('仅本地 Mod 不能进入更新包')
                 for name in (mod['id']+'.dll','mod.ini','manager.json',*mod['files'],*mod.get('runtime_files',[])):
                     if base+name not in payload:raise ValueError('更新包缺少 Mod 文件')
         allowed={MANAGER}

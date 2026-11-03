@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "calendar_gifts",
   "title": "节日与生日赠礼",
   "category": "gameplay",

@@ -27,6 +27,7 @@ struct SdgoMod
     std::wstring dllPath;
     std::vector<std::string> hosts;
     std::vector<std::string> required;
+    sdgo::SymbolTable symbols;
     int api = 0;
     int order = 100;
     bool enabled = true;
@@ -104,6 +105,11 @@ namespace
 
     const char* ModName(SdgoMod* mod) { return mod ? mod->id.c_str() : "?"; }
 
+    const sdgo::Symbol* FindSymbol(SdgoMod* mod, const char* name)
+    {
+        return mod ? mod->symbols.FindWithFallback(name, g_symbols) : g_symbols.Find(name);
+    }
+
     // ---- API exposed to mods ------------------------------------------------
 
     void Api_Log(SdgoMod* mod, int level, const char* fmt, ...)
@@ -116,7 +122,7 @@ namespace
 
     const sdgo::Symbol* VerifiedSymbol(SdgoMod* mod, const char* name, const char* wantedKind)
     {
-        const sdgo::Symbol* symbol = name ? g_symbols.Find(name) : nullptr;
+        const sdgo::Symbol* symbol = name ? FindSymbol(mod, name) : nullptr;
         if (!symbol) {
             sdgo::log::Writef(ModName(mod), SDGO_LOG_ERROR, "symbol %s is not in the symbol file", name ? name : "(null)");
             return nullptr;
@@ -297,9 +303,25 @@ namespace
             sdgo::log::Writef(mod->id.c_str(), SDGO_LOG_INFO, "not for host %s", g_hostKey.c_str());
             return false;
         }
+        const std::wstring fragment = mod->directory + L"\\symbols.fragment.ini";
+        if (GetFileAttributesW(fragment.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            if (!mod->symbols.Load(fragment, g_host, g_hostKey.c_str(), mod->id.c_str(), true)) {
+                sdgo::log::Writef(mod->id.c_str(), SDGO_LOG_ERROR,
+                                  "symbols.fragment.ini does not match the running host");
+                return false;
+            }
+            std::string error;
+            if (!mod->symbols.ValidateOverlay(g_symbols, error)) {
+                sdgo::log::Writef(mod->id.c_str(), SDGO_LOG_ERROR,
+                                  "symbols.fragment.ini rejected: %s", error.c_str());
+                return false;
+            }
+            sdgo::log::Writef(mod->id.c_str(), SDGO_LOG_INFO, "Mod symbols: %u verified",
+                              static_cast<unsigned>(mod->symbols.VerifiedCount()));
+        }
         bool symbolsOk = true;
         for (const std::string& name : mod->required) {
-            const sdgo::Symbol* symbol = g_symbols.Find(name.c_str());
+            const sdgo::Symbol* symbol = FindSymbol(mod, name.c_str());
             if (!symbol || !symbol->verified) {
                 sdgo::log::Writef(mod->id.c_str(), SDGO_LOG_ERROR, "required symbol %s %s", name.c_str(),
                                   symbol ? symbol->problem.c_str() : "missing from symbol file");

@@ -9,6 +9,8 @@ Server owners and maintainers install, configure and [update](docs/mod-manager.m
 **SDGO Mod Manager**; the **0_MOD管理（服主专用）** entry at the top of the client folder opens it. Ordinary
 players keep using their normal game launcher, update the way their server owner provides, and should not
 change Mods themselves, so their client stays matched to the server.
+Manager can also configure addons marked **local-only**. They stay in the selected installation;
+public package and export tools reject them. See the [Manager guide](docs/mod-manager.md).
 This page is a feature index. Configuration, gameplay instructions, compatibility and troubleshooting are in each feature's documentation.
 
 Beta and Experimental after a feature name mark its release channel; unlabeled features are Stable:

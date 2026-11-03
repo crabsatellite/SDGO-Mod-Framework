@@ -51,6 +51,17 @@ def main():
             assert info['mode']=='standard'
             assert [mod['id'] for mod in info['hosts'][0]['mods']]==['mission_ai']
             assert [mod['id'] for mod in info['hosts'][0]['archive']]==['findwindow_fix']
+            personal=client/'sdgo/mods/personal_fixture';personal.mkdir(parents=True)
+            (personal/'mod.ini').write_text('[mod]\nid=personal_fixture\ndistribution=local_only\ncategory=gameplay\nfeature=personal_fixture\n[settings]\nstrength=20\n',encoding='utf-8')
+            (personal/'manager.json').write_text(json.dumps({'schema_version':1,'id':'personal_fixture','distribution':'local_only',
+                'title':'Local configuration fixture','category':'gameplay','hosts':['client'],'settings':[
+                    {'id':'strength','label':'Strength','type':'integer','minimum':0,'maximum':40,'default':20,
+                     'audience':'user','file':'mod.ini','section':'settings','key':'strength'}]}),encoding='utf-8')
+            local=next(mod for mod in call('/api/state')['hosts'][0]['mods'] if mod['id']=='personal_fixture')
+            assert local['distribution']=='local_only' and not local['redistributable']
+            settings=call('/api/settings?host=client&mod=personal_fixture')
+            updated=call('/api/settings',{'host':'client','mod':'personal_fixture','values':{'strength':25},'revisions':settings['revisions']})
+            assert updated['saved'] and updated['values']['strength']==25
             assert {p['id'] for p in info['panels']} >= {'shop','rewards','collection_capsule','calendar_gifts'}
             calendar=call('/api/providers/calendar_gifts/api/calendar-gifts')
             assert not calendar['policy']['enabled'] and not calendar['service']['running']
@@ -87,7 +98,7 @@ def main():
             assert (root/'rewards/runtime/policies'/(rewards['revision']+'.json')).is_file()
             call('/api/exit',{});process.wait(timeout=30)
             assert process.returncode==0
-            print('PASS frozen EXE: standalone launch, private calendar gift policies/export, daily mode, fix archive, collection provider, AI/PR guidance, C# shop CRUD and solo MB preset')
+            print('PASS frozen EXE: standalone launch, local-only module discovery/configuration, private calendar gift policies/export, daily mode, fix archive, collection provider, AI/PR guidance, C# shop CRUD and solo MB preset')
         finally:
             if process.poll() is None:
                 if base and token:

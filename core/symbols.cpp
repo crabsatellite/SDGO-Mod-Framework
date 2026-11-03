@@ -90,24 +90,45 @@ namespace
         }
         return true;
     }
+
+    std::wstring ImageName(HMODULE host)
+    {
+        wchar_t path[MAX_PATH * 2] = {};
+        if (!GetModuleFileNameW(host, path, MAX_PATH * 2))
+            return {};
+        const wchar_t* slash = wcsrchr(path, L'\\');
+        const wchar_t* forward = wcsrchr(path, L'/');
+        const wchar_t* name = slash && (!forward || slash > forward) ? slash + 1 :
+                              forward ? forward + 1 : path;
+        return name;
+    }
+
+    bool SameBinding(const sdgo::Symbol& left, const sdgo::Symbol& right)
+    {
+        return left.kind == right.kind && left.address == right.address && left.expect == right.expect &&
+               left.expectedTarget == right.expectedTarget;
+    }
 }
 
-bool sdgo::SymbolTable::Load(const std::wstring& path, HMODULE host, const char* hostKey)
+bool sdgo::SymbolTable::Load(const std::wstring& path, HMODULE host, const char* hostKey,
+                             const char* logSource, bool requireImage)
 {
     m_symbols.clear();
     if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        log::Writef("core", SDGO_LOG_WARN, "no symbol file for host %s", hostKey);
+        log::Writef(logSource, SDGO_LOG_WARN, "no symbol file for host %s", hostKey);
         return false;
     }
 
     auto base = reinterpret_cast<uintptr_t>(host);
     auto nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + reinterpret_cast<IMAGE_DOS_HEADER*>(base)->e_lfanew);
     uintptr_t timestamp = 0, sizeOfImage = 0;
+    const std::wstring image = Value(path, L"host", L"image");
     if (!ParseNumber(Value(path, L"host", L"timestamp"), timestamp) ||
         !ParseNumber(Value(path, L"host", L"size_of_image"), sizeOfImage) ||
+        (requireImage && (image.empty() || _wcsicmp(image.c_str(), ImageName(host).c_str()) != 0)) ||
         timestamp != nt->FileHeader.TimeDateStamp ||
         sizeOfImage != nt->OptionalHeader.SizeOfImage) {
-        log::Writef("core", SDGO_LOG_ERROR, "symbol file [host] does not describe %s; ignoring it", hostKey);
+        log::Writef(logSource, SDGO_LOG_ERROR, "symbol file [host] does not describe %s; ignoring it", hostKey);
         return false;
     }
 
@@ -161,9 +182,11 @@ bool sdgo::SymbolTable::Load(const std::wstring& path, HMODULE host, const char*
         }
 
         if (symbol.verified)
-            log::Writef("core", SDGO_LOG_DEBUG, "symbol %s ok at %08X", symbol.name.c_str(), static_cast<unsigned>(symbol.address));
+            log::Writef(logSource, SDGO_LOG_DEBUG, "symbol %s ok at %08X", symbol.name.c_str(),
+                        static_cast<unsigned>(symbol.address));
         else
-            log::Writef("core", SDGO_LOG_WARN, "symbol %s rejected: %s", symbol.name.c_str(), symbol.problem.c_str());
+            log::Writef(logSource, SDGO_LOG_WARN, "symbol %s rejected: %s", symbol.name.c_str(),
+                        symbol.problem.c_str());
         m_symbols.push_back(std::move(symbol));
     }
     return true;
@@ -176,6 +199,53 @@ const sdgo::Symbol* sdgo::SymbolTable::Find(const char* name) const
             return &symbol;
     }
     return nullptr;
+}
+
+const sdgo::Symbol* sdgo::SymbolTable::FindWithFallback(const char* name, const SymbolTable& fallback) const
+{
+    const Symbol* symbol = Find(name);
+    return symbol ? symbol : fallback.Find(name);
+}
+
+bool sdgo::SymbolTable::ValidateOverlay(const SymbolTable& base, std::string& error) const
+{
+    error.clear();
+    if (m_symbols.empty()) {
+        error = "fragment has no symbol sections";
+        return false;
+    }
+    for (size_t i = 0; i < m_symbols.size(); ++i) {
+        const Symbol& symbol = m_symbols[i];
+        if (!symbol.verified) {
+            error = "symbol " + symbol.name + " is not verified: " + symbol.problem;
+            return false;
+        }
+        for (size_t j = 0; j < i; ++j) {
+            const Symbol& prior = m_symbols[j];
+            if (symbol.name == prior.name) {
+                error = "fragment repeats symbol name " + symbol.name;
+                return false;
+            }
+            if (symbol.address == prior.address && !SameBinding(symbol, prior)) {
+                error = "fragment gives incompatible definitions to " + symbol.name + " and " + prior.name;
+                return false;
+            }
+        }
+        if (const Symbol* existing = base.Find(symbol.name.c_str())) {
+            if (!SameBinding(symbol, *existing)) {
+                error = "symbol " + symbol.name + " conflicts with the global definition";
+                return false;
+            }
+            continue;
+        }
+        for (const Symbol& existing : base.m_symbols) {
+            if (symbol.address == existing.address && !SameBinding(symbol, existing)) {
+                error = "symbol " + symbol.name + " conflicts with global alias " + existing.name;
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 size_t sdgo::SymbolTable::VerifiedCount() const
