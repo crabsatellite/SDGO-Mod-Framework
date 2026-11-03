@@ -317,6 +317,7 @@ add_custom_target(sdgo_data ALL
 )
 # Direct builds of this lifecycle fix also need its admitted host signature.
 add_dependencies(waitroom_window_fix sdgo_data)
+add_dependencies(unit_catalog sdgo_data)
 # A direct GameTest build needs its symbol map and the matching PvP observer
 # implementation; retaining an older installed DLL can hide new status exports.
 add_dependencies(game_test_client sdgo_data match_ai)
@@ -473,6 +474,11 @@ if(BUILD_TESTING)
     add_test(NAME unit_resource_depot_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_resource_depot.py" -v)
     set_tests_properties(unit_resource_depot_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
+    add_executable(unit_skill_presentation_test tests/unit_skill_presentation_test.cpp)
+    target_link_libraries(unit_skill_presentation_test PRIVATE sdgo_api)
+    sdgo_strict(unit_skill_presentation_test)
+    add_test(NAME unit_skill_presentation_offline COMMAND unit_skill_presentation_test)
+    set_tests_properties(unit_skill_presentation_offline PROPERTIES TIMEOUT 30)
     add_test(NAME unit_presentation_owner_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_presentations.py" -v)
     set_tests_properties(unit_presentation_owner_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
