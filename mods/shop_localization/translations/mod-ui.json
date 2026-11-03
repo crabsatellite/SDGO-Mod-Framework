@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "option": {
+    "@ui:SDGO room titles": "SDGO 房间标题",
+    "@ui:The room title must contain 1 to 128 characters and no control characters. Your text was kept.": "房间标题必须包含 1 至 128 个字符，且不能含有控制字符。已保留你输入的文字。",
+    "@ui:The previous room title is still waiting for server confirmation. Please wait before changing it again.": "上一次房间标题仍在等待服务器确认，请稍候再修改。",
+    "@ui:The room list is still synchronizing. Please try the title again after it finishes. Your text was kept.": "房间列表仍在同步，请在同步完成后重试。已保留你输入的文字。",
+    "@ui:The server is still checking extended room titles. Please wait for the room list, then retry. Your text was kept.": "服务器仍在检查扩展房间标题支持，请等待房间列表出现后重试。已保留你输入的文字。",
+    "@ui:This server has not confirmed extended room title support. Ask the server owner to check the matching Mods. Your text was kept.": "此服务器尚未确认支持扩展房间标题。请让服务器管理员检查配套 Mod。已保留你输入的文字。",
+    "@ui:The room identity has not been confirmed yet. Refresh or re-enter this room, then try again. Your text was kept.": "尚未确认房间身份。请刷新或重新进入此房间后再试。已保留你输入的文字。",
+    "@ui:This room title control is not compatible with the installed Mod. The title was not submitted.": "此房间标题控件与已安装的 Mod 不兼容，标题未提交。",
+    "@ui:There is not enough memory to submit the room title. Your text was not truncated.": "内存不足，无法提交房间标题。你输入的文字未被截断。",
+    "@ui:The room identity is no longer available. Your title was not submitted.": "房间身份已失效，标题未提交。",
+    "@ui:The full room title has not been confirmed. Reopen the title settings to retry or resolve the saved draft before starting.": "完整房间标题尚未确认。开始前请重新打开标题设置重试，或处理已保存的草稿。",
+    "@ui:The room title could not be sent. Your text was kept; reopen the title settings to retry.": "无法发送房间标题。已保留你输入的文字；请重新打开标题设置后重试。",
+    "@ui:The server did not confirm this room title. Your text was kept; reopen the title settings to retry.": "服务器未确认此房间标题。已保留你输入的文字；请重新打开标题设置后重试。"
+  }
+}

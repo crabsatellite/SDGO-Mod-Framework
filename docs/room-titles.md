@@ -8,15 +8,9 @@ The client, Agent bridge and Battle provider must all be installed and enabled.
 It uses the authenticated game connection and needs no additional ports, account,
 database migration, FRP settings or launcher.
 
-Client 0.2.3 covers normal, AI, team and mission room creation, settings and
-rename controls. It refreshes the input limit after deferred initialization,
-including an already focused title edit, and prevents the native per-frame
-width check from shortening a room name. Other text inputs retain their native
-limits. The matching creation transport requires Agent and Battle
-components 0.2.1.
-The normal, AI and team creation entries are selected through the room list's
-native tabs. The inline waiting-room editor confirms with Enter and cancels
-with Esc; cancelling retains the last server-confirmed full title.
+Native normal, AI, team and mission creation dialogs accept long titles on first open and after cancel/reopen, including an already focused title box. Room-name edits retain the complete input instead of cutting it to the display width; other text inputs retain their native limits. The matching creation transport requires Agent and Battle components 0.2.1.
+The normal, AI and team creation entries use the room list's native tabs. The inline waiting-room editor confirms with Enter and cancels with Esc; cancelling retains the last server-confirmed full title.
+
 
 | Host | Mod | Default |
 |---|---|---|
