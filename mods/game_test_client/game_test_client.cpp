@@ -1631,6 +1631,23 @@ int __cdecl TitleMissionCreate(const SdgoGameTestContextV1* c){
     }
     return roomTitles.Poll(RoomTitleActions::MissionCreate,c);
 }
+int __cdecl PreviewMissionCreate(const SdgoGameTestContextV1* c) {
+    // A standalone preview starts directly after owned-unit selection, which
+    // leaves the real client in its hangar rather than the room-list scene.
+    if (!roomTitles.Running() && actions.AppState()==5) {
+        static bool requested=false;
+        if (!requested) {
+            const auto result=hangarNavigation.ClickBottomRadio(L"GameRoomRadio",0x48);
+            if (result>=HangarNavigation::kDownmenuServiceMismatch || result==HangarNavigation::kUnbound) {
+                c->Assert(0,"native GameRoomRadio must return from the owned-unit hangar before the mission preview");
+                return SDGO_GAME_TEST_FAIL;
+            }
+            if (result==HangarNavigation::kReady) requested=true;
+        }
+        return SDGO_GAME_TEST_WAIT;
+    }
+    return TitleMissionCreate(c);
+}
 int __cdecl TitleTeamRename(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::TeamRename,c);}
 int __cdecl TitleTeamSettings(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::TeamSettings,c);}
 int __cdecl TitleMissionSettings(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::MissionSettings,c);}
@@ -1780,7 +1797,8 @@ void RegisterPlannedCases() {
         plannedCases.assign(realCases,realCases+3);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
         if (roomStylePreview) {
-            plannedCases.push_back(roomStylePreview==2 ? titleCases[6] : titleCases[0]);
+            plannedCases.push_back(roomStylePreview==2 ? SdgoGameTestCaseV1{
+                "room_titles.mission.create",180000,&PreviewMissionCreate} : titleCases[0]);
             plannedCases.push_back({roomStylePreview==2 ? "room_style.mission.preview" : "room_style.pvp.preview", 90000, &RoomStylePreview});
             provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
         }
