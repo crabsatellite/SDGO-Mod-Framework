@@ -1,6 +1,6 @@
 # Extended room titles
 
-[简体中文](room-titles.zh-CN.md)
+[简体中文](room-titles.zh-CN.md) · [Back to the feature index](../README.md)
 
 An optional feature for mission and PvP room titles: up to 128 Unicode scalars,
 bounded to 512 UTF-8 bytes. Use the usual create-room and rename controls.
@@ -8,9 +8,12 @@ The client, Agent bridge and Battle provider must all be installed and enabled.
 It uses the authenticated game connection and needs no additional ports, account,
 database migration, FRP settings or launcher.
 
-Native normal, AI, team and mission creation dialogs accept long titles on first open and after cancel/reopen, including an already focused title box. Room-name edits retain the complete input instead of cutting it to the display width; other text inputs retain their native limits. The matching creation transport requires Agent and Battle components 0.2.1.
-The normal, AI and team creation entries use the room list's native tabs. The inline waiting-room editor confirms with Enter and cancels with Esc; cancelling retains the last server-confirmed full title.
-
+Native normal, AI, team and mission creation dialogs accept long titles on first open and after
+cancel/reopen, including an already focused title box. Room-name boxes keep the complete input even beyond
+their display width; other text inputs keep their native limits. Normal, AI and team rooms are created from
+the room list's native tabs. The inline waiting-room editor confirms with Enter and cancels with Esc;
+cancelling keeps the last server-confirmed full title. Long titles in newly created rooms need Agent and
+Battle components 0.2.1 or later.
 
 | Host | Mod | Default |
 |---|---|---|
