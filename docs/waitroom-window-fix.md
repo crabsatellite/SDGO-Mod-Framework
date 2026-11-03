@@ -1,4 +1,4 @@
-# Wait-room window initialization guard (Beta)
+# Wait-room window initialization guard
 
 [简体中文](waitroom-window-fix.zh-CN.md) · [Feature index](../README.md)
 
@@ -18,4 +18,3 @@ server owner's client package or update; no server configuration is needed.
 The hook requires the supported native client profile and the complete original
 callback fingerprint. A different callback is rejected and logged. If room entry
 still fails, include the client log and the room-entry steps in the bug report.
-This Beta is awaiting its original-client room/battle/return check.
