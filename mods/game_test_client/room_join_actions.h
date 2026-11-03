@@ -566,8 +566,9 @@ private:
     static constexpr size_t kUiCallbackSlot = 0x38;
     static constexpr size_t kReadyBusinessSlot = 0x08;
     static constexpr size_t kManagerStateArray = 0x0C;
-    static constexpr size_t kManagerLocalSlot = 0x20;
     static constexpr size_t kManagerCommandContext = 0x24;
+    // 00733ECE-00733ED5 passes context[3] to the shipped Ready sender.
+    static constexpr size_t kCommandLocalSlot = 3;
     static constexpr size_t kManagerWaitRoom = 0x38;
     static constexpr size_t kWaitRoomSlotStride = 0x48E;
     static constexpr size_t kWaitRoomSlotReady = 0xA06;
@@ -1040,9 +1041,9 @@ private:
 
         readyStage_=7;
         const uint32_t localSlot =
-            Read<uint32_t>(
+            Read<uint8_t>(
                 manager +
-                kManagerLocalSlot);
+                kManagerCommandContext + kCommandLocalSlot);
         if (localSlot >= 12)
             return false;
 
