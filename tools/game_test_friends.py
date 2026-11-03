@@ -107,7 +107,7 @@ class FriendActor:
                          s.get('command',{}).get('done')=='1',timeout)
 
 
-def prepare_actor(template,stage,run_dir,profile,host,*,baseline=None,extra_mods=()):
+def prepare_actor(template,stage,run_dir,profile,host,*,baseline=None,extra_mods=(),rebind_existing_account=False):
     if not profile.is_file():
         raise game_test.GameTestError('friend tests require an existing sealed-template account profile')
     options=dict(target_host=host,login_port=5001,account_profile=profile,
@@ -121,7 +121,8 @@ def prepare_actor(template,stage,run_dir,profile,host,*,baseline=None,extra_mods
             'immutable_hashes':metadata['client']['immutable_hashes'],
             'events':events.read_text(encoding='utf-8') if events.exists() else '',
             'report':game_test.read_json(report) if report.exists() else None},indent=2))
-        return game_test.reuse_prepared(template,stage,run_dir,**options)
+        return game_test.reuse_prepared(template,stage,run_dir,
+                                        rebind_existing_account=rebind_existing_account,**options)
     return game_test.prepare(template,stage,run_dir,**options)
 
 
@@ -195,7 +196,8 @@ class Campaign:
         # Pagination visits these existing identities serially; reuse one
         # capsule rather than making another full client for every account.
         run=self.root/('page-peer-01' if label.startswith('page-peer-') else label+'-01');profile=self.root/'profiles'/(label+'.ini')
-        metadata=prepare_actor(self.template,self.stage,run,profile,self.host,baseline=self.baseline,extra_mods=self.extra_mods)
+        metadata=prepare_actor(self.template,self.stage,run,profile,self.host,baseline=self.baseline,
+                               extra_mods=self.extra_mods,rebind_existing_account=label.startswith('page-peer-'))
         future=self.pool.submit(game_test.run_prepared,run,9000,60,on_process=self.on_process,on_poll=self.on_poll)
         actor=FriendActor(run,future);self.running[label]=(actor,future,profile)
         try:
