@@ -85,6 +85,12 @@ sdgo_version_resource(sdgo_core core.dll "SDGO mod framework core")
 sdgo_stage(sdgo_core "client/sdgo")
 sdgo_stage(sdgo_core "server/sdgo")
 
+# Source-asset script registration is a linkable consumer, not another VM or a
+# staged Mod. Owner/importer modules provide verified native symbols and content.
+add_library(sdgo_script_registration STATIC core/script_registration.cpp core/native_script_registration.cpp)
+target_link_libraries(sdgo_script_registration PUBLIC sdgo_api bcrypt)
+sdgo_strict(sdgo_script_registration)
+
 # ---- mods: sdgo/mods/<id>/<id>.dll + mod.ini + extra files -------------------------
 # Client mods go to stage/<config>/client/sdgo/mods/<id>, SERVER mods to the server tree.
 add_custom_target(release_stable_payload DEPENDS sdgo_core d3d9_shim winmm_shim)
@@ -1208,6 +1214,17 @@ if(BUILD_TESTING)
         target_include_directories(ai_test_lua50 PUBLIC "${SDGO_LUA50_SOURCE}/include")
         target_include_directories(ai_test_lua50 PRIVATE "${SDGO_LUA50_SOURCE}/src")
         target_compile_definitions(ai_test_lua50 PRIVATE _CRT_SECURE_NO_WARNINGS)
+        add_executable(script_registration_test tests/script_registration_test.cpp)
+        target_link_libraries(script_registration_test PRIVATE sdgo_script_registration ai_test_lua50)
+        sdgo_strict(script_registration_test)
+        target_link_options(script_registration_test PRIVATE /BASE:0x18000000 /DYNAMICBASE:NO)
+        add_test(NAME script_registration_real_lua50 COMMAND script_registration_test)
+        set_tests_properties(script_registration_real_lua50 PROPERTIES TIMEOUT 30)
+        set(SDGO_SCRIPT_NATIVE_CLIENT "" CACHE FILEPATH "Optional original client for bounded original Lua API replay")
+        if(SDGO_SCRIPT_NATIVE_CLIENT)
+            add_test(NAME script_registration_original_api_replay COMMAND script_registration_test --native-api "${SDGO_SCRIPT_NATIVE_CLIENT}")
+            set_tests_properties(script_registration_original_api_replay PROPERTIES TIMEOUT 30)
+        endif()
         add_executable(mission_ai_lua_test tools/lua50_host.c)
         target_link_libraries(mission_ai_lua_test PRIVATE ai_test_lua50)
         add_test(NAME mission_ai_lua_offline COMMAND mission_ai_lua_test mods/mission_ai/test/sim_mission.lua)
