@@ -60,7 +60,7 @@ Release labels describe the published version; later feature work is accepted se
 
 <!-- /mod-category:gameplay -->
 
-The independent [holiday and birthday gift Manager module](docs/calendar-gifts.md) provides one missing unit per festival and one per birthday tier. Server-private birthdays and targeted player rosters are excluded from generic rule distribution.
+The independent [holiday and birthday gift Manager module](docs/calendar-gifts.md) provides one missing unit on each of 14 holidays, including Christmas Eve, Christmas and Halloween, and one per birthday tier. Existing policies can add the new presets. Server-private birthdays and targeted player rosters are excluded from generic rule distribution.
 
 <a id="long-room-title-commands"></a>
 

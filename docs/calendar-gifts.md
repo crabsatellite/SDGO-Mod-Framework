@@ -9,10 +9,13 @@ Calendar gifts is an independent Manager module. Server owners configure holiday
 Automatic delivery starts disabled. The bundled editable rules provide:
 
 - One currently unowned unit on New Year's Day, Spring Festival, Qingming, Labour Day, Dragon Boat Festival, Mid-Autumn Festival and National Day, once per festival per year.
+- The same rule on Valentine's Day (February 14), International Women's Day (March 8), June 1 Children's Day, Halloween (October 31), Christmas Eve (December 24), Christmas (December 25) and New Year's Eve (December 31). Christmas Eve and Christmas are separate events with independent switches.
 - One unowned unit in each of C, CS, CR, B, BS, BR, A, AS, AR, S, SS and SR on a registered birthday.
 - UTC+08:00 and up to seven days of downtime recovery. First activation starts on the server's current date and does not backfill earlier events.
 
 An exhausted birthday tier searches higher rarity, then lower rarity within the same base rank. Choices within one bundle remain distinct. AU, BU and CU can be enabled separately. An exhausted tier and fallback range are skipped rather than filled with duplicates.
+
+New workspaces contain all 14 holidays. Existing policies are preserved: use **补充常见节日** in the event section and save the rules to add missing new presets. Existing IDs, names, switches, rewards and private rosters remain intact; a festival already configured under another ID is not duplicated. New events start on the save date, so downtime recovery does not retroactively grant holidays from before they were added.
 
 Ownership checks include the hangar, permanent units awaiting collection in native Storage, and relevant units held by the friend unit gift module. Eligible units need an existing valid permanent-unit reward definition on the server. Fixed-unit rewards also skip owned or pending types.
 
@@ -48,6 +51,6 @@ The receipt and all native Storage inserts share one database transaction. A lat
 
 The module maintains its own `sdgo_calendar_gifts` data. Existing native triggers and their permissions remain authoritative. Servers using collection-catalog triggers, for example, need the existing game login's transaction-observation permissions. Missing permissions stop activation; the module never grants server permissions automatically.
 
-The offline 2025–2040 festival calendar uses the [Hong Kong Observatory's Gregorian–Lunar conversion data](https://www.hko.gov.hk/tc/gts/time/conversion.htm). It describes festival dates, rather than every adjusted public-holiday day. Update the bundled calendar or select an explicit date outside that range.
+The offline 2025–2040 calendar for lunar festivals and Qingming uses the [Hong Kong Observatory's Gregorian–Lunar conversion data](https://www.hko.gov.hk/tc/gts/time/conversion.htm). Update that calendar or choose an explicit date outside its range. Fixed Gregorian holidays use their annual month/day directly and do not share that year limit. Rules cover the festival date rather than adjusted holiday periods; owners can disable or change events for local observances.
 
 For failures, inspect Manager's task status and local diagnostics. Share generic rule exports when troubleshooting, keeping private rosters, database INIs and full receipts on the server.
