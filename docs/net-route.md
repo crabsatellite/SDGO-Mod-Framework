@@ -1,6 +1,6 @@
-# Configured network endpoint routes (Beta)
+# Configured network endpoint routes
 
-`net_route` is a Beta client mod for the supported GOnline build. It
+`net_route` is a client mod for the supported GOnline build. It
 translates configured TCP/UDP destinations and restores the logical source of
 UDP replies. It does not change packet payloads or provide a new battle relay.
 

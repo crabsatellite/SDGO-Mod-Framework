@@ -1,4 +1,4 @@
-# Automatic native hangar capacity (Beta)
+# Automatic native hangar capacity
 
 [简体中文](hangar-capacity.zh-CN.md)
 

@@ -1,0 +1,51 @@
+name: Manager release updates
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: manager-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r manager/requirements-build.txt
+      - name: Choose release channel
+        shell: pwsh
+        run: |
+          if ('${{ github.ref_type }}' -eq 'tag') {
+            $version='${{ github.ref_name }}'.Substring(1)
+            $channel=if($version -match '-beta\.'){'beta'}else{'stable'}
+          } else {
+            $version=(Get-Content VERSION -TotalCount 1).Trim()+'-beta.${{ github.run_number }}${{ github.run_attempt }}'
+            $channel='beta'
+          }
+          "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+          "RELEASE_CHANNEL=$channel" >> $env:GITHUB_ENV
+      - name: Update integrity and install regression
+        timeout-minutes: 3
+        run: python -m unittest discover -s tests -p "test_manager_updates*.py" -v
+      - name: Build and validate exact release bytes
+        run: python tools/build_release.py --build --channel $env:RELEASE_CHANNEL --version $env:RELEASE_VERSION
+      - name: Standalone Manager check
+        run: python tests/mod_manager_frozen_test.py --exe "build/manager/SDGO Mod Manager.exe"
+      - name: Publish immutable versioned asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag='v'+$env:RELEASE_VERSION
+          if (gh release view $tag --json tagName 2>$null) { exit 0 }
+          $options=@('--target','${{ github.sha }}','--title',('SDGO Mod Manager '+$env:RELEASE_VERSION),'--generate-notes')
+          if($env:RELEASE_CHANNEL -eq 'beta'){$options+=@('--prerelease','--latest=false')}else{$options+='--latest'}
+          gh release create $tag "dist/SDGO-ModFramework-$env:RELEASE_VERSION.zip" "dist/SDGO-ModFramework-$env:RELEASE_VERSION.sha256" @options
+          if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}

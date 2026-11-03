@@ -10,7 +10,8 @@
 
 | 层 | 路径 | 已观察到的行为 |
 | --- | --- | --- |
-| 客户端 | 普通建房 `0x008D42D0` | 从 `GameRoomNameEdit` 取值，转为窄字符串，以 20 字节复制到 `0x640` 请求；发送长度固定为 `0x53`。 |
+| 客户端 | 普通及另一类对战建房 `0x008CF460` / `0x008CFF70` | 原生 `0x525` 请求，固定 `0x50` 字节；标题长度在 `+0x12`、内容在 `+0x13`。成功回包 `0x918`、`0x3CE1` 字节，房间编号在 `+6`，属于 Battle 域。 |
+| 客户端 | 队伍建房 `0x008D42D0` | 从 `self+0x50` 的窗口查找 `GameRoomNameEdit`，转为窄字符串，以 20 字节复制到 `0x640` 请求；发送长度固定为 `0x53`。 |
 | 客户端 | 任务建房 `0x009EE1A0` | 选择任务模式 5/8，读取房名，先截到 20 字节，再构造同类 `0x640` 请求。 |
 | 客户端 | 任务设置 `0x0084C300` | `CServiceCooperateRoomSetting` 的确定按钮与 Enter 路径都调用此函数；标题长度截到 20，发送 `0x9ED`、`0x3E` 字节请求。 |
 | 服务端 | 大厅房间创建 `0x004FDB70` | 标题长度写入 `WaitRoom +0x53`，从请求 `+0x13` 向房间 `+0x54` 固定复制 20 字节。 |
@@ -23,7 +24,10 @@
 客户端任务设置的类型对应关系由原版 RTTI 和 vtable 核对：
 `CServiceCooperateRoomSetting` vtable `0x00E9DE8C`，按钮处理
 `0x00852AE0`、Enter 处理 `0x00852F30`，两者都调用 `0x0084C300`。
-普通建房服务 `CServiceMakeRoomSetting` 的 vtable 为 `0x00EA3CD4`。
+普通建房 `CServiceMakeRoom` 的 vtable 为 `0x00EA6414`；另一种建房 `CServiceMakeRoomAI`
+为 `0x00EA6484`。两者先加载隐藏窗口，在首次状态 3 更新后才缓存 `self+0x54` 的房名框。
+队伍建房 `CServiceMakeRoomMatchmaking` 为 `0x00EA64F4`，初始化为 `0x008E4700`。
+`0x00EA3CD4` 是只提供规则选择的 `CServiceMakeRoomSetting`，不能用它的初始化代表房名输入框。
 
 历史服务端 MAP/伪代码有跳转桩和函数边界错误，不能仅凭旧函数名确定实际处理器；上述地址以当前二进制为准。
 服务端改名函数 `0x004DCA40–0x004DCDAD` 的反编译中可直接看到 `_strncpy(room + 0x7A, request + 8, 0x14)`。

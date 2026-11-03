@@ -22,6 +22,10 @@ struct FakeEdit
     unsigned writes = 0;
 };
 std::wstring g_title_bar_cache;
+std::wstring g_original_title;
+bool g_legacy_projection_available = true;
+bool g_title_cache_write_enabled = true;
+bool g_title_cache_read_enabled = true;
 }  // namespace
 
 bool Bind(const SdgoApi*, SdgoMod*) { return true; }
@@ -56,7 +60,10 @@ bool SetEditText(void* edit, const std::wstring& text, bool)
     return true;
 }
 
-bool SetTitleBarCachedTitle(void*, const std::wstring& title) { g_title_bar_cache = title; return true; }
+bool SetTitleEditOriginalTitle(void*, const std::wstring& title) { g_original_title=title;return true; }
+
+bool SetTitleBarCachedTitle(void*, const std::wstring& title) { if (!g_title_cache_write_enabled) return false; g_title_bar_cache = title; return true; }
+bool ReadTitleBarCachedTitle(void*, std::wstring* title) { if (!g_title_cache_read_enabled) return false; *title = g_title_bar_cache; return true; }
 
 bool ReadTitleBarRoom(void* self, bool* battle, uint32_t* id, std::wstring* legacy)
 {
@@ -68,7 +75,7 @@ bool ReadTitleBarRoom(void* self, bool* battle, uint32_t* id, std::wstring* lega
     if (!room) std::memcpy(&room, bytes + 0x10C, sizeof(room));
     if (!room) return false;
     std::memcpy(id, room, sizeof(*id));
-    *legacy = L"native title";
+    *legacy = g_legacy_projection_available ? L"native title" : L"";
     return *id != 0;
 }
 
@@ -239,6 +246,7 @@ void ResetRoot()
     g_activeConnection = 0;
     g_activeRoom = 0;
     g_drafts.clear();
+    g_nativeLeaves.clear();
     for (SavedDraft& saved : g_saved)
         saved = SavedDraft();
     g_notices.clear();
@@ -252,6 +260,10 @@ void ResetRoot()
     g_title_event_callback = nullptr;
     g_title_event_message = {};
     ui::g_title_bar_cache.clear();
+    ui::g_original_title.clear();
+    ui::g_legacy_projection_available = true;
+    ui::g_title_cache_write_enabled = true;
+    ui::g_title_cache_read_enabled = true;
     g_titleEvent = reinterpret_cast<EventFn>(&FakeTitleEvent);
 }
 
@@ -838,6 +850,7 @@ void TestTitleEventNoSendAndServerError()
     FakeBdbEvent event;
     Put16(event.prefix.data() + 4, 0x0BDB);
     event.title.text = L"unchanged title event must not stage forever";
+    ui::g_title_bar_cache = event.title.text;
     g_title_event_result = 73;
     const int event_result =
         TitleEvent(&title_bar, nullptr, &event);
@@ -846,6 +859,32 @@ void TestTitleEventNoSendAndServerError()
               !g_state.HasPending(70) &&
               StartDecision(70) == transport::SendDecision::Pass,
           "PvP title event consumed without a native send clears its phantom draft and does not block battle start");
+
+    event.title.text = L"queued native title keeps its complete metadata beyond the UI callback";
+    g_title_event_result = 1;
+    ui::g_title_cache_read_enabled = false;
+    const auto callsBeforeUnreadable = g_title_event_calls;
+    Check(TitleEvent(&title_bar, nullptr, &event) == 1 && g_title_event_calls == callsBeforeUnreadable &&
+              !g_drafts.count(70) && StartDecision(70) == transport::SendDecision::Pass,
+          "an unreadable native cache cannot stage or claim a command that was never queued");
+    ui::g_title_cache_read_enabled = true;
+    Check(TitleEvent(&title_bar, nullptr, &event) == 1 &&
+              g_drafts.count(70) == 1 && !g_state.HasPending(70) &&
+              StartDecision(70) == transport::SendDecision::Reject,
+          "a handled native title queued for a later frame retains its unsent draft");
+    const auto callsAfterQueue = g_title_event_calls;
+    ui::g_title_bar_cache = L"confirmed title"; // a native render can restore the confirmed view before the queue pumps
+    Check(TitleEvent(&title_bar, nullptr, &event) == 1 && g_title_event_calls == callsAfterQueue &&
+              g_drafts.at(70).native_queued,
+          "an identical event cannot enqueue a second legacy command while the first native command is pending");
+    const auto queued = SendDraft(70, kPvpTitleEdit, event.title.text);
+    Check(queued.decision == transport::SendDecision::Replace &&
+              queued.message.title == Utf8Bytes(event.title.text),
+          "the later original native send still carries the complete queued title");
+    AckSnapshot(70, Record(1100, battle_room, 2, 2, Utf8Bytes(event.title.text)), queued.message.request_id);
+    Check(!g_state.HasPending(70) && !g_drafts.count(70) &&
+              StartDecision(70) == transport::SendDecision::Pass,
+          "the queued title's exact acknowledgement releases the battle-start gate");
 
     ResetRoot();
     Check(Ready(71, 1101,
@@ -935,6 +974,96 @@ void TestMissionTitleEventRetry()
           "replayed mission confirmation completes without changing another room domain");
 }
 
+void TestUncertainTitleRecovery()
+{
+    struct TitleBar { std::array<uint8_t, 0x108> prefix{}; void* battle = nullptr; void* mission = nullptr; };
+    struct Event { std::array<uint8_t, 0x2C> prefix{}; ui::FakeEdit title; };
+    const uint32_t room = kBattleDomainForTest | 6;
+    uint32_t nativeId = 6;
+    TitleBar titleBar;
+    titleBar.battle = &nativeId;
+    Event event;
+    Put16(event.prefix.data() + 4, 0x0BDB);
+    ResetRoot();
+    Check(Ready(92, 9101, {Record(9101, room, 1, 1, "confirmed original")}),
+          "uncertain recovery fixture has an authoritative confirmed title");
+    ActivatePvpRoom(92, nativeId);
+    g_title_event_callback = &NativeTitleApplyFixture;
+    ui::g_title_bar_cache = L"confirmed original";
+    event.title.text = L"uncertain replacement title beyond twenty characters";
+    Check(TitleEvent(&titleBar, nullptr, &event) == 1, "first uncertain edit uses the native title handler");
+    const auto uncertain = g_title_event_message.request_id;
+    g_state.AdvanceTime(92, GetTickCount64() + titles::kSetTitleTimeoutMilliseconds);
+    event.title.text = L"confirmed original";
+    g_title_event_callback = nullptr;
+    g_title_event_result = 0;
+    const auto beforeInactive = ui::g_title_bar_cache;
+    Check(TitleEvent(&titleBar, nullptr, &event) == 0 && ui::g_title_bar_cache == beforeInactive &&
+              StartDecision(92) == transport::SendDecision::Reject,
+          "an inactive recovery callback restores the native cache and cannot release an uncertain title");
+    g_title_event_callback = &NativeTitleApplyFixture;
+    Check(TitleEvent(&titleBar, nullptr, &event) == 1 &&
+              g_title_event_message.request_id != uncertain &&
+              g_title_event_message.title == "confirmed original" &&
+              StartDecision(92) == transport::SendDecision::Reject,
+          "recovering the confirmed value forces a compensating native request and still requires its ACK");
+    AckSnapshot(92, Record(9101, room, 1, 2, "confirmed original"), g_title_event_message.request_id);
+    Check(!g_state.HasPending(92) && !g_drafts.count(92) &&
+              StartDecision(92) == transport::SendDecision::Pass,
+          "only the compensating confirmation releases uncertain-title recovery");
+
+    ResetRoot();
+    Check(Ready(93, 9102, {Record(9102, room, 1, 1, "")}),
+          "legacy recovery fixture has only the authenticated room identity");
+    ActivatePvpRoom(93, nativeId);
+    ui::g_legacy_projection_available = false;
+    ui::g_title_bar_cache = L"native legacy name";
+    g_title_event_callback = &NativeTitleApplyFixture;
+    event.title.text = L"first full title for a legacy room beyond twenty characters";
+    Check(TitleEvent(&titleBar, nullptr, &event) == 1, "legacy upgrade begins through the original native handler");
+    const auto legacyRequest = g_title_event_message.request_id;
+    g_state.AdvanceTime(93, GetTickCount64() + titles::kSetTitleTimeoutMilliseconds);
+    ui::g_title_cache_write_enabled = false;
+    const auto callsBeforeFailure = g_title_event_calls;
+    Check(TitleEvent(&titleBar, nullptr, &event) == 1 &&
+              g_title_event_calls == callsBeforeFailure && StartDecision(93) == transport::SendDecision::Reject,
+          "cache restoration failure preserves blocked recovery without invoking an unprepared native command");
+    ui::g_title_cache_write_enabled = true;
+    Check(TitleEvent(&titleBar, nullptr, &event) == 1 &&
+              g_title_event_message.request_id == legacyRequest &&
+              g_state.Pending(93)->status == titles::PendingStatus::Awaiting,
+          "an unavailable short projection does not prevent retrying the exact legacy-upgrade nonce");
+    AckSnapshot(93, Record(9102, room, 1, 2, Utf8Bytes(event.title.text)), legacyRequest);
+    Check(!g_state.HasPending(93) && StartDecision(93) == transport::SendDecision::Pass,
+          "legacy recovery completes only after its full authoritative title returns");
+}
+
+void TestBareListRefreshKeepsConfirmedTitle()
+{
+    ResetRoot();
+    const uint32_t room = kBattleDomainForTest | 9;
+    const std::string full = "confirmed native title beyond twenty bytes";
+    Check(Ready(94, 9200, {Record(9200, room, 1, 1, full)}),
+          "bare-refresh fixture has confirmed extended title support");
+    auto bare = NativePacket(ReceiveSize(kRoomList), kRoomList);
+    OnReceive(94, bare.data(), bare.size(), nullptr, 0);
+    Check(g_state.IsReady(94) && g_state.Query(94, room)->title == full,
+          "an unsolicited legacy list update cannot erase the confirmed full title");
+    const auto refresh = g_state.BeginHello(94, GetTickCount64());
+    OnReceive(94, bare.data(), bare.size(), nullptr, 0);
+    Check(g_state.IsNegotiating(94) && g_state.Query(94, room)->title == full,
+          "a bare list broadcast cannot consume the outstanding capability nonce");
+    metadata::SnapshotBatch batch;
+    batch.server_epoch = 9200;
+    batch.request_id = refresh.request_id;
+    batch.rooms.push_back(Record(9200, room, 1, 1, full));
+    std::vector<uint8_t> body;
+    Check(metadata::EncodeSnapshotBatchBody(batch, &body), "matching capability refresh encodes");
+    OnReceive(94, bare.data(), bare.size(), body.data(), body.size());
+    Check(g_state.IsReady(94) && !g_state.IsNegotiating(94) && g_state.Query(94, room)->title == full,
+          "the actual matching refresh still completes after an interleaved native broadcast");
+}
+
 void TestAutoCreateCapability()
 {
     ResetRoot();
@@ -982,10 +1111,20 @@ void TestNegotiatingDraft()
               transport::SendDecision::Replace && g_state.IsNegotiating(81),
           "mission refresh tracks its outstanding capability offer");
     const std::wstring text = L"a full room title waiting for a refreshed list !ai3";
-    Check(!Prepare(ui::Surface::PvpCreate, text) && !g_notices.empty() &&
+    Check(Prepare(ui::Surface::PvpCreate, text) && g_notices.empty() &&
               g_saved[static_cast<size_t>(ui::Surface::PvpCreate)].text == text &&
-              g_drafts.empty() && !g_state.HasPending(81),
-          "title submitted during refresh reports the wait before native UI closes and keeps text");
+              g_drafts.count(81)==1 && !g_state.HasPending(81),
+          "fresh title submitted during a redundant refresh stages without a player-facing wait error");
+    const auto immediate=SendDraft(81,0x0640,text);
+    Check(immediate.message.request_id && !g_state.IsNegotiating(81) && g_state.HasPending(81),
+          "the original create send supersedes the pending recheck using confirmed capability");
+    AckBatch(81,5,1234,1,1,Utf8Bytes(text),immediate.message.request_id);
+    Check(!g_state.HasPending(81) && g_notices.empty(),
+          "the fresh create completes normally without a confusing synchronization popup");
+    ResetRoot();
+    Check(Ready(81,1234) && BeforeSend(81,list.data(),list.size(),0,&replacement)==
+              transport::SendDecision::Replace,
+          "independent list rejection fixture starts a genuine capability recheck");
     metadata::TrailerView view;
     metadata::Message hello;
     Check(DecodeMessagePacket(replacement, &view, &hello), "refresh offer decodes");
@@ -1014,8 +1153,85 @@ void TestNegotiatingDraft()
           "bare native create rejection fails the matching title without losing its text");
 }
 
+void TestNativePvpCreateCarrier()
+{
+    ResetRoot();
+    Check(Ready(84, 2000), "native PvP create negotiates its real connection");
+    const std::wstring title(128,L'房');
+    Check(Prepare(ui::Surface::PvpNativeCreate,title), "actual PvP form stages the complete Unicode title");
+    const auto sent=SendDraft(84,0x0525,title,0);
+    Check(sent.decision==transport::SendDecision::Replace && sent.native.size()==0x50 &&
+              sent.native[0x12]==20 && sent.message.title==Utf8Bytes(title) &&
+              OnlyTitleProjectionChanged(sent,0x0525,title),
+          "real 0x525 carrier preserves all non-title fields and repairs the native 256-byte length wrap");
+    std::vector<uint8_t> body;
+    Check(metadata::EncodeMessageBody(Snapshot(Record(2000,kBattleDomainForTest|19,4,1,Utf8Bytes(title)),sent.message.request_id),&body),"native PvP ACK encodes");
+    auto ack=NativePacket(0x3CE1,0x0918);Put32(ack.data()+6,19);
+    OnReceive(84,ack.data(),ack.size(),body.data(),body.size());
+    std::wstring confirmed;
+    Check(!g_state.HasPending(84) && LookupTitle(true,19,&confirmed) && confirmed==title &&
+              g_activeRoom==(kBattleDomainForTest|19),
+          "native 0x918 ACK confirms the full title in the Battle domain");
+}
+
+int g_team_callback_calls = 0;
+bool g_team_callback_had_draft = false;
+int __fastcall FakeTeamSettings(void*, void*, void*, uint32_t, const void*, void*)
+{
+    ++g_team_callback_calls;
+    const auto draft = g_drafts.find(g_activeConnection);
+    g_team_callback_had_draft = draft != g_drafts.end() &&
+        draft->second.surface == ui::Surface::TeamSettings && draft->second.opcode == 0x09ED && draft->second.room == 21;
+    return 71;
+}
+
+void TestTeamSettingsCallback()
+{
+    ResetRoot();
+    Check(Ready(85,2001,{Record(2001,21,4,1,"old team title")}),"team settings capability fixture");
+    g_fake_mission_room = 999; // a previous mission must not redirect this Team edit
+    g_activeRoom = 21;
+    g_teamSettings = reinterpret_cast<DialogFn>(&FakeTeamSettings);
+    ui::FakeEdit edit; edit.text=std::wstring(128,L'\u623f');
+    ui::FakeEdit name; name.text=L"CancelBtn";
+    g_team_callback_calls=0;
+    Check(TeamSettings(&edit,nullptr,nullptr,0x101,&name,nullptr)==71 &&
+              g_team_callback_calls==1 && g_drafts.empty(),
+          "team callback preserves non-confirm actions and its four-argument ABI");
+    name.text=L"SettingOkBtn";
+    Check(TeamSettings(&edit,nullptr,nullptr,0x101,&name,nullptr)==71 &&
+              g_team_callback_calls==2 && g_team_callback_had_draft && g_drafts.empty() &&
+              !g_state.HasPending(85),
+          "team confirmation exposes the complete draft during native callback and clears a no-send action");
+    ui::FakeEdit reopened;
+    OnInit(ui::Surface::TeamSettings,nullptr,&reopened);
+    Check(reopened.text==edit.text,"team settings restores the full saved edit against its actual Team room");
+    ResetRoot();
+    g_team_callback_calls=0;
+    Check(TeamSettings(&edit,nullptr,nullptr,0x101,&name,nullptr)==0 &&
+              g_team_callback_calls==0 && !g_notices.empty(),
+          "unnegotiated team settings does not silently submit a truncated long title");
+}
+
+void TestInlineCancelKeepsConfirmedTitle()
+{
+    ResetRoot();
+    const uint32_t room=kBattleDomainForTest|22;
+    Check(Ready(86,2002,{Record(2002,room,1,1,"confirmed long title beyond twenty bytes")}),"inline cancel fixture");
+    g_activeRoom=room;
+    auto& saved=g_saved[static_cast<size_t>(ui::Surface::PvpTitleEdit)];
+    saved={true,86,room,L"unsent draft that must not become the cancel value"};
+    ui::FakeEdit edit;
+    OnInit(ui::Surface::PvpTitleEdit,nullptr,&edit);
+    Check(edit.text==saved.text && ui::g_original_title==L"confirmed long title beyond twenty bytes",
+          "Escape original cache retains confirmed full metadata independently of the visible retry draft");
+}
+
 void RunTests()
 {
+    TestInlineCancelKeepsConfirmedTitle();
+    TestTeamSettingsCallback();
+    TestNativePvpCreateCarrier();
     TestCapabilityAndLegacyFallback();
     TestCreateMissionAndPvpUpdates();
     TestProjectionBoundaries();
@@ -1024,6 +1240,8 @@ void RunTests()
     TestTitleEventNoSendAndServerError();
     TestNegotiatingDraft();
     TestMissionTitleEventRetry();
+    TestUncertainTitleRecovery();
+    TestBareListRefreshKeepsConfirmedTitle();
     TestAutoCreateCapability();
     ResetRoot();
     const uint32_t room = kBattleDomainForTest | 5;
@@ -1050,16 +1268,104 @@ void RunTests()
           "another room never inherits the previous room difficulty");
     Put32(joined.data() + 6, 5);
     OnReceive(111, joined.data(), joined.size(), nullptr, 0);
-    auto left = NativePacket(2, 0x087A);
+    auto leaveAck = NativePacket(8, 0x057B);
+    Put16(leaveAck.data()+6, 1);
+    OnReceive(111, leaveAck.data(), leaveAck.size(), nullptr, 0);
+    Check(SdgoRoomTitleCurrentV1(copy, sizeof(copy)) == full.size(),
+          "a rejected native leave preserves the active room's confirmed title");
+    Put16(leaveAck.data()+6, 0);
+    OnReceive(112, leaveAck.data(), leaveAck.size(), nullptr, 0);
+    Check(SdgoRoomTitleCurrentV1(copy, sizeof(copy)) == full.size(),
+          "another connection's leave ACK cannot clear this room's title");
+    OnReceive(111, leaveAck.data(), leaveAck.size(), nullptr, 0);
+    Check(ReceiveSize(0x057B) == 8 && SdgoRoomTitleCurrentV1(copy, sizeof(copy)) == 0,
+          "the real successful 057B leave ACK deactivates the previous room's full title");
+    OnReceive(111, joined.data(), joined.size(), nullptr, 0);
+    auto left = NativePacket(6, 0x087A);
     OnReceive(111, left.data(), left.size(), nullptr, 0);
     Check(SdgoRoomTitleCurrentV1(copy, sizeof(copy)) == 0,
           "leaving the room stops the AI title provider");
 }
 }  // namespace
 
+void TestModernRoomLeaveConfirmation()
+{
+    ResetRoot();
+    const uint32_t connection = 121, room = 5;
+    const std::string full = "confirmed full title for the modern mission room";
+    Check(Ready(connection, 4500, {Record(4500, room, 1, 1, full)}),
+          "modern leave fixture has confirmed full room metadata");
+    g_activeConnection=connection;g_activeRoom=room;
+    InterlockedExchange(&g_currentTitleReady,1);
+    char current[513] = {};
+    auto request=NativePacket(10,0x05C4);
+    auto ack=NativePacket(10,0x09B7);
+    std::vector<uint8_t> replacement;
+    Put32(request.data()+6,room+1);
+    BeforeSend(connection,request.data(),request.size(),0,&replacement);
+    Check(g_nativeLeaves.empty(),"another room's removal cannot become the current room's exit intent");
+    Put32(request.data()+6,room);
+    Check(BeforeSend(connection,request.data(),request.size(),0,&replacement)==transport::SendDecision::Pass &&
+              g_nativeLeaves.count(connection)==1,
+          "the actual local 05C4 request records its current room generation without rewriting the packet");
+    Put32(ack.data()+6,room+1);
+    OnReceive(connection,ack.data(),ack.size(),nullptr,0);
+    Put32(ack.data()+6,room);
+    OnReceive(connection+1,ack.data(),ack.size(),nullptr,0);
+    Check(SdgoRoomTitleCurrentV1(current,sizeof(current))==full.size(),
+          "another room or connection's 09B7 cannot clear this room's title");
+    auto rejected=NativePacket(8,0x04D2);Put16(rejected.data()+6,1);
+    OnReceive(connection,rejected.data(),rejected.size(),nullptr,0);
+    OnReceive(connection,ack.data(),ack.size(),nullptr,0);
+    Check(g_nativeLeaves.empty() && SdgoRoomTitleCurrentV1(current,sizeof(current))==full.size(),
+          "a rejected exit preserves the title and cannot later consume an unrelated departure broadcast");
+    BeforeSend(connection,request.data(),request.size(),0,&replacement);
+    Seed(connection,4500,{Record(4500,room,2,1,full)});
+    OnReceive(connection,ack.data(),ack.size(),nullptr,0);
+    Check(SdgoRoomTitleCurrentV1(current,sizeof(current))==full.size(),
+          "an old exit confirmation cannot clear a reused native room generation");
+    BeforeSend(connection,request.data(),request.size(),0,&replacement);
+    auto& saved=g_saved[static_cast<size_t>(ui::Surface::PvpTitleEdit)];
+    saved={true,connection,room,L"saved room edit"};
+    OnReceive(connection,ack.data(),ack.size(),nullptr,0);
+    Check(ReceiveSize(0x09B7)==10 && ReceiveSize(0x04D2)==8 &&
+              SdgoRoomTitleCurrentV1(current,sizeof(current))==0 && !saved.valid && g_nativeLeaves.empty(),
+          "the genuine local modern-room departure deactivates its confirmed title and editing draft");
+}
+
+void TestCreateSnapshotCarrier()
+{
+    Draft draft;
+    draft.opcode = 0x0640;
+    auto packet = NativePacket(0x21FC, 0x0A33);
+    Put32(packet.data() + 6, 9);
+    metadata::Message snapshot;
+    snapshot.kind = metadata::MessageKind::Snapshot;
+    snapshot.room_id = 9;
+    Check(CreateSnapshotMatchesCarrier(draft, packet.data(), packet.size(), snapshot),
+          "a mission create snapshot is bound to the actual 0A33 native room ID");
+    snapshot.room_id = 10;
+    Check(!CreateSnapshotMatchesCarrier(draft, packet.data(), packet.size(), snapshot),
+          "a full-title snapshot cannot confirm another native room");
+    snapshot.room_id = 9 | kBattleDomain;
+    Check(!CreateSnapshotMatchesCarrier(draft, packet.data(), packet.size(), snapshot),
+          "a mission create ACK cannot be rebound to the Battle room domain");
+    draft.opcode = 0x0525;
+    Check(!CreateSnapshotMatchesCarrier(draft, packet.data(), packet.size(), snapshot),
+          "a PvP create cannot complete on a mission create carrier");
+    packet = NativePacket(0x3CE1, 0x0918);
+    Put32(packet.data() + 6, 9);
+    Check(CreateSnapshotMatchesCarrier(draft, packet.data(), packet.size(), snapshot) &&
+              !CreateSnapshotMatchesCarrier(draft, packet.data(), 8, snapshot),
+          "a PvP create requires the complete 0918 carrier and its native Battle-domain identity");
+}
+
 int main()
 {
+    Check(InitializeSessionRequests(),"the installed Windows system RNG initializes the process's room-title request range");
     RunTests();
+    TestModernRoomLeaveConfirmation();
+    TestCreateSnapshotCarrier();
     std::printf("%s: %d failure(s)\n",
                 g_failures ? "FAIL" : "PASS", g_failures);
     return g_failures ? 1 : 0;

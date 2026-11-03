@@ -24,10 +24,17 @@ $env:LIB=$oldCompilerLib
 if($ServicesOnly){Write-Output $services;return}
 $oldLibrary=$env:SDGO_MANAGER_SERVICES
 $oldCache=$env:PYINSTALLER_CONFIG_DIR
+$oldMetadata=$env:SDGO_MANAGER_METADATA
 try {
+    $metadata=Get-Content -LiteralPath (Join-Path $repo 'manager/repository.json') -Raw | ConvertFrom-Json
+    $metadata.manager_version=if($env:SDGO_RELEASE_VERSION){$env:SDGO_RELEASE_VERSION}else{(Get-Content -LiteralPath (Join-Path $repo 'VERSION') -TotalCount 1).Trim()}
+    $metadataDir=Join-Path $build 'manager-metadata'
+    New-Item -ItemType Directory -Force -Path $metadataDir | Out-Null
+    $env:SDGO_MANAGER_METADATA=Join-Path $metadataDir 'repository.json'
+    [IO.File]::WriteAllText($env:SDGO_MANAGER_METADATA,($metadata | ConvertTo-Json),[Text.UTF8Encoding]::new($false))
     $env:SDGO_MANAGER_SERVICES=$library
     $env:PYINSTALLER_CONFIG_DIR=Join-Path $build 'manager-cache'
     & $Python -m PyInstaller --noconfirm --distpath (Join-Path $build 'manager') --workpath (Join-Path $build 'manager-freeze') (Join-Path $repo 'manager\SDGOModManager.spec')
     if($LASTEXITCODE -ne 0){throw 'Manager EXE build failed; see the concrete error above'}
-} finally {$env:SDGO_MANAGER_SERVICES=$oldLibrary;$env:PYINSTALLER_CONFIG_DIR=$oldCache}
+} finally {$env:SDGO_MANAGER_SERVICES=$oldLibrary;$env:PYINSTALLER_CONFIG_DIR=$oldCache;$env:SDGO_MANAGER_METADATA=$oldMetadata}
 Get-Item -LiteralPath (Join-Path $build 'manager\SDGO Mod Manager.exe') | Select-Object FullName,Length

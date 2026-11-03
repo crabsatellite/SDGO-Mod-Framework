@@ -256,3 +256,7 @@ Beta, testing or pending-release labels from the bilingual feature index and gui
 Mod channel (`stable`), Manager labels, version suffixes and package templates. Verify the installed
 and published metadata agree. A build, fixture or partial scenario alone does not promote a feature;
 other features retain their existing status until their own acceptance and publication are complete.
+
+Evaluate the accepted version and its declared workflow. Later features or optimizations have their
+own acceptance scope and do not undo a released version's completed tests. Historical runtime
+receipts and user confirmations remain evidence after temporary test output has been cleaned up.
