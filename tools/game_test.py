@@ -1621,7 +1621,10 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                          mission_mode: int | None = None,
                          shop_catalog: bool = False, friends_only: bool = False, room_titles_only: bool = False,
                          room_style_preview: str | None = None,
-                         same_room_rematch: bool = False, shop_visual_only: bool = False) -> tuple[str, ...]:
+                         same_room_rematch: bool = False, shop_visual_only: bool = False,
+                         page_group: str | None = None) -> tuple[str, ...]:
+    if page_group is not None and (page_group != 'hangar' or not pages_only or shop_catalog or collection_draw):
+        raise GameTestError('page_group=hangar requires read-only pages without shop or collection scope')
     mission_mode = validate_mission_mode(mission_mode)
     play_unit_uid = validate_play_unit_uid(play_unit_uid)
     if type(same_room_rematch) is not bool:raise GameTestError('same_room_rematch must be a boolean')
@@ -1663,6 +1666,8 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         return FLOW_CASES[:3] + selection + MISSION_FLOW_CASES
     modes = parse_mode_sequence(mode_sequence)
     if pages_only:
+        if page_group == 'hangar':
+            return FLOW_CASES[:3] + selection + ('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel')
         if shop_visual_only:
             return FLOW_CASES[:2] + ('flow.shop_ready',) + selection + ('pages.shop.catalog',)
         shop_cases = ('pages.shop.catalog',) if shop_catalog else ()
@@ -1740,6 +1745,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         room_titles_only=plan.get("room_titles_only",False),
         room_style_preview=plan.get("room_style_preview"),
         shop_visual_only=plan.get('shop_visual_only', False),
+        page_group=plan.get('page_group'),
     )
 
 
@@ -2049,6 +2055,8 @@ def write_job(
             run["run"]["ai_layout"] = plan["ai_layout"]
     if 'play_unit_uid' in plan:
         run['run']['play_unit_uid'] = str(plan['play_unit_uid'])
+    if 'page_group' in plan:
+        run['run']['page_group'] = plan['page_group']
     if all(field in plan for field in SHOP_PLAN_FIELDS):
         for field in SHOP_PLAN_FIELDS:
             run['run'][field] = str(plan[field])
@@ -2107,6 +2115,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
         gift_requests_only = run.get('gift_requests_only', '0') == '1'
         deck_only = run.get('deck_only', '0') == '1'
         pages_only = run.get('pages_only', '0') == '1'
+        page_group = run.get('page_group')
         friends_only = run.get('friends_only', '0') == '1'
         room_titles_only = run.get('room_titles_only','0') == '1'
         room_style_preview = run.get('room_style_preview')
@@ -2307,6 +2316,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 room_style_preview=room_style_preview,
                 shop_visual_only=bool(shop_plan and shop_plan.get('shop_visual_only')),
                 same_room_rematch=same_room_rematch,
+                page_group=page_group,
             )
 
         if historical_cases:
@@ -2392,6 +2402,8 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             plan.update(shop_plan)
         if room_style_preview is not None:
             plan['room_style_preview'] = room_style_preview
+        if page_group is not None:
+            plan['page_group'] = page_group
         for flag, value in (
             ('bootstrap_only', bootstrap_only),
             ('battleship_only', battleship_only),
@@ -2681,6 +2693,7 @@ def prepare(
     gift_requests_only: bool = False,
     deck_only: bool = False,
     pages_only: bool = False,
+    page_group: str | None = None,
     friends_only: bool = False,
     room_titles_only: bool = False,
     room_style_preview: str | None = None,
@@ -2705,6 +2718,13 @@ def prepare(
     _owned_client_transfer: tuple[Path, str] | None = None,
 ) -> dict:
     client_template = client_template.resolve()
+    if page_group is not None:
+        if page_group != 'hangar' or not pages_only:
+            raise GameTestError('page_group=hangar requires --pages-only')
+        sdk=manifest_mod(stage/'client/sdgo/mods/game_test_client/mod.ini').get('version','')
+        parsed=re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:[-+].*)?',sdk)
+        if not parsed or tuple(map(int,parsed.groups())) < (0,1,8):
+            raise GameTestError('the sealed hangar page group requires native observer 0.1.8 or newer')
     if type(same_room_rematch) is not bool or (same_room_rematch and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,random_loadout)))):
         raise GameTestError('same-room rematch requires complete PvP without random loadout or preparation-only scopes')
     if rebind_existing_account:
@@ -2778,6 +2798,7 @@ def prepare(
             deck_only, pages_only, collection_draw, play_unit_uid, mission_mode,
             shop_binding is not None,friends_only=friends_only, room_titles_only=room_titles_only,
             room_style_preview=room_style_preview,
+            page_group=page_group,
         )
         if mission_mode is not None:
             if random_loadout:
@@ -2979,6 +3000,8 @@ def prepare(
             ('collection_draw',collection_draw),
         ):
             if value:plan[flag] = True
+        if page_group is not None:
+            plan['page_group'] = page_group
 
     run_dir.parent.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex
@@ -3299,6 +3322,8 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
     public_shop_fields = set()
     if plan.get('room_style_preview') != public_plan.get('room_style_preview'):
         raise GameTestError('run.json cannot change the sealed room-style preview scope')
+    if plan.get('page_group') != public_plan.get('page_group'):
+        raise GameTestError('run.json cannot change the sealed page group')
     if fps_only:
         if set(plan) != set(public_plan):
             raise GameTestError("run.json adds fields outside the native FPS plan")
@@ -4315,6 +4340,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--room-titles-only',action='store_true',help='test all live room-title inputs, reopen and full server-confirmed titles')
     prepare_parser.add_argument('--room-style-preview', choices=('pvp', 'mission'), help='capture the genuine legacy room after native creation; requires --room-titles-only and a preview Mod')
     prepare_parser.add_argument('--pages-only', action='store_true',help='visit the real hangar and verify Mod inventory, preview and cancel without exchanging units')
+    prepare_parser.add_argument('--page-group', choices=('hangar',), help='with --pages-only, seal only the read-only native hangar checks')
     prepare_parser.add_argument('--friends-only',action='store_true',help='run the real multi-client native friend session')
     prepare_parser.add_argument('--collection-draw',action='store_true',help='explicit pages-only extension: purchase one collection draw with existing native funds and verify delivery')
     prepare_parser.add_argument('--shop-assertions',type=Path,
@@ -4415,6 +4441,7 @@ def main(argv: list[str] | None = None) -> int:
                 gift_requests_only=args.gift_requests_only,
                 deck_only=args.deck_only,
                 pages_only=args.pages_only,
+                page_group=args.page_group,
                 friends_only=args.friends_only,
                 room_titles_only=args.room_titles_only,
                 room_style_preview=args.room_style_preview,

@@ -186,7 +186,13 @@ void PageUi::RestoreOriginal() {
 void PageUi::BeforeNativeRefresh() {if(Ready() && exchange_)RestoreOriginal();}
 void PageUi::AfterNativeRefresh() {if(Ready()){HideOriginal();Render();}}
 void PageUi::Open() {if(Ready()){exchange_=true;armed_=false;page_=0;HideOriginal();Render();}}
-void PageUi::Close() {if(Ready()){RestoreOriginal();exchange_=false;armed_=false;confirm_=false;rows_.clear();Render();}}
+void PageUi::Close() {
+    // Keep the native identity/lifetime check even for an already-closed view.
+    // Only the unchanged close/render work can be skipped on off-page pumps.
+    if(!Connected())return;
+    if(!exchange_ && !armed_ && !confirm_ && rows_.empty() && hidden_.empty())return;
+    RestoreOriginal();exchange_=false;armed_=false;confirm_=false;rows_.clear();Render();
+}
 void PageUi::Arm(bool value) {armed_=value;Render();}
 void PageUi::Status(const std::wstring& value) {status_=value;Render();}
 void PageUi::Rows(std::vector<std::wstring> value) {rows_=std::move(value);page_=0;armed_=false;Render();}

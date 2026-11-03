@@ -166,6 +166,20 @@ int main(){
     assert(!g_hasPreview && !g_mutating && fixture::sends==beforeChange && !g_ui.Armed());
     g_ui.Open();g_ui.Arm(true);page_fixture::dialog[0x162]=0;g_nextTick=0;Pump();
     assert(!g_ui.Exchange() && !g_ui.Armed());
+    assert(!g_hasPreview && page_fixture::Shown(L"UnitDeleteBtn"));
+    // Closing once restores native controls and clears confirmation. Later
+    // off-page message pumps must not render/write the already-closed panel.
+    auto* closedConfirm=page_fixture::Pointer(L"ModHangarConfirm");
+    page_fixture::Put<uint32_t>(closedConfirm,0x18C,2);
+    for(int tick=0;tick<64;++tick) {g_nextTick=0;Pump();}
+    assert(page_fixture::Get<uint32_t>(closedConfirm,0x18C)==2 &&
+           !g_ui.Exchange() && !g_ui.Armed() && !g_hasPreview);
+    page_fixture::dialog[0x162]=1;g_nextTick=0;Pump();
+    assert(page_fixture::Get<uint32_t>(closedConfirm,0x18C)==0 && page_fixture::Shown(L"UnitDeleteBtn"));
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarOpen"));
+    assert(g_ui.Exchange() && !g_ui.Armed() && !g_hasPreview && fixture::sends==beforeChange);
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarCancel"));
+    assert(!g_ui.Exchange() && page_fixture::Shown(L"UnitDeleteBtn"));
 
     // The exported observer is read-only without a valid run. Mutating actions
     // require the exact canonical client run hash, native UI thread and real
