@@ -227,6 +227,11 @@ because its command does not fit the native title limit with a reused session pr
 `--ai-pool-level 1`–`5` selects an exact pool with `--expected-ai 1`; it cannot be
 combined with the difficulty override. In the test Mod, `BattleAiBehavior=1`
 requires actual special-victim recovery, moving fire and distant pursuit.
+`BattleAiActivity=1` separately checks every expected bot for target acquisition and real movement or
+attack activity, and rejects ten seconds of free neutral idling against a visible opponent. It is off
+by default and available through the test Mod's developer settings in Manager. Its passive diagnostics
+include per-bot activity totals, weapon/controller state and sampling gaps; they never move a bot or
+manufacture combat results.
 `BattleAiDeaths=1` records native death identities; adding `BattleAiTeleport=1`
 requires a real local AI teleport with changed position, preserved HP and no
 destruction request. These opt-in witnesses observe native gameplay.
