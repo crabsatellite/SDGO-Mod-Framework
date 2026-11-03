@@ -213,7 +213,7 @@ def install_host(host, bundle, manifest, cache, is_running=None):
     tree='client' if role=='client' else 'server';source=bundle/tree
     key=host_key(exe);symbols='sdgo/symbols/'+key+'.ini'
     if not (source/symbols).is_file():raise ValueError('此游戏程序版本暂不支持自动更新')
-    catalog=json.loads((source/'sdgo/catalog.json').read_text())
+    catalog=json.loads((source/'sdgo/catalog.json').read_text(encoding='utf-8'))
     selected=[m for m in catalog['mods'] if m['target']==tree and key in m['hosts']]
     loader='d3d9.dll' if role=='client' else 'winmm.dll'
     if (root/loader).exists() and not (root/'sdgo/core.dll').exists():

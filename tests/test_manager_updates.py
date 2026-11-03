@@ -33,7 +33,7 @@ def bundle(channel='stable',release='1.1.7',extra=None):
     mod={'id':'example','feature':'example','target':'client','category':'fixes',
          'hosts':[KEY],'version':'2.0.0','channel':channel,'files':['manager.json','config.ini'],
          'config_files':['config.ini'],'runtime_files':[]}
-    catalog={'schema_version':1,'mods':[mod],'features':{'example':{'category':'fixes','mods':['example']}},'categories':{}}
+    catalog={'schema_version':1,'mods':[mod],'features':{'example':{'category':'fixes','mods':['example']}},'categories':{'fixes':{'zh-CN':'基础修复'}}}
     payload={u.MANAGER:b'new manager', 'client/d3d9.dll':b'new loader','client/sdgo/core.dll':b'new core',
              'client/sdgo/sdgo.ini':b'[core]\nlog=info\n',
              'client/sdgo/symbols/'+KEY+'.ini':b'[host]\nname=GOnline\n[new.alias]\nrva=7\n',
