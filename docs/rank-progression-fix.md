@@ -67,6 +67,7 @@ rank comparison. Both are prepared in one transaction under an application lock.
 ownership, the supported comparison, definition hashes and SQL options, and refuses unknown
 definitions, a foreign `sdgo_rank_progression_fix` schema or externally edited copies. No native SQL
 is bundled. An existing transaction on the borrowed session is neither committed nor rolled back.
+
 ## Developer tests
 
 `ctest` runs the offline C++ tests. The optional database test creates an isolated scratch database

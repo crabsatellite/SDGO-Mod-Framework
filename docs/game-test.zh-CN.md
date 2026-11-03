@@ -42,7 +42,7 @@ python tools/game_test_fps.py --client-template D:\Games\SDGO --stage build/stag
 禁用对照不检查渲染上限。渲染低于上限时照实记录，不承诺达到该吞吐量。
 断言和结果沿用 GameTest 的 JSON/JUnit；该场景验证登录页原生渲染，战斗计时和画质另行测试。
 
-运行器先导出报告、原生事件及后台环境回执，再核对本轮进程已退出并删除所属客户端副本。
+运行器先导出报告、原生事件及后台环境回执，再核对本次运行的进程已退出并删除所属客户端副本。
 模板和其他测试保留；换环境复测时指定新的工作及结果目录即可。
 单独验证一档也可使用 `game_test.py prepare --fps-cap 160` 后执行通常的 `run`；
 添加 `--fps-mod-disabled` 可取得原生强制 60 的对照。
