@@ -123,6 +123,8 @@ public:
     static_assert(sizeof(NativeRequestName)==0x1C,"native query string stack size changed");
     using RequestPendingFn=uint32_t(__thiscall*)(void*,NativeRequestName);
     using UnitPageRequestFn=void(__stdcall*)(uint32_t);
+    using FormatOptionTextFn=void*(__cdecl*)(void*,void*,uint32_t,const wchar_t*,int32_t);
+    using CashCaptionKeyFn=uint32_t(__thiscall*)(void*);
 
     struct Bindings
     {
@@ -137,6 +139,8 @@ public:
         NativeWStringDtorFn native_wstring_dtor = nullptr;
         RequestPendingFn request_pending=nullptr;
         UnitPageRequestFn request_unit_page=nullptr;
+        FormatOptionTextFn format_option_text=nullptr;
+        CashCaptionKeyFn cash_caption_key=nullptr;
         NativeUiFindControlFn native_ui_find_control = nullptr;
         GridDataFn grid_data = nullptr;
         GridFindFn grid_find = nullptr;
@@ -212,6 +216,10 @@ public:
         uint32_t native_page_bytes = 0;
         std::array<uint32_t,8> native_page_product_ids{};
         uint32_t native_request_pending = 0;
+        uint32_t popup_phase=0,popup_option_count=0,popup_product=0,popup_option=0,popup_category=0,popup_payment=0,popup_combo_count=0;
+        int32_t popup_price=0,popup_validity=0;
+        uint32_t popup_native_state=0,popup_combo_visible=0,popup_price_visible=0;
+        std::wstring popup_price_text;
         uint32_t wallet_unchanged = 0;
         uint32_t inventory_unchanged = 0;
         uint32_t inventory_failure = 0;
@@ -268,6 +276,8 @@ public:
                 api, mod, "flow.native_wstring_dtor");
         bindings.request_pending=Symbol<RequestPendingFn>(api,mod,"flow.native_request_pending");
         bindings.request_unit_page=Symbol<UnitPageRequestFn>(api,mod,"flow.unit_page_request");
+        bindings.format_option_text=Symbol<FormatOptionTextFn>(api,mod,"test.shop_format_option_text");
+        bindings.cash_caption_key=Symbol<CashCaptionKeyFn>(api,mod,"test.shop_cash_caption_key");
         bindings.native_ui_find_control =
             Symbol<NativeUiFindControlFn>(
                 api, mod, "flow.native_ui_find_control");
@@ -325,6 +335,7 @@ public:
             bindings_.native_wstring_dtor &&
             bindings_.request_pending &&
             bindings_.request_unit_page &&
+            bindings_.format_option_text && bindings_.cash_caption_key &&
             bindings_.native_ui_find_control &&
             bindings_.grid_data &&
             bindings_.grid_find &&
@@ -574,8 +585,11 @@ private:
     static constexpr size_t kGiftCombo = 0xAC;
     static constexpr size_t kGiftOptionsBegin = 0xB4;
     static constexpr size_t kGiftOptionsEnd = 0xB8;
-    static constexpr size_t kComboItemsBegin = 0x190;
-    static constexpr size_t kComboItemsEnd = 0x194;
+    // C73560 appends {native wstring key, button-text object at +1C}
+    // descriptors to the combo's +234/+238 vector. +190 belongs to each
+    // child button-text object's text slots, not to the combo itself.
+    static constexpr size_t kComboItemsBegin = 0x234;
+    static constexpr size_t kComboItemsEnd = 0x238;
     static constexpr size_t kManagerPopupSentinel = 0x54;
     static constexpr size_t kManagerPopupCount = 0x58;
     static constexpr size_t kProfileGp = 0x18F;
@@ -1673,6 +1687,14 @@ private:
                 : bindings_.buy_vtable;
         if (!HasVtable(popup, expected))
             return Publish(kPopupMismatch);
+        uint32_t nativeState=0;
+        if(!ReadValue(popup,0x44,&nativeState))return Publish(kNativeFault);
+        observation_.popup_native_state=nativeState;
+        // 009DC900 (and the gift counterpart) advances 3 -> 4 only
+        // after the original modal update populates its combo and labels.
+        // An attached state-1 modal still contains constructor placeholders.
+        if(nativeState<4)return Publish(gift ? kWaitingForGiftPreview : kWaitingForBuyPreview);
+        if(nativeState!=4)return Publish(kPopupMismatch);
         const Result verified =
             ValidatePopup(popup, gift);
         if (verified != kComplete)
@@ -1913,6 +1935,7 @@ private:
         void* popup,
         bool gift)
     {
+        observation_.popup_phase=1;
         void* root = nullptr;
         void* combo = nullptr;
         void* cancel = nullptr;
@@ -1946,6 +1969,15 @@ private:
                 L"BuyCancelBtn"))
             return kControlMismatch;
 
+        uint8_t shown=0;
+        ReadValue(popup,0x44,&observation_.popup_native_state);
+        if(ReadValue(combo,0x162,&shown))observation_.popup_combo_visible=shown;
+        void* priceControl=FindControl(root,L"PriceStatic",kStaticKind);
+        if(priceControl) {
+            if(ReadValue(priceControl,0x162,&shown))observation_.popup_price_visible=shown;
+            ReadHostString(static_cast<uint8_t*>(priceControl)+kControlText,255,&observation_.popup_price_text);
+        }
+
         std::vector<sdgo::shop::Option> options;
         if (!ReadOptions(
                 popup,
@@ -1958,10 +1990,18 @@ private:
                 &options) ||
             options.empty())
             return kPopupOptionMismatch;
+        observation_.popup_option_count=static_cast<uint32_t>(options.size());
+        observation_.popup_phase=2;
         uint32_t matching = UINT32_MAX;
         for (uint32_t index = 0;
              index < options.size();
              ++index) {
+            if(index==0 || options[index].id==observation_.option_id) {
+                const auto& item=options[index];observation_.popup_product=item.productId;
+                observation_.popup_option=item.id;observation_.popup_category=item.category;
+                observation_.popup_price=item.price;observation_.popup_validity=item.validity;
+                observation_.popup_payment=item.payment;
+            }
             if (options[index].productId !=
                 target_->productId)
                 return kPopupOptionMismatch;
@@ -1976,6 +2016,7 @@ private:
             return kPopupOptionMismatch;
         const sdgo::shop::Option& option =
             options[matching];
+        observation_.popup_phase=3;
         if (option.category !=
                 target_->category ||
             option.validity !=
@@ -1988,14 +2029,17 @@ private:
 
         uintptr_t itemBegin = 0;
         uintptr_t itemEnd = 0;
-        if (!ReadValue(
+        observation_.popup_phase=4;
+        const bool comboRead=ReadValue(
                 combo,
                 kComboItemsBegin,
-                &itemBegin) ||
-            !ReadValue(
+                &itemBegin) && ReadValue(
                 combo,
                 kComboItemsEnd,
-                &itemEnd) ||
+                &itemEnd);
+        observation_.popup_combo_count=comboRead && itemEnd>=itemBegin
+            ? static_cast<uint32_t>((itemEnd-itemBegin)/sizeof(void*)) : UINT32_MAX;
+        if (!comboRead ||
             !itemBegin ||
             itemEnd < itemBegin ||
             (itemEnd - itemBegin) %
@@ -2005,10 +2049,24 @@ private:
                     sizeof(void*) !=
                 options.size())
             return kPopupOptionMismatch;
+        observation_.popup_combo_count=static_cast<uint32_t>((itemEnd-itemBegin)/sizeof(void*));
+        observation_.popup_phase=5;
+        void* descriptor=nullptr;void* labelButton=nullptr;void* parent=nullptr;
+        std::wstring key;
+        if(!ReadAddress(itemBegin+matching*sizeof(void*),&descriptor) || !descriptor ||
+           !ReadHostString(descriptor,63,&key) || key!=std::to_wstring(matching) ||
+           !ReadPointer(descriptor,0x1C,&labelButton) || !labelButton ||
+           !ReadPointer(labelButton,kControlParent,&parent) || parent!=root)
+            return kControlMismatch;
+        uintptr_t textBegin=0,textEnd=0;
+        if(!ReadValue(labelButton,0x190,&textBegin) || !ReadValue(labelButton,0x194,&textEnd) ||
+           !textBegin || textEnd<textBegin || (textEnd-textBegin)%sizeof(void*) ||
+           (textEnd-textBegin)/sizeof(void*)<1 || (textEnd-textBegin)/sizeof(void*)>16)
+            return kUiDurationMismatch;
         void* nativeLabel = nullptr;
         if (!ReadButtonTextItem(
-                combo,
-                matching,
+                labelButton,
+                0,
                 &nativeLabel) ||
             !nativeLabel)
             return kUiDurationMismatch;
@@ -2022,6 +2080,8 @@ private:
             sdgo::shop::DurationLabel(
                 option,
                 observation_.time_limit);
+        observation_.popup_phase=6;
+        observation_.option_label=label;
         if (expected.empty()) {
             const auto runtime =
                 runtime_.find(option.id);
@@ -2029,11 +2089,38 @@ private:
                 return kPopupOptionMismatch;
             expected = runtime->second.text;
         }
-        if (label != expected)
+        std::wstring caption;
+        if(!FormatOptionCaption(expected,option,&caption) || label!=caption)
             return kUiDurationMismatch;
         targetOptionIndex_ = matching;
         observation_.option_label = label;
         return kComplete;
+    }
+
+    bool FormatOptionCaption(const std::wstring& label,const sdgo::shop::Option& option,
+                             std::wstring* output) const
+    {
+        uint8_t* profile=nullptr;
+        if(!output || !ReadIndirect(bindings_.profile_pointer,&profile) || !profile)return false;
+        // 006EC6D0 is the original cdecl locale formatter. Its output adds
+        // eight bytes of locale metadata to the native wstring prefix.
+        std::array<uint8_t,0x20> temporary{};bool constructed=false,valid=false;
+        __try {
+            uint32_t key=0x1ED90;
+            if(option.payment==2) {
+                key=bindings_.cash_caption_key(profile);
+                if(key!=0x1ED91 && key!=0x1F2BE)return false;
+            } else if(option.payment!=1)return false;
+            if(!bindings_.native_wstring_ctor(temporary.data(),L""))return false;
+            constructed=true;
+            bindings_.format_option_text(profile,temporary.data(),key,label.c_str(),option.price);
+            valid=ReadHostString(temporary.data(),255,output);
+        } __except(EXCEPTION_EXECUTE_HANDLER) {valid=false;}
+        if(constructed) {
+            __try {bindings_.native_wstring_dtor(temporary.data());}
+            __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+        }
+        return valid;
     }
 
     bool RuntimeMatches(

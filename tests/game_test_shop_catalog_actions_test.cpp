@@ -46,6 +46,7 @@ unsigned buyCancelCalls = 0;
 unsigned giftCancelCalls = 0;
 bool suppressPopup = false;
 bool suppressPageAdvance = false;
+bool deferPopupReady=false;
 bool catalogRequestPending=false;
 bool pageReplyQueued=false;
 unsigned pageReplyPendingPolls=0;
@@ -96,6 +97,8 @@ std::array<uint8_t, 8 * 0x11> pageRows = {};
 std::vector<sdgo::shop::Option> roomOptions;
 std::vector<sdgo::shop::Option> popupOptions;
 std::array<void*, 2> comboItems = {};
+std::array<void*,2> comboTextSlots{};
+Bytes comboDescriptor(0x20);
 std::array<uint8_t, 0x70> categoryPermanent = {};
 std::array<uint8_t, 0x70> categoryRental = {};
 std::array<uint8_t, 128> nameAlpha = {};
@@ -118,6 +121,8 @@ Control* buyCombo = nullptr;
 Control* buyCancel = nullptr;
 Control* giftCombo = nullptr;
 Control* giftCancel = nullptr;
+Control* buyOptionText=nullptr;
+Control* giftOptionText=nullptr;
 
 template <class T>
 void Put(void* object, size_t offset, const T& value)
@@ -285,6 +290,7 @@ void PreparePopup(
     bool gift,
     uint32_t product)
 {
+    Put(popup,0x44,uint32_t{deferPopupReady ? 1u : 4u});
     popupOptions.clear();
     for (const auto& option : roomOptions) {
         if (option.productId == product)
@@ -304,21 +310,26 @@ void PreparePopup(
 
     Control* combo =
         gift ? giftCombo : buyCombo;
+    Control* labelButton=gift ? giftOptionText : buyOptionText;
     const std::wstring duration =
         product == 1019001
             ? L"永久"
             : L"租赁 7 天";
+    const auto caption=duration+L":"+std::to_wstring(popupOptions[0].price)+
+        (popupOptions[0].payment==1 ? L"GB" : L"MB");
     SetHostString(
-        combo->bytes.data(),
+        labelButton->bytes.data(),
         kControlText,
-        duration);
-    comboItems[0] =
-        combo->bytes.data() +
-        kControlText;
+        caption);
+    SetHostString(comboDescriptor.get(),0,L"0");
+    Put(comboDescriptor.get(),0x1C,labelButton->bytes.data());
+    comboTextSlots[0]=labelButton->bytes.data()+kControlText;
+    SetVector(labelButton->bytes.data(),0x190,0x194,comboTextSlots.data(),sizeof(void*));
+    comboItems[0]=comboDescriptor.get();
     SetVector(
         combo->bytes.data(),
-        0x190,
-        0x194,
+        0x234,
+        0x238,
         comboItems.data(),
         sizeof(void*));
 }
@@ -345,6 +356,17 @@ void __fastcall NativeStringDtor(void*, void*)
 }
 
 void Check(bool,const char*);
+void* __cdecl FormatOptionText(void* owner,void* output,uint32_t key,const wchar_t* label,int32_t price)
+{
+    Check(owner==profile.get() && (key==0x1ED90 || key==0x1ED91),
+          "the existing native locale formatter receives the actual profile and currency key");
+    SetHostString(output,0,std::wstring(label)+L":"+std::to_wstring(price)+(key==0x1ED90 ? L"GB":L"MB"));
+    return output;
+}
+uint32_t __fastcall CashCaptionKey(void* owner,void*)
+{
+    Check(owner==profile.get(),"the cash caption uses the original profile method");return 0x1ED91;
+}
 uint32_t __fastcall RequestPending(void* self,void*,ShopCatalogActions::NativeRequestName name)
 {
     const auto text=HostString(name.bytes.data());
@@ -475,10 +497,10 @@ void* __fastcall ButtonTextItem(
     uint32_t index)
 {
     if (index != 0 ||
-        (combo != buyCombo->bytes.data() &&
-         combo != giftCombo->bytes.data()))
+        (combo != buyOptionText->bytes.data() &&
+         combo != giftOptionText->bytes.data()))
         return nullptr;
-    return comboItems[0];
+    return comboTextSlots[0];
 }
 
 uint32_t __stdcall DownmenuCallback(
@@ -790,6 +812,8 @@ ShopCatalogActions::Bindings Bindings()
         &managerPointer;
     value.request_pending=reinterpret_cast<ShopCatalogActions::RequestPendingFn>(&RequestPending);
     value.request_unit_page=&RequestUnitPage;
+    value.format_option_text=&FormatOptionText;
+    value.cash_caption_key=reinterpret_cast<ShopCatalogActions::CashCaptionKeyFn>(&CashCaptionKey);
     value.service_find_by_name =
         reinterpret_cast<
             ShopCatalogActions::
@@ -871,6 +895,7 @@ void Setup()
     buyCancelCalls = giftCancelCalls = 0;
     suppressPopup = false;
     suppressPageAdvance = false;
+    deferPopupReady=false;
     popupSentinel = {};
     popupNode = {};
     DetachPopup();
@@ -1004,6 +1029,8 @@ void Setup()
     giftCancel = AddControl(
         giftRoot.get(),
         L"BuyCancelBtn");
+    buyOptionText=AddControl(buyRoot.get(),L"buy-option-text");
+    giftOptionText=AddControl(giftRoot.get(),L"gift-option-text");
     Put(
         buyPopup.get(),
         0x50,
@@ -1178,6 +1205,16 @@ int wmain(int argc, wchar_t** argv)
             buyCancelCalls == 2 &&
             giftCancelCalls == 2,
         "one original action per transition without retries");
+    Setup();deferPopupReady=true;
+    actions=Driver(assertions,display);uint64_t modalElapsed=0;
+    Check(PollTo(actions,ShopCatalogActions::kOpeningBuyPreview,&modalElapsed)==ShopCatalogActions::kOpeningBuyPreview,
+          "the original modal may attach before its first initialized update");
+    auto modalContext=Context(modalElapsed);
+    Check(actions.Poll(&modalContext)==ShopCatalogActions::kWaitingForBuyPreview &&
+          actions.State().buy_previews==0,"constructor-stage popup data cannot count as a verified preview");
+    deferPopupReady=false;Put(buyPopup.get(),0x44,uint32_t{4});
+    Check(PollTo(actions,ShopCatalogActions::kComplete,&modalElapsed)==ShopCatalogActions::kComplete,
+          "the same original modal is accepted only after its native ready state");
     Setup();
     actions=Driver(assertions,display);
     uint64_t delayedTitleElapsed=0;
@@ -1204,7 +1241,7 @@ int wmain(int argc, wchar_t** argv)
     ShopCatalogActions unboundPager;
     Check(!unboundPager.Bind(missingPager),"the original numbered-page callback is mandatory");
     Check(
-        state.option_label == L"租赁 7 天" &&
+        state.option_label == L"租赁 7 天:900MB" &&
             state.payment == 2 &&
             state.price == 900 &&
             state.validity == 7,

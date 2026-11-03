@@ -1416,6 +1416,20 @@ int ReadShopCatalog(const SdgoGameTestContextV1* context) {
             };
             const auto native=utf8(state.native_name),visible=utf8(state.visible_name);
             char names[512];sprintf_s(names,"native shop target title source=\"%s\" visible=\"%s\"",native.c_str(),visible.c_str());context->Observe(names);
+            if(!state.option_label.empty()) {
+                const auto label=utf8(state.option_label);char text[1024];
+                sprintf_s(text,"native shop popup label=\"%s\"",label.c_str());context->Observe(text);
+            }
+            if(!state.popup_price_text.empty()) {
+                const auto label=utf8(state.popup_price_text);char text[1024];
+                sprintf_s(text,"native shop popup price control=\"%s\"",label.c_str());context->Observe(text);
+            }
+        }
+        if(state.popup_phase) {
+            char popup[320];sprintf_s(popup,"native shop popup phase=%u options=%u product=%u option=%u category=%u price=%d validity=%d payment=%u combo=%u state=%u comboVisible=%u priceVisible=%u",
+                state.popup_phase,state.popup_option_count,state.popup_product,state.popup_option,state.popup_category,state.popup_price,
+                state.popup_validity,state.popup_payment,state.popup_combo_count,state.popup_native_state,
+                state.popup_combo_visible,state.popup_price_visible);context->Observe(popup);
         }
         if(state.inventory_failure) {
             char inventory[320];sprintf_s(inventory,"native shop inventory failure=%u ready=%u capacity=%d probeSlot=%u brief=%u/%u/%llu full=%u/%u/%llu",
