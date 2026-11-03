@@ -189,6 +189,8 @@ int InstallRecords(void* grid) {
         g_api->Log(g_mod, SDGO_LOG_ERROR, "unit catalog grid identity mismatch");
         return -1;
     }
+    g_api->Log(g_mod, SDGO_LOG_INFO, "native record context pid=%lu grid=%p",
+               static_cast<unsigned long>(GetCurrentProcessId()), grid);
 
     std::vector<const Entry*> pending;
     int existing = 0;
