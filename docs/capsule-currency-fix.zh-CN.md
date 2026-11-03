@@ -10,7 +10,7 @@ English: [capsule-currency-fix.md](capsule-currency-fix.md)
 
 ## 使用
 
-无需操作：它属于基础修复，随客户端框架一起安装；朋友服玩家通过 `update.bat` 获得。
+无需操作：它属于基础修复，随客户端框架一起安装，玩家通过服主提供的客户端包或更新获得。
 只需要这一项修复的客户端，可在游戏关闭时用 Manager 的「导入客户端配置包」导入
 `SDGO-CapsuleCurrencyFix-<版本>.zip`。它在 Manager 的「修复归档」中列出。安装后需重启客户端，
 正在运行的游戏不会热加载。

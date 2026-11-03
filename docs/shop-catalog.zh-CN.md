@@ -30,7 +30,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -Target "D:\Se
 
 「导出配置 / 导入配置」处理可分发的商品 JSON，不含 IP、数据库密码或本机目录。导入同一 catalog 的配置时，
 遗漏的旧商品转为已删除并保留编号；导入不能改写已有商品的身份。应用成功后生成的 UTF-16LE 显示标签会写入所选客户端，
-朋友服通过 `update.bat` 分发给玩家；未应用的草稿不会混入标签。商品配置只由 Manager 发布，WorldServer 启动时不会自动应用。
+随服主的客户端包或更新分发给玩家；未应用的草稿不会混入标签。商品配置只由 Manager 发布，WorldServer 启动时不会自动应用。
 
 ## 规则与限制
 
@@ -57,5 +57,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -Target "D:\Se
 ## 中文名称与说明
 
 新增商品必须填写中文名称，销售选项也必须有中文。旧配置缺中文时先补齐再修改或发布；已有数据不会被重置。
-客户端的商品、说明与机体预览汉化由独立的 [商城汉化 Mod](shop-localization.zh-CN.md) 提供，配套内容通过客户端 Git 更新同步。
+客户端的商品、说明与机体预览汉化由独立的 [商城汉化 Mod](shop-localization.zh-CN.md) 提供，配套内容随客户端更新分发。
 「更新中文检索」单独更新受保护的检索过程和别名，不发布商品草稿或价格。

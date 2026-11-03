@@ -12,7 +12,7 @@
 
 ## 安装
 
-它属于基础修复，随客户端框架一起安装；朋友服玩家通过 `update.bat` 获得。
+它属于基础修复，随客户端框架一起安装，玩家通过服主提供的客户端包或更新获得。
 
 也可以使用独立的 `SDGO-ShopLabels-Patch` 包。解压到任意目录，关闭**目标目录里的**游戏，然后运行：
 
@@ -54,10 +54,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -Target "D:\Ga
 
 ## 开发者说明
 
-原生 GridData 查询只通过 `AL` 返回一个字节，调用声明必须使用字节返回类型。
-DLL 合约夹具保留非零的 `EAX` 高位，覆盖原始调用约定，防止误把指针残留值当成查询结果。
+原生 GridData 查询只通过 `AL` 返回一个字节，`EAX` 高位可能残留指针值，调用声明必须使用字节返回类型。
 
 客户端用代码页 874（泰文）转换销售选项名，因此变成问号。Mod 挂钩 `shop.buy_options.populate`、
 `shop.gift_options.populate` 和 `shop.tooltip.option` 记录正在绘制的选项行，再挂钩 `text.ansi_to_wide`，只替换这些行的
 CP874 转换。租赁标志来自选项类别的客户端元数据（GridData type `0x22` 的 `+0x6D` 字节，通过 `shop_labels.grid_data` / `shop_labels.grid_find` 查询），
 期限来自选项的数值有效期。其它文字转换交回原函数。
+
+数量型物品直接显示数值数量；悬停价格表使用「租赁7天」「30天」等紧凑文字，购买/赠送下拉框保留完整标签和原生格式化价格。

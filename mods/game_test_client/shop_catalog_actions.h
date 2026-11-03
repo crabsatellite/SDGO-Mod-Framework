@@ -18,6 +18,7 @@
 
 #include "sdgo/game_test.h"
 #include "sdgo/shop_labels.h"
+#include "shop_pointer_input.h"
 
 // Ordinary, read-only Shop GameTest adapter.
 //
@@ -29,6 +30,13 @@
 class ShopCatalogActions
 {
 public:
+    bool VisualOnly() const { return visualOnly_; }
+    bool RefreshHover() {
+        const bool ready=visualOnly_ && target_ && RoomStillMatches() && pointerInput_.Install(api_,mod_) && pointerInput_.MoveToRow(targetRow_);
+        observation_.pointer_position_reads=pointerInput_.PositionReads();
+        observation_.pointer_state_reads=pointerInput_.StateReads();
+        return ready;
+    }
     enum Result : uint32_t
     {
         kUnbound = 0,
@@ -48,6 +56,7 @@ public:
         kComplete = 14,
         kSubmittingSearch = 15,
         kWaitingForFullInventory = 16,
+        kShowingHover = 17,
 
         kInvalidContext = 0x100,
         kRunChanged = 0x101,
@@ -70,6 +79,7 @@ public:
         kUnsafeModalPresent = 0x112,
         kPageDidNotAdvance = 0x113,
         kConfigurationRejected = 0x114,
+        kUiTooltipMismatch = 0x115,
     };
 
     enum Stage : uint32_t
@@ -92,6 +102,8 @@ public:
         kStageWaitGiftGone,
         kStageDone,
         kStageSubmitSearch,
+        kStageShowHover,
+        kStageFinishProduct,
     };
 
     using GameAppFn = uint8_t*(__cdecl*)();
@@ -123,6 +135,8 @@ public:
     static_assert(sizeof(NativeRequestName)==0x1C,"native query string stack size changed");
     using RequestPendingFn=uint32_t(__thiscall*)(void*,NativeRequestName);
     using UnitPageRequestFn=void(__stdcall*)(uint32_t);
+    using EditSetTextFn=void(__thiscall*)(void*,const void*,int);
+    using EditGetTextFn=const void*(__thiscall*)(void*);
     using FormatOptionTextFn=void*(__cdecl*)(void*,void*,uint32_t,const wchar_t*,int32_t);
     using CashCaptionKeyFn=uint32_t(__thiscall*)(void*);
 
@@ -139,6 +153,10 @@ public:
         NativeWStringDtorFn native_wstring_dtor = nullptr;
         RequestPendingFn request_pending=nullptr;
         UnitPageRequestFn request_unit_page=nullptr;
+        EditSetTextFn edit_set_text=nullptr;
+        EditGetTextFn edit_get_text=nullptr;
+        void* tooltip_vtable=nullptr;
+        void* tooltip_unit_vtable=nullptr;
         FormatOptionTextFn format_option_text=nullptr;
         CashCaptionKeyFn cash_caption_key=nullptr;
         NativeUiFindControlFn native_ui_find_control = nullptr;
@@ -206,6 +224,11 @@ public:
         int32_t time_limit = -1;
         uint32_t buy_previews = 0;
         uint32_t gift_previews = 0;
+        uint32_t hover_previews = 0;
+        uint32_t pointer_position_reads=0,pointer_state_reads=0;
+        std::wstring tooltip_name,tooltip_description,tooltip_usage;
+        uint32_t popup_name_found=0;
+        std::wstring popup_name;
         uint32_t cancellations = 0;
         uint32_t original_actions = 0;
         uint32_t popup_count = 0;
@@ -214,6 +237,7 @@ public:
         uint32_t native_page_slots = 0;
         uint32_t native_page_nonempty = 0;
         uint32_t native_page_bytes = 0;
+        uint32_t native_page_options = 0;
         std::array<uint32_t,8> native_page_product_ids{};
         uint32_t native_request_pending = 0;
         uint32_t popup_phase=0,popup_option_count=0,popup_product=0,popup_option=0,popup_category=0,popup_payment=0,popup_combo_count=0;
@@ -246,6 +270,7 @@ public:
     {
         if (!api || !api->Symbol)
             return false;
+        api_=api;mod_=mod;
         Bindings bindings = {};
         bindings.game_app =
             Symbol<GameAppFn>(
@@ -276,6 +301,10 @@ public:
                 api, mod, "flow.native_wstring_dtor");
         bindings.request_pending=Symbol<RequestPendingFn>(api,mod,"flow.native_request_pending");
         bindings.request_unit_page=Symbol<UnitPageRequestFn>(api,mod,"flow.unit_page_request");
+        bindings.edit_set_text=Symbol<EditSetTextFn>(api,mod,"room_titles.ui_edit_set_text");
+        bindings.edit_get_text=Symbol<EditGetTextFn>(api,mod,"room_titles.ui_edit_get_text");
+        bindings.tooltip_vtable=api->Symbol(mod,"flow.shop_tooltip_vtable");
+        bindings.tooltip_unit_vtable=api->Symbol(mod,"flow.shop_tooltip_unit_vtable");
         bindings.format_option_text=Symbol<FormatOptionTextFn>(api,mod,"test.shop_format_option_text");
         bindings.cash_caption_key=Symbol<CashCaptionKeyFn>(api,mod,"test.shop_cash_caption_key");
         bindings.native_ui_find_control =
@@ -378,13 +407,20 @@ public:
         runtime_.clear();
         stockAssertions_ = false;
         configured_ = false;
+        unsigned configurationPhase=0;
         try {
+            configurationPhase=1;
             const Ini assertions =
                 LoadIni(catalogAssertions);
             const Ini display = LoadIni(runtimeDisplay);
+            configurationPhase=2;
             ParseCatalogAssertions(assertions);
+            configurationPhase=3;
             ParseRuntime(display);
+            configurationPhase=4;
             CrossCheckConfiguration();
+            configurationPhase=5;
+            if(visualOnly_ && !api_)throw 1;
             configured_ = true;
             observation_.configured =
                 static_cast<uint32_t>(products_.size());
@@ -393,6 +429,7 @@ public:
             Publish(kUnbound);
             return true;
         } catch (...) {
+            if(api_ && api_->Log)api_->Log(mod_,SDGO_LOG_ERROR,"shop visual configuration refused at phase %u; no input text or credentials logged",configurationPhase);
             products_.clear();
             runtime_.clear();
             stockAssertions_ = false;
@@ -454,6 +491,13 @@ public:
             return WaitForPreviewGone(true);
         case kStageDone:
             return Publish(kComplete);
+        case kStageShowHover:
+            if(!RefreshHover())return Publish(kNativeFault);
+            {const auto tooltip=ValidateHover();if(tooltip!=kComplete)return Publish(tooltip);}
+            ++observation_.hover_previews;stage_=kStageFinishProduct;
+            return Publish(kShowingHover);
+        case kStageFinishProduct:
+            return FinishProduct();
         default:
             return Publish(kNativeFault);
         }
@@ -540,6 +584,8 @@ public:
         case kUnsafeModalPresent: return "unsafe-modal-present";
         case kPageDidNotAdvance: return "page-did-not-advance";
         case kConfigurationRejected: return "configuration-rejected";
+        case kShowingHover: return "showing-hover";
+        case kUiTooltipMismatch: return "ui-tooltip-mismatch";
         default: return "unknown";
         }
     }
@@ -614,6 +660,10 @@ private:
         int32_t validity = 0;
         uint8_t payment = 0;
         std::wstring name;
+        std::wstring displayName;
+        std::wstring query;
+        bool tooltipExpected=false,tooltipUnit=false;
+        std::wstring tooltipDescription,tooltipUsage;
         std::wstring label;
     };
 
@@ -919,7 +969,11 @@ private:
                 shop,
                 L"Scope",
                 L"OwnerCatalog");
-        if (scope == L"StockAssertions")
+        visualOnly_ = scope == L"StockVisualAssertions";
+        if(visualOnly_ && (!bindings_.tooltip_vtable || !bindings_.tooltip_unit_vtable))throw 1;
+        query_ = visualOnly_ ? Value(shop,L"Query",L"") : L"";
+        if(query_.size()>36 || (!query_.empty() && (!bindings_.edit_set_text || !bindings_.edit_get_text)))throw 1;
+        if (scope == L"StockAssertions" || visualOnly_)
             stockAssertions_ = true;
         else if (scope == L"OwnerCatalog")
             stockAssertions_ = false;
@@ -1004,6 +1058,16 @@ private:
                 throw 1;
             product.name =
                 Value(section.second, L"Name");
+            product.displayName = visualOnly_ ? Value(section.second, L"DisplayName") : product.name;
+            product.query=visualOnly_ ? Value(section.second,L"Query",query_.c_str()) : L"";
+            if(product.query.size()>36 || (!product.query.empty() && (!bindings_.edit_set_text || !bindings_.edit_get_text)))throw 1;
+            product.tooltipExpected=visualOnly_ && section.second.count(L"TooltipUnit");
+            if(product.tooltipExpected) {
+                product.tooltipUnit=Integer(section.second,L"TooltipUnit",0,1)!=0;
+                if(product.tooltipUnit!=(product.category/100000==11))throw 1;
+                product.tooltipDescription=DecodeTextHex(Value(section.second,L"TooltipDescriptionHex"));
+                product.tooltipUsage=DecodeTextHex(Value(section.second,L"TooltipUsageHex"));
+            }
             product.label =
                 Value(section.second, L"Label");
             const bool enabled =
@@ -1015,6 +1079,7 @@ private:
                     L"1") != 0;
             if (!Key(product.key) ||
                 !Text(product.name) ||
+                !Text(product.displayName) ||
                 !Text(product.label) ||
                 (stockAssertions_
                      ? product.productId !=
@@ -1195,6 +1260,9 @@ private:
         IntegrityImage image;
         const Result captured =
             CaptureIntegrity(&image);
+        if(visualOnly_ && captured==kInventoryUnavailable &&
+           (observation_.inventory_failure<=3 || observation_.inventory_failure==7))
+            return Publish(kWaitingForFullInventory);
         if(captured==kInventoryUnavailable && observation_.inventory_failure==6 &&
            observation_.inventory_brief_uid && !observation_.inventory_full_unit &&
            !observation_.inventory_full_uid &&
@@ -1362,6 +1430,10 @@ private:
             return Publish(popupResult);
         if (popups.count)
             return Publish(kUnsafeModalPresent);
+        if(visualOnly_) {
+            const auto next=std::find_if(products_.begin(),products_.end(),[this](const Product& p){return !verifiedKeys_.count(p.key);});
+            if(next!=products_.end())query_=next->query;
+        }
 
         void* cached = nullptr;
         if (!ReadPointer(
@@ -1416,6 +1488,13 @@ private:
         if(active!=1 || !root || !cached)return Publish(kWaitingForCatalog);
         void* found=FindControl(root,L"FilterBtn",kButtonKind);
         if(found!=cached || !ControlIdentity(found,root,L"FilterBtn"))return Publish(kControlMismatch);
+        if(!query_.empty()) {
+            void* edit=nullptr;void* parent=nullptr;
+            if(!ReadPointer(service,0xB4,&edit) || !edit || !ReadPointer(edit,kControlParent,&parent) || parent!=root)return Publish(kControlMismatch);
+            const void* populated=SetNativeEditQuery(bindings_,edit,query_.c_str());
+            std::wstring actual;
+            if(!populated || !ReadHostString(populated,64,&actual) || actual!=query_)return Publish(kUiNameMismatch);
+        }
         if(!Invoke(bindings_.search_callback,service,kClickEvent,found))return Publish(kNativeFault);
         ++observation_.original_actions;
         allSelectedAt_=lastElapsed_;
@@ -1790,19 +1869,70 @@ private:
         }
         if (!target_)
             return Publish(kNativeFault);
+        if(visualOnly_) {hoverStartedAt_=lastElapsed_;stage_=kStageShowHover;return Publish(kCancellingGiftPreview);}
+        return FinishProduct();
+    }
+
+    Result FinishProduct()
+    {
+        if(!target_)return Publish(kNativeFault);
+        pointerInput_.Clear();
         verifiedKeys_.insert(target_->key);
         observation_.verified =
             static_cast<uint32_t>(
                 verifiedKeys_.size());
         target_ = nullptr;
-        stage_ = kStageScanPage;
+        const auto next=std::find_if(products_.begin(),products_.end(),[this](const Product& p){return !verifiedKeys_.count(p.key);});
+        const bool anotherQuery=visualOnly_ && next!=products_.end() && next->query!=query_;
+        stage_ = anotherQuery ? kStageSelectAll : kStageScanPage;
         return Publish(kCancellingGiftPreview);
+    }
+
+    static std::wstring NormalizeTooltip(const std::wstring& text) {
+        std::wstring output;
+        for(size_t i=0;i<text.size();++i) {
+            if(text[i]==L'\r')continue;
+            if(text[i]==L'\\' && i+1<text.size() && text[i+1]==L'n') {output.push_back(L'\n');++i;}
+            else output.push_back(text[i]);
+        }
+        return output;
+    }
+    Result ValidateHover() {
+        if(!target_)return kNativeFault;
+        const bool unit=target_->category/100000==11;
+        void* service=nullptr;
+        const auto found=ResolveService(unit?L"tooltipUnit":L"tooltip",unit?bindings_.tooltip_unit_vtable:bindings_.tooltip_vtable,&service);
+        if(found==kServiceAbsent)return kShowingHover;
+        if(found!=kServiceMatched)return kServiceMismatch;
+        void* root=nullptr;
+        if(!ReadPointer(service,0x44,&root) || !root)return kShowingHover;
+        std::wstring* texts[]={&observation_.tooltip_name,&observation_.tooltip_description,&observation_.tooltip_usage};
+        for(size_t i=0;i<3;++i) {
+            void* control=nullptr;void* parent=nullptr;
+            if(!ReadPointer(service,0x60+i*sizeof(void*),&control) || !control ||
+               !HasVtable(control,bindings_.static_text_vtable) || !ReadPointer(control,kControlParent,&parent) || parent!=root ||
+               !ReadHostString(static_cast<uint8_t*>(control)+kControlText,4096,texts[i]))return kControlMismatch;
+        }
+        if(observation_.tooltip_name!=target_->displayName)
+            return lastElapsed_<hoverStartedAt_+2000?kShowingHover:kUiTooltipMismatch;
+        for(const auto* value:texts) {
+            if(value->find(L"???")!=std::wstring::npos || value->find(L"Sergeant")!=std::wstring::npos ||
+               std::any_of(value->begin(),value->end(),[](wchar_t c){return (c>=0x0E00&&c<=0x0E7F)||c==0xFFFD;}))return kUiTooltipMismatch;
+        }
+        if(target_->tooltipExpected && (NormalizeTooltip(observation_.tooltip_description)!=NormalizeTooltip(target_->tooltipDescription) ||
+           NormalizeTooltip(observation_.tooltip_usage)!=NormalizeTooltip(target_->tooltipUsage)))return kUiTooltipMismatch;
+        if(!pointerInput_.PositionReads() || !pointerInput_.StateReads())return kShowingHover;
+        return kComplete;
     }
 
     Result ValidateProduct(
         const Product& product,
         uint32_t row)
     {
+        observation_.product_id=product.productId;
+        std::vector<sdgo::shop::Option> observedOptions;
+        if(!ReadOptions(room_,kRoomOptionsBegin,kRoomOptionsEnd,&observedOptions))return kMalformedCatalog;
+        observation_.native_page_options=static_cast<uint32_t>(observedOptions.size());
         const auto name =
             nativeNames_.find(product.productId);
         if (name == nativeNames_.end() ||
@@ -1837,11 +1967,11 @@ private:
         observation_.native_name = name->second;
         observation_.visible_name = visible;
         std::wstring shortened;
-        if (product.name.size() > 10)
+        if (product.displayName.size() > 10)
             shortened =
-                product.name.substr(0, 10) +
+                product.displayName.substr(0, 10) +
                 L"..";
-        const bool titleMatches=visible==product.name || visible==shortened;
+        const bool titleMatches=visible==product.displayName || visible==shortened;
 
         std::vector<sdgo::shop::Option> options;
         if (!ReadOptions(
@@ -2027,6 +2157,18 @@ private:
                 target_->payment)
             return kPopupOptionMismatch;
 
+        if(visualOnly_) {
+            const wchar_t* titleKey=gift?L"GiftNameStatic":L"MixNameStatic";
+            void* title=FindControl(root,titleKey,kStaticKind);
+            std::wstring actual;
+            observation_.popup_name_found=title?1u:0u;
+            const bool read=title && HasVtable(title,bindings_.static_text_vtable) &&
+                ControlIdentity(title,root,titleKey) && ReadHostString(static_cast<uint8_t*>(title)+kControlText,255,&actual);
+            observation_.popup_name=actual;
+            if(!read || actual!=target_->displayName)
+                return kUiNameMismatch;
+        }
+
         uintptr_t itemBegin = 0;
         uintptr_t itemEnd = 0;
         observation_.popup_phase=4;
@@ -2092,6 +2234,22 @@ private:
         std::wstring caption;
         if(!FormatOptionCaption(expected,option,&caption) || label!=caption)
             return kUiDurationMismatch;
+        if(visualOnly_) {
+            for(uint32_t i=0;i<options.size();++i) {
+                const auto& actualOption=options[i];
+                const auto expectedOption=runtime_.find(actualOption.id);
+                if(expectedOption==runtime_.end())return kPopupOptionMismatch;
+                const auto& sealed=expectedOption->second;
+                if(actualOption.category!=sealed.category || actualOption.price!=sealed.price || actualOption.validity!=sealed.validity ||
+                   actualOption.payment!=sealed.payment)return kPopupOptionMismatch;
+                void* item=nullptr;void* button=nullptr;void* owner=nullptr;void* captionObject=nullptr;
+                std::wstring itemKey,actualCaption,expectedCaption;
+                if(!ReadAddress(itemBegin+i*sizeof(void*),&item) || !item || !ReadHostString(item,63,&itemKey) || itemKey!=std::to_wstring(i) ||
+                   !ReadPointer(item,0x1C,&button) || !button || !ReadPointer(button,kControlParent,&owner) || owner!=root ||
+                   !ReadButtonTextItem(button,0,&captionObject) || !captionObject || !ReadHostString(captionObject,255,&actualCaption) ||
+                   !FormatOptionCaption(sealed.text,actualOption,&expectedCaption) || actualCaption!=expectedCaption)return kUiDurationMismatch;
+            }
+        }
         targetOptionIndex_ = matching;
         observation_.option_label = label;
         return kComplete;
@@ -2326,7 +2484,9 @@ private:
                 &slot,
                 unit.brief.data() + 12,
                 sizeof(slot));
-            if (type) {
+            if (type && (!uid || slot != index + 1))
+                return kInventoryUnavailable;
+            if (type && !visualOnly_) {
                 uint32_t fullType = 0;
                 uint16_t fullSlot = 0;
                 uint64_t fullUid = 0;
@@ -2380,7 +2540,7 @@ private:
                 info,
                 unit.brief.data(),
                 slot);
-            bindings_.unit_full_by_slot(
+            if (!visualOnly_) bindings_.unit_full_by_slot(
                 info,
                 unit.full.data(),
                 slot);
@@ -3097,8 +3257,34 @@ private:
         __try {request(page);return true;}
         __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
     }
+    static std::wstring DecodeTextHex(const std::wstring& value) {
+        if(value.size()%4 || value.size()>16384)throw 1;
+        auto digit=[](wchar_t c)->unsigned {if(c>=L'0'&&c<=L'9')return c-L'0';if(c>=L'A'&&c<=L'F')return c-L'A'+10;if(c>=L'a'&&c<=L'f')return c-L'a'+10;throw 1;};
+        std::wstring text;
+        for(size_t i=0;i<value.size();i+=4) {
+            const auto code=(digit(value[i])<<4)|digit(value[i+1])|(digit(value[i+2])<<12)|(digit(value[i+3])<<8);
+            if(!code)throw 1;
+            text.push_back(static_cast<wchar_t>(code));
+        }
+        return text;
+    }
+
+    static const void* SetNativeEditQuery(const Bindings& b,void* edit,const wchar_t* query) {
+        NativeRequestName text;
+        bool constructed=false;
+        const void* result=nullptr;
+        __try {
+            constructed=b.native_wstring_ctor(text.bytes.data(),query)!=nullptr;
+            if(constructed) {b.edit_set_text(edit,text.bytes.data(),0);result=b.edit_get_text(edit);}
+        } __finally {if(constructed)b.native_wstring_dtor(text.bytes.data());}
+        return result;
+    }
 
     Bindings bindings_ = {};
+    const SdgoApi* api_=nullptr;
+    SdgoMod* mod_=nullptr;
+    ShopPointerInput pointerInput_;
+    uint64_t hoverStartedAt_=0;
     bool bound_ = false;
     bool configured_ = false;
     Stage stage_ = kStageIdle;
@@ -3114,6 +3300,8 @@ private:
     std::set<std::wstring> verifiedKeys_;
     std::set<uint32_t> requestedInventoryPages_;
     bool stockAssertions_ = false;
+    bool visualOnly_ = false;
+    std::wstring query_;
     IntegrityImage baseline_;
     bool hasBaseline_ = false;
     void* room_ = nullptr;

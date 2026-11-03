@@ -17,7 +17,7 @@ IDs distinguish separate copies of the same item. Choice-required gifts pause
 for individual native handling. Capacity errors, refusal, disconnect, page closure
 and timeout stop the batch. Unconfirmed claims are never retried automatically.
 
-Friend-server players receive it through `update.bat`. Otherwise install the
+Players receive it with the server owner's client package or update. Otherwise install the
 client portion of a Full package, or close the target client and
 import the dedicated overlay using SDGO Mod Manager. Start the game normally.
 No server Mod, account settings, database access, additional skins, background

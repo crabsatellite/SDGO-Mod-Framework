@@ -42,7 +42,7 @@ class CalendarGiftService:
                     phase='rules';policy=engine.policy();people=engine.people();pending=False
                     if policy['enabled']:
                         start,end=engine.window(policy)
-                        occurrences=model.occurrences(policy,people,start,end);budget=200
+                        occurrences=engine.occurrences(policy,people,start,end);budget=200
                         for occurrence in occurrences:
                             phase='recipients'
                             accounts=repository.accounts(occurrence,people)
@@ -183,7 +183,7 @@ class CalendarGifts(Provider):
             from owner.calendar_gifts.repository import Repository
             policy=engine.policy();people=engine.people();date=dt.date.fromisoformat(body.get('date') or engine.today().isoformat())
             account=body.get('account_id');model.integer(account,1,2147483647,'预览玩家编号')
-            occurrences=model.occurrences(policy,people,date,date);connection=self.connection()
+            occurrences=engine.occurrences(policy,people,date,date);connection=self.connection()
             try:
                 repository=Repository(connection);result=[]
                 for occurrence in occurrences:

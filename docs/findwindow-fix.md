@@ -15,8 +15,8 @@ Independent of [`ime_fix`](ime-fix.md), which fixes how the game reads committed
 ## Use
 
 Nothing to do: it works automatically once the framework is installed on the client. The mod
-needs the `sdgo\core.dll` of the same release (it uses `HookSystemExport`); the client installer
-and `update.bat` update both. SDGO Mod Manager lists it under **修复归档** (fix archive). To
+needs the `sdgo\core.dll` of the same release (it uses `HookSystemExport`); installing or updating
+the client framework updates both. SDGO Mod Manager lists it under **修复归档** (fix archive). To
 switch it off while troubleshooting, click **显示开发信息** (show developer info), clear its
 switch and restart the game; this writes `findwindow_fix=0` under `[mods]` in `sdgo\sdgo.ini`.
 

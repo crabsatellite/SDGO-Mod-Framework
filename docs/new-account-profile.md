@@ -76,6 +76,7 @@ The unit cap applies only to rows inserted by the native first-profile call, inc
 `sp_InsertUserUnitAll*` grants on servers where they are enabled. It keeps the earliest hangar slots
 (then unit identity), and updates the unit counters and any dangling selected-unit reference in the
 same transaction. The runtime accepts `RankNumber` 0..20 if `config.ini` is edited by hand.
+
 ## Developer tests
 
 `ctest` runs `new_account_policy_test`. The SQL test needs a disposable SQL Server container:

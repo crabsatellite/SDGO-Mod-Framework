@@ -88,6 +88,19 @@
       "activation": "restart_required"
     },
     {
+      "id": "battle_player_weapon_slot",
+      "key": "BattlePlayerWeaponSlot",
+      "label": "原生开火测试武器槽（-1 保持当前）",
+      "type": "integer",
+      "default": -1,
+      "minimum": -1,
+      "maximum": 2,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
       "id": "battle_map",
       "key": "BattleMap",
       "label": "原生测试地图编号（0 随机）",

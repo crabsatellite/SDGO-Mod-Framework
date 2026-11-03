@@ -4,6 +4,9 @@ namespace sdgo::shop_localization {
 enum class Operation { Assign, Copy };
 struct ReturnSite { const char* name; bool option; bool product; Operation operation; };
 inline constexpr ReturnSite kSites[] = {
+    // First buy/gift option dialogs; the later confirm page has separate callers.
+    {"shop_localization.call.009DC5BB", false, true, Operation::Assign},
+    {"shop_localization.call.009DD54A", false, true, Operation::Assign},
     // Shared UnitNameStatic leaf used by normal capsule, factory-room, mixing, and shop unit previews.
     {"shop_localization.call.006EF404", false, false, Operation::Assign},
     {"shop_localization.call.009C038C", true, false, Operation::Assign},

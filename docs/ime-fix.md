@@ -5,7 +5,7 @@
 `ime_fix` 1.1.1 restores Chinese IME candidate requests and fixes residual preedit letters after word selection.
 The original single-call-site UTF-16 commit-length correction remains for Chinese, Japanese and Korean input.
 
-Run `update.bat` in an existing client, then start the client normally. The automatic fix appears in
+Update the client framework (or install your server owner's client update), then start the client normally. The automatic fix appears in
 Mod Manager's Fix archive; older Managers may retain its IME commit fix label. Developer toggles and
 length-only diagnostics are available under Show developer information and take effect after restart.
 

@@ -38,17 +38,18 @@ export async function mount(root,ctx){
  const birthdays=section('生日默认规则'),birthEnabled=input('checkbox',state.policy.birthday.enabled),feb29=select([['feb28','平年在 2 月 28 日赠送'],['mar01','平年在 3 月 1 日赠送'],['leap_only','仅闰年的 2 月 29 日赠送']],state.policy.birthday.feb29);
  birthEnabled.onchange=()=>state.policy.birthday.enabled=birthEnabled.checked;feb29.onchange=()=>state.policy.birthday.feb29=feb29.value;
  birthdays.append(field('启用生日赠礼',birthEnabled),field('2 月 29 日生日',feb29));gifts(state.policy.birthday.rewards,birthdays);
- const events=section('节日与指定日期'),eventList=el('div');events.append(el('p','通用日历覆盖 2025–2040 年；节日当天每年一份。活动编号绑定发放历史，已有活动修改日期时请保留编号。','muted'),eventList);
+ const events=section('节日与指定日期'),eventList=el('div');events.append(el('p','固定公历节日按每年月日计算；农历节日和清明日历覆盖 2025–2040 年。节日当天每年一份，新增活动从保存当天起生效，不补发之前的节日。活动编号绑定发放历史，已有活动修改日期时请保留编号。','muted'),eventList);
  function eventEditor(event){
   const card=el('details'),summary=el('summary',event.title),title=input('text',event.title),on=input('checkbox',event.enabled);
   card.append(summary,field('活动名称',title),field('启用活动',on));title.oninput=()=>{event.title=title.value;summary.textContent=title.value;};on.onchange=()=>event.enabled=on.checked;
   const calendar=select([['festival','通用节日'],['annual','每年的指定月日'],['once','一次性日期']],event.calendar),dateFields=el('div');
-  const drawDates=()=>{dateFields.replaceChildren();if(event.calendar==='festival'){const f=select([['new_year','元旦'],['spring_festival','春节'],['qingming','清明'],['labour_day','劳动节'],['dragon_boat','端午'],['mid_autumn','中秋'],['national_day','国庆']],event.festival);f.onchange=()=>event.festival=f.value;dateFields.append(f);}else{const d=input(event.calendar==='once'?'date':'text',event.calendar==='once'?event.date:event.month_day);d.placeholder='MM-DD';d.onchange=()=>{if(event.calendar==='once')event.date=d.value;else event.month_day=d.value;};dateFields.append(d);}};
+  const drawDates=()=>{dateFields.replaceChildren();if(event.calendar==='festival'){const f=select(state.festivals.map(x=>[x.value,x.title+(x.month_day?'（'+x.month_day+'）':'')]),event.festival);f.onchange=()=>event.festival=f.value;dateFields.append(f);}else{const d=input(event.calendar==='once'?'date':'text',event.calendar==='once'?event.date:event.month_day);d.placeholder='MM-DD';d.onchange=()=>{if(event.calendar==='once')event.date=d.value;else event.month_day=d.value;};dateFields.append(d);}};
   calendar.onchange=()=>{event.calendar=calendar.value;drawDates();};card.append(field('日期规则',calendar),dateFields);drawDates();
   const group=select(groupChoices(),event.group);group.onchange=()=>event.group=group.value;card.append(field('接收范围',group));gifts(event.rewards,card);
   card.append(act('删除此活动',()=>{state.policy.events=state.policy.events.filter(e=>e!==event);card.remove();}));return card;
  }
  for(const event of state.policy.events)eventList.append(eventEditor(event));
+ if(state.missing_festivals.length){const add=act('补充常见节日（'+state.missing_festivals.length+' 项）',()=>{const added=structuredClone(state.missing_festivals);for(const event of added){state.policy.events.push(event);eventList.append(eventEditor(event));}add.disabled=true;ctx.message('已补充节日，点击“保存全部通用规则”后生效；原活动、开关与礼物保持不变。');});events.append(add);}
  events.append(act('添加指定日期活动',()=>{const event={id:'event_'+crypto.randomUUID().replaceAll('-','').slice(0,16),title:'新活动',enabled:true,calendar:'annual',festival:'new_year',month_day:state.today.slice(5),date:state.today,group:'all',rewards:{mode:'missing_one',grades:[],fallback:true,unit_ids:[],items:[]}};state.policy.events.push(event);const e=eventEditor(event);e.open=true;eventList.append(e);}));
  async function savePolicy(){state.policy.utc_offset_minutes=Number(offset.value);state.policy.catchup_days=Number(catchup.value);const fresh=await api('/policy',{value:state.policy,revision:state.policy_revision});state.policy_revision=fresh.policy_revision;state.today=fresh.today;ctx.message('通用规则已保存。');}
  events.append(act('保存全部通用规则',savePolicy));

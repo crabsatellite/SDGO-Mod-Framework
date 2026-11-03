@@ -145,15 +145,17 @@ std::vector<sdgo::shop_search::Alias> FixtureAliases()
 void Offline()
 {
     using sdgo::shop_search::Alias;
-    using sdgo::shop_search::BuildItemsInstallSql;
-    const std::wstring expected =
+    using sdgo::shop_search::BuildInstallSql;
+    const std::wstring expectedMain =
         L"CREATE PROCEDURE dbo.sp_StoreItemsList AS SELECT N'O''Hara';";
-    const auto sql = BuildItemsInstallSql(
+    const std::wstring expectedSub =
+        L"CREATE PROCEDURE dbo.sp_StoreSubItemsList AS SELECT N'Sub';";
+    const auto sql = BuildInstallSql(
         {
             {1010102, L"Beta O'Hara", L"测试机乙"},
             {1010101, L"Alpha", L"高达"},
         },
-        expected, L"revision'O");
+        expectedMain, expectedSub, L"revision'O");
 
     Check(
         sql.find(L"@search4 VARCHAR(100)") != std::wstring::npos,
@@ -209,19 +211,50 @@ void Offline()
                 std::wstring::npos,
         "plain search must remain a parameterized LIKE expression");
     Check(
-        sql.find(L"EXEC(@InstallBatch)") !=
+        sql.find(L"EXEC(@MainInstallBatch)") !=
+                std::wstring::npos &&
+            sql.find(L"EXEC(@SubInstallBatch)") !=
                 std::wstring::npos &&
             sql.find(
-                L"STUFF(@IntendedInstalledDefinition, 1, 6, N'ALTER')") !=
+                L"STUFF(@IntendedInstalledMainDefinition, 1, 6, N'ALTER')") !=
+                std::wstring::npos &&
+            sql.find(
+                L"STUFF(@IntendedInstalledSubDefinition, 1, 6, N'ALTER')") !=
                 std::wstring::npos &&
             sql.find(L"CREATE PROCEDURE dbo.sp_StoreItemsList") !=
                 std::wstring::npos &&
+            sql.find(L"CREATE PROCEDURE dbo.sp_StoreSubItemsList") !=
+                std::wstring::npos &&
             sql.find(L"CREATE OR ALTER") == std::wstring::npos,
-        "SQL Server 2014 installation must execute ALTER and store CREATE text");
+        "SQL Server 2014 installation must ALTER and store both CREATE definitions");
     Check(
         sql.find(L"CREATE PROCEDURE dbo.sp_StoreItemsList AS SELECT "
                      L"N''O''''Hara'';") != std::wstring::npos,
-        "expected definition must be embedded as a quoted Unicode literal");
+        "expected main definition must be embedded as a quoted Unicode literal");
+    Check(
+        sql.find(L"CREATE PROCEDURE dbo.sp_StoreSubItemsList AS SELECT "
+                     L"N''Sub'';") != std::wstring::npos,
+        "expected sub definition must be embedded as a quoted Unicode literal");
+    Check(
+        sql.find(L"INSERT #sdgo_selected_parents") != std::wstring::npos &&
+            sql.find(L"EXEC dbo.sp_StoreItemsList") != std::wstring::npos &&
+            sql.find(L"P.sdgo_parent_order ASC") != std::wstring::npos &&
+            sql.find(L"B.f_index DESC") != std::wstring::npos &&
+            sql.find(L"B.f_validity ASC") != std::wstring::npos,
+        "sub procedure must reuse main selection and preserve native child ordering");
+    Check(
+        sql.find(L"S.f_productid = P.f_productid") != std::wstring::npos &&
+            sql.find(L"B.f_itemid = S.f_itemid") != std::wstring::npos &&
+            sql.find(L"S.f_package") != std::wstring::npos &&
+            sql.find(L"B.f_display") == std::wstring::npos,
+        "sub procedure must return main package and preserve native child membership");
+    Check(
+        sql.find(L"N'shop_search/v2'") != std::wstring::npos &&
+            sql.find(L"N'shop_search/v1', N'shop_search/v2'") !=
+                std::wstring::npos &&
+            sql.find(L"shop search v2 ownership state is incomplete") !=
+                std::wstring::npos,
+        "installer must migrate v1 ownership and fail closed on incomplete v2 state");
     Check(
         sql.find(L"(1010101, N'Alpha', N'高达'),") <
             sql.find(L"(1010102, N'Beta O''Hara', N'测试机乙')"),
@@ -244,9 +277,9 @@ void Offline()
 
     bool rejected = false;
     try {
-        BuildItemsInstallSql(
+        BuildInstallSql(
             {{1, L"A", L"甲"}, {1, L"A", L"乙"}},
-            expected, L"r");
+            expectedMain, expectedSub, L"r");
     } catch (const std::invalid_argument&) {
         rejected = true;
     }
@@ -254,9 +287,9 @@ void Offline()
         rejected,
         "conflicting translations for one product/source pair must be rejected");
 
-    const auto duplicate = BuildItemsInstallSql(
+    const auto duplicate = BuildInstallSql(
         {{1, L"A", L"甲"}, {1, L"A", L"甲"}, {1, L"B", L"乙"}},
-        expected, L"r");
+        expectedMain, expectedSub, L"r");
     const auto firstDuplicate =
         duplicate.find(L"(1, N'A', N'甲')");
     Check(
@@ -268,8 +301,9 @@ void Offline()
 
     rejected = false;
     try {
-        BuildItemsInstallSql(
-            {{1, std::wstring(513, L'a'), L"甲"}}, expected, L"r");
+        BuildInstallSql(
+            {{1, std::wstring(513, L'a'), L"甲"}},
+            expectedMain, expectedSub, L"r");
     } catch (const std::invalid_argument&) {
         rejected = true;
     }
@@ -277,8 +311,9 @@ void Offline()
 
     rejected = false;
     try {
-        BuildItemsInstallSql(
-            {{1, L"A", std::wstring(513, L'甲')}}, expected, L"r");
+        BuildInstallSql(
+            {{1, L"A", std::wstring(513, L'甲')}},
+            expectedMain, expectedSub, L"r");
     } catch (const std::invalid_argument&) {
         rejected = true;
     }
@@ -286,29 +321,19 @@ void Offline()
 
     rejected = false;
     try {
-        BuildItemsInstallSql({}, L"", L"r");
+        BuildInstallSql({}, L"", expectedSub, L"r");
     } catch (const std::invalid_argument&) {
         rejected = true;
     }
-    Check(rejected, "empty expected definitions must be rejected");
-    const auto paired=sdgo::shop_search::BuildInstallSql(
-        {{1010101,L"Alpha",L"高达"}},expected,L"paired",
-        L"CREATE PROCEDURE dbo.sp_StoreSubItemsList AS SELECT 1;");
-    Check(paired.find(L"EXEC dbo.sp_StoreItemsList\n")!=std::wstring::npos &&
-          paired.find(L"ORDER BY P.sdgo_ordinal,S.f_index DESC,S.f_validity ASC")!=std::wstring::npos,
-          "sales options must consume the same ordered parent result and original option order");
-    Check(paired.find(L"shop sales-option procedure changed after inspection")<
-              paired.find(L"DELETE FROM dbo.sdgo_ShopSearchAliases") &&
-          paired.find(L"EXEC(@SubItemsInstallBatch)")<paired.find(L"COMMIT TRANSACTION"),
-          "both native procedures are guarded and installed before the shared transaction commits");
-    Check(paired.find(L"owned shop sales-option procedure has an external edit")!=std::wstring::npos &&
-          paired.find(L"shop sales-option procedure readback mismatch")!=std::wstring::npos &&
-          paired.find(L"VALUES(N'dbo.sp_StoreSubItemsList',@Revision")!=std::wstring::npos,
-          "option procedure ownership, readback and revision remain separate from the parent");
-    rejected=false;
-    try {sdgo::shop_search::BuildInstallSql({},expected,L"paired",L"");}
-    catch(const std::invalid_argument&){rejected=true;}
-    Check(rejected,"paired installation refuses a missing inspected option definition");
+    Check(rejected, "empty expected main definition must be rejected");
+
+    rejected = false;
+    try {
+        BuildInstallSql({}, expectedMain, L"", L"r");
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Check(rejected, "empty expected sub definition must be rejected");
 }
 
 } // namespace
@@ -321,22 +346,19 @@ int main(int argc, char** argv)
             std::cout << "shop search SQL builder checks passed\n";
             return 0;
         }
-        if(argc==6 && std::string(argv[1])=="--emit-pair") {
-            const auto sql=sdgo::shop_search::BuildInstallSql(FixtureAliases(),
-                DecodeUtf8(ReadBytes(argv[2])),DecodeUtf8(argv[5]),DecodeUtf8(ReadBytes(argv[3])));
-            WriteBytes(argv[4],EncodeUtf8(sql));return 0;
-        }
-        if (argc != 5 || std::string(argv[1]) != "--emit") {
+        if (argc != 6 || std::string(argv[1]) != "--emit") {
             std::cerr
                 << "usage: shop_search_sql_builder "
-                   "--emit EXPECTED_UTF8 OUTPUT_UTF8 REVISION\n";
+                   "--emit EXPECTED_MAIN_UTF8 EXPECTED_SUB_UTF8 "
+                   "OUTPUT_UTF8 REVISION\n";
             return 2;
         }
-        const auto expected = DecodeUtf8(ReadBytes(argv[2]));
-        const auto revision = DecodeUtf8(argv[4]);
-        const auto sql = sdgo::shop_search::BuildItemsInstallSql(
-            FixtureAliases(), expected, revision);
-        WriteBytes(argv[3], EncodeUtf8(sql));
+        const auto expectedMain = DecodeUtf8(ReadBytes(argv[2]));
+        const auto expectedSub = DecodeUtf8(ReadBytes(argv[3]));
+        const auto revision = DecodeUtf8(argv[5]);
+        const auto sql = sdgo::shop_search::BuildInstallSql(
+            FixtureAliases(), expectedMain, expectedSub, revision);
+        WriteBytes(argv[4], EncodeUtf8(sql));
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

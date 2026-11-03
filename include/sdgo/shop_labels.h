@@ -41,4 +41,13 @@ inline std::wstring DurationLabel(const Option& option, int timeLimit)
         return L"永久";
     return {};
 }
+
+inline std::wstring QuantityLabel(const Option& option, int timeLimit, bool compact = false)
+{
+    const uint32_t kind = option.category / 100000;
+    if ((timeLimit != 0 && timeLimit != 2) || kind < 10 || kind > 22 || kind == 11 ||
+        option.validity <= 0 || option.validity > 1000000)
+        return {};
+    return (compact ? std::wstring() : std::wstring(L"数量 ")) + std::to_wstring(option.validity);
+}
 } // namespace sdgo::shop
