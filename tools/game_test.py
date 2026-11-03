@@ -244,11 +244,23 @@ def read_ini(path: Path) -> configparser.ConfigParser:
     return parser
 
 
+def replace_ini(temporary: Path, path: Path, timeout: float = 5.0) -> None:
+    deadline=time.monotonic()+timeout
+    while True:
+        try:
+            os.replace(temporary,path)
+            return
+        except PermissionError as error:
+            if getattr(error,'winerror',None) not in (5,32) or time.monotonic()>=deadline:
+                raise
+            time.sleep(min(.1,max(0,deadline-time.monotonic())))
+
+
 def write_ini(path: Path, parser: configparser.ConfigParser) -> None:
     temporary = path.with_name(path.name + ".tmp")
     with temporary.open("w", encoding="utf-8", newline="\n") as stream:
         parser.write(stream, space_around_delimiters=False)
-    os.replace(temporary, path)
+    replace_ini(temporary, path)
 
 
 def copy_file_if_missing(source: Path, destination: Path) -> None:

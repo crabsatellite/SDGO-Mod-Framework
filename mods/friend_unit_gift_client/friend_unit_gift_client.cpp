@@ -10,6 +10,7 @@
 #include "sdgo/friend_unit_gift_client_observer.h"
 #include "sdgo/game_test_page_observer.h"
 #include "sdgo/storage_extension.h"
+#include "sdgo/localization.h"
 
 #include <algorithm>
 #include <array>
@@ -62,9 +63,6 @@ using StorageEvent = std::uint32_t(__thiscall*)(
 using StoragePacket = std::uint32_t(__thiscall*)(
     void*, std::uintptr_t, std::uintptr_t, std::uintptr_t,
     std::uint32_t, const std::uint8_t*);
-using ComposerCtor = void*(__thiscall*)(
-    void*, const void*, std::uint8_t);
-using ComposerDtor = void(__thiscall*)(void*);
 using ComposerUpdate = void(__thiscall*)(void*);
 using ComposerCallback =
     void(__stdcall*)(void*, std::uint32_t, std::uintptr_t, void*);
@@ -99,6 +97,50 @@ Transport g_transport;
 Model g_model;
 NativeInventorySync g_inventory_sync;
 NativeReplyQueue g_native_replies;
+NativeUnitDetailQueue g_native_details;
+using SyncFull = void(__thiscall*)(void*,const void*);
+SyncFull g_sync_full = nullptr;
+using UnitCardCtor = void*(__thiscall*)(void*,const void*,std::uint32_t);
+using UnitCardDtor = void(__thiscall*)(void*);
+UnitCardCtor g_unit_card_ctor=nullptr;
+UnitCardDtor g_unit_card_dtor=nullptr;
+std::uint64_t g_unit_card_requested=0;
+std::uint64_t g_provenance_target_uid=0;
+std::uint64_t g_provenance_target_session=0;
+std::uint64_t g_provenance_target_deadline=0;
+std::uint64_t g_provenance_next_action=0;
+using NativeAddControl = std::uint32_t(__thiscall*)(void*,const ui::NativeString*,int,int,int,int);
+NativeAddControl g_add_combo=nullptr;
+NativeAddControl g_add_edit=nullptr;
+using NativeSetFont=void(__thiscall*)(void*,std::uint32_t);
+NativeSetFont g_set_font=nullptr;
+bool g_picker_selecting=false;
+bool g_picker_seen=false;
+bool g_picker_navigation_sent=false;
+std::uint64_t g_picker_target_uid=0;
+std::uint64_t g_picker_next_action=0;
+using ManagementCallback=std::uint32_t(__stdcall*)(void*,std::uint32_t,std::uintptr_t,void*);
+ManagementCallback g_management_callback=nullptr;
+FriendCallback g_downmenu_callback=nullptr;
+FriendCallback g_operator_callback=nullptr;
+void* g_downmenu_vtable=nullptr;
+void* g_operator_vtable=nullptr;
+void* g_management_pager_vtable=nullptr;
+using ManagementPageChange=void(__thiscall*)(void*,int,std::uint8_t);
+ManagementPageChange g_management_page_change=nullptr;
+void* g_composer_note=nullptr;
+void* g_composer_primary=nullptr;
+void* g_composer_cancel=nullptr;
+void* g_composer_notice=nullptr;
+bool g_composer_opening=false;
+bool g_composer_controls=false;
+std::uint64_t g_composer_card_uid=0;
+bool g_composer_received=false;
+Detail g_received_detail{};
+std::uint64_t g_composer_reload_uid=0;
+std::array<std::uint16_t,kMaximumNoteCodeUnits> g_composer_saved_note{};
+std::uint16_t g_composer_saved_note_size=0;
+std::atomic<unsigned> g_native_detail_receipts{0};
 void* g_receive_decoded_original = nullptr;
 const DWORD g_receive_default_mxcsr = 0x1F80;
 volatile LONG g_receive_carrier_observations = 0;
@@ -106,6 +148,8 @@ NativeInventorySync::Delete g_inventory_delete = nullptr;
 NativeBusiness g_inventory_view = nullptr;
 NativeBusiness g_inventory_redraw = nullptr;
 NativeBusiness g_inventory_page = nullptr;
+NativeBusiness g_storage_labels=nullptr;
+NativeBusiness g_storage_render=nullptr;
 void* g_inventory_service_vtable = nullptr;
 ui::Bindings g_ui;
 ui::FriendEntry g_friend_main;
@@ -124,8 +168,6 @@ void* g_unit_detail_service_vtable = nullptr;
 StorageInit g_storage_init = nullptr;
 StorageEvent g_storage_event = nullptr;
 StoragePacket g_storage_packet = nullptr;
-ComposerCtor g_composer_ctor = nullptr;
-ComposerDtor g_composer_dtor = nullptr;
 ComposerUpdate g_composer_update = nullptr;
 ComposerCallback g_composer_callback = nullptr;
 NativeAlloc g_alloc = nullptr;
@@ -161,6 +203,8 @@ UINT_PTR g_timer = 0;
 DWORD g_ui_thread = 0;
 void* g_composer = nullptr;
 std::uint32_t g_receiver_id = 0;
+std::int32_t g_friend_context_x = -1;
+std::int32_t g_friend_context_y = -1;
 std::wstring g_receiver_name;
 std::atomic<std::uint64_t> g_request_sequence{1};
 bool g_storage_broker = false;
@@ -189,6 +233,7 @@ bool g_populate_after_inventory = false;
 std::uint32_t g_returns_next_page = 0;
 std::uint64_t g_returns_session = 0;
 std::uint64_t g_returns_retry_at = 0;
+std::uint64_t g_returns_poll_at = 0;
 std::uint64_t g_selection_detail_uid = 0;
 Command g_uncertain_command = Command::hello;
 RequestId g_uncertain_request_id{};
@@ -216,6 +261,14 @@ struct ObserverState {
 ObserverState g_observer;
 
 void RenderStorageRows();
+bool ControlReady(void* control);
+bool CreateComposerCard(std::uint64_t uid);
+void PopulateComposer(void* service);
+void RefreshComposerSummary();
+bool OpenReceivedInfo(const Detail& detail);
+void CloseComposer();
+bool BeginGiftAction(Command command);
+void* ResolveService(const wchar_t* name,const void* expectedVtable);
 void RefreshUnitDetailView();
 bool ArmGameThread();
 std::uint64_t CurrentSessionKey() noexcept;
@@ -241,9 +294,15 @@ bool __stdcall CaptureDecodedReply(
                 g_api->Log(g_mod,SDGO_LOG_INFO,"native decoded storage carrier bytes=%u magic_offset=%d",plainSize,magicOffset);
             }
             consumed=g_native_replies.Capture(decoded,plainSize);
+            if (plainSize>=2 && wire::Read16(decoded)==0x0699) {
+                const bool tracked=g_native_details.Observe(decoded,plainSize);
+                if (g_native_detail_receipts.fetch_add(1)<5)
+                    g_api->Log(g_mod,SDGO_LOG_INFO,"native unit detail reply observed: bytes=%u tracked=%u",plainSize,tracked?1u:0u);
+            }
         }
     } __except(EXCEPTION_EXECUTE_HANDLER) {consumed=false;}
     SetLastError(error);return consumed;
+
 }
 
 // This site is AFTER the one original decode call, so other Mods may retain
@@ -278,7 +337,30 @@ pass_native:
 }
 
 bool __cdecl RequestNativeDetail(std::uint64_t uid, void*) {
-    return g_transport.RequestNativeUnitDetails(uid);
+    g_native_details.Expect(CurrentSessionKey(),uid);
+    const bool sent=g_transport.RequestNativeUnitDetails(uid);
+    if (!sent) g_native_details.Expect(0,0);
+    return sent;
+}
+
+void ApplyNativeDetails() noexcept {
+    __try {
+        NativeUnitDetailQueue::Record record{};
+        while (g_native_details.Pop(CurrentSessionKey(),&record)) {
+            if (!g_unit_info || !*g_unit_info || !g_sync_full || !g_brief) continue;
+            auto* info=*g_unit_info;
+            const int capacity=Read<int>(info,0x0C);
+            const auto slot=Read<std::uint16_t>(record.data(),4);
+            const auto uid=Read<std::uint64_t>(record.data(),8);
+            if (Read<std::uint8_t>(info,0x20)!=1 || !Read<std::uint32_t>(info,4) ||
+                capacity<1 || capacity>1200 || !slot || slot>capacity || g_inventory_sync.HasFull(uid)) continue;
+            std::uint8_t brief[25]{};
+            g_brief(info,brief,slot);
+            const auto existing=Read<std::uint64_t>(brief,4);
+            if (Read<std::uint32_t>(brief) && existing && existing!=uid) continue;
+            g_sync_full(info,record.data());
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
 }
 
 void __cdecl NativeInventoryChanged(void*) {
@@ -390,6 +472,21 @@ void RefreshAvailability() {
     g_friend_main.SetAvailable(offer);
     g_friend_three_d.SetAvailable(offer);
     g_storage_view.SetAvailable(resolve);
+    // A late stock inbox refresh can reset the borrowed native row controls.
+    // Restore the active gift presentation on the normal UI timer as well as
+    // after packets, including when a background inventory query finishes.
+    static std::uint32_t storageState=~0u;
+    if (g_storage_view.custom_view()) {
+        const std::uint32_t state=(g_model.pending()?1u:0u) |
+            (g_inventory_sync.Busy()?2u:0u) |
+            (g_inventory_sync.error()!=NativeInventorySync::Error::none?4u:0u) |
+            (g_transport.MutationUncertain()?8u:0u);
+        const auto* first=g_model.row(static_cast<std::size_t>(g_storage_local_page)*5u);
+        if (state!=storageState || (first &&
+            !ControlReady(g_storage_view.ControlFor(g_storage_view.RowActionForGift(first->gift_id))))) {
+            RenderStorageRows();storageState=state;
+        }
+    } else storageState=~0u;
     RefreshUnitDetailView();
 }
 
@@ -433,14 +530,14 @@ bool SnapshotUnitsUnsafe(std::vector<UnitSnapshot>* output) {
         const auto uid = Read<std::uint64_t>(brief, 4);
         const auto nativeSlot = Read<std::uint16_t>(brief, 12);
         if (!unitNumber || !uid || nativeSlot != slot ||
-            nativeSlot == active || brief[15] || brief[16] ||
-            brief[17] || brief[18]) {
+            nativeSlot == active || !runtime::NativeBriefAllowsGift(brief)) {
             continue;
         }
         UnitSnapshot unit;
         unit.uid = uid;
         unit.unit_number = unitNumber;
         unit.slot = nativeSlot;
+        unit.level = brief[14];
         g_full(info, unit.full_record.data(), nativeSlot);
         const bool fullReady = Read<std::uint32_t>(unit.full_record.data()) == unitNumber &&
             Read<std::uint16_t>(unit.full_record.data(), 4) == nativeSlot &&
@@ -454,6 +551,47 @@ bool SnapshotUnitsUnsafe(std::vector<UnitSnapshot>* output) {
     return true;
 }
 
+bool ReadNativeUnitName(std::uint32_t id,wchar_t* output) noexcept {
+    __try {
+        const std::uint8_t* row=nullptr;
+        auto* grid=g_grid_data ? g_grid_data() : nullptr;
+        if (!grid || !g_grid_find || !g_grid_find(grid,&row,id,2,1) || !row ||
+            Read<std::uint32_t>(row)!=id) return false;
+        for (std::size_t i=0;i<50;++i) {
+            output[i]=static_cast<wchar_t>(Read<std::uint16_t>(row,0xCD+2*i));
+            if (!output[i]) return i!=0;
+        }
+        output[50]=0;return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+std::wstring UnitDisplayName(std::uint32_t id) {
+    wchar_t native[51]{};
+    const std::wstring source=ReadNativeUnitName(id,native) ? native : L"机体名称暂不可用";
+    std::wstring translated;
+    return sdgo::localization::TryLookup(sdgo::localization::Kind::UnitName,id,source,&translated)
+        ? translated : source;
+}
+
+bool ReadNativeUnitIcon(std::uint32_t id,wchar_t* output) noexcept {
+    __try {
+        const std::uint8_t* row=nullptr;
+        auto* grid=g_grid_data ? g_grid_data():nullptr;
+        if (!grid || !g_grid_find || !g_grid_find(grid,&row,id,2,1) || !row) return false;
+        for (std::size_t i=0;i<128;++i) {
+            output[i]=static_cast<wchar_t>(Read<std::uint16_t>(row,0x12F6+i*2));
+            if (!output[i]) return i!=0;
+        }
+        output[128]=0;return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+}
+std::wstring UnitIconPath(std::uint32_t id) {
+    wchar_t path[129]{};return ReadNativeUnitIcon(id,path) ? path:L"";
+}
+void RestoreNativeStorage(void* service) {
+    if (g_storage_labels && g_storage_render) {g_storage_labels(service);g_storage_render(service);}
+}
+
 bool SnapshotUnits(std::vector<UnitSnapshot>* output) {
     __try {
         return SnapshotUnitsUnsafe(output);
@@ -461,6 +599,30 @@ bool SnapshotUnits(std::vector<UnitSnapshot>* output) {
         if (output) output->clear();
         return false;
     }
+}
+
+void LogUnavailableUnit(std::uint64_t uid) noexcept {
+    __try {
+        if (!g_unit_info || !*g_unit_info || !g_brief || !g_full) return;
+        auto* info=*g_unit_info;
+        const int capacity=Read<int>(info,0x0C);
+        if (capacity<1 || capacity>1200) return;
+        for (int slot=1;slot<=capacity;++slot) {
+            std::uint8_t brief[25]{};
+            g_brief(info,brief,static_cast<std::uint16_t>(slot));
+            if (Read<std::uint64_t>(brief,4)!=uid) continue;
+            std::uint8_t full[153]{};
+            g_full(info,full,static_cast<std::uint16_t>(slot));
+            g_api->Log(g_mod,SDGO_LOG_WARN,
+                "native gift selection record: uid=%llu unit=%u slot=%u level=%u flags=%u/%u/%u/%u full_selected=%u full_locked=%u full_uid=%llu",
+                static_cast<unsigned long long>(uid),Read<std::uint32_t>(brief),
+                Read<std::uint16_t>(brief,12),brief[14],brief[15],brief[16],brief[17],brief[18],
+                full[6],full[137],static_cast<unsigned long long>(Read<std::uint64_t>(full,8)));
+            return;
+        }
+        g_api->Log(g_mod,SDGO_LOG_WARN,"native gift requested unit is absent from the brief cache: uid=%llu",
+                   static_cast<unsigned long long>(uid));
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
 }
 
 bool CurrentUnit(
@@ -523,12 +685,38 @@ bool FindOwnedUnit(
     }
 }
 
+bool ShowNativeUnitCard(std::uint64_t uid) {
+    UnitSnapshot unit;
+    if (!FindOwnedUnit(uid,&unit) || !g_alloc || !g_free || !g_enqueue ||
+        !g_unit_card_ctor || !g_unit_card_dtor) return false;
+    auto* temporary=g_alloc(0x148);
+    if (!temporary) return false;
+    g_unit_card_ctor(temporary,unit.full_record.data(),0);
+    auto* live=g_enqueue(temporary,1);
+    g_unit_card_dtor(temporary);g_free(temporary);
+    return live!=nullptr;
+}
+
+bool OwnBriefContains(std::uint64_t uid) noexcept {
+    __try {
+        if (!uid || !g_unit_info || !*g_unit_info || !g_brief) return false;
+        auto* info=*g_unit_info;
+        const int capacity=Read<int>(info,0x0C);
+        if (Read<std::uint8_t>(info,0x20)!=1 || capacity<1 || capacity>1200) return false;
+        for (int slot=1;slot<=capacity;++slot) {
+            std::uint8_t brief[25]{};g_brief(info,brief,static_cast<std::uint16_t>(slot));
+            if (Read<std::uint32_t>(brief) && Read<std::uint64_t>(brief,4)==uid) return true;
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    return false;
+}
+
 bool ReadNote(
     void* service,
     std::array<char16_t, kMaximumNoteCodeUnits>* note,
     std::uint16_t* codeUnits) {
     if (!service || !note || !codeUnits || !g_edit_get) return false;
-    auto* root = Read<void*>(service, 0x4C);
+    auto* root = Read<void*>(service, 0x6C);
     auto* edit = g_ui.FindNamed(root, L"DescEdit", 8);
     if (!edit) return false;
     auto* text = g_edit_get(edit);
@@ -545,6 +733,19 @@ bool ReadNote(
     return true;
 }
 
+bool WriteNativeNote(void* edit,const wchar_t* text) {
+    if (!edit || !text || !g_wstring_ctor || !g_wstring_dtor || !g_edit_set) return false;
+    alignas(4) std::uint8_t native[0x1C]{};
+    bool constructed=false;
+    __try {
+        g_wstring_ctor(native,text);constructed=true;
+        g_edit_set(edit,reinterpret_cast<const ui::NativeString*>(native),0);
+        return true;
+    } __finally {
+        if (constructed) g_wstring_dtor(native);
+    }
+}
+
 bool SetNote(
     void* service,
     const std::uint16_t* note,
@@ -555,7 +756,7 @@ bool SetNote(
     }
     const auto* utf16 = reinterpret_cast<const char16_t*>(note);
     if (!wire::ValidUtf16(utf16, codeUnits)) return false;
-    auto* root = Read<void*>(service, 0x4C);
+    auto* root = Read<void*>(service, 0x6C);
     auto* edit = g_ui.FindNamed(root, L"DescEdit", 8);
     if (!edit || !g_ui.SetNoteLimit(edit)) return false;
     std::wstring text;
@@ -563,8 +764,7 @@ bool SetNote(
     for (std::uint16_t index = 0; index < codeUnits; ++index) {
         text.push_back(static_cast<wchar_t>(note[index]));
     }
-    const auto native = NativeView(text);
-    g_edit_set(edit, &native, 0);
+    if (!WriteNativeNote(edit,text.c_str())) return false;
     std::array<char16_t, kMaximumNoteCodeUnits> actual{};
     std::uint16_t actualUnits = 0;
     return ReadNote(service, &actual, &actualUnits) &&
@@ -577,102 +777,49 @@ void SetComposerPrimary(
     const std::wstring& caption,
     bool enabled) {
     if (!g_composer) return;
-    auto* primary = Read<void*>(g_composer, 0xA4);
-    g_ui.SetState(primary, true, enabled);
+    auto* primary = g_composer_primary;
+    g_ui.SetState(primary, true, enabled && !g_composer_reload_uid);
     g_ui.SetText(primary, caption);
 }
 
 void SetComposerNotice(const std::wstring& message) {
     if (!g_composer) return;
-    auto* root = Read<void*>(g_composer, 0x4C);
-    if (auto* notice = g_ui.FindNamed(root, L"NoticeStatic", 3)) {
-        g_ui.SetText(notice, message, 1);
+    if (g_composer_notice) g_ui.SetText(g_composer_notice, message, 1);
+}
+
+void RefreshComposerSummary() {
+    if (!g_composer) return;
+    auto* root=Read<void*>(g_composer,0x6C);
+    if (!root) return;
+    g_ui.SetText(g_ui.FindNamed(root,L"TitleStatic",3),(g_composer_received ? L"赠送者：":L"赠送给 ")+g_receiver_name,1);
+    g_ui.SetText(g_ui.FindNamed(root,L"UnitNameStatic",3),
+        g_selected_unit.uid ? g_ui.UnitCaption(g_selected_unit.unit_number,g_selected_unit.level) : L"正在读取机体…");
+    g_ui.SetState(g_ui.FindNamed(root,L"UnitNameStatic",3),true,false);
+    g_ui.SetState(g_ui.FindNamed(root,L"SkillTitleStatic1",3),false,false);
+    for (const auto* key:{L"LockIcon0",L"LockIcon1",L"AttributeSkillIcon0",L"AttributeSkillIcon1",L"AttributeSkillIcon2",L"AttributeSkillIcon3",L"SkillFrameIcon0",L"SkillFrameIcon1",L"SkillFrameIcon2",L"SkillFrameIcon3",L"GBlindIcon",L"GBlindStatic",L"AttributeSkillBlindIcon"}) {
+        auto* control=g_ui.FindNamed(root,key,std::wcscmp(key,L"GBlindStatic")==0 ? 3 : 1);
+        g_ui.SetState(control,false,false);
     }
+    if (g_composer_received) {
+        for (const auto* key:{L"SkillTitleStatic0",L"SkillStatic0",L"SkillStatic1",L"SkillStatic2",L"SkillStatic3"})
+            g_ui.SetState(g_ui.FindNamed(root,key,3),false,false);
+        for (const auto* key:{L"SkillIcon0",L"SkillIcon1",L"SkillIcon2",L"SkillIcon3"})
+            g_ui.SetState(g_ui.FindNamed(root,key,1),false,false);
+    }
+
+}
+
+void SetComposerEditable(bool enabled) {
+    if (g_composer_note) g_ui.SetState(g_composer_note,true,enabled);
 }
 
 bool SelectComposerUnit(std::uint64_t uid) {
-    if (!g_composer || g_units.empty()) return false;
-    auto* combo = Read<void*>(g_composer, 0xAC);
-    if (!combo) return false;
-    std::size_t selected = g_units.size();
-    if (uid) {
-        for (std::size_t index = 0; index < g_units.size(); ++index) {
-            if (g_units[index].uid == uid) {
-                selected = index;
-                break;
-            }
-        }
-    } else {
-        const auto nativeIndex = Read<std::int32_t>(combo, 0x21C);
-        if (nativeIndex >= 0 &&
-            static_cast<std::size_t>(nativeIndex) < g_units.size()) {
-            selected = static_cast<std::size_t>(nativeIndex);
-        }
-    }
-    if (selected >= g_units.size()) return false;
-    Put<std::int32_t>(
-        combo, 0x21C, static_cast<std::int32_t>(selected));
-    g_selected_unit = g_units[selected];
+    if (!g_composer || !g_selected_unit.uid || (uid && uid!=g_selected_unit.uid)) return false;
     UnitSnapshot current;
-    if (!CurrentUnit(g_selected_unit.slot, &current) || current.uid != g_selected_unit.uid) {
-        SetComposerPrimary(L"请重新选择", false);
-        SetComposerNotice(L"所选机体已变化或暂时不可赠送，请选择其他机体。");
-        return false;
-    }
-    g_selected_unit = current;
-    g_composer_phase = ComposerPhase::selecting;
+    if (!CurrentUnit(g_selected_unit.slot,&current) || current.uid!=g_selected_unit.uid) return false;
+    g_selected_unit=current;
     g_model.CancelOffer();
-    if (!g_inventory_sync.HasFull(g_selected_unit.uid)) {
-        if (g_inventory_sync.error()!=NativeInventorySync::Error::none) g_inventory_sync.Retry();
-        g_selection_detail_uid = g_selected_unit.uid;
-        g_inventory_sync.QueueDetail(g_selected_unit.uid);
-        SetComposerPrimary(L"正在读取详情…", false);
-        SetComposerNotice(L"正在通过原生请求核对所选机体详情，此步骤不会转移机体。");
-        return true;
-    }
-    g_selection_detail_uid = 0;
-    SetComposerPrimary(L"服务器预检", true);
-    SetComposerNotice(
-        L"已选择 #" + std::to_wstring(g_selected_unit.unit_number) +
-        L"（UID " + std::to_wstring(g_selected_unit.uid) +
-        L"）。点击“服务器预检”不会转移机体。");
-    return true;
-}
-
-bool AddComboItem(
-    void* combo,
-    std::size_t index,
-    const UnitSnapshot& unit) {
-    if (!combo || !g_alloc || !g_free || !g_item_ctor ||
-        !g_combo_add || !g_ui.skin) {
-        return false;
-    }
-    auto* memory = g_alloc(0x220);
-    if (!memory) return false;
-    auto* item = g_item_ctor(
-        memory, Read<void*>(combo, 0x15C));
-    if (!item) {
-        g_free(memory);
-        return false;
-    }
-    Put<int>(item, 0x154, 192);
-    Put<int>(item, 0x158, 18);
-    for (const auto* path : {
-             L"sprs\\17520.spr",
-             L"sprs\\17521.spr",
-             L"sprs\\17520.spr"}) {
-        const std::wstring owned(path);
-        const auto skin = NativeView(owned);
-        g_ui.skin(item, &skin, 0, 0, 0);
-    }
-    g_ui.SetText(
-        item,
-        L"#" + std::to_wstring(unit.unit_number) +
-            L"  UID " + std::to_wstring(unit.uid),
-        1);
-    const auto keyText = std::to_wstring(index);
-    const auto key = NativeView(keyText);
-    return g_combo_add(combo, &key, item) != 0;
+    return g_inventory_sync.HasFull(current.uid);
 }
 
 std::wstring StatusText(WireStatus status) {
@@ -938,9 +1085,9 @@ bool BeginGiftAction(Command command) {
         return false;
     }
     g_storage_view.ShowStatus(
-        command == Command::provenance
-            ? L"正在读取机体来源…"
-            : L"正在提交一次性处理请求；不会自动重发…",
+        command == Command::provenance || command == Command::detail
+            ? L"正在读取机体信息…"
+            : L"正在处理赠礼…",
         true);
     RenderStorageRows();
     return true;
@@ -1006,6 +1153,9 @@ void __cdecl OnTransport(
         } else {
             if (event->status == WireStatus::success)
                 ScheduleInventoryMutation(event->command, event->reply->unit_uid);
+            if (g_composer_received && event->reply->gift_id==g_received_detail.gift_id &&
+                (event->command==Command::accept || event->command==Command::return_to_sender || event->command==Command::takeback) &&
+                (event->status==WireStatus::success || event->status==WireStatus::returning_waiting_capacity)) CloseComposer();
             if (event->command == Command::inventory_returns) {
                 g_inventory_sync.SetSession(CurrentSessionKey());
                 g_returns_active = false;
@@ -1029,6 +1179,11 @@ void __cdecl OnTransport(
                 g_observer.last_reply_gift_id = event->reply->gift_id;
                 g_observer.last_reply_unit_uid = event->reply->unit_uid;
             }
+            if (event->command==Command::detail) {
+                if (event->status==WireStatus::success && g_storage_view.custom_view() &&
+                    g_selected_gift_id==g_model.detail().gift_id) OpenReceivedInfo(g_model.detail());
+                else g_storage_view.ShowStatus(StatusText(event->status),true);
+            }
             if (event->command == Command::preview_offer) {
                 if (event->status == WireStatus::success &&
                     g_model.HasOfferConfirmation()) {
@@ -1036,13 +1191,11 @@ void __cdecl OnTransport(
                     SetComposerPrimary(L"确认赠送", true);
                     SetComposerNotice(
                         L"服务器预检通过：向 " + g_receiver_name +
-                        L" 赠送 #" +
-                        std::to_wstring(g_selected_unit.unit_number) +
-                        L"（UID " +
-                        std::to_wstring(g_selected_unit.uid) +
-                        L"）。再次点击才会提交。");
+                        L" 赠送 "+g_ui.UnitCaption(g_selected_unit.unit_number,g_selected_unit.level)+
+                        L"。再次点击才会提交。");
                 } else {
                     g_composer_phase = ComposerPhase::selecting;
+                    SetComposerEditable(true);
                     g_model.CancelOffer();
                     SetComposerPrimary(L"服务器预检", true);
                     SetComposerNotice(StatusText(event->status));
@@ -1139,9 +1292,7 @@ void __cdecl OnTransport(
                 event->command == Command::list_returned) {
                 if (!SelectedGift()) g_selected_gift_id = 0;
                 g_storage_view.ShowStatus(
-                    L"自定义机体礼物：" +
-                        std::to_wstring(g_model.total_count()) +
-                        L" 项。原生礼物仍保持独立。",
+                    L"机体赠礼：" + std::to_wstring(g_model.total_count()) + L" 台。点击机体图标查看信息。",
                     true);
                 RenderStorageRows();
             } else if (
@@ -1155,18 +1306,14 @@ void __cdecl OnTransport(
                             g_provenance_request_uid &&
                         g_unit_detail_view.unit_uid() ==
                             g_provenance_request_uid) {
-                        g_unit_detail_view.SetDetail(
-                            ProvenanceDetailText(provenance),
-                            true);
+                        OpenReceivedInfo(provenance);
                     }
                     RefreshUnitDetailView();
                 } else {
                     const auto& provenance =
                         g_model.provenance();
                     g_storage_view.ShowStatus(
-                        provenance.present
-                            ? ProvenanceText(provenance)
-                            : StatusText(event->status),
+                        provenance.present ? L"赠礼信息已读取。" : StatusText(event->status),
                         true);
                     RenderStorageRows();
                 }
@@ -1211,6 +1358,7 @@ void __cdecl OnTransport(
                 }
             } else {
                 g_composer_phase = ComposerPhase::selecting;
+                SetComposerEditable(true);
                 g_model.CancelOffer();
                 SetComposerPrimary(L"服务器预检", true);
             }
@@ -1251,112 +1399,257 @@ void __cdecl OnTransport(
     RefreshAvailability();
 }
 
-bool OpenComposer() {
-    if (!g_native_ready || !g_model.CanOffer() ||
-        g_composer || !g_alloc || !g_free ||
-        !g_composer_ctor || !g_composer_dtor ||
-        !g_enqueue) {
-        return false;
-    }
-    struct EmptyVector {
-        void* begin = nullptr;
-        void* end = nullptr;
-        void* capacity = nullptr;
-    } empty;
-    auto* object = g_alloc(0xC8);
-    if (!object) return false;
-    g_composer_ctor(object, &empty, 0);
-    auto* live = g_enqueue(object, 1);
-    g_composer_dtor(object);
-    g_free(object);
+bool CreateComposerCard(std::uint64_t uid) {
+    UnitSnapshot unit;
+    if (!FindOwnedUnit(uid,&unit) || !g_unit_card_ctor || !g_unit_card_dtor) return false;
+    auto* temporary=g_alloc(0x148);
+    if (!temporary) return false;
+    g_unit_card_ctor(temporary,unit.full_record.data(),0);
+    auto* live=g_enqueue(temporary,1);
+    g_unit_card_dtor(temporary);g_free(temporary);
     if (!live) return false;
-    g_composer = live;
-    g_composer_phase = ComposerPhase::selecting;
-    g_units.clear();
-    g_selected_unit = {};
-    g_returns_needed=true;g_returns_retry_at=0;g_populate_after_inventory=true;
+    auto* old=g_composer;
+    if (old && g_composer_note) {
+        std::array<char16_t,kMaximumNoteCodeUnits> note{};
+        std::uint16_t length=0;
+        if (ReadNote(old,&note,&length)) {
+            std::memcpy(g_composer_saved_note.data(),note.data(),length*sizeof(char16_t));
+            g_composer_saved_note_size=length;
+        }
+    }
+    g_composer=live;g_composer_card_uid=uid;g_composer_reload_uid=0;
+    g_composer_opening=false;g_composer_controls=false;
+    g_composer_note=nullptr;
+    g_composer_primary=nullptr;g_composer_cancel=nullptr;g_composer_notice=nullptr;
+
+    if (old) g_close(old,1);
     return true;
 }
 
-void PopulateComposer(void* service) {
-    auto* root = Read<void*>(service, 0x4C);
-    if (!root) return;
-    g_populate_after_inventory = false;
-    const auto preferredUid = g_selected_unit.uid;
-    auto* note = g_ui.FindNamed(root, L"DescEdit", 8);
-    const bool noteReady = g_ui.SetNoteLimit(note);
-    g_ui.SetState(note, true, noteReady);
-    if (auto* title =
-            g_ui.FindNamed(root, L"TitleStatic", 3)) {
-        g_ui.SetText(title, L"向 " + g_receiver_name + L" 赠送机体");
-    }
-    if (auto* notice =
-            g_ui.FindNamed(root, L"NoticeStatic", 3)) {
-        g_ui.SetText(
-            notice,
-            L"请选择自己拥有的具体机体并填写留言；"
-            L"服务器预检后还需再次确认。",
-            1);
-    }
-    auto* combo = Read<void*>(service, 0xAC);
-    const bool unitsReady =
-        noteReady && !g_returns_needed && !g_returns_active && !g_returns_next_page &&
-        !g_inventory_sync.Busy() && g_inventory_sync.error()==NativeInventorySync::Error::none &&
-        combo && SnapshotUnits(&g_units) && !g_units.empty();
-    g_ui.SetState(combo, true, unitsReady);
-    if (combo && g_combo_clear) {
-        g_combo_clear(combo);
-        for (std::size_t i = 0; unitsReady && i < g_units.size(); ++i) {
-            if (!AddComboItem(combo, i, g_units[i])) {
-                g_units.clear();
-                g_selected_unit = {};
-                break;
-            }
-        }
-        if (!g_units.empty()) {
-            const bool retained=std::any_of(g_units.begin(),g_units.end(),
-                [preferredUid](const UnitSnapshot& unit){return unit.uid==preferredUid;});
-            SelectComposerUnit(retained ? preferredUid : 0);
-        }
-    }
-    if (auto* label =
-            g_ui.FindNamed(root, L"GiftNameStatic", 3)) {
-        g_ui.SetText(
-            label,
-            g_units.empty()
-                ? L"没有当前可预检的机体"
-                : L"已读取 " + std::to_wstring(g_units.size()) +
-                      L" 台可选机体");
-    }
-    for (const auto offset : {0x98u, 0x9Cu, 0xA0u}) {
-        g_ui.SetState(Read<void*>(service, offset), false, false);
-    }
-    g_ui.SetState(
-        Read<void*>(service, 0xA4), true, !g_units.empty());
-    g_ui.SetText(
-        Read<void*>(service, 0xA4),
-        g_units.empty() ? L"没有可选机体" : L"服务器预检");
-    if (g_returns_needed || g_returns_active || g_returns_next_page ||
-        (g_inventory_sync.Busy() && !g_selection_detail_uid)) {
-        g_populate_after_inventory = true;
-        SetComposerPrimary(L"正在同步机库…", false);
-        SetComposerNotice(L"正在核对退回的机体和原生机库数据，请稍候。");
-    } else if (g_selection_detail_uid) {
-        SetComposerPrimary(L"正在读取详情…", false);
-    }
-    g_ui.SetState(Read<void*>(service, 0xA8), true, true);
-    g_ui.SetText(
-        Read<void*>(service, 0xA8), L"取消");
+bool OpenComposer() {
+    runtime::AuthenticatedContext context;
+    if (!g_native_ready || !g_model.CanOffer() || g_composer || g_picker_selecting ||
+        !runtime::ReadAuthenticatedContext(g_app ? g_app():nullptr,g_profile,&context) ||
+        (context.app_state!=5 && context.app_state!=6)) return false;
+    g_picker_selecting=true;g_picker_seen=false;g_picker_navigation_sent=false;
+    g_picker_target_uid=0;g_picker_next_action=0;
+    g_selected_unit={};g_composer_saved_note_size=0;
+    g_composer_phase=ComposerPhase::selecting;g_composer_received=false;
+    return true;
 }
 
-void CloseComposer() {
-    auto* service = g_composer;
-    g_composer = nullptr;
+bool PickerControlReady(void* control) {
+    return control && Read<std::uint8_t>(control,0x162) && Read<std::uint8_t>(control,0x167);
+}
+
+std::uint32_t __stdcall ManagementEventHook(void* service,std::uint32_t event,std::uintptr_t name,void* control) {
+    if (!g_picker_selecting || event!=0x803 || Read<void*>(service)!=g_inventory_service_vtable)
+        return g_management_callback(service,event,name,control);
+    auto* root=Read<void*>(service,0x44);
+    if (!root || !Read<std::uint8_t>(root,0x162)) return 0;
+    for (std::size_t index=0;index<36;++index) {
+        if (Read<void*>(service,0xE0+index*4)!=control) continue;
+        const auto slot=Read<std::uint16_t>(service,0x7AC+index*2);
+        UnitSnapshot unit;
+        if (!CurrentUnit(slot,&unit)) {
+            g_ui.SetText(g_ui.FindNamed(root,L"TitleStatic",3),L"该机体不能赠送，请双击选择其他机体");
+            return 0;
+        }
+        g_selected_unit=unit;g_picker_target_uid=0;g_picker_selecting=false;
+        g_composer_opening=true;g_composer_phase=ComposerPhase::selecting;
+        g_inventory_sync.SetSession(CurrentSessionKey());
+        if (!g_inventory_sync.HasFull(unit.uid)) g_inventory_sync.QueueDetail(unit.uid);
+        return 0;
+    }
+    return 0;
+}
+
+void PumpGiftPicker() {
+    if (!g_picker_selecting) return;
+    runtime::AuthenticatedContext context;
+    if (!runtime::ReadAuthenticatedContext(g_app ? g_app():nullptr,g_profile,&context)) return;
+    if (context.app_state==6) {
+        if (g_picker_navigation_sent) return;
+        auto* menu=ResolveService(L"downmenu",g_downmenu_vtable);
+        auto* root=menu ? Read<void*>(menu,0x44):nullptr;
+        auto* control=menu ? Read<void*>(menu,0x54):nullptr;
+        if (!root || g_ui.FindNamed(root,L"MyRoomRadio",12)!=control || !PickerControlReady(control)) return;
+        g_downmenu_callback(menu,0x301,reinterpret_cast<std::uintptr_t>(static_cast<std::uint8_t*>(control)+0x118),control);
+        g_picker_navigation_sent=true;return;
+    }
+    if (context.app_state!=5) return;
+    auto* grid=ResolveService(L"UnitIndexingCubbyhole",g_inventory_service_vtable);
+    auto* root=grid ? Read<void*>(grid,0x44):nullptr;
+    if (!root || !Read<std::uint8_t>(root,0x162)) {
+        if (g_picker_seen) {g_picker_selecting=false;g_picker_target_uid=0;return;}
+        if (GetTickCount64()<g_picker_next_action) return;
+        auto* menu=ResolveService(L"operatormenu",g_operator_vtable);
+        auto* control=menu ? Read<void*>(menu,0x80):nullptr;
+        auto* parent=control ? Read<void*>(control,0x15C):nullptr;
+        if (!parent || g_ui.FindNamed(parent,L"UnitBtn",4)!=control || !PickerControlReady(control)) return;
+        g_operator_callback(menu,0x101,reinterpret_cast<std::uintptr_t>(static_cast<std::uint8_t*>(control)+0x118),control);
+        g_picker_next_action=GetTickCount64()+1000;return;
+    }
+    g_picker_seen=true;
+    g_ui.SetText(g_ui.FindNamed(root,L"TitleStatic",3),L"双击选择要赠送的机体");
+    if (!g_picker_target_uid) return;
+    for (std::size_t index=0;index<36;++index) {
+        const auto slot=Read<std::uint16_t>(grid,0x7AC+index*2);
+        if (!slot || !g_unit_info || !*g_unit_info) continue;
+        std::uint8_t brief[25]{};g_brief(*g_unit_info,brief,slot);
+        if (Read<std::uint64_t>(brief,4)!=g_picker_target_uid) continue;
+        auto* control=Read<void*>(grid,0xE0+index*4);
+        if (!PickerControlReady(control) || Read<void*>(control,0x15C)!=root) return;
+        ManagementEventHook(grid,0x803,reinterpret_cast<std::uintptr_t>(static_cast<std::uint8_t*>(control)+0x118),control);
+        return;
+    }
+    if (GetTickCount64()<g_picker_next_action) return;
+    auto* pager=ResolveService(L"UnitIndexingPage",g_management_pager_vtable);
+    if (!pager || !g_management_page_change || !g_unit_info || !*g_unit_info) return;
+    const int capacity=Read<int>(*g_unit_info,0xC);
+    if (capacity<1 || capacity>1200) return;
+    for (int slot=1;slot<=capacity;++slot) {
+        std::uint8_t brief[25]{};g_brief(*g_unit_info,brief,static_cast<std::uint16_t>(slot));
+        if (Read<std::uint64_t>(brief,4)!=g_picker_target_uid) continue;
+        const int page=(slot-1)/36,current=Read<int>(pager,0xDC),pages=Read<int>(pager,0xD4);
+        if (page<0 || page>=pages || page==Read<int>(grid,0x838)) return;
+        if (page/10!=current/10) g_management_page_change(pager,-1,page>current ? 1u:0u);
+        else g_management_page_change(pager,page%10,0);
+        g_picker_next_action=GetTickCount64()+500;return;
+    }
+
+}
+
+bool AttachComposerControls(void* service) {
+    auto* root=Read<void*>(service,0x6C);
+    if (!root || !g_add_combo || !g_add_edit) return false;
+    const std::wstring noteName=L"DescEdit";
+    const auto noteKey=NativeView(noteName);
+    // Reuse the game's blank blue input panel. Only this sprite instance is
+    // scaled; its cached frames and the original archive remain untouched.
+    const std::wstring panelName=L"GiftNotePanel",panelPath=L"sprs\\17459.spr";
+    const auto panelKey=NativeView(panelName),panelSkin=NativeView(panelPath);
+    const int panelY=g_composer_received ? 231:338;
+    const int panelHeight=g_composer_received ? 197:82;
+    g_ui.add_icon(root,&panelKey,315,panelY,271,panelHeight);
+    auto* panel=g_ui.FindNamed(root,panelName.c_str(),1);
+    if (!panel) return false;
+    g_ui.skin(panel,&panelSkin,0,0,0);
+    auto** skins=Read<std::uint8_t**>(panel,0x1A4);
+    auto* sprite=skins && *skins ? Read<std::uint8_t*>(*skins) : nullptr;
+    if (!sprite) return false;
+    Put<float>(sprite,0x94,271.0f/262.0f);Put<float>(sprite,0x98,static_cast<float>(panelHeight)/61.0f);
+    Put<std::uint8_t>(sprite,0xA0,1);
+    Put<std::uint8_t>(panel,0x168,0);
+    g_ui.SetState(panel,true,false);
+    auto* noteLabel=g_ui.AddTextButton(root,L"GiftNoteLabel",326,panelY+6,252,15,g_composer_received ? L"赠送寄语":L"寄语（可选，最多 200 字）");
+    g_ui.SetState(noteLabel,true,false);
+    g_add_edit(root,&noteKey,326,g_composer_received ? 252:365,251,g_composer_received ? 167:44);
+    g_composer_note=g_ui.FindNamed(root,noteName.c_str(),8);
+    if (!g_composer_note) return false;
+    Put<std::uint8_t>(g_composer_note,0x168,0);
+    auto* nativeName=g_ui.FindNamed(root,L"UnitNameStatic",3);
+    auto noteFont=nativeName ? Read<std::uint32_t>(nativeName,0x16C) : 1u;
+    g_set_font(g_composer_note,noteFont);
+    g_api->Log(g_mod,SDGO_LOG_INFO,"native gift card controls initialized: note_font=%u panel=271x82",noteFont);
+    Put<std::uint8_t>(g_composer_note,0x29F,1);
+    Put<std::uint32_t>(g_composer_note,0x2A4,2);
+    g_ui.SetState(g_composer_note,true,g_ui.SetNoteLimit(g_composer_note));
+    const auto addBlue=[&](const wchar_t* name,int x,const std::wstring& caption) {
+        auto* control=g_ui.AddTextButton(root,name,x,420,82,31,caption);
+        if (!control) return control;
+        for (int i=0;i<3;++i) {
+            const std::wstring skinPath=L"sprs\\"+std::to_wstring(17530+i)+L".spr";
+            const auto skin=NativeView(skinPath);g_ui.skin(control,&skin,0,i==1 ? 4u : 0u,i==1 ? 4u : 0u);
+        }
+        g_ui.SetState(control,true,true);return control;
+    };
+    g_composer_primary=addBlue(L"GiftConfirm",410,L"服务器预检");
+    g_composer_cancel=addBlue(L"GiftCancel",502,L"取消");
+    g_composer_notice=g_ui.AddTextButton(root,L"GiftNotice",25,56,558,15,L"");
+    g_ui.SetState(g_composer_notice,true,false);
+    // Keep the original native frame, model, weapons, skills and level table.
+    // Only the lower-right custom-parts area carries the gift note.
+    Put<float>(root,0x148,197.0f);Put<float>(root,0x14C,128.0f);
+    g_ui.refresh_geometry(root);
+    g_composer_controls=g_composer_primary && g_composer_cancel;
+    if (g_composer_saved_note_size) SetNote(service,g_composer_saved_note.data(),g_composer_saved_note_size);
+    return g_composer_controls;
+}
+
+void PopulateComposer(void* service) {
+    if (!service || !g_composer_controls) return;
+    if (g_composer_received) {
+        std::array<std::uint16_t,kMaximumNoteCodeUnits> note{};
+        for (std::size_t i=0;i<g_received_detail.note_code_units;++i) note[i]=g_received_detail.note[i];
+        SetNote(service,note.data(),g_received_detail.note_code_units);
+        SetComposerEditable(false);RefreshComposerSummary();
+        const bool pending=g_received_detail.state==GiftState::pending;
+        const bool returned=g_received_detail.direction==ListDirection::returned;
+        SetComposerPrimary(returned ? L"取回":pending ? L"接受":L"已接收",(pending||returned)&&!g_model.pending());
+        g_ui.SetState(g_composer_cancel,true,!g_model.pending());
+        g_ui.SetText(g_composer_cancel,pending ? L"退还":L"关闭");
+        std::wstring dates=L"赠送时间："+FormatUnixMillis(g_received_detail.offered_unix_millis);
+        if (g_received_detail.accepted_unix_millis)
+            dates+=L"    接收时间："+FormatUnixMillis(g_received_detail.accepted_unix_millis);
+        SetComposerNotice(dates);
+        return;
+    }
+    g_populate_after_inventory=false;
+    RefreshComposerSummary();
+    g_ui.SetState(g_composer_note,true,g_ui.SetNoteLimit(g_composer_note));
+    g_ui.SetState(g_composer_cancel,true,true);
+    g_ui.SetText(g_composer_cancel,L"取消");
+    SetComposerPrimary(L"服务器预检",g_selected_unit.uid && !g_inventory_sync.Busy());
+    SetComposerNotice(L"核对机体与寄语后进行预检，再确认赠送。");
+}
+
+void ForgetComposer() {
+    g_composer = nullptr;g_composer_received=false;g_received_detail={};
+    g_composer_opening=false;g_composer_reload_uid=0;g_composer_card_uid=0;
+    g_composer_controls=false;g_composer_note=nullptr;
+
+    g_composer_primary=nullptr;g_composer_cancel=nullptr;g_composer_notice=nullptr;
     g_units.clear();
     g_selected_unit = {};
     g_selection_detail_uid = 0;
     g_model.CancelOffer();
-    if (service && g_close) g_close(service, 1);
+}
+
+void __fastcall ComposerDtorHook(void* service,void*) {
+    if (service==g_composer) ForgetComposer();
+    g_unit_card_dtor(service);
+}
+
+void CloseComposer() {
+    auto* service=g_composer;
+    ForgetComposer();
+    if (service && g_close) g_close(service,1);
+}
+
+bool OpenReceivedInfo(const Detail& detail) {
+    if (!detail.present || !detail.unit_number || !detail.unit_uid) return false;
+    if (g_composer) {if (!g_composer_received) return false;CloseComposer();}
+    UnitSnapshot view;
+    if (!FindOwnedUnit(detail.unit_uid,&view)) {
+        view.uid=detail.unit_uid;view.unit_number=detail.unit_number;view.level=static_cast<std::uint8_t>(detail.level);
+        Put<std::uint32_t>(view.full_record.data(),0,detail.unit_number);
+        Put<std::uint64_t>(view.full_record.data(),8,detail.unit_uid);
+        Put<std::uint8_t>(view.full_record.data(),16,view.level);
+    }
+    // The native brief can still carry level zero after an inventory refresh.
+    // Gift details identify this instance and contain its authoritative level.
+    view.level=static_cast<std::uint8_t>(detail.level);
+    auto* temporary=g_alloc(0x148);if (!temporary) return false;
+    g_unit_card_ctor(temporary,view.full_record.data(),0);
+    auto* live=g_enqueue(temporary,1);g_unit_card_dtor(temporary);g_free(temporary);
+    if (!live) return false;
+    g_composer=live;g_composer_received=true;g_received_detail=detail;g_selected_unit=view;
+    g_receiver_name.assign(detail.peer_name.begin(),detail.peer_name.begin()+detail.peer_name_code_units);
+    g_composer_controls=false;g_composer_opening=false;g_composer_card_uid=detail.unit_uid;
+    g_composer_primary=nullptr;g_composer_cancel=nullptr;g_composer_note=nullptr;g_composer_notice=nullptr;
+    g_composer_saved_note_size=0;g_composer_phase=ComposerPhase::selecting;
+    return true;
 }
 
 void* FindServiceByName(const wchar_t* name) {
@@ -1466,21 +1759,21 @@ bool OpenFriendContextFor(std::uint32_t receiver) {
     return true;
 }
 
-void CaptureFriendAndOpen(void* service) {
+bool CaptureFriendAndOpen(void* service) {
     auto* record = Read<std::uint8_t*>(service, 0x50);
-    if (!record) return;
+    if (!record) return false;
     const auto receiver = Read<std::uint32_t>(record);
-    if (!receiver) return;
+    if (!receiver) return false;
     char nickname[17]{};
     std::memcpy(nickname, record + 0x0A, 16);
     wchar_t wide[33]{};
     const int count = MultiByteToWideChar(
         CP_ACP, 0, nickname, -1, wide,
         static_cast<int>(std::size(wide)));
-    if (count <= 0) return;
+    if (count <= 0) return false;
     g_receiver_id = receiver;
     g_receiver_name.assign(wide);
-    OpenComposer();
+    return OpenComposer();
 }
 
 void __fastcall FriendMainInit(
@@ -1490,9 +1783,25 @@ void __fastcall FriendMainInit(
     g_friend_main_init(service, argument);
     __try {
         ArmGameThread();
-        g_friend_main.Attach(service, g_ui);
+        const bool attached = g_friend_main.Attach(service, g_ui);
+        if (!attached) {
+            auto* root = Read<void*>(service,0x4C);
+            auto* source = root ? g_ui.FindNamed(root,L"Btn5",4) : nullptr;
+            g_api->Log(g_mod,SDGO_LOG_WARN,
+                "friend gift context attachment failed: reason=%s root=%p source=%p width=%d height=%d skins_begin=%p skins_end=%p",
+                g_ui.last_error,root,source,source ? Read<int>(source,0x154) : 0,
+                source ? Read<int>(source,0x158) : 0,
+                source ? Read<void*>(source,0x1A4) : nullptr,
+                source ? Read<void*>(source,0x1A8) : nullptr);
+        }
         RefreshAvailability();
+        if (attached) {
+            auto* root=Read<void*>(service,0x4C);
+            g_friend_context_x=static_cast<std::int32_t>(Read<float>(root,0x148));
+            g_friend_context_y=static_cast<std::int32_t>(Read<float>(root,0x14C));
+        }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_api->Log(g_mod,SDGO_LOG_WARN,"friend gift context attachment raised a native access fault");
         g_friend_main.Detach(service);
     }
 }
@@ -1504,9 +1813,37 @@ void __fastcall FriendThreeDInit(
     g_friend_three_d_init(service, argument);
     __try {
         ArmGameThread();
-        g_friend_three_d.Attach(service, g_ui);
+        const bool attached = g_friend_three_d.Attach(service, g_ui);
+        if (!attached) {
+            auto* root = Read<void*>(service,0x4C);
+            auto* source = root ? g_ui.FindNamed(root,L"Btn5",4) : nullptr;
+            g_api->Log(g_mod,SDGO_LOG_WARN,
+                "3D friend gift context attachment failed: reason=%s root=%p source=%p width=%d height=%d skins_begin=%p skins_end=%p",
+                g_ui.last_error,root,source,source ? Read<int>(source,0x154) : 0,
+                source ? Read<int>(source,0x158) : 0,
+                source ? Read<void*>(source,0x1A4) : nullptr,
+                source ? Read<void*>(source,0x1A8) : nullptr);
+        }
         RefreshAvailability();
+        if (attached) {
+            auto* root=Read<void*>(service,0x4C);
+            g_friend_context_x=static_cast<std::int32_t>(Read<float>(root,0x148));
+            g_friend_context_y=static_cast<std::int32_t>(Read<float>(root,0x14C));
+            auto* bottom=g_ui.FindNamed(root,L"Icon1",1);
+            auto* bg=g_ui.FindNamed(root,L"ModFriendUnitGiftBackground",1);
+            auto* source=g_ui.FindNamed(root,L"Btn5",4);
+            auto* button=g_ui.FindNamed(root,L"ModFriendUnitGift",4);
+            g_api->Log(g_mod,SDGO_LOG_INFO,
+                "3D friend gift menu geometry: root=%p x=%g y=%g height=%d bottom=%p bottom_y=%g background=%p background_y=%g source_y=%g button_y=%g",
+                root,static_cast<double>(Read<float>(root,0x148)),
+                static_cast<double>(Read<float>(root,0x14C)),Read<int>(root,0x158),
+                bottom,bottom ? static_cast<double>(Read<float>(bottom,0x14C)) : -1.0,
+                bg,bg ? static_cast<double>(Read<float>(bg,0x14C)) : -1.0,
+                source ? static_cast<double>(Read<float>(source,0x14C)) : -1.0,
+                button ? static_cast<double>(Read<float>(button,0x14C)) : -1.0);
+        }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_api->Log(g_mod,SDGO_LOG_WARN,"3D friend gift context attachment raised a native access fault");
         g_friend_three_d.Detach(service);
     }
 }
@@ -1520,7 +1857,11 @@ void __stdcall FriendEvent(
         (g_friend_main.Click(service, control) ||
          g_friend_three_d.Click(service, control))) {
         __try {
-            CaptureFriendAndOpen(service);
+            if (CaptureFriendAndOpen(service)) {
+                g_friend_main.Detach(service);
+                g_friend_three_d.Detach(service);
+                if (g_close) g_close(service,1);
+            }
         } __except (EXCEPTION_EXECUTE_HANDLER) {
         }
         return;
@@ -1570,8 +1911,7 @@ void __fastcall UnitDetailRefreshHook(
 
 void UnitDetailEventUnsafe(
     void* service,
-    void* eventData) {
-    auto* control = Read<void*>(eventData, 0x10);
+    void* control) {
     if (!g_unit_detail_view.Click(
             service, control)) {
         return;
@@ -1605,23 +1945,20 @@ void __stdcall UnitDetailEventHook(
         service, event, eventData, identifier);
     if (event != 0x101 || !eventData) return;
     __try {
-        UnitDetailEventUnsafe(service, eventData);
+        UnitDetailEventUnsafe(service, reinterpret_cast<void*>(identifier));
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
 }
 
 void __fastcall ComposerUpdateHook(void* service, void*) {
-    if (service == g_composer && Read<std::uint32_t>(service, 0x44) == 3) {
-        __try {
-            PopulateComposer(service);
-            Put<std::uint32_t>(service, 0x44, 4);
-            g_step(service);
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            CloseComposer();
-        }
-        return;
-    }
     g_composer_update(service);
+    if (service != g_composer) return;
+    if (Read<std::uint32_t>(service,0x44)<3 || !Read<void*>(service,0x6C)) return;
+    if (!g_composer_controls) {
+        if (!AttachComposerControls(service)) { CloseComposer();return; }
+        PopulateComposer(service);
+    }
+    RefreshComposerSummary();
 }
 
 void __stdcall ComposerEvent(
@@ -1633,16 +1970,28 @@ void __stdcall ComposerEvent(
         g_composer_callback(service, event, second, control);
         return;
     }
-    if (event == 0x201 &&
-        control == Read<void*>(service, 0xAC)) {
-        SelectComposerUnit(0);
-        return;
+    if (g_composer_received && event==0x101) {
+        if (control==Read<void*>(service,0x70)) {CloseComposer();return;}
+        g_selected_gift_id=g_received_detail.gift_id;
+        if (control==g_composer_primary) {
+            if (g_composer_phase==ComposerPhase::outcome_unknown) {BeginReceiptQuery();return;}
+            if (BeginGiftAction(g_received_detail.direction==ListDirection::returned ? Command::takeback:Command::accept))
+                SetComposerPrimary(L"正在处理…",false);
+            return;
+        }
+        if (control==g_composer_cancel) {
+            if (g_received_detail.state==GiftState::pending) {
+                if (BeginGiftAction(Command::return_to_sender)) SetComposerPrimary(L"正在退还…",false);
+            } else CloseComposer();
+            return;
+        }
     }
-    if (event == 0x101 && control == Read<void*>(service, 0xA8)) {
+    if (event == 0x101 &&
+        (control == g_composer_cancel || control == Read<void*>(service,0x70))) {
         CloseComposer();
         return;
     }
-    if (event == 0x101 && control == Read<void*>(service, 0xA4)) {
+    if (event == 0x101 && control == g_composer_primary) {
         if (g_composer_phase == ComposerPhase::complete &&
             g_inventory_sync.error() != NativeInventorySync::Error::none) {
             g_inventory_sync.Retry();
@@ -1674,6 +2023,7 @@ void __stdcall ComposerEvent(
                 return;
             }
             g_composer_phase = ComposerPhase::previewing;
+            SetComposerEditable(false);
             SetComposerPrimary(L"正在预检…", false);
             SetComposerNotice(
                 L"正在由服务器核对好友关系、所有权和接收容量。");
@@ -1684,6 +2034,7 @@ void __stdcall ComposerEvent(
             if (!CurrentUnit(g_selected_unit.slot, &current)) {
                 g_model.CancelOffer();
                 g_composer_phase = ComposerPhase::selecting;
+                SetComposerEditable(true);
                 SetComposerPrimary(L"服务器预检", true);
                 SetComposerNotice(
                     L"所选机体已变化，请重新选择并预检。");
@@ -1724,9 +2075,7 @@ void __stdcall ComposerEvent(
         }
         return;
     }
-    // The stock 1261 business callback assumes a shop offer vector. Our
-    // tracked clone deliberately has none, so all its business events remain
-    // inside this companion Mod.
+    g_composer_callback(service,event,second,control);
 }
 
 int __cdecl StoragePacketPrefilter(
@@ -1747,7 +2096,7 @@ void __cdecl StoragePacketPostfilter(
     std::uint32_t,
     void*) {
     if (service == g_storage_view.service()) {
-        g_storage_view.EnforceCustomView();
+        if (g_storage_view.custom_view()) RenderStorageRows();
     }
 }
 
@@ -1779,9 +2128,7 @@ int __cdecl StorageUiEvent(
     void* control,
     std::uint32_t* result,
     void*) {
-    if (event != 0x101) {
-        return 0;
-    }
+    if (event!=0x101 && event!=0x301 && event!=0x801 && event!=0x803 && event!=0x303) return 0;
     const auto action =
         g_storage_view.ActionFor(service, control);
     if (action == ui::StorageView::Action::none) return 0;
@@ -1801,6 +2148,9 @@ int __cdecl StorageUiEvent(
         }
         return 1;
     }
+    if (action == ui::StorageView::Action::open_inbox) {
+        BeginStorageList(Command::list_inbox,1);return 1;
+    }
     if (action == ui::StorageView::Action::open_returned) {
         if (!BeginStorageList(Command::list_returned, 1)) {
             g_storage_view.ShowStatus(
@@ -1809,6 +2159,8 @@ int __cdecl StorageUiEvent(
         return 1;
     }
 
+    const auto rowGift=g_storage_view.GiftForControl(control);
+    if (rowGift) g_selected_gift_id=rowGift;
     const auto gift = g_storage_view.GiftFor(action);
     if (gift) {
         g_selected_gift_id = gift;
@@ -1856,7 +2208,7 @@ int __cdecl StorageUiEvent(
         return 1;
     }
     if (action == ui::StorageView::Action::provenance) {
-        BeginGiftAction(Command::provenance);
+        BeginGiftAction(Command::detail);
         return 1;
     }
     if (action == ui::StorageView::Action::receipt) {
@@ -1926,12 +2278,23 @@ void PumpInventorySync() {
         const auto session = CurrentSessionKey();
         if (session != g_returns_session) {
             g_returns_session=session;g_returns_needed=true;g_returns_active=false;
-            g_returns_next_page=0;g_returns_retry_at=0;g_inventory_was_visible=false;
+            g_returns_next_page=0;g_returns_retry_at=0;g_returns_poll_at=0;g_inventory_was_visible=false;
         }
         auto* inventory = ResolveService(L"UnitIndexingCubbyhole",g_inventory_service_vtable);
         auto* panel = inventory ? Read<void*>(inventory,0x44) : nullptr;
         const bool visible = panel && Read<std::uint8_t>(panel,0x162);
-        if (visible && !g_inventory_was_visible) g_returns_needed=true;
+        const auto now=GetTickCount64();
+        if (visible && !g_inventory_was_visible) {
+            g_returns_needed=true;g_returns_poll_at=now+10000;
+        }
+        // A friend may return a unit while this same native inventory stays
+        // open. Read the existing return feed while idle, without a relog or
+        // competing with an active gift card, picker or source request.
+        if (visible && !g_composer && !g_picker_selecting &&
+            !g_storage_view.custom_view() && !g_provenance_target_uid &&
+            now>=g_returns_poll_at) {
+            g_returns_needed=true;g_returns_poll_at=now+10000;
+        }
         g_inventory_was_visible=visible;
         if (g_transport.Ready() && g_model.CanResolveExisting() &&
             !g_model.pending() && !g_transport.MutationUncertain() &&
@@ -1969,6 +2332,53 @@ void PumpNativeReplies() {
         g_transport.OnStoragePacket(kNativeReplyOpcode,reply.data(),static_cast<std::uint32_t>(reply.size()));
 }
 
+bool ControlReady(void* control);
+
+void PumpOwnedUnitProvenance() {
+    if (!g_provenance_target_uid) return;
+    const auto now=GetTickCount64();
+    if (CurrentSessionKey()!=g_provenance_target_session || now>g_provenance_target_deadline) {
+        g_provenance_target_uid=0;return;
+    }
+    if (now<g_provenance_next_action || g_model.pending() || g_picker_selecting || g_composer ||
+        !OwnBriefContains(g_provenance_target_uid)) return;
+    auto* service=g_unit_detail_view.service();
+    auto* button=g_unit_detail_view.button();
+    if (service && g_unit_detail_view.unit_uid()==g_provenance_target_uid && ControlReady(button)) {
+        UnitDetailEventHook(service,0x101,static_cast<std::uint8_t*>(button)+0x118,
+            reinterpret_cast<std::uintptr_t>(button));
+        if (g_model.pending()) g_provenance_target_uid=0;
+        return;
+    }
+    auto* grid=ResolveService(L"UnitIndexingCubbyhole",g_inventory_service_vtable);
+    auto* root=grid ? Read<void*>(grid,0x44):nullptr;
+    if (!root || !Read<std::uint8_t>(root,0x162) || !g_unit_info || !*g_unit_info) return;
+    for (std::size_t index=0;index<36;++index) {
+        const auto slot=Read<std::uint16_t>(grid,0x7AC+index*2);
+        if (!slot) continue;
+        std::uint8_t brief[25]{};g_brief(*g_unit_info,brief,slot);
+        if (Read<std::uint64_t>(brief,4)!=g_provenance_target_uid) continue;
+        auto* icon=Read<void*>(grid,0xE0+index*4);
+        if (!PickerControlReady(icon) || Read<void*>(icon,0x15C)!=root) return;
+        // Native left-click selects the owned record and requests its details.
+        g_management_callback(grid,0x801,reinterpret_cast<std::uintptr_t>(static_cast<std::uint8_t*>(icon)+0x118),icon);
+        g_provenance_next_action=now+1000;return;
+    }
+    auto* pager=ResolveService(L"UnitIndexingPage",g_management_pager_vtable);
+    if (!pager || !g_management_page_change) return;
+    const int capacity=Read<int>(*g_unit_info,0xC);
+    if (capacity<1 || capacity>1200) return;
+    for (int slot=1;slot<=capacity;++slot) {
+        std::uint8_t brief[25]{};g_brief(*g_unit_info,brief,static_cast<std::uint16_t>(slot));
+        if (Read<std::uint64_t>(brief,4)!=g_provenance_target_uid) continue;
+        const int page=(slot-1)/36,current=Read<int>(pager,0xDC),pages=Read<int>(pager,0xD4);
+        if (page<0 || page>=pages || page==Read<int>(grid,0x838)) return;
+        g_management_page_change(pager,page/10!=current/10 ? -1:page%10,
+            page/10!=current/10 && page>current ? 1u:0u);
+        g_provenance_next_action=now+500;return;
+    }
+}
+
 void CALLBACK Tick(HWND, UINT, UINT_PTR, DWORD) {
     if (!g_game_thread_ready ||
         GetCurrentThreadId() != g_ui_thread ||
@@ -1978,8 +2388,18 @@ void CALLBACK Tick(HWND, UINT, UINT_PTR, DWORD) {
     g_tick_active = true;
     __try {
         PumpNativeReplies();
+        ApplyNativeDetails();
         g_transport.Tick();
         PumpInventorySync();
+        PumpGiftPicker();
+        PumpOwnedUnitProvenance();
+        if (g_composer_opening && g_inventory_sync.HasFull(g_selected_unit.uid))
+            CreateComposerCard(g_selected_unit.uid);
+        if (g_composer_reload_uid && g_inventory_sync.HasFull(g_composer_reload_uid))
+            CreateComposerCard(g_composer_reload_uid);
+        if (g_unit_card_requested && g_inventory_sync.HasFull(g_unit_card_requested)) {
+            const auto uid=g_unit_card_requested;g_unit_card_requested=0;ShowNativeUnitCard(uid);
+        }
         if (g_transport.State() == ConnectionState::idle &&
             !g_transport.HasOutstanding()) {
             runtime::AuthenticatedContext context;
@@ -2067,10 +2487,11 @@ bool InvokeStorageAction(ui::StorageView::Action action) {
     auto* control = g_storage_view.ControlFor(action);
     if (!service || !ControlReady(control)) return false;
     std::uint32_t result = 0;
+    const auto event=Read<std::uint32_t>(control,0x134)==12 ? 0x301u:0x101u;
     return StorageUiEvent(
                nullptr,
                service,
-               0x101,
+               event,
                0,
                control,
                &result,
@@ -2084,57 +2505,15 @@ bool InvokeComposerButton(void* control) {
 }
 
 bool InvokeOwnedUnitProvenance(std::uint64_t unitUid) {
-    if (!unitUid || !g_grid_data || !g_grid_find) return false;
+    if (!unitUid ||
+        g_picker_selecting || g_composer || !g_management_callback) return false;
     if (g_storage_view.custom_view() &&
-        !InvokeStorageAction(ui::StorageView::Action::toggle)) {
-        return false;
-    }
-
-    UnitSnapshot unit;
-    if (!FindOwnedUnit(unitUid, &unit)) return false;
-    auto* service = ResolveService(
-        L"UnitIndexingInfo", g_unit_detail_service_vtable);
-    if (!service ||
-        service != g_unit_detail_view.service()) {
-        return false;
-    }
-    auto* root = Read<void*>(service, 0x44);
-    if (!root || Read<std::uint8_t>(root, 0x162) == 0) {
-        return false;
-    }
-    auto* grid = g_grid_data();
-    const std::uint8_t* record = nullptr;
-    if (!grid ||
-        !g_grid_find(
-            grid,
-            &record,
-            unit.unit_number,
-            2,
-            1) ||
-        !record) {
-        return false;
-    }
-
-    std::memcpy(
-        static_cast<std::uint8_t*>(service) + 0x94,
-        unit.full_record.data(),
-        unit.full_record.size());
-    Put<const std::uint8_t*>(service, 0x90, record);
-    UnitDetailRefreshHook(service, nullptr);
-
-    auto* button = g_unit_detail_view.button();
-    if (g_unit_detail_view.unit_uid() != unitUid ||
-        !ControlReady(button)) {
-        return false;
-    }
-    std::array<std::uint8_t, 0x14> eventData{};
-    Put<void*>(eventData.data(), 0x10, button);
-    UnitDetailEventHook(
-        service, 0x101, eventData.data(), 0);
-    const auto& pending = g_model.pending_request();
-    return pending &&
-           pending->command == Command::provenance &&
-           pending->unit_uid == unitUid;
+        !InvokeStorageAction(ui::StorageView::Action::toggle)) return false;
+    g_provenance_target_uid=unitUid;
+    g_provenance_target_session=CurrentSessionKey();
+    g_provenance_target_deadline=GetTickCount64()+90000;
+    g_provenance_next_action=0;
+    return true;
 }
 
 bool ExecuteObserverAction(
@@ -2144,7 +2523,7 @@ bool ExecuteObserverAction(
         request.action <=
             SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_NONE ||
         request.action >
-            SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_QUERY_RECEIPT) {
+            SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_ORDINARY_STORAGE) {
         return false;
     }
     if (!g_game_thread_ready) {
@@ -2158,6 +2537,16 @@ bool ExecuteObserverAction(
 
     bool accepted = false;
     switch (request.action) {
+    case SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_UNIT_TEMPLATE:
+        if (request.unit_uid && OwnBriefContains(request.unit_uid)) {
+            if (g_inventory_sync.HasFull(request.unit_uid)) accepted=ShowNativeUnitCard(request.unit_uid);
+            else {
+                g_inventory_sync.SetSession(CurrentSessionKey());
+                g_unit_card_requested=request.unit_uid;
+                accepted=g_inventory_sync.QueueDetail(request.unit_uid);
+            }
+        }
+        break;
     case SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_FRIEND_CONTEXT:
         accepted =
             request.receiver_id != 0 &&
@@ -2170,27 +2559,18 @@ bool ExecuteObserverAction(
         if (entry && ControlReady(entry->button())) {
             FriendEvent(
                 entry->service(), 0x101, 0, entry->button());
-            accepted = g_composer != nullptr;
+            accepted = g_composer != nullptr || g_composer_opening || g_picker_selecting;
         }
         break;
     }
-    case SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_SELECT_UNIT: {
-        if (!g_composer || !request.unit_uid) break;
-        auto* combo = Read<void*>(g_composer, 0xAC);
-        if (!combo || !ControlReady(combo)) break;
-        for (std::size_t index = 0; index < g_units.size(); ++index) {
-            if (g_units[index].uid != request.unit_uid) continue;
-            Put<std::int32_t>(
-                combo, 0x21C, static_cast<std::int32_t>(index));
-            ComposerEvent(g_composer, 0x201, 0, combo);
-            accepted = g_selected_unit.uid == request.unit_uid;
-            break;
+    case SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_SELECT_UNIT:
+        if (g_picker_selecting && request.unit_uid && OwnBriefContains(request.unit_uid)) {
+            g_picker_target_uid=request.unit_uid;accepted=true;
         }
         break;
-    }
     case SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_SET_NOTE:
         accepted =
-            g_composer &&
+            g_composer && !g_composer_received && g_composer_phase==ComposerPhase::selecting &&
             request.note_code_units <= kMaximumNoteCodeUnits &&
             SetNote(
                 g_composer,
@@ -2200,24 +2580,29 @@ bool ExecuteObserverAction(
     case SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_PREVIEW:
         if (g_composer_phase == ComposerPhase::selecting) {
             accepted = InvokeComposerButton(
-                Read<void*>(g_composer, 0xA4));
+                g_composer_primary);
         }
         break;
     case SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_CONFIRM:
         if (g_composer_phase == ComposerPhase::confirming) {
             accepted = InvokeComposerButton(
-                Read<void*>(g_composer, 0xA4));
+                g_composer_primary);
         }
         break;
     case SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_CANCEL:
         accepted = InvokeComposerButton(
-            g_composer ? Read<void*>(g_composer, 0xA8) : nullptr);
+            g_composer ? (g_composer_received ? Read<void*>(g_composer,0x70):g_composer_cancel) : nullptr);
         break;
     case SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_STORAGE_VIEW:
         if (!g_storage_view.custom_view()) {
             accepted = InvokeStorageAction(
                 ui::StorageView::Action::toggle);
-        }
+        } else accepted=g_storage_view.ready();
+        break;
+    case SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_ORDINARY_STORAGE:
+        accepted = g_storage_view.custom_view()
+                       ? InvokeStorageAction(ui::StorageView::Action::toggle)
+                       : g_storage_view.ready();
         break;
     case SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_REFRESH_INBOX:
         if (g_storage_view.custom_view()) {
@@ -2244,16 +2629,19 @@ bool ExecuteObserverAction(
         break;
     }
     case SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_ACCEPT:
-        accepted = InvokeStorageAction(
-            ui::StorageView::Action::accept);
+        accepted=g_composer_received ?
+            ((!request.gift_id || request.gift_id==g_received_detail.gift_id) && InvokeComposerButton(g_composer_primary)) :
+            InvokeStorageAction(ui::StorageView::Action::accept);
         break;
     case SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_RETURN_TO_SENDER:
-        accepted = InvokeStorageAction(
-            ui::StorageView::Action::return_to_sender);
+        accepted=g_composer_received ?
+            ((!request.gift_id || request.gift_id==g_received_detail.gift_id) && InvokeComposerButton(g_composer_cancel)) :
+            InvokeStorageAction(ui::StorageView::Action::return_to_sender);
         break;
     case SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_TAKEBACK:
-        accepted = InvokeStorageAction(
-            ui::StorageView::Action::takeback);
+        accepted=g_composer_received ?
+            ((!request.gift_id || request.gift_id==g_received_detail.gift_id) && InvokeComposerButton(g_composer_primary)) :
+            InvokeStorageAction(ui::StorageView::Action::takeback);
         break;
     case SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_PROVENANCE:
         accepted = request.unit_uid
@@ -2266,7 +2654,7 @@ bool ExecuteObserverAction(
         if (g_composer &&
             g_composer_phase == ComposerPhase::outcome_unknown) {
             accepted = InvokeComposerButton(
-                Read<void*>(g_composer, 0xA4));
+                g_composer_primary);
         } else {
             accepted = InvokeStorageAction(
                 ui::StorageView::Action::receipt);
@@ -2384,6 +2772,8 @@ static int GetSnapshot(
         g_transport.MutationUncertain() ? 1u : 0u;
     snapshot.storage_broker = g_storage_broker ? 1u : 0u;
     snapshot.storage_fallback = g_storage_fallback ? 1u : 0u;
+    snapshot.friend_context_x = g_friend_context_x;
+    snapshot.friend_context_y = g_friend_context_y;
     if (g_friend_main.service() ||
         g_friend_three_d.service()) {
         snapshot.control_flags |=
@@ -2401,15 +2791,10 @@ static int GetSnapshot(
             SDGO_FRIEND_UNIT_GIFT_CLIENT_CONTROL_COMPOSER;
         snapshot.composer_phase =
             static_cast<std::uint32_t>(g_composer_phase) + 1u;
-        auto* combo = Read<void*>(g_composer, 0xAC);
-        auto* root = Read<void*>(g_composer, 0x4C);
+        auto* root = Read<void*>(g_composer, 0x6C);
         auto* note = g_ui.FindNamed(root, L"DescEdit", 8);
-        auto* primary = Read<void*>(g_composer, 0xA4);
-        auto* cancel = Read<void*>(g_composer, 0xA8);
-        if (ControlReady(combo)) {
-            snapshot.control_flags |=
-                SDGO_FRIEND_UNIT_GIFT_CLIENT_CONTROL_COMBO;
-        }
+        auto* primary = g_composer_primary;
+        auto* cancel = g_composer_cancel;
         if (ControlReady(note)) {
             snapshot.control_flags |=
                 SDGO_FRIEND_UNIT_GIFT_CLIENT_CONTROL_NOTE;
@@ -2432,13 +2817,16 @@ static int GetSnapshot(
         snapshot.control_flags |=
             SDGO_FRIEND_UNIT_GIFT_CLIENT_CONTROL_STORAGE_BUTTON;
     }
-    if (g_storage_view.custom_view() &&
-        g_model.row_count()) {
+    const auto* visibleGift=g_model.row(static_cast<std::size_t>(g_storage_local_page)*5u);
+    if (g_storage_view.custom_view() && visibleGift &&
+        ControlReady(g_storage_view.ControlFor(g_storage_view.RowActionForGift(visibleGift->gift_id)))) {
         snapshot.control_flags |=
             SDGO_FRIEND_UNIT_GIFT_CLIENT_CONTROL_STORAGE_ROWS;
     }
     if (SelectedGift() && !g_model.pending() &&
-        !g_transport.MutationUncertain()) {
+        !g_transport.MutationUncertain() && !g_inventory_sync.Busy() &&
+        g_inventory_sync.error()==NativeInventorySync::Error::none &&
+        ControlReady(g_storage_view.ControlFor(ui::StorageView::Action::provenance))) {
         snapshot.control_flags |=
             SDGO_FRIEND_UNIT_GIFT_CLIENT_CONTROL_STORAGE_ACTION;
     }
@@ -2447,6 +2835,14 @@ static int GetSnapshot(
          ControlReady(g_unit_detail_view.button()))) {
         snapshot.control_flags |=
             SDGO_FRIEND_UNIT_GIFT_CLIENT_CONTROL_PROVENANCE;
+    }
+    if (g_picker_selecting) {
+        auto* grid=ResolveService(L"UnitIndexingCubbyhole",g_inventory_service_vtable);
+        auto* root=grid ? Read<void*>(grid,0x44):nullptr;
+        if (root && Read<std::uint8_t>(root,0x162)) {
+            snapshot.control_flags|=SDGO_FRIEND_UNIT_GIFT_CLIENT_CONTROL_COMBO;
+            snapshot.composer_phase=SDGO_FRIEND_UNIT_GIFT_CLIENT_COMPOSER_SELECTING;
+        }
     }
     snapshot.action_sequence = g_observer.action_sequence;
     snapshot.reply_sequence = g_observer.reply_sequence;
@@ -2469,6 +2865,7 @@ static int GetSnapshot(
     snapshot.selected_unit_number =
         g_selected_unit.unit_number;
     snapshot.selected_unit_slot = g_selected_unit.slot;
+    snapshot.selected_unit_level = g_selected_unit.level;
     snapshot.selected_unit_uid = g_selected_unit.uid;
     snapshot.selected_gift_id = g_selected_gift_id;
     snapshot.page = g_model.page();
@@ -2506,13 +2903,29 @@ static int GetSnapshot(
     snapshot.inventory_sync_error=static_cast<std::uint32_t>(g_inventory_sync.error());
     snapshot.inventory_last_added_uid=g_inventory_sync.last_added();
     snapshot.inventory_last_removed_uid=g_inventory_sync.last_removed();
-    const auto& provenance = g_model.provenance();
+    const auto& provenance = g_composer_received ? g_received_detail : g_model.provenance();
     std::wstring text;
-    const bool displayed = provenance.present &&
+    bool receivedDisplayed=false;
+    if (provenance.present && g_composer && g_composer_received && g_composer_controls &&
+        g_composer_card_uid==provenance.unit_uid) {
+        auto* root=Read<void*>(g_composer,0x6C);
+        std::wstring sender,dates;
+        std::array<char16_t,kMaximumNoteCodeUnits> note{};
+        std::uint16_t units=0;
+        if (root && Read<std::uint8_t>(root,0x162) && g_composer_note &&
+            Read<std::uint8_t>(g_composer_note,0x162) &&
+            g_ui.ReadText(g_ui.FindNamed(root,L"TitleStatic",3),&sender) &&
+            g_ui.ReadText(g_composer_notice,&dates) && ReadNote(g_composer,&note,&units)) {
+            text=sender+L"\n"+dates+L"\n";
+            for (std::size_t i=0;i<units;++i) text.push_back(static_cast<wchar_t>(note[i]));
+            receivedDisplayed=true;
+        }
+    }
+    const bool displayed = provenance.present && (receivedDisplayed ||
         ((g_unit_detail_view.unit_uid()==provenance.unit_uid && g_unit_detail_view.detail_visible() &&
           g_ui.ReadText(g_unit_detail_view.detail(),&text)) ||
          (g_storage_view.custom_view() && g_ui.ReadText(g_storage_view.status_control(),&text) &&
-          text==ProvenanceText(provenance)));
+          text==ProvenanceText(provenance))));
     if (displayed) {
         snapshot.provenance_present = 1;
         const auto length = std::min<std::size_t>(
@@ -2559,6 +2972,9 @@ int __cdecl SdgoFriendUnitGiftClientActionV1(
 SDGO_MOD_ENTRY {
     g_api = api;
     g_mod = mod;
+    g_ui.unit_name=&UnitDisplayName;
+    g_ui.unit_icon=&UnitIconPath;
+    g_ui.restore_storage=&RestoreNativeStorage;
     if (!api || !mod || !api->Symbol || !api->HookCode ||
         api->size<offsetof(SdgoApi,HookSite)+sizeof(api->HookSite) || !api->HookSite ||
         !api->Log) {
@@ -2567,8 +2983,6 @@ SDGO_MOD_ENTRY {
     if (!g_transport.Bind(api, mod) ||
         !Bind(g_session, "storage.session") ||
         !g_ui.Bind(api, mod) ||
-        !Bind(g_composer_ctor, "friend_unit_gift.composer_ctor") ||
-        !Bind(g_composer_dtor, "friend_unit_gift.composer_dtor") ||
         !Bind(g_alloc, "friend_unit_gift.native_alloc") ||
         !Bind(g_free, "friend_unit_gift.native_free") ||
         !Bind(g_enqueue, "friend_unit_gift.enqueue_ui") ||
@@ -2581,6 +2995,22 @@ SDGO_MOD_ENTRY {
         !Bind(g_edit_set, "friend_unit_gift.edit_set_text") ||
         !Bind(g_brief, "hangar.brief") ||
         !Bind(g_full, "hangar.full") ||
+        !Bind(g_downmenu_callback,"flow.hangar_downmenu_callback") ||
+        !Bind(g_operator_callback,"flow.operator_menu_callback") ||
+        !Bind(g_downmenu_vtable,"flow.hangar_downmenu_vtable") ||
+        !Bind(g_operator_vtable,"flow.operator_menu_vtable") ||
+        !Bind(g_management_pager_vtable,"friend_unit_gift.management_pager_vtable") ||
+        !Bind(g_management_page_change,"friend_unit_gift.management_page_change") ||
+        !Bind(g_add_combo,"friend_unit_gift.ui_add_combo") ||
+        !Bind(g_add_edit,"friend_unit_gift.ui_add_edit") ||
+        !Bind(g_set_font,"friend_unit_gift.ui_set_font") ||
+        !Bind(g_ui.clear_skins,"friend_unit_gift.ui_clear_skins") ||
+        !Bind(g_ui.set_number,"friend_unit_gift.ui_set_number") ||
+        !Bind(g_storage_labels,"friend_unit_gift.storage_labels") ||
+        !Bind(g_storage_render,"friend_unit_gift.storage_render") ||
+        !Bind(g_unit_card_ctor,"friend_unit_gift.native_card_ctor") ||
+        !Bind(g_unit_card_dtor,"friend_unit_gift.native_card_dtor") ||
+        !Bind(g_sync_full, "hangar.sync_full") ||
         !Bind(g_inventory_delete, "friend_unit_gift.inventory_delete") ||
         !Bind(g_inventory_view, "hangar.view_list") ||
         !Bind(g_inventory_redraw, "hangar.redraw") ||
@@ -2655,16 +3085,24 @@ SDGO_MOD_ENTRY {
             reinterpret_cast<void**>(&g_unit_detail_refresh)) ||
         !api->HookCode(
             mod,
-            "friend_unit_gift.composer_update",
+            "friend_unit_gift.native_card_update",
             reinterpret_cast<void*>(&ComposerUpdateHook),
             reinterpret_cast<void**>(&g_composer_update)) ||
         !api->HookCode(
             mod,
-            "friend_unit_gift.composer_callback",
+            "friend_unit_gift.native_card_callback",
             reinterpret_cast<void*>(&ComposerEvent),
             reinterpret_cast<void**>(&g_composer_callback))) {
         return 0;
     }
+
+    if (!api->HookCode(mod,"friend_unit_gift.native_card_dtor",
+            reinterpret_cast<void*>(&ComposerDtorHook),
+            reinterpret_cast<void**>(&g_unit_card_dtor))) return 0;
+
+    if (!api->HookCode(mod,"friend_unit_gift.management_callback",
+            reinterpret_cast<void*>(&ManagementEventHook),
+            reinterpret_cast<void**>(&g_management_callback))) return 0;
 
     if (!RegisterStorageBroker() && !InstallStorageFallback()) {
         return 0;

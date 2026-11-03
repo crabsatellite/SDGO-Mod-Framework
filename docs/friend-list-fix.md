@@ -10,7 +10,7 @@ still use the game's own friend page.
 | mod | host | part |
 |---|---|---|
 | `friend_list_fix` | WorldServer | returns the complete list with current pilot names |
-| `friend_list_client_fix` | client | lets an accepted offline friend open the native conversation window and gives the chat window its correct layout |
+| `friend_list_client_fix` | client | restores the messenger layout, preserves known names during lossy status updates and opens accepted offline conversations |
 
 ## Use
 
@@ -45,6 +45,15 @@ archive are unchanged.
 fallback to the native ANSI result, so mixed Thai database defaults with Chinese Unicode name columns display
 correctly without changing columns.
 
+Server 0.1.3 also reads damaged names through the authenticated native Unicode
+binding and encodes the name field using that column's code page. This handles
+native ANSI binding loss without changing the original procedures or player data.
+Client 1.1.2 preserves a complete cached name when a status reply for the same
+pilot contains question marks. The original updater still applies presence,
+location and relationship changes and rebuilds the display text. A complete
+new name follows the normal update path.
+
+
 The stock query left-joins online status, clan and other optional data and sends SQL NULLs to a native OLE DB
 row binding without status buffers. The row reader stops on the warning, so one offline or incomplete row can
 truncate the list. `friend_list_fix` returns non-null defaults of the original types, reads the current pilot
@@ -68,5 +77,4 @@ Packet, cache and address evidence: [client](investigations/friend-list-client.m
 ```powershell
 cmake --build build --config Release --target friend_list_fix friend_list_client_fix friend_list_fix_test friend_list_client_fix_test friend_list_db_test
 ctest --test-dir build -C Release -R friend_list --output-on-failure
-python tests/run_friend_list_sql_test.py --build-dir build --work-root build/sql-fixtures --native-source "<private UTF-8 procedure export>" --image "<locally cached SQL Server image>"
 ```

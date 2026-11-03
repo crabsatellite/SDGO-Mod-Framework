@@ -13,6 +13,19 @@
 namespace {
 
 constexpr char kRunId[] = "12345678-1234-1234-1234-123456789abc";
+using CursorGet=void(__cdecl*)(int*,int*);
+CursorGet g_cursorHook=nullptr;
+int g_observedX=0,g_observedY=0;
+void __cdecl OriginalCursor(int* x,int* y) { *x=12;*y=34; }
+void __cdecl ObserveActionCursor() { g_cursorHook(&g_observedX,&g_observedY); }
+void* CursorSymbol(SdgoMod*,const char* name) {
+    return !std::strcmp(name,"friends.cursor_position") ? reinterpret_cast<void*>(&OriginalCursor) : nullptr;
+}
+int CursorHook(SdgoMod*,const char* name,void* replacement,void** original) {
+    if (std::strcmp(name,"friends.cursor_position")) return 0;
+    g_cursorHook=reinterpret_cast<CursorGet>(replacement);
+    *original=reinterpret_cast<void*>(&OriginalCursor);return 1;
+}
 
 SdgoGameTestContextV1 Context(const char* runId = kRunId) {
     SdgoGameTestContextV1 result{};
@@ -276,7 +289,7 @@ int wmain(int argc, wchar_t** argv) {
     std::array<std::uint16_t, 201> tooLong{};
     check(actions.Invoke(&context, 0, 0, 0, 0, nullptr, 0) ==
               friends::FriendActions::kInvalidCommand &&
-              actions.Invoke(&context, 17, 0, 0, 0, nullptr, 0) ==
+              actions.Invoke(&context, 20, 0, 0, 0, nullptr, 0) ==
               friends::FriendActions::kInvalidCommand &&
               actions.Invoke(
                   &context, SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_SET_NOTE,
@@ -423,6 +436,39 @@ int wmain(int argc, wchar_t** argv) {
                   std::string::npos,
           "Write preserves full unsigned 64-bit decimal precision");
 
+    using CallbackSetter=void(__cdecl*)(void(__cdecl*)());
+    const auto setCallback=reinterpret_cast<CallbackSetter>(GetProcAddress(fixture,"TestUnitGiftSetActionCallback"));
+    SdgoApi inputApi{};inputApi.size=sizeof(inputApi);inputApi.Symbol=&CursorSymbol;inputApi.HookCode=&CursorHook;
+    check(setCallback && actions.BindCursor(&inputApi,reinterpret_cast<SdgoMod*>(1)),
+          "scoped mouse input binds the verified native cursor getter");
+    if (setCallback && g_cursorHook) {
+        auto placed=baseline;placed.friend_context_x=480;placed.friend_context_y=263;
+        placed.control_flags=SDGO_FRIEND_UNIT_GIFT_CLIENT_CONTROL_GIFT_BUTTON;
+        setSnapshot(&placed);setActionResult(1);setCallback(&ObserveActionCursor);
+        int x=0,y=0;g_cursorHook(&x,&y);
+        check(x==12 && y==34,"ordinary native mouse reads remain unchanged");
+        check(actions.Invoke(&context,SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_FRIEND_CONTEXT,
+                             7,0,0,nullptr,0,480,263)==friends::FriendActions::kReady &&
+                  g_observedX==480 && g_observedY==263,
+              "the real product action receives the specified friend-row mouse coordinates");
+        g_cursorHook(&x,&y);
+        check(x==12 && y==34 && WrittenSnapshot(actions,&context).find("cursor_input_calls=1")!=std::string::npos,
+              "mouse injection ends with the action and reports actual native reads");
+        check(actions.Invoke(&context,SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_SET_NOTE,
+                             7,0,0,nullptr,0,480,263)==friends::FriendActions::kInvalidCommand,
+              "mouse injection is unavailable to unrelated gift actions");
+        setCallback(nullptr);
+        setSnapshot(&baseline);
+        check(actions.Invoke(&context,SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_FRIEND_CONTEXT,
+                             7,0,0,nullptr,0,520,300)==friends::FriendActions::kReady,
+              "queued popup construction retains the requested native mouse input");
+        g_cursorHook(&x,&y);
+        check(x==520 && y==300,"the deferred native popup reads the requested coordinates on its next frame");
+        placed.friend_context_x=520;placed.friend_context_y=300;setSnapshot(&placed);
+        check(actions.Capture(&context),"the actual popup position completes the scoped mouse input");
+        g_cursorHook(&x,&y);
+        check(x==12 && y==34,"mouse input returns to native reads after deferred popup observation");
+    }
     FreeLibrary(fixture);
     std::cout << "UNIT GIFT ACTION GATEWAY CHECKS "
               << (failures ? "FAILED " : "PASSED ")

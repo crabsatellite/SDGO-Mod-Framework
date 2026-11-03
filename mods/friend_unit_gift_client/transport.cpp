@@ -269,7 +269,7 @@ bool Transport::SendExpandedProbe(
     if (!EncodeRequest(request, &packet)) return false;
     pending_ = request;
     has_pending_ = true;
-    deadline_ = now_millis + kProbeTimeoutMillis;
+    deadline_ = now_millis + kPolicyProbeTimeoutMillis;
     if (!SendBytes(packet.data(), packet.size())) {
         FailPending(
             WireStatus::send_failed,
@@ -480,6 +480,14 @@ void Transport::Complete(const Reply& reply) noexcept {
     capabilities_ = reply.capabilities;
     server_epoch_ = reply.server_epoch;
     if (state_ == ConnectionState::probing_expanded) {
+        if (api_ && api_->Log && mod_) {
+            const auto saved = GetLastError();
+            api_->Log(mod_, SDGO_LOG_INFO,
+                "expanded gift capability reply status=%d capabilities=%08X flags=%04X",
+                static_cast<int>(reply.status), reply.capabilities,
+                static_cast<unsigned>(reply.flags));
+            SetLastError(saved);
+        }
         constexpr std::uint32_t required =
             capability_protocol |
             capability_expanded_requests |

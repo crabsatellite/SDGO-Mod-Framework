@@ -208,7 +208,10 @@ class Campaign:
             graphics_only=any('Failed to create Direct3D object.' in row.get('message','') for row in rows) and not any(
                 row.get('case') in ('flow.login','flow.onboarding','friends.session') for row in rows)
             if graphics_only and _startup_attempt<2:
-                report=future.result(timeout=30)
+                # Native graphics failure can precede sealed-file readback and
+                # quiet-runtime cleanup. Wait for that failed run to finish
+                # before reusing its capsule; it is never counted as a pass.
+                report=future.result(timeout=180)
                 self.receipt.setdefault('startup_retries',[]).append({'label':label,'run_id':metadata['run_id'],
                     'reason':'native Direct3D creation failed before login','status':report['status'],'accepted_as_pass':False})
                 self.save();self.running.pop(label)

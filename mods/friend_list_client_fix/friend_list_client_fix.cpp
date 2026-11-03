@@ -10,9 +10,25 @@
 #include "sdgo/sdgo_api.h"
 #include "chat_open_policy.h"
 #include "messenger_layout_policy.h"
+#include "name_update_policy.h"
 
 namespace
 {
+    using UpdateRecord = std::uintptr_t(__thiscall*)(void*, const void*);
+    UpdateRecord g_originalUpdate = nullptr;
+
+    std::uintptr_t __fastcall UpdateFriendRecord(void* self, void*, const void* incoming)
+    {
+        if (!friend_list_client_fix::PreserveKnownName(self,incoming))
+            return g_originalUpdate(self,incoming);
+        std::uint8_t row[friend_list_client_fix::kUpdateRowBytes];
+        std::memcpy(row,incoming,sizeof(row));
+        std::memcpy(row + friend_list_client_fix::kNameOffset,
+                    static_cast<const std::uint8_t*>(self) + friend_list_client_fix::kNameOffset,
+                    friend_list_client_fix::kNameBytes);
+        return g_originalUpdate(self,row);
+    }
+
     void* g_originalGate = nullptr;
     void* g_originalServiceLayoutCall = nullptr;
     void* g_originalPopupLayoutCall = nullptr;
@@ -111,7 +127,7 @@ SDGO_MOD_ENTRY
 {
     if (!api || api->version != SDGO_API_VERSION ||
         api->size < offsetof(SdgoApi, HookSite) + sizeof(api->HookSite) ||
-        !api->Symbol || !api->HookSite || !api->Log) {
+        !api->Symbol || !api->HookSite || !api->HookCode || !api->Log) {
         return 0;
     }
 
@@ -134,6 +150,7 @@ SDGO_MOD_ENTRY
     if (!assign || !serviceCall || !popupCall ||
         !serviceReturn || !popupReturn || !originalLayout ||
         !api->Symbol(mod, friend_list_client_fix::kLayoutSymbol) ||
+        !api->Symbol(mod, friend_list_client_fix::kNameUpdateSymbol) ||
         std::memcmp(originalLayout,
                     friend_list_client_fix::kOriginalLayoutPath,
                     sizeof(friend_list_client_fix::kOriginalLayoutPath)) != 0 ||
@@ -154,7 +171,10 @@ SDGO_MOD_ENTRY
             &g_originalPopupLayoutCall) ||
         !api->HookSite(mod, friend_list_client_fix::kGateSymbol,
                        reinterpret_cast<void*>(&OfflineChatGate),
-                       &g_originalGate)) {
+                       &g_originalGate) ||
+        !api->HookCode(mod, friend_list_client_fix::kNameUpdateSymbol,
+                       reinterpret_cast<void*>(&UpdateFriendRecord),
+                       reinterpret_cast<void**>(&g_originalUpdate))) {
         return 0;
     }
 
@@ -162,6 +182,7 @@ SDGO_MOD_ENTRY
              "two native messenger layout calls use the shipped friend layout "
              "without owning global string assignment; accepted offline "
              "friends may open the native conversation UI; message send, "
-             "rejection and delivery remain native");
+             "rejection and delivery remain native; lossy presence replies "
+             "retain the known friend name while native status fields update");
     return 1;
 }
