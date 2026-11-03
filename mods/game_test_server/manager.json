@@ -9,9 +9,9 @@
   "description": "开发测试组件，默认关闭。仅为显式测试任务记录真实对战事件，不创建房间或控制玩家。",
   "settings": [
     {
-      "id": "battleaideaths",
+      "id": "battle_ai_deaths",
       "key": "BattleAiDeaths",
-      "label": "AI 击杀与地图伤害原生观察",
+      "label": "记录原生 HP 损失与死亡身份",
       "type": "boolean",
       "default": false,
       "file": "mod.ini",

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "root_unit_id": 90001,
+  "behavior_profile": "native-single-form-v1",
+  "units": [
+    {
+      "UnitNumber": 90001,
+      "UnitModelName": "ExampleUnit"
+    }
+  ],
+  "weapons": []
+}

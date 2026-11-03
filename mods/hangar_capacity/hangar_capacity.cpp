@@ -43,34 +43,94 @@ bool ReadExtra(const CountArgs* input, std::int16_t* extra) {
     __try { if (!input) return false; std::memcpy(extra, reinterpret_cast<const BYTE*>(input) + 4, sizeof(*extra)); return true; }
     __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
-bool EnsureNativeCapacity(void* connection, std::int32_t account) {
+bool EnsureNativeCapacity(
+    void* connection,
+    std::int32_t account,
+    capacity::PolicyFailure* failure) {
+    if (failure)
+        *failure = {};
     const auto sql = capacity::MakeEnsureSql(g_database, account, g_lockTimeout);
-    if (!sql) return false;
+    if (!sql) {
+        capacity::SetPolicyFailure(
+            failure,
+            capacity::PolicyPhase::kEnsure,
+            capacity::PolicyStage::kPolicyBuild,
+            E_INVALIDARG);
+        return false;
+    }
     capacity::PolicySession session(g_queryTimeout);
-    return session.Open(connection) && session.Ensure(*sql);
+    if (!session.Open(connection) || !session.Ensure(*sql)) {
+        if (failure)
+            *failure = session.Failure();
+        return false;
+    }
+    return true;
 }
-using EnsureFn = bool (*)(void*, std::int32_t);
+using EnsureFn = bool (*)(
+    void*, std::int32_t, capacity::PolicyFailure*);
 EnsureFn g_ensure = &EnsureNativeCapacity; // fixture injection; never exported
-void Failed() noexcept {
+void Failed(capacity::PolicyFailure failure) noexcept {
     try {
+        if (failure.stage == capacity::PolicyStage::kNone)
+            failure = capacity::PolicyFailure{
+                capacity::PolicyPhase::kEnsure,
+                capacity::PolicyStage::kException,
+                E_UNEXPECTED};
         if (g_errors.fetch_add(1) < 5 && g_api && g_api->Log)
-            g_api->Log(g_mod, SDGO_LOG_ERROR, "hangar capacity policy unavailable; native request reports a database failure (check schema, rights and session state)");
+            g_api->Log(
+                g_mod,
+                SDGO_LOG_ERROR,
+                "hangar capacity policy unavailable phase=%s stage=%s hr=0x%08lX; native getter not called",
+                capacity::PolicyPhaseName(failure.phase),
+                capacity::PolicyStageName(failure.stage),
+                static_cast<unsigned long>(
+                    static_cast<std::uint32_t>(failure.hr)));
     } catch (...) {}
 }
 int __fastcall GetCount(void* self, void*, void* connection, CountArgs* args) {
     LastError error;
     std::int32_t account = 0;
-    if (!ReadAccount(args, &account) || !connection) { Failed(); return 1; }
+    if (!ReadAccount(args, &account)) {
+        Failed(capacity::PolicyFailure{
+            capacity::PolicyPhase::kInput,
+            capacity::PolicyStage::kAccount,
+            E_INVALIDARG});
+        return 1;
+    }
+    if (!connection) {
+        Failed(capacity::PolicyFailure{
+            capacity::PolicyPhase::kInput,
+            capacity::PolicyStage::kConnection,
+            E_POINTER});
+        return 1;
+    }
     bool ensured = false;
-    try { ensured = g_ensure(connection, account); }
-    catch (...) { ensured = false; }
-    if (!ensured) { Failed(); return 1; }
+    capacity::PolicyFailure failure{};
+    try {
+        ensured = g_ensure(connection, account, &failure);
+    } catch (...) {
+        ensured = false;
+        failure = capacity::PolicyFailure{
+            capacity::PolicyPhase::kEnsure,
+            capacity::PolicyStage::kException,
+            E_UNEXPECTED};
+    }
+    if (!ensured) {
+        Failed(failure);
+        return 1;
+    }
     error.BeforeNative();
     const int result = g_original(self, connection, args);
     error.AfterNative();
     if (result != 0) return result;
     std::int16_t extra = 0;
-    if (!ReadExtra(args, &extra) || extra < capacity::kTargetExtra) { Failed(); return 1; }
+    if (!ReadExtra(args, &extra) || extra < capacity::kTargetExtra) {
+        Failed(capacity::PolicyFailure{
+            capacity::PolicyPhase::kNative,
+            capacity::PolicyStage::kCapacityReadback,
+            HRESULT_FROM_WIN32(ERROR_INVALID_DATA)});
+        return 1;
+    }
     try {
         if (!g_announced.exchange(true) && g_api && g_api->Log)
             g_api->Log(g_mod, SDGO_LOG_INFO, "capacity policy verified: at least 1200 total slots, original account data and getter reply retained");

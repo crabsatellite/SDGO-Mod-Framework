@@ -49,10 +49,46 @@ FakeTexture fakeTexture{textureTable,1};
 
 ULONG STDMETHODCALLTYPE FakeDeviceRelease(IDirect3DDevice9* raw) {
     InterlockedIncrement(&deviceReleaseCalls);
+    lastWorkerThread=GetCurrentThreadId();
     auto* device=reinterpret_cast<FakeDevice*>(raw);return --device->references;
 }
+HWND cooperativeCallbackWindow=nullptr;
+volatile LONG cooperativeSentCallbacks=0,cooperativePostedCallbacks=0;
+bool cooperativeSentCompleted=false;
+WNDPROC cooperativeFloodOriginalProc=nullptr;
+HANDLE cooperativeFloodStarted=nullptr,cooperativeFloodStop=nullptr;
+volatile LONG cooperativeFloodEnabled=0,cooperativeFloodMessages=0;
+LRESULT CALLBACK CooperativeWindowProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam) {
+    if(message==WM_APP+71){InterlockedIncrement(&cooperativeSentCallbacks);return 0x53;}
+    if(message==WM_APP+72){InterlockedIncrement(&cooperativePostedCallbacks);return 0;}
+    return DefWindowProcW(window,message,wparam,lparam);
+}
+LRESULT CALLBACK CooperativeFloodWindowProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam) {
+    if(message==WM_APP+73) {
+        InterlockedIncrement(&cooperativeFloodMessages);
+        if(cooperativeFloodStarted)SetEvent(cooperativeFloodStarted);
+        if(InterlockedCompareExchange(&cooperativeFloodEnabled,0,0))
+            PostMessageW(window,WM_APP+73,0,0);
+        return 0;
+    }
+    return cooperativeFloodOriginalProc
+        ? CallWindowProcW(cooperativeFloodOriginalProc,window,message,wparam,lparam)
+        : DefWindowProcW(window,message,wparam,lparam);
+}
+DWORD WINAPI StopCooperativeFlood(void*) {
+    if(cooperativeFloodStop)WaitForSingleObject(cooperativeFloodStop,2000);
+    else Sleep(2000);
+    InterlockedExchange(&cooperativeFloodEnabled,0);
+    return 0;
+}
 HRESULT STDMETHODCALLTYPE FakeCooperativeLevel(IDirect3DDevice9*) {
-    lastWorkerThread=GetCurrentThreadId();return cooperativeResult;
+    lastWorkerThread=GetCurrentThreadId();
+    if(cooperativeCallbackWindow) {
+        DWORD_PTR reply=0;
+        cooperativeSentCompleted=SendMessageTimeoutW(cooperativeCallbackWindow,WM_APP+71,0,0,
+            SMTO_ABORTIFHUNG|SMTO_BLOCK,2000,&reply)!=0 && reply==0x53;
+    }
+    return cooperativeResult;
 }
 HRESULT STDMETHODCALLTYPE FakeGetBackBuffer(IDirect3DDevice9*,UINT,UINT,D3DBACKBUFFER_TYPE,
                                              IDirect3DSurface9** surface) {
@@ -89,7 +125,13 @@ HRESULT STDMETHODCALLTYPE FakeAdditionalSwapChain(IDirect3DDevice9*,D3DPRESENT_P
 HRESULT STDMETHODCALLTYPE FakeReset(IDirect3DDevice9*,D3DPRESENT_PARAMETERS* parameters) {
     InterlockedIncrement(&resetCalls);
     lastWorkerThread=GetCurrentThreadId();
-    if (parameters)lastParameters=*parameters;
+    if (parameters) {
+        lastParameters=*parameters;
+        parameters->BackBufferCount=0;
+        parameters->BackBufferWidth=0;
+        parameters->BackBufferHeight=0;
+        if (parameters->Windowed)parameters->BackBufferFormat=D3DFMT_UNKNOWN;
+    }
     return resetResult;
 }
 HRESULT STDMETHODCALLTYPE FakePresent(IDirect3DDevice9*,const RECT*,const RECT*,HWND window,const RGNDATA*) {
@@ -344,6 +386,60 @@ int main() {
         lastWorkerThread=0;
         if (device->TestCooperativeLevel()!=cooperativeResult ||
             lastWorkerThread!=state.proxy_thread_id)++failures;
+        const auto oldWindowProc=reinterpret_cast<WNDPROC>(SetWindowLongPtrW(sourceWindow,GWLP_WNDPROC,
+            reinterpret_cast<LONG_PTR>(&CooperativeWindowProc)));
+        cooperativeCallbackWindow=sourceWindow;
+        const auto pumpsBefore=quiet.State().dispatch_message_pumps;
+        PostMessageW(sourceWindow,WM_APP+72,0,0);
+        if(!oldWindowProc || device->TestCooperativeLevel()!=cooperativeResult ||
+           lastWorkerThread!=state.proxy_thread_id || !cooperativeSentCompleted ||
+           cooperativeSentCallbacks!=1 || cooperativePostedCallbacks!=0 ||
+           quiet.State().dispatch_message_pumps<=pumpsBefore)++failures;
+        cooperativeCallbackWindow=nullptr;
+        MSG untouched{};
+        if(!PeekMessageW(&untouched,sourceWindow,WM_APP+72,WM_APP+72,PM_REMOVE) ||
+           cooperativePostedCallbacks!=0)++failures;
+        if(oldWindowProc)SetWindowLongPtrW(sourceWindow,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(oldWindowProc));
+        SetLastError(ERROR_SUCCESS);
+        cooperativeFloodOriginalProc=reinterpret_cast<WNDPROC>(SetWindowLongPtrW(
+            state.proxy_hwnd,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(&CooperativeFloodWindowProc)));
+        const DWORD floodSubclassError=GetLastError();
+        cooperativeFloodStarted=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+        cooperativeFloodStop=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+        HANDLE floodStopThread=nullptr;
+        bool floodReady=cooperativeFloodOriginalProc || floodSubclassError==ERROR_SUCCESS;
+        if(floodReady && cooperativeFloodStarted && cooperativeFloodStop) {
+            InterlockedExchange(&cooperativeFloodEnabled,1);
+            InterlockedExchange(&cooperativeFloodMessages,0);
+            floodStopThread=CreateThread(nullptr,0,&StopCooperativeFlood,nullptr,0,nullptr);
+            floodReady=floodStopThread &&
+                PostMessageW(state.proxy_hwnd,WM_APP+73,0,0) &&
+                WaitForSingleObject(cooperativeFloodStarted,500)==WAIT_OBJECT_0;
+        } else floodReady=false;
+        HRESULT floodResult=D3DERR_NOTAVAILABLE;
+        ULONGLONG floodElapsed=~ULONGLONG{0};
+        if(floodReady) {
+            lastWorkerThread=0;
+            const ULONGLONG started=GetTickCount64();
+            floodResult=device->TestCooperativeLevel();
+            floodElapsed=GetTickCount64()-started;
+        }
+        if(cooperativeFloodStop)SetEvent(cooperativeFloodStop);
+        InterlockedExchange(&cooperativeFloodEnabled,0);
+        if(floodStopThread) {
+            if(WaitForSingleObject(floodStopThread,3000)!=WAIT_OBJECT_0)++failures;
+            CloseHandle(floodStopThread);
+        }
+        if(!floodReady || floodResult!=cooperativeResult ||
+           lastWorkerThread!=state.proxy_thread_id || floodElapsed>=500 ||
+           InterlockedCompareExchange(&cooperativeFloodMessages,0,0)<1)++failures;
+        if(cooperativeFloodOriginalProc)
+            SetWindowLongPtrW(state.proxy_hwnd,GWLP_WNDPROC,
+                reinterpret_cast<LONG_PTR>(cooperativeFloodOriginalProc));
+        if(cooperativeFloodStarted)CloseHandle(cooperativeFloodStarted);
+        if(cooperativeFloodStop)CloseHandle(cooperativeFloodStop);
+        cooperativeFloodOriginalProc=nullptr;
+        cooperativeFloodStarted=nullptr;cooperativeFloodStop=nullptr;
         lastWindow=nullptr;
         presentLastError=ERROR_RETRY;
         SetLastError(ERROR_ACCESS_DENIED);
@@ -395,6 +491,8 @@ int main() {
                                   D3DPOOL_DEFAULT,&texture,nullptr)!=D3DERR_INVALIDCALL ||
             texture || lastWorkerThread!=GetCurrentThreadId())++failures;
         D3DPRESENT_PARAMETERS reset{};
+        reset.BackBufferWidth=1111;reset.BackBufferHeight=777;reset.BackBufferCount=2;
+        reset.BackBufferFormat=D3DFMT_X8R8G8B8;
         reset.Windowed=TRUE;reset.hDeviceWindow=sourceWindow;
 
         void* originalClone[119]{};
@@ -404,6 +502,8 @@ int main() {
         lastWorkerThread=0;
         if (!quiet.RefreshDeviceHooks() || HasOriginalDeviceSlot(originalClone) ||
             device->Reset(&reset)!=resetResult || lastWorkerThread!=state.proxy_thread_id ||
+            reset.BackBufferWidth || reset.BackBufferHeight || reset.BackBufferCount ||
+            reset.BackBufferFormat!=D3DFMT_UNKNOWN || reset.hDeviceWindow!=sourceWindow ||
             resetCalls!=1)++failures;
 
         void* inheritedHookClone[119]{};
@@ -414,7 +514,9 @@ int main() {
         if (!quiet.RefreshDeviceHooks() ||
             device->Reset(&reset)!=resetResult || lastWorkerThread!=state.proxy_thread_id ||
             lastParameters.hDeviceWindow!=state.proxy_hwnd ||
-            reset.BackBufferWidth!=640 || reset.BackBufferHeight!=480 ||
+            lastParameters.BackBufferWidth!=640 || lastParameters.BackBufferHeight!=480 ||
+            reset.BackBufferWidth || reset.BackBufferHeight || reset.BackBufferCount ||
+            reset.BackBufferFormat!=D3DFMT_UNKNOWN ||
             reset.hDeviceWindow!=sourceWindow || resetCalls!=2)++failures;
 
         inheritedHookClone[2]=reinterpret_cast<void*>(&FakeDeviceRelease);
@@ -442,9 +544,13 @@ int main() {
                 resetCalls!=static_cast<LONG>(5+i))++failures;
         }
         fakeDevice.references=2;
+        lastWorkerThread=0;
         if (device->Release()!=1 || deviceReleaseCalls!=1 ||
+            lastWorkerThread!=state.proxy_thread_id ||
             !quiet.RefreshDeviceHooks())++failures;
-        if (device->Release()!=0 || deviceReleaseCalls!=2)++failures;
+        lastWorkerThread=0;
+        if (device->Release()!=0 || deviceReleaseCalls!=2 ||
+            lastWorkerThread!=state.proxy_thread_id)++failures;
         void* afterRelease[119]{};
         InitializeDeviceTable(afterRelease);
         fakeDevice.table=afterRelease;
@@ -457,7 +563,7 @@ int main() {
     state=quiet.State();
     if (state.factory_calls!=2 || state.factories!=1 || state.create_attempts!=4 ||
         state.created_devices!=1 || state.failed_devices!=3 || state.resets!=14 ||
-        state.presents!=4 || state.successful_presents!=3 || state.cooperative_checks!=2 || state.last_create_hresult!=S_OK ||
+        state.presents!=4 || state.successful_presents!=3 || state.cooperative_checks!=4 || state.last_create_hresult!=S_OK ||
         state.last_reset_hresult!=resetResult || state.last_present_hresult!=presentResult ||
         state.last_cooperative_hresult!=cooperativeResult || state.last_backbuffer_hresult!=S_OK ||
         state.last_actual_width!=640 || state.last_actual_height!=480 ||

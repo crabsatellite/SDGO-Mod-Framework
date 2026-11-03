@@ -1,26 +1,22 @@
 #pragma once
 
-#include <array>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
 
+#include "../native_resource_overlay/native_resource_overlay.h"
+
 namespace capsule_catalog
 {
-    struct NativeFileInfo
-    {
-        std::array<uint32_t, 9> words = {};
-    };
-
-    struct OverlayEntry
-    {
-        NativeFileInfo info;
-    };
+    using NativeFileInfo = sdgo::resource_overlay::NativeFileInfo;
+    using OverlayEntry = sdgo::resource_overlay::OverlayEntry;
 
     struct Bundle
     {
         std::wstring zpkPath;
         std::string catalogRevision;
+        std::string indexHash;
+        std::string archiveHash;
         uint32_t chunkSize = 0;
         uint32_t fixedCount = 0;
         uint32_t coinCount = 0;

@@ -13,7 +13,7 @@ Each feature card shows only its name, a one-line description and its switch, wi
 archive as always on. With only a client added, the sidebar shows just the game
 features and the archive; adding a server directory (or clicking **我是服主**) reveals the
 owner tools: shop, operators, capsules, rewards, FRP, AI catalog, collection capsule,
-hangar server and background tasks. The developer view expands internal identifiers,
+hangar server, [holiday and birthday gifts](calendar-gifts.md), and background tasks. The developer view expands internal identifiers,
 versions, low-level settings and diagnostics; it is not a server-owner permission gate.
 
 Choose existing workspaces to preserve authored data. Configuration writes retain

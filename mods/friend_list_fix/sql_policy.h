@@ -130,8 +130,11 @@ inline std::wstring OriginalProjection(const std::wstring& alias) {
     }
     return out;
 }
-inline std::wstring Clone(const std::wstring& source,const std::wstring& name,bool exists) {
+inline std::wstring Clone(const std::wstring& source,const std::wstring& name,bool exists,
+                          const std::wstring& nameCollation=L"DATABASE_DEFAULT") {
     if(name!=kNames[0])throw std::runtime_error("unexpected friend procedure");
+    static const std::wregex collationName(L"[A-Za-z][A-Za-z0-9_]{0,127}");
+    if(!std::regex_match(nameCollation,collationName))throw std::runtime_error("invalid native pilot-name collation");
     // Decode only actual SQL literals. Comments and SQL outside the dynamic
     // query remain unchanged, including pagination and output parameters.
     auto literals=Literals(source);
@@ -142,7 +145,11 @@ inline std::wstring Clone(const std::wstring& source,const std::wstring& name,bo
     unsigned names=0,joins=0,first=0,later=0;
     for(auto& literal:literals) {
         auto& query=literal.value;
-        names+=Replace(query,pilot,L"CONVERT(varchar(20),COALESCE(NULLIF(p.f_pilot,N''),a.f_pilot)) AS f_pilot");
+        // Member databases can use Thai while their Unicode pilot-name column
+        // uses Chinese. Resolve both CASE operands explicitly before converting
+        // to native ANSI; DATABASE_DEFAULT would lose canonical Chinese names.
+        names+=Replace(query,pilot,L"CONVERT(varchar(20),COALESCE(NULLIF(p.f_pilot COLLATE "+nameCollation+
+            L",N''),CONVERT(nvarchar(20),a.f_pilot) COLLATE "+nameCollation+L")) AS f_pilot");
         joins+=Replace(query,join,L"tbl_Friend a LEFT JOIN tbl_Account_Pilot p ON a.f_idx2=p.f_idx LEFT JOIN tblg_userGameInfo b ON a.f_idx2=b.f_idx");
         std::vector<std::wsmatch> projections;
         for(auto i=std::wsregex_iterator(query.begin(),query.end(),projection);i!=std::wsregex_iterator();++i)projections.push_back(*i);

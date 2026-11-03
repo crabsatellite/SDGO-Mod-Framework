@@ -27,6 +27,14 @@ class Workspace:
         if self.mode != 'developer':
             raise PermissionError('此信息仅在开发信息视图提供')
 
+    def close(self):
+        self.services.close()
+        for provider in self.providers.values():
+            with provider.lock:
+                if provider.engine is not None and hasattr(provider.engine, 'close'):
+                    provider.engine.close()
+                provider.engine = None
+
     def save_workspace(self):
         storage.atomic(self.path, storage.json_bytes(self.settings))
 

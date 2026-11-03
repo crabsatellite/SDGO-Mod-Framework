@@ -505,10 +505,10 @@ bool capsule_catalog::LoadBundle(const std::wstring& modDirectory, Bundle& out, 
     std::wstring zpkRelative = overlay + L".zpk";
     uint64_t zdxSize = 0;
     uint64_t zpkSize = 0;
-    if (!VerifyDeclaredFile(modDirectory, zdxRelative,
-                            IniValue(ini, L"runtime", L"overlay_zdx_sha256"), &zdxSize, error) ||
-        !VerifyDeclaredFile(modDirectory, zpkRelative,
-                            IniValue(ini, L"runtime", L"overlay_zpk_sha256"), &zpkSize, error))
+    const std::wstring indexHash = IniValue(ini, L"runtime", L"overlay_zdx_sha256");
+    const std::wstring archiveHash = IniValue(ini, L"runtime", L"overlay_zpk_sha256");
+    if (!VerifyDeclaredFile(modDirectory, zdxRelative, indexHash, &zdxSize, error) ||
+        !VerifyDeclaredFile(modDirectory, zpkRelative, archiveHash, &zpkSize, error))
         return false;
     if (zdxSize > kMaxIndexBytes) {
         error = "overlay.zdx is too large";
@@ -518,6 +518,8 @@ bool capsule_catalog::LoadBundle(const std::wstring& modDirectory, Bundle& out, 
     if (!ReadFileBytes(Join(modDirectory, zdxRelative), kMaxIndexBytes, index, error))
         return false;
     candidate.zpkPath = Join(modDirectory, zpkRelative);
+    candidate.indexHash = LowerAscii(indexHash);
+    candidate.archiveHash = LowerAscii(archiveHash);
     if (!ParseIndex(index, zpkSize, candidate, error))
         return false;
     if ((candidate.entries.find(L"uirs\\1161.uir") != candidate.entries.end()) != declaredUi) {

@@ -6,7 +6,7 @@
   "hosts": [
     "client"
   ],
-  "description": "开发测试组件，默认关闭。仅在显式测试任务中运行；支持无登录 FPS 参数与频率测试。安装或启用本身不会开始测试。",
+  "description": "开发测试组件，默认关闭。支持原生登录、入房、Ready、单人及多客户端协同对战、页面检查，以及无需登录的 FPS 测试。仅在显式测试任务中运行，安装或启用本身不会开始测试。",
   "settings": [
     {
       "id": "fps_gameplay_cap",
@@ -33,9 +33,9 @@
       "activation": "restart_required"
     },
     {
-      "id": "battleaibehavior",
+      "id": "battle_ai_behavior",
       "key": "BattleAiBehavior",
-      "label": "AI 行为原生观察",
+      "label": "要求必杀恢复、移动开火及远距追敌实测",
       "type": "boolean",
       "default": false,
       "file": "mod.ini",
@@ -44,9 +44,9 @@
       "activation": "restart_required"
     },
     {
-      "id": "battleaideaths",
+      "id": "battle_ai_deaths",
       "key": "BattleAiDeaths",
-      "label": "AI 击杀与地图伤害观察",
+      "label": "记录原生死亡与地图伤害身份",
       "type": "boolean",
       "default": false,
       "file": "mod.ini",
@@ -55,9 +55,9 @@
       "activation": "restart_required"
     },
     {
-      "id": "battleaiteleport",
+      "id": "battle_ai_teleport",
       "key": "BattleAiTeleport",
-      "label": "AI 原生传送回归",
+      "label": "要求 AI 真实瞬移且保留血量",
       "type": "boolean",
       "default": false,
       "file": "mod.ini",
@@ -66,9 +66,9 @@
       "activation": "restart_required"
     },
     {
-      "id": "battleplayercombat",
+      "id": "battle_player_combat",
       "key": "BattlePlayerCombat",
-      "label": "玩家原生移动与射击回归",
+      "label": "测试进程原生移动与主武器输入",
       "type": "boolean",
       "default": false,
       "file": "mod.ini",
@@ -77,9 +77,9 @@
       "activation": "restart_required"
     },
     {
-      "id": "battleplayercombatcontinuous",
+      "id": "battle_player_combat_continuous",
       "key": "BattlePlayerCombatContinuous",
-      "label": "玩家持续射击回归",
+      "label": "测试进程持续主武器输入",
       "type": "boolean",
       "default": false,
       "file": "mod.ini",
@@ -88,17 +88,100 @@
       "activation": "restart_required"
     },
     {
-      "id": "battlemap",
+      "id": "battle_map",
       "key": "BattleMap",
-      "label": "测试地图编号（0 随机）",
+      "label": "原生测试地图编号（0 随机）",
       "type": "integer",
       "default": 0,
+      "minimum": 0,
+      "maximum": 65535,
       "file": "mod.ini",
       "section": "settings",
       "audience": "developer",
-      "activation": "restart_required",
+      "activation": "restart_required"
+    },
+    {
+      "id": "capture_native_frames",
+      "key": "CaptureNativeFrames",
+      "label": "采集真实原生页面画面",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "unit_presentations",
+      "key": "UnitPresentations",
+      "label": "导入机体的原生图鉴与模型测试",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "unit_acquisition_kind",
+      "key": "UnitAcquisitionKind",
+      "label": "机体候选检查（0关闭、1固定、3自定义）",
+      "type": "integer",
+      "default": 0,
       "minimum": 0,
-      "maximum": 65535
+      "maximum": 3,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "unit_acquisition_machine",
+      "key": "UnitAcquisitionMachine",
+      "label": "候选检查的机台编号",
+      "type": "integer",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 9999999,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "unit_acquisition_unit",
+      "key": "UnitAcquisitionUnit",
+      "label": "候选检查的机体编号",
+      "type": "integer",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 9999999,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "collection_preview_only",
+      "key": "CollectionPreviewOnly",
+      "label": "仅检查收藏扭蛋原生预览（不抽取）",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "unit_portraits",
+      "key": "UnitPortraits",
+      "label": "原生准备动作截图",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
     }
   ],
   "presentation": "configurable",

@@ -295,4 +295,10 @@ class Shop(Provider):
         action = 'read' if method=='GET' else path.rsplit('/',1)[-1]
         value=bridge.call({**self.config,'action':action,'body':body,'revision':headers.get('X-Shop-Revision','')})
         if method=='GET' and path.endswith('/export'): return Binary(storage.json_bytes(value['catalog']),'application/json','shop.json')
+        units = self.workspace.providers.get('units')
+        registrations = units.for_server(Path(self.config['world'])/'WorldServer.ini') if units and self.config.get('world') else []
+        value['unit_imports'] = {str(r['category_id']): r for r in registrations}
+        for item in value.get('items', []):
+            if str(item['Id']) in value['unit_imports']:
+                item['Name'] = value['unit_imports'][str(item['Id'])]['display_name']
         return value

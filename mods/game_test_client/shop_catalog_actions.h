@@ -131,6 +131,8 @@ public:
     using EditSetTextFn=void(__thiscall*)(void*,const void*,int);
     using EditGetTextFn=const void*(__thiscall*)(void*);
     using HoverByRowFn=void(__thiscall*)(void*,int);
+    using FormatOptionTextFn=void*(__cdecl*)(void*,void*,uint32_t,const wchar_t*,int32_t);
+    using CashCaptionKeyFn=uint32_t(__thiscall*)(void*);
 
     struct Bindings
     {
@@ -148,6 +150,8 @@ public:
         EditSetTextFn edit_set_text=nullptr;
         EditGetTextFn edit_get_text=nullptr;
         HoverByRowFn hover_by_row=nullptr;
+        FormatOptionTextFn format_option_text=nullptr;
+        CashCaptionKeyFn cash_caption_key=nullptr;
         NativeUiFindControlFn native_ui_find_control = nullptr;
         GridDataFn grid_data = nullptr;
         GridFindFn grid_find = nullptr;
@@ -158,6 +162,8 @@ public:
         UiCallbackFn room_callback = nullptr;
         void* search_vtable = nullptr;
         UiCallbackFn search_callback = nullptr;
+        void* page_number_vtable = nullptr;
+        UiCallbackFn page_number_callback = nullptr;
         void* buy_vtable = nullptr;
         PopupCallbackFn buy_callback = nullptr;
         void* gift_vtable = nullptr;
@@ -223,7 +229,12 @@ public:
         uint32_t native_page_nonempty = 0;
         uint32_t native_page_bytes = 0;
         uint32_t native_page_options = 0;
+        std::array<uint32_t,8> native_page_product_ids{};
         uint32_t native_request_pending = 0;
+        uint32_t popup_phase=0,popup_option_count=0,popup_product=0,popup_option=0,popup_category=0,popup_payment=0,popup_combo_count=0;
+        int32_t popup_price=0,popup_validity=0;
+        uint32_t popup_native_state=0,popup_combo_visible=0,popup_price_visible=0;
+        std::wstring popup_price_text;
         uint32_t wallet_unchanged = 0;
         uint32_t inventory_unchanged = 0;
         uint32_t inventory_failure = 0;
@@ -283,6 +294,8 @@ public:
         bindings.edit_set_text=Symbol<EditSetTextFn>(api,mod,"room_titles.ui_edit_set_text");
         bindings.edit_get_text=Symbol<EditGetTextFn>(api,mod,"room_titles.ui_edit_get_text");
         bindings.hover_by_row=Symbol<HoverByRowFn>(api,mod,"flow.shop_hover_by_row");
+        bindings.format_option_text=Symbol<FormatOptionTextFn>(api,mod,"test.shop_format_option_text");
+        bindings.cash_caption_key=Symbol<CashCaptionKeyFn>(api,mod,"test.shop_cash_caption_key");
         bindings.native_ui_find_control =
             Symbol<NativeUiFindControlFn>(
                 api, mod, "flow.native_ui_find_control");
@@ -307,6 +320,8 @@ public:
                 api, mod, "flow.shop_room_manager_callback");
         bindings.search_vtable=api->Symbol(mod,"flow.shop_search_vtable");
         bindings.search_callback=Symbol<UiCallbackFn>(api,mod,"flow.shop_search_callback");
+        bindings.page_number_vtable=api->Symbol(mod,"test.shop_page_number_vtable");
+        bindings.page_number_callback=Symbol<UiCallbackFn>(api,mod,"test.shop_page_number_callback");
         bindings.buy_vtable =
             api->Symbol(mod, "flow.shop_buy_options_vtable");
         bindings.buy_callback =
@@ -338,6 +353,7 @@ public:
             bindings_.native_wstring_dtor &&
             bindings_.request_pending &&
             bindings_.request_unit_page &&
+            bindings_.format_option_text && bindings_.cash_caption_key &&
             bindings_.native_ui_find_control &&
             bindings_.grid_data &&
             bindings_.grid_find &&
@@ -347,6 +363,7 @@ public:
             bindings_.room_vtable &&
             bindings_.room_callback &&
             bindings_.search_vtable && bindings_.search_callback &&
+            bindings_.page_number_vtable && bindings_.page_number_callback &&
             bindings_.buy_vtable &&
             bindings_.buy_callback &&
             bindings_.gift_vtable &&
@@ -359,6 +376,7 @@ public:
                 bindings_.room_vtable,
                 bindings_.room_callback) &&
             CallbackMatches(bindings_.search_vtable,bindings_.search_callback) &&
+            CallbackMatches(bindings_.page_number_vtable,bindings_.page_number_callback) &&
             CallbackMatches(
                 bindings_.buy_vtable,
                 bindings_.buy_callback) &&
@@ -572,8 +590,10 @@ private:
     static constexpr size_t kDownmenuShopRadio = 0x50;
     static constexpr size_t kDownmenuMode = 0x60;
     static constexpr size_t kRoomRoot = 0x64;
-    static constexpr size_t kRoomPage = 0x68;
-    static constexpr size_t kRoomMaxPage = 0x6C;
+    // 009DADC0 records the real page at +70/+74 and derives the five-page
+    // arrow groups at +68/+6C. Reading group counters skips four pages.
+    static constexpr size_t kRoomPage = 0x70;
+    static constexpr size_t kRoomMaxPage = 0x74;
     static constexpr size_t kRoomProductsBegin = 0x78;
     static constexpr size_t kRoomProductsEnd = 0x7C;
     static constexpr size_t kRoomOptionsBegin = 0x88;
@@ -589,6 +609,9 @@ private:
     static constexpr size_t kGiftCombo = 0xAC;
     static constexpr size_t kGiftOptionsBegin = 0xB4;
     static constexpr size_t kGiftOptionsEnd = 0xB8;
+    // C73560 appends {native wstring key, button-text object at +1C}
+    // descriptors to the combo's +234/+238 vector. +190 belongs to each
+    // child button-text object's text slots, not to the combo itself.
     static constexpr size_t kComboItemsBegin = 0x234;
     static constexpr size_t kComboItemsEnd = 0x238;
     static constexpr size_t kManagerPopupSentinel = 0x54;
@@ -1480,6 +1503,7 @@ private:
         }
         if (!LoadNativeNames())
             return Publish(kNativeNameMismatch);
+        pageUiReadySince_ = lastElapsed_;
         stage_ = kStageScanPage;
         return Publish(kWaitingForCatalog);
     }
@@ -1509,6 +1533,9 @@ private:
                 ValidateProduct(
                     *product,
                     row.row);
+            if(validated==kUiNameMismatch &&
+               lastElapsed_<pageUiReadySince_+kCatalogWaitMilliseconds)
+                return Publish(kWaitingForCatalog);
             if (validated != kComplete)
                 return Publish(validated);
             target_ = product;
@@ -1523,25 +1550,57 @@ private:
             return Publish(kComplete);
         }
         if (page < maximum) {
-            void* control =
-                FindControl(
-                    roomRoot_,
-                    L"RightBtn",
-                    kButtonKind);
-            if (!control ||
-                !ControlIdentity(
-                    control,
-                    roomRoot_,
-                    L"RightBtn"))
-                return Publish(kControlMismatch);
+            const Result request =
+                CatalogRequestReady();
+            if (request != kComplete)
+                return Publish(request);
+            void* control = nullptr;
+            void* service = room_;
+            UiCallbackFn callback = bindings_.room_callback;
+            if ((page + 1) % 5) {
+                const auto resolved=ResolveService(L"page_number",bindings_.page_number_vtable,&service);
+                if(resolved==kServiceAbsent)return Publish(kWaitingForCatalog);
+                if(resolved!=kServiceMatched)return Publish(kServiceMismatch);
+                void* root=nullptr;void* cached=nullptr;uint32_t selected=0,last=0;
+                if(!ReadPointer(service,0x44,&root) || !ReadValue(service,0x88,&selected) ||
+                   !ReadValue(service,0x8C,&last))return Publish(kNativeFault);
+                // The original 03ED notification may still be queued after
+                // the shop reply. Never use a previous page's pager service.
+                if(!root || selected!=page || last!=maximum)return Publish(kWaitingForCatalog);
+                const uint32_t index=(page+1)%5;
+                const std::wstring name=L"PageBtn"+std::to_wstring(index);
+                if(!ReadPointer(service,0x48+index*sizeof(void*),&cached))return Publish(kNativeFault);
+                control=FindControl(root,name.c_str(),kButtonKind);
+                if(!control || control!=cached || !ControlIdentity(control,root,name.c_str()))
+                    return Publish(kControlMismatch);
+                callback=bindings_.page_number_callback;
+            } else {
+                control=FindControl(roomRoot_,L"RightBtn",kButtonKind);
+                if(!control || !ControlIdentity(control,roomRoot_,L"RightBtn"))
+                    return Publish(kControlMismatch);
+            }
             pageBefore_ = page;
+            pageInvokedAt_ = lastElapsed_;
             if (!Invoke(
-                    bindings_.room_callback,
-                    room_,
+                    callback,
+                    service,
                     kClickEvent,
                     control))
                 return Publish(kNativeFault);
             ++observation_.original_actions;
+            uint32_t invokedPage = 0;
+            if (!ReadValue(
+                    room_,
+                    kRoomPage,
+                    &invokedPage))
+                return Publish(kNativeFault);
+            observation_.current_page =
+                invokedPage;
+            const Result invokedRequest =
+                CatalogRequestReady();
+            if (invokedRequest ==
+                kNativeFault)
+                return Publish(kNativeFault);
             stage_ = kStageWaitPage;
             return Publish(kChangingPage);
         }
@@ -1557,18 +1616,35 @@ private:
     {
         if (!RoomStillMatches())
             return Publish(kServiceMismatch);
-        const auto request=CatalogRequestReady();
-        if(request!=kComplete)return Publish(request);
-        uint32_t page = 0;
-        if (!ReadValue(
-                room_,
-                kRoomPage,
-                &page))
+        const Result request =
+            CatalogRequestReady();
+        if (request == kNativeFault)
             return Publish(kNativeFault);
-        if (page == pageBefore_)
+        std::vector<ProductRow> rows;
+        uint32_t page = 0;
+        uint32_t maximum = 0;
+        if (!ReadProductRows(
+                &rows,
+                &page,
+                &maximum))
+            return Publish(
+                request ==
+                        kWaitingForCatalog
+                    ? kChangingPage
+                    : kMalformedCatalog);
+        if (request ==
+            kWaitingForCatalog)
             return Publish(kChangingPage);
+        // The original page-number callback posts 03EC; its normal consumer
+        // sends 072D, then 0549 rebuilds rows and +70/+74 through 009DADC0.
+        // Arrow clicks advance only the group synchronously. Neither action
+        // makes the next eight rows available before the original reply.
+        if (page == pageBefore_)
+            return Publish(lastElapsed_<pageInvokedAt_+kCatalogWaitMilliseconds
+                ? kChangingPage : kPageDidNotAdvance);
         if (page != pageBefore_ + 1)
             return Publish(kPageDidNotAdvance);
+        pageUiReadySince_ = lastElapsed_;
         stage_ = kStageScanPage;
         return Publish(kChangingPage);
     }
@@ -1659,6 +1735,14 @@ private:
                 : bindings_.buy_vtable;
         if (!HasVtable(popup, expected))
             return Publish(kPopupMismatch);
+        uint32_t nativeState=0;
+        if(!ReadValue(popup,0x44,&nativeState))return Publish(kNativeFault);
+        observation_.popup_native_state=nativeState;
+        // 009DC900 (and the gift counterpart) advances 3 -> 4 only
+        // after the original modal update populates its combo and labels.
+        // An attached state-1 modal still contains constructor placeholders.
+        if(nativeState<4)return Publish(gift ? kWaitingForGiftPreview : kWaitingForBuyPreview);
+        if(nativeState!=4)return Publish(kPopupMismatch);
         const Result verified =
             ValidatePopup(popup, gift);
         if (verified != kComplete)
@@ -1811,16 +1895,14 @@ private:
                 64,
                 &visible))
             return kUiNameMismatch;
+        observation_.native_name = name->second;
+        observation_.visible_name = visible;
         std::wstring shortened;
         if (product.displayName.size() > 10)
             shortened =
                 product.displayName.substr(0, 10) +
                 L"..";
-        observation_.native_name = name->second;
-        observation_.visible_name = visible;
-        if (visible != product.displayName &&
-            visible != shortened)
-            return kUiNameMismatch;
+        const bool titleMatches=visible==product.displayName || visible==shortened;
 
         std::vector<sdgo::shop::Option> options;
         if (!ReadOptions(
@@ -1837,6 +1919,11 @@ private:
              ++index) {
             const sdgo::shop::Option& option =
                 options[index];
+            if(option.productId==product.productId) {
+                observation_.product_id=option.productId;observation_.option_id=option.id;
+                observation_.category=option.category;observation_.validity=option.validity;
+                observation_.price=option.price;observation_.payment=option.payment;
+            }
             if (option.productId !=
                 product.productId ||
                 option.category !=
@@ -1902,13 +1989,14 @@ private:
             name->second;
         observation_.visible_name =
             visible;
-        return kComplete;
+        return titleMatches ? kComplete : kUiNameMismatch;
     }
 
     Result ValidatePopup(
         void* popup,
         bool gift)
     {
+        observation_.popup_phase=1;
         void* root = nullptr;
         void* combo = nullptr;
         void* cancel = nullptr;
@@ -1942,6 +2030,15 @@ private:
                 L"BuyCancelBtn"))
             return kControlMismatch;
 
+        uint8_t shown=0;
+        ReadValue(popup,0x44,&observation_.popup_native_state);
+        if(ReadValue(combo,0x162,&shown))observation_.popup_combo_visible=shown;
+        void* priceControl=FindControl(root,L"PriceStatic",kStaticKind);
+        if(priceControl) {
+            if(ReadValue(priceControl,0x162,&shown))observation_.popup_price_visible=shown;
+            ReadHostString(static_cast<uint8_t*>(priceControl)+kControlText,255,&observation_.popup_price_text);
+        }
+
         std::vector<sdgo::shop::Option> options;
         if (!ReadOptions(
                 popup,
@@ -1954,10 +2051,18 @@ private:
                 &options) ||
             options.empty())
             return kPopupOptionMismatch;
+        observation_.popup_option_count=static_cast<uint32_t>(options.size());
+        observation_.popup_phase=2;
         uint32_t matching = UINT32_MAX;
         for (uint32_t index = 0;
              index < options.size();
              ++index) {
+            if(index==0 || options[index].id==observation_.option_id) {
+                const auto& item=options[index];observation_.popup_product=item.productId;
+                observation_.popup_option=item.id;observation_.popup_category=item.category;
+                observation_.popup_price=item.price;observation_.popup_validity=item.validity;
+                observation_.popup_payment=item.payment;
+            }
             if (options[index].productId !=
                 target_->productId)
                 return kPopupOptionMismatch;
@@ -1972,6 +2077,7 @@ private:
             return kPopupOptionMismatch;
         const sdgo::shop::Option& option =
             options[matching];
+        observation_.popup_phase=3;
         if (option.category !=
                 target_->category ||
             option.validity !=
@@ -1994,14 +2100,17 @@ private:
 
         uintptr_t itemBegin = 0;
         uintptr_t itemEnd = 0;
-        if (!ReadValue(
+        observation_.popup_phase=4;
+        const bool comboRead=ReadValue(
                 combo,
                 kComboItemsBegin,
-                &itemBegin) ||
-            !ReadValue(
+                &itemBegin) && ReadValue(
                 combo,
                 kComboItemsEnd,
-                &itemEnd) ||
+                &itemEnd);
+        observation_.popup_combo_count=comboRead && itemEnd>=itemBegin
+            ? static_cast<uint32_t>((itemEnd-itemBegin)/sizeof(void*)) : UINT32_MAX;
+        if (!comboRead ||
             !itemBegin ||
             itemEnd < itemBegin ||
             (itemEnd - itemBegin) %
@@ -2011,13 +2120,23 @@ private:
                     sizeof(void*) !=
                 options.size())
             return kPopupOptionMismatch;
+        observation_.popup_combo_count=static_cast<uint32_t>((itemEnd-itemBegin)/sizeof(void*));
+        observation_.popup_phase=5;
+        void* descriptor=nullptr;void* labelButton=nullptr;void* parent=nullptr;
+        std::wstring key;
+        if(!ReadAddress(itemBegin+matching*sizeof(void*),&descriptor) || !descriptor ||
+           !ReadHostString(descriptor,63,&key) || key!=std::to_wstring(matching) ||
+           !ReadPointer(descriptor,0x1C,&labelButton) || !labelButton ||
+           !ReadPointer(labelButton,kControlParent,&parent) || parent!=root)
+            return kControlMismatch;
+        uintptr_t textBegin=0,textEnd=0;
+        if(!ReadValue(labelButton,0x190,&textBegin) || !ReadValue(labelButton,0x194,&textEnd) ||
+           !textBegin || textEnd<textBegin || (textEnd-textBegin)%sizeof(void*) ||
+           (textEnd-textBegin)/sizeof(void*)<1 || (textEnd-textBegin)/sizeof(void*)>16)
+            return kUiDurationMismatch;
         void* nativeLabel = nullptr;
-        void* entry=nullptr;void* optionButton=nullptr;
-        if(!ReadAddress(itemBegin+matching*sizeof(void*),&entry) || !entry ||
-           !ReadPointer(entry,0x1C,&optionButton) || !optionButton ||
-           !ControlIdentity(optionButton,combo,std::to_wstring(matching).c_str()) ||
-           !ReadButtonTextItem(
-                optionButton,
+        if (!ReadButtonTextItem(
+                labelButton,
                 0,
                 &nativeLabel) ||
             !nativeLabel)
@@ -2032,6 +2151,8 @@ private:
             sdgo::shop::DurationLabel(
                 option,
                 observation_.time_limit);
+        observation_.popup_phase=6;
+        observation_.option_label=label;
         if (expected.empty()) {
             const auto runtime =
                 runtime_.find(option.id);
@@ -2039,14 +2160,38 @@ private:
                 return kPopupOptionMismatch;
             expected = runtime->second.text;
         }
-        if(visualOnly_) {
-            if(label.rfind(expected+L" :",0)!=0 || label.find(std::to_wstring(option.price))==std::wstring::npos)
-                return kUiDurationMismatch;
-        } else if (label != expected)
+        std::wstring caption;
+        if(!FormatOptionCaption(expected,option,&caption) || label!=caption)
             return kUiDurationMismatch;
         targetOptionIndex_ = matching;
         observation_.option_label = label;
         return kComplete;
+    }
+
+    bool FormatOptionCaption(const std::wstring& label,const sdgo::shop::Option& option,
+                             std::wstring* output) const
+    {
+        uint8_t* profile=nullptr;
+        if(!output || !ReadIndirect(bindings_.profile_pointer,&profile) || !profile)return false;
+        // 006EC6D0 is the original cdecl locale formatter. Its output adds
+        // eight bytes of locale metadata to the native wstring prefix.
+        std::array<uint8_t,0x20> temporary{};bool constructed=false,valid=false;
+        __try {
+            uint32_t key=0x1ED90;
+            if(option.payment==2) {
+                key=bindings_.cash_caption_key(profile);
+                if(key!=0x1ED91 && key!=0x1F2BE)return false;
+            } else if(option.payment!=1)return false;
+            if(!bindings_.native_wstring_ctor(temporary.data(),L""))return false;
+            constructed=true;
+            bindings_.format_option_text(profile,temporary.data(),key,label.c_str(),option.price);
+            valid=ReadHostString(temporary.data(),255,output);
+        } __except(EXCEPTION_EXECUTE_HANDLER) {valid=false;}
+        if(constructed) {
+            __try {bindings_.native_wstring_dtor(temporary.data());}
+            __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+        }
+        return valid;
     }
 
     bool RuntimeMatches(
@@ -2703,6 +2848,7 @@ private:
                 (end - begin) /
                 kProductStride);
         observation_.native_page_slots=count;observation_.native_page_nonempty=0;
+        observation_.native_page_product_ids.fill(0);
         rows.reserve(count);
         for (uint32_t index = 0;
              index < count;
@@ -2715,6 +2861,7 @@ private:
                     &productId))
                 return false;
             if (!productId)continue; // native pages retain empty display slots
+            observation_.native_page_product_ids[index]=productId;
             ++observation_.native_page_nonempty;
             for (const ProductRow& row : rows) {
                 if (row.productId ==
@@ -3064,6 +3211,8 @@ private:
     void* roomRoot_ = nullptr;
     void* popup_ = nullptr;
     Product* target_ = nullptr;
+    uint64_t pageInvokedAt_ = 0;
+    uint64_t pageUiReadySince_ = 0;
     uint32_t targetRow_ = 0;
     uint32_t targetOptionIndex_ = 0;
     uint32_t pageBefore_ = 0;

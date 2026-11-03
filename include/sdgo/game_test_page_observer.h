@@ -44,7 +44,8 @@ enum SdgoHangarGameTestRunnerStateV1 {
 
 enum SdgoStorageGameTestActionV1 {
     SDGO_STORAGE_GAME_TEST_ACTION_NONE = 0,
-    SDGO_STORAGE_GAME_TEST_ACTION_CLAIM_ALL = 1
+    SDGO_STORAGE_GAME_TEST_ACTION_CLAIM_ALL = 1,
+    SDGO_STORAGE_GAME_TEST_ACTION_CLOSE = 2
 };
 
 enum SdgoStorageGameTestTabV1 {

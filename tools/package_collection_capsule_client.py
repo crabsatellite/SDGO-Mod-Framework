@@ -328,7 +328,7 @@ def package_client_registry(
         b"if errorlevel 1 pause\r\n"
     )
     readme = (
-        "Collection Capsule client package (Beta)\r\n"
+        "Collection Capsule client package\r\n"
         "\r\n"
         "Install: double-click Install-Client.cmd and select the folder containing GOnline.exe.\r\n"
         "Uninstall: close that client, double-click Uninstall-Client.cmd and select the same folder.\r\n"

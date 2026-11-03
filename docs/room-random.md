@@ -1,4 +1,4 @@
-# Per-round random owned loadouts (Beta)
+# Per-round random owned loadouts
 
 [简体中文](room-random.zh-CN.md)
 
@@ -35,8 +35,11 @@ Without the command, rounds use the native sortie flow.
 - Disabled, expired, out-of-energy, training or non-sortie units are never drawn. Locked units (sale
   protection) can be drawn.
 - When alternatives exist, the next round avoids the previous model or model set.
-- If any player has no usable unit or cannot reach ten points, the whole start is cancelled. C-only
-  decks reach at most eight points.
+- Costs come from native unit data, rather than a fixed mapping from grade letters. New variants
+  enter only their owner's pool when their actual cost and room restrictions are valid.
+- If any player has no usable unit or cannot reach ten points, the whole start is cancelled. Four
+  ordinary two-point C units reach only eight; variants with different native costs are evaluated
+  by those actual costs rather than rejected solely by their grade.
 
 The result applies to this round only; `GoUserUnitNum`, inventory, saved decks and locks are not changed.
 Drawn units keep their level, upgrades, skills, paint, emblem, experience and serial.

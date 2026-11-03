@@ -29,6 +29,96 @@ class ReuseOwnedClientTests(unittest.TestCase):
                  mock.patch.dict(sys.modules,{'send2trash':types.SimpleNamespace(send2trash=recycle)})]
         for patch in patches:patch.start();self.addCleanup(patch.stop)
 
+    def existing_peer(self,state='existing_account'):
+        path=self.base/'private/peer.ini';path.parent.mkdir(exist_ok=True)
+        config=game_test.read_ini(self.fixture.account_profile)
+        config['account']['username']='gtPeer0001'
+        if not config.has_section('registration'):config.add_section('registration')
+        config['registration']['state']=state
+        game_test.write_ini(path,config)
+        return path
+
+    def test_explicit_rebind_reuses_same_client_and_preserves_both_account_profiles(self):
+        run=self.fixture.prepare('account-rebind');peer=self.existing_peer()
+        old_profile=self.fixture.account_profile.read_bytes();peer_profile=peer.read_bytes()
+        identity=(run/'client/GOnline.exe').stat().st_ino
+        with mock.patch.object(game_test,'create_account_profile',side_effect=AssertionError('must not register')):
+            result=game_test.reuse_prepared(self.fixture.template,self.fixture.stage,run,
+                account_profile=peer,rebind_existing_account=True)
+        self.assertEqual(identity,(run/'client/GOnline.exe').stat().st_ino)
+        self.assertTrue(result['reuse']['rebound_existing_account'])
+        self.assertEqual(game_test.validate_private_account(run/'client',result['plan']),game_test.account_profile_lock_path(peer))
+        self.assertEqual(old_profile,self.fixture.account_profile.read_bytes())
+        self.assertEqual(peer_profile,peer.read_bytes())
+        for profile in (self.fixture.account_profile,peer):self.assertFalse(game_test.account_profile_lock_path(profile).exists())
+        game_test.verify_hashes(game_test.validate_metadata(run))
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows short-name aliases')
+    def test_short_and_long_profile_names_share_one_exclusive_account_lock(self):
+        import ctypes
+        from ctypes import wintypes
+        peer=self.existing_peer()
+        native=ctypes.WinDLL('kernel32',use_last_error=True)
+        native.GetShortPathNameW.argtypes=(wintypes.LPCWSTR,wintypes.LPWSTR,wintypes.DWORD)
+        native.GetShortPathNameW.restype=wintypes.DWORD
+        buffer=ctypes.create_unicode_buffer(32768)
+        size=native.GetShortPathNameW(str(peer),buffer,len(buffer))
+        self.assertTrue(size and size<len(buffer))
+        alias=Path(buffer.value)
+        if str(alias).casefold()==str(peer.resolve()).casefold():
+            self.skipTest('volume does not expose a distinct short path')
+        self.assertEqual(peer.resolve(),alias.resolve())
+        long_lock=game_test.account_profile_lock_path(peer.resolve())
+        self.assertEqual(long_lock,game_test.account_profile_lock_path(alias))
+        lock,token=game_test.acquire_exclusive_lock(long_lock,'long account path')
+        try:
+            with self.assertRaises(game_test.GameTestError):
+                game_test.acquire_exclusive_lock(game_test.account_profile_lock_path(alias),'short account alias')
+        finally:
+            game_test.release_owned_lock(lock,token)
+
+    def test_profile_parent_alias_returns_canonical_exclusive_lock(self):
+        peer=self.existing_peer()
+        alias=peer.parent/'..'/peer.parent.name/peer.name
+        expected=peer.resolve().with_name(peer.name+'.run.lock')
+        self.assertEqual(expected,game_test.account_profile_lock_path(alias))
+        lock,token=game_test.acquire_exclusive_lock(expected,'canonical account')
+        try:
+            with self.assertRaises(game_test.GameTestError):
+                game_test.acquire_exclusive_lock(game_test.account_profile_lock_path(alias),'parent alias')
+        finally:
+            game_test.release_owned_lock(lock,token)
+
+    def test_another_profile_still_requires_an_explicit_rebind(self):
+        run=self.fixture.prepare('no-implicit-switch');old=(run/'run.json').read_bytes()
+        with self.assertRaisesRegex(game_test.GameTestError,'explicit existing-account'):
+            game_test.reuse_prepared(self.fixture.template,self.fixture.stage,run,account_profile=self.existing_peer())
+        self.assertEqual(old,(run/'run.json').read_bytes());self.assertFalse(self.recycled)
+
+    def test_rebinding_cannot_create_an_account_or_use_registration_retries(self):
+        for state,options in (('pending_first_login',{}),('existing_account',{'retry_count':2}),
+                              ('existing_account',{'expect_first_fail':True})):
+            with self.subTest(state=state,options=options):
+                run=self.fixture.prepare('no-registration-'+str(len(list(self.base.glob('no-registration-*')))))
+                old=(run/'run.json').read_bytes()
+                with self.assertRaisesRegex(game_test.GameTestError,'already registered'):
+                    game_test.reuse_prepared(self.fixture.template,self.fixture.stage,run,
+                        account_profile=self.existing_peer(state),rebind_existing_account=True,**options)
+                self.assertEqual(old,(run/'run.json').read_bytes());self.assertFalse(self.recycled)
+
+    def test_busy_rebind_target_leaves_previous_client_intact_and_releases_its_lock(self):
+        run=self.fixture.prepare('busy-peer');peer=self.existing_peer();old=(run/'run.json').read_bytes()
+        held,token=game_test.acquire_exclusive_lock(game_test.account_profile_lock_path(peer),'existing peer')
+        try:
+            with self.assertRaises(game_test.GameTestError):
+                game_test.reuse_prepared(self.fixture.template,self.fixture.stage,run,
+                    account_profile=peer,rebind_existing_account=True)
+            self.assertEqual(old,(run/'run.json').read_bytes());self.assertFalse(self.recycled)
+            self.assertFalse((run/'.run.lock').exists())
+            self.assertFalse(game_test.account_profile_lock_path(self.fixture.account_profile).exists())
+            self.assertTrue(held.exists())
+        finally:game_test.release_owned_lock(held,token)
+
     def test_fresh_capsule_moves_same_file_and_archives_prior_evidence(self):
         run=self.fixture.prepare('current');old=self.fixture.metadata(run)
         game=run/'client/GOnline.exe';identity=game.stat().st_ino
@@ -47,10 +137,32 @@ class ReuseOwnedClientTests(unittest.TestCase):
         self.assertEqual(old['run_id'],new['reuse']['previous_run_id'])
         self.assertIsNone(new['execution'])
         self.assertFalse(event.exists())
+        self.assertEqual((run/'client/d3d9.dll').read_bytes(),b'normal-loader')
         self.assertEqual('old native evidence\n',game_test.read_json(self.base/'gametest-current/previous-run.json')['events'])
         self.assertTrue(any(p.name=='gametest' for p in self.recycled))
         self.assertFalse((run/'.run.lock').exists())
         self.assertFalse(game_test.account_profile_lock_path(self.fixture.account_profile).exists())
+        game_test.verify_hashes(game_test.validate_metadata(run))
+
+    def test_explicit_staged_loader_binding_replaces_only_the_owned_copy(self):
+        run=self.fixture.prepare('staged-loader')
+        source_loader=(self.fixture.template/'d3d9.dll').read_bytes()
+        stage_loader=(self.fixture.stage/'client/d3d9.dll').read_bytes()
+        self.assertNotEqual(source_loader,stage_loader)
+
+        metadata=game_test.reuse_prepared(
+            self.fixture.template,
+            self.fixture.stage,
+            run,
+            bind_staged_loader=True,
+        )
+
+        self.assertEqual((run/'client/d3d9.dll').read_bytes(),stage_loader)
+        self.assertEqual((self.fixture.template/'d3d9.dll').read_bytes(),source_loader)
+        self.assertEqual(
+            metadata['client']['immutable_hashes']['d3d9.dll'],
+            game_test.sha256(self.fixture.stage/'client/d3d9.dll'),
+        )
         game_test.verify_hashes(game_test.validate_metadata(run))
 
     def test_running_client_refuses_before_any_move(self):
@@ -81,6 +193,14 @@ class ReuseOwnedClientTests(unittest.TestCase):
     def test_referenced_archive_baseline_is_protected(self):
         run=self.fixture.prepare('baseline');other=self.base/'another';other.mkdir()
         (other/'run.json').write_text(json.dumps({'assets':{'baseline':str(run)}}))
+        with self.assertRaisesRegex(game_test.GameTestError,'baseline'):
+            game_test.reuse_prepared(self.fixture.template,self.fixture.stage,run)
+        self.assertTrue((run/'client/GOnline.exe').exists());self.assertFalse(self.recycled)
+
+    def test_nested_friend_campaign_also_protects_its_archive_baseline(self):
+        run=self.fixture.prepare('baseline')
+        actor=self.base/'friends/campaign/a-01';actor.mkdir(parents=True)
+        (actor/'run.json').write_text(json.dumps({'assets':{'baseline':str(run)}}))
         with self.assertRaisesRegex(game_test.GameTestError,'baseline'):
             game_test.reuse_prepared(self.fixture.template,self.fixture.stage,run)
         self.assertTrue((run/'client/GOnline.exe').exists());self.assertFalse(self.recycled)

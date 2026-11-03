@@ -19,8 +19,8 @@ foreach($mode in @('active','clamp','inactive','invalid','disabled','wrongkind',
     if($LASTEXITCODE -ne 0 -or ($output -join "`n") -notmatch 'ALL DAILY REWARD RUNTIME CHECKS PASSED'){throw ($output -join "`n")}
     $log=[IO.File]::ReadAllText((Join-Path $dir 'sdgo\logs\sdgo.log'))
     if($mode -in @('active','clamp','inactive')){
-        if(-not $log.Contains('loaded Daily double battle rewards (Beta)')){throw "Mod was not active in $mode"}
-    }elseif($log.Contains('loaded Daily double battle rewards (Beta)')){throw "Invalid or disabled Mod unexpectedly loaded in $mode"}
+        if(-not $log.Contains('loaded Daily double battle rewards')){throw "Mod was not active in $mode"}
+    }elseif($log.Contains('loaded Daily double battle rewards')){throw "Invalid or disabled Mod unexpectedly loaded in $mode"}
     Write-Host "$mode : payout, decomposition, guards, general/FP/SIMD state and error checks passed for all ten paths"
 }
 Write-Host "ALL DAILY REWARD RUNTIME CASES PASSED`nReceipt: $work"
