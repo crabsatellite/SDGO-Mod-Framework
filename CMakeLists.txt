@@ -315,6 +315,8 @@ add_custom_target(sdgo_data ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/config/sdgo.ini" "${SDGO_STAGE}/server/sdgo/"
     COMMENT "Staging symbol files and sdgo.ini"
 )
+# Direct builds of this lifecycle fix also need its admitted host signature.
+add_dependencies(waitroom_window_fix sdgo_data)
 # A GameTest build must ship the symbol map required by its current manifest,
 # including when only this target is built instead of ALL_BUILD.
 add_dependencies(game_test_client sdgo_data)
