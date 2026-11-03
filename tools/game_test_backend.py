@@ -812,10 +812,28 @@ def stop(work,reason):
     emit('stop_requested',pid=state.get('pid'))
 
 def _pid_exists(pid):
+    if type(pid) is not int or pid<=0:return False
+    if os.name=='nt':
+        # Signal zero is CTRL_C_EVENT on Windows, not a POSIX existence probe.
+        # A synchronizable handle can only observe exit; it cannot signal or kill.
+        kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+        kernel.OpenProcess.argtypes=[wintypes.DWORD,wintypes.BOOL,wintypes.DWORD]
+        kernel.OpenProcess.restype=wintypes.HANDLE
+        kernel.WaitForSingleObject.argtypes=[wintypes.HANDLE,wintypes.DWORD]
+        kernel.WaitForSingleObject.restype=wintypes.DWORD
+        kernel.CloseHandle.argtypes=[wintypes.HANDLE]
+        kernel.CloseHandle.restype=wintypes.BOOL
+        process=kernel.OpenProcess(0x00100000,False,pid) # SYNCHRONIZE only
+        if not process:
+            # Access denied or an unknown query failure cannot justify cleanup.
+            return ctypes.get_last_error() not in (87,1168)
+        try:
+            return kernel.WaitForSingleObject(process,0)!=0 # WAIT_OBJECT_0 proves exit
+        finally:kernel.CloseHandle(process)
     try:
         os.kill(pid,0)
-    except OSError:
-        return False
+    except ProcessLookupError:return False
+    except PermissionError:return True
     return True
 
 def cleanup(work,remove_runtime):
@@ -832,10 +850,8 @@ def cleanup(work,remove_runtime):
     if state_path.is_file():
         state=json.loads(state_path.read_text(encoding='utf-8-sig'))
         pid=int(state.get('pid') or 0)
-        if pid and state.get('phase')!='stopped':
-            try:os.kill(pid,0)
-            except OSError:pass
-            else:raise RuntimeError('Backend controller is still active')
+        if pid and state.get('phase')!='stopped' and _pid_exists(pid):
+            raise RuntimeError('Backend controller is still active')
         service_pids={int(row.get('pid') or 0) for row in state.get('services',[])}
         service_pids.update(int(pid or 0) for pid in state.get('remaining_owned_pids',[]))
         if any(pid>0 and _pid_exists(pid) for pid in service_pids):

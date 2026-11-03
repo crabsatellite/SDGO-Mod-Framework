@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <cstdint>
 #include <cstring>
+#include <cwchar>
 #include <string>
 #include "sdgo/sdgo_api.h"
 #include "sdgo/game_test_capsule_observer.h"
@@ -17,15 +18,20 @@ public:
         observe_=module?reinterpret_cast<SdgoCapsuleGameTestGetSnapshotV1Fn>(GetProcAddress(module,SDGO_CAPSULE_GAME_TEST_SNAPSHOT_EXPORT)):nullptr;
         return data_ && find_ && observe_;
     }
-    bool Check(const std::wstring& runtime) {
+    bool Check(const std::wstring& runtime,bool allowEmptyTables=false) {
         state_={};
         if(!data_ || !find_){state_.error=1;return false;}
         struct Table {const wchar_t* name;uint32_t first;int type;};
         const Table tables[]={{L"fixed",155001,0x17},{L"coin",135001,0x16},{L"custom",3519001,0x41},
                               {L"candidates",3520001,0x42},{L"activity",145001,0x3C}};
         for(const auto& table:tables) {
-            const auto count=GetPrivateProfileIntW(L"counts",table.name,0,runtime.c_str());
-            if(!count || count>8192){state_.error=2;return false;}
+            wchar_t countText[16]{};
+            GetPrivateProfileStringW(L"counts",table.name,L"",countText,16,runtime.c_str());
+            const size_t digits=wcslen(countText);
+            if(!digits || digits>4 || (digits>1 && countText[0]==L'0') ||
+               wcsspn(countText,L"0123456789")!=digits){state_.error=2;return false;}
+            const auto count=static_cast<uint32_t>(wcstoul(countText,nullptr,10));
+            if((!count && !allowEmptyTables) || count>8192){state_.error=2;return false;}
             state_.expected+=count;
             for(uint32_t i=0;i<count;++i) {
                 const uint8_t* record=nullptr;

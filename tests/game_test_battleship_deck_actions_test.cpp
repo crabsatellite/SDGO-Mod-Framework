@@ -1305,6 +1305,41 @@ void TestPreparedFleetReadOnly(BattleShipDeckActions& decks)
     WriteUid(ship+kShipUnitUids,kTargetUids[0]);WriteUid(g_briefInventory[2]+4,999999);
     Check(decks.ObserveExistingDeck(kTargetUids,observed)==BattleShipDeckActions::kRequiredUnitMissing,
         "a profile UID absent from the real inventory cannot satisfy prepared-fleet validation");
+
+    for(unsigned count=2;count<=4;++count) {
+        ResetFixture(decks);ship=g_profileStorage+kProfileBattleShip;
+        WriteUid(ship,kShipUid);WriteUid(ship+kShipLeader,kTargetUids[count-1]);
+        uint64_t expected[4]{};const uint64_t automatic[4]{};
+        for(unsigned i=0;i<4;++i) {
+            if(i<count)expected[i]=kTargetUids[i];
+            WriteUid(ship+kShipUnitUids+i*8,expected[i]);
+        }
+        Check(decks.ObserveExistingDeck(automatic,observed)==BattleShipDeckActions::kAccepted &&
+            observed.profile_matches && observed.selected_count==count && observed.total_cost==count*2,
+            "existing legal two three and four unit fleets are observed without a new deck edit");
+        WriteUid(ship+kShipLeader,kTargetUids[0]);
+        Check(decks.ObserveExistingDeck(expected,observed)==BattleShipDeckActions::kAccepted && observed.selected_count==count,
+            "an explicit fixture can declare empty trailing fleet slots without inventing units");
+        Check(!g_lobbyCalls && !g_selectCalls && !g_saveCalls && !g_goOutCalls,
+            "variable-size existing fleet checks never request acquisition Save or GoOut");
+    }
+    ResetFixture(decks);ship=g_profileStorage+kProfileBattleShip;
+    WriteUid(ship,kShipUid);WriteUid(ship+kShipLeader,kTargetUids[0]);
+    const uint64_t automatic[4]{};
+    for(unsigned i=0;i<4;++i)WriteUid(ship+kShipUnitUids+i*8,kTargetUids[i]);
+    WriteUid(ship+kShipUnitUids+8,kTargetUids[0]);
+    Check(decks.ObserveExistingDeck(automatic,observed)==BattleShipDeckActions::kRequiredUnitDuplicate,
+        "automatic existing fleet observation rejects duplicate owned copies");
+    WriteUid(ship+kShipUnitUids+8,kTargetUids[1]);WriteUid(ship+kShipLeader,999999);
+    Check(decks.ObserveExistingDeck(automatic,observed)==BattleShipDeckActions::kRequiredUnitChanged,
+        "the actual fleet leader must be among its owned selected copies");
+    WriteUid(ship+kShipLeader,kTargetUids[0]);
+    for(unsigned i=0;i<4;++i)g_grids[i][0x139]=3;
+    Check(decks.ObserveExistingDeck(automatic,observed)==BattleShipDeckActions::kRequiredUnitCostMismatch,
+        "an over-budget native fleet cannot satisfy an existing-fleet fixture");
+    g_grids[0][0x139]=0;
+    Check(decks.ObserveExistingDeck(automatic,observed)==BattleShipDeckActions::kRequiredUnitCostMismatch,
+        "a missing native cost cannot silently become a free unit");
 }
 } // namespace
 

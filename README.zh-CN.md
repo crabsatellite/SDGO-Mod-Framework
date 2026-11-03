@@ -9,6 +9,7 @@ Manager 提供「更新」按钮：默认 Stable，可切换 Beta，自动检查
 服主与维护人员通过 **SDGO Mod Manager** 管理功能，客户端目录顶部提供「服主专用」入口，程序和网页标签统一使用界面中的 SDGO 标志。普通玩家使用原游戏启动器，不要自行修改 Mod，以免与服务器配置不匹配。
 本页仅列出功能概览。具体配置、玩法操作、兼容性与排错方法见各功能文档。
 Beta、Experimental 表示发布阶段。
+Stable 表示当前基本功能已验证可用，后续 Bug 通过新版本修复；Beta 用于基本流程仍在开发的功能，目前为机体导入。
 发布阶段以已发布版本为准，后续迭代单独验收。
 
 ## 基础修复
@@ -24,7 +25,7 @@ Beta、Experimental 表示发布阶段。
 | 阿普萨拉斯 III 变形卡死修复 <!-- catalog: `transform_input_fix` --> | 缺少变形动画时恢复原生状态退出，解除移动与攻击锁定 | [使用说明](docs/transform-input-fix.zh-CN.md) |
 | Agent 中继日志修复 <!-- catalog: `agent_relay_log_fix` --> | 修复 Agent 中继日志读取无效内存 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
 | 军衔回退修复 <!-- catalog: `rank_progression_fix` --> | 防止战斗结算降低已有军衔（WorldServer） | [使用说明](docs/rank-progression-fix.zh-CN.md) |
-| 好友列表修复 <!-- catalog: `friend_list_fix`、`friend_list_client_fix` --> | 保留离线好友、当前角色名和原生聊天入口 | [使用说明](docs/friend-list-fix.zh-CN.md) |
+| 好友列表修复 <!-- catalog: `friend_list_fix`、`friend_list_client_fix` --> | 保留离线好友与当前角色名，恢复原生好友聊天界面 | [使用说明](docs/friend-list-fix.zh-CN.md) |
 | 新账号起始资料修复 <!-- catalog: `new_account_profile` --> | 可配置的初始 GP、点券、军衔和赠送机体，替代原服的 9,999,999 / 15 级 | [使用说明](docs/new-account-profile.zh-CN.md) |
 | 商城租赁与中文选项修复 <!-- catalog: `shop_labels` --> | 商城中显示可读的租赁/永久标签和中文选项名 | [使用说明](docs/shop-labels.zh-CN.md) |
 
@@ -37,24 +38,29 @@ Beta、Experimental 表示发布阶段。
 | 功能 | 简介 | 文档 |
 |---|---|---|
 | 任务 AI 僚机 <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai`，由 AI 僚机补位 | [使用说明](docs/coop-wingmen.zh-CN.md) |
-| 对战 AI <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友，同步解除开局控制并显示 TAB 战绩 | [使用说明](docs/pvp-ai.zh-CN.md) |
+| 对战 AI <!-- catalog: `pvp_ai`、`match_ai` --> | 真人同队或原生分队；独立选择双方补位、只补对面或精确 AI 数量；AI 获得 MVP 后保留真人房主 | [使用说明](docs/pvp-ai.zh-CN.md) |
 | AI 机体目录（独立附加包） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |
 | 战斗贡献奖励 <!-- catalog: `battle_rewards` --> | 按战斗贡献发放 GB/MB，含钱包服务管理与历史 GB 补偿 | [使用说明](docs/battle-rewards.zh-CN.md) |
-| 收藏扭蛋（Beta） <!-- catalog: `collection_capsule` --> | 十万 GP 活动机台，优先抽尚未解锁的图鉴机体 | [使用说明](docs/collection-capsule.zh-CN.md) |
-| 每局随机机体（Beta） <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组 | [使用说明](docs/room-random.zh-CN.md) |
+| 收藏扭蛋 <!-- catalog: `collection_capsule` --> | 十万 GP 活动机台，优先抽尚未解锁的图鉴机体 | [使用说明](docs/collection-capsule.zh-CN.md) |
+| 每局随机机体 <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组 | [使用说明](docs/room-random.zh-CN.md) |
 | FPS 上限 <!-- catalog: `fps_limit` --> | 提高渲染帧率上限，保留原生游戏速度 | [使用说明](docs/fps-limit.zh-CN.md) |
 | 长房名 <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 普通、AI、队伍及任务房的建房、设置和改名入口支持最长 128 字 | [使用说明](docs/room-titles.zh-CN.md) |
 | 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | 房名选择难度、退射、远距离追敌及原生必杀／瞬移恢复 | [使用说明](docs/battle-ai.zh-CN.md) |
 | 自动机库容量 <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） | [使用说明](docs/hangar-capacity.zh-CN.md) |
-| 机库管理（批量 GB 兑换 Beta） <!-- catalog: `hangar_manager` --> | 机体管理页内一键整理和重复机体兑换（GB 服务端批量入账） | [使用说明](docs/hangar-manager.zh-CN.md) |
-| 副官补给与管理（Beta） <!-- catalog: `operator_catalog` --> | 五位免费补给副官，以及副官名称、头像和掉落的管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
+| 机库管理 <!-- catalog: `hangar_manager` --> | 机体管理页内一键整理和重复机体兑换（GB 服务端批量入账） | [使用说明](docs/hangar-manager.zh-CN.md) |
+| 副官补给与管理 <!-- catalog: `operator_catalog` --> | 五位免费补给副官，以及副官名称、头像和掉落的管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
 | 扭蛋机编辑器 <!-- catalog: `capsule_catalog` --> | 在 Manager 中新增、修改、下架扭蛋机，设置奖池、价格和权重 | [使用说明](docs/capsule-catalog.zh-CN.md) |
-| 每日双倍时间（Beta） <!-- catalog: `daily_rewards` --> | 每天固定时段（默认 18:00–22:00）战斗 GB 和经验翻倍 | [使用说明](docs/daily-rewards.zh-CN.md) |
+| 每日双倍时间 <!-- catalog: `daily_rewards` --> | 每天固定时段（默认 18:00–22:00）战斗 GB 和经验翻倍 | [使用说明](docs/daily-rewards.zh-CN.md) |
 | 保管库一键领取 <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
 
-| 商城汉化与中文检索（Beta） <!-- catalog: `shop_localization` --> | 汉化商品说明与机库确认名称，支持中文搜索及等级、币种组合筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
+| 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化商品说明与机库确认名称，支持中文搜索及等级、币种组合筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
+| 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 保管库接受或退还原机体，保留赠送来源与寄语；公开配置默认关闭新赠送 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
+
+| 机体族导入（Beta） <!-- catalog: `unit_catalog` --> | 在 Mod Manager 导入机体包，补齐信息并生成两端定义、图鉴和商城／扭蛋资源 | [使用](docs/unit-import.zh-CN.md) |
 
 <!-- /mod-category:gameplay -->
+
+服主还可以使用独立的 [节日与生日赠礼 Manager 模块](docs/calendar-gifts.zh-CN.md)：默认提供节日一台未拥有机体、生日 12 档各一台的规则；本服生日和定向玩家名单不随通用规则分发。
 
 <a id="long-room-title-commands"></a>
 
@@ -67,7 +73,7 @@ Beta、Experimental 表示发布阶段。
 | 功能 | 简介 | 文档 |
 |---|---|---|
 | FRP 联机 <!-- catalog: `net_route`、`agent_udp_pool` --> | 通过服主的 Sakura FRP 等 TCP/UDP 转发连接服务器 | [使用说明](docs/frp-distribution.zh-CN.md) |
-| 商城商品管理（Beta） <!-- catalog: `shop_catalog` --> | 在 Manager 中上架、改价、下架服主自己的商城商品（WorldServer） | [使用说明](docs/shop-catalog.zh-CN.md) |
+| 商城商品管理 <!-- catalog: `shop_catalog` --> | 在 Manager 中上架、改价、下架服主自己的商城商品（WorldServer） | [使用说明](docs/shop-catalog.zh-CN.md) |
 
 <!-- /mod-category:network -->
 
@@ -81,7 +87,7 @@ Beta、Experimental 表示发布阶段。
 |---|---|---|
 | 发包日志 <!-- catalog: `net_probe` --> | 记录客户端发出的封包，用于分析协议 | [使用说明](docs/net-probe.md) |
 | 扭蛋价格探针（Experimental） <!-- catalog: `capsule_price_probe` --> | 只读记录扭蛋列表价格标签的刷新 | [使用说明](docs/capsule-price-probe.md) |
-| GameTest（Experimental） <!-- catalog: `game_test_client`、`game_test_server` --> | 在真实客户端和服务器中自动运行登录、建房、对战和页面场景 | [使用说明](docs/game-test.zh-CN.md) |
+| GameTest（Experimental） <!-- catalog: `game_test_client`、`game_test_server` --> | 原生登录、入房、Ready、单客户端与多客户端协同对战，以及页面检查 | [使用说明](docs/game-test.zh-CN.md) |
 
 <!-- /mod-category:development -->
 

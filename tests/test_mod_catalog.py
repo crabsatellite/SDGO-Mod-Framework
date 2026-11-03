@@ -13,6 +13,20 @@ spec.loader.exec_module(catalog)
 
 
 class CatalogTests(unittest.TestCase):
+    def test_friend_fix_is_distributed_as_complete_automatic_client_server_feature(self):
+        full=catalog.read_catalog(ROOT)
+        base=catalog.select_catalog(full,'base')
+        expected={'friend_list_fix':'server','friend_list_client_fix':'client'}
+        self.assertEqual(set(full['features']['friend-list-fix']['mods']),set(expected))
+        selected={m['id']:m for m in base['mods']}
+        for identity,target in expected.items():
+            mod=selected[identity]
+            self.assertEqual(mod['target'],target)
+            self.assertTrue(mod['enabled_by_default'])
+            self.assertIn('manager.json',mod['files'])
+            contract=json.loads((ROOT/'mods'/identity/'manager.json').read_text(encoding='utf-8-sig'))
+            self.assertEqual(contract['presentation'],'automatic_fix')
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -26,7 +40,9 @@ class CatalogTests(unittest.TestCase):
 
     def replace(self, path, before, after):
         p = self.root / path
-        p.write_text(p.read_text(encoding="utf-8").replace(before, after), encoding="utf-8")
+        text = p.read_text(encoding="utf-8")
+        self.assertIn(before, text, "fixture replacement must match the actual UTF-8 source")
+        p.write_text(text.replace(before, after), encoding="utf-8")
 
     def test_complete_source_catalog(self):
         c = catalog.read_catalog(self.root)
@@ -124,7 +140,9 @@ class CatalogTests(unittest.TestCase):
         self.assertNotIn("beta", c["categories"])
 
     def test_feature_halves_must_agree(self):
-        self.replace("mods/pvp_ai/mod.ini", "channel=stable", "channel=beta")
+        current = catalog.read_catalog(self.root)["features"]["pvp-ai"]["channel"]
+        other = "stable" if current != "stable" else "beta"
+        self.replace("mods/pvp_ai/mod.ini", "channel=" + current, "channel=" + other)
         with self.assertRaisesRegex(ValueError, "disagrees"):
             catalog.read_catalog(self.root)
 
@@ -159,7 +177,7 @@ class CatalogTests(unittest.TestCase):
             catalog.read_catalog(self.root)
 
     def test_readme_beta_label_is_checked(self):
-        self.replace("README.md", "Collection capsule (Beta)", "Collection capsule")
+        self.replace("README.md", "Unit family import (Beta)", "Unit family import")
         with self.assertRaisesRegex(ValueError, "channel"):
             catalog.read_catalog(self.root)
 

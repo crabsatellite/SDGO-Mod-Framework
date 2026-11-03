@@ -67,6 +67,22 @@ def standalone_sprite(texture_path, width, height, uv=(0, 0, 1, 1)):
     return header + raw_path.ljust(64, b"\0") + bytes(64) + struct.pack("<f", 1.0)
 
 
+def imported_art(unit):
+    """Decode selected source artwork; framing belongs to Assets.card()."""
+    import base64
+    import hashlib
+    from PIL import Image
+    from owner.units.assets import normalize_png
+    meta = unit['unit_import']
+    encoded = meta.get('image_png')
+    if not isinstance(encoded, str) or len(encoded) > 12 * 1024 * 1024:
+        raise ValueError('Imported capsule image is missing or oversized')
+    raw = base64.b64decode(encoded, validate=True)
+    if hashlib.sha256(raw).hexdigest() != meta.get('image_sha256'):
+        raise ValueError('Imported capsule image fingerprint changed; synchronize it again')
+    return Image.open(io.BytesIO(normalize_png(raw))).convert('RGBA')
+
+
 class Assets:
     CARD_SIZE = (183, 107)
     # Exact stock viewport, verified against native A/B/C cards: x=10..172 and
@@ -187,13 +203,13 @@ class Assets:
         self.reader = ClientData(client)
         self.catalog = catalog
         self.portrait_overrides = catalog.get("portrait_overrides", {})
-        source = read_json(lookup)
+        source = dict(lookup) if isinstance(lookup,dict) else read_json(lookup)
         if "units" in source:
             if source.get("zdx_sha256") != self.reader.index_hash:
                 raise ValueError("Unit sprite lookup does not match client index")
             source = source["units"]
         self.lookup = source
-        if capsule_lookup is None:
+        if capsule_lookup is None and not isinstance(lookup,dict):
             candidate = Path(lookup).with_name("capsule_spr_lookup.json")
             capsule_lookup = candidate if candidate.is_file() else None
         capsule_source = read_json(capsule_lookup) if capsule_lookup else {}
@@ -323,6 +339,7 @@ class Assets:
         return image
 
     def portrait(self, uid, variant=0):
+        if self.units[uid].get('unit_import'): return imported_art(self.units[uid])
         paths = self._sprite_pair(self.lookup, uid, "unit_sprites")
         if not paths:
             raise ValueError(f"No source portrait for unit {uid}")
@@ -330,6 +347,7 @@ class Assets:
 
     def card_provenance(self, uid):
         unit = self.units[uid]
+        if unit.get('unit_import'): return 'native-frame-and-imported-art'
         if self._sprite_pair({str(uid): unit.get("capsule_sprites")},
                              uid, "capsule_sprites"):
             return "gdt-native"
@@ -360,6 +378,7 @@ class Assets:
 
     def _source_art(self, uid, variant):
         """Read the source texture at its real pixels, before SPR resizing."""
+        if self.units[uid].get('unit_import'): return imported_art(self.units[uid])
         from PIL import Image, ImageChops
         paths = self._sprite_pair(self.lookup, uid, "unit_sprites")
         if not paths:
@@ -386,6 +405,32 @@ class Assets:
                     lambda alpha: alpha * frame["opacity"] // 255))
         return image
 
+    @functools.cached_property
+    def _frame_source_units(self):
+        """Recover the established native frame even for candidate-only catalogs."""
+        if not any(unit.get('unit_import') for unit in self.units.values()):
+            return self.units
+        from owner.units.assets import Baseline
+        from .capsule_catalog import gdt_records,grade
+        baseline=Baseline(self.reader.root)
+        size,rows=gdt_records(self.reader.read_resource('gdrs/0033.gdt'))
+        if size!=1019:raise ValueError('Native capsule frame sources have an unsupported layout')
+        result=dict(self.units)
+        for row in rows:
+            if row[4]!=0:continue
+            for slot in range(min(row[11],6)):
+                uid=struct.unpack_from('<I',row,27+slot*4)[0]
+                if uid in result and result[uid].get('unit_import'):continue
+                raw=baseline.record('unit',uid)
+                if raw is None:continue
+                rank,subgrade=raw[308],raw[309]
+                if rank not in (1,2,3,4) or subgrade not in (1,2,3,4,5):continue
+                paths=[row[59+(slot*2+variant)*60:59+(slot*2+variant+1)*60].decode('utf-16-le').split('\0')[0]
+                       for variant in (0,1)]
+                if all(paths):result[uid]={'id':uid,'rank':rank,'subgrade':subgrade,
+                    'grade':grade({'UnitGradeNumber':rank,'UnitGradeNumber2':subgrade}),'capsule_sprites':paths}
+        return result
+
     @staticmethod
     def _is_starfield(pixel):
         red, green, blue, alpha = pixel
@@ -399,7 +444,7 @@ class Assets:
 
     def _native_card_samples(self, base_grade):
         samples = []
-        for unit in sorted(self.units.values(), key=lambda item: item["id"]):
+        for unit in sorted(self._frame_source_units.values(), key=lambda item: item["id"]):
             if unit.get("grade") != base_grade:
                 continue
             paths = self._sprite_pair(
@@ -424,7 +469,7 @@ class Assets:
     def _native_rare_samples(self, base_grade):
         """Read true stock R cards whose dark subjects expose fixed footer text."""
         samples = []
-        for unit in sorted(self.units.values(), key=lambda item: item["id"]):
+        for unit in sorted(self._frame_source_units.values(), key=lambda item: item["id"]):
             if unit.get("grade") != base_grade + "R":
                 continue
             paths = self._sprite_pair(

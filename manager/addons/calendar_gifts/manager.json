@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "calendar_gifts",
+  "title": "节日与生日赠礼",
+  "category": "gameplay",
+  "hosts": ["world"],
+  "provider": "calendar_gifts",
+  "description": "按本服日期规则，把未拥有机体及道具送入原生保管库；生日和玩家分组只存于本服。",
+  "presentation": "configurable",
+  "settings": []
+}

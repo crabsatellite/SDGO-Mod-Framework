@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "id": "room_style_preview",
+  "title": "原生 2D 房间截图预览",
+  "category": "development",
+  "hosts": ["client"],
+  "description": "隔离 GameTest 截图原型。仅把一次已成功、身份与地图均核对一致的原生 APP18 普通对战或任务房转场改到随客户端发布的 2D 房间界面；不实现房间同步或玩家偏好持久化。",
+  "settings": [
+    {
+      "id": "preference",
+      "key": "Preference",
+      "label": "预览样式",
+      "type": "choice",
+      "default": "3d",
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required",
+      "options": ["3d", "2d"]
+    },
+    {
+      "id": "previewkind",
+      "key": "PreviewKind",
+      "label": "原生房间域",
+      "type": "choice",
+      "default": "normal",
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required",
+      "options": ["normal", "mission"]
+    }
+  ],
+  "presentation": "configurable",
+  "mechanism": "默认关闭。2d 模式只接受已知原生创建/加入调用点和 APP18，并核对精确 factory、当前 APP source、profile 原生 context、payload 保留字段以及该调用点的服务器 ACK room global；不把尚未发布且语义不同的 profile 784/764 当作创建前置条件。普通对战保留 FFFFFFFF 随机地图标记并转 APP7/tag6；任务保留原生 FFFFFFFF unset-map 标记并转 APP16/tag7，具体任务说明随后由原生 room-info 刷新提供。两条路径都复用并由原生消费者释放同一个 24-byte payload。"
+}

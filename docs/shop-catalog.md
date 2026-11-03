@@ -1,4 +1,4 @@
-# Shop catalog manager (Beta)
+# Shop catalog manager
 
 [简体中文（完整说明）](shop-catalog.zh-CN.md)
 
@@ -17,6 +17,10 @@ the standalone `Install.ps1`. It updates only its own single-item offers in a tr
 listing, billing and delivery; accounts, balances, inventory and history are untouched. Prices must be
 positive; GB is native currency 1 (GP), MB native currency 2 (GC). Only the Manager publishes the
 configuration; the WorldServer component applies nothing at startup.
+
+The apply tool preserves native computed columns and their UDFs. It writes the
+underlying subitems and checks the effective parent quantity, validity, price
+and currency in the same transaction, without changing the database layout.
 
 New product names and sale-option labels require Chinese text. Existing owner data remains intact;
 fill missing names before editing or publishing. The separate [shop localization Mod](shop-localization.md)

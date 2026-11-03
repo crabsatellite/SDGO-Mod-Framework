@@ -133,6 +133,13 @@ target_link_libraries(fps_limit_runtime_test PRIVATE sdgo_api)
 sdgo_strict(fps_limit_runtime_test)
 add_dependencies(fps_limit_runtime_test fps_limit sdgo_core)
 sdgo_add_mod(net_probe DESCRIPTION "packet logger" SOURCES mods/net_probe/net_probe.cpp)
+sdgo_add_mod(unit_catalog DESCRIPTION "confirmed unit family content"
+             SOURCES mods/unit_catalog/client.cpp mods/unit_catalog/preview_runtime.cpp
+                     mods/unit_catalog/preview_shop.cpp mods/unit_catalog/preview_capsule.cpp
+                     support/native_resource_overlay/native_resource_overlay.cpp
+                     support/native_resource_overlay/native_resource_overlay.def
+             FILES symbols.fragment.ini)
+
 sdgo_add_mod(shop_labels DESCRIPTION "shop rental and Unicode labels" SOURCES mods/shop_labels/shop_labels.cpp FILES display.example.ini)
 sdgo_add_mod(shop_localization DESCRIPTION "Chinese shop localization" SOURCES mods/shop_localization/shop_localization.cpp mods/shop_localization/shop_search.cpp FILES zh-CN.ini symbols.fragment.ini LIBS user32)
 add_library(shop_catalog_engine STATIC mods/shop_catalog/catalog_runtime.cpp)
@@ -184,8 +191,17 @@ sdgo_add_mod(rank_progression_fix SERVER DESCRIPTION "native World battle rank p
              SOURCES mods/rank_progression_fix/rank_progression_fix.cpp LIBS ole32 oleaut32 bcrypt uuid)
 sdgo_add_mod(friend_list_fix SERVER DESCRIPTION "native offline friend list and pilot names"
              SOURCES mods/friend_list_fix/friend_list_fix.cpp LIBS ole32 oleaut32 bcrypt uuid)
-sdgo_add_mod(friend_list_client_fix DESCRIPTION "native offline friend conversation opener"
+sdgo_add_mod(friend_list_client_fix DESCRIPTION "native friend list, messenger layout and offline conversation fix"
              SOURCES mods/friend_list_client_fix/friend_list_client_fix.cpp)
+sdgo_add_mod(friend_unit_gift_client DESCRIPTION "optional native friend unit gifts and provenance"
+             SOURCES mods/friend_unit_gift_client/friend_unit_gift_client.cpp
+                     mods/friend_unit_gift_client/native_ui.cpp
+                     mods/friend_unit_gift_client/transport.cpp
+             LIBS user32 ole32)
+sdgo_add_mod(friend_unit_gift_server SERVER DESCRIPTION "optional authenticated friend unit gift escrow"
+             SOURCES mods/friend_unit_gift_server/friend_unit_gift_server.cpp
+                     mods/friend_unit_gift_server/server_database.cpp
+             LIBS ole32 oleaut32 bcrypt uuid)
 
 
 # Private feature libraries; no room metadata or gameplay state enters the core.
@@ -219,8 +235,13 @@ sdgo_add_mod(collection_capsule SERVER DESCRIPTION "never-acquired base-form cap
 # Shared capsule resource provider, distributed inside the owner toolkit. The
 # generated player bundle uses one capsule_catalog instance for all machines.
 add_library(capsule_registry_support SHARED
-    support/capsule_registry/capsule_catalog.cpp support/capsule_registry/capsule_runtime.cpp)
-set_target_properties(capsule_registry_support PROPERTIES OUTPUT_NAME capsule_catalog)
+    support/capsule_registry/capsule_catalog.cpp support/capsule_registry/capsule_runtime.cpp
+    support/native_resource_overlay/native_resource_overlay.cpp
+    support/native_resource_overlay/native_resource_overlay.def)
+set_target_properties(capsule_registry_support PROPERTIES
+    OUTPUT_NAME capsule_catalog
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/capsule_registry_support/$<CONFIG>"
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/capsule_registry_support/$<CONFIG>")
 target_link_libraries(capsule_registry_support PRIVATE sdgo_api)
 sdgo_strict(capsule_registry_support)
 sdgo_version_resource(capsule_registry_support capsule_catalog.dll "SDGO shared capsule resource registry")
@@ -256,7 +277,9 @@ add_custom_target(ai_catalog_data ALL
         "${SDGO_STAGE}/server/sdgo/mods/ai_catalog/mod.ini")
 
 sdgo_add_mod(capsule_catalog DESCRIPTION "native capsule catalog overlay"
-             SOURCES mods/capsule_catalog/capsule_catalog.cpp mods/capsule_catalog/capsule_runtime.cpp)
+             SOURCES mods/capsule_catalog/capsule_catalog.cpp mods/capsule_catalog/capsule_runtime.cpp
+                     support/native_resource_overlay/native_resource_overlay.cpp
+                     support/native_resource_overlay/native_resource_overlay.def)
 sdgo_add_mod(capsule_currency_fix DESCRIPTION "activity capsule currency display fix"
              SOURCES mods/capsule_currency_fix/capsule_currency_fix.cpp mods/capsule_currency_fix/capsule_currency_logic.cpp)
 sdgo_add_mod(capsule_price_probe DESCRIPTION "read-only capsule price UI diagnostics"
@@ -296,6 +319,9 @@ if(SDGO_BUILD_MANAGER)
         "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.json" "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.cs"
         "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.ps1" "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.sql"
         "${CMAKE_CURRENT_SOURCE_DIR}/owner/shop/*.cs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/owner/units/*.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/mods/unit_catalog/*"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/install_unit_catalog.ps1"
         "${CMAKE_CURRENT_SOURCE_DIR}/owner/collection_capsule/*.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/owner/collection_capsule/sql/*.sql"
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/*collection_capsule*.py"
@@ -309,8 +335,10 @@ if(SDGO_BUILD_MANAGER)
     add_custom_command(OUTPUT "${SDGO_MANAGER_EXE}"
         COMMAND "${SDGO_MANAGER_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
             -File "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_mod_manager.ps1"
-            -BuildDir "${CMAKE_BINARY_DIR}" -Python "${Python3_EXECUTABLE}"
-        DEPENDS ${SDGO_MANAGER_INPUTS} "${CMAKE_CURRENT_SOURCE_DIR}/tools/mod_manager.py"
+            -BuildDir "${CMAKE_BINARY_DIR}" -Python "${Python3_EXECUTABLE}" -UnitBinary "$<TARGET_FILE:unit_catalog>"
+            -CapsuleBinary "$<TARGET_FILE:capsule_catalog>"
+        DEPENDS ${SDGO_MANAGER_INPUTS} unit_catalog "$<TARGET_FILE:unit_catalog>"
+            capsule_catalog "$<TARGET_FILE:capsule_catalog>" "${CMAKE_CURRENT_SOURCE_DIR}/tools/mod_manager.py"
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_mod_manager.ps1"
             "${CMAKE_CURRENT_SOURCE_DIR}/manager/SDGOModManager.spec"
         VERBATIM)
@@ -328,10 +356,12 @@ sdgo_strict(launcher_handshake_test)
 add_executable(capsule_client_runtime_harness tests/capsule_client_runtime_harness.cpp
                mods/capsule_catalog/capsule_runtime.cpp)
 target_include_directories(capsule_client_runtime_harness PRIVATE mods/capsule_catalog)
+target_link_libraries(capsule_client_runtime_harness PRIVATE sdgo_api)
 sdgo_strict(capsule_client_runtime_harness)
 add_executable(capsule_client_native_stream_test tests/capsule_client_native_stream_test.cpp
                mods/capsule_catalog/capsule_runtime.cpp)
 target_include_directories(capsule_client_native_stream_test PRIVATE mods/capsule_catalog)
+target_link_libraries(capsule_client_native_stream_test PRIVATE sdgo_api)
 sdgo_strict(capsule_client_native_stream_test)
 add_executable(capsule_currency_fix_test mods/capsule_currency_fix/capsule_currency_fix_test.cpp
                mods/capsule_currency_fix/capsule_currency_logic.cpp)
@@ -386,6 +416,42 @@ sdgo_strict(daily_rewards_runtime_test)
 # Offline AI contracts. The fixtures call production code with synthetic rooms,
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
+if(BUILD_TESTING)
+    add_executable(native_resource_overlay_test tests/native_resource_overlay_test.cpp
+        support/native_resource_overlay/native_resource_overlay.cpp)
+    target_link_libraries(native_resource_overlay_test PRIVATE sdgo_api)
+    sdgo_strict(native_resource_overlay_test)
+    add_test(NAME native_resource_overlay_offline COMMAND native_resource_overlay_test)
+    add_executable(unit_catalog_test tests/unit_catalog_test.cpp)
+    target_link_libraries(unit_catalog_test PRIVATE sdgo_api)
+    sdgo_strict(unit_catalog_test)
+    add_library(unit_catalog_old_capsule_fixture SHARED tests/old_capsule_fixture.cpp)
+    set_target_properties(unit_catalog_old_capsule_fixture PROPERTIES
+        OUTPUT_NAME capsule_catalog
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/old_capsule_fixture/$<CONFIG>"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/old_capsule_fixture/$<CONFIG>")
+    sdgo_strict(unit_catalog_old_capsule_fixture)
+    add_executable(unit_preview_test tests/unit_preview_test.cpp mods/unit_catalog/preview_runtime.cpp
+        mods/unit_catalog/preview_shop.cpp mods/unit_catalog/preview_capsule.cpp)
+    target_link_libraries(unit_preview_test PRIVATE sdgo_api)
+    sdgo_strict(unit_preview_test)
+    add_test(NAME unit_preview_offline COMMAND unit_preview_test)
+    add_test(NAME unit_catalog_offline COMMAND unit_catalog_test)
+    foreach(scenario success conflict missing_reference partial_failure index_reference_missing index_conflict)
+        add_test(NAME unit_catalog_${scenario}_offline COMMAND unit_catalog_test $<TARGET_FILE:unit_catalog> ${scenario})
+        set_tests_properties(unit_catalog_${scenario}_offline PROPERTIES TIMEOUT 30)
+    endforeach()
+    add_test(NAME unit_catalog_old_capsule_offline COMMAND unit_catalog_test
+        $<TARGET_FILE:unit_catalog> old_capsule $<TARGET_FILE:unit_catalog_old_capsule_fixture>)
+    set_tests_properties(unit_catalog_old_capsule_offline PROPERTIES TIMEOUT 30)
+    add_test(NAME unit_import_owner_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_import_*.py" -v)
+    set_tests_properties(unit_import_owner_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 90)
+    add_test(NAME unit_presentation_owner_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_presentations.py" -v)
+    set_tests_properties(unit_presentation_owner_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
+
+endif()
 if(BUILD_TESTING)
     add_executable(ime_fix_dll_test tests/ime_fix_dll_test.cpp)
     target_link_libraries(ime_fix_dll_test PRIVATE sdgo_api)
@@ -511,7 +577,19 @@ if(BUILD_TESTING)
         --host "$<TARGET_FILE:game_test_framework_host>")
     set_tests_properties(game_test_framework_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
     add_executable(game_test_onboarding_gate_test tests/game_test_onboarding_gate_test.cpp)
+    add_executable(game_test_onboarding_actions_test tests/game_test_onboarding_actions_test.cpp)
+    target_link_libraries(game_test_onboarding_actions_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_onboarding_actions_test)
+    add_test(NAME game_test_onboarding_actions_offline COMMAND game_test_onboarding_actions_test)
+    set_tests_properties(game_test_onboarding_actions_offline PROPERTIES TIMEOUT 30)
     add_executable(game_test_native_credentials_test tests/game_test_native_credentials_test.cpp)
+    foreach(friend_runtime_test IN ITEMS game_test_native_actions_transport game_test_friend_invite_sender game_test_friend_invite_receiver game_test_friend_room_actions)
+        add_executable(${friend_runtime_test}_test tests/${friend_runtime_test}_test.cpp)
+        target_link_libraries(${friend_runtime_test}_test PRIVATE sdgo_api)
+        sdgo_strict(${friend_runtime_test}_test)
+        add_test(NAME ${friend_runtime_test}_offline COMMAND ${friend_runtime_test}_test)
+        set_tests_properties(${friend_runtime_test}_offline PROPERTIES TIMEOUT 30)
+    endforeach()
     target_link_libraries(game_test_native_credentials_test PRIVATE sdgo_api)
     sdgo_strict(game_test_native_credentials_test)
     add_test(NAME game_test_native_credentials_offline COMMAND game_test_native_credentials_test)
@@ -537,6 +615,21 @@ if(BUILD_TESTING)
     add_test(NAME game_test_room_actions_offline COMMAND game_test_room_actions_test)
     set_tests_properties(game_test_room_actions_offline PROPERTIES TIMEOUT 30)
     add_executable(game_test_channel_actions_test tests/game_test_channel_actions_test.cpp)
+    add_executable(game_test_friend_extra_actions_test tests/game_test_friend_extra_actions_test.cpp)
+    add_executable(game_test_friend_actions_test tests/game_test_friend_actions_test.cpp)
+    add_executable(game_test_friend_message_history_test tests/game_test_friend_message_history_test.cpp)
+    target_link_libraries(game_test_friend_message_history_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_friend_message_history_test)
+    add_test(NAME game_test_friend_message_history_offline COMMAND game_test_friend_message_history_test)
+    set_tests_properties(game_test_friend_message_history_offline PROPERTIES TIMEOUT 30)
+    target_link_libraries(game_test_friend_actions_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_friend_actions_test)
+    add_test(NAME game_test_friend_actions_offline COMMAND game_test_friend_actions_test)
+    set_tests_properties(game_test_friend_actions_offline PROPERTIES TIMEOUT 30)
+    target_link_libraries(game_test_friend_extra_actions_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_friend_extra_actions_test)
+    add_test(NAME game_test_friend_extra_actions_offline COMMAND game_test_friend_extra_actions_test)
+    set_tests_properties(game_test_friend_extra_actions_offline PROPERTIES TIMEOUT 30)
     add_executable(game_test_hangar_navigation_test tests/game_test_hangar_navigation_test.cpp)
     add_executable(game_test_page_test_actions_test tests/game_test_page_test_actions_test.cpp)
     target_link_libraries(game_test_page_test_actions_test PRIVATE sdgo_api)
@@ -566,6 +659,14 @@ if(BUILD_TESTING)
     target_link_libraries(game_test_room_join_actions_test PRIVATE sdgo_api)
     sdgo_strict(game_test_room_join_actions_test)
     add_test(NAME game_test_room_join_actions_offline COMMAND game_test_room_join_actions_test)
+    add_executable(game_test_guest_ready_actions_test tests/game_test_guest_ready_actions_test.cpp)
+    target_link_libraries(game_test_guest_ready_actions_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_guest_ready_actions_test)
+    add_test(NAME game_test_guest_ready_actions_offline COMMAND game_test_guest_ready_actions_test)
+    add_executable(game_test_pvp_session_actions_test tests/game_test_pvp_session_actions_test.cpp)
+    target_link_libraries(game_test_pvp_session_actions_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_pvp_session_actions_test)
+    add_test(NAME game_test_pvp_session_actions_offline COMMAND game_test_pvp_session_actions_test)
     add_executable(game_test_mission_flow_actions_test tests/game_test_mission_flow_actions_test.cpp)
     target_link_libraries(game_test_mission_flow_actions_test PRIVATE sdgo_api)
     sdgo_strict(game_test_mission_flow_actions_test)
@@ -639,6 +740,9 @@ if(BUILD_TESTING)
     add_test(NAME mod_manager_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_mod_manager*.py" -v)
     set_tests_properties(mod_manager_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 120)
+    add_test(NAME mod_manager_calendar_gifts_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_calendar*.py" -v)
+    set_tests_properties(mod_manager_calendar_gifts_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
     add_test(NAME mod_manager_updates_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_manager_updates*.py" -v)
     set_tests_properties(mod_manager_updates_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 120)
@@ -700,6 +804,10 @@ if(BUILD_TESTING)
     target_link_libraries(shop_catalog_mod_test PRIVATE sdgo_api)
     sdgo_strict(shop_catalog_mod_test)
     add_dependencies(shop_catalog_mod_test shop_catalog)
+    add_executable(shop_catalog_contract_test tests/shop_catalog_contract_test.cpp)
+    sdgo_strict(shop_catalog_contract_test)
+    target_compile_options(shop_catalog_contract_test PRIVATE /UNDEBUG)
+    add_test(NAME shop_catalog_sql_contract COMMAND shop_catalog_contract_test)
     if(SDGO_MANAGER_POWERSHELL)
         add_test(NAME shop_manager_ownership COMMAND "${SDGO_MANAGER_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
             -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/shop_manager_ownership_test.ps1" -BuildDir "${CMAKE_BINARY_DIR}" -Config "$<CONFIG>")
@@ -863,6 +971,77 @@ if(BUILD_TESTING)
     add_executable(friend_list_db_test tests/friend_list_db_test.cpp)
     target_link_libraries(friend_list_db_test PRIVATE ole32 oleaut32 bcrypt uuid)
     sdgo_strict(friend_list_db_test)
+    add_executable(friend_unit_gift_policy_test tests/friend_unit_gift_policy_test.cpp)
+    target_link_libraries(friend_unit_gift_policy_test PRIVATE sdgo_api)
+    sdgo_strict(friend_unit_gift_policy_test)
+    target_compile_options(friend_unit_gift_policy_test PRIVATE /UNDEBUG)
+    add_test(NAME friend_unit_gift_policy_offline COMMAND friend_unit_gift_policy_test)
+    set_tests_properties(friend_unit_gift_policy_offline PROPERTIES TIMEOUT 30)
+    add_executable(friend_unit_gift_sql_emit tests/friend_unit_gift_sql_emit.cpp)
+    sdgo_strict(friend_unit_gift_sql_emit)
+    foreach(gift_test IN ITEMS friend_unit_gift_protocol friend_unit_gift_client_model storage_extension_registry)
+        add_executable(${gift_test}_test tests/${gift_test}_test.cpp)
+        target_link_libraries(${gift_test}_test PRIVATE sdgo_api)
+        sdgo_strict(${gift_test}_test)
+        target_compile_options(${gift_test}_test PRIVATE /UNDEBUG)
+        add_test(NAME ${gift_test}_offline COMMAND ${gift_test}_test)
+        set_tests_properties(${gift_test}_offline PROPERTIES TIMEOUT 30)
+    endforeach()
+    add_executable(friend_unit_gift_transport_test tests/friend_unit_gift_transport_test.cpp
+                   mods/friend_unit_gift_client/transport.cpp)
+    target_link_libraries(friend_unit_gift_transport_test PRIVATE sdgo_api ole32)
+    sdgo_strict(friend_unit_gift_transport_test)
+    target_compile_options(friend_unit_gift_transport_test PRIVATE /UNDEBUG)
+    add_test(NAME friend_unit_gift_transport_offline COMMAND friend_unit_gift_transport_test)
+    set_tests_properties(friend_unit_gift_transport_offline PROPERTIES TIMEOUT 30)
+    add_executable(friend_unit_gift_native_ui_test tests/friend_unit_gift_native_ui_test.cpp
+                   mods/friend_unit_gift_client/native_ui.cpp)
+    target_link_libraries(friend_unit_gift_native_ui_test PRIVATE sdgo_api user32)
+    sdgo_strict(friend_unit_gift_native_ui_test)
+    target_compile_options(friend_unit_gift_native_ui_test PRIVATE /UNDEBUG)
+    add_test(NAME friend_unit_gift_native_ui_offline COMMAND friend_unit_gift_native_ui_test)
+    set_tests_properties(friend_unit_gift_native_ui_offline PROPERTIES TIMEOUT 30)
+    add_executable(friend_unit_gift_native_inventory_test
+                   tests/friend_unit_gift_native_inventory_test.cpp)
+    target_link_libraries(friend_unit_gift_native_inventory_test PRIVATE sdgo_api)
+    sdgo_strict(friend_unit_gift_native_inventory_test)
+    add_test(NAME friend_unit_gift_native_inventory_offline
+             COMMAND friend_unit_gift_native_inventory_test)
+    set_tests_properties(friend_unit_gift_native_inventory_offline PROPERTIES TIMEOUT 30)
+    add_executable(friend_unit_gift_client_runtime_policy_test
+                   tests/friend_unit_gift_client_runtime_policy_test.cpp)
+    target_link_libraries(friend_unit_gift_client_runtime_policy_test PRIVATE sdgo_api)
+    sdgo_strict(friend_unit_gift_client_runtime_policy_test)
+    target_compile_options(friend_unit_gift_client_runtime_policy_test PRIVATE /UNDEBUG)
+    add_test(NAME friend_unit_gift_client_runtime_policy_offline
+             COMMAND friend_unit_gift_client_runtime_policy_test)
+    set_tests_properties(friend_unit_gift_client_runtime_policy_offline PROPERTIES TIMEOUT 30)
+    add_library(unit_gift_observer_fixture SHARED tests/unit_gift_observer_fixture.cpp)
+    target_link_libraries(unit_gift_observer_fixture PRIVATE sdgo_api)
+    sdgo_strict(unit_gift_observer_fixture)
+    set_target_properties(unit_gift_observer_fixture PROPERTIES
+        OUTPUT_NAME friend_unit_gift_client
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_fixture/$<CONFIG>"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_fixture/$<CONFIG>"
+        PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_fixture/$<CONFIG>")
+    add_library(unit_gift_missing_export_fixture SHARED tests/unit_gift_observer_fixture.cpp)
+    target_link_libraries(unit_gift_missing_export_fixture PRIVATE sdgo_api)
+    target_compile_definitions(unit_gift_missing_export_fixture PRIVATE UNIT_GIFT_OBSERVER_FIXTURE_NO_PRODUCT_EXPORTS=1)
+    sdgo_strict(unit_gift_missing_export_fixture)
+    set_target_properties(unit_gift_missing_export_fixture PROPERTIES
+        OUTPUT_NAME friend_unit_gift_client
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_missing_export/$<CONFIG>"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_missing_export/$<CONFIG>"
+        PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_missing_export/$<CONFIG>")
+    add_executable(unit_gift_actions_test tests/unit_gift_actions_test.cpp)
+    target_link_libraries(unit_gift_actions_test PRIVATE sdgo_api)
+    sdgo_strict(unit_gift_actions_test)
+    target_compile_options(unit_gift_actions_test PRIVATE /UNDEBUG)
+    add_dependencies(unit_gift_actions_test unit_gift_observer_fixture unit_gift_missing_export_fixture)
+    add_test(NAME unit_gift_actions_offline COMMAND unit_gift_actions_test
+             $<TARGET_FILE:unit_gift_observer_fixture>
+             $<TARGET_FILE:unit_gift_missing_export_fixture>)
+    set_tests_properties(unit_gift_actions_offline PROPERTIES TIMEOUT 30)
     set_tests_properties(rank_progression_fix_offline PROPERTIES TIMEOUT 30)
     add_executable(rank_progression_db_test tests/rank_progression_db_test.cpp)
     target_link_libraries(rank_progression_db_test PRIVATE ole32 oleaut32 bcrypt uuid)
@@ -885,6 +1064,10 @@ if(BUILD_TESTING)
     set_tests_properties(room_commands_offline PROPERTIES TIMEOUT 30)
 
     add_executable(room_random_test tests/room_random_test.cpp)
+    add_executable(random_loadout_regression_test tests/random_loadout_regression_test.cpp)
+    target_link_libraries(random_loadout_regression_test PRIVATE sdgo_api)
+    sdgo_strict(random_loadout_regression_test)
+    add_test(NAME random_loadout_regression_offline COMMAND random_loadout_regression_test)
     target_link_libraries(room_random_test PRIVATE sdgo_api bcrypt)
     sdgo_strict(room_random_test)
     add_test(NAME room_random_offline COMMAND room_random_test)
@@ -921,7 +1104,7 @@ if(BUILD_TESTING)
     add_test(NAME game_test_fps_runner_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_game_test_fps*.py" -v)
     set_tests_properties(game_test_fps_runner_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
-    foreach(plan routes mission_plan shop_plan unit_selection reuse environment)
+    foreach(plan routes mission_plan shop_plan unit_selection reuse environment ai_teams multiplayer)
         add_test(NAME game_test_${plan}_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
             -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_game_test_${plan}.py" -v)
         set_tests_properties(game_test_${plan}_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
@@ -931,6 +1114,10 @@ if(BUILD_TESTING)
     set_tests_properties(game_test_server_report_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
     add_library(battle_ai_server_bridge_fixture SHARED tests/battle_ai_server_bridge_fixture.cpp)
     sdgo_strict(battle_ai_server_bridge_fixture)
+    add_executable(pvp_team_plan_test tests/pvp_team_plan_test.cpp)
+    target_link_libraries(pvp_team_plan_test PRIVATE sdgo_api)
+    sdgo_strict(pvp_team_plan_test)
+    add_test(NAME pvp_team_plan_offline COMMAND pvp_team_plan_test)
     foreach(mod pvp_ai match_ai coop_ai mission_ai)
         add_executable(${mod}_test "tests/${mod}_test.cpp")
         target_link_libraries(${mod}_test PRIVATE sdgo_api)
@@ -1181,4 +1368,11 @@ if(BUILD_TESTING)
     target_link_libraries(hangar_capacity_sql_test PRIVATE sdgo_api ole32 oleaut32 uuid)
     sdgo_strict(hangar_capacity_sql_test)
     target_compile_options(hangar_capacity_sql_test PRIVATE /Ob0)
+    add_custom_target(pvp_population_regression_build DEPENDS
+        game_test_quiet_audio_test game_test_unit_select_actions_test game_test_sealed_room_title_test
+    sdgo_core d3d9_shim winmm_shim fps_limit
+        pvp_ai match_ai room_random room_random_client game_test_client game_test_server
+        pvp_ai_test match_ai_test pvp_team_plan_test pvp_title_rules_test
+        room_random_test random_loadout_regression_test room_random_client_policy_test
+        game_test_room_actions_test)
 endif()

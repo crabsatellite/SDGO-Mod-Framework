@@ -15,6 +15,15 @@ from manager import storage
 from manager.instance import Lease
 
 
+def announce(url):
+    # A detached GUI can inherit a closed or invalid redirected stdout handle.
+    # Publishing manager-session.json is authoritative; console output must
+    # never prevent the already-bound HTTP server from entering its loop.
+    if sys.stdout:
+        try:print(url,flush=True)
+        except (OSError,ValueError):pass
+
+
 def main(argv=None):
     effective=sys.argv[1:] if argv is None else argv
     if effective[:1]==['--finish-update']:
@@ -31,7 +40,7 @@ def main(argv=None):
     if not lease.file:
         url=lease.existing_url()
         if not args.no_browser:webbrowser.open(url)
-        if sys.stdout:print(url,flush=True)
+        announce(url)
         return
     workspace = Workspace(args.workspace, ROOT / 'mods')
     attach(workspace)
@@ -47,11 +56,11 @@ def main(argv=None):
     storage.atomic(workspace.root / 'manager-session.json', storage.json_bytes({'application': 'sdgo_mod_manager', 'url': url, 'pid': os.getpid()}))
     workspace.services.restore()
     if not args.no_browser: webbrowser.open(url)
-    if sys.stdout: print(url, flush=True)
+    announce(url)
     try: server.serve_forever()
     finally:
         server.server_close()
-        workspace.services.close()
+        workspace.close()
         lease.close()
 
 
