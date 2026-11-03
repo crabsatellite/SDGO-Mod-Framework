@@ -178,6 +178,11 @@ public:
     // The caller supplies only the exact native title containing its nonce.
     // The room id is always taken from the genuine server list entry selected
     // by that title. Titles are the legacy list's exact 1..20 byte ASCII field.
+    using RoomResolver=const uint8_t*(*)(void*);
+    void SetRoomResolver(RoomResolver resolver,void* opaque) {
+        roomResolver_=resolver;roomOpaque_=opaque;
+    }
+
     bool JoinExactTitle(const char* exactTitle)
     {
         if (!bound_ || !native_ ||
@@ -932,12 +937,7 @@ private:
             profilePointer_
                 ? *profilePointer_
                 : nullptr;
-        uint8_t* room =
-            profile
-                ? Read<uint8_t*>(
-                      profile +
-                      kProfileRoom)
-                : nullptr;
+        uint8_t* room = ResolvedRoom(profile);
         if (!profile || !room ||
             isRoomMaster_(room))
             return false;
@@ -1102,12 +1102,7 @@ private:
                 profilePointer_
                     ? *profilePointer_
                     : nullptr;
-            uint8_t* room =
-                profile
-                    ? Read<uint8_t*>(
-                          profile +
-                          kProfileRoom)
-                    : nullptr;
+            uint8_t* room = ResolvedRoom(profile);
             if (!profile || !room ||
                 Read<uint32_t>(room) !=
                     expected ||
@@ -1608,6 +1603,12 @@ private:
     SdgoMod* mod_ = nullptr;
     NativeActions* native_ = nullptr;
     GameAppFn gameApp_ = nullptr;
+    uint8_t* ResolvedRoom(uint8_t* profile) const {
+        if(roomResolver_)return const_cast<uint8_t*>(roomResolver_(roomOpaque_));
+        return profile ? Read<uint8_t*>(profile+kProfileRoom):nullptr;
+    }
+    RoomResolver roomResolver_=nullptr;
+    void* roomOpaque_=nullptr;
     uint8_t** profilePointer_ = nullptr;
     IsRoomMasterFn isRoomMaster_ = nullptr;
     void** serviceManagedPointer_ = nullptr;

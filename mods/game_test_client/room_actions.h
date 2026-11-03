@@ -784,6 +784,10 @@ public:
 
     // The active 3D scene owns its packed model. The legacy profile cache can
     // be empty or stale after settlement, so only 2D rooms use that cache.
+    // Shared read-only resolver for native adapters. A 3D room belongs to its
+    // active model; profile+0xEC can remain empty after a successful join.
+    const uint8_t* LiveRoomInfo() const {return CurrentRoomData();}
+
     NativeRoomObservation NativeRoomState() const
     {
         NativeRoomObservation observed = {};

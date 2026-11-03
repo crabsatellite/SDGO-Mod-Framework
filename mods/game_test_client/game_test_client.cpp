@@ -101,6 +101,8 @@ const void* roomListVtable=nullptr;
 const void* modalLoadingVtable=nullptr;
 GiftActions gifts;
 RoomActions rooms;
+RoomJoinActions roomJoin;
+PvpSessionActions pvpSession;
 RoomTitleActions roomTitles;
 bool roomTitlesOnly=false;
 uint32_t roomStylePreview=0;
@@ -703,6 +705,10 @@ int __cdecl Start(const SdgoGameTestContextV1* context) {
     context->Assert(snapshot.room_mode == RequestedMode(), "the native game mode matches the requested real room mode");
     context->Assert(snapshot.received_battle_start_count > startSequence, "a genuine server battle-start packet preceded native GAME_MAIN");
     return SDGO_GAME_TEST_PASS;
+}
+bool PvpControlEnabled(uint32_t sequence) {
+    SdgoPvpAiClientStartStatusV1 control{};control.size=sizeof(control);control.version=SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
+    return getStartStatus&&getStartStatus(&control)&&control.battle_start_sequence==sequence&&control.player_control_enabled;
 }
 uint32_t UnitDataForNpc(const SdgoGameTestContextV1* context, uint32_t npcId) {
     using GridData = void*(__cdecl*)();
@@ -2528,9 +2534,14 @@ SDGO_MOD_ENTRY {
     if (friendsOnly) {
         if (!friendActions.Bind(api,mod,&actions)||!friendExtras.Bind(api,mod)||
             !friendInviteSender.Bind(api,mod,&actions)||!friendInviteReceiver.Bind(api,mod,&actions)||
-            !friendRoomActions.Bind(&actions,&rooms,&friendInviteSender,&friendInviteReceiver,&CreateFriendInviteRoom))
+            !friendRoomActions.Bind(&actions,&rooms,&friendInviteSender,&friendInviteReceiver,&CreateFriendInviteRoom) ||
+            !roomJoin.Bind(api,mod,&actions))
             sdgo_test::Fail("native friend operation bindings are unavailable");
+        roomJoin.SetRoomResolver([](void* opaque)->const uint8_t*{return static_cast<RoomActions*>(opaque)->LiveRoomInfo();},&rooms);
+        if(!pvpSession.Bind(&actions,&rooms,&roomJoin,&Snapshot,&Start,roomTitle,RequestedMode(),expectedAi,&PvpControlEnabled))
+            sdgo_test::Fail("coordinated native PvP operation bindings are unavailable");
         friendSession.Bind(&friendActions,&friendExtras,api,mod,&friendRoomActions);
+        friendSession.BindPvp(&pvpSession);
         friendSession.BindFrameCapture(
             [](const wchar_t* path){return quietGraphics.RequestFrameCapture(path);},
             []()->HRESULT{HRESULT result=E_PENDING;
