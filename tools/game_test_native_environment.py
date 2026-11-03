@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -87,10 +88,15 @@ def check_labels(description, lease):
 
 
 def upload_snapshot(container,source,destination,expected_hash):
-    """Stream exact snapshot bytes, then verify inside the owned container."""
-    with source.open('rb') as stream:
-        result=subprocess.run(['docker','exec','-i',container,'sh','-c','cat > "$1"','snapshot-input',destination],
-            stdin=stream,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,timeout=180,
+    """Compress owned SQL input in transit; verify exact decompressed bytes."""
+    # Docker Desktop stdin can be slow under concurrent native test load. SQL
+    # backups compress well; keep both the source and native restore unchanged.
+    with source.open('rb') as stream, tempfile.TemporaryFile(dir=source.parent) as compressed:
+        with gzip.GzipFile(fileobj=compressed,mode='wb',compresslevel=1,mtime=0) as encoder:
+            shutil.copyfileobj(stream,encoder)
+        compressed.seek(0)
+        result=subprocess.run(['docker','exec','-i',container,'sh','-c','gzip -dc > "$1"','snapshot-input',destination],
+            stdin=compressed,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,timeout=600,
             creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
     if result.returncode:raise RuntimeError('Owned SQL snapshot upload failed.')
     actual=docker('exec',container,'sha256sum',destination).split()[0]
@@ -152,12 +158,12 @@ class NativeDriver:
         atomic_json(self.environment.root / 'progress.json', value)
         print(json.dumps(value), file=sys.stderr, flush=True)
 
-    def sql(self, statement):
+    def sql(self, statement, timeout=120):
         env = os.environ.copy()
         env['SQLCMDPASSWORD'] = self.private['sa_password']
         return docker('exec', '-e', 'SQLCMDPASSWORD', self.private['container'],
             '/opt/mssql-tools18/bin/sqlcmd', '-S', 'tcp:127.0.0.1,1433', '-U', 'sa', '-C', '-I',
-            '-b', '-l', '5', '-t', '120', '-h', '-1', '-W', '-Q', statement, env=env)
+            '-b', '-l', '5', '-t', str(timeout), '-h', '-1', '-W', '-Q', statement, env=env,timeout=timeout+30)
 
     def start_sql(self, lease):
         raise RuntimeError(
@@ -238,12 +244,14 @@ class NativeDriver:
             if gt.sha256(staged)!=entry['sha256']:
                 raise RuntimeError('Owned SQL input copy differs from its sealed template.')
             destination = '/var/opt/mssql/backup/gametest/' + entry['file']
+            self.progress('copying_snapshot',database=entry['name'],bytes=source.stat().st_size)
             upload_snapshot(self.private['container'],staged,destination,entry['sha256'])
             moves = ','.join('MOVE '+quoted(f['name'])+' TO '+quoted(
                 '/var/opt/mssql/data/gt_'+entry['name']+'_'+str(i)+('.ldf' if f['type']=='L' else '.mdf'))
                 for i, f in enumerate(entry['files']))
             name = identifier(entry['name'])
-            self.sql('RESTORE DATABASE '+name+' FROM DISK='+quoted(destination)+' WITH CHECKSUM,RECOVERY,'+moves+';')
+            self.progress('restoring_database',database=entry['name'])
+            self.sql('RESTORE DATABASE '+name+' FROM DISK='+quoted(destination)+' WITH CHECKSUM,RECOVERY,'+moves+';',timeout=600)
         user = self.private['app_user']
         self.sql('CREATE LOGIN '+identifier(user)+' WITH PASSWORD='+quoted(self.private['app_password'])+
                  ',CHECK_POLICY=OFF;GRANT VIEW SERVER STATE TO '+identifier(user)+
@@ -359,7 +367,7 @@ class NativeDriver:
                 for encoding in ('utf-8','utf-16-le'):
                     raw=raw.replace(secret.encode(encoding),'[redacted]'.encode(encoding))
             target.write_bytes(raw)
-        for relative in ('result.json','fixture-binding.json','progress.json','launch-selection.json','native-network.json','client-run/run.json'):
+        for relative in ('result.json','fixture-binding.json','progress.json','launch-selection.json','native-network.json','server-candidate-overlay.json','client-run/run.json'):
             source=lease.root/relative
             if source.is_file():
                 copy_evidence(source)
@@ -377,11 +385,21 @@ class NativeDriver:
             copy_evidence(report)
 
 
+def writable_owned_copy(target):
+    no_reparse_tree(target)
+    for copied in target.rglob('*'):
+        if copied.is_file():copied.chmod(copied.stat().st_mode | stat.S_IWUSR)
+
+
 def copy_tree(source, target):
     no_reparse_tree(source)
     def ignored(folder,names):
         return gt.copy_ignore(folder,names) | {n for n in names if n.lower()=='logdata' or n.lower().endswith('.dmp')}
     shutil.copytree(source,target,ignore=ignored)
+    # Reusable templates may carry Windows read-only attributes. Only these
+    # owned copies are writable; rebasing and candidate symbol merging must
+    # never attempt to replace a read-only destination inherited by copy2.
+    writable_owned_copy(target)
 
 
 def publish_template_copy(output,destination):
@@ -537,7 +555,7 @@ def upgrade_template(source, destination, registry):
     lease=registry.allocate(ROOT/'build/game-test-environments','template-revision')
     driver=NativeDriver(registry)
     with ManagedEnvironment(registry,lease,driver,ROOT/'build/game-test-receipts'):
-        output=lease.root/'template-output';shutil.copytree(source,output)
+        output=lease.root/'template-output';shutil.copytree(source,output);writable_owned_copy(output)
         driver.start_sql(lease);driver.private['app_user']=data['native_db_user']
         atomic_json(lease.root/'private/instance.json',driver.private)
         driver.restore(data,source/'backups')
@@ -554,7 +572,7 @@ def upgrade_template(source, destination, registry):
             remote='/var/opt/mssql/backup/gametest/revision_'+entry['file']
             driver.sql('BACKUP DATABASE '+identifier(entry['name'])+' TO DISK='+quoted(remote)+' WITH COPY_ONLY,CHECKSUM,INIT;')
             driver.sql('RESTORE VERIFYONLY FROM DISK='+quoted(remote)+' WITH CHECKSUM;')
-            target=output/'backups'/entry['file'];docker('cp',driver.private['container']+':'+remote,str(target))
+            target=output/'backups'/entry['file'];docker('cp',driver.private['container']+':'+remote,str(target),timeout=600)
             entry['sha256']=gt.sha256(target);entry['bytes']=target.stat().st_size
         secret=json.loads((output/'private/native.json').read_text(encoding='utf-8'))
         params={'port':data['native_sql_port'],'app_user':data['native_db_user'],'app_password':secret['native_db_password']}
@@ -663,6 +681,50 @@ def start_native_services(driver,lease,template,client,account):
         driver.progress('service_ready', service=service['folder'], pid=process.pid, listeners=listeners)
 
 
+def overlay_server_candidates(native, stage, identifiers):
+    """Install explicit candidates only into this environment's stopped hosts."""
+    from tools.verify_symbols import read_pe, host_key
+    records=[]
+    for name in dict.fromkeys(identifiers):
+        before=len(records)
+        if not re.fullmatch(r'[a-z][a-z0-9_]*',name):raise RuntimeError('Invalid server candidate identifier.')
+        source=stage/'server/sdgo/mods'/name
+        no_reparse_tree(source)
+        cfg=gt.read_ini(source/'mod.ini')
+        if cfg.get('mod','id',fallback='')!=name:raise RuntimeError('Server candidate identity differs from its folder.')
+        hosts={h.strip() for h in cfg.get('mod','hosts',fallback='').split(',')}
+        preserved={p.strip().replace('\\','/') for p in cfg.get('mod','config_files',fallback='').split(',') if p.strip()}
+        for service in (native/'Server').iterdir():
+            executable=next((service/n for n in ('BattleServer.exe','AgentServer.exe','WorldServer.exe') if (service/n).is_file()),None)
+            if executable is None:continue
+            key=host_key(str(executable),read_pe(executable))
+            if key not in hosts and '*' not in hosts:continue
+            destination=service/'sdgo/mods'/name
+            previous=gt.read_ini(destination/'mod.ini') if (destination/'mod.ini').is_file() else gt.ini_parser()
+            for file in source.rglob('*'):
+                if not file.is_file():continue
+                relative=file.relative_to(source)
+                target=destination/relative
+                if relative.as_posix() in preserved and target.is_file():continue
+                target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(file,target)
+            merged=gt.read_ini(destination/'mod.ini');merged['mod']['enabled']='1'
+            if previous.has_section('settings'):
+                if not merged.has_section('settings'):merged.add_section('settings')
+                for k,v in previous.items('settings',raw=True):merged['settings'][k]=v
+            gt.write_ini(destination/'mod.ini',merged)
+            gt.merge_required_symbols(stage/'server/sdgo/symbols'/f'{key}.ini',service/'sdgo/symbols'/f'{key}.ini',[destination/'mod.ini'])
+            settings=gt.read_ini(service/'sdgo/sdgo.ini')
+            for section in ('categories','features','mods'):
+                if not settings.has_section(section):settings.add_section(section)
+            settings['categories'][merged['mod']['category']]='1'
+            settings['features'][merged['mod']['feature']]='1';settings['mods'][name]='1'
+            gt.write_ini(service/'sdgo/sdgo.ini',settings)
+            records.append({'host':service.name,'mod':name,'version':merged['mod']['version'],
+                'files':{f.relative_to(destination).as_posix():gt.sha256(f) for f in destination.rglob('*') if f.is_file()}})
+        if len(records)==before:raise RuntimeError('Server candidate has no matching native host: '+name)
+    return records
+
+
 def scenario_options(account, *, bootstrap_only=False, mode_sequence='1', pages_only=False,
                      shop_assertions=None, shop_display=None):
     gt.parse_mode_sequence(mode_sequence)
@@ -680,7 +742,8 @@ def scenario_options(account, *, bootstrap_only=False, mode_sequence='1', pages_
 
 
 def execute_environment(template_path,stage,slot,include_mods,bootstrap_only,registry,apsalus_roundtrip=False,
-                        *,mode_sequence='1',pages_only=False,shop_assertions=None,shop_display=None,timeout=600):
+                        *,mode_sequence='1',pages_only=False,shop_assertions=None,shop_display=None,
+                        room_titles_only=False,include_server_mods=(),timeout=600):
     template_path=template_path.resolve();template=template_description(template_path)
     account=next((a for a in template['accounts'] if a['slot']==slot),None)
     if account is None:raise RuntimeError('Choose one of the five prepared account slots.')
@@ -688,6 +751,7 @@ def execute_environment(template_path,stage,slot,include_mods,bootstrap_only,reg
         pages_only=pages_only,shop_assertions=shop_assertions,shop_display=shop_display)
     if timeout<=0:raise RuntimeError('The native run timeout must be positive.')
     gt.validate_observer_stage(Path(template['client_template']),stage.resolve(),tuple(include_mods))
+    if room_titles_only and (bootstrap_only or apsalus_roundtrip or pages_only or mode_sequence!='1'):raise RuntimeError('Room-title input scope cannot include bootstrap-only or combat roundtrips.')
     lease=registry.allocate(ROOT/'build/game-test-environments',template['id'])
     driver=NativeDriver(registry);outcome=None
     managed=ManagedEnvironment(registry,lease,driver,ROOT/'build/game-test-receipts')
@@ -713,10 +777,12 @@ def execute_environment(template_path,stage,slot,include_mods,bootstrap_only,reg
             if path.is_file():
                 cfg=gt.read_ini(path);cfg['settings']['FirstPort']=str(lease.udp_first+(i-1)*8);gt.write_ini(path,cfg)
         profiles=lease.root/'private/accounts';copy_tree(template_path/'private/accounts',profiles)
+        candidates=overlay_server_candidates(native,stage.resolve(),include_server_mods)
+        atomic_json(lease.root/'server-candidate-overlay.json',{'source':gt.git_source_ref(ROOT),'hosts':candidates})
         run=lease.root/'client-run'
         meta=gt.prepare(Path(template['client_template']),stage,run,target_host=lease.ip,network_policy='direct',
             account_profile=profiles/account['profile'],extra_mods=tuple(include_mods),
-            apsalus_roundtrip=apsalus_roundtrip,**scenario)
+            apsalus_roundtrip=apsalus_roundtrip,room_titles_only=room_titles_only,**scenario)
         atomic_json(lease.root/'fixture-binding.json',{'template_id':template['id'],'account_slot':slot,
             'account_id':account['account_id'],'units':account['units'],'primary_uid':account['primary_uid'],
             'new_accounts_created_during_run':0,'global_account_profile_used':False})
@@ -725,7 +791,7 @@ def execute_environment(template_path,stage,slot,include_mods,bootstrap_only,reg
         driver.progress('client_running', account_slot=slot)
         outcome=gt.run_prepared(run,timeout,30,on_process=lambda pid,exe:driver.record_pid(lease,pid,exe),
             on_poll=lambda:verify_native_loopback(driver,lease))
-        if not bootstrap_only and not pages_only:
+        if not bootstrap_only and not pages_only and not room_titles_only:
             from tools.game_test_server_report import evaluate
             report=evaluate(meta,list((native/'Server').glob('BattleServer*/sdgo/gametest/server-observer-events.jsonl')),account['account_id'])
             atomic_json(run/'receipts/server-report.json',report)
@@ -757,12 +823,14 @@ def native_main(argv=None):
     run.add_argument('--stage',type=Path,default=ROOT/'build/stage/Release')
     run.add_argument('--account',type=int,choices=range(1,6),default=1)
     run.add_argument('--include-mod',action='append',default=[])
+    run.add_argument('--include-server-mod',action='append',default=[],help='explicit staged server candidate, installed only into matching owned native hosts')
     run.add_argument('--bootstrap-only',action='store_true')
+    run.add_argument('--room-titles-only',action='store_true',help='native room-name inputs and real title ACKs, without battle claims')
     run.add_argument('--mode-sequence',default='1',help='existing native PvP matrix, e.g. 1,3,6,7,9')
     run.add_argument('--pages-only',action='store_true',help='real native pages; reuse prepared inventory without equipping or acquiring units')
     run.add_argument('--shop-assertions',type=Path)
     run.add_argument('--shop-display',type=Path)
-    run.add_argument('--timeout',type=int,default=600)
+    run.add_argument('--timeout',type=float,default=600)
     run.add_argument('--apsalus-roundtrip',action='store_true',help='verify two original transform requests and releases during a full battle')
     args=parser.parse_args(argv)
     registry=Registry()
@@ -779,7 +847,8 @@ def native_main(argv=None):
                 if template is None:raise RuntimeError('No prepared template is registered. Restore the shared template; ordinary tests never create accounts.')
                 result=execute_environment(template,args.stage,args.account,args.include_mod,args.bootstrap_only,registry,args.apsalus_roundtrip,
                     mode_sequence=args.mode_sequence,pages_only=args.pages_only,shop_assertions=args.shop_assertions,
-                    shop_display=args.shop_display,timeout=args.timeout)
+                    shop_display=args.shop_display,room_titles_only=args.room_titles_only,
+                    include_server_mods=args.include_server_mod,timeout=args.timeout)
             print(json.dumps(result,indent=2));return 0 if result['status'] in ('pass','template_ready') else 1
         except Exception as error:
             print(json.dumps({'status':'fail','reason':str(error),'error_type':type(error).__name__}));return 1

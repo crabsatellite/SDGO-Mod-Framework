@@ -66,8 +66,11 @@ void** g_teamPool = nullptr;
 void** g_battlePool = nullptr;
 std::unique_ptr<server::ServerState> g_state;
 bool g_active = false;
+const SdgoApi* g_api = nullptr;
+SdgoMod* g_mod = nullptr;
 
 constexpr std::uint16_t kCreateTeam = 0x0640;
+constexpr std::uint16_t kCreateBattle = 0x0525;
 constexpr std::uint16_t kListBattle = 0x07FB;
 constexpr std::uint16_t kListTeam = 0x0A08;
 constexpr std::uint16_t kBattleSettings = 0x050F;
@@ -332,6 +335,7 @@ std::size_t ExactRequestBytes(std::uint16_t opcode)
 {
     switch (opcode) {
     case kCreateTeam: return 0x53;
+    case kCreateBattle: return 0x50;
     case kListBattle: return 0x16;
     case kListTeam: return 0x16;
     case kBattleSettings: return 0x37;
@@ -351,6 +355,8 @@ bool RequestTitle(std::uint16_t opcode,
     switch (opcode) {
     case kCreateTeam:
         return SafeRequestTitle(packet, size, 0x15, 0x16, title);
+    case kCreateBattle:
+        return SafeRequestTitle(packet, size, 0x12, 0x13, title);
     case kBattleSettings:
         return SafeRequestTitle(packet, size, 0x0B, 0x0C, title);
     case kTeamSettings:
@@ -365,7 +371,7 @@ bool RequestTitle(std::uint16_t opcode,
 server::RoomDomain RequestDomain(std::uint16_t opcode,
                                  const void* packet)
 {
-    if (opcode == kBattleSettings)
+    if (opcode == kBattleSettings || opcode==kCreateBattle)
         return server::RoomDomain::Battle;
     if (opcode == kRenameRoom) {
         const auto* bytes = static_cast<const std::uint8_t*>(packet);
@@ -567,17 +573,19 @@ bool CommitContext(DispatchContext* context,
         return false;
     }
 
-    if (context->kind == ContextKind::Create && response == 0x0A33) {
+    if (context->kind == ContextKind::Create &&
+        ((context->opcode==kCreateTeam && response==0x0A33) || (context->opcode==kCreateBattle && response==0x0918))) {
+        const auto domain=RequestDomain(context->opcode,context->native_packet);
         std::uint32_t nativeId = 0;
         if (size < 10 ||
             !SafeDword(static_cast<const std::uint8_t*>(packet) + 6,
                        &nativeId))
             return false;
-        void* room = NativeRoom(server::RoomDomain::Team, nativeId);
+        void* room = NativeRoom(domain, nativeId);
         std::uint32_t observedId = 0;
         std::uint32_t owner = 0;
         server::NativeTitle nativeTitle;
-        if (!ReadRoomIdentity(server::RoomDomain::Team, room, &observedId,
+        if (!ReadRoomIdentity(domain, room, &observedId,
                               &owner, &nativeTitle) ||
             observedId != nativeId || owner != context->pilot)
             return false;
@@ -586,12 +594,12 @@ bool CommitContext(DispatchContext* context,
         metadata::StateResult created;
         if (!context->extended &&
             g_state->QueryRoom(
-                server::EncodeRoomId(server::RoomDomain::Team, nativeId),
+                server::EncodeRoomId(domain, nativeId),
                 &created.snapshot)) {
             created.error = metadata::StateError::None;
         } else {
             created =
-                g_state->CreateRoom(server::RoomDomain::Team, nativeId,
+                g_state->CreateRoom(domain, nativeId,
                                     owner, nativeTitle, full, true);
         }
         if (!created.ok()) {
@@ -600,7 +608,7 @@ bool CommitContext(DispatchContext* context,
         }
         context->wire_id = created.snapshot.key.room_id;
         context->committed = true;
-        SyncMembers(server::RoomDomain::Team, room);
+        SyncMembers(domain, room);
         *snapshot = created.snapshot;
         return true;
     }
@@ -684,11 +692,12 @@ bool BuildHelloBatch(DispatchContext* context,
     const auto* bytes = static_cast<const std::uint8_t*>(packet);
     std::array<std::uint32_t, 10> wireIds{};
     std::size_t count = 0;
-    if (context->opcode == kCreateTeam) {
+    if (context->opcode == kCreateTeam || context->opcode==kCreateBattle) {
+        const auto domain=RequestDomain(context->opcode,context->native_packet);
         std::uint32_t nativeId = 0;
         if (size < 10 || !SafeDword(bytes + 6, &nativeId))
             return false;
-        wireIds[0] = server::EncodeRoomId(server::RoomDomain::Team, nativeId);
+        wireIds[0] = server::EncodeRoomId(domain, nativeId);
         metadata::RoomSnapshot observed;
         if (!wireIds[0] || !ObserveRoomByWire(wireIds[0], &observed))
             return false;
@@ -729,7 +738,8 @@ bool BuildContextResponse(DispatchContext* context,
     if (context->kind == ContextKind::Hello &&
         ((context->opcode == kListBattle && Word(packet) == 0x0617) ||
          (context->opcode == kListTeam && Word(packet) == 0x0824) ||
-         (context->opcode == kCreateTeam && Word(packet) == 0x0A33 && size == 0x21FC)) &&
+         (context->opcode == kCreateTeam && Word(packet) == 0x0A33 && size == 0x21FC) ||
+         (context->opcode == kCreateBattle && Word(packet) == 0x0918 && size == 0x3CE1)) &&
         actorRecipient)
         return BuildHelloBatch(context, packet, size, extended);
     if (!hasSnapshot &&
@@ -787,7 +797,7 @@ bool GenericSnapshot(const void* packet,
         return false;
     const std::uint16_t opcode = Word(packet);
     std::uint32_t wireId = 0;
-    if ((opcode == 0x0550 || opcode == 0x0680 || opcode == 0x086F) &&
+    if ((opcode == 0x0550 || opcode==0x0918 || opcode == 0x0680 || opcode == 0x086F) &&
         size >= 10) {
         std::uint32_t nativeId = 0;
         SafeDword(static_cast<const std::uint8_t*>(packet) + 6, &nativeId);
@@ -841,6 +851,9 @@ int ForwardSend(void* self,
         return g_send(self, destination, packet, size, flags);
     const std::uint16_t opcode = Word(packet);
     DispatchContext* context = g_context;
+    if (g_api && context && context->opcode == kCreateTeam)
+        g_api->Log(g_mod, SDGO_LOG_DEBUG,
+            "title create Battle response opcode=%04X bytes=%d destination=%u", opcode, size, destination);
     if (g_sendGate.context == context && g_sendGate.packet == packet &&
         g_sendGate.destination == destination &&
         g_sendGate.opcode == opcode)
@@ -938,10 +951,10 @@ bool PrepareContext(DispatchContext* context,
         context->request_body.assign(body, body + bodySize);
 
     if (opcode == kListBattle || opcode == kListTeam ||
-        (opcode == kCreateTeam && message && message->kind == metadata::MessageKind::Hello)) {
+        ((opcode == kCreateTeam || opcode==kCreateBattle) && message && message->kind == metadata::MessageKind::Hello)) {
         if (!message || message->kind != metadata::MessageKind::Hello)
             return false;
-        if (opcode == kCreateTeam) {
+        if (opcode == kCreateTeam || opcode==kCreateBattle) {
             server::NativeTitle nativeTitle;
             if (!RequestTitle(opcode, nativePacket, nativeSize, &nativeTitle))
                 return false;
@@ -949,7 +962,7 @@ bool PrepareContext(DispatchContext* context,
         context->kind = ContextKind::Hello;
         return true;
     }
-    if (opcode == kCreateTeam) {
+    if (opcode == kCreateTeam || opcode==kCreateBattle) {
         context->kind = ContextKind::Create;
         context->mutation = message != nullptr;
         context->has_native_title =
@@ -1044,6 +1057,9 @@ int __cdecl Dispatch(DWORD argument0,
         return g_dispatch(argument0, argument1, connection, packet, size);
     const std::uint16_t opcode = Word(packet);
     const std::size_t expected = ExactRequestBytes(opcode);
+    if (g_api && opcode == kCreateTeam)
+        g_api->Log(g_mod, SDGO_LOG_DEBUG,
+            "title create Battle dispatch connection=%u bytes=%d", connection, size);
     const bool passiveVariable =
         opcode == kMissionConversion || opcode == kPvpConversion;
     bool nativeDispatched = false;
@@ -1104,11 +1120,27 @@ int __cdecl Dispatch(DWORD argument0,
         DispatchContext context;
         if (!PrepareContext(&context, opcode, pilot, nativePacket,
                             nativeSize, messagePointer, body, bodySize)) {
+            if (g_api && opcode == kCreateTeam)
+                g_api->Log(g_mod, SDGO_LOG_DEBUG, "title create Battle context rejected metadata=%u", messagePointer != nullptr);
             if (messagePointer)
                 return 1;
             return g_dispatch(argument0, argument1, connection, packet, size);
         }
         context.route = static_cast<std::uintptr_t>(connection);
+        // Native channel admission can move the same Agent client connection
+        // to another Battle provider after its lobby Hello. A validated fresh
+        // SetTitle create is itself an explicit protocol offer from the pilot
+        // stamped by the Agent. Bind it here; its exact create ACK confirms
+        // this provider to the client. Never bootstrap an existing-room edit.
+        if (context.kind == ContextKind::Create && context.extended) {
+            if (!g_state->HasCapability(pilot) &&
+                !g_state->BeginCapabilityRound(pilot, context.route))
+                return 1;
+            // Changing an existing Agent route requires an explicit Hello.
+            // Do not erase completed create deduplication on an implicit rebind.
+            if (!g_state->HasCapability(pilot, context.route))
+                return 1;
+        }
         if (context.kind == ContextKind::Hello &&
             !g_state->BeginCapabilityRound(pilot, context.route) &&
             !g_state->HasCapability(pilot, context.route))
@@ -1118,6 +1150,10 @@ int __cdecl Dispatch(DWORD argument0,
             const server::RequestDecision decision =
                 g_state->BeginRequest(
                     pilot, message.request_id, opcode, body, bodySize);
+            if (g_api && opcode == kCreateTeam)
+                g_api->Log(g_mod, SDGO_LOG_DEBUG,
+                    "title create Battle request=%u disposition=%u", message.request_id,
+                    static_cast<unsigned>(decision.disposition));
             switch (decision.disposition) {
             case server::RequestDisposition::Proceed:
                 break;
@@ -1138,6 +1174,9 @@ int __cdecl Dispatch(DWORD argument0,
         nativeDispatched = true;
         DispatchScoped(g_dispatch, argument0, argument1, connection,
                        nativePacket, static_cast<int>(nativeSize), &context);
+        if (g_api && opcode == kCreateTeam)
+            g_api->Log(g_mod, SDGO_LOG_DEBUG,
+                "title create Battle native returned committed=%u completed=%u", context.committed, context.request_completed);
         if (context.mutation && !context.request_completed) {
             if (context.committed) {
                 g_state->CompleteRequest(
@@ -1168,9 +1207,8 @@ void ObserveCreatedRoom(server::RoomDomain domain,
 {
     if (!g_state || !room)
         return;
-    if (domain == server::RoomDomain::Team && g_context &&
-        g_context->kind == ContextKind::Create &&
-        g_context->extended)
+    if (g_context && g_context->kind == ContextKind::Create && g_context->extended &&
+        domain==RequestDomain(g_context->opcode,g_context->native_packet))
         return;
     std::uint32_t nativeId = 0;
     std::uint32_t owner = 0;
@@ -1596,6 +1634,8 @@ const SdgoRoomTitleApi* __cdecl SdgoRoomTitleApiV1()
 
 SDGO_MOD_ENTRY
 {
+    g_api = api;
+    g_mod = mod;
     try {
         g_state = std::make_unique<server::ServerState>(MakeEpoch());
     } catch (const std::bad_alloc&) {

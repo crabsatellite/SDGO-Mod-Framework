@@ -289,3 +289,6 @@ dialog:not(.ui-dialog) textarea { min-height: 260px; margin: 8px 0 16px; }
   .provider-root .layout, .provider-root .identity { display: block; }
 }
 .service-title { display: flex; align-items: center; gap: 10px; }
+.update-auto { display:flex;align-items:center;gap:12px;margin:18px 0; }
+.release-notes { white-space:pre-wrap;overflow-wrap:anywhere;max-height:420px;overflow:auto; }
+.update-status { font-weight:600;color:var(--ui-blue); }

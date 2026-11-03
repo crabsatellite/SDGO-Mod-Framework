@@ -1,5 +1,7 @@
 # IME candidates and text commit
 
+[简体中文](ime-fix.zh-CN.md)
+
 `ime_fix` 1.1.1 restores Chinese IME candidate requests and fixes residual preedit letters after word selection.
 The original single-call-site UTF-16 commit-length correction remains for Chinese, Japanese and Korean input.
 

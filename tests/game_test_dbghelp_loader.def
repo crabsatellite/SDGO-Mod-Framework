@@ -1,0 +1,14 @@
+LIBRARY dbghelp
+EXPORTS
+    SymCleanup=Fixture_SymCleanup
+    SymGetLineFromAddr64=Fixture_SymGetLineFromAddr64
+    SymFromAddr=Fixture_SymFromAddr
+    StackWalk=Fixture_StackWalk
+    SymFunctionTableAccess=Fixture_SymFunctionTableAccess
+    SymGetModuleBase=Fixture_SymGetModuleBase
+    SymInitialize=Fixture_SymInitialize
+    SymSetOptions=Fixture_SymSetOptions
+    EnumerateLoadedModules=Fixture_EnumerateLoadedModules
+    GetTimestampForLoadedLibrary=Fixture_GetTimestampForLoadedLibrary
+    MiniDumpWriteDump=Fixture_MiniDumpWriteDump
+
