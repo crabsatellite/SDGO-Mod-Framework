@@ -315,6 +315,9 @@ public:
         }
     }
 
+    uint32_t ReadyStage() const { return readyStage_; }
+    uint32_t ReadyContextFlags() const { return readyContextFlags_; }
+
     JoinObservation JoinState() const
     {
         RefreshJoinAcceptance();
@@ -942,6 +945,8 @@ private:
     bool ResolveReadyContext(
         ReadyContext& context) const
     {
+        readyStage_=1;
+        readyContextFlags_=0;
         std::memset(
             &context,
             0,
@@ -952,6 +957,7 @@ private:
                 0) != kJoinAccepted)
             return false;
 
+        readyStage_=2;
         uint8_t* profile =
             profilePointer_
                 ? *profilePointer_
@@ -971,6 +977,7 @@ private:
                         0)))
             return false;
 
+        readyStage_=3;
         uint8_t* app =
             gameApp_ ? gameApp_()
                      : nullptr;
@@ -980,6 +987,7 @@ private:
                 kGameAppState) !=
                 kThreeDWaitRoomAppState)
             return false;
+        readyStage_=4;
         uint8_t* owner =
             Read<uint8_t*>(
                 app +
@@ -988,6 +996,7 @@ private:
             Read<void*>(owner) !=
                 threeDWaitRoomVtable_)
             return false;
+        readyStage_=5;
         uint8_t* manager =
             Read<uint8_t*>(
                 owner + 4);
@@ -996,6 +1005,7 @@ private:
                 Read<void*>(manager)))
             return false;
 
+        readyStage_=6;
         uint8_t** states =
             Read<uint8_t**>(
                 manager +
@@ -1005,6 +1015,12 @@ private:
                 ? states[
                       kReadyCommandIndex]
                 : nullptr;
+        if(command) {
+            if(Read<void*>(command)==readyCommandVtable_)readyContextFlags_|=1;
+            if(Read<uint32_t>(command+4)==kReadyCommandIndex)readyContextFlags_|=2;
+            if(Read<uint8_t*>(command+0x0C)==manager+kManagerCommandContext)readyContextFlags_|=4;
+            if(Read<uint8_t*>(command+0x10)==manager)readyContextFlags_|=8;
+        }
         if (!command ||
             Read<void*>(command) !=
                 readyCommandVtable_ ||
@@ -1022,6 +1038,7 @@ private:
                 manager)
             return false;
 
+        readyStage_=7;
         const uint32_t localSlot =
             Read<uint32_t>(
                 manager +
@@ -1029,6 +1046,7 @@ private:
         if (localSlot >= 12)
             return false;
 
+        readyStage_=8;
         uint8_t* waitRoom =
             Read<uint8_t*>(
                 manager +
@@ -1036,6 +1054,7 @@ private:
         if (!waitRoom)
             return false;
 
+        readyStage_=9;
         bool ready = false;
         if (!ReadNativeReadyFlag(
                 waitRoom,
@@ -1043,6 +1062,7 @@ private:
                 ready))
             return false;
 
+        readyStage_=10;
         context.manager = manager;
         context.command = command;
         context.wait_room = waitRoom;
@@ -1629,6 +1649,7 @@ private:
     RoomResolver roomResolver_=nullptr;
     mutable uint32_t selectionStage_=0;
     mutable uint32_t selectionControlFlags_=0;
+    mutable uint32_t readyStage_=0,readyContextFlags_=0;
     void* roomOpaque_=nullptr;
     uint8_t** profilePointer_ = nullptr;
     IsRoomMasterFn isRoomMaster_ = nullptr;

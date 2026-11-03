@@ -112,6 +112,7 @@ public:
         fprintf(file,"[pvp]\noperation=%u\nsequence=%u\nresult=%u\npilot=%u\nexpected_host=%u\nhost=%u\nroom=%u\nhumans=%u\nlocal_host=%u\nstart_sequence=%u\nend_sequence=%u\nend_opcode=%u\nbattle_seen=%u\nsettled=%u\nframes=%u\nmovement_events=%u\nbots=%u\nlocal_bots=%u\nremote_bots=%u\njoin_result=%u\njoin_original=%u\nready_result=%u\nready_reply=%u\nready_original=%u\nready_model=%u\n",
             s.operation,s.sequence,s.result,s.pilot,s.expected_host,s.host,s.room,s.humans,s.local_host,s.start_sequence,s.end_sequence,s.end_opcode,s.battle_seen,s.settled,s.frames,s.movement_events,s.bots,s.local_bots,s.remote_bots,s.join_result,s.join_original,s.ready_result,s.ready_reply,s.ready_original,s.ready_model);
         fprintf(file,"hp_events=%u\nlua_errors=%u\njoin_stage=%u\njoin_control_flags=%u\n",s.hp_events,s.lua_errors,s.join_stage,s.join_control_flags);
+        fprintf(file,"ready_stage=%u\nready_context_flags=%u\n",join_->ReadyStage(),join_->ReadyContextFlags());
         const auto selected=native_->OnboardingState();
         fprintf(file,"channel_id=%u\nchannel_group=%u\n",selected.channel_id,selected.channel_group);
     }
