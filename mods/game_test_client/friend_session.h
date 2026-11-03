@@ -73,6 +73,8 @@ class FriendSession {
 
     static uint32_t Operation(const wchar_t* text) {
         const wchar_t* names[]={L"",L"ensure",L"refresh",L"page",L"add",L"accept",L"reject",L"open",L"send",L"remove",L"close",L"profile",L"room_create",L"invite_send",L"invite_arm_accept",L"invite_arm_reject",L"invite_decide",L"room_leave",L"gift_context",L"gift_open",L"gift_select_unit",L"gift_note",L"gift_preview",L"gift_confirm",L"gift_cancel",L"gift_storage",L"gift_inbox",L"gift_returned",L"gift_select",L"gift_accept",L"gift_return",L"gift_takeback",L"gift_provenance",L"gift_receipt",L"room_join",L"room_ready",L"room_start",L"battle_finish"};
+        if(!wcscmp(text,L"gift_native_card"))return 38;
+        if(!wcscmp(text,L"gift_storage_back"))return 39;
         for(uint32_t i=1;i<38;++i)if(!wcscmp(text,names[i]))return i;
         return 0;
     }
@@ -204,6 +206,7 @@ public:
     }
     void Bind(FriendActions* actions,FriendExtraActions* extras,const SdgoApi* api,SdgoMod* mod,FriendRoomActions* roomActions=nullptr){
         actions_=actions;extras_=extras;roomActions_=roomActions;profile_=static_cast<uint8_t**>(api->Symbol(mod,"flow.profile_pointer"));
+        unitGifts_.BindCursor(api,mod);
     }
     void BindPvp(PvpSessionActions* pvp){pvpActions_=pvp;}
     int Poll(const SdgoGameTestContextV1* context) {
@@ -328,8 +331,8 @@ public:
             !Text(commandPath.c_str(),L"body",command.body,sizeof(command.body))) {
             context->Assert(0,"friend command is malformed");return SDGO_GAME_TEST_FAIL;
         }
-        pvpCommand_=command.operation>=34;
-        giftCommand_=command.operation>=18&&command.operation<=33;
+        pvpCommand_=command.operation>=34&&command.operation<=37;
+        giftCommand_=(command.operation>=18&&command.operation<=33)||(command.operation>=38&&command.operation<=39);
         roomCommand_=command.operation>=12&&!giftCommand_&&!pvpCommand_;
         extraCommand_=command.operation>=10&&!roomCommand_&&!giftCommand_&&!pvpCommand_;
         const uint32_t channel=GetPrivateProfileIntW(L"command",L"channel_id",0,commandPath.c_str());
@@ -351,7 +354,9 @@ public:
                 context->Assert(0,"unit gift action input is malformed");return SDGO_GAME_TEST_FAIL;
             }
             giftOperation_=command.operation;
-            result=giftResult_=unitGifts_.Invoke(context,command.operation-17,command.target_id,unit,gift,note,noteLength);
+            const int cursorX=static_cast<int>(GetPrivateProfileIntW(L"command",L"cursor_x",-1,commandPath.c_str()));
+            const int cursorY=static_cast<int>(GetPrivateProfileIntW(L"command",L"cursor_y",-1,commandPath.c_str()));
+            result=giftResult_=unitGifts_.Invoke(context,command.operation>=38 ? command.operation-21 : command.operation-17,command.target_id,unit,gift,note,noteLength,cursorX,cursorY);
         } else result=roomCommand_?roomActions_->Submit(command,static_cast<uint16_t>(channel),room):
             extraCommand_&&extras_?extras_->Submit(command):actions_->Submit(command);
         active_=true;commandAt_=GetTickCount64();
