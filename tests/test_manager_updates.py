@@ -162,6 +162,22 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(json.loads((self.host/'sdgo/release.json').read_text())['mods']['example'],'3.0.0')
         self.assertEqual(result['preserved_newer_mods'],['example'])
 
+    def test_updated_symbols_remain_readable_by_the_native_windows_loader(self):
+        self.existing()
+        u.install_host(self.record,self.bundle,self.manifest,self.root/'cache',lambda _:False)
+        path=self.host/'sdgo/symbols'/(KEY+'.ini')
+        self.assertFalse(path.read_bytes().startswith(b'\xef\xbb\xbf'))
+        if os.name!='nt':return
+        import ctypes
+        from ctypes import wintypes
+        read=ctypes.WinDLL('kernel32',use_last_error=True).GetPrivateProfileStringW
+        read.argtypes=[wintypes.LPCWSTR,wintypes.LPCWSTR,wintypes.LPCWSTR,wintypes.LPWSTR,wintypes.DWORD,wintypes.LPCWSTR]
+        read.restype=wintypes.DWORD
+        for section,key,expected in [('host','name','GOnline'),('new.alias','rva','7'),('custom.alias','rva','99')]:
+            value=ctypes.create_unicode_buffer(128)
+            read(section,key,'MISSING',value,len(value),str(path.resolve()))
+            self.assertEqual(value.value,expected,(section,key))
+
     def test_running_game_defers_then_installs_without_stopping_it(self):
         before=(self.host/'GOnline.exe').read_bytes()
         with mock.patch.object(u,'running',return_value=True):
