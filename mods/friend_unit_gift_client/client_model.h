@@ -221,6 +221,7 @@ public:
         }
         if ((request.command == Command::list_inbox ||
              request.command == Command::list_returned ||
+             request.command == Command::inventory_returns ||
              request.command == Command::detail ||
              request.command == Command::accept ||
              request.command == Command::return_to_sender ||

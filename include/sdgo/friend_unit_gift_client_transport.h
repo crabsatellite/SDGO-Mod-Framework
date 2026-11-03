@@ -86,6 +86,9 @@ public:
     // Mutations are never retried automatically.
     bool Send(Request request) noexcept;
     bool SendAt(Request request, std::uint64_t now_millis) noexcept;
+    // Original read-only 0x078B request. The game's own response handler
+    // synchronizes authoritative full and brief inventory data.
+    bool RequestNativeUnitDetails(std::uint64_t unit_uid) noexcept;
 
     // Returns true only for a positively decoded custom reply. fixed_size must
     // be kCarrierBytes; zero or an unproved size is never dereferenced.

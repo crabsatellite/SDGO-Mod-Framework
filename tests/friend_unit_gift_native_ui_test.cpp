@@ -203,6 +203,21 @@ int main() {
     bindings.skin =
         reinterpret_cast<Bindings::Skin>(&SkinShim);
     bindings.button_vtable = g_button_vtable;
+    Control rendered;
+    Put<void*>(rendered.bytes.data(),0,g_button_vtable);
+    const std::wstring renderedText=L"发送方：好友\n赠送时间：2026-11-03 00:01 UTC\n寄语：出击顺利！";
+    NativeString renderedString;
+    renderedString.data.pointer=renderedText.c_str();
+    renderedString.length=static_cast<std::uint32_t>(renderedText.size());
+    renderedString.capacity=renderedString.length;
+    std::array<NativeString*,1> textItems{&renderedString};
+    Put<void*>(rendered.bytes.data(),0x190,textItems.data());
+    Put<void*>(rendered.bytes.data(),0x194,textItems.data()+1);
+    std::wstring readText;
+    Check(bindings.ReadText(rendered.bytes.data(),&readText) && readText==renderedText,
+          "provenance observer reads the exact native control text, including line breaks and time");
+    Put<void*>(rendered.bytes.data(),0x194,textItems.data());
+    Check(!bindings.ReadText(rendered.bytes.data(),&readText),"missing native text cannot be replaced by model output");
 
     Control noteEdit;
     Control nativeInput;

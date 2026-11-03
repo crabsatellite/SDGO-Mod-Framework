@@ -195,6 +195,25 @@ int main() {
     detail.flags = envelope_expanded_probe;
     assert(!EncodeReply(4001, detail, &reply_bytes));
 
+    Request inventory;
+    inventory.command=Command::inventory_returns;
+    inventory.request_id=Id(90);
+    assert(wire::ReadOnly(inventory.command));
+    assert(EncodeRequest(inventory,&request_bytes));
+    wire::Write32(request_bytes.data()+2,4001);
+    assert(MarkAgentValidated(request_bytes.data(),request_bytes.size()));
+    assert(DecodeRequest(request_bytes.data(),request_bytes.size(),&decoded_request,&actor));
+    assert(decoded_request.command==Command::inventory_returns && actor==4001);
+    Reply returned=list;
+    returned.command=Command::inventory_returns;
+    returned.row_count=returned.total_count=1;
+    returned.direction=ListDirection::returned;
+    returned.rows[0].state=GiftState::returned;
+    returned.rows[0].direction=ListDirection::returned;
+    assert(EncodeReply(4001,returned,&reply_bytes));
+    assert(DecodeReply(reply_bytes.data(),reply_bytes.size(),&decoded_reply));
+    assert(decoded_reply.command==Command::inventory_returns && decoded_reply.rows[0].state==GiftState::returned);
+
     std::cout << "friend unit gift protocol tests passed\n";
     return 0;
 }

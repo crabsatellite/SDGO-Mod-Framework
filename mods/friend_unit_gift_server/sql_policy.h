@@ -726,6 +726,34 @@ END;
     return sql;
 }
 
+inline std::wstring QueryInventoryReturnsModule() {
+    return LR"SQL(CREATE PROCEDURE [sdgo_friend_unit_gift].[QueryInventoryReturns]
+    @ActorAccount int
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF @ActorAccount IS NULL OR @ActorAccount<=0 RETURN;
+    ;WITH returned AS (
+        SELECT offer.GiftId,offer.UserUnitNumber,offer.RecipientAccount,
+               offer.OfferedAt,offer.State,
+               ROW_NUMBER() OVER(PARTITION BY offer.UserUnitNumber ORDER BY offer.GiftId DESC) rn
+        FROM [sdgo_friend_unit_gift].[GiftOffer] offer
+        WHERE offer.SenderAccount=@ActorAccount AND offer.State=3
+    )
+    SELECT returned.GiftId,returned.UserUnitNumber,owned.UnitNumber,returned.State,
+           returned.RecipientAccount PeerAccount,
+           CONVERT(nvarchar(20),N'') PeerName,CONVERT(nvarchar(200),N'') Note,
+           CONVERT(bigint,DATEDIFF(second,CONVERT(datetime,'19700101',112),
+               returned.OfferedAt))*1000+DATEPART(millisecond,returned.OfferedAt) OfferedUnixMillis,
+           owned.UnitLevelNumber,owned.UnitClass,owned.UnitClassMark
+    FROM returned JOIN dbo.tbl_UserUnits owned
+      ON owned.UserUnitNumber=returned.UserUnitNumber AND owned.AccountNumber=@ActorAccount
+    WHERE returned.rn=1
+    ORDER BY returned.GiftId;
+END;
+)SQL";
+}
+
 inline std::wstring QueryProvenanceModule() {
     return LR"SQL(CREATE PROCEDURE [sdgo_friend_unit_gift].[QueryProvenance]
     @ActorAccount int,
@@ -974,6 +1002,7 @@ inline std::vector<SqlModule> Modules(std::wstring_view commonDatabase) {
     modules.push_back(
         {L"QueryReturned",
          detail::QueryReturnedModule(std::wstring(commonDatabase))});
+    modules.push_back({L"QueryInventoryReturns", detail::QueryInventoryReturnsModule()});
     modules.push_back({L"QueryProvenance", detail::QueryProvenanceModule()});
     modules.push_back(
         {L"PreviewOffer",

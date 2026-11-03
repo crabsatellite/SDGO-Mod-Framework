@@ -159,7 +159,9 @@ class GiftCampaign:
         sender.wait(lambda state:state.get('unit_gift',{}).get('composer_phase')=='1' and
                     int(state['unit_gift'].get('control_flags','0'))&8,60)
         self.command(sender,'gift_select_unit',unit_uid=self.uid)
-        sender.wait(lambda state:int(state.get('unit_gift',{}).get('selected_unit_uid','0'))==self.uid,60)
+        sender.wait(lambda state:int(state.get('unit_gift',{}).get('selected_unit_uid','0'))==self.uid and
+                    state['unit_gift'].get('inventory_sync_busy')=='0' and
+                    int(state['unit_gift'].get('control_flags','0'))&32,120)
         self.command(sender,'gift_note',note_utf16_hex=text_hex(note))
         baseline=int(self.view(sender)['reply_sequence'])
         self.command(sender,'gift_preview')
@@ -171,6 +173,8 @@ class GiftCampaign:
         baseline=int(self.view(sender)['reply_sequence'])
         self.command(sender,'gift_confirm')
         received=self.wait_reply(sender,2,baseline,unit=self.uid)
+        sender.wait(lambda state:int(state.get('unit_gift',{}).get('inventory_last_removed_uid','0'))==self.uid and
+                    state['unit_gift'].get('inventory_sync_busy')=='0',120)
         gift=int(received['unit_gift']['last_reply_gift_id'])
         self.check('confirmed native gift receives a nonzero authoritative gift ID',gift>0)
         return gift
@@ -230,6 +234,8 @@ class GiftCampaign:
         baseline=int(self.view(recipient)['reply_sequence'])
         self.command(recipient,'gift_accept',gift_id=accepted)
         self.wait_reply(recipient,6,baseline,gift=accepted,unit=self.uid)
+        recipient.wait(lambda state:int(state.get('unit_gift',{}).get('inventory_last_added_uid','0'))==self.uid and
+                       state['unit_gift'].get('inventory_sync_busy')=='0',120)
         after=self.db.unit(self.uid)
         self.check('native accept transfers exactly one unchanged instance to the receiver',
                    after and int(after['AccountNumber'])==bid and
