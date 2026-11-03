@@ -159,6 +159,12 @@ public:
             static_cast<unsigned long long>(s.selected_unit_uid),
             static_cast<unsigned long long>(s.selected_gift_id), s.page,
             s.total_count, s.row_count, s.provenance_present);
+        std::fprintf(file,
+            "inventory_sync_busy=%u\ninventory_sync_error=%u\n"
+            "inventory_last_added_uid=%llu\ninventory_last_removed_uid=%llu\n",
+            s.inventory_sync_busy, s.inventory_sync_error,
+            static_cast<unsigned long long>(s.inventory_last_added_uid),
+            static_cast<unsigned long long>(s.inventory_last_removed_uid));
         std::fprintf(file, "pending_request_id=");
         HexBytes(file, s.pending_request_id, 16);
         std::fprintf(file, "\nlast_reply_request_id=");

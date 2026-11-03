@@ -37,7 +37,13 @@ enum class Command : std::uint16_t {
     provenance = 9,
     preview_offer = 10,
     receipt = 11,
+    inventory_returns = 12,
 };
+
+inline bool IsListCommand(Command command) noexcept {
+    return command == Command::list_inbox || command == Command::list_returned ||
+           command == Command::inventory_returns;
+}
 
 enum class WireStatus : std::int32_t {
     success = 0,
@@ -237,13 +243,14 @@ inline void ReadUtf16(const std::uint8_t* input,
 inline bool ValidCommand(Command command) noexcept {
     const auto value = static_cast<std::uint16_t>(command);
     return value >= static_cast<std::uint16_t>(Command::hello) &&
-           value <= static_cast<std::uint16_t>(Command::receipt);
+           value <= static_cast<std::uint16_t>(Command::inventory_returns);
 }
 
 inline bool ReadOnly(Command command) noexcept {
     return command == Command::hello ||
            command == Command::list_inbox ||
            command == Command::list_returned ||
+           command == Command::inventory_returns ||
            command == Command::detail ||
            command == Command::provenance ||
            command == Command::preview_offer ||
@@ -316,6 +323,7 @@ inline bool ValidRequest(const Request& request,
                request.note_code_units == 0;
     case Command::list_inbox:
     case Command::list_returned:
+    case Command::inventory_returns:
         return request.page > 0 && request.note_code_units == 0;
     case Command::detail:
     case Command::accept:
@@ -362,8 +370,7 @@ inline bool ValidReply(const Reply& reply) noexcept {
                         row.peer_name_code_units))
             return false;
     }
-    const bool list = reply.command == Command::list_inbox ||
-                      reply.command == Command::list_returned;
+    const bool list = IsListCommand(reply.command);
     const bool detail = reply.command == Command::detail ||
                         reply.command == Command::provenance ||
                         reply.command == Command::preview_offer ||
@@ -653,8 +660,7 @@ inline bool EncodeReply(
     wire::Write32(output->data() + 6, authenticatedActor);
     wire::Write32(output->data() + 12, 0);
     std::uint32_t payloadBytes = 0;
-    if (normalized.command == Command::list_inbox ||
-        normalized.command == Command::list_returned) {
+    if (IsListCommand(normalized.command)) {
         payloadBytes =
             static_cast<std::uint32_t>(
                 normalized.row_count * kSummaryBytes);
@@ -682,8 +688,7 @@ inline bool EncodeReply(
             normalized.direction))
         return false;
     auto* payload = envelope + kEnvelopeHeaderBytes;
-    if (normalized.command == Command::list_inbox ||
-        normalized.command == Command::list_returned) {
+    if (IsListCommand(normalized.command)) {
         for (std::size_t index = 0;
              index < normalized.row_count;
              ++index) {
@@ -752,8 +757,7 @@ inline bool DecodeReply(const std::uint8_t* data,
     reply.status = static_cast<WireStatus>(status);
     const auto* payload =
         data + kReplyEnvelopeOffset + kEnvelopeHeaderBytes;
-    if (reply.command == Command::list_inbox ||
-        reply.command == Command::list_returned) {
+    if (IsListCommand(reply.command)) {
         if (reply.row_count > kMaximumRows ||
             reply.note_code_units != 0 ||
             payloadBytes !=

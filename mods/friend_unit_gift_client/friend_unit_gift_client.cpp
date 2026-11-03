@@ -3,6 +3,7 @@
 #include "client_model.h"
 #include "client_runtime_policy.h"
 #include "native_ui.h"
+#include "native_inventory.h"
 #include "transport.h"
 
 #include "sdgo/friend_unit_gift_client_observer.h"
@@ -95,6 +96,12 @@ const SdgoApi* g_api = nullptr;
 SdgoMod* g_mod = nullptr;
 Transport g_transport;
 Model g_model;
+NativeInventorySync g_inventory_sync;
+NativeInventorySync::Delete g_inventory_delete = nullptr;
+NativeBusiness g_inventory_view = nullptr;
+NativeBusiness g_inventory_redraw = nullptr;
+NativeBusiness g_inventory_page = nullptr;
+void* g_inventory_service_vtable = nullptr;
 ui::Bindings g_ui;
 ui::FriendEntry g_friend_main;
 ui::FriendEntry g_friend_three_d;
@@ -170,6 +177,14 @@ UnitSnapshot g_selected_unit{};
 std::uint64_t g_selected_gift_id = 0;
 std::uint32_t g_storage_local_page = 0;
 Command g_storage_list_command = Command::list_inbox;
+bool g_returns_needed = true;
+bool g_returns_active = false;
+bool g_inventory_was_visible = false;
+bool g_populate_after_inventory = false;
+std::uint32_t g_returns_next_page = 0;
+std::uint64_t g_returns_session = 0;
+std::uint64_t g_returns_retry_at = 0;
+std::uint64_t g_selection_detail_uid = 0;
 Command g_uncertain_command = Command::hello;
 RequestId g_uncertain_request_id{};
 bool g_has_uncertain_operation = false;
@@ -198,6 +213,26 @@ ObserverState g_observer;
 void RenderStorageRows();
 void RefreshUnitDetailView();
 bool ArmGameThread();
+std::uint64_t CurrentSessionKey() noexcept;
+void RefreshNativeInventoryView();
+
+bool __cdecl RequestNativeDetail(std::uint64_t uid, void*) {
+    return g_transport.RequestNativeUnitDetails(uid);
+}
+
+void __cdecl NativeInventoryChanged(void*) {
+    RefreshNativeInventoryView();
+}
+
+void ScheduleInventoryMutation(Command command, std::uint64_t uid) {
+    if (!uid) return;
+    g_inventory_sync.SetSession(CurrentSessionKey());
+    const auto effect = runtime::LocalInventoryEffect(command, WireStatus::success);
+    if (effect == runtime::InventoryEffect::remove_local)
+        g_inventory_sync.QueueRemoval(uid);
+    else if (effect == runtime::InventoryEffect::add_local)
+        g_inventory_sync.QueueDetail(uid);
+}
 
 ui::NativeString NativeView(const std::wstring& value) {
     ui::NativeString string;
@@ -286,7 +321,9 @@ void RefreshAvailability() {
     }
     const bool offer =
         g_native_ready && g_model.CanOffer() &&
-        !g_transport.MutationUncertain();
+        !g_transport.MutationUncertain() &&
+        !g_inventory_sync.Busy() &&
+        g_inventory_sync.error() == NativeInventorySync::Error::none;
     const bool resolve =
         g_native_ready && g_model.CanResolveExisting();
     g_friend_main.SetAvailable(offer);
@@ -344,13 +381,13 @@ bool SnapshotUnitsUnsafe(std::vector<UnitSnapshot>* output) {
         unit.unit_number = unitNumber;
         unit.slot = nativeSlot;
         g_full(info, unit.full_record.data(), nativeSlot);
-        if (Read<std::uint32_t>(unit.full_record.data()) != unitNumber ||
-            Read<std::uint16_t>(unit.full_record.data(), 4) != nativeSlot ||
-            Read<std::uint64_t>(unit.full_record.data(), 8) != uid ||
-            unit.full_record[6] != 0 ||
-            unit.full_record[137] != 0) {
+        const bool fullReady = Read<std::uint32_t>(unit.full_record.data()) == unitNumber &&
+            Read<std::uint16_t>(unit.full_record.data(), 4) == nativeSlot &&
+            Read<std::uint64_t>(unit.full_record.data(), 8) == uid;
+        if (fullReady && (unit.full_record[6] != 0 || unit.full_record[137] != 0)) {
             continue;
         }
+        if (!fullReady) unit.full_record.fill(0);
         output->push_back(unit);
     }
     return true;
@@ -515,8 +552,24 @@ bool SelectComposerUnit(std::uint64_t uid) {
     Put<std::int32_t>(
         combo, 0x21C, static_cast<std::int32_t>(selected));
     g_selected_unit = g_units[selected];
+    UnitSnapshot current;
+    if (!CurrentUnit(g_selected_unit.slot, &current) || current.uid != g_selected_unit.uid) {
+        SetComposerPrimary(L"请重新选择", false);
+        SetComposerNotice(L"所选机体已变化或暂时不可赠送，请选择其他机体。");
+        return false;
+    }
+    g_selected_unit = current;
     g_composer_phase = ComposerPhase::selecting;
     g_model.CancelOffer();
+    if (!g_inventory_sync.HasFull(g_selected_unit.uid)) {
+        if (g_inventory_sync.error()!=NativeInventorySync::Error::none) g_inventory_sync.Retry();
+        g_selection_detail_uid = g_selected_unit.uid;
+        g_inventory_sync.QueueDetail(g_selected_unit.uid);
+        SetComposerPrimary(L"正在读取详情…", false);
+        SetComposerNotice(L"正在通过原生请求核对所选机体详情，此步骤不会转移机体。");
+        return true;
+    }
+    g_selection_detail_uid = 0;
     SetComposerPrimary(L"服务器预检", true);
     SetComposerNotice(
         L"已选择 #" + std::to_wstring(g_selected_unit.unit_number) +
@@ -764,7 +817,9 @@ void RenderStorageRows() {
         displayPage,
         g_model.total_count(),
         g_selected_gift_id,
-        !g_model.pending() && !g_transport.MutationUncertain(),
+        !g_model.pending() && !g_transport.MutationUncertain() &&
+            !g_inventory_sync.Busy() &&
+            g_inventory_sync.error() == NativeInventorySync::Error::none,
         g_has_uncertain_operation &&
             g_transport.Ready() &&
             !g_model.pending());
@@ -775,6 +830,9 @@ bool BeginStorageList(Command command, std::uint32_t page) {
         command != Command::list_returned) {
         return false;
     }
+    g_inventory_sync.Retry();
+    g_returns_needed = true;
+    g_returns_retry_at = 0;
     Request request;
     request.command = command;
     request.page = page ? page : 1;
@@ -794,7 +852,10 @@ bool BeginStorageList(Command command, std::uint32_t page) {
 bool BeginGiftAction(Command command) {
     const auto* row = SelectedGift();
     if (!row || g_model.pending() ||
-        g_transport.MutationUncertain()) {
+        g_transport.MutationUncertain() ||
+        (command != Command::provenance &&
+         (g_inventory_sync.Busy() ||
+          g_inventory_sync.error() != NativeInventorySync::Error::none))) {
         return false;
     }
     Request request;
@@ -882,6 +943,22 @@ void __cdecl OnTransport(
                 g_transport.Capabilities(),
                 g_transport.ServerEpoch());
         } else {
+            if (event->status == WireStatus::success)
+                ScheduleInventoryMutation(event->command, event->reply->unit_uid);
+            if (event->command == Command::inventory_returns) {
+                g_inventory_sync.SetSession(CurrentSessionKey());
+                g_returns_active = false;
+                if (event->status == WireStatus::success) {
+                    for (std::size_t i=0;i<event->reply->row_count;++i)
+                        g_inventory_sync.QueueDetail(event->reply->rows[i].unit_uid);
+                    if (static_cast<std::uint64_t>(event->reply->page)*kMaximumRows < event->reply->total_count)
+                        g_returns_next_page = event->reply->page + 1;
+                    g_populate_after_inventory = true;
+                } else {
+                    g_returns_needed = true;
+                    g_returns_retry_at = GetTickCount64()+10000;
+                }
+            }
             if (SyncObserver()) {
                 ++g_observer.reply_sequence;
                 g_observer.last_reply_command =
@@ -939,6 +1016,8 @@ void __cdecl OnTransport(
                     SetComposerNotice(StatusText(event->status));
                 } else {
                     const auto resolvedCommand = g_uncertain_command;
+                    if (g_has_uncertain_operation && event->status == WireStatus::success)
+                        ScheduleInventoryMutation(resolvedCommand, event->reply->unit_uid);
                     if (g_has_uncertain_operation &&
                         (event->status == WireStatus::success ||
                          event->status ==
@@ -1036,6 +1115,10 @@ void __cdecl OnTransport(
             }
         }
     } else if (event->kind == EventKind::request_failed) {
+        if (event->command==Command::inventory_returns) {
+            g_returns_active=false;g_returns_needed=true;
+            g_returns_retry_at=GetTickCount64()+10000;
+        }
         const bool matched = g_model.Fail(
             session,
             event->command,
@@ -1130,12 +1213,15 @@ bool OpenComposer() {
     g_composer_phase = ComposerPhase::selecting;
     g_units.clear();
     g_selected_unit = {};
+    g_returns_needed=true;g_returns_retry_at=0;g_populate_after_inventory=true;
     return true;
 }
 
 void PopulateComposer(void* service) {
     auto* root = Read<void*>(service, 0x4C);
     if (!root) return;
+    g_populate_after_inventory = false;
+    const auto preferredUid = g_selected_unit.uid;
     auto* note = g_ui.FindNamed(root, L"DescEdit", 8);
     const bool noteReady = g_ui.SetNoteLimit(note);
     g_ui.SetState(note, true, noteReady);
@@ -1153,7 +1239,10 @@ void PopulateComposer(void* service) {
     }
     auto* combo = Read<void*>(service, 0xAC);
     const bool unitsReady =
-        noteReady && combo && SnapshotUnits(&g_units) && !g_units.empty();
+        noteReady && !g_returns_needed && !g_returns_active && !g_returns_next_page &&
+        !g_inventory_sync.Busy() && g_inventory_sync.error()==NativeInventorySync::Error::none &&
+        combo && SnapshotUnits(&g_units) && !g_units.empty();
+    g_ui.SetState(combo, true, unitsReady);
     if (combo && g_combo_clear) {
         g_combo_clear(combo);
         for (std::size_t i = 0; unitsReady && i < g_units.size(); ++i) {
@@ -1164,7 +1253,9 @@ void PopulateComposer(void* service) {
             }
         }
         if (!g_units.empty()) {
-            SelectComposerUnit(0);
+            const bool retained=std::any_of(g_units.begin(),g_units.end(),
+                [preferredUid](const UnitSnapshot& unit){return unit.uid==preferredUid;});
+            SelectComposerUnit(retained ? preferredUid : 0);
         }
     }
     if (auto* label =
@@ -1184,6 +1275,14 @@ void PopulateComposer(void* service) {
     g_ui.SetText(
         Read<void*>(service, 0xA4),
         g_units.empty() ? L"没有可选机体" : L"服务器预检");
+    if (g_returns_needed || g_returns_active || g_returns_next_page ||
+        (g_inventory_sync.Busy() && !g_selection_detail_uid)) {
+        g_populate_after_inventory = true;
+        SetComposerPrimary(L"正在同步机库…", false);
+        SetComposerNotice(L"正在核对退回的机体和原生机库数据，请稍候。");
+    } else if (g_selection_detail_uid) {
+        SetComposerPrimary(L"正在读取详情…", false);
+    }
     g_ui.SetState(Read<void*>(service, 0xA8), true, true);
     g_ui.SetText(
         Read<void*>(service, 0xA8), L"取消");
@@ -1194,6 +1293,7 @@ void CloseComposer() {
     g_composer = nullptr;
     g_units.clear();
     g_selected_unit = {};
+    g_selection_detail_uid = 0;
     g_model.CancelOffer();
     if (service && g_close) g_close(service, 1);
 }
@@ -1228,6 +1328,17 @@ void* ResolveService(
         return nullptr;
     }
     return service;
+}
+
+void RefreshNativeInventoryView() {
+    if (!g_inventory_view || !g_inventory_redraw || !g_inventory_page) return;
+    auto* service = ResolveService(L"UnitIndexingCubbyhole", g_inventory_service_vtable);
+    if (!service) return;
+    auto* panel = Read<void*>(service, 0x44);
+    if (!panel || !Read<std::uint8_t>(panel, 0x162)) return;
+    g_inventory_view(service);
+    g_inventory_redraw(service);
+    g_inventory_page(service);
 }
 
 void* UnitDetailSkinSource() {
@@ -1471,10 +1582,19 @@ void __stdcall ComposerEvent(
         return;
     }
     if (event == 0x101 && control == Read<void*>(service, 0xA4)) {
+        if (g_composer_phase == ComposerPhase::complete &&
+            g_inventory_sync.error() != NativeInventorySync::Error::none) {
+            g_inventory_sync.Retry();
+            SetComposerPrimary(L"正在同步机库…", false);
+            SetComposerNotice(L"正在重新读取机体数据；不会再次提交赠送。");
+            return;
+        }
         if (g_composer_phase == ComposerPhase::selecting) {
             std::array<char16_t, kMaximumNoteCodeUnits> note{};
             std::uint16_t noteCodeUnits = 0;
-            if (!SelectComposerUnit(0) ||
+            if (!SelectComposerUnit(0) || g_selection_detail_uid ||
+                g_returns_needed || g_returns_active || g_returns_next_page ||
+                g_inventory_sync.Busy() || !g_inventory_sync.HasFull(g_selected_unit.uid) ||
                 !ReadNote(service, &note, &noteCodeUnits) ||
                 !g_model.PrepareOffer(
                     g_receiver_id,
@@ -1741,6 +1861,47 @@ std::uint32_t __fastcall StoragePacketHook(
     return result;
 }
 
+void PumpInventorySync() {
+        const auto session = CurrentSessionKey();
+        if (session != g_returns_session) {
+            g_returns_session=session;g_returns_needed=true;g_returns_active=false;
+            g_returns_next_page=0;g_returns_retry_at=0;g_inventory_was_visible=false;
+        }
+        auto* inventory = ResolveService(L"UnitIndexingCubbyhole",g_inventory_service_vtable);
+        auto* panel = inventory ? Read<void*>(inventory,0x44) : nullptr;
+        const bool visible = panel && Read<std::uint8_t>(panel,0x162);
+        if (visible && !g_inventory_was_visible) g_returns_needed=true;
+        g_inventory_was_visible=visible;
+        if (g_transport.Ready() && g_model.CanResolveExisting() &&
+            !g_model.pending() && !g_transport.MutationUncertain() &&
+            !g_returns_active && (g_returns_needed || g_returns_next_page) &&
+            GetTickCount64()>=g_returns_retry_at) {
+            Request request;request.command=Command::inventory_returns;
+            request.page=g_returns_next_page ? g_returns_next_page : 1;
+            if (BeginRequest(request)) {
+                g_returns_active=true;g_returns_needed=false;g_returns_next_page=0;
+            }
+        }
+        g_inventory_sync.SetSession(CurrentSessionKey());
+        g_inventory_sync.Tick(GetTickCount64());
+        if (g_composer && g_selection_detail_uid && !g_inventory_sync.Busy() &&
+            g_inventory_sync.error()==NativeInventorySync::Error::none) {
+            const auto uid=g_selection_detail_uid;g_selection_detail_uid=0;
+            SelectComposerUnit(uid);
+        }
+        if (g_composer && g_composer_phase==ComposerPhase::selecting &&
+            g_populate_after_inventory && !g_returns_needed && !g_returns_active &&
+            !g_returns_next_page && !g_inventory_sync.Busy()) {
+            g_populate_after_inventory=false;PopulateComposer(g_composer);
+        }
+        if (g_composer && g_composer_phase == ComposerPhase::complete) {
+            const bool failed = g_inventory_sync.error() != NativeInventorySync::Error::none;
+            SetComposerPrimary(failed ? L"重试机库同步" :
+                g_inventory_sync.Busy() ? L"正在同步机库…" : L"服务器已确认", failed);
+            if (failed) SetComposerNotice(L"转移已确认，机库数据尚未同步。可重新读取；不会再次赠送。");
+        }
+}
+
 void CALLBACK Tick(HWND, UINT, UINT_PTR, DWORD) {
     if (!g_game_thread_ready ||
         GetCurrentThreadId() != g_ui_thread ||
@@ -1750,6 +1911,7 @@ void CALLBACK Tick(HWND, UINT, UINT_PTR, DWORD) {
     g_tick_active = true;
     __try {
         g_transport.Tick();
+        PumpInventorySync();
         if (g_transport.State() == ConnectionState::idle &&
             !g_transport.HasOutstanding()) {
             runtime::AuthenticatedContext context;
@@ -2272,29 +2434,19 @@ static int GetSnapshot(
                     row->peer_name[nameIndex]);
         }
     }
+    snapshot.inventory_sync_busy=g_inventory_sync.Busy()?1u:0u;
+    snapshot.inventory_sync_error=static_cast<std::uint32_t>(g_inventory_sync.error());
+    snapshot.inventory_last_added_uid=g_inventory_sync.last_added();
+    snapshot.inventory_last_removed_uid=g_inventory_sync.last_removed();
     const auto& provenance = g_model.provenance();
-    if (provenance.present) {
+    std::wstring text;
+    const bool displayed = provenance.present &&
+        ((g_unit_detail_view.unit_uid()==provenance.unit_uid && g_unit_detail_view.detail_visible() &&
+          g_ui.ReadText(g_unit_detail_view.detail(),&text)) ||
+         (g_storage_view.custom_view() && g_ui.ReadText(g_storage_view.status_control(),&text) &&
+          text==ProvenanceText(provenance)));
+    if (displayed) {
         snapshot.provenance_present = 1;
-        std::wstring text = L"发送方：";
-        for (std::size_t index = 0;
-             index < provenance.peer_name_code_units;
-             ++index) {
-            text.push_back(static_cast<wchar_t>(
-                provenance.peer_name[index]));
-        }
-        text += L"；发送时间：";
-        text += std::to_wstring(
-            provenance.offered_unix_millis);
-        text += L"；接收时间：";
-        text += std::to_wstring(
-            provenance.accepted_unix_millis);
-        text += L"；留言：";
-        for (std::size_t index = 0;
-             index < provenance.note_code_units;
-             ++index) {
-            text.push_back(static_cast<wchar_t>(
-                provenance.note[index]));
-        }
         const auto length = std::min<std::size_t>(
             text.size(),
             std::size(snapshot.provenance_text));
@@ -2360,6 +2512,11 @@ SDGO_MOD_ENTRY {
         !Bind(g_edit_set, "friend_unit_gift.edit_set_text") ||
         !Bind(g_brief, "hangar.brief") ||
         !Bind(g_full, "hangar.full") ||
+        !Bind(g_inventory_delete, "friend_unit_gift.inventory_delete") ||
+        !Bind(g_inventory_view, "hangar.view_list") ||
+        !Bind(g_inventory_redraw, "hangar.redraw") ||
+        !Bind(g_inventory_page, "hangar.page_frame") ||
+        !Bind(g_inventory_service_vtable, "flow.unit_management_vtable") ||
         !Bind(g_grid_data, "grid.data") ||
         !Bind(g_grid_find, "grid.find") ||
         !Bind(g_unit_info, "hangar.info_global") ||
@@ -2385,6 +2542,9 @@ SDGO_MOD_ENTRY {
             "friend_unit_gift.unit_detail_service_vtable")) {
         return 0;
     }
+    if (!g_inventory_sync.Bind({g_unit_info, g_brief, g_full,
+            g_inventory_delete, &RequestNativeDetail, &NativeInventoryChanged, nullptr}))
+        return 0;
     g_transport.SetSink(&OnTransport, nullptr);
 
     if (!api->HookCode(

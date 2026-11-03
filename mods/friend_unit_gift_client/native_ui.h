@@ -60,6 +60,7 @@ struct Bindings {
         bool visible,
         bool enabled) const noexcept;
     bool SetNoteLimit(void* edit) const noexcept;
+    bool ReadText(void* control, std::wstring* text) const;
 
     Add add = nullptr;
     Find find = nullptr;
@@ -141,6 +142,7 @@ public:
     Action RowActionForGift(std::uint64_t gift) const noexcept;
     void* ControlFor(Action action) const noexcept;
     bool custom_view() const noexcept { return custom_view_; }
+    void* status_control() const noexcept { return status_; }
     bool attached() const noexcept { return service_ != nullptr; }
     void* service() const noexcept { return service_; }
     void* button() const noexcept { return button_; }

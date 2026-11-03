@@ -1,0 +1,60 @@
+#include "../mods/friend_unit_gift_client/native_inventory.h"
+#include <array>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+using sdgo::friend_unit_gift::client::NativeInventorySync;
+namespace {
+std::array<std::uint8_t,0x28> info{};
+std::uint8_t* info_pointer=info.data();
+std::array<std::array<std::uint8_t,25>,36> brief{};
+std::array<std::array<std::uint8_t,153>,36> full{};
+unsigned gets=0,deletions=0,sends=0,changes=0;
+std::uint64_t requested=0;
+bool send_ok=true;
+template<class T>void Put(void* p,std::size_t offset,T value){std::memcpy(static_cast<std::uint8_t*>(p)+offset,&value,sizeof(value));}
+void Check(bool b,const char* message){if(!b){std::fprintf(stderr,"FAIL: %s\n",message);std::exit(1);}}
+void Unit(std::uint16_t slot,std::uint64_t uid,bool complete=true){
+ auto& b=brief[slot-1];auto& f=full[slot-1];b.fill(0);f.fill(0);
+ Put<std::uint32_t>(b.data(),0,12345);Put(b.data(),4,uid);Put(b.data(),12,slot);
+ if(complete){Put<std::uint32_t>(f.data(),0,12345);Put(f.data(),4,slot);Put(f.data(),8,uid);}
+}
+void* __fastcall Brief(void*,void*,void* out,std::uint16_t slot){++gets;std::memcpy(out,brief.at(slot-1).data(),25);return out;}
+void* __fastcall Full(void*,void*,void* out,std::uint16_t slot){++gets;std::memcpy(out,full.at(slot-1).data(),153);return out;}
+void __fastcall Erase(void* self,void*,const void* data,std::uint16_t slot){
+ Check(self==info.data() && data==nullptr,"deletion calls the shipped null-data slot ABI");
+ ++deletions;brief.at(slot-1).fill(0);full.at(slot-1).fill(0);
+}
+bool __cdecl Request(std::uint64_t uid,void*){++sends;requested=uid;return send_ok;}
+void __cdecl Changed(void*){++changes;}
+}
+int main(){
+ Put<std::uint32_t>(info.data(),4,1);Put<std::uint32_t>(info.data(),0x0C,36);Put<std::uint8_t>(info.data(),0x20,1);
+ NativeInventorySync sync;
+ Check(sync.Bind({&info_pointer,reinterpret_cast<NativeInventorySync::Get>(&Brief),reinterpret_cast<NativeInventorySync::Get>(&Full),reinterpret_cast<NativeInventorySync::Delete>(&Erase),&Request,&Changed,nullptr}),"bind native callbacks");
+ sync.SetSession(1);constexpr std::uint64_t old_uid=0x1122334455667788ULL,new_uid=old_uid+9;
+ Unit(2,old_uid);Check(sync.HasFull(old_uid),"native brief/full identity agrees without floating point");
+ Check(!sync.QueueRemoval(0),"zero UID is rejected");
+ Check(sync.QueueRemoval(old_uid+1),"already absent instance can be acknowledged");sync.Tick(0);
+ Check(deletions==0 && sync.HasFull(old_uid),"an absent UID never deletes another slot");
+ Check(sync.QueueRemoval(old_uid),"confirmed removal queues by UID");sync.Tick(1);
+ Check(deletions==1 && !sync.HasFull(old_uid) && sync.last_removed()==old_uid,"confirmed removal is read back from the native cache");
+ Check(sync.QueueDetail(new_uid) && sync.QueueDetail(new_uid),"duplicate read request coalesces");sync.Tick(2);
+ Check(sends==1 && requested==new_uid && sync.Busy() && sync.last_added()==0,"sending a detail query does not fabricate an accepted unit");
+ Unit(5,new_uid,false);sync.Tick(3);
+ Check(sync.Busy() && sends==1,"brief-only presence cannot prove full native data");
+ Put<std::uint64_t>(full[4].data(),8,new_uid+1);sync.Tick(4);Check(sync.Busy(),"wrong full UID cannot satisfy synchronization");
+ Unit(5,new_uid);sync.Tick(5);Check(!sync.Busy() && sync.last_added()==new_uid && changes>=2,"real full data completes the queued read");
+ sync.SetSession(2);Put<std::uint8_t>(info.data(),0x20,0);const auto before=gets;
+ sync.QueueRemoval(new_uid);sync.Tick(10);Check(gets==before && deletions==1,"initializing inventory is never scanned or deleted");
+ sync.SetSession(3);Put<std::uint8_t>(info.data(),0x20,1);Put<std::uint32_t>(info.data(),4,0);
+ Check(!sync.HasFull(new_uid) && gets==before,"missing native allocations prevent unsafe slot access");
+ Put<std::uint32_t>(info.data(),4,1);sync.QueueRemoval(new_uid);sync.SetSession(4);sync.Tick(11);
+ Check(sync.last_removed()==0 && deletions==1,"session changes discard old actor work");
+ send_ok=false;sync.QueueDetail(new_uid+100);sync.Tick(20);sync.Tick(21);sync.Tick(22);
+ Check(sync.error()==NativeInventorySync::Error::send_failed && sends==4 && deletions==1,"only bounded read-only attempts repeat");
+ sync.Tick(23);Check(sends==4,"failed synchronization pauses until explicit retry");
+ send_ok=true;sync.Retry();sync.Tick(24);Check(sends==5,"explicit retry sends one read, never a gift mutation");
+ Unit(6,new_uid+100);sync.Tick(25);Check(!sync.Busy() && sync.error()==NativeInventorySync::Error::none,"retry completes from native data");
+ std::puts("NATIVE INVENTORY SYNC CONTRACTS PASSED");
+}

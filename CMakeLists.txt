@@ -902,6 +902,13 @@ if(BUILD_TESTING)
     target_compile_options(friend_unit_gift_native_ui_test PRIVATE /UNDEBUG)
     add_test(NAME friend_unit_gift_native_ui_offline COMMAND friend_unit_gift_native_ui_test)
     set_tests_properties(friend_unit_gift_native_ui_offline PROPERTIES TIMEOUT 30)
+    add_executable(friend_unit_gift_native_inventory_test
+                   tests/friend_unit_gift_native_inventory_test.cpp)
+    target_link_libraries(friend_unit_gift_native_inventory_test PRIVATE sdgo_api)
+    sdgo_strict(friend_unit_gift_native_inventory_test)
+    add_test(NAME friend_unit_gift_native_inventory_offline
+             COMMAND friend_unit_gift_native_inventory_test)
+    set_tests_properties(friend_unit_gift_native_inventory_offline PROPERTIES TIMEOUT 30)
     add_executable(friend_unit_gift_client_runtime_policy_test
                    tests/friend_unit_gift_client_runtime_policy_test.cpp)
     target_link_libraries(friend_unit_gift_client_runtime_policy_test PRIVATE sdgo_api)
@@ -915,14 +922,18 @@ if(BUILD_TESTING)
     sdgo_strict(unit_gift_observer_fixture)
     set_target_properties(unit_gift_observer_fixture PROPERTIES
         OUTPUT_NAME friend_unit_gift_client
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_fixture/$<CONFIG>")
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_fixture/$<CONFIG>"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_fixture/$<CONFIG>"
+        PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_fixture/$<CONFIG>")
     add_library(unit_gift_missing_export_fixture SHARED tests/unit_gift_observer_fixture.cpp)
     target_link_libraries(unit_gift_missing_export_fixture PRIVATE sdgo_api)
     target_compile_definitions(unit_gift_missing_export_fixture PRIVATE UNIT_GIFT_OBSERVER_FIXTURE_NO_PRODUCT_EXPORTS=1)
     sdgo_strict(unit_gift_missing_export_fixture)
     set_target_properties(unit_gift_missing_export_fixture PROPERTIES
         OUTPUT_NAME friend_unit_gift_client
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_missing_export/$<CONFIG>")
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_missing_export/$<CONFIG>"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_missing_export/$<CONFIG>"
+        PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_missing_export/$<CONFIG>")
     add_executable(unit_gift_actions_test tests/unit_gift_actions_test.cpp)
     target_link_libraries(unit_gift_actions_test PRIVATE sdgo_api)
     sdgo_strict(unit_gift_actions_test)

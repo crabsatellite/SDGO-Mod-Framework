@@ -180,6 +180,21 @@ bool Bindings::SetNoteLimit(void* edit) const noexcept {
     }
 }
 
+bool Bindings::ReadText(void* control, std::wstring* output) const {
+    if (!control || !output || Read<void*>(control)!=button_vtable) return false;
+    auto** first=Read<NativeString**>(control,0x190);
+    auto** last=Read<NativeString**>(control,0x194);
+    const auto start=reinterpret_cast<std::uintptr_t>(first);
+    const auto end=reinterpret_cast<std::uintptr_t>(last);
+    if (!first || end<=start || end-start>64*sizeof(void*) || (end-start)%sizeof(void*)) return false;
+    const auto* value=*first;
+    if (!value || value->length>512 || value->capacity<value->length) return false;
+    const auto* data=value->capacity<8 ? value->data.small : value->data.pointer;
+    if (!data || data[value->length]!=L'\0') return false;
+    output->assign(data,value->length);
+    return true;
+}
+
 void* Bindings::FindNamed(
     void* dialog,
     const wchar_t* name,

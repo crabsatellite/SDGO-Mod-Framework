@@ -1042,12 +1042,13 @@ Reply ServerDatabase::ExecuteWireRequest(
             break;
         }
         case Command::list_inbox:
-        case Command::list_returned: {
+        case Command::list_returned:
+        case Command::inventory_returns: {
             const bool inbox =
                 request.command == Command::list_inbox;
             const auto sql =
                 L"EXEC [sdgo_friend_unit_gift].[" +
-                std::wstring(inbox ? L"QueryInbox" : L"QueryReturned") +
+                std::wstring(inbox ? L"QueryInbox" : request.command == Command::inventory_returns ? L"QueryInventoryReturns" : L"QueryReturned") +
                 L"] @ActorAccount=" +
                 std::to_wstring(authenticatedActor) + L";";
             if (game.Query(sql, 11, &rows) &&

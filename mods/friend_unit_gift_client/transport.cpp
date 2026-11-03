@@ -302,6 +302,14 @@ bool Transport::Send(Request request) noexcept {
     return SendAt(request, Now());
 }
 
+bool Transport::RequestNativeUnitDetails(std::uint64_t unit_uid) noexcept {
+    if (!Ready() || !unit_uid || unit_uid > INT64_MAX) return false;
+    std::array<std::uint8_t, 14> packet{};
+    wire::Write16(packet.data(), 0x078B);
+    wire::Write64(packet.data() + 6, unit_uid);
+    return SendBytes(packet.data(), packet.size());
+}
+
 bool Transport::SendAt(
     Request request,
     std::uint64_t now_millis) noexcept {

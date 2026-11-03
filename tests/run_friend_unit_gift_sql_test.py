@@ -23,8 +23,6 @@ import pyodbc
 
 
 DATABASE = "SDGOFriendUnitGiftPolicyFixture"
-EXPECTED_SQL_PID = 29848
-EXPECTED_SQL_PORT = 61633
 OWNER_PROPERTY = "sdgo_friend_unit_gift_fixture_owner"
 
 UNIT_COLUMNS = [
@@ -96,17 +94,18 @@ def sql_literal(value: str) -> str:
 
 
 def connection_string(config: dict, database: str) -> str:
-    if int(config["sql_port"]) != EXPECTED_SQL_PORT:
-        raise RuntimeError("unexpected SQL port")
+    if config["sql_host"] != "127.0.0.1" or not 1024<=int(config["sql_port"])<=65535:
+        raise RuntimeError("the fixture requires a selected native loopback SQL endpoint")
+    quote=lambda value:'{'+str(value).replace('}','}}')+'}'
     return (
         "DRIVER={SQL Server};"
         f"SERVER={config['sql_host']},{config['sql_port']};"
-        f"UID={config['app_user']};PWD={config['app_password']};"
+        f"UID={quote(config['app_user'])};PWD={quote(config['app_password'])};"
         f"DATABASE={database};"
     )
 
 
-def load_owner_config(path: Path) -> dict:
+def load_owner_config(path: Path, native: dict) -> dict:
     parser = configparser.ConfigParser(interpolation=None, strict=False)
     parser.optionxform = str
     with path.open("r", encoding="utf-8-sig", errors="strict") as source:
@@ -118,11 +117,11 @@ def load_owner_config(path: Path) -> dict:
     password = section.get("pwd") or section.get("PWD")
     if user is None or password is None:
         raise RuntimeError("owner credential source is incomplete")
-    if user.lower() != "sa" or len(password) != 6:
-        raise RuntimeError("owner credential source is not the verified native owner")
     return {
         "sql_host": "127.0.0.1",
-        "sql_port": EXPECTED_SQL_PORT,
+        "sql_port": int(native["port"]),
+        "expected_sql_pid": int(native["pid"]),
+        "owner_root": native["root"],
         "app_user": user,
         "app_password": password,
     }
@@ -139,7 +138,7 @@ def execute_install(config: dict, install_path: Path) -> tuple[bool, str]:
 $ErrorActionPreference='Stop'
 $sql=Get-Content -LiteralPath $env:SDGO_GIFT_SQL_FILE -Raw -Encoding UTF8
 $builder=New-Object System.Data.SqlClient.SqlConnectionStringBuilder
-$builder['Data Source']='127.0.0.1,61633'
+$builder['Data Source']='127.0.0.1,'+$env:SDGO_GIFT_SQL_PORT
 $builder['Initial Catalog']='SDGOFriendUnitGiftPolicyFixture'
 $builder['User ID']=$env:SDGO_GIFT_SQL_USER
 $builder['Password']=$env:SDGO_GIFT_SQL_PASSWORD
@@ -160,6 +159,7 @@ try {
     environment = dict(
         os.environ,
         SDGO_GIFT_SQL_FILE=str(install_path.resolve()),
+        SDGO_GIFT_SQL_PORT=str(config["sql_port"]),
         SDGO_GIFT_SQL_USER=config["app_user"],
         SDGO_GIFT_SQL_PASSWORD=config["app_password"],
     )
@@ -204,8 +204,13 @@ def create_database(config: dict, data: Path, log: Path, owner: str) -> None:
             "DB_ID(?)",
             DATABASE,
         ).fetchone()
-        if int(row[0]) != EXPECTED_SQL_PID:
+        if int(row[0]) != config["expected_sql_pid"]:
             raise RuntimeError("unexpected SQL process")
+        files=connection.cursor().execute(
+            'SELECT f.physical_name FROM sys.master_files f '
+            'JOIN sys.databases d ON d.database_id=f.database_id WHERE d.state=0').fetchall()
+        if not files or not all(Path(x[0]).resolve().is_relative_to(Path(config['owner_root']).resolve()) for x in files):
+            raise RuntimeError('online SQL files are not confined to the selected native copy')
         if not str(row[1]).startswith("12.0."):
             raise RuntimeError("fixture requires SQL Server 2014")
         if row[2] is not None:
@@ -748,6 +753,22 @@ def test_policy(connection, config: dict, original: tuple) -> dict:
 
     set_policy(connection, True)
     add_friendship(connection)
+    resolved=connection.cursor().execute(
+        'EXEC [sdgo_friend_unit_gift].[QueryInventoryReturns] ?',SENDER).fetchall()
+    assert any(int(row[1])==third_uid for row in resolved)
+    assert not connection.cursor().execute(
+        'EXEC [sdgo_friend_unit_gift].[QueryInventoryReturns] ?',RECIPIENT).fetchall()
+    offered_again=offer(connection,third_uid,'repeat return')
+    assert offered_again[0]==0
+    assert not any(int(row[1])==third_uid for row in connection.cursor().execute(
+        'EXEC [sdgo_friend_unit_gift].[QueryInventoryReturns] ?',SENDER).fetchall())
+    repeated_return=exec_result(connection,'Return',[RECIPIENT,str(uuid.uuid4()),int(offered_again[1])])
+    assert repeated_return[0]==0
+    resolved=connection.cursor().execute(
+        'EXEC [sdgo_friend_unit_gift].[QueryInventoryReturns] ?',SENDER).fetchall()
+    assert sum(int(row[1])==third_uid for row in resolved)==1
+    assert_payload_equal(third_original,row_payload(connection,SENDER,third_uid),account=SENDER,slot=25)
+    results['inventory_return_sync_is_owned_and_deduplicated']=True
     candidate = int(connection.cursor().execute(
         "SELECT TOP 1 UserUnitNumber FROM dbo.tbl_UserUnits "
         "WHERE AccountNumber=? AND UserUnitSlotNumber=24", SENDER
@@ -1034,16 +1055,22 @@ def main() -> int:
     parser.add_argument("--report", required=True, type=Path)
     args = parser.parse_args()
     public_config = json.loads(args.config.read_text(encoding="utf-8"))
-    if int(public_config["sql_port"]) != EXPECTED_SQL_PORT:
-        raise RuntimeError("private native configuration points at another port")
-    config = load_owner_config(args.owner_ini)
+    owner_root=Path(public_config["owner"]).resolve()
+    if not (owner_root/"TEST-ONLY.txt").is_file():
+        raise RuntimeError("SQL fixture requires the marked native test copy")
+    native=json.loads((owner_root/"database/native-sql.json").read_text(encoding="utf-8"))
+    if Path(native["root"]).resolve()!=owner_root or int(public_config["sql_port"])!=int(native["port"]):
+        raise RuntimeError("native SQL ownership or endpoint disagrees with the selected copy")
+    if not args.fixture_dir.resolve().is_relative_to(owner_root):
+        raise RuntimeError("fixture files must stay inside the selected native test copy")
+    config = load_owner_config(args.owner_ini,native)
     args.install_sql.read_text(encoding="utf-8")
     data, log = ensure_local_fixture_paths(args.fixture_dir)
     owner = str(uuid.uuid4())
     report = {
         "database": DATABASE,
-        "sql_pid": EXPECTED_SQL_PID,
-        "sql_port": EXPECTED_SQL_PORT,
+        "sql_pid": config["expected_sql_pid"],
+        "sql_port": config["sql_port"],
         "passed": False,
         "checks": {},
         "cleanup": False,

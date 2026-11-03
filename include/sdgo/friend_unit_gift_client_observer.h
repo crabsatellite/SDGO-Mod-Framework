@@ -119,9 +119,15 @@ struct SdgoFriendUnitGiftClientSnapshotV1 {
     std::uint32_t provenance_present;
     std::uint16_t provenance_text_code_units;
     std::uint16_t provenance_text[512];
-    std::uint32_t reserved[8];
+    std::uint32_t inventory_sync_busy;
+    std::uint32_t inventory_sync_error;
+    std::uint64_t inventory_last_added_uid;
+    std::uint64_t inventory_last_removed_uid;
+    std::uint32_t reserved[2];
 };
 #pragma pack(pop)
+static_assert(sizeof(SdgoFriendUnitGiftClientSnapshotV1) == 3016,
+              "V1 inventory diagnostics retain the original snapshot size");
 
 using SdgoFriendUnitGiftClientGetSnapshotV1Fn =
     int(__cdecl*)(SdgoFriendUnitGiftClientSnapshotV1* output);
