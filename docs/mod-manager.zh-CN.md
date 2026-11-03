@@ -85,6 +85,8 @@ Manager 运行时默认在启动后及每小时自动检查并安装。可用「
 
 更新对象为已登记的客户端和服务器目录。正在运行的游戏或服务不会被停止，下载完成后等待其关闭再自动安装。保留 Mod 开关、已有参数、独立配置文件、自定义 Mod、机体资源与私人数据；文件写入失败时回滚对应目录，恢复副本位于本地 Manager 工作区。
 
+本地 Mod 的版本高于发布包时，保留该 Mod 及其所需的原生符号配置，避免并发开发时降级已有的新版本。
+
 管理器本身有更新时，点击「重启 Manager 完成更新」。新程序等待旧 Manager 正常退出，校验并替换程序，再打开相同工作区；普通 Mod 更新无需重启 Manager。
 
 发布者使用 `python tools/build_release.py --build --channel stable --version X.Y.Z` 构建 Stable，或 `--channel beta --version X.Y.Z-beta.N` 构建 Beta。包里只有 Manager 与登记的框架文件，不含原版客户端、服务端、数据库、测试副本或账号配置。发布工作流先验证更新安装、构建对应代码并检查 Manager 成品；master 后续提交自动生成 Beta release，正式版本标签生成 Stable release。

@@ -41,6 +41,8 @@ Automatic checking and installation are enabled while Manager runs. It checks at
 
 Updates apply to registered client and server directories. Running games/servers are never stopped: their update waits until they close. Mod switches, settings, separately declared configuration files, custom Mods, game resources and private data are preserved. Failed writes roll back the affected host; recovery copies stay in the local Manager workspace.
 
+Locally installed Mods with a higher version than the release are retained together with their required native symbols, allowing parallel development without downgrading completed work.
+
 When Manager itself has an update, choose **重启 Manager 完成更新**. The downloaded Manager waits for the old process to close, replaces the verified executable and reopens the same workspace. Ordinary Mod updates do not require restarting Manager.
 
 For publishers, `python tools/build_release.py --build --channel stable --version X.Y.Z` creates a Stable asset, and `--channel beta --version X.Y.Z-beta.N` includes Beta features. Both contain only Manager and declared framework payloads. The release workflow tests update/install contracts, builds selected code and checks the standalone Manager before publishing. Pushes to `master` create Beta releases; stable version tags create Stable releases. Never include copied clients, native servers, databases or owner settings.
