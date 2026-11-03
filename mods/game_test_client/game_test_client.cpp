@@ -31,6 +31,9 @@
 #include "fps_test_actions.h"
 #include "sdgo/pvp_ai_client_observer.h"
 #include "scoreboard_actions.h"
+#include "battle_ai_behavior_probe.h"
+#include "native_death_probe.h"
+#include "native_player_combat_probe.h"
 #include "sealed_room_title.h"
 #include <cwchar>
 
@@ -103,6 +106,9 @@ SdgoPvpAiClientGetLuaStatusV1Fn getLuaStatus;
 SdgoPvpAiClientGetStartStatusV1Fn getStartStatus;
 SdgoPvpAiClientGetScoreboardStatusV1Fn getScoreboardStatus;
 ScoreboardActions scoreboardInput;
+BattleAiBehaviorProbe battleAiBehavior;
+NativeDeathProbe nativeDeathProbe;
+NativePlayerCombatProbe nativePlayerCombat;
 uint32_t scoreboardCombatSequence = 0, scoreboardCombatChanges = 0;
 SdgoPvpAiClientScoreboardStatusV1 scoreboardLast{};
 char accountName[32] = {}, accountPassword[128] = {}, roomTitle[21] = {};
@@ -292,6 +298,7 @@ bool LoadPlan() {
         if(expectedTitle!=actualTitle)return false;
     }
     if (!missionMode && !ReadSealedRoomTitle(job,roomTitle)) return false;
+    if (!missionMode && !ReadSealedAiTeamCounts(job,expectedAi,roomTitle,expectedAllies,expectedEnemies)) return false;
     retryCount = static_cast<unsigned>(GetPrivateProfileIntW(L"run", L"retry_count", 1, job.c_str()));
     if (retryCount < 1 || retryCount > 2) return false;
     expectFirstFailure = GetPrivateProfileIntW(L"run", L"expect_first_fail", 0, job.c_str()) != 0;
@@ -821,6 +828,12 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
 int __cdecl Return(const SdgoGameTestContextV1* context) {
     SdgoPvpAiClientSnapshotV1 live{};
     if(Snapshot(live) && live.native_app_state==22) {
+        if(!battleAiBehavior.Observe(context,live)) return SDGO_GAME_TEST_FAIL;
+        if(!nativeDeathProbe.Observe(context)) return SDGO_GAME_TEST_FAIL;
+        SdgoPvpAiClientStartStatusV1 nativeControl{};
+        nativeControl.size=sizeof(nativeControl);nativeControl.version=SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
+        if(getStartStatus) getStartStatus(&nativeControl);
+        if(!nativePlayerCombat.Poll(context,live,nativeControl,scoreboardInput)) return SDGO_GAME_TEST_FAIL;
         SdgoPvpAiClientScoreboardStatusV1 roster{};
         roster.size = sizeof(roster); roster.version = SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
         if (getScoreboardStatus && getScoreboardStatus(&roster) && roster.battle_start_sequence == activeBattleStartSequence) {
@@ -867,6 +880,9 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
         context->Observe(message);
         context->Assert(ended.reply_opcode == 0x0871, "the original client consumed the genuine server battle-end reply");
         context->Assert(1, "Lua observation stayed available with zero errors through the entire real battle");
+        battleAiBehavior.Finish(context);
+        nativeDeathProbe.Finish(context);
+        nativePlayerCombat.Finish(context,scoreboardInput);
         context->Assert(scoreboardCombatSequence == activeBattleStartSequence && scoreboardCombatChanges > 0,
             "the native TAB kill/assist/points renderer reflected actual AI combat-counter changes during this full battle");
         const auto combat=battleCombat.State();char evidence[256];
@@ -1692,6 +1708,23 @@ int __cdecl TitleMissionCreate(const SdgoGameTestContextV1* c){
     }
     return roomTitles.Poll(RoomTitleActions::MissionCreate,c);
 }
+int __cdecl PreviewMissionCreate(const SdgoGameTestContextV1* c) {
+    // A standalone preview starts directly after owned-unit selection, which
+    // leaves the real client in its hangar rather than the room-list scene.
+    if (!roomTitles.Running() && actions.AppState()==5) {
+        static bool requested=false;
+        if (!requested) {
+            const auto result=hangarNavigation.ClickBottomRadio(L"GameRoomRadio",0x48);
+            if (result>=HangarNavigation::kDownmenuServiceMismatch || result==HangarNavigation::kUnbound) {
+                c->Assert(0,"native GameRoomRadio must return from the owned-unit hangar before the mission preview");
+                return SDGO_GAME_TEST_FAIL;
+            }
+            if (result==HangarNavigation::kReady) requested=true;
+        }
+        return SDGO_GAME_TEST_WAIT;
+    }
+    return TitleMissionCreate(c);
+}
 int __cdecl TitleTeamRename(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::TeamRename,c);}
 int __cdecl TitleTeamSettings(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::TeamSettings,c);}
 int __cdecl TitleMissionSettings(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::MissionSettings,c);}
@@ -1841,7 +1874,8 @@ void RegisterPlannedCases() {
         plannedCases.assign(realCases,realCases+3);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
         if (roomStylePreview) {
-            plannedCases.push_back(roomStylePreview==2 ? titleCases[6] : titleCases[0]);
+            plannedCases.push_back(roomStylePreview==2 ? SdgoGameTestCaseV1{
+                "room_titles.mission.create",180000,&PreviewMissionCreate} : titleCases[0]);
             plannedCases.push_back({roomStylePreview==2 ? "room_style.mission.preview" : "room_style.pvp.preview", 90000, &RoomStylePreview});
             provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
         }
@@ -2047,6 +2081,8 @@ extern "C" __declspec(dllexport) LONG __cdecl SdgoGameTestCaptureStatusV1(HRESUL
 SDGO_MOD_ENTRY {
     if (!sdgo_test::Open(api, mod, "client")) return 0;
     const bool loaded = LoadPlan();
+    if (!nativeDeathProbe.Install(api,mod)) return 0;
+    if (!nativePlayerCombat.Install(api,mod)) return 0;
     if (verifyQuietRuntime) {
         // DLLs have their own import tables. Observe every dialog in this
         // isolated test process so a Mod cannot leak a desktop prompt while
@@ -2057,8 +2093,13 @@ SDGO_MOD_ENTRY {
             !api->HookSystemExport(mod,L"user32.dll","MessageBoxA",reinterpret_cast<void*>(&QuietMessageBoxA),reinterpret_cast<void**>(&originalMessageBoxA)))return 0;
         PublishQuietSocketReceipt();
     }
-    // Map 0 selects the game's normal quick-room random-map policy; the
-    // actual map and participants remain provided by the server.
+    // Select the configured map through the normal native room page. Zero
+    // keeps the game's quick-room random-map policy.
+    const int battleMap = api->SettingInt(mod,"BattleMap",0);
+    if (battleMap < 0 || battleMap > UINT16_MAX) {
+        api->Log(mod,SDGO_LOG_ERROR,"invalid native GameTest BattleMap");
+        return 0;
+    }
     if (!loaded) sdgo_test::Fail("invalid private account or native scenario configuration");
     RegisterPlannedCases();
     if (fpsOnly) {
@@ -2069,7 +2110,7 @@ SDGO_MOD_ENTRY {
         accountPassword,
         roomTitle,
         static_cast<uint16_t>(loaded ? (missionMode?missionMode:RequestedMode()) : 1),
-        0,
+        static_cast<uint32_t>(battleMap),
         passwordIsMd5,randomTeams};
     if (!loaded || !actions.Bind(api, mod, config) ||
         (!missionMode && !channels.Bind(api, mod, &actions)) ||
@@ -2112,7 +2153,9 @@ SDGO_MOD_ENTRY {
     if (!api->HookImport(mod, "user32.dll", "FindWindowW", reinterpret_cast<void*>(&FindOwnInstance), reinterpret_cast<void**>(&originalFindWindow)) ||
         !api->HookCode(mod, "test.client_update", reinterpret_cast<void*>(&Update), reinterpret_cast<void**>(&originalUpdate)))
         return 0;
-    if (verifyQuietRuntime && !quietGraphics.Install(api,mod,fpsOnly))return 0;
+    const bool namedProxyAllowed=fpsOnly ||
+        (quietLoopback&&verifyDirectNetwork&&!verifyRoutedNetwork&&!missionMode);
+    if (verifyQuietRuntime && !quietGraphics.Install(api,mod,namedProxyAllowed))return 0;
     PublishQuietSocketReceipt();
     api->Log(mod, SDGO_LOG_INFO, fpsOnly ? "observing native FPS cap and cadence without authentication":"observing normal launcher/login/room/battle flow");
     return 1;

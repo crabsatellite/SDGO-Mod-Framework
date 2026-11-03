@@ -19,6 +19,8 @@ except ImportError:
 
 BATTLE_HOST = 'BattleServer-548A891D-0046C000'
 STEPS = ('request_accepted', 'setup_complete', 'battle_active', 'battle_end')
+DAMAGE_EVENT = 'native_effective_hp_loss'
+DAMAGE_SOURCES = ('battle_rewards_bridge', 'direct_native_hook')
 
 
 def integer(value, name, minimum=0):
@@ -38,9 +40,11 @@ def human_roster(pilot, expected_humans=None):
     return set(roster)
 
 
-def participants(event, pilot, expected_ai, setup,expected_allies=None,expected_humans=None,cooperative=False):
+def participants(event, pilot, expected_ai, setup,expected_allies=None,expected_humans=None,cooperative=False,layout=None):
     expected=human_roster(pilot,expected_humans)
     if len(expected)+expected_ai>8:raise ValueError('expected participants exceed native test room capacity')
+    if layout not in (None,'allied') or (layout=='allied' and expected_ai!=6):
+        raise ValueError('invalid sealed AI layout')
     slots=event.get('slots')
     if not isinstance(slots,list):raise ValueError('missing native participant slots')
     ids=set(); seats=set(); humans=set(); bots=0; teams={1:[0,0],2:[0,0]}
@@ -68,10 +72,27 @@ def participants(event, pilot, expected_ai, setup,expected_allies=None,expected_
     if cooperative and any(s['team']!=own for s in slots if not s['is_ai']):
         raise ValueError('cooperative humans did not follow the host team')
     if setup:
-        allies=expected_ai//2 if expected_allies is None else expected_allies
+        allies=(5 if layout=='allied' else expected_ai//2) if expected_allies is None else expected_allies
         if teams[own][1]!=allies or teams[3-own][1]!=expected_ai-allies:
             raise ValueError('native ally/enemy placement disagrees with plan')
     return ids
+
+
+def damage_diagnostic(event, ready, pilot, modes):
+    if event.get('event') != DAMAGE_EVENT:
+        return False
+    source=event.get('source')
+    if (ready.get('battle_ai_deaths') is not True or source not in DAMAGE_SOURCES or
+        source!=ready.get('death_source')):
+        raise ValueError('native damage diagnostic source does not match observer startup')
+    integer(event.get('sequence'),'native damage sequence',1)
+    integer(event.get('qpc'),'native damage timestamp',1)
+    integer(event.get('thread_id'),'native damage thread',1)
+    integer(event.get('room_cookie'),'native damage room cookie',1)
+    if (integer(event.get('host_pilot_id'),'native damage room host',1)!=pilot or
+        integer(event.get('mode'),'native damage room mode',1) not in modes):
+        raise ValueError('native damage diagnostic room does not match the client plan')
+    return True
 
 
 def evaluate(metadata: dict, paths: list[Path], pilot: int) -> dict:
@@ -91,6 +112,12 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int) -> dict:
         seen_paths.add(path)
         current={};last_sequence=0;last_qpc=0
         try:
+            layout=plan.get('ai_layout')
+            if 'ai_layout' in plan and (
+                type(layout) is not str or layout!='allied' or expected_ai!=6 or
+                plan.get('ai_difficulty')!='Hard' or 'ai_pool_level' in plan
+            ):
+                raise ValueError('sealed allied AI layout requires six Hard bots')
             raw=path.read_bytes()
             records=[json.loads(line) for line in raw.decode('utf-8').splitlines() if line.strip()]
             if not records:raise ValueError('empty server observer stream')
@@ -98,10 +125,11 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int) -> dict:
             ready=records[0]
             if any(r.get('run_id')!=server_run_id or r.get('role')!='server' or r.get('suite')!='pvp-ai' for r in records):
                 raise ValueError('server observer stream belongs to another run or role')
+            minimum_ai=integer(ready.get('minimum_ai'),'observer AI count',1)
             if (ready.get('event')!='observer_ready' or ready.get('host_key')!=BATTLE_HOST or
                 ready.get('normal_server_main') is not True or ready.get('require_end') is not True or
                 ready.get('nonce')!=server_nonce or integer(ready.get('expected_host_pilot_id'),'observer host',1)!=pilot or
-                integer(ready.get('minimum_ai'),'observer AI count',1)!=expected_ai):
+                (minimum_ai>expected_ai if session else minimum_ai!=expected_ai)):
                 raise ValueError('server observer startup binding does not match the client plan')
             pid=integer(ready.get('pid'),'native server PID',1)
             if session and pid not in session['pids']:raise ValueError('reused server process differs from the sealed session')
@@ -111,6 +139,7 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int) -> dict:
                 # native log. The current sealed title contains a fresh nonce.
                 if session and event.get('title')!=plan['room_title']:continue
                 name=event.get('event')
+                if damage_diagnostic(event,ready,pilot,modes):continue
                 if name not in STEPS:raise ValueError('unexpected or failed native observer event')
                 sequence=integer(event.get('sequence'),'native sequence',1)
                 qpc=integer(event.get('qpc'),'native timestamp',1)
@@ -130,7 +159,7 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int) -> dict:
                 if not battle or battle['mode']!=mode or battle['phase']>=4 or STEPS[battle['phase']]!=name:
                     raise ValueError('native battle lifecycle is missing a step or out of order')
                 ids=participants(event,pilot,expected_ai,name!=STEPS[0],plan.get('ai_allies'),
-                    expected_humans,plan.get('ai_teams')=='coop')
+                    expected_humans,plan.get('ai_teams')=='coop',layout=layout)
                 roles=sorted((s['pilot_id'],s['team'],s['is_ai']) for s in event['slots'])
                 if name==STEPS[1]:
                     battle['participant_ids']=sorted(ids)

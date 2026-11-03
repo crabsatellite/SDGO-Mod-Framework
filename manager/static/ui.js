@@ -51,19 +51,9 @@ export function icon(name, cls = 'ui-icon') {
 
 // The brand mark: a gold V-fin over a red crest and a white face plate with cyan eyes.
 export function mark(cls = 'ui-mark') {
-  const svg = document.createElementNS(SVG, 'svg');
-  svg.setAttribute('viewBox', '0 0 64 64');
-  svg.setAttribute('aria-hidden', 'true');
-  svg.setAttribute('class', cls);
-  svg.innerHTML =
-    '<defs><linearGradient id="uiFin" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe07a"/><stop offset=".55" stop-color="#ffc531"/><stop offset="1" stop-color="#e39a0e"/></linearGradient>' +
-    '<linearGradient id="uiFace" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#b9c6dc"/></linearGradient></defs>' +
-    '<path d="M32 37 3 7l10-1 19 21L51 6l10 1z" fill="url(#uiFin)"/>' +
-    '<path d="M28 26l4-8 4 8-4 9z" fill="#ff3b4e"/>' +
-    '<path d="M19 36l13 7 13-7-3 18-10 7-10-7z" fill="url(#uiFace)" stroke="#2a3d5c" stroke-width="1.2"/>' +
-    '<path d="M23 42l7 3v2.4l-7-2.6zM41 42l-7 3v2.4l7-2.6z" fill="#39e1ff"/>' +
-    '<path d="M28 52h8l-1 4h-6z" fill="#ff3b4e"/>';
-  return svg;
+  const image=document.createElement('img');
+  image.src='/brand.svg';image.alt='';image.className=cls;image.setAttribute('aria-hidden','true');
+  return image;
 }
 
 // Client artwork (manager/art.py). The picture is set only once it has loaded, so a page
@@ -153,7 +143,7 @@ export function enhance(root = document) {
     if (!element.querySelector(':scope > svg.ui-icon')) element.prepend(icon(element.dataset.uiIcon));
   }
   for (const element of root.querySelectorAll('[data-ui-mark]')) {
-    if (!element.querySelector(':scope > svg.ui-mark')) element.prepend(mark());
+    if (!element.querySelector(':scope > .ui-mark')) element.prepend(mark());
   }
   for (const element of root.querySelectorAll('[data-ui-art]')) applyArt(element, element.dataset.uiArt);
 }

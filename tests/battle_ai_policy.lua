@@ -3,10 +3,22 @@ local now,authority,generation=0,1,1
 local objects={}
 local logs={}
 local checks=0
+local safeDirections,nativeFallbacks,safetyResult=0,0,nil
 function SDGO_BattleAI_Now() return now end
 function SDGO_BattleAI_Authority() return authority end
 function SDGO_BattleAI_Generation() return generation end
 function SDGO_BattleAI_Log(s) logs[1]=s end
+function SDGO_BattleAI_Native()
+  nativeFallbacks=nativeFallbacks+1
+  return 123
+end
+function SDGO_BattleAI_SafeDirection(dir,distance,forward,backward,left,right)
+  assert(distance>0 and backward==UNIT_MOVE_DIR_BACKWARD and
+    left==UNIT_MOVE_DIR_LEFT and right==UNIT_MOVE_DIR_RIGHT)
+  safeDirections=safeDirections+1
+  if safetyResult~=nil then return safetyResult end
+  return dir
+end
 function CheckObejctAlive(id) return objects[id] and objects[id].hp>0 end
 function DocumentFind(id) return objects[id] end
 function GetDistance(a,b)
@@ -17,7 +29,7 @@ function GetDistance(a,b)
   for i=1,30 do root=(root+square/root)/2 end
   return root
 end
-UNIT_MOVE_DIR_LEFT=1; UNIT_MOVE_DIR_RIGHT=2; UNIT_MOVE_DIR_BACKWARD=3
+UNIT_MOVE_DIR_FORWARD=4; UNIT_MOVE_DIR_LEFT=1; UNIT_MOVE_DIR_RIGHT=2; UNIT_MOVE_DIR_BACKWARD=3
 UNIT_MOVE_EVENT_MOVE=4; UNIT_WEAPON_CHANGE_SECOND=2; UNIT_WEAPON_CHANGE_THIRD=3
 local Unit={}
 function Unit:GetID() return self.id end
@@ -72,6 +84,7 @@ end
 Stub('Gunfighter',10,'GF'); Stub('Infighter',7,'IF'); Stub('Tanker',5,nil); Stub('Stoker',8,nil)
 local function Reset(config)
   now=0; authority=1; generation=generation+1; objects={}
+  safeDirections=0;nativeFallbacks=0;safetyResult=nil
   local human=New(1); human.x=1000; human.target=0
   SDGO_BattleAI_TestConfig=config or {}
   if SDGO_BattleAI_TestConfig.Difficulty==nil then SDGO_BattleAI_TestConfig.Difficulty=2 end
@@ -110,12 +123,19 @@ u=Reset(); objects[1].x=100; Tick(u,0)
 Check(u.history[1]==UNIT_MOVE_DIR_BACKWARD,'ranged bot backs away instead of charging point blank')
 u=Reset(); u.moving=true
 for t=0,15000,150 do Tick(u,t) end
-local left,right,replan=false,false,false
+local left,right,back,random=false,false,false,false
 for _,v in pairs(u.history) do
-  if v==1 then left=true elseif v==2 then right=true elseif v=='random' then replan=true end
+  if v==UNIT_MOVE_DIR_LEFT then left=true
+  elseif v==UNIT_MOVE_DIR_RIGHT then right=true
+  elseif v==UNIT_MOVE_DIR_BACKWARD then back=true
+  elseif v=='random' then random=true end
 end
-Check(left and right and replan,'stationary motor escalates left, right, then native destination replan')
+Check(left and right and back and not random and safeDirections==u.moves,
+      'stationary motor escalates left, right, then a safe bounded backward replan')
 Check(u.moves<10,'stuck recovery has a cooldown rather than per-frame commands')
+u=Reset();objects[1].x=100;safetyResult=-1;Tick(u,0)
+Check(u.moves==0 and nativeFallbacks==1 and u.transitions==0,
+      'blocked spacing delegates to the original native AI without issuing an unsafe motor command')
 u=Reset(); u.moving=true; objects[1].x=10000
 for t=0,6000,150 do u.x=t/10; Tick(u,t) end
 Check(u.moves==0,'a progressing unit is not mistaken for stuck')

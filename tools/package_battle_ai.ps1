@@ -2,7 +2,12 @@ param([string]$Config='Release')
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $tag=[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
-$name='SDGO-BattleAI-0.4.2-preview-'+$tag
+$metadata=[IO.File]::ReadAllText((Join-Path $repo 'mods\battle_ai\mod.ini'))
+$version=[regex]::Match($metadata,'(?m)^version=([^\r\n]+)').Groups[1].Value
+$channel=[regex]::Match($metadata,'(?m)^channel=([^\r\n]+)').Groups[1].Value
+if(-not $version -or $channel -notin @('stable','beta','experimental')) { throw 'Invalid Battle AI release metadata' }
+$releaseVersion=if($channel -eq 'stable') {$version} else {$version+'-'+$channel}
+$name='SDGO-BattleAI-'+$releaseVersion+'-'+$tag
 $out=Join-Path $repo ('dist\'+$name)
 if(Test-Path -LiteralPath $out) { throw 'Package destination already exists' }
 $products=@{
@@ -48,7 +53,7 @@ Get-ChildItem -LiteralPath $out -Recurse -File | ForEach-Object {
     $relative=$_.FullName.Substring($out.Length+1).Replace('\','/')
     $files[$relative]=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
 }
-$manifest=[ordered]@{schema=1;version='0.4.2-preview';source_commit=$sourceCommit;default_difficulty='Medium';components=@('battle_ai','match_ai','mission_ai','ai_catalog','battle_ai_server','pvp_ai');files=$files}
+$manifest=[ordered]@{schema=1;version=$releaseVersion;channel=$channel;source_commit=$sourceCommit;default_difficulty='Medium';components=@('battle_ai','match_ai','mission_ai','ai_catalog','battle_ai_server','pvp_ai');files=$files}
 [IO.File]::WriteAllText((Join-Path $out 'package-manifest.json'),($manifest | ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip=$out+'.zip'

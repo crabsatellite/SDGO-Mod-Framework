@@ -131,6 +131,13 @@ not change firewall profiles or notifications. Nonlocal quiet runs require
 permission to prepare their scoped application rule; setup failure never opens
 a UAC prompt or falls back to an interactive client.
 
+If a protected input desktop denies read access, FPS and local direct PvP tests
+can verify the fixed `WinSta0\Default` desktop instead. It must contain only
+the same process's exact hidden, nonactivating graphics proxy; game windows
+remain on the private desktop, with the foreground, audio and socket checks
+still required. The actual input-desktop name and state remain unknown in the
+receipt. Unidentified or visible windows and other observation errors fail.
+
 Runs reuse `%LOCALAPPDATA%\SDGO-GameTest\account.ini`, or the file selected with
 `--account-profile`. Preparing another run never generates a new account.
 Only explicit `--create-test-account` creates the first persistent profile;
@@ -185,6 +192,17 @@ test copy and verifies that process's actual TCP peer before login. Use
 The example tests normal, death match and leader match in order.
 Each mode covers room creation, real battle startup, AI state assertions and
 normal completion and return. Select a single mode when diagnosing a failure.
+
+For focused ordinary PvP checks, `--ai-difficulty Hard --expected-ai 7` seals the
+native difficulty command. Add `--ai-layout allied --expected-ai 6` instead to
+test five allied AI and one enemy AI. This layout needs a fresh observer session
+because its command does not fit the native title limit with a reused session prefix.
+`--ai-pool-level 1`–`5` selects an exact pool with `--expected-ai 1`; it cannot be
+combined with the difficulty override. In the test Mod, `BattleAiBehavior=1`
+requires actual special-victim recovery, moving fire and distant pursuit.
+`BattleAiDeaths=1` records native death identities; adding `BattleAiTeleport=1`
+requires a real local AI teleport with changed position, preserved HP and no
+destruction request. These opt-in witnesses observe native gameplay.
 Grid (`6`) and Tag (`7`) use the native VS channel business flow and require a
 complete battleship deck on the account. Missing decks and server rejections
 fail the case.
