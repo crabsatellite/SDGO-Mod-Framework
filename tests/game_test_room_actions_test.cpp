@@ -149,6 +149,13 @@ bool __stdcall FakeIsRoomMaster(void*)
     return true;
 }
 
+uint8_t* __fastcall FakeRoomInfo(uint8_t* model,void*)
+{
+    uint8_t* room=nullptr;
+    std::memcpy(&room,model+4,sizeof(room));
+    return room;
+}
+
 int __stdcall FakeWaitRoomPlayerCount(void*)
 {
     return 1;
@@ -242,6 +249,8 @@ void* LookupSymbol(const char* name)
         return reinterpret_cast<void*>(&FakeWaitRoomPlayerCount);
     if (std::strcmp(name, "flow.profile_pointer") == 0)
         return &g_profile;
+    if (std::strcmp(name, "flow.mission_room_info") == 0)
+        return reinterpret_cast<void*>(&FakeRoomInfo);
     if (std::strcmp(name, "flow.service_managed_pointer") == 0)
         return &g_serviceManager;
     if (std::strcmp(name, "flow.service_find_by_name") == 0)
@@ -289,10 +298,23 @@ void TestStartWaitsForOriginalMainState(RoomActions& rooms)
     uint8_t* states[13] = {};
     auto put=[](void* p,size_t offset,const auto& value){std::memcpy(static_cast<uint8_t*>(p)+offset,&value,sizeof(value));};
     const uint32_t appState=18, readyStage=2;void* vtable=&g_nonNullObject;
+    uint8_t model[8]={},packedRoom[0x1000]={},staleRoom[0x1000]={};
+    void* modelVtable[8]={};modelVtable[7]=reinterpret_cast<void*>(&FakeRoomInfo);
     uint8_t* managerPointer=manager;uint8_t* ownerPointer=owner;uint8_t* context=manager+0x24;
     uint8_t** statePointer=states;void* room=&g_nonNullObject;
     put(g_app,0x4A0,appState);put(g_app,0x4A4,ownerPointer);put(owner,0,vtable);put(owner,4,managerPointer);
     put(profile,0xEC,room);g_profile=profile;put(manager,0x0C,statePointer);
+    put(manager,0,vtable);put(manager,0x38,static_cast<uint8_t*>(model));
+    put(model,0,static_cast<void**>(modelVtable));put(model,4,static_cast<uint8_t*>(packedRoom));
+    put(packedRoom,0,uint32_t{23});packedRoom[5]=3;put(packedRoom,0x4CE,uint32_t{31});
+    put(staleRoom,0,uint32_t{999});put(profile,0xEC,static_cast<uint8_t*>(staleRoom));
+    auto observed=rooms.NativeRoomState();
+    Check(observed.room_id==23 && observed.host_pilot_id==31 && observed.player_count==1,
+        "the active native scene model overrides a stale legacy profile cache after settlement");
+    modelVtable[7]=nullptr;
+    Check(!rooms.NativeRoomState().model_present,
+        "an unverified scene getter cannot fall back to stale profile room data");
+    modelVtable[7]=reinterpret_cast<void*>(&FakeRoomInfo);
     put(main,0,vtable);put(main,0x0C,context);put(main,0x10,managerPointer);put(command,0,vtable);
     states[0]=main;states[12]=command;context[2]=1;g_startQueued=0;
     Check(!rooms.StartBattleNativeHost() && g_startQueued==0,"factory completion alone cannot queue Start before Main is ready");
