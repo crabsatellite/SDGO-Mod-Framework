@@ -65,6 +65,8 @@ def policy_ini(policy: dict) -> str:
         f"ExtraHuman={policy['extra_human_multiplier']}",
         "[pvp]",
     ]
+    if policy.get('human_multipliers'):
+        lines[-1:-1]=['[humans]',*[str(i+1)+'='+str(v) for i,v in enumerate(policy['human_multipliers'])]]
     for name, value in (
         ("BaseWin", pvp["base"]["win"]),
         ("BaseLose", pvp["base"]["lose"]),
@@ -347,6 +349,7 @@ def main() -> int:
 
     rng = random.Random(0x5344474F)
     policies = [model.defaults(), *(random_policy(rng) for _ in range(7))]
+    custom=model.defaults();custom['human_multipliers']=['1','1.1']+['1.5']*10;policies.append(custom)
     checked = sum(
         compare_policy(executable, policy, rng, index)
         for index, policy in enumerate(policies)

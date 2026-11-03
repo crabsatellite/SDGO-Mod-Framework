@@ -154,6 +154,7 @@ private:
             before={bot.pilot_id,bot.object_id,bot.position_x,bot.position_z};
         }
         ++state_.frames;state_.battle_seen=1;state_.start_sequence=s.received_battle_start_count;
+        state_.humans=s.human_participant_count;
         state_.bots=s.bot_count;state_.local_bots=local;state_.remote_bots=remote;
         state_.lua_errors=s.lua_error_count;
         if(state_.pilot==state_.expected_host) {

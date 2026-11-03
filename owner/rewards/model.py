@@ -54,6 +54,11 @@ def defaults():
 
 def validate(policy):
     from . import progression
+    from . import gathering
+    gathering.validate(policy.get('gathering',gathering.defaults()))
+    table=policy.get('human_multipliers',[])
+    if not isinstance(table,list) or len(table) not in (0,12):raise ValueError('人数倍率表须为空或包含1至12人的全部档位')
+    if any(number(v,100)<=0 for v in table):raise ValueError('人数倍率必须大于零且不超过100')
     if "progression" in policy:
         progression.validate(policy["progression"])
     try:
@@ -132,7 +137,7 @@ def preview(policy, context, stats):
     multiplier = {
         "base": number(policy["base_multiplier"], 100),
         "double_time": event,
-        "humans": number(policy["extra_human_multiplier"], 2) ** (humans - 1),
+        "humans": number(policy['human_multipliers'][humans-1],100) if policy.get('human_multipliers') else number(policy["extra_human_multiplier"], 2) ** (humans - 1),
         "duration": min(Fraction(1), Fraction(active, policy["full_reward_seconds"])),
     }
     factor = multiplier["base"] * event * multiplier["humans"] * multiplier["duration"]

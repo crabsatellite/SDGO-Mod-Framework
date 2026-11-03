@@ -94,6 +94,13 @@ int main(){
         snapshot.bots[0].local_control=1;w.driver.Tick(&context);Check(!w.driver.State().frames,"guest must observe synchronized copies rather than locally running AI");
     }
     {
+        World w;w.room.room.player_count=2;w.Joined();
+        Check(w.driver.State().humans==2,"early guest records the real admission-time population");
+        RemoteSnapshot();w.driver.Tick(&context);
+        Check(w.driver.State().humans==3&&w.driver.State().battle_seen,
+              "battle population refreshes from the acknowledged full native roster after later guests join");
+    }
+    {
         World w;w.Joined();RemoteSnapshot();w.driver.Tick(&context);snapshot.bots[0].position_x+=2;w.driver.Tick(&context);
         Check(w.driver.State().remote_bots==5&&w.driver.State().movement_events==1,"actual remote identities and post-control movement are accumulated");
         F::Command c{};c.sequence=2;c.operation=Driver::FinishBattle;c.target_id=31;w.driver.Submit(c,3,&context);

@@ -14,7 +14,8 @@
 param(
     [string]$Config = "Release",
     [string]$BuildDir = "",
-    [string]$DailyRewardsDll = ""
+    [string]$DailyRewardsDll = "",
+    [ValidateSet('basic','daily','progression','outage')][string[]]$Cases = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -175,10 +176,12 @@ $allPassed = $false
 try {
     $rewardCases = @(
         @{ Name = "basic"; Daily = $false },
-        @{ Name = "daily"; Daily = $true }
+        @{ Name = "daily"; Daily = $true },
+        @{ Name = "outage"; Daily = $false }
     )
     if ($env:SDGO_REWARD_SQL_INTEGRATION -eq '1') { $rewardCases += @{ Name='progression'; Daily=$false } }
     foreach ($entry in $rewardCases) {
+        if ($Cases.Count -gt 0 -and $entry.Name -notin $Cases) { continue }
         $fixture = New-Case $entry.Name $entry.Daily
         Write-Host "== real core battle rewards $($entry.Name)"
         $output = & python -B (Join-Path $PSScriptRoot "battle_rewards_runtime_worker.py") `
@@ -212,27 +215,11 @@ finally {
     if ($allPassed -and
         $resolved.StartsWith($buildRoot, [StringComparison]::OrdinalIgnoreCase) -and
         (Test-Path -LiteralPath $resolved)) {
-        for ($attempt = 0; $attempt -lt 5; $attempt++) {
-            try {
-                Remove-Item -LiteralPath $resolved -Recurse -Force
-                break
-            }
-            catch {
-                if ($attempt -eq 4) { throw }
-                Start-Sleep -Milliseconds 200
-            }
-        }
-        if (Test-Path -LiteralPath $runRoot) {
-            foreach ($old in Get-ChildItem -LiteralPath $runRoot -Directory) {
-                $oldPath = [IO.Path]::GetFullPath($old.FullName)
-                if (-not $oldPath.StartsWith(
-                        $runRoot + [IO.Path]::DirectorySeparatorChar,
-                        [StringComparison]::OrdinalIgnoreCase)) {
-                    throw "Refusing to clean an unexpected runtime fixture path"
-                }
-                Remove-Item -LiteralPath $oldPath -Recurse -Force
-            }
-        }
+        Add-Type -AssemblyName Microsoft.VisualBasic
+        [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($resolved,
+            [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+            [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)
+        if (Test-Path -LiteralPath $resolved) { throw 'Owned fixture was not moved to the Recycle Bin' }
     }
     elseif (Test-Path -LiteralPath $resolved) {
         Write-Host "Failed fixture retained for diagnosis: $resolved"

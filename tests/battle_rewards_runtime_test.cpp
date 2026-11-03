@@ -659,6 +659,27 @@ void DailyCase() {
     CHECK(WaitPacket(5001, 1006));
 }
 
+void OutageCase(const fs::path& runtime) {
+    CHECK(WaitUntil([&]{return fs::is_regular_file(runtime/L"worker-offline.ready");},10000));
+    CHECK(WaitStatus(runtime,"\"wallet_worker_healthy\": false"));
+    auto match=std::make_unique<MatchFixture>();
+    PrepareMatch(match.get(),0x6000,1700006000,7001);
+    RecordCombat(match.get(),0);
+    auto frame=PrepareFrame(match.get(),0,0,0);
+    InvokeSite(reinterpret_cast<void*>(kSiteFunctions[0]),frame->Frame());
+    CheckFrame(*frame,0,13310,false);
+    unsigned queued=0;
+    for(const auto& item:fs::directory_iterator(runtime/L"outbox"))
+        if(item.path().extension()==L".ini")++queued;
+    CHECK(queued==1);
+    {std::ofstream signal(runtime/L"native-settled.ready");signal<<"native settlement completed with consumer offline\n";}
+    CHECK(WaitPacket(7001,1125));
+    // A repeated native callback cannot repeat either GP or the durable cash job.
+    auto replay=PrepareFrame(match.get(),0,0,0);
+    InvokeSite(reinterpret_cast<void*>(kSiteFunctions[0]),replay->Frame());
+    CheckFrame(*replay,0,0,false);
+}
+
 void ProgressionCase() {
     std::vector<std::unique_ptr<MatchFixture>> matches;
     std::vector<std::unique_ptr<FrameFixture>> frames;
@@ -686,7 +707,7 @@ int wmain(int argc, wchar_t** argv) {
     const fs::path runtime = fs::absolute(argv[1]);
     const std::wstring mode = argv[2];
     const bool daily = mode == L"daily";
-    if (!daily && mode != L"basic" && mode != L"progression") return 2;
+    if (!daily && mode != L"basic" && mode != L"progression" && mode != L"outage") return 2;
 
     wchar_t executable[32768] = {};
     GetModuleFileNameW(nullptr, executable,
@@ -724,7 +745,9 @@ int wmain(int argc, wchar_t** argv) {
     VerifyPatchedSites(daily);
     CHECK(WaitStatus(runtime, "\"policy_loaded\": true"));
 
-    if (mode == L"progression")
+    if (mode == L"outage")
+        OutageCase(runtime);
+    else if (mode == L"progression")
         ProgressionCase();
     else if (daily)
         DailyCase();

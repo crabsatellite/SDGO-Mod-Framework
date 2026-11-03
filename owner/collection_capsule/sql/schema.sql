@@ -13,11 +13,34 @@ IF OBJECT_ID(N'sdgo_collection_capsule.State',N'U') IS NULL
         Singleton int NOT NULL PRIMARY KEY CHECK(Singleton=1),
         SchemaVersion int NOT NULL,
         MachineID int NOT NULL,
-        PriceGP int NOT NULL CHECK(PriceGP=100000),
+        PriceGP int NOT NULL CONSTRAINT CK_CollectionPrice CHECK(PriceGP BETWEEN 1 AND 1000000000),
         PoolHash char(64) NOT NULL,
         Enabled bit NOT NULL,
         InstalledAt datetime NOT NULL DEFAULT GETUTCDATE()
     );
+-- Replace only the historical fixed-price constraint owned by this schema.
+DECLARE @oldPriceCheck sysname,@dropPriceCheck nvarchar(512);
+SELECT @oldPriceCheck=name FROM sys.check_constraints
+WHERE parent_object_id=OBJECT_ID(N'sdgo_collection_capsule.State')
+ AND REPLACE(REPLACE(REPLACE(REPLACE(LOWER(definition),'[',''),']',''),'(',''),')','')='pricegp=100000';
+IF @oldPriceCheck IS NOT NULL
+BEGIN
+ SET @dropPriceCheck=N'ALTER TABLE sdgo_collection_capsule.State DROP CONSTRAINT '+QUOTENAME(@oldPriceCheck);
+ EXEC sys.sp_executesql @dropPriceCheck;
+END;
+IF NOT EXISTS(SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID(N'sdgo_collection_capsule.State') AND name=N'CK_CollectionPrice')
+ ALTER TABLE sdgo_collection_capsule.State ADD CONSTRAINT CK_CollectionPrice CHECK(PriceGP BETWEEN 1 AND 1000000000);
+IF COL_LENGTH(N'sdgo_collection_capsule.State',N'LimitPeriod') IS NULL
+ ALTER TABLE sdgo_collection_capsule.State ADD LimitPeriod varchar(4) NOT NULL DEFAULT('week') WITH VALUES;
+IF COL_LENGTH(N'sdgo_collection_capsule.State',N'DrawLimit') IS NULL
+ ALTER TABLE sdgo_collection_capsule.State ADD DrawLimit int NOT NULL DEFAULT(15) WITH VALUES;
+IF COL_LENGTH(N'sdgo_collection_capsule.State',N'UtcOffsetMinutes') IS NULL
+ ALTER TABLE sdgo_collection_capsule.State ADD UtcOffsetMinutes int NOT NULL DEFAULT(480) WITH VALUES;
+IF OBJECT_ID(N'sdgo_collection_capsule.DrawQuota',N'U') IS NULL
+ CREATE TABLE sdgo_collection_capsule.DrawQuota(
+  AccountNumber int NOT NULL,MachineID int NOT NULL,PeriodKind varchar(4) NOT NULL,
+  PeriodStart date NOT NULL,DrawCount int NOT NULL CHECK(DrawCount>=0),
+  PRIMARY KEY(AccountNumber,MachineID,PeriodKind,PeriodStart));
 IF OBJECT_ID(N'sdgo_collection_capsule.Roots',N'U') IS NULL
     CREATE TABLE sdgo_collection_capsule.Roots (
         UnitID int NOT NULL PRIMARY KEY,
