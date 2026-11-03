@@ -6,6 +6,7 @@ This configuration module itself never connects to a live game or database.
 from __future__ import annotations
 
 import collections
+import base64
 import copy
 import functools
 import hashlib
@@ -369,6 +370,8 @@ def validate(catalog):
     if len(units) != len(catalog["units"]):
         raise ValueError("Duplicate unit ID")
     validate_overrides(catalog)
+    validate_project_assets(catalog)
+    validate_activity_drafts(catalog)
     policy = catalog.get("custom_candidate_policy")
     if policy is not None:
         if (not isinstance(policy, dict) or policy.get("version") != 1
@@ -416,6 +419,53 @@ def validate(catalog):
                         raise ValueError("Invalid custom weight, mileage or price")
 
 
+def validate_project_assets(catalog):
+    from owner.units.project import normalize_metadata
+    from owner.units.assets import normalize_png
+    rows=catalog.get('project_assets',[])
+    if not isinstance(rows,list) or len(rows)>2048:raise ValueError('Project asset list is invalid')
+    seen=set();total=0
+    for row in rows:
+        if not isinstance(row,dict):raise ValueError('Project asset must be an object')
+        key=row.get('key');project=row.get('project_key');role=row.get('role')
+        if (not isinstance(project,str) or not re.fullmatch('[A-Za-z0-9][A-Za-z0-9._-]{0,127}',project)
+            or role not in ('activity_poster','shop_portrait','capsule_portrait')
+            or key!=project+':'+role or key in seen):raise ValueError('Project asset identity is invalid or duplicate')
+        seen.add(key)
+        for field in ('asset_sha256','source_asset_sha256','original_sha256','project_revision'):
+            if not isinstance(row.get(field),str) or not re.fullmatch('[0-9a-f]{64}',row[field]):
+                raise ValueError('Project asset hash is invalid')
+        try:raw=base64.b64decode(row.get('png_base64',''),validate=True)
+        except (ValueError,TypeError):raise ValueError('Project asset PNG encoding is invalid') from None
+        total+=len(raw)
+        if total>40*1024*1024:raise ValueError('Capsule project media exceeds the portable JSON size limit')
+        if hashlib.sha256(raw).hexdigest()!=row['asset_sha256']:raise ValueError('Project asset PNG hash differs')
+        normalize_png(raw);normalize_metadata(row.get('metadata',{}))
+
+
+def validate_activity_drafts(catalog):
+    from owner.units.project import normalize_metadata
+    rows=catalog.get('activity_drafts',[])
+    if not isinstance(rows,list) or len(rows)>999:raise ValueError('Activity draft list is invalid')
+    assets={r['key']:r for r in catalog.get('project_assets',[])}
+    seen=set();roots=set()
+    for row in rows:
+        if (not isinstance(row,dict) or row.get('schema_version')!=1 or row.get('enabled') is not False
+            or row.get('changes_applied') is not False or row.get('status')!='draft'):
+            raise ValueError('Activity candidates must remain explicitly disabled drafts')
+        mid=row.get('id');root=row.get('unit_id')
+        if type(mid) is not int or not 1990001<=mid<=1990999 or mid in seen:raise ValueError('Invalid activity draft machine ID')
+        if type(root) is not int or root<=0 or root in roots:raise ValueError('Duplicate or invalid dedicated activity root')
+        seen.add(mid);roots.add(root)
+        if type(row.get('price')) is not int or row['price']<=0 or row.get('currency_type') not in (0,1,2):
+            raise ValueError('Invalid activity draft price/currency')
+        art=assets.get(row.get('artwork_key'))
+        if not art or art['role']!='activity_poster' or art['asset_sha256']!=row.get('artwork_sha256'):
+            raise ValueError('Activity draft artwork is absent or stale')
+        if art['project_key']!=row.get('project_key'):raise ValueError('Activity draft belongs to another project')
+        normalize_metadata(row.get('metadata',{}))
+
+
 def patterns(catalog):
     units = {u["id"]: u for u in catalog["units"]}
     groups = collections.defaultdict(list)
@@ -426,15 +476,17 @@ def patterns(catalog):
             for k, v in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))]
 
 
-def acquisition(snapshot, catalog, additional=()):
+def acquisition(snapshot, catalog, additional=(), *, table_reader=None, source_grants=()):
     """Least fixed point over actual sources and AND/OR blueprint requirements.
 
     Possessing a recipe record is insufficient: its item must have a source.
     Rental products are not permanent roots. Cycles do not create a root.
     """
+    def read(database,name):
+        return table_reader(database,name) if table_reader is not None else table(snapshot,database,name)
     units = {u["id"]: u for u in catalog["units"]}
-    cats = {int(r["CatalogueID"]): r for r in table(snapshot, "GOnlineGame", "tbl_ItemCategory")}
-    recipes = table(snapshot, "GOnlineGame", "tbl_MixTreeFile")
+    cats = {int(r["CatalogueID"]): r for r in read("GOnlineGame", "tbl_ItemCategory")}
+    recipes = read("GOnlineGame", "tbl_MixTreeFile")
     recipe_ids = {int(r["Idx"]) for r in recipes}
     known, plans, done_quests = {}, {}, set()
     for kind in ("fixed_machines", "custom_machines"):
@@ -443,11 +495,11 @@ def acquisition(snapshot, catalog, additional=()):
                 for s in m.get("slots", m.get("candidates", [])):
                     known.setdefault(s["unit_id"], {"source": kind, "machine_id": m["id"]})
     # Enabled coin variants can contain units absent from the GP machine.
-    coin_enabled = {int(r["MachineID"]) for r in table(snapshot, "GOnlineGame", "tbl_CoinMachinePrice")
+    coin_enabled = {int(r["MachineID"]) for r in read("GOnlineGame", "tbl_CoinMachinePrice")
                     if not r["Disable"]}
     visible_coin = {m["id"] + 1 for m in catalog["fixed_machines"] if not m.get("retired", False)}
     active_coin = coin_enabled & visible_coin
-    for r in table(snapshot, "GOnlineGame", "tbl_CoinCapsuleList"):
+    for r in read("GOnlineGame", "tbl_CoinCapsuleList"):
         if int(r["MachineID"]) in active_coin:
             known.setdefault(int(r["UnitID"]), {"source": "coin_capsule", "machine_id": int(r["MachineID"])})
     for uid in additional:
@@ -460,27 +512,31 @@ def acquisition(snapshot, catalog, additional=()):
         ref = int(c["RefIndex"])
         # Catalogue IDs are product categories, not recipe IDs. In the native
         # dataset plans use 154xxxx categories whose RefIndex is 200xxx.
-        if ref in recipe_ids:
+        if int(category)//100000 == 15 and ref in recipe_ids:
             plans.setdefault(ref, reason)
         elif int(category) // 100000 == 11 and ref in units:
             known.setdefault(ref, reason)
 
-    products = table(snapshot, "GDStoreBilling", "tbls_StoreItems")
+    for source in source_grants:
+        if not isinstance(source,dict) or not isinstance(source.get('witness'),dict) or not source['witness'].get('source'):
+            raise ValueError('Additional acquisition grants require a source witness')
+        grant(source['category_id'],copy.deepcopy(source['witness']))
+    products = read("GDStoreBilling", "tbls_StoreItems")
     visible_items = {str(r["f_itemid"]).strip() for r in products
                      if str(r["f_display"]).strip() == "1" and int(r["f_depth0"]) > 1
                      and int(r["f_quantity"]) != 0}
-    for r in table(snapshot, "GDStoreBilling", "tbls_SubItems"):
+    for r in read("GDStoreBilling", "tbls_SubItems"):
         if str(r["f_itemid"]).strip() in visible_items and str(r["f_display"]).strip() == "1":
             grant(r["f_categoryNumber"], {"source": "shop", "item_id": str(r["f_itemid"]).strip()})
     drop_machines = set()
-    for row in table(snapshot, "GOnlineGame", "tbl_BattleResultItemDropSetting"):
+    for row in read("GOnlineGame", "tbl_BattleResultItemDropSetting"):
         drop_machines.update(int(row[k]) for k in ("NormalMachineID", "RareMachineID", "UniqueMachineID") if row[k])
-    for row in table(snapshot, "GOnlineGame", "tbl_BattleResultItemDropDice"):
+    for row in read("GOnlineGame", "tbl_BattleResultItemDropDice"):
         if int(row["ItemMachineID"]) in drop_machines and float(row["Prob"]) > 0:
             grant(row["CategoryID"], {"source": "configured_battle_drop", "drop_machine_id": int(row["ItemMachineID"])})
-    quests = table(snapshot, "GOnlineGame", "tbl_QuestInfo")
+    quests = read("GOnlineGame", "tbl_QuestInfo")
     deps = collections.defaultdict(set)
-    for r in table(snapshot, "GOnlineGame", "tbl_QuestPrerequest"):
+    for r in read("GOnlineGame", "tbl_QuestPrerequest"):
         deps[int(r["QuestID"])].add(int(r["PreQuest"]))
     skipped_quests = []
     while True:
@@ -1766,6 +1822,8 @@ def export_bundle(catalog, output):
     if "portrait_overrides" in catalog:
         payload["portrait_overrides"] = copy.deepcopy(
             catalog["portrait_overrides"])
+    if 'project_assets' in catalog:payload['project_assets']=copy.deepcopy(catalog['project_assets'])
+    if 'activity_drafts' in catalog:payload['activity_drafts']=copy.deepcopy(catalog['activity_drafts'])
     # Identical semantic payloads prevent client/server configuration divergence.
     for role in ("client", "server"):
         write_json(out / f"{role}.json", {**payload, "role": role})

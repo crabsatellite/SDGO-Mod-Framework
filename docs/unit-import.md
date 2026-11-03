@@ -19,6 +19,29 @@ The source-only Type-13 profile validates paired record layouts and dependency e
 it does not enable new skill registration. All such records remain blocked pending
 initialization, dependency, server-field and runtime verification.
 
+The blueprint authoring candidate adds editable recipes with explicit recovered,
+authored or unknown provenance. A recipe requires its blueprint item, output,
+three to five ordered materials and minimum levels; seven raw slots are retained
+as source structure while unsupported UI counts remain blocked. The native first material
+is the retained key unit. Unknown fields stay required. Published definitions
+can be retired without deleting data needed by already-owned blueprint items.
+Read `capabilities.blueprints.native_registration` before expecting a playable
+recipe: it remains false until the paired native compiler, guarded installation
+and original game synthesis path are verified.
+
+The acquisition preview uses the configured host's real sources. Every imported
+S-rank-or-higher root requires its own activity machine; A/B/C roots use a complete
+obtainable blueprint route or ordinary native capsule patterns. Previewing a route
+does not apply machine pricing, probabilities or rewards.
+
+The Manager also supports metadata-first `sdgo.unit-project` authoring. Keep
+descriptions, aliases, search examples, sources and original activity posters in
+the project; a portable authoring ZIP carries those files with exact hashes.
+Capsule editors can read the same project library and copy selected images and
+metadata into their own portable catalog before a unit is ready for runtime
+publication. This never registers a prize or applies a machine. User content
+remains private owner data; the framework release contains only the tools.
+
 See [the Chinese guide](unit-import.zh-CN.md) for the full workflow and boundaries.
 
 ```powershell

@@ -117,27 +117,67 @@ class Workspace:
         with self.lock:
             state=self.check(expected)
             parsed=inspect_upload(filename,raw,self.baseline,archive_executable=self.archive_executable)
+            project=parsed.get('project')
             sha=hashlib.sha256(raw).hexdigest()
             existing=next((d['id'] for d in state['drafts'].values() if d.get('source_sha')==sha),None)
             if existing:return self.public(existing)
+            if project and project.get('project_key') and any(d['family_key']==project['project_key'] for d in state['drafts'].values()):
+                raise model.RevisionConflict('该制作项目已存在，请先核对并明确更新，不能覆盖现有资料')
             identity=uuid.uuid4().hex
             forms=[model.new_record(r,'unit') for r in parsed['forms']]
             weapons=[model.new_record(r,'weapon') for r in parsed['weapons']]
             single=len(forms)==1 and not forms[0]['transform_target']
-            draft={'id':identity,'family_key':'unit-import.'+identity,'name':forms[0]['name'],
+            draft={'id':identity,'family_key':'unit-import.'+identity,'name':project['name'] if project else forms[0]['name'],
                 'source_filename':Path(filename).name,'source_sha':sha,'root_unit_id':forms[0]['id'] if single else None,
                 'behavior_profile':'native-single-form-v1' if single else None,'item_template_id':None,'category_id':None,
                 'forms':forms,'weapons':weapons,'files':[],'assets':[],
                 'presentation':{role:{'asset_sha':None,'caption':'商城设定售价' if role=='shop' else '由扭蛋模块设定概率'} for role in ('shop','capsule')},
                 'parse_warnings':parsed.get('warnings',[]),'created':now(),'updated':now(),'status':'draft'}
+            if project:
+                if project.get('project_key'):draft['family_key']=project['project_key']
+                draft['metadata']=copy.deepcopy(project['metadata']);draft['media']=copy.deepcopy(project['media'])
+                draft['project_kind']='unit-family' if forms else 'metadata-only'
+            elif parsed.get('blueprints'):
+                from .blueprints import from_record
+                draft['blueprints']=[]
+                for source_recipe in parsed['blueprints']:
+                    row=source_recipe['blueprint']
+                    draft['blueprints'].append(from_record(row,domain='archive-sha256:'+sha))
             if single:
                 forms[0]['server']['SallyReady']=1;forms[0]['sources']['SallyReady']='single-form'
-            for record in parsed['forms']+parsed['weapons']:self._store(record['raw'])
+            for record in parsed['forms']+parsed['weapons']+parsed.get('blueprints',[]):self._store(record['raw'])
             for name,data in parsed['files'].items():
                 blob=self._store(data);draft['files'].append({'path':name,'sha':blob,'bytes':len(data)})
+            if project:
+                from .assets import normalize_png
+                for asset in project['assets']:
+                    data=parsed['files'][asset['path']];normalize_png(data)
+                    self._store(data)
+                    draft['assets'].append({k:v for k,v in asset.items() if k!='path'})
             self._preview_candidates(draft,parsed)
+            if project:
+                patch=model.definitions(project['definitions']) if project.get('definitions') else {}
+                if project.get('presentation'):patch['presentation']=project['presentation']
+                if patch:draft=model.update(draft,patch,self.repository.catalog)
             draft['content_revision']=model.content_revision(draft)
             state['drafts'][identity]=draft
+            response=self._commit(state,identity)
+            if (project and draft.get('item_template_id')) or draft.get('blueprints'):
+                return self.update(identity,{},response['revision'])
+            return response
+
+    def create_project(self,value,expected):
+        from .project import normalize_metadata
+        if not isinstance(value,dict) or set(value)-{'name','metadata'}:raise ValueError('新建资料项目字段无效')
+        with self.lock:
+            state=self.check(expected);identity=uuid.uuid4().hex
+            draft={'id':identity,'family_key':'unit-import.'+identity,'name':model.text(value.get('name',''),'项目名称'),
+                'project_kind':'metadata-only','metadata':normalize_metadata(value.get('metadata',{})),'media':{},
+                'source_filename':None,'source_sha':None,'root_unit_id':None,'behavior_profile':None,
+                'item_template_id':None,'category_id':None,'forms':[],'weapons':[],'files':[],'assets':[],
+                'presentation':{role:{'asset_sha':None,'caption':''} for role in ('shop','capsule')},
+                'parse_warnings':[],'created':now(),'updated':now(),'status':'draft'}
+            draft['content_revision']=model.content_revision(draft);state['drafts'][identity]=draft
             return self._commit(state,identity)
 
     def _preview_candidates(self,draft,parsed):
@@ -177,6 +217,27 @@ class Workspace:
                 if category is None:raise ValueError('本模块的机体物品编号空间已用满')
                 value['category_id']=category
                 state['retired_categories']=sorted(set(state.get('retired_categories',[]))|{category})
+            if value.get('blueprints'):
+                from .blueprints import RECIPE_FIRST,RECIPE_LAST,CATEGORY_FIRST,CATEGORY_LAST
+                used_recipes=set(state.get('retired_blueprints',[]))
+                retired_categories=set(state.get('retired_categories',[]))
+                used_categories=set(self.repository.catalog.get('items',{}))|retired_categories
+                for other in state['drafts'].values():
+                    for recipe in other.get('blueprints',[]):
+                        if recipe.get('id'):used_recipes.add(recipe['id'])
+                        if recipe.get('item_category_id'):used_categories.add(recipe['item_category_id'])
+                for recipe in value['blueprints']:
+                    if recipe['id'] is None:
+                        recipe['id']=next((i for i in range(RECIPE_FIRST,RECIPE_LAST+1) if i not in used_recipes and not self._any_id(i)),None)
+                        if recipe['id'] is None:raise ValueError('设计图登记编号空间已用满')
+                    used_recipes.add(recipe['id'])
+                    if recipe['item_category_id'] is None:
+                        recipe['item_category_id']=next((i for i in range(CATEGORY_FIRST,CATEGORY_LAST+1) if i not in used_categories and not self._any_id(i)),None)
+                        if recipe['item_category_id'] is None:raise ValueError('图纸物品编号空间已用满')
+                    used_categories.add(recipe['item_category_id'])
+                    retired_categories.add(recipe['item_category_id'])
+                state['retired_blueprints']=sorted(used_recipes)
+                state['retired_categories']=sorted(retired_categories)
             self._touch(value);state['drafts'][identity]=value
             return self._commit(state,identity)
 
@@ -222,7 +283,18 @@ class Workspace:
         from .codec import decode_record
         with self.lock:
             state=self.check(expected);draft=copy.deepcopy(self._get(state,identity))
-            if role in ('shop','capsule'):
+            if role=='activity_poster':
+                from .project import normalize_media
+                png=normalize_png(raw);source_sha=self._store(raw);sha=self._store(png)
+                for digest,kind in ((source_sha,'source-image'),(sha,'image')):
+                    existing=next((a for a in draft['assets'] if a['sha']==digest),None)
+                    if existing is None:draft['assets'].append({'sha':digest,'filename':Path(filename).name,'kind':kind,'source':'owner-upload'})
+                    elif kind=='image':existing['kind']='image'
+                media=copy.deepcopy(draft.get('media',{}));media['activity_poster']={
+                    'asset_sha':sha,'source_sha':source_sha,'filename':Path(filename).name,'caption':'',
+                    'source_kind':'owner-provided'}
+                draft['media']=normalize_media(media,draft['assets'])
+            elif role in ('shop','capsule'):
                 png=normalize_png(raw);sha=self._store(png)
                 if not any(a['sha']==sha for a in draft['assets']):draft['assets'].append({'sha':sha,'filename':Path(filename).name,'kind':'image','source':'upload'})
                 draft['presentation'][role]['asset_sha']=sha
@@ -230,7 +302,19 @@ class Workspace:
             elif role=='dependency':
                 suffix=Path(filename).suffix.lower()
                 if suffix=='.bin':
-                    record=decode_record(raw);kind=record['kind'];key='forms' if kind in ('unit','units') else 'weapons'
+                    record=decode_record(raw);kind=record['kind']
+                    if kind=='blueprint':
+                        from .blueprints import from_record
+                        prior=draft.get('blueprints',[])
+                        if any(r.get('source',{}).get('record_sha256')==record['blueprint']['source_sha256'] for r in prior):
+                            raise ValueError('该设计图原始记录已存在')
+                        draft.setdefault('blueprints',[]).append(from_record(record['blueprint'],domain='uploaded-record'))
+                        sha=self._store(raw)
+                        draft['files'].append({'path':'records/blueprint-'+str(record['id'])+'.bin','sha':sha,'bytes':len(raw)})
+                        self._touch(draft);state['drafts'][identity]=draft
+                        result=self._commit(state,identity)
+                        return self.update(identity,{},result['revision'])
+                    key='forms' if kind in ('unit','units') else 'weapons'
                     if any(r['id']==record['id'] for r in draft['forms']+draft['weapons']):raise ValueError('补传记录编号已存在，不能覆盖原始记录')
                     draft[key].append(model.new_record(record,'unit' if key=='forms' else 'weapon'))
                     self._store(raw)
@@ -256,12 +340,14 @@ class Workspace:
         if template and root and draft.get('category_id'):
             root_record=next(r for r in draft['forms'] if r['id']==root)
             item=copy.deepcopy(template);item.update(CatalogueID=draft['category_id'],RefIndex=root,Name=root_record['server'].get('UnitModelName',''))
-        return {'family_key':draft['family_key'],'revision':model.content_revision(draft),'root_unit_id':root,
+        result={'family_key':draft['family_key'],'revision':model.content_revision(draft),'root_unit_id':root,
                 'item_template_id':draft.get('item_template_id'),
                 'units':[copy.deepcopy(r['server']) for r in draft['forms']],
                 'weapons':[copy.deepcopy(r['server']) for r in draft['weapons']], 'item':item,
                 'names':[{'UnitNumber':r['id'],'NameCN':draft['name'] if r['id']==root else r['name'],
                           'NameEN':r['server'].get('UnitModelName',r['name'])} for r in draft['forms']]}
+        if draft.get('blueprints'):result['blueprints']=copy.deepcopy(draft['blueprints'])
+        return result
 
     def requirements(self,draft,state=None):
         from .codec import scan_resource_references,patch_unit,patch_weapon,UNIT_FIELDS
@@ -269,6 +355,15 @@ class Workspace:
         def need(code,message,field=None,level='required',accept=None):
             issues.append({'code':code,'message':message,'field':field,'level':level,**({'accept':accept} if accept else {})})
         root=draft.get('root_unit_id');forms={r['id']:r for r in draft['forms']};newweapons={r['id'] for r in draft['weapons']}
+        from . import blueprints
+        for recipe in draft.get('blueprints',[]):
+            issues.extend(blueprints.requirements(recipe,root_unit_id=root,
+                unit_ids=set(self.repository.catalog.get('units',{}))|set(forms)))
+            if recipe.get('enabled',True) and not blueprints.NATIVE_REGISTRATION_SUPPORTED:
+                need('blueprint_native_adapter','设计图客户端、事务和实机适配尚未开放；可以保存草稿，不能发布','blueprints','error')
+        if draft.get('blueprints'):
+            try:blueprints.primary_id(draft['blueprints'])
+            except ValueError as error:need('blueprint_primary',str(error),'blueprints','required')
         if root not in forms:need('root','请选择进入机库、商店和扭蛋的根形态','root_unit_id')
         profile=draft.get('behavior_profile')
         if profile not in model.PROFILES:need('behavior','请选择原生变形类型','behavior_profile')
@@ -332,6 +427,8 @@ class Workspace:
             item=self.repository.catalog.get('items',{}).get(draft['item_template_id'],{})
             if (item.get('TimeLimit'),item.get('Option1'),item.get('Option2'))!=(0,1,2):
                 need('item_template_permanent','请选择永久机体物品模板；机体的租赁售价由商城选项另行配置','item_template_id')
+        if root and draft.get('item_template_id') and draft.get('category_id') is None:
+            need('item_identity','本地物品类别待分配，请保存草稿','category_id')
         for role,label in (('shop','商城'),('capsule','扭蛋')):
             sha=draft['presentation'][role].get('asset_sha')
             if sha is None:need('preview',f'请选择或上传{label}展示图片','presentation.'+role,accept='.png')
@@ -348,7 +445,7 @@ class Workspace:
         for identity in ownids:
             if identity in claimed:need('id_owned',f'编号 {identity} 已由另一个已登记机体占用',None,'error')
             if self._any_id(identity):need('id_native',f'编号 {identity} 已被原生数据占用；此版本不盲目改号',None,'error')
-        if not any(i['code'] in ('field','field_invalid','root','item_template') for i in issues):
+        if not any(i['code'] in ('field','field_invalid','root','item_template','item_identity') for i in issues):
             try:self.repository.check_plan(self.plan(draft))
             except (ValueError,KeyError) as e:need('server_plan',str(e),None,'required',accept='.json')
         if self.publisher is None and (not self.module_binary or not self.module_binary.is_file()):
@@ -359,12 +456,23 @@ class Workspace:
 
     def public(self,selected=None):
         with self.lock:
-            state=self.read();result={'revision':model.revision(state),'drafts':[{
-                'id':d['id'],'name':d['name'],'status':d['status'],'updated':d['updated']} for d in state['drafts'].values()],
+            from .blueprints import NATIVE_REGISTRATION_SUPPORTED
+            from .project import search_text
+            state=self.read();result={'revision':model.revision(state),
+                'capabilities':{'projects':{'protocol':'sdgo.unit-project','schema_version':1,'metadata_first':True,'bundled_media':True},
+                    'blueprints':{'schema_version':1,'authoring':True,
+                    'native_registration':NATIVE_REGISTRATION_SUPPORTED,'target_record_kind':33,
+                    'target_record_size':1197,'material_minimum':3,'material_maximum':5,'raw_material_maximum':7}},'drafts':[{
+                'id':d['id'],'name':d['name'],'status':d['status'],'updated':d['updated'],
+                'search_text':search_text(d)}
+                for d in state['drafts'].values()],
                 'baseline':self.baseline.public_info(),'server':self.repository.public_info(),
                 'confirmation_destination':'server' if self.repository.public_info().get('server_configured') else 'workspace',
                 'templates':{'units':[{'id':n,'name':str(r.get('UnitModelName',n))} for n,r in self.repository.catalog.get('units',{}).items()],
                     'weapons':[{'id':n,'name':str(r.get('WeaponName',n))} for n,r in self.repository.catalog.get('weapons',{}).items()],
+                    'blueprints':getattr(self.baseline,'blueprint_templates',lambda:[])(),
+                    'blueprint_items':[{'id':n,'name':str(r.get('Name',n)).split('\0')[0],'recipe_id':r.get('RefIndex')}
+                        for n,r in self.repository.catalog.get('items',{}).items() if n//100000==15 and r.get('TimeLimit')==0],
                     'items':[{'id':n,'name':str(r.get('Name',n)).split('\0')[0],'unit_id':r.get('RefIndex')} for n,r in self.repository.catalog.get('items',{}).items()
                         if n//100000==11 and (r.get('TimeLimit'),r.get('Option1'),r.get('Option2'))==(0,1,2)
                         and (template:=self.baseline.record('item',n)) is not None and template[4]==0]}}

@@ -3,6 +3,45 @@
 本接口用于 SDGO Mod Manager 的机体内容制作。通用工具不附带具体机体、原始记录或模型；
 服主提供的数据、原生模型截图与发布内容保存在自己的工作区。
 
+## 机体资料项目与共享素材
+
+`sdgo.unit-project` / `schema_version: 1` 是制作项目协议，独立于玩家运行包。
+可以先创建不含机体记录的 `metadata-only` 项目，填写资料和上传图片；此时不会登记机体或修改宿主。
+后续制作包可同时包含原始记录、typed definitions、资料与素材，不要求素材一直保留在原电脑的路径上。
+
+项目根 `project.json` 声明稳定 `project_key`、`name`、`metadata`、`media`、`assets`、
+制作 definitions、presentation 和精确 `files` SHA-256 清单。
+`assets/<sha>.png` 携带原图及规范化制作图，所有素材都必须在当前项目内且哈希匹配。
+声明自身不列入自己的hash清单；缺文件、重复身份、资源被修改或外部素材指针会拒收。
+制作项目不包含 DLL、主机连接配置、账户、运行收据或临时绝对路径；不能把它作为运行包安装。
+再次遇到相同稳定项目号时要求明确更新，不默默覆盖作者项目。
+
+`metadata` 提供 `description`、`short_description`、`gameplay_notes`、`aliases`、
+`search_examples`、`tags`、`series`、`model_number`、`english_name`、`sources` 和可选的
+`declared_unit_id`。介绍与本服说明分开；资料出处记录标题、网址及官方/作者/参考类型。
+`visibility` 为 `private`：这里的具体机体与服主资料只进入作者内容，不进入通用框架默认数据。
+搜索使用名称、简介、别名、作品、型号和标签；示例用于提示，不凭示例制造并不存在的匹配。
+这些字段是 Manager 元数据，不能当作已证明的原生图鉴字段或技能行为。
+
+`media.activity_poster` 同时引用规范图 `asset_sha` 和原图 `source_sha`，保留来源与文件名。
+既有 shop/capsule 图片通道同样在项目素材库可用。活动图通过共用生成器生成361×322派生版，原图保留。
+
+Manager 提供：
+
+- `POST /api/providers/units/api/units/projects` 创建资料项目。
+- `GET /api/providers/units/api/units/projects` 读取可检索的项目素材库。
+- `GET /api/providers/units/api/units/drafts/<id>/project` 导出完整制作项目。
+- 既有 asset 接口的 `role=activity_poster` 上传海报。
+- 扭蛋侧 `GET /api/providers/capsules/api/projects` 复用相同目录；
+  `POST /api/providers/capsules/api/projects/media` 将选定版本的图片及元数据复制进扭蛋制作目录，
+  随其语义导出携带。来源版本与素材哈希不符即拒绝。
+
+素材可在机体尚未完成登记时用于制作；此操作不会将其加入可抽奖池。
+`usable_for_authoring` 与宿主定义、运行验证分别声明，不把资料可读当作机体已可玩。
+独立活动机草稿按同等级、同货币原生机台的均值提供售价、稀有奖配置频率与陪跑奖励建议，
+保留来源机台与精确有理数。原生序列、重复回避与出货限制仍另行验证，不能将配置频率冒充独立抽样概率。
+生成草稿不编译安装、不上架；修改海报会使已关联草稿需要重新核对素材。
+
 ## 制作输入
 
 RAR/ZIP 中提供原始机体 BIN（每条 4976 字节）、武器 BIN（每条 1871 字节）及其原生资源。
@@ -36,6 +75,46 @@ RAR/ZIP 中提供原始机体 BIN（每条 4976 字节）、武器 BIN（每条 
 不凭编号编造技能，不自动清空未知技能或脚本。新增依赖 GDT、技能/脚本行为及版本资源域需单独扩展适配器。
 
 ## 客户端内容与展示
+
+### 设计图制作声明（候选扩展）
+
+definitions 可选字段 `blueprints` 接受设计图列表；每个机体族最多16份。
+服务端接口仍使用 `schema_version: 1`。读取导入面板的
+`capabilities.blueprints` 判断制作和原生注册是否开放，不通过修改 source-only 标记跳过门禁。
+当前制作接口与草稿编辑可用，原生编译、事务登记和实机合成适配完成前，
+`native_registration` 为 `false`，含启用配方的草稿不能确认发布。
+
+每份声明提供：
+
+- `schema_version: 1`、`id`、`enabled`、`name`、`output_unit_id`。
+- `source.kind` 为 `source-recovered`、`authored` 或 `unknown`。恢复项还须提供
+  `domain`、`record_id`、`record_sha256`；未知项保留在草稿，不能作为完整来源发布。
+- `recipe_template_id` 是目标客户端现有设计图显示模板；`item_template_id` 是现有图纸物品模板。
+  它们与机体的永久物品模板不同，不用于套用另一台机体的材料或战斗数值。
+- `item_category_id` 是新的图纸类别。未指定目标ID时，工作区从独立范围分配配方和图纸类别，
+  删除未发布草稿也不会复用已预留的身份。
+- `materials` 发布使用3至5个有序 `{unit_id, minimum_level}`。原始6/7槽保留为未开放的来源声明。首项为原生关键机体；
+  原生合成保留它并按原有规则调整等级，其余材料消耗。当前不接受重复材料ID或产物自引用。
+- `minimum_player_level`、`repay_point` 必须明确填写；零保持为零，缺项不自动补零。
+  `RepayPoint` 是原生删除图纸的返回点数，不是本扩展定义的合成收费。
+- `internal_name` 为目标SQL可无损保存的ASCII内部名称；`name` 用于客户端本地化展示。
+  多份启用配方必须明确选定一份 `encyclopedia_primary`；它只选择图鉴展示关联，不能证明图纸可以获得。
+
+对应 schema 与检查在 `owner/units/blueprints.py`；目标1197字节布局适配在
+`owner/units/blueprint_codec.py`。GDT容器的第三word不能当作逻辑记录kind。
+新增设计图的非玩家定义计划包含 `tbl_MixTreeFile`、`tbl_MixTreeInfo` 和材料列表。
+不能调用会清空全局派生表的旧重建过程来安装单个作者配方。
+已发布配方可停用并保留已持有图纸所需登记，不能通过硬删除草稿破坏玩家资产。
+
+### 获取途径预览
+
+`GET /api/providers/units/api/units/acquisition` 返回已确认机库根形态的获取建议和来源版本，
+不改变机台、价格、概率或玩家库存。分析复用扭蛋模块的最小闭包，图纸物品与全部材料均需可获取；
+无起点的循环配方不会自行变为可达。变形态不能当作另一台可持有材料。
+
+新增的 S 级及以上库存根分别生成独立活动机台意图；A/B/C 优先完整图纸路线，否则使用既有
+原生等级组合和概率模板进入普通扭蛋。已存在的普通扭蛋获取可复用。
+源数据、配置可达、客户端登记及实际合成/抽取验收分别记录。
 
 确认后输出的 `definitions.json` 是 `sdgo.unit-family` 发布声明，不是制作阶段的 definitions 补丁。
 客户端原生目录使用 `SDGOUN1` 容器、类型化记录、长度与校验值，安装器核对完整文件清单和所有权。

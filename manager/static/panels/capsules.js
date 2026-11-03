@@ -1313,6 +1313,90 @@ async function init() {
   }
 }
 
+function initializeProjectLibrary(){
+  const panel=document.createElement('details');panel.className='panel';panel.id='unit-project-library';
+  const title=document.createElement('summary');title.textContent='机体资料与素材库';
+  const note=document.createElement('p');note.className='note';
+  note.textContent='在机体资料面板先导入简介、别名和图片，再将素材复制到扭蛋制作项目。导入素材不会登记机体、发奖品或改变奖池。';
+  const controls=document.createElement('div');controls.className='actions';
+  const search=document.createElement('input');search.type='search';search.placeholder='搜索机体名称、别名或作品';
+  search.setAttribute('aria-label','搜索项目素材');
+  const refresh=document.createElement('button');refresh.type='button';refresh.textContent='读取项目素材';
+  const status=document.createElement('p');status.className='note';status.setAttribute('role','status');
+  const results=document.createElement('div');let items=[];
+  function render(){
+    results.replaceChildren();
+    const query=search.value.normalize('NFKC').toLowerCase().split(/\s+/).filter(Boolean);
+    const selected=items.filter(row=>{
+      const meta=row.metadata||{};
+      const text=[row.name,meta.description,meta.series,meta.model_number,meta.english_name,...(meta.aliases||[]),...(meta.tags||[])].join(' ').normalize('NFKC').toLowerCase();
+      return query.every(word=>text.includes(word));
+    });
+    for(const project of selected){
+      const card=document.createElement('article');card.className='panel';
+      const heading=document.createElement('h3');heading.textContent=project.name;
+      const description=document.createElement('p');description.textContent=project.metadata?.description||'尚未填写机体简介';
+      const examples=document.createElement('p');examples.className='note';
+      examples.textContent='搜索示例：'+((project.metadata?.search_examples||[]).join(' / ')||'可在机体资料面板填写');
+      card.append(heading,description,examples);
+      for(const [role,media] of Object.entries(project.media||{})){
+        const box=document.createElement('div');box.className='panel';
+        const label=document.createElement('strong');label.textContent=({activity_poster:'活动海报',shop_portrait:'商城图片',capsule_portrait:'扭蛋头像'})[role]||role;
+        const image=document.createElement('img');image.src=media.image_url;image.alt=project.name+' '+label.textContent;
+        image.style.maxWidth='240px';image.style.maxHeight='220px';image.style.objectFit='contain';image.style.display='block';
+        const use=document.createElement('button');use.type='button';use.textContent='存入扭蛋制作素材';
+        use.onclick=async()=>{
+          if(state.dirty){showToast('请先保存当前机台修改，再引用项目素材。');return;}
+          if(!state.revision){showToast('请先配置并打开扭蛋制作目录。');return;}
+          use.disabled=true;
+          try{
+            const result=await apiPost('/api/providers/capsules/api/projects/media',{
+              project_id:project.project_id,role,asset_sha:media.asset_sha,
+              source_revision:project.revision,expected_revision:state.revision});
+            state.revision=result.catalog_revision;
+            if(state.bootstrap)state.bootstrap.catalog_revision=result.catalog_revision;
+            $('#revision').textContent='revision '+result.catalog_revision.slice(0,12);
+            status.textContent=result.message;showToast(result.message);
+          }catch(error){status.textContent=error.message;showToast(error.message);}
+          finally{use.disabled=false;}
+        };
+        box.append(label,image,use);
+        if(role==='activity_poster'){
+          const activity=document.createElement('button');activity.type='button';activity.textContent='生成独立活动机草稿（同档均值）';
+          activity.onclick=async()=>{
+            if(state.dirty||!state.revision){showToast('请先保存并打开扭蛋制作目录。');return;}
+            activity.disabled=true;
+            try{
+              const result=await apiPost('/api/providers/capsules/api/projects/activity-draft',{
+                project_id:project.project_id,source_revision:project.revision,expected_revision:state.revision});
+              state.revision=result.catalog_revision;if(state.bootstrap)state.bootstrap.catalog_revision=result.catalog_revision;
+              $('#revision').textContent='revision '+result.catalog_revision.slice(0,12);
+              const draft=result.activity_draft;
+              status.textContent=result.message+'；机台 '+draft.id+'，参考价格 '+draft.price+'，稀有奖配置频率 '+
+                (draft.balance.rare_configuration_frequency.value*100).toFixed(4)+'%。';
+              showToast('已保存活动机草稿；原机台和玩家资产保持不变。');
+            }catch(error){status.textContent=error.message;showToast(error.message);}
+            finally{activity.disabled=false;}
+          };
+          box.append(activity);
+        }
+        card.append(box);
+      }
+      results.append(card);
+    }
+    if(!selected.length){const empty=document.createElement('p');empty.textContent='没有匹配的项目；可先到机体资料面板新建或导入制作项目。';results.append(empty);}
+  }
+  refresh.onclick=async()=>{
+    refresh.disabled=true;status.textContent='正在读取机体项目…';
+    try{const result=await apiGet('/api/providers/capsules/api/projects');items=result.items||[];render();status.textContent='已读取 '+items.length+' 个资料项目。';}
+    catch(error){status.textContent=error.message;}
+    finally{refresh.disabled=false;}
+  };
+  search.addEventListener('input',render);controls.append(search,refresh);
+  panel.append(title,note,controls,status,results);shadow.prepend(panel);
+}
+
+initializeProjectLibrary();
 await init();
 return () => { if (state.portrait) clearTimeout(state.portrait.timer); clearTimeout(showToast.timer); };
 }

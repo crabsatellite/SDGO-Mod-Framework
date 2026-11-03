@@ -189,6 +189,14 @@ class Capsules(Provider):
         return self.engine
 
     def request(self, method, uri, body, headers):
+        if method=='GET' and urlsplit(uri).path=='/api/projects':
+            return self.workspace.providers['units'].project_library()
+        if method=='POST' and urlsplit(uri).path=='/api/projects/media':
+            from .units import import_project_media
+            return import_project_media(self,body)
+        if method=='POST' and urlsplit(uri).path=='/api/projects/activity-draft':
+            from .units import create_project_activity_draft
+            return create_project_activity_draft(self,body)
         engine = self.get_engine()
         parsed = urlsplit(uri); path = parsed.path; query = parse_qs(parsed.query)
         one = lambda name, default='': query.get(name, [default])[0]

@@ -21,8 +21,8 @@ UNIT_FILES = ("0237", "0242", "0243", "0244", "0246", "0245")
 WEAPON_FILES = ("0067", "0068", "0107", "0130", "0157", "0164", "0200", "0238", "0274")
 ITEM_FILES = ("0031",)
 RECORD_FILES = {"unit": (UNIT_FILES, codec.UNIT_SIZE), "weapon": (WEAPON_FILES, codec.WEAPON_SIZE), "item": (ITEM_FILES, 614),
-                "unit_index": (("0220",),614)}
-RUNTIME_TYPES = {"unit": 2, "weapon": 10, "item": 34, "unit_index":85}
+                "unit_index": (("0220",),614), "blueprint": (("0029",),1197)}
+RUNTIME_TYPES = {"unit": 2, "weapon": 10, "item": 34, "unit_index":85, "blueprint":33}
 
 MAX_RESOURCE_BYTES = 64 * 1024 * 1024
 MAX_INDEX_BYTES = 16 * 1024 * 1024
@@ -407,6 +407,13 @@ class Baseline:
         if not rows or set(rows)!=set(range(first,first+len(rows))):
             raise ValueError('原生机体一览目录不连续，不能安全添加图鉴条目')
         return rows
+
+    def blueprint_templates(self):
+        """Existing target display records; no new recipe is registered here."""
+        if not self.exists('gdrs/0029.gdt'):return []
+        rows=self._records('gdrs/0029.gdt',1197)
+        return [{'id':identity,'name':row[5:105].decode('utf-16-le').split('\0')[0]}
+                for identity,row in sorted(rows.items()) if row[4]==0]
 
     def _gdt_paths(self) -> list[str]:
         paths = {name for name in self.entries if name.startswith("gdrs/") and name.endswith(".gdt")}

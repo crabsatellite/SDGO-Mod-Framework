@@ -65,6 +65,46 @@ class UnitManagerTests(unittest.TestCase):
         if revision is None: revision = self.capsules.request('GET', '/api/bootstrap', {}, {})['catalog_revision']
         return self.capsules.request('POST', '/api/units/import', {'expected_revision': revision}, {})
 
+    def test_metadata_only_project_media_is_reused_without_granting_a_prize(self):
+        state=self.units.request('POST','/api/units/projects',{'name':'Owner information',
+            'metadata':{'description':'Private owner description','aliases':['Owner alias']}},
+            {'X-Catalog-Revision':self.engine.public()['revision']})
+        state=self.units.request('POST','/api/units/drafts/'+state['draft']['id']+'/asset',
+            {'filename':'poster.png','data':base64.b64encode(png()).decode(),'role':'activity_poster'},
+            {'X-Catalog-Revision':state['revision']})
+        library=self.capsules.request('GET','/api/projects',{}, {})
+        project=library['items'][0];media=project['media']['activity_poster']
+        self.assertFalse(project['native_ready'])
+        app=self.capsules.get_engine();before,_=app.store.read()
+        from manager.engines.capsules.capsule_catalog import digest
+        result=self.capsules.request('POST','/api/projects/media',{'project_id':project['project_id'],
+            'source_revision':project['revision'],'role':'activity_poster','asset_sha':media['asset_sha'],
+            'expected_revision':digest(before)}, {})
+        after,_=app.store.read()
+        self.assertEqual(before['units'],after['units'])
+        self.assertEqual(before['fixed_machines'],after['fixed_machines'])
+        self.assertEqual(before['custom_machines'],after['custom_machines'])
+        self.assertFalse(result['native_units_registered'])
+        self.assertEqual([],self.repo.applied)
+        entry=after['project_assets'][0]
+        self.assertEqual('Private owner description',entry['metadata']['description'])
+        from PIL import Image
+        with Image.open(io.BytesIO(base64.b64decode(entry['png_base64']))) as image:self.assertEqual((361,322),image.size)
+        from manager.engines.capsules.capsule_catalog import export_bundle
+        out=self.root/'portable';export_bundle(after,out)
+        exported=json.loads((out/'client.json').read_text(encoding='utf-8'))
+        self.assertEqual(entry,exported['project_assets'][0])
+
+    def test_stale_project_media_reference_does_not_modify_capsule_catalog(self):
+        state=self.units.request('POST','/api/units/projects',{'name':'Owner information'},
+            {'X-Catalog-Revision':self.engine.public()['revision']})
+        app=self.capsules.get_engine();before,raw=app.store.read()
+        from manager.engines.capsules.capsule_catalog import digest
+        with self.assertRaisesRegex(ValueError,'变化'):
+            self.capsules.request('POST','/api/projects/media',{'project_id':state['draft']['id'],
+                'source_revision':'stale','role':'activity_poster','asset_sha':'a'*64,'expected_revision':digest(before)}, {})
+        self.assertEqual(raw,app.store.read()[1])
+
     def test_only_published_content_is_visible_and_edits_keep_old_approval(self):
         state = complete(self.engine, self.engine.inspect('fixture.zip', archive(), self.engine.public()['revision']))
         self.assertEqual(self.units.registrations(), [])

@@ -30,9 +30,12 @@ def fnv(raw):
 def native_catalog(records):
     seen=set();parts=[]
     for kind,identity,raw in sorted(records,key=lambda r:r[1]):
-        if kind not in {2,10,34,85} or len(raw)!={2:4976,10:1871,34:614,85:614}[kind]:raise ValueError('不支持的原生记录类型或长度')
+        if kind not in {2,10,33,34,85} or len(raw)!={2:4976,10:1871,33:1197,34:614,85:614}[kind]:raise ValueError('不支持的原生记录类型或长度')
         if type(identity) is not int or identity<=0 or identity in seen or struct.unpack_from('<I',raw)[0]!=identity or raw[4]!=0:
             raise ValueError('原生记录身份、发布标记或全局编号冲突')
+        if kind==33:
+            from .blueprint_codec import decode
+            decode(raw)
         seen.add(identity);parts.append(struct.pack('<6I',kind,identity,len(raw),fnv(raw),0,0)+raw)
     if not seen:raise ValueError('没有可以发布的机体记录')
     payload=b''.join(parts)
@@ -148,7 +151,29 @@ def publish(workspace,state,selected,transaction):
         struct.pack_into('<I',index,6,root)
         wchar(index,14,50,display['index_owned'].replace('/','\\'))
         wchar(index,114,50,display['index_missing'].replace('/','\\'))
+        index_position=len(records)
         records.append((85,index_id,bytes(index)))
+        if family.get('blueprints'):
+            from . import blueprints,blueprint_codec
+            for declaration in family['blueprints']:
+                template=workspace.baseline.record('blueprint',declaration['recipe_template_id'])
+                if template is None:raise ValueError('客户端缺少所选设计图模板')
+                compiling=copy.deepcopy(declaration);compiling['enabled']=True
+                raw=blueprint_codec.patch(template,compiling,root_unit_id=root)
+                records.append((33,declaration['id'],raw))
+                template_item=workspace.baseline.record('item',declaration['item_template_id'])
+                if not template_item or len(template_item)!=614 or template_item[4]!=0:
+                    raise ValueError('客户端缺少启用的原生图纸物品模板')
+                if struct.unpack_from('<I',template_item)[0]//100000!=15:raise ValueError('图纸模板不是原生15类物品')
+                item=bytearray(template_item)
+                struct.pack_into('<I',item,0,declaration['item_category_id'])
+                wchar(item,5,50,declaration['name'])
+                struct.pack_into('<I',item,105,declaration['id'])
+                records.append((34,declaration['item_category_id'],bytes(item)))
+            primary=blueprints.primary_id(family['blueprints'])
+            if primary:struct.pack_into('<I',index,10,primary)
+            # Replace only this root's pending index bytes, not a native table.
+            records[index_position]=(85,index_id,bytes(index))
         registrations.append({'key':'unit:'+str(root),'provider':'unit_catalog','kind':'unit','unit_id':root,
             'category_id':family['category_id'],'family_key':family['family_key'],'revision':model.content_revision(family),
             'unit_index_id':index_id,
@@ -158,6 +183,9 @@ def publish(workspace,state,selected,transaction):
             'unit_primary_sprite':display['unit_primary'],'custom_candidate_sprite':display['custom'],
             'capsule_fixed_sprite':display.get('capsule_fixed'),
             'presentation':contract(workspace,family),
+            'metadata':copy.deepcopy(family.get('metadata',{})),
+            'primary_blueprint_id':blueprints.primary_id(family['blueprints']) if family.get('blueprints') else 0,
+            'blueprints':[{'id':r['id'],'item_category_id':r['item_category_id'],'enabled':r['enabled']} for r in family.get('blueprints',[])],
             'shop_image_sha256':hashlib.sha256(generated['index_owned']).hexdigest(),
             'shop_source_sha256':family['presentation']['shop']['asset_sha'],'capsule_image_sha256':family['presentation']['capsule']['asset_sha'],
             'enabled':state['drafts'][family['id']]['status']!='disabled','storefront_changes':False,'gacha_changes':False})

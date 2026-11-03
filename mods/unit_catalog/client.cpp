@@ -80,11 +80,19 @@ bool NativeRecord(void* grid, uint32_t id, uint32_t kind, const uint8_t** record
     return g_find(grid, record, id, static_cast<int>(kind), 0) && *record;
 }
 
-bool ReferenceExists(void* grid, uint32_t id, uint32_t kind) {
-    if (!id) return false;
-    if (g_catalog.Contains(id, kind)) return true;
+const uint8_t* ReferenceRecord(void* grid, uint32_t id, uint32_t kind) {
+    if (!id) return nullptr;
+    const size_t imported = g_catalog.Find(id);
+    if (imported != g_catalog.records.size() &&
+        g_catalog.records[imported].kind == kind) {
+        return g_catalog.records[imported].bytes.data();
+    }
     const uint8_t* record = nullptr;
-    return NativeRecord(grid, id, kind, &record);
+    return NativeRecord(grid, id, kind, &record) ? record : nullptr;
+}
+
+bool ReferenceExists(void* grid, uint32_t id, uint32_t kind) {
+    return ReferenceRecord(grid, id, kind) != nullptr;
 }
 
 bool ValidateReferences(void* grid) {
@@ -105,11 +113,40 @@ bool ValidateReferences(void* grid) {
                 }
             }
         } else if (entry.kind == kItemCategoryType) {
-            const uint32_t unit = U32(entry.bytes.data() + kItemCategoryRefOffset);
-            if (!ReferenceExists(grid, unit, kUnitType)) {
-                g_api->Log(g_mod, SDGO_LOG_ERROR, "item category %lu unit %lu is unavailable",
-                           static_cast<unsigned long>(entry.id), static_cast<unsigned long>(unit));
+            const uint32_t reference = U32(entry.bytes.data() + kItemCategoryRefOffset);
+            const bool blueprint =
+                entry.id / kItemCategoryClassDivisor == kBlueprintItemClass;
+            const uint32_t kind = blueprint ? kBlueprintType : kUnitType;
+            if (!ReferenceExists(grid, reference, kind)) {
+                g_api->Log(g_mod, SDGO_LOG_ERROR,
+                           "item category %lu %s %lu is unavailable",
+                           static_cast<unsigned long>(entry.id),
+                           blueprint ? "blueprint" : "unit",
+                           static_cast<unsigned long>(reference));
                 return false;
+            }
+        } else if (entry.kind == kBlueprintType) {
+            const uint32_t output = U32(entry.bytes.data() + kBlueprintOutputOffset);
+            if (!ReferenceExists(grid, output, kUnitType)) {
+                g_api->Log(g_mod, SDGO_LOG_ERROR,
+                           "blueprint %lu output unit %lu is unavailable",
+                           static_cast<unsigned long>(entry.id),
+                           static_cast<unsigned long>(output));
+                return false;
+            }
+            const uint32_t count =
+                U32(entry.bytes.data() + kBlueprintMaterialCountOffset);
+            for (uint32_t slot = 0; slot < count; ++slot) {
+                const uint32_t material =
+                    U32(entry.bytes.data() + kBlueprintMaterialOffset +
+                        slot * sizeof(uint32_t));
+                if (!ReferenceExists(grid, material, kUnitType)) {
+                    g_api->Log(g_mod, SDGO_LOG_ERROR,
+                               "blueprint %lu material unit %lu is unavailable",
+                               static_cast<unsigned long>(entry.id),
+                               static_cast<unsigned long>(material));
+                    return false;
+                }
             }
         } else if (entry.kind == kUnitIndexType) {
             const uint32_t unit=U32(entry.bytes.data()+kUnitIndexRefOffset);
@@ -117,6 +154,30 @@ bool ValidateReferences(void* grid) {
                 g_api->Log(g_mod,SDGO_LOG_ERROR,"unit index %lu references unavailable unit %lu",
                     static_cast<unsigned long>(entry.id),static_cast<unsigned long>(unit));
                 return false;
+            }
+            const uint32_t blueprint =
+                U32(entry.bytes.data() + kUnitIndexBlueprintRefOffset);
+            if (blueprint) {
+                const uint8_t* recipe =
+                    ReferenceRecord(grid, blueprint, kBlueprintType);
+                if (!recipe) {
+                    g_api->Log(g_mod, SDGO_LOG_ERROR,
+                               "unit index %lu references unavailable blueprint %lu",
+                               static_cast<unsigned long>(entry.id),
+                               static_cast<unsigned long>(blueprint));
+                    return false;
+                }
+                const uint32_t output =
+                    U32(recipe + kBlueprintOutputOffset);
+                if (output != unit) {
+                    g_api->Log(g_mod, SDGO_LOG_ERROR,
+                               "unit index %lu unit %lu does not match blueprint %lu output %lu",
+                               static_cast<unsigned long>(entry.id),
+                               static_cast<unsigned long>(unit),
+                               static_cast<unsigned long>(blueprint),
+                               static_cast<unsigned long>(output));
+                    return false;
+                }
             }
         }
     }

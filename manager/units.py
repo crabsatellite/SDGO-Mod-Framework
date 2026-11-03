@@ -49,14 +49,12 @@ class Units(Provider):
         if self.engine is None:
             from owner.units.workspace import Workspace
             c = self.config
-            if not c.get('client'):
-                raise ValueError('请先选择配套客户端目录')
             root = Path(__file__).resolve().parents[1]
-            binary = c.get('module_binary') or next((str(p) for p in (
-                root/'unit-import/unit_catalog.dll',root/'build/Release/unit_catalog.dll',
-                Path(c['client'])/'sdgo/mods/unit_catalog/unit_catalog.dll') if p.is_file()), None)
+            candidates=[root/'unit-import/unit_catalog.dll',root/'build/Release/unit_catalog.dll']
+            if c.get('client'):candidates.append(Path(c['client'])/'sdgo/mods/unit_catalog/unit_catalog.dll')
+            binary = c.get('module_binary') or next((str(p) for p in candidates if p.is_file()),None)
             self.engine = Workspace(c.get('workspace') or self.workspace.root/'data/units',
-                c['client'], c.get('snapshot'), c.get('server_ini'), binary,
+                c.get('client'), c.get('snapshot'), c.get('server_ini'), binary,
                 archive_executable=c.get('archive_executable'))
         return self.engine
 
@@ -99,6 +97,48 @@ class Units(Provider):
             from owner.units.repository import database_target_key
             target = database_target_key(Path(ini))
             return [r for r in self.registrations() if r['server_applied'] and r['server_target'] == target]
+
+    def acquisition_preview(self):
+        from owner.units.acquisition import route_roots
+        from owner.units.acquisition_host import read_configuration,activity_grants
+        from owner.units.model import revision
+        from .engines.capsules.capsule_catalog import acquisition
+        capsule=self.workspace.providers['capsules']
+        ini=self.config.get('server_ini')
+        if not ini or not capsule.config.get('catalog'):
+            return {'available':False,'changes_applied':False,'message':'请先配置本机体宿主与扭蛋目录，才能检查获取闭环'}
+        rows=self.for_server(ini)
+        if not rows:return {'available':False,'changes_applied':False,'message':'请先确认并应用机体定义，再检查其获取途径'}
+        from owner.units.repository import database_target_key
+        if not capsule.config.get('server_ini') or database_target_key(Path(ini))!=database_target_key(Path(capsule.config['server_ini'])):
+            raise ValueError('获取途径和机体导入必须使用同一宿主数据库')
+        app=capsule.get_engine()
+        with app.store.lock:catalog,_=app.store.read()
+        configuration=read_configuration(ini);tables=configuration['tables']
+        grants=activity_grants(self.config['client'],tables)
+        reach=acquisition(None,catalog,table_reader=lambda db,name:tables[(db,name)],source_grants=grants)
+        result=route_roots(rows,reach,tables[('GOnlineGame','tbl_MixTreeFile')],family_revision=revision(self.get_engine().read()))
+        result.update(available=True,configuration_sha256=configuration['configuration_sha256'],
+                      captured_at=configuration['captured_at'],catalog_revision=revision(catalog))
+        result['limitations']=list(dict.fromkeys([*result['limitations'],*reach.get('limitations',[])]))
+        return result
+
+    def project_library(self):
+        from owner.units.project import normalize_metadata,shared_media
+        from owner.units.model import content_revision
+        engine=self.get_engine();items=[]
+        with engine.lock:
+            for draft in engine.read()['drafts'].values():
+                if draft['status']=='disabled':continue
+                host_applied=bool(draft.get('published') and draft.get('published_server_result',draft.get('server_result',{})).get('applied'))
+                items.append({'project_id':draft['id'],'family_key':draft['family_key'],'name':draft['name'],
+                    'root_unit_id':draft.get('root_unit_id'),'metadata':normalize_metadata(draft.get('metadata',{})),
+                    'revision':content_revision(draft),'usable_for_authoring':True,'native_ready':False,
+                    'host_definition_applied':host_applied,'requires_runtime_validation':True,
+                    'media':{role:{**entry,'image_url':'/api/providers/units/api/units/assets/'+entry['asset_sha']}
+                             for role,entry in shared_media(draft).items()}})
+        return {'protocol':'sdgo.unit-project-library','schema_version':1,'items':items,
+                'changes_applied':False,'grants_units':False}
 
     def request(self, method, path, body, headers):
         result=self._request(method,path,body,headers)
@@ -145,6 +185,14 @@ class Units(Provider):
                             else generator.capsule_source(engine,draft))
                         return Binary(raw,'image/png')
                 if path == '/api/units': return engine.public()
+                if path == '/api/units/acquisition': return self.acquisition_preview()
+                if path == '/api/units/projects': return self.project_library()
+                project_export=re.fullmatch(r'/api/units/drafts/([0-9a-f]{32})/project',path)
+                if project_export:
+                    from owner.units.project import export_project
+                    with engine.lock:
+                        raw=export_project(engine,engine._get(engine.read(),project_export[1]))
+                    return Binary(raw,'application/zip','SDGO-Unit-Project.zip')
                 if path == '/api/units/registrations':
                     return {'provider': 'unit_catalog', 'items': self.registrations(),
                             'grants_units': False, 'creates_shop_products': False, 'creates_machine_slots': False}
@@ -171,6 +219,7 @@ class Units(Provider):
                             return Binary(storage.json_bytes(engine.plan(draft)), 'application/json', 'unit-import-server-plan.json')
                     return engine.public(identity)
             expected = headers.get('X-Catalog-Revision', '')
+            if method=='POST' and path=='/api/units/projects':return engine.create_project(body,expected)
             if method=='POST' and path=='/api/units/preview-cleanup':
                 from owner.units.native_preview import cleanup
                 engine.check(expected)
@@ -260,3 +309,106 @@ def sync_capsule_units(provider, expected):
         if candidate != catalog: engine.store._save(candidate, raw)
     return {**engine.bootstrap(), 'unit_import_count': len(rows),
             'message': '已登记机体与头像；机台槽位、价格和概率保持原配置。请在机台编辑器选择机体后编译并应用'}
+
+
+def import_project_media(provider,body):
+    """Copy reviewed author media into the portable capsule authoring catalog."""
+    from owner.units import model
+    from owner.units.project import shared_media,normalize_metadata
+    if not isinstance(body,dict) or set(body)-{'project_id','role','asset_sha','source_revision','expected_revision'}:
+        raise ValueError('素材引用请求无效')
+    identity=body.get('project_id')
+    if not isinstance(identity,str) or not re.fullmatch('[0-9a-f]{32}',identity):raise ValueError('请选择资料项目')
+    source=provider.workspace.providers['units'].get_engine();app=provider.get_engine()
+    with app.store.lock,source.lock:
+        draft=source._get(source.read(),identity)
+        if draft['status']=='disabled':raise ValueError('该资料项目已停用')
+        if body.get('source_revision')!=model.content_revision(draft):raise ValueError('项目资料已变化，请刷新素材库后重选')
+        role=body.get('role');entry=shared_media(draft).get(role)
+        if not entry or entry['asset_sha']!=body.get('asset_sha'):raise ValueError('项目素材已变化，请刷新后重选')
+        raw=source.blob(entry['asset_sha'])
+        if role=='activity_poster':
+            from owner.collection_capsule.client import normalize_activity_cover
+            raw=normalize_activity_cover(raw)
+        catalog,previous=app.store.read();app.store._expect(catalog,body.get('expected_revision'))
+        candidate=copy.deepcopy(catalog)
+        key=draft['family_key']+':'+role
+        value={'key':key,'project_key':draft['family_key'],'project_revision':model.content_revision(draft),
+            'name':draft['name'],'role':role,'unit_id':draft.get('root_unit_id') or draft.get('metadata',{}).get('declared_unit_id'),
+            'asset_sha256':hashlib.sha256(raw).hexdigest(),'source_asset_sha256':entry['asset_sha'],
+            'original_sha256':entry['source_sha'],
+            'png_base64':base64.b64encode(raw).decode('ascii'),'metadata':normalize_metadata(draft.get('metadata',{}))}
+        target=candidate.setdefault('project_assets',[])
+        existing=next((row for row in target if row['key']==key),None)
+        if existing is None:target.append(value)
+        else:target[target.index(existing)]=value
+        for draft_machine in candidate.get('activity_drafts',[]):
+            if draft_machine.get('artwork_key')==key:
+                draft_machine['artwork_sha256']=value['asset_sha256']
+                draft_machine['project_revision']=value['project_revision']
+                draft_machine['artwork_review_required']=True
+        from .engines.capsules.capsule_catalog import validate
+        validate(candidate)
+        if candidate!=catalog:app.store._save(candidate,previous)
+    return {'catalog_revision':model.revision(candidate),'project_asset_key':key,
+        'changes_applied':False,'native_units_registered':False,
+        'message':'资料与图片已复制到扭蛋制作项目；尚未改变奖池、价格或上架状态'}
+
+
+def create_project_activity_draft(provider,body):
+    """Reviewable dedicated machine; disabled until paired native application."""
+    from owner.units import model
+    from owner.units.project import normalize_metadata
+    from owner.units.activity_balance import recommend
+    from owner.units.acquisition_host import read_configuration,activity_grants
+    from owner.units.repository import database_target_key
+    if not isinstance(body,dict) or set(body)-{'project_id','source_revision','expected_revision'}:
+        raise ValueError('活动机台草稿请求无效')
+    units=provider.workspace.providers['units'];engine=units.get_engine()
+    ini=units.config.get('server_ini');capsule_ini=provider.config.get('server_ini')
+    if not ini or not capsule_ini or database_target_key(Path(ini))!=database_target_key(Path(capsule_ini)):
+        raise ValueError('活动机台与机体资料必须配置同一宿主；先生成草稿，不会更改宿主')
+    app=provider.get_engine()
+    with app.store.lock,engine.lock:
+        source=engine._get(engine.read(),body.get('project_id'))
+        if source['status']=='disabled' or model.content_revision(source)!=body.get('source_revision'):
+            raise ValueError('机体项目已变化或停用，请刷新后重选')
+        family=source.get('published')
+        if not family or not source.get('published_server_result',source.get('server_result',{})).get('applied'):
+            raise ValueError('先完成机体的宿主登记，再生成以该机体为奖品的活动草稿；图片仍可提前复用')
+        root=family['root_unit_id'];form=next(r for r in family['forms'] if r['id']==root)
+        if form['server']['UnitGradeNumber']!=4:raise ValueError('S级以下请检查设计图闭环或使用普通扭蛋机')
+        catalog,previous=app.store.read();app.store._expect(catalog,body.get('expected_revision'))
+        configuration=read_configuration(ini);tables=configuration['tables']
+        listed={r['witness']['machine_id'] for r in activity_grants(units.config['client'],tables)}
+        configuration_units=list(engine.repository.catalog['units'].values())
+        balance=recommend({'unit_id':root,'rank':4,'subgrade':form['server']['UnitGradeNumber2']},
+            units=configuration_units,categories=tables[('GOnlineGame','tbl_ItemCategory')],
+            prices=tables[('GOnlineGame','tbl_ItemMachinePrice')],pool=tables[('GOnlineGame','tbl_ItemMachineList')],
+            listed_machines=listed)
+        if not balance['available']:raise ValueError(balance['message'])
+        candidate=copy.deepcopy(catalog)
+        drafts=candidate.setdefault('activity_drafts',[])
+        existing=next((r for r in drafts if r['project_key']==source['family_key'] and r['unit_id']==root),None)
+        occupied={r['MachineID'] for r in tables[('GOnlineGame','tbl_ItemMachinePrice')]}|{r['id'] for r in drafts}
+        machine_id=existing['id'] if existing else next((i for i in range(1990001,1991000) if i not in occupied),None)
+        if machine_id is None:raise ValueError('活动机台保留编号已用满')
+        poster_key=source['family_key']+':activity_poster'
+        artwork=next((r for r in candidate.get('project_assets',[]) if r['key']==poster_key),None)
+        if not artwork:raise ValueError('请先将该项目的活动海报存入扭蛋制作素材')
+        draft={'schema_version':1,'id':machine_id,'project_key':source['family_key'],
+            'project_revision':model.content_revision(source),'unit_id':root,'unit_category_id':family['category_id'],
+            'name':source['name']+'活动扭蛋机','enabled':False,'status':'draft',
+            'artwork_key':poster_key,'artwork_sha256':artwork['asset_sha256'],
+            'metadata':normalize_metadata(source.get('metadata',{})),
+            'currency_type':balance['currency'],'price':balance['suggested_price'],
+            'artwork_review_required':True,
+            'balance':balance,'host_configuration_sha256':configuration['configuration_sha256'],
+            'changes_applied':False}
+        if existing:drafts[drafts.index(existing)]=draft
+        else:drafts.append(draft)
+        from .engines.capsules.capsule_catalog import validate
+        validate(candidate)
+        if candidate!=catalog:app.store._save(candidate,previous)
+    return {'catalog_revision':model.revision(candidate),'activity_draft':draft,'changes_applied':False,
+        'message':'独立活动机草稿已生成：同档原生均值、项目海报和私有资料已绑定；尚未编译安装或上架'}
