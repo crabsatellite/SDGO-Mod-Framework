@@ -1247,7 +1247,18 @@ def load_shop_test_inputs(assertions_path: Path, display_path: Path) -> dict:
         present_tooltip={k for k in tooltip_keys if assertions.has_option(section,k)}
         if present_tooltip and (not visual_only or present_tooltip!=tooltip_keys):
             raise GameTestError('tooltip visual assertions require the complete sealed visual scope')
-        product = _exact_ini_keys(assertions, section, product_keys | present_tooltip | ({'Query'} if visual_only and assertions.has_option(section,'Query') else set()), "shop assertions")
+        art_keys={k for k in ('ArtRankLabel','PreviewName','CaptureHover') if visual_only and assertions.has_option(section,k)}
+        product = _exact_ini_keys(assertions, section, product_keys | present_tooltip | art_keys | ({'Query'} if visual_only and assertions.has_option(section,'Query') else set()), "shop assertions")
+        if 'CaptureHover' in product and (product['CaptureHover'] not in ('0','1') or (product['CaptureHover']=='0' and present_tooltip)):
+            raise GameTestError('hover expectations require native hover capture')
+        if 'PreviewName' in product:
+            value=product['PreviewName']
+            if not value or len(value.encode('utf-16le'))>100 or any(c in value for c in '\r\n\0'):
+                raise GameTestError('shop preview name must be bounded display text')
+        if 'ArtRankLabel' in product:
+            value=product['ArtRankLabel']
+            if len(value.encode('utf-16le'))>64 or any(c in value for c in '\r\n\0'):
+                raise GameTestError('shop artwork label must be bounded display text')
         if present_tooltip:
             if product['TooltipUnit'] not in ('0','1'):
                 raise GameTestError('tooltip kind must be native unit or item')
