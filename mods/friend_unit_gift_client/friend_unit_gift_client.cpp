@@ -4,6 +4,7 @@
 #include "client_runtime_policy.h"
 #include "native_ui.h"
 #include "native_inventory.h"
+#include "native_reply_queue.h"
 #include "transport.h"
 
 #include "sdgo/friend_unit_gift_client_observer.h"
@@ -97,6 +98,10 @@ SdgoMod* g_mod = nullptr;
 Transport g_transport;
 Model g_model;
 NativeInventorySync g_inventory_sync;
+NativeReplyQueue g_native_replies;
+void* g_receive_decoded_original = nullptr;
+const DWORD g_receive_default_mxcsr = 0x1F80;
+volatile LONG g_receive_carrier_observations = 0;
 NativeInventorySync::Delete g_inventory_delete = nullptr;
 NativeBusiness g_inventory_view = nullptr;
 NativeBusiness g_inventory_redraw = nullptr;
@@ -215,6 +220,62 @@ void RefreshUnitDetailView();
 bool ArmGameThread();
 std::uint64_t CurrentSessionKey() noexcept;
 void RefreshNativeInventoryView();
+
+bool __stdcall CaptureDecodedReply(
+    const std::uint8_t* decoded,const std::uint8_t* outer,std::uint32_t size) noexcept {
+    const auto error=GetLastError();
+    bool consumed=false;
+    __try {
+        if(decoded && outer && size>=2 && size<=0x100000) {
+            auto plainSize=size;
+            const auto outerOpcode=wire::Read16(outer);
+            if(outerOpcode==0x65 || outerOpcode==0x66) {
+                plainSize=size>=8 ? wire::Read16(outer+6) : 0;
+                if(plainSize>size-8)plainSize=0;
+            }
+            if(plainSize>=2 && wire::Read16(decoded)==kNativeReplyOpcode &&
+                InterlockedIncrement(&g_receive_carrier_observations)<=5 && g_api && g_api->Log) {
+                int magicOffset=-1;
+                for(std::size_t at=0;at+8<=plainSize && at<=32;++at)
+                    if(!std::memcmp(decoded+at,kEnvelopeMagic.data(),8)){magicOffset=static_cast<int>(at);break;}
+                g_api->Log(g_mod,SDGO_LOG_INFO,"native decoded storage carrier bytes=%u magic_offset=%d",plainSize,magicOffset);
+            }
+            consumed=g_native_replies.Capture(decoded,plainSize);
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {consumed=false;}
+    SetLastError(error);return consumed;
+}
+
+// This site is AFTER the one original decode call, so other Mods may retain
+// their receiver/decoder entry hooks. Nulling only a consumed result follows
+// the receiver's existing null-result exit; all other packets are unchanged.
+__declspec(naked) void ReceiveDecodedSite() {
+    __asm {pushfd}
+    __asm {pushad}
+    __asm {mov eax,esp}
+    __asm {sub esp,0x210}
+    __asm {and esp,0xfffffff0}
+    __asm {mov [esp+0x200],eax}
+    __asm {fxsave [esp]}
+    __asm {fninit}
+    __asm {ldmxcsr dword ptr [g_receive_default_mxcsr]}
+    __asm {cld}
+    __asm {mov eax,[esp+0x200]}
+    __asm {push dword ptr [ebp+0x18]}
+    __asm {push dword ptr [ebp+0x14]}
+    __asm {push dword ptr [eax+0x1C]}
+    __asm {call CaptureDecodedReply}
+    __asm {test al,al}
+    __asm {jz pass_native}
+    __asm {mov eax,[esp+0x200]}
+    __asm {mov dword ptr [eax+0x1C],0}
+pass_native:
+    __asm {fxrstor [esp]}
+    __asm {mov esp,[esp+0x200]}
+    __asm {popad}
+    __asm {popfd}
+    __asm {jmp dword ptr [g_receive_decoded_original]}
+}
 
 bool __cdecl RequestNativeDetail(std::uint64_t uid, void*) {
     return g_transport.RequestNativeUnitDetails(uid);
@@ -1902,6 +1963,12 @@ void PumpInventorySync() {
         }
 }
 
+void PumpNativeReplies() {
+    std::array<std::uint8_t,kCarrierBytes> reply{};
+    while(g_native_replies.Pop(&reply))
+        g_transport.OnStoragePacket(kNativeReplyOpcode,reply.data(),static_cast<std::uint32_t>(reply.size()));
+}
+
 void CALLBACK Tick(HWND, UINT, UINT_PTR, DWORD) {
     if (!g_game_thread_ready ||
         GetCurrentThreadId() != g_ui_thread ||
@@ -1910,6 +1977,7 @@ void CALLBACK Tick(HWND, UINT, UINT_PTR, DWORD) {
     }
     g_tick_active = true;
     __try {
+        PumpNativeReplies();
         g_transport.Tick();
         PumpInventorySync();
         if (g_transport.State() == ConnectionState::idle &&
@@ -2492,6 +2560,7 @@ SDGO_MOD_ENTRY {
     g_api = api;
     g_mod = mod;
     if (!api || !mod || !api->Symbol || !api->HookCode ||
+        api->size<offsetof(SdgoApi,HookSite)+sizeof(api->HookSite) || !api->HookSite ||
         !api->Log) {
         return 0;
     }
@@ -2546,6 +2615,8 @@ SDGO_MOD_ENTRY {
             g_inventory_delete, &RequestNativeDetail, &NativeInventoryChanged, nullptr}))
         return 0;
     g_transport.SetSink(&OnTransport, nullptr);
+    if(!api->HookSite(mod,"friend_unit_gift.receive_decoded_site",
+            reinterpret_cast<void*>(&ReceiveDecodedSite),&g_receive_decoded_original))return 0;
 
     if (!api->HookCode(
             mod,
