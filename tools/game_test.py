@@ -1108,7 +1108,8 @@ def load_shop_test_inputs(assertions_path: Path, display_path: Path) -> dict:
         {"Schema", "Scope", "CatalogId", "Revision"},
         "shop assertions",
     )
-    if shop["Schema"] != "1" or shop["Scope"] != "StockAssertions":
+    visual_only = shop["Scope"] == "StockVisualAssertions"
+    if shop["Schema"] != "1" or shop["Scope"] not in ("StockAssertions", "StockVisualAssertions"):
         raise GameTestError("shop assertions require [shop] Schema=1 and Scope=StockAssertions")
     _shop_key("shop CatalogId", shop["CatalogId"])
     revision = _shop_key("shop Revision", shop["Revision"])
@@ -1117,6 +1118,8 @@ def load_shop_test_inputs(assertions_path: Path, display_path: Path) -> dict:
         "ProductId", "ItemId", "TemplateId", "Category", "Price",
         "Currency", "Validity", "Enabled", "Name", "Label",
     }
+    if visual_only:
+        product_keys.add("DisplayName")
     products = 0
     product_ids: set[int] = set()
     item_ids: set[int] = set()
@@ -1142,7 +1145,7 @@ def load_shop_test_inputs(assertions_path: Path, display_path: Path) -> dict:
             raise GameTestError(f"{section}.Currency must be GB or MB")
         if product["Enabled"] not in {"0", "1"}:
             raise GameTestError(f"{section}.Enabled must be 0 or 1")
-        for field in ("Name", "Label"):
+        for field in (("Name", "Label", "DisplayName") if visual_only else ("Name", "Label")):
             value = product[field]
             if not value or len(value) > 50 or any(character in "\r\n\x00" for character in value):
                 raise GameTestError(f"{section}.{field} is not bounded display text")
@@ -1186,13 +1189,16 @@ def load_shop_test_inputs(assertions_path: Path, display_path: Path) -> dict:
     if options == 0:
         raise GameTestError("shop runtime display requires at least one expected option")
 
-    return {
+    result = {
         "shop_assertions_path": SHOP_ASSERTIONS_JOB_PATH,
         "shop_assertions_sha256": sha256(assertions_path),
         "shop_display_path": SHOP_DISPLAY_JOB_PATH,
         "shop_display_sha256": sha256(display_path),
         "shop_revision": revision,
     }
+    if visual_only:
+        result['shop_visual_only'] = True
+    return result
 
 
 def install_shop_test_inputs(
@@ -1247,6 +1253,8 @@ def validate_shop_test_install(root: Path, plan: dict) -> dict:
         inputs[0],
         inputs[1],
     )
+    if type(plan.get('shop_visual_only', False)) is not bool or plan.get('shop_visual_only', False) != installed.get('shop_visual_only', False):
+        raise GameTestError('shop visual scope disagrees with sealed assertion inputs')
     for field in SHOP_PLAN_FIELDS:
         if type(plan[field]) is not type(installed[field]) or plan[field] != installed[field]:
             raise GameTestError(f"shop GameTest input disagrees with the sealed plan for {field}")
@@ -1458,7 +1466,8 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                          play_unit_uid: int | None = None,
                          mission_mode: int | None = None,
                          shop_catalog: bool = False, room_titles_only: bool = False,
-                         room_style_preview: str | None = None) -> tuple[str, ...]:
+                         room_style_preview: str | None = None,
+                         shop_visual_only: bool = False) -> tuple[str, ...]:
     mission_mode = validate_mission_mode(mission_mode)
     play_unit_uid = validate_play_unit_uid(play_unit_uid)
     if sum((bool(bootstrap_only),bool(battleship_only),bool(gift_requests_only),bool(deck_only),bool(pages_only),bool(room_titles_only))) > 1:
@@ -1469,6 +1478,8 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         raise GameTestError('collection draw requires the explicit pages-only scenario')
     if shop_catalog and not pages_only:
         raise GameTestError('shop catalog assertions require the explicit pages-only scenario')
+    if shop_visual_only and not (shop_catalog and pages_only):
+        raise GameTestError('shop visual scope requires sealed stock assertions and pages-only')
     if room_style_preview is not None:
         if room_style_preview not in ('pvp', 'mission') or not room_titles_only:
             raise GameTestError('room-style preview requires the room-title scope and pvp or mission')
@@ -1491,6 +1502,8 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         return FLOW_CASES[:3] + selection + MISSION_FLOW_CASES
     modes = parse_mode_sequence(mode_sequence)
     if pages_only:
+        if shop_visual_only:
+            return FLOW_CASES[:3] + selection + ('pages.shop.catalog',)
         shop_cases = ('pages.shop.catalog',) if shop_catalog else ()
         return FLOW_CASES[:3] + selection + ('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel','catalog.operator','catalog.ai') + shop_cases + ('pages.storage.read','pages.storage.claim','catalog.capsule','pages.capsule.currency') + (
             ('pages.collection.preview','pages.collection.draw','pages.collection.delivery') if collection_draw else ())
@@ -1554,6 +1567,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         shop_catalog,
         room_titles_only=plan.get("room_titles_only",False),
         room_style_preview=plan.get("room_style_preview"),
+        shop_visual_only=plan.get('shop_visual_only', False),
     )
 
 
@@ -1782,6 +1796,8 @@ def write_job(
     if all(field in plan for field in SHOP_PLAN_FIELDS):
         for field in SHOP_PLAN_FIELDS:
             run['run'][field] = str(plan[field])
+        if plan.get('shop_visual_only'):
+            run['run']['shop_visual_only'] = '1'
     for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','room_titles_only','collection_draw','random_loadout'):
         if plan.get(flag):run['run'][flag] = '1'
     if 'room_style_preview' in plan:
@@ -1857,7 +1873,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
 
         unknown_shop_fields = {
             field for field in run if field.startswith("shop_")
-        } - set(SHOP_PLAN_FIELDS)
+        } - set(SHOP_PLAN_FIELDS) - {'shop_visual_only'}
         if unknown_shop_fields:
             raise ValueError('unknown shop GameTest fields are forbidden')
         shop_fields_present = {field for field in SHOP_PLAN_FIELDS if field in run}
@@ -1879,6 +1895,12 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             if not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', run['shop_revision']):
                 raise ValueError('invalid shop revision')
             shop_plan = {field: run[field] for field in SHOP_PLAN_FIELDS}
+            if 'shop_visual_only' in run:
+                if run['shop_visual_only'] != '1':
+                    raise ValueError('invalid shop visual scope')
+                shop_plan['shop_visual_only'] = True
+        elif 'shop_visual_only' in run:
+            raise ValueError('shop visual scope requires sealed stock inputs')
 
         mission_mode = None
         if mission_plan:
@@ -1947,6 +1969,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 gift_requests_only, deck_only, pages_only, collection_draw,
                 play_unit_uid, shop_catalog=shop_plan is not None, room_titles_only=room_titles_only,
                 room_style_preview=room_style_preview,
+                shop_visual_only=bool(shop_plan and shop_plan.get('shop_visual_only')),
             )
 
         if historical_cases:
@@ -2848,7 +2871,7 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
             raise GameTestError('run.json cannot add or remove the configured owned unit UID')
         unknown_plan_shop_fields = {
             field for field in plan if field.startswith("shop_")
-        } - set(SHOP_PLAN_FIELDS)
+        } - set(SHOP_PLAN_FIELDS) - {'shop_visual_only'}
         if unknown_plan_shop_fields:
             raise GameTestError('run.json contains unknown shop GameTest fields')
         plan_shop_fields = {field for field in SHOP_PLAN_FIELDS if field in plan}

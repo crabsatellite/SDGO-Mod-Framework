@@ -66,6 +66,24 @@ class ShopPlanTests(unittest.TestCase):
             shop_display=self.stock_display,
         )
 
+    def test_visual_stock_scope_binds_expected_rendered_names_and_excludes_other_pages(self):
+        self.stock_assertions.write_text(
+            SHOP_ASSERTIONS_FIXTURE.replace('Scope=StockAssertions', 'Scope=StockVisualAssertions')
+            + 'DisplayName=中文商品\n', encoding='utf-8')
+        run_dir = self.shop_prepare('visual-stock')
+        plan = game_test.read_json(run_dir/'run.json')['plan']
+        self.assertTrue(plan['shop_visual_only'])
+        required = game_test.required_cases_for_plan(plan)
+        self.assertEqual(required, game_test.FLOW_CASES[:3] + ('pages.shop.catalog',))
+        self.assertNotIn('pages.storage.claim', required)
+        self.assertTrue(game_test.read_public_plan(run_dir/'client')['shop_visual_only'])
+
+    def test_visual_stock_scope_requires_independent_rendered_name(self):
+        self.stock_assertions.write_text(
+            SHOP_ASSERTIONS_FIXTURE.replace('Scope=StockAssertions', 'Scope=StockVisualAssertions'), encoding='utf-8')
+        with self.assertRaises(game_test.GameTestError):
+            game_test.load_shop_test_inputs(self.stock_assertions, self.stock_display)
+
     def test_default_pages_plan_has_no_shop_fields_or_case(self):
         run_dir = self.prepare("pages-without-shop", pages_only=True)
         metadata = game_test.read_json(run_dir / "run.json")

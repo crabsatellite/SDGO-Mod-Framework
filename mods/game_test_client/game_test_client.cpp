@@ -82,6 +82,7 @@ ActiveSelectionObserver::Snapshot selectionBeforeRound;
 bool randomLoadout=false;
 ShopCatalogActions shopCatalog;
 bool testShopCatalog=false;
+bool shopVisualOnly=false;
 MissionFlowActions mission;
 uint16_t missionMode=0;
 SdgoMissionAiClientGetSnapshotV1Fn getMissionSnapshot=nullptr;
@@ -187,6 +188,8 @@ bool LoadPlan() {
     GetPrivateProfileStringW(L"run",L"shop_assertions_path",L"",shopAssertions,128,job.c_str());
     GetPrivateProfileStringW(L"run",L"shop_display_path",L"",shopDisplay,128,job.c_str());
     testShopCatalog=shopAssertions[0] || shopDisplay[0];
+    shopVisualOnly=GetPrivateProfileIntW(L"run",L"shop_visual_only",0,job.c_str())!=0;
+    if(shopVisualOnly && !testShopCatalog)return false;
     if(testShopCatalog && (!pagesOnly || wcscmp(shopAssertions,L"inputs/shop-assertions.ini") ||
         wcscmp(shopDisplay,L"inputs/shop-runtime-display.ini")))return false;
     collectionDraw=GetPrivateProfileIntW(L"run",L"collection_draw",0,job.c_str())!=0;
@@ -1345,6 +1348,16 @@ int __cdecl ReadCapsuleCurrency(const SdgoGameTestContextV1* context) {
     return SDGO_GAME_TEST_PASS;
 }
 int ReadShopCatalog(const SdgoGameTestContextV1* context) {
+    static bool capturePending=false;
+    static uint32_t capturedBuy=0,capturedGift=0;
+    static ShopCatalogActions::Result capturedFailure=ShopCatalogActions::kComplete;
+    if(capturePending) {
+        const auto status=quietGraphics.FrameCaptureState();
+        if(status==QuietFrameCapture::Pending || status==QuietFrameCapture::Capturing)return SDGO_GAME_TEST_WAIT;
+        context->Assert(status==QuietFrameCapture::Complete,"native shop framebuffer capture completed on the genuine D3D9 device");
+        capturePending=false;
+        if(status!=QuietFrameCapture::Complete || capturedFailure!=ShopCatalogActions::kComplete)return SDGO_GAME_TEST_FAIL;
+    }
     const auto before=shopCatalog.State();
     if(before.stage==ShopCatalogActions::kStageIdle || before.stage==ShopCatalogActions::kStageBaseline) {
         // The unit-management popup only loads briefs. Enter the original
@@ -1356,6 +1369,20 @@ int ReadShopCatalog(const SdgoGameTestContextV1* context) {
         if(navigation!=HangarNavigation::kReady)return SDGO_GAME_TEST_WAIT;
     }
     const auto result=shopCatalog.Poll(context);const auto state=shopCatalog.State();
+    if(shopCatalog.VisualOnly() && (result>=ShopCatalogActions::kInvalidContext ||
+        state.buy_previews>capturedBuy || state.gift_previews>capturedGift)) {
+        const bool failed=result>=ShopCatalogActions::kInvalidContext;
+        wchar_t filename[96]{};
+        swprintf_s(filename,L"\\shop-%s-%u.bmp",failed?L"failure":state.buy_previews>capturedBuy?L"buy":L"gift",state.product_id);
+        const auto path=sdgo_test::directory+filename;
+        capturePending=quietGraphics.RequestFrameCapture(path.c_str());
+        context->Assert(capturePending,"queue an actual shop frame while its native page or preview remains open");
+        capturedBuy=state.buy_previews;capturedGift=state.gift_previews;
+        capturedFailure=failed?result:ShopCatalogActions::kComplete;
+        char message[128]{};sprintf_s(message,"native shop visual checkpoint result=%s product=%u",ShopCatalogActions::ResultName(result),state.product_id);context->Observe(message);
+        if(capturePending)return SDGO_GAME_TEST_WAIT;
+        return SDGO_GAME_TEST_FAIL;
+    }
     static uint32_t previous=UINT32_MAX,verified=UINT32_MAX,lastPending=UINT32_MAX;
     if(previous!=result || verified!=state.verified || lastPending!=state.native_request_pending) {
         const auto sent=actions.TransportState();
@@ -1377,6 +1404,7 @@ int ReadShopCatalog(const SdgoGameTestContextV1* context) {
     context->Assert(state.stock_assertions && state.configured && state.verified==state.configured &&
         state.buy_previews==state.configured && state.gift_previews==state.configured && state.cancellations==2*state.configured &&
         state.wallet_unchanged && state.inventory_unchanged,
+        shopVisualOnly ? "native Chinese shop names, options and real preview frames match; cancellation preserves wallet and every inventory brief" :
         "native stock names, options, permanent/rental labels and buy/gift previews match; cancellation preserves wallet and complete inventory");
     return SDGO_GAME_TEST_PASS;
 }
@@ -1808,6 +1836,10 @@ void RegisterPlannedCases() {
     if (pagesOnly) {
         plannedCases.assign(realCases,realCases+3);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
+        if(testShopCatalog && shopVisualOnly) {
+            plannedCases.push_back(shopCatalogCase);
+            provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+        }
         plannedCases.insert(plannedCases.end(),std::begin(pageCases),std::begin(pageCases)+5);
         if(testShopCatalog)plannedCases.push_back(shopCatalogCase);
         plannedCases.insert(plannedCases.end(),std::begin(pageCases)+5,std::end(pageCases));
@@ -2035,7 +2067,7 @@ SDGO_MOD_ENTRY {
         (playUnitUid && !unitSelection.Bind(api,mod,&actions)) ||
         ((randomLoadout || playUnitUid) && !activeSelection.Bind(api,mod)) ||
         (testShopCatalog && (!shopCatalog.Bind(api,mod) || !shopCatalog.Configure(
-            sdgo_test::directory+L"\\inputs\\shop-assertions.ini",sdgo_test::directory+L"\\inputs\\shop-runtime-display.ini"))) ||
+            sdgo_test::directory+L"\\inputs\\shop-assertions.ini",sdgo_test::directory+L"\\inputs\\shop-runtime-display.ini") || shopCatalog.VisualOnly()!=shopVisualOnly)) ||
         (roomTitlesOnly && !roomTitles.Bind(api,mod,&actions)) ||
         (!missionMode && !rooms.Bind(api, mod, &actions, config)) ||
         !tutorial.Bind(api, mod, &actions) || !onboarding.Bind(api, mod, &actions))

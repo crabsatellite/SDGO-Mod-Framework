@@ -29,6 +29,7 @@
 class ShopCatalogActions
 {
 public:
+    bool VisualOnly() const { return visualOnly_; }
     enum Result : uint32_t
     {
         kUnbound = 0,
@@ -591,6 +592,7 @@ private:
         int32_t validity = 0;
         uint8_t payment = 0;
         std::wstring name;
+        std::wstring displayName;
         std::wstring label;
     };
 
@@ -896,7 +898,8 @@ private:
                 shop,
                 L"Scope",
                 L"OwnerCatalog");
-        if (scope == L"StockAssertions")
+        visualOnly_ = scope == L"StockVisualAssertions";
+        if (scope == L"StockAssertions" || visualOnly_)
             stockAssertions_ = true;
         else if (scope == L"OwnerCatalog")
             stockAssertions_ = false;
@@ -981,6 +984,7 @@ private:
                 throw 1;
             product.name =
                 Value(section.second, L"Name");
+            product.displayName = visualOnly_ ? Value(section.second, L"DisplayName") : product.name;
             product.label =
                 Value(section.second, L"Label");
             const bool enabled =
@@ -992,6 +996,7 @@ private:
                     L"1") != 0;
             if (!Key(product.key) ||
                 !Text(product.name) ||
+                !Text(product.displayName) ||
                 !Text(product.label) ||
                 (stockAssertions_
                      ? product.productId !=
@@ -1749,11 +1754,13 @@ private:
                 &visible))
             return kUiNameMismatch;
         std::wstring shortened;
-        if (product.name.size() > 10)
+        if (product.displayName.size() > 10)
             shortened =
-                product.name.substr(0, 10) +
+                product.displayName.substr(0, 10) +
                 L"..";
-        if (visible != product.name &&
+        observation_.native_name = name->second;
+        observation_.visible_name = visible;
+        if (visible != product.displayName &&
             visible != shortened)
             return kUiNameMismatch;
 
@@ -2170,7 +2177,9 @@ private:
                 &slot,
                 unit.brief.data() + 12,
                 sizeof(slot));
-            if (type) {
+            if (type && (!uid || slot != index + 1))
+                return kInventoryUnavailable;
+            if (type && !visualOnly_) {
                 uint32_t fullType = 0;
                 uint16_t fullSlot = 0;
                 uint64_t fullUid = 0;
@@ -2224,7 +2233,7 @@ private:
                 info,
                 unit.brief.data(),
                 slot);
-            bindings_.unit_full_by_slot(
+            if (!visualOnly_) bindings_.unit_full_by_slot(
                 info,
                 unit.full.data(),
                 slot);
@@ -2956,6 +2965,7 @@ private:
     std::set<std::wstring> verifiedKeys_;
     std::set<uint32_t> requestedInventoryPages_;
     bool stockAssertions_ = false;
+    bool visualOnly_ = false;
     IntegrityImage baseline_;
     bool hasBaseline_ = false;
     void* room_ = nullptr;
