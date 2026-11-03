@@ -13,6 +13,7 @@
 #include <cstring>
 #include <string>
 
+#include "sdgo/battle_rewards_damage_observer.h"
 #include "sdgo/pvp_ai_observer.h"
 #include "sdgo/sdgo_api.h"
 
@@ -20,6 +21,31 @@ namespace
 {
     constexpr unsigned kQueueCapacity = 256;
     constexpr unsigned kDrainBatch = 64;
+    constexpr unsigned kDamageQueueCapacity = 512;
+    constexpr unsigned kDamageDrainBatch = 64;
+    constexpr size_t kRoomMode = 0x05;
+    constexpr size_t kRoomTitleLength = 0x79;
+    constexpr size_t kRoomTitle = 0x7A;
+    constexpr size_t kRoomHost = 0x4CE;
+    constexpr size_t kSlotInfo = 0x533;
+    constexpr size_t kSlotInfoStride = 0x48E;
+    constexpr size_t kSlotPilotId = 0x429;
+    constexpr size_t kBattlePilots = 0x3CE4;
+    constexpr size_t kBattlePilotStride = 0x1F54;
+    constexpr size_t kPilotEntity = 0x00;
+    constexpr size_t kPilotTeam = 0x04;
+    constexpr size_t kUnitKey = 0x00;
+    constexpr size_t kUnitMaxHp = 0x04;
+    constexpr size_t kUnitHp = 0x34;
+    constexpr size_t kUnitData = 0x6C;
+    constexpr int kBattleSlots = 12;
+
+    enum class DamageSource
+    {
+        None,
+        DirectHook,
+        BattleRewardsBridge
+    };
 
     struct RunConfig
     {
@@ -43,6 +69,40 @@ namespace
         std::string reason = "waiting for authenticated host";
     };
 
+    struct DamageEvent
+    {
+        uint64_t sequence = 0;
+        uint64_t qpc = 0;
+        uint32_t threadId = 0;
+        uint32_t roomCookie = 0;
+        uint32_t hostPilotId = 0;
+        uint32_t attackerPilotId = 0;
+        uint32_t victimPilotId = 0;
+        uint32_t attackerSlotPilotId = 0;
+        uint32_t victimSlotPilotId = 0;
+        uint32_t victimUnitKey = 0;
+        uint32_t victimHp = 0;
+        uint32_t victimMaxHp = 0;
+        uintptr_t victimUnitData = 0;
+        uint32_t effectiveLoss = 0;
+        int32_t deathFlag = 0;
+        int32_t attackerSlot = -1;
+        int32_t victimSlot = -1;
+        uint8_t mode = 0;
+        uint8_t attackerTeam = 0;
+        uint8_t victimTeam = 0;
+        uint8_t attackerIsAi = 0;
+        uint8_t victimIsAi = 0;
+        uint8_t samePilot = 0;
+        uint8_t sameSlot = 0;
+        uint8_t friendly = 0;
+        uint8_t identityValid = 0;
+    };
+
+    using RecordDamageFn = uint32_t(__thiscall*)(
+        void* room, void* victimPilot, void* attackerPilot, void* victimUnit,
+        uint32_t effectiveLoss, int32_t deathFlag);
+
     const SdgoApi* g_api = nullptr;
     SdgoMod* g_mod = nullptr;
     RunConfig g_config;
@@ -57,8 +117,18 @@ namespace
     unsigned g_queueRead = 0;
     unsigned g_queueWrite = 0;
     unsigned g_queueCount = 0;
+    DamageEvent g_damageQueue[kDamageQueueCapacity] = {};
+    unsigned g_damageQueueRead = 0;
+    unsigned g_damageQueueWrite = 0;
+    unsigned g_damageQueueCount = 0;
+    RecordDamageFn g_recordDamage = nullptr;
+    bool g_deathEnabled = false;
+    bool g_deathSetupFailed = false;
+    DamageSource g_damageSource = DamageSource::None;
     volatile LONG g_expectedHost = 0;
     volatile LONG g_dropped = 0;
+    volatile LONG g_damageDropped = 0;
+    volatile LONG g_damageSequence = 0;
     volatile LONG g_abortWorker = 0;
     volatile LONG g_writeErrorLogged = 0;
 
@@ -276,6 +346,212 @@ namespace
         return false;
     }
 
+    template <typename T>
+    bool SafeRead(const void* base, size_t offset, T* output)
+    {
+        if (!base || !output)
+            return false;
+        __try {
+            *output = *reinterpret_cast<const volatile T*>(
+                static_cast<const uint8_t*>(base) + offset);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
+    int PilotSlot(const void* room, const void* pilot)
+    {
+        if (!room || !pilot)
+            return -1;
+        const uintptr_t first =
+            reinterpret_cast<uintptr_t>(room) + kBattlePilots;
+        const uintptr_t candidate = reinterpret_cast<uintptr_t>(pilot);
+        for (int slot = 0; slot < kBattleSlots; ++slot)
+            if (candidate ==
+                first + static_cast<uintptr_t>(slot) * kBattlePilotStride)
+                return slot;
+        return -1;
+    }
+
+    uint32_t RoomSlotPilotId(const void* room, int slot)
+    {
+        uint32_t value = 0;
+        if (slot < 0 || slot >= kBattleSlots)
+            return 0;
+        SafeRead(
+            room,
+            kSlotInfo + static_cast<size_t>(slot) * kSlotInfoStride +
+                kSlotPilotId,
+            &value);
+        return value;
+    }
+
+    bool MatchingDamageRoom(
+        const void* room, uint32_t* hostPilotId, uint8_t* mode)
+    {
+        if (!g_deathEnabled || !room || !hostPilotId || !mode)
+            return false;
+        const uint32_t expectedHost = ExpectedHost();
+        uint8_t titleLength = 0;
+        char title[21] = {};
+        if (expectedHost == 0 ||
+            !SafeRead(room, kRoomHost, hostPilotId) ||
+            *hostPilotId != expectedHost ||
+            !SafeRead(room, kRoomMode, mode) ||
+            (g_config.mode != 0 && *mode != g_config.mode) ||
+            !SafeRead(room, kRoomTitleLength, &titleLength) ||
+            titleLength > 20) {
+            return false;
+        }
+        __try {
+            memcpy(
+                title, static_cast<const uint8_t*>(room) + kRoomTitle,
+                titleLength);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+        title[titleLength] = '\0';
+        return TitleContainsNonce(title);
+    }
+
+    bool CaptureDamage(
+        void* room, void* victimPilot, void* attackerPilot, void* victimUnit,
+        uint32_t effectiveLoss, int32_t deathFlag, DamageEvent* output)
+    {
+        if (!output || !victimPilot || !attackerPilot || !victimUnit ||
+            effectiveLoss == 0) {
+            return false;
+        }
+        DamageEvent event = {};
+        if (!MatchingDamageRoom(
+                room, &event.hostPilotId, &event.mode))
+            return false;
+        event.sequence = static_cast<uint32_t>(
+            InterlockedIncrement(&g_damageSequence));
+        LARGE_INTEGER qpc = {};
+        QueryPerformanceCounter(&qpc);
+        event.qpc = static_cast<uint64_t>(qpc.QuadPart);
+        event.threadId = GetCurrentThreadId();
+        event.roomCookie =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(room));
+        event.effectiveLoss = effectiveLoss;
+        event.deathFlag = deathFlag;
+        event.attackerSlot = PilotSlot(room, attackerPilot);
+        event.victimSlot = PilotSlot(room, victimPilot);
+        if (!SafeRead(
+                attackerPilot, kPilotEntity, &event.attackerPilotId) ||
+            !SafeRead(
+                victimPilot, kPilotEntity, &event.victimPilotId) ||
+            !SafeRead(
+                attackerPilot, kPilotTeam, &event.attackerTeam) ||
+            !SafeRead(
+                victimPilot, kPilotTeam, &event.victimTeam)) {
+            return false;
+        }
+        event.attackerSlotPilotId =
+            RoomSlotPilotId(room, event.attackerSlot);
+        event.victimSlotPilotId =
+            RoomSlotPilotId(room, event.victimSlot);
+        event.attackerIsAi =
+            (event.attackerPilotId & 0x80000000u) != 0 ? 1 : 0;
+        event.victimIsAi =
+            (event.victimPilotId & 0x80000000u) != 0 ? 1 : 0;
+        event.samePilot =
+            event.attackerPilotId != 0 &&
+                    event.attackerPilotId == event.victimPilotId
+                ? 1
+                : 0;
+        event.sameSlot =
+            event.attackerSlot >= 0 &&
+                    event.attackerSlot == event.victimSlot
+                ? 1
+                : 0;
+        event.friendly =
+            event.attackerTeam != 0 &&
+                    event.attackerTeam == event.victimTeam
+                ? 1
+                : 0;
+        event.identityValid =
+            event.attackerSlot >= 0 && event.victimSlot >= 0 &&
+                    event.attackerSlotPilotId == event.attackerPilotId &&
+                    event.victimSlotPilotId == event.victimPilotId
+                ? 1
+                : 0;
+        SafeRead(victimUnit, kUnitKey, &event.victimUnitKey);
+        SafeRead(victimUnit, kUnitHp, &event.victimHp);
+        SafeRead(victimUnit, kUnitMaxHp, &event.victimMaxHp);
+        SafeRead(victimUnit, kUnitData, &event.victimUnitData);
+        *output = event;
+        return true;
+    }
+
+    void QueueDamage(const DamageEvent& event)
+    {
+        if (!TryEnterCriticalSection(&g_queueLock)) {
+            InterlockedIncrement(&g_damageDropped);
+            return;
+        }
+        if (g_damageQueueCount == kDamageQueueCapacity) {
+            InterlockedIncrement(&g_damageDropped);
+        } else {
+            g_damageQueue[g_damageQueueWrite] = event;
+            g_damageQueueWrite =
+                (g_damageQueueWrite + 1) % kDamageQueueCapacity;
+            ++g_damageQueueCount;
+        }
+        LeaveCriticalSection(&g_queueLock);
+    }
+
+    uint32_t __fastcall ObserveRecordDamage(
+        void* room, void*, void* victimPilot, void* attackerPilot,
+        void* victimUnit, uint32_t effectiveLoss, int32_t deathFlag)
+    {
+        const DWORD incomingError = GetLastError();
+        DamageEvent event = {};
+        __try {
+            if (CaptureDamage(
+                    room, victimPilot, attackerPilot, victimUnit,
+                    effectiveLoss, deathFlag, &event)) {
+                QueueDamage(event);
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+        SetLastError(incomingError);
+        const uint32_t result = g_recordDamage(
+            room, victimPilot, attackerPilot, victimUnit, effectiveLoss,
+            deathFlag);
+        const DWORD originalError = GetLastError();
+        SetLastError(originalError);
+        return result;
+    }
+
+    void __cdecl ObserveBattleRewardsDamage(
+        const SdgoBattleRewardsDamageEventV1* nativeEvent, void*)
+    {
+        const DWORD incomingError = GetLastError();
+        __try {
+            if (nativeEvent &&
+                nativeEvent->size >= sizeof(*nativeEvent) &&
+                nativeEvent->version ==
+                    SDGO_BATTLE_REWARDS_DAMAGE_OBSERVER_VERSION) {
+                DamageEvent event = {};
+                if (CaptureDamage(
+                        nativeEvent->room,
+                        nativeEvent->victim_pilot,
+                        nativeEvent->attacker_pilot,
+                        nativeEvent->victim_unit,
+                        nativeEvent->effective_loss,
+                        nativeEvent->death_flag,
+                        &event)) {
+                    QueueDamage(event);
+                }
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+        SetLastError(incomingError);
+    }
+
     void __cdecl ObservePvpAi(const SdgoPvpAiObserverEventV1* event, void*)
     {
         if (!event || event->size < sizeof(*event) ||
@@ -308,6 +584,20 @@ namespace
             output[count++] = g_queue[g_queueRead];
             g_queueRead = (g_queueRead + 1) % kQueueCapacity;
             --g_queueCount;
+        }
+        LeaveCriticalSection(&g_queueLock);
+        return count;
+    }
+
+    unsigned DrainDamage(DamageEvent* output)
+    {
+        EnterCriticalSection(&g_queueLock);
+        unsigned count = 0;
+        while (count < kDamageDrainBatch && g_damageQueueCount != 0) {
+            output[count++] = g_damageQueue[g_damageQueueRead];
+            g_damageQueueRead =
+                (g_damageQueueRead + 1) % kDamageQueueCapacity;
+            --g_damageQueueCount;
         }
         LeaveCriticalSection(&g_queueLock);
         return count;
@@ -380,6 +670,66 @@ namespace
         return line;
     }
 
+    std::string DamageJson(const DamageEvent& event)
+    {
+        const char* source =
+            g_damageSource == DamageSource::BattleRewardsBridge
+                ? "battle_rewards_bridge"
+                : "direct_native_hook";
+        return
+            "{\"run_id\":\"" + EscapeJson(g_config.runId) +
+            "\",\"role\":\"server\",\"suite\":\"" +
+            EscapeJson(g_config.suite) +
+            "\",\"event\":\"native_effective_hp_loss\"" +
+            ",\"source\":\"" + source + "\"" +
+            ",\"sequence\":" + std::to_string(event.sequence) +
+            ",\"qpc\":" + std::to_string(event.qpc) +
+            ",\"thread_id\":" + std::to_string(event.threadId) +
+            ",\"room_cookie\":" + std::to_string(event.roomCookie) +
+            ",\"host_pilot_id\":" +
+            std::to_string(event.hostPilotId) +
+            ",\"mode\":" + std::to_string(event.mode) +
+            ",\"attacker_slot\":" +
+            std::to_string(event.attackerSlot) +
+            ",\"victim_slot\":" + std::to_string(event.victimSlot) +
+            ",\"attacker_pilot_id\":" +
+            std::to_string(event.attackerPilotId) +
+            ",\"victim_pilot_id\":" +
+            std::to_string(event.victimPilotId) +
+            ",\"attacker_slot_pilot_id\":" +
+            std::to_string(event.attackerSlotPilotId) +
+            ",\"victim_slot_pilot_id\":" +
+            std::to_string(event.victimSlotPilotId) +
+            ",\"attacker_team\":" +
+            std::to_string(event.attackerTeam) +
+            ",\"victim_team\":" + std::to_string(event.victimTeam) +
+            ",\"attacker_is_ai\":" +
+            std::string(event.attackerIsAi ? "true" : "false") +
+            ",\"victim_is_ai\":" +
+            std::string(event.victimIsAi ? "true" : "false") +
+            ",\"same_pilot\":" +
+            std::string(event.samePilot ? "true" : "false") +
+            ",\"same_slot\":" +
+            std::string(event.sameSlot ? "true" : "false") +
+            ",\"friendly\":" +
+            std::string(event.friendly ? "true" : "false") +
+            ",\"identity_valid\":" +
+            std::string(event.identityValid ? "true" : "false") +
+            ",\"effective_loss\":" +
+            std::to_string(event.effectiveLoss) +
+            ",\"death_flag\":" + std::to_string(event.deathFlag) +
+            ",\"victim_hp_at_hook\":" +
+            std::to_string(event.victimHp) +
+            ",\"victim_max_hp\":" +
+            std::to_string(event.victimMaxHp) +
+            ",\"victim_unit_key\":" +
+            std::to_string(event.victimUnitKey) +
+            ",\"victim_unit_data\":" +
+            std::to_string(
+                static_cast<unsigned long long>(event.victimUnitData)) +
+            "}\n";
+    }
+
     const char* OutcomeName(Lifecycle::Outcome outcome)
     {
         switch (outcome) {
@@ -387,6 +737,43 @@ namespace
         case Lifecycle::Fail: return "fail";
         default: return "running";
         }
+    }
+
+    const char* DamageSourceName(DamageSource source)
+    {
+        switch (source) {
+        case DamageSource::BattleRewardsBridge:
+            return "battle_rewards_bridge";
+        case DamageSource::DirectHook:
+            return "direct_native_hook";
+        default:
+            return "disabled";
+        }
+    }
+
+    std::string ObserverReadyJson(uint32_t processId, const char* hostKey)
+    {
+        return
+            "{\"run_id\":\"" + EscapeJson(g_config.runId) +
+            "\",\"role\":\"server\",\"suite\":\"" +
+            EscapeJson(g_config.suite) +
+            "\",\"event\":\"observer_ready\",\"status\":\"running\"" +
+            ",\"normal_server_main\":true,\"pid\":" +
+            std::to_string(processId) +
+            ",\"host_key\":\"" + EscapeJson(hostKey) +
+            "\",\"nonce\":\"" + EscapeJson(g_config.nonce) +
+            "\",\"expected_host_pilot_id\":" +
+            std::to_string(ExpectedHost()) +
+            ",\"mode\":" + std::to_string(g_config.mode) +
+            ",\"minimum_ai\":" +
+            std::to_string(g_config.minimumAi) +
+            ",\"require_end\":" +
+            (g_config.requireEnd ? "true" : "false") +
+            ",\"battle_ai_deaths\":" +
+            (g_deathEnabled ? "true" : "false") +
+            ",\"death_source\":\"" +
+            std::string(DamageSourceName(g_damageSource)) +
+            "\"}\n";
     }
 
     bool WriteStatus(const Lifecycle& lifecycle)
@@ -406,6 +793,9 @@ namespace
             ",\"dropped\":" +
             std::to_string(static_cast<unsigned long>(
                 InterlockedCompareExchange(&g_dropped, 0, 0))) +
+             ",\"damage_dropped\":" +
+             std::to_string(static_cast<unsigned long>(
+                 InterlockedCompareExchange(&g_damageDropped, 0, 0))) +
             "}\n";
         HANDLE file = CreateFileW(
             temporary.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
@@ -551,21 +941,14 @@ namespace
         else if (selectedHost != 0)
             lifecycle.reason = "waiting for matching room request";
 
-        const std::string ready =
-            "{\"run_id\":\"" + EscapeJson(g_config.runId) +
-            "\",\"role\":\"server\",\"suite\":\"" + EscapeJson(g_config.suite) +
-            "\",\"event\":\"observer_ready\",\"status\":\"running\"" +
-            ",\"normal_server_main\":true,\"pid\":" +
-            std::to_string(GetCurrentProcessId()) +
-            ",\"host_key\":\"" + EscapeJson(g_api->host_key) +
-            "\",\"nonce\":\"" + EscapeJson(g_config.nonce) +
-            "\",\"expected_host_pilot_id\":" + std::to_string(ExpectedHost()) +
-            ",\"mode\":" + std::to_string(g_config.mode) +
-            ",\"minimum_ai\":" + std::to_string(g_config.minimumAi) +
-            ",\"require_end\":" + (g_config.requireEnd ? "true" : "false") +
-            "}\n";
+        const std::string ready = ObserverReadyJson(
+            GetCurrentProcessId(), g_api->host_key);
         if (!WriteReceipt(ready))
             Fail(&lifecycle, "observer_ready receipt could not be flushed");
+        if (g_deathSetupFailed)
+            Fail(
+                &lifecycle,
+                "native damage observer could not register with battle_rewards");
         if (!WriteStatus(lifecycle))
             g_api->Log(g_mod, SDGO_LOG_ERROR, "GameTest server observer could not publish its status file");
 
@@ -596,6 +979,13 @@ namespace
                 Fail(&lifecycle, "observer queue overflowed; lifecycle evidence was lost");
                 statusChanged = true;
             }
+            if (InterlockedCompareExchange(&g_damageDropped, 0, 0) != 0 &&
+                lifecycle.outcome != Lifecycle::Fail) {
+                Fail(
+                    &lifecycle,
+                    "native damage queue overflowed; death evidence was lost");
+                statusChanged = true;
+            }
 
             SdgoPvpAiObserverEventV1 batch[kDrainBatch] = {};
             unsigned count = 0;
@@ -613,6 +1003,17 @@ namespace
                         before.eventCount != lifecycle.eventCount ||
                         before.reason != lifecycle.reason)
                         statusChanged = true;
+                }
+            }
+            DamageEvent damageBatch[kDamageDrainBatch] = {};
+            while ((count = DrainDamage(damageBatch)) != 0) {
+                for (unsigned i = 0; i < count; ++i) {
+                    if (!WriteReceipt(DamageJson(damageBatch[i]))) {
+                        Fail(
+                            &lifecycle,
+                            "native damage receipt could not be flushed");
+                        statusChanged = true;
+                    }
                 }
             }
             if (statusChanged && !WriteStatus(lifecycle))
@@ -633,6 +1034,15 @@ SDGO_MOD_ENTRY
             api->Log(mod, SDGO_LOG_ERROR, "GameTest server observer inactive: %s", error.c_str());
         return 0;
     }
+    const int deathSetting =
+        api->SettingInt(mod, "BattleAiDeaths", 0);
+    if (deathSetting != 0 && deathSetting != 1) {
+        api->Log(
+            mod, SDGO_LOG_ERROR,
+            "GameTest server observer inactive: BattleAiDeaths must be 0 or 1");
+        return 0;
+    }
+    g_deathEnabled = deathSetting != 0;
 
     HMODULE pvpAi = GetModuleHandleW(L"pvp_ai.dll");
     auto registerObserver = pvpAi
@@ -674,6 +1084,42 @@ SDGO_MOD_ENTRY
         return 0;
     }
 
+    HMODULE battleRewards =
+        g_deathEnabled
+            ? GetModuleHandleW(L"battle_rewards.dll")
+            : nullptr;
+    const auto registerDamageObserver =
+        battleRewards
+            ? reinterpret_cast<
+                  SdgoBattleRewardsRegisterDamageObserverV1Fn>(
+                  GetProcAddress(
+                      battleRewards,
+                      SDGO_BATTLE_REWARDS_DAMAGE_OBSERVER_EXPORT))
+            : nullptr;
+    if (g_deathEnabled && !battleRewards &&
+        !api->HookCode(
+            mod, "battle.rewards.record_damage",
+            reinterpret_cast<void*>(&ObserveRecordDamage),
+            reinterpret_cast<void**>(&g_recordDamage))) {
+        InterlockedExchange(&g_abortWorker, 1);
+        SetEvent(g_startGate);
+        WaitForSingleObject(worker, INFINITE);
+        CloseHandle(worker);
+        CloseHandle(g_startGate);
+        g_startGate = nullptr;
+        if (g_eventFile != INVALID_HANDLE_VALUE) {
+            CloseHandle(g_eventFile);
+            g_eventFile = INVALID_HANDLE_VALUE;
+        }
+        DeleteCriticalSection(&g_queueLock);
+        api->Log(
+            mod, SDGO_LOG_ERROR,
+            "GameTest server observer inactive: native HP-loss hook unavailable");
+        return 0;
+    }
+    if (g_deathEnabled && !battleRewards)
+        g_damageSource = DamageSource::DirectHook;
+
     const SdgoPvpAiObserverSinkV1 sink = {
         sizeof(sink), SDGO_PVP_AI_OBSERVER_VERSION, &ObservePvpAi, nullptr};
     if (!registerObserver(&sink)) {
@@ -692,9 +1138,31 @@ SDGO_MOD_ENTRY
         return 0;
     }
 
+    if (g_deathEnabled && battleRewards) {
+        const SdgoBattleRewardsDamageObserverSinkV1 damageSink = {
+            sizeof(damageSink),
+            SDGO_BATTLE_REWARDS_DAMAGE_OBSERVER_VERSION,
+            &ObserveBattleRewardsDamage,
+            nullptr};
+        if (!registerDamageObserver ||
+            !registerDamageObserver(&damageSink)) {
+            // pvp_ai registration is process-lifetime, so remain loaded and
+            // publish a fail-closed run status instead of unloading a callback.
+            g_deathSetupFailed = true;
+            api->Log(
+                mod, SDGO_LOG_ERROR,
+                "GameTest server observer: battle_rewards damage observer registration failed");
+        } else {
+            g_damageSource = DamageSource::BattleRewardsBridge;
+        }
+    }
+
     SetEvent(g_startGate);
     CloseHandle(worker);
     api->Log(mod, SDGO_LOG_INFO,
-             "ready: passive GameTest observer follows normal BattleServer startup and real PvP AI rooms");
+             "ready: passive GameTest observer follows normal BattleServer startup and real PvP AI rooms%s",
+             g_deathEnabled && !g_deathSetupFailed
+                 ? " with native HP-loss receipts"
+                 : "");
     return 1;
 }

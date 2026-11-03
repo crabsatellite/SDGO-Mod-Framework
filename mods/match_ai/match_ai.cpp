@@ -1196,6 +1196,9 @@ namespace
 
     constexpr size_t kSlotObjectId = 0x04;
     constexpr size_t kSlotRecord = 0x44;
+    constexpr uint16_t kTeleportRelocationOpcode = 0x07D4;
+    constexpr uint8_t kTeleportRelocationPointCount = 12;
+    const DWORD g_teleportDefaultMxcsr = 0x1F80;
 
     bool SlotHolds(void* um, const Bot& bot)
     {
@@ -1228,6 +1231,75 @@ namespace
             if (bot.objectId == objectId && SlotHolds(um, bot))
                 return &bot;
         return nullptr;
+    }
+
+    // The Teleport item's 0x07D4 notification normally sends a player through
+    // the native start-point relocation path.  A match_ai participant is a CNPC,
+    // so the stock handler takes its local-authority NPC fallback instead and
+    // reports PT_REQ_MAP_DAMAGE (0x0492), destroying a healthy PvP bot.
+    //
+    // Admit only the exact live, locally controlled participant named by this
+    // packet.  The site detour then clears the saved IsA(10) result so the
+    // original handler performs its ordinary point lookup and message 0x34.
+    int __stdcall TeleportRelocationParticipant(uint8_t* unit, const uint8_t* packet)
+    {
+        const DWORD incomingError = GetLastError();
+        int admitted = 0;
+        __try {
+            if (unit && packet && g_game.unitManager && g_aiEnabled &&
+                *reinterpret_cast<const uint16_t*>(packet) == kTeleportRelocationOpcode &&
+                packet[10] < kTeleportRelocationPointCount) {
+                uint8_t* mode = CurrentPvpMode();
+                void* um = *g_game.unitManager;
+                if (mode && mode == g_botMode && um) {
+                    const uint32_t pilotId = *reinterpret_cast<const uint32_t*>(packet + 6);
+                    const Bot* bot =
+                        BotByObject(um, *reinterpret_cast<uint32_t*>(unit + kUnitObjectId));
+                    admitted =
+                        bot && bot->unit == unit && bot->generation != 0 &&
+                        bot->pilotId == pilotId &&
+                        *reinterpret_cast<uint32_t*>(unit + kUnitServerId) == pilotId &&
+                        unit[kUnitLocalControl] != 0 && unit[kUnitRemote] == 0 &&
+                        unit[kUnitMasterNpc] != 0;
+                }
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        SetLastError(incomingError);
+        return admitted;
+    }
+
+    void* g_teleportNpcGateOriginal = nullptr;
+
+    __declspec(naked) void TeleportNpcGate()
+    {
+        __asm {
+            pushfd
+            pushad
+            mov eax, esp
+            sub esp, 210h
+            and esp, 0FFFFFFF0h
+            mov [esp+200h], eax
+            fxsave [esp]
+            fninit
+            ldmxcsr dword ptr [g_teleportDefaultMxcsr]
+            cld
+            push dword ptr [ebp-70h]
+            push edi
+            call TeleportRelocationParticipant
+            mov [esp+204h], eax
+            fxrstor [esp]
+            mov eax, [esp+204h]
+            mov esp, [esp+200h]
+            test eax, eax
+            jz native_npc_path
+            // pushad saved EAX at +28. Clear only AL, the IsA(10) result
+            // consumed by the relocated native `test al, al`.
+            mov byte ptr [esp+28], 0
+        native_npc_path:
+            popad
+            popfd
+            jmp dword ptr [g_teleportNpcGateOriginal]
+        }
     }
 
     // Observe the actual native TAB kill/assist/points renderer, rather than infer
@@ -2074,6 +2146,10 @@ SDGO_MOD_ENTRY
         return 0;
     if (!api->HookSite(mod, "hud.scoreboard_npc_gate", reinterpret_cast<void*>(&ScoreboardNpcGate),
                        &g_scoreboardNpcGateOriginal))
+        return 0;
+    if (!api->HookSite(mod, "game.teleport_relocation_npc_gate",
+                       reinterpret_cast<void*>(&TeleportNpcGate),
+                       &g_teleportNpcGateOriginal))
         return 0;
     // The profile pointer is only used by the optional read-only GameTest
     // observer. Older supported symbol maps must still load the production AI
