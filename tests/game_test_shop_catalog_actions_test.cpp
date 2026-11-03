@@ -49,6 +49,9 @@ bool suppressPageAdvance = false;
 bool catalogRequestPending=false;
 bool pageReplyQueued=false;
 unsigned pageReplyPendingPolls=0;
+uint32_t pageReplyTarget=0;
+uint32_t lastFixturePage=1;
+unsigned numericPageCalls=0;
 bool retainEmptyNativeSlots=false;
 bool secondInventoryPage=false;
 bool fullInventoryReply=false;
@@ -63,6 +66,8 @@ Bytes downmenu(0x400);
 Bytes room(0x400);
 Bytes search(0x200);
 Bytes searchRoot(4);
+Bytes pageNumber(0xA0);
+Bytes pageNumberRoot(4);
 Bytes buyPopup(0x200);
 Bytes giftPopup(0x200);
 Bytes downmenuRoot(4);
@@ -73,12 +78,13 @@ Bytes gridObject(4);
 std::array<void*, 20> downmenuVtable = {};
 std::array<void*, 20> roomVtable = {};
 std::array<void*, 20> searchVtable = {};
+std::array<void*, 20> pageNumberVtable = {};
 std::array<void*, 20> buyVtable = {};
 std::array<void*, 20> giftVtable = {};
 std::array<void*, 20> staticVtable = {};
 std::deque<std::wstring> strings;
 std::map<std::pair<void*, std::wstring>, Control*> controls;
-std::vector<Control> controlStorage(32);
+std::vector<Control> controlStorage(64);
 size_t controlCount = 0;
 Node popupSentinel;
 Node popupNode;
@@ -104,6 +110,7 @@ Control* shopRadio = nullptr;
 Control* allRadio = nullptr;
 Control* filterButton = nullptr;
 Control* rightButton = nullptr;
+std::array<Control*,5> pageButtons{};
 Control* buyButton = nullptr;
 Control* giftButton = nullptr;
 Control* goodsStatic = nullptr;
@@ -253,7 +260,7 @@ void LoadPage(uint32_t page)
 {
     std::memset(pageRows.data(), 0, pageRows.size());
     const uint32_t product =
-        page == 0 ? 1019001 : 1019002;
+        page == 0 ? 1019001 : page==lastFixturePage ? 1019002 : 1990000+page;
     Put(pageRows.data(), 0, product);
     SetVector(
         room.get(),
@@ -261,8 +268,12 @@ void LoadPage(uint32_t page)
         0x7C,
         pageRows.data(),
         retainEmptyNativeSlots ? pageRows.size() : 0x11);
-    Put(room.get(), 0x68, page);
-    Put(room.get(), 0x6C, uint32_t{1});
+    Put(room.get(), 0x68, page/5);
+    Put(room.get(), 0x6C, lastFixturePage/5);
+    Put(room.get(), 0x70, page);
+    Put(room.get(), 0x74, lastFixturePage);
+    Put(pageNumber.get(),0x88,page);
+    Put(pageNumber.get(),0x8C,lastFixturePage);
     SetHostString(
         goodsStatic->bytes.data(),
         kControlText,
@@ -347,7 +358,7 @@ uint32_t __fastcall RequestPending(void* self,void*,ShopCatalogActions::NativeRe
         }
         pageReplyQueued=false;
         catalogRequestPending=false;
-        LoadPage(1);
+        LoadPage(pageReplyTarget);
     }
     return catalogRequestPending ? 1u : 0u;
 }
@@ -374,6 +385,7 @@ void* __fastcall ServiceFind(
         return room.get();
     if (name == L"subTabDlg" && Read<uint32_t>(app.get(), 0x4A0) == 9)
         return search.get();
+    if(name==L"page_number" && Read<uint32_t>(app.get(),0x4A0)==9)return pageNumber.get();
     return nullptr;
 }
 
@@ -510,7 +522,9 @@ uint32_t __stdcall RoomCallback(
         if (catalogRequestPending)
             return 0;
         if (!suppressPageAdvance) {
-            Put(room.get(), 0x68, uint32_t{1});
+            const uint32_t group=Read<uint32_t>(room.get(),0x68)+1;
+            Put(room.get(), 0x68, group);
+            pageReplyTarget=group*5;
             catalogRequestPending=true;
             pageReplyQueued=true;
             pageReplyPendingPolls=1;
@@ -518,7 +532,7 @@ uint32_t __stdcall RoomCallback(
         return 0;
     }
     const uint32_t page =
-        Read<uint32_t>(room.get(), 0x68);
+        Read<uint32_t>(room.get(), 0x70);
     const uint32_t product =
         page == 0 ? 1019001 : 1019002;
     if (control == buyButton->bytes.data()) {
@@ -537,6 +551,23 @@ uint32_t __stdcall RoomCallback(
                 true,
                 product);
             AttachPopup(giftPopup.get());
+        }
+    }
+    return 0;
+}
+
+uint32_t __stdcall PageNumberCallback(void* service,uint32_t event,const void*,void* control)
+{
+    if(service!=pageNumber.get() || event!=0x101)return 0;
+    for(uint32_t index=0;index<pageButtons.size();++index) {
+        if(control!=pageButtons[index]->bytes.data())continue;
+        if(catalogRequestPending)return 0;
+        ++numericPageCalls;
+        if(!suppressPageAdvance) {
+            pageReplyTarget=Read<uint32_t>(room.get(),0x68)*5+index;
+            Check(pageReplyTarget==Read<uint32_t>(room.get(),0x70)+1,
+                  "the original numbered control selects the next contiguous eight-row page");
+            catalogRequestPending=true;pageReplyQueued=true;pageReplyPendingPolls=1;
         }
     }
     return 0;
@@ -799,6 +830,8 @@ ShopCatalogActions::Bindings Bindings()
         &RoomCallback;
     value.search_vtable=searchVtable.data();
     value.search_callback=&SearchCallback;
+    value.page_number_vtable=pageNumberVtable.data();
+    value.page_number_callback=&PageNumberCallback;
     value.buy_vtable =
         buyVtable.data();
     value.buy_callback =
@@ -817,6 +850,7 @@ void Setup()
     catalogRequestPending=false;
     pageReplyQueued=false;
     pageReplyPendingPolls=0;
+    pageReplyTarget=0;lastFixturePage=1;numericPageCalls=0;
     retainEmptyNativeSlots=false;
     secondInventoryPage=fullInventoryReply=unitPagePending=false;unitPageRequests=0;
     app.data.assign(app.data.size(), 0);
@@ -826,6 +860,7 @@ void Setup()
     downmenu.data.assign(downmenu.data.size(), 0);
     room.data.assign(room.data.size(), 0);
     search.data.assign(search.data.size(),0);
+    pageNumber.data.assign(pageNumber.data.size(),0);
     buyPopup.data.assign(buyPopup.data.size(), 0);
     giftPopup.data.assign(giftPopup.data.size(), 0);
     strings.clear();
@@ -843,6 +878,7 @@ void Setup()
     downmenuVtable.fill(nullptr);
     roomVtable.fill(nullptr);
     searchVtable.fill(nullptr);
+    pageNumberVtable.fill(nullptr);
     buyVtable.fill(nullptr);
     giftVtable.fill(nullptr);
     staticVtable.fill(nullptr);
@@ -853,6 +889,9 @@ void Setup()
         reinterpret_cast<void*>(
             &RoomCallback);
     searchVtable[kCallbackSlot]=reinterpret_cast<void*>(&SearchCallback);
+    pageNumberVtable[kCallbackSlot]=reinterpret_cast<void*>(&PageNumberCallback);
+    Put(pageNumber.get(),0,pageNumberVtable.data());
+    Put(pageNumber.get(),0x44,pageNumberRoot.get());
     buyVtable[kCallbackSlot] =
         reinterpret_cast<void*>(
             &BuyCallback);
@@ -931,6 +970,11 @@ void Setup()
     rightButton = AddControl(
         roomRoot.get(),
         L"RightBtn");
+    for(uint32_t i=0;i<pageButtons.size();++i) {
+        const std::wstring name=L"PageBtn"+std::to_wstring(i);
+        pageButtons[i]=AddControl(pageNumberRoot.get(),name.c_str());
+        Put(pageNumber.get(),0x48+i*sizeof(void*),pageButtons[i]->bytes.data());
+    }
     buyButton = AddControl(
         roomRoot.get(),
         L"BuyBtn0");
@@ -1129,11 +1173,22 @@ int wmain(int argc, wchar_t** argv)
         "exact wallet and full inventory image remain unchanged");
     Check(
         downmenuCalls == 1 &&
-            roomCalls == 6 &&
+            roomCalls == 5 && numericPageCalls == 1 &&
             searchCalls == 1 &&
             buyCancelCalls == 2 &&
             giftCancelCalls == 2,
         "one original action per transition without retries");
+    Setup();
+    lastFixturePage=5;
+    actions=Driver(assertions,display);
+    Check(PollTo(actions,ShopCatalogActions::kComplete)==ShopCatalogActions::kComplete &&
+          actions.State().verified==2 && numericPageCalls==4 && roomCalls==6 &&
+          actions.State().current_page==5 && actions.State().max_page==5,
+          "four numbered pages and one five-page arrow group are traversed without skipping products");
+    Setup();
+    auto missingPager=Bindings();missingPager.page_number_callback=nullptr;
+    ShopCatalogActions unboundPager;
+    Check(!unboundPager.Bind(missingPager),"the original numbered-page callback is mandatory");
     Check(
         state.option_label == L"租赁 7 天" &&
             state.payment == 2 &&
