@@ -15,6 +15,7 @@ from test_unit_blueprint_codec import donor
 
 
 class BlueprintBaseline(Baseline):
+    def exists(self,path):return path=='sprs/uniqueplan.spr' or super().exists(path)
     def record(self,kind,identity):
         if kind=='blueprint' and identity==200001:return donor()
         if kind=='item' and identity==1520001:
@@ -30,7 +31,8 @@ class BlueprintCompiler(unittest.TestCase):
             try:
                 state=complete(engine,engine.inspect('unit.zip',archive(),engine.public()['revision']))
                 family=copy.deepcopy(engine.read()['drafts'][state['draft']['id']])
-                family['blueprints']=[declaration()];family['metadata']={'description':'Private author content'}
+                recipe=declaration();recipe['recipe_sprite']='sprs/uniqueplan.spr'
+                family['blueprints']=[recipe];family['metadata']={'description':'Private author content'}
                 family['status']='confirmed';family['published']=copy.deepcopy(family)
                 state=engine.read();state['drafts'][family['id']]=family
                 transaction=root/'transaction';transaction.mkdir()
@@ -54,6 +56,7 @@ class BlueprintCompiler(unittest.TestCase):
                     kind,identity,size,*_=struct.unpack_from('<6I',raw,cursor);cursor+=24
                     records[(kind,identity)]=raw[cursor:cursor+size];cursor+=size
                 self.assertEqual(1197,len(records[(33,209000)]))
+                self.assertEqual('sprs/uniqueplan.spr',records[(33,209000)][169:229].decode('utf-16-le').split('\0')[0].replace('\\','/'))
                 self.assertEqual(90001,struct.unpack_from('<I',records[(33,209000)],229)[0])
                 self.assertEqual(209000,struct.unpack_from('<I',records[(34,1599000)],105)[0])
                 self.assertEqual(209000,struct.unpack_from('<I',records[(85,0x375BE2)],10)[0])

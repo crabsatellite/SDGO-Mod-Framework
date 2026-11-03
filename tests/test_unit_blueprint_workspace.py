@@ -68,6 +68,8 @@ class BlueprintWorkspace(unittest.TestCase):
         self.assertEqual(209000,recipe['id'])
         self.assertEqual(200001,recipe['source']['record_id'])
         self.assertEqual('source-recovered',recipe['source']['kind'])
+        self.assertEqual('sprs/recipe.spr',recipe['recipe_sprite'])
+        self.assertTrue(any(r['field']=='sprs/recipe.spr' for r in state['draft']['requirements']))
         self.assertIsNone(recipe['recipe_template_id'])
         self.assertEqual(bytes(raw),self.engine.blob(recipe['source']['record_sha256']))
         self.assertFalse(state['draft']['can_confirm'])

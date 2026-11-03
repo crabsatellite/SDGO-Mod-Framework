@@ -20,7 +20,7 @@ CATEGORY_FIRST=1599000
 CATEGORY_LAST=1599999
 FIELDS={'schema_version','id','enabled','name','source','recipe_template_id',
         'item_template_id','item_category_id','output_unit_id','materials',
-        'minimum_player_level','repay_point','encyclopedia_primary','internal_name'}
+        'minimum_player_level','repay_point','encyclopedia_primary','internal_name','recipe_sprite'}
 
 
 def _number(value,label,maximum=2_147_483_647,minimum=0,nullable=True):
@@ -62,6 +62,14 @@ def normalize(value,*,root_unit_id):
             not re.fullmatch('[0-9a-f]{64}',source['record_sha256'])):
         raise ValueError('原始设计图记录SHA-256无效')
     result['source']=source
+    if 'recipe_sprite' in result:
+        sprite=result['recipe_sprite']
+        if sprite is not None:
+            if isinstance(sprite,str):sprite=sprite.replace('\\','/').lower()
+            if (not isinstance(sprite,str) or len(sprite)>=30 or
+                not re.fullmatch(r'sprs/[a-z0-9_-]+\.spr',sprite)):
+                raise ValueError('设计图卡面须为受支持的 sprs/名称.spr 路径')
+            result['recipe_sprite']=sprite
     for key in ('id','recipe_template_id','item_template_id','item_category_id'):
         result[key]=_number(result.get(key),key,minimum=1)
     output=_number(result.get('output_unit_id'), '设计图产物',minimum=1)
@@ -103,7 +111,8 @@ def from_record(decoded,*,domain):
         'recipe_template_id':None,'item_template_id':None,'item_category_id':None,
         'output_unit_id':decoded['output_unit_id'],'materials':copy.deepcopy(decoded['materials']),
         'minimum_player_level':decoded['minimum_player_level'],'repay_point':decoded['repay_point'],
-        'encyclopedia_primary':False}
+        'encyclopedia_primary':False,
+        **({'recipe_sprite':decoded['recipe_sprite']} if decoded.get('recipe_sprite') else {})}
 
 
 def requirements(recipe,*,root_unit_id,unit_ids=None):

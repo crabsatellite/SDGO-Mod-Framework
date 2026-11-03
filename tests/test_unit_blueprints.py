@@ -14,6 +14,13 @@ def declaration():
 
 
 class UnitBlueprints(unittest.TestCase):
+    def test_recipe_sprite_is_explicit_bounded_and_cannot_escape_resource_scope(self):
+        value=declaration();value['recipe_sprite']='SPRS\\own-plan.spr'
+        self.assertEqual('sprs/own-plan.spr',b.normalize(value,root_unit_id=90001)['recipe_sprite'])
+        for path in ('sprs/../plan.spr','txrs/plan.txr','C:/plan.spr','sprs/'+'x'*30+'.spr',True):
+            value['recipe_sprite']=path
+            with self.subTest(path=path),self.assertRaises(ValueError):b.normalize(value,root_unit_id=90001)
+
     def test_exact_baseline_hash_uses_native_arithmetic(self):
         self.assertEqual(1090352029,b.native_material_hash([13003,16002,15004]))
         with self.assertRaisesRegex(ValueError,'INT'):b.native_material_hash([46341])
