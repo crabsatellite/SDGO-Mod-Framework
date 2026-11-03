@@ -92,6 +92,8 @@ using DeleteFn=void(__cdecl*)(void*);
 DispatchFn g_dispatch=nullptr;
 RayFn g_ray=nullptr;
 FindObjectFn g_findObject=nullptr;
+using SelectWeaponFn=void(__thiscall*)(uint8_t*,int,char,char,char);
+SelectWeaponFn g_selectWeapon=nullptr;
 IntentFn g_intent=nullptr;
 IntentFn g_stop=nullptr;
 SetIntentFn g_setIntent=nullptr;
@@ -1081,6 +1083,13 @@ bool RequestNativeWeapon(uint8_t* unit,int slot) {
         *reinterpret_cast<uint16_t*>(message)=0x48;message[0x10]=static_cast<uint8_t>(slot);
         using Receive=void(__thiscall*)(uint8_t*,const uint8_t*);
         reinterpret_cast<Receive>(table[7])(unit,message);
+        // The NPC message changes only its input hint. On a free native
+        // controller, submit the same non-forced weapon-selection transaction
+        // used by the ordinary input consumer (AttackFSM virtual +94). It owns
+        // ammo admission, model binding and notifications; no slot is written
+        // here. Active attacks, capture and get-up retain their native owner.
+        if(fsm&&battle_ai::native::detail::Neutral(fsm)&&!ControlBlocked(unit))
+            g_selectWeapon(fsm,slot,0,1,0);
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
@@ -2398,7 +2407,7 @@ SDGO_MOD_ENTRY {
         !Bind(g_lua.settable,"lua.settable") || !Bind(g_lua.newtable,"lua.newtable") ||
         !Bind(g_lua.pcall,"lua.pcall") || !Bind(g_lua.load,"lua.load") ||
         !Bind(g_document,"game.document") || !Bind(g_findObject,"um.find_object") || !Bind(g_route,"navigation.route") ||
-        !Bind(g_setIntent,"npc.set_attack_intent") || !Bind(g_stop,"npc.move_stop") ||
+        !Bind(g_setIntent,"npc.set_attack_intent") || !Bind(g_selectWeapon,"combat.select_weapon") || !Bind(g_stop,"npc.move_stop") ||
         !Bind(g_setGoal,"npc.set_move_goal") || !Bind(g_delete,"crt.operator_delete") ||
         !Bind(g_navigation.query,"collision.query") || !Bind(g_navigation.segmentAabb,"collision.segment_aabb") ||
         !Bind(g_navigation.terrainRay,"collision.terrain_ray") || !Bind(g_navigation.rayObb,"collision.ray_obb") ||
