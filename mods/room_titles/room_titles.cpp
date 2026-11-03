@@ -336,7 +336,7 @@ int __fastcall TeamSettings(void* self, void*, void* root, uint32_t event,
             g_drafts.erase(draft);
         return result;
     } catch (const std::bad_alloc&) {
-        Explain(L"There is not enough memory to submit the room title. Your text was not truncated.");
+        ExplainFixed(L"There is not enough memory to submit the room title. Your text was not truncated.");
         return 0;
     }
 }
@@ -359,7 +359,7 @@ int __fastcall TitleEvent(void* self, void*, void* event)
         bool restoreCache = false;
         std::wstring nativeCache;
         if (!ui::ReadTitleBarCachedTitle(self, &nativeCache)) {
-            Explain(L"The room title is still updating. Your text was kept; reopen the title editor to retry.");
+            ExplainFixed(L"The room title is still updating. Your text was kept; reopen the title editor to retry.");
             return 1;
         }
         {
@@ -399,7 +399,7 @@ int __fastcall TitleEvent(void* self, void*, void* event)
         // this local comparison cache forces the original nonempty command to
         // queue even when the requested value equals the restored cache.
         if (restoreCache && !ui::SetTitleBarCachedTitle(self, confirmed == title ? L"" : confirmed)) {
-            Explain(L"The room-title control could not queue the change. Your text was kept; reopen the title editor to retry.");
+            ExplainFixed(L"The room-title control could not queue the change. Your text was kept; reopen the title editor to retry.");
             return 1;
         }
         const int result = g_titleEvent(self, event);
