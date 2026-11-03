@@ -142,6 +142,9 @@ sdgo_add_mod(unit_catalog DESCRIPTION "confirmed unit family content"
 
 sdgo_add_mod(shop_labels DESCRIPTION "shop rental and Unicode labels" SOURCES mods/shop_labels/shop_labels.cpp FILES display.example.ini)
 sdgo_add_mod(shop_localization DESCRIPTION "Chinese shop localization" SOURCES mods/shop_localization/shop_localization.cpp mods/shop_localization/shop_search.cpp FILES zh-CN.ini symbols.fragment.ini LIBS user32)
+sdgo_add_mod(shop_art_localization DESCRIPTION "Chinese labels over verified shop artwork"
+             SOURCES mods/shop_art_localization/shop_art_localization.cpp mods/shop_art_localization/native_ui.cpp
+             FILES symbols.fragment.ini LIBS user32)
 add_library(shop_catalog_engine STATIC mods/shop_catalog/catalog_runtime.cpp)
 target_include_directories(shop_catalog_engine PUBLIC mods/shop_catalog)
 target_link_libraries(shop_catalog_engine PUBLIC odbc32 bcrypt)
@@ -810,6 +813,13 @@ if(BUILD_TESTING)
     sdgo_strict(shop_labels_test)
     add_dependencies(shop_labels_test shop_labels)
     add_test(NAME shop_labels_dll_contract COMMAND shop_labels_test "$<TARGET_FILE:shop_labels>" "${CMAKE_BINARY_DIR}/shop_labels_test_data")
+    add_executable(shop_art_localization_ui_test tests/shop_art_localization_ui_test.cpp
+                   mods/shop_art_localization/native_ui.cpp)
+    target_include_directories(shop_art_localization_ui_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(shop_art_localization_ui_test PRIVATE sdgo_api user32)
+    sdgo_strict(shop_art_localization_ui_test)
+    target_compile_options(shop_art_localization_ui_test PRIVATE /UNDEBUG)
+    add_test(NAME shop_art_localization_ui_offline COMMAND shop_art_localization_ui_test)
     add_executable(shop_catalog_mod_test tests/shop_catalog_mod_test.cpp)
     target_link_libraries(shop_catalog_mod_test PRIVATE sdgo_api)
     sdgo_strict(shop_catalog_mod_test)
