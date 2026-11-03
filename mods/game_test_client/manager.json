@@ -31,6 +31,74 @@
       "section": "settings",
       "audience": "developer",
       "activation": "restart_required"
+    },
+    {
+      "id": "battleaibehavior",
+      "key": "BattleAiBehavior",
+      "label": "AI 行为原生观察",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "battleaideaths",
+      "key": "BattleAiDeaths",
+      "label": "AI 击杀与地图伤害观察",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "battleaiteleport",
+      "key": "BattleAiTeleport",
+      "label": "AI 原生传送回归",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "battleplayercombat",
+      "key": "BattlePlayerCombat",
+      "label": "玩家原生移动与射击回归",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "battleplayercombatcontinuous",
+      "key": "BattlePlayerCombatContinuous",
+      "label": "玩家持续射击回归",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "battlemap",
+      "key": "BattleMap",
+      "label": "测试地图编号（0 随机）",
+      "type": "integer",
+      "default": 0,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required",
+      "minimum": 0,
+      "maximum": 65535
     }
   ],
   "presentation": "configurable",
