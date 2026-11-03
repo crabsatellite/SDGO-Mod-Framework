@@ -16,7 +16,7 @@ using PopulateFn = void(__thiscall*)(uint8_t*);
 using TooltipFn = void(__thiscall*)(uint8_t*, const Option*, int);
 using ConvertFn = const wchar_t*(__cdecl*)(UINT, const char*);
 using GridDataFn = void*(__cdecl*)();
-using GridFindFn = int(__thiscall*)(void*, void**, int, int, char);
+using GridFindFn = uint8_t(__thiscall*)(void*, void**, int, int, char);
 
 const SdgoApi* g_api = nullptr;
 SdgoMod* g_mod = nullptr;
