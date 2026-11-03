@@ -1565,9 +1565,13 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                          play_unit_uid: int | None = None,
                          mission_mode: int | None = None,
                          shop_catalog: bool = False, friends_only: bool = False, room_titles_only: bool = False,
-                         room_style_preview: str | None = None) -> tuple[str, ...]:
+                         room_style_preview: str | None = None,
+                         same_room_rematch: bool = False) -> tuple[str, ...]:
     mission_mode = validate_mission_mode(mission_mode)
     play_unit_uid = validate_play_unit_uid(play_unit_uid)
+    if type(same_room_rematch) is not bool:raise GameTestError('same_room_rematch must be a boolean')
+    if same_room_rematch and (mission_mode is not None or any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,friends_only,collection_draw,shop_catalog,room_titles_only,room_style_preview))):
+        raise GameTestError('same-room rematch requires a complete native PvP scenario')
     if sum((bool(bootstrap_only),bool(battleship_only),bool(gift_requests_only),bool(deck_only),bool(pages_only),bool(friends_only),bool(room_titles_only))) > 1:
         raise GameTestError('choose only one account preparation operation')
     if friends_only:
@@ -1616,6 +1620,13 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         prefix += ('flow.battleship',)
     if battleship_only:
         return prefix
+    if same_room_rematch:
+        cases=[]
+        for mode in modes:
+            name='pvp' if len(modes)==1 else f'pvp.mode{mode}'
+            cases.extend(f'{name}.{step}' for step in ('room','start','ai_spawn','waiting'))
+            cases.extend(f'{name}.rematch.{step}' for step in MODE_FLOW_STEPS)
+        return prefix+tuple(cases)
     if len(modes) == 1:
         return prefix + FLOW_CASES[3:]
     return prefix + tuple(
@@ -1634,7 +1645,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
             "ai_layout",
             "bootstrap_only",
             "battleship_only", "gift_requests_only", "deck_only",
-            "pages_only", "friends_only", "room_titles_only", "collection_draw", "random_loadout",
+            "pages_only", "friends_only", "room_titles_only", "collection_draw", "random_loadout", "same_room_rematch",
             *SHOP_PLAN_FIELDS,
         }
         if forbidden.intersection(plan):
@@ -1665,6 +1676,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         plan.get("play_unit_uid"),
         plan.get("mission_mode"),
         shop_catalog,
+        same_room_rematch=plan.get("same_room_rematch",False),
         friends_only=plan.get("friends_only",False),
         room_titles_only=plan.get("room_titles_only",False),
         room_style_preview=plan.get("room_style_preview"),
@@ -1697,6 +1709,27 @@ def account_profile_lock_path(path: Path) -> Path:
     return path.with_name(path.name + ".run.lock")
 
 
+def ai_room_command(expected_ai: int, allies: int, policy: str | None = None, teams: str | None = None) -> str:
+    if teams not in (None,'coop','versus'):
+        raise GameTestError('AI human team policy must be coop or versus')
+    if teams=='coop':
+        if policy=='enemy':
+            ai_room_command(expected_ai,allies,policy)
+            return '!ai coop'
+        if policy=='fill':
+            ai_room_command(expected_ai,allies,policy)
+            return '!ai coop fill'
+        if policy is None:
+            return f'!ai{expected_ai-allies} coop'+(f' a{allies}' if allies else '')
+    if policy is None:return f'!ai e{expected_ai-allies} a{allies}'
+    if policy not in ('fill','enemy'):
+        raise GameTestError('AI population policy must be fill or enemy')
+    expected_allies=3 if policy=='fill' else 0
+    if expected_ai!=7 or allies!=expected_allies:
+        raise GameTestError('automatic AI policies require seven bots with three allies for fill or zero for enemy in the single-host eight-player room')
+    return '!ai '+policy
+
+
 def make_plan(
     target_host: str,
     login_port: int,
@@ -1709,6 +1742,10 @@ def make_plan(
     launcher_path: str | None,
     play_unit_uid: int | None = None,
     mission_mode: int | None = None,
+    ai_allies: int | None = None,
+    random_teams: bool = False,
+    ai_policy: str | None = None,
+    ai_teams: str | None = None,
     ai_pool_level: int | None = None,
     ai_difficulty: str | None = None,
     ai_layout: str | None = None,
@@ -1724,8 +1761,13 @@ def make_plan(
     ai_layout = validate_ai_layout(ai_layout)
     if ai_pool_level is not None and ai_difficulty is not None:
         raise GameTestError("ai_pool_level and ai_difficulty cannot be combined")
+    if any(value is not None for value in (ai_pool_level,ai_difficulty,ai_layout)) and (
+            ai_allies is not None or random_teams or ai_policy is not None or ai_teams is not None):
+        raise GameTestError('AI preset controls cannot be combined with custom population controls')
     mission_mode = validate_mission_mode(mission_mode)
     if mission_mode is not None:
+        if ai_allies is not None or random_teams or ai_policy is not None or ai_teams is not None:
+            raise GameTestError('custom PvP AI teams cannot be used in a mission smoke plan')
         if ai_pool_level is not None or ai_difficulty is not None or ai_layout is not None:
             raise GameTestError("AI pool and difficulty controls are available only for ordinary PvP")
         if mode_sequence != "1":
@@ -1744,8 +1786,8 @@ def make_plan(
             or ai_pool_level is not None
         ):
             raise GameTestError("ai_layout=allied requires ai_difficulty=Hard and expected_ai=6")
-        if ai_difficulty is not None and ai_layout is None and expected_ai != 5:
-            raise GameTestError("ai_difficulty requires expected_ai=5")
+        if ai_difficulty is not None and ai_layout is None and expected_ai != 7:
+            raise GameTestError("ai_difficulty requires expected_ai=7")
         modes = parse_mode_sequence(mode_sequence)
     title_nonce = "gt" + secrets.token_hex(2)
     plan = {
@@ -1777,18 +1819,23 @@ def make_plan(
     else:
         enemies = (expected_ai + 1) // 2
         allies = expected_ai - enemies
+        if ai_allies is not None:
+            if type(ai_allies) is not int or not 0<=ai_allies<expected_ai:
+                raise GameTestError('ai_allies must leave at least one enemy in the single-host PvP scenario')
+            allies=ai_allies;enemies=expected_ai-ai_allies
+            plan['ai_allies']=allies
+        if type(random_teams) is not bool:raise GameTestError('random_teams must be a boolean')
+        if random_teams:plan['random_teams']=True
+        command=ai_room_command(expected_ai,allies,ai_policy,ai_teams)
+        if ai_layout=='allied':command='!ai1 a5 hard'
+        elif ai_pool_level is not None:command=f'!ai1 lv{ai_pool_level}'
+        elif ai_difficulty is not None:command=f'!ai {ai_difficulty.lower()}'
+        if ai_policy is not None:plan['ai_policy']=ai_policy
+        if ai_teams is not None:plan['ai_teams']=ai_teams
         plan.update({
             "mode_sequence": ",".join(str(mode) for mode in modes),
             "expected_ai": expected_ai,
-            "room_title": (
-                f"{title_nonce} !ai1 a6 hard"
-                if ai_layout == "allied"
-                else f"{title_nonce} !ai1 lv{ai_pool_level}"
-                if ai_pool_level is not None
-                else f"{title_nonce} !ai {ai_difficulty.lower()}"
-                if ai_difficulty is not None
-                else f"{title_nonce} !ai e{enemies} a{allies}"
-            ),
+            "room_title": f"{title_nonce} {command}",
         })
         if ai_pool_level is not None:
             plan["ai_pool_level"] = ai_pool_level
@@ -1927,6 +1974,10 @@ def write_job(
     else:
         run["run"]["mode_sequence"] = plan["mode_sequence"]
         run["run"]["expected_ai"] = str(plan["expected_ai"])
+        if 'ai_allies' in plan:run['run']['ai_allies']=str(plan['ai_allies'])
+        if plan.get('random_teams'):run['run']['random_teams']='1'
+        if 'ai_policy' in plan:run['run']['ai_policy']=plan['ai_policy']
+        if 'ai_teams' in plan:run['run']['ai_teams']=plan['ai_teams']
         if "ai_pool_level" in plan:
             run["run"]["ai_pool_level"] = str(plan["ai_pool_level"])
         if "ai_difficulty" in plan:
@@ -1938,7 +1989,7 @@ def write_job(
     if all(field in plan for field in SHOP_PLAN_FIELDS):
         for field in SHOP_PLAN_FIELDS:
             run['run'][field] = str(plan[field])
-    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only', 'friends_only','room_titles_only','collection_draw','random_loadout'):
+    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','friends_only','room_titles_only','collection_draw','random_loadout','same_room_rematch'):
         if plan.get(flag):run['run'][flag] = '1'
     if 'room_style_preview' in plan:
         run['run']['room_style_preview'] = plan['room_style_preview']
@@ -1997,9 +2048,10 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
         if mission_plan and room_style_preview is not None:
             raise ValueError('room-style preview cannot be a mission combat plan')
         collection_draw = run.get('collection_draw', '0') == '1'
+        same_room_rematch = run.get('same_room_rematch','0')=='1'
         preparation_fields = (
             'bootstrap_only', 'battleship_only', 'gift_requests_only',
-            'deck_only', 'pages_only', 'friends_only', 'room_titles_only', 'collection_draw', 'random_loadout',
+            'deck_only', 'pages_only', 'friends_only', 'room_titles_only', 'collection_draw', 'random_loadout', 'same_room_rematch',
         )
         if any(run.get(flag, '0') not in ('0', '1') for flag in preparation_fields):
             raise ValueError('invalid preparation flag')
@@ -2145,7 +2197,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                     raise ValueError('ai_difficulty must use its canonical name')
                 if ai_pool_level is not None:
                     raise ValueError('ai_difficulty cannot be combined with ai_pool_level')
-                required_ai_count = '6' if ai_layout == 'allied' else '5'
+                required_ai_count = '6' if ai_layout == 'allied' else '7'
                 if run['expected_ai'] != required_ai_count:
                     raise ValueError(
                         f'ai_difficulty requires exactly {required_ai_count} AI'
@@ -2157,7 +2209,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 if not re.fullmatch(r'gt[0-9a-f]{4}', nonce):
                     raise ValueError('invalid AI difficulty title nonce')
                 suffix = (
-                    ' !ai1 a6 hard'
+                    ' !ai1 a5 hard'
                     if ai_layout == 'allied'
                     else f' !ai {ai_difficulty.lower()}'
                 )
@@ -2182,6 +2234,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 gift_requests_only, deck_only, pages_only, collection_draw,
                 play_unit_uid, shop_catalog=shop_plan is not None,friends_only=friends_only, room_titles_only=room_titles_only,
                 room_style_preview=room_style_preview,
+                same_room_rematch=same_room_rematch,
             )
 
         if historical_cases:
@@ -2240,6 +2293,21 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
         else:
             plan['mode_sequence'] = mode_sequence
             plan['expected_ai'] = int(run['expected_ai'])
+            if 'ai_allies' in run:
+                allies=int(run['ai_allies'])
+                if not 0<=allies<plan['expected_ai']:raise ValueError('invalid custom AI ally count')
+                plan['ai_allies']=allies
+            if 'random_teams' in run:
+                if run['random_teams']!='1':raise ValueError('invalid native random-team flag')
+                plan['random_teams']=True
+            if 'ai_policy' in run or 'ai_teams' in run:
+                policy=run.get('ai_policy')
+                teams=run.get('ai_teams')
+                command=ai_room_command(plan['expected_ai'],plan.get('ai_allies',plan['expected_ai']//2),policy,teams)
+                suffix=' !rand' if run.get('random_loadout')=='1' else ''
+                if not run['room_title'].endswith(' '+command+suffix):raise ValueError('automatic AI policy differs from the sealed room command')
+                if policy is not None:plan['ai_policy']=policy
+                if teams is not None:plan['ai_teams']=teams
             if ai_pool_level is not None:
                 plan['ai_pool_level'] = ai_pool_level
             if ai_difficulty is not None:
@@ -2261,6 +2329,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             ('friends_only',friends_only),
             ('room_titles_only',room_titles_only),
             ('collection_draw', collection_draw),
+            ('same_room_rematch', same_room_rematch),
         ):
             if value:
                 plan[flag] = True
@@ -2273,10 +2342,11 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                     raise ValueError('random scenario requires PvP')
                 nonce = run['title_nonce']
                 expected_ai = int(run["expected_ai"])
+                allies=plan.get('ai_allies',expected_ai//2)
                 if (
                     not re.fullmatch(r'[0-9a-f]{4}', nonce)
                     or run['room_title'] !=
-                    f'{nonce} !ai e{(expected_ai + 1) // 2} a{expected_ai // 2} !rand'
+                    f"{nonce} {ai_room_command(expected_ai,allies,plan.get('ai_policy'),plan.get('ai_teams'))} !rand"
                 ):
                     raise ValueError('random native room command differs')
                 plan['random_loadout'] = True
@@ -2521,6 +2591,10 @@ def prepare(
     retry_count: int | None = None,
     expect_first_fail: bool | None = None,
     expected_ai: int = 3,
+    ai_allies: int | None = None,
+    random_teams: bool = False,
+    ai_policy: str | None = None,
+    ai_teams: str | None = None,
     ai_pool_level: int | None = None,
     ai_difficulty: str | None = None,
     ai_layout: str | None = None,
@@ -2542,6 +2616,7 @@ def prepare(
     shop_assertions: Path | None = None,
     shop_display: Path | None = None,
     random_loadout: bool = False,
+    same_room_rematch: bool = False,
     network_policy: str = 'direct',
     route_profile: Path | None = None,
     quiet: bool = True,
@@ -2550,11 +2625,19 @@ def prepare(
     apsalus_roundtrip: bool = False,
     fps_gameplay_cap: int | None = None,
     server_session: dict | None = None,
+    rebind_existing_account: bool = False,
     fps_cap: int | None = None,
     fps_mod_enabled: bool = True,
     _owned_client_transfer: tuple[Path, str] | None = None,
 ) -> dict:
     client_template = client_template.resolve()
+    if type(same_room_rematch) is not bool or (same_room_rematch and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,random_loadout)))):
+        raise GameTestError('same-room rematch requires complete PvP without random loadout or preparation-only scopes')
+    if rebind_existing_account:
+        raise GameTestError('existing-account rebinding requires --reuse-client')
+    if (ai_allies is not None or random_teams or ai_policy is not None or ai_teams is not None) and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,
+            battleship_only,gift_requests_only,deck_only,pages_only))):
+        raise GameTestError('custom AI team counts require a complete native PvP battle')
     ai_pool_level = validate_ai_pool_level(ai_pool_level)
     ai_difficulty = validate_ai_difficulty(ai_difficulty)
     ai_layout = validate_ai_layout(ai_layout)
@@ -2650,8 +2733,8 @@ def prepare(
             )):
                 raise GameTestError('--ai-layout allied requires an ordinary PvP scenario')
         if ai_difficulty is not None:
-            if ai_layout is None and expected_ai != 5:
-                raise GameTestError('--ai-difficulty requires --expected-ai 5')
+            if ai_layout is None and expected_ai != 7:
+                raise GameTestError('--ai-difficulty requires --expected-ai 7')
             if mission_mode is not None or any((
                 bootstrap_only, battleship_only, gift_requests_only, deck_only,
                 pages_only, collection_draw, random_loadout, room_titles_only, room_style_preview is not None,
@@ -2763,6 +2846,10 @@ def prepare(
             launcher_path,
             play_unit_uid,
             mission_mode,
+            ai_allies,
+            random_teams,
+            ai_policy,
+            ai_teams,
             ai_pool_level,
             ai_difficulty,
             ai_layout,
@@ -2790,8 +2877,12 @@ def prepare(
             # UUID still owns all receipts; this four-hex nonce has the same
             # sixteen random bits as the ordinary gt-prefixed nonce.
             plan['title_nonce']=secrets.token_hex(2)
-            plan['room_title']=f"{plan['title_nonce']} !ai e{(expected_ai+1)//2} a{expected_ai//2} !rand"
+            allies=plan.get('ai_allies',expected_ai//2)
+            plan['room_title']=f"{plan['title_nonce']} {ai_room_command(expected_ai,allies,plan.get('ai_policy'),plan.get('ai_teams'))} !rand"
             plan['random_loadout']=True
+        if same_room_rematch:plan['same_room_rematch']=True
+        if len(plan['room_title'].encode('utf-8'))>20:
+            raise GameTestError('Native GameTest room title exceeds twenty bytes; use a shorter rule or separate scenarios')
         plan['network_policy']=network_policy
         if route_binding is not None:
             plan.update(route_binding)
@@ -2956,6 +3047,9 @@ def recycle_owned_artifact(path: Path, owner_root: Path) -> None:
 
 def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options) -> dict:
     """Move one stopped owned client into a fresh capsule, keeping its file IDs."""
+    rebind_existing_account=options.pop('rebind_existing_account',False)
+    if type(rebind_existing_account) is not bool:
+        raise GameTestError('existing-account rebind flag must be boolean')
     raw=run_dir.absolute()
     if raw.is_symlink() or (hasattr(raw,'is_junction') and raw.is_junction()):
         raise GameTestError('client reuse rejects linked run directories')
@@ -2995,26 +3089,38 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
         value=row.get('image_path')
         if (value and is_relative_to(Path(value).resolve(),run_dir)) or (row['pid']==previous_pid and not value):
             raise GameTestError('the owned client may still be running; reuse made no changes')
-    account_lock_path=None
+    account_lock_path=None;target_account_lock_path=None;account_rebound=False
     if fps_only:
         if options.get('account_profile') is not None:
             raise GameTestError('account-free FPS reuse does not accept an account profile')
+        if rebind_existing_account:
+            raise GameTestError('account-free FPS reuse cannot rebind an account')
     else:
         account_lock_path=validate_private_account(Path(previous['client']['root']),previous['plan'])
         profile=account_lock_path.with_name(account_lock_path.name.removesuffix('.run.lock'))
-        if options.get('account_profile') and Path(options['account_profile']).resolve()!=profile:
-            raise GameTestError('reuse keeps the same persistent account profile')
+        requested=Path(options.get('account_profile') or profile).expanduser().resolve()
+        if requested!=profile:
+            if not rebind_existing_account:
+                raise GameTestError('reuse keeps the same persistent account profile; explicit existing-account rebinding is required')
+            candidate=load_account_profile(requested)
+            if (candidate.get('registration','state',fallback='') not in MISSION_EXISTING_ACCOUNT_STATES or
+                    options.get('retry_count') not in (None,1) or options.get('expect_first_fail')):
+                raise GameTestError('rebinding requires an already registered account without registration retries')
+            profile=requested;account_rebound=True
+            target_account_lock_path=account_profile_lock_path(profile)
+        elif rebind_existing_account and options.get('account_profile') is None:
+            raise GameTestError('existing-account rebinding requires an explicit account profile')
         options['account_profile']=profile
     if previous.get('assets') and options.get('asset_baseline') is None:
         options['asset_baseline']=Path(previous['assets']['baseline'])
     archive=owned/'gametest-current';archive.mkdir(exist_ok=True)
     if archive.is_symlink() or (hasattr(archive,'is_junction') and archive.is_junction()):
         raise GameTestError('client reuse rejects a linked receipt archive')
-    lock,token=acquire_lock(run_dir);account_lock=None;account_token=None
+    lock,token=acquire_lock(run_dir);account_locks=[]
     holding=run_dir.parent/('.gametest-reusing-'+uuid.uuid4().hex)
     try:
-        if account_lock_path is not None:
-            account_lock,account_token=acquire_exclusive_lock(account_lock_path,'persistent account')
+        for path in sorted({p for p in (account_lock_path,target_account_lock_path) if p is not None},key=lambda p:str(p).casefold()):
+            account_locks.append(acquire_exclusive_lock(path,'persistent account'))
         prior={'run_id':previous['run_id'],'source':previous.get('source'),'plan':previous['plan'],
                'immutable_hashes':previous['client']['immutable_hashes'],'execution':previous.get('execution')}
         prior['required_cases']=read_ini(client_root/'sdgo/gametest/run.ini')['run']['required_cases'].split(',')
@@ -3043,6 +3149,7 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
         metadata=prepare(client_template,stage,run_dir,
                          _owned_client_transfer=(holding,token),**options)
         metadata['reuse']={'previous_run_id':previous['run_id'],'mode':'move_owned_client_no_copy'}
+        if account_rebound:metadata['reuse']['rebound_existing_account']=True
         atomic_write(run_dir/'run.json',json.dumps(metadata,indent=2,sort_keys=True))
         recycle_owned_artifact(holding,owned)
         return metadata
@@ -3056,7 +3163,7 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
         raise
     finally:
         release_owned_lock(run_dir/lock.name,token)
-        if account_lock is not None:release_owned_lock(account_lock,account_token)
+        for account_lock,account_token in reversed(account_locks):release_owned_lock(account_lock,account_token)
 
 
 def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
@@ -4092,6 +4199,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     prepare_parser.add_argument("--retry-count", type=int, choices=(1, 2))
     prepare_parser.add_argument("--expected-ai", type=int, default=3)
+    prepare_parser.add_argument('--ai-allies',type=int,help='exact allied AI count for the single host; remaining --expected-ai are enemies')
+    prepare_parser.add_argument('--random-teams',action='store_true',help='request original native random human teams before AI placement')
+    prepare_parser.add_argument('--ai-policy',choices=('fill','enemy'),help='exercise an automatic population command; requires --expected-ai 7 and matching --ai-allies')
+    prepare_parser.add_argument('--ai-teams',choices=('coop','versus'),help='exercise cooperative human grouping or preserve native room teams independently of AI counts')
+    prepare_parser.add_argument('--same-room-rematch',action='store_true',help='finish a battle, retain the same native room and human host, and start a second full battle before leaving')
     prepare_parser.add_argument(
         "--ai-pool-level",
         type=int,
@@ -4100,7 +4212,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument(
         "--ai-difficulty",
         choices=("Easy", "Medium", "Hard"),
-        help="for ordinary five-AI PvP, select the native room AI difficulty",
+        help="for ordinary seven-AI PvP, select the native room AI difficulty",
     )
     prepare_parser.add_argument(
         "--ai-layout",
@@ -4133,6 +4245,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--visible',action='store_true',help='explicit developer opt-in to a visible client; default tests use an isolated desktop and muted audio')
     prepare_parser.add_argument('--asset-baseline',type=Path,help='reuse verified read-only native archives from a passed owned build run; never links original player files')
     prepare_parser.add_argument('--reuse-client',action='store_true',help='reuse the stopped owned run-dir client in place with a fresh run UUID and compact prior receipt; no full client copy')
+    prepare_parser.add_argument('--rebind-existing-account',action='store_true',help='with --reuse-client and --account-profile, switch the stopped client to another already registered account')
     prepare_parser.add_argument('--include-mod',action='append',default=[],help='explicit staged client Mod to install before runtime hashes freeze')
     prepare_parser.add_argument('--fps-gameplay-cap',type=int,help='verify native 60 Hz gameplay and the selected render cap during a full PvP battle')
     prepare_parser.add_argument(
@@ -4198,6 +4311,12 @@ def main(argv: list[str] | None = None) -> int:
                 retry_count=args.retry_count,
                 expect_first_fail=args.expect_first_fail,
                 expected_ai=args.expected_ai,
+                rebind_existing_account=args.rebind_existing_account,
+                ai_allies=args.ai_allies,
+                random_teams=args.random_teams,
+                ai_policy=args.ai_policy,
+                ai_teams=args.ai_teams,
+                same_room_rematch=args.same_room_rematch,
                 ai_pool_level=args.ai_pool_level,
                 ai_difficulty=args.ai_difficulty,
                 ai_layout=args.ai_layout,

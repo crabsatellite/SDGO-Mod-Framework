@@ -29,12 +29,25 @@ def integer(value, name, minimum=0):
     return value
 
 
-def participants(event, pilot, expected_ai, setup, layout=None):
+def human_roster(pilot, expected_humans=None):
+    roster=[pilot] if expected_humans is None else expected_humans
+    if not isinstance(roster,(list,tuple)) or not 1<=len(roster)<=8:
+        raise ValueError('invalid expected human roster')
+    if any(type(who) is not int or not 0<who<0x80000000 for who in roster):
+        raise ValueError('invalid expected human pilot')
+    if len(set(roster))!=len(roster) or pilot not in roster:
+        raise ValueError('expected human roster must uniquely include the host')
+    return set(roster)
+
+
+def participants(event, pilot, expected_ai, setup,expected_allies=None,expected_humans=None,cooperative=False,layout=None):
+    expected=human_roster(pilot,expected_humans)
+    if len(expected)+expected_ai>8:raise ValueError('expected participants exceed native test room capacity')
     if layout not in (None,'allied') or (layout=='allied' and expected_ai!=6):
         raise ValueError('invalid sealed AI layout')
     slots=event.get('slots')
     if not isinstance(slots,list):raise ValueError('missing native participant slots')
-    ids=set(); seats=set(); humans=0; bots=0; teams={1:[0,0],2:[0,0]}
+    ids=set(); seats=set(); humans=set(); bots=0; teams={1:[0,0],2:[0,0]}
     for slot in slots:
         who=integer(slot.get('pilot_id'),'participant pilot',1)
         seat=integer(slot.get('slot'),'participant slot')
@@ -42,22 +55,25 @@ def participants(event, pilot, expected_ai, setup, layout=None):
         if who in ids or seat in seats or seat>=12 or team not in teams:
             raise ValueError('ambiguous native participant identity')
         if type(slot.get('is_ai')) is not bool:raise ValueError('invalid native AI flag')
+        if who>0xFFFFFFFF or bool(who&0x80000000)!=slot['is_ai']:
+            raise ValueError('native AI flag disagrees with pilot identity')
         integer(slot.get('unit_or_npc_id'),'participant unit',1)
         ids.add(who);seats.add(seat)
         if slot['is_ai']:bots+=1;teams[team][1]+=1
         else:
-            if who!=pilot:raise ValueError('unexpected human pilot in isolated battle')
-            humans+=1;teams[team][0]+=1
-    if humans!=1 or bots!=(expected_ai if setup else 0):raise ValueError('native participant counts disagree with plan')
+            if who not in expected:raise ValueError('unexpected human pilot in isolated battle')
+            humans.add(who);teams[team][0]+=1
+    if humans!=expected or bots!=(expected_ai if setup else 0):raise ValueError('native participant counts disagree with plan')
     if integer(event.get('active_slots'),'active slots')!=len(slots):raise ValueError('active-slot total mismatch')
     for team in (1,2):
         if integer(event.get(f'humans_team_{team}'),'human team count')!=teams[team][0] or integer(event.get(f'ai_team_{team}'),'AI team count')!=teams[team][1]:
             raise ValueError('native team totals disagree with slots')
+    own=next(s['team'] for s in slots if s['pilot_id']==pilot and not s['is_ai'])
+    if cooperative and any(s['team']!=own for s in slots if not s['is_ai']):
+        raise ValueError('cooperative humans did not follow the host team')
     if setup:
-        own=next(s['team'] for s in slots if not s['is_ai'])
-        allies=5 if layout=='allied' else expected_ai//2
-        enemies=1 if layout=='allied' else (expected_ai+1)//2
-        if teams[own][1]!=allies or teams[3-own][1]!=enemies:
+        allies=(5 if layout=='allied' else expected_ai//2) if expected_allies is None else expected_allies
+        if teams[own][1]!=allies or teams[3-own][1]!=expected_ai-allies:
             raise ValueError('native ally/enemy placement disagrees with plan')
     return ids
 
@@ -87,6 +103,8 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int) -> dict:
     server_nonce=session['nonce'] if session else plan['title_nonce']
     modes=game_test.parse_mode_sequence(plan['mode_sequence'])
     expected_ai=integer(plan['expected_ai'],'expected AI',1)
+    expected_humans=plan.get('human_pilot_ids')
+    human_roster(pilot,expected_humans)
     errors=[];battles=[];sources=[];seen_paths=set()
     for path in paths:
         path=path.resolve()
@@ -140,10 +158,16 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int) -> dict:
                 battle=current.get(cookie)
                 if not battle or battle['mode']!=mode or battle['phase']>=4 or STEPS[battle['phase']]!=name:
                     raise ValueError('native battle lifecycle is missing a step or out of order')
-                ids=participants(event,pilot,expected_ai,name!=STEPS[0],layout)
-                if name==STEPS[1]:battle['participant_ids']=sorted(ids)
+                ids=participants(event,pilot,expected_ai,name!=STEPS[0],plan.get('ai_allies'),
+                    expected_humans,plan.get('ai_teams')=='coop',layout=layout)
+                roles=sorted((s['pilot_id'],s['team'],s['is_ai']) for s in event['slots'])
+                if name==STEPS[1]:
+                    battle['participant_ids']=sorted(ids)
+                    battle['participant_roles']=roles
                 if name in STEPS[2:] and sorted(ids)!=battle['participant_ids']:
                     raise ValueError('native participants changed across the active battle')
+                if name in STEPS[2:] and roles!=battle['participant_roles']:
+                    raise ValueError('native participant teams changed across the active battle')
                 battle['events'].append(name);battle['phase']+=1
                 if name==STEPS[3]:
                     battle['qpc_end']=qpc
@@ -152,10 +176,12 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int) -> dict:
             errors.append(f'{path}: {error}')
     for mode in modes:
         matches=[b for b in battles if b['mode']==mode]
-        if len(matches)!=1 or matches[0]['phase']!=4:
-            errors.append(f'mode {mode} requires exactly one complete four-event native battle lifecycle')
+        expected=2 if plan.get('same_room_rematch') else 1
+        if len(matches)!=expected or any(b['phase']!=4 for b in matches):
+            errors.append(f'mode {mode} requires exactly {expected} complete four-event native battle lifecycle(s)')
     return {'schema':1,'run_id':run_id,'scope':'passive_native_server_lifecycle',
             'status':'fail' if errors else 'pass','expected_host_pilot_id':pilot,
+            'expected_human_pilot_ids':sorted(human_roster(pilot,expected_humans)),
             'required_modes':list(modes),'sources':sources,'battles':battles,'errors':errors}
 
 

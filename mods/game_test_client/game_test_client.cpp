@@ -168,7 +168,11 @@ bool endObserved = false;
 std::vector<uint16_t> requestedModes;
 size_t modeIndex = 0;
 unsigned expectedAi = 3;
-unsigned expectedAllies = 1, expectedEnemies = 2;
+unsigned expectedAllies=1,expectedEnemies=2;
+bool randomTeams=false;
+bool sameRoomRematch=false;
+unsigned sameRoomRound=0;
+uint32_t sameRoomId=0;
 uint16_t RequestedMode() { return missionMode?missionMode:requestedModes.at(modeIndex); }
 struct MotionSample {
     uint32_t pilot, object, npc;
@@ -312,9 +316,19 @@ bool LoadPlan() {
     if (strlen(narrowNonce) > 8) return false;
     expectedAi = GetPrivateProfileIntW(L"run", L"expected_ai", 3, job.c_str());
     if (expectedAi < 1 || expectedAi > 7) return false;
+    expectedAllies=GetPrivateProfileIntW(L"run",L"ai_allies",expectedAi/2,job.c_str());
+    if(expectedAllies>=expectedAi)return false;
+    expectedEnemies=expectedAi-expectedAllies;
+    const auto randomTeamFlag=GetPrivateProfileIntW(L"run",L"random_teams",0,job.c_str());
+    if(randomTeamFlag>1)return false;
+    randomTeams=randomTeamFlag==1;
     randomLoadout=GetPrivateProfileIntW(L"run",L"random_loadout",0,job.c_str())!=0;
+    const auto rematchFlag=GetPrivateProfileIntW(L"run",L"same_room_rematch",0,job.c_str());
+    if(rematchFlag>1)return false;
+    sameRoomRematch=rematchFlag==1;
+    if(sameRoomRematch && (missionMode || bootstrapOnly || battleshipOnly || giftRequestsOnly || deckOnly || pagesOnly || randomLoadout))return false;
     if(randomLoadout && strlen(narrowNonce)!=4)return false;
-    if(sprintf_s(roomTitle,randomLoadout?"%s !ai e%u a%u !rand":"%s !ai e%u a%u",narrowNonce,(expectedAi+1)/2,expectedAi/2)<0)return false;
+    if(sprintf_s(roomTitle,randomLoadout?"%s !ai e%u a%u !rand":"%s !ai e%u a%u",narrowNonce,expectedEnemies,expectedAllies)<0)return false;
     if(missionMode) {
         expectedAi=GetPrivateProfileIntW(L"run",L"mission_ai_count",0,job.c_str());
         const auto level=GetPrivateProfileIntW(L"run",L"mission_ai_level",0,job.c_str());
@@ -427,6 +441,18 @@ int __cdecl Bootstrap(const SdgoGameTestContextV1* context) {
 }
 int __cdecl Login(const SdgoGameTestContextV1* context) {
     const auto auth = actions.LoginState();
+    static uint64_t nextProgress=0;
+    if(!context->tick)nextProgress=0;
+    if(context->elapsed_ms>=nextProgress) {
+        const auto transport=actions.TransportState();
+        const auto progress=actions.OnboardingState();
+        char message[256];
+        sprintf_s(message,"native login progress app=%u service=%u auth=%u replies=%u pilot=%u pending=%u path=%u transport=%04X/%u/%u/%u",
+            auth.native_app_state,auth.native_login_state,auth.result,auth.reply_sequence,auth.profile_pilot_id,
+            progress.pending_login_event_count,progress.login_path_state,transport.opcode,transport.packet_size,
+            transport.send_sequence,transport.result);
+        context->Observe(message);nextProgress=context->elapsed_ms+3000;
+    }
     if (auth.reply_sequence != loginReplySeen) {
         loginReplySeen = auth.reply_sequence;
         char message[128];
@@ -465,6 +491,14 @@ bool Snapshot(SdgoPvpAiClientSnapshotV1& snapshot) {
     return getSnapshot && getSnapshot(&snapshot) != 0;
 }
 int __cdecl Room(const SdgoGameTestContextV1* context) {
+    if(sameRoomRematch && sameRoomRound==1) {
+        const auto waiting=rooms.NativeRoomState();
+        if((actions.AppState()!=18 && actions.AppState()!=20) || !waiting.model_present)return SDGO_GAME_TEST_WAIT;
+        const bool valid=sameRoomId && waiting.room_id==sameRoomId && waiting.room_mode==RequestedMode() &&
+            waiting.local_is_host && waiting.player_count==1;
+        context->Assert(valid,"the second battle reuses the exact settled native room with its sole real human host; no new create request");
+        return valid ? SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+    }
     static size_t roomPageBaselineMode=SIZE_MAX;
     static size_t hangarExitMode=SIZE_MAX;
     if(actions.AppState()==5) {
@@ -618,6 +652,7 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
         return SDGO_GAME_TEST_WAIT;
     context->Assert(freshRoom.room_id == nativeRoom.room_id && freshRoom.room_mode == RequestedMode(), "a new native room factory completion belongs to this create request and room model");
     context->Assert(nativeRoom.room_id != 0, "the server-created native room model supplied a room id");
+    if(sameRoomRematch)sameRoomId=nativeRoom.room_id;
     context->Assert(actions.OnboardingState().profile_pilot_id == authenticatedPilot, "the waiting room retains this run's authenticated pilot");
     context->Assert(nativeRoom.model_present && nativeRoom.local_is_host && nativeRoom.player_count >= 1 && nativeRoom.player_count <= 12,
                     "the normal native room model contains the authenticated host");
@@ -791,7 +826,7 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
     context->Assert(snapshot.human_participant_count == 1, "the real room contains the authenticated test player");
     context->Assert(snapshot.ai_participant_count == expectedAi && snapshot.bot_count == expectedAi, "all server-provided AI participants spawned as native units");
     context->Assert(snapshot.unit_manager_player_count == 1 + expectedAi, "native player and HUD count includes the real player and every AI unit");
-    context->Assert(snapshot.local_team >= 1 && snapshot.local_team <= 2 && allies == expectedAllies && enemies == expectedEnemies, "actual AI team placement matches the requested allies and enemies");
+    context->Assert(snapshot.local_team >= 1 && snapshot.local_team <= 2 && allies == expectedAllies && enemies == expectedEnemies, "actual AI team placement matches the requested allies and enemies relative to the authenticated host");
     std::set<uint32_t> pilotIds, objectIds;
     for (unsigned i = 0; i < snapshot.bot_count && i < 12; ++i) {
         const auto& bot = snapshot.bots[i];
@@ -901,6 +936,26 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
     if (!endObserved) return SDGO_GAME_TEST_WAIT;
     const auto state = actions.AppState();
     if (!leaveRequested && (state == 18 || state == 20)) {
+        const auto waiting=rooms.NativeRoomState();
+        if(!RoomActions::SettledRoomReady(waiting))return SDGO_GAME_TEST_WAIT;
+        char ownership[192];
+        sprintf_s(ownership,"settled room=%u host=%08X authenticated=%u players=%u mode=%u local_host=%u",
+            waiting.room_id,waiting.host_pilot_id,authenticatedPilot,waiting.player_count,
+            waiting.room_mode,waiting.local_is_host);
+        context->Observe(ownership);
+        context->Assert(waiting.local_is_host,
+            "after settlement the sole authenticated human remains room host; an AI MVP cannot receive room ownership");
+        if(!waiting.local_is_host)return SDGO_GAME_TEST_FAIL;
+        if(sameRoomRematch && sameRoomRound==0) {
+            const bool valid=waiting.room_id==sameRoomId && waiting.room_mode==RequestedMode() && waiting.player_count==1;
+            context->Assert(valid,"settlement returned to the same waiting room with only the real human; AI battle-only participants have left");
+            if(!valid)return SDGO_GAME_TEST_FAIL;
+            context->Observe("kept the settled native room open for a second real Start instead of leaving and recreating it");
+            sameRoomRound=1;
+            activeBattleStartSequence=0;
+            startRequested=leaveRequested=endObserved=false;
+            return SDGO_GAME_TEST_PASS;
+        }
         leaveSequence = rooms.LeaveState().reply_sequence;
         if (!rooms.Leave()) return SDGO_GAME_TEST_WAIT;
         leaveRequested = true;
@@ -927,6 +982,7 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
     }
     context->Assert(1, "the original client consumed the real leave-room reply and returned to its lobby");
     ++modeIndex;
+    sameRoomRound=0;sameRoomId=0;
     channels.Reset();
     activeBattleStartSequence = 0;
     roomRequested = startRequested = leaveRequested = endObserved = false;
@@ -1247,8 +1303,9 @@ int __cdecl ConfigureDeck(const SdgoGameTestContextV1* context) {
         const auto result=decks.ObserveExistingDeck(deckUnitUids,prepared);
         if (result==BattleShipDeckActions::kWaitingForShipData || result==BattleShipDeckActions::kWaitingForInventory)
             return SDGO_GAME_TEST_WAIT;
-        context->Assert(result==BattleShipDeckActions::kAccepted && prepared.profile_matches && prepared.selected_count==4,
-            "the server-loaded selected four-unit fleet matches the sealed fixture and every UID exists in this account's native inventory");
+        context->Assert(result==BattleShipDeckActions::kAccepted && prepared.profile_matches &&
+            prepared.selected_count>=1 && prepared.selected_count<=4 && prepared.total_cost<=10,
+            "the server-loaded selected fleet has one to four unique owned units within the native ten-point budget");
         char state[160];sprintf_s(state,"existing native fleet ship=%llu leader=%llu units=%u cost=%u; no acquisition or deck edit requested",
             prepared.ship_uid,prepared.leader_uid,prepared.selected_count,prepared.total_cost);context->Observe(state);
         return result==BattleShipDeckActions::kAccepted ? SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
@@ -1694,6 +1751,9 @@ int __cdecl SelectPlayUnit(const SdgoGameTestContextV1* context) {
             state.native_row_x_bits,state.native_row_y_bits,state.native_row_x_finite,state.native_row_y_finite,
             state.native_list_pressed_index,state.native_list_selected_index,state.unit_manager_page,state.native_target_occupied,state.native_row_selected_before,state.native_row_selected);
         context->Observe(graph);
+        char pager[192];sprintf_s(pager,"native unit page raw=%d max=%d group=%d maxgroup=%d target=%u",
+            state.unit_manager_page_raw,state.unit_manager_max_page_raw,state.unit_manager_page_group_raw,
+            state.unit_manager_max_page_group_raw,state.target_page);context->Observe(pager);
     }
     if(result>=UnitSelectActions::kInvalidTarget || result==UnitSelectActions::kUnbound){diagnosticFailure=true;failureAt=context->elapsed_ms;context->Observe("unit selection failure latched; ten-second read-only diagnostic pause with no more input/business calls");return SDGO_GAME_TEST_WAIT;}
     if(result==UnitSelectActions::kAlreadySelected) {
@@ -2208,8 +2268,8 @@ void RegisterPlannedCases() {
     }
     const bool needsShip = battleshipOnly || deckOnly || std::find(requestedModes.begin(),requestedModes.end(),6)!=requestedModes.end() ||
         std::find(requestedModes.begin(),requestedModes.end(),7)!=requestedModes.end();
-    if (requestedModes.size() == 1 && !needsShip && !giftRequestsOnly && !playUnitUid) return;
-    const size_t count = 4 + requestedModes.size() * 4;
+    if (requestedModes.size() == 1 && !needsShip && !giftRequestsOnly && !playUnitUid && !sameRoomRematch) return;
+    const size_t count = 4 + requestedModes.size() * (sameRoomRematch?8:4);
     caseNames.reserve(count); plannedCases.reserve(count);
     for (unsigned i = 0; i < 3; ++i) plannedCases.push_back(realCases[i]);
     if(playUnitUid)plannedCases.push_back(playUnitCase);
@@ -2219,13 +2279,17 @@ void RegisterPlannedCases() {
     if (deckOnly) plannedCases.push_back(deckCase);
     const char* suffixes[] = {"room", "start", "ai_spawn", "return"};
     if (!giftRequestsOnly && !battleshipOnly && !deckOnly) for (const auto mode : requestedModes) {
+      for(unsigned round=0;round<(sameRoomRematch?2u:1u);++round) {
         for (unsigned i = 0; i < 4; ++i) {
-            if (requestedModes.size()==1) { plannedCases.push_back(realCases[3+i]);continue; }
-            caseNames.push_back("pvp.mode" + std::to_string(mode) + "." + suffixes[i]);
+            if (requestedModes.size()==1 && !sameRoomRematch) { plannedCases.push_back(realCases[3+i]);continue; }
+            const std::string prefix=requestedModes.size()==1 ? "pvp":"pvp.mode"+std::to_string(mode);
+            const char* step=sameRoomRematch && !round && i==3 ? "waiting":suffixes[i];
+            caseNames.push_back(prefix+(round?".rematch.":".")+step);
             auto test = realCases[3 + i];
             test.id = caseNames.back().c_str();
             plannedCases.push_back(test);
         }
+      }
     }
     provider.count = static_cast<uint32_t>(plannedCases.size());
     provider.cases = plannedCases.data();
@@ -2242,12 +2306,13 @@ int WINAPI QuietMessageBoxW(HWND owner,LPCWSTR text,LPCWSTR caption,UINT type) {
     if (!verifyQuietRuntime)return originalMessageBoxW(owner,text,caption,type);
     char message[1024]="native Windows dialog during quiet test";
     if (text)WideCharToMultiByte(CP_UTF8,0,text,-1,message,sizeof(message),nullptr,nullptr);
-    PublishQuietSocketReceipt();
+    PublishQuietSocketReceipt(true);
     sdgo_test::Fail(message);
     return IDCANCEL;
 }
 int WINAPI QuietMessageBoxA(HWND owner,LPCSTR text,LPCSTR caption,UINT type) {
     if (!verifyQuietRuntime)return originalMessageBoxA(owner,text,caption,type);
+    PublishQuietSocketReceipt(true);
     sdgo_test::Fail(text ? text:"native Windows dialog during quiet test");
     return IDCANCEL;
 }
@@ -2263,7 +2328,9 @@ void PublishQuietSocketReceipt(bool force) {
     static uint64_t lastWritten=0;
     const auto now=GetTickCount64();
     if (!force && written && now-lastWritten<250 && observed.escaped==previous.escaped && audio.failed==previousAudio.failed &&
-        graphics.dispatch_failures==previousGraphics.dispatch_failures && !graphics.proxy_visible && !graphics.proxy_appwindow)return;
+        graphics.dispatch_failures==previousGraphics.dispatch_failures &&
+        graphics.dispatch_message_pumps==previousGraphics.dispatch_message_pumps &&
+        !graphics.proxy_visible && !graphics.proxy_appwindow)return;
     if (written && !memcmp(&previous,&observed,sizeof(observed)) && !memcmp(&previousAudio,&audio,sizeof(audio)) &&
         !memcmp(&previousGraphics,&graphics,sizeof(graphics)))return;
     const auto path=sdgo_test::directory+L"\\quiet-sockets.ini";
@@ -2286,7 +2353,10 @@ void PublishQuietSocketReceipt(bool force) {
         graphics.ime_disabled,graphics.last_requested_width,graphics.last_requested_height,graphics.last_client_width,graphics.last_client_height,
         graphics.last_resolved_width,graphics.last_resolved_height,graphics.last_actual_width,graphics.last_actual_height,
         static_cast<long>(graphics.last_backbuffer_hresult),graphics.cooperative_checks,static_cast<long>(graphics.last_cooperative_hresult));
-    fprintf(file,"named_desktop_fallback=%u\n",graphics.named_desktop_fallback);
+    fprintf(file,"named_desktop_fallback=%u\ndispatch_message_pumps=%u\n",
+        graphics.named_desktop_fallback,graphics.dispatch_message_pumps);
+    fprintf(file,"worker_messages=%u\nworker_last_message=%u\nworker_requests=%u\nworker_busy=%u\n",
+        graphics.worker_messages,graphics.worker_last_message,graphics.worker_requests,graphics.worker_busy);
     fprintf(file,"texture_calls=%u\ntexture_failures=%u\nrender_target_calls=%u\nrender_target_failures=%u\nrender_target_null=%u\nlast_rt_width=%u\nlast_rt_height=%u\nlast_rt_format=%u\nlast_rt_usage=%u\nlast_rt_hresult=%ld\nlast_rt_return_address=%lu\n",
         graphics.texture_calls,graphics.texture_failures,graphics.render_target_texture_calls,graphics.render_target_texture_failures,
         graphics.render_target_texture_null_results,graphics.last_render_target_width,graphics.last_render_target_height,
@@ -2441,7 +2511,7 @@ SDGO_MOD_ENTRY {
         roomTitle,
         static_cast<uint16_t>(loaded ? (missionMode?missionMode:RequestedMode()) : 1),
         static_cast<uint32_t>(battleMap),
-        passwordIsMd5};
+        passwordIsMd5,randomTeams};
     if (!loaded || !actions.Bind(api, mod, config) ||
         (!missionMode && !channels.Bind(api, mod, &actions)) ||
         ((missionMode || roomTitlesOnly) && !mission.Bind(api,mod,&actions)) ||

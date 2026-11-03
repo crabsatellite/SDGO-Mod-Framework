@@ -64,6 +64,13 @@ class ServerReportTests(unittest.TestCase):
         events[2],events[3]=events[3],events[2]
         self.assertEqual(self.evaluate(events)['status'],'fail')
 
+    def test_rematch_requires_two_complete_native_battles_instead_of_reusing_the_first_result(self):
+        self.metadata['plan']['same_room_rematch']=True
+        self.assertEqual(self.evaluate(self.stream())['status'],'fail')
+        complete=self.stream((1,1))
+        self.assertEqual(self.evaluate(complete)['status'],'pass')
+        self.assertEqual(self.evaluate(complete[:-1])['status'],'fail')
+
     def test_duplicate_battles_and_duplicate_native_sequences_fail(self):
         self.assertEqual(self.evaluate(self.stream((1,1)))['status'],'fail')
         events=self.stream();events[3]['sequence']=events[2]['sequence']
@@ -118,6 +125,66 @@ class ServerReportTests(unittest.TestCase):
         result=report.evaluate(self.metadata,[self.path,self.path],9229)
         self.assertEqual(result['status'],'pass')
         self.assertEqual(len(result['sources']),1)
+
+    def cooperative_stream(self):
+        self.metadata['plan'].update(expected_ai=5,ai_allies=0,ai_teams='coop',
+            human_pilot_ids=[9229,9230,9231],room_title='gt1234 !ai coop')
+        events=self.stream();events[0]['minimum_ai']=5
+        humans=[{'slot':0,'pilot_id':9230,'unit_or_npc_id':10003,'team':2,'is_ai':False},
+                {'slot':5,'pilot_id':9231,'unit_or_npc_id':10026,'team':2,'is_ai':False},
+                {'slot':11,'pilot_id':9229,'unit_or_npc_id':24788,'team':2,'is_ai':False}]
+        bots=[{'slot':seat,'pilot_id':0x80000000+i+1,'unit_or_npc_id':3604001+i,'team':1,'is_ai':True}
+              for i,seat in enumerate((1,2,3,6,7))]
+        for event in events[1:]:
+            setup=event['event']!='request_accepted'
+            event.update(humans_team_1=0,humans_team_2=3,ai_team_1=5 if setup else 0,ai_team_2=0,
+                active_slots=8 if setup else 3,slots=copy.deepcopy(humans+(bots if setup else [])))
+        return events
+
+    def test_three_humans_require_the_declared_existing_roster_through_the_whole_battle(self):
+        events=self.cooperative_stream()
+        self.assertEqual(self.evaluate(events)['status'],'pass')
+        for index in range(1,5):
+            wrong=copy.deepcopy(events);wrong[index]['slots'][0]['pilot_id']=9999
+            self.assertEqual(self.evaluate(wrong)['status'],'fail')
+        del self.metadata['plan']['human_pilot_ids']
+        self.assertEqual(self.evaluate(events)['status'],'fail')
+
+    def test_cooperative_roster_cannot_pass_with_one_human_on_the_other_team(self):
+        events=self.cooperative_stream()
+        for event in events[1:]:
+            event['slots'][0]['team']=1
+            event.update(humans_team_1=1,humans_team_2=2)
+        self.assertEqual(self.evaluate(events)['status'],'fail')
+
+    def test_ai_placement_is_relative_to_the_host_even_when_another_human_is_first(self):
+        events=self.cooperative_stream()
+        self.metadata['plan'].update(ai_teams='versus',ai_allies=2)
+        for event in events[1:]:
+            event['slots'][0]['team']=1
+            event.update(humans_team_1=1,humans_team_2=2)
+            if event['event']!='request_accepted':
+                for bot in event['slots'][3:5]:bot['team']=2
+                event.update(ai_team_1=3,ai_team_2=2)
+        self.assertEqual(self.evaluate(events)['status'],'pass')
+
+    def test_declared_human_roster_rejects_missing_host_duplicates_and_ai_identities(self):
+        for roster in ([],[9230],[9229,9229],[9229,True],[9229,0x80000001],list(range(9229,9238))):
+            with self.subTest(roster=roster),self.assertRaises(ValueError):
+                report.human_roster(9229,roster)
+        events=self.cooperative_stream()
+        with self.assertRaisesRegex(ValueError,'capacity'):
+            report.participants(events[2],9229,6,True,0,[9229,9230,9231],True)
+
+    def test_native_ai_flag_must_match_the_native_pilot_id_bit(self):
+        events=self.stream();events[2]['slots'][1]['pilot_id']=12345
+        self.assertEqual(self.evaluate(events)['status'],'fail')
+
+    def test_mid_battle_team_swaps_cannot_pass_even_when_all_relative_counts_still_match(self):
+        events=self.cooperative_stream();end=events[-1]
+        for slot in end['slots']:slot['team']=3-slot['team']
+        end.update(humans_team_1=3,humans_team_2=0,ai_team_1=0,ai_team_2=5)
+        self.assertEqual(self.evaluate(events)['status'],'fail')
 
     def reused_stream(self):
         old=self.stream()

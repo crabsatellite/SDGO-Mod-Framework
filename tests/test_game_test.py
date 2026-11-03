@@ -678,11 +678,11 @@ rva=state
         self.assertNotIn('ai_layout', baseline_meta['plan'])
         self.assertNotIn('ai_layout', baseline_run)
 
-    def test_ai_difficulty_seals_native_five_ai_room_command(self):
+    def test_ai_difficulty_seals_native_full_room_command(self):
         for difficulty in ('Easy', 'Medium', 'Hard'):
             with self.subTest(ai_difficulty=difficulty):
                 plan = game_test.make_plan(
-                    '127.0.0.1', 5001, '1', '1', '1', 1, False, 5, None,
+                    '127.0.0.1', 5001, '1', '1', '1', 1, False, 7, None,
                     ai_difficulty=difficulty,
                 )
                 self.assertRegex(
@@ -693,7 +693,7 @@ rva=state
 
         run_dir = self.prepare(
             'ai-difficulty-hard',
-            expected_ai=5,
+            expected_ai=7,
             ai_difficulty='Hard',
         )
         meta = self.metadata(run_dir)
@@ -705,7 +705,7 @@ rva=state
 
         reused = self.prepare(
             'ai-difficulty-hard-reused',
-            expected_ai=5,
+            expected_ai=7,
             ai_difficulty='Hard',
             server_session={
                 'run_id': '00000000-0000-0000-0000-000000000002',
@@ -723,7 +723,7 @@ rva=state
         with self.assertRaisesRegex(game_test.GameTestError, 'exceeds twenty bytes'):
             self.prepare(
                 'ai-difficulty-medium-reused',
-                expected_ai=5,
+                expected_ai=7,
                 ai_difficulty='Medium',
                 server_session={
                     'run_id': '00000000-0000-0000-0000-000000000003',
@@ -751,7 +751,7 @@ rva=state
                     '127.0.0.1', 5001, '1', '1', '1', 1, False, 5, None,
                     ai_difficulty=invalid,
                 )
-        with self.assertRaisesRegex(game_test.GameTestError, 'expected_ai=5'):
+        with self.assertRaisesRegex(game_test.GameTestError, 'expected_ai=7'):
             game_test.make_plan(
                 '127.0.0.1', 5001, '1', '1', '1', 1, False, 6, None,
                 ai_difficulty='Hard',
@@ -765,14 +765,14 @@ rva=state
         with self.assertRaisesRegex(game_test.GameTestError, 'ordinary PvP'):
             self.prepare(
                 'ai-difficulty-pages',
-                expected_ai=5,
+                expected_ai=7,
                 ai_difficulty='Hard',
                 pages_only=True,
             )
         with self.assertRaisesRegex(game_test.GameTestError, 'ordinary PvP'):
             self.prepare(
                 'ai-difficulty-random',
-                expected_ai=5,
+                expected_ai=7,
                 ai_difficulty='Hard',
                 random_loadout=True,
             )
@@ -786,7 +786,7 @@ rva=state
         self.assertEqual(plan['expected_ai'], 6)
         self.assertEqual(plan['ai_difficulty'], 'Hard')
         self.assertEqual(plan['ai_layout'], 'allied')
-        self.assertRegex(plan['room_title'], r'^gt[0-9a-f]{4} !ai1 a6 hard$')
+        self.assertRegex(plan['room_title'], r'^gt[0-9a-f]{4} !ai1 a5 hard$')
         self.assertEqual(len(plan['room_title'].encode('ascii')), 19)
 
         run_dir = self.prepare(
@@ -801,7 +801,7 @@ rva=state
         self.assertEqual(public['expected_ai'], '6')
         self.assertEqual(public['ai_difficulty'], 'Hard')
         self.assertEqual(public['ai_layout'], 'allied')
-        self.assertRegex(public['room_title'], r'^gt[0-9a-f]{4} !ai1 a6 hard$')
+        self.assertRegex(public['room_title'], r'^gt[0-9a-f]{4} !ai1 a5 hard$')
         self.assertEqual(game_test.validate_metadata(run_dir)['plan'], meta['plan'])
 
         with self.assertRaisesRegex(game_test.GameTestError, 'exceeds twenty bytes'):
@@ -1047,6 +1047,17 @@ rva=state
                 self.assertTrue(runtime.verify(1234)['firewall_verified'])
                 self.assertTrue(runtime.verify(1234)['firewall_verified'])
                 self.assertEqual(write.call_count,1,'the sealed login proof must not race repeated native INI reads')
+            runtime.process.verify_background.return_value={
+                'verified':True,'foreground_safe':True,'isolation_safe':True,
+                'isolation_mode':'private_desktop_with_hidden_default_proxy',
+                'input_desktop_unchanged':None,'input_desktop_safe':None,
+                'input_desktop_error':'PermissionError: OpenInputDesktop access denied',
+                'named_desktop_target_window_count':1}
+            proof=runtime.verify(1234)
+            self.assertTrue(proof['audio_muted'])
+            self.assertTrue(proof['firewall_verified'])
+            self.assertIsNone(proof['input_desktop_unchanged'])
+            self.assertIn('access denied',proof['input_desktop_error'])
 
     @unittest.skipUnless(game_test.os.name=='nt','Windows process-owned UDP table')
     def test_actual_windows_udp_table_finds_the_owned_loopback_socket(self):
