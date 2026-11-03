@@ -1918,7 +1918,9 @@ void PublishQuietSocketReceipt(bool force) {
     static uint64_t lastWritten=0;
     const auto now=GetTickCount64();
     if (!force && written && now-lastWritten<250 && observed.escaped==previous.escaped && audio.failed==previousAudio.failed &&
-        graphics.dispatch_failures==previousGraphics.dispatch_failures && !graphics.proxy_visible && !graphics.proxy_appwindow)return;
+        graphics.dispatch_failures==previousGraphics.dispatch_failures &&
+        graphics.dispatch_message_pumps==previousGraphics.dispatch_message_pumps &&
+        !graphics.proxy_visible && !graphics.proxy_appwindow)return;
     if (written && !memcmp(&previous,&observed,sizeof(observed)) && !memcmp(&previousAudio,&audio,sizeof(audio)) &&
         !memcmp(&previousGraphics,&graphics,sizeof(graphics)))return;
     const auto path=sdgo_test::directory+L"\\quiet-sockets.ini";
@@ -1941,7 +1943,8 @@ void PublishQuietSocketReceipt(bool force) {
         graphics.ime_disabled,graphics.last_requested_width,graphics.last_requested_height,graphics.last_client_width,graphics.last_client_height,
         graphics.last_resolved_width,graphics.last_resolved_height,graphics.last_actual_width,graphics.last_actual_height,
         static_cast<long>(graphics.last_backbuffer_hresult),graphics.cooperative_checks,static_cast<long>(graphics.last_cooperative_hresult));
-    fprintf(file,"named_desktop_fallback=%u\n",graphics.named_desktop_fallback);
+    fprintf(file,"named_desktop_fallback=%u\ndispatch_message_pumps=%u\n",
+        graphics.named_desktop_fallback,graphics.dispatch_message_pumps);
     fprintf(file,"texture_calls=%u\ntexture_failures=%u\nrender_target_calls=%u\nrender_target_failures=%u\nrender_target_null=%u\nlast_rt_width=%u\nlast_rt_height=%u\nlast_rt_format=%u\nlast_rt_usage=%u\nlast_rt_hresult=%ld\nlast_rt_return_address=%lu\n",
         graphics.texture_calls,graphics.texture_failures,graphics.render_target_texture_calls,graphics.render_target_texture_failures,
         graphics.render_target_texture_null_results,graphics.last_render_target_width,graphics.last_render_target_height,

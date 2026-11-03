@@ -52,8 +52,22 @@ ULONG STDMETHODCALLTYPE FakeDeviceRelease(IDirect3DDevice9* raw) {
     lastWorkerThread=GetCurrentThreadId();
     auto* device=reinterpret_cast<FakeDevice*>(raw);return --device->references;
 }
+HWND cooperativeCallbackWindow=nullptr;
+volatile LONG cooperativeSentCallbacks=0,cooperativePostedCallbacks=0;
+bool cooperativeSentCompleted=false;
+LRESULT CALLBACK CooperativeWindowProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam) {
+    if(message==WM_APP+71){InterlockedIncrement(&cooperativeSentCallbacks);return 0x53;}
+    if(message==WM_APP+72){InterlockedIncrement(&cooperativePostedCallbacks);return 0;}
+    return DefWindowProcW(window,message,wparam,lparam);
+}
 HRESULT STDMETHODCALLTYPE FakeCooperativeLevel(IDirect3DDevice9*) {
-    lastWorkerThread=GetCurrentThreadId();return cooperativeResult;
+    lastWorkerThread=GetCurrentThreadId();
+    if(cooperativeCallbackWindow) {
+        DWORD_PTR reply=0;
+        cooperativeSentCompleted=SendMessageTimeoutW(cooperativeCallbackWindow,WM_APP+71,0,0,
+            SMTO_ABORTIFHUNG|SMTO_BLOCK,2000,&reply)!=0 && reply==0x53;
+    }
+    return cooperativeResult;
 }
 HRESULT STDMETHODCALLTYPE FakeGetBackBuffer(IDirect3DDevice9*,UINT,UINT,D3DBACKBUFFER_TYPE,
                                              IDirect3DSurface9** surface) {
@@ -351,6 +365,20 @@ int main() {
         lastWorkerThread=0;
         if (device->TestCooperativeLevel()!=cooperativeResult ||
             lastWorkerThread!=state.proxy_thread_id)++failures;
+        const auto oldWindowProc=reinterpret_cast<WNDPROC>(SetWindowLongPtrW(sourceWindow,GWLP_WNDPROC,
+            reinterpret_cast<LONG_PTR>(&CooperativeWindowProc)));
+        cooperativeCallbackWindow=sourceWindow;
+        const auto pumpsBefore=quiet.State().dispatch_message_pumps;
+        PostMessageW(sourceWindow,WM_APP+72,0,0);
+        if(!oldWindowProc || device->TestCooperativeLevel()!=cooperativeResult ||
+           lastWorkerThread!=state.proxy_thread_id || !cooperativeSentCompleted ||
+           cooperativeSentCallbacks!=1 || cooperativePostedCallbacks!=0 ||
+           quiet.State().dispatch_message_pumps<=pumpsBefore)++failures;
+        cooperativeCallbackWindow=nullptr;
+        MSG untouched{};
+        if(!PeekMessageW(&untouched,sourceWindow,WM_APP+72,WM_APP+72,PM_REMOVE) ||
+           cooperativePostedCallbacks!=0)++failures;
+        if(oldWindowProc)SetWindowLongPtrW(sourceWindow,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(oldWindowProc));
         lastWindow=nullptr;
         presentLastError=ERROR_RETRY;
         SetLastError(ERROR_ACCESS_DENIED);
@@ -474,7 +502,7 @@ int main() {
     state=quiet.State();
     if (state.factory_calls!=2 || state.factories!=1 || state.create_attempts!=4 ||
         state.created_devices!=1 || state.failed_devices!=3 || state.resets!=14 ||
-        state.presents!=4 || state.successful_presents!=3 || state.cooperative_checks!=2 || state.last_create_hresult!=S_OK ||
+        state.presents!=4 || state.successful_presents!=3 || state.cooperative_checks!=3 || state.last_create_hresult!=S_OK ||
         state.last_reset_hresult!=resetResult || state.last_present_hresult!=presentResult ||
         state.last_cooperative_hresult!=cooperativeResult || state.last_backbuffer_hresult!=S_OK ||
         state.last_actual_width!=640 || state.last_actual_height!=480 ||
