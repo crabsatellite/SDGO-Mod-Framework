@@ -17,6 +17,7 @@ struct UnitSnapshot {
     std::uint32_t unit_number = 0;
     std::uint16_t slot = 0;
     std::array<std::uint8_t, kNativeFullUnitBytes> full_record{};
+    std::uint8_t level = 0;
 };
 
 inline bool operator==(const UnitSnapshot& left,

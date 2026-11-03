@@ -9,6 +9,13 @@
 
 namespace sdgo::friend_unit_gift::client::runtime {
 
+// CUnitInfo::WriteSyncRecord maps full +0x52 (skill part present) to brief
+// byte 15. It does not mark a rental. Bytes 16/17/18 are fleet use, lock and
+// time-limit/run-out state. A fitted skill part travels with the owned unit.
+inline bool NativeBriefAllowsGift(const std::uint8_t* brief) noexcept {
+    return brief && !brief[16] && !brief[17] && !brief[18];
+}
+
 enum class InventoryEffect : std::uint8_t {
     none,
     remove_local,

@@ -16,7 +16,7 @@ import sys
 import uuid
 
 import game_test
-from game_test_friends import Campaign, assert_receipt
+from game_test_friends import Campaign, assert_receipt, find_friend
 
 
 def text_hex(value: str) -> str:
@@ -29,8 +29,10 @@ def from_text_hex(value: str) -> str:
     return b''.join(int(value[i:i+4],16).to_bytes(2,'little') for i in range(0,len(value),4)).decode('utf-16-le')
 
 
-def provenance_timestamp(value: dt.datetime) -> str:
+def provenance_timestamp(value: dt.datetime | str) -> str:
     # SQL records UTC datetime2 values; preserve that meaning for naive rows.
+    if isinstance(value,str):
+        value=dt.datetime.fromisoformat(value.strip().removesuffix('Z')+('+00:00' if value.strip().endswith('Z') else ''))
     if value.tzinfo is not None:
         value=value.astimezone(dt.timezone.utc)
     return value.strftime('%Y-%m-%d %H:%M UTC')
@@ -39,6 +41,13 @@ def provenance_timestamp(value: dt.datetime) -> str:
 def native_paths_owned(root: Path, paths) -> bool:
     paths=list(paths)
     return bool(paths) and all(Path(path).resolve().is_relative_to(root.resolve()) for path in paths)
+
+
+def same_profile_settings(left: Path, right: Path) -> bool:
+    def settings(path):
+        cfg=game_test.read_ini(path)
+        return dict(cfg.defaults()),{name:dict(cfg[name]) for name in cfg.sections()}
+    return settings(left)==settings(right)
 
 
 class InventoryReadback:
@@ -65,6 +74,10 @@ class InventoryReadback:
         paths=cursor.execute('SELECT f.physical_name FROM sys.master_files f JOIN sys.databases d ON d.database_id=f.database_id WHERE d.state=0').fetchall()
         if not native_paths_owned(self.root,(row[0] for row in paths)):
             raise game_test.GameTestError('SQL file ownership is unavailable or outside this test copy; use a local metadata readback credential INI')
+        cursor.execute('SELECT TOP (0) * FROM dbo.tbl_UserUnits')
+        self.native_columns=tuple(column[0] for column in cursor.description)
+        if len(self.native_columns)!=50:
+            raise game_test.GameTestError('the fixture native instance contract is not fifty columns')
 
     def unit(self,uid:int):
         cursor=self.connection.cursor()
@@ -73,12 +86,23 @@ class InventoryReadback:
         if len(rows)>1:raise game_test.GameTestError('native unit UID is ambiguous')
         return dict(zip(columns,rows[0])) if rows else None
 
+    def nickname(self,account:int):
+        value=self.connection.cursor().execute(
+            'SELECT PilotName FROM dbo.tbl_Users WHERE AccountNumber=?',account).fetchval()
+        if not isinstance(value,str) or not value:
+            raise game_test.GameTestError('authoritative native pilot name is unavailable')
+        return value
+
     def escrow(self,uid:int):
         cursor=self.connection.cursor()
         rows=cursor.execute('SELECT * FROM sdgo_friend_unit_gift.EscrowUnit WHERE UserUnitNumber=?',uid).fetchall()
         columns=[column[0] for column in cursor.description]
         if len(rows)>1:raise game_test.GameTestError('gift escrow UID is ambiguous')
-        return dict(zip(columns,rows[0])) if rows else None
+        if not rows:return None
+        value=dict(zip(columns,rows[0]))
+        if any(name not in value for name in self.native_columns):
+            raise game_test.GameTestError('escrow is missing a native instance column')
+        return {name:value[name] for name in self.native_columns}
 
     def counts_valid(self,account:int):
         row=self.connection.cursor().execute(
@@ -91,9 +115,16 @@ class InventoryReadback:
     def gift_record(self,gift:int):
         cursor=self.connection.cursor()
         rows=cursor.execute(
-            'SELECT UserUnitNumber,SenderAccount,RecipientAccount,State,OfferedAt,AcceptedAt '
+            'SELECT GiftId,UserUnitNumber,SenderAccount,RecipientAccount,State,OfferedAt,AcceptedAt,Note '
             'FROM sdgo_friend_unit_gift.GiftOffer WHERE GiftId=?',gift).fetchall()
         if len(rows)!=1:raise game_test.GameTestError('authoritative gift record is missing or ambiguous')
+        return dict(zip((column[0] for column in cursor.description),rows[0]))
+
+    def pending_gift(self,uid:int):
+        cursor=self.connection.cursor()
+        rows=cursor.execute('SELECT GiftId,UserUnitNumber,SenderAccount,RecipientAccount,State,Note '
+                            'FROM sdgo_friend_unit_gift.GiftOffer WHERE UserUnitNumber=? AND State=0',uid).fetchall()
+        if len(rows)!=1:raise game_test.GameTestError('the fixture has no unique pending gift to resume')
         return dict(zip((column[0] for column in cursor.description),rows[0]))
 
     def close(self):self.connection.close()
@@ -113,7 +144,7 @@ class GiftCampaign:
         profiles=self.root/'profiles';profiles.mkdir(parents=True,exist_ok=True)
         for label,role in (('a','sender'),('b','recipient')):
             source=Path(binding[role]['profile_path']);destination=profiles/(label+'.ini')
-            if destination.exists() and destination.read_bytes()!=source.read_bytes():
+            if destination.exists() and not same_profile_settings(destination,source):
                 raise game_test.GameTestError('gift actor profile identity changed')
             if not destination.exists():shutil.copy2(source,destination)
         self.native=Campaign(args.client_template,args.stage,self.root,args.target_host,args.asset_baseline,
@@ -131,9 +162,9 @@ class GiftCampaign:
 
     @staticmethod
     def view(actor):
-        state=actor.state()
-        if not state or state.get('unit_gift',{}).get('valid')!='1':
-            raise game_test.GameTestError('no correlated product gift observer snapshot')
+        # The native observer file is atomically replaced on UI ticks. A
+        # concurrent read can briefly have no snapshot; wait for actual data.
+        state=actor.wait(lambda current:current.get('unit_gift',{}).get('valid')=='1',30)
         return state['unit_gift']
 
     @staticmethod
@@ -157,8 +188,12 @@ class GiftCampaign:
         return actor.wait(matches,120)
 
     def open_draft(self,sender,recipient,note):
-        self.command(sender,'gift_context',target_id=recipient)
-        sender.wait(lambda state:int(state.get('unit_gift',{}).get('control_flags','0'))&2,60)
+        self.command(sender,'gift_context',target_id=recipient,cursor_x=480,cursor_y=263)
+        placement=sender.wait(lambda state:int(state.get('unit_gift',{}).get('control_flags','0'))&2,60)['unit_gift']
+        self.check('native friend popup follows the supplied friend-row mouse input',
+                   int(placement.get('cursor_input_calls','0'))>0 and
+                   (placement.get('friend_context_x'),placement.get('friend_context_y'))==('480','263'))
+        self.capture(sender,'gift-context-'+str(sender.sequence))
         self.command(sender,'gift_open',target_id=recipient)
         sender.wait(lambda state:state.get('unit_gift',{}).get('composer_phase')=='1' and
                     int(state['unit_gift'].get('control_flags','0'))&8,60)
@@ -183,6 +218,9 @@ class GiftCampaign:
                     state['unit_gift'].get('inventory_sync_busy')=='0',120)
         gift=int(received['unit_gift']['last_reply_gift_id'])
         self.check('confirmed native gift receives a nonzero authoritative gift ID',gift>0)
+        self.capture(sender,'gift-offered-'+str(sender.sequence))
+        self.command(sender,'gift_cancel')
+        sender.wait(lambda state:state.get('unit_gift',{}).get('composer_phase')=='0',60)
         return gift
 
     def select_inbox(self,recipient,gift):
@@ -193,20 +231,56 @@ class GiftCampaign:
         state=self.wait_reply(recipient,3,baseline)
         found=any(int(row['gift_id'])==gift and int(row['unit_uid'])==self.uid for row in self.rows(state))
         self.check('receiver sees the exact offered instance in the product Storage view',found)
+        recipient.wait(lambda current:current.get('unit_gift',{}).get('pending_command')=='0' and
+                       int(current['unit_gift'].get('control_flags','0')) & 512,120)
         self.command(recipient,'gift_select',gift_id=gift)
-        recipient.wait(lambda current:int(current.get('unit_gift',{}).get('selected_gift_id','0'))==gift,60)
+        recipient.wait(lambda current:int(current.get('unit_gift',{}).get('selected_gift_id','0'))==gift and
+                       current['unit_gift'].get('pending_command')=='0' and
+                       int(current['unit_gift'].get('control_flags','0')) & 1024,60)
         self.capture(recipient,'gift-inbox-'+str(recipient.sequence))
 
+    def open_gift_information(self,actor,gift):
+        baseline=int(self.view(actor)['reply_sequence'])
+        self.command(actor,'gift_provenance',gift_id=gift)
+        self.wait_reply(actor,5,baseline,gift=gift,unit=self.uid)
+        actor.wait(lambda current:current.get('unit_gift',{}).get('composer_phase')=='1' and
+                   int(current['unit_gift'].get('control_flags','0')) & 32,60)
+        self.capture(actor,'gift-native-unit-information-'+str(actor.sequence))
+
     def enabled(self):
-        sender,aid,_=self.native.start('a');recipient,bid,_=self.native.start('b')
+        existing=self.db.unit(self.uid)
+        self.check('the existing offered instance has not moved before the native campaign',existing is not None)
+        expected_sender=int(existing['AccountNumber'])
+        expected_sender_name=self.db.nickname(expected_sender)
+        recipient,bid,bname=self.native.start('b')
+        initial=recipient.wait(lambda state:True)
+        offline=find_friend(initial,expected_sender)
+        if offline and offline['presence']=='0':
+            self.command(recipient,'refresh')
+            initial=self.native.state_friend(recipient,expected_sender,presence=0)
+            offline=find_friend(initial,expected_sender)
+            self.command(recipient,'open',target_id=expected_sender,target_name=offline['name'])
+            self.capture(recipient,'gift-offline-friend-name')
+            self.check('an initially offline friend retains the canonical sender name',
+                       offline['name']==expected_sender_name)
+            self.command(recipient,'close',target_id=expected_sender,target_name=offline['name'])
+        sender,aid,aname=self.native.start('a')
         self.receipt['actors']=list(self.native.receipt['actors']);self.save()
         for actor in (sender,recipient):
             actor.wait(lambda state:state.get('unit_gift',{}).get('valid')=='1' and
                        state['unit_gift'].get('ready')=='1' and
-                       int(state['unit_gift'].get('capabilities','0'))&4,120)
+                       int(state['unit_gift'].get('capabilities','0'))&4,150)
             self.check('gift controls share the published Storage extension broker',
                        self.view(actor).get('storage_broker')=='1' and
                        self.view(actor).get('storage_fallback')=='0')
+        if not find_friend(sender.state(),bid):
+            self.native.accept_pair(sender,aid,aname,recipient,bid,bname)
+        sender_state=self.native.state_friend(sender,bid)
+        recipient_state=recipient.wait(lambda state:
+            (row:=find_friend(state,aid)) is not None and int(row['presence'])>0,90)
+        self.check('gift participants are genuine mutual native friends',
+                   find_friend(sender_state,bid)['name']==bname and
+                   find_friend(recipient_state,aid)['name']==aname)
         before=self.db.unit(self.uid)
         self.check('fixture is the sender exact existing native instance',
                    before and int(before['AccountNumber'])==aid and
@@ -218,7 +292,9 @@ class GiftCampaign:
         self.check('preview and cancellation never move or change the original unit',same_payload(before,self.db.unit(self.uid)))
 
         self.native.stop('b')
-        self.native.state_friend(sender,bid,presence=0)
+        offline_state=self.native.state_friend(sender,bid,presence=0)
+        self.check('the friend name remains canonical after the native logout update',
+                   find_friend(offline_state,bid)['name']==bname)
         returned_note='归还验收\n保留养成 '+uuid.uuid4().hex[:8]
         returned=self.offer(sender,bid,returned_note)
         self.check('an offline confirmed friend can receive the offered instance',
@@ -229,6 +305,7 @@ class GiftCampaign:
         recipient.wait(lambda state:state.get('unit_gift',{}).get('valid')=='1' and
                        state['unit_gift'].get('ready')=='1',120)
         self.select_inbox(recipient,returned)
+        self.open_gift_information(recipient,returned)
         baseline=int(self.view(recipient)['reply_sequence'])
         self.command(recipient,'gift_return',gift_id=returned)
         self.wait_reply(recipient,7,baseline,gift=returned,unit=self.uid)
@@ -238,7 +315,16 @@ class GiftCampaign:
         accepted_note='出击顺利！🎁\n赠礼来源 '+uuid.uuid4().hex[:8]+'\n'
         accepted_note+='愿'*(200-len(accepted_note.encode('utf-16-le'))//2)
         accepted=self.offer(sender,bid,accepted_note)
+        self.accept_and_prove(sender,aid,aname,recipient,bid,bname,before,accepted,accepted_note)
+        self.native.stop('b');self.native.stop('a')
+        self.receipt['status']='pass';self.save()
+
+    def accept_and_prove(self,sender,aid,aname,recipient,bid,bname,before,accepted,accepted_note):
         self.select_inbox(recipient,accepted)
+        self.command(recipient,'gift_storage')
+        self.check('opening an already active gift page retains the selected native gift',
+                   int(self.view(recipient).get('selected_gift_id','0'))==accepted)
+        self.open_gift_information(recipient,accepted)
         baseline=int(self.view(recipient)['reply_sequence'])
         self.command(recipient,'gift_accept',gift_id=accepted)
         self.wait_reply(recipient,6,baseline,gift=accepted,unit=self.uid)
@@ -249,13 +335,21 @@ class GiftCampaign:
                    after and int(after['AccountNumber'])==bid and
                    same_payload(before,after,allow_owner_slot=True) and self.db.escrow(self.uid) is None)
         self.check('both inventory counters match authoritative instance rows',self.db.counts_valid(aid) and self.db.counts_valid(bid))
+        self.prove_accepted(sender,aid,aname,recipient,bid,bname,before,accepted,accepted_note)
+
+    def prove_accepted(self,sender,aid,aname,recipient,bid,bname,before,accepted,accepted_note):
+        recipient.wait(lambda state:state.get('unit_gift',{}).get('composer_phase')=='0' and
+                       state['unit_gift'].get('pending_command')=='0',120)
+        self.command(recipient,'storage_hangar',timeout=180)
+        recipient.wait(lambda state:state.get('unit_gift',{}).get('pending_command')=='0' and
+                       state['unit_gift'].get('composer_phase')=='0',120)
         baseline=int(self.view(recipient)['reply_sequence'])
         self.command(recipient,'gift_provenance',unit_uid=self.uid)
         self.wait_reply(recipient,9,baseline,unit=self.uid)
         state=recipient.wait(lambda current:current.get('unit_gift',{}).get('provenance_present')=='1',60)
         text=from_text_hex(state['unit_gift']['provenance_utf16_hex'])
         self.check('product provenance shows the original sender and complete Unicode note',
-                   accepted_note in text and self.binding['sender']['nickname'] in text)
+                   accepted_note in text and aname in text)
         record=self.db.gift_record(accepted)
         self.check('product provenance shows the authoritative offer and acceptance times for this instance',
                    int(record['UserUnitNumber'])==self.uid and int(record['SenderAccount'])==aid and
@@ -269,12 +363,131 @@ class GiftCampaign:
             recipient,relogged_bid,_=self.native.start('b')
             self.check('the accepted native instance survives the recipient relogin',relogged_bid==bid and same_payload(before,self.db.unit(self.uid),allow_owner_slot=True))
             recipient.wait(lambda state:state.get('unit_gift',{}).get('ready')=='1' and int(state['unit_gift'].get('capabilities','0'))&4,120)
-            pending=self.offer(recipient,aid,'关闭新赠送后仍可接受已有赠礼')
-            handoff={'gift_id':pending,'unit_uid':self.uid,'sender_id':bid,'recipient_id':aid}
-            game_test.atomic_write(self.root/'gift-off-handoff.json',json.dumps(handoff,indent=2))
-            self.check('an authoritative pending gift is retained for disabled-feature resolution',self.db.unit(self.uid) is None and same_payload(before,self.db.escrow(self.uid),allow_owner_slot=True))
-        self.native.stop('b');self.native.stop('a')
-        self.receipt['status']='pass';self.save()
+            returning_payload=self.db.unit(self.uid)
+            returned=self.offer(recipient,aid,'原生机体信息退还验收')
+            self.return_and_prepare_off(sender,aid,recipient,bid,returning_payload,returned)
+
+    def return_and_prepare_off(self,recipient,recipient_id,sender,sender_id,payload,gift):
+        self.command(sender,'storage_hangar',timeout=180)
+        self.check('the open native sender inventory excludes the escrowed instance',
+                   not any(k.startswith('storage_inventory_unit') and int(v.get('uid','0'))==self.uid
+                           for k,v in sender.state().items()))
+        self.select_inbox(recipient,gift)
+        self.open_gift_information(recipient,gift)
+        baseline=int(self.view(recipient)['reply_sequence'])
+        self.command(recipient,'gift_return',gift_id=gift)
+        self.wait_reply(recipient,7,baseline,gift=gift,unit=self.uid)
+        self.check('the native unit-information return button restores all fifty original sender fields',
+                   same_payload(payload,self.db.unit(self.uid)) and self.db.escrow(self.uid) is None)
+        self.check('native unit-information return retains both inventory counters',
+                   self.db.counts_valid(recipient_id) and self.db.counts_valid(sender_id))
+        sender.wait(lambda current:int(current.get('unit_gift',{}).get('inventory_last_added_uid','0'))==self.uid and
+                    current['unit_gift'].get('inventory_sync_busy')=='0',120)
+        self.check('the existing open native sender inventory receives the returned instance without relogin',
+                   int(self.view(sender)['inventory_last_added_uid'])==self.uid)
+        self.capture(recipient,'gift-returned-from-native-information')
+        if not getattr(self.args,'prepare_off_resolution',False):return
+        pending=self.offer(sender,recipient_id,'关闭新赠送后仍可接受已有赠礼')
+        handoff={'gift_id':pending,'unit_uid':self.uid,'sender_id':sender_id,'recipient_id':recipient_id}
+        game_test.atomic_write(self.root/'gift-off-handoff.json',json.dumps(handoff,indent=2))
+        self.check('an authoritative pending gift is retained for disabled-feature resolution',
+                   self.db.unit(self.uid) is None and same_payload(payload,self.db.escrow(self.uid)))
+
+    def return_pending(self):
+        record=self.db.gift_record(self.args.resume_gift_id);payload=self.db.escrow(self.uid)
+        self.check('return resumes the exact reverse gift without resetting an accepted instance',
+                   payload and len(payload)==50 and int(record['State'])==0 and
+                   int(record['UserUnitNumber'])==self.uid and self.db.unit(self.uid) is None and
+                   int(record['SenderAccount'])==int(self.binding['recipient']['account_id']) and
+                   int(record['RecipientAccount'])==int(self.binding['sender']['account_id']) and
+                   int(payload['AccountNumber'])==int(record['SenderAccount']))
+        recipient,aid,_=self.native.start('a');sender,bid,_=self.native.start('b')
+        self.receipt['actors']=list(self.native.receipt['actors']);self.save()
+        self.check('return participants match the authoritative pending gift',
+                   aid==int(record['RecipientAccount']) and bid==int(record['SenderAccount']))
+        for actor in (recipient,sender):
+            actor.wait(lambda current:current.get('unit_gift',{}).get('ready')=='1',150)
+        self.return_and_prepare_off(recipient,aid,sender,bid,payload,int(record['GiftId']))
+        self.native.stop('b');self.native.stop('a');self.receipt['status']='pass';self.save()
+
+    def prepare_off_resolution(self):
+        record=self.db.gift_record(self.args.resume_gift_id);payload=self.db.unit(self.uid)
+        self.check('disabled handoff resumes the returned instance and preserves its fifty columns',
+                   payload and len(payload)==50 and int(record['State'])==3 and
+                   int(record['UserUnitNumber'])==self.uid and self.db.escrow(self.uid) is None and
+                   int(record['SenderAccount'])==int(self.binding['recipient']['account_id']) and
+                   int(record['RecipientAccount'])==int(self.binding['sender']['account_id']) and
+                   int(payload['AccountNumber'])==int(record['SenderAccount']))
+        recipient,aid,_=self.native.start('a');sender,bid,_=self.native.start('b')
+        self.receipt['actors']=list(self.native.receipt['actors']);self.save()
+        self.check('disabled handoff actors match the returned gift participants',
+                   aid==int(record['RecipientAccount']) and bid==int(record['SenderAccount']))
+        self.command(recipient,'refresh')
+        for actor in (recipient,sender):
+            actor.wait(lambda current:current.get('unit_gift',{}).get('ready')=='1',150)
+        pending=self.offer(sender,aid,'关闭新赠送后仍可接受已有赠礼')
+        handoff={'gift_id':pending,'unit_uid':self.uid,'sender_id':bid,'recipient_id':aid}
+        game_test.atomic_write(self.root/'gift-off-handoff.json',json.dumps(handoff,indent=2))
+        self.check('an authoritative pending gift is retained for disabled-feature resolution',
+                   self.db.unit(self.uid) is None and same_payload(payload,self.db.escrow(self.uid)))
+        self.native.stop('b');self.native.stop('a');self.receipt['status']='pass';self.save()
+
+    def verify_pending_handoff(self):
+        handoff=json.loads((self.root/'gift-off-handoff.json').read_text(encoding='utf-8'))
+        record=self.db.gift_record(int(handoff['gift_id']));payload=self.db.escrow(self.uid)
+        self.check('handoff readback preserves the pending exact fifty-column instance',
+                   payload and len(payload)==50 and int(record['State'])==0 and
+                   self.db.unit(self.uid) is None and int(record['UserUnitNumber'])==self.uid and
+                   int(record['SenderAccount'])==int(handoff['sender_id']) and
+                   int(record['RecipientAccount'])==int(handoff['recipient_id']))
+        recipient,aid,_=self.native.start('a')
+        self.receipt['actors']=list(self.native.receipt['actors']);self.save()
+        self.check('handoff readback uses the authenticated pending recipient',aid==int(record['RecipientAccount']))
+        recipient.wait(lambda current:current.get('unit_gift',{}).get('ready')=='1',150)
+        self.check('new offers are enabled before the deliberate OFF restart',int(self.view(recipient)['capabilities'])&4!=0)
+        self.select_inbox(recipient,int(record['GiftId']))
+        self.open_gift_information(recipient,int(record['GiftId']))
+        self.command(recipient,'gift_cancel')
+        self.check('reading and closing pending gift information does not resolve it',
+                   int(self.db.gift_record(int(record['GiftId']))['State'])==0 and same_payload(payload,self.db.escrow(self.uid)))
+        self.native.stop('a');self.receipt['status']='pass';self.save()
+
+    def accept_pending(self):
+        pending=self.db.pending_gift(self.uid)
+        before=self.db.escrow(self.uid)
+        self.check('resume uses the exact native pending instance and original fixture participants',
+                   before and len(before)==50 and int(pending['UserUnitNumber'])==self.uid and
+                   int(pending['SenderAccount'])==int(self.binding['sender']['account_id']) and
+                   int(pending['RecipientAccount'])==int(self.binding['recipient']['account_id']) and
+                   int(before['AccountNumber'])==int(pending['SenderAccount']))
+        sender,aid,aname=self.native.start('a')
+        recipient,bid,bname=self.native.start('b')
+        self.receipt['actors']=list(self.native.receipt['actors']);self.save()
+        self.check('resumed native actors match the original pending sender and recipient',
+                   aid==int(pending['SenderAccount']) and bid==int(pending['RecipientAccount']))
+        for actor in (sender,recipient):
+            actor.wait(lambda state:state.get('unit_gift',{}).get('ready')=='1',150)
+        self.accept_and_prove(sender,aid,aname,recipient,bid,bname,before,int(pending['GiftId']),pending['Note'])
+        self.native.stop('b');self.native.stop('a');self.receipt['status']='pass';self.save()
+
+    def verify_accepted(self):
+        record=self.db.gift_record(self.args.resume_gift_id)
+        before=self.db.unit(self.uid)
+        self.check('resume verifies the exact already accepted instance and original gift participants',
+                   before and len(before)==50 and int(record['UserUnitNumber'])==self.uid and
+                   int(record['State'])==1 and self.db.escrow(self.uid) is None and
+                   int(record['SenderAccount'])==int(self.binding['sender']['account_id']) and
+                   int(record['RecipientAccount'])==int(self.binding['recipient']['account_id']) and
+                   int(before['AccountNumber'])==int(record['RecipientAccount']))
+        sender,aid,aname=self.native.start('a')
+        recipient,bid,bname=self.native.start('b')
+        self.receipt['actors']=list(self.native.receipt['actors']);self.save()
+        self.check('accepted-instance actors match the original gift participants',
+                   aid==int(record['SenderAccount']) and bid==int(record['RecipientAccount']))
+        for actor in (sender,recipient):
+            actor.wait(lambda state:state.get('unit_gift',{}).get('ready')=='1',150)
+        self.prove_accepted(sender,aid,aname,recipient,bid,bname,before,int(record['GiftId']),record['Note'])
+        self.native.stop('b');self.native.stop('a');self.receipt['status']='pass';self.save()
 
     def disabled_resolution(self):
         handoff=json.loads((self.root/'gift-off-handoff.json').read_text(encoding='utf-8'))
@@ -287,6 +500,7 @@ class GiftCampaign:
             self.check('new offers stay disabled while existing gift controls remain available',int(view['capabilities'])&4==0)
         before=self.db.escrow(self.uid);self.check('the same complete fifty-column instance remains in escrow',before and len(before)==50)
         gift=int(handoff['gift_id']);self.select_inbox(recipient,gift)
+        self.open_gift_information(recipient,gift)
         baseline=int(self.view(recipient)['reply_sequence'])
         self.command(recipient,'gift_accept',gift_id=gift);self.wait_reply(recipient,6,baseline,gift=gift,unit=self.uid)
         recipient.wait(lambda state:int(state.get('unit_gift',{}).get('inventory_last_added_uid','0'))==self.uid and state['unit_gift'].get('inventory_sync_busy')=='0',120)
@@ -294,6 +508,31 @@ class GiftCampaign:
         self.check('disabled-feature native accept preserves the full instance and removes escrow',after and int(after['AccountNumber'])==aid and same_payload(before,after,allow_owner_slot=True) and self.db.escrow(self.uid) is None)
         self.check('disabled-feature native accept retains consistent inventory counters',self.db.counts_valid(aid) and self.db.counts_valid(bid))
         self.capture(recipient,'gift-disabled-accepted')
+        self.command(sender,'storage_hangar',timeout=180)
+        self.capture(sender,'gift-disabled-sender-hangar')
+        self.native.stop('b');self.native.stop('a');self.receipt['status']='pass';self.save()
+
+    def verify_disabled_accepted(self):
+        handoff=json.loads((self.root/'gift-off-handoff.json').read_text(encoding='utf-8'))
+        gift=int(self.args.resume_gift_id);record=self.db.gift_record(gift);payload=self.db.unit(self.uid)
+        self.check('readback verifies the exact already accepted disabled-feature gift without accepting again',
+                   gift==int(handoff['gift_id']) and self.uid==int(handoff['unit_uid']) and payload and len(payload)==50 and
+                   int(record['State'])==1 and int(record['UserUnitNumber'])==self.uid and self.db.escrow(self.uid) is None and
+                   int(record['SenderAccount'])==int(handoff['sender_id']) and
+                   int(record['RecipientAccount'])==int(handoff['recipient_id']) and
+                   int(payload['AccountNumber'])==int(handoff['recipient_id']))
+        recipient,aid,aname=self.native.start('a');sender,bid,bname=self.native.start('b')
+        self.receipt['actors']=list(self.native.receipt['actors']);self.save()
+        self.check('readback authenticates both original disabled-feature gift participants',
+                   aid==int(handoff['recipient_id']) and bid==int(handoff['sender_id']))
+        for actor in (recipient,sender):
+            actor.wait(lambda state:state.get('unit_gift',{}).get('ready')=='1',120)
+            self.check('readback leaves new offers disabled for both native clients',int(self.view(actor)['capabilities'])&4==0)
+        self.command(sender,'storage_hangar',timeout=180)
+        self.capture(sender,'gift-disabled-sender-hangar')
+        self.prove_accepted(sender,bid,bname,recipient,aid,aname,payload,gift,record['Note'])
+        self.check('disabled-feature readback preserves the accepted native instance and both counters',
+                   same_payload(payload,self.db.unit(self.uid)) and self.db.counts_valid(aid) and self.db.counts_valid(bid))
         self.native.stop('b');self.native.stop('a');self.receipt['status']='pass';self.save()
 
     def close(self):
@@ -318,14 +557,29 @@ def main():
     parser.add_argument('--pair',choices=('primary_friend_pair','all_payload_groups_pair'),default='all_payload_groups_pair')
     parser.add_argument('--asset-baseline',type=Path)
     parser.add_argument('--target-host',required=True)
-    parser.add_argument('--phase',choices=('enabled','disabled-resolution'),default='enabled')
+    parser.add_argument('--phase',choices=('enabled','accept-pending','verify-accepted','return-pending','prepare-off-resolution','verify-pending-handoff','disabled-resolution','verify-disabled-accepted'),default='enabled')
     parser.add_argument('--prepare-off-resolution',action='store_true',help='retain one genuine pending gift for a later disabled-resolution phase')
-    args=parser.parse_args();campaign=GiftCampaign(args)
+    parser.add_argument('--resume-gift-id',type=int,help='accepted gift to verify for source information and restart persistence')
+    args=parser.parse_args()
+    if args.phase in ('verify-accepted','return-pending','prepare-off-resolution','verify-disabled-accepted') and (args.resume_gift_id is None or args.resume_gift_id<=0):
+        parser.error(args.phase+' requires a positive --resume-gift-id')
+    campaign=GiftCampaign(args)
     try:
         if args.phase=='enabled':campaign.enabled()
+        elif args.phase=='accept-pending':campaign.accept_pending()
+        elif args.phase=='verify-accepted':campaign.verify_accepted()
+        elif args.phase=='return-pending':campaign.return_pending()
+        elif args.phase=='prepare-off-resolution':campaign.prepare_off_resolution()
+        elif args.phase=='verify-pending-handoff':campaign.verify_pending_handoff()
+        elif args.phase=='verify-disabled-accepted':campaign.verify_disabled_accepted()
         else:campaign.disabled_resolution()
     except Exception as error:
-        campaign.receipt.update(status='fail',error_type=type(error).__name__,error=str(error));campaign.save();raise
+        campaign.receipt.update(status='fail',error_type=type(error).__name__,error=str(error));campaign.save()
+        for actor,future,_ in list(campaign.native.running.values()):
+            if future.done():continue
+            try:campaign.command(actor,'capture',label='gift-failure',timeout=15)
+            except Exception:pass
+        raise
     finally:campaign.close()
     print(json.dumps(campaign.receipt,ensure_ascii=True,indent=2))
 

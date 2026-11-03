@@ -1,4 +1,5 @@
 #include "sdgo/friend_unit_gift_client_transport.h"
+#include <windows.h>
 
 #include <array>
 #include <cassert>
@@ -157,6 +158,10 @@ int main() {
     assert(expanded.command == Command::hello);
     assert(!Empty(expanded.request_id));
     assert(expanded.flags & envelope_expanded_probe);
+    // A real first-use policy installation exceeded the three-second native
+    // discovery window. The confirmed extension must still accept its reply.
+    transport.TickAt(GetTickCount64() + 5000);
+    assert(transport.State() == ConnectionState::probing_expanded);
 
     hello.request_id = expanded.request_id;
     hello.flags = envelope_expanded_probe;
@@ -330,6 +335,22 @@ int main() {
     assert(vanilla.NativeProbeReplyCount() == 0);
     assert(vanilla.NativeProbeLastReason() ==
            NativeProbeReason::reply_timeout);
+
+    Transport unresponsive_extension;
+    assert(unresponsive_extension.BindNative(
+        &Session, reinterpret_cast<Transport::NativeSend>(&NativeSendShim)));
+    assert(unresponsive_extension.BeginProbeAt(30000));
+    Reply extension_hello;
+    extension_hello.command = Command::hello;
+    extension_hello.capabilities = capabilities;
+    extension_hello.server_epoch = 90;
+    bytes = ReplyBytes(extension_hello);
+    assert(unresponsive_extension.OnStoragePacket(
+        kNativeReplyOpcode, bytes.data(), static_cast<std::uint32_t>(bytes.size())));
+    assert(unresponsive_extension.State() == ConnectionState::probing_expanded);
+    unresponsive_extension.TickAt(GetTickCount64() + 180000);
+    assert(unresponsive_extension.State() == ConnectionState::unavailable);
+    assert(!unresponsive_extension.Ready());
 
     std::cout << "friend unit gift transport tests passed\n";
     return 0;

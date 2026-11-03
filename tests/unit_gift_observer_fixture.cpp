@@ -11,6 +11,7 @@ std::uint32_t g_snapshotCalls = 0;
 std::uint32_t g_actionCalls = 0;
 int g_snapshotResult = 1;
 int g_actionResult = 1;
+void(__cdecl* g_actionCallback)() = nullptr;
 
 } // namespace
 
@@ -27,6 +28,7 @@ int g_actionResult = 1;
 #pragma comment(linker, "/EXPORT:TestUnitGiftSnapshotCalls=_TestUnitGiftSnapshotCalls")
 #pragma comment(linker, "/EXPORT:TestUnitGiftActionCalls=_TestUnitGiftActionCalls")
 #pragma comment(linker, "/EXPORT:TestUnitGiftCopyLastRequest=_TestUnitGiftCopyLastRequest")
+#pragma comment(linker, "/EXPORT:TestUnitGiftSetActionCallback=_TestUnitGiftSetActionCallback")
 #endif
 
 #if !defined(UNIT_GIFT_OBSERVER_FIXTURE_NO_PRODUCT_EXPORTS)
@@ -45,6 +47,7 @@ SdgoFriendUnitGiftClientActionV1(
     ++g_actionCalls;
     if (!request) return 0;
     g_request = *request;
+    if (g_actionCallback) g_actionCallback();
     return g_actionResult;
 }
 #endif
@@ -56,6 +59,11 @@ extern "C" __declspec(dllexport) void __cdecl TestUnitGiftReset() {
     g_actionCalls = 0;
     g_snapshotResult = 1;
     g_actionResult = 1;
+    g_actionCallback = nullptr;
+}
+
+extern "C" __declspec(dllexport) void __cdecl TestUnitGiftSetActionCallback(void(__cdecl* callback)()) {
+    g_actionCallback=callback;
 }
 
 extern "C" __declspec(dllexport) void __cdecl TestUnitGiftSetSnapshot(
