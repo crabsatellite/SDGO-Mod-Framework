@@ -44,8 +44,10 @@ bool gate_open = true;
 int gate_calls = 0;
 int classifier_calls = 0;
 int record_calls = 0;
+int observer_calls = 0;
 int diagnostic_calls = 0;
 int record_calls_seen_by_original = -1;
+int observer_calls_seen_by_original = -1;
 hook::DiagnosticReason last_diagnostic = hook::DiagnosticReason::None;
 hook::NativeDamageSnapshot last_snapshot;
 hook::VictimClassification last_classification;
@@ -89,6 +91,7 @@ uint32_t __fastcall PrivateOriginal(
         native_damage == expected_damage && native_death == expected_death;
     original_last_error = GetLastError() == expected_incoming_error;
     record_calls_seen_by_original = record_calls;
+    observer_calls_seen_by_original = observer_calls;
     if (mutate_original_inputs) {
         Put(native_victim, hook::kPilotEntity, 999999u);
         Put(native_victim, hook::kPilotTeam, static_cast<uint8_t>(9));
@@ -136,6 +139,19 @@ void __stdcall Record(
     last_snapshot = *snapshot;
     last_classification = *classification;
     SetLastError(0x99999999);
+}
+
+void __stdcall ObserveDamage(
+    void* native_room, void* native_victim, void* native_attacker,
+    void* native_unit, uint32_t native_damage, int32_t native_death) {
+    ++observer_calls;
+    CHECK(native_room == expected_room);
+    CHECK(native_victim == expected_victim);
+    CHECK(native_attacker == expected_attacker);
+    CHECK(native_unit == expected_unit);
+    CHECK(native_damage == expected_damage);
+    CHECK(native_death == expected_death);
+    SetLastError(0xB0B0B0B0);
 }
 
 void __stdcall RecordCombat(
@@ -188,8 +204,10 @@ void Reset() {
     gate_calls = 0;
     classifier_calls = 0;
     record_calls = 0;
+    observer_calls = 0;
     diagnostic_calls = 0;
     record_calls_seen_by_original = -1;
+    observer_calls_seen_by_original = -1;
     last_diagnostic = hook::DiagnosticReason::None;
     last_snapshot = {};
     last_classification = {};
@@ -202,6 +220,7 @@ void Reset() {
     hook::classify_victim = &Classify;
     hook::record_sink = &Record;
     hook::diagnostic_sink = &Diagnostic;
+    hook::damage_observer = &ObserveDamage;
 }
 
 uint32_t Call() {
@@ -230,6 +249,8 @@ void ParticipantAndAbiTest() {
     CHECK(classifier_calls == 1);
     CHECK(record_calls == 1);
     CHECK(record_calls_seen_by_original == 1);
+    CHECK(observer_calls == 1);
+    CHECK(observer_calls_seen_by_original == 1);
     CHECK(diagnostic_calls == 0);
     CHECK(last_snapshot.attacker_account == 1001);
     CHECK(last_snapshot.attacker_entity == 1001);

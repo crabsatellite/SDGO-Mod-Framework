@@ -29,6 +29,14 @@ uint32_t scoreboardFrameFlags = 0, scoreboardFrameEax = 0, scoreboardFrameEbx = 
 uint32_t scoreboardFrameEcx = 0, scoreboardFrameEdx = 0, scoreboardFrameEsi = 0, scoreboardFrameEdi = 0;
 uint32_t scoreboardFrameEbp = 0, scoreboardExpectedEbp = 0;
 uint8_t* scoreboardFrameUnit = nullptr;
+uint32_t teleportFrameFlags = 0, teleportFrameEax = 0, teleportFrameEbx = 0;
+uint32_t teleportFrameEcx = 0, teleportFrameEdx = 0, teleportFrameEsi = 0, teleportFrameEdi = 0;
+uint32_t teleportFrameEbp = 0, teleportExpectedEbp = 0;
+uint8_t* teleportFrameUnit = nullptr;
+const uint8_t* teleportFramePacket = nullptr;
+alignas(16) uint8_t teleportBeforeFx[512]{}, teleportAfterFx[512]{};
+alignas(16) uint32_t teleportXmm[4]{
+    0x12345678, 0xA0B0C0D0, 0x0BADF00D, 0xFFEEDDCC};
 std::array<std::array<uint8_t, 0xA0>, 12> nodes{};
 std::array<std::array<uint8_t, 0x200>, 12> npcs{};
 std::array<std::array<uint8_t, 0x70>, 12> slots{};
@@ -212,6 +220,70 @@ __declspec(naked) int InvokeScoreboardGate(uint8_t*, int) {
         ret
     }
 }
+__declspec(naked) int TeleportGateContinuation() {
+    __asm {
+        push eax
+        pushfd
+        pop eax
+        mov teleportFrameFlags, eax
+        pop eax
+        mov teleportFrameEax, eax
+        mov teleportFrameEbx, ebx
+        mov teleportFrameEcx, ecx
+        mov teleportFrameEdx, edx
+        mov teleportFrameEsi, esi
+        mov teleportFrameEdi, edi
+        mov teleportFrameEbp, ebp
+        mov teleportFrameUnit, edi
+        push eax
+        mov eax, [ebp-70h]
+        mov teleportFramePacket, eax
+        pop eax
+        test al, al
+        jne native_npc_path
+        mov eax, 1
+        ret
+    native_npc_path:
+        xor eax, eax
+        ret
+    }
+}
+__declspec(naked) int InvokeTeleportGate(uint8_t*, const uint8_t*, int) {
+    __asm {
+        push ebp
+        mov ebp, esp
+        sub esp, 80h
+        push ebx
+        push esi
+        push edi
+        mov edi, [ebp+8]
+        mov eax, [ebp+0Ch]
+        mov [ebp-70h], eax
+        mov teleportExpectedEbp, ebp
+        mov eax, 0A5A5A500h
+        mov al, byte ptr [ebp+10h]
+        mov ebx, 11223344h
+        mov ecx, 55667788h
+        mov edx, 22334455h
+        mov esi, 66778899h
+        fninit
+        fld1
+        fldpi
+        movdqu xmm0, xmmword ptr [teleportXmm]
+        fxsave [teleportBeforeFx]
+        stc
+        std
+        call TeleportNpcGate
+        fxsave [teleportAfterFx]
+        cld
+        pop edi
+        pop esi
+        pop ebx
+        mov esp, ebp
+        pop ebp
+        ret
+    }
+}
 int __fastcall NativeLockSearch(void*, void*, uint32_t sourceId, char p2, char p3) {
     seenSearchP2 = p2; seenSearchP3 = p3;
     if (throwLockSearch) RaiseException(0xE0000003, 0, 0, nullptr);
@@ -352,6 +424,7 @@ void Reset(int classIndex = 0, int roomMode = 1) {
     g_targetTeamOriginal = fixtureTeamTrampoline ? fixtureTeamTrampoline : reinterpret_cast<void*>(&NativeTeamOnlyGate);
     g_targetParticipants = reinterpret_cast<void*>(&NativeParticipantContinuation);
     g_scoreboardNpcGateOriginal = reinterpret_cast<void*>(&ScoreboardGateContinuation);
+    g_teleportNpcGateOriginal = reinterpret_cast<void*>(&TeleportGateContinuation);
     network = true; observer = failAppend = throwCamera = throwUdp = false; starts.clear();
 }
 void StartEntry(int slot, uint32_t id, int count, std::initializer_list<uint32_t> ids) {
@@ -496,6 +569,74 @@ int main() {
     const Bot staleScoreboardBot = g_botTable[0];
     Put<uint32_t>(slots[staleScoreboardBot.slot].data(), kSlotObjectId, 9999);
     CHECK(InvokeScoreboardGate(staleScoreboardBot.unit, 1) == 0);
+
+    SCENARIO("Teleport relocation uses the native player path only for the exact local PvP AI");
+    Spawn();
+    CHECK(g_botTable.size() == 2);
+    g_aiEnabled = true;
+    std::array<uint8_t, 11> teleport{};
+    Put<uint16_t>(teleport.data(), 0, kTeleportRelocationOpcode);
+    Put<uint32_t>(teleport.data(), 2, 0);
+    Put<uint32_t>(teleport.data(), 6, g_botTable[0].pilotId);
+    teleport[10] = 4;
+    Bot teleportBot = g_botTable[0];
+    Put<int32_t>(teleportBot.unit, 0x38, 7777);
+    SetLastError(0x1234);
+    const int teleportResult = InvokeTeleportGate(teleportBot.unit, teleport.data(), 1);
+    const DWORD teleportLastError = GetLastError();
+    CHECK(teleportResult == 1);
+    CHECK(teleportFrameUnit == teleportBot.unit && teleportFramePacket == teleport.data());
+    CHECK(teleportFrameEbp == teleportExpectedEbp && teleportFrameEax == 0xA5A5A500);
+    CHECK(teleportFrameEbx == 0x11223344 && teleportFrameEcx == 0x55667788);
+    CHECK(teleportFrameEdx == 0x22334455 && teleportFrameEsi == 0x66778899);
+    CHECK(teleportFrameEdi == reinterpret_cast<uint32_t>(teleportBot.unit));
+    CHECK((teleportFrameFlags & 1) != 0 && Get<int32_t>(teleportBot.unit, 0x38) == 7777);
+    CHECK((teleportFrameFlags & 0x400) != 0);
+    CHECK(!memcmp(teleportBeforeFx, teleportAfterFx, sizeof(teleportBeforeFx)));
+    CHECK(teleportLastError == 0x1234);
+
+    // A native human result is left unchanged, while every incomplete or stale
+    // PvP identity keeps the stock NPC branch.
+    CHECK(InvokeTeleportGate(searchHumans[0].data(), teleport.data(), 0) == 1);
+    units[0][kUnitRemote] = 1;
+    CHECK(InvokeTeleportGate(teleportBot.unit, teleport.data(), 1) == 0);
+    units[0][kUnitRemote] = 0;
+    units[0][kUnitLocalControl] = 0;
+    CHECK(InvokeTeleportGate(teleportBot.unit, teleport.data(), 1) == 0);
+    units[0][kUnitLocalControl] = 1;
+    units[0][kUnitMasterNpc] = 0;
+    CHECK(InvokeTeleportGate(teleportBot.unit, teleport.data(), 1) == 0);
+    units[0][kUnitMasterNpc] = 1;
+    g_botTable[0].generation = 0;
+    CHECK(InvokeTeleportGate(teleportBot.unit, teleport.data(), 1) == 0);
+    g_botTable[0].generation = teleportBot.generation;
+    g_botTable.erase(g_botTable.begin());
+    CHECK(InvokeTeleportGate(teleportBot.unit, teleport.data(), 1) == 0);
+    g_botTable.insert(g_botTable.begin(), teleportBot);
+    Put<uint32_t>(slots[teleportBot.slot].data(), kSlotObjectId, 9999);
+    CHECK(InvokeTeleportGate(teleportBot.unit, teleport.data(), 1) == 0);
+    Put<uint32_t>(slots[teleportBot.slot].data(), kSlotObjectId, teleportBot.objectId);
+    g_botMode = nullptr;
+    CHECK(InvokeTeleportGate(teleportBot.unit, teleport.data(), 1) == 0);
+    g_botMode = mode.data();
+    g_vtables[0] = nullptr;
+    CHECK(InvokeTeleportGate(teleportBot.unit, teleport.data(), 1) == 0);
+    g_vtables[0] = vtable.data();
+    g_aiEnabled = false;
+    CHECK(InvokeTeleportGate(teleportBot.unit, teleport.data(), 1) == 0);
+    g_aiEnabled = true;
+    Put<uint16_t>(teleport.data(), 0, 0x07D3);
+    CHECK(InvokeTeleportGate(teleportBot.unit, teleport.data(), 1) == 0);
+    Put<uint16_t>(teleport.data(), 0, kTeleportRelocationOpcode);
+    Put<uint32_t>(teleport.data(), 2, 1);
+    CHECK(InvokeTeleportGate(teleportBot.unit, teleport.data(), 1) == 1);
+    Put<uint32_t>(teleport.data(), 6, g_botTable[1].pilotId);
+    CHECK(InvokeTeleportGate(teleportBot.unit, teleport.data(), 1) == 0);
+    Put<uint32_t>(teleport.data(), 6, teleportBot.pilotId);
+    teleport[10] = kTeleportRelocationPointCount;
+    CHECK(InvokeTeleportGate(teleportBot.unit, teleport.data(), 1) == 0);
+    teleport[10] = 4;
+    CHECK(Get<int32_t>(teleportBot.unit, 0x38) == 7777);
 
     SCENARIO("native search sees real human and AI ids through a scoped participant adapter");
     Spawn(0, 1, 2, 2); searchHumanLookup = true;
