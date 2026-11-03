@@ -84,6 +84,27 @@ class ShopPlanTests(unittest.TestCase):
         with self.assertRaises(game_test.GameTestError):
             game_test.load_shop_test_inputs(self.stock_assertions, self.stock_display)
 
+    def test_artwork_expectation_is_bounded_and_only_allowed_in_visual_scope(self):
+        visual = SHOP_ASSERTIONS_FIXTURE.replace('Scope=StockAssertions', 'Scope=StockVisualAssertions') + 'DisplayName=中文商品\n'
+        for value in ('上士及以上', ''):
+            self.stock_assertions.write_text(visual + f'ArtRankLabel={value}\n', encoding='utf-8')
+            game_test.load_shop_test_inputs(self.stock_assertions, self.stock_display)
+        self.stock_assertions.write_text(visual + 'ArtRankLabel=' + '字' * 33 + '\n', encoding='utf-8')
+        with self.assertRaises(game_test.GameTestError):
+            game_test.load_shop_test_inputs(self.stock_assertions, self.stock_display)
+
+    def test_page_only_capture_cannot_silently_skip_requested_tooltip_text(self):
+        visual = SHOP_ASSERTIONS_FIXTURE.replace('Scope=StockAssertions', 'Scope=StockVisualAssertions') + 'DisplayName=中文商品\n'
+        self.stock_assertions.write_text(visual + 'CaptureHover=0\nPreviewName=训练用MS-A\n', encoding='utf-8')
+        game_test.load_shop_test_inputs(self.stock_assertions, self.stock_display)
+        for extra in ('CaptureHover=2\n', 'CaptureHover=0\nTooltipUnit=0\nTooltipDescriptionHex=\nTooltipUsageHex=\n'):
+            self.stock_assertions.write_text(visual + extra, encoding='utf-8')
+            with self.assertRaises(game_test.GameTestError):
+                game_test.load_shop_test_inputs(self.stock_assertions, self.stock_display)
+        self.stock_assertions.write_text(SHOP_ASSERTIONS_FIXTURE + 'ArtRankLabel=上士及以上\n', encoding='utf-8')
+        with self.assertRaises(game_test.GameTestError):
+            game_test.load_shop_test_inputs(self.stock_assertions, self.stock_display)
+
     def test_visual_queries_are_sealed_and_bounded_per_product(self):
         text=SHOP_ASSERTIONS_FIXTURE.replace('Scope=StockAssertions','Scope=StockVisualAssertions')+'DisplayName=中文商品\nQuery=高达\n'
         self.stock_assertions.write_text(text,encoding='utf-8')
