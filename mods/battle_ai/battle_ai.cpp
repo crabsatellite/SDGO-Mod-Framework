@@ -1,6 +1,7 @@
 // Installs Lua decorators before native CNPC::Think. Native movement, weapons,
 // damage and networking remain the executor. Never reads another process.
 #include <windows.h>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cwchar>
@@ -24,8 +25,16 @@
 #include "native_loadout.h"
 #include "sdgo/room_titles_current.h"
 #include "sdgo/ai_catalog_provider.h"
+#include "sdgo/battle_ai_observer.h"
 
 namespace {
+static_assert(sizeof(SdgoBattleAiUnitSnapshotV1)==208);
+static_assert(offsetof(SdgoBattleAiUnitSnapshotV1,special_zero_completions)==164);
+static_assert(offsetof(SdgoBattleAiUnitSnapshotV1,ranged_attempts)==168);
+static_assert(offsetof(SdgoBattleAiUnitSnapshotV1,ranged_nonzero_returns)==176);
+static_assert(offsetof(SdgoBattleAiUnitSnapshotV1,mobile_primary_dispatches)==184);
+static_assert(offsetof(SdgoBattleAiUnitSnapshotV1,mobile_defensive_dispatches)==192);
+static_assert(offsetof(SdgoBattleAiUnitSnapshotV1,backward_primary_dispatches)==200);
 struct lua_State;
 using LuaFn = int(__cdecl*)(lua_State*);
 using Reader = const char*(__cdecl*)(lua_State*, void*, size_t*);
@@ -89,6 +98,7 @@ StateEventFn g_trackingEntry=nullptr,g_trackingUpdate=nullptr,g_swingEntry=nullp
 StateEventFn g_swingUpdate=nullptr;
 MessageFn g_message=nullptr;
 void* g_contactReturn=nullptr;
+void* g_specialCompletionGateOriginal=nullptr;
 IntentFn g_queueSwing=nullptr,g_faceTarget=nullptr;
 IntentFn g_attackAdmission=nullptr;
 IntentFn g_facingUpdate=nullptr;
@@ -123,6 +133,13 @@ struct DefencePlan {
     bool threatened=false,shielding=false,meleeBusy=false,specialBusy=false,hurt=false;
     bool shieldHitKnown=false;uint8_t shieldHitType=0;
 };
+struct SpecialCompletionReceipt {
+    uint64_t generation=0,acceptedSequence=0,terminalSequence=0;
+    uint8_t* fsm=nullptr;
+    uint8_t* result=nullptr;
+    uint32_t action=0,caster=0,victim=0,damage=0;
+    bool armed=false;
+};
 struct Actor {
     uint64_t generation=0;
     ULONGLONG seen=0,aimAt=0,nextPulse=0;
@@ -136,7 +153,7 @@ struct Actor {
     int lastHp=0;
     ULONGLONG hurtAt=0;
     uint32_t rng=0;
-    bool pathRanged=false,quickSwing=false,sideCue=false,suppressMelee=false;
+    bool pathRanged=false,quickSwing=false,sideCue=false,suppressMelee=false,cancelMeleeTracking=false;
     ULONGLONG startupAt=0;
     uint32_t startupTarget=0;
     float cueAngle=0;
@@ -153,7 +170,14 @@ struct Actor {
     ULONGLONG specialAcknowledgedAt=0;
     uint64_t specialAcknowledgedSequence=0;
     uint64_t specialFinished=0;
+    SpecialCompletionReceipt specialCompletion;
+    uint64_t zeroCompletionCount=0;
     uint64_t thinkSerial=0;
+    uint32_t observedTarget=0,observedFarTargets=0;
+    ULONGLONG observedTargetAt=0;
+    bool observedTargetVisible=false;
+    float observedTargetDistance=0,observedMaxRange=0;
+    Vec3 observedTargetPoint{};
     uint32_t roleUnit=0;
     bool roleAlternate=false,meleeRole=false;
     uint64_t coverQueryFrame=0;
@@ -169,9 +193,20 @@ struct Actor {
 };
 std::unordered_map<uint8_t*,Actor> g_actors;
 void ClearStartup(uint8_t*,Actor&,bool);
-struct Motion { uint8_t* unit=nullptr; Vec3 point,velocity; ULONGLONG at=0; };
+bool PlayerBotRulesMode();
+struct Motion {
+    uint8_t* unit=nullptr;
+    uint64_t generation=0;
+    Vec3 point,velocity;
+    ULONGLONG at=0;
+};
 std::unordered_map<uint32_t,Motion> g_motion;
-struct RangedActivity {ULONGLONG time=0,primaryAt=0;uint32_t target=0,weapon=0,primaryTarget=0;uint64_t calls=0,shots=0;};
+struct RangedActivity {
+    ULONGLONG time=0,primaryAt=0;
+    uint32_t target=0,weapon=0,primaryTarget=0;
+    uint64_t calls=0,attempts=0,shots=0,nonzeroReturns=0;
+    uint64_t mobilePrimaryDispatches=0,mobileDefensiveDispatches=0,backwardPrimaryDispatches=0;
+};
 std::unordered_map<uint8_t*,RangedActivity> g_rangedShots;
 struct Contact {uint32_t target=0,action=0;int combo=0;ULONGLONG time=0;uint8_t* victim=nullptr;};
 std::unordered_map<uint8_t*,Contact> g_contacts;
@@ -186,7 +221,13 @@ thread_local bool g_nativeFallback=false;
 std::atomic<DWORD> g_gameThread{0};
 std::mutex g_pendingMutex;
 std::vector<uint8_t*> g_pendingInit;
-struct SpNotice {uint32_t pilot=0,weapon=0;int32_t value=-1;ULONGLONG time=0;uint64_t sequence=0;bool begin=false,stateOnly=false,finish=false;};
+struct SpNotice {
+    uint32_t pilot=0,weapon=0,victimPilot=0,damage=0;
+    int32_t value=-1;
+    ULONGLONG time=0;
+    uint64_t sequence=0;
+    bool begin=false,stateOnly=false,finish=false,meleeCompletion=false;
+};
 std::mutex g_spMutex;
 std::vector<SpNotice> g_pendingSp;
 std::atomic<uint64_t> g_spSequence{0};
@@ -304,9 +345,12 @@ Vec3 AimPoint(uint8_t* unit) {
     }
     return position;
 }
-Vec3 Velocity(uint8_t* unit,uint32_t id,Vec3 point,ULONGLONG now) {
+Vec3 Velocity(uint8_t* unit,uint32_t id,Vec3 point,ULONGLONG now,uint64_t generation=0) {
     auto& m=g_motion[id];
-    if(m.unit!=unit || !m.at || now-m.at>1000) { m={unit,point,{},now}; return {}; }
+    if(m.unit!=unit || (generation&&m.generation!=generation) || !m.at || now-m.at>1000) {
+        m={unit,generation,point,{},now};return {};
+    }
+    if(generation&&!m.generation) m.generation=generation;
     if(now-m.at>=20) {
         Vec3 v=(point-m.point)*(1000.0f/static_cast<float>(now-m.at));
         m.velocity=battle_ai::Finite(v) && battle_ai::Length(v)<50000 ? v : Vec3{};
@@ -327,6 +371,89 @@ bool ControlBlocked(uint8_t* unit) {
     for(size_t offset:{size_t(0xD4),size_t(0xE8),size_t(0xFC),size_t(0x110),size_t(0x138)})
         if(battle_ai::native::detail::InState(movement,offset)) return true;
     return false;
+}
+bool ArmMeleeCompletion(uint8_t* unit,Actor& actor,const SpNotice& notice,uint64_t acceptedSequence) {
+    __try {
+        auto generation=g_generations.find(unit);
+        auto fsm=*reinterpret_cast<uint8_t**>(unit+0x9CC);
+        if(generation==g_generations.end()||!actor.generation||actor.generation!=generation->second||
+           !fsm||*reinterpret_cast<uint8_t**>(fsm+4)!=fsm+0xAC||fsm[0x9B5]!=0) return false;
+        auto action=*reinterpret_cast<uint32_t*>(fsm+0x224);
+        auto result=*reinterpret_cast<uint8_t**>(fsm+0x9BC);
+        auto victimId=g_canonical(*g_document,notice.victimPilot);
+        auto victim=FindObject(victimId);
+        if(notice.damage!=0||!action||!result||!victimId||!victim||
+           *reinterpret_cast<int32_t*>(victim+0x38)<=0||
+           *reinterpret_cast<uint32_t*>(result+0x10)!=notice.damage||
+           *reinterpret_cast<uint32_t*>(result+0x14)!=victimId||
+           *reinterpret_cast<uint32_t*>(victim+0x9D8)!=4||
+           *reinterpret_cast<uint32_t*>(victim+0xEB8)!=*reinterpret_cast<uint32_t*>(unit+4)) return false;
+        actor.specialCompletion={actor.generation,acceptedSequence,notice.sequence,fsm,result,action,
+                                 *reinterpret_cast<uint32_t*>(unit+4),victimId,notice.damage,true};
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+}
+bool AllowZeroDamageCompletion(uint8_t* fsm,uint8_t* owner,uint8_t* result) {
+    if(GetCurrentThreadId()!=g_gameThread||!g_runtime.enabled||g_runtime.difficulty<1||
+       g_preparationFault||!PlayerBotRulesMode()) return false;
+    __try {
+        if(!Owned(owner)||!fsm||!result||owner[0xEC8]!=0||*reinterpret_cast<uint8_t**>(owner+0x9CC)!=fsm||
+           *reinterpret_cast<uint8_t**>(fsm+0x9BC)!=result||*reinterpret_cast<uint8_t**>(fsm+4)!=fsm+0xAC||
+           fsm[0x9B3]!=1||fsm[0x9B5]!=0||*reinterpret_cast<uint32_t*>(result+0x10)!=0) return false;
+        auto found=g_actors.find(owner);
+        auto generation=g_generations.find(owner);
+        if(found==g_actors.end()||generation==g_generations.end()) return false;
+        auto& actor=found->second;auto& receipt=actor.specialCompletion;
+        auto action=*reinterpret_cast<uint32_t*>(fsm+0x224);
+        auto caster=*reinterpret_cast<uint32_t*>(owner+4);
+        auto victimId=*reinterpret_cast<uint32_t*>(result+0x14);
+        if(!receipt.armed||!action||receipt.generation!=actor.generation||receipt.generation!=generation->second||
+           receipt.acceptedSequence!=actor.specialAcknowledgedSequence||
+           receipt.terminalSequence!=actor.specialFinished||receipt.fsm!=fsm||receipt.result!=result||
+           receipt.action!=action||
+           receipt.caster!=caster||receipt.victim!=victimId||receipt.damage!=0) return false;
+        auto victim=FindObject(victimId);
+        if(!victim||*reinterpret_cast<int32_t*>(victim+0x38)<=0||
+           *reinterpret_cast<uint32_t*>(victim+0x9D8)!=4||
+           *reinterpret_cast<uint32_t*>(victim+0xEB8)!=caster) return false;
+        receipt.armed=false;++actor.zeroCompletionCount;return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+}
+const DWORD g_specialCompletionDefaultMxcsr=0x1F80;
+void __stdcall DispatchSpecialCompletionGate(BYTE* frame) noexcept {
+    const DWORD error=GetLastError();
+    __try {
+        auto& flags=*reinterpret_cast<DWORD*>(frame+0x20);
+        if((flags&0x40)!=0) {
+            auto fsm=*reinterpret_cast<uint8_t**>(frame+4);
+            auto result=*reinterpret_cast<uint8_t**>(frame+0x18);
+            auto owner=*reinterpret_cast<uint8_t**>(frame+0x1C);
+            if(AllowZeroDamageCompletion(fsm,owner,result)) flags&=~DWORD(0x41);
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    SetLastError(error);
+}
+__declspec(naked) void SpecialCompletionGate() {
+    __asm {
+        pushfd
+        pushad
+        mov eax,esp
+        sub esp,210h
+        and esp,0FFFFFFF0h
+        mov [esp+200h],eax
+        fxsave [esp]
+        fninit
+        ldmxcsr dword ptr [g_specialCompletionDefaultMxcsr]
+        cld
+        mov eax,[esp+200h]
+        push eax
+        call DispatchSpecialCompletionGate
+        fxrstor [esp]
+        mov esp,[esp+200h]
+        popad
+        popfd
+        jmp dword ptr [g_specialCompletionGateOriginal]
+    }
 }
 bool HurtState(uint8_t* unit) {
     uint8_t* movement=nullptr;
@@ -361,7 +488,8 @@ void RestoreIntent(uint8_t* unit,Actor& a) {
             *reinterpret_cast<float*>(unit+0x3208)=a.savedPitchError;
         }
     } __except(EXCEPTION_EXECUTE_HANDLER) {}
-    a.controlled=false;a.ownsIntent=false;a.ownsAim=false;a.aimTarget=0;a.suppressMelee=false;a.path.clear();
+    a.controlled=false;a.ownsIntent=false;a.ownsAim=false;a.aimTarget=0;
+    a.suppressMelee=false;a.cancelMeleeTracking=false;a.path.clear();
     a.defenceMoveOwned=false;a.defence={};
     a.recoveryControlled=false;
 }
@@ -380,18 +508,31 @@ bool MovementAvailable(uint8_t* unit,bool allowRanged) {
     auto record=*reinterpret_cast<uint8_t**>(fsm+0x248);
     return record&&(record[0x8F]==1||fsm[0xB38]==1);
 }
-void FollowPath(uint8_t* unit,Actor& a) {
-    if(a.path.empty()) return;
+auto MotionSafetyFor(uint8_t* unit,Vec3 destination) {
+    if(!g_document||!*g_document) return battle_ai::native::MotionSafety::Unavailable;
+    return battle_ai::native::CheckMotionSafety(
+        g_navigation,*g_document,unit,Position(unit),destination);
+}
+bool FollowPath(uint8_t* unit,Actor& a) {
+    if(a.path.empty()) return true;
     if(!MovementAvailable(unit,a.pathRanged)) {
         // Native attacks/hurt/guard own the motor now; drop our route without
         // cancelling the movement belonging to their active state.
-        a.path.clear();return;
+        a.path.clear();return false;
     }
     AdvancePath(unit,a);
-    if(a.path.empty()) return;
+    if(a.path.empty()) return true;
+    if(MotionSafetyFor(unit,a.path[a.waypoint])==battle_ai::native::MotionSafety::Blocked) {
+        a.path.clear();
+        if(!ControlBlocked(unit)) g_stop(unit);
+        return false;
+    }
     Vec3 current=*reinterpret_cast<Vec3*>(unit+0x3078);
     if(unit[0x30DC]==0||battle_ai::Length(current-a.path[a.waypoint])>1)
-        g_setGoal(unit,&a.path[a.waypoint],1);
+        if(!g_setGoal(unit,&a.path[a.waypoint],1)) {
+            a.path.clear();return false;
+        }
+    return true;
 }
 struct TargetObservation {
     uint32_t id=0;
@@ -514,6 +655,7 @@ bool CaptureUnsafe(Observation& o) {
     ULONGLONG now=GetTickCount64();
     o.id=*reinterpret_cast<uint32_t*>(unit+4);o.generation=actor.generation;
     o.hp=*reinterpret_cast<int*>(unit+0x38);o.pos=Position(unit);
+    Velocity(unit,o.id,o.pos,now,o.generation);
     o.goal=*reinterpret_cast<Vec3*>(unit+0x3078);
     o.moving=unit[0x30DC]!=0;
     // CheckHurt consumes a latch. Observe actual/queued MovementFSM control
@@ -521,12 +663,10 @@ bool CaptureUnsafe(Observation& o) {
     o.hurt=ControlBlocked(unit);
     if(actor.lastHp>0 && o.hp<actor.lastHp) actor.hurtAt=now;
     actor.lastHp=o.hp;o.hurtRecently=actor.hurtAt && now-actor.hurtAt<1600;
-    float maxRange=0,meleeRange=0;
+    float meleeRange=0;
     for(const auto& w:o.caps.weapons) if(w.valid&&w.ordinary&&w.slot<3) {
-        maxRange=(std::max)(maxRange,w.range);
         if(w.kind==battle_ai::native::WeaponKind::Melee) meleeRange=(std::max)(meleeRange,w.range);
     }
-    float perception=(std::max)(maxRange,(std::min)(24000.0f,(std::max)(1500.0f,maxRange*1.5f)));
     int ownTeam=*reinterpret_cast<int*>(unit+0x20);
     using CanAttack=bool(__thiscall*)(uint8_t*,uint8_t*);
     Ray3 ray={};
@@ -580,9 +720,11 @@ bool CaptureUnsafe(Observation& o) {
             Vec3 point=AimPoint(candidate);
             float rangedDistance=static_cast<float>(battle_ai::Length(point-ray.origin));
             float meleeDistance=static_cast<float>(battle_ai::Length(point-meleeOrigin));
+            // Weapon reach constrains firing, not noticing a distant visible
+            // combatant to pursue. Fresh collision queries below still own
+            // visibility; Lua retains only the last visible point behind cover.
             if(!battle_ai::Finite(point)||!std::isfinite(rangedDistance)||
-               !std::isfinite(meleeDistance)||
-               (rangedDistance>perception&&meleeDistance>perception)) continue;
+               !std::isfinite(meleeDistance)) continue;
             auto vtable=*reinterpret_cast<void***>(candidate);
             if(!vtable||!vtable[10]) continue;
             const auto protection=battle_ai::native::ReadDamageProtection(candidate);
@@ -624,6 +766,19 @@ bool CaptureUnsafe(Observation& o) {
         if(traversed>=4096) return false;
     }
     if(!battle_ai::Finite(o.pos)||!battle_ai::Finite(o.goal)) return false;
+    actor.observedTarget=*reinterpret_cast<uint32_t*>(fsm+0x200);
+    actor.observedTargetAt=0;
+    actor.observedTargetVisible=false;actor.observedTargetDistance=0;actor.observedFarTargets=0;actor.observedMaxRange=0;
+    for(const auto& weapon:o.caps.weapons)
+        if(weapon.valid&&weapon.ordinary&&weapon.slot<3) actor.observedMaxRange=(std::max)(actor.observedMaxRange,weapon.range);
+    for(size_t i=0;i<o.count;++i) {
+        const auto& target=o.targets[i];
+        if(target.id==actor.observedTarget) {
+            actor.observedTargetVisible=target.visible;actor.observedTargetDistance=target.distance;actor.observedTargetPoint=target.point;
+            actor.observedTargetAt=now;
+        }
+        if(target.visible&&target.attackable&&!target.damageProtected&&target.distance>actor.observedMaxRange) ++actor.observedFarTargets;
+    }
     PlanDefence(o,actor,now);return true;
 }
 bool Capture(Observation& o) {
@@ -696,6 +851,11 @@ int __cdecl Observe(lua_State* L) {
     Number(L,"specialControlAllowed",specialControl);
     auto shot=g_rangedShots.find(g_current);
     Number(L,"shots",shot==g_rangedShots.end()?0:static_cast<double>(shot->second.shots));
+    Number(L,"shotAttempts",shot==g_rangedShots.end()?0:static_cast<double>(shot->second.attempts));
+    Number(L,"shotNonzeroReturns",shot==g_rangedShots.end()?0:static_cast<double>(shot->second.nonzeroReturns));
+    Number(L,"mobilePrimaryDispatches",shot==g_rangedShots.end()?0:static_cast<double>(shot->second.mobilePrimaryDispatches));
+    Number(L,"mobileDefensiveDispatches",shot==g_rangedShots.end()?0:static_cast<double>(shot->second.mobileDefensiveDispatches));
+    Number(L,"backwardPrimaryDispatches",shot==g_rangedShots.end()?0:static_cast<double>(shot->second.backwardPrimaryDispatches));
     Number(L,"shotAt",shot==g_rangedShots.end()?0:static_cast<double>(shot->second.primaryAt));
     auto contact=g_contacts.find(g_current);
     Number(L,"contactTarget",contact==g_contacts.end()?0:contact->second.target);
@@ -777,7 +937,7 @@ int __cdecl AimTarget(lua_State* L) {
 int __cdecl CancelRoute(lua_State*) {
     if(Owned(g_current)) {
         auto& a=ActorFor(g_current);
-        if(!a.path.empty()) g_stop(g_current);
+        if(!a.path.empty()&&!ControlBlocked(g_current)) g_stop(g_current);
         a.path.clear();a.defenceMoveOwned=false;
     }
     return 0;
@@ -809,7 +969,11 @@ int __cdecl RecoveryMode(lua_State* L) {
     return 0;
 }
 int __cdecl MeleeGate(lua_State* L) {
-    if(GetCurrentThreadId()==g_gameThread&&Owned(g_current)) ActorFor(g_current).suppressMelee=g_lua.tonumber(L,1)==1;
+    if(GetCurrentThreadId()==g_gameThread&&Owned(g_current)) {
+        auto& actor=ActorFor(g_current);
+        actor.suppressMelee=g_lua.tonumber(L,1)==1;
+        actor.cancelMeleeTracking=actor.suppressMelee&&g_lua.gettop(L)>=2&&g_lua.tonumber(L,2)==1;
+    }
     return 0;
 }
 int __cdecl ProfileLease(lua_State* L) {
@@ -941,8 +1105,7 @@ bool LoadRouteUnsafe(uint32_t target,const Vec3* lastSeen) {
     if(!valid||!released) return false;
     for(Vec3 p:staged) if(!battle_ai::Finite(p)) return false;
     a.path.swap(staged);a.waypoint=0;
-    FollowPath(g_current,a);
-    return true;
+    return FollowPath(g_current,a);
 }
 bool LoadRoute(uint32_t id,const Vec3* lastSeen) {
     __try { return LoadRouteUnsafe(id,lastSeen); }
@@ -977,7 +1140,8 @@ bool AdvancePointUnsafe(Vec3 target,float stepLimit,bool allowRanged) {
     if(!std::isfinite(distance)||distance<=1.0) return false;
     float scale=distance>stepLimit?stepLimit/static_cast<float>(distance):1.0f;
     Vec3 goal={here.x+offset.x*scale,here.y,here.z+offset.z*scale};
-    if(!battle_ai::Finite(goal)) return false;
+    if(!battle_ai::Finite(goal)||
+       MotionSafetyFor(g_current,goal)!=battle_ai::native::MotionSafety::Safe) return false;
     std::vector<Vec3> staged;
     try { staged.push_back(goal); } catch(...) { return false; }
     if(!g_setGoal(g_current,&goal,1)) return false;
@@ -999,6 +1163,53 @@ int __cdecl AdvancePoint(lua_State* L) {
             AdvancePointGuarded(target,static_cast<float>(limit),ranged==1);
     }
     g_lua.pushnumber(L,ok?1:0);return 1;
+}
+int __cdecl SafeDirection(lua_State* L) {
+    double requested=g_lua.tonumber(L,1),distanceValue=g_lua.tonumber(L,2);
+    double forwardValue=g_lua.tonumber(L,3),backwardValue=g_lua.tonumber(L,4);
+    double leftValue=g_lua.tonumber(L,5),rightValue=g_lua.tonumber(L,6);
+    double selected=-1;
+    if(g_lua.gettop(L)>=6&&Owned(g_current)&&g_document&&*g_document&&
+       GetCurrentThreadId()==g_gameThread&&
+       std::isfinite(requested)&&std::isfinite(distanceValue)&&distanceValue>0&&
+       std::isfinite(forwardValue)&&std::isfinite(backwardValue)&&
+       std::isfinite(leftValue)&&std::isfinite(rightValue)) {
+        __try {
+            auto node=*reinterpret_cast<uint8_t**>(g_current+8);
+            Vec3 forward=node?battle_ai::Horizontal(*reinterpret_cast<Vec3*>(node+0x6C)):Vec3{};
+            const double length=battle_ai::Length(forward);
+            if(node&&std::isfinite(length)&&length>0.5) {
+                forward=forward*static_cast<float>(1.0/length);
+                const Vec3 right={forward.z,0,-forward.x};
+                const Vec3 here=Position(g_current);
+                struct Candidate {double value;Vec3 direction;};
+                Candidate candidates[4] = {
+                    {requested,{}},{leftValue,right*-1.0f},
+                    {rightValue,right},{backwardValue,forward*-1.0f}
+                };
+                auto direction=[&](double value) {
+                    if(value==forwardValue) return forward;
+                    if(value==backwardValue) return forward*-1.0f;
+                    if(value==leftValue) return right*-1.0f;
+                    if(value==rightValue) return right;
+                    return Vec3{};
+                };
+                candidates[0].direction=direction(requested);
+                for(const auto& candidate:candidates) {
+                    if(candidate.value!=requested&&candidate.value==forwardValue) continue;
+                    if(battle_ai::Length(candidate.direction)<0.5) continue;
+                    const Vec3 destination=here+candidate.direction*static_cast<float>(distanceValue);
+                    const auto safety=battle_ai::native::CheckMotionSafety(
+                        g_navigation,*g_document,g_current,here,destination);
+                    if(safety==battle_ai::native::MotionSafety::Unavailable) break;
+                    if(safety==battle_ai::native::MotionSafety::Safe) {
+                        selected=candidate.value;break;
+                    }
+                }
+            }
+        } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    }
+    g_lua.pushnumber(L,selected);return 1;
 }
 int __cdecl Chance(lua_State* L);
 int __cdecl Cover(lua_State* L) {
@@ -1271,7 +1482,13 @@ void __fastcall AttackIntent(uint8_t* unit,void*) {
     if(found==g_actors.end()||!found->second.ownsIntent) return;
     auto& a=found->second;
     auto record=fsm?*reinterpret_cast<uint8_t**>(fsm+0x248):nullptr;
-    if(a.suppressMelee&&record&&(record[0x6A]==1||record[0x6A]==8)) unit[0xDCD]=0;
+    auto current=fsm?*reinterpret_cast<uint8_t**>(fsm+4):nullptr;
+    auto pending=fsm?*reinterpret_cast<uint8_t**>(fsm+8):nullptr;
+    // Any already queued non-Neutral action owns its admission input. This
+    // includes a swing as well as a ranged/special handoff from tracking.
+    const bool committedTrackingAction=fsm&&current==fsm+0x48&&pending&&pending!=fsm+0x20;
+    if(a.suppressMelee&&!committedTrackingAction&&record&&(record[0x6A]==1||record[0x6A]==8))
+        unit[0xDCD]=0;
     ULONGLONG now=GetTickCount64();
     if(neutral && unit[0xDCD]) {
         if(now<a.nextPulse) unit[0xDCD]=0;
@@ -1282,19 +1499,98 @@ void __fastcall AttackIntent(uint8_t* unit,void*) {
         *reinterpret_cast<float*>(unit+0x3208)=0;
     }
 }
-void RecordRangedShot(uint8_t* fsm,uint32_t event,char chained,char force) {
+struct RangedShotAttempt {
+    uint8_t* fsm=nullptr;
+    uint8_t* owner=nullptr;
+    uint8_t* record=nullptr;
+    uint64_t generation=0;
+    uint32_t ownerId=0;
+    uint32_t action=0;
+    uint32_t target=0;
+    uint32_t weapon=0;
+    ULONGLONG time=0;
+    bool eligible=false;
+};
+RangedShotAttempt BeginRangedShot(uint8_t* fsm,uint32_t event,char chained,char force) {
+    RangedShotAttempt attempt;
     __try {
-        if(!g_gameThread || GetCurrentThreadId()!=g_gameThread) return;
+        if(!g_gameThread || GetCurrentThreadId()!=g_gameThread || !fsm) return attempt;
         auto owner=*reinterpret_cast<uint8_t**>(fsm+0xB2C);
-        if(!owner || *reinterpret_cast<int*>(owner+0x38)<=0) return;
-        auto& shot=g_rangedShots[owner];shot.time=GetTickCount64();shot.target=*reinterpret_cast<uint32_t*>(fsm+0x200);++shot.calls;
+        if(!owner || *reinterpret_cast<int*>(owner+0x38)<=0) return attempt;
+        auto& shot=g_rangedShots[owner];
+        shot.time=GetTickCount64();
+        shot.target=*reinterpret_cast<uint32_t*>(fsm+0x200);
+        ++shot.calls;
         // Only primary kind 1/8 calls inside native 6B41A0 are new attack-cycle
         // fires. Kind 7, multiple muzzles and arbitrary 6B1270 callers are not.
-        if(g_receiptFsm==fsm && event==0 && chained==0 && (force==0||force==1) &&
-           *reinterpret_cast<uint8_t**>(fsm+4)==fsm+0x34) {
+        const bool primary=g_receiptFsm==fsm && event==0 && chained==0 && (force==0||force==1) &&
+            *reinterpret_cast<uint8_t**>(fsm+4)==fsm+0x34;
+        if(primary) {
+            ++shot.attempts;
+            // Preserve the established primary-receipt contract used by Lua
+            // cadence and Hard follow-ups. Some legitimate native generators
+            // return zero, so the raw 6B1270 return cannot gate this counter.
             ++shot.shots;shot.primaryAt=shot.time;shot.primaryTarget=shot.target;
         }
-        auto record=*reinterpret_cast<uint8_t**>(fsm+0x248);shot.weapon=record?*reinterpret_cast<uint32_t*>(record):0;
+        auto record=*reinterpret_cast<uint8_t**>(fsm+0x248);
+        shot.weapon=record?*reinterpret_cast<uint32_t*>(record):0;
+        if(primary) {
+            if(*reinterpret_cast<uint8_t**>(owner+0x9CC)==fsm && record) {
+                auto generation=g_generations.find(owner);
+                auto actor=g_actors.find(owner);
+                auto action=*reinterpret_cast<uint32_t*>(fsm+0x224);
+                auto ownerId=*reinterpret_cast<uint32_t*>(owner+4);
+                auto weapon=*reinterpret_cast<uint32_t*>(record);
+                const bool liveGeneration=generation!=g_generations.end()&&actor!=g_actors.end()&&
+                    generation->second!=0&&actor->second.generation==generation->second;
+                if(generation!=g_generations.end() && actor!=g_actors.end() &&
+                   generation->second!=0 && actor->second.generation==generation->second &&
+                   action!=0 && ownerId!=0 && weapon!=0) {
+                    attempt={fsm,owner,record,generation->second,ownerId,action,shot.target,weapon,shot.time,true};
+                }
+                battle_ai::native::Capabilities caps={};
+                auto motion=g_motion.find(ownerId);
+                const auto now=shot.time;
+                const bool freshMotion=liveGeneration&&motion!=g_motion.end()&&motion->second.unit==owner&&
+                    motion->second.generation==generation->second&&motion->second.at&&
+                    now>=motion->second.at&&now-motion->second.at<=250;
+                Vec3 physical={};
+                if(freshMotion) {
+                    const Vec3 delta=battle_ai::Horizontal(Position(owner)-motion->second.point);
+                    const Vec3 velocity=battle_ai::Horizontal(motion->second.velocity);
+                    if(battle_ai::Finite(delta)&&battle_ai::Length(delta)>0.01) physical=delta;
+                    else if(battle_ai::Finite(velocity)&&battle_ai::Length(velocity)>0.01) physical=velocity;
+                }
+                const bool actuallyMoving=battle_ai::Finite(physical)&&battle_ai::Length(physical)>0.01;
+                const bool selectedMobileGun=liveGeneration&&
+                    battle_ai::native::ReadCapabilities(owner,caps)&&caps.selectedSlot>=0&&caps.selectedSlot<3&&
+                    caps.weapons[caps.selectedSlot].valid&&caps.weapons[caps.selectedSlot].ordinary&&
+                    caps.weapons[caps.selectedSlot].kind!=battle_ai::native::WeaponKind::Melee&&
+                    caps.weapons[caps.selectedSlot].movingShot&&caps.weapons[caps.selectedSlot].id==weapon;
+                const bool mobileDispatch=selectedMobileGun&&!ControlBlocked(owner)&&owner[0x30DC]!=0&&actuallyMoving;
+                if(mobileDispatch) {
+                    // This is a post-ammo native generator-dispatch witness.
+                    // It does not claim that every generator created a projectile
+                    // or returned a universal success value.
+                    ++shot.mobilePrimaryDispatches;
+                    const auto& state=actor->second;
+                    const bool freshDefencePlan=state.defence.at&&now>=state.defence.at&&
+                        now-state.defence.at<=250&&state.defence.threatened&&state.defence.movement.relocate;
+                    const bool freshDefenceRecovery=state.recoveryControlled&&state.recoveryAt&&
+                        now>=state.recoveryAt&&now-state.recoveryAt<=250&&state.defenceEpisode&&
+                        state.defenceEpisodeAt&&now>=state.defenceEpisodeAt&&now-state.defenceEpisodeAt<=1000;
+                    if(state.defenceMoveOwned||freshDefencePlan||freshDefenceRecovery)
+                        ++shot.mobileDefensiveDispatches;
+                    if(state.observedTarget==shot.target&&state.observedTargetAt&&now>=state.observedTargetAt&&
+                       now-state.observedTargetAt<=250) {
+                        const Vec3 toward=battle_ai::Horizontal(state.observedTargetPoint-Position(owner));
+                        if(battle_ai::Finite(toward)&&battle_ai::Length(toward)>0.01&&
+                           battle_ai::Dot(toward,physical)<0)
+                            ++shot.backwardPrimaryDispatches;
+                    }
+                }
+            }
+        }
         if(g_rangedShots.size()>2048) {
             ULONGLONG now=GetTickCount64();
             for(auto it=g_rangedShots.begin();it!=g_rangedShots.end();) {
@@ -1302,10 +1598,36 @@ void RecordRangedShot(uint8_t* fsm,uint32_t event,char chained,char force) {
             }
         }
     } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    return attempt;
+}
+void CompleteRangedShot(const RangedShotAttempt& attempt,uint32_t result) {
+    if(!result||!attempt.eligible) return;
+    __try {
+        if(!g_gameThread||GetCurrentThreadId()!=g_gameThread||
+           !attempt.owner||!attempt.fsm||!attempt.record||
+           *reinterpret_cast<int*>(attempt.owner+0x38)<=0||
+           *reinterpret_cast<uint32_t*>(attempt.owner+4)!=attempt.ownerId||
+           *reinterpret_cast<uint8_t**>(attempt.owner+0x9CC)!=attempt.fsm||
+           *reinterpret_cast<uint8_t**>(attempt.fsm+0xB2C)!=attempt.owner||
+           *reinterpret_cast<uint32_t*>(attempt.fsm+0x224)!=attempt.action||
+           *reinterpret_cast<uint8_t**>(attempt.fsm+0x248)!=attempt.record||
+           *reinterpret_cast<uint32_t*>(attempt.record)!=attempt.weapon) return;
+        auto generation=g_generations.find(attempt.owner);
+        auto actor=g_actors.find(attempt.owner);
+        auto shot=g_rangedShots.find(attempt.owner);
+        if(generation==g_generations.end()||actor==g_actors.end()||shot==g_rangedShots.end()||
+           generation->second!=attempt.generation||actor->second.generation!=attempt.generation) return;
+        // Diagnostic only: a stable nonzero return is useful evidence for the
+        // projectile/Lua generators that expose it, but zero is also a legal
+        // result for other native firing families.
+        ++shot->second.nonzeroReturns;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
 }
 uint32_t __fastcall RangedShot(uint8_t* fsm,void*,uint32_t event,char chained,char force) {
-    RecordRangedShot(fsm,event,chained,force);
-    return g_shot(fsm,event,chained,force);
+    auto attempt=BeginRangedShot(fsm,event,chained,force);
+    auto result=g_shot(fsm,event,chained,force);
+    CompleteRangedShot(attempt,result);
+    return result;
 }
 void __fastcall FireReceipts(uint8_t* fsm,void*,void* event) {
     if(GetCurrentThreadId()!=g_gameThread) {g_fireReceipts(fsm,event);return;}
@@ -1359,6 +1681,7 @@ void ApplySpNotice(const SpNotice& notice) {
         if(notice.stateOnly) {
             if(notice.finish&&found!=g_actors.end()) {
                 found->second.specialAcknowledged=false;found->second.specialFinished=notice.sequence;
+                found->second.specialCompletion={};
             }
             if(g_spSnapshots.size()>2048) g_spSnapshots.clear();
             g_spSnapshots[unit]={notice.sequence,notice.value};
@@ -1370,10 +1693,12 @@ void ApplySpNotice(const SpNotice& notice) {
         if(notice.begin) {
             if(!notice.weapon||actor.expectedSpecialWeapon!=notice.weapon||notice.time<actor.expectedSpecialAt||notice.time-actor.expectedSpecialAt>3000) return;
             actor.expectedSpecialWeapon=0;actor.specialAcknowledged=true;actor.specialAcknowledgedAt=notice.time;
-            actor.specialAcknowledgedSequence=notice.sequence;
+            actor.specialAcknowledgedSequence=notice.sequence;actor.specialCompletion={};
         } else {
             if(!actor.specialAcknowledged||notice.time<actor.specialAcknowledgedAt||notice.time-actor.specialAcknowledgedAt>60000) return;
-            actor.specialAcknowledged=false;actor.specialFinished=notice.sequence;
+            auto acceptedSequence=actor.specialAcknowledgedSequence;
+            actor.specialAcknowledged=false;actor.specialFinished=notice.sequence;actor.specialCompletion={};
+            if(notice.meleeCompletion) ArmMeleeCompletion(unit,actor,notice,acceptedSequence);
         }
         if(g_spSnapshots.size()>2048) g_spSnapshots.clear();
         g_spSnapshots[unit]={notice.sequence,notice.value};
@@ -1391,6 +1716,19 @@ bool ParseSpNotice(const uint8_t* packet,size_t valueOffset,bool begin,SpNotice&
         return notice.value>=0&&notice.value<=30000;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
+bool ParseMeleeCompletion(const uint8_t* packet,SpNotice& notice,uint64_t sequence) {
+    if(!ParseSpNotice(packet,0xE,false,notice,sequence)) return false;
+    __try {
+        if(*reinterpret_cast<const uint16_t*>(packet)==606) {
+            notice.victimPilot=*reinterpret_cast<const uint32_t*>(packet+0x12);
+            notice.damage=*reinterpret_cast<const uint32_t*>(packet+0x24);
+            notice.meleeCompletion=notice.victimPilot!=0;
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        notice.victimPilot=0;notice.damage=0;notice.meleeCompletion=false;
+    }
+    return true;
+}
 void SubmitSpNotice(const SpNotice& notice) {
     std::lock_guard<std::mutex> lock(g_spMutex);
     if(g_pendingSp.size()>=256) g_pendingSp.erase(g_pendingSp.begin());
@@ -1407,7 +1745,7 @@ int __fastcall SpecialNotice(uint8_t* handler,void*,const uint8_t* packet) {
     int result=g_specialNotice(handler,packet);if(valid) SubmitSpNotice(notice);return result;
 }
 int __fastcall MeleeNotice(uint8_t* handler,void*,const uint8_t* packet) {
-    SpNotice notice;bool valid=ParseSpNotice(packet,0xE,false,notice,NextSpSequence());
+    SpNotice notice;bool valid=ParseMeleeCompletion(packet,notice,NextSpSequence());
     int result=g_meleeNotice(handler,packet);if(valid) SubmitSpNotice(notice);return result;
 }
 int __fastcall RangedNotice(uint8_t* handler,void*,const uint8_t* packet) {
@@ -1518,16 +1856,27 @@ void __fastcall TrackingUpdate(uint8_t* fsm,void*,void* event) {
         __try {
             auto owner=*reinterpret_cast<uint8_t**>(fsm+0xB2C);
             auto pending=*reinterpret_cast<uint8_t**>(fsm+8);
+            auto found=g_actors.find(owner);
+            if(WantsGeneric(owner)&&*reinterpret_cast<uint8_t**>(fsm+4)==fsm+0x48&&
+               pending&&pending!=fsm+0x20&&found!=g_actors.end())
+                found->second.cancelMeleeTracking=false;
             if(WantsGeneric(owner)&&*reinterpret_cast<uint8_t**>(fsm+4)==fsm+0x48&&(!pending||pending==fsm+0x20)) {
                 auto target=FindObject(*reinterpret_cast<uint32_t*>(fsm+0x200));
-                if(target) {
+                bool cancel=found!=g_actors.end()&&found->second.cancelMeleeTracking;
+                if(target&&!cancel) {
                     const auto protection=battle_ai::native::ReadDamageProtection(target);
-                    if(!protection.known||protection.active) {
-                        auto found=g_actors.find(owner);if(found!=g_actors.end()) ClearStartup(owner,found->second,true);
-                        g_setIntent(owner,0);
-                        if(!pending) g_queueState(fsm,fsm+0x20);
-                        return; // native Release/Neutral Entry run at the next FSM update
+                    cancel=!protection.known||protection.active;
+                }
+                if(cancel) {
+                    if(found!=g_actors.end()) {
+                        ClearStartup(owner,found->second,true);
+                        found->second.cancelMeleeTracking=false;
                     }
+                    g_setIntent(owner,0);
+                    owner[0x312A]=0;
+                    *reinterpret_cast<uint16_t*>(owner+0xDCD)=0;
+                    if(!pending) g_queueState(fsm,fsm+0x20);
+                    return; // native Release/Neutral Entry run at the next FSM update
                 }
             }
         } __except(EXCEPTION_EXECUTE_HANDLER) {}
@@ -1847,6 +2196,7 @@ void Prepare() {
     Register(L,"SDGO_BattleAI_RecoveryMode",RecoveryMode);
     Register(L,"SDGO_BattleAI_Route",Route);
     Register(L,"SDGO_BattleAI_AdvancePoint",AdvancePoint);
+    Register(L,"SDGO_BattleAI_SafeDirection",SafeDirection);
     Register(L,"SDGO_BattleAI_CancelRoute",CancelRoute);
     Register(L,"SDGO_BattleAI_Chance",Chance);
     Register(L,"SDGO_BattleAI_Cover",Cover);
@@ -1949,8 +2299,63 @@ extern "C" __declspec(dllexport) void __cdecl SdgoBattleAiInitializeUnit(uint8_t
        result!=battle_ai::loadout::ApplyResult::InvalidArgument)
         g_api->Log(g_mod,SDGO_LOG_WARN,"native bot loadout initialization incomplete (%d)",static_cast<int>(result));
 }
+extern "C" __declspec(dllexport) int __cdecl SdgoBattleAiGetUnitSnapshotV1(uint32_t id,SdgoBattleAiUnitSnapshotV1* output) {
+    __try {
+        if(!output||output->size<sizeof(*output)||output->version!=1||GetCurrentThreadId()!=g_gameThread) return 0;
+        auto unit=FindObject(id);auto found=g_actors.find(unit);
+        if(!unit||found==g_actors.end()||unit[0x2B65]!=0||
+           *reinterpret_cast<uint32_t*>(unit+0x3238)<3604001||*reinterpret_cast<uint32_t*>(unit+0x3238)>3607000) return 0;
+        battle_ai::native::Capabilities caps={};if(!battle_ai::native::ReadCapabilities(unit,caps)) return 0;
+        const auto& actor=found->second;SdgoBattleAiUnitSnapshotV1 result{};
+        result.size=sizeof(result);result.version=1;result.object_id=id;result.unit_id=caps.unitId;result.generation=actor.generation;
+        result.hp=*reinterpret_cast<int32_t*>(unit+0x38);result.hurt_state=*reinterpret_cast<uint32_t*>(unit+0x9D8);
+        result.captured_by=*reinterpret_cast<uint32_t*>(unit+0xEB8);result.control_blocked=ControlBlocked(unit);result.special_busy=caps.specialBusy;
+        result.ai_enabled=unit[0x326C]!=0;
+        result.selected_slot=caps.selectedSlot;result.special_finished=actor.specialFinished;
+        result.special_zero_completions=static_cast<uint32_t>(
+            std::min<uint64_t>(actor.zeroCompletionCount,UINT32_MAX));
+        auto shot=g_rangedShots.find(unit);if(shot!=g_rangedShots.end()) result.ranged_shots=shot->second.shots;
+        if(shot!=g_rangedShots.end()) result.ranged_attempts=shot->second.attempts;
+        if(shot!=g_rangedShots.end()) result.ranged_nonzero_returns=shot->second.nonzeroReturns;
+        if(shot!=g_rangedShots.end()) result.mobile_primary_dispatches=shot->second.mobilePrimaryDispatches;
+        if(shot!=g_rangedShots.end()) result.mobile_defensive_dispatches=shot->second.mobileDefensiveDispatches;
+        if(shot!=g_rangedShots.end()) result.backward_primary_dispatches=shot->second.backwardPrimaryDispatches;
+        auto attack=*reinterpret_cast<uint8_t**>(unit+0x9CC);auto movement=*reinterpret_cast<uint8_t**>(unit+0x9C8);
+        result.target_id=attack?*reinterpret_cast<uint32_t*>(attack+0x200):0;
+        if(result.target_id==actor.observedTarget) {
+            result.target_visible=actor.observedTargetVisible;result.target_distance=actor.observedTargetDistance;
+            result.target_x=actor.observedTargetPoint.x;result.target_y=actor.observedTargetPoint.y;result.target_z=actor.observedTargetPoint.z;
+        }
+        result.defence_moving=actor.defenceMoveOwned||actor.defence.movement.relocate;
+        result.moving=unit[0x30DC]!=0;
+        if(caps.selectedSlot>=0&&caps.selectedSlot<4) {
+            result.moving_shot=caps.weapons[caps.selectedSlot].movingShot;result.weapon_range=caps.weapons[caps.selectedSlot].range;
+        }
+        result.max_ordinary_range=actor.observedMaxRange;result.visible_far_targets=actor.observedFarTargets;
+        const Vec3 pos=Position(unit);result.x=pos.x;result.y=pos.y;result.z=pos.z;
+        auto offset=[](uint8_t* fsm,size_t field)->uint32_t {
+            if(!fsm) return 0;auto state=*reinterpret_cast<uint8_t**>(fsm+field);
+            return state>=fsm&&state<fsm+0x210?static_cast<uint32_t>(state-fsm):0;
+        };
+        result.attack_state=offset(attack,4);result.attack_pending=offset(attack,8);
+        result.movement_state=offset(movement,4);result.movement_pending=offset(movement,8);
+        if(attack) {
+            result.special_end_event=attack[0x9B3];result.special_result_applied=attack[0x9B5];
+            uint8_t* specialResult=nullptr;
+            if(battle_ai::native::detail::ReadPointer(attack,0x9BC,specialResult)) {
+                battle_ai::native::detail::Read(specialResult,0x14,result.special_result_victim);
+                battle_ai::native::detail::Read(specialResult,0x10,result.special_result_damage);
+            }
+            result.special_owner_flag=unit[0xEC8];
+        }
+        *output=result;return 1;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return 0;}
+}
 SDGO_MOD_ENTRY {
     g_api = api; g_mod = mod;
+    if(!api||api->version!=SDGO_API_VERSION||
+       api->size<offsetof(SdgoApi,HookSite)+sizeof(api->HookSite)||!api->Symbol||!api->HookSite||
+       !api->Symbol(mod,"combat.special_melee_completion_layout")) return 0;
     if (!Bind(g_lua.state,"lua_tinker.state") || !Bind(g_lua.gettop,"lua.gettop") ||
         !Bind(g_lua.type,"lua.type") || !Bind(g_lua.tonumber,"lua.tonumber") ||
         !Bind(g_lua.settop,"lua.settop") || !Bind(g_lua.tostring,"lua.tostring") ||
@@ -1994,7 +2399,9 @@ SDGO_MOD_ENTRY {
         !api->HookCode(mod,"npc.swing_entry",reinterpret_cast<void*>(&SwingEntry),reinterpret_cast<void**>(&g_swingEntry)) ||
         !api->HookCode(mod,"npc.swing_update",reinterpret_cast<void*>(&SwingUpdate),reinterpret_cast<void**>(&g_swingUpdate)) ||
         !api->HookCode(mod,"um.deliver_message",reinterpret_cast<void*>(&DeliverMessage),reinterpret_cast<void**>(&g_message)) ||
-        !api->HookCode(mod,"combat.projectile_update",reinterpret_cast<void*>(&ProjectileUpdate),reinterpret_cast<void**>(&g_projectile))) return 0;
+        !api->HookCode(mod,"combat.projectile_update",reinterpret_cast<void*>(&ProjectileUpdate),reinterpret_cast<void**>(&g_projectile)) ||
+        !api->HookSite(mod,"combat.special_melee_completion_gate",reinterpret_cast<void*>(&SpecialCompletionGate),
+                       &g_specialCompletionGateOriginal)) return 0;
     api->Log(mod,SDGO_LOG_INFO,"ready: capability-driven local battle bots; native projectiles and collisions");
     return 1;
 }

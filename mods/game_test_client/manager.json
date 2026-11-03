@@ -33,6 +33,74 @@
       "activation": "restart_required"
     },
     {
+      "id": "battle_ai_behavior",
+      "key": "BattleAiBehavior",
+      "label": "要求必杀恢复、移动开火及远距追敌实测",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "battle_ai_deaths",
+      "key": "BattleAiDeaths",
+      "label": "记录原生死亡与地图伤害身份",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "battle_ai_teleport",
+      "key": "BattleAiTeleport",
+      "label": "要求 AI 真实瞬移且保留血量",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "battle_player_combat",
+      "key": "BattlePlayerCombat",
+      "label": "测试进程原生移动与主武器输入",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "battle_player_combat_continuous",
+      "key": "BattlePlayerCombatContinuous",
+      "label": "测试进程持续主武器输入",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "battle_map",
+      "key": "BattleMap",
+      "label": "原生测试地图编号（0 随机）",
+      "type": "integer",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 65535,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
       "id": "capture_native_frames",
       "key": "CaptureNativeFrames",
       "label": "采集真实原生页面画面",
@@ -58,22 +126,40 @@
       "id": "unit_acquisition_kind",
       "key": "UnitAcquisitionKind",
       "label": "机体候选检查（0关闭、1固定、3自定义）",
-      "type": "integer", "default": 0, "minimum": 0, "maximum": 3,
-      "file": "mod.ini", "section": "settings", "audience": "developer", "activation": "restart_required"
+      "type": "integer",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 3,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
     },
     {
       "id": "unit_acquisition_machine",
       "key": "UnitAcquisitionMachine",
       "label": "候选检查的机台编号",
-      "type": "integer", "default": 0, "minimum": 0, "maximum": 9999999,
-      "file": "mod.ini", "section": "settings", "audience": "developer", "activation": "restart_required"
+      "type": "integer",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 9999999,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
     },
     {
       "id": "unit_acquisition_unit",
       "key": "UnitAcquisitionUnit",
       "label": "候选检查的机体编号",
-      "type": "integer", "default": 0, "minimum": 0, "maximum": 9999999,
-      "file": "mod.ini", "section": "settings", "audience": "developer", "activation": "restart_required"
+      "type": "integer",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 9999999,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
     },
     {
       "id": "collection_preview_only",

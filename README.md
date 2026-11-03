@@ -6,7 +6,7 @@ Unofficial fan project; no game files are included. [简体中文](README.zh-CN.
 [Installation](docs/setup.md) · [SDGO Mod Manager](docs/mod-manager.md) · [Latest release](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
 Manager includes an **Update** button with Stable (default) and Beta channels, automatic checks and installation. See the Manager guide.
 
-Manage features through **SDGO Mod Manager** and use your normal game launcher.
+Server owners and maintainers use **SDGO Mod Manager**, available through a clearly marked owner entry at the top of the client folder. Its program and browser tab use the same SDGO mark as the interface. Ordinary players should use their normal game launcher and follow the server owner's Mod configuration.
 This page is a feature index. Configuration, gameplay instructions, compatibility and troubleshooting are in each feature's documentation.
 Beta and Experimental labels indicate release channels.
 Release labels describe the published version; later feature work is accepted separately.
@@ -24,7 +24,7 @@ Release labels describe the published version; later feature work is accepted se
 | Apsalus III transform input fix <!-- catalog: `transform_input_fix` --> | Release the native transform lock when a form has no transform animation | [Use](docs/transform-input-fix.md) |
 | Agent relay log fix <!-- catalog: `agent_relay_log_fix` --> | Fix an Agent relay log that reads invalid memory | [Use](docs/agent-relay-log-fix.md) |
 | Battle rank regression fix <!-- catalog: `rank_progression_fix` --> | Stop battle settlement from lowering a pilot's rank (WorldServer) | [Use](docs/rank-progression-fix.md) |
-| Friend list fix <!-- catalog: `friend_list_fix`, `friend_list_client_fix` --> | Retain offline friends, current names and the native conversation entry | [Use](docs/friend-list-fix.md) |
+| Friend list fix <!-- catalog: `friend_list_fix`, `friend_list_client_fix` --> | Retain offline friends and current names; restore the built-in messenger UI | [Use](docs/friend-list-fix.md) |
 | New-account starter profile <!-- catalog: `new_account_profile` --> | Configurable starting GP, cash, rank and unit gifts instead of the stock 9,999,999 / rank 15 | [Use](docs/new-account-profile.md) |
 | Shop rental and Unicode labels <!-- catalog: `shop_labels` --> | Readable rental/permanent labels and Chinese option names in the shop | [Use](docs/shop-labels.md) |
 
@@ -44,7 +44,7 @@ Release labels describe the published version; later feature work is accepted se
 | Per-round random loadouts (Beta) <!-- catalog: `room_random`, `room_random_client` --> | `!rand` in a room title draws each player's unit or deck from their own hangar every round | [Use](docs/room-random.md) |
 | FPS cap <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed | [Use](docs/fps-limit.md) |
 | Extended room titles <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Enter up to 128 characters in normal, AI, team and mission room creation, settings and rename controls | [Use](docs/room-titles.md) |
-| Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Easy / Medium / Hard PvP bots, selectable in the room title | [Use](docs/battle-ai.md) |
+| Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Room-selected difficulty, ranged retreat, distant pursuit and native special/Teleport recovery | [Use](docs/battle-ai.md) |
 | Automatic hangar capacity <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) | [Use](docs/hangar-capacity.md) |
 | Hangar manager (GB batches Beta) <!-- catalog: `hangar_manager` --> | One-click sorting and duplicate exchange on the unit-management page, with server-side GB batches | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager (Beta) <!-- catalog: `operator_catalog` --> | Five free supply officers, plus operator names, portraits and drops | [Use](docs/operator-assistant.md) |
@@ -53,6 +53,7 @@ Release labels describe the published version; later feature work is accepted se
 | Storage claim all <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation | [Use](docs/storage-claim.md) |
 
 | Chinese shop localization and search (Beta) <!-- catalog: `shop_localization` --> | Translate shop text and hangar confirmation names; combine Chinese search, rank and payment filters | [Guide](docs/shop-localization.md) |
+| Friend unit gifts (Beta, optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Offer owned units through Storage, with accept/return and provenance; new offers default off | [Use](docs/friend-unit-gift.md) |
 
 | Unit family import (Beta) <!-- catalog: `unit_catalog` --> | Import unit archives, complete required data and generate paired unit, encyclopedia and shop/capsule resources in Mod Manager | [Use](docs/unit-import.md) |
 

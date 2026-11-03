@@ -2,12 +2,15 @@
 // private fixtures: no game, account, network socket, or existing process used.
 #include <windows.h>
 #include <algorithm>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <intrin.h>
 #include <string>
 #include <vector>
 #include <thread>
 #include "sdgo/sdgo_api.h"
+#include "sdgo/battle_ai_observer.h"
 extern "C" {
 #include "lua.h"
 #include "lauxlib.h"
@@ -15,8 +18,15 @@ extern "C" {
 }
 #include "battle_ai_native_world.h"
 namespace {
+static_assert(sizeof(SdgoBattleAiUnitSnapshotV1)==208);
+static_assert(offsetof(SdgoBattleAiUnitSnapshotV1,ranged_attempts)==168);
+static_assert(offsetof(SdgoBattleAiUnitSnapshotV1,ranged_nonzero_returns)==176);
+static_assert(offsetof(SdgoBattleAiUnitSnapshotV1,mobile_primary_dispatches)==184);
+static_assert(offsetof(SdgoBattleAiUnitSnapshotV1,mobile_defensive_dispatches)==192);
+static_assert(offsetof(SdgoBattleAiUnitSnapshotV1,backward_primary_dispatches)==200);
 lua_State* g_L = nullptr;
 int g_failures = 0;
+int g_expectedDispatchResult = 123;
 std::wstring g_root;
 void Check(bool ok,const char* what) {
     std::printf("%s %s\n",ok?"PASS":"FAIL",what); if(!ok) ++g_failures;
@@ -39,7 +49,7 @@ struct Unit {
     __declspec(noinline) bool Think() {
         if(!bytes[0x326C]) return true;
         int result=native_world::Dispatch("VSAI_Gunfighter_01_Update",bytes);
-        Check(result==123,"native dispatcher callback preserves its return value");
+        Check(result==g_expectedDispatchResult,"native dispatcher callback preserves its return value");
         reinterpret_cast<native_world::Callbacks*>(this)->Intent();
         if(*reinterpret_cast<uint8_t**>(bytes+8)) reinterpret_cast<native_world::Callbacks*>(this)->FacingUpdate();
         return true;
@@ -126,6 +136,10 @@ int wmain(int argc,wchar_t** argv) {
         native_world::Initialize(unit.bytes,g_L);
         native_world::Put(native_world::fsms[0].data(),0x200,uint32_t(2));
         native_world::enemy2[0xDCD]=0;
+        native_world::shotReturn=0;
+        uint32_t zeroShotResult=reinterpret_cast<native_world::Callbacks*>(native_world::fsms[2].data())->Shot(111,2,3);
+        Check(zeroShotResult==0,"ranged shot hook preserves an original native zero return");
+        native_world::shotReturn=0xBEEFF00D;
         uint32_t shotResult=reinterpret_cast<native_world::Callbacks*>(native_world::fsms[2].data())->Shot(111,2,3);
         Check(shotResult==0xBEEFF00D,"ranged shot hook forwards the original 32-bit returned object value");
         Check(*reinterpret_cast<uint32_t*>(native_world::fsms[2].data()+0x100)==116,"ranged shot observation forwards exact original arguments");
@@ -134,6 +148,19 @@ int wmain(int argc,wchar_t** argv) {
     unit.Init(reinterpret_cast<void*>(1)); unit.Think();
     Check(lua_gettop(g_L)==1 && lua_tonumber(g_L,1)==987,"adapter preserves incoming Lua stack");
     if(generic||medium) {
+        const auto snapshot=reinterpret_cast<SdgoBattleAiGetUnitSnapshotV1Fn>(
+            GetProcAddress(GetModuleHandleW(L"battle_ai.dll"),SDGO_BATTLE_AI_UNIT_OBSERVER_EXPORT));
+        Check(snapshot!=nullptr,"the optional native behavior observer has a stable export");
+        if(snapshot) {
+            SdgoBattleAiUnitSnapshotV1 state{};state.size=sizeof(state);state.version=1;
+            const auto stops=native_world::stopMotorCalls,off=native_world::message41Calls;
+            Check(snapshot(20,&state)==1&&state.object_id==20&&state.hp==1000&&state.ai_enabled,
+                  "read-only behavior snapshots identify the actual initialized native AI");
+            Check(native_world::stopMotorCalls==stops&&native_world::message41Calls==off,
+                  "reading behavior never sends an attack-off or motor-stop message");
+            state.size=sizeof(state)-1;Check(snapshot(20,&state)==0,"short behavior observer buffers are rejected");
+            state.size=sizeof(state);state.version=2;Check(snapshot(20,&state)==0,"unknown behavior observer versions are rejected");
+        }
         auto fsm=native_world::fsms[0].data();
         native_world::Put(fsm,0x240,int32_t(0));native_world::Put(fsm,0x248,native_world::weapons[0].data());
         native_world::Put(unit.bytes,0xDD0,int32_t(1));
@@ -293,9 +320,21 @@ int wmain(int argc,wchar_t** argv) {
                 Check(native_world::lastPart==75003,"native melee-only weapon properties select the full-width fighting part on the client");
                 native_world::weapons[1][0x6A]=range1;native_world::weapons[2][0x6A]=range2;
             }
+            auto freshDefenceLifecycle=[&](uintptr_t spawn) {
+                auto attackFsm=native_world::fsms[0].data();
+                auto movementFsm=native_world::movements[0].data();
+                const auto position=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x88);
+                native_world::Put(attackFsm,4,attackFsm+0x20);native_world::Put(attackFsm,8,uint32_t(0));
+                native_world::Put(movementFsm,4,movementFsm+0x20);native_world::Put(movementFsm,8,uint32_t(0));
+                native_world::Put(unit.bytes,0x3078,position);
+                unit.bytes[0x30DC]=0;unit.bytes[0x312A]=0;native_world::Put(unit.bytes,0xDCD,uint16_t(0));
+                unit.Init(reinterpret_cast<void*>(spawn));
+            };
             native_world::Put(native_world::enemy1.data(),0x38,int32_t(0));
             native_world::Put(native_world::nodes[2].data(),0x88,native_world::Vec3{0,0,-500});
-            native_world::Put(unit.bytes,0x3090,native_world::Vec3{-1,0,0});Sleep(90);unit.Think();
+            native_world::Put(unit.bytes,0x3090,native_world::Vec3{-1,0,0});
+            freshDefenceLifecycle(6);
+            Sleep(90);unit.Think();
             auto facing=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x6C);
             Check(facing.z>0.95f&&std::abs(facing.x)>0.01f,"Medium rear defence requests a bounded native scene turn even when old desired cache points elsewhere");
             for(int i=0;i<16;++i) {Sleep(16);unit.Think();}
@@ -305,6 +344,7 @@ int wmain(int argc,wchar_t** argv) {
             native_world::Put(native_world::nodes[1].data(),0x88,native_world::Vec3{0,0,1000});
             native_world::Put(native_world::nodes[2].data(),0x88,native_world::Vec3{0,0,-1000});
             native_world::Put(native_world::nodes[0].data(),0x6C,native_world::Vec3{0,0,1});native_world::Put(unit.bytes,0x3090,native_world::Vec3{0,0,1});
+            freshDefenceLifecycle(7);
             int beforeDefenceMoves=native_world::moves;Sleep(90);unit.Think();
             Check(native_world::moves>beforeDefenceMoves&&std::abs(reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078)->x)>1,
                   "Medium proposes a native lateral route to reduce front/rear crossfire");
@@ -338,7 +378,9 @@ int wmain(int argc,wchar_t** argv) {
             unit.Think();Check(unit.bytes[0x312A]!=0,"Medium waits for special selection commit then requests native attack");
             native_world::Put(pressureMotor,4,pressureMotor+0x20);
             requestSpecial();Check(native_world::attackAdmissions==beforeRequests+1,"legal native special request forwards to original authorization path");
-            native_world::Put(unit.bytes,0x2B68,uint32_t(0x80000014));uint8_t accepted[0x18]={};
+            native_world::Put(unit.bytes,0x2B68,uint32_t(0x80000014));
+            native_world::Put(native_world::enemy1.data(),0x2B68,uint32_t(0x80000001));
+            uint8_t accepted[0x18]={};
             native_world::Put(accepted,6,uint32_t(0x80000014));native_world::Put(accepted,0xA,uint32_t(104));native_world::Put(accepted,0x12,int32_t(20000));
             using NoticeFn=int(__thiscall*)(uint8_t*,const uint8_t*);
             NoticeFn volatile notify=reinterpret_cast<NoticeFn>(native_world::Address(&native_world::Callbacks::SpecialNotice));
@@ -358,7 +400,9 @@ int wmain(int argc,wchar_t** argv) {
             native_world::Put(fsm,4,fsm+0x20);native_world::Put(fsm,8,static_cast<uint8_t*>(nullptr));
             native_world::Put(unit.bytes,0xBC8,int32_t(15000));notify(native_world::document.data(),accepted);unit.Think();
             Check(*reinterpret_cast<int*>(unit.bytes+0xBC8)==15000,"duplicate special notice without a pending request cannot refund NPC SP");
-            uint8_t terminal[0x20]={};native_world::Put(terminal,6,uint32_t(0x80000014));native_world::Put(terminal,0xE,int32_t(0));
+            uint8_t terminal[0x28]={};native_world::Put(terminal,0,uint16_t(606));
+            native_world::Put(terminal,6,uint32_t(0x80000014));native_world::Put(terminal,0xE,int32_t(0));
+            native_world::Put(terminal,0x12,uint32_t(0x80000001));
             NoticeFn volatile meleeNotice=reinterpret_cast<NoticeFn>(native_world::Address(&native_world::Callbacks::MeleeNotice));
             int terminalResult=meleeNotice(native_world::document.data(),terminal);unit.Think();
             Check(terminalResult==0x51B1&&*reinterpret_cast<int*>(unit.bytes+0xBC8)==0,"actual melee completion606 applies authoritative remaining SP through native command18");
@@ -366,13 +410,100 @@ int wmain(int argc,wchar_t** argv) {
                   "authoritative completion immediately restores the ordinary weapon without waiting for a missed busy-state sample");
             native_world::Put(terminal,0xE,int32_t(20000));meleeNotice(native_world::document.data(),terminal);unit.Think();
             Check(*reinterpret_cast<int*>(unit.bytes+0xBC8)==0,"duplicate terminal notification cannot refund a finished special");
+            auto completionResult=native_world::specialResults[0].data();
+            uint32_t completionAction=0x7000;
+            auto stageCompletion=[&](uint32_t damage) {
+                native_world::Put(unit.bytes,0xBC8,int32_t(30000));requestSpecial();
+                notify(native_world::document.data(),accepted);unit.Think();
+                native_world::Put(fsm,4,fsm+0xAC);native_world::Put(fsm,8,static_cast<uint8_t*>(nullptr));
+                native_world::Put(fsm,0x224,++completionAction);fsm[0x9B3]=1;fsm[0x9B5]=0;
+                native_world::Put(native_world::enemy1.data(),0x38,int32_t(1000));
+                native_world::Put(native_world::enemy1.data(),0x9D8,uint32_t(4));
+                native_world::Put(native_world::enemy1.data(),0xEB8,uint32_t(20));
+                memset(completionResult,0,0x24);
+                native_world::Put(completionResult,0x10,damage);
+                native_world::Put(completionResult,0x14,uint32_t(1));
+                native_world::Put(completionResult,0x18,int32_t(1000));
+                native_world::Put(completionResult,0x1C,int32_t(0));
+                native_world::Put(terminal,0xE,int32_t(0));
+                native_world::Put(terminal,0x24,damage);
+                meleeNotice(native_world::document.data(),terminal);unit.Think();
+            };
+            native_world::specialCompletionCalls=0;
+            native_world::Put(fsm,4,fsm+0xAC);native_world::Put(fsm,0x224,++completionAction);
+            fsm[0x9B3]=1;fsm[0x9B5]=0;memset(completionResult,0,0x24);
+            native_world::Put(completionResult,0x14,uint32_t(1));
+            native_world::Put(native_world::enemy1.data(),0x38,int32_t(1000));
+            native_world::Put(native_world::enemy1.data(),0x9D8,uint32_t(4));
+            native_world::Put(native_world::enemy1.data(),0xEB8,uint32_t(20));
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==0&&native_world::specialCompletionCalls==0,
+                  "zero damage without a matched terminal receipt retains the native JBE exit");
+            stageCompletion(0);
+            const unsigned priorMxcsr=_mm_getcsr(),expectedMxcsr=(priorMxcsr&~0x6000u)|0x4000u;
+            _mm_setcsr(expectedMxcsr);
+            double fpValue=123.5,fpRestored=0;
+            __asm { fld qword ptr [fpValue] }
+            int repaired=native_world::InvokeSpecialCompletionGate(fsm);
+            __asm { fstp qword ptr [fpRestored] }
+            Check(repaired==1&&native_world::specialCompletionCalls==1&&native_world::specialCompletionDamage==0&&
+                  fsm[0x9B5]==1&&*reinterpret_cast<uint32_t*>(native_world::enemy1.data()+0x9D8)==2&&
+                  *reinterpret_cast<uint32_t*>(native_world::enemy1.data()+0xEB8)==0,
+                  "matched zero-damage 606 crosses the native JBE and 9B5 branch boundary into fixture completion");
+            Check(native_world::specialCompletionOwner==reinterpret_cast<uintptr_t>(unit.bytes)&&
+                  native_world::specialCompletionResult==reinterpret_cast<uintptr_t>(completionResult)&&
+                  native_world::specialCompletionFsm==reinterpret_cast<uintptr_t>(fsm)&&
+                  native_world::specialCompletionEdx==0x12345678&&native_world::specialCompletionEdi==0x23456789&&
+                  native_world::specialCompletionEbp==0x3456789A&&fpRestored==fpValue&&_mm_getcsr()==expectedMxcsr,
+                  "completion branch HookSite preserves live registers plus x87 and SIMD state");
+            _mm_setcsr(priorMxcsr);
+            fsm[0x9B5]=0;native_world::Put(native_world::enemy1.data(),0x9D8,uint32_t(4));
+            native_world::Put(native_world::enemy1.data(),0xEB8,uint32_t(20));
+            native_world::Put(completionResult,0x10,uint32_t(0));native_world::Put(completionResult,0x14,uint32_t(1));
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==0&&native_world::specialCompletionCalls==1,
+                  "the matched zero-damage receipt is consumed once");
+            stageCompletion(0);native_world::Put(native_world::enemy1.data(),0xEB8,uint32_t(999));
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==0,
+                  "a zero-damage receipt cannot release a victim no longer captured by that caster");
+            stageCompletion(0);native_world::Put(native_world::enemy1.data(),0x38,int32_t(0));
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==0,
+                  "a zero-damage receipt cannot run completion for a dead victim");
+            stageCompletion(0);native_world::Put(fsm,0x224,++completionAction);
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==0,
+                  "a terminal receipt cannot outlive its bound special action");
+            stageCompletion(0);native_world::Put(completionResult,0x14,uint32_t(2));
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==0,
+                  "a terminal receipt cannot release an unmatched result victim");
+            stageCompletion(0);
+            auto replacementResult=native_world::specialResults[1].data();
+            memset(replacementResult,0,0x24);
+            native_world::Put(replacementResult,0x14,uint32_t(1));
+            native_world::Put(fsm,0x9BC,replacementResult);
+            const int beforeReplacement=native_world::specialCompletionCalls;
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==0&&
+                  native_world::specialCompletionCalls==beforeReplacement,
+                  "a terminal receipt cannot follow a replacement result buffer");
+            native_world::Put(fsm,0x9BC,completionResult);
+            stageCompletion(5);
+            const int beforePositive=native_world::specialCompletionCalls;
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==1&&
+                  native_world::specialCompletionCalls==beforePositive+1&&native_world::specialCompletionDamage==5,
+                  "positive damage retains the native branch boundary into fixture completion without a repair receipt");
+            native_world::Put(completionResult,0x10,uint32_t(5));fsm[0x9B5]=1;
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==0&&native_world::specialCompletionCalls==beforePositive+1,
+                  "the native 9B5 applied guard still rejects an already completed result");
+            native_world::Put(fsm,4,fsm+0x20);native_world::Put(fsm,8,static_cast<uint8_t*>(nullptr));
+            fsm[0x9B3]=0;fsm[0x9B5]=0;memset(completionResult,0,0x24);
+            native_world::Put(native_world::enemy1.data(),0x38,int32_t(1000));
+            native_world::Put(native_world::enemy1.data(),0x9D8,uint32_t(1));
+            native_world::Put(native_world::enemy1.data(),0xEB8,uint32_t(0));
+            const int gatedRequests=native_world::attackAdmissions;
             unit.bytes[0x31C4]=1;requestSpecial();unit.bytes[0x31C4]=0;
-            Check(native_world::attackAdmissions==beforeRequests+1,"native special gate rejects explicit unit restriction");
+            Check(native_world::attackAdmissions==gatedRequests,"native special gate rejects explicit unit restriction");
             native_world::Put(native_world::movements[0].data(),0x2C0,int32_t(1));requestSpecial();
-            Check(native_world::attackAdmissions==beforeRequests+1,"native special gate rejects controller override");
+            Check(native_world::attackAdmissions==gatedRequests,"native special gate rejects controller override");
             native_world::Put(native_world::movements[0].data(),0x2C0,int32_t(0));
             native_world::Put(unit.bytes,0xBC8,int32_t(0));requestSpecial();
-            Check(native_world::attackAdmissions==beforeRequests+1,"final native special gate enforces SP, restriction and controller permissions despite NPC overrides");
+            Check(native_world::attackAdmissions==gatedRequests,"final native special gate enforces SP, restriction and controller permissions despite NPC overrides");
             native_world::Put(unit.bytes,0xBC8,int32_t(30000));requestSpecial();notify(native_world::document.data(),accepted);unit.Think();
             NoticeFn volatile rangedNotice=reinterpret_cast<NoticeFn>(native_world::Address(&native_world::Callbacks::RangedNotice));
             native_world::Put(terminal,0xA,int32_t(0));
@@ -504,6 +635,11 @@ int wmain(int argc,wchar_t** argv) {
         Check(Eval("local a; for _,t in ipairs(geometryObservation.targets) do if t.id==1 then a=t end end; local w=geometryObservation.weapons[2]; assert(a and a.rangedDistance>24000 and a.rangedDistance<30000 and w.kind=='opaque' and w.ordinary==1 and w.attackStyle==1 and w.rangeType==4)"),
               "a legal opaque ordinary weapon retains native metadata and targets beyond the extra-perception cap");
         native_world::weapons[1][0x6A]=oldOpaqueRangeType;
+        native_world::Put(native_world::weapons[1].data(),0x72,uint32_t(500));
+        native_world::Put(sphereShape,0x10,native_world::Vec3{12000,0,0});
+        unit.Think();
+        Check(Eval("local t;for _,v in ipairs(geometryObservation.targets) do if v.id==1 then t=v end end;assert(t and t.rangedDistance>10000 and t.rangedVisible==1)"),
+              "short-range loadouts still observe distant line-of-sight combatants for pursuit");
         native_world::Put(native_world::weapons[1].data(),0x72,uint32_t(2000));
         native_world::Put(native_world::nodes[1].data(),0x88,native_world::Vec3{250,0,0});
         native_world::Put(sphereShape,0x10,native_world::Vec3{250,0,0});
@@ -673,12 +809,45 @@ int wmain(int argc,wchar_t** argv) {
         Check(Eval("assert(SDGO_BattleAI_Universal.states[20].generation>priorGenericGeneration)"),"off-thread spawn reset is queued and applied by the established game thread");
         Eval("savedGeneric=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) sample=SDGO_BattleAI_Observe(); return 123 end");
         auto fsm=native_world::fsms[0].data();auto callbacks=reinterpret_cast<native_world::Callbacks*>(fsm);
-        native_world::Put(fsm,4,fsm+0x34);native_world::Put(fsm,8,uint32_t(0));
+        native_world::Put(fsm,4,fsm+0x34);native_world::Put(fsm,8,uint32_t(0));native_world::Put(fsm,0x224,uint32_t(7001));
+        native_world::Put(fsm,0x248,native_world::weapons[1].data());
         unit.Think();Check(Eval("assert(sample.shots==0)"),"raw projectile/muzzle calls are not primary attack-cycle fires");
+        native_world::shotReturn=0;
         callbacks->Receipts(nullptr);unit.Think();
-        Check(Eval("assert(sample.shots==2)"),"native receipt scope counts primary kinds 1 and 8, excludes chained kind 7");
+        Check(Eval("assert(sample.shotAttempts==2 and sample.shots==2 and sample.shotNonzeroReturns==0)"),
+              "zero-return native families retain the established primary receipt and expose no nonzero-return witness");
+        native_world::shotReturn=0xBEEFF00D;
+        callbacks->Receipts(nullptr);unit.Think();
+        Check(Eval("assert(sample.shotAttempts==4 and sample.shots==4 and sample.shotNonzeroReturns==2)"),
+              "native receipt scope counts primary kinds 1 and 8, excludes chained kind 7, and observes stable nonzero returns separately");
+        native_world::replaceShotAction=true;callbacks->Receipts(nullptr);unit.Think();
+        Check(Eval("assert(sample.shotAttempts==6 and sample.shots==6 and sample.shotNonzeroReturns==3)"),
+              "an action replaced by the original call keeps receipt compatibility without crediting a stale nonzero-return witness");
+        native_world::replaceShotWeapon=true;callbacks->Receipts(nullptr);
+        Check(*reinterpret_cast<uint8_t**>(fsm+0x248)==native_world::weapons[2].data(),
+              "weapon replacement fixture changes the selected record during the original call");
+        // The completion guard has already observed the changed pointer. Restore
+        // the fixture's selected-slot/record pairing before Lua capability reads.
+        native_world::Put(fsm,0x248,native_world::weapons[1].data());
+        unit.Think();
+        Check(Eval("assert(sample.shotAttempts==8 and sample.shots==8 and sample.shotNonzeroReturns==4)"),
+              "a weapon replaced by the original call keeps receipt compatibility without crediting a stale nonzero-return witness");
+        native_world::Put(fsm,0x224,uint32_t(0));
+        callbacks->Receipts(nullptr);unit.Think();
+        Check(Eval("assert(sample.shotAttempts==10 and sample.shots==10 and sample.shotNonzeroReturns==4)"),
+              "an action-zero primary receipt preserves established shot semantics without manufacturing an identity witness");
+        const auto shotSnapshot=reinterpret_cast<SdgoBattleAiGetUnitSnapshotV1Fn>(
+            GetProcAddress(GetModuleHandleW(L"battle_ai.dll"),SDGO_BATTLE_AI_UNIT_OBSERVER_EXPORT));
+        SdgoBattleAiUnitSnapshotV1 shotState{};shotState.size=sizeof(shotState);shotState.version=1;
+        Check(shotSnapshot&&shotSnapshot(20,&shotState)==1&&
+              shotState.ranged_attempts==10&&shotState.ranged_shots==10&&
+              shotState.ranged_nonzero_returns==4,
+              "native behavior snapshot exposes primary receipts and stable nonzero returns as separate telemetry");
+        native_world::Put(fsm,0x224,uint32_t(7001));
+        native_world::Put(fsm,0x248,native_world::weapons[1].data());
         native_world::Put(fsm,4,fsm+0x20);callbacks->Receipts(nullptr);unit.Think();
-        Check(Eval("assert(sample.shots==2)"),"non-ranged state cannot manufacture a counted primary fire");
+        Check(Eval("assert(sample.shotAttempts==10 and sample.shots==10 and sample.shotNonzeroReturns==4)"),
+              "non-ranged state cannot manufacture a counted primary receipt or nonzero-return witness");
         native_world::coverWall=true;auto beforeCoverMoves=native_world::moves;
         Eval("SDGO_BattleAI_GenericUpdate=function(n) coverSample=SDGO_BattleAI_Cover(2,1400,100,0); coverRepeat=SDGO_BattleAI_Cover(2,1400,100,0); count80=0; for i=1,1000 do count80=count80+SDGO_BattleAI_Chance(80) end; return 123 end");
         int maxCoverQueries=0;
@@ -696,7 +865,23 @@ int wmain(int argc,wchar_t** argv) {
         Eval("SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_MeleeGate(1); return 123 end");unit.Think();
         uint8_t input[0x20]={};input[0xD]=1;callbacks->SwingUpdate(input);
         Check(native_world::swingInput==0&&input[0xD]==1,"melee continuation gate preserves native update and restores event input afterward");
+        native_world::Put(fsm,4,fsm+0x48);native_world::Put(fsm,8,uint32_t(0));
+        native_world::Put(fsm,0x200,uint32_t(2));unit.bytes[0x312A]=1;unit.bytes[0xDCD]=1;
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_MeleeGate(1,1); return 123 end");unit.Think();
+        const int beforeTrackingCancel=native_world::trackUpdates;
+        callbacks->TrackingUpdate(input);
+        Check(*reinterpret_cast<uint8_t**>(fsm+4)==fsm+0x48&&
+              *reinterpret_cast<uint8_t**>(fsm+8)==fsm+0x20&&
+              !unit.bytes[0x312A]&&!unit.bytes[0xDCD]&&native_world::trackUpdates==beforeTrackingCancel,
+              "confirmed ranged response releases held knife tracking through the existing native Neutral transition");
+        native_world::Put(fsm,8,fsm+0x5C);unit.bytes[0x312A]=1;unit.bytes[0xDCD]=1;
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_MeleeGate(1,1); return 123 end");unit.Think();
+        callbacks->TrackingUpdate(input);
+        Check(*reinterpret_cast<uint8_t**>(fsm+8)==fsm+0x5C&&unit.bytes[0x312A]&&unit.bytes[0xDCD]&&
+              native_world::trackUpdates==beforeTrackingCancel+1,
+              "ranged response never overwrites an already queued native swing or clears its committed input");
         Eval("SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_MeleeGate(0); sample=SDGO_BattleAI_Observe(); return 123 end");
+        native_world::Put(fsm,4,fsm+0x5C);native_world::Put(fsm,8,uint32_t(0));
         native_world::Put(fsm,0x200,uint32_t(2));native_world::Put(fsm,0x224,uint32_t(1234));
         uint8_t message[0x50]={};native_world::Put(message,0,uint16_t(0xC));native_world::Put(message,0x14,int32_t(100));native_world::Put(message,0x3C,uint32_t(20));
         bool delivered=native_world::EmitContact(native_world::document.data(),2,message,0);unit.Think();
@@ -747,9 +932,23 @@ int wmain(int argc,wchar_t** argv) {
         native_world::Put(native_world::nodes[0].data(),0x6C,native_world::Vec3{0,0,1});native_world::Put(unit.bytes,0x3090,native_world::Vec3{0,0,1});
         native_world::Put(message,0x3C,uint32_t(2));message[0x19]=1;message[0x1A]=2;
         native_world::EmitContact(native_world::document.data(),20,message,0);
+        const auto hitTypeStarted=GetTickCount64();
+        const int hitTypeRotations=native_world::rotations;
         for(int i=0;i<16;++i) {Sleep(16);unit.Think();}
         shieldFacing=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x6C);
-        Check(shieldFacing.z<-0.98f,"a recent delivered attacker uses message HitType at +1A, not adjacent RangeType +19, when visibility is lost");
+        const bool hitTypeFacing=shieldFacing.z<-0.98f;
+        if(!hitTypeFacing) {
+            std::printf("DIAG hit-type elapsed=%llu rotations=%d->%d facing=(%.3f,%.3f,%.3f) message=(range:%u hit:%u) shield=(%.1f/%.1f type:%u mode:%u) obbDir=(%.3f,%.3f,%.3f)\n",
+                static_cast<unsigned long long>(GetTickCount64()-hitTypeStarted),hitTypeRotations,native_world::rotations,
+                shieldFacing.x,shieldFacing.y,shieldFacing.z,
+                static_cast<unsigned>(message[0x19]),static_cast<unsigned>(message[0x1A]),
+                *reinterpret_cast<float*>(unit.bytes+0x2B70),*reinterpret_cast<float*>(unit.bytes+0x2B74),
+                static_cast<unsigned>(native_world::definitions[0][0x149]),
+                static_cast<unsigned>(native_world::definitions[0][0x14E+*reinterpret_cast<int*>(fsm+0x240)]),
+                native_world::lastObbRay.direction.x,native_world::lastObbRay.direction.y,native_world::lastObbRay.direction.z);
+            Eval("local t=nil; for _,v in ipairs(sample.targets or {}) do if v.id==2 then t=v end end; print(string.format('DIAG hit-type observation attacker=%s hurt=%s targetVisible=%s ranged=%s melee=%s targetHit=%s known=%s', tostring(sample.meleeAttacker),tostring(sample.hurt),tostring(t and t.visible),tostring(t and t.rangedVisible),tostring(t and t.meleeVisible),tostring(t and t.hitType),tostring(t and t.hitKnown)))");
+        }
+        Check(hitTypeFacing,"a recent delivered attacker uses message HitType at +1A, not adjacent RangeType +19, when visibility is lost");
         native_world::blocked=false;native_world::definitions[0][0x149]=0;
         for(uint8_t sideMode:{uint8_t(2),uint8_t(1)}) {
             native_world::definitions[0][0x14E]=sideMode;native_world::definitions[0][0x14F]=sideMode;
@@ -907,7 +1106,41 @@ int wmain(int argc,wchar_t** argv) {
         Config(generic?"[settings]\nDifficulty=Hard\n":"[settings]\nDifficulty=Medium\n");
         native_world::SetRoomTitle(generic?L"!ai hard":L"!ai medium");
         unit.Init(reinterpret_cast<void*>(3));Sleep(2100);unit.Think();
-        Eval("SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_Observe();return 123 end");
+        Eval("blockedVictimPolicy=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) blockedVictimRoute=SDGO_BattleAI_Route(2,1); return 123 end");
+        unit.Think();
+        Check(Eval("assert(blockedVictimRoute==1)")&&unit.bytes[0x30DC],
+              "victim-control fixture begins with a mod-owned native movement route");
+        Eval("SDGO_BattleAI_GenericUpdate=blockedVictimPolicy");
+        auto victimFsm=native_world::fsms[0].data();
+        auto victimMovement=native_world::movements[0].data();
+        native_world::Put(victimFsm,4,victimFsm+0x20);native_world::Put(victimFsm,8,uint32_t(0));
+        native_world::Put(victimMovement,4,victimMovement+0xE8);native_world::Put(victimMovement,8,victimMovement+0xE8);
+        unit.bytes[0x312A]=1;native_world::Put(unit.bytes,0xDCD,uint16_t(0x101));
+        const int victimStops=native_world::stopMotorCalls;
+        const int victimAttackOff=native_world::message41Calls;
+        const int victimGoals=native_world::goalCalls;
+        g_expectedDispatchResult=0;
+        for(int frame=0;frame<3;++frame) unit.Think();
+        g_expectedDispatchResult=123;
+        Check(native_world::stopMotorCalls==victimStops&&native_world::message41Calls==victimAttackOff&&
+              native_world::goalCalls==victimGoals&&unit.bytes[0x312A]&&
+              *reinterpret_cast<uint8_t**>(victimMovement+4)==victimMovement+0xE8&&
+              *reinterpret_cast<uint8_t**>(victimMovement+8)==victimMovement+0xE8,
+              "sustained native victim control clears its mod route without MoveStop or command41 interference");
+        // This fixture does not execute the game's hurt release. Model that
+        // authoritative handoff explicitly, then require output on its first
+        // legal controller frame rather than accepting a fixture-held input.
+        native_world::Put(victimMovement,4,victimMovement+0x20);native_world::Put(victimMovement,8,uint32_t(0));
+        unit.bytes[0x30DC]=0;unit.bytes[0x312A]=0;native_world::Put(unit.bytes,0xDCD,uint16_t(0));
+        unit.Think();
+        Check(unit.bytes[0x312A]&&*reinterpret_cast<uint8_t**>(victimMovement+4)==victimMovement+0x20&&
+              *reinterpret_cast<uint8_t**>(victimMovement+8)==nullptr,
+              "the fixture's authoritative victim release permits ready native output on the first legal frame");
+
+        native_world::Initialize(unit.bytes,g_L);native_world::directPathFixture=true;native_world::pathMode=0;
+        native_world::SetRoomTitle(generic?L"!ai hard":L"!ai medium");
+        unit.Init(reinterpret_cast<void*>(3));unit.Think();
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) defenceObservation=SDGO_BattleAI_Observe();return 123 end");
         auto location=[&] {return *reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x88);};
         auto setPosition=[&](native_world::Vec3 p){native_world::Put(native_world::nodes[0].data(),0x88,p);};
         auto crossfire=[&] {
@@ -917,18 +1150,134 @@ int wmain(int argc,wchar_t** argv) {
             uint8_t hit[0x50]={};native_world::Put(hit,0,uint16_t(0xC));native_world::Put(hit,0x14,int32_t(1));
             for(uint32_t attacker:{1u,2u}) {native_world::Put(hit,0x3C,attacker);native_world::EmitContact(native_world::document.data(),20,hit,0);}
         };
-        crossfire();const auto anchor=location();const double radius=generic?1200:480;
+        crossfire();const auto handoffAnchor=location();const double radius=generic?1200:480;
         native_world::pathMode=4;const int priorPaths=native_world::pathCalls;unit.Think();
         const auto alternateGoal=*reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078);
-        Check(unit.bytes[0x30DC]&&alternateGoal.x<anchor.x&&native_world::pathCalls-priorPaths<=3,
+        Check(unit.bytes[0x30DC]&&alternateGoal.x<handoffAnchor.x&&native_world::pathCalls-priorPaths<=3,
               "a blocked best escape point tries a bounded reachable alternative instead of giving up on movement");
+        crossfire();unit.Think();
+        Check(Eval("assert(defenceObservation.routeActive==1 and defenceObservation.defenceMoving==1)"),
+              "crossfire handoff fixture starts from an observed adapter-owned defensive route");
+        auto defenceFsm=native_world::fsms[0].data();
+        auto defenceMovement=native_world::movements[0].data();
+        native_world::weapons[1][0x8F]=0;
+        native_world::Put(defenceFsm,4,defenceFsm+0x20);native_world::Put(defenceFsm,8,defenceFsm+0x34);
+        native_world::Put(defenceMovement,4,defenceMovement+0x20);native_world::Put(defenceMovement,8,uint32_t(0));
+        unit.bytes[0x312A]=1;
+        const int fixedGoals=native_world::goalCalls;
+        const int fixedStops=native_world::stopMotorCalls;
+        crossfire();unit.Think();
+        Check(*reinterpret_cast<uint8_t**>(defenceFsm+4)==defenceFsm+0x20&&
+              *reinterpret_cast<uint8_t**>(defenceFsm+8)==defenceFsm+0x34&&
+              *reinterpret_cast<uint8_t**>(defenceMovement+4)==defenceMovement+0x20&&
+              *reinterpret_cast<uint8_t**>(defenceMovement+8)==nullptr&&
+              unit.bytes[0x312A]&&native_world::goalCalls==fixedGoals&&
+              native_world::stopMotorCalls==fixedStops,
+              "a pending stationary shot takes defensive-route ownership without rewriting either native FSM");
+        crossfire();unit.Think();
+        Check(Eval("assert(defenceObservation.routeActive==0)")&&native_world::goalCalls==fixedGoals,
+              "stationary-only ranged ownership drops the adapter route instead of reissuing its movement goal");
+        native_world::Put(defenceFsm,4,defenceFsm+0x20);native_world::Put(defenceFsm,8,uint32_t(0));
+        unit.bytes[0x312A]=0;
+        const int resumePaths=native_world::pathCalls;
+        crossfire();unit.Think();
+        Check(native_world::pathCalls>resumePaths&&
+              *reinterpret_cast<uint8_t**>(defenceFsm+4)==defenceFsm+0x20&&
+              *reinterpret_cast<uint8_t**>(defenceFsm+8)==nullptr&&
+              *reinterpret_cast<uint8_t**>(defenceMovement+4)==defenceMovement+0x20&&
+              *reinterpret_cast<uint8_t**>(defenceMovement+8)==nullptr,
+              "native neutral handoff reloads the defensive route without mutating movement or attack state");
+        crossfire();unit.Think();
+        Check(Eval("assert(defenceObservation.routeActive==1 and defenceObservation.defenceMoving==1)"),
+              "the resumed neutral defensive route is observable before ranged movement admission");
+        native_world::weapons[1][0x8F]=1;
+        native_world::Put(defenceFsm,4,defenceFsm+0x34);native_world::Put(defenceFsm,8,defenceFsm+0x34);
+        unit.bytes[0x312A]=1;
+        const int movingGoals=native_world::goalCalls;
+        crossfire();unit.Think();crossfire();unit.Think();
+        Check(Eval("assert(defenceObservation.routeActive==1 and defenceObservation.defenceMoving==1)")&&
+              native_world::goalCalls==movingGoals&&unit.bytes[0x312A]&&
+              *reinterpret_cast<uint8_t**>(defenceFsm+4)==defenceFsm+0x34&&
+              *reinterpret_cast<uint8_t**>(defenceFsm+8)==defenceFsm+0x34&&
+              *reinterpret_cast<uint8_t**>(defenceMovement+4)==defenceMovement+0x20&&
+              *reinterpret_cast<uint8_t**>(defenceMovement+8)==nullptr,
+              "current-and-pending moving-shot state retains the owned defensive route and native controls");
+        const auto dispatchSnapshot=reinterpret_cast<SdgoBattleAiGetUnitSnapshotV1Fn>(
+            GetProcAddress(GetModuleHandleW(L"battle_ai.dll"),SDGO_BATTLE_AI_UNIT_OBSERVER_EXPORT));
+        auto readDispatches=[&] {
+            SdgoBattleAiUnitSnapshotV1 state{};state.size=sizeof(state);state.version=1;
+            Check(dispatchSnapshot&&dispatchSnapshot(20,&state)==1,
+                  "native dispatch witness snapshot is readable on the game thread");
+            return state;
+        };
+        native_world::Put(defenceFsm,0x200,uint32_t(1));
+        crossfire();
+        Sleep(25);unit.Think();
+        auto movingPosition=location();setPosition(movingPosition+native_world::Vec3{0,0,20});
+        Sleep(25);unit.Think();
+        const auto beforeMobileDispatch=readDispatches();
+        reinterpret_cast<native_world::Callbacks*>(defenceFsm)->Receipts(nullptr);
+        const auto mobileDispatch=readDispatches();
+        Check(mobileDispatch.mobile_primary_dispatches==beforeMobileDispatch.mobile_primary_dispatches+2&&
+              mobileDispatch.mobile_defensive_dispatches==beforeMobileDispatch.mobile_defensive_dispatches+2&&
+              mobileDispatch.backward_primary_dispatches==beforeMobileDispatch.backward_primary_dispatches+2,
+              "post-ammo primary dispatches record a bound moving-shot gun with live motor, real defensive motion and physical retreat");
+        native_world::Put(defenceMovement,4,defenceMovement+0xD4);
+        movingPosition=location();setPosition(movingPosition+native_world::Vec3{0,0,20});
+        Sleep(25);unit.Think();
+        reinterpret_cast<native_world::Callbacks*>(defenceFsm)->Receipts(nullptr);
+        auto rejectedDispatch=readDispatches();
+        Check(rejectedDispatch.mobile_primary_dispatches==mobileDispatch.mobile_primary_dispatches&&
+              rejectedDispatch.mobile_defensive_dispatches==mobileDispatch.mobile_defensive_dispatches&&
+              rejectedDispatch.backward_primary_dispatches==mobileDispatch.backward_primary_dispatches,
+              "blocked native control cannot manufacture a mobile primary dispatch witness");
+        native_world::Put(defenceMovement,4,defenceMovement+0x20);
+        movingPosition=location();setPosition(movingPosition+native_world::Vec3{0,0,20});
+        Sleep(25);unit.Think();unit.bytes[0x30DC]=0;
+        reinterpret_cast<native_world::Callbacks*>(defenceFsm)->Receipts(nullptr);
+        rejectedDispatch=readDispatches();
+        Check(rejectedDispatch.mobile_primary_dispatches==mobileDispatch.mobile_primary_dispatches&&
+              rejectedDispatch.mobile_defensive_dispatches==mobileDispatch.mobile_defensive_dispatches&&
+              rejectedDispatch.backward_primary_dispatches==mobileDispatch.backward_primary_dispatches,
+              "a stopped native motor cannot manufacture a mobile primary dispatch witness");
+        unit.bytes[0x30DC]=1;
+        Sleep(25);unit.Think();
+        reinterpret_cast<native_world::Callbacks*>(defenceFsm)->Receipts(nullptr);
+        rejectedDispatch=readDispatches();
+        Check(rejectedDispatch.mobile_primary_dispatches==mobileDispatch.mobile_primary_dispatches&&
+              rejectedDispatch.mobile_defensive_dispatches==mobileDispatch.mobile_defensive_dispatches&&
+              rejectedDispatch.backward_primary_dispatches==mobileDispatch.backward_primary_dispatches,
+              "a motor flag without fresh physical displacement cannot manufacture a mobile primary dispatch witness");
+        native_world::Initialize(unit.bytes,g_L);native_world::directPathFixture=true;native_world::pathMode=4;
+        native_world::SetRoomTitle(generic?L"!ai hard":L"!ai medium");
+        unit.Init(reinterpret_cast<void*>(31));unit.Think();
+        defenceFsm=native_world::fsms[0].data();
+        defenceMovement=native_world::movements[0].data();
+        native_world::Put(defenceFsm,4,defenceFsm+0x20);native_world::Put(defenceFsm,8,uint32_t(0));
+        native_world::Put(defenceFsm,0x240,int32_t(1));native_world::Put(defenceFsm,0x248,native_world::weapons[1].data());
+        native_world::weapons[1][0x8F]=1;native_world::Put(unit.bytes,0xDD0,int32_t(1));
+        native_world::Put(defenceMovement,4,defenceMovement+0x20);native_world::Put(defenceMovement,8,uint32_t(0));
+        setPosition({0,0,0});native_world::Put(unit.bytes,0x3078,native_world::Vec3{0,0,0});unit.bytes[0x30DC]=0;
+        native_world::Put(defenceFsm,4,defenceFsm+0x20);native_world::Put(defenceFsm,8,uint32_t(0));
+        unit.bytes[0x312A]=0;native_world::Put(unit.bytes,0xDCD,uint16_t(0));
+        const auto anchor=location();
+        const int radiusStartPaths=native_world::pathCalls;
+        crossfire();unit.Think();
+        auto radiusStartGoal=*reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078);
+        Check(unit.bytes[0x30DC]&&native_world::pathCalls>radiusStartPaths&&
+              battle_ai::Length(radiusStartGoal-anchor)>25&&battle_ai::Length(radiusStartGoal-anchor)<=radius+0.1,
+              "the independent continuous-crossfire fixture starts a bounded native defensive route");
+        crossfire();unit.Think();
+        radiusStartGoal=*reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078);
+        Check(Eval("assert(defenceObservation.routeActive==1 and defenceObservation.defenceMoving==1)"),
+              "the independent continuous-crossfire route is observable as adapter-owned on its next policy frame");
         const int goalsBeforeDefence=native_world::goalCalls;
         Eval("savedDefenceProbe=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) advanceResult=SDGO_BattleAI_AdvancePoint(1000,0,0,200,1); return 123 end");
         unit.Think();
         Check(Eval("assert(advanceResult==0)")&&native_world::goalCalls==goalsBeforeDefence,
               "front/rear defensive route retains motor ownership from a pursuit step");
         Eval("SDGO_BattleAI_GenericUpdate=savedDefenceProbe");
-        if(unit.bytes[0x30DC]) setPosition(alternateGoal);
+        if(unit.bytes[0x30DC]) setPosition(radiusStartGoal);
         native_world::pathMode=0;
         bool bounded=true;double furthest=0;
         for(int step=0;step<12;++step) {
@@ -939,6 +1288,10 @@ int wmain(int argc,wchar_t** argv) {
                 bounded=bounded&&distance<=radius+0.1;setPosition(goal);
             }
         }
+        if(!(bounded&&furthest>radius-1))
+            std::printf("DIAG continuous-crossfire bounded=%d furthest=%.3f radius=%.3f anchor=(%.3f,%.3f,%.3f) location=(%.3f,%.3f,%.3f) motor=%u\n",
+                bounded?1:0,furthest,radius,anchor.x,anchor.y,anchor.z,
+                location().x,location().y,location().z,static_cast<unsigned>(unit.bytes[0x30DC]));
         Check(bounded&&furthest>radius-1,
               "a continuous crossfire episode reaches but never exceeds its Medium/Hard defensive destination radius");
         const auto nextAnchor=location();

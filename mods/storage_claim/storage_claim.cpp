@@ -8,7 +8,9 @@
 #include "sdgo/storage_claim_model.h"
 #include "sdgo/inventory_app_state.h"
 #include "sdgo/game_test_page_observer.h"
+#include "sdgo/storage_extension.h"
 #include "native_ui.h"
+#include "storage_extension_registry.h"
 
 namespace {
 using namespace sdgo::storage;
@@ -47,6 +49,7 @@ const SdgoApi* g_api=nullptr;SdgoMod* g_mod=nullptr;
 NativeInit g_init=nullptr;NativeUI g_event=nullptr;NativePacket g_packet=nullptr;
 NativeSession g_session=nullptr,g_app=nullptr;NativeSend g_send=nullptr;NativeBusy g_busy=nullptr;
 ui::Page g_ui;Batch g_batch;void* g_service=nullptr;void* g_owner=nullptr;
+sdgo::storage::extension::Registry g_extensions;
 UINT_PTR g_timer=0;DWORD g_thread=0;bool g_armed=false,g_pumping=false;
 bool g_timerObserved=false;
 Tab g_armTab=Tab::Items;uint64_t g_armSession=0,g_nextSend=0,g_observedSession=0;
@@ -188,9 +191,11 @@ bool AttachUnsafe(void* self){return g_ui.Attach(self);}
 bool Attach(void* self){__try{return AttachUnsafe(self);}__except(EXCEPTION_EXECUTE_HANDLER){g_ui.Detach();return false;}}
 void __fastcall Init(void* self,void*) {
     if(g_timer){KillTimer(nullptr,g_timer);g_timer=0;}g_timerObserved=false;
+    if(g_service)g_extensions.PageDetach(g_service);
     if(g_batch.Busy())g_batch.Stop(Reason::Changed);g_armed=false;g_ui.Detach();
     g_init(self);g_service=self;g_thread=GetCurrentThreadId();
     ++g_generation;
+    g_extensions.PageAttach(self,Read<void*>(self,0x70));
     try {
         if(Attach(self))g_timer=SetTimer(nullptr,0,75,&Timer);
         if(!g_timer){g_ui.Unpublish();g_ui.Detach();g_api->Log(g_mod,SDGO_LOG_ERROR,"storage UI unavailable; native controls preserved");}
@@ -198,6 +203,8 @@ void __fastcall Init(void* self,void*) {
     }catch(const std::exception&){g_ui.Detach();g_api->Log(g_mod,SDGO_LOG_ERROR,"storage UI initialization failed; native controls preserved");}
 }
 uint32_t HandleUI(void* handler,void* self,uint32_t event,uintptr_t second,void* control) {
+    uint32_t extensionResult=0;
+    if(g_extensions.UiEvent(handler,self,event,second,control,&extensionResult))return extensionResult;
     if(self!=g_service && event==0x101 && g_ui.Click(control))g_api->Log(g_mod,SDGO_LOG_WARN,"storage button receiver does not match attached page");
     if(self==g_service && event==0x101 && g_ui.Click(control) && !Available()) {
         g_ui.Display(L"一键领取",L"当前不是可操作的大厅状态，请返回大厅后重试。");
@@ -207,6 +214,11 @@ uint32_t HandleUI(void* handler,void* self,uint32_t event,uintptr_t second,void*
     if(self==g_service && Available()) {
         if(event==0x101 && g_ui.Click(control)) {
             g_api->Log(g_mod,SDGO_LOG_INFO,"storage claim button received; app state %u, armed %d",sdgo::inventory::AppState(g_app()),g_armed?1:0);
+            if(CurrentTab()==Tab::Gifts && g_extensions.BlockClaimAll(self)) {
+                g_armed=false;
+                g_ui.Display(L"一键领取",L"当前礼物包含需要单独接受或退回的机体，请先处理。");
+                return 0;
+            }
             if(g_batch.Busy()){g_batch.Stop(Reason::Cancelled);DisplayState();return 0;}
             if(g_batch.Outstanding()){DisplayState();return 0;}
             const auto session=Session();const auto tab=CurrentTab();
@@ -251,6 +263,11 @@ Key ReplyKey(Tab tab,const uint8_t* data,Key expected,bool giftClaim=false) {
 }
 uint32_t PacketUnsafe(void* self,uintptr_t a,uintptr_t b,uintptr_t c,uint32_t command,const uint8_t* data) {
     const auto op=static_cast<uint16_t>(command);
+    // On this verified host Agent's 0x07BE route always calls SendToClient
+    // with the fixed 0x07EA-byte carrier before this service callback.
+    // Other native storage commands expose no trustworthy length here.
+    const uint32_t fixedSize=op==0x07BE?0x07EAu:0u;
+    if(g_extensions.PacketPrefilter(op,data,fixedSize))return 0;
     if(op==0x4E7 || op==0x722) {
         const auto tab=op==0x4E7?Tab::Items:Tab::Gifts;
         const auto key=ReplyKey(tab,data,{});
@@ -295,6 +312,7 @@ uint32_t PacketUnsafe(void* self,uintptr_t a,uintptr_t b,uintptr_t c,uint32_t co
     const bool list=owned && g_batch.Waiting(Operation::List) && op==(tab==Tab::Items?0x7BD:0x7BE);
     const bool claim=owned && g_batch.Waiting(Operation::Claim) && op==(tab==Tab::Items?0x7E8:0xA23);
     const auto result=g_packet(self,a,b,c,command,data); // native grants, inventory/UI refresh and ownership checks
+    g_extensions.PacketPostfilter(self,op,data,fixedSize);
     if(list) {
         if(CurrentTab()!=tab || Read<uint32_t>(self,0x160)!=g_batch.page()){g_batch.Reject(Reason::Changed);RecordTestReply();return result;}
         uint32_t total=0;const auto entries=Snapshot(self,tab,total);
@@ -393,6 +411,25 @@ extern "C" __declspec(dllexport) int __cdecl SdgoStorageGameTestActionV1(
     uint64_t runHash,uint32_t action) {
     __try{return StorageGameTestAction(runHash,action);}
     __except(EXCEPTION_EXECUTE_HANDLER){return 0;}
+}
+
+static int __cdecl RegisterStorageExtension(
+    const SdgoStorageExtensionSinkV1* sink) {
+    return g_extensions.Register(sink);
+}
+
+static int __cdecl UnregisterStorageExtension(void* user) {
+    return g_extensions.Unregister(user);
+}
+
+extern "C" __declspec(dllexport)
+const SdgoStorageExtensionApiV1* __cdecl SdgoStorageGetExtensionApiV1() {
+    static const SdgoStorageExtensionApiV1 api{
+        sizeof(SdgoStorageExtensionApiV1),
+        SDGO_STORAGE_EXTENSION_API_VERSION,
+        &RegisterStorageExtension,
+        &UnregisterStorageExtension};
+    return &api;
 }
 
 SDGO_MOD_ENTRY {

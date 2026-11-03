@@ -9,6 +9,11 @@ body {
   background-attachment: fixed;
 }
 [hidden], .hidden { display: none !important; }
+.owner-notice { display:flex; align-items:center; gap:20px; margin:20px 40px 0; padding:16px 20px; border:1px solid rgb(255 197 49 / 50%); border-left:4px solid var(--ui-gold); background:rgb(255 197 49 / 9%); }
+.owner-notice strong { color:var(--ui-gold); font-size:17px; }
+.owner-notice p { margin:6px 0 0; color:var(--ui-armor); line-height:1.7; font-size:13px; }
+.owner-notice button { flex:none; }
+@media (max-width:800px) { .owner-notice { margin:16px 18px 0; align-items:flex-start; flex-direction:column; gap:12px; } }
 
 /* ---------------------------------------------------------------- shell */
 .manager-shell { display: grid; grid-template-columns: 268px minmax(0, 1fr); min-height: 100vh; }
