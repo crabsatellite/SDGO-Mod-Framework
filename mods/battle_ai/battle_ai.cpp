@@ -77,6 +77,7 @@ using battle_ai::Vec3;
 using battle_ai::native::Ray3;
 using DispatchFn=int(__cdecl*)(const char*,uint8_t*);
 using RayFn=Ray3*(__thiscall*)(uint8_t*,Ray3*);
+using FindObjectFn=uint8_t*(__thiscall*)(uint8_t*,uint32_t);
 using GoalFn=int(__thiscall*)(uint8_t*,const Vec3*,int);
 using IntentFn=void(__thiscall*)(uint8_t*);
 using SetIntentFn=int(__thiscall*)(uint8_t*,char);
@@ -89,6 +90,7 @@ using RouteFn=Vec3*(__thiscall*)(uint8_t*,uint32_t,Vec3,Vec3,Vec3*,uint32_t*);
 using DeleteFn=void(__cdecl*)(void*);
 DispatchFn g_dispatch=nullptr;
 RayFn g_ray=nullptr;
+FindObjectFn g_findObject=nullptr;
 IntentFn g_intent=nullptr;
 IntentFn g_stop=nullptr;
 SetIntentFn g_setIntent=nullptr;
@@ -359,11 +361,11 @@ Vec3 Velocity(uint8_t* unit,uint32_t id,Vec3 point,ULONGLONG now,uint64_t genera
     return m.velocity;
 }
 uint8_t* FindObject(uint32_t id) {
-    if(!g_document || !*g_document) return nullptr;
+    if(!g_document || !*g_document || !g_findObject) return nullptr;
     // The engine's object lookup includes players, NPCs and AI participant list.
-    using Fn=uint8_t*(__thiscall*)(uint8_t*,uint32_t);
-    auto fn=reinterpret_cast<Fn>(g_api->Symbol(g_mod,"um.find_object"));
-    return fn?fn(*g_document,id):nullptr;
+    // Resolve its immutable, manifest-verified entry once at Mod load. Targets
+    // themselves are still looked up live for every shot/notice/decision.
+    return g_findObject(*g_document,id);
 }
 bool ControlBlocked(uint8_t* unit) {
     uint8_t* movement=nullptr;
@@ -2373,7 +2375,7 @@ SDGO_MOD_ENTRY {
         !Bind(g_lua.pushcclosure,"lua.pushcclosure") || !Bind(g_lua.gettable,"lua.gettable") ||
         !Bind(g_lua.settable,"lua.settable") || !Bind(g_lua.newtable,"lua.newtable") ||
         !Bind(g_lua.pcall,"lua.pcall") || !Bind(g_lua.load,"lua.load") ||
-        !Bind(g_document,"game.document") || !Bind(g_route,"navigation.route") ||
+        !Bind(g_document,"game.document") || !Bind(g_findObject,"um.find_object") || !Bind(g_route,"navigation.route") ||
         !Bind(g_setIntent,"npc.set_attack_intent") || !Bind(g_stop,"npc.move_stop") ||
         !Bind(g_setGoal,"npc.set_move_goal") || !Bind(g_delete,"crt.operator_delete") ||
         !Bind(g_navigation.query,"collision.query") || !Bind(g_navigation.segmentAabb,"collision.segment_aabb") ||

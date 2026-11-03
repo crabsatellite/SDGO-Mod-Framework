@@ -267,6 +267,10 @@ Use `--pages-only` to test the authenticated unit-management page, inventory
 readback, both exchange previews and cancellation. It compares unit UIDs, slots
 and the active unit before and after; it never confirms an exchange with candidates.
 Page cases are not battle tests.
+With observer 0.1.8 or newer, `--pages-only --page-group hangar` seals only the
+hangar read, preview and cancel cases, together with login and optional active-unit
+selection. This read-only group excludes storage claims, purchases and other page
+features; it rejects shop or collection scope and preserves the full suite's assertions.
 It also opens native storage, waits for its real message loop and server list
 reply, and confirms one claim batch. An empty batch only covers the empty-storage path.
 Capsule cases read all five native catalog tables and enter the actual page to

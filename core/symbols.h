@@ -42,5 +42,8 @@ namespace sdgo
 
     private:
         std::vector<Symbol> m_symbols;
+        // Numeric positions preserve the vector's pointer and copy semantics.
+        // Stable ordering retains Find's first-match behaviour for duplicates.
+        std::vector<size_t> m_lookup;
     };
 }
