@@ -422,6 +422,10 @@ public:
         return observed;
     }
 
+    bool InventoryPageRequestSeen() const noexcept {
+        return InterlockedCompareExchange(&inventoryPageObservations_,0,0)!=0;
+    }
+
     TransportObservation FindTransportSince(
         uint32_t baseline,
         uint16_t opcode) const

@@ -17,8 +17,9 @@ namespace friends {
 // original AllowBtn or RefuseBtn callback with the real native control.
 //
 // It never constructs an invite packet, writes invitation/profile state, or
-// fabricates a room. Accept completion requires the original 0x05AB
-// continuation, its 0x0734 request, and the final native guest-room model.
+// fabricates a room. Accept completion requires the actual acceptance send,
+// its native invitation identity, and the final guest-room model. Builds that
+// take the 0x05AB/0x0734 continuation retain that separately observed lineage.
 class FriendInviteReceiver
 {
 public:
@@ -42,6 +43,7 @@ public:
         kJoinRequestSent = 8,
         kRoomJoined = 9,
         kRejected = 10,
+        kPromptWaitingVisible = 11,
         kFailed = 0x100,
     };
 
@@ -368,7 +370,14 @@ public:
         observation_.native_app_state =
             native_ ? native_->AppState()
                     : UINT32_MAX;
-        if (observation_.phase == kJoinRequestSent)
+        if(observation_.phase==kPromptWaitingVisible) {
+            if(observation_.prompt_destroyed)Fail(kPromptNoLongerLive);
+            else if(ValidateLivePromptAndControls(managedPrompt_,allowControl_)) {
+                observation_.controls_ready=1;observation_.phase=kPromptInitialized;
+            }
+        }
+        if (observation_.phase == kJoinRequestSent ||
+            (observation_.phase==kDecisionSent && observation_.decision_sent && observation_.invitation_context_matched))
             RefreshRoomCompletion();
         if (expectedDecision_ == kReject &&
             observation_.decision_sent &&
@@ -670,6 +679,12 @@ private:
                 nameLength);
     }
 
+    bool ValidateControlIdentity(void* root,void* control,const wchar_t* name,size_t length) const {
+        if(!root || !control)return false;
+        const auto* bytes=static_cast<const uint8_t*>(control);
+        return Read<void*>(bytes+kControlParentOffset)==root && NativeStringMatches(bytes+kControlNameOffset,name,length);
+    }
+
     bool ValidateLivePromptAndControls(
         void* prompt,
         void* selectedControl) const
@@ -873,10 +888,8 @@ private:
             observation_.phase ==
             kPromptConstructed)
             Fail(kPromptCloneMismatch);
-        else if (
-            observation_.phase ==
-            kPromptQueued)
-            Fail(kPromptUiMismatch);
+        // A verified clone may be initialized later by the native UI loader.
+        // Its original initializer and lifetime hooks remain authoritative.
     }
 
     bool CanObserveJoinContinuation() const
@@ -1134,13 +1147,13 @@ private:
             bool refuseHit = false;
             __try {
                 allowMatched =
-                    receiver->ValidateControl(
+                    receiver->ValidateControlIdentity(
                         receiver->layoutRoot_,
                         receiver->allowControl_,
                         L"AllowBtn",
                         8);
                 refuseMatched =
-                    receiver->ValidateControl(
+                    receiver->ValidateControlIdentity(
                         receiver->layoutRoot_,
                         receiver->refuseControl_,
                         L"RefuseBtn",
@@ -1170,7 +1183,7 @@ private:
                         static_cast<uint8_t*>(self) +
                         kPromptReadyOffset) != 0 &&
                     allowMatched &&
-                    refuseMatched;
+                    refuseMatched && allowEnabled && refuseEnabled && allowHit && refuseHit;
             } __except (EXCEPTION_EXECUTE_HANDLER) {
                 matched = false;
                 allowMatched = false;
@@ -1198,11 +1211,10 @@ private:
                 allowHit ? 1 : 0;
             receiver->observation_.refuse_control_hit =
                 refuseHit ? 1 : 0;
-            receiver->observation_.controls_ready =
-                matched ? 1 : 0;
+            receiver->observation_.controls_ready = matched && receiver->ValidateLivePromptAndControls(self,receiver->allowControl_)?1:0;
             if (matched) {
                 receiver->observation_.phase =
-                    kPromptInitialized;
+                    receiver->observation_.controls_ready?kPromptInitialized:kPromptWaitingVisible;
             } else {
                 receiver->Fail(
                     kPromptUiMismatch);
