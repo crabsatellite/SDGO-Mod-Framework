@@ -5,7 +5,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from manager.entrypoints import create,CLIENT_NAME
+import struct
+from manager.entrypoints import create,CLIENT_NAME,ShellLink
 from manager.workspace import Workspace
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -21,9 +22,21 @@ class EntrypointTests(unittest.TestCase):
         self.workspace=Workspace(self.root/'服主 工作区',ROOT/'mods');self.workspace.add_host(self.client)
 
     def read(self,path):
-        command="$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:SDGO_TEST_LINK);[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);@{target=$s.TargetPath;arguments=$s.Arguments;description=$s.Description}|ConvertTo-Json -Compress"
-        return json.loads(subprocess.check_output(['powershell.exe','-NoProfile','-NonInteractive','-Command',command],
-            env=dict(os.environ,SDGO_TEST_LINK=str(path)),encoding='utf-8',timeout=20,creationflags=subprocess.CREATE_NO_WINDOW))
+        # Independently inspect MS-SHLLINK Unicode StringData. WScript shortcut
+        # automation corrupts non-ANSI paths on English Windows installations.
+        raw=path.read_bytes();self.assertEqual(struct.unpack_from('<I',raw)[0],76)
+        flags=struct.unpack_from('<I',raw,20)[0];offset=76
+        if flags&1:offset+=2+struct.unpack_from('<H',raw,offset)[0]
+        if flags&2:offset+=struct.unpack_from('<I',raw,offset)[0]
+        result={}
+        self.assertTrue(flags&128)
+        for flag,name in [(4,'description'),(8,'relative'),(16,'directory'),(32,'arguments'),(64,'icon')]:
+            if flags&flag:
+                size=2*struct.unpack_from('<H',raw,offset)[0];offset+=2
+                result[name]=raw[offset:offset+size].decode('utf-16le');offset+=size
+        with ShellLink() as link:link.load(path);result['target']=link.target()
+        self.assertEqual(Path(result['icon']),self.exe)
+        return result
 
     def test_shortcuts_bind_existing_workspace_and_only_client_roots(self):
         server=self.root/'server';server.mkdir();(server/'BattleServer.exe').write_bytes(b'fixture')
