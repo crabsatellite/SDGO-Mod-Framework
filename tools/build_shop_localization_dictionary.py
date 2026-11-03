@@ -74,7 +74,9 @@ def add_runtime_newline_aliases(words):
     return len(aliases)
 
 
-def compile_words(terms, phrases=None, native_names=None, extra=None, unit_names=None):
+def compile_words(
+        terms, phrases=None, native_names=None, extra=None, unit_names=None,
+        reviewed_orphan_aliases=None):
     if terms.get('schema_version') != 1:
         raise ValueError('Unsupported private term-extract schema')
     candidates = collections.defaultdict(list)
@@ -99,6 +101,12 @@ def compile_words(terms, phrases=None, native_names=None, extra=None, unit_names
         if source and target and source==target:
             identities.add(source)
             return
+        # Description banks commonly spell intended line breaks as the two
+        # characters ``\n``. The native parser expands escapes only after the
+        # dictionary is encoded, so store a real LF here and let encode()
+        # emit exactly one ``\n`` escape. Names remain byte-for-byte authored.
+        if target and kind == 'description':
+            target=target.replace('\\n','\n')
         if (not source or not target or '\0' in source+target or '\ufffd' in target
                 or len(source.encode('utf-16-le'))>16384 or len(target.encode('utf-16-le'))>16384):
             return
@@ -136,6 +144,39 @@ def compile_words(terms, phrases=None, native_names=None, extra=None, unit_names
             if isinstance(source, dict): source=source.get('value','')
             add(source,target,priority=85-slot)
         add(unit.get('alias_0237_slot2',''),target,priority=40)
+
+    # Some shop previews deliberately show a unit that has no ordinary
+    # kind-11 catalogue row. Admit only aliases reviewed against that exact
+    # native unit record and the stable public unit-name bank. This keeps
+    # unrelated transformation aliases out of the shared preview-name hook.
+    records_by_id = {unit['unit_id']: unit for unit in terms['unit_records']}
+    claimed_orphan_aliases = {}
+    for raw_unit_id, aliases in (reviewed_orphan_aliases or {}).items():
+        if not str(raw_unit_id).isdigit() or not isinstance(aliases, list) or not aliases:
+            raise ValueError('Invalid reviewed orphan unit aliases')
+        unit_id = int(raw_unit_id)
+        record = records_by_id.get(unit_id)
+        target = None if unit_names is None else unit_names.get(
+            str(unit_id), unit_names.get(unit_id))
+        if record is None or not target:
+            raise ValueError('Reviewed orphan alias requires a stable unit name')
+        native_aliases = set()
+        for source in (record.get('original_0011') or {}).get('slots', []):
+            if isinstance(source, dict):
+                source = source.get('value', '')
+            if isinstance(source, str) and source:
+                native_aliases.add(source)
+        source = record.get('alias_0237_slot2', '')
+        if isinstance(source, str) and source:
+            native_aliases.add(source)
+        for source in aliases:
+            if not isinstance(source, str) or source not in native_aliases:
+                raise ValueError('Reviewed orphan alias is not native for unit ' + str(unit_id))
+            previous = claimed_orphan_aliases.get(source)
+            if previous is not None and previous != unit_id:
+                raise ValueError('Reviewed orphan alias maps to multiple units: ' + source)
+            claimed_orphan_aliases[source] = unit_id
+            add(source, target, priority=130)
 
     preliminary = {source: selected[0] for source, rows in candidates.items() if (selected:=choose(source, rows)) is not None}
     if phrases:
@@ -289,13 +330,24 @@ def main():
                 if source in extra[kind] and extra[kind][source]!=text:raise ValueError('Conflicting authored translation: '+source)
                 extra[kind][source]=text
     unit_names = None
+    reviewed_orphan_aliases = None
     unit_file = ROOT/'mods/shop_localization/unit-names.json'
     if unit_file.is_file():
         bank = json.loads(unit_file.read_text(encoding='utf-8'))
         if bank.get('schema_version') != 1 or not isinstance(bank.get('units'),dict):
             raise ValueError('Unsupported stable unit-name bank')
         unit_names = bank['units']
-    words,report=compile_words(json.loads(args.terms.read_text(encoding='utf-8')),phrases,native,extra,unit_names)
+        reviewed_orphan_aliases = bank.get('reviewed_orphan_aliases', {})
+        if not isinstance(reviewed_orphan_aliases, dict):
+            raise ValueError('Unsupported reviewed orphan unit aliases')
+    words,report=compile_words(
+        json.loads(args.terms.read_text(encoding='utf-8')),
+        phrases,
+        native,
+        extra,
+        unit_names,
+        reviewed_orphan_aliases,
+    )
     args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_bytes(encode(words))
     args.report.parent.mkdir(parents=True,exist_ok=True);args.report.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps({k:v for k,v in report.items() if k not in ('unresolved_source_conflicts','untranslated_names','parent_text_missing')},ensure_ascii=False))

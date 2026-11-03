@@ -28,6 +28,8 @@ class Workspace:
             raise PermissionError('此信息仅在开发信息视图提供')
 
     def close(self):
+        from .update_restart import pending
+        if pending(self.root):self.services.prepare_restart()
         self.services.close()
         for provider in self.providers.values():
             with provider.lock:
@@ -68,12 +70,19 @@ class Workspace:
                 return host
         raise ValueError('宿主不存在')
 
+    def _mod_directory(self, host, identity):
+        candidates = [storage.safe_child(host['path'], 'sdgo/'+tree+'/'+identity)
+                      for tree in ('mods','local-mods')]
+        installed = [path for path in candidates if (path/'mod.ini').is_file()]
+        if len(installed)>1:raise ValueError('Mod 标识在共享目录与本地目录中重复：'+identity)
+        return installed[0] if installed else candidates[0]
+
     def _installed(self, host):
-        root = Path(host['path']) / 'sdgo/mods'
         result = []
-        if not root.is_dir():
-            return result
-        for folder in sorted(root.iterdir()):
+        roots = [Path(host['path'])/'sdgo'/tree for tree in ('mods','local-mods')]
+        folders = [folder for root in roots if root.is_dir() for folder in sorted(root.iterdir())]
+        for folder in folders:
+            root = folder.parent
             if not folder.is_dir() or not registry.ID.fullmatch(folder.name):
                 continue
             ini = folder / 'mod.ini'
@@ -89,6 +98,7 @@ class Workspace:
                 contract = registry.load(root).get(folder.name)
             manager_raw = (folder / 'manager.json').read_bytes() if (folder / 'manager.json').is_file() else None
             scope = distribution.resolve(raw, manager_raw, allow_legacy_public=True)
+            if root.name=='local-mods':scope=distribution.LOCAL_ONLY
             global_path = Path(host['path']) / 'sdgo/sdgo.ini'
             global_raw = global_path.read_bytes() if global_path.exists() else b''
             global_ini = storage.ini_values(global_raw)
@@ -139,7 +149,7 @@ class Workspace:
     def details(self, host_id, mod_id):
         host = self.host(host_id)
         contract = self.contracts.get(mod_id)
-        mod_dir = storage.safe_child(host['path'], 'sdgo/mods/'+mod_id)
+        mod_dir = self._mod_directory(host, mod_id)
         if not (mod_dir / 'mod.ini').is_file():
             raise ValueError('此宿主未安装该 Mod')
         if contract is None:
@@ -192,7 +202,7 @@ class Workspace:
                 field = fields[key]
                 updates.setdefault(field['file'], []).append((field, registry.validate(field, value)))
             host = self.host(host_id)
-            root = storage.safe_child(host['path'], 'sdgo/mods/'+mod_id)
+            root = self._mod_directory(host, mod_id)
             candidates = {}
             for name, changes in updates.items():
                 xml = self._client_xml_field(changes[0][0])
@@ -229,7 +239,7 @@ class Workspace:
         path = storage.safe_child(host['path'],'sdgo/sdgo.ini')
         with storage.LOCK:
             raw = path.read_bytes() if path.exists() else b''
-            manifest = storage.safe_child(host['path'],'sdgo/mods/'+mod_id+'/mod.ini')
+            manifest = self._mod_directory(host, mod_id)/'mod.ini'
             mod_raw = manifest.read_bytes()
             if not isinstance(expected, dict) or expected.get('global') != storage.revision(raw) or expected.get('manifest') != storage.revision(mod_raw):
                 raise storage.Conflict('全局配置已改变，请刷新后重试')

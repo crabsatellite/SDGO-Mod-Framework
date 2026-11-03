@@ -1,7 +1,9 @@
 #include "symbols.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <numeric>
 
 #include "log.h"
 #include "sdgo/sdgo_api.h"
@@ -105,14 +107,23 @@ namespace
 
     bool SameBinding(const sdgo::Symbol& left, const sdgo::Symbol& right)
     {
-        return left.kind == right.kind && left.address == right.address && left.expect == right.expect &&
-               left.expectedTarget == right.expectedTarget;
+        if (left.kind != right.kind || left.address != right.address || left.expectedTarget != right.expectedTarget)
+            return false;
+        if (left.expect == right.expect) return true;
+        if (!left.verified || !right.verified) return false;
+        const size_t shared = left.expect.size() < right.expect.size() ? left.expect.size() : right.expect.size();
+        for (size_t index = 0; index < shared; ++index) {
+            if (left.expect[index] >= 0 && right.expect[index] >= 0 && left.expect[index] != right.expect[index])
+                return false;
+        }
+        return true;
     }
 }
 
 bool sdgo::SymbolTable::Load(const std::wstring& path, HMODULE host, const char* hostKey,
                              const char* logSource, bool requireImage)
 {
+    m_lookup.clear();
     m_symbols.clear();
     if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
         log::Writef(logSource, SDGO_LOG_WARN, "no symbol file for host %s", hostKey);
@@ -189,16 +200,26 @@ bool sdgo::SymbolTable::Load(const std::wstring& path, HMODULE host, const char*
                         symbol.problem.c_str());
         m_symbols.push_back(std::move(symbol));
     }
+    m_lookup.resize(m_symbols.size());
+    std::iota(m_lookup.begin(), m_lookup.end(), size_t{0});
+    std::stable_sort(m_lookup.begin(), m_lookup.end(), [this](size_t left, size_t right) {
+        return m_symbols[left].name < m_symbols[right].name;
+    });
     return true;
 }
 
 const sdgo::Symbol* sdgo::SymbolTable::Find(const char* name) const
 {
-    for (const Symbol& symbol : m_symbols) {
-        if (symbol.name == name)
-            return &symbol;
+    if (!name) return nullptr;
+    // Very small hosts cost less to scan than to binary-search. Keep their
+    // original fast path; the large native game/server tables use the index.
+    if(m_symbols.size()<8) {
+        for(const Symbol& symbol:m_symbols)if(symbol.name==name)return &symbol;
+        return nullptr;
     }
-    return nullptr;
+    const auto found = std::lower_bound(m_lookup.begin(), m_lookup.end(), name,
+        [this](size_t index, const char* value) { return m_symbols[index].name.compare(value) < 0; });
+    return found != m_lookup.end() && m_symbols[*found].name == name ? &m_symbols[*found] : nullptr;
 }
 
 const sdgo::Symbol* sdgo::SymbolTable::FindWithFallback(const char* name, const SymbolTable& fallback) const

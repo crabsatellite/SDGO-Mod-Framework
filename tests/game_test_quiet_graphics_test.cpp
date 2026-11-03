@@ -229,15 +229,21 @@ private:
     ULONG references_=1;
 };
 
+DWORD resolverThread=0;
+int forwarderCalls=0;
 IDirect3D9* WINAPI Create(UINT sdkVersion) {
     lastWorkerThread=GetCurrentThreadId();
     if (sdkVersion!=D3D_SDK_VERSION)++failures;
     return factoryUnavailable ? nullptr:new FakeD3D;
 }
+IDirect3D9* WINAPI ForwardedCreate(UINT sdkVersion) {
+    ++forwarderCalls;
+    return Create(sdkVersion);
+}
 int __cdecl Hook(SdgoMod*,const char* library,const char* name,void* replacement,void** original) {
     if (std::strcmp(library,"d3d9.dll") || std::strcmp(name,"Direct3DCreate9"))return 0;
     detour=reinterpret_cast<QuietGraphics::Create9Fn>(replacement);
-    *original=reinterpret_cast<void*>(&Create);return 1;
+    *original=reinterpret_cast<void*>(&ForwardedCreate);return 1;
 }
 
 void InitializeDeviceTable(void** table) {
@@ -259,6 +265,16 @@ bool HasOriginalDeviceSlot(void** table) {
         table[18]==reinterpret_cast<void*>(&FakeGetBackBuffer) ||
         table[23]==reinterpret_cast<void*>(&FakeCreateTexture);
 }
+}
+
+#if defined(_M_IX86)
+#pragma comment(linker,"/EXPORT:SdgoDirect3DCreate9Target=_ResolveQuietFactory@0")
+#else
+#pragma comment(linker,"/EXPORT:SdgoDirect3DCreate9Target=ResolveQuietFactory")
+#endif
+extern "C" __declspec(dllexport) FARPROC WINAPI ResolveQuietFactory() {
+    resolverThread=GetCurrentThreadId();
+    return reinterpret_cast<FARPROC>(&Create);
 }
 
 int main() {
@@ -328,10 +344,12 @@ int main() {
     if (input)CloseDesktop(input);
 
     factoryUnavailable=true;
+    if(resolverThread!=GetCurrentThreadId() || forwarderCalls!=0)++failures;
     if (detour(D3D_SDK_VERSION)!=nullptr)++failures;
     factoryUnavailable=false;
     IDirect3D9* d3d=detour(D3D_SDK_VERSION);
     if (!d3d)return 1;
+    if(forwarderCalls!=0)++failures;
     queryResult=static_cast<HRESULT>(0x88761234u);
     if (d3d->CheckDeviceFormat(3,D3DDEVTYPE_SW,D3DFMT_R5G6B5,0x55,D3DRTYPE_TEXTURE,
                                D3DFMT_A1R5G5B5)!=queryResult ||

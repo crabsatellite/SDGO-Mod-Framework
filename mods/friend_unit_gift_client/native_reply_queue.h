@@ -35,4 +35,42 @@ private:
     std::size_t first_=0,count_=0;
     std::uint32_t dropped_=0;
 };
+
+// The normal 0x0699 detail reply carries the authentic packed 153-byte unit
+// at offset 14. Stock handlers only synchronize it on the active hangar page.
+// Retain only our outstanding read and let the UI thread call the same native
+// cache writer. Observing this reply never consumes or rewrites the packet.
+class NativeUnitDetailQueue {
+public:
+    using Record=std::array<std::uint8_t,153>;
+    void Expect(std::uint64_t session,std::uint64_t uid) noexcept {
+        AcquireSRWLockExclusive(&lock_);
+        session_=session;uid_=uid;queued_=false;
+        ReleaseSRWLockExclusive(&lock_);
+    }
+    bool Observe(const std::uint8_t* packet,std::uint32_t size) noexcept {
+        if (!packet || size!=167 || wire::Read16(packet)!=0x0699) return false;
+        const auto* record=packet+14;
+        const auto uid=wire::Read64(record+8);
+        const auto slot=wire::Read16(record+4);
+        if (!wire::Read32(record) || !uid || !slot || slot>1200) return false;
+        AcquireSRWLockExclusive(&lock_);
+        const bool matches=session_ && uid_ && uid_==uid;
+        if (matches) { std::memcpy(record_.data(),record,record_.size());queued_=true; }
+        ReleaseSRWLockExclusive(&lock_);return matches;
+    }
+    bool Pop(std::uint64_t session,Record* output) noexcept {
+        if (!output) return false;
+        AcquireSRWLockExclusive(&lock_);
+        const bool present=queued_ && session && session==session_;
+        if (present) { *output=record_;queued_=false;uid_=0; }
+        if (session!=session_) { queued_=false;uid_=0;session_=0; }
+        ReleaseSRWLockExclusive(&lock_);return present;
+    }
+private:
+    SRWLOCK lock_=SRWLOCK_INIT;
+    Record record_{};
+    std::uint64_t session_=0,uid_=0;
+    bool queued_=false;
+};
 }

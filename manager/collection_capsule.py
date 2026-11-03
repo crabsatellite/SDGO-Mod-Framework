@@ -23,13 +23,24 @@ class CollectionCapsule(Provider):
         'server_ini': '目标 WorldServer 配置文件',
         'client': '配套客户端目录（本机安装目标）',
         'source': '配套完整框架包或服主工具包目录',
-        'cover': '活动海报 PNG（361×322，留空使用随包海报）',
+        'cover': '活动海报底图 PNG（至少361×322，自动添加价格与次数）',
         'snapshot': '公开目录快照（开发时替代数据库导出）',
+        'price_gp':'每次价格（GB）','limit_period':'限额周期（week/day/none）',
+        'draw_limit':'每周期最多成功次数（0为不限次）','utc_offset_minutes':'重置时区（UTC分钟偏移）',
     }
 
     @property
     def state_file(self):
         return self.workspace.root / 'data/collection_capsule/last-build.json'
+
+    def rules(self):
+        from owner.collection_capsule.rules import from_config
+        return from_config(self.config)
+
+    def configure(self,values):
+        from owner.collection_capsule.rules import from_config
+        from_config({**self.config,**values})
+        return super().configure(values)
 
     def revision(self):
         return storage.revision(storage.json_bytes(self.config) +
@@ -40,13 +51,15 @@ class CollectionCapsule(Provider):
             raise storage.Conflict('收藏扭蛋配置或构建已改变，请刷新后重试')
 
     def stage(self):
+        from owner.collection_capsule.client import registry_support
         source = Path(self.config['source']) if self.config.get('source') else (
             Path(sys.executable).parent if getattr(sys, 'frozen', False) else ROOT)
         for candidate in (source / 'collection/framework', source / 'framework',
                           source / 'build/stage/Release', source):
             if ((candidate / 'client/sdgo/core.dll').is_file() and
-                    (candidate / 'server/sdgo/mods/collection_capsule/collection_capsule.dll').is_file() and
-                    (candidate / 'support/capsule-registry/capsule_catalog.dll').is_file()):
+                    (candidate / 'server/sdgo/mods/collection_capsule/collection_capsule.dll').is_file()):
+                try:registry_support(candidate)
+                except ValueError:continue
                 return candidate
         raise ValueError('请选择包含收藏扭蛋和共享机台支持的配套完整框架包或服主工具包')
 
@@ -65,7 +78,7 @@ class CollectionCapsule(Provider):
         state = storage.read_json(self.state_file, {})
         current = state.get('config_revision') == storage.revision(storage.json_bytes(self.config))
         return {'revision': self.revision(), 'generated': bool(current and state.get('machine_kind') == 'activity'),
-                'machine_id': state.get('machine_id', 990001), 'price_gp': 100000, 'machine_kind': 'activity',
+                'machine_id': state.get('machine_id', 990001), 'price_gp': self.rules()['price_gp'], 'rules':self.rules(),'machine_kind': 'activity',
                 'rank_weights': {'C': 35, 'B': 30, 'A': 20, 'S': 15},
                 'collection_policy': 'catalog_then_inventory',
                 'eligible_roots': state.get('eligible_roots'),
@@ -75,7 +88,7 @@ class CollectionCapsule(Provider):
 
     def generate(self):
         from tools.collection_capsule import build
-        from owner.collection_capsule.client import build_client_registry
+        from owner.collection_capsule.client import build_client_registry, registry_support
         from owner.collection_capsule.deployment import connection, export_configuration
         from tools.package_collection_capsule_client import package_client_registry
         if not self.config.get('client') or not self.config.get('server_ini'):
@@ -95,20 +108,20 @@ class CollectionCapsule(Provider):
         machine_id = storage.ini_values(settings.read_bytes() if settings.is_file() else b'').getint(
             'settings', 'MachineID', fallback=990001)
         client = Path(self.config['client'])
-        server = build(snapshot, output / 'server-package', machine_id, [], stage / 'server', client_root=client)
+        server = build(snapshot, output / 'server-package', machine_id, [], stage / 'server', client_root=client,rules=self.rules())
         model = storage.read_json(output / 'server-package/model.json')
         current = client / 'sdgo/mods/capsule_catalog'
-        cover = Path(self.config['cover']) if self.config.get('cover') else ROOT / 'mods/collection_capsule/assets/cover.png'
+        cover = Path(self.config['cover']) if self.config.get('cover') else ROOT / 'mods/collection_capsule/assets/cover-base.png'
         registry = build_client_registry(client_root=client,
             current_registry=current if (current / 'runtime.ini').is_file() else None,
             source_units=model['pool']['units'], unit_items=model['unit_items'], machine_id=machine_id, cover=cover,
-            output=output / 'client-registry')
+            output=output / 'client-registry',rules=self.rules())
         package_client_registry(registry=output / 'client-registry', framework_stage=stage / 'client',
-            support_dll=stage / 'support/capsule-registry/capsule_catalog.dll', output=output / 'player')
+            support_dll=registry_support(stage), output=output / 'player')
         storage.atomic(self.state_file, storage.json_bytes({
             'build_id': identity, 'config_revision': storage.revision(storage.json_bytes(self.config)),
             'machine_id': machine_id, 'machine_kind': 'activity', 'eligible_roots': server['resolved_roots'],
-            'catalog_revision': registry['catalog_revision'], 'placement': registry.get('placement')}))
+            'catalog_revision': registry['catalog_revision'], 'placement': registry.get('placement'),'rules':self.rules()}))
         return self.public()
 
     def client_install(self, output, check_only=False):
@@ -144,6 +157,10 @@ class CollectionCapsule(Provider):
         if method != 'POST':
             raise ValueError('收藏扭蛋操作未登记')
         self.check_revision(body)
+        if path=='/api/rules':
+            from owner.collection_capsule.rules import validate
+            value=validate(body['value']);self.configure({k:str(v) for k,v in value.items()})
+            return self.public()
         if path == '/api/generate':
             return self.generate()
         if path == '/api/upgrade-catalog':

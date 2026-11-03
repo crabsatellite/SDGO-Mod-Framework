@@ -192,6 +192,9 @@ int main() {
     PacketAndNativeResultTest();
     StaleSessionTests();
     NoAccessAndBindingTests();
+    Reset();cash::SessionRoute route;CHECK(cash::Capture(room_pilot.data(),&route));
+    CHECK(cash::NotifyCurrentGb(route,0x01020304,123456)==cash::NotifyResult::Sent);
+    CHECK(received_packet[0]==0x32 && received_packet[1]==0x09);
     std::cout << checks << " checks, " << failures << " failures\n";
     return failures ? 1 : 0;
 }

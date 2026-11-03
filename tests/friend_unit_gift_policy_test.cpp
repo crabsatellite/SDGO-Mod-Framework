@@ -1,6 +1,7 @@
 #include "../mods/friend_unit_gift_server/gift_policy.h"
 #include "../mods/friend_unit_gift_server/sql_policy.h"
 #include "../mods/friend_unit_gift_server/unit_payload.h"
+#include "../mods/friend_unit_gift_server/server_epoch.h"
 
 #include <algorithm>
 #include <cassert>
@@ -18,6 +19,9 @@ bool Contains(const std::wstring& value, std::wstring_view needle) {
 } // namespace
 
 int main() {
+    const auto epoch=ServerRuntimeEpoch();
+    Sleep(2);
+    assert(epoch && ServerRuntimeEpoch()==epoch);
     static_assert(kNativeUnitColumns.size() == 50);
     static_assert(kManagerDefaults.enabled == false);
     static_assert(kManagerDefaults.minimum_battles == 20);
@@ -56,7 +60,10 @@ int main() {
     assert(!EligibleUnit(unit, 100));
 
     const auto modules = Modules(L"Fixture");
-    assert(modules.size() == 11);
+    assert(modules.size() == 12);
+    assert(std::count_if(modules.begin(),modules.end(),[](const SqlModule& module) {
+        return module.name==L"QueryInventoryReturns";
+    })==1);
     for (const auto& module : modules) {
         assert(Contains(module.definition, L"CREATE PROCEDURE"));
         assert(Contains(module.definition, L"\nEND;\n"));
@@ -95,6 +102,7 @@ int main() {
     assert(!Contains(*install, L"ALTER PROCEDURE"));
     assert(Contains(*install, L"ArgRecipientAccount"));
     assert(Contains(*install, L"QueryReturned"));
+    assert(Contains(*install, L"QueryInventoryReturns"));
     assert(Contains(*install, L"PreviewOffer"));
     assert(Contains(*install, L"QueryGift"));
     assert(Contains(*install, L"QueryReceipt"));

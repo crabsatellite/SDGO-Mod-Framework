@@ -262,7 +262,7 @@ class HttpRuntimeTests(unittest.TestCase):
         self.assertNotIn('progression',self.workspace.read())
         with post('solo-preset',{}) as response: saved=json.load(response)
         self.assertTrue(saved['progression']['config']['enabled'])
-        self.assertEqual(saved['policy']['progression']['daily_mb'],27000)
+        self.assertEqual(saved['policy']['progression']['daily_mb'],400)
         with self.assertRaises(HTTPError) as stale: post('solo-preset',{})
         self.assertEqual(stale.exception.code,400);stale.exception.close()
         p=saved['policy']['progression'];p['enabled']=False

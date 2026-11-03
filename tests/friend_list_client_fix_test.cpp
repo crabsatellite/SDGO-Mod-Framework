@@ -14,6 +14,7 @@
 #include "sdgo/sdgo_api.h"
 #include "../mods/friend_list_client_fix/chat_open_policy.h"
 #include "../mods/friend_list_client_fix/messenger_layout_policy.h"
+#include "../mods/friend_list_client_fix/name_update_policy.h"
 
 extern "C" __declspec(dllimport) int __cdecl SdgoModLoad(const SdgoApi*, SdgoMod*);
 
@@ -121,8 +122,38 @@ namespace
 
     void FakeLog(SdgoMod*, int, const char*, ...) {}
 
+    bool g_updateRequested = false;
+    bool g_updateHookRequested = false;
+    bool g_rejectUpdate = false;
+    unsigned g_updateCalls = 0;
+    const void* g_updateInput = nullptr;
+    std::array<std::uint8_t,0x30> g_updatedRow{};
+
+    __declspec(noinline) std::uintptr_t __fastcall NativeUpdateFixture(
+        void* self, void*, const void* row)
+    {
+        ++g_updateCalls;
+        g_updateInput = row;
+        std::memcpy(g_updatedRow.data(),row,g_updatedRow.size());
+        std::memcpy(self,row,g_updatedRow.size());
+        return 0xCAFEBABE;
+    }
+
+    int FakeHookCode(SdgoMod*, const char* name, void* detour, void** original)
+    {
+        if (!Same(name,friend_list_client_fix::kNameUpdateSymbol)) return 0;
+        g_updateHookRequested = true;
+        void* target = reinterpret_cast<void*>(&NativeUpdateFixture);
+        return MH_CreateHook(target,detour,original) == MH_OK &&
+            MH_EnableHook(target) == MH_OK;
+    }
+
     void* FakeSymbol(SdgoMod*, const char* name)
     {
+        if (Same(name,friend_list_client_fix::kNameUpdateSymbol)) {
+            g_updateRequested = true;
+            return g_rejectUpdate ? nullptr : reinterpret_cast<void*>(&NativeUpdateFixture);
+        }
         if (Same(name, friend_list_client_fix::kLayoutSymbol)) {
             g_layoutRequested = true;
             return g_rejectLayout ? nullptr : g_gateCode;
@@ -475,6 +506,53 @@ namespace
               "detour, trampoline and native thiscall keep the stack balanced");
     }
 
+    void CheckNameUpdates()
+    {
+        auto cached = Row(1001,0xD6,7,0);
+        const char chinese[] = "\xD6\xD0\xCE\xC4\xBA\xC3\xD3\xD1";
+        std::memcpy(cached.data()+0x0A,chinese,sizeof(chinese));
+        std::array<std::uint8_t,0x30> reply{};
+        std::fill(reply.begin(),reply.end(),static_cast<std::uint8_t>(0x55));
+        std::memcpy(reply.data(),cached.data(),4);
+        std::memset(reply.data()+0x0A,0,17);
+        std::memcpy(reply.data()+0x0A,"????",5);
+        reply[0x1B] = 7;
+        const auto unmodified = reply;
+        auto expected = reply;
+        std::memcpy(expected.data()+0x0A,cached.data()+0x0A,17);
+        g_updateCalls = 0;
+        const auto result = NativeUpdateFixture(cached.data(),nullptr,reply.data());
+        Check(result == 0xCAFEBABE && g_updateCalls == 1,
+              "friend update trampoline preserves native result and one invocation");
+        Check(g_updatedRow == expected && reply == unmodified,
+              "lossy update retains only known name; every status byte updates and packet remains untouched");
+        Check(std::memcmp(cached.data(),expected.data(),expected.size()) == 0,
+              "native updater receives corrected name before rebuilding its display text");
+
+        std::memset(reply.data()+0x0A,0,17);
+        std::memcpy(reply.data()+0x0A,"Renamed",8);
+        NativeUpdateFixture(cached.data(),nullptr,reply.data());
+        Check(g_updatedRow == reply && g_updateInput == reply.data(),
+              "complete nickname changes retain the original argument and native behavior");
+
+        auto foreign = Row(9876,'A',7,0);
+        std::memcpy(reply.data()+0x0A,"????",5);
+        NativeUpdateFixture(foreign.data(),nullptr,reply.data());
+        Check(g_updatedRow == reply && g_updateInput == reply.data(),
+              "a different identity cannot inherit another friend's name");
+        auto unknown = Row(1001,'?',7,0);
+        NativeUpdateFixture(unknown.data(),nullptr,reply.data());
+        Check(g_updatedRow == reply && g_updateInput == reply.data(),
+              "an already damaged cache does not invent a replacement name");
+
+        const auto valid = Row(1001,'A',7,0);
+        auto unterminated = reply;
+        std::memset(unterminated.data()+0x0A,'?',17);
+        Check(!friend_list_client_fix::PreserveKnownName(valid.data(),unterminated.data()) &&
+                  !friend_list_client_fix::PreserveKnownName(nullptr,reply.data()),
+              "malformed fields and missing cache are outside the repair policy");
+    }
+
     template <std::size_t N>
     bool Match(const std::vector<std::uint8_t>& image, std::size_t offset,
                const std::array<std::uint8_t, N>& expected)
@@ -673,6 +751,8 @@ namespace
 
     void ResetRequestReceipts()
     {
+        g_updateRequested = false;
+        g_updateHookRequested = false;
         g_layoutRequested = false;
         g_gateRequested = false;
         g_assignRequested = false;
@@ -696,7 +776,8 @@ namespace
         const bool service = RemoveHook(g_serviceCaller.callSite);
         const bool popup = RemoveHook(g_popupCaller.callSite);
         const bool gate = RemoveHook(g_gateCode);
-        return service && popup && gate;
+        const bool update = RemoveHook(reinterpret_cast<void*>(&NativeUpdateFixture));
+        return service && popup && gate && update;
     }
 
     bool AllFriendReceipts()
@@ -705,7 +786,7 @@ namespace
                g_serviceCallRequested && g_popupCallRequested &&
                g_serviceReturnRequested && g_popupReturnRequested &&
                g_originalLayoutRequested && g_serviceHookRequested &&
-               g_popupHookRequested;
+                g_popupHookRequested && g_updateRequested && g_updateHookRequested;
     }
 
     void CheckOtherOwnerCall(
@@ -772,6 +853,12 @@ int wmain(int argc, wchar_t** argv)
 
     api.size = sizeof(api);
     api.HookSite = &FakeHookSite;
+    api.HookCode = &FakeHookCode;
+    g_rejectUpdate = true;
+    Check(SdgoModLoad(&api,reinterpret_cast<SdgoMod*>(1)) == 0 &&
+              !g_updateHookRequested && !g_serviceHookRequested,
+          "missing native friend updater fails before any hooks are installed");
+    g_rejectUpdate = false;
     ResetRequestReceipts();
     g_rejectMessengerSymbol = true;
     Check(SdgoModLoad(&api, reinterpret_cast<SdgoMod*>(1)) == 0 &&
@@ -804,6 +891,7 @@ int wmain(int argc, wchar_t** argv)
           "production DLL binds all verified symbols and activates three scoped sites");
 
     if (active) {
+        CheckNameUpdates();
         CheckLayoutCall(
             g_serviceCaller, g_originalLayout,
             static_cast<std::uint32_t>(kLayoutLength),

@@ -53,6 +53,7 @@ inline int ordinaryNotices=0;
 inline std::atomic<bool> stallOrdinary{false},ordinaryEntered{false},releaseOrdinary{false};
 inline bool deferSwitch=false;
 inline int requestedSlot=-1,switchRequests=0;
+inline int nativeSelections=0;
 inline uint32_t shotReturn=0xBEEFF00D;
 inline bool replaceShotAction=false,replaceShotWeapon=false;
 inline void* messageEntry=nullptr;
@@ -101,10 +102,22 @@ struct Callbacks {
         if(*reinterpret_cast<const uint16_t*>(message)==0x18) Put(unit,0xBC8,*reinterpret_cast<const int32_t*>(message+0x10));
         if(*reinterpret_cast<const uint16_t*>(message)==0x48) {
             int slot=message[0x10];requestedSlot=slot;++switchRequests;Put(unit,0xDD0,slot);
-            if(!deferSwitch&&slot>=0&&slot<4) {
-                auto fsm=*reinterpret_cast<uint8_t**>(unit+0x9CC);
-                Put(fsm,0x240,slot);Put(fsm,0x248,weapons[slot].data());
-            }
+        }
+    }
+    __declspec(noinline) void SelectWeapon(int slot,char queued,char notify,char force) {
+        auto fsm=reinterpret_cast<uint8_t*>(this);requestedSlot=slot;++nativeSelections;
+        if(queued!=0||notify!=1||force!=0||deferSwitch||slot<0||slot>3)return;
+        Put(fsm,0x240,slot);Put(fsm,0x248,weapons[slot].data());
+    }
+    void ConsumeWeaponInput() {
+        auto unit=reinterpret_cast<uint8_t*>(this);
+        auto fsm=*reinterpret_cast<uint8_t**>(unit+0x9CC);
+        if(!fsm)return; // Disabled/bootstrap fixtures intentionally have no FSM.
+        const int slot=*reinterpret_cast<int*>(unit+0xDD0);
+        if(!deferSwitch&&slot>=0&&slot<4&&*reinterpret_cast<int*>(fsm+0x240)!=slot&&
+           *reinterpret_cast<uint8_t**>(fsm+4)==fsm+0x20&&
+           (*reinterpret_cast<uint8_t**>(fsm+8)==nullptr||*reinterpret_cast<uint8_t**>(fsm+8)==fsm+0x20)) {
+            Put(fsm,0x240,slot);Put(fsm,0x248,weapons[slot].data());
         }
     }
     __declspec(noinline) void FacingUpdate() {
@@ -400,6 +413,7 @@ inline void Symbols(FILE* f,void(*symbol)(FILE*,const char*,void*,bool)) {
     symbol(f,"um.object_id_from_pilot",Address(&Callbacks::Canonical),false);
     symbol(f,"npc.facing_update",Address(&Callbacks::FacingUpdate),false);
     symbol(f,"combat.attack_admission",Address(&Callbacks::AttackAdmission),false);
+    symbol(f,"combat.select_weapon",Address(&Callbacks::SelectWeapon),false);
     symbol(f,"combat.player_sp_gate",Address(&Callbacks::PlayerSpGate),false);
     SetRoomTitle(L"",true);symbol(f,"game.app",reinterpret_cast<void*>(&App),false);
     symbol(f,"npc.tracking_entry",Address(&Callbacks::TrackingEntry),false);

@@ -145,7 +145,16 @@ if(BUILD_TESTING)
     add_test(NAME waitroom_window_fix_actual_dll COMMAND waitroom_window_fix_dll_test "$<TARGET_FILE:waitroom_window_fix>")
     set_tests_properties(waitroom_window_fix_actual_dll PROPERTIES TIMEOUT 30)
 endif()
+sdgo_add_mod(native_data_guard DESCRIPTION "verified native battle data guards"
+             SOURCES mods/native_data_guard/native_data_guard.cpp FILES symbols.fragment.ini)
+sdgo_add_mod(login_recovery SERVER DESCRIPTION "native authenticated stale login recovery"
+             SOURCES mods/login_recovery/login_recovery.cpp FILES symbols.fragment.ini)
+add_executable(login_recovery_policy_test tests/login_recovery_policy_test.cpp)
+sdgo_strict(login_recovery_policy_test)
+add_test(NAME login_recovery_policy COMMAND login_recovery_policy_test)
 sdgo_add_mod(fps_limit DESCRIPTION "native config.xml FPS cap" SOURCES mods/fps_limit/fps_limit.cpp)
+sdgo_add_mod(announcements DESCRIPTION "scheduled native announcements"
+             SOURCES mods/announcements/announcements.cpp FILES symbols.fragment.ini rules.json runtime.ini LIBS ole32 oleaut32 uuid comctl32)
 
 add_executable(fps_limit_runtime_test tests/fps_limit_runtime_test.cpp)
 target_link_libraries(fps_limit_runtime_test PRIVATE sdgo_api)
@@ -161,6 +170,9 @@ sdgo_add_mod(unit_catalog DESCRIPTION "confirmed unit family content"
 
 sdgo_add_mod(shop_labels DESCRIPTION "shop rental and Unicode labels" SOURCES mods/shop_labels/shop_labels.cpp FILES display.example.ini)
 sdgo_add_mod(shop_localization DESCRIPTION "Chinese shop localization" SOURCES mods/shop_localization/shop_localization.cpp mods/shop_localization/shop_search.cpp FILES zh-CN.ini symbols.fragment.ini LIBS user32)
+sdgo_add_mod(shop_art_localization DESCRIPTION "Chinese labels over verified shop artwork"
+             SOURCES mods/shop_art_localization/shop_art_localization.cpp mods/shop_art_localization/native_ui.cpp
+             FILES symbols.fragment.ini LIBS user32)
 add_library(shop_catalog_engine STATIC mods/shop_catalog/catalog_runtime.cpp)
 target_include_directories(shop_catalog_engine PUBLIC mods/shop_catalog)
 target_link_libraries(shop_catalog_engine PUBLIC odbc32 bcrypt)
@@ -265,6 +277,7 @@ target_link_libraries(capsule_registry_support PRIVATE sdgo_api)
 sdgo_strict(capsule_registry_support)
 sdgo_version_resource(capsule_registry_support capsule_catalog.dll "SDGO shared capsule resource registry")
 sdgo_stage(capsule_registry_support "support/capsule-registry")
+add_dependencies(release_stable_payload capsule_registry_support)
 
 # Optional catalog provider, same mod id in the two processes. Owner-generated
 # catalog.bin is never staged or bundled by a framework build.
@@ -359,8 +372,9 @@ if(SDGO_BUILD_MANAGER)
             -File "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_mod_manager.ps1"
             -BuildDir "${CMAKE_BINARY_DIR}" -Python "${Python3_EXECUTABLE}" -UnitBinary "$<TARGET_FILE:unit_catalog>"
             -CapsuleBinary "$<TARGET_FILE:capsule_catalog>"
+            -RegistryBinary "$<TARGET_FILE:capsule_registry_support>"
         DEPENDS ${SDGO_MANAGER_INPUTS} unit_catalog "$<TARGET_FILE:unit_catalog>"
-            capsule_catalog "$<TARGET_FILE:capsule_catalog>" "${CMAKE_CURRENT_SOURCE_DIR}/tools/mod_manager.py"
+            capsule_catalog "$<TARGET_FILE:capsule_catalog>" capsule_registry_support "$<TARGET_FILE:capsule_registry_support>" "${CMAKE_CURRENT_SOURCE_DIR}/tools/mod_manager.py"
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_mod_manager.ps1"
             "${CMAKE_CURRENT_SOURCE_DIR}/manager/SDGOModManager.spec"
         VERBATIM)
@@ -502,6 +516,12 @@ if(BUILD_TESTING)
 endif()
 if(BUILD_TESTING)
     add_executable(core_ini_test tests/core_ini_test.cpp)
+    add_executable(core_symbols_test tests/core_symbols_test.cpp core/symbols.cpp core/log.cpp)
+    target_link_libraries(core_symbols_test PRIVATE sdgo_api)
+    target_include_directories(core_symbols_test PRIVATE core)
+    sdgo_strict(core_symbols_test)
+    add_test(NAME core_symbols_offline COMMAND core_symbols_test)
+    set_tests_properties(core_symbols_offline PROPERTIES TIMEOUT 60)
     add_executable(symbol_fragment_test tests/symbol_fragment_test.cpp core/symbols.cpp core/log.cpp)
     target_link_libraries(symbol_fragment_test PRIVATE sdgo_api)
     add_executable(game_test_sealed_room_title_test tests/game_test_sealed_room_title_test.cpp)
@@ -525,6 +545,16 @@ if(BUILD_TESTING)
     add_test(NAME startup_crash_fix_actual_dll COMMAND automatic_fixes_runtime_test gate "$<TARGET_FILE:startup_crash_fix>")
     add_test(NAME agent_relay_log_fix_actual_dll COMMAND automatic_fixes_runtime_test relay "$<TARGET_FILE:agent_relay_log_fix>")
     set_tests_properties(startup_crash_fix_actual_dll agent_relay_log_fix_actual_dll PROPERTIES TIMEOUT 30)
+    add_executable(game_test_quiet_wait_room_test tests/game_test_quiet_wait_room_test.cpp)
+    target_link_libraries(game_test_quiet_wait_room_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_quiet_wait_room_test)
+    add_test(NAME game_test_quiet_wait_room_offline COMMAND game_test_quiet_wait_room_test)
+    add_executable(native_data_guard_runtime_test tests/native_data_guard_runtime_test.cpp)
+    target_link_libraries(native_data_guard_runtime_test PRIVATE sdgo_api)
+    sdgo_strict(native_data_guard_runtime_test)
+    add_dependencies(native_data_guard_runtime_test native_data_guard)
+    add_test(NAME native_data_guard_actual_dll COMMAND native_data_guard_runtime_test "$<TARGET_FILE:native_data_guard>")
+    set_tests_properties(native_data_guard_actual_dll PROPERTIES TIMEOUT 30)
     add_executable(game_test_quiet_sockets_test tests/game_test_quiet_sockets_test.cpp)
     target_link_libraries(game_test_quiet_sockets_test PRIVATE sdgo_api ws2_32)
     sdgo_strict(game_test_quiet_sockets_test)
@@ -836,6 +866,13 @@ if(BUILD_TESTING)
     sdgo_strict(shop_labels_test)
     add_dependencies(shop_labels_test shop_labels)
     add_test(NAME shop_labels_dll_contract COMMAND shop_labels_test "$<TARGET_FILE:shop_labels>" "${CMAKE_BINARY_DIR}/shop_labels_test_data")
+    add_executable(shop_art_localization_ui_test tests/shop_art_localization_ui_test.cpp
+                   mods/shop_art_localization/native_ui.cpp)
+    target_include_directories(shop_art_localization_ui_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(shop_art_localization_ui_test PRIVATE sdgo_api user32)
+    sdgo_strict(shop_art_localization_ui_test)
+    target_compile_options(shop_art_localization_ui_test PRIVATE /UNDEBUG)
+    add_test(NAME shop_art_localization_ui_offline COMMAND shop_art_localization_ui_test)
     add_executable(shop_catalog_mod_test tests/shop_catalog_mod_test.cpp)
     target_link_libraries(shop_catalog_mod_test PRIVATE sdgo_api)
     sdgo_strict(shop_catalog_mod_test)
@@ -903,7 +940,7 @@ if(BUILD_TESTING)
     add_test(NAME battle_reward_runtime_integration COMMAND powershell -NoProfile -ExecutionPolicy Bypass
         -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/battle_rewards_runtime_test.ps1" -Config "$<CONFIG>"
         -BuildDir "${CMAKE_BINARY_DIR}" -DailyRewardsDll "$<TARGET_FILE:daily_rewards>")
-    set_tests_properties(battle_reward_runtime_integration PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 120 RUN_SERIAL TRUE)
+    set_tests_properties(battle_reward_runtime_integration PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 360 RUN_SERIAL TRUE)
     add_executable(battle_reward_mission_test tests/battle_reward_mission_test.cpp)
     target_link_libraries(battle_reward_mission_test PRIVATE sdgo_api)
     target_include_directories(battle_reward_mission_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -936,6 +973,15 @@ if(BUILD_TESTING)
     add_test(NAME battle_reward_jobs_offline COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_reward_job_interop.py" "$<TARGET_FILE:battle_reward_jobs_test>")
     set_tests_properties(battle_reward_jobs_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
+    add_executable(battle_reward_binding_test tests/battle_reward_binding_test.cpp)
+    target_link_libraries(battle_reward_binding_test PRIVATE sdgo_api bcrypt)
+    target_include_directories(battle_reward_binding_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_reward_binding_test)
+    add_test(NAME battle_reward_binding_offline COMMAND battle_reward_binding_test)
+
+    add_test(NAME battle_reward_wallet_lifecycle_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_wallet*.py" -v)
+    set_tests_properties(battle_reward_wallet_lifecycle_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
     add_executable(battle_reward_cash_notify_test tests/battle_reward_cash_notify_test.cpp)
     target_link_libraries(battle_reward_cash_notify_test PRIVATE sdgo_api)
     target_include_directories(battle_reward_cash_notify_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -1440,4 +1486,15 @@ if(BUILD_TESTING)
         pvp_ai_test match_ai_test pvp_team_plan_test pvp_title_rules_test
         room_random_test random_loadout_regression_test room_random_client_policy_test
         game_test_room_actions_test)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(announcement_policy_test tests/announcement_policy_test.cpp)
+    target_link_libraries(announcement_policy_test PRIVATE sdgo_api)
+    sdgo_strict(announcement_policy_test)
+    add_test(NAME announcement_policy COMMAND announcement_policy_test)
+    add_executable(announcement_window_messages_test tests/announcement_window_messages_test.cpp)
+    target_link_libraries(announcement_window_messages_test PRIVATE ole32 oleaut32 uuid comctl32)
+    sdgo_strict(announcement_window_messages_test)
+    add_test(NAME announcement_window_messages COMMAND announcement_window_messages_test)
 endif()

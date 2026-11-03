@@ -198,6 +198,7 @@ struct Session {
     MatchContext context;
     std::string wallet_scope;
     std::array<uint32_t, 12> accounts{}, settled{};
+    std::vector<WalletJob::Attendance> attendance;
     unsigned account_count = 0, settled_count = 0;
 };
 std::map<uintptr_t, Session> g_sessions;
@@ -328,8 +329,8 @@ bool Freeze(Session& session, BYTE* room, uint32_t duration) {
         g_error = "mission Boss identity registry is unavailable"; return false;
     }
     if (!g_runtime->SnapshotPolicy(&session.policy)) { g_error = g_runtime->LastError(); return false; }
-    WalletHealth wallet = ReadWalletHealth(g_runtime->RuntimeRoot());
-    if (!wallet.healthy) { g_error = wallet.error; return false; }
+    const WalletBinding wallet = ReadWalletBinding(g_runtime->RuntimeRoot());
+    if (!wallet.valid) { g_error = wallet.error; return false; }
     native_stats::Participant roster[12]{};
     unsigned count = 0;
     if (!native_stats::ReadParticipants(room, roster, 12, &count)) { g_error = "unable to snapshot native participants"; return false; }
@@ -340,6 +341,12 @@ bool Freeze(Session& session, BYTE* room, uint32_t duration) {
         if (roster[i].kind == native_stats::ParticipantKind::Human && roster[i].active) {
             if (!roster[i].account || !accounts.insert(roster[i].account).second) { g_error = "duplicate native wallet account"; return false; }
             frozen_accounts[humans] = roster[i].account;
+            ParticipantStats attendance;
+            attendance.active_seconds=duration;
+            attendance.kills=roster[i].kills;
+            if(!session.combat.Apply(roster[i].native_id,&attendance)){g_error="unable to freeze human contribution";return false;}
+            const bool contributed=attendance.damage>0 || attendance.kills>0 || attendance.assists>0 || attendance.minion_kills>0 || attendance.boss_credit_micro>0;
+            session.attendance.push_back({duration,contributed});
             ++humans;
         }
     }
@@ -429,7 +436,6 @@ void SettleImpl(unsigned site, BYTE* frame) {
         g_error = error.message; ++g_counters.payouts_rejected; return;
     }
     if (reward.eligible) {
-        if (g_pending.size() >= 4096) { g_error = "native wallet response queue is full"; ++g_counters.payouts_rejected; return; }
         Pending pending;
         pending.job = {session->match_id, "", session->policy.revision.data(), session->wallet_scope,
                        native.account, static_cast<uint32_t>(reward.mb)};
@@ -437,6 +443,10 @@ void SettleImpl(unsigned site, BYTE* frame) {
         pending.job.active_seconds = stats.active_seconds;
         pending.job.contributed = stats.damage > 0 || stats.kills > 0 || stats.assists > 0 ||
             stats.minion_kills > 0 || stats.boss_credit_micro > 0;
+        pending.job.mode=context.mode==Mode::Pvp?"pvp":"pve";
+        pending.job.participants=session->attendance;
+        const auto self=std::find(session->accounts.begin(),session->accounts.begin()+session->account_count,native.account);
+        pending.job.participants[static_cast<size_t>(self-session->accounts.begin())]={stats.active_seconds,pending.job.contributed};
         const std::string intent = pending.job.match_id + ":" + std::to_string(native.account) + ":" +
             pending.job.policy_revision + ":" + std::to_string(reward.gb) + ":" + std::to_string(reward.mb);
         if (!BossCatalog::Sha256(intent, &pending.job.plan_hash)) { g_error = "unable to hash native reward intent"; return; }
@@ -448,7 +458,8 @@ void SettleImpl(unsigned site, BYTE* frame) {
         pending.since = GetTickCount64();
         std::string name;
         if (!PublishWalletJob(g_runtime->RuntimeRoot(), pending.job, &name, &g_error)) { ++g_counters.payouts_rejected; return; }
-        g_pending.push_back(std::move(pending));
+        if(g_pending.size()<4096)g_pending.push_back(std::move(pending));
+        else g_api->Log(g_mod,SDGO_LOG_WARN,"cash notification deferred; earned job is durable and the next native cash query refreshes its balance");
     }
     if (!WriteG(frame, site, static_cast<uint16_t>(reward.gb))) { g_error = "unable to write native G settlement"; ++g_counters.settlements_failed; return; }
     session->settled[session->settled_count++] = native.account;
@@ -475,8 +486,10 @@ void ReadReceipts() {
         const auto now = job_detail::UnixNow();
         auto notified = native_cash_notify::NotifyResult::StaleSession;
         // Never replay a historical absolute balance into an active wallet UI.
-        if (WalletReceiptFresh(receipt, now, 15))
+        if (WalletReceiptFresh(receipt, now, 15)) {
+            if(receipt.has_current_gb) native_cash_notify::NotifyCurrentGb(it->route,it->job.account,receipt.current_gb);
             notified = native_cash_notify::NotifyCurrentMb(it->route, it->job.account, receipt.current_mb);
+        }
         if ((notified == native_cash_notify::NotifyResult::TransportFailure || notified == native_cash_notify::NotifyResult::BindingUnavailable) &&
             GetTickCount64() - it->since < 15000) { ++it; continue; }
         ++g_counters.payouts_committed;

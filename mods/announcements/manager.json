@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "announcements",
+  "title": "公告与展示规则",
+  "category": "gameplay",
+  "hosts": ["client"],
+  "provider": "announcements",
+  "description": "在登录公告和游戏内 GM 公告中，组合日期、星期、每日时段、游戏事件、间隔和次数上限。",
+  "presentation": "configurable",
+  "mechanism": "登录公告使用原生网页浏览控件；游戏内文字通过原生 GM 公告队列显示。次数按本客户端规则累计。",
+  "settings": []
+}

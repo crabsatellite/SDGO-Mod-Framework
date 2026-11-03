@@ -34,6 +34,13 @@ namespace
     }
 }
 
+// Resolve on the boot caller before a background graphics worker invokes the
+// factory. The worker must not re-enter the core's in-progress InitOnce gate.
+extern "C" FARPROC WINAPI Shim_SdgoDirect3DCreate9Target()
+{
+    return Real<FARPROC>("Direct3DCreate9");
+}
+
 extern "C" IDirect3D9* WINAPI Shim_Direct3DCreate9(UINT sdkVersion)
 {
     EarlyBoot();

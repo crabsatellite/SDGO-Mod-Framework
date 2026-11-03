@@ -30,9 +30,9 @@ class ProgressionTests(unittest.TestCase):
         self.assertEqual(p['pvp']['base']['win']['gb'], model.defaults()['pvp']['base']['win']['gb'])
         fixed = p['progression']['daily_first_mb'] + p['progression']['daily_mb']
         self.assertLess(fixed * 2, 69900)
-        self.assertGreaterEqual(fixed * 3, 69900)
-        self.assertEqual(fixed, 30000)
-        self.assertEqual(p['progression']['weekly_mb'], 15000)
+        self.assertLess(fixed * 3, 2490)
+        self.assertEqual(fixed, 500)
+        self.assertEqual(p['progression']['weekly_mb'], 1000)
 
     def test_china_day_and_monday_year_boundaries(self):
         self.assertEqual(progression.periods(epoch('2026-11-01T15:59:59')), ('2026-11-01','2026-10-26'))
@@ -57,7 +57,7 @@ class ProgressionTests(unittest.TestCase):
             with self.assertRaises(ValueError):w.solo_preset(old['revision'])
             snapshot=w.runtime.root/'policies'/ (new['revision']+'.json')
             self.assertEqual(model.revision(json.loads(snapshot.read_text())),new['revision'])
-            self.assertEqual(w.public()['policy']['progression']['daily_mb'],27000)
+            self.assertEqual(w.public()['policy']['progression']['daily_mb'],400)
 
     def test_worker_snapshot_and_metadata_before_any_credit(self):
         with tempfile.TemporaryDirectory() as root:
@@ -82,9 +82,9 @@ class ProgressionTests(unittest.TestCase):
             snapshot.write_bytes(original)
             # Disabling now must not revoke the original approved, captured job.
             w.save_progression(progression.defaults(),w.public()['revision'])
-            self.assertTrue(worker.poll());self.assertEqual(repo.balance,4000)
+            self.assertTrue(worker.poll());self.assertEqual(repo.balance,1100)
             self.assertTrue(repo.bonus_policy['enabled'])
-            self.assertIn(b'CurrentMb=4000', (worker.receipts/path.name).read_bytes())
+            self.assertIn(b'CurrentMb=1100', (worker.receipts/path.name).read_bytes())
 
     def test_snapshot_conflict_restores_canonical_policy_and_native_revision(self):
         with tempfile.TemporaryDirectory() as root:
@@ -101,7 +101,7 @@ class ProgressionSqlTests(sql_fixture.RewardRepositorySqlIntegrationTests):
     def setUp(self):
         super().setUp()
         c=self.connection.cursor();c.execute('DELETE dbo.SdgoBattleProgressMatch');c.execute('DELETE dbo.SdgoBattleProgressPeriod');self.connection.commit()
-        self.progress={**progression.defaults(),'enabled':True}
+        self.progress={**progression.defaults(),'enabled':True,'daily_first_mb':3000,'daily_mb':27000,'weekly_mb':15000}
 
     def job(self, number, timestamp='2026-10-26T10:00:00', **changes):
         job={'match_id':'realm.'+str(number),'account_number':900000001,'expected_scope':self.scope,
@@ -186,7 +186,7 @@ class ProgressionSqlTests(sql_fixture.RewardRepositorySqlIntegrationTests):
 
     def test_worker_crash_after_bonus_commit_replays_without_double_credit(self):
         with tempfile.TemporaryDirectory() as root:
-            w=Workspace(root);state=w.solo_preset(w.public()['revision'])
+            w=Workspace(root);state=w.solo_preset(w.public()['revision']);state=w.save_progression(self.progress,state['revision'])
             worker=WalletWorker(w.runtime.root,self.repository)
             path=worker.outbox/'native.ini'
             path.write_bytes(ini_bytes('reward',{'SchemaVersion':2,'MatchId':'crash.1','AccountNumber':900000001,

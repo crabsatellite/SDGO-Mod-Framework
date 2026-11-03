@@ -49,6 +49,7 @@ function SDGO_BattleAI_AdvancePoint(x,y,z,distance,allowRanged)
   return result
 end
 function SDGO_BattleAI_Log(text) calls.error=text end
+function SDGO_BattleAI_Fault(text) calls.error=text end
 local npc={}
 function npc:GetID() return observation.id end
 function npc:CheckHurt() return observation.hurt end
@@ -143,8 +144,11 @@ Check(calls.fire==nil and not calls.stop and calls.routes==0 and calls.jumps==0,
       'hurt state drops policy ownership without replacing native attack or movement transitions')
 Reset();observation.hp=0;Tick(0)
 Check(calls.fire==nil and not calls.stop and calls.routes==0,'dead actor receives no attack or movement request')
-Reset();observation.valid=0;Tick(0)
-Check(calls.native==1 and calls.target==nil,'unknown native data fails back to original script')
+Reset();observation.valid=0;observation.failure='missing current weapon binding'
+SDGO_BattleAI_GenericUpdate(npc)
+Check(calls.native==0 and calls.target==nil and calls.releaseIntent==1 and
+      SDGO_BattleAI_Universal.faults==1 and string.find(calls.error,observation.failure,1,true),
+      'unavailable observations report the exact fault without switching to the original brain')
 Reset();Tick(0);Tick(100);Tick(200)
 Check(calls.native==1,'stock initialization executes once per generation, not every frame')
 generation=generation+1;observation.generation=generation;Tick(300)
@@ -180,10 +184,10 @@ Check(calls.moves==priorPatrolMoves+1 and calls.safeDirections==priorPatrolSafet
 Reset();observation.targets={};Tick(0)
 local beforeUnavailableNative=calls.native;local beforeUnavailableMoves=calls.moves
 calls.safeDirectionResult=-1;observation.goal=observation.pos;Tick(1)
-Check(calls.native==beforeUnavailableNative+1 and calls.moves==beforeUnavailableMoves and
+Check(calls.native==beforeUnavailableNative and calls.moves==beforeUnavailableMoves and
       calls.aim==0 and calls.fire==false and
       not calls.patrol,
-      'unavailable safe patrol delegates once to native AI without an unsafe movement command')
+      'an unavailable safe patrol never delegates to another brain or issues an unchecked move')
 Reset();Tick(0);observation.alternate=1
 for _,candidate in pairs(observation.targets) do candidate.hp=10000 end
 observation.weapons[1]=Weapon(0,'projectile',1800,5000,200)
@@ -355,7 +359,7 @@ Check(calls.releaseIntent==1 and calls.fire==nil,
 Reset({Difficulty=1});observation.nativeTarget=1;observation.specialAvailable=1;observation.specialRange=1800;observation.spReady=1
 observation.hurt=1;observation.meleeBusy=1;observation.specialControlAllowed=1;observation.meleeAttacker=2
 SDGO_BattleAI_ProfileUpdate(npc)
-Check(calls.switch==3 and SDGO_BattleAI_Universal.profiles[20].special.target==2,
+Check(calls.switch==3 and calls.target==2 and SDGO_BattleAI_Universal.profiles[20].special.target==2,
       'a player-permitted hurt cancel requests special against the actual melee attacker instead of the old front target')
 Reset({Difficulty=0});observation.nativeTarget=2;observation.specialAvailable=1;observation.specialRange=1800;observation.spReady=1
 SDGO_BattleAI_ProfileUpdate(npc)
@@ -447,18 +451,19 @@ function badNpc:MoveStop() error('isolated unit failure') end
 for time=4,6 do now=time;SDGO_BattleAI_GenericUpdate(badNpc) end
 local faults=SDGO_BattleAI_Universal.faults;local nativeCalls=calls.native
 now=7;SDGO_BattleAI_GenericUpdate(badNpc)
-Check(SDGO_BattleAI_Universal.faults==faults and calls.native==nativeCalls+1,
-      'three consecutive failures quarantine only that NPC generation')
+Check(SDGO_BattleAI_Universal.faults==faults+1 and calls.native==nativeCalls,
+      'consecutive failures remain explicit and retry the enhanced policy instead of selecting the original brain')
+faults=SDGO_BattleAI_Universal.faults
 observation.id=20;now=8;SDGO_BattleAI_GenericUpdate(npc)
 Check(calls.fire==true and SDGO_BattleAI_Universal.failures[20]==nil and SDGO_BattleAI_Universal.faults==faults,
-      'one quarantined NPC does not disable another Medium or Hard unit')
+      'one failing NPC does not disable another Medium or Hard unit')
 generation=generation+1;observation.generation=generation;observation.id=30;now=9
 SDGO_BattleAI_GenericUpdate(badNpc)
 Check(SDGO_BattleAI_Universal.faults==faults+1 and SDGO_BattleAI_Universal.failures[30].generation==generation and
-      SDGO_BattleAI_Universal.failures[30].count==1,'a new NPC generation may retry after an older generation was quarantined')
+      SDGO_BattleAI_Universal.failures[30].count==1,'a new NPC generation starts independent policy diagnostics')
 dofile('mods/battle_ai/universal_ai.lua')
 Check(SDGO_BattleAI_Universal.faults==0 and next(SDGO_BattleAI_Universal.failures)==nil,
-      'policy reload clears unit quarantine and permits a corrected script to retry')
+      'policy reload clears resolved diagnostics and retries the corrected policy')
 
 for _,difficulty in pairs({1,2}) do
   Reset({Difficulty=difficulty});observation.defenceMoving=1;observation.routeActive=1
@@ -908,5 +913,37 @@ for difficulty=1,2 do
   observation.targets[1].groundPos={x=12000,y=0,z=0};Tick(0)
   Check(calls.target==1 and calls.routeId==1 and not calls.fire,
         'a distant visible opponent is pursued without firing beyond native weapon range: '..difficulty)
+
+  Reset({Difficulty=difficulty});observation.selectedSlot=0;observation.meleeRole=1
+  observation.targets={Target(1,5000,5000)}
+  local seen=observation.targets[1]
+  seen.pos={x=0,y=0,z=5000};seen.perceptionVisible=1;seen.rangedVisible=0;seen.meleeVisible=0
+  Tick(0)
+  Check(calls.target==1 and not calls.fire and (calls.routes>0 or (calls.advances or 0)>0),
+        'body visibility acquires and pursues a distant enemy while the selected knife has no gun origin: '..difficulty)
+  observation.selectedSlot=1;seen.distance=1200;seen.rangedVisible=1;Tick(1)
+  Check(calls.fire==true,
+        'a genuinely bound gun resumes firing from its own visible native origin: '..difficulty)
+
+  Reset({Difficulty=difficulty});observation.selectedSlot=0;observation.meleeRole=1
+  observation.weapons={Weapon(0,'melee',800,1000,600)}
+  observation.targets={Target(1,5000,5000)}
+  seen=observation.targets[1];seen.pos={x=0,y=0,z=5000}
+  seen.perceptionVisible=1;seen.rangedVisible=0;seen.meleeVisible=0
+  Tick(0)
+  Check(calls.target==1 and not calls.fire and (calls.advances or 0)>0,
+        'a melee-only loadout closes on a body-visible opponent without any ranged-origin dependency: '..difficulty)
+end
+for _,difficulty in pairs({1,2}) do
+  Reset({Difficulty=difficulty});observation.selectedSlot=0;observation.meleeRole=1
+  observation.weapons={Weapon(0,'melee',800,1000,600),Weapon(1,'melee',800,2000,600)}
+  observation.targets={Target(1,5000,1800)};observation.targets[1].pos={x=0,y=0,z=1800}
+  calls.routeResult=0;calls.advanceResult=0
+  Tick(0);Tick(700)
+  Check(calls.moves==0 and not calls.fire,'a rejected pursuit does not invent movement or an out-of-range hit: '..difficulty)
+  Tick(1401)
+  Check(SDGO_BattleAI_Universal.states[20].recovering and calls.recoveryMode==1 and
+        calls.moves>0 and calls.safeDirections>0 and calls.native==1,
+        'failed navigation retains pursuit demand so bounded safe recovery can run without stock AI: '..difficulty)
 end
 print(string.format('ALL %d UNIVERSAL CONTROLLER CHECKS PASSED (Lua 5.0)',checks))

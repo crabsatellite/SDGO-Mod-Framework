@@ -52,7 +52,6 @@ local function DirectMove(npc,o,dir,distance,mode,recovery)
       dir,distance,UNIT_MOVE_DIR_FORWARD,UNIT_MOVE_DIR_BACKWARD,
       UNIT_MOVE_DIR_LEFT,UNIT_MOVE_DIR_RIGHT)
     if not dir or dir<0 then
-      if SDGO_BattleAI_Native then SDGO_BattleAI_Native(1) end
       return false
     end
   end
@@ -112,6 +111,7 @@ local function TargetVisible(w,t)
   return Flag(t.visible)
 end
 local function AnyVisible(t)
+  if Flag(t.perceptionVisible) then return true end
   if t.rangedVisible~=nil or t.meleeVisible~=nil then
     return Flag(t.rangedVisible) or Flag(t.meleeVisible)
   end
@@ -193,7 +193,7 @@ local function PickTarget(o,s,now)
     if last and now-last.seen<C.TargetMemoryMs and Candidate(o,s,last,now) then
       local copy={}
       for key,value in pairs(last) do copy[key]=value end
-      copy.visible=0;copy.rangedVisible=0;copy.meleeVisible=0
+       copy.visible=0;copy.perceptionVisible=0;copy.rangedVisible=0;copy.meleeVisible=0
       copy.remembered=true;best=copy
     end
   end
@@ -449,9 +449,11 @@ local function Move(npc,o,s,target,now,force)
     if point and SDGO_BattleAI_AdvancePoint then
       advanced=SDGO_BattleAI_AdvancePoint(point.x,point.y,point.z,300,0)==1
     end
-    s.movementIntent=advanced
+    -- A rejected path is still an unmet pursuit request. Clearing this demand
+    -- made Recover treat a stationary bot as intentionally idle forever when
+    -- both the native route and direct segment were blocked.
+    s.movementIntent=true;s.movementIntentAt=now
     if advanced then
-      s.movementIntentAt=now
       Log(s,'route unavailable: bounded walking fallback',now)
     else Log(s,'route unavailable: retry throttled',now) end
     return advanced
@@ -624,7 +626,8 @@ local function SpecialTarget(o,t)
   local distance=t and (t.rangedDistance or t.distance)
   local visible=false
   if t then
-    if t.rangedVisible~=nil then visible=Flag(t.rangedVisible)
+    if t.perceptionVisible~=nil then visible=Flag(t.perceptionVisible)
+    elseif t.rangedVisible~=nil then visible=Flag(t.rangedVisible)
     else visible=Flag(t.visible) end
   end
   return t and distance and t.hp>0 and not DamageProtected(t) and visible and
@@ -785,6 +788,9 @@ local function ProfileTick(npc,o,now,deferSpecial)
   p.special={target=target.id,slot=o.selectedSlot,started=now,finished=o.specialFinished or 0,
              ackSequence=o.specialAckSequence or 0,defensive=defensiveCast}
   if SDGO_BattleAI_ProfileLease then SDGO_BattleAI_ProfileLease(o.selectedSlot) end
+  -- A free native controller may commit the slot in this decision. Bind the
+  -- confirmed counter target before its retained firing input can be consumed.
+  npc:SetAttackTarget(target.id)
   MeleeGate(false);KeepBoundGun(npc,o,target);ChangeWeapon(npc,3)
   return true
 end
@@ -875,7 +881,9 @@ local function PositionForProtected(npc,o,s,t,now)
 end
 local function Tick(npc)
   local o=SDGO_BattleAI_Observe()
-  if not o or not Flag(o.valid) or not o.weapons or not o.targets then return SDGO_BattleAI_Native() end
+  if not o or not Flag(o.valid) or not o.weapons or not o.targets then
+    error('native observation unavailable: '..tostring(o and o.failure or 'incomplete observation'))
+  end
   local now=SDGO_BattleAI_Now()
   local s=State(o,now)
   if not s.initialized then
@@ -1206,7 +1214,6 @@ function SDGO_BattleAI_GenericUpdate(npc)
   if not identified or id==nil then id=tostring(npc) end
   local generation=SDGO_BattleAI_Generation and SDGO_BattleAI_Generation() or 0
   local failure=U.failures and U.failures[id]
-  if failure and failure.generation==generation and failure.count>=3 then return SDGO_BattleAI_Native() end
   local ok,result=pcall(Tick,npc)
   if ok then
     if U.failures then U.failures[id]=nil end
@@ -1216,9 +1223,13 @@ function SDGO_BattleAI_GenericUpdate(npc)
   if not U.failures then U.failures={} end
   if not failure or failure.generation~=generation then failure={generation=generation,count=0};U.failures[id]=failure end
   failure.count=failure.count+1
-  if failure.count<=3 then SDGO_BattleAI_Log('generic policy error; native AI retained: '..tostring(result)) end
-  npc:SetAttackOnOff(false)
-  return SDGO_BattleAI_Native()
+  local now=SDGO_BattleAI_Now()
+  if failure.count<=3 or not failure.loggedAt or now-failure.loggedAt>=5000 then
+    SDGO_BattleAI_Fault('NPC '..tostring(id)..' generation '..tostring(generation)..': '..tostring(result))
+    failure.loggedAt=now
+  end
+  ReleaseHeldIntent()
+  return 123
 end
 U.faults=0
 U.failures={}

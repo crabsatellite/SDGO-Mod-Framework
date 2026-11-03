@@ -10,6 +10,21 @@ from . import storage
 from .updates import MANAGER, child, digest
 
 
+def pending(workspace, pid=None):
+    """Recognize only an intact handoff staged for this exact Manager process."""
+    root=Path(workspace).resolve()
+    try:
+        value=json.loads((root/'updates/restart.json').read_text(encoding='utf-8'))
+        if not isinstance(value,dict):return False
+        source=Path(value['source']).resolve();target=Path(value['target']).resolve()
+        return (value.get('schema_version')==1 and value.get('parent_pid')==(os.getpid() if pid is None else pid)
+                and Path(value['workspace']).resolve()==root and source.name==MANAGER and target.name==MANAGER
+                and source.is_relative_to(root/'updates/releases')
+                and digest(source.read_bytes())==value['source_sha256']
+                and digest(target.read_bytes())==value['previous_sha256'])
+    except (OSError,ValueError,KeyError,TypeError):return False
+
+
 def schedule(controller):
     if not controller.manager_exe or not controller.state()['manager_restart']:
         raise ValueError('没有等待重启的管理器更新')

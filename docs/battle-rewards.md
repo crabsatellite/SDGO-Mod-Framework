@@ -6,9 +6,42 @@ BattleServer mod wired to the native final settlement. It computes GB/MB from th
 effective damage, assists and, in missions, minion and Boss contribution; PvP MVP earns extra MB.
 Owners adjust the multipliers in SDGO Mod Manager; players keep their normal client and launcher.
 
-The optional [solo MB progression preset](solo-mb-progression.zh-CN.md) adds mission MB floors,
-3,000 MB for the first qualifying match each day, another 27,000 for three daily matches and 15,000
-for twelve weekly matches. Fixed bonuses do not multiply. It is off until reviewed in the Manager.
+The optional [MB progression preset](solo-mb-progression.md) adds mission MB floors
+and configurable daily/weekly milestones. It is off by default. Its public initial
+values are 100 MB for the daily first match, 400 extra for three daily matches and
+1,000 extra for twelve weekly matches. Existing owner-authored settings are preserved.
+
+## Human multipliers and gathering rewards
+
+In **Battle rewards → Human multipliers and gathering rewards**, optionally enable
+a twelve-entry multiplier table, one entry for each human count from 1 through 12.
+Without it the existing `1.1^(human count - 1)` rule remains in effect. AI and
+spectators do not count. The table multiplies ordinary contribution rewards along
+with the base/event multipliers and participation factor; fixed bonuses are separate.
+
+Gathering rewards are disabled by default and have no public payout preset. Add a
+rule, choose its human threshold, PvP/PvE scope, per-match/daily/weekly period and
+fixed GB/MB amounts, then enable it. Set the minimum active time, contribution
+requirement and UTC offset for the group. Each counted human and the recipient
+must meet those participation conditions. The server supplies this data; browser
+previews cannot submit a match for payment.
+
+Eligibility is per account. Friends who have claimed this week's reward do not
+prevent a later friend from claiming their own share. All BattleServers sharing
+the same wallet deduplicate the rule/account/period. Days start at local midnight
+and weeks on Monday at the selected offset, using the original match-end time.
+Retries do not duplicate payment. Rule IDs identify claims; keep an ID when editing
+amounts to retain that period's claimed state. Creating a new ID creates a separate reward.
+
+Fixed gathering bonuses do not multiply. GB and MB use the native wallet procedures
+in one transaction, so a failed payment rolls back both currencies and the claim.
+The separate GB payment is not constrained by the ordinary 65,535 settlement field.
+Online balances use the native notification paths; disconnected players refresh
+their balance through normal login or shop queries.
+
+Install the matching Battle Mod and Manager/wallet worker before enabling these
+rules. Gathering requires native v3 participant snapshots; older pending v1/v2
+jobs retain their original behavior and never invent gathering eligibility.
 
 ## Install and manage in the Manager
 
@@ -23,13 +56,21 @@ Multipliers, rules and previews are edited there and apply to later settlements 
 BattleServer. The panel shows a connection only when the policy, native settlement and wallet
 heartbeat are all confirmed. See the [Manager guide](mod-manager.md).
 
-Keep the Manager running while the server is available. It remembers enabled services, restores them
-when it starts and retries a failed wallet worker. A listening BattleServer port alone does not prove
-reward readiness: check both the wallet service and the reward panel. If the wallet heartbeat expires,
-the Mod retains the original game reward path instead of applying the contribution policy. A small
-GB credit can therefore be a real native payment. Restoring the worker affects later settlements;
-it does not reconstruct earlier combat statistics. For unattended operation, include the existing
-Manager in the operating system's normal startup configuration with its existing workspace.
+Keep the Manager running to deliver queued cash awards. It restores enabled services and reconnects
+broken database sessions. With `battle_rewards 0.2.2`, the worker first verifies and persists the native
+ledger identity separately from its short-lived heartbeat. Later Manager pauses, updates or restarts
+do not cancel contribution calculation or durable jobs: Battle uses the frozen match policy and the
+verified binding. An uninitialized or mismatched wallet, invalid policy or failed durable write still
+rejects custom settlement and reports the cause. Update Manager and start its wallet service before
+updating each stopped, idle BattleServer.
+
+A listening BattleServer port alone does not prove the wallet has recovered. Saved jobs remain queued
+while the panel reports a disconnected worker; restoring the same workspace processes them automatically
+without waiting for a nightly batch. For unattended operation, add the existing Manager and workspace
+to the operating system's normal startup configuration.
+
+The default time factor reaches its full value at 180 active seconds. A 45-second round receives 25%
+of that factor, so a small short-round GB amount alone does not demonstrate an outage.
 
 ## Delivery and recovery
 
@@ -42,6 +83,9 @@ MB uses durable jobs and a database receipt keyed by match and account, calling 
 `sp_PocketGC_IO`. A lost response can be retried without a second credit. The worker then reads the
 current MB and sends the normal `0x064B` balance update through the Agent; offline players see the new
 balance at their next login or shop cash query. Keep queued jobs and receipts during recovery.
+Brief Windows sharing conflicts during job reads or archival are retried with a fixed limit. Persistent
+failures remain visible and are never treated as successful payment. Reconnection cannot silently
+replace the verified ledger identity or weaken account, policy-hash and receipt deduplication.
 
 To stop the worker, use **停止本 Manager 的钱包服务** in the reward panel; it only stops the worker this
 Manager started.
@@ -53,6 +97,8 @@ payments using comparable healthy settlements under the same GB rules. Normalize
 its event multiplier, take the exact average, then multiply by the affected battle's event factor and
 round down once. Pay only `max(0, target - already_paid)`. Larger original payments are kept.
 This is an administrative compensation, not an exact reconstruction of kills, damage or MVP.
+Older fallback settlements without a captured intent cannot be reconstructed exactly. Legitimate
+short-round rewards must not be classified as missing payments merely because their amounts are low.
 
 The source checkout and reward owner toolkit include a maintenance command (Python 3.10+, `pyodbc`
 and a SQL Server ODBC driver). Prepare and review a private plan using the

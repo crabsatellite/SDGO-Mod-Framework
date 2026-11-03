@@ -78,7 +78,7 @@ class SqlFixtureLedger:
         self.connection = self.fixture.connection
         self.scope = self.fixture.scope
         self.applied = set()
-        self.allowed = {6001} if mode == 'progression' else (
+        self.allowed = {7001} if mode == 'outage' else {6001} if mode == 'progression' else (
             {4001, 5001}
             if mode == "daily"
             else {1001, 1002, 1101, 1201, 1301, 1401, 1501, 1601,
@@ -164,8 +164,22 @@ def run(args):
     ledger = SqlFixtureLedger(args.mode) if use_sql else FixtureLedger()
     try:
         worker = WalletWorker(runtime, ledger)
+        original_process=worker.process
+        def observed_process(path):
+            try:return original_process(path)
+            except Exception as error:
+                locations=[Path(frame.filename).name+':'+str(frame.lineno) for frame in traceback.extract_tb(error.__traceback__)]
+                print('native job failure '+type(error).__name__+' at '+','.join(locations),flush=True)
+                raise
+        worker.process=observed_process
+        from owner.rewards.wallet_binding import publish
+        publish(runtime,worker.scope)
         if not worker.poll():
             raise RuntimeError("fixture wallet worker did not start healthy")
+        if args.mode=='outage':
+            worker.last_error='wallet_worker_stopped'
+            worker.heartbeat(False)
+            (runtime/'worker-offline.ready').write_text('consumer stopped; binding remains verified\n')
 
         command = [str(args.exe.resolve()), str(runtime), args.mode]
         host_output = runtime / "fixture-host-output.txt"
@@ -180,6 +194,9 @@ def run(args):
                 )
                 deadline = time.monotonic() + args.timeout
                 while process.poll() is None and time.monotonic() < deadline:
+                    if args.mode=='outage' and not (runtime/'native-settled.ready').exists():
+                        time.sleep(.025)
+                        continue
                     if not worker.poll():
                         raise RuntimeError(
                             "real WalletWorker rejected a native job"
@@ -206,7 +223,7 @@ def run(args):
         if not worker.poll():
             raise RuntimeError("fixture wallet worker ended unhealthy")
 
-        expected = 4 if args.mode == 'progression' else 2 if args.mode == "daily" else 13
+        expected = 1 if args.mode=='outage' else 4 if args.mode == 'progression' else 2 if args.mode == "daily" else 13
         completed = list((runtime / "jobs-completed").glob("*.ini"))
         receipts = list((runtime / "receipts").glob("*.ini"))
         outbox = list((runtime / "outbox").glob("*.ini"))
@@ -232,7 +249,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--exe", type=Path, required=True)
-    parser.add_argument("--mode", choices=("basic", "daily", "progression"), required=True)
+    parser.add_argument("--mode", choices=("basic", "daily", "progression", "outage"), required=True)
     parser.add_argument("--timeout", type=float, default=35.0)
     run(parser.parse_args())
 

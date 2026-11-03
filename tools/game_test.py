@@ -133,9 +133,18 @@ def utc_now() -> str:
 
 def atomic_write(path: Path, data: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(data, encoding="utf-8", newline="\n")
-    os.replace(temporary, path)
+    temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
+    try:
+        temporary.write_text(data, encoding="utf-8", newline="\n")
+        for attempt in range(20):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                if attempt == 19: raise
+                time.sleep(.05)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def read_json(path: Path) -> dict:
@@ -237,11 +246,23 @@ def read_ini(path: Path) -> configparser.ConfigParser:
     return parser
 
 
+def replace_ini(temporary: Path, path: Path, timeout: float = 5.0) -> None:
+    deadline=time.monotonic()+timeout
+    while True:
+        try:
+            os.replace(temporary,path)
+            return
+        except PermissionError as error:
+            if getattr(error,'winerror',None) not in (5,32) or time.monotonic()>=deadline:
+                raise
+            time.sleep(min(.1,max(0,deadline-time.monotonic())))
+
+
 def write_ini(path: Path, parser: configparser.ConfigParser) -> None:
     temporary = path.with_name(path.name + ".tmp")
     with temporary.open("w", encoding="utf-8", newline="\n") as stream:
         parser.write(stream, space_around_delimiters=False)
-    os.replace(temporary, path)
+    replace_ini(temporary, path)
 
 
 def copy_file_if_missing(source: Path, destination: Path) -> None:
@@ -296,7 +317,23 @@ def merge_required_symbols(
     destination = read_ini(copied_symbols) if copied_symbols.is_file() else ini_parser()
     required = {"host"}
     for manifest in manifests:
-        required.update(manifest_requires(manifest))
+        names = manifest_requires(manifest)
+        fragment = manifest.parent / 'symbols.fragment.ini'
+        if fragment.is_file():
+            local = read_ini(fragment)
+            try:
+                matching_host = (local['host']['image'].casefold() == source['host']['image'].casefold() and
+                    all(int(local['host'][key], 0) == int(source['host'][key], 0)
+                        for key in ('timestamp', 'size_of_image')))
+            except (KeyError, ValueError):
+                matching_host = False
+            if not matching_host:
+                raise GameTestError('Mod symbol fragment does not match the selected host: ' + manifest.parent.name)
+            # Core loads and verifies this Mod's sidecar itself. Keep its aliases
+            # local rather than moving them into the shared map or satisfying
+            # another Mod's requirements with them.
+            names -= set(local.sections()) - {'host'}
+        required.update(names)
     missing = sorted(section for section in required if not source.has_section(section) and
                      not (preserve_existing and destination.has_section(section)))
     if missing and not allow_missing:
@@ -787,7 +824,9 @@ def allow_named_desktop_fallback(metadata: dict) -> bool:
     if metadata.get('suite') == FPS_SUITE:
         return True
     plan = metadata.get('plan', {})
-    if (metadata.get('suite') != 'pvp-ai-normal-flow' or
+    supported_session=(metadata.get('suite')=='pvp-ai-normal-flow' or
+                       (metadata.get('suite')=='native-friends' and plan.get('friends_only') is True))
+    if (not supported_session or
         plan.get('quiet') is not True or plan.get('network_policy') != 'direct'):
         return False
     try:
@@ -894,7 +933,7 @@ class QuietRuntime:
             raise GameTestError('quiet desktop isolation proof is internally inconsistent')
         if (proof.get('isolation_mode')=='private_desktop_with_hidden_default_proxy' and
             not allow_named_desktop_fallback(self.metadata)):
-            raise GameTestError('named-desktop fallback requires FPS or local direct PvP isolation')
+            raise GameTestError('named-desktop fallback requires FPS, local direct PvP, or a local direct coordinated session')
         if self.proof_file_written and (proof.get('input_desktop_unchanged') is False or
             proof.get('unexpected_input_window_count',0)>0 or
             (proof.get('input_desktop_safe') is False and proof.get('input_target_window_count',0)>0)):
@@ -1251,7 +1290,18 @@ def load_shop_test_inputs(assertions_path: Path, display_path: Path) -> dict:
         present_tooltip={k for k in tooltip_keys if assertions.has_option(section,k)}
         if present_tooltip and (not visual_only or present_tooltip!=tooltip_keys):
             raise GameTestError('tooltip visual assertions require the complete sealed visual scope')
-        product = _exact_ini_keys(assertions, section, product_keys | present_tooltip | ({'Query'} if visual_only and assertions.has_option(section,'Query') else set()), "shop assertions")
+        art_keys={k for k in ('ArtRankLabel','PreviewName','CaptureHover') if visual_only and assertions.has_option(section,k)}
+        product = _exact_ini_keys(assertions, section, product_keys | present_tooltip | art_keys | ({'Query'} if visual_only and assertions.has_option(section,'Query') else set()), "shop assertions")
+        if 'CaptureHover' in product and (product['CaptureHover'] not in ('0','1') or (product['CaptureHover']=='0' and present_tooltip)):
+            raise GameTestError('hover expectations require native hover capture')
+        if 'PreviewName' in product:
+            value=product['PreviewName']
+            if not value or len(value.encode('utf-16le'))>100 or any(c in value for c in '\r\n\0'):
+                raise GameTestError('shop preview name must be bounded display text')
+        if 'ArtRankLabel' in product:
+            value=product['ArtRankLabel']
+            if len(value.encode('utf-16le'))>64 or any(c in value for c in '\r\n\0'):
+                raise GameTestError('shop artwork label must be bounded display text')
         if present_tooltip:
             if product['TooltipUnit'] not in ('0','1'):
                 raise GameTestError('tooltip kind must be native unit or item')
@@ -1626,7 +1676,10 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                          mission_mode: int | None = None,
                          shop_catalog: bool = False, friends_only: bool = False, room_titles_only: bool = False,
                          room_style_preview: str | None = None,
-                         same_room_rematch: bool = False, shop_visual_only: bool = False) -> tuple[str, ...]:
+                         same_room_rematch: bool = False, shop_visual_only: bool = False,
+                         page_group: str | None = None) -> tuple[str, ...]:
+    if page_group is not None and (page_group != 'hangar' or not pages_only or shop_catalog or collection_draw):
+        raise GameTestError('page_group=hangar requires read-only pages without shop or collection scope')
     mission_mode = validate_mission_mode(mission_mode)
     play_unit_uid = validate_play_unit_uid(play_unit_uid)
     if type(same_room_rematch) is not bool:raise GameTestError('same_room_rematch must be a boolean')
@@ -1668,6 +1721,8 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         return FLOW_CASES[:3] + selection + MISSION_FLOW_CASES
     modes = parse_mode_sequence(mode_sequence)
     if pages_only:
+        if page_group == 'hangar':
+            return FLOW_CASES[:3] + selection + ('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel')
         if shop_visual_only:
             return FLOW_CASES[:2] + ('flow.shop_ready',) + selection + ('pages.shop.catalog',)
         shop_cases = ('pages.shop.catalog',) if shop_catalog else ()
@@ -1748,6 +1803,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         room_titles_only=plan.get("room_titles_only",False),
         room_style_preview=plan.get("room_style_preview"),
         shop_visual_only=plan.get('shop_visual_only', False),
+        page_group=plan.get('page_group'),
     )
 
 
@@ -2059,6 +2115,8 @@ def write_job(
         run['run']['play_unit_uid'] = str(plan['play_unit_uid'])
     if 'unit_scenario_sha256' in plan:
         run['run']['unit_scenario_sha256'] = plan['unit_scenario_sha256']
+    if 'page_group' in plan:
+        run['run']['page_group'] = plan['page_group']
     if all(field in plan for field in SHOP_PLAN_FIELDS):
         for field in SHOP_PLAN_FIELDS:
             run['run'][field] = str(plan[field])
@@ -2117,6 +2175,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
         gift_requests_only = run.get('gift_requests_only', '0') == '1'
         deck_only = run.get('deck_only', '0') == '1'
         pages_only = run.get('pages_only', '0') == '1'
+        page_group = run.get('page_group')
         friends_only = run.get('friends_only', '0') == '1'
         room_titles_only = run.get('room_titles_only','0') == '1'
         room_style_preview = run.get('room_style_preview')
@@ -2317,6 +2376,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 room_style_preview=room_style_preview,
                 shop_visual_only=bool(shop_plan and shop_plan.get('shop_visual_only')),
                 same_room_rematch=same_room_rematch,
+                page_group=page_group,
             )
 
         unit_binding={}
@@ -2411,6 +2471,8 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             plan.update(shop_plan)
         if room_style_preview is not None:
             plan['room_style_preview'] = room_style_preview
+        if page_group is not None:
+            plan['page_group'] = page_group
         for flag, value in (
             ('bootstrap_only', bootstrap_only),
             ('battleship_only', battleship_only),
@@ -2608,7 +2670,7 @@ def collect_hashes(root: Path) -> tuple[dict, dict]:
         if path.relative_to(root).as_posix().lower() in RUNTIME_OUTPUTS:
             continue
         if path.is_file() and path.suffix.lower() in {".dll", ".lua", ".ini", ".tsv", ".json",
-                                                      ".bin", ".gdt", ".zsd", ".spr", ".txr", ".uir", ".zpk", ".zdx"}:
+                                                      ".bin", ".gdt", ".zsd", ".spr", ".txr", ".uir", ".zpk", ".zdx", ".html"}:
             bind(path, immutable)
     for relative in (SHOP_ASSERTIONS_RELATIVE, SHOP_DISPLAY_RELATIVE):
         path = root / relative
@@ -2700,6 +2762,7 @@ def prepare(
     gift_requests_only: bool = False,
     deck_only: bool = False,
     pages_only: bool = False,
+    page_group: str | None = None,
     friends_only: bool = False,
     room_titles_only: bool = False,
     room_style_preview: str | None = None,
@@ -2737,6 +2800,13 @@ def prepare(
         if not unit_package.is_file() or not 0<unit_package.stat().st_size<=160*1024*1024:
             raise GameTestError('unit package is missing or exceeds the trusted installer limit')
         unit_payload=unit_package.read_bytes()
+    if page_group is not None:
+        if page_group != 'hangar' or not pages_only:
+            raise GameTestError('page_group=hangar requires --pages-only')
+        sdk=manifest_mod(stage/'client/sdgo/mods/game_test_client/mod.ini').get('version','')
+        parsed=re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:[-+].*)?',sdk)
+        if not parsed or tuple(map(int,parsed.groups())) < (0,1,8):
+            raise GameTestError('the sealed hangar page group requires native observer 0.1.8 or newer')
     if type(same_room_rematch) is not bool or (same_room_rematch and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,random_loadout)))):
         raise GameTestError('same-room rematch requires complete PvP without random loadout or preparation-only scopes')
     if rebind_existing_account:
@@ -2810,6 +2880,7 @@ def prepare(
             deck_only, pages_only, collection_draw, play_unit_uid, mission_mode,
             shop_binding is not None,friends_only=friends_only, room_titles_only=room_titles_only,
             room_style_preview=room_style_preview,
+            page_group=page_group,
         )
         if mission_mode is not None:
             if random_loadout:
@@ -3011,6 +3082,8 @@ def prepare(
             ('collection_draw',collection_draw),
         ):
             if value:plan[flag] = True
+        if page_group is not None:
+            plan['page_group'] = page_group
 
     if unit_scenario is not None:
         try:plan.update(unit_scenarios.bind(unit_scenario,plan))
@@ -3356,6 +3429,8 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
     public_shop_fields = set()
     if plan.get('room_style_preview') != public_plan.get('room_style_preview'):
         raise GameTestError('run.json cannot change the sealed room-style preview scope')
+    if plan.get('page_group') != public_plan.get('page_group'):
+        raise GameTestError('run.json cannot change the sealed page group')
     if fps_only:
         if set(plan) != set(public_plan):
             raise GameTestError("run.json adds fields outside the native FPS plan")
@@ -4372,6 +4447,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--room-titles-only',action='store_true',help='test all live room-title inputs, reopen and full server-confirmed titles')
     prepare_parser.add_argument('--room-style-preview', choices=('pvp', 'mission'), help='capture the genuine legacy room after native creation; requires --room-titles-only and a preview Mod')
     prepare_parser.add_argument('--pages-only', action='store_true',help='visit the real hangar and verify Mod inventory, preview and cancel without exchanging units')
+    prepare_parser.add_argument('--page-group', choices=('hangar',), help='with --pages-only, seal only the read-only native hangar checks')
     prepare_parser.add_argument('--friends-only',action='store_true',help='run the real multi-client native friend session')
     prepare_parser.add_argument('--collection-draw',action='store_true',help='explicit pages-only extension: purchase one collection draw with existing native funds and verify delivery')
     prepare_parser.add_argument('--shop-assertions',type=Path,
@@ -4472,6 +4548,7 @@ def main(argv: list[str] | None = None) -> int:
                 gift_requests_only=args.gift_requests_only,
                 deck_only=args.deck_only,
                 pages_only=args.pages_only,
+                page_group=args.page_group,
                 friends_only=args.friends_only,
                 room_titles_only=args.room_titles_only,
                 room_style_preview=args.room_style_preview,

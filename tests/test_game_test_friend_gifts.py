@@ -2,6 +2,7 @@ from pathlib import Path
 import datetime as dt
 import importlib.util
 import sys
+import tempfile
 import unittest
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -11,6 +12,16 @@ gifts=importlib.util.module_from_spec(spec);spec.loader.exec_module(gifts)
 
 
 class GiftNativeProofContracts(unittest.TestCase):
+    def test_profile_serialization_preserves_identity_but_changed_credentials_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source=Path(directory)/'source.ini';copy=Path(directory)/'copy.ini'
+            source.write_text('; private fixture\n[account]\nusername=existing-player\npassword=original\n[registration]\nstate=existing_account\n',encoding='utf-8')
+            cfg=gifts.game_test.read_ini(source);gifts.game_test.write_ini(copy,cfg)
+            self.assertNotEqual(source.read_bytes(),copy.read_bytes())
+            self.assertTrue(gifts.same_profile_settings(source,copy))
+            cfg['account']['password']='changed';gifts.game_test.write_ini(copy,cfg)
+            self.assertFalse(gifts.same_profile_settings(source,copy))
+
     def test_empty_or_foreign_sql_metadata_cannot_prove_owned_files(self):
         root=ROOT/'build/native-proof-contract'
         self.assertFalse(gifts.native_paths_owned(root,[]))
@@ -28,6 +39,16 @@ class GiftNativeProofContracts(unittest.TestCase):
         encoded=gifts.text_hex(note)
         self.assertFalse(any(c in encoded for c in '\r\n=[]'))
         self.assertEqual(gifts.from_text_hex(encoded),note)
+
+    def test_native_sql_datetime2_strings_keep_the_authoritative_utc_minute(self):
+        self.assertEqual(gifts.provenance_timestamp('2026-11-03 09:57:28.1234567'),
+                         '2026-11-03 09:57 UTC')
+        self.assertEqual(gifts.provenance_timestamp('2026-11-03T09:57:28+09:00'),
+                         '2026-11-03 00:57 UTC')
+        self.assertEqual(gifts.provenance_timestamp('2026-11-03T09:57:28Z'),
+                         '2026-11-03 09:57 UTC')
+        with self.assertRaises(ValueError):
+            gifts.provenance_timestamp('invalid native timestamp')
 
     def test_native_uid_is_never_converted_through_a_float(self):
         uid=0x1122334455667788

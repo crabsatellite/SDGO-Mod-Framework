@@ -45,6 +45,17 @@
       "activation": "restart_required"
     },
     {
+      "id": "battle_ai_activity",
+      "key": "BattleAiActivity",
+      "label": "逐台检查 AI 索敌、行动和持续发呆",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
       "id": "battle_ai_deaths",
       "key": "BattleAiDeaths",
       "label": "记录原生死亡与地图伤害身份",
@@ -192,6 +203,32 @@
       "label": "原生准备动作截图",
       "type": "boolean",
       "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "battle_player_secondary",
+      "key": "BattlePlayerSecondary",
+      "label": "Use secondary native player attack input",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "collection_expected_status",
+      "key": "CollectionExpectedStatus",
+      "label": "Expected collection reply (0 success, 6040 limit)",
+      "type": "choice",
+      "default": "0",
+      "options": [
+        "0",
+        "6040"
+      ],
       "file": "mod.ini",
       "section": "settings",
       "audience": "developer",

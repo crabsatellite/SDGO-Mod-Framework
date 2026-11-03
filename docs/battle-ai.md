@@ -48,6 +48,18 @@ native Neutral transition, waits for the gun's actual binding and keeps firing w
 moving shots. A queued slash, active combo or special retains its native ownership. Visible enemies
 outside ordinary weapon range remain pursuit candidates; firing still obeys the weapon's real range.
 
+With a knife or special selected, perception uses the body's native collision origin. A bound gun uses
+its actual native muzzle origin for ranged visibility. Missing melee muzzle data therefore does not
+prevent noticing an opponent, and body visibility does not authorize a shot from an unbound gun.
+On a free controller, weapon changes use the native non-forced selection transaction; active attacks
+retain their native ownership. A rejected pursuit route remains an unmet movement request, so bounded
+stuck recovery can continue through the existing collision and DeathZone checks.
+
+If enhanced observation or a policy fails, the Mod logs the bot identity and failure, releases held
+input and retries the enhanced policy. It does not silently switch to stock decisions. Easy and the
+enable switch still intentionally select native control. Use the framework log and the developer
+decision log when diagnosing a persistent failure.
+
 Acknowledged zero-damage melee specials complete through the original native finalizer, so a surviving
 victim can leave capture normally. Teleport notifications move locally controlled PvP bots through the
 same native relocation path as players, instead of the stock NPC destruction fallback. Normal damage,
@@ -72,6 +84,11 @@ detection and re-planning; line of sight is checked per target with the client's
 With many units present, sensing reads only what it needs to keep overhead low; target range, scan
 frequency, reaction speed and combat decisions are unchanged, and combat state and visibility are still read
 and checked on every observation.
+
+The native object-lookup entry is bound once when the Mod loads. Each shot, notice and decision
+still looks up the current object by ID, so respawns, deaths and target changes remain live.
+Memory-readability caching lasts for one observation only; it does not retain targets or line-of-sight
+results across decisions.
 
 ## Install
 

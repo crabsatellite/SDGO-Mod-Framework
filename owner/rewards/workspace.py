@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import threading
 import uuid
-from . import model, progression
+from . import model, progression, gathering
 from .runtime_control import RuntimeControl
 
 
@@ -44,10 +44,12 @@ class Workspace:
                 "revision": model.revision(policy),
                 "delivery_connected": False,
                 "status": "waiting_for_native",
-                "human_rule": "1.1^(human_count-1)",
+                "human_rule": "configured_table" if policy.get('human_multipliers') else "1.1^(human_count-1)",
+                "human_multipliers":policy.get('human_multipliers',[]),
                 "ai_match_tier": "same_as_pvp",
                 "event_multiplier_source": "double_time_component",
                 "progression": progression.public(policy),
+                "gathering":gathering.public(policy),
             })
 
     def save(self, value, expected):
@@ -86,6 +88,12 @@ class Workspace:
             policy = self.read()
             policy["progression"] = progression.validate(copy.deepcopy(value))
             return self.save(policy, expected)
+
+    def save_social_rules(self,value,expected):
+        if not isinstance(value,dict) or set(value)!={'human_multipliers','gathering'}:raise ValueError('人数与聚会规则字段不完整')
+        with self.lock:
+            policy=self.read();policy.update(copy.deepcopy(value))
+            return self.save(policy,expected)
 
     def preview(self, value):
         with self.lock:

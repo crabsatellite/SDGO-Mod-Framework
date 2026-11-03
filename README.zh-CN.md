@@ -29,12 +29,15 @@ Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所
 | 输入法卡死修复 <!-- catalog: `findwindow_fix` --> | 防止讯飞等输入法让整合包客户端卡死或崩溃 | [使用说明](docs/findwindow-fix.zh-CN.md) |
 | 启动崩溃修复 <!-- catalog: `startup_crash_fix` --> | 修复开游戏时读取界面随机闪退 | [使用说明](docs/startup-crash-fix.zh-CN.md) |
 | 房间窗口初始化保护 <!-- catalog: `waitroom_window_fix` --> | 处理房间视图尚未绑定时收到的窗口图标查询 | [使用说明](docs/waitroom-window-fix.zh-CN.md) |
+| 原生战斗数据崩溃修复 <!-- catalog: `native_data_guard` --> | 保护浮游炮挂点索引、缺失名称和可选变形数据的读取 | [使用说明](docs/native-data-guard.zh-CN.md) |
+| 异常断线登录恢复 <!-- catalog: `login_recovery` --> | 原生旧会话清理后，在 WorldServer 内完成一次认证重试 | [使用说明](docs/login-recovery.zh-CN.md) |
 | 阿普萨拉斯 III 变形卡死修复 <!-- catalog: `transform_input_fix` --> | 缺少变形动画时恢复原生状态退出，解除移动与攻击锁定 | [使用说明](docs/transform-input-fix.zh-CN.md) |
 | Agent 中继日志修复 <!-- catalog: `agent_relay_log_fix` --> | 修复 Agent 中继日志读取无效内存 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
 | 军衔回退修复 <!-- catalog: `rank_progression_fix` --> | 防止战斗结算降低已有军衔（WorldServer） | [使用说明](docs/rank-progression-fix.zh-CN.md) |
-| 好友列表修复 <!-- catalog: `friend_list_fix`、`friend_list_client_fix` --> | 保留离线好友与当前角色名，恢复原生好友聊天界面 | [使用说明](docs/friend-list-fix.zh-CN.md) |
+| 好友列表修复 <!-- catalog: `friend_list_fix`、`friend_list_client_fix` --> | 保留离线好友及状态更新前的完整中文名，恢复原生好友聊天界面 | [使用说明](docs/friend-list-fix.zh-CN.md) |
 | 新账号起始资料修复 <!-- catalog: `new_account_profile` --> | 可配置的初始 GP、点券、军衔和赠送机体，替代原服的 9,999,999 / 15 级 | [使用说明](docs/new-account-profile.zh-CN.md) |
 | 商城租赁与中文选项修复 <!-- catalog: `shop_labels` --> | 显示租赁/永久、实际数量和中文选项名 | [使用说明](docs/shop-labels.zh-CN.md) |
+| 商城图片文字汉化 <!-- catalog: `shop_art_localization` --> | 汉化受支持涂料图片内的军衔文字 | [使用说明](docs/shop-art-localization.zh-CN.md) |
 
 <!-- /mod-category:fixes -->
 
@@ -44,22 +47,23 @@ Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所
 
 | 功能 | 简介 | 文档 |
 |---|---|---|
+| 公告与展示规则 <!-- catalog: `announcements` --> | 组合时段、游戏事件、展示间隔和次数，控制登录与游戏内公告 | [使用说明](docs/announcements.zh-CN.md) |
 | 任务 AI 僚机 <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai`，由 AI 僚机补位 | [使用说明](docs/coop-wingmen.zh-CN.md) |
 | 对战 AI <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友；可让真人自动同队，选择双方补位、只补对面或指定数量 | [使用说明](docs/pvp-ai.zh-CN.md) |
 | AI 机体目录（独立附加包） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |
-| 战斗贡献奖励 <!-- catalog: `battle_rewards` --> | 按战斗贡献发放 GB/MB，含钱包服务管理与历史 GB 补偿 | [使用说明](docs/battle-rewards.zh-CN.md) |
-| 收藏扭蛋 <!-- catalog: `collection_capsule` --> | 十万 GP 活动机台，优先抽尚未解锁的图鉴机体 | [使用说明](docs/collection-capsule.zh-CN.md) |
+| 战斗贡献奖励 <!-- catalog: `battle_rewards` --> | 按贡献发放 GB/MB，可配置人数倍率与按账号去重的聚会奖励 | [使用说明](docs/battle-rewards.zh-CN.md) |
+| 收藏扭蛋 <!-- catalog: `collection_capsule` --> | 优先补图鉴的活动机台，价格和成功次数可配置，默认每周 15 次 | [使用说明](docs/collection-capsule.zh-CN.md) |
 | 每局随机机体 <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组 | [使用说明](docs/room-random.zh-CN.md) |
 | FPS 上限 <!-- catalog: `fps_limit` --> | 提高渲染帧率上限，保留原生游戏速度 | [使用说明](docs/fps-limit.zh-CN.md) |
 | 长房名 <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 普通、AI、队伍及任务房的建房、设置和改名入口支持最长 128 字 | [使用说明](docs/room-titles.zh-CN.md) |
-| 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | 对战 AI 的 Easy / Medium / Hard 三档，在房名中选择 | [使用说明](docs/battle-ai.zh-CN.md) |
+| 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | 房名选择 Easy / Medium / Hard，实时索敌、持续追敌和原生武器切换 | [使用说明](docs/battle-ai.zh-CN.md) |
 | 自动机库容量 <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） | [使用说明](docs/hangar-capacity.zh-CN.md) |
-| 机库管理 <!-- catalog: `hangar_manager` --> | 机体管理页内一键整理和重复机体兑换（GB 服务端批量入账） | [使用说明](docs/hangar-manager.zh-CN.md) |
+| 机库管理 <!-- catalog: `hangar_manager` --> | 页内整理和重复兑换（GB 服务端批量入账），关闭后停止重复刷新 | [使用说明](docs/hangar-manager.zh-CN.md) |
 | 副官补给与管理 <!-- catalog: `operator_catalog` --> | 五位免费补给副官，以及副官名称、头像和掉落的管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
 | 扭蛋机编辑器 <!-- catalog: `capsule_catalog` --> | 在 Manager 中新增、修改、下架扭蛋机，设置奖池、价格和权重 | [使用说明](docs/capsule-catalog.zh-CN.md) |
 | 每日双倍时间 <!-- catalog: `daily_rewards` --> | 每天固定时段（默认 18:00–22:00）战斗 GB 和经验翻倍 | [使用说明](docs/daily-rewards.zh-CN.md) |
 | 保管库一键领取 <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
-| 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化商品名称、说明和选项，可用中文名称搜索并组合等级、币种筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
+| 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化商品名称、说明、选项和涂装机体预览，可用中文名称搜索并组合等级、币种筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
 | 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 把自己的机体原样送给好友，对方在保管库接受或退还；默认关闭，由服主开启 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
 | 机体族导入（Beta） <!-- catalog: `unit_catalog` --> | 在 Mod Manager 导入机体、资料与图片，补齐两端定义，并用 G 币或代币模板制作独立活动奖池 | [使用](docs/unit-import.zh-CN.md) |
 

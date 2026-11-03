@@ -421,8 +421,7 @@ int __fastcall WorldGiftHandler(
     reply.unit_uid = request.unit_uid;
     reply.receiver_id = request.receiver_id;
     reply.page = request.page;
-    reply.server_epoch =
-        static_cast<std::uint64_t>(GetTickCount64());
+    reply.server_epoch = ServerRuntimeEpoch();
     reply.capabilities =
         capability_protocol |
         capability_expanded_requests |

@@ -125,7 +125,7 @@ SDGO_MOD_ENTRY {
             mod, "collection.activity_pick", reinterpret_cast<void*>(&ActivityPickHook),
             reinterpret_cast<void**>(&g_original))) return 0;
     api->Log(mod, SDGO_LOG_INFO,
-             "collection activity capsule active: machine=%d, native price registry=100000 GP",
+             "collection activity capsule active: machine=%d, price and quota use the installed native catalog",
              g_machineId);
     return 1;
 }

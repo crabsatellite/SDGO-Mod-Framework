@@ -151,6 +151,10 @@ private:
     };
 
     static constexpr std::uint64_t kProbeTimeoutMillis = 3000;
+    // Only a positively authenticated extension reaches this probe. Its first
+    // reply can install owned policy through the server's 120-second SQL
+    // command budget; allow another ten seconds for delivery and UI polling.
+    static constexpr std::uint64_t kPolicyProbeTimeoutMillis = 130000;
     static constexpr std::uint64_t kRequestTimeoutMillis = 10000;
 
     std::uint64_t Now() const noexcept;

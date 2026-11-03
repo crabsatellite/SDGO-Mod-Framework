@@ -23,12 +23,27 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import sys
 import struct
 import uuid
 import zlib
 
 
 BUILDER_VERSION = 2
+
+def registry_support(stage: Path) -> Path:
+    """Locate the provider in an owner kit or an updater-compatible release."""
+    for name in ('support/capsule-registry/capsule_catalog.dll',
+                 'server/support/capsule-registry/capsule_catalog.dll'):
+        path = stage / name
+        if path.is_file():
+            return path
+    if getattr(sys, 'frozen', False):
+        path = Path(sys._MEIPASS) / 'collection-support/capsule_catalog.dll'
+        if path.is_file():
+            return path
+    raise ValueError('The framework is missing the shared capsule registry provider')
+
 MACHINE_PRICE_GP = 100_000
 HOST_TIMESTAMP = 0x54BE1568
 HOST_SIZE_OF_IMAGE = 0x00C97000
@@ -539,7 +554,7 @@ def _contains_utf16_ascii_path(data: bytes, expected: str) -> bool:
     return False
 
 
-def _make_activity_row(template: bytes, grid_id: int, machine_id: int) -> bytes:
+def _make_activity_row(template: bytes, grid_id: int, machine_id: int,price_gp:int=MACHINE_PRICE_GP) -> bytes:
     row = bytearray(template)
     row[:] = bytes(len(row))
     struct.pack_into("<I", row, 0, grid_id)
@@ -547,7 +562,7 @@ def _make_activity_row(template: bytes, grid_id: int, machine_id: int) -> bytes:
     # Native activity rows store the currency as a little-endian u32 at +9.
     # Type 0 is GP; +13..+14 are observed reserved zero bytes.
     struct.pack_into("<I", row, 9, 0)
-    struct.pack_into("<I", row, 15, MACHINE_PRICE_GP)
+    struct.pack_into("<I", row, 15, price_gp)
     _put_wide(
         row,
         ACTIVITY_SPRITE_OFFSET,
@@ -673,6 +688,7 @@ def build_client_registry(
     cover,
     output,
     enabled: bool = True,
+    rules: dict | None = None,
 ) -> dict:
     """Build a complete shared capsule registry.
 
@@ -685,6 +701,8 @@ def build_client_registry(
     shipped 1140005 permanent Lv1 unit-item template and are never implicitly
     removed.
     """
+    from .rules import defaults as rule_defaults,validate as validate_rules
+    rules=validate_rules(rules or rule_defaults())
     if type(machine_id) is not int or not 0 < machine_id <= 0x7FFFFFFF:
         raise ClientRegistryError("Machine ID must be a positive SQL/client INT")
     normalized_items = _normalize_unit_items(unit_items)
@@ -893,13 +911,14 @@ def build_client_registry(
                     activity_rows[0],
                     TABLE_BASES[ACTIVITY_TABLE] + owned_index,
                     machine_id,
+                    rules['price_gp'],
                 )
             )
             action = "added"
         else:
             grid_id = TABLE_BASES[ACTIVITY_TABLE] + owned_index
             replacement = _make_activity_row(
-                activity_rows[0], grid_id, machine_id
+                activity_rows[0], grid_id, machine_id,rules['price_gp']
             )
             action = (
                 "unchanged"
@@ -908,7 +927,11 @@ def build_client_registry(
                 else "updated"
             )
             activity_rows[owned_index] = replacement
-        texture, uv, cover_size = _card_texture(cover_path)
+        import tempfile
+        from .art import render_cover
+        with tempfile.TemporaryDirectory(prefix='collection-poster-') as temporary:
+            generated=render_cover(cover_path,Path(temporary)/'cover.png',rules)
+            texture, uv, cover_size = _card_texture(generated)
         resources[COLLECTION_TEXTURE.replace("\\", "/")] = texture
         sprite = _standalone_sprite(
             COLLECTION_TEXTURE,
@@ -987,7 +1010,8 @@ def build_client_registry(
     semantic = {
         "builder_version": BUILDER_VERSION,
         "machine_id": machine_id,
-        "price_gp": MACHINE_PRICE_GP,
+        "price_gp": rules['price_gp'],
+        "rules":rules,
         "enabled": enabled,
         "placement_kind": "activity",
         "unit_items": list(normalized_items),
@@ -1069,7 +1093,8 @@ def build_client_registry(
         "machine": {
             "id": machine_id,
             "enabled": enabled,
-            "price_gp": MACHINE_PRICE_GP,
+            "price_gp": rules['price_gp'],
+            "rules":rules,
             "kind": "activity",
             "dynamic_server_pool": True,
         },

@@ -172,6 +172,17 @@ For a gun-fire regression, enable `BattlePlayerCombat` in the copied test observ
 weapon-change request, waits for the actual binding, and requires real ammunition consumption
 in addition to mapped input, movement and an attack state. The default `-1` keeps the current
 weapon. No weapon data, ammunition, cooldown or FSM state is forced by the probe.
+The same opt-in works for each actor in coordinated native SDK sessions. It applies
+only after that actor's bound room, pilot, battle sequence and original control
+release are observed, and releases input when settlement completes. It remains off
+by default.
+
+For collection quota rejection, use the pages-only collection-draw scenario with
+`CollectionExpectedStatus=6006` in the copied observer. Declare an already-exhausted
+quota in the isolated test database before launch. The same cases then require a
+real native purchase rejection and no prize; they do not claim a successful draw
+or delivery. Compare the native wallet, quota and prize-box rows before and after
+to verify the refund. Keep the default `0` for a separate successful draw/claim.
 
 `prepare --same-room-rematch` checks that the human retains room ownership after
 settlement, starts a second full battle in that same room, and leaves only after
@@ -216,6 +227,11 @@ because its command does not fit the native title limit with a reused session pr
 `--ai-pool-level 1`–`5` selects an exact pool with `--expected-ai 1`; it cannot be
 combined with the difficulty override. In the test Mod, `BattleAiBehavior=1`
 requires actual special-victim recovery, moving fire and distant pursuit.
+`BattleAiActivity=1` separately checks every expected bot for target acquisition and real movement or
+attack activity, and rejects ten seconds of free neutral idling against a visible opponent. It is off
+by default and available through the test Mod's developer settings in Manager. Its passive diagnostics
+include per-bot activity totals, weapon/controller state and sampling gaps; they never move a bot or
+manufacture combat results.
 `BattleAiDeaths=1` records native death identities; adding `BattleAiTeleport=1`
 requires a real local AI teleport with changed position, preserved HP and no
 destruction request. These opt-in witnesses observe native gameplay.
@@ -299,6 +315,10 @@ The API also accepts `capsule_package=<Manager deployment root>` to install a
 manifest-verified capsule publication before sealing. Its framework and provider
 programs must match the selected stage. The runner uses its trusted installer and
 reads back the installed resource hashes; this path never applies the server SQL.
+With observer 0.1.8 or newer, `--pages-only --page-group hangar` seals only the
+hangar read, preview and cancel cases, together with login and optional active-unit
+selection. This read-only group excludes storage claims, purchases and other page
+features; it rejects shop or collection scope and preserves the full suite's assertions.
 It also opens native storage, waits for its real message loop and server list
 reply, and confirms one claim batch. An empty batch only covers the empty-storage path.
 Capsule cases read all five native catalog tables and enter the actual page to

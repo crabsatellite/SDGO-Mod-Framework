@@ -72,11 +72,13 @@ FILETIME g_scriptTime = {}, g_configTime = {};
 FILETIME g_universalTime = {};
 bool g_loading = false;
 bool g_preparationFault = false;
+bool g_policyReady = false;
 
 using battle_ai::Vec3;
 using battle_ai::native::Ray3;
 using DispatchFn=int(__cdecl*)(const char*,uint8_t*);
 using RayFn=Ray3*(__thiscall*)(uint8_t*,Ray3*);
+using FindObjectFn=uint8_t*(__thiscall*)(uint8_t*,uint32_t);
 using GoalFn=int(__thiscall*)(uint8_t*,const Vec3*,int);
 using IntentFn=void(__thiscall*)(uint8_t*);
 using SetIntentFn=int(__thiscall*)(uint8_t*,char);
@@ -89,6 +91,9 @@ using RouteFn=Vec3*(__thiscall*)(uint8_t*,uint32_t,Vec3,Vec3,Vec3*,uint32_t*);
 using DeleteFn=void(__cdecl*)(void*);
 DispatchFn g_dispatch=nullptr;
 RayFn g_ray=nullptr;
+FindObjectFn g_findObject=nullptr;
+using SelectWeaponFn=void(__thiscall*)(uint8_t*,int,char,char,char);
+SelectWeaponFn g_selectWeapon=nullptr;
 IntentFn g_intent=nullptr;
 IntentFn g_stop=nullptr;
 SetIntentFn g_setIntent=nullptr;
@@ -236,7 +241,6 @@ std::unordered_map<uint8_t*,SpSnapshot> g_spSnapshots;
 std::mutex g_loadoutMutex;
 std::unordered_map<uint8_t*,battle_ai::loadout::ClientApplyState> g_loadouts;
 battle_ai::loadout::ClientNativeFunctions g_loadoutNative;
-int g_observationFaults=0;
 
 uint64_t SpeedKey(uint32_t unitId,uint32_t weaponId,bool alternate) {
     return (uint64_t(unitId)<<32)|(uint64_t(weaponId)<<1)|(alternate?1:0);
@@ -359,11 +363,11 @@ Vec3 Velocity(uint8_t* unit,uint32_t id,Vec3 point,ULONGLONG now,uint64_t genera
     return m.velocity;
 }
 uint8_t* FindObject(uint32_t id) {
-    if(!g_document || !*g_document) return nullptr;
+    if(!g_document || !*g_document || !g_findObject) return nullptr;
     // The engine's object lookup includes players, NPCs and AI participant list.
-    using Fn=uint8_t*(__thiscall*)(uint8_t*,uint32_t);
-    auto fn=reinterpret_cast<Fn>(g_api->Symbol(g_mod,"um.find_object"));
-    return fn?fn(*g_document,id):nullptr;
+    // Resolve its immutable, manifest-verified entry once at Mod load. Targets
+    // themselves are still looked up live for every shot/notice/decision.
+    return g_findObject(*g_document,id);
 }
 bool ControlBlocked(uint8_t* unit) {
     uint8_t* movement=nullptr;
@@ -538,7 +542,7 @@ struct TargetObservation {
     uint32_t id=0;
     int hp=0,maxHp=0;
     float distance=0,rangedDistance=0,meleeDistance=0;
-    bool visible=false,rangedVisible=false,meleeVisible=false,enemy=false,attackable=false,rangedFiring=false,meleeTracking=false,meleeSwinging=false,hurt=false,damageProtected=false;
+    bool visible=false,perceptionVisible=false,rangedVisible=false,meleeVisible=false,enemy=false,attackable=false,rangedFiring=false,meleeTracking=false,meleeSwinging=false,hurt=false,damageProtected=false;
     uint32_t selectedTarget=0;
     uint8_t hitType=0;bool hitKnown=false;
     bool meleeApproaching=false;
@@ -546,6 +550,7 @@ struct TargetObservation {
 };
 struct AllyObservation {uint32_t id=0,target=0;Vec3 pos;bool meleeTracking=false,meleeSwinging=false;RangedActivity ranged;Contact contact;};
 struct Observation {
+    const char* failure="native observation";
     battle_ai::native::Capabilities caps={};
     uint32_t id=0;
     uint64_t generation=0;
@@ -638,10 +643,10 @@ void PlanDefence(const Observation& o,Actor& actor,ULONGLONG now) {
 }
 bool CaptureUnsafe(Observation& o) {
     if(!Owned(g_current)||!g_document||!*g_document||GetCurrentThreadId()!=g_gameThread) return false;
-    if(!battle_ai::native::ReadCapabilities(g_current,o.caps)) return false;
+    if(!battle_ai::native::ReadCapabilities(g_current,o.caps)) {o.failure="weapon capabilities";return false;}
     bool hasWeapon=false;
     for(const auto& w:o.caps.weapons) if(w.valid) hasWeapon=true;
-    if(!hasWeapon) return false;
+    if(!hasWeapon) {o.failure="ordinary weapon availability";return false;}
     uint8_t* unit=g_current;
     auto& actor=ActorFor(unit);
     if(actor.roleUnit!=o.caps.unitId||actor.roleAlternate!=o.caps.alternate) {
@@ -678,9 +683,6 @@ bool CaptureUnsafe(Observation& o) {
     auto selectedRecord=*reinterpret_cast<uint8_t**>(fsm+0x248);
     o.comboKnown=selectedRecord&&o.comboMax>=1&&o.comboMax<=32&&o.comboIndex>=0&&o.comboIndex<o.comboMax&&selectedRecord[0x264]==o.comboMax;
     o.chainWindow=fsm[0x218]!=0;
-    Ray3* nativeRay=g_ray(fsm,&ray);
-    if(!nativeRay || !battle_ai::Finite(nativeRay->origin)) return false;
-    if(nativeRay!=&ray) ray=*nativeRay;
     Vec3 meleeOrigin=o.pos;
     auto selfNode=*reinterpret_cast<uint8_t**>(unit+8);
     uint8_t* selfSphere=nullptr;Vec3 nativeMeleeOrigin={};
@@ -688,6 +690,20 @@ bool CaptureUnsafe(Observation& o) {
        battle_ai::native::detail::Read(selfSphere,0x10,nativeMeleeOrigin)&&
        battle_ai::Finite(nativeMeleeOrigin))
         meleeOrigin=nativeMeleeOrigin;
+    bool rangedOrigin=false;
+    for(const auto& weapon:o.caps.weapons)
+        if(weapon.valid&&weapon.ordinary&&weapon.slot==o.caps.selectedSlot&&
+           weapon.kind!=battle_ai::native::WeaponKind::Melee) rangedOrigin=true;
+    // The native ranged-origin getter iterates muzzle-node names and does not
+    // initialize its output when the selected melee weapon has no muzzle.
+    // Perception uses the body's native collision point in that posture;
+    // actual ranged visibility is available only for the bound gun's own ray.
+    ray.origin=meleeOrigin;
+    if(rangedOrigin) {
+        Ray3* nativeRay=g_ray(fsm,&ray);
+        if(!nativeRay || !battle_ai::Finite(nativeRay->origin)) {o.failure="native ranged origin";return false;}
+        if(nativeRay!=&ray) ray=*nativeRay;
+    }
     for(size_t offset:{size_t(0x48),size_t(0x70),size_t(0x7C)}) {
         auto head=*reinterpret_cast<uint8_t***>(*g_document+offset);
         if(!head) continue;
@@ -750,9 +766,10 @@ bool CaptureUnsafe(Observation& o) {
             t.velocity=Velocity(candidate,id,point,now);
             if(attackRecord&&(attackRecord[0x6A]==1||attackRecord[0x6A]==8))
                 t.meleeApproaching=battle_ai::Dot(battle_ai::Horizontal(o.pos-t.ground),t.velocity)>30;
-            t.rangedVisible=battle_ai::native::FreshLineClear(g_navigation,*g_document,unit,id,ray.origin,point,true);
+            t.perceptionVisible=battle_ai::native::FreshLineClear(g_navigation,*g_document,unit,id,ray.origin,point,true);
+            t.rangedVisible=rangedOrigin&&t.perceptionVisible;
             t.meleeVisible=meleeDistance<=meleeRange&&battle_ai::native::FreshLineClear(g_navigation,*g_document,unit,id,meleeOrigin,point);
-            t.visible=t.rangedVisible||t.meleeVisible;
+            t.visible=t.perceptionVisible||t.meleeVisible;
             // A target's entire loadout/boost does not need decoding just to
             // notice gun input. The event hook below also retains brief shots.
             uint8_t* enemyFsm=nullptr;uint8_t* enemyRecord=nullptr;uint8_t rangeType=0;
@@ -810,7 +827,7 @@ int __cdecl Observe(lua_State* L) {
     bool valid=Capture(o);
     g_lua.newtable(L);Number(L,"valid",valid?1:0);
     if(!valid) {
-        if(g_observationFaults++<3) g_api->Log(g_mod,SDGO_LOG_WARN,"native capability observation unavailable; using stock AI");
+        g_lua.pushstring(L,"failure");g_lua.pushstring(L,o.failure);g_lua.settable(L,-3);
         return 1;
     }
     if(g_runtime.generic) ActorFor(g_current).controlled=true;
@@ -906,6 +923,7 @@ int __cdecl Observe(lua_State* L) {
         Number(L,"rangedDistance",t.rangedDistance);Number(L,"meleeDistance",t.meleeDistance);
         Number(L,"enemy",t.enemy);Number(L,"visible",t.visible);Number(L,"attackable",t.attackable);
         Number(L,"rangedVisible",t.rangedVisible);Number(L,"meleeVisible",t.meleeVisible);
+        Number(L,"perceptionVisible",t.perceptionVisible);
         Number(L,"damageProtected",t.damageProtected);
         Number(L,"rangedFiring",t.rangedFiring);Vector(L,"pos",t.point);Vector(L,"groundPos",t.ground);Vector(L,"velocity",t.velocity);
         Number(L,"hurt",t.hurt);
@@ -1065,6 +1083,13 @@ bool RequestNativeWeapon(uint8_t* unit,int slot) {
         *reinterpret_cast<uint16_t*>(message)=0x48;message[0x10]=static_cast<uint8_t>(slot);
         using Receive=void(__thiscall*)(uint8_t*,const uint8_t*);
         reinterpret_cast<Receive>(table[7])(unit,message);
+        // The NPC message changes only its input hint. On a free native
+        // controller, submit the same non-forced weapon-selection transaction
+        // used by the ordinary input consumer (AttackFSM virtual +94). It owns
+        // ammo admission, model binding and notifications; no slot is written
+        // here. Active attacks, capture and get-up retain their native owner.
+        if(fsm&&battle_ai::native::detail::Neutral(fsm)&&!ControlBlocked(unit))
+            g_selectWeapon(fsm,slot,0,1,0);
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
@@ -1430,8 +1455,8 @@ int __cdecl Dispatch(const char* name,uint8_t* unit) {
     const char* prior=g_nativeCallback;
     g_nativeCallback=name;
     int result=0;
-    if(unit==g_current && !g_nativeFallback && WantsGeneric(unit)) {
-        result=g_dispatch("SDGO_BattleAI_GenericUpdate",unit);
+    if(unit==g_current && !g_nativeFallback && g_runtime.enabled && g_runtime.difficulty>=1 && Owned(unit)) {
+        result=g_preparationFault||!g_policyReady ? 123:g_dispatch("SDGO_BattleAI_GenericUpdate",unit);
     } else {
         result=g_dispatch(name,unit);
         if(unit==g_current&&!g_nativeFallback&&g_runtime.enabled&&g_runtime.difficulty==1&&Owned(unit)&&!g_preparationFault)
@@ -2088,6 +2113,11 @@ int __cdecl Log(lua_State* L) {
     if (s) g_api->Log(g_mod, SDGO_LOG_INFO, "%s", s);
     return 0;
 }
+int __cdecl PolicyFault(lua_State* L) {
+    const char* message=g_lua.tostring(L,1);
+    if(message) g_api->Log(g_mod,SDGO_LOG_ERROR,"AI policy failure: %s",message);
+    return 0;
+}
 // Layouts belong only to the manifest's verified GOnline build. Remote copies
 // (+2B65) must never run an additional decision loop. Lua also checks GetNPCID.
 bool Eligible() {
@@ -2190,13 +2220,15 @@ void Prepare() {
         return;
     }
     // Remember a failed attempt too: no compile/error spam each frame. An edit retries.
+    if(L!=g_loaded) g_policyReady=false;
     g_loaded = L; g_scriptTime = st; g_configTime = ct;g_universalTime=ut;
     std::string script,universal;
     if (!Read(g_script, script) || !Read(g_universalScript,universal)) {
-        g_api->Log(g_mod, SDGO_LOG_ERROR, "cannot read AI policy scripts; native AI retained"); return;
+        g_api->Log(g_mod, SDGO_LOG_ERROR, "cannot read AI policy scripts"); return;
     }
     Register(L,"SDGO_BattleAI_Now",Now);
     Register(L,"SDGO_BattleAI_Log",Log);
+    Register(L,"SDGO_BattleAI_Fault",PolicyFault);
     Register(L,"SDGO_BattleAI_Authority",Authority);
     Register(L,"SDGO_BattleAI_Generation",Generation);
     Register(L,"SDGO_BattleAI_Observe",Observe);
@@ -2219,6 +2251,7 @@ void Prepare() {
     RuntimeSettings next;
     next.generic=true;
     if (Run(L, ConfigChunk(next,roomDifficulty) + script + "\n" + universal)) {
+        g_policyReady=true;
         if(next.difficulty!=g_runtime.difficulty)
             Run(L,"if SDGO_BattleAI_Universal then SDGO_BattleAI_Universal.states={} end");
         g_runtime=next;
@@ -2231,7 +2264,7 @@ void GuardedPrepare() {
     __try { Prepare(); }
     __except(EXCEPTION_EXECUTE_HANDLER) {
         g_preparationFault = true;
-        g_api->Log(g_mod, SDGO_LOG_ERROR, "policy preparation failed; native Think retained");
+        g_api->Log(g_mod, SDGO_LOG_ERROR, "AI policy preparation failed");
     }
 }
 void ResetLifecycle(uint8_t* unit) {
@@ -2373,8 +2406,8 @@ SDGO_MOD_ENTRY {
         !Bind(g_lua.pushcclosure,"lua.pushcclosure") || !Bind(g_lua.gettable,"lua.gettable") ||
         !Bind(g_lua.settable,"lua.settable") || !Bind(g_lua.newtable,"lua.newtable") ||
         !Bind(g_lua.pcall,"lua.pcall") || !Bind(g_lua.load,"lua.load") ||
-        !Bind(g_document,"game.document") || !Bind(g_route,"navigation.route") ||
-        !Bind(g_setIntent,"npc.set_attack_intent") || !Bind(g_stop,"npc.move_stop") ||
+        !Bind(g_document,"game.document") || !Bind(g_findObject,"um.find_object") || !Bind(g_route,"navigation.route") ||
+        !Bind(g_setIntent,"npc.set_attack_intent") || !Bind(g_selectWeapon,"combat.select_weapon") || !Bind(g_stop,"npc.move_stop") ||
         !Bind(g_setGoal,"npc.set_move_goal") || !Bind(g_delete,"crt.operator_delete") ||
         !Bind(g_navigation.query,"collision.query") || !Bind(g_navigation.segmentAabb,"collision.segment_aabb") ||
         !Bind(g_navigation.terrainRay,"collision.terrain_ray") || !Bind(g_navigation.rayObb,"collision.ray_obb") ||
@@ -2389,7 +2422,7 @@ SDGO_MOD_ENTRY {
     g_universalScript=dir+L"\\universal_ai.lua";
     g_plainProjectileEntry=api->Symbol(mod,"combat.projectile_update");
     std::string check;
-    if (!Read(g_script,check)||!Read(g_universalScript,check)) { api->Log(mod,SDGO_LOG_ERROR,"missing AI policy script"); return 0; }
+    if (!Read(g_script,check)||!Read(g_universalScript,check)) api->Log(mod,SDGO_LOG_ERROR,"missing AI policy script");
     if (!api->HookCode(mod,"npc.think",reinterpret_cast<void*>(&Think),reinterpret_cast<void**>(&g_think)) ||
         !api->HookCode(mod,"npc.init_ai",reinterpret_cast<void*>(&Init),reinterpret_cast<void**>(&g_init)) ||
         !api->HookCode(mod,"npc.dispatch_ai",reinterpret_cast<void*>(&Dispatch),reinterpret_cast<void**>(&g_dispatch)) ||
