@@ -372,6 +372,7 @@ def validate(catalog):
     validate_overrides(catalog)
     validate_project_assets(catalog)
     validate_activity_drafts(catalog)
+    validate_activity_machines(catalog)
     policy = catalog.get("custom_candidate_policy")
     if policy is not None:
         if (not isinstance(policy, dict) or policy.get("version") != 1
@@ -464,6 +465,37 @@ def validate_activity_drafts(catalog):
             raise ValueError('Activity draft artwork is absent or stale')
         if art['project_key']!=row.get('project_key'):raise ValueError('Activity draft belongs to another project')
         normalize_metadata(row.get('metadata',{}))
+
+
+def validate_activity_machines(catalog):
+    from owner.units.activity_repository import normalize_config
+    from owner.units.activity_patterns import normalize_preferences
+    normalize_preferences(catalog.get('activity_preferences'))
+    rows=catalog.get('activity_machines',[])
+    if not isinstance(rows,list) or len(rows)>999:raise ValueError('Activity machine collection is invalid')
+    server_keys=('schema_version','id','unit_id','project_key','revision','currency_type','price','template_machine_id','pool')
+    assets={row['key']:row for row in catalog.get('project_assets',[])}
+    seen=set();roots=set()
+    for row in rows:
+        required=set(server_keys)|{'name','unit_category_id','artwork_key','artwork_sha256'}
+        if (not isinstance(row,dict) or not required<=set(row) or set(row)-required-{'pattern_id'}):
+            raise ValueError('Activity machine contains unsupported fields')
+        if row.get('pattern_id','gp_rare') not in ('gp_rare','token_rare','token_99'):
+            raise ValueError('Unknown activity machine pattern')
+        name=row['name']
+        if (not isinstance(name,str) or not name.strip() or len(name)>128 or
+            any(ord(char)<32 for char in name)):
+            raise ValueError('Activity machine name is invalid')
+        config=normalize_config({key:row[key] for key in server_keys})
+        if config['id'] in seen or config['unit_id'] in roots:raise ValueError('Each imported activity root needs a distinct machine')
+        seen.add(config['id']);roots.add(config['unit_id'])
+        asset=assets.get(row.get('artwork_key'))
+        if not asset or asset['role']!='activity_poster' or asset['project_key']!=config['project_key'] or asset['asset_sha256']!=row.get('artwork_sha256'):
+            raise ValueError('Reviewed activity machine artwork is missing or changed')
+        if type(row.get('unit_category_id')) is not int or row['unit_category_id']//100000!=11:
+            raise ValueError('Activity featured unit category is invalid')
+        if not any(entry['category_id']==row['unit_category_id'] and entry['amount']==1 for entry in config['pool']):
+            raise ValueError('The dedicated machine must include its featured root')
 
 
 def patterns(catalog):
@@ -1824,6 +1856,8 @@ def export_bundle(catalog, output):
             catalog["portrait_overrides"])
     if 'project_assets' in catalog:payload['project_assets']=copy.deepcopy(catalog['project_assets'])
     if 'activity_drafts' in catalog:payload['activity_drafts']=copy.deepcopy(catalog['activity_drafts'])
+    if 'activity_machines' in catalog:payload['activity_machines']=copy.deepcopy(catalog['activity_machines'])
+    if 'activity_preferences' in catalog:payload['activity_preferences']=copy.deepcopy(catalog['activity_preferences'])
     # Identical semantic payloads prevent client/server configuration divergence.
     for role in ("client", "server"):
         write_json(out / f"{role}.json", {**payload, "role": role})

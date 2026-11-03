@@ -5,8 +5,9 @@ from collections import Counter,defaultdict
 from fractions import Fraction
 
 
-def recommend(root,*,units,categories,prices,pool,listed_machines,currency=None):
+def recommend(root,*,units,categories,prices,pool,listed_machines,currency=None,profile='ordinary'):
     if root.get('rank')!=4:raise ValueError('独立活动机建议只用于S级及以上机库根形态')
+    if profile not in ('ordinary','same_tier'):raise ValueError('未知活动机台参考类型')
     unit_by_id={u['UnitNumber']:u for u in units}
     category_by_id={r['CatalogueID']:r for r in categories}
     price_by_id={r['MachineID']:r for r in prices}
@@ -27,16 +28,23 @@ def recommend(root,*,units,categories,prices,pool,listed_machines,currency=None)
                 raise ValueError('原生活动奖池含未解析物品或数量')
             unit=unit_by_id.get(item['RefIndex']) if category//100000==11 else None
             if unit and unit['UnitGradeNumber']==4:
-                if unit['UnitGradeNumber2']==root.get('subgrade'):rare[unit['UnitNumber']]+=count
+                if profile=='ordinary' or unit['UnitGradeNumber2']==root.get('subgrade'):
+                    rare[unit['UnitNumber']]+=count
+                else:filler[(category,amount)]+=count
             else:filler[(category,amount)]+=count
-        if rare and filler:
+        # Ordinary GP / small-token machines use genuinely rare S rewards.
+        # A special high-price, high-S-frequency machine must not become the
+        # default simply because it is the only exact-SR reference.
+        ordinary = (rare and max(Fraction(n,total) for n in rare.values())<=Fraction(1,100))
+        if rare and filler and (profile=='same_tier' or ordinary):
             cohorts[price['Type']].append({'machine_id':mid,'price':price['Price'],
                 'rare':rare,'filler':filler,'total':total})
     available=sorted(cohorts)
-    chosen=currency if currency is not None else (0 if 0 in cohorts else available[0] if available else None)
+    chosen=currency if currency is not None else (0 if profile=='ordinary' else
+        0 if 0 in cohorts else available[0] if available else None)
     if chosen not in cohorts:
         return {'available':False,'changes_applied':False,'unit_id':root['unit_id'],
-                'available_currencies':available,'message':'没有同等级、同货币的原生活动机参考；请明确选择模板或作者设定'}
+                'available_currencies':available,'message':'没有符合该货币与普通稀有奖定位的参考；请选择其他货币或明确指定作者配置'}
     selected=cohorts[chosen]
     samples=[Fraction(count,r['total']) for r in selected for count in r['rare'].values()]
     rare_mean=sum(samples,Fraction())/len(samples)
@@ -56,6 +64,8 @@ def recommend(root,*,units,categories,prices,pool,listed_machines,currency=None)
         'filler_rewards':[{'category_id':category,'amount':amount,'name':category_by_id[category]['Name'],
                            'configuration_frequency':rational(value)} for (category,amount),value in sorted(normalized.items())],
         'artwork_required':True,'probability_kind':'native-config-frequency',
-        'method':'Arithmetic mean of matching rare unit frequencies; non-S rewards use per-machine mean shares.',
+        'reference_profile':profile,
+        'method':('Arithmetic mean of ordinary native rare-S frequencies and GP prices; high-frequency special pools excluded.'
+                  if profile=='ordinary' else 'Arithmetic mean of exact-subgrade native frequencies and prices.'),
         'limitations':['This is a draft recommendation, not an applied pool.',
             'Native sequence, repeat avoidance and configured limits remain separate from independent random odds.']}

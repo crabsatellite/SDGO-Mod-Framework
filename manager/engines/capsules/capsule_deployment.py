@@ -587,8 +587,11 @@ def _validate_semantic_bundle(bundle_root, catalog, revision):
     for name, path in (("client.json", client_path), ("server.json", server_path)):
         if manifest.get("files", {}).get(name) != _sha256_file(path):
             raise ValueError(f"Semantic bundle hash mismatch: {name}")
-    if client_body.get("fixed_machines") != catalog.get("fixed_machines"):
-        raise ValueError("Semantic bundle differs from the requested catalog")
+    for key in ("fixed_machines", "custom_machines", "units",
+                "custom_candidate_policy", "portrait_overrides", "project_assets",
+                "activity_drafts", "activity_machines", "activity_preferences"):
+        if client_body.get(key) != catalog.get(key):
+            raise ValueError("Semantic bundle differs from the requested catalog: " + key)
     return client_path, server_path, manifest_path
 
 
@@ -1089,7 +1092,7 @@ def _validate_server_result(row, revision, verify=False):
         raise ServerDeploymentError("Server verification did not pass")
 
 
-def _apply_server(connection, server_dir, revision):
+def _apply_server(connection, server_dir, revision, *, activity_machines=(), server_ini=None):
     install = _safe_join(server_dir, "install.sql").read_text(encoding="utf-8")
     verify = _safe_join(server_dir, "verify.sql").read_text(encoding="utf-8")
     cursor = connection.cursor()
@@ -1102,6 +1105,19 @@ def _apply_server(connection, server_dir, revision):
         _validate_server_result(installed, revision)
         verified = _execute_last_result(cursor, verify)
         _validate_server_result(verified, revision, verify=True)
+        if activity_machines:
+            from owner.units.activity_repository import ActivityRepository
+            if server_ini is None:
+                raise ServerDeploymentError("Activity deployment requires a configured server INI")
+            repository = ActivityRepository(server_ini)
+            fields = ("schema_version", "id", "unit_id", "project_key", "revision",
+                      "currency_type", "price", "template_machine_id", "pool")
+            activity_results = []
+            for machine in activity_machines:
+                config = {key: machine[key] for key in fields}
+                repository.apply(config, connection=connection, in_transaction=True)
+                activity_results.append(repository.verify(config, connection=connection))
+            verified = {**verified, "activity_machines": activity_results}
         connection.commit()
         state = _execute_last_result(
             cursor, "SELECT @@TRANCOUNT AS OpenTransactions;"
@@ -1409,6 +1425,8 @@ class DeploymentTarget:
         from .capsule_server_runtime import build as build_server
 
         revision = digest(catalog)
+        if catalog.get("activity_machines") and self.server_ini is None:
+            raise ServerDeploymentError("Dedicated activity machines require paired client and server deployment")
         runtime_output = _assert_existing_components_no_reparse(runtime_output)
         bundle_root = _assert_existing_components_no_reparse(bundle_root)
         framework_stage = _assert_existing_components_no_reparse(self.framework_stage)
@@ -1498,6 +1516,8 @@ class DeploymentTarget:
                         connection,
                         _safe_join(package_root, "server"),
                         revision,
+                        activity_machines=catalog.get("activity_machines", ()),
+                        server_ini=self.server_ini,
                     )
                     server_applied = True
                 except Exception:

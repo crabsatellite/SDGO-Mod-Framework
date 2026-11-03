@@ -16,7 +16,24 @@ class ActivityBalance(unittest.TestCase):
               for mid,cat,amount,count in [(101,1100001,1,10),(101,1300001,5,90),
                   (301,1100002,1,30),(301,1300001,5,70),
                   (501,1100003,1,99),(501,1300001,5,1)]]
-        return dict(units=units,categories=categories,prices=prices,pool=pool,listed_machines={101,301,501})
+        return dict(units=units,categories=categories,prices=prices,pool=pool,listed_machines={101,301,501},profile='same_tier')
+
+    def test_default_uses_affordable_gp_rare_s_instead_of_special_exact_sr(self):
+        data=self.fixture();data.pop('profile')
+        data['prices'][2]['Price']=10000
+        data['pool'][4]['ExpandedEntries']=10
+        data['pool'][5]['ExpandedEntries']=9990
+        result=recommend({'unit_id':100,'rank':4,'subgrade':4},**data)
+        self.assertTrue(result['available']);self.assertEqual(0,result['currency'])
+        self.assertEqual([501],result['source_machine_ids'])
+        self.assertEqual(10000,result['suggested_price'])
+        self.assertEqual(.001,result['rare_configuration_frequency']['value'])
+        self.assertEqual('ordinary',result['reference_profile'])
+
+    def test_default_does_not_silently_switch_to_expensive_sr_currency(self):
+        data=self.fixture();data.pop('profile')
+        result=recommend({'unit_id':100,'rank':4,'subgrade':4},**data)
+        self.assertFalse(result['available'])
 
     def test_exact_grade_and_currency_mean_and_filler_amount_are_retained(self):
         result=recommend({'unit_id':100,'rank':4,'subgrade':4},**self.fixture())

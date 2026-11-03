@@ -438,6 +438,7 @@ class DeploymentTests(unittest.TestCase):
         self.assertTrue(installed_ini.startswith(original_ini))
         self.assertIn(b"capsule_catalog=1", installed_ini)
         self.assertNotIn(b"capsule_catalog=0", installed_ini)
+
         symbols = (
             client / "sdgo/symbols" / deployment.HOST_SYMBOL_NAME
         ).read_text(encoding="utf-8")
@@ -503,6 +504,43 @@ class DeploymentTests(unittest.TestCase):
             package / "player/client/sdgo/mods/capsule_catalog/mod.ini"
         ).read_text(encoding="utf-8")
         self.assertIn("enabled=1", packaged_mod)
+
+    def test_activity_verification_precedes_the_single_shared_commit(self):
+        server=self.root/'server-transaction';server.mkdir()
+        (server/'install.sql').write_text('InstalledUtc WeightedMachines')
+        (server/'verify.sql').write_text('AS Verified')
+        connection=FakeConnection(self.revision)
+        machine={'schema_version':1,'id':1990001,'unit_id':90001,'project_key':'fixture',
+                 'revision':'a'*64,'currency_type':0,'price':10000,'template_machine_id':1101,'pool':[]}
+        with patch('owner.units.activity_repository.ActivityRepository') as repository:
+            def apply(*args,**kwargs):
+                self.assertIs(connection,kwargs['connection']);self.assertTrue(kwargs['in_transaction'])
+                self.assertEqual(0,connection.commits)
+            def verify(*args,**kwargs):
+                self.assertIs(connection,kwargs['connection']);self.assertEqual(0,connection.commits)
+                return {'verified':True}
+            repository.return_value.apply.side_effect=apply
+            repository.return_value.verify.side_effect=verify
+            result=deployment._apply_server(connection,server,self.revision,
+                activity_machines=[machine],server_ini=self.root/'fixture.ini')
+        self.assertEqual([{'verified':True}],result['activity_machines'])
+        self.assertEqual(1,connection.commits);self.assertEqual(0,connection.rollbacks)
+        self.assertFalse(connection.closed)
+
+    def test_activity_failure_rolls_back_the_entire_shared_server_transaction(self):
+        server=self.root/'server-transaction';server.mkdir()
+        (server/'install.sql').write_text('InstalledUtc WeightedMachines')
+        (server/'verify.sql').write_text('AS Verified')
+        connection=FakeConnection(self.revision)
+        machine={'schema_version':1,'id':1990001,'unit_id':90001,'project_key':'fixture',
+                 'revision':'a'*64,'currency_type':0,'price':10000,'template_machine_id':1101,'pool':[]}
+        with patch('owner.units.activity_repository.ActivityRepository') as repository:
+            repository.return_value.verify.side_effect=ValueError('Activity readback failed')
+            with self.assertRaisesRegex(ValueError,'readback'):
+                deployment._apply_server(connection,server,self.revision,
+                    activity_machines=[machine],server_ini=self.root/'fixture.ini')
+        self.assertEqual(0,connection.commits);self.assertEqual(1,connection.rollbacks)
+        self.assertFalse(connection.closed)
 
     def test_foreign_loader_is_chained_and_sdgo_ini_is_minimally_updated(self):
         client = make_client(self.root, foreign_loader=True, own_core=True)

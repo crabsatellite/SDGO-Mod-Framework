@@ -347,6 +347,10 @@ def import_project_media(provider,body):
                 draft_machine['artwork_sha256']=value['asset_sha256']
                 draft_machine['project_revision']=value['project_revision']
                 draft_machine['artwork_review_required']=True
+        for machine in candidate.get('activity_machines',[]):
+            if machine.get('artwork_key')==key:
+                machine['artwork_sha256']=value['asset_sha256']
+                machine['revision']=model.revision({k:v for k,v in machine.items() if k!='revision'})
         from .engines.capsules.capsule_catalog import validate
         validate(candidate)
         if candidate!=catalog:app.store._save(candidate,previous)
@@ -359,10 +363,10 @@ def create_project_activity_draft(provider,body):
     """Reviewable dedicated machine; disabled until paired native application."""
     from owner.units import model
     from owner.units.project import normalize_metadata
-    from owner.units.activity_balance import recommend
+    from owner.units.activity_patterns import build_pattern
     from owner.units.acquisition_host import read_configuration,activity_grants
     from owner.units.repository import database_target_key
-    if not isinstance(body,dict) or set(body)-{'project_id','source_revision','expected_revision'}:
+    if not isinstance(body,dict) or set(body)-{'project_id','source_revision','expected_revision','pattern_id'}:
         raise ValueError('活动机台草稿请求无效')
     units=provider.workspace.providers['units'];engine=units.get_engine()
     ini=units.config.get('server_ini');capsule_ini=provider.config.get('server_ini')
@@ -376,17 +380,21 @@ def create_project_activity_draft(provider,body):
         family=source.get('published')
         if not family or not source.get('published_server_result',source.get('server_result',{})).get('applied'):
             raise ValueError('先完成机体的宿主登记，再生成以该机体为奖品的活动草稿；图片仍可提前复用')
+        receipt=source.get('published_server_result',source.get('server_result',{}))
+        if receipt.get('server_target')!=database_target_key(Path(ini)):
+            raise ValueError('该机体尚未在当前配置的原生服务器完成登记')
         root=family['root_unit_id'];form=next(r for r in family['forms'] if r['id']==root)
         if form['server']['UnitGradeNumber']!=4:raise ValueError('S级以下请检查设计图闭环或使用普通扭蛋机')
         catalog,previous=app.store.read();app.store._expect(catalog,body.get('expected_revision'))
         configuration=read_configuration(ini);tables=configuration['tables']
         listed={r['witness']['machine_id'] for r in activity_grants(units.config['client'],tables)}
         configuration_units=list(engine.repository.catalog['units'].values())
-        balance=recommend({'unit_id':root,'rank':4,'subgrade':form['server']['UnitGradeNumber2']},
+        preset=build_pattern(body.get('pattern_id','gp_rare'),
+            {'unit_id':root,'rank':4,'subgrade':form['server']['UnitGradeNumber2']},family['category_id'],
             units=configuration_units,categories=tables[('GOnlineGame','tbl_ItemCategory')],
             prices=tables[('GOnlineGame','tbl_ItemMachinePrice')],pool=tables[('GOnlineGame','tbl_ItemMachineList')],
-            listed_machines=listed)
-        if not balance['available']:raise ValueError(balance['message'])
+            listed_machines=listed,preferences=catalog.get('activity_preferences'))
+        balance=preset['balance']
         candidate=copy.deepcopy(catalog)
         drafts=candidate.setdefault('activity_drafts',[])
         existing=next((r for r in drafts if r['project_key']==source['family_key'] and r['unit_id']==root),None)
@@ -401,7 +409,8 @@ def create_project_activity_draft(provider,body):
             'name':source['name']+'活动扭蛋机','enabled':False,'status':'draft',
             'artwork_key':poster_key,'artwork_sha256':artwork['asset_sha256'],
             'metadata':normalize_metadata(source.get('metadata',{})),
-            'currency_type':balance['currency'],'price':balance['suggested_price'],
+            'currency_type':preset['currency_type'],'price':preset['price'],
+            'pattern_id':preset['pattern_id'],'pool':preset['pool'],'template_machine_id':preset['template_machine_id'],
             'artwork_review_required':True,
             'balance':balance,'host_configuration_sha256':configuration['configuration_sha256'],
             'changes_applied':False}
@@ -411,4 +420,4 @@ def create_project_activity_draft(provider,body):
         validate(candidate)
         if candidate!=catalog:app.store._save(candidate,previous)
     return {'catalog_revision':model.revision(candidate),'activity_draft':draft,'changes_applied':False,
-        'message':'独立活动机草稿已生成：同档原生均值、项目海报和私有资料已绑定；尚未编译安装或上架'}
+        'message':'独立活动机草稿已生成：所选价格与奖池模板、项目海报和资料已绑定；尚未编译安装或上架'}

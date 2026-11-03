@@ -42,6 +42,25 @@ metadata into their own portable catalog before a unit is ready for runtime
 publication. This never registers a prize or applies a machine. User content
 remains private owner data; the framework release contains only the tools.
 
+The capsule panel also edits dedicated activity pools. Choose **普通 G 币**
+(ordinary GP), **少量代币** (small token cost), or **99 代币高阶** (premium).
+The **本服模板参数** controls store the owner's target frequency and price in
+the private authoring catalog. Unset values use the configured host's native
+reference frequency and most common matching price. The premium preset is
+explicit and uses the native same-tier mean at 99 tokens. A missing ordinary
+reference never silently selects the premium preset.
+Owner machine data, unit content and preset overrides are not framework defaults.
+
+Presets fill an editable form with native reference rewards. Adjust currency,
+price, units, blueprints, consumables, amounts and frequencies before saving.
+Multiple amounts of the same item are supported. Frequencies total 10000 slots;
+all amounts of any category together must stay at or below 50% for the native
+repeat-avoidance path. These are configured sequence frequencies, not a promise
+of independent random draws. Native starts, limits, billing and delivery remain
+in effect. Save validates the host catalog; compile and apply pair the client
+poster with the server pool in the existing deployment transaction. Updates
+preserve native runtime state and player progress rather than resetting them.
+
 See [the Chinese guide](unit-import.zh-CN.md) for the full workflow and boundaries.
 
 ```powershell
@@ -77,7 +96,7 @@ Synchronization preserves existing machine economics and requires the same game 
 Offline drafts cannot become live candidates. Approved imported C/B/A units may use ordinary native custom slots; rare-slot and S-rank restrictions still apply.
 The fixed-card generator calls the existing `Assets.card` crop/frame/rank/rare-silhouette implementation;
 it no longer pads a whole robot image into an empty rectangle. SR custom candidates retain their native portrait
-and let the existing game's custom selector draw the grade frame. Capsule compiler v9 retains master's uploaded portrait/crop overrides and resident activity resources, and invalidates the old cache.
+and let the existing game's custom selector draw the grade frame. Capsule compiler v10 retains uploaded portrait/crop overrides and resident activity/collection resources, and invalidates the old cache.
 The product preview uses the same 122×122 owned encyclopedia icon as the ordinary shop list.
 The generator preserves the distinct native detail, alternate-list and custom-candidate sprite consumers instead of assigning one image to all three.
 Manager serves the same generator output used in publication; complete SKU pricing stays owned by the shop module.

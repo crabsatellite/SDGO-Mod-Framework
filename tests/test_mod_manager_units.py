@@ -105,6 +105,88 @@ class UnitManagerTests(unittest.TestCase):
                 'source_revision':'stale','role':'activity_poster','asset_sha':'a'*64,'expected_revision':digest(before)}, {})
         self.assertEqual(raw,app.store.read()[1])
 
+    def activity_fixture(self):
+        from owner.units.model import content_revision
+        from owner.collection_capsule.client import normalize_activity_cover
+        state=self.publish();identity=state['draft']['id'];authored=self.engine.read()
+        project=authored['drafts'][identity]
+        project['published']['forms'][0]['server']['UnitGradeNumber']=4
+        storage.atomic(self.engine.path,storage.json_bytes(authored))
+        raw=normalize_activity_cover(png());sha=hashlib.sha256(raw).hexdigest()
+        key=project['family_key']+':activity_poster'
+        catalog=json.loads(self.catalog.read_bytes())
+        catalog['project_assets']=[{'key':key,'project_key':project['family_key'],
+            'project_revision':content_revision(project),'name':project['name'],'role':'activity_poster',
+            'asset_sha256':sha,'source_asset_sha256':sha,'original_sha256':sha,
+            'png_base64':base64.b64encode(raw).decode(),'metadata':{}}]
+        catalog['activity_drafts']=[{'schema_version':1,'id':1990001,'project_key':project['family_key'],
+            'unit_id':90001,'unit_category_id':1119000,'name':'Fixture activity','enabled':False,
+            'status':'draft','changes_applied':False,'artwork_key':key,'artwork_sha256':sha,
+            'currency_type':0,'price':10000,'metadata':{}}]
+        storage.atomic(self.catalog,storage.json_bytes(catalog))
+        return {'expected_revision':self.capsules.request('GET','/api/bootstrap',{}, {})['catalog_revision'],
+            'id':1990001,'name':'Fixture activity','pattern_id':'gp_rare','currency_type':0,
+            'price':10000,'template_machine_id':1101,
+            'pool':[{'category_id':1119000,'amount':1,'entries':20},
+                    {'category_id':2220001,'amount':1,'entries':4980},
+                    {'category_id':2220002,'amount':1,'entries':5000}]}
+
+    def test_activity_edit_saves_reviewed_portable_pool_without_installing(self):
+        body=self.activity_fixture()
+        with patch('manager.unit_activity.ActivityRepository') as repository:
+            repository.return_value.preflight.return_value={'valid':True}
+            result=self.capsules.request('POST','/api/projects/activity',body,{})
+            self.assertFalse(result['changes_applied'])
+            repository.return_value.apply.assert_not_called()
+            reviewed=repository.return_value.preflight.call_args.args[0]
+            self.assertEqual(20,reviewed['pool'][0]['entries'])
+            self.assertNotIn('artwork_key',reviewed)
+        current=self.capsules.request('GET','/api/projects/activity',{}, {})
+        self.assertEqual(['gp_rare','token_rare','token_99'],[r['id'] for r in current['patterns']])
+        self.assertEqual('gp_rare',current['machines'][0]['pattern_id'])
+        saved=self.catalog.read_bytes()
+        with self.assertRaises(Exception):self.capsules.request('POST','/api/projects/activity',body,{})
+        self.assertEqual(saved,self.catalog.read_bytes())
+
+    def test_invalid_activity_pool_is_rejected_before_native_review_or_catalog_write(self):
+        body=self.activity_fixture();saved=self.catalog.read_bytes()
+        body['pool'][0]['entries']=19
+        with patch('manager.unit_activity.ActivityRepository') as repository:
+            with self.assertRaises(ValueError):self.capsules.request('POST','/api/projects/activity',body,{})
+            repository.return_value.preflight.assert_not_called()
+        self.assertEqual(saved,self.catalog.read_bytes())
+
+    def test_activity_candidates_include_only_imports_published_to_this_host(self):
+        body=self.activity_fixture()
+        result=self.capsules.request('GET','/api/projects/activity-items?q=90001',{}, {})
+        self.assertTrue(any(row['category_id']==1119000 for row in result['items']))
+        authored=self.engine.read();draft=next(iter(authored['drafts'].values()))
+        draft['published_server_result']['server_target']='another-host'
+        storage.atomic(self.engine.path,storage.json_bytes(authored));saved=self.catalog.read_bytes()
+        result=self.capsules.request('GET','/api/projects/activity-items?q=90001',{}, {})
+        self.assertFalse(any(row['category_id']==1119000 for row in result['items']))
+        with patch('manager.unit_activity.ActivityRepository') as repository:
+            with self.assertRaisesRegex(ValueError,'当前配置'):
+                self.capsules.request('POST','/api/projects/activity',body,{})
+            repository.return_value.preflight.assert_not_called()
+        self.assertEqual(saved,self.catalog.read_bytes())
+
+    def test_owner_template_parameters_stay_in_authoring_data_and_do_not_change_machines(self):
+        before=json.loads(self.catalog.read_bytes())
+        self.assertNotIn('activity_preferences',before)
+        revision=self.capsules.request('GET','/api/bootstrap',{}, {})['catalog_revision']
+        preferences={'schema_version':1,'patterns':{'gp_rare':{'featured_entries':20,'price':10000}}}
+        with patch('manager.unit_activity.ActivityRepository') as repository:
+            result=self.capsules.request('POST','/api/projects/activity-preferences',
+                {'expected_revision':revision,'preferences':preferences},{})
+            repository.assert_not_called()
+        after=json.loads(self.catalog.read_bytes())
+        self.assertEqual(preferences,after.pop('activity_preferences'));self.assertEqual(before,after)
+        self.assertFalse(result['changes_applied'])
+        from manager.engines.capsules.capsule_catalog import export_bundle
+        out=self.root/'portable-preferences';export_bundle(json.loads(self.catalog.read_bytes()),out)
+        self.assertEqual(preferences,json.loads((out/'server.json').read_bytes())['activity_preferences'])
+
     def test_only_published_content_is_visible_and_edits_keep_old_approval(self):
         state = complete(self.engine, self.engine.inspect('fixture.zip', archive(), self.engine.public()['revision']))
         self.assertEqual(self.units.registrations(), [])
