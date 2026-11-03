@@ -4,6 +4,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "mods/game_test_client/native_player_combat_probe.h"
@@ -14,6 +15,9 @@ namespace
     int g_failures = 0;
     int g_setting = 1;
     int g_continuousSetting = 0;
+    int g_weaponSlotSetting = -1;
+    int g_weaponRequests = 0;
+    bool g_consumeAmmo = true;
     int g_symbolCalls = 0;
     const char* g_missingSymbol = nullptr;
 
@@ -30,7 +34,10 @@ namespace
     uint8_t g_unit[0x3300] = {};
     uint8_t g_node[0x200] = {};
     uint8_t g_move[0x300] = {};
-    uint8_t g_attack[0x300] = {};
+    uint8_t g_attack[0xC00] = {};
+    uint8_t g_definition[0x300] = {};
+    uint8_t g_weapons[3][0x700] = {};
+    void* g_unitVtable[8] = {};
     void* g_moveVtable[2] = {};
     void* g_attackVtable[2] = {};
     uint8_t g_nativeInput[0x40] = {};
@@ -149,9 +156,15 @@ namespace
         CHECK(attack == g_attack);
         g_lastAttackContext = context;
         if (g_fireHeld)
+        {
             Put(
                 g_attack, 4,
                 static_cast<void*>(g_attack + 0x40));
+            if (g_consumeAmmo && g_weaponSlotSetting == 2 && Get<int32_t>(g_attack, 0x240) == 2) {
+                auto ammo = Get<int16_t>(g_attack, 0x24C + 2 * 0xC8);
+                if (ammo > 0) Put(g_attack, 0x24C + 2 * 0xC8, int16_t(ammo - 1));
+            }
+        }
     }
 
     int SettingInt(
@@ -164,6 +177,8 @@ namespace
                 key,
                 "BattlePlayerCombatContinuous") == 0)
             return g_continuousSetting;
+        if (std::strcmp(key, "BattlePlayerWeaponSlot") == 0)
+            return g_weaponSlotSetting;
         return fallback;
     }
 
@@ -321,6 +336,156 @@ namespace
         g_lastAttackContext = nullptr;
         g_observations.clear();
         g_assertions.clear();
+        g_weaponRequests = 0;
+        g_consumeAmmo = true;
+    }
+
+    void __fastcall ReceiveWeapon(uint8_t* unit, void*, const uint8_t* message)
+    {
+        CHECK(unit == g_unit && Get<uint16_t>(const_cast<uint8_t*>(message), 0) == 0x48);
+        CHECK(message[0x10] == 2);
+        ++g_weaponRequests;
+        // Real native receipt queues DD0; it does not acknowledge the binding.
+        Put(g_unit, 0xDD0, int32_t(message[0x10]));
+    }
+
+    void RangedProfile()
+    {
+        std::memset(g_definition, 0, sizeof(g_definition));
+        std::memset(g_weapons, 0, sizeof(g_weapons));
+        Put(g_unit, 0x9C4, g_definition);
+        g_unitVtable[7] = FunctionAddress(&ReceiveWeapon);
+        Put(g_unit, 0, g_unitVtable);
+        Put(g_definition, 0, uint32_t(10003));
+        g_definition[0x247] = 3;
+        for (int slot = 0; slot < 3; ++slot) {
+            const uint32_t id = slot == 2 ? 40119 : 41001 + slot;
+            Put(g_definition, 0x249 + slot * 4, id);
+            Put(g_weapons[slot], 0, id);
+            g_weapons[slot][0x69] = 1;
+            g_weapons[slot][0x6A] = slot == 0 ? 1 : 2;
+            Put(g_weapons[slot], 0x6C, int32_t(100));
+            Put(g_weapons[slot], 0x72, uint32_t(slot == 0 ? 200 : 2000));
+            Put(g_weapons[slot], 0x7C, int16_t(slot == 0 ? 0 : 60));
+            g_weapons[slot][0x8F] = 1;
+            for (size_t bank : {size_t(0x24C), size_t(0x56C)}) {
+                Put(g_attack, bank + slot * 0xC8, int16_t(60));
+                Put(g_attack, bank + slot * 0xC8 + 0xC, g_weapons[slot]);
+            }
+        }
+        Put(g_attack, 0x240, int32_t(0));
+        Put(g_attack, 0x248, g_weapons[0]);
+        for (auto pair : {std::pair<size_t, size_t>(0xBCC, 0xBD0), {0xBE1, 0xBE5}}) {
+            for (uint8_t i = 0; i < 4; ++i) g_unit[pair.first + i] = i;
+            Put(g_unit, pair.second, 100.0f);
+        }
+    }
+
+    void RangedWeaponAcknowledgementTests()
+    {
+        ResetNativeWorld();
+        RangedProfile();
+        g_setting = g_continuousSetting = 1;
+        g_weaponSlotSetting = 2;
+        auto api = Api();
+        ScoreboardActions input;
+        CHECK(input.Install(&api, nullptr));
+        CHECK(g_heldDetour(g_nativeInput, nullptr, 31) == 0);
+        NativePlayerCombatProbe probe;
+        CHECK(probe.Install(&api, nullptr));
+        auto snapshot = Snapshot();
+        auto status = StartStatus();
+        auto context = Context(1000);
+        CHECK(probe.Poll(&context, snapshot, status, input));
+        CHECK(g_weaponRequests == 1 && g_moveInputCalls == 0 && g_fireInputCalls == 0);
+        CHECK(Get<int32_t>(g_unit, 0xDD0) == 2 && Get<int32_t>(g_attack, 0x240) == 0);
+        context.elapsed_ms = 1100;
+        CHECK(probe.Poll(&context, snapshot, status, input));
+        CHECK(g_weaponRequests == 1 && g_fireInputCalls == 0);
+        context.elapsed_ms = 1300;
+        CHECK(probe.Poll(&context, snapshot, status, input));
+        CHECK(g_weaponRequests == 2 && g_fireInputCalls == 0);
+        // Only an actual native commit permits movement/fire sampling to begin.
+        Put(g_attack, 0x240, int32_t(2));
+        Put(g_attack, 0x248, g_weapons[2]);
+        context.elapsed_ms = 1400;
+        CHECK(probe.Poll(&context, snapshot, status, input));
+        CHECK(g_moveInputCalls == 1 && !g_fireHeld);
+        context.elapsed_ms = 1580;
+        CHECK(probe.Poll(&context, snapshot, status, input));
+        CHECK(g_fireHeld && Get<int16_t>(g_attack, 0x24C + 2 * 0xC8) == 59);
+        context.elapsed_ms = 1600;
+        CHECK(probe.Poll(&context, snapshot, status, input));
+        probe.Finish(&context, input);
+        CHECK(g_assertions.size() == 4);
+        for (int result : g_assertions) CHECK(result == 1);
+        bool boundSeen = false;
+        for (const auto& line : g_observations)
+            boundSeen = boundSeen || line.find("slot=2 weapon=40119") != std::string::npos;
+        CHECK(boundSeen);
+
+        ResetNativeWorld();
+        RangedProfile();
+        g_consumeAmmo = false;
+        Put(g_attack, 0x240, int32_t(2));
+        Put(g_attack, 0x248, g_weapons[2]);
+        NativePlayerCombatProbe alternate;
+        CHECK(alternate.Install(&api, nullptr));
+        context.elapsed_ms = 0;
+        CHECK(alternate.Poll(&context, snapshot, status, input));
+        g_unit[0xE34] = 1;
+        Put(g_attack, 0x56C + 2 * 0xC8, int16_t(10));
+        context.elapsed_ms = 180;
+        CHECK(alternate.Poll(&context, snapshot, status, input));
+        CHECK(g_fireHeld);
+        context.elapsed_ms = 200;
+        CHECK(alternate.Poll(&context, snapshot, status, input));
+        alternate.Finish(&context, input);
+        CHECK(g_assertions.size() == 4 && g_assertions[0] && g_assertions[1] &&
+              g_assertions[2] && !g_assertions[3]);
+
+        // Unavailable live data must release a previously held fire mapping.
+        NativePlayerCombatProbe unavailable;
+        CHECK(unavailable.Install(&api, nullptr));
+        context.elapsed_ms = 0;
+        CHECK(unavailable.Poll(&context, snapshot, status, input));
+        context.elapsed_ms = 180;
+        CHECK(unavailable.Poll(&context, snapshot, status, input));
+        CHECK(g_heldDetour(g_nativeInput, nullptr, 9) == 1);
+        Put(g_definition, 0, uint32_t(0));
+        CHECK(unavailable.Poll(&context, snapshot, status, input));
+        CHECK(g_heldDetour(g_nativeInput, nullptr, 9) == 0);
+        Put(g_definition, 0, uint32_t(10003));
+        context.elapsed_ms = 1000;
+        CHECK(unavailable.Poll(&context, snapshot, status, input));
+        context.elapsed_ms = 1180;
+        CHECK(unavailable.Poll(&context, snapshot, status, input));
+        CHECK(g_heldDetour(g_nativeInput, nullptr, 9) == 1);
+        Put(g_attack, 0x240, int32_t(0));
+        Put(g_attack, 0x248, g_weapons[0]);
+        g_unitVtable[7] = nullptr;
+        CHECK(!unavailable.Poll(&context, snapshot, status, input));
+        CHECK(g_heldDetour(g_nativeInput, nullptr, 9) == 0);
+        g_unitVtable[7] = FunctionAddress(&ReceiveWeapon);
+        Put(g_attack, 0x240, int32_t(2));
+        Put(g_attack, 0x248, g_weapons[2]);
+        context.elapsed_ms = 1300;
+        CHECK(unavailable.Poll(&context, snapshot, status, input));
+        CHECK(g_heldDetour(g_nativeInput, nullptr, 0) == 1 &&
+              g_heldDetour(g_nativeInput, nullptr, 9) == 0);
+        unavailable.Finish(&context, input);
+
+        ResetNativeWorld();
+        RangedProfile();
+        g_weaponSlotSetting = 0;
+        NativePlayerCombatProbe melee;
+        CHECK(melee.Install(&api, nullptr));
+        CHECK(!melee.Poll(&context, snapshot, status, input));
+        CHECK(g_weaponRequests == 0 && g_fireInputCalls == 0 && g_assertions.size() == 1 && !g_assertions[0]);
+        g_weaponSlotSetting = 3;
+        NativePlayerCombatProbe special;
+        CHECK(!special.Install(&api, nullptr));
+        g_weaponSlotSetting = -1;
     }
 
     void InstallTests()
@@ -611,6 +776,7 @@ int main()
 {
     InstallTests();
     GatingAndAbiTests();
+    RangedWeaponAcknowledgementTests();
     std::cout << g_checks << " checks, "
               << g_failures << " failures\n";
     return g_failures ? 1 : 0;
