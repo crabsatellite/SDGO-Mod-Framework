@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "id": "shop_localization",
+  "title": "商城中文汉化",
+  "category": "gameplay",
+  "hosts": [
+    "client"
+  ],
+  "description": "汉化商城名称、说明、筛选选项与机体预览，支持中文关键词查询，并为机库确认等 Mod 提供统一中文名称。",
+  "mechanism": "在已核对的原生显示路径查精确词典，以稳定编号补齐名称；其他 Mod 经可选 C ABI 查询，关闭时保留原文。中文查询经兼容原生封包的编码传输，由 Manager 更新服务端检索索引后按中文部分名称、等级、支付方式组合筛选和分页。普通英文查询保留；不修改商品、价格、币种、期限、结算或玩家物品。未知内容保留原文，新商品中文必填，Git 更新分发。",
+  "settings": [
+    {
+      "id": "translatenames",
+      "key": "TranslateNames",
+      "label": "汉化商品与机体名称",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "translatedescriptions",
+      "key": "TranslateDescriptions",
+      "label": "汉化商品说明",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "translateoptions",
+      "key": "TranslateOptions",
+      "label": "汉化商城选项",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "translateinterface",
+      "key": "TranslateInterface",
+      "label": "汉化本地 Mod 界面提示",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "searchchinese",
+      "key": "SearchChinese",
+      "label": "中文关键词搜索（需服务端检索更新）",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    }
+  ],
+  "presentation": "configurable"
+}

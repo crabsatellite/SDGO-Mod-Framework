@@ -1,4 +1,4 @@
-# AI 机体目录（Beta，独立附加包）
+# AI 机体目录（独立附加包）
 
 English: [ai-catalog.md](ai-catalog.md)
 

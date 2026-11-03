@@ -201,11 +201,17 @@ public:
                 if(service && modalLoadingVtable && *reinterpret_cast<void**>(service)==modalLoadingVtable)modalPresent=true;
                 if (service && *reinterpret_cast<void**>(service)==roomListVtable) {
                     roomPresent=true;
-                    auto* button=*reinterpret_cast<uint8_t**>(service+0x84);
-                    void* root=button ? *reinterpret_cast<void**>(button+kControlParent):nullptr;
-                    if (root && button && FindControl(root,L"MakeRoomBtn",4)==button &&
-                        ControlHasName(button,L"MakeRoomBtn") && button[0x162] && button[0x167]) {
-                        roomReady=true;
+                    // The Team tab exposes MakeTeamBtn while MakeRoomBtn is
+                    // hidden. Both are genuine ready views of this room list;
+                    // admission must finish before another native tab can be selected.
+                    constexpr size_t offsets[]={0x84,0x88};
+                    for(size_t index=0;index<2;++index) {
+                        auto* button=*reinterpret_cast<uint8_t**>(service+offsets[index]);
+                        void* root=button ? *reinterpret_cast<void**>(button+kControlParent):nullptr;
+                        const auto* name=index==0 ? L"MakeRoomBtn" : L"MakeTeamBtn";
+                        if (root && button && FindControl(root,name,4)==button &&
+                            ControlHasName(button,name) && button[0x162] && button[0x167])
+                            roomReady=true;
                     }
                 }
                 node=*reinterpret_cast<uint8_t**>(node);

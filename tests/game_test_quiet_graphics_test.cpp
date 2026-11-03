@@ -227,6 +227,52 @@ bool HasOriginalDeviceSlot(void** table) {
 }
 
 int main() {
+    {
+    // Verify native readback encoding, padded rows, top-down orientation, and
+    // refusing an existing file before exercising the real graphics proxy.
+    wchar_t directory[MAX_PATH]{}, bitmap[MAX_PATH]{};
+    GetTempPathW(MAX_PATH, directory);
+    GetTempFileNameW(directory, L"sdf", 0, bitmap);
+    DeleteFileW(bitmap);
+    uint32_t pixels[] = {0x00112233, 0x00445566, 0xCCCCCCCC,
+                         0x00778899, 0x00AABBCC, 0xDDDDDDDD};
+    D3DLOCKED_RECT image{12, pixels};
+    D3DSURFACE_DESC description{};
+    description.Width = description.Height = 2;
+    description.Format = D3DFMT_X8R8G8B8;
+    if (QuietFrameCapture::WriteBitmap(bitmap, image, description) != S_OK ||
+        SUCCEEDED(QuietFrameCapture::WriteBitmap(bitmap, image, description))) ++failures;
+    HANDLE input = CreateFileW(bitmap, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    unsigned char bytes[70]{};
+    DWORD count = 0;
+    if (input == INVALID_HANDLE_VALUE || !ReadFile(input, bytes, sizeof(bytes), &count, nullptr) ||
+        count != sizeof(bytes) || bytes[0] != 'B' || bytes[1] != 'M' ||
+        reinterpret_cast<const BITMAPINFOHEADER*>(bytes + 14)->biHeight != -2 ||
+        *reinterpret_cast<const uint32_t*>(bytes + 54) != 0xFF112233 ||
+        *reinterpret_cast<const uint32_t*>(bytes + 62) != 0xFF778899) ++failures;
+    if (input != INVALID_HANDLE_VALUE) CloseHandle(input);
+    DeleteFileW(bitmap);
+    image.Pitch = 4;
+    if (SUCCEEDED(QuietFrameCapture::WriteBitmap(bitmap, image, description)) ||
+        GetFileAttributesW(bitmap) != INVALID_FILE_ATTRIBUTES) ++failures;
+    uint16_t rgb565[] = {0xF800, 0x001F};
+    description.Height = 1;
+    description.Format = D3DFMT_R5G6B5;
+    image = {4, rgb565};
+    if (QuietFrameCapture::WriteBitmap(bitmap, image, description) != S_OK) ++failures;
+    input = CreateFileW(bitmap, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (input == INVALID_HANDLE_VALUE || !ReadFile(input, bytes, sizeof(bytes), &count, nullptr) ||
+        count != 62 || *reinterpret_cast<const uint32_t*>(bytes + 54) != 0xFFFF0000 ||
+        *reinterpret_cast<const uint32_t*>(bytes + 58) != 0xFF0000FF) ++failures;
+    if (input != INVALID_HANDLE_VALUE) CloseHandle(input);
+    DeleteFileW(bitmap);
+    QuietFrameCapture capture;
+    HRESULT captureResult = S_OK;
+    if (capture.State() != QuietFrameCapture::Idle || capture.Request(nullptr) ||
+        !capture.Request(bitmap) || capture.Request(bitmap)) ++failures;
+    capture.BeforePresent(nullptr);
+    if (capture.State(&captureResult) != QuietFrameCapture::Failed || captureResult != E_POINTER) ++failures;
+    }
     InitializeDeviceTable(deviceTable);
     surfaceTable[2]=reinterpret_cast<void*>(&FakeSurfaceRelease);
     surfaceTable[12]=reinterpret_cast<void*>(&FakeSurfaceGetDesc);

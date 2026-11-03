@@ -79,6 +79,27 @@ namespace Sdgo.Shop
             if(String.IsNullOrEmpty(value)||value.Length>50||value.IndexOfAny(new[]{'\r','\n','\0'})>=0||value.StartsWith("\"")||value.EndsWith("\""))
                 throw new InvalidOperationException("商品名称和选项文字需要 1–50 个字符，不可换行或以双引号开头/结尾。");
         }
+        public static bool HasChinese(string value)
+        {
+            return !String.IsNullOrEmpty(value)&&Regex.IsMatch(value,@"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]");
+        }
+        public static void Chinese(string value,string field)
+        {
+            if(String.IsNullOrEmpty(value))
+                throw new InvalidOperationException(field+"必须包含至少一个汉字，可以同时保留 MSA-001 等英文或数字代号。");
+            Text(value);
+            if(!HasChinese(value))
+                throw new InvalidOperationException(field+"必须包含至少一个汉字，可以同时保留 MSA-001 等英文或数字代号。");
+        }
+        public static void ValidateChinese(Product product)
+        {
+            Chinese(product.name,"商品中文名称");
+            Chinese(product.label,"商品销售标签");
+        }
+        public static void ValidateChinese(Catalog catalog)
+        {
+            foreach(var product in catalog.products.Where(p=>!p.retired)) ValidateChinese(product);
+        }
         public static void Validate(Catalog catalog,Snapshot snapshot=null)
         {
             if(catalog==null||catalog.schema_version!=1||!Key(catalog.catalog_id)||catalog.products==null||catalog.products.Count>4096)
@@ -106,6 +127,10 @@ namespace Sdgo.Shop
         public static bool Key(string key) { return key!=null&&Regex.IsMatch(key,@"^[A-Za-z0-9_.-]{1,64}$"); }
         public static Product Create(Catalog catalog,Snapshot snapshot,Item item)
         {
+            return Create(catalog,snapshot,item,item.Name);
+        }
+        public static Product Create(Catalog catalog,Snapshot snapshot,Item item,string name)
+        {
             var t=snapshot.Templates.Where(x=>x.Kind==item.Kind).OrderByDescending(x=>x.Visible).ThenBy(x=>x.Id).FirstOrDefault();
             if(t==null) throw new InvalidOperationException("这类物品尚无可用的原生单物品模板。");
             var ids=new HashSet<int>(snapshot.ProductIds.Concat(catalog.products.Select(p=>p.product_id)));
@@ -114,11 +139,11 @@ namespace Sdgo.Shop
             string sku=Enumerable.Range(90001,9999).Select(n=>t.Sku[0]+n.ToString("D5")).FirstOrDefault(s=>!skus.Contains(s));
             if(id==0||sku==null) throw new InvalidOperationException("本页可用的 Mod 商品编号已用完。");
             return new Product {key="p-"+Guid.NewGuid().ToString("N"),product_id=id,item_id=sku,template_id=t.Id,category_id=item.Id,
-                name=item.Name,label=item.Label(item.TimeLimit==1 ? 7 : 1),price=500,currency="GB",validity=item.TimeLimit==1 ? 7 : 1,enabled=true};
+                name=name,label=item.Label(item.TimeLimit==1 ? 7 : 1),price=500,currency="GB",validity=item.TimeLimit==1 ? 7 : 1,enabled=true};
         }
         public static string Ini(Catalog catalog)
         {
-            Validate(catalog);var b=new StringBuilder("; Host-owned shop definitions. No credentials.\r\n[shop]\r\nSchema=1\r\nCatalogId="+catalog.catalog_id+"\r\nRevision="+Hash(Encoding.UTF8.GetBytes(Json().Serialize(catalog)))+"\r\n");
+            Validate(catalog);ValidateChinese(catalog);var b=new StringBuilder("; Host-owned shop definitions. No credentials.\r\n[shop]\r\nSchema=1\r\nCatalogId="+catalog.catalog_id+"\r\nRevision="+Hash(Encoding.UTF8.GetBytes(Json().Serialize(catalog)))+"\r\n");
             foreach(var p in catalog.products.Where(x=>!x.retired))
                 b.AppendFormat("\r\n[product:{0}]\r\nProductId={1}\r\nItemId={2}\r\nTemplateId={3}\r\nCategory={4}\r\nPrice={5}\r\nCurrency={6}\r\nValidity={7}\r\nName={8}\r\nLabel={9}\r\nEnabled={10}\r\n",p.key,p.product_id,p.item_id,p.template_id,p.category_id,p.price,p.currency,p.validity,p.name,p.label,p.enabled?1:0);
             return b.ToString();

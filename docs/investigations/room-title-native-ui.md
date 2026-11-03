@@ -100,7 +100,7 @@ one-time WordSkip activation and rejection of an out-of-range details index.
 The native byte signatures used by the shipping Mod are in `symbols/GOnline-54BE1568-00C97000.ini`;
 `tools/verify_symbols.py` validates them without starting the client.
 
-## Already-focused create-room input (client 0.2.1, 2026-11-02)
+## Already-focused create-room input
 
 The native edit has two relevant limits. `CUIEditBox +0x2A0` stores UTF-16
 bytes, while the shared input at pointer `0x010887E0` caches UTF-16 code units
@@ -128,3 +128,121 @@ cmake -S . -B build -DSDGO_ROOM_TITLE_NATIVE_CLIENT="<supported client>\GOnline.
 cmake --build build --config Release --target room_titles_native_ui_test room_titles
 ctest --test-dir build -C Release -R "^room_titles_(native_input|native_ui|client|transport|client_state)_offline$" --output-on-failure
 ```
+
+## Real creation services and deferred controls (client 0.2.3)
+
+The three RTTI-backed creation vtables are `CServiceMakeRoom` at `0x00EA6414`,
+`CServiceMakeRoomAI` at `0x00EA6484`, and `CServiceMakeRoomMatchmaking` at
+`0x00EA64F4`. The first two use root `+0x50` and cached edit `+0x54`.
+Their early init at `0x008D0380` only loads a hidden root. Updates
+`0x008E5AA0` / `0x008E5BB0` change lifecycle `+0x44` from 3 to 4, populate
+controls through `0x008CF890` / `0x008D0B30`, then set default text and focus.
+The limit and saved draft must therefore be applied after that update returns,
+only for the initialization transition, never over later user typing.
+
+The team form initializes its visible controls at `0x008E4700`, root `+0x50`.
+The old `0x00EA3CD4` / `0x008E0C60` pair belongs to the separate rule-selection
+service (`uirs\1306.uir`), not the name edit. The native room list opens the
+ordinary/AI forms through `MakeRoomBtn` and the team form through `MakeTeamBtn`.
+
+Ordinary/AI submit uses `0x0525` (80 bytes, length/title at `+0x12/+0x13`);
+its `0x0918` ACK is `0x3CE1` bytes with Battle room ID at `+6`. Team and mission
+creation continue to use the existing `0x0640` carrier. Native short fields stay
+bounded; full metadata is committed only on the corresponding native ACK.
+
+The retained `--room-titles-only` GameTest drives original dialog notifications,
+committed characters in the real Win32 EDIT, cancellation/reopen, and exact
+server-confirmed full titles. It does not synthesize rooms, title replies or
+inventory. Offline fixtures also cover missing controls before the first update,
+the state-3 initialization, focused input refresh and no draft rewrite on later
+updates. Runtime receipts and private accounts remain outside Git.
+
+## Independent width truncation
+
+The focused edit update at `0x00C629F0` calls `0x00C627E0` after synchronizing
+the shared Win32 input. This `void __thiscall(Edit*, HostWString24*)` routine
+measures the text against `edit[+0x25C] - edit[+0x254]` and replaces an overflowing
+value with a fitting prefix. Raising `+0x2A0` alone does not disable it.
+
+The Mod bypasses this width policy only for an initialized room-name edit whose
+registered service, live service vtable, expected edit identity and 512-byte
+limit still match. Other edits run the original function, including unrelated
+edits with the same limit. It leaves `+0x29F` unchanged because that flag also
+changes Enter and multiline handling. The native single-line geometry has no
+horizontal scroll offset; retaining the full value does not enlarge the field.
+The offline regression covers an overflowing room name, an unrelated edit and
+service-storage reuse. Native GameTest checks complete text after later updates
+and requires the exact full title in the server confirmation.
+
+## Title confirmation and native command queues
+
+Native loading can defer response dispatch on the client main thread beyond
+five seconds. Capability and title requests retain their nonce for a bounded
+30-second window. A delayed matching response can complete the request; an
+unrelated or superseded nonce still cannot authorize a title or battle start.
+
+The inline title event `0x0BDB` reaches `0x00A53670`, then `0x00A46380`.
+The latter clones a title command into the native queue at `0x00994DE0`.
+Returning from the UI callback does not prove that the transport already sent
+it. A changed title keeps its draft until the original send observes it and the
+server confirms it. An unchanged native cache remains a no-op. Room identity is
+validated from the native room id and service layout independently of whether
+the optional short display projection can currently be converted.
+
+## Native channel changes and provider identity
+
+Agent session `+0x444` holds the current Battle connection. Both `0x07FB` and
+`0x0640` resolve it at dispatch time; a successful Battle `0x09DF` can replace
+that handle between the lobby Hello and room creation. Capability cannot be
+assumed to belong to the same Battle merely because the client-to-Agent
+connection remains unchanged.
+
+A validated fresh `SetTitle` create, whose epoch, room, generation and revision
+are all zero, is an explicit protocol offer from the Agent-authenticated pilot
+to the newly selected provider. It establishes capability only when this
+provider has no existing capability for that pilot. An existing Agent route
+cannot be implicitly rebound, because restarting its capability round would
+erase completed request deduplication. Existing-room updates keep their normal
+negotiation, owner, generation and revision checks.
+
+The client can adopt a different provider epoch only for an awaiting fresh
+create with the exact request nonce, complete title and initial revision. Its
+snapshot must also match the native carrier, room ID and Team/Battle domain:
+`0x0640` uses `0x0A33`, while `0x0525` uses `0x0918`. Expired creates, unrelated
+snapshots and existing-room edits cannot authorize that change. Old-provider
+room caches are removed when the matching fresh creation is confirmed.
+Each client process seeds its monotonic request range from the Windows system
+RNG. A reused pilot and Agent route must not restart at request `1`: another
+Battle provider can still remember an earlier login's same-title create, and
+replaying that old native room reply would leave the new waiting room without
+its current model. In-process retries keep their exact nonce for deduplication.
+An already confirmed connection can submit a fresh keyless create while a
+redundant lobby Hello is outstanding. That superseded Hello nonce is consumed
+into the response floor before creation, so its delayed batch, ACK or error
+cannot cancel the newer create. Unconfirmed servers and existing-room edits
+retain their capability gates. A future unrelated response from another epoch
+still invalidates old capability.
+
+Native model category `4` has no reachable inline rename input: event handler
+`0x00A53830` explicitly rejects that category. Population `0x00A45A70` enables
+`TitleChangeBtn`; its enabled flag alone therefore does not authorize opening
+the editor. This model byte is copied from the `0x0A33` server payload; it is not
+the factory object type that selects the Team manager. Native tests confirm
+the original Team manager/Main graph and exercise its inline title input when
+the native model category permits it. Compiled legacy settings adapters remain
+separate ABI/protocol regressions.
+The ordinary MakeTeam builder sends `0x0640` with request byte `+6 == 2`, which
+the native Battle handler copies to the model's `+4`. That normal Team class
+can use the shared inline editor once its original host state is ready.
+
+Modern Mission and Team Main states dispatch `0x0BE1` to the shared original
+leave business at `0x00741950`. Their validated manager/state/context graph is
+sufficient; they need not publish the legacy profile-room pointer. Mission
+uses manager/Main vtables `0x00E89D28` / `0x00E86824`, while Team uses
+`0x00E89CC8` / `0x00E867C4`.
+
+The modern close path sends `0x05C4` with its native room ID at `+6` and accepts
+`0x09B7` for that same ID. The title cache records the actual outgoing close
+intent and clears only the matching connection, epoch, room and generation.
+An unrelated room, a reused generation or a rejected `0x04D2` close cannot clear
+the current confirmed title. These fields identify a room, not a pilot.

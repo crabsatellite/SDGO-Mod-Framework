@@ -3,8 +3,6 @@
 在双阵营 PvP 房间标题里写 `!ai`，即可加入 AI 对手和队友，使用原有的战斗、计分、复活和观战功能。
 English: [pvp-ai.md](pvp-ai.md)
 
-本功能处于 **Beta 测试阶段**。
-
 ![对战 AI 的队友与敌人交战](pvp-ai-demo.webp)
 
 也支持死亡竞赛、Grid、队长和 Tag 模式。
