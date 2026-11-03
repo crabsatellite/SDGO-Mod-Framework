@@ -1060,6 +1060,18 @@ rva=state
             self.assertFalse(game_test.allow_named_desktop_fallback(changed))
         self.assertTrue(game_test.allow_named_desktop_fallback({'suite':game_test.FPS_SUITE}))
 
+    def test_owned_exit_wait_accepts_delayed_signal_but_not_a_still_live_process(self):
+        process=mock.Mock();process.poll.side_effect=[None,1]
+        process.wait.side_effect=[game_test.subprocess.TimeoutExpired(['owned-game'],10),1]
+        self.assertTrue(game_test.stop_owned_entry(process))
+        process.kill.assert_called_once()
+        self.assertEqual(process.wait.call_args_list,[mock.call(timeout=10),mock.call(timeout=30)])
+        process=mock.Mock();process.poll.return_value=None
+        process.wait.side_effect=game_test.subprocess.TimeoutExpired(['owned-game'],30)
+        with self.assertRaises(game_test.subprocess.TimeoutExpired):game_test.stop_owned_entry(process)
+        process=mock.Mock();process.poll.return_value=1
+        self.assertFalse(game_test.stop_owned_entry(process));process.kill.assert_not_called()
+
     def test_ai_controls_do_not_leak_into_room_ui_scenarios(self):
         controls=(
             {'expected_ai':1,'ai_pool_level':4},
