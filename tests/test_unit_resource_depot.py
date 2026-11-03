@@ -65,6 +65,16 @@ class ResourceDepotTests(unittest.TestCase):
         self.index['idsReserved']=True;self.pin=self.save_index()
         with self.assertRaisesRegex(DepotError,'authority'):self.open()
 
+    def test_material_only_addendum_can_omit_program_policy_but_never_enable_it(self):
+        self.index.pop('programActivationPolicy');self.pin=self.save_index()
+        with self.open() as depot:self.assertEqual(list(depot.records('opaqueSourceGamePrograms')),[])
+        self.index['sectionCounts']['opaqueSourceGamePrograms']=1;self.pin=self.save_index()
+        with self.assertRaisesRegex(DepotError,'registration authority'):self.open()
+        self.index['sectionCounts']['opaqueSourceGamePrograms']=0
+        self.index['programActivationPolicy']={'activationAllowed':True,'registrationRequired':False,'originalLuaJitDirectExecutionAllowed':False}
+        self.pin=self.save_index()
+        with self.assertRaisesRegex(DepotError,'registration authority'):self.open()
+
     def test_corrupt_page_is_rejected_before_rows_are_returned(self):
         page=self.index['metadataPages'][0];(self.root/page['path']).write_bytes(b'changed')
         with self.open() as depot:
