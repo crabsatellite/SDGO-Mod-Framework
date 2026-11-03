@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "waitroom_window_fix",
+  "title": "房间窗口初始化保护",
+  "category": "fixes",
+  "hosts": ["client"],
+  "description": "处理房间视图尚未绑定时收到的 Windows 图标查询。",
+  "settings": [],
+  "presentation": "automatic_fix",
+  "mechanism": "仅在原生等待房间视图为空时，让图标查询沿原来的默认窗口路径处理；就绪视图和其他消息保持原逻辑。"
+}
