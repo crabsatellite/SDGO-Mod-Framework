@@ -255,17 +255,98 @@ END)SQL";
     return value;
 }
 
+inline const std::wstring& SubProcedureDefinition()
+{
+    static const std::wstring value = LR"SQL(CREATE PROCEDURE dbo.sp_StoreSubItemsList
+    @depth1 SMALLINT,
+    @PageNm INT,
+    @PageSize INT,
+    @search1 SMALLINT,
+    @search2 SMALLINT,
+    @search3 SMALLINT,
+    @search4 VARCHAR(100),
+    @TotalCnt INT OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    CREATE TABLE #sdgo_selected_parents
+    (
+        sdgo_parent_order INT IDENTITY(1, 1) NOT NULL,
+        f_productid INT NOT NULL,
+        f_itemid VARCHAR(50) NOT NULL,
+        f_subitemCnt INT NULL,
+        f_depth3 SMALLINT NOT NULL,
+        f_price INT NULL,
+        f_payment VARCHAR(8) NULL,
+        f_limitedAdition VARCHAR(8) NULL,
+        f_quantity INT NOT NULL,
+        f_package VARCHAR(8) NULL,
+        f_limitedGift VARCHAR(8) NULL
+    );
+
+    INSERT #sdgo_selected_parents
+    (
+        f_productid,
+        f_itemid,
+        f_subitemCnt,
+        f_depth3,
+        f_price,
+        f_payment,
+        f_limitedAdition,
+        f_quantity,
+        f_package,
+        f_limitedGift
+    )
+    EXEC dbo.sp_StoreItemsList
+        @depth1,
+        @PageNm,
+        @PageSize,
+        @search1,
+        @search2,
+        @search3,
+        @search4,
+        @TotalCnt OUTPUT;
+
+    SELECT
+        S.f_productid,
+        B.f_itemtblidx,
+        B.f_price,
+        B.f_itemNm,
+        B.f_validity,
+        B.f_payment,
+        B.f_categoryNumber,
+        S.f_package
+    FROM #sdgo_selected_parents AS P
+    JOIN dbo.tbls_StoreItems AS S
+        ON S.f_productid = P.f_productid
+    JOIN dbo.tbls_SubItems AS B
+        ON B.f_itemid = S.f_itemid
+    ORDER BY
+        P.sdgo_parent_order ASC,
+        B.f_index DESC,
+        B.f_validity ASC;
+END)SQL";
+    return value;
+}
+
 } // namespace detail
 
 inline std::wstring BuildInstallSql(
     const std::vector<Alias>& input,
-    const std::wstring& expectedCurrentDefinition,
+    const std::wstring& expectedCurrentMainDefinition,
+    const std::wstring& expectedCurrentSubDefinition,
     const std::wstring& revision)
 {
     detail::ValidateText(
-        expectedCurrentDefinition,
+        expectedCurrentMainDefinition,
         std::numeric_limits<std::size_t>::max(),
-        "expectedCurrentDefinition");
+        "expectedCurrentMainDefinition");
+    detail::ValidateText(
+        expectedCurrentSubDefinition,
+        std::numeric_limits<std::size_t>::max(),
+        "expectedCurrentSubDefinition");
     detail::ValidateText(revision, 128, "revision");
 
     std::vector<Alias> aliases = input;
@@ -300,31 +381,48 @@ inline std::wstring BuildInstallSql(
     }
     aliases = std::move(normalized);
 
-    const auto& procedure = detail::ProcedureDefinition();
+    const auto& mainProcedure = detail::ProcedureDefinition();
+    const auto& subProcedure = detail::SubProcedureDefinition();
     std::wstring sql;
     sql.reserve(
-        expectedCurrentDefinition.size() * 2 + procedure.size() * 2 +
-        aliases.size() * 160 + 7000);
+        expectedCurrentMainDefinition.size() * 2 +
+        expectedCurrentSubDefinition.size() * 2 +
+        mainProcedure.size() * 2 + subProcedure.size() * 2 +
+        aliases.size() * 160 + 12000);
     sql += L"SET NOCOUNT ON;\nSET XACT_ABORT ON;\n";
-    sql += L"DECLARE @ExpectedCurrentDefinition NVARCHAR(MAX) = ";
-    sql += detail::MaxLiteral(expectedCurrentDefinition);
-    sql += L";\nDECLARE @IntendedInstalledDefinition NVARCHAR(MAX) = ";
-    sql += detail::MaxLiteral(procedure);
+    sql += L"DECLARE @ExpectedCurrentMainDefinition NVARCHAR(MAX) = ";
+    sql += detail::MaxLiteral(expectedCurrentMainDefinition);
+    sql += L";\nDECLARE @ExpectedCurrentSubDefinition NVARCHAR(MAX) = ";
+    sql += detail::MaxLiteral(expectedCurrentSubDefinition);
+    sql += L";\nDECLARE @IntendedInstalledMainDefinition NVARCHAR(MAX) = ";
+    sql += detail::MaxLiteral(mainProcedure);
+    sql += L";\nDECLARE @IntendedInstalledSubDefinition NVARCHAR(MAX) = ";
+    sql += detail::MaxLiteral(subProcedure);
     sql += L";\nDECLARE @Revision NVARCHAR(128) = ";
     sql += detail::Literal(revision);
     sql += LR"SQL(;
-DECLARE @CurrentDefinition NVARCHAR(MAX);
-DECLARE @OwnedInstalledDefinition NVARCHAR(MAX);
-DECLARE @OriginalDefinition NVARCHAR(MAX);
-DECLARE @ActualInstalledDefinition NVARCHAR(MAX);
-DECLARE @InstallBatch NVARCHAR(MAX);
-DECLARE @Owner NVARCHAR(128);
+DECLARE @CurrentMainDefinition NVARCHAR(MAX);
+DECLARE @CurrentSubDefinition NVARCHAR(MAX);
+DECLARE @OwnedInstalledMainDefinition NVARCHAR(MAX);
+DECLARE @OwnedInstalledSubDefinition NVARCHAR(MAX);
+DECLARE @OriginalMainDefinition NVARCHAR(MAX);
+DECLARE @OriginalSubDefinition NVARCHAR(MAX);
+DECLARE @ActualInstalledMainDefinition NVARCHAR(MAX);
+DECLARE @ActualInstalledSubDefinition NVARCHAR(MAX);
+DECLARE @MainInstallBatch NVARCHAR(MAX);
+DECLARE @SubInstallBatch NVARCHAR(MAX);
+DECLARE @AliasesOwner NVARCHAR(128);
+DECLARE @StateOwner NVARCHAR(128);
+DECLARE @BackupOwner NVARCHAR(128);
+DECLARE @InitialOwner NVARCHAR(128);
 DECLARE @LockResult INT;
 DECLARE @CreatedAliases BIT = 0;
 DECLARE @CreatedState BIT = 0;
 DECLARE @CreatedBackup BIT = 0;
-SET @InstallBatch =
-    STUFF(@IntendedInstalledDefinition, 1, 6, N'ALTER');
+SET @MainInstallBatch =
+    STUFF(@IntendedInstalledMainDefinition, 1, 6, N'ALTER');
+SET @SubInstallBatch =
+    STUFF(@IntendedInstalledSubDefinition, 1, 6, N'ALTER');
 
 BEGIN TRY
     BEGIN TRANSACTION;
@@ -373,55 +471,61 @@ BEGIN TRY
 
     IF @CreatedAliases = 1
         EXEC sys.sp_addextendedproperty
-            @name=N'sdgo_owner', @value=N'shop_search/v1',
+            @name=N'sdgo_owner', @value=N'shop_search/v2',
             @level0type=N'SCHEMA', @level0name=N'dbo',
             @level1type=N'TABLE',
             @level1name=N'sdgo_ShopSearchAliases';
     IF @CreatedState = 1
         EXEC sys.sp_addextendedproperty
-            @name=N'sdgo_owner', @value=N'shop_search/v1',
+            @name=N'sdgo_owner', @value=N'shop_search/v2',
             @level0type=N'SCHEMA', @level0name=N'dbo',
             @level1type=N'TABLE',
             @level1name=N'sdgo_ShopSearchState';
     IF @CreatedBackup = 1
         EXEC sys.sp_addextendedproperty
-            @name=N'sdgo_owner', @value=N'shop_search/v1',
+            @name=N'sdgo_owner', @value=N'shop_search/v2',
             @level0type=N'SCHEMA', @level0name=N'dbo',
             @level1type=N'TABLE',
             @level1name=N'sdgo_ShopSearchBackup';
 
-    SELECT @Owner = CONVERT(NVARCHAR(128), value)
+    SELECT @AliasesOwner = CONVERT(NVARCHAR(128), value)
     FROM sys.extended_properties
     WHERE class = 1
         AND major_id = OBJECT_ID(N'dbo.sdgo_ShopSearchAliases', N'U')
         AND minor_id = 0
         AND name = N'sdgo_owner';
-    IF ISNULL(@Owner, N'') <> N'shop_search/v1'
+    IF ISNULL(@AliasesOwner, N'') NOT IN
+            (N'shop_search/v1', N'shop_search/v2')
     BEGIN
         ;THROW 51007, 'shop search alias table belongs to another owner', 1;
     END;
-    SET @Owner = NULL;
-    SELECT @Owner = CONVERT(NVARCHAR(128), value)
+    SELECT @StateOwner = CONVERT(NVARCHAR(128), value)
     FROM sys.extended_properties
     WHERE class = 1
         AND major_id = OBJECT_ID(N'dbo.sdgo_ShopSearchState', N'U')
         AND minor_id = 0
         AND name = N'sdgo_owner';
-    IF ISNULL(@Owner, N'') <> N'shop_search/v1'
+    IF ISNULL(@StateOwner, N'') NOT IN
+            (N'shop_search/v1', N'shop_search/v2')
     BEGIN
         ;THROW 51008, 'shop search state table belongs to another owner', 1;
     END;
-    SET @Owner = NULL;
-    SELECT @Owner = CONVERT(NVARCHAR(128), value)
+    SELECT @BackupOwner = CONVERT(NVARCHAR(128), value)
     FROM sys.extended_properties
     WHERE class = 1
         AND major_id = OBJECT_ID(N'dbo.sdgo_ShopSearchBackup', N'U')
         AND minor_id = 0
         AND name = N'sdgo_owner';
-    IF ISNULL(@Owner, N'') <> N'shop_search/v1'
+    IF ISNULL(@BackupOwner, N'') NOT IN
+            (N'shop_search/v1', N'shop_search/v2')
     BEGIN
         ;THROW 51009, 'shop search backup table belongs to another owner', 1;
     END;
+    IF @AliasesOwner <> @StateOwner OR @AliasesOwner <> @BackupOwner
+    BEGIN
+        ;THROW 51013, 'shop search owned table versions disagree', 1;
+    END;
+    SET @InitialOwner = @AliasesOwner;
 
     IF COL_LENGTH(N'dbo.sdgo_ShopSearchAliases', N'ProductId') <> 4
         OR COL_LENGTH(N'dbo.sdgo_ShopSearchAliases', N'OriginalName') <> 100
@@ -436,51 +540,113 @@ BEGIN TRY
         ;THROW 51010, 'shop search owned table layout mismatch', 1;
     END;
 
-    SELECT @CurrentDefinition =
+)SQL";
+    sql += LR"SQL(
+    SELECT @CurrentMainDefinition =
         OBJECT_DEFINITION(OBJECT_ID(N'dbo.sp_StoreItemsList', N'P'));
-    IF @CurrentDefinition IS NULL
+    SELECT @CurrentSubDefinition =
+        OBJECT_DEFINITION(OBJECT_ID(N'dbo.sp_StoreSubItemsList', N'P'));
+    IF @CurrentMainDefinition IS NULL OR @CurrentSubDefinition IS NULL
     BEGIN
-        ;THROW 51001, 'native shop search procedure unavailable', 1;
+        ;THROW 51001, 'native shop search procedures unavailable', 1;
     END;
-    IF DATALENGTH(@CurrentDefinition) <>
-            DATALENGTH(@ExpectedCurrentDefinition)
-        OR @CurrentDefinition COLLATE Latin1_General_100_BIN2 <>
-            @ExpectedCurrentDefinition COLLATE Latin1_General_100_BIN2
+    IF DATALENGTH(@CurrentMainDefinition) <>
+            DATALENGTH(@ExpectedCurrentMainDefinition)
+        OR @CurrentMainDefinition COLLATE Latin1_General_100_BIN2 <>
+            @ExpectedCurrentMainDefinition COLLATE Latin1_General_100_BIN2
     BEGIN
-        ;THROW 51002, 'shop search procedure changed after inspection', 1;
+        ;THROW 51002, 'main shop search procedure changed after inspection', 1;
+    END;
+    IF DATALENGTH(@CurrentSubDefinition) <>
+            DATALENGTH(@ExpectedCurrentSubDefinition)
+        OR @CurrentSubDefinition COLLATE Latin1_General_100_BIN2 <>
+            @ExpectedCurrentSubDefinition COLLATE Latin1_General_100_BIN2
+    BEGIN
+        ;THROW 51014, 'sub shop search procedure changed after inspection', 1;
     END;
 
-    SELECT @OwnedInstalledDefinition = InstalledDefinition
+    SELECT @OwnedInstalledMainDefinition = InstalledDefinition
     FROM dbo.sdgo_ShopSearchState WITH (UPDLOCK, HOLDLOCK)
     WHERE ObjectName = N'dbo.sp_StoreItemsList';
-    SELECT @OriginalDefinition = OriginalDefinition
+    SELECT @OwnedInstalledSubDefinition = InstalledDefinition
+    FROM dbo.sdgo_ShopSearchState WITH (UPDLOCK, HOLDLOCK)
+    WHERE ObjectName = N'dbo.sp_StoreSubItemsList';
+    SELECT @OriginalMainDefinition = OriginalDefinition
     FROM dbo.sdgo_ShopSearchBackup WITH (UPDLOCK, HOLDLOCK)
     WHERE ObjectName = N'dbo.sp_StoreItemsList';
+    SELECT @OriginalSubDefinition = OriginalDefinition
+    FROM dbo.sdgo_ShopSearchBackup WITH (UPDLOCK, HOLDLOCK)
+    WHERE ObjectName = N'dbo.sp_StoreSubItemsList';
 
-    IF @OwnedInstalledDefinition IS NOT NULL
+    IF @CreatedState = 0 AND @InitialOwner = N'shop_search/v2'
+        AND
+        (
+            @OwnedInstalledMainDefinition IS NULL
+            OR @OwnedInstalledSubDefinition IS NULL
+            OR @OriginalMainDefinition IS NULL
+            OR @OriginalSubDefinition IS NULL
+        )
     BEGIN
-        IF DATALENGTH(@CurrentDefinition) <>
-                DATALENGTH(@OwnedInstalledDefinition)
-            OR @CurrentDefinition COLLATE Latin1_General_100_BIN2 <>
-                @OwnedInstalledDefinition COLLATE Latin1_General_100_BIN2
+        ;THROW 51015, 'shop search v2 ownership state is incomplete', 1;
+    END;
+    IF @CreatedState = 0 AND @InitialOwner = N'shop_search/v1'
+        AND @OwnedInstalledMainDefinition IS NULL
+    BEGIN
+        ;THROW 51005, 'shop search v1 ownership state is incomplete', 1;
+    END;
+
+    IF @OwnedInstalledMainDefinition IS NOT NULL
+    BEGIN
+        IF DATALENGTH(@CurrentMainDefinition) <>
+                DATALENGTH(@OwnedInstalledMainDefinition)
+            OR @CurrentMainDefinition COLLATE Latin1_General_100_BIN2 <>
+                @OwnedInstalledMainDefinition COLLATE Latin1_General_100_BIN2
         BEGIN
-            ;THROW 51003, 'owned shop search procedure has an external edit', 1;
+            ;THROW 51003, 'owned main shop search procedure has an external edit', 1;
         END;
-        IF @OriginalDefinition IS NULL
+        IF @OriginalMainDefinition IS NULL
         BEGIN
-            ;THROW 51004, 'owned shop search backup is missing', 1;
+            ;THROW 51004, 'owned main shop search backup is missing', 1;
         END;
     END
     ELSE
     BEGIN
-        IF @OriginalDefinition IS NOT NULL
+        IF @OriginalMainDefinition IS NOT NULL
         BEGIN
-            ;THROW 51005, 'shop search ownership state is incomplete', 1;
+            ;THROW 51005, 'main shop search ownership state is incomplete', 1;
         END;
         INSERT dbo.sdgo_ShopSearchBackup(
             ObjectName, OriginalDefinition, CreatedAt)
         VALUES(
-            N'dbo.sp_StoreItemsList', @CurrentDefinition, SYSUTCDATETIME());
+            N'dbo.sp_StoreItemsList', @CurrentMainDefinition,
+            SYSUTCDATETIME());
+    END;
+
+    IF @OwnedInstalledSubDefinition IS NOT NULL
+    BEGIN
+        IF DATALENGTH(@CurrentSubDefinition) <>
+                DATALENGTH(@OwnedInstalledSubDefinition)
+            OR @CurrentSubDefinition COLLATE Latin1_General_100_BIN2 <>
+                @OwnedInstalledSubDefinition COLLATE Latin1_General_100_BIN2
+        BEGIN
+            ;THROW 51016, 'owned sub shop search procedure has an external edit', 1;
+        END;
+        IF @OriginalSubDefinition IS NULL
+        BEGIN
+            ;THROW 51017, 'owned sub shop search backup is missing', 1;
+        END;
+    END
+    ELSE
+    BEGIN
+        IF @OriginalSubDefinition IS NOT NULL
+        BEGIN
+            ;THROW 51018, 'sub shop search ownership state is incomplete', 1;
+        END;
+        INSERT dbo.sdgo_ShopSearchBackup(
+            ObjectName, OriginalDefinition, CreatedAt)
+        VALUES(
+            N'dbo.sp_StoreSubItemsList', @CurrentSubDefinition,
+            SYSUTCDATETIME());
     END;
 
     DELETE FROM dbo.sdgo_ShopSearchAliases;
@@ -551,17 +717,28 @@ BEGIN TRY
     FROM @CanonicalAlias AS I
     GROUP BY I.ProductId, I.OriginalName;
 
-    EXEC(@InstallBatch);
+    EXEC(@MainInstallBatch);
+    EXEC(@SubInstallBatch);
 
-    SELECT @ActualInstalledDefinition =
+    SELECT @ActualInstalledMainDefinition =
         OBJECT_DEFINITION(OBJECT_ID(N'dbo.sp_StoreItemsList', N'P'));
-    IF @ActualInstalledDefinition IS NULL
-        OR DATALENGTH(@ActualInstalledDefinition) <>
-            DATALENGTH(@IntendedInstalledDefinition)
-        OR @ActualInstalledDefinition COLLATE Latin1_General_100_BIN2 <>
-            @IntendedInstalledDefinition COLLATE Latin1_General_100_BIN2
+    SELECT @ActualInstalledSubDefinition =
+        OBJECT_DEFINITION(OBJECT_ID(N'dbo.sp_StoreSubItemsList', N'P'));
+    IF @ActualInstalledMainDefinition IS NULL
+        OR DATALENGTH(@ActualInstalledMainDefinition) <>
+            DATALENGTH(@IntendedInstalledMainDefinition)
+        OR @ActualInstalledMainDefinition COLLATE Latin1_General_100_BIN2 <>
+            @IntendedInstalledMainDefinition COLLATE Latin1_General_100_BIN2
     BEGIN
-        ;THROW 51006, 'shop search procedure readback mismatch', 1;
+        ;THROW 51006, 'main shop search procedure readback mismatch', 1;
+    END;
+    IF @ActualInstalledSubDefinition IS NULL
+        OR DATALENGTH(@ActualInstalledSubDefinition) <>
+            DATALENGTH(@IntendedInstalledSubDefinition)
+        OR @ActualInstalledSubDefinition COLLATE Latin1_General_100_BIN2 <>
+            @IntendedInstalledSubDefinition COLLATE Latin1_General_100_BIN2
+    BEGIN
+        ;THROW 51019, 'sub shop search procedure readback mismatch', 1;
     END;
 
     IF EXISTS(
@@ -569,7 +746,7 @@ BEGIN TRY
         WHERE ObjectName = N'dbo.sp_StoreItemsList')
         UPDATE dbo.sdgo_ShopSearchState
         SET Revision = @Revision,
-            InstalledDefinition = @ActualInstalledDefinition,
+            InstalledDefinition = @ActualInstalledMainDefinition,
             UpdatedAt = SYSUTCDATETIME()
         WHERE ObjectName = N'dbo.sp_StoreItemsList';
     ELSE
@@ -577,7 +754,41 @@ BEGIN TRY
             ObjectName, Revision, InstalledDefinition, UpdatedAt)
         VALUES(
             N'dbo.sp_StoreItemsList', @Revision,
-            @ActualInstalledDefinition, SYSUTCDATETIME());
+            @ActualInstalledMainDefinition, SYSUTCDATETIME());
+
+    IF EXISTS(
+        SELECT 1 FROM dbo.sdgo_ShopSearchState
+        WHERE ObjectName = N'dbo.sp_StoreSubItemsList')
+        UPDATE dbo.sdgo_ShopSearchState
+        SET Revision = @Revision,
+            InstalledDefinition = @ActualInstalledSubDefinition,
+            UpdatedAt = SYSUTCDATETIME()
+        WHERE ObjectName = N'dbo.sp_StoreSubItemsList';
+    ELSE
+        INSERT dbo.sdgo_ShopSearchState(
+            ObjectName, Revision, InstalledDefinition, UpdatedAt)
+        VALUES(
+            N'dbo.sp_StoreSubItemsList', @Revision,
+            @ActualInstalledSubDefinition, SYSUTCDATETIME());
+
+    IF @InitialOwner = N'shop_search/v1'
+    BEGIN
+        EXEC sys.sp_updateextendedproperty
+            @name=N'sdgo_owner', @value=N'shop_search/v2',
+            @level0type=N'SCHEMA', @level0name=N'dbo',
+            @level1type=N'TABLE',
+            @level1name=N'sdgo_ShopSearchAliases';
+        EXEC sys.sp_updateextendedproperty
+            @name=N'sdgo_owner', @value=N'shop_search/v2',
+            @level0type=N'SCHEMA', @level0name=N'dbo',
+            @level1type=N'TABLE',
+            @level1name=N'sdgo_ShopSearchState';
+        EXEC sys.sp_updateextendedproperty
+            @name=N'sdgo_owner', @value=N'shop_search/v2',
+            @level0type=N'SCHEMA', @level0name=N'dbo',
+            @level1type=N'TABLE',
+            @level1name=N'sdgo_ShopSearchBackup';
+    END;
 
     COMMIT TRANSACTION;
 END TRY
