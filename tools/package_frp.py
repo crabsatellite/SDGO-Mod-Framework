@@ -70,6 +70,7 @@ def contents(repo: Path, binaries: Path) -> dict[str, bytes]:
         for mod in mods:
             add(f"payload/{side}/mods/{mod}/{mod}.dll", binaries/f"{mod}.dll")
             add(f"payload/{side}/mods/{mod}/mod.ini", repo/f"mods/{mod}/mod.ini")
+            add(f"payload/{side}/mods/{mod}/manager.json", repo/f"mods/{mod}/manager.json")
             template = repo/f"mods/{mod}/config.example.ini"
             if template.exists():
                 add(f"payload/{side}/mods/{mod}/config.example.ini", template)
