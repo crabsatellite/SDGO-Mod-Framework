@@ -317,9 +317,9 @@ add_custom_target(sdgo_data ALL
 )
 # Direct builds of this lifecycle fix also need its admitted host signature.
 add_dependencies(waitroom_window_fix sdgo_data)
-# A GameTest build must ship the symbol map required by its current manifest,
-# including when only this target is built instead of ALL_BUILD.
-add_dependencies(game_test_client sdgo_data)
+# A direct GameTest build needs its symbol map and the matching PvP observer
+# implementation; retaining an older installed DLL can hide new status exports.
+add_dependencies(game_test_client sdgo_data match_ai)
 
 # The same manifests drive package selection and runtime category/feature gates.
 add_custom_target(sdgo_catalog ALL
