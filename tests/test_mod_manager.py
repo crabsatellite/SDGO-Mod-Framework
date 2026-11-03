@@ -90,7 +90,7 @@ class ManagerTests(unittest.TestCase):
     def test_all_published_setting_keys_have_contracts(self):
         for identity,contract in self.workspace.contracts.items():
             root=ROOT/'mods'/identity
-            declared={f['key'].lower() for f in contract['settings']}
+            declared={f['key'].lower() for f in contract.get('settings',[])}
             for name in ('mod.ini','config.example.ini'):
                 if (root/name).exists():
                     parser=storage.ini_values((root/name).read_bytes())
