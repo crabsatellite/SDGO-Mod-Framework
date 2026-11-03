@@ -12,6 +12,7 @@ concurrency:
 jobs:
   publish:
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.1.0
@@ -31,6 +32,7 @@ jobs:
           "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
           "RELEASE_CHANNEL=$channel" >> $env:GITHUB_ENV
       - name: Update integrity and install regression
+        timeout-minutes: 3
         run: python -m unittest discover -s tests -p "test_manager_updates*.py" -v
       - name: Build and validate exact release bytes
         run: python tools/build_release.py --build --channel $env:RELEASE_CHANNEL --version $env:RELEASE_VERSION

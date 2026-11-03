@@ -1,4 +1,4 @@
-# Storage claim all (Beta)
+# Storage claim all
 
 Client Mod `storage_claim` adds **一键领取** beside the two native storage tabs.
 [简体中文](storage-claim.zh-CN.md)
