@@ -7,6 +7,21 @@ import test_game_test as runner_fixture
 game_test=runner_fixture.game_test
 
 class UnitScenarioTests(unittest.TestCase):
+    def test_one_activity_draw_requires_typed_pairs_and_retains_legacy_inputs(self):
+        context={'pages_only':True,'play_unit_uid':17}
+        old={'schema':1,'capture_frames':True,'portraits':True,'collection_preview':True,
+            'activity_target':{'machine_id':7,'price':13,'currency':0}}
+        self.assertEqual(scope.validate(old,context),old)
+        draw=old|{'activity_draw':True,'reward_pairs':[[1110001,1],[1520001,1],[2220001,2]]}
+        result=scope.bind(draw,context)['unit_scenario']
+        self.assertEqual(scope.cases(result)[-1],'pages.activity.draw')
+        self.assertNotIn('pages.collection.delivery',scope.cases(result))
+        self.assertEqual(scope.settings(result)['ActivityRewardAmount2'],'2')
+        for change in ({'reward_pairs':[[1110001,1]]},{'reward_pairs':[[1110001,1],[1110001,1]]},
+            {'reward_pairs':[[1300001,1],[2220001,1]]},{'reward_pairs':[[1110001,True],[2220001,1]]}):
+            with self.assertRaises(ValueError):scope.bind(draw|change,context)
+        with self.assertRaises(ValueError):scope.bind(old|{'reward_pairs':draw['reward_pairs']},context)
+
     def test_custom_activity_target_is_preview_only_and_typed(self):
         context={'pages_only':True,'play_unit_uid':17}
         target={'machine_id':7,'price':13,'currency':2}

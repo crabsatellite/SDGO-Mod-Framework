@@ -1760,10 +1760,17 @@ void TestConfiguredTarget()
     NativeActions native;
     CapsuleDrawActions actions;
     Check(actions.ConfigureTarget({7,13,0}),"explicit preview target is accepted before binding");
+    Check(actions.ConfigureRewards({{1110001,1},{1520001,1},{2220001,2}}) &&
+          actions.AcceptsReward(1520001,1) && actions.AcceptsReward(2220001,2) &&
+          !actions.AcceptsReward(2220001,1) && !actions.AcceptsReward(1110002,1),
+          "explicit activity reward pairs match exact typed category and amount");
+    Check(!actions.ConfigureRewards({{1110001,1},{1110001,1}}) &&
+          !actions.ConfigureRewards({{1300001,1}}),"duplicate or unsupported reward pairs are refused");
     Check(!actions.ConfigureTarget({0,13,0}) && !actions.ConfigureTarget({7,0,0}) &&
           !actions.ConfigureTarget({7,13,3}),"invalid target values cannot replace the accepted profile");
     Check(Bind(native,actions),"configured target uses the same native ABI bindings");
     Check(!actions.ConfigureTarget({kMachineId,kPrice,0}),"an armed native target cannot be replaced");
+    Check(!actions.ConfigureRewards({{1110001,1}}),"armed reward expectations cannot change");
     const auto result=DrivePreview(actions);
     Check(result==CapsuleDrawActions::kTargetMachineMismatch && actions.State().target_machine==7 &&
           !actions.State().buy_attempted && g_networkCalls==0 && g_buyCalls==0,

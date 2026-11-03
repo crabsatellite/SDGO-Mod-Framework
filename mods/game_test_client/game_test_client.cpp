@@ -146,6 +146,7 @@ QuietAudio quietAudio;
 QuietGraphics quietGraphics;
 bool captureNativeFrames=false;
 bool unitPagesOnly=false;
+bool activityDrawOnce=false;
 bool testUnitPresentations=false;
 bool captureUnitPortraits=false;
 UnitPresentationsActions unitPresentations;
@@ -203,6 +204,18 @@ bool LoadPlan() {
     capsuleTarget.price=GetPrivateProfileIntW(L"settings",L"CapsulePreviewPrice",capsuleTarget.price,acquisitionIni.c_str());
     capsuleTarget.currency=GetPrivateProfileIntW(L"settings",L"CapsulePreviewCurrency",capsuleTarget.currency,acquisitionIni.c_str());
     if(!collection.ConfigureTarget(capsuleTarget))return false;
+    activityDrawOnce=GetPrivateProfileIntW(L"settings",L"ActivityDrawOnce",0,acquisitionIni.c_str())==1;
+    const auto rewardCount=GetPrivateProfileIntW(L"settings",L"ActivityRewardCount",0,acquisitionIni.c_str());
+    if(rewardCount>128 || (activityDrawOnce && rewardCount<2) || (!activityDrawOnce && rewardCount))return false;
+    std::vector<CapsuleDrawActions::Reward> activityRewards;
+    for(unsigned i=0;i<rewardCount;++i) {
+        wchar_t key[64]{};swprintf_s(key,L"ActivityRewardCategory%u",i);
+        const auto category=GetPrivateProfileIntW(L"settings",key,0,acquisitionIni.c_str());
+        swprintf_s(key,L"ActivityRewardAmount%u",i);
+        const auto amount=GetPrivateProfileIntW(L"settings",key,0,acquisitionIni.c_str());
+        activityRewards.push_back({category,amount});
+    }
+    if(!collection.ConfigureRewards(activityRewards))return false;
     unitAcquisitionConfig.machine_kind=GetPrivateProfileIntW(L"settings",L"UnitAcquisitionKind",0,acquisitionIni.c_str());
     unitAcquisitionConfig.machine_id=GetPrivateProfileIntW(L"settings",L"UnitAcquisitionMachine",0,acquisitionIni.c_str());
     unitAcquisitionConfig.unit_id=GetPrivateProfileIntW(L"settings",L"UnitAcquisitionUnit",0,acquisitionIni.c_str());
@@ -248,6 +261,7 @@ bool LoadPlan() {
     collectionDraw=GetPrivateProfileIntW(L"run",L"collection_draw",0,job.c_str())!=0;
     if(collectionDraw && !pagesOnly)return false;
     if(collectionPreviewOnly && (!pagesOnly || collectionDraw))return false;
+    if(activityDrawOnce && (!unitPagesOnly || !collectionPreviewOnly || collectionDraw || !testUnitPresentations))return false;
     if((capsuleTarget.machine!=990001 || capsuleTarget.price!=100000 || capsuleTarget.currency!=0) &&
         (!collectionPreviewOnly || collectionDraw))return false;
     if(unitAcquisitionConfig.machine_kind && (!pagesOnly || collectionDraw || collectionPreviewOnly ||
@@ -1828,8 +1842,7 @@ int __cdecl DrawCollection(const SdgoGameTestContextV1* context) {
     state=collection.State();
     context->Assert(state.buy_attempted && state.buy_submitted && state.request_opcode==0x05D3 && state.request_size==10 &&
         !state.result_reply_status && state.acknowledgement_opcode==0x09C6 &&
-        state.original_reply_completed && state.dropbox_serial && state.reward_item_category>=1100000 &&
-        state.reward_item_category<1200000 && state.reward_amount==1,
+        state.original_reply_completed && state.dropbox_serial && collection.AcceptsReward(state.reward_item_category,state.reward_amount),
         "one original activity purchase consumed genuine delivery acknowledgements and its original result-close callback was accepted");
     return SDGO_GAME_TEST_PASS;
 }
@@ -2428,6 +2441,7 @@ void RegisterPlannedCases() {
             if(unitAcquisitionConfig.machine_kind || collectionPreviewOnly)plannedCases.push_back(pageCases[7]);
             if(unitAcquisitionConfig.machine_kind)plannedCases.push_back(unitAcquisitionCase);
             if(collectionPreviewOnly)plannedCases.push_back(collectionCases[0]);
+            if(activityDrawOnce)plannedCases.push_back({"pages.activity.draw",120000,&DrawCollection});
             provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
         }
         plannedCases.insert(plannedCases.end(),std::begin(pageCases),std::begin(pageCases)+5);
