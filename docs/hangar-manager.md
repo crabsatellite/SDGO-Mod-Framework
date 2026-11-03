@@ -1,7 +1,6 @@
 # Hangar manager
 
-Sorting and the native per-unit item exchange use the established workflows below.
-The newer server GB batch flow remains in Beta and is assessed separately.
+Sorting, native item exchange and server-side GB batch exchange are available in the current stable release.
 
 [简体中文](hangar-manager.zh-CN.md)
 
@@ -28,7 +27,7 @@ After submitting, **log in again** to see the result.
   `tbl_UnitGradeInfo` and native dismantling decide the actual reward.
 - Preview and the first confirmation delete nothing; two confirmations are required.
 
-**GB batch exchange (Beta)** builds the list from the native inventory summary. After confirmation the exact
+**GB batch exchange** builds the list from the native inventory summary. After confirmation the exact
 instances, unit numbers and slots go to the server, which rechecks ownership, protection, KeepCopies and
 rewards, dismantles natively and credits GB in one transaction. Incomplete or stale lists and any failure
 change nothing; repeated submissions do not pay twice. Log in again afterwards.

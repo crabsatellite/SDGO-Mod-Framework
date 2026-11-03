@@ -422,6 +422,10 @@ public:
         return observed;
     }
 
+    bool InventoryPageRequestSeen() const noexcept {
+        return InterlockedCompareExchange(&inventoryPageObservations_,0,0)!=0;
+    }
+
     TransportObservation FindTransportSince(
         uint32_t baseline,
         uint16_t opcode) const
@@ -660,6 +664,12 @@ private:
         }
 
         uint32_t refreshRoom = 0;
+        uint64_t inventoryCursor = 0;
+        bool inventoryCursorValid = false;
+        if (opcode == 0x048A && packet && size == 14) {
+            __try { memcpy(&inventoryCursor,static_cast<const uint8_t*>(packet)+6,8);inventoryCursorValid=true; }
+            __except(EXCEPTION_EXECUTE_HANDLER) {}
+        }
         if ((opcode == 0x0943 || opcode == 0x08A5) && packet && size == 10) {
             __try { memcpy(&refreshRoom, static_cast<const uint8_t*>(packet) + 6, 4); }
             __except (EXCEPTION_EXECUTE_HANDLER) { refreshRoom = 0; }
@@ -668,6 +678,9 @@ private:
         const int result =
             actions->networkSend_(network, stream, packet, size, flag);
         const DWORD error = GetLastError();
+        if (inventoryCursorValid && InterlockedIncrement(&actions->inventoryPageObservations_)<=5 && actions->api_ && actions->api_->Log)
+            actions->api_->Log(actions->mod_,SDGO_LOG_INFO,"original inventory page request cursor=%llu bytes=%d result=%d",
+                static_cast<unsigned long long>(inventoryCursor),size,result);
 
         while (InterlockedCompareExchange(
                    &actions->transportPublishGuard_,
@@ -820,6 +833,7 @@ private:
     mutable volatile LONG transportSequence_ = 0;
     mutable volatile LONG transportOpcode_ = 0;
     mutable volatile LONG transportSize_ = 0;
+    mutable volatile LONG inventoryPageObservations_ = 0;
     mutable volatile LONG transportResult_ = 0;
     mutable volatile LONG gameStartSends_ = 0;
     mutable volatile LONG transportPublishGuard_ = 0;

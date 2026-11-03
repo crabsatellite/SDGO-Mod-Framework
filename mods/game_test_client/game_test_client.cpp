@@ -1493,6 +1493,45 @@ int __cdecl ReadStoragePage(const SdgoGameTestContextV1* context) {
     }
     return SDGO_GAME_TEST_WAIT;
 }
+int FriendStorageAction(const SdgoGameTestContextV1* context,uint32_t operation) {
+    static bool bound=false;
+    if(!bound){if(!storage.Bind())return SDGO_GAME_TEST_FAIL;bound=true;}
+    if(operation==1)return ReadStoragePage(context);
+    if(operation==3) {
+        const auto closed=storage.Close(context);
+        if(closed>=StorageTestActions::Invalid)return SDGO_GAME_TEST_FAIL;
+        if(closed!=StorageTestActions::Complete)return SDGO_GAME_TEST_WAIT;
+        static bool boundHangar=false;
+        if(!boundHangar){
+            if(!hangarNavigation.Bind(sdgo_test::api,sdgo_test::mod,&actions) || !pages.Bind())return SDGO_GAME_TEST_FAIL;
+            boundHangar=true;
+        }
+        const auto navigation=hangarNavigation.EnsureUnitManagementPage();
+        static uint32_t previousNavigation=UINT32_MAX;
+        if(navigation!=previousNavigation){char text[128];sprintf_s(text,"post-storage native hangar entry=%s",HangarNavigation::ResultName(navigation));context->Observe(text);previousNavigation=navigation;}
+        if(navigation>=HangarNavigation::kDownmenuServiceMismatch || navigation==HangarNavigation::kUnbound)return SDGO_GAME_TEST_FAIL;
+        if(navigation!=HangarNavigation::kReady)return SDGO_GAME_TEST_WAIT;
+        const auto read=pages.PollHangarRead(context);
+        static uint32_t previousRead=UINT32_MAX;
+        if(read!=previousRead){char text[128];sprintf_s(text,"post-storage native inventory read=%s",PageTestActions::ResultName(read));context->Observe(text);previousRead=read;}
+        if(read>=PageTestActions::kInvalidContext)return SDGO_GAME_TEST_FAIL;
+        return read==PageTestActions::kReadReady?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_WAIT;
+    }
+    const auto result=storage.Claim(context);
+    if(result>=StorageTestActions::Invalid)return SDGO_GAME_TEST_FAIL;
+    return result==StorageTestActions::Complete?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_WAIT;
+}
+void FriendStorageWrite(FILE* file) {
+    const auto state=storage.State();
+    fprintf(file,"[storage]\nloaded=%u\nvisible=%u\ntab=%u\ntotal=%u\nentries=%u\ncompleted=%u\nphase=%u\nreason=%u\nbusy=%u\noutstanding=%u\nactions=%u\nreplies=%u\npreflight_replies=%u\n",
+        state.loaded,state.visible,state.current_tab,state.total,state.page_entry_count,state.completed,
+        state.batch_phase,state.batch_reason,state.busy,state.outstanding,state.action_sequence,state.reply_sequence,state.preflight_reply_sequence);
+    const auto& units=pages.CurrentUnits();
+    fprintf(file,"[storage_inventory]\ncount=%u\n",static_cast<unsigned>(units.size()));
+    for(unsigned i=0;i<units.size();++i)
+        fprintf(file,"[storage_inventory_unit%u]\nuid=%llu\nunit=%u\nslot=%u\n",i,
+            static_cast<unsigned long long>(units[i].uid),units[i].unit_id,units[i].slot);
+}
 int __cdecl ClaimStoragePage(const SdgoGameTestContextV1* context) {
     static bool verifyingInventory=false;
     static std::vector<SdgoHangarGameTestUnitV1> beforeClaim;
@@ -2238,7 +2277,7 @@ friends::FriendActions::Result CreateFriendInviteRoom(void*,const SdgoGameTestCo
 }
 int __cdecl FriendFlow(const SdgoGameTestContextV1* context) {
     static bool hangarExitRequested=false;
-    if(actions.AppState()==5) {
+    if(!friendSession.Ready() && actions.AppState()==5) {
         if(!hangarExitRequested) {
             const auto result=hangarNavigation.ClickBottomRadio(L"GameRoomRadio",0x48);
             if(result>=HangarNavigation::kDownmenuServiceMismatch || result==HangarNavigation::kUnbound) {
@@ -2572,6 +2611,7 @@ SDGO_MOD_ENTRY {
             sdgo_test::Fail("coordinated native PvP operation bindings are unavailable");
         friendSession.Bind(&friendActions,&friendExtras,api,mod,&friendRoomActions);
         friendSession.BindPvp(&pvpSession);
+        friendSession.BindStorageActions(&FriendStorageAction,&FriendStorageWrite);
         friendSession.BindFrameCapture(
             [](const wchar_t* path){return quietGraphics.RequestFrameCapture(path);},
             []()->HRESULT{HRESULT result=E_PENDING;

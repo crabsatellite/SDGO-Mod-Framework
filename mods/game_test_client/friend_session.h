@@ -43,7 +43,7 @@ class FriendSession {
     uint32_t giftOperation_=0;
     FriendActions::Result giftResult_=FriendActions::kUnbound;
     uint32_t sequence_=0;
-    bool active_=false,ready_=false;
+    bool active_=false,ready_=false,finishPending_=false;
     uint64_t lastWrite_=0,commandAt_=0;
     unsigned completed_=0;
     bool (*captureRequest_)(const wchar_t*)=nullptr;
@@ -52,6 +52,11 @@ class FriendSession {
     HRESULT captureResult_=E_PENDING;
     uint64_t captureAt_=0;
     std::wstring captureFile_;
+    int (*storageAction_)(const SdgoGameTestContextV1*,uint32_t)=nullptr;
+    void (*storageWrite_)(FILE*)=nullptr;
+    uint32_t storageOperation_=0;
+    bool storageCommand_=false,storagePending_=false;
+    int storageResult_=SDGO_GAME_TEST_WAIT;
     static std::string Utf8(const char* value) {
         wchar_t wide[512]{};char encoded[2048]{};
         if(!MultiByteToWideChar(CP_ACP,0,value,-1,wide,512) ||
@@ -73,7 +78,11 @@ class FriendSession {
     }
     FriendActions::Observation Observation() const {
         auto state=actions_->State();
-        if(captureCommand_) {
+        if(storageCommand_) {
+            state.result=storageResult_==SDGO_GAME_TEST_PASS?FriendActions::kReady:FriendActions::kNativeFault;
+            state.command_sequence=sequence_;state.operation=0;state.request_sent=state.reply_consumed=0;
+            state.request_opcode=state.reply_opcode=state.reply_status=0;
+        } else if(captureCommand_) {
             state.result=SUCCEEDED(captureResult_)?FriendActions::kReady:FriendActions::kNativeFault;
             state.command_sequence=sequence_;state.operation=0;
             state.request_sent=state.reply_consumed=0;
@@ -124,11 +133,11 @@ class FriendSession {
         }
         *output=value;return true;
     }
-    void Write(const SdgoGameTestContextV1* context,bool done) {
+    bool Write(const SdgoGameTestContextV1* context,bool done) {
         const auto s=Observation();
         const std::wstring path=std::wstring(context->directory)+L"\\friend-result.ini",temporary=path+L".tmp";
         FILE* f=_wfopen(temporary.c_str(),L"wb");
-        if(!f)return;
+        if(!f)return false;
         fprintf(f,"[run]\nid=%s\npid=%lu\nready=%u\n[command]\nsequence=%u\ndone=%u\noperation=%u\nresult=%u\nrequest_sent=%u\nrequest_opcode=%u\ntransport_sequence=%u\nreply_sequence=%u\nreply_opcode=%u\nreply_status=%u\nreply_result=%u\nreply_consumed=%u\n",
             context->run_id,GetCurrentProcessId(),ready_?1u:0u,sequence_,done?1u:0u,s.operation,s.result,s.request_sent,
             s.request_opcode,s.request_transport_sequence,s.reply_sequence,s.reply_opcode,s.reply_status,s.reply_result,s.reply_consumed);
@@ -177,12 +186,19 @@ class FriendSession {
         }
         if(roomActions_)roomActions_->Write(f);
         unitGifts_.Write(f,context);
+        if(storageWrite_)storageWrite_(f);
         fprintf(f,"[capture]\npending=%u\nhresult=%lu\n",capturePending_?1u:0u,static_cast<unsigned long>(captureResult_));
         if(pvpActions_)pvpActions_->Append(f);
-        fclose(f);MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH);
+        fclose(f);
+        const bool published=MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=0;
         lastWrite_=GetTickCount64();
+        return published;
     }
 public:
+    bool Ready() const noexcept {return ready_;}
+    void BindStorageActions(int (*action)(const SdgoGameTestContextV1*,uint32_t),void (*write)(FILE*)) {
+        storageAction_=action;storageWrite_=write;
+    }
     void BindFrameCapture(bool (*request)(const wchar_t*),HRESULT (*status)()) {
         captureRequest_=request;captureStatus_=status;
     }
@@ -197,6 +213,24 @@ public:
         GetPrivateProfileStringW(L"run",L"id",L"",abortId,64,abortPath.c_str());
         const std::wstring expectedRun(context->run_id,context->run_id+strlen(context->run_id));
         if(expectedRun==abortId){context->Assert(0,"owned friend campaign requested a bounded abort");return SDGO_GAME_TEST_FAIL;}
+        if(finishPending_) {
+            if(Write(context,true))return completed_?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+            if(GetTickCount64()-commandAt_>10000) {
+                context->Assert(0,"the final friend receipt could not be published");return SDGO_GAME_TEST_FAIL;
+            }
+            return SDGO_GAME_TEST_WAIT;
+        }
+        if(storagePending_) {
+            storageResult_=storageAction_(context,storageOperation_);
+            if(storageResult_==SDGO_GAME_TEST_WAIT && GetTickCount64()-commandAt_<120000) {
+                if(GetTickCount64()-lastWrite_>=250)Write(context,false);
+                return SDGO_GAME_TEST_WAIT;
+            }
+            if(storageResult_==SDGO_GAME_TEST_WAIT)storageResult_=SDGO_GAME_TEST_FAIL;
+            storagePending_=false;if(storageResult_==SDGO_GAME_TEST_PASS)++completed_;
+            Write(context,true);
+            return storageResult_==SDGO_GAME_TEST_PASS?SDGO_GAME_TEST_WAIT:SDGO_GAME_TEST_FAIL;
+        }
         if(capturePending_) {
             captureResult_=captureStatus_();
             if(captureResult_==E_PENDING && GetTickCount64()-captureAt_<30000)return SDGO_GAME_TEST_WAIT;
@@ -259,9 +293,16 @@ public:
         sequence_=next;
         if(!wcscmp(op,L"finish")) {
             context->Assert(completed_>0,"the native friend session completed coordinated real operations");
-            Write(context,true);return completed_?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+            finishPending_=true;commandAt_=GetTickCount64();
+            return SDGO_GAME_TEST_WAIT;
         }
         if(!wcscmp(op,L"snapshot")){++completed_;Write(context,true);return SDGO_GAME_TEST_WAIT;}
+        storageCommand_=!wcscmp(op,L"storage_open")||!wcscmp(op,L"storage_claim")||!wcscmp(op,L"storage_hangar");
+        if(storageCommand_) {
+            if(!storageAction_){context->Assert(0,"native storage adapter is absent");return SDGO_GAME_TEST_FAIL;}
+            storageOperation_=!wcscmp(op,L"storage_open")?1:!wcscmp(op,L"storage_claim")?2:3;storageResult_=SDGO_GAME_TEST_WAIT;
+            storagePending_=true;commandAt_=GetTickCount64();Write(context,false);return SDGO_GAME_TEST_WAIT;
+        }
         captureCommand_=!wcscmp(op,L"capture");
         if(captureCommand_) {
             wchar_t label[48]{};

@@ -787,6 +787,18 @@ int main()
                 friends::FriendInviteReceiver::
                     kReject)),
         "reject attempt armed with exact inviter/channel/room identity");
+    g_layoutRoot[0x162]=0;
+    g_packetDetour(nullptr,nullptr,0,0,0,0x059A,invite);
+    auto waiting=receiver.State();
+    Check(waiting.phase==friends::FriendInviteReceiver::kPromptWaitingVisible && waiting.prompt_initialized && !waiting.controls_ready,
+          "a genuine initializer may complete before its native root becomes visible");
+    g_layoutRoot[0x162]=1;
+    Check(receiver.Refresh().phase==friends::FriendInviteReceiver::kPromptInitialized && receiver.State().controls_ready,
+          "native visibility completes readiness without changing native input flags");
+    g_promptDtorDetour(g_managedPrompt,nullptr);
+    receiver.ResetObservation();
+    ResetFixture();
+    Check(receiver.Arm(Expected(friends::FriendInviteReceiver::kReject)),"visible reject attempt rearmed after deferred UI observation");
     Check(
         g_packetDetour(
             nullptr,
@@ -896,8 +908,19 @@ int main()
         g_callbackCalls == 2,
         "exactly one original decision callback ran per attempt");
     Check(
-        g_dtorCalls == 8,
+        g_dtorCalls == 10,
         "source and managed prompt destructors followed all native lifetimes");
+
+    ResetFixture();
+    Check(receiver.Arm(Expected(friends::FriendInviteReceiver::kAccept)),"direct same-channel accept armed after a completed native room");
+    g_packetDetour(nullptr,nullptr,0,0,0,0x059A,invite);
+    Check(receiver.InvokeDecision(),"direct path still requires the genuine original acceptance callback");
+    Check(receiver.State().phase==friends::FriendInviteReceiver::kDecisionSent,"acceptance send alone never proves a direct room join");
+    PublishJoinedRoom();
+    const auto direct=receiver.Refresh();
+    Check(direct.phase==friends::FriendInviteReceiver::kRoomJoined && direct.decision_sent && direct.room_model_matched && direct.local_guest &&
+          !direct.join_continuation_observed && !direct.join_request_sent,
+          "direct native guest completion does not invent a legacy continuation or join packet");
 
     friends::FriendInviteReceiver::active_ = nullptr;
     return g_failures == 0 ? 0 : 1;
