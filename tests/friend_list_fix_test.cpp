@@ -52,5 +52,34 @@ int main() {
     CHECK(values.size()==2&&values[0].value==L"a'b"&&values[1].value==L"c");
     bool refused=false;try{Clone(L"CREATE PROC sp_FriendsList AS SELECT 1",L"sp_FriendsList",false);}catch(...){refused=true;}
     CHECK(refused);
+    SCENARIO("canonical Unicode repairs only the packed native name field");
+    std::array<unsigned char,kFriendRowBytes*2> packed{};
+    packed.fill(0xA5);
+    const std::uint32_t chineseId=1001,asciiId=1002;
+    memcpy(packed.data(),&chineseId,4);
+    memcpy(packed.data()+4,"????????",9);
+    memcpy(packed.data()+kFriendRowBytes,&asciiId,4);
+    memcpy(packed.data()+kFriendRowBytes+4,"PilotTwo",9);
+    const auto untouched=packed;
+    unsigned fetches=0;
+    CHECK(RepairFriendNames(packed.data(),2,936,[&](std::uint32_t id,std::wstring& value) {
+        ++fetches;CHECK(id==chineseId);value=L"\u4e2d\u6587\u597d\u53cb";return true;
+    })==1);
+    CHECK(fetches==1);
+    wchar_t decoded[20]{};
+    CHECK(MultiByteToWideChar(936,MB_ERR_INVALID_CHARS,
+        reinterpret_cast<const char*>(packed.data()+4),-1,decoded,20)>0);
+    CHECK(!wcscmp(decoded,L"\u4e2d\u6587\u597d\u53cb"));
+    for(size_t i=0;i<packed.size();++i)
+        if(i<4||i>=4+kFriendNameBytes)CHECK(packed[i]==untouched[i]);
+    SCENARIO("native name limit keeps complete multibyte characters and failed lookup retains data");
+    std::array<char,kFriendNameBytes> encoded{};
+    CHECK(EncodeFriendName(std::wstring(12,L'\u4e2d'),936,encoded));
+    CHECK(strlen(encoded.data())==16);
+    CHECK(MultiByteToWideChar(936,MB_ERR_INVALID_CHARS,encoded.data(),-1,decoded,20)==9);
+    CHECK(!EncodeFriendName(std::wstring(L"x\0y",3),936,encoded));
+    auto missing=untouched;
+    CHECK(RepairFriendNames(missing.data(),1,936,[](std::uint32_t,std::wstring&){return false;})==0);
+    CHECK(missing==untouched);
     return ai_test::Finish();
 }

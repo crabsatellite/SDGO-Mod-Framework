@@ -26,6 +26,8 @@ enum SdgoFriendUnitGiftClientActionV1 : std::uint32_t {
     SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_TAKEBACK = 14,
     SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_PROVENANCE = 15,
     SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_QUERY_RECEIPT = 16,
+    SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_UNIT_TEMPLATE = 17,
+    SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_ORDINARY_STORAGE = 18,
 };
 
 enum SdgoFriendUnitGiftClientComposerPhaseV1 : std::uint32_t {
@@ -109,7 +111,7 @@ struct SdgoFriendUnitGiftClientSnapshotV1 {
     std::uint64_t last_reply_unit_uid;
     std::uint32_t selected_unit_number;
     std::uint16_t selected_unit_slot;
-    std::uint16_t reserved16;
+    std::uint16_t selected_unit_level;
     std::uint64_t selected_unit_uid;
     std::uint64_t selected_gift_id;
     std::uint32_t page;
@@ -123,7 +125,8 @@ struct SdgoFriendUnitGiftClientSnapshotV1 {
     std::uint32_t inventory_sync_error;
     std::uint64_t inventory_last_added_uid;
     std::uint64_t inventory_last_removed_uid;
-    std::uint32_t reserved[2];
+    std::int32_t friend_context_x;
+    std::int32_t friend_context_y;
 };
 #pragma pack(pop)
 static_assert(sizeof(SdgoFriendUnitGiftClientSnapshotV1) == 3016,

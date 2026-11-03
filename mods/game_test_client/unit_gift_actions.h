@@ -17,7 +17,28 @@ namespace friends {
 // Developer orchestration only. Product/native UI callbacks perform every
 // action; this adapter neither sends gift packets nor modifies inventory.
 class UnitGiftActions {
+    using CursorPosition = void(__cdecl*)(int*,int*);
+    inline static CursorPosition originalCursor_ = nullptr;
+    inline static thread_local bool injectCursor_ = false;
+    inline static thread_local int cursorX_ = 0, cursorY_ = 0;
+    inline static thread_local unsigned cursorCalls_ = 0;
+    inline static thread_local ULONGLONG cursorUntil_ = 0;
+    unsigned lastCursorCalls_ = 0;
+    int lastCursorX_ = -1, lastCursorY_ = -1;
+    static void __cdecl CursorInput(int* x,int* y) {
+        originalCursor_(x,y);
+        if (injectCursor_ && GetTickCount64()>cursorUntil_) injectCursor_=false;
+        if (injectCursor_ && x && y) {
+            *x=cursorX_;*y=cursorY_;++cursorCalls_;
+        }
+    }
 public:
+    bool BindCursor(const SdgoApi* api,SdgoMod* mod) {
+        return api && api->HookCode && api->Symbol &&
+            api->Symbol(mod,"friends.cursor_position") &&
+            api->HookCode(mod,"friends.cursor_position",reinterpret_cast<void*>(&CursorInput),
+                          reinterpret_cast<void**>(&originalCursor_));
+    }
     // Stable developer-only capture_error values written to [unit_gift]:
     // 0 none, 1 unscoped context, 2 module missing, 3 export missing,
     // 4 query rejected, 5 size/version mismatch, 6 run hash/PID mismatch,
@@ -97,14 +118,20 @@ public:
             }
         }
         valid_ = true;
+        if (injectCursor_) {
+            lastCursorCalls_=cursorCalls_;
+            if ((snapshot_.control_flags & SDGO_FRIEND_UNIT_GIFT_CLIENT_CONTROL_GIFT_BUTTON) &&
+                snapshot_.friend_context_x==cursorX_ && snapshot_.friend_context_y==cursorY_)
+                injectCursor_=false;
+        }
         return true;
     }
 
     FriendActions::Result Invoke(
         const SdgoGameTestContextV1* context, uint32_t action,
         uint32_t receiver, uint64_t unit, uint64_t gift,
-        const uint16_t* note, uint16_t noteLength) {
-        if (action < 1 || action > 16 || noteLength > 200 ||
+        const uint16_t* note, uint16_t noteLength,int cursorX=-1,int cursorY=-1) {
+        if (action < 1 || action > SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_ORDINARY_STORAGE || noteLength > 200 ||
             (noteLength && !note))
             return FriendActions::kInvalidCommand;
         const auto runHash = RunHash(context);
@@ -123,7 +150,19 @@ public:
         request.note_code_units = noteLength;
         if (noteLength)
             std::memcpy(request.note, note, noteLength * sizeof(uint16_t));
-        const int accepted = invoke(&request);
+        if ((cursorX>=0 || cursorY>=0) &&
+            (action!=SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_FRIEND_CONTEXT ||
+             cursorX<0 || cursorY<0 || cursorX>16383 || cursorY>16383 || !originalCursor_))
+            return FriendActions::kInvalidCommand;
+        int accepted=0;
+        if (cursorX>=0 && cursorY>=0) {
+            cursorX_=cursorX;cursorY_=cursorY;cursorCalls_=0;injectCursor_=true;
+            cursorUntil_=GetTickCount64()+15000;
+            __try { accepted=invoke(&request); }
+            __finally { if (AbnormalTermination()) injectCursor_=false; }
+            lastCursorCalls_=cursorCalls_;lastCursorX_=cursorX;lastCursorY_=cursorY;
+            if (!accepted) injectCursor_=false;
+        } else accepted = invoke(&request);
         Capture(context);
         return accepted ? FriendActions::kReady : FriendActions::kReplyRejected;
     }
@@ -137,6 +176,8 @@ public:
             static_cast<unsigned>(captureError_));
         if (!valid_) return;
         const auto& s = snapshot_;
+        std::fprintf(file,"cursor_input_calls=%u\ncursor_input_x=%d\ncursor_input_y=%d\nfriend_context_x=%d\nfriend_context_y=%d\n",
+            lastCursorCalls_,lastCursorX_,lastCursorY_,s.friend_context_x,s.friend_context_y);
         std::fprintf(file,
             "process_id=%u\nui_thread_id=%u\ntransport_state=%u\ncapabilities=%u\n"
             "server_epoch=%llu\nready=%u\nmutation_uncertain=%u\n"
@@ -145,7 +186,7 @@ public:
             "last_status=%d\npending_command=%u\nlast_action=%u\n"
             "last_accepted_operation=%u\nlast_reply_command=%u\nlast_reply_status=%d\n"
             "last_reply_gift_id=%llu\nlast_reply_unit_uid=%llu\n"
-            "selected_unit_number=%u\nselected_unit_slot=%u\n"
+            "selected_unit_number=%u\nselected_unit_slot=%u\nselected_unit_level=%u\n"
             "selected_unit_uid=%llu\nselected_gift_id=%llu\npage=%u\n"
             "total_count=%u\nrow_count=%u\nprovenance_present=%u\n",
             s.process_id, s.ui_thread_id, s.transport_state, s.capabilities,
@@ -156,7 +197,7 @@ public:
             s.last_accepted_operation, s.last_reply_command, s.last_reply_status,
             static_cast<unsigned long long>(s.last_reply_gift_id),
             static_cast<unsigned long long>(s.last_reply_unit_uid),
-            s.selected_unit_number, static_cast<unsigned>(s.selected_unit_slot),
+            s.selected_unit_number, static_cast<unsigned>(s.selected_unit_slot),static_cast<unsigned>(s.selected_unit_level),
             static_cast<unsigned long long>(s.selected_unit_uid),
             static_cast<unsigned long long>(s.selected_gift_id), s.page,
             s.total_count, s.row_count, s.provenance_present);

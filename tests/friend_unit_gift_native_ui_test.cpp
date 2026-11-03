@@ -56,6 +56,8 @@ std::wstring NativeText(const NativeString* value) {
 
 std::map<std::wstring, std::unique_ptr<Control>> g_controls;
 std::map<void*, std::wstring> g_captions;
+std::map<void*,std::map<int,std::wstring>> g_text_layers;
+std::map<void*,std::wstring> g_static_captions;
 std::map<void*, std::size_t> g_skin_calls;
 std::map<
     void*,
@@ -64,6 +66,7 @@ std::map<
 std::map<void*, std::array<std::uint8_t*, 16>>
     g_added_skin_pointers;
 void* g_button_vtable = reinterpret_cast<void*>(0x12345678);
+void* g_static_vtable = reinterpret_cast<void*>(0x1234ABCD);
 void* g_input_seen = nullptr;
 std::uint32_t g_input_units = 0;
 int g_input_clear = -1;
@@ -84,6 +87,7 @@ Control* NewControl(
     bool enabled = true) {
     auto control = std::make_unique<Control>();
     Put<void*>(control->bytes.data(), 0, g_button_vtable);
+    Put<std::uint32_t>(control->bytes.data(),0x134,4);
     Put<void*>(control->bytes.data(), 0x15C, parent);
     Put<std::uint8_t>(
         control->bytes.data(), 0x162, visible ? 1 : 0);
@@ -136,7 +140,7 @@ void* __fastcall FindShim(
 void __fastcall TextShim(
     void* control,
     void*,
-    int,
+    int index,
     const NativeString* value,
     int,
     int,
@@ -148,6 +152,11 @@ void __fastcall TextShim(
     std::uint32_t,
     int) {
     g_captions[control] = NativeText(value);
+    g_text_layers[control][index]=NativeText(value);
+}
+
+void __fastcall StaticCaptionShim(void* control,void*,const NativeString* value) {
+    g_static_captions[control]=NativeText(value);
 }
 
 void __fastcall SkinShim(
@@ -182,12 +191,47 @@ void PrepareSkinSource(Control* source) {
             0,
             reinterpret_cast<void*>(0x1000 + index));
         pointers[index] = entries[index].data();
+        NativeString path;
+        std::memcpy(path.data.small,L"skin",5*sizeof(wchar_t));
+        path.length = 4;
+        Put<NativeString>(entries[index].data(),4,path);
     }
     Put<std::uint8_t**>(
         source->bytes.data(), 0x1A4, pointers.data());
     Put<std::uint8_t**>(
         source->bytes.data(), 0x1A8,
         pointers.data() + pointers.size());
+}
+
+void __fastcall EmptySkinShim(void* control,void*) {
+    auto& count = g_skin_calls[control];
+    if (count >= 16) return;
+    auto& entry = g_added_skin_entries[control][count];
+    entry.fill(0);
+    Put<std::uint32_t>(entry.data(),0x18,7);
+    auto& pointers = g_added_skin_pointers[control];
+    pointers[count] = entry.data();
+    ++count;
+    Put<std::uint8_t**>(control,0x1A4,pointers.data());
+    Put<std::uint8_t**>(control,0x1A8,pointers.data()+count);
+}
+
+unsigned g_geometry_updates = 0;
+unsigned g_native_placements = 0;
+void __fastcall PlacePopupShim(void*,void*,std::uint32_t) { ++g_native_placements; }
+void __fastcall GeometryShim(void* control,void*) {
+    ++g_geometry_updates;
+    const int x=static_cast<int>(Read<float>(control,0x148));
+    const int y=static_cast<int>(Read<float>(control,0x14C));
+    const RECT rect{x,y,x+Read<int>(control,0x154),y+Read<int>(control,0x158)};
+    Put<RECT>(control,0x138,rect);
+}
+std::uint32_t __fastcall AddIconShim(void* dialog,void*,const NativeString* key,
+                                    int x,int y,int width,int height) {
+    const auto result=AddShim(dialog,nullptr,key,x,y,width,height,0);
+    auto* control=g_controls[NativeText(key)]->bytes.data();
+    Put<std::uint8_t>(control,0x168,1); // native constructor's debug-rectangle default
+    return result;
 }
 
 } // namespace
@@ -202,7 +246,25 @@ int main() {
         reinterpret_cast<Bindings::Text>(&TextShim);
     bindings.skin =
         reinterpret_cast<Bindings::Skin>(&SkinShim);
+    bindings.empty_skin = reinterpret_cast<Bindings::EmptySkin>(&EmptySkinShim);
+    bindings.refresh_geometry = reinterpret_cast<Bindings::RefreshGeometry>(&GeometryShim);
+    bindings.add_icon = reinterpret_cast<Bindings::AddIcon>(&AddIconShim);
+    bindings.place_popup = reinterpret_cast<Bindings::PlacePopup>(&PlacePopupShim);
     bindings.button_vtable = g_button_vtable;
+    bindings.static_vtable=g_static_vtable;
+    bindings.static_caption=reinterpret_cast<Bindings::Caption>(&StaticCaptionShim);
+    bindings.unit_name=[](std::uint32_t)->std::wstring{return L"测试机体";};
+    Control radio;
+    Put<std::uint32_t>(radio.bytes.data(),0x134,12);
+    std::array<std::array<std::uint8_t,0x7C>,3> radioItems{};
+    std::array<std::uint8_t*,3> radioText{};
+    for (std::size_t i=0;i<radioText.size();++i) radioText[i]=radioItems[i].data();
+    Put<void*>(radio.bytes.data(),0x190,radioText.data());
+    Put<void*>(radio.bytes.data(),0x194,radioText.data()+radioText.size());
+    bindings.SetText(radio.bytes.data(),L"收到的机体");
+    for (int i=0;i<3;++i)
+        Check(g_text_layers[radio.bytes.data()][i]==L"收到的机体",
+              "native radio caption remains readable in every selected and hover state");
     Control rendered;
     Put<void*>(rendered.bytes.data(),0,g_button_vtable);
     const std::wstring renderedText=L"发送方：好友\n赠送时间：2026-11-03 00:01 UTC\n寄语：出击顺利！";
@@ -218,6 +280,57 @@ int main() {
           "provenance observer reads the exact native control text, including line breaks and time");
     Put<void*>(rendered.bytes.data(),0x194,textItems.data());
     Check(!bindings.ReadText(rendered.bytes.data(),&readText),"missing native text cannot be replaced by model output");
+
+    Control staticReadback;
+    Put<void*>(staticReadback.bytes.data(),0,g_static_vtable);
+    NativeString staticValue{};
+    const std::wstring senderText=L"赠送者：测试玩家";
+    staticValue.data.pointer=senderText.c_str();
+    staticValue.length=static_cast<std::uint32_t>(senderText.size());
+    staticValue.capacity=staticValue.length;
+    Put<NativeString>(staticReadback.bytes.data(),0x21C,staticValue);
+    Check(bindings.ReadText(staticReadback.bytes.data(),&readText) && readText==senderText,
+          "native card provenance reads the displayed static sender caption");
+    staticValue.capacity=1;
+    Put<NativeString>(staticReadback.bytes.data(),0x21C,staticValue);
+    Check(!bindings.ReadText(staticReadback.bytes.data(),&readText),
+          "invalid native static string storage is rejected");
+
+    Control layered;
+    std::array<std::array<std::uint8_t,0x80>,2> layerRecords{};
+    std::array<std::uint8_t*,2> layerPointers{layerRecords[0].data(),layerRecords[1].data()};
+    Put<void*>(layered.bytes.data(),0x190,layerPointers.data());
+    Put<void*>(layered.bytes.data(),0x194,layerPointers.data()+2);
+    Put<int>(layered.bytes.data(),0x154,109);Put<int>(layered.bytes.data(),0x158,12);
+    g_text_layers[layered.bytes.data()][1]=L"9999999999";
+    bindings.SetText(layered.bytes.data(),L"Lv.12");
+    Check(g_text_layers[layered.bytes.data()][0]==L"Lv.12" &&
+              g_text_layers[layered.bytes.data()][1].empty(),
+          "replacing a stock caption clears every leftover placeholder text layer");
+
+    Control staticLabel;
+    Put<void*>(staticLabel.bytes.data(),0,g_static_vtable);
+    Put<std::uint32_t>(staticLabel.bytes.data(),0x134,3);
+    Put<std::uint32_t>(staticLabel.bytes.data(),0x21C,0x12345678);
+    g_static_captions[staticLabel.bytes.data()]=L"9999999999";
+    bindings.SetState(staticLabel.bytes.data(),false,false);
+    Check(Read<std::uint32_t>(staticLabel.bytes.data(),0x21C)==0x12345678,
+          "hiding a static control never corrupts its owned string pointer");
+    bindings.SetState(staticLabel.bytes.data(),true,false);
+    Check(Read<std::uint8_t>(staticLabel.bytes.data(),0x162)==1 &&
+          Read<std::uint8_t>(staticLabel.bytes.data(),0x163)==1 &&
+          Read<std::uint8_t>(staticLabel.bytes.data(),0x167)==0 &&
+          Read<std::uint32_t>(staticLabel.bytes.data(),0x21C)==0x12345678,
+          "read-only static text remains drawable without accepting input or changing string ownership");
+    bindings.SetText(staticLabel.bytes.data(),L"Lv.12");
+    Check(g_static_captions[staticLabel.bytes.data()]==L"Lv.12" && g_text_layers[staticLabel.bytes.data()].empty(),
+          "native static caption replacement removes the placeholder instead of adding an overlay");
+    Control comboState;
+    Put<std::uint32_t>(comboState.bytes.data(),0x134,11);
+    Put<std::int32_t>(comboState.bytes.data(),0x21C,7);
+    bindings.SetState(comboState.bytes.data(),true,false);
+    Check(Read<std::int32_t>(comboState.bytes.data(),0x21C)==7,
+          "temporarily disabling a combo does not reset its selected item");
 
     Control noteEdit;
     Control nativeInput;
@@ -305,19 +418,71 @@ int main() {
     Check(
         Read<int>(friendDialog.bytes.data(), 0x158) == 149 &&
             Read<float>(
-                friendDialog.bytes.data(), 0x148) == 680.0f &&
+                friendDialog.bytes.data(), 0x148) == 750.0f &&
             Read<float>(
-                friendDialog.bytes.data(), 0x14C) == 451.0f,
-        "visible gift entry expands and clamps inside the viewport");
+                friendDialog.bytes.data(), 0x14C) == 500.0f && g_native_placements==1,
+        "visible gift entry expands and delegates cursor positioning to the original popup");
+    Put<float>(friendDialog.bytes.data(),0x148,320.0f);
+    Put<float>(friendDialog.bytes.data(),0x14C,240.0f);
+    friendEntry.SetAvailable(true);
+    Check(Read<float>(friendDialog.bytes.data(),0x148)==320.0f &&
+              Read<float>(friendDialog.bytes.data(),0x14C)==240.0f && g_native_placements==1,
+          "later availability ticks cannot reset the native right-click position");
     friendEntry.SetAvailable(false);
     Check(
         Read<int>(friendDialog.bytes.data(), 0x158) == 125 &&
             Read<float>(
-                friendDialog.bytes.data(), 0x148) == 750.0f &&
+                friendDialog.bytes.data(), 0x148) == 320.0f &&
             Read<float>(
-                friendDialog.bytes.data(), 0x14C) == 500.0f,
-        "hiding the gift entry restores exact menu geometry");
+                friendDialog.bytes.data(), 0x14C) == 240.0f,
+        "hiding the gift entry restores height without moving the native popup");
     friendEntry.Detach(friendService.bytes.data());
+
+    // Native 0572 context menus have a deliberately blank normal skin.
+    Control blankDialog;
+    Control blankService;
+    Put<void*>(blankService.bytes.data(),0x4C,blankDialog.bytes.data());
+    Put<int>(blankDialog.bytes.data(),0x154,126);
+    Put<int>(blankDialog.bytes.data(),0x158,132);
+    auto* blankSource = NewControl(L"Btn5",blankDialog.bytes.data());
+    Put<float>(blankSource->bytes.data(),0x14C,105.0f);
+    Put<int>(blankSource->bytes.data(),0x154,126);
+    Put<int>(blankSource->bytes.data(),0x158,21);
+    auto* bottom = NewControl(L"Icon1",blankDialog.bytes.data());
+    Put<float>(bottom->bytes.data(),0x14C,127.0f);
+    Put<int>(bottom->bytes.data(),0x158,6);
+    auto* strip = NewControl(L"Icon8",blankDialog.bytes.data());
+    PrepareSkinSource(strip);
+    auto** stripSkins = Read<std::uint8_t**>(strip->bytes.data(),0x1A4);
+    std::array<std::uint8_t,0x50> stripEntry{};
+    std::memcpy(stripEntry.data(),*stripSkins,stripEntry.size());
+    std::array<std::uint8_t*,1> stripPointer{stripEntry.data()};
+    Put<std::uint8_t**>(strip->bytes.data(),0x1A4,stripPointer.data());
+    Put<std::uint8_t**>(strip->bytes.data(),0x1A8,stripPointer.data()+1);
+    PrepareSkinSource(blankSource);
+    auto** blankSkins = Read<std::uint8_t**>(blankSource->bytes.data(),0x1A4);
+    std::memset(blankSkins[0],0,0x50);
+    Put<std::uint32_t>(blankSkins[0],0x18,7);
+    FriendEntry transparentEntry;
+    Check(transparentEntry.Attach(blankService.bytes.data(),bindings),
+          "stock transparent normal skin is preserved through the native blank appender");
+    auto** clonedSkins = Read<std::uint8_t**>(transparentEntry.button(),0x1A4);
+    Check(g_skin_calls[transparentEntry.button()] == 3 &&
+              !Read<void*>(clonedSkins[0]) && Read<void*>(clonedSkins[1]) &&
+              Read<void*>(clonedSkins[2]),
+          "normal, hover and pressed slots keep native ordering including the blank slot");
+    transparentEntry.SetAvailable(true);
+    Check(transparentEntry.Click(blankService.bytes.data(),transparentEntry.button()),
+          "gift entry with a transparent normal state remains interactive");
+    Check(Read<float>(bottom->bytes.data(),0x14C)==149.0f && g_geometry_updates>0 &&
+              Read<RECT>(blankDialog.bytes.data(),0x138).bottom==155 &&
+              g_controls.count(L"ModFriendUnitGiftBackground") &&
+              Read<std::uint8_t>(g_controls[L"ModFriendUnitGiftBackground"]->bytes.data(),0x167)==0 &&
+              Read<std::uint8_t>(g_controls[L"ModFriendUnitGiftBackground"]->bytes.data(),0x168)==0,
+          "native background strip, lower border and hit rectangle follow the added row");
+    transparentEntry.Detach(blankService.bytes.data());
+    Check(Read<float>(bottom->bytes.data(),0x14C)==127.0f,
+          "detaching restores the original lower border");
 
     Control detailService;
     Control detailRoot;
@@ -396,7 +561,7 @@ int main() {
             Read<std::uint8_t>(
                 detailView.detail(), 0x162) == 1 &&
             Read<std::uint8_t>(
-                detailView.detail(), 0x163) == 0 &&
+                detailView.detail(), 0x163) == 1 &&
             Read<std::uint8_t>(
                 detailView.detail(), 0x167) == 0 &&
             Read<std::uint8_t>(
@@ -465,23 +630,29 @@ int main() {
     Put<std::uint8_t>(claim->bytes.data(), 0x163, 0);
     Put<std::uint8_t>(claim->bytes.data(), 0x167, 0);
 
-    std::vector<Control> stock(46);
+    std::vector<Control> stock(47);
     std::size_t stockIndex = 0;
     const auto installStock = [&](std::size_t offset) {
         auto& control = stock[stockIndex++];
-        Put<std::uint8_t>(control.bytes.data(), 0x162, 1);
-        Put<std::uint8_t>(control.bytes.data(), 0x163, 1);
-        Put<std::uint8_t>(control.bytes.data(), 0x167, 1);
-        Put<void*>(
-            service.bytes.data(), offset, control.bytes.data());
+        Put<void*>(control.bytes.data(),0,g_button_vtable);
+        Put<std::uint32_t>(control.bytes.data(),0x134,4);
+        Put<void*>(control.bytes.data(),0x15C,dialog.bytes.data());
+        Put<std::uint8_t>(control.bytes.data(),0x162,1);
+        Put<std::uint8_t>(control.bytes.data(),0x163,1);
+        Put<std::uint8_t>(control.bytes.data(),0x167,1);
+        Put<void*>(service.bytes.data(),offset,control.bytes.data());
     };
     for (const auto offset : {
-             0x94u, 0x98u, 0xA4u, 0xA8u, 0xACu, 0xB0u}) {
+             0x94u, 0x98u, 0xA4u, 0xA8u, 0xACu, 0xB0u, 0xB4u}) {
         installStock(offset);
     }
     for (std::size_t row = 0; row < 5; ++row) {
         for (std::size_t field = 0; field < 8; ++field) {
             installStock(0xBC + row * 0x20 + field * 4);
+            auto* native=Read<void*>(service.bytes.data(),0xBC+row*0x20+field*4);
+            const std::uint32_t kinds[]={12,1,3,3,3,4,4,1};
+            Put<std::uint32_t>(native,0x134,kinds[field]);
+            if (kinds[field]==3) Put<void*>(native,0,g_static_vtable);
         }
     }
 
@@ -505,6 +676,7 @@ int main() {
     rows[0].gift_id = 100;
     rows[0].unit_uid = 1000;
     rows[0].unit_number = 572;
+    rows[0].level = 12;
     rows[0].state = GiftState::pending;
     rows[0].direction = ListDirection::inbox;
     rows[0].peer_name_code_units = 2;
@@ -521,14 +693,19 @@ int main() {
     Check(
         Read<std::uint8_t>(claim->bytes.data(), 0x162) == 0,
         "native Claim All is hidden only in the custom view");
-    for (const auto& control : stock) {
-        Check(
-            Read<std::uint8_t>(control.bytes.data(), 0x162) == 0 &&
-                Read<std::uint8_t>(control.bytes.data(), 0x167) == 0,
-            "stock gift rows are hidden without mutating their data");
+    Check(view.ControlFor(view.RowActionForGift(100))==Read<void*>(service.bytes.data(),0xBC),
+          "received gifts reuse the actual native Storage row rather than an overlay button");
+    for (std::size_t row=2;row<5;++row) for (std::size_t field=0;field<8;++field) {
+        const auto* control=Read<void*>(service.bytes.data(),0xBC+row*0x20+field*4);
+        Check(Read<std::uint8_t>(control,0x162)==0 && Read<std::uint8_t>(control,0x167)==0,
+              "unused native rows are hidden and cannot route actions");
     }
     const auto first =
         view.RowActionForGift(100);
+    const auto caption=g_static_captions[Read<void*>(service.bytes.data(),0xC4)];
+    Check(caption.find(L"Lv.12 · 测试机体")!=std::wstring::npos &&
+              caption.find(L"UID")==std::wstring::npos && caption.find(L"#572")==std::wstring::npos,
+          "player gift rows show the concrete name and level without internal identifiers");
     Check(
         first != StorageView::Action::none &&
             view.GiftFor(first) == 100,
@@ -565,12 +742,8 @@ int main() {
     }
     Put<std::uint8_t>(claim->bytes.data(), 0x162, 1);
     view.EnforceCustomView();
-    for (const auto& control : stock) {
-        Check(
-            Read<std::uint8_t>(control.bytes.data(), 0x162) == 0 &&
-                Read<std::uint8_t>(control.bytes.data(), 0x167) == 0,
-            "post-refresh enforcement hides stock rows again");
-    }
+    Check(Read<std::uint8_t>(view.ControlFor(first),0x162)==1,
+          "post-refresh enforcement retains the original visible gift row");
     Check(
         Read<std::uint8_t>(claim->bytes.data(), 0x162) == 0,
         "post-refresh enforcement keeps Claim All hidden");
