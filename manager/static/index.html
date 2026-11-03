@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SDGO Mod Manager</title>
+<title>SDGO Mod Manager · 服主专用</title>
 <link rel="stylesheet" href="/ui.css">
 <link rel="stylesheet" href="/style.css">
 </head>
@@ -43,6 +43,11 @@
         <button id="add-host" class="ui-btn is-blue" data-ui-icon="add" title="添加游戏客户端或服务器目录">添加目录</button>
       </div>
     </header>
+    <section class="owner-notice" aria-labelledby="owner-notice-title">
+      <div><strong id="owner-notice-title">服主与维护人员专用</strong>
+      <p>普通玩家请使用游戏启动器，不要自行使用本工具修改 Mod。客户端 Mod 与服务器配置不匹配，可能导致无法进入游戏、断线或崩溃；需要调整时请联系服主。</p></div>
+      <button id="create-entrypoints" class="ui-btn is-ghost is-small" type="button">创建快捷入口</button>
+    </section>
     <div id="manager-message" class="ui-log" role="status"></div>
     <main id="content"></main>
   </div>
