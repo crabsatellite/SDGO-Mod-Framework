@@ -143,6 +143,10 @@ Runs reuse `%LOCALAPPDATA%\SDGO-GameTest\account.ini`, or the file selected with
 Only explicit `--create-test-account` creates the first persistent profile;
 existing profiles are never overwritten.
 
+Login inventory paging finishes in its original scene before later cases enter
+the hangar. This also applies to existing accounts with several inventory batches;
+the framework waits for the native initialized flag and a complete owned-unit scan.
+
 New-account setup covers nickname creation, leaving the beginner trial, the
 first unit draw and required in-game confirmations before battle scenarios.
 
