@@ -15,7 +15,15 @@ from .capsule_ui_layout import patch_capsule_price_defaults
 
 
 TABLE_BASES = {"0033": 155001, "0101": 135001, "0154": 3519001, "0155": 3520001}
-COMPILER_VERSION = 9
+COMPILER_VERSION = 10
+
+
+def resident_activity_ownership(client):
+    path=Path(client)/'sdgo/mods/capsule_catalog/manifest.json'
+    if not path.is_file():return []
+    values=read_json(path).get('activity_ownership',[])
+    if not isinstance(values,list):raise ValueError('Activity registry ownership must be a list')
+    return values
 
 
 def resident_extensions(client, reader):
@@ -85,6 +93,9 @@ def _extension_digest(resources, tables, metadata, reader):
             raw = reader.read_resource(texture)
         hashes[texture] = hashlib.sha256(raw).hexdigest()
     hashes['unit_items'] = hashlib.sha256(json.dumps(metadata, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    root=getattr(reader,'root',None)
+    owned=resident_activity_ownership(root) if root is not None else []
+    if owned:hashes['activity_ownership']=hashlib.sha256(json.dumps(owned,sort_keys=True).encode()).hexdigest()
     return hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
 
 
@@ -354,6 +365,24 @@ def compile_catalog(catalog, client, lookup, output):
         target.write_bytes(data)
         resources[f"gdrs/{table}.gdt"] = data
         files[f"data/{table}.gdt"] = hashlib.sha256(data).hexdigest()
+    activity_ownership=resident_activity_ownership(client)
+    activity_metadata=None
+    if catalog.get('activity_machines'):
+        from owner.units.activity_client import compile_activity_client
+        source_resources=dict(resources);source_resources['gdrs/0099.gdt']=extension_tables['0099'][0]
+        keys=('schema_version','id','name','unit_id','project_key','currency_type','price','artwork_key','artwork_sha256')
+        result=compile_activity_client(extension_tables['0099'][0],source_resources,
+            [{key:row[key] for key in keys} for row in catalog['activity_machines']],
+            catalog.get('project_assets',[]),ownership=activity_ownership,
+            reserved_resource_ids=occupied_sprite_ids|occupied_texture_ids)
+        activity_ownership=result['ownership'];activity_metadata=result['metadata']
+        resources.update(result['resources'])
+        size,rows=gdt_records(result['gdt']);extension_tables['0099']=(result['gdt'],len(rows))
+        placement.extend({'kind':'activity_machines',**row} for row in result['placements'])
+        for relative,data in result['resources'].items():
+            if relative.startswith(('sprs/','txrs/')) and inherited.get(relative)!=data:
+                target=out/'assets'/relative;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(data)
+                files[target.relative_to(out).as_posix()]=hashlib.sha256(data).hexdigest()
     for table, (raw, _) in extension_tables.items():
         (data_dir / (table + '.gdt')).write_bytes(raw)
         resources['gdrs/' + table + '.gdt'] = raw
@@ -382,6 +411,7 @@ def compile_catalog(catalog, client, lookup, output):
     write_json(out / "placements.json", {"catalog_revision": revision, "machines": placement})
     write_json(out / "manifest.json", {"schema_version": 1, "compiler_version": COMPILER_VERSION,
         "unit_items": unit_items,
+        "activity_ownership":activity_ownership,"activity_metadata":activity_metadata,
         "preserved_extensions_signature": extension_signature,
         "catalog_revision": revision,
         "counts": counts, "files": files, "generated_cards": generated_cards,

@@ -191,6 +191,21 @@ class Capsules(Provider):
     def request(self, method, uri, body, headers):
         if method=='GET' and urlsplit(uri).path=='/api/projects':
             return self.workspace.providers['units'].project_library()
+        if method=='GET' and urlsplit(uri).path=='/api/projects/activity':
+            from .unit_activity import activity_state
+            return activity_state(self)
+        if method=='GET' and urlsplit(uri).path=='/api/projects/activity-items':
+            from .unit_activity import activity_items
+            return activity_items(self,parse_qs(urlsplit(uri).query).get('q',[''])[0])
+        if method=='POST' and urlsplit(uri).path=='/api/projects/activity':
+            from .unit_activity import save_activity
+            return save_activity(self,body)
+        if method=='POST' and urlsplit(uri).path=='/api/projects/activity-preset':
+            from .unit_activity import preview_activity_pattern
+            return preview_activity_pattern(self,body)
+        if method=='POST' and urlsplit(uri).path=='/api/projects/activity-preferences':
+            from .unit_activity import save_activity_preferences
+            return save_activity_preferences(self,body)
         if method=='POST' and urlsplit(uri).path=='/api/projects/media':
             from .units import import_project_media
             return import_project_media(self,body)

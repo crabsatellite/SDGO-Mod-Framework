@@ -1362,23 +1362,27 @@ function initializeProjectLibrary(){
         };
         box.append(label,image,use);
         if(role==='activity_poster'){
-          const activity=document.createElement('button');activity.type='button';activity.textContent='生成独立活动机草稿（同档均值）';
+          const pattern=document.createElement('select');pattern.setAttribute('aria-label',project.name+'活动机台模板');
+          for(const [value,label] of [['gp_rare','普通 G 币'],['token_rare','少量代币'],['token_99','99 代币高阶']]){
+            const option=document.createElement('option');option.value=value;option.textContent=label;pattern.append(option);}
+          const activity=document.createElement('button');activity.type='button';activity.textContent='按模板生成独立活动机草稿';
           activity.onclick=async()=>{
             if(state.dirty||!state.revision){showToast('请先保存并打开扭蛋制作目录。');return;}
             activity.disabled=true;
             try{
               const result=await apiPost('/api/providers/capsules/api/projects/activity-draft',{
-                project_id:project.project_id,source_revision:project.revision,expected_revision:state.revision});
+                project_id:project.project_id,source_revision:project.revision,expected_revision:state.revision,pattern_id:pattern.value});
               state.revision=result.catalog_revision;if(state.bootstrap)state.bootstrap.catalog_revision=result.catalog_revision;
               $('#revision').textContent='revision '+result.catalog_revision.slice(0,12);
               const draft=result.activity_draft;
-              status.textContent=result.message+'；机台 '+draft.id+'，参考价格 '+draft.price+'，稀有奖配置频率 '+
-                (draft.balance.rare_configuration_frequency.value*100).toFixed(4)+'%。';
+              const target=draft.pool.find(row=>row.category_id===draft.unit_category_id);
+              status.textContent=result.message+'；价格 '+draft.price+'，目标奖励配置频率 '+(target.entries/100).toFixed(2)+'%。';
+              await state.reloadActivity?.();
               showToast('已保存活动机草稿；原机台和玩家资产保持不变。');
             }catch(error){status.textContent=error.message;showToast(error.message);}
             finally{activity.disabled=false;}
           };
-          box.append(activity);
+          box.append(pattern,activity);
         }
         card.append(box);
       }
@@ -1396,6 +1400,178 @@ function initializeProjectLibrary(){
   panel.append(title,note,controls,status,results);shadow.prepend(panel);
 }
 
+function initializeActivityEditor(){
+  const panel=document.createElement('details');panel.className='panel';panel.id='unit-activity-editor';
+  const style=document.createElement('style');style.textContent=`
+    #unit-activity-editor {margin:16px 0;border:1px solid var(--line);border-radius:12px;padding:16px;background:var(--surface);}
+    #unit-activity-editor summary {font-size:18px;font-weight:700;cursor:pointer;}
+    #unit-activity-editor .activity-header {display:flex;align-items:center;justify-content:space-between;gap:20px;margin:16px 0;}
+    #unit-activity-editor .activity-header img {width:180px;height:161px;object-fit:contain;border-radius:8px;}
+    #unit-activity-editor .activity-fields {display:grid;grid-template-columns:minmax(160px,2fr) minmax(90px,1fr) minmax(100px,1fr);gap:12px;}
+    #unit-activity-editor .activity-field {display:grid;gap:6px;min-width:0;color:var(--muted);}
+    #unit-activity-editor .activity-presets {display:grid;grid-template-columns:minmax(180px,1fr) auto;align-items:end;gap:12px;margin:16px 0;}
+    #unit-activity-editor .activity-picker {display:grid;grid-template-columns:minmax(150px,1fr) auto minmax(150px,1fr) auto;gap:8px;margin:16px 0;}
+    #unit-activity-editor input,#unit-activity-editor select {width:100%;min-width:0;box-sizing:border-box;}
+    #unit-activity-editor .activity-rewards {width:100%;border-collapse:collapse;margin:12px 0;}
+    #unit-activity-editor th {text-align:left;color:var(--muted);font-size:12px;padding:8px;}
+    #unit-activity-editor td {padding:6px 8px;border-top:1px solid var(--line);}
+    #unit-activity-editor th:nth-child(2) {width:90px;}
+    #unit-activity-editor th:nth-child(3) {width:120px;}
+    #unit-activity-editor th:last-child {width:76px;}
+    #unit-activity-editor .activity-featured {background:rgb(70 219 232 / 9%);color:var(--cyan);}
+    @media(max-width:850px){#unit-activity-editor .activity-picker {grid-template-columns:1fr auto;}}
+  `;panel.append(style);
+  const heading=document.createElement('summary');heading.textContent='独立活动扭蛋机';
+  const note=document.createElement('p');note.className='note';
+  note.textContent='选择机体项目的独立活动机草稿，搭配机体、设计图和原生消耗品。频率总计须为 100%，单项最多 50%。保存后使用页面上的“编译”和“应用”同时安装客户端与服务端。原生抽取的连续重复规避和限额规则继续生效。';
+  const refresh=document.createElement('button');refresh.type='button';refresh.textContent='读取活动机台';
+  const list=document.createElement('div');const editor=document.createElement('div');
+  const defaults=document.createElement('details');defaults.className='activity-default-settings';
+  const status=document.createElement('p');status.setAttribute('role','status');
+  let snapshot,selected,rows=[],choices=new Map();
+  const el=(tag,text)=>{const node=document.createElement(tag);if(text!==undefined)node.textContent=text;return node;};
+  const labeled=(text,input)=>{const label=el('label');label.className='activity-field';label.append(el('span',text),input);return label;};
+  function renderPreferences(){
+    defaults.replaceChildren(el('summary','本服模板参数（随制作目录保存）'));
+    defaults.append(el('p','留空沿用本服原生参考。这里的价格和目标频率只用于以后生成或套用模板，不会自动改变已有机台；它们属于服主配置，不进入通用工具包。'));
+    const table=el('table');table.className='activity-rewards';const head=el('tr');
+    for(const name of ['模板','单次价格','目标频率 %'])head.append(el('th',name));table.append(head);
+    const inputs=[];
+    for(const preset of snapshot.patterns||[]){
+      const stored=snapshot.preferences?.patterns?.[preset.id]||{};const row=el('tr');
+      const price=el('input');price.type='number';price.min='1';price.step='1';price.value=stored.price??'';price.placeholder='原生参考';
+      price.setAttribute('aria-label',preset.title+'本服默认价格');
+      const percent=el('input');percent.type='number';percent.min='0.01';percent.max='50';percent.step='0.01';
+      percent.value=stored.featured_entries==null?'':(stored.featured_entries/100).toFixed(2);percent.placeholder='原生参考';
+      percent.setAttribute('aria-label',preset.title+'本服目标频率');
+      const priceCell=el('td');priceCell.append(price);const frequencyCell=el('td');frequencyCell.append(percent);
+      row.append(el('td',preset.title),priceCell,frequencyCell);table.append(row);inputs.push({id:preset.id,price,percent});
+    }
+    const save=el('button','保存本服模板参数');save.type='button';
+    save.onclick=async()=>{
+      if(state.dirty){showToast('请先保存当前机台修改，再设置本服模板参数。');return;}
+      save.disabled=true;
+      try{const patterns={};
+        for(const input of inputs){const settings={};
+          if(input.price.value!=='')settings.price=Number(input.price.value);
+          if(input.percent.value!==''){const entries=Number(input.percent.value)*100;
+            if(Math.abs(entries-Math.round(entries))>0.000001)throw new Error('目标频率最多保留两位小数。');
+            settings.featured_entries=Math.round(entries);}
+          if(Object.keys(settings).length)patterns[input.id]=settings;
+        }
+        const result=await apiPost('/api/providers/capsules/api/projects/activity-preferences',{
+          expected_revision:state.revision,preferences:{schema_version:1,patterns}});
+        state.revision=result.catalog_revision;if(state.bootstrap)state.bootstrap.catalog_revision=state.revision;
+        $('#revision').textContent='revision '+state.revision.slice(0,12);snapshot.preferences=result.preferences;status.textContent=result.message;
+      }catch(error){status.textContent=error.message;}finally{save.disabled=false;}
+    };defaults.append(table,save);
+  }
+  function changed(){setDirty(true);}
+  function open(machine){
+    if(state.dirty&&!confirmDiscard())return;
+    selected=machine;rows=(machine.pool||[]).map(row=>({...row}));editor.replaceChildren();panel.open=true;
+    const title=el('h3',machine.name);const header=el('div');header.className='activity-header';header.append(title);editor.append(header);
+    const art=(snapshot.artwork||[]).find(row=>row.key===machine.artwork_key);
+    if(art){const image=el('img');image.src='data:image/png;base64,'+art.png_base64;
+      image.alt=machine.name+'活动海报';header.append(image);}
+    const fields=el('div');fields.className='activity-fields';
+    const name=el('input');name.value=machine.name;name.maxLength=128;name.setAttribute('aria-label','活动机台名称');
+    const currency=el('select');currency.setAttribute('aria-label','活动机台货币');
+    for(const [value,label] of [[0,'G 币'],[2,'代币']]){const option=el('option',label);option.value=value;currency.append(option);}
+    currency.value=machine.currency_type;
+    const price=el('input');price.type='number';price.min='1';price.step='1';price.value=machine.price;
+    price.setAttribute('aria-label','活动机台单次价格');fields.append(labeled('名称',name),labeled('货币',currency),labeled('单次价格',price));
+    const pattern=el('select');pattern.setAttribute('aria-label','活动机台奖池模板');
+    for(const preset of snapshot.patterns||[]){const option=el('option',preset.title);option.value=preset.id;pattern.append(option);}
+    pattern.value=machine.pattern_id||'gp_rare';
+    const usePattern=el('button','套用模板价格与奖池');usePattern.type='button';
+    for(const input of [name,currency,price])input.addEventListener('input',changed);
+    const reference=el('p');
+    function describe(){const balance=machine.balance?.rare_configuration_frequency;
+      reference.textContent=balance?'原生参考频率 '+(balance.value*100).toFixed(4)+'%；目标频率与所有奖品均可调整。':'';}
+    describe();editor.append(reference);
+    const rewards=el('table');rewards.className='activity-rewards';const total=el('p');total.setAttribute('role','status');
+    function summarize(){const sum=rows.reduce((value,row)=>value+Number(row.entries||0),0);
+      total.textContent='奖池合计 '+(sum/100).toFixed(2)+'%（'+rows.length+' 种奖励）';}
+    function drawRows(){
+      rewards.replaceChildren();
+      const tableHead=el('thead');const headings=el('tr');
+      for(const title of ['奖励','数量','配置频率 %','操作'])headings.append(el('th',title));tableHead.append(headings);
+      const tableBody=el('tbody');rewards.append(tableHead,tableBody);
+      for(const [index,row] of rows.entries()){
+        const line=el('tr');if(row.category_id===machine.unit_category_id)line.className='activity-featured';
+        const label=el('td',choices.get(row.category_id)?.name||('物品 '+row.category_id));
+        const amount=el('input');amount.type='number';amount.min='1';amount.step='1';amount.value=row.amount;
+        amount.setAttribute('aria-label','奖励 '+(index+1)+' 数量');
+        const percent=el('input');percent.type='number';percent.min='0.01';percent.max='50';percent.step='0.01';percent.value=(row.entries/100).toFixed(2);
+        percent.setAttribute('aria-label','奖励 '+(index+1)+' 配置频率百分比');
+        amount.oninput=()=>{row.amount=Number(amount.value);changed();};
+        percent.oninput=()=>{row.entries=Number(percent.value)*100;changed();summarize();};
+        const remove=el('button','移除');remove.type='button';remove.onclick=()=>{rows.splice(index,1);changed();drawRows();};
+        const quantity=el('td');quantity.append(amount);const frequency=el('td');frequency.append(percent);
+        const action=el('td');action.append(remove);line.append(label,quantity,frequency,action);tableBody.append(line);
+      }
+      summarize();
+    }
+    const search=el('input');search.type='search';search.placeholder='搜索机体、设计图或消耗品';search.setAttribute('aria-label','搜索活动奖励');
+    const find=el('button','搜索奖励');find.type='button';
+    const matches=el('select');matches.setAttribute('aria-label','可用活动奖励');
+    const add=el('button','添加奖励');add.type='button';
+    find.onclick=async()=>{
+      find.disabled=true;
+      try{const result=await apiGet('/api/providers/capsules/api/projects/activity-items?q='+encodeURIComponent(search.value));
+        matches.replaceChildren();for(const item of result.items){choices.set(item.category_id,item);
+          const option=el('option',item.name+(item.kind==='blueprint'?'（设计图）':''));option.value=item.category_id;matches.append(option);}drawRows();
+      }catch(error){status.textContent=error.message;}finally{find.disabled=false;}
+    };
+    add.onclick=()=>{const category=Number(matches.value);if(!category)return;
+      let amount=1;while(rows.some(row=>row.category_id===category&&row.amount===amount))amount++;
+      rows.push({category_id:category,amount,entries:100});changed();drawRows();};
+    const picker=el('div');picker.className='activity-picker';picker.append(search,find,matches,add);
+    const save=el('button','保存活动机台配置');save.type='button';
+    usePattern.onclick=async()=>{
+      usePattern.disabled=true;
+      try{const result=await apiPost('/api/providers/capsules/api/projects/activity-preset',{
+        expected_revision:state.revision,id:machine.id,pattern_id:pattern.value});
+        Object.assign(machine,result.preset);rows=machine.pool.map(row=>({...row}));
+        describe();
+        currency.value=machine.currency_type;price.value=machine.price;
+        for(const [identity,name] of Object.entries(result.reward_names||{}))choices.set(Number(identity),{name});
+        changed();drawRows();status.textContent='模板价格与奖池已预填，可继续调整。审核并保存后再编译应用。';
+      }catch(error){status.textContent=error.message;}finally{usePattern.disabled=false;}
+    };
+    save.onclick=async()=>{
+      const pool=rows.map(row=>({...row,entries:Math.round(row.entries)}));
+      if(pool.some((row,index)=>Math.abs(row.entries-rows[index].entries)>0.000001)||pool.reduce((sum,row)=>sum+row.entries,0)!==10000){
+        status.textContent='配置频率须保留最多两位小数，合计 100%。';return;}
+      save.disabled=true;
+      try{const result=await apiPost('/api/providers/capsules/api/projects/activity',{
+        expected_revision:state.revision,id:machine.id,name:name.value,pattern_id:machine.pattern_id||'gp_rare',currency_type:Number(currency.value),price:Number(price.value),
+        template_machine_id:machine.template_machine_id||machine.balance?.source_machine_ids?.[0],pool});
+        state.revision=result.catalog_revision;if(state.bootstrap)state.bootstrap.catalog_revision=state.revision;
+        $('#revision').textContent='revision '+state.revision.slice(0,12);setDirty(false);status.textContent=result.message;await load();
+      }catch(error){status.textContent=error.message;}finally{save.disabled=false;}
+    };
+    const presets=el('div');presets.className='activity-presets';presets.append(labeled('价格与奖池模板',pattern),usePattern);
+    editor.append(fields,presets,picker,rewards,total,save);drawRows();
+  }
+  async function load(){
+    refresh.disabled=true;
+    try{snapshot=await apiGet('/api/providers/capsules/api/projects/activity');list.replaceChildren();renderPreferences();
+      for(const [identity,name] of Object.entries(snapshot.reward_names||{}))choices.set(Number(identity),{name});
+      const machines=new Map((snapshot.drafts||[]).map(row=>[row.id,row]));
+      for(const row of snapshot.machines||[])machines.set(row.id,row);
+      for(const row of machines.values()){const button=el('button',row.name+(row.status==='draft'?' · 草稿':' · 已配置'));
+        button.type='button';button.onclick=()=>open(row);list.append(button);}
+      if(!machines.size)list.append(el('p','请先在机体资料与素材库中生成独立活动机草稿。'));
+      if(selected&&machines.has(selected.id))open(machines.get(selected.id));
+    }catch(error){status.textContent=error.message;}finally{refresh.disabled=false;}
+  }
+  refresh.onclick=load;state.reloadActivity=load;
+  panel.append(heading,note,refresh,status,defaults,list,editor);shadow.prepend(panel);
+}
+
+initializeActivityEditor();
 initializeProjectLibrary();
 await init();
 return () => { if (state.portrait) clearTimeout(state.portrait.timer); clearTimeout(showToast.timer); };

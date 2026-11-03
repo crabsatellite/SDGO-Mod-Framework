@@ -56,7 +56,7 @@ Release labels describe the published version; later feature work is accepted se
 | Chinese shop localization and search <!-- catalog: `shop_localization` --> | Translate shop text and hangar confirmation names; combine Chinese search, rank and payment filters | [Guide](docs/shop-localization.md) |
 | Friend unit gifts (optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Offer owned units through Storage, with accept/return and provenance; new offers default off | [Use](docs/friend-unit-gift.md) |
 
-| Unit family import (Beta) <!-- catalog: `unit_catalog` --> | Import unit archives, complete required data and generate paired unit, encyclopedia and shop/capsule resources in Mod Manager | [Use](docs/unit-import.md) |
+| Unit family import (Beta) <!-- catalog: `unit_catalog` --> | Import units and portable metadata/artwork, complete paired definitions, and author dedicated activity pools with GP or token presets in Mod Manager | [Use](docs/unit-import.md) |
 
 <!-- /mod-category:gameplay -->
 
