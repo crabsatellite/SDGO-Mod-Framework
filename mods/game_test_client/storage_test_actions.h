@@ -17,7 +17,7 @@ public:
         return Bind({module?reinterpret_cast<SdgoStorageGameTestGetSnapshotV1Fn>(GetProcAddress(module,SDGO_STORAGE_GAME_TEST_SNAPSHOT_EXPORT)):nullptr,
                      module?reinterpret_cast<SdgoStorageGameTestActionV1Fn>(GetProcAddress(module,SDGO_STORAGE_GAME_TEST_ACTION_EXPORT)):nullptr});
     }
-    bool Bind(Exports exports) { exports_=exports;stage_=0;state_={};before_={};return exports.snapshot && exports.action; }
+    bool Bind(Exports exports) { exports_=exports;stage_=0;closing_=false;state_={};before_={};return exports.snapshot && exports.action; }
     Result Read(const SdgoGameTestContextV1* context) {
         if(!context || context->size<sizeof(*context) || context->version!=SDGO_GAME_TEST_VERSION ||
            !context->role || strcmp(context->role,"client") || !context->run_id)return Invalid;
@@ -57,9 +57,19 @@ public:
            (state_.completed && state_.preflight_reply_sequence<=before_.preflight_reply_sequence))return Rejected;
         stage_=3;return Complete;
     }
+    Result Close(const SdgoGameTestContextV1* context) {
+        const auto read=Read(context);
+        if(read>=Invalid)return read;
+        if(!state_.loaded || !state_.visible)return Complete;
+        if(closing_)return Waiting;
+        if(state_.busy || state_.outstanding)return Waiting;
+        if(!exports_.action(state_.run_hash,SDGO_STORAGE_GAME_TEST_ACTION_CLOSE))return Rejected;
+        closing_=true;return Waiting;
+    }
     SdgoStorageGameTestSnapshotV1 State()const{return state_;}
 private:
     Exports exports_{};
     SdgoStorageGameTestSnapshotV1 state_{},before_{};
     unsigned stage_=0;
+    bool closing_=false;
 };

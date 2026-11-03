@@ -1108,6 +1108,14 @@ void TestThreeDRoomNativePath(
     friends::FriendInviteSender& sender,
     NativeActions& native)
 {
+    ResetFixture(sender,native);
+    SetThreeDRoomFixture();
+    g_inviteButton[0x162]=0;
+    Check(sender.Send(4242,"FriendAlpha")==friends::FriendInviteSender::kRequestPending && g_callbackCalls==0,
+          "a newly opened 3D popup waits for its own native visibility update without forcing hidden controls");
+    g_inviteButton[0x162]=1;
+    Check(sender.Poll()==friends::FriendInviteSender::kRequestPending && g_callbackCalls==1,
+          "native visibility admits exactly one original 3D invitation callback");
     ResetFixture(sender, native);
     SetThreeDRoomFixture();
     g_uiLoadBusy = true;

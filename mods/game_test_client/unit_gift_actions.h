@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cwchar>
+#include <iterator>
 
 #include "friend_actions.h"
 #include "sdgo/friend_unit_gift_client_observer.h"
@@ -85,7 +86,7 @@ public:
             captureError_ = kCaptureRowCountBounds;
             return false;
         }
-        if (snapshot_.provenance_text_code_units > 256) {
+        if (snapshot_.provenance_text_code_units > std::size(snapshot_.provenance_text)) {
             captureError_ = kCaptureProvenanceBounds;
             return false;
         }

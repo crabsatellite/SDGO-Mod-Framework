@@ -364,6 +364,12 @@ class Campaign:
     def invitations(self):
         a,aid,aname=self.start('a');b,bid,bname=self.start('b')
         self.state_friend(a,bid);self.state_friend(b,aid)
+        # The first actor may have loaded its cache before the peer logged in.
+        # Refresh through the real protocol before testing an online-only UI.
+        for actor,peer in ((a,bid),(b,aid)):
+            assert_receipt(actor.command('refresh'),sent=True)
+            actor.wait(lambda state:bool(find_friend(state,peer)) and int(find_friend(state,peer)['presence'])!=0,90)
+        self.check('real friend refresh observes both authenticated peers online',True)
         assert_receipt(a.command('open',target_name=bname,target_id=bid))
         created=assert_receipt(a.command('room_create',timeout=180))
         room=created['room'];room_id=int(room['actual_room_id']);channel=int(room['actual_channel_id'])

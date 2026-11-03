@@ -394,8 +394,11 @@ public:
                 !observation_.invite_control_visible ||
                 !observation_.invite_control_enabled ||
                 !observation_.
-                    invite_control_hit_testable)
+                    invite_control_hit_testable) {
+                if(threeDRoom && observation_.invite_control_enabled && observation_.invite_control_hit_testable)
+                    return ArmMessengerWait(targetId,targetName,targetNameLength);
                 return Publish(kInviteControlNotReady);
+            }
 
             const NativeActions::TransportObservation before =
                 native_->TransportState();
