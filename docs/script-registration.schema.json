@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Original-VM script registration candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "owner", "revision", "vmAbi", "phase", "rootProfile", "executionFailure", "programs"],
+  "properties": {
+    "schema": {"const": "sdgo:script-registration/1"},
+    "owner": {"type": "string", "pattern": "^[a-z_][a-z0-9_]*$", "maxLength": 48},
+    "revision": {"type": "string", "minLength": 1, "maxLength": 128},
+    "vmAbi": {"const": "lua50-x86-double64"},
+    "phase": {"const": "after-original-root-loader"},
+    "rootProfile": {"const": "closure-publications-only-v1"},
+    "executionFailure": {"const": "close-candidate-client"},
+    "programs": {
+      "type": "array", "minItems": 1, "maxItems": 512,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["resource", "member", "sha256", "exports"],
+        "properties": {
+          "resource": {"type": "string", "pattern": "^scp/[a-z0-9_.-]+\\.scp$", "maxLength": 240},
+          "member": {"type": "string", "minLength": 1, "maxLength": 1024},
+          "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "exports": {"type": "array", "minItems": 1, "maxItems": 8192, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$", "maxLength": 255}}
+        }
+      }
+    }
+  }
+}
