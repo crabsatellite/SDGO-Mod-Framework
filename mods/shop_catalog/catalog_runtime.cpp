@@ -25,6 +25,8 @@ namespace {
 constexpr std::uint64_t kMaximumSearchIndexBytes = 8ull * 1024 * 1024;
 constexpr char kOriginalSearchDefinitionHash[] =
     "595974c93de41196927d7cc665d6154a9932713182d0c1824246d57d579a43b6";
+constexpr char kOriginalSubSearchDefinitionHash[] =
+    "8857d2f6e806b7fc394369bb73fd5f71b5bf442ed56b2f827d76a0fd0027a0dc";
 
 bool Success(SQLRETURN value) { return value == SQL_SUCCESS || value == SQL_SUCCESS_WITH_INFO; }
 std::wstring Absolute(const std::wstring& path)
@@ -502,28 +504,60 @@ bool ApplySearchIndex(
         Database billing(hostFile, L"DB StoreBilling");
         billing.Execute(
             L"SELECT OBJECT_DEFINITION(OBJECT_ID(N'dbo.sp_StoreItemsList',N'P')),"
+            L"OBJECT_DEFINITION(OBJECT_ID(N'dbo.sp_StoreSubItemsList',N'P')),"
             L"CASE WHEN OBJECT_ID(N'dbo.sdgo_ShopSearchState',N'U') IS NULL THEN 0 ELSE 1 END");
         if (!Success(SQLFetch(billing.statement)))
-            throw std::runtime_error("native shop search definition unavailable");
-        const std::wstring currentDefinition = billing.LongString(1);
-        const bool hasState = billing.Number(2) != 0;
+            throw std::runtime_error("native shop search definitions unavailable");
+        const std::wstring currentMainDefinition = billing.LongString(1);
+        const std::wstring currentSubDefinition = billing.LongString(2);
+        const bool hasState = billing.Number(3) != 0;
         if (SQLFetch(billing.statement) != SQL_NO_DATA)
-            throw std::runtime_error("ambiguous native shop search definition");
+            throw std::runtime_error("ambiguous native shop search definitions");
         if (hasState) {
             billing.Execute(
-                L"SELECT InstalledDefinition FROM dbo.sdgo_ShopSearchState "
-                L"WHERE ObjectName=N'dbo.sp_StoreItemsList'");
-            if (!Success(SQLFetch(billing.statement)))
+                L"SELECT ObjectName,InstalledDefinition "
+                L"FROM dbo.sdgo_ShopSearchState "
+                L"WHERE ObjectName IN("
+                L"N'dbo.sp_StoreItemsList',N'dbo.sp_StoreSubItemsList') "
+                L"ORDER BY ObjectName");
+            bool mainOwned = false;
+            bool subOwned = false;
+            for (;;) {
+                const SQLRETURN fetched = SQLFetch(billing.statement);
+                if (fetched == SQL_NO_DATA) break;
+                if (!Success(fetched))
+                    throw std::runtime_error("shop search ownership state unavailable");
+                const std::wstring object = billing.String(1);
+                const std::wstring installed = billing.LongString(2);
+                if (object == L"dbo.sp_StoreItemsList") {
+                    if (mainOwned || installed != currentMainDefinition)
+                        throw std::runtime_error("owned main shop search procedure has an external edit");
+                    mainOwned = true;
+                } else if (object == L"dbo.sp_StoreSubItemsList") {
+                    if (subOwned || installed != currentSubDefinition)
+                        throw std::runtime_error("owned sub shop search procedure has an external edit");
+                    subOwned = true;
+                } else {
+                    throw std::runtime_error("unexpected shop search ownership state");
+                }
+            }
+            if (!mainOwned)
                 throw std::runtime_error("shop search ownership state incomplete");
-            const std::wstring installedDefinition = billing.LongString(1);
-            if (SQLFetch(billing.statement) != SQL_NO_DATA ||
-                installedDefinition != currentDefinition)
-                throw std::runtime_error("owned shop search procedure has an external edit");
+            if (!subOwned) {
+                const std::string originalSubUtf8 = Utf8(currentSubDefinition);
+                if (Sha256(originalSubUtf8.data(), originalSubUtf8.size()) !=
+                    kOriginalSubSearchDefinitionHash)
+                    throw std::runtime_error("unsupported native sub shop search procedure; no changes made");
+            }
         } else {
-            const std::string originalUtf8 = Utf8(currentDefinition);
-            if (Sha256(originalUtf8.data(), originalUtf8.size()) !=
+            const std::string originalMainUtf8 = Utf8(currentMainDefinition);
+            if (Sha256(originalMainUtf8.data(), originalMainUtf8.size()) !=
                 kOriginalSearchDefinitionHash)
-                throw std::runtime_error("unsupported native shop search procedure; no changes made");
+                throw std::runtime_error("unsupported native main shop search procedure; no changes made");
+            const std::string originalSubUtf8 = Utf8(currentSubDefinition);
+            if (Sha256(originalSubUtf8.data(), originalSubUtf8.size()) !=
+                kOriginalSubSearchDefinitionHash)
+                throw std::runtime_error("unsupported native sub shop search procedure; no changes made");
         }
 
         // Only aliases whose exact product/name pair is currently published can
@@ -551,14 +585,53 @@ bool ApplySearchIndex(
 
         billing.Execute(
             sdgo::shop_search::BuildInstallSql(
-                aliases, currentDefinition, revision));
+                aliases, currentMainDefinition, currentSubDefinition,
+                revision));
         billing.Complete();
         billing.Execute(
-            L"SELECT COUNT(*) FROM dbo.sdgo_ShopSearchAliases");
+            L"SELECT ObjectName,"
+            L"OBJECT_DEFINITION(OBJECT_ID(ObjectName,N'P')),"
+            L"InstalledDefinition "
+            L"FROM dbo.sdgo_ShopSearchState "
+            L"WHERE ObjectName IN("
+            L"N'dbo.sp_StoreItemsList',N'dbo.sp_StoreSubItemsList') "
+            L"ORDER BY ObjectName");
+        bool mainConfirmed = false;
+        bool subConfirmed = false;
+        for (;;) {
+            const SQLRETURN fetched = SQLFetch(billing.statement);
+            if (fetched == SQL_NO_DATA) break;
+            if (!Success(fetched))
+                throw std::runtime_error("shop search procedure readback unavailable");
+            const std::wstring object = billing.String(1);
+            const std::wstring current = billing.LongString(2);
+            const std::wstring installed = billing.LongString(3);
+            if (current != installed)
+                throw std::runtime_error("shop search procedure readback mismatch");
+            if (object == L"dbo.sp_StoreItemsList" && !mainConfirmed)
+                mainConfirmed = true;
+            else if (object == L"dbo.sp_StoreSubItemsList" && !subConfirmed)
+                subConfirmed = true;
+            else
+                throw std::runtime_error("ambiguous shop search procedure readback");
+        }
+        if (!mainConfirmed || !subConfirmed)
+            throw std::runtime_error("shop search procedure readback incomplete");
+        billing.Execute(
+            L"SELECT COUNT(*),"
+            L"(SELECT COUNT(*) FROM sys.extended_properties "
+            L"WHERE class=1 AND minor_id=0 AND name=N'sdgo_owner' "
+            L"AND CONVERT(NVARCHAR(128),value)=N'shop_search/v2' "
+            L"AND major_id IN("
+            L"OBJECT_ID(N'dbo.sdgo_ShopSearchAliases',N'U'),"
+            L"OBJECT_ID(N'dbo.sdgo_ShopSearchState',N'U'),"
+            L"OBJECT_ID(N'dbo.sdgo_ShopSearchBackup',N'U'))) "
+            L"FROM dbo.sdgo_ShopSearchAliases");
         if (!Success(SQLFetch(billing.statement)))
             throw std::runtime_error("shop search alias readback unavailable");
         const int installedAliases = billing.Number(1);
-        if (installedAliases <= 0 ||
+        const int ownedTables = billing.Number(2);
+        if (installedAliases <= 0 || ownedTables != 3 ||
             SQLFetch(billing.statement) != SQL_NO_DATA)
             throw std::runtime_error("shop search alias readback invalid");
 
