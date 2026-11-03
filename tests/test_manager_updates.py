@@ -214,14 +214,15 @@ class UpdateTests(unittest.TestCase):
         server=make_server(self.workspace);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
         base='http://127.0.0.1:'+str(server.server_port)
-        with urllib.request.urlopen(base+'/api/state') as r:token=json.load(r)['session_token']
+        local=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with local.open(base+'/api/state',timeout=10) as r:token=json.load(r)['session_token']
         for origin in ('https://foreign.invalid',base):
             req=urllib.request.Request(base+'/api/updates',data=b'{"action":"install"}',
                 headers={'Content-Type':'application/json','Origin':origin,'X-ModManager-Token':'bad'})
-            with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(req)
+            with self.assertRaises(urllib.error.HTTPError) as error:local.open(req,timeout=10)
             self.assertEqual(error.exception.code,403)
             error.exception.close()
-        with urllib.request.urlopen(base+'/api/updates') as r:self.assertEqual(json.load(r)['channel'],'stable')
+        with local.open(base+'/api/updates',timeout=10) as r:self.assertEqual(json.load(r)['channel'],'stable')
 
 
 if __name__=='__main__':unittest.main()
