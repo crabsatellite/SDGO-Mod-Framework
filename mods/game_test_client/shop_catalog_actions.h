@@ -147,6 +147,8 @@ public:
         UiCallbackFn room_callback = nullptr;
         void* search_vtable = nullptr;
         UiCallbackFn search_callback = nullptr;
+        void* page_number_vtable = nullptr;
+        UiCallbackFn page_number_callback = nullptr;
         void* buy_vtable = nullptr;
         PopupCallbackFn buy_callback = nullptr;
         void* gift_vtable = nullptr;
@@ -290,6 +292,8 @@ public:
                 api, mod, "flow.shop_room_manager_callback");
         bindings.search_vtable=api->Symbol(mod,"flow.shop_search_vtable");
         bindings.search_callback=Symbol<UiCallbackFn>(api,mod,"flow.shop_search_callback");
+        bindings.page_number_vtable=api->Symbol(mod,"test.shop_page_number_vtable");
+        bindings.page_number_callback=Symbol<UiCallbackFn>(api,mod,"test.shop_page_number_callback");
         bindings.buy_vtable =
             api->Symbol(mod, "flow.shop_buy_options_vtable");
         bindings.buy_callback =
@@ -330,6 +334,7 @@ public:
             bindings_.room_vtable &&
             bindings_.room_callback &&
             bindings_.search_vtable && bindings_.search_callback &&
+            bindings_.page_number_vtable && bindings_.page_number_callback &&
             bindings_.buy_vtable &&
             bindings_.buy_callback &&
             bindings_.gift_vtable &&
@@ -342,6 +347,7 @@ public:
                 bindings_.room_vtable,
                 bindings_.room_callback) &&
             CallbackMatches(bindings_.search_vtable,bindings_.search_callback) &&
+            CallbackMatches(bindings_.page_number_vtable,bindings_.page_number_callback) &&
             CallbackMatches(
                 bindings_.buy_vtable,
                 bindings_.buy_callback) &&
@@ -549,8 +555,10 @@ private:
     static constexpr size_t kDownmenuShopRadio = 0x50;
     static constexpr size_t kDownmenuMode = 0x60;
     static constexpr size_t kRoomRoot = 0x64;
-    static constexpr size_t kRoomPage = 0x68;
-    static constexpr size_t kRoomMaxPage = 0x6C;
+    // 009DADC0 records the real page at +70/+74 and derives the five-page
+    // arrow groups at +68/+6C. Reading group counters skips four pages.
+    static constexpr size_t kRoomPage = 0x70;
+    static constexpr size_t kRoomMaxPage = 0x74;
     static constexpr size_t kRoomProductsBegin = 0x78;
     static constexpr size_t kRoomProductsEnd = 0x7C;
     static constexpr size_t kRoomOptionsBegin = 0x88;
@@ -1480,21 +1488,36 @@ private:
                 CatalogRequestReady();
             if (request != kComplete)
                 return Publish(request);
-            void* control =
-                FindControl(
-                    roomRoot_,
-                    L"RightBtn",
-                    kButtonKind);
-            if (!control ||
-                !ControlIdentity(
-                    control,
-                    roomRoot_,
-                    L"RightBtn"))
-                return Publish(kControlMismatch);
+            void* control = nullptr;
+            void* service = room_;
+            UiCallbackFn callback = bindings_.room_callback;
+            if ((page + 1) % 5) {
+                const auto resolved=ResolveService(L"page_number",bindings_.page_number_vtable,&service);
+                if(resolved==kServiceAbsent)return Publish(kWaitingForCatalog);
+                if(resolved!=kServiceMatched)return Publish(kServiceMismatch);
+                void* root=nullptr;void* cached=nullptr;uint32_t selected=0,last=0;
+                if(!ReadPointer(service,0x44,&root) || !ReadValue(service,0x88,&selected) ||
+                   !ReadValue(service,0x8C,&last))return Publish(kNativeFault);
+                // The original 03ED notification may still be queued after
+                // the shop reply. Never use a previous page's pager service.
+                if(!root || selected!=page || last!=maximum)return Publish(kWaitingForCatalog);
+                const uint32_t index=(page+1)%5;
+                const std::wstring name=L"PageBtn"+std::to_wstring(index);
+                if(!ReadPointer(service,0x48+index*sizeof(void*),&cached))return Publish(kNativeFault);
+                control=FindControl(root,name.c_str(),kButtonKind);
+                if(!control || control!=cached || !ControlIdentity(control,root,name.c_str()))
+                    return Publish(kControlMismatch);
+                callback=bindings_.page_number_callback;
+            } else {
+                control=FindControl(roomRoot_,L"RightBtn",kButtonKind);
+                if(!control || !ControlIdentity(control,roomRoot_,L"RightBtn"))
+                    return Publish(kControlMismatch);
+            }
             pageBefore_ = page;
+            pageInvokedAt_ = lastElapsed_;
             if (!Invoke(
-                    bindings_.room_callback,
-                    room_,
+                    callback,
+                    service,
                     kClickEvent,
                     control))
                 return Publish(kNativeFault);
@@ -1546,13 +1569,13 @@ private:
         if (request ==
             kWaitingForCatalog)
             return Publish(kChangingPage);
-        // 009DFBF0 advances room+68 before 009BE6B0 sends 072D.  The
-        // 0549 reply later clears REQ_GET_STORE_ITEM_LIST ownership and
-        // rebuilds the 0x11-byte rows through 009DADC0.  Do not scan the
-        // synchronously advanced page while it still contains prior rows:
-        // a second RightBtn click would be ignored by the pending guard.
+        // The original page-number callback posts 03EC; its normal consumer
+        // sends 072D, then 0549 rebuilds rows and +70/+74 through 009DADC0.
+        // Arrow clicks advance only the group synchronously. Neither action
+        // makes the next eight rows available before the original reply.
         if (page == pageBefore_)
-            return Publish(kPageDidNotAdvance);
+            return Publish(lastElapsed_<pageInvokedAt_+kCatalogWaitMilliseconds
+                ? kChangingPage : kPageDidNotAdvance);
         if (page != pageBefore_ + 1)
             return Publish(kPageDidNotAdvance);
         stage_ = kStageScanPage;
@@ -3000,6 +3023,7 @@ private:
     void* roomRoot_ = nullptr;
     void* popup_ = nullptr;
     Product* target_ = nullptr;
+    uint64_t pageInvokedAt_ = 0;
     uint32_t targetRow_ = 0;
     uint32_t targetOptionIndex_ = 0;
     uint32_t pageBefore_ = 0;
