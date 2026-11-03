@@ -449,9 +449,11 @@ local function Move(npc,o,s,target,now,force)
     if point and SDGO_BattleAI_AdvancePoint then
       advanced=SDGO_BattleAI_AdvancePoint(point.x,point.y,point.z,300,0)==1
     end
-    s.movementIntent=advanced
+    -- A rejected path is still an unmet pursuit request. Clearing this demand
+    -- made Recover treat a stationary bot as intentionally idle forever when
+    -- both the native route and direct segment were blocked.
+    s.movementIntent=true;s.movementIntentAt=now
     if advanced then
-      s.movementIntentAt=now
       Log(s,'route unavailable: bounded walking fallback',now)
     else Log(s,'route unavailable: retry throttled',now) end
     return advanced

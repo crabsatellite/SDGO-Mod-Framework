@@ -934,4 +934,16 @@ for difficulty=1,2 do
   Check(calls.target==1 and not calls.fire and (calls.advances or 0)>0,
         'a melee-only loadout closes on a body-visible opponent without any ranged-origin dependency: '..difficulty)
 end
+for _,difficulty in pairs({1,2}) do
+  Reset({Difficulty=difficulty});observation.selectedSlot=0;observation.meleeRole=1
+  observation.weapons={Weapon(0,'melee',800,1000,600),Weapon(1,'melee',800,2000,600)}
+  observation.targets={Target(1,5000,1800)};observation.targets[1].pos={x=0,y=0,z=1800}
+  calls.routeResult=0;calls.advanceResult=0
+  Tick(0);Tick(700)
+  Check(calls.moves==0 and not calls.fire,'a rejected pursuit does not invent movement or an out-of-range hit: '..difficulty)
+  Tick(1401)
+  Check(SDGO_BattleAI_Universal.states[20].recovering and calls.recoveryMode==1 and
+        calls.moves>0 and calls.safeDirections>0 and calls.native==1,
+        'failed navigation retains pursuit demand so bounded safe recovery can run without stock AI: '..difficulty)
+end
 print(string.format('ALL %d UNIVERSAL CONTROLLER CHECKS PASSED (Lua 5.0)',checks))
