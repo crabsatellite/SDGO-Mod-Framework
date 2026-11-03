@@ -1,0 +1,151 @@
+{
+  "schema": 1,
+  "source": "Hong Kong Observatory Gregorian-Lunar calendar, UTC+08:00",
+  "source_url": "https://www.hko.gov.hk/tc/gts/time/conversion.htm",
+  "years": {
+    "2025": {
+      "new_year": "2025-01-01",
+      "spring_festival": "2025-01-29",
+      "qingming": "2025-04-04",
+      "labour_day": "2025-05-01",
+      "dragon_boat": "2025-05-31",
+      "mid_autumn": "2025-10-06",
+      "national_day": "2025-10-01"
+    },
+    "2026": {
+      "new_year": "2026-01-01",
+      "spring_festival": "2026-02-17",
+      "qingming": "2026-04-05",
+      "labour_day": "2026-05-01",
+      "dragon_boat": "2026-06-19",
+      "mid_autumn": "2026-09-25",
+      "national_day": "2026-10-01"
+    },
+    "2027": {
+      "new_year": "2027-01-01",
+      "spring_festival": "2027-02-06",
+      "qingming": "2027-04-05",
+      "labour_day": "2027-05-01",
+      "dragon_boat": "2027-06-09",
+      "mid_autumn": "2027-09-15",
+      "national_day": "2027-10-01"
+    },
+    "2028": {
+      "new_year": "2028-01-01",
+      "spring_festival": "2028-01-26",
+      "qingming": "2028-04-04",
+      "labour_day": "2028-05-01",
+      "dragon_boat": "2028-05-28",
+      "mid_autumn": "2028-10-03",
+      "national_day": "2028-10-01"
+    },
+    "2029": {
+      "new_year": "2029-01-01",
+      "spring_festival": "2029-02-13",
+      "qingming": "2029-04-04",
+      "labour_day": "2029-05-01",
+      "dragon_boat": "2029-06-16",
+      "mid_autumn": "2029-09-22",
+      "national_day": "2029-10-01"
+    },
+    "2030": {
+      "new_year": "2030-01-01",
+      "spring_festival": "2030-02-03",
+      "qingming": "2030-04-05",
+      "labour_day": "2030-05-01",
+      "dragon_boat": "2030-06-05",
+      "mid_autumn": "2030-09-12",
+      "national_day": "2030-10-01"
+    },
+    "2031": {
+      "new_year": "2031-01-01",
+      "spring_festival": "2031-01-23",
+      "qingming": "2031-04-05",
+      "labour_day": "2031-05-01",
+      "dragon_boat": "2031-06-24",
+      "mid_autumn": "2031-10-01",
+      "national_day": "2031-10-01"
+    },
+    "2032": {
+      "new_year": "2032-01-01",
+      "spring_festival": "2032-02-11",
+      "qingming": "2032-04-04",
+      "labour_day": "2032-05-01",
+      "dragon_boat": "2032-06-12",
+      "mid_autumn": "2032-09-19",
+      "national_day": "2032-10-01"
+    },
+    "2033": {
+      "new_year": "2033-01-01",
+      "spring_festival": "2033-01-31",
+      "qingming": "2033-04-04",
+      "labour_day": "2033-05-01",
+      "dragon_boat": "2033-06-01",
+      "mid_autumn": "2033-09-08",
+      "national_day": "2033-10-01"
+    },
+    "2034": {
+      "new_year": "2034-01-01",
+      "spring_festival": "2034-02-19",
+      "qingming": "2034-04-05",
+      "labour_day": "2034-05-01",
+      "dragon_boat": "2034-06-20",
+      "mid_autumn": "2034-09-27",
+      "national_day": "2034-10-01"
+    },
+    "2035": {
+      "new_year": "2035-01-01",
+      "spring_festival": "2035-02-08",
+      "qingming": "2035-04-05",
+      "labour_day": "2035-05-01",
+      "dragon_boat": "2035-06-10",
+      "mid_autumn": "2035-09-16",
+      "national_day": "2035-10-01"
+    },
+    "2036": {
+      "new_year": "2036-01-01",
+      "spring_festival": "2036-01-28",
+      "qingming": "2036-04-04",
+      "labour_day": "2036-05-01",
+      "dragon_boat": "2036-05-30",
+      "mid_autumn": "2036-10-04",
+      "national_day": "2036-10-01"
+    },
+    "2037": {
+      "new_year": "2037-01-01",
+      "spring_festival": "2037-02-15",
+      "qingming": "2037-04-04",
+      "labour_day": "2037-05-01",
+      "dragon_boat": "2037-06-18",
+      "mid_autumn": "2037-09-24",
+      "national_day": "2037-10-01"
+    },
+    "2038": {
+      "new_year": "2038-01-01",
+      "spring_festival": "2038-02-04",
+      "qingming": "2038-04-05",
+      "labour_day": "2038-05-01",
+      "dragon_boat": "2038-06-07",
+      "mid_autumn": "2038-09-13",
+      "national_day": "2038-10-01"
+    },
+    "2039": {
+      "new_year": "2039-01-01",
+      "spring_festival": "2039-01-24",
+      "qingming": "2039-04-05",
+      "labour_day": "2039-05-01",
+      "dragon_boat": "2039-05-27",
+      "mid_autumn": "2039-10-02",
+      "national_day": "2039-10-01"
+    },
+    "2040": {
+      "new_year": "2040-01-01",
+      "spring_festival": "2040-02-12",
+      "qingming": "2040-04-04",
+      "labour_day": "2040-05-01",
+      "dragon_boat": "2040-06-14",
+      "mid_autumn": "2040-09-20",
+      "national_day": "2040-10-01"
+    }
+  }
+}

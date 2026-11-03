@@ -112,7 +112,10 @@ struct FakeRooms
     NativeRoomObservation nativeRoom = {};
     FreshRoomObservation fresh = {};
     bool leaveResult = true;
+    bool leaveReady = true;
     unsigned leaveCalls = 0;
+
+    bool LeaveReady() const { return leaveReady; }
 
     bool Leave()
     {
@@ -838,18 +841,23 @@ void TestLeaveRequiresFreshReplyAndClearedModel()
     rooms.leave.reply_sequence = 10;
     rooms.leave.result = FakeRooms::kLeaveAccepted;
     rooms.leave.reply_opcode = 0x057B;
+    rooms.leaveReady = false;
 
     Check(
         bridge.Submit(
             Command(1, Bridge::kLeave),
             31,
             9001) == FriendActions::kWaitingForReply &&
-            rooms.leaveCalls == 1,
-        "leave calls RoomActions Leave directly once");
+            rooms.leaveCalls == 0,
+        "leave waits for the native room Main stage after model publication");
+    bridge.Tick(nullptr);
+    Check(bridge.Active() && rooms.leaveCalls == 0,
+          "loading room does not invoke or force its leave business");
+    rooms.leaveReady = true;
     bridge.Tick(nullptr);
     Check(
-        bridge.Active(),
-        "a stale accepted leave receipt is ignored");
+        bridge.Active() && rooms.leaveCalls == 1,
+        "ready room invokes leave once and ignores a stale accepted receipt");
 
     rooms.leave.reply_sequence = 11;
     bridge.Tick(nullptr);

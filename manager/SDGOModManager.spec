@@ -26,6 +26,8 @@ data += [(str(root/'tools/install_unit_catalog.ps1'),'tools'),
          (str(Path(os.environ['SDGO_UNIT_CATALOG_BINARY'])),'unit-import'),
          (str(Path(os.environ['SDGO_CAPSULE_REGISTRY_BINARY'])),'unit-import')]
 data += [(str(root/'owner/collection_capsule/sql'),'owner/collection_capsule/sql'),
+         (str(root/'owner/calendar_gifts/festival_dates.json'),'owner/calendar_gifts'),
+         (str(root/'owner/calendar_gifts/schema.sql'),'owner/calendar_gifts'),
          (str(root/'mods/collection_capsule/assets'),'mods/collection_capsule/assets'),
          (str(root/'support/capsule_registry'),'support/capsule_registry')]
 data += [(str(root/'tools'/name),'tools') for name in ('install_server.ps1','install_common.ps1')]

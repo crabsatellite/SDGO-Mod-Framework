@@ -208,12 +208,18 @@ int wmain(int argc, wchar_t** argv) {
           "oversized peer name is rejected with bounds diagnostic");
 
     invalid = baseline;
-    invalid.provenance_text_code_units = 257;
+    invalid.provenance_text_code_units = 513;
     setSnapshot(&invalid);
     check(!actions.Capture(&context) &&
               WrittenSnapshot(actions, &context).find(
                   "valid=0\ncapture_error=9\n") != std::string::npos,
           "oversized provenance text is rejected with bounds diagnostic");
+
+    invalid = baseline;
+    invalid.provenance_text_code_units = 320;
+    std::fill(std::begin(invalid.provenance_text),std::begin(invalid.provenance_text)+320,std::uint16_t{0x613F});
+    setSnapshot(&invalid);
+    check(actions.Capture(&context),"full note plus sender and timestamps fits the declared 512-unit native observation");
 
     setSnapshot(&baseline);
     setSnapshotResult(0);

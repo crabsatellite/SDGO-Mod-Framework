@@ -26,7 +26,7 @@ def decode_upload(body):
 
 
 class Units(Provider):
-    id, title = 'units', '机体导入'
+    id, title = 'units', '机体导入（Beta）'
     fields = {'workspace': '机体制作工作区（可沿用已有目录）', 'client': '配套客户端目录',
               'server_ini': 'WorldServer INI（留空只生成离线发布物）',
               'snapshot': '原生定义快照目录', 'module_binary': '机体客户端 DLL（用于导出）',

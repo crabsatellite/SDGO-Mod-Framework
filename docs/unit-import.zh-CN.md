@@ -1,4 +1,4 @@
-# 机体导入助手与 unit_catalog
+# 机体导入助手与 unit_catalog（Beta）
 
 这是 SDGO Mod Manager 的服主内容面板和可选客户端 Mod，功能 ID 为 `unit-import`，归类为玩法扩展。
 打开面板不会修改游戏资源或停止现有服务。通用发布包只提供工具，不预装作者机体；

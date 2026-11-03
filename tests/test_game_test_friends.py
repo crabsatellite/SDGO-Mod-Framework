@@ -63,6 +63,14 @@ class FriendCampaignContracts(unittest.TestCase):
         actor=friends.FriendActor(self.root)
         with self.assertRaises(friends.game_test.GameTestError):actor.command('send',body='line1\n[run]\nid=other')
         self.assertFalse((actor.directory/'friend-command.ini').exists())
+
+    def test_final_receipt_published_between_poll_and_run_end_is_consumed(self):
+        actor=friends.FriendActor(self.root)
+        Path(self.metadata['client']['events']).touch()
+        final={'command':{'sequence':'4','done':'1'}}
+        with mock.patch.object(actor,'state',side_effect=[None,final]), \
+             mock.patch.object(friends.game_test,'has_run_end',return_value=True):
+            self.assertEqual(actor.wait(lambda s:s['command']['sequence']=='4',1),final)
     def test_command_publication_waits_for_native_reader_without_delete_sharing(self):
         if os.name!='nt':self.skipTest('requires Windows file sharing semantics')
         actor=friends.FriendActor(self.root)

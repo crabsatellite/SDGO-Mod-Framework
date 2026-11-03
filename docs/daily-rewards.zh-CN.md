@@ -1,4 +1,4 @@
-# 每日双倍时间（Beta）
+# 每日双倍时间
 
 [English](daily-rewards.md) · [返回功能目录](../README.zh-CN.md)
 
@@ -50,7 +50,7 @@ Trace=0
 采用服务器系统时区；分布在多台机器时，服主应统一各机器的时区和时钟。
 
 `Trace=1` 在日志中记录最初 32 次生效结算的三项前后值，不记录玩家账号或密码。
-启动日志应出现 `loaded Daily double battle rewards (Beta)`，以及配置的本地时间段。
+启动日志应出现 `loaded Daily double battle rewards`，以及配置的本地时间段。
 
 ## 关闭和卸下
 

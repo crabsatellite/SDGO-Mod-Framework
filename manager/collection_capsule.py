@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class CollectionCapsule(Provider):
-    id, title = 'collection_capsule', '收藏扭蛋（Beta）'
+    id, title = 'collection_capsule', '收藏扭蛋'
     fields = {
         'server_ini': '目标 WorldServer 配置文件',
         'client': '配套客户端目录（本机安装目标）',
@@ -71,7 +71,7 @@ class CollectionCapsule(Provider):
                 'eligible_roots': state.get('eligible_roots'),
                 'catalog_revision': state.get('catalog_revision'),
                 'placement': state.get('placement'),
-                'validation': 'Beta；实际游戏动画、扣费和重启持久化由服主手动验收'}
+                'validation': '基本功能已验证可用；变更机台配置或内容后核对显示、扣费和领取结果'}
 
     def generate(self):
         from tools.collection_capsule import build
@@ -136,7 +136,7 @@ class CollectionCapsule(Provider):
                 if name != 'bundle-manifest.json' and _sha256(raw) != manifest['files'][name]:
                     raise ValueError('玩家包内容已改变，请重新生成')
                 archive.writestr(name, raw)
-        return Binary(stream.getvalue(), 'application/zip', 'SDGO-CollectionCapsule-Beta-Player.zip')
+        return Binary(stream.getvalue(), 'application/zip', 'SDGO-CollectionCapsule-Player.zip')
 
     def request(self, method, path, body, headers):
         if method == 'GET' and path == '/api/state':

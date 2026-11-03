@@ -1,4 +1,4 @@
-# Collection capsule (Beta)
+# Collection capsule
 
 Collection capsule is an independently installable and disableable gameplay Mod.
 It adds one machine to the native activity capsule page:
@@ -43,7 +43,7 @@ This feature requires the framework/core from the same build; install them toget
 
 ## Mod Manager owner tutorial
 
-Use **SDGO Mod Manager → Collection capsule (Beta)** for everyday configuration.
+Use **SDGO Mod Manager → Collection capsule** for everyday configuration.
 Select the target WorldServer INI, matching client, and full framework or owner
 toolkit directory. An optional activity poster must be a **361×322 PNG**.
 
