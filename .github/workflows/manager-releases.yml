@@ -52,6 +52,16 @@ jobs:
       - name: Owner shortcut serialization
         timeout-minutes: 3
         run: python -m unittest discover -s tests -p "test_mod_manager_entrypoints.py" -v
+      - name: Announcement rules and sealed native inputs
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -p "test_announcements.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -p "test_game_test_atomic_write.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -p "test_game_test_runtime_outputs.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Random overlay release metadata
         timeout-minutes: 3
         run: python -m unittest discover -s tests -p "test_room_random_package.py" -v
@@ -87,6 +97,15 @@ jobs:
             dist/SDGO-ModFramework-*.sha256
           retention-days: 3
           if-no-files-found: error
+      - name: Native announcement policy
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target announcement_policy_test announcement_window_messages_test --parallel 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & build/Release/announcement_policy_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & build/Release/announcement_window_messages_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Publish immutable versioned asset
         if: env.PREPARE_ONLY != 'true'
         env:
