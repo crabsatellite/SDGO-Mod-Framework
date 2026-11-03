@@ -1,4 +1,4 @@
-# 商城商品管理（Beta）
+# 商城商品管理
 
 [English](shop-catalog.md)
 

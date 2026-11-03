@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "collection_capsule",
-  "title": "收藏扭蛋（Beta）",
+  "title": "收藏扭蛋",
   "category": "gameplay",
   "hosts": [
     "world"

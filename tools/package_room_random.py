@@ -1,4 +1,4 @@
-"""Build a small, host-only, incremental preview; never package game/private files."""
+"""Build matching random-loadout overlays from the declared release channel."""
 import argparse
 import configparser
 import io
@@ -7,6 +7,10 @@ import json
 from pathlib import Path
 import subprocess
 import zipfile
+import sys
+
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from manager.updates import version as release_version
 
 
 def main():
@@ -16,7 +20,10 @@ def main():
     server_version=config['mod']['version']
     client_config=configparser.ConfigParser(interpolation=None)
     client_config.read(repo/'mods/room_random_client/mod.ini',encoding='utf-8')
-    version=max((server_version,client_config['mod']['version']),key=lambda v:tuple(map(int,v.split('.'))))+'-beta'
+    channel=config['mod']['channel']
+    if channel!=client_config['mod']['channel']:raise ValueError('Random client/server channels must match')
+    version=max((server_version,client_config['mod']['version']),key=release_version)
+    if channel=='beta' and '-beta.' not in version:version+='-beta.1'
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binaries',type=Path,default=repo/'build/Release')
     parser.add_argument('--out',type=Path,default=repo/f'dist/SDGO-RoomRandom-{version}.zip')
@@ -52,11 +59,11 @@ def main():
         'Read docs/room-random.zh-CN.md before installing into a STOPPED BattleServer.\n'
         'tools/install_room_random.ps1 -ServerRoot <one server folder> -DatabaseIni <host WorldServer.ini>\n'
         'No game executable, account data, database password, or private configuration is included.\n'
-        'One mission controlled-model retest passed; broader mode/multiplayer/reward acceptance remains pending. No public release.\n'
+        f'Release channel: {channel}. Use matching client/server components for the supported workflow.\n'
     ).encode('utf-8')
     revision=subprocess.run(['git','rev-parse','HEAD'],cwd=repo,capture_output=True,text=True,check=True).stdout.strip()
     manifest={'schema_version':1,'version':version,'server_component_version':server_version,'client_component_version':client_config['mod']['version'],'source_commit':revision,
-        'status':'beta preview; one mission controlled-model retest passed; broader acceptance pending',
+        'status':channel,
         'supported_host':'BattleServer-548A891D-0046C000',
         'supported_host_sha256':'f74d16037fc8f4fe49a8041488aabd1948df1b1a9f2d125de9dad4a2347b63a4',
         'files':{name:hashlib.sha256(raw).hexdigest() for name,raw in payload.items()}}

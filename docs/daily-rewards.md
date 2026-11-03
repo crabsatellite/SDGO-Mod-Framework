@@ -1,4 +1,4 @@
-# Daily double battle rewards (Beta)
+# Daily double battle rewards
 
 `daily_rewards` runs on BattleServer. Its enabled default is daily **18:00 inclusive
 to 22:00 exclusive in the server's local time**. It doubles the normal final G-point,

@@ -202,7 +202,7 @@ def contents(repo: Path, stage: Path) -> dict[str, bytes]:
         b"Pillow>=10,<13\npyodbc>=5,<6\n"
     )
     files["README.md"] = (
-        "# Collection capsule owner toolkit (Beta)\n\n"
+        "# Collection capsule owner toolkit\n\n"
         "Portable tools and matched framework files for building and installing "
         "the collection capsule. It contains no game client, credentials, "
         "database snapshot, player history, or generated server package.\n\n"
@@ -211,7 +211,7 @@ def contents(repo: Path, stage: Path) -> dict[str, bytes]:
         "read [the owner tutorial](docs/collection-capsule.md).\n"
     ).encode("utf-8")
     files["README.zh-CN.md"] = (
-        "# 收藏扭蛋服主工具包（Beta）\n\n"
+        "# 收藏扭蛋服主工具包\n\n"
         "本包提供收藏扭蛋的服主工具和配套 framework，不包含游戏客户端、凭据、"
         "数据库快照、玩家历史或已经生成的服务器包。\n\n"
         "先运行 `python -m pip install -r requirements-collection-capsule.txt`，"

@@ -1,4 +1,4 @@
-# 每局随机机体（Beta）
+# 每局随机机体
 
 [English](room-random.md) · [返回功能目录](../README.zh-CN.md)
 

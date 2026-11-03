@@ -1,4 +1,4 @@
-# Shop localization and Chinese search (Beta)
+# Shop localization and Chinese search
 
 `shop_localization` translates native shop text, shared unit-preview titles, unit names in hangar exchange
 previews and fixed messages from cooperating Mods. All five scopes default to enabled. Manage them in SDGO Mod Manager and restart

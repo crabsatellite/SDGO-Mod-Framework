@@ -1,4 +1,4 @@
-# Operator supplies and manager (Beta)
+# Operator supplies and manager
 
 [简体中文（完整说明）](operator-assistant.zh-CN.md)
 

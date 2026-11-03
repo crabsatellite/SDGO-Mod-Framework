@@ -1,4 +1,4 @@
-# Per-round random owned loadouts (Beta)
+# Per-round random owned loadouts
 
 [简体中文](room-random.zh-CN.md)
 

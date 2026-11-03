@@ -317,12 +317,10 @@ not guarantee a useful shot.
 
 ## Release status after acceptance
 
-After a feature passes its complete acceptance scenarios and the matching runtime is deployed and
-published to the main branch, update its release status as part of the delivery. Remove obsolete
+When the declared basic workflow is implemented and shown usable by focused tests, actual use or user confirmation, publish it as Stable after deployment and main-branch delivery. Exhaustive mode/edge coverage and zero bugs are not prerequisites; later bug fixes use new versions. Remove obsolete
 Beta, testing or pending-release labels from the bilingual feature index and guides, and align the
 Mod channel (`stable`), Manager labels, version suffixes and package templates. Verify the installed
-and published metadata agree. A build, fixture or partial scenario alone does not promote a feature;
-other features retain their existing status until their own acceptance and publication are complete.
+and published metadata agree. A build alone does not establish a working workflow, but valid focused verification remains valid without exhaustive coverage. Keep Beta for basic workflows still being built or not yet shown usable; unit import is currently in that category.
 
 Evaluate the accepted version and its declared workflow. Later features or optimizations have their
 own acceptance scope and do not undo a released version's completed tests. Historical runtime

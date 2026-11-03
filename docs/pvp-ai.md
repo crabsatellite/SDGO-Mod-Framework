@@ -1,4 +1,4 @@
-# PvP AI players (Beta)
+# PvP AI players
 
 Put `!ai` in a two-team PvP room title to add AI opponents and teammates, using the existing
 combat, scoring, respawn and spectator features. 中文：[pvp-ai.zh-CN.md](pvp-ai.zh-CN.md)
@@ -19,7 +19,7 @@ Both parts are in the full framework package; friend-server players receive `mat
 
 Follow the [installation guide](setup.md#install), then use your usual launcher.
 
-These population and host-retention rules require `pvp_ai 0.3.0-beta.3` on Battle servers and
+These population and host-retention rules require `pvp_ai 0.3.0` on Battle servers and
 `match_ai 0.1.6` or later on every participating client, including the host.
 Restart the affected programs. Easy, Medium and Hard use the same release point.
 
