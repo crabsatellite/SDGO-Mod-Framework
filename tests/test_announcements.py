@@ -32,7 +32,7 @@ class AnnouncementsTest(unittest.TestCase):
             workspace=Workspace(root/'manager',source/'mods');workspace.add_host(client)
             provider=announcements.Announcements(workspace)
             try:
-                self.assertEqual(provider.describe()['config']['client'],str(client))
+                self.assertEqual(Path(provider.describe()['config']['client']).resolve(),client.resolve())
                 provider.configure({'client':str(root/'explicit-choice')})
                 self.assertEqual(provider.describe()['config']['client'],str(root/'explicit-choice'))
             finally:workspace.close()
