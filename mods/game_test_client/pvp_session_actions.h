@@ -85,7 +85,15 @@ public:
             if(!readyStarted_)readyStarted_=join_->Ready();
             const auto ready=join_->ReadyState();state_.ready_result=ready.result;
             state_.ready_reply=ready.server_reply_observed;state_.ready_original=ready.original_dispatch_completed;state_.ready_model=ready.post_dispatch_model_ready;
-            if(ready.result==JoinT::kReadyRejected){Fail();return;}
+            if(ready.result==JoinT::kReadyRejected){
+                if(context&&context->Observe) {
+                    char message[256];sprintf_s(message,"native Ready rejected: stage=%u flags=%u slot=%u reply=%04X flag=%u detail=%u original=%u model=%u business=%u",
+                        join_->ReadyStage(),join_->ReadyContextFlags(),ready.local_slot,ready.reply_opcode,ready.ready_flag,
+                        ready.reply_detail,ready.original_dispatch_completed,ready.post_dispatch_model_ready,ready.native_business_ready);
+                    context->Observe(message);
+                }
+                Fail();return;
+            }
             if(ready.result!=JoinT::kReadyAccepted)return;
             if(ready.room_id!=expectedRoom_||!ready.server_reply_observed||!ready.original_dispatch_completed||!ready.post_dispatch_model_ready){Fail();return;}
             Complete();

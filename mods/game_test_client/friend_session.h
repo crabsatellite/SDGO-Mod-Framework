@@ -270,6 +270,7 @@ public:
                     observed.reply_opcode,observed.reply_status,observed.reply_consumed);
                 context->Observe(message);
                 if(observed.result==FriendActions::kNativeFault || observed.result==FriendActions::kCacheMalformed) {
+                    active_=false;Write(context,true);
                     context->Assert(0,"native friend action faulted or produced a malformed cache");return SDGO_GAME_TEST_FAIL;
                 }
             }
@@ -277,6 +278,7 @@ public:
         }
         const uint64_t commandTimeout=pvpCommand_&&pvpActions_&&pvpActions_->State().operation==PvpSessionActions::FinishBattle?900000:90000;
         if(active_&&GetTickCount64()-commandAt_>commandTimeout) {
+            Write(context,true);
             context->Assert(0,"native friend operation timed out waiting for real state/reply");return SDGO_GAME_TEST_FAIL;
         }
         if(GetTickCount64()-lastWrite_>=250)Write(context,!active_);
@@ -353,7 +355,7 @@ public:
         } else result=roomCommand_?roomActions_->Submit(command,static_cast<uint16_t>(channel),room):
             extraCommand_&&extras_?extras_->Submit(command):actions_->Submit(command);
         active_=true;commandAt_=GetTickCount64();
-        if(result==FriendActions::kNativeFault){context->Assert(0,"native friend command could not be submitted");return SDGO_GAME_TEST_FAIL;}
+        if(result==FriendActions::kNativeFault){active_=false;Write(context,true);context->Assert(0,"native friend command could not be submitted");return SDGO_GAME_TEST_FAIL;}
         Write(context,false);return SDGO_GAME_TEST_WAIT;
     }
 };
