@@ -221,13 +221,14 @@ that run's GameTest Mod; the native game thread executes the original friend
 actions and records the resulting cache, actual transport and consumed replies.
 Commands require the run UUID and a consecutive sequence. The private account
 profile, quiet desktop and loopback network protections still apply. This scope
-cannot be combined with battle, shop or other account-preparation scopes.
+cannot be combined with the autonomous battle suite, shop or other account-preparation scopes.
+The multiplayer coordinator below uses this same bounded command session.
 
 The `campaign` command requires a stopped, passed `--asset-baseline` and the
 verified unique loopback `--target-host` of an independently prepared backend.
-Use synthetic accounts in an isolated database copy. Put persistent account
-profiles under `<work-root>/profiles`; missing peer profiles are registered
-through the native onboarding flow. The coordinator covers requests,
+Use existing test accounts in an isolated database copy. Put their persistent
+profiles under `<work-root>/profiles`; missing profiles fail preparation rather
+than registering another account. The coordinator covers requests,
 accept/reject, conversation open/close, bidirectional and Chinese whispers,
 offline presence and native send rejection, relogin, duplicate/self/unknown
 validation, deletion, re-addition and multiple list pages. Its receipt records
@@ -293,6 +294,44 @@ for unit gifts. The recipient must be an actual native pilot nickname. Native
 authentication and the server authorize/process the mail; GameTest still waits
 for an independent processing receipt and never grants currency or inventory
 directly. Keep credentials and command configuration local.
+
+### Coordinated multiplayer
+
+Prepare one quiet `--friends-only` run for each distinct existing account, using
+the same isolated native backend, a single `--mode-sequence`, and the same
+`--expected-ai` setting. Each client needs its own mutable files; a stopped,
+passed archive baseline can supply the shared read-only game archives. Install
+`match_ai` on every client and `pvp_ai` plus the passive observer on the backend.
+Bind the host run to that observer session as described above. Existing equipped
+units and any mode-required battleship decks must already be usable.
+
+Declare every human pilot before starting. Humans and AI share the eight native
+room slots; the coordinator requires at least two humans and one AI. For example,
+three existing pilots with `--expected-ai 5 --ai-allies 0 --ai-teams coop
+--random-teams` exercise three humans against five AI while retaining the room's
+random-team option. The `coop` rule groups the humans when the server starts.
+Replace the example IDs and paths with the prepared test identities and actual
+enabled Battle observer streams:
+
+```powershell
+python tools/game_test_multiplayer.py --host-run build/cohort/host --peer-run build/cohort/peer1 --peer-run build/cohort/peer2 --human-pilots 101,102,103 --server-events D:\SDGO-Test\server\Server\BattleServer4\sdgo\gametest\server-observer-events.jsonl --output build/cohort-result.json
+```
+
+The host creates a real room. Each guest selects the host's actual channel,
+resolves the exact advertised title and enters through the original room-entry
+business. Ready uses the original 3D Main action and player state machine: its
+sender must emit the real request, then the original reply consumer must update
+the live room model. The coordinator starts only after every guest completes
+these steps. It never sets a Ready flag or inserts room participants.
+
+Battle checks require local AI authority on the host, synchronized remote copies
+on guests, real movement, host combat evidence, and original settlement back in
+the same human-owned room. Guests then leave before the host through native
+business methods, with the observed channel and room IDs supplied explicitly.
+The independent server report verifies the declared human roster, AI teams and
+complete battle lifecycle. A launch, battle or exit failure fails the overall
+campaign and aborts only its owned clients. Accounts, credentials, endpoints and
+reports remain local; this command is a developer test tool, not a player launcher.
 
 For a passive server check, run `tools/game_test_server_report.py --run-dir
 build/gametest/pvp --events <server-observer-events.jsonl> --host-pilot <pilot-id>`.
