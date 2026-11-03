@@ -28,6 +28,8 @@ Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所
 | 活动扭蛋币种显示 <!-- catalog: `capsule_currency_fix` --> | 9301 号机在列表和购买确认框中显示为 99 代币 | [使用说明](docs/capsule-currency-fix.zh-CN.md) |
 | 输入法卡死修复 <!-- catalog: `findwindow_fix` --> | 防止讯飞等输入法让整合包客户端卡死或崩溃 | [使用说明](docs/findwindow-fix.zh-CN.md) |
 | 启动崩溃修复 <!-- catalog: `startup_crash_fix` --> | 修复开游戏时读取界面随机闪退 | [使用说明](docs/startup-crash-fix.zh-CN.md) |
+| 原生战斗数据崩溃修复 <!-- catalog: `native_data_guard` --> | 保护浮游炮挂点索引、缺失名称和可选变形数据的读取 | [使用说明](docs/native-data-guard.zh-CN.md) |
+| 异常断线登录恢复 <!-- catalog: `login_recovery` --> | 原生旧会话清理后，在 WorldServer 内完成一次认证重试 | [使用说明](docs/login-recovery.zh-CN.md) |
 | 阿普萨拉斯 III 变形卡死修复 <!-- catalog: `transform_input_fix` --> | 缺少变形动画时恢复原生状态退出，解除移动与攻击锁定 | [使用说明](docs/transform-input-fix.zh-CN.md) |
 | Agent 中继日志修复 <!-- catalog: `agent_relay_log_fix` --> | 修复 Agent 中继日志读取无效内存 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
 | 军衔回退修复 <!-- catalog: `rank_progression_fix` --> | 防止战斗结算降低已有军衔（WorldServer） | [使用说明](docs/rank-progression-fix.zh-CN.md) |
@@ -44,6 +46,7 @@ Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所
 
 | 功能 | 简介 | 文档 |
 |---|---|---|
+| 公告与展示规则 <!-- catalog: `announcements` --> | 组合时段、游戏事件、展示间隔和次数，控制登录与游戏内公告 | [使用说明](docs/announcements.zh-CN.md) |
 | 任务 AI 僚机 <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai`，由 AI 僚机补位 | [使用说明](docs/coop-wingmen.zh-CN.md) |
 | 对战 AI <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友；可让真人自动同队，选择双方补位、只补对面或指定数量 | [使用说明](docs/pvp-ai.zh-CN.md) |
 | AI 机体目录（独立附加包） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |

@@ -39,6 +39,7 @@
 #include "battle_ai_behavior_probe.h"
 #include "native_death_probe.h"
 #include "native_player_combat_probe.h"
+#include "native_data_guard_probe.h"
 #include "sealed_room_title.h"
 #include <cwchar>
 #include <array>
@@ -84,6 +85,8 @@ AiCatalogActions aiCatalog;
 StorageTestActions storage;
 CapsuleCatalogActions capsules;
 BattleCombatActions battleCombat;
+NativeDataGuardProbe nativeDataGuardProbe;
+QuietWaitRoomMessages quietWaitRoomMessages;
 CapsuleDrawActions collection;
 UnitSelectActions unitSelection;
 ActiveSelectionObserver activeSelection;
@@ -452,6 +455,7 @@ int __cdecl Bootstrap(const SdgoGameTestContextV1* context) {
     }
     context->Assert(GetCurrentThreadId() == mainThread, "test polling runs on the observed original app-update thread");
     context->Observe("the original client update reached the login stage without supplied game data or an application-state write");
+    if (!nativeDataGuardProbe.Run(sdgo_test::api, sdgo_test::mod, context)) return SDGO_GAME_TEST_FAIL;
     return SDGO_GAME_TEST_PASS;
 }
 int __cdecl Login(const SdgoGameTestContextV1* context) {
