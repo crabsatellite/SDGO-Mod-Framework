@@ -1,4 +1,5 @@
 #include "../mods/friend_unit_gift_client/native_inventory.h"
+#include "../mods/friend_unit_gift_client/native_reply_queue.h"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -25,13 +26,25 @@ void __fastcall Erase(void* self,void*,const void* data,std::uint16_t slot){
  Check(self==info.data() && data==nullptr,"deletion calls the shipped null-data slot ABI");
  ++deletions;brief.at(slot-1).fill(0);full.at(slot-1).fill(0);
 }
-bool __cdecl Request(std::uint64_t uid,void*){++sends;requested=uid;return send_ok;}
+bool __cdecl RequestDetailShim(std::uint64_t uid,void*){++sends;requested=uid;return send_ok;}
 void __cdecl Changed(void*){++changes;}
 }
 int main(){
+ using namespace sdgo::friend_unit_gift;
+ sdgo::friend_unit_gift::client::NativeReplyQueue queue;
+ std::array<std::uint8_t,kCarrierBytes> reply{};
+ wire::Write16(reply.data(),kNativeReplyOpcode);
+ Check(!queue.Capture(reply.data(),reply.size()),"ordinary storage replies keep their native path");
+ std::memcpy(reply.data()+kReplyEnvelopeOffset,kEnvelopeMagic.data(),kEnvelopeMagic.size());
+ Check(!queue.Capture(reply.data(),reply.size()-1),"unproved short payloads are never copied");
+ for(unsigned i=0;i<9;++i)Check(queue.Capture(reply.data(),reply.size()),"owned namespace is consumed before native mail parsing");
+ Check(queue.dropped()==1,"network handoff is bounded");
+ std::array<std::uint8_t,kCarrierBytes> observed{};unsigned copies=0;
+ while(queue.Pop(&observed)){Check(observed==reply,"handoff retains the actual decoded bytes");++copies;}
+ Check(copies==8,"full queue never invents additional replies");
  Put<std::uint32_t>(info.data(),4,1);Put<std::uint32_t>(info.data(),0x0C,36);Put<std::uint8_t>(info.data(),0x20,1);
  NativeInventorySync sync;
- Check(sync.Bind({&info_pointer,reinterpret_cast<NativeInventorySync::Get>(&Brief),reinterpret_cast<NativeInventorySync::Get>(&Full),reinterpret_cast<NativeInventorySync::Delete>(&Erase),&Request,&Changed,nullptr}),"bind native callbacks");
+ Check(sync.Bind({&info_pointer,reinterpret_cast<NativeInventorySync::Get>(&Brief),reinterpret_cast<NativeInventorySync::Get>(&Full),reinterpret_cast<NativeInventorySync::Delete>(&Erase),&RequestDetailShim,&Changed,nullptr}),"bind native callbacks");
  sync.SetSession(1);constexpr std::uint64_t old_uid=0x1122334455667788ULL,new_uid=old_uid+9;
  Unit(2,old_uid);Check(sync.HasFull(old_uid),"native brief/full identity agrees without floating point");
  Check(!sync.QueueRemoval(0),"zero UID is rejected");
