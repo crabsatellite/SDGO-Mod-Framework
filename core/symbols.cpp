@@ -105,8 +105,16 @@ namespace
 
     bool SameBinding(const sdgo::Symbol& left, const sdgo::Symbol& right)
     {
-        return left.kind == right.kind && left.address == right.address && left.expect == right.expect &&
-               left.expectedTarget == right.expectedTarget;
+        if (left.kind != right.kind || left.address != right.address || left.expectedTarget != right.expectedTarget)
+            return false;
+        if (left.expect == right.expect) return true;
+        if (!left.verified || !right.verified) return false;
+        const size_t shared = left.expect.size() < right.expect.size() ? left.expect.size() : right.expect.size();
+        for (size_t index = 0; index < shared; ++index) {
+            if (left.expect[index] >= 0 && right.expect[index] >= 0 && left.expect[index] != right.expect[index])
+                return false;
+        }
+        return true;
     }
 }
 
