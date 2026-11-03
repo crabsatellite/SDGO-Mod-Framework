@@ -21,6 +21,7 @@ struct Joiner {
     unsigned joins=0,readies=0;
     bool JoinExactTitle(const char*){++joins;return true;}
     bool Ready(){++readies;return true;}
+    uint32_t SelectionStage()const{return 8;}
     auto JoinState()const{return join;}
     auto ReadyState()const{return ready;}
 };
