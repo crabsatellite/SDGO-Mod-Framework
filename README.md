@@ -27,7 +27,7 @@ Release labels describe the published version; later feature work is accepted se
 | Battle rank regression fix <!-- catalog: `rank_progression_fix` --> | Stop battle settlement from lowering a pilot's rank (WorldServer) | [Use](docs/rank-progression-fix.md) |
 | Friend list fix <!-- catalog: `friend_list_fix`, `friend_list_client_fix` --> | Retain offline friends and current names; restore the built-in messenger UI | [Use](docs/friend-list-fix.md) |
 | New-account starter profile <!-- catalog: `new_account_profile` --> | Configurable starting GP, cash, rank and unit gifts instead of the stock 9,999,999 / rank 15 | [Use](docs/new-account-profile.md) |
-| Shop rental and Unicode labels <!-- catalog: `shop_labels` --> | Readable rental/permanent labels and Chinese option names in the shop | [Use](docs/shop-labels.md) |
+| Shop rental and Unicode labels <!-- catalog: `shop_labels` --> | Readable rental/permanent labels, numeric quantities and Chinese options without split duration digits | [Use](docs/shop-labels.md) |
 
 <!-- /mod-category:fixes -->
 
@@ -53,7 +53,7 @@ Release labels describe the published version; later feature work is accepted se
 | Daily double rewards <!-- catalog: `daily_rewards` --> | Double battle GB and EXP in a daily window (default 18:00–22:00) | [Use](docs/daily-rewards.md) |
 | Storage claim all <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation | [Use](docs/storage-claim.md) |
 
-| Chinese shop localization and search <!-- catalog: `shop_localization` --> | Translate shop text and hangar confirmation names; combine Chinese search, rank and payment filters | [Guide](docs/shop-localization.md) |
+| Chinese shop localization and search <!-- catalog: `shop_localization` --> | Translate list, buy/gift and hangar names plus category tooltips; combine Chinese search, rank and payment | [Guide](docs/shop-localization.md) |
 | Friend unit gifts (optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Offer owned units through Storage, with accept/return and provenance; new offers default off | [Use](docs/friend-unit-gift.md) |
 
 | Unit family import (Beta) <!-- catalog: `unit_catalog` --> | Import unit archives, complete required data and generate paired unit, encyclopedia and shop/capsule resources in Mod Manager | [Use](docs/unit-import.md) |

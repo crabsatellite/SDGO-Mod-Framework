@@ -10,7 +10,7 @@
 可同时加 `--random-loadout` 验证随机机体和该人数布局组合，所有参数写入封存任务。
 `--same-room-rematch` 验证结算返回后真人仍为房主，并在同一房间完整再打一局，最后才离房；
 此回归不与随机机体、页面或账号准备场景混用。服务端报告需要每个模式有两次完整战斗，不能用第一局结果代替第二局。
-流程、命令和数据维护见 [`sdgo-native-testing` guide](../skills/sdgo-native-testing/SKILL.md)。
+原生组件接口见 [GameTest API](../include/sdgo/game_test.h)。
 
 ## 无需登录的 FPS 参数验证
 
@@ -53,7 +53,7 @@ python tools/game_test_fps.py --client-template D:\Games\SDGO --stage build/stag
 `tools/game_test_backend.py serve` 运行已经配置的本地测试服务端，复用其独立原生 SQL 实例，
 不使用 Docker，也不在每次重试时复制或还原数据库。后端的 `backend.json`、`private.json`
 和实际 SQL 文件必须绑定同一测试副本；启动前会核对存活的 SQL 进程及数据文件路径。
-准备测试副本和已有账号的方法见 [guide](../skills/sdgo-native-testing/SKILL.md)。
+测试环境和已有账号由运行者独立配置；不要使用实际玩家数据作为可变夹具。
 
 server stage 须构建 `winmm_shim`、`sdgo_core`、`sdgo_data`、`pvp_ai` 和 `game_test_server`。
 以下示例假设测试副本已经使用 `127.93.0.1`，私有数据库配置也已就绪：
@@ -182,6 +182,14 @@ Grid（`6`）和 Tag（`7`）会通过原生业务切换 VS 频道，并要求�
 赠送预览后取消，并比较完整机库与钱包。它不会安装商品、购买或赠送。
 查询先打开原生搜索页，再点击该页的 `FilterBtn` 并等待原生查询完成；仅切换
 `AllSerchRadio` 会打开空页，不作为商品查询成功的证据。
+
+需要商城画面回归时，封存断言使用 `Scope=StockVisualAssertions`，每件商品填写独立的 `DisplayName`，
+可选 `Query` 经原生搜索框查询已有商品。此范围只注册登录、商城就绪与商城场景，不执行保管库领取，
+不声称覆盖新手流程。它检查全部机库简要记录及钱包、真实购买/赠送控件和原生格式化价格，取消前捕获真实 D3D9 帧。
+悬停文案可同时封存 `TooltipUnit`（0/1）、`TooltipDescriptionHex`、`TooltipUsageHex`；后两项是有界 UTF-16LE 十六进制。
+服务、控件身份及文字必须一致，只正规化字面量 `\n`、LF 与 CR 换行表示；不伪造游戏记录、服务端回包或画面。
+悬停场景仅在隔离测试进程中提供虚拟鼠标输入，由原生输入轮询和命中检测打开真实说明框。
+它不移动系统鼠标，不声称验证物理鼠标硬件；截图仍来自游戏自身的真实渲染器。
 
 `--play-unit-uid` 可在页面、对战或任务场景前，通过原生机库选择账号实际持有的
 机体。框架先等待真实完整机体资料，再调用出击业务；必须收到原生成功回包并读回

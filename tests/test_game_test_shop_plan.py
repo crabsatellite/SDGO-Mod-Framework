@@ -102,6 +102,18 @@ class ShopPlanTests(unittest.TestCase):
         with self.assertRaises(game_test.GameTestError):
             game_test.load_shop_test_inputs(self.stock_assertions,self.stock_display)
 
+    def test_tooltip_expectations_require_complete_bounded_unicode_fields(self):
+        text=SHOP_ASSERTIONS_FIXTURE.replace('Scope=StockAssertions','Scope=StockVisualAssertions')+'DisplayName=中文商品\n'
+        self.stock_assertions.write_text(text+'TooltipUnit=0\n',encoding='utf-8')
+        with self.assertRaises(game_test.GameTestError):
+            game_test.load_shop_test_inputs(self.stock_assertions,self.stock_display)
+        fields='TooltipUnit=0\nTooltipDescriptionHex='+('中文\n说明'.encode('utf-16le').hex())+'\nTooltipUsageHex=\n'
+        self.stock_assertions.write_text(text+fields,encoding='utf-8')
+        self.assertTrue(game_test.load_shop_test_inputs(self.stock_assertions,self.stock_display)['shop_visual_only'])
+        self.stock_assertions.write_text(text+fields.replace('TooltipUsageHex=','TooltipUsageHex=0000'),encoding='utf-8')
+        with self.assertRaises(game_test.GameTestError):
+            game_test.load_shop_test_inputs(self.stock_assertions,self.stock_display)
+
     def test_default_pages_plan_has_no_shop_fields_or_case(self):
         run_dir = self.prepare("pages-without-shop", pages_only=True)
         metadata = game_test.read_json(run_dir / "run.json")

@@ -1683,6 +1683,15 @@ int ReadShopCatalog(const SdgoGameTestContextV1* context) {
         char message[128]{};sprintf_s(message,"native shop visual checkpoint result=%s product=%u",ShopCatalogActions::ResultName(result),state.product_id);context->Observe(message);
         if(failed) {char info[160]{};sprintf_s(info,"native shop failed details: options=%u nativeNameChars=%u visibleNameChars=%u first=%04X",state.native_page_options,static_cast<unsigned>(state.native_name.size()),static_cast<unsigned>(state.visible_name.size()),state.visible_name.empty()?0u:static_cast<unsigned>(state.visible_name[0]));context->Observe(info);}
         if(failed) {char info[512]{};sprintf_s(info,"native popup title control=%u chars=%u codeunits:",state.popup_name_found,static_cast<unsigned>(state.popup_name.size()));for(size_t i=0;i<state.popup_name.size() && i<32;++i){char code[8]{};sprintf_s(code," %04X",static_cast<unsigned>(state.popup_name[i]));strcat_s(info,code);}context->Observe(info);}
+        if(failed || state.hover_previews) {
+            char info[192]{};sprintf_s(info,"native tooltip readback name=%u description=%u usage=%u pointer=%u/%u",static_cast<unsigned>(state.tooltip_name.size()),static_cast<unsigned>(state.tooltip_description.size()),static_cast<unsigned>(state.tooltip_usage.size()),state.pointer_position_reads,state.pointer_state_reads);context->Observe(info);
+        }
+        if(failed && !state.tooltip_description.empty()) {
+            const auto hex=[](const std::wstring& value){std::string text;for(const auto c:value){char code[8]{};sprintf_s(code,"%02X%02X",static_cast<unsigned>(c)&255u,static_cast<unsigned>(c)>>8);text+=code;}return text;};
+            const auto description=hex(state.tooltip_description),usage=hex(state.tooltip_usage);
+            context->Observe((std::string("native tooltip description UTF16LE=")+description).c_str());
+            context->Observe((std::string("native tooltip usage UTF16LE=")+usage).c_str());
+        }
         if(capturePending)return SDGO_GAME_TEST_WAIT;
         return SDGO_GAME_TEST_FAIL;
     }

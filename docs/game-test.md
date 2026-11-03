@@ -69,8 +69,8 @@ a higher cap, then continues the ordinary battle, settlement and return flow.
 with its independent native SQL instance. It does not use Docker or recopy and
 restore databases on every retry. The backend's `backend.json`, `private.json`
 and actual SQL files must identify the same test copy; startup checks the live
-SQL process and data-file paths. See the [guide](../skills/sdgo-native-testing/SKILL.md)
-for test-copy preparation and existing accounts.
+SQL process and data-file paths. Operators configure their own environment and existing test accounts;
+see the [GameTest API](../include/sdgo/game_test.h) for the component contract.
 
 Build `winmm_shim`, `sdgo_core`, `sdgo_data`, `pvp_ai` and `game_test_server` for
 the server stage. This example assumes the test copy already uses `127.93.0.1`
@@ -275,6 +275,19 @@ not install products, purchase or send gifts.
 The adapter opens the native search view, clicks its original `FilterBtn`, and
 waits for native query completion. Selecting `AllSerchRadio` alone opens an
 empty view and is not evidence that a stock query succeeded.
+
+For a bounded visual shop regression, use `Scope=StockVisualAssertions` in the same sealed assertion
+file and add each product's `DisplayName`. Optional `Query` fields select existing stock through the
+native search edit. This scope registers login, native shop readiness and shop cases only; it does not
+claim onboarding or run storage claims. It compares every inventory brief and wallet, checks genuine
+buy/gift controls and their formatted prices, and captures the real D3D9 backbuffer before cancellation.
+For tooltip text, seal all three optional fields `TooltipUnit` (0/1), `TooltipDescriptionHex` and
+`TooltipUsageHex` (bounded UTF-16LE hex). Actual tooltip service/control identities and text must match;
+only literal `\n` versus LF and CR line-ending representation are normalized. Native game records,
+server replies and rendered pixels are never synthesized.
+The tooltip scenario supplies virtual mouse input only inside the isolated test process and lets the
+original input polling and hit testing open the native tooltip. It does not move the system cursor or
+claim hardware-mouse acceptance; captured pixels still come from the genuine game renderer.
 
 `--play-unit-uid` selects a genuinely owned unit through the native hangar
 before page, PvP or mission cases. The adapter waits for the full native unit

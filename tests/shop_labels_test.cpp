@@ -173,7 +173,7 @@ int wmain(int argc, wchar_t** argv)
     g_result.clear();Populate(counts,false);
     ok=Check(g_result[0]==L"数量 1" && g_result[1]==L"数量 3" && g_result[2]==L"数量 5","paint pack counts are recovered from numeric metadata, independently of corrupted source text") && ok;
     g_result.clear();for(const auto& option:counts)g_tooltip(nullptr,nullptr,&option,0);
-    ok=Check(g_result[0]==L"1" && g_result[1]==L"3" && g_result[2]==L"5" && g_result[3]==L"有效期30天","quantity column stays numeric and operator expiry fits without splitting 30 into two lines") && ok;
+    ok=Check(g_result[0]==L"1" && g_result[1]==L"3" && g_result[2]==L"5" && g_result[3]==L"30天","quantity column stays numeric and operator expiry fits without splitting 30 into two lines") && ok;
     ok=Check(memcmp(counts.data(),countsBefore.data(),counts.size()*sizeof(Option))==0,"numeric count, price, payment and duration fields stay unchanged") && ok;
     printf("SHOP LABELS DLL CONTRACT %s (%u native fallbacks)\n", ok ? "PASS" : "FAIL", g_nativeCalls);
     return ok ? 0 : 1;

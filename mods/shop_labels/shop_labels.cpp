@@ -97,16 +97,15 @@ const wchar_t* Borrow(std::wstring text)
 const wchar_t* __cdecl Convert(UINT codePage, const char* text)
 {
     Option option = {};
-    static unsigned convertTraces=0;
-    if(codePage==874 && g_view.begin && convertTraces++<12)g_api->Log(g_mod,SDGO_LOG_INFO,"native option input diagnostic offset=%ld bytes=%lu",static_cast<long>(reinterpret_cast<uintptr_t>(text)-g_view.begin),static_cast<unsigned long>(g_view.end-g_view.begin));
     if (codePage == 874 && ReadOption(text, &option)) {
         // A host caption must never hide the actual rental/permanent status.
         const int mode = TimeLimit(option.category);
-        static unsigned traces=0;
-        if(traces++<12)g_api->Log(g_mod,SDGO_LOG_INFO,"native option diagnostic product=%u option=%u category=%u validity=%d mode=%d",option.productId,option.id,option.category,option.validity,mode);
         if ((mode == 1 && g_showRental) || (mode == 0 && g_showPermanent)) {
             std::wstring label = sdgo::shop::DurationLabel(option, mode);
-            if (g_compact) label.erase(std::remove(label.begin(), label.end(), L' '), label.end());
+            if (g_compact) {
+                if(mode==1 && option.category/100000!=11)label=std::to_wstring(option.validity)+L"天";
+                else label.erase(std::remove(label.begin(), label.end(), L' '), label.end());
+            }
             if (!label.empty())
                 return Borrow(std::move(label));
         }

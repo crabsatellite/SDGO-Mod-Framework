@@ -4,8 +4,10 @@
 previews and fixed messages from cooperating Mods. All five scopes default to enabled. Manage them in SDGO Mod Manager and restart
 the client after changing them. Missing or disabled localization preserves original consumer text.
 Player-authored room titles, drafts and chat are never translated.
+The initial buy/gift dialogs and later confirmation pages have separate title paths. Operator, battleship,
+paint and unit tooltips translate both description and usage text, including literal `\n` and actual newlines.
 
-Clients update through the existing `update.bat` Git runtime. Owners configure the Shop panel's existing
+Players install the server owner's client package or update. Owners configure the Shop panel's existing
 workspace/World/client paths and click **Update Chinese search**. This independent action publishes only
 owned search aliases and both backed-up, guarded native list procedures; it does not publish a catalog draft,
 change products/prices, or touch inventories and wallets. Unknown or externally edited procedures refuse.

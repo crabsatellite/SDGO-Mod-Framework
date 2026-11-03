@@ -14,7 +14,7 @@ the server's shop catalog. Prices, currency, durations and purchases are unchang
 ## Install
 
 It is installed with the core fixes of the client framework, and friend-server players receive it
-through `update.bat`. A standalone `SDGO-ShopLabels-Patch` package with its own `Install.ps1` is also
+through the server owner's client package or update. A standalone `SDGO-ShopLabels-Patch` package with its own `Install.ps1` is also
 available; see the [Chinese guide](shop-labels.zh-CN.md).
 
 ## Settings
@@ -30,6 +30,9 @@ Under **商城物品显示** in SDGO Mod Manager; restart the game after saving.
 `display.ini` is the UTF-16LE file exported by the [shop catalog](shop-catalog.md). When the rental or
 permanent label is enabled for an option, that label is shown. Otherwise a custom name is used, and only
 while the option's ID, category, duration, price and currency still match.
+Paint, sticker, battleship and other count-based offers recover quantities from numeric metadata.
+Hover tables use compact duration labels and numeric counts so digits stay together in narrow columns;
+buy/gift dropdowns retain full labels. Prices, numeric durations and quantities are never rewritten.
 
 This is not a global font or chat fix, and it cannot recover product names already stored as question
 marks in the database. The activity capsule currency label is handled by the separate
