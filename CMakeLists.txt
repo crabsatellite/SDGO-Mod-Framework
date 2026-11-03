@@ -135,6 +135,16 @@ sdgo_add_mod(mission_ai DESCRIPTION "co-op mission wingmen (client)"
 sdgo_add_mod(ime_fix DESCRIPTION "Chinese IME candidate and commit fixes" SOURCES mods/ime_fix/ime_fix.cpp FILES symbols.fragment.ini)
 sdgo_add_mod(findwindow_fix DESCRIPTION "FindWindowW fix" SOURCES mods/findwindow_fix/findwindow_fix.cpp LIBS user32)
 sdgo_add_mod(startup_crash_fix DESCRIPTION "random crash at game start fix" SOURCES mods/startup_crash_fix/startup_crash_fix.cpp)
+sdgo_add_mod(waitroom_window_fix DESCRIPTION "native wait-room window initialization guard"
+             SOURCES mods/waitroom_window_fix/waitroom_window_fix.cpp FILES symbols.fragment.ini)
+if(BUILD_TESTING)
+    add_executable(waitroom_window_fix_dll_test tests/waitroom_window_fix_dll_test.cpp)
+    target_link_libraries(waitroom_window_fix_dll_test PRIVATE sdgo_api)
+    sdgo_strict(waitroom_window_fix_dll_test)
+    add_dependencies(waitroom_window_fix_dll_test waitroom_window_fix)
+    add_test(NAME waitroom_window_fix_actual_dll COMMAND waitroom_window_fix_dll_test "$<TARGET_FILE:waitroom_window_fix>")
+    set_tests_properties(waitroom_window_fix_actual_dll PROPERTIES TIMEOUT 30)
+endif()
 sdgo_add_mod(fps_limit DESCRIPTION "native config.xml FPS cap" SOURCES mods/fps_limit/fps_limit.cpp)
 
 add_executable(fps_limit_runtime_test tests/fps_limit_runtime_test.cpp)
