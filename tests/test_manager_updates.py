@@ -62,7 +62,7 @@ def bundle(channel='stable',release='1.1.7',extra=None):
 class UpdateTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
-        self.root=Path(self.temp.name);self.workspace=Workspace(self.root/'workspace',ROOT/'mods')
+        self.root=Path(self.temp.name).resolve();self.workspace=Workspace(self.root/'workspace',ROOT/'mods')
         self.host=self.root/'client';fake_exe(self.host/'GOnline.exe')
         self.workspace.add_host(self.host);self.record=self.workspace.settings['hosts'][0]
         self.raw,self.asset,self.api=bundle()
@@ -93,6 +93,9 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(u.release_asset(api,'beta')['channel'],'beta')
         self.assertGreater(u.version('1.1.7'),u.version('1.1.7-beta.90'))
         self.assertGreater(u.version('1.1.8-beta.1'),u.version('1.1.7'))
+
+    def test_update_paths_normalize_relative_roots(self):
+        self.assertEqual(u.child(Path('.'),'manager/repository.json'),ROOT/'manager/repository.json')
 
     def test_beta_selects_newest_valid_release_including_stable(self):
         raw,asset,api=bundle('beta','1.1.8-beta.3')
