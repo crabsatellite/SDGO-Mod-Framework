@@ -16,6 +16,11 @@ from manager.instance import Lease
 
 
 def main(argv=None):
+    effective=sys.argv[1:] if argv is None else argv
+    if effective[:1]==['--finish-update']:
+        from manager.update_restart import finish
+        if len(effective)!=2:raise ValueError('更新交接参数无效')
+        finish(effective[1]);return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--workspace', type=Path, default=Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'SDGO/ModManager')
     parser.add_argument('--port', type=int, default=0)
@@ -30,6 +35,9 @@ def main(argv=None):
         return
     workspace = Workspace(args.workspace, ROOT / 'mods')
     attach(workspace)
+    from manager.updates import attach as attach_updates
+    executable=Path(sys.executable) if getattr(sys,'frozen',False) else None
+    attach_updates(workspace,ROOT,executable)
     server = make_server(workspace, args.port)
     url = 'http://127.0.0.1:' + str(server.server_port) + '/'
     storage.atomic(workspace.root / 'manager-session.json', storage.json_bytes({'application': 'sdgo_mod_manager', 'url': url, 'pid': os.getpid()}))

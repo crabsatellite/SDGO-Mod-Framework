@@ -638,9 +638,9 @@ class _Win32Api:
         ):
             error=self._error("TerminateProcess failed")
             # Exit can race GetExitCodeProcess: a terminating process may
-            # still report STILL_ACTIVE but reject a second termination.
-            grace=30000 if error.errno==5 else 1000
-            if self.kernel.WaitForSingleObject(wintypes.HANDLE(process_handle),grace)==WAIT_OBJECT_0:
+            # still report STILL_ACTIVE but reject a second termination. Pending
+            # I/O can delay the signal under concurrent native-test load.
+            if self.kernel.WaitForSingleObject(wintypes.HANDLE(process_handle),30000)==WAIT_OBJECT_0:
                 return
             raise error
         if self.kernel.WaitForSingleObject(

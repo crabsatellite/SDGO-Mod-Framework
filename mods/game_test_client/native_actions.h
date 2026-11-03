@@ -498,6 +498,14 @@ public:
     const Config& GetConfig() const { return config_; }
 
     uint32_t GameStartSendCount() const {return static_cast<uint32_t>(InterlockedCompareExchange(&gameStartSends_,0,0));}
+    struct RoomRefreshObservation { uint32_t count, room_id; };
+    RoomRefreshObservation RoomRefresh(uint16_t opcode) const {
+        if (opcode != 0x0943 && opcode != 0x08A5) return {};
+        AcquireSRWLockShared(&refreshLock_);
+        const auto result = refresh_[opcode == 0x08A5 ? 1 : 0];
+        ReleaseSRWLockShared(&refreshLock_);
+        return result;
+    }
 
 private:
     static constexpr int kLoginRejectedOpcode = 0x232A;
@@ -650,6 +658,11 @@ private:
             }
         }
 
+        uint32_t refreshRoom = 0;
+        if ((opcode == 0x0943 || opcode == 0x08A5) && packet && size == 10) {
+            __try { memcpy(&refreshRoom, static_cast<const uint8_t*>(packet) + 6, 4); }
+            __except (EXCEPTION_EXECUTE_HANDLER) { refreshRoom = 0; }
+        }
         // Never delay, suppress or rewrite the original transport call.
         const int result =
             actions->networkSend_(network, stream, packet, size, flag);
@@ -690,6 +703,13 @@ private:
             static_cast<LONG>(sequence));
         InterlockedIncrement(&actions->transportWriteVersion_);
         if(opcode==0x08a7 && size==8 && result>0)InterlockedIncrement(&actions->gameStartSends_);
+        if (refreshRoom && result > 0) {
+            AcquireSRWLockExclusive(&actions->refreshLock_);
+            auto& observed = actions->refresh_[opcode == 0x08A5 ? 1 : 0];
+            observed.room_id = refreshRoom;
+            ++observed.count;
+            ReleaseSRWLockExclusive(&actions->refreshLock_);
+        }
         InterlockedExchange(
             &actions->transportPublishGuard_,
             0);
@@ -804,5 +824,7 @@ private:
     mutable volatile LONG transportPublishGuard_ = 0;
     mutable TransportEventSlot
         transportHistory_[kTransportHistoryCapacity] = {};
+    mutable SRWLOCK refreshLock_ = SRWLOCK_INIT;
+    RoomRefreshObservation refresh_[2]{};
     inline static NativeActions* active_ = nullptr;
 };

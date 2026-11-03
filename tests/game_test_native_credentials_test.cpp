@@ -11,6 +11,10 @@ uint8_t* profile = nullptr;
 int peer = 0, hashes = 0, sends = 0, constructors = 0, failures = 0;
 char capturedUser[32]{}, capturedHash[40]{};
 const char* plainHash = "fedcba9876543210fedcba9876543210";
+using ObservedSend = int(__fastcall*)(void*, void*, void*, const void*, int, char);
+ObservedSend observedSend = nullptr;
+void* releasePacket = nullptr;
+int refreshResult = 10;
 void Check(bool value, const char* name) {
     if (!value) { std::fprintf(stderr, "FAIL: %s\n", name); ++failures; }
 }
@@ -27,6 +31,10 @@ void* __fastcall Packet(void* self, void*, const char* user, const char* hash) {
 }
 int __fastcall Send(void*, void*, void* stream, const void* data, int size, char flags) {
     ++sends;
+    if (size != 0x4D) {
+        if (releasePacket) { VirtualFree(releasePacket, 0, MEM_RELEASE); releasePacket = nullptr; }
+        return refreshResult;
+    }
     Check(stream == &peer && size == 0x4D && flags == 0 &&
         *static_cast<const uint16_t*>(data) == 0x2329, "normal login transport ABI");
     return size;
@@ -43,7 +51,8 @@ void* Symbol(SdgoMod*, const char* name) {
     if (!strcmp(name, "flow.profile_pointer")) return &profile;
     return reinterpret_cast<void*>(&Unused);
 }
-int Hook(SdgoMod* mod, const char* name, void*, void** original) {
+int Hook(SdgoMod* mod, const char* name, void* detour, void** original) {
+    if (!strcmp(name, "flow.network_send")) observedSend = reinterpret_cast<ObservedSend>(detour);
     *original = Symbol(mod, name); return *original != nullptr;
 }
 }
@@ -72,6 +81,32 @@ int main() {
         Check(!actions.Login(), "malformed credential never reaches transport");
     }
     Check(hashes == 1 && constructors == 2 && sends == 2, "invalid credentials cause no native request");
+    // Exact ten-byte packets can be destroyed by the original sender. The
+    // observer must copy only the room field before forwarding, never after.
+    SYSTEM_INFO system{}; GetSystemInfo(&system);
+    const uint16_t refreshOpcodes[] = {0x0943, 0x08A5};
+    for (uint16_t opcode : refreshOpcodes) {
+        auto* allocation = static_cast<uint8_t*>(VirtualAlloc(nullptr, system.dwPageSize * 2,
+            MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+        DWORD previous = 0;
+        Check(allocation && VirtualProtect(allocation + system.dwPageSize, system.dwPageSize, PAGE_NOACCESS, &previous),
+            "guarded native refresh packet allocated");
+        if (!allocation) continue;
+        auto* packet = allocation + system.dwPageSize - 10;
+        memset(packet, 0, 10); memcpy(packet, &opcode, 2);
+        const uint32_t room = opcode == 0x0943 ? 42 : 43; memcpy(packet + 6, &room, 4);
+        releasePacket = allocation;
+        Check(observedSend && observedSend(network, nullptr, &peer, packet, 10, 0) == 10,
+            "original sender consumes guarded refresh packet exactly once");
+        const auto receipt = actions.RoomRefresh(opcode);
+        Check(receipt.count == 1 && receipt.room_id == room, "native refresh retains exact domain and room after packet disposal");
+    }
+    uint8_t rejected[10]{}; const uint16_t opcode = 0x0943;
+    const uint32_t room = 999; memcpy(rejected, &opcode, 2); memcpy(rejected + 6, &room, 4);
+    refreshResult = -1; observedSend(network, nullptr, &peer, rejected, 10, 0);
+    refreshResult = 9; observedSend(network, nullptr, &peer, rejected, 9, 0);
+    Check(actions.RoomRefresh(opcode).count == 1 && actions.RoomRefresh(opcode).room_id == 42,
+        "failed or malformed native refresh never replaces the successful receipt");
     std::printf("OFFLINE native credential failures: %d\n", failures);
     return failures ? 1 : 0;
 }

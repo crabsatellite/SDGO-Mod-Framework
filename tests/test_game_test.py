@@ -61,6 +61,50 @@ hosts=*
 """
 
 
+class RoomTitlePlanTests(unittest.TestCase):
+    def test_style_preview_is_bounded_to_one_native_create_and_capture(self):
+        for mode in ('pvp', 'mission'):
+            plan = {'room_titles_only': True, 'room_style_preview': mode, 'play_unit_uid': 123}
+            self.assertEqual(game_test.required_cases_for_plan(plan), game_test.FLOW_CASES[:3] + (
+                'setup.active_unit', f'room_titles.{mode}.create', f'room_style.{mode}.preview'))
+            self.assertEqual(game_test.metadata_suite_for_plan(plan), 'native-room-style-preview')
+        for mode in ('', 'team', '3d', True, 1):
+            with self.assertRaises(game_test.GameTestError):
+                game_test.required_flow_cases('1', room_titles_only=True, room_style_preview=mode)
+        with self.assertRaises(game_test.GameTestError):
+            game_test.required_flow_cases('1', room_style_preview='pvp')
+
+    def test_standalone_entry_resolves_runtime_helpers_outside_the_checkout(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            probe = "import runpy,sys;runpy.run_path(sys.argv[1],run_name='standalone_probe');import tools.game_test_environment;print('runtime helpers resolved')"
+            result = game_test.subprocess.run(
+                [game_test.sys.executable, '-I', '-c', probe, str(Path(game_test.__file__).resolve())],
+                cwd=temporary, capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('runtime helpers resolved', result.stdout)
+
+    def test_room_title_scope_requires_every_surface_and_leave(self):
+        cases=game_test.required_flow_cases('1',room_titles_only=True)
+        self.assertEqual(cases,game_test.FLOW_CASES[:3]+tuple('room_titles.'+x for x in (
+            'pvp.create','pvp.rename','pvp.leave','grid.create','grid.rename','grid.leave','mission.create','mission.rename','mission.leave','team.create','team.native_view','team.leave','start.create','start.rename','start')))
+    def test_room_title_fixture_can_select_an_existing_owned_unit(self):
+        normal=game_test.required_flow_cases('1',room_titles_only=True)
+        selected=game_test.required_flow_cases('1',play_unit_uid=123,room_titles_only=True)
+        self.assertEqual(selected,normal[:3]+('setup.active_unit',)+normal[3:])
+
+    def test_disabled_retained_diagnostic_uses_native_manifest_encoding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'mod.ini'
+            path.write_text('[mod]\nenabled=0\nrequires=retired.probe\n',encoding='utf-16')
+            self.assertFalse(game_test.manifest_enabled(path))
+            path.write_text('[mod]\nenabled=1\n[settings]\nenabled=0\n[settings]\nlegacy=1\n',encoding='utf-8')
+            self.assertTrue(game_test.manifest_enabled(path))
+
+    def test_room_title_scope_cannot_be_combined_with_other_operations(self):
+        with self.assertRaises(game_test.GameTestError):
+            game_test.required_flow_cases('1',pages_only=True,room_titles_only=True)
+
+
 class FakeProcess:
     next_pid = 5100
 
@@ -309,6 +353,16 @@ rva=state
 
     def metadata(self, run_dir):
         return game_test.read_json(run_dir / "run.json")
+
+    def test_room_style_preview_roundtrips_through_the_sealed_job(self):
+        for mode in ('pvp', 'mission'):
+            run_dir = self.prepare('style-' + mode, room_titles_only=True, room_style_preview=mode)
+            metadata = self.metadata(run_dir)
+            public = game_test.read_public_plan(run_dir / 'client')
+            self.assertEqual(public['room_style_preview'], mode)
+            self.assertEqual(metadata['plan']['room_style_preview'], mode)
+            self.assertEqual(metadata['suite'], 'native-room-style-preview')
+            self.assertEqual(game_test.required_cases_for_plan(public)[-1], f'room_style.{mode}.preview')
 
     def private_account(self, run_dir):
         parser = configparser.ConfigParser()
@@ -581,6 +635,14 @@ rva=state
             self.assertEqual(game_test.sha256(linked/'client'/name),game_test.sha256(self.template/name))
         self.assertEqual(self.metadata(linked)['assets']['mode'],'owned_readonly_hardlinks')
         with self.assertRaises(game_test.GameTestError):self.prepare('outside-owned-baseline',asset_baseline=baseline)
+
+    def test_disabled_retained_probe_does_not_require_retired_symbols(self):
+        folder=self.template/'sdgo/mods/retired_probe'
+        folder.mkdir()
+        (folder/'mod.ini').write_text('[mod]\nid=retired_probe\nenabled=0\nrequires=retired.native.symbol\n',encoding='utf-16')
+        (folder/'retired_probe.dll').write_bytes(b'disabled diagnostic')
+        run_dir=self.prepare('disabled-retained-probe')
+        self.assertTrue((run_dir/'client/sdgo/mods/retired_probe/mod.ini').is_file())
 
     def test_native_installer_utf16_manifest_is_read_without_changing_the_source(self):
         manifest=self.template/'sdgo/mods/other_mod/mod.ini'
@@ -1581,6 +1643,23 @@ class ExistingCredentialProfileTests(unittest.TestCase):
         for username,password in [('x'*15,'short1'),('existing','bad\nvalue'),('existing','')]:
             with self.assertRaises(game_test.GameTestError):
                 game_test.validate_account_credentials(p,username,password)
+
+
+class GitSourceRefTests(unittest.TestCase):
+    def test_status_timeout_keeps_verified_commit_and_unknown_cleanliness(self):
+        commit = "a" * 40
+        with mock.patch.object(game_test.subprocess, "run", side_effect=[
+            game_test.subprocess.CompletedProcess([], 0, stdout=commit + "\n"),
+            game_test.subprocess.TimeoutExpired(["git", "status"], 30),
+        ]) as run:
+            self.assertEqual(game_test.git_source_ref(ROOT), {"commit": commit, "dirty": None})
+        if game_test.os.name == "nt":
+            self.assertTrue(all(call.kwargs["creationflags"] == game_test.subprocess.ABOVE_NORMAL_PRIORITY_CLASS
+                                for call in run.call_args_list))
+
+    def test_failed_head_does_not_invent_a_commit_or_clean_state(self):
+        with mock.patch.object(game_test.subprocess, "run", side_effect=FileNotFoundError):
+            self.assertEqual(game_test.git_source_ref(ROOT), {"commit": None, "dirty": None})
 
 
 if __name__ == "__main__":

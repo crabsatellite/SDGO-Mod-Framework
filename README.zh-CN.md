@@ -4,10 +4,12 @@
 非官方爱好者项目，不包含游戏文件。[English](README.md)
 
 [安装说明](docs/setup.zh-CN.md) · [统一 Mod Manager](docs/mod-manager.zh-CN.md) · [最新发布](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
+Manager 提供「更新」按钮：默认 Stable，可切换 Beta，自动检查和安装；详见管理器指南。
 
 通过 **SDGO Mod Manager** 管理功能，游戏仍使用原启动器。
 本页仅列出功能概览。具体配置、玩法操作、兼容性与排错方法见各功能文档。
 Beta、Experimental 表示发布阶段。
+发布阶段以已发布版本为准，后续迭代单独验收。
 
 ## 基础修复
 
@@ -35,20 +37,22 @@ Beta、Experimental 表示发布阶段。
 | 功能 | 简介 | 文档 |
 |---|---|---|
 | 任务 AI 僚机 <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai`，由 AI 僚机补位 | [使用说明](docs/coop-wingmen.zh-CN.md) |
-| 对战 AI（Beta） <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友，同步解除开局控制并显示 TAB 战绩 | [使用说明](docs/pvp-ai.zh-CN.md) |
-| AI 机体目录（Beta，独立附加包） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |
+| 对战 AI <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友，同步解除开局控制并显示 TAB 战绩 | [使用说明](docs/pvp-ai.zh-CN.md) |
+| AI 机体目录（独立附加包） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |
 | 战斗贡献奖励 <!-- catalog: `battle_rewards` --> | 按战斗贡献发放 GB/MB，含钱包服务管理与历史 GB 补偿 | [使用说明](docs/battle-rewards.zh-CN.md) |
 | 收藏扭蛋（Beta） <!-- catalog: `collection_capsule` --> | 十万 GP 活动机台，优先抽尚未解锁的图鉴机体 | [使用说明](docs/collection-capsule.zh-CN.md) |
 | 每局随机机体（Beta） <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组 | [使用说明](docs/room-random.zh-CN.md) |
 | FPS 上限 <!-- catalog: `fps_limit` --> | 提高渲染帧率上限，保留原生游戏速度 | [使用说明](docs/fps-limit.zh-CN.md) |
-| 长房名（Beta） <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 任务和对战房名最长 128 字，指令可写在任意位置 | [使用说明](docs/room-titles.zh-CN.md) |
-| 战斗 AI 难度（Beta） <!-- catalog: `battle_ai`、`battle_ai_server` --> | 对战 AI 的 Easy / Medium / Hard 三档，房名可选 | [使用说明](docs/battle-ai.zh-CN.md) |
-| 自动机库容量（Beta） <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） | [使用说明](docs/hangar-capacity.zh-CN.md) |
-| 机库管理（Beta） <!-- catalog: `hangar_manager` --> | 机体管理页内一键整理和重复机体兑换（GB 服务端批量入账） | [使用说明](docs/hangar-manager.zh-CN.md) |
+| 长房名 <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 普通、AI、队伍及任务房的建房、设置和改名入口支持最长 128 字 | [使用说明](docs/room-titles.zh-CN.md) |
+| 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | 对战 AI 的 Easy / Medium / Hard 三档，房名可选 | [使用说明](docs/battle-ai.zh-CN.md) |
+| 自动机库容量 <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） | [使用说明](docs/hangar-capacity.zh-CN.md) |
+| 机库管理（批量 GB 兑换 Beta） <!-- catalog: `hangar_manager` --> | 机体管理页内一键整理和重复机体兑换（GB 服务端批量入账） | [使用说明](docs/hangar-manager.zh-CN.md) |
 | 副官补给与管理（Beta） <!-- catalog: `operator_catalog` --> | 五位免费补给副官，以及副官名称、头像和掉落的管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
-| 扭蛋机编辑器（Beta） <!-- catalog: `capsule_catalog` --> | 在 Manager 中新增、修改、下架扭蛋机，设置奖池、价格和权重 | [使用说明](docs/capsule-catalog.zh-CN.md) |
+| 扭蛋机编辑器 <!-- catalog: `capsule_catalog` --> | 在 Manager 中新增、修改、下架扭蛋机，设置奖池、价格和权重 | [使用说明](docs/capsule-catalog.zh-CN.md) |
 | 每日双倍时间（Beta） <!-- catalog: `daily_rewards` --> | 每天固定时段（默认 18:00–22:00）战斗 GB 和经验翻倍 | [使用说明](docs/daily-rewards.zh-CN.md) |
-| 保管库一键领取（Beta） <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
+| 保管库一键领取 <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
+
+| 商城汉化与中文检索（Beta） <!-- catalog: `shop_localization` --> | 汉化商品说明与机库确认名称，支持中文搜索及等级、币种组合筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
 | 好友机体赠送（Beta，可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 保管库接受或退还原机体，保留赠送来源与寄语；公开配置默认关闭新赠送 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
 
 <!-- /mod-category:gameplay -->
@@ -63,7 +67,7 @@ Beta、Experimental 表示发布阶段。
 
 | 功能 | 简介 | 文档 |
 |---|---|---|
-| FRP 联机（Beta） <!-- catalog: `net_route`、`agent_udp_pool` --> | 通过服主的 Sakura FRP 等 TCP/UDP 转发连接服务器 | [使用说明](docs/frp-distribution.zh-CN.md) |
+| FRP 联机 <!-- catalog: `net_route`、`agent_udp_pool` --> | 通过服主的 Sakura FRP 等 TCP/UDP 转发连接服务器 | [使用说明](docs/frp-distribution.zh-CN.md) |
 | 商城商品管理（Beta） <!-- catalog: `shop_catalog` --> | 在 Manager 中上架、改价、下架服主自己的商城商品（WorldServer） | [使用说明](docs/shop-catalog.zh-CN.md) |
 
 <!-- /mod-category:network -->
