@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "capsule_price_probe",
   "title": "扭蛋价格探针",
   "category": "development",

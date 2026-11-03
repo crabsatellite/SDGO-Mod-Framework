@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "battle_ai",
   "title": "战斗 AI 难度",
   "category": "gameplay",

@@ -102,6 +102,59 @@ class ManagerTests(unittest.TestCase):
         self.assertEqual(state['hosts'][0]['archive'][0]['settings_count'],0)
         self.assertEqual(state['hosts'][0]['mods'],[])
 
+    def test_local_only_mod_is_manageable_but_never_exportable(self):
+        folder=self.client/'sdgo/mods/personal_fixture';folder.mkdir(parents=True)
+        (folder/'mod.ini').write_text(
+            '[mod]\nid=personal_fixture\ndistribution=local_only\n'
+            'category=gameplay\nfeature=personal_fixture\n',
+            encoding='utf-8')
+        (folder/'manager.json').write_text(json.dumps({
+            'schema_version':1,'distribution':'local_only','id':'personal_fixture',
+            'title':'Personal fixture','category':'gameplay','hosts':['client'],
+            'settings':[],
+        }),encoding='utf-8')
+        state=self.workspace.public()
+        item=next(mod for mod in state['hosts'][0]['mods']
+                  if mod['id']=='personal_fixture')
+        self.assertEqual(item['distribution'],'local_only')
+        self.assertFalse(item['redistributable'])
+        host=self.workspace.settings['hosts'][0]['id']
+        with self.assertRaisesRegex(ValueError,'仅本地 Mod 禁止导出'):
+            self.workspace.require_redistributable(host,['personal_fixture'])
+        self.workspace.require_redistributable(host,['findwindow_fix'])
+        self.assertIn('仅本地 · 禁止导出',
+                      (ROOT/'manager/static/app.js').read_text(encoding='utf-8'))
+
+    def test_local_only_package_requires_marker_and_installs_through_manager(self):
+        marker=b''.join((b'SDGO_LOCAL_',b'ONLY_NONREDISTRIBUTABLE'))
+        entries={
+            'client/sdgo/mods/personal_fixture/mod.ini':
+                b'[mod]\nid=personal_fixture\ndll=personal_fixture.dll\n'
+                b'distribution=local_only\nhosts=GOnline-00000000-00000000\n',
+            'client/sdgo/mods/personal_fixture/manager.json':
+                storage.json_bytes({
+                    'schema_version':1,'distribution':'local_only',
+                    'id':'personal_fixture','title':'Personal fixture',
+                    'category':'gameplay','hosts':['client'],'settings':[],
+                }),
+            'client/sdgo/mods/personal_fixture/personal_fixture.dll':
+                b'MZ fixture '+marker,
+        }
+        def package(values):
+            output=io.BytesIO()
+            with zipfile.ZipFile(output,'w') as archive:
+                for name,raw in values.items():archive.writestr(name,raw)
+            return base64.b64encode(output.getvalue()).decode('ascii')
+        host=self.workspace.settings['hosts'][0]['id']
+        status,result=self.call('POST','/api/import',{'host':host,'package':package(entries)})
+        self.assertEqual(status,200,result)
+        item=next(mod for mod in result['state']['hosts'][0]['mods']
+                  if mod['id']=='personal_fixture')
+        self.assertFalse(item['redistributable'])
+        entries['client/sdgo/mods/personal_fixture/personal_fixture.dll']=b'MZ no marker'
+        status,_=self.call('POST','/api/import',{'host':host,'package':package(entries)})
+        self.assertEqual(status,400)
+
     def test_standard_can_use_daily_management_and_not_developer_info(self):
         host=self.workspace.settings['hosts'][0]['id']
         for identity in self.workspace.providers:

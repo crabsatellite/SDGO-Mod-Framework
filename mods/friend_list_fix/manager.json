@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "friend_list_fix",
   "title": "好友列表修复",
   "category": "fixes",

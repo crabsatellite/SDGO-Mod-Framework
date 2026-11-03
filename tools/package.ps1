@@ -105,6 +105,8 @@ if ($catalog.features.PSObject.Properties.Name -contains 'unit-import') {
     & python (Join-Path $PSScriptRoot 'package_unit_import.py') --out (Join-Path $out 'unit-import') --binaries (Join-Path $buildRoot $Config) --directory-only
     if ($LASTEXITCODE -ne 0) { throw 'Unit import toolkit packaging failed' }
 }
+& python (Join-Path $PSScriptRoot 'distribution_guard.py') --path $out
+if ($LASTEXITCODE -ne 0) { throw 'Distribution guard rejected the public package' }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::Open($zip, [IO.Compression.ZipArchiveMode]::Create)
 try {

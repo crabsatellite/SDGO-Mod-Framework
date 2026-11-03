@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "match_ai",
   "title": "对战 AI · 客户端",
   "category": "gameplay",

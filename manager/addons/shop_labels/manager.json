@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "shop_labels",
   "title": "商城物品显示",
   "category": "gameplay",

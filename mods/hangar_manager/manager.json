@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "hangar_manager",
   "title": "机库整理与回收",
   "category": "gameplay",

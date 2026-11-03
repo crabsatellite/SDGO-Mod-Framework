@@ -2,6 +2,8 @@ param([string]$BuildDir='build',[string]$Python='python',[string]$UnitBinary,[st
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $build=[IO.Path]::GetFullPath($(if([IO.Path]::IsPathRooted($BuildDir)){$BuildDir}else{Join-Path $repo $BuildDir}))
+& $Python (Join-Path $PSScriptRoot 'distribution_guard.py') --source-path $repo
+if($LASTEXITCODE -ne 0){throw 'Local-only source cannot enter the public Manager build'}
 $services=Join-Path $build 'manager-services'
 New-Item -ItemType Directory -Force -Path $services | Out-Null
 $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'

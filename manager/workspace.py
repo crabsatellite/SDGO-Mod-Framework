@@ -4,7 +4,7 @@ import copy
 from pathlib import Path
 import re
 import uuid
-from . import registry, storage
+from . import distribution, registry, storage
 
 EXES = {'GOnline.exe': 'client', 'BattleServer.exe': 'battle', 'AgentServer.exe': 'agent', 'WorldServer.exe': 'world'}
 
@@ -87,6 +87,8 @@ class Workspace:
             # An addon can register its own contract in its installed directory.
             if contract is None and (folder / 'manager.json').is_file():
                 contract = registry.load(root).get(folder.name)
+            manager_raw = (folder / 'manager.json').read_bytes() if (folder / 'manager.json').is_file() else None
+            scope = distribution.resolve(raw, manager_raw, allow_legacy_public=True)
             global_path = Path(host['path']) / 'sdgo/sdgo.ini'
             global_raw = global_path.read_bytes() if global_path.exists() else b''
             global_ini = storage.ini_values(global_raw)
@@ -104,6 +106,7 @@ class Workspace:
                            'description': contract.get('description', '') if contract else '此 Mod 未登记详细配置。',
                            'enabled': enabled and not blocked, 'manifest_enabled': enabled,
                            'blocked_by': blocked, 'registered': contract is not None,
+                           'distribution': scope, 'redistributable': scope == distribution.PUBLIC,
                            'version': value.get('mod', 'version', fallback=''),
                            'provider': contract.get('provider') if contract else None,
                            'revision': storage.revision(raw),
@@ -111,6 +114,15 @@ class Workspace:
                            'configured': 'installed', 'runtime_status': 'unverified',
                            'settings_count': len([f for f in contract.get('settings',[]) if f['audience']=='user' or self.mode=='developer']) if contract else 0})
         return result
+
+    def require_redistributable(self, host_id, mod_ids):
+        installed = {item['id']: item for item in self._installed(self.host(host_id))}
+        unknown = set(mod_ids) - installed.keys()
+        if unknown:
+            raise ValueError('Mod 未安装：' + '、'.join(sorted(unknown)))
+        blocked = [identity for identity in mod_ids if not installed[identity]['redistributable']]
+        if blocked:
+            raise ValueError('仅本地 Mod 禁止导出：' + '、'.join(blocked))
 
     def public(self):
         hosts = []
