@@ -69,10 +69,14 @@ offset and leads projectiles whose speed is known or learned from stable samples
 trajectories are not linearly predicted); navigation uses the client's native path search with stuck
 detection and re-planning; line of sight is checked per target with the client's collision primitives.
 
+With many units present, sensing reads only what it needs to keep overhead low; target range, scan
+frequency, reaction speed and combat decisions are unchanged, and combat state and visibility are still read
+and checked on every observation.
+
 ## Install
 
 Requires the framework; client `GOnline-54BE1568-00C97000`, server `BattleServer-548A891D-0046C000`.
-Friend-server players receive the client part through `update.bat`. Manual install, with the copy stopped:
+Players receive the client part with the server owner's client package or update. Manual install, with the copy stopped:
 
 ```powershell
 ./tools/install_battle_ai.ps1 -GameDir D:/Games/SDGO -Source ./build/stage/Release/client

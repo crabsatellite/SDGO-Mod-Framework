@@ -25,6 +25,8 @@ class Workspace:
                 'policy_revision':storage.revision(self.policy_file.read_bytes() if self.policy_file.exists() else b''),
                 'private_revision':storage.revision(self.people_file.read_bytes() if self.people_file.exists() else b''),
                 'today':self.today().isoformat(),'calendar_years':[2025,2040],
+                'festivals':[{'value':key,'title':name,'month_day':model.FIXED_FESTIVALS.get(key)} for key,name in model.FESTIVALS.items()],
+                'missing_festivals':model.missing_festivals(self.policy()),
                 'grades':[{'value':list(g),'title':name} for g,name in model.GRADE_NAMES.items()]}
 
     def save(self,kind,value,revision):
@@ -37,12 +39,21 @@ class Workspace:
             before=self.policy() if kind=='policy' else None
             # Re-enabling starts today; downtime catch-up never backfills years
             # before this server opted in. Retained SQL receipts remain final.
-            if kind=='policy' and checked['enabled'] and not before['enabled']:
+            if kind=='policy':
                 state=storage.read_json(self.state_file,{})
-                state['not_before']=self.today(checked).isoformat()
-                storage.atomic(self.state_file,storage.json_bytes(state))
+                original=storage.json_bytes(state);today=self.today(checked).isoformat()
+                if checked['enabled'] and not before['enabled']:state['not_before']=today
+                existing={event['id'] for event in before['events']}
+                for event in checked['events']:
+                    if event['id'] not in existing:state.setdefault('event_not_before',{}).setdefault(event['id'],today)
+                if storage.json_bytes(state)!=original:storage.atomic(self.state_file,storage.json_bytes(state))
             storage.atomic(target,storage.json_bytes(checked))
         return self.public()
+
+    def occurrences(self,policy,people,start,end):
+        not_before=storage.read_json(self.state_file,{}).get('event_not_before',{})
+        return [row for row in model.occurrences(policy,people,start,end)
+                if row['date']>=not_before.get(row['key'].rsplit(':',1)[0],'0001-01-01')]
 
     def export(self):
         # Private birthdays/groups, activation dates and delivery receipts are

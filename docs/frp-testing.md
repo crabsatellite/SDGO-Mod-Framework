@@ -33,7 +33,7 @@ framework files, configuration preservation and uninstall scope.
 framework package embeds the same kit in `frp/`. Packaging validates DLL versions,
 architecture, archive contents and local documentation links.
 
-For an optional local acceptance check, `tests/frp_package_audit.py --help` describes
+For an optional local package check, `tests/frp_package_audit.py --help` describes
 installing into a minimal copy of a supplied client. It never executes the game or
 writes to the reference client. Its reference core must predate the candidate kit
 for the downgrade check. Tests and game files are not shipped in the Mod kit.

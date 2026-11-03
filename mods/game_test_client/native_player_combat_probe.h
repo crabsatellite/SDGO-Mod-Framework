@@ -10,6 +10,7 @@
 #include "sdgo/sdgo_api.h"
 
 #include "scoreboard_actions.h"
+#include "../battle_ai/native_capabilities.h"
 
 // Opt-in native player input for an isolated AI battle GameTest. The probe
 // resolves the authenticated pilot's real local unit, supplies mapped forward
@@ -26,6 +27,7 @@ class NativePlayerCombatProbe
     // return with RET 4. Their native owner is supplied through ECX.
     using InputBusinessFn =
         void(__thiscall*)(uint8_t*, void*);
+    using WeaponInputFn = void(__thiscall*)(uint8_t*, void*, int);
     using NativeTickFn =
         void(__thiscall*)(uint8_t*, void*);
 
@@ -52,9 +54,18 @@ class NativePlayerCombatProbe
     FindObjectFn findObject_ = nullptr;
     InputBusinessFn moveInput_ = nullptr;
     InputBusinessFn fireInput_ = nullptr;
+    WeaponInputFn weaponInput_ = nullptr;
 
     bool enabled_ = false;
     bool continuousPrimary_ = false;
+    int requestedWeaponSlot_ = -1;
+    bool weaponReported_ = false;
+    bool ammoBaselineValid_ = false;
+    bool ammoSpent_ = false;
+    int16_t previousAmmo_ = 0;
+    uint32_t sampledUnit_ = 0, sampledWeapon_ = 0;
+    bool sampledAlternate_ = false;
+    uint8_t* sampledAttack_ = nullptr;
     bool controlsActive_ = false;
     bool forwardHeld_ = false;
     bool primaryHeld_ = false;
@@ -79,12 +90,16 @@ class NativePlayerCombatProbe
     {
         input.HoldGameplay(kForwardAction, false);
         input.HoldGameplay(kPrimaryAction, false);
+        if (requestedWeaponSlot_ >= 0)
+            input.HoldGameplay(14u + requestedWeaponSlot_, false);
         forwardHeld_ = false;
         primaryHeld_ = false;
         controlsActive_ = false;
         baselineValid_ = false;
         boundObjectId_ = 0;
         boundUnit_ = nullptr;
+        weaponReported_ = false;
+        ammoBaselineValid_ = false;
     }
 
     void BeginBattle(
@@ -98,6 +113,7 @@ class NativePlayerCombatProbe
         movementReported_ = false;
         attackReported_ = false;
         finished_ = false;
+        ammoSpent_ = false;
         bursts_ = 0;
         consumedMoveQueries_ = 0;
         consumedFireQueries_ = 0;
@@ -142,6 +158,9 @@ public:
             return false;
         enabled_ = setting != 0;
         continuousPrimary_ = continuous != 0;
+        requestedWeaponSlot_ = api->SettingInt(mod, "BattlePlayerWeaponSlot", -1);
+        if (requestedWeaponSlot_ < -1 || requestedWeaponSlot_ > 2)
+            return false;
         if (!enabled_)
             return true;
 
@@ -162,6 +181,11 @@ public:
             reinterpret_cast<InputBusinessFn>(
                 api->Symbol(
                     mod, "test.apsalus_primary_input"));
+        if (requestedWeaponSlot_ >= 0) {
+            weaponInput_ = reinterpret_cast<WeaponInputFn>(
+                api->Symbol(mod, "test.player_weapon_input"));
+            if (!weaponInput_) return false;
+        }
         return unitManager_ && objectIdFromPilot_ &&
                findObject_ && moveInput_ && fireInput_;
     }
@@ -176,6 +200,12 @@ public:
             return true;
         if (!context)
             return false;
+        // Result handling may still report app state 22 for several updates.
+        // Finish ends this battle's input lease even before that state changes.
+        if (finished_ && battleSequence_ == snapshot.received_battle_start_count) {
+            Release(input);
+            return true;
+        }
 
         const bool genuineReleasedBattle =
             snapshot.size == sizeof(snapshot) &&
@@ -191,6 +221,13 @@ public:
                 snapshot.received_battle_start_count &&
             start.player_control_enabled != 0;
         if (!genuineReleasedBattle) {
+            if (context->tick % 300 == 0) {
+                char text[192];
+                sprintf_s(text, "native fire probe waits for released battle: app=%u battle=%u control_battle=%u enabled=%u",
+                          snapshot.native_app_state, snapshot.received_battle_start_count,
+                          start.battle_start_sequence, start.player_control_enabled);
+                context->Observe(text);
+            }
             Release(input);
             return true;
         }
@@ -204,6 +241,8 @@ public:
             unitManager_ ? *unitManager_ : nullptr;
         void* nativeInput = input.NativeInput();
         if (!manager || !nativeInput) {
+            if (context->tick % 300 == 0)
+                context->Observe("native fire probe waits for the real local manager and observed native input object");
             Release(input);
             return true;
         }
@@ -245,6 +284,8 @@ public:
             *reinterpret_cast<uint8_t**>(
                 move + kMoveOwner) == unit;
         if (!boundAliveController) {
+            if (context->tick % 300 == 0)
+                context->Observe("native fire probe waits for the authenticated living local controller");
             Release(input);
             return true;
         }
@@ -257,6 +298,72 @@ public:
             !moveVtable[1] || !attackVtable[1]) {
             Release(input);
             return true;
+        }
+
+        if (requestedWeaponSlot_ >= 0) {
+            battle_ai::native::Capabilities caps{};
+            if (!battle_ai::native::ReadCapabilities(unit, caps)) {
+                if (context->tick % 300 == 0)
+                    context->Observe("native fire probe waits for a coherent live form and weapon-bank observation");
+                Release(input);
+                return true;
+            }
+            const auto& weapon = caps.weapons[requestedWeaponSlot_];
+            if (!weapon.valid || !weapon.ordinary ||
+                weapon.kind == battle_ai::native::WeaponKind::Melee) {
+                context->Assert(0, "the requested native fire-test slot must contain an ordinary ranged weapon");
+                Release(input);
+                return false;
+            }
+            // CPlayer's real input consumer clears DD0 to -4 without a weapon
+            // selection down edge. Supply mapped key-down pulses and invoke
+            // that consumer until the original FSM commits the requested slot.
+            // A queued 0x48 message alone can be overwritten before that commit.
+            if (caps.selectedSlot != requestedWeaponSlot_) {
+                input.HoldGameplay(kForwardAction, false);
+                input.HoldGameplay(kPrimaryAction, false);
+                // The native consumer queries the down edge, not the held
+                // level. Repeat a mapped key-down until binding is observed.
+                input.HoldGameplay(14u + requestedWeaponSlot_, false);
+                input.HoldGameplay(14u + requestedWeaponSlot_, true);
+                weaponInput_(unit, nativeInput, 0);
+                if (context->tick % 300 == 0)
+                    context->Observe("native fire probe supplied mapped weapon-selection input; actual binding is still pending");
+                return true;
+            }
+            input.HoldGameplay(14u + requestedWeaponSlot_, false);
+            // ReadCapabilities also verifies the committed slot's bound record
+            // against its live form/bank. A requested slot alone is insufficient.
+            if (!weaponReported_) {
+                char text[160];
+                sprintf_s(text, "native player ranged weapon bound unit_data=%u slot=%d weapon=%u range_type=%u",
+                          caps.unitId, requestedWeaponSlot_, weapon.id, unsigned(weapon.rangeType));
+                context->Observe(text);
+                weaponReported_ = true;
+            }
+            const size_t bank = caps.alternate ? 0x56C : 0x24C;
+            uint8_t* liveAttack = nullptr;
+            uint8_t* record = nullptr;
+            uint8_t alternate = 0;
+            uint32_t boundId = 0;
+            int32_t slot = -1;
+            int16_t ammo = 0;
+            using namespace battle_ai::native::detail;
+            if (!ReadPointer(unit, kUnitAttackFsm, liveAttack) || liveAttack != attack ||
+                !Read(unit, 0xE34, alternate) || alternate != unsigned(caps.alternate) ||
+                !Read(liveAttack, 0x240, slot) || slot != requestedWeaponSlot_ ||
+                !ReadPointer(liveAttack, 0x248, record) || !Read(record, 0, boundId) || boundId != weapon.id ||
+                !Read(liveAttack, bank + requestedWeaponSlot_ * 0xC8, ammo)) {
+                Release(input);
+                return true;
+            }
+            const bool sameWeapon = sampledUnit_ == caps.unitId && sampledWeapon_ == weapon.id &&
+                                    sampledAlternate_ == caps.alternate && sampledAttack_ == liveAttack;
+            if (ammoBaselineValid_ && sameWeapon && ammo >= 0 && ammo < previousAmmo_) ammoSpent_ = true;
+            previousAmmo_ = ammo;
+            ammoBaselineValid_ = true;
+            sampledUnit_ = caps.unitId; sampledWeapon_ = weapon.id;
+            sampledAlternate_ = caps.alternate; sampledAttack_ = liveAttack;
         }
 
         const float* position =
@@ -388,5 +495,7 @@ public:
         context->Assert(
             attackObserved_,
             "mapped primary input and native FSM dispatch entered a real local attack state");
+        if (requestedWeaponSlot_ >= 0)
+            context->Assert(ammoSpent_, "the acknowledged ordinary ranged weapon consumed its real native ammunition");
     }
 };
