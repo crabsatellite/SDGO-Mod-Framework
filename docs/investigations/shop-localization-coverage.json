@@ -1,13 +1,14 @@
 {
   "schema_version": 1,
-  "dictionary_entries": 17265,
+  "dictionary_entries": 18612,
   "native_category_names": 3299,
   "native_parent_records": 2489,
   "missing_known_names": 0,
   "missing_known_prose": 0,
   "Thai_or_Korean_target_remnants": 0,
   "literal_source_numeric_fields": "preserved unchanged",
-  "descriptions": 3309,
+  "descriptions": 4619,
+  "runtime_newline_aliases": 1347,
   "original_resource_sha256": {
     "gdrs/0031.gdt": "b7fb10ae776fb22948c2f22c2d3364f984f7d45c1a24757276007282cbb66ea0",
     "gdrs/0011.gdt": "b0ba4702c30b634a7bc0bdfa0c4506db50a14b6221b733c56e917e49414ac8c1",
@@ -27,6 +28,6 @@
   },
   "stable_unit_names": 1073,
   "hangar_unit_names_covered": 1071,
-  "revised_translation_values": 341,
+  "revised_translation_values": 342,
   "billing_name_aliases": 122
 }

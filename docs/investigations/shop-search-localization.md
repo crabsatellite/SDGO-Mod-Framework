@@ -38,8 +38,9 @@ The helper never invokes catalog Apply or changes product rows, pricing, invento
 ## Text and cooperating Mods
 
 Key coverage alone does not establish translation quality: mixed English prose can
-remain despite source keys being present. The authored vocabulary revises 334 descriptions and seven name values,
-adds Korean Jamo checks, and generates 17,265 entries including stable ID keys. Thai/Hangul/Jamo and
+remain despite source keys being present. The authored vocabulary revises 335 descriptions and seven name values,
+adds Korean Jamo checks, and generates 18,612 entries including 1,347 exact LF aliases for stock strings
+whose native records use literal `\n` markers. Both source forms remain available. Thai/Hangul/Jamo and
 replacement-character targets are absent; legitimate technical/model identifiers remain explicit.
 All 1071 hangar rule UnitIDs are mapped from 1073 available unit IDs. Six plain borrowed names are
 localized, while seven actual model codes remain unchanged.
