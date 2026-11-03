@@ -135,6 +135,15 @@ inline WalletHealth ReadWalletHealth(const std::filesystem::path& runtime) {
 inline WalletBinding ReadWalletBinding(const std::filesystem::path& runtime) {
     WalletBinding result;
     std::map<std::string,std::string> values;
+    std::error_code file_error;
+    const bool exists=std::filesystem::exists(runtime/L"wallet-binding.ini",file_error);
+    if(!exists&&!file_error) {
+        // Preserve healthy older installations while Manager is being upgraded.
+        // The new Manager persists this same verified scope on its first start.
+        // A present but invalid binding must never be bypassed by a heartbeat.
+        const auto legacy=ReadWalletHealth(runtime);
+        if(legacy.healthy){result.valid=true;result.scope=legacy.scope;return result;}
+    }
     if(!job_detail::Read(runtime/L"wallet-binding.ini","binding",&values) ||
        values["Protocol"]!="sdgo-native-wallet-scope-v1" || !job_detail::Scope(values["ScopeId"])) {
         result.error="verified native wallet binding is unavailable";return result;

@@ -11,6 +11,9 @@ int main(){
     if(!std::filesystem::create_directory(root))return 2;
     const std::string scope="10000000-2000-4000-8000-000000000001";
     check(!ReadWalletBinding(root).valid,"a never-bound native ledger must fail closed");
+    check(runtime_detail::AtomicWrite(root/L"wallet-status.ini","[wallet]\r\nSchemaVersion=1\r\nHealthy=1\r\nHeartbeatUnix="+std::to_string(job_detail::UnixNow())+"\r\nScopeId="+scope+"\r\nRevision=sdgo-native-gc-ledger-v2\r\nLastError=\r\n",nullptr),"healthy legacy worker fixture is written");
+    check(ReadWalletBinding(root).valid,"healthy legacy installations continue during their Manager migration");
+    std::filesystem::remove(root/L"wallet-status.ini");
     check(runtime_detail::AtomicWrite(root/L"wallet-binding.ini","[binding]\r\nSchemaVersion=1\r\nProtocol=sdgo-native-wallet-scope-v1\r\nScopeId="+scope+"\r\n",nullptr),"verified owner binding is written");
     check(!ReadWalletHealth(root).healthy,"a missing consumer is not reported healthy");
     check(ReadWalletBinding(root).valid&&ReadWalletBinding(root).scope==scope,"producer identity survives a missing consumer");

@@ -14,7 +14,8 @@
 param(
     [string]$Config = "Release",
     [string]$BuildDir = "",
-    [string]$DailyRewardsDll = ""
+    [string]$DailyRewardsDll = "",
+    [ValidateSet('basic','daily','progression','outage')][string[]]$Cases = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -180,6 +181,7 @@ try {
     )
     if ($env:SDGO_REWARD_SQL_INTEGRATION -eq '1') { $rewardCases += @{ Name='progression'; Daily=$false } }
     foreach ($entry in $rewardCases) {
+        if ($Cases.Count -gt 0 -and $entry.Name -notin $Cases) { continue }
         $fixture = New-Case $entry.Name $entry.Daily
         Write-Host "== real core battle rewards $($entry.Name)"
         $output = & python -B (Join-Path $PSScriptRoot "battle_rewards_runtime_worker.py") `

@@ -6,7 +6,7 @@
   "hosts": [
     "battle"
   ],
-  "description": "配置战斗贡献、任务 MB 保底和按账号限次的每日/每周奖励；提供轻度养成方案。",
+  "description": "配置战斗贡献、任务 MB 保底和每日/每周奖励。原生结算计算与异步钱包交接分开，已落盘奖励在工作器恢复后自动兑现并去重。",
   "settings": [
     {
       "id": "runtime_directory",
