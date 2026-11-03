@@ -89,6 +89,11 @@ python tools/game_test_backend.py cleanup --work build/fps-backend --remove-runt
 不修改系统防火墙或通知设置。非本机测试需要预先具备其专用防火墙规则的管理权限；
 准备失败时不会弹出提权窗口或回退到交互运行。
 
+受保护输入桌面拒绝读取时，FPS 与本机直连 PvP 测试可核验固定的 `WinSta0\Default`：
+该桌面必须只有同一进程、身份一致且不可见、不可激活的图形代理，真实游戏窗口仍在独立桌面，
+前台归属、静音和网络检查继续生效。回执保留实际输入桌面名称和状态为未知；
+无法识别、可见的窗口或其他观察错误仍判失败。
+
 默认复用 `%LOCALAPPDATA%\SDGO-GameTest\account.ini`，也可用 `--account-profile`
 指定已有配置。普通重跑不会注册新账号；只有显式 `--create-test-account` 才允许
 首次创建持久账号配置，且不会覆盖已有文件。
@@ -120,6 +125,14 @@ python tools/game_test.py run --run-dir build/gametest/pvp --timeout 3600
 
 示例依次测试普通、死亡竞赛和队长模式。每种模式都经过
 建房、真实开局、AI 状态断言和正常结束返回；也可指定单个模式排查。
+
+普通对战的定向检查可用 `--ai-difficulty Hard --expected-ai 5` 封存原生难度指令；
+再指定 `--ai-layout allied --expected-ai 6` 则检查五名 AI 队友与一名 AI 对手。
+此队伍配置需新观察会话，复用会话的前缀会使指令超出原生房名上限。
+`--ai-pool-level 1` 至 `5` 配合 `--expected-ai 1` 选择机体池，不能同时覆盖难度。
+测试 Mod 的 `BattleAiBehavior=1` 要求实测必杀受击者恢复、移动射击和远距离追敌；
+`BattleAiDeaths=1` 记录原生死亡身份，再加 `BattleAiTeleport=1` 则必须观察到本地 AI
+真实瞬移、位置改变、血量保留且没有发送销毁请求。这些可选检查只观察原生战斗。
 Grid（`6`）和 Tag（`7`）会通过原生业务切换 VS 频道，并要求账号已有完整战舰编队。
 缺少编队或服务端拒绝会判为失败。
 回执位于运行目录的 `receipts/report.json` 和 `receipts/junit.xml`。

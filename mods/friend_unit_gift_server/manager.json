@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "id": "friend_unit_gift_server",
+  "title": "好友机体赠送",
+  "category": "gameplay",
+  "hosts": [
+    "agent",
+    "world"
+  ],
+  "description": "允许满足条件的互为好友玩家赠送自己现有的永久机体，并完整保留机体 UID、取得日期、养成、战绩、部件与外观数据。",
+  "mechanism": "Agent Mod 在原生登录认证完成后验证并转发扩展请求；World Mod 使用自有 SQL schema 将机体原样放入事务 escrow。收件人可接受或退回；退回时发件人容量不足会保留在 escrow，之后由发件人领取。关闭功能只阻止新赠送，不阻断已经在途的接受、退回、领取和来源查询。",
+  "settings": [
+    {
+      "id": "enabled",
+      "key": "Enabled",
+      "label": "启用好友机体赠送",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "minimum_battles",
+      "key": "MinBattles",
+      "label": "发件人最低对战数",
+      "type": "integer",
+      "default": 20,
+      "minimum": 0,
+      "maximum": 2147483647,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "minimum_player_kills",
+      "key": "MinPlayerKills",
+      "label": "发件人最低玩家击坠数",
+      "type": "integer",
+      "default": 1,
+      "minimum": 0,
+      "maximum": 2147483647,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "required_tiers",
+      "key": "RequiredTiers",
+      "label": "须满足的等级类型组合数",
+      "type": "integer",
+      "default": 12,
+      "minimum": 0,
+      "maximum": 12,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "minimum_distinct_per_tier",
+      "key": "MinDistinctPerTier",
+      "label": "每个组合最低不同机体数",
+      "type": "integer",
+      "default": 2,
+      "minimum": 1,
+      "maximum": 1200,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    }
+  ],
+  "presentation": "configurable"
+}

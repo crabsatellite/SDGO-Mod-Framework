@@ -21,7 +21,7 @@ function ownerTools(){return developer()||hasServer()||localStorage.getItem(OWNE
 function accept(value){state=value;hostId=selectedHost()?.id;renderFrame();}
 function renderFrame(){
  const dev=developer(),owner=ownerTools();
- $('change-mode').textContent=dev?'收起开发信息':'显示开发信息';$('eyebrow').textContent=dev?'开发调试':(hasServer()?'玩家与服主':'你的游戏');
+ $('change-mode').textContent=dev?'收起开发信息':'显示开发信息';$('eyebrow').textContent=dev?'开发调试':'服主与维护';
  $('host-select').replaceChildren(...state.hosts.map(h=>{const o=new Option(h.name+' · '+(dev?h.role:ROLES[h.role]),h.id);o.selected=h.id===hostId;return o;}));
  $('host-select').hidden=!state.hosts.length;
  $('nav-mods').classList.toggle('selected',activePanel===null&&!archiveView);$('nav-archive').classList.toggle('selected',activePanel===null&&archiveView);$('nav-services').classList.toggle('selected',activePanel==='services');
@@ -157,6 +157,7 @@ async function showUpdates(){
  await refresh();const timer=setInterval(()=>refresh().catch(e=>message(e.message,true)),3000);panelCleanup=()=>clearInterval(timer);
 }
 $('nav-updates').onclick=()=>showUpdates().catch(e=>message(e.message,true));
+$('create-entrypoints').onclick=async()=>{try{const result=await request('/api/entrypoints',{});message(`已创建 ${result.created} 个快捷入口，保留 ${result.kept} 个已有入口。`);}catch(e){message(e.message,true);}};
 $('nav-mods').onclick=()=>showMods(false);$('nav-archive').onclick=()=>showMods(true);$('host-select').onchange=()=>{hostId=$('host-select').value;showMods(archiveView);};$('add-host').onclick=openPath;
 $('owner-show').onclick=()=>{localStorage.setItem(OWNER_KEY,'1');renderFrame();};
  $('owner-hide').onclick=()=>{localStorage.removeItem(OWNER_KEY);if(activePanel!==null){showMods(false);}else renderFrame();};

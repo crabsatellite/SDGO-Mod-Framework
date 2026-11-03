@@ -38,6 +38,10 @@ def main(argv=None):
     from manager.updates import attach as attach_updates
     executable=Path(sys.executable) if getattr(sys,'frozen',False) else None
     attach_updates(workspace,ROOT,executable)
+    if executable and not args.no_browser:
+        from manager.entrypoints import create
+        try:create(workspace,executable)
+        except (OSError, ValueError):pass  # A read-only desktop must not prevent opening Manager.
     server = make_server(workspace, args.port)
     url = 'http://127.0.0.1:' + str(server.server_port) + '/'
     storage.atomic(workspace.root / 'manager-session.json', storage.json_bytes({'application': 'sdgo_mod_manager', 'url': url, 'pid': os.getpid()}))

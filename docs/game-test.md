@@ -113,6 +113,13 @@ not change firewall profiles or notifications. Nonlocal quiet runs require
 permission to prepare their scoped application rule; setup failure never opens
 a UAC prompt or falls back to an interactive client.
 
+If a protected input desktop denies read access, FPS and local direct PvP tests
+can verify the fixed `WinSta0\Default` desktop instead. It must contain only
+the same process's exact hidden, nonactivating graphics proxy; game windows
+remain on the private desktop, with the foreground, audio and socket checks
+still required. The actual input-desktop name and state remain unknown in the
+receipt. Unidentified or visible windows and other observation errors fail.
+
 Runs reuse `%LOCALAPPDATA%\SDGO-GameTest\account.ini`, or the file selected with
 `--account-profile`. Preparing another run never generates a new account.
 Only explicit `--create-test-account` creates the first persistent profile;
@@ -151,6 +158,17 @@ test copy and verifies that process's actual TCP peer before login. Use
 The example tests normal, death match and leader match in order.
 Each mode covers room creation, real battle startup, AI state assertions and
 normal completion and return. Select a single mode when diagnosing a failure.
+
+For focused ordinary PvP checks, `--ai-difficulty Hard --expected-ai 5` seals the
+native difficulty command. Add `--ai-layout allied --expected-ai 6` instead to
+test five allied AI and one enemy AI. This layout needs a fresh observer session
+because its command does not fit the native title limit with a reused session prefix.
+`--ai-pool-level 1`–`5` selects an exact pool with `--expected-ai 1`; it cannot be
+combined with the difficulty override. In the test Mod, `BattleAiBehavior=1`
+requires actual special-victim recovery, moving fire and distant pursuit.
+`BattleAiDeaths=1` records native death identities; adding `BattleAiTeleport=1`
+requires a real local AI teleport with changed position, preserved HP and no
+destruction request. These opt-in witnesses observe native gameplay.
 Grid (`6`) and Tag (`7`) use the native VS channel business flow and require a
 complete battleship deck on the account. Missing decks and server rejections
 fail the case.
@@ -158,6 +176,35 @@ Results are under `receipts/report.json` and `receipts/junit.xml` in the run dir
 
 Account preparation can use `--bootstrap-only`, `--battleship-only`,
 `--gift-requests-only` or `--deck-only`; these do not claim PvP acceptance.
+
+`--friends-only` opens a coordinated native messenger session after normal
+login and onboarding. `tools/game_test_friends.py` sends scoped commands to
+that run's GameTest Mod; the native game thread executes the original friend
+actions and records the resulting cache, actual transport and consumed replies.
+Commands require the run UUID and a consecutive sequence. The private account
+profile, quiet desktop and loopback network protections still apply. This scope
+cannot be combined with battle, shop or other account-preparation scopes.
+
+The `campaign` command requires a stopped, passed `--asset-baseline` and the
+verified unique loopback `--target-host` of an independently prepared backend.
+Use synthetic accounts in an isolated database copy. Put persistent account
+profiles under `<work-root>/profiles`; missing peer profiles are registered
+through the native onboarding flow. The coordinator covers requests,
+accept/reject, conversation open/close, bidirectional and Chinese whispers,
+offline presence and native send rejection, relogin, duplicate/self/unknown
+validation, deletion, re-addition and multiple list pages. Its receipt records
+each check independently. Profile acceptance requires the actual managed
+popup clone, its original initialization, and a consumed `0x084B` reply with
+the selected target ID and copied data; enqueue alone is insufficient.
+This campaign currently does not prove room invitations. A failed or
+interrupted bootstrap is never an accepted archive baseline. Developer test
+files, accounts, addresses and database copies are not gameplay dependencies
+of the distributed friend repair Mods.
+
+```powershell
+python tools/game_test_friends.py campaign --client-template D:\Games\SDGO --stage build/stage/Release --work-root build/friends/campaign --asset-baseline build/friends/passed-bootstrap --target-host <verified-loopback-address>
+```
+
 Ship acquisition uses the native tutorial. Gifts use an existing sender's normal
 mail business and require the server's ordinary gift service plus independent
 processing evidence. Deck setup reads four genuinely owned unit UIDs from

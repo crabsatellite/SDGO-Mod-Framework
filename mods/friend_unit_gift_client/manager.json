@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "friend_unit_gift_client",
+  "title": "好友机体赠送",
+  "category": "gameplay",
+  "hosts": ["client"],
+  "presentation": "configurable",
+  "description": "在原生好友菜单和保管库中提供机体赠送、接收、退回与来源信息。",
+  "mechanism": "客户端先通过 Agent 与 World 的能力握手确认服务器支持，再显示原生游戏内入口。具体机体按 UID 选择，发送前执行服务器预检并再次确认；自定义机体礼物与普通商城礼物分开显示。无需额外启动器、桌面窗口或本机配置。"
+}
