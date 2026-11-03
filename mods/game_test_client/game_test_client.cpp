@@ -1,6 +1,7 @@
 #include "quiet_sockets.h"
 #include "quiet_audio.h"
 #include "quiet_graphics.h"
+#include "quiet_wait_room_messages.h"
 #include "../game_test_shared/runner.h"
 #include "native_actions.h"
 #include "channel_actions.h"
@@ -85,6 +86,7 @@ StorageTestActions storage;
 CapsuleCatalogActions capsules;
 BattleCombatActions battleCombat;
 NativeDataGuardProbe nativeDataGuardProbe;
+QuietWaitRoomMessages quietWaitRoomMessages;
 CapsuleDrawActions collection;
 UnitSelectActions unitSelection;
 ActiveSelectionObserver activeSelection;
@@ -2736,6 +2738,7 @@ SDGO_MOD_ENTRY {
         return 0;
     const bool namedProxyAllowed=fpsOnly ||
         (quietLoopback&&verifyDirectNetwork&&!verifyRoutedNetwork&&!missionMode);
+    if (verifyQuietRuntime && !quietWaitRoomMessages.Install(api,mod))return 0;
     if (verifyQuietRuntime && !quietGraphics.Install(api,mod,namedProxyAllowed))return 0;
     PublishQuietSocketReceipt();
     api->Log(mod, SDGO_LOG_INFO, fpsOnly ? "observing native FPS cap and cadence without authentication":"observing normal launcher/login/room/battle flow");
