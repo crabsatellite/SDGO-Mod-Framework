@@ -13,7 +13,7 @@
 // client. The adapter never receives a room id from its caller. It resolves an
 // exact title from the live server-advertised RoomList vector, validates that
 // vector's corresponding live GameRoom row, and invokes the shipped row
-// callback. Completion requires the shipped reply handler plus the real room
+// business method. Completion requires the shipped reply handler plus the real room
 // model installed by the client.
 class RoomJoinActions
 {
@@ -96,6 +96,7 @@ public:
         roomJoinCallback_ =
             Symbol<RoomJoinCallbackFn>(
                 "flow.room_join_callback");
+        roomJoinBusiness_=Symbol<RoomJoinBusinessFn>("flow.room_join_business");
         threeDWaitRoomVtable_ =
             Symbol<void*>("flow.three_d_wait_room_vtable");
         readyCommandVtable_ =
@@ -120,7 +121,7 @@ public:
             !gameApp_ || !profilePointer_ || !isRoomMaster_ ||
             !serviceManagedPointer_ || !nativeWStringCtor_ ||
             !nativeWStringDtor_ || !nativeUiFindControl_ ||
-            !roomListVtable_ || !roomJoinCallback_ ||
+            !roomListVtable_ || !roomJoinCallback_ || !roomJoinBusiness_ ||
             !threeDWaitRoomVtable_ || !readyCommandVtable_ ||
             !readyBusiness_ || !waitRoomDispatch_ ||
             !managerVtables_[0] ||
@@ -225,11 +226,10 @@ public:
 
             const NativeActions::TransportObservation before =
                 native_->TransportState();
-            roomJoinCallback_(
-                selection.service,
-                kRoomRowActivateEvent,
-                selection.control_name,
-                selection.control);
+            // 008DFAAF dispatches the selected live row to 008CEDD0. Invoke
+            // that original business directly; a desktop mouse activation
+            // byte is not an input to a tick-driven GameTest.
+            roomJoinBusiness_(selection.service,selection.index);
             const NativeActions::TransportObservation after =
                 native_->TransportState();
 
@@ -512,6 +512,7 @@ public:
 private:
     struct RoomSelection
     {
+        uint32_t index=0;
         void* service;
         void* control;
         const void* control_name;
@@ -555,7 +556,7 @@ private:
     static constexpr size_t kControlEnabled = 0x167;
     // 008DFA29 checks this byte on the native GameRoom control before 0x303.
     // It is not a callback pointer; adjacent fields cannot make it joinable.
-    static constexpr size_t kControlJoinable = 0x21C;
+    static constexpr size_t kControlActivation = 0x21C;
     static constexpr size_t kNativeStringLength = 0x10;
     static constexpr size_t kNativeStringCapacity = 0x14;
     static constexpr size_t kNativeWStringSize = 0x1C;
@@ -581,6 +582,7 @@ private:
             void*,
             const void*,
             uint32_t);
+    using RoomJoinBusinessFn=void(__thiscall*)(void*,uint32_t);
     using RoomJoinCallbackFn =
         uint32_t(__stdcall*)(
             void*,
@@ -785,17 +787,14 @@ private:
             if(Read<uint8_t*>(control+kControlParent)==root)selectionControlFlags_|=2;
             if(control[kControlVisible])selectionControlFlags_|=4;
             if(control[kControlEnabled])selectionControlFlags_|=8;
-            if(Read<uint8_t>(control+kControlJoinable))selectionControlFlags_|=16;
+            if(Read<uint8_t>(control+kControlActivation))selectionControlFlags_|=16;
         }
         if (!control ||
             Read<uint8_t*>(
                 control +
                 kControlParent) != root ||
             !control[kControlVisible] ||
-            !control[kControlEnabled] ||
-            !Read<uint8_t>(
-                control +
-                kControlJoinable))
+            !control[kControlEnabled])
             return false;
 
         selectionStage_=7;
@@ -821,6 +820,7 @@ private:
             return false;
 
         selectionStage_=8;
+        selection.index=static_cast<uint32_t>(matchedIndex);
         selection.service = service;
         selection.control = control;
         selection.control_name =
@@ -1638,6 +1638,7 @@ private:
     NativeUiFindControlFn nativeUiFindControl_ = nullptr;
     void* roomListVtable_ = nullptr;
     RoomJoinCallbackFn roomJoinCallback_ = nullptr;
+    RoomJoinBusinessFn roomJoinBusiness_=nullptr;
     PacketDispatchFn roomListPacket_ = nullptr;
     void* threeDWaitRoomVtable_ = nullptr;
     void* readyCommandVtable_ = nullptr;
