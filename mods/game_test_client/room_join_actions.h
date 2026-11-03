@@ -58,9 +58,12 @@ public:
         uint16_t reply_opcode;
         uint8_t local_slot;
         uint8_t ready_flag;
-        uint8_t original_handler_completed;
-        uint8_t model_ready;
-        uint8_t reserved[2];
+        uint8_t reply_detail;
+        uint8_t server_reply_observed;
+        uint8_t original_dispatch_completed;
+        uint8_t post_dispatch_model_ready;
+        uint8_t native_business_ready;
+        uint8_t reserved;
     };
 
     bool Bind(
@@ -101,6 +104,9 @@ public:
         readyBusiness_ =
             Symbol<ReadyBusinessFn>(
                 "flow.room_join_ready_business");
+        waitRoomDispatch_ =
+            Symbol<WaitRoomDispatchFn>(
+                "flow.waitroom_packet_dispatch");
         managerVtables_[0] =
             Symbol<void*>("flow.normal_3d_manager_vtable");
         managerVtables_[1] =
@@ -109,13 +115,15 @@ public:
             Symbol<void*>(
                 "flow.battleship_3d_manager_vtable");
 
-        if (!api_ || !api_->HookSlot || !mod_ || !native_ ||
+        if (!api_ || !api_->HookCode || !api_->HookSlot ||
+            !mod_ || !native_ ||
             !gameApp_ || !profilePointer_ || !isRoomMaster_ ||
             !serviceManagedPointer_ || !nativeWStringCtor_ ||
             !nativeWStringDtor_ || !nativeUiFindControl_ ||
             !roomListVtable_ || !roomJoinCallback_ ||
             !threeDWaitRoomVtable_ || !readyCommandVtable_ ||
-            !readyBusiness_ || !managerVtables_[0] ||
+            !readyBusiness_ || !waitRoomDispatch_ ||
+            !managerVtables_[0] ||
             !managerVtables_[1] || !managerVtables_[2])
             return false;
         if (active_ && active_ != this)
@@ -150,18 +158,18 @@ public:
         }
         passiveRoomListPacket_ =
             roomListPacket_;
-        if (!api_->HookSlot(
+        if (!api_->HookCode(
                 mod_,
-                "flow.room_join_ready_reply_slot",
+                "flow.waitroom_packet_dispatch",
                 reinterpret_cast<void*>(
-                    &ObserveReadyReply),
+                    &ObserveWaitRoomPacket),
                 reinterpret_cast<void**>(
-                    &readyReply_))) {
+                    &waitRoomDispatch_))) {
             active_ = nullptr;
             return false;
         }
-        passiveReadyReply_ =
-            readyReply_;
+        passiveWaitRoomDispatch_ =
+            waitRoomDispatch_;
 
         bound_ = true;
         return true;
@@ -233,8 +241,10 @@ public:
     }
 
     // Invokes the original guest 3D Ready command. It refuses to toggle an
-    // already-ready pilot back off. Success is published only after the
-    // original local 0x0999 consumer has updated the native readiness model.
+    // already-ready pilot back off. The command's context byte is only an
+    // optimistic local business flag. Success is published only after the full
+    // CWaitRoom dispatcher returns from a genuine local 0x0999 and its native
+    // slot model reads back ready.
     bool Ready()
     {
         if (!bound_ || !native_ ||
@@ -260,6 +270,9 @@ public:
             InterlockedExchangePointer(
                 &pendingReadyCommand_,
                 context.command);
+            InterlockedExchangePointer(
+                &pendingReadyWaitRoom_,
+                context.wait_room);
             InterlockedExchange(
                 &readyResult_,
                 kReadyPending);
@@ -272,14 +285,22 @@ public:
             readyBusiness_(context.command);
             const NativeActions::TransportObservation after =
                 native_->TransportState();
+            const uint8_t businessReady =
+                Read<uint8_t>(
+                    context.manager +
+                    kManagerCommandContext);
 
             if (after.send_sequence == before.send_sequence ||
                 after.opcode != kReadyRequestOpcode ||
                 after.packet_size != kReadyRequestSize ||
-                after.result == 0) {
+                after.result == 0 ||
+                businessReady != 1) {
                 RejectPendingReady(0, context.local_slot, 0);
                 return false;
             }
+            InterlockedExchange(
+                &readyNativeBusinessReady_,
+                businessReady);
             return true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             RejectPendingReady(0, 0xFF, 0);
@@ -418,14 +439,30 @@ public:
             observed.ready_flag =
                 static_cast<uint8_t>(
                     (reply >> 24) & 0xFFu);
-            observed.original_handler_completed =
+            observed.reply_detail =
+                static_cast<uint8_t>(
+                    InterlockedCompareExchange(
+                        &readyReplyDetail_,
+                        0,
+                        0));
+            observed.server_reply_observed =
+                InterlockedCompareExchange(
+                    &readyServerReplyObserved_,
+                    0,
+                    0) != 0;
+            observed.original_dispatch_completed =
                 InterlockedCompareExchange(
                     &readyOriginalCompleted_,
                     0,
                     0) != 0;
-            observed.model_ready =
+            observed.post_dispatch_model_ready =
                 InterlockedCompareExchange(
                     &readyModelReady_,
+                    0,
+                    0) != 0;
+            observed.native_business_ready =
+                InterlockedCompareExchange(
+                    &readyNativeBusinessReady_,
                     0,
                     0) != 0;
             const LONG after =
@@ -460,6 +497,9 @@ public:
         InterlockedExchangePointer(
             &pendingReadyCommand_,
             nullptr);
+        InterlockedExchangePointer(
+            &pendingReadyWaitRoom_,
+            nullptr);
     }
 
 private:
@@ -475,6 +515,7 @@ private:
     {
         uint8_t* manager;
         void* command;
+        uint8_t* wait_room;
         uint32_t room_id;
         uint8_t local_slot;
         bool ready;
@@ -511,9 +552,12 @@ private:
     static constexpr size_t kNativeWStringSize = 0x1C;
     static constexpr size_t kUiCallbackSlot = 0x38;
     static constexpr size_t kReadyBusinessSlot = 0x08;
-    static constexpr size_t kReadyReplySlot = 0x18;
     static constexpr size_t kManagerStateArray = 0x0C;
-    static constexpr size_t kManagerReadyContext = 0x20;
+    static constexpr size_t kManagerLocalSlot = 0x20;
+    static constexpr size_t kManagerCommandContext = 0x24;
+    static constexpr size_t kManagerWaitRoom = 0x38;
+    static constexpr size_t kWaitRoomSlotStride = 0x48E;
+    static constexpr size_t kWaitRoomSlotReady = 0xA06;
     static constexpr size_t kReadyCommandIndex = 4;
 
     using GameAppFn = uint8_t*(__cdecl*)();
@@ -542,12 +586,16 @@ private:
             int,
             int,
             void*);
+    using WaitRoomDispatchFn =
+        void(__thiscall*)(
+            void*,
+            int,
+            int,
+            int,
+            int,
+            void*);
     using ReadyBusinessFn =
         int(__thiscall*)(void*);
-    using ReadyFlagFn =
-        uint8_t(__thiscall*)(
-            void*,
-            uint32_t);
 
     template <typename T>
     T Symbol(const char* name) const
@@ -948,25 +996,37 @@ private:
                 command +
                 0x0C) !=
                 manager +
-                    kManagerReadyContext)
+                    kManagerCommandContext ||
+            Read<uint8_t*>(
+                command +
+                0x10) !=
+                manager)
             return false;
 
         const uint32_t localSlot =
             Read<uint32_t>(
                 manager +
-                kManagerReadyContext);
+                kManagerLocalSlot);
         if (localSlot >= 12)
+            return false;
+
+        uint8_t* waitRoom =
+            Read<uint8_t*>(
+                manager +
+                kManagerWaitRoom);
+        if (!waitRoom)
             return false;
 
         bool ready = false;
         if (!ReadNativeReadyFlag(
-                manager,
+                waitRoom,
                 localSlot,
                 ready))
             return false;
 
         context.manager = manager;
         context.command = command;
+        context.wait_room = waitRoom;
         context.room_id = roomId;
         context.local_slot =
             static_cast<uint8_t>(
@@ -976,40 +1036,21 @@ private:
     }
 
     bool ReadNativeReadyFlag(
-        uint8_t* manager,
+        uint8_t* waitRoom,
         uint32_t localSlot,
         bool& ready) const
     {
         ready = false;
-        uint8_t* first =
-            Read<uint8_t*>(
-                manager +
-                kManagerReadyContext +
-                8);
-        uint8_t* second =
-            first
-                ? Read<uint8_t*>(
-                      first + 0x14)
-                : nullptr;
-        void** vtable =
-            second
-                ? Read<void**>(
-                      second)
-                : nullptr;
-        ReadyFlagFn getter =
-            vtable
-                ? reinterpret_cast<
-                      ReadyFlagFn>(
-                      vtable[
-                          0x28 /
-                          sizeof(void*)])
-                : nullptr;
-        if (!getter)
+        if (!waitRoom ||
+            localSlot >= 12)
             return false;
         const uint8_t nativeReady =
-            getter(
-                second,
-                localSlot);
+            Read<uint8_t>(
+                waitRoom +
+                kWaitRoomSlotReady +
+                static_cast<size_t>(
+                    localSlot) *
+                    kWaitRoomSlotStride);
         if (nativeReady > 1)
             return false;
         ready = nativeReady != 0;
@@ -1174,11 +1215,26 @@ private:
             &readyReplyDetails_,
             0);
         InterlockedExchange(
+            &readyReplyDetail_,
+            0);
+        InterlockedExchange(
+            &readyServerReplyObserved_,
+            0);
+        InterlockedExchange(
             &readyOriginalCompleted_,
             0);
         InterlockedExchange(
             &readyModelReady_,
             0);
+        InterlockedExchange(
+            &readyNativeBusinessReady_,
+            0);
+        InterlockedExchangePointer(
+            &pendingReadyCommand_,
+            nullptr);
+        InterlockedExchangePointer(
+            &pendingReadyWaitRoom_,
+            nullptr);
     }
 
     void RejectPendingJoin(
@@ -1233,6 +1289,9 @@ private:
             return;
         InterlockedExchangePointer(
             &pendingReadyCommand_,
+            nullptr);
+        InterlockedExchangePointer(
+            &pendingReadyWaitRoom_,
             nullptr);
         InterlockedIncrement(
             &readyWriteVersion_);
@@ -1367,7 +1426,7 @@ private:
         return result;
     }
 
-    static int __fastcall ObserveReadyReply(
+    static void __fastcall ObserveWaitRoomPacket(
         void* self,
         void*,
         int a,
@@ -1379,18 +1438,19 @@ private:
         RoomJoinActions* actions =
             active_;
         if (!actions ||
-            !actions->readyReply_) {
-            PacketDispatchFn passive =
-                passiveReadyReply_;
-            return passive
-                ? passive(
-                      self,
-                      a,
-                      b,
-                      c,
-                      opcode,
-                      packet)
-                : 0;
+            !actions->waitRoomDispatch_) {
+            WaitRoomDispatchFn passive =
+                passiveWaitRoomDispatch_;
+            if (passive) {
+                passive(
+                    self,
+                    a,
+                    b,
+                    c,
+                    opcode,
+                    packet);
+            }
+            return;
         }
 
         const uint16_t normalized =
@@ -1398,6 +1458,7 @@ private:
                 opcode & 0xFFFF);
         uint8_t slot = 0xFF;
         uint8_t flag = 0;
+        uint8_t detail = 0;
         bool owned = false;
         if (normalized ==
                 kReadyReplyOpcode &&
@@ -1408,7 +1469,7 @@ private:
                 0) != 0 &&
             InterlockedCompareExchangePointer(
                 &actions->
-                     pendingReadyCommand_,
+                     pendingReadyWaitRoom_,
                 nullptr,
                 nullptr) == self) {
             __try {
@@ -1418,44 +1479,77 @@ private:
                         packet);
                 slot = bytes[6];
                 flag = bytes[7];
+                detail = bytes[8];
                 owned =
-                    Read<uint32_t>(
-                        static_cast<uint8_t*>(
-                            self) +
-                        8) == 2 &&
                     actions->
                         ResolveReadyContext(
                             context) &&
-                    context.command == self &&
+                    context.wait_room == self &&
+                    context.command ==
+                        InterlockedCompareExchangePointer(
+                            &actions->
+                                 pendingReadyCommand_,
+                            nullptr,
+                            nullptr) &&
+                    context.room_id ==
+                        static_cast<uint32_t>(
+                            InterlockedCompareExchange(
+                                &actions->
+                                     readyRoomId_,
+                                0,
+                                0)) &&
                     context.local_slot ==
-                        slot;
+                        slot &&
+                    context.local_slot ==
+                        static_cast<uint8_t>(
+                            InterlockedCompareExchange(
+                                &actions->
+                                     readyLocalSlot_,
+                                0,
+                                0));
             } __except (EXCEPTION_EXECUTE_HANDLER) {
                 owned = false;
             }
         }
 
-        const int result =
-            actions->readyReply_(
-                self,
-                a,
-                b,
-                c,
-                opcode,
-                packet);
+        actions->waitRoomDispatch_(
+            self,
+            a,
+            b,
+            c,
+            opcode,
+            packet);
         if (!owned)
-            return result;
+            return;
 
         bool modelReady = false;
+        bool sameContext = false;
         __try {
             ReadyContext after = {};
-            modelReady =
+            sameContext =
                 actions->
                     ResolveReadyContext(
                         after) &&
-                after.command == self &&
-                after.local_slot == slot &&
+                after.wait_room == self &&
+                after.command ==
+                    InterlockedCompareExchangePointer(
+                        &actions->
+                             pendingReadyCommand_,
+                        nullptr,
+                        nullptr) &&
+                after.room_id ==
+                    static_cast<uint32_t>(
+                        InterlockedCompareExchange(
+                            &actions->
+                                 readyRoomId_,
+                            0,
+                            0)) &&
+                after.local_slot == slot;
+            modelReady =
+                sameContext &&
                 after.ready;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
+            sameContext = false;
             modelReady = false;
         }
 
@@ -1463,9 +1557,12 @@ private:
                 &actions->readyPending_,
                 0,
                 1) != 1)
-            return result;
+            return;
         InterlockedExchangePointer(
             &actions->pendingReadyCommand_,
+            nullptr);
+        InterlockedExchangePointer(
+            &actions->pendingReadyWaitRoom_,
             nullptr);
         InterlockedIncrement(
             &actions->readyWriteVersion_);
@@ -1481,6 +1578,13 @@ private:
                      flag)
                  << 24)));
         InterlockedExchange(
+            &actions->readyReplyDetail_,
+            detail);
+        InterlockedExchange(
+            &actions->
+                 readyServerReplyObserved_,
+            1);
+        InterlockedExchange(
             &actions->
                  readyOriginalCompleted_,
             1);
@@ -1489,14 +1593,15 @@ private:
             modelReady ? 1 : 0);
         InterlockedExchange(
             &actions->readyResult_,
-            flag == 1 && modelReady
+            flag == 1 &&
+                    sameContext &&
+                    modelReady
                 ? kReadyAccepted
                 : kReadyRejected);
         InterlockedIncrement(
             &actions->readySequence_);
         InterlockedIncrement(
             &actions->readyWriteVersion_);
-        return result;
     }
 
     const SdgoApi* api_ = nullptr;
@@ -1515,7 +1620,7 @@ private:
     void* threeDWaitRoomVtable_ = nullptr;
     void* readyCommandVtable_ = nullptr;
     ReadyBusinessFn readyBusiness_ = nullptr;
-    PacketDispatchFn readyReply_ = nullptr;
+    WaitRoomDispatchFn waitRoomDispatch_ = nullptr;
     void* managerVtables_[3] = {};
     bool bound_ = false;
     char expectedTitle_[21] = {};
@@ -1539,13 +1644,17 @@ private:
     mutable volatile LONG readyRoomId_ = 0;
     mutable volatile LONG readyLocalSlot_ = 0xFF;
     mutable volatile LONG readyReplyDetails_ = 0;
+    mutable volatile LONG readyReplyDetail_ = 0;
+    mutable volatile LONG readyServerReplyObserved_ = 0;
     mutable volatile LONG readyOriginalCompleted_ = 0;
     mutable volatile LONG readyModelReady_ = 0;
+    mutable volatile LONG readyNativeBusinessReady_ = 0;
     mutable PVOID volatile pendingReadyCommand_ = nullptr;
+    mutable PVOID volatile pendingReadyWaitRoom_ = nullptr;
 
     inline static RoomJoinActions* active_ = nullptr;
     inline static PacketDispatchFn
         passiveRoomListPacket_ = nullptr;
-    inline static PacketDispatchFn
-        passiveReadyReply_ = nullptr;
+    inline static WaitRoomDispatchFn
+        passiveWaitRoomDispatch_ = nullptr;
 };

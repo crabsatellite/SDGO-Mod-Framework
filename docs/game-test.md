@@ -1,5 +1,18 @@
 # Native GameTest
 
+`prepare --same-room-rematch` checks that the human retains room ownership after
+settlement, starts a second full battle in that same room, and leaves only after
+the rematch. It cannot combine with random loadouts, pages or account preparation.
+The passive server report requires two complete battle lifecycles per mode.
+
+For asymmetric population regression, `prepare` accepts
+`--expected-ai 7 --ai-allies 0 --random-teams`: request native human team
+randomization and verify seven opponents with no allied AI relative to the host.
+Without `--ai-allies`, the existing balanced test layout remains the default.
+These are full PvP scenario options; page/mission smoke plans reject them.
+Combine with `--random-loadout` to exercise owned units and team placement in the
+same sealed native scenario.
+
 ## FPS cap without account login
 
 Build `game_test_client`, `fps_limit`, `sdgo_core`, `d3d9_shim` and `sdgo_data`,
@@ -50,41 +63,42 @@ and the observer setting before startup. After real AI movement is observed,
 the case checks 60 Hz gameplay and requires rendering above 60 FPS when selecting
 a higher cap, then continues the ordinary battle, settlement and return flow.
 
-### Recreate a local backend
+### Reuse a local native backend
 
-`tools/game_test_backend.py` owns copied native services and an isolated SQL
-container. It requires Docker, a compatible local native server tree, the server
-stage, and verified database backups (`backend.json` plus its `backups` folder).
+`tools/game_test_backend.py serve` runs an already configured local test server
+with its independent native SQL instance. It does not use Docker or recopy and
+restore databases on every retry. The backend's `backend.json`, `private.json`
+and actual SQL files must identify the same test copy; startup checks the live
+SQL process and data-file paths. See the [guide](../skills/sdgo-native-testing/SKILL.md)
+for test-copy preparation and existing accounts.
+
 Build `winmm_shim`, `sdgo_core`, `sdgo_data`, `pvp_ai` and `game_test_server` for
-that server stage. Missing loader, observer or symbol files fail preflight
-before SQL resources are created or databases are restored.
-Use a fresh work directory and an unused IPv4 loopback address. For example:
+the server stage. This example assumes the test copy already uses `127.93.0.1`
+and its private database configuration is ready:
 
 ```powershell
-python tools/game_test_backend.py prepare --source-server D:\SDGO\Server --stage build/stage/Release --backup-source D:\Tests\verified-backend --work build/fps-backend --target-ip 127.93.0.1
-python tools/game_test.py prepare --client-template D:\Games\SDGO --stage build/stage/Release --run-dir build/fps-probe --target-host 127.93.0.1 --login-port 5001 --fps-cap 160
-python tools/game_test_backend.py serve --work build/fps-backend --client-run build/fps-probe --stage build/stage/Release --startup-xml D:\SDGO\ServerStartUp\ServerStartUp.xml --lifetime 1800
+python tools/game_test.py prepare --client-template D:\SDGO-Test\client --stage build/stage/Release --run-dir build/fps-probe --target-host 127.93.0.1 --login-port 5001 --fps-cap 160
+python tools/game_test_backend.py serve --work D:\SDGO-Test\server --client-run build/fps-probe --stage build/stage/Release --startup-xml D:\SDGO-Test\server\ServerStartUp\ServerStartUp.xml --lifetime 1800
 ```
 
-Run the matrix from another terminal after `backend_ready`, specifying that
-same `--target-host`. Service startup retries and database readiness probes are
-bounded; launch selection uses both the startup XML and native channel table.
-The FPS suite never needs an account. Other suites reuse their private account
-profile by default; authenticated backend observers also require
-`serve --host-pilot-id <actual native pilot ID>` for that account. No account ID
-is embedded in the backend tool. Live COPY_ONLY backup is an explicit opt-in
-(`--allow-live-copy-only`) when a verified backup source is unavailable.
+Launch selection reads both the native startup XML and channel table. Wait for
+each Battle's new `Table Download OK.. Time Procedure Ready..` marker and
+`backend_ready` before starting clients; an open TCP port is insufficient.
+The FPS suite needs no account. Other suites bind an existing private account
+profile, and authenticated observers also require
+`serve --host-pilot-id <actual native pilot ID>`. No account ID is embedded.
+Client-only scenarios can reuse a ready server session; restart owned services
+when their candidate DLLs change.
 
 ```powershell
-python tools/game_test_backend.py stop --work build/fps-backend
-python tools/game_test_backend.py cleanup --work build/fps-backend --remove-runtime
+python tools/game_test_backend.py stop --work D:\SDGO-Test\server
 ```
 
-Cleanup verifies owned service exit and the SQL container/volume identity, then
-removes private credentials and copied runtime while retaining public receipts.
-The separately prepared `fps-probe` belongs only to that test: remove it after
-its process has exited and evidence is exported. Shared backups and source
-servers remain available for later environments.
+Verify owned service exit after stopping. Preserve the shared test copy, native
+SQL, existing accounts and common assets. After acceptance and required deployment
+readback, move successful temporary records and owned concurrent copies to the
+Recycle Bin; retain failure diagnostics until resolved. Test runtimes, databases
+and private configuration stay local and are not runtime publication sources.
 
 An optional development Mod, disabled by default. Test cases run inside the
 real client and use its normal business requests against a real server.
@@ -104,8 +118,12 @@ Tests default to a separate background desktop with BGM, effects and voice
 muted in the copied client. Desktop/window ownership is checked separately and
 missing evidence fails the run. A dedicated graphics thread creates the real
 D3D9 device through one invisible, nonactivating proxy; actual game pages stay
-on the private desktop. Fullscreen is rejected. The native Miles WaveOut
-driver's zero master gain is read back independently. The copied logic-test
+on the private desktop. Fullscreen is rejected.
+If Windows denies access to the locked input desktop, the launcher instead
+verifies the private game windows and the single, hidden graphics proxy on
+the named Default desktop. Other observation errors or unrecognized windows
+still fail the run; inaccessible input-desktop state remains explicitly unknown.
+The native Miles WaveOut driver's zero master gain is read back independently. The copied logic-test
 profile disables native postprocessing, sets all five native effect levels to
 zero and checks the effective runtime flags. These checks do not claim visual or
 postprocessing acceptance. Local direct tests bind only loopback and do
@@ -147,6 +165,22 @@ profile. Later runs reuse that profile. After the first preparation, add
 with a new run UUID. The previous receipt and binary hashes are consolidated;
 retired jobs go to the Recycle Bin instead of keeping another full client.
 An archive baseline referenced by another capsule cannot be reused this way.
+To switch a stopped client to another existing test identity, combine
+`--reuse-client --rebind-existing-account --account-profile <existing-profile>`.
+The target must declare `registered` or `existing_account`, without registration
+retries. Both profiles are locked and preserved while the same client files are
+reused. Bind the server observer to the target account's actual pilot ID too.
+For a single host in an eight-player room, exercise automatic commands with
+`--expected-ai 7 --ai-allies 3 --ai-policy fill`, or
+`--expected-ai 7 --ai-allies 0 --ai-policy enemy`. These test `!ai fill` and
+`!ai enemy` directly. Add `--ai-teams coop` to exercise human grouping; omit it
+or use `versus` to retain native manual/random teams. These options can combine
+with `--random-teams` or `--random-loadout` when the sealed native title fits
+20 bytes; split longer combinations into separate scenarios.
+Ordinary Grid/Tag runs validate the already-selected fleet without editing it:
+one to four distinct owned units, an included leader and at most ten native
+points. The explicit `--deck-only` editor scenario still uses its four-unit
+fixture and genuine Save/GoOut replies.
 Install `Send2Trash` in the developer environment; reuse has no permanent-delete
 fallback. The same account cannot run concurrently. The default endpoint is
 `127.0.0.1:5001`; change it with `--target-host` and `--login-port`. The original
@@ -159,7 +193,7 @@ The example tests normal, death match and leader match in order.
 Each mode covers room creation, real battle startup, AI state assertions and
 normal completion and return. Select a single mode when diagnosing a failure.
 
-For focused ordinary PvP checks, `--ai-difficulty Hard --expected-ai 5` seals the
+For focused ordinary PvP checks, `--ai-difficulty Hard --expected-ai 7` seals the
 native difficulty command. Add `--ai-layout allied --expected-ai 6` instead to
 test five allied AI and one enemy AI. This layout needs a fresh observer session
 because its command does not fit the native title limit with a reused session prefix.

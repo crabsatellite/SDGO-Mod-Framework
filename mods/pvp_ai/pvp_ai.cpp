@@ -43,17 +43,20 @@
 
 #include "sdgo/ai_catalog_provider.h"
 #include "sdgo/room_commands.h"
+#include "sdgo/pvp_team_plan.h"
 
 namespace
 {
     // ---- battle room layout (WaitRoomEx), as 0x004B9BF0, 0x004B6EB0 and 0x004B79D0 use it ----
     constexpr size_t kRoomType = 0x04;          // u8, passed to the pilot setup with the mode
     constexpr size_t kRoomMode = 0x05;          // u8
+    constexpr size_t kRoomCapacity = 0x07;      // native WaitRoomEx max participants
     constexpr size_t kRoomPlayers = 0x71;       // u32, current player count (humans only)
     constexpr size_t kRoomHost = 0x4CE;         // u32, pilot id of the room host
     constexpr size_t kRoomTitleMax = 20;
     constexpr int kSlots = 12;
-    constexpr int kSlotsPerTeam = 6;
+    constexpr int kLegacySlotSplit = 6;         // placement preference, never a team limit
+    constexpr int kSupportedPlayers = 8;
     constexpr size_t kSlotInfo = 0x533;         // slot info records, stride 0x48E
     constexpr size_t kSlotInfoStride = 0x48E;
     constexpr size_t kSlotInfoPilotId = 0x429;  // = room + 0x95C + slot * 0x48E
@@ -82,6 +85,7 @@ namespace
     constexpr size_t kRoomScoreTeam1 = 0x2EEE4;
     constexpr size_t kRoomScoreTeam2 = 0x2EEE8;
     constexpr uint32_t kAiPilotBit = 0x80000000u;
+    bool GuardedRemove(uint8_t* room);
 
     // The dispatcher keeps a copy of the room in its frame (ebp - 0x328AC); its team checks
     // read that copy.
@@ -93,8 +97,10 @@ namespace
     }
 
     using SetupHumansFn = int(__thiscall*)(void* proc, uint8_t* room, uint32_t* a, uint32_t* b, uint8_t c);
+    using AssignHumanTeamsFn = int(__thiscall*)(void* proc,uint8_t* room);
     using RoomTickFn = int(__thiscall*)(uint8_t* room, uint32_t now);
     using BattleEndFn = void(__thiscall*)(uint8_t* room, uint16_t a, uint16_t b, int now);
+    using ResultHostFn = void(__thiscall*)(uint8_t*,const int*,const int*,int,int);
     using RespawnPilotFn = int(__thiscall*)(uint8_t* room, uint32_t now, uint8_t* pilot, uint32_t id, uint32_t extra);
     using RespawnRefreshFn = void(__thiscall*)(uint8_t* room, int a, uint8_t* pilot, int b, int c);
     using PilotStateRespawnFn = int(__thiscall*)(uint8_t* part);
@@ -131,8 +137,10 @@ namespace
     SdgoMod* g_mod = nullptr;
     const SdgoRoomTitleApi* g_titleApi = nullptr;
     SetupHumansFn g_setupHumans = nullptr;
+    AssignHumanTeamsFn g_assignHumanTeams = nullptr;
     RoomTickFn g_roomTick = nullptr;
     BattleEndFn g_battleEnd = nullptr;
+    ResultHostFn g_resultHost = nullptr;
     RespawnPilotFn g_respawnPilot = nullptr;
     RespawnRefreshFn g_respawnRefresh = nullptr;
     PilotStateRespawnFn g_pilotStateRespawn = nullptr;
@@ -164,7 +172,6 @@ namespace
     struct Settings
     {
         int defaultLevel = 2;
-        int fillTeamSize = 3;
         int gradeCost[5] = {}; // [1..4]: death match life cost of a player unit of that grade, 0 = keep
         int logRoom = 1;
         int logBattle = 0;
@@ -270,7 +277,6 @@ namespace
         g_settings.defaultLevel = g_api->SettingInt(g_mod, "DefaultLevel", 2);
         if (g_settings.defaultLevel < 1 || g_settings.defaultLevel > 5)
             g_settings.defaultLevel = 2;
-        g_settings.fillTeamSize = g_api->SettingInt(g_mod, "FillTeamSize", 3);
         const int playerCost[5] = {0, 250, 334, 455, 556};
         for (int grade = 1; grade <= 4; ++grade) {
             char key[24];
@@ -313,14 +319,17 @@ namespace
     struct Plan
     {
         bool enabled = false;
+        bool valid = true;
+        bool cooperative = false;
         int enemies = 0;
         int allies = 0;
         int level = 2;
         battle_ai::Difficulty difficulty = battle_ai::Difficulty::Medium;
     };
 
-    // "!ai" fills both teams to FillTeamSize; "!aiN" asks for N enemies; options after it: eN enemies,
-    // aN allies, lvN level. Case-insensitive.
+    // "!ai" / "!ai fill" fill both native teams within the room capacity.
+    // "!ai enemy" fills only the host's opponents; eN/aN request additional AI.
+    // "coop" groups humans with the host; otherwise native human teams apply.
     Plan ParseTitle(const char* title)
     {
         Plan plan;
@@ -333,9 +342,11 @@ namespace
         int difficulty = battle_ai::RoomDifficulty(std::string_view(title));
         if (difficulty >= 0) plan.difficulty = static_cast<battle_ai::Difficulty>(difficulty);
         plan.enabled = true;
-        const int count=command.has_count ? static_cast<int>((std::min)(command.count,uint32_t{kSlotsPerTeam})) : -1;
+        const int count=command.has_count && command.count<=kSupportedPlayers ? static_cast<int>(command.count) : -1;
+        if(command.has_count && count<0)plan.valid=false;
         int enemies = -1;
         int allies = -1;
+        bool enemySet=false,allySet=false,levelSet=false,difficultySet=false,teamSet=false;
         uint32_t cursor=command.arguments_offset;
         commands::Token argument;
         while (commands::Next(title,command.arguments_offset+command.arguments_length,cursor,argument)) {
@@ -343,20 +354,47 @@ namespace
             const uint32_t length=argument.length;
             const char first=commands::Lower(token[0]);
             if (length == 3 && first == 'l' && commands::Lower(token[1]) == 'v' && token[2] >= '1' && token[2] <= '5') {
+                if(levelSet)plan.valid=false;
+                levelSet=true;
                 plan.level = token[2] - '0';
-            } else if (length >= 2 && (first == 'e' || first == 'a')) {
+            } else if ((length==4 && _strnicmp(token,"easy",4)==0) ||
+                       (length==6 && _strnicmp(token,"medium",6)==0) ||
+                       (length==4 && _strnicmp(token,"hard",4)==0)) {
+                if(difficultySet)plan.valid=false;
+                difficultySet=true;
+            } else if ((length==4 && _strnicmp(token,"coop",4)==0) ||
+                       (length==6 && _strnicmp(token,"versus",6)==0)) {
+                if(teamSet)plan.valid=false;
+                teamSet=true;
+                plan.cooperative=length==4;
+            } else if (length==5 && _strnicmp(token,"enemy",5)==0) {
+                if(enemySet || allySet || command.has_count)plan.valid=false;
+                enemies=sdgo::pvp_teams::kFillRoom;allies=0;enemySet=allySet=true;
+            } else if (length==4 && _strnicmp(token,"fill",4)==0) {
+                if(enemySet || allySet || command.has_count)plan.valid=false;
+                enemies=allies=kFill;enemySet=allySet=true;
+            } else if (length >= 2 && (first == 'e' || first == 'a') &&
+                       ((token[1]>='0' && token[1]<='9') || token[1]=='*' || token[1]=='-' || token[1]=='+')) {
                 uint32_t value=0;
-                if(commands::Number(token+1,length-1,value))
-                    (first == 'e' ? enemies : allies)=static_cast<int>((std::min)(value,uint32_t{kSlotsPerTeam}));
-            }
+                const bool fill=length==2 && token[1]=='*';
+                if(!fill && (!commands::Number(token+1,length-1,value) || value>kSupportedPlayers))plan.valid=false;
+                bool& seen=first=='e' ? enemySet:allySet;
+                if(seen)plan.valid=false;
+                if(first=='e' && command.has_count)plan.valid=false;
+                seen=true;
+                (first=='e' ? enemies:allies)=fill ? sdgo::pvp_teams::kFillRoom:static_cast<int>((std::min)(value,uint32_t{kSupportedPlayers}));
+            } else plan.valid=false;
         }
-        if (count < 0 && enemies < 0 && allies < 0) {
-            plan.enemies = kFill;
-            plan.allies = kFill;
+        if (!command.has_count && !enemySet && !allySet) {
+            plan.enemies = plan.cooperative ? sdgo::pvp_teams::kFillRoom:kFill;
+            plan.allies = plan.cooperative ? 0:kFill;
         } else {
-            plan.enemies = enemies >= 0 ? enemies : (count >= 0 ? count : 0);
-            plan.allies = allies >= 0 ? allies : 0;
+            plan.enemies = enemySet ? enemies : (count >= 0 ? count : 0);
+            plan.allies = allySet ? allies : 0;
+            if(plan.enemies==sdgo::pvp_teams::kFillRoom && plan.allies==sdgo::pvp_teams::kFillRoom)
+                plan.enemies=plan.allies=kFill;
         }
+        if(plan.cooperative && plan.enemies==0 && plan.allies==0)plan.valid=false;
         return plan;
     }
 
@@ -402,6 +440,7 @@ namespace
         char title[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
         bool titled = false;
         uint8_t hostTeam = 0;
+        bool validTeams = true;
     };
 
     RoomView ViewRoom(uint8_t* room)
@@ -423,7 +462,8 @@ namespace
             uint32_t id = SlotPilotId(room, slot);
             if (id == 0)
                 continue;
-            int team = SlotTeam(room, slot) == 1 ? 1 : 2;
+            const uint8_t team = SlotTeam(room, slot);
+            if(team!=1 && team!=2) {view.validTeams=false;continue;}
             if (id & kAiPilotBit) {
                 ++view.ai[team];
                 continue;
@@ -432,9 +472,121 @@ namespace
             if (id == host)
                 view.hostTeam = static_cast<uint8_t>(team);
         }
-        if (view.hostTeam == 0)
-            view.hostTeam = view.humans[1] >= view.humans[2] ? 1 : 2;
         return view;
+    }
+
+    constexpr size_t kTeamColour1=0x2EF0C;
+    constexpr size_t kRandomPattern=0x3CC3;
+    constexpr size_t kLastRandomHumanCount=0x3CD7;
+    RoomView CooperativeRoomView(uint8_t* room) {
+        auto view=ViewRoom(room);
+        if(!room[8])return view;
+        // Native random rooms can have team zero until AssignHumanTeams runs.
+        // Coop replaces that assignment, so count the real occupied identities
+        // before grouping. Keep an explicit host side; otherwise choose team 1.
+        memset(view.humans,0,sizeof(view.humans));
+        memset(view.ai,0,sizeof(view.ai));
+        view.hostTeam=0;view.validTeams=true;
+        const auto host=*reinterpret_cast<const uint32_t*>(room+kRoomHost);
+        uint32_t seen[kSlots]{};int count=0,hostCount=0;
+        for(int slot=0;slot<kSlots;++slot) {
+            const auto id=SlotPilotId(room,slot);
+            if(!id)continue;
+            for(int i=0;i<count;++i)if(seen[i]==id)view.validTeams=false;
+            seen[count++]=id;
+            const auto team=SlotTeam(room,slot);
+            if((id&kAiPilotBit) || team>2) {view.validTeams=false;continue;}
+            const uint8_t assigned=team ? team:uint8_t{1};
+            ++view.humans[assigned];
+            if(id==host){view.hostTeam=assigned;++hostCount;}
+        }
+        if(hostCount!=1)view.validTeams=false;
+        return view;
+    }
+    sdgo::pvp_teams::Room PopulationInput(uint8_t* room,const RoomView& view,bool cooperative=false) {
+        sdgo::pvp_teams::Room input;
+        const int capacity=room[kRoomCapacity];
+        input.capacity=capacity>=2 && capacity<=kSlots ? (std::min)(capacity,kSupportedPlayers):0;
+        input.perTeamCapacity=input.capacity;input.hostTeam=view.hostTeam;
+        for(int side=1;side<=2;++side) {
+            input.humans[side]=view.humans[side];input.ai[side]=view.ai[side];
+        }
+        if(cooperative && (view.hostTeam==1 || view.hostTeam==2)) {
+            input.humans[view.hostTeam]=view.humans[1]+view.humans[2];
+            input.humans[3-view.hostTeam]=0;
+        }
+        return input;
+    }
+    bool CoopPreflight(uint8_t* room,const Plan& plan,const RoomView& view) {
+        if(!plan.valid || !view.validTeams || (view.hostTeam!=1 && view.hostTeam!=2) ||
+           room[kRoomType]==1 || view.ai[1] || view.ai[2])return false;
+        const int humans=view.humans[1]+view.humans[2];
+        if(humans<1 || static_cast<uint32_t>(humans)!=
+           *reinterpret_cast<const uint32_t*>(room+kRoomPlayers))return false;
+        const uint8_t first=room[kTeamColour1],second=room[kTeamColour1+1];
+        if((first!=1 && first!=2) || second!=3-first)return false;
+        return sdgo::pvp_teams::Resolve({plan.allies,plan.enemies},PopulationInput(room,view,true)).error==
+            sdgo::pvp_teams::Error::None;
+    }
+    // The original manual branch also resets native per-slot spawn bookkeeping.
+    // Suppress random assignment only during this call; keep the authored room setting.
+    int AssignManualHumanTeams(void* proc,uint8_t* room) {
+        const uint8_t random=room[8];
+        int result=0;
+        __try {
+            room[8]=0;
+            result=g_assignHumanTeams(proc,room);
+        } __finally {
+            room[8]=random;
+        }
+        return result;
+    }
+    int SingleRandomHumanSlot(uint8_t* room) {
+        int found=-1;
+        for(int slot=0;slot<kSlots;++slot) {
+            const uint32_t id=SlotPilotId(room,slot);
+            if(!id)continue;
+            if(found>=0 || (id&kAiPilotBit))return -1;
+            found=slot;
+        }
+        return found;
+    }
+    bool SingleRandomAiRoom(uint8_t* room) {
+        if(!room || !IsPvpMode(room[kRoomMode]) || !room[8] ||
+            *reinterpret_cast<const uint32_t*>(room+kRoomPlayers)!=1)return false;
+        const auto plan=ParseTitle(ViewRoom(room).title);
+        return plan.enabled && plan.valid && (plan.allies!=0 || plan.enemies!=0);
+    }
+    int __fastcall AssignHumanTeams(void* proc,void*,uint8_t* room) {
+        if(room && IsPvpMode(room[kRoomMode])) {
+            const auto plan=ParseTitle(ViewRoom(room).title);
+            if(plan.enabled && plan.cooperative) {
+                const auto view=CooperativeRoomView(room);
+                if(!CoopPreflight(room,plan,view))return 0;
+                const uint8_t colour=room[kTeamColour1+view.hostTeam-1];
+                for(int slot=0;slot<kSlots;++slot) {
+                    const auto id=SlotPilotId(room,slot);
+                    if(!id || (id&kAiPilotBit))continue;
+                    room[kSlotInfo+slot*kSlotInfoStride+kSlotInfoTeamA]=view.hostTeam;
+                    room[kSlotInfo+slot*kSlotInfoStride+kSlotInfoColour]=colour;
+                }
+                return AssignManualHumanTeams(proc,room);
+            }
+        }
+        if(SingleRandomAiRoom(room)) {
+            const int slot=SingleRandomHumanSlot(room);
+            const uint8_t colour=room[kTeamColour1];
+            if(slot<0 || (colour!=1 && colour!=2))return 0;
+            room[kSlotInfo+slot*kSlotInfoStride+kSlotInfoTeamA]=1;
+            room[kSlotInfo+slot*kSlotInfoStride+kSlotInfoColour]=colour;
+            if(*reinterpret_cast<const uint32_t*>(room+kLastRandomHumanCount)!=1) {
+                *reinterpret_cast<uint32_t*>(room+kLastRandomHumanCount)=1;
+                memset(room+kRandomPattern,0,kSlots);
+            }
+            room[kRandomPattern]=0;
+            return 1;
+        }
+        return g_assignHumanTeams(proc,room);
     }
 
     // ---- 1. player count and team checks of the dispatcher ----------------------------
@@ -1047,8 +1199,8 @@ namespace
         return other ? static_cast<uint8_t>(3 - other) : team;
     }
 
-    // Adds up to `wanted` AI pilots of `team` in the free slots of that team's half
-    // (team 1: slots 0-5, team 2: slots 6-11, as the AI battle modes place theirs).
+    // Team is carried by the pilot/slot fields, not by a half of the storage
+    // array. AI can use any empty native slot without moving a human player.
     // ---- modes 6 and 7: a deck of units per AI pilot ------------------------------------
     //
     // In grid match (6) and tag match (7) a pilot plays a deck of up to 4 units: the player
@@ -1170,8 +1322,9 @@ namespace
             return 0;
         int added = 0;
         uint8_t colour = TeamColour(room, team);
-        int first = team == 1 ? 0 : kSlotsPerTeam;
-        for (int slot = first; slot < first + kSlotsPerTeam && added < wanted; ++slot) {
+        const int preferredFirst=team==1 ? 0:kLegacySlotSplit;
+        for (int offset = 0; offset < kSlots && added < wanted; ++offset) {
+            const int slot=(preferredFirst+offset)%kSlots;
             if (SlotPilotId(room, slot) != 0)
                 continue;
             uint32_t pick = (*choices)[NextRandom() % choices->size()];
@@ -1256,35 +1409,32 @@ namespace
                    room[kRoomTagUnits2]);
     }
 
-    void AddPvpAi(uint8_t* room)
+    bool AddPvpAi(uint8_t* room)
     {
         if (!IsPvpMode(room[kRoomMode]))
-            return;
+            return true;
         RoomView view = ViewRoom(room);
         if (!view.titled)
-            return;
+            return true;
         Plan plan = ParseTitle(view.title);
         if (!plan.enabled)
-            return;
+            return true;
+        if(plan.valid && plan.allies==0 && plan.enemies==0)
+            return true; // !ai0 leaves ordinary native rooms and limits intact.
 
-        // "!ai" fills each team to FillTeamSize players; eN/aN are capped by the six slots
-        // of a team.
-        int fill = g_settings.fillTeamSize;
-        if (fill < 1 || fill > kSlotsPerTeam)
-            fill = kSlotsPerTeam;
-        uint8_t allyTeam = view.hostTeam;
-        uint8_t enemyTeam = allyTeam == 1 ? 2 : 1;
-        int allyFree = kSlotsPerTeam - view.humans[allyTeam] - view.ai[allyTeam];
-        int enemyFree = kSlotsPerTeam - view.humans[enemyTeam] - view.ai[enemyTeam];
-        int allies = plan.allies == kFill ? fill - view.humans[allyTeam] - view.ai[allyTeam] : plan.allies;
-        int enemies = plan.enemies == kFill ? fill - view.humans[enemyTeam] - view.ai[enemyTeam] : plan.enemies;
-        if (allies > allyFree)
-            allies = allyFree;
-        if (enemies > enemyFree)
-            enemies = enemyFree;
+        const auto input=PopulationInput(room,view);
+        const auto population=sdgo::pvp_teams::Resolve({plan.allies,plan.enemies},input);
+        if(!plan.valid || !view.validTeams || population.error!=sdgo::pvp_teams::Error::None ||
+           (plan.cooperative && view.humans[population.enemyTeam]!=0)) {
+            g_api->Log(g_mod,SDGO_LOG_ERROR,"AI room population rejected: hostTeam=%u humans=%d/%d requested allies=%d enemies=%d capacity=%d error=%u; no silent count clamp",
+                view.hostTeam,view.humans[1],view.humans[2],plan.allies,plan.enemies,input.capacity,static_cast<unsigned>(population.error));
+            return false;
+        }
+        const auto allyTeam=population.allyTeam,enemyTeam=population.enemyTeam;
+        const int allies=population.allies,enemies=population.enemies;
         if (allies <= 0 && enemies <= 0) {
             g_api->Log(g_mod, SDGO_LOG_INFO, "no AI players to add (teams full or none asked for)");
-            return;
+            return true;
         }
 
         std::vector<uint32_t> available = AiNpcIds();
@@ -1297,11 +1447,11 @@ namespace
         if (pool.empty()) {
             if (catalog) {
                 g_api->Log(g_mod, SDGO_LOG_WARN, "AI catalog has no usable Level%d entries; check catalog source-data diagnostics", plan.level);
-                return;
+                return false;
             }
             g_api->Log(g_mod, SDGO_LOG_WARN, "no NPC of Level%d is in the server's AI-NPC list (%u entries)",
                        plan.level, static_cast<unsigned>(available.size()));
-            return;
+            return false;
         }
         if (!PrepareRoomItems(room, plan.difficulty))
             g_api->Log(g_mod, SDGO_LOG_WARN,
@@ -1323,13 +1473,13 @@ namespace
                    difficulty);
         if (addedAllies + addedEnemies > 0)
             RecountBattle(room);
+        return addedAllies==allies && addedEnemies==enemies;
     }
 
     bool GuardedAddPvpAi(uint8_t* room, DWORD* code)
     {
         __try {
-            AddPvpAi(room);
-            return true;
+            return AddPvpAi(room);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             *code = GetExceptionCode();
             return false;
@@ -1338,18 +1488,83 @@ namespace
 
     int __fastcall SetupHumans(void* proc, void* /*edx*/, uint8_t* room, uint32_t* a, uint32_t* b, uint8_t c)
     {
+        uint32_t humanIds[kSlots]{};
+        uint8_t humanTeams[kSlots]{},humanColours[kSlots]{};
+        bool cooperative=false;
+        if(room && IsPvpMode(room[kRoomMode])) {
+            const auto requested=ParseTitle(ViewRoom(room).title);
+            cooperative=requested.enabled && requested.cooperative;
+            const auto view=cooperative ? CooperativeRoomView(room):ViewRoom(room);
+            const bool singleRandom=!cooperative && SingleRandomAiRoom(room);
+            const int humanSlot=singleRandom ? SingleRandomHumanSlot(room):-1;
+            if(requested.enabled && (!requested.valid || (cooperative && !CoopPreflight(room,requested,view)) || (singleRandom &&
+                (humanSlot<0 || (room[kTeamColour1]!=1 && room[kTeamColour1]!=2))))) {
+                g_api->Log(g_mod,SDGO_LOG_ERROR,
+                    "AI room preflight rejected: valid=%u singleRandom=%u humanSlot=%d humans=%lu host=%lu colours=%u/%u capacity=%u",
+                    requested.valid,singleRandom,humanSlot,*reinterpret_cast<const uint32_t*>(room+kRoomPlayers),
+                    *reinterpret_cast<const uint32_t*>(room+kRoomHost),room[kTeamColour1],room[kTeamColour1+1],room[kRoomCapacity]);
+                return 0x0FBE;
+            }
+            if(cooperative)for(int slot=0;slot<kSlots;++slot) {
+                const auto id=SlotPilotId(room,slot);
+                if(!id || (id&kAiPilotBit))continue;
+                humanIds[slot]=id;
+                humanTeams[slot]=SlotTeam(room,slot);
+                humanColours[slot]=room[kSlotInfo+slot*kSlotInfoStride+kSlotInfoColour];
+            }
+        }
         int result = g_setupHumans(proc, room, a, b, c);
+        const auto restoreHumanTeams=[&]() {
+            if(cooperative)for(int slot=0;slot<kSlots;++slot) {
+                if(!humanIds[slot] || SlotPilotId(room,slot)!=humanIds[slot])continue;
+                room[kSlotInfo+slot*kSlotInfoStride+kSlotInfoTeamA]=humanTeams[slot];
+                room[kSlotInfo+slot*kSlotInfoStride+kSlotInfoColour]=humanColours[slot];
+            }
+        };
+        if(result!=0 && room && IsPvpMode(room[kRoomMode]) && ParseTitle(ViewRoom(room).title).enabled) {
+            g_api->Log(g_mod,SDGO_LOG_ERROR,
+                "original human pilot setup rejected AI room: error=%04X humans=%lu host=%lu random=%u colours=%u/%u",
+                result,*reinterpret_cast<const uint32_t*>(room+kRoomPlayers),*reinterpret_cast<const uint32_t*>(room+kRoomHost),
+                room[8],room[kTeamColour1],room[kTeamColour1+1]);
+            for(int slot=0;slot<kSlots;++slot) {
+                const auto id=SlotPilotId(room,slot);
+                if(!id || (id&kAiPilotBit))continue;
+                const uint8_t* info=room+kSlotInfo+slot*kSlotInfoStride;
+                const uint8_t* pilot=room+kPilots+slot*kPilotStride;
+                g_api->Log(g_mod,SDGO_LOG_ERROR,
+                    "native human setup input: slot=%d pilot=%lu team=%u lookupKey=%lu userRecord=%u unit=%lu serial=%llu",
+                    slot,static_cast<unsigned long>(id),info[kSlotInfoTeamA],
+                    static_cast<unsigned long>(*reinterpret_cast<const uint32_t*>(info+0xEA)),
+                    *reinterpret_cast<const uintptr_t*>(pilot+kPilotUserRecord)!=0,
+                    static_cast<unsigned long>(*reinterpret_cast<const uint32_t*>(info+0x146)),
+                    static_cast<unsigned long long>(*reinterpret_cast<const uint64_t*>(info+0x14E)));
+            }
+        }
         if (result == 0 && room) {
             GuardedObserverForget(room);
             GuardedObserverEmit(SDGO_PVP_AI_EVENT_REQUEST_ACCEPTED, room);
+            // Keep the original human setup and only undo this Mod's AI on a
+            // failed population. The ordinary native error branch skips the
+            // start announcement but does not immediately release pilots.
+            uint8_t teamCounters[4]{};uint32_t powers[4]{};
+            memcpy(teamCounters,room+kRoomTeamSize1,sizeof(teamCounters));
+            memcpy(powers,room+kRoomPower1,sizeof(powers));
             DWORD code = 0;
             if (!GuardedAddPvpAi(room, &code)) {
-                g_api->Log(g_mod, SDGO_LOG_ERROR, "exception %08lX while adding AI players; this battle has none", code);
-                GuardedObserverEmit(SDGO_PVP_AI_EVENT_SETUP_FAILED, room, code);
+                const uint32_t error=code ? code:0x0FBEu;
+                if(!GuardedRemove(room))
+                    g_api->Log(g_mod,SDGO_LOG_ERROR,"could not fully retire failed AI population; native start remains cancelled");
+                memcpy(room+kRoomTeamSize1,teamCounters,sizeof(teamCounters));
+                memcpy(room+kRoomPower1,powers,sizeof(powers));
+                g_api->Log(g_mod, SDGO_LOG_ERROR, "AI population setup failed (%08lX); cancelling native start instead of accepting different teams", error);
+                GuardedObserverEmit(SDGO_PVP_AI_EVENT_SETUP_FAILED, room, error);
+                restoreHumanTeams();
+                return static_cast<int>(error);
             } else {
                 GuardedObserverEmit(SDGO_PVP_AI_EVENT_SETUP_COMPLETE, room);
             }
         }
+        if(result!=0)restoreHumanTeams();
         return result;
     }
 
@@ -1701,6 +1916,30 @@ namespace
         }
     }
 
+    void __fastcall ResultHost(uint8_t* room,void*,const int* order,const int* ranks,int transfer,int count)
+    {
+        // Stock settlement promotes the first ranked pilot when the host loses.
+        // Only suppress an AI promotion; keep the genuine rankings and MVP.
+        __try {
+            if(room && IsPvpMode(room[kRoomMode]) && room[kRoomMode] && order && ranks &&
+               transfer>0 && count>0 && count<=kSlots && order[0]>=0 && order[0]<kSlots) {
+                const auto candidate=SlotPilotId(room,order[0]);
+                const auto previous=*reinterpret_cast<const uint32_t*>(room+kRoomHost);
+                std::array<uint32_t,kSlots> pilots{};
+                for(int slot=0;slot<kSlots;++slot)pilots[slot]=SlotPilotId(room,slot);
+                if((candidate&kAiPilotBit) && previous && !(previous&kAiPilotBit) &&
+                   sdgo::pvp_teams::SelectHumanHost(candidate,previous,pilots)==previous) {
+                    transfer=0;
+                    g_api->Log(g_mod,SDGO_LOG_INFO,"AI MVP %08lX retains human room host %08lX",
+                        static_cast<unsigned long>(candidate),static_cast<unsigned long>(previous));
+                }
+            }
+        } __except(EXCEPTION_EXECUTE_HANDLER) {
+            g_api->Log(g_mod,SDGO_LOG_WARN,"could not verify native settlement host selection");
+        }
+        g_resultHost(room,order,ranks,transfer,count);
+    }
+
     void __fastcall BattleEnd(uint8_t* room, void* /*edx*/, uint16_t a, uint16_t b, int now)
     {
         const bool observed = ObserverRoomActive(room);
@@ -1711,8 +1950,19 @@ namespace
         const bool copied = observed && GuardedObserverCopyEvent(
             SDGO_PVP_AI_EVENT_BATTLE_END, room, 0, false, &endEvent);
         g_battleEnd(room, a, b, now);
-        if (copied)
+        if (copied) {
+            __try {
+                g_api->Log(g_mod,SDGO_LOG_INFO,
+                    "native settlement room=%lu host_before=%08lX host_after=%08lX humans=%lu mode=%u",
+                    static_cast<unsigned long>(*reinterpret_cast<const uint32_t*>(room)),
+                    static_cast<unsigned long>(endEvent.host_pilot_id),
+                    static_cast<unsigned long>(*reinterpret_cast<const uint32_t*>(room+kRoomHost)),
+                    static_cast<unsigned long>(*reinterpret_cast<const uint32_t*>(room+kRoomPlayers)),room[kRoomMode]);
+            } __except(EXCEPTION_EXECUTE_HANDLER) {
+                g_api->Log(g_mod,SDGO_LOG_ERROR,"native settled room ownership was not readable");
+            }
             GuardedObserverPublishEvent(&endEvent);
+        }
         if (room && !GuardedRemove(room))
             g_api->Log(g_mod, SDGO_LOG_ERROR, "exception while removing the AI pilots at battle end");
         if (room)
@@ -1836,6 +2086,8 @@ SDGO_MOD_ENTRY
     LARGE_INTEGER counter = {};
     QueryPerformanceCounter(&counter);
     g_random = static_cast<unsigned>(counter.LowPart ^ GetTickCount() ^ GetCurrentProcessId()) | 1u;
+    if(!api->HookCode(mod,"battle.assign_human_teams",reinterpret_cast<void*>(&AssignHumanTeams),
+        reinterpret_cast<void**>(&g_assignHumanTeams)))return 0;
     if (!api->HookCode(mod, "battle.setup_humans", reinterpret_cast<void*>(&SetupHumans),
                        reinterpret_cast<void**>(&g_setupHumans)))
         return 0;
@@ -1848,6 +2100,8 @@ SDGO_MOD_ENTRY
     if (!api->HookCode(mod, "battle.end", reinterpret_cast<void*>(&BattleEnd),
                        reinterpret_cast<void**>(&g_battleEnd)))
         return 0;
+    if(!api->HookCode(mod,"battle.result_host",reinterpret_cast<void*>(&ResultHost),
+                      reinterpret_cast<void**>(&g_resultHost)))return 0;
     if (!api->HookCode(mod, "battle.room_tick", reinterpret_cast<void*>(&RoomTick),
                        reinterpret_cast<void**>(&g_roomTick)))
         return 0;

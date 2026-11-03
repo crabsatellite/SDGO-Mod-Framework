@@ -6,7 +6,7 @@
   "hosts": [
     "battle"
   ],
-  "description": "为对战房间添加 AI 队友和对手。",
+  "description": "按房名选择真人同队或原生分队，并独立控制双方 AI 补位。",
   "settings": [
     {
       "id": "default_level",
@@ -20,19 +20,6 @@
       "activation": "restart_required",
       "minimum": 1,
       "maximum": 5
-    },
-    {
-      "id": "fill_team_size",
-      "key": "FillTeamSize",
-      "label": "每队目标人数",
-      "type": "integer",
-      "default": 3,
-      "file": "mod.ini",
-      "section": "settings",
-      "audience": "user",
-      "activation": "restart_required",
-      "minimum": 1,
-      "maximum": 6
     },
     {
       "id": "life_cost_grade1",

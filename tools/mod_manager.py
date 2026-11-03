@@ -51,7 +51,7 @@ def main(argv=None):
     try: server.serve_forever()
     finally:
         server.server_close()
-        workspace.services.close()
+        workspace.close()
         lease.close()
 
 

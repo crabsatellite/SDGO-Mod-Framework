@@ -25,6 +25,8 @@ namespace {
 constexpr std::uint64_t kMaximumSearchIndexBytes = 8ull * 1024 * 1024;
 constexpr char kOriginalSearchDefinitionHash[] =
     "595974c93de41196927d7cc665d6154a9932713182d0c1824246d57d579a43b6";
+constexpr char kOriginalSubItemsDefinitionHash[] =
+    "8857d2f6e806b7fc394369bb73fd5f71b5bf442ed56b2f827d76a0fd0027a0dc";
 
 bool Success(SQLRETURN value) { return value == SQL_SUCCESS || value == SQL_SUCCESS_WITH_INFO; }
 std::wstring Absolute(const std::wstring& path)
@@ -311,6 +313,31 @@ void Metadata(Database& game, Product& product)
     if (product.timeLimit == 1 && product.validity > 36500)
         throw std::runtime_error("rental duration exceeds supported display range");
 }
+StoreItemsLayout StoreItemsMetadata(Database& billing)
+{
+    billing.Execute(
+        L"SELECT c.name,CONVERT(int,c.is_computed) "
+        L"FROM sys.columns c "
+        L"WHERE c.object_id=OBJECT_ID(N'dbo.tbls_StoreItems') "
+        L"AND c.name IN(N'f_subitemCnt',N'f_validity',N'f_price',N'f_payment') "
+        L"ORDER BY c.column_id");
+    StoreItemsLayout layout;
+    std::set<std::wstring> seen;
+    SQLRETURN fetched = SQL_SUCCESS;
+    while ((fetched = SQLFetch(billing.statement)) != SQL_NO_DATA) {
+        if (!Success(fetched)) throw std::runtime_error("cannot read native shop column metadata");
+        const std::wstring name = billing.String(1);
+        const bool computed = billing.Number(2) != 0;
+        if (!seen.insert(name).second) throw std::runtime_error("duplicate native shop column metadata");
+        if (name == L"f_subitemCnt") layout.subitemCountComputed = computed;
+        else if (name == L"f_validity") layout.validityComputed = computed;
+        else if (name == L"f_price") layout.priceComputed = computed;
+        else if (name == L"f_payment") layout.paymentComputed = computed;
+        else throw std::runtime_error("unexpected native shop column metadata");
+    }
+    if (seen.size() != 4) throw std::runtime_error("native shop business columns missing");
+    return layout;
+}
 void WriteUnicode(const std::wstring& path, const std::wstring& text)
 {
     HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -413,7 +440,8 @@ bool Apply(const std::wstring& hostIni, const std::wstring& catalogIni,
         }
         Database billing(hostFile, L"DB StoreBilling");
         try {
-            billing.Execute(ApplySql(catalog));
+            const StoreItemsLayout layout = StoreItemsMetadata(billing);
+            billing.Execute(ApplySql(catalog, layout));
             bool contract = false;
             std::wstring display = L"; Generated from the committed server definitions. UTF-16LE.\r\n[shop]\r\nRevision=" + catalog.revision + L"\r\n";
             unsigned count = 0;
@@ -502,11 +530,13 @@ bool ApplySearchIndex(
         Database billing(hostFile, L"DB StoreBilling");
         billing.Execute(
             L"SELECT OBJECT_DEFINITION(OBJECT_ID(N'dbo.sp_StoreItemsList',N'P')),"
-            L"CASE WHEN OBJECT_ID(N'dbo.sdgo_ShopSearchState',N'U') IS NULL THEN 0 ELSE 1 END");
+            L"CASE WHEN OBJECT_ID(N'dbo.sdgo_ShopSearchState',N'U') IS NULL THEN 0 ELSE 1 END,"
+            L"OBJECT_DEFINITION(OBJECT_ID(N'dbo.sp_StoreSubItemsList',N'P'))");
         if (!Success(SQLFetch(billing.statement)))
             throw std::runtime_error("native shop search definition unavailable");
         const std::wstring currentDefinition = billing.LongString(1);
         const bool hasState = billing.Number(2) != 0;
+        const std::wstring currentSubItemsDefinition=billing.LongString(3);
         if (SQLFetch(billing.statement) != SQL_NO_DATA)
             throw std::runtime_error("ambiguous native shop search definition");
         if (hasState) {
@@ -524,6 +554,25 @@ bool ApplySearchIndex(
             if (Sha256(originalUtf8.data(), originalUtf8.size()) !=
                 kOriginalSearchDefinitionHash)
                 throw std::runtime_error("unsupported native shop search procedure; no changes made");
+        }
+
+        bool ownedSubItems=false;
+        if(hasState) {
+            billing.Execute(L"SELECT InstalledDefinition FROM dbo.sdgo_ShopSearchState "
+                            L"WHERE ObjectName=N'dbo.sp_StoreSubItemsList'");
+            const auto fetched=SQLFetch(billing.statement);
+            if(Success(fetched)) {
+                ownedSubItems=true;
+                const auto installed=billing.LongString(1);
+                if(SQLFetch(billing.statement)!=SQL_NO_DATA || installed!=currentSubItemsDefinition)
+                    throw std::runtime_error("owned shop sales-option procedure has an external edit");
+            } else if(fetched!=SQL_NO_DATA)
+                throw std::runtime_error("cannot inspect shop sales-option ownership state");
+        }
+        if(!ownedSubItems) {
+            const auto originalUtf8=Utf8(currentSubItemsDefinition);
+            if(Sha256(originalUtf8.data(),originalUtf8.size())!=kOriginalSubItemsDefinitionHash)
+                throw std::runtime_error("unsupported native shop sales-option procedure; no changes made");
         }
 
         // Only aliases whose exact product/name pair is currently published can
@@ -551,7 +600,7 @@ bool ApplySearchIndex(
 
         billing.Execute(
             sdgo::shop_search::BuildInstallSql(
-                aliases, currentDefinition, revision));
+                aliases, currentDefinition, revision,currentSubItemsDefinition));
         billing.Complete();
         billing.Execute(
             L"SELECT COUNT(*) FROM dbo.sdgo_ShopSearchAliases");

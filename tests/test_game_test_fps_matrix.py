@@ -218,7 +218,7 @@ class FpsMatrixTests(unittest.TestCase):
 
     def test_reparse_path_is_rejected(self):
         with mock.patch.object(
-            game_test_fps, "_is_reparse", side_effect=lambda path: Path(path) == self.work
+            game_test_fps, "_is_reparse", side_effect=lambda path: Path(path).resolve() == self.work.resolve()
         ):
             with self.assertRaisesRegex(game_test_fps.FpsMatrixError, "reparse point"):
                 game_test_fps.validate_roots(

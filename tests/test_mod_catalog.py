@@ -40,13 +40,15 @@ class CatalogTests(unittest.TestCase):
 
     def replace(self, path, before, after):
         p = self.root / path
-        p.write_text(p.read_text(encoding="utf-8").replace(before, after), encoding="utf-8")
+        text = p.read_text(encoding="utf-8")
+        self.assertIn(before, text, "fixture replacement must match the actual UTF-8 source")
+        p.write_text(text.replace(before, after), encoding="utf-8")
 
     def test_complete_source_catalog(self):
         c = catalog.read_catalog(self.root)
         self.assertTrue({"findwindow_fix", "ime_fix", "startup_crash_fix", "pvp_ai", "match_ai", "coop_ai", "mission_ai", "net_probe"}.issubset({m["id"] for m in c["mods"]}))
         self.assertEqual(set(c["features"]["pvp-ai"]["mods"]), {"pvp_ai", "match_ai"})
-        self.assertEqual(c["features"]["pvp-ai"]["channel"], "stable")
+        self.assertEqual(c["features"]["pvp-ai"]["channel"], "beta")
         self.assertEqual(c["features"]["room-random"]["mods"], ["room_random", "room_random_client"])
         self.assertEqual(c["features"]["room-random"]["category"], "gameplay")
         self.assertEqual(c["features"]["room-random"]["activation"], "room-title")
@@ -138,7 +140,9 @@ class CatalogTests(unittest.TestCase):
         self.assertNotIn("beta", c["categories"])
 
     def test_feature_halves_must_agree(self):
-        self.replace("mods/pvp_ai/mod.ini", "channel=stable", "channel=beta")
+        current = catalog.read_catalog(self.root)["features"]["pvp-ai"]["channel"]
+        other = "stable" if current != "stable" else "beta"
+        self.replace("mods/pvp_ai/mod.ini", "channel=" + current, "channel=" + other)
         with self.assertRaisesRegex(ValueError, "disagrees"):
             catalog.read_catalog(self.root)
 

@@ -255,12 +255,116 @@ END)SQL";
     return value;
 }
 
+inline const std::wstring& SubItemsProcedureDefinition()
+{
+    // Capture the exact ordered parent result, including its membership,
+    // pagination and Chinese bridge. Sales options must never run a different
+    // date/name filter from the eight products the original client received.
+    static const std::wstring value=LR"SQL(CREATE PROCEDURE dbo.sp_StoreSubItemsList
+    @depth1 SMALLINT,
+    @PageNm INT,
+    @PageSize INT,
+    @search1 SMALLINT,
+    @search2 SMALLINT,
+    @search3 SMALLINT,
+    @search4 VARCHAR(100),
+    @TotalCnt INT OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+    SELECT TOP (0)
+        S.f_productid,S.f_itemid,S.f_subitemCnt,S.f_depth3,S.f_price,
+        S.f_payment,S.f_limitedAdition,S.f_quantity,S.f_package,S.f_limitedGift
+    INTO #sdgo_shop_option_parents
+    FROM dbo.tbls_StoreItems AS S;
+    ALTER TABLE #sdgo_shop_option_parents ADD sdgo_ordinal INT IDENTITY(1,1);
+    INSERT #sdgo_shop_option_parents(
+        f_productid,f_itemid,f_subitemCnt,f_depth3,f_price,f_payment,
+        f_limitedAdition,f_quantity,f_package,f_limitedGift)
+    EXEC dbo.sp_StoreItemsList
+        @depth1,@PageNm,@PageSize,@search1,@search2,@search3,@search4,@TotalCnt OUTPUT;
+    SELECT P.f_productid,S.f_itemtblidx,S.f_price,S.f_itemNm,
+        S.f_validity,S.f_payment,S.f_categoryNumber,P.f_package
+    FROM #sdgo_shop_option_parents AS P
+    JOIN dbo.tbls_SubItems AS S ON S.f_itemid=P.f_itemid
+    ORDER BY P.sdgo_ordinal,S.f_index DESC,S.f_validity ASC;
+END)SQL";
+    return value;
+}
+
+inline const std::wstring& SubItemsGuardSql()
+{
+    static const std::wstring value=LR"SQL(
+    DECLARE @CurrentSubItemsDefinition NVARCHAR(MAX)=
+        OBJECT_DEFINITION(OBJECT_ID(N'dbo.sp_StoreSubItemsList',N'P'));
+    DECLARE @OwnedSubItemsDefinition NVARCHAR(MAX);
+    DECLARE @OriginalSubItemsDefinition NVARCHAR(MAX);
+    IF @CurrentSubItemsDefinition IS NULL
+        THROW 51012, 'native shop sales-option procedure unavailable', 1;
+    IF DATALENGTH(@CurrentSubItemsDefinition)<>DATALENGTH(@ExpectedSubItemsDefinition)
+        OR @CurrentSubItemsDefinition COLLATE Latin1_General_100_BIN2<>
+            @ExpectedSubItemsDefinition COLLATE Latin1_General_100_BIN2
+        THROW 51013, 'shop sales-option procedure changed after inspection', 1;
+    SELECT @OwnedSubItemsDefinition=InstalledDefinition
+    FROM dbo.sdgo_ShopSearchState WITH(UPDLOCK,HOLDLOCK)
+    WHERE ObjectName=N'dbo.sp_StoreSubItemsList';
+    SELECT @OriginalSubItemsDefinition=OriginalDefinition
+    FROM dbo.sdgo_ShopSearchBackup WITH(UPDLOCK,HOLDLOCK)
+    WHERE ObjectName=N'dbo.sp_StoreSubItemsList';
+    IF @OwnedSubItemsDefinition IS NOT NULL
+    BEGIN
+        IF DATALENGTH(@CurrentSubItemsDefinition)<>DATALENGTH(@OwnedSubItemsDefinition)
+            OR @CurrentSubItemsDefinition COLLATE Latin1_General_100_BIN2<>
+                @OwnedSubItemsDefinition COLLATE Latin1_General_100_BIN2
+            THROW 51014, 'owned shop sales-option procedure has an external edit', 1;
+        IF @OriginalSubItemsDefinition IS NULL
+            THROW 51015, 'owned shop sales-option backup is missing', 1;
+    END
+    ELSE
+    BEGIN
+        IF @OriginalSubItemsDefinition IS NOT NULL
+            THROW 51016, 'shop sales-option ownership state is incomplete', 1;
+        INSERT dbo.sdgo_ShopSearchBackup(ObjectName,OriginalDefinition,CreatedAt)
+        VALUES(N'dbo.sp_StoreSubItemsList',@CurrentSubItemsDefinition,SYSUTCDATETIME());
+    END;
+)SQL";
+    return value;
+}
+
+inline const std::wstring& SubItemsApplySql()
+{
+    static const std::wstring value=LR"SQL(
+    DECLARE @SubItemsInstallBatch NVARCHAR(MAX)=
+        STUFF(@IntendedSubItemsDefinition,1,6,N'ALTER');
+    EXEC(@SubItemsInstallBatch);
+    DECLARE @ActualSubItemsDefinition NVARCHAR(MAX)=
+        OBJECT_DEFINITION(OBJECT_ID(N'dbo.sp_StoreSubItemsList',N'P'));
+    IF @ActualSubItemsDefinition IS NULL
+        OR DATALENGTH(@ActualSubItemsDefinition)<>DATALENGTH(@IntendedSubItemsDefinition)
+        OR @ActualSubItemsDefinition COLLATE Latin1_General_100_BIN2<>
+            @IntendedSubItemsDefinition COLLATE Latin1_General_100_BIN2
+        THROW 51017, 'shop sales-option procedure readback mismatch', 1;
+    IF EXISTS(SELECT 1 FROM dbo.sdgo_ShopSearchState
+              WHERE ObjectName=N'dbo.sp_StoreSubItemsList')
+        UPDATE dbo.sdgo_ShopSearchState
+        SET Revision=@Revision,InstalledDefinition=@ActualSubItemsDefinition,
+            UpdatedAt=SYSUTCDATETIME()
+        WHERE ObjectName=N'dbo.sp_StoreSubItemsList';
+    ELSE
+        INSERT dbo.sdgo_ShopSearchState(ObjectName,Revision,InstalledDefinition,UpdatedAt)
+        VALUES(N'dbo.sp_StoreSubItemsList',@Revision,@ActualSubItemsDefinition,SYSUTCDATETIME());
+)SQL";
+    return value;
+}
+
 } // namespace detail
 
-inline std::wstring BuildInstallSql(
+inline std::wstring BuildItemsInstallSql(
     const std::vector<Alias>& input,
     const std::wstring& expectedCurrentDefinition,
-    const std::wstring& revision)
+    const std::wstring& revision,
+    const std::wstring* expectedSubItemsDefinition=nullptr)
 {
     detail::ValidateText(
         expectedCurrentDefinition,
@@ -312,6 +416,12 @@ inline std::wstring BuildInstallSql(
     sql += detail::MaxLiteral(procedure);
     sql += L";\nDECLARE @Revision NVARCHAR(128) = ";
     sql += detail::Literal(revision);
+    if(expectedSubItemsDefinition) {
+        sql+=L";\nDECLARE @ExpectedSubItemsDefinition NVARCHAR(MAX) = ";
+        sql+=detail::MaxLiteral(*expectedSubItemsDefinition);
+        sql+=L";\nDECLARE @IntendedSubItemsDefinition NVARCHAR(MAX) = ";
+        sql+=detail::MaxLiteral(detail::SubItemsProcedureDefinition());
+    }
     sql += LR"SQL(;
 DECLARE @CurrentDefinition NVARCHAR(MAX);
 DECLARE @OwnedInstalledDefinition NVARCHAR(MAX);
@@ -483,7 +593,9 @@ BEGIN TRY
             N'dbo.sp_StoreItemsList', @CurrentDefinition, SYSUTCDATETIME());
     END;
 
-    DELETE FROM dbo.sdgo_ShopSearchAliases;
+)SQL";
+    if(expectedSubItemsDefinition)sql+=detail::SubItemsGuardSql();
+    sql+=LR"SQL(    DELETE FROM dbo.sdgo_ShopSearchAliases;
     DECLARE @AliasInput TABLE(
         ProductId INT NOT NULL,
         OriginalName NVARCHAR(512) COLLATE Thai_CI_AS NOT NULL,
@@ -579,7 +691,9 @@ BEGIN TRY
             N'dbo.sp_StoreItemsList', @Revision,
             @ActualInstalledDefinition, SYSUTCDATETIME());
 
-    COMMIT TRANSACTION;
+)SQL";
+    if(expectedSubItemsDefinition)sql+=detail::SubItemsApplySql();
+    sql+=LR"SQL(    COMMIT TRANSACTION;
 END TRY
 BEGIN CATCH
     IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
@@ -587,6 +701,18 @@ BEGIN CATCH
 END CATCH;
 )SQL";
     return sql;
+}
+
+inline std::wstring BuildInstallSql(
+    const std::vector<Alias>& aliases,
+    const std::wstring& expectedCurrentDefinition,
+    const std::wstring& revision,
+    const std::wstring& expectedSubItemsDefinition)
+{
+    detail::ValidateText(expectedSubItemsDefinition,
+        std::numeric_limits<std::size_t>::max(),"expectedSubItemsDefinition");
+    return BuildItemsInstallSql(aliases,expectedCurrentDefinition,revision,
+        &expectedSubItemsDefinition);
 }
 
 } // namespace sdgo::shop_search

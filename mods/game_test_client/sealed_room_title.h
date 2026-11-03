@@ -13,7 +13,9 @@ inline bool ReadSealedRoomTitle(const std::wstring& job, char (&title)[21]) {
 
 inline bool ReadSealedAiTeamCounts(const std::wstring& job, unsigned count,
                                   const char* title, unsigned& allies, unsigned& enemies) {
-    allies=count/2;enemies=(count+1)/2;
+    allies=GetPrivateProfileIntW(L"run",L"ai_allies",count/2,job.c_str());
+    if(allies>=count)return false;
+    enemies=count-allies;
     wchar_t layout[32]{};
     if(!GetPrivateProfileStringW(L"run",L"ai_layout",L"",layout,32,job.c_str())) return true;
     if(wcscmp(layout,L"allied") || count!=6) return false;
@@ -25,7 +27,7 @@ inline bool ReadSealedAiTeamCounts(const std::wstring& job, unsigned count,
        GetPrivateProfileStringW(L"run",L"ai_pool_level",L"",pool,16,job.c_str())) return false;
     char prefix[16]{},expected[32]{};
     if(!WideCharToMultiByte(CP_UTF8,0,nonce,-1,prefix,16,nullptr,nullptr) ||
-       sprintf_s(expected,"%s !ai1 a6 hard",prefix)<0 || strcmp(title,expected)) return false;
+       sprintf_s(expected,"%s !ai1 a5 hard",prefix)<0 || strcmp(title,expected)) return false;
     allies=5;enemies=1;
     return true;
 }

@@ -404,58 +404,17 @@ def _standalone_sprite(
 
 def build_archive(resources: dict[str, bytes]) -> tuple[bytes, bytes, dict]:
     """Encode an independent native-format overlay archive."""
-    chunk_size = 512
-    entries = []
-    chunks = []
-    for supplied_name, raw in sorted(resources.items()):
-        name = supplied_name.replace("\\", "/").lower()
-        generated = re.fullmatch(r"(sprs|txrs)/([0-9]{5})\.(spr|txr)", name)
-        generated_ok = (
-            generated is not None
-            and 60000 <= int(generated.group(2)) <= 65535
-            and (generated.group(1), generated.group(3))
-            in {("sprs", "spr"), ("txrs", "txr")}
-        )
-        if not (
-            re.fullmatch(r"gdrs/(?:0031|0033|0099|0101|0154|0155)\.gdt", name)
-            or name == "uirs/1161.uir"
-            or generated_ok
-        ):
-            raise ClientRegistryError(f"Resource is outside the provider allowlist: {name}")
-        packed = b"ZOAGZIP1" + struct.pack("<I", len(raw)) + gzip.compress(raw, mtime=0)
-        start = len(chunks)
-        count = (len(packed) + chunk_size - 1) // chunk_size
-        for index in range(count):
-            cursor = len(chunks)
-            chunks.append(
-                struct.pack("<II", cursor + 1, max(0, cursor - 1))
-                + packed[index * chunk_size : (index + 1) * chunk_size].ljust(
-                    chunk_size, b"\0"
-                )
-            )
-        entries.append(
-            {
-                "path": name,
-                "zsize": len(packed),
-                "start_chunk": start,
-                "chunks": count,
-                "sha256": _sha256(raw),
-            }
-        )
-    zdx = bytearray(struct.pack("<6I", 1, chunk_size, len(chunks), 0, len(entries), 0))
-    for entry in entries:
-        for character in entry["path"].replace("/", "\\") + "\0":
-            zdx.extend(struct.pack("<H", ord(character) ^ 0xAA))
-        zdx.extend(
-            struct.pack(
-                "<III", entry["zsize"], entry["start_chunk"], entry["chunks"]
-            )
-            + bytes(24)
-        )
-    return bytes(zdx), b"".join(chunks), {
-        "chunk_size": chunk_size,
-        "entries": entries,
-    }
+    from owner.native_archive import build_archive as encode_archive
+    def allowed(name):
+        generated=re.fullmatch(r"(sprs|txrs)/([0-9]{5})\.(spr|txr)",name)
+        return bool(
+            re.fullmatch(r"gdrs/(?:0031|0033|0099|0101|0154|0155)\.gdt",name)
+            or name=="uirs/1161.uir"
+            or generated and 60000<=int(generated.group(2))<=65535
+            and (generated.group(1),generated.group(3)) in {("sprs","spr"),("txrs","txr")})
+    try:return encode_archive(resources,allowed)
+    except ValueError as error:raise ClientRegistryError(str(error)) from None
+
 
 
 def _read_runtime_registry(path: Path) -> ArchiveReader:

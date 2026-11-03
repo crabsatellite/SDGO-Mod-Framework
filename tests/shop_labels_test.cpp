@@ -39,7 +39,7 @@ void BuildMap()
     g_permanentRecord[0x6D] = 0;
 }
 void* __cdecl NativeGridData() { return g_managerPtr; }
-int __fastcall NativeGridFind(void*, void*, void** out, int id, int type, char)
+int __fastcall NativeGridFindImpl(void*, void*, void** out, int id, int type, char)
 {
     if (type != 0x22) return 0;
     if (id == 1110549) *out = g_rentalRecord.data();
@@ -47,6 +47,27 @@ int __fastcall NativeGridFind(void*, void*, void** out, int id, int type, char)
     else return 0;
     return 1;
 }
+#if defined(_MSC_VER) && defined(_M_IX86)
+// The real 0059D2B0 returns only AL; its upper EAX bits retain a pointer.
+// Preserve that ABI so an int-returning consumer cannot accidentally pass.
+__declspec(naked) uint8_t __fastcall NativeGridFind(void*,void*,void**,int,int,char)
+{
+    __asm {
+        push dword ptr [esp+16]
+        push dword ptr [esp+16]
+        push dword ptr [esp+16]
+        push dword ptr [esp+16]
+        call NativeGridFindImpl
+        or eax, 05A5A0000h
+        ret 16
+    }
+}
+#else
+uint8_t __fastcall NativeGridFind(void* self,void* unused,void** out,int id,int type,char flag)
+{
+    return static_cast<uint8_t>(NativeGridFindImpl(self,unused,out,id,type,flag));
+}
+#endif
 const wchar_t* __cdecl NativeConvert(UINT, const char*) { ++g_nativeCalls; return L"native"; }
 void __fastcall NativePopulate(uint8_t* self, void*)
 {

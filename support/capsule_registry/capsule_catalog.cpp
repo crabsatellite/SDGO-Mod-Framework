@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include <cstdio>
+#include <cstring>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -23,16 +24,6 @@ namespace
     SdgoMod* g_mod = nullptr;
     capsule_catalog::Bundle g_bundle;
     volatile LONG g_priceUiOpened = 0;
-
-    using OpenFileFn = void*(__thiscall*)(void*, const void*, bool);
-    using FileCtorFn = void*(__thiscall*)(void*, void*, capsule_catalog::NativeFileInfo&, uint32_t, bool);
-    using NewFn = void*(__cdecl*)(size_t);
-    using WfopenFn = void*(__cdecl*)(const wchar_t*, const wchar_t*);
-
-    OpenFileFn g_mainOpen = nullptr;
-    FileCtorFn g_mainCtor = nullptr;
-    NewFn g_mainNew = nullptr;
-    WfopenFn g_mainWfopen = nullptr;
 
     using VerifyChecksumFn = bool(__thiscall*)(void*, const wchar_t*, void*);
     VerifyChecksumFn g_verifyChecksum = nullptr;
@@ -52,31 +43,6 @@ namespace
     {
         target = reinterpret_cast<Fn>(g_api->Symbol(g_mod, name));
         return target != nullptr;
-    }
-
-    // MSVC 2010 x86 std::wstring used by GOnline.exe:
-    // union { wchar_t inlineBuffer[8]; wchar_t* pointer; } at +0,
-    // size at +0x10 and capacity at +0x14.
-    bool TryMainName(const void* nativeString, const wchar_t** text, size_t* length)
-    {
-        __try {
-            const auto* bytes = static_cast<const uint8_t*>(nativeString);
-            size_t size = *reinterpret_cast<const uint32_t*>(bytes + 0x10);
-            size_t capacity = *reinterpret_cast<const uint32_t*>(bytes + 0x14);
-            if (size > 259 || capacity < size) {
-                return false;
-            }
-            const wchar_t* value = capacity < 8
-                ? reinterpret_cast<const wchar_t*>(nativeString)
-                : *reinterpret_cast<const wchar_t* const*>(nativeString);
-            if (!value || value[size] != L'\0')
-                return false;
-            *text = value;
-            *length = size;
-            return true;
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            return false;
-        }
     }
 
     bool TryRawName(const wchar_t* nativeString, const wchar_t** text, size_t* length)
@@ -116,50 +82,18 @@ namespace
         ReleaseSRWLockExclusive(&g_streamLock);
     }
 
-    void* CallCtor(FileCtorFn ctor, void* storage, void* file,
-                   const capsule_catalog::OverlayEntry* entry, uint32_t chunkSize, bool fullMemory)
+    void __cdecl ObserveOverlayOpen(const char* owner, const wchar_t* path,
+                                    void* stream, void*)
     {
-        __try {
-            return ctor(storage, file, const_cast<capsule_catalog::NativeFileInfo&>(entry->info),
-                        chunkSize, fullMemory);
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            return nullptr;
-        }
-    }
-
-    void* CreateNativeFile(const capsule_catalog::OverlayEntry* entry, bool fullMemory,
-                           size_t objectSize, NewFn allocate, WfopenFn open, FileCtorFn construct)
-    {
-        void* file = open(g_bundle.zpkPath.c_str(), L"rb");
-        if (!file)
-            return nullptr;
-        void* storage = allocate(objectSize);
-        if (!storage)
-            return nullptr; // Mirrors the original OpenFile's extremely rare allocation-failure path.
-        return CallCtor(construct, storage, file, entry, g_bundle.chunkSize, fullMemory);
-    }
-
-    void* __fastcall MainOpenDetour(void* pack, void*, const void* nativeName, bool fullMemory)
-    {
-        const wchar_t* text = nullptr;
-        size_t length = 0;
-        if (TryMainName(nativeName, &text, &length)) {
-            std::wstring name = NormalizeNativePath(text, length);
-            if (const auto* entry = g_bundle.Find(name)) {
-                void* file = CreateNativeFile(entry, fullMemory, 0x7c, g_mainNew, g_mainWfopen, g_mainCtor);
-                if (file) {
-                    if (capsule_catalog::IsOverlayGdtPath(name))
-                        TrackOverlayGdt(file, name);
-                    if (name == L"uirs\\1161.uir" &&
-                        InterlockedCompareExchange(&g_priceUiOpened, 1, 0) == 0)
-                        g_api->Log(g_mod, SDGO_LOG_INFO,
-                                   "capsule price UI defaults patch opened: uirs\\1161.uir");
-                    return file;
-                }
-                g_api->Log(g_mod, SDGO_LOG_ERROR, "overlay open failed for %ls; using stock pack", name.c_str());
-            }
-        }
-        return g_mainOpen(pack, nativeName, fullMemory);
+        if (!owner || std::strcmp(owner, "capsule_catalog") != 0 || !path || !stream)
+            return;
+        const std::wstring name(path);
+        if (capsule_catalog::IsOverlayGdtPath(name))
+            TrackOverlayGdt(stream, name);
+        if (name == L"uirs\\1161.uir" &&
+            InterlockedCompareExchange(&g_priceUiOpened, 1, 0) == 0)
+            g_api->Log(g_mod, SDGO_LOG_INFO,
+                       "capsule price UI defaults patch opened: uirs\\1161.uir");
     }
 
     bool __fastcall VerifyChecksumDetour(void* grid, void*, const wchar_t* filename, void* stream)
@@ -335,9 +269,6 @@ SDGO_MOD_ENTRY
     }
 
     bool bound =
-        BindCode(g_mainCtor, "capsule.main.file_ctor") &&
-        BindCode(g_mainNew, "capsule.main.operator_new") &&
-        BindCode(g_mainWfopen, "capsule.main.wfopen") &&
         BindCode(g_gridData, "grid.data") &&
         BindCode(g_gridFind, "grid.find");
     if (!bound) {
@@ -345,12 +276,34 @@ SDGO_MOD_ENTRY
         return 0;
     }
 
-    if (!api->HookCode(mod, "capsule.main.open_file", reinterpret_cast<void*>(&MainOpenDetour),
-                       reinterpret_cast<void**>(&g_mainOpen)) ||
-        !api->HookCode(mod, "capsule.grid_verify_checksum", reinterpret_cast<void*>(&VerifyChecksumDetour),
+    sdgo::resource_overlay::BundleRegistration overlay;
+    overlay.owner = "capsule_catalog";
+    overlay.identity = g_bundle.indexHash + ":" + g_bundle.archiveHash;
+    overlay.archivePath = g_bundle.zpkPath;
+    overlay.chunkSize = g_bundle.chunkSize;
+    overlay.entries = g_bundle.entries;
+    auto& provider = sdgo::resource_overlay::LocalProvider();
+    if (!provider.RegisterTrustedBundle(overlay, error)) {
+        api->Log(mod, SDGO_LOG_ERROR,
+                 "capsule resource broker rejected: %s; stock catalog remains active",
+                 error.c_str());
+        return 0;
+    }
+
+    if (!api->HookCode(mod, "capsule.grid_verify_checksum", reinterpret_cast<void*>(&VerifyChecksumDetour),
                        reinterpret_cast<void**>(&g_verifyChecksum)) ||
         !api->HookCode(mod, "capsule.grid_load_all", reinterpret_cast<void*>(&GridLoadAllDetour),
                        reinterpret_cast<void**>(&g_gridLoadAll))) {
+        return 0;
+    }
+    // Publish the broker only after every other capsule hook has registered.
+    // If any earlier load step is rolled back while the DLL remains referenced
+    // by another host, the getter must still return null rather than advertise
+    // a provider whose OpenFile hook was never activated.
+    if (!provider.Start(api, mod, &ObserveOverlayOpen, nullptr, error)) {
+        api->Log(mod, SDGO_LOG_ERROR,
+                 "capsule resource broker rejected: %s; stock catalog remains active",
+                 error.c_str());
         return 0;
     }
     api->Log(mod, SDGO_LOG_INFO, "%s capsule catalog %s ready: %u overlay resources",

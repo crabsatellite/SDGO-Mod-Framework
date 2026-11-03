@@ -37,7 +37,7 @@ Release labels describe the published version; later feature work is accepted se
 | Feature | Overview | Documentation |
 |---|---|---|
 | Mission AI wingmen <!-- catalog: `coop_ai`, `mission_ai` --> | `!ai` in a co-op room title adds AI wingmen to the team | [Use](docs/coop-wingmen.md) |
-| PvP AI <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` adds opponents and teammates with synchronized opening controls and native TAB records | [Use](docs/pvp-ai.md) |
+| PvP AI (Beta) <!-- catalog: `pvp_ai`, `match_ai` --> | Group humans or keep native teams; independently fill both sides, opponents only or exact AI counts; retain the human host after an AI MVP | [Use](docs/pvp-ai.md) |
 | AI mech catalog (separate addon) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards <!-- catalog: `battle_rewards` --> | GB/MB from battle contribution, supervised wallet delivery and historical GB compensation | [Use](docs/battle-rewards.md) |
 | Collection capsule (Beta) <!-- catalog: `collection_capsule` --> | 100,000 GP activity machine that fills missing catalog units first | [Use](docs/collection-capsule.md) |
@@ -54,6 +54,8 @@ Release labels describe the published version; later feature work is accepted se
 
 | Chinese shop localization and search (Beta) <!-- catalog: `shop_localization` --> | Translate shop text and hangar confirmation names; combine Chinese search, rank and payment filters | [Guide](docs/shop-localization.md) |
 | Friend unit gifts (Beta, optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Offer owned units through Storage, with accept/return and provenance; new offers default off | [Use](docs/friend-unit-gift.md) |
+
+| Unit family import <!-- catalog: `unit_catalog` --> | Import unit archives, complete required data and generate paired unit, encyclopedia and shop/capsule resources in Mod Manager | [Use](docs/unit-import.md) |
 
 <!-- /mod-category:gameplay -->
 
