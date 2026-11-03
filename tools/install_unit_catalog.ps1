@@ -372,6 +372,47 @@ function Read-Receipt([string]$Path) {
     return $receipt
 }
 
+function Get-ProgramDefinition([string]$Text) {
+    $sections = @{}; $values = @{}; $keys = @{}; $section = $null
+    foreach ($raw in ($Text -split "`r?`n")) {
+        $line = $raw.Trim()
+        if (-not $line -or $line.StartsWith(';') -or $line.StartsWith('#')) { continue }
+        if ($line -match '^\[([^\]]+)\]\s*(?:[;#].*)?$') {
+            $section = $Matches[1].ToLowerInvariant()
+            if ($sections.ContainsKey($section)) { throw 'Duplicate unit program manifest section' }
+            $sections[$section] = $true
+            continue
+        }
+        if ($null -eq $section -or $line -notmatch '^([^=]+)=(.*)$') { throw 'Invalid unit program manifest' }
+        $key = $Matches[1].Trim().ToLowerInvariant(); $value = $Matches[2].Trim()
+        $identity = $section + ':' + $key
+        if ($keys.ContainsKey($identity)) { throw 'Duplicate unit program manifest key' }
+        $keys[$identity] = $true
+        if ($section -eq 'settings' -or ($section -eq 'mod' -and $key -eq 'enabled')) { continue }
+        $values[$identity] = $value
+    }
+    return (($values.Keys | Sort-Object | ForEach-Object { $_ + '=' + $values[$_] }) -join "`n")
+}
+
+function Test-ReceiptFile($Receipt, $File, [string]$Path, [string]$Relative) {
+    $expected = ([string]$File.installed_sha256).ToLowerInvariant()
+    if ((Get-Sha256 $Path) -ceq $expected) { return $true }
+    if ($Relative -ine 'sdgo\mods\unit_catalog\mod.ini' -or
+        -not ($Receipt.PSObject.Properties.Name -contains 'framework_mod_ini_base64')) { return $false }
+    $encoded = [string]$Receipt.framework_mod_ini_base64
+    if (-not $encoded -or $encoded.Length -gt 131072) { throw 'Invalid unit program manifest snapshot' }
+    $snapshot = [Convert]::FromBase64String($encoded)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $hash = [BitConverter]::ToString($sha.ComputeHash($snapshot)).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    if ($hash -cne $expected) { throw 'Unit program manifest snapshot hash differs from receipt' }
+    $stream = [IO.MemoryStream]::new($snapshot, $false)
+    $reader = [IO.StreamReader]::new($stream, [Text.Encoding]::UTF8, $true)
+    try { $original = $reader.ReadToEnd() } finally { $reader.Dispose(); $stream.Dispose() }
+    $current = [IO.File]::ReadAllText($Path)
+    return (Get-ProgramDefinition $original) -ceq (Get-ProgramDefinition $current)
+}
+
 function New-Transaction([string]$Prefix) {
     $path = Join-Path ([IO.Path]::GetTempPath()) ($Prefix + [Guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $path | Out-Null
@@ -448,7 +489,7 @@ if ($Uninstall) {
         if (-not [bool]$file.owned) { continue }
         if (Test-Path -LiteralPath $target -PathType Leaf) {
             $actual = Get-Sha256 $target
-            if ($actual -cne ([string]$file.installed_sha256).ToLowerInvariant()) {
+            if (-not (Test-ReceiptFile $receipt $file $target $relative)) {
                 throw "Owned file changed after installation; refusing to remove it: $relative"
             }
             $remove += [pscustomobject]@{ relative = $relative; target = $target }
@@ -548,7 +589,7 @@ foreach ($entry in $package.copy) {
     $copyNeeded = -not $exists -or $currentHash -cne $entry.sha256
 
     if ($null -ne $old) {
-        if ($exists -and $currentHash -cne ([string]$old.installed_sha256).ToLowerInvariant()) {
+        if ($exists -and -not (Test-ReceiptFile $oldReceipt $old $entry.target $entry.target_relative)) {
             throw "Previously recorded file changed after installation: $($entry.target_relative)"
         }
         if ([bool]$old.owned) {
@@ -693,6 +734,7 @@ try {
         symbol_original_base64 = $symbolOriginalBase64
         symbol_installed_sha256 = $(if ($null -eq $oldReceipt -and $addSymbol) { Get-Sha256 $symbolPath } else { $symbolInstalledHash })
         files = $receiptFiles
+        framework_mod_ini_base64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Get-PathWithin $ResolvedClientRoot 'sdgo\mods\unit_catalog\mod.ini')))
     }
     Backup-Target $transaction $receiptPath
     $receiptTemporary = Join-Path $transaction.root "install-receipt.json"

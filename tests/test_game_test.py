@@ -355,6 +355,34 @@ rva=state
     def metadata(self, run_dir):
         return game_test.read_json(run_dir / "run.json")
 
+    def test_unit_package_is_installed_before_runtime_hashes_are_sealed(self):
+        package=self.root/'unit-candidate.zip';package.write_bytes(b'candidate package fixture')
+        existing=self.template/'sdgo/mods/unit_catalog';existing.mkdir()
+        old=b'[mod]\nid=unit_catalog\ncategory=gameplay\nfeature=unit-import\nversion=0.3.0\ndll=unit_catalog.dll\nhosts=*\nenabled=1\n'
+        (existing/'mod.ini').write_bytes(old);(existing/'unit_catalog.dll').write_bytes(b'old unit program')
+        staged=self.stage/'client/sdgo/mods/unit_catalog';staged.mkdir()
+        (staged/'mod.ini').write_bytes(old.replace(b'0.3.0',b'0.4.0'));(staged/'unit_catalog.dll').write_bytes(b'new unit program')
+        def install(client,raw):
+            self.assertEqual(package.read_bytes(),raw)
+            self.assertEqual(old,(client/'sdgo/mods/unit_catalog/mod.ini').read_bytes())
+            self.assertEqual(b'old unit program',(client/'sdgo/mods/unit_catalog/unit_catalog.dll').read_bytes())
+            target=client/'sdgo/mods/unit_catalog/catalog.bin'
+            target.write_bytes(b'candidate native records')
+            return {'receipt':{'revision':'fixture-revision'}}
+        with mock.patch('owner.units.deployment.install_package',side_effect=install):
+            run=self.prepare(unit_package=package)
+        metadata=self.metadata(run);relative='sdgo/mods/unit_catalog/catalog.bin'
+        self.assertEqual('fixture-revision',metadata['unit_package']['revision'])
+        self.assertEqual(game_test.sha256(run/'client'/relative),metadata['client']['immutable_hashes'][relative])
+        self.assertFalse((self.template/relative).exists())
+        game_test.verify_hashes(metadata)
+        (run/'client'/relative).write_bytes(b'changed after seal')
+        with self.assertRaises(game_test.GameTestError):game_test.verify_hashes(metadata)
+
+    def test_missing_unit_candidate_is_rejected_before_client_copy(self):
+        with self.assertRaises(game_test.GameTestError):self.prepare(unit_package=self.root/'missing.zip')
+        self.assertFalse((self.root/'run').exists())
+
     def test_room_style_preview_roundtrips_through_the_sealed_job(self):
         for mode in ('pvp', 'mission'):
             run_dir = self.prepare('style-' + mode, room_titles_only=True, room_style_preview=mode)

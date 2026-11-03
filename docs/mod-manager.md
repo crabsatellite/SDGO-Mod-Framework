@@ -28,6 +28,12 @@ reported restart of the game or server.
 
 ## Updates
 
+Framework updates also synchronize the program entries in unit-content installation receipts.
+Unit definitions, models, textures, acquisition data and content revision stay unchanged.
+Modified content is rejected; failed program or receipt verification rolls back the update.
+Module enablement and user settings remain intact. Legacy receipt drift is reconciled only
+against verified framework artifacts, never by trusting an unknown installed program.
+
 Open **更新** (Update) in the sidebar. New installations default to **Stable**: only published stable features are installed. **Beta** includes Stable and Beta features and follows the newest available release; development diagnostics are excluded from both channels. Switching back to Stable leaves existing Beta and custom Mods in place and updates only the features in the Stable package.
 
 Automatic checking and installation are enabled while Manager runs. It checks at startup and hourly afterward. Use **检查更新** to check now or **立即更新** to install. GitHub Release assets are verified against their SHA-256 and the complete file manifest before installation. Network errors leave the current installation usable and can be retried. Automatic updates can be disabled without disabling manual checks.
