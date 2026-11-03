@@ -1407,6 +1407,16 @@ int ReadShopCatalog(const SdgoGameTestContextV1* context) {
         char rows[160];sprintf_s(rows,"native shop page products=%u,%u,%u,%u,%u,%u,%u,%u",
             state.native_page_product_ids[0],state.native_page_product_ids[1],state.native_page_product_ids[2],state.native_page_product_ids[3],
             state.native_page_product_ids[4],state.native_page_product_ids[5],state.native_page_product_ids[6],state.native_page_product_ids[7]);context->Observe(rows);
+        if(!state.native_name.empty()) {
+            const auto utf8=[](const std::wstring& value){
+                const int length=WideCharToMultiByte(CP_UTF8,0,value.data(),static_cast<int>(value.size()),nullptr,0,nullptr,nullptr);
+                std::string text(static_cast<size_t>(length),0);
+                if(length)WideCharToMultiByte(CP_UTF8,0,value.data(),static_cast<int>(value.size()),text.data(),length,nullptr,nullptr);
+                return text;
+            };
+            const auto native=utf8(state.native_name),visible=utf8(state.visible_name);
+            char names[512];sprintf_s(names,"native shop target title source=\"%s\" visible=\"%s\"",native.c_str(),visible.c_str());context->Observe(names);
+        }
         if(state.inventory_failure) {
             char inventory[320];sprintf_s(inventory,"native shop inventory failure=%u ready=%u capacity=%d probeSlot=%u brief=%u/%u/%llu full=%u/%u/%llu",
                 state.inventory_failure,state.inventory_ready,state.inventory_capacity,state.inventory_probe_slot,
