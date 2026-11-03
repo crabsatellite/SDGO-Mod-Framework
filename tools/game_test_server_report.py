@@ -29,7 +29,9 @@ def integer(value, name, minimum=0):
     return value
 
 
-def participants(event, pilot, expected_ai, setup):
+def participants(event, pilot, expected_ai, setup, layout=None):
+    if layout not in (None,'allied') or (layout=='allied' and expected_ai!=6):
+        raise ValueError('invalid sealed AI layout')
     slots=event.get('slots')
     if not isinstance(slots,list):raise ValueError('missing native participant slots')
     ids=set(); seats=set(); humans=0; bots=0; teams={1:[0,0],2:[0,0]}
@@ -53,7 +55,9 @@ def participants(event, pilot, expected_ai, setup):
             raise ValueError('native team totals disagree with slots')
     if setup:
         own=next(s['team'] for s in slots if not s['is_ai'])
-        if teams[own][1]!=expected_ai//2 or teams[3-own][1]!=(expected_ai+1)//2:
+        allies=5 if layout=='allied' else expected_ai//2
+        enemies=1 if layout=='allied' else (expected_ai+1)//2
+        if teams[own][1]!=allies or teams[3-own][1]!=enemies:
             raise ValueError('native ally/enemy placement disagrees with plan')
     return ids
 
@@ -90,6 +94,12 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int) -> dict:
         seen_paths.add(path)
         current={};last_sequence=0;last_qpc=0
         try:
+            layout=plan.get('ai_layout')
+            if 'ai_layout' in plan and (
+                type(layout) is not str or layout!='allied' or expected_ai!=6 or
+                plan.get('ai_difficulty')!='Hard' or 'ai_pool_level' in plan
+            ):
+                raise ValueError('sealed allied AI layout requires six Hard bots')
             raw=path.read_bytes()
             records=[json.loads(line) for line in raw.decode('utf-8').splitlines() if line.strip()]
             if not records:raise ValueError('empty server observer stream')
@@ -130,7 +140,7 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int) -> dict:
                 battle=current.get(cookie)
                 if not battle or battle['mode']!=mode or battle['phase']>=4 or STEPS[battle['phase']]!=name:
                     raise ValueError('native battle lifecycle is missing a step or out of order')
-                ids=participants(event,pilot,expected_ai,name!=STEPS[0])
+                ids=participants(event,pilot,expected_ai,name!=STEPS[0],layout)
                 if name==STEPS[1]:battle['participant_ids']=sorted(ids)
                 if name in STEPS[2:] and sorted(ids)!=battle['participant_ids']:
                     raise ValueError('native participants changed across the active battle')
