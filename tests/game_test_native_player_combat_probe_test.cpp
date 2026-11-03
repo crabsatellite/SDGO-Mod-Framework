@@ -420,6 +420,15 @@ namespace
         probe.Finish(&context, input);
         CHECK(g_assertions.size() == 4);
         for (int result : g_assertions) CHECK(result == 1);
+        const int finishedMoves = g_moveInputCalls;
+        const int finishedFire = g_fireInputCalls;
+        const int finishedDispatch = g_attackDispatchCalls;
+        context.elapsed_ms = 300000;
+        CHECK(probe.Poll(&context, snapshot, status, input));
+        CHECK(g_moveInputCalls == finishedMoves && g_fireInputCalls == finishedFire &&
+              g_attackDispatchCalls == finishedDispatch);
+        CHECK(g_heldDetour(g_nativeInput, nullptr, 9) == 0 &&
+              g_downDetour(g_nativeInput, nullptr, 16) == 0);
         bool boundSeen = false;
         for (const auto& line : g_observations)
             boundSeen = boundSeen || line.find("slot=2 weapon=40119") != std::string::npos;

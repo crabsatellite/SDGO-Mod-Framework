@@ -200,6 +200,12 @@ public:
             return true;
         if (!context)
             return false;
+        // Result handling may still report app state 22 for several updates.
+        // Finish ends this battle's input lease even before that state changes.
+        if (finished_ && battleSequence_ == snapshot.received_battle_start_count) {
+            Release(input);
+            return true;
+        }
 
         const bool genuineReleasedBattle =
             snapshot.size == sizeof(snapshot) &&
