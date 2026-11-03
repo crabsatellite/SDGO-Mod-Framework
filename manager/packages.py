@@ -8,7 +8,7 @@ import re
 import zipfile
 from . import distribution, storage
 
-ALLOWED = {'.ini','.json','.bin','.dll','.spr','.txr','.png','.lua','.tsv'}
+ALLOWED = {'.ini','.json','.bin','.dll','.spr','.txr','.png','.lua','.tsv','.html'}
 
 
 def _running(executable):

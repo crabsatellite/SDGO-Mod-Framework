@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "native_data_guard",
+  "title": "原生战斗数据崩溃修复",
+  "category": "fixes",
+  "hosts": ["client"],
+  "description": "修复浮游炮挂点索引越界、缺失名称和可选变形数据导致的客户端访问异常。",
+  "settings": [],
+  "presentation": "automatic_fix",
+  "mechanism": "校验原生指令后修正挂点范围判断；缺失显示名称使用未命名标签，缺失可选变形数据时保留基础模型的原生完成流程。"
+}

@@ -1,0 +1,36 @@
+"""Independent Mod symbols must remain independent during native preparation."""
+from pathlib import Path
+import tempfile
+import unittest
+from tools import game_test
+
+HOST='[host]\nimage=WorldServer.exe\ntimestamp=0x548A86E3\nsize_of_image=0x0010C000\n'
+
+class ModSymbolPreparationTests(unittest.TestCase):
+    def test_matching_sidecar_satisfies_only_its_own_mod_and_stays_local(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);stage=root/'stage.ini';copied=root/'copied.ini'
+            stage.write_text(HOST)
+            mod=root/'login';mod.mkdir();manifest=mod/'mod.ini'
+            manifest.write_text('[mod]\nrequires=login.request\n')
+            (mod/'symbols.fragment.ini').write_text(HOST+'[login.request]\nkind=code\nrva=0x00059EE0\nexpect=55 8B EC\n')
+            game_test.merge_required_symbols(stage,copied,[manifest])
+            self.assertEqual(set(game_test.read_ini(copied).sections()),{'host'})
+            other=root/'other';other.mkdir();other_manifest=other/'mod.ini'
+            other_manifest.write_text('[mod]\nrequires=login.request\n')
+            with self.assertRaisesRegex(game_test.GameTestError,'lack required sections'):
+                game_test.merge_required_symbols(stage,copied,[manifest,other_manifest])
+
+    def test_another_host_or_missing_local_alias_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);stage=root/'stage.ini';copied=root/'copied.ini';manifest=root/'mod.ini'
+            stage.write_text(HOST);manifest.write_text('[mod]\nrequires=login.request\n')
+            fragment=root/'symbols.fragment.ini'
+            fragment.write_text(HOST.replace('0x548A86E3','0x548A86E4')+'[login.request]\nkind=code\nrva=0x00059EE0\n')
+            with self.assertRaisesRegex(game_test.GameTestError,'does not match'):
+                game_test.merge_required_symbols(stage,copied,[manifest])
+            fragment.write_text(HOST+'[different.alias]\nkind=code\nrva=0x00059EE0\n')
+            with self.assertRaisesRegex(game_test.GameTestError,'lack required sections'):
+                game_test.merge_required_symbols(stage,copied,[manifest])
+
+if __name__=='__main__':unittest.main()
