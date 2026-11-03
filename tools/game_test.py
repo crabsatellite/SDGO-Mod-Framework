@@ -507,6 +507,7 @@ def overlay_observer(
     *,
     fps_mod_enabled: bool | None = None,
     bind_staged_loader: bool = False,
+    skip_staged_mods: tuple[str, ...] = (),
 ) -> None:
     validate_observer_stage(
         root,stage,extra_mods,disabled_mods,
@@ -616,6 +617,7 @@ def overlay_observer(
         updated_manifests.append(destination/'mod.ini')
     for staged_manifest in sorted((stage_client/'sdgo/mods').glob('*/mod.ini')):
         identifier=staged_manifest.parent.name
+        if identifier in skip_staged_mods:continue
         if identifier in (TEST_MOD,TARGET_MOD) or (fps_mod_enabled is not None and identifier == FPS_MOD):continue
         destination=root/'sdgo/mods'/identifier
         installed_manifest=destination/'mod.ini'
@@ -2702,9 +2704,16 @@ def prepare(
     fps_cap: int | None = None,
     fps_mod_enabled: bool = True,
     bind_staged_loader: bool = False,
+    unit_package: Path | None = None,
     _owned_client_transfer: tuple[Path, str] | None = None,
 ) -> dict:
     client_template = client_template.resolve()
+    unit_payload=None
+    if unit_package is not None:
+        unit_package=Path(unit_package).resolve()
+        if not unit_package.is_file() or not 0<unit_package.stat().st_size<=160*1024*1024:
+            raise GameTestError('unit package is missing or exceeds the trusted installer limit')
+        unit_payload=unit_package.read_bytes()
     if type(same_room_rematch) is not bool or (same_room_rematch and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,random_loadout)))):
         raise GameTestError('same-room rematch requires complete PvP without random loadout or preparation-only scopes')
     if rebind_existing_account:
@@ -3015,7 +3024,14 @@ def prepare(
         overlay_observer(
             client, stage, extra_mods, disabled_mods,
             fps_mod_enabled=fps_mod_enabled if fps_only else None,
-            bind_staged_loader=bind_staged_loader)
+            bind_staged_loader=bind_staged_loader,
+            skip_staged_mods=('unit_catalog',) if unit_payload is not None else ())
+        unit_install=None
+        if unit_payload is not None:
+            # Install authored data through the ordinary trusted installer
+            # before any runtime inputs are sealed. Never mutate a sealed run.
+            from owner.units.deployment import install_package
+            unit_install=install_package(client,unit_payload)
         observer_manifest=client/'sdgo/mods'/TEST_MOD/'mod.ini'
         observer_config=read_ini(observer_manifest)
         if not observer_config.has_section('settings'):observer_config.add_section('settings')
@@ -3090,6 +3106,9 @@ def prepare(
             },
             "execution": None,
         }
+        if unit_payload is not None:
+            metadata['unit_package']={'path':str(unit_package),'sha256':hashlib.sha256(unit_payload).hexdigest(),
+                                      'bytes':len(unit_payload),'revision':unit_install['receipt']['revision']}
         if server_session is not None:
             metadata['server_session']=server_session
         if shared_assets:

@@ -14,6 +14,37 @@ ROOT=Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(shutil.which('pwsh'),'PowerShell is required for installer checks')
 class InstallerResourceTests(unittest.TestCase):
+    def test_receipt_allows_only_pinned_user_setting_changes(self):
+        import base64
+        script=r'''
+param([string]$Installer,[string]$InputPath)
+$ErrorActionPreference='Stop'
+Set-StrictMode -Version Latest
+$ast=[Management.Automation.Language.Parser]::ParseFile($Installer,[ref]$null,[ref]$null)
+foreach($f in $ast.FindAll({param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst]},$true)){
+ if($f.Name -in @('Get-Sha256','Get-ProgramDefinition','Test-ReceiptFile')){Invoke-Expression $f.Extent.Text}
+}
+$spec=Get-Content -LiteralPath $InputPath -Raw | ConvertFrom-Json
+$receipt=[pscustomobject]@{framework_mod_ini_base64=$spec.snapshot}
+$file=[pscustomobject]@{installed_sha256=$spec.sha256;owned=$true}
+$actual=Test-ReceiptFile $receipt $file $spec.path $spec.relative
+if($actual -ne $spec.expected){throw 'Receipt setting classification differs'}
+'''
+        original=b'[mod]\nid=unit_catalog\nversion=0.3.0\nenabled=1\n[settings]\nEnabled=1\n'
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);runner=root/'receipt.ps1';runner.write_text(script,encoding='utf-8')
+            target=root/'mod.ini';spec=root/'input.json'
+            cases=[(original.replace(b'enabled=1',b'enabled=0').replace(b'Enabled=1',b'Enabled=0'),True),
+                   (original.replace(b'version=0.3.0',b'version=9.0.0'),False)]
+            for current,expected in cases:
+                target.write_bytes(current)
+                spec.write_text(json.dumps({'path':str(target),'relative':'sdgo\\mods\\unit_catalog\\mod.ini',
+                    'snapshot':base64.b64encode(original).decode(),'sha256':hashlib.sha256(original).hexdigest(),
+                    'expected':expected}))
+                result=subprocess.run(['pwsh','-NoProfile','-File',str(runner),'-Installer',str(ROOT/'tools/install_unit_catalog.ps1'),
+                    '-InputPath',str(spec)],capture_output=True,text=True,timeout=45)
+                self.assertEqual(0,result.returncode,result.stdout+result.stderr)
+
     def test_installer_accepts_exact_overlay_and_rejects_an_undeclared_model(self):
         script=r'''
 param([string]$Installer,[string]$InputPath)

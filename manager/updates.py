@@ -47,7 +47,10 @@ def safe_name(name):
 
 def child(root, name):
     root = Path(root).resolve()
-    path = storage.safe_child(root, safe_name(name))
+    name=safe_name(name)
+    # Inspect the lexical path before safe_child resolves it. Otherwise a
+    # symlink to another file inside the same host hides the link itself.
+    path = root.joinpath(*name.split('/'))
     walk = path
     while True:
         if walk.is_symlink() or (walk.exists() and getattr(walk.lstat(), 'st_file_attributes', 0) & 0x400):
@@ -55,7 +58,7 @@ def child(root, name):
         if walk == root: break
         if walk == walk.parent:raise ValueError('更新路径不属于目标目录')
         walk = walk.parent
-    return path
+    return storage.safe_child(root,name)
 
 
 def read_ini(raw):
@@ -283,9 +286,15 @@ def install_host(host, bundle, manifest, cache, is_running=None):
                    'mods':{m['id']:m['version'] for m in selected+retained}}
         mbytes=storage.json_bytes(installed)
         if not marker.exists() or marker.read_bytes()!=mbytes:changes[marker]=mbytes
+        unit_plan=None
+        if role=='client' and any(mod['id']=='unit_catalog' for mod in selected):
+            from . import unit_receipts
+            unit_plan=unit_receipts.prepare(root,source,manifest,changes,child,key)
+            if unit_plan is not None:changes[unit_plan['path']]=unit_plan['data']
         # Recheck immediately before touching runtime files. Locked files also
         # cause a transaction rollback; no game process is ever stopped.
         if is_running(exe):return {'id':host['id'],'name':host['name'],'status':'waiting','message':'等待对应游戏或服务器关闭'}
+        if unit_plan is not None:unit_receipts.verify_snapshot(unit_plan)
         previous={p:p.read_bytes() if p.exists() else None for p in changes};written=[]
         backup=cache/'backups'/manifest['version']/digest(str(root).encode())[:16]
         try:
@@ -294,13 +303,39 @@ def install_host(host, bundle, manifest, cache, is_running=None):
                     saved=child(backup,path.relative_to(root).as_posix())
                     if not saved.exists():storage.atomic(saved,previous[path])
                 storage.atomic(path,data);written.append(path)
-        except OSError:
+            if unit_plan is not None:unit_receipts.verify_installed(root,unit_plan,child)
+        except Exception:
             for path in reversed(written):
                 if previous[path] is None:path.unlink(missing_ok=True)
                 else:storage.atomic(path,previous[path])
             raise
     return {'id':host['id'],'name':host['name'],'status':'installed','version':manifest['version'],'changed_files':len(changes),
             'preserved_newer_mods':[m['id'] for m in retained]}
+
+
+def repair_unit_receipt(host,bundle,manifest,cache,is_running=None):
+    """Reconcile only a legacy unit receipt against an already verified artifact.
+
+    No runtime program, game data, release marker or global setting is replaced.
+    """
+    from . import unit_receipts
+    if host['role']!='client':raise ValueError('机体程序收据只适用于客户端')
+    root=Path(host['path']).resolve();exe=root/EXES['client'];is_running=is_running or running
+    if is_running(exe):return {'status':'waiting','message':'关闭这个客户端后再核对机体程序'}
+    with storage.LOCK:
+        plan=unit_receipts.prepare(root,Path(bundle)/'client',manifest,{},child,host_key(exe),repair=True)
+        if plan is None:return {'status':'current','changed_files':0}
+        unit_receipts.verify_snapshot(plan)
+        if is_running(exe):return {'status':'waiting','message':'等待对应客户端关闭'}
+        previous=plan['path'].read_bytes()
+        saved=child(Path(cache)/'backups'/manifest['version']/digest(str(root).encode())[:16],unit_receipts.RECEIPT)
+        if not saved.exists():storage.atomic(saved,previous)
+        try:
+            storage.atomic(plan['path'],plan['data']);unit_receipts.verify_installed(root,plan,child)
+        except Exception:
+            storage.atomic(plan['path'],previous)
+            raise
+    return {'status':'reconciled','changed_files':1,'program_files_changed':False,'content_files_changed':False}
 
 
 class Updates:
