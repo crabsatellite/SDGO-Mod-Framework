@@ -53,6 +53,9 @@ def make_server(workspace, port=0):
                     return self.response(200, (static / ('index.html' if path == '/' else 'ui-kit.html')).read_bytes(), 'text/html; charset=utf-8')
                 if method == 'GET' and path in ('/app.js', '/style.css', '/panel_helpers.js', '/ui.css', '/ui.js'):
                     return self.response(200, (static / path[1:]).read_bytes(), 'text/javascript; charset=utf-8' if path.endswith('.js') else 'text/css; charset=utf-8')
+                if method=='GET' and path in ('/brand.svg','/favicon.ico'):
+                    return self.response(200,(static/('brand.svg' if path=='/brand.svg' else 'brand.ico')).read_bytes(),
+                                         'image/svg+xml' if path=='/brand.svg' else 'image/x-icon')
                 if method == 'GET' and path.startswith('/api/art/'):
                     from .art import image
                     try:
@@ -64,6 +67,12 @@ def make_server(workspace, port=0):
                     if name not in {key + '.js' for key in workspace.providers}: raise ValueError('面板未登记')
                     return self.response(200, (static / 'panels' / name).read_bytes(), 'text/javascript; charset=utf-8')
                 if method == 'GET' and path == '/api/state': return self.send_json(200, {**workspace.public(), 'session_token': token})
+                if method=='POST' and path=='/api/entrypoints':
+                    executable=getattr(getattr(workspace,'updates',None),'manager_exe',None)
+                    if executable is None:raise ValueError('请使用打包版 Manager 创建快捷入口')
+                    from .entrypoints import create
+                    rows=create(workspace,executable)
+                    return self.send_json(200,{'created':sum(r['status']=='created' for r in rows),'kept':sum(r['status']=='kept' for r in rows)})
                 if method == 'GET' and path == '/api/identity': return self.send_json(200, {'application': 'sdgo_mod_manager', 'workspace_id': storage.revision(str(workspace.root).encode())})
                 if path=='/api/updates':
                     updates=getattr(workspace,'updates',None)

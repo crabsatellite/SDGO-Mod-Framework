@@ -1,6 +1,7 @@
 <# Install paired AI components into an existing client or battle-server framework. #>
 param([Parameter(Mandatory=$true)][string]$GameDir,[string]$Source,
-      [ValidateSet('Client','Server')][string]$Side='Client')
+      [ValidateSet('Client','Server')][string]$Side='Client',[switch]$FrameworkOnly,
+      [switch]$PvpCombatOnly)
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $sideName=$Side.ToLowerInvariant()
@@ -19,9 +20,17 @@ if($Side -eq 'Client') {
     $expectedHash='f74d16037fc8f4fe49a8041488aabd1948df1b1a9f2d125de9dad4a2347b63a4'
     $products=[ordered]@{battle_ai_server=@('battle_ai_server.dll','mod.ini','manager.json');pvp_ai=@('pvp_ai.dll','mod.ini','manager.json')}
 }
+if($PvpCombatOnly) {
+    if($Side -ne 'Client') { throw 'PvpCombatOnly applies to the paired client combat components' }
+    $products.Remove('mission_ai');$products.Remove('ai_catalog')
+}
 $exe=Join-Path $game $exeName
-if(-not (Test-Path -LiteralPath $exe)) { throw "GameDir must contain $exeName" }
-if((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -ine $expectedHash) { throw "Unsupported $exeName byte identity" }
+if($FrameworkOnly) {
+    if(Test-Path -LiteralPath $exe) { throw "FrameworkOnly requires a framework template without $exeName" }
+} else {
+    if(-not (Test-Path -LiteralPath $exe)) { throw "GameDir must contain $exeName" }
+    if((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -ine $expectedHash) { throw "Unsupported $exeName byte identity" }
+}
 if(-not (Test-Path -LiteralPath (Join-Path $game 'sdgo\core.dll'))) { throw 'Install the SDGO mod framework first' }
 foreach($file in @($loader,'sdgo\core.dll')) {
     if(-not (Test-Path -LiteralPath (Join-Path $Source $file))) { throw "AI package is missing its matching framework file: $file" }

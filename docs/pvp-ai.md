@@ -32,6 +32,10 @@ countdown frame that releases player control. AI cannot move or attack early.
 Hold TAB to see AI on both teams in the native battle roster, including their
 names, kills, assists and points with normal scoring and sorting.
 
+Teleport moves locally controlled PvP AI to a native spawn point, preserving their
+current HP. It no longer takes the original NPC destruction fallback, which could
+kill a healthy bot inside the playable map. Normal damage and map hazards still apply.
+
 | Title | Effect |
 |---|---|
 | `!ai coop` | Group humans with the host at start; add no allied AI and fill all remaining room places with opponents |
