@@ -142,7 +142,7 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual((self.host/'sdgo/sdgo.ini').read_bytes(),b'[mods]\ncustom=1\n')
         symbols=u.read_ini((self.host/'sdgo/symbols'/(KEY+'.ini')).read_bytes())
         self.assertIn('custom.alias',symbols);self.assertIn('new.alias',symbols)
-        self.assertIn('private_mod',[m['id'] for m in json.loads((self.host/'sdgo/catalog.json').read_text())['mods']])
+        self.assertIn('private_mod',[m['id'] for m in json.loads((self.host/'sdgo/catalog.json').read_text(encoding='utf-8'))['mods']])
         self.assertEqual(result['status'],'installed')
         again=u.install_host(self.record,self.bundle,self.manifest,self.root/'cache',lambda _:False)
         self.assertEqual(again['changed_files'],0)
