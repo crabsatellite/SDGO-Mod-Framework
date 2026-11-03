@@ -164,6 +164,10 @@ python tools/game_test.py run --run-dir build/gametest/pvp --timeout 3600
 此队伍配置需新观察会话，复用会话的前缀会使指令超出原生房名上限。
 `--ai-pool-level 1` 至 `5` 配合 `--expected-ai 1` 选择机体池，不能同时覆盖难度。
 测试 Mod 的 `BattleAiBehavior=1` 要求实测必杀受击者恢复、移动射击和远距离追敌；
+`BattleAiActivity=1` 单独检查每名预期 AI 是否取得目标并实际移动或攻击，面对可见敌人且控制空闲时
+连续十秒保持中立不动会失败。默认关闭，可在 Manager 中测试 Mod 的开发设置里选择。
+只读诊断记录逐台活动统计、武器／控制状态和采样间隔，不会移动机器人或伪造战果。
+
 `BattleAiDeaths=1` 记录原生死亡身份，再加 `BattleAiTeleport=1` 则必须观察到本地 AI
 真实瞬移、位置改变、血量保留且没有发送销毁请求。这些可选检查只观察原生战斗。
 Grid（`6`）和 Tag（`7`）会通过原生业务切换 VS 频道，并要求账号已有完整战舰编队。
