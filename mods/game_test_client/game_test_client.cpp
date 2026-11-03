@@ -145,6 +145,7 @@ QuietSockets quietSockets;
 QuietAudio quietAudio;
 QuietGraphics quietGraphics;
 bool captureNativeFrames=false;
+bool unitPagesOnly=false;
 bool testUnitPresentations=false;
 bool captureUnitPortraits=false;
 UnitPresentationsActions unitPresentations;
@@ -186,6 +187,8 @@ std::vector<MotionSample> motionSamples;
 
 bool LoadPlan() {
     const std::wstring job = sdgo_test::directory + L"\\run.ini";
+    unitPagesOnly=GetPrivateProfileIntW(L"settings",L"UnitPagesOnly",0,
+        (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
     captureNativeFrames=GetPrivateProfileIntW(L"settings",L"CaptureNativeFrames",0,
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
     testUnitPresentations=GetPrivateProfileIntW(L"settings",L"UnitPresentations",0,
@@ -254,6 +257,7 @@ bool LoadPlan() {
         if(!playUnitUid || errno || !end || *end)return false;
     }
     if(testUnitPresentations && !playUnitUid)return false;
+    if(unitPagesOnly && (!pagesOnly || !testUnitPresentations || collectionDraw || testShopCatalog))return false;
     if(captureUnitPortraits && (!testUnitPresentations || !captureNativeFrames))return false;
     if (static_cast<unsigned>(bootstrapOnly) + battleshipOnly + giftRequestsOnly + deckOnly + pagesOnly + friendsOnly + roomTitlesOnly > 1) return false;
     if (friendsOnly && (missionMode || playUnitUid || collectionDraw || testShopCatalog))return false;
@@ -2396,6 +2400,12 @@ void RegisterPlannedCases() {
             provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
         }
         AppendUnitPresentations();
+        if(unitPagesOnly) {
+            if(unitAcquisitionConfig.machine_kind || collectionPreviewOnly)plannedCases.push_back(pageCases[7]);
+            if(unitAcquisitionConfig.machine_kind)plannedCases.push_back(unitAcquisitionCase);
+            if(collectionPreviewOnly)plannedCases.push_back(collectionCases[0]);
+            provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+        }
         plannedCases.insert(plannedCases.end(),std::begin(pageCases),std::begin(pageCases)+5);
         if(testShopCatalog)plannedCases.push_back(shopCatalogCase);
         plannedCases.insert(plannedCases.end(),std::begin(pageCases)+5,std::end(pageCases));

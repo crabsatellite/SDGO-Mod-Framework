@@ -267,6 +267,25 @@ Use `--pages-only` to test the authenticated unit-management page, inventory
 readback, both exchange previews and cancellation. It compares unit UIDs, slots
 and the active unit before and after; it never confirms an exchange with candidates.
 Page cases are not battle tests.
+
+For an imported unit, the Python `prepare` / `reuse_prepared` API accepts
+`unit_scenario={"schema": 1, "capture_frames": True}` together with
+`pages_only=True` and `play_unit_uid=<existing owned UID>`. This bounded scope
+uses the original encyclopedia list, detail, alternate/base-form and close
+callbacks. It does not repeat storage claims or start a battle. Add
+`"portraits": True` to capture the model's actual wait/selection animations.
+An optional `"acquisition": {"kind": 1, "machine_id": ..., "unit_id": ...}`
+checks a fixed capsule candidate; kind `3` checks a custom candidate. These
+callbacks open the real model preview without buying or changing a selection.
+`"collection_preview": True` instead opens the existing collection confirmation
+without purchasing. Capsule previews and portrait captures remain distinct from
+draw, delivery and gameplay acceptance.
+
+The runner copies canonical scenario inputs, binds their SHA-256 and validates
+the native observer settings against that input before launch. Install an authored
+unit publication with the API's `unit_package` argument before sealing; do not edit
+an already prepared client or its receipt hashes. Unit content stays in the server
+owner's client package or update, outside the public test fixtures.
 It also opens native storage, waits for its real message loop and server list
 reply, and confirms one claim batch. An empty batch only covers the empty-storage path.
 Capsule cases read all five native catalog tables and enter the actual page to

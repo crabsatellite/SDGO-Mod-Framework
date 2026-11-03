@@ -38,6 +38,7 @@ import importlib.util
 # also import repository packages, independently of the caller's directory.
 if str(Path(__file__).resolve().parents[1]) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tools import game_test_unit_scenario as unit_scenarios
 SCHEMA_VERSION = 2
 OWNED_BUILD_ROOT=Path(__file__).resolve().parents[1]/'build'
 OWNED_PROCESS_EXIT_TIMEOUT = 30
@@ -1365,7 +1366,8 @@ def validate_shop_test_install(root: Path, plan: dict) -> dict:
         raise GameTestError("shop GameTest inputs do not use their fixed copied-client paths")
     root = Path(root).resolve()
     inputs = []
-    for relative in (SHOP_ASSERTIONS_RELATIVE, SHOP_DISPLAY_RELATIVE):
+    for relative in (SHOP_ASSERTIONS_RELATIVE, SHOP_DISPLAY_RELATIVE,
+                     'sdgo/gametest/'+unit_scenarios.INPUT):
         lexical = root / relative
         resolved = lexical.resolve()
         if (
@@ -1696,6 +1698,9 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
 
 
 def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
+    if 'unit_scenario' in plan:
+        try:return unit_scenarios.cases(unit_scenarios.validate(plan['unit_scenario'],plan))
+        except ValueError as error:raise GameTestError(str(error)) from error
     shop_fields = {field for field in SHOP_PLAN_FIELDS if field in plan}
     if shop_fields and shop_fields != set(SHOP_PLAN_FIELDS):
         raise GameTestError("shop GameTest plan is missing sealed input fields")
@@ -2051,6 +2056,8 @@ def write_job(
             run["run"]["ai_layout"] = plan["ai_layout"]
     if 'play_unit_uid' in plan:
         run['run']['play_unit_uid'] = str(plan['play_unit_uid'])
+    if 'unit_scenario_sha256' in plan:
+        run['run']['unit_scenario_sha256'] = plan['unit_scenario_sha256']
     if all(field in plan for field in SHOP_PLAN_FIELDS):
         for field in SHOP_PLAN_FIELDS:
             run['run'][field] = str(plan[field])
@@ -2311,6 +2318,14 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 same_room_rematch=same_room_rematch,
             )
 
+        unit_binding={}
+        if 'unit_scenario_sha256' in run:
+            unit_context={'pages_only':pages_only,'play_unit_uid':play_unit_uid,
+                'collection_draw':collection_draw,'bootstrap_only':bootstrap_only,
+                'friends_only':friends_only,'room_titles_only':room_titles_only,
+                'mission_mode':mission_mode,**(shop_plan or {})}
+            unit_binding=unit_scenarios.read(root,run['unit_scenario_sha256'],unit_context,read_ini)
+            expected_cases=unit_scenarios.cases(unit_binding['unit_scenario'])
         if historical_cases:
             recorded_cases = tuple(run["required_cases"].split(','))
             if (not recorded_cases or len(recorded_cases) > 256 or len(set(recorded_cases)) != len(recorded_cases) or
@@ -2390,6 +2405,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 plan['ai_layout'] = ai_layout
         if play_unit_uid is not None:
             plan['play_unit_uid'] = play_unit_uid
+        plan.update(unit_binding)
         if shop_plan is not None:
             plan.update(shop_plan)
         if room_style_preview is not None:
@@ -2705,6 +2721,7 @@ def prepare(
     fps_mod_enabled: bool = True,
     bind_staged_loader: bool = False,
     unit_package: Path | None = None,
+    unit_scenario: dict | None = None,
     _owned_client_transfer: tuple[Path, str] | None = None,
 ) -> dict:
     client_template = client_template.resolve()
@@ -2989,6 +3006,9 @@ def prepare(
         ):
             if value:plan[flag] = True
 
+    if unit_scenario is not None:
+        try:plan.update(unit_scenarios.bind(unit_scenario,plan))
+        except ValueError as error:raise GameTestError(str(error)) from error
     run_dir.parent.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex
     preparing = run_dir.parent / f".gametest-preparing-{token}"
@@ -3037,7 +3057,11 @@ def prepare(
         if not observer_config.has_section('settings'):observer_config.add_section('settings')
         observer_config['settings']['ApsalusRoundtrip']='1' if apsalus_roundtrip else '0'
         observer_config['settings']['FpsGameplayCap']=str(fps_gameplay_cap or 0)
+        for key,value in unit_scenarios.settings(plan.get('unit_scenario')).items():
+            observer_config['settings'][key]=value
         write_ini(observer_manifest,observer_config)
+        if 'unit_scenario' in plan:
+            atomic_write(client/'sdgo/gametest'/unit_scenarios.INPUT,unit_scenarios.encoded(plan['unit_scenario']).decode('utf-8'))
         installed_route = configure_test_network(
             client,
             network_policy,
@@ -3309,6 +3333,9 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
         raise GameTestError("run.json lacks normal-flow plan")
     public_plan = read_public_plan(root, historical_cases=for_reuse)
     public_run = read_ini(root / "sdgo" / "gametest" / "run.ini")["run"]
+    for field in ('unit_scenario','unit_scenario_sha256'):
+        if (field in plan)!=(field in public_plan) or plan.get(field)!=public_plan.get(field):
+            raise GameTestError('run.json cannot change the sealed native unit scenario')
     if public_run.get("id") != run_id:
         raise GameTestError("run.json run_id disagrees with run.ini")
     fps_only = "fps_cap" in public_plan
