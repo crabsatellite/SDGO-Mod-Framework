@@ -87,7 +87,7 @@ Optional development and diagnostic features.
 |---|---|---|
 | Packet logger <!-- catalog: `net_probe` --> | Log the client's outgoing packets for protocol work | [Use](docs/net-probe.md) |
 | Capsule price probe (Experimental) <!-- catalog: `capsule_price_probe` --> | Read-only log of capsule list price label refreshes | [Use](docs/capsule-price-probe.md) |
-| Native GameTest (Experimental) <!-- catalog: `game_test_client`, `game_test_server` --> | Automated login, room, battle and page scenarios in the real client and server | [Use](docs/game-test.md) |
+| Native GameTest (Experimental) <!-- catalog: `game_test_client`, `game_test_server` --> | Native login, room entry, Ready, single-client and coordinated multiplayer battles, and page checks | [Use](docs/game-test.md) |
 
 <!-- /mod-category:development -->
 
