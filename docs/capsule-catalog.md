@@ -1,4 +1,8 @@
-# Capsule catalog editor (Beta)
+# Capsule catalog editor
+
+The accepted 1.0 authoring workflow covers resource generation, paired installation and native draws.
+Previews that add resource formats are evaluated separately; they do not certify every imported unit
+or format merely by being installed.
 
 Owners manage fixed and custom capsule machines through the capsule panel in SDGO Mod Manager.
 Create, inspect, edit, retire, restore and reorder machines; choose native six-slot

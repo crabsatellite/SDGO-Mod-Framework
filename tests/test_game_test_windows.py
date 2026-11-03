@@ -550,6 +550,28 @@ class InputDesktopReadOnlyWatcherTests(unittest.TestCase):
                 log.close()
 
 
+class TerminationSignalTests(unittest.TestCase):
+    def test_a_racing_exit_must_signal_before_cleanup_succeeds(self):
+        api=object.__new__(game_test_windows._Win32Api)
+        api.poll=mock.Mock(return_value=None)
+        api.kernel=mock.Mock()
+        api.kernel.TerminateProcess.return_value=0
+        api._error=mock.Mock(return_value=OSError(5,'already terminating'))
+        api.kernel.WaitForSingleObject.return_value=game_test_windows.WAIT_OBJECT_0
+        api.terminate(123)
+        self.assertEqual(api.kernel.WaitForSingleObject.call_args.args[1],30000)
+        api.kernel.WaitForSingleObject.return_value=game_test_windows.WAIT_TIMEOUT
+        with self.assertRaises(OSError):api.terminate(123)
+
+    def test_a_successful_termination_request_still_requires_process_exit(self):
+        api=object.__new__(game_test_windows._Win32Api)
+        api.poll=mock.Mock(return_value=None)
+        api.kernel=mock.Mock()
+        api.kernel.TerminateProcess.return_value=1
+        api.kernel.WaitForSingleObject.return_value=game_test_windows.WAIT_TIMEOUT
+        with self.assertRaises(TimeoutError):api.terminate(123)
+
+
 @unittest.skipUnless(os.name == "nt", "real private desktops require Windows")
 class BackgroundProcessWin32Tests(unittest.TestCase):
     def test_real_child_window_stays_on_background_desktop(self):

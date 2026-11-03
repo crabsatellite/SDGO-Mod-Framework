@@ -2,82 +2,71 @@
 
 [简体中文](friend-list-fix.zh-CN.md)
 
-An independent automatic fix for the native friend list. Friendship and messaging
-actions stay in the game's existing friend page. The Mod Manager lists this fix
-in its repair archive; no additional launcher or background service is needed.
+Fixes three problems in the native friend list: offline friends disappearing, outdated pilot names, and
+being unable to open a conversation with an offline friend. Adding friends, viewing the list and messaging
+still use the game's own friend page.
 
-The distributed fix consists of `friend_list_client_fix` on the client and
-`friend_list_fix` on WorldServer, with their matching manifests, Manager
-contracts and verified host symbol files. The World Mod creates and upgrades
-its own SQL objects automatically; there is no separate hand-applied database
-patch. Clients connecting to an updated WorldServer receive its repaired list
-responses. Owners of a separate server must install the server component too.
-Native executable files and native `dbo` procedure definitions are retained.
+| mod | host | part |
+|---|---|---|
+| `friend_list_fix` | WorldServer | returns the complete list with current pilot names |
+| `friend_list_client_fix` | client | lets an accepted offline friend open the native conversation window |
 
-The development test backend, database snapshots, temporary IP addresses and
-test-account files are verification infrastructure and are not player runtime
-dependencies. Publication verifies the complete owner runtime against the
-client Git payload and its mirror, together with the matching server files.
+## Use
 
-Install both components on the corresponding hosts, then restart WorldServer
-and log in again with the updated client. The native messenger fetches membership
-once per login; reopening its tab does not reload a broken cached list.
+Both parts are automatic fixes listed under **修复归档** (fix archive) in SDGO Mod Manager; there is nothing
+to configure. After installing, restart WorldServer and log in again with the updated client. The game reads
+the friend list once per login, so reopening the friend tab does not refresh an already broken list.
 
-`friend_list_fix` runs in WorldServer. The stock query left-joins online status,
-clan and other optional data but sends SQL NULLs to a native OLE DB row binding
-that has no status buffers. The row reader stops on warnings, so a single
-offline or incomplete row can truncate the list. The Mod returns non-null
-defaults of the original types, reads the current pilot name with the saved
-friendship name as a fallback, and preserves relationships, sorting, paging,
-and the five-parameter/17-column native contract.
+**Offline whisper delivery is not added.** Messages to an offline friend still get the native error `0x1407`
+(`0x1406` for an unknown name); nothing pretends to be delivered. Use the in-game mail for messages that
+should be read later.
 
-Version 0.1.2 also derives the canonical pilot-name column's collation and
-applies it to both fallback operands before ANSI conversion. This handles
-native member databases with a Thai default and a Chinese Unicode name column,
-without changing either column or losing canonical Chinese names.
+The WorldServer database account needs permission to create a schema and procedures and to read metadata.
 
-It borrows the authenticated member database session. `[DB Member] DBName` in
-the host INI selects the expected database; credentials are not copied. On the
-first request it creates an ownership-marked `sdgo_friend_list_fix` schema and
-query copy. The native `dbo.sp_FriendsList` and player data are retained. An
-unknown source shape, foreign schema, edited owned procedure, or SQL failure
-produces the native failure reply; initialization can retry. Schema/procedure
-creation and metadata read permissions are required. A changed native query
-is rechecked on the next WorldServer restart. Disabling the Mod restores native
-routing on restart; it leaves its owned query objects available for inspection.
+## Logs
 
-`friend_list_client_fix` 1.1.1 restores the native messenger service and
-conversation panels to the friend layout already shipped in the supported
-client archive. The executable still asks for `uirs\1364.uir`, which that
-archive now uses for the parts-exchange popup; the orphaned
-`uirs\0553.uir` contains the messenger's required `Edit`, `Slider` and
-`Static0` through `Static19` controls. The Mod redirects only the two verified
-friend calls. It leaves the shared string-assignment entry available to shop
-localization and other Mods. The parts-exchange caller and other native string
-assignments remain unchanged. It does not patch the executable on disk or rewrite
-`GPackData`.
+| log line | meaning |
+|---|---|
+| `friend list fix registered; owned SQL query initializes on the first list request ...` | server part loaded; initializes on the first list request |
+| `friend list policy unavailable; native database failure returned, retry is allowed` | initialization failed; the native failure reply was sent and it will retry |
+| `accepted offline friends may open the native conversation UI ...` | client part loaded |
 
-The same client Mod selectively allows a complete, accepted offline friend to
-open the restored conversation UI. It retains actual offline presence,
-selection guards, normal online behavior and native message errors.
+## Developer notes
 
-**Offline whisper delivery is not added.** WorldServer returns native error
-`0x1407` for an offline recipient and `0x1406` for an unknown name. It has no
-offline queue on this path. Use the existing in-game mail facility for a message
-that needs to be read later.
+`friend_list_client_fix` 1.1.1 also restores the native messenger service and
+conversation panels to `uirs/0553.uir`, which already contains the required
+chat controls. The client requests `uirs/1364.uir`, now a parts-exchange layout.
+Only the two verified friend call sites are redirected; the shared string
+assignment entry remains available to shop localization and other Mods.
+The executable and native archive are retained.
 
-The [client evidence](friend-list-investigation-client.md) and
-[server evidence](friend-list-investigation-server.md) describe the supported
-builds, packet/cache behavior and exact boundaries. Developer checks load the
-production client DLL, install both real MinHook detours, exercise the two
-accepted messenger resource callers plus a forwarded exchange caller, and
-verify the exact host signatures. SQL contract checks cover offline rows and
-pagination in a dedicated test database. Use two updated native clients against
-the isolated local test backend to check login/logout, friend-list display and
-message exchange; see the [native testing guide](../skills/sdgo-native-testing/SKILL.md).
+Server 0.1.2 derives the canonical pilot-name column collation before converting
+the current name and fallback to the native ANSI result, supporting mixed Thai
+database defaults and Chinese Unicode name columns without changing columns.
 
+
+The stock query left-joins online status, clan and other optional data and sends SQL NULLs to a native OLE DB
+row binding without status buffers. The row reader stops on the warning, so one offline or incomplete row can
+truncate the list. `friend_list_fix` returns non-null defaults of the original types, reads the current pilot
+name with the saved friendship name as a fallback, and keeps relationships, sorting, paging and the
+five-parameter / 17-column native contract.
+
+It borrows the authenticated member database session; `[DB Member] DBName` in the host INI selects the expected
+database and no credentials are copied. On the first request it creates an ownership-marked query copy in its own
+`sdgo_friend_list_fix` schema; `dbo.sp_FriendsList` and player data are untouched. An unknown source shape, foreign
+schema, edited owned procedure or SQL failure produces the native failure reply. A changed native query is rechecked
+on the next restart; disabling the mod restores native routing and leaves its owned objects for inspection.
+
+`friend_list_client_fix` only admits complete, accepted offline friends and keeps the real offline presence,
+selection guards, online behavior and native message errors.
+
+Packet, cache and address evidence: [client](investigations/friend-list-client.md),
+[server](investigations/friend-list-server.md).
+
+## Developer tests
 
 ```powershell
 cmake --build build --config Release --target friend_list_fix friend_list_client_fix friend_list_fix_test friend_list_client_fix_test friend_list_db_test
 ctest --test-dir build -C Release -R friend_list --output-on-failure
+python tests/run_friend_list_sql_test.py --build-dir build --work-root build/sql-fixtures --native-source "<private UTF-8 procedure export>" --image "<locally cached SQL Server image>"
 ```

@@ -16,7 +16,7 @@ public static class ShopUiTests
             using(var service=new ShopService(root,true))
             {
                 service.Connect();var permanent=service.Snapshot.Items.First(i=>i.Id==1120022);var rental=service.Snapshot.Items.First(i=>i.TimeLimit==1);
-                var a=Model.Create(service.Catalog,service.Snapshot,permanent);service.Catalog.products.Add(a);var b=Model.Create(service.Catalog,service.Snapshot,rental);b.currency="MB";service.Catalog.products.Add(b);
+                var a=Model.Create(service.Catalog,service.Snapshot,permanent);a.name="永久测试商品";service.Catalog.products.Add(a);var b=Model.Create(service.Catalog,service.Snapshot,rental);b.name="租赁测试商品";b.currency="MB";service.Catalog.products.Add(b);
                 Check(a.product_id!=b.product_id&&a.item_id!=b.item_id,"new products reserve distinct identities");Check(a.label=="永久"&&b.label=="租赁 7 天","numeric lease types produce Chinese labels");
                 var invalid=Model.Clone(service.Catalog);invalid.products[0].price=0;Refuses(()=>Model.Validate(invalid),"zero price rejected before native buy popup");
                 invalid=Model.Clone(service.Catalog);invalid.products[0].validity=7;Refuses(()=>Model.Validate(invalid,service.Snapshot),"permanent unit cannot become a seven-day sale");
@@ -47,11 +47,11 @@ public static class ShopUiTests
         using(var service=new ShopService(state,false))
         {
             service.Settings.WorldDirectory=world;service.Catalog.catalog_id="ui-sql-"+Guid.NewGuid().ToString("N");service.Connect();
-            var a=Model.Create(service.Catalog,service.Snapshot,service.Snapshot.Items.First(i=>i.Id==1120022));a.name="UI TEST GB";a.price=501;service.Catalog.products.Add(a);
-            var b=Model.Create(service.Catalog,service.Snapshot,service.Snapshot.Items.First(i=>i.Id==1110549));b.name="UI TEST MB RENTAL";b.price=502;b.currency="MB";service.Catalog.products.Add(b);
+            var a=Model.Create(service.Catalog,service.Snapshot,service.Snapshot.Items.First(i=>i.Id==1120022));a.name="UI 测试 GB";a.price=501;service.Catalog.products.Add(a);
+            var b=Model.Create(service.Catalog,service.Snapshot,service.Snapshot.Items.First(i=>i.Id==1110549));b.name="UI 测试 MB 租赁";b.price=502;b.currency="MB";service.Catalog.products.Add(b);
             service.Apply();Check(service.Applied.Count==2&&service.Catalog.products.All(p=>service.Status(p)=="已上架"),"UI service applies new offers through actual native engine to isolated SQL");
             Check(File.ReadAllText(Path.Combine(mod,"mod.ini")).Contains("enabled=1"),"first explicit GUI apply enables configured startup module");
-            a.name="UI TEST renamed";a.price=601;b.enabled=false;service.Apply();Check(service.Status(a)=="已上架"&&service.Status(b)=="已下架","UI edit and unlist read back exact native fields");
+            a.name="UI 测试改名";a.price=601;b.enabled=false;service.Apply();Check(service.Status(a)=="已上架"&&service.Status(b)=="已下架","UI edit and unlist read back exact native fields");
             a.retired=true;a.enabled=false;b.retired=true;service.Apply();Check(service.Applied.All(p=>!p.Visible),"UI delete hides only managed offers");
             Check(File.ReadAllText(Path.Combine(mod,"runtime-display.ini")).Contains("[shop]"),"UI publishes generated server display profile");
         }
