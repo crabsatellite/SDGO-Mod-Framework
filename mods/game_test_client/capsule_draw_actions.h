@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cwchar>
+#include <vector>
 
 #include "native_actions.h"
 
@@ -67,6 +68,24 @@ public:
         uint32_t price = 100000;
         uint32_t currency = 0;
     };
+    struct Reward {uint32_t category;uint32_t amount;};
+    bool ConfigureRewards(const std::vector<Reward>& rewards)
+    {
+        if(bound_ || rewards.size()>128)return false;
+        for(size_t i=0;i<rewards.size();++i) {
+            const auto r=rewards[i];const auto kind=r.category/100000;
+            if(!r.category || r.category>0x7fffffff || !r.amount || r.amount>0x7fffffff ||
+               (kind!=11 && kind!=15 && kind!=22))return false;
+            for(size_t j=0;j<i;++j)if(rewards[j].category==r.category && rewards[j].amount==r.amount)return false;
+        }
+        expectedRewards_=rewards;return true;
+    }
+    bool AcceptsReward(uint32_t category,uint32_t amount) const
+    {
+        if(expectedRewards_.empty())return category>=kRewardCategoryBegin && category<kRewardCategoryEnd && amount==1;
+        for(const auto reward:expectedRewards_)if(reward.category==category && reward.amount==amount)return true;
+        return false;
+    }
 
     bool ConfigureTarget(const Target& target)
     {
@@ -998,6 +1017,7 @@ private:
         100000;
     uint32_t expectedCurrency_ =
         0;
+    std::vector<Reward> expectedRewards_;
     static constexpr uint32_t kActivityMachineType =
         2;
     static constexpr uint32_t kRadioEvent =
@@ -1765,11 +1785,7 @@ private:
                          serialHigh != 0) &&
                         (serialHigh &
                          0x80000000U) == 0 &&
-                        rewardCategory >=
-                            kRewardCategoryBegin &&
-                        rewardCategory <
-                            kRewardCategoryEnd &&
-                        rewardAmount == 1 &&
+                        actions->AcceptsReward(rewardCategory,rewardAmount) &&
                         *(
                             static_cast<
                                 const uint8_t*>(

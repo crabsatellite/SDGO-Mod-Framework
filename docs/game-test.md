@@ -283,6 +283,12 @@ draw, delivery and gameplay acceptance.
 An optional `"activity_target": {"machine_id": ..., "price": ..., "currency": ...}`
 selects another existing native activity confirmation with exact matching. It
 requires `collection_preview`; changed targets cannot submit a draw in this scope.
+To test one purchase separately, explicitly add `"activity_draw": True` and
+`"reward_pairs": [[<item category>, <amount>], ...]` copied from the reviewed host
+pool. This scope invokes the original Buy callback at most once and requires its
+real result and exact typed acknowledgement. It stops after result closure; an
+inbox claim and inventory/wallet readback are separate checks. Rejected or uncertain
+purchases are never automatically retried, and the test does not change pool odds.
 
 The runner copies canonical scenario inputs, binds their SHA-256 and validates
 the native observer settings against that input before launch. Install an authored

@@ -8,13 +8,14 @@ INPUT = 'inputs/unit-scenario.json'
 SETTINGS = {'UnitPagesOnly':'0','UnitPresentations':'0','UnitPortraits':'0',
     'CaptureNativeFrames':'0','CollectionPreviewOnly':'0',
     'UnitAcquisitionKind':'0','UnitAcquisitionMachine':'0','UnitAcquisitionUnit':'0',
-    'CapsulePreviewMachine':'990001','CapsulePreviewPrice':'100000','CapsulePreviewCurrency':'0'}
+    'CapsulePreviewMachine':'990001','CapsulePreviewPrice':'100000','CapsulePreviewCurrency':'0',
+    'ActivityDrawOnce':'0','ActivityRewardCount':'0'}
 INDEX_CASES = ('pages.unit_index.list','pages.unit_index.detail',
     'pages.unit_index.alternate','pages.unit_index.base','pages.unit_index.close')
 PORTRAIT_CASES = ('pages.unit_index.pose_wait','pages.unit_index.pose_ready')
 
 def validate(value, plan):
-    if not isinstance(value,dict) or set(value)-{'schema','capture_frames','portraits','acquisition','collection_preview','activity_target'}:
+    if not isinstance(value,dict) or set(value)-{'schema','capture_frames','portraits','acquisition','collection_preview','activity_target','activity_draw','reward_pairs'}:
         raise ValueError('invalid native unit scenario fields')
     if type(value.get('schema')) is not int or value['schema']!=1:
         raise ValueError('unsupported native unit scenario schema')
@@ -23,10 +24,10 @@ def validate(value, plan):
         any(k.startswith('shop_') for k in plan)):
         raise ValueError('native unit scenarios require pages_only and an existing owned unit UID')
     result={'schema':1}
-    for field in ('capture_frames','portraits','collection_preview'):
+    for field in ('capture_frames','portraits','collection_preview','activity_draw'):
         flag=value.get(field,False)
         if type(flag) is not bool:raise ValueError('native unit scenario flags must be boolean')
-        result[field]=flag
+        if field!='activity_draw' or field in value:result[field]=flag
     if result['portraits'] and not result['capture_frames']:
         raise ValueError('native portraits require genuine frame capture')
     if 'activity_target' in value:
@@ -36,6 +37,17 @@ def validate(value, plan):
         if any(type(target[key]) is not int or not 0<target[key]<2**31 for key in ('machine_id','price')) or type(target['currency']) is not int or target['currency'] not in (0,1,2):
             raise ValueError('native activity preview identity, price or currency is invalid')
         result['activity_target']=dict(target)
+    pairs=value.get('reward_pairs',[])
+    if result.get('activity_draw'):
+        if 'activity_target' not in result or not isinstance(pairs,list) or not 2<=len(pairs)<=128:
+            raise ValueError('one native activity draw needs its exact target and typed reward pairs')
+        seen=set()
+        for pair in pairs:
+            if not isinstance(pair,list) or len(pair)!=2 or any(type(n) is not int or not 0<n<2**31 for n in pair) or pair[0]//100000 not in (11,15,22) or tuple(pair) in seen:
+                raise ValueError('activity reward pair is invalid or duplicated')
+            seen.add(tuple(pair))
+        result['reward_pairs']=[list(pair) for pair in pairs]
+    elif pairs:raise ValueError('reward expectations require the explicit native draw scope')
     if 'acquisition' in value:
         item=value['acquisition']
         if not isinstance(item,dict) or set(item)!={'kind','machine_id','unit_id'}:
@@ -65,6 +77,11 @@ def settings(value=None):
     if value.get('activity_target'):
         a=value['activity_target'];result.update(CapsulePreviewMachine=str(a['machine_id']),
             CapsulePreviewPrice=str(a['price']),CapsulePreviewCurrency=str(a['currency']))
+    if value.get('activity_draw'):
+        result['ActivityDrawOnce']='1';result['ActivityRewardCount']=str(len(value['reward_pairs']))
+        for index,(category,amount) in enumerate(value['reward_pairs']):
+            result['ActivityRewardCategory'+str(index)]=str(category)
+            result['ActivityRewardAmount'+str(index)]=str(amount)
     return result
 
 def cases(value):
@@ -73,6 +90,7 @@ def cases(value):
     result+=INDEX_CASES[2:]
     if value.get('acquisition'):result+=('catalog.capsule','pages.unit_acquisition')
     if value['collection_preview']:result+=('catalog.capsule','pages.collection.preview')
+    if value.get('activity_draw'):result+=('pages.activity.draw',)
     return result
 
 def read(root, digest, plan, read_ini):
@@ -87,7 +105,7 @@ def read(root, digest, plan, read_ini):
     if raw!=encoded(value):raise ValueError('native unit scenario must use its canonical input bytes')
     config=read_ini(root/'sdgo/mods/game_test_client/mod.ini')
     for key,expected in settings(value).items():
-        fallback=SETTINGS[key] if key.startswith('CapsulePreview') else None
+        fallback=SETTINGS.get(key) if key.startswith(('CapsulePreview','Activity')) else None
         if config.get('settings',key,fallback=fallback)!=expected:
             raise ValueError('native unit observer settings disagree with sealed scenario: '+key)
     return {'unit_scenario':value,'unit_scenario_sha256':digest}
