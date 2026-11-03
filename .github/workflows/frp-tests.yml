@@ -7,9 +7,21 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
+      - name: Reject local-only source
+        run: python tools/distribution_guard.py --git-tree $env:GITHUB_SHA
+      - name: Reject local-only bytes in every new push commit
+        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: python tools/distribution_guard.py --git-range "$env:BEFORE..$env:AFTER"
+      - name: Distribution guard regression
+        run: python -m unittest discover -s tests -p "test_distribution_guard.py" -v
       - name: Configure Win32
         run: python -m pip install -r manager/requirements-build.txt
       - name: Configure native framework

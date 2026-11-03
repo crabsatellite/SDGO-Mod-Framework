@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "capsule_currency_fix",
   "title": "活动扭蛋币种显示修复",
   "category": "fixes",

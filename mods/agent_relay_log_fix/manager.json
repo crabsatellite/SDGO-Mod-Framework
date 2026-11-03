@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "agent_relay_log_fix",
   "title": "中继日志修复",
   "category": "fixes",

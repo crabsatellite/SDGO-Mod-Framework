@@ -1,9 +1,15 @@
 # Build from the repository; all inputs are generic code/contracts, never owner state.
 from pathlib import Path
 import os
+import subprocess
 import sys
 from importlib import metadata
 root = Path(SPECPATH).parent
+subprocess.run(
+    [sys.executable, str(root/'tools/distribution_guard.py'),
+     '--source-path', str(root)],
+    check=True,
+)
 library = Path(os.environ['SDGO_MANAGER_SERVICES'])
 data = [(str(root/'manager/static'),'manager/static'),
         (os.environ.get('SDGO_MANAGER_METADATA',str(root/'manager/repository.json')),'manager'),

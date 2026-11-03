@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "transform_input_fix",
   "title": "阿普萨拉斯 III 变形卡死修复",
   "category": "fixes",

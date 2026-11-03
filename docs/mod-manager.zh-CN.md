@@ -103,3 +103,33 @@ powershell -ExecutionPolicy Bypass -File tools/build_mod_manager.ps1
 ### 构建发布包
 
 发布者使用 `python tools/build_release.py --build --channel stable --version X.Y.Z` 构建 Stable，或 `--channel beta --version X.Y.Z-beta.N` 构建 Beta。包里只有 Manager 与登记的框架文件，不含原版客户端、服务端、数据库、测试副本或账号配置。发布工作流先验证更新安装、构建对应代码并检查 Manager 成品；master 后续提交自动生成 Beta release，正式版本标签生成 Stable release。
+
+### 仅本地 Mod
+
+服主个人使用的 Mod 保存在独立私有仓库中。它在 `mod.ini` 的 `[mod]` 中声明
+`distribution=local_only`，在 `manager.json` 顶层声明
+`"distribution": "local_only"`；仓库根目录的 `distribution.json` 声明
+`{"distribution":"local_only","redistributable":false}`；每个私有 `.cpp`/`.h`
+文件首行带框架约定的仅本地源码标记，运行 DLL 嵌入框架约定的禁止分发标记。
+Manager 可以把它安装到服主选定的客户端、显示“仅本地 · 禁止导出”并管理配置，
+但不会把它视为可导出的公共内容。
+
+公共仓库随包 Mod 必须在两份清单中都明确声明 `public`。
+`tools/distribution_guard.py` 可检查待提交索引、指定提交、整个待推送 Git 历史范围、
+源码工作树、输出目录和 ZIP；即使私有文件在较早提交加入、最终提交又删除，也会被拦截。
+catalog 生成器、冻结 Manager 构建、Manager 下载响应、通用打包、Release 构建和更新包读取
+还会重复校验。改名 DLL 或删除某一份清单不能把仅本地内容变成可发布内容。
+
+```powershell
+python tools/distribution_guard.py --git-index
+python tools/distribution_guard.py --git-tree HEAD
+python tools/distribution_guard.py --git-range origin/master..HEAD
+python tools/distribution_guard.py --source-path .
+python tools/distribution_guard.py --path build\public-package
+python tools/distribution_guard.py --archive dist\SDGO-ModFramework-X.Y.Z.zip
+```
+
+较老的客户端仓库若公共 Mod 还没有分发字段，Git hook 可加
+`--allow-legacy-public`。它只兼容“两份声明都缺失”的旧公共清单，仍会拒绝
+`local_only`、单边声明、仓库/源码标记和带禁止分发标记的二进制。公共框架源码、
+Manager 构建和发布包仍使用上面的严格命令。

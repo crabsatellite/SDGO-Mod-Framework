@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "friend_unit_gift_client",
   "title": "好友机体赠送",
   "category": "gameplay",

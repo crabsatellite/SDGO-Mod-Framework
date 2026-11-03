@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "friend_list_client_fix",
   "title": "好友列表与聊天界面修复",
   "category": "fixes",

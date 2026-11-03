@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "startup_crash_fix",
   "title": "启动崩溃修复",
   "category": "fixes",

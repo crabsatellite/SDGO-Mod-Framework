@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "game_test_client",
   "title": "原生 GameTest 客户端",
   "category": "development",

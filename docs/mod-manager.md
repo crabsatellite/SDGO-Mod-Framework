@@ -57,3 +57,36 @@ and [registration design](mod-manager-design.zh-CN.md).
 ## Building releases
 
 For publishers, `python tools/build_release.py --build --channel stable --version X.Y.Z` creates a Stable asset, and `--channel beta --version X.Y.Z-beta.N` includes Beta features. Both contain only Manager and declared framework payloads. The release workflow tests update/install contracts, builds selected code and checks the standalone Manager before publishing. Pushes to `master` create Beta releases; stable version tags create Stable releases. Never include copied clients, native servers, databases or owner settings.
+
+### Local-only Mods
+
+An owner-only Mod stays in a separate private repository. Its `[mod]` manifest uses
+`distribution=local_only`, its `manager.json` uses `"distribution": "local_only"`,
+the repository `distribution.json` uses `{"distribution":"local_only",
+"redistributable":false}`, every private `.cpp`/`.h` starts with the framework's
+local-source marker, and its runtime binary carries the framework non-redistributable
+marker. Manager can install and configure it on the owner's selected client, labels it
+as local-only, and refuses to treat it as exportable.
+
+Every Mod bundled by this public repository explicitly declares `public` in both
+manifests. `tools/distribution_guard.py` checks source commits, staged directories and
+ZIP archives. It also scans every distinct blob in an outgoing Git range, including a
+private file added and deleted before the final commit. The catalog builder, frozen
+Manager build, Manager download responses, package script, release builder and update
+reader repeat the fail-closed checks, so renaming a DLL or deleting one manifest does
+not make a local-only payload publishable.
+
+```powershell
+python tools/distribution_guard.py --git-index
+python tools/distribution_guard.py --git-tree HEAD
+python tools/distribution_guard.py --git-range origin/master..HEAD
+python tools/distribution_guard.py --source-path .
+python tools/distribution_guard.py --path build\public-package
+python tools/distribution_guard.py --archive dist\SDGO-ModFramework-X.Y.Z.zip
+```
+
+For an older client repository whose public Mods predate the distribution fields,
+Git hooks may add `--allow-legacy-public`. This accepts only a fully undeclared legacy
+pair and still rejects local-only declarations, mismatches, repository/source markers
+and marked binary bytes. Public framework source, Manager builds and packages use the
+strict commands above.

@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "findwindow_fix",
   "title": "输入法兼容修复",
   "category": "fixes",

@@ -561,9 +561,10 @@ class AiCatalogTests(unittest.TestCase):
         repo = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "portable release fixture"
-            for name in ("tools", "backend", "docs", "mods/ime_fix", "third_party/minhook"):
+            for name in ("tools", "manager", "backend", "docs", "mods/ime_fix", "third_party/minhook"):
                 (root / name).mkdir(parents=True)
-            for name in ("tools/package.ps1", "tools/mod_catalog.py", "README.md", "README.zh-CN.md",
+            for name in ("tools/package.ps1", "tools/mod_catalog.py", "tools/distribution_guard.py",
+                         "manager/distribution.py", "README.md", "README.zh-CN.md",
                          "mods/ime_fix/mod.ini", "docs/ime-fix.md", "LICENSE", "THIRD_PARTY_NOTICES.md"):
                 shutil.copyfile(repo / name, root / name)
             for name in ("install_client.ps1", "install_server.ps1", "install_common.ps1"):

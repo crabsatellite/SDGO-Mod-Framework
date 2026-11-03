@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "daily_rewards",
   "title": "每日双倍奖励",
   "category": "gameplay",

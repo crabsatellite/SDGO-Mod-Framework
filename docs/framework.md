@@ -65,6 +65,7 @@ AgentServer.exe / WorldServer.exe ──> winmm.dll (same server loader)
     symbols\<host key>.ini      one per supported exe build (files for other hosts are ignored)
     mods\<id>\mod.ini           manifest + [settings]
     mods\<id>\<id>.dll          (+ any files the mod reads, located with ModDirectory)
+    mods\<id>\symbols.fragment.ini  optional symbols visible only to this Mod
     mods\<id>\config.ini        optional user settings, supported by the network mods
     logs\sdgo.log, sdgo.prev.log
 ```
@@ -87,6 +88,15 @@ Mods never patch raw addresses. They ask the core for named symbols, and the cor
 out addresses whose bytes match what was recorded for that exact build. A different build
 or a conflicting patch therefore disables the mods that depend on the changed code, instead
 of crashing the process.
+
+The shared `sdgo/symbols/<host key>.ini` is the public symbol table. An independently
+installed Mod may instead ship `symbols.fragment.ini` beside its `mod.ini`. The fragment is
+loaded only for that Mod; its names are not visible to other Mods and it does not modify the
+shared table. Its `[host]` section must give the exact executable `image`, `timestamp`, and
+`size_of_image`. Every entry must verify. A wrong host, malformed or rejected entry, a
+different definition for a shared name or address rejects the complete fragment and skips
+that Mod. Repeating or renaming an equivalent shared binding is allowed for compatibility
+with packages that already carry feature-specific aliases.
 
 `symbols/<host key>.ini`:
 
@@ -166,6 +176,11 @@ MySetting=1
 A mod is loaded when it is enabled, its `api` is supported, the running host key is listed
 in `hosts`, and every symbol in `requires` verified. The reason for skipping a mod is
 logged.
+
+List `symbols.fragment.ini` in `files=` when the Mod supplies Mod-specific native bindings. The
+core checks the fragment before resolving `requires=` and before loading the DLL. A required
+name resolves in the owning Mod's fragment first, then the shared table. Omitting the fragment
+keeps the existing shared-table behavior.
 
 `[categories] <category>=0` and `[features] <feature>=0` in `sdgo.ini` disable the
 whole group on that host. They cannot override `enabled=0` or `[mods] <id>=0`.
