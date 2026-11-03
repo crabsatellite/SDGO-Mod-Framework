@@ -25,7 +25,7 @@ Install using the [normal framework installers](setup.md), including
 `install_server.ps1 -Role Agent` for Agent folders. With the relevant processes
 stopped, turn on **长房名 · 客户端**, **长房名 · Agent** and **长房名 · 对战服** in
 SDGO Mod Manager, then start them. Owners distribute the enabled client Mod with
-their ordinary client package (`update.bat` for friend servers); players start the
+their ordinary client package or update; players start the
 game normally. No computer-specific configuration belongs in it.
 
 Open the room-title button in the waiting room to edit the title in the native

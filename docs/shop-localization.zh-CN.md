@@ -9,7 +9,7 @@
 
 ## 使用
 
-`shop_localization` 是客户端 Mod，通过 `update.bat` 等现有更新方式分发，更新后重启游戏即可。
+`shop_localization` 是客户端 Mod，玩家通过服主提供的客户端包或更新获得，更新后重启游戏即可。
 SDGO Mod Manager 的「商城中文汉化」提供五个开关，默认全部开启，修改后重启游戏生效：
 
 | 开关 | 作用 |

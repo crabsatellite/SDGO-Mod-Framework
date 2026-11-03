@@ -76,7 +76,7 @@ and checked on every observation.
 ## Install
 
 Requires the framework; client `GOnline-54BE1568-00C97000`, server `BattleServer-548A891D-0046C000`.
-Friend-server players receive the client part through `update.bat`. Manual install, with the copy stopped:
+Players receive the client part with the server owner's client package or update. Manual install, with the copy stopped:
 
 ```powershell
 ./tools/install_battle_ai.ps1 -GameDir D:/Games/SDGO -Source ./build/stage/Release/client

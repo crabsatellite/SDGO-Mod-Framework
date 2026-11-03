@@ -144,7 +144,7 @@ PvP 机器人；原生任务、原生 AI 模式和 Boss 不受影响。机体等
 ## 安装
 
 先安装本项目 Mod 框架。客户端支持 `GOnline-54BE1568-00C97000`，服务端支持 `BattleServer-548A891D-0046C000`。
-朋友服玩家通过 `update.bat` 获得客户端部分。手动安装时关闭要更新的那一份副本后运行：
+玩家通过服主提供的客户端包或更新获得客户端部分。手动安装时关闭要更新的那一份副本后运行：
 
 ```powershell
 ./tools/install_battle_ai.ps1 -GameDir D:/Games/SDGO -Source ./build/stage/Release/client

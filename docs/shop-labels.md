@@ -13,8 +13,8 @@ the server's shop catalog. Prices, currency, durations and purchases are unchang
 
 ## Install
 
-It is installed with the core fixes of the client framework, and friend-server players receive it
-through `update.bat`. A standalone `SDGO-ShopLabels-Patch` package with its own `Install.ps1` is also
+It is installed with the core fixes of the client framework, so players receive it with their server
+owner's client package or update. A standalone `SDGO-ShopLabels-Patch` package with its own `Install.ps1` is also
 available; see the [Chinese guide](shop-labels.zh-CN.md).
 
 ## Settings

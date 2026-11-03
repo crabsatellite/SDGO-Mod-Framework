@@ -40,7 +40,7 @@ containing `DB Game` and `DB Member` (same SQL instance) and install or update. 
 working; the panel can check the installed procedure hashes and restore the original procedure. No game
 server restart is needed.
 
-**Client:** friend-server players update with `update.bat`. The Full framework package includes this mod
+**Client:** players receive it with the server owner's client package or update. The Full framework package includes this mod
 (Base does not). Alternatively import the mod's overlay with **导入客户端配置包** in the Manager, or close
 the client and run `install_hangar.ps1 -GameDir "D:\Games\SDGO"` from the standalone package
 (`-RefreshRules` refreshes the reward preview rules). Supported client: `GOnline-54BE1568-00C97000`.
