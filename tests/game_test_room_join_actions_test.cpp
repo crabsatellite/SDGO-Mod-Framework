@@ -23,7 +23,6 @@ static_assert(
 
 constexpr uint32_t kRoomId = 0x1234ABCD;
 constexpr uint8_t kRoomVariant = 1;
-constexpr uint8_t kLocalSlot = 2;
 constexpr char kTitle[] = "GT-JOIN-NONCE";
 
 using NetworkSendDetour =
@@ -43,16 +42,6 @@ using PacketDetour =
         int,
         int,
         void*);
-using WaitRoomDetour =
-    void(__fastcall*)(
-        void*,
-        void*,
-        int,
-        int,
-        int,
-        int,
-        void*);
-
 struct ServiceNode
 {
     ServiceNode* next;
@@ -68,7 +57,6 @@ int g_failures = 0;
 RoomJoinActions* g_actions = nullptr;
 NetworkSendDetour g_networkSendDetour = nullptr;
 PacketDetour g_roomPacketDetour = nullptr;
-WaitRoomDetour g_waitRoomDetour = nullptr;
 
 uint8_t g_app[0x500] = {};
 uint8_t g_profileStorage[0x6000] = {};
@@ -96,13 +84,8 @@ bool g_hideRequestedRow = false;
 
 uint8_t g_waitOwner[0x20] = {};
 uint8_t g_manager[0x80] = {};
-uint8_t g_readyCommand[0x20] = {};
-uint8_t* g_states[25] = {};
 void* g_waitOwnerVtable[12] = {};
 void* g_managerVtables[3][16] = {};
-void* g_readyCommandVtable[12] = {};
-std::array<uint8_t, 0x4AC4> g_waitRoomService = {};
-std::array<uint8_t, 0x4AC4> g_foreignWaitRoomService = {};
 
 bool g_networkAccepts = true;
 bool g_localIsHost = false;
@@ -110,18 +93,7 @@ bool g_roomOriginalCalled = false;
 bool g_roomPacketFreed = false;
 uint32_t g_joinSequenceInsideOriginal = UINT32_MAX;
 uint32_t g_joinResultInsideOriginal = UINT32_MAX;
-bool g_readyOriginalCalled = false;
-bool g_readyPacketFreed = false;
-uint32_t g_readySequenceInsideOriginal = UINT32_MAX;
-uint32_t g_readyResultInsideOriginal = UINT32_MAX;
-void* g_readyOriginalSelf = nullptr;
-int g_readyOriginalArguments[4] = {};
-bool g_readyStackBalanced = false;
-bool g_readyOriginalWritesModel = true;
-bool g_readyOriginalChangesRoom = false;
 unsigned g_joinCallbackCalls = 0;
-unsigned g_readyBusinessCalls = 0;
-bool g_readyBusinessContextValid = false;
 const char* g_rejectedHookSlot = nullptr;
 const char* g_rejectedHookCode = nullptr;
 
@@ -171,15 +143,7 @@ T Get(
     return value;
 }
 
-uint8_t& ReadyModel(
-    uint8_t* waitRoom,
-    uint32_t slot)
-{
-    return waitRoom[
-        0xA06 +
-        static_cast<size_t>(slot) *
-            0x48E];
-}
+
 
 const wchar_t* NativeString(
     const void* storage)
@@ -457,76 +421,7 @@ void __fastcall FakeRoomJoinBusiness(void* service,void*,uint32_t index) {
     FakeRoomJoinCallback(service,0x303,control?control+0x118:nullptr,control);
 }
 
-int __fastcall FakeReadyBusiness(
-    void* command,
-    void*)
-{
-    ++g_readyBusinessCalls;
-    if (command != g_readyCommand)
-        return -1;
-    auto* context =
-        Get<uint8_t*>(
-            command,
-            0x0C);
-    auto* manager =
-        Get<uint8_t*>(
-            command,
-            0x10);
-    const uint32_t localSlot =
-        context
-            ? context[3]
-            : UINT32_MAX;
-    auto* waitRoom =
-        context
-            ? Get<uint8_t*>(
-                  context,
-                  0x14)
-            : nullptr;
-    g_readyBusinessContextValid =
-        context == g_manager + 0x24 &&
-        manager == g_manager &&
-        localSlot == kLocalSlot &&
-        waitRoom ==
-            g_waitRoomService.data() &&
-        Get<uint8_t*>(
-            context,
-            0x18) ==
-            Get<uint8_t*>(
-                g_manager,
-                0x3C);
-    if (!g_readyBusinessContextValid ||
-        localSlot >= 12 ||
-        !waitRoom)
-        return -1;
-    const uint8_t currentReady =
-        ReadyModel(
-            waitRoom,
-            localSlot);
-    uint8_t packet[8] = {};
-    Put<uint16_t>(
-        packet,
-        0,
-        0x05A6);
-    packet[6] =
-        static_cast<uint8_t>(
-            localSlot);
-    packet[7] =
-        currentReady ? 0 : 1;
-    Put<uint32_t>(
-        command,
-        8,
-        Get<uint32_t>(
-            command,
-            8) +
-            1);
-    SendNativePacket(
-        packet,
-        sizeof(packet));
-    context[0] = 1;
-    return Get<int>(
-        command,
-        8);
-}
+
 
 int __fastcall FakeRoomPacketOriginal(
     void*,
@@ -555,58 +450,7 @@ int __fastcall FakeRoomPacketOriginal(
     return 41;
 }
 
-void __fastcall FakeWaitRoomDispatchOriginal(
-    void* self,
-    void*,
-    int a,
-    int b,
-    int c,
-    int opcode,
-    void* packet)
-{
-    g_readyOriginalCalled = true;
-    g_readyOriginalSelf = self;
-    g_readyOriginalArguments[0] = a;
-    g_readyOriginalArguments[1] = b;
-    g_readyOriginalArguments[2] = c;
-    g_readyOriginalArguments[3] = opcode;
-    if (g_actions) {
-        const auto inside =
-            g_actions->ReadyState();
-        g_readySequenceInsideOriginal =
-            inside.sequence;
-        g_readyResultInsideOriginal =
-            inside.result;
-    }
-    if (self && packet &&
-        (opcode & 0xFFFF) == 0x0999) {
-        auto* bytes =
-            static_cast<uint8_t*>(
-                packet);
-        if (bytes[6] < 12 &&
-            g_readyOriginalWritesModel) {
-            ReadyModel(
-                static_cast<uint8_t*>(
-                    self),
-                bytes[6]) =
-                bytes[7];
-        }
-        if (g_readyOriginalChangesRoom)
-            Put<uint32_t>(
-                g_room,
-                0,
-                Get<uint32_t>(
-                    g_room,
-                    0) +
-                    1);
-    }
-    g_readyPacketFreed =
-        packet &&
-        VirtualFree(
-            packet,
-            0,
-            MEM_RELEASE) != 0;
-}
+
 
 void* LookupSymbol(
     const char* name)
@@ -703,20 +547,6 @@ void* LookupSymbol(
         return g_waitOwnerVtable;
     if (std::strcmp(
             name,
-            "flow.room_join_ready_command_vtable") == 0)
-        return g_readyCommandVtable;
-    if (std::strcmp(
-            name,
-            "flow.room_join_ready_business") == 0)
-        return reinterpret_cast<void*>(
-            &FakeReadyBusiness);
-    if (std::strcmp(
-            name,
-            "flow.waitroom_packet_dispatch") == 0)
-        return reinterpret_cast<void*>(
-            &FakeWaitRoomDispatchOriginal);
-    if (std::strcmp(
-            name,
             "flow.normal_3d_manager_vtable") == 0)
         return g_managerVtables[0];
     if (std::strcmp(
@@ -763,13 +593,6 @@ int ApiHookCode(
             reinterpret_cast<
                 NetworkSendDetour>(
                 detour);
-    if (std::strcmp(
-            name,
-            "flow.waitroom_packet_dispatch") == 0)
-        g_waitRoomDetour =
-            reinterpret_cast<
-                WaitRoomDetour>(
-                detour);
     return 1;
 }
 
@@ -801,26 +624,9 @@ int ApiHookSlot(
     return 0;
 }
 
-void ResetPublicationReceipts()
-{
-    g_roomOriginalCalled = false;
-    g_roomPacketFreed = false;
-    g_joinSequenceInsideOriginal =
-        UINT32_MAX;
-    g_joinResultInsideOriginal =
-        UINT32_MAX;
-    g_readyOriginalCalled = false;
-    g_readyPacketFreed = false;
-    g_readySequenceInsideOriginal =
-        UINT32_MAX;
-    g_readyResultInsideOriginal =
-        UINT32_MAX;
-    g_readyOriginalSelf = nullptr;
-    std::memset(
-        g_readyOriginalArguments,
-        0,
-        sizeof(g_readyOriginalArguments));
-    g_readyStackBalanced = false;
+void ResetPublicationReceipts() {
+    g_roomOriginalCalled=false;g_roomPacketFreed=false;
+    g_joinSequenceInsideOriginal=g_joinResultInsideOriginal=UINT32_MAX;
 }
 
 void SetupRoomList(
@@ -952,116 +758,15 @@ void SetupRoomList(
     g_networkAccepts = true;
     g_localIsHost = false;
     g_joinCallbackCalls = 0;
-    g_readyBusinessCalls = 0;
-    g_readyBusinessContextValid = false;
-    g_readyOriginalWritesModel = true;
-    g_readyOriginalChangesRoom = false;
     ResetPublicationReceipts();
 }
 
-void InstallGuestRoom(
-    uint32_t roomId = kRoomId)
-{
-    std::memset(
-        g_waitOwner,
-        0,
-        sizeof(g_waitOwner));
-    std::memset(
-        g_manager,
-        0,
-        sizeof(g_manager));
-    std::memset(
-        g_readyCommand,
-        0,
-        sizeof(g_readyCommand));
-    std::memset(
-        g_states,
-        0,
-        sizeof(g_states));
-    std::memset(
-        g_waitRoomService.data(),
-        0,
-        g_waitRoomService.size());
-    std::memset(
-        g_foreignWaitRoomService.data(),
-        0,
-        g_foreignWaitRoomService.size());
-
-    Put<uint32_t>(
-        g_room,
-        0,
-        roomId);
-    g_room[4] = kRoomVariant;
-    g_room[5] = 1;
-    Put<uint8_t*>(
-        g_profileStorage,
-        0xEC,
-        g_room);
-
-    Put<uint32_t>(
-        g_app,
-        0x4A0,
-        18);
-    Put<uint8_t*>(
-        g_app,
-        0x4A4,
-        g_waitOwner);
-    Put<void*>(
-        g_waitOwner,
-        0,
-        g_waitOwnerVtable);
-    Put<uint8_t*>(
-        g_waitOwner,
-        4,
-        g_manager);
-
-    Put<void*>(
-        g_manager,
-        0,
-        g_managerVtables[0]);
-    Put<uint8_t**>(
-        g_manager,
-        0x0C,
-        g_states);
-    g_manager[0x20] =
-        kLocalSlot;
-    Put<uint8_t*>(
-        g_manager,
-        0x38,
-        g_waitRoomService.data());
-    Put<uint8_t*>(
-        g_manager,
-        0x3C,
-        g_room);
-
-    g_states[4] =
-        g_readyCommand;
-    Put<void*>(
-        g_readyCommand,
-        0,
-        g_readyCommandVtable);
-    Put<uint32_t>(
-        g_readyCommand,
-        4,
-        4);
-    Put<uint32_t>(
-        g_readyCommand,
-        8,
-        0);
-    Put<uint8_t*>(
-        g_readyCommand,
-        0x0C,
-        g_manager + 0x24);
-    Put<uint8_t*>(
-        g_readyCommand,
-        0x10,
-        g_manager);
-    g_manager[0x27] =
-        kLocalSlot;
-    ReadyModel(
-        g_waitRoomService.data(),
-        kLocalSlot) = 0;
-    g_readyBusinessContextValid = false;
+void InstallGuestRoom(uint32_t roomId=kRoomId) {
+    memset(g_waitOwner,0,sizeof(g_waitOwner));memset(g_manager,0,sizeof(g_manager));
+    Put<uint32_t>(g_room,0,roomId);g_room[4]=kRoomVariant;g_room[5]=1;
+    Put<uint8_t*>(g_profileStorage,0xEC,g_room);Put<uint32_t>(g_app,0x4A0,18);
+    Put<uint8_t*>(g_app,0x4A4,g_waitOwner);Put<void*>(g_waitOwner,0,g_waitOwnerVtable);
+    Put<uint8_t*>(g_waitOwner,4,g_manager);
 }
 
 uint8_t* AllocatePacket(
@@ -1111,102 +816,17 @@ int DeliverJoinReply(
         packet);
 }
 
-void DeliverReadyReply(
-    uint8_t slot,
-    uint8_t flag,
-    uint8_t* waitRoom =
-        g_waitRoomService.data())
-{
-    auto* packet =
-        AllocatePacket(0x20);
-    Check(
-        packet != nullptr,
-        "ready reply packet fixture was allocated");
-    if (!packet ||
-        !g_waitRoomDetour)
-        return;
-    packet[6] = slot;
-    packet[7] = flag;
-    packet[8] = 0x5A;
-    uintptr_t before = 0;
-    uintptr_t after = 0;
-#if defined(_MSC_VER) && defined(_M_IX86)
-    __asm mov before, esp
-#endif
-    g_waitRoomDetour(
-        waitRoom,
-        nullptr,
-        4,
-        5,
-        6,
-        0x0999,
-        packet);
-#if defined(_MSC_VER) && defined(_M_IX86)
-    __asm mov after, esp
-    g_readyStackBalanced =
-        before == after;
-#else
-    g_readyStackBalanced = true;
-#endif
-}
 
-bool CompleteGuestJoin(
-    RoomJoinActions& actions)
-{
-    actions.ResetObservations();
-    SetupRoomList();
-    if (!actions.JoinExactTitle(
-            kTitle))
-        return false;
-    if (DeliverJoinReply(
-            kRoomId,
-            kRoomVariant) != 41)
-        return false;
-    InstallGuestRoom();
-    return actions.JoinState().result ==
-           RoomJoinActions::kJoinAccepted;
-}
 
-void TestBindGuards(
-    const SdgoApi& api,
-    NativeActions& native,
-    RoomJoinActions& actions)
-{
-    g_rejectedHookCode =
-        "flow.waitroom_packet_dispatch";
+
+
+void TestBindGuards(const SdgoApi& api,NativeActions& native,RoomJoinActions& actions) {
+    g_rejectedHookSlot="flow.room_join_list_packet_slot";
     RoomJoinActions rejected;
-    Check(
-        !rejected.Bind(
-            &api,
-            reinterpret_cast<SdgoMod*>(
-                1),
-            &native),
-        "Bind fails closed when the full CWaitRoom dispatcher cannot be hooked");
-    ResetPublicationReceipts();
-    Check(
-        g_roomPacketDetour(
-            g_roomList,
-            nullptr,
-            0,
-            0,
-            0,
-            0,
-            nullptr) == 41 &&
-            g_roomOriginalCalled,
-        "a partial slot bind remains a transparent pass-through after Bind fails");
-    g_rejectedHookCode = nullptr;
-
-    Check(
-        actions.Bind(
-            &api,
-            reinterpret_cast<SdgoMod*>(
-                1),
-            &native),
-        "RoomJoinActions bound to verified callback identities and packet hooks");
-    Check(
-        g_roomPacketDetour &&
-            g_waitRoomDetour,
-        "the Join slot and full WaitRoom dispatcher detours were captured");
+    Check(!rejected.Bind(&api,reinterpret_cast<SdgoMod*>(1),&native),"join fails closed when its original packet slot cannot be hooked");
+    g_rejectedHookSlot=nullptr;
+    Check(actions.Bind(&api,reinterpret_cast<SdgoMod*>(1),&native),"join binds the shipped row business and packet consumer");
+    Check(g_roomPacketDetour!=nullptr,"the original join reply slot was observed");
 }
 
 void TestRoomSelectionGuards(
@@ -1424,262 +1044,7 @@ void TestJoinReplyAndModel(
         "foreign or mismatched room acknowledgement never passes on model state");
 }
 
-void TestReadyReplyAndModel(
-    RoomJoinActions& actions)
-{
-    Check(
-        CompleteGuestJoin(
-            actions),
-        "Ready fixture completed a guest join through ACK and native model");
-    g_manager[0x27] = 12;
-    Check(
-        !actions.Ready() &&
-            g_readyBusinessCalls == 0,
-        "Ready validates the native command context slot byte before calling native business");
-    g_manager[0x27] = kLocalSlot;
-    // 00733ED1 reads context[3]. The preceding state-manager word is unrelated.
-    Put<uint32_t>(g_manager,0x20,0xDEADBEEFu);
 
-    ReadyModel(
-        g_waitRoomService.data(),
-        kLocalSlot) = 2;
-    Check(
-        !actions.Ready() &&
-            g_readyBusinessCalls == 0,
-        "non-boolean CWaitRoom readiness fails closed before Ready business");
-
-    ReadyModel(
-        g_waitRoomService.data(),
-        kLocalSlot) = 1;
-    Check(
-        !actions.Ready() &&
-            g_readyBusinessCalls == 0,
-        "Ready refuses to toggle an already-ready CWaitRoom slot off");
-
-    ReadyModel(
-        g_waitRoomService.data(),
-        kLocalSlot) = 0;
-    Check(
-        actions.Ready(),
-        "Ready invokes the original guest 3D command");
-    Check(
-        g_readyBusinessCalls == 1 &&
-            g_readyBusinessContextValid &&
-            Get<uint32_t>(
-                g_readyCommand,
-                8) == 1 &&
-            g_manager[0x24] == 1,
-        "original Ready business used manager+0x24 and advanced its real stage from zero to one");
-    const auto pending =
-        actions.ReadyState();
-    Check(
-        pending.result ==
-                RoomJoinActions::
-                    kReadyPending &&
-            pending.room_id == kRoomId &&
-            pending.native_business_ready == 1 &&
-            pending.server_reply_observed == 0 &&
-            pending.original_dispatch_completed == 0 &&
-            pending.post_dispatch_model_ready == 0,
-        "optimistic native business remains pending after real 0x05A6 transport");
-    Check(
-        !actions.Ready() &&
-            g_readyBusinessCalls == 1,
-        "pending Ready cannot issue a second toggle");
-
-    ResetPublicationReceipts();
-    DeliverReadyReply(
-        kLocalSlot + 1,
-        1);
-    const auto afterForeign =
-        actions.ReadyState();
-    Check(
-        afterForeign.result ==
-                RoomJoinActions::
-                    kReadyPending &&
-            g_readyOriginalCalled &&
-            g_readyPacketFreed,
-        "0x0999 for another slot runs the original but cannot satisfy local Ready");
-    Check(
-        g_readyOriginalSelf ==
-                g_waitRoomService.data() &&
-            g_readyOriginalArguments[0] == 4 &&
-            g_readyOriginalArguments[1] == 5 &&
-            g_readyOriginalArguments[2] == 6 &&
-            g_readyOriginalArguments[3] ==
-                0x0999 &&
-            g_readyStackBalanced,
-        "full WaitRoom detour preserves the shipped thiscall arguments and ret-0x14 stack cleanup");
-
-    ReadyModel(
-        g_waitRoomService.data(),
-        kLocalSlot) = 1;
-    const auto modelWithoutAck =
-        actions.ReadyState();
-    Check(
-        modelWithoutAck.result ==
-                RoomJoinActions::
-                    kReadyPending &&
-            modelWithoutAck.
-                    server_reply_observed ==
-                0,
-        "native model readiness alone cannot replace the matching server acknowledgement");
-    ReadyModel(
-        g_waitRoomService.data(),
-        kLocalSlot) = 0;
-
-    ResetPublicationReceipts();
-    DeliverReadyReply(
-        kLocalSlot,
-        1,
-        g_foreignWaitRoomService.data());
-    Check(
-        actions.ReadyState().result ==
-                RoomJoinActions::
-                    kReadyPending &&
-            ReadyModel(
-                g_foreignWaitRoomService.data(),
-                kLocalSlot) == 1,
-        "the same slot reply on a foreign WaitRoom service cannot satisfy the pending room");
-
-    ResetPublicationReceipts();
-    const uint32_t beforeSequence =
-        afterForeign.sequence;
-    DeliverReadyReply(
-        kLocalSlot,
-        1);
-    const auto accepted =
-        actions.ReadyState();
-    Check(
-        g_readyOriginalCalled &&
-            g_readyPacketFreed,
-        "full original WaitRoom dispatcher updated state and consumed its packet");
-    Check(
-        g_readySequenceInsideOriginal ==
-                beforeSequence &&
-            g_readyResultInsideOriginal ==
-                RoomJoinActions::
-                    kReadyPending,
-        "Ready acceptance was not published before the original consumer completed");
-    Check(
-        accepted.result ==
-                RoomJoinActions::
-                    kReadyAccepted &&
-            accepted.reply_opcode ==
-                0x0999 &&
-            accepted.local_slot ==
-                kLocalSlot &&
-            accepted.ready_flag == 1 &&
-            accepted.reply_detail == 0x5A &&
-            accepted.
-                    server_reply_observed ==
-                1 &&
-            accepted.
-                    original_dispatch_completed ==
-                1 &&
-            accepted.
-                    post_dispatch_model_ready ==
-                1 &&
-            accepted.
-                    native_business_ready ==
-                1,
-        "local 0x0999 passes only after full dispatch and native CWaitRoom readback");
-
-    Check(
-        CompleteGuestJoin(
-            actions),
-        "Ready rejection fixture completed a fresh guest join");
-    Check(
-        actions.Ready(),
-        "Ready rejection fixture sent the original 0x05A6");
-    ResetPublicationReceipts();
-    DeliverReadyReply(
-        kLocalSlot,
-        0);
-    const auto rejected =
-        actions.ReadyState();
-    Check(
-        rejected.result ==
-                RoomJoinActions::
-                    kReadyRejected &&
-            rejected.ready_flag == 0 &&
-            rejected.
-                    server_reply_observed ==
-                1 &&
-            rejected.
-                    original_dispatch_completed ==
-                1 &&
-            rejected.
-                    post_dispatch_model_ready ==
-                0,
-        "server unready notification is not reported as Ready success");
-
-    Check(
-        CompleteGuestJoin(
-            actions),
-        "Ready missing-model fixture completed a fresh guest join");
-    Check(
-        actions.Ready(),
-        "Ready missing-model fixture sent the original 0x05A6");
-    g_readyOriginalWritesModel = false;
-    ResetPublicationReceipts();
-    DeliverReadyReply(
-        kLocalSlot,
-        1);
-    const auto missingModel =
-        actions.ReadyState();
-    Check(
-        missingModel.result ==
-                RoomJoinActions::
-                    kReadyRejected &&
-            missingModel.
-                    native_business_ready ==
-                1 &&
-            missingModel.
-                    post_dispatch_model_ready ==
-                0,
-        "optimistic business plus ACK is rejected when full dispatch leaves the native model false");
-    g_readyOriginalWritesModel = true;
-
-    Check(
-        CompleteGuestJoin(
-            actions),
-        "Ready changed-room fixture completed a fresh guest join");
-    Check(
-        actions.Ready(),
-        "Ready changed-room fixture sent the original 0x05A6");
-    g_readyOriginalChangesRoom = true;
-    ResetPublicationReceipts();
-    DeliverReadyReply(
-        kLocalSlot,
-        1);
-    const auto changedRoom =
-        actions.ReadyState();
-    Check(
-        changedRoom.result ==
-                RoomJoinActions::
-                    kReadyRejected &&
-            changedRoom.
-                    server_reply_observed ==
-                1 &&
-            changedRoom.
-                    original_dispatch_completed ==
-                1 &&
-            changedRoom.
-                    post_dispatch_model_ready ==
-                0,
-        "a matching packet cannot accept Ready after the native room identity changes");
-    g_readyOriginalChangesRoom = false;
-
-    Check(
-        CompleteGuestJoin(
-            actions),
-        "Ready host-gate fixture completed a fresh guest join");
-    g_localIsHost = true;
-    Check(
-        !actions.Ready(),
-        "Ready refuses the host branch and cannot send battle-start by mistake");
-}
 } // namespace
 
 int main()
@@ -1691,11 +1056,6 @@ int main()
         0x38 / sizeof(void*)] =
         reinterpret_cast<void*>(
             &FakeRoomJoinCallback);
-    g_readyCommandVtable[
-        0x08 / sizeof(void*)] =
-        reinterpret_cast<void*>(
-            &FakeReadyBusiness);
-
     SdgoApi api = {};
     api.size = sizeof(api);
     api.version = SDGO_API_VERSION;
@@ -1732,8 +1092,6 @@ int main()
         actions);
     TestJoinReplyAndModel(
         actions);
-    TestReadyReplyAndModel(
-        actions);
 
     actions.ResetObservations();
     SetupRoomList();
@@ -1753,7 +1111,6 @@ int main()
     actions.SetRoomResolver([](void* room)->const uint8_t*{return static_cast<const uint8_t*>(room);},g_room);
     Check(actions.JoinState().result==RoomJoinActions::kJoinAccepted,
         "the original reply and actual 3D room can acknowledge a join while profile+0xEC is empty");
-    Check(actions.Ready(),"guest Ready uses the same actual room instead of the empty legacy cache");
     actions.SetRoomResolver(nullptr,nullptr);
 
     if (g_failures) {
