@@ -1874,7 +1874,9 @@ SDGO_MOD_ENTRY {
     if (!api->HookImport(mod, "user32.dll", "FindWindowW", reinterpret_cast<void*>(&FindOwnInstance), reinterpret_cast<void**>(&originalFindWindow)) ||
         !api->HookCode(mod, "test.client_update", reinterpret_cast<void*>(&Update), reinterpret_cast<void**>(&originalUpdate)))
         return 0;
-    if (verifyQuietRuntime && !quietGraphics.Install(api,mod,fpsOnly))return 0;
+    const bool namedProxyAllowed=fpsOnly ||
+        (quietLoopback&&verifyDirectNetwork&&!verifyRoutedNetwork&&!missionMode);
+    if (verifyQuietRuntime && !quietGraphics.Install(api,mod,namedProxyAllowed))return 0;
     PublishQuietSocketReceipt();
     api->Log(mod, SDGO_LOG_INFO, fpsOnly ? "observing native FPS cap and cadence without authentication":"observing normal launcher/login/room/battle flow");
     return 1;

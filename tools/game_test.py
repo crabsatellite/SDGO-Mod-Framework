@@ -687,6 +687,19 @@ def validate_muted_audio(root: Path) -> None:
         raise GameTestError(f'quiet test audio policy failed before launch: {error}') from error
 
 
+def allow_named_desktop_fallback(metadata: dict) -> bool:
+    if metadata.get('suite') == FPS_SUITE:
+        return True
+    plan = metadata.get('plan', {})
+    if (metadata.get('suite') != 'pvp-ai-normal-flow' or
+        plan.get('quiet') is not True or plan.get('network_policy') != 'direct'):
+        return False
+    try:
+        return ipaddress.IPv4Address(plan.get('target_host', '')).is_loopback
+    except ipaddress.AddressValueError:
+        return False
+
+
 class QuietRuntime:
     def __init__(self,metadata: dict,receipt_dir: Path):
         self.metadata=metadata;self.directory=receipt_dir;self.process=None;self.firewall=None;self.firewall_attempted=False
@@ -732,7 +745,7 @@ class QuietRuntime:
         module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
         self.process=module.WindowsBackgroundProcess(arguments,cwd=kwargs['cwd'],env=kwargs['env'],
             stdout=kwargs['stdout'],stderr=kwargs['stderr'],run_id=self.metadata['run_id'],
-            allow_named_desktop_fallback=self.metadata.get('suite')==FPS_SUITE)
+            allow_named_desktop_fallback=allow_named_desktop_fallback(self.metadata))
         return self.process
 
     def verify(self,pid: int) -> dict | None:
@@ -763,8 +776,8 @@ class QuietRuntime:
         if proof.get('verified') and proof.get('isolation_safe',True) is not True:
             raise GameTestError('quiet desktop isolation proof is internally inconsistent')
         if (proof.get('isolation_mode')=='private_desktop_with_hidden_default_proxy' and
-            self.metadata.get('suite')!=FPS_SUITE):
-            raise GameTestError('named-desktop fallback is restricted to the native FPS suite')
+            not allow_named_desktop_fallback(self.metadata)):
+            raise GameTestError('named-desktop fallback requires FPS or local direct PvP isolation')
         if self.proof_file_written and (proof.get('input_desktop_unchanged') is False or
             proof.get('unexpected_input_window_count',0)>0 or
             (proof.get('input_desktop_safe') is False and proof.get('input_target_window_count',0)>0)):
