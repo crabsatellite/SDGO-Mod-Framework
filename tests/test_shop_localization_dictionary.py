@@ -54,5 +54,26 @@ class WordCompiler(unittest.TestCase):
         self.assertIn('Text=名称\\n第二行',output)
         self.assertEqual(compiler.escape('truncated '),'truncated\\s')
 
+    def test_literal_line_markers_gain_exact_runtime_lf_aliases(self):
+        words,report=compiler.compile_words(
+            self.terms(),
+            extra={'description':{'บรรทัดหนึ่ง\\nบรรทัดสอง':'第一行\\n第二行'}},
+        )
+        self.assertEqual(words['บรรทัดหนึ่ง\\nบรรทัดสอง'],words['บรรทัดหนึ่ง\nบรรทัดสอง'])
+        self.assertEqual(report['runtime_newline_aliases'],1)
+        output=compiler.encode(words).decode('utf-8')
+        self.assertIn('Source=บรรทัดหนึ่ง\\\\nบรรทัดสอง',output)
+        self.assertIn('Source=บรรทัดหนึ่ง\\nบรรทัดสอง',output)
+
+    def test_runtime_lf_alias_refuses_a_different_authored_translation(self):
+        with self.assertRaisesRegex(ValueError,'Conflicting runtime newline alias'):
+            compiler.compile_words(
+                self.terms(),
+                extra={'description':{
+                    'บรรทัดหนึ่ง\\nบรรทัดสอง':'第一行',
+                    'บรรทัดหนึ่ง\nบรรทัดสอง':'不同译文',
+                }},
+            )
+
 
 if __name__=='__main__':unittest.main()

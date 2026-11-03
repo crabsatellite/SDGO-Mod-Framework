@@ -7,7 +7,7 @@
     "client"
   ],
   "provider": "shop",
-  "description": "商城中显示租赁/永久标签和中文选项名。",
+  "description": "显示商城租赁/永久、实际数量和中文选项名；悬停有效期采用紧凑格式，保留价格与原生数值。",
   "settings": [
     {
       "id": "showpermanent",

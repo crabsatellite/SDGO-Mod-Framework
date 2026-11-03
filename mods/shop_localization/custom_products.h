@@ -53,7 +53,7 @@ class CustomProducts {
     struct Pair {uint32_t id;Box* box;};
     struct InsertResult {void* node;uint8_t inserted;uint8_t padding[3];};
     using Data=void*(__cdecl*)();
-    using Find=int(__thiscall*)(void*,void**,int,int,char);
+    using Find=uint8_t(__thiscall*)(void*,void**,int,int,char);
     using New=void*(__cdecl*)(size_t);
     using Delete=void(__cdecl*)(void*);
     using Make=void*(__thiscall*)(void*,const Pair*);

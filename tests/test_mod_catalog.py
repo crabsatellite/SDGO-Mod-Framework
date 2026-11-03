@@ -2,6 +2,7 @@ from pathlib import Path
 import copy
 import importlib.util
 import json
+import re
 import shutil
 import tempfile
 import unittest
@@ -250,6 +251,34 @@ class CatalogTests(unittest.TestCase):
         script.unlink()
         with self.assertRaisesRegex(ValueError, "Missing"):
             catalog.validate_stage(self.root, stage, c)
+
+
+class PublicTextTests(unittest.TestCase):
+    """Public docs and Manager text describe the framework, never one server's own operations."""
+
+    # Add a public reference here when a guide needs to link to it.
+    LINK_TARGETS = ("github.com/crabsatellite/SDGO-Mod-Framework", "learn.microsoft.com/",
+                    "www.hko.gov.hk/", "www.lua.org/")
+    PRIVATE = re.compile(r"update\.bat|install\.bat|朋友服|friend[- ]servers?\b|"
+                         r"\b[A-Za-z]:\\(?:Dev|Users)\\|\]\((?:\.\./)*skills/", re.I)
+
+    def public_texts(self):
+        paths = [ROOT / "README.md", ROOT / "README.zh-CN.md", ROOT / "AGENTS.md",
+                 *ROOT.glob("docs/**/*.md"), *ROOT.glob("mods/*/manager.json"),
+                 *ROOT.glob("manager/addons/*/manager.json")]
+        for path in paths:
+            yield path.relative_to(ROOT).as_posix(), path.read_text(encoding="utf-8-sig")
+
+    def test_no_private_server_operations(self):
+        hits = [f"{name}:{text.count(chr(10), 0, m.start()) + 1}: {m.group(0)}"
+                for name, text in self.public_texts() for m in self.PRIVATE.finditer(text)]
+        self.assertEqual(hits, [], "say 'the server owner's client package or update' instead")
+
+    def test_external_links_are_public_references(self):
+        hits = [f"{name}: {url}" for name, text in self.public_texts()
+                for url in re.findall(r"https?://([^\s)>`'\"]+)", text)
+                if not url.startswith(self.LINK_TARGETS)]
+        self.assertEqual(hits, [])
 
 
 if __name__ == "__main__":

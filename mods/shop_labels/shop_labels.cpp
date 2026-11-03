@@ -1,6 +1,7 @@
 #include <windows.h>
 
 #include <array>
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <map>
@@ -31,6 +32,7 @@ bool g_showPermanent = true;
 
 struct View { uintptr_t begin = 0; uintptr_t end = 0; };
 thread_local View g_view;
+thread_local bool g_compact = false;
 // The original converter returns a borrowed ring-buffer pointer. Its caller
 // immediately copies into a wstring; it never frees that pointer.
 thread_local std::array<std::wstring, 16> g_labels;
@@ -100,6 +102,10 @@ const wchar_t* __cdecl Convert(UINT codePage, const char* text)
         const int mode = TimeLimit(option.category);
         if ((mode == 1 && g_showRental) || (mode == 0 && g_showPermanent)) {
             std::wstring label = sdgo::shop::DurationLabel(option, mode);
+            if (g_compact) {
+                if(mode==1 && option.category/100000!=11)label=std::to_wstring(option.validity)+L"天";
+                else label.erase(std::remove(label.begin(), label.end(), L' '), label.end());
+            }
             if (!label.empty())
                 return Borrow(std::move(label));
         }
@@ -110,6 +116,8 @@ const wchar_t* __cdecl Convert(UINT codePage, const char* text)
                 value.payment == option.payment && value.price == option.price)
                 return Borrow(value.text);
         }
+        const auto quantity=sdgo::shop::QuantityLabel(option,mode,g_compact);
+        if(!quantity.empty())return Borrow(quantity);
     }
     return g_convert(codePage, text);
 }
@@ -117,9 +125,11 @@ const wchar_t* __cdecl Convert(UINT codePage, const char* text)
 void Populate(uint8_t* self, size_t offset, PopulateFn original)
 {
     const View before = g_view;
+    const bool compactBefore=g_compact;
+    g_compact=false;
     g_view = ReadView(self, offset);
     __try { original(self); }
-    __finally { g_view = before; }
+    __finally { g_view = before;g_compact=compactBefore; }
 }
 
 void __fastcall Buy(uint8_t* self, void*) { Populate(self, 0xB0, g_buy); }
@@ -127,10 +137,12 @@ void __fastcall Gift(uint8_t* self, void*) { Populate(self, 0xB4, g_gift); }
 void __fastcall Tooltip(uint8_t* self, void*, const Option* option, int row)
 {
     const View before = g_view;
+    const bool compactBefore=g_compact;
+    g_compact=true;
     g_view.begin = reinterpret_cast<uintptr_t>(option);
     g_view.end = option ? g_view.begin + sizeof(Option) : 0;
     __try { g_tooltip(self, option, row); }
-    __finally { g_view = before; }
+    __finally { g_view = before;g_compact=compactBefore; }
 }
 
 bool LoadOverrides(const wchar_t* directory)

@@ -1,28 +1,99 @@
 # Shop localization and Chinese search
 
-`shop_localization` translates native shop text, shared unit-preview titles, unit names in hangar exchange
-previews and fixed messages from cooperating Mods. All five scopes default to enabled. Manage them in SDGO Mod Manager and restart
-the client after changing them. Missing or disabled localization preserves original consumer text.
-Player-authored room titles, drafts and chat are never translated.
+[简体中文](shop-localization.zh-CN.md) · [Back to the feature index](../README.md)
 
-Clients update through the existing `update.bat` Git runtime. Owners configure the Shop panel's existing
-workspace/World/client paths and click **Update Chinese search**. This independent action publishes only
-owned search aliases and both backed-up, guarded native list procedures; it does not publish a catalog draft,
-change products/prices, or touch inventories and wallets. Unknown or externally edited procedures refuse.
-World does not need a restart; the corresponding client Mod must also be updated.
+Translates shop product names, descriptions and sale options, and the unit-preview titles on shop and capsule pages.
+Hangar batch-exchange lists and fixed messages from other Mods use the same Chinese names. The shop can also be
+searched by Chinese name, combined with rank and payment filters.
 
-Choose category, rank and payment, enter part of a Chinese name or an English/model name, then click the
-native magnifier. Native dropdown selection alone does not submit. Pagination retains conditions.
-The product list and its sales-option list share the same ordered search result, including pagination,
-rank and payment filters. This keeps icons, prices and buy/gift previews available for old products in global
-and Chinese searches. Both procedures are inspected, backed up and updated in one transaction; an external
-edit to either procedure refuses the update.
-Chinese/mixed queries support 36 UTF-16 units without truncation; ordinary English/Thai queries retain their
-native encoding. Until a server is updated, disable Chinese search and use its original English query.
-Refresh the index after adding or renaming offers. Exact product/name aliases handle legacy billing-name
-differences, including rental prefixes and model spelling; English/model queries also match displayed aliases.
+Prices, currencies, durations and billing keep their original definitions. Rental/permanent labels are handled by
+the separate [shop rental and Chinese option fix](shop-labels.md).
 
-New offers require Chinese names and sales labels. Existing owner state remains readable and intact.
-Known descriptions are translated while preserving numeric terms and model codes; unknown future text
-stays original. See the [Chinese guide](shop-localization.zh-CN.md) and
-[engineering reference](investigations/shop-search-localization.md).
+## Use
+
+`shop_localization` is a client Mod that players receive with the server owner's client package or update;
+restart the game after updating. **商城中文汉化** in SDGO Mod Manager has five switches, all on by default; restart
+the game after changing them:
+
+| switch | effect |
+|---|---|
+| 汉化商品与机体名称 (names) | product names, unit-preview titles and unit names in hangar exchange lists |
+| 汉化商品说明 (descriptions) | product descriptions |
+| 汉化商城选项 (options) | sale options in the buy and gift windows |
+| 汉化本地 Mod 界面提示 (Mod interface) | fixed messages and captions from hangar manager, extended room titles and other Mods |
+| 中文关键词搜索 (Chinese search, needs the server update) | Chinese input in the shop search box, see below |
+
+A disabled switch, or a client without this Mod, shows the original text; text not yet in the dictionary also stays
+original. Hangar exchange lists only change displayed names; slots, ranks, counts, rewards and confirmations are
+unchanged, and real model codes such as FAZZ and GN-XIII are kept. Player-written room titles, drafts and chat are
+never translated.
+
+## Chinese search and filters
+
+### Owners: update the server search
+
+Chinese search needs a matching server search. In Manager's **商城商品** (Shop) panel, configure the workspace,
+WorldServer and client, then click **更新中文检索** (Update Chinese search):
+
+- It is a separate action: it does not publish catalog drafts or change products, prices, wallets, inventories or delivery.
+- It updates the product-list and sale-option-list search procedures plus the Chinese aliases, backing up the originals
+  first. If either procedure is not the known original or was changed by another tool, the update refuses.
+- WorldServer does not need a restart; players need the matching client Mod.
+- Run it again after adding or renaming products.
+
+Until the server is updated, turn off **中文关键词搜索** in Manager to keep the original English search.
+
+### Players: search the shop
+
+1. Choose the category, rank and payment type.
+2. Type part of a Chinese name (for example 高达 or 强袭), an English name or a model code.
+3. Click the **magnifier** on the right. Changing a dropdown alone does not search.
+
+**All** means no restriction for that field. Name, rank and payment can be combined, and paging keeps the conditions.
+Chinese or mixed keywords can be up to 36 UTF-16 units; a longer keyword shows a notice and stays in the box instead
+of being cut off.
+
+## Chinese names for new products
+
+When adding products in Manager, names and sale options must contain Chinese; model codes may stay. Editing, import
+and publishing all check this. Existing workspaces are not reset: fill in missing Chinese names before publishing.
+Chinese product names the owner already entered take precedence.
+
+## Logs
+
+| log line | meaning |
+|---|---|
+| `Chinese shop localization ready: <n> dictionary entries, <m> verified shop callers ...` | localization loaded |
+| `Chinese shop search bridge ready ...` | Chinese search loaded |
+| `shop search rejected overlong query ...` | keyword over 36 UTF-16 units was not sent (the keyword is not logged) |
+| `localization caller is not verified: <name>` / `shop localization refused: ...` | unsupported client; the Mod did not load and the shop shows original text |
+
+## Developer notes
+
+The native search entry converts the keyword with code page 874, which destroys Chinese before sending. At the two
+verified shop keyword call sites only, the Mod encodes Chinese or mixed keywords as the reserved ASCII prefix `~CN:`
+plus UTF-16LE Base64 (at most 36 UTF-16 units / 100 bytes). English and Thai keywords and other pages keep their
+native encoding.
+
+The native search procedure ignores rank in the global category and every optional filter in the hot category. The
+procedure Manager installs decodes Chinese keywords, matches Unicode substrings against published names and
+product-bound aliases, applies rank, subfilter and payment consistently in every category, and computes the page and
+total from the same set. Native category and hot membership, event exclusion, the 10 output columns and sort order are
+kept. The product list and its sale-option list share that ordered result, so old products keep icons, prices and
+buy/gift previews in global and Chinese searches. Both procedures are inspected, backed up and updated in one
+transaction.
+
+Billing names can differ from client display names through rental prefixes, whitespace, legacy spelling or model-code
+formatting. Dictionary entries of the form `@search:ProductID:Original` bind them exactly by product ID and original
+name without replacing native display records or product identities; English and model queries also match these
+aliases.
+
+Other Mods query unit names, item names and fixed UI text through the optional `SdgoLocalizationLookupV1` C ABI and
+keep their source text when this Mod is missing or disabled. Existing English, Thai and Korean descriptions are
+translated entry by entry, preserving numbers, percentages, durations and model codes; corrupt, truncated or uncertain
+source names are marked as such.
+
+Addresses, packets and interfaces: [search and localization reference](investigations/shop-search-localization.md),
+[unit-preview title notes](investigations/shop-preview-title-fix.md).
+
+The initial buy/gift option dialogs and later confirmation pages translate their separate product-title fields. Numeric purchase values remain native.

@@ -1,17 +1,25 @@
 # Native GameTest
 
-`prepare --same-room-rematch` checks that the human retains room ownership after
-settlement, starts a second full battle in that same room, and leaves only after
-the rematch. It cannot combine with random loadouts, pages or account preparation.
-The passive server report requires two complete battle lifecycles per mode.
+[简体中文](game-test.zh-CN.md) · [Back to the feature index](../README.md)
 
-For asymmetric population regression, `prepare` accepts
-`--expected-ai 7 --ai-allies 0 --random-teams`: request native human team
-randomization and verify seven opponents with no allied AI relative to the host.
-Without `--ai-allies`, the existing balanced test layout remains the default.
-These are full PvP scenario options; page/mission smoke plans reject them.
-Combine with `--random-loadout` to exercise owned units and team placement in the
-same sealed native scenario.
+An optional development Mod, disabled by default. Test cases run inside the
+real client and use its normal business requests against a real server.
+The external runner prepares a separate client, starts it and collects results.
+It does not operate the desktop.
+
+A scenario sends a request, waits for the real reply and checks the resulting
+room, battle and AI state. Login, server data, room creation and battle loading
+use the normal game flow. Tests must not fabricate profiles, rooms or replies.
+
+Test accounts and registration retry policy live in private local configuration.
+Missing steps, failed assertions, unhandled native errors and timeouts fail the run.
+Results are written as JSON and JUnit XML. Installing this Mod alone does not
+start tests or change ordinary play.
+
+Tests use an existing local native test environment: a separate client copy, native servers and a native SQL
+database, fully isolated from production, without Docker. Concurrent jobs that would conflict copy the
+environment with their own ports and native SQL, and remove the whole job copy afterwards. Ordinary tests bind
+existing accounts and units; test runtimes and database copies stay local.
 
 ## FPS cap without account login
 
@@ -69,8 +77,7 @@ a higher cap, then continues the ordinary battle, settlement and return flow.
 with its independent native SQL instance. It does not use Docker or recopy and
 restore databases on every retry. The backend's `backend.json`, `private.json`
 and actual SQL files must identify the same test copy; startup checks the live
-SQL process and data-file paths. See the [guide](../skills/sdgo-native-testing/SKILL.md)
-for test-copy preparation and existing accounts.
+SQL process and data-file paths.
 
 Build `winmm_shim`, `sdgo_core`, `sdgo_data`, `pvp_ai` and `game_test_server` for
 the server stage. This example assumes the test copy already uses `127.93.0.1`
@@ -95,24 +102,9 @@ python tools/game_test_backend.py stop --work D:\SDGO-Test\server
 ```
 
 Verify owned service exit after stopping. Preserve the shared test copy, native
-SQL, existing accounts and common assets. After acceptance and required deployment
-readback, move successful temporary records and owned concurrent copies to the
-Recycle Bin; retain failure diagnostics until resolved. Test runtimes, databases
+SQL, existing accounts and common assets. After a passing run, move successful temporary
+records and owned concurrent copies to the Recycle Bin; retain failure diagnostics until resolved. Test runtimes, databases
 and private configuration stay local and are not runtime publication sources.
-
-An optional development Mod, disabled by default. Test cases run inside the
-real client and use its normal business requests against a real server.
-The external runner prepares a separate client, starts it and collects results.
-It does not operate the desktop.
-
-A scenario sends a request, waits for the real reply and checks the resulting
-room, battle and AI state. Login, server data, room creation and battle loading
-use the normal game flow. Tests must not fabricate profiles, rooms or replies.
-
-Test accounts and registration retry policy live in private local configuration.
-Missing steps, failed assertions, unhandled native errors and timeouts fail the run.
-Results are written as JSON and JUnit XML. Installing this Mod alone does not
-start tests or change ordinary play.
 
 Tests default to a separate background desktop with BGM, effects and voice
 muted in the copied client. Desktop/window ownership is checked separately and
@@ -125,8 +117,8 @@ the named Default desktop. Other observation errors or unrecognized windows
 still fail the run; inaccessible input-desktop state remains explicitly unknown.
 The native Miles WaveOut driver's zero master gain is read back independently. The copied logic-test
 profile disables native postprocessing, sets all five native effect levels to
-zero and checks the effective runtime flags. These checks do not claim visual or
-postprocessing acceptance. Local direct tests bind only loopback and do
+zero and checks the effective runtime flags; test visual quality and postprocessing
+separately in a visible client. Local direct tests bind only loopback and do
 not change firewall profiles or notifications. Nonlocal quiet runs require
 permission to prepare their scoped application rule; setup failure never opens
 a UAC prompt or falls back to an interactive client.
@@ -174,6 +166,26 @@ To switch a stopped client to another existing test identity, combine
 The target must declare `registered` or `existing_account`, without registration
 retries. Both profiles are locked and preserved while the same client files are
 reused. Bind the server observer to the target account's actual pilot ID too.
+
+For a gun-fire regression, enable `BattlePlayerCombat` in the copied test observer and set
+`BattlePlayerWeaponSlot` to an ordinary ranged slot (`0`–`2`). The probe submits the native
+weapon-change request, waits for the actual binding, and requires real ammunition consumption
+in addition to mapped input, movement and an attack state. The default `-1` keeps the current
+weapon. No weapon data, ammunition, cooldown or FSM state is forced by the probe.
+
+`prepare --same-room-rematch` checks that the human retains room ownership after
+settlement, starts a second full battle in that same room, and leaves only after
+the rematch. It cannot combine with random loadouts, pages or account preparation.
+The passive server report requires two complete battle lifecycles per mode.
+
+For asymmetric population regression, `prepare` accepts
+`--expected-ai 7 --ai-allies 0 --random-teams`: request native human team
+randomization and verify seven opponents with no allied AI relative to the host.
+Without `--ai-allies`, the existing balanced test layout remains the default.
+These are full PvP scenario options; page/mission smoke plans reject them.
+Combine with `--random-loadout` to exercise owned units and team placement in the
+same sealed native scenario.
+
 For a single host in an eight-player room, exercise automatic commands with
 `--expected-ai 7 --ai-allies 3 --ai-policy fill`, or
 `--expected-ai 7 --ai-allies 0 --ai-policy enemy`. These test `!ai fill` and
@@ -213,7 +225,7 @@ fail the case.
 Results are under `receipts/report.json` and `receipts/junit.xml` in the run directory.
 
 Account preparation can use `--bootstrap-only`, `--battleship-only`,
-`--gift-requests-only` or `--deck-only`; these do not claim PvP acceptance.
+`--gift-requests-only` or `--deck-only`; these are account preparation, not PvP battle tests.
 
 `--friends-only` opens a coordinated native messenger session after normal
 login and onboarding. `tools/game_test_friends.py` sends scoped commands to
@@ -232,11 +244,11 @@ than registering another account. The coordinator covers requests,
 accept/reject, conversation open/close, bidirectional and Chinese whispers,
 offline presence and native send rejection, relogin, duplicate/self/unknown
 validation, deletion, re-addition and multiple list pages. Its receipt records
-each check independently. Profile acceptance requires the actual managed
+each check independently. A profile check requires the actual managed
 popup clone, its original initialization, and a consumed `0x084B` reply with
 the selected target ID and copied data; enqueue alone is insufficient.
-This campaign currently does not prove room invitations. A failed or
-interrupted bootstrap is never an accepted archive baseline. Developer test
+This campaign does not cover room invitations. A failed or interrupted
+bootstrap cannot serve as an archive baseline. Developer test
 files, accounts, addresses and database copies are not gameplay dependencies
 of the distributed friend repair Mods.
 
@@ -254,16 +266,16 @@ battle tests; no units or gameplay database records are supplemented.
 Use `--pages-only` to test the authenticated unit-management page, inventory
 readback, both exchange previews and cancellation. It compares unit UIDs, slots
 and the active unit before and after; it never confirms an exchange with candidates.
-Page cases do not count as battle acceptance.
+Page cases are not battle tests.
 It also opens native storage, waits for its real message loop and server list
-reply, and confirms one claim batch. An empty batch does not prove delivery.
+reply, and confirms one claim batch. An empty batch only covers the empty-storage path.
 Capsule cases read all five native catalog tables and enter the actual page to
 check machine 9301's UI/confirmation currency source and the collection price;
 they do not purchase anything.
 The suite requires the hangar, storage, operator/AI catalog, capsule catalog and
 currency-fix Mods plus the server's 1200-slot capacity Mod. It reads every configured operator and NPC from the
 native grid and compares the configured names, category references, NPC bytes
-and source unit hashes. These catalog checks do not claim shop interaction or
+and source unit hashes. These catalog checks do not cover shop interaction or
 mission completion.
 
 For stock shop checks, pass both `--shop-assertions` and `--shop-display` with
@@ -284,7 +296,7 @@ room command.
 
 `--mission-mode 5` or `8` registers bounded mission smoke cases: native channel
 and mission admission, room creation, start, three level-2 wingmen, movement,
-target acquisition and native combat observations. These cases do not claim
+target acquisition and native combat observations. These cases do not cover
 mission clear, settlement or active exit. Unavailable native missions or
 channels fail without fabricated admission data.
 
@@ -338,7 +350,7 @@ build/gametest/pvp --events <server-observer-events.jsonl> --host-pilot <pilot-i
 Repeat `--events` for each Battle host used by the matrix. The report requires a
 matching run, room title, pilot, teams and complete four-event native lifecycle
 for every requested mode. It writes `receipts/server-report.json`; a single
-server scenario summary does not prove a whole client matrix.
+server scenario summary does not replace the whole client matrix.
 
 Both components register with Mod Manager as development Mods. The Python
 runner is a developer test command for a bounded job; it is not a player launcher
@@ -353,14 +365,3 @@ passed battle, using only the owned game window and its process audio. Failed,
 silent or black clips are deleted. Retained clips still need visual review for
 combat activity and framing before editing; a passed AI assertion alone does
 not guarantee a useful shot.
-
-## Release status after acceptance
-
-When the declared basic workflow is implemented and shown usable by focused tests, actual use or user confirmation, publish it as Stable after deployment and main-branch delivery. Exhaustive mode/edge coverage and zero bugs are not prerequisites; later bug fixes use new versions. Remove obsolete
-Beta, testing or pending-release labels from the bilingual feature index and guides, and align the
-Mod channel (`stable`), Manager labels, version suffixes and package templates. Verify the installed
-and published metadata agree. A build alone does not establish a working workflow, but valid focused verification remains valid without exhaustive coverage. Keep Beta for basic workflows still being built or not yet shown usable; unit import is currently in that category.
-
-Evaluate the accepted version and its declared workflow. Later features or optimizations have their
-own acceptance scope and do not undo a released version's completed tests. Historical runtime
-receipts and user confirmations remain evidence after temporary test output has been cleaned up.

@@ -52,7 +52,7 @@ toolkit directory. An optional activity poster must be a **361×322 PNG**.
 2. Close the selected client and check installation conditions. Stop the selected
    WorldServer, then install its server package and the matching local client.
    Manager does not control game processes.
-3. Restart that WorldServer, export the player package and distribute it to friends.
+3. Restart that WorldServer, export the player package and distribute it to players.
    Manager and the player notes report the current activity page and slot. Players
    draw there and claim the resulting unit through the game's native prize box.
 4. Register reciprocal imported-family metadata before building when needed.

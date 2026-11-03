@@ -49,6 +49,31 @@ def choose(source, rows):
     return None
 
 
+def add_runtime_newline_aliases(words):
+    """Admit the LF form produced by native shop text preprocessing.
+
+    Stock records encode line breaks as the two characters ``\n``. Some shop
+    display paths expand that marker before the hooked string assignment, so
+    retain the original key and add an exact LF alias for the same translation.
+    """
+    aliases = {}
+    for source, value in words.items():
+        alias = source.replace('\\n', '\n')
+        if alias == source:
+            continue
+        existing = words.get(alias)
+        if existing is not None:
+            if existing != value:
+                raise ValueError('Conflicting runtime newline alias: ' + source)
+            continue
+        previous = aliases.get(alias)
+        if previous is not None and previous != value:
+            raise ValueError('Conflicting runtime newline alias: ' + source)
+        aliases[alias] = value
+    words.update(aliases)
+    return len(aliases)
+
+
 def compile_words(terms, phrases=None, native_names=None, extra=None, unit_names=None):
     if terms.get('schema_version') != 1:
         raise ValueError('Unsupported private term-extract schema')
@@ -207,6 +232,7 @@ def compile_words(terms, phrases=None, native_names=None, extra=None, unit_names
         if chosen is None:
             ignored.append({'source':source,'targets':sorted({t for p,t,k in rows})})
         else: words[source]={'text':localize_prose(chosen[0]) if chosen[1]=='description' else chosen[0],'kind':chosen[1]}
+    runtime_newline_aliases = add_runtime_newline_aliases(words)
     covered=collections.Counter();total=collections.Counter()
     for c in categories:
         total[str(c['kind'])]+=1
@@ -214,6 +240,7 @@ def compile_words(terms, phrases=None, native_names=None, extra=None, unit_names
     report={'schema_version':1,'dictionary_entries':len(words),'by_kind':dict(collections.Counter(v['kind'] for v in words.values())),
             'category_names':{'total_by_native_kind':dict(total),'translated_or_existing_Chinese_by_native_kind':dict(covered)},
             'retained_native_identifiers':sorted(identities),'unresolved_source_conflicts':ignored,
+            'runtime_newline_aliases':runtime_newline_aliases,
             'parent_text_missing':parent_misses,
             'untranslated_names':[{'category':c['catalogue_id'],'kind':c['kind'],'source':c['source']['name']} for c in categories if c['source']['name'] not in words and '@category:'+str(c['catalogue_id'])+':'+c['source']['name'] not in words and c['source']['name'] not in identities and not re.search(r'[\u3400-\u9fff]',c['source']['name'])]}
     report['parent_text_missing']=[p for p in parent_misses if p['source'] not in words and p['source'] not in identities and '@product:'+str(p['product'])+':'+p['source'] not in words]

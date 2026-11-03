@@ -14,7 +14,7 @@
 ## 使用
 
 无需操作，客户端安装框架后自动生效。本 mod 需要同一版本的 `sdgo\core.dll`（使用 `HookSystemExport`），
-客户端安装脚本和 `update.bat` 会一起更新。它在 SDGO Mod Manager 的“修复归档”中列出。排查问题需要临时关闭时，
+安装或更新客户端框架时两者会一起更新。它在 SDGO Mod Manager 的“修复归档”中列出。排查问题需要临时关闭时，
 点“显示开发信息”，再关闭它的开关并重启游戏；这会在 `sdgo\sdgo.ini` 的 `[mods]` 下写入 `findwindow_fix=0`。
 
 ## 设置

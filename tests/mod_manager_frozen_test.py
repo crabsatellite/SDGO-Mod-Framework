@@ -54,7 +54,8 @@ def main():
             assert {p['id'] for p in info['panels']} >= {'shop','rewards','collection_capsule','calendar_gifts'}
             calendar=call('/api/providers/calendar_gifts/api/calendar-gifts')
             assert not calendar['policy']['enabled'] and not calendar['service']['running']
-            assert len(calendar['policy']['events'])==7 and len(calendar['policy']['birthday']['rewards']['grades'])==12
+            assert len(calendar['policy']['events'])==14 and len(calendar['policy']['birthday']['rewards']['grades'])==12
+            assert any(e['value']=='christmas' and e['month_day']=='12-25' for e in calendar['festivals'])
             people={'schema':1,'birthdays':[{'account_id':73491,'month_day':'11-03','enabled':True}],'groups':{}}
             call('/api/providers/calendar_gifts/api/calendar-gifts/private',{'value':people,'revision':calendar['private_revision']})
             rules=call('/api/providers/calendar_gifts/api/calendar-gifts/export')
