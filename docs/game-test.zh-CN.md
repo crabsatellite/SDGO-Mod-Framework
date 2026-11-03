@@ -196,6 +196,32 @@ Grid（`6`）和 Tag（`7`）会通过原生业务切换 VS 频道，并要求�
 角色昵称。账号权限、命令处理和发放由服务器负责；测试仍等待独立处理回执，
 不会直接发币、写库存或用发送成功代替到账。凭据与命令配置保留在本地。
 
+### 多客户端协同对战
+
+为每个不同的已有账号准备一个静音、后台的 `--friends-only` 运行目录，指向同一套隔离原生后端，
+使用相同的单个 `--mode-sequence` 和 `--expected-ai`。各客户端的可写文件独立；已停止且通过的
+归档基线可以提供共享只读资源包。所有客户端安装 `match_ai`，后端安装 `pvp_ai` 和被动观察器，
+房主运行目录按前述方法绑定观察会话。复用已有出击机体；模式要求战舰时，账号应已有可用编队。
+
+启动前声明全部真人驾驶员 ID。真人和 AI 共用八个原生槽位；协调器要求至少两名真人和一个 AI。
+例如，三个已有账号配合 `--expected-ai 5 --ai-allies 0 --ai-teams coop --random-teams`，
+会在保留房间随机队伍选项的同时，由服务端的 `coop` 规则在开局时组成三名真人对五个 AI。
+将示例 ID、目录及观察流替换为已准备的测试身份和实际启用的 Battle：
+
+```powershell
+python tools/game_test_multiplayer.py --host-run build/cohort/host --peer-run build/cohort/peer1 --peer-run build/cohort/peer2 --human-pilots 101,102,103 --server-events D:\SDGO-Test\server\Server\BattleServer4\sdgo\gametest\server-observer-events.jsonl --output build/cohort-result.json
+```
+
+房主先真实建房。客人切换到房主实际所在频道，按完整的服务端房名找到房间，调用原版入房业务。
+Ready 走原版三维房间 Main 业务及玩家状态机：必须观察到真实请求、原版回包处理完成和当前房间
+模型更新，协调器才允许房主开局，不直接设置 Ready 标志或补入房间成员。
+
+战斗中分别核对房主的本地 AI 控制权、客人的远端同步副本、真实移动及房主的战斗证据，之后等待
+原生结算返回同一间真人持有的房间。客人先离房、房主最后离房；每次退出都显式绑定实际观察到的
+频道和房间 ID，调用原生业务。独立服务端报告另行核对预先声明的真人名单、AI 队伍和完整战斗
+生命周期。启动、战斗或退出失败都会使整轮失败，并且只中止所属客户端。账号、凭据、端点和
+报告继续留在本地；这是开发用测试命令，不是玩家启动器。
+
 服务端被动验证使用 `tools/game_test_server_report.py --run-dir build/gametest/pvp
 --events <server-observer-events.jsonl> --host-pilot <角色ID>`。矩阵使用多个 Battle
 主机时重复传入 `--events`。每个模式都必须具备同次运行、相同房名与角色、正确
