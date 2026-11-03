@@ -40,6 +40,8 @@ if __package__ in (None, ""):
 
 SCHEMA_VERSION = 2
 OWNED_BUILD_ROOT=Path(__file__).resolve().parents[1]/'build'
+if str(OWNED_BUILD_ROOT.parent) not in sys.path:
+    sys.path.insert(0, str(OWNED_BUILD_ROOT.parent))
 HOST_KEY = "GOnline-54BE1568-00C97000"
 GAME_EXE = "GOnline.exe"
 STARTUP_EVENT_NAME = "9YOU SDGO"
@@ -175,15 +177,26 @@ def copy_ignore(directory: str, names: list[str]) -> set[str]:
 
 
 def git_source_ref(root: Path) -> dict:
+    result = {"commit": None, "dirty": None}
+    # Git is read-only here. Bound its scheduling priority as well as its
+    # timeout on busy native-test hosts, where child processes otherwise start
+    # at normal priority even when the runner itself has been prioritized.
+    process_options = {}
+    if os.name == "nt":
+        process_options["creationflags"] = subprocess.ABOVE_NORMAL_PRIORITY_CLASS
     try:
-        commit = subprocess.run(
+        result["commit"] = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=root,
             check=True,
             capture_output=True,
             text=True,
             timeout=30,
+            **process_options,
         ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return result
+    try:
         status = subprocess.run(
             ["git", "status", "--porcelain"],
             cwd=root,
@@ -191,10 +204,12 @@ def git_source_ref(root: Path) -> dict:
             capture_output=True,
             text=True,
             timeout=30,
+            **process_options,
         ).stdout
-        return {"commit": commit, "dirty": bool(status.strip())}
+        result["dirty"] = bool(status.strip())
     except (OSError, subprocess.SubprocessError):
-        return {"commit": None, "dirty": None}
+        pass  # preserve the verified commit; unknown cleanliness stays unknown
+    return result
 
 
 def ini_parser() -> configparser.ConfigParser:
@@ -236,11 +251,8 @@ def copy_file_if_missing(source: Path, destination: Path) -> None:
 
 def manifest_configuration(path: Path) -> configparser.ConfigParser:
     try:
-        parser = read_ini(path)
+        parser=read_ini(path)
     except GameTestError:
-        # An unrelated diagnostic may have legacy duplicate settings sections.
-        # Dependencies belong to its first native [mod] section; do not rewrite
-        # or reinterpret that diagnostic's authored settings.
         raw=path.read_bytes()
         decoded=raw.decode('utf-16' if raw.startswith((b'\xff\xfe',b'\xfe\xff')) else 'utf-8-sig')
         match=re.search(r'(?ims)^\s*\[mod\]\s*\n(.*?)(?=^\s*\[|\Z)',decoded)
@@ -249,19 +261,22 @@ def manifest_configuration(path: Path) -> configparser.ConfigParser:
     return parser
 
 
+def manifest_mod(path: Path):
+    parser=manifest_configuration(path)
+    if not parser.has_section('mod'):raise GameTestError(f'manifest lacks [mod]: {path}')
+    return parser['mod']
+
+
 def retained_manifest_enabled(path: Path) -> bool:
-    # Native core never overrides a manifest's own off switch. Inactive
-    # diagnostics may retain historical aliases and are not runtime consumers.
-    return manifest_configuration(path).get('mod','enabled',fallback='1').strip()!='0'
+    return manifest_mod(path).getint('enabled',fallback=1)!=0
+
+
+def manifest_enabled(path: Path) -> bool:
+    return retained_manifest_enabled(path)
 
 
 def manifest_requires(path: Path) -> set[str]:
-    parser=manifest_configuration(path)
-    try:
-        value = parser["mod"].get("requires", "")
-    except KeyError as error:
-        raise GameTestError(f"manifest lacks [mod]: {path}") from error
-    return {item.strip() for item in value.split(",") if item.strip()}
+    return {item.strip() for item in manifest_mod(path).get('requires','').split(',') if item.strip()}
 
 
 def merge_required_symbols(
@@ -272,6 +287,7 @@ def merge_required_symbols(
     preserve_existing: bool = False,
     allow_missing: bool = False,
 ) -> None:
+
     source = read_ini(stage_symbols)
     destination = read_ini(copied_symbols) if copied_symbols.is_file() else ini_parser()
     required = {"host"}
@@ -431,6 +447,7 @@ def validate_observer_stage(
                 if missing:raise GameTestError(f"retained Mod symbols lack required sections: {', '.join(missing)}")
 
 
+
 def overlay_observer(
     root: Path,
     stage: Path,
@@ -578,6 +595,7 @@ def overlay_observer(
         allow_missing=fps_mod_enabled is not None,
     )
     enable_test_configuration(root, fps_mod_enabled)
+
 
 
 def configure_sfx_only(root: Path) -> dict:
@@ -809,7 +827,8 @@ class QuietRuntime:
         if guard.getint('audio','active',fallback=0)!=1 or opened<1:return None
         if guard.getint('audio','muted',fallback=0)!=opened or guard.getint('audio','failed',fallback=0):
             raise GameTestError('native Miles audio drivers did not verify zero master volume')
-        proof.update(audio_driver='native_miles_waveout',audio_drivers_opened=opened,audio_drivers_muted=opened)
+        proof.update(audio_driver='native_miles_waveout',audio_drivers_opened=opened,audio_drivers_muted=opened,
+                     native_audio_open_failures=guard.getint('audio','open_failed',fallback=0))
         network_verified=self.firewall.get('status')=='installed'
         if self.firewall.get('status')=='loopback_only':
             if (guard.getint('policy','loopback_only',fallback=0)!=1 or
@@ -1479,10 +1498,11 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                         collection_draw: bool = False,
                          play_unit_uid: int | None = None,
                          mission_mode: int | None = None,
-                         shop_catalog: bool = False) -> tuple[str, ...]:
+                         shop_catalog: bool = False, room_titles_only: bool = False,
+                         room_style_preview: str | None = None) -> tuple[str, ...]:
     mission_mode = validate_mission_mode(mission_mode)
     play_unit_uid = validate_play_unit_uid(play_unit_uid)
-    if sum((bool(bootstrap_only),bool(battleship_only),bool(gift_requests_only),bool(deck_only),bool(pages_only))) > 1:
+    if sum((bool(bootstrap_only),bool(battleship_only),bool(gift_requests_only),bool(deck_only),bool(pages_only),bool(room_titles_only))) > 1:
         raise GameTestError('choose only one account preparation operation')
     if play_unit_uid is not None and any((bootstrap_only,battleship_only,gift_requests_only,deck_only)):
         raise GameTestError('--play-unit-uid is supported only for PvP and pages scenarios, or mission smoke')
@@ -1490,6 +1510,19 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         raise GameTestError('collection draw requires the explicit pages-only scenario')
     if shop_catalog and not pages_only:
         raise GameTestError('shop catalog assertions require the explicit pages-only scenario')
+    if room_style_preview is not None:
+        if room_style_preview not in ('pvp', 'mission') or not room_titles_only:
+            raise GameTestError('room-style preview requires the room-title scope and pvp or mission')
+        if mission_mode is not None or collection_draw or shop_catalog:
+            raise GameTestError('room-style preview cannot contain combat or shop operations')
+        selection = ('setup.active_unit',) if play_unit_uid is not None else ()
+        return FLOW_CASES[:3] + selection + (
+            f'room_titles.{room_style_preview}.create', f'room_style.{room_style_preview}.preview')
+    if room_titles_only:
+        if mission_mode is not None or collection_draw or shop_catalog:
+            raise GameTestError('room-title input scope cannot contain mission combat or shop operations')
+        selection=('setup.active_unit',) if play_unit_uid is not None else ()
+        return FLOW_CASES[:3]+selection+tuple('room_titles.'+x for x in ('pvp.create','pvp.rename','pvp.leave','grid.create','grid.rename','grid.leave','mission.create','mission.rename','mission.leave','team.create','team.native_view','team.leave','start.create','start.rename','start'))
     selection = ('setup.active_unit',) if play_unit_uid is not None else ()
     if mission_mode is not None:
         if mode_sequence != "1":
@@ -1531,7 +1564,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
             "ai_layout",
             "bootstrap_only",
             "battleship_only", "gift_requests_only", "deck_only",
-            "pages_only", "collection_draw", "random_loadout",
+            "pages_only", "room_titles_only", "collection_draw", "random_loadout",
             *SHOP_PLAN_FIELDS,
         }
         if forbidden.intersection(plan):
@@ -1562,10 +1595,16 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         plan.get("play_unit_uid"),
         plan.get("mission_mode"),
         shop_catalog,
+        room_titles_only=plan.get("room_titles_only",False),
+        room_style_preview=plan.get("room_style_preview"),
     )
 
 
 def metadata_suite_for_plan(plan: dict) -> str:
+    if plan.get("room_style_preview"):
+        return "native-room-style-preview"
+    if plan.get("room_titles_only"):
+        return "native-room-titles"
     if "mission_mode" in plan:
         return MISSION_SUITE
     if plan.get("bootstrap_only"):
@@ -1826,8 +1865,10 @@ def write_job(
     if all(field in plan for field in SHOP_PLAN_FIELDS):
         for field in SHOP_PLAN_FIELDS:
             run['run'][field] = str(plan[field])
-    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','collection_draw','random_loadout'):
+    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','room_titles_only','collection_draw','random_loadout'):
         if plan.get(flag):run['run'][flag] = '1'
+    if 'room_style_preview' in plan:
+        run['run']['room_style_preview'] = plan['room_style_preview']
     if 'network_policy' in plan:run['run']['network_policy']=plan['network_policy']
     if plan.get('network_policy') == ROUTED_LOOPBACK_POLICY:
         for field in ROUTE_PLAN_FIELDS:
@@ -1842,7 +1883,7 @@ def write_job(
     write_ini(directory / "run.ini", run)
 
 
-def read_public_plan(root: Path) -> dict:
+def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
     parser = read_ini(root / "sdgo" / "gametest" / "run.ini")
     try:
         run = parser["run"]
@@ -1877,10 +1918,14 @@ def read_public_plan(root: Path) -> dict:
         gift_requests_only = run.get('gift_requests_only', '0') == '1'
         deck_only = run.get('deck_only', '0') == '1'
         pages_only = run.get('pages_only', '0') == '1'
+        room_titles_only = run.get('room_titles_only','0') == '1'
+        room_style_preview = run.get('room_style_preview')
+        if mission_plan and room_style_preview is not None:
+            raise ValueError('room-style preview cannot be a mission combat plan')
         collection_draw = run.get('collection_draw', '0') == '1'
         preparation_fields = (
             'bootstrap_only', 'battleship_only', 'gift_requests_only',
-            'deck_only', 'pages_only', 'collection_draw', 'random_loadout',
+            'deck_only', 'pages_only', 'room_titles_only', 'collection_draw', 'random_loadout',
         )
         if any(run.get(flag, '0') not in ('0', '1') for flag in preparation_fields):
             raise ValueError('invalid preparation flag')
@@ -2061,9 +2106,16 @@ def read_public_plan(root: Path) -> dict:
             expected_cases = required_flow_cases(
                 mode_sequence, bootstrap_only, battleship_only,
                 gift_requests_only, deck_only, pages_only, collection_draw,
-                play_unit_uid, shop_catalog=shop_plan is not None,
+                play_unit_uid, shop_catalog=shop_plan is not None, room_titles_only=room_titles_only,
+                room_style_preview=room_style_preview,
             )
 
+        if historical_cases:
+            recorded_cases = tuple(run["required_cases"].split(','))
+            if (not recorded_cases or len(recorded_cases) > 256 or len(set(recorded_cases)) != len(recorded_cases) or
+                any(not re.fullmatch(r'[a-z][a-z0-9_.]{0,127}', case) for case in recorded_cases)):
+                raise ValueError('invalid historical native case contract')
+            expected_cases = recorded_cases
         if (
             run["role"] != "client"
             or run["normal_flow"] != "1"
@@ -2124,12 +2176,15 @@ def read_public_plan(root: Path) -> dict:
             plan['play_unit_uid'] = play_unit_uid
         if shop_plan is not None:
             plan.update(shop_plan)
+        if room_style_preview is not None:
+            plan['room_style_preview'] = room_style_preview
         for flag, value in (
             ('bootstrap_only', bootstrap_only),
             ('battleship_only', battleship_only),
             ('gift_requests_only', gift_requests_only),
             ('deck_only', deck_only),
             ('pages_only', pages_only),
+            ('room_titles_only',room_titles_only),
             ('collection_draw', collection_draw),
         ):
             if value:
@@ -2394,6 +2449,8 @@ def prepare(
     gift_requests_only: bool = False,
     deck_only: bool = False,
     pages_only: bool = False,
+    room_titles_only: bool = False,
+    room_style_preview: str | None = None,
     collection_draw: bool = False,
     shop_assertions: Path | None = None,
     shop_display: Path | None = None,
@@ -2438,7 +2495,7 @@ def prepare(
         if (
             any((
                 bootstrap_only, battleship_only, gift_requests_only, deck_only,
-                pages_only, collection_draw, random_loadout,
+                pages_only, room_titles_only, collection_draw, random_loadout,
             ))
             or play_unit_uid is not None
             or mission_mode is not None
@@ -2451,6 +2508,7 @@ def prepare(
             or ai_pool_level is not None
             or ai_difficulty is not None
             or ai_layout is not None
+            or room_style_preview is not None
         ):
             raise GameTestError("native FPS tests cannot request an authenticated account flow")
     elif fps_mod_enabled is not True:
@@ -2474,7 +2532,8 @@ def prepare(
         required_flow_cases(
             mode_sequence, bootstrap_only, battleship_only, gift_requests_only,
             deck_only, pages_only, collection_draw, play_unit_uid, mission_mode,
-            shop_binding is not None,
+            shop_binding is not None, room_titles_only=room_titles_only,
+            room_style_preview=room_style_preview,
         )
         if mission_mode is not None:
             if random_loadout:
@@ -2486,7 +2545,7 @@ def prepare(
                 raise GameTestError('--ai-pool-level requires --expected-ai 1')
             if mission_mode is not None or any((
                 bootstrap_only, battleship_only, gift_requests_only, deck_only,
-                pages_only, collection_draw, random_loadout,
+                pages_only, collection_draw, random_loadout, room_titles_only, room_style_preview is not None,
             )):
                 raise GameTestError('--ai-pool-level requires an ordinary PvP scenario')
         if ai_layout is not None:
@@ -2500,7 +2559,7 @@ def prepare(
                 )
             if mission_mode is not None or fps_gameplay_cap is not None or any((
                 bootstrap_only, battleship_only, gift_requests_only, deck_only,
-                pages_only, collection_draw, random_loadout,
+                pages_only, collection_draw, random_loadout, room_titles_only, room_style_preview is not None,
             )):
                 raise GameTestError('--ai-layout allied requires an ordinary PvP scenario')
         if ai_difficulty is not None:
@@ -2508,9 +2567,10 @@ def prepare(
                 raise GameTestError('--ai-difficulty requires --expected-ai 5')
             if mission_mode is not None or any((
                 bootstrap_only, battleship_only, gift_requests_only, deck_only,
-                pages_only, collection_draw, random_loadout,
+                pages_only, collection_draw, random_loadout, room_titles_only, room_style_preview is not None,
             )):
                 raise GameTestError('--ai-difficulty requires an ordinary PvP scenario')
+
     if quiet and sfx_only:raise GameTestError('SFX capture requires explicit --visible; ordinary tests are background and silent')
     if quiet:
         try:ipaddress.IPv4Address(target_host)
@@ -2636,7 +2696,7 @@ def prepare(
                 raise GameTestError('Reusable native room title exceeds twenty bytes')
         if random_loadout and any((
             bootstrap_only, battleship_only, gift_requests_only, deck_only,
-            pages_only, mission_mode is not None,
+            pages_only, room_titles_only, mission_mode is not None,
         )):
             raise GameTestError('random loadout requires a real PvP scenario')
         if random_loadout:
@@ -2652,15 +2712,19 @@ def prepare(
         if shop_binding is not None:
             plan.update(shop_binding)
         plan['quiet']=quiet
+        if room_style_preview is not None:
+            plan['room_style_preview'] = room_style_preview
         for flag,value in (
             ('bootstrap_only',bootstrap_only),
             ('battleship_only',battleship_only),
             ('gift_requests_only',gift_requests_only),
             ('deck_only',deck_only),
             ('pages_only',pages_only),
+            ('room_titles_only',room_titles_only),
             ('collection_draw',collection_draw),
         ):
             if value:plan[flag] = True
+
     run_dir.parent.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex
     preparing = run_dir.parent / f".gametest-preparing-{token}"
@@ -2720,6 +2784,15 @@ def prepare(
         recording = configure_sfx_only(client) if sfx_only else None
         if quiet:configure_muted_audio(client)
         if fps_only:configure_fps_test(client, fps_cap)
+        if room_titles_only:
+            # Bind protocol diagnostics before collecting immutable hashes.
+            # The runner must never toggle logging in a sealed client.
+            settings_path = client / "sdgo" / "sdgo.ini"
+            settings = read_ini(settings_path)
+            if not settings.has_section("core"):
+                settings.add_section("core")
+            settings["core"]["log_level"] = "0"
+            write_ini(settings_path, settings)
         if fps_gameplay_cap is not None:
             from manager.storage import atomic as atomic_bytes, patch_client_timer_fps
             config=client/'config.xml'
@@ -2807,7 +2880,10 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
     # Preflight the recycler before changing paths or accounts.
     try:__import__('send2trash')
     except ImportError as error:raise GameTestError('install Send2Trash before client reuse; no files changed') from error
-    previous=validate_metadata(run_dir);verify_hashes(previous)
+    # File transfer does not execute the previous observer. Its original sealed
+    # contract can predate new/reordered cases; the new preparation below is
+    # still validated against the complete current contract before it can run.
+    previous=validate_metadata(run_dir, for_reuse=True);verify_hashes(previous)
     client_root=run_dir/'client'
     fps_only=options.get('fps_cap') is not None
     if fps_only!=(previous.get('suite')==FPS_SUITE):
@@ -2854,6 +2930,7 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
             account_lock,account_token=acquire_exclusive_lock(account_lock_path,'persistent account')
         prior={'run_id':previous['run_id'],'source':previous.get('source'),'plan':previous['plan'],
                'immutable_hashes':previous['client']['immutable_hashes'],'execution':previous.get('execution')}
+        prior['required_cases']=read_ini(client_root/'sdgo/gametest/run.ini')['run']['required_cases'].split(',')
         proofs=archive/'proof-binaries';proofs.mkdir(exist_ok=True)
         if proofs.is_symlink() or (hasattr(proofs,'is_junction') and proofs.is_junction()):
             raise GameTestError('client reuse rejects a linked binary proof archive')
@@ -2895,7 +2972,7 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
         if account_lock is not None:release_owned_lock(account_lock,account_token)
 
 
-def validate_metadata(run_dir: Path) -> dict:
+def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
     if run_dir.is_symlink() or (hasattr(run_dir,'is_junction') and run_dir.is_junction()):
         raise GameTestError('run directory is linked rather than an owned capsule')
     run_dir = run_dir.resolve()
@@ -2933,7 +3010,7 @@ def validate_metadata(run_dir: Path) -> dict:
     plan = metadata.get("plan")
     if not isinstance(plan, dict):
         raise GameTestError("run.json lacks normal-flow plan")
-    public_plan = read_public_plan(root)
+    public_plan = read_public_plan(root, historical_cases=for_reuse)
     public_run = read_ini(root / "sdgo" / "gametest" / "run.ini")["run"]
     if public_run.get("id") != run_id:
         raise GameTestError("run.json run_id disagrees with run.ini")
@@ -2943,6 +3020,8 @@ def validate_metadata(run_dir: Path) -> dict:
         raise GameTestError("run.json suite disagrees with the sealed normal-flow plan")
 
     public_shop_fields = set()
+    if plan.get('room_style_preview') != public_plan.get('room_style_preview'):
+        raise GameTestError('run.json cannot change the sealed room-style preview scope')
     if fps_only:
         if set(plan) != set(public_plan):
             raise GameTestError("run.json adds fields outside the native FPS plan")
@@ -2953,7 +3032,7 @@ def validate_metadata(run_dir: Path) -> dict:
                 "ai_layout",
                 "bootstrap_only",
                 "battleship_only", "gift_requests_only", "deck_only",
-                "pages_only", "collection_draw", "random_loadout",
+                "pages_only", "room_titles_only", "collection_draw", "random_loadout",
             }
             if forbidden.intersection(plan):
                 raise GameTestError("run.json adds PvP, pages, or preparation scope to a mission smoke")
@@ -2969,7 +3048,7 @@ def validate_metadata(run_dir: Path) -> dict:
             raise GameTestError("run.json cannot add mission scope to a non-mission plan")
         for flag in (
             'bootstrap_only','battleship_only','gift_requests_only','deck_only',
-            'pages_only','collection_draw','random_loadout',
+            'pages_only','room_titles_only','collection_draw','random_loadout',
         ):
             if (
                 type(plan.get(flag, False)) is not bool
@@ -3012,6 +3091,7 @@ def validate_metadata(run_dir: Path) -> dict:
             raise GameTestError('run.json has a partial shop GameTest input plan')
         if plan_shop_fields != public_shop_fields:
             raise GameTestError('run.json cannot add or remove shop GameTest inputs')
+
     for key, value in public_plan.items():
         if plan.get(key) != value:
             raise GameTestError(f"run.json plan disagrees with run.ini for {key}")
@@ -3933,6 +4013,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--battleship-only', action='store_true',help='acquire the initial battleships through native tutorial business')
     prepare_parser.add_argument('--gift-requests-only', action='store_true',help='send configured native mail gift requests; server processing is verified separately')
     prepare_parser.add_argument('--deck-only', action='store_true',help='save and select a native battleship deck using four genuinely owned unit UIDs from the private account profile')
+    prepare_parser.add_argument('--room-titles-only',action='store_true',help='test all live room-title inputs, reopen and full server-confirmed titles')
+    prepare_parser.add_argument('--room-style-preview', choices=('pvp', 'mission'), help='capture the genuine legacy room after native creation; requires --room-titles-only and a preview Mod')
     prepare_parser.add_argument('--pages-only', action='store_true',help='visit the real hangar and verify Mod inventory, preview and cancel without exchanging units')
     prepare_parser.add_argument('--collection-draw',action='store_true',help='explicit pages-only extension: purchase one collection draw with existing native funds and verify delivery')
     prepare_parser.add_argument('--shop-assertions',type=Path,
@@ -4026,6 +4108,8 @@ def main(argv: list[str] | None = None) -> int:
                 gift_requests_only=args.gift_requests_only,
                 deck_only=args.deck_only,
                 pages_only=args.pages_only,
+                room_titles_only=args.room_titles_only,
+                room_style_preview=args.room_style_preview,
                 collection_draw=args.collection_draw,
                 shop_assertions=args.shop_assertions,
                 shop_display=args.shop_display,

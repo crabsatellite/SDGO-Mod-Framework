@@ -65,6 +65,9 @@ void* g_editVtable[8] = {};
 void* g_buttonVtable[32] = {};
 void* g_staticTextVtable[40] = {};
 void* g_titleBarVtable[8] = {};
+void* g_titleEditVtable[8] = {};
+void* g_serviceVtable[8] = {};
+int g_widthTrimCalls = 0;
 NativeString g_native = {};
 std::wstring g_heapText;
 std::wstring g_setText;
@@ -301,6 +304,24 @@ void __fastcall FakeOriginal(void*, void*, std::uint32_t argument)
     SendMessageW(g_inputWindow, EM_SETLIMITTEXT, 20, 0);
 }
 
+void __fastcall FakeWidthTrim(void*, void*, NativeString* text)
+{
+    ++g_widthTrimCalls;
+    SetNative(text, GetNative(*text).substr(0, 13));
+}
+
+void __fastcall FakeCreateUpdate(void* self, void*)
+{
+    g_originalRan = true;
+    auto* state = reinterpret_cast<std::uint32_t*>(static_cast<std::uint8_t*>(self) + 0x44);
+    if (*state != 3)
+        return;
+    *state = 4;
+    // Unlike the early init, only this first Update exposes the native edit.
+    SetPointer(self, 0x54, g_callbackEdit);
+    FakeOriginal(self, nullptr, 0);
+}
+
 void __fastcall FakePvpRender(void*, void*, const void*)
 {
     g_renderOriginalRan = true;
@@ -370,6 +391,8 @@ void* FakeSymbol(SdgoMod*, const char* name)
         return g_buttonVtable;
     if (!std::strcmp(name, "room_titles.ui_static_text_vtable"))
         return g_staticTextVtable;
+    if (!std::strcmp(name, "room_titles.ui_title_edit_vtable"))
+        return g_titleEditVtable;
     if (!std::strcmp(name, "room_titles.ui_titlebar_vtable"))
         return g_titleBarVtable;
     return nullptr;
@@ -378,14 +401,18 @@ void* FakeSymbol(SdgoMod*, const char* name)
 int FakeHookSlot(SdgoMod*, const char* name, void* detour, void** original)
 {
     g_detours[name] = detour;
-    *original = reinterpret_cast<void*>(&FakeOriginal);
+    *original = std::strstr(name, "create_update")
+        ? reinterpret_cast<void*>(&FakeCreateUpdate)
+        : reinterpret_cast<void*>(&FakeOriginal);
     return 1;
 }
 
 int FakeHookCode(SdgoMod*, const char* name, void* detour, void** original)
 {
     g_detours[name] = detour;
-    if (!std::strcmp(name, "room_titles.ui_pvp_titlebar_render"))
+    if (!std::strcmp(name, "room_titles.ui_edit_width_trim"))
+        *original = reinterpret_cast<void*>(&FakeWidthTrim);
+    else if (!std::strcmp(name, "room_titles.ui_pvp_titlebar_render"))
         *original = reinterpret_cast<void*>(&FakePvpRender);
     else if (!std::strcmp(name, "room_titles.ui_mission_titlebar_render"))
         *original = reinterpret_cast<void*>(&FakeMissionRender);
@@ -485,7 +512,7 @@ int wmain(int argc, wchar_t** argv)
     InitEdit(&edit);
     FakeDialog dialog = {&edit, nullptr, nullptr};
     FakeService service;
-    SetPointer(service.bytes.data(), 0x4C, &dialog);
+    SetPointer(service.bytes.data(), 0x50, &dialog);
     if (!Check(native_ui::FindRoomNameEdit(service.bytes.data(), Surface::PvpCreate) == &edit,
                "find create edit") ||
         !Check(native_ui::SetRoomNameLimit(&edit) && Limit(edit) == 512, "set UTF-16 byte limit"))
@@ -601,13 +628,13 @@ int wmain(int argc, wchar_t** argv)
                "reject overlong edit text"))
         return 1;
 
-    if (!Check(native_ui::InstallInitHooks(&InitCallback) && g_detours.size() == 4,
-               "install four init slots"))
+    if (!Check(native_ui::InstallInitHooks(&InitCallback) && g_detours.size() == 10,
+               "install seven init slots, two late create updates and width policy hook"))
         return 1;
     g_callbackEdit = &edit;
 
     FakeService pvpCreate;
-    SetPointer(pvpCreate.bytes.data(), 0x4C, &dialog);
+    SetPointer(pvpCreate.bytes.data(), 0x50, &dialog);
     FakeService missionCreate;
     SetPointer(missionCreate.bytes.data(), 0x4C, &dialog);
     FakeService missionSettings;
@@ -632,6 +659,75 @@ int wmain(int argc, wchar_t** argv)
                    g_callbacks == 6,
                "cancel/reopen refreshes both create dialogs without an extra focus change"))
         return 1;
+
+    FakeService nativePvpCreate;
+    SetPointer(nativePvpCreate.bytes.data(), 0, g_serviceVtable);
+    SetPointer(nativePvpCreate.bytes.data(), 0x54, &edit);
+    if (!Check(Invoke("room_titles.ui_native_pvp_create_init", Surface::PvpNativeCreate, &nativePvpCreate, 7) &&
+                   Invoke("room_titles.ui_grid_pvp_create_init", Surface::PvpNativeCreate, &nativePvpCreate, 8) &&
+                   g_callbacks==8,
+               "actual normal and grid creation forms widen their cached name edit at +0x54"))
+        return 1;
+
+    for (const char* symbol : {"room_titles.ui_native_pvp_create_update",
+                               "room_titles.ui_grid_pvp_create_update"}) {
+        using UpdateDetour = void (__fastcall*)(void*, void*);
+        auto update = reinterpret_cast<UpdateDetour>(g_detours.at(symbol));
+        SetPointer(nativePvpCreate.bytes.data(), 0x54, nullptr);
+        auto* state = reinterpret_cast<std::uint32_t*>(nativePvpCreate.bytes.data() + 0x44);
+        *state = 2;
+        const int before = g_callbacks;
+        update(nativePvpCreate.bytes.data(), nullptr);
+        if (!Check(g_callbacks == before, "no callback before native controls exist"))
+            return 1;
+        *state = 3;
+        g_originalRan = false;
+        update(nativePvpCreate.bytes.data(), nullptr);
+        if (!Check(*state == 4 && g_originalRan && g_callbacks == before + 1 &&
+                       Limit(edit) == 512 && SendMessageW(g_inputWindow, EM_GETLIMITTEXT, 0, 0) == 256,
+                   "late update widens the newly populated and focused native edit"))
+            return 1;
+        update(nativePvpCreate.bytes.data(), nullptr);
+        if (!Check(g_callbacks == before + 1, "ordinary updates do not restore a draft over typing"))
+            return 1;
+    }
+
+    using WidthDetour = void (__fastcall*)(void*, void*, NativeString*);
+    auto widthTrim = reinterpret_cast<WidthDetour>(g_detours.at("room_titles.ui_edit_width_trim"));
+    NativeString wideName = {};
+    SetNative(&wideName, std::wstring(128, L'\u623f'));
+    widthTrim(&edit, nullptr, &wideName);
+    if (!Check(g_widthTrimCalls == 0 && GetNative(wideName).size() == 128 && edit.bytes[0x29F] == 0,
+               "verified room title bypasses only width truncation without enabling multiline behavior"))
+        return 1;
+    FakeEdit unrelated;
+    InitEdit(&unrelated);
+    const std::uint32_t sameLimit = 512;
+    std::memcpy(unrelated.bytes.data() + 0x2A0, &sameLimit, sizeof(sameLimit));
+    widthTrim(&unrelated, nullptr, &wideName);
+    if (!Check(g_widthTrimCalls == 1 && GetNative(wideName).size() == 13,
+               "same-limit unrelated edit still runs the native width policy"))
+        return 1;
+    SetNative(&wideName, std::wstring(128, L'\u623f'));
+    SetPointer(nativePvpCreate.bytes.data(), 0, g_buttonVtable);
+    widthTrim(&edit, nullptr, &wideName);
+    if (!Check(g_widthTrimCalls == 2 && GetNative(wideName).size() == 13,
+               "reused service storage cannot grant a stale room-edit exemption"))
+        return 1;
+    SetPointer(nativePvpCreate.bytes.data(), 0, g_serviceVtable);
+
+    FakeService teamSettings;
+    SetPointer(teamSettings.bytes.data(), 0x7C, &dialog);
+    if (!Check(Invoke("room_titles.ui_team_settings_init", Surface::TeamSettings,
+                       &teamSettings, 9), "team settings expands its name edit at root +0x7C"))
+        return 1;
+
+    FakeService inlineTitle;
+    SetPointer(inlineTitle.bytes.data(),0,g_titleEditVtable);
+    SetNative(NativeAt(inlineTitle.bytes.data(),0x54),L"short original");
+    if (!Check(native_ui::SetTitleEditOriginalTitle(inlineTitle.bytes.data(),std::wstring(128,L'\u623f')) &&
+                   GetNative(*NativeAt(inlineTitle.bytes.data(),0x54))==std::wstring(128,L'\u623f'),
+               "native original title is deeply copied for Escape without a modern CRT string"))return 1;
 
     NativeString normalText = {};
     NativeString alternateStateText = {};
@@ -697,6 +793,20 @@ int wmain(int argc, wchar_t** argv)
                    titleBarLegacyTitle == L"Short",
                "shared titlebar PvP identity and legacy title"))
         return 1;
+
+    std::wstring cachedTitle;
+    if (!Check(native_ui::ReadTitleBarCachedTitle(titleBar.bytes.data(), &cachedTitle) &&
+                   cachedTitle == L"Full PvP title longer than twenty bytes",
+               "read the native full title cache before deciding whether an edit is unchanged"))
+        return 1;
+    pvpRoom.bytes[0x7A] = 0;
+    titleBarLegacyTitle = L"stale value";
+    if (!Check(native_ui::ReadTitleBarRoom(titleBar.bytes.data(), &titleBarBattleDomain,
+                                         &titleBarRoomId, &titleBarLegacyTitle) &&
+                   titleBarBattleDomain && titleBarRoomId == pvpId && titleBarLegacyTitle.empty(),
+               "a missing legacy display projection cannot erase a verified native room identity"))
+        return 1;
+    std::memcpy(pvpRoom.bytes.data() + 0x7A, "Short", 6);
 
     FakeRoom missionRoom;
     const std::uint32_t missionId = 17;

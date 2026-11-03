@@ -1,4 +1,4 @@
-# 战斗 AI 难度（Beta）
+# 战斗 AI 难度
 
 [English](battle-ai.md) · [返回功能目录](../README.zh-CN.md)
 

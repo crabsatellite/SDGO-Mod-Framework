@@ -65,6 +65,24 @@ def make_server(workspace, port=0):
                     return self.response(200, (static / 'panels' / name).read_bytes(), 'text/javascript; charset=utf-8')
                 if method == 'GET' and path == '/api/state': return self.send_json(200, {**workspace.public(), 'session_token': token})
                 if method == 'GET' and path == '/api/identity': return self.send_json(200, {'application': 'sdgo_mod_manager', 'workspace_id': storage.revision(str(workspace.root).encode())})
+                if path=='/api/updates':
+                    updates=getattr(workspace,'updates',None)
+                    if updates is None:raise ValueError('当前管理器没有更新组件，请安装新版')
+                    if method=='GET':return self.send_json(200,updates.state())
+                    if method=='POST':
+                        action=body.get('action')
+                        if action=='channel':return self.send_json(200,updates.channel(body.get('channel')))
+                        if action=='automatic':
+                            if type(body.get('enabled')) is not bool:raise ValueError('自动更新开关无效')
+                            result=workspace.services.start('manager.updates') if body['enabled'] else workspace.services.stop('manager.updates')
+                            return self.send_json(200,updates.state())
+                        if action in ('check','install'):return self.send_json(200,updates.request(action=='install'))
+                        if action=='restart':
+                            from .update_restart import schedule
+                            schedule(updates)
+                            self.send_json(200,{'restarting':True})
+                            threading.Thread(target=self.server.shutdown,daemon=True).start();return
+                        raise ValueError('更新操作无效')
                 if method == 'GET' and path == '/api/developer':
                     workspace.require_developer()
                     host=workspace.host(query['host'][0]);identity=query['mod'][0]

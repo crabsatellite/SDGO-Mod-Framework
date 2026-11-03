@@ -1,4 +1,4 @@
-# FRP Beta build and verification
+# FRP build and verification
 
 Run these commands in a source checkout on Windows with Visual Studio C++ tools,
 CMake and Python. No game, Sakura account, server, database or credentials are

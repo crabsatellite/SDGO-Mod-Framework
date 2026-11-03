@@ -5,6 +5,7 @@
 #include <cwchar>
 #include <intrin.h>
 #include <new>
+#include "quiet_frame_capture.h"
 #include "sdgo/sdgo_api.h"
 
 // Direct3D 9 cannot enumerate or create a device on a non-input WinSta0
@@ -14,6 +15,8 @@
 // genuine multithreaded device and genuine HRESULTs are returned to the game.
 class QuietGraphics {
 public:
+    bool RequestFrameCapture(const wchar_t* path) { return frameCapture_.Request(path); }
+    LONG FrameCaptureState(HRESULT* result = nullptr) const { return frameCapture_.State(result); }
     using Create9Fn=IDirect3D9*(WINAPI*)(UINT);
     static constexpr const wchar_t* ProxyClassName() {return L"SDGO.GameTest.GraphicsProxy";}
     struct Observation {
@@ -1048,6 +1051,7 @@ private:
         }
         const LONG presentNumber=InterlockedIncrement(&owner->presents_);
         const uintptr_t returnAddress=reinterpret_cast<uintptr_t>(_ReturnAddress());
+        owner->frameCapture_.BeforePresent(device);
         const HRESULT result=record.present(device,source,destination,owner->proxyWindow_,dirty);
         const DWORD presentError=GetLastError();
         if (SUCCEEDED(result)) {
@@ -1080,6 +1084,7 @@ private:
     }
 
     inline static QuietGraphics* active_=nullptr;
+    QuietFrameCapture frameCapture_;
     const SdgoApi* api_=nullptr;
     SdgoMod* mod_=nullptr;
     Create9Fn original_=nullptr;

@@ -1,4 +1,4 @@
-# FRP connectivity (Beta)
+# FRP connectivity
 
 Optional networking tools, configured by the server owner. Use your normal game
 launcher after installing the owner's client profile.

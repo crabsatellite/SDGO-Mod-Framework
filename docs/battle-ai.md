@@ -1,4 +1,4 @@
-# Battle AI difficulty (Beta)
+# Battle AI difficulty
 
 [简体中文](battle-ai.zh-CN.md)
 
