@@ -19,6 +19,14 @@ real battles on a test server to check its weapons, skills and transformation.
 The generic release contains only the tools, never units. Owner drafts, images, publications and install receipts stay
 in the owner's workspace.
 
+Large authoring libraries can use the developer-only paged resource depot reader
+in `owner.units.resource_depot`. It verifies a pinned index, bounded metadata pages,
+compressed shards and streamed content hashes without loading the full library into
+memory. Conflicting logical paths retain their variants; baseline reuse and owner
+aliases require target checks. Opaque source game scripts remain data and gain no
+execution permission. This reader does not install resources, register records or
+replace the Manager's unit import workflow.
+
 ## Projects, blueprints and activity pools
 
 The blueprint authoring candidate adds editable recipes with explicit recovered,

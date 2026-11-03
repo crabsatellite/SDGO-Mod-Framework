@@ -458,6 +458,9 @@ if(BUILD_TESTING)
     add_test(NAME unit_import_owner_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_import_*.py" -v)
     set_tests_properties(unit_import_owner_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 90)
+    add_test(NAME unit_resource_depot_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_resource_depot.py" -v)
+    set_tests_properties(unit_resource_depot_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
     add_test(NAME unit_presentation_owner_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_presentations.py" -v)
     set_tests_properties(unit_presentation_owner_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
