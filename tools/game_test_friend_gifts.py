@@ -142,6 +142,10 @@ class GiftCampaign:
     def command(self,actor,name,**fields):
         return assert_receipt(actor.command(name,**fields))
 
+    def capture(self,actor,label):
+        self.command(actor,'capture',label=label)
+        self.check('genuine native frame saved: '+label,(actor.directory/('capture-'+label+'.bmp')).is_file())
+
     def wait_reply(self,actor,command,baseline,*,gift=None,unit=None):
         def matches(state):
             view=state.get('unit_gift',{})
@@ -163,10 +167,12 @@ class GiftCampaign:
                     state['unit_gift'].get('inventory_sync_busy')=='0' and
                     int(state['unit_gift'].get('control_flags','0'))&32,120)
         self.command(sender,'gift_note',note_utf16_hex=text_hex(note))
+        self.capture(sender,'gift-draft-'+str(sender.sequence))
         baseline=int(self.view(sender)['reply_sequence'])
         self.command(sender,'gift_preview')
         self.wait_reply(sender,10,baseline,unit=self.uid)
         sender.wait(lambda state:state.get('unit_gift',{}).get('composer_phase')=='3',60)
+        self.capture(sender,'gift-preview-'+str(sender.sequence))
 
     def offer(self,sender,recipient,note):
         self.open_draft(sender,recipient,note)
@@ -188,6 +194,7 @@ class GiftCampaign:
         self.check('receiver sees the exact offered instance in the product Storage view',found)
         self.command(recipient,'gift_select',gift_id=gift)
         recipient.wait(lambda current:int(current.get('unit_gift',{}).get('selected_gift_id','0'))==gift,60)
+        self.capture(recipient,'gift-inbox-'+str(recipient.sequence))
 
     def enabled(self):
         sender,aid,_=self.native.start('a');recipient,bid,_=self.native.start('b')
@@ -255,6 +262,7 @@ class GiftCampaign:
                    record['AcceptedAt'] is not None and
                    '赠送时间：'+provenance_timestamp(record['OfferedAt']) in text and
                    '接收时间：'+provenance_timestamp(record['AcceptedAt']) in text)
+        self.capture(recipient,'gift-provenance')
         self.native.stop('b');self.native.stop('a')
         self.receipt['status']='pass';self.save()
 

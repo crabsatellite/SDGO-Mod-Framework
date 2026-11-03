@@ -2154,6 +2154,10 @@ SDGO_MOD_ENTRY {
             !friendRoomActions.Bind(&actions,&rooms,&friendInviteSender,&friendInviteReceiver,&CreateFriendInviteRoom))
             sdgo_test::Fail("native friend operation bindings are unavailable");
         friendSession.Bind(&friendActions,&friendExtras,api,mod,&friendRoomActions);
+        friendSession.BindFrameCapture(
+            [](const wchar_t* path){return quietGraphics.RequestFrameCapture(path);},
+            []()->HRESULT{HRESULT result=E_PENDING;
+                return quietGraphics.FrameCaptureState(&result)>=QuietFrameCapture::Complete?result:E_PENDING;});
     }
     roomListVtable=api->Symbol(mod,"flow.native_room_list_vtable");
     modalLoadingVtable=api->Symbol(mod,"flow.native_modal_loading_vtable");
