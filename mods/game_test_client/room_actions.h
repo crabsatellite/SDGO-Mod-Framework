@@ -180,6 +180,10 @@ public:
         normalThreeDManagerVtables_[0] = Symbol<void*>("flow.normal_3d_manager_vtable");
         normalThreeDManagerVtables_[1] = Symbol<void*>("flow.ai_3d_manager_vtable");
         normalThreeDManagerVtables_[2] = Symbol<void*>("flow.battleship_3d_manager_vtable");
+        missionThreeDManagerVtable_ = Symbol<void*>("flow.mission_3d_manager_vtable");
+        missionThreeDMainVtable_ = Symbol<void*>("flow.mission_3d_main_vtable");
+        teamThreeDManagerVtable_ = Symbol<void*>("flow.team_3d_manager_vtable");
+        teamThreeDMainVtable_ = Symbol<void*>("flow.team_3d_main_state_vtable");
 
         if (!api_ || !mod_ || !native_ || !gameApp_ || !createRoomInit_ ||
             !createRoomDialogDispatch_ || !waitRoomObjectFactory_ ||
@@ -555,17 +559,37 @@ public:
     // matchmaking, clan and mission rooms use the team variant 0x0487.
     // The original always-packet handler consumes the real 0x057B reply and
     // performs the normal client transition.
+    bool IsModernTeamRoomReady() const
+    {
+        if (!gameApp_ || !teamThreeDManagerVtable_ || !teamThreeDMainVtable_)
+            return false;
+        __try {
+            auto* app=gameApp_();
+            if (!app || *reinterpret_cast<const uint32_t*>(app+kGameAppState)!=kThreeDWaitRoomState)
+                return false;
+            auto* owner=*reinterpret_cast<uint8_t**>(app+kGameAppStateObject);
+            if (!owner || *reinterpret_cast<void**>(owner)!=threeDWaitRoomVtable_)
+                return false;
+            auto* manager=*reinterpret_cast<uint8_t**>(owner+kWaitRoomObject);
+            if (!manager || *reinterpret_cast<void**>(manager)!=teamThreeDManagerVtable_)
+                return false;
+            auto** states=*reinterpret_cast<uint8_t***>(manager+kThreeDRoomStateArray);
+            auto* main=states ? states[0] : nullptr;
+            return main && *reinterpret_cast<void**>(main)==teamThreeDMainVtable_ &&
+                *reinterpret_cast<const uint32_t*>(main+8)==2 &&
+                *reinterpret_cast<uint8_t**>(main+0x0C)==manager+0x24 &&
+                *reinterpret_cast<uint8_t**>(main+0x10)==manager && manager[0x26]!=0;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
     bool Leave() const
     {
         if (!native_ || !profilePointer_)
             return false;
 
         __try {
-            uint8_t* profile = *profilePointer_;
-            if (!profile ||
-                !*reinterpret_cast<void**>(profile + kProfileRoom))
-                return false;
-
             uint8_t* app = gameApp_ ? gameApp_() : nullptr;
             if (app && *reinterpret_cast<const uint32_t*>(app + kGameAppState) == kThreeDWaitRoomState) {
                 uint8_t* owner = *reinterpret_cast<uint8_t**>(app + kGameAppStateObject);
@@ -573,19 +597,30 @@ public:
                 uint8_t* manager = *reinterpret_cast<uint8_t**>(owner + kWaitRoomObject);
                 if (!manager) return false;
                 void* vtable = *reinterpret_cast<void**>(manager);
-                if (vtable != normalThreeDManagerVtables_[0] && vtable != normalThreeDManagerVtables_[1] &&
+                const bool mission = missionThreeDManagerVtable_ && vtable == missionThreeDManagerVtable_;
+                const bool team = teamThreeDManagerVtable_ && vtable == teamThreeDManagerVtable_;
+                if (!mission && !team && vtable != normalThreeDManagerVtables_[0] && vtable != normalThreeDManagerVtables_[1] &&
                     vtable != normalThreeDManagerVtables_[2]) return false;
                 uint8_t** states = *reinterpret_cast<uint8_t***>(manager + kThreeDRoomStateArray);
                 uint8_t* main = states ? states[0] : nullptr;
-                if (!main || *reinterpret_cast<void**>(main) != normalThreeDMainVtable_ ||
+                const void* expectedMain = mission ? missionThreeDMainVtable_ :
+                    team ? teamThreeDMainVtable_ : normalThreeDMainVtable_;
+                if (!main || !expectedMain || *reinterpret_cast<void**>(main) != expectedMain ||
                     *reinterpret_cast<uint8_t**>(main + 0x0C) != manager + 0x24 ||
                     *reinterpret_cast<uint8_t**>(main + 0x10) != manager ||
                     *reinterpret_cast<const uint32_t*>(main + 8) != 2) return false;
                 const uint8_t* context = manager + 0x24;
                 if (context[0x25] == 1 || context[0x24] == 1 || !context[2]) return false;
+                // Mission Main's 0BE1 command dispatch reaches this same
+                // original 741950 business. Its genuine modern context is
+                // sufficient; the legacy profile-room publication can be null.
                 normalThreeDLeave_(main);
                 return true;
             }
+
+            uint8_t* profile = *profilePointer_;
+            if (!profile || !*reinterpret_cast<void**>(profile + kProfileRoom))
+                return false;
 
             const LONG objectType =
                 InterlockedCompareExchange(&roomObjectType_, 0, 0);
@@ -1462,6 +1497,10 @@ private:
     CreateRoomDialogDispatchFn normalThreeDLeaveReply_ = nullptr;
     void* normalThreeDMainVtable_ = nullptr;
     void* normalThreeDManagerVtables_[3] = {};
+    void* missionThreeDManagerVtable_ = nullptr;
+    void* missionThreeDMainVtable_ = nullptr;
+    void* teamThreeDManagerVtable_ = nullptr;
+    void* teamThreeDMainVtable_ = nullptr;
     void* waitMenuSelf_ = nullptr;
     mutable volatile LONG writeVersion_ = 0;
     mutable volatile LONG replySequence_ = 0;

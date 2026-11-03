@@ -21,7 +21,7 @@ constexpr std::uint32_t kTitleLimitBytes = 512;
 constexpr std::size_t kEditLimitOffset = 0x2A0;
 constexpr std::size_t kEditFocusOffset = 0x165;
 constexpr std::size_t kInputContextBytes = 0x138;
-constexpr std::size_t kPvpCreateDialogOffset = 0x4C;
+constexpr std::size_t kPvpCreateDialogOffset = 0x50;
 constexpr std::size_t kMissionCreateDialogOffset = 0x4C;
 constexpr std::size_t kMissionSettingsDialogOffset = 0x5C;
 constexpr std::size_t kPvpTitleEditOffset = 0x50;
@@ -89,6 +89,8 @@ using ButtonTextItemFn = HostWString24* (__thiscall*)(void*, std::uint32_t);
 using StaticTextSetFn = void (__thiscall*)(void*, const HostWString24*);
 using StaticTextWordSkipFn = void (__thiscall*)(void*, std::uint8_t);
 using InitFn = void (__thiscall*)(void*, std::uint32_t);
+using UpdateFn = void (__thiscall*)(void*);
+using WidthTrimFn = void (__thiscall*)(void*, HostWString24*);
 using TitleRenderFn = void (__thiscall*)(void*, const void*);
 using PvpRoomListFn = void (__thiscall*)(void*, const void*);
 using MissionRoomRowFn = void (__thiscall*)(void*, int);
@@ -112,12 +114,25 @@ const void* g_editVtable = nullptr;
 const void* g_buttonVtable = nullptr;
 const void* g_staticTextVtable = nullptr;
 const void* g_titleBarVtable = nullptr;
+const void* g_titleEditVtable = nullptr;
 InitCallback g_callback = nullptr;
 TitleLookupCallback g_titleLookup = nullptr;
 InitFn g_pvpCreateInit = nullptr;
 InitFn g_missionCreateInit = nullptr;
 InitFn g_missionSettingsInit = nullptr;
 InitFn g_pvpTitleEditInit = nullptr;
+InitFn g_nativePvpCreateInit = nullptr;
+InitFn g_gridPvpCreateInit = nullptr;
+InitFn g_teamSettingsInit = nullptr;
+UpdateFn g_nativePvpCreateUpdate = nullptr;
+UpdateFn g_gridPvpCreateUpdate = nullptr;
+WidthTrimFn g_widthTrim = nullptr;
+struct RegisteredEdit {
+    void* service = nullptr;
+    void* edit = nullptr;
+    const void* serviceVtable = nullptr;
+};
+RegisteredEdit g_registeredEdits[static_cast<std::size_t>(Surface::TeamSettings) + 1] = {};
 TitleRenderFn g_pvpTitleRender = nullptr;
 TitleRenderFn g_missionTitleRender = nullptr;
 PvpRoomListFn g_pvpRoomList = nullptr;
@@ -397,11 +412,10 @@ void ProjectTitleBar(void* titleBar, const void* room, RoomKind kind)
     if (!LookupFullTitle(kind, room, &fullTitle))
         return;
 
+    SetTitleBarCachedTitle(titleBar, fullTitle);
     std::wstring legacyTitle;
     if (!ReadLegacyRoomTitle(room, kind, &legacyTitle))
         return;
-
-    SetTitleBarCachedTitle(titleBar, fullTitle);
     if (fullTitle == legacyTitle)
         return;
 
@@ -551,7 +565,9 @@ void ProjectRoomDetails(void* service, void* dialog, int index, RoomKind kind)
 const char* SurfaceName(Surface surface)
 {
     switch (surface) {
-    case Surface::PvpCreate: return "PvP create";
+    case Surface::PvpCreate: return "team PvP create";
+    case Surface::PvpNativeCreate: return "native PvP create";
+    case Surface::TeamSettings: return "team room settings";
     case Surface::MissionCreate: return "mission create";
     case Surface::MissionSettings: return "mission settings";
     case Surface::PvpTitleEdit: return "PvP title edit";
@@ -568,14 +584,72 @@ void CompleteInit(Surface surface, void* service)
                        SurfaceName(surface));
         edit = nullptr;
     }
+    auto& registered = g_registeredEdits[static_cast<std::size_t>(surface)];
+    registered = {};
+    if (edit && IsAccessibleRange(service, sizeof(void*), false)) {
+        registered.service = service;
+        registered.edit = edit;
+        std::memcpy(&registered.serviceVtable, service, sizeof(void*));
+    }
     if (g_callback)
         g_callback(surface, service, edit);
+}
+
+void __fastcall TrimEditToWidth(void* self, void*, HostWString24* text)
+{
+    if (IsEdit(self)) {
+        std::uint32_t bytes = 0;
+        if (IsAccessibleRange(static_cast<std::uint8_t*>(self) + kEditLimitOffset, sizeof(bytes), false))
+            std::memcpy(&bytes, static_cast<std::uint8_t*>(self) + kEditLimitOffset, sizeof(bytes));
+        if (bytes == kTitleLimitBytes) {
+            for (std::size_t i = 0; i < std::size(g_registeredEdits); ++i) {
+                const auto& registered = g_registeredEdits[i];
+                if (registered.edit == self &&
+                    IsObjectWithVtable(registered.service, registered.serviceVtable) &&
+                    FindRoomNameEdit(registered.service, static_cast<Surface>(i)) == self)
+                    return; // preserve the full room title instead of a width-sized prefix
+            }
+        }
+    }
+    g_widthTrim(self, text);
 }
 
 void __fastcall PvpCreateInit(void* self, void*, std::uint32_t argument)
 {
     g_pvpCreateInit(self, argument);
     CompleteInit(Surface::PvpCreate, self);
+}
+
+void __fastcall NativePvpCreateInit(void* self, void*, std::uint32_t argument)
+{
+    g_nativePvpCreateInit(self, argument);
+    CompleteInit(Surface::PvpNativeCreate, self);
+}
+void __fastcall GridPvpCreateInit(void* self, void*, std::uint32_t argument)
+{
+    g_gridPvpCreateInit(self, argument);
+    CompleteInit(Surface::PvpNativeCreate, self);
+}
+
+// These services allocate/cache the edit during their first state-3 update,
+// after Init has only loaded a hidden root. Run after defaults and focus too.
+void CompleteCreateUpdate(void* self, UpdateFn original)
+{
+    const bool initializing = IsAccessibleRange(self, 0x48, false) &&
+        *reinterpret_cast<const std::uint32_t*>(static_cast<const std::uint8_t*>(self) + 0x44) == 3;
+    original(self);
+    if (initializing)
+        CompleteInit(Surface::PvpNativeCreate, self);
+}
+
+void __fastcall NativePvpCreateUpdate(void* self, void*)
+{
+    CompleteCreateUpdate(self, g_nativePvpCreateUpdate);
+}
+
+void __fastcall GridPvpCreateUpdate(void* self, void*)
+{
+    CompleteCreateUpdate(self, g_gridPvpCreateUpdate);
 }
 
 void __fastcall MissionCreateInit(void* self, void*, std::uint32_t argument)
@@ -588,6 +662,12 @@ void __fastcall MissionSettingsInit(void* self, void*, std::uint32_t argument)
 {
     g_missionSettingsInit(self, argument);
     CompleteInit(Surface::MissionSettings, self);
+}
+
+void __fastcall TeamSettingsInit(void* self, void*, std::uint32_t argument)
+{
+    g_teamSettingsInit(self, argument);
+    CompleteInit(Surface::TeamSettings, self);
 }
 
 void __fastcall PvpTitleEditInit(void* self, void*, std::uint32_t argument)
@@ -683,11 +763,12 @@ bool Bind(const SdgoApi* api, SdgoMod* mod)
     const void* staticTextVtable = api->Symbol(mod, "room_titles.ui_static_text_vtable");
     const void* titleBarVtable =
         api->Symbol(mod, "room_titles.ui_titlebar_vtable");
+    const void* titleEditVtable = api->Symbol(mod, "room_titles.ui_title_edit_vtable");
     if (!findControl || !getText || !setText || !inputLimit || !inputContext || !inputLock ||
         !wideToNarrow || !narrowToWide ||
         !nativeStringAssign || !buttonTextItem || !staticTextSet ||
         !staticTextWordSkip || !editVtable || !buttonVtable ||
-        !staticTextVtable || !titleBarVtable)
+        !staticTextVtable || !titleBarVtable || !titleEditVtable)
         return false;
 
     g_api = api;
@@ -708,6 +789,7 @@ bool Bind(const SdgoApi* api, SdgoMod* mod)
     g_buttonVtable = buttonVtable;
     g_staticTextVtable = staticTextVtable;
     g_titleBarVtable = titleBarVtable;
+    g_titleEditVtable = titleEditVtable;
     g_bound = true;
     return true;
 }
@@ -718,7 +800,22 @@ bool InstallInitHooks(InitCallback callback)
         return false;
     g_callback = callback;
 
-    if (!g_api->HookSlot(g_mod, "room_titles.ui_pvp_create_init",
+    if (!g_api->HookCode(g_mod, "room_titles.ui_edit_width_trim",
+                         reinterpret_cast<void*>(&TrimEditToWidth),
+                         reinterpret_cast<void**>(&g_widthTrim)) ||
+        !g_api->HookSlot(g_mod, "room_titles.ui_native_pvp_create_update",
+                         reinterpret_cast<void*>(&NativePvpCreateUpdate),
+                         reinterpret_cast<void**>(&g_nativePvpCreateUpdate)) ||
+        !g_api->HookSlot(g_mod, "room_titles.ui_grid_pvp_create_update",
+                         reinterpret_cast<void*>(&GridPvpCreateUpdate),
+                         reinterpret_cast<void**>(&g_gridPvpCreateUpdate)) ||
+        !g_api->HookSlot(g_mod, "room_titles.ui_native_pvp_create_init",
+                         reinterpret_cast<void*>(&NativePvpCreateInit),
+                         reinterpret_cast<void**>(&g_nativePvpCreateInit)) ||
+        !g_api->HookSlot(g_mod, "room_titles.ui_grid_pvp_create_init",
+                         reinterpret_cast<void*>(&GridPvpCreateInit),
+                         reinterpret_cast<void**>(&g_gridPvpCreateInit)) ||
+        !g_api->HookSlot(g_mod, "room_titles.ui_pvp_create_init",
                          reinterpret_cast<void*>(&PvpCreateInit),
                          reinterpret_cast<void**>(&g_pvpCreateInit)) ||
         !g_api->HookSlot(g_mod, "room_titles.ui_mission_create_init",
@@ -727,6 +824,9 @@ bool InstallInitHooks(InitCallback callback)
         !g_api->HookSlot(g_mod, "room_titles.ui_mission_settings_init",
                          reinterpret_cast<void*>(&MissionSettingsInit),
                          reinterpret_cast<void**>(&g_missionSettingsInit)) ||
+        !g_api->HookSlot(g_mod, "room_titles.ui_team_settings_init",
+                         reinterpret_cast<void*>(&TeamSettingsInit),
+                         reinterpret_cast<void**>(&g_teamSettingsInit)) ||
         !g_api->HookSlot(g_mod, "room_titles.ui_pvp_title_edit_init",
                          reinterpret_cast<void*>(&PvpTitleEditInit),
                          reinterpret_cast<void**>(&g_pvpTitleEditInit)))
@@ -769,9 +869,10 @@ void* FindRoomNameEdit(void* service, Surface surface)
     if (!g_bound || !service)
         return nullptr;
 
-    if (surface == Surface::PvpTitleEdit) {
+    if (surface == Surface::PvpTitleEdit || surface == Surface::PvpNativeCreate) {
         void* edit = nullptr;
-        return ReadPointer(service, kPvpTitleEditOffset, &edit) && IsEdit(edit) ? edit : nullptr;
+        const auto offset=surface==Surface::PvpNativeCreate ? 0x54u : kPvpTitleEditOffset;
+        return ReadPointer(service, offset, &edit) && IsEdit(edit) ? edit : nullptr;
     }
 
     std::size_t dialogOffset = 0;
@@ -779,6 +880,7 @@ void* FindRoomNameEdit(void* service, Surface surface)
     case Surface::PvpCreate: dialogOffset = kPvpCreateDialogOffset; break;
     case Surface::MissionCreate: dialogOffset = kMissionCreateDialogOffset; break;
     case Surface::MissionSettings: dialogOffset = kMissionSettingsDialogOffset; break;
+    case Surface::TeamSettings: dialogOffset = 0x7C; break;
     default: return nullptr;
     }
 
@@ -850,7 +952,7 @@ bool SetTitleBarCachedTitle(void* title_bar, const std::wstring& text)
 {
     if (!g_bound ||
         !IsObjectWithVtable(title_bar, g_titleBarVtable) ||
-        text.empty() || text.size() > kMaximumTitleCodeUnits ||
+        text.size() > kMaximumTitleCodeUnits ||
         text.find(L'\0') != std::wstring::npos)
         return false;
     auto* cached = reinterpret_cast<HostWString24*>(
@@ -858,14 +960,30 @@ bool SetTitleBarCachedTitle(void* title_bar, const std::wstring& text)
     return AssignNativeString(cached, text);
 }
 
+bool SetTitleEditOriginalTitle(void* service, const std::wstring& text)
+{
+    if (!g_bound || !IsObjectWithVtable(service, g_titleEditVtable) ||
+        text.empty() || text.size() > kMaximumTitleCodeUnits)
+        return false;
+    return AssignNativeString(reinterpret_cast<HostWString24*>(
+        static_cast<std::uint8_t*>(service) + 0x54), text);
+}
+
 bool ReadTitleBarRoom(void* title_bar,
                       bool* battle_domain,
                       std::uint32_t* native_room_id,
                       std::wstring* legacy_title)
 {
-    if (!g_bound || !battle_domain || !native_room_id || !legacy_title ||
-        !IsObjectWithVtable(title_bar, g_titleBarVtable))
+    if (!g_bound || !battle_domain || !native_room_id || !legacy_title)
         return false;
+    if (!IsObjectWithVtable(title_bar, g_titleBarVtable)) {
+        void* actual = nullptr;
+        if (IsAccessibleRange(title_bar, sizeof(actual), false))
+            std::memcpy(&actual, title_bar, sizeof(actual));
+        if (g_api->Log) g_api->Log(g_mod, SDGO_LOG_WARN,
+            "title event owner mismatch: actual=%p expected=%p", actual, g_titleBarVtable);
+        return false;
+    }
 
     void* room = nullptr;
     RoomKind kind = RoomKind::Pvp;
@@ -879,14 +997,31 @@ bool ReadTitleBarRoom(void* title_bar,
 
     std::uint32_t roomId = 0;
     std::memcpy(&roomId, room, sizeof(roomId));
+    if (g_api->Log) g_api->Log(g_mod, SDGO_LOG_DEBUG,
+        "title event native identity: domain=%u id=%u", static_cast<unsigned>(kind), roomId);
     std::wstring title;
-    if (!roomId || !ReadLegacyRoomTitle(room, kind, &title))
+    if (!roomId || roomId > 400) {
+        if (g_api->Log) g_api->Log(g_mod, SDGO_LOG_WARN,
+            "title event native room unavailable: domain=%u id=%u", static_cast<unsigned>(kind), roomId);
         return false;
+    }
+    // Room identity and the optional bounded display projection are separate.
+    // Editing can make the host conversion buffer temporarily unavailable;
+    // the authenticated metadata key still identifies this native room.
+    ReadLegacyRoomTitle(room, kind, &title);
 
     *battle_domain = kind == RoomKind::Pvp;
     *native_room_id = roomId;
     legacy_title->swap(title);
     return true;
+}
+
+bool ReadTitleBarCachedTitle(void* title_bar, std::wstring* text)
+{
+    return g_bound && text && IsObjectWithVtable(title_bar, g_titleBarVtable) &&
+        CopyNativeString(reinterpret_cast<const HostWString24*>(
+            static_cast<const std::uint8_t*>(title_bar) + kTitleBarCachedTitleOffset),
+            kMaximumTitleCodeUnits, text);
 }
 
 bool LegacyTitleBytes(const std::wstring& text, std::string* copy)

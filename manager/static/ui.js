@@ -10,6 +10,7 @@ const SVG = 'http://www.w3.org/2000/svg';
 const ICONS = {
   mods: 'M4 7l8-4 8 4v10l-8 4-8-4z M4 7l8 4 8-4 M12 11v10',
   services: 'M3 12h4l2-5 4 10 2-5h6',
+  download: 'M12 3v12 M7 10l5 5 5-5 M4 17v4h16v-4',
   archive: 'M3 4h18v5H3z M5 9v11h14V9 M10 13h4',
   shop: 'M3 4h3l2.5 11h10L21 7H7 M10 20h.01 M17 20h.01',
   operators: 'M6 20v-3a6 6 0 0 1 12 0v3 M8 9a4 4 0 1 0 8 0 4 4 0 0 0-8 0z M5 9h2 M17 9h2',
