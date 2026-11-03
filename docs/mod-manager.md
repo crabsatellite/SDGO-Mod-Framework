@@ -60,6 +60,11 @@ For publishers, `python tools/build_release.py --build --channel stable --versio
 
 ### Local-only Mods
 
+Install these addons under `sdgo/local-mods/<id>/`. Both the core and Manager discover this root;
+Manager imports marked local-only packages there automatically. Ignore the whole `sdgo/local-mods/`
+directory in version control. Public package, export and source guards reject its contents, so additional
+local addons do not need individual exclusion rules.
+
 An owner-only Mod stays in a separate private repository. Its `[mod]` manifest uses
 `distribution=local_only`, its `manager.json` uses `"distribution": "local_only"`,
 the repository `distribution.json` uses `{"distribution":"local_only",

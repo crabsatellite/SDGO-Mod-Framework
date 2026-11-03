@@ -151,6 +151,8 @@ class ManagerTests(unittest.TestCase):
         item=next(mod for mod in result['state']['hosts'][0]['mods']
                   if mod['id']=='personal_fixture')
         self.assertFalse(item['redistributable'])
+        self.assertTrue((self.client/'sdgo/local-mods/personal_fixture/mod.ini').is_file())
+        self.assertFalse((self.client/'sdgo/mods/personal_fixture/mod.ini').exists())
         entries['client/sdgo/mods/personal_fixture/personal_fixture.dll']=b'MZ no marker'
         status,_=self.call('POST','/api/import',{'host':host,'package':package(entries)})
         self.assertEqual(status,400)
