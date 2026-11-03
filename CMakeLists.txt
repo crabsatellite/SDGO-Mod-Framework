@@ -134,6 +134,8 @@ add_executable(login_recovery_policy_test tests/login_recovery_policy_test.cpp)
 sdgo_strict(login_recovery_policy_test)
 add_test(NAME login_recovery_policy COMMAND login_recovery_policy_test)
 sdgo_add_mod(fps_limit DESCRIPTION "native config.xml FPS cap" SOURCES mods/fps_limit/fps_limit.cpp)
+sdgo_add_mod(announcements DESCRIPTION "scheduled native announcements"
+             SOURCES mods/announcements/announcements.cpp FILES symbols.fragment.ini rules.json runtime.ini LIBS ole32 oleaut32 uuid comctl32)
 
 add_executable(fps_limit_runtime_test tests/fps_limit_runtime_test.cpp)
 target_link_libraries(fps_limit_runtime_test PRIVATE sdgo_api)
@@ -1415,4 +1417,15 @@ if(BUILD_TESTING)
         pvp_ai_test match_ai_test pvp_team_plan_test pvp_title_rules_test
         room_random_test random_loadout_regression_test room_random_client_policy_test
         game_test_room_actions_test)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(announcement_policy_test tests/announcement_policy_test.cpp)
+    target_link_libraries(announcement_policy_test PRIVATE sdgo_api)
+    sdgo_strict(announcement_policy_test)
+    add_test(NAME announcement_policy COMMAND announcement_policy_test)
+    add_executable(announcement_window_messages_test tests/announcement_window_messages_test.cpp)
+    target_link_libraries(announcement_window_messages_test PRIVATE ole32 oleaut32 uuid comctl32)
+    sdgo_strict(announcement_window_messages_test)
+    add_test(NAME announcement_window_messages COMMAND announcement_window_messages_test)
 endif()

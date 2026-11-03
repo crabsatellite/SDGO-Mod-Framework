@@ -131,9 +131,18 @@ def utc_now() -> str:
 
 def atomic_write(path: Path, data: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(data, encoding="utf-8", newline="\n")
-    os.replace(temporary, path)
+    temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
+    try:
+        temporary.write_text(data, encoding="utf-8", newline="\n")
+        for attempt in range(20):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                if attempt == 19: raise
+                time.sleep(.05)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def read_json(path: Path) -> dict:
@@ -2628,7 +2637,7 @@ def collect_hashes(root: Path) -> tuple[dict, dict]:
         if path.relative_to(root).as_posix().lower() in RUNTIME_OUTPUTS:
             continue
         if path.is_file() and path.suffix.lower() in {".dll", ".lua", ".ini", ".tsv", ".json",
-                                                      ".bin", ".gdt", ".zsd", ".spr", ".txr", ".uir", ".zpk", ".zdx"}:
+                                                      ".bin", ".gdt", ".zsd", ".spr", ".txr", ".uir", ".zpk", ".zdx", ".html"}:
             bind(path, immutable)
     for relative in (SHOP_ASSERTIONS_RELATIVE, SHOP_DISPLAY_RELATIVE):
         path = root / relative
