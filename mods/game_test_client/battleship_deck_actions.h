@@ -406,14 +406,20 @@ public:
             const uint8_t* ship=profile ? profile+kProfileBattleShip:nullptr;
             if (!ship || !(observed.ship_uid=ReadUid(ship))) return kWaitingForShipData;
             observed.leader_uid=ReadUid(ship+kShipLeader);
-            if (observed.leader_uid!=required[0]) return kRequiredUnitChanged;
+            bool explicitFleet=false;
+            for(uint32_t i=0;i<4;++i)explicitFleet=explicitFleet || required[i]!=0;
+            if (explicitFleet && observed.leader_uid!=required[0]) return kRequiredUnitChanged;
+            bool leaderPresent=false;
             for (uint32_t i=0;i<4;++i) {
-                if (!required[i]) return kInvalidTarget;
-                for (uint32_t j=0;j<i;++j) if (required[j]==required[i]) return kRequiredUnitDuplicate;
                 observed.unit_uids[i]=ReadUid(ship+kShipUnitUids+i*kShipUnitUidStride);
-                if (observed.unit_uids[i]!=required[i]) return kRequiredUnitChanged;
+                if (explicitFleet && observed.unit_uids[i]!=required[i]) return kRequiredUnitChanged;
+                if(!observed.unit_uids[i])continue;
+                for (uint32_t j=0;j<i;++j) if (observed.unit_uids[j]==observed.unit_uids[i]) return kRequiredUnitDuplicate;
+                leaderPresent=leaderPresent || observed.leader_uid==observed.unit_uids[i];
                 ++observed.selected_count;
             }
+            if(!observed.selected_count)return kWaitingForShipData;
+            if(!leaderPresent)return kRequiredUnitChanged;
             void* inventory=unitInfoPointer_ ? *unitInfoPointer_:nullptr;
             if (!inventory || !static_cast<const uint8_t*>(inventory)[kUnitInfoReady]) return kWaitingForInventory;
             const int capacity=*reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(inventory)+kUnitInfoCapacity);
@@ -424,14 +430,17 @@ public:
                 const uint32_t id=*reinterpret_cast<const uint32_t*>(brief);
                 const uint64_t uid=ReadUid(brief+4);
                 if (!id) continue;
-                for (uint32_t i=0;i<4;++i) if (uid==required[i]) {
+                for (uint32_t i=0;i<4;++i) if (observed.unit_uids[i] && uid==observed.unit_uids[i]) {
                     if (found[i]) return kRequiredUnitDuplicate;
                     void* grid=nullptr;
                     if (!FindUnitGrid(id,&grid) || !grid) return kRequiredUnitTypeMismatch;
-                    observed.total_cost+=static_cast<const uint8_t*>(grid)[kGridCost];found[i]=true;
+                    const auto cost=static_cast<const uint8_t*>(grid)[kGridCost];
+                    if(!cost || cost>kDeckCostLimit)return kRequiredUnitCostMismatch;
+                    observed.total_cost+=cost;found[i]=true;
                 }
             }
-            for (bool present:found) if (!present) return kRequiredUnitMissing;
+            for (uint32_t i=0;i<4;++i) if (observed.unit_uids[i] && !found[i]) return kRequiredUnitMissing;
+            if(observed.total_cost>kDeckCostLimit)return kRequiredUnitCostMismatch;
             observed.profile_matches=1;observed.result=kAccepted;
             return kAccepted;
         } __except(EXCEPTION_EXECUTE_HANDLER) { return kNativeFault; }
@@ -594,6 +603,7 @@ private:
     static constexpr uint32_t kBattleShipAppState = 20;
     static constexpr uint32_t kDeckSize = 4;
     static constexpr uint32_t kRequiredTotalCost = 8;
+    static constexpr uint32_t kDeckCostLimit = 10;
     static constexpr uint32_t kMaxInventorySlots = 4096;
     static constexpr uint32_t kMaxCarouselShips = 15;
     static constexpr uint32_t kClickMessage = 0x101;

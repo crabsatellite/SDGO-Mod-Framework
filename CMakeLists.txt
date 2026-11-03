@@ -1053,6 +1053,10 @@ if(BUILD_TESTING)
     set_tests_properties(room_commands_offline PROPERTIES TIMEOUT 30)
 
     add_executable(room_random_test tests/room_random_test.cpp)
+    add_executable(random_loadout_regression_test tests/random_loadout_regression_test.cpp)
+    target_link_libraries(random_loadout_regression_test PRIVATE sdgo_api)
+    sdgo_strict(random_loadout_regression_test)
+    add_test(NAME random_loadout_regression_offline COMMAND random_loadout_regression_test)
     target_link_libraries(room_random_test PRIVATE sdgo_api bcrypt)
     sdgo_strict(room_random_test)
     add_test(NAME room_random_offline COMMAND room_random_test)
@@ -1089,7 +1093,7 @@ if(BUILD_TESTING)
     add_test(NAME game_test_fps_runner_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_game_test_fps*.py" -v)
     set_tests_properties(game_test_fps_runner_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
-    foreach(plan routes mission_plan shop_plan unit_selection reuse environment)
+    foreach(plan routes mission_plan shop_plan unit_selection reuse environment ai_teams)
         add_test(NAME game_test_${plan}_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
             -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_game_test_${plan}.py" -v)
         set_tests_properties(game_test_${plan}_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
@@ -1099,6 +1103,10 @@ if(BUILD_TESTING)
     set_tests_properties(game_test_server_report_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
     add_library(battle_ai_server_bridge_fixture SHARED tests/battle_ai_server_bridge_fixture.cpp)
     sdgo_strict(battle_ai_server_bridge_fixture)
+    add_executable(pvp_team_plan_test tests/pvp_team_plan_test.cpp)
+    target_link_libraries(pvp_team_plan_test PRIVATE sdgo_api)
+    sdgo_strict(pvp_team_plan_test)
+    add_test(NAME pvp_team_plan_offline COMMAND pvp_team_plan_test)
     foreach(mod pvp_ai match_ai coop_ai mission_ai)
         add_executable(${mod}_test "tests/${mod}_test.cpp")
         target_link_libraries(${mod}_test PRIVATE sdgo_api)
@@ -1349,4 +1357,11 @@ if(BUILD_TESTING)
     target_link_libraries(hangar_capacity_sql_test PRIVATE sdgo_api ole32 oleaut32 uuid)
     sdgo_strict(hangar_capacity_sql_test)
     target_compile_options(hangar_capacity_sql_test PRIVATE /Ob0)
+    add_custom_target(pvp_population_regression_build DEPENDS
+        game_test_quiet_audio_test game_test_unit_select_actions_test game_test_sealed_room_title_test
+    sdgo_core d3d9_shim winmm_shim fps_limit
+        pvp_ai match_ai room_random room_random_client game_test_client game_test_server
+        pvp_ai_test match_ai_test pvp_team_plan_test pvp_title_rules_test
+        room_random_test random_loadout_regression_test room_random_client_policy_test
+        game_test_room_actions_test)
 endif()

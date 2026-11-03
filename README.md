@@ -37,7 +37,7 @@ Release labels describe the published version; later feature work is accepted se
 | Feature | Overview | Documentation |
 |---|---|---|
 | Mission AI wingmen <!-- catalog: `coop_ai`, `mission_ai` --> | `!ai` in a co-op room title adds AI wingmen to the team | [Use](docs/coop-wingmen.md) |
-| PvP AI <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` adds opponents and teammates with synchronized opening controls and native TAB records | [Use](docs/pvp-ai.md) |
+| PvP AI (Beta) <!-- catalog: `pvp_ai`, `match_ai` --> | Group humans or keep native teams; independently fill both sides, opponents only or exact AI counts; retain the human host after an AI MVP | [Use](docs/pvp-ai.md) |
 | AI mech catalog (separate addon) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards <!-- catalog: `battle_rewards` --> | GB/MB from battle contribution, supervised wallet delivery and historical GB compensation | [Use](docs/battle-rewards.md) |
 | Collection capsule (Beta) <!-- catalog: `collection_capsule` --> | 100,000 GP activity machine that fills missing catalog units first | [Use](docs/collection-capsule.md) |

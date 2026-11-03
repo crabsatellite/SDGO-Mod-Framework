@@ -3,6 +3,13 @@
 默认复用本机从生产复制、数据库完全隔离的原生 `test`，不用 Docker。
 并发有冲突时复制 test 并配置独立端口和原生 SQL，完成后删除整个任务副本。
 普通测试绑定已有账号与机体；保留已有代码和有效结果，测试程序/数据库副本只留本地。
+
+对战人数回归可在 `prepare` 中组合 `--expected-ai 7 --ai-allies 0 --random-teams`，
+请求原生随机真人分队，并验证房主对面恰有 7 个 AI、本方没有 AI。
+省略 `--ai-allies` 时沿用原有的平衡测试布局；这两个参数描述本轮完整对战场景，不适用于页面或任务烟雾测试。
+可同时加 `--random-loadout` 验证随机机体和该人数布局组合，所有参数写入封存任务。
+`--same-room-rematch` 验证结算返回后真人仍为房主，并在同一房间完整再打一局，最后才离房；
+此回归不与随机机体、页面或账号准备场景混用。服务端报告需要每个模式有两次完整战斗，不能用第一局结果代替第二局。
 流程、命令和数据维护见 [`sdgo-native-testing` guide](../skills/sdgo-native-testing/SKILL.md)。
 
 ## 无需登录的 FPS 参数验证
@@ -41,35 +48,34 @@ python tools/game_test_fps.py --client-template D:\Games\SDGO --stage build/stag
 运行前会封存渲染上限与观察器配置。实际 AI 移动后，场景核对 60 Hz 逻辑更新；
 选择高于 60 的上限时，渲染还必须实测超过 60 FPS，之后继续正常对战、结算和返回流程。
 
-### 重建本地后端
+### 复用本地原生后端
 
-`tools/game_test_backend.py` 管理复制的原生服务和独立 SQL 容器。需要 Docker、兼容的
-本地原生服务端、server stage，以及已校验的数据库备份（`backend.json` 和 `backups` 目录）。
+`tools/game_test_backend.py serve` 运行已经配置的本地测试服务端，复用其独立原生 SQL 实例，
+不使用 Docker，也不在每次重试时复制或还原数据库。后端的 `backend.json`、`private.json`
+和实际 SQL 文件必须绑定同一测试副本；启动前会核对存活的 SQL 进程及数据文件路径。
+准备测试副本和已有账号的方法见 [guide](../skills/sdgo-native-testing/SKILL.md)。
+
 server stage 须构建 `winmm_shim`、`sdgo_core`、`sdgo_data`、`pvp_ai` 和 `game_test_server`。
-缺少加载器、观察器或符号时，会在创建 SQL 资源和恢复数据库之前报告预检失败。
-使用新的工作目录和未占用的 IPv4 回环地址，例如：
+以下示例假设测试副本已经使用 `127.93.0.1`，私有数据库配置也已就绪：
 
 ```powershell
-python tools/game_test_backend.py prepare --source-server D:\SDGO\Server --stage build/stage/Release --backup-source D:\Tests\verified-backend --work build/fps-backend --target-ip 127.93.0.1
-python tools/game_test.py prepare --client-template D:\Games\SDGO --stage build/stage/Release --run-dir build/fps-probe --target-host 127.93.0.1 --login-port 5001 --fps-cap 160
-python tools/game_test_backend.py serve --work build/fps-backend --client-run build/fps-probe --stage build/stage/Release --startup-xml D:\SDGO\ServerStartUp\ServerStartUp.xml --lifetime 1800
+python tools/game_test.py prepare --client-template D:\SDGO-Test\client --stage build/stage/Release --run-dir build/fps-probe --target-host 127.93.0.1 --login-port 5001 --fps-cap 160
+python tools/game_test_backend.py serve --work D:\SDGO-Test\server --client-run build/fps-probe --stage build/stage/Release --startup-xml D:\SDGO-Test\server\ServerStartUp\ServerStartUp.xml --lifetime 1800
 ```
 
-出现 `backend_ready` 后，在另一终端运行矩阵并指定相同的 `--target-host`。
-服务启动重试和数据库探测均有超时；启动集合同时读取原生启动 XML 和频道表。
-FPS 套件无需账号；其他套件默认复用私有账号配置，后端观察器另需通过
-`serve --host-pilot-id <账号实际原生驾驶员 ID>` 指定对应账号，不在工具中固定账号 ID。
-缺少已校验备份时，只有显式
-`--allow-live-copy-only` 才允许向源 SQL 发起 COPY_ONLY 备份。
+启动集合同时读取原生启动 XML 和频道表；等待本次启动各 Battle 的
+`Table Download OK.. Time Procedure Ready..` 及 `backend_ready` 后再运行客户端。
+TCP 端口开放不能代替原生表加载完成。FPS 套件无需账号；其他套件绑定已有私有账号配置，
+后端观察器另需 `serve --host-pilot-id <实际原生驾驶员 ID>`，工具不固定账号 ID。
+只改客户端场景时可复用已就绪的服务会话；更新服务端候选 DLL 时才重启所属后端。
 
 ```powershell
-python tools/game_test_backend.py stop --work build/fps-backend
-python tools/game_test_backend.py cleanup --work build/fps-backend --remove-runtime
+python tools/game_test_backend.py stop --work D:\SDGO-Test\server
 ```
 
-清理先核对所属服务已退出及 SQL 容器/卷身份，再删除私有凭据和复制的运行环境，保留公开回执。
-单独准备的 `fps-probe` 仅属于该次测试，进程退出、证据导出后再删除。共享备份和源服务端保留，
-后续可换目录、地址或机器复测。
+停止后核对所属服务进程已经退出。保留共享 test、原生 SQL、已有账号和公共资产；
+完成验收和必要部署读回后，将成功测试的临时记录及所属并发副本移入回收站，失败诊断保留到问题解决。
+测试副本、数据库和私有配置只留本地，不作为正式运行文件的发布来源。
 
 开发用可选 Mod，默认关闭。测试在真实客户端进程内执行，通过正常业务请求
 与真实服务端通信。外部运行器负责准备独立客户端、启动和收集结果，不操作桌面。
@@ -82,8 +88,10 @@ python tools/game_test_backend.py cleanup --work build/fps-backend --remove-runt
 
 测试默认使用独立后台桌面，副本中的 BGM、音效和语音全部静音。后台窗口与前台
 归属有独立回执；不满足条件就失败。旧 D3D9 的设备在专用图形线程上创建，仅使用
-不可见、不可激活的代理窗口；真实游戏页面仍留在后台桌面。禁止全屏，逐窗口验证
-代理身份和前台归属。原生 Miles 驱动使用 WaveOut，按驱动验证主音量为零。逻辑测试副本关闭原生
+不可见、不可激活的代理窗口；真实游戏页面仍留在后台桌面。禁止全屏，逐窗口验证代理身份和前台归属。
+锁屏导致输入桌面访问被拒绝时，框架改为核对独立游戏桌面及 Default 桌面上唯一的隐藏图形代理，
+并明确记录输入桌面状态不可读。其他读取错误、未识别窗口或前台归属异常仍会使测试失败。
+原生 Miles 驱动使用 WaveOut，按驱动验证主音量为零。逻辑测试副本关闭原生
 后处理效果，同时将各项原生特效等级设为零，并读取实际运行标志；该配置用于逻辑与协议测试，画质和后处理应在可见客户端中单独测试。
 本机直连测试只绑定回环地址，不创建公网监听，
 不修改系统防火墙或通知设置。非本机测试需要预先具备其专用防火墙规则的管理权限；
@@ -117,7 +125,18 @@ python tools/game_test.py run --run-dir build/gametest/pvp --timeout 3600
 在确认进程已停止、文件完整后复用现有客户端，每轮生成新的运行 ID。
 上一轮回执与二进制哈希集中保存，旧任务及重复文件进入回收站；不会再复制整套客户端。
 被其他任务引用的只读归档基线不能作为复用目标。同一账号禁止并发运行。
+需要换用另一个已有测试账号时，在 `--reuse-client` 后同时指定
+`--rebind-existing-account --account-profile <已有账号配置>`。客户端必须已停止；目标配置须声明
+`registered` 或 `existing_account`，且不使用注册重试。框架同时锁定旧、新账号配置，保留两份配置，
+复用客户端文件；需要服务端回执时，观察器也须绑定目标账号的实际驾驶员 ID。
 复用功能需要开发环境安装 `Send2Trash`，缺少时会停止，不会降级为永久删除。
+自动补位指令也可直接纳入原生回归：单人 8 人房使用
+`--expected-ai 7 --ai-allies 3 --ai-policy fill` 验证 `!ai fill`，或
+`--expected-ai 7 --ai-allies 0 --ai-policy enemy` 验证 `!ai enemy`。
+`--ai-teams coop` 验证真人跟随房主同队；省略或写 `versus` 沿用原生手选／随机。
+这些参数可与 `--random-teams`、`--random-loadout` 组合，敌友仍相对房主最终阵营；封存后的原生房名须在 20 字节内，过长组合应分场景测试。
+普通 Grid/Tag 回归只读核对账号已选的战舰：1–4 台各不重复的已有机体、有效旗舰和不超过 10 的原生点数。
+不要求先重建四机体编队；专门的 `--deck-only` 编辑场景仍使用显式四机体声明，走原生 Save/GoOut 回执。
 连接地址默认 `127.0.0.1:5001`，可用 `--target-host` 和 `--login-port` 修改；
 服务器和频道由原客户端正常流程自动选择。
 默认 `--network-policy direct` 仅在测试副本关闭继承的地址转发，并在登录前核对
@@ -126,7 +145,7 @@ python tools/game_test.py run --run-dir build/gametest/pvp --timeout 3600
 示例依次测试普通、死亡竞赛和队长模式。每种模式都经过
 建房、真实开局、AI 状态断言和正常结束返回；也可指定单个模式排查。
 
-普通对战的定向检查可用 `--ai-difficulty Hard --expected-ai 5` 封存原生难度指令；
+普通对战的定向检查可用 `--ai-difficulty Hard --expected-ai 7` 封存原生难度指令；
 再指定 `--ai-layout allied --expected-ai 6` 则检查五名 AI 队友与一名 AI 对手。
 此队伍配置需新观察会话，复用会话的前缀会使指令超出原生房名上限。
 `--ai-pool-level 1` 至 `5` 配合 `--expected-ai 1` 选择机体池，不能同时覆盖难度。
