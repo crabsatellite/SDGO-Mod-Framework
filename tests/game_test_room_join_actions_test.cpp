@@ -473,10 +473,8 @@ int __fastcall FakeReadyBusiness(
             command,
             0x10);
     const uint32_t localSlot =
-        manager
-            ? Get<uint32_t>(
-                  manager,
-                  0x20)
+        context
+            ? context[3]
             : UINT32_MAX;
     auto* waitRoom =
         context
@@ -1433,19 +1431,14 @@ void TestReadyReplyAndModel(
         CompleteGuestJoin(
             actions),
         "Ready fixture completed a guest join through ACK and native model");
-    Put<uint32_t>(
-        g_manager,
-        0x20,
-        0x100u +
-            kLocalSlot);
+    g_manager[0x27] = 12;
     Check(
         !actions.Ready() &&
             g_readyBusinessCalls == 0,
-        "Ready validates the full native local-slot dword before calling native business");
-    Put<uint32_t>(
-        g_manager,
-        0x20,
-        kLocalSlot);
+        "Ready validates the native command context slot byte before calling native business");
+    g_manager[0x27] = kLocalSlot;
+    // 00733ED1 reads context[3]. The preceding state-manager word is unrelated.
+    Put<uint32_t>(g_manager,0x20,0xDEADBEEFu);
 
     ReadyModel(
         g_waitRoomService.data(),
