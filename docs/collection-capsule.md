@@ -4,7 +4,8 @@ Collection capsule is an independently installable and disableable gameplay Mod.
 It adds one machine to the native activity capsule page:
 
 - default machine ID `990001`;
-- a fixed price of **100,000 GP** per draw, with no other accepted currency;
+- a configurable GB (native GP) price, initially **100,000 GB** per draw;
+- **15 successful draws per account each week** by default, usable together; Monday 00:00 at UTC+8 resets the quota;
 - rank-first selection with **C 35% / B 30% / A 20% / S 15%**;
 - tier 1 selects an eligible permanent base/initial form that the account has not
   unlocked in this Mod's catalog;
@@ -28,6 +29,12 @@ and all are currently held or pending, or if delivery metadata, database work, o
 result validation fails, the native failure path should refund the complete
 prepayment and leave a net charge of zero.
 
+The server also rejects purchases after the configured limit and refunds the full
+native prepayment. A draw counts only when its prize is committed to the prize box;
+failed delivery consumes no quota. Claiming that prize later does not consume another
+draw. All servers using the same account database share the quota. Unused draws do
+not carry forward. Changing the cap preserves draws already used in that period.
+
 ## Runtime and distribution boundary
 
 The server installs the `collection_capsule` World Mod, SQL schema, and machine
@@ -43,9 +50,19 @@ This feature requires the framework/core from the same build; install them toget
 
 ## Mod Manager owner tutorial
 
+The released Manager includes the resource generator. Select the matching framework folder and your client to generate the collection resources.
+
 Use **SDGO Mod Manager → Collection capsule** for everyday configuration.
 Select the target WorldServer INI, matching client, and full framework or owner
-toolkit directory. An optional activity poster must be a **361×322 PNG**.
+toolkit directory. An optional poster background must be a PNG of at least
+**361×322** pixels. The builder adds matching price and quota lettering and scales
+the result to the native poster size.
+
+Set the price, successful-draw cap, reset period (`week`, `day`, or `none`) and UTC
+offset in this panel, then regenerate and install the matched server and client
+resources. A zero cap is unlimited. Select `none` with a zero cap to disable period
+tracking. Rules take effect through that matched installation; saving alone does
+not change the running server. Keep the client price and server price synchronized.
 
 1. Generate matched resources. Only public configuration is exported; existing
    shared client machines are preserved.
@@ -64,7 +81,7 @@ gift categories. Publishing requires the current six-table shared provider; an
 older four-table provider is rejected. Regenerate and distribute matched resources
 after changing the collection poster or importing new content.
 Enable or disable the gameplay Mod on its World feature card and restart that
-World; the minimal catalog unlock set is retained. Price is fixed at 100,000 GP.
+World; the minimal catalog unlock set and quota records are retained.
 The internal machine ID is developer information and must match SQL and client resources.
 All paths remain in the owner's local workspace. There is no additional UI,
 server or game launcher.
@@ -154,9 +171,11 @@ Declarations for newly imported multi-form unit families can be repeated:
 Standalone, unambiguous base units need no declaration. `--unit-family` supplies
 inventory-root metadata; it is not a frozen prize allowlist.
 
-The default placeholder cover is `mods\collection_capsule\assets\cover.png`.
-A replacement must be an exact **361×322 PNG**. Author a larger image at the same
-aspect ratio and downsample it for installation:
+The default background is `mods\collection_capsule\assets\cover-base.png`.
+Supply a replacement PNG at the same aspect ratio, without price or quota text.
+The builder adds that text from the current rules and resizes it for installation.
+CLI rule options are `--price-gp 100000 --limit-period week --draw-limit 15
+--utc-offset-minutes 480`; use them with both `build` and `build-kit`.
 
 Poster copy must describe both tiers. The recommended short footer is
 **“Complete the catalog · Then refill the hangar”**. Do not publish artwork that
@@ -209,7 +228,7 @@ python tools/collection_capsule.py install-server `
 
 The installer first creates a recovery backup limited to this server payload, then
 opens an outer database transaction. SQL installation and readback of the machine
-ID, 100,000 GP price, enabled state, and pool hash occur inside that transaction.
+ID, configured GP price, enabled state, and pool hash occur inside that transaction.
 The standard installer then updates this World's framework and Mod files, and the
 database commits only after the file update succeeds. A caught failure rolls back
 the database and restores only the controlled files. If another process changed a

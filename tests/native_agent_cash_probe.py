@@ -97,7 +97,10 @@ def main() -> int:
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--winmm", type=Path, required=True)
     parser.add_argument("--core", type=Path, required=True)
+    parser.add_argument('--packet-id',type=lambda v:int(v,0),choices=(0x064B,0x0932),default=0x064B)
     args = parser.parse_args()
+    global PACKET
+    PACKET=struct.pack('<HII',args.packet_id,ACCOUNT,CURRENT_MB)
 
     repo = Path(__file__).resolve().parents[1]
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")

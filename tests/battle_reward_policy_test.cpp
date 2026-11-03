@@ -312,6 +312,16 @@ int main(int argc, char** argv) {
     }
     CalculationTests();
     ParserTests();
+    {
+        std::string text=DefaultIni()+"[humans]\r\n";
+        for(unsigned i=1;i<=12;++i)text+=std::to_string(i)+"="+(i==1?"1":i==2?"1.1":"1.5")+"\r\n";
+        Policy p;PolicyConfigError error;CHECK(ParsePolicyIni(text,&p,&error));CHECK(p.custom_human_multipliers);
+        MatchContext context;context.human_count=3;context.duration_seconds=180;
+        ParticipantStats stats;stats.active_seconds=180;Reward result;
+        CHECK(Calculate(p,context,stats,&result));CHECK(result.gb==7500);
+        context.human_count=4;CHECK(Calculate(p,context,stats,&result));CHECK(result.gb==7500);
+        CHECK(!ParsePolicyIni(DefaultIni()+"[humans]\r\n1=1\r\n",&p,&error));
+    }
     std::cout << checks << " checks, " << failures << " failures\n";
     return failures ? 1 : 0;
 }

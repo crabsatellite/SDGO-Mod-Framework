@@ -101,6 +101,7 @@ SdgoMissionAiClientGetSnapshotV1Fn getMissionSnapshot=nullptr;
 uint64_t playUnitUid=0;
 bool collectionDraw=false;
 bool collectionPreviewOnly=false;
+uint32_t collectionExpectedStatus=0;
 std::vector<SdgoHangarGameTestUnitV1> collectionBeforeUnits;
 const void* roomListVtable=nullptr;
 const void* modalLoadingVtable=nullptr;
@@ -199,6 +200,9 @@ bool LoadPlan() {
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
     collectionPreviewOnly=GetPrivateProfileIntW(L"settings",L"CollectionPreviewOnly",0,
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
+    collectionExpectedStatus=GetPrivateProfileIntW(L"settings",L"CollectionExpectedStatus",0,
+        (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str());
+    if(collectionExpectedStatus!=0 && collectionExpectedStatus!=6040)return false;
     const std::wstring acquisitionIni=sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini";
     unitAcquisitionConfig.machine_kind=GetPrivateProfileIntW(L"settings",L"UnitAcquisitionKind",0,acquisitionIni.c_str());
     unitAcquisitionConfig.machine_id=GetPrivateProfileIntW(L"settings",L"UnitAcquisitionMachine",0,acquisitionIni.c_str());
@@ -1601,7 +1605,8 @@ int __cdecl ReadCapsuleCatalog(const SdgoGameTestContextV1* context) {
     context->Assert(ready,acquisition
         ? "the isolated acquisition profile matches every declared native table, including explicitly empty tables, with exact row identities"
         : "all five configured capsule tables are registered in the actual native grid with exact counts and row identities");
-    if(!acquisition)context->Assert(state.collection_machine==990001 && state.collection_price==100000,"the collection machine has its original 100000 GP price in the real client registry");
+    if(!acquisition)context->Assert(state.collection_machine==990001 && state.collection_price>0,
+        "the collection machine has the configured positive GP price in the verified native registry");
     return ready?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
 }
 int __cdecl ReadCapsuleCurrency(const SdgoGameTestContextV1* context) {
@@ -1797,6 +1802,10 @@ int CollectionResult(const SdgoGameTestContextV1* context,CapsuleDrawActions::Re
             static_cast<unsigned long long>(s.dropbox_serial),s.reward_item_category,s.reward_amount,s.remaining_gp);
         context->Observe(message);previous=result;reply=s.acknowledgement_sequence;
     }
+    // The original World maps a nonzero activity SQL return to wire status
+    // 6040. An isolated SQL comparison must separately establish quota/refund.
+    if(result==CapsuleDrawActions::kServerRejected && collectionExpectedStatus==6040 &&
+       s.result_reply_status==6040 && s.original_reply_completed)return SDGO_GAME_TEST_WAIT;
     if(result>=CapsuleDrawActions::kMachineServiceMismatch || result==CapsuleDrawActions::kUnbound) {
         context->Assert(0,"activity capsule native action/reply identity is valid and no failed purchase is retried");return SDGO_GAME_TEST_FAIL;
     }
@@ -1807,7 +1816,8 @@ int __cdecl PreviewCollection(const SdgoGameTestContextV1* context) {
     if(pending==SDGO_GAME_TEST_FAIL)return pending;
     if(result!=CapsuleDrawActions::kPreviewReady)return SDGO_GAME_TEST_WAIT;
     const auto s=collection.State();
-    context->Assert(s.target_machine==990001 && s.target_price==100000 && s.preview_ready && !s.buy_attempted,
+    context->Assert(s.target_machine==990001 && s.target_price>0 &&
+        s.target_price==capsules.State().collection_price && s.preview_ready && !s.buy_attempted,
         "original activity controls selected the real collection machine and initialized its own confirmation without purchasing");
     context->Assert(!s.buy_submitted && !s.request_transport_sequence,
         "the preview has not submitted an activity-capsule purchase transport");
@@ -1818,6 +1828,19 @@ int __cdecl DrawCollection(const SdgoGameTestContextV1* context) {
     auto result=state.buy_attempted?collection.Poll():collection.DrawOnce();
     if(result==CapsuleDrawActions::kResultReady || result==CapsuleDrawActions::kClosingResult)result=collection.CloseResult();
     const int pending=CollectionResult(context,result);if(pending==SDGO_GAME_TEST_FAIL)return pending;
+    if(collectionExpectedStatus==6040) {
+        state=collection.State();
+        if(state.acknowledgement_sequence || state.dropbox_serial || state.reward_amount) {
+            context->Assert(0,"an exhausted quota must reject the purchase instead of delivering a prize");
+            return SDGO_GAME_TEST_FAIL;
+        }
+        if(result!=CapsuleDrawActions::kServerRejected)return SDGO_GAME_TEST_WAIT;
+        context->Assert(state.buy_submitted && state.request_opcode==0x05D3 && state.request_size==10 &&
+            state.result_reply_status==6040 && state.original_reply_completed &&
+            !state.acknowledgement_sequence && !state.dropbox_serial && !state.reward_amount,
+            "one genuine native collection purchase was rejected by the configured quota with no prize acknowledgement");
+        return SDGO_GAME_TEST_PASS;
+    }
     if(result!=CapsuleDrawActions::kComplete)return SDGO_GAME_TEST_WAIT;
     state=collection.State();
     context->Assert(state.buy_attempted && state.buy_submitted && state.request_opcode==0x05D3 && state.request_size==10 &&
@@ -1828,6 +1851,13 @@ int __cdecl DrawCollection(const SdgoGameTestContextV1* context) {
     return SDGO_GAME_TEST_PASS;
 }
 int __cdecl DeliverCollection(const SdgoGameTestContextV1* context) {
+    if(collectionExpectedStatus==6040) {
+        const auto state=collection.State();
+        context->Assert(state.result_reply_status==6040 && state.original_reply_completed &&
+            !state.dropbox_serial && !state.reward_item_category && !state.reward_amount,
+            "an exhausted-quota rejection has no collection prize to claim");
+        return SDGO_GAME_TEST_PASS;
+    }
     static uint32_t stage=0;static bool clicked=false;
     if(stage==0) {
         if(actions.AppState()==6) { if(!storage.Bind()){context->Assert(0,"native storage export binding remains available");return SDGO_GAME_TEST_FAIL;}stage=1;clicked=false; }
@@ -2376,7 +2406,20 @@ int __cdecl FriendFlow(const SdgoGameTestContextV1* context) {
         }
         return SDGO_GAME_TEST_WAIT;
     }
-    return friendSession.Poll(context);
+    const auto result=friendSession.Poll(context);
+    const auto cohort=pvpSession.State();
+    if(cohort.battle_seen) {
+        SdgoPvpAiClientSnapshotV1 live{};
+        if(!cohort.settled && Snapshot(live) && live.native_app_state==22 &&
+           live.received_battle_start_count==cohort.start_sequence &&
+           live.profile_pilot_id==cohort.pilot && live.human_participant_count==cohort.humans) {
+            SdgoPvpAiClientStartStatusV1 control{};
+            control.size=sizeof(control);control.version=SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
+            if(getStartStatus)getStartStatus(&control);
+            if(!nativePlayerCombat.Poll(context,live,control,scoreboardInput))return SDGO_GAME_TEST_FAIL;
+        } else if(cohort.settled)nativePlayerCombat.Finish(context,scoreboardInput);
+    }
+    return result;
 }
 void RegisterPlannedCases() {
     if (fpsOnly) {
@@ -2650,7 +2693,8 @@ SDGO_MOD_ENTRY {
         // DLLs have their own import tables. Observe every dialog in this
         // isolated test process so a Mod cannot leak a desktop prompt while
         // the runner waits for its assertion failure.
-        if (api->size < offsetof(SdgoApi,HookSystemExport)+sizeof(api->HookSystemExport) || !api->HookSystemExport ||
+        if (!quietWaitRoomMessages.Install(api,mod) ||
+            api->size < offsetof(SdgoApi,HookSystemExport)+sizeof(api->HookSystemExport) || !api->HookSystemExport ||
             !quietAudio.Install(api,mod) || (quietLoopback && !quietSockets.Install(api,mod)) ||
             !api->HookSystemExport(mod,L"user32.dll","MessageBoxW",reinterpret_cast<void*>(&QuietMessageBoxW),reinterpret_cast<void**>(&originalMessageBoxW)) ||
             !api->HookSystemExport(mod,L"user32.dll","MessageBoxA",reinterpret_cast<void*>(&QuietMessageBoxA),reinterpret_cast<void**>(&originalMessageBoxA)))return 0;

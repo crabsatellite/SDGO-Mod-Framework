@@ -101,6 +101,7 @@ class Rewards(Provider):
             if path == '/api/rewards/policy': return engine.save(body['policy'], expected)
             if path == '/api/rewards/solo-preset': return engine.solo_preset(expected)
             if path == '/api/rewards/progression': return engine.save_progression(body['progression'], expected)
+            if path == '/api/rewards/social-rules':return engine.save_social_rules(body['rules'],expected)
         raise ValueError('奖励操作未登记')
 
 

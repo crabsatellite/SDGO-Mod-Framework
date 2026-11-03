@@ -27,7 +27,11 @@ def connection(server_ini: Path, section: str = "DB Game"):
     cfg = configparser.ConfigParser(interpolation=None)
     try:
         cfg.read_string(text)
-        db = cfg[section]
+        selected = next((name for name in cfg.sections()
+                         if name.replace(' ', '').casefold() == section.replace(' ', '').casefold()), None)
+        if selected is None:
+            raise KeyError(section)
+        db = cfg[selected]
     except (configparser.Error, KeyError):
         raise ValueError("Unable to parse host database configuration") from None
 
@@ -54,7 +58,7 @@ def upgrade_catalog(db):
         while cursor.nextset():
             pass
         row = cursor.execute("SELECT SchemaVersion,MachineID,PriceGP,Enabled FROM sdgo_collection_capsule.State WHERE Singleton=1").fetchone()
-        if row is None or row[0] != 3 or row[2] != 100000:
+        if row is None or row[0] != 3 or not 1<=row[2]<=1000000000:
             raise RuntimeError("Catalog policy upgrade readback differs")
         old = cursor.execute("SELECT COUNT(*) FROM sys.tables WHERE schema_id=SCHEMA_ID('sdgo_collection_capsule') AND name IN ('Seen','Coverage','DrawLog')").fetchone()[0]
         if old:

@@ -38,16 +38,37 @@ def fixture_unit(uid, target=0, ready=1, rank=1):
 
 
 def run(container: str, credential_file: Path, output: Path, native_build: Path | None = None,
-        config: str = "Release", native_only: bool = False):
+        config: str = "Release", native_only: bool = False,server_ini:Path|None=None):
     import pyodbc
     output.mkdir(parents=True, exist_ok=False)
-    private = json.loads(credential_file.read_text(encoding="utf-8-sig"))
+    private = json.loads(credential_file.read_text(encoding="utf-8-sig")) if server_ini is None else {}
     tag, token = uuid.uuid4().hex[:10], uuid.uuid4().hex
     database, login = "CollectionTest_" + tag, "CollectionLogin_" + tag
     test_password = "Test_" + secrets.token_hex(14) + "!7"
-    env = dict(os.environ, SQLCMDPASSWORD=private["sa_password"], COLLECTION_PASSWORD=test_password)
+    env = dict(os.environ, SQLCMDPASSWORD=private.get("sa_password",''), COLLECTION_PASSWORD=test_password)
+    native_source=None
+    if server_ini is not None:
+        from manager import storage
+        from manager.database import connect as selected_connect
+        test_root=next((p for p in server_ini.resolve().parents if (p/'TEST-ONLY.txt').is_file()),None)
+        if test_root is None:raise RuntimeError('Select an explicitly marked isolated test server INI')
+        native_source=storage.ini_values(server_ini.read_bytes())['DB StoreBilling']
+        with contextlib.closing(selected_connect(server_ini,'DB StoreBilling',autocommit=True)) as probe:
+            if any(not Path(row[0]).resolve().is_relative_to(test_root) for row in probe.cursor().execute('SELECT physical_name FROM master.sys.master_files')):
+                raise RuntimeError('Selected SQL has files outside its test copy')
 
     def admin(sql):
+        if native_source is not None:
+            from owner.rewards.sql_repository import split_batches
+            value='DRIVER={SQL Server};SERVER='+native_source['DBServerName']+';DATABASE=master;UID='+native_source['ID']+';PWD='+native_source['PWD']+';'
+            output_rows=[]
+            with contextlib.closing(pyodbc.connect(value,autocommit=True,timeout=15)) as db:
+                for batch in split_batches(sql.replace('$(COLLECTION_PASSWORD)',test_password)):
+                    c=db.cursor();c.execute(batch)
+                    while True:
+                        if c.description:output_rows.extend(' '.join(str(v) for v in row) for row in c.fetchall())
+                        if not c.nextset():break
+            return '\n'.join(output_rows)
         result = subprocess.run(["docker", "exec", "-i", "-e", "SQLCMDPASSWORD", "-e", "COLLECTION_PASSWORD",
             container, "/opt/mssql-tools18/bin/sqlcmd", "-S", "localhost", "-U", "sa", "-C", "-b", "-h", "-1", "-W"],
             input=sql, text=True, capture_output=True, env=env)
@@ -63,12 +84,15 @@ def run(container: str, credential_file: Path, output: Path, native_build: Path 
         fixture_collation = 'Latin1_General_CI_AS' if temp_collation.strip() == 'Thai_CI_AS' else 'Thai_CI_AS'
         admin(f"CREATE DATABASE [{database}] COLLATE {fixture_collation};\nGO\nUSE [{database}];CREATE TABLE dbo.fixture_owner(token varchar(32));INSERT dbo.fixture_owner VALUES('{token}');\nGO\n")
         created = True
-        admin(f"USE master;CREATE LOGIN [{login}] WITH PASSWORD='$(COLLECTION_PASSWORD)',CHECK_POLICY=OFF;GRANT VIEW SERVER STATE TO [{login}];GRANT VIEW SERVER PERFORMANCE STATE TO [{login}];\nGO\nUSE [{database}];CREATE USER [{login}] FOR LOGIN [{login}];ALTER ROLE db_owner ADD MEMBER [{login}];\nGO\n")
-        bridge_module.Bridge.request_queue_size = 128
-        bridge = bridge_module.Bridge(("127.0.0.1", 0), bridge_module.Handler)
-        bridge.container = container
-        threading.Thread(target=bridge.serve_forever, daemon=True).start()
-        port = bridge.server_address[1]
+        performance='' if native_source is not None else f'GRANT VIEW SERVER PERFORMANCE STATE TO [{login}];'
+        admin(f"USE master;CREATE LOGIN [{login}] WITH PASSWORD='$(COLLECTION_PASSWORD)',CHECK_POLICY=OFF;GRANT VIEW SERVER STATE TO [{login}];{performance}\nGO\nUSE [{database}];CREATE USER [{login}] FOR LOGIN [{login}];ALTER ROLE db_owner ADD MEMBER [{login}];\nGO\n")
+        if native_source is None:
+            bridge_module.Bridge.request_queue_size = 128
+            bridge = bridge_module.Bridge(("127.0.0.1", 0), bridge_module.Handler)
+            bridge.container = container
+            threading.Thread(target=bridge.serve_forever, daemon=True).start()
+            port = bridge.server_address[1]
+        else:port=int(native_source['DBServerName'].rsplit(',',1)[1])
 
         def connect():
             value = (f"DRIVER={{SQL Server}};SERVER=127.0.0.1,{port};DATABASE={database};"
@@ -220,7 +244,8 @@ INSERT dbo.tbl_MachinePrice VALUES(990001,99999,0,0);""")
         def draw(number, *, abort_success=False):
             # This models the already verified World prepay/refund boundary.
             with contextlib.closing(connect()) as wallet:
-                if wallet.cursor().execute("UPDATE dbo.fixture_wallet SET GP=GP-100000 WHERE AccountNumber=? AND GP>=100000", number).rowcount != 1:
+                price=scalar('SELECT PriceGP FROM sdgo_collection_capsule.State WHERE Singleton=1')
+                if wallet.cursor().execute("UPDATE dbo.fixture_wallet SET GP=GP-? WHERE AccountNumber=? AND GP>=?", price,number,price).rowcount != 1:
                     return 1001, None
                 code, prize = 3002, None
                 try:
@@ -253,10 +278,10 @@ INSERT dbo.tbl_MachinePrice VALUES(990001,99999,0,0);""")
                                 cur.execute("IF @@TRANCOUNT>0 ROLLBACK TRANSACTION;")
                             raise
                 except Exception:
-                    wallet.cursor().execute("UPDATE dbo.fixture_wallet SET GP=GP+100000 WHERE AccountNumber=?", number)
+                    wallet.cursor().execute("UPDATE dbo.fixture_wallet SET GP=GP+? WHERE AccountNumber=?", price,number)
                     raise
                 if code:
-                    wallet.cursor().execute("UPDATE dbo.fixture_wallet SET GP=GP+100000 WHERE AccountNumber=?", number)
+                    wallet.cursor().execute("UPDATE dbo.fixture_wallet SET GP=GP+? WHERE AccountNumber=?", price,number)
                 return code, prize
 
         def claim(number, prize):
@@ -483,6 +508,47 @@ SELECT @r,@slot,@instance,@serial,@max;
                   and scalar("SELECT UnitID FROM sdgo_collection_capsule.OwnedUnitItems WHERE CategoryID=1180000") == 100
                   and scalar("SELECT CategoryID FROM sdgo_collection_capsule.UnitDelivery WHERE UnitID=100") == 1180000,
                   "owned permanent category collision rolls back without breaking historical gift mapping")
+            # The native wrapper's prepay/refund boundary and success-only quota
+            # share the same transaction semantics under concurrent clicks.
+            for uid in range(500,530):
+                execute(f"INSERT dbo.tbl_Units VALUES({uid},0,1,1,2,{1000000+uid},N'Quota fixture')")
+                publish_category(uid)
+            account(81);execute('UPDATE dbo.fixture_wallet SET GP=2000000 WHERE AccountNumber=81')
+            aborted=draw(81,abort_success=True)
+            check(aborted[0]!=0 and scalar('SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=81')==2000000
+                  and scalar('SELECT COUNT(*) FROM sdgo_collection_capsule.DrawQuota WHERE AccountNumber=81')==0,
+                  'aborted delivery refunds prepayment and does not consume quota')
+            with ThreadPoolExecutor(max_workers=4) as executor:quota_results=list(executor.map(lambda _:draw(81),range(16)))
+            check(sum(r[0]==0 for r in quota_results)==15 and sum(r[0]==6006 for r in quota_results)==1
+                  and scalar('SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=81')==500000
+                  and scalar('SELECT MAX(DrawCount) FROM sdgo_collection_capsule.DrawQuota WHERE AccountNumber=81')==15,
+                  'weekly default allows fifteen successful concurrent draws and fully refunds the sixteenth')
+            execute('UPDATE sdgo_collection_capsule.State SET DrawLimit=16')
+            check(draw(81)[0]==0 and scalar('SELECT MAX(DrawCount) FROM sdgo_collection_capsule.DrawQuota WHERE AccountNumber=81')==16,
+                  'editing the limit retains already-used counts instead of resetting them')
+            execute('UPDATE sdgo_collection_capsule.State SET DrawLimit=17')
+            execute("CREATE TRIGGER dbo.RejectQuotaFixture ON dbo.tbl_UserDropItemBox AFTER INSERT AS THROW 51995,'quota rollback fixture',1;")
+            before=scalar('SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=81')
+            try:
+                failed=False
+                try:failed=draw(81)[0]!=0
+                except pyodbc.Error:failed=True # native OLE DB also rejects a doomed transaction
+                check(failed and scalar('SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=81')==before
+                      and scalar('SELECT MAX(DrawCount) FROM sdgo_collection_capsule.DrawQuota WHERE AccountNumber=81')==16,
+                      'failed prize creation consumes neither money nor draw count')
+            finally:execute('DROP TRIGGER dbo.RejectQuotaFixture')
+            execute("UPDATE sdgo_collection_capsule.DrawQuota SET PeriodStart=DATEADD(day,-7,PeriodStart) WHERE AccountNumber=81;UPDATE sdgo_collection_capsule.State SET DrawLimit=15;")
+            check(draw(81)[0]==0 and scalar('SELECT TOP 1 DrawCount FROM sdgo_collection_capsule.DrawQuota WHERE AccountNumber=81 ORDER BY PeriodStart DESC')==1,
+                  'new weekly period starts a new quota without deleting old period records')
+            execute('UPDATE sdgo_collection_capsule.State SET DrawLimit=0')
+            check(draw(81)[0]==0,'zero cap permits draws while still tracking the configured period')
+            execute('UPDATE sdgo_collection_capsule.State SET DrawLimit=1')
+            check(draw(81)[0]==6006,'re-enabling a cap cannot erase draws made while the cap was zero')
+            execute('UPDATE sdgo_collection_capsule.State SET DrawLimit=15,PriceGP=123456;UPDATE dbo.tbl_ItemMachinePrice SET Price=123456 WHERE MachineID=990001')
+            account(82);before=scalar('SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=82')
+            check(draw(82)[0]==0 and scalar('SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=82')==before-123456,
+                  'another account has an independent quota and configurable native GP price')
+            execute('UPDATE sdgo_collection_capsule.State SET PriceGP=100000;UPDATE dbo.tbl_ItemMachinePrice SET Price=100000 WHERE MachineID=990001')
             execute(disable(990001))
             account(10)
             check(draw(10)[0] != 0 and scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=10") == 1000000,
@@ -506,11 +572,13 @@ SELECT @r,@slot,@instance,@serial,@max;
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--container", required=True)
-    parser.add_argument("--credential-file", type=Path, required=True)
+    parser.add_argument("--container")
+    parser.add_argument("--credential-file", type=Path)
+    parser.add_argument('--server-ini',type=Path,help='Existing isolated native test SQL; no Docker bridge')
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--native-build", type=Path)
     parser.add_argument("--config", default="Release")
     parser.add_argument("--native-only", action="store_true")
     args = parser.parse_args()
-    run(args.container, args.credential_file, args.out.resolve(), args.native_build, args.config, args.native_only)
+    if not args.server_ini and not (args.container and args.credential_file):parser.error('Select --server-ini or legacy --container with --credential-file')
+    run(args.container, args.credential_file, args.out.resolve(), args.native_build, args.config, args.native_only,args.server_ini)

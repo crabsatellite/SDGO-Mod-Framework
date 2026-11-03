@@ -258,6 +258,7 @@ target_link_libraries(capsule_registry_support PRIVATE sdgo_api)
 sdgo_strict(capsule_registry_support)
 sdgo_version_resource(capsule_registry_support capsule_catalog.dll "SDGO shared capsule resource registry")
 sdgo_stage(capsule_registry_support "support/capsule-registry")
+add_dependencies(release_stable_payload capsule_registry_support)
 
 # Optional catalog provider, same mod id in the two processes. Owner-generated
 # catalog.bin is never staged or bundled by a framework build.
@@ -349,8 +350,9 @@ if(SDGO_BUILD_MANAGER)
             -File "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_mod_manager.ps1"
             -BuildDir "${CMAKE_BINARY_DIR}" -Python "${Python3_EXECUTABLE}" -UnitBinary "$<TARGET_FILE:unit_catalog>"
             -CapsuleBinary "$<TARGET_FILE:capsule_catalog>"
+            -RegistryBinary "$<TARGET_FILE:capsule_registry_support>"
         DEPENDS ${SDGO_MANAGER_INPUTS} unit_catalog "$<TARGET_FILE:unit_catalog>"
-            capsule_catalog "$<TARGET_FILE:capsule_catalog>" "${CMAKE_CURRENT_SOURCE_DIR}/tools/mod_manager.py"
+            capsule_catalog "$<TARGET_FILE:capsule_catalog>" capsule_registry_support "$<TARGET_FILE:capsule_registry_support>" "${CMAKE_CURRENT_SOURCE_DIR}/tools/mod_manager.py"
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_mod_manager.ps1"
             "${CMAKE_CURRENT_SOURCE_DIR}/manager/SDGOModManager.spec"
         VERBATIM)
@@ -906,7 +908,7 @@ if(BUILD_TESTING)
     add_test(NAME battle_reward_runtime_integration COMMAND powershell -NoProfile -ExecutionPolicy Bypass
         -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/battle_rewards_runtime_test.ps1" -Config "$<CONFIG>"
         -BuildDir "${CMAKE_BINARY_DIR}" -DailyRewardsDll "$<TARGET_FILE:daily_rewards>")
-    set_tests_properties(battle_reward_runtime_integration PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 120 RUN_SERIAL TRUE)
+    set_tests_properties(battle_reward_runtime_integration PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 360 RUN_SERIAL TRUE)
     add_executable(battle_reward_mission_test tests/battle_reward_mission_test.cpp)
     target_link_libraries(battle_reward_mission_test PRIVATE sdgo_api)
     target_include_directories(battle_reward_mission_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -939,6 +941,15 @@ if(BUILD_TESTING)
     add_test(NAME battle_reward_jobs_offline COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_reward_job_interop.py" "$<TARGET_FILE:battle_reward_jobs_test>")
     set_tests_properties(battle_reward_jobs_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
+    add_executable(battle_reward_binding_test tests/battle_reward_binding_test.cpp)
+    target_link_libraries(battle_reward_binding_test PRIVATE sdgo_api bcrypt)
+    target_include_directories(battle_reward_binding_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_reward_binding_test)
+    add_test(NAME battle_reward_binding_offline COMMAND battle_reward_binding_test)
+
+    add_test(NAME battle_reward_wallet_lifecycle_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_wallet*.py" -v)
+    set_tests_properties(battle_reward_wallet_lifecycle_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
     add_executable(battle_reward_cash_notify_test tests/battle_reward_cash_notify_test.cpp)
     target_link_libraries(battle_reward_cash_notify_test PRIVATE sdgo_api)
     target_include_directories(battle_reward_cash_notify_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

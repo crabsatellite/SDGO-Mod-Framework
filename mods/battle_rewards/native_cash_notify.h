@@ -36,6 +36,9 @@ constexpr size_t kRoomPilotAccount = 0x429;
 constexpr size_t kRoomPilotAgentHandle = 0x476;
 constexpr size_t kNetFrameTransport = 0xAC;
 constexpr uint16_t kCashInfoPacket = 0x064B;
+// GOnline e2dba73c... dispatch 0x00807ABC -> 0x007EE6A0 reads
+// the absolute GP at packet +6 and writes player state +0x18F.
+constexpr uint16_t kGamePointPacket = 0x0932;
 constexpr size_t kCashInfoPacketSize = 10;
 
 using SendToServerFn = int(__thiscall*)(
@@ -100,9 +103,9 @@ inline void PutLe32(std::array<uint8_t, kCashInfoPacketSize>* packet,
 }
 
 inline std::array<uint8_t, kCashInfoPacketSize> CashInfoPacket(
-    uint32_t account_number, uint32_t current_mb) {
+    uint32_t account_number, uint32_t current_mb,uint16_t packet_id=kCashInfoPacket) {
     std::array<uint8_t, kCashInfoPacketSize> packet{};
-    PutLe16(&packet, 0, kCashInfoPacket);
+    PutLe16(&packet, 0, packet_id);
     PutLe32(&packet, 2, account_number);
     PutLe32(&packet, 6, current_mb);
     return packet;
@@ -146,8 +149,8 @@ inline bool Capture(const void* room_pilot, SessionRoute* route) {
 // current_mb must be a fresh native wallet read performed after the durable
 // credit. A historical ledger MbAfter value can become stale if the player
 // spends or receives MB before a delayed/replayed notification.
-inline NotifyResult NotifyCurrentMb(
-    const SessionRoute& route, uint32_t account_number, uint32_t current_mb) {
+inline NotifyResult NotifyCurrentBalance(
+    const SessionRoute& route, uint32_t account_number, uint32_t current_mb,uint16_t packet_id) {
     if (!route.room_pilot || route.account_number == 0 ||
         route.agent_handle == 0 || account_number != route.account_number) {
         return NotifyResult::StaleSession;
@@ -181,7 +184,7 @@ inline NotifyResult NotifyCurrentMb(
         return NotifyResult::BindingUnavailable;
     }
 
-    const auto packet = detail::CashInfoPacket(account_number, current_mb);
+    const auto packet = detail::CashInfoPacket(account_number, current_mb,packet_id);
     int native_result = -1;
     const DWORD incoming_error = GetLastError();
     const bool invoked = detail::InvokeSend(
@@ -192,6 +195,8 @@ inline NotifyResult NotifyCurrentMb(
     }
     return NotifyResult::Sent;
 }
+inline NotifyResult NotifyCurrentMb(const SessionRoute& route,uint32_t account,uint32_t amount){return NotifyCurrentBalance(route,account,amount,kCashInfoPacket);}
+inline NotifyResult NotifyCurrentGb(const SessionRoute& route,uint32_t account,uint32_t amount){return NotifyCurrentBalance(route,account,amount,kGamePointPacket);}
 
 }  // namespace native_cash_notify
 }  // namespace battle_rewards

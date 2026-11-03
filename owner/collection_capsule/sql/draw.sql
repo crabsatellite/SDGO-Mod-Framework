@@ -15,8 +15,17 @@ BEGIN
              @LockOwner='Transaction',@LockTimeout=5000;
         IF @lock<0 BEGIN RETURN 3002;END;
         IF NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.State WITH(HOLDLOCK)
-                      WHERE Singleton=1 AND SchemaVersion=3 AND Enabled=1 AND MachineID=@v_MachineID AND PriceGP=100000)
+                      WHERE Singleton=1 AND SchemaVersion=3 AND Enabled=1 AND MachineID=@v_MachineID AND PriceGP BETWEEN 1 AND 1000000000)
         BEGIN RETURN 3002;END;
+        DECLARE @period varchar(4),@limit int,@offset int,@periodStart date;
+        SELECT @period=LimitPeriod,@limit=DrawLimit,@offset=UtcOffsetMinutes FROM sdgo_collection_capsule.State WITH(HOLDLOCK) WHERE Singleton=1;
+        IF @period NOT IN('none','day','week') OR @limit NOT BETWEEN 0 AND 100000 OR @offset NOT BETWEEN -720 AND 840 RETURN 3002;
+        SET @periodStart=CONVERT(date,DATEADD(minute,@offset,GETUTCDATE()));
+        IF @period='week' SET @periodStart=DATEADD(day,-(DATEDIFF(day,CONVERT(date,'19000101'),@periodStart)%7),@periodStart);
+        IF @period<>'none' AND @limit>0 AND EXISTS(
+          SELECT 1 FROM sdgo_collection_capsule.DrawQuota WITH(UPDLOCK,HOLDLOCK)
+          WHERE AccountNumber=@v_AccountNum AND MachineID=@v_MachineID AND PeriodKind=@period AND PeriodStart=@periodStart AND DrawCount>=@limit)
+          RETURN 6006; -- ERR_PICK_EVENT_CAPSULE_ALREADY_USE; native caller refunds the precharge
         -- Existing profiles can draw immediately; no complete-history proof.
         IF NOT EXISTS(SELECT 1 FROM dbo.tbl_Users WITH(HOLDLOCK)
                       WHERE AccountNumber=@v_AccountNum)
@@ -158,6 +167,12 @@ BEGIN
         IF NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.CatalogUnlocks
                       WHERE AccountNumber=@v_AccountNum AND UnitID=@unit)
         BEGIN RETURN 3002;END;
+        IF @period<>'none'
+        BEGIN
+          IF EXISTS(SELECT 1 FROM sdgo_collection_capsule.DrawQuota WHERE AccountNumber=@v_AccountNum AND MachineID=@v_MachineID AND PeriodKind=@period AND PeriodStart=@periodStart)
+            UPDATE sdgo_collection_capsule.DrawQuota SET DrawCount=DrawCount+1 WHERE AccountNumber=@v_AccountNum AND MachineID=@v_MachineID AND PeriodKind=@period AND PeriodStart=@periodStart;
+          ELSE INSERT sdgo_collection_capsule.DrawQuota VALUES(@v_AccountNum,@v_MachineID,@period,@periodStart,1);
+        END;
         INSERT dbo.tbl_CapsulePicked(AccountID,MachineID,UnitGradeNumber,UnitID)
         VALUES(@v_AccountNum,@v_MachineID,@rank,@unit);
         SELECT @instance AS DropBoxSerial,@category AS ItemCategory,CONVERT(int,1) AS Amount;
