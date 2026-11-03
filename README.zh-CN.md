@@ -35,6 +35,7 @@ Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所
 | 好友列表修复 <!-- catalog: `friend_list_fix`、`friend_list_client_fix` --> | 保留离线好友与当前角色名，恢复原生好友聊天界面 | [使用说明](docs/friend-list-fix.zh-CN.md) |
 | 新账号起始资料修复 <!-- catalog: `new_account_profile` --> | 可配置的初始 GP、点券、军衔和赠送机体，替代原服的 9,999,999 / 15 级 | [使用说明](docs/new-account-profile.zh-CN.md) |
 | 商城租赁与中文选项修复 <!-- catalog: `shop_labels` --> | 显示租赁/永久、实际数量和中文选项名 | [使用说明](docs/shop-labels.zh-CN.md) |
+| 商城图片文字汉化 <!-- catalog: `shop_art_localization` --> | 汉化受支持涂料图片内的军衔文字 | [使用说明](docs/shop-art-localization.zh-CN.md) |
 
 <!-- /mod-category:fixes -->
 
@@ -59,7 +60,7 @@ Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所
 | 扭蛋机编辑器 <!-- catalog: `capsule_catalog` --> | 在 Manager 中新增、修改、下架扭蛋机，设置奖池、价格和权重 | [使用说明](docs/capsule-catalog.zh-CN.md) |
 | 每日双倍时间 <!-- catalog: `daily_rewards` --> | 每天固定时段（默认 18:00–22:00）战斗 GB 和经验翻倍 | [使用说明](docs/daily-rewards.zh-CN.md) |
 | 保管库一键领取 <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
-| 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化商品名称、说明和选项，可用中文名称搜索并组合等级、币种筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
+| 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化商品名称、说明、选项和涂装机体预览，可用中文名称搜索并组合等级、币种筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
 | 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 把自己的机体原样送给好友，对方在保管库接受或退还；默认关闭，由服主开启 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
 | 机体族导入（Beta） <!-- catalog: `unit_catalog` --> | 在 Mod Manager 导入机体包，补齐信息并生成两端定义、图鉴和商城／扭蛋资源 | [使用说明](docs/unit-import.zh-CN.md) |
 
