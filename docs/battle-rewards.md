@@ -23,13 +23,21 @@ Multipliers, rules and previews are edited there and apply to later settlements 
 BattleServer. The panel shows a connection only when the policy, native settlement and wallet
 heartbeat are all confirmed. See the [Manager guide](mod-manager.md).
 
-Keep the Manager running while the server is available. It remembers enabled services, restores them
-when it starts and retries a failed wallet worker. A listening BattleServer port alone does not prove
-reward readiness: check both the wallet service and the reward panel. If the wallet heartbeat expires,
-the Mod retains the original game reward path instead of applying the contribution policy. A small
-GB credit can therefore be a real native payment. Restoring the worker affects later settlements;
-it does not reconstruct earlier combat statistics. For unattended operation, include the existing
-Manager in the operating system's normal startup configuration with its existing workspace.
+Keep the Manager running to deliver queued cash awards. It restores enabled services and reconnects
+broken database sessions. With `battle_rewards 0.2.2`, the worker first verifies and persists the native
+ledger identity separately from its short-lived heartbeat. Later Manager pauses, updates or restarts
+do not cancel contribution calculation or durable jobs: Battle uses the frozen match policy and the
+verified binding. An uninitialized or mismatched wallet, invalid policy or failed durable write still
+rejects custom settlement and reports the cause. Update Manager and start its wallet service before
+updating each stopped, idle BattleServer.
+
+A listening BattleServer port alone does not prove the wallet has recovered. Saved jobs remain queued
+while the panel reports a disconnected worker; restoring the same workspace processes them automatically
+without waiting for a nightly batch. For unattended operation, add the existing Manager and workspace
+to the operating system's normal startup configuration.
+
+The default time factor reaches its full value at 180 active seconds. A 45-second round receives 25%
+of that factor, so a small short-round GB amount alone does not demonstrate an outage.
 
 ## Delivery and recovery
 
@@ -42,6 +50,9 @@ MB uses durable jobs and a database receipt keyed by match and account, calling 
 `sp_PocketGC_IO`. A lost response can be retried without a second credit. The worker then reads the
 current MB and sends the normal `0x064B` balance update through the Agent; offline players see the new
 balance at their next login or shop cash query. Keep queued jobs and receipts during recovery.
+Brief Windows sharing conflicts during job reads or archival are retried with a fixed limit. Persistent
+failures remain visible and are never treated as successful payment. Reconnection cannot silently
+replace the verified ledger identity or weaken account, policy-hash and receipt deduplication.
 
 To stop the worker, use **停止本 Manager 的钱包服务** in the reward panel; it only stops the worker this
 Manager started.
@@ -53,6 +64,8 @@ payments using comparable healthy settlements under the same GB rules. Normalize
 its event multiplier, take the exact average, then multiply by the affected battle's event factor and
 round down once. Pay only `max(0, target - already_paid)`. Larger original payments are kept.
 This is an administrative compensation, not an exact reconstruction of kills, damage or MVP.
+Older fallback settlements without a captured intent cannot be reconstructed exactly. Legitimate
+short-round rewards must not be classified as missing payments merely because their amounts are low.
 
 The source checkout and reward owner toolkit include a maintenance command (Python 3.10+, `pyodbc`
 and a SQL Server ODBC driver). Prepare and review a private plan using the

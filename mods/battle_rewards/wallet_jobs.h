@@ -14,6 +14,10 @@ struct WalletHealth {
     bool healthy = false;
     std::string scope, revision, error;
 };
+struct WalletBinding {
+    bool valid=false;
+    std::string scope,error;
+};
 struct WalletJob {
     std::string match_id, plan_hash, policy_revision, scope;
     uint32_t account = 0, mb = 0;
@@ -122,6 +126,20 @@ inline WalletHealth ReadWalletHealth(const std::filesystem::path& runtime) {
         return result;
     }
     result.healthy = true; return result;
+}
+
+// The producer needs the verified ledger identity, not a continuously running
+// consumer. Pending native jobs remain durable while Manager/SQL reconnects.
+// This binding is published only after a real worker verifies its SQL scope;
+// a different database cannot silently rebind an existing outbox.
+inline WalletBinding ReadWalletBinding(const std::filesystem::path& runtime) {
+    WalletBinding result;
+    std::map<std::string,std::string> values;
+    if(!job_detail::Read(runtime/L"wallet-binding.ini","binding",&values) ||
+       values["Protocol"]!="sdgo-native-wallet-scope-v1" || !job_detail::Scope(values["ScopeId"])) {
+        result.error="verified native wallet binding is unavailable";return result;
+    }
+    result.valid=true;result.scope=values["ScopeId"];return result;
 }
 
 inline bool WalletJobName(const WalletJob& job, std::string* name) {

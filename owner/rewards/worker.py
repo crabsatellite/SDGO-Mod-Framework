@@ -15,6 +15,7 @@ import uuid
 from .runtime_control import _atomic_write
 from .sql_repository import validate_request, MbCreditReceipt
 from . import model, progression
+from .file_io import retry_sharing
 
 WORKER_REVISION = "sdgo-native-gc-ledger-v2"
 JOB_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,159}\.ini\Z")
@@ -34,7 +35,7 @@ def read_job(path):
     path = Path(path)
     if not JOB_NAME.fullmatch(path.name) or path.is_symlink() or path.stat().st_size > 16384:
         raise ValueError("Native reward job identity/size is invalid")
-    raw = path.read_bytes()
+    raw = retry_sharing(path.read_bytes)
     parser = configparser.ConfigParser(interpolation=None, strict=True)
     parser.optionxform = str
     parser.read_string(raw.decode("ascii"))
@@ -102,7 +103,7 @@ class WalletWorker:
         receipt_path = self.receipts / path.name
         if receipt_path.exists():
             old = configparser.ConfigParser(interpolation=None)
-            old.read(receipt_path, encoding="ascii")
+            old.read_string(retry_sharing(lambda:receipt_path.read_text(encoding="ascii")))
             if old.get("receipt", "SourceHash", fallback="") != job["source_hash"]:
                 raise ValueError("Native reward job changed after its durable receipt")
             self._archive(path)
@@ -148,9 +149,9 @@ class WalletWorker:
         if destination.exists():
             if destination.read_bytes() != path.read_bytes():
                 raise ValueError("Completed native job identity conflicts with a new job")
-            path.unlink()
+            retry_sharing(path.unlink)
         else:
-            os.replace(path, destination)
+            retry_sharing(lambda:os.replace(path, destination))
 
     def poll(self):
         healthy = True

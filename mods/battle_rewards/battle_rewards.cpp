@@ -328,8 +328,8 @@ bool Freeze(Session& session, BYTE* room, uint32_t duration) {
         g_error = "mission Boss identity registry is unavailable"; return false;
     }
     if (!g_runtime->SnapshotPolicy(&session.policy)) { g_error = g_runtime->LastError(); return false; }
-    WalletHealth wallet = ReadWalletHealth(g_runtime->RuntimeRoot());
-    if (!wallet.healthy) { g_error = wallet.error; return false; }
+    const WalletBinding wallet = ReadWalletBinding(g_runtime->RuntimeRoot());
+    if (!wallet.valid) { g_error = wallet.error; return false; }
     native_stats::Participant roster[12]{};
     unsigned count = 0;
     if (!native_stats::ReadParticipants(room, roster, 12, &count)) { g_error = "unable to snapshot native participants"; return false; }
@@ -429,7 +429,6 @@ void SettleImpl(unsigned site, BYTE* frame) {
         g_error = error.message; ++g_counters.payouts_rejected; return;
     }
     if (reward.eligible) {
-        if (g_pending.size() >= 4096) { g_error = "native wallet response queue is full"; ++g_counters.payouts_rejected; return; }
         Pending pending;
         pending.job = {session->match_id, "", session->policy.revision.data(), session->wallet_scope,
                        native.account, static_cast<uint32_t>(reward.mb)};
@@ -448,7 +447,8 @@ void SettleImpl(unsigned site, BYTE* frame) {
         pending.since = GetTickCount64();
         std::string name;
         if (!PublishWalletJob(g_runtime->RuntimeRoot(), pending.job, &name, &g_error)) { ++g_counters.payouts_rejected; return; }
-        g_pending.push_back(std::move(pending));
+        if(g_pending.size()<4096)g_pending.push_back(std::move(pending));
+        else g_api->Log(g_mod,SDGO_LOG_WARN,"cash notification deferred; earned job is durable and the next native cash query refreshes its balance");
     }
     if (!WriteG(frame, site, static_cast<uint16_t>(reward.gb))) { g_error = "unable to write native G settlement"; ++g_counters.settlements_failed; return; }
     session->settled[session->settled_count++] = native.account;
