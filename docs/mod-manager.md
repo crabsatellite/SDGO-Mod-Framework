@@ -1,25 +1,44 @@
 # Unified Mod Manager
 
-[简体中文](mod-manager.zh-CN.md)
+[简体中文](mod-manager.zh-CN.md) · [Back to the feature index](../README.md)
 
-**For server owners and maintainers.** Ordinary players should use the game launcher and follow their server owner's installation/update instructions. Uncoordinated client Mod or server configuration changes can prevent joining, cause disconnects or crashes. A persistent notice appears at the top of every Manager page.
+**For server owners and maintainers.** Ordinary players keep using the game launcher and follow their server
+owner's installation and update instructions. Client Mods that do not match the server configuration can prevent
+joining, cause disconnects or crash the game. A notice at the top of every Manager page says the same.
 
-Open **0_MOD管理（服主专用）** at the top of the client folder, or **SDGO Mod Manager.exe** from the framework package. A normal first launch creates the directory entry; **创建目录入口** repairs missing ones. Existing usable shortcuts retain their workspace. Desktop shortcuts are not created. The program, directory entry and browser tab share the SDGO mark from the interface. Client/server selection,
-mod configuration, shop, operators, capsule machines, rewards, FRP and AI catalogs
-share one local interface. Users do not install Python or launch per-feature UIs.
+Open Manager from **0_MOD管理（服主专用）** at the top of the client folder, or from **SDGO Mod Manager.exe** in the
+framework package. The first normal launch creates the folder entry; **创建目录入口** (create folder entry) restores a
+missing one, and existing entries keep their workspace. No desktop shortcut is created.
+
+Client/server selection, mod configuration, shop, operators, unit import, capsule machines, rewards, FRP and AI
+catalogs share one local interface. Users do not install Python or launch per-feature programs.
 
 Each feature card shows only its name, a one-line description and its switch, with
 **设置** (settings) when it has adjustable values. Automatic bug fixes appear in the
 archive as always on. With only a client added, the sidebar shows just the game
 features and the archive; adding a server directory (or clicking **我是服主**) reveals the
-owner tools: shop, operators, capsules, rewards, FRP, AI catalog, collection capsule,
+owner tools: shop, operators, unit import, capsules, rewards, FRP, AI catalog, collection capsule,
 hangar server, [holiday and birthday gifts](calendar-gifts.md), and background tasks. The developer view expands internal identifiers,
 versions, low-level settings and diagnostics; it is not a server-owner permission gate.
 
 Choose existing workspaces to preserve authored data. Configuration writes retain
 unknown keys and comments, validate registered values and reject stale revisions.
-Games continue using their normal launchers. Saving configuration does not prove
-that a running game loaded it; follow the reported restart/runtime status.
+Games continue using their normal launchers. A saved setting takes effect after the
+reported restart of the game or server.
+
+## Updates
+
+Open **更新** (Update) in the sidebar. New installations default to **Stable**: only published stable features are installed. **Beta** includes Stable and Beta features and follows the newest available release; development diagnostics are excluded from both channels. Switching back to Stable leaves existing Beta and custom Mods in place and updates only the features in the Stable package.
+
+Automatic checking and installation are enabled while Manager runs. It checks at startup and hourly afterward. Use **检查更新** to check now or **立即更新** to install. GitHub Release assets are verified against their SHA-256 and the complete file manifest before installation. Network errors leave the current installation usable and can be retried. Automatic updates can be disabled without disabling manual checks.
+
+Updates apply to registered client and server directories. Running games/servers are never stopped: their update waits until they close. Mod switches, settings, separately declared configuration files, custom Mods, game resources and private data are preserved. Failed writes roll back the affected host; recovery copies stay in the local Manager workspace.
+
+Locally installed Mods with a higher version than the release are kept together with their required native symbols instead of being downgraded.
+
+When Manager itself has an update, choose **重启 Manager 完成更新**. The downloaded Manager waits for the old process to close, replaces the verified executable and reopens the same workspace. Ordinary Mod updates do not require restarting Manager.
+
+## AI handoff and development
 
 Every feature can copy a credential-free AI configuration/debugging handoff or a
 GitHub bug-report prompt. The repair path helps willing users set up a development
@@ -35,16 +54,6 @@ no game art.
 See the [full guide](mod-manager.zh-CN.md), [contribution guidance](contributing.zh-CN.md)
 and [registration design](mod-manager-design.zh-CN.md).
 
-## Updates
-
-Open **更新** (Update) in the sidebar. New installations default to **Stable**: only published stable features are installed. **Beta** includes Stable and Beta features and follows the newest available release; development diagnostics are excluded from both channels. Switching back to Stable leaves existing Beta and custom Mods in place and updates only the features in the Stable package.
-
-Automatic checking and installation are enabled while Manager runs. It checks at startup and hourly afterward. Use **检查更新** to check now or **立即更新** to install. GitHub Release assets are verified against their SHA-256 and the complete file manifest before installation. Network errors leave the current installation usable and can be retried. Automatic updates can be disabled without disabling manual checks.
-
-Updates apply to registered client and server directories. Running games/servers are never stopped: their update waits until they close. Mod switches, settings, separately declared configuration files, custom Mods, game resources and private data are preserved. Failed writes roll back the affected host; recovery copies stay in the local Manager workspace.
-
-Locally installed Mods with a higher version than the release are retained together with their required native symbols, allowing parallel development without downgrading completed work.
-
-When Manager itself has an update, choose **重启 Manager 完成更新**. The downloaded Manager waits for the old process to close, replaces the verified executable and reopens the same workspace. Ordinary Mod updates do not require restarting Manager.
+## Building releases
 
 For publishers, `python tools/build_release.py --build --channel stable --version X.Y.Z` creates a Stable asset, and `--channel beta --version X.Y.Z-beta.N` includes Beta features. Both contain only Manager and declared framework payloads. The release workflow tests update/install contracts, builds selected code and checks the standalone Manager before publishing. Pushes to `master` create Beta releases; stable version tags create Stable releases. Never include copied clients, native servers, databases or owner settings.
