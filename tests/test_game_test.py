@@ -459,6 +459,45 @@ rva=state
         self.assertFalse((client / "sdgo" / "gametest" / "events.jsonl").exists())
         self.assertEqual((self.template / "sdgo" / "gametest" / "events.jsonl").read_text(), "stale")
 
+    def test_prepare_binds_the_staged_loader_only_when_explicitly_requested(self):
+        run_dir = self.prepare("staged-loader", bind_staged_loader=True)
+        copied = run_dir / "client" / "d3d9.dll"
+        self.assertEqual(copied.read_bytes(), b"stage-loader")
+        self.assertEqual((self.template / "d3d9.dll").read_bytes(), b"normal-loader")
+        metadata = self.metadata(run_dir)
+        self.assertEqual(
+            metadata["client"]["immutable_hashes"]["d3d9.dll"],
+            game_test.sha256(self.stage / "client" / "d3d9.dll"),
+        )
+        game_test.verify_hashes(metadata)
+
+    def test_prepare_disables_an_installed_mod_without_mutating_the_template(self):
+        source_manifest = self.template / "sdgo" / "mods" / "other_mod" / "mod.ini"
+        source_settings = self.template / "sdgo" / "sdgo.ini"
+        manifest_before = source_manifest.read_bytes()
+        settings_before = source_settings.read_bytes()
+
+        run_dir = self.prepare("disabled-mod", disabled_mods=("other_mod",))
+        client = run_dir / "client"
+        copied_manifest = client / "sdgo" / "mods" / "other_mod" / "mod.ini"
+        copied_settings = client / "sdgo" / "sdgo.ini"
+        self.assertEqual(
+            game_test.read_ini(copied_manifest).get("mod", "enabled"),
+            "0",
+        )
+        self.assertEqual(
+            game_test.read_ini(copied_settings).get("mods", "other_mod"),
+            "0",
+        )
+        self.assertEqual(source_manifest.read_bytes(), manifest_before)
+        self.assertEqual(source_settings.read_bytes(), settings_before)
+
+        metadata = self.metadata(run_dir)
+        game_test.verify_hashes(metadata)
+        copied_manifest.write_text(OTHER_MANIFEST, encoding="utf-8")
+        with self.assertRaisesRegex(game_test.GameTestError, "changed"):
+            game_test.verify_hashes(metadata)
+
     def test_prepare_merges_required_symbols_and_enables_needed_switches(self):
         run_dir = self.prepare("symbols")
         symbols = game_test.read_ini(
