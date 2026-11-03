@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "storage_claim",
   "title": "保管库一键领取",
   "category": "gameplay",

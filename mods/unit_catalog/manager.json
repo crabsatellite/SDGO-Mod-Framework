@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "unit_catalog",
   "title": "机体内容导入（Beta）",
   "description": "解析机体包、补齐定义，并在独立客户端的原生商城机体视图及扭蛋 unitview 中核对后导入。登记不自动送机体或上架。",

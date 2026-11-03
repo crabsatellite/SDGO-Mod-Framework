@@ -29,10 +29,11 @@ def fake_exe(path):
     path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(data)
 
 
-def bundle(channel='stable',release='1.1.7',extra=None):
+def bundle(channel='stable',release='1.1.7',extra=None,legacy=False):
     mod={'id':'example','feature':'example','target':'client','category':'fixes',
          'hosts':[KEY],'version':'2.0.0','channel':channel,'files':['manager.json','config.ini'],
-         'config_files':['config.ini'],'runtime_files':[]}
+         'config_files':['config.ini'],'runtime_files':[],'distribution':'public'}
+    if legacy:mod.pop('distribution')
     catalog={'schema_version':1,'mods':[mod],'features':{'example':{'category':'fixes','mods':['example']}},'categories':{'fixes':{'zh-CN':'基础修复'}}}
     payload={u.MANAGER:b'new manager', 'client/d3d9.dll':b'new loader','client/sdgo/core.dll':b'new core',
              'client/sdgo/sdgo.ini':b'[core]\nlog=info\n',
@@ -40,9 +41,13 @@ def bundle(channel='stable',release='1.1.7',extra=None):
              'client/sdgo/catalog.json':storage.json_bytes(catalog),'server/sdgo/catalog.json':storage.json_bytes(catalog),
              'server/winmm.dll':b'server loader','server/sdgo/core.dll':b'server core','server/sdgo/sdgo.ini':b'[core]\nlog=info\n',
              'client/sdgo/mods/example/example.dll':b'new mod',
-             'client/sdgo/mods/example/mod.ini':b'[mod]\nid=example\nversion=2.0.0\nenabled=1\n[settings]\nAmount=2\nNewOption=7\n',
-             'client/sdgo/mods/example/manager.json':b'{}',
+             'client/sdgo/mods/example/mod.ini':b'[mod]\nid=example\ndistribution=public\nversion=2.0.0\nenabled=1\n[settings]\nAmount=2\nNewOption=7\n',
+             'client/sdgo/mods/example/manager.json':b'{"distribution":"public"}',
              'client/sdgo/mods/example/config.ini':b'[settings]\nvalue=default\n'}
+    if legacy:
+        name='client/sdgo/mods/example/mod.ini'
+        payload[name]=payload[name].replace(b'distribution=public\n',b'')
+        payload['client/sdgo/mods/example/manager.json']=b'{}'
     payload.update(extra or {})
     manifest={'schema_version':1,'repository':u.REPOSITORY,'version':release,'channel':channel,'source_commit':'a'*40,
               'files':{n:{'bytes':len(b),'sha256':u.digest(b)} for n,b in payload.items()}}
@@ -125,6 +130,36 @@ class UpdateTests(unittest.TestCase):
         target=self.root/'bad'
         with self.assertRaises(ValueError):u.unpack(self.raw+b'x',self.asset,target)
         self.assertFalse(target.exists())
+
+    def test_legacy_public_release_without_distribution_fields_remains_readable(self):
+        raw,asset,_=bundle(release='1.1.16',legacy=True)
+        result=u.unpack(raw,asset,self.root/'legacy')
+        self.assertEqual(result['version'],'1.1.16')
+
+    def test_new_protocol_release_requires_explicit_public_distribution(self):
+        raw,asset,_=bundle(release='1.2.0',legacy=True)
+        with self.assertRaises(ValueError):u.unpack(raw,asset,self.root/'undeclared')
+        self.assertFalse((self.root/'undeclared').exists())
+
+    def test_legacy_release_cannot_hide_a_local_only_registration(self):
+        raw,asset,_=bundle(release='1.1.16',legacy=True,extra={
+            'client/sdgo/mods/example/mod.ini':b'[mod]\nid=example\ndistribution=local_only\n',
+            'client/sdgo/mods/example/manager.json':b'{"distribution":"local_only"}',
+        })
+        with self.assertRaises(ValueError):u.unpack(raw,asset,self.root/'private')
+        self.assertFalse((self.root/'private').exists())
+
+    def test_current_newer_manager_does_not_download_an_older_protocol_release(self):
+        calls=[]
+        def fetch(url,limit,stop):
+            calls.append(url)
+            if url==u.LATEST:return json.dumps(self.api).encode()
+            raise AssertionError('Older release bytes must not be downloaded')
+        controller=u.Updates(self.workspace,ROOT,fetcher=fetch)
+        controller.current='1.2.0';self.addCleanup(controller.stop)
+        controller.cycle(False)
+        self.assertEqual(controller.state()['phase'],'current')
+        self.assertEqual(calls,[u.LATEST])
 
     def test_traversal_case_duplicates_and_game_originals_are_rejected(self):
         for name in ('client/../escape.dll','client/SDGO/core.dll','client/GOnline.exe','server/data.mdf'):

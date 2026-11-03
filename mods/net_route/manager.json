@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "net_route",
   "title": "客户端网络映射",
   "category": "network",

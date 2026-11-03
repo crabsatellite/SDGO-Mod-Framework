@@ -6,11 +6,12 @@ from pathlib import Path
 import re
 import threading
 from urllib.parse import parse_qs, urlsplit
-from . import storage
+from . import distribution, storage
 
 
 class Binary:
     def __init__(self, data, mime='application/octet-stream', filename=None):
+        distribution.require_redistributable_payload(filename or "Manager export", data)
         self.data, self.mime, self.filename = data, mime, filename
 
 

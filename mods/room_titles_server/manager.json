@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "room_titles_server",
   "title": "长房名 · 对战服",
   "category": "gameplay",

@@ -28,9 +28,15 @@ namespace sdgo
     {
     public:
         // Loads and verifies every entry against the running host. Returns false when the
-        // file is absent or was written for a different build.
-        bool Load(const std::wstring& path, HMODULE host, const char* hostKey);
+        // file is absent or was written for a different build. Per-Mod fragments require
+        // the executable image name as well as the timestamp and image size to match.
+        bool Load(const std::wstring& path, HMODULE host, const char* hostKey,
+                  const char* logSource = "core", bool requireImage = false);
         const Symbol* Find(const char* name) const;
+        const Symbol* FindWithFallback(const char* name, const SymbolTable& fallback) const;
+        // A fragment may repeat an equivalent global binding or alias, but it may not
+        // replace a name or attach an incompatible definition to an existing address.
+        bool ValidateOverlay(const SymbolTable& base, std::string& error) const;
         size_t Count() const { return m_symbols.size(); }
         size_t VerifiedCount() const;
 

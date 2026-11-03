@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "shop_localization",
   "title": "商城中文汉化",
   "category": "gameplay",

@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "ime_fix",
   "title": "中文输入法候选与提交修复",
   "category": "fixes",

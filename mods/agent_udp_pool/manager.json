@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "agent_udp_pool",
   "title": "Agent UDP 端口池",
   "category": "network",

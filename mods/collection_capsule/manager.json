@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "collection_capsule",
   "title": "收藏扭蛋",
   "category": "gameplay",

@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "distribution": "public",
   "id": "operator_catalog",
   "title": "副官目录",
   "category": "gameplay",
