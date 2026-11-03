@@ -1122,26 +1122,9 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
             buyingGate[0],buyingGate[1],buyingGate[2],buyingGate[3],buyingGate[4],buyingGate[5],buyingGate[6]);
         context->Observe(message);previousBuyingGate=buyingGate;
     }
-    if(state.tutorial_level>=2 && !inventory.initialized && !inventory.manager_present && !actions.InventoryPageRequestSeen() &&
-       (actions.AppState()==5 || actions.AppState()==6)) {
-        using UiBusy=bool(__thiscall*)(void*);
-        auto** loader=static_cast<void**>(context->api->Symbol(sdgo_test::mod,"friends.ui_load_manager_pointer"));
-        const auto busy=reinterpret_cast<UiBusy>(context->api->Symbol(sdgo_test::mod,"friends.ui_load_in_progress"));
-        bool loading=true;
-        __try {loading=!loader || !busy || (*loader && busy(*loader));}
-        __except(EXCEPTION_EXECUTE_HANDLER){loading=true;}
-        if(!loading) {
-        const auto navigation=hangarNavigation.EnsureHangar();
-        static uint32_t previousInventoryEntry=UINT32_MAX;
-        if(navigation!=previousInventoryEntry) {
-            char entry[128];sprintf_s(entry,"native onboarding inventory entry=%s",HangarNavigation::ResultName(navigation));
-            context->Observe(entry);previousInventoryEntry=navigation;
-        }
-        if(navigation==HangarNavigation::kUnbound || navigation>=HangarNavigation::kDownmenuServiceMismatch) {
-            context->Assert(0,"the original hangar entry must initialize the real onboarding inventory");return SDGO_GAME_TEST_FAIL;
-        }
-        }
-    }
+    // The native login flow owns the initial 0x048A inventory stream. A scene
+    // transition here can retire its reply consumer after the first batch.
+    // Wait for genuine completion; later scenario steps enter the hangar.
     const std::array<uint32_t,8> inventoryPage{
         inventory.manager_present,inventory.initialized,inventory.allocated_block_count,
         inventory.slot_capacity,inventory.page_count,inventory.tail_count,
