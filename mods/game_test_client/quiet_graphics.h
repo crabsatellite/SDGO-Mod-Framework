@@ -59,6 +59,16 @@ public:
                             reinterpret_cast<void**>(&original_)) || !original_) {
             active_=nullptr;original_=nullptr;return false;
         }
+        HMODULE forwarder=nullptr;
+        if(GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                reinterpret_cast<LPCWSTR>(reinterpret_cast<uintptr_t>(original_)),&forwarder)) {
+            using ResolveFactoryFn=FARPROC(WINAPI*)();
+            const auto resolve=reinterpret_cast<ResolveFactoryFn>(GetProcAddress(forwarder,"SdgoDirect3DCreate9Target"));
+            if(resolve) {
+                original_=reinterpret_cast<Create9Fn>(resolve());
+                if(!original_) {active_=nullptr;return false;}
+            }
+        }
         InitializeCriticalSection(&dispatchLock_);
         if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
                 reinterpret_cast<LPCWSTR>(reinterpret_cast<uintptr_t>(&WorkerEntry)),&pinnedModule_))

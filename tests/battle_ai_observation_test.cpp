@@ -31,6 +31,8 @@ struct Storage {
 };
 struct Link { Link* next; Link* previous; uint8_t* unit; };
 int sightQueries = 0;
+int rayCalls = 0;
+bool invalidRay = false;
 bool blocked = false;
 std::array<uint8_t, 0x180> wall{};
 std::array<void*, 16> unitVtable{}, sceneVtable{};
@@ -38,6 +40,8 @@ bool __fastcall IsA(void*, void*, int kind) { return kind == 0x15; }
 bool __fastcall Attackable(void*, void*, uint8_t*) { return true; }
 bool __fastcall Terrain(void*, void*, int kind) { return kind == 3; }
 battle_ai::native::Ray3* __fastcall Ray(uint8_t*, void*, Ray3* ray) {
+    ++rayCalls;
+    if(invalidRay) return nullptr;
     *ray = {{0, 0, 0}, {0, 0, 1}};
     return ray;
 }
@@ -88,6 +92,7 @@ struct World {
     }
     explicit World(size_t count) {
         blocked = false;
+        invalidRay=false;rayCalls=0;
         unitVtable[1] = reinterpret_cast<void*>(&IsA);
         unitVtable[10] = reinterpret_cast<void*>(&Attackable);
         sceneVtable[5] = reinterpret_cast<void*>(&Terrain);
@@ -141,7 +146,12 @@ int main(int argc, char**) {
         memoryQueries = 0; sightQueries = 0;
         CHECK(Capture(observed));
         const auto queries = memoryQueries;
-        CHECK(observed.count == count && sightQueries == int(count));
+        Observation withoutCache{};
+        memoryQueries=0;
+        CHECK(GuardedCapture(withoutCache));
+        CHECK(Digest(observed)==Digest(withoutCache));
+        CHECK(queries<memoryQueries);
+        CHECK(observed.count == count && sightQueries == int(count)*2);
         for (size_t i = 0; i < count; ++i)
             CHECK(observed.targets[i].id == 2000 + i && observed.targets[i].visible);
         std::printf("OBS count=%zu memory_queries=%zu sight_queries=%d digest=%llu\n",
@@ -178,6 +188,22 @@ int main(int argc, char**) {
         CHECK(!Capture(unavailable));
         CHECK(battle_ai::native::detail::g_readableRegionCache == nullptr);
         world->entries[0].unit = valid;
+    }
+    {
+        auto world=std::make_unique<World>(1);
+        Put(world->owner.attack.data(),0x240,int32_t(0));
+        Put(world->owner.attack.data(),0x248,world->weapons[0].data());
+        Put(world->enemies[0].node.data(),0x88,Vec3{0,0,5000});
+        invalidRay=true;
+        Observation melee{};
+        CHECK(Capture(melee)&&rayCalls==0&&melee.count==1);
+        CHECK(melee.targets[0].perceptionVisible&&melee.targets[0].visible&&
+              !melee.targets[0].rangedVisible&&!melee.targets[0].meleeVisible);
+        CHECK(melee.targets[0].distance==5000);
+        Put(world->owner.attack.data(),0x240,int32_t(1));
+        Put(world->owner.attack.data(),0x248,world->weapons[1].data());
+        Observation missingGunOrigin{};
+        CHECK(!Capture(missingGunOrigin)&&rayCalls==1);
     }
     ai_test::api.Symbol=&ResolveLookup;
     auto document=lookupDocument.data();g_document=&document;

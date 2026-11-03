@@ -795,8 +795,10 @@ int wmain(int argc,wchar_t** argv) {
         native_world::Put(native_world::nodes[0].data(),0x88,native_world::Vec3{0,0,0});
         native_world::Put(advanceFsm,4,advanceFsm+0x20);native_world::weapons[1][0x8F]=1;
         Eval("SDGO_BattleAI_GenericUpdate=savedGeneric");
+        Eval("beforeRayFaultCalls=calls;beforeRayFaults=SDGO_BattleAI_Universal.faults");
         native_world::nullRay=true;unit.Think();native_world::nullRay=false;
-        Check(Eval("assert(calls>=2)"),"failed native ray observation falls back rather than querying from a zero origin");
+        Check(Eval("assert(calls==beforeRayFaultCalls and SDGO_BattleAI_Universal.faults==beforeRayFaults+1)"),
+              "an unavailable native ray reports an enhanced-policy failure without running a second brain");
         native_world::Ray3 offThreadRay={};
         std::thread worker([&] {
             reinterpret_cast<native_world::Callbacks*>(native_world::fsms[0].data())->Ray(&offThreadRay);
@@ -973,7 +975,9 @@ int wmain(int argc,wchar_t** argv) {
         reinterpret_cast<native_world::Callbacks*>(native_world::fsms[0].data())->Ray(&ray);
         Check(unit.bytes[0x312A]==0 && unit.bytes[0x30DC]==0 && ray.direction.z==1 && ray.direction.x==0,
               "disabling generic mode releases owned motor and shooting and retains stock ray");
-    } else if(disabled||bad||missing) {
+    } else if(missing) {
+        Check(Eval("assert(SDGO_BattleAI==nil and calls==0)"),"missing enhanced policy scripts are explicit errors instead of switching to native AI");
+    } else if(disabled||bad) {
         Check(Eval("assert(SDGO_BattleAI==nil and calls==1)"),"disabled or rejected mod leaves native AI intact");
     } else {
         Check(Eval("assert(SDGO_BattleAI and SDGO_BattleAI.states[20] and SDGO_BattleAI.faults==0); firstGeneration=SDGO_BattleAI.states[20].generation"),"DLL injects policy on first native Think");
