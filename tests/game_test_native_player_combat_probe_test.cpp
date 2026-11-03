@@ -345,7 +345,7 @@ namespace
     void __fastcall WeaponInput(uint8_t* unit, void*, void* input, int wheel)
     {
         CHECK(unit == g_unit && input == g_nativeInput && wheel == 0);
-        CHECK(g_heldDetour(input, nullptr, 16) == 1);
+        CHECK(g_downDetour(input, nullptr, 16) == 1);
         ++g_weaponRequests;
         // Real native receipt queues DD0; it does not acknowledge the binding.
         Put(g_unit, 0xDD0, int32_t(2));
@@ -398,6 +398,7 @@ namespace
         auto context = Context(1000);
         CHECK(probe.Poll(&context, snapshot, status, input));
         CHECK(g_weaponRequests == 1 && g_moveInputCalls == 0 && g_fireInputCalls == 0);
+        CHECK(g_attackDispatchCalls == 1);
         CHECK(Get<int32_t>(g_unit, 0xDD0) == 2 && Get<int32_t>(g_attack, 0x240) == 0);
         context.elapsed_ms = 1100;
         CHECK(probe.Poll(&context, snapshot, status, input));
@@ -405,6 +406,7 @@ namespace
         context.elapsed_ms = 1300;
         CHECK(probe.Poll(&context, snapshot, status, input));
         CHECK(g_weaponRequests == 3 && g_fireInputCalls == 0);
+        CHECK(g_attackDispatchCalls == 3);
         // Only an actual native commit permits movement/fire sampling to begin.
         Put(g_attack, 0x240, int32_t(2));
         Put(g_attack, 0x248, g_weapons[2]);
