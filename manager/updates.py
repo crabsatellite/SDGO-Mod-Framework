@@ -67,7 +67,9 @@ def read_ini(raw):
 
 def serialize_ini(value):
     stream = io.StringIO(); value.write(stream, space_around_delimiters=False)
-    return stream.getvalue().encode('utf-8-sig')
+    # The native loader reads symbol files through GetPrivateProfileStringW.
+    # A UTF-8 BOM hides the first [host] section from that Windows API.
+    return stream.getvalue().encode('utf-8')
 
 
 def fetch(url, limit, stop=None):
