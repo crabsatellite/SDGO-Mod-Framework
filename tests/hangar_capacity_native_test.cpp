@@ -1,6 +1,7 @@
 #include <windows.h>
 
 #include <array>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -21,6 +22,7 @@ int ensureCalls = 0;
 int originalCalls = 0;
 bool ensureResult = true;
 bool ensureThrows = false;
+sdgo::hangar_capacity::PolicyFailure ensureFailure{};
 bool originalWrites = true;
 int originalResult = 0;
 std::int16_t originalExtra = sdgo::hangar_capacity::kTargetExtra;
@@ -30,6 +32,8 @@ void* expectedConnection = reinterpret_cast<void*>(0x55667788);
 CountArgs* expectedArgs = nullptr;
 std::int32_t expectedAccount = 0;
 std::vector<int> order;
+unsigned logCalls = 0;
+char lastLog[512]{};
 
 void Check(bool condition, const char* expression, int line) {
     ++checks;
@@ -48,14 +52,32 @@ T Read(const void* source) {
     return value;
 }
 
-bool Ensure(void* connection, std::int32_t account) {
+bool Ensure(
+    void* connection,
+    std::int32_t account,
+    sdgo::hangar_capacity::PolicyFailure* failure) {
     ++ensureCalls;
     order.push_back(1);
     CHECK(connection == expectedConnection);
     CHECK(account == expectedAccount);
     SetLastError(kPolicyError);
     if (ensureThrows) throw std::runtime_error("fixture policy failure");
+    if (!ensureResult && failure)
+        *failure = ensureFailure;
     return ensureResult;
+}
+
+void __cdecl Log(SdgoMod*, int, const char* format, ...) {
+    ++logCalls;
+    va_list arguments;
+    va_start(arguments, format);
+    vsnprintf_s(
+        lastLog,
+        sizeof(lastLog),
+        _TRUNCATE,
+        format,
+        arguments);
+    va_end(arguments);
 }
 
 int __fastcall Original(void* self, void*, void* connection, CountArgs* args) {
@@ -80,6 +102,7 @@ void Reset() {
     originalCalls = 0;
     ensureResult = true;
     ensureThrows = false;
+    ensureFailure = {};
     originalWrites = true;
     originalResult = 0;
     originalExtra = sdgo::hangar_capacity::kTargetExtra;
@@ -87,6 +110,8 @@ void Reset() {
     expectedArgs = nullptr;
     expectedAccount = 0;
     order.clear();
+    logCalls = 0;
+    lastLog[0] = '\0';
     g_original = reinterpret_cast<GetCountFn>(&Original);
     g_ensure = &Ensure;
     g_api = nullptr;
@@ -169,6 +194,10 @@ void PolicyFailuresLeaveNativeArgumentsUntouched() {
         expectedAccount = args.account;
         ensureResult = false;
         ensureThrows = throwing != 0;
+        ensureFailure = sdgo::hangar_capacity::PolicyFailure{
+            sdgo::hangar_capacity::PolicyPhase::kApply,
+            sdgo::hangar_capacity::PolicyStage::kGetResult,
+            E_FAIL};
         std::array<BYTE, sizeof(CountArgs)> before{};
         std::memcpy(before.data(), &args, before.size());
         SetLastError(kIncomingError);
@@ -180,6 +209,72 @@ void PolicyFailuresLeaveNativeArgumentsUntouched() {
         CHECK(std::memcmp(before.data(), &args, before.size()) == 0);
         CHECK(GetLastError() == kIncomingError);
     }
+}
+
+void PolicyDiagnosticsAreBoundedAndNonSecret() {
+    Reset();
+    SdgoApi api{};
+    api.Log = &Log;
+    g_api = &api;
+    g_mod = reinterpret_cast<SdgoMod*>(0x1234);
+    auto args = MakeArgs(78, 0x1234, 0x55667788);
+    expectedArgs = &args;
+    expectedAccount = args.account;
+    ensureResult = false;
+    ensureFailure = sdgo::hangar_capacity::PolicyFailure{
+        sdgo::hangar_capacity::PolicyPhase::kApply,
+        sdgo::hangar_capacity::PolicyStage::kGetResult,
+        E_FAIL};
+
+    for (int attempt = 0; attempt != 6; ++attempt)
+        CHECK(
+            GetCount(
+                expectedSelf,
+                nullptr,
+                expectedConnection,
+                &args) == 1);
+
+    CHECK(logCalls == 5);
+    CHECK(std::strstr(lastLog, "phase=apply") != nullptr);
+    CHECK(std::strstr(lastLog, "stage=get_result") != nullptr);
+    CHECK(std::strstr(lastLog, "hr=0x80004005") != nullptr);
+    CHECK(std::strstr(lastLog, "SELECT") == nullptr);
+    CHECK(std::strstr(lastLog, "account=") == nullptr);
+    CHECK(originalCalls == 0);
+}
+
+void PolicySessionReportsExactEarlyGate() {
+    using namespace sdgo::hangar_capacity;
+    PolicyFailure failure{};
+    ICommandText* command = reinterpret_cast<ICommandText*>(1);
+    CHECK(!BorrowCommand(nullptr, &command, &failure));
+    CHECK(command == nullptr);
+    CHECK(failure.phase == PolicyPhase::kOpen);
+    CHECK(failure.stage == PolicyStage::kConnection);
+    CHECK(failure.hr == E_POINTER);
+
+    std::array<BYTE, 0x244> connection{};
+    const int busy = 1;
+    std::memcpy(connection.data() + 0x240, &busy, sizeof(busy));
+    CHECK(!BorrowCommand(connection.data(), &command, &failure));
+    CHECK(failure.phase == PolicyPhase::kOpen);
+    CHECK(failure.stage == PolicyStage::kBorrowBusy);
+    CHECK(failure.hr == HRESULT_FROM_WIN32(ERROR_BUSY));
+
+    std::memset(connection.data(), 0, connection.size());
+    CHECK(!BorrowCommand(connection.data(), &command, &failure));
+    CHECK(failure.phase == PolicyPhase::kOpen);
+    CHECK(failure.stage == PolicyStage::kBorrowCommand);
+    CHECK(failure.hr == E_POINTER);
+
+    PolicySession session(3);
+    CHECK(!session.Ensure(L""));
+    failure = session.Failure();
+    CHECK(failure.phase == PolicyPhase::kEnsure);
+    CHECK(failure.stage == PolicyStage::kFactory);
+    CHECK(failure.hr == E_UNEXPECTED);
+    CHECK(std::strcmp(PolicyPhaseName(failure.phase), "ensure") == 0);
+    CHECK(std::strcmp(PolicyStageName(failure.stage), "factory") == 0);
 }
 
 void InvalidInputsStopBeforePolicy() {
@@ -280,6 +375,8 @@ int main() {
     fixture::NativeFailurePassesThrough();
     fixture::StaleNativeSuccessFailsClosedWithoutRewriting();
     fixture::PolicyFailuresLeaveNativeArgumentsUntouched();
+    fixture::PolicyDiagnosticsAreBoundedAndNonSecret();
+    fixture::PolicySessionReportsExactEarlyGate();
     fixture::InvalidInputsStopBeforePolicy();
     fixture::Reset();
     fixture::ReadOnlyAndInaccessibleNativeArguments();

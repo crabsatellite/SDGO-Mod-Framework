@@ -14,6 +14,8 @@
 #include "capsule_catalog_actions.h"
 #include "battle_combat_actions.h"
 #include "apsalus_transform_probe.h"
+#include "unit_presentations_actions.h"
+#include "unit_acquisition_actions.h"
 #include "capsule_draw_actions.h"
 #include "unit_select_actions.h"
 #include "active_selection_observer.h"
@@ -28,7 +30,9 @@
 #include "tutorial_actions.h"
 #include "onboarding_actions.h"
 #include "onboarding_gate.h"
+#include "friend_session.h"
 #include "fps_test_actions.h"
+
 #include "sdgo/pvp_ai_client_observer.h"
 #include "scoreboard_actions.h"
 #include "battle_ai_behavior_probe.h"
@@ -36,6 +40,7 @@
 #include "native_player_combat_probe.h"
 #include "sealed_room_title.h"
 #include <cwchar>
+#include <array>
 
 namespace {
 static_assert(static_cast<uint32_t>(TutorialActions::kLeftGame) == sdgo_game_test::kTutorialLeftGame, "tutorial observation contract changed");
@@ -90,6 +95,7 @@ uint16_t missionMode=0;
 SdgoMissionAiClientGetSnapshotV1Fn getMissionSnapshot=nullptr;
 uint64_t playUnitUid=0;
 bool collectionDraw=false;
+bool collectionPreviewOnly=false;
 std::vector<SdgoHangarGameTestUnitV1> collectionBeforeUnits;
 const void* roomListVtable=nullptr;
 const void* modalLoadingVtable=nullptr;
@@ -101,6 +107,12 @@ uint32_t roomStylePreview=0;
 RoomStylePreviewActions roomStylePreviewActions;
 TutorialActions tutorial;
 OnboardingActions onboarding;
+friends::FriendActions friendActions;
+friends::FriendExtraActions friendExtras;
+friends::FriendSession friendSession;
+friends::FriendInviteSender friendInviteSender;
+friends::FriendInviteReceiver friendInviteReceiver;
+friends::FriendRoomActions friendRoomActions;
 SdgoPvpAiClientGetSnapshotV1Fn getSnapshot;
 SdgoPvpAiClientGetLuaStatusV1Fn getLuaStatus;
 SdgoPvpAiClientGetStartStatusV1Fn getStartStatus;
@@ -129,8 +141,14 @@ bool quietLoopback = false;
 QuietSockets quietSockets;
 QuietAudio quietAudio;
 QuietGraphics quietGraphics;
+bool captureNativeFrames=false;
+bool testUnitPresentations=false;
+bool captureUnitPortraits=false;
+UnitPresentationsActions unitPresentations;
+UnitAcquisitionActions unitAcquisition;
+UnitAcquisitionActions::Config unitAcquisitionConfig{};
 void PublishQuietSocketReceipt(bool force=false);
-bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false, pagesOnly = false;
+bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false, pagesOnly = false, friendsOnly = false;
 uint64_t deckUnitUids[4]{};
 char giftRecipient[17]{};
 uint32_t giftSenderPilot = 0, giftRecipientPilot = 0, giftCount = 0, giftSent = 0;
@@ -165,6 +183,18 @@ std::vector<MotionSample> motionSamples;
 
 bool LoadPlan() {
     const std::wstring job = sdgo_test::directory + L"\\run.ini";
+    captureNativeFrames=GetPrivateProfileIntW(L"settings",L"CaptureNativeFrames",0,
+        (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
+    testUnitPresentations=GetPrivateProfileIntW(L"settings",L"UnitPresentations",0,
+        (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
+    captureUnitPortraits=GetPrivateProfileIntW(L"settings",L"UnitPortraits",0,
+        (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
+    collectionPreviewOnly=GetPrivateProfileIntW(L"settings",L"CollectionPreviewOnly",0,
+        (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
+    const std::wstring acquisitionIni=sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini";
+    unitAcquisitionConfig.machine_kind=GetPrivateProfileIntW(L"settings",L"UnitAcquisitionKind",0,acquisitionIni.c_str());
+    unitAcquisitionConfig.machine_id=GetPrivateProfileIntW(L"settings",L"UnitAcquisitionMachine",0,acquisitionIni.c_str());
+    unitAcquisitionConfig.unit_id=GetPrivateProfileIntW(L"settings",L"UnitAcquisitionUnit",0,acquisitionIni.c_str());
     wchar_t networkPolicy[24]{};
     GetPrivateProfileStringW(L"run",L"network_policy",L"legacy",networkPolicy,24,job.c_str());
     verifyRoutedNetwork=!wcscmp(networkPolicy,L"routed_loopback");
@@ -172,6 +202,7 @@ bool LoadPlan() {
     verifyQuietRuntime=GetPrivateProfileIntW(L"run",L"quiet",0,job.c_str())!=0;
     quietLoopback=verifyQuietRuntime && GetPrivateProfileIntW(L"run",L"quiet_loopback",0,job.c_str())==1;
     fpsOnly=sdgo_test::suiteId=="native-fps-limit";
+    if(collectionPreviewOnly && fpsOnly)return false;
     if (fpsOnly) {
         fpsRequested=GetPrivateProfileIntW(L"run",L"fps_cap",0,job.c_str());
         const int enabled=GetPrivateProfileIntW(L"run",L"fps_mod_enabled",-1,job.c_str());
@@ -187,6 +218,7 @@ bool LoadPlan() {
     giftRequestsOnly = GetPrivateProfileIntW(L"run", L"gift_requests_only", 0, job.c_str()) != 0;
     deckOnly = GetPrivateProfileIntW(L"run", L"deck_only", 0, job.c_str()) != 0;
     pagesOnly = GetPrivateProfileIntW(L"run", L"pages_only", 0, job.c_str()) != 0;
+    friendsOnly = GetPrivateProfileIntW(L"run", L"friends_only", 0, job.c_str()) != 0;
     roomTitlesOnly = GetPrivateProfileIntW(L"run", L"room_titles_only", 0, job.c_str()) != 0;
     wchar_t stylePreview[16]{};
     GetPrivateProfileStringW(L"run",L"room_style_preview",L"",stylePreview,16,job.c_str());
@@ -202,6 +234,11 @@ bool LoadPlan() {
         wcscmp(shopDisplay,L"inputs/shop-runtime-display.ini")))return false;
     collectionDraw=GetPrivateProfileIntW(L"run",L"collection_draw",0,job.c_str())!=0;
     if(collectionDraw && !pagesOnly)return false;
+    if(collectionPreviewOnly && (!pagesOnly || collectionDraw))return false;
+    if(unitAcquisitionConfig.machine_kind && (!pagesOnly || collectionDraw || collectionPreviewOnly ||
+        !testUnitPresentations || !unitAcquisitionConfig.machine_id || !unitAcquisitionConfig.unit_id ||
+        (unitAcquisitionConfig.machine_kind!=UnitAcquisitionActions::kFixedMachine &&
+         unitAcquisitionConfig.machine_kind!=UnitAcquisitionActions::kCustomMachine)))return false;
     missionMode=static_cast<uint16_t>(GetPrivateProfileIntW(L"run",L"mission_mode",0,job.c_str()));
     if(missionMode && (missionMode!=5 && missionMode!=8))return false;
     wchar_t playUid[32]{};
@@ -211,7 +248,10 @@ bool LoadPlan() {
         wchar_t* end=nullptr;errno=0;playUnitUid=_wcstoui64(playUid,&end,10);
         if(!playUnitUid || errno || !end || *end)return false;
     }
-    if (static_cast<unsigned>(bootstrapOnly) + battleshipOnly + giftRequestsOnly + deckOnly + pagesOnly + roomTitlesOnly > 1) return false;
+    if(testUnitPresentations && !playUnitUid)return false;
+    if(captureUnitPortraits && (!testUnitPresentations || !captureNativeFrames))return false;
+    if (static_cast<unsigned>(bootstrapOnly) + battleshipOnly + giftRequestsOnly + deckOnly + pagesOnly + friendsOnly + roomTitlesOnly > 1) return false;
+    if (friendsOnly && (missionMode || playUnitUid || collectionDraw || testShopCatalog))return false;
     wchar_t relative[512] = {}, nonce[16] = {}, user[32] = {}, password[128] = {};
     GetPrivateProfileStringW(L"run", L"account_path", L"private/account.ini", relative, 512, job.c_str());
     std::wstring accountPath = relative;
@@ -1030,7 +1070,7 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
         context->Assert(0, "the normal first-unit business callback raised a native exception"); return SDGO_GAME_TEST_FAIL;
     }
     if (state.tutorial_level < 2 && !starter.request_attempted && onboarding.DrawStarterUnit())
-        context->Observe("invoked the original first-unit Buy business callback on the live onboarding capsule");
+        context->Observe("invoked the original first-unit Buy business callback on the live native buying dialog");
     if (starter.reply_sequence != previousStarterReply) {
         previousStarterReply = starter.reply_sequence;
         char message[144]; sprintf_s(message, "real starter reply opcode=%04X error=%u unit=%u slot=%u tutorial=%u", starter.reply_opcode, starter.reply_error, starter.picked_unit_id, starter.picked_unit_slot, starter.tutorial_level);
@@ -1040,6 +1080,8 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
         }
         context->Assert(starter.picked_unit_id != 0, "the real first-unit reply supplied a unit id");
     }
+    if (onboarding.AdvanceStarterCapsuleResult())
+        context->Observe("invoked the original live CapsuleClick callback after the accepted first-unit reply; native state advanced from 2 to 4");
     if (onboarding.ConfirmStarterResultPopup())
         context->Observe("invoked the original starter-result confirmation business callback on the real result popup");
     if (onboarding.ConfirmInitialLoadingPopup())
@@ -1049,6 +1091,63 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
         context->Assert(0, "the backend rejected initial-loading completion"); return SDGO_GAME_TEST_FAIL;
     }
     const auto inventory = onboarding.InventoryState();
+    const std::array<uint32_t,7> unitResultGate{
+        starter.unit_result_clone_sequence,starter.unit_result_captured_app_state,starter.unit_result_ui_state,
+        starter.unit_result_unit_id,starter.unit_result_captured,starter.unit_result_named_identity_matched,
+        starter.unit_result_control_ready};
+    static std::array<uint32_t,7> previousUnitResultGate{UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX};
+    if(unitResultGate!=previousUnitResultGate) {
+        char message[256];sprintf_s(message,"native starter unit-result clone=%u app=%u ui=%u unit=%u captured=%u named=%u control_ready=%u confirm=%u/%u",
+            unitResultGate[0],unitResultGate[1],unitResultGate[2],unitResultGate[3],unitResultGate[4],unitResultGate[5],unitResultGate[6],
+            starter.result_confirm_attempted,starter.result_confirm_sequence);
+        context->Observe(message);previousUnitResultGate=unitResultGate;
+    }
+    const std::array<uint32_t,8> capsuleGate{
+        starter.capsule_clone_sequence,starter.capsule_ui_state,starter.capsule_native_state,
+        starter.capsule_click_sequence,starter.capsule_captured,starter.capsule_named_identity_matched,
+        starter.capsule_control_ready,starter.capsule_click_attempted};
+    static std::array<uint32_t,8> previousCapsuleGate{UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX};
+    if(capsuleGate!=previousCapsuleGate) {
+        char message[256];sprintf_s(message,"native starter capsule clone=%u ui=%u state=%u clicks=%u captured=%u named=%u control_ready=%u attempted=%u",
+            capsuleGate[0],capsuleGate[1],capsuleGate[2],capsuleGate[3],capsuleGate[4],capsuleGate[5],capsuleGate[6],capsuleGate[7]);
+        context->Observe(message);previousCapsuleGate=capsuleGate;
+    }
+    const std::array<uint32_t,7> buyingGate{
+        starter.buying_clone_sequence,starter.buying_captured_app_state,starter.buying_ui_state,
+        starter.buying_captured,starter.buying_named_identity_matched,starter.buying_control_ready,
+        starter.buying_validation_failed};
+    static std::array<uint32_t,7> previousBuyingGate{UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX};
+    if(buyingGate!=previousBuyingGate) {
+        char message[256];sprintf_s(message,"native starter buying clone=%u captured_app=%u state=%u captured=%u named=%u control_ready=%u validation_failed=%u",
+            buyingGate[0],buyingGate[1],buyingGate[2],buyingGate[3],buyingGate[4],buyingGate[5],buyingGate[6]);
+        context->Observe(message);previousBuyingGate=buyingGate;
+    }
+    if(state.tutorial_level>=2 && !inventory.initialized &&
+       (actions.AppState()==5 || actions.AppState()==6)) {
+        const auto navigation=hangarNavigation.EnsureHangar();
+        static uint32_t previousInventoryEntry=UINT32_MAX;
+        if(navigation!=previousInventoryEntry) {
+            char entry[128];sprintf_s(entry,"native onboarding inventory entry=%s",HangarNavigation::ResultName(navigation));
+            context->Observe(entry);previousInventoryEntry=navigation;
+        }
+        if(navigation==HangarNavigation::kUnbound || navigation>=HangarNavigation::kDownmenuServiceMismatch) {
+            context->Assert(0,"the original hangar entry must initialize the real onboarding inventory");return SDGO_GAME_TEST_FAIL;
+        }
+    }
+    const std::array<uint32_t,8> inventoryPage{
+        inventory.manager_present,inventory.initialized,inventory.allocated_block_count,
+        inventory.slot_capacity,inventory.page_count,inventory.tail_count,
+        inventory.last_uid_cursor_low,inventory.last_uid_cursor_high};
+    static std::array<uint32_t,8> previousInventoryPage{};
+    static bool inventoryPageObserved=false;
+    if(!inventoryPageObserved || inventoryPage!=previousInventoryPage) {
+        char detail[256];
+        sprintf_s(detail,"native inventory pagination manager=%u initialized=%u blocks=%u capacity=%u pages=%u tail=%u cursor_low=%u cursor_high=%u",
+            inventoryPage[0],inventoryPage[1],inventoryPage[2],inventoryPage[3],
+            inventoryPage[4],inventoryPage[5],inventoryPage[6],inventoryPage[7]);
+        context->Observe(detail);
+        previousInventoryPage=inventoryPage;inventoryPageObserved=true;
+    }
     if(roomTitlesOnly){
         static uint32_t appSeen=UINT32_MAX,initializedSeen=UINT32_MAX,managerSeen=UINT32_MAX,capacitySeen=UINT32_MAX;
         if(appSeen!=state.native_app_state || initializedSeen!=inventory.initialized || managerSeen!=inventory.manager_present || capacitySeen!=inventory.slot_capacity){
@@ -1063,6 +1162,18 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
     }
     if (inventory.native_fault) {
         context->Assert(0, "the read-only native inventory observation failed"); return SDGO_GAME_TEST_FAIL;
+    }
+    const std::array<uint32_t,12> gate{
+        starter.result_popup_clone_sequence,starter.result_popup_captured_app_state,
+        starter.result_popup_captured,starter.result_popup_ready,starter.result_confirm_attempted,
+        starter.result_confirm_sequence,initial.popup_state,initial.confirm_sequence,
+        inventory.manager_present,inventory.initialized,inventory.scan_complete,inventory.owned_unit_count};
+    static std::array<uint32_t,12> previousGate{};static bool gateObserved=false;
+    if(!gateObserved||gate!=previousGate) {
+        char detail[320];
+        sprintf_s(detail,"native onboarding gates popup_clone=%u captured_app=%u captured=%u ready=%u confirm_attempted=%u confirm_sequence=%u initial_popup=%u initial_confirm=%u inventory_manager=%u initialized=%u scanned=%u owned=%u",
+            gate[0],gate[1],gate[2],gate[3],gate[4],gate[5],gate[6],gate[7],gate[8],gate[9],gate[10],gate[11]);
+        context->Observe(detail);previousGate=gate;gateObserved=true;
     }
     const sdgo_game_test::OnboardingCompletionEvidence completion{
         nicknameRequested,
@@ -1316,6 +1427,18 @@ int __cdecl ReadAiCatalog(const SdgoGameTestContextV1* context) {
     return ready ? SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
 }
 int __cdecl ReadStoragePage(const SdgoGameTestContextV1* context) {
+    static bool shopExitRequested=false;
+    if(actions.AppState()==9) {
+        if(!shopExitRequested) {
+            const auto navigation=hangarNavigation.ClickBottomRadio(L"GameRoomRadio",0x48);
+            if(navigation>=HangarNavigation::kDownmenuServiceMismatch || navigation==HangarNavigation::kUnbound) {
+                context->Assert(0,"the original game-room radio remains available after the shop preview");
+                return SDGO_GAME_TEST_FAIL;
+            }
+            shopExitRequested=navigation==HangarNavigation::kReady;
+        }
+        return SDGO_GAME_TEST_WAIT;
+    }
     const auto result=storage.Read(context);
     if(result>=StorageTestActions::Invalid) {
         context->Assert(0,"storage native observer is available and belongs to this process/run/UI thread");
@@ -1388,12 +1511,15 @@ int __cdecl ClaimStoragePage(const SdgoGameTestContextV1* context) {
 }
 int __cdecl ReadCapsuleCatalog(const SdgoGameTestContextV1* context) {
     if(collectionDraw)collectionBeforeUnits=pages.BaselineUnits();
-    const bool ready=capsules.Check(sdgo_test::directory+L"\\..\\mods\\capsule_catalog\\runtime.ini");
+    const bool acquisition=unitAcquisitionConfig.machine_kind!=0;
+    const bool ready=capsules.Check(sdgo_test::directory+L"\\..\\mods\\capsule_catalog\\runtime.ini",acquisition);
     const auto state=capsules.State();char message[192];
     sprintf_s(message,"native capsule tables=%u rows=%u/%u collection=%u price=%u error=%u",state.tables,state.verified,state.expected,
         state.collection_machine,state.collection_price,state.error);context->Observe(message);
-    context->Assert(ready,"all five configured capsule tables are registered in the actual native grid with exact counts and row identities");
-    context->Assert(state.collection_machine==990001 && state.collection_price==100000,"the collection machine has its original 100000 GP price in the real client registry");
+    context->Assert(ready,acquisition
+        ? "the isolated acquisition profile matches every declared native table, including explicitly empty tables, with exact row identities"
+        : "all five configured capsule tables are registered in the actual native grid with exact counts and row identities");
+    if(!acquisition)context->Assert(state.collection_machine==990001 && state.collection_price==100000,"the collection machine has its original 100000 GP price in the real client registry");
     return ready?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
 }
 int __cdecl ReadCapsuleCurrency(const SdgoGameTestContextV1* context) {
@@ -1419,6 +1545,15 @@ int __cdecl ReadCapsuleCurrency(const SdgoGameTestContextV1* context) {
     return SDGO_GAME_TEST_PASS;
 }
 int ReadShopCatalog(const SdgoGameTestContextV1* context) {
+    static bool diagnosticRequested=false,diagnosticComplete=false;
+    if(diagnosticRequested && !diagnosticComplete) {
+        const auto captured=quietGraphics.CaptureFrameResult();
+        if(captured==E_PENDING)return SDGO_GAME_TEST_WAIT;
+        diagnosticComplete=true;
+        context->Observe(SUCCEEDED(captured)?"native shop diagnostic backbuffer saved (not a passing case)":"native shop diagnostic frame was unavailable");
+        context->Assert(0,"native stock catalog and preview controls must match the sealed read-only assertions");
+        return SDGO_GAME_TEST_FAIL;
+    }
     const auto before=shopCatalog.State();
     if(before.stage==ShopCatalogActions::kStageIdle || before.stage==ShopCatalogActions::kStageBaseline) {
         // The unit-management popup only loads briefs. Enter the original
@@ -1437,6 +1572,33 @@ int ReadShopCatalog(const SdgoGameTestContextV1* context) {
             ShopCatalogActions::ResultName(result),state.stage,state.verified,state.configured,state.current_page,state.max_page,
             state.product_id,state.option_id,state.category,state.validity,state.price,state.payment,state.buy_previews,state.gift_previews,
             state.cancellations,state.wallet_unchanged,state.inventory_unchanged,state.native_page_nonempty,state.native_page_slots,state.native_page_bytes,state.native_request_pending,sent.opcode,sent.packet_size,sent.send_sequence);context->Observe(message);previous=result;verified=state.verified;lastPending=state.native_request_pending;
+        char rows[160];sprintf_s(rows,"native shop page products=%u,%u,%u,%u,%u,%u,%u,%u",
+            state.native_page_product_ids[0],state.native_page_product_ids[1],state.native_page_product_ids[2],state.native_page_product_ids[3],
+            state.native_page_product_ids[4],state.native_page_product_ids[5],state.native_page_product_ids[6],state.native_page_product_ids[7]);context->Observe(rows);
+        if(!state.native_name.empty()) {
+            const auto utf8=[](const std::wstring& value){
+                const int length=WideCharToMultiByte(CP_UTF8,0,value.data(),static_cast<int>(value.size()),nullptr,0,nullptr,nullptr);
+                std::string text(static_cast<size_t>(length),0);
+                if(length)WideCharToMultiByte(CP_UTF8,0,value.data(),static_cast<int>(value.size()),text.data(),length,nullptr,nullptr);
+                return text;
+            };
+            const auto native=utf8(state.native_name),visible=utf8(state.visible_name);
+            char names[512];sprintf_s(names,"native shop target title source=\"%s\" visible=\"%s\"",native.c_str(),visible.c_str());context->Observe(names);
+            if(!state.option_label.empty()) {
+                const auto label=utf8(state.option_label);char text[1024];
+                sprintf_s(text,"native shop popup label=\"%s\"",label.c_str());context->Observe(text);
+            }
+            if(!state.popup_price_text.empty()) {
+                const auto label=utf8(state.popup_price_text);char text[1024];
+                sprintf_s(text,"native shop popup price control=\"%s\"",label.c_str());context->Observe(text);
+            }
+        }
+        if(state.popup_phase) {
+            char popup[320];sprintf_s(popup,"native shop popup phase=%u options=%u product=%u option=%u category=%u price=%d validity=%d payment=%u combo=%u state=%u comboVisible=%u priceVisible=%u",
+                state.popup_phase,state.popup_option_count,state.popup_product,state.popup_option,state.popup_category,state.popup_price,
+                state.popup_validity,state.popup_payment,state.popup_combo_count,state.popup_native_state,
+                state.popup_combo_visible,state.popup_price_visible);context->Observe(popup);
+        }
         if(state.inventory_failure) {
             char inventory[320];sprintf_s(inventory,"native shop inventory failure=%u ready=%u capacity=%d probeSlot=%u brief=%u/%u/%llu full=%u/%u/%llu",
                 state.inventory_failure,state.inventory_ready,state.inventory_capacity,state.inventory_probe_slot,
@@ -1445,6 +1607,12 @@ int ReadShopCatalog(const SdgoGameTestContextV1* context) {
         }
     }
     if(result>=ShopCatalogActions::kInvalidContext || result==ShopCatalogActions::kUnbound || result==ShopCatalogActions::kUnconfigured) {
+        if(captureNativeFrames && !diagnosticRequested) {
+            const auto folder=sdgo_test::directory+L"\\visual";
+            if(CreateDirectoryW(folder.c_str(),nullptr) || GetLastError()==ERROR_ALREADY_EXISTS)
+                diagnosticRequested=quietGraphics.CaptureNextFrame((folder+L"\\diagnostic-shop.bmp").c_str());
+            if(diagnosticRequested)return SDGO_GAME_TEST_WAIT;
+        }
         context->Assert(0,"native stock catalog and preview controls must match the sealed read-only assertions");return SDGO_GAME_TEST_FAIL;
     }
     if(result!=ShopCatalogActions::kComplete)return SDGO_GAME_TEST_WAIT;
@@ -1488,6 +1656,8 @@ int __cdecl PreviewCollection(const SdgoGameTestContextV1* context) {
     const auto s=collection.State();
     context->Assert(s.target_machine==990001 && s.target_price==100000 && s.preview_ready && !s.buy_attempted,
         "original activity controls selected the real collection machine and initialized its own confirmation without purchasing");
+    context->Assert(!s.buy_submitted && !s.request_transport_sequence,
+        "the preview has not submitted an activity-capsule purchase transport");
     return SDGO_GAME_TEST_PASS;
 }
 int __cdecl DrawCollection(const SdgoGameTestContextV1* context) {
@@ -1595,6 +1765,122 @@ int __cdecl SelectPlayUnit(const SdgoGameTestContextV1* context) {
     return SDGO_GAME_TEST_PASS;
 }
 const SdgoGameTestCaseV1 playUnitCase{"setup.active_unit",120000,&SelectPlayUnit};
+int PresentationResult(const SdgoGameTestContextV1* context,UnitPresentationsActions::Result result) {
+    const auto& s=unitPresentations.State();
+    static uint32_t previous=0,phase=0,flags=0,first=0,detailFlags=0;static uintptr_t model=0,detail=0;
+    const uint32_t currentDetailFlags=s.detail_active|(s.detail_visible<<8)|(s.projection_mode<<16)|(s.pending_actions<<24);
+    if(previous!=result || model!=s.model || phase!=s.phase || flags!=s.list_flags || first!=s.first_visible_id || detail!=s.detail || detailFlags!=currentDetailFlags) {
+        char message[448];sprintf_s(message,"original unit presentations result=%u unit=%u index=%u slot=%u form=%u animation=%.2f list=%08X detail=%08X model=%08X select=%u switch=%u phase=%u rank=%u flags=%04X shown=%u first=%u detail_unit=%u active=%u visible=%u projection=%u pending=%u",
+            result,s.unit,s.index_id,s.slot,s.form,s.animation_state,static_cast<uint32_t>(s.list),
+            static_cast<uint32_t>(s.detail),static_cast<uint32_t>(s.model),s.selection_calls,s.form_calls,
+            s.phase,s.rank,s.list_flags,s.visible_count,s.first_visible_id,s.detail_unit,s.detail_active,s.detail_visible,s.projection_mode,s.pending_actions);
+        context->Observe(message);previous=result;model=s.model;phase=s.phase;flags=s.list_flags;first=s.first_visible_id;detail=s.detail;detailFlags=currentDetailFlags;
+    }
+    if(result>=UnitPresentationsActions::Invalid) {
+        context->Assert(0,"the original encyclopedia service, control, requested unit and model identities remain valid");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if(result!=UnitPresentationsActions::Ready)return SDGO_GAME_TEST_WAIT;
+    context->Assert(1,"the original unit UI reached the requested state through its own callbacks");
+    return SDGO_GAME_TEST_PASS;
+}
+int __cdecl ImportedIndex(const SdgoGameTestContextV1* context) {
+    static bool diagnosticRequested=false,diagnosticComplete=false;
+    if(diagnosticRequested && !diagnosticComplete) {
+        const auto captured=quietGraphics.CaptureFrameResult();
+        if(captured==E_PENDING)return SDGO_GAME_TEST_WAIT;
+        diagnosticComplete=true;
+        context->Observe(SUCCEEDED(captured)?"native encyclopedia diagnostic backbuffer saved (not a passing case)":"native encyclopedia diagnostic frame was unavailable");
+    }
+    ActiveSelectionObserver::Snapshot s;
+    if(!activeSelection.Read(authenticatedPilot,&s) || !s.inventory_matches || s.uid!=playUnitUid) {
+        context->Assert(0,"encyclopedia checks use the genuinely equipped owned unit");return SDGO_GAME_TEST_FAIL;
+    }
+    const auto result=unitPresentations.EnsureList(s.unit);
+    if(captureNativeFrames && !diagnosticRequested && result==UnitPresentationsActions::Waiting &&
+            unitPresentations.State().phase==5 && context->elapsed_ms>=3000) {
+        const auto folder=sdgo_test::directory+L"\\visual";
+        if(CreateDirectoryW(folder.c_str(),nullptr) || GetLastError()==ERROR_ALREADY_EXISTS)
+            diagnosticRequested=quietGraphics.CaptureNextFrame((folder+L"\\diagnostic-unit-index.bmp").c_str());
+    }
+    return PresentationResult(context,result);
+}
+int __cdecl ImportedDetail(const SdgoGameTestContextV1* context) {
+    return PresentationResult(context,unitPresentations.OpenDetail());
+}
+bool ImportedTransformTarget(uint32_t& target) {
+    using Grid=void*(__cdecl*)();using Find=uint8_t(__thiscall*)(void*,const uint8_t**,uint32_t,int,char);
+    const auto grid=reinterpret_cast<Grid>(sdgo_test::api->Symbol(sdgo_test::mod,"grid.data"));
+    const auto find=reinterpret_cast<Find>(sdgo_test::api->Symbol(sdgo_test::mod,"grid.find"));
+    const uint8_t* row=nullptr;
+    if(!grid || !find || !find(grid(),&row,unitPresentations.State().unit,2,0) || !row)return false;
+    memcpy(&target,row+316,4);return true;
+}
+int ImportedForm(const SdgoGameTestContextV1* context,uint32_t form) {
+    uint32_t target=0;
+    if(!ImportedTransformTarget(target)) {context->Assert(0,"native imported unit has a readable transform reference");return SDGO_GAME_TEST_FAIL;}
+    if(!target) {context->Assert(1,"single-form native unit declares no transformation; no form action is submitted");return SDGO_GAME_TEST_PASS;}
+    return PresentationResult(context,unitPresentations.SwitchForm(form));
+}
+int __cdecl ImportedAlternate(const SdgoGameTestContextV1* context){return ImportedForm(context,1);}
+int __cdecl ImportedBase(const SdgoGameTestContextV1* context){return ImportedForm(context,0);}
+int __cdecl ImportedClose(const SdgoGameTestContextV1* context){return PresentationResult(context,unitPresentations.Close());}
+int __cdecl ImportedAcquisition(const SdgoGameTestContextV1* context) {
+    if(unitPresentations.State().unit!=unitAcquisitionConfig.unit_id) {
+        context->Assert(0,"the sealed acquisition target matches the genuinely owned unit already inspected");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    const auto result=unitAcquisition.Poll();const auto s=unitAcquisition.State();
+    static uint32_t previous=UINT32_MAX,sequence=UINT32_MAX;
+    if(previous!=result || sequence!=s.unitview_event_sequence) {
+        char message[512];sprintf_s(message,"native acquisition result=%u kind=%u machine=%u unit=%u machine_page=%u slot=%u candidate_page=%u slot=%u control=%08X view=%08X event=%u/%u model=%08X dimensions=%d/%d",
+            static_cast<unsigned>(result),s.machine_kind,s.machine_id,s.unit_id,s.machine_page,s.machine_slot,
+            s.candidate_page,s.candidate_slot,s.candidate_control_pointer,s.unitview_pointer,
+            s.unitview_event_sequence,s.unitview_event_unit,s.unitview_model_pointer,s.render_width,s.render_height);
+        context->Observe(message);previous=result;sequence=s.unitview_event_sequence;
+    }
+    if(result==UnitAcquisitionActions::kUnbound || result>=UnitAcquisitionActions::kInvalidConfig) {
+        context->Assert(0,"the native capsule machine, candidate control and unitview consumer identities remain valid");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if(result!=UnitAcquisitionActions::kReady)return SDGO_GAME_TEST_WAIT;
+    context->Assert(s.unitview_event_consumed && s.unitview_event_unit==unitAcquisitionConfig.unit_id &&
+        s.unitview_model_ready && s.unitview_dialog_visible && s.unitview_render_visible,
+        "the original candidate callback reached its actual unitview consumer and visible native model without purchasing");
+    return SDGO_GAME_TEST_PASS;
+}
+const SdgoGameTestCaseV1 unitAcquisitionCase{"pages.unit_acquisition",180000,&ImportedAcquisition};
+const SdgoGameTestCaseV1 unitPresentationCases[]={
+    {"pages.unit_index.list",120000,&ImportedIndex},
+    {"pages.unit_index.detail",120000,&ImportedDetail},
+    {"pages.unit_index.alternate",60000,&ImportedAlternate},
+    {"pages.unit_index.base",60000,&ImportedBase},
+    {"pages.unit_index.close",60000,&ImportedClose},
+};
+int UnitPortrait(const SdgoGameTestContextV1* context,bool choice) {
+    static std::string current;static bool issued=false;static uint64_t issuedAt=0;
+    if(current!=context->case_id){current=context->case_id;issued=false;issuedAt=0;}
+    if(!issued) {
+        const auto result=unitPresentations.ReadyPose(choice);
+        if(result>=UnitPresentationsActions::Invalid)return PresentationResult(context,result);
+        if(result!=UnitPresentationsActions::Ready)return SDGO_GAME_TEST_WAIT;
+        issued=true;issuedAt=context->elapsed_ms;return SDGO_GAME_TEST_WAIT;
+    }
+    if(context->elapsed_ms-issuedAt<150)return SDGO_GAME_TEST_WAIT;
+    const auto folder=sdgo_test::directory+L"\\visual";
+    if(!CreateDirectoryW(folder.c_str(),nullptr) && GetLastError()!=ERROR_ALREADY_EXISTS) {
+        context->Assert(0,"native portrait output directory is available");return SDGO_GAME_TEST_FAIL;
+    }
+    const std::wstring name(current.begin(),current.end());
+    const bool saved=unitPresentations.WritePortraitSource((folder+L"\\"+name+L".json").c_str(),choice?"choice_01":"wait_01");
+    context->Assert(saved,"original detail entity plays its actual ready/selection animation and exposes its real pixel viewport");
+    return saved?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+}
+int __cdecl PortraitWait(const SdgoGameTestContextV1* context){return UnitPortrait(context,false);}
+int __cdecl PortraitReady(const SdgoGameTestContextV1* context){return UnitPortrait(context,true);}
+const SdgoGameTestCaseV1 portraitCases[]={
+    {"pages.unit_index.pose_wait",60000,&PortraitWait},{"pages.unit_index.pose_ready",60000,&PortraitReady},
+};
 int MissionProgress(const SdgoGameTestContextV1* context,MissionFlowActions::Result result) {
     static uint32_t previous=UINT32_MAX;
     if(previous!=result) {
@@ -1858,6 +2144,87 @@ const SdgoGameTestCaseV1 fpsCases[]={
 SdgoGameTestProviderV1 provider{sizeof(provider), SDGO_GAME_TEST_VERSION, "pvp-ai", "client", 7, realCases};
 std::vector<std::string> caseNames;
 std::vector<SdgoGameTestCaseV1> plannedCases;
+void AppendUnitPresentations() {
+    if(!testUnitPresentations)return;
+    plannedCases.insert(plannedCases.end(),std::begin(unitPresentationCases),std::begin(unitPresentationCases)+2);
+    if(captureUnitPortraits)plannedCases.insert(plannedCases.end(),std::begin(portraitCases),std::end(portraitCases));
+    plannedCases.insert(plannedCases.end(),std::begin(unitPresentationCases)+2,std::end(unitPresentationCases));
+}
+std::vector<SdgoGameTestCaseV1> capturedOriginalCases,capturedCases;
+int __cdecl ObserveThenCapture(const SdgoGameTestContextV1* context) {
+    static std::string current;
+    static bool nativeComplete=false,requested=false;
+    static unsigned frame=0;
+    static uint64_t capturedAt=0;
+    if(current!=context->case_id) {
+        current=context->case_id;nativeComplete=false;requested=false;frame=0;capturedAt=0;
+    }
+    if(!nativeComplete) {
+        const auto found=std::find_if(capturedOriginalCases.begin(),capturedOriginalCases.end(),
+            [&](const auto& test){return current==test.id;});
+        if(found==capturedOriginalCases.end())return SDGO_GAME_TEST_FAIL;
+        const int result=found->poll(context);
+        if(result!=SDGO_GAME_TEST_PASS)return result;
+        nativeComplete=true;
+    }
+    const unsigned target=current=="pages.unit_index.pose_ready" ? 3u:2u;
+    const uint64_t interval=current.find("pages.unit_index.pose_")==0 ? 350:800;
+    if(frame==target)return SDGO_GAME_TEST_PASS;
+    if(frame && context->elapsed_ms-capturedAt<interval)return SDGO_GAME_TEST_WAIT;
+    if(!requested) {
+        const auto folder=sdgo_test::directory+L"\\visual";
+        if(!CreateDirectoryW(folder.c_str(),nullptr) && GetLastError()!=ERROR_ALREADY_EXISTS) {
+            context->Assert(0,"the owned native frame output directory is writable");return SDGO_GAME_TEST_FAIL;
+        }
+        const std::wstring name(current.begin(),current.end());
+        const auto path=folder+L"\\"+name+L"-"+std::to_wstring(frame)+L".bmp";
+        if(!quietGraphics.CaptureNextFrame(path.c_str())) {
+            context->Assert(0,"the real native D3D frame observation is available");return SDGO_GAME_TEST_FAIL;
+        }
+        requested=true;return SDGO_GAME_TEST_WAIT;
+    }
+    const HRESULT result=quietGraphics.CaptureFrameResult();
+    if(result==E_PENDING)return SDGO_GAME_TEST_WAIT;
+    context->Assert(SUCCEEDED(result),"the real native backbuffer was read before Present without another renderer");
+    if(FAILED(result))return SDGO_GAME_TEST_FAIL;
+    char captured[128];sprintf_s(captured,"native visual frame %u captured after genuine business assertions and ordinary updates",frame);
+    context->Observe(captured);
+    ++frame;requested=false;capturedAt=context->elapsed_ms;
+    return frame==target ? SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_WAIT;
+}
+void WrapNativeCaptures() {
+    if(!captureNativeFrames)return;
+    capturedOriginalCases.assign(provider.cases,provider.cases+provider.count);
+    capturedCases=capturedOriginalCases;
+    // Login/bootstrap can finish before the native renderer starts presenting.
+    // Capture the requested native pages without holding authentication behind
+    // a screenshot of an initialization state.
+    for(auto& test:capturedCases)
+        if(std::strncmp(test.id,"pages.",6)==0)test.poll=&ObserveThenCapture;
+    provider.cases=capturedCases.data();
+}
+
+friends::FriendActions::Result CreateFriendInviteRoom(void*,const SdgoGameTestContextV1* context) {
+    const auto result=Room(context);
+    return result==SDGO_GAME_TEST_PASS ? friends::FriendActions::kReady :
+        result==SDGO_GAME_TEST_FAIL ? friends::FriendActions::kNativeRequestNotSent : friends::FriendActions::kWaitingForReply;
+}
+int __cdecl FriendFlow(const SdgoGameTestContextV1* context) {
+    static bool hangarExitRequested=false;
+    if(actions.AppState()==5) {
+        if(!hangarExitRequested) {
+            const auto result=hangarNavigation.ClickBottomRadio(L"GameRoomRadio",0x48);
+            if(result>=HangarNavigation::kDownmenuServiceMismatch || result==HangarNavigation::kUnbound) {
+                context->Assert(0,"native GameRoomRadio must enter the lobby before friend operations");return SDGO_GAME_TEST_FAIL;
+            }
+            if(result==HangarNavigation::kReady) {
+                hangarExitRequested=true;context->Observe("original GameRoomRadio requested after onboarding inventory initialization");
+            }
+        }
+        return SDGO_GAME_TEST_WAIT;
+    }
+    return friendSession.Poll(context);
+}
 void RegisterPlannedCases() {
     if (fpsOnly) {
         provider.suite="native-fps-limit";provider.count=3;provider.cases=fpsCases;return;
@@ -1869,6 +2236,11 @@ void RegisterPlannedCases() {
         provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
     }
     if (bootstrapOnly) { provider.count = 3; return; }
+    if (friendsOnly) {
+        plannedCases.assign(realCases,realCases+3);
+        plannedCases.push_back({"friends.session",3600000,&FriendFlow});
+        provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+    }
     if (roomTitlesOnly) {
         static_cast<void>(legacyTitleCases);
         plannedCases.assign(realCases,realCases+3);
@@ -1885,10 +2257,13 @@ void RegisterPlannedCases() {
     if (pagesOnly) {
         plannedCases.assign(realCases,realCases+3);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
+        AppendUnitPresentations();
         plannedCases.insert(plannedCases.end(),std::begin(pageCases),std::begin(pageCases)+5);
         if(testShopCatalog)plannedCases.push_back(shopCatalogCase);
         plannedCases.insert(plannedCases.end(),std::begin(pageCases)+5,std::end(pageCases));
         if(collectionDraw)plannedCases.insert(plannedCases.end(),std::begin(collectionCases),std::end(collectionCases));
+        else if(collectionPreviewOnly)plannedCases.push_back(collectionCases[0]);
+        if(unitAcquisitionConfig.machine_kind)plannedCases.push_back(unitAcquisitionCase);
         provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
     }
     const bool needsShip = battleshipOnly || deckOnly || std::find(requestedModes.begin(),requestedModes.end(),6)!=requestedModes.end() ||
@@ -1898,6 +2273,7 @@ void RegisterPlannedCases() {
     caseNames.reserve(count); plannedCases.reserve(count);
     for (unsigned i = 0; i < 3; ++i) plannedCases.push_back(realCases[i]);
     if(playUnitUid)plannedCases.push_back(playUnitCase);
+    AppendUnitPresentations();
     if (giftRequestsOnly) plannedCases.push_back(giftCase);
     else if (needsShip) plannedCases.push_back(battleshipCase);
     if (deckOnly) plannedCases.push_back(deckCase);
@@ -2010,6 +2386,27 @@ LONG CALLBACK NativeFault(EXCEPTION_POINTERS* fault) {
             sdgo_test::api->Log(sdgo_test::mod, SDGO_LOG_ERROR,
                 "native exception %08lX at %p thread=%lu: eax %08lX ebx %08lX ecx %08lX edx %08lX esi %08lX edi %08lX ebp %08lX esp %08lX",
                 code, fault->ExceptionRecord->ExceptionAddress, GetCurrentThreadId(),c->Eax, c->Ebx, c->Ecx, c->Edx, c->Esi, c->Edi, c->Ebp, c->Esp);
+            if(code==EXCEPTION_ACCESS_VIOLATION && fault->ExceptionRecord->NumberParameters>=2)
+                sdgo_test::api->Log(sdgo_test::mod,SDGO_LOG_ERROR,"native access kind=%lu address=%p",
+                    static_cast<DWORD>(fault->ExceptionRecord->ExceptionInformation[0]),
+                    reinterpret_cast<void*>(fault->ExceptionRecord->ExceptionInformation[1]));
+            // Keep bounded code/frame diagnostics independent of game singleton
+            // access, which may itself be unavailable during the original fault.
+            __try {
+                const auto* bytes=reinterpret_cast<const uint8_t*>(c->Eip);
+                char instruction[97]{};
+                for(unsigned i=0;i<32;++i)sprintf_s(instruction+i*3,sizeof(instruction)-i*3,"%02X ",bytes[i]);
+                sdgo_test::api->Log(sdgo_test::mod,SDGO_LOG_ERROR,"native fault code=%s",instruction);
+                uintptr_t frame=c->Ebp;
+                for(unsigned i=0;i<16 && frame>=c->Esp && frame-c->Esp<0x10000 && !(frame&3);++i) {
+                    const auto* words=reinterpret_cast<const uint32_t*>(frame);
+                    const uintptr_t next=words[0],address=words[1];
+                    sdgo_test::api->Log(sdgo_test::mod,SDGO_LOG_ERROR,"native frame[%u] base=%p return=%p",i,
+                        reinterpret_cast<void*>(frame),reinterpret_cast<void*>(address));
+                    if(next<=frame)break;
+                    frame=next;
+                }
+            } __except(EXCEPTION_EXECUTE_HANDLER) {}
             HMODULE faultModule=nullptr;
             if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                     reinterpret_cast<LPCWSTR>(fault->ExceptionRecord->ExceptionAddress),&faultModule)) {
@@ -2104,6 +2501,7 @@ SDGO_MOD_ENTRY {
     }
     if (!loaded) sdgo_test::Fail("invalid private account or native scenario configuration");
     RegisterPlannedCases();
+    WrapNativeCaptures();
     if (fpsOnly) {
         if (!fpsActions.Bind(api,mod,fpsRequested,fpsModEnabled))sdgo_test::Fail("native FPS readback binding is unavailable");
     } else {
@@ -2120,12 +2518,14 @@ SDGO_MOD_ENTRY {
         !battleships.Bind(api,mod,&actions) || !gifts.Bind(api,mod,&actions) ||
         (deckOnly && !decks.Bind(api,mod,&actions)) ||
         (!hangarNavigation.Bind(api,mod,&actions)) ||
+        (testUnitPresentations && !unitPresentations.Bind(api,mod,&hangarNavigation)) ||
+        (unitAcquisitionConfig.machine_kind && !unitAcquisition.Bind(api,mod,&hangarNavigation,unitAcquisitionConfig)) ||
         (pagesOnly && !pages.Bind()) ||
         (pagesOnly && !operatorCatalog.Bind(api,mod)) ||
         (pagesOnly && !aiCatalog.Bind(api,mod)) ||
         (pagesOnly && !storage.Bind()) ||
         (pagesOnly && !capsules.Bind(api,mod)) ||
-        (collectionDraw && !collection.Bind(api,mod,&actions)) ||
+        ((collectionDraw || collectionPreviewOnly) && !collection.Bind(api,mod,&actions)) ||
         (playUnitUid && !unitSelection.Bind(api,mod,&actions)) ||
         ((randomLoadout || playUnitUid) && !activeSelection.Bind(api,mod)) ||
         (testShopCatalog && (!shopCatalog.Bind(api,mod) || !shopCatalog.Configure(
@@ -2134,6 +2534,17 @@ SDGO_MOD_ENTRY {
         (!missionMode && !rooms.Bind(api, mod, &actions, config)) ||
         !tutorial.Bind(api, mod, &actions) || !onboarding.Bind(api, mod, &actions))
         sdgo_test::Fail("normal-flow native request bindings or private account configuration are unavailable");
+    if (friendsOnly) {
+        if (!friendActions.Bind(api,mod,&actions)||!friendExtras.Bind(api,mod)||
+            !friendInviteSender.Bind(api,mod,&actions)||!friendInviteReceiver.Bind(api,mod,&actions)||
+            !friendRoomActions.Bind(&actions,&rooms,&friendInviteSender,&friendInviteReceiver,&CreateFriendInviteRoom))
+            sdgo_test::Fail("native friend operation bindings are unavailable");
+        friendSession.Bind(&friendActions,&friendExtras,api,mod,&friendRoomActions);
+        friendSession.BindFrameCapture(
+            [](const wchar_t* path){return quietGraphics.RequestFrameCapture(path);},
+            []()->HRESULT{HRESULT result=E_PENDING;
+                return quietGraphics.FrameCaptureState(&result)>=QuietFrameCapture::Complete?result:E_PENDING;});
+    }
     roomListVtable=api->Symbol(mod,"flow.native_room_list_vtable");
     modalLoadingVtable=api->Symbol(mod,"flow.native_modal_loading_vtable");
     if (!modalLoadingVtable)sdgo_test::Fail("native modal-loading page identity is unavailable");

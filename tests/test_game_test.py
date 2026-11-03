@@ -126,6 +126,30 @@ class FakeProcess:
         return self.returncode if self.returncode is not None else 0
 
 
+class OwnedProcessExitTests(unittest.TestCase):
+    def test_pending_termination_is_confirmed_without_terminating_twice(self):
+        process=mock.Mock();process.poll.side_effect=[None,1]
+        process.wait.side_effect=[game_test.subprocess.TimeoutExpired('owned',30),1]
+        self.assertEqual(game_test.stop_owned_entry_process(process),1)
+        process.kill.assert_called_once_with()
+        self.assertEqual(process.wait.call_args_list,[mock.call(timeout=30),mock.call(timeout=30)])
+
+    def test_denied_repeated_termination_still_requires_confirmed_exit(self):
+        process=mock.Mock();process.poll.side_effect=[None,1]
+        process.kill.side_effect=PermissionError('termination already pending')
+        process.wait.return_value=1
+        self.assertEqual(game_test.stop_owned_entry_process(process),0)
+        process.wait.assert_called_once_with(timeout=30)
+
+    def test_exhausted_exit_budget_remains_a_cleanup_failure(self):
+        process=mock.Mock();process.poll.return_value=None
+        process.wait.side_effect=game_test.subprocess.TimeoutExpired('owned',30)
+        with self.assertRaises(game_test.subprocess.TimeoutExpired):
+            game_test.stop_owned_entry_process(process)
+        self.assertEqual(process.wait.call_count,2)
+        process.kill.assert_called_once_with()
+
+
 class FakeStartupEvent:
     def __enter__(self):
         return self
@@ -145,6 +169,37 @@ class FakeQuietRuntime:
 
 
 class GameTestRunnerTests(unittest.TestCase):
+    def test_retained_addon_uses_its_matching_fragment_and_skips_disabled_diagnostic(self):
+        base=self.root/'symbols.ini';staged=self.root/'staged.ini'
+        text='[host]\nimage=GOnline.exe\ntimestamp=0x54BE1568\nsize_of_image=0x00C97000\n'
+        base.write_text(text);staged.write_text(text)
+        addon=self.root/'addon';addon.mkdir()
+        manifest=addon/'mod.ini';manifest.write_text('[mod]\nid=addon\nenabled=1\nrequires=addon.call\n')
+        fragment=addon/'symbols.fragment.ini';fragment.write_text(text+'[addon.call]\nkind=code\nrva=0x1234\nexpect=55 8B EC 90 90\n')
+        diagnostic=self.root/'diagnostic.ini';diagnostic.write_text('[mod]\nenabled=0\nrequires=missing.disabled\n')
+        game_test.merge_retained_addon_symbols(staged,base,[manifest,diagnostic])
+        self.assertIn('addon.call',game_test.read_ini(base))
+        base.write_text(text);fragment.write_text(text.replace('0x54BE1568','0x11111111')+'[addon.call]\nkind=data\nrva=0\n')
+        with self.assertRaisesRegex(game_test.GameTestError,'different host'):
+            game_test.merge_retained_addon_symbols(staged,base,[manifest])
+
+    def test_friends_scope_is_bound_to_native_session_and_exclusive(self):
+        run_dir=self.prepare('friends-only',friends_only=True)
+        meta=self.metadata(run_dir)
+        expected=game_test.FLOW_CASES[:3]+('friends.session',)
+        self.assertEqual(meta['suite'],'native-friends')
+        self.assertEqual(game_test.required_flow_cases('1',friends_only=True),expected)
+        self.assertEqual(game_test.read_ini(run_dir/'client/sdgo/gametest/run.ini')['run']['required_cases'],','.join(expected))
+        self.assertEqual(game_test.validate_metadata(run_dir)['plan'],meta['plan'])
+        meta['plan']['friends_only']=False
+        (run_dir/'run.json').write_text(json.dumps(meta),encoding='utf-8')
+        with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run_dir)
+        with self.assertRaises(game_test.GameTestError):
+            game_test.required_flow_cases('1',bootstrap_only=True,friends_only=True)
+        for scope in ({'mission_mode':5},{'play_unit_uid':1},{'collection_draw':True},{'shop_catalog':True}):
+            with self.subTest(scope=scope),self.assertRaises(game_test.GameTestError):
+                game_test.required_flow_cases('1',friends_only=True,**scope)
+
     def test_real_manifest_merges_the_optional_production_observer_profile_alias(self):
         # An older normal installation may have only flow.profile_pointer.
         # match_ai binds game.profile_pointer optionally, but the real test
@@ -1611,7 +1666,7 @@ state=pending_first_login
             game_test,'process_image_path',return_value=meta['client']['game']):
             report=game_test.run_prepared(run_dir,timeout=1,launch_timeout=0)
         self.assertEqual(report['status'],'pass')
-        process.kill.assert_called_once();process.wait.assert_called_once_with(timeout=10)
+        process.kill.assert_called_once();process.wait.assert_called_once_with(timeout=game_test.OWNED_PROCESS_EXIT_TIMEOUT)
         self.assertFalse((run_dir/'.run.lock').exists())
         self.assertFalse(game_test.account_profile_lock_path(self.account_profile).exists())
 

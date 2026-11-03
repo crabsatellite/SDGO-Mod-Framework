@@ -39,6 +39,9 @@ Log line when active: `rental/permanent labels enabled; <n> Unicode option overr
 
 ## Developer notes
 
+The native grid lookup returns a single byte in `AL`; callers must use a byte return type.
+The DLL contract fixture preserves nonzero upper `EAX` bits to cover the original calling convention.
+
 The client converts sale option names with code page 874 (Thai), which turns them into question marks.
 The mod hooks `shop.buy_options.populate`, `shop.gift_options.populate` and `shop.tooltip.option` to
 record which option rows are being drawn, and `text.ansi_to_wide` to replace the CP874 conversion of

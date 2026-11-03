@@ -179,7 +179,9 @@ class Capsules(Provider):
             if c.get('install_client'):
                 from .engines.capsules.capsule_deployment import DeploymentTarget
                 callback = DeploymentTarget(client_target=c['install_client'], server_ini=c.get('server_ini'),
-                    framework_stage=c.get('framework_stage'), symbol_fragment=c.get('symbol_fragment')).apply
+                    framework_stage=c.get('framework_stage') or c.get('client') or c['install_client'],
+                    symbol_fragment=c.get('symbol_fragment') or
+                        Path(__file__).resolve().parents[1]/'mods/capsule_catalog/symbol-proposal.ini').apply
             store = CatalogStore(c['catalog'], patterns_path=c.get('patterns'), assets_path=c.get('assets'),
                 bundle_path=c.get('bundle_output'), snapshot_path=c.get('snapshot'), client_path=c.get('client'),
                 lookup_path=c.get('lookup'), apply_callback=callback)
@@ -190,16 +192,37 @@ class Capsules(Provider):
         engine = self.get_engine()
         parsed = urlsplit(uri); path = parsed.path; query = parse_qs(parsed.query)
         one = lambda name, default='': query.get(name, [default])[0]
+        if method == 'POST' and path == '/api/units/import':
+            from .units import sync_capsule_units
+            return sync_capsule_units(self, body.get('expected_revision'))
         if method == 'GET':
-            if path == '/api/bootstrap': return engine.bootstrap()
+            if path == '/api/bootstrap': return self.imported_previews(engine.bootstrap())
             if path == '/api/machine': return engine.machine(one('kind'), int(one('id')))
-            if path == '/api/units': return engine.units(one('q'), int(one('limit', '100')))
+            if path == '/api/units': return self.imported_previews(engine.units(one('q'), int(one('limit', '100'))))
             if path == '/api/portraits': return engine.store.portrait_get(int(one('unit_id')), int(one('variant', '0')))
             if path == '/api/catalog/download': return Binary(storage.json_bytes(engine.store.read()[0]), 'application/json', 'capsule-catalog.json')
             match = re.fullmatch(r'/assets/unit/([0-9]+)\.png', path)
-            if match: return Binary(engine.store.asset(int(match[1])).read_bytes(), 'image/png')
-        if method == 'POST': return engine.dispatch_post(path, body)
+            if match:
+                from .engines.capsules.capsule_assets import Assets,imported_art
+                catalog, _ = engine.store.read()
+                unit = next((u for u in catalog['units'] if u['id'] == int(match[1])), {})
+                if unit.get('unit_import'):
+                    import io
+                    art=(Assets(engine.store.client_path,engine.store.lookup_path or {},catalog).card(unit['id'])
+                         if unit['rank']<=3 else imported_art(unit))
+                    out = io.BytesIO(); art.save(out, 'PNG')
+                    return Binary(out.getvalue(), 'image/png')
+                return Binary(engine.store.asset(int(match[1])).read_bytes(), 'image/png')
+        if method == 'POST': return self.imported_previews(engine.dispatch_post(path, body))
         raise ValueError('扭蛋机操作未登记')
+
+    def imported_previews(self, result):
+        if not isinstance(result, dict) or 'units' not in result: return result
+        catalog, _ = self.get_engine().store.read()
+        imported = {u['id'] for u in catalog['units'] if u.get('unit_import')}
+        for unit in result['units']:
+            if unit['id'] in imported: unit['has_asset'] = True
+        return result
 
 
 class Frp(Provider):
@@ -234,7 +257,8 @@ def attach(workspace):
     from .shop import Shop
     from .ai_catalog import AiCatalog
     from .collection_capsule import CollectionCapsule
+    from .units import Units
     from .hangar import Hangar
-    for cls in (Rewards, Operators, Capsules, Shop, Frp, AiCatalog, CollectionCapsule, Hangar):
+    for cls in (Rewards, Operators, Capsules, Shop, Frp, AiCatalog, CollectionCapsule, Hangar, Units):
         provider = cls(workspace)
         workspace.providers[provider.id] = provider
