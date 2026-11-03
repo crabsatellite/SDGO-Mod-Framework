@@ -14,6 +14,14 @@ SIZE_T WINAPI CountVirtualQuery(LPCVOID address, PMEMORY_BASIC_INFORMATION info,
 
 namespace observation_fixture {
 using ai_test::Put;
+std::array<uint8_t, 0x40> lookupDocument{}, lookupObject{};
+int lookupCalls=0, resolverCalls=0;
+uint8_t* __fastcall NativeLookup(uint8_t* document,void*,uint32_t id) {
+    CHECK(document==lookupDocument.data());
+    ++lookupCalls;
+    return id==1234 ? lookupObject.data() : nullptr;
+}
+void* ResolveLookup(SdgoMod*,const char*) {++resolverCalls;return reinterpret_cast<void*>(&NativeLookup);}
 struct Storage {
     std::array<uint8_t, 0x3300> unit{};
     std::array<uint8_t, 0xC00> attack{};
@@ -171,5 +179,14 @@ int main(int argc, char**) {
         CHECK(battle_ai::native::detail::g_readableRegionCache == nullptr);
         world->entries[0].unit = valid;
     }
+    ai_test::api.Symbol=&ResolveLookup;
+    auto document=lookupDocument.data();g_document=&document;
+    g_findObject=reinterpret_cast<FindObjectFn>(&NativeLookup);
+    CHECK(FindObject(1234)==lookupObject.data() && FindObject(9999)==nullptr);
+    CHECK(lookupCalls==2 && resolverCalls==0);
+    document=nullptr;
+    CHECK(FindObject(1234)==nullptr && lookupCalls==2 && resolverCalls==0);
+    document=lookupDocument.data();g_findObject=nullptr;
+    CHECK(FindObject(1234)==nullptr && lookupCalls==2 && resolverCalls==0);
     return ai_test::Finish();
 }

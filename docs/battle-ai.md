@@ -73,6 +73,9 @@ With many units present, sensing reads only what it needs to keep overhead low; 
 frequency, reaction speed and combat decisions are unchanged, and combat state and visibility are still read
 and checked on every observation.
 
+The native object-lookup entry is bound once when the Mod loads. Each shot, notice and decision
+still looks up the current object by ID, so respawns, deaths and target changes remain live.
+
 ## Install
 
 Requires the framework; client `GOnline-54BE1568-00C97000`, server `BattleServer-548A891D-0046C000`.

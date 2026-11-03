@@ -35,6 +35,10 @@ confirmed, the connection changes or the hangar is modified elsewhere. Confirmed
 
 ## Install
 
+An already-closed exchange panel skips repeated rendering while its native owner remains valid.
+Leaving the page still clears the preview and confirmation, restores native controls and checks
+the dialog's lifetime. Reopening starts a fresh confirmation flow.
+
 **Server:** in SDGO Mod Manager open **机库整理与批量回收服务端** (hangar server), choose the server INI
 containing `DB Game` and `DB Member` (same SQL instance) and install or update. Normal native mail keeps
 working; the panel can check the installed procedure hashes and restore the original procedure. No game

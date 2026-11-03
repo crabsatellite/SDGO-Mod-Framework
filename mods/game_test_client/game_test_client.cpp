@@ -152,6 +152,7 @@ UnitAcquisitionActions unitAcquisition;
 UnitAcquisitionActions::Config unitAcquisitionConfig{};
 void PublishQuietSocketReceipt(bool force=false);
 bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false, pagesOnly = false, friendsOnly = false;
+bool hangarPagesOnly = false;
 uint64_t deckUnitUids[4]{};
 char giftRecipient[17]{};
 uint32_t giftSenderPilot = 0, giftRecipientPilot = 0, giftCount = 0, giftSent = 0;
@@ -238,6 +239,13 @@ bool LoadPlan() {
     if(testShopCatalog && (!pagesOnly || wcscmp(shopAssertions,L"inputs/shop-assertions.ini") ||
         wcscmp(shopDisplay,L"inputs/shop-runtime-display.ini")))return false;
     collectionDraw=GetPrivateProfileIntW(L"run",L"collection_draw",0,job.c_str())!=0;
+    wchar_t pageGroup[16]{};
+    const auto pageGroupChars=GetPrivateProfileStringW(L"run",L"page_group",L"",pageGroup,16,job.c_str());
+    if(pageGroupChars) {
+        if(pageGroupChars>=15 || wcscmp(pageGroup,L"hangar") || !pagesOnly || testShopCatalog || collectionDraw ||
+           collectionPreviewOnly || testUnitPresentations || captureUnitPortraits || unitAcquisitionConfig.machine_kind)return false;
+        hangarPagesOnly=true;
+    }
     if(collectionDraw && !pagesOnly)return false;
     if(collectionPreviewOnly && (!pagesOnly || collectionDraw))return false;
     if(unitAcquisitionConfig.machine_kind && (!pagesOnly || collectionDraw || collectionPreviewOnly ||
@@ -2388,6 +2396,10 @@ void RegisterPlannedCases() {
     if (pagesOnly) {
         plannedCases.assign(realCases,realCases+3);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
+        if(hangarPagesOnly) {
+            plannedCases.insert(plannedCases.end(),std::begin(pageCases),std::begin(pageCases)+3);
+            provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+        }
         if(testShopCatalog && shopVisualOnly) {
             plannedCases.assign(realCases,realCases+2);
             plannedCases.push_back(shopReadyCase);
