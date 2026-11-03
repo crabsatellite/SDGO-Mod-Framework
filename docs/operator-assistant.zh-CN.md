@@ -1,4 +1,4 @@
-# 副官补给与管理（Beta）
+# 副官补给与管理
 
 [English](operator-assistant.md) · [返回功能目录](../README.zh-CN.md)
 

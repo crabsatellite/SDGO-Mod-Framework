@@ -48,7 +48,7 @@ class CatalogTests(unittest.TestCase):
         c = catalog.read_catalog(self.root)
         self.assertTrue({"findwindow_fix", "ime_fix", "startup_crash_fix", "pvp_ai", "match_ai", "coop_ai", "mission_ai", "net_probe"}.issubset({m["id"] for m in c["mods"]}))
         self.assertEqual(set(c["features"]["pvp-ai"]["mods"]), {"pvp_ai", "match_ai"})
-        self.assertEqual(c["features"]["pvp-ai"]["channel"], "beta")
+        self.assertEqual(c["features"]["pvp-ai"]["channel"], "stable")
         self.assertEqual(c["features"]["room-random"]["mods"], ["room_random", "room_random_client"])
         self.assertEqual(c["features"]["room-random"]["category"], "gameplay")
         self.assertEqual(c["features"]["room-random"]["activation"], "room-title")
@@ -177,7 +177,7 @@ class CatalogTests(unittest.TestCase):
             catalog.read_catalog(self.root)
 
     def test_readme_beta_label_is_checked(self):
-        self.replace("README.md", "Collection capsule (Beta)", "Collection capsule")
+        self.replace("README.md", "Unit family import (Beta)", "Unit family import")
         with self.assertRaisesRegex(ValueError, "channel"):
             catalog.read_catalog(self.root)
 

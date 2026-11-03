@@ -1,4 +1,4 @@
-# Shop catalog manager (Beta)
+# Shop catalog manager
 
 [简体中文（完整说明）](shop-catalog.zh-CN.md)
 

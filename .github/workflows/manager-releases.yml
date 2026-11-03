@@ -37,6 +37,9 @@ jobs:
       - name: Owner shortcut serialization
         timeout-minutes: 3
         run: python -m unittest discover -s tests -p "test_mod_manager_entrypoints.py" -v
+      - name: Random overlay release metadata
+        timeout-minutes: 3
+        run: python -m unittest discover -s tests -p "test_room_random_package.py" -v
       - name: Build and validate exact release bytes
         run: python tools/build_release.py --build --channel $env:RELEASE_CHANNEL --version $env:RELEASE_VERSION
       - name: Standalone Manager check

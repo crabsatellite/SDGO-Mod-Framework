@@ -9,6 +9,7 @@ Manager includes an **Update** button with Stable (default) and Beta channels, a
 Server owners and maintainers use **SDGO Mod Manager**, available through a clearly marked owner entry at the top of the client folder. Its program and browser tab use the same SDGO mark as the interface. Ordinary players should use their normal game launcher and follow the server owner's Mod configuration.
 This page is a feature index. Configuration, gameplay instructions, compatibility and troubleshooting are in each feature's documentation.
 Beta and Experimental labels indicate release channels.
+Stable means the current basic workflow has been shown usable; later bugs are fixed in new versions. Beta is for basic workflows still under development, currently unit import.
 Release labels describe the published version; later feature work is accepted separately.
 
 ## Core fixes
@@ -37,25 +38,25 @@ Release labels describe the published version; later feature work is accepted se
 | Feature | Overview | Documentation |
 |---|---|---|
 | Mission AI wingmen <!-- catalog: `coop_ai`, `mission_ai` --> | `!ai` in a co-op room title adds AI wingmen to the team | [Use](docs/coop-wingmen.md) |
-| PvP AI (Beta) <!-- catalog: `pvp_ai`, `match_ai` --> | Group humans or keep native teams; independently fill both sides, opponents only or exact AI counts; retain the human host after an AI MVP | [Use](docs/pvp-ai.md) |
+| PvP AI <!-- catalog: `pvp_ai`, `match_ai` --> | Group humans or keep native teams; independently fill both sides, opponents only or exact AI counts; retain the human host after an AI MVP | [Use](docs/pvp-ai.md) |
 | AI mech catalog (separate addon) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards <!-- catalog: `battle_rewards` --> | GB/MB from battle contribution, supervised wallet delivery and historical GB compensation | [Use](docs/battle-rewards.md) |
-| Collection capsule (Beta) <!-- catalog: `collection_capsule` --> | 100,000 GP activity machine that fills missing catalog units first | [Use](docs/collection-capsule.md) |
-| Per-round random loadouts (Beta) <!-- catalog: `room_random`, `room_random_client` --> | `!rand` in a room title draws each player's unit or deck from their own hangar every round | [Use](docs/room-random.md) |
+| Collection capsule <!-- catalog: `collection_capsule` --> | 100,000 GP activity machine that fills missing catalog units first | [Use](docs/collection-capsule.md) |
+| Per-round random loadouts <!-- catalog: `room_random`, `room_random_client` --> | `!rand` in a room title draws each player's unit or deck from their own hangar every round | [Use](docs/room-random.md) |
 | FPS cap <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed | [Use](docs/fps-limit.md) |
 | Extended room titles <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Enter up to 128 characters in normal, AI, team and mission room creation, settings and rename controls | [Use](docs/room-titles.md) |
 | Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Room-selected difficulty, ranged retreat, distant pursuit and native special/Teleport recovery | [Use](docs/battle-ai.md) |
 | Automatic hangar capacity <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) | [Use](docs/hangar-capacity.md) |
-| Hangar manager (GB batches Beta) <!-- catalog: `hangar_manager` --> | One-click sorting and duplicate exchange on the unit-management page, with server-side GB batches | [Use](docs/hangar-manager.md) |
-| Operator supplies and manager (Beta) <!-- catalog: `operator_catalog` --> | Five free supply officers, plus operator names, portraits and drops | [Use](docs/operator-assistant.md) |
+| Hangar manager <!-- catalog: `hangar_manager` --> | One-click sorting and duplicate exchange on the unit-management page, with server-side GB batches | [Use](docs/hangar-manager.md) |
+| Operator supplies and manager <!-- catalog: `operator_catalog` --> | Five free supply officers, plus operator names, portraits and drops | [Use](docs/operator-assistant.md) |
 | Capsule catalog editor <!-- catalog: `capsule_catalog` --> | Create, edit and retire capsule machines, pools, prices and weights in the Manager | [Use](docs/capsule-catalog.md) |
-| Daily double rewards (Beta) <!-- catalog: `daily_rewards` --> | Double battle GB and EXP in a daily window (default 18:00–22:00) | [Use](docs/daily-rewards.md) |
+| Daily double rewards <!-- catalog: `daily_rewards` --> | Double battle GB and EXP in a daily window (default 18:00–22:00) | [Use](docs/daily-rewards.md) |
 | Storage claim all <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation | [Use](docs/storage-claim.md) |
 
-| Chinese shop localization and search (Beta) <!-- catalog: `shop_localization` --> | Translate shop text and hangar confirmation names; combine Chinese search, rank and payment filters | [Guide](docs/shop-localization.md) |
-| Friend unit gifts (Beta, optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Offer owned units through Storage, with accept/return and provenance; new offers default off | [Use](docs/friend-unit-gift.md) |
+| Chinese shop localization and search <!-- catalog: `shop_localization` --> | Translate shop text and hangar confirmation names; combine Chinese search, rank and payment filters | [Guide](docs/shop-localization.md) |
+| Friend unit gifts (optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Offer owned units through Storage, with accept/return and provenance; new offers default off | [Use](docs/friend-unit-gift.md) |
 
-| Unit family import <!-- catalog: `unit_catalog` --> | Import unit archives, complete required data and generate paired unit, encyclopedia and shop/capsule resources in Mod Manager | [Use](docs/unit-import.md) |
+| Unit family import (Beta) <!-- catalog: `unit_catalog` --> | Import unit archives, complete required data and generate paired unit, encyclopedia and shop/capsule resources in Mod Manager | [Use](docs/unit-import.md) |
 
 <!-- /mod-category:gameplay -->
 
@@ -72,7 +73,7 @@ Additional reference: [room-title commands](docs/room-commands.md).
 | Feature | Overview | Documentation |
 |---|---|---|
 | FRP connectivity <!-- catalog: `net_route`, `agent_udp_pool` --> | Connect through the owner's Sakura FRP or other TCP/UDP forwarding | [Use](docs/frp-distribution.md) |
-| Shop catalog manager (Beta) <!-- catalog: `shop_catalog` --> | List, price and retire the owner's own shop offers from the Manager (WorldServer) | [Use](docs/shop-catalog.md) |
+| Shop catalog manager <!-- catalog: `shop_catalog` --> | List, price and retire the owner's own shop offers from the Manager (WorldServer) | [Use](docs/shop-catalog.md) |
 
 <!-- /mod-category:network -->
 
