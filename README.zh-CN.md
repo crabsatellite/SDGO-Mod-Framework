@@ -6,7 +6,7 @@
 [安装说明](docs/setup.zh-CN.md) · [统一 Mod Manager](docs/mod-manager.zh-CN.md) · [最新发布](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
 Manager 提供「更新」按钮：默认 Stable，可切换 Beta，自动检查和安装；详见管理器指南。
 
-通过 **SDGO Mod Manager** 管理功能，游戏仍使用原启动器。
+服主与维护人员通过 **SDGO Mod Manager** 管理功能，桌面和客户端目录顶部提供「服主专用」入口。普通玩家使用原游戏启动器，不要自行修改 Mod，以免与服务器配置不匹配。
 本页仅列出功能概览。具体配置、玩法操作、兼容性与排错方法见各功能文档。
 Beta、Experimental 表示发布阶段。
 发布阶段以已发布版本为准，后续迭代单独验收。
