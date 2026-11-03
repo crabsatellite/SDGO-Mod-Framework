@@ -394,7 +394,22 @@ static int StorageGameTestGetSnapshot(
 
 static int StorageGameTestAction(
     uint64_t runHash,uint32_t action) {
-    if(action!=SDGO_STORAGE_GAME_TEST_ACTION_CLAIM_ALL || !runHash || runHash!=SyncTestObserver())return 0;
+    if(!runHash || runHash!=SyncTestObserver())return 0;
+    if(action==SDGO_STORAGE_GAME_TEST_ACTION_CLOSE) {
+        if(!g_thread || GetCurrentThreadId()!=g_thread || !g_service || !g_ui.Owns(g_service) ||
+           !Available() || g_batch.Busy() || g_batch.Outstanding() || g_busy(g_service))return 0;
+        uint8_t* close=nullptr;
+        for(const auto offset:{0x9Cu,0xA0u}) {
+            auto* candidate=Read<uint8_t*>(g_service,offset);
+            if(candidate && candidate[0x162] && candidate[0x163] && candidate[0x167] && Read<void*>(candidate,0x15C)==Read<void*>(g_service,0x70)){close=candidate;break;}
+        }
+        if(!close)return 0;
+        // The shipped callback recognizes this exact cached Close button and
+        // enqueues its own close. Never hide or destroy native UI in a probe.
+        UIEvent(nullptr,nullptr,g_service,0x101,0,close);
+        ++g_testObserver.actionSequence;g_testObserver.lastAction=action;return 1;
+    }
+    if(action!=SDGO_STORAGE_GAME_TEST_ACTION_CLAIM_ALL)return 0;
     void* button=nullptr;
     if(!ObserverActionReady(button))return 0;
     UIEvent(nullptr,nullptr,g_service,0x101,0,button);

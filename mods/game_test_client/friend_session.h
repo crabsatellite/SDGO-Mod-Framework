@@ -49,6 +49,11 @@ class FriendSession {
     HRESULT captureResult_=E_PENDING;
     uint64_t captureAt_=0;
     std::wstring captureFile_;
+    int (*storageAction_)(const SdgoGameTestContextV1*,uint32_t)=nullptr;
+    void (*storageWrite_)(FILE*)=nullptr;
+    uint32_t storageOperation_=0;
+    bool storageCommand_=false,storagePending_=false;
+    int storageResult_=SDGO_GAME_TEST_WAIT;
     static std::string Utf8(const char* value) {
         wchar_t wide[512]{};char encoded[2048]{};
         if(!MultiByteToWideChar(CP_ACP,0,value,-1,wide,512) ||
@@ -70,7 +75,11 @@ class FriendSession {
     }
     FriendActions::Observation Observation() const {
         auto state=actions_->State();
-        if(captureCommand_) {
+        if(storageCommand_) {
+            state.result=storageResult_==SDGO_GAME_TEST_PASS?FriendActions::kReady:FriendActions::kNativeFault;
+            state.command_sequence=sequence_;state.operation=0;state.request_sent=state.reply_consumed=0;
+            state.request_opcode=state.reply_opcode=state.reply_status=0;
+        } else if(captureCommand_) {
             state.result=SUCCEEDED(captureResult_)?FriendActions::kReady:FriendActions::kNativeFault;
             state.command_sequence=sequence_;state.operation=0;
             state.request_sent=state.reply_consumed=0;
@@ -170,11 +179,16 @@ class FriendSession {
         }
         if(roomActions_)roomActions_->Write(f);
         unitGifts_.Write(f,context);
+        if(storageWrite_)storageWrite_(f);
         fprintf(f,"[capture]\npending=%u\nhresult=%lu\n",capturePending_?1u:0u,static_cast<unsigned long>(captureResult_));
         fclose(f);MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH);
         lastWrite_=GetTickCount64();
     }
 public:
+    bool Ready() const noexcept {return ready_;}
+    void BindStorageActions(int (*action)(const SdgoGameTestContextV1*,uint32_t),void (*write)(FILE*)) {
+        storageAction_=action;storageWrite_=write;
+    }
     void BindFrameCapture(bool (*request)(const wchar_t*),HRESULT (*status)()) {
         captureRequest_=request;captureStatus_=status;
     }
@@ -188,6 +202,17 @@ public:
         GetPrivateProfileStringW(L"run",L"id",L"",abortId,64,abortPath.c_str());
         const std::wstring expectedRun(context->run_id,context->run_id+strlen(context->run_id));
         if(expectedRun==abortId){context->Assert(0,"owned friend campaign requested a bounded abort");return SDGO_GAME_TEST_FAIL;}
+        if(storagePending_) {
+            storageResult_=storageAction_(context,storageOperation_);
+            if(storageResult_==SDGO_GAME_TEST_WAIT && GetTickCount64()-commandAt_<120000) {
+                if(GetTickCount64()-lastWrite_>=250)Write(context,false);
+                return SDGO_GAME_TEST_WAIT;
+            }
+            if(storageResult_==SDGO_GAME_TEST_WAIT)storageResult_=SDGO_GAME_TEST_FAIL;
+            storagePending_=false;if(storageResult_==SDGO_GAME_TEST_PASS)++completed_;
+            Write(context,true);
+            return storageResult_==SDGO_GAME_TEST_PASS?SDGO_GAME_TEST_WAIT:SDGO_GAME_TEST_FAIL;
+        }
         if(capturePending_) {
             captureResult_=captureStatus_();
             if(captureResult_==E_PENDING && GetTickCount64()-captureAt_<30000)return SDGO_GAME_TEST_WAIT;
@@ -251,6 +276,12 @@ public:
             Write(context,true);return completed_?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
         }
         if(!wcscmp(op,L"snapshot")){++completed_;Write(context,true);return SDGO_GAME_TEST_WAIT;}
+        storageCommand_=!wcscmp(op,L"storage_open")||!wcscmp(op,L"storage_claim")||!wcscmp(op,L"storage_hangar");
+        if(storageCommand_) {
+            if(!storageAction_){context->Assert(0,"native storage adapter is absent");return SDGO_GAME_TEST_FAIL;}
+            storageOperation_=!wcscmp(op,L"storage_open")?1:!wcscmp(op,L"storage_claim")?2:3;storageResult_=SDGO_GAME_TEST_WAIT;
+            storagePending_=true;commandAt_=GetTickCount64();Write(context,false);return SDGO_GAME_TEST_WAIT;
+        }
         captureCommand_=!wcscmp(op,L"capture");
         if(captureCommand_) {
             wchar_t label[48]{};
