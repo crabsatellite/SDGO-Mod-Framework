@@ -39,7 +39,10 @@ $RequiredModuleFiles = @(
     "sdgo\mods\unit_catalog\resources.zdx",
     "sdgo\mods\unit_catalog\resources.zpk"
 )
-$AllowedModuleFiles = $RequiredModuleFiles + @('sdgo\mods\unit_catalog\manager.json')
+$AllowedModuleFiles = $RequiredModuleFiles + @(
+    'sdgo\mods\unit_catalog\manager.json',
+    'sdgo\mods\unit_catalog\symbols.fragment.ini'
+)
 $AllowedResourceRoots = @("anrs", "fxrs", "mdrs", "scp", "sdrs", "sol", "sprs", "trns", "txrs", "uirs")
 $BlockedResourceExtensions = @(".bat", ".cmd", ".com", ".dll", ".exe", ".js", ".lnk", ".msi", ".ps1", ".scr", ".vbs")
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -345,6 +348,14 @@ function Read-Package([string]$Root) {
     }
     $fragmentPath = Get-PathWithin $Root "symbols.fragment.ini"
     $fragmentText = [IO.File]::ReadAllText($fragmentPath)
+    # New packages keep their complete symbol fragment next to the Mod, where
+    # the framework loads it. Legacy packages only appended the load hook to
+    # the global map; retain that path without losing newer per-Mod symbols.
+    $localFragment = 'sdgo\mods\unit_catalog\symbols.fragment.ini'
+    if ($copyByTarget.ContainsKey($localFragment) -and
+        $copyByTarget[$localFragment].sha256 -cne $hashes['symbols.fragment.ini']) {
+        throw 'Runtime symbol fragment differs from the package symbol fragment'
+    }
     $symbolSection = Get-IniSection $fragmentText "unit_catalog.load_last_table"
     if ($null -eq $symbolSection) { throw "symbols.fragment.ini has no unit_catalog.load_last_table" }
     $hostSection = Get-IniSection $fragmentText "host"
