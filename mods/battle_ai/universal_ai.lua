@@ -788,6 +788,9 @@ local function ProfileTick(npc,o,now,deferSpecial)
   p.special={target=target.id,slot=o.selectedSlot,started=now,finished=o.specialFinished or 0,
              ackSequence=o.specialAckSequence or 0,defensive=defensiveCast}
   if SDGO_BattleAI_ProfileLease then SDGO_BattleAI_ProfileLease(o.selectedSlot) end
+  -- A free native controller may commit the slot in this decision. Bind the
+  -- confirmed counter target before its retained firing input can be consumed.
+  npc:SetAttackTarget(target.id)
   MeleeGate(false);KeepBoundGun(npc,o,target);ChangeWeapon(npc,3)
   return true
 end

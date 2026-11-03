@@ -148,7 +148,6 @@ bool quietLoopback = false;
 QuietSockets quietSockets;
 QuietAudio quietAudio;
 QuietGraphics quietGraphics;
-QuietWaitRoomMessages quietWaitRoomMessages;
 bool captureNativeFrames=false;
 bool testUnitPresentations=false;
 bool captureUnitPortraits=false;
