@@ -5,7 +5,7 @@ description: Fix and verify original SDGO Mods in the shared local test copy, us
 
 # SDGO 原生测试 guide
 
-先读当前源码工作区的 `AGENTS.md`。目标是完成指定修复和相关完整原生 GameTest，继续已授权的部署与 Git 交付。测试不是扩建基础设施的任务。
+先读当前源码工作区的 `AGENTS.md`。目标是完成指定修复和相关完整原生 GameTest，继续已授权的部署、Git 交付与实际 Release。测试不是扩建基础设施的任务。
 
 ## 统一的本地 test
 
@@ -70,6 +70,17 @@ Mod 源码库保存框架、Mod、测试代码、fixture 声明、配置范本�
 3. 按仓库的完整运行文件发布流程提交、推送客户端 `main`，再通过实际更新器核对安装提交与配置。
 4. 更新现有 `README.md`、`README.zh-CN.md` 的功能索引，以及该功能已有的中英文独立文档。内容应与刚部署的行为一致，说明用途、操作、默认值、范围、生效方式、兼容性和排错方法。
 5. 将源码、测试及上述文档合入最新 `master` 并推送，保留并行提交。文档更新是交付步骤的一部分。
+6. 每个新功能或修复在测试、推送后都必须完成对应的版本化 GitHub Release。这是用户已授权的常规交付，不再另问是否发布；不能只完成 Git push、创建 tag 或排队 CI 就结束。根据下面的验收规则选择通道，并读回 Release 与实际下载包。
+
+## Release 通道与完成条件
+
+- **Stable**：该版本声明的功能范围已经完成组件所需的完整验收；同步其 `channel=stable`、Manager 标签和中英文说明，发布非 prerelease 的正式版本。战斗行为须有相关完整原生 GameTest，网络功能须核对实际 TCP/UDP/relay，Manager 或工具须验证相应真实操作流程；不能用单元测试或编译通过代替缺失的运行验收。
+- **Beta**：该范围仍缺相关完整验收，或当前只验证了离线、局部场景。已推送的候选功能必须有明确的 Beta prerelease，说明具体未验收范围；继续完成原任务，不能把 Beta 发布当作全部问题已解决。后续验收完成后，发布新的 Stable 版本。
+- 沿用已有的有效验收和已发布功能状态。下一版本的新增场景待测，不会撤销上一版本的 Stable 验收；不要批量升降其他功能的通道。
+- 使用未发布的新版本号，对齐 `VERSION` 与 `manager/repository.json`。现有 `.github/workflows/manager-releases.yml` 会为 `master` 推送生成 Beta，正式 `vX.Y.Z` 标签生成 Stable；也可用 `tools/build_release.py` 构建相同格式的资产。检查对应 CI 实际完成，不能把自动 Beta 的存在当成应发 Stable 已完成。
+- GitHub Release 必须指向本次已推送的源码提交，含 Manager 更新器可识别的 ZIP 和 SHA-256 文件。通过实际 Release 元数据及公开下载核对版本、通道、摘要和完整清单，再确认更新器可以识别。不得覆盖已发布版本的资产。
+- Release ZIP 仅含 Manager、框架和该通道声明的 Mod；原版客户端、原生服务端、数据库、私人名单、凭据和测试副本不得进入资产。完整运行文件继续通过现有客户端/服务端 Git 发布，Release 不替代 `client main` 和镜像读回。
+- 发布读回完成后，再按既有规则删除本任务成功测试记录及临时副本。最终回复给出实际 Release 链接、通道及仍待验收的明确范围。
 
 功能通过相关完整 GameTest 并完成实际部署与主线发布后，必须同步更新该功能的文档状态和发布元数据。
 已完成验收并正式发布的功能应移除过时的 Beta、测试中或待发布标记，将对应 `channel` 更新为 `stable`，
