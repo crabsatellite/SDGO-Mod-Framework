@@ -1,4 +1,4 @@
-# FRP 联机（Beta）
+# FRP 联机
 
 [English](https://github.com/crabsatellite/SDGO-Mod-Framework/blob/master/docs/frp-distribution.md) · [返回功能目录](https://github.com/crabsatellite/SDGO-Mod-Framework/blob/master/README.zh-CN.md)
 
