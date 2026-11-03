@@ -99,6 +99,8 @@ def _require_public(
 
 def _manifest_base(name: str) -> tuple[str, str] | None:
     parts = normalized(name).split("/")
+    if "local-mods" in parts:
+        raise ValueError("The entire local-mods directory is nonredistributable")
     if (len(parts) >= 3 and parts[-3] in {"mods", "addons", "support"}
             and parts[-1] in {"mod.ini", "manager.json"}):
         return "/".join(parts[:-1]), parts[-1]

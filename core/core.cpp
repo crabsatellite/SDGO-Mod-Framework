@@ -371,21 +371,30 @@ namespace
 
     void LoadMods()
     {
-        WIN32_FIND_DATAW entry = {};
-        HANDLE find = FindFirstFileW((g_root + L"\\mods\\*").c_str(), &entry);
-        if (find == INVALID_HANDLE_VALUE) {
-            sdgo::log::Writef("core", SDGO_LOG_INFO, "no mods directory");
-            return;
+        const wchar_t* modRoots[] = {L"mods", L"local-mods"};
+        for (const wchar_t* modRoot : modRoots) {
+            WIN32_FIND_DATAW entry = {};
+            const std::wstring root = g_root + L"\\" + modRoot;
+            HANDLE find = FindFirstFileW((root + L"\\*").c_str(), &entry);
+            if (find == INVALID_HANDLE_VALUE) continue;
+            do {
+                if (!(entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || entry.cFileName[0] == L'.' ||
+                    (entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) continue;
+                const std::wstring directory = root + L"\\" + entry.cFileName;
+                if (GetFileAttributesW((directory + L"\\mod.ini").c_str()) == INVALID_FILE_ATTRIBUTES) continue;
+                SdgoMod* candidate = ReadManifest(directory, entry.cFileName);
+                const bool duplicate = std::any_of(g_mods.begin(), g_mods.end(), [candidate](const SdgoMod* existing) {
+                    return existing->id == candidate->id;
+                });
+                if (duplicate) {
+                    sdgo::log::Writef(candidate->id.c_str(), SDGO_LOG_ERROR, "duplicate Mod identity; local copy skipped");
+                    delete candidate;
+                } else {
+                    g_mods.push_back(candidate);
+                }
+            } while (FindNextFileW(find, &entry));
+            FindClose(find);
         }
-        do {
-            if (!(entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || entry.cFileName[0] == L'.')
-                continue;
-            std::wstring directory = g_root + L"\\mods\\" + entry.cFileName;
-            if (GetFileAttributesW((directory + L"\\mod.ini").c_str()) == INVALID_FILE_ATTRIBUTES)
-                continue;
-            g_mods.push_back(ReadManifest(directory, entry.cFileName));
-        } while (FindNextFileW(find, &entry));
-        FindClose(find);
 
         std::stable_sort(g_mods.begin(), g_mods.end(), [](const SdgoMod* a, const SdgoMod* b) {
             return a->order != b->order ? a->order < b->order : a->id < b->id;
