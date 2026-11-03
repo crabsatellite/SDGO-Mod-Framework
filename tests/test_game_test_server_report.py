@@ -80,6 +80,27 @@ class ServerReportTests(unittest.TestCase):
             events=self.stream();mutate(events)
             self.assertEqual(self.evaluate(events)['status'],'fail')
 
+    def test_allied_layout_requires_five_allies_one_enemy_and_keeps_team_binding(self):
+        self.metadata['plan'].update(expected_ai=6,ai_layout='allied',ai_difficulty='Hard',
+                                     room_title='gt1234 !ai1 a6 hard')
+        events=self.stream()
+        self.assertEqual(self.evaluate(events)['status'],'fail','balanced six is not the sealed allied layout')
+        for event in events[2:]:
+            event['slots'][4]['team']=1;event['slots'][5]['team']=1
+            event['ai_team_1']=5;event['ai_team_2']=1
+        self.assertEqual(self.evaluate(events)['status'],'pass')
+        for field,value in (('ai_layout',None),('ai_layout',True),('ai_layout','balanced'),
+                            ('ai_difficulty','Medium'),('ai_pool_level',4)):
+            original=copy.deepcopy(self.metadata)
+            self.metadata['plan'][field]=value
+            with self.subTest(field=field,value=value):self.assertEqual(self.evaluate(events)['status'],'fail')
+            self.metadata=original
+        for event in events[1:]:
+            for slot in event['slots']:slot['team']=3-slot['team']
+            event['humans_team_1'],event['humans_team_2']=event['humans_team_2'],event['humans_team_1']
+            event['ai_team_1'],event['ai_team_2']=event['ai_team_2'],event['ai_team_1']
+        self.assertEqual(self.evaluate(events)['status'],'pass','host team may be either native faction')
+
     def test_title_host_and_failure_event_are_not_silently_ignored(self):
         for field,value in (('title','other room'),('host_pilot_id',6228),
                             ('status_code',False),('event','setup_failed')):
