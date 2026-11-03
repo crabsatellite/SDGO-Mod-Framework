@@ -1,4 +1,4 @@
-# Unit family import (Beta)
+# Unit family import
 
 `unit_catalog` is an optional client mod with an authoring panel in SDGO Mod Manager.
 The generic release contains tools only: neither supplied sample unit nor owner drafts/assets are bundled.

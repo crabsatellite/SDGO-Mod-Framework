@@ -55,7 +55,7 @@ Beta、Experimental 表示发布阶段。
 | 商城汉化与中文检索（Beta） <!-- catalog: `shop_localization` --> | 汉化商品说明与机库确认名称，支持中文搜索及等级、币种组合筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
 | 好友机体赠送（Beta，可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 保管库接受或退还原机体，保留赠送来源与寄语；公开配置默认关闭新赠送 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
 
-| 机体族导入（Beta） <!-- catalog: `unit_catalog` --> | 在 Mod Manager 导入机体包，补齐信息并生成两端定义、图鉴和商城／扭蛋资源 | [使用](docs/unit-import.zh-CN.md) |
+| 机体族导入 <!-- catalog: `unit_catalog` --> | 在 Mod Manager 导入机体包，补齐信息并生成两端定义、图鉴和商城／扭蛋资源 | [使用](docs/unit-import.zh-CN.md) |
 
 <!-- /mod-category:gameplay -->
 
