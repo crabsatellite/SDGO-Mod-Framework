@@ -84,5 +84,26 @@ class CalendarManagerContracts(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'私人'):
             self.provider.configure({'server_ini':str(server/'WorldServer.ini'),'workspace':str(server/'sdgo/mods/calendar_gifts/private')})
 
+    def test_legacy_birthday_backup_import_ignores_email_and_preserves_registered_dates(self):
+        backup=self.root/'old-private-birthdays.json'
+        backup.write_text(json.dumps([
+            {'AccountNumber':73491,'Birthday':'0304','Email':'never-export@example.invalid'},
+            {'AccountNumber':73492,'Birthday':'0229'},
+            {'AccountNumber':True,'Birthday':'0101'},
+            {'AccountNumber':73493,'Birthday':'0230'}]),encoding='utf-8')
+        self.provider.configure({'legacy_birthdays':str(backup)})
+        initial=self.call('GET',PREFIX)[1]
+        people=initial['private'];people['birthdays']=[{'account_id':73491,'month_day':'05-06','enabled':True}]
+        self.call('POST',PREFIX+'/private',{'value':people,'revision':initial['private_revision']})
+        initial=self.call('GET',PREFIX)[1]
+        with patch('manager.database.connect',side_effect=AssertionError('backup import must not open SQL')):
+            status,result=self.call('POST',PREFIX+'/import-birthdays',{'revision':initial['private_revision']})
+        self.assertEqual(status,200);self.assertEqual(result['imported'],1)
+        self.assertEqual(result['private']['birthdays'],[
+            {'account_id':73491,'month_day':'05-06','enabled':True},
+            {'account_id':73492,'month_day':'02-29','enabled':True}])
+        self.assertNotIn('never-export',json.dumps(result))
+        self.assertNotIn('never-export',self.provider.get_engine().people_file.read_text(encoding='utf-8'))
+
 
 if __name__=='__main__':unittest.main()

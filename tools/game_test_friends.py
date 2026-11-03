@@ -347,13 +347,16 @@ class Campaign:
         a,aid,aname=self.start('a')
         b,bid,bname=self.start('b')
         if not find_friend(a.state(),bid):self.accept_pair(a,aid,aname,b,bid,bname)
-        expected={bid:bname};self.stop('b')
+        expected={bid:bname}
+        assert_receipt(b.command('snapshot'))
+        self.stop('b')
         for label in self.peer_labels:
             peer,pid,name=self.start(label)
             if not find_friend(a.state(),pid):
                 self.accept_pair(a,aid,aname,peer,pid,name)
             self.state_friend(a,pid);self.state_friend(peer,aid)
             expected[pid]=name
+            assert_receipt(peer.command('snapshot'))
             self.stop(label)
         self.check('all declared existing fixture peers became native friends',int(a.state()['state']['friend_count'])>=len(expected))
         self.stop('a')

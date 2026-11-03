@@ -21,7 +21,7 @@ Ownership checks include the hangar, permanent units awaiting collection in nati
 1. Open the owner-only SDGO Mod Manager and select **Holiday and birthday gifts**.
 2. Select a separate private configuration directory and this server's `WorldServer.ini`. Private data cannot be placed inside a distributable Mod directory. Existing INI credentials remain local and are not returned by the API or included in rule exports.
 3. Configure each event's date, audience and rewards. Choose one missing unit, one per selected tier, fixed units, or native items found by name in the server catalog.
-4. Register birthday month/day values by player name, or import existing birthday registrations. Import preserves existing entries and does not read email addresses.
+4. Register birthday month/day values by player name, or import existing birthday registrations. If the old table has been removed, select its private JSON backup in the directory settings. Import retains only player identities and birthdays, preserves existing dates, and does not store email addresses.
 5. Save the rules, review a player/date with the read-only preview, then start the supervised calendar task.
 
 Private player groups support anniversaries and one-time events. February 29 birthdays can use February 28, March 1, or leap years only.
