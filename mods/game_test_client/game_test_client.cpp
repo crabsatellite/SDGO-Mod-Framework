@@ -709,6 +709,13 @@ int __cdecl Start(const SdgoGameTestContextV1* context) {
 int PvpGuestChannel(uint32_t group,uint16_t channel) {
     static uint32_t generation=rooms.NativeRoomPageGeneration();
     const auto result=channels.EnsureVsGroup(group);
+    const auto channelState=channels.State();
+    static uint32_t lastChannel=UINT32_MAX,lastResult=UINT32_MAX;
+    if(channelState.selected_channel!=lastChannel||result!=lastResult) {
+        sdgo_test::api->Log(sdgo_test::mod,SDGO_LOG_INFO,"native peer channel result=%s selected=%u/%u expected=%u/%u generation=%u",
+            ChannelActions::ResultName(result),channelState.selected_group,channelState.selected_channel,group,channel,rooms.NativeRoomPageGeneration());
+        lastChannel=channelState.selected_channel;lastResult=result;
+    }
     if(result==ChannelActions::kAccepted&&channels.TakeSceneReloadRequirement()) {
         hangarNavigation.RequireGameRoomReentry(generation);return SDGO_GAME_TEST_WAIT;
     }
@@ -721,6 +728,10 @@ int PvpGuestChannel(uint32_t group,uint16_t channel) {
     const auto selected=channels.State();
     if(selected.selected_channel!=channel||selected.selected_group!=group)return SDGO_GAME_TEST_FAIL;
     const auto page=hangarNavigation.EnsureGameRoom(roomListVtable,modalLoadingVtable,rooms.NativeRoomPageGeneration());
+    static uint32_t lastPage=UINT32_MAX;
+    if(page!=lastPage) {
+        sdgo_test::api->Log(sdgo_test::mod,SDGO_LOG_INFO,"native peer room-list entry=%s generation=%u",HangarNavigation::ResultName(page),rooms.NativeRoomPageGeneration());lastPage=page;
+    }
     if(page==HangarNavigation::kReady)return SDGO_GAME_TEST_PASS;
     if(page==HangarNavigation::kUnbound||page>=HangarNavigation::kDownmenuServiceMismatch)return SDGO_GAME_TEST_FAIL;
     return SDGO_GAME_TEST_WAIT;

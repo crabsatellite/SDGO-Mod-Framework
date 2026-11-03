@@ -182,6 +182,7 @@ public:
     void SetRoomResolver(RoomResolver resolver,void* opaque) {
         roomResolver_=resolver;roomOpaque_=opaque;
     }
+    uint32_t SelectionStage()const{return selectionStage_;}
 
     bool JoinExactTitle(const char* exactTitle)
     {
@@ -673,6 +674,7 @@ private:
         const char* title,
         RoomSelection& selection) const
     {
+        selectionStage_=1;
         std::memset(
             &selection,
             0,
@@ -681,6 +683,7 @@ private:
             ResolveUniqueRoomList();
         if (!service)
             return false;
+        selectionStage_=2;
 
         uint8_t* makeButton =
             Read<uint8_t*>(
@@ -705,6 +708,7 @@ private:
                 4) != makeButton)
             return false;
 
+        selectionStage_=3;
         uint8_t* begin =
             Read<uint8_t*>(
                 service +
@@ -730,6 +734,7 @@ private:
             count > kMaximumRoomRows)
             return false;
 
+        selectionStage_=4;
         int matchedIndex = -1;
         for (uint32_t index = 0;
              index < count;
@@ -749,6 +754,7 @@ private:
         }
         if (matchedIndex < 0)
             return false;
+        selectionStage_=5;
 
         uint8_t* entry =
             begin +
@@ -763,6 +769,7 @@ private:
             entry[0x8F] != 0)
             return false;
 
+        selectionStage_=6;
         uint8_t* control =
             Read<uint8_t*>(
                 service +
@@ -781,6 +788,7 @@ private:
                 kControlClickBusiness))
             return false;
 
+        selectionStage_=7;
         wchar_t rowName[16] = {};
         const wchar_t prefix[] =
             L"GameRoom";
@@ -802,6 +810,7 @@ private:
                 0x0C) != control)
             return false;
 
+        selectionStage_=8;
         selection.service = service;
         selection.control = control;
         selection.control_name =
@@ -1608,6 +1617,7 @@ private:
         return profile ? Read<uint8_t*>(profile+kProfileRoom):nullptr;
     }
     RoomResolver roomResolver_=nullptr;
+    mutable uint32_t selectionStage_=0;
     void* roomOpaque_=nullptr;
     uint8_t** profilePointer_ = nullptr;
     IsRoomMasterFn isRoomMaster_ = nullptr;
