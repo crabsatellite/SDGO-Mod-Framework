@@ -24,7 +24,11 @@ jobs:
       - name: Choose release channel
         shell: pwsh
         run: |
-          if ('${{ github.ref_type }}' -eq 'tag') {
+          $prepareOnly='${{ github.event_name }}' -eq 'workflow_dispatch' -and '${{ github.ref_name }}' -ne 'master' -and '${{ github.ref_type }}' -ne 'tag'
+          if ($prepareOnly) {
+            $version=(Get-Content VERSION -TotalCount 1).Trim()
+            $channel=if($version -match '-beta\.'){'beta'}else{'stable'}
+          } elseif ('${{ github.ref_type }}' -eq 'tag') {
             $version='${{ github.ref_name }}'.Substring(1)
             $channel=if($version -match '-beta\.'){'beta'}else{'stable'}
           } else {
@@ -33,6 +37,7 @@ jobs:
           }
           "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
           "RELEASE_CHANNEL=$channel" >> $env:GITHUB_ENV
+          "PREPARE_ONLY=$($prepareOnly.ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
       - name: Reject local-only source from public publication
         run: python tools/distribution_guard.py --git-tree $env:GITHUB_SHA
       - name: Reject local-only bytes in every newly published commit
@@ -57,7 +62,33 @@ jobs:
         run: python tools/build_release.py --build --channel $env:RELEASE_CHANNEL --version $env:RELEASE_VERSION
       - name: Standalone Manager check
         run: python tests/mod_manager_frozen_test.py --exe "build/manager/SDGO Mod Manager.exe"
+      - name: Native login recovery policy
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target login_recovery_policy_test
+          if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+          ctest --test-dir build -C Release -R '^login_recovery_policy$' --output-on-failure
+          if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+      - name: Native client data guards
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target native_data_guard_runtime_test game_test_quiet_wait_room_test
+          if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+          ctest --test-dir build -C Release -R '^(native_data_guard_actual_dll|game_test_quiet_wait_room_offline)$' --output-on-failure
+          if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+      - name: Retain prepared package
+        # Candidate branches build exact install bytes before runtime delivery.
+        if: env.PREPARE_ONLY == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: prepared-manager-release
+          path: |
+            dist/SDGO-ModFramework-*.zip
+            dist/SDGO-ModFramework-*.sha256
+          retention-days: 3
+          if-no-files-found: error
       - name: Publish immutable versioned asset
+        if: env.PREPARE_ONLY != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh

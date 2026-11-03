@@ -4,7 +4,7 @@
   "id": "login_recovery",
   "title": "异常断线登录恢复",
   "category": "fixes",
-  "hosts": ["server"],
+  "hosts": ["world"],
   "description": "原生登录已验证身份并清理旧在线会话后，在同一请求内重试一次认证。",
   "presentation": "automatic_fix",
   "mechanism": "沿用原生旧会话清理与 Agent 退出通知，先通知旧连接退出，再重试原生认证一次；正常登录、密码错误和封禁拒绝保持原处理。",
