@@ -37,7 +37,6 @@ namespace
     uint8_t g_attack[0xC00] = {};
     uint8_t g_definition[0x300] = {};
     uint8_t g_weapons[3][0x700] = {};
-    void* g_unitVtable[8] = {};
     void* g_moveVtable[2] = {};
     void* g_attackVtable[2] = {};
     uint8_t g_nativeInput[0x40] = {};
@@ -54,6 +53,7 @@ namespace
     void* g_lastAttackContext = nullptr;
     std::vector<std::string> g_observations;
     std::vector<int> g_assertions;
+    void __fastcall WeaponInput(uint8_t*, void*, void*, int);
 
     void Check(
         bool condition, const char* expression, int line)
@@ -203,6 +203,8 @@ namespace
         if (std::strcmp(
                 name, "test.apsalus_primary_input") == 0)
             return FunctionAddress(&FireInput);
+        if (std::strcmp(name, "test.player_weapon_input") == 0)
+            return FunctionAddress(&WeaponInput);
         return nullptr;
     }
 
@@ -340,13 +342,13 @@ namespace
         g_consumeAmmo = true;
     }
 
-    void __fastcall ReceiveWeapon(uint8_t* unit, void*, const uint8_t* message)
+    void __fastcall WeaponInput(uint8_t* unit, void*, void* input, int wheel)
     {
-        CHECK(unit == g_unit && Get<uint16_t>(const_cast<uint8_t*>(message), 0) == 0x48);
-        CHECK(message[0x10] == 2);
+        CHECK(unit == g_unit && input == g_nativeInput && wheel == 0);
+        CHECK(g_heldDetour(input, nullptr, 16) == 1);
         ++g_weaponRequests;
         // Real native receipt queues DD0; it does not acknowledge the binding.
-        Put(g_unit, 0xDD0, int32_t(message[0x10]));
+        Put(g_unit, 0xDD0, int32_t(2));
     }
 
     void RangedProfile()
@@ -354,8 +356,6 @@ namespace
         std::memset(g_definition, 0, sizeof(g_definition));
         std::memset(g_weapons, 0, sizeof(g_weapons));
         Put(g_unit, 0x9C4, g_definition);
-        g_unitVtable[7] = FunctionAddress(&ReceiveWeapon);
-        Put(g_unit, 0, g_unitVtable);
         Put(g_definition, 0, uint32_t(10003));
         g_definition[0x247] = 3;
         for (int slot = 0; slot < 3; ++slot) {
@@ -401,16 +401,17 @@ namespace
         CHECK(Get<int32_t>(g_unit, 0xDD0) == 2 && Get<int32_t>(g_attack, 0x240) == 0);
         context.elapsed_ms = 1100;
         CHECK(probe.Poll(&context, snapshot, status, input));
-        CHECK(g_weaponRequests == 1 && g_fireInputCalls == 0);
+        CHECK(g_weaponRequests == 2 && g_fireInputCalls == 0);
         context.elapsed_ms = 1300;
         CHECK(probe.Poll(&context, snapshot, status, input));
-        CHECK(g_weaponRequests == 2 && g_fireInputCalls == 0);
+        CHECK(g_weaponRequests == 3 && g_fireInputCalls == 0);
         // Only an actual native commit permits movement/fire sampling to begin.
         Put(g_attack, 0x240, int32_t(2));
         Put(g_attack, 0x248, g_weapons[2]);
         context.elapsed_ms = 1400;
         CHECK(probe.Poll(&context, snapshot, status, input));
         CHECK(g_moveInputCalls == 1 && !g_fireHeld);
+        CHECK(g_heldDetour(g_nativeInput, nullptr, 16) == 0);
         context.elapsed_ms = 1580;
         CHECK(probe.Poll(&context, snapshot, status, input));
         CHECK(g_fireHeld && Get<int16_t>(g_attack, 0x24C + 2 * 0xC8) == 59);
@@ -461,14 +462,10 @@ namespace
         context.elapsed_ms = 1180;
         CHECK(unavailable.Poll(&context, snapshot, status, input));
         CHECK(g_heldDetour(g_nativeInput, nullptr, 9) == 1);
-        Put(g_attack, 0x240, int32_t(0));
-        Put(g_attack, 0x248, g_weapons[0]);
-        g_unitVtable[7] = nullptr;
-        CHECK(!unavailable.Poll(&context, snapshot, status, input));
+        g_unit[0x31E9] = 0;
+        CHECK(unavailable.Poll(&context, snapshot, status, input));
         CHECK(g_heldDetour(g_nativeInput, nullptr, 9) == 0);
-        g_unitVtable[7] = FunctionAddress(&ReceiveWeapon);
-        Put(g_attack, 0x240, int32_t(2));
-        Put(g_attack, 0x248, g_weapons[2]);
+        g_unit[0x31E9] = 1;
         context.elapsed_ms = 1300;
         CHECK(unavailable.Poll(&context, snapshot, status, input));
         CHECK(g_heldDetour(g_nativeInput, nullptr, 0) == 1 &&
