@@ -1179,6 +1179,20 @@ int wmain(int argc, wchar_t** argv)
             giftCancelCalls == 2,
         "one original action per transition without retries");
     Setup();
+    actions=Driver(assertions,display);
+    uint64_t delayedTitleElapsed=0;
+    for(unsigned i=0;i<50 && actions.State().stage!=ShopCatalogActions::kStageScanPage;++i) {
+        auto delayedContext=Context(delayedTitleElapsed);
+        actions.Poll(&delayedContext);delayedTitleElapsed+=100;
+    }
+    SetHostString(goodsStatic->bytes.data(),kControlText,L"previous page title");
+    auto delayedContext=Context(delayedTitleElapsed);
+    Check(actions.Poll(&delayedContext)==ShopCatalogActions::kWaitingForCatalog &&
+          actions.State().verified==0,"an arriving catalog cannot pass while its title still belongs to the previous page");
+    SetHostString(goodsStatic->bytes.data(),kControlText,L"Alpha");
+    Check(PollTo(actions,ShopCatalogActions::kComplete,&delayedTitleElapsed)==ShopCatalogActions::kComplete,
+          "a deferred native label must actually match before the existing previews are accepted");
+    Setup();
     lastFixturePage=5;
     actions=Driver(assertions,display);
     Check(PollTo(actions,ShopCatalogActions::kComplete)==ShopCatalogActions::kComplete &&

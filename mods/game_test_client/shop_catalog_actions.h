@@ -1441,6 +1441,7 @@ private:
         }
         if (!LoadNativeNames())
             return Publish(kNativeNameMismatch);
+        pageUiReadySince_ = lastElapsed_;
         stage_ = kStageScanPage;
         return Publish(kWaitingForCatalog);
     }
@@ -1470,6 +1471,9 @@ private:
                 ValidateProduct(
                     *product,
                     row.row);
+            if(validated==kUiNameMismatch &&
+               lastElapsed_<pageUiReadySince_+kCatalogWaitMilliseconds)
+                return Publish(kWaitingForCatalog);
             if (validated != kComplete)
                 return Publish(validated);
             target_ = product;
@@ -1578,6 +1582,7 @@ private:
                 ? kChangingPage : kPageDidNotAdvance);
         if (page != pageBefore_ + 1)
             return Publish(kPageDidNotAdvance);
+        pageUiReadySince_ = lastElapsed_;
         stage_ = kStageScanPage;
         return Publish(kChangingPage);
     }
@@ -1807,6 +1812,8 @@ private:
                 64,
                 &visible))
             return kUiNameMismatch;
+        observation_.native_name = name->second;
+        observation_.visible_name = visible;
         std::wstring shortened;
         if (product.name.size() > 10)
             shortened =
@@ -3024,6 +3031,7 @@ private:
     void* popup_ = nullptr;
     Product* target_ = nullptr;
     uint64_t pageInvokedAt_ = 0;
+    uint64_t pageUiReadySince_ = 0;
     uint32_t targetRow_ = 0;
     uint32_t targetOptionIndex_ = 0;
     uint32_t pageBefore_ = 0;
