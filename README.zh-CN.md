@@ -60,7 +60,7 @@ Stable 表示当前基本功能已验证可用，后续 Bug 通过新版本修�
 
 <!-- /mod-category:gameplay -->
 
-服主还可以使用独立的 [节日与生日赠礼 Manager 模块](docs/calendar-gifts.zh-CN.md)：默认提供节日一台未拥有机体、生日 12 档各一台的规则；本服生日和定向玩家名单不随通用规则分发。
+服主还可以使用独立的 [节日与生日赠礼 Manager 模块](docs/calendar-gifts.zh-CN.md)：默认提供 14 个节日（含平安夜、圣诞节和万圣节）各一台未拥有机体、生日 12 档各一台的规则；已有配置可补充新增节日，本服生日和定向玩家名单不随通用规则分发。
 
 <a id="long-room-title-commands"></a>
 

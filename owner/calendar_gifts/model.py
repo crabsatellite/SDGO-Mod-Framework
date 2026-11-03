@@ -11,7 +11,14 @@ GRADES=((4,3),(4,4),(4,2),(3,3),(3,4),(3,2),(2,3),(2,4),(2,2),(1,3),(1,4),(1,2))
 GRADE_NAMES={(1,2):'C',(1,3):'CS',(1,4):'CR',(1,5):'CU',(2,2):'B',(2,3):'BS',(2,4):'BR',
              (2,5):'BU',(3,2):'A',(3,3):'AS',(3,4):'AR',(3,5):'AU',(4,2):'S',(4,3):'SS',(4,4):'SR'}
 FESTIVALS={'new_year':'元旦','spring_festival':'春节','qingming':'清明',
-           'labour_day':'劳动节','dragon_boat':'端午','mid_autumn':'中秋','national_day':'国庆'}
+           'labour_day':'劳动节','dragon_boat':'端午','mid_autumn':'中秋','national_day':'国庆',
+           'valentines_day':'情人节','womens_day':'国际妇女节','childrens_day':'六一儿童节',
+           'halloween':'万圣节','christmas_eve':'平安夜','christmas':'圣诞节','new_years_eve':'跨年夜'}
+FIXED_FESTIVALS={'new_year':'01-01','labour_day':'05-01','national_day':'10-01',
+                 'valentines_day':'02-14','womens_day':'03-08','childrens_day':'06-01',
+                 'halloween':'10-31','christmas_eve':'12-24','christmas':'12-25','new_years_eve':'12-31'}
+ADDITIONAL_FESTIVALS=('valentines_day','womens_day','childrens_day','halloween',
+                      'christmas_eve','christmas','new_years_eve')
 ID=re.compile(r'[a-z][a-z0-9_-]{0,47}\Z')
 
 
@@ -25,6 +32,14 @@ def defaults():
             'birthday':{'enabled':True,'feb29':'feb28','rewards':default_rewards(True)},
             'events':[{'id':key,'title':name,'enabled':True,'calendar':'festival','festival':key,
                        'month_day':'','date':'','group':'all','rewards':default_rewards()} for key,name in FESTIVALS.items()]}
+
+
+def missing_festivals(policy):
+    """Offer only the new presets, preserving IDs and custom/disabled events."""
+    ids={e['id'] for e in policy['events']}
+    festivals={e['festival'] for e in policy['events'] if e['calendar']=='festival'}
+    return [e for e in defaults()['events'] if e['id'] in ADDITIONAL_FESTIVALS
+            and e['id'] not in ids and e['festival'] not in festivals]
 
 
 def fields(value,expected,label):
@@ -117,6 +132,8 @@ def validate_private(value):
 
 def event_date(event,year):
     if event['calendar']=='festival':
+        if event['festival'] in FIXED_FESTIVALS:
+            return dt.date.fromisoformat(str(year)+'-'+FIXED_FESTIVALS[event['festival']])
         dates=json.loads((HERE/'festival_dates.json').read_text(encoding='utf-8'))['years']
         if str(year) not in dates:raise ValueError('缺少 '+str(year)+' 年节日日历，请先更新日历或改用指定日期')
         return dt.date.fromisoformat(dates[str(year)][event['festival']])
