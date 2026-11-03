@@ -29,11 +29,12 @@ public:
         }
         const uint32_t target = mission ? 16 : 7;
         if (context->elapsed_ms >= nextObservation_) {
-            char line[240]; sprintf_s(line,
-                "legacy preview target=%u app=%u room=%u map=%u transitions=%u ready=%u manager=%u/%u decision=%u reject=%u refresh=%04X",
+            char line[384]; sprintf_s(line,
+                "legacy preview target=%u app=%u room=%u map=%u transitions=%u ready=%u manager=%u/%u decision=%u reject=%u refresh=%04X profile_diag=%u/%u authority=%u source=%u checks=%u/%u/%u",
                 state.requested_target, state.actual_app, state.room_id, state.map_id, state.transitions,
                 state.ready, state.manager_found, state.manager_ids_match, state.last_decision,
-                state.reject_reason, state.expected_refresh_opcode);
+                state.reject_reason, state.expected_refresh_opcode, state.profile_room_id, state.profile_map_id,
+                state.reserved[0], state.reserved[1], state.reserved[2], state.reserved[3], state.reserved[4]);
             context->Observe(line); nextObservation_ = context->elapsed_ms + 5000;
         }
         if (!state.ready) return SDGO_GAME_TEST_WAIT;
@@ -45,7 +46,8 @@ public:
         if (!requested_) {
             const bool exact = state.requested_target == target && state.actual_app == target &&
                 native.AppState() == target && state.transitions == 1 && state.room_id &&
-                state.profile_room_id == state.room_id && state.profile_map_id == state.map_id &&
+                state.reserved[0] == state.room_id && state.reserved[1] &&
+                state.reserved[2] == 1 && state.reserved[3] == 1 && state.reserved[4] == 1 &&
                 state.manager_found && state.manager_ids_match && state.expected_refresh_opcode == opcode;
             context->Assert(exact, "the exact native legacy scene publishes the genuine server room/map and refresh request");
             if (!exact) return SDGO_GAME_TEST_FAIL;
