@@ -18,6 +18,7 @@ import game_test_server_report
 def campaign(host:Path,peers:list[Path],pilots:list[int],events:list[Path],output:Path,*,timeout=1200):
     if not pilots:raise game_test.GameTestError('declare the existing human roster before launch')
     roster=sorted(game_test_server_report.human_roster(pilots[0],pilots))
+    if len(roster)<2:raise game_test.GameTestError('coordinated multiplayer requires at least two real humans')
     runs=[host.resolve(),*[p.resolve() for p in peers]]
     if len(runs)!=len(roster) or len(set(runs))!=len(runs):raise game_test.GameTestError('one distinct owned run per declared human is required')
     metadata=[game_test.validate_metadata(p) for p in runs]
@@ -34,6 +35,8 @@ def campaign(host:Path,peers:list[Path],pilots:list[int],events:list[Path],outpu
         names.append(profile['account']['username'].casefold())
     if len(set(names))!=len(names):raise game_test.GameTestError('distinct existing accounts are required')
     if len(game_test.parse_mode_sequence(first['mode_sequence']))!=1:raise game_test.GameTestError('one native battle per coordinated session')
+    if not 1<=first['expected_ai']<=7 or len(roster)+first['expected_ai']>8:
+        raise game_test.GameTestError('the declared humans and AI exceed the supported native room capacity')
     receipt={'schema':1,'scope':'native_multiplayer_cohort','status':'running','host_run_id':metadata[0]['run_id'],
              'room_title':first['room_title'],'expected_human_pilot_ids':roster,'expected_ai':first['expected_ai'],
              'actors':[{'pilot':pilot,'run_id':m['run_id'],'run_dir':str(p)} for pilot,m,p in zip(pilots,metadata,runs)],'checks':[]}
@@ -76,7 +79,8 @@ def campaign(host:Path,peers:list[Path],pilots:list[int],events:list[Path],outpu
                 check('native battle and settlement',p['settled']=='1' and int(p['end_opcode'])==0x0871 and
                       int(p['host']) in roster and int(p['movement_events'])>0,pilot=pilot)
         # Guests leave first so the original human host is still available.
-        for actor in [*actors[1:],actors[0]]:assert_receipt(actor.command('room_leave',timeout=90))
+        for actor in [*actors[1:],actors[0]]:
+            assert_receipt(actor.command('room_leave',channel_id=channel,room_id=room,timeout=90))
         for actor in actors:assert_receipt(actor.command('finish',timeout=30))
         reports=[future.result(timeout=90) for future in futures]
         check('all actor launch/native reports pass',all(r['status']=='pass' for r in reports))
