@@ -1,5 +1,7 @@
 # 阿普萨拉斯 III 变形卡死修复
 
+[English](transform-input-fix.md) · [返回功能目录](../README.zh-CN.md)
+
 `transform_input_fix` 修复阿普萨拉斯 III 在变形后持续卡住、无法移动或攻击的问题。它是自动生效的客户端修复，安装后重启游戏即可，无需设置；在 SDGO Mod Manager 的「修复归档」中查看。
 
 ## 适用范围
@@ -14,6 +16,7 @@
 
 ## 排查
 
-确认当前客户端已经更新并重启，且自动修复已安装。若仍出现问题，记录出击机体、第一次或再次变形、对战模式及客户端版本。原生日志中的 `Apsalus III null transform animation` 表示本次异常分支触发了恢复。
+确认客户端已经更新并重启。`sdgo/logs/sdgo.log` 中有 `Apsalus III missing-animation transform input recovery active` 表示修复已加载；
+`Apsalus III null transform animation` 表示本次变形触发了恢复。若仍出现问题，请记录出击形态、变形方向、对战模式及客户端版本。
 
-开发者可参阅[英文说明](transform-input-fix.md)中的原生函数位置；原生测试流程见 [GameTest guide](../skills/sdgo-native-testing/SKILL.md)。
+开发者可参阅[英文说明](transform-input-fix.md#native-behavior)中的原生函数位置，回归测试见[原生 GameTest](game-test.zh-CN.md)。

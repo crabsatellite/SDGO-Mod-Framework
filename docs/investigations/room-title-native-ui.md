@@ -100,7 +100,7 @@ one-time WordSkip activation and rejection of an out-of-range details index.
 The native byte signatures used by the shipping Mod are in `symbols/GOnline-54BE1568-00C97000.ini`;
 `tools/verify_symbols.py` validates them without starting the client.
 
-## Already-focused create-room input (client 0.2.1, 2026-11-02)
+## Already-focused create-room input
 
 The native edit has two relevant limits. `CUIEditBox +0x2A0` stores UTF-16
 bytes, while the shared input at pointer `0x010887E0` caches UTF-16 code units
