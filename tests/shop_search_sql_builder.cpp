@@ -145,10 +145,10 @@ std::vector<sdgo::shop_search::Alias> FixtureAliases()
 void Offline()
 {
     using sdgo::shop_search::Alias;
-    using sdgo::shop_search::BuildInstallSql;
+    using sdgo::shop_search::BuildItemsInstallSql;
     const std::wstring expected =
         L"CREATE PROCEDURE dbo.sp_StoreItemsList AS SELECT N'O''Hara';";
-    const auto sql = BuildInstallSql(
+    const auto sql = BuildItemsInstallSql(
         {
             {1010102, L"Beta O'Hara", L"测试机乙"},
             {1010101, L"Alpha", L"高达"},
@@ -244,7 +244,7 @@ void Offline()
 
     bool rejected = false;
     try {
-        BuildInstallSql(
+        BuildItemsInstallSql(
             {{1, L"A", L"甲"}, {1, L"A", L"乙"}},
             expected, L"r");
     } catch (const std::invalid_argument&) {
@@ -254,7 +254,7 @@ void Offline()
         rejected,
         "conflicting translations for one product/source pair must be rejected");
 
-    const auto duplicate = BuildInstallSql(
+    const auto duplicate = BuildItemsInstallSql(
         {{1, L"A", L"甲"}, {1, L"A", L"甲"}, {1, L"B", L"乙"}},
         expected, L"r");
     const auto firstDuplicate =
@@ -268,7 +268,7 @@ void Offline()
 
     rejected = false;
     try {
-        BuildInstallSql(
+        BuildItemsInstallSql(
             {{1, std::wstring(513, L'a'), L"甲"}}, expected, L"r");
     } catch (const std::invalid_argument&) {
         rejected = true;
@@ -277,7 +277,7 @@ void Offline()
 
     rejected = false;
     try {
-        BuildInstallSql(
+        BuildItemsInstallSql(
             {{1, L"A", std::wstring(513, L'甲')}}, expected, L"r");
     } catch (const std::invalid_argument&) {
         rejected = true;
@@ -286,11 +286,29 @@ void Offline()
 
     rejected = false;
     try {
-        BuildInstallSql({}, L"", L"r");
+        BuildItemsInstallSql({}, L"", L"r");
     } catch (const std::invalid_argument&) {
         rejected = true;
     }
     Check(rejected, "empty expected definitions must be rejected");
+    const auto paired=sdgo::shop_search::BuildInstallSql(
+        {{1010101,L"Alpha",L"高达"}},expected,L"paired",
+        L"CREATE PROCEDURE dbo.sp_StoreSubItemsList AS SELECT 1;");
+    Check(paired.find(L"EXEC dbo.sp_StoreItemsList\n")!=std::wstring::npos &&
+          paired.find(L"ORDER BY P.sdgo_ordinal,S.f_index DESC,S.f_validity ASC")!=std::wstring::npos,
+          "sales options must consume the same ordered parent result and original option order");
+    Check(paired.find(L"shop sales-option procedure changed after inspection")<
+              paired.find(L"DELETE FROM dbo.sdgo_ShopSearchAliases") &&
+          paired.find(L"EXEC(@SubItemsInstallBatch)")<paired.find(L"COMMIT TRANSACTION"),
+          "both native procedures are guarded and installed before the shared transaction commits");
+    Check(paired.find(L"owned shop sales-option procedure has an external edit")!=std::wstring::npos &&
+          paired.find(L"shop sales-option procedure readback mismatch")!=std::wstring::npos &&
+          paired.find(L"VALUES(N'dbo.sp_StoreSubItemsList',@Revision")!=std::wstring::npos,
+          "option procedure ownership, readback and revision remain separate from the parent");
+    rejected=false;
+    try {sdgo::shop_search::BuildInstallSql({},expected,L"paired",L"");}
+    catch(const std::invalid_argument&){rejected=true;}
+    Check(rejected,"paired installation refuses a missing inspected option definition");
 }
 
 } // namespace
@@ -303,6 +321,11 @@ int main(int argc, char** argv)
             std::cout << "shop search SQL builder checks passed\n";
             return 0;
         }
+        if(argc==6 && std::string(argv[1])=="--emit-pair") {
+            const auto sql=sdgo::shop_search::BuildInstallSql(FixtureAliases(),
+                DecodeUtf8(ReadBytes(argv[2])),DecodeUtf8(argv[5]),DecodeUtf8(ReadBytes(argv[3])));
+            WriteBytes(argv[4],EncodeUtf8(sql));return 0;
+        }
         if (argc != 5 || std::string(argv[1]) != "--emit") {
             std::cerr
                 << "usage: shop_search_sql_builder "
@@ -311,7 +334,7 @@ int main(int argc, char** argv)
         }
         const auto expected = DecodeUtf8(ReadBytes(argv[2]));
         const auto revision = DecodeUtf8(argv[4]);
-        const auto sql = sdgo::shop_search::BuildInstallSql(
+        const auto sql = sdgo::shop_search::BuildItemsInstallSql(
             FixtureAliases(), expected, revision);
         WriteBytes(argv[3], EncodeUtf8(sql));
         return 0;
