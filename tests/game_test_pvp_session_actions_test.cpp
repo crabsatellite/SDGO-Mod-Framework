@@ -23,6 +23,8 @@ struct Joiner {
     bool Ready(){++readies;return true;}
     uint32_t SelectionStage()const{return 8;}
     uint32_t SelectionControlFlags()const{return 31;}
+    uint32_t ReadyStage()const{return 10;}
+    uint32_t ReadyContextFlags()const{return 15;}
     auto JoinState()const{return join;}
     auto ReadyState()const{return ready;}
 };
