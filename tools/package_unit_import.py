@@ -17,16 +17,16 @@ def main():
     parser.add_argument('--directory-only',action='store_true')
     args=parser.parse_args()
     names=['docs/unit-import.md','docs/unit-import.zh-CN.md',
-        'docs/unit-import-validation.zh-CN.md','LICENSE']
+        'docs/unit-import-protocol.zh-CN.md','LICENSE']
     files={name:(root/name).read_bytes() for name in names}
     if not args.directory_only:
         manager=args.manager or args.binaries.parent/'manager/SDGO Mod Manager.exe'
         files['SDGO Mod Manager.exe']=manager.read_bytes()
     files['README.zh-CN.txt']=('SDGO 机体导入 0.2.0 Beta · Mod Manager\n\n打开“SDGO Mod Manager.exe”，选择左侧“机体导入”。\n'
         '可继续使用原机体制作工作区，无需系统 Python。RAR 解析需要本机 7-Zip。\n'
-        '先解析补齐并选择发布图片，再准备独立客户端调用实际商城与扭蛋 UI，目视核对后确认导入。\n'
+        '先解析补齐并选择发布图片，可准备独立预览客户端在实际商城与扭蛋界面中查看，再确认导入。\n'
         '通用工具包不含游戏 EXE/资源、机体数据、账号信息、数据库凭据或实际宿主配置。\n'
-        '详细使用和验证边界见 docs/unit-import.zh-CN.md。\n').encode('utf-8')
+        '详细使用方法见 docs/unit-import.zh-CN.md。\n').encode('utf-8')
     revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
     manifest={'module':'unit-import-tools','schema_version':1,'version':'0.2.0-beta','entry':'SDGO Mod Manager.exe','source_commit':revision,
         'source_dirty':bool(subprocess.check_output(['git','status','--porcelain'],cwd=root,text=True).strip()),

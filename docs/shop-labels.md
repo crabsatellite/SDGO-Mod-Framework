@@ -13,8 +13,8 @@ the server's shop catalog. Prices, currency, durations and purchases are unchang
 
 ## Install
 
-It is installed with the core fixes of the client framework, and friend-server players receive it
-through the server owner's client package or update. A standalone `SDGO-ShopLabels-Patch` package with its own `Install.ps1` is also
+It is installed with the core fixes of the client framework, so players receive it with their server
+owner's client package or update. A standalone `SDGO-ShopLabels-Patch` package with its own `Install.ps1` is also
 available; see the [Chinese guide](shop-labels.zh-CN.md).
 
 ## Settings
@@ -30,9 +30,6 @@ Under **商城物品显示** in SDGO Mod Manager; restart the game after saving.
 `display.ini` is the UTF-16LE file exported by the [shop catalog](shop-catalog.md). When the rental or
 permanent label is enabled for an option, that label is shown. Otherwise a custom name is used, and only
 while the option's ID, category, duration, price and currency still match.
-Paint, sticker, battleship and other count-based offers recover quantities from numeric metadata.
-Hover tables use compact duration labels and numeric counts so digits stay together in narrow columns;
-buy/gift dropdowns retain full labels. Prices, numeric durations and quantities are never rewritten.
 
 This is not a global font or chat fix, and it cannot recover product names already stored as question
 marks in the database. The activity capsule currency label is handled by the separate
@@ -42,8 +39,8 @@ Log line when active: `rental/permanent labels enabled; <n> Unicode option overr
 
 ## Developer notes
 
-The native grid lookup returns a single byte in `AL`; callers must use a byte return type.
-The DLL contract fixture preserves nonzero upper `EAX` bits to cover the original calling convention.
+The native grid lookup returns a single byte in `AL` and can leave pointer residue in the upper `EAX`
+bits, so callers must use a byte return type.
 
 The client converts sale option names with code page 874 (Thai), which turns them into question marks.
 The mod hooks `shop.buy_options.populate`, `shop.gift_options.populate` and `shop.tooltip.option` to
@@ -51,3 +48,5 @@ record which option rows are being drawn, and `text.ansi_to_wide` to replace the
 those rows only. The rental flag comes from the option category's client metadata (GridData type `0x22`, byte `+0x6D`, looked up
 through `shop_labels.grid_data` / `shop_labels.grid_find`); the duration comes from the option's numeric validity.
 Other text conversions are passed to the original function.
+
+Count-based offers recover quantities from numeric metadata. Hover tables use compact labels such as 租赁7天 or 30天; buy/gift dropdowns retain full labels and native formatted prices.

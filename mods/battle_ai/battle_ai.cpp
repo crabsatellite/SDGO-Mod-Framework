@@ -781,9 +781,19 @@ bool CaptureUnsafe(Observation& o) {
     }
     PlanDefence(o,actor,now);return true;
 }
-bool Capture(Observation& o) {
+bool GuardedCapture(Observation& o) {
     __try { return CaptureUnsafe(o); }
     __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+bool Capture(Observation& o) {
+    // Reuse page-readability queries only within this observation. Every field
+    // is still read live and every copy keeps its SEH guard; no targets, sight
+    // tests or decisions are skipped, delayed or shared with a later update.
+    // Catch native faults inside the scope so its thread-local pointer is also
+    // restored when an unguarded engine access fails under /EHsc.
+    battle_ai::native::detail::ReadableRegionCache readableRegions{};
+    battle_ai::native::detail::ScopedReadableRegionCache readableScope(readableRegions);
+    return GuardedCapture(o);
 }
 void Number(lua_State* L,const char* key,double value) {
     g_lua.pushstring(L,key);g_lua.pushnumber(L,value);g_lua.settable(L,-3);

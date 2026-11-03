@@ -3,8 +3,6 @@
 The shop_localization feature supplies display translations, a bounded Chinese query transport and optional
 localization for cooperating Mods. Static native analysis targets GOnline SHA-256 e2dba73c10302b50cb0e6f2e58dd0a14effa8d224989ae570a7f8e05af79ff92
 and current WorldServer SHA-256 82d3c4cf09679a431b9bfa639795b148f932642d8774ff66021785115dc53d46.
-Saved decompilation was corroborated against current-file instructions; unavailable deep REA providers
-were not presented as runtime traces.
 
 ## Search and filtering findings
 
@@ -37,10 +35,9 @@ The helper never invokes catalog Apply or changes product rows, pricing, invento
 
 ## Text and cooperating Mods
 
-Key coverage alone does not establish translation quality: mixed English prose can
-remain despite source keys being present. The authored vocabulary revises 335 descriptions and seven name values,
-adds Korean Jamo checks, and generates 18,612 entries including 1,347 exact LF aliases for stock strings
-whose native records use literal `\n` markers. Both source forms remain available. Thai/Hangul/Jamo and
+Key coverage alone does not guarantee a full translation: mixed English prose can
+remain even when every source key is present. The authored vocabulary revises 334 descriptions and seven name values,
+adds Korean Jamo checks, and generates 17,265 entries including stable ID keys. Thai/Hangul/Jamo and
 replacement-character targets are absent; legitimate technical/model identifiers remain explicit.
 All 1071 hangar rule UnitIDs are mapped from 1073 available unit IDs. Six plain borrowed names are
 localized, while seven actual model codes remain unchanged.
@@ -52,20 +49,17 @@ preview names and rewards, leaving rules/identity/packets intact. Room-title int
 fixed notices/caption; player titles, drafts and chat never enter the lookup. Name and interface scopes
 remain separately configurable in the same Manager feature.
 
-## Evidence boundaries
-
-Actual DLL tests cover display callers, switches, dictionary parsing and C ABI output bounds; consumer
-tests cover provider absence and later discovery. An independent SQL2014 temporary database checks
-Unicode partial/English searches, global/hot filters, pagination, idempotence, backups, external-edit
-refusal and unchanged product rows. The actual native helper is separately exercised using the exact
-known native definition in a unique synthetic database. Every test database is removed. Private original
-SQL, native records, credentials and raw local receipts remain outside source control.
-
-These fixtures do not render actual game search results or execute player purchases/exchanges. Final
-verification must distinguish installed hashes, server procedure readback, client load logs and manual
-search/filter/confirmation visuals.
+## Billing-name aliases
 
 Billing names can differ from native display names through English/Thai rental prefixes, whitespace, legacy
 spelling, model-code formatting or festival-key word ordering. Explicit @search:ProductID:Original
 entries bind these current billing names to the already rendered titles; they never replace native display
 records or product identities. English/model queries also consult the same guarded aliases.
+
+## Tests
+
+Actual-DLL tests cover display callers, switches, dictionary parsing and C ABI output bounds; consumer
+tests cover provider absence and later discovery. A temporary SQL Server 2014 database covers Unicode
+partial and English searches, global/hot filters, pagination, idempotence, backups, external-edit
+refusal and unchanged product rows; the native helper runs against the exact known native definition in
+a synthetic database. Private original SQL, native records and credentials stay outside source control.

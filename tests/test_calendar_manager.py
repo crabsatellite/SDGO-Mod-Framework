@@ -35,8 +35,23 @@ class CalendarManagerContracts(unittest.TestCase):
     def test_registered_defaults_do_not_start_or_connect_a_worker(self):
         state=self.call('GET',PREFIX)[1]
         self.assertFalse(state['policy']['enabled']);self.assertEqual(state['private']['birthdays'],[])
+        self.assertEqual(len(state['festivals']),14)
+        self.assertEqual(next(e for e in state['festivals'] if e['value']=='christmas')['month_day'],'12-25')
         service=self.call('GET','/api/services/calendar.gifts')[1]
         self.assertEqual(service['owner'],'manager');self.assertFalse(service['desired']);self.assertFalse(service['running'])
+
+    def test_old_policy_can_add_international_presets_through_existing_revision_api(self):
+        from owner.calendar_gifts import model
+        state=self.call('GET',PREFIX)[1];old=state['policy']
+        old['events']=[e for e in old['events'] if e['id'] not in model.ADDITIONAL_FESTIVALS]
+        old['events'][0]['enabled']=False
+        status,saved=self.call('POST',PREFIX+'/policy',{'value':old,'revision':state['policy_revision']})
+        self.assertEqual(status,200);self.assertEqual(len(saved['missing_festivals']),7)
+        new=saved['policy'];new['events']+=saved['missing_festivals']
+        with patch('manager.database.connect',side_effect=AssertionError('saving presets must not open SQL')):
+            status,result=self.call('POST',PREFIX+'/policy',{'value':new,'revision':saved['policy_revision']})
+        self.assertEqual(status,200);self.assertEqual(len(result['policy']['events']),14)
+        self.assertEqual(result['missing_festivals'],[]);self.assertFalse(result['policy']['events'][0]['enabled'])
 
     def test_authenticated_revision_writes_are_separate_and_stale_edits_rejected(self):
         state=self.call('GET',PREFIX)[1];policy=state['policy'];policy['catchup_days']=3
