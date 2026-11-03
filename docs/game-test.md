@@ -286,6 +286,10 @@ the native observer settings against that input before launch. Install an author
 unit publication with the API's `unit_package` argument before sealing; do not edit
 an already prepared client or its receipt hashes. Unit content stays in the server
 owner's client package or update, outside the public test fixtures.
+The API also accepts `capsule_package=<Manager deployment root>` to install a
+manifest-verified capsule publication before sealing. Its framework and provider
+programs must match the selected stage. The runner uses its trusted installer and
+reads back the installed resource hashes; this path never applies the server SQL.
 It also opens native storage, waits for its real message loop and server list
 reply, and confirms one claim batch. An empty batch only covers the empty-storage path.
 Capsule cases read all five native catalog tables and enter the actual page to

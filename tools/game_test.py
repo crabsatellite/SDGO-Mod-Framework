@@ -39,6 +39,7 @@ import importlib.util
 if str(Path(__file__).resolve().parents[1]) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools import game_test_unit_scenario as unit_scenarios
+from tools import game_test_capsule_package as capsule_packages
 SCHEMA_VERSION = 2
 OWNED_BUILD_ROOT=Path(__file__).resolve().parents[1]/'build'
 OWNED_PROCESS_EXIT_TIMEOUT = 30
@@ -2721,10 +2722,15 @@ def prepare(
     fps_mod_enabled: bool = True,
     bind_staged_loader: bool = False,
     unit_package: Path | None = None,
+    capsule_package: Path | None = None,
     unit_scenario: dict | None = None,
     _owned_client_transfer: tuple[Path, str] | None = None,
 ) -> dict:
     client_template = client_template.resolve()
+    capsule_binding=None
+    if capsule_package is not None:
+        try:capsule_binding=capsule_packages.validate(capsule_package,stage)
+        except (OSError,ValueError) as error:raise GameTestError(str(error)) from error
     unit_payload=None
     if unit_package is not None:
         unit_package=Path(unit_package).resolve()
@@ -3045,7 +3051,11 @@ def prepare(
             client, stage, extra_mods, disabled_mods,
             fps_mod_enabled=fps_mod_enabled if fps_only else None,
             bind_staged_loader=bind_staged_loader,
-            skip_staged_mods=('unit_catalog',) if unit_payload is not None else ())
+            skip_staged_mods=tuple(name for name,selected in
+                (('unit_catalog',unit_payload is not None),('capsule_catalog',capsule_binding is not None)) if selected))
+        capsule_install=None
+        if capsule_binding is not None:
+            capsule_install=capsule_packages.install(capsule_binding,client)
         unit_install=None
         if unit_payload is not None:
             # Install authored data through the ordinary trusted installer
@@ -3133,6 +3143,7 @@ def prepare(
         if unit_payload is not None:
             metadata['unit_package']={'path':str(unit_package),'sha256':hashlib.sha256(unit_payload).hexdigest(),
                                       'bytes':len(unit_payload),'revision':unit_install['receipt']['revision']}
+        if capsule_install is not None:metadata['capsule_package']=capsule_install
         if server_session is not None:
             metadata['server_session']=server_session
         if shared_assets:
