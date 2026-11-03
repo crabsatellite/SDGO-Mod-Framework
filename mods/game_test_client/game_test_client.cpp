@@ -1,6 +1,7 @@
 #include "quiet_sockets.h"
 #include "quiet_audio.h"
 #include "quiet_graphics.h"
+#include "quiet_wait_room_messages.h"
 #include "../game_test_shared/runner.h"
 #include "native_actions.h"
 #include "channel_actions.h"
@@ -38,6 +39,7 @@
 #include "battle_ai_behavior_probe.h"
 #include "native_death_probe.h"
 #include "native_player_combat_probe.h"
+#include "native_data_guard_probe.h"
 #include "sealed_room_title.h"
 #include <cwchar>
 #include <array>
@@ -83,6 +85,8 @@ AiCatalogActions aiCatalog;
 StorageTestActions storage;
 CapsuleCatalogActions capsules;
 BattleCombatActions battleCombat;
+NativeDataGuardProbe nativeDataGuardProbe;
+QuietWaitRoomMessages quietWaitRoomMessages;
 CapsuleDrawActions collection;
 UnitSelectActions unitSelection;
 ActiveSelectionObserver activeSelection;
@@ -97,6 +101,7 @@ SdgoMissionAiClientGetSnapshotV1Fn getMissionSnapshot=nullptr;
 uint64_t playUnitUid=0;
 bool collectionDraw=false;
 bool collectionPreviewOnly=false;
+uint32_t collectionExpectedStatus=0;
 std::vector<SdgoHangarGameTestUnitV1> collectionBeforeUnits;
 const void* roomListVtable=nullptr;
 const void* modalLoadingVtable=nullptr;
@@ -154,6 +159,7 @@ UnitAcquisitionActions unitAcquisition;
 UnitAcquisitionActions::Config unitAcquisitionConfig{};
 void PublishQuietSocketReceipt(bool force=false);
 bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false, pagesOnly = false, friendsOnly = false;
+bool hangarPagesOnly = false;
 uint64_t deckUnitUids[4]{};
 char giftRecipient[17]{};
 uint32_t giftSenderPilot = 0, giftRecipientPilot = 0, giftCount = 0, giftSent = 0;
@@ -198,6 +204,9 @@ bool LoadPlan() {
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
     collectionPreviewOnly=GetPrivateProfileIntW(L"settings",L"CollectionPreviewOnly",0,
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
+    collectionExpectedStatus=GetPrivateProfileIntW(L"settings",L"CollectionExpectedStatus",0,
+        (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str());
+    if(collectionExpectedStatus!=0 && collectionExpectedStatus!=6040)return false;
     const std::wstring acquisitionIni=sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini";
     auto capsuleTarget=collection.ExpectedTarget();
     capsuleTarget.machine=GetPrivateProfileIntW(L"settings",L"CapsulePreviewMachine",capsuleTarget.machine,acquisitionIni.c_str());
@@ -259,6 +268,13 @@ bool LoadPlan() {
     if(testShopCatalog && (!pagesOnly || wcscmp(shopAssertions,L"inputs/shop-assertions.ini") ||
         wcscmp(shopDisplay,L"inputs/shop-runtime-display.ini")))return false;
     collectionDraw=GetPrivateProfileIntW(L"run",L"collection_draw",0,job.c_str())!=0;
+    wchar_t pageGroup[16]{};
+    const auto pageGroupChars=GetPrivateProfileStringW(L"run",L"page_group",L"",pageGroup,16,job.c_str());
+    if(pageGroupChars) {
+        if(pageGroupChars>=15 || wcscmp(pageGroup,L"hangar") || !pagesOnly || testShopCatalog || collectionDraw ||
+           collectionPreviewOnly || testUnitPresentations || captureUnitPortraits || unitAcquisitionConfig.machine_kind)return false;
+        hangarPagesOnly=true;
+    }
     if(collectionDraw && !pagesOnly)return false;
     if(collectionPreviewOnly && (!pagesOnly || collectionDraw))return false;
     if(activityDrawOnce && (!unitPagesOnly || !collectionPreviewOnly || collectionDraw || !testUnitPresentations))return false;
@@ -467,6 +483,7 @@ int __cdecl Bootstrap(const SdgoGameTestContextV1* context) {
     }
     context->Assert(GetCurrentThreadId() == mainThread, "test polling runs on the observed original app-update thread");
     context->Observe("the original client update reached the login stage without supplied game data or an application-state write");
+    if (!nativeDataGuardProbe.Run(sdgo_test::api, sdgo_test::mod, context)) return SDGO_GAME_TEST_FAIL;
     return SDGO_GAME_TEST_PASS;
 }
 int __cdecl Login(const SdgoGameTestContextV1* context) {
@@ -1613,7 +1630,8 @@ int __cdecl ReadCapsuleCatalog(const SdgoGameTestContextV1* context) {
     context->Assert(ready,acquisition
         ? "the isolated acquisition profile matches every declared native table, including explicitly empty tables, with exact row identities"
         : "all five configured capsule tables are registered in the actual native grid with exact counts and row identities");
-    if(!acquisition)context->Assert(state.collection_machine==990001 && state.collection_price==100000,"the collection machine has its original 100000 GP price in the real client registry");
+    if(!acquisition)context->Assert(state.collection_machine==990001 && state.collection_price>0,
+        "the collection machine has the configured positive GP price in the verified native registry");
     return ready?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
 }
 int __cdecl ReadCapsuleCurrency(const SdgoGameTestContextV1* context) {
@@ -1640,6 +1658,15 @@ int __cdecl ReadCapsuleCurrency(const SdgoGameTestContextV1* context) {
 }
 int ReadShopReady(const SdgoGameTestContextV1* context) {
     const auto state=actions.OnboardingState();
+    static NativeActions::OnboardingObservation previous{};
+    static bool observed=false;
+    if(!observed || memcmp(&state,&previous,sizeof(state))!=0) {
+        char message[224]{};
+        sprintf_s(message,"native shop readiness app=%u login=%u pilot=%u tutorial=%u path=%u pending=%u",
+            state.native_app_state,state.native_login_state,state.profile_pilot_id,state.tutorial_level,
+            state.login_path_state,state.pending_login_event_count);
+        context->Observe(message);previous=state;observed=true;
+    }
     if(!state.profile_pilot_id || state.tutorial_level<2 ||
        (state.native_app_state!=5 && state.native_app_state!=6))return SDGO_GAME_TEST_WAIT;
     if(!authenticatedPilot)authenticatedPilot=state.profile_pilot_id;
@@ -1706,7 +1733,7 @@ int ReadShopCatalog(const SdgoGameTestContextV1* context) {
         capturedBuy=state.buy_previews;capturedGift=state.gift_previews;
         capturedFailure=failed?result:ShopCatalogActions::kComplete;
         char message[128]{};sprintf_s(message,"native shop visual checkpoint result=%s product=%u",ShopCatalogActions::ResultName(result),state.product_id);context->Observe(message);
-        if(failed) {char info[160]{};sprintf_s(info,"native shop failed details: options=%u nativeNameChars=%u visibleNameChars=%u first=%04X",state.native_page_options,static_cast<unsigned>(state.native_name.size()),static_cast<unsigned>(state.visible_name.size()),state.visible_name.empty()?0u:static_cast<unsigned>(state.visible_name[0]));context->Observe(info);}
+        if(failed) {char info[192]{};sprintf_s(info,"native shop failed details: options=%u nativeNameChars=%u visibleNameChars=%u first=%04X art_phase=%u",state.native_page_options,static_cast<unsigned>(state.native_name.size()),static_cast<unsigned>(state.visible_name.size()),state.visible_name.empty()?0u:static_cast<unsigned>(state.visible_name[0]),state.art_phase);context->Observe(info);}
         if(failed) {char info[512]{};sprintf_s(info,"native popup title control=%u chars=%u codeunits:",state.popup_name_found,static_cast<unsigned>(state.popup_name.size()));for(size_t i=0;i<state.popup_name.size() && i<32;++i){char code[8]{};sprintf_s(code," %04X",static_cast<unsigned>(state.popup_name[i]));strcat_s(info,code);}context->Observe(info);}
         if(failed || state.hover_previews) {
             char info[192]{};sprintf_s(info,"native tooltip readback name=%u description=%u usage=%u pointer=%u/%u",static_cast<unsigned>(state.tooltip_name.size()),static_cast<unsigned>(state.tooltip_description.size()),static_cast<unsigned>(state.tooltip_usage.size()),state.pointer_position_reads,state.pointer_state_reads);context->Observe(info);
@@ -1800,6 +1827,10 @@ int CollectionResult(const SdgoGameTestContextV1* context,CapsuleDrawActions::Re
             static_cast<unsigned long long>(s.dropbox_serial),s.reward_item_category,s.reward_amount,s.remaining_gp);
         context->Observe(message);previous=result;reply=s.acknowledgement_sequence;
     }
+    // The original World maps a nonzero activity SQL return to wire status
+    // 6040. An isolated SQL comparison must separately establish quota/refund.
+    if(result==CapsuleDrawActions::kServerRejected && collectionExpectedStatus==6040 &&
+       s.result_reply_status==6040 && s.original_reply_completed)return SDGO_GAME_TEST_WAIT;
     if(result>=CapsuleDrawActions::kMachineServiceMismatch || result==CapsuleDrawActions::kUnbound) {
         context->Assert(0,"activity capsule native action/reply identity is valid and no failed purchase is retried");return SDGO_GAME_TEST_FAIL;
     }
@@ -1829,6 +1860,8 @@ int __cdecl PreviewCollection(const SdgoGameTestContextV1* context) {
     const auto expected=collection.ExpectedTarget();
     context->Assert(s.target_machine==expected.machine && s.target_price==expected.price && s.preview_ready && !s.buy_attempted,
         "original activity controls selected the configured native machine and verified its own currency/price confirmation without purchasing");
+    if(expected.machine==990001)context->Assert(s.target_price>0 && s.target_price==capsules.State().collection_price,
+        "collection confirmation uses the current native catalog price");
     context->Assert(!s.buy_submitted && !s.request_transport_sequence,
         "the preview has not submitted an activity-capsule purchase transport");
     return SDGO_GAME_TEST_PASS;
@@ -1838,6 +1871,19 @@ int __cdecl DrawCollection(const SdgoGameTestContextV1* context) {
     auto result=state.buy_attempted?collection.Poll():collection.DrawOnce();
     if(result==CapsuleDrawActions::kResultReady || result==CapsuleDrawActions::kClosingResult)result=collection.CloseResult();
     const int pending=CollectionResult(context,result);if(pending==SDGO_GAME_TEST_FAIL)return pending;
+    if(collectionExpectedStatus==6040) {
+        state=collection.State();
+        if(state.acknowledgement_sequence || state.dropbox_serial || state.reward_amount) {
+            context->Assert(0,"an exhausted quota must reject the purchase instead of delivering a prize");
+            return SDGO_GAME_TEST_FAIL;
+        }
+        if(result!=CapsuleDrawActions::kServerRejected)return SDGO_GAME_TEST_WAIT;
+        context->Assert(state.buy_submitted && state.request_opcode==0x05D3 && state.request_size==10 &&
+            state.result_reply_status==6040 && state.original_reply_completed &&
+            !state.acknowledgement_sequence && !state.dropbox_serial && !state.reward_amount,
+            "one genuine native collection purchase was rejected by the configured quota with no prize acknowledgement");
+        return SDGO_GAME_TEST_PASS;
+    }
     if(result!=CapsuleDrawActions::kComplete)return SDGO_GAME_TEST_WAIT;
     state=collection.State();
     context->Assert(state.buy_attempted && state.buy_submitted && state.request_opcode==0x05D3 && state.request_size==10 &&
@@ -1847,6 +1893,13 @@ int __cdecl DrawCollection(const SdgoGameTestContextV1* context) {
     return SDGO_GAME_TEST_PASS;
 }
 int __cdecl DeliverCollection(const SdgoGameTestContextV1* context) {
+    if(collectionExpectedStatus==6040) {
+        const auto state=collection.State();
+        context->Assert(state.result_reply_status==6040 && state.original_reply_completed &&
+            !state.dropbox_serial && !state.reward_item_category && !state.reward_amount,
+            "an exhausted-quota rejection has no collection prize to claim");
+        return SDGO_GAME_TEST_PASS;
+    }
     static uint32_t stage=0;static bool clicked=false;
     if(stage==0) {
         if(actions.AppState()==6) { if(!storage.Bind()){context->Assert(0,"native storage export binding remains available");return SDGO_GAME_TEST_FAIL;}stage=1;clicked=false; }
@@ -2395,7 +2448,20 @@ int __cdecl FriendFlow(const SdgoGameTestContextV1* context) {
         }
         return SDGO_GAME_TEST_WAIT;
     }
-    return friendSession.Poll(context);
+    const auto result=friendSession.Poll(context);
+    const auto cohort=pvpSession.State();
+    if(cohort.battle_seen) {
+        SdgoPvpAiClientSnapshotV1 live{};
+        if(!cohort.settled && Snapshot(live) && live.native_app_state==22 &&
+           live.received_battle_start_count==cohort.start_sequence &&
+           live.profile_pilot_id==cohort.pilot && live.human_participant_count==cohort.humans) {
+            SdgoPvpAiClientStartStatusV1 control{};
+            control.size=sizeof(control);control.version=SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
+            if(getStartStatus)getStartStatus(&control);
+            if(!nativePlayerCombat.Poll(context,live,control,scoreboardInput))return SDGO_GAME_TEST_FAIL;
+        } else if(cohort.settled)nativePlayerCombat.Finish(context,scoreboardInput);
+    }
+    return result;
 }
 void RegisterPlannedCases() {
     if (fpsOnly) {
@@ -2429,6 +2495,10 @@ void RegisterPlannedCases() {
     if (pagesOnly) {
         plannedCases.assign(realCases,realCases+3);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
+        if(hangarPagesOnly) {
+            plannedCases.insert(plannedCases.end(),std::begin(pageCases),std::begin(pageCases)+3);
+            provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+        }
         if(testShopCatalog && shopVisualOnly) {
             plannedCases.assign(realCases,realCases+2);
             plannedCases.push_back(shopReadyCase);
@@ -2672,7 +2742,8 @@ SDGO_MOD_ENTRY {
         // DLLs have their own import tables. Observe every dialog in this
         // isolated test process so a Mod cannot leak a desktop prompt while
         // the runner waits for its assertion failure.
-        if (api->size < offsetof(SdgoApi,HookSystemExport)+sizeof(api->HookSystemExport) || !api->HookSystemExport ||
+        if (!quietWaitRoomMessages.Install(api,mod) ||
+            api->size < offsetof(SdgoApi,HookSystemExport)+sizeof(api->HookSystemExport) || !api->HookSystemExport ||
             !quietAudio.Install(api,mod) || (quietLoopback && !quietSockets.Install(api,mod)) ||
             !api->HookSystemExport(mod,L"user32.dll","MessageBoxW",reinterpret_cast<void*>(&QuietMessageBoxW),reinterpret_cast<void**>(&originalMessageBoxW)) ||
             !api->HookSystemExport(mod,L"user32.dll","MessageBoxA",reinterpret_cast<void*>(&QuietMessageBoxA),reinterpret_cast<void**>(&originalMessageBoxA)))return 0;
@@ -2760,6 +2831,7 @@ SDGO_MOD_ENTRY {
         return 0;
     const bool namedProxyAllowed=fpsOnly ||
         (quietLoopback&&verifyDirectNetwork&&!verifyRoutedNetwork&&!missionMode);
+    if (verifyQuietRuntime && !quietWaitRoomMessages.Install(api,mod))return 0;
     if (verifyQuietRuntime && !quietGraphics.Install(api,mod,namedProxyAllowed))return 0;
     PublishQuietSocketReceipt();
     api->Log(mod, SDGO_LOG_INFO, fpsOnly ? "observing native FPS cap and cadence without authentication":"observing normal launcher/login/room/battle flow");

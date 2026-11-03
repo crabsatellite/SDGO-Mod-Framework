@@ -30,12 +30,15 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Input method freeze fix <!-- catalog: `findwindow_fix` --> | Stop input methods such as iFlytek from freezing or crashing the repack client | [Use](docs/findwindow-fix.md) |
 | Startup crash fix <!-- catalog: `startup_crash_fix` --> | Stop random crashes on the loading screen at game start | [Use](docs/startup-crash-fix.md) |
 | Wait-room window initialization guard <!-- catalog: `waitroom_window_fix` --> | Keep window icon queries safe while a room view is attaching | [Use](docs/waitroom-window-fix.md) |
+| Native battle data guards <!-- catalog: `native_data_guard` --> | Guard funnel mount indices, missing display names and optional transform metadata | [Use](docs/native-data-guard.md) |
+| Native login recovery <!-- catalog: `login_recovery` --> | Complete authenticated old-session cleanup and retry login once on WorldServer | [Use](docs/login-recovery.md) |
 | Apsalus III transform input fix <!-- catalog: `transform_input_fix` --> | Release the native transform lock when a form has no transform animation | [Use](docs/transform-input-fix.md) |
 | Agent relay log fix <!-- catalog: `agent_relay_log_fix` --> | Fix an Agent relay log that reads invalid memory | [Use](docs/agent-relay-log-fix.md) |
 | Battle rank regression fix <!-- catalog: `rank_progression_fix` --> | Stop battle settlement from lowering a pilot's rank (WorldServer) | [Use](docs/rank-progression-fix.md) |
-| Friend list fix <!-- catalog: `friend_list_fix`, `friend_list_client_fix` --> | Retain offline friends and current names; restore the built-in messenger UI | [Use](docs/friend-list-fix.md) |
+| Friend list fix <!-- catalog: `friend_list_fix`, `friend_list_client_fix` --> | Retain offline friends and Chinese names through status updates; restore the built-in messenger UI | [Use](docs/friend-list-fix.md) |
 | New-account starter profile <!-- catalog: `new_account_profile` --> | Configurable starting GP, cash, rank and unit gifts instead of the stock 9,999,999 / rank 15 | [Use](docs/new-account-profile.md) |
 | Shop rental and Unicode labels <!-- catalog: `shop_labels` --> | Readable rental/permanent labels, numeric quantities and Chinese shop options | [Use](docs/shop-labels.md) |
+| Chinese shop artwork labels <!-- catalog: `shop_art_localization` --> | Translate rank text baked into supported paint artwork | [Use](docs/shop-art-localization.md) |
 
 <!-- /mod-category:fixes -->
 
@@ -45,22 +48,23 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 
 | Feature | Overview | Documentation |
 |---|---|---|
+| Announcements <!-- catalog: `announcements` --> | Schedule login and in-game notices with event triggers and display limits | [Use](docs/announcements.md) |
 | Mission AI wingmen <!-- catalog: `coop_ai`, `mission_ai` --> | `!ai` in a co-op room title adds AI wingmen to the team | [Use](docs/coop-wingmen.md) |
 | PvP AI <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` in a room title adds AI opponents and teammates; optionally group all humans, fill both sides, fill opponents only or add exact counts | [Use](docs/pvp-ai.md) |
 | AI mech catalog (separate addon) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools | [Use](docs/ai-catalog.md) |
-| Battle contribution rewards <!-- catalog: `battle_rewards` --> | GB/MB from battle contribution, supervised wallet delivery and historical GB compensation | [Use](docs/battle-rewards.md) |
-| Collection capsule <!-- catalog: `collection_capsule` --> | 100,000 GP activity machine that fills missing catalog units first | [Use](docs/collection-capsule.md) |
+| Battle contribution rewards <!-- catalog: `battle_rewards` --> | Contribution GB/MB, configurable human multipliers and optional per-account gathering rewards | [Use](docs/battle-rewards.md) |
+| Collection capsule <!-- catalog: `collection_capsule` --> | Missing-unit activity machine with configurable price and successful-draw limits; 15 per week by default | [Use](docs/collection-capsule.md) |
 | Per-round random loadouts <!-- catalog: `room_random`, `room_random_client` --> | `!rand` in a room title draws each player's unit or deck from their own hangar every round | [Use](docs/room-random.md) |
 | FPS cap <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed | [Use](docs/fps-limit.md) |
 | Extended room titles <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Enter up to 128 characters in normal, AI, team and mission room creation, settings and rename controls | [Use](docs/room-titles.md) |
-| Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Easy / Medium / Hard for PvP AI, chosen in the room title | [Use](docs/battle-ai.md) |
+| Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Room-selected Easy / Medium / Hard; live perception, pursuit and native weapon handoff | [Use](docs/battle-ai.md) |
 | Automatic hangar capacity <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) | [Use](docs/hangar-capacity.md) |
-| Hangar manager <!-- catalog: `hangar_manager` --> | One-click sorting and duplicate exchange on the unit-management page, with server-side GB batches | [Use](docs/hangar-manager.md) |
+| Hangar manager <!-- catalog: `hangar_manager` --> | Native-page sorting and duplicate exchange, server-side GB batches, and no repeated closed-panel rendering | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager <!-- catalog: `operator_catalog` --> | Five free supply officers, plus operator names, portraits and drops | [Use](docs/operator-assistant.md) |
 | Capsule catalog editor <!-- catalog: `capsule_catalog` --> | Create, edit and retire capsule machines, pools, prices and weights in the Manager | [Use](docs/capsule-catalog.md) |
 | Daily double rewards <!-- catalog: `daily_rewards` --> | Double battle GB and EXP in a daily window (default 18:00–22:00) | [Use](docs/daily-rewards.md) |
 | Storage claim all <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation | [Use](docs/storage-claim.md) |
-| Chinese shop localization and search <!-- catalog: `shop_localization` --> | Translate shop names, descriptions and options; search by Chinese name combined with rank and payment filters | [Use](docs/shop-localization.md) |
+| Chinese shop localization and search <!-- catalog: `shop_localization` --> | Translate shop names, descriptions, options and paint-page unit previews; search by Chinese name combined with rank and payment filters | [Use](docs/shop-localization.md) |
 | Friend unit gifts (optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Give an owned unit to a friend as-is; the friend accepts or returns it in Storage. Off until the owner enables it | [Use](docs/friend-unit-gift.md) |
 | Unit family import (Beta) <!-- catalog: `unit_catalog` --> | Import units and portable metadata/artwork, complete paired definitions, and author dedicated activity pools with GP or token presets in Mod Manager | [Use](docs/unit-import.md) |
 

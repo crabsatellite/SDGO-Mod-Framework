@@ -1193,6 +1193,16 @@ rva=state
             self.assertFalse(game_test.allow_named_desktop_fallback(changed))
         self.assertTrue(game_test.allow_named_desktop_fallback({'suite':game_test.FPS_SUITE}))
 
+    def test_coordinated_native_sessions_share_the_same_named_desktop_admission(self):
+        run_dir=self.prepare('named-cohort-scope');meta=self.metadata(run_dir)
+        meta['suite']='native-friends';meta['plan']['friends_only']=True
+        self.assertTrue(game_test.allow_named_desktop_fallback(meta))
+        for field,value in (('friends_only',False),('target_host','203.0.113.5'),
+                            ('network_policy','preserve'),('quiet',False)):
+            changed=copy.deepcopy(meta);changed['plan'][field]=value
+            with self.subTest(field=field):
+                self.assertFalse(game_test.allow_named_desktop_fallback(changed))
+
     def test_owned_exit_wait_accepts_delayed_signal_but_not_a_still_live_process(self):
         process=mock.Mock();process.poll.side_effect=[None,1]
         process.wait.side_effect=[game_test.subprocess.TimeoutExpired(['owned-game'],10),1]

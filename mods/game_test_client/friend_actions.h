@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -1593,6 +1594,7 @@ private:
         FriendActions* actions = active_;
         if (!actions || !actions->messengerDispatch_)
             return 0;
+        const auto previous = actions->observation_;
         const DWORD incomingError = GetLastError();
         const uint16_t normalized =
             static_cast<uint16_t>(opcode);
@@ -1725,6 +1727,22 @@ private:
             actions->ReplyMatchesActiveCommand(normalized))
             ++actions->matchedReplySequence_;
         actions->RefreshPassiveState();
+        for (unsigned i=0;i<(std::min)(previous.friend_count,16u);++i) {
+            for (unsigned j=0;j<(std::min)(actions->observation_.friend_count,16u);++j) {
+                const auto& before=previous.friends[i];
+                const auto& after=actions->observation_.friends[j];
+                if (before.pilot_id==after.pilot_id &&
+                    std::strcmp(before.nickname,after.nickname) && actions->api_->Log) {
+                    actions->api_->Log(actions->mod_,SDGO_LOG_INFO,
+                        "native friend nickname change opcode=%04X pilot=%u before_bytes=%u after_bytes=%u before_question=%u after_question=%u",
+                        normalized,after.pilot_id,
+                        static_cast<unsigned>(std::strlen(before.nickname)),
+                        static_cast<unsigned>(std::strlen(after.nickname)),
+                        std::strchr(before.nickname,'?')?1u:0u,
+                        std::strchr(after.nickname,'?')?1u:0u);
+                }
+            }
+        }
         SetLastError(nativeError);
         return result;
     }

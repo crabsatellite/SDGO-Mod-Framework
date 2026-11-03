@@ -56,6 +56,17 @@ static_assert(
 } // namespace
 
 int main() {
+    std::array<std::uint8_t,25> brief{};
+    brief[14]=12;brief[15]=1;
+    Check(NativeBriefAllowsGift(brief.data()),
+          "an equipped skill part is retained on a giftable developed unit");
+    for (const std::size_t offset:{16u,17u,18u}) {
+        brief[offset]=1;
+        Check(!NativeBriefAllowsGift(brief.data()),
+              "fleet use, locking and time-limit state still prevent gifting");
+        brief[offset]=0;
+    }
+    Check(!NativeBriefAllowsGift(nullptr),"a missing native brief is not a selectable instance");
     Check(
         LocalInventoryEffect(
             Command::offer,
@@ -100,12 +111,12 @@ int main() {
             nullptr, &profilePointer, &context),
         "a missing native app rejects the probe");
     Put<std::uint32_t>(app.data(), 0x4A0, 4);
-    Put<std::uint32_t>(profile.data(), 0x138, 6228);
+    Put<std::uint32_t>(profile.data(), 0x138, 41001);
     Check(
         !ReadAuthenticatedContext(
             app.data(), &profilePointer, &context) &&
             context.app_state == 4 &&
-            context.pilot_id == 6228,
+            context.pilot_id == 41001,
         "a pre-menu app state rejects the probe");
     Put<std::uint32_t>(app.data(), 0x4A0, 5);
     Put<std::uint32_t>(profile.data(), 0x138, 0);
@@ -119,12 +130,12 @@ int main() {
             app.data(), &profilePointer, &context),
         "a missing authenticated profile rejects the probe");
     profilePointer = profile.data();
-    Put<std::uint32_t>(profile.data(), 0x138, 6228);
+    Put<std::uint32_t>(profile.data(), 0x138, 41001);
     Check(
         ReadAuthenticatedContext(
             app.data(), &profilePointer, &context) &&
             context.app_state == 5 &&
-            context.pilot_id == 6228,
+            context.pilot_id == 41001,
         "an authenticated native menu accepts the probe");
     Put<std::uint32_t>(app.data(), 0x4A0, 29);
     Check(

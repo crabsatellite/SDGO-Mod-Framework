@@ -623,7 +623,7 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                     for key,value in previous.items('settings',raw=True):updated['settings'][key]=value
                 game_test.write_ini(target_manifest,updated)
                 for file in source_manifest.parent.iterdir():
-                    if file.is_file() and file.suffix.lower() in ('.dll','.lua'):
+                    if file.is_file() and (file.suffix.lower() in ('.dll','.lua') or file.name=='symbols.fragment.ini'):
                         shutil.copy2(file,target_folder/file.name)
                 manifests.append(target_manifest)
             symbols=owned_folder/'sdgo/symbols'

@@ -6,6 +6,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <vector>
 #include "boss_catalog.h"
 #include "runtime_state.h"
 
@@ -14,17 +15,26 @@ struct WalletHealth {
     bool healthy = false;
     std::string scope, revision, error;
 };
+struct WalletBinding {
+    bool valid=false;
+    std::string scope,error;
+};
 struct WalletJob {
     std::string match_id, plan_hash, policy_revision, scope;
     uint32_t account = 0, mb = 0;
     uint64_t completed_unix = 0;
     uint32_t active_seconds = 0;
     bool contributed = false;
+    struct Attendance {uint32_t active_seconds=0;bool contributed=false;};
+    std::string mode;
+    std::vector<Attendance> participants;
 };
 struct WalletReceipt {
     uint32_t historical_post_mb = 0, current_mb = 0;
     uint64_t published_unix = 0;
     bool already_applied = false;
+    bool has_current_gb=false;
+    uint32_t current_gb=0;
 };
 
 namespace job_detail {
@@ -87,6 +97,10 @@ inline bool Read(const std::filesystem::path& path, const char* section,
     *result = std::move(values); return true;
 }
 inline bool Valid(const WalletJob& job) {
+    if (!job.mode.empty()) {
+        if ((job.mode!="pvp" && job.mode!="pve") || !job.completed_unix || job.participants.empty() || job.participants.size()>12)return false;
+        for(const auto& p:job.participants)if(p.active_seconds>86400)return false;
+    } else if(!job.participants.empty())return false;
     if (job.match_id.empty() || job.match_id.size() > 128 || !job.account || job.account >= 0x80000000u ||
         (!job.mb && !job.completed_unix) || job.mb >= 0x80000000u || !Hex(job.plan_hash, 64) || !Hex(job.policy_revision, 64) || !Scope(job.scope) ||
         job.active_seconds > 86400 || job.completed_unix > 253402214400ULL ||
@@ -97,11 +111,14 @@ inline bool Valid(const WalletJob& job) {
     return true;
 }
 inline std::string Serialize(const WalletJob& job) {
-    return std::string("[reward]\r\nSchemaVersion=") + (job.completed_unix ? "2" : "1") + "\r\nMatchId=" + job.match_id + "\r\nAccountNumber=" + std::to_string(job.account) +
+    std::string attendance;
+    for(const auto& p:job.participants){if(!attendance.empty())attendance+=",";attendance+=std::to_string(p.active_seconds)+":"+(p.contributed?"1":"0");}
+    return std::string("[reward]\r\nSchemaVersion=") + (!job.mode.empty()?"3":job.completed_unix ? "2" : "1") + "\r\nMatchId=" + job.match_id + "\r\nAccountNumber=" + std::to_string(job.account) +
         "\r\nPlanHash=" + job.plan_hash + "\r\nMb=" + std::to_string(job.mb) + "\r\nPolicyRevision=" + job.policy_revision +
         "\r\nExpectedScope=" + job.scope + "\r\n" + (job.completed_unix ?
         "CompletedUnix=" + std::to_string(job.completed_unix) + "\r\nActiveSeconds=" + std::to_string(job.active_seconds) +
-        "\r\nContributed=" + (job.contributed ? "1" : "0") + "\r\n" : "");
+        "\r\nContributed=" + (job.contributed ? "1" : "0") + "\r\n" : "")+
+        (!job.mode.empty()?"Mode="+job.mode+"\r\nParticipants="+attendance+"\r\n":"");
 }
 }
 
@@ -117,11 +134,31 @@ inline WalletHealth ReadWalletHealth(const std::filesystem::path& runtime) {
     const auto now = job_detail::UnixNow();
     if (!job_detail::UInt(values["HeartbeatUnix"], UINT64_MAX, &heartbeat) || heartbeat > now + 5 ||
         now > heartbeat + 15 || values["Healthy"] != "1" || !job_detail::Scope(result.scope) ||
-        result.revision != "sdgo-native-gc-ledger-v2") {
+        (result.revision != "sdgo-native-gc-ledger-v3" && result.revision != "sdgo-native-gc-ledger-v2")) {
         if (result.error.empty()) result.error = "wallet worker heartbeat is stale or invalid";
         return result;
     }
     result.healthy = true; return result;
+}
+
+// The producer needs the verified ledger identity, not a continuously running
+// consumer. Pending native jobs remain durable while Manager/SQL reconnects.
+// This binding is published only after a real worker verifies its SQL scope;
+// a different database cannot silently rebind an existing outbox.
+inline WalletBinding ReadWalletBinding(const std::filesystem::path& runtime) {
+    WalletBinding result;
+    std::map<std::string,std::string> values;
+    std::error_code file_error;
+    const bool exists=std::filesystem::exists(runtime/L"wallet-binding.ini",file_error);
+    if(!exists&&!file_error) {
+        const auto legacy=ReadWalletHealth(runtime);
+        if(legacy.healthy){result.valid=true;result.scope=legacy.scope;return result;}
+    }
+    if(!job_detail::Read(runtime/L"wallet-binding.ini","binding",&values) ||
+       values["Protocol"]!="sdgo-native-wallet-scope-v1" || !job_detail::Scope(values["ScopeId"])) {
+        result.error="verified native wallet binding is unavailable";return result;
+    }
+    result.valid=true;result.scope=values["ScopeId"];return result;
 }
 
 inline bool WalletJobName(const WalletJob& job, std::string* name) {
@@ -163,6 +200,10 @@ inline bool ReadWalletReceipt(const std::filesystem::path& runtime, const Wallet
         !job_detail::UInt(value["PublishedUnix"], UINT64_MAX, &published) || (value["AlreadyApplied"] != "0" && value["AlreadyApplied"] != "1"))
         return fail("wallet receipt amount/time fields are invalid");
     *result = {static_cast<uint32_t>(before), static_cast<uint32_t>(current), published, value["AlreadyApplied"] == "1"};
+    if(value.find("CurrentGb")!=value.end()){
+        uint64_t gp=0;if(!job_detail::UInt(value["CurrentGb"],2147483647,&gp))return fail("invalid current GP balance");
+        result->has_current_gb=true;result->current_gb=static_cast<uint32_t>(gp);
+    }
     if (error) error->clear();
     return true;
 }

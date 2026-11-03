@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gift_policy.h"
+#include "server_epoch.h"
 
 #include "sdgo/friend_unit_gift_protocol.h"
 

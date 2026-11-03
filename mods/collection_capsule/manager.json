@@ -9,7 +9,7 @@
   ],
   "provider": "collection_capsule",
   "presentation": "configurable",
-  "description": "活动扭蛋机：100,000 GP，先补未解锁图鉴，图鉴全解锁后补当前机库缺少的初始机体。C/B/A/S 权重35/30/20/15。",
+  "description": "活动收藏扭蛋：默认100,000 GP、每周15次，可集中使用。价格、周期、限额和海报由Manager配套生成；优先补图鉴，再补机库。",
   "mechanism": "World Mod 自动维护最小图鉴解锁标记，候选来自可用数据库初始机体，允许没有原生图鉴条目的新内容。未领取奖品视为已在手；安装或更新通过 Manager 自动建表迁移，不要求玩家运行 SQL。",
   "settings": [
     {

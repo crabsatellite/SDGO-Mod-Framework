@@ -20,12 +20,35 @@ The `0x04B3` friend-list response starts its 56-byte entries at packet
 
 The initial response handler caches every accepted-friend row, including
 presence `0`. Later updates match the stable identity and remove a row only
-when its relationship is no longer accepted. Presence notifications update
-the same row without clearing its identity or nickname.
+when its relationship is no longer accepted. Presence notifications match the
+same identity and can also overwrite its nickname.
 
 The client therefore expects the server to return an offline friend with the
 real identity and nickname and numeric zero presence. A complete offline row
 is displayable without a client list filter.
+
+## Lossy presence-name updates
+
+Opcode `0x0854` carries a byte count at offset `6`, followed by `0x30`-byte
+records at offset `7`. The messenger dispatcher's accepted-friend path calls
+`0x0062F8A0` for a matching cached identity. That updater copies the encoded
+nickname at `+0x0A` and rebuilds its wide display string at cached offset
+`+0x38`. A name already reduced to question marks therefore overwrites a
+previously valid list entry as soon as the next status list arrives.
+
+Client 1.1.2 hooks this friend-record updater. When both identities are equal
+and nonzero, both names are terminated within 17 bytes, the cached name is
+nonempty and complete, and the incoming name contains a question mark, it
+passes a local copy of the native status row with only the known name restored.
+The original routine continues to apply relationship, presence and location
+fields and regenerate the display string. Complete new names use the original
+argument directly. The received packet is never rewritten.
+
+The entry signature and thiscall `RET 4` are pinned to the supported executable.
+The production-DLL fixture checks the actual hook and trampoline, native result,
+identity isolation, normal rename forwarding, unchanged packet bytes and every
+non-name status byte. This hook does not own the messenger dispatcher or the
+shared string-assignment function.
 
 ## Conversation opener defect
 

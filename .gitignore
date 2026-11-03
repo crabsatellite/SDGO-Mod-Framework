@@ -1,5 +1,6 @@
 # Build output (the staged game tree lives in build/stage/<config>)
 build/
+**/local-mods/
 
 # Compiled binaries
 *.dll

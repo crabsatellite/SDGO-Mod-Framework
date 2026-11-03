@@ -3,9 +3,10 @@
 This client Mod owns every player-visible part of friend unit gifts:
 
 - a capability-gated entry in the native friend context menu;
-- a tracked native `1261` composer clone for unit selection, Unicode note and
-  explicit confirmation;
-- a separate custom-unit view in the native Storage page;
+- native unit management and its double-click event for owned-instance selection;
+- the native `1238` unit-acquisition card for review, an optional Unicode note
+  and explicit confirmation;
+- the original Storage unit-entry widgets, with notes shown in unit information;
 - received/returned pagination with accept, return, take-back and provenance
   actions;
 - packet correlation, timeout handling and same-request receipt lookup when a

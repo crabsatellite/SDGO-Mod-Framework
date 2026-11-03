@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "shop_art_localization",
+  "title": "商城图片文字汉化",
+  "category": "fixes",
+  "hosts": [
+    "client"
+  ],
+  "settings": [],
+  "description": "覆盖已核实涂装罐图片中的泰文军衔提示，显示“上士及以上”。",
+  "mechanism": "独立客户端 Mod。只在商品行原生图片实际使用 sprs/17825.spr 时，于同一商城原生对话框追加输入禁用的背景和文字 child；保留罐体、箭头、价格、真实购买门槛与未知图片。背景使用原生实色矩形绘制，文字使用原生字体。切页、搜索、分类、空行及其他商品继续跟随原生行生命周期。需重启客户端生效。",
+  "presentation": "configurable"
+}

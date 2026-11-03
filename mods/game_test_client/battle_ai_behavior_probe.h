@@ -12,25 +12,31 @@ class BattleAiBehaviorProbe {
         float releaseX=0,releaseZ=0;
         uint64_t releaseShots=0;
         uint32_t casterState=0,casterPending=0,casterEndEvent=0,casterApplied=0,casterResult=0,casterReady=0,casterZeroCompletions=0;
+        uint64_t idleSince=0,idleReportedAt=0,lastObservedAt=0,maxIdleSampleGap=0;
     };
     struct Totals {
         uint64_t shots=0,attempts=0,zeroCompletions=0;
         uint64_t mobileDispatches=0,defensiveDispatches=0,backwardDispatches=0;
         uint32_t defenceFrames=0,defenceDisplacements=0,mobileGunFrames=0,defenceShots=0;
         uint32_t blockedDefenceFrames=0,specialDefenceFrames=0,neutralDefenceFrames=0,backwardShotFrames=0;
+        uint32_t targetFrames=0,movementFrames=0,attackFrames=0;
+        uint64_t maxIdleMs=0;
     };
     std::array<Unit,12> units_{};
     std::array<Totals,12> totals_{};
     uint32_t sequence_=0,captures_=0,recovered_=0,retreatShots_=0,pursuits_=0,frames_=0;
     SdgoBattleAiGetUnitSnapshotV1Fn get_=nullptr;
+    uint32_t expectedBots_=0;
 public:
     bool Observe(const SdgoGameTestContextV1* context,const SdgoPvpAiClientSnapshotV1& battle) {
-        if(!context->api->SettingInt(sdgo_test::mod,"BattleAiBehavior",0)) return true;
+        if(!context->api->SettingInt(sdgo_test::mod,"BattleAiBehavior",0) &&
+           !context->api->SettingInt(sdgo_test::mod,"BattleAiActivity",0)) return true;
         if(!get_) get_=reinterpret_cast<SdgoBattleAiGetUnitSnapshotV1Fn>(GetProcAddress(GetModuleHandleW(L"battle_ai.dll"),SDGO_BATTLE_AI_UNIT_OBSERVER_EXPORT));
         if(!get_) {context->Assert(0,"the candidate battle AI read-only observer is loaded");return false;}
         if(sequence_!=battle.received_battle_start_count) {
-            sequence_=battle.received_battle_start_count;units_={};totals_={};captures_=recovered_=retreatShots_=pursuits_=frames_=0;
+            sequence_=battle.received_battle_start_count;units_={};totals_={};captures_=recovered_=retreatShots_=pursuits_=frames_=0;expectedBots_=0;
         }
+        if(battle.bot_count>expectedBots_) expectedBots_=battle.bot_count;
         ++frames_;
         for(uint32_t i=0;i<battle.bot_count&&i<12;++i) {
             SdgoBattleAiUnitSnapshotV1 now{};now.size=sizeof(now);now.version=1;
@@ -38,6 +44,33 @@ public:
             auto& state=units_[i];const auto before=state.last;
             auto& total=totals_[i];
             const bool sameLife=before.object_id==now.object_id&&before.generation==now.generation;
+            const float activityDx=now.x-before.x,activityDz=now.z-before.z;
+            const bool moving=sameLife&&!now.control_blocked&&activityDx*activityDx+activityDz*activityDz>0.01f;
+            const bool attacking=now.attack_state==0x34||now.attack_state==0x5C||now.special_busy;
+            if(now.hp>0&&now.target_id) {
+                ++total.targetFrames;
+                if(moving) ++total.movementFrames;
+                if(attacking) ++total.attackFrames;
+            }
+            const uint64_t clock=GetTickCount64();
+            const bool freeIdle=sameLife&&now.hp>0&&now.ai_enabled&&now.target_visible&&
+                !now.control_blocked&&!now.special_busy&&now.attack_state==0x20&&!moving;
+            if(freeIdle) {
+                if(!state.idleSince) state.idleSince=clock;
+                if(state.lastObservedAt && clock-state.lastObservedAt>state.maxIdleSampleGap)
+                    state.maxIdleSampleGap=clock-state.lastObservedAt;
+                const auto elapsed=clock-state.idleSince;
+                if(elapsed>total.maxIdleMs) total.maxIdleMs=elapsed;
+                if(elapsed>=2000 && clock-state.idleReportedAt>=2000) {
+                    char detail[384];sprintf_s(detail,"native AI idle unit=%u elapsed=%llu sample_gap=%llu slot=%d target=%u distance=%.1f movement=%X/%X attack=%X/%X defence=%u moving=%u pos=%.1f,%.1f,%.1f shots=%llu attempts=%llu",
+                        now.object_id,static_cast<unsigned long long>(elapsed),static_cast<unsigned long long>(state.maxIdleSampleGap),
+                        now.selected_slot,now.target_id,now.target_distance,now.movement_state,now.movement_pending,
+                        now.attack_state,now.attack_pending,now.defence_moving,now.moving,now.x,now.y,now.z,
+                        static_cast<unsigned long long>(now.ranged_shots),static_cast<unsigned long long>(now.ranged_attempts));
+                    context->Observe(detail);state.idleReportedAt=clock;
+                }
+            } else {state.idleSince=0;state.idleReportedAt=0;state.maxIdleSampleGap=0;}
+            state.lastObservedAt=clock;
             const uint64_t shots=sameLife&&now.ranged_shots>=before.ranged_shots?now.ranged_shots-before.ranged_shots:now.ranged_shots;
             total.shots+=shots;
             total.attempts+=sameLife&&now.ranged_attempts>=before.ranged_attempts?
@@ -118,6 +151,20 @@ public:
         return true;
     }
     void Finish(const SdgoGameTestContextV1* context) const {
+        if(context->api->SettingInt(sdgo_test::mod,"BattleAiActivity",0)) {
+            uint32_t observed=0,active=0;
+            for(size_t i=0;i<units_.size();++i) {
+                if(!units_[i].last.object_id) continue;
+                ++observed;
+                const auto& total=totals_[i];
+                if(total.targetFrames&&(total.movementFrames||total.attackFrames||total.shots)&&total.maxIdleMs<10000) ++active;
+                char detail[224];sprintf_s(detail,"native AI activity unit=%u unit_data=%u target_frames=%u movement_frames=%u attack_frames=%u max_free_idle_ms=%llu",
+                    units_[i].last.object_id,units_[i].last.unit_id,total.targetFrames,total.movementFrames,total.attackFrames,
+                    static_cast<unsigned long long>(total.maxIdleMs));context->Observe(detail);
+            }
+            context->Assert(expectedBots_>0&&observed==expectedBots_&&active==expectedBots_,
+                "every AI acquired an opponent and moved or attacked, without ten seconds of free neutral idling against a visible target");
+        }
         if(!context->api->SettingInt(sdgo_test::mod,"BattleAiBehavior",0)) return;
         uint32_t stuck=0,unrecovered=0,zeroCompletions=0;
         uint64_t mobileDispatches=0,defensiveDispatches=0,backwardDispatches=0;

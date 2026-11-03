@@ -41,7 +41,9 @@ def read_json(path):
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
-def build(snapshot, output, machine_id, families, framework_stage=None, *, client_root=None, client_gdrs=None):
+def build(snapshot, output, machine_id, families, framework_stage=None, *, client_root=None, client_gdrs=None,rules=None):
+    from owner.collection_capsule.rules import defaults,validate
+    rules=validate(rules or defaults())
     from owner.collection_capsule.native_catalog import resolve_native_roots
     rows = load_units(snapshot)
     declarations = [read_json(path) for path in families]
@@ -69,10 +71,10 @@ def build(snapshot, output, machine_id, families, framework_stage=None, *, clien
                          + str(len(unresolved)) + " form records remain unresolved")
     output.mkdir(parents=True, exist_ok=False)
     model = {"schema_version": 1, "feature": "collection-capsule", "machine_id": machine_id,
-             "price_gp": 100000, "machine_kind": "activity", "source_units": rows, "pool": pool,
+             "price_gp": rules['price_gp'],"rules":rules, "machine_kind": "activity", "source_units": rows, "pool": pool,
              "native_root_revision": native["revision"], "native_root_audit": native["audit"], "unit_items": unit_items}
     write_json(output / "model.json", model)
-    (output / "install.sql").write_text(installation(pool, rows, machine_id, unit_items=unit_items), encoding="utf-8")
+    (output / "install.sql").write_text(installation(pool, rows, machine_id, unit_items=unit_items,rules=rules), encoding="utf-8")
     (output / "disable.sql").write_text(disable(machine_id), encoding="utf-8")
     if framework_stage:
         server = output / "server"
@@ -92,19 +94,21 @@ def build(snapshot, output, machine_id, families, framework_stage=None, *, clien
     files = {path.relative_to(output).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
              for path in output.rglob("*") if path.is_file()}
     write_json(output / "manifest.json", {"schema_version": 1, "feature": "collection-capsule",
-               "machine_id": machine_id, "price_gp": 100000, "machine_kind": "activity", "pool_revision": pool_hash(pool),
+               "machine_id": machine_id, "price_gp": rules['price_gp'],"rules":rules, "machine_kind": "activity", "pool_revision": pool_hash(pool),
                "files": files})
-    return {"machine_id": machine_id, "price_gp": 100000, "resolved_roots": len(pool["units"]),
+    return {"machine_id": machine_id, "price_gp": rules['price_gp'],"rules":rules, "resolved_roots": len(pool["units"]),
             "pool_revision": pool_hash(pool), "output": str(output)}
 
 
 def checked_model(package):
+    from owner.collection_capsule.rules import validate
     manifest, model = read_json(package / "manifest.json"), read_json(package / "model.json")
     if (manifest.get("schema_version") != 1 or manifest.get("feature") != "collection-capsule"
             or model.get("schema_version") != 1 or model.get("feature") != "collection-capsule"
             or manifest.get("machine_id") != model.get("machine_id")
             or model.get("machine_kind") != "activity" or manifest.get("machine_kind") != "activity"
-            or model.get("price_gp") != 100000 or manifest.get("price_gp") != 100000
+            or model.get("price_gp") != validate(model.get('rules',{}))['price_gp'] or manifest.get("price_gp") != model['price_gp']
+            or manifest.get('rules')!=model['rules']
             or manifest.get("pool_revision") != pool_hash(model["pool"])):
         raise ValueError("Collection server package metadata differs")
     for relative, expected in manifest.get("files", {}).items():
@@ -276,8 +280,10 @@ def install_server(package, server_ini, *, check_only=False):
                 cursor.execute("SET XACT_ABORT ON;BEGIN TRANSACTION;")
                 cursor.execute(sql)
                 row = cursor.execute("SELECT s.MachineID,s.PriceGP,s.Enabled,s.PoolHash,s.SchemaVersion,p.Type,p.Price,p.Disable FROM sdgo_collection_capsule.State s JOIN dbo.tbl_ItemMachinePrice p ON p.MachineID=s.MachineID WHERE s.Singleton=1").fetchone()
-                if not row or tuple(row) != (model["machine_id"], 100000, True, pool_hash(model["pool"]), 3, 0, 100000, 0):
+                if not row or tuple(row) != (model["machine_id"], model['price_gp'], True, pool_hash(model["pool"]), 3, 0, model['price_gp'], 0):
                     raise RuntimeError("Installed collection state readback differs")
+                quota=cursor.execute('SELECT LimitPeriod,DrawLimit,UtcOffsetMinutes FROM sdgo_collection_capsule.State WHERE Singleton=1').fetchone()
+                if tuple(quota)!=(model['rules']['limit_period'],model['rules']['draw_limit'],model['rules']['utc_offset_minutes']):raise RuntimeError('Installed quota readback differs')
                 result = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
                     str(ROOT / "tools/install_server.ps1"), "-ServerRoot", str(target), "-Role", "World",
                     "-Source", str(payload)], capture_output=True, text=True)
@@ -293,12 +299,20 @@ def install_server(package, server_ini, *, check_only=False):
                 raise
             finally:
                 cursor.close()
-    return {"applied": True, "machine_id": model["machine_id"], "machine_kind": "activity", "price_gp": 100000,
+    return {"applied": True, "machine_id": model["machine_id"], "machine_kind": "activity", "price_gp": model['price_gp'],"rules":model['rules'],
             "catalog_schema_version": 3, "database_setup_automatic": True, "players_require_sql": False,
             "restart_world_required": True, "backup": str(files.backup)}
 
 
 def main():
+    def add_rules(p):
+        p.add_argument('--price-gp',type=int,default=100000)
+        p.add_argument('--limit-period',choices=('none','day','week'),default='week')
+        p.add_argument('--draw-limit',type=int,default=15)
+        p.add_argument('--utc-offset-minutes',type=int,default=480)
+    def rules(args):
+        from owner.collection_capsule.rules import validate
+        return validate({key:getattr(args,key) for key in ('price_gp','limit_period','draw_limit','utc_offset_minutes')})
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     p = commands.add_parser("inspect")
@@ -313,6 +327,7 @@ def main():
     source = p.add_mutually_exclusive_group(required=True)
     source.add_argument("--client", type=Path)
     source.add_argument("--client-gdrs", type=Path)
+    add_rules(p)
     p = commands.add_parser("install-server")
     p.add_argument("--package", type=Path, required=True)
     p.add_argument("--server-ini", type=Path, required=True)
@@ -335,9 +350,10 @@ def main():
     p.add_argument("--machine-id", type=int, default=990001)
     p.add_argument("--unit-family", type=Path, action="append", default=[])
     p.add_argument("--current-registry", type=Path)
-    p.add_argument("--cover", type=Path, default=ROOT / "mods/collection_capsule/assets/cover.png")
+    p.add_argument("--cover", type=Path, default=ROOT / "mods/collection_capsule/assets/cover-base.png")
     p.add_argument("--framework-stage", type=Path)
     p.add_argument("--support-dll", type=Path)
+    add_rules(p)
     args = parser.parse_args()
     if args.command == "inspect":
         result = build_pool(load_units(args.snapshot))
@@ -346,7 +362,7 @@ def main():
         print(json.dumps({"roots": len(result["units"]), "excluded": len(result["excluded"]), "output": str(args.out)}))
     elif args.command == "build-server":
         print(json.dumps(build(args.snapshot, args.out, args.machine_id, args.unit_family, args.framework_stage,
-                               client_root=args.client, client_gdrs=args.client_gdrs)))
+                               client_root=args.client, client_gdrs=args.client_gdrs,rules=rules(args))))
     elif args.command == "install-server":
         print(json.dumps(install_server(args.package, args.server_ini, check_only=args.check_only)))
     elif args.command == "disable":
@@ -363,7 +379,7 @@ def main():
         with contextlib.closing(connection(args.server_ini)) as db:
             print(json.dumps(register_unit_family(db, read_json(args.unit_family))))
     elif args.command == "build-kit":
-        from owner.collection_capsule.client import build_client_registry
+        from owner.collection_capsule.client import build_client_registry, registry_support
         # Plain module import uses this script's tools/ directory, including in
         # the portable owner kit; it never imports code from a game folder.
         sys.path.insert(0, str(ROOT / "tools"))
@@ -371,20 +387,20 @@ def main():
         stage = args.framework_stage
         if stage is None:
             stage = ROOT / "framework" if (ROOT / "framework").is_dir() else ROOT / "build/stage/Release"
-        support = args.support_dll or stage / "support/capsule-registry/capsule_catalog.dll"
+        support = args.support_dll or registry_support(stage)
         current = args.current_registry
         if current is None and (args.client / "sdgo/mods/capsule_catalog/runtime.ini").is_file():
             current = args.client / "sdgo/mods/capsule_catalog"
         args.out.mkdir(parents=True, exist_ok=False)
         server = build(args.snapshot, args.out / "server-package", args.machine_id,
-                       args.unit_family, stage / "server", client_root=args.client)
+                       args.unit_family, stage / "server", client_root=args.client,rules=rules(args))
         model = read_json(args.out / "server-package/model.json")
         registry = build_client_registry(client_root=args.client, current_registry=current,
             source_units=model["pool"]["units"], unit_items=model['unit_items'], machine_id=args.machine_id, cover=args.cover,
-            output=args.out / "client-registry")
+            output=args.out / "client-registry",rules=model['rules'])
         player = package_client_registry(registry=args.out / "client-registry", framework_stage=stage / "client",
                                          support_dll=support, output=args.out / "player")
-        receipt = {"schema_version": 1, "machine_id": args.machine_id, "price_gp": 100000,
+        receipt = {"schema_version": 1, "machine_id": args.machine_id, "price_gp": model['price_gp'],"rules":model['rules'],
                    "server": server, "registry": registry, "player": player,
                    "distribution": "Give friends only the player directory; server package stays with owner"}
         write_json(args.out / "build-receipt.json", receipt)

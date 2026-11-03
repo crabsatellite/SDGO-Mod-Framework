@@ -225,6 +225,7 @@ public:
         uint32_t buy_previews = 0;
         uint32_t gift_previews = 0;
         uint32_t hover_previews = 0;
+        uint32_t art_phase = 0;
         uint32_t pointer_position_reads=0,pointer_state_reads=0;
         std::wstring tooltip_name,tooltip_description,tooltip_usage;
         uint32_t popup_name_found=0;
@@ -493,6 +494,10 @@ public:
             return Publish(kComplete);
         case kStageShowHover:
             if(!RefreshHover())return Publish(kNativeFault);
+            // Capturing the preceding modal frame can span several updates.
+            // Begin the hover wait only after virtual input reaches the native
+            // mouse poll, rather than while that earlier frame is being saved.
+            if(!hoverStartedAt_)hoverStartedAt_=lastElapsed_;
             {const auto tooltip=ValidateHover();if(tooltip!=kComplete)return Publish(tooltip);}
             ++observation_.hover_previews;stage_=kStageFinishProduct;
             return Publish(kShowingHover);
@@ -664,6 +669,10 @@ private:
         std::wstring query;
         bool tooltipExpected=false,tooltipUnit=false;
         std::wstring tooltipDescription,tooltipUsage;
+        bool artRankExpected=false;
+        std::wstring artRankLabel;
+        bool captureHover=true;
+        std::wstring previewName;
         std::wstring label;
     };
 
@@ -1062,6 +1071,15 @@ private:
             product.query=visualOnly_ ? Value(section.second,L"Query",query_.c_str()) : L"";
             if(product.query.size()>36 || (!product.query.empty() && (!bindings_.edit_set_text || !bindings_.edit_get_text)))throw 1;
             product.tooltipExpected=visualOnly_ && section.second.count(L"TooltipUnit");
+            product.captureHover=!visualOnly_ || Integer(section.second,L"CaptureHover",0,1,L"1")!=0;
+            product.previewName=visualOnly_ ? Value(section.second,L"PreviewName",L"") : L"";
+            if(!product.previewName.empty() && !Text(product.previewName))throw 1;
+            if(product.tooltipExpected && !product.captureHover)throw 1;
+            product.artRankExpected=visualOnly_ && section.second.count(L"ArtRankLabel");
+            if(product.artRankExpected) {
+                product.artRankLabel=Value(section.second,L"ArtRankLabel");
+                if(product.artRankLabel.size()>32 || product.artRankLabel.find_first_of(L"\r\n")!=std::wstring::npos)throw 1;
+            }
             if(product.tooltipExpected) {
                 product.tooltipUnit=Integer(section.second,L"TooltipUnit",0,1)!=0;
                 if(product.tooltipUnit!=(product.category/100000==11))throw 1;
@@ -1869,7 +1887,7 @@ private:
         }
         if (!target_)
             return Publish(kNativeFault);
-        if(visualOnly_) {hoverStartedAt_=lastElapsed_;stage_=kStageShowHover;return Publish(kCancellingGiftPreview);}
+        if(visualOnly_ && target_->captureHover) {hoverStartedAt_=0;stage_=kStageShowHover;return Publish(kCancellingGiftPreview);}
         return FinishProduct();
     }
 
@@ -1925,11 +1943,99 @@ private:
         return kComplete;
     }
 
+    Result ValidateArtRank(const Product& product,uint32_t row) {
+        if(!product.artRankExpected)return kComplete;
+        observation_.art_phase=1;
+        const std::wstring backgroundName=L"ModShopArtBackground"+std::to_wstring(row);
+        const std::wstring textName=L"ModShopArtText"+std::to_wstring(row);
+        void* background=FindControl(roomRoot_,backgroundName.c_str(),kButtonKind);
+        void* label=FindControl(roomRoot_,textName.c_str(),kButtonKind);
+        uint8_t backgroundVisible=0,labelVisible=0;
+        if((background && !ReadValue(background,0x162,&backgroundVisible)) ||
+           (label && !ReadValue(label,0x162,&labelVisible)))return kControlMismatch;
+        if(product.artRankLabel.empty())return !backgroundVisible && !labelVisible?kComplete:kUiNameMismatch;
+        observation_.art_phase=2;
+        if(!background || !label || !backgroundVisible || !labelVisible ||
+           !ControlIdentity(background,roomRoot_,backgroundName.c_str()) ||
+           !ControlIdentity(label,roomRoot_,textName.c_str()))return kControlMismatch;
+        observation_.art_phase=3;
+        void* nativeVtable=api_ && api_->Symbol ? api_->Symbol(mod_,"shop_art_localization.ui_button_vtable") : nullptr;
+        void* backgroundVtable=nullptr;void* labelVtable=nullptr;
+        if(!nativeVtable ||
+           !ReadPointer(background,0,&backgroundVtable) || !ReadPointer(label,0,&labelVtable) ||
+           !backgroundVtable || backgroundVtable==nativeVtable || labelVtable!=nativeVtable)return kControlMismatch;
+        for(size_t i=0;i<36;++i) {
+            observation_.art_phase=100+static_cast<uint32_t>(i);
+            void* expected=nullptr;void* actual=nullptr;
+            if(!ReadPointer(nativeVtable,i*sizeof(void*),&expected) ||
+               !ReadPointer(backgroundVtable,i*sizeof(void*),&actual))return kControlMismatch;
+            if(i==0x20/sizeof(void*)) {
+                MEMORY_BASIC_INFORMATION memory{};
+                const auto module=GetModuleHandleW(L"shop_art_localization.dll");
+                if(!module || actual==expected || !VirtualQuery(actual,&memory,sizeof(memory)) ||
+                   memory.Type!=MEM_IMAGE || memory.AllocationBase!=module)return kControlMismatch;
+            } else if(actual!=expected)return kControlMismatch;
+        }
+        for(void* control:{background,label}) {
+            observation_.art_phase=4;
+            uint8_t enabled=1;
+            if(!ReadValue(control,0x167,&enabled) || enabled)return kControlMismatch;
+        }
+        uint8_t backgroundFill=0,labelFill=1;
+        observation_.art_phase=5;
+        if(!ReadValue(background,0x168,&backgroundFill) || backgroundFill!=0 ||
+           !ReadValue(label,0x168,&labelFill) || labelFill!=0)return kControlMismatch;
+        void* text=nullptr;std::wstring actual;
+        observation_.art_phase=6;
+        if(!ReadButtonTextItem(label,0,&text) || !ReadHostString(text,64,&actual))return kControlMismatch;
+        observation_.art_phase=7;
+        return actual==product.artRankLabel?kComplete:kUiNameMismatch;
+    }
+
+    void* PainterDialog() {
+        void* service=nullptr;
+        void* expected=api_ && api_->Symbol ? api_->Symbol(mod_,"test.shop_paint_view_vtable") : nullptr;
+        if(!expected || ResolveService(L"paintview",expected,&service)!=kServiceMatched)return nullptr;
+        const auto lookup=reinterpret_cast<ServiceFindByNameFn>(api_->Symbol(mod_,"test.shop_service_child_lookup"));
+        void* actual=nullptr;
+        if(!lookup || !ReadPointer(expected,0x5C,&actual) || actual!=reinterpret_cast<void*>(lookup))return nullptr;
+        alignas(4) uint8_t name[kNativeWStringSize]{};
+        bool constructed=false;void* root=nullptr;
+        __try {
+            constructed=bindings_.native_wstring_ctor(name,L"dlg")!=nullptr;
+            if(constructed)root=lookup(service,name);
+        } __finally {
+            if(constructed)bindings_.native_wstring_dtor(name);
+        }
+        return root;
+    }
+
     Result ValidateProduct(
         const Product& product,
         uint32_t row)
     {
         observation_.product_id=product.productId;
+        const auto artRank=ValidateArtRank(product,row);
+        if(artRank!=kComplete)return artRank;
+        if(!product.previewName.empty()) {
+            observation_.art_phase=20;
+            void* previewRoot=PainterDialog();
+            if(!previewRoot)return kServiceMismatch;
+            observation_.art_phase=201;
+            void* title=FindControl(previewRoot,L"UnitNameStatic",kStaticKind);
+            uint8_t visible=0;std::wstring text;
+            if(!title)return kControlMismatch;
+            observation_.art_phase=202;
+            if(!HasVtable(title,bindings_.static_text_vtable))return kControlMismatch;
+            observation_.art_phase=203;
+            if(!ControlIdentity(title,previewRoot,L"UnitNameStatic"))return kControlMismatch;
+            observation_.art_phase=204;
+            if(!ReadValue(title,0x162,&visible) || !visible)return kControlMismatch;
+            observation_.art_phase=205;
+            if(!ReadHostString(static_cast<uint8_t*>(title)+kControlText,64,&text))return kControlMismatch;
+            if(text!=product.previewName)return kUiNameMismatch;
+            observation_.art_phase=21;
+        }
         std::vector<sdgo::shop::Option> observedOptions;
         if(!ReadOptions(room_,kRoomOptionsBegin,kRoomOptionsEnd,&observedOptions))return kMalformedCatalog;
         observation_.native_page_options=static_cast<uint32_t>(observedOptions.size());

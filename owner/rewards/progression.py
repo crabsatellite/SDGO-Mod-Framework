@@ -9,8 +9,8 @@ CHINA = timezone(timedelta(hours=8))
 
 def defaults():
     return {"enabled": False, "minimum_active_seconds": 180,
-            "daily_first_mb": 3000, "daily_matches": 3, "daily_mb": 27000,
-            "weekly_matches": 12, "weekly_mb": 15000}
+            "daily_first_mb": 100, "daily_matches": 3, "daily_mb": 400,
+            "weekly_matches": 12, "weekly_mb": 1000}
 
 
 def validate(value):

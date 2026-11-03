@@ -31,6 +31,32 @@ void __cdecl Changed(void*){++changes;}
 }
 int main(){
  using namespace sdgo::friend_unit_gift;
+ sdgo::friend_unit_gift::client::NativeUnitDetailQueue details;
+ constexpr std::uint64_t detail_uid=0x1122334455667788ULL;
+ std::array<std::uint8_t,167> detail_packet{};
+ wire::Write16(detail_packet.data(),0x0699);
+ std::array<std::uint8_t,153> detail_record{};detail_record.fill(0xA5);
+ Put<std::uint32_t>(detail_record.data(),0,12345);Put<std::uint16_t>(detail_record.data(),4,2);
+ Put(detail_record.data(),8,detail_uid);
+ std::memcpy(detail_packet.data()+14,detail_record.data(),detail_record.size());
+ const auto original_packet=detail_packet;
+ Check(!details.Observe(detail_packet.data(),detail_packet.size()),"unrequested native details are not handed to the gift cache");
+ details.Expect(9,detail_uid);
+ Check(!details.Observe(detail_packet.data(),detail_packet.size()-1),"truncated native detail replies are rejected");
+ details.Expect(9,detail_uid+1);
+ Check(!details.Observe(detail_packet.data(),detail_packet.size()),"another owned unit cannot satisfy this detail read");
+ details.Expect(9,detail_uid);
+ Check(details.Observe(detail_packet.data(),detail_packet.size()) && detail_packet==original_packet,
+       "only the authentic tracked reply is copied and its packet remains unchanged");
+ sdgo::friend_unit_gift::client::NativeUnitDetailQueue::Record copied{};
+ Check(!details.Pop(10,&copied),"a changed session discards old native detail data");
+ details.Expect(10,detail_uid);
+ Check(details.Observe(detail_packet.data(),detail_packet.size()) && details.Pop(10,&copied) && copied==detail_record,
+       "UI-thread handoff preserves every byte including acquired date and equipped parts");
+ Check(!details.Pop(10,&copied) && !details.Observe(detail_packet.data(),detail_packet.size()),
+       "a completed read cannot replay its native cache write");
+ details.Expect(10,detail_uid);Put<std::uint16_t>(detail_packet.data()+14,4,1201);
+ Check(!details.Observe(detail_packet.data(),detail_packet.size()),"an out-of-capacity native target is rejected");
  sdgo::friend_unit_gift::client::NativeReplyQueue queue;
  std::array<std::uint8_t,kCarrierBytes> reply{};
  wire::Write16(reply.data(),kNativeReplyOpcode);

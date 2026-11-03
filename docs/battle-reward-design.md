@@ -9,14 +9,20 @@ See [deployment and recovery](battle-rewards.md) for installation.
 ```text
 final GB/MB = floor(
     one-times reward * base multiplier * event multiplier
-    * 1.1^(qualifying human count - 1) * participation duration factor
+    * human multiplier * participation duration factor
 )
 ```
 
 Standard PvP with AI teammates/opponents uses the same reward tier as human-only
 PvP. AI and observers do not increase the human multiplier or receive wallets.
-The human multiplier compounds: 1, 1.1, 1.21, 1.331 for one through four humans.
+An owner-configured table can set a separate multiplier for each human count.
+Without that table, the default compounds: 1, 1.1, 1.21, 1.331 for one through four humans.
 A base multiplier of 10, double time and four humans therefore produce 26.62.
+
+Daily/weekly milestones and gathering bonuses are separate fixed awards; base,
+event and human multipliers do not multiply them. Gathering rules may pay per
+match, day or week, with per-account/rule/period deduplication across servers.
+Public defaults disable gathering awards and contain no payout rules.
 
 The one-times amount combines outcome/clear participation rewards with kills,
 effective damage, assists and, for PvP, an additional MVP award.

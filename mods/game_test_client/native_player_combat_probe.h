@@ -33,6 +33,7 @@ class NativePlayerCombatProbe
 
     static constexpr uint32_t kForwardAction = 0;
     static constexpr uint32_t kPrimaryAction = 9;
+    static constexpr uint32_t kLockAction = 10;
     static constexpr uint64_t kCycleMs = 900;
     static constexpr uint64_t kForwardHeldMs = 180;
     static constexpr uint64_t kPrimaryHeldMs = 360;
@@ -54,10 +55,12 @@ class NativePlayerCombatProbe
     FindObjectFn findObject_ = nullptr;
     InputBusinessFn moveInput_ = nullptr;
     InputBusinessFn fireInput_ = nullptr;
+    InputBusinessFn lockInput_ = nullptr;
     WeaponInputFn weaponInput_ = nullptr;
 
     bool enabled_ = false;
     bool continuousPrimary_ = false;
+    bool lockOn_ = false;
     int requestedWeaponSlot_ = -1;
     bool weaponReported_ = false;
     bool ammoBaselineValid_ = false;
@@ -90,6 +93,7 @@ class NativePlayerCombatProbe
     {
         input.HoldGameplay(kForwardAction, false);
         input.HoldGameplay(kPrimaryAction, false);
+        input.HoldGameplay(kLockAction, false);
         if (requestedWeaponSlot_ >= 0)
             input.HoldGameplay(14u + requestedWeaponSlot_, false);
         forwardHeld_ = false;
@@ -158,6 +162,9 @@ public:
             return false;
         enabled_ = setting != 0;
         continuousPrimary_ = continuous != 0;
+        const int lock = api->SettingInt(mod, "BattlePlayerSecondary", 0);
+        if (lock != 0 && lock != 1) return false;
+        lockOn_ = lock != 0;
         requestedWeaponSlot_ = api->SettingInt(mod, "BattlePlayerWeaponSlot", -1);
         if (requestedWeaponSlot_ < -1 || requestedWeaponSlot_ > 2)
             return false;
@@ -181,6 +188,11 @@ public:
             reinterpret_cast<InputBusinessFn>(
                 api->Symbol(
                     mod, "test.apsalus_primary_input"));
+        if (lockOn_) {
+            lockInput_ = reinterpret_cast<InputBusinessFn>(
+                api->Symbol(mod, "test.player_secondary_input"));
+            if (!lockInput_) return false;
+        }
         if (requestedWeaponSlot_ >= 0) {
             weaponInput_ = reinterpret_cast<WeaponInputFn>(
                 api->Symbol(mod, "test.player_weapon_input"));
@@ -390,6 +402,10 @@ public:
             ++bursts_;
         input.HoldGameplay(kForwardAction, forward);
         input.HoldGameplay(kPrimaryAction, primary);
+        // Supply the mapped secondary action to its original consumer.
+        // Target choice, aim and all control-state changes stay native.
+        input.HoldGameplay(kLockAction, lockOn_);
+        if (lockOn_) lockInput_(unit, nativeInput);
         forwardHeld_ = forward;
         primaryHeld_ = primary;
 

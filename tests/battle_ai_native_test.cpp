@@ -52,6 +52,7 @@ struct Unit {
         Check(result==g_expectedDispatchResult,"native dispatcher callback preserves its return value");
         reinterpret_cast<native_world::Callbacks*>(this)->Intent();
         if(*reinterpret_cast<uint8_t**>(bytes+8)) reinterpret_cast<native_world::Callbacks*>(this)->FacingUpdate();
+        reinterpret_cast<native_world::Callbacks*>(this)->ConsumeWeaponInput();
         return true;
     }
     __declspec(noinline) void Init(void* data) { bytes[0x100]=static_cast<unsigned char>(reinterpret_cast<uintptr_t>(data)); }
@@ -169,14 +170,22 @@ int wmain(int argc,wchar_t** argv) {
         Check(native_world::switchRequests==prior&&*reinterpret_cast<int*>(fsm+0x240)==0,
               "stock NPC hint shortcut can suppress a switch that never actually committed");
         Eval("savedWeaponProbe=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) weaponProbeResult=SDGO_BattleAI_RequestWeapon(1); return 123 end");
+        const auto selections=native_world::nativeSelections;
+        native_world::Put(fsm,4,fsm+0x20);native_world::Put(fsm,8,uint32_t(0));
         unit.Think();
-        Check(native_world::switchRequests==prior+1&&native_world::requestedSlot==1&&*reinterpret_cast<int*>(fsm+0x240)==1,
-              "native message bridge retries a stale NPC hint and lets the receiver commit the real slot");
+        Check(native_world::switchRequests==prior+1&&native_world::nativeSelections==selections+1&&native_world::requestedSlot==1&&*reinterpret_cast<int*>(fsm+0x240)==1,
+              "a free controller uses the original non-forced selection transaction rather than mistaking an NPC hint for binding");
         native_world::deferSwitch=true;
         native_world::Put(fsm,0x240,int32_t(0));native_world::Put(fsm,0x248,native_world::weapons[0].data());
         unit.Think();
         Check(*reinterpret_cast<int*>(fsm+0x240)==0,
               "queued switch never fabricates acknowledgement when the native receiver defers it");
+        native_world::Put(fsm,4,fsm+0x34);const auto activeSelections=native_world::nativeSelections;
+        unit.Think();
+        Check(native_world::nativeSelections==activeSelections&&native_world::switchRequests==prior+3&&
+              *reinterpret_cast<int*>(fsm+0x240)==0,
+              "an active native action keeps only a pending hint and cannot be interrupted by a forced selection");
+        native_world::Put(fsm,4,fsm+0x20);
         Check(Eval("assert(SDGO_BattleAI_RequestWeapon(1)==0)"),"weapon bridge rejects calls outside the current owned AI callback");
         native_world::deferSwitch=false;
         native_world::Put(fsm,0x240,int32_t(1));native_world::Put(fsm,0x248,native_world::weapons[1].data());
@@ -369,6 +378,7 @@ int wmain(int argc,wchar_t** argv) {
             ++beforeRequests;
             native_world::Put(fsm,0x248,special);requestSpecial();
             Check(native_world::attackAdmissions==beforeRequests,"final attack admission rejects the special branch without player SP");
+            native_world::Put(fsm,0x240,int32_t(1));
             native_world::Put(fsm,0x248,native_world::weapons[1].data());
             auto pressureMotor=native_world::movements[0].data();
             native_world::Put(pressureMotor,4,pressureMotor+0xE8);
@@ -559,8 +569,9 @@ int wmain(int argc,wchar_t** argv) {
             Config("[settings]\nDifficulty=Easy\n");Sleep(2100);unit.Think();
             Check(native_world::requestedSlot==1&&*reinterpret_cast<int*>(fsm+0x240)==3,
                   "profile disable retains a pending restore while the native weapon switch is deferred");
-            native_world::deferSwitch=false;int priorSwitches=native_world::switchRequests;unit.Think();
-            Check(native_world::switchRequests==priorSwitches+1&&*reinterpret_cast<int*>(fsm+0x240)==1,
+            native_world::deferSwitch=false;int priorSwitches=native_world::switchRequests;
+            const int priorSelections=native_world::nativeSelections;unit.Think();
+            Check(native_world::nativeSelections==priorSelections+1&&*reinterpret_cast<int*>(fsm+0x240)==1,
                   "Easy handoff retries the previous weapon until the native selection commits");
             priorSwitches=native_world::switchRequests;unit.Think();
             Check(native_world::switchRequests==priorSwitches,"confirmed ordinary slot releases pending restore without repeated commands");
@@ -795,8 +806,10 @@ int wmain(int argc,wchar_t** argv) {
         native_world::Put(native_world::nodes[0].data(),0x88,native_world::Vec3{0,0,0});
         native_world::Put(advanceFsm,4,advanceFsm+0x20);native_world::weapons[1][0x8F]=1;
         Eval("SDGO_BattleAI_GenericUpdate=savedGeneric");
+        Eval("beforeRayFaultCalls=calls;beforeRayFaults=SDGO_BattleAI_Universal.faults");
         native_world::nullRay=true;unit.Think();native_world::nullRay=false;
-        Check(Eval("assert(calls>=2)"),"failed native ray observation falls back rather than querying from a zero origin");
+        Check(Eval("assert(calls==beforeRayFaultCalls and SDGO_BattleAI_Universal.faults==beforeRayFaults+1)"),
+              "an unavailable native ray reports an enhanced-policy failure without running a second brain");
         native_world::Ray3 offThreadRay={};
         std::thread worker([&] {
             reinterpret_cast<native_world::Callbacks*>(native_world::fsms[0].data())->Ray(&offThreadRay);
@@ -973,7 +986,9 @@ int wmain(int argc,wchar_t** argv) {
         reinterpret_cast<native_world::Callbacks*>(native_world::fsms[0].data())->Ray(&ray);
         Check(unit.bytes[0x312A]==0 && unit.bytes[0x30DC]==0 && ray.direction.z==1 && ray.direction.x==0,
               "disabling generic mode releases owned motor and shooting and retains stock ray");
-    } else if(disabled||bad||missing) {
+    } else if(missing) {
+        Check(Eval("assert(SDGO_BattleAI==nil and calls==0)"),"missing enhanced policy scripts are explicit errors instead of switching to native AI");
+    } else if(disabled||bad) {
         Check(Eval("assert(SDGO_BattleAI==nil and calls==1)"),"disabled or rejected mod leaves native AI intact");
     } else {
         Check(Eval("assert(SDGO_BattleAI and SDGO_BattleAI.states[20] and SDGO_BattleAI.faults==0); firstGeneration=SDGO_BattleAI.states[20].generation"),"DLL injects policy on first native Think");

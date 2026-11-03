@@ -3,13 +3,15 @@ import configparser
 import json
 import copy
 from pathlib import Path
+import struct
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/"tools"))
 from make_frp_profile import configurations, export_profile
-from package_frp import symbol_fragment, validate_markdown_links
+from package_frp import contents, symbol_fragment, validate_markdown_links
 
 
 class DistributionChecks(unittest.TestCase):
@@ -77,6 +79,36 @@ class DistributionChecks(unittest.TestCase):
         valid={'README.md':b'[help](docs/help.md#setup)', 'docs/help.md':b'[home](../README.md)'}
         validate_markdown_links(valid)
         with self.assertRaises(ValueError):validate_markdown_links({'README.md':b'[missing](docs/help.md)'})
+
+    def test_public_mod_payloads_copy_both_canonical_distribution_manifests(self):
+        repo=Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temporary:
+            binaries=Path(temporary)
+            image=bytearray(0x80)
+            struct.pack_into('<I',image,0x3c,0x40)
+            image[0x40:0x44]=b'PE\0\0'
+            struct.pack_into('<H',image,0x44,0x14c)
+            for name in ('net_route.dll','agent_udp_pool.dll','agent_relay_log_fix.dll',
+                         'd3d9.dll','winmm.dll','core.dll'):
+                (binaries/name).write_bytes(image)
+            expected_version=tuple(int(n) for n in (repo/'VERSION').read_text().strip().split('.'))+(0,)
+            with mock.patch('package_frp.file_version',return_value=expected_version):
+                packaged=contents(repo,binaries)
+        for side,identities in (('client',('net_route',)),
+                                ('agent',('agent_udp_pool','agent_relay_log_fix'))):
+            for identity in identities:
+                prefix=f'payload/{side}/mods/{identity}/'
+                manifest=packaged[prefix+'mod.ini']
+                registration=packaged[prefix+'manager.json']
+                self.assertEqual(manifest,(repo/f'mods/{identity}/mod.ini').read_bytes())
+                self.assertEqual(registration,(repo/f'mods/{identity}/manager.json').read_bytes())
+                config=configparser.ConfigParser(interpolation=None)
+                config.read_string(manifest.decode('utf-8-sig'))
+                manager=json.loads(registration.decode('utf-8-sig'))
+                self.assertEqual(config.get('mod','id'),identity)
+                self.assertEqual(config.get('mod','distribution'),'public')
+                self.assertEqual(manager.get('id'),identity)
+                self.assertEqual(manager.get('distribution'),'public')
 
     def test_manual_templates_match_the_four_slot_owner_example(self):
         repo=Path(__file__).resolve().parents[1]
