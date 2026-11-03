@@ -67,7 +67,7 @@ void Reset(Driver& driver){
     Put(mainState,0,mainVtable);Put<uint32_t>(mainState,8,2);Put(mainState,0x0C,manager+0x24);Put(mainState,0x10,manager);
     manager[0x26]=1;Put(manager,0x38,model);Put(model,0,modelVtable);Put<int>(model,0x30,1);Put<uint32_t>(room,0,81);
     modelVtable[0x1C/4]=reinterpret_cast<void*>(&Info);modelVtable[0x28/4]=reinterpret_cast<void*>(&ReadyFlag);
-    Put<uint32_t>(model,0x1744+0x48E,5230);Put<uint32_t>(player,0,1);Put(player,8,manager+0x24);
+    Put<uint32_t>(model,0x1744+0x48E,42);Put<uint32_t>(player,0,1);Put(player,8,manager+0x24);
     Put(command,0,commandVtable);Put<uint32_t>(command,4,4);Put(command,0x0C,player);current=&driver;
 }
 void TickSend(){Check(queued,"Main queued Ready before the player sender executes");queued=false;sendHook(command,nullptr);}
