@@ -6,6 +6,9 @@ Translates shop product names, descriptions and sale options, and the unit-previ
 Hangar batch-exchange lists and fixed messages from other Mods use the same Chinese names. The shop can also be
 searched by Chinese name, combined with rank and payment filters.
 
+Paint-page unit previews also use Chinese names, including training units. Descriptions retain paragraph breaks;
+battleship descriptions and usage restrictions appear in their separate fields.
+
 Prices, currencies, durations and billing keep their original definitions. Rental/permanent labels are handled by
 the separate [shop rental and Chinese option fix](shop-labels.md).
 
