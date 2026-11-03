@@ -4,13 +4,17 @@
 非官方爱好者项目，不包含游戏文件。[English](README.md)
 
 [安装说明](docs/setup.zh-CN.md) · [统一 Mod Manager](docs/mod-manager.zh-CN.md) · [最新发布](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
-Manager 提供「更新」按钮：默认 Stable，可切换 Beta，自动检查和安装；详见管理器指南。
 
-服主与维护人员通过 **SDGO Mod Manager** 管理功能，客户端目录顶部提供「服主专用」入口，程序和网页标签统一使用界面中的 SDGO 标志。普通玩家使用原游戏启动器，不要自行修改 Mod，以免与服务器配置不匹配。
+服主与维护人员通过 **SDGO Mod Manager** 安装、配置和[更新](docs/mod-manager.zh-CN.md#更新)功能，
+客户端目录顶部的「0_MOD管理（服主专用）」可直接打开它。普通玩家照常使用原游戏启动器，按服主提供的方式更新，
+不要自行修改 Mod，以免与服务器配置不匹配。
 本页仅列出功能概览。具体配置、玩法操作、兼容性与排错方法见各功能文档。
-Beta、Experimental 表示发布阶段。
-Stable 表示当前基本功能已验证可用，后续 Bug 通过新版本修复；Beta 用于基本流程仍在开发的功能，目前为机体导入。
-发布阶段以已发布版本为准，后续迭代单独验收。
+
+功能名后的 Beta、Experimental 表示发布阶段，未标注的为 Stable：
+
+- **Stable**：基本功能可以正常使用，之后的问题通过新版本修复。Manager 更新默认只安装 Stable。
+- **Beta**：基本流程仍在开发，目前只有机体族导入。在 Manager 更新中切换到 Beta 通道后安装。
+- **Experimental**：开发诊断工具。开发诊断类功能不随 Manager 更新安装。
 
 ## 基础修复
 
@@ -38,29 +42,27 @@ Stable 表示当前基本功能已验证可用，后续 Bug 通过新版本修�
 | 功能 | 简介 | 文档 |
 |---|---|---|
 | 任务 AI 僚机 <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai`，由 AI 僚机补位 | [使用说明](docs/coop-wingmen.zh-CN.md) |
-| 对战 AI <!-- catalog: `pvp_ai`、`match_ai` --> | 真人同队或原生分队；独立选择双方补位、只补对面或精确 AI 数量；AI 获得 MVP 后保留真人房主 | [使用说明](docs/pvp-ai.zh-CN.md) |
+| 对战 AI <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友；可让真人自动同队，选择双方补位、只补对面或指定数量 | [使用说明](docs/pvp-ai.zh-CN.md) |
 | AI 机体目录（独立附加包） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |
 | 战斗贡献奖励 <!-- catalog: `battle_rewards` --> | 按战斗贡献发放 GB/MB，含钱包服务管理与历史 GB 补偿 | [使用说明](docs/battle-rewards.zh-CN.md) |
 | 收藏扭蛋 <!-- catalog: `collection_capsule` --> | 十万 GP 活动机台，优先抽尚未解锁的图鉴机体 | [使用说明](docs/collection-capsule.zh-CN.md) |
 | 每局随机机体 <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组 | [使用说明](docs/room-random.zh-CN.md) |
 | FPS 上限 <!-- catalog: `fps_limit` --> | 提高渲染帧率上限，保留原生游戏速度 | [使用说明](docs/fps-limit.zh-CN.md) |
 | 长房名 <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 普通、AI、队伍及任务房的建房、设置和改名入口支持最长 128 字 | [使用说明](docs/room-titles.zh-CN.md) |
-| 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | 房名选择难度、退射、远距离追敌、原生必杀／瞬移恢复及保持战斗行为的感知优化 | [使用说明](docs/battle-ai.zh-CN.md) |
+| 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | 对战 AI 的 Easy / Medium / Hard 三档，在房名中选择 | [使用说明](docs/battle-ai.zh-CN.md) |
 | 自动机库容量 <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） | [使用说明](docs/hangar-capacity.zh-CN.md) |
 | 机库管理 <!-- catalog: `hangar_manager` --> | 机体管理页内一键整理和重复机体兑换（GB 服务端批量入账） | [使用说明](docs/hangar-manager.zh-CN.md) |
 | 副官补给与管理 <!-- catalog: `operator_catalog` --> | 五位免费补给副官，以及副官名称、头像和掉落的管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
 | 扭蛋机编辑器 <!-- catalog: `capsule_catalog` --> | 在 Manager 中新增、修改、下架扭蛋机，设置奖池、价格和权重 | [使用说明](docs/capsule-catalog.zh-CN.md) |
 | 每日双倍时间 <!-- catalog: `daily_rewards` --> | 每天固定时段（默认 18:00–22:00）战斗 GB 和经验翻倍 | [使用说明](docs/daily-rewards.zh-CN.md) |
 | 保管库一键领取 <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
-
-| 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化商品说明与机库确认名称，支持中文搜索及等级、币种组合筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
-| 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 保管库接受或退还原机体，保留赠送来源与寄语；公开配置默认关闭新赠送 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
-
-| 机体族导入（Beta） <!-- catalog: `unit_catalog` --> | 在 Mod Manager 导入机体包，补齐信息并生成两端定义、图鉴和商城／扭蛋资源 | [使用](docs/unit-import.zh-CN.md) |
+| 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化商品名称、说明和选项，可用中文名称搜索并组合等级、币种筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
+| 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 把自己的机体原样送给好友，对方在保管库接受或退还；默认关闭，由服主开启 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
+| 机体族导入（Beta） <!-- catalog: `unit_catalog` --> | 在 Mod Manager 导入机体包，补齐信息并生成两端定义、图鉴和商城／扭蛋资源 | [使用说明](docs/unit-import.zh-CN.md) |
 
 <!-- /mod-category:gameplay -->
 
-服主还可以使用独立的 [节日与生日赠礼 Manager 模块](docs/calendar-gifts.zh-CN.md)：默认提供 14 个节日（含平安夜、圣诞节和万圣节）各一台未拥有机体、生日 12 档各一台的规则；已有配置可补充新增节日，本服生日和定向玩家名单不随通用规则分发。
+服主还可以使用独立的 Manager 模块[节日与生日赠礼](docs/calendar-gifts.zh-CN.md)：在 14 个常见节日、玩家生日或指定日期把机体和道具送进保管库。
 
 <a id="long-room-title-commands"></a>
 
