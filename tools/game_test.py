@@ -34,6 +34,10 @@ import xml.etree.ElementTree as ET
 import importlib.util
 
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+
 SCHEMA_VERSION = 2
 OWNED_BUILD_ROOT=Path(__file__).resolve().parents[1]/'build'
 if str(OWNED_BUILD_ROOT.parent) not in sys.path:
@@ -701,6 +705,40 @@ def validate_muted_audio(root: Path) -> None:
         raise GameTestError(f'quiet test audio policy failed before launch: {error}') from error
 
 
+def allow_named_desktop_fallback(metadata: dict) -> bool:
+    if metadata.get('suite') == FPS_SUITE:
+        return True
+    plan = metadata.get('plan', {})
+    if (metadata.get('suite') != 'pvp-ai-normal-flow' or
+        plan.get('quiet') is not True or plan.get('network_policy') != 'direct'):
+        return False
+    try:
+        return ipaddress.IPv4Address(plan.get('target_host', '')).is_loopback
+    except ipaddress.AddressValueError:
+        return False
+
+
+def stop_owned_entry(process) -> bool:
+    if process is None or process.poll() is not None:
+        return False
+    try:
+        process.kill()
+        process.wait(timeout=10)
+        return False
+    except (TimeoutError, subprocess.TimeoutExpired):
+        # Termination can be asynchronous while native COM/graphics threads
+        # finish. A second bounded wait accepts only a signaled process.
+        process.wait(timeout=30)
+        if process.poll() is None:
+            raise
+        return True
+    except OSError:
+        process.wait(timeout=10)
+        if process.poll() is None:
+            raise
+        return True
+
+
 class QuietRuntime:
     def __init__(self,metadata: dict,receipt_dir: Path):
         self.metadata=metadata;self.directory=receipt_dir;self.process=None;self.firewall=None;self.firewall_attempted=False
@@ -746,7 +784,7 @@ class QuietRuntime:
         module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
         self.process=module.WindowsBackgroundProcess(arguments,cwd=kwargs['cwd'],env=kwargs['env'],
             stdout=kwargs['stdout'],stderr=kwargs['stderr'],run_id=self.metadata['run_id'],
-            allow_named_desktop_fallback=self.metadata.get('suite')==FPS_SUITE)
+            allow_named_desktop_fallback=allow_named_desktop_fallback(self.metadata))
         return self.process
 
     def verify(self,pid: int) -> dict | None:
@@ -777,8 +815,8 @@ class QuietRuntime:
         if proof.get('verified') and proof.get('isolation_safe',True) is not True:
             raise GameTestError('quiet desktop isolation proof is internally inconsistent')
         if (proof.get('isolation_mode')=='private_desktop_with_hidden_default_proxy' and
-            self.metadata.get('suite')!=FPS_SUITE):
-            raise GameTestError('named-desktop fallback is restricted to the native FPS suite')
+            not allow_named_desktop_fallback(self.metadata)):
+            raise GameTestError('named-desktop fallback requires FPS or local direct PvP isolation')
         if self.proof_file_written and (proof.get('input_desktop_unchanged') is False or
             proof.get('unexpected_input_window_count',0)>0 or
             (proof.get('input_desktop_safe') is False and proof.get('input_target_window_count',0)>0)):
@@ -1447,6 +1485,30 @@ def validate_mission_mode(value: int | None) -> int | None:
     return value
 
 
+def validate_ai_pool_level(value: int | None) -> int | None:
+    if value is None:
+        return None
+    if type(value) is not int or not 1 <= value <= 5:
+        raise GameTestError("ai_pool_level must be an integer between 1 and 5")
+    return value
+
+
+def validate_ai_difficulty(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if type(value) is not str or value not in ("Easy", "Medium", "Hard"):
+        raise GameTestError("ai_difficulty must be one of: Easy, Medium, Hard")
+    return value
+
+
+def validate_ai_layout(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if type(value) is not str or value != "allied":
+        raise GameTestError("ai_layout must be: allied")
+    return value
+
+
 def mission_room_title(title_nonce: str) -> str:
     return f"{title_nonce} !ai{MISSION_AI_COUNT} lv{MISSION_AI_LEVEL}"
 
@@ -1519,7 +1581,9 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
     shop_catalog = bool(shop_fields)
     if "mission_mode" in plan:
         forbidden = {
-            "mode_sequence", "expected_ai", "bootstrap_only",
+            "mode_sequence", "expected_ai", "ai_pool_level", "ai_difficulty",
+            "ai_layout",
+            "bootstrap_only",
             "battleship_only", "gift_requests_only", "deck_only",
             "pages_only", "room_titles_only", "collection_draw", "random_loadout",
             *SHOP_PLAN_FIELDS,
@@ -1593,6 +1657,9 @@ def make_plan(
     launcher_path: str | None,
     play_unit_uid: int | None = None,
     mission_mode: int | None = None,
+    ai_pool_level: int | None = None,
+    ai_difficulty: str | None = None,
+    ai_layout: str | None = None,
 ) -> dict:
     if not 1 <= login_port <= 65535:
         raise GameTestError("login_port must be between 1 and 65535")
@@ -1600,8 +1667,15 @@ def make_plan(
         raise GameTestError("retry_count must be 1 or 2")
     if expect_first_fail and retry_count != 2:
         raise GameTestError("expect_first_fail requires retry_count=2")
+    ai_pool_level = validate_ai_pool_level(ai_pool_level)
+    ai_difficulty = validate_ai_difficulty(ai_difficulty)
+    ai_layout = validate_ai_layout(ai_layout)
+    if ai_pool_level is not None and ai_difficulty is not None:
+        raise GameTestError("ai_pool_level and ai_difficulty cannot be combined")
     mission_mode = validate_mission_mode(mission_mode)
     if mission_mode is not None:
+        if ai_pool_level is not None or ai_difficulty is not None or ai_layout is not None:
+            raise GameTestError("AI pool and difficulty controls are available only for ordinary PvP")
         if mode_sequence != "1":
             raise GameTestError("--mission-mode cannot be combined with a PvP mode sequence")
         if expected_ai != 3:
@@ -1610,6 +1684,16 @@ def make_plan(
     else:
         if expected_ai < 1 or expected_ai > 7:
             raise GameTestError("expected_ai must be between 1 and 7")
+        if ai_pool_level is not None and expected_ai != 1:
+            raise GameTestError("ai_pool_level requires expected_ai=1")
+        if ai_layout is not None and (
+            expected_ai != 6
+            or ai_difficulty != "Hard"
+            or ai_pool_level is not None
+        ):
+            raise GameTestError("ai_layout=allied requires ai_difficulty=Hard and expected_ai=6")
+        if ai_difficulty is not None and ai_layout is None and expected_ai != 5:
+            raise GameTestError("ai_difficulty requires expected_ai=5")
         modes = parse_mode_sequence(mode_sequence)
     title_nonce = "gt" + secrets.token_hex(2)
     plan = {
@@ -1644,8 +1728,22 @@ def make_plan(
         plan.update({
             "mode_sequence": ",".join(str(mode) for mode in modes),
             "expected_ai": expected_ai,
-            "room_title": f"{title_nonce} !ai e{enemies} a{allies}",
+            "room_title": (
+                f"{title_nonce} !ai1 a6 hard"
+                if ai_layout == "allied"
+                else f"{title_nonce} !ai1 lv{ai_pool_level}"
+                if ai_pool_level is not None
+                else f"{title_nonce} !ai {ai_difficulty.lower()}"
+                if ai_difficulty is not None
+                else f"{title_nonce} !ai e{enemies} a{allies}"
+            ),
         })
+        if ai_pool_level is not None:
+            plan["ai_pool_level"] = ai_pool_level
+        if ai_difficulty is not None:
+            plan["ai_difficulty"] = ai_difficulty
+        if ai_layout is not None:
+            plan["ai_layout"] = ai_layout
     play_unit_uid = validate_play_unit_uid(play_unit_uid)
     if play_unit_uid is not None:
         plan["play_unit_uid"] = play_unit_uid
@@ -1777,6 +1875,12 @@ def write_job(
     else:
         run["run"]["mode_sequence"] = plan["mode_sequence"]
         run["run"]["expected_ai"] = str(plan["expected_ai"])
+        if "ai_pool_level" in plan:
+            run["run"]["ai_pool_level"] = str(plan["ai_pool_level"])
+        if "ai_difficulty" in plan:
+            run["run"]["ai_difficulty"] = plan["ai_difficulty"]
+        if "ai_layout" in plan:
+            run["run"]["ai_layout"] = plan["ai_layout"]
     if 'play_unit_uid' in plan:
         run['run']['play_unit_uid'] = str(plan['play_unit_uid'])
     if all(field in plan for field in SHOP_PLAN_FIELDS):
@@ -1814,6 +1918,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 or run["quiet_loopback"] != "1"
                 or run["required_cases"] != ",".join(FPS_CASES)
                 or "account_path" in run
+                or "ai_layout" in run
             ):
                 raise ValueError("run contract does not describe the native FPS suite")
             host, port = run["endpoint"].rsplit(":", 1)
@@ -1889,7 +1994,11 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             }
             if not required_mission_fields.issubset(run.keys()):
                 raise ValueError('mission smoke plan is missing sealed scope fields')
-            if any(field in run for field in ('mode_sequence', 'expected_ai', *preparation_fields)):
+            if any(field in run for field in (
+                'mode_sequence', 'expected_ai', 'ai_pool_level', 'ai_difficulty',
+                'ai_layout',
+                *preparation_fields,
+            )):
                 raise ValueError('mission smoke plan contains PvP, pages, or preparation scope')
             if run['mission_mode'] not in tuple(str(mode) for mode in SUPPORTED_MISSION_MODES):
                 raise ValueError('invalid mission mode')
@@ -1942,6 +2051,79 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             mode_sequence = ",".join(
                 str(mode) for mode in parse_mode_sequence(run["mode_sequence"])
             )
+            ai_pool_level = None
+            ai_difficulty = None
+            ai_layout = None
+            if 'ai_pool_level' in run:
+                raw_ai_pool_level = run['ai_pool_level']
+                if not re.fullmatch(r'[1-5]', raw_ai_pool_level):
+                    raise ValueError('ai_pool_level must be canonical decimal from 1 through 5')
+                if run['expected_ai'] != '1':
+                    raise ValueError('ai_pool_level requires exactly one AI')
+                if any(field in run for field in preparation_fields):
+                    raise ValueError('ai_pool_level requires ordinary PvP without preparation scopes')
+                ai_pool_level = int(raw_ai_pool_level)
+                nonce = run['title_nonce']
+                if not re.fullmatch(r'gt[0-9a-f]{4}', nonce):
+                    raise ValueError('invalid AI pool title nonce')
+                suffix = f' !ai1 lv{ai_pool_level}'
+                direct_title = nonce + suffix
+                reused_title = (
+                    r'gt[0-9a-f]{4}' + re.escape(nonce[2:]) + re.escape(suffix)
+                )
+                if (
+                    run['room_title'] != direct_title
+                    and re.fullmatch(reused_title, run['room_title']) is None
+                ):
+                    raise ValueError('AI pool room command differs from the sealed native plan')
+            if 'ai_layout' in run:
+                ai_layout = run['ai_layout']
+                if ai_layout != 'allied':
+                    raise ValueError('ai_layout must use its canonical allied name')
+                if ai_pool_level is not None:
+                    raise ValueError('ai_layout cannot be combined with ai_pool_level')
+                if run.get('ai_difficulty') != 'Hard' or run['expected_ai'] != '6':
+                    raise ValueError('allied AI layout requires Hard difficulty and exactly six AI')
+                if any(field in run for field in preparation_fields):
+                    raise ValueError('ai_layout requires ordinary PvP without preparation scopes')
+            if 'ai_difficulty' in run:
+                raw_ai_difficulty = run['ai_difficulty']
+                if raw_ai_difficulty not in ('Easy', 'Medium', 'Hard'):
+                    raise ValueError('ai_difficulty must use its canonical name')
+                if ai_pool_level is not None:
+                    raise ValueError('ai_difficulty cannot be combined with ai_pool_level')
+                required_ai_count = '6' if ai_layout == 'allied' else '5'
+                if run['expected_ai'] != required_ai_count:
+                    raise ValueError(
+                        f'ai_difficulty requires exactly {required_ai_count} AI'
+                    )
+                if any(field in run for field in preparation_fields):
+                    raise ValueError('ai_difficulty requires ordinary PvP without preparation scopes')
+                ai_difficulty = raw_ai_difficulty
+                nonce = run['title_nonce']
+                if not re.fullmatch(r'gt[0-9a-f]{4}', nonce):
+                    raise ValueError('invalid AI difficulty title nonce')
+                suffix = (
+                    ' !ai1 a6 hard'
+                    if ai_layout == 'allied'
+                    else f' !ai {ai_difficulty.lower()}'
+                )
+                direct_title = nonce + suffix
+                reused_title = (
+                    r'gt[0-9a-f]{4}' + re.escape(nonce[2:]) + re.escape(suffix)
+                )
+                try:
+                    title_bytes = run['room_title'].encode('ascii')
+                except UnicodeEncodeError as error:
+                    raise ValueError('AI difficulty room command must be ASCII') from error
+                if (
+                    len(title_bytes) > 20
+                    or (
+                        run['room_title'] != direct_title
+                        and re.fullmatch(reused_title, run['room_title']) is None
+                    )
+                ):
+                    raise ValueError('AI difficulty room command differs from the sealed native plan')
             expected_cases = required_flow_cases(
                 mode_sequence, bootstrap_only, battleship_only,
                 gift_requests_only, deck_only, pages_only, collection_draw,
@@ -2005,6 +2187,12 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
         else:
             plan['mode_sequence'] = mode_sequence
             plan['expected_ai'] = int(run['expected_ai'])
+            if ai_pool_level is not None:
+                plan['ai_pool_level'] = ai_pool_level
+            if ai_difficulty is not None:
+                plan['ai_difficulty'] = ai_difficulty
+            if ai_layout is not None:
+                plan['ai_layout'] = ai_layout
         if play_unit_uid is not None:
             plan['play_unit_uid'] = play_unit_uid
         if shop_plan is not None:
@@ -2268,6 +2456,9 @@ def prepare(
     retry_count: int | None = None,
     expect_first_fail: bool | None = None,
     expected_ai: int = 3,
+    ai_pool_level: int | None = None,
+    ai_difficulty: str | None = None,
+    ai_layout: str | None = None,
     play_unit_uid: int | None = None,
     mission_mode: int | None = None,
     launcher_path: str | None = None,
@@ -2298,6 +2489,11 @@ def prepare(
     _owned_client_transfer: tuple[Path, str] | None = None,
 ) -> dict:
     client_template = client_template.resolve()
+    ai_pool_level = validate_ai_pool_level(ai_pool_level)
+    ai_difficulty = validate_ai_difficulty(ai_difficulty)
+    ai_layout = validate_ai_layout(ai_layout)
+    if ai_pool_level is not None and ai_difficulty is not None:
+        raise GameTestError('--ai-pool-level and --ai-difficulty cannot be combined')
     if fps_gameplay_cap is not None:
         if type(fps_gameplay_cap) is not int or not 1<=fps_gameplay_cap<=1000:
             raise GameTestError('gameplay FPS cap must be an integer from 1 to 1000')
@@ -2330,6 +2526,9 @@ def prepare(
             or retry_count is not None
             or expect_first_fail is not None
             or expected_ai != 3
+            or ai_pool_level is not None
+            or ai_difficulty is not None
+            or ai_layout is not None
             or room_style_preview is not None
         ):
             raise GameTestError("native FPS tests cannot request an authenticated account flow")
@@ -2362,6 +2561,36 @@ def prepare(
                 raise GameTestError('--mission-mode cannot be combined with the PvP random-loadout scope')
             if expected_ai != 3:
                 raise GameTestError('--expected-ai is a PvP setting and cannot change a mission smoke plan')
+        if ai_pool_level is not None:
+            if expected_ai != 1:
+                raise GameTestError('--ai-pool-level requires --expected-ai 1')
+            if mission_mode is not None or any((
+                bootstrap_only, battleship_only, gift_requests_only, deck_only,
+                pages_only, collection_draw, random_loadout, room_titles_only, room_style_preview is not None,
+            )):
+                raise GameTestError('--ai-pool-level requires an ordinary PvP scenario')
+        if ai_layout is not None:
+            if (
+                expected_ai != 6
+                or ai_difficulty != 'Hard'
+                or ai_pool_level is not None
+            ):
+                raise GameTestError(
+                    '--ai-layout allied requires --ai-difficulty Hard and --expected-ai 6'
+                )
+            if mission_mode is not None or fps_gameplay_cap is not None or any((
+                bootstrap_only, battleship_only, gift_requests_only, deck_only,
+                pages_only, collection_draw, random_loadout, room_titles_only, room_style_preview is not None,
+            )):
+                raise GameTestError('--ai-layout allied requires an ordinary PvP scenario')
+        if ai_difficulty is not None:
+            if ai_layout is None and expected_ai != 5:
+                raise GameTestError('--ai-difficulty requires --expected-ai 5')
+            if mission_mode is not None or any((
+                bootstrap_only, battleship_only, gift_requests_only, deck_only,
+                pages_only, collection_draw, random_loadout, room_titles_only, room_style_preview is not None,
+            )):
+                raise GameTestError('--ai-difficulty requires an ordinary PvP scenario')
 
     if quiet and sfx_only:raise GameTestError('SFX capture requires explicit --visible; ordinary tests are background and silent')
     if quiet:
@@ -2469,6 +2698,9 @@ def prepare(
             launcher_path,
             play_unit_uid,
             mission_mode,
+            ai_pool_level,
+            ai_difficulty,
+            ai_layout,
         )
         if server_session is not None:
             if (not isinstance(server_session,dict) or
@@ -2817,7 +3049,9 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
     else:
         if "mission_mode" in public_plan:
             forbidden = {
-                "mode_sequence", "expected_ai", "bootstrap_only",
+                "mode_sequence", "expected_ai", "ai_pool_level", "ai_difficulty",
+                "ai_layout",
+                "bootstrap_only",
                 "battleship_only", "gift_requests_only", "deck_only",
                 "pages_only", "room_titles_only", "collection_draw", "random_loadout",
             }
@@ -2846,6 +3080,27 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
             validate_play_unit_uid(plan['play_unit_uid'])
         if ('play_unit_uid' in plan) != ('play_unit_uid' in public_plan):
             raise GameTestError('run.json cannot add or remove the configured owned unit UID')
+        if ('ai_pool_level' in plan) != ('ai_pool_level' in public_plan):
+            raise GameTestError('run.json cannot add or remove the configured AI pool level')
+        if 'ai_pool_level' in public_plan and (
+            type(plan['ai_pool_level']) is not int
+            or plan['ai_pool_level'] != public_plan['ai_pool_level']
+        ):
+            raise GameTestError('run.json cannot change the configured AI pool level')
+        if ('ai_difficulty' in plan) != ('ai_difficulty' in public_plan):
+            raise GameTestError('run.json cannot add or remove the configured AI difficulty')
+        if 'ai_difficulty' in public_plan and (
+            type(plan['ai_difficulty']) is not str
+            or plan['ai_difficulty'] != public_plan['ai_difficulty']
+        ):
+            raise GameTestError('run.json cannot change the configured AI difficulty')
+        if ('ai_layout' in plan) != ('ai_layout' in public_plan):
+            raise GameTestError('run.json cannot add or remove the configured AI layout')
+        if 'ai_layout' in public_plan and (
+            type(plan['ai_layout']) is not str
+            or plan['ai_layout'] != public_plan['ai_layout']
+        ):
+            raise GameTestError('run.json cannot change the configured AI layout')
         unknown_plan_shop_fields = {
             field for field in plan if field.startswith("shop_")
         } - set(SHOP_PLAN_FIELDS)
@@ -3306,15 +3561,8 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
             try:action()
             except Exception as error:cleanup_errors.append(f'{label}: {type(error).__name__}: {error}')
         def stop_entry():
-            if entry_process and entry_process.poll() is None:
-                try:entry_process.kill()
-                except OSError:
-                    # Windows can reject a second termination while the first
-                    # exit is still pending. Accept only a confirmed exit.
-                    entry_process.wait(timeout=10)
-                    if entry_process.poll() is None:raise
-                    return
-                entry_process.wait(timeout=10)
+            if stop_owned_entry(entry_process):
+                metadata['execution']['entry_stop_wait_retried']=True
         if game_process:
             if entry_process and game_process["pid"] == entry_process.pid:
                 cleanup('owned game stop',stop_entry)
@@ -3755,6 +4003,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     prepare_parser.add_argument("--retry-count", type=int, choices=(1, 2))
     prepare_parser.add_argument("--expected-ai", type=int, default=3)
+    prepare_parser.add_argument(
+        "--ai-pool-level",
+        type=int,
+        help="for ordinary one-AI PvP, select native AI catalog level 1..5",
+    )
+    prepare_parser.add_argument(
+        "--ai-difficulty",
+        choices=("Easy", "Medium", "Hard"),
+        help="for ordinary five-AI PvP, select the native room AI difficulty",
+    )
+    prepare_parser.add_argument(
+        "--ai-layout",
+        choices=("allied",),
+        help="internal Hard-six-AI layout: host with five allied AI and one enemy AI",
+    )
     prepare_parser.add_argument('--play-unit-uid',type=int,
                                 help='select an existing genuinely owned non-zero uint64 unit UID through native hangar UI before PvP, pages, or mission tests')
     prepare_parser.add_argument("--sfx-only", action="store_true",
@@ -3845,6 +4108,9 @@ def main(argv: list[str] | None = None) -> int:
                 retry_count=args.retry_count,
                 expect_first_fail=args.expect_first_fail,
                 expected_ai=args.expected_ai,
+                ai_pool_level=args.ai_pool_level,
+                ai_difficulty=args.ai_difficulty,
+                ai_layout=args.ai_layout,
                 play_unit_uid=args.play_unit_uid,
                 mission_mode=args.mission_mode,
                 launcher_path=args.launcher_path,

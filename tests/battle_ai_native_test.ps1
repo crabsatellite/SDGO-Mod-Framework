@@ -22,7 +22,12 @@ foreach($case in 'enabled','disabled','bad-signature','missing-script','generic'
     $cfg="[core]`r`nlog_level=1`r`n[mods]`r`n"
     if($case -eq 'disabled') { $cfg+="battle_ai=0`r`n" }
     [IO.File]::WriteAllText((Join-Path $dir 'sdgo\sdgo.ini'),$cfg)
-    & (Join-Path $dir 'battle_ai_native_test.exe') $case 2>&1 | Tee-Object -FilePath (Join-Path $dir 'result.txt')
-    if($LASTEXITCODE -ne 0) { throw "Native AI fixture $case failed; $dir" }
+    $resultPath=Join-Path $dir 'result.txt'
+    & (Join-Path $dir 'battle_ai_native_test.exe') $case *> $resultPath
+    if($LASTEXITCODE -ne 0) {
+        Get-Content -LiteralPath $resultPath -Tail 60
+        throw "Native AI fixture $case failed; $dir"
+    }
+    Write-Output "PASS native AI fixture $case"
 }
 Write-Output "ALL NATIVE ADAPTER CASES PASSED: $run"
