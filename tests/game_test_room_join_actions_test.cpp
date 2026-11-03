@@ -451,6 +451,12 @@ uint32_t __stdcall FakeRoomJoinCallback(
     return 0xA5A5u;
 }
 
+void __fastcall FakeRoomJoinBusiness(void* service,void*,uint32_t index) {
+    if(index>=10)return;
+    auto* control=Get<uint8_t*>(service,0x94+index*0x0C);
+    FakeRoomJoinCallback(service,0x303,control?control+0x118:nullptr,control);
+}
+
 int __fastcall FakeReadyBusiness(
     void* command,
     void*)
@@ -692,6 +698,7 @@ void* LookupSymbol(
             "flow.room_join_callback") == 0)
         return reinterpret_cast<void*>(
             &FakeRoomJoinCallback);
+    if(std::strcmp(name,"flow.room_join_business")==0)return reinterpret_cast<void*>(&FakeRoomJoinBusiness);
     if (std::strcmp(
             name,
             "flow.three_d_wait_room_vtable") == 0)
@@ -1738,8 +1745,10 @@ int main()
     actions.ResetObservations();
     SetupRoomList();
     Put<uint32_t>(g_rows[0].data(),0x21C,0x01000000u);
-    Check(!actions.JoinExactTitle(kTitle),"adjacent nonzero bytes do not turn a zero native joinability byte into a callback");
-    Check(g_joinCallbackCalls==0,"disabled native row never invokes the real double-click business");
+    Check(actions.JoinExactTitle(kTitle),"the original room entry business does not require a synthesized mouse-activation byte");
+    Check(g_joinCallbackCalls==1,"one native business call uses the real advertised row without changing its activation state");
+    Check(Get<uint32_t>(g_rows[0].data(),0x21C)==0x01000000u,"GameTest never writes the native activation field");
+    actions.ResetObservations();
     SetupRoomList();
     actions.SetRoomResolver([](void*)->const uint8_t*{return nullptr;},nullptr);
     Check(actions.JoinExactTitle(kTitle),"resolver regression sends an original join request");
