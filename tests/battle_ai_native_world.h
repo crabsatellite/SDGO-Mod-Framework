@@ -112,6 +112,7 @@ struct Callbacks {
     void ConsumeWeaponInput() {
         auto unit=reinterpret_cast<uint8_t*>(this);
         auto fsm=*reinterpret_cast<uint8_t**>(unit+0x9CC);
+        if(!fsm)return; // Disabled/bootstrap fixtures intentionally have no FSM.
         const int slot=*reinterpret_cast<int*>(unit+0xDD0);
         if(!deferSwitch&&slot>=0&&slot<4&&*reinterpret_cast<int*>(fsm+0x240)!=slot&&
            *reinterpret_cast<uint8_t**>(fsm+4)==fsm+0x20&&
