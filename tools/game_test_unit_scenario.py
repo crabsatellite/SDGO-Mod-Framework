@@ -7,13 +7,14 @@ from pathlib import Path
 INPUT = 'inputs/unit-scenario.json'
 SETTINGS = {'UnitPagesOnly':'0','UnitPresentations':'0','UnitPortraits':'0',
     'CaptureNativeFrames':'0','CollectionPreviewOnly':'0',
-    'UnitAcquisitionKind':'0','UnitAcquisitionMachine':'0','UnitAcquisitionUnit':'0'}
+    'UnitAcquisitionKind':'0','UnitAcquisitionMachine':'0','UnitAcquisitionUnit':'0',
+    'CapsulePreviewMachine':'990001','CapsulePreviewPrice':'100000','CapsulePreviewCurrency':'0'}
 INDEX_CASES = ('pages.unit_index.list','pages.unit_index.detail',
     'pages.unit_index.alternate','pages.unit_index.base','pages.unit_index.close')
 PORTRAIT_CASES = ('pages.unit_index.pose_wait','pages.unit_index.pose_ready')
 
 def validate(value, plan):
-    if not isinstance(value,dict) or set(value)-{'schema','capture_frames','portraits','acquisition','collection_preview'}:
+    if not isinstance(value,dict) or set(value)-{'schema','capture_frames','portraits','acquisition','collection_preview','activity_target'}:
         raise ValueError('invalid native unit scenario fields')
     if type(value.get('schema')) is not int or value['schema']!=1:
         raise ValueError('unsupported native unit scenario schema')
@@ -28,6 +29,13 @@ def validate(value, plan):
         result[field]=flag
     if result['portraits'] and not result['capture_frames']:
         raise ValueError('native portraits require genuine frame capture')
+    if 'activity_target' in value:
+        target=value['activity_target']
+        if not result['collection_preview'] or not isinstance(target,dict) or set(target)!={'machine_id','price','currency'}:
+            raise ValueError('activity target needs an explicit non-purchasing preview and exact identity/price/currency')
+        if any(type(target[key]) is not int or not 0<target[key]<2**31 for key in ('machine_id','price')) or type(target['currency']) is not int or target['currency'] not in (0,1,2):
+            raise ValueError('native activity preview identity, price or currency is invalid')
+        result['activity_target']=dict(target)
     if 'acquisition' in value:
         item=value['acquisition']
         if not isinstance(item,dict) or set(item)!={'kind','machine_id','unit_id'}:
@@ -54,6 +62,9 @@ def settings(value=None):
     if value.get('acquisition'):
         a=value['acquisition'];result.update(UnitAcquisitionKind=str(a['kind']),
             UnitAcquisitionMachine=str(a['machine_id']),UnitAcquisitionUnit=str(a['unit_id']))
+    if value.get('activity_target'):
+        a=value['activity_target'];result.update(CapsulePreviewMachine=str(a['machine_id']),
+            CapsulePreviewPrice=str(a['price']),CapsulePreviewCurrency=str(a['currency']))
     return result
 
 def cases(value):
@@ -76,6 +87,7 @@ def read(root, digest, plan, read_ini):
     if raw!=encoded(value):raise ValueError('native unit scenario must use its canonical input bytes')
     config=read_ini(root/'sdgo/mods/game_test_client/mod.ini')
     for key,expected in settings(value).items():
-        if config.get('settings',key,fallback=None)!=expected:
+        fallback=SETTINGS[key] if key.startswith('CapsulePreview') else None
+        if config.get('settings',key,fallback=fallback)!=expected:
             raise ValueError('native unit observer settings disagree with sealed scenario: '+key)
     return {'unit_scenario':value,'unit_scenario_sha256':digest}

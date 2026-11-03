@@ -280,6 +280,9 @@ callbacks open the real model preview without buying or changing a selection.
 `"collection_preview": True` instead opens the existing collection confirmation
 without purchasing. Capsule previews and portrait captures remain distinct from
 draw, delivery and gameplay acceptance.
+An optional `"activity_target": {"machine_id": ..., "price": ..., "currency": ...}`
+selects another existing native activity confirmation with exact matching. It
+requires `collection_preview`; changed targets cannot submit a draw in this scope.
 
 The runner copies canonical scenario inputs, binds their SHA-256 and validates
 the native observer settings against that input before launch. Install an authored

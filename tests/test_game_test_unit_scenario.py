@@ -7,6 +7,20 @@ import test_game_test as runner_fixture
 game_test=runner_fixture.game_test
 
 class UnitScenarioTests(unittest.TestCase):
+    def test_custom_activity_target_is_preview_only_and_typed(self):
+        context={'pages_only':True,'play_unit_uid':17}
+        target={'machine_id':7,'price':13,'currency':2}
+        binding=scope.bind({'schema':1,'collection_preview':True,'activity_target':target},context)
+        settings=scope.settings(binding['unit_scenario'])
+        self.assertEqual(settings['CapsulePreviewMachine'],'7')
+        self.assertEqual(settings['CapsulePreviewPrice'],'13')
+        self.assertEqual(settings['CapsulePreviewCurrency'],'2')
+        self.assertEqual(scope.cases(binding['unit_scenario'])[-1],'pages.collection.preview')
+        self.assertNotIn('pages.collection.draw',scope.cases(binding['unit_scenario']))
+        for invalid in (target|{'machine_id':True},target|{'price':0},target|{'currency':3}):
+            with self.assertRaises(ValueError):scope.bind({'schema':1,'collection_preview':True,'activity_target':invalid},context)
+        with self.assertRaises(ValueError):scope.bind({'schema':1,'activity_target':target},context)
+
     def test_unit_scope_is_bounded_and_has_original_ui_cases(self):
         plan={'pages_only':True,'play_unit_uid':17}
         binding=scope.bind({'schema':1,'capture_frames':True,'portraits':True},plan)
@@ -46,6 +60,16 @@ class SealedUnitScenarioTests(unittest.TestCase):
         self.assertEqual(observer['settings']['UnitPagesOnly'],'1')
         self.assertEqual(observer['settings']['UnitAcquisitionUnit'],'9')
         game_test.verify_hashes(meta)
+
+    def test_activity_confirmation_binds_its_own_native_identity_and_price(self):
+        target={'machine_id':7,'price':13,'currency':0}
+        run=self.prepare('activity-preview',pages_only=True,play_unit_uid=17,
+            unit_scenario={'schema':1,'collection_preview':True,'activity_target':target})
+        public=game_test.read_public_plan(run/'client')
+        self.assertEqual(public['unit_scenario']['activity_target'],target)
+        path=run/'client/sdgo/mods/game_test_client/mod.ini'
+        config=game_test.read_ini(path);config['settings']['CapsulePreviewPrice']='14';game_test.write_ini(path,config)
+        with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run)
 
     def test_tampered_scenario_bytes_or_observer_settings_are_rejected(self):
         for field in ('input','settings'):

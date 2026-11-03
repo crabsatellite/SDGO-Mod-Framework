@@ -61,6 +61,22 @@ public:
         kNativeFault = 0x10D,
     };
 
+    struct Target
+    {
+        uint32_t machine = 990001;
+        uint32_t price = 100000;
+        uint32_t currency = 0;
+    };
+
+    bool ConfigureTarget(const Target& target)
+    {
+        if(bound_ || !target.machine || target.machine>0x7fffffff ||
+           !target.price || target.price>0x7fffffff || target.currency>2)return false;
+        expectedMachine_=target.machine;expectedPrice_=target.price;expectedCurrency_=target.currency;
+        return true;
+    }
+    Target ExpectedTarget() const {return {expectedMachine_,expectedPrice_,expectedCurrency_};}
+
     struct Observation
     {
         uint32_t result;
@@ -724,7 +740,7 @@ public:
                     InterlockedCompareExchange(
                         &lastResult_, 0, 0));
             observed.target_machine =
-                kTargetMachine;
+                expectedMachine_;
             observed.target_price =
                 static_cast<uint32_t>(
                     InterlockedCompareExchange(
@@ -976,11 +992,11 @@ private:
         bool event_tile;
     };
 
-    static constexpr uint32_t kTargetMachine =
+    uint32_t expectedMachine_ =
         990001;
-    static constexpr uint32_t kTargetPrice =
+    uint32_t expectedPrice_ =
         100000;
-    static constexpr uint8_t kTargetCurrency =
+    uint32_t expectedCurrency_ =
         0;
     static constexpr uint32_t kActivityMachineType =
         2;
@@ -1238,7 +1254,7 @@ private:
                     row + kMachineIdOffset);
             if (machine)
                 ++valid;
-            if (machine != kTargetMachine)
+            if (machine != expectedMachine_)
                 continue;
             ++matches;
             target.index = index;
@@ -1250,8 +1266,8 @@ private:
             target.event_tile =
                 row[kEventTileOffset] != 0;
             if (row[kCurrencyOffset] !=
-                    kTargetCurrency ||
-                target.price != kTargetPrice)
+                    expectedCurrency_ ||
+                target.price != expectedPrice_)
                 return kScanTargetMismatch;
         }
         target.valid_count = valid;
@@ -1285,7 +1301,7 @@ private:
             return kDialogInvalid;
         if (*reinterpret_cast<uint32_t*>(
                 bytes + kDialogMachineId) !=
-            kTargetMachine)
+            expectedMachine_)
             return kDialogInvalid;
         const uint32_t type =
             *reinterpret_cast<uint32_t*>(
@@ -1300,11 +1316,11 @@ private:
         if (!record)
             return kDialogWaiting;
         if (ReadU32(record + kMachineIdOffset) !=
-                kTargetMachine ||
+                expectedMachine_ ||
             record[kCurrencyOffset] !=
-                kTargetCurrency ||
+                expectedCurrency_ ||
             ReadU32(record + kPriceOffset) !=
-                kTargetPrice)
+                expectedPrice_)
             return kDialogInvalid;
 
         void* root =
@@ -1629,7 +1645,7 @@ private:
                     const_cast<uint8_t*>(
                         bytes) +
                     kDialogMachineId) ==
-                    kTargetMachine &&
+                    actions->expectedMachine_ &&
                 *reinterpret_cast<void* const*>(
                     live) ==
                     actions->dialogVtable_;
@@ -1691,7 +1707,7 @@ private:
                     const uint32_t*>(
                     bytes +
                     kBuyingMachineId) ==
-                    kTargetMachine;
+                    actions->expectedMachine_;
         } __except (
             EXCEPTION_EXECUTE_HANDLER) {
             targetService = false;
@@ -1759,7 +1775,7 @@ private:
                                 const uint8_t*>(
                                 packet) +
                             kAckCurrencyFlagOffset) ==
-                            kTargetCurrency;
+                            actions->expectedCurrency_;
                 }
                 if (normalized ==
                     kResultReplyOpcode)

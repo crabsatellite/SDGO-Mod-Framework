@@ -198,6 +198,11 @@ bool LoadPlan() {
     collectionPreviewOnly=GetPrivateProfileIntW(L"settings",L"CollectionPreviewOnly",0,
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
     const std::wstring acquisitionIni=sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini";
+    auto capsuleTarget=collection.ExpectedTarget();
+    capsuleTarget.machine=GetPrivateProfileIntW(L"settings",L"CapsulePreviewMachine",capsuleTarget.machine,acquisitionIni.c_str());
+    capsuleTarget.price=GetPrivateProfileIntW(L"settings",L"CapsulePreviewPrice",capsuleTarget.price,acquisitionIni.c_str());
+    capsuleTarget.currency=GetPrivateProfileIntW(L"settings",L"CapsulePreviewCurrency",capsuleTarget.currency,acquisitionIni.c_str());
+    if(!collection.ConfigureTarget(capsuleTarget))return false;
     unitAcquisitionConfig.machine_kind=GetPrivateProfileIntW(L"settings",L"UnitAcquisitionKind",0,acquisitionIni.c_str());
     unitAcquisitionConfig.machine_id=GetPrivateProfileIntW(L"settings",L"UnitAcquisitionMachine",0,acquisitionIni.c_str());
     unitAcquisitionConfig.unit_id=GetPrivateProfileIntW(L"settings",L"UnitAcquisitionUnit",0,acquisitionIni.c_str());
@@ -243,6 +248,8 @@ bool LoadPlan() {
     collectionDraw=GetPrivateProfileIntW(L"run",L"collection_draw",0,job.c_str())!=0;
     if(collectionDraw && !pagesOnly)return false;
     if(collectionPreviewOnly && (!pagesOnly || collectionDraw))return false;
+    if((capsuleTarget.machine!=990001 || capsuleTarget.price!=100000 || capsuleTarget.currency!=0) &&
+        (!collectionPreviewOnly || collectionDraw))return false;
     if(unitAcquisitionConfig.machine_kind && (!pagesOnly || collectionDraw || collectionPreviewOnly ||
         !testUnitPresentations || !unitAcquisitionConfig.machine_id || !unitAcquisitionConfig.unit_id ||
         (unitAcquisitionConfig.machine_kind!=UnitAcquisitionActions::kFixedMachine &&
@@ -1805,8 +1812,9 @@ int __cdecl PreviewCollection(const SdgoGameTestContextV1* context) {
     if(pending==SDGO_GAME_TEST_FAIL)return pending;
     if(result!=CapsuleDrawActions::kPreviewReady)return SDGO_GAME_TEST_WAIT;
     const auto s=collection.State();
-    context->Assert(s.target_machine==990001 && s.target_price==100000 && s.preview_ready && !s.buy_attempted,
-        "original activity controls selected the real collection machine and initialized its own confirmation without purchasing");
+    const auto expected=collection.ExpectedTarget();
+    context->Assert(s.target_machine==expected.machine && s.target_price==expected.price && s.preview_ready && !s.buy_attempted,
+        "original activity controls selected the configured native machine and verified its own currency/price confirmation without purchasing");
     context->Assert(!s.buy_submitted && !s.request_transport_sequence,
         "the preview has not submitted an activity-capsule purchase transport");
     return SDGO_GAME_TEST_PASS;
