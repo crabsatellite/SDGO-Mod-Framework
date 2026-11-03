@@ -53,6 +53,42 @@ class ReuseOwnedClientTests(unittest.TestCase):
         for profile in (self.fixture.account_profile,peer):self.assertFalse(game_test.account_profile_lock_path(profile).exists())
         game_test.verify_hashes(game_test.validate_metadata(run))
 
+    @unittest.skipUnless(os.name == 'nt', 'Windows short-name aliases')
+    def test_short_and_long_profile_names_share_one_exclusive_account_lock(self):
+        import ctypes
+        from ctypes import wintypes
+        peer=self.existing_peer()
+        native=ctypes.WinDLL('kernel32',use_last_error=True)
+        native.GetShortPathNameW.argtypes=(wintypes.LPCWSTR,wintypes.LPWSTR,wintypes.DWORD)
+        native.GetShortPathNameW.restype=wintypes.DWORD
+        buffer=ctypes.create_unicode_buffer(32768)
+        size=native.GetShortPathNameW(str(peer),buffer,len(buffer))
+        self.assertTrue(size and size<len(buffer))
+        alias=Path(buffer.value)
+        if str(alias).casefold()==str(peer.resolve()).casefold():
+            self.skipTest('volume does not expose a distinct short path')
+        self.assertEqual(peer.resolve(),alias.resolve())
+        long_lock=game_test.account_profile_lock_path(peer.resolve())
+        self.assertEqual(long_lock,game_test.account_profile_lock_path(alias))
+        lock,token=game_test.acquire_exclusive_lock(long_lock,'long account path')
+        try:
+            with self.assertRaises(game_test.GameTestError):
+                game_test.acquire_exclusive_lock(game_test.account_profile_lock_path(alias),'short account alias')
+        finally:
+            game_test.release_owned_lock(lock,token)
+
+    def test_profile_parent_alias_returns_canonical_exclusive_lock(self):
+        peer=self.existing_peer()
+        alias=peer.parent/'..'/peer.parent.name/peer.name
+        expected=peer.resolve().with_name(peer.name+'.run.lock')
+        self.assertEqual(expected,game_test.account_profile_lock_path(alias))
+        lock,token=game_test.acquire_exclusive_lock(expected,'canonical account')
+        try:
+            with self.assertRaises(game_test.GameTestError):
+                game_test.acquire_exclusive_lock(game_test.account_profile_lock_path(alias),'parent alias')
+        finally:
+            game_test.release_owned_lock(lock,token)
+
     def test_another_profile_still_requires_an_explicit_rebind(self):
         run=self.fixture.prepare('no-implicit-switch');old=(run/'run.json').read_bytes()
         with self.assertRaisesRegex(game_test.GameTestError,'explicit existing-account'):
