@@ -595,6 +595,29 @@ public:
         }
     }
 
+    bool LeaveReady() const
+    {
+        // Invitation acceptance publishes the room model before Main finishes
+        // loading. Wait for its genuine idle stage before invoking MyLeaveRoom.
+        if (!native_ || !gameApp_)
+            return false;
+        __try {
+            const uint8_t* app = gameApp_();
+            if (!app)
+                return false;
+            if (*reinterpret_cast<const uint32_t*>(app + kGameAppState) !=
+                    kThreeDWaitRoomState)
+                return true;
+            const uint32_t flags = NativeStartFlags();
+            return flags != UINT32_MAX && (flags & 255u) == 2 &&
+                ((flags >> 8) & 255u) != 0 &&
+                ((flags >> 16) & 255u) != 1 &&
+                ((flags >> 24) & 255u) != 1;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
     bool Leave() const
     {
         if (!native_ || !profilePointer_)

@@ -186,6 +186,7 @@ class GiftCampaign:
         return gift
 
     def select_inbox(self,recipient,gift):
+        self.command(recipient,'storage_open',timeout=150)
         self.command(recipient,'gift_storage')
         baseline=int(self.view(recipient)['reply_sequence'])
         self.command(recipient,'gift_inbox')
@@ -263,8 +264,37 @@ class GiftCampaign:
                    '赠送时间：'+provenance_timestamp(record['OfferedAt']) in text and
                    '接收时间：'+provenance_timestamp(record['AcceptedAt']) in text)
         self.capture(recipient,'gift-provenance')
+        if getattr(self.args,'prepare_off_resolution',False):
+            self.native.stop('b')
+            recipient,relogged_bid,_=self.native.start('b')
+            self.check('the accepted native instance survives the recipient relogin',relogged_bid==bid and same_payload(before,self.db.unit(self.uid),allow_owner_slot=True))
+            recipient.wait(lambda state:state.get('unit_gift',{}).get('ready')=='1' and int(state['unit_gift'].get('capabilities','0'))&4,120)
+            pending=self.offer(recipient,aid,'关闭新赠送后仍可接受已有赠礼')
+            handoff={'gift_id':pending,'unit_uid':self.uid,'sender_id':bid,'recipient_id':aid}
+            game_test.atomic_write(self.root/'gift-off-handoff.json',json.dumps(handoff,indent=2))
+            self.check('an authoritative pending gift is retained for disabled-feature resolution',self.db.unit(self.uid) is None and same_payload(before,self.db.escrow(self.uid),allow_owner_slot=True))
         self.native.stop('b');self.native.stop('a')
         self.receipt['status']='pass';self.save()
+
+    def disabled_resolution(self):
+        handoff=json.loads((self.root/'gift-off-handoff.json').read_text(encoding='utf-8'))
+        self.check('disabled resolution uses the exact previously offered instance',int(handoff['unit_uid'])==self.uid)
+        recipient,aid,_=self.native.start('a');sender,bid,_=self.native.start('b')
+        self.check('existing authenticated participants match the original pending gift',aid==int(handoff['recipient_id']) and bid==int(handoff['sender_id']))
+        for actor in (recipient,sender):
+            actor.wait(lambda state:state.get('unit_gift',{}).get('ready')=='1',120)
+            view=self.view(actor)
+            self.check('new offers stay disabled while existing gift controls remain available',int(view['capabilities'])&4==0)
+        before=self.db.escrow(self.uid);self.check('the same complete fifty-column instance remains in escrow',before and len(before)==50)
+        gift=int(handoff['gift_id']);self.select_inbox(recipient,gift)
+        baseline=int(self.view(recipient)['reply_sequence'])
+        self.command(recipient,'gift_accept',gift_id=gift);self.wait_reply(recipient,6,baseline,gift=gift,unit=self.uid)
+        recipient.wait(lambda state:int(state.get('unit_gift',{}).get('inventory_last_added_uid','0'))==self.uid and state['unit_gift'].get('inventory_sync_busy')=='0',120)
+        after=self.db.unit(self.uid)
+        self.check('disabled-feature native accept preserves the full instance and removes escrow',after and int(after['AccountNumber'])==aid and same_payload(before,after,allow_owner_slot=True) and self.db.escrow(self.uid) is None)
+        self.check('disabled-feature native accept retains consistent inventory counters',self.db.counts_valid(aid) and self.db.counts_valid(bid))
+        self.capture(recipient,'gift-disabled-accepted')
+        self.native.stop('b');self.native.stop('a');self.receipt['status']='pass';self.save()
 
     def close(self):
         for label in list(self.native.running):
@@ -288,8 +318,12 @@ def main():
     parser.add_argument('--pair',choices=('primary_friend_pair','all_payload_groups_pair'),default='all_payload_groups_pair')
     parser.add_argument('--asset-baseline',type=Path)
     parser.add_argument('--target-host',required=True)
+    parser.add_argument('--phase',choices=('enabled','disabled-resolution'),default='enabled')
+    parser.add_argument('--prepare-off-resolution',action='store_true',help='retain one genuine pending gift for a later disabled-resolution phase')
     args=parser.parse_args();campaign=GiftCampaign(args)
-    try:campaign.enabled()
+    try:
+        if args.phase=='enabled':campaign.enabled()
+        else:campaign.disabled_resolution()
     except Exception as error:
         campaign.receipt.update(status='fail',error_type=type(error).__name__,error=str(error));campaign.save();raise
     finally:campaign.close()

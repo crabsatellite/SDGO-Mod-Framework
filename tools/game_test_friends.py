@@ -65,10 +65,14 @@ class FriendActor:
             state=self.state()
             if state and predicate(state):return state
             if self.completion is not None and self.completion.done():
+                final_state=self.state()
+                if final_state and predicate(final_state):return final_state
                 report=self.completion.result()
                 raise game_test.GameTestError('native actor exited before its friend condition: '+report.get('status','unknown'))
             events=Path(self.metadata['client']['events'])
             if events.exists() and game_test.has_run_end(events):
+                final_state=self.state()
+                if final_state and predicate(final_state):return final_state
                 raise game_test.GameTestError('native actor ended before its friend condition')
             time.sleep(.15)
         raise game_test.GameTestError('native friend observation timed out')
@@ -188,7 +192,9 @@ class Campaign:
         if not condition:raise game_test.GameTestError('friend campaign failed: '+name)
     def start(self,label,_startup_attempt=0):
         number=self.counts.get(label,0)+1;self.counts[label]=number
-        run=self.root/(label+'-01');profile=self.root/'profiles'/(label+'.ini')
+        # Pagination visits these existing identities serially; reuse one
+        # capsule rather than making another full client for every account.
+        run=self.root/('page-peer-01' if label.startswith('page-peer-') else label+'-01');profile=self.root/'profiles'/(label+'.ini')
         metadata=prepare_actor(self.template,self.stage,run,profile,self.host,baseline=self.baseline,extra_mods=self.extra_mods)
         future=self.pool.submit(game_test.run_prepared,run,9000,60,on_process=self.on_process,on_poll=self.on_poll)
         actor=FriendActor(run,future);self.running[label]=(actor,future,profile)
@@ -362,35 +368,37 @@ class Campaign:
         self.receipt['status']='passed';self.save()
 
     def invitations(self):
-        a,aid,aname=self.start('a');b,bid,bname=self.start('b')
-        self.state_friend(a,bid);self.state_friend(b,aid)
-        # The first actor may have loaded its cache before the peer logged in.
-        # Refresh through the real protocol before testing an online-only UI.
-        for actor,peer in ((a,bid),(b,aid)):
-            assert_receipt(actor.command('refresh'),sent=True)
-            actor.wait(lambda state:bool(find_friend(state,peer)) and int(find_friend(state,peer)['presence'])!=0,90)
-        self.check('real friend refresh observes both authenticated peers online',True)
-        assert_receipt(a.command('open',target_name=bname,target_id=bid))
-        created=assert_receipt(a.command('room_create',timeout=180))
-        room=created['room'];room_id=int(room['actual_room_id']);channel=int(room['actual_channel_id'])
-        self.check('friend invitation uses a real newly created host room',room_id>0 and channel>0 and room['model_present']=='1' and room['local_is_host']=='1')
-        baseline=int(room['player_count'])
-        identity=dict(target_id=aid,target_name=aname,channel_id=channel,room_id=room_id)
         for decision in ('reject','accept'):
+            a,aid,aname=self.start('a');b,bid,bname=self.start('b')
+            self.state_friend(a,bid);self.state_friend(b,aid)
+            # Each decision starts with fresh authenticated clients and a new
+            # genuine room. Native post-refusal state is never bypassed.
+            for actor,peer in ((a,bid),(b,aid)):
+                assert_receipt(actor.command('refresh'),sent=True)
+                actor.wait(lambda state:bool(find_friend(state,peer)) and int(find_friend(state,peer)['presence'])!=0,90)
+            self.check('real friend refresh observes both authenticated peers online for '+decision,True)
+            assert_receipt(a.command('open',target_name=bname,target_id=bid))
+            created=assert_receipt(a.command('room_create',timeout=180))
+            room=created['room'];room_id=int(room['actual_room_id']);channel=int(room['actual_channel_id'])
+            self.check('friend invitation uses a real newly created host room for '+decision,room_id>0 and channel>0 and room['model_present']=='1' and room['local_is_host']=='1')
+            baseline=int(room['player_count'])
+            identity=dict(target_id=aid,target_name=aname,channel_id=channel,room_id=room_id)
             assert_receipt(b.command('invite_arm_'+decision,**identity))
             sent=assert_receipt(a.command('invite_send',target_id=bid,target_name=bname,channel_id=channel,room_id=room_id),sent=True)
             self.check('native room invite transport '+decision,int(sent['invite_sender']['request_opcode'])==0x077E and sent['invite_sender']['recipient_correlated']=='1')
             b.wait(lambda s:s.get('invite_receiver',{}).get('controls_ready')=='1' and s['invite_receiver'].get('incoming_packet_matched')=='1')
-            result=assert_receipt(b.command('invite_decide',timeout=180))
+            result=assert_receipt(b.command('invite_decide',timeout=180,**identity))
             received=result['invite_receiver']
             if decision=='reject':
                 self.check('native invitation rejection closes its real prompt without joining',received['prompt_destroyed']=='1' and received['decision_sent']=='1' and int(received['decision_opcode'])==0x07A9 and received['join_request_sent']=='0')
             else:
-                self.check('native invitation acceptance joins the exact room as a guest',received['join_request_sent']=='1' and received['room_model_matched']=='1' and received['local_guest']=='1' and int(received['model_room_id'])==room_id)
-        a.wait(lambda s:int(s.get('room',{}).get('player_count','0'))>=baseline+1)
-        assert_receipt(b.command('room_leave',timeout=90));assert_receipt(a.command('room_leave',timeout=90))
-        self.check('both invitation participants return to the real lobby',a.state()['state']['app']=='6' and b.state()['state']['app']=='6')
-        self.stop('b');self.stop('a');self.receipt['status']='invitations_passed';self.save()
+                self.check('native invitation acceptance joins the exact room as a guest',received['decision_sent']=='1' and int(received['decision_opcode'])==0x04A8 and received['room_model_matched']=='1' and received['local_guest']=='1' and received['wait_room_owner_matched']=='1' and received['manager_vtable_matched']=='1' and int(received['model_room_id'])==room_id)
+                a.wait(lambda s:int(s.get('room',{}).get('player_count','0'))>=baseline+1)
+                assert_receipt(b.command('room_leave',channel_id=channel,room_id=room_id,timeout=90))
+            assert_receipt(a.command('room_leave',channel_id=channel,room_id=room_id,timeout=90))
+            self.check('both invitation participants return to the real lobby after '+decision,a.state()['state']['app']=='6' and b.state()['state']['app']=='6')
+            self.stop('b');self.stop('a')
+        self.receipt['status']='invitations_passed';self.save()
 
 
 def main():

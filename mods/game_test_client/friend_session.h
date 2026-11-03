@@ -40,7 +40,7 @@ class FriendSession {
     uint32_t giftOperation_=0;
     FriendActions::Result giftResult_=FriendActions::kUnbound;
     uint32_t sequence_=0;
-    bool active_=false,ready_=false;
+    bool active_=false,ready_=false,finishPending_=false;
     uint64_t lastWrite_=0,commandAt_=0;
     unsigned completed_=0;
     bool (*captureRequest_)(const wchar_t*)=nullptr;
@@ -126,11 +126,11 @@ class FriendSession {
         }
         *output=value;return true;
     }
-    void Write(const SdgoGameTestContextV1* context,bool done) {
+    bool Write(const SdgoGameTestContextV1* context,bool done) {
         const auto s=Observation();
         const std::wstring path=std::wstring(context->directory)+L"\\friend-result.ini",temporary=path+L".tmp";
         FILE* f=_wfopen(temporary.c_str(),L"wb");
-        if(!f)return;
+        if(!f)return false;
         fprintf(f,"[run]\nid=%s\npid=%lu\nready=%u\n[command]\nsequence=%u\ndone=%u\noperation=%u\nresult=%u\nrequest_sent=%u\nrequest_opcode=%u\ntransport_sequence=%u\nreply_sequence=%u\nreply_opcode=%u\nreply_status=%u\nreply_result=%u\nreply_consumed=%u\n",
             context->run_id,GetCurrentProcessId(),ready_?1u:0u,sequence_,done?1u:0u,s.operation,s.result,s.request_sent,
             s.request_opcode,s.request_transport_sequence,s.reply_sequence,s.reply_opcode,s.reply_status,s.reply_result,s.reply_consumed);
@@ -181,8 +181,10 @@ class FriendSession {
         unitGifts_.Write(f,context);
         if(storageWrite_)storageWrite_(f);
         fprintf(f,"[capture]\npending=%u\nhresult=%lu\n",capturePending_?1u:0u,static_cast<unsigned long>(captureResult_));
-        fclose(f);MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH);
+        fclose(f);
+        const bool published=MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=0;
         lastWrite_=GetTickCount64();
+        return published;
     }
 public:
     bool Ready() const noexcept {return ready_;}
@@ -202,6 +204,13 @@ public:
         GetPrivateProfileStringW(L"run",L"id",L"",abortId,64,abortPath.c_str());
         const std::wstring expectedRun(context->run_id,context->run_id+strlen(context->run_id));
         if(expectedRun==abortId){context->Assert(0,"owned friend campaign requested a bounded abort");return SDGO_GAME_TEST_FAIL;}
+        if(finishPending_) {
+            if(Write(context,true))return completed_?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+            if(GetTickCount64()-commandAt_>10000) {
+                context->Assert(0,"the final friend receipt could not be published");return SDGO_GAME_TEST_FAIL;
+            }
+            return SDGO_GAME_TEST_WAIT;
+        }
         if(storagePending_) {
             storageResult_=storageAction_(context,storageOperation_);
             if(storageResult_==SDGO_GAME_TEST_WAIT && GetTickCount64()-commandAt_<120000) {
@@ -273,7 +282,8 @@ public:
         sequence_=next;
         if(!wcscmp(op,L"finish")) {
             context->Assert(completed_>0,"the native friend session completed coordinated real operations");
-            Write(context,true);return completed_?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+            finishPending_=true;commandAt_=GetTickCount64();
+            return SDGO_GAME_TEST_WAIT;
         }
         if(!wcscmp(op,L"snapshot")){++completed_;Write(context,true);return SDGO_GAME_TEST_WAIT;}
         storageCommand_=!wcscmp(op,L"storage_open")||!wcscmp(op,L"storage_claim")||!wcscmp(op,L"storage_hangar");

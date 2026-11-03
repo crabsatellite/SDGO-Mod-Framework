@@ -206,6 +206,11 @@ public:
                     static_cast<GuardFailure>(
                         room_.guard_failure));
             leaveBaseline_ = room_.leave_reply_sequence;
+            if (!rooms_->LeaveReady()) {
+                command_.result = FriendActions::kWaitingForReply;
+                active_ = true;
+                return FriendActions::kWaitingForReply;
+            }
             if (!rooms_->Leave())
                 return Fail(
                     FriendActions::kNativeRequestNotSent,
@@ -908,10 +913,10 @@ private:
         if (receiverState_.decision ==
                 ReceiverT::kAccept &&
             receiverState_.phase == ReceiverT::kRoomJoined) {
-            command_.reply_sequence =
-                receiverState_.join_transport_sequence_after;
-            command_.reply_opcode =
-                receiverState_.join_opcode;
+            command_.reply_sequence = receiverState_.join_request_sent ?
+                receiverState_.join_transport_sequence_after : room_.fresh_sequence;
+            command_.reply_opcode = receiverState_.join_request_sent ?
+                receiverState_.join_opcode : receiverState_.decision_opcode;
             command_.reply_result = 1;
             command_.reply_consumed = 1;
             Complete(FriendActions::kReplyObserved);
@@ -924,6 +929,16 @@ private:
     void TickLeave()
     {
         RefreshObservations();
+        if (!room_.leave_requested) {
+            if (!rooms_->LeaveReady())
+                return;
+            if (!rooms_->Leave()) {
+                Fail(FriendActions::kNativeRequestNotSent,
+                     kGuardNativeActionRejected);
+                return;
+            }
+            room_.leave_requested = 1;
+        }
         if (room_.leave_reply_sequence <= leaveBaseline_) {
             command_.result = FriendActions::kWaitingForReply;
             return;
