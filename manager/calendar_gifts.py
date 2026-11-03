@@ -83,7 +83,9 @@ class CalendarGiftService:
 
 class CalendarGifts(Provider):
     id,title='calendar_gifts','节日与生日赠礼'
-    fields={'workspace':'本服日期赠礼配置目录','server_ini':'本服 WorldServer.ini','legacy_state':'旧生日发放记录 processor_state.json（可选）'}
+    fields={'workspace':'本服日期赠礼配置目录','server_ini':'本服 WorldServer.ini',
+            'legacy_birthdays':'旧生日登记表 JSON 备份（可选）',
+            'legacy_state':'旧生日发放记录 processor_state.json（可选）'}
 
     def __init__(self,workspace):
         super().__init__(workspace);self.controller=CalendarGiftService()
@@ -150,15 +152,27 @@ class CalendarGifts(Provider):
         if method=='POST' and path=='/api/calendar-gifts/import-birthdays':
             current=engine.public()
             if body.get('revision')!=current['private_revision']:raise storage.Conflict('私人名单已改变，请刷新')
-            connection=self.connection('DB Member')
-            try:
-                rows=connection.cursor().execute("SELECT AccountNumber,Birthday FROM dbo.tbl_UserEmail WHERE Birthday IS NOT NULL").fetchall()
-            finally:connection.close()
+            if self.config.get('legacy_birthdays'):
+                from pathlib import Path
+                source=Path(self.config['legacy_birthdays'])
+                if source.stat().st_size>2*1024*1024:raise ValueError('旧生日登记表备份过大')
+                backup=storage.read_json(source)
+                if not isinstance(backup,list):raise ValueError('旧生日登记表应为 JSON 记录列表')
+                rows=[(r.get('AccountNumber'),r.get('Birthday')) for r in backup if isinstance(r,dict)]
+            else:
+                connection=self.connection('DB Member')
+                try:
+                    cursor=connection.cursor()
+                    if not cursor.execute("SELECT OBJECT_ID(N'dbo.tbl_UserEmail',N'U')").fetchval():
+                        raise ValueError('本服没有旧生日登记表；可选择其私人 JSON 备份导入，或按玩家名字登记生日')
+                    rows=cursor.execute("SELECT AccountNumber,Birthday FROM dbo.tbl_UserEmail WHERE Birthday IS NOT NULL").fetchall()
+                finally:connection.close()
             value=current['private'];seen={r['account_id'] for r in value['birthdays']};added=0
             from owner.calendar_gifts.model import month_day
             for account,raw in rows:
                 raw=str(raw).strip()
-                if len(raw)!=4 or not raw.isdigit() or int(account) in seen:continue
+                if isinstance(account,bool) or not isinstance(account,int) or account<1 or account>2147483647:continue
+                if len(raw)!=4 or not raw.isdigit() or account in seen:continue
                 date=raw[:2]+'-'+raw[2:]
                 try:month_day(date)
                 except ValueError:continue
