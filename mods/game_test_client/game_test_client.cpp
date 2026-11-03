@@ -1785,6 +1785,22 @@ int CollectionResult(const SdgoGameTestContextV1* context,CapsuleDrawActions::Re
     return SDGO_GAME_TEST_WAIT;
 }
 int __cdecl PreviewCollection(const SdgoGameTestContextV1* context) {
+    // The full pages suite enters capsules in its currency case. A focused
+    // encyclopedia scope must perform that real navigation itself.
+    static bool focusedEntry=false;
+    if(unitPagesOnly && !focusedEntry) {
+        const auto hangar=hangarNavigation.EnsureUnitManagementPage();
+        if(hangar==HangarNavigation::kUnbound || hangar>=HangarNavigation::kDownmenuServiceMismatch) {
+            context->Assert(0,"focused capsule preview returns through the original unit-management entry");return SDGO_GAME_TEST_FAIL;
+        }
+        if(hangar!=HangarNavigation::kReady)return SDGO_GAME_TEST_WAIT;
+        const auto navigation=hangarNavigation.ClickBottomRadio(L"CapsuleRoomRadio",0x4C);
+        if(navigation==HangarNavigation::kUnbound || navigation>=HangarNavigation::kDownmenuServiceMismatch) {
+            context->Assert(0,"focused capsule preview opens the original CapsuleRoomRadio");return SDGO_GAME_TEST_FAIL;
+        }
+        focusedEntry=navigation==HangarNavigation::kReady;
+        return SDGO_GAME_TEST_WAIT;
+    }
     const auto result=collection.EnsurePreview();const int pending=CollectionResult(context,result);
     if(pending==SDGO_GAME_TEST_FAIL)return pending;
     if(result!=CapsuleDrawActions::kPreviewReady)return SDGO_GAME_TEST_WAIT;
