@@ -25,7 +25,7 @@ public:
     struct Observation {
         uint32_t result=0,operation=0,sequence=0,pilot=0,expected_host=0,host=0,room=0,humans=0;
         uint32_t start_sequence=0,end_sequence=0,frames=0,movement_events=0,bots=0,local_bots=0,remote_bots=0;
-        uint32_t join_result=0,ready_result=0,hp_events=0,lua_errors=0,join_stage=0;
+        uint32_t join_result=0,ready_result=0,hp_events=0,lua_errors=0,join_stage=0,join_control_flags=0;
         uint16_t end_opcode=0;
         uint8_t local_host=0,battle_seen=0,settled=0,join_original=0,ready_reply=0,ready_original=0,ready_model=0;
     };
@@ -70,6 +70,7 @@ public:
             if(channel!=SDGO_GAME_TEST_PASS)return;
             if(!joinStarted_)joinStarted_=join_->JoinExactTitle(title_);
             state_.join_stage=join_->SelectionStage();
+            state_.join_control_flags=join_->SelectionControlFlags();
             const auto joined=join_->JoinState();state_.join_result=joined.result;state_.join_original=joined.original_handler_completed;
             if(joined.result==JoinT::kJoinRejected){Fail();return;}
             if(joined.result!=JoinT::kJoinAccepted)return;
@@ -108,7 +109,7 @@ public:
         const auto s=State();
         fprintf(file,"[pvp]\noperation=%u\nsequence=%u\nresult=%u\npilot=%u\nexpected_host=%u\nhost=%u\nroom=%u\nhumans=%u\nlocal_host=%u\nstart_sequence=%u\nend_sequence=%u\nend_opcode=%u\nbattle_seen=%u\nsettled=%u\nframes=%u\nmovement_events=%u\nbots=%u\nlocal_bots=%u\nremote_bots=%u\njoin_result=%u\njoin_original=%u\nready_result=%u\nready_reply=%u\nready_original=%u\nready_model=%u\n",
             s.operation,s.sequence,s.result,s.pilot,s.expected_host,s.host,s.room,s.humans,s.local_host,s.start_sequence,s.end_sequence,s.end_opcode,s.battle_seen,s.settled,s.frames,s.movement_events,s.bots,s.local_bots,s.remote_bots,s.join_result,s.join_original,s.ready_result,s.ready_reply,s.ready_original,s.ready_model);
-        fprintf(file,"hp_events=%u\nlua_errors=%u\njoin_stage=%u\n",s.hp_events,s.lua_errors,s.join_stage);
+        fprintf(file,"hp_events=%u\nlua_errors=%u\njoin_stage=%u\njoin_control_flags=%u\n",s.hp_events,s.lua_errors,s.join_stage,s.join_control_flags);
         const auto selected=native_->OnboardingState();
         fprintf(file,"channel_id=%u\nchannel_group=%u\n",selected.channel_id,selected.channel_group);
     }

@@ -22,6 +22,7 @@ struct Joiner {
     bool JoinExactTitle(const char*){++joins;return true;}
     bool Ready(){++readies;return true;}
     uint32_t SelectionStage()const{return 8;}
+    uint32_t SelectionControlFlags()const{return 31;}
     auto JoinState()const{return join;}
     auto ReadyState()const{return ready;}
 };
