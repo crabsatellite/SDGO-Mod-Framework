@@ -43,6 +43,12 @@ class FriendSession {
     bool active_=false,ready_=false;
     uint64_t lastWrite_=0,commandAt_=0;
     unsigned completed_=0;
+    bool (*captureRequest_)(const wchar_t*)=nullptr;
+    HRESULT (*captureStatus_)()=nullptr;
+    bool captureCommand_=false,capturePending_=false;
+    HRESULT captureResult_=E_PENDING;
+    uint64_t captureAt_=0;
+    std::wstring captureFile_;
     static std::string Utf8(const char* value) {
         wchar_t wide[512]{};char encoded[2048]{};
         if(!MultiByteToWideChar(CP_ACP,0,value,-1,wide,512) ||
@@ -64,7 +70,12 @@ class FriendSession {
     }
     FriendActions::Observation Observation() const {
         auto state=actions_->State();
-        if(giftCommand_) {
+        if(captureCommand_) {
+            state.result=SUCCEEDED(captureResult_)?FriendActions::kReady:FriendActions::kNativeFault;
+            state.command_sequence=sequence_;state.operation=0;
+            state.request_sent=state.reply_consumed=0;
+            state.request_opcode=state.reply_opcode=state.reply_status=0;
+        } else if(giftCommand_) {
             state.result=giftResult_;state.command_sequence=sequence_;state.operation=giftOperation_;
             state.request_sent=0;state.request_opcode=state.reply_opcode=state.reply_status=0;
             state.reply_consumed=0;
@@ -159,10 +170,14 @@ class FriendSession {
         }
         if(roomActions_)roomActions_->Write(f);
         unitGifts_.Write(f,context);
+        fprintf(f,"[capture]\npending=%u\nhresult=%lu\n",capturePending_?1u:0u,static_cast<unsigned long>(captureResult_));
         fclose(f);MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH);
         lastWrite_=GetTickCount64();
     }
 public:
+    void BindFrameCapture(bool (*request)(const wchar_t*),HRESULT (*status)()) {
+        captureRequest_=request;captureStatus_=status;
+    }
     void Bind(FriendActions* actions,FriendExtraActions* extras,const SdgoApi* api,SdgoMod* mod,FriendRoomActions* roomActions=nullptr){
         actions_=actions;extras_=extras;roomActions_=roomActions;profile_=static_cast<uint8_t**>(api->Symbol(mod,"flow.profile_pointer"));
     }
@@ -173,6 +188,16 @@ public:
         GetPrivateProfileStringW(L"run",L"id",L"",abortId,64,abortPath.c_str());
         const std::wstring expectedRun(context->run_id,context->run_id+strlen(context->run_id));
         if(expectedRun==abortId){context->Assert(0,"owned friend campaign requested a bounded abort");return SDGO_GAME_TEST_FAIL;}
+        if(capturePending_) {
+            captureResult_=captureStatus_();
+            if(captureResult_==E_PENDING && GetTickCount64()-captureAt_<30000)return SDGO_GAME_TEST_WAIT;
+            if(captureResult_==E_PENDING)captureResult_=HRESULT_FROM_WIN32(ERROR_TIMEOUT);
+            capturePending_=false;
+            context->Assert(SUCCEEDED(captureResult_),"the actual game backbuffer was captured before Present");
+            if(SUCCEEDED(captureResult_))++completed_;
+            Write(context,true);
+            return SUCCEEDED(captureResult_)?SDGO_GAME_TEST_WAIT:SDGO_GAME_TEST_FAIL;
+        }
         if(!ready_&&!active_) {
             const auto result=actions_->EnsureInitialized();
             if(result>=FriendActions::kBusy){context->Assert(0,"native messenger initialization could not start");return SDGO_GAME_TEST_FAIL;}
@@ -226,6 +251,22 @@ public:
             Write(context,true);return completed_?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
         }
         if(!wcscmp(op,L"snapshot")){++completed_;Write(context,true);return SDGO_GAME_TEST_WAIT;}
+        captureCommand_=!wcscmp(op,L"capture");
+        if(captureCommand_) {
+            wchar_t label[48]{};
+            const auto count=GetPrivateProfileStringW(L"command",L"label",L"",label,48,commandPath.c_str());
+            bool valid=count>0 && count<47;
+            for(unsigned i=0;i<count;++i)
+                valid=valid && ((label[i]>=L'a'&&label[i]<=L'z')||(label[i]>=L'A'&&label[i]<=L'Z')||
+                    (label[i]>=L'0'&&label[i]<=L'9')||label[i]==L'-'||label[i]==L'_');
+            captureFile_=std::wstring(context->directory)+L"\\capture-"+label+L".bmp";
+            if(!valid||!captureRequest_||!captureStatus_||!captureRequest_(captureFile_.c_str())) {
+                captureResult_=E_INVALIDARG;Write(context,true);
+                context->Assert(0,"a scoped native frame capture could not be requested");return SDGO_GAME_TEST_FAIL;
+            }
+            captureResult_=E_PENDING;capturePending_=true;captureAt_=GetTickCount64();
+            Write(context,false);return SDGO_GAME_TEST_WAIT;
+        }
         FriendActions::Command command{};command.sequence=sequence_;command.operation=Operation(op);
         command.target_id=GetPrivateProfileIntW(L"command",L"target_id",0,commandPath.c_str());
         command.page=GetPrivateProfileIntW(L"command",L"page",1,commandPath.c_str());
