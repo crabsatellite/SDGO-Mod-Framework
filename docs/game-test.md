@@ -1,5 +1,11 @@
 # Native GameTest
 
+For a gun-fire regression, enable `BattlePlayerCombat` in the copied test observer and set
+`BattlePlayerWeaponSlot` to an ordinary ranged slot (`0`–`2`). The probe submits the native
+weapon-change request, waits for the actual binding, and requires real ammunition consumption
+in addition to mapped input, movement and an attack state. The default `-1` keeps the current
+weapon. No weapon data, ammunition, cooldown or FSM state is forced by the probe.
+
 `prepare --same-room-rematch` checks that the human retains room ownership after
 settlement, starts a second full battle in that same room, and leaves only after
 the rematch. It cannot combine with random loadouts, pages or account preparation.

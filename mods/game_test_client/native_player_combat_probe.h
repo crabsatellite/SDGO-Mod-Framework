@@ -10,6 +10,7 @@
 #include "sdgo/sdgo_api.h"
 
 #include "scoreboard_actions.h"
+#include "../battle_ai/native_capabilities.h"
 
 // Opt-in native player input for an isolated AI battle GameTest. The probe
 // resolves the authenticated pilot's real local unit, supplies mapped forward
@@ -55,6 +56,16 @@ class NativePlayerCombatProbe
 
     bool enabled_ = false;
     bool continuousPrimary_ = false;
+    int requestedWeaponSlot_ = -1;
+    bool weaponRequestSent_ = false;
+    bool weaponReported_ = false;
+    uint64_t weaponRequestAt_ = 0;
+    bool ammoBaselineValid_ = false;
+    bool ammoSpent_ = false;
+    int16_t previousAmmo_ = 0;
+    uint32_t sampledUnit_ = 0, sampledWeapon_ = 0;
+    bool sampledAlternate_ = false;
+    uint8_t* sampledAttack_ = nullptr;
     bool controlsActive_ = false;
     bool forwardHeld_ = false;
     bool primaryHeld_ = false;
@@ -85,6 +96,9 @@ class NativePlayerCombatProbe
         baselineValid_ = false;
         boundObjectId_ = 0;
         boundUnit_ = nullptr;
+        weaponRequestSent_ = false;
+        weaponReported_ = false;
+        ammoBaselineValid_ = false;
     }
 
     void BeginBattle(
@@ -98,6 +112,7 @@ class NativePlayerCombatProbe
         movementReported_ = false;
         attackReported_ = false;
         finished_ = false;
+        ammoSpent_ = false;
         bursts_ = 0;
         consumedMoveQueries_ = 0;
         consumedFireQueries_ = 0;
@@ -142,6 +157,9 @@ public:
             return false;
         enabled_ = setting != 0;
         continuousPrimary_ = continuous != 0;
+        requestedWeaponSlot_ = api->SettingInt(mod, "BattlePlayerWeaponSlot", -1);
+        if (requestedWeaponSlot_ < -1 || requestedWeaponSlot_ > 2)
+            return false;
         if (!enabled_)
             return true;
 
@@ -257,6 +275,72 @@ public:
             !moveVtable[1] || !attackVtable[1]) {
             Release(input);
             return true;
+        }
+
+        if (requestedWeaponSlot_ >= 0) {
+            battle_ai::native::Capabilities caps{};
+            if (!battle_ai::native::ReadCapabilities(unit, caps)) {
+                Release(input);
+                return true;
+            }
+            const auto& weapon = caps.weapons[requestedWeaponSlot_];
+            if (!weapon.valid || !weapon.ordinary ||
+                weapon.kind == battle_ai::native::WeaponKind::Melee) {
+                context->Assert(0, "the requested native fire-test slot must contain an ordinary ranged weapon");
+                Release(input);
+                return false;
+            }
+            // The common CPlayer receiver handles the same native 0x48 request
+            // as CUnit/CNPC. It only queues the desired slot; actual permission,
+            // binding, ammo and cooldown remain owned by the original game.
+            if (caps.selectedSlot != requestedWeaponSlot_) {
+                input.HoldGameplay(kForwardAction, false);
+                input.HoldGameplay(kPrimaryAction, false);
+                if (!weaponRequestSent_ || context->elapsed_ms - weaponRequestAt_ >= 250) {
+                    auto table = *reinterpret_cast<void***>(unit);
+                    if (!table || !table[7]) { Release(input); return false; }
+                    alignas(4) uint8_t message[0x14]{};
+                    *reinterpret_cast<uint16_t*>(message) = 0x48;
+                    message[0x10] = static_cast<uint8_t>(requestedWeaponSlot_);
+                    using Receive = void(__thiscall*)(uint8_t*, const uint8_t*);
+                    reinterpret_cast<Receive>(table[7])(unit, message);
+                    weaponRequestSent_ = true;
+                    weaponRequestAt_ = context->elapsed_ms;
+                }
+                return true;
+            }
+            // ReadCapabilities also verifies the committed slot's bound record
+            // against its live form/bank. A requested slot alone is insufficient.
+            if (!weaponReported_) {
+                char text[160];
+                sprintf_s(text, "native player ranged weapon bound unit_data=%u slot=%d weapon=%u range_type=%u",
+                          caps.unitId, requestedWeaponSlot_, weapon.id, unsigned(weapon.rangeType));
+                context->Observe(text);
+                weaponReported_ = true;
+            }
+            const size_t bank = caps.alternate ? 0x56C : 0x24C;
+            uint8_t* liveAttack = nullptr;
+            uint8_t* record = nullptr;
+            uint8_t alternate = 0;
+            uint32_t boundId = 0;
+            int32_t slot = -1;
+            int16_t ammo = 0;
+            using namespace battle_ai::native::detail;
+            if (!ReadPointer(unit, kUnitAttackFsm, liveAttack) || liveAttack != attack ||
+                !Read(unit, 0xE34, alternate) || alternate != unsigned(caps.alternate) ||
+                !Read(liveAttack, 0x240, slot) || slot != requestedWeaponSlot_ ||
+                !ReadPointer(liveAttack, 0x248, record) || !Read(record, 0, boundId) || boundId != weapon.id ||
+                !Read(liveAttack, bank + requestedWeaponSlot_ * 0xC8, ammo)) {
+                Release(input);
+                return true;
+            }
+            const bool sameWeapon = sampledUnit_ == caps.unitId && sampledWeapon_ == weapon.id &&
+                                    sampledAlternate_ == caps.alternate && sampledAttack_ == liveAttack;
+            if (ammoBaselineValid_ && sameWeapon && ammo >= 0 && ammo < previousAmmo_) ammoSpent_ = true;
+            previousAmmo_ = ammo;
+            ammoBaselineValid_ = true;
+            sampledUnit_ = caps.unitId; sampledWeapon_ = weapon.id;
+            sampledAlternate_ = caps.alternate; sampledAttack_ = liveAttack;
         }
 
         const float* position =
@@ -388,5 +472,7 @@ public:
         context->Assert(
             attackObserved_,
             "mapped primary input and native FSM dispatch entered a real local attack state");
+        if (requestedWeaponSlot_ >= 0)
+            context->Assert(ammoSpent_, "the acknowledged ordinary ranged weapon consumed its real native ammunition");
     }
 };
