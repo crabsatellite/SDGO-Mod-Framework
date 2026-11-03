@@ -6,6 +6,7 @@
 #include "friend_extra_actions.h"
 #include "friend_room_actions.h"
 #include "unit_gift_actions.h"
+#include "pvp_session_actions.h"
 #include "sdgo/game_test.h"
 
 namespace friends {
@@ -32,6 +33,8 @@ class FriendSession {
     FriendActions* actions_=nullptr;
     FriendExtraActions* extras_=nullptr;
     FriendRoomActions* roomActions_=nullptr;
+    PvpSessionActions* pvpActions_=nullptr;
+    bool pvpCommand_=false;
     UnitGiftActions unitGifts_;
     uint8_t** profile_=nullptr;
     bool extraCommand_=false;
@@ -64,8 +67,8 @@ class FriendSession {
     }
 
     static uint32_t Operation(const wchar_t* text) {
-        const wchar_t* names[]={L"",L"ensure",L"refresh",L"page",L"add",L"accept",L"reject",L"open",L"send",L"remove",L"close",L"profile",L"room_create",L"invite_send",L"invite_arm_accept",L"invite_arm_reject",L"invite_decide",L"room_leave",L"gift_context",L"gift_open",L"gift_select_unit",L"gift_note",L"gift_preview",L"gift_confirm",L"gift_cancel",L"gift_storage",L"gift_inbox",L"gift_returned",L"gift_select",L"gift_accept",L"gift_return",L"gift_takeback",L"gift_provenance",L"gift_receipt"};
-        for(uint32_t i=1;i<34;++i)if(!wcscmp(text,names[i]))return i;
+        const wchar_t* names[]={L"",L"ensure",L"refresh",L"page",L"add",L"accept",L"reject",L"open",L"send",L"remove",L"close",L"profile",L"room_create",L"invite_send",L"invite_arm_accept",L"invite_arm_reject",L"invite_decide",L"room_leave",L"gift_context",L"gift_open",L"gift_select_unit",L"gift_note",L"gift_preview",L"gift_confirm",L"gift_cancel",L"gift_storage",L"gift_inbox",L"gift_returned",L"gift_select",L"gift_accept",L"gift_return",L"gift_takeback",L"gift_provenance",L"gift_receipt",L"room_join",L"room_ready",L"room_start",L"battle_finish"};
+        for(uint32_t i=1;i<38;++i)if(!wcscmp(text,names[i]))return i;
         return 0;
     }
     FriendActions::Observation Observation() const {
@@ -73,6 +76,10 @@ class FriendSession {
         if(captureCommand_) {
             state.result=SUCCEEDED(captureResult_)?FriendActions::kReady:FriendActions::kNativeFault;
             state.command_sequence=sequence_;state.operation=0;
+            state.request_sent=state.reply_consumed=0;
+            state.request_opcode=state.reply_opcode=state.reply_status=0;
+        } else if(pvpCommand_&&pvpActions_) {
+            const auto p=pvpActions_->State();state.result=p.result;state.operation=p.operation;state.command_sequence=p.sequence;
             state.request_sent=state.reply_consumed=0;
             state.request_opcode=state.reply_opcode=state.reply_status=0;
         } else if(giftCommand_) {
@@ -171,6 +178,7 @@ class FriendSession {
         if(roomActions_)roomActions_->Write(f);
         unitGifts_.Write(f,context);
         fprintf(f,"[capture]\npending=%u\nhresult=%lu\n",capturePending_?1u:0u,static_cast<unsigned long>(captureResult_));
+        if(pvpActions_)pvpActions_->Append(f);
         fclose(f);MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH);
         lastWrite_=GetTickCount64();
     }
@@ -181,6 +189,7 @@ public:
     void Bind(FriendActions* actions,FriendExtraActions* extras,const SdgoApi* api,SdgoMod* mod,FriendRoomActions* roomActions=nullptr){
         actions_=actions;extras_=extras;roomActions_=roomActions;profile_=static_cast<uint8_t**>(api->Symbol(mod,"flow.profile_pointer"));
     }
+    void BindPvp(PvpSessionActions* pvp){pvpActions_=pvp;}
     int Poll(const SdgoGameTestContextV1* context) {
         if(!actions_){context->Assert(0,"friend action adapter is unavailable");return SDGO_GAME_TEST_FAIL;}
         const std::wstring abortPath=std::wstring(context->directory)+L"\\friend-abort.ini";
@@ -205,6 +214,7 @@ public:
         }
         actions_->Tick();
         if(roomActions_)roomActions_->Tick(context);
+        if(pvpActions_)pvpActions_->Tick(context);
         const auto observed=Observation();
         const bool terminal=IsFriendCommandTerminal(observed);
         if(active_&&terminal) {
@@ -231,7 +241,8 @@ public:
             }
             active_=false;Write(context,true);
         }
-        if(active_&&GetTickCount64()-commandAt_>90000) {
+        const uint64_t commandTimeout=pvpCommand_&&pvpActions_&&pvpActions_->State().operation==PvpSessionActions::FinishBattle?900000:90000;
+        if(active_&&GetTickCount64()-commandAt_>commandTimeout) {
             context->Assert(0,"native friend operation timed out waiting for real state/reply");return SDGO_GAME_TEST_FAIL;
         }
         if(GetTickCount64()-lastWrite_>=250)Write(context,!active_);
@@ -274,14 +285,19 @@ public:
             !Text(commandPath.c_str(),L"body",command.body,sizeof(command.body))) {
             context->Assert(0,"friend command is malformed");return SDGO_GAME_TEST_FAIL;
         }
-        giftCommand_=command.operation>=18;
-        roomCommand_=command.operation>=12&&!giftCommand_;
-        extraCommand_=command.operation>=10&&!roomCommand_&&!giftCommand_;
+        pvpCommand_=command.operation>=34;
+        giftCommand_=command.operation>=18&&command.operation<=33;
+        roomCommand_=command.operation>=12&&!giftCommand_&&!pvpCommand_;
+        extraCommand_=command.operation>=10&&!roomCommand_&&!giftCommand_&&!pvpCommand_;
         const uint32_t channel=GetPrivateProfileIntW(L"command",L"channel_id",0,commandPath.c_str());
         const uint32_t room=GetPrivateProfileIntW(L"command",L"room_id",0,commandPath.c_str());
         if(roomCommand_&&(!roomActions_||channel>UINT16_MAX)){context->Assert(0,"friend room command lacks a supported native bridge or channel");return SDGO_GAME_TEST_FAIL;}
         FriendActions::Result result;
-        if(giftCommand_) {
+        if(pvpCommand_) {
+            const uint32_t humans=GetPrivateProfileIntW(L"command",L"human_count",0,commandPath.c_str());
+            if(!pvpActions_){context->Assert(0,"coordinated native PvP adapter is unavailable");return SDGO_GAME_TEST_FAIL;}
+            result=pvpActions_->Submit(command,humans,context);
+        } else if(giftCommand_) {
             uint64_t unit=0,gift=0;uint16_t note[200]{},noteLength=0;wchar_t hex[802]{};
             const auto hexLength=GetPrivateProfileStringW(L"command",L"note_utf16_hex",L"",hex,802,commandPath.c_str());
             if(hexLength>=801||!Number64(commandPath.c_str(),L"unit_uid",&unit)||

@@ -1739,6 +1739,21 @@ int main()
     TestReadyReplyAndModel(
         actions);
 
+    actions.ResetObservations();
+    SetupRoomList();
+    actions.SetRoomResolver([](void*)->const uint8_t*{return nullptr;},nullptr);
+    Check(actions.JoinExactTitle(kTitle),"resolver regression sends an original join request");
+    DeliverJoinReply(kRoomId,kRoomVariant);
+    InstallGuestRoom();
+    Check(actions.JoinState().result==RoomJoinActions::kJoinPending,
+        "an unavailable active model cannot fall back to a cached legacy room");
+    Put<uint8_t*>(g_profileStorage,0xEC,nullptr);
+    actions.SetRoomResolver([](void* room)->const uint8_t*{return static_cast<const uint8_t*>(room);},g_room);
+    Check(actions.JoinState().result==RoomJoinActions::kJoinAccepted,
+        "the original reply and actual 3D room can acknowledge a join while profile+0xEC is empty");
+    Check(actions.Ready(),"guest Ready uses the same actual room instead of the empty legacy cache");
+    actions.SetRoomResolver(nullptr,nullptr);
+
     if (g_failures) {
         std::fprintf(
             stderr,
