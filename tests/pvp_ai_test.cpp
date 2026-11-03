@@ -15,6 +15,12 @@ uint32_t failBuild = 0;
 uint32_t failSetup = 0;
 int buildCalls = 0, setupCalls = 0, respawns = 0, refreshes = 0, stateRespawns = 0;
 int originals = 0;
+int resultHostCalls=0,resultHostTransfer=-1;
+void __fastcall NativeResultHost(uint8_t* value,void*,const int* order,const int*,int transfer,int count) {
+    ++resultHostCalls;resultHostTransfer=transfer;
+    if(transfer>0 && count>0 && order && order[0]>=0 && order[0]<kSlots)
+        std::memcpy(value+0xA5,value+kSlotInfo+order[0]*kSlotInfoStride,kSlotInfoStride);
+}
 int nativeTeamCalls=0,nativeHumanCalls=0,nativeHumanError=0;
 bool nativeAssignDuringSetup=false;
 int nativeRandomSeen=-1;
@@ -122,6 +128,8 @@ void Reset(int mode = 1) {
     g_respawnRefresh = reinterpret_cast<RespawnRefreshFn>(&Refresh);
     g_pilotStateRespawn = reinterpret_cast<PilotStateRespawnFn>(&StateRespawn);
     g_battleEnd = reinterpret_cast<BattleEndFn>(&End);
+    g_resultHost = reinterpret_cast<ResultHostFn>(&NativeResultHost);
+    resultHostCalls=0;resultHostTransfer=-1;
     std::memset(g_dead, 0, sizeof(g_dead));
     std::memset(g_watch, 0, sizeof(g_watch));
     for (auto& active : g_observerActiveRooms)
@@ -573,6 +581,20 @@ int wmain(int argc,wchar_t** argv) {
     RespawnAiPilots(room.data(), 100); CHECK(respawns == 1 && refreshes == 0);
     revive = true; RespawnAiPilots(room.data(), 101); CHECK(respawns == 2 && refreshes == 1 && stateRespawns == 1);
     room[kRoomMode] = 11; Put<uint32_t>(Unit(6), kUnitHp, 0); RespawnAiPilots(room.data(), 102); CHECK(respawns == 2);
+
+    SCENARIO("AI MVP preserves the real server host without rewriting native ranks or the MVP");
+    Reset(3);Human(0,1);CHECK(AddAiPilot(room.data(),6,100,2,2));
+    int resultOrder[2]={6,0},resultRanks[2]={1,2};
+    ResultHost(room.data(),nullptr,resultOrder,resultRanks,1,2);
+    CHECK(resultHostCalls==1 && resultHostTransfer==0 && Get<uint32_t>(room.data(),kRoomHost)==10);
+    CHECK(resultOrder[0]==6 && resultOrder[1]==0 && resultRanks[0]==1 && resultRanks[1]==2);
+    Human(1,2);resultOrder[0]=1;
+    ResultHost(room.data(),nullptr,resultOrder,resultRanks,1,2);
+    CHECK(resultHostTransfer==1 && Get<uint32_t>(room.data(),kRoomHost)==11);
+    room[kRoomMode]=5;resultOrder[0]=6;
+    ResultHost(room.data(),nullptr,resultOrder,resultRanks,1,2);
+    CHECK(resultHostTransfer==1);
+    Reset(3);Human(0,1);CHECK(AddAiPilot(room.data(),6,100,2,2));
 
     SCENARIO("battle end removes AI, preserves humans and releases diagnostic state");
     room[kRoomMode] = 1; before.assign(Pilot(0), Pilot(0) + kPilotStride);

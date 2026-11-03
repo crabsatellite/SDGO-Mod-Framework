@@ -21,8 +21,8 @@ Both parts are in the full framework package; friend-server players receive `mat
 
 Follow the [installation guide](setup.md#install), then use your usual launcher.
 
-These population rules require `pvp_ai 0.3.0-beta.2` on Battle servers and
-`match_ai 0.1.5` or later on every participating client, including the host.
+These population and host-retention rules require `pvp_ai 0.3.0-beta.3` on Battle servers and
+`match_ai 0.1.6` or later on every participating client, including the host.
 Restart the affected programs. Easy, Medium and Hard use the same release point.
 
 ## Use
@@ -120,6 +120,9 @@ The host runs the AI and other clients display synchronized copies. Grid/Tag
 modes can use AI decks. The existing dead view can follow AI players, and AI appear on the
 battle Tab scoreboard. Respawn, life consumption and victory conditions follow the selected mode.
 AI on either team target opposing humans and AI and never their teammates, at every difficulty.
+AI can earn MVP but cannot become room host. When an AI ranks first, the human
+host who remains in the room keeps Start permission, including after a solo loss.
+The same room can start another battle. Native transfers to other humans remain available.
 
 ## Settings
 

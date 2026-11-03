@@ -54,6 +54,7 @@
 #include "sdgo/room_titles_current.h"
 #include "sdgo/ai_scoring.h"
 #include "sdgo/pvp_ai_client_observer.h"
+#include "room_host.h"
 
 namespace
 {
@@ -152,6 +153,25 @@ namespace
 
     const SdgoApi* g_api = nullptr;
     SdgoMod* g_mod = nullptr;
+    match_ai_host::Bindings g_roomHost;
+    using ChangeRoomHostFn=bool(__thiscall*)(uint8_t*,uint32_t);
+    ChangeRoomHostFn g_changeRoomHost=nullptr;
+
+    bool __fastcall ChangeRoomHost(uint8_t* model,void*,uint32_t candidate)
+    {
+        uint32_t selected=candidate;
+        __try { selected=g_roomHost.Select(model,candidate); }
+        __except(EXCEPTION_EXECUTE_HANDLER) {
+            g_api->Log(g_mod,SDGO_LOG_WARN,"could not verify the native room host candidate");
+        }
+        if(selected!=candidate)
+            g_api->Log(g_mod,SDGO_LOG_INFO,"AI room host candidate %08lX resolved to human %08lX",
+                static_cast<unsigned long>(candidate),static_cast<unsigned long>(selected));
+        // An empty human roster cannot grant an AI control of a player room.
+        // A native no-change result (the selected human is already host) is
+        // preserved, as are all ordinary transfers to another real player.
+        return selected ? g_changeRoomHost(model,selected):false;
+    }
 
     struct GameCalls
     {
@@ -2077,6 +2097,10 @@ SDGO_MOD_ENTRY
                  Bind(g_addDeckUnit, "unit.add_deck_unit") && Bind(g_switchDeck, "unit.switch_deck");
     if (!bound)
         return 0;
+    if(!Bind(g_roomHost.roomInfo,"pvp_ai_client.room_info") ||
+       !Bind(g_roomHost.hostGetter,"pvp_ai_client.host_id") ||
+       !api->HookCode(mod,"pvp_ai_client.change_host",reinterpret_cast<void*>(&ChangeRoomHost),
+                      reinterpret_cast<void**>(&g_changeRoomHost)))return 0;
     if (!Bind(g_rosterInit, "hud.battle_roster_init") ||
         !api->HookCode(mod, "hud.battle_roster_row", reinterpret_cast<void*>(&ScoreboardRow),
                        reinterpret_cast<void**>(&g_originalRosterRow)))

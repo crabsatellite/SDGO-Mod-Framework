@@ -100,6 +100,7 @@ namespace
     using AssignHumanTeamsFn = int(__thiscall*)(void* proc,uint8_t* room);
     using RoomTickFn = int(__thiscall*)(uint8_t* room, uint32_t now);
     using BattleEndFn = void(__thiscall*)(uint8_t* room, uint16_t a, uint16_t b, int now);
+    using ResultHostFn = void(__thiscall*)(uint8_t*,const int*,const int*,int,int);
     using RespawnPilotFn = int(__thiscall*)(uint8_t* room, uint32_t now, uint8_t* pilot, uint32_t id, uint32_t extra);
     using RespawnRefreshFn = void(__thiscall*)(uint8_t* room, int a, uint8_t* pilot, int b, int c);
     using PilotStateRespawnFn = int(__thiscall*)(uint8_t* part);
@@ -139,6 +140,7 @@ namespace
     AssignHumanTeamsFn g_assignHumanTeams = nullptr;
     RoomTickFn g_roomTick = nullptr;
     BattleEndFn g_battleEnd = nullptr;
+    ResultHostFn g_resultHost = nullptr;
     RespawnPilotFn g_respawnPilot = nullptr;
     RespawnRefreshFn g_respawnRefresh = nullptr;
     PilotStateRespawnFn g_pilotStateRespawn = nullptr;
@@ -1914,6 +1916,30 @@ namespace
         }
     }
 
+    void __fastcall ResultHost(uint8_t* room,void*,const int* order,const int* ranks,int transfer,int count)
+    {
+        // Stock settlement promotes the first ranked pilot when the host loses.
+        // Only suppress an AI promotion; keep the genuine rankings and MVP.
+        __try {
+            if(room && IsPvpMode(room[kRoomMode]) && room[kRoomMode] && order && ranks &&
+               transfer>0 && count>0 && count<=kSlots && order[0]>=0 && order[0]<kSlots) {
+                const auto candidate=SlotPilotId(room,order[0]);
+                const auto previous=*reinterpret_cast<const uint32_t*>(room+kRoomHost);
+                std::array<uint32_t,kSlots> pilots{};
+                for(int slot=0;slot<kSlots;++slot)pilots[slot]=SlotPilotId(room,slot);
+                if((candidate&kAiPilotBit) && previous && !(previous&kAiPilotBit) &&
+                   sdgo::pvp_teams::SelectHumanHost(candidate,previous,pilots)==previous) {
+                    transfer=0;
+                    g_api->Log(g_mod,SDGO_LOG_INFO,"AI MVP %08lX retains human room host %08lX",
+                        static_cast<unsigned long>(candidate),static_cast<unsigned long>(previous));
+                }
+            }
+        } __except(EXCEPTION_EXECUTE_HANDLER) {
+            g_api->Log(g_mod,SDGO_LOG_WARN,"could not verify native settlement host selection");
+        }
+        g_resultHost(room,order,ranks,transfer,count);
+    }
+
     void __fastcall BattleEnd(uint8_t* room, void* /*edx*/, uint16_t a, uint16_t b, int now)
     {
         const bool observed = ObserverRoomActive(room);
@@ -1924,8 +1950,19 @@ namespace
         const bool copied = observed && GuardedObserverCopyEvent(
             SDGO_PVP_AI_EVENT_BATTLE_END, room, 0, false, &endEvent);
         g_battleEnd(room, a, b, now);
-        if (copied)
+        if (copied) {
+            __try {
+                g_api->Log(g_mod,SDGO_LOG_INFO,
+                    "native settlement room=%lu host_before=%08lX host_after=%08lX humans=%lu mode=%u",
+                    static_cast<unsigned long>(*reinterpret_cast<const uint32_t*>(room)),
+                    static_cast<unsigned long>(endEvent.host_pilot_id),
+                    static_cast<unsigned long>(*reinterpret_cast<const uint32_t*>(room+kRoomHost)),
+                    static_cast<unsigned long>(*reinterpret_cast<const uint32_t*>(room+kRoomPlayers)),room[kRoomMode]);
+            } __except(EXCEPTION_EXECUTE_HANDLER) {
+                g_api->Log(g_mod,SDGO_LOG_ERROR,"native settled room ownership was not readable");
+            }
             GuardedObserverPublishEvent(&endEvent);
+        }
         if (room && !GuardedRemove(room))
             g_api->Log(g_mod, SDGO_LOG_ERROR, "exception while removing the AI pilots at battle end");
         if (room)
@@ -2063,6 +2100,8 @@ SDGO_MOD_ENTRY
     if (!api->HookCode(mod, "battle.end", reinterpret_cast<void*>(&BattleEnd),
                        reinterpret_cast<void**>(&g_battleEnd)))
         return 0;
+    if(!api->HookCode(mod,"battle.result_host",reinterpret_cast<void*>(&ResultHost),
+                      reinterpret_cast<void**>(&g_resultHost)))return 0;
     if (!api->HookCode(mod, "battle.room_tick", reinterpret_cast<void*>(&RoomTick),
                        reinterpret_cast<void**>(&g_roomTick)))
         return 0;

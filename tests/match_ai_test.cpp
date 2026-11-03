@@ -375,10 +375,56 @@ void Spawn(int classIndex = 0, int roomMode = 1, int humanCount = 1, int aiCount
     Reset(classIndex, roomMode); Records(humanCount, aiCount); SpawnAiPlayers(mode.data(), "test");
 }
 bool Near(float a, float b) { return std::fabs(a - b) < 0.0001f; }
+uint32_t hostForwarded=0;
+int hostForwardCalls=0;
+bool hostNativeResult=true;
+uint8_t* __fastcall HostRoomInfo(uint8_t* model,void*) { return Get<uint8_t*>(model,4); }
+uint32_t __fastcall HostGetter(uint8_t*,void*) { return 0; }
+bool __fastcall NativeHostChange(uint8_t*,void*,uint32_t pilot) {
+    ++hostForwardCalls;hostForwarded=pilot;return hostNativeResult;
+}
+void TestHumanHost() {
+    Reset();
+    std::array<uint8_t,0x3D00> packed{};
+    uint8_t model[0x30]{};void* modelVtable[29]{};
+    modelVtable[7]=reinterpret_cast<void*>(&HostRoomInfo);
+    modelVtable[28]=reinterpret_cast<void*>(&HostGetter);
+    Put(model,0,static_cast<void**>(modelVtable));Put(model,4,packed.data());
+    Put(model,0x24,uint32_t{31});
+    g_roomHost.roomInfo=reinterpret_cast<match_ai_host::RoomInfo>(&HostRoomInfo);
+    g_roomHost.hostGetter=modelVtable[28];
+    g_changeRoomHost=reinterpret_cast<ChangeRoomHostFn>(&NativeHostChange);
+    Put(packed.data(),0x4CE,uint32_t{31});Put(packed.data(),0x95C,uint32_t{31});
+    Put(packed.data(),0x95C+6*0x48E,uint32_t{0x80000002u});
+    hostForwardCalls=0;hostNativeResult=true;
+    for(uint8_t modeId:{uint8_t{1},uint8_t{3},uint8_t{6},uint8_t{7},uint8_t{9}}) {
+        packed[5]=modeId;
+        CHECK(ChangeRoomHost(model,nullptr,0x80000002u));
+        CHECK(hostForwarded==31);
+    }
+    CHECK(hostForwardCalls==5);
+    hostNativeResult=false;
+    CHECK(!ChangeRoomHost(model,nullptr,0x80000002u) && hostForwarded==31);
+    hostNativeResult=true;
+    Put(packed.data(),0x95C+0x48E,uint32_t{32});
+    CHECK(ChangeRoomHost(model,nullptr,32) && hostForwarded==32);
+    Put(packed.data(),0x95C,uint32_t{0});
+    CHECK(ChangeRoomHost(model,nullptr,0x80000002u) && hostForwarded==32);
+    Put(packed.data(),0x95C+0x48E,uint32_t{0});
+    const int before=hostForwardCalls;
+    CHECK(!ChangeRoomHost(model,nullptr,0x80000002u) && hostForwardCalls==before);
+    packed[5]=5;
+    CHECK(ChangeRoomHost(model,nullptr,0x80000002u) && hostForwarded==0x80000002u);
+    packed[5]=3;modelVtable[28]=nullptr;
+    CHECK(ChangeRoomHost(model,nullptr,0x80000002u) && hostForwarded==0x80000002u);
+    g_roomHost={};g_changeRoomHost=nullptr;
+}
 }
 
 int main() {
     using namespace fixture;
+    SCENARIO("AI MVP cannot own a player room; native human transfers and no-change results are preserved");
+    TestHumanHost();
     CHECK(MH_Initialize() == MH_OK);
     CHECK(MH_CreateHook(reinterpret_cast<void*>(&NativeTeamOnlyGate), reinterpret_cast<void*>(&TargetTeamGate), &fixtureTeamTrampoline) == MH_OK);
     CHECK(MH_EnableHook(reinterpret_cast<void*>(&NativeTeamOnlyGate)) == MH_OK);
