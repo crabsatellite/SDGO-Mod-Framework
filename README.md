@@ -57,6 +57,8 @@ Release labels describe the published version; later feature work is accepted se
 
 <!-- /mod-category:gameplay -->
 
+The independent [holiday and birthday gift Manager module](docs/calendar-gifts.md) provides one missing unit per festival and one per birthday tier. Server-private birthdays and targeted player rosters are excluded from generic rule distribution.
+
 <a id="long-room-title-commands"></a>
 
 Additional reference: [room-title commands](docs/room-commands.md).

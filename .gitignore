@@ -45,3 +45,9 @@ catalog.json
 *.zpk
 *.zdx
 *.dmp
+
+# Server-private date-gift rosters and activation state are never public inputs.
+birthdays.private.json
+calendar-state.private.json
+calendar-errors.private.json
+calendar-legacy.private.json

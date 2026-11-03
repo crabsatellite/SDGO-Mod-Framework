@@ -36,6 +36,7 @@ def build(workspace, base_url, *, host_id=None, mod_id=None, provider_id=None, k
             'frp':'服主填写实际 Sakura FRP 端点。生成器只导出客户端需要的地址映射；Agent 复用已登记的 UDP 池，玩家使用原启动器，不需要 Sakura 账号或专用联机入口。',
             'ai_catalog':'根据服主的原生目录表和配套客户端表生成一致的 AI 机体清单，在客户端和 BattleServer 装配同一份数据，保留旧编号分配记录。它不自动等于 AI 实战验收通过。'}
         stories['collection_capsule']='活动收藏扭蛋固定100,000 GP，先补图鉴未解锁机体，全解锁后补当前永久机库与领取箱缺少的机体。候选来自可用数据库初始机体，包含无原生图鉴条目的合法新内容；过滤训练、占位、不可出击和不可独立持有的变形态。当前阶段C/B/A/S按35/30/20/15加权并按可用等级归一，通过原生奖品箱发放永久1级机体。Mod仅保留最小图鉴解锁标记；无完整历史证明或导入门槛，Manager安装更新自动处理SQL，玩家不运行SQL。生成、安装、真人领取和扣费验收是不同状态。'
+        stories['calendar_gifts']='独立的日期赠礼模块由 Manager 统一管理后台任务。公开默认关闭；节日一台未拥有机体，生日12档各一台，支持按节日调整机体和原生道具。年度与账号回执和原生保管库写入共用事务；重启或结果未知时先查原回执。私人生日、玩家分组、定向日期及发放记录不能进入通用规则导出，也不能复制进 AI 问题说明。'
         mechanism=stories.get(provider_id,'此功能由登记的业务模块提供配置和管理操作。')
         settings=redact(provider.config)
         capabilities={
@@ -50,6 +51,7 @@ def build(workspace, base_url, *, host_id=None, mod_id=None, provider_id=None, k
             'frp':{'operations':['GET/POST /api/profile','POST /api/export'],'editable':['逻辑登录端点','Sakura TCP/UDP 端点','连续 UDP 端口池'],'revision_field':'revision','scope':'只导出客户端连接配置，不导出 Sakura 凭据'},
             'ai_catalog':{'operations':['POST /api/check','POST /api/generate','POST /api/install_client','POST /api/install_server','POST /api/export'],'editable':['配套客户端/服务器来源','机体分级规则','上一版编号分配记录'],'scope':'更新必须保留编号分配记录；生成与安装后仍需人工游戏验收'}}
         capabilities['collection_capsule']={'operations':['POST /api/generate','POST /api/check-install','POST /api/install-server','POST /api/install-client','POST /api/export','POST /api/import-history','POST /api/register-family'],'editable':['目标 WorldServer INI','配套客户端','完整框架/服主工具包','361x322 活动海报'],'scope':'所有写操作需当前 revision；只操作选定目标。不得伪造完整历史、重置 Seen 或猜测双向形态。永久单位分类是交付元数据，不是奖品白名单；旧分类须保留供历史奖品领取。游戏程序由用户关闭，Manager 不管理其进程。'}
+        capabilities['calendar_gifts']={'operations':['GET /api/calendar-gifts','POST /api/calendar-gifts/policy','POST /api/calendar-gifts/private','POST /api/calendar-gifts/preview','GET /api/calendar-gifts/export','GET/POST /api/services/calendar.gifts'],'editable':['节日与指定日期','机体等级、固定机体及原生道具','本服私有生日与玩家分组'],'revision_field':'revision','scope':'自动发放仅由 Manager 注册的后台任务执行。预览不发礼物，导出强制关闭并排除定向活动、私人名单、回执和凭据。AI 说明不读取私人名单。'}
         settings={**settings,'管理操作契约':capabilities.get(provider_id,{})}
         paths=[str(value) for key,value in settings.items() if isinstance(value,str) and key not in ('demo',) and value]
         addresses=[base_url+'/api/providers/'+provider_id+'/config']
