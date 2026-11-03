@@ -20,6 +20,7 @@ public:
     using SnapshotFn=bool(*)(SdgoPvpAiClientSnapshotV1&);
     using StartFn=int(*)(const SdgoGameTestContextV1*);
     using ControlFn=bool(*)(uint32_t);
+    using ChannelFn=int(*)(uint32_t,uint16_t);
     enum Operation:uint32_t {Join=34,Ready=35,Start=36,FinishBattle=37};
     struct Observation {
         uint32_t result=0,operation=0,sequence=0,pilot=0,expected_host=0,host=0,room=0,humans=0;
@@ -29,14 +30,15 @@ public:
         uint8_t local_host=0,battle_seen=0,settled=0,join_original=0,ready_reply=0,ready_original=0,ready_model=0;
     };
     bool Bind(NativeT* native,RoomT* room,JoinT* join,SnapshotFn snapshot,StartFn start,
-              const char* title,uint32_t mode,uint32_t bots,ControlFn control) {
+              const char* title,uint32_t mode,uint32_t bots,ControlFn control,ChannelFn channel) {
         native_=native;room_=room;join_=join;snapshot_=snapshot;start_=start;mode_=mode;expectedBots_=bots;
         control_=control;
-        if(!native||!room||!join||!snapshot||!start||!control||bots<1||bots>7||
+        channel_=channel;
+        if(!native||!room||!join||!snapshot||!start||!control||!channel||bots<1||bots>7||
            (mode!=1&&mode!=3&&mode!=6&&mode!=7&&mode!=9)||!title||!Title(title))return false;
         return true;
     }
-    Result Submit(const Command& command,uint32_t humans,const SdgoGameTestContextV1* context) {
+    Result Submit(const Command& command,uint32_t humans,const SdgoGameTestContextV1* context,uint32_t group=UINT32_MAX,uint16_t channel=0) {
         if(active_||!context||humans<2||humans>8||!command.target_id||(command.target_id&0x80000000u))return Fail();
         op_=command.operation;state_.operation=op_;state_.sequence=command.sequence;
         state_.expected_host=command.target_id;expectedHumans_=humans;state_.result=friends::FriendActions::kWaitingForLobby;
@@ -44,7 +46,8 @@ public:
         const auto current=room_->NativeRoomState();
         state_.pilot=native_->OnboardingState().profile_pilot_id;
         if(op_==Join) {
-            if(state_.pilot==command.target_id||!Title(command.body))return Fail();
+            if(state_.pilot==command.target_id||group>3||!channel||!Title(command.body))return Fail();
+            targetGroup_=group;targetChannel_=channel;
             joinStarted_=false;
         } else if(op_==Ready) {
             if(state_.pilot==command.target_id||!joined_)return Fail();
@@ -62,6 +65,9 @@ public:
         Track();
         if(!active_)return;
         if(op_==Join) {
+            const int channel=channel_(targetGroup_,targetChannel_);
+            if(channel==SDGO_GAME_TEST_FAIL){Fail();return;}
+            if(channel!=SDGO_GAME_TEST_PASS)return;
             if(!joinStarted_)joinStarted_=join_->JoinExactTitle(title_);
             const auto joined=join_->JoinState();state_.join_result=joined.result;state_.join_original=joined.original_handler_completed;
             if(joined.result==JoinT::kJoinRejected){Fail();return;}
@@ -102,6 +108,8 @@ public:
         fprintf(file,"[pvp]\noperation=%u\nsequence=%u\nresult=%u\npilot=%u\nexpected_host=%u\nhost=%u\nroom=%u\nhumans=%u\nlocal_host=%u\nstart_sequence=%u\nend_sequence=%u\nend_opcode=%u\nbattle_seen=%u\nsettled=%u\nframes=%u\nmovement_events=%u\nbots=%u\nlocal_bots=%u\nremote_bots=%u\njoin_result=%u\njoin_original=%u\nready_result=%u\nready_reply=%u\nready_original=%u\nready_model=%u\n",
             s.operation,s.sequence,s.result,s.pilot,s.expected_host,s.host,s.room,s.humans,s.local_host,s.start_sequence,s.end_sequence,s.end_opcode,s.battle_seen,s.settled,s.frames,s.movement_events,s.bots,s.local_bots,s.remote_bots,s.join_result,s.join_original,s.ready_result,s.ready_reply,s.ready_original,s.ready_model);
         fprintf(file,"hp_events=%u\nlua_errors=%u\n",s.hp_events,s.lua_errors);
+        const auto selected=native_->OnboardingState();
+        fprintf(file,"channel_id=%u\nchannel_group=%u\n",selected.channel_id,selected.channel_group);
     }
 private:
     bool Title(const char* title) {
@@ -142,6 +150,7 @@ private:
     }
     struct Sample {uint32_t pilot=0,id=0;float x=0,z=0;};
     NativeT* native_=nullptr;RoomT* room_=nullptr;JoinT* join_=nullptr;SnapshotFn snapshot_=nullptr;StartFn start_=nullptr;ControlFn control_=nullptr;
+    ChannelFn channel_=nullptr;uint32_t targetGroup_=UINT32_MAX;uint16_t targetChannel_=0;
     Observation state_{};uint32_t expectedBots_=0,expectedHumans_=0,mode_=0,expectedRoom_=0,op_=0;
     std::array<Sample,12> samples_{};
     BattleCombatActions combat_;

@@ -3,7 +3,7 @@
 #include <cstdio>
 using F=friends::FriendActions;
 namespace {
-int failures=0,starts=0;bool controlled=true;
+int failures=0,starts=0;bool controlled=true,channelReady=true;
 void Check(bool ok,const char* name){if(!ok){++failures;std::printf("FAIL %s\n",name);}}
 struct Native {
     NativeActions::OnboardingObservation profile{};
@@ -29,6 +29,7 @@ SdgoPvpAiClientSnapshotV1 snapshot{};
 bool Snap(SdgoPvpAiClientSnapshotV1& s){s=snapshot;return true;}
 bool Control(uint32_t seq){return controlled&&seq==7;}
 int Start(const SdgoGameTestContextV1*){++starts;return SDGO_GAME_TEST_PASS;}
+int Channel(uint32_t group,uint16_t channel){return !channelReady?SDGO_GAME_TEST_WAIT:group==1&&channel==9304?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;}
 void Assert(int,const char*){}
 SdgoGameTestContextV1 context{};
 struct World {
@@ -36,11 +37,11 @@ struct World {
     World(){
         native.profile.profile_pilot_id=32;
         auto& r=room.room;r.native_app_state=18;r.model_present=1;r.room_id=81;r.room_mode=3;r.player_count=3;r.host_pilot_id=31;
-        Check(driver.Bind(&native,&room,&join,&Snap,&Start,"gt-peer !ai5",3,5,&Control),"bound native adapters");
+        Check(driver.Bind(&native,&room,&join,&Snap,&Start,"gt-peer !ai5",3,5,&Control,&Channel),"bound native adapters");
     }
     void Joined(){
         F::Command c{};c.sequence=1;c.operation=Driver::Join;c.target_id=31;strcpy_s(c.body,"gt-peer !ai5");
-        driver.Submit(c,3,&context);join.join.result=Joiner::kJoinAccepted;join.join.model_room_id=81;join.join.local_is_guest=1;join.join.original_handler_completed=1;driver.Tick(&context);
+        driver.Submit(c,3,&context,1,9304);join.join.result=Joiner::kJoinAccepted;join.join.model_room_id=81;join.join.local_is_guest=1;join.join.original_handler_completed=1;driver.Tick(&context);
     }
 };
 void RemoteSnapshot(){
@@ -52,6 +53,12 @@ void RemoteSnapshot(){
 }
 int main(){
     context.Assert=&Assert;
+    {
+        World w;channelReady=false;w.Joined();
+        Check(w.join.joins==0,"guest does not search or join another channel before the original selector completes");
+        channelReady=true;w.driver.Tick(&context);
+        Check(w.join.joins==1&&w.driver.State().result==F::kReady,"the exact-room join follows acknowledged native channel preparation");
+    }
     {
         World w;w.Joined();Check(w.driver.State().result==F::kReady&&w.join.joins==1,"exact live room plus original join reply completes");
         F::Command c{};c.operation=Driver::Ready;c.sequence=2;c.target_id=31;w.driver.Submit(c,3,&context);

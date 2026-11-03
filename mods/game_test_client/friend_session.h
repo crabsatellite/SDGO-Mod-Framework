@@ -296,7 +296,9 @@ public:
         if(pvpCommand_) {
             const uint32_t humans=GetPrivateProfileIntW(L"command",L"human_count",0,commandPath.c_str());
             if(!pvpActions_){context->Assert(0,"coordinated native PvP adapter is unavailable");return SDGO_GAME_TEST_FAIL;}
-            result=pvpActions_->Submit(command,humans,context);
+            const uint32_t group=GetPrivateProfileIntW(L"command",L"channel_group",UINT32_MAX,commandPath.c_str());
+            if(channel>UINT16_MAX){context->Assert(0,"coordinated native channel id is invalid");return SDGO_GAME_TEST_FAIL;}
+            result=pvpActions_->Submit(command,humans,context,group,static_cast<uint16_t>(channel));
         } else if(giftCommand_) {
             uint64_t unit=0,gift=0;uint16_t note[200]{},noteLength=0;wchar_t hex[802]{};
             const auto hexLength=GetPrivateProfileStringW(L"command",L"note_utf16_hex",L"",hex,802,commandPath.c_str());
