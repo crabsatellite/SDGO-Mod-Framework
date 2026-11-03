@@ -128,6 +128,11 @@ sdgo_add_mod(findwindow_fix DESCRIPTION "FindWindowW fix" SOURCES mods/findwindo
 sdgo_add_mod(startup_crash_fix DESCRIPTION "random crash at game start fix" SOURCES mods/startup_crash_fix/startup_crash_fix.cpp)
 sdgo_add_mod(native_data_guard DESCRIPTION "verified native battle data guards"
              SOURCES mods/native_data_guard/native_data_guard.cpp FILES symbols.fragment.ini)
+sdgo_add_mod(login_recovery SERVER DESCRIPTION "native authenticated stale login recovery"
+             SOURCES mods/login_recovery/login_recovery.cpp FILES symbols.fragment.ini)
+add_executable(login_recovery_policy_test tests/login_recovery_policy_test.cpp)
+sdgo_strict(login_recovery_policy_test)
+add_test(NAME login_recovery_policy COMMAND login_recovery_policy_test)
 sdgo_add_mod(fps_limit DESCRIPTION "native config.xml FPS cap" SOURCES mods/fps_limit/fps_limit.cpp)
 
 add_executable(fps_limit_runtime_test tests/fps_limit_runtime_test.cpp)
