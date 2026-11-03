@@ -321,10 +321,6 @@ public:
                 input.HoldGameplay(14u + requestedWeaponSlot_, false);
                 input.HoldGameplay(14u + requestedWeaponSlot_, true);
                 weaponInput_(unit, nativeInput, 0);
-                // Hidden clients still consume the original control event,
-                // just as the fire/movement path below does after binding.
-                reinterpret_cast<NativeTickFn>(attackVtable[1])(
-                    attack, unit + kUnitControlContext);
                 if (context->tick % 300 == 0)
                     context->Observe("native fire probe supplied mapped weapon-selection input; actual binding is still pending");
                 return true;

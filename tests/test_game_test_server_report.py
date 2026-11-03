@@ -51,6 +51,23 @@ class ServerReportTests(unittest.TestCase):
         self.assertEqual(incomplete['status'],'fail')
         self.assertEqual(len(incomplete['errors']),4)
 
+    def test_cohort_declaration_requires_all_real_humans(self):
+        events=self.stream()
+        for row in events[1:]:
+            row['slots'].extend([dict(slot=2,pilot_id=9230,unit_or_npc_id=10003,team=1,is_ai=False),
+                                 dict(slot=3,pilot_id=9231,unit_or_npc_id=10026,team=1,is_ai=False)])
+            row['humans_team_1']=3;row['active_slots']+=2
+        self.path.write_text('\n'.join(json.dumps(e) for e in events)+'\n',encoding='utf-8')
+        self.assertEqual(report.evaluate(self.metadata,[self.path],9229)['status'],'fail')
+        result=report.evaluate(self.metadata,[self.path],9229,expected_humans=[9229,9230,9231])
+        self.assertEqual(result['status'],'pass')
+        self.assertEqual(result['expected_human_pilot_ids'],[9229,9230,9231])
+
+    def test_cohort_cannot_override_a_sealed_roster(self):
+        self.metadata['plan']['human_pilot_ids']=[9229]
+        with self.assertRaisesRegex(ValueError,'sealed plan'):
+            report.evaluate(self.metadata,[],9229,expected_humans=[9229,9230])
+
     def test_same_run_role_nonce_and_native_main_are_bound(self):
         for field,value in (('run_id','stale-run'),('role','client'),('nonce','wrong'),
                             ('normal_server_main',False),('require_end',False),
