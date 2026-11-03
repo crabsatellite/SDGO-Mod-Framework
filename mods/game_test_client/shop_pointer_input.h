@@ -34,8 +34,7 @@ public:
 #if !defined(_M_IX86)
         return false;
 #else
-        HMODULE zoa = GetModuleHandleW(L"zoa_input.dll");
-        if (!zoa || !BindZoaExports(zoa)) return false;
+        if (!BindInput()) return false;
 
         api_ = api;
         mod_ = mod;
@@ -55,8 +54,8 @@ public:
         installed_ = true;
         if (api_->Log) {
             api_->Log(mod_, SDGO_LOG_INFO,
-                      "shop pointer virtual input ready: zoa_input=%08X/%08X",
-                      ZoaTimeDateStamp, ZoaSizeOfImage);
+                      "shop pointer virtual input ready: binding=%s image=%08X/%08X",
+                      bindingName_, bindingTimeDateStamp_, bindingSizeOfImage_);
         }
         return true;
 #endif
@@ -127,6 +126,36 @@ private:
     static constexpr DWORD ZoaSingletonRva = 0x0000E330;
     static constexpr DWORD ZoaGetMouseRva = 0x000052F0;
     static constexpr DWORD ZoaLazyGetInstanceRva = 0x00005C50;
+    static constexpr DWORD ZoaMousePollRva = 0x00005370;
+    static constexpr DWORD ZoaMousePollSize = 0x000000FC;
+    static constexpr DWORD ZoaCursorCallRva = 0x000053CB;
+    static constexpr DWORD ZoaCursorReturnRva = 0x000053D1;
+    static constexpr DWORD ZoaCursorIatRva = 0x000091B8;
+    static constexpr DWORD ZoaScreenCallRva = 0x000053D3;
+    static constexpr DWORD ZoaScreenIatRva = 0x000091B4;
+
+    static constexpr DWORD GOnlinePreferredBase = 0x00400000;
+    static constexpr DWORD GOnlineTimeDateStamp = 0x54BE1568;
+    static constexpr DWORD GOnlineSizeOfImage = 0x00C97000;
+    static constexpr DWORD GOnlineEntryPointRva = 0x0087AF55;
+    static constexpr DWORD GOnlineChecksum = 0x005A78EF;
+    static constexpr DWORD GOnlineSingletonRva = 0x00C0DC60;
+    static constexpr DWORD GOnlineSingletonResetRva = 0x00847130;
+    static constexpr DWORD GOnlineInputConstructorRva = 0x00847140;
+    static constexpr DWORD GOnlineInputScanRva = 0x00847180;
+    static constexpr DWORD GOnlineInputInitializeRva = 0x008471B0;
+    static constexpr DWORD GOnlineDirectInputCallRva = 0x008471CE;
+    static constexpr DWORD GOnlineDirectInputThunkRva = 0x0097E540;
+    static constexpr DWORD GOnlineDirectInputIatRva = 0x00A2D08C;
+    static constexpr DWORD GOnlineMousePollRva = 0x00846680;
+    static constexpr DWORD GOnlineMousePollSize = 0x000000F8;
+    static constexpr DWORD GOnlineCursorCallRva = 0x008466DE;
+    static constexpr DWORD GOnlineCursorReturnRva = 0x008466E4;
+    static constexpr DWORD GOnlineCursorIatRva = 0x00A2D8B8;
+    static constexpr DWORD GOnlineScreenCallRva = 0x008466E6;
+    static constexpr DWORD GOnlineScreenIatRva = 0x00A2D734;
+
+    static constexpr size_t InputMouseOffset = 8;
     static constexpr uint32_t DeviceVtableSlots = 32;
     static constexpr uint32_t GetDeviceStateSlot = 9;
 
@@ -138,7 +167,6 @@ private:
         "?GetInstancePtr@?$CSingleton@VCInput@@@@SAPAVCInput@@XZ";
 
     using GetCursorPosFn = BOOL(WINAPI*)(LPPOINT);
-    using GetMouseFn = void*(__thiscall*)(void*);
     using GetDeviceStateFn = HRESULT(STDMETHODCALLTYPE*)(void*, DWORD, LPVOID);
 
     struct ModuleRange {
@@ -168,17 +196,166 @@ private:
         return static_cast<LPARAM>(low | high);
     }
 
-    bool BindZoaExports(HMODULE module) {
+    template <size_t Size>
+    static bool MatchBytes(const BYTE* base, DWORD rva, const BYTE (&expected)[Size]) {
+        return std::memcmp(base + rva, expected, Size) == 0;
+    }
+
+    static bool IsIndirectCallToIat(const BYTE* base, DWORD callRva, DWORD iatRva) {
+        const BYTE* instruction = base + callRva;
+        if (instruction[0] != 0xFF || instruction[1] != 0x15) return false;
+
+        DWORD operand = 0;
+        std::memcpy(&operand, instruction + 2, sizeof(operand));
+        return operand == static_cast<DWORD>(
+                              reinterpret_cast<uintptr_t>(base + iatRva));
+    }
+
+    static bool IsRelativeCallTo(const BYTE* base, DWORD callRva, DWORD targetRva) {
+        const BYTE* instruction = base + callRva;
+        if (instruction[0] != 0xE8) return false;
+
+        int32_t displacement = 0;
+        std::memcpy(&displacement, instruction + 1, sizeof(displacement));
+        return callRva + 5 + displacement == targetRva;
+    }
+
+    static bool IsIndirectJumpToIat(const BYTE* base, DWORD jumpRva, DWORD iatRva) {
+        const BYTE* instruction = base + jumpRva;
+        if (instruction[0] != 0xFF || instruction[1] != 0x25) return false;
+
+        DWORD operand = 0;
+        std::memcpy(&operand, instruction + 2, sizeof(operand));
+        return operand == static_cast<DWORD>(
+                              reinterpret_cast<uintptr_t>(base + iatRva));
+    }
+
+    static bool HasGOnlineIdentity(HMODULE module) {
         const auto* base = reinterpret_cast<const BYTE*>(module);
+        if (reinterpret_cast<uintptr_t>(base) != GOnlinePreferredBase) return false;
+
         const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
-        if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0) return false;
+        if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0 ||
+            dos->e_lfanew >= 0x1000) {
+            return false;
+        }
         const auto* nt =
             reinterpret_cast<const IMAGE_NT_HEADERS32*>(base + static_cast<size_t>(dos->e_lfanew));
         if (nt->Signature != IMAGE_NT_SIGNATURE ||
             nt->FileHeader.Machine != IMAGE_FILE_MACHINE_I386 ||
-            nt->FileHeader.TimeDateStamp != ZoaTimeDateStamp ||
+            nt->FileHeader.NumberOfSections != 7 ||
+            nt->FileHeader.TimeDateStamp != GOnlineTimeDateStamp ||
+            nt->FileHeader.Characteristics != 0x010F ||
             nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC ||
-            nt->OptionalHeader.SizeOfImage != ZoaSizeOfImage) {
+            nt->OptionalHeader.ImageBase != GOnlinePreferredBase ||
+            nt->OptionalHeader.AddressOfEntryPoint != GOnlineEntryPointRva ||
+            nt->OptionalHeader.SizeOfImage != GOnlineSizeOfImage ||
+            nt->OptionalHeader.CheckSum != GOnlineChecksum ||
+            nt->OptionalHeader.DllCharacteristics != 0x8000) {
+            return false;
+        }
+        return true;
+    }
+
+    bool BindInput() {
+        HMODULE executable = GetModuleHandleW(nullptr);
+        if (executable && HasGOnlineIdentity(executable)) {
+            return BindGOnlineInput(executable);
+        }
+
+        HMODULE zoa = GetModuleHandleW(L"zoa_input.dll");
+        return zoa && BindZoaInput(zoa);
+    }
+
+    bool BindGOnlineInput(HMODULE module) {
+        if (!HasGOnlineIdentity(module)) return false;
+        const auto* base = reinterpret_cast<const BYTE*>(module);
+
+        static constexpr BYTE ExpectedSingletonReset[] = {
+            0xC7, 0x05, 0x60, 0xDC, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0xC3};
+        static constexpr BYTE ExpectedInputConstructor[] = {
+            0x56, 0x8B, 0xF1, 0x68, 0x00, 0x01, 0x00, 0x00, 0x89, 0x35,
+            0x60, 0xDC, 0x00, 0x01, 0x8D, 0x46, 0x14, 0x6A, 0x00, 0x50,
+            0xC7, 0x06, 0x00, 0x00, 0x00, 0x00, 0xC7, 0x46, 0x04, 0x00,
+            0x00, 0x00, 0x00, 0xC7, 0x46, 0x08, 0x00, 0x00, 0x00, 0x00,
+            0xE8, 0x43, 0x4C, 0x03, 0x00, 0x83, 0xC4, 0x0C, 0xC7, 0x46,
+            0x0C, 0x00, 0x00, 0x00, 0x00, 0x8B, 0xC6, 0x5E, 0xC3};
+        // The static build has no exported getter to bind. CInput::Scan reads
+        // the GetMouse field through the exact "mov ecx,[esi+8]" sequence
+        // before the sole mouse poll.
+        static constexpr BYTE ExpectedInputScan[] = {
+            0x56, 0x8B, 0xF1, 0x8B, 0x4E, 0x04, 0x85, 0xC9, 0x74, 0x05,
+            0xE8, 0x11, 0xF3, 0xFF, 0xFF, 0x8B, 0x4E, 0x08, 0x85, 0xC9,
+            0x74, 0x09, 0x8B, 0x46, 0x10, 0x50, 0xE8, 0xE1, 0xF4, 0xFF,
+            0xFF, 0x8B, 0x4E, 0x0C, 0x5E, 0x85, 0xC9, 0x74, 0x05, 0xE9,
+            0x84, 0xFD, 0xFF, 0xFF, 0xC3};
+        static constexpr BYTE ExpectedInputInitializePrefix[] = {
+            0x55, 0x8B, 0xEC, 0x8B, 0x45, 0x0C, 0x56, 0x57, 0x8B, 0x7D,
+            0x08, 0x6A, 0x00, 0x8B, 0xF1, 0x56, 0x68, 0xFC, 0x19, 0xF2,
+            0x00, 0x68, 0x00, 0x08, 0x00, 0x00, 0x50, 0x89, 0x7E, 0x10};
+        // CMouse+0 is the native DirectInput device. Slot 9 receives a 20-byte
+        // DIMOUSESTATE2 buffer before the genuine cursor polling path.
+        static constexpr BYTE ExpectedMouseStatePoll[] = {
+            0x8B, 0x06, 0x8B, 0x08, 0x8D, 0x55, 0xE8, 0x52, 0x6A,
+            0x14, 0x50, 0x8B, 0x41, 0x24, 0xFF, 0xD0, 0x85, 0xC0};
+        static constexpr BYTE ExpectedMouseCursorPrefix[] = {
+            0x8B, 0x46, 0x18, 0x8B, 0x4E, 0x1C, 0x57, 0x8D, 0x7E, 0x18,
+            0x57, 0xC6, 0x46, 0x28, 0x00, 0x89, 0x46, 0x20, 0x89, 0x4E,
+            0x24};
+        static constexpr BYTE ExpectedAfterCursorCall[] = {0x57, 0x53};
+        static constexpr BYTE ExpectedMousePollTail[] = {
+            0x8B, 0x4D, 0xFC, 0x5E, 0x33, 0xCD, 0x5B, 0xE8, 0x22,
+            0x56, 0x03, 0x00, 0x8B, 0xE5, 0x5D, 0xC2, 0x04, 0x00};
+
+        if (!MatchBytes(base, GOnlineSingletonResetRva, ExpectedSingletonReset) ||
+            !MatchBytes(base, GOnlineInputConstructorRva, ExpectedInputConstructor) ||
+            !MatchBytes(base, GOnlineInputScanRva, ExpectedInputScan) ||
+            !MatchBytes(base, GOnlineInputInitializeRva, ExpectedInputInitializePrefix) ||
+            !IsRelativeCallTo(base, GOnlineDirectInputCallRva,
+                              GOnlineDirectInputThunkRva) ||
+            !IsIndirectJumpToIat(base, GOnlineDirectInputThunkRva,
+                                 GOnlineDirectInputIatRva) ||
+            !MatchBytes(base, GOnlineMousePollRva + 0x17, ExpectedMouseStatePoll) ||
+            !MatchBytes(base, GOnlineMousePollRva + 0x49, ExpectedMouseCursorPrefix) ||
+            !IsIndirectCallToIat(base, GOnlineCursorCallRva, GOnlineCursorIatRva) ||
+            !MatchBytes(base, GOnlineCursorReturnRva, ExpectedAfterCursorCall) ||
+            !IsIndirectCallToIat(base, GOnlineScreenCallRva, GOnlineScreenIatRva) ||
+            !MatchBytes(base, GOnlineMousePollRva + 0xE6, ExpectedMousePollTail)) {
+            return false;
+        }
+
+        singletonSlot_ =
+            reinterpret_cast<void* volatile*>(const_cast<BYTE*>(base) + GOnlineSingletonRva);
+        cursorCallerRange_ = {
+            reinterpret_cast<uintptr_t>(base + GOnlineMousePollRva),
+            reinterpret_cast<uintptr_t>(base + GOnlineMousePollRva + GOnlineMousePollSize)};
+        cursorReturnAddress_ = base + GOnlineCursorReturnRva;
+        bindingName_ = "gonline-static";
+        bindingTimeDateStamp_ = GOnlineTimeDateStamp;
+        bindingSizeOfImage_ = GOnlineSizeOfImage;
+        return true;
+    }
+
+    bool BindZoaInput(HMODULE module) {
+        const auto* base = reinterpret_cast<const BYTE*>(module);
+        const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+        if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0 ||
+            dos->e_lfanew >= 0x1000) {
+            return false;
+        }
+        const auto* nt =
+            reinterpret_cast<const IMAGE_NT_HEADERS32*>(base + static_cast<size_t>(dos->e_lfanew));
+        if (nt->Signature != IMAGE_NT_SIGNATURE ||
+            nt->FileHeader.Machine != IMAGE_FILE_MACHINE_I386 ||
+            nt->FileHeader.NumberOfSections != 4 ||
+            nt->FileHeader.TimeDateStamp != ZoaTimeDateStamp ||
+            nt->FileHeader.Characteristics != 0x210E ||
+            nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC ||
+            nt->OptionalHeader.ImageBase != 0x10000000 ||
+            nt->OptionalHeader.AddressOfEntryPoint != 0x000068BC ||
+            nt->OptionalHeader.SizeOfImage != ZoaSizeOfImage ||
+            nt->OptionalHeader.CheckSum != 0 ||
+            nt->OptionalHeader.DllCharacteristics != 0) {
             return false;
         }
 
@@ -193,15 +370,36 @@ private:
         }
 
         static constexpr BYTE ExpectedGetMouse[] = {0x8B, 0x41, 0x08, 0xC3};
+        static constexpr BYTE ExpectedMouseStatePoll[] = {
+            0x8B, 0x06, 0x8B, 0x08, 0x6A, 0x14, 0x50, 0xFF, 0x51, 0x24,
+            0x85, 0xC0};
+        static constexpr BYTE ExpectedMouseCursorPrefix[] = {
+            0x8B, 0x4E, 0x18, 0x8B, 0x56, 0x1C, 0x57, 0x8D, 0x7E, 0x18,
+            0x57, 0xC6, 0x46, 0x28, 0x00, 0x89, 0x4E, 0x20, 0x89, 0x56,
+            0x24};
+        static constexpr BYTE ExpectedAfterCursorCall[] = {0x57, 0x55};
+        static constexpr BYTE ExpectedMousePollTail[] = {
+            0x8B, 0x4C, 0x24, 0x1C, 0x5E, 0x5D, 0x33, 0xCC, 0xE8, 0xEB,
+            0x12, 0x00, 0x00, 0x83, 0xC4, 0x18, 0xC2, 0x04, 0x00};
         if (std::memcmp(reinterpret_cast<const void*>(getMouse), ExpectedGetMouse,
-                        sizeof(ExpectedGetMouse)) != 0) {
+                        sizeof(ExpectedGetMouse)) != 0 ||
+            !MatchBytes(base, ZoaMousePollRva + 0x1B, ExpectedMouseStatePoll) ||
+            !MatchBytes(base, ZoaMousePollRva + 0x46, ExpectedMouseCursorPrefix) ||
+            !IsIndirectCallToIat(base, ZoaCursorCallRva, ZoaCursorIatRva) ||
+            !MatchBytes(base, ZoaCursorReturnRva, ExpectedAfterCursorCall) ||
+            !IsIndirectCallToIat(base, ZoaScreenCallRva, ZoaScreenIatRva) ||
+            !MatchBytes(base, ZoaMousePollRva + 0xE9, ExpectedMousePollTail)) {
             return false;
         }
 
         singletonSlot_ = reinterpret_cast<void* volatile*>(singleton);
-        getMouse_ = reinterpret_cast<GetMouseFn>(getMouse);
-        zoaRange_ = {reinterpret_cast<uintptr_t>(base),
-                     reinterpret_cast<uintptr_t>(base) + ZoaSizeOfImage};
+        cursorCallerRange_ = {
+            reinterpret_cast<uintptr_t>(base + ZoaMousePollRva),
+            reinterpret_cast<uintptr_t>(base + ZoaMousePollRva + ZoaMousePollSize)};
+        cursorReturnAddress_ = base + ZoaCursorReturnRva;
+        bindingName_ = "zoa_input";
+        bindingTimeDateStamp_ = ZoaTimeDateStamp;
+        bindingSizeOfImage_ = ZoaSizeOfImage;
         return true;
     }
 
@@ -217,7 +415,9 @@ private:
         void* input = singletonSlot_
                           ? InterlockedCompareExchangePointer(singletonSlot_, nullptr, nullptr)
                           : nullptr;
-        void* mouse = input && getMouse_ ? getMouse_(input) : nullptr;
+        void* mouse =
+            input ? *reinterpret_cast<void**>(static_cast<BYTE*>(input) + InputMouseOffset)
+                  : nullptr;
         void* device = mouse ? *reinterpret_cast<void**>(mouse) : nullptr;
         void** originalTable = device ? *reinterpret_cast<void***>(device) : nullptr;
         if (!input || !mouse || !device || !originalTable ||
@@ -331,7 +531,9 @@ private:
         ShopPointerInput* self = active_;
         if (!self || !self->originalGetCursorPos_) return FALSE;
 
-        if (!self->zoaRange_.Contains(_ReturnAddress()) ||
+        const void* returnAddress = _ReturnAddress();
+        if (!self->cursorCallerRange_.Contains(returnAddress) ||
+            returnAddress != self->cursorReturnAddress_ ||
             InterlockedCompareExchange(&self->virtualEnabled_, 0, 0) == 0) {
             return self->originalGetCursorPos_(point);
         }
@@ -364,8 +566,11 @@ private:
     SdgoMod* mod_ = nullptr;
     GetCursorPosFn originalGetCursorPos_ = nullptr;
     void* volatile* singletonSlot_ = nullptr;
-    GetMouseFn getMouse_ = nullptr;
-    ModuleRange zoaRange_{};
+    ModuleRange cursorCallerRange_{};
+    const void* cursorReturnAddress_ = nullptr;
+    const char* bindingName_ = nullptr;
+    DWORD bindingTimeDateStamp_ = 0;
+    DWORD bindingSizeOfImage_ = 0;
 
     HWND ownedWindow_ = nullptr;
     void* device_ = nullptr;
