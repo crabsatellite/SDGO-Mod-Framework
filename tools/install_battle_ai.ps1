@@ -1,6 +1,7 @@
 <# Install paired AI components into an existing client or battle-server framework. #>
 param([Parameter(Mandatory=$true)][string]$GameDir,[string]$Source,
-      [ValidateSet('Client','Server')][string]$Side='Client',[switch]$FrameworkOnly)
+      [ValidateSet('Client','Server')][string]$Side='Client',[switch]$FrameworkOnly,
+      [switch]$PvpCombatOnly)
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $sideName=$Side.ToLowerInvariant()
@@ -18,6 +19,10 @@ if($Side -eq 'Client') {
     $exeName='BattleServer.exe';$symbolName='BattleServer-548A891D-0046C000.ini'
     $expectedHash='f74d16037fc8f4fe49a8041488aabd1948df1b1a9f2d125de9dad4a2347b63a4'
     $products=[ordered]@{battle_ai_server=@('battle_ai_server.dll','mod.ini','manager.json');pvp_ai=@('pvp_ai.dll','mod.ini','manager.json')}
+}
+if($PvpCombatOnly) {
+    if($Side -ne 'Client') { throw 'PvpCombatOnly applies to the paired client combat components' }
+    $products.Remove('mission_ai');$products.Remove('ai_catalog')
 }
 $exe=Join-Path $game $exeName
 if($FrameworkOnly) {

@@ -144,6 +144,7 @@ PvP 机器人；原生任务、原生 AI 模式和 Boss 不受影响。机体等
 
 更新不含游戏原程序的 Manager 框架模板时，可给同一安装器加 `-FrameworkOnly`。
 该选项会拒绝普通游戏目录；普通客户端和服务端安装仍校验原程序的哈希。
+只更新客户端 `battle_ai` 与 `match_ai` 时加 `-PvpCombatOnly`，保留已有任务 AI 和机体目录运行代码。
 
 ```powershell
 ./tools/install_battle_ai.ps1 -GameDir D:/Games/SDGO -Source ./build/stage/Release/client

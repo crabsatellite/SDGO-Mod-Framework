@@ -85,6 +85,8 @@ catalogs, enable states, user `config.ini` and other mods are preserved.
 For a Manager framework template that contains no native game executable, use
 the same installer with `-FrameworkOnly`. This option rejects a normal game
 directory; normal client and server installs still verify the executable hash.
+Use `-PvpCombatOnly` for a client update limited to `battle_ai` and `match_ai`;
+installed mission AI and catalog runtimes are preserved.
 
 ## Settings
 
