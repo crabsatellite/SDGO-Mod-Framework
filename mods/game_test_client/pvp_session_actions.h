@@ -65,10 +65,12 @@ public:
         Track();
         if(!active_)return;
         if(op_==Join) {
-            const int channel=channel_(targetGroup_,targetChannel_);
-            if(channel==SDGO_GAME_TEST_FAIL){Fail();return;}
-            if(channel!=SDGO_GAME_TEST_PASS)return;
-            if(!joinStarted_)joinStarted_=join_->JoinExactTitle(title_);
+            if(!joinStarted_) {
+                const int channel=channel_(targetGroup_,targetChannel_);
+                if(channel==SDGO_GAME_TEST_FAIL){Fail();return;}
+                if(channel!=SDGO_GAME_TEST_PASS)return;
+                joinStarted_=join_->JoinExactTitle(title_);
+            }
             state_.join_stage=join_->SelectionStage();
             state_.join_control_flags=join_->SelectionControlFlags();
             const auto joined=join_->JoinState();state_.join_result=joined.result;state_.join_original=joined.original_handler_completed;

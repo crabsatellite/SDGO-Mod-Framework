@@ -62,6 +62,18 @@ int main(){
         Check(w.join.joins==1&&w.driver.State().result==F::kReady,"the exact-room join follows acknowledged native channel preparation");
     }
     {
+        World w;
+        F::Command c{};c.sequence=1;c.operation=Driver::Join;c.target_id=31;strcpy_s(c.body,"gt-peer !ai5");
+        w.driver.Submit(c,3,&context,1,9304);w.driver.Tick(&context);
+        Check(w.join.joins==1&&w.driver.State().result!=F::kReady,"sent join waits for the actual delayed native acknowledgement");
+        // The original reply replaces the room-list page with the 3D room.
+        // Requiring the list again would strand an otherwise accepted join.
+        channelReady=false;w.join.join.result=Joiner::kJoinAccepted;w.join.join.model_room_id=81;
+        w.join.join.local_is_guest=1;w.join.join.original_handler_completed=1;w.driver.Tick(&context);
+        Check(w.driver.State().result==F::kReady&&w.join.joins==1,"delayed original join completes after leaving the native list page without reopening it");
+        channelReady=true;
+    }
+    {
         World w;w.Joined();Check(w.driver.State().result==F::kReady&&w.join.joins==1,"exact live room plus original join reply completes");
         F::Command c{};c.operation=Driver::Ready;c.sequence=2;c.target_id=31;w.driver.Submit(c,3,&context);
         w.join.ready.result=Joiner::kReadyAccepted;w.join.ready.room_id=81;w.driver.Tick(&context);
