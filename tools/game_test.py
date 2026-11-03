@@ -1706,6 +1706,9 @@ def metadata_suite_for_plan(plan: dict) -> str:
 
 
 def account_profile_lock_path(path: Path) -> Path:
+    # A Windows short-name alias and its long spelling own the same account.
+    # Canonicalize before deriving the lock identity, just as profile loading does.
+    path = path.expanduser().resolve()
     return path.with_name(path.name + ".run.lock")
 
 
