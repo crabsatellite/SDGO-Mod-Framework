@@ -51,9 +51,10 @@ def campaign(host:Path,peers:list[Path],pilots:list[int],events:list[Path],outpu
             check('real authentication and native onboarding',int(state['state']['pilot'])==pilot,pilot=pilot)
         created=assert_receipt(actors[0].command('room_create',timeout=180))
         room=int(created['room']['actual_room_id'])
+        channel=int(created['pvp']['channel_id']);group=int(created['pvp']['channel_group'])
         check('host created a real native room',room>0 and created['room']['local_is_host']=='1')
         for pilot,actor in zip(pilots[1:],actors[1:]):
-            joined=assert_receipt(actor.command('room_join',target_id=pilots[0],body=first['room_title'],human_count=len(pilots),timeout=180))
+            joined=assert_receipt(actor.command('room_join',target_id=pilots[0],body=first['room_title'],human_count=len(pilots),channel_id=channel,channel_group=group,timeout=180))
             p=joined['pvp']
             check('guest original join and actual room',p['join_original']=='1' and int(p['room'])==room and int(p['host'])==pilots[0],pilot=pilot)
             ready=assert_receipt(actor.command('room_ready',target_id=pilots[0],human_count=len(pilots),timeout=90))['pvp']

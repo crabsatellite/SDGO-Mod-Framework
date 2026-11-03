@@ -706,6 +706,25 @@ int __cdecl Start(const SdgoGameTestContextV1* context) {
     context->Assert(snapshot.received_battle_start_count > startSequence, "a genuine server battle-start packet preceded native GAME_MAIN");
     return SDGO_GAME_TEST_PASS;
 }
+int PvpGuestChannel(uint32_t group,uint16_t channel) {
+    static uint32_t generation=rooms.NativeRoomPageGeneration();
+    const auto result=channels.EnsureVsGroup(group);
+    if(result==ChannelActions::kAccepted&&channels.TakeSceneReloadRequirement()) {
+        hangarNavigation.RequireGameRoomReentry(generation);return SDGO_GAME_TEST_WAIT;
+    }
+    if(result!=ChannelActions::kAlreadySelected&&result!=ChannelActions::kAccepted) {
+        if(result==ChannelActions::kWaitingForLobby||result==ChannelActions::kSelectorOpened||
+           result==ChannelActions::kPaging||result==ChannelActions::kNativeRequestPending||result==ChannelActions::kRequestSent)
+            return SDGO_GAME_TEST_WAIT;
+        return SDGO_GAME_TEST_FAIL;
+    }
+    const auto selected=channels.State();
+    if(selected.selected_channel!=channel||selected.selected_group!=group)return SDGO_GAME_TEST_FAIL;
+    const auto page=hangarNavigation.EnsureGameRoom(roomListVtable,modalLoadingVtable,rooms.NativeRoomPageGeneration());
+    if(page==HangarNavigation::kReady)return SDGO_GAME_TEST_PASS;
+    if(page==HangarNavigation::kUnbound||page>=HangarNavigation::kDownmenuServiceMismatch)return SDGO_GAME_TEST_FAIL;
+    return SDGO_GAME_TEST_WAIT;
+}
 bool PvpControlEnabled(uint32_t sequence) {
     SdgoPvpAiClientStartStatusV1 control{};control.size=sizeof(control);control.version=SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
     return getStartStatus&&getStartStatus(&control)&&control.battle_start_sequence==sequence&&control.player_control_enabled;
@@ -2538,7 +2557,7 @@ SDGO_MOD_ENTRY {
             !roomJoin.Bind(api,mod,&actions))
             sdgo_test::Fail("native friend operation bindings are unavailable");
         roomJoin.SetRoomResolver([](void* opaque)->const uint8_t*{return static_cast<RoomActions*>(opaque)->LiveRoomInfo();},&rooms);
-        if(!pvpSession.Bind(&actions,&rooms,&roomJoin,&Snapshot,&Start,roomTitle,RequestedMode(),expectedAi,&PvpControlEnabled))
+        if(!pvpSession.Bind(&actions,&rooms,&roomJoin,&Snapshot,&Start,roomTitle,RequestedMode(),expectedAi,&PvpControlEnabled,&PvpGuestChannel))
             sdgo_test::Fail("coordinated native PvP operation bindings are unavailable");
         friendSession.Bind(&friendActions,&friendExtras,api,mod,&friendRoomActions);
         friendSession.BindPvp(&pvpSession);
