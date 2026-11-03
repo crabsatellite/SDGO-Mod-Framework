@@ -47,6 +47,15 @@ local function Log(s,reason,now)
 end
 local function DirectMove(npc,o,dir,distance,mode,recovery)
   if Flag(o.defenceMoving) and not recovery then return false end
+  if SDGO_BattleAI_SafeDirection then
+    dir=SDGO_BattleAI_SafeDirection(
+      dir,distance,UNIT_MOVE_DIR_FORWARD,UNIT_MOVE_DIR_BACKWARD,
+      UNIT_MOVE_DIR_LEFT,UNIT_MOVE_DIR_RIGHT)
+    if not dir or dir<0 then
+      if SDGO_BattleAI_Native then SDGO_BattleAI_Native(1) end
+      return false
+    end
+  end
   -- A direct step owns the motor now. Otherwise Think's trailing FollowPath
   -- can immediately overwrite this command with an old pursuit waypoint.
   SDGO_BattleAI_CancelRoute()
@@ -125,10 +134,27 @@ local function AnyInRange(o,t)
   for _,w in pairs(o.weapons) do if InRange(w,t) then return true end end
   return false
 end
+local function RangedResponse(o)
+  if Flag(o.meleePressure) then return true end
+  if Flag(o.defenceMoving) then
+    for _,w in pairs(o.weapons or {}) do
+      if Usable(w) and w.kind~='melee' then return true end
+    end
+  end
+  return false
+end
+local function ResponseInRange(o,t)
+  if not RangedResponse(o) then return AnyInRange(o,t) end
+  for _,w in pairs(o.weapons) do
+    if w.kind~='melee' and InRange(w,t) then return true end
+  end
+  return false
+end
 local function Candidate(o,s,t,now)
   return t.id~=s.id and t.hp>0 and not DamageProtected(t) and Flag(t.enemy) and Flag(t.attackable)
 end
 local function PickTarget(o,s,now)
+  o.rangedResponse=RangedResponse(o)
   local current=nil
   for _,t in pairs(o.targets) do
     if t.id==s.target and Candidate(o,s,t,now) then current=t end
@@ -139,7 +165,7 @@ local function PickTarget(o,s,now)
       copy.seen=now;s.memory[t.id]=copy
     elseif t.hp<=0 or DamageProtected(t) then s.memory[t.id]=nil end
   end
-  local currentRange=current and AnyInRange(o,current)
+  local currentRange=current and ResponseInRange(o,current)
   local best,near=nil,nil
   for _,t in pairs(o.targets) do
     if Candidate(o,s,t,now) and AnyVisible(t) then
@@ -155,7 +181,7 @@ local function PickTarget(o,s,now)
       local referenceDistance=reference and RoleDistance(o,reference)
       local tooFar=reference and distance>referenceDistance+C.FarTargetSlack and
         distance*100>referenceDistance*C.FarTargetRatioPercent
-      if AnyInRange(o,t) and not tooFar and
+      if ResponseInRange(o,t) and not tooFar and
          (not best or t.hp<best.hp or (t.hp==best.hp and
           (distance<RoleDistance(o,best) or (distance==RoleDistance(o,best) and t.id<best.id)))) then best=t end
     end
@@ -197,6 +223,9 @@ local function PickWeapon(o,s,t,threat,now,forceKind)
     local value=allowed and WeaponScore(w,t,threat) or -1
     if allowed and w.slot==o.selectedSlot and Usable(w) then current=w end
     local rank=InRange(w,t) and (Flag(w.ready) and 2 or 1) or 0
+    -- A mobile gun that can fire now keeps output during a native escape.
+    -- A stronger stationary gun still obeys its own animation/motor gate.
+    if Flag(o.defenceMoving) then rank=rank*2+(rank==2 and w.kind~='melee' and Flag(w.movingShot) and 1 or 0) end
     if value>=0 and (rank>tier or (rank==tier and
        (value>score or (value==score and best and w.slot<best.slot)))) then
       best=w;score=value;tier=rank
@@ -210,14 +239,17 @@ local function PickWeapon(o,s,t,threat,now,forceKind)
      ((current.damage or 0)>=t.hp or WeaponScore(current,t,threat)>=score) then return current end
   -- With no fireable weapon, do not churn between cooling-down slots. The
   -- first genuinely ready option always wins on the next native observation.
-  if tier<2 and current and InRange(current,t) then return current end
+  local readyTier=Flag(o.defenceMoving) and 4 or 2
+  if tier<readyTier and current and InRange(current,t) then return current end
   return best
 end
 local function Chance(percent)
   return SDGO_BattleAI_Chance and SDGO_BattleAI_Chance(percent)==1
 end
-local function MeleeGate(value)
-  if SDGO_BattleAI_MeleeGate then SDGO_BattleAI_MeleeGate(value and 1 or 0) end
+local function MeleeGate(value,cancelTracking)
+  if SDGO_BattleAI_MeleeGate then
+    SDGO_BattleAI_MeleeGate(value and 1 or 0,cancelTracking and 1 or 0)
+  end
 end
 local function Support(o,t,now)
   for _,a in pairs(o.allies or {}) do
@@ -538,7 +570,11 @@ local function Recover(npc,o,s,t,now)
   else
     s.recoveryDir=nil
     if t then Move(npc,o,s,t,now,true)
-    else npc:SetMoveTargetPosRandom();npc:SetMoveType(UNIT_MOVE_EVENT_MOVE) end
+    else
+      s.patrolLeft=not s.patrolLeft
+      DirectMove(npc,o,s.patrolLeft and UNIT_MOVE_DIR_LEFT or UNIT_MOVE_DIR_RIGHT,
+        C.RecoveryDistance,UNIT_MOVE_EVENT_MOVE,true)
+    end
     s.attempt=0;s.anchor=o.pos;s.progressAt=now;s.recoverUntil=now+C.RecoveryMs;s.recovering=true
   end
   Log(s,'stuck recovery',now)
@@ -860,7 +896,10 @@ local function Tick(npc)
     RecoveryMode(false);return 123
   end
   if o.hp<=0 or Flag(o.hurt) then
-    SafeSetFire(npc,o,false); npc:MoveStop();s.movementIntent=false;s.readyAt=nil; s.recoverUntil=nil
+    -- Native hurt/capture/get-up owns both controllers. Repeating message
+    -- 0x41 (attack-off) or 0x3D (MoveStop) is unnecessary controller writing
+    -- here; discard only our route and decision bookkeeping.
+    s.movementIntent=false;s.readyAt=nil; s.recoverUntil=nil
     SDGO_BattleAI_CancelRoute()
     s.weave=nil;s.cover=nil;MeleeGate(false)
     s.recovering=nil;RecoveryMode(false)
@@ -874,6 +913,13 @@ local function Tick(npc)
   s.noTargetLast=not t
   if Recover(npc,o,s,t,now) then
     s.cover=nil;s.flanking=false;s.orbUntil=nil
+    local nextWeapon=nil
+    -- Recovery owns the motor even when the native observation intentionally
+    -- masks defenceMoving. Retry a ranged request on each legal recovery
+    -- decision until the actual binding changes, keeping the bounded step.
+    if t then
+      nextWeapon=PickWeapon(o,s,t,true,now,'ranged');MeleeGate(true)
+    end
     local fire=false
     for _,w in pairs(o.weapons) do
       if Ordinary(w) and w.slot==o.selectedSlot and t and InRange(w,t) and
@@ -883,6 +929,7 @@ local function Tick(npc)
     end
     SDGO_BattleAI_AimTarget(fire and t.id or 0)
     SafeSetFire(npc,o,fire);SDGO_BattleAI_Cadence(0)
+    if nextWeapon and nextWeapon.slot~=o.selectedSlot then ChangeWeapon(npc,nextWeapon.slot) end
     return 123
   end
   if s.weave or Flag(o.meleeBusy) then
@@ -904,10 +951,13 @@ local function Tick(npc)
     MeleeGate(Flag(s.protectedMeleeGate))
     if not Flag(o.meleeBusy) and not Flag(o.specialBusy) then
       if not s.patrolling or not o.goal or Distance2(o.pos,o.goal)<=C.ArrivalDistance*C.ArrivalDistance or now>=s.patrolAt then
-        npc:SetMoveTargetPosRandom();s.patrolAt=now+C.PatrolMs;s.patrolling=true
-        s.movementIntent=true;s.movementIntentAt=now
+        s.patrolLeft=not s.patrolLeft
+        DirectMove(npc,o,
+          s.patrolLeft and UNIT_MOVE_DIR_LEFT or UNIT_MOVE_DIR_RIGHT,
+          C.StrafeDistance,UNIT_MOVE_EVENT_MOVE)
+        s.patrolling=true
+        s.patrolAt=now+C.PatrolMs
       end
-      npc:SetMoveType(UNIT_MOVE_EVENT_MOVE)
     end
     Log(s,'no visible reachable opponent',now)
     return 123
@@ -979,8 +1029,18 @@ local function Tick(npc)
     return 123
   end
   local selectionKind=forced
+  if Flag(o.rangedResponse) then
+    selectionKind='ranged'
+  end
   if not selectionKind and MeleeOpportunity(o,t) then selectionKind='melee' end
   local w=PickWeapon(o,s,t,threat,now,selectionKind)
+  if selectionKind=='ranged' then
+    -- A held knife tracking state can otherwise retain the native chase
+    -- forever while the defensive motor retreats. Request its existing
+    -- tracking-to-Neutral release only after a usable gun is known.
+    -- PickWeapon returns only weapons that passed Usable/WeaponScore.
+    MeleeGate(true,w and w.kind~='melee')
+  end
   if not w then
     if Flag(o.meleeBusy) or Flag(o.specialBusy) then
       Log(s,'weapons unavailable: current native action retains ownership',now)

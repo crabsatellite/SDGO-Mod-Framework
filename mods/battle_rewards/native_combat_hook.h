@@ -101,6 +101,9 @@ using RecordSink = void(__stdcall*)(
     const VictimClassification* classification);
 using DiagnosticSink = void(__stdcall*)(
     DiagnosticReason reason, const NativeDamageSnapshot* snapshot);
+using DamageObserver = void(__stdcall*)(
+    void* room, void* victim_pilot, void* attacker_pilot,
+    void* victim_unit, uint32_t effective_damage, int32_t death_flag);
 
 // HookCode writes the verified trampoline here. The other callbacks are set
 // once during mod load before battle threads can reach the detour.
@@ -109,6 +112,7 @@ inline EventGate event_gate = nullptr;
 inline ClassifyVictim classify_victim = nullptr;
 inline RecordSink record_sink = nullptr;
 inline DiagnosticSink diagnostic_sink = nullptr;
+inline DamageObserver damage_observer = nullptr;
 
 namespace detail {
 
@@ -335,6 +339,19 @@ inline void EmitDiagnostic(
     }
 }
 
+inline void InvokeDamageObserver(
+    DamageObserver callback, void* room, void* victim_pilot,
+    void* attacker_pilot, void* victim_unit, uint32_t effective_damage,
+    int32_t death_flag) {
+    if (!callback) return;
+    __try {
+        callback(
+            room, victim_pilot, attacker_pilot, victim_unit,
+            effective_damage, death_flag);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
 inline DiagnosticReason PrepareCallbacks(
     const NativeDamageSnapshot& snapshot, EventGate gate,
     ClassifyVictim classifier, VictimClassification* classification) {
@@ -391,6 +408,12 @@ inline uint32_t __fastcall Detour(
     const ClassifyVictim classifier = classify_victim;
     const RecordSink sink = record_sink;
     const DiagnosticSink diagnostics = diagnostic_sink;
+    const DamageObserver observer = damage_observer;
+
+    detail::InvokeDamageObserver(
+        observer, room, victim_pilot, attacker_pilot, victim_unit,
+        effective_damage, death_flag);
+    SetLastError(incoming_error);
 
     NativeDamageSnapshot snapshot;
     DiagnosticReason reason = detail::Capture(
