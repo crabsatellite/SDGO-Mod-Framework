@@ -203,9 +203,10 @@ def publish(workspace,state,selected,transaction):
     text=mod_manifest.decode('utf-8-sig')
     import re
     text=re.sub(r'(?m)^enabled\s*=.*$','enabled=1',text)
-    text=re.sub(r'(?m)^files\s*=.*$','files=catalog.bin,definitions.json,resource-overlay.ini,resources.zdx,resources.zpk',text)
+    text=re.sub(r'(?m)^files\s*=.*$','files=symbols.fragment.ini,catalog.bin,definitions.json,resource-overlay.ini,resources.zdx,resources.zpk',text)
     files={prefix+'unit_catalog.dll':binary,prefix+'mod.ini':text.encode(),prefix+'catalog.bin':catalog,
         prefix+'manager.json':(ROOT/'mods/unit_catalog/manager.json').read_bytes(),
+        prefix+'symbols.fragment.ini':symbols,
         prefix+'resource-overlay.ini':overlay_config,prefix+'resources.zdx':zdx,prefix+'resources.zpk':zpk,
         prefix+'definitions.json':json.dumps({'protocol':'sdgo.unit-family','schema_version':1,'revision':content_revision,
             'families':published,'registrations':registrations},ensure_ascii=False,indent=2).encode(),

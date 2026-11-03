@@ -40,6 +40,12 @@ class BlueprintCompiler(unittest.TestCase):
                      patch('owner.units.presentation.contract',return_value={'schema':3}):
                     result=compiler.publish(engine,state,family['id'],transaction)
                 with zipfile.ZipFile(result['client_zip']) as z:
+                    fragment='client/sdgo/mods/unit_catalog/symbols.fragment.ini'
+                    self.assertEqual(z.read('symbols.fragment.ini'),z.read(fragment))
+                    self.assertIn(b'files=symbols.fragment.ini,',z.read('client/sdgo/mods/unit_catalog/mod.ini'))
+                    manifest=json.loads(z.read('manifest.json'))
+                    import hashlib
+                    self.assertEqual(hashlib.sha256(z.read(fragment)).hexdigest(),manifest['files'][fragment])
                     raw=z.read('client/sdgo/mods/unit_catalog/catalog.bin')
                     output=json.loads(z.read('client/sdgo/mods/unit_catalog/definitions.json'))
                     server=json.loads(Path(result['server_plan']).read_text(encoding='utf-8'))
