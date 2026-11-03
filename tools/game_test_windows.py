@@ -24,6 +24,7 @@ import os
 from pathlib import Path
 import secrets
 import subprocess
+import time
 from typing import BinaryIO, Mapping, Sequence
 
 
@@ -58,6 +59,8 @@ GENERIC_ALL = 0x10000000
 UOI_NAME = 2
 PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002
 ERROR_ACCESS_DENIED = 5
+INPUT_DESKTOP_RETRY_DELAY_SECONDS = 0.1
+INPUT_DESKTOP_MAX_RETRIES = 20
 
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 
@@ -183,6 +186,8 @@ class _Win32Api:
             raise OSError("WindowsBackgroundProcess requires Windows")
         self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
         self.user = ctypes.WinDLL("user32", use_last_error=True)
+        self.input_desktop_open_retry_count = 0
+        self.last_input_desktop_open_retry_count = 0
         self._configure()
 
     def _configure(self) -> None:
@@ -325,14 +330,32 @@ class _Win32Api:
             )
         return name
 
+    def _open_input_desktop(self) -> int:
+        self.last_input_desktop_open_retry_count = 0
+        for retry_count in range(INPUT_DESKTOP_MAX_RETRIES + 1):
+            desktop = self.user.OpenInputDesktop(
+                0, False, DESKTOP_READOBJECTS
+            )
+            if self._valid_handle(desktop):
+                return int(desktop)
+            error = ctypes.get_last_error()
+            if (
+                error != ERROR_ACCESS_DENIED or
+                retry_count == INPUT_DESKTOP_MAX_RETRIES
+            ):
+                ctypes.set_last_error(error)
+                raise self._error("OpenInputDesktop failed")
+            self.last_input_desktop_open_retry_count += 1
+            self.input_desktop_open_retry_count += 1
+            time.sleep(INPUT_DESKTOP_RETRY_DELAY_SECONDS)
+        raise AssertionError("unreachable input desktop retry state")
+
     def input_desktop_name(self) -> str:
-        desktop = self.user.OpenInputDesktop(0, False, DESKTOP_READOBJECTS)
-        if not self._valid_handle(desktop):
-            raise self._error("OpenInputDesktop failed")
+        desktop = self._open_input_desktop()
         try:
-            return self._user_object_name(int(desktop))
+            return self._user_object_name(desktop)
         finally:
-            self.close_desktop(int(desktop))
+            self.close_desktop(desktop)
 
     def create_desktop(self, name: str) -> int:
         desktop = self.user.CreateDesktopW(
@@ -674,13 +697,11 @@ class _Win32Api:
         )
 
     def input_desktop_state(self, target_pid: int) -> _DesktopState:
-        desktop = self.user.OpenInputDesktop(0, False, DESKTOP_READOBJECTS)
-        if not self._valid_handle(desktop):
-            raise self._error("OpenInputDesktop failed")
+        desktop = self._open_input_desktop()
         try:
-            return self.desktop_state(int(desktop), target_pid)
+            return self.desktop_state(desktop, target_pid)
         finally:
-            self.close_desktop(int(desktop))
+            self.close_desktop(desktop)
 
     def named_desktop_state(self, name: str, target_pid: int) -> _DesktopState:
         if name.casefold() != "default":
@@ -826,6 +847,7 @@ class WindowsBackgroundProcess:
             "input_desktop_safe": None,
             "isolation_mode": "private_desktop",
             "isolation_safe": False,
+            "input_desktop_open_retries": 0,
             "error": None,
         }
         if selected_pid <= 0:
@@ -925,6 +947,10 @@ class WindowsBackgroundProcess:
             receipt["isolation_safe"] = receipt["verified"]
         except OSError as error:
             receipt["error"] = f"{type(error).__name__}: {error}"
+        finally:
+            receipt["input_desktop_open_retries"] = getattr(
+                self._api, "input_desktop_open_retry_count", 0
+            )
         return receipt
 
     def close(self) -> None:

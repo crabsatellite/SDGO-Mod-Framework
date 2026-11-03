@@ -54,7 +54,9 @@ int wmain(int argc,wchar_t** argv) {
         const int options=std::stoi(flags);
         Need(db.Exec(std::wstring(L"SET ANSI_NULLS ")+(options&1?L"ON":L"OFF")));
         Need(db.Exec(std::wstring(L"SET QUOTED_IDENTIFIER ")+(options&2?L"ON":L"OFF")));
-        Need(db.Exec(Clone(before,L"sp_FriendsList",true)));
+        std::wstring collation;
+        Need(db.String(L"SELECT collation_name FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.tbl_Account_Pilot') AND name=N'f_pilot'",collation));
+        Need(db.Exec(Clone(before,L"sp_FriendsList",true,collation)));
         Need(Prepare(db,database));
         puts("PASS actual SQLOLEDB borrowed session, ownership, retry, source preservation and external-edit refusal");
         return 0;
