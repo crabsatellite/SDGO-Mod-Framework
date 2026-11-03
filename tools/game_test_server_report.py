@@ -95,7 +95,7 @@ def damage_diagnostic(event, ready, pilot, modes):
     return True
 
 
-def evaluate(metadata: dict, paths: list[Path], pilot: int) -> dict:
+def evaluate(metadata: dict, paths: list[Path], pilot: int, *, expected_humans: list[int] | None = None) -> dict:
     integer(pilot,'expected host pilot',1)
     plan=metadata['plan'];run_id=metadata['run_id']
     session=metadata.get('server_session')
@@ -103,7 +103,10 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int) -> dict:
     server_nonce=session['nonce'] if session else plan['title_nonce']
     modes=game_test.parse_mode_sequence(plan['mode_sequence'])
     expected_ai=integer(plan['expected_ai'],'expected AI',1)
-    expected_humans=plan.get('human_pilot_ids')
+    sealed_humans=plan.get('human_pilot_ids')
+    if expected_humans is not None and sealed_humans is not None and human_roster(pilot,expected_humans)!=human_roster(pilot,sealed_humans):
+        raise ValueError('declared human roster differs from the sealed plan')
+    if expected_humans is None:expected_humans=sealed_humans
     human_roster(pilot,expected_humans)
     errors=[];battles=[];sources=[];seen_paths=set()
     for path in paths:
