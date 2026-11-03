@@ -18,6 +18,13 @@ data = [(str(root/'manager/static'),'manager/static'),
         (str(root/'owner/rewards/policy.example.json'),'owner/rewards'),
         (str(root/'owner/rewards/sql'),'owner/rewards/sql'),
         (str(root/'backend/install_ai_catalog_client.ps1'),'backend')]
+data += [(str(root/'tools/install_unit_catalog.ps1'),'tools'),
+         (str(root/'mods/capsule_catalog/symbol-proposal.ini'),'mods/capsule_catalog'),
+         (str(root/'mods/unit_catalog/mod.ini'),'mods/unit_catalog'),
+         (str(root/'mods/unit_catalog/symbols.fragment.ini'),'mods/unit_catalog'),
+         (str(root/'mods/unit_catalog/preview.symbols.fragment.ini'),'mods/unit_catalog'),
+         (str(Path(os.environ['SDGO_UNIT_CATALOG_BINARY'])),'unit-import'),
+         (str(Path(os.environ['SDGO_CAPSULE_REGISTRY_BINARY'])),'unit-import')]
 data += [(str(root/'owner/collection_capsule/sql'),'owner/collection_capsule/sql'),
          (str(root/'mods/collection_capsule/assets'),'mods/collection_capsule/assets'),
          (str(root/'support/capsule_registry'),'support/capsule_registry')]

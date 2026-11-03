@@ -34,12 +34,13 @@ import xml.etree.ElementTree as ET
 import importlib.util
 
 
-if __package__ in (None, ""):
+# Direct CLI entry points start with tools/ on sys.path. Candidate overlays
+# also import repository packages, independently of the caller's directory.
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-
 SCHEMA_VERSION = 2
 OWNED_BUILD_ROOT=Path(__file__).resolve().parents[1]/'build'
+OWNED_PROCESS_EXIT_TIMEOUT = 30
 if str(OWNED_BUILD_ROOT.parent) not in sys.path:
     sys.path.insert(0, str(OWNED_BUILD_ROOT.parent))
 HOST_KEY = "GOnline-54BE1568-00C97000"
@@ -116,6 +117,7 @@ IGNORED_DIRECTORIES = {
 }
 IGNORED_SUFFIXES = {".bak", ".dmp", ".log", ".tmp"}
 IMMUTABLE_ROOT_SUFFIXES = {".dll", ".exe", ".zdx", ".zpk"}
+RUNTIME_OUTPUTS = frozenset({"sdgo/mods/capsule_catalog/runtime-receipt.ini"})
 ALNUM = string.ascii_letters + string.digits
 
 
@@ -308,6 +310,38 @@ def merge_required_symbols(
     write_ini(copied_symbols, destination)
 
 
+def merge_retained_addon_symbols(stage_symbols:Path,copied_symbols:Path,manifests:list[Path]) -> None:
+    """Retain installed addons through their declared, matching-host fragments."""
+    active=[]
+    destination=read_ini(copied_symbols)
+    for manifest in manifests:
+        raw=manifest.read_bytes()
+        decoded=raw.decode('utf-16' if raw.startswith((b'\xff\xfe',b'\xfe\xff')) else 'utf-8-sig')
+        match=re.search(r'(?ims)^\s*\[mod\]\s*\n(.*?)(?=^\s*\[|\Z)',decoded)
+        if not match:raise GameTestError('retained addon lacks its native manifest')
+        config=ini_parser();config.read_string('[mod]\n'+match[1])
+        if config.getint('mod','enabled',fallback=1)==0:continue
+        active.append(manifest)
+        required=manifest_requires(manifest)
+        if all(destination.has_section(key) for key in required):continue
+        fragment=manifest.parent/'symbols.fragment.ini'
+        if not fragment.is_file():continue
+        source=read_ini(fragment)
+        if not source.has_section('host') or dict(source['host'])!=dict(destination['host']):
+            raise GameTestError('retained addon symbol fragment describes a different host')
+        for key in required:
+            if not destination.has_section(key) and source.has_section(key):destination[key]=dict(source[key])
+    write_ini(copied_symbols,destination)
+    merge_required_symbols(stage_symbols,copied_symbols,active,preserve_existing=True)
+
+
+def retained_manifest_enabled(manifest:Path) -> bool:
+    raw=manifest.read_bytes()
+    decoded=raw.decode('utf-16' if raw.startswith((b'\xff\xfe',b'\xfe\xff')) else 'utf-8-sig')
+    match=re.search(r'(?ims)^\s*\[mod\]\s*\n(.*?)(?=^\s*\[|\Z)',decoded)
+    if not match:raise GameTestError('retained addon lacks its native manifest')
+    config=ini_parser();config.read_string('[mod]\n'+match[1])
+    return config.getint('mod','enabled',fallback=1)!=0
 def enable_test_configuration(root: Path, fps_mod_enabled: bool | None = None) -> None:
     manifest = root / "sdgo" / "mods" / TEST_MOD / "mod.ini"
     parser = read_ini(manifest)
@@ -442,9 +476,17 @@ def validate_observer_stage(
     if missing:raise GameTestError(f"stage host symbols lack required sections: {', '.join(missing)}")
     if fps_mod_enabled is None:
         for manifest in (root/'sdgo/mods').glob('*/mod.ini'):
-            if manifest.parent.name not in updated and retained_manifest_enabled(manifest):
-                missing=sorted(manifest_requires(manifest)-set(source.sections())-set(existing.sections()))
-                if missing:raise GameTestError(f"retained Mod symbols lack required sections: {', '.join(missing)}")
+            if manifest.parent.name in updated or not retained_manifest_enabled(manifest):
+                continue
+            available=set(source.sections())|set(existing.sections())
+            fragment=manifest.parent/'symbols.fragment.ini'
+            if fragment.is_file():
+                extra=read_ini(fragment)
+                if not extra.has_section('host') or dict(extra['host'])!=dict(source['host']):
+                    raise GameTestError('retained addon symbol fragment describes a different host')
+                available.update(extra.sections())
+            missing=sorted(manifest_requires(manifest)-available)
+            if missing:raise GameTestError(f"retained Mod symbols lack required sections: {', '.join(missing)}")
 
 
 
@@ -587,13 +629,16 @@ def overlay_observer(
         merge_required_symbols(stage_symbols,copied_symbols,[fps_manifest],preserve_existing=True)
     retained_manifests=[manifest for manifest in (root/'sdgo/mods').glob('*/mod.ini')
                         if manifest not in updated_manifests and manifest != fps_manifest and retained_manifest_enabled(manifest)]
-    merge_required_symbols(
-        stage_symbols,
-        copied_symbols,
-        retained_manifests,
-        preserve_existing=True,
-        allow_missing=fps_mod_enabled is not None,
-    )
+    if fps_mod_enabled is None:
+        merge_retained_addon_symbols(stage_symbols,copied_symbols,retained_manifests)
+    else:
+        merge_required_symbols(
+            stage_symbols,
+            copied_symbols,
+            retained_manifests,
+            preserve_existing=True,
+            allow_missing=True,
+        )
     enable_test_configuration(root, fps_mod_enabled)
 
 
@@ -1519,16 +1564,20 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                         collection_draw: bool = False,
                          play_unit_uid: int | None = None,
                          mission_mode: int | None = None,
-                         shop_catalog: bool = False, room_titles_only: bool = False,
+                         shop_catalog: bool = False, friends_only: bool = False, room_titles_only: bool = False,
                          room_style_preview: str | None = None,
                          same_room_rematch: bool = False) -> tuple[str, ...]:
     mission_mode = validate_mission_mode(mission_mode)
     play_unit_uid = validate_play_unit_uid(play_unit_uid)
     if type(same_room_rematch) is not bool:raise GameTestError('same_room_rematch must be a boolean')
-    if same_room_rematch and (mission_mode is not None or any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,collection_draw,shop_catalog,room_titles_only,room_style_preview))):
+    if same_room_rematch and (mission_mode is not None or any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,friends_only,collection_draw,shop_catalog,room_titles_only,room_style_preview))):
         raise GameTestError('same-room rematch requires a complete native PvP scenario')
-    if sum((bool(bootstrap_only),bool(battleship_only),bool(gift_requests_only),bool(deck_only),bool(pages_only),bool(room_titles_only))) > 1:
+    if sum((bool(bootstrap_only),bool(battleship_only),bool(gift_requests_only),bool(deck_only),bool(pages_only),bool(friends_only),bool(room_titles_only))) > 1:
         raise GameTestError('choose only one account preparation operation')
+    if friends_only:
+        if collection_draw or play_unit_uid is not None or mission_mode is not None or shop_catalog:
+            raise GameTestError('friend sessions cannot add battle, mission or shop scope')
+        return FLOW_CASES[:3]+('friends.session',)
     if play_unit_uid is not None and any((bootstrap_only,battleship_only,gift_requests_only,deck_only)):
         raise GameTestError('--play-unit-uid is supported only for PvP and pages scenarios, or mission smoke')
     if collection_draw and not pages_only:
@@ -1596,7 +1645,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
             "ai_layout",
             "bootstrap_only",
             "battleship_only", "gift_requests_only", "deck_only",
-            "pages_only", "room_titles_only", "collection_draw", "random_loadout", "same_room_rematch",
+            "pages_only", "friends_only", "room_titles_only", "collection_draw", "random_loadout", "same_room_rematch",
             *SHOP_PLAN_FIELDS,
         }
         if forbidden.intersection(plan):
@@ -1628,12 +1677,15 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         plan.get("mission_mode"),
         shop_catalog,
         same_room_rematch=plan.get("same_room_rematch",False),
+        friends_only=plan.get("friends_only",False),
         room_titles_only=plan.get("room_titles_only",False),
         room_style_preview=plan.get("room_style_preview"),
     )
 
 
 def metadata_suite_for_plan(plan: dict) -> str:
+    if plan.get('friends_only'):
+        return 'native-friends'
     if plan.get("room_style_preview"):
         return "native-room-style-preview"
     if plan.get("room_titles_only"):
@@ -1937,7 +1989,7 @@ def write_job(
     if all(field in plan for field in SHOP_PLAN_FIELDS):
         for field in SHOP_PLAN_FIELDS:
             run['run'][field] = str(plan[field])
-    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','room_titles_only','collection_draw','random_loadout','same_room_rematch'):
+    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','friends_only','room_titles_only','collection_draw','random_loadout','same_room_rematch'):
         if plan.get(flag):run['run'][flag] = '1'
     if 'room_style_preview' in plan:
         run['run']['room_style_preview'] = plan['room_style_preview']
@@ -1990,6 +2042,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
         gift_requests_only = run.get('gift_requests_only', '0') == '1'
         deck_only = run.get('deck_only', '0') == '1'
         pages_only = run.get('pages_only', '0') == '1'
+        friends_only = run.get('friends_only', '0') == '1'
         room_titles_only = run.get('room_titles_only','0') == '1'
         room_style_preview = run.get('room_style_preview')
         if mission_plan and room_style_preview is not None:
@@ -1998,7 +2051,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
         same_room_rematch = run.get('same_room_rematch','0')=='1'
         preparation_fields = (
             'bootstrap_only', 'battleship_only', 'gift_requests_only',
-            'deck_only', 'pages_only', 'room_titles_only', 'collection_draw', 'random_loadout', 'same_room_rematch',
+            'deck_only', 'pages_only', 'friends_only', 'room_titles_only', 'collection_draw', 'random_loadout', 'same_room_rematch',
         )
         if any(run.get(flag, '0') not in ('0', '1') for flag in preparation_fields):
             raise ValueError('invalid preparation flag')
@@ -2179,7 +2232,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             expected_cases = required_flow_cases(
                 mode_sequence, bootstrap_only, battleship_only,
                 gift_requests_only, deck_only, pages_only, collection_draw,
-                play_unit_uid, shop_catalog=shop_plan is not None, room_titles_only=room_titles_only,
+                play_unit_uid, shop_catalog=shop_plan is not None,friends_only=friends_only, room_titles_only=room_titles_only,
                 room_style_preview=room_style_preview,
                 same_room_rematch=same_room_rematch,
             )
@@ -2273,6 +2326,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             ('gift_requests_only', gift_requests_only),
             ('deck_only', deck_only),
             ('pages_only', pages_only),
+            ('friends_only',friends_only),
             ('room_titles_only',room_titles_only),
             ('collection_draw', collection_draw),
             ('same_room_rematch', same_room_rematch),
@@ -2284,7 +2338,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             if run['random_loadout'] not in ('0', '1'):
                 raise ValueError('invalid random loadout policy')
             if run['random_loadout'] == '1':
-                if any((bootstrap_only, battleship_only, gift_requests_only, deck_only, pages_only)):
+                if any((bootstrap_only, battleship_only, gift_requests_only, deck_only, pages_only,friends_only)):
                     raise ValueError('random scenario requires PvP')
                 nonce = run['title_nonce']
                 expected_ai = int(run["expected_ai"])
@@ -2440,6 +2494,8 @@ def collect_hashes(root: Path) -> tuple[dict, dict]:
     def bind(path: Path, collection: dict) -> None:
         if not path.is_file():
             raise GameTestError(f"missing copied GameTest payload: {path}")
+        if not is_relative_to(path.resolve(),root.resolve()):
+            raise GameTestError('copied native resource escapes the owned client')
         collection[path.relative_to(root).as_posix()] = sha256(path)
 
     bind(root / GAME_EXE, immutable)
@@ -2458,6 +2514,8 @@ def collect_hashes(root: Path) -> tuple[dict, dict]:
             bind(path, immutable)
     mods = root / "sdgo" / "mods"
     for path in sorted(mods.rglob("*"), key=lambda item: item.as_posix().lower()):
+        if path.relative_to(root).as_posix().lower() in RUNTIME_OUTPUTS:
+            continue
         if path.is_file() and path.suffix.lower() in {".dll", ".lua", ".ini", ".tsv", ".json",
                                                       ".bin", ".gdt", ".zsd", ".spr", ".txr", ".uir", ".zpk", ".zdx"}:
             bind(path, immutable)
@@ -2465,6 +2523,13 @@ def collect_hashes(root: Path) -> tuple[dict, dict]:
         path = root / relative
         if path.exists():
             bind(path, immutable)
+    # Imported native assets live beside the game, not only under sdgo/mods.
+    # Bind the complete explicit resource trees before the process starts.
+    for tree in ('gdrs','mdrs','anrs','txrs','sprs','fxrs','sdrs','scp','sol','trns','uirs'):
+        folder=root/tree
+        if not folder.exists():continue
+        for path in sorted(folder.rglob('*'),key=lambda item:item.as_posix().lower()):
+            if path.is_file():bind(path,immutable)
     for name in ("config.xml", "閰嶇疆鏂囦欢.ini"):
         path = root / name
         if path.is_file():
@@ -2544,6 +2609,7 @@ def prepare(
     gift_requests_only: bool = False,
     deck_only: bool = False,
     pages_only: bool = False,
+    friends_only: bool = False,
     room_titles_only: bool = False,
     room_style_preview: str | None = None,
     collection_draw: bool = False,
@@ -2584,7 +2650,7 @@ def prepare(
             raise GameTestError('gameplay FPS checks require a complete native PvP battle')
         extra_mods=tuple(dict.fromkeys((*extra_mods,FPS_MOD)))
     if apsalus_roundtrip and (mode_sequence != '1' or play_unit_uid is None or any((bootstrap_only,
-            battleship_only,gift_requests_only,deck_only,pages_only)) or mission_mode is not None):
+            battleship_only,gift_requests_only,deck_only,pages_only,friends_only)) or mission_mode is not None):
         raise GameTestError('Apsalus roundtrip requires one complete ordinary battle and an existing owned unit UID')
     fps_only = fps_cap is not None
     if fps_only:
@@ -2636,7 +2702,7 @@ def prepare(
         required_flow_cases(
             mode_sequence, bootstrap_only, battleship_only, gift_requests_only,
             deck_only, pages_only, collection_draw, play_unit_uid, mission_mode,
-            shop_binding is not None, room_titles_only=room_titles_only,
+            shop_binding is not None,friends_only=friends_only, room_titles_only=room_titles_only,
             room_style_preview=room_style_preview,
         )
         if mission_mode is not None:
@@ -2729,7 +2795,6 @@ def prepare(
         extra_mods,
         fps_mod_enabled=fps_mod_enabled if fps_only else None,
     )
-
     profile_path = None
     profile = None
     if fps_only:
@@ -2832,6 +2897,7 @@ def prepare(
             ('gift_requests_only',gift_requests_only),
             ('deck_only',deck_only),
             ('pages_only',pages_only),
+            ('friends_only',friends_only),
             ('room_titles_only',room_titles_only),
             ('collection_draw',collection_draw),
         ):
@@ -3012,7 +3078,7 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
                 raise GameTestError('client reuse rejects linked client files/directories')
             if path.is_file() and path.stat().st_nlink>1 and path.relative_to(client_root).as_posix() not in ('GPackData.zpk','GPackData.zdx'):
                 raise GameTestError('client reuse rejects shared mutable runtime files')
-    for other in owned.glob('*/run.json'):
+    for other in owned.rglob('run.json'):
         if other.parent==run_dir:continue
         data=read_json(other);baseline=data.get('assets',{}).get('baseline')
         if baseline and Path(baseline).resolve()==run_dir:
@@ -3146,7 +3212,6 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
     expected_suite = FPS_SUITE if fps_only else metadata_suite_for_plan(public_plan)
     if metadata.get("suite") != expected_suite:
         raise GameTestError("run.json suite disagrees with the sealed normal-flow plan")
-
     public_shop_fields = set()
     if plan.get('room_style_preview') != public_plan.get('room_style_preview'):
         raise GameTestError('run.json cannot change the sealed room-style preview scope')
@@ -3160,7 +3225,7 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
                 "ai_layout",
                 "bootstrap_only",
                 "battleship_only", "gift_requests_only", "deck_only",
-                "pages_only", "room_titles_only", "collection_draw", "random_loadout",
+                "pages_only", "friends_only", "room_titles_only", "collection_draw", "random_loadout",
             }
             if forbidden.intersection(plan):
                 raise GameTestError("run.json adds PvP, pages, or preparation scope to a mission smoke")
@@ -3176,7 +3241,7 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
             raise GameTestError("run.json cannot add mission scope to a non-mission plan")
         for flag in (
             'bootstrap_only','battleship_only','gift_requests_only','deck_only',
-            'pages_only','room_titles_only','collection_draw','random_loadout',
+            'pages_only', 'friends_only','room_titles_only','collection_draw','random_loadout',
         ):
             if (
                 type(plan.get(flag, False)) is not bool
@@ -3539,6 +3604,31 @@ def startup_info():
     return info
 
 
+def stop_owned_entry_process(process, timeout: float = OWNED_PROCESS_EXIT_TIMEOUT) -> int:
+    """Stop one held owned process; allow bounded pending kernel teardown."""
+    if process is None or process.poll() is not None:
+        return 0
+    termination_error = None
+    try:
+        process.kill()
+    except OSError as error:
+        # A repeated termination can be rejected while the first is pending.
+        # Accept it only after the held process handle confirms actual exit.
+        termination_error = error
+    for attempt in range(2):
+        try:
+            process.wait(timeout=timeout)
+            if process.poll() is None:
+                if termination_error is not None:
+                    raise termination_error
+                raise GameTestError('owned process exit was not confirmed after waiting')
+            return attempt
+        except subprocess.TimeoutExpired:
+            if attempt:
+                raise
+    raise AssertionError('unreachable owned process wait state')
+
+
 def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 30.0, *, on_process=None, on_poll=None) -> dict:
     run_dir = run_dir.resolve()
     metadata = validate_metadata(run_dir)
@@ -3668,13 +3758,12 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
             try:action()
             except Exception as error:cleanup_errors.append(f'{label}: {type(error).__name__}: {error}')
         def stop_entry():
-            if stop_owned_entry(entry_process):
+            retries=stop_owned_entry_process(entry_process)
+            if retries:
+                metadata['execution']['exit_wait_retries']=retries
                 metadata['execution']['entry_stop_wait_retried']=True
-        if game_process:
-            if entry_process and game_process["pid"] == entry_process.pid:
-                cleanup('owned game stop',stop_entry)
-            else:
-                cleanup('verified child stop',lambda:terminate_verified_process(game_process["pid"], Path(metadata["client"]["game"])))
+        if game_process and (not entry_process or game_process['pid'] != entry_process.pid):
+            cleanup('verified child stop',lambda:terminate_verified_process(game_process["pid"], Path(metadata["client"]["game"])))
         cleanup('owned entry stop',stop_entry)
         for handle in handles:
             cleanup('output stream close',handle.close)
@@ -4142,6 +4231,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--room-titles-only',action='store_true',help='test all live room-title inputs, reopen and full server-confirmed titles')
     prepare_parser.add_argument('--room-style-preview', choices=('pvp', 'mission'), help='capture the genuine legacy room after native creation; requires --room-titles-only and a preview Mod')
     prepare_parser.add_argument('--pages-only', action='store_true',help='visit the real hangar and verify Mod inventory, preview and cancel without exchanging units')
+    prepare_parser.add_argument('--friends-only',action='store_true',help='run the real multi-client native friend session')
     prepare_parser.add_argument('--collection-draw',action='store_true',help='explicit pages-only extension: purchase one collection draw with existing native funds and verify delivery')
     prepare_parser.add_argument('--shop-assertions',type=Path,
                                 help='read-only StockAssertions INI copied into a pages-only GameTest capsule')
@@ -4241,6 +4331,7 @@ def main(argv: list[str] | None = None) -> int:
                 gift_requests_only=args.gift_requests_only,
                 deck_only=args.deck_only,
                 pages_only=args.pages_only,
+                friends_only=args.friends_only,
                 room_titles_only=args.room_titles_only,
                 room_style_preview=args.room_style_preview,
                 collection_draw=args.collection_draw,

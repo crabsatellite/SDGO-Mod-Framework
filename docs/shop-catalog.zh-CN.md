@@ -41,6 +41,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -Target "D:\Se
   新增 SKU 使用现有单物品模板并保留稳定 option ID，未知或已占用的编号拒绝覆盖，失败回滚。
 - 外部工具修改了配置后，Manager 会拒绝覆盖。
 
+应用工具读取原生商城列的实际属性。数量、期限、价格或币种是计算列时，只写入其来源子项，
+保留原生 UDF 与计算表达式，并在同一事务内核对最终商品值；失败不会以修改数据库架构的方式绕过。
+
 ## 卸载
 
 在面板下架商品并应用，可只停止销售而保留模块。彻底卸载须先关闭目标 WorldServer：
