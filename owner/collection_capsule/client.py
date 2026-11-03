@@ -359,6 +359,18 @@ def _owned_activity_machine(row: bytes, machine_id: int) -> bool:
     )
 
 
+def normalize_activity_cover(raw: bytes) -> bytes:
+    """Make a native-sized derivative while the authoring project keeps its original."""
+    from owner.units.assets import normalize_png
+    from PIL import Image
+    normalize_png(raw)
+    with Image.open(io.BytesIO(raw)) as source:
+        source.load();image=source.convert('RGBA')
+        if image.size!=COVER_SIZE:image=image.resize(COVER_SIZE,Image.Resampling.LANCZOS)
+        stream=io.BytesIO();image.save(stream,'PNG',optimize=False,compress_level=9)
+        return stream.getvalue()
+
+
 def _card_texture(cover: Path) -> tuple[bytes, tuple[float, float, float, float], tuple[int, int]]:
     try:
         from PIL import Image

@@ -32,6 +32,7 @@ _PROTECTED_TOPS = {
     "dependencies",
     "manifest.json",
     "family.json",
+    "project.json",
 }
 _DANGEROUS_EXTENSIONS = {
     ".apk",
@@ -373,8 +374,12 @@ def inspect_upload(
     else:
         raise ValueError("upload must be a RAR or ZIP archive")
 
+    from .project import read_project
+    project=read_project(files)
+
     forms: list[dict[str, Any]] = []
     weapons: list[dict[str, Any]] = []
+    blueprints: list[dict[str, Any]] = []
     resources: list[dict[str, str]] = []
     package_resources: set[str] = set()
     global_references: set[str] = set()
@@ -394,6 +399,8 @@ def inspect_upload(
             identities[identity] = decoded["kind"]
             if decoded["kind"] == "unit":
                 forms.append({key: value for key, value in decoded.items() if key != "kind"})
+            elif decoded['kind']=='blueprint':
+                blueprints.append(decoded)
             else:
                 weapons.append({key: value for key, value in decoded.items() if key != "kind"})
             global_references.update(decoded["resource_refs"])
@@ -408,7 +415,7 @@ def inspect_upload(
         elif suffix not in (".json", ".txt", ".md"):
             warnings.append(f"未分类文件不会作为游戏资源发布：{path}")
 
-    if not forms:
+    if not forms and project is None:
         raise ValueError("archive contains no 4976-byte unit record")
     form_ids = {form["id"] for form in forms}
     weapon_ids = {weapon["id"] for weapon in weapons}
@@ -434,11 +441,14 @@ def inspect_upload(
     warnings.append(
         "资源字符串扫描只覆盖可见的 ASCII/UTF-16LE 直接引用；它不是完整语义解析或递归依赖闭包证明。"
     )
-    return {
+    result = {
         "files": files,
         "forms": sorted(forms, key=lambda value: value["id"]),
         "weapons": sorted(weapons, key=lambda value: value["id"]),
+        "blueprints": sorted(blueprints,key=lambda value:value['id']),
         "resources": sorted(resources, key=lambda value: value["path"]),
         "external_refs": sorted(external),
         "warnings": warnings,
     }
+    if project is not None:result['project']=project
+    return result

@@ -80,6 +80,9 @@ TABLES = {
     "item": ("tbl_ItemCategory", ITEM_COLUMNS, "CatalogueID"),
     "name": ("tbl_UnitNames", NAME_COLUMNS, "UnitNumber"),
 }
+from .blueprint_repository import RECIPE_COLUMNS,INFO_COLUMNS
+TABLES.update({'blueprint':('tbl_MixTreeFile',RECIPE_COLUMNS,'Idx'),
+               'blueprint_info':('tbl_MixTreeInfo',INFO_COLUMNS,'ItemID')})
 
 # kind, size in bytes, nullability.  The values are checked against the live
 # SQL metadata before any catalog row is changed.
@@ -156,6 +159,7 @@ _INTEGER_KINDS = {
     "tinyint": (0, 255),
     "smallint": (-32_768, 32_767),
     "int": (-2_147_483_648, INT_MAX),
+    "bigint": (-9_223_372_036_854_775_808,9_223_372_036_854_775_807),
 }
 
 
@@ -324,6 +328,12 @@ def _load_snapshot(path: Path) -> tuple[dict[str, Any], dict[str, bool]]:
         )
     else:
         metadata["unit_graphs"] = False
+    files={name:path/('dbo.'+name+'.json') for name in ('tbl_MixTreeFile','tbl_MixTreeInfo','tbl_MixTreeList')}
+    if all(file.is_file() for file in files.values()):
+        catalog['blueprints']=_index(_json_rows(files['tbl_MixTreeFile']),'Idx','tbl_MixTreeFile')
+        catalog['blueprint_infos']=_index(_json_rows(files['tbl_MixTreeInfo']),'ItemID','tbl_MixTreeInfo')
+        catalog['blueprint_materials']={}
+        for row in _json_rows(files['tbl_MixTreeList']):catalog['blueprint_materials'].setdefault(row['ItemID'],[]).append(row)
     return catalog, metadata
 
 
@@ -397,6 +407,8 @@ def _load_cursor_catalog(cursor) -> tuple[dict[str, Any], dict[str, bool]]:
             _select_rows(cursor, "tbl_UnitNames", NAME_COLUMNS),
             "UnitNumber", "tbl_UnitNames",
         )
+    from .blueprint_repository import load
+    catalog.update(load(cursor))
     return catalog, metadata
 
 
@@ -415,7 +427,9 @@ def _row_hash(row: dict[str, Any], columns: tuple[str, ...]) -> str:
 def _readback_matches(
     expected: dict[str, Any], actual: dict[str, Any], table: str
 ) -> bool:
-    for name, kind, _, _ in SQL_SCHEMAS[table]:
+    from .blueprint_repository import schema as blueprint_schema
+    specs=SQL_SCHEMAS.get(table,blueprint_schema().get(table))
+    for name, kind, _, _ in specs:
         left, right = expected[name], actual[name]
         if kind == "real" and left is not None:
             left = struct.unpack("<f", struct.pack("<f", float(left)))[0]
@@ -514,8 +528,8 @@ def _validate_plan(
     }
     if not isinstance(plan, dict):
         raise ValueError("导入计划必须是对象")
-    if set(plan) != fields:
-        unknown = set(plan) - fields
+    if set(plan)-{'blueprints'} != fields:
+        unknown = set(plan) - fields-{'blueprints'}
         missing = fields - set(plan)
         details = []
         if unknown:
@@ -693,7 +707,7 @@ def _validate_plan(
     for identity, row in name_map.items():
         check_collision("name", identity, row, catalog["names"], NAME_COLUMNS)
 
-    return {
+    result = {
         "family_key": family,
         "revision": revision,
         "root_unit_id": root,
@@ -703,6 +717,11 @@ def _validate_plan(
         "item": item,
         "names": names,
     }
+    if plan.get('blueprints'):
+        from .blueprint_repository import validate
+        result['blueprints']=validate(plan['blueprints'],root=root,unit_ids=all_units,
+            catalog=catalog,ownership=ownership,family=family)
+    return result
 
 
 def _ensure_support_schema(cursor) -> None:
@@ -939,6 +958,9 @@ SELECT @Result;
 
             _ensure_support_schema(cursor)
             _validate_live_schema(cursor)
+            if plan.get('blueprints'):
+                from .blueprint_repository import validate_schema
+                validate_schema(cursor)
             live_catalog, live_metadata = _load_cursor_catalog(cursor)
             live_ownership = _read_ownership(cursor)
             validated = _validate_plan(
@@ -965,6 +987,20 @@ SELECT @Result;
                     )
                     counts[action][plural] += 1
                     installed_hashes[(kind, row[key])] = digest
+            if validated.get('blueprints'):
+                from .blueprint_repository import apply_materials
+                counts['inserted'].update(blueprints=0,blueprint_infos=0,blueprint_lists=0)
+                counts['updated'].update(blueprints=0,blueprint_infos=0,blueprint_lists=0)
+                for entry in validated['blueprints']:
+                    for kind,plural,row,key in (
+                        ('blueprint','blueprints',entry['recipe'],'Idx'),
+                        ('blueprint_info','blueprint_infos',entry['info'],'ItemID'),
+                        ('item','items',entry['item'],'CatalogueID')):
+                        action,digest=_write_record(cursor,kind=kind,row=row,family=validated['family_key'],revision=validated['revision'])
+                        counts[action][plural]+=1;installed_hashes[(kind,row[key])]=digest
+                    action,digest=apply_materials(cursor,entry['materials'],family=validated['family_key'],revision=validated['revision'])
+                    counts[action]['blueprint_lists']+=1
+                    installed_hashes[('blueprint_list',entry['recipe']['Idx'])]=digest
             # A linked form is not a second inventory prize.  Keep the existing
             # collection feature's live root registry in this same transaction.
             collection_registered = False
@@ -999,6 +1035,12 @@ SELECT @Result;
                 self.catalog["names"][row["UnitNumber"]] = dict(row)
             item = validated["item"]
             self.catalog["items"][item["CatalogueID"]] = dict(item)
+            for entry in validated.get('blueprints',[]):
+                rid=entry['recipe']['Idx']
+                self.catalog.setdefault('blueprints',{})[rid]=dict(entry['recipe'])
+                self.catalog.setdefault('blueprint_infos',{})[rid]=dict(entry['info'])
+                self.catalog.setdefault('blueprint_materials',{})[rid]=[dict(row) for row in entry['materials']]
+                self.catalog['items'][entry['item']['CatalogueID']]=dict(entry['item'])
             for (kind, identity), digest in installed_hashes.items():
                 self._ownership[(kind, identity)] = (
                     validated["family_key"], digest

@@ -12,14 +12,17 @@ namespace sdgo::unit_catalog {
 constexpr uint32_t kFormatVersion = 1;
 constexpr uint32_t kUnitType = 2;
 constexpr uint32_t kWeaponType = 10;
+constexpr uint32_t kBlueprintType = 0x21;
 constexpr uint32_t kItemCategoryType = 0x22;
 constexpr uint32_t kUnitIndexType = 0x55;
 constexpr size_t kUnitBytes = 4976;
 constexpr size_t kWeaponBytes = 1871;
+constexpr size_t kBlueprintBytes = 1197;
 constexpr size_t kItemCategoryBytes = 614;
 constexpr size_t kUnitIndexBytes = 614;
 constexpr uint32_t kUnitIndexFirstId = 0x375BE1;
 constexpr size_t kUnitIndexRefOffset = 6;
+constexpr size_t kUnitIndexBlueprintRefOffset = 10;
 constexpr uint32_t kMaxId = 9999999;
 constexpr uint32_t kMaxRecords = 4096;
 constexpr uint32_t kMaxPayloadBytes = 64u * 1024u * 1024u;
@@ -33,6 +36,16 @@ constexpr size_t kUnitWeaponOffsets[] = {585, 589, 593, 597};
 constexpr size_t kItemCategoryNameOffset = 5;
 constexpr size_t kItemCategoryNameBytes = 100;
 constexpr size_t kItemCategoryRefOffset = 105;
+constexpr uint32_t kItemCategoryClassDivisor = 100000;
+constexpr uint32_t kBlueprintItemClass = 15;
+constexpr size_t kBlueprintMaterialCountOffset = 105;
+constexpr size_t kBlueprintOutputOffset = 229;
+constexpr size_t kBlueprintMaterialOffset = 233;
+constexpr size_t kBlueprintMaterialLevelOffset = 261;
+constexpr size_t kBlueprintMaterialSlots = 7;
+constexpr uint32_t kBlueprintMinimumMaterials = 3;
+constexpr uint32_t kBlueprintMaximumMaterials = 7;
+constexpr uint32_t kBlueprintMaximumMaterialLevel = 255;
 
 inline uint32_t U32(const void* bytes) {
     uint32_t value = 0;
@@ -63,7 +76,7 @@ struct Header {
 };
 
 struct EntryHeader {
-    uint32_t kind;                  // 2 unit, 10 weapon, 0x22 item, 0x55 index
+    uint32_t kind;                  // 2 unit, 10 weapon, 0x21 blueprint, 0x22 item, 0x55 index
     uint32_t id;
     uint32_t byteCount;
     uint32_t recordHash;            // FNV-1a over the following native record
@@ -79,6 +92,7 @@ inline size_t ExpectedBytes(uint32_t kind) {
     switch (kind) {
     case kUnitType: return kUnitBytes;
     case kWeaponType: return kWeaponBytes;
+    case kBlueprintType: return kBlueprintBytes;
     case kItemCategoryType: return kItemCategoryBytes;
     case kUnitIndexType: return kUnitIndexBytes;
     default: return 0;
@@ -261,6 +275,37 @@ private:
                                    kItemCategoryNameBytes) ||
                 !U32(entry.bytes.data() + kItemCategoryRefOffset)) {
                 return Fail(error, "item category name or referenced unit is invalid");
+            }
+        } else if (entry.kind == kBlueprintType) {
+            const uint32_t count =
+                U32(entry.bytes.data() + kBlueprintMaterialCountOffset);
+            const uint32_t output = U32(entry.bytes.data() + kBlueprintOutputOffset);
+            if (count < kBlueprintMinimumMaterials ||
+                count > kBlueprintMaximumMaterials ||
+                !output || output > kMaxId) {
+                return Fail(error, "blueprint material count or output unit is invalid");
+            }
+            uint32_t materials[kBlueprintMaterialSlots] = {};
+            for (size_t slot = 0; slot < kBlueprintMaterialSlots; ++slot) {
+                const uint32_t material =
+                    U32(entry.bytes.data() + kBlueprintMaterialOffset + slot * sizeof(uint32_t));
+                const uint32_t level =
+                    U32(entry.bytes.data() + kBlueprintMaterialLevelOffset +
+                        slot * sizeof(uint32_t));
+                materials[slot] = material;
+                if (level > kBlueprintMaximumMaterialLevel ||
+                    (slot < count && (!material || material > kMaxId || !level)) ||
+                    (slot >= count && material)) {
+                    return Fail(error, "blueprint material or level slot is invalid");
+                }
+                if (slot < count && material == output) {
+                    return Fail(error, "blueprint output cannot also be a material");
+                }
+                for (size_t previous = 0; previous < slot && slot < count; ++previous) {
+                    if (materials[previous] == material) {
+                        return Fail(error, "blueprint materials must be unique");
+                    }
+                }
             }
         } else if (entry.kind == kUnitIndexType) {
             if (entry.id<kUnitIndexFirstId || entry.bytes[5]>1 ||

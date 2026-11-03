@@ -334,6 +334,11 @@ def decode_record(raw: bytes) -> dict[str, Any]:
         return decode_unit(raw)
     if len(raw) == WEAPON_SIZE:
         return decode_weapon(raw)
+    if len(raw)==1197:
+        from .blueprint_codec import decode
+        decoded=decode(raw)
+        return {'kind':'blueprint','id':decoded['id'],'name':decoded['name'],'raw':raw,
+                'resource_refs':decoded['resource_refs'],'blueprint':decoded}
     raise ValueError(f"unknown client BIN layout ({len(raw)} bytes)")
 
 

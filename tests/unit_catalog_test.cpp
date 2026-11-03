@@ -92,10 +92,24 @@ Entry MakeRecord(uint32_t kind, uint32_t id) {
         Put32(result.bytes.data() + kUnitWeaponOffsets[0], 61165);
     } else if (kind == kItemCategoryType) {
         PutUtf16(result.bytes.data() + kItemCategoryNameOffset, kItemCategoryNameBytes, "Fixture Unit");
-        Put32(result.bytes.data() + kItemCategoryRefOffset, 25060);
+        Put32(result.bytes.data() + kItemCategoryRefOffset,
+              id / kItemCategoryClassDivisor == kBlueprintItemClass ? 200001u : 25060u);
+    } else if (kind == kBlueprintType) {
+        PutUtf16(result.bytes.data() + 5, 100, "Fixture Blueprint");
+        Put32(result.bytes.data() + kBlueprintMaterialCountOffset, 3);
+        Put32(result.bytes.data() + kBlueprintOutputOffset, 25060);
+        const uint32_t materials[] = {25061, 10001, 10002};
+        const uint32_t levels[] = {7, 1, 1};
+        for (size_t slot = 0; slot < std::size(materials); ++slot) {
+            Put32(result.bytes.data() + kBlueprintMaterialOffset +
+                      slot * sizeof(uint32_t), materials[slot]);
+            Put32(result.bytes.data() + kBlueprintMaterialLevelOffset +
+                      slot * sizeof(uint32_t), levels[slot]);
+        }
     } else if (kind == kUnitIndexType) {
         result.bytes[5]=1;
         Put32(result.bytes.data()+kUnitIndexRefOffset,25060);
+        Put32(result.bytes.data()+kUnitIndexBlueprintRefOffset,200001);
         PutUtf16(result.bytes.data()+14,100,"sprs\\owned.spr");
         PutUtf16(result.bytes.data()+114,100,"sprs\\missing.spr");
     }
@@ -362,25 +376,43 @@ std::vector<uint8_t> MakeNativeFixture(const std::string& scenario) {
     Entry first = MakeRecord(kUnitType, 25060);
     Entry second = MakeRecord(kUnitType, 25061);
     Entry weapon = MakeRecord(kWeaponType, 61165);
+    Entry blueprint = MakeRecord(kBlueprintType, 200001);
     Entry category = MakeRecord(kItemCategoryType, 1250600);
+    Entry blueprintCategory = MakeRecord(kItemCategoryType, 1520001);
     Entry index = MakeRecord(kUnitIndexType,kUnitIndexFirstId);
     if(scenario=="index_reference_missing")Put32(index.bytes.data()+kUnitIndexRefOffset,999998);
+    if(scenario=="index_blueprint_reference_missing")
+        Put32(index.bytes.data()+kUnitIndexBlueprintRefOffset,999998);
+    if(scenario=="index_blueprint_output_mismatch")
+        Put32(index.bytes.data()+kUnitIndexRefOffset,25061);
+    if(scenario=="blueprint_output_missing")
+        Put32(blueprint.bytes.data()+kBlueprintOutputOffset,999998);
+    if(scenario=="blueprint_material_missing")
+        Put32(blueprint.bytes.data()+kBlueprintMaterialOffset,999998);
+    if(scenario=="blueprint_item_reference_missing")
+        Put32(blueprintCategory.bytes.data()+kItemCategoryRefOffset,999998);
     Put32(first.bytes.data() + kUnitTransformOffset, second.id);
     Put32(second.bytes.data() + kUnitTransformOffset, first.id);
     Put32(first.bytes.data() + kUnitWeaponOffsets[0], weapon.id);
     Put32(second.bytes.data() + kUnitWeaponOffsets[0],
           scenario == "missing_reference" ? 999999u : 45082u);
     Put32(category.bytes.data() + kItemCategoryRefOffset, first.id);
-    for (Entry* entry : {&first, &second, &weapon, &category,&index})
+    for (Entry* entry : {&first, &second, &weapon, &blueprint, &category,
+                         &blueprintCategory, &index})
         entry->recordHash = Hash32(entry->bytes.data(), entry->bytes.size());
-    return Encode({first, second, weapon, category,index});
+    return Encode({first, second, weapon, blueprint, category, blueprintCategory, index});
 }
 
 void NativeFixture(const fs::path& dll, const std::string& scenario,
                    const fs::path& suppliedRoot = {}) {
     Check(scenario == "success" || scenario == "conflict" ||
           scenario == "missing_reference" || scenario == "partial_failure_child" ||
-          scenario=="index_reference_missing" || scenario=="index_conflict",
+          scenario=="index_reference_missing" || scenario=="index_conflict" ||
+          scenario=="blueprint_output_missing" ||
+          scenario=="blueprint_material_missing" ||
+          scenario=="blueprint_item_reference_missing" ||
+          scenario=="index_blueprint_reference_missing" ||
+          scenario=="index_blueprint_output_mismatch",
           "native fixture scenario is supported");
     g_nodes.clear();
     g_nativeUnits.clear();
@@ -396,6 +428,10 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
     *reinterpret_cast<void**>(g_grid + 4) = &g_head;
     g_nativeWeapons[45082] = std::vector<uint8_t>(kWeaponBytes);
     Put32(g_nativeWeapons[45082].data(), 45082);
+    for (const uint32_t unit : {10001u, 10002u}) {
+        g_nativeUnits[unit] = std::vector<uint8_t>(kUnitBytes);
+        Put32(g_nativeUnits[unit].data(), unit);
+    }
     if (scenario == "conflict") g_foreignKeys.insert(25060);
     if (scenario == "index_conflict")g_foreignKeys.insert(kUnitIndexFirstId);
 
@@ -438,8 +474,8 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
     reinterpret_cast<Detour>(g_loadDetour)(g_grid, nullptr, L"gdrs\\0280.gdt", 0x0d);
     Check(g_loadCalls == 2, "original native table loader called before both detours");
     if (scenario == "success") {
-        Check(g_nodes.size() == 5 && g_integrityRecords == 5,
-               "all unit, weapon, item-category and encyclopedia records entered the native tree");
+        Check(g_nodes.size() == 7 && g_integrityRecords == 7,
+               "all unit, weapon, blueprint, item-category and encyclopedia records entered the native tree");
         Catalog parsed;
         std::string error;
         Check(parsed.Parse(MakeNativeFixture(scenario), error),
@@ -451,7 +487,7 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
                   "native readback preserves every raw byte");
         }
         reinterpret_cast<Detour>(g_loadDetour)(g_grid, nullptr, L"0280.gdt", 0x0d);
-        Check(g_loadCalls == 3 && g_nodes.size() == 5 && g_integrityRecords == 5,
+        Check(g_loadCalls == 3 && g_nodes.size() == 7 && g_integrityRecords == 7,
               "catalog publication runs only once after the original loader");
         CleanupNativeTree();
     } else {
@@ -590,17 +626,71 @@ int ParserFixture() {
     const std::vector<Entry> source{
         MakeRecord(kUnitType, 25060),
         MakeRecord(kWeaponType, 61165),
+        MakeRecord(kBlueprintType, 200001),
         MakeRecord(kItemCategoryType, 1250600),
     };
     const auto valid = Encode(source);
     Catalog catalog;
     std::string error;
     Check(catalog.Parse(valid, error), "valid mixed native catalog accepted");
-    Check(catalog.records.size() == 3, "all native records retained");
+    Check(catalog.records.size() == 4, "all native records retained");
     Check(catalog.Contains(25060, kUnitType) &&
           catalog.Contains(61165, kWeaponType) &&
+          catalog.Contains(200001, kBlueprintType) &&
           catalog.Contains(1250600, kItemCategoryType), "typed lookup succeeds");
     Check(catalog.Find(7) == catalog.records.size(), "missing lookup is bounded");
+    {
+        const Entry validBlueprint = MakeRecord(kBlueprintType, 200001);
+        for (uint32_t count = kBlueprintMinimumMaterials;
+             count <= kBlueprintMaximumMaterials; ++count) {
+            Entry boundary = validBlueprint;
+            Put32(boundary.bytes.data() + kBlueprintMaterialCountOffset, count);
+            for (uint32_t slot = 0; slot < kBlueprintMaterialSlots; ++slot) {
+                Put32(boundary.bytes.data() + kBlueprintMaterialOffset +
+                          slot * sizeof(uint32_t),
+                      slot < count ? 10001u + slot : 0u);
+                Put32(boundary.bytes.data() + kBlueprintMaterialLevelOffset +
+                          slot * sizeof(uint32_t),
+                      slot < count ? 1u + slot : (slot == 6 ? 255u : 0u));
+            }
+            Check(catalog.Parse(Encode({boundary}), error),
+                  "blueprint material counts 3..7 and retained inactive levels are accepted");
+            Check(catalog.records.size() == 1 &&
+                      catalog.records[0].bytes == boundary.bytes,
+                  "valid blueprint boundary bytes are preserved exactly");
+        }
+        for (int mutation = 0; mutation < 9; ++mutation) {
+            Entry invalid = validBlueprint;
+            if (mutation == 0)
+                Put32(invalid.bytes.data() + kBlueprintMaterialCountOffset, 2);
+            if (mutation == 1)
+                Put32(invalid.bytes.data() + kBlueprintMaterialCountOffset, 8);
+            if (mutation == 2)
+                Put32(invalid.bytes.data() + kBlueprintOutputOffset, 0);
+            if (mutation == 3)
+                Put32(invalid.bytes.data() + kBlueprintMaterialOffset, 0);
+            if (mutation == 4)
+                Put32(invalid.bytes.data() + kBlueprintMaterialLevelOffset, 0);
+            if (mutation == 5)
+                Put32(invalid.bytes.data() + kBlueprintMaterialLevelOffset, 256);
+            if (mutation == 6)
+                Put32(invalid.bytes.data() + kBlueprintMaterialOffset +
+                      3 * sizeof(uint32_t), 10003);
+            if (mutation == 7)
+                Put32(invalid.bytes.data() + kBlueprintMaterialOffset +
+                      sizeof(uint32_t), 25061);
+            if (mutation == 8)
+                Put32(invalid.bytes.data() + kBlueprintMaterialOffset, 25060);
+            Check(!catalog.Parse(Encode({invalid}), error),
+                  "malformed blueprint count, identity or material slots are rejected");
+            Check(catalog.records.empty(), "malformed blueprint parse remains atomic");
+        }
+        Entry wideCount = validBlueprint;
+        Put32(wideCount.bytes.data() + kBlueprintMaterialCountOffset, 256);
+        Check(!catalog.Parse(Encode({wideCount}), error),
+              "blueprint material count is validated as a DWORD without byte truncation");
+        Check(catalog.records.empty(), "wide invalid blueprint count remains atomic");
+    }
     {
         auto extended=source;
         extended.push_back(MakeRecord(kUnitIndexType,kUnitIndexFirstId));
@@ -636,10 +726,10 @@ int ParserFixture() {
         if (mutation == 8) std::memset(unit + kUnitModelPathOffset, 0x41, kUnitModelPathBytes);
         if (mutation == 9) PutUtf16(unit + kUnitModelPathOffset, kUnitModelPathBytes, "mdrs\\..\\escape.mod");
         if (mutation == 10) {
-            uint8_t* category = RecordAt(invalid, 2);
+            uint8_t* category = RecordAt(invalid, 3);
             Put32(category + kItemCategoryRefOffset, 0);
-            HeaderAt(invalid, 2)->recordHash =
-                Hash32(category, HeaderAt(invalid, 2)->byteCount);
+            HeaderAt(invalid, 3)->recordHash =
+                Hash32(category, HeaderAt(invalid, 3)->byteCount);
         }
         if (mutation == 11) first->recordHash ^= 1;
         if (mutation >= 2 && mutation <= 9) first->recordHash = Hash32(unit, first->byteCount);
@@ -712,7 +802,10 @@ int main(int argc, char** argv) {
     std::fprintf(stderr,
                  "usage: unit_catalog_test [--parse <catalog.bin> | "
                  "<production-unit_catalog.dll> "
-                  "<success|conflict|missing_reference|partial_failure> | "
+                  "<success|conflict|missing_reference|partial_failure|"
+                  "blueprint_output_missing|blueprint_material_missing|"
+                  "blueprint_item_reference_missing|index_blueprint_reference_missing|"
+                  "index_blueprint_output_mismatch> | "
                   "<production-unit_catalog.dll> old_capsule <old-capsule.dll>]\n");
     return 2;
 }

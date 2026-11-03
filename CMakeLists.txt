@@ -437,7 +437,9 @@ if(BUILD_TESTING)
     sdgo_strict(unit_preview_test)
     add_test(NAME unit_preview_offline COMMAND unit_preview_test)
     add_test(NAME unit_catalog_offline COMMAND unit_catalog_test)
-    foreach(scenario success conflict missing_reference partial_failure index_reference_missing index_conflict)
+    foreach(scenario success conflict missing_reference partial_failure index_reference_missing index_conflict
+                     blueprint_output_missing blueprint_material_missing
+                     blueprint_item_reference_missing index_blueprint_reference_missing index_blueprint_output_mismatch)
         add_test(NAME unit_catalog_${scenario}_offline COMMAND unit_catalog_test $<TARGET_FILE:unit_catalog> ${scenario})
         set_tests_properties(unit_catalog_${scenario}_offline PROPERTIES TIMEOUT 30)
     endforeach()

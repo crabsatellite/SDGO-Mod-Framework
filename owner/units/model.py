@@ -145,10 +145,16 @@ def content_revision(draft):
 
 
 def update(draft, patch, catalog):
-    if not isinstance(patch,dict) or set(patch)-{'name','root_unit_id','behavior_profile','forms','weapons','presentation','item_template_id'}:
+    if not isinstance(patch,dict) or set(patch)-{'name','root_unit_id','behavior_profile','forms','weapons','presentation','item_template_id','blueprints','metadata','media'}:
         raise ValueError('草稿更新包含未知字段')
     result=copy.deepcopy(draft)
     if 'name' in patch:result['name']=text(patch['name'],'机体名称')
+    if 'metadata' in patch:
+        from .project import normalize_metadata
+        result['metadata']=normalize_metadata(patch['metadata'])
+    if 'media' in patch:
+        from .project import normalize_media
+        result['media']=normalize_media(patch['media'],result.get('assets',[]))
     if 'root_unit_id' in patch:
         root=patch['root_unit_id']
         published=result.get('published')
@@ -170,6 +176,16 @@ def update(draft, patch, catalog):
         if identity is not None and (type(identity) is not int or identity not in catalog.get('items',{}) or identity//100000!=11):
             raise ValueError('请选择有效的原生机体物品模板')
         result['item_template_id']=identity
+    if 'blueprints' in patch:
+        from .blueprints import normalize
+        rows=patch['blueprints']
+        if not isinstance(rows,list) or len(rows)>16:raise ValueError('每个机体族最多16份设计图声明')
+        values=[normalize(row,root_unit_id=result.get('root_unit_id')) for row in rows]
+        ids=[r['id'] for r in values if r['id'] is not None]
+        if len(set(ids))!=len(ids):raise ValueError('设计图编号不能重复')
+        published={r['id'] for r in result.get('published',{}).get('blueprints',[]) if r.get('id')}
+        if published-set(ids):raise ValueError('已发布设计图请停用保留登记；不能删除玩家已持有图纸的定义')
+        result['blueprints']=values
     for key,kind,table in (('forms','unit','units'),('weapons','weapon','weapons')):
         if key not in patch:continue
         if not isinstance(patch[key],list):raise ValueError('形态和武器更新必须是列表')
@@ -211,10 +227,10 @@ def update(draft, patch, catalog):
 
 
 def definitions(plan):
-    if not isinstance(plan,dict) or set(plan)-{'schema_version','root_unit_id','behavior_profile','item_template_id','units','weapons'}:
+    if not isinstance(plan,dict) or set(plan)-{'schema_version','root_unit_id','behavior_profile','item_template_id','units','weapons','blueprints','metadata','media'}:
         raise ValueError('定义文件只接受 schema_version、形态/武器定义和根形态设置')
     if plan.get('schema_version')!=1:raise ValueError('不支持的定义文件版本')
-    patch={key:plan[key] for key in ('root_unit_id','behavior_profile','item_template_id') if key in plan}
+    patch={key:plan[key] for key in ('root_unit_id','behavior_profile','item_template_id','blueprints','metadata','media') if key in plan}
     for src,target,identity in (('units','forms','UnitNumber'),('weapons','weapons','WeaponNo')):
         rows=plan.get(src,[])
         if not isinstance(rows,list):raise ValueError('定义文件记录必须是列表')

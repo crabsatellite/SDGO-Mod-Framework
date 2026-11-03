@@ -114,13 +114,15 @@ async function refreshDraftAfterWrite(payload){
 }
 
 function renderList(){
-  const drafts=Array.isArray(state.drafts)?state.drafts:[];
+  const all=Array.isArray(state.drafts)?state.drafts:[];
+  const query=($("project-search")?.value||"").normalize("NFKC").toLowerCase().split(/\s+/).filter(Boolean);
+  const drafts=all.filter(row=>query.every(word=>String(row.search_text||row.name||"").normalize("NFKC").toLowerCase().includes(word)));
   $("draft-count").textContent=String(drafts.length);
   $("draft-list").replaceChildren();
   if(!drafts.length){
     const empty=document.createElement("p");
     empty.className="note";
-    empty.textContent="还没有机体导入草稿。";
+    empty.textContent=query.length?"没有匹配的资料项目，请换一个名称或别名。":"还没有机体导入草稿。";
     $("draft-list").append(empty);
     return;
   }
@@ -137,6 +139,89 @@ function renderList(){
     button.addEventListener("click",()=>loadDraft(item.id));
     $("draft-list").append(button);
   }
+}
+
+let metadataEditors=null;
+function initializeProjectActions(){
+  $("editor-form").noValidate=true;
+  const search=document.createElement("input");search.type="search";search.id="project-search";
+  search.placeholder="搜索名称、别名、作品或型号";search.setAttribute("aria-label","搜索机体资料");
+  search.addEventListener("input",renderList);$("draft-list").before(search);
+  const row=document.createElement("div");row.className="actions";
+  const name=document.createElement("input");name.maxLength=48;name.placeholder="新资料项目名称";
+  name.setAttribute("aria-label","资料项目名称");
+  const create=document.createElement("button");create.type="button";create.textContent="新建资料项目";
+  create.onclick=async()=>{
+    if(busy)return;if(dirty){message("请先保存当前草稿，再新建资料项目。",true);return;}
+    if(!name.value.trim()){message("请填写资料项目名称。",true);return;}
+    setBusy(true);try{
+      const result=await api("/api/units/projects","POST",{name:name.value.trim()});
+      await refreshDraftAfterWrite(result);name.value="";
+      message("资料项目已建立。可以先填写简介、别名和海报；机体记录与两端登记可稍后完成。");
+    }catch(error){message(error.message,true);}finally{setBusy(false);}
+  };
+  const download=document.createElement("a");download.id="export-project";download.textContent="导出制作项目（含资料素材）";
+  download.onclick=event=>{if(!draft||dirty){event.preventDefault();message("请先保存资料，再导出制作项目。",true);}};
+  row.append(name,create,download);$("choose-archive").parentElement.append(row);
+}
+
+function metadataArea(parent,label,value,maximum=4000){
+  const field=document.createElement("label");field.className="field";
+  const text=document.createElement("span");text.textContent=label;
+  const input=document.createElement("textarea");input.maxLength=maximum;input.rows=3;
+  input.value=value||"";input.style.width="100%";input.addEventListener("input",markDirty);
+  field.append(text,input);parent.append(field);return input;
+}
+
+function renderProjectMetadata(){
+  let panel=$("project-metadata");
+  if(!panel){panel=document.createElement("section");panel.id="project-metadata";$("forms").before(panel);}
+  panel.replaceChildren();
+  const title=document.createElement("h3");title.textContent="机体资料与项目素材";
+  const note=document.createElement("p");note.className="note";
+  note.textContent="资料和海报随制作项目打包，扭蛋机可复用。资料可以先导入；成为实际奖品仍需完成机体两端登记。具体内容属于服主私有项目，不进入框架默认包。";
+  panel.append(title,note);
+  const metadata=draft.metadata||{};const fields=document.createElement("div");fields.className="server-fields";
+  const description=metadataArea(fields,"机体简介",metadata.description);
+  const gameplay=metadataArea(fields,"本服说明（与原作简介区分）",metadata.gameplay_notes,2000);
+  const short=metadataArea(fields,"简短介绍",metadata.short_description,199);
+  const aliases=metadataArea(fields,"搜索别名（每行一个）",(metadata.aliases||[]).join("\n"),2048);
+  const examples=metadataArea(fields,"搜索示例（每行一个）",(metadata.search_examples||[]).join("\n"),2048);
+  const series=blueprintInput(fields,"所属作品",metadata.series);
+  const model=blueprintInput(fields,"官方型号",metadata.model_number);
+  const english=blueprintInput(fields,"外文名称",metadata.english_name);
+  const tags=blueprintInput(fields,"检索标签（逗号分隔）",(metadata.tags||[]).join(", "));
+  const sources=metadataArea(fields,"资料出处（每行：标题 | 网址）",(metadata.sources||[]).map(r=>r.title+" | "+r.url).join("\n"),8192);
+  const declared=blueprintInput(fields,"资料关联机体编号（可稍后填写）",metadata.declared_unit_id,"number");
+  panel.append(fields);
+  const poster=document.createElement("div");poster.className="preview-card";
+  const heading=document.createElement("strong");heading.textContent="活动扭蛋机海报";
+  const picture=document.createElement("img");picture.alt="活动扭蛋机海报预览";picture.style.maxWidth="361px";picture.style.width="100%";
+  const current=draft.media?.activity_poster;
+  if(current?.asset_sha)picture.src=endpoint("/api/units/assets/"+current.asset_sha);else picture.hidden=true;
+  const help=document.createElement("p");help.className="note";
+  help.textContent=current?"原图已保留并随项目导出；活动页面使用361×322画布。":"尚未导入海报。选择PNG后会保存原图与制作副本。";
+  const upload=document.createElement("input");upload.type="file";upload.accept=".png,image/png";
+  upload.setAttribute("aria-label","上传项目活动海报");
+  upload.onchange=()=>{if(dirty){message("请先保存文字资料，再上传海报。",true);upload.value="";return;}
+    uploadSupplement(upload.files[0],"asset","activity_poster").finally(()=>upload.value="");};
+  poster.append(heading,picture,help,upload);panel.append(poster);
+  const lines=input=>input.value.split(/\r?\n/).map(v=>v.trim()).filter(Boolean);
+  metadataEditors=()=>{
+    const prior=metadata.sources||[];
+    const refs=lines(sources).map(line=>{
+      const separator=line.indexOf("|");
+      if(separator<0)throw new Error("资料出处请按“标题 | 网址”填写。");
+      const title=line.slice(0,separator).trim(),url=line.slice(separator+1).trim();
+      return {...(prior.find(r=>r.url===url)||{kind:"reference"}),title,url};
+    });
+    return {...metadata,description:description.value,gameplay_notes:gameplay.value,short_description:short.value,aliases:lines(aliases),
+      search_examples:lines(examples),series:series.value,model_number:model.value,english_name:english.value,
+      tags:tags.value.split(/[,，\n]/).map(v=>v.trim()).filter(Boolean),sources:refs,visibility:"private",
+      declared_unit_id:declared.value.trim()?Number(declared.value):null};
+  };
+  if($("project-search"))$("project-search").placeholder=(metadata.search_examples||[]).length
+    ?"搜索示例："+metadata.search_examples.slice(0,3).join(" / "):"搜索名称、别名、作品或型号";
 }
 
 function metric(label,value){
@@ -363,6 +448,109 @@ function renderRecords(targetId,items,group,emptyText){
   });
 }
 
+let blueprintEditors=[];
+function collectBlueprints(){return blueprintEditors.map(read=>read());}
+
+function blueprintInput(parent,label,value,type="text"){
+  const box=document.createElement("label");box.className="field";
+  const text=document.createElement("span");text.textContent=label;
+  const input=document.createElement("input");input.type=type;
+  if(type==="number"){input.step="1";input.min="0";}
+  input.value=value==null?"":String(value);
+  input.addEventListener("input",markDirty);
+  box.append(text,input);parent.append(box);return input;
+}
+
+function blueprintSelect(parent,label,value,rows,showIds=true){
+  const box=document.createElement("label");box.className="field";
+  const text=document.createElement("span");text.textContent=label;
+  const select=document.createElement("select");
+  let current=value==null?"":String(value);
+  const search=document.createElement("input");search.type="search";
+  search.placeholder="按名称或编号搜索";search.setAttribute("aria-label","搜索"+label);
+  const draw=()=>fillTemplateSelect(select,rows,search.value,current,"请选择",row=>row.name+(showIds?" · "+row.id:""));
+  draw();search.addEventListener("input",draw);
+  select.addEventListener("change",()=>{current=select.value;});
+  select.addEventListener("change",markDirty);
+  box.append(text);if(rows.length>100)box.append(search);box.append(select);parent.append(box);return select;
+}
+
+function renderBlueprints(){
+  let panel=$("unit-blueprints");
+  if(!panel){
+    panel=document.createElement("section");panel.id="unit-blueprints";
+    $("weapons").after(panel);
+  }
+  panel.replaceChildren();blueprintEditors=[];
+  const title=document.createElement("h3");title.textContent="设计图配方";
+  const note=document.createElement("p");note.className="note";
+  note.textContent="可保存自己的配方或补传有来源的定义。当前支持3至5个材料，第一个是保留的关键机体，其余材料会消耗；图纸本身也必须有获取途径。新增原生适配通过验收前，配方保持草稿。";
+  const add=document.createElement("button");add.type="button";add.textContent="添加设计图";
+  add.dataset.blueprintLocked=draft.root_unit_id?"0":"1";
+  add.disabled=busy||draft.status==="disabled"||!draft.root_unit_id;
+  add.onclick=()=>{
+    const rows=collectBlueprints();
+    rows.push({schema_version:1,id:null,enabled:true,name:(draft.name||"机体")+"设计图",
+      source:{kind:"authored"},output_unit_id:draft.root_unit_id,materials:[],
+      minimum_player_level:null,repay_point:null});
+    draft.blueprints=rows;renderBlueprints();markDirty();
+  };
+  panel.append(title,note,add);
+  const number=input=>input.value.trim()===""?null:Number(input.value);
+  const sourceNames={authored:"作者设定", "source-recovered":"恢复的源数据",unknown:"待补齐来源"};
+  (draft.blueprints||[]).forEach((recipe,index)=>{
+    const card=document.createElement("details");card.className="record";card.open=true;
+    const summary=document.createElement("summary");summary.textContent=(recipe.name||"设计图")+" · "+(recipe.id||"保存后分配编号");
+    const body=document.createElement("div");body.className="record-body";
+    const fields=document.createElement("div");fields.className="server-fields";
+    const name=blueprintInput(fields,"设计图名称 *",recipe.name);
+    const internal=blueprintInput(fields,"图纸服务端内部名称（ASCII） *",recipe.internal_name);
+    const origin=blueprintSelect(fields,"来源 *",recipe.source?.kind||"unknown",Object.entries(sourceNames).map(([id,name])=>({id,name})),false);
+    const enabled=blueprintSelect(fields,"配方状态",recipe.enabled===false?"0":"1",[{id:"1",name:"启用"},{id:"0",name:"停用（保留已持有图纸定义）"}],false);
+    const primary=blueprintSelect(fields,"图鉴主设计图（多份启用配方需指定一份）",recipe.encyclopedia_primary?"1":"0",[{id:"0",name:"非主配方"},{id:"1",name:"图鉴默认显示此配方"}],false);
+    const template=blueprintSelect(fields,"原生配方显示模板 *",recipe.recipe_template_id,state.templates?.blueprints||[]);
+    const item=blueprintSelect(fields,"原生图纸物品模板 *",recipe.item_template_id,state.templates?.blueprint_items||[]);
+    const level=blueprintInput(fields,"玩家最低等级 *（0为不限制）",recipe.minimum_player_level,"number");level.max="255";
+    const repay=blueprintInput(fields,"回收图纸返还点数 *",recipe.repay_point,"number");
+    const sourceDomain=blueprintInput(fields,"恢复来源域（恢复数据必填）",recipe.source?.domain);
+    const sourceId=blueprintInput(fields,"源记录编号（恢复数据必填）",recipe.source?.record_id,"number");
+    const sourceHash=blueprintInput(fields,"源记录 SHA-256（恢复数据必填）",recipe.source?.record_sha256);
+    const materialArea=document.createElement("div");const materialInputs=[];
+    function materialRow(material,slot){
+      const row=document.createElement("div");row.className="server-fields";
+      const unit=blueprintSelect(row,slot===0?"关键机体 *":"材料机体 "+(slot+1)+" *",material.unit_id,state.templates?.units||[]);
+      const required=blueprintInput(row,"最低机体等级 *",material.minimum_level,"number");required.min="1";required.max="255";
+      materialArea.append(row);materialInputs.push(()=>({unit_id:number(unit),minimum_level:number(required)}));
+    }
+    (recipe.materials||[]).forEach(materialRow);
+    const read=()=>{
+      const source={...(recipe.source||{}),kind:origin.value};
+      for(const [key,value] of Object.entries({domain:sourceDomain.value.trim(),record_id:number(sourceId),record_sha256:sourceHash.value.trim()})){
+        if(value==null||value==="")delete source[key];else source[key]=value;
+      }
+      return {...recipe,name:name.value.trim(),internal_name:internal.value.trim(),source,enabled:enabled.value!=="0",encyclopedia_primary:primary.value==="1",
+        recipe_template_id:number(template),item_template_id:number(item),
+        output_unit_id:draft.root_unit_id,minimum_player_level:number(level),repay_point:number(repay),
+        materials:materialInputs.map(read=>read())};
+    };
+    blueprintEditors.push(read);
+    const addMaterial=document.createElement("button");addMaterial.type="button";addMaterial.textContent="添加材料槽（最多5个）";
+    addMaterial.disabled=materialInputs.length>=5;
+    addMaterial.dataset.blueprintLocked=addMaterial.disabled?"1":"0";
+    addMaterial.onclick=()=>{const rows=collectBlueprints();rows[index].materials.push({unit_id:null,minimum_level:null});draft.blueprints=rows;renderBlueprints();markDirty();};
+    const removeMaterial=document.createElement("button");removeMaterial.type="button";removeMaterial.textContent="移除最后一个材料槽";
+    removeMaterial.disabled=!materialInputs.length;
+    removeMaterial.dataset.blueprintLocked=removeMaterial.disabled?"1":"0";
+    removeMaterial.onclick=()=>{const rows=collectBlueprints();rows[index].materials.pop();draft.blueprints=rows;renderBlueprints();markDirty();};
+    const remove=document.createElement("button");remove.type="button";remove.textContent="删除未发布的设计图";
+    remove.disabled=(draft.published?.blueprints||[]).some(r=>r.id===recipe.id);
+    remove.dataset.blueprintLocked=remove.disabled?"1":"0";
+    remove.onclick=()=>{const rows=collectBlueprints();rows.splice(index,1);draft.blueprints=rows;renderBlueprints();markDirty();};
+    const actions=document.createElement("div");actions.className="actions";actions.append(addMaterial,removeMaterial,remove);
+    body.append(fields,materialArea,actions);card.append(summary,body);panel.append(card);
+  });
+}
+
 function addOption(select,value,label){
   const option=document.createElement("option");
   option.value=value==null?"":String(value);
@@ -567,6 +755,8 @@ function renderEditor(){
   renderRequirements();
   renderRecords("forms",draft.forms||[],"forms","制作包中没有解析出机体形态。");
   renderRecords("weapons",draft.weapons||[],"weapons","制作包中没有解析出新武器记录。");
+  renderProjectMetadata();
+  renderBlueprints();
   renderPresentations();
   renderNativePreview();
   resetConfirmations();
@@ -598,6 +788,9 @@ function syncActions(){
     button.disabled=busy||disabled||dirty||button.dataset.hasSelection!=="1";
   });
   document.querySelectorAll("[data-drop-missing-skills]").forEach(button=>button.disabled=busy||dirty||disabled);
+  document.querySelectorAll("#unit-blueprints button").forEach(button=>button.disabled=busy||disabled||button.dataset.blueprintLocked==="1");
+  document.querySelectorAll("#unit-blueprints input,#unit-blueprints select").forEach(input=>input.disabled=busy||disabled);
+  const project=$("export-project");if(project){project.href=draft?endpoint("/api/units/drafts/"+draft.id+"/project"):"#";project.classList.toggle("disabled",!draft||dirty||busy);}
 }
 
 async function dropMissingSkills(entry){
@@ -640,6 +833,8 @@ function collectPatch(){
     behavior_profile:behaviorValue===""?null:behaviorValue,
     forms:collectServerRecords(draft.forms||[],"forms"),
     weapons:collectServerRecords(draft.weapons||[],"weapons"),
+    ...(metadataEditors?{metadata:metadataEditors()}:{}),
+    ...(draft.blueprints?{blueprints:collectBlueprints()}:{}),
     presentation:{
       shop:{asset_sha:$("shop-asset").value||null,source_mode:$("shop-source-mode").value,caption:$("shop-caption").value.trim()},
       capsule:{asset_sha:$("capsule-asset").value||null,source_mode:$("capsule-source-mode").value,caption:$("capsule-caption").value.trim()}
@@ -791,7 +986,9 @@ async function saveDraft(event){
   try{
     const response=await api("/api/units/drafts/"+encodeURIComponent(draft.id),"PUT",collectPatch());
     await refreshDraftAfterWrite(response);
-    message("草稿已保存。请重新核对商城和扭蛋预览。");
+    message(draft.project_kind==="metadata-only"
+      ?"资料已保存，可在扭蛋机的项目素材库中复用。机体记录与两端登记尚未完成。"
+      :"草稿已保存。资料与素材可供扭蛋编辑器复用；发布前请核对当前预览。");
   }catch(error){
     message(error.message,true);
   }finally{
@@ -980,5 +1177,7 @@ $("refresh-native").onclick=()=>refreshNativePreview().catch(error=>message(erro
 ctx.setInterval(async()=>{if(!draft?.native_preview?.prepared||busy)return;try{await refreshNativePreview();}catch{}},2000);
 
 $("cleanup-native").onclick=async()=>{if(busy)return;try{const result=await api("/api/units/preview-cleanup","POST",{});message("已清理 "+result.removed_copies+" 个过期副本；保留当前预览和运行中的客户端。");}catch(error){message(error.message,true);}};
+
+initializeProjectActions();
 
 }

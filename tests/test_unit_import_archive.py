@@ -337,7 +337,7 @@ class UnitImportArchiveTests(unittest.TestCase):
                 self.assertEqual(image.size, (4, 4))
                 self.assertEqual(image.format, "PNG")
             info = baseline.public_info()
-            self.assertEqual(info["native_id_coverage"]["strict_record_types"], {"unit": 2, "weapon": 10, "item": 34,"unit_index":85})
+            self.assertEqual(info["native_id_coverage"]["strict_record_types"], {"unit": 2, "weapon": 10, "item": 34,"unit_index":85,"blueprint":33})
             self.assertTrue(info["native_id_coverage"]["all_gdrs_ids_scanned"])
 
     def test_only_receipt_owned_unchanged_loose_resources_may_be_updated(self):
