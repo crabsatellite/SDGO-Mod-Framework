@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from manager.entrypoints import create,DESKTOP_NAME,CLIENT_NAME
+from manager.entrypoints import create,CLIENT_NAME
 from manager.workspace import Workspace
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -28,9 +28,10 @@ class EntrypointTests(unittest.TestCase):
     def test_shortcuts_bind_existing_workspace_and_only_client_roots(self):
         server=self.root/'server';server.mkdir();(server/'BattleServer.exe').write_bytes(b'fixture')
         self.workspace.add_host(server)
-        result=create(self.workspace,self.exe,self.desktop)
-        self.assertEqual([r['status'] for r in result],['created','created'])
-        for path in (self.desktop/DESKTOP_NAME,self.client/CLIENT_NAME):
+        result=create(self.workspace,self.exe)
+        self.assertEqual([r['status'] for r in result],['created'])
+        self.assertEqual(list(self.desktop.iterdir()),[])
+        for path in (self.client/CLIENT_NAME,):
             link=self.read(path)
             self.assertEqual(Path(link['target']),self.exe)
             self.assertEqual(link['arguments'],'--workspace "'+str(self.workspace.root)+'"')
@@ -38,11 +39,11 @@ class EntrypointTests(unittest.TestCase):
         self.assertFalse((server/CLIENT_NAME).exists())
 
     def test_existing_usable_shortcuts_retain_their_original_workspace(self):
-        create(self.workspace,self.exe,self.desktop)
-        paths=(self.desktop/DESKTOP_NAME,self.client/CLIENT_NAME)
+        create(self.workspace,self.exe)
+        paths=(self.client/CLIENT_NAME,)
         before={p:p.read_bytes() for p in paths}
         other=Workspace(self.root/'another-workspace',ROOT/'mods');other.add_host(self.client)
-        result=create(other,self.exe,self.desktop)
+        result=create(other,self.exe)
         self.assertTrue(all(r['status']=='kept' for r in result))
         self.assertTrue(all(p.read_bytes()==raw for p,raw in before.items()))
         self.assertIn(str(self.workspace.root),self.read(paths[0])['arguments'])
