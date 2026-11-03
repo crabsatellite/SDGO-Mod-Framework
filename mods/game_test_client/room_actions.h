@@ -159,6 +159,7 @@ public:
             Symbol<WaitRoomPlayerCountFn>(
                 "flow.wait_room_player_count");
         profilePointer_ = Symbol<uint8_t**>("flow.profile_pointer");
+        roomInfo_ = Symbol<RoomInfoFn>("flow.mission_room_info");
         serviceManagedPointer_ =
             Symbol<void**>("flow.service_managed_pointer");
         serviceFindByName_ =
@@ -194,7 +195,7 @@ public:
         if (!api_ || !mod_ || !native_ || !gameApp_ || !createRoomInit_ ||
             !createRoomDialogDispatch_ || !waitRoomObjectFactory_ ||
             !waitRoomAlwaysDispatch_ || !waitMenuUpdate_ || !startOrReady_ ||
-            !isRoomMaster_ || !waitRoomPlayerCount_ || !profilePointer_ ||
+            !isRoomMaster_ || !waitRoomPlayerCount_ || !profilePointer_ || !roomInfo_ ||
             !serviceManagedPointer_ || !serviceFindByName_ ||
             !waitMenuVtable_ || !threeDWaitRoomVtable_ ||
             !threeDStartCommandVtable_ || !threeDRoomHasState_ ||
@@ -457,7 +458,7 @@ public:
             uint8_t* profile = *profilePointer_;
             if (!profile)
                 return false;
-            void* room = *reinterpret_cast<void**>(profile + kProfileRoom);
+            void* room = CurrentRoomData();
             if (!room || !isRoomMaster_(room))
                 return false;
 
@@ -572,8 +573,7 @@ public:
 
         __try {
             uint8_t* profile = *profilePointer_;
-            if (!profile ||
-                !*reinterpret_cast<void**>(profile + kProfileRoom))
+            if (!profile || !CurrentRoomData())
                 return false;
 
             uint8_t* app = gameApp_ ? gameApp_() : nullptr;
@@ -746,8 +746,8 @@ public:
 
     bool HasObservedWaitMenu() const { return ResolveWaitMenu() != nullptr; }
 
-    // Reads the room model installed by the original 0x0918 path at
-    // profile+0xEC. This does not construct a room or modify client state.
+    // The active 3D scene owns its packed model. The legacy profile cache can
+    // be empty or stale after settlement, so only 2D rooms use that cache.
     NativeRoomObservation NativeRoomState() const
     {
         NativeRoomObservation observed = {};
@@ -762,8 +762,7 @@ public:
             uint8_t* profile = *profilePointer_;
             if (!profile)
                 return observed;
-            void* room = *reinterpret_cast<void**>(
-                profile + kProfileRoom);
+            void* room = CurrentRoomData();
             if (!room)
                 return observed;
             const uint8_t* bytes = static_cast<const uint8_t*>(room);
@@ -861,8 +860,7 @@ public:
             uint8_t* profile = *profilePointer_;
             if (!profile)
                 return observed;
-            const uint8_t* room =
-                *reinterpret_cast<uint8_t**>(profile + kProfileRoom);
+            const uint8_t* room = CurrentRoomData();
             if (!room)
                 return observed;
             observed.room_id =
@@ -939,6 +937,31 @@ private:
     static constexpr size_t kReplyError = 0x06;
     static constexpr size_t kBattleEndResultType = 0x12;
     static constexpr size_t kWaitRoomObjectType = 0x10;
+    uint8_t* CurrentRoomData() const
+    {
+        __try {
+            auto* app=gameApp_ ? gameApp_():nullptr;
+            if(app && *reinterpret_cast<uint32_t*>(app+kGameAppState)==kThreeDWaitRoomState) {
+                auto* owner=*reinterpret_cast<uint8_t**>(app+kGameAppStateObject);
+                if(!owner || *reinterpret_cast<void**>(owner)!=threeDWaitRoomVtable_)return nullptr;
+                auto* manager=*reinterpret_cast<uint8_t**>(owner+kWaitRoomObject);
+                if(!manager)return nullptr;
+                void* managerType=*reinterpret_cast<void**>(manager);
+                if(managerType!=normalThreeDManagerVtables_[0] && managerType!=normalThreeDManagerVtables_[1] &&
+                   managerType!=normalThreeDManagerVtables_[2])return nullptr;
+                auto* model=*reinterpret_cast<uint8_t**>(manager+0x38);
+                auto* vtable=model ? *reinterpret_cast<uint8_t**>(model):nullptr;
+                // Shared by the stock PvP and mission CBaseRoomData models.
+                if(!vtable || !roomInfo_ || *reinterpret_cast<RoomInfoFn*>(vtable+0x1C)!=roomInfo_)return nullptr;
+                return roomInfo_(model);
+            }
+            auto* profile=profilePointer_ ? *profilePointer_:nullptr;
+            return profile ? *reinterpret_cast<uint8_t**>(profile+kProfileRoom):nullptr;
+        } __except(EXCEPTION_EXECUTE_HANDLER) {return nullptr;}
+    }
+
+    using RoomInfoFn=uint8_t*(__thiscall*)(uint8_t*);
+    RoomInfoFn roomInfo_=nullptr;
     static constexpr size_t kProfileRoom = 0xEC;
     static constexpr size_t kGameAppState = 0x4A0;
     static constexpr size_t kGameAppStateObject = 0x4A4;
