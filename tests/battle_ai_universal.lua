@@ -359,7 +359,7 @@ Check(calls.releaseIntent==1 and calls.fire==nil,
 Reset({Difficulty=1});observation.nativeTarget=1;observation.specialAvailable=1;observation.specialRange=1800;observation.spReady=1
 observation.hurt=1;observation.meleeBusy=1;observation.specialControlAllowed=1;observation.meleeAttacker=2
 SDGO_BattleAI_ProfileUpdate(npc)
-Check(calls.switch==3 and SDGO_BattleAI_Universal.profiles[20].special.target==2,
+Check(calls.switch==3 and calls.target==2 and SDGO_BattleAI_Universal.profiles[20].special.target==2,
       'a player-permitted hurt cancel requests special against the actual melee attacker instead of the old front target')
 Reset({Difficulty=0});observation.nativeTarget=2;observation.specialAvailable=1;observation.specialRange=1800;observation.spReady=1
 SDGO_BattleAI_ProfileUpdate(npc)
