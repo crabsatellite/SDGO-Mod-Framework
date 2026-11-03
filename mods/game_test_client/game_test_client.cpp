@@ -1370,6 +1370,18 @@ int __cdecl ReadAiCatalog(const SdgoGameTestContextV1* context) {
     return ready ? SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
 }
 int __cdecl ReadStoragePage(const SdgoGameTestContextV1* context) {
+    static bool shopExitRequested=false;
+    if(actions.AppState()==9) {
+        if(!shopExitRequested) {
+            const auto navigation=hangarNavigation.ClickBottomRadio(L"GameRoomRadio",0x48);
+            if(navigation>=HangarNavigation::kDownmenuServiceMismatch || navigation==HangarNavigation::kUnbound) {
+                context->Assert(0,"the original game-room radio remains available after the shop preview");
+                return SDGO_GAME_TEST_FAIL;
+            }
+            shopExitRequested=navigation==HangarNavigation::kReady;
+        }
+        return SDGO_GAME_TEST_WAIT;
+    }
     const auto result=storage.Read(context);
     if(result>=StorageTestActions::Invalid) {
         context->Assert(0,"storage native observer is available and belongs to this process/run/UI thread");
