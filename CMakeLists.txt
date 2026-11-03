@@ -1100,7 +1100,7 @@ if(BUILD_TESTING)
     add_test(NAME game_test_fps_runner_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_game_test_fps*.py" -v)
     set_tests_properties(game_test_fps_runner_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
-    foreach(plan routes mission_plan shop_plan unit_selection reuse environment ai_teams)
+    foreach(plan routes mission_plan shop_plan unit_selection reuse environment ai_teams multiplayer)
         add_test(NAME game_test_${plan}_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
             -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_game_test_${plan}.py" -v)
         set_tests_properties(game_test_${plan}_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
