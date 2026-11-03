@@ -64,6 +64,7 @@ Mod 在借用的 OLE DB 会话上用事务包住已核对的注册和首次建�
 机体上限只作用于原生首次建档调用新插入的行，包括服务器启用了 `sp_InsertUserUnitAll*` 批量赠送时的情况。
 按机库位置、再按机体实例编号保留，并在同一事务中更新机体数量统计和失效的出击机体引用。
 手动编辑 `config.ini` 时，运行时接受 `RankNumber` 0..20。
+
 ## 开发测试
 
 `ctest` 运行 `new_account_policy_test`。SQL 测试需要一个可丢弃的 SQL Server 容器：

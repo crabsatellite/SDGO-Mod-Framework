@@ -59,6 +59,7 @@ Hook 符号为 `rank.execute`、`rank.execute_rows`、`rank.connection_layout`�
 副本由当前数据库中的原生定义生成，只替换过程名称和军衔比较式。两个过程在同一事务和应用锁内准备，
 检查归属、比较式版本、定义指纹和 SQL 选项；未知定义、他人的同名 `sdgo_rank_progression_fix` schema 或被外部修改的副本
 都会拒绝覆盖。分发包不携带原生 SQL。借用会话上已有的事务不会被 Mod 提交或回滚。
+
 ## 开发测试
 
 `ctest` 运行离线 C++ 测试。可选的数据库测试会创建隔离的临时库并使用合成角色，需要两个原生过程定义的备份：
