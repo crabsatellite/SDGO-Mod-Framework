@@ -1979,6 +1979,8 @@ void PublishQuietSocketReceipt(bool force) {
         static_cast<long>(graphics.last_backbuffer_hresult),graphics.cooperative_checks,static_cast<long>(graphics.last_cooperative_hresult));
     fprintf(file,"named_desktop_fallback=%u\ndispatch_message_pumps=%u\n",
         graphics.named_desktop_fallback,graphics.dispatch_message_pumps);
+    fprintf(file,"worker_messages=%u\nworker_last_message=%u\nworker_requests=%u\nworker_busy=%u\n",
+        graphics.worker_messages,graphics.worker_last_message,graphics.worker_requests,graphics.worker_busy);
     fprintf(file,"texture_calls=%u\ntexture_failures=%u\nrender_target_calls=%u\nrender_target_failures=%u\nrender_target_null=%u\nlast_rt_width=%u\nlast_rt_height=%u\nlast_rt_format=%u\nlast_rt_usage=%u\nlast_rt_hresult=%ld\nlast_rt_return_address=%lu\n",
         graphics.texture_calls,graphics.texture_failures,graphics.render_target_texture_calls,graphics.render_target_texture_failures,
         graphics.render_target_texture_null_results,graphics.last_render_target_width,graphics.last_render_target_height,
