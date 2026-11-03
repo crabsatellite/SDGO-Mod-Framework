@@ -83,8 +83,8 @@ def name_row(identity=25060):
 
 def plan():
     return {
-        "family_key": "heine-destiny",
-        "revision": "5.31",
+        "family_key": "fixture-imported-family",
+        "revision": "fixture-v1",
         "root_unit_id": 25060,
         "item_template_id": 1110008,
         "units": [unit_row()],

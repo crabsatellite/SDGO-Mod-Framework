@@ -13,7 +13,7 @@ class ModelTests(unittest.TestCase):
                 'weapons':[],'status':'draft','presentation':{'shop':{},'capsule':{}},'item_template_id':None}
 
     def test_missing_values_are_not_turned_into_zero(self):
-        r=model.new_record({'id':25061,'name':'海涅','raw':b'raw','client':{'UnitNumber':25061,'HP':14500}},'unit')
+        r=model.new_record({'id':25061,'name':'示例机体','raw':b'raw','client':{'UnitNumber':25061,'HP':14500}},'unit')
         self.assertNotIn('MoveLevel',r['server']);self.assertEqual(r['server']['HP'],14500)
 
     def test_template_fills_only_missing_fields(self):
