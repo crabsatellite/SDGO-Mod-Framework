@@ -46,12 +46,14 @@ def safe_name(name):
 
 
 def child(root, name):
+    root = Path(root).resolve()
     path = storage.safe_child(root, safe_name(name))
     walk = path
-    while walk != root.parent:
+    while True:
         if walk.is_symlink() or (walk.exists() and getattr(walk.lstat(), 'st_file_attributes', 0) & 0x400):
             raise ValueError('更新目标不能是目录链接')
         if walk == root: break
+        if walk == walk.parent:raise ValueError('更新路径不属于目标目录')
         walk = walk.parent
     return path
 
