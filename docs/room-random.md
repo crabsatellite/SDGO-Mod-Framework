@@ -79,7 +79,10 @@ builds units from a separate frozen start snapshot, so updating the visible cach
 `room_random_client` syncs the cache after the native message dispatcher and, at the human construction
 entry, supplies a private copy of the complete record matched to this round's start entry, room and owner;
 the frozen snapshot is not modified. The 3D path resolves the room through the current 3D manager, not
-the legacy profile room pointer; mission and normal rooms store slots differently. A missing notice or a
+the legacy profile room pointer; mission and normal rooms store slots differently. The native human
+converter is a static four-argument function (`RET 10h`) whose `ECX` is scratch, not a room object, and a
+3D start command can advance the app state before conversion; the mod therefore uses the room model observed
+with the actual start packet and revalidates its vtable and room identity. A missing notice or a
 changed owner, room or start entry leaves the native input unchanged and is logged.
 
 Logs: server `native loadout notices queued`; client `battle start cache` and

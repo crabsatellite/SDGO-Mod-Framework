@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "sdgo/sdgo_api.h"
+#include "sdgo/localization.h"
 #include "sdgo/room_titles.h"
 #include "client_state.h"
 #include "native_transport.h"
@@ -77,13 +78,23 @@ uint32_t Dword(const uint8_t* bytes)
     return value;
 }
 
-void Explain(const wchar_t* text)
+void ExplainFixed(const wchar_t* source)
 {
+    std::wstring translated;
+    const wchar_t* text = source;
+    if (sdgo::localization::TryLookup(sdgo::localization::Kind::UiText, 0, source, &translated))
+        text = translated.c_str();
     if (g_notice) {
         g_notice(text);
         return;
     }
-    MessageBoxW(GetActiveWindow(), text, L"SDGO room titles", MB_OK | MB_ICONINFORMATION);
+    constexpr wchar_t captionSource[] = L"SDGO room titles";
+    std::wstring translatedCaption;
+    const wchar_t* caption = captionSource;
+    if (sdgo::localization::TryLookup(sdgo::localization::Kind::UiText, 0, captionSource,
+                                      &translatedCaption))
+        caption = translatedCaption.c_str();
+    MessageBoxW(GetActiveWindow(), text, caption, MB_OK | MB_ICONINFORMATION);
 }
 
 bool Utf8(const std::wstring& text, std::string* output)
@@ -172,7 +183,7 @@ bool Prepare(ui::Surface surface, const std::wstring& text)
     draft.text = text;
     bool legacyExact = false;
     if (!Utf8(text, &draft.utf8) || !Projection(text, &draft.native_full, &draft.native_short, &legacyExact)) {
-        Explain(L"The room title must contain 1 to 128 characters and no control characters. Your text was kept.");
+        ExplainFixed(L"The room title must contain 1 to 128 characters and no control characters. Your text was kept.");
         return false;
     }
     const wchar_t* error = nullptr;
@@ -232,7 +243,7 @@ bool Prepare(ui::Surface surface, const std::wstring& text)
             return true;
         }
     }
-    Explain(error);
+    ExplainFixed(error);
     return false;
 }
 
@@ -242,7 +253,7 @@ void Submit(SubmitFn original, void* service, ui::Surface surface)
         void* edit = ui::FindRoomNameEdit(service, surface);
         std::wstring title;
         if (!edit || !ui::ReadEditText(edit, &title)) {
-            Explain(L"This room title control is not compatible with the installed Mod. The title was not submitted.");
+            ExplainFixed(L"This room title control is not compatible with the installed Mod. The title was not submitted.");
             return;
         }
         if (Prepare(surface, title)) {
@@ -256,7 +267,7 @@ void Submit(SubmitFn original, void* service, ui::Surface surface)
                 g_drafts.erase(draft);
         }
     } catch (const std::bad_alloc&) {
-        Explain(L"There is not enough memory to submit the room title. Your text was not truncated.");
+        ExplainFixed(L"There is not enough memory to submit the room title. Your text was not truncated.");
     }
 }
 
@@ -273,7 +284,7 @@ int __fastcall TitleEvent(void* self, void*, void* event)
         bool battleDomain = false;
         std::wstring confirmed;
         if (!ui::ReadTitleBarRoom(self, &battleDomain, &nativeId, &confirmed) || nativeId > 400) {
-            Explain(L"The room identity is no longer available. Your title was not submitted.");
+            ExplainFixed(L"The room identity is no longer available. Your title was not submitted.");
             return 1;
         }
         bool restoreCache = false;
@@ -335,7 +346,7 @@ transport::SendDecision BeforeSend(uint32_t connection, const uint8_t* packet, s
             blocked = !g_state.CanStartBattle(connection) || g_drafts.count(connection) != 0;
         }
         if (blocked) {
-            Explain(L"The full room title has not been confirmed. Reopen the title settings to retry or resolve the saved draft before starting.");
+            ExplainFixed(L"The full room title has not been confirmed. Reopen the title settings to retry or resolve the saved draft before starting.");
             return transport::SendDecision::Reject;
         }
         return transport::SendDecision::Pass;
@@ -408,7 +419,7 @@ void AfterSend(uint32_t connection, bool queued, const uint8_t* packet, size_t s
             failed = g_state.FailPending(connection, message.request_id, titles::ClientError::TransportError);
     }
     if (failed)
-        Explain(L"The room title could not be sent. Your text was kept; reopen the title settings to retry.");
+        ExplainFixed(L"The room title could not be sent. Your text was kept; reopen the title settings to retry.");
 }
 
 size_t ReceiveSize(uint16_t opcode, const uint8_t* packet = nullptr, size_t size = 0)
@@ -502,7 +513,7 @@ void OnReceive(uint32_t connection, const uint8_t* packet, size_t size, const ui
     // A notice may run a Windows message loop. Never show it while owning the
     // title state lock: UI callbacks may re-enter to restore the saved draft.
     if (failed)
-        Explain(L"The server did not confirm this room title. Your text was kept; reopen the title settings to retry.");
+        ExplainFixed(L"The server did not confirm this room title. Your text was kept; reopen the title settings to retry.");
 }
 
 void OnInit(ui::Surface surface, void*, void* edit)
