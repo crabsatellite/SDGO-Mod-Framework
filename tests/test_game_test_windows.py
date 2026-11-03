@@ -7,6 +7,9 @@ used.
 """
 from __future__ import annotations
 
+import ctypes
+from ctypes import wintypes
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -14,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from unittest import mock
 import uuid
@@ -165,12 +169,136 @@ class FailingApi:
 
 
 class BackgroundProcessPolicyTests(unittest.TestCase):
+    @staticmethod
+    def _input_desktop_api():
+        api = game_test_windows._Win32Api.__new__(
+            game_test_windows._Win32Api
+        )
+        api.user = mock.Mock()
+        api.input_desktop_open_retry_count = 0
+        api.last_input_desktop_open_retry_count = 0
+        api.close_desktop = mock.Mock()
+        return api
+
+    def test_input_desktop_access_denied_retries_then_reads_real_name(self):
+        api = self._input_desktop_api()
+        api.user.OpenInputDesktop.side_effect = [0, 456]
+        api._user_object_name = mock.Mock(return_value="Default")
+
+        with (
+            mock.patch.object(
+                game_test_windows.ctypes,
+                "get_last_error",
+                return_value=game_test_windows.ERROR_ACCESS_DENIED,
+            ),
+            mock.patch.object(game_test_windows.time, "sleep") as sleep,
+        ):
+            self.assertEqual(api.input_desktop_name(), "Default")
+
+        self.assertEqual(api.user.OpenInputDesktop.call_count, 2)
+        sleep.assert_called_once_with(
+            game_test_windows.INPUT_DESKTOP_RETRY_DELAY_SECONDS
+        )
+        self.assertEqual(api.input_desktop_open_retry_count, 1)
+        self.assertEqual(api.last_input_desktop_open_retry_count, 1)
+        api._user_object_name.assert_called_once_with(456)
+        api.close_desktop.assert_called_once_with(456)
+
+    def test_input_desktop_access_denied_timeout_keeps_error_and_no_name(self):
+        api = self._input_desktop_api()
+        api.user.OpenInputDesktop.return_value = 0
+        api.desktop_state = mock.Mock()
+
+        with (
+            mock.patch.object(
+                game_test_windows.ctypes,
+                "get_last_error",
+                return_value=game_test_windows.ERROR_ACCESS_DENIED,
+            ),
+            mock.patch.object(
+                game_test_windows.ctypes,
+                "set_last_error",
+            ) as set_last_error,
+            mock.patch.object(
+                game_test_windows._Win32Api,
+                "_error",
+                return_value=OSError(
+                    game_test_windows.ERROR_ACCESS_DENIED,
+                    "synthetic access denied",
+                ),
+            ),
+            mock.patch.object(game_test_windows.time, "sleep") as sleep,
+        ):
+            with self.assertRaises(OSError) as raised:
+                api.input_desktop_state(100)
+
+        self.assertEqual(
+            raised.exception.errno,
+            game_test_windows.ERROR_ACCESS_DENIED,
+        )
+        self.assertEqual(
+            api.user.OpenInputDesktop.call_count,
+            game_test_windows.INPUT_DESKTOP_MAX_RETRIES + 1,
+        )
+        self.assertEqual(
+            sleep.call_count,
+            game_test_windows.INPUT_DESKTOP_MAX_RETRIES,
+        )
+        self.assertEqual(
+            api.input_desktop_open_retry_count,
+            game_test_windows.INPUT_DESKTOP_MAX_RETRIES,
+        )
+        self.assertEqual(
+            api.last_input_desktop_open_retry_count,
+            game_test_windows.INPUT_DESKTOP_MAX_RETRIES,
+        )
+        set_last_error.assert_called_once_with(
+            game_test_windows.ERROR_ACCESS_DENIED
+        )
+        api.desktop_state.assert_not_called()
+        api.close_desktop.assert_not_called()
+
+    def test_input_desktop_other_error_does_not_retry_or_fallback(self):
+        api = self._input_desktop_api()
+        api.user.OpenInputDesktop.return_value = 0
+        api._user_object_name = mock.Mock(return_value="Default")
+
+        with (
+            mock.patch.object(
+                game_test_windows.ctypes,
+                "get_last_error",
+                return_value=87,
+            ),
+            mock.patch.object(
+                game_test_windows.ctypes,
+                "set_last_error",
+            ) as set_last_error,
+            mock.patch.object(
+                game_test_windows._Win32Api,
+                "_error",
+                return_value=OSError(87, "synthetic invalid parameter"),
+            ),
+            mock.patch.object(game_test_windows.time, "sleep") as sleep,
+        ):
+            with self.assertRaises(OSError) as raised:
+                api.input_desktop_name()
+
+        self.assertEqual(raised.exception.errno, 87)
+        api.user.OpenInputDesktop.assert_called_once_with(
+            0, False, game_test_windows.DESKTOP_READOBJECTS
+        )
+        sleep.assert_not_called()
+        set_last_error.assert_called_once_with(87)
+        api._user_object_name.assert_not_called()
+        api.close_desktop.assert_not_called()
+
     def test_input_desktop_proxy_is_allowed_only_with_exact_hidden_window_identity(self):
         class Api:
             def desktop_state(self,desktop,pid):return game_test_windows._DesktopState('owned-private',1,1)
             def input_desktop_state(self,pid):return game_test_windows._DesktopState('Default',1,1,(self.window,))
             def foreground_pid(self):return 99
         api=Api()
+        api.input_desktop_open_retry_count=3
         owner=game_test_windows.WindowsBackgroundProcess.__new__(game_test_windows.WindowsBackgroundProcess)
         owner.pid=100;owner.run_id='offline';owner.desktop_name='owned-private';owner.desktop_path='WinSta0\\owned-private'
         owner._desktop_handle=123;owner._api=api;owner._input_desktop_at_launch='Default';owner._closed=True
@@ -178,7 +306,9 @@ class BackgroundProcessPolicyTests(unittest.TestCase):
         original={'hwnd':456,'class_name':'SDGO.GameTest.GraphicsProxy','visible':False,
                   'noactivate':True,'toolwindow':True,'appwindow':False}
         api.window=original.copy()
-        self.assertTrue(owner.verify_background(100,allowed_input_windows=(456,))['verified'])
+        receipt=owner.verify_background(100,allowed_input_windows=(456,))
+        self.assertTrue(receipt['verified'])
+        self.assertEqual(receipt['input_desktop_open_retries'],3)
         self.assertFalse(owner.verify_background(100)['verified'])
         with mock.patch.object(api,'input_desktop_state',return_value=game_test_windows._DesktopState('Default',0,0)):
             self.assertFalse(owner.verify_background(100,allowed_input_windows=(456,))['verified'])
@@ -321,6 +451,103 @@ class BackgroundProcessPolicyTests(unittest.TestCase):
                     str(uuid.uuid4()),
                 )
         self.assertEqual(api.closed_desktops, [7001])
+
+
+@unittest.skipUnless(
+    os.name == "nt" and os.environ.get("SDGO_INPUT_DESKTOP_WATCH_SECONDS"),
+    "set SDGO_INPUT_DESKTOP_WATCH_SECONDS for the read-only watcher",
+)
+class InputDesktopReadOnlyWatcherTests(unittest.TestCase):
+    def test_watch_input_desktop_access_state_changes(self):
+        duration = float(os.environ["SDGO_INPUT_DESKTOP_WATCH_SECONDS"])
+        self.assertGreater(duration, 0)
+        interval = float(
+            os.environ.get("SDGO_INPUT_DESKTOP_WATCH_INTERVAL", "0.1")
+        )
+        self.assertGreater(interval, 0)
+
+        api = game_test_windows._Win32Api()
+        api.kernel.ProcessIdToSessionId.argtypes = [
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        api.kernel.ProcessIdToSessionId.restype = wintypes.BOOL
+        session = wintypes.DWORD()
+        if not api.kernel.ProcessIdToSessionId(
+            os.getpid(), ctypes.byref(session)
+        ):
+            raise api._error("ProcessIdToSessionId failed")
+
+        log_path = os.environ.get("SDGO_INPUT_DESKTOP_WATCH_LOG")
+        log = (
+            open(log_path, "a", encoding="utf-8")
+            if log_path else None
+        )
+
+        def probe() -> dict:
+            row = {
+                "session_id": int(session.value),
+                "read_access": game_test_windows.DESKTOP_READOBJECTS,
+                "read_error": 0,
+                "name": None,
+                "name_source": None,
+                "name_query_error": 0,
+            }
+            ctypes.set_last_error(0)
+            desktop = api.user.OpenInputDesktop(
+                0, False, game_test_windows.DESKTOP_READOBJECTS
+            )
+            if api._valid_handle(desktop):
+                try:
+                    row["name"] = api._user_object_name(int(desktop))
+                    row["name_source"] = "read_access"
+                except OSError as error:
+                    row["name_query_error"] = int(error.errno or 0)
+                finally:
+                    api.close_desktop(int(desktop))
+                return row
+
+            row["read_error"] = ctypes.get_last_error()
+            if row["read_error"] != game_test_windows.ERROR_ACCESS_DENIED:
+                return row
+
+            ctypes.set_last_error(0)
+            name_desktop = api.user.OpenInputDesktop(0, False, 0)
+            if not api._valid_handle(name_desktop):
+                row["name_query_error"] = ctypes.get_last_error()
+                return row
+            try:
+                row["name"] = api._user_object_name(int(name_desktop))
+                row["name_source"] = "zero_access_after_read_denied"
+            except OSError as error:
+                row["name_query_error"] = int(error.errno or 0)
+            finally:
+                api.close_desktop(int(name_desktop))
+            return row
+
+        deadline = time.monotonic() + duration
+        previous = None
+        try:
+            while True:
+                row = probe()
+                state = json.dumps(row, sort_keys=True)
+                if state != previous:
+                    row["timestamp_utc"] = datetime.now(
+                        timezone.utc
+                    ).isoformat()
+                    line = json.dumps(row, sort_keys=True)
+                    print(line, flush=True)
+                    if log is not None:
+                        log.write(line + "\n")
+                        log.flush()
+                    previous = state
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                time.sleep(min(interval, remaining))
+        finally:
+            if log is not None:
+                log.close()
 
 
 class TerminationSignalTests(unittest.TestCase):

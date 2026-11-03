@@ -184,8 +184,17 @@ sdgo_add_mod(rank_progression_fix SERVER DESCRIPTION "native World battle rank p
              SOURCES mods/rank_progression_fix/rank_progression_fix.cpp LIBS ole32 oleaut32 bcrypt uuid)
 sdgo_add_mod(friend_list_fix SERVER DESCRIPTION "native offline friend list and pilot names"
              SOURCES mods/friend_list_fix/friend_list_fix.cpp LIBS ole32 oleaut32 bcrypt uuid)
-sdgo_add_mod(friend_list_client_fix DESCRIPTION "native offline friend conversation opener"
+sdgo_add_mod(friend_list_client_fix DESCRIPTION "native friend list, messenger layout and offline conversation fix"
              SOURCES mods/friend_list_client_fix/friend_list_client_fix.cpp)
+sdgo_add_mod(friend_unit_gift_client DESCRIPTION "optional native friend unit gifts and provenance"
+             SOURCES mods/friend_unit_gift_client/friend_unit_gift_client.cpp
+                     mods/friend_unit_gift_client/native_ui.cpp
+                     mods/friend_unit_gift_client/transport.cpp
+             LIBS user32 ole32)
+sdgo_add_mod(friend_unit_gift_server SERVER DESCRIPTION "optional authenticated friend unit gift escrow"
+             SOURCES mods/friend_unit_gift_server/friend_unit_gift_server.cpp
+                     mods/friend_unit_gift_server/server_database.cpp
+             LIBS ole32 oleaut32 bcrypt uuid)
 
 
 # Private feature libraries; no room metadata or gameplay state enters the core.
@@ -511,7 +520,19 @@ if(BUILD_TESTING)
         --host "$<TARGET_FILE:game_test_framework_host>")
     set_tests_properties(game_test_framework_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
     add_executable(game_test_onboarding_gate_test tests/game_test_onboarding_gate_test.cpp)
+    add_executable(game_test_onboarding_actions_test tests/game_test_onboarding_actions_test.cpp)
+    target_link_libraries(game_test_onboarding_actions_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_onboarding_actions_test)
+    add_test(NAME game_test_onboarding_actions_offline COMMAND game_test_onboarding_actions_test)
+    set_tests_properties(game_test_onboarding_actions_offline PROPERTIES TIMEOUT 30)
     add_executable(game_test_native_credentials_test tests/game_test_native_credentials_test.cpp)
+    foreach(friend_runtime_test IN ITEMS game_test_native_actions_transport game_test_friend_invite_sender game_test_friend_invite_receiver game_test_friend_room_actions)
+        add_executable(${friend_runtime_test}_test tests/${friend_runtime_test}_test.cpp)
+        target_link_libraries(${friend_runtime_test}_test PRIVATE sdgo_api)
+        sdgo_strict(${friend_runtime_test}_test)
+        add_test(NAME ${friend_runtime_test}_offline COMMAND ${friend_runtime_test}_test)
+        set_tests_properties(${friend_runtime_test}_offline PROPERTIES TIMEOUT 30)
+    endforeach()
     target_link_libraries(game_test_native_credentials_test PRIVATE sdgo_api)
     sdgo_strict(game_test_native_credentials_test)
     add_test(NAME game_test_native_credentials_offline COMMAND game_test_native_credentials_test)
@@ -537,6 +558,21 @@ if(BUILD_TESTING)
     add_test(NAME game_test_room_actions_offline COMMAND game_test_room_actions_test)
     set_tests_properties(game_test_room_actions_offline PROPERTIES TIMEOUT 30)
     add_executable(game_test_channel_actions_test tests/game_test_channel_actions_test.cpp)
+    add_executable(game_test_friend_extra_actions_test tests/game_test_friend_extra_actions_test.cpp)
+    add_executable(game_test_friend_actions_test tests/game_test_friend_actions_test.cpp)
+    add_executable(game_test_friend_message_history_test tests/game_test_friend_message_history_test.cpp)
+    target_link_libraries(game_test_friend_message_history_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_friend_message_history_test)
+    add_test(NAME game_test_friend_message_history_offline COMMAND game_test_friend_message_history_test)
+    set_tests_properties(game_test_friend_message_history_offline PROPERTIES TIMEOUT 30)
+    target_link_libraries(game_test_friend_actions_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_friend_actions_test)
+    add_test(NAME game_test_friend_actions_offline COMMAND game_test_friend_actions_test)
+    set_tests_properties(game_test_friend_actions_offline PROPERTIES TIMEOUT 30)
+    target_link_libraries(game_test_friend_extra_actions_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_friend_extra_actions_test)
+    add_test(NAME game_test_friend_extra_actions_offline COMMAND game_test_friend_extra_actions_test)
+    set_tests_properties(game_test_friend_extra_actions_offline PROPERTIES TIMEOUT 30)
     add_executable(game_test_hangar_navigation_test tests/game_test_hangar_navigation_test.cpp)
     add_executable(game_test_page_test_actions_test tests/game_test_page_test_actions_test.cpp)
     target_link_libraries(game_test_page_test_actions_test PRIVATE sdgo_api)
@@ -863,6 +899,77 @@ if(BUILD_TESTING)
     add_executable(friend_list_db_test tests/friend_list_db_test.cpp)
     target_link_libraries(friend_list_db_test PRIVATE ole32 oleaut32 bcrypt uuid)
     sdgo_strict(friend_list_db_test)
+    add_executable(friend_unit_gift_policy_test tests/friend_unit_gift_policy_test.cpp)
+    target_link_libraries(friend_unit_gift_policy_test PRIVATE sdgo_api)
+    sdgo_strict(friend_unit_gift_policy_test)
+    target_compile_options(friend_unit_gift_policy_test PRIVATE /UNDEBUG)
+    add_test(NAME friend_unit_gift_policy_offline COMMAND friend_unit_gift_policy_test)
+    set_tests_properties(friend_unit_gift_policy_offline PROPERTIES TIMEOUT 30)
+    add_executable(friend_unit_gift_sql_emit tests/friend_unit_gift_sql_emit.cpp)
+    sdgo_strict(friend_unit_gift_sql_emit)
+    foreach(gift_test IN ITEMS friend_unit_gift_protocol friend_unit_gift_client_model storage_extension_registry)
+        add_executable(${gift_test}_test tests/${gift_test}_test.cpp)
+        target_link_libraries(${gift_test}_test PRIVATE sdgo_api)
+        sdgo_strict(${gift_test}_test)
+        target_compile_options(${gift_test}_test PRIVATE /UNDEBUG)
+        add_test(NAME ${gift_test}_offline COMMAND ${gift_test}_test)
+        set_tests_properties(${gift_test}_offline PROPERTIES TIMEOUT 30)
+    endforeach()
+    add_executable(friend_unit_gift_transport_test tests/friend_unit_gift_transport_test.cpp
+                   mods/friend_unit_gift_client/transport.cpp)
+    target_link_libraries(friend_unit_gift_transport_test PRIVATE sdgo_api ole32)
+    sdgo_strict(friend_unit_gift_transport_test)
+    target_compile_options(friend_unit_gift_transport_test PRIVATE /UNDEBUG)
+    add_test(NAME friend_unit_gift_transport_offline COMMAND friend_unit_gift_transport_test)
+    set_tests_properties(friend_unit_gift_transport_offline PROPERTIES TIMEOUT 30)
+    add_executable(friend_unit_gift_native_ui_test tests/friend_unit_gift_native_ui_test.cpp
+                   mods/friend_unit_gift_client/native_ui.cpp)
+    target_link_libraries(friend_unit_gift_native_ui_test PRIVATE sdgo_api user32)
+    sdgo_strict(friend_unit_gift_native_ui_test)
+    target_compile_options(friend_unit_gift_native_ui_test PRIVATE /UNDEBUG)
+    add_test(NAME friend_unit_gift_native_ui_offline COMMAND friend_unit_gift_native_ui_test)
+    set_tests_properties(friend_unit_gift_native_ui_offline PROPERTIES TIMEOUT 30)
+    add_executable(friend_unit_gift_native_inventory_test
+                   tests/friend_unit_gift_native_inventory_test.cpp)
+    target_link_libraries(friend_unit_gift_native_inventory_test PRIVATE sdgo_api)
+    sdgo_strict(friend_unit_gift_native_inventory_test)
+    add_test(NAME friend_unit_gift_native_inventory_offline
+             COMMAND friend_unit_gift_native_inventory_test)
+    set_tests_properties(friend_unit_gift_native_inventory_offline PROPERTIES TIMEOUT 30)
+    add_executable(friend_unit_gift_client_runtime_policy_test
+                   tests/friend_unit_gift_client_runtime_policy_test.cpp)
+    target_link_libraries(friend_unit_gift_client_runtime_policy_test PRIVATE sdgo_api)
+    sdgo_strict(friend_unit_gift_client_runtime_policy_test)
+    target_compile_options(friend_unit_gift_client_runtime_policy_test PRIVATE /UNDEBUG)
+    add_test(NAME friend_unit_gift_client_runtime_policy_offline
+             COMMAND friend_unit_gift_client_runtime_policy_test)
+    set_tests_properties(friend_unit_gift_client_runtime_policy_offline PROPERTIES TIMEOUT 30)
+    add_library(unit_gift_observer_fixture SHARED tests/unit_gift_observer_fixture.cpp)
+    target_link_libraries(unit_gift_observer_fixture PRIVATE sdgo_api)
+    sdgo_strict(unit_gift_observer_fixture)
+    set_target_properties(unit_gift_observer_fixture PROPERTIES
+        OUTPUT_NAME friend_unit_gift_client
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_fixture/$<CONFIG>"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_fixture/$<CONFIG>"
+        PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_fixture/$<CONFIG>")
+    add_library(unit_gift_missing_export_fixture SHARED tests/unit_gift_observer_fixture.cpp)
+    target_link_libraries(unit_gift_missing_export_fixture PRIVATE sdgo_api)
+    target_compile_definitions(unit_gift_missing_export_fixture PRIVATE UNIT_GIFT_OBSERVER_FIXTURE_NO_PRODUCT_EXPORTS=1)
+    sdgo_strict(unit_gift_missing_export_fixture)
+    set_target_properties(unit_gift_missing_export_fixture PROPERTIES
+        OUTPUT_NAME friend_unit_gift_client
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_missing_export/$<CONFIG>"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_missing_export/$<CONFIG>"
+        PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unit_gift_missing_export/$<CONFIG>")
+    add_executable(unit_gift_actions_test tests/unit_gift_actions_test.cpp)
+    target_link_libraries(unit_gift_actions_test PRIVATE sdgo_api)
+    sdgo_strict(unit_gift_actions_test)
+    target_compile_options(unit_gift_actions_test PRIVATE /UNDEBUG)
+    add_dependencies(unit_gift_actions_test unit_gift_observer_fixture unit_gift_missing_export_fixture)
+    add_test(NAME unit_gift_actions_offline COMMAND unit_gift_actions_test
+             $<TARGET_FILE:unit_gift_observer_fixture>
+             $<TARGET_FILE:unit_gift_missing_export_fixture>)
+    set_tests_properties(unit_gift_actions_offline PROPERTIES TIMEOUT 30)
     set_tests_properties(rank_progression_fix_offline PROPERTIES TIMEOUT 30)
     add_executable(rank_progression_db_test tests/rank_progression_db_test.cpp)
     target_link_libraries(rank_progression_db_test PRIVATE ole32 oleaut32 bcrypt uuid)

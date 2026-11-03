@@ -6,6 +6,9 @@ inline bool Prepare(Session& db,const std::wstring& expectedDatabase) {
     std::wstring database;
     Need(db.String(L"SELECT CASE WHEN DB_ID("+Literal(expectedDatabase)+L")=DB_ID() THEN N'1' ELSE N'0' END",database),"friend database identity unavailable");
     if(database!=L"1")return false;
+    std::wstring nameCollation;
+    Need(db.String(L"SELECT ISNULL((SELECT collation_name FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.tbl_Account_Pilot',N'U') AND name=N'f_pilot' AND system_type_id=231 AND max_length=40),N'')",nameCollation),"native pilot-name collation unavailable");
+    Need(!nameCollation.empty(),"native pilot-name column layout differs");
     std::wstring signature;
     Need(db.String(L"SELECT CASE WHEN COUNT(*)=5 AND SUM(CASE WHEN system_type_id=56 AND max_length=4 AND is_output=CASE WHEN parameter_id<=3 THEN 0 ELSE 1 END THEN 1 ELSE 0 END)=5 THEN N'1' ELSE N'0' END FROM sys.parameters WHERE object_id=OBJECT_ID(N'dbo.sp_FriendsList',N'P') AND parameter_id>0",signature));
     Need(signature==L"1","friend procedure parameter signature differs");
@@ -50,7 +53,7 @@ inline bool Prepare(Session& db,const std::wstring& expectedDatabase) {
                 Need(db.String(L"SELECT CONVERT(nvarchar(10),CONVERT(int,uses_ansi_nulls)+2*CONVERT(int,uses_quoted_identifier)) FROM sys.sql_modules WHERE object_id=OBJECT_ID("+alias+L",N'P')",currentOptions));
                 if(savedOptions!=currentOptions)throw std::runtime_error("friend policy SQL options have an external edit");
             }
-            const auto clone=Clone(source,name,!current.empty());
+            const auto clone=Clone(source,name,!current.empty(),nameCollation);
             const auto sourceHash=Hash(Canonical(source,name,L"dbo"));
             const auto targetHash=Hash(Canonical(clone,name,kSchema));
             const int options=std::stoi(flags);

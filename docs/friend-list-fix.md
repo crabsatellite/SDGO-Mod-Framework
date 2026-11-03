@@ -33,6 +33,18 @@ The WorldServer database account needs permission to create a schema and procedu
 
 ## Developer notes
 
+`friend_list_client_fix` 1.1.1 also restores the native messenger service and
+conversation panels to `uirs/0553.uir`, which already contains the required
+chat controls. The client requests `uirs/1364.uir`, now a parts-exchange layout.
+Only the two verified friend call sites are redirected; the shared string
+assignment entry remains available to shop localization and other Mods.
+The executable and native archive are retained.
+
+Server 0.1.2 derives the canonical pilot-name column collation before converting
+the current name and fallback to the native ANSI result, supporting mixed Thai
+database defaults and Chinese Unicode name columns without changing columns.
+
+
 The stock query left-joins online status, clan and other optional data and sends SQL NULLs to a native OLE DB
 row binding without status buffers. The row reader stops on the warning, so one offline or incomplete row can
 truncate the list. `friend_list_fix` returns non-null defaults of the original types, reads the current pilot

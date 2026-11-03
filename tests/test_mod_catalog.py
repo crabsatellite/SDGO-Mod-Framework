@@ -13,6 +13,20 @@ spec.loader.exec_module(catalog)
 
 
 class CatalogTests(unittest.TestCase):
+    def test_friend_fix_is_distributed_as_complete_automatic_client_server_feature(self):
+        full=catalog.read_catalog(ROOT)
+        base=catalog.select_catalog(full,'base')
+        expected={'friend_list_fix':'server','friend_list_client_fix':'client'}
+        self.assertEqual(set(full['features']['friend-list-fix']['mods']),set(expected))
+        selected={m['id']:m for m in base['mods']}
+        for identity,target in expected.items():
+            mod=selected[identity]
+            self.assertEqual(mod['target'],target)
+            self.assertTrue(mod['enabled_by_default'])
+            self.assertIn('manager.json',mod['files'])
+            contract=json.loads((ROOT/'mods'/identity/'manager.json').read_text(encoding='utf-8-sig'))
+            self.assertEqual(contract['presentation'],'automatic_fix')
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
