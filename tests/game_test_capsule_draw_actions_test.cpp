@@ -1754,6 +1754,22 @@ void TestBindMismatch()
         saved;
 }
 
+void TestConfiguredTarget()
+{
+    ResetFixture();
+    NativeActions native;
+    CapsuleDrawActions actions;
+    Check(actions.ConfigureTarget({7,13,0}),"explicit preview target is accepted before binding");
+    Check(!actions.ConfigureTarget({0,13,0}) && !actions.ConfigureTarget({7,0,0}) &&
+          !actions.ConfigureTarget({7,13,3}),"invalid target values cannot replace the accepted profile");
+    Check(Bind(native,actions),"configured target uses the same native ABI bindings");
+    Check(!actions.ConfigureTarget({kMachineId,kPrice,0}),"an armed native target cannot be replaced");
+    const auto result=DrivePreview(actions);
+    Check(result==CapsuleDrawActions::kTargetMachineMismatch && actions.State().target_machine==7 &&
+          !actions.State().buy_attempted && g_networkCalls==0 && g_buyCalls==0,
+          "a different native machine is rejected instead of falling back or purchasing");
+}
+
 void TestPreview()
 {
     ResetFixture();
@@ -2341,6 +2357,8 @@ void RunScenario(
                  scenario,
                  "preview") == 0)
         TestPreview();
+    else if (std::strcmp(scenario,"configured-target") == 0)
+        TestConfiguredTarget();
     else if (std::strcmp(
                  scenario,
                  "event") == 0)
@@ -2442,6 +2460,7 @@ int main(int argc, char** argv)
         "native-contract",
         "bind",
         "preview",
+        "configured-target",
         "event",
         "currency",
         "price",
