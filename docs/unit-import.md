@@ -140,6 +140,8 @@ ready/selection poses (see [developer notes](#gametest-checks-and-captures)), up
   (remove the missing skill and import): every form referencing it gets `0` on both client and server, the source
   RAR/BIN is kept, earlier preview approvals are invalidated and the skill's effect is gone. Other skills, weapons and
   links are unchanged. Slot 3 cannot be removed yet.
+  When slot 1 is removed and slot 2 remains, the native unit detail leaves the first area empty and displays the
+  existing second skill in its original slot. No placeholder skill or slot reassignment is introduced.
 
 ### Server internal names and Chinese display names
 

@@ -134,6 +134,8 @@ definitions 可选字段 `blueprints` 接受设计图列表；每个机体族最
 
 确认后输出的 `definitions.json` 是 `sdgo.unit-family` 发布声明，不是制作阶段的 definitions 补丁。
 客户端原生目录使用 `SDGOUN1` 容器、类型化记录、长度与校验值，安装器核对完整文件清单和所有权。
+发布包同时携带安装入口使用的根符号片段与 Mod 目录中的完整 `symbols.fragment.ini`，两者字节必须一致。
+局部符号随 Mod 安装并由框架校验，不能只更新 DLL 或只追加旧的表加载符号。
 机体、武器、物品类别分别使用原生 kind `2`、`10`、`0x22`。
 机体一览使用 `0220.gdt` 对应的 kind `0x55`，614 字节，按原生连续 global ID 枚举；
 每个库存根一条，`+6` 为机体 ID，`+10` 为可选的 kind `0x21` 设计图 ID。
