@@ -1,4 +1,4 @@
-# 保管库一键领取（Beta）
+# 保管库一键领取
 
 [English](storage-claim.md) · [返回功能目录](../README.zh-CN.md)
 

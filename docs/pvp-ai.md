@@ -3,8 +3,6 @@
 Put `!ai` in a two-team PvP room title to add AI opponents and teammates, using the existing
 combat, scoring, respawn and spectator features. 中文：[pvp-ai.zh-CN.md](pvp-ai.zh-CN.md)
 
-This feature is in **Beta**.
-
 ![AI teammates and opponents in battle](pvp-ai-demo.webp)
 
 Also supports death match, Grid, leader and Tag modes.

@@ -115,6 +115,23 @@ class ReuseOwnedClientTests(unittest.TestCase):
                 game_test.reuse_prepared(self.fixture.template,self.fixture.stage,run)
         self.assertEqual(before,(run/'run.json').read_bytes());self.assertFalse(self.recycled)
 
+    def test_retired_case_contract_is_reused_but_cannot_run_as_a_current_contract(self):
+        current=game_test.required_flow_cases('1',room_titles_only=True)
+        historical=current[:-3]
+        with mock.patch.object(game_test,'required_flow_cases',return_value=historical):
+            run=self.fixture.prepare('historical',room_titles_only=True)
+        old=self.fixture.metadata(run)
+        game=run/'client/GOnline.exe';identity=game.stat().st_ino
+        with self.assertRaisesRegex(game_test.GameTestError,'required normal client flow'):
+            game_test.validate_metadata(run)
+        new=game_test.reuse_prepared(self.fixture.template,self.fixture.stage,run,room_titles_only=True)
+        self.assertEqual(game.stat().st_ino,identity)
+        self.assertEqual(new['reuse']['previous_run_id'],old['run_id'])
+        self.assertEqual(game_test.read_ini(run/'client/sdgo/gametest/run.ini')['run']['required_cases'],','.join(current))
+        archived=game_test.read_json(self.base/'gametest-current/previous-run.json')
+        self.assertEqual(archived['required_cases'],list(historical))
+        game_test.verify_hashes(game_test.validate_metadata(run))
+
     def test_referenced_archive_baseline_is_protected(self):
         run=self.fixture.prepare('baseline');other=self.base/'another';other.mkdir()
         (other/'run.json').write_text(json.dumps({'assets':{'baseline':str(run)}}))

@@ -529,6 +529,134 @@ void TestRetryAfterRoomChanged()
           "editing after a room change uses a new nonce and current revision");
 }
 
+void TestDelayedNativeDispatch()
+{
+    rt::ClientState state;
+    const auto hello = state.BeginHello(19, 100);
+    state.AdvanceTime(19, 9400);
+    Check(state.IsNegotiating(19) && !state.IsReady(19),
+          "native loading delay beyond nine seconds keeps the matching capability offer");
+    Check(!state.AcceptBatch(19, Batch(991, hello.request_id + 1, {})) &&
+              !state.IsReady(19) && state.IsNegotiating(19),
+          "delayed capability still rejects an unrelated request nonce");
+    Check(state.AcceptBatch(19, Batch(991, hello.request_id,
+                                    {Record(991, 4, 1, 1, "old title")})) && state.IsReady(19),
+          "the actual delayed server confirmation establishes capability");
+    const std::string full = "confirmed long title beyond twenty characters";
+    const auto request = state.BeginSetTitle(19, 4, full, 9500);
+    state.AdvanceTime(19, 20000);
+    Check(state.Pending(19)->status == rt::PendingStatus::Awaiting && !state.CanStartBattle(19),
+          "a delayed native title reply remains pending without silently starting stale rules");
+    Check(state.AcceptMessage(19, Snapshot(Record(991, 4, 1, 2, full), request.request_id)) &&
+              !state.HasPending(19) && state.CanStartBattle(19),
+          "the exact delayed title confirmation completes and unblocks battle start");
+    const auto expired = state.BeginHello(20, 0);
+    state.AdvanceTime(20, rt::kHelloTimeoutMilliseconds);
+    const auto fresh = state.BeginHello(20, rt::kHelloTimeoutMilliseconds + 1);
+    Check(fresh.request_id != expired.request_id &&
+              !state.AcceptBatch(20, Batch(992, expired.request_id, {})) &&
+              !state.IsReady(20),
+          "a reply to an expired superseded offer cannot authorize a later connection");
+    Check(ReadyWithEmptyBatch(&state, 21, 993, 0), "capability expiry fixture starts with a confirmed connection");
+    state.BeginHello(21, 100);
+    state.AdvanceTime(21, 100 + rt::kHelloTimeoutMilliseconds);
+    Check(!state.IsReady(21) && !state.IsNegotiating(21),
+          "an unanswered recheck expires the old capability instead of trusting a reused connection indefinitely");
+}
+
+void TestCreateAfterNativeChannelSwitch()
+{
+    const std::string title = "complete title on a different native Battle provider";
+    rt::ClientState state;
+    Check(ReadyWithEmptyBatch(&state, 31, 701, 0) &&
+              state.AcceptMessage(31, Snapshot(Record(701, 9, 1, 1, "old channel"), 0)),
+          "channel-switch fixture has a confirmed provider and an old cached room");
+    const auto create = state.BeginSetTitle(31, 0, title, 100);
+    Check(state.AcceptMessage(31, Snapshot(Record(702, 4, 3, 1, title), create.request_id)) &&
+              state.IsReady(31) && !state.HasPending(31) && state.CanStartBattle(31) &&
+              !state.Query(31, 9) && state.Query(31, 4)->key.server_epoch == 702,
+          "the exact fresh-room ACK adopts the selected provider and removes old-channel cache");
+    const auto update = state.BeginSetTitle(31, 4, title + " renamed", 200);
+    Check(!state.AcceptMessage(31, Snapshot(Record(703, 4, 3, 2, title + " renamed"), update.request_id)) &&
+              !state.IsReady(31) && !state.CanStartBattle(31),
+          "an existing-room update cannot authorize another provider epoch");
+
+    for (unsigned mismatch = 0; mismatch < 4; ++mismatch) {
+        rt::ClientState rejected;
+        Check(ReadyWithEmptyBatch(&rejected, 32, 801, 0), "mismatched create fixture is ready");
+        const auto request = rejected.BeginSetTitle(32, 0, title, 100);
+        auto reply = Snapshot(Record(802, 1, 1, 1, title), request.request_id);
+        if (mismatch == 0) ++reply.request_id;
+        if (mismatch == 1) reply.title += " different";
+        if (mismatch == 2) reply.revision = 2;
+        if (mismatch == 3) rejected.AdvanceTime(32, 100 + rt::kSetTitleTimeoutMilliseconds);
+        Check(!rejected.AcceptMessage(32, reply) && !rejected.IsReady(32) &&
+                  !rejected.CanStartBattle(32),
+              "another nonce, title, revision or expired create cannot authorize a provider switch");
+    }
+}
+
+void TestNewClientSessionRequests()
+{
+    rt::ClientState first(100000), restarted(700000);
+    const auto firstHello=first.BeginHello(1,0);
+    const auto secondHello=restarted.BeginHello(1,0);
+    Check(firstHello.request_id==100000 && secondHello.request_id==700000 &&
+              first.AcceptBatch(1,Batch(9001,firstHello.request_id)) &&
+              restarted.AcceptBatch(1,Batch(9001,secondHello.request_id)),
+          "separate native client sessions start in independently seeded monotonic request ranges");
+    const std::string title="same full room title used after restarting the client";
+    const auto oldCreate=first.BeginSetTitle(1,0,title,100);
+    const auto newCreate=restarted.BeginSetTitle(1,0,title,100);
+    Check(newCreate.request_id!=oldCreate.request_id && newCreate.request_id==700001,
+          "identical title and reused Agent connection do not repeat the previous login's create nonce");
+    Check(!restarted.AcceptMessage(1,Snapshot(Record(9001,5,1,1,title),oldCreate.request_id)) &&
+              restarted.HasPending(1) && restarted.IsReady(1),
+          "a cached previous-login creation cannot confirm the new session's pending room");
+    Check(restarted.AcceptMessage(1,Snapshot(Record(9002,6,2,1,title),newCreate.request_id)) &&
+              !restarted.HasPending(1) && restarted.Query(1,6),
+          "the new session accepts only its actual fresh room on the selected Battle provider");
+}
+
+void TestFreshCreateDuringLobbyRecheck()
+{
+    rt::ClientState state;
+    Check(ReadyWithEmptyBatch(&state,41,1001,0),"recheck creation fixture has verified server support");
+    const auto recheck=state.BeginHello(41,10);
+    const std::string full="full room title created while a redundant lobby recheck is pending";
+    const auto create=state.BeginSetTitle(41,0,full,20);
+    Check(create.request_id && !state.IsNegotiating(41) && state.HasPending(41),
+          "fresh creation uses existing confirmed capability and supersedes the redundant lobby recheck");
+    Check(!state.AcceptBatch(41,Batch(1002,recheck.request_id)) && state.IsReady(41) &&
+              state.Pending(41)->status==rt::PendingStatus::Awaiting,
+          "a late old-provider recheck cannot invalidate the actual pending create");
+    Check(!state.AcceptMessage(41,HelloAck(1002,recheck.request_id)) && state.IsReady(41) &&
+              state.Pending(41)->status==rt::PendingStatus::Awaiting,
+          "a superseded HelloAck cannot complete or cancel the fresh creation");
+    Check(!state.AcceptMessage(41,ErrorMessage(1002,{},0,recheck.request_id,rm::RemoteError::InvalidRequest)) &&
+              state.IsReady(41) && state.Pending(41)->status==rt::PendingStatus::Awaiting,
+          "a superseded old-provider rejection cannot cancel a newer creation");
+    Check(state.AcceptMessage(41,Snapshot(Record(1003,5,1,1,full),create.request_id)) &&
+              !state.HasPending(41) && state.CanStartBattle(41),
+          "the exact fresh-room confirmation completes on its actual selected provider");
+
+    const auto updateRecheck=state.BeginHello(41,30);
+    Check(updateRecheck.request_id && !state.BeginSetTitle(41,5,"changed existing title",40).request_id &&
+              state.IsNegotiating(41),
+          "existing-room edits retain the recheck gate and cannot bypass their current identity validation");
+    rt::ClientState unknown;
+    unknown.BeginHello(42,0);
+    Check(!unknown.BeginSetTitle(42,0,full,10).request_id && unknown.IsNegotiating(42),
+          "an unconfirmed server never receives a long create before capability negotiation");
+    rt::ClientState unrelated;
+    Check(ReadyWithEmptyBatch(&unrelated,43,1101,0),"unrelated new-epoch fixture is ready");
+    unrelated.BeginHello(43,10);
+    const auto pending=unrelated.BeginSetTitle(43,0,full,20);
+    Check(!unrelated.AcceptBatch(43,Batch(1102,pending.request_id+1)) &&
+              !unrelated.IsReady(43) && !unrelated.CanStartBattle(43),
+          "an unrelated future response from another provider still invalidates old capability");
+}
+
 }  // namespace
 
 int main()
@@ -542,6 +670,10 @@ int main()
     TestCacheBounds();
     TestConnectionBound();
     TestRetryAfterRoomChanged();
+    TestDelayedNativeDispatch();
+    TestCreateAfterNativeChannelSwitch();
+    TestNewClientSessionRequests();
+    TestFreshCreateDuringLobbyRecheck();
     std::printf("%s: %d failure(s)\n",
                 g_failures == 0 ? "PASS" : "FAIL", g_failures);
     return g_failures == 0 ? 0 : 1;

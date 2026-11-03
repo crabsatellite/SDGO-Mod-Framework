@@ -2,9 +2,13 @@ import {e,button,field,download} from '/panel_helpers.js';
 export async function mount(root,ctx){
  root.inert=true;
  let state, selected=null, query='';
+ const hasChinese=value=>/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/.test(value||'');
+ const automaticLabel=(product,validity)=>{const item=state.items.find(row=>row.Id===product.category_id);if(!item)return product.label;if(item.TimeLimit===1)return (item.Kind===11?'租赁 ':'有效期 ')+validity+' 天';return item.Kind===11?'永久':'数量 '+validity;};
  const controls=e('div',undefined,'actions'),search=document.createElement('input');search.placeholder='搜索商品名称或编号';search.oninput=()=>{query=search.value;render();};controls.append(search);
  const select=document.createElement('select');select.ariaLabel='新增商品的原生物品';
- controls.append(select,button('新增商品',async()=>{if(!select.value)throw Error('请选择原生物品');await action('create',{category_id:Number(select.value)});},ctx,'primary'),button('应用到游戏',async()=>{if(!confirm('将当前商城草稿应用到已选择的服务器和客户端？'))return;await action('apply',{});ctx.message('服务器已返回应用结果。游戏内显示与购买由你手动检查。');},ctx),button('导出配置',async()=>download(await ctx.fetch('/api/shop/export'),'shop.json'),ctx));
+ const createName=document.createElement('input');createName.placeholder='中文商品名称（必填，可含 MSA-001 等代号）';createName.maxLength=50;createName.required=true;
+ const createNameBox=e('label','新商品中文名称');createNameBox.append(createName,e('span','上方原生物品下拉保留原始名称，仅用于确认实际物品。','field-help'));
+ controls.append(select,createNameBox,button('新增商品',async()=>{if(!select.value)throw Error('请选择原生物品');const name=createName.value.trim();if(!hasChinese(name))throw Error('中文商品名称必须包含至少一个汉字，可以同时保留英文或数字代号。');await action('create',{category_id:Number(select.value),name});createName.value='';},ctx,'primary'),button('应用到游戏',async()=>{if(!confirm('将当前商城草稿应用到已选择的服务器和客户端？未补齐中文的旧商品会被拒绝。'))return;await action('apply',{});ctx.message('服务器已返回应用结果。游戏内显示与购买由你手动检查。');},ctx),button('更新中文检索',async()=>{await action('search-index',{});const result=state.search_index;if(state.demo){ctx.message('演示模式仅模拟中文检索更新，未连接服务器数据库。');return;}if(!result||!result.installed)throw Error('服务器未确认中文检索更新。');ctx.message('中文检索已更新：'+result.name_count+' 个名称'+(result.revision?'，版本 '+result.revision:'')+'。');},ctx),button('导出配置',async()=>download(await ctx.fetch('/api/shop/export'),'shop.json'),ctx),button('导出玩家更新包',async()=>{const response=await ctx.fetch('/api/shop/client-package',{headers:{'X-Shop-Revision':state.revision}});if(!response.ok){let message='玩家更新包生成失败';try{message=(await response.json()).error||message;}catch{}throw Error(message);}await download(response,'SDGO-shop-client-update.zip');},ctx));
  const importFile=document.createElement('input');importFile.type='file';importFile.accept='.json';importFile.hidden=true;importFile.onchange=async()=>{try{await action('import',{catalog:JSON.parse(await importFile.files[0].text())});}catch(error){ctx.message(error.message,true);}};
  controls.append(button('导入配置',()=>importFile.click(),ctx),importFile);root.append(controls);
  const layout=e('div',undefined,'settings-grid'),list=e('section',undefined,'manager-card'),editor=e('section',undefined,'manager-card');layout.append(list,editor);root.append(layout);
@@ -15,11 +19,13 @@ export async function mount(root,ctx){
   const rows=state.products.filter(row=>JSON.stringify(row.product).toLowerCase().includes(query.toLowerCase()));
   for(const row of rows){const p=row.product;list.append(button(p.name+' · '+p.price+' '+p.currency+' · '+row.status,()=>{selected=p.key;render();},ctx));}
   if(!rows.length)list.append(e('p','还没有管理商品。选择一个原生物品，然后新增。','muted'));
-  editor.replaceChildren();const product=state.catalog.products.find(p=>p.key===selected);if(!product){editor.append(e('p','选择商品查看和编辑。','muted'));return;}
+  editor.replaceChildren();const product=state.catalog.products.find(p=>p.key===selected);if(!product){editor.append(e('p','选择商品查看和编辑。新增前还需要在原生物品下方填写中文商品名称。','muted'));return;}
   editor.append(e('h2',product.name),e('p','商品 '+product.product_id+' · 物品 '+product.category_id,'muted'));
-  const fields={};for(const [key,label,type] of [['name','商品名称'],['label','选项标签'],['price','售价','number'],['validity','数量 / 租赁天数','number'],['enabled','上架','checkbox']]){fields[key]=field(label,product[key],type);editor.append(fields[key].box);}
+  if(!hasChinese(product.name)||!hasChinese(product.label))editor.append(e('p','这个旧商品尚未补齐中文名称或中文销售标签。可以继续查看；保存修改或发布前必须补齐。','error'));
+  const fields={};for(const [key,label,type] of [['name','中文商品名称（必填，需含汉字）'],['label','中文销售标签（必填，需含汉字）'],['price','售价','number'],['validity','数量 / 租赁天数','number'],['enabled','上架','checkbox']]){fields[key]=field(label,product[key],type);editor.append(fields[key].box);}
+  fields.validity.input.oninput=()=>{const validity=Number(fields.validity.input.value);if(Number.isFinite(validity)&&validity>0)fields.label.input.value=automaticLabel(product,validity);};
   const currency=e('label','币种'),value=document.createElement('select');for(const name of ['GB','MB'])value.append(new Option(name,name));value.value=product.currency;currency.append(value);editor.append(currency);
-  editor.append(button('保存商品',async()=>{const values={currency:value.value};for(const [key,entry] of Object.entries(fields))values[key]=entry.input.type==='checkbox'?entry.input.checked:entry.input.type==='number'?Number(entry.input.value):entry.input.value;await action('update',{key:product.key,values});ctx.message('商品草稿已保存，应用到游戏后才会更改服务器商品。');},ctx,'primary'),button(product.retired?'恢复商品':'删除商品',()=>action(product.retired?'restore':'delete',{key:product.key}),ctx));
+  editor.append(button('保存商品',async()=>{const values={currency:value.value};for(const [key,entry] of Object.entries(fields))values[key]=entry.input.type==='checkbox'?entry.input.checked:entry.input.type==='number'?Number(entry.input.value):entry.input.value.trim();if(!hasChinese(values.name)||!hasChinese(values.label))throw Error('中文商品名称和中文销售标签都必须包含至少一个汉字。');await action('update',{key:product.key,values});ctx.message('商品草稿已保存，应用到游戏后才会更改服务器商品。');},ctx,'primary'),button(product.retired?'恢复商品':'删除商品',()=>action(product.retired?'restore':'delete',{key:product.key}),ctx));
  }
  try{await load();}finally{root.inert=false;}
 }

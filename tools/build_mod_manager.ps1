@@ -1,4 +1,4 @@
-param([string]$BuildDir='build',[string]$Python='python')
+param([string]$BuildDir='build',[string]$Python='python',[switch]$ServicesOnly)
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $build=[IO.Path]::GetFullPath($(if([IO.Path]::IsPathRooted($BuildDir)){$BuildDir}else{Join-Path $repo $BuildDir}))
@@ -16,13 +16,25 @@ if($env:LIB){$env:LIB=(($env:LIB -split ';') | Where-Object {$_ -and (Test-Path 
 if($LASTEXITCODE -ne 0){throw 'Manager business assembly build failed'}
 & $compiler /nologo /target:exe ("/out:"+(Join-Path $services 'ShopUiTests.exe')) ("/r:"+$library) /r:System.Data.dll /r:System.Web.Extensions.dll (Join-Path $repo 'tests/ShopUiTests.cs')
 if($LASTEXITCODE -ne 0){throw 'Manager domain test build failed'}
+& $compiler /nologo /target:exe ("/out:"+(Join-Path $services 'ShopChineseRequiredTests.exe')) ("/r:"+$library) /r:System.Data.dll /r:System.Web.Extensions.dll (Join-Path $repo 'tests/ShopChineseRequiredTests.cs')
+if($LASTEXITCODE -ne 0){throw 'Manager Chinese product contract test build failed'}
+& $compiler /nologo /target:exe ("/out:"+(Join-Path $services 'ShopSearchIndexTests.exe')) ("/r:"+$library) /r:System.Data.dll /r:System.Web.Extensions.dll (Join-Path $repo 'tests/ShopSearchIndexTests.cs')
+if($LASTEXITCODE -ne 0){throw 'Manager shop search-index contract test build failed'}
 $env:LIB=$oldCompilerLib
+if($ServicesOnly){Write-Output $services;return}
 $oldLibrary=$env:SDGO_MANAGER_SERVICES
 $oldCache=$env:PYINSTALLER_CONFIG_DIR
+$oldMetadata=$env:SDGO_MANAGER_METADATA
 try {
+    $metadata=Get-Content -LiteralPath (Join-Path $repo 'manager/repository.json') -Raw | ConvertFrom-Json
+    $metadata.manager_version=if($env:SDGO_RELEASE_VERSION){$env:SDGO_RELEASE_VERSION}else{(Get-Content -LiteralPath (Join-Path $repo 'VERSION') -TotalCount 1).Trim()}
+    $metadataDir=Join-Path $build 'manager-metadata'
+    New-Item -ItemType Directory -Force -Path $metadataDir | Out-Null
+    $env:SDGO_MANAGER_METADATA=Join-Path $metadataDir 'repository.json'
+    [IO.File]::WriteAllText($env:SDGO_MANAGER_METADATA,($metadata | ConvertTo-Json),[Text.UTF8Encoding]::new($false))
     $env:SDGO_MANAGER_SERVICES=$library
     $env:PYINSTALLER_CONFIG_DIR=Join-Path $build 'manager-cache'
     & $Python -m PyInstaller --noconfirm --distpath (Join-Path $build 'manager') --workpath (Join-Path $build 'manager-freeze') (Join-Path $repo 'manager\SDGOModManager.spec')
     if($LASTEXITCODE -ne 0){throw 'Manager EXE build failed; see the concrete error above'}
-} finally {$env:SDGO_MANAGER_SERVICES=$oldLibrary;$env:PYINSTALLER_CONFIG_DIR=$oldCache}
+} finally {$env:SDGO_MANAGER_SERVICES=$oldLibrary;$env:PYINSTALLER_CONFIG_DIR=$oldCache;$env:SDGO_MANAGER_METADATA=$oldMetadata}
 Get-Item -LiteralPath (Join-Path $build 'manager\SDGO Mod Manager.exe') | Select-Object FullName,Length

@@ -13,11 +13,12 @@ namespace Sdgo.Manager
         static bool demo;
         static readonly HashSet<string> Editable=new HashSet<string>{"name","label","price","currency","validity","enabled"};
         static string Text(Dictionary<string,object> d,string key,string fallback="") {return d.ContainsKey(key)?Convert.ToString(d[key]):fallback;}
-        static object State()
+        static object State(SearchIndexResult searchIndex=null)
         {
             return new {catalog=service.Catalog,revision=Model.FileHash(service.CatalogFile),demo=service.Demo,
                 items=service.Snapshot==null?new List<Item>():service.Snapshot.Items,
-                products=service.Catalog.products.Select(p=>new {product=p,status=service.Status(p)}).ToArray()};
+                products=service.Catalog.products.Select(p=>new {product=p,status=service.Status(p)}).ToArray(),
+                search_index=searchIndex};
         }
         static void Open(Dictionary<string,object> request)
         {
@@ -41,7 +42,9 @@ namespace Sdgo.Manager
                 {
                     int category=Convert.ToInt32(body["category_id"]);var item=service.Snapshot.Items.FirstOrDefault(i=>i.Id==category);
                     if(item==null)throw new InvalidOperationException("物品不存在。");
-                    service.Catalog.products.Add(Model.Create(service.Catalog,service.Snapshot,item));service.SaveDraft();
+                    string name=Text(body,"name").Trim();Model.Chinese(name,"商品中文名称");
+                    var created=Model.Create(service.Catalog,service.Snapshot,item,name);Model.ValidateChinese(created);
+                    service.Catalog.products.Add(created);service.SaveDraft();
                 }
                 else if(action=="update"||action=="delete"||action=="restore")
                 {
@@ -54,12 +57,24 @@ namespace Sdgo.Manager
                         var merged=Model.Json().Deserialize<Dictionary<string,object>>(Model.Json().Serialize(product));
                         foreach(var pair in values)merged[pair.Key]=pair.Value;
                         var changed=Model.Json().Deserialize<Product>(Model.Json().Serialize(merged));
+                        if(changed.validity!=product.validity)
+                        {
+                            var item=service.Snapshot.Items.FirstOrDefault(i=>i.Id==changed.category_id);
+                            if(item==null)throw new InvalidOperationException("物品不存在。");
+                            changed.label=item.Label(changed.validity);
+                        }
+                        Model.ValidateChinese(changed);
                         service.Catalog.products[service.Catalog.products.IndexOf(product)]=changed;
                     }
                     else {product.retired=action=="delete";product.enabled=action=="restore";}
                     service.SaveDraft();
                 }
                 else if(action=="apply")service.Apply();
+                else if(action=="search-index")
+                {
+                    var result=service.SyncSearchIndex();
+                    return Model.Json().Serialize(new {ok=true,value=State(result)});
+                }
                 else if(action=="import")
                 {
                     var incoming=Model.Json().Deserialize<Catalog>(Model.Json().Serialize(body["catalog"]));Model.Validate(incoming,service.Snapshot);

@@ -20,10 +20,12 @@ enum class Surface : std::uint8_t {
     // The host reuses this dialog for both PvP and mission wait rooms. Keep
     // the stable identifier because the controller also uses it as the
     // native 0x089E title-change operation.
-    PvpTitleEdit
+    PvpTitleEdit,
+    PvpNativeCreate,
+    TeamSettings
 };
 
-// Called after the native init returns and after the edit limit is expanded.
+// Called after native control initialization and after the edit limit is expanded.
 // edit is null when the verified surface did not expose its expected control.
 using InitCallback = void (*)(Surface surface, void* service, void* edit);
 
@@ -36,7 +38,8 @@ using TitleLookupCallback = bool (*)(bool battle_domain,
 // Resolve the verified host helpers used below. This does not install hooks.
 bool Bind(const SdgoApi* api, SdgoMod* mod);
 
-// Hook all four verified init vtable slots. A false result must make the
+// Hook the verified init slots, late PvP create updates and scoped width policy.
+// A false result must make the
 // containing Mod decline to load so the core rolls back any earlier slot swap.
 bool InstallInitHooks(InitCallback callback = nullptr);
 
@@ -72,11 +75,17 @@ bool SetEditText(void* edit, const std::wstring& text, bool selection_flag = fal
 // allocator. This keeps title-edit cancel/reopen behavior on the full title
 // without changing either room structure's fixed legacy field.
 bool SetTitleBarCachedTitle(void* title_bar, const std::wstring& text);
+// An empty cache is a native-valid comparison value used only to force a
+// nonempty recovery command through the original queue; it is never sent.
+bool ReadTitleBarCachedTitle(void* title_bar, std::wstring* text);
+// The inline editor emits this original value on Escape. Keep its host-owned
+// cache consistent with confirmed metadata so cancel never restores a prefix.
+bool SetTitleEditOriginalTitle(void* service, const std::wstring& text);
 
 // Resolve the native room selected by the shared wait-room title bar. The
 // host checks its PvP room pointer at +0x108 first, then its mission room
 // pointer at +0x10C. The returned id is the raw native id without a Mod domain
-// bit; legacy_title is copied from the matching fixed room field.
+// bit; legacy_title is copied when that optional short projection is readable.
 bool ReadTitleBarRoom(void* title_bar,
                       bool* battle_domain,
                       std::uint32_t* native_room_id,

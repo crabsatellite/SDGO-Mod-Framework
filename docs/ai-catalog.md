@@ -1,4 +1,4 @@
-# AI mech catalog (Beta, separate addon)
+# AI mech catalog (separate addon)
 
 [中文](ai-catalog.zh-CN.md)
 

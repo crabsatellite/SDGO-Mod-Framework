@@ -147,15 +147,21 @@ class AiCatalogTests(unittest.TestCase):
             for role in ("client", "server"):
                 _, package, _ = installer_fixture(root / role, role)
                 shutil.copytree(package / role, stage / role)
+                shutil.copyfile(repo / "mods/ai_catalog/manager.json", stage / role / "sdgo/mods/ai_catalog/manager.json")
+            (stage / "manager").mkdir()
+            (stage / "manager/SDGO Mod Manager.exe").write_bytes(b"fixture manager")
             (stage / "client/private.json").write_text("PRIVATE OWNER DATA")
             (stage / "client/GOnline.exe").write_text("GAME MUST NOT BE INCLUDED")
             output = root / "addon.zip"
             packager.package(stage, output)
             with zipfile.ZipFile(output) as archive:
                 self.assertIsNone(archive.testzip())
-                self.assertFalse(any(name.endswith((".exe", ".bin", ".pyc")) or "private" in name for name in archive.namelist()))
+                self.assertIn("SDGO Mod Manager.exe", archive.namelist())
+                self.assertFalse(any((name.endswith(".exe") and name != "SDGO Mod Manager.exe")
+                    or name.endswith((".bin", ".pyc")) or "private" in name for name in archive.namelist()))
                 for role in ("client", "server"):
                     self.assertEqual(installer.ini(archive.read(f"{role}/sdgo/mods/ai_catalog/mod.ini")).getint("mod", "enabled"), 0)
+                    self.assertEqual(json.loads(archive.read(f"{role}/sdgo/mods/ai_catalog/manager.json"))["id"], "ai_catalog")
                 self.assertIn("backend/install_ai_catalog.py", archive.namelist())
                 self.assertIn("backend/export_ai_catalog.py", archive.namelist())
                 self.assertIn("docs/ai-catalog.zh-CN.md", archive.namelist())
@@ -562,8 +568,17 @@ class AiCatalogTests(unittest.TestCase):
                 shutil.copyfile(repo / name, root / name)
             for name in ("install_client.ps1", "install_server.ps1", "install_common.ps1"):
                 (root / "tools" / name).write_text("fixture")
+            manifest = installer.ini((repo / "mods/ime_fix/mod.ini").read_bytes())
+            payloads = [name.strip() for name in manifest.get("mod", "files", fallback="").split(",") if name.strip()]
+            payloads.append("manager.json")
+            for name in payloads:
+                destination = root / "mods/ime_fix" / name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(repo / "mods/ime_fix" / name, destination)
             (root / "third_party/minhook/LICENSE.txt").write_text("fixture")
             (root / "VERSION").write_text("0.0.1")
+            (root / "build/manager").mkdir(parents=True)
+            (root / "build/manager/SDGO Mod Manager.exe").write_bytes(b"fixture manager")
             (root / "CMakeLists.txt").write_text("sdgo_add_mod(ime_fix SOURCES fixture.cpp)")
             (root / "backend/private.json").write_text("PRIVATE DO NOT PACKAGE")
             for role, loader in (("client", "d3d9.dll"), ("server", "winmm.dll")):
@@ -573,6 +588,10 @@ class AiCatalogTests(unittest.TestCase):
             stage = root / "build/stage/Release/client/sdgo/mods"
             (stage / "ime_fix").mkdir(parents=True)
             shutil.copyfile(repo / "mods/ime_fix/mod.ini", stage / "ime_fix/mod.ini")
+            for name in payloads:
+                destination = stage / "ime_fix" / name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(repo / "mods/ime_fix" / name, destination)
             (stage / "ime_fix/ime_fix.dll").write_text("fixture")
             (stage / "ai_catalog").mkdir()
             (stage / "ai_catalog/catalog.bin").write_text("PRIVATE OWNER CATALOG")
