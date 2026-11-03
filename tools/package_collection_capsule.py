@@ -61,7 +61,7 @@ SUPPORT_FILES = (
     "runtime-mod.ini",
     "PROVENANCE.md",
 )
-ASSET_FILES = ("cover.png", "cover.svg")
+ASSET_FILES = ("cover.png", "cover-base.png", "cover.svg")
 DOCUMENTS = ("collection-capsule.md", "collection-capsule.zh-CN.md")
 ZIP_TIMESTAMP = (2020, 1, 1, 0, 0, 0)
 

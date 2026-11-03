@@ -46,6 +46,8 @@ struct Policy {
     uint32_t schema_version = 0;
     uint32_t base_multiplier_micro = 0;
     uint32_t extra_human_multiplier_micro = 0;
+    bool custom_human_multipliers = false;
+    std::array<uint32_t,12> human_multipliers_micro{};
     uint32_t full_reward_seconds = 0;
     uint32_t minimum_active_seconds = 0;
     std::array<char, 65> revision{};
@@ -345,7 +347,9 @@ inline bool CalculateCurrency(const Policy& policy, const MatchContext& context,
         return Fail(error, ErrorCode::ArithmeticOverflow,
                     "reward arithmetic exceeded 256 bits");
     }
-    for (uint32_t i = 1; i < context.human_count; ++i) {
+    if (policy.custom_human_multipliers && !raw.Multiply(policy.human_multipliers_micro[context.human_count-1]))
+        return Fail(error, ErrorCode::ArithmeticOverflow,"human multiplier overflow");
+    for (uint32_t i = 1; !policy.custom_human_multipliers && i < context.human_count; ++i) {
         if (!raw.Multiply(11)) {
             return Fail(error, ErrorCode::ArithmeticOverflow,
                         "reward arithmetic exceeded 256 bits");
@@ -364,7 +368,8 @@ inline bool CalculateCurrency(const Policy& policy, const MatchContext& context,
         raw.Divide(static_cast<uint32_t>(kMicro));
     }
     raw.Divide(static_cast<uint32_t>(kMicro));  // base multiplier scale
-    for (uint32_t i = 1; i < context.human_count; ++i) raw.Divide(10);
+    if (policy.custom_human_multipliers) raw.Divide(static_cast<uint32_t>(kMicro));
+    else for (uint32_t i = 1; i < context.human_count; ++i) raw.Divide(10);
     raw.Divide(policy.full_reward_seconds);
 
     if (!raw.ToUint64(amount)) {
@@ -408,6 +413,9 @@ inline Policy DefaultPolicy() {
 
 inline bool ValidatePolicy(const Policy& policy, Error* error = nullptr) {
     if (error) *error = {};
+    if (policy.custom_human_multipliers)
+        for (auto value:policy.human_multipliers_micro)
+            if (!value || value>100*kMicro)return detail::Fail(error,ErrorCode::InvalidPolicy,"human multiplier outside 0..100");
     if (policy.schema_version != 1 ||
         policy.base_multiplier_micro > 100 * kMicro ||
         policy.extra_human_multiplier_micro != 1100000 ||

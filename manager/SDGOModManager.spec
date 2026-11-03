@@ -35,6 +35,7 @@ data += [(str(root/'owner/collection_capsule/sql'),'owner/collection_capsule/sql
          (str(root/'owner/calendar_gifts/festival_dates.json'),'owner/calendar_gifts'),
          (str(root/'owner/calendar_gifts/schema.sql'),'owner/calendar_gifts'),
          (str(root/'mods/collection_capsule/assets'),'mods/collection_capsule/assets'),
+        (str(Path(os.environ['SDGO_COLLECTION_SUPPORT_BINARY'])),'collection-support'),
          (str(root/'support/capsule_registry'),'support/capsule_registry')]
 data += [(str(root/'tools'/name),'tools') for name in ('install_server.ps1','install_common.ps1')]
 data += [(str(path),str(path.parent.relative_to(root))) for path in sorted((root/'mods').glob('*/manager.json'))]

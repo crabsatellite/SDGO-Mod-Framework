@@ -84,6 +84,8 @@ def compile_ini(policy):
         )),
     ]
     lines = []
+    if policy.get('human_multipliers'):
+        rows.insert(3,('humans',tuple((str(i+1),_decimal(v,100)) for i,v in enumerate(policy['human_multipliers']))))
     for section, values in rows:
         if lines:
             lines.append("")

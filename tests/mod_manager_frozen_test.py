@@ -78,6 +78,10 @@ def main():
                 assert '导入旧生日发放记录' in response.read().decode('utf-8')
             collection=call('/api/providers/collection_capsule/api/state')
             assert collection['price_gp']==100000 and not collection['generated']
+            assert collection['rules']['draw_limit']==15 and collection['rules']['limit_period']=='week'
+            custom_rules={**collection['rules'],'price_gp':76543,'draw_limit':4,'limit_period':'day'}
+            collection=call('/api/providers/collection_capsule/api/rules',{'value':custom_rules,'revision':collection['revision']})
+            assert collection['rules']==custom_rules and collection['price_gp']==76543
             context=call('/api/ai-context',{'provider':'shop','kind':'bug'})
             assert 'SDGO-Mod-Framework' in context['text'] and 'AI models:' in context['text']
             catalog=call('/api/providers/shop/api/shop/catalog');assert catalog['demo'] and catalog['items']
@@ -94,8 +98,19 @@ def main():
             rewards=call('/api/providers/rewards/api/rewards')
             assert not rewards['progression']['config']['enabled']
             rewards=call('/api/providers/rewards/api/rewards/solo-preset',{}, {'X-Reward-Revision':rewards['revision']})
-            assert rewards['policy']['progression']['daily_mb']==27000 and rewards['policy']['progression']['enabled']
+            assert rewards['policy']['progression']['daily_mb']==400 and rewards['policy']['progression']['enabled']
             assert (root/'rewards/runtime/policies'/(rewards['revision']+'.json')).is_file()
+            assert not rewards['gathering']['config']['enabled'] and not rewards['gathering']['config']['rules']
+            social={'human_multipliers':['1','1.1']+['1.5']*10,'gathering':{
+                **rewards['gathering']['config'],'enabled':True,'rules':[{
+                    'id':'weekly_meetup','title':'Weekly gathering','enabled':True,'minimum_humans':3,
+                    'period':'week','modes':['pvp','pve'],'gb':12345,'mb':678}]}}
+            rewards=call('/api/providers/rewards/api/rewards/social-rules',{'rules':social},{'X-Reward-Revision':rewards['revision']})
+            assert rewards['human_multipliers']==social['human_multipliers']
+            assert rewards['gathering']['config']==social['gathering']
+            assert rewards['policy']['progression']['daily_mb']==400
+            with urllib.request.urlopen(base+'/panels/reward_social.js',timeout=10) as response:
+                assert '保存人数与聚会规则' in response.read().decode('utf-8')
             call('/api/exit',{});process.wait(timeout=30)
             assert process.returncode==0
             print('PASS frozen EXE: standalone launch, local-only module discovery/configuration, private calendar gift policies/export, daily mode, fix archive, collection provider, AI/PR guidance, C# shop CRUD and solo MB preset')

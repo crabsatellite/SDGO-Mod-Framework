@@ -123,7 +123,7 @@ void Receipt(const std::filesystem::path& runtime, const std::string& scope) {
     const WalletHealth health = ReadWalletHealth(runtime);
     CHECK(health.healthy);
     CHECK(health.scope == scope);
-    CHECK(health.revision == "sdgo-native-gc-ledger-v2");
+    CHECK(health.revision == "sdgo-native-gc-ledger-v3");
     CHECK(health.error.empty());
 
     WalletReceipt receipt;
@@ -166,7 +166,7 @@ void Stale(const std::filesystem::path& runtime, const std::string& scope) {
     const WalletHealth health = ReadWalletHealth(runtime);
     CHECK(!health.healthy);
     CHECK(health.scope == scope);
-    CHECK(health.revision == "sdgo-native-gc-ledger-v2");
+    CHECK(health.revision == "sdgo-native-gc-ledger-v3");
     CHECK(health.error == "wallet worker heartbeat is stale or invalid");
 }
 
@@ -200,6 +200,11 @@ int wmain(int argc, wchar_t** argv) {
         Emit(runtime, scope);
     } else if (operation == L"receipt") {
         Receipt(runtime, scope);
+    } else if (operation == L"emit-v3") {
+        auto job=Job(scope);job.completed_unix=1793008800;job.active_seconds=180;job.contributed=true;
+        job.mode="pvp";job.participants={{180,true},{180,true},{180,true}};
+        std::string name,error;CHECK(PublishWalletJob(runtime,job,&name,&error));
+        CHECK(Bytes(runtime/L"outbox"/name).find("SchemaVersion=3\r\n")!=std::string::npos);
     } else if (operation == L"emit-v2") {
         EmitV2(runtime, scope);
     } else if (operation == L"stale") {

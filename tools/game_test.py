@@ -808,7 +808,9 @@ def allow_named_desktop_fallback(metadata: dict) -> bool:
     if metadata.get('suite') == FPS_SUITE:
         return True
     plan = metadata.get('plan', {})
-    if (metadata.get('suite') != 'pvp-ai-normal-flow' or
+    supported_session=(metadata.get('suite')=='pvp-ai-normal-flow' or
+                       (metadata.get('suite')=='native-friends' and plan.get('friends_only') is True))
+    if (not supported_session or
         plan.get('quiet') is not True or plan.get('network_policy') != 'direct'):
         return False
     try:
@@ -915,7 +917,7 @@ class QuietRuntime:
             raise GameTestError('quiet desktop isolation proof is internally inconsistent')
         if (proof.get('isolation_mode')=='private_desktop_with_hidden_default_proxy' and
             not allow_named_desktop_fallback(self.metadata)):
-            raise GameTestError('named-desktop fallback requires FPS or local direct PvP isolation')
+            raise GameTestError('named-desktop fallback requires FPS, local direct PvP, or a local direct coordinated session')
         if self.proof_file_written and (proof.get('input_desktop_unchanged') is False or
             proof.get('unexpected_input_window_count',0)>0 or
             (proof.get('input_desktop_safe') is False and proof.get('input_target_window_count',0)>0)):

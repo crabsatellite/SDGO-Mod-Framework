@@ -236,7 +236,8 @@ def _validated_registry(registry: Path) -> tuple[dict, dict[str, bytes]]:
         manifest.get("schema_version") != 1
         or type(manifest.get("machine", {}).get("id")) is not int
         or not 0 < manifest['machine']['id'] <= 2147483647
-        or manifest.get("machine", {}).get("price_gp") != 100000
+        or type(manifest.get("machine", {}).get("price_gp"))is not int
+        or not 1<=manifest['machine']['price_gp']<=1000000000
         or manifest.get("machine", {}).get("enabled") is not True
         or manifest.get('machine', {}).get('kind') != 'activity'
         or not re.fullmatch(

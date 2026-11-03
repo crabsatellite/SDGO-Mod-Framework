@@ -25,6 +25,11 @@ EXEC dbo.sp_PocketGC_IO
     @retGC = @CurrentMb OUTPUT;
 SELECT @NativeRetVal AS NativeRetVal, @CurrentMb AS CurrentMb;
 """
+CURRENT_GP_SQL="""
+DECLARE @NativeRetVal int=-1,@CurrentGp int=-1;
+EXEC dbo.sp_PocketGP_IO @type=1,@s_idx=?,@s_GP=0,@s_from=0,@s_etc=0,@retVal=@NativeRetVal OUTPUT,@retGP=@CurrentGp OUTPUT;
+SELECT @NativeRetVal AS NativeRetVal,@CurrentGp AS CurrentGp;
+"""
 
 
 @dataclass(frozen=True)
@@ -89,6 +94,8 @@ class RewardWalletRepository:
             progress_script = SCHEMA_PATH.with_name("battle_reward_progression.sql").read_text(encoding="utf-8-sig")
             for batch in split_batches(progress_script):
                 cursor.execute(batch)
+            gathering_script=SCHEMA_PATH.with_name('battle_reward_gathering.sql').read_text(encoding='utf-8-sig')
+            for batch in split_batches(gathering_script):cursor.execute(batch)
             scope = self._read_scope(cursor)
             self.connection.commit()
             return scope
@@ -131,6 +138,38 @@ class RewardWalletRepository:
         except Exception:
             self.connection.rollback()
             raise
+
+    def apply_gathering(self,job,award):
+        cursor=self.connection.cursor()
+        try:
+            cursor.execute('EXEC dbo.SdgoBattleGatheringApply @MatchId=?,@AccountNumber=?,@ExpectedScope=?,@SourceHash=?,@PolicyRevision=?,@RuleId=?,@PeriodKind=?,@PeriodKey=?,@Gb=?,@Mb=?',
+                job['match_id'],job['account_number'],str(job['expected_scope']),job['source_hash'],job['policy_revision'],
+                award['id'],award['period'],award['period_key'],award['gb'],award['mb'])
+            paid=None
+            while True:
+                if cursor.description and [col[0] for col in cursor.description]==['Gb','Mb']:
+                    rows=cursor.fetchall()
+                    if len(rows)!=1 or any(type(v)is not int or v<0 for v in rows[0]) or rows[0][0]>award['gb'] or rows[0][1]>award['mb']:raise ValueError('Invalid gathering receipt')
+                    paid={'gb':rows[0][0],'mb':rows[0][1]}
+                if not cursor.nextset():break
+            if paid is None:raise ValueError('Missing gathering receipt')
+            self.connection.commit();return paid
+        except Exception:self.connection.rollback();raise
+
+    def current_gp(self,account_number):
+        if type(account_number)is not int or not 0<account_number<=2147483647:raise ValueError('Invalid native GP account')
+        cursor=self.connection.cursor()
+        try:
+            cursor.execute(CURRENT_GP_SQL,account_number);value=None
+            while True:
+                if cursor.description and [col[0] for col in cursor.description]==['NativeRetVal','CurrentGp']:
+                    rows=cursor.fetchall()
+                    if len(rows)!=1 or rows[0][0]!=0 or type(rows[0][1])is not int or not 0<=rows[0][1]<=2147483647:raise ValueError('Native GP query failed')
+                    value=rows[0][1]
+                if not cursor.nextset():break
+            if value is None:raise ValueError('Missing native GP result')
+            return value
+        finally:self.connection.rollback()
 
     def current_mb(self, account_number: int) -> int:
         """Read the current MB balance through the game's native procedure."""
