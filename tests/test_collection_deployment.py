@@ -56,6 +56,8 @@ class FakeCursor:
         return self
 
     def fetchone(self):
+        if self.last.startswith('SELECT LimitPeriod,DrawLimit,UtcOffsetMinutes'):
+            value=self.model['rules'];return (value['limit_period'],value['draw_limit'],value['utc_offset_minutes'])
         if self.last == "SELECT DB_NAME()":
             return ("CollectionFixture",)
         if self.last.startswith(
@@ -93,6 +95,7 @@ class CollectionDeploymentTests(unittest.TestCase):
         model = {
             "schema_version": 1,
             "feature": "collection-capsule",
+            "rules":{"price_gp":100000,"limit_period":"week","draw_limit":15,"utc_offset_minutes":480},
             "machine_id": 990001,
             "price_gp": 100000,
             "machine_kind": "activity",
@@ -129,6 +132,7 @@ class CollectionDeploymentTests(unittest.TestCase):
             "price_gp": 100000,
             "machine_kind": "activity",
             "pool_revision": CLI.pool_hash(model["pool"]),
+            "rules":model['rules'],
             "files": files,
         }
         (package / "manifest.json").write_text(
@@ -166,6 +170,7 @@ class CollectionDeploymentTests(unittest.TestCase):
         model = {
             "machine_id": 990001,
             "price_gp": 100000,
+            "rules":{"price_gp":100000,"limit_period":"week","draw_limit":15,"utc_offset_minutes":480},
             "pool": {"units": [{"unit_id": 1}], "form_aliases": []},
         }
         return package, payload, target, server_ini, executable, model

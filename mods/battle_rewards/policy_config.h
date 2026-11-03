@@ -171,6 +171,7 @@ public:
     }
 
     bool Empty() const { return entries_.empty(); }
+    bool Has(const std::string& key) const{return entries_.find(key)!=entries_.end();}
     std::string FirstKey() const {
         return entries_.empty() ? std::string() : entries_.begin()->first;
     }
@@ -258,6 +259,14 @@ inline bool ParsePolicyIni(const std::string& text, Policy* policy,
         return false;
     }
     parsed.extra_human_multiplier_micro = static_cast<uint32_t>(decimal);
+    if (values.Has("humans.1")) {
+        parsed.custom_human_multipliers=true;
+        for (unsigned i=0;i<12;++i) {
+            const std::string key=std::to_string(i+1);
+            if(!values.TakeDecimal("humans",key.c_str(),100,&decimal,error))return false;
+            parsed.human_multipliers_micro[i]=static_cast<uint32_t>(decimal);
+        }
+    }
 
     if (!config_detail::TakeRate(&values, "pvp", "BaseWin",
                                  &parsed.pvp.base_win, error) ||

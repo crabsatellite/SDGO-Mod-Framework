@@ -1,4 +1,4 @@
-param([string]$BuildDir='build',[string]$Python='python',[string]$UnitBinary,[string]$CapsuleBinary,[switch]$ServicesOnly)
+param([string]$BuildDir='build',[string]$Python='python',[string]$UnitBinary,[string]$CapsuleBinary,[string]$RegistryBinary,[switch]$ServicesOnly)
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $build=[IO.Path]::GetFullPath($(if([IO.Path]::IsPathRooted($BuildDir)){$BuildDir}else{Join-Path $repo $BuildDir}))
@@ -28,6 +28,7 @@ $oldLibrary=$env:SDGO_MANAGER_SERVICES
 $oldCache=$env:PYINSTALLER_CONFIG_DIR
 $oldUnitBinary=$env:SDGO_UNIT_CATALOG_BINARY
 $oldCapsuleBinary=$env:SDGO_CAPSULE_REGISTRY_BINARY
+$oldCollectionSupport=$env:SDGO_COLLECTION_SUPPORT_BINARY
 $oldMetadata=$env:SDGO_MANAGER_METADATA
 try {
     $metadata=Get-Content -LiteralPath (Join-Path $repo 'manager/repository.json') -Raw | ConvertFrom-Json
@@ -42,9 +43,14 @@ try {
     if(-not $CapsuleBinary){$CapsuleBinary=Join-Path $build 'Release\capsule_catalog.dll'}
     if(-not (Test-Path -LiteralPath $CapsuleBinary -PathType Leaf)){throw 'Build capsule_registry_support before building Manager'}
     $env:SDGO_CAPSULE_REGISTRY_BINARY=[IO.Path]::GetFullPath($CapsuleBinary)
+    if(-not $RegistryBinary){$RegistryBinary=Join-Path $build 'stage\Release\support\capsule-registry\capsule_catalog.dll'}
+    if(-not (Test-Path -LiteralPath $RegistryBinary -PathType Leaf)){throw 'Build capsule_registry_support before building Manager'}
+    $env:SDGO_COLLECTION_SUPPORT_BINARY=[IO.Path]::GetFullPath($RegistryBinary)
+    & $Python -c 'import sys;from pathlib import Path;sys.path.insert(0,sys.argv[1]);from manager.distribution import require_redistributable;require_redistributable(sys.argv[2],Path(sys.argv[2]).read_bytes())' $repo $env:SDGO_COLLECTION_SUPPORT_BINARY
+    if($LASTEXITCODE -ne 0){throw 'Collection registry provider cannot enter a public Manager build'}
     $env:SDGO_MANAGER_SERVICES=$library
     $env:PYINSTALLER_CONFIG_DIR=Join-Path $build 'manager-cache'
     & $Python -m PyInstaller --noconfirm --distpath (Join-Path $build 'manager') --workpath (Join-Path $build 'manager-freeze') (Join-Path $repo 'manager\SDGOModManager.spec')
     if($LASTEXITCODE -ne 0){throw 'Manager EXE build failed; see the concrete error above'}
-} finally {$env:SDGO_MANAGER_SERVICES=$oldLibrary;$env:PYINSTALLER_CONFIG_DIR=$oldCache;$env:SDGO_UNIT_CATALOG_BINARY=$oldUnitBinary;$env:SDGO_CAPSULE_REGISTRY_BINARY=$oldCapsuleBinary;$env:SDGO_MANAGER_METADATA=$oldMetadata}
+} finally {$env:SDGO_MANAGER_SERVICES=$oldLibrary;$env:PYINSTALLER_CONFIG_DIR=$oldCache;$env:SDGO_UNIT_CATALOG_BINARY=$oldUnitBinary;$env:SDGO_CAPSULE_REGISTRY_BINARY=$oldCapsuleBinary;$env:SDGO_COLLECTION_SUPPORT_BINARY=$oldCollectionSupport;$env:SDGO_MANAGER_METADATA=$oldMetadata}
 Get-Item -LiteralPath (Join-Path $build 'manager\SDGO Mod Manager.exe') | Select-Object FullName,Length

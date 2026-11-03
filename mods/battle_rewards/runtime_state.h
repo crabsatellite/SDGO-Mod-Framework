@@ -154,6 +154,11 @@ inline bool WorstCaseSafe(const Policy& source, uint32_t base_multiplier_micro,
 
     MatchContext context;
     context.human_count = 12;
+    if (policy.custom_human_multipliers) {
+        context.human_count=1;
+        for(unsigned i=1;i<12;++i)
+            if(policy.human_multipliers_micro[i]>policy.human_multipliers_micro[context.human_count-1])context.human_count=i+1;
+    }
     context.event_multiplier = 2;
     context.duration_seconds = policy.full_reward_seconds;
     context.bosses_defeated = 100;

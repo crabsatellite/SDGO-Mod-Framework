@@ -7,6 +7,12 @@ from tools import game_test
 HOST='[host]\nimage=WorldServer.exe\ntimestamp=0x548A86E3\nsize_of_image=0x0010C000\n'
 
 class ModSymbolPreparationTests(unittest.TestCase):
+    def test_shipped_shared_maps_have_no_duplicate_symbol_sections(self):
+        root=Path(__file__).resolve().parents[1]
+        for path in (root/'symbols').glob('*.ini'):
+            with self.subTest(map=path.name):
+                self.assertIn('host',game_test.read_ini(path))
+
     def test_matching_sidecar_satisfies_only_its_own_mod_and_stays_local(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);stage=root/'stage.ini';copied=root/'copied.ini'

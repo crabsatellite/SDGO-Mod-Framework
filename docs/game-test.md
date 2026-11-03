@@ -172,6 +172,17 @@ For a gun-fire regression, enable `BattlePlayerCombat` in the copied test observ
 weapon-change request, waits for the actual binding, and requires real ammunition consumption
 in addition to mapped input, movement and an attack state. The default `-1` keeps the current
 weapon. No weapon data, ammunition, cooldown or FSM state is forced by the probe.
+The same opt-in works for each actor in coordinated native SDK sessions. It applies
+only after that actor's bound room, pilot, battle sequence and original control
+release are observed, and releases input when settlement completes. It remains off
+by default.
+
+For collection quota rejection, use the pages-only collection-draw scenario with
+`CollectionExpectedStatus=6006` in the copied observer. Declare an already-exhausted
+quota in the isolated test database before launch. The same cases then require a
+real native purchase rejection and no prize; they do not claim a successful draw
+or delivery. Compare the native wallet, quota and prize-box rows before and after
+to verify the refund. Keep the default `0` for a separate successful draw/claim.
 
 `prepare --same-room-rematch` checks that the human retains room ownership after
 settlement, starts a second full battle in that same room, and leaves only after

@@ -36,7 +36,9 @@ def pool_hash(pool: dict) -> str:
                                      separators=(",", ":")).encode()).hexdigest()
 
 
-def installation(pool: dict, source_rows: list[dict], machine_id: int, *, unit_items: list[dict] | None = None) -> str:
+def installation(pool: dict, source_rows: list[dict], machine_id: int, *, unit_items: list[dict] | None = None,rules: dict | None=None) -> str:
+    from .rules import defaults,validate
+    rules=validate(rules or defaults());price=rules['price_gp']
     from .metadata import validate_source
     validate_source(source_rows)
     source = {r["UnitNumber"]: r for r in source_rows}
@@ -192,13 +194,14 @@ INSERT sdgo_collection_capsule.UnitSource(UnitID,TransformTo,Ready,UnitRank,Unit
     sql += f"""
 IF NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.State)
  INSERT sdgo_collection_capsule.State(Singleton,SchemaVersion,MachineID,PriceGP,PoolHash,Enabled)
- VALUES(1,3,{machine_id},100000,{literal(checksum)},1);
-ELSE UPDATE sdgo_collection_capsule.State SET SchemaVersion=3,PoolHash={literal(checksum)},Enabled=1 WHERE Singleton=1;
+ VALUES(1,3,{machine_id},{price},{literal(checksum)},1);
+ELSE UPDATE sdgo_collection_capsule.State SET SchemaVersion=3,PriceGP={price},PoolHash={literal(checksum)},Enabled=1 WHERE Singleton=1;
+EXEC(N'UPDATE sdgo_collection_capsule.State SET LimitPeriod=''{rules['limit_period']}'',DrawLimit={rules['draw_limit']},UtcOffsetMinutes={rules['utc_offset_minutes']} WHERE Singleton=1;');
 IF @previousCollectionSchema=1
  DELETE dbo.tbl_MachinePrice WHERE MachineID={machine_id};
 IF NOT EXISTS(SELECT 1 FROM dbo.tbl_ItemMachinePrice WHERE MachineID={machine_id})
- INSERT dbo.tbl_ItemMachinePrice(MachineID,Price,Disable,Type) VALUES({machine_id},100000,0,0);
-ELSE UPDATE dbo.tbl_ItemMachinePrice SET Disable=0 WHERE MachineID={machine_id};
+ INSERT dbo.tbl_ItemMachinePrice(MachineID,Price,Disable,Type) VALUES({machine_id},{price},0,0);
+ELSE UPDATE dbo.tbl_ItemMachinePrice SET Price={price},Disable=0 WHERE MachineID={machine_id};
 """
     sql += retire_history_tables()
     sql += """
@@ -219,7 +222,7 @@ def disable(machine_id: int) -> str:
     return f"""SET XACT_ABORT ON;BEGIN TRANSACTION;
 IF NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.State WHERE Singleton=1 AND SchemaVersion=3 AND MachineID={machine_id})
 BEGIN ROLLBACK;RAISERROR('Collection ownership differs',16,1);RETURN;END;
-IF EXISTS(SELECT 1 FROM dbo.tbl_ItemMachinePrice WHERE MachineID={machine_id} AND (Price<>100000 OR Type<>0 OR Disable<>0))
+IF EXISTS(SELECT 1 FROM dbo.tbl_ItemMachinePrice p JOIN sdgo_collection_capsule.State s ON s.MachineID=p.MachineID WHERE p.MachineID={machine_id} AND (p.Price<>s.PriceGP OR p.Type<>0 OR p.Disable<>0))
 BEGIN ROLLBACK;RAISERROR('Activity price was externally edited',16,1);RETURN;END;
 UPDATE sdgo_collection_capsule.State SET Enabled=0 WHERE Singleton=1;
 DELETE dbo.tbl_ItemMachinePrice WHERE MachineID={machine_id};
@@ -298,7 +301,7 @@ DECLARE @lock int;
 EXEC @lock=sys.sp_getapplock @Resource=N'sdgo.collection_capsule.install.v1',
  @LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=5000;
 IF @lock<0 RAISERROR('Collection install is busy',16,1);
-IF NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.State WHERE Singleton=1 AND SchemaVersion IN(2,3) AND PriceGP=100000)
+IF NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.State WHERE Singleton=1 AND SchemaVersion IN(2,3) AND PriceGP BETWEEN 1 AND 1000000000)
  RAISERROR('Installed activity capsule schema differs',16,1);
 """ + HERE.joinpath("schema.sql").read_text(encoding="utf-8") + retire_history_triggers() + module_updates() + HERE.joinpath("catalog_seed.sql").read_text(encoding="utf-8") + """
 UPDATE sdgo_collection_capsule.State SET SchemaVersion=3 WHERE Singleton=1;

@@ -7,7 +7,7 @@
   "hosts": [
     "battle"
   ],
-  "description": "配置战斗贡献、任务 MB 保底和按账号限次的每日/每周奖励；提供轻度养成方案。",
+  "description": "配置战斗贡献、人数倍率、日周目标，以及按账号跨服务器去重的每场/每日/每周聚会奖励。",
   "settings": [
     {
       "id": "runtime_directory",

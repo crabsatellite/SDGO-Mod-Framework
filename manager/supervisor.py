@@ -91,7 +91,7 @@ class ServiceRegistry:
                 for identity, entry in list(self.entries.items()):
                     if self.stop_event.is_set(): break
                     status=entry['controller'].state()
-                    if self.desired(identity) and status.get('running') and status.get('healthy') is False:
+                    if self.desired(identity) and status.get('running') and status.get('healthy') is False and not status.get('recovering'):
                         if entry['unhealthy_since'] is None:entry['unhealthy_since']=time.monotonic()
                         elif time.monotonic()-entry['unhealthy_since']>=15:
                             self.stop(identity,persist=False);entry['unhealthy_since']=None
@@ -108,3 +108,9 @@ class ServiceRegistry:
         if self.thread: self.thread.join(timeout=25)
         for identity in list(self.entries): self.stop(identity, persist=False)
         for identity in list(self.resources): self.release_resource(identity)
+
+    def prepare_restart(self):
+        """Let registered controllers hand off only their existing bounded leases."""
+        for entry in list(self.entries.values()):
+            prepare=getattr(entry['controller'],'prepare_restart',None)
+            if prepare:prepare()

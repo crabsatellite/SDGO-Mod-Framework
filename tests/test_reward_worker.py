@@ -97,5 +97,39 @@ class WorkerTests(unittest.TestCase):
             self.assertFalse(worker.process(path)); self.assertEqual(ledger.calls, 1)
             self.assertEqual(ledger.balance, 1250)
 
+    def test_transient_archive_sharing_does_not_reject_or_repeat_a_committed_credit(self):
+        with tempfile.TemporaryDirectory() as root:
+            ledger=Ledger();worker=WalletWorker(root,ledger);path=self.job(worker)
+            import os
+            original=os.replace;attempts=0
+            def replace(source,target):
+                nonlocal attempts
+                if Path(target).parent==worker.completed:
+                    attempts+=1
+                    if attempts==1:raise PermissionError('temporary native reader')
+                return original(source,target)
+            with patch('owner.rewards.worker.os.replace',side_effect=replace):
+                self.assertTrue(worker.poll())
+            self.assertEqual(attempts,2)
+            self.assertEqual(ledger.calls,1)
+            self.assertEqual(ledger.balance,1250)
+            self.assertFalse(path.exists())
+            self.assertTrue((worker.completed/path.name).exists())
+
+    def test_native_publisher_read_sharing_is_retried_before_marking_wallet_unhealthy(self):
+        with tempfile.TemporaryDirectory() as root:
+            ledger=Ledger();worker=WalletWorker(root,ledger);path=self.job(worker)
+            original=Path.read_bytes;attempts=0
+            def read(candidate):
+                nonlocal attempts
+                if candidate==path:
+                    attempts+=1
+                    if attempts==1:raise PermissionError('native publisher still holds the file')
+                return original(candidate)
+            with patch.object(Path,'read_bytes',read):self.assertTrue(worker.poll())
+            self.assertEqual(attempts,2)
+            self.assertEqual(ledger.calls,1)
+            self.assertEqual(worker.last_error,'')
+
 
 if __name__ == "__main__": unittest.main()

@@ -28,6 +28,8 @@ class Workspace:
             raise PermissionError('此信息仅在开发信息视图提供')
 
     def close(self):
+        from .update_restart import pending
+        if pending(self.root):self.services.prepare_restart()
         self.services.close()
         for provider in self.providers.values():
             with provider.lock:
