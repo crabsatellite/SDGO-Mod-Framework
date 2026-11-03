@@ -25,6 +25,8 @@
 #include "sdgo/mission_ai_client_observer.h"
 #include "gift_actions.h"
 #include "room_actions.h"
+#include "room_title_actions.h"
+#include "room_style_preview_actions.h"
 #include "tutorial_actions.h"
 #include "onboarding_actions.h"
 #include "onboarding_gate.h"
@@ -93,6 +95,10 @@ const void* roomListVtable=nullptr;
 const void* modalLoadingVtable=nullptr;
 GiftActions gifts;
 RoomActions rooms;
+RoomTitleActions roomTitles;
+bool roomTitlesOnly=false;
+uint32_t roomStylePreview=0;
+RoomStylePreviewActions roomStylePreviewActions;
 TutorialActions tutorial;
 OnboardingActions onboarding;
 SdgoPvpAiClientGetSnapshotV1Fn getSnapshot;
@@ -192,6 +198,13 @@ bool LoadPlan() {
     giftRequestsOnly = GetPrivateProfileIntW(L"run", L"gift_requests_only", 0, job.c_str()) != 0;
     deckOnly = GetPrivateProfileIntW(L"run", L"deck_only", 0, job.c_str()) != 0;
     pagesOnly = GetPrivateProfileIntW(L"run", L"pages_only", 0, job.c_str()) != 0;
+    roomTitlesOnly = GetPrivateProfileIntW(L"run", L"room_titles_only", 0, job.c_str()) != 0;
+    wchar_t stylePreview[16]{};
+    GetPrivateProfileStringW(L"run",L"room_style_preview",L"",stylePreview,16,job.c_str());
+    if (stylePreview[0]) {
+        roomStylePreview = !wcscmp(stylePreview,L"pvp") ? 1 : !wcscmp(stylePreview,L"mission") ? 2 : 0;
+        if (!roomStylePreview || !roomTitlesOnly) return false;
+    }
     wchar_t shopAssertions[128]{},shopDisplay[128]{};
     GetPrivateProfileStringW(L"run",L"shop_assertions_path",L"",shopAssertions,128,job.c_str());
     GetPrivateProfileStringW(L"run",L"shop_display_path",L"",shopDisplay,128,job.c_str());
@@ -216,7 +229,7 @@ bool LoadPlan() {
     }
     if(testUnitPresentations && !playUnitUid)return false;
     if(captureUnitPortraits && (!testUnitPresentations || !captureNativeFrames))return false;
-    if (static_cast<unsigned>(bootstrapOnly) + battleshipOnly + giftRequestsOnly + deckOnly + pagesOnly > 1) return false;
+    if (static_cast<unsigned>(bootstrapOnly) + battleshipOnly + giftRequestsOnly + deckOnly + pagesOnly + roomTitlesOnly > 1) return false;
     wchar_t relative[512] = {}, nonce[16] = {}, user[32] = {}, password[128] = {};
     GetPrivateProfileStringW(L"run", L"account_path", L"private/account.ini", relative, 512, job.c_str());
     std::wstring accountPath = relative;
@@ -302,7 +315,7 @@ bool LoadPlan() {
         wchar_t forbidden[128]{};
         if(GetPrivateProfileStringW(L"run",L"mode_sequence",L"",forbidden,128,job.c_str()) ||
             GetPrivateProfileStringW(L"run",L"expected_ai",L"",forbidden,128,job.c_str()))return false;
-        if(bootstrapOnly || battleshipOnly || giftRequestsOnly || deckOnly || pagesOnly || randomLoadout)return false;
+        if(bootstrapOnly || battleshipOnly || giftRequestsOnly || deckOnly || pagesOnly || roomTitlesOnly || randomLoadout)return false;
         return true;
     }
     wchar_t modes[128] = {};
@@ -992,6 +1005,13 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
         context->Assert(0, "the backend rejected initial-loading completion"); return SDGO_GAME_TEST_FAIL;
     }
     const auto inventory = onboarding.InventoryState();
+    if(roomTitlesOnly){
+        static uint32_t appSeen=UINT32_MAX,initializedSeen=UINT32_MAX,managerSeen=UINT32_MAX,capacitySeen=UINT32_MAX;
+        if(appSeen!=state.native_app_state || initializedSeen!=inventory.initialized || managerSeen!=inventory.manager_present || capacitySeen!=inventory.slot_capacity){
+            char message[192];sprintf_s(message,"room-title precondition app=%u inventory_manager=%u initialized=%u capacity=%u complete=%u owned=%u",state.native_app_state,inventory.manager_present,inventory.initialized,inventory.slot_capacity,inventory.scan_complete,inventory.owned_unit_count);context->Observe(message);
+            appSeen=state.native_app_state;initializedSeen=inventory.initialized;managerSeen=inventory.manager_present;capacitySeen=inventory.slot_capacity;
+        }
+    }
     static uint32_t previousOwned = UINT32_MAX;
     if (inventory.initialized && inventory.owned_unit_count != previousOwned) {
         char message[128]; sprintf_s(message, "real inventory owned=%u first_unit=%u slot=%u scanned=%u/%u", inventory.owned_unit_count, inventory.first_unit_id, inventory.first_unit_slot, inventory.slots_examined, inventory.slot_capacity);
@@ -1176,6 +1196,9 @@ int __cdecl ConfigureDeck(const SdgoGameTestContextV1* context) {
     }
     return SDGO_GAME_TEST_WAIT;
 }
+// Original startup/IME initialization can block main-thread dispatch for more
+// than two minutes on a busy native host. Login still requires the real ACK;
+// allow five minutes for initialization without changing room assertions.
 const SdgoGameTestCaseV1 deckCase{"setup.deck",180000,&ConfigureDeck};
 const SdgoGameTestCaseV1 battleshipCase{"flow.battleship",180000,&AcquireBattleship};
 const SdgoGameTestCaseV1 giftCase{"setup.gift_requests",360000,&SendGiftRequests};
@@ -1736,9 +1759,155 @@ const SdgoGameTestCaseV1 collectionCases[]={
     {"pages.collection.draw",120000,&DrawCollection},
     {"pages.collection.delivery",180000,&DeliverCollection},
 };
+int TitleCreateVs(const SdgoGameTestContextV1* c,uint32_t type,RoomTitleActions::Surface surface) {
+    if(!roomTitles.Running() && actions.AppState()==5){
+        static bool requested=false;
+        if(!requested){
+            const auto result=hangarNavigation.ClickBottomRadio(L"GameRoomRadio",0x48);
+            if(result>=HangarNavigation::kDownmenuServiceMismatch || result==HangarNavigation::kUnbound){c->Assert(0,"native GameRoomRadio must return from the owned-unit hangar before title tests");return SDGO_GAME_TEST_FAIL;}
+            if(result==HangarNavigation::kReady){requested=true;c->Observe("native GameRoomRadio requested after fixture unit selection");}
+        }
+        return SDGO_GAME_TEST_WAIT;
+    }
+    if(!roomTitles.Running() && actions.AppState()==6){
+        const auto channel=channels.EnsureVsType(type);
+        if(channel==ChannelActions::kNativeRequestPending)return SDGO_GAME_TEST_WAIT;
+        if(channel>=ChannelActions::kInvalidTarget){
+            const auto state=channels.State();
+            char line[160];sprintf_s(line,"native PvP channel result=%u selected=%u/%u target=%u/%u",channel,
+                state.selected_group,state.selected_channel,state.target_group,state.target_channel);
+            c->Observe(line);c->Assert(0,"native PvP channel selection failed");return SDGO_GAME_TEST_FAIL;
+        }
+        if(channel!=ChannelActions::kAccepted && channel!=ChannelActions::kAlreadySelected)return SDGO_GAME_TEST_WAIT;
+        if(channels.TakeSceneReloadRequirement())hangarNavigation.RequireGameRoomReentry(rooms.NativeRoomPageGeneration());
+        const auto result=hangarNavigation.EnsureGameRoom(roomListVtable,modalLoadingVtable,rooms.NativeRoomPageGeneration());
+        if(result!=HangarNavigation::kReady)return SDGO_GAME_TEST_WAIT;
+    }
+    return roomTitles.Poll(surface,c);
+}
+int __cdecl TitlePvpCreate(const SdgoGameTestContextV1* c){return TitleCreateVs(c,1,RoomTitleActions::PvpCreate);}
+int __cdecl TitleTeamCreate(const SdgoGameTestContextV1* c){return TitleCreateVs(c,1,RoomTitleActions::PvpTeamCreate);}
+int __cdecl TitleGridCreate(const SdgoGameTestContextV1* c){return TitleCreateVs(c,1,RoomTitleActions::PvpGridCreate);}
+int __cdecl TitlePvpRename(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::PvpRename,c);}
+int __cdecl TitleMissionCreate(const SdgoGameTestContextV1* c){
+    if(!roomTitles.Running()){
+        const auto result=mission.EnsureRoom(5,"GTRoomTitleInput",false);
+        if(result>=MissionFlowActions::kInvalidMode || result==MissionFlowActions::kUnbound){
+            c->Observe(MissionFlowActions::ResultName(result));c->Assert(0,"native mission channel admission failed");return SDGO_GAME_TEST_FAIL;
+        }
+        if(result!=MissionFlowActions::kCreateDialogReady)return SDGO_GAME_TEST_WAIT;
+    }
+    return roomTitles.Poll(RoomTitleActions::MissionCreate,c);
+}
+int __cdecl TitleTeamRename(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::TeamRename,c);}
+int __cdecl TitleTeamSettings(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::TeamSettings,c);}
+int __cdecl TitleMissionSettings(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::MissionSettings,c);}
+int __cdecl TitleMissionRename(const SdgoGameTestContextV1* c){return roomTitles.Poll(RoomTitleActions::MissionRename,c);}
+int __cdecl RoomStylePreview(const SdgoGameTestContextV1* c) {
+    return roomStylePreviewActions.Poll(c,roomStylePreview==2,actions,quietGraphics,sdgo_test::directory);
+}
+int __cdecl TitleLeave(const SdgoGameTestContextV1* c){
+    if(actions.AppState()==6){
+        std::array<char,513> title{};
+        const auto size=sdgo::CurrentRoomTitle(c->api->ModDirectory(sdgo_test::mod),title.data(),static_cast<uint32_t>(title.size()));
+        if(size && c->elapsed_ms<5000)return SDGO_GAME_TEST_WAIT;
+        c->Assert(1,"the original room-exit flow returned the client to its native lobby state");
+        c->Assert(size==0,"the previous room's confirmed full title is no longer active after leaving");
+        roomTitles.Reset();channels.Reset();return size?SDGO_GAME_TEST_FAIL:SDGO_GAME_TEST_PASS;
+    }
+    static uint64_t last=0;if(GetTickCount64()-last>2000){last=GetTickCount64();if(!rooms.Leave())roomTitles.Leave(c);}
+    return SDGO_GAME_TEST_WAIT;
+}
+int __cdecl TitleTeamNativeView(const SdgoGameTestContextV1* c) {
+    if(actions.AppState()!=18 || !rooms.IsModernTeamRoomReady())return SDGO_GAME_TEST_WAIT;
+    void* bar=roomTitles.Service("room_titles.ui_titlebar_vtable");
+    const auto* room=static_cast<const uint8_t*>(roomTitles.Root(bar,0x10C));
+    if(!bar || !room)return SDGO_GAME_TEST_WAIT;
+    char details[128];sprintf_s(details,"native Team model id=%u field4=%u host_state=%u",
+        *reinterpret_cast<const uint32_t*>(room),room[4],
+        *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(bar)+0x100));
+    if (!roomTitles.Running()) {
+        c->Observe(details);
+        c->Assert(1,"the created team uses its original modern3D Team manager and ready Main state");
+        c->Assert(roomTitles.Service("title_test.team_titlebar_vtable")==nullptr,
+                  "the legacy2D team settings header is absent from this supported modern room scene");
+    }
+    if (room[4]==4) {
+        c->Assert(1,"the native category-4 handler disables the inline rename entry");
+        return SDGO_GAME_TEST_PASS;
+    }
+    if (*reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(bar)+0x100)!=2)
+        return SDGO_GAME_TEST_WAIT;
+    // Factory type 1 identifies the Team manager, while model byte +4 comes
+    // from the server's room payload. Exercise the real inline editor when
+    // that native category permits it instead of assuming all Teams forbid it.
+    return roomTitles.Poll(RoomTitleActions::PvpRename,c);
+}
+int __cdecl TitleStartSmoke(const SdgoGameTestContextV1* c) {
+    static uint32_t startBaseline=0,sendBaseline=0,replyBaseline=0;
+    static uint64_t lastAttempt=0;
+    static bool requested=false;
+    static std::string confirmedTitle;
+    if (!c->tick) {
+        std::array<char,513> title{};
+        const auto size=sdgo::CurrentRoomTitle(c->api->ModDirectory(sdgo_test::mod),title.data(),static_cast<uint32_t>(title.size()));
+        c->Assert(size>20,"battle-start smoke begins with the server-confirmed extended native input");
+        if (size<=20) return SDGO_GAME_TEST_FAIL;
+        confirmedTitle.assign(title.data(),size);
+        startBaseline=mission.NativeStartConsumedSequence();
+        sendBaseline=actions.GameStartSendCount();replyBaseline=rooms.NativeStartReplySequence();
+        requested=false;lastAttempt=0;
+    }
+    if (rooms.NativeStartReplySequence()>replyBaseline && rooms.NativeStartReplyError()!=0) {
+        char failure[96];sprintf_s(failure,"native long-title battle start rejected: 07B5/%04X",rooms.NativeStartReplyError());
+        c->Assert(0,failure);return SDGO_GAME_TEST_FAIL;
+    }
+    if ((!requested || (actions.GameStartSendCount()==sendBaseline && c->elapsed_ms-lastAttempt>=1000 &&
+                       rooms.NativeStartQueueState()==0 && rooms.NativeStartPrerequisite()==0)) && rooms.StartBattleNativeHost()) {
+        requested=true;lastAttempt=c->elapsed_ms;
+        c->Observe("original room-host Start business requested for the confirmed long-title AI room");
+    }
+    if (actions.AppState()!=22 || mission.NativeStartConsumedSequence()<=startBaseline ||
+        actions.GameStartSendCount()<=sendBaseline)
+        return SDGO_GAME_TEST_WAIT;
+    std::array<char,513> current{};
+    const auto size=sdgo::CurrentRoomTitle(c->api->ModDirectory(sdgo_test::mod),current.data(),static_cast<uint32_t>(current.size()));
+    c->Assert(actions.AppState()==22 && mission.NativeStartConsumedSequence()>startBaseline &&
+                  actions.GameStartSendCount()>sendBaseline,
+              "a real server battle-start packet admitted the long-title room into native GAME_MAIN");
+    c->Assert(std::string(current.data(),size)==confirmedTitle,"the confirmed full title survives the genuine battle-start transition");
+    c->Observe("bounded battle-start smoke only; combat, results and natural battle return are not claimed");
+    return SDGO_GAME_TEST_PASS;
+}
+const SdgoGameTestCaseV1 titleCases[]={
+    {"room_titles.pvp.create",120000,&TitlePvpCreate},
+    {"room_titles.pvp.rename",120000,&TitlePvpRename},
+    {"room_titles.pvp.leave",60000,&TitleLeave},
+    {"room_titles.grid.create",120000,&TitleGridCreate},
+    {"room_titles.grid.rename",120000,&TitlePvpRename},
+    {"room_titles.grid.leave",60000,&TitleLeave},
+    {"room_titles.mission.create",180000,&TitleMissionCreate},
+    {"room_titles.mission.rename",120000,&TitleMissionRename},
+    {"room_titles.mission.leave",60000,&TitleLeave},
+    {"room_titles.team.create",120000,&TitleTeamCreate},
+    {"room_titles.team.native_view",60000,&TitleTeamNativeView},
+    {"room_titles.team.leave",60000,&TitleLeave},
+    {"room_titles.start.create",120000,&TitleGridCreate},
+    {"room_titles.start.rename",120000,&TitlePvpRename},
+    {"room_titles.start",180000,&TitleStartSmoke},
+};
+// These original windows belong to the compiled legacy APP14/APP16 graph.
+// Current creation success always enters APP18, whose mission rename uses
+// TitleDlg instead. Retain legacy adapters with the protocol/ABI regressions;
+// do not construct hidden scenes to manufacture end-to-end coverage.
+const SdgoGameTestCaseV1 legacyTitleCases[]={
+    {"room_titles.team.settings",120000,&TitleTeamSettings},
+    {"room_titles.team.rename",120000,&TitleTeamRename},
+    {"room_titles.mission.settings",120000,&TitleMissionSettings},
+};
 const SdgoGameTestCaseV1 realCases[] = {
     {"framework.bootstrap", 60000, &Bootstrap},
-    {"flow.login", 120000, &Login},
+    {"flow.login", 300000, &Login},
     {"flow.onboarding", 180000, &Onboarding},
     {"pvp.room", 120000, &Room},
     {"pvp.start", 120000, &Start},
@@ -1833,6 +2002,18 @@ void RegisterPlannedCases() {
         provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
     }
     if (bootstrapOnly) { provider.count = 3; return; }
+    if (roomTitlesOnly) {
+        static_cast<void>(legacyTitleCases);
+        plannedCases.assign(realCases,realCases+3);
+        if(playUnitUid)plannedCases.push_back(playUnitCase);
+        if (roomStylePreview) {
+            plannedCases.push_back(roomStylePreview==2 ? titleCases[6] : titleCases[0]);
+            plannedCases.push_back({roomStylePreview==2 ? "room_style.mission.preview" : "room_style.pvp.preview", 90000, &RoomStylePreview});
+            provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+        }
+        plannedCases.insert(plannedCases.end(),std::begin(titleCases),std::end(titleCases));
+        provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+    }
     if (pagesOnly) {
         plannedCases.assign(realCases,realCases+3);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
@@ -1909,10 +2090,11 @@ void PublishQuietSocketReceipt(bool force) {
     const auto temporary=path+L".tmp";
     FILE* file=_wfopen(temporary.c_str(),L"wb");
     if (!file)return;
-    fprintf(file,"[run]\nid=%s\n[policy]\npid=%lu\nactive=%u\nloopback_only=%u\n[sockets]\nbinds=%u\nredirected=%u\nfailed=%u\nescaped=%u\n[audio]\nactive=%u\nopened=%u\nmuted=%u\nfailed=%u\n",
+    fprintf(file,"[run]\nid=%s\n[policy]\npid=%lu\nactive=%u\nloopback_only=%u\n[sockets]\nbinds=%u\nredirected=%u\nfailed=%u\nescaped=%u\n[audio]\nactive=%u\nopened=%u\nmuted=%u\nfailed=%u\nopen_failed=%u\n",
         sdgo_test::runId.c_str(),GetCurrentProcessId(),observed.active,quietLoopback ? 1u:0u,observed.binds,observed.redirected,observed.failed,observed.escaped,
-        audio.active,audio.opened,audio.muted,audio.failed);
+        audio.active,audio.opened,audio.muted,audio.failed,audio.open_failed);
     fprintf(file,"[graphics]\nactive=%u\nworker_ready=%u\ndispatch_failures=%u\ncreated_devices=%u\nfailed_devices=%u\ncreate_hresult=%ld\npresents=%u\nsuccessful_presents=%u\npresent_qpc_frequency=%llu\nsuccessful_present_min_gap_ticks=%llu\nsuccessful_present_max_gap_ticks=%llu\nproxy_hwnd=%lu\nproxy_visible=%u\nproxy_noactivate=%u\nproxy_toolwindow=%u\nproxy_appwindow=%u\n",
+
         graphics.active,graphics.worker_ready,graphics.dispatch_failures,graphics.created_devices,graphics.failed_devices,
         static_cast<long>(graphics.last_create_hresult),graphics.presents,graphics.successful_presents,
         static_cast<unsigned long long>(graphics.present_qpc_frequency),
@@ -2039,13 +2221,23 @@ void __fastcall Update(uint8_t* app, void*) {
 }
 }
 SDGO_GAME_TEST_PROVIDER_ENTRY { return &provider; }
+extern "C" __declspec(dllexport) int __cdecl SdgoGameTestCaptureFrameV1(const wchar_t* path) {
+    return quietGraphics.RequestFrameCapture(path) ? 1 : 0;
+}
+extern "C" __declspec(dllexport) LONG __cdecl SdgoGameTestCaptureStatusV1(HRESULT* result) {
+    return quietGraphics.FrameCaptureState(result);
+}
 SDGO_MOD_ENTRY {
     if (!sdgo_test::Open(api, mod, "client")) return 0;
     const bool loaded = LoadPlan();
     if (verifyQuietRuntime) {
-        if (!quietAudio.Install(api,mod) || (quietLoopback && !quietSockets.Install(api,mod)) ||
-            !api->HookImport(mod,"user32.dll","MessageBoxW",reinterpret_cast<void*>(&QuietMessageBoxW),reinterpret_cast<void**>(&originalMessageBoxW)) ||
-            !api->HookImport(mod,"user32.dll","MessageBoxA",reinterpret_cast<void*>(&QuietMessageBoxA),reinterpret_cast<void**>(&originalMessageBoxA)))return 0;
+        // DLLs have their own import tables. Observe every dialog in this
+        // isolated test process so a Mod cannot leak a desktop prompt while
+        // the runner waits for its assertion failure.
+        if (api->size < offsetof(SdgoApi,HookSystemExport)+sizeof(api->HookSystemExport) || !api->HookSystemExport ||
+            !quietAudio.Install(api,mod) || (quietLoopback && !quietSockets.Install(api,mod)) ||
+            !api->HookSystemExport(mod,L"user32.dll","MessageBoxW",reinterpret_cast<void*>(&QuietMessageBoxW),reinterpret_cast<void**>(&originalMessageBoxW)) ||
+            !api->HookSystemExport(mod,L"user32.dll","MessageBoxA",reinterpret_cast<void*>(&QuietMessageBoxA),reinterpret_cast<void**>(&originalMessageBoxA)))return 0;
         PublishQuietSocketReceipt();
     }
     // Map 0 selects the game's normal quick-room random-map policy; the
@@ -2065,7 +2257,7 @@ SDGO_MOD_ENTRY {
         passwordIsMd5};
     if (!loaded || !actions.Bind(api, mod, config) ||
         (!missionMode && !channels.Bind(api, mod, &actions)) ||
-        (missionMode && !mission.Bind(api,mod,&actions)) ||
+        ((missionMode || roomTitlesOnly) && !mission.Bind(api,mod,&actions)) ||
         !battleships.Bind(api,mod,&actions) || !gifts.Bind(api,mod,&actions) ||
         (deckOnly && !decks.Bind(api,mod,&actions)) ||
         (!hangarNavigation.Bind(api,mod,&actions)) ||
@@ -2081,6 +2273,7 @@ SDGO_MOD_ENTRY {
         ((randomLoadout || playUnitUid) && !activeSelection.Bind(api,mod)) ||
         (testShopCatalog && (!shopCatalog.Bind(api,mod) || !shopCatalog.Configure(
             sdgo_test::directory+L"\\inputs\\shop-assertions.ini",sdgo_test::directory+L"\\inputs\\shop-runtime-display.ini"))) ||
+        (roomTitlesOnly && !roomTitles.Bind(api,mod,&actions)) ||
         (!missionMode && !rooms.Bind(api, mod, &actions, config)) ||
         !tutorial.Bind(api, mod, &actions) || !onboarding.Bind(api, mod, &actions))
         sdgo_test::Fail("normal-flow native request bindings or private account configuration are unavailable");

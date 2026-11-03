@@ -6,7 +6,7 @@ from importlib import metadata
 root = Path(SPECPATH).parent
 library = Path(os.environ['SDGO_MANAGER_SERVICES'])
 data = [(str(root/'manager/static'),'manager/static'),
-        (str(root/'manager/repository.json'),'manager'),
+        (os.environ.get('SDGO_MANAGER_METADATA',str(root/'manager/repository.json')),'manager'),
         (str(root/'manager/addons'),'manager/addons'),
         (str(root/'manager/engines/operators/resources'),'manager/engines/operators/resources'),
         (str(root/'manager/engines/operators/Install-Operator.ps1'),'manager/engines/operators'),

@@ -32,7 +32,7 @@ class CatalogTests(unittest.TestCase):
         c = catalog.read_catalog(self.root)
         self.assertTrue({"findwindow_fix", "ime_fix", "startup_crash_fix", "pvp_ai", "match_ai", "coop_ai", "mission_ai", "net_probe"}.issubset({m["id"] for m in c["mods"]}))
         self.assertEqual(set(c["features"]["pvp-ai"]["mods"]), {"pvp_ai", "match_ai"})
-        self.assertEqual(c["features"]["pvp-ai"]["channel"], "beta")
+        self.assertEqual(c["features"]["pvp-ai"]["channel"], "stable")
         self.assertEqual(c["features"]["room-random"]["mods"], ["room_random", "room_random_client"])
         self.assertEqual(c["features"]["room-random"]["category"], "gameplay")
         self.assertEqual(c["features"]["room-random"]["activation"], "room-title")
@@ -42,6 +42,15 @@ class CatalogTests(unittest.TestCase):
         c = catalog.select_catalog(catalog.read_catalog(self.root), "base")
         self.assertTrue({"findwindow_fix", "ime_fix", "startup_crash_fix"}.issubset({m["id"] for m in c["mods"]}))
         self.assertTrue(all(m["category"] == "fixes" for m in c["mods"]))
+
+    def test_shop_localization_is_an_optional_manager_registered_client_feature(self):
+        c=catalog.read_catalog(self.root)
+        mod=next(m for m in c['mods'] if m['id']=='shop_localization')
+        self.assertEqual(mod['category'],'gameplay')
+        self.assertEqual(mod['target'],'client')
+        self.assertIn('zh-CN.ini',mod['files'])
+        base=catalog.select_catalog(c,'base')
+        self.assertNotIn('shop_localization',{m['id'] for m in base['mods']})
 
     def test_shop_components_are_classified_and_generated_helper_is_declared(self):
         c = catalog.read_catalog(self.root)
@@ -111,11 +120,11 @@ class CatalogTests(unittest.TestCase):
 
     def test_category_is_independent_of_beta(self):
         c = catalog.read_catalog(self.root)
-        self.assertEqual(c["features"]["pvp-ai"]["category"], "gameplay")
+        self.assertEqual(c["features"]["collection-capsule"]["category"], "gameplay")
         self.assertNotIn("beta", c["categories"])
 
     def test_feature_halves_must_agree(self):
-        self.replace("mods/pvp_ai/mod.ini", "channel=beta", "channel=stable")
+        self.replace("mods/pvp_ai/mod.ini", "channel=stable", "channel=beta")
         with self.assertRaisesRegex(ValueError, "disagrees"):
             catalog.read_catalog(self.root)
 
@@ -150,7 +159,7 @@ class CatalogTests(unittest.TestCase):
             catalog.read_catalog(self.root)
 
     def test_readme_beta_label_is_checked(self):
-        self.replace("README.md", "PvP AI (Beta)", "PvP AI")
+        self.replace("README.md", "Collection capsule (Beta)", "Collection capsule")
         with self.assertRaisesRegex(ValueError, "channel"):
             catalog.read_catalog(self.root)
 

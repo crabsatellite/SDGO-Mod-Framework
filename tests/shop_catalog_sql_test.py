@@ -172,7 +172,7 @@ def main():
     products = [dict(key="lease", product_id=1019001, item_id="190001", template_id=1010001,
                     category_id=1110549, price=9900, currency="MB", validity=7, name="中文租赁商品", label="租赁 7 天", enabled=True, retired=False),
                 dict(key="permanent", product_id=1019002, item_id="190002", template_id=1010001,
-                    category_id=1120022, price=500, currency="GB", validity=1, name="O'Hara'; SELECT 1--", label="永久机体", enabled=True, retired=False)]
+                    category_id=1120022, price=500, currency="GB", validity=1, name="中文 O'Hara'; SELECT 1--", label="永久机体", enabled=True, retired=False)]
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
     import shop_catalog as model
     data = {"schema_version": 1, "catalog_id": "integration", "products": products}
@@ -205,6 +205,15 @@ def main():
     managed = rows(t)
     check(len(managed) == 2 and managed[0]["f_validity"] == 7, "actual_32bit_native_engine_applies_definitions")
     check(managed[0]["f_itemNm"] == "租赁 7 天", "Unicode_survives_real_SQL_storage")
+    display = (args.output / "runtime-display.ini").read_text(encoding="utf-16")
+    check("[product:1019001]" in display and "Name=中文租赁商品" in display and "TemplateId=1010001" in display,
+          "published_client_profile_contains_guarded_Chinese_parent_display_definitions")
+    original_name = products[0]["name"]
+    products[0]["name"] = "English only title"
+    run(False)
+    t.execute("SELECT f_itemNm FROM dbo.tbls_StoreItems WHERE f_productid=1019001")
+    check(t.fetchone()[0] == original_name, "native_helper_refuses_nonChinese_title_before_database_changes")
+    products[0]["name"] = original_name
     t.execute("SELECT f_imgIitemid FROM dbo.tbls_SubItems WHERE f_reProductID IN (1019001,1019002)")
     check(all(str(r[0]).strip() == "0" for r in t.fetchall()), "new_options_use_native_category_image_default")
     ids = [r["f_itemtblidx"] for r in managed]
@@ -266,7 +275,9 @@ def main():
     catalog.write_text("[shop]\nSchema=1\nCatalogId=integration\nRevision=disable-test\n[product:broken]\nPrice=bad\n", encoding="utf-16")
     disabled = subprocess.run([str(args.exe.resolve()), "--host-ini", str(billing_ini.resolve()), "--catalog", str(catalog.resolve()),
                                "--output", str(args.output.resolve()), "--disable"], capture_output=True, timeout=45)
-    check(disabled.returncode == 0, "disable_works_with_invalid_products_and_no_game_connection")
+    if disabled.returncode:
+        raise AssertionError("disable_works_with_invalid_products_and_no_game_connection: " + disabled.stderr.decode("utf-8", errors="replace"))
+    check(True, "disable_works_with_invalid_products_and_no_game_connection")
     t.execute("SELECT COUNT(*) FROM dbo.tbls_StoreItems p JOIN dbo.sdgo_ShopCatalog s ON s.ProductId=p.f_productid WHERE s.CatalogId=N'integration' AND p.f_display='1'")
     check(t.fetchone()[0] == 0, "disable_retires_all_owned_products")
     # Restore a valid profile so the separate DLL ABI harness can also run.
