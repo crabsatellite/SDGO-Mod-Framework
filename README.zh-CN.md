@@ -27,7 +27,7 @@ Stable 表示当前基本功能已验证可用，后续 Bug 通过新版本修�
 | 军衔回退修复 <!-- catalog: `rank_progression_fix` --> | 防止战斗结算降低已有军衔（WorldServer） | [使用说明](docs/rank-progression-fix.zh-CN.md) |
 | 好友列表修复 <!-- catalog: `friend_list_fix`、`friend_list_client_fix` --> | 保留离线好友与当前角色名，恢复原生好友聊天界面 | [使用说明](docs/friend-list-fix.zh-CN.md) |
 | 新账号起始资料修复 <!-- catalog: `new_account_profile` --> | 可配置的初始 GP、点券、军衔和赠送机体，替代原服的 9,999,999 / 15 级 | [使用说明](docs/new-account-profile.zh-CN.md) |
-| 商城租赁与中文选项修复 <!-- catalog: `shop_labels` --> | 商城中显示可读的租赁/永久标签和中文选项名 | [使用说明](docs/shop-labels.zh-CN.md) |
+| 商城租赁与中文选项修复 <!-- catalog: `shop_labels` --> | 显示租赁/永久、实际数量和中文选项，保持有效期数字完整 | [使用说明](docs/shop-labels.zh-CN.md) |
 
 <!-- /mod-category:fixes -->
 
@@ -53,7 +53,7 @@ Stable 表示当前基本功能已验证可用，后续 Bug 通过新版本修�
 | 每日双倍时间 <!-- catalog: `daily_rewards` --> | 每天固定时段（默认 18:00–22:00）战斗 GB 和经验翻倍 | [使用说明](docs/daily-rewards.zh-CN.md) |
 | 保管库一键领取 <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
 
-| 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化商品说明与机库确认名称，支持中文搜索及等级、币种组合筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
+| 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化列表、购买/赠送名称、多类别说明与机库确认，支持中文组合筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
 | 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 保管库接受或退还原机体，保留赠送来源与寄语；公开配置默认关闭新赠送 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
 
 | 机体族导入（Beta） <!-- catalog: `unit_catalog` --> | 在 Mod Manager 导入机体包，补齐信息并生成两端定义、图鉴和商城／扭蛋资源 | [使用](docs/unit-import.zh-CN.md) |

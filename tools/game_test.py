@@ -1243,7 +1243,21 @@ def load_shop_test_inputs(assertions_path: Path, display_path: Path) -> dict:
         if not section.startswith("product:"):
             raise GameTestError("shop assertions contain an unsupported section")
         _shop_key("shop product key", section[len("product:"):])
-        product = _exact_ini_keys(assertions, section, product_keys | ({'Query'} if visual_only and assertions.has_option(section,'Query') else set()), "shop assertions")
+        tooltip_keys={'TooltipDescriptionHex','TooltipUsageHex','TooltipUnit'}
+        present_tooltip={k for k in tooltip_keys if assertions.has_option(section,k)}
+        if present_tooltip and (not visual_only or present_tooltip!=tooltip_keys):
+            raise GameTestError('tooltip visual assertions require the complete sealed visual scope')
+        product = _exact_ini_keys(assertions, section, product_keys | present_tooltip | ({'Query'} if visual_only and assertions.has_option(section,'Query') else set()), "shop assertions")
+        if present_tooltip:
+            if product['TooltipUnit'] not in ('0','1'):
+                raise GameTestError('tooltip kind must be native unit or item')
+            for key in ('TooltipDescriptionHex','TooltipUsageHex'):
+                raw=product[key]
+                if len(raw)>16384 or len(raw)%4 or not re.fullmatch('[0-9a-fA-F]*',raw):
+                    raise GameTestError('tooltip expected text must be bounded UTF-16LE hex')
+                try: decoded=bytes.fromhex(raw).decode('utf-16le')
+                except UnicodeDecodeError as error: raise GameTestError('invalid tooltip expected text') from error
+                if '\0' in decoded: raise GameTestError('tooltip expected text cannot contain NUL')
         if 'Query' in product and (not product['Query'] or len(product['Query'].encode('utf-16le'))>72 or any(c in product['Query'] for c in '\r\n\0')):
             raise GameTestError('product visual query must be bounded native input text')
         product_id = _shop_integer(f"{section}.ProductId", product["ProductId"], 1, 2**31 - 1)
