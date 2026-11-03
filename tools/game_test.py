@@ -718,6 +718,27 @@ def allow_named_desktop_fallback(metadata: dict) -> bool:
         return False
 
 
+def stop_owned_entry(process) -> bool:
+    if process is None or process.poll() is not None:
+        return False
+    try:
+        process.kill()
+        process.wait(timeout=10)
+        return False
+    except (TimeoutError, subprocess.TimeoutExpired):
+        # Termination can be asynchronous while native COM/graphics threads
+        # finish. A second bounded wait accepts only a signaled process.
+        process.wait(timeout=30)
+        if process.poll() is None:
+            raise
+        return True
+    except OSError:
+        process.wait(timeout=10)
+        if process.poll() is None:
+            raise
+        return True
+
+
 class QuietRuntime:
     def __init__(self,metadata: dict,receipt_dir: Path):
         self.metadata=metadata;self.directory=receipt_dir;self.process=None;self.firewall=None;self.firewall_attempted=False
@@ -3540,15 +3561,8 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
             try:action()
             except Exception as error:cleanup_errors.append(f'{label}: {type(error).__name__}: {error}')
         def stop_entry():
-            if entry_process and entry_process.poll() is None:
-                try:entry_process.kill()
-                except OSError:
-                    # Windows can reject a second termination while the first
-                    # exit is still pending. Accept only a confirmed exit.
-                    entry_process.wait(timeout=10)
-                    if entry_process.poll() is None:raise
-                    return
-                entry_process.wait(timeout=10)
+            if stop_owned_entry(entry_process):
+                metadata['execution']['entry_stop_wait_retried']=True
         if game_process:
             if entry_process and game_process["pid"] == entry_process.pid:
                 cleanup('owned game stop',stop_entry)
