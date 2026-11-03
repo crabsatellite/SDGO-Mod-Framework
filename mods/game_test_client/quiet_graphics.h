@@ -46,6 +46,7 @@ public:
         uint64_t successful_present_min_gap_ticks;
         uint64_t successful_present_max_gap_ticks;
         uint32_t dispatch_message_pumps;
+        uint32_t worker_messages,worker_last_message,worker_requests,worker_busy;
     };
 
     bool Install(const SdgoApi* api,SdgoMod* mod,bool allowNamedDesktopFallback=false) {
@@ -95,7 +96,8 @@ public:
             reinterpret_cast<uintptr_t>(InterlockedCompareExchangePointer(
                 &lastRenderTargetReturnAddress_,nullptr,nullptr)),Read(namedDesktopFallback_),
             1,Read64(presentQpcFrequency_),Read64(successfulPresentMinGap_),
-            Read64(successfulPresentMaxGap_),Read(dispatchMessagePumps_)
+            Read64(successfulPresentMaxGap_),Read(dispatchMessagePumps_),
+            Read(workerMessages_),Read(workerLastMessage_),Read(workerRequests_),Read(workerBusy_)
         };
     }
 
@@ -123,6 +125,7 @@ private:
         HANDLE done;
         volatile LONG references;
         void(*destroy)(void*);
+        const char* description;
     };
     using DeviceReleaseFn=ULONG(STDMETHODCALLTYPE*)(IDirect3DDevice9*);
     using DeviceCooperativeFn=HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9*);
@@ -179,13 +182,14 @@ private:
         item->invoke=reinterpret_cast<DispatchFn>(typedInvoke);
         item->payload=payload;item->done=done;item->references=2;
         item->destroy=[](void* value){delete static_cast<Request*>(value);};
+        item->description=__FUNCSIG__;
         EnterCriticalSection(&dispatchLock_);
         if(dispatchBroken_) {
             LeaveCriticalSection(&dispatchLock_);
             ReleaseItem(item);ReleaseItem(item);return false;
         }
         InterlockedExchange(&dispatchCallerThread_,caller);
-        pending_=item;SetEvent(requestEvent_);
+        InterlockedExchangePointer(&pending_,item);SetEvent(requestEvent_);
         HANDLE waits[2]={done,worker_};
         const ULONGLONG deadline=GetTickCount64()+DispatchTimeoutMs;
         DWORD wait=WAIT_FAILED;
@@ -209,10 +213,20 @@ private:
         else {
             InterlockedExchange(&dispatchBroken_,1);
             InterlockedIncrement(&dispatchFailures_);
+            FILETIME created{},exited{},kernel{},user{};
+            GetThreadTimes(worker_,&created,&exited,&kernel,&user);
+            const auto milliseconds=[](FILETIME value){return
+                ((static_cast<unsigned long long>(value.dwHighDateTime)<<32)|value.dwLowDateTime)/10000;};
+            const auto active=static_cast<const char*>(InterlockedCompareExchangePointer(&activeOperation_,nullptr,nullptr));
             if(api_ && api_->Log)api_->Log(mod_,SDGO_LOG_ERROR,
-                "quiet graphics dispatch incomplete wait=%lu caller=%lu worker=%lu operation=%s",
+                "quiet graphics dispatch incomplete wait=%lu caller=%lu worker=%lu "
+                "messages=%lu last_message=%04lX requests=%lu busy=%lu cpu_ms=%llu/%llu "
+                "queued_operation=%s active_operation=%s",
                 static_cast<unsigned long>(wait),static_cast<unsigned long>(caller),
-                static_cast<unsigned long>(proxyThreadId_),__FUNCSIG__);
+                static_cast<unsigned long>(proxyThreadId_),static_cast<unsigned long>(Read(workerMessages_)),
+                static_cast<unsigned long>(Read(workerLastMessage_)),static_cast<unsigned long>(Read(workerRequests_)),
+                static_cast<unsigned long>(Read(workerBusy_)),milliseconds(kernel),milliseconds(user),
+                __FUNCSIG__,active ? active:"none");
         }
         InterlockedExchange(&dispatchCallerThread_,0);
         LeaveCriticalSection(&dispatchLock_);
@@ -227,6 +241,17 @@ private:
     static void Complete(DispatchItem* item) {
         SetEvent(item->done);
         ReleaseItem(item);
+    }
+    void InvokePending() {
+        auto* item=static_cast<DispatchItem*>(InterlockedExchangePointer(&pending_,nullptr));
+        if(!item)return;
+        InterlockedExchangePointer(&activeOperation_,const_cast<char*>(item->description));
+        InterlockedExchange(&workerBusy_,1);
+        item->invoke(this,item->payload);
+        InterlockedIncrement(&workerRequests_);
+        InterlockedExchange(&workerBusy_,0);
+        InterlockedExchangePointer(&activeOperation_,nullptr);
+        Complete(item);
     }
     static LRESULT CALLBACK ProxyWindowProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam) {
         return DefWindowProcW(window,message,wparam,lparam);
@@ -283,13 +308,15 @@ private:
         InterlockedExchange(&workerReady_,1);SetEvent(workerReadyEvent_);
         HANDLE handles[1]={requestEvent_};MSG message{};
         for (;;) {
-            const DWORD wait=MsgWaitForMultipleObjects(1,handles,FALSE,INFINITE,QS_ALLINPUT);
+            const DWORD wait=MsgWaitForMultipleObjectsEx(1,handles,INFINITE,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
             if (wait==WAIT_OBJECT_0) {
-                DispatchItem* item=const_cast<DispatchItem*>(pending_);
-                pending_=nullptr;
-                if (item) {item->invoke(this,item->payload);Complete(item);}
+                InvokePending();
             } else if (wait==WAIT_OBJECT_0+1) {
-                while (PeekMessageW(&message,nullptr,0,0,PM_REMOVE)) {
+                for(unsigned batch=0;batch<32;++batch) {
+                    if(WaitForSingleObject(requestEvent_,0)==WAIT_OBJECT_0) {InvokePending();break;}
+                    if(!PeekMessageW(&message,nullptr,0,0,PM_REMOVE))break;
+                    InterlockedIncrement(&workerMessages_);
+                    InterlockedExchange(&workerLastMessage_,static_cast<LONG>(message.message));
                     TranslateMessage(&message);DispatchMessageW(&message);
                 }
             } else break;
@@ -1132,7 +1159,9 @@ private:
     HMODULE imm32Module_=nullptr;
     CRITICAL_SECTION dispatchLock_{};
     HANDLE requestEvent_=nullptr,workerReadyEvent_=nullptr,worker_=nullptr;
-    volatile DispatchItem* pending_=nullptr;
+    PVOID volatile pending_=nullptr;
+    PVOID volatile activeOperation_=nullptr;
+    mutable volatile LONG workerMessages_=0,workerLastMessage_=0,workerRequests_=0,workerBusy_=0;
     mutable volatile LONG workerReady_=0,imeDisabled_=0;
     volatile LONG dispatchBroken_=0;
     volatile LONG dispatchCallerThread_=0;

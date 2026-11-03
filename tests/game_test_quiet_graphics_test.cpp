@@ -55,10 +55,31 @@ ULONG STDMETHODCALLTYPE FakeDeviceRelease(IDirect3DDevice9* raw) {
 HWND cooperativeCallbackWindow=nullptr;
 volatile LONG cooperativeSentCallbacks=0,cooperativePostedCallbacks=0;
 bool cooperativeSentCompleted=false;
+WNDPROC cooperativeFloodOriginalProc=nullptr;
+HANDLE cooperativeFloodStarted=nullptr,cooperativeFloodStop=nullptr;
+volatile LONG cooperativeFloodEnabled=0,cooperativeFloodMessages=0;
 LRESULT CALLBACK CooperativeWindowProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam) {
     if(message==WM_APP+71){InterlockedIncrement(&cooperativeSentCallbacks);return 0x53;}
     if(message==WM_APP+72){InterlockedIncrement(&cooperativePostedCallbacks);return 0;}
     return DefWindowProcW(window,message,wparam,lparam);
+}
+LRESULT CALLBACK CooperativeFloodWindowProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam) {
+    if(message==WM_APP+73) {
+        InterlockedIncrement(&cooperativeFloodMessages);
+        if(cooperativeFloodStarted)SetEvent(cooperativeFloodStarted);
+        if(InterlockedCompareExchange(&cooperativeFloodEnabled,0,0))
+            PostMessageW(window,WM_APP+73,0,0);
+        return 0;
+    }
+    return cooperativeFloodOriginalProc
+        ? CallWindowProcW(cooperativeFloodOriginalProc,window,message,wparam,lparam)
+        : DefWindowProcW(window,message,wparam,lparam);
+}
+DWORD WINAPI StopCooperativeFlood(void*) {
+    if(cooperativeFloodStop)WaitForSingleObject(cooperativeFloodStop,2000);
+    else Sleep(2000);
+    InterlockedExchange(&cooperativeFloodEnabled,0);
+    return 0;
 }
 HRESULT STDMETHODCALLTYPE FakeCooperativeLevel(IDirect3DDevice9*) {
     lastWorkerThread=GetCurrentThreadId();
@@ -379,6 +400,46 @@ int main() {
         if(!PeekMessageW(&untouched,sourceWindow,WM_APP+72,WM_APP+72,PM_REMOVE) ||
            cooperativePostedCallbacks!=0)++failures;
         if(oldWindowProc)SetWindowLongPtrW(sourceWindow,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(oldWindowProc));
+        SetLastError(ERROR_SUCCESS);
+        cooperativeFloodOriginalProc=reinterpret_cast<WNDPROC>(SetWindowLongPtrW(
+            state.proxy_hwnd,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(&CooperativeFloodWindowProc)));
+        const DWORD floodSubclassError=GetLastError();
+        cooperativeFloodStarted=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+        cooperativeFloodStop=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+        HANDLE floodStopThread=nullptr;
+        bool floodReady=cooperativeFloodOriginalProc || floodSubclassError==ERROR_SUCCESS;
+        if(floodReady && cooperativeFloodStarted && cooperativeFloodStop) {
+            InterlockedExchange(&cooperativeFloodEnabled,1);
+            InterlockedExchange(&cooperativeFloodMessages,0);
+            floodStopThread=CreateThread(nullptr,0,&StopCooperativeFlood,nullptr,0,nullptr);
+            floodReady=floodStopThread &&
+                PostMessageW(state.proxy_hwnd,WM_APP+73,0,0) &&
+                WaitForSingleObject(cooperativeFloodStarted,500)==WAIT_OBJECT_0;
+        } else floodReady=false;
+        HRESULT floodResult=D3DERR_NOTAVAILABLE;
+        ULONGLONG floodElapsed=~ULONGLONG{0};
+        if(floodReady) {
+            lastWorkerThread=0;
+            const ULONGLONG started=GetTickCount64();
+            floodResult=device->TestCooperativeLevel();
+            floodElapsed=GetTickCount64()-started;
+        }
+        if(cooperativeFloodStop)SetEvent(cooperativeFloodStop);
+        InterlockedExchange(&cooperativeFloodEnabled,0);
+        if(floodStopThread) {
+            if(WaitForSingleObject(floodStopThread,3000)!=WAIT_OBJECT_0)++failures;
+            CloseHandle(floodStopThread);
+        }
+        if(!floodReady || floodResult!=cooperativeResult ||
+           lastWorkerThread!=state.proxy_thread_id || floodElapsed>=500 ||
+           InterlockedCompareExchange(&cooperativeFloodMessages,0,0)<1)++failures;
+        if(cooperativeFloodOriginalProc)
+            SetWindowLongPtrW(state.proxy_hwnd,GWLP_WNDPROC,
+                reinterpret_cast<LONG_PTR>(cooperativeFloodOriginalProc));
+        if(cooperativeFloodStarted)CloseHandle(cooperativeFloodStarted);
+        if(cooperativeFloodStop)CloseHandle(cooperativeFloodStop);
+        cooperativeFloodOriginalProc=nullptr;
+        cooperativeFloodStarted=nullptr;cooperativeFloodStop=nullptr;
         lastWindow=nullptr;
         presentLastError=ERROR_RETRY;
         SetLastError(ERROR_ACCESS_DENIED);
@@ -502,7 +563,7 @@ int main() {
     state=quiet.State();
     if (state.factory_calls!=2 || state.factories!=1 || state.create_attempts!=4 ||
         state.created_devices!=1 || state.failed_devices!=3 || state.resets!=14 ||
-        state.presents!=4 || state.successful_presents!=3 || state.cooperative_checks!=3 || state.last_create_hresult!=S_OK ||
+        state.presents!=4 || state.successful_presents!=3 || state.cooperative_checks!=4 || state.last_create_hresult!=S_OK ||
         state.last_reset_hresult!=resetResult || state.last_present_hresult!=presentResult ||
         state.last_cooperative_hresult!=cooperativeResult || state.last_backbuffer_hresult!=S_OK ||
         state.last_actual_width!=640 || state.last_actual_height!=480 ||
