@@ -117,20 +117,20 @@ int main()
           "an equivalent feature-specific alias remains compatible");
 
     Check(Write(fragmentPath, header + DataSymbol("alias", host, g_shared, "11 22 33 44")),
-          "wrote incompatible global-alias fragment");
+          "wrote shorter verified global-alias prefix");
     sdgo::SymbolTable badAlias;
     Check(badAlias.Load(fragmentPath, host, "fixture", "test", true) &&
-              !badAlias.ValidateOverlay(global, error),
-          "a global address cannot be given an incompatible alias");
+              badAlias.ValidateOverlay(global, error),
+          "verified aliases may use different lengths of the same byte prefix");
 
     Check(Write(fragmentPath, header +
               DataSymbol("first_alias", host, g_private, "61 62 63 64 65") +
               DataSymbol("second_alias", host, g_private, "61 62 63 64")),
-          "wrote incompatible internal-alias fragment");
+          "wrote compatible internal aliases with different prefix lengths");
     sdgo::SymbolTable internalAlias;
     Check(internalAlias.Load(fragmentPath, host, "fixture", "test", true) &&
-              !internalAlias.ValidateOverlay(global, error),
-          "one address cannot carry incompatible definitions");
+              internalAlias.ValidateOverlay(global, error),
+          "verified internal aliases retain compatible prefix definitions");
 
     Check(Write(fragmentPath, header + DataSymbol("bad_bytes", host, g_private, "00 62 63 64 65")),
           "wrote byte-mismatch fragment");
