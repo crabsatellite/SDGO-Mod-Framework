@@ -32,19 +32,19 @@ class ProviderTests(unittest.TestCase):
         def action(name,body):
             nonlocal state
             state=provider.request('POST','/api/shop/'+name,body,{'X-Shop-Revision':state['revision']})
-        action('create',{'category_id':state['items'][0]['Id']});first=state['catalog']['products'][0]
+        action('create',{'category_id':state['items'][0]['Id'],'name':'测试商品一'});first=state['catalog']['products'][0]
         key=first['key'];number=first['product_id']
-        action('update',{'key':key,'values':{'name':'Manager product','price':631,'currency':'MB'}})
+        action('update',{'key':key,'values':{'name':'Manager 中文商品','price':631,'currency':'MB'}})
         self.assertEqual(state['catalog']['products'][0]['price'],631)
         action('delete',{'key':key});self.assertTrue(state['catalog']['products'][0]['retired'])
         action('restore',{'key':key});self.assertFalse(state['catalog']['products'][0]['retired'])
-        action('create',{'category_id':state['items'][0]['Id']})
+        action('create',{'category_id':state['items'][0]['Id'],'name':'测试商品二'})
         self.assertNotEqual(number,state['catalog']['products'][1]['product_id'])
         before=(self.root/'shop/shop.json').read_bytes()
         with self.assertRaises(ValueError):action('update',{'key':key,'values':{'product_id':1}})
         self.assertEqual(before,(self.root/'shop/shop.json').read_bytes())
         exported=provider.request('GET','/api/shop/export',{},{}).data
-        self.assertNotIn(str(self.root).encode(),exported);self.assertIn(b'Manager product',exported)
+        self.assertNotIn(str(self.root).encode(),exported);self.assertIn('Manager 中文商品'.encode(),exported)
 
     def test_operator_crud_uses_original_validation_and_revisions(self):
         from manager.engines.operators import model
