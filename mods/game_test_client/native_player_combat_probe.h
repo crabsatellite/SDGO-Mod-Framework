@@ -309,9 +309,9 @@ public:
                 Release(input);
                 return false;
             }
-            // CPlayer's real input consumer clears DD0 to -4 when no weapon
-            // selection action is held. Supply the mapped key and invoke that
-            // consumer, keeping its request until the original FSM commits it.
+            // CPlayer's real input consumer clears DD0 to -4 without a weapon
+            // selection down edge. Supply mapped key-down pulses and invoke
+            // that consumer until the original FSM commits the requested slot.
             // A queued 0x48 message alone can be overwritten before that commit.
             if (caps.selectedSlot != requestedWeaponSlot_) {
                 input.HoldGameplay(kForwardAction, false);
