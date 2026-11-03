@@ -104,10 +104,20 @@ end
 local function Control(npc,s,spec,now,dir,reason,random)
   -- These are the same native motor APIs the shipped VSAI scripts use. Never
   -- SetNowPos, refill boost, alter speed, suppress collisions, or fire a packet.
+  if SDGO_BattleAI_SafeDirection then
+    dir=SDGO_BattleAI_SafeDirection(
+      dir,C.RecoveryDistance,UNIT_MOVE_DIR_FORWARD,UNIT_MOVE_DIR_BACKWARD,
+      UNIT_MOVE_DIR_LEFT,UNIT_MOVE_DIR_RIGHT)
+    if not dir or dir<0 then
+      if SDGO_BattleAI_Native then SDGO_BattleAI_Native(1) end
+      s.nextDecision=now;s.nextTactic=now+C.TacticCooldownMs
+      Emit(s,reason..': native fallback',now)
+      return false
+    end
+  end
   npc:MoveStop()
   npc:SetAttackOnOff(false)
-  if random then npc:SetMoveTargetPosRandom()
-  else npc:SetMoveTargetPos_Dir(dir,C.RecoveryDistance,dir,false) end
+  npc:SetMoveTargetPos_Dir(dir,C.RecoveryDistance,dir,false)
   npc:SetMoveType(UNIT_MOVE_EVENT_MOVE)
   s.controlGoal=npc:GetMoveTargetPos()
   s.anchor=npc:GetNowPos()
@@ -115,6 +125,7 @@ local function Control(npc,s,spec,now,dir,reason,random)
   s.nextDecision=now
   s.nextTactic=now+C.TacticCooldownMs
   Emit(s,reason,now)
+  return true
 end
 
 local function Before(npc,spec)

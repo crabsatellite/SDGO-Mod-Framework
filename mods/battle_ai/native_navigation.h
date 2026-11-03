@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -42,6 +43,12 @@ struct NavigationApi {
     RaySphereFn raySphere = nullptr;
 };
 
+enum class MotionSafety {
+    Safe,
+    Blocked,
+    Unavailable
+};
+
 static_assert(sizeof(Vec3) == 12, "GOnline Vec3 ABI changed");
 static_assert(sizeof(Ray3) == 24, "GOnline Ray3 ABI changed");
 static_assert(sizeof(Aabb) == 24, "GOnline AABB ABI changed");
@@ -67,6 +74,7 @@ constexpr double kLengthEpsilon = 1.0e-6;
 constexpr double kEndpointEpsilon = 1.0e-3;
 
 using SceneIsAFn = bool(__thiscall*)(void* scene, int kind);
+using ObjectIsAFn = bool(__thiscall*)(void* object, int kind);
 
 inline bool ValidShapeArray(const std::uint8_t* array, int count, std::size_t stride) noexcept {
     if (count < 0 || count > kShapeCountLimit) return false;
@@ -91,6 +99,93 @@ inline bool ValidAabb(const Aabb& bounds) noexcept {
            bounds.min.x <= bounds.max.x &&
            bounds.min.y <= bounds.max.y &&
            bounds.min.z <= bounds.max.z;
+}
+
+inline bool Intersects(const Aabb& left, const Aabb& right) noexcept {
+    return left.min.x <= right.max.x && left.max.x >= right.min.x &&
+           left.min.y <= right.max.y && left.max.y >= right.min.y &&
+           left.min.z <= right.max.z && left.max.z >= right.min.z;
+}
+
+inline MotionSafety MotionSafetyUnsafe(const NavigationApi& api, std::uint8_t* document,
+                                       std::uint8_t* owner, Vec3 current,
+                                       Vec3 destination) noexcept {
+    if (!api.query || !api.segmentAabb || !document || !owner ||
+        !Finite(current) || !Finite(destination)) {
+        return MotionSafety::Unavailable;
+    }
+
+    auto* quadtree = *reinterpret_cast<void**>(document + kDocumentQuadTree);
+    auto* ownerScene = *reinterpret_cast<std::uint8_t**>(owner + kOwnerScene);
+    if (!quadtree || !ownerScene) return MotionSafety::Unavailable;
+
+    const auto start = *reinterpret_cast<const Aabb*>(ownerScene + kSceneAabb);
+    if (!ValidAabb(start)) return MotionSafety::Unavailable;
+
+    const Vec3 delta = destination - current;
+    const Aabb finish = {start.min + delta, start.max + delta};
+    if (!Finite(delta) || !ValidAabb(finish)) return MotionSafety::Unavailable;
+
+    const Aabb queryBounds = {
+        {(std::min)(start.min.x, finish.min.x),
+         (std::min)(start.min.y, finish.min.y),
+         (std::min)(start.min.z, finish.min.z)},
+        {(std::max)(start.max.x, finish.max.x),
+         (std::max)(start.max.y, finish.max.y),
+         (std::max)(start.max.z, finish.max.z)}
+    };
+    const Vec3 ownerCenter = (start.min + start.max) * 0.5f;
+    const Vec3 ownerHalf = (start.max - start.min) * 0.5f;
+    const Vec3 segmentCenter = ownerCenter + delta * 0.5f;
+    const Vec3 halfDelta = delta * 0.5f;
+    if (!ValidAabb(queryBounds) || !Finite(ownerCenter) || !Finite(ownerHalf) ||
+        !Finite(segmentCenter) || !Finite(halfDelta)) {
+        return MotionSafety::Unavailable;
+    }
+
+    void* scenes[kSceneCapacity] = {};
+    int sceneCount = 0;
+    api.query(quadtree, scenes, &sceneCount, kSceneCapacity, &queryBounds);
+    if (sceneCount < 0 || sceneCount >= kSceneCapacity) {
+        return MotionSafety::Unavailable;
+    }
+
+    for (int sceneIndex = 0; sceneIndex < sceneCount; ++sceneIndex) {
+        auto* scene = static_cast<std::uint8_t*>(scenes[sceneIndex]);
+        if (!scene) return MotionSafety::Unavailable;
+        if (scene == ownerScene) continue;
+
+        auto* object = *reinterpret_cast<std::uint8_t**>(scene + kSceneBackPointer);
+        if (!object) {
+            auto** sceneVtable = *reinterpret_cast<void***>(scene);
+            if (!sceneVtable || !sceneVtable[5]) return MotionSafety::Unavailable;
+            const auto sceneIsA = reinterpret_cast<SceneIsAFn>(sceneVtable[5]);
+            if (sceneIsA(scene, 3)) continue;
+            return MotionSafety::Unavailable;
+        }
+        if (object == owner) continue;
+
+        auto** vtable = *reinterpret_cast<void***>(object);
+        if (!vtable || !vtable[1]) return MotionSafety::Unavailable;
+        const auto objectIsA = reinterpret_cast<ObjectIsAFn>(vtable[1]);
+        if (!objectIsA(object, 0x22)) continue;
+
+        const auto deathBounds = *reinterpret_cast<const Aabb*>(scene + kSceneAabb);
+        if (!ValidAabb(deathBounds)) return MotionSafety::Unavailable;
+        const Aabb expanded = {
+            deathBounds.min - ownerHalf,
+            deathBounds.max + ownerHalf
+        };
+        if (!ValidAabb(expanded)) return MotionSafety::Unavailable;
+        if (!api.segmentAabb(&segmentCenter, &halfDelta, &expanded)) continue;
+
+        // A bot already overlapping this zone gets one chance to leave it
+        // completely. Every other overlap, including a thin zone crossed
+        // between clear endpoints, rejects the generated movement.
+        if (Intersects(start, deathBounds) && !Intersects(finish, deathBounds)) continue;
+        return MotionSafety::Blocked;
+    }
+    return MotionSafety::Safe;
 }
 
 inline bool FreshLineClearUnsafe(const NavigationApi& api, std::uint8_t* document,
@@ -227,6 +322,20 @@ inline bool FreshLineClear(const NavigationApi& api, std::uint8_t* document,
 #else
     return detail::FreshLineClearUnsafe(
         api, document, owner, targetId, from, to, ignoreFriendly);
+#endif
+}
+
+inline MotionSafety CheckMotionSafety(const NavigationApi& api, std::uint8_t* document,
+                                      std::uint8_t* owner, Vec3 current,
+                                      Vec3 destination) noexcept {
+#if defined(_MSC_VER) && defined(_WIN32)
+    __try {
+        return detail::MotionSafetyUnsafe(api, document, owner, current, destination);
+    } __except (1 /* EXCEPTION_EXECUTE_HANDLER */) {
+        return MotionSafety::Unavailable;
+    }
+#else
+    return detail::MotionSafetyUnsafe(api, document, owner, current, destination);
 #endif
 }
 

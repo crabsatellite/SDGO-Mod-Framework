@@ -2,7 +2,9 @@
 
 [简体中文](mod-manager.zh-CN.md)
 
-Open **SDGO Mod Manager.exe** from the framework package. Client/server selection,
+**For server owners and maintainers.** Ordinary players should use the game launcher and follow their server owner's installation/update instructions. Uncoordinated client Mod or server configuration changes can prevent joining, cause disconnects or crashes. A persistent notice appears at the top of every Manager page.
+
+Open **0_MOD管理（服主专用）** at the top of the client folder, or **SDGO Mod Manager.exe** from the framework package. A normal first launch creates the directory entry; **创建目录入口** repairs missing ones. Existing usable shortcuts retain their workspace. Desktop shortcuts are not created. The program, directory entry and browser tab share the SDGO mark from the interface. Client/server selection,
 mod configuration, shop, operators, capsule machines, rewards, FRP and AI catalogs
 share one local interface. Users do not install Python or launch per-feature UIs.
 

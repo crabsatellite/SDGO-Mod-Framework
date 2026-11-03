@@ -22,6 +22,7 @@ inline wchar_t title[32]={};
 inline std::array<uint8_t,0x3300> enemy1{},enemy2{},remoteHuman{},sameTeamNpc{};
 inline std::array<std::array<uint8_t,0x1400>,5> definitions{},fsms{};
 inline std::array<std::array<uint8_t,0x1400>,5> movements{};
+inline std::array<std::array<uint8_t,0x24>,5> specialResults{};
 inline std::array<std::array<uint8_t,0x300>,5> nodes{},scenes{};
 inline std::array<std::array<uint8_t,0x100>,5> targetShapes{};
 inline std::array<uint8_t*,5> configuredUnits{};
@@ -38,6 +39,7 @@ inline int pathCalls=0;
 inline bool directPathFixture=false;
 inline void* protectedPath=nullptr;
 inline int jumps=0,moves=0,goalCalls=0,lastGoalMode=0,frees=0,queries=0;
+inline int stopMotorCalls=0,message41Calls=0;
 inline int obbCalls=0,terrainCalls=0;
 inline Ray3 lastObbRay{},lastTerrainRay{};
 inline int lastWait=0;
@@ -51,6 +53,8 @@ inline int ordinaryNotices=0;
 inline std::atomic<bool> stallOrdinary{false},ordinaryEntered{false},releaseOrdinary{false};
 inline bool deferSwitch=false;
 inline int requestedSlot=-1,switchRequests=0;
+inline uint32_t shotReturn=0xBEEFF00D;
+inline bool replaceShotAction=false,replaceShotWeapon=false;
 inline void* messageEntry=nullptr;
 inline void* contactReturn=nullptr;
 inline std::array<uint8_t,0x300> wall{};
@@ -87,7 +91,11 @@ struct Callbacks {
             Put(source,0xBC8,*reinterpret_cast<const int32_t*>(packet+0xB));
         return 0x51D0;
     }
-    __declspec(noinline) uint32_t Canonical(uint32_t pilot) {return source&&*reinterpret_cast<uint32_t*>(source+0x2B68)==pilot?20:0;}
+    __declspec(noinline) uint32_t Canonical(uint32_t pilot) {
+        for(auto unit:configuredUnits)
+            if(unit&&*reinterpret_cast<uint32_t*>(unit+0x2B68)==pilot) return *reinterpret_cast<uint32_t*>(unit+4);
+        return 0;
+    }
     __declspec(noinline) void Receive(const uint8_t* message) {
         auto unit=reinterpret_cast<uint8_t*>(this);
         if(*reinterpret_cast<const uint16_t*>(message)==0x18) Put(unit,0xBC8,*reinterpret_cast<const int32_t*>(message+0x10));
@@ -127,12 +135,12 @@ struct Callbacks {
     __declspec(noinline) bool CanAttack(uint8_t* attacker) {
         auto candidate=reinterpret_cast<uint8_t*>(this);
         if(candidate==attacker) return false;
-        const int state=*reinterpret_cast<int*>(candidate+0x9D8);
-        if(state==1) {
+        const int eligibilityState=*reinterpret_cast<int*>(candidate+0x9D8);
+        if(eligibilityState==1) {
             const int own=*reinterpret_cast<int*>(candidate+0x20),other=*reinterpret_cast<int*>(attacker+0x20);
             return own==0||own==5||other==0||other==5||own!=other;
         }
-        return state==4&&*reinterpret_cast<uint32_t*>(candidate+0xEB8)==*reinterpret_cast<uint32_t*>(attacker+4);
+        return eligibilityState==4&&*reinterpret_cast<uint32_t*>(candidate+0xEB8)==*reinterpret_cast<uint32_t*>(attacker+4);
     }
     __declspec(noinline) bool Projectile(void* opaque) {
         auto p=reinterpret_cast<uint8_t*>(this);
@@ -144,10 +152,19 @@ struct Callbacks {
     }
     __declspec(noinline) bool Homing(void* opaque) { return Projectile(opaque); }
     __declspec(noinline) int AttackIntent(char on) { reinterpret_cast<uint8_t*>(this)[0x312A]=on?1:0;return 1; }
-    __declspec(noinline) void StopMotor() { reinterpret_cast<uint8_t*>(this)[0x30DC]=0; }
+    __declspec(noinline) void StopMotor() { ++stopMotorCalls;reinterpret_cast<uint8_t*>(this)[0x30DC]=0; }
     __declspec(noinline) uint32_t Shot(uint32_t event,char chain,char force) {
-        Put(reinterpret_cast<uint8_t*>(this),0x100,event+static_cast<uint32_t>(chain)+static_cast<uint32_t>(force));
-        return 0xBEEFF00D;
+        auto fsm=reinterpret_cast<uint8_t*>(this);
+        Put(fsm,0x100,event+static_cast<uint32_t>(chain)+static_cast<uint32_t>(force));
+        if(replaceShotAction) {
+            replaceShotAction=false;
+            Put(fsm,0x224,*reinterpret_cast<uint32_t*>(fsm+0x224)+1);
+        }
+        if(replaceShotWeapon) {
+            replaceShotWeapon=false;
+            Put(fsm,0x248,weapons[2].data());
+        }
+        return shotReturn;
     }
     __declspec(noinline) void Intent() {
         auto unit=reinterpret_cast<uint8_t*>(this);
@@ -206,6 +223,66 @@ __declspec(naked) inline bool __cdecl EmitContact(uint8_t*,uint32_t,void*,uint32
         ret
     }
 }
+inline int specialCompletionCalls=0;
+inline uint32_t specialCompletionDamage=0;
+inline uintptr_t specialCompletionOwner=0,specialCompletionResult=0,specialCompletionFsm=0;
+inline uint32_t specialCompletionEdx=0,specialCompletionEdi=0,specialCompletionEbp=0;
+// The fixture completion body records the native branch boundary and models
+// its observable cleanup. Full original-finalizer acceptance stays in GameTest.
+__declspec(noinline) inline int __cdecl NativeSpecialCompletion(uint8_t* fsm,uint32_t damage) {
+    ++specialCompletionCalls;specialCompletionDamage=damage;
+    auto result=*reinterpret_cast<uint8_t**>(fsm+0x9BC);
+    auto victimId=*reinterpret_cast<uint32_t*>(result+0x14);
+    for(auto unit:configuredUnits) if(unit&&*reinterpret_cast<uint32_t*>(unit+4)==victimId) {
+        Put(unit,0x9D8,uint32_t(2));Put(unit,0xEB8,uint32_t(0));break;
+    }
+    memset(result,0,0x24);fsm[0x9B5]=1;return 1;
+}
+// Entry is the exact native branch boundary: flags come from result damage
+// compared with zero, then the untouched 9B5 check gates fixture completion.
+__declspec(naked) inline int __cdecl SpecialCompletionGateSite() {
+    __asm {
+        jbe completion_blocked
+        cmp byte ptr [esi+9B5h],1
+        je completion_blocked
+        mov specialCompletionOwner,eax
+        mov specialCompletionResult,ecx
+        mov specialCompletionFsm,esi
+        mov specialCompletionEdx,edx
+        mov specialCompletionEdi,edi
+        mov specialCompletionEbp,ebp
+        push dword ptr [ecx+10h]
+        push esi
+        call NativeSpecialCompletion
+        add esp,8
+        jmp finish
+    completion_blocked:
+        xor eax,eax
+    finish:
+        pop ebp
+        pop edi
+        pop esi
+        pop ebx
+        ret
+    }
+}
+__declspec(naked) inline int __cdecl InvokeSpecialCompletionGate(uint8_t*) {
+    __asm {
+        push ebx
+        push esi
+        push edi
+        push ebp
+        mov esi,dword ptr [esp+14h]
+        xor ebx,ebx
+        mov eax,dword ptr [esi+0B2Ch]
+        mov ecx,dword ptr [esi+09BCh]
+        mov edx,12345678h
+        mov edi,23456789h
+        mov ebp,3456789Ah
+        cmp dword ptr [ecx+10h],ebx
+        jmp SpecialCompletionGateSite
+    }
+}
 __declspec(noinline) inline void __cdecl Free(void* p) {
     ++frees;
     if(p==protectedPath) {VirtualFree(p,0,MEM_RELEASE);protectedPath=nullptr;}
@@ -237,6 +314,7 @@ inline void Encode(uint8_t* unit,size_t perm,size_t bytes,size_t key,float value
 inline void Configure(uint8_t* unit,size_t index,uint32_t id,int team,int hp,float x,float z) {
     memset(unit,0,0x3300);
     auto def=definitions[index].data(),fsm=fsms[index].data(),node=nodes[index].data(),scene=scenes[index].data();
+    specialResults[index].fill(0);
     configuredUnits[index]=unit;unitKinds[index]=0;targetShapes[index].fill(0);
     Put(node,0xD8,static_cast<uint8_t*>(nullptr));Put(node,0xE0,static_cast<uint8_t*>(nullptr));
     Put(unit,0,unitVtable.data());Put(unit,4,id);Put(unit,0x20,team);Put(unit,0x38,hp);Put(unit,0x3C,1000);
@@ -252,7 +330,7 @@ inline void Configure(uint8_t* unit,size_t index,uint32_t id,int team,int hp,flo
         Put(fsm,0x24C+i*0xC8,int16_t(30));Put(fsm,0x254+i*0xC8,int16_t(0));
         Put(fsm,0x258+i*0xC8,weapons[i].data());
     }
-    Put(fsm,4,fsm+0x20);Put(fsm,8,uint32_t(0));Put(fsm,0x240,int32_t(1));Put(fsm,0x248,weapons[1].data());Put(fsm,0xB2C,unit);Put(fsm,0xB30,movement);Put(unit,0xDD0,int32_t(1));
+    Put(fsm,4,fsm+0x20);Put(fsm,8,uint32_t(0));Put(fsm,0x240,int32_t(1));Put(fsm,0x248,weapons[1].data());Put(fsm,0x9BC,specialResults[index].data());Put(fsm,0xB2C,unit);Put(fsm,0xB30,movement);Put(unit,0xDD0,int32_t(1));
     Encode(unit,0xBE1,0xBE5,0xBF5,100);Encode(unit,0xBCC,0xBD0,0xBE0,100);
     unit[0x326C]=1;Put(unit,0x3238,uint32_t(3604001));
     unit[0x3291]=1;
@@ -262,6 +340,10 @@ inline ListNode head{},a{},b{};
 inline ListNode remoteHead{},remoteEntry{},friendlyHead{},friendlyEntry{};
 inline int SetFire(lua_State* L){
     const uint8_t next=lua_toboolean(L,2)?1:0;
+    // The real Lua method emits native command 0x41. Count the request even
+    // when the fixture's held bit already matches so sustained blocked-state
+    // policy calls cannot hide behind this fixture's idempotent shortcut.
+    if(!next) ++message41Calls;
     if(source[0x312A]==next) return 0;
     source[0x312A]=next;
     if(!next) {
@@ -272,14 +354,18 @@ inline int SetFire(lua_State* L){
     return 0;
 }
 inline int SetTarget(lua_State* L){Put(fsms[0].data(),0x200,uint32_t(lua_tonumber(L,2)));return 0;}
-inline int Stop(lua_State*){source[0x30DC]=0;return 0;}
+inline int Stop(lua_State*){++stopMotorCalls;source[0x30DC]=0;return 0;}
 inline int Change(lua_State* L){int i=static_cast<int>(lua_tonumber(L,2));if(*reinterpret_cast<int*>(source+0xDD0)!=i){uint8_t message[0x14]={};Put(message,0,uint16_t(0x48));message[0x10]=static_cast<uint8_t>(i);reinterpret_cast<Callbacks*>(source)->Receive(message);}return 0;}
 inline int Direction(lua_State*){++moves;source[0x30DC]=1;return 0;}
 inline int Mode(lua_State*){return 0;}
 inline int Jump(lua_State*){++jumps;return 0;}
 inline void Initialize(uint8_t* unit,lua_State* L) {
     state=L;source=unit;blocked=coverWall=nullRay=terrainWall=forceObbBlock=false;
+    shotReturn=0xBEEFF00D;replaceShotAction=replaceShotWeapon=false;
     jumps=moves=goalCalls=lastGoalMode=frees=queries=obbCalls=terrainCalls=0;
+    stopMotorCalls=message41Calls=0;
+    specialCompletionCalls=0;specialCompletionDamage=0;specialCompletionOwner=specialCompletionResult=specialCompletionFsm=0;
+    specialCompletionEdx=specialCompletionEdi=specialCompletionEbp=0;
     lastObbRay={};lastTerrainRay={};configuredUnits.fill(nullptr);unitKinds.fill(0);
     wall.fill(0);
     unitVtable[1]=Address(&Callbacks::UnitIsA);
@@ -295,7 +381,8 @@ inline void Initialize(uint8_t* unit,lua_State* L) {
     Configure(enemy2.data(),2,2,1,100,1400,100);enemy2[0xDCD]=1;
     head={&a,&b,nullptr};a={&b,&head,enemy1.data()};b={&head,&a,enemy2.data()};
     Put(document.data(),0x48,&head);Put(document.data(),0x82C4,document.data());Put(document.data(),0x8364,document.data());
-    Put(wall.data(),0,sceneVtable.data());Put(wall.data(),0xD4,int(1));Put(wall.data(),0xD8,wall.data()+0x180);
+    Put(wall.data(),0,sceneVtable.data());Put(wall.data(),0x0C,enemy1.data());
+    Put(wall.data(),0xD4,int(1));Put(wall.data(),0xD8,wall.data()+0x180);
     lua_getglobal(L,"npc");
     auto method=[&](const char* name,lua_CFunction fn){lua_pushstring(L,name);lua_pushcfunction(L,fn);lua_settable(L,-3);};
     method("SetAttackOnOff",SetFire);method("SetAttackTarget",SetTarget);method("MoveStop",Stop);
@@ -345,6 +432,15 @@ inline void Symbols(FILE* f,void(*symbol)(FILE*,const char*,void*,bool)) {
     symbol(f,"collision.ray_obb",reinterpret_cast<void*>(&Obb),false);
     symbol(f,"collision.ray_sphere",reinterpret_cast<void*>(&Sphere),false);
     auto base=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    auto site=[&](const char* name,void* address) {
+        std::fprintf(f,"[%s]\nkind=site\nrva=0x%08lX\nexpect=",name,
+                     static_cast<unsigned long>(reinterpret_cast<uintptr_t>(address)-base));
+        auto bytes=static_cast<const unsigned char*>(address);
+        for(int i=0;i<16;++i) std::fprintf(f,"%02X ",bytes[i]);
+        std::fprintf(f,"\n\n");
+    };
+    site("combat.special_melee_completion_layout",reinterpret_cast<void*>(&InvokeSpecialCompletionGate));
+    site("combat.special_melee_completion_gate",reinterpret_cast<void*>(&SpecialCompletionGateSite));
     std::fprintf(f,"[game.document]\nkind=data\nrva=0x%08lX\n\n",static_cast<unsigned long>(reinterpret_cast<uintptr_t>(&documentPointer)-base));
 }
 }

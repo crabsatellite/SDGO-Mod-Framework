@@ -17,6 +17,7 @@
 #include "sdgo/sdgo_api.h"
 #include "sdgo/mod_settings.h"
 #include "sdgo/battle_eligibility_observer.h"
+#include "sdgo/battle_rewards_damage_observer.h"
 #include "sdgo/battle_reward_stats.h"
 #include "sdgo/battle_reward_mission.h"
 #include "boss_catalog.h"
@@ -50,6 +51,38 @@ eligibility_observer::GameTestGate g_eligibilityGate;
 eligibility_observer::BattleRowLimiter g_eligibilityLimiter;
 SRWLOCK g_eligibilityLock = SRWLOCK_INIT;
 constexpr char kEligibilitySymbol[] = "battle.rewards.observe_eligibility.team";
+volatile PVOID g_damageObserverCallback = nullptr;
+volatile PVOID g_damageObserverUser = nullptr;
+volatile LONG g_damageObserverRegistration = 0;
+
+void __stdcall ForwardDamageObserver(
+    void* room, void* victimPilot, void* attackerPilot, void* victimUnit,
+    uint32_t effectiveLoss, int32_t deathFlag) noexcept {
+    if (InterlockedCompareExchange(
+            &g_damageObserverRegistration, 0, 0) != 2) {
+        return;
+    }
+    const auto callback =
+        reinterpret_cast<SdgoBattleRewardsDamageObserverCallbackV1>(
+            InterlockedCompareExchangePointer(
+                &g_damageObserverCallback, nullptr, nullptr));
+    if (!callback) return;
+    SdgoBattleRewardsDamageEventV1 event = {
+        sizeof(event),
+        SDGO_BATTLE_REWARDS_DAMAGE_OBSERVER_VERSION,
+        room,
+        victimPilot,
+        attackerPilot,
+        victimUnit,
+        effectiveLoss,
+        deathFlag};
+    void* user = InterlockedCompareExchangePointer(
+        &g_damageObserverUser, nullptr, nullptr);
+    __try {
+        callback(&event, user);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
 
 bool MissionMode(uint8_t mode) { return mode == 5 || mode == 8 || mode == 10; }
 
@@ -530,6 +563,27 @@ bool Settings(const SdgoApi* api, SdgoMod* mod) {
 }
 }
 
+extern "C" __declspec(dllexport) int __cdecl
+SdgoBattleRewardsRegisterDamageObserverV1(
+    const SdgoBattleRewardsDamageObserverSinkV1* sink) {
+    if (!sink || sink->size < sizeof(*sink) ||
+        sink->version !=
+            SDGO_BATTLE_REWARDS_DAMAGE_OBSERVER_VERSION ||
+        !sink->callback) {
+        return 0;
+    }
+    if (InterlockedCompareExchange(
+            &g_damageObserverRegistration, 1, 0) != 0) {
+        return 0;
+    }
+    InterlockedExchangePointer(&g_damageObserverUser, sink->user);
+    InterlockedExchangePointer(
+        &g_damageObserverCallback,
+        reinterpret_cast<PVOID>(sink->callback));
+    InterlockedExchange(&g_damageObserverRegistration, 2);
+    return 1;
+}
+
 SDGO_MOD_ENTRY {
     if (!api || api->version != SDGO_API_VERSION || api->size < offsetof(SdgoApi, HookSite) + sizeof(api->HookSite) || !api->HookSite) return 0;
     g_api = api; g_mod = mod;
@@ -541,6 +595,7 @@ SDGO_MOD_ENTRY {
     native_combat_hook::classify_victim = &Classify;
     native_combat_hook::record_sink = &Record;
     native_combat_hook::diagnostic_sink = &CombatDiagnostic;
+    native_combat_hook::damage_observer = &ForwardDamageObserver;
     bridge::callback = &Settle;
     for (unsigned i = 0; i < kSettlementSites.size(); ++i) {
         g_sites[i] = static_cast<BYTE*>(api->Symbol(mod, kSettlementSites[i].symbol));
