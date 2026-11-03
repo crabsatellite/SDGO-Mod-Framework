@@ -83,6 +83,7 @@ class UpdateTests(unittest.TestCase):
     def controller(self,release_api=None,archive=None):
         def fetch(url,limit,stop):return json.dumps(release_api or self.api).encode() if url in (u.LATEST,u.RELEASES) else (archive or self.raw)
         c=u.Updates(self.workspace,ROOT,fetcher=fetch)
+        c.current='1.0.0'  # The installed fixture is independent of the source release.
         self.addCleanup(c.stop);return c
 
     def test_stable_is_default_and_rejects_prerelease(self):
@@ -146,6 +147,20 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(result['status'],'installed')
         again=u.install_host(self.record,self.bundle,self.manifest,self.root/'cache',lambda _:False)
         self.assertEqual(again['changed_files'],0)
+
+    def test_newer_installed_mod_and_its_symbol_contract_are_preserved(self):
+        base=self.existing()
+        (base/'mod.ini').write_bytes(b'[mod]\nid=example\nversion=3.0.0\nchannel=stable\nrequires=new.alias\nenabled=0\n')
+        symbols=self.host/'sdgo/symbols'/(KEY+'.ini')
+        symbols.write_bytes(b'[new.alias]\nrva=900\n[custom.alias]\nrva=99\n')
+        result=u.install_host(self.record,self.bundle,self.manifest,self.root/'cache',lambda _:False)
+        self.assertEqual((base/'example.dll').read_bytes(),b'old mod')
+        self.assertEqual(u.read_ini((base/'mod.ini').read_bytes())['mod']['version'],'3.0.0')
+        self.assertEqual(u.read_ini(symbols.read_bytes())['new.alias']['rva'],'900')
+        catalog=json.loads((self.host/'sdgo/catalog.json').read_text(encoding='utf-8'))
+        self.assertEqual(next(m for m in catalog['mods'] if m['id']=='example')['version'],'3.0.0')
+        self.assertEqual(json.loads((self.host/'sdgo/release.json').read_text())['mods']['example'],'3.0.0')
+        self.assertEqual(result['preserved_newer_mods'],['example'])
 
     def test_running_game_defers_then_installs_without_stopping_it(self):
         before=(self.host/'GOnline.exe').read_bytes()

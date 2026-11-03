@@ -214,7 +214,17 @@ def install_host(host, bundle, manifest, cache, is_running=None):
     key=host_key(exe);symbols='sdgo/symbols/'+key+'.ini'
     if not (source/symbols).is_file():raise ValueError('此游戏程序版本暂不支持自动更新')
     catalog=json.loads((source/'sdgo/catalog.json').read_text(encoding='utf-8'))
-    selected=[m for m in catalog['mods'] if m['target']==tree and key in m['hosts']]
+    supported=[m for m in catalog['mods'] if m['target']==tree and key in m['hosts']]
+    selected=[];retained=[];protected_symbols=set()
+    for mod in supported:
+        ini=child(root,'sdgo/mods/'+mod['id']+'/mod.ini')
+        old=read_ini(ini.read_bytes()) if ini.exists() else None
+        try:newer=old is not None and version(old['mod']['version'])>version(mod['version'])
+        except (KeyError,ValueError):newer=False
+        if newer:
+            retained.append({**mod,'version':old['mod']['version'],'channel':old['mod'].get('channel',mod['channel'])})
+            protected_symbols.update(n.strip() for n in old['mod'].get('requires','').split(',') if n.strip())
+        else:selected.append(mod)
     loader='d3d9.dll' if role=='client' else 'winmm.dll'
     if (root/loader).exists() and not (root/'sdgo/core.dll').exists():
         raise ValueError('这个目录有其他图形/音频扩展，请先用框架安装器完成首次安装')
@@ -241,18 +251,20 @@ def install_host(host, bundle, manifest, cache, is_running=None):
             if path.exists() and name==symbols:
                 old=read_ini(path.read_bytes());new=read_ini(data)
                 for section in old.sections():
-                    if not new.has_section(section):new[section]=dict(old[section])
+                    if not new.has_section(section) or section in protected_symbols:new[section]=dict(old[section])
                 data=serialize_ini(new)
             if not path.exists() or path.read_bytes()!=data:changes[path]=data
         catpath=child(root,'sdgo/catalog.json');current=storage.read_json(catpath,{'schema_version':1,'mods':[],'features':{},'categories':{}})
-        ids={m['id'] for m in selected};features={m['feature'] for m in selected}
-        current['mods']=[m for m in current['mods'] if m['id'] not in ids]+selected
+        ids={m['id'] for m in selected+retained};features={m['feature'] for m in selected}
+        existing={m['id']:m for m in current['mods']}
+        kept=[{**existing.get(m['id'],m),'version':m['version'],'channel':m['channel']} for m in retained]
+        current['mods']=[m for m in current['mods'] if m['id'] not in ids]+selected+kept
         current.setdefault('features',{}).update({k:v for k,v in catalog['features'].items() if k in features})
         current.setdefault('categories',{}).update(catalog['categories'])
         catbytes=storage.json_bytes(current)
         if not catpath.exists() or catpath.read_bytes()!=catbytes:changes[catpath]=catbytes
         installed={'schema_version':1,'version':manifest['version'],'channel':manifest['channel'],'source_commit':manifest['source_commit'],
-                   'mods':{m['id']:m['version'] for m in selected}}
+                   'mods':{m['id']:m['version'] for m in selected+retained}}
         mbytes=storage.json_bytes(installed)
         if not marker.exists() or marker.read_bytes()!=mbytes:changes[marker]=mbytes
         # Recheck immediately before touching runtime files. Locked files also
@@ -271,7 +283,8 @@ def install_host(host, bundle, manifest, cache, is_running=None):
                 if previous[path] is None:path.unlink(missing_ok=True)
                 else:storage.atomic(path,previous[path])
             raise
-    return {'id':host['id'],'name':host['name'],'status':'installed','version':manifest['version'],'changed_files':len(changes)}
+    return {'id':host['id'],'name':host['name'],'status':'installed','version':manifest['version'],'changed_files':len(changes),
+            'preserved_newer_mods':[m['id'] for m in retained]}
 
 
 class Updates:
