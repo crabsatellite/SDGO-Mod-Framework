@@ -130,6 +130,8 @@ void* __fastcall Assign(void* self, void*, const wchar_t* source, uint32_t lengt
     if(caller>=0x009C0000 && caller<0x009F0000 && traces++<20)
         g_api->Log(g_mod,SDGO_LOG_INFO,"native display diagnostic caller=%08lX chars=%u admitted=%u",static_cast<unsigned long>(caller),length,std::binary_search(g_returns.begin(),g_returns.end(),caller)?1u:0u);
     if (std::binary_search(g_returns.begin(), g_returns.end(), caller)) {
+        static unsigned admitted=0;
+        if(admitted++<16)g_api->Log(g_mod,SDGO_LOG_INFO,"native display admitted diagnostic caller=%08lX chars=%u first=%04X",static_cast<unsigned long>(caller),length,source&&length?static_cast<unsigned>(source[0]):0u);
         if (const auto* text = Lookup(source, length, caller)) return g_assign(self, text->data(), static_cast<uint32_t>(text->size()));
     }
     return g_assign(self, source, length);

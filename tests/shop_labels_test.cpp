@@ -25,6 +25,7 @@ bool g_inGift = false;
 std::array<uint8_t, 8> g_manager = {};
 uint8_t* g_managerPtr = g_manager.data();
 std::array<uint8_t, 614> g_rentalRecord = {}, g_permanentRecord = {};
+std::array<uint8_t, 614> g_paintRecord = {}, g_operatorRecord = {};
 
 bool Check(bool value, const char* text)
 {
@@ -37,15 +38,47 @@ void BuildMap()
     g_rentalRecord[0x6D] = 1;
     *reinterpret_cast<uint32_t*>(g_permanentRecord.data()) = 1120549;
     g_permanentRecord[0x6D] = 0;
+    *reinterpret_cast<uint32_t*>(g_paintRecord.data())=1610001;
+    g_paintRecord[0x6D]=0;
+    *reinterpret_cast<uint32_t*>(g_operatorRecord.data())=1210001;
+    g_operatorRecord[0x6D]=1;
 }
 void* __cdecl NativeGridData() { return g_managerPtr; }
-int __fastcall NativeGridFind(void*, void*, void** out, int id, int type, char)
+// The shipped function writes AL only. Keep EAX's other bytes nonzero so a
+// mistaken int-return declaration cannot pass this native ABI regression.
+__declspec(naked) uint8_t __fastcall NativeGridFind(void*, void*, void**, int, int, char)
 {
-    if (type != 0x22) return 0;
-    if (id == 1110549) *out = g_rentalRecord.data();
-    else if (id == 1120549) *out = g_permanentRecord.data();
-    else return 0;
-    return 1;
+    __asm {
+        cmp dword ptr [esp+12], 0x22
+        jne missing
+        mov edx, dword ptr [esp+4]
+        mov ecx, dword ptr [esp+8]
+        cmp ecx, 1110549
+        je rental
+        cmp ecx, 1120549
+        jne extra
+        mov ecx, offset g_permanentRecord
+        jmp found
+    extra:
+        cmp ecx,1610001
+        jne operatorItem
+        mov ecx,offset g_paintRecord
+        jmp found
+    operatorItem:
+        cmp ecx,1210001
+        jne missing
+        mov ecx,offset g_operatorRecord
+        jmp found
+    rental:
+        mov ecx, offset g_rentalRecord
+    found:
+        mov dword ptr [edx], ecx
+        mov eax, 0x5A5A0001
+        ret 16
+    missing:
+        mov eax, 0x5A5A0000
+        ret 16
+    }
 }
 const wchar_t* __cdecl NativeConvert(UINT, const char*) { ++g_nativeCalls; return L"native"; }
 void __fastcall NativePopulate(uint8_t* self, void*)
@@ -134,7 +167,14 @@ int wmain(int argc, wchar_t** argv)
     g_result.clear();
     g_tooltip(nullptr, nullptr, &options[0], 0);
     g_tooltip(nullptr, nullptr, &options[1], 1);
-    ok = Check(g_result[0] == L"租赁 7 天" && g_result[1] == L"永久", "hover tooltip renders explicit lease before purchase") && ok;
+    ok = Check(g_result[0] == L"租赁7天" && g_result[1] == L"永久", "hover tooltip renders compact explicit lease before purchase") && ok;
+    std::vector<Option> counts{MakeOption(7,1610001,1,1100,2),MakeOption(8,1610001,3,3100,2),MakeOption(9,1610001,5,4900,2),MakeOption(10,1210001,30,1500,2)};
+    const auto countsBefore=counts;
+    g_result.clear();Populate(counts,false);
+    ok=Check(g_result[0]==L"数量 1" && g_result[1]==L"数量 3" && g_result[2]==L"数量 5","paint pack counts are recovered from numeric metadata, independently of corrupted source text") && ok;
+    g_result.clear();for(const auto& option:counts)g_tooltip(nullptr,nullptr,&option,0);
+    ok=Check(g_result[0]==L"1" && g_result[1]==L"3" && g_result[2]==L"5" && g_result[3]==L"有效期30天","quantity column stays numeric and operator expiry fits without splitting 30 into two lines") && ok;
+    ok=Check(memcmp(counts.data(),countsBefore.data(),counts.size()*sizeof(Option))==0,"numeric count, price, payment and duration fields stay unchanged") && ok;
     printf("SHOP LABELS DLL CONTRACT %s (%u native fallbacks)\n", ok ? "PASS" : "FAIL", g_nativeCalls);
     return ok ? 0 : 1;
 }

@@ -30,6 +30,7 @@ class ShopCatalogActions
 {
 public:
     bool VisualOnly() const { return visualOnly_; }
+    bool RefreshHover() const { return visualOnly_ && target_ && RoomStillMatches() && InvokeHover(bindings_.hover_by_row,room_,targetRow_); }
     enum Result : uint32_t
     {
         kUnbound = 0,
@@ -49,6 +50,7 @@ public:
         kComplete = 14,
         kSubmittingSearch = 15,
         kWaitingForFullInventory = 16,
+        kShowingHover = 17,
 
         kInvalidContext = 0x100,
         kRunChanged = 0x101,
@@ -93,6 +95,8 @@ public:
         kStageWaitGiftGone,
         kStageDone,
         kStageSubmitSearch,
+        kStageShowHover,
+        kStageFinishProduct,
     };
 
     using GameAppFn = uint8_t*(__cdecl*)();
@@ -124,6 +128,9 @@ public:
     static_assert(sizeof(NativeRequestName)==0x1C,"native query string stack size changed");
     using RequestPendingFn=uint32_t(__thiscall*)(void*,NativeRequestName);
     using UnitPageRequestFn=void(__stdcall*)(uint32_t);
+    using EditSetTextFn=void(__thiscall*)(void*,const void*,int);
+    using EditGetTextFn=const void*(__thiscall*)(void*);
+    using HoverByRowFn=void(__thiscall*)(void*,int);
 
     struct Bindings
     {
@@ -138,6 +145,9 @@ public:
         NativeWStringDtorFn native_wstring_dtor = nullptr;
         RequestPendingFn request_pending=nullptr;
         UnitPageRequestFn request_unit_page=nullptr;
+        EditSetTextFn edit_set_text=nullptr;
+        EditGetTextFn edit_get_text=nullptr;
+        HoverByRowFn hover_by_row=nullptr;
         NativeUiFindControlFn native_ui_find_control = nullptr;
         GridDataFn grid_data = nullptr;
         GridFindFn grid_find = nullptr;
@@ -201,6 +211,9 @@ public:
         int32_t time_limit = -1;
         uint32_t buy_previews = 0;
         uint32_t gift_previews = 0;
+        uint32_t hover_previews = 0;
+        uint32_t popup_name_found=0;
+        std::wstring popup_name;
         uint32_t cancellations = 0;
         uint32_t original_actions = 0;
         uint32_t popup_count = 0;
@@ -209,6 +222,7 @@ public:
         uint32_t native_page_slots = 0;
         uint32_t native_page_nonempty = 0;
         uint32_t native_page_bytes = 0;
+        uint32_t native_page_options = 0;
         uint32_t native_request_pending = 0;
         uint32_t wallet_unchanged = 0;
         uint32_t inventory_unchanged = 0;
@@ -266,6 +280,9 @@ public:
                 api, mod, "flow.native_wstring_dtor");
         bindings.request_pending=Symbol<RequestPendingFn>(api,mod,"flow.native_request_pending");
         bindings.request_unit_page=Symbol<UnitPageRequestFn>(api,mod,"flow.unit_page_request");
+        bindings.edit_set_text=Symbol<EditSetTextFn>(api,mod,"room_titles.ui_edit_set_text");
+        bindings.edit_get_text=Symbol<EditGetTextFn>(api,mod,"room_titles.ui_edit_get_text");
+        bindings.hover_by_row=Symbol<HoverByRowFn>(api,mod,"flow.shop_hover_by_row");
         bindings.native_ui_find_control =
             Symbol<NativeUiFindControlFn>(
                 api, mod, "flow.native_ui_find_control");
@@ -437,6 +454,12 @@ public:
             return WaitForPreviewGone(true);
         case kStageDone:
             return Publish(kComplete);
+        case kStageShowHover:
+            if(!RefreshHover())return Publish(kNativeFault);
+            ++observation_.hover_previews;stage_=kStageFinishProduct;
+            return Publish(kShowingHover);
+        case kStageFinishProduct:
+            return FinishProduct();
         default:
             return Publish(kNativeFault);
         }
@@ -566,8 +589,8 @@ private:
     static constexpr size_t kGiftCombo = 0xAC;
     static constexpr size_t kGiftOptionsBegin = 0xB4;
     static constexpr size_t kGiftOptionsEnd = 0xB8;
-    static constexpr size_t kComboItemsBegin = 0x190;
-    static constexpr size_t kComboItemsEnd = 0x194;
+    static constexpr size_t kComboItemsBegin = 0x234;
+    static constexpr size_t kComboItemsEnd = 0x238;
     static constexpr size_t kManagerPopupSentinel = 0x54;
     static constexpr size_t kManagerPopupCount = 0x58;
     static constexpr size_t kProfileGp = 0x18F;
@@ -593,6 +616,7 @@ private:
         uint8_t payment = 0;
         std::wstring name;
         std::wstring displayName;
+        std::wstring query;
         std::wstring label;
     };
 
@@ -899,6 +923,9 @@ private:
                 L"Scope",
                 L"OwnerCatalog");
         visualOnly_ = scope == L"StockVisualAssertions";
+        if(visualOnly_ && !bindings_.hover_by_row)throw 1;
+        query_ = visualOnly_ ? Value(shop,L"Query",L"") : L"";
+        if(query_.size()>36 || (!query_.empty() && (!bindings_.edit_set_text || !bindings_.edit_get_text)))throw 1;
         if (scope == L"StockAssertions" || visualOnly_)
             stockAssertions_ = true;
         else if (scope == L"OwnerCatalog")
@@ -985,6 +1012,8 @@ private:
             product.name =
                 Value(section.second, L"Name");
             product.displayName = visualOnly_ ? Value(section.second, L"DisplayName") : product.name;
+            product.query=visualOnly_ ? Value(section.second,L"Query",query_.c_str()) : L"";
+            if(product.query.size()>36 || (!product.query.empty() && (!bindings_.edit_set_text || !bindings_.edit_get_text)))throw 1;
             product.label =
                 Value(section.second, L"Label");
             const bool enabled =
@@ -1177,6 +1206,9 @@ private:
         IntegrityImage image;
         const Result captured =
             CaptureIntegrity(&image);
+        if(visualOnly_ && captured==kInventoryUnavailable &&
+           (observation_.inventory_failure<=3 || observation_.inventory_failure==7))
+            return Publish(kWaitingForFullInventory);
         if(captured==kInventoryUnavailable && observation_.inventory_failure==6 &&
            observation_.inventory_brief_uid && !observation_.inventory_full_unit &&
            !observation_.inventory_full_uid &&
@@ -1344,6 +1376,10 @@ private:
             return Publish(popupResult);
         if (popups.count)
             return Publish(kUnsafeModalPresent);
+        if(visualOnly_) {
+            const auto next=std::find_if(products_.begin(),products_.end(),[this](const Product& p){return !verifiedKeys_.count(p.key);});
+            if(next!=products_.end())query_=next->query;
+        }
 
         void* cached = nullptr;
         if (!ReadPointer(
@@ -1398,6 +1434,13 @@ private:
         if(active!=1 || !root || !cached)return Publish(kWaitingForCatalog);
         void* found=FindControl(root,L"FilterBtn",kButtonKind);
         if(found!=cached || !ControlIdentity(found,root,L"FilterBtn"))return Publish(kControlMismatch);
+        if(!query_.empty()) {
+            void* edit=nullptr;void* parent=nullptr;
+            if(!ReadPointer(service,0xB4,&edit) || !edit || !ReadPointer(edit,kControlParent,&parent) || parent!=root)return Publish(kControlMismatch);
+            const void* populated=SetNativeEditQuery(bindings_,edit,query_.c_str());
+            std::wstring actual;
+            if(!populated || !ReadHostString(populated,64,&actual) || actual!=query_)return Publish(kUiNameMismatch);
+        }
         if(!Invoke(bindings_.search_callback,service,kClickEvent,found))return Publish(kNativeFault);
         ++observation_.original_actions;
         allSelectedAt_=lastElapsed_;
@@ -1514,6 +1557,8 @@ private:
     {
         if (!RoomStillMatches())
             return Publish(kServiceMismatch);
+        const auto request=CatalogRequestReady();
+        if(request!=kComplete)return Publish(request);
         uint32_t page = 0;
         if (!ReadValue(
                 room_,
@@ -1709,12 +1754,21 @@ private:
         }
         if (!target_)
             return Publish(kNativeFault);
+        if(visualOnly_) {stage_=kStageShowHover;return Publish(kCancellingGiftPreview);}
+        return FinishProduct();
+    }
+
+    Result FinishProduct()
+    {
+        if(!target_)return Publish(kNativeFault);
         verifiedKeys_.insert(target_->key);
         observation_.verified =
             static_cast<uint32_t>(
                 verifiedKeys_.size());
         target_ = nullptr;
-        stage_ = kStageScanPage;
+        const auto next=std::find_if(products_.begin(),products_.end(),[this](const Product& p){return !verifiedKeys_.count(p.key);});
+        const bool anotherQuery=visualOnly_ && next!=products_.end() && next->query!=query_;
+        stage_ = anotherQuery ? kStageSelectAll : kStageScanPage;
         return Publish(kCancellingGiftPreview);
     }
 
@@ -1722,6 +1776,10 @@ private:
         const Product& product,
         uint32_t row)
     {
+        observation_.product_id=product.productId;
+        std::vector<sdgo::shop::Option> observedOptions;
+        if(!ReadOptions(room_,kRoomOptionsBegin,kRoomOptionsEnd,&observedOptions))return kMalformedCatalog;
+        observation_.native_page_options=static_cast<uint32_t>(observedOptions.size());
         const auto name =
             nativeNames_.find(product.productId);
         if (name == nativeNames_.end() ||
@@ -1924,6 +1982,16 @@ private:
                 target_->payment)
             return kPopupOptionMismatch;
 
+        if(visualOnly_) {
+            void* title=FindControl(root,L"TitleStatic",kStaticKind);
+            std::wstring actual;
+            observation_.popup_name_found=title?1u:0u;
+            const bool read=title && ReadHostString(static_cast<uint8_t*>(title)+kControlText,255,&actual);
+            observation_.popup_name=actual;
+            if(!read || actual!=target_->displayName)
+                return kUiNameMismatch;
+        }
+
         uintptr_t itemBegin = 0;
         uintptr_t itemEnd = 0;
         if (!ReadValue(
@@ -1944,9 +2012,13 @@ private:
                 options.size())
             return kPopupOptionMismatch;
         void* nativeLabel = nullptr;
-        if (!ReadButtonTextItem(
-                combo,
-                matching,
+        void* entry=nullptr;void* optionButton=nullptr;
+        if(!ReadAddress(itemBegin+matching*sizeof(void*),&entry) || !entry ||
+           !ReadPointer(entry,0x1C,&optionButton) || !optionButton ||
+           !ControlIdentity(optionButton,combo,std::to_wstring(matching).c_str()) ||
+           !ReadButtonTextItem(
+                optionButton,
+                0,
                 &nativeLabel) ||
             !nativeLabel)
             return kUiDurationMismatch;
@@ -1967,7 +2039,10 @@ private:
                 return kPopupOptionMismatch;
             expected = runtime->second.text;
         }
-        if (label != expected)
+        if(visualOnly_) {
+            if(label.rfind(expected+L" :",0)!=0 || label.find(std::to_wstring(option.price))==std::wstring::npos)
+                return kUiDurationMismatch;
+        } else if (label != expected)
             return kUiDurationMismatch;
         targetOptionIndex_ = matching;
         observation_.option_label = label;
@@ -2948,6 +3023,22 @@ private:
         __try {request(page);return true;}
         __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
     }
+    static bool InvokeHover(HoverByRowFn fn,void* room,uint32_t row) {
+        if(!fn || !room || row>=8)return false;
+        __try {fn(room,static_cast<int>(row));return true;}
+        __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+    }
+
+    static const void* SetNativeEditQuery(const Bindings& b,void* edit,const wchar_t* query) {
+        NativeRequestName text;
+        bool constructed=false;
+        const void* result=nullptr;
+        __try {
+            constructed=b.native_wstring_ctor(text.bytes.data(),query)!=nullptr;
+            if(constructed) {b.edit_set_text(edit,text.bytes.data(),0);result=b.edit_get_text(edit);}
+        } __finally {if(constructed)b.native_wstring_dtor(text.bytes.data());}
+        return result;
+    }
 
     Bindings bindings_ = {};
     bool bound_ = false;
@@ -2966,6 +3057,7 @@ private:
     std::set<uint32_t> requestedInventoryPages_;
     bool stockAssertions_ = false;
     bool visualOnly_ = false;
+    std::wstring query_;
     IntegrityImage baseline_;
     bool hasBaseline_ = false;
     void* room_ = nullptr;
