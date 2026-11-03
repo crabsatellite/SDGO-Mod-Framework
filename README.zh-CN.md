@@ -87,7 +87,7 @@ Stable 表示当前基本功能已验证可用，后续 Bug 通过新版本修�
 |---|---|---|
 | 发包日志 <!-- catalog: `net_probe` --> | 记录客户端发出的封包，用于分析协议 | [使用说明](docs/net-probe.md) |
 | 扭蛋价格探针（Experimental） <!-- catalog: `capsule_price_probe` --> | 只读记录扭蛋列表价格标签的刷新 | [使用说明](docs/capsule-price-probe.md) |
-| GameTest（Experimental） <!-- catalog: `game_test_client`、`game_test_server` --> | 在真实客户端和服务器中自动运行登录、建房、对战和页面场景 | [使用说明](docs/game-test.zh-CN.md) |
+| GameTest（Experimental） <!-- catalog: `game_test_client`、`game_test_server` --> | 原生登录、入房、Ready、单客户端与多客户端协同对战，以及页面检查 | [使用说明](docs/game-test.zh-CN.md) |
 
 <!-- /mod-category:development -->
 
