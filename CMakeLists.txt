@@ -126,6 +126,11 @@ sdgo_add_mod(mission_ai DESCRIPTION "co-op mission wingmen (client)"
 sdgo_add_mod(ime_fix DESCRIPTION "Chinese IME candidate and commit fixes" SOURCES mods/ime_fix/ime_fix.cpp FILES symbols.fragment.ini)
 sdgo_add_mod(findwindow_fix DESCRIPTION "FindWindowW fix" SOURCES mods/findwindow_fix/findwindow_fix.cpp LIBS user32)
 sdgo_add_mod(startup_crash_fix DESCRIPTION "random crash at game start fix" SOURCES mods/startup_crash_fix/startup_crash_fix.cpp)
+sdgo_add_mod(login_recovery SERVER DESCRIPTION "native authenticated stale login recovery"
+             SOURCES mods/login_recovery/login_recovery.cpp FILES symbols.fragment.ini)
+add_executable(login_recovery_policy_test tests/login_recovery_policy_test.cpp)
+sdgo_strict(login_recovery_policy_test)
+add_test(NAME login_recovery_policy COMMAND login_recovery_policy_test)
 sdgo_add_mod(fps_limit DESCRIPTION "native config.xml FPS cap" SOURCES mods/fps_limit/fps_limit.cpp)
 
 add_executable(fps_limit_runtime_test tests/fps_limit_runtime_test.cpp)
