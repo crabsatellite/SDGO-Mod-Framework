@@ -98,6 +98,8 @@ const wchar_t* __cdecl Convert(UINT codePage, const char* text)
     if (codePage == 874 && ReadOption(text, &option)) {
         // A host caption must never hide the actual rental/permanent status.
         const int mode = TimeLimit(option.category);
+        static unsigned traces=0;
+        if(traces++<12)g_api->Log(g_mod,SDGO_LOG_INFO,"native option diagnostic product=%u option=%u category=%u validity=%d mode=%d",option.productId,option.id,option.category,option.validity,mode);
         if ((mode == 1 && g_showRental) || (mode == 0 && g_showPermanent)) {
             std::wstring label = sdgo::shop::DurationLabel(option, mode);
             if (!label.empty())

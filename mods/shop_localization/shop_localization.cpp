@@ -126,6 +126,9 @@ const std::wstring* Lookup(const wchar_t* source, uint32_t length, uintptr_t cal
 void* __fastcall Assign(void* self, void*, const wchar_t* source, uint32_t length)
 {
     const auto caller = reinterpret_cast<uintptr_t>(_ReturnAddress());
+    static unsigned traces=0;
+    if(caller>=0x009C0000 && caller<0x009F0000 && traces++<20)
+        g_api->Log(g_mod,SDGO_LOG_INFO,"native display diagnostic caller=%08lX chars=%u admitted=%u",static_cast<unsigned long>(caller),length,std::binary_search(g_returns.begin(),g_returns.end(),caller)?1u:0u);
     if (std::binary_search(g_returns.begin(), g_returns.end(), caller)) {
         if (const auto* text = Lookup(source, length, caller)) return g_assign(self, text->data(), static_cast<uint32_t>(text->size()));
     }
