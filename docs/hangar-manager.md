@@ -1,7 +1,5 @@
 # Hangar manager
 
-Sorting, native item exchange and server-side GB batch exchange are available in the current stable release.
-
 [简体中文](hangar-manager.zh-CN.md)
 
 The client mod `hangar_manager` adds **Sort** and **Exchange duplicates** buttons next to the lock and

@@ -1,6 +1,6 @@
 # Holiday and birthday gifts
 
-[简体中文](calendar-gifts.zh-CN.md) · [Mod Manager](mod-manager.md) · [Friend unit gifts](friend-unit-gift.md)
+[简体中文](calendar-gifts.zh-CN.md) · [Back to the feature index](../README.md) · [Mod Manager](mod-manager.md)
 
 Calendar gifts is an independent Manager module. Server owners configure holidays, birthdays and particular dates; rewards enter the player's original Storage page for normal claiming. It creates new rewards rather than transferring another player's inventory, and requires no game executable or archive patch.
 

@@ -1,6 +1,6 @@
 # 节日与生日赠礼
 
-[English](calendar-gifts.md) · [Mod Manager](mod-manager.zh-CN.md) · [好友机体赠送](friend-unit-gift.zh-CN.md)
+[English](calendar-gifts.md) · [返回功能目录](../README.zh-CN.md) · [Mod Manager](mod-manager.zh-CN.md)
 
 日期赠礼是独立的 Manager 模块。服主设置节日、生日或指定日期，礼物进入玩家的原生保管库，玩家按游戏原有方式领取。它发放新的机体或道具，不转移其他玩家的库存，也不需要修改游戏 EXE 或资源归档。
 

@@ -54,8 +54,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -Target "D:\Ga
 
 ## 开发者说明
 
-原生 GridData 查询只通过 `AL` 返回一个字节，调用声明必须使用字节返回类型。
-DLL 合约夹具保留非零的 `EAX` 高位，覆盖原始调用约定，防止误把指针残留值当成查询结果。
+原生 GridData 查询只通过 `AL` 返回一个字节，`EAX` 高位可能残留指针值，调用声明必须使用字节返回类型。
 
 客户端用代码页 874（泰文）转换销售选项名，因此变成问号。Mod 挂钩 `shop.buy_options.populate`、
 `shop.gift_options.populate` 和 `shop.tooltip.option` 记录正在绘制的选项行，再挂钩 `text.ansi_to_wide`，只替换这些行的

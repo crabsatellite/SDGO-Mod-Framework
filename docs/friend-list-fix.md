@@ -2,14 +2,15 @@
 
 [简体中文](friend-list-fix.zh-CN.md)
 
-Fixes three problems in the native friend list: offline friends disappearing, outdated pilot names, and
-being unable to open a conversation with an offline friend. Adding friends, viewing the list and messaging
+Fixes problems in the native friend list and chat window: offline friends disappearing, outdated pilot names,
+being unable to open a conversation with an offline friend, and the chat window loading the wrong layout without
+its input box. Adding friends, viewing the list and messaging
 still use the game's own friend page.
 
 | mod | host | part |
 |---|---|---|
 | `friend_list_fix` | WorldServer | returns the complete list with current pilot names |
-| `friend_list_client_fix` | client | lets an accepted offline friend open the native conversation window |
+| `friend_list_client_fix` | client | lets an accepted offline friend open the native conversation window and gives the chat window its correct layout |
 
 ## Use
 
@@ -33,17 +34,16 @@ The WorldServer database account needs permission to create a schema and procedu
 
 ## Developer notes
 
-`friend_list_client_fix` 1.1.1 also restores the native messenger service and
-conversation panels to `uirs/0553.uir`, which already contains the required
-chat controls. The client requests `uirs/1364.uir`, now a parts-exchange layout.
-Only the two verified friend call sites are redirected; the shared string
-assignment entry remains available to shop localization and other Mods.
-The executable and native archive are retained.
+The client requests `uirs/1364.uir` for the messenger service and conversation panels, but that resource is a
+parts-exchange layout without the chat input, so native initialization reads a null control.
+`friend_list_client_fix` redirects only the two verified messenger call sites to the archive's existing
+`uirs/0553.uir`, which has the required chat controls; the parts-exchange screen keeps using `1364`. The shared
+string assignment entry stays available to shop localization and other Mods, and the executable and native
+archive are unchanged.
 
-Server 0.1.2 derives the canonical pilot-name column collation before converting
-the current name and fallback to the native ANSI result, supporting mixed Thai
-database defaults and Chinese Unicode name columns without changing columns.
-
+`friend_list_fix` derives the pilot-name column's actual collation before converting the current name and
+fallback to the native ANSI result, so mixed Thai database defaults with Chinese Unicode name columns display
+correctly without changing columns.
 
 The stock query left-joins online status, clan and other optional data and sends SQL NULLs to a native OLE DB
 row binding without status buffers. The row reader stops on the warning, so one offline or incomplete row can
