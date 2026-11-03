@@ -392,6 +392,7 @@ def validate_observer_stage(
     root: Path,
     stage: Path,
     extra_mods: tuple[str, ...] = (),
+    disabled_mods: tuple[str, ...] = (),
     *,
     fps_mod_enabled: bool | None = None,
 ) -> None:
@@ -423,6 +424,14 @@ def validate_observer_stage(
         if cfg.get('mod','id',fallback='')!=identifier or HOST_KEY not in cfg.get('mod','hosts',fallback='').split(','):
             raise GameTestError('explicit test Mod identity/host mismatch: '+identifier)
         updated[identifier]=manifest
+    for identifier in disabled_mods:
+        if not re.fullmatch(r'[a-z][a-z0-9_]{0,63}', identifier):
+            raise GameTestError('invalid explicitly disabled test Mod ID')
+        if identifier in (TEST_MOD,TARGET_MOD) or identifier in extra_mods:
+            raise GameTestError('test Mod cannot be both required and explicitly disabled: '+identifier)
+        manifest=root/'sdgo/mods'/identifier/'mod.ini'
+        if not manifest.is_file() or read_ini(manifest).get('mod','id',fallback='')!=identifier:
+            raise GameTestError('explicitly disabled test Mod is not installed: '+identifier)
     for manifest in sorted(mods.glob('*/mod.ini')):
         identifier=manifest.parent.name
         if identifier==TEST_MOD:continue
@@ -494,16 +503,26 @@ def overlay_observer(
     root: Path,
     stage: Path,
     extra_mods: tuple[str, ...] = (),
+    disabled_mods: tuple[str, ...] = (),
     *,
     fps_mod_enabled: bool | None = None,
+    bind_staged_loader: bool = False,
 ) -> None:
-    validate_observer_stage(root,stage,extra_mods,fps_mod_enabled=fps_mod_enabled)
+    validate_observer_stage(
+        root,stage,extra_mods,disabled_mods,
+        fps_mod_enabled=fps_mod_enabled)
     stage_client = stage / "client"
     observer_source = stage_client / "sdgo" / "mods" / TEST_MOD
     if not (observer_source / f"{TEST_MOD}.dll").is_file() or not (observer_source / "mod.ini").is_file():
         raise GameTestError(f"stage lacks native observer Mod: {observer_source}")
 
-    copy_file_if_missing(stage_client / "d3d9.dll", root / "d3d9.dll")
+    staged_loader = stage_client / "d3d9.dll"
+    if bind_staged_loader:
+        if not staged_loader.is_file():
+            raise GameTestError(f"stage lacks framework loader: {staged_loader}")
+        shutil.copy2(staged_loader, root / "d3d9.dll")
+    else:
+        copy_file_if_missing(staged_loader, root / "d3d9.dll")
     # The current test Mod can require a newer manifest loader. Bind the
     # staged core in this isolated copy; leave the normal template untouched.
     staged_core=stage_client / "sdgo" / "core.dll"
@@ -615,6 +634,16 @@ def overlay_observer(
         for payload in staged_manifest.parent.iterdir():
             if payload.is_file() and payload.suffix.lower() in ('.dll','.lua'):
                 shutil.copy2(payload,destination/payload.name)
+    if disabled_mods:
+        settings=read_ini(root/'sdgo/sdgo.ini')
+        if not settings.has_section('mods'):settings.add_section('mods')
+        for identifier in disabled_mods:
+            manifest=root/'sdgo/mods'/identifier/'mod.ini'
+            current=read_ini(manifest)
+            current['mod']['enabled']='0'
+            write_ini(manifest,current)
+            settings['mods'][identifier]='0'
+        write_ini(root/'sdgo/sdgo.ini',settings)
 
     stage_symbols = stage_client / "sdgo" / "symbols" / f"{HOST_KEY}.ini"
     copied_symbols = root / "sdgo" / "symbols" / f"{HOST_KEY}.ini"
@@ -2622,12 +2651,14 @@ def prepare(
     quiet: bool = True,
     asset_baseline: Path | None = None,
     extra_mods: tuple[str, ...] = (),
+    disabled_mods: tuple[str, ...] = (),
     apsalus_roundtrip: bool = False,
     fps_gameplay_cap: int | None = None,
     server_session: dict | None = None,
     rebind_existing_account: bool = False,
     fps_cap: int | None = None,
     fps_mod_enabled: bool = True,
+    bind_staged_loader: bool = False,
     _owned_client_transfer: tuple[Path, str] | None = None,
 ) -> dict:
     client_template = client_template.resolve()
@@ -2785,6 +2816,8 @@ def prepare(
         raise GameTestError(f"client template lacks {GAME_EXE}: {client_template}")
     if not (stage / "client").is_dir():
         raise GameTestError(f"stage lacks client tree: {stage / 'client'}")
+    if bind_staged_loader and not (stage / "client" / "d3d9.dll").is_file():
+        raise GameTestError(f"stage lacks framework loader: {stage / 'client' / 'd3d9.dll'}")
     if run_dir.exists():
         raise GameTestError(f"run directory already exists: {run_dir}")
     if is_relative_to(run_dir, client_template):
@@ -2793,6 +2826,7 @@ def prepare(
         _owned_client_transfer[0]/'client' if _owned_client_transfer else client_template,
         stage,
         extra_mods,
+        disabled_mods,
         fps_mod_enabled=fps_mod_enabled if fps_only else None,
     )
     profile_path = None
@@ -2935,7 +2969,10 @@ def prepare(
             os.replace(holding/'client',client)
             recycle_owned_artifact(client/'sdgo/gametest',preparing)
             recycle_owned_artifact(client/'sdgo/mods'/TEST_MOD,preparing)
-        overlay_observer(client, stage, extra_mods, fps_mod_enabled=fps_mod_enabled if fps_only else None)
+        overlay_observer(
+            client, stage, extra_mods, disabled_mods,
+            fps_mod_enabled=fps_mod_enabled if fps_only else None,
+            bind_staged_loader=bind_staged_loader)
         observer_manifest=client/'sdgo/mods'/TEST_MOD/'mod.ini'
         observer_config=read_ini(observer_manifest)
         if not observer_config.has_section('settings'):observer_config.add_section('settings')
@@ -3058,6 +3095,8 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
         raise GameTestError('client reuse requires an owned build run, never the player client')
     if options.get('create_test_account'):
         raise GameTestError('client reuse cannot register another account')
+    if options.get('bind_staged_loader') and not (stage.resolve()/'client'/'d3d9.dll').is_file():
+        raise GameTestError('client reuse requires the explicitly bound staged loader')
     # Preflight the recycler before changing paths or accounts.
     try:__import__('send2trash')
     except ImportError as error:raise GameTestError('install Send2Trash before client reuse; no files changed') from error
@@ -3069,7 +3108,9 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
     fps_only=options.get('fps_cap') is not None
     if fps_only!=(previous.get('suite')==FPS_SUITE):
         raise GameTestError('reuse cannot switch between account-free FPS and authenticated suites')
-    validate_observer_stage(client_root,stage.resolve(),options.get('extra_mods',()),
+    validate_observer_stage(
+        client_root,stage.resolve(),options.get('extra_mods',()),
+        options.get('disabled_mods',()),
         fps_mod_enabled=options.get('fps_mod_enabled',True) if fps_only else None)
     for directory,dirs,files in os.walk(client_root,followlinks=False):
         for name in dirs+files:

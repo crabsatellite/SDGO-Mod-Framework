@@ -101,10 +101,32 @@ class ReuseOwnedClientTests(unittest.TestCase):
         self.assertEqual(old['run_id'],new['reuse']['previous_run_id'])
         self.assertIsNone(new['execution'])
         self.assertFalse(event.exists())
+        self.assertEqual((run/'client/d3d9.dll').read_bytes(),b'normal-loader')
         self.assertEqual('old native evidence\n',game_test.read_json(self.base/'gametest-current/previous-run.json')['events'])
         self.assertTrue(any(p.name=='gametest' for p in self.recycled))
         self.assertFalse((run/'.run.lock').exists())
         self.assertFalse(game_test.account_profile_lock_path(self.fixture.account_profile).exists())
+        game_test.verify_hashes(game_test.validate_metadata(run))
+
+    def test_explicit_staged_loader_binding_replaces_only_the_owned_copy(self):
+        run=self.fixture.prepare('staged-loader')
+        source_loader=(self.fixture.template/'d3d9.dll').read_bytes()
+        stage_loader=(self.fixture.stage/'client/d3d9.dll').read_bytes()
+        self.assertNotEqual(source_loader,stage_loader)
+
+        metadata=game_test.reuse_prepared(
+            self.fixture.template,
+            self.fixture.stage,
+            run,
+            bind_staged_loader=True,
+        )
+
+        self.assertEqual((run/'client/d3d9.dll').read_bytes(),stage_loader)
+        self.assertEqual((self.fixture.template/'d3d9.dll').read_bytes(),source_loader)
+        self.assertEqual(
+            metadata['client']['immutable_hashes']['d3d9.dll'],
+            game_test.sha256(self.fixture.stage/'client/d3d9.dll'),
+        )
         game_test.verify_hashes(game_test.validate_metadata(run))
 
     def test_running_client_refuses_before_any_move(self):
