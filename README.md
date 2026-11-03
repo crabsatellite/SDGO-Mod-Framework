@@ -6,7 +6,7 @@ Unofficial fan project; no game files are included. [简体中文](README.zh-CN.
 [Installation](docs/setup.md) · [SDGO Mod Manager](docs/mod-manager.md) · [Latest release](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
 Manager includes an **Update** button with Stable (default) and Beta channels, automatic checks and installation. See the Manager guide.
 
-Manage features through **SDGO Mod Manager** and use your normal game launcher.
+Server owners and maintainers use **SDGO Mod Manager**, available through clearly marked owner shortcuts on the desktop and at the top of the client folder. Ordinary players should use their normal game launcher and follow the server owner's Mod configuration.
 This page is a feature index. Configuration, gameplay instructions, compatibility and troubleshooting are in each feature's documentation.
 Beta and Experimental labels indicate release channels.
 Release labels describe the published version; later feature work is accepted separately.

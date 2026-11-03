@@ -64,6 +64,12 @@ def make_server(workspace, port=0):
                     if name not in {key + '.js' for key in workspace.providers}: raise ValueError('面板未登记')
                     return self.response(200, (static / 'panels' / name).read_bytes(), 'text/javascript; charset=utf-8')
                 if method == 'GET' and path == '/api/state': return self.send_json(200, {**workspace.public(), 'session_token': token})
+                if method=='POST' and path=='/api/entrypoints':
+                    executable=getattr(getattr(workspace,'updates',None),'manager_exe',None)
+                    if executable is None:raise ValueError('请使用打包版 Manager 创建快捷入口')
+                    from .entrypoints import create
+                    rows=create(workspace,executable)
+                    return self.send_json(200,{'created':sum(r['status']=='created' for r in rows),'kept':sum(r['status']=='kept' for r in rows)})
                 if method == 'GET' and path == '/api/identity': return self.send_json(200, {'application': 'sdgo_mod_manager', 'workspace_id': storage.revision(str(workspace.root).encode())})
                 if path=='/api/updates':
                     updates=getattr(workspace,'updates',None)

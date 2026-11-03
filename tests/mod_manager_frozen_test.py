@@ -42,6 +42,8 @@ def main():
                 request=urllib.request.Request(base+path,None if body is None else json.dumps(body).encode(),values)
                 with urllib.request.urlopen(request,timeout=30) as response:return json.load(response)
             info=call('/api/state');token=info['session_token']
+            with urllib.request.urlopen(base+'/',timeout=10) as response:html=response.read().decode('utf-8')
+            assert '服主与维护人员专用' in html and '普通玩家请使用游戏启动器' in html and 'owner-notice' in html
             assert info['mode']=='standard'
             assert [mod['id'] for mod in info['hosts'][0]['mods']]==['mission_ai']
             assert [mod['id'] for mod in info['hosts'][0]['archive']]==['findwindow_fix']
