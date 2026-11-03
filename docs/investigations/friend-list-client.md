@@ -70,7 +70,7 @@ executable.
 
 The parts-exchange initializer at `0x00565DA0` legitimately uses
 `uirs\1364.uir`, so a global path replacement would break another native UI.
-Version 1.1.1 hooks the two verified native CALL instructions at `0x00959911`
+The client fix hooks the two verified native CALL instructions at `0x00959911`
 and `0x00961F1E`. Each detour substitutes the stable DLL-owned path
 `uirs\0553.uir` only when both argument guards hold:
 
