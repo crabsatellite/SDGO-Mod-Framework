@@ -1819,9 +1819,7 @@ private:
             shortened =
                 product.name.substr(0, 10) +
                 L"..";
-        if (visible != product.name &&
-            visible != shortened)
-            return kUiNameMismatch;
+        const bool titleMatches=visible==product.name || visible==shortened;
 
         std::vector<sdgo::shop::Option> options;
         if (!ReadOptions(
@@ -1838,6 +1836,11 @@ private:
              ++index) {
             const sdgo::shop::Option& option =
                 options[index];
+            if(option.productId==product.productId) {
+                observation_.product_id=option.productId;observation_.option_id=option.id;
+                observation_.category=option.category;observation_.validity=option.validity;
+                observation_.price=option.price;observation_.payment=option.payment;
+            }
             if (option.productId !=
                 product.productId ||
                 option.category !=
@@ -1903,7 +1906,7 @@ private:
             name->second;
         observation_.visible_name =
             visible;
-        return kComplete;
+        return titleMatches ? kComplete : kUiNameMismatch;
     }
 
     Result ValidatePopup(
