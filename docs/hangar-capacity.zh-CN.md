@@ -1,4 +1,4 @@
-# 自动机库容量（Beta）
+# 自动机库容量
 
 [English](hangar-capacity.md)
 
