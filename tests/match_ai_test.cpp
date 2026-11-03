@@ -13,7 +13,9 @@ std::array<uint8_t, 0x500> mode{}, app{};
 std::array<uint8_t, 0x400> camera{};
 std::array<uint8_t, 0x1D40> hud{};
 std::array<uint8_t, 0x3F0> rosterPanel{};
-std::array<uint8_t, 0x40> start{};
+std::array<std::array<std::array<uint8_t,0x40>,12>,3> startPoints{};
+int startPointCount[3]={0,12,12};
+std::vector<float> createdPositions;
 std::array<uint8_t, 12 * kRecordSize> humans{}, ais{};
 std::array<std::array<uint8_t, 0x3400>, 12> units{};
 std::array<uint8_t, 0x3400> localPlayer{};
@@ -67,8 +69,11 @@ int __fastcall Inbound(void*, void*, int, int, int, int, void*) {
 uint8_t* __cdecl App() { return app.data(); }
 bool __cdecl Network() { return network; }
 bool __fastcall Observer(void*, void*) { return observer; }
-uint8_t* __fastcall Start(void*, void*, int colour, int index) { starts.emplace_back(colour, index); return start.data(); }
-uint8_t* __fastcall Create(uint8_t*, void*, uint32_t npc, float, float, float, int, float, float, float) {
+uint8_t* __fastcall Start(void*, void*, int colour, int index) {
+    starts.emplace_back(colour,index);
+    return colour>=1 && colour<=2 && index>=0 && index<startPointCount[colour] ? startPoints[colour][index].data():nullptr;
+}
+uint8_t* __fastcall Create(uint8_t*, void*, uint32_t npc, float x, float, float, int, float, float, float) {
     if (created >= 12) return nullptr;
     auto unit = units[created].data();
     Put(unit, kUnitNpcData, npcs[created].data());
@@ -79,6 +84,7 @@ uint8_t* __fastcall Create(uint8_t*, void*, uint32_t npc, float, float, float, i
     Put(unit, kUnitNpcDataId, npc);
     unit[0x326C] = 1; // real CNPC construction can return with AI enabled
     Put<uint32_t>(unit, kUnitPendingControl, 123);
+    createdPositions.push_back(x);
     ++created;
     return unit;
 }
@@ -369,6 +375,9 @@ void Records(int humanCount, int aiCount) {
 void Reset(int classIndex = 0, int roomMode = 1) {
     for (void* p : allocations) std::free(p);
     allocations.clear(); allocationBudget = 12;
+    createdPositions.clear();startPointCount[1]=startPointCount[2]=12;startPoints={};
+    for(int colour=1;colour<=2;++colour)for(int i=0;i<12;++i)
+        Put<float>(startPoints[colour][i].data(),kStartPointPos,static_cast<float>(colour*100+i));
     room.fill(0); service.fill(0); mode.fill(0); app.fill(0); camera.fill(0); hud.fill(0);
     humans.fill(0); ais.fill(0); packet.fill(0); units = {}; slots = {}; decks = {}; nodes = {}; npcs = {};
     for (int i = 0; i < 12; ++i) { Put<int32_t>(npcs[i].data(), kNpcPoints, 4); Put<uint32_t>(npcs[i].data(), kNpcUnitDataId, 2000u + i); }
@@ -439,10 +448,56 @@ void Spawn(int classIndex = 0, int roomMode = 1, int humanCount = 1, int aiCount
     Reset(classIndex, roomMode); Records(humanCount, aiCount); SpawnAiPlayers(mode.data(), "test");
 }
 bool Near(float a, float b) { return std::fabs(a - b) < 0.0001f; }
+uint32_t hostForwarded=0;
+int hostForwardCalls=0;
+bool hostNativeResult=true;
+uint8_t* __fastcall HostRoomInfo(uint8_t* model,void*) { return Get<uint8_t*>(model,4); }
+uint32_t __fastcall HostGetter(uint8_t*,void*) { return 0; }
+bool __fastcall NativeHostChange(uint8_t*,void*,uint32_t pilot) {
+    ++hostForwardCalls;hostForwarded=pilot;return hostNativeResult;
+}
+void TestHumanHost() {
+    Reset();
+    std::array<uint8_t,0x3D00> packed{};
+    uint8_t model[0x30]{};void* modelVtable[29]{};
+    modelVtable[7]=reinterpret_cast<void*>(&HostRoomInfo);
+    modelVtable[28]=reinterpret_cast<void*>(&HostGetter);
+    Put(model,0,static_cast<void**>(modelVtable));Put(model,4,packed.data());
+    Put(model,0x24,uint32_t{31});
+    g_roomHost.roomInfo=reinterpret_cast<match_ai_host::RoomInfo>(&HostRoomInfo);
+    g_roomHost.hostGetter=modelVtable[28];
+    g_changeRoomHost=reinterpret_cast<ChangeRoomHostFn>(&NativeHostChange);
+    Put(packed.data(),0x4CE,uint32_t{31});Put(packed.data(),0x95C,uint32_t{31});
+    Put(packed.data(),0x95C+6*0x48E,uint32_t{0x80000002u});
+    hostForwardCalls=0;hostNativeResult=true;
+    for(uint8_t modeId:{uint8_t{1},uint8_t{3},uint8_t{6},uint8_t{7},uint8_t{9}}) {
+        packed[5]=modeId;
+        CHECK(ChangeRoomHost(model,nullptr,0x80000002u));
+        CHECK(hostForwarded==31);
+    }
+    CHECK(hostForwardCalls==5);
+    hostNativeResult=false;
+    CHECK(!ChangeRoomHost(model,nullptr,0x80000002u) && hostForwarded==31);
+    hostNativeResult=true;
+    Put(packed.data(),0x95C+0x48E,uint32_t{32});
+    CHECK(ChangeRoomHost(model,nullptr,32) && hostForwarded==32);
+    Put(packed.data(),0x95C,uint32_t{0});
+    CHECK(ChangeRoomHost(model,nullptr,0x80000002u) && hostForwarded==32);
+    Put(packed.data(),0x95C+0x48E,uint32_t{0});
+    const int before=hostForwardCalls;
+    CHECK(!ChangeRoomHost(model,nullptr,0x80000002u) && hostForwardCalls==before);
+    packed[5]=5;
+    CHECK(ChangeRoomHost(model,nullptr,0x80000002u) && hostForwarded==0x80000002u);
+    packed[5]=3;modelVtable[28]=nullptr;
+    CHECK(ChangeRoomHost(model,nullptr,0x80000002u) && hostForwarded==0x80000002u);
+    g_roomHost={};g_changeRoomHost=nullptr;
+}
 }
 
 int main() {
     using namespace fixture;
+    SCENARIO("AI MVP cannot own a player room; native human transfers and no-change results are preserved");
+    TestHumanHost();
     CHECK(MH_Initialize() == MH_OK);
     CHECK(MH_CreateHook(reinterpret_cast<void*>(&NativeTeamOnlyGate), reinterpret_cast<void*>(&TargetTeamGate), &fixtureTeamTrampoline) == MH_OK);
     CHECK(MH_EnableHook(reinterpret_cast<void*>(&NativeTeamOnlyGate)) == MH_OK);
@@ -460,6 +515,22 @@ int main() {
     Spawn(0, 1, 11, 3); CHECK(g_botTable.size() == 1 && playerCount == 12);
     Reset(); Records(1, 2); network = false; SpawnAiPlayers(mode.data(), "offline"); CHECK(created == 0);
     Reset(); Records(1, 0); SpawnAiPlayers(mode.data(), "none"); CHECK(g_botTable.empty());
+
+    SCENARIO("seven enemies cycle native map start points without changing UM slots or colours");
+    for(int points:{1,2,4,6})for(bool remote:{false,true}) {
+        Reset();Records(1,7);startPointCount[1]=points;humans[kRecordMaster]=remote ? 0:1;
+        SpawnAiPlayers(mode.data(),"asymmetric map");
+        CHECK(created==7 && playerCount==8 && g_botTable.size()==7);
+        for(int i=0;i<7;++i) {
+            CHECK(createdPositions[i]==static_cast<float>(100+i%points));
+            CHECK(g_botTable[i].slot==i+1);
+            auto record=Get<uint8_t*>(slots[i+1].data(),kSlotRecord);
+            CHECK(record[kRecordColour]==1 && record[kRecordTeam]==2);
+        }
+    }
+    Reset();Records(1,7);startPointCount[1]=0;SpawnAiPlayers(mode.data(),"missing map colour");
+    CHECK(created==0 && g_botTable.empty());
+    CHECK(AiStartPoint(um,0,0)==nullptr && AiStartPoint(um,1,-1)==nullptr && AiStartPoint(um,1,12)==nullptr);
 
     SCENARIO("all five PvP modes freeze bots through waiting/countdown and release on the native player frame");
     const int nativeModes[] = {1, 3, 6, 9, 7};
@@ -687,8 +758,8 @@ int main() {
     CHECK(LockTarget(g_botTable[0].objectId, 1, 0) == 0 && g_targetSearchUm == nullptr);
 
     SCENARIO("grid HUD gauge includes human and AI teams");
-    const int expected[] = {0, 80, 80, 60, 80, 120, 160};
-    for (int n = 1; n <= 6; ++n) {
+    const int expected[] = {0, 80, 80, 60, 80, 120, 160,160};
+    for (int n = 1; n <= 7; ++n) {
         Reset(2, 6); Records(1, n); SetGridGauge(mode.data());
         CHECK(Get<int32_t>(mode.data(), kModeGridGauge) == expected[n]);
         CHECK(hudGauge == expected[n] && hudCalls == 1);

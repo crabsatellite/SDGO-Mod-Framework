@@ -265,75 +265,14 @@ def _parse_pe(path):
 
 def _product_name(path):
     """Read Windows VersionInfo without loading the DLL into this process."""
-    if os.name != "nt":
-        return None
-    script = (
-        "& { param([string]$FilePath) "
-        "$ErrorActionPreference='Stop'; "
-        "$value=(Get-Item -LiteralPath $FilePath).VersionInfo.ProductName; "
-        "if ($null -ne $value) { [Console]::Out.Write($value) } }"
-    )
-    result = subprocess.run(
-        [
-            "powershell.exe",
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            script,
-            str(_absolute(path)),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=20,
-    )
-    if result.returncode:
-        raise OSError(f"Unable to read DLL version information: {Path(path).name}")
-    return result.stdout.strip() or None
+    from manager.windows import product_name
+    return product_name(path)
 
 
 def _running_gonline_paths():
     """Return exact executable paths for running GOnline.exe processes."""
-    if os.name != "nt":
-        return []
-    script = (
-        "$ErrorActionPreference='Stop'; "
-        "@(Get-CimInstance Win32_Process -Filter \"Name='GOnline.exe'\" | "
-        "Where-Object { $_.ExecutablePath } | "
-        "ForEach-Object { $_.ExecutablePath }) | ConvertTo-Json -Compress"
-    )
-    result = subprocess.run(
-        [
-            "powershell.exe",
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            script,
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=20,
-    )
-    if result.returncode:
-        raise OSError("Unable to verify whether the configured GOnline.exe is running")
-    text = result.stdout.strip()
-    if not text:
-        return []
-    value = json.loads(text)
-    if isinstance(value, str):
-        return [value]
-    if value is None:
-        return []
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise OSError("Unexpected process inventory result")
-    return value
+    from manager.windows import process_image_paths
+    return process_image_paths('GOnline.exe')
 
 
 def _assert_client_image_unmapped(executable):

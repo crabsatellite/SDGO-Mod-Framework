@@ -151,6 +151,31 @@ def candidate(uid):
 
 
 class CustomCandidatePolicyTests(unittest.TestCase):
+    def test_imported_lower_grade_uses_ordinary_native_slots_without_becoming_sr(self):
+        catalog, _ = fixture()
+        worker = unit(25128, 1, 4)
+        worker['unit_import'] = {'family_key':'fixture-worker', 'revision':'a'*64,
+                                 'category_id':1119001}
+        catalog['units'].append(worker)
+        machine=catalog['custom_machines'][0]
+        for rule in machine['slot_rules']:
+            rule['rank_max']=3 if rule['slot']<=6 else 4
+            rule['subgrades']=[4] if rule['slot']<=6 else [3]
+        machine['candidates']=[candidate(25128)]
+        c.validate(catalog)
+        self.assertTrue(c.custom_candidate_allowed(catalog, worker))
+        self.assertEqual((worker['rank'],worker['subgrade']),(1,4))
+        for rule in machine['slot_rules']:
+            rule['subgrades']=[2]
+        with self.assertRaisesRegex(ValueError,'no permitted slot'):
+            c.validate(catalog)
+
+    def test_unpublished_import_metadata_does_not_relax_custom_policy(self):
+        catalog, _=fixture()
+        worker=unit(25128,1,4)
+        worker['unit_import']={'family_key':'fixture-worker','revision':'draft','category_id':1119001}
+        self.assertFalse(c.custom_candidate_allowed(catalog,worker))
+
     def test_helper_and_validation_keep_native_and_allow_only_sr_or_recipe_less_ss(self):
         catalog, _ = fixture()
         units = {u["id"]: u for u in catalog["units"]}

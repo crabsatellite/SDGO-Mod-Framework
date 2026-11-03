@@ -77,6 +77,29 @@ class FakeProcess:
 
 
 class BackendSafetyTests(unittest.TestCase):
+    @unittest.skipUnless(os.name=='nt','Windows process handles')
+    def test_live_pid_probe_never_sends_a_console_signal_and_observes_real_child_exit(self):
+        child=subprocess.Popen([sys.executable,'-c','import threading; threading.Event().wait(60)'],
+            creationflags=subprocess.CREATE_NO_WINDOW)
+        try:
+            with mock.patch.object(backend.os,'kill',side_effect=AssertionError('No signal is a read-only probe')):
+                self.assertTrue(backend._pid_exists(child.pid))
+                self.assertIsNone(child.poll())
+                child.terminate();child.wait(timeout=10)
+                self.assertFalse(backend._pid_exists(child.pid))
+        finally:
+            if child.poll() is None:child.terminate()
+            child.wait(timeout=10)
+
+    @unittest.skipUnless(os.name=='nt','Windows process handles')
+    def test_inaccessible_pid_is_preserved_and_absent_pid_is_distinguished(self):
+        kernel=mock.Mock();kernel.OpenProcess.return_value=None
+        with mock.patch.object(backend.ctypes,'WinDLL',return_value=kernel):
+            for error,exists in ((5,True),(87,False),(1168,False),(12345,True)):
+                with self.subTest(error=error),mock.patch.object(backend.ctypes,'get_last_error',return_value=error):
+                    self.assertEqual(backend._pid_exists(12345),exists)
+        kernel.OpenProcess.assert_called_with(0x00100000,False,12345)
+
     def test_observer_uses_explicit_native_account_identity_only_for_authenticated_suites(self):
         self.assertEqual(backend.observer_host_id(True,None),0)
         with self.assertRaises(RuntimeError):backend.observer_host_id(True,12345)
