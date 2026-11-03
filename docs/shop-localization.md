@@ -11,7 +11,7 @@ the separate [shop rental and Chinese option fix](shop-labels.md).
 
 ## Use
 
-`shop_localization` is a client Mod distributed through the existing updater (`update.bat` for friend servers);
+`shop_localization` is a client Mod that players receive with the server owner's client package or update;
 restart the game after updating. **商城中文汉化** in SDGO Mod Manager has five switches, all on by default; restart
 the game after changing them:
 

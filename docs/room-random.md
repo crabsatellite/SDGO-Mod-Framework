@@ -46,7 +46,7 @@ Drawn units keep their level, upgrades, skills, paint, emblem, experience and se
 
 ## Install
 
-Friend-server players close the client and run `update.bat`; the client part has no settings.
+Players install the client part from the server owner's client package or update with the game closed; it has no settings.
 
 The server supports `BattleServer-548A891D-0046C000` with the framework installed. Stop the target
 BattleServer, then:

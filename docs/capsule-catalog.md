@@ -45,8 +45,8 @@ restored game artwork, game archives or AI models are published by this feature.
 Give players the complete generated `player` directory, including its manifest
 and `Install-Client.cmd`. Every catalog change requires matching generated client
 data; updating only the framework DLL does not update prize pictures or slots.
-For friend servers using `update.bat`, publish that data and its updated file
-manifest to the client repository.
+If you ship players a complete client through your own updater, include that data
+and its updated file manifest.
 Read back the published payload, installed client `runtime.ini` and server
 `sdgo_mod_CapsuleRuntimeState.CatalogRevision`: all must have the same
 `catalog_revision`. Keep the owner workspace on that catalog too. Check first,

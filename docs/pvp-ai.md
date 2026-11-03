@@ -9,8 +9,8 @@ combat, scoring, respawn and spectator features. Normal, death match, Grid, lead
 
 ## Install
 
-Both parts are in the full framework package; friend-server players receive `match_ai` through
-`update.bat`.
+Both parts are in the full framework package; players receive `match_ai` with the server owner's client
+package or update.
 
 | Mod | Install on |
 |---|---|
