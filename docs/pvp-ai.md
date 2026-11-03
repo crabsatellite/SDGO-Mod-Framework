@@ -19,8 +19,8 @@ Both parts are in the full framework package; friend-server players receive `mat
 
 Follow the [installation guide](setup.md#install), then use your usual launcher.
 
-Update every participating client, including the host, to `match_ai 0.1.4` or
-later and restart the client. The opening freeze and TAB roster fixes take
+Update every participating client, including the host, to `match_ai 0.1.5` or
+later and restart the client. The opening freeze, TAB roster and Teleport fixes take
 effect in the next battle; Easy, Medium and Hard use the same release point.
 
 ## Use
@@ -31,6 +31,10 @@ Normal, death match, Grid, leader and Tag modes enable AI on the same native
 countdown frame that releases player control. AI cannot move or attack early.
 Hold TAB to see AI on both teams in the native battle roster, including their
 names, kills, assists and points with normal scoring and sorting.
+
+Teleport moves locally controlled PvP AI to a native spawn point, preserving their
+current HP. It no longer takes the original NPC destruction fallback, which could
+kill a healthy bot inside the playable map. Normal damage and map hazards still apply.
 
 | Title | Effect |
 |---|---|

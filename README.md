@@ -6,7 +6,7 @@ Unofficial fan project; no game files are included. [简体中文](README.zh-CN.
 [Installation](docs/setup.md) · [SDGO Mod Manager](docs/mod-manager.md) · [Latest release](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
 Manager includes an **Update** button with Stable (default) and Beta channels, automatic checks and installation. See the Manager guide.
 
-Manage features through **SDGO Mod Manager** and use your normal game launcher.
+Server owners and maintainers use **SDGO Mod Manager**, available through a clearly marked owner entry at the top of the client folder. Its program and browser tab use the same SDGO mark as the interface. Ordinary players should use their normal game launcher and follow the server owner's Mod configuration.
 This page is a feature index. Configuration, gameplay instructions, compatibility and troubleshooting are in each feature's documentation.
 Beta and Experimental labels indicate release channels.
 Release labels describe the published version; later feature work is accepted separately.
@@ -44,7 +44,7 @@ Release labels describe the published version; later feature work is accepted se
 | Per-round random loadouts (Beta) <!-- catalog: `room_random`, `room_random_client` --> | `!rand` in a room title draws each player's unit or deck from their own hangar every round | [Use](docs/room-random.md) |
 | FPS cap <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed | [Use](docs/fps-limit.md) |
 | Extended room titles <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Enter up to 128 characters in normal, AI, team and mission room creation, settings and rename controls | [Use](docs/room-titles.md) |
-| Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Easy / Medium / Hard PvP bots, selectable in the room title | [Use](docs/battle-ai.md) |
+| Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Room-selected difficulty, ranged retreat, distant pursuit and native special/Teleport recovery | [Use](docs/battle-ai.md) |
 | Automatic hangar capacity <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) | [Use](docs/hangar-capacity.md) |
 | Hangar manager (GB batches Beta) <!-- catalog: `hangar_manager` --> | One-click sorting and duplicate exchange on the unit-management page, with server-side GB batches | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager (Beta) <!-- catalog: `operator_catalog` --> | Five free supply officers, plus operator names, portraits and drops | [Use](docs/operator-assistant.md) |

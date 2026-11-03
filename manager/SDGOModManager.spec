@@ -36,4 +36,5 @@ a = Analysis([str(root/'tools/mod_manager.py')], pathex=[str(root)], datas=data,
              excludes=['playwright','numpy','scipy','matplotlib','tkinter','pytest'], noarchive=False)
 pyz = PYZ(a.pure)
 exe = EXE(pyz,a.scripts,a.binaries,a.datas,[],name='SDGO Mod Manager',console=False,
-          debug=False,strip=False,upx=False,disable_windowed_traceback=False)
+          debug=False,strip=False,upx=False,disable_windowed_traceback=False,
+          icon=str(root/'manager/static/brand.ico'))

@@ -15,6 +15,7 @@
 #include <thread>
 #include <vector>
 
+#include "sdgo/battle_rewards_damage_observer.h"
 #include "sdgo/sdgo_api.h"
 
 static_assert(sizeof(void*) == 4,
@@ -213,6 +214,21 @@ std::vector<PacketRecord> g_packets;
 std::array<BYTE, 20> g_layout_guards{};
 int g_checks = 0;
 int g_failures = 0;
+volatile LONG g_observed_damage = 0;
+volatile LONG g_invalid_observed_damage = 0;
+
+void __cdecl ObserveDamage(
+    const SdgoBattleRewardsDamageEventV1* event, void*) {
+    if (!event || event->size < sizeof(*event) ||
+        event->version !=
+            SDGO_BATTLE_REWARDS_DAMAGE_OBSERVER_VERSION ||
+        !event->room || !event->victim_pilot ||
+        !event->attacker_pilot || event->effective_loss == 0) {
+        InterlockedIncrement(&g_invalid_observed_damage);
+        return;
+    }
+    InterlockedIncrement(&g_observed_damage);
+}
 
 void Check(bool condition, const char* expression, int line) {
     ++g_checks;
@@ -683,7 +699,27 @@ int wmain(int argc, wchar_t** argv) {
 
     CHECK(GenerateSymbols(root));
     CHECK(LoadRealCore(root));
-    CHECK(GetModuleHandleW(L"battle_rewards.dll") != nullptr);
+    HMODULE battleRewards =
+        GetModuleHandleW(L"battle_rewards.dll");
+    CHECK(battleRewards != nullptr);
+    const auto registerDamageObserver =
+        battleRewards
+            ? reinterpret_cast<
+                  SdgoBattleRewardsRegisterDamageObserverV1Fn>(
+                  GetProcAddress(
+                      battleRewards,
+                      SDGO_BATTLE_REWARDS_DAMAGE_OBSERVER_EXPORT))
+            : nullptr;
+    CHECK(registerDamageObserver != nullptr);
+    const SdgoBattleRewardsDamageObserverSinkV1 damageSink = {
+        sizeof(damageSink),
+        SDGO_BATTLE_REWARDS_DAMAGE_OBSERVER_VERSION,
+        &ObserveDamage,
+        nullptr};
+    CHECK(registerDamageObserver &&
+          registerDamageObserver(&damageSink) == 1);
+    CHECK(registerDamageObserver &&
+          registerDamageObserver(&damageSink) == 0);
     CHECK((GetModuleHandleW(L"daily_rewards.dll") != nullptr) == daily);
     VerifyPatchedSites(daily);
     CHECK(WaitStatus(runtime, "\"policy_loaded\": true"));
@@ -694,6 +730,10 @@ int wmain(int argc, wchar_t** argv) {
         DailyCase();
     else
         BasicCases(runtime);
+    CHECK(InterlockedCompareExchange(
+              &g_observed_damage, 0, 0) > 0);
+    CHECK(InterlockedCompareExchange(
+              &g_invalid_observed_damage, 0, 0) == 0);
 
     std::cout << g_checks << " checks, " << g_failures << " failures\n";
     if (!g_failures)

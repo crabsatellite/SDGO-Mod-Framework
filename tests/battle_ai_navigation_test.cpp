@@ -11,6 +11,7 @@ namespace {
 
 using battle_ai::Vec3;
 using battle_ai::native::Aabb;
+using battle_ai::native::MotionSafety;
 using battle_ai::native::NavigationApi;
 using battle_ai::native::Ray3;
 
@@ -62,6 +63,7 @@ struct Callbacks {
     __declspec(noinline) void Query(void** output, int* count, int capacity,
                                     const Aabb*);
     __declspec(noinline) bool IsA(int kind);
+    __declspec(noinline) bool ObjectIsA(int kind);
     __declspec(noinline) bool TerrainRay(const Ray3*, float* distance);
 };
 
@@ -69,6 +71,7 @@ struct Fixture {
     std::array<std::uint8_t, 0x8300> document{};
     std::array<std::uint8_t, 0x40> owner{};
     std::array<void*, 6> sceneVtable{};
+    std::array<void*, 2> objectVtable{};
     Callbacks quadtree{};
     std::array<SceneStorage, 4> scenes{};
     std::array<void*, kCapacity> results{};
@@ -85,6 +88,7 @@ struct Fixture {
     Fixture() {
         active = this;
         sceneVtable[5] = Address(&Callbacks::IsA);
+        objectVtable[1] = Address(&Callbacks::ObjectIsA);
         Put(document.data(), kDocumentQuadTree,
             static_cast<void*>(&quadtree));
         Put(owner.data(), kOwnerScene,
@@ -102,6 +106,7 @@ struct Fixture {
         scene.object.fill(0);
         Put(scene.bytes.data(), 0, sceneVtable.data());
         Put(scene.bytes.data(), kSceneBackPointer, scene.object.data());
+        Put(scene.object.data(), 0, objectVtable.data());
         Put(scene.object.data(), kObjectId, objectId);
         Put(scene.bytes.data(), kSceneAabb,
             Aabb{{-1.0f, -1.0f, -1.0f}, {11.0f, 1.0f, 1.0f}});
@@ -155,16 +160,36 @@ bool Callbacks::IsA(int kind) {
         reinterpret_cast<std::uint8_t*>(this);
 }
 
+bool Callbacks::ObjectIsA(int kind) {
+    return kind == 0x22 && reinterpret_cast<std::uint8_t*>(this)[8] != 0;
+}
+
 bool Callbacks::TerrainRay(const Ray3*, float* distance) {
     ++active->terrainCalls;
     *distance = active->terrainDistance;
     return active->terrainHit;
 }
 
-__declspec(noinline) bool __cdecl SegmentAabb(const Vec3*, const Vec3*,
-                                               const Aabb*) {
+__declspec(noinline) bool __cdecl SegmentAabb(const Vec3* center,
+                                               const Vec3* halfDelta,
+                                               const Aabb* bounds) {
     ++active->segmentCalls;
-    return true;
+    const Vec3 from = *center - *halfDelta;
+    const Vec3 delta = *halfDelta * 2.0f;
+    float minimum = 0.0f;
+    float maximum = 1.0f;
+    const auto slab = [&](float origin, float direction, float lower, float upper) {
+        if (std::abs(direction) < 1.0e-6f) return origin >= lower && origin <= upper;
+        float first = (lower - origin) / direction;
+        float second = (upper - origin) / direction;
+        if (first > second) (std::swap)(first, second);
+        minimum = (std::max)(minimum, first);
+        maximum = (std::min)(maximum, second);
+        return minimum <= maximum;
+    };
+    return slab(from.x, delta.x, bounds->min.x, bounds->max.x) &&
+           slab(from.y, delta.y, bounds->min.y, bounds->max.y) &&
+           slab(from.z, delta.z, bounds->min.z, bounds->max.z);
 }
 
 float DistanceFor(std::uint8_t code) {
@@ -212,6 +237,110 @@ bool Clear(Fixture& fixture, std::uint32_t targetId = 999,
     return battle_ai::native::FreshLineClear(
         fixture.Api(), fixture.document.data(), fixture.owner.data(),
         targetId, from, to, ignoreFriendly);
+}
+
+MotionSafety Safety(Fixture& fixture, Vec3 destination,
+                    Vec3 current = {0.0f, 0.0f, 0.0f}) {
+    active = &fixture;
+    return battle_ai::native::CheckMotionSafety(
+        fixture.Api(), fixture.document.data(), fixture.owner.data(),
+        current, destination);
+}
+
+void ConfigureDeathZone(Fixture& fixture, std::size_t index, Aabb bounds) {
+    fixture.scenes[index].object[8] = 1;
+    Put(fixture.scenes[index].bytes.data(), kSceneAabb, bounds);
+}
+
+void TestDeathZoneMotionSafety() {
+    {
+        Fixture fixture;
+        Put(fixture.scenes[0].bytes.data(), kSceneAabb,
+            Aabb{{-1.0f, -1.0f, -1.0f}, {1.0f, 1.0f, 1.0f}});
+        ConfigureDeathZone(fixture, 1,
+            Aabb{{4.0f, -2.0f, -2.0f}, {6.0f, 2.0f, 2.0f}});
+        fixture.Results({0, 1});
+        Check(Safety(fixture, {5.0f, 0.0f, 0.0f}) == MotionSafety::Blocked,
+              "a destination overlapping a DeathZone is rejected");
+    }
+    {
+        Fixture fixture;
+        Put(fixture.scenes[0].bytes.data(), kSceneAabb,
+            Aabb{{-1.0f, -1.0f, -1.0f}, {1.0f, 1.0f, 1.0f}});
+        ConfigureDeathZone(fixture, 1,
+            Aabb{{4.0f, -2.0f, -2.0f}, {4.1f, 2.0f, 2.0f}});
+        fixture.Results({1});
+        Check(Safety(fixture, {10.0f, 0.0f, 0.0f}) == MotionSafety::Blocked,
+              "a thin DeathZone crossed between clear endpoints is rejected");
+    }
+    {
+        Fixture fixture;
+        Put(fixture.scenes[0].bytes.data(), kSceneAabb,
+            Aabb{{-1.0f, -1.0f, -1.0f}, {1.0f, 1.0f, 1.0f}});
+        ConfigureDeathZone(fixture, 1,
+            Aabb{{20.0f, -2.0f, -2.0f}, {21.0f, 2.0f, 2.0f}});
+        fixture.Results({1});
+        Check(Safety(fixture, {10.0f, 0.0f, 0.0f}) == MotionSafety::Safe,
+              "movement with no DeathZone intersection remains available");
+        fixture.scenes[1].object[8] = 0;
+        Put(fixture.scenes[1].bytes.data(), kSceneAabb,
+            Aabb{{4.0f, -2.0f, -2.0f}, {6.0f, 2.0f, 2.0f}});
+        Check(Safety(fixture, {10.0f, 0.0f, 0.0f}) == MotionSafety::Safe,
+              "an ordinary collision block is not treated as a DeathZone");
+    }
+    {
+        Fixture fixture;
+        Put(fixture.scenes[0].bytes.data(), kSceneAabb,
+            Aabb{{-1.0f, -1.0f, -1.0f}, {1.0f, 1.0f, 1.0f}});
+        Put(fixture.scenes[1].bytes.data(), kSceneBackPointer,
+            static_cast<std::uint8_t*>(nullptr));
+        fixture.terrainScene = fixture.scenes[1].bytes.data();
+        fixture.Results({1});
+        Check(Safety(fixture, {10.0f, 0.0f, 0.0f}) == MotionSafety::Safe,
+              "a native terrain scene without an object backpointer does not stall motion");
+    }
+    {
+        Fixture fixture;
+        Put(fixture.scenes[0].bytes.data(), kSceneAabb,
+            Aabb{{-1.0f, -1.0f, -1.0f}, {1.0f, 1.0f, 1.0f}});
+        ConfigureDeathZone(fixture, 1,
+            Aabb{{-2.0f, -2.0f, -2.0f}, {2.0f, 2.0f, 2.0f}});
+        fixture.Results({1});
+        Check(Safety(fixture, {4.0f, 0.0f, 0.0f}) == MotionSafety::Safe,
+              "an owner already overlapping a DeathZone may leave it completely");
+        Check(Safety(fixture, {1.0f, 0.0f, 0.0f}) == MotionSafety::Blocked,
+              "an owner already overlapping a DeathZone may not remain inside it");
+        ConfigureDeathZone(fixture, 2,
+            Aabb{{2.5f, -2.0f, -2.0f}, {3.0f, 2.0f, 2.0f}});
+        fixture.Results({1, 2});
+        Check(Safety(fixture, {4.0f, 0.0f, 0.0f}) == MotionSafety::Blocked,
+              "leaving an overlapping zone may not cross another DeathZone");
+    }
+    {
+        Fixture fixture;
+        Put(fixture.scenes[0].bytes.data(), kSceneAabb,
+            Aabb{{-1.0f, -1.0f, -1.0f}, {1.0f, 1.0f, 1.0f}});
+        ConfigureDeathZone(fixture, 1,
+            Aabb{{4.0f, -2.0f, -2.0f}, {6.0f, 2.0f, 2.0f}});
+        fixture.Results({1});
+        Put(fixture.owner.data(), 0x38, int{100});
+        const auto alive = Safety(fixture, {10.0f, 0.0f, 0.0f});
+        Put(fixture.owner.data(), 0x38, int{-100});
+        const auto nonpositive = Safety(fixture, {10.0f, 0.0f, 0.0f});
+        Check(alive == MotionSafety::Blocked && nonpositive == alive,
+              "DeathZone movement safety does not depend on owner HP");
+    }
+    {
+        Fixture fixture;
+        fixture.reportedCount = kCapacity;
+        fixture.results.fill(fixture.scenes[1].bytes.data());
+        Check(Safety(fixture, {10.0f, 0.0f, 0.0f}) == MotionSafety::Unavailable,
+              "a full native scene result reports unavailable motion safety");
+        fixture.reportedCount = 1;
+        fixture.results[0] = nullptr;
+        Check(Safety(fixture, {10.0f, 0.0f, 0.0f}) == MotionSafety::Unavailable,
+              "a malformed native scene result reports unavailable motion safety");
+    }
 }
 
 void TestExcludedBodies() {
@@ -454,6 +583,7 @@ int main() {
     TestFreshDifferentTargets();
     TestCapacityAndMalformedData();
     TestInputsRemainUnchanged();
+    TestDeathZoneMotionSafety();
     std::printf("NAVIGATION WRAPPER CHECKS %s\n",
                 failures ? "FAILED" : "PASSED");
     return failures ? 1 : 0;

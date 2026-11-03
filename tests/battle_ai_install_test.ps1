@@ -51,6 +51,32 @@ try {
        (Get-FileHash -LiteralPath (Join-Path $work 'sdgo\mods\battle_ai\battle_ai.dll')).Hash -ne $modBefore) { throw 'Foreign loader rejection did not preserve the install' }
 } finally { [IO.File]::WriteAllBytes($loader,$loaderBytes) }
 Write-Output 'PASS foreign loader rejected before framework or AI files are changed'
+$framework=Join-Path (Split-Path -Parent $work) 'framework template'
+New-Item -ItemType Directory -Force -Path (Join-Path $framework 'sdgo\mods\battle_ai') | Out-Null
+Copy-Item -LiteralPath (Join-Path $source 'sdgo\core.dll') -Destination (Join-Path $framework 'sdgo')
+$frameworkConfig=Join-Path $framework 'sdgo\mods\battle_ai\config.ini'
+[IO.File]::WriteAllText($frameworkConfig,"[settings]`nDifficulty=Easy`n")
+& (Join-Path $repo 'tools\install_battle_ai.ps1') -GameDir $framework -Source $source -FrameworkOnly
+if((Test-Path -LiteralPath (Join-Path $framework 'GOnline.exe')) -or
+   -not (Test-Path -LiteralPath (Join-Path $framework 'sdgo\mods\match_ai\match_ai.dll')) -or
+   [IO.File]::ReadAllText($frameworkConfig) -cne "[settings]`nDifficulty=Easy`n") { throw 'Framework-only install did not preserve its template boundary/settings' }
+$rejected=$false
+try { & (Join-Path $repo 'tools\install_battle_ai.ps1') -GameDir $work -Source $source -FrameworkOnly } catch { $rejected=$true }
+if(-not $rejected) { throw 'Framework-only mode accepted a live game layout' }
+Write-Output 'PASS explicit framework template install preserves settings and rejects game layouts'
+$scoped=Join-Path (Split-Path -Parent $work) 'paired combat template'
+New-Item -ItemType Directory -Force -Path (Join-Path $scoped 'sdgo\mods\ai_catalog'),(Join-Path $scoped 'sdgo\mods\mission_ai') | Out-Null
+Copy-Item -LiteralPath (Join-Path $source 'sdgo\core.dll') -Destination (Join-Path $scoped 'sdgo')
+foreach($id in 'ai_catalog','mission_ai') {
+    [IO.File]::WriteAllText((Join-Path $scoped "sdgo\mods\$id\mod.ini"),'owner-specific-manifest')
+    [IO.File]::WriteAllText((Join-Path $scoped "sdgo\mods\$id\$id.dll"),'owner-specific-runtime')
+}
+& (Join-Path $repo 'tools\install_battle_ai.ps1') -GameDir $scoped -Source $source -FrameworkOnly -PvpCombatOnly
+foreach($id in 'ai_catalog','mission_ai') {
+    if([IO.File]::ReadAllText((Join-Path $scoped "sdgo\mods\$id\mod.ini")) -cne 'owner-specific-manifest' -or
+       [IO.File]::ReadAllText((Join-Path $scoped "sdgo\mods\$id\$id.dll")) -cne 'owner-specific-runtime') { throw 'Paired combat install replaced an unrelated AI component' }
+}
+Write-Output 'PASS paired PvP combat install preserves mission and catalog runtimes'
 if($ServerExe) {
     $hostWork=Join-Path (Split-Path -Parent $work) 'server with spaces'
     foreach($dir in 'sdgo\symbols','sdgo\mods\udp_pool','sdgo\mods\pvp_ai') { New-Item -ItemType Directory -Force -Path (Join-Path $hostWork $dir) | Out-Null }
