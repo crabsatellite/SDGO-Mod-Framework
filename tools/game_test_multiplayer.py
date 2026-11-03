@@ -44,16 +44,19 @@ def campaign(host:Path,peers:list[Path],pilots:list[int],events:list[Path],outpu
     save() # immutable identities and expectations are declared before any client starts
     actors=[];futures=[];pool=concurrent.futures.ThreadPoolExecutor(max_workers=len(runs))
     try:
-        for pilot,run in zip(pilots,runs):
+        def start_actor(pilot,run):
             future=pool.submit(game_test.run_prepared,run,timeout,60)
             actor=FriendActor(run,future);actors.append(actor);futures.append(future)
             state=actor.wait(lambda s:s.get('run',{}).get('ready')=='1',300)
             check('real authentication and native onboarding',int(state['state']['pilot'])==pilot,pilot=pilot)
+            return actor
+        start_actor(pilots[0],runs[0])
         created=assert_receipt(actors[0].command('room_create',timeout=180))
         room=int(created['room']['actual_room_id'])
         channel=int(created['pvp']['channel_id']);group=int(created['pvp']['channel_group'])
         check('host created a real native room',room>0 and created['room']['local_is_host']=='1')
-        for pilot,actor in zip(pilots[1:],actors[1:]):
+        for pilot,run in zip(pilots[1:],runs[1:]):
+            actor=start_actor(pilot,run)
             joined=assert_receipt(actor.command('room_join',target_id=pilots[0],body=first['room_title'],human_count=len(pilots),channel_id=channel,channel_group=group,timeout=180))
             p=joined['pvp']
             check('guest original join and actual room',p['join_original']=='1' and int(p['room'])==room and int(p['host'])==pilots[0],pilot=pilot)

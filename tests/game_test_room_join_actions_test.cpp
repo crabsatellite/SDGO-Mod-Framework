@@ -913,12 +913,8 @@ void SetupRoomList(
             row,
             0x15C,
             g_root.data());
-        Put<void*>(
-            row,
-            0x21C,
-            reinterpret_cast<void*>(
-                0x12340000u +
-                index));
+        // Native CServiceRoomList::OnWindowMessage reads a Boolean here.
+        row[0x21C] = 1;
         SetControlName(
             row,
             rowNames[index]);
@@ -1740,6 +1736,10 @@ int main()
         actions);
 
     actions.ResetObservations();
+    SetupRoomList();
+    Put<uint32_t>(g_rows[0].data(),0x21C,0x01000000u);
+    Check(!actions.JoinExactTitle(kTitle),"adjacent nonzero bytes do not turn a zero native joinability byte into a callback");
+    Check(g_joinCallbackCalls==0,"disabled native row never invokes the real double-click business");
     SetupRoomList();
     actions.SetRoomResolver([](void*)->const uint8_t*{return nullptr;},nullptr);
     Check(actions.JoinExactTitle(kTitle),"resolver regression sends an original join request");

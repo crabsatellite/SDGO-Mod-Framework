@@ -183,6 +183,7 @@ public:
         roomResolver_=resolver;roomOpaque_=opaque;
     }
     uint32_t SelectionStage()const{return selectionStage_;}
+    uint32_t SelectionControlFlags()const{return selectionControlFlags_;}
 
     bool JoinExactTitle(const char* exactTitle)
     {
@@ -552,7 +553,9 @@ private:
     static constexpr size_t kControlParent = 0x15C;
     static constexpr size_t kControlVisible = 0x162;
     static constexpr size_t kControlEnabled = 0x167;
-    static constexpr size_t kControlClickBusiness = 0x21C;
+    // 008DFA29 checks this byte on the native GameRoom control before 0x303.
+    // It is not a callback pointer; adjacent fields cannot make it joinable.
+    static constexpr size_t kControlJoinable = 0x21C;
     static constexpr size_t kNativeStringLength = 0x10;
     static constexpr size_t kNativeStringCapacity = 0x14;
     static constexpr size_t kNativeWStringSize = 0x1C;
@@ -777,15 +780,22 @@ private:
                 static_cast<size_t>(
                     matchedIndex) *
                     0x0C);
+        selectionControlFlags_=control?1u:0u;
+        if(control) {
+            if(Read<uint8_t*>(control+kControlParent)==root)selectionControlFlags_|=2;
+            if(control[kControlVisible])selectionControlFlags_|=4;
+            if(control[kControlEnabled])selectionControlFlags_|=8;
+            if(Read<uint8_t>(control+kControlJoinable))selectionControlFlags_|=16;
+        }
         if (!control ||
             Read<uint8_t*>(
                 control +
                 kControlParent) != root ||
             !control[kControlVisible] ||
             !control[kControlEnabled] ||
-            !Read<void*>(
+            !Read<uint8_t>(
                 control +
-                kControlClickBusiness))
+                kControlJoinable))
             return false;
 
         selectionStage_=7;
@@ -1618,6 +1628,7 @@ private:
     }
     RoomResolver roomResolver_=nullptr;
     mutable uint32_t selectionStage_=0;
+    mutable uint32_t selectionControlFlags_=0;
     void* roomOpaque_=nullptr;
     uint8_t** profilePointer_ = nullptr;
     IsRoomMasterFn isRoomMaster_ = nullptr;
