@@ -1,5 +1,6 @@
 from pathlib import Path
 import configparser
+import copy
 import contextlib
 import importlib.util
 import io
@@ -982,6 +983,42 @@ rva=state
         runtime.process.verify_background.return_value={**proof,'error':None}
         with self.assertRaisesRegex(game_test.GameTestError,'attempted to take the user foreground'):
             runtime.verify(1234)
+
+    def test_named_proxy_scope_includes_only_local_direct_pvp_and_fps(self):
+        run_dir=self.prepare('named-pvp-scope');meta=self.metadata(run_dir)
+        self.assertTrue(game_test.allow_named_desktop_fallback(meta))
+        for field,value in (('target_host','203.0.113.5'),('target_host','invalid'),
+                            ('network_policy','preserve'),('network_policy','routed_loopback'),
+                            ('quiet',False)):
+            changed=copy.deepcopy(meta);changed['plan'][field]=value
+            with self.subTest(field=field,value=value):
+                self.assertFalse(game_test.allow_named_desktop_fallback(changed))
+        for suite in ('native-mission-smoke','unknown'):
+            changed=copy.deepcopy(meta);changed['suite']=suite
+            self.assertFalse(game_test.allow_named_desktop_fallback(changed))
+        self.assertTrue(game_test.allow_named_desktop_fallback({'suite':game_test.FPS_SUITE}))
+
+    def test_local_pvp_named_proxy_still_requires_native_receipts_and_loopback(self):
+        run_dir=self.prepare('named-pvp-proof');meta=self.metadata(run_dir)
+        receipt=run_dir/'receipts';receipt.mkdir(exist_ok=True)
+        runtime=REAL_QUIET_RUNTIME(meta,receipt);runtime.process=mock.Mock()
+        runtime.firewall={'status':'loopback_only','system_policy_changed':False}
+        runtime.process.verify_background.return_value={
+            'verified':True,'isolation_safe':True,'foreground_safe':True,
+            'isolation_mode':'private_desktop_with_hidden_default_proxy',
+            'input_desktop_name':None,'input_desktop_unchanged':None,
+            'input_desktop_safe':None,'error':None}
+        self.assertIsNone(runtime.verify(1234))
+        marker=run_dir/'client/sdgo/gametest/quiet-sockets.ini'
+        marker.write_text(f'[run]\nid={meta["run_id"]}\n[policy]\npid=1234\nactive=1\nloopback_only=1\n[sockets]\nescaped=0\n[audio]\nactive=1\nopened=1\nmuted=1\nfailed=0\n[graphics]\nactive=1\nworker_ready=1\ncreated_devices=1\ndispatch_failures=0\nproxy_hwnd=456\n')
+        with mock.patch.object(game_test,'owned_udp_endpoints',return_value=[]):
+            proof=runtime.verify(1234)
+            self.assertTrue(proof['firewall_verified'] and proof['audio_muted'])
+            self.assertIsNone(proof['input_desktop_name'])
+        with mock.patch.object(game_test,'owned_udp_endpoints',return_value=[{'local_ipv4':'0.0.0.0','local_port':4000}]):
+            with self.assertRaisesRegex(game_test.GameTestError,'non-loopback'):runtime.verify(1234)
+        runtime.metadata=copy.deepcopy(meta);runtime.metadata['plan']['network_policy']='preserve'
+        with self.assertRaisesRegex(game_test.GameTestError,'local direct PvP'):runtime.verify(1234)
 
     def test_disappearing_windows_are_not_misreported_as_public_desktop_escape(self):
         run_dir=self.prepare('quiet-window-disappearance');receipt=run_dir/'receipts';receipt.mkdir(exist_ok=True)

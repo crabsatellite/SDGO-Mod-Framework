@@ -89,6 +89,11 @@ python tools/game_test_backend.py cleanup --work build/fps-backend --remove-runt
 不修改系统防火墙或通知设置。非本机测试需要预先具备其专用防火墙规则的管理权限；
 准备失败时不会弹出提权窗口或回退到交互运行。
 
+受保护输入桌面拒绝读取时，FPS 与本机直连 PvP 测试可核验固定的 `WinSta0\Default`：
+该桌面必须只有同一进程、身份一致且不可见、不可激活的图形代理，真实游戏窗口仍在独立桌面，
+前台归属、静音和网络检查继续生效。回执保留实际输入桌面名称和状态为未知；
+无法识别、可见的窗口或其他观察错误仍判失败。
+
 默认复用 `%LOCALAPPDATA%\SDGO-GameTest\account.ini`，也可用 `--account-profile`
 指定已有配置。普通重跑不会注册新账号；只有显式 `--create-test-account` 才允许
 首次创建持久账号配置，且不会覆盖已有文件。

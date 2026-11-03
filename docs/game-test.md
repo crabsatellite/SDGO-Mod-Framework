@@ -113,6 +113,13 @@ not change firewall profiles or notifications. Nonlocal quiet runs require
 permission to prepare their scoped application rule; setup failure never opens
 a UAC prompt or falls back to an interactive client.
 
+If a protected input desktop denies read access, FPS and local direct PvP tests
+can verify the fixed `WinSta0\Default` desktop instead. It must contain only
+the same process's exact hidden, nonactivating graphics proxy; game windows
+remain on the private desktop, with the foreground, audio and socket checks
+still required. The actual input-desktop name and state remain unknown in the
+receipt. Unidentified or visible windows and other observation errors fail.
+
 Runs reuse `%LOCALAPPDATA%\SDGO-GameTest\account.ini`, or the file selected with
 `--account-profile`. Preparing another run never generates a new account.
 Only explicit `--create-test-account` creates the first persistent profile;
