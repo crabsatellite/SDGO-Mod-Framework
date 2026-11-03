@@ -29,6 +29,9 @@ replace the Manager's unit import workflow.
 
 ## Projects, blueprints and activity pools
 
+The optional recipe-card SPR binding keeps a supplied recipe's own image. Missing declared resources block publication;
+without a binding, an authored recipe uses the selected display template. The same setting is available in Manager.
+
 The blueprint authoring candidate adds editable recipes with explicit recovered,
 authored or unknown provenance. A recipe requires its blueprint item, output,
 three to five ordered materials and minimum levels; seven raw slots are retained

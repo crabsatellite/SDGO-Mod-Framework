@@ -159,7 +159,10 @@ def publish(workspace,state,selected,transaction):
                 template=workspace.baseline.record('blueprint',declaration['recipe_template_id'])
                 if template is None:raise ValueError('客户端缺少所选设计图模板')
                 compiling=copy.deepcopy(declaration);compiling['enabled']=True
-                raw=blueprint_codec.patch(template,compiling,root_unit_id=root)
+                sprite=declaration.get('recipe_sprite')
+                if sprite and sprite not in assets and not workspace.baseline.exists(sprite):
+                    raise ValueError('设计图卡面尚未提供：'+sprite)
+                raw=blueprint_codec.patch(template,compiling,root_unit_id=root,recipe_sprite=sprite)
                 records.append((33,declaration['id'],raw))
                 template_item=workspace.baseline.record('item',declaration['item_template_id'])
                 if not template_item or len(template_item)!=614 or template_item[4]!=0:

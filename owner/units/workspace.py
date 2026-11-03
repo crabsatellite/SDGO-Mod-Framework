@@ -406,7 +406,7 @@ class Workspace:
             if form and form['server'].get(omission['field'])==0:
                 need('skill_omitted',f"已主动移除形态 {omission['form_id']} 的技能 {omission['skill_id']}；该技能效果不会生效，客户端与服务端同时清零",
                      f"forms.{omission['form_id']}.{omission['field']}",'warning')
-        required=set()
+        required={r['recipe_sprite'] for r in draft.get('blueprints',[]) if r.get('recipe_sprite')}
         for row in draft['forms']+draft['weapons']:required.update(row.get('resource_refs',[]))
         owned={f['path'].replace('\\','/').lower():f for f in draft['files']}
         for name,entry in owned.items():

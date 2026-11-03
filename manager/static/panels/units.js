@@ -509,6 +509,7 @@ function renderBlueprints(){
     const enabled=blueprintSelect(fields,"配方状态",recipe.enabled===false?"0":"1",[{id:"1",name:"启用"},{id:"0",name:"停用（保留已持有图纸定义）"}],false);
     const primary=blueprintSelect(fields,"图鉴主设计图（多份启用配方需指定一份）",recipe.encyclopedia_primary?"1":"0",[{id:"0",name:"非主配方"},{id:"1",name:"图鉴默认显示此配方"}],false);
     const template=blueprintSelect(fields,"原生配方显示模板 *",recipe.recipe_template_id,state.templates?.blueprints||[]);
+    const sprite=blueprintInput(fields,"配方卡面 SPR（留空沿用所选模板）",recipe.recipe_sprite||"");
     const item=blueprintSelect(fields,"原生图纸物品模板 *",recipe.item_template_id,state.templates?.blueprint_items||[]);
     const level=blueprintInput(fields,"玩家最低等级 *（0为不限制）",recipe.minimum_player_level,"number");level.max="255";
     const repay=blueprintInput(fields,"回收图纸返还点数 *",recipe.repay_point,"number");
@@ -529,7 +530,7 @@ function renderBlueprints(){
         if(value==null||value==="")delete source[key];else source[key]=value;
       }
       return {...recipe,name:name.value.trim(),internal_name:internal.value.trim(),source,enabled:enabled.value!=="0",encyclopedia_primary:primary.value==="1",
-        recipe_template_id:number(template),item_template_id:number(item),
+        recipe_template_id:number(template),item_template_id:number(item),recipe_sprite:sprite.value.trim()||null,
         output_unit_id:draft.root_unit_id,minimum_player_level:number(level),repay_point:number(repay),
         materials:materialInputs.map(read=>read())};
     };
