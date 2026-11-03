@@ -1143,10 +1143,12 @@ def load_shop_test_inputs(assertions_path: Path, display_path: Path) -> dict:
     shop = _exact_ini_keys(
         assertions,
         "shop",
-        {"Schema", "Scope", "CatalogId", "Revision"},
+        {"Schema", "Scope", "CatalogId", "Revision"} | ({'Query'} if assertions.get('shop','Scope',fallback='') == 'StockVisualAssertions' and assertions.has_option('shop','Query') else set()),
         "shop assertions",
     )
     visual_only = shop["Scope"] == "StockVisualAssertions"
+    if 'Query' in shop and (not shop['Query'] or len(shop['Query'].encode('utf-16le'))>72 or any(c in shop['Query'] for c in '\r\n\0')):
+        raise GameTestError('shop visual query must be bounded native input text')
     if shop["Schema"] != "1" or shop["Scope"] not in ("StockAssertions", "StockVisualAssertions"):
         raise GameTestError("shop assertions require [shop] Schema=1 and Scope=StockAssertions")
     _shop_key("shop CatalogId", shop["CatalogId"])
@@ -1167,7 +1169,9 @@ def load_shop_test_inputs(assertions_path: Path, display_path: Path) -> dict:
         if not section.startswith("product:"):
             raise GameTestError("shop assertions contain an unsupported section")
         _shop_key("shop product key", section[len("product:"):])
-        product = _exact_ini_keys(assertions, section, product_keys, "shop assertions")
+        product = _exact_ini_keys(assertions, section, product_keys | ({'Query'} if visual_only and assertions.has_option(section,'Query') else set()), "shop assertions")
+        if 'Query' in product and (not product['Query'] or len(product['Query'].encode('utf-16le'))>72 or any(c in product['Query'] for c in '\r\n\0')):
+            raise GameTestError('product visual query must be bounded native input text')
         product_id = _shop_integer(f"{section}.ProductId", product["ProductId"], 1, 2**31 - 1)
         template_id = _shop_integer(f"{section}.TemplateId", product["TemplateId"], 1, 2**31 - 1)
         if product_id != template_id:
@@ -1565,7 +1569,7 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
     modes = parse_mode_sequence(mode_sequence)
     if pages_only:
         if shop_visual_only:
-            return FLOW_CASES[:3] + selection + ('pages.shop.catalog',)
+            return FLOW_CASES[:2] + ('flow.shop_ready',) + selection + ('pages.shop.catalog',)
         shop_cases = ('pages.shop.catalog',) if shop_catalog else ()
         return FLOW_CASES[:3] + selection + ('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel','catalog.operator','catalog.ai') + shop_cases + ('pages.storage.read','pages.storage.claim','catalog.capsule','pages.capsule.currency') + (
             ('pages.collection.preview','pages.collection.draw','pages.collection.delivery') if collection_draw else ())

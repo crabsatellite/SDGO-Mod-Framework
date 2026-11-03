@@ -1364,18 +1364,40 @@ int __cdecl ReadCapsuleCurrency(const SdgoGameTestContextV1* context) {
         "machine 9301 uses token currency in both its loaded UI list and the registry used by the original confirmation lookup, with price 99 retained");
     return SDGO_GAME_TEST_PASS;
 }
+int ReadShopReady(const SdgoGameTestContextV1* context) {
+    const auto state=actions.OnboardingState();
+    if(!state.profile_pilot_id || state.tutorial_level<2 ||
+       (state.native_app_state!=5 && state.native_app_state!=6))return SDGO_GAME_TEST_WAIT;
+    if(!authenticatedPilot)authenticatedPilot=state.profile_pilot_id;
+    context->Assert(authenticatedPilot==state.profile_pilot_id,"the existing shop test identity is the genuine server-loaded profile after accepted login");
+    context->Observe("read-only shop scope uses the native lobby or hangar; it does not claim battle-channel admission or create starter assets");
+    return authenticatedPilot==state.profile_pilot_id?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+}
+const SdgoGameTestCaseV1 shopReadyCase{"flow.shop_ready",120000,&ReadShopReady};
 int ReadShopCatalog(const SdgoGameTestContextV1* context) {
     static bool capturePending=false;
     static uint32_t capturedBuy=0,capturedGift=0;
+    static uint32_t capturedHover=0;
+    static bool hoverCapture=false;
+    static bool capturedList=false;
     static ShopCatalogActions::Result capturedFailure=ShopCatalogActions::kComplete;
     if(capturePending) {
+        if(hoverCapture && !shopCatalog.RefreshHover())return SDGO_GAME_TEST_FAIL;
         const auto status=quietGraphics.FrameCaptureState();
         if(status==QuietFrameCapture::Pending || status==QuietFrameCapture::Capturing)return SDGO_GAME_TEST_WAIT;
         context->Assert(status==QuietFrameCapture::Complete,"native shop framebuffer capture completed on the genuine D3D9 device");
         capturePending=false;
+        hoverCapture=false;
         if(status!=QuietFrameCapture::Complete || capturedFailure!=ShopCatalogActions::kComplete)return SDGO_GAME_TEST_FAIL;
     }
     const auto before=shopCatalog.State();
+    if(shopVisualOnly && !capturedList && before.stage==ShopCatalogActions::kStageScanPage) {
+        const auto path=sdgo_test::directory+L"\\shop-list.bmp";
+        capturedList=true;
+        capturePending=quietGraphics.RequestFrameCapture(path.c_str());
+        context->Assert(capturePending,"capture the populated native shop before issuing another page request");
+        return capturePending?SDGO_GAME_TEST_WAIT:SDGO_GAME_TEST_FAIL;
+    }
     if(before.stage==ShopCatalogActions::kStageIdle || before.stage==ShopCatalogActions::kStageBaseline) {
         // The unit-management popup only loads briefs. Enter the original
         // 3D unitmgr so its genuine REQ_UNIT_SLOT_PAGE consumer is present.
@@ -1387,16 +1409,22 @@ int ReadShopCatalog(const SdgoGameTestContextV1* context) {
     }
     const auto result=shopCatalog.Poll(context);const auto state=shopCatalog.State();
     if(shopCatalog.VisualOnly() && (result>=ShopCatalogActions::kInvalidContext ||
-        state.buy_previews>capturedBuy || state.gift_previews>capturedGift)) {
+        state.buy_previews>capturedBuy || state.gift_previews>capturedGift || state.hover_previews>capturedHover ||
+        (!capturedList && state.stage==ShopCatalogActions::kStageWaitPage))) {
         const bool failed=result>=ShopCatalogActions::kInvalidContext;
         wchar_t filename[96]{};
-        swprintf_s(filename,L"\\shop-%s-%u.bmp",failed?L"failure":state.buy_previews>capturedBuy?L"buy":L"gift",state.product_id);
+        swprintf_s(filename,L"\\shop-%s-%u.bmp",failed?L"failure":state.buy_previews>capturedBuy?L"buy":state.gift_previews>capturedGift?L"gift":state.hover_previews>capturedHover?L"hover":L"list",state.product_id);
+        hoverCapture=state.hover_previews>capturedHover;
+        capturedHover=state.hover_previews;
+        if(state.stage==ShopCatalogActions::kStageWaitPage)capturedList=true;
         const auto path=sdgo_test::directory+filename;
         capturePending=quietGraphics.RequestFrameCapture(path.c_str());
         context->Assert(capturePending,"queue an actual shop frame while its native page or preview remains open");
         capturedBuy=state.buy_previews;capturedGift=state.gift_previews;
         capturedFailure=failed?result:ShopCatalogActions::kComplete;
         char message[128]{};sprintf_s(message,"native shop visual checkpoint result=%s product=%u",ShopCatalogActions::ResultName(result),state.product_id);context->Observe(message);
+        if(failed) {char info[160]{};sprintf_s(info,"native shop failed details: options=%u nativeNameChars=%u visibleNameChars=%u first=%04X",state.native_page_options,static_cast<unsigned>(state.native_name.size()),static_cast<unsigned>(state.visible_name.size()),state.visible_name.empty()?0u:static_cast<unsigned>(state.visible_name[0]));context->Observe(info);}
+        if(failed) {char info[512]{};sprintf_s(info,"native popup title control=%u chars=%u codeunits:",state.popup_name_found,static_cast<unsigned>(state.popup_name.size()));for(size_t i=0;i<state.popup_name.size() && i<32;++i){char code[8]{};sprintf_s(code," %04X",static_cast<unsigned>(state.popup_name[i]));strcat_s(info,code);}context->Observe(info);}
         if(capturePending)return SDGO_GAME_TEST_WAIT;
         return SDGO_GAME_TEST_FAIL;
     }
@@ -1854,6 +1882,9 @@ void RegisterPlannedCases() {
         plannedCases.assign(realCases,realCases+3);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
         if(testShopCatalog && shopVisualOnly) {
+            plannedCases.assign(realCases,realCases+2);
+            plannedCases.push_back(shopReadyCase);
+            if(playUnitUid)plannedCases.push_back(playUnitCase);
             plannedCases.push_back(shopCatalogCase);
             provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
         }

@@ -1,6 +1,7 @@
 #include <windows.h>
 
 #include <array>
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <map>
@@ -16,7 +17,7 @@ using PopulateFn = void(__thiscall*)(uint8_t*);
 using TooltipFn = void(__thiscall*)(uint8_t*, const Option*, int);
 using ConvertFn = const wchar_t*(__cdecl*)(UINT, const char*);
 using GridDataFn = void*(__cdecl*)();
-using GridFindFn = int(__thiscall*)(void*, void**, int, int, char);
+using GridFindFn = uint8_t(__thiscall*)(void*, void**, int, int, char);
 
 const SdgoApi* g_api = nullptr;
 SdgoMod* g_mod = nullptr;
@@ -31,6 +32,7 @@ bool g_showPermanent = true;
 
 struct View { uintptr_t begin = 0; uintptr_t end = 0; };
 thread_local View g_view;
+thread_local bool g_compact = false;
 // The original converter returns a borrowed ring-buffer pointer. Its caller
 // immediately copies into a wstring; it never frees that pointer.
 thread_local std::array<std::wstring, 16> g_labels;
@@ -95,6 +97,8 @@ const wchar_t* Borrow(std::wstring text)
 const wchar_t* __cdecl Convert(UINT codePage, const char* text)
 {
     Option option = {};
+    static unsigned convertTraces=0;
+    if(codePage==874 && g_view.begin && convertTraces++<12)g_api->Log(g_mod,SDGO_LOG_INFO,"native option input diagnostic offset=%ld bytes=%lu",static_cast<long>(reinterpret_cast<uintptr_t>(text)-g_view.begin),static_cast<unsigned long>(g_view.end-g_view.begin));
     if (codePage == 874 && ReadOption(text, &option)) {
         // A host caption must never hide the actual rental/permanent status.
         const int mode = TimeLimit(option.category);
@@ -102,6 +106,7 @@ const wchar_t* __cdecl Convert(UINT codePage, const char* text)
         if(traces++<12)g_api->Log(g_mod,SDGO_LOG_INFO,"native option diagnostic product=%u option=%u category=%u validity=%d mode=%d",option.productId,option.id,option.category,option.validity,mode);
         if ((mode == 1 && g_showRental) || (mode == 0 && g_showPermanent)) {
             std::wstring label = sdgo::shop::DurationLabel(option, mode);
+            if (g_compact) label.erase(std::remove(label.begin(), label.end(), L' '), label.end());
             if (!label.empty())
                 return Borrow(std::move(label));
         }
@@ -112,6 +117,8 @@ const wchar_t* __cdecl Convert(UINT codePage, const char* text)
                 value.payment == option.payment && value.price == option.price)
                 return Borrow(value.text);
         }
+        const auto quantity=sdgo::shop::QuantityLabel(option,mode,g_compact);
+        if(!quantity.empty())return Borrow(quantity);
     }
     return g_convert(codePage, text);
 }
@@ -119,9 +126,11 @@ const wchar_t* __cdecl Convert(UINT codePage, const char* text)
 void Populate(uint8_t* self, size_t offset, PopulateFn original)
 {
     const View before = g_view;
+    const bool compactBefore=g_compact;
+    g_compact=false;
     g_view = ReadView(self, offset);
     __try { original(self); }
-    __finally { g_view = before; }
+    __finally { g_view = before;g_compact=compactBefore; }
 }
 
 void __fastcall Buy(uint8_t* self, void*) { Populate(self, 0xB0, g_buy); }
@@ -129,10 +138,12 @@ void __fastcall Gift(uint8_t* self, void*) { Populate(self, 0xB4, g_gift); }
 void __fastcall Tooltip(uint8_t* self, void*, const Option* option, int row)
 {
     const View before = g_view;
+    const bool compactBefore=g_compact;
+    g_compact=true;
     g_view.begin = reinterpret_cast<uintptr_t>(option);
     g_view.end = option ? g_view.begin + sizeof(Option) : 0;
     __try { g_tooltip(self, option, row); }
-    __finally { g_view = before; }
+    __finally { g_view = before;g_compact=compactBefore; }
 }
 
 bool LoadOverrides(const wchar_t* directory)

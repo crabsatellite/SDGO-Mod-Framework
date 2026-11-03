@@ -74,7 +74,7 @@ class ShopPlanTests(unittest.TestCase):
         plan = game_test.read_json(run_dir/'run.json')['plan']
         self.assertTrue(plan['shop_visual_only'])
         required = game_test.required_cases_for_plan(plan)
-        self.assertEqual(required, game_test.FLOW_CASES[:3] + ('pages.shop.catalog',))
+        self.assertEqual(required, game_test.FLOW_CASES[:2] + ('flow.shop_ready','pages.shop.catalog'))
         self.assertNotIn('pages.storage.claim', required)
         self.assertTrue(game_test.read_public_plan(run_dir/'client')['shop_visual_only'])
 
@@ -83,6 +83,24 @@ class ShopPlanTests(unittest.TestCase):
             SHOP_ASSERTIONS_FIXTURE.replace('Scope=StockAssertions', 'Scope=StockVisualAssertions'), encoding='utf-8')
         with self.assertRaises(game_test.GameTestError):
             game_test.load_shop_test_inputs(self.stock_assertions, self.stock_display)
+
+    def test_visual_queries_are_sealed_and_bounded_per_product(self):
+        text=SHOP_ASSERTIONS_FIXTURE.replace('Scope=StockAssertions','Scope=StockVisualAssertions')+'DisplayName=中文商品\nQuery=高达\n'
+        self.stock_assertions.write_text(text,encoding='utf-8')
+        run_dir=self.shop_prepare('visual-query')
+        plan=game_test.read_json(run_dir/'run.json')['plan']
+        game_test.validate_shop_test_install(run_dir/'client',plan)
+        changed=dict(plan);changed['shop_visual_only']=False
+        with self.assertRaises(game_test.GameTestError):
+            game_test.validate_shop_test_install(run_dir/'client',changed)
+        self.stock_assertions.write_text(text.replace('Query=高达','Query='+'高'*37),encoding='utf-8')
+        with self.assertRaises(game_test.GameTestError):
+            game_test.load_shop_test_inputs(self.stock_assertions,self.stock_display)
+
+    def test_regular_stock_scope_cannot_smuggle_visual_queries(self):
+        self.stock_assertions.write_text(SHOP_ASSERTIONS_FIXTURE+'Query=Unit\n',encoding='utf-8')
+        with self.assertRaises(game_test.GameTestError):
+            game_test.load_shop_test_inputs(self.stock_assertions,self.stock_display)
 
     def test_default_pages_plan_has_no_shop_fields_or_case(self):
         run_dir = self.prepare("pages-without-shop", pages_only=True)

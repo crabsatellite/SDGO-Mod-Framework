@@ -88,6 +88,9 @@ std::array<uint8_t, 8 * 0x11> pageRows = {};
 std::vector<sdgo::shop::Option> roomOptions;
 std::vector<sdgo::shop::Option> popupOptions;
 std::array<void*, 2> comboItems = {};
+std::array<uint8_t,0x20> saleEntry{};
+std::array<void*,1> saleItems{};
+Control* optionCaption=nullptr;
 std::array<uint8_t, 0x70> categoryPermanent = {};
 std::array<uint8_t, 0x70> categoryRental = {};
 std::array<uint8_t, 128> nameAlpha = {};
@@ -300,10 +303,17 @@ void PreparePopup(
         kControlText,
         duration);
     comboItems[0] =
-        combo->bytes.data() +
+        (optionCaption?optionCaption:combo)->bytes.data() +
         kControlText;
+    if(!optionCaption || Read<void*>(optionCaption->bytes.data(),kControlParent)!=combo->bytes.data())
+        optionCaption=AddControl(combo->bytes.data(),L"0");
+    SetHostString(optionCaption->bytes.data(),kControlText,duration);
+    comboItems[0]=optionCaption->bytes.data()+kControlText;
+    Put(saleEntry.data(),0x1C,static_cast<void*>(optionCaption->bytes.data()));
+    saleItems[0]=saleEntry.data();
+    SetVector(combo->bytes.data(),0x234,0x238,saleItems.data(),sizeof(void*));
     SetVector(
-        combo->bytes.data(),
+        optionCaption->bytes.data(),
         0x190,
         0x194,
         comboItems.data(),
@@ -452,8 +462,7 @@ void* __fastcall ButtonTextItem(
     uint32_t index)
 {
     if (index != 0 ||
-        (combo != buyCombo->bytes.data() &&
-         combo != giftCombo->bytes.data()))
+        (!optionCaption || combo != optionCaption->bytes.data()))
         return nullptr;
     return comboItems[0];
 }
@@ -808,6 +817,7 @@ void Setup()
     giftPopup.data.assign(giftPopup.data.size(), 0);
     strings.clear();
     controls.clear();
+    optionCaption=nullptr;
     controlCount = 0;
     downmenuCalls = roomCalls = 0;
     searchCalls=0;
