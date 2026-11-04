@@ -49,6 +49,15 @@ class ActivityPatterns(unittest.TestCase):
         self.assertEqual((2,99,1000),(result['currency_type'],result['price'],result['target_entries']))
         self.assertEqual(9301,result['source_machine_id'])
 
+    def test_authored_ordinary_number_is_excluded_from_reference_machines(self):
+        from unittest.mock import patch
+        data=self.fixture();data['listed_machines'].update({9401,990001,1990001})
+        with patch('owner.units.activity_patterns.recommend',return_value={'available':False,'message':'No reference'}) as recommend:
+            with self.assertRaises(ValueError):
+                build_pattern('gp_rare',{'unit_id':90001,'rank':4,'subgrade':4},1119000,
+                    excluded_machine_ids={9401},**data)
+            self.assertEqual({101,201,9301},recommend.call_args.kwargs['listed_machines'])
+
     def test_unsupported_pattern_never_falls_back(self):
         with self.assertRaises(ValueError):self.build('unknown')
 
