@@ -95,9 +95,11 @@ inline std::vector<SqlLiteral> Literals(const std::wstring& text) {
     return result;
 }
 inline unsigned Replace(std::wstring& text,const std::wregex& pattern,const std::wstring& replacement) {
-    unsigned count=0;
-    for(auto i=std::wsregex_iterator(text.begin(),text.end(),pattern);i!=std::wsregex_iterator();++i)++count;
-    text=std::regex_replace(text,pattern,replacement);return count;
+    std::vector<std::pair<std::size_t,std::size_t>> matches;
+    for(auto i=std::wsregex_iterator(text.begin(),text.end(),pattern);i!=std::wsregex_iterator();++i)
+        matches.emplace_back(static_cast<std::size_t>(i->position()),static_cast<std::size_t>(i->length()));
+    for(auto i=matches.rbegin();i!=matches.rend();++i)text.replace(i->first,i->second,replacement);
+    return static_cast<unsigned>(matches.size());
 }
 inline std::wstring Compact(std::wstring text) {
     text=Lower(text);text.erase(std::remove_if(text.begin(),text.end(),[](wchar_t c){return iswspace(c)!=0;}),text.end());return text;
@@ -131,7 +133,8 @@ inline std::wstring OriginalProjection(const std::wstring& alias) {
     return out;
 }
 inline std::wstring Clone(const std::wstring& source,const std::wstring& name,bool exists,
-                          const std::wstring& nameCollation=L"DATABASE_DEFAULT") {
+                          const std::wstring& nameCollation=L"DATABASE_DEFAULT",
+                          const std::wstring& gameDatabase=L"") {
     if(name!=kNames[0])throw std::runtime_error("unexpected friend procedure");
     static const std::wregex collationName(L"[A-Za-z][A-Za-z0-9_]{0,127}");
     if(!std::regex_match(nameCollation,collationName))throw std::runtime_error("invalid native pilot-name collation");
@@ -142,7 +145,7 @@ inline std::wstring Clone(const std::wstring& source,const std::wstring& name,bo
     const std::wregex pilot(LR"(\ba\.f_pilot\b)",flags);
     const std::wregex join(LR"(\btbl_Friend\s+a\s+LEFT\s+JOIN\s+tblg_userGameInfo\s+b\s+ON\s+a\.f_idx2\s*=\s*b\.f_idx\b)",flags);
     const std::wregex projection(LR"(\b(tbl1|BB)\.f_idx2\s*,([\s\S]*?)\bFROM\b)",flags);
-    unsigned names=0,joins=0,first=0,later=0;
+    unsigned names=0,joins=0,first=0,later=0,levels=0,steps=0;
     for(auto& literal:literals) {
         auto& query=literal.value;
         // Member databases can use Thai while their Unicode pilot-name column
@@ -150,7 +153,15 @@ inline std::wstring Clone(const std::wstring& source,const std::wstring& name,bo
         // to native ANSI; DATABASE_DEFAULT would lose canonical Chinese names.
         names+=Replace(query,pilot,L"CONVERT(varchar(20),COALESCE(NULLIF(p.f_pilot COLLATE "+nameCollation+
             L",N''),CONVERT(nvarchar(20),a.f_pilot) COLLATE "+nameCollation+L")) AS f_pilot");
-        joins+=Replace(query,join,L"tbl_Friend a LEFT JOIN tbl_Account_Pilot p ON a.f_idx2=p.f_idx LEFT JOIN tblg_userGameInfo b ON a.f_idx2=b.f_idx");
+        const auto gameJoin=gameDatabase.empty()?L"":L" LEFT JOIN "+Identifier(gameDatabase)+
+            L".dbo.tbl_Users rank_user ON a.f_idx2=rank_user.AccountNumber";
+        joins+=Replace(query,join,L"tbl_Friend a LEFT JOIN tbl_Account_Pilot p ON a.f_idx2=p.f_idx LEFT JOIN tblg_userGameInfo b ON a.f_idx2=b.f_idx"+gameJoin);
+        if (!gameDatabase.empty()) {
+            levels+=Replace(query,std::wregex(LR"(\bb\.f_level\b)",flags),
+                L"COALESCE(b.f_level,CONVERT(int,rank_user.UserLevelNumber)) AS f_level");
+            steps+=Replace(query,std::wregex(LR"(ISNULL\s*\(\s*b\.f_levelstep\s*,\s*1\s*\))",flags),
+                L"COALESCE(b.f_levelstep,CONVERT(int,rank_user.UserLevelStep),1)");
+        }
         std::vector<std::wsmatch> projections;
         for(auto i=std::wsregex_iterator(query.begin(),query.end(),projection);i!=std::wsregex_iterator();++i)projections.push_back(*i);
         for(auto item=projections.rbegin();item!=projections.rend();++item) {
@@ -164,11 +175,16 @@ inline std::wstring Clone(const std::wstring& source,const std::wstring& name,bo
         }
     }
     if(names!=2||joins!=2||first!=1||later!=1)throw std::runtime_error("unknown native friend query shape");
+    if(!gameDatabase.empty() && (levels!=2||steps!=2))throw std::runtime_error("unknown native friend rank projection");
     auto result=source;
     for(auto i=literals.rbegin();i!=literals.rend();++i) {
         auto quoted=Literal(i->value);quoted.erase(quoted.begin()); // preserve the source's N prefix
         result.replace(i->begin,i->length,quoted);
     }
+    if (!gameDatabase.empty() && Replace(result,
+            std::wregex(LR"(\bDECLARE\s+@SQL\s+NVARCHAR\s*\(\s*4000\s*\))",flags),
+            L"DECLARE @SQL NVARCHAR(MAX)")!=1)
+        throw std::runtime_error("unknown native friend dynamic query declaration");
     auto h=ParseHeader(result,name,L"dbo");
     result.replace(h.name,h.nameLength,Identifier(kSchema)+L"."+Identifier(name));
     result.replace(h.action,h.actionLength,exists?L"ALTER":L"CREATE");

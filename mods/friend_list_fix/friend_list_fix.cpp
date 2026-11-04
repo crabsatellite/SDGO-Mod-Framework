@@ -12,6 +12,7 @@ ListFn originalList = nullptr;
 const SdgoApi* g_api = nullptr;
 SdgoMod* g_mod = nullptr;
 std::wstring database;
+std::wstring gameDatabase;
 std::mutex setupMutex;
 bool prepared = false;
 std::atomic<unsigned> failures{0};
@@ -22,7 +23,23 @@ std::atomic<unsigned> nameReceipts{0};
 
 bool PrepareNative(void* connection) {
     sdgo::friend_fix::Session session;
-    if (!session.Open(connection) || !sdgo::friend_fix::Prepare(session, database)) return false;
+    if (!session.Open(connection)) return false;
+    std::wstring gameRankColumns;
+    // Inherit the selected native game database; no separate Mod setting or
+    // stored account update is required. Older servers can keep the existing
+    // friend query when their member login cannot read the game database.
+    const bool gameRankReadable=session.String(
+        L"SELECT CONVERT(nvarchar(10),COUNT(*)) FROM "+sdgo::friend_fix::Identifier(gameDatabase)+
+        L".sys.columns c JOIN "+sdgo::friend_fix::Identifier(gameDatabase)+
+        L".sys.tables t ON t.object_id=c.object_id JOIN "+sdgo::friend_fix::Identifier(gameDatabase)+
+        L".sys.schemas s ON s.schema_id=t.schema_id WHERE s.name=N'dbo' AND t.name=N'tbl_Users' "
+        L"AND c.name IN(N'AccountNumber',N'UserLevelNumber',N'UserLevelStep')",gameRankColumns) && gameRankColumns==L"3" &&
+        session.String(L"SELECT CONVERT(nvarchar(1),COUNT_BIG(COALESCE(CONVERT(int,UserLevelNumber),"
+            L"CONVERT(int,UserLevelStep),AccountNumber))) FROM "+sdgo::friend_fix::Identifier(gameDatabase)+
+            L".dbo.tbl_Users WHERE 1=0",gameRankColumns) && gameRankColumns==L"0";
+    if (!gameRankReadable && g_api)
+        g_api->Log(g_mod,SDGO_LOG_WARN,"game rank fallback unavailable to native member session; retaining member-only rank lookup");
+    if (!sdgo::friend_fix::Prepare(session,database,gameRankReadable?gameDatabase:L"")) return false;
     std::wstring codePage;
     if (!session.String(L"SELECT CONVERT(nvarchar(20),COLLATIONPROPERTY(collation_name,'CodePage')) FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.tbl_Account_Pilot') AND name=N'f_pilot'",codePage)) return false;
     const auto value = std::stoul(codePage);
@@ -98,6 +115,9 @@ SDGO_MOD_ENTRY {
     const auto n = GetPrivateProfileStringW(L"DB Member", L"DBName", L"", name, 130, ini.c_str());
     if (!n || n > 128) return 0;
     database.assign(name, n);
+    const auto gameName=GetPrivateProfileStringW(L"DB Game",L"DBName",L"",name,130,ini.c_str());
+    if (!gameName || gameName>128) return 0;
+    gameDatabase.assign(name,gameName);
     const auto* command = static_cast<const wchar_t*>(api->Symbol(mod, "friends.command"));
     if (!command || wcscmp(command, L"{call dbo.sp_FriendsList(?,?,?,?,?)}") ||
         !api->Symbol(mod, "friends.connection_layout") ||

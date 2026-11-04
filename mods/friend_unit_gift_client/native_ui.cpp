@@ -402,6 +402,21 @@ bool FriendEntry::Attach(
     bindings.last_error = "missing friend dialog";
     if (!dialog) return false;
     auto* source = bindings.FindNamed(dialog, L"Btn5", 4);
+    return AttachDialog(service, bindings, dialog, source, false);
+}
+
+bool FriendEntry::AttachCommunity(void* service, const Bindings& bindings) {
+    // Community_New stores SubMenu01 at +4C, not a dialog. Its native parent
+    // is the existing 1242 popup; the older Messenger uses a different layout.
+    if (!service) return false;
+    auto* first = Read<void*>(service, 0x4C);
+    auto* dialog = first ? Read<void*>(first, 0x15C) : nullptr;
+    auto* source = bindings.FindNamed(dialog, L"SubMenu06", 4);
+    return AttachDialog(service, bindings, dialog, source, true);
+}
+
+bool FriendEntry::AttachDialog(void* service, const Bindings& bindings,
+                              void* dialog, void* source, bool community) {
     bindings.last_error = "friend source button parent";
     if (!ChildOf(source, dialog)) return false;
 
@@ -416,6 +431,20 @@ bool FriendEntry::Attach(
     const int dialogHeight = Read<int>(dialog, 0x158);
     bindings.last_error = "friend dialog height";
     if (dialogHeight <= 0 || dialogHeight > 4096) return false;
+    if (community) {
+        frame_ = bindings.FindNamed(dialog, L"BgIcon", 1);
+        if (!ChildOf(frame_, dialog)) return false;
+        original_frame_height_ = Read<int>(frame_, 0x158);
+        auto** skins=Read<void**>(frame_,0x1A4);
+        auto** end=Read<void**>(frame_,0x1A8);
+        if (skins && end==skins+1 && *skins) {
+            frame_sprite_=Read<void*>(*skins);
+            if (frame_sprite_) {
+                original_frame_scale_y_=Read<float>(frame_sprite_,0x98);
+                original_frame_scaled_=Read<std::uint8_t>(frame_sprite_,0xA0);
+            }
+        }
+    }
     // 0572 draws separate strip icons; changing only dialog height leaves the
     // added row outside its frame. Clone its last strip before the new button
     // so the stock renderer keeps the original child order and ownership.
@@ -448,6 +477,18 @@ bool FriendEntry::Attach(
         dialog, L"ModFriendUnitGift", 0, y,
         width, height, source, L"赠送机体");
     if (!button) return false;
+    if (community) {
+        auto** items=Read<std::uint8_t**>(source,0x190);
+        auto** end=Read<std::uint8_t**>(source,0x194);
+        if (items && end>items && *items) {
+            const auto* item=*items;const auto caption=View(L"赠送机体");
+            bindings.text(button,0,&caption,
+                static_cast<int>(Read<float>(item,0x48)),static_cast<int>(Read<float>(item,0x4C)),
+                Read<int>(item,0x50),Read<int>(item,0x54),Read<std::uint32_t>(item,0x58),
+                Read<std::uint32_t>(item,0x5C),Read<std::uint8_t>(item,0x64),
+                Read<std::uint32_t>(item,0x6C),Read<int>(item,0x68));
+        }
+    }
 
     bindings_ = &bindings;
     service_ = service;
@@ -456,6 +497,11 @@ bool FriendEntry::Attach(
     original_dialog_height_ = dialogHeight;
     expanded_dialog_height_ =
         std::max(dialogHeight, y + height);
+    if (community) {
+        const int padding=std::max(0,dialogHeight-
+            (static_cast<int>(Read<float>(source,0x14C))+height));
+        expanded_dialog_height_=std::max(dialogHeight,y+height+padding);
+    }
     if (bottom_) expanded_dialog_height_ = std::max(expanded_dialog_height_,
         static_cast<int>(expanded_bottom_y_)+Read<int>(bottom_,0x158));
     geometry_captured_ = true;
@@ -502,6 +548,9 @@ void FriendEntry::Detach(void* service) noexcept {
     button_ = nullptr;
     background_ = nullptr;
     bottom_ = nullptr;
+    frame_ = nullptr;
+    frame_sprite_ = nullptr;
+    original_frame_height_ = 0;
     original_bottom_y_ = 0.0f;
     expanded_bottom_y_ = 0.0f;
     original_dialog_height_ = 0;
@@ -521,12 +570,30 @@ void FriendEntry::ApplyGeometry(bool expanded) noexcept {
                 Put<float>(bottom_,0x14C,original_bottom_y_);
                 bindings_->refresh_geometry(bottom_);
             }
+            if (frame_) {
+                Put<int>(frame_, 0x158, original_frame_height_);
+                if (frame_sprite_) {
+                    Put<float>(frame_sprite_,0x98,original_frame_scale_y_);
+                    Put<std::uint8_t>(frame_sprite_,0xA0,original_frame_scaled_);
+                }
+                bindings_->refresh_geometry(frame_);
+            }
             if (bindings_->refresh_geometry) bindings_->refresh_geometry(dialog_);
             geometry_expanded_ = false;
             return;
         }
         Put<int>(
             dialog_, 0x158, expanded_dialog_height_);
+        if (frame_) {
+            const int height=original_frame_height_ + expanded_dialog_height_ - original_dialog_height_;
+            Put<int>(frame_, 0x158, height);
+            if (frame_sprite_ && original_frame_height_>0) {
+                Put<float>(frame_sprite_,0x98,(original_frame_scaled_ ? original_frame_scale_y_ : 1.0f)*
+                    static_cast<float>(height)/static_cast<float>(original_frame_height_));
+                Put<std::uint8_t>(frame_sprite_,0xA0,1);
+            }
+            bindings_->refresh_geometry(frame_);
+        }
         if (bottom_) {
             Put<float>(bottom_,0x14C,expanded_bottom_y_);
             bindings_->refresh_geometry(bottom_);
