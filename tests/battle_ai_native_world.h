@@ -13,6 +13,8 @@ using battle_ai::native::Ray3;
 using battle_ai::native::Aabb;
 inline lua_State* state=nullptr;
 inline uint8_t* source=nullptr;
+inline uint8_t* genericObject=nullptr;
+inline uint32_t canonicalOverridePilot=0,canonicalOverrideId=0;
 inline std::array<uint8_t,0x8500> document{};
 inline uint8_t* documentPointer=document.data();
 inline std::array<uint8_t,0x500> app{};
@@ -94,6 +96,7 @@ struct Callbacks {
         return 0x51D0;
     }
     __declspec(noinline) uint32_t Canonical(uint32_t pilot) {
+        if(pilot==canonicalOverridePilot)return canonicalOverrideId;
         for(auto unit:configuredUnits)
             if(unit&&*reinterpret_cast<uint32_t*>(unit+0x2B68)==pilot) return *reinterpret_cast<uint32_t*>(unit+4);
         return 0;
@@ -208,7 +211,8 @@ struct Callbacks {
     }
     __declspec(noinline) uint8_t* Find(uint32_t id) {
         if(id==20)return source;if(id==1)return enemy1.data();if(id==2)return enemy2.data();
-        if(id==3)return remoteHuman.data();if(id==4)return sameTeamNpc.data();return nullptr;
+        if(id==3)return remoteHuman.data();if(id==4)return sameTeamNpc.data();
+        if(id==13038)return genericObject;return nullptr;
     }
     __declspec(noinline) uint8_t* NavigationNode(Vec3) {return nullptr;}
     __declspec(noinline) uint8_t* NavigationNodeAt(int) {return nullptr;}
@@ -382,6 +386,7 @@ inline int Mode(lua_State*){return 0;}
 inline int Jump(lua_State*){++jumps;return 0;}
 inline void Initialize(uint8_t* unit,lua_State* L) {
     state=L;source=unit;blocked=coverWall=nullRay=terrainWall=forceObbBlock=false;
+    genericObject=nullptr;canonicalOverridePilot=canonicalOverrideId=0;
     shotReturn=0xBEEFF00D;replaceShotAction=replaceShotWeapon=false;
     jumps=moves=goalCalls=lastGoalMode=frees=queries=obbCalls=terrainCalls=0;
     stopMotorCalls=message41Calls=0;
@@ -398,7 +403,8 @@ inline void Initialize(uint8_t* unit,lua_State* L) {
         Put(w,0x72,uint32_t(i==0?200:2000));Put(w,0x7C,uint16_t(i==0?0:30));
         Put(w,0x82,uint16_t(i==0?30:6));w[0x8F]=1;
     }
-    Configure(unit,0,20,2,1000,0,0);Configure(enemy1.data(),1,1,1,1000,1000,0);
+    Configure(unit,0,20,2,1000,0,0);unitKinds[0]=10;
+    Configure(enemy1.data(),1,1,1,1000,1000,0);
     Configure(enemy2.data(),2,2,1,100,1400,100);enemy2[0xDCD]=1;
     head={&a,&b,nullptr};a={&b,&head,enemy1.data()};b={&head,&a,enemy2.data()};
     Put(document.data(),0x48,&head);Put(document.data(),0x82C4,document.data());Put(document.data(),0x8364,document.data());
