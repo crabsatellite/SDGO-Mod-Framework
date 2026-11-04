@@ -28,6 +28,20 @@ lua_State* g_L = nullptr;
 int g_failures = 0;
 int g_expectedDispatchResult = 123;
 std::wstring g_root;
+uint8_t* g_guardRegion = nullptr;
+SIZE_T g_guardPageSize = 0;
+volatile LONG g_guardAccessViolations = 0;
+LONG CALLBACK GuardAccessProbe(EXCEPTION_POINTERS* exception) {
+    if(exception&&exception->ExceptionRecord&&
+       exception->ExceptionRecord->ExceptionCode==EXCEPTION_ACCESS_VIOLATION&&
+       exception->ExceptionRecord->NumberParameters>=2&&g_guardRegion&&g_guardPageSize) {
+        const auto address=static_cast<uintptr_t>(exception->ExceptionRecord->ExceptionInformation[1]);
+        const auto objectStart=reinterpret_cast<uintptr_t>(g_guardRegion)+g_guardPageSize-sizeof(void*);
+        if(address>objectStart&&address<objectStart+0x3300)
+            InterlockedIncrement(&g_guardAccessViolations);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
 void Check(bool ok,const char* what) {
     std::printf("%s %s\n",ok?"PASS":"FAIL",what); if(!ok) ++g_failures;
 }
@@ -108,6 +122,7 @@ int wmain(int argc,wchar_t** argv) {
     bool bad=argc>1 && !wcscmp(argv[1],L"bad-signature");
     bool missing=argc>1 && !wcscmp(argv[1],L"missing-script");
     bool generic=argc>1 && !wcscmp(argv[1],L"generic");
+    bool ownership=argc>1 && !wcscmp(argv[1],L"ownership");
     bool easy=argc>1 && !wcscmp(argv[1],L"easy");
     bool medium=argc>1 && (!wcscmp(argv[1],L"medium")||!wcscmp(argv[1],L"enabled"));
     wchar_t exe[MAX_PATH]; GetModuleFileNameW(nullptr,exe,MAX_PATH); *wcsrchr(exe,L'\\')=0; g_root=exe;
@@ -133,8 +148,10 @@ int wmain(int argc,wchar_t** argv) {
     SdgoBoot boot={sizeof(boot),"battle_ai_native_test",GetModuleHandleW(nullptr)};
     Check(init(&boot)!=0,"real core initialization");
     Unit unit; unit.bytes[0x326C]=1; *reinterpret_cast<uint32_t*>(unit.bytes+0x3238)=3604001;
-    if(generic||easy||medium) {
+    if(generic||ownership||easy||medium||missing) {
         native_world::Initialize(unit.bytes,g_L);
+    }
+    if(generic||ownership||easy||medium) {
         native_world::Put(native_world::fsms[0].data(),0x200,uint32_t(2));
         native_world::enemy2[0xDCD]=0;
         native_world::shotReturn=0;
@@ -148,6 +165,58 @@ int wmain(int argc,wchar_t** argv) {
     lua_pushnumber(g_L,987);
     unit.Init(reinterpret_cast<void*>(1)); unit.Think();
     Check(lua_gettop(g_L)==1 && lua_tonumber(g_L,1)==987,"adapter preserves incoming Lua stack");
+    if(ownership) {
+        Check(Eval("SDGO_BattleAI_GenericUpdate=function(n) sample=SDGO_BattleAI_Observe(); return 123 end"),
+              "ownership probe installs an observation callback");
+        uint8_t message[0x50]={};
+        native_world::Put(message,0,uint16_t(0xC));
+        native_world::Put(message,0x14,int32_t(100));
+        native_world::Put(message,0x3C,uint32_t(1));
+        const bool delivered=native_world::EmitContact(native_world::document.data(),20,message,0);
+        unit.Think();
+        Check(delivered&&Eval("assert(sample.meleeAttacker==1)"),
+              "a native IsA(10) CNPC receiver still records delivered melee damage");
+        SYSTEM_INFO systemInfo{};GetSystemInfo(&systemInfo);
+        g_guardPageSize=systemInfo.dwPageSize;
+        g_guardRegion=static_cast<uint8_t*>(VirtualAlloc(nullptr,g_guardPageSize*4,
+            MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));
+        DWORD priorProtection=0;
+        const bool guardReady=g_guardRegion&&VirtualProtect(g_guardRegion+g_guardPageSize,
+            g_guardPageSize*3,PAGE_NOACCESS,&priorProtection)!=0;
+        Check(guardReady,"short generic native object guard pages initialize");
+        if(guardReady) {
+            auto object=g_guardRegion+g_guardPageSize-sizeof(void*);
+            native_world::Put(object,0,native_world::unitVtable.data());
+            native_world::genericObject=object;
+            g_guardAccessViolations=0;
+            auto handler=AddVectoredExceptionHandler(1,GuardAccessProbe);
+            const bool genericDelivered=reinterpret_cast<native_world::Callbacks*>(
+                native_world::document.data())->Message(13038,message,0);
+            Check(handler&&g_guardAccessViolations==0&&!genericDelivered,
+                  "generic message receivers are rejected by native type before CNPC offsets");
+            g_guardAccessViolations=0;
+            native_world::canonicalOverridePilot=0x80000077;
+            native_world::canonicalOverrideId=13038;
+            uint8_t state[0x18]={};
+            native_world::Put(state,0,uint16_t(0x779));
+            native_world::Put(state,6,native_world::canonicalOverridePilot);
+            state[0xA]=0xFF;
+            using NoticeFn=int(__thiscall*)(uint8_t*,const uint8_t*);
+            NoticeFn volatile spState=reinterpret_cast<NoticeFn>(
+                native_world::Address(&native_world::Callbacks::SpStateNotice));
+            const int stateResult=spState(native_world::document.data(),state);
+            unit.Think();
+            Check(handler&&stateResult==1&&g_guardAccessViolations==0,
+                  "generic canonical results cannot receive NPC SP state or large-offset reads");
+            if(handler) RemoveVectoredExceptionHandler(handler);
+            native_world::canonicalOverridePilot=native_world::canonicalOverrideId=0;
+            native_world::genericObject=nullptr;
+        }
+        if(g_guardRegion)VirtualFree(g_guardRegion,0,MEM_RELEASE);
+        g_guardRegion=nullptr;g_guardPageSize=0;
+        std::printf("NATIVE ADAPTER CHECKS %s\n",g_failures?"FAILED":"PASSED");
+        return g_failures?1:0;
+    }
     if(generic||medium) {
         const auto snapshot=reinterpret_cast<SdgoBattleAiGetUnitSnapshotV1Fn>(
             GetProcAddress(GetModuleHandleW(L"battle_ai.dll"),SDGO_BATTLE_AI_UNIT_OBSERVER_EXPORT));

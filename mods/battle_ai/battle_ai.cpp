@@ -305,9 +305,21 @@ Actor& ActorFor(uint8_t* unit) {
     }
     return a;
 }
+bool ObjectIsA(uint8_t* object,int kind) {
+    __try {
+        if(!object)return false;
+        auto table=*reinterpret_cast<void***>(object);
+        if(!table||!table[1])return false;
+        using IsA=bool(__thiscall*)(void*,int);
+        return reinterpret_cast<IsA>(table[1])(object,kind);
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 bool Owned(uint8_t* unit) {
     __try {
-        return unit && unit[0x2B65]==0 && unit[0x326C]!=0 &&
+        // UnitManager uses this same virtual IsA(10) gate before it reads or
+        // removes NPC state. DeliverMessage accepts every object kind, so a
+        // successful id lookup alone does not make its receiver a CNPC.
+        return ObjectIsA(unit,10) && unit[0x2B65]==0 && unit[0x326C]!=0 &&
             *reinterpret_cast<uint32_t*>(unit+0x3238)>=3604001 &&
             *reinterpret_cast<uint32_t*>(unit+0x3238)<=3607000;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -661,11 +673,7 @@ struct Observation {
     bool hasObstacle=false;
 };
 bool Destroyable(uint8_t* object) {
-    if(!object)return false;
-    auto table=*reinterpret_cast<void***>(object);
-    if(!table||!table[1])return false;
-    using IsA=bool(__thiscall*)(void*,int);
-    return reinterpret_cast<IsA>(table[1])(object,battle_ai::native::kDestroyableBlockKind);
+    return ObjectIsA(object,battle_ai::native::kDestroyableBlockKind);
 }
 void ObserveBlockingGate(Observation& o,Actor& actor,ULONGLONG now,Vec3 perceptionOrigin,Vec3 meleeOrigin,bool rangedOrigin) {
     using namespace battle_ai::native::detail;
@@ -2078,7 +2086,7 @@ void ApplySpNotice(const SpNotice& notice) {
     __try {
         if(!g_document||!*g_document) return;
         auto unit=FindObject(g_canonical(*g_document,notice.pilot));auto found=g_actors.find(unit);
-        if(!unit||*reinterpret_cast<uint32_t*>(unit+0x2B68)!=notice.pilot) return;
+        if(!ObjectIsA(unit,10)||*reinterpret_cast<uint32_t*>(unit+0x2B68)!=notice.pilot) return;
         auto npc=*reinterpret_cast<uint32_t*>(unit+0x3238);if(npc<3604001||npc>3607000) return;
         auto latest=g_spSnapshots.find(unit);
         if(latest!=g_spSnapshots.end()&&notice.sequence<latest->second.sequence) {
