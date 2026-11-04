@@ -103,5 +103,123 @@ int main() {
     Check(!construction.PrepareConstruction(c,frozen.data(),start.data()+0x20,1).applied,"restoration invalidates the previous construction authorization");
     construction.Process(c,0x06C3,start.data());Put<uint32_t>(room.data(),0,9);
     Check(!construction.PrepareConstruction(c,frozen.data(),start.data()+0x20,1).applied,"room identity change rejects a previous construction snapshot");
+    {
+        std::array<uint8_t,0x5DA8> lateProfile{};
+        std::array<uint8_t,0x4000> lateRoom{};
+        Context lateContext{lateProfile.data(),lateRoom.data(),2001};
+        CacheSync late;
+        Put<uint32_t>(lateRoom.data(),0,20);lateRoom[5]=8;
+        std::array<std::array<uint8_t,0x99>,4> units{};
+        std::array<std::array<uint8_t,kStride>,4> sources{};
+        std::array<std::array<uint8_t,room_random_sync::kPayload+room_random_sync::kUnitSize>,4> notices{};
+        std::array<uint8_t,0xCD4> lateStart{};Put<uint16_t>(lateStart.data(),0,0x06C3);
+        for(size_t slot=0;slot<4;++slot) {
+            const auto owner=static_cast<uint32_t>(2001+slot);
+            const auto oldModel=static_cast<uint32_t>(15001+slot);
+            const auto model=static_cast<uint32_t>(12001+slot);
+            Put<uint32_t>(lateRoom.data(),kSlotBase+slot*kStride+kOwner,owner);
+            Put<uint32_t>(lateRoom.data(),kSlotBase+slot*kStride+0x49,oldModel);
+            Put<uint32_t>(units[slot].data(),0,model);
+            Put<uint64_t>(units[slot].data(),8,0x400000000ULL+slot);
+            notices[slot]=room_random_sync::Packet(0x0861,owner,static_cast<uint32_t>(slot),20,units[slot]);
+            Put<uint32_t>(lateStart.data(),0x20+slot*0x10F,owner);
+            Put<uint32_t>(lateStart.data(),0x2E+slot*0x10F,model);
+            Put<uint32_t>(sources[slot].data(),kOwner,owner);
+            Put<uint32_t>(sources[slot].data(),0x49,oldModel);
+        }
+        for(size_t slot=0;slot<3;++slot)
+            Check(late.Process(lateContext,0x0861,notices[slot].data()).applied==1,
+                  "three on-time human notices apply before the start");
+        auto lateResult=late.Process(lateContext,0x06C3,lateStart.data());
+        Check(lateResult.applied==3 && lateResult.mismatched==1,
+              "start records one missing human notice without discarding the other three");
+        auto rejected=notices[3];Put<uint32_t>(rejected.data(),6,9999);
+        Check(late.Process(lateContext,0x0861,rejected.data()).reason==4,
+              "wrong-owner notice is rejected after start");
+        auto outOfRange=notices[3];Put<uint32_t>(outOfRange.data(),10,12);
+        Check(late.Process(lateContext,0x0861,outOfRange.data()).reason==3,
+              "out-of-range notice is rejected after start");
+        for(size_t slot=0;slot<3;++slot)
+            Check(late.PrepareConstruction(lateContext,sources[slot].data(),
+                                           lateStart.data()+0x20+slot*0x10F,0).applied,
+                  "rejected notice preserves every already-authorized human slot");
+        Check(!late.PrepareConstruction(lateContext,sources[3].data(),
+                                        lateStart.data()+0x20+3*0x10F,0).applied,
+              "missing fourth notice cannot authorize a partial frozen source");
+        Check(late.Process(lateContext,0x0861,notices[3].data()).applied==1,
+              "matching fourth notice is accepted after start");
+        for(size_t slot=0;slot<4;++slot) {
+            const auto fixed=late.PrepareConstruction(
+                lateContext,sources[slot].data(),lateStart.data()+0x20+slot*0x10F,0);
+            Check(fixed.applied && fixed.after==12001+slot,
+                  "late fourth notice completes its slot without revoking the first three");
+        }
+        auto nextUnit=units[1];Put<uint32_t>(nextUnit.data(),0,15002);
+        const auto next=room_random_sync::Packet(0x0861,2002,1,20,nextUnit);
+        Check(late.Process(lateContext,0x0861,next.data()).applied==1,
+              "a later selection still updates its native slot");
+        Check(!late.PrepareConstruction(lateContext,sources[1].data(),
+                                        lateStart.data()+0x20+0x10F,0).applied,
+              "a later selection invalidates only its own start authority");
+        for(size_t slot : {size_t(0),size_t(2),size_t(3)})
+            Check(late.PrepareConstruction(lateContext,sources[slot].data(),
+                                           lateStart.data()+0x20+slot*0x10F,0).applied,
+                  "one player's later selection preserves the other start authorities");
+        Put<uint32_t>(lateRoom.data(),0,21);
+        Check(late.Process(lateContext,0x0861,notices[0].data()).applied==1,
+              "a notice in the next room generation still updates its cache");
+        for(size_t slot=0;slot<4;++slot)
+            Check(!late.PrepareConstruction(lateContext,sources[slot].data(),
+                                            lateStart.data()+0x20+slot*0x10F,0).applied,
+                  "room generation change rejects every previous start authority");
+    }
+    {
+        std::array<uint8_t,0x5DA8> deckProfile{};
+        std::array<uint8_t,0x4000> deckRoom{};
+        Context deckContext{deckProfile.data(),deckRoom.data(),3001};
+        Put<uint32_t>(deckRoom.data(),0,30);deckRoom[5]=7;
+        Put<uint32_t>(deckRoom.data(),kSlotBase+kOwner,3001);
+        Put<uint32_t>(deckRoom.data(),kSlotBase+0x49,16001);
+        std::array<uint8_t,0x99> deckUnit{};
+        Put<uint32_t>(deckUnit.data(),0,13001);Put<uint64_t>(deckUnit.data(),8,0x500000001ULL);
+        std::array<uint8_t,0x2BC> deckNotice{};
+        std::array<uint8_t,0xCD4> deckStart{};Put<uint16_t>(deckStart.data(),0,0x06C3);
+        Put<uint32_t>(deckStart.data(),0x20,3001);
+        for(size_t i=0;i<4;++i) {
+            Put<uint32_t>(deckNotice.data(),0x58+i*0x99,static_cast<uint32_t>(13001+i));
+            Put<uint64_t>(deckNotice.data(),0x60+i*0x99,0x500000001ULL+i);
+            Put<uint32_t>(deckStart.data(),0x2E+i*0x32,static_cast<uint32_t>(13001+i));
+        }
+        Put<uint64_t>(deckNotice.data(),0x1C,0x500000001ULL);
+        const auto unitPacket=room_random_sync::Packet(0x0861,3001,0,30,deckUnit);
+        const auto shipPacket=room_random_sync::Packet(0x098B,3001,0,30,deckNotice);
+        std::array<uint8_t,kStride> deckSource{};
+        Put<uint32_t>(deckSource.data(),kOwner,3001);Put<uint32_t>(deckSource.data(),0x19E,16001);
+        CacheSync shipFirst;
+        auto deckResult=shipFirst.Process(deckContext,0x06C3,deckStart.data());
+        Check(deckResult.applied==0 && deckResult.mismatched==1,
+              "deck start waits when both full notices are late");
+        Check(shipFirst.Process(deckContext,0x098B,shipPacket.data()).applied==1 &&
+              !shipFirst.PrepareConstruction(deckContext,deckSource.data(),deckStart.data()+0x20,1).applied,
+              "late ship notice alone keeps deck construction closed");
+        Check(shipFirst.Process(deckContext,0x0861,unitPacket.data()).applied==1,
+              "late unit notice completes a ship-first deck");
+        auto deckPrepared=shipFirst.PrepareConstruction(
+            deckContext,deckSource.data(),deckStart.data()+0x20,1);
+        auto expectedDeck=deckSource;
+        std::memcpy(expectedDeck.data()+0x49,deckUnit.data(),deckUnit.size());
+        std::memcpy(expectedDeck.data()+0x146,deckNotice.data(),deckNotice.size());
+        Check(deckPrepared.applied && deckPrepared.pilot==expectedDeck,
+              "ship-first late notices preserve the complete deck source");
+        Put<uint32_t>(deckRoom.data(),0,31);Put<uint32_t>(deckRoom.data(),kSlotBase+0x49,16001);
+        CacheSync unitFirst;
+        unitFirst.Process(deckContext,0x06C3,deckStart.data());
+        Check(unitFirst.Process(deckContext,0x0861,unitPacket.data()).applied==1 &&
+              !unitFirst.PrepareConstruction(deckContext,deckSource.data(),deckStart.data()+0x20,1).applied,
+              "late unit notice alone keeps deck construction closed");
+        Check(unitFirst.Process(deckContext,0x098B,shipPacket.data()).applied==1 &&
+              unitFirst.PrepareConstruction(deckContext,deckSource.data(),deckStart.data()+0x20,1).applied,
+              "unit-first and ship-first late deck notices both complete the same start");
+    }
     std::printf("%d CLIENT CACHE POLICY CHECKS, %d failures\n",checks,failures);return failures?1:0;
 }
