@@ -113,6 +113,7 @@ powershell -ExecutionPolicy Bypass -File tools/build_mod_manager.ps1
 统一放在客户端的 `sdgo/local-mods/<id>/` 中。加载器和 Manager 都会发现该目录，
 Manager 导入标记为仅本地的配置包时也会自动选择它。整个 `sdgo/local-mods/` 应由
 版本管理忽略，公开打包、导出和源码分发检查会拒绝包含该目录的内容；新增私人扩展无需逐个添加排除项。
+这些检查按 Windows 路径规则忽略保留目录名与清单文件名的大小写，改动字母大小写不能绕过分发限制。
 
 服主个人使用的 Mod 保存在独立私有仓库中。它在 `mod.ini` 的 `[mod]` 中声明
 `distribution=local_only`，在 `manager.json` 顶层声明
