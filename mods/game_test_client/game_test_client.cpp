@@ -2185,6 +2185,36 @@ const SdgoGameTestCaseV1 missionCases[]={
     {"mission.room",180000,&CreateMission},{"mission.start",180000,&StartMission},
     {"mission.ai_spawn",120000,&SpawnMissionAi},{"mission.combat",120000,&ObserveMissionCombat},
 };
+// Read each atomic probe receipt without the profile API's persistent file
+// cache, which can prevent the server replacing its preceding receipt.
+struct MissionRespawnReceipt {
+    std::wstring text;
+    bool Load(const std::wstring& path) {
+        HANDLE file=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+            nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+        if(file==INVALID_HANDLE_VALUE)return false;
+        LARGE_INTEGER size{};DWORD read=0;
+        bool ok=GetFileSizeEx(file,&size) && size.QuadPart>=2 && size.QuadPart<=16384 && size.QuadPart%2==0;
+        if(ok) {
+            text.resize(static_cast<size_t>(size.QuadPart/2));
+            ok=ReadFile(file,text.data(),static_cast<DWORD>(size.QuadPart),&read,nullptr) &&
+                read==size.QuadPart && text[0]==0xFEFF;
+        }
+        CloseHandle(file);return ok;
+    }
+    std::wstring Value(const wchar_t* key) const {
+        const std::wstring prefix=L"\n"+std::wstring(key)+L"=";
+        const auto found=text.find(prefix);
+        if(found==std::wstring::npos)return {};
+        const auto begin=found+prefix.size(),end=text.find_first_of(L"\r\n",begin);
+        return text.substr(begin,end==std::wstring::npos?end:end-begin);
+    }
+    uint32_t Number(const wchar_t* key) const {
+        const auto value=Value(key);wchar_t* end=nullptr;
+        const auto number=wcstoul(value.c_str(),&end,10);
+        return !value.empty() && end && !*end ? static_cast<uint32_t>(number):0;
+    }
+};
 int __cdecl ObserveMissionRespawns(const SdgoGameTestContextV1* context) {
     static bool basicConfirmed=false;
     SdgoMissionAiClientSnapshotV1 s{};
@@ -2202,18 +2232,20 @@ int __cdecl ObserveMissionRespawns(const SdgoGameTestContextV1* context) {
         }
     }
     const std::wstring receipt=std::wstring(context->directory)+L"\\mission-respawn-server.ini";
+    MissionRespawnReceipt values;
+    if(!values.Load(receipt))return SDGO_GAME_TEST_WAIT;
     wchar_t status[16]{},run[64]{};
-    GetPrivateProfileStringW(L"probe",L"status",L"",status,16,receipt.c_str());
-    GetPrivateProfileStringW(L"probe",L"run_id",L"",run,64,receipt.c_str());
+    wcsncpy_s(status,values.Value(L"status").c_str(),_TRUNCATE);
+    wcsncpy_s(run,values.Value(L"run_id").c_str(),_TRUNCATE);
     if(!*status)return SDGO_GAME_TEST_WAIT;
     const std::wstring expectedRun(context->run_id,context->run_id+strlen(context->run_id));
-    if(expectedRun!=run || (wcscmp(status,L"basic")!=0 && wcscmp(status,L"pass")!=0)) {
+    if(expectedRun!=run || (wcscmp(status,L"cycle")!=0 && wcscmp(status,L"basic")!=0 && wcscmp(status,L"pass")!=0)) {
         context->Assert(0,"same-run native mission respawn server probe completed successfully");return SDGO_GAME_TEST_FAIL;
     }
-    const auto pilot=GetPrivateProfileIntW(L"probe",L"pilot",0,receipt.c_str());
-    const auto limit=GetPrivateProfileIntW(L"probe",L"life_limit",0,receipt.c_str());
-    const auto deaths=GetPrivateProfileIntW(L"probe",L"deaths",0,receipt.c_str());
-    const auto required=GetPrivateProfileIntW(L"probe",L"respawns",0,receipt.c_str());
+    const auto pilot=values.Number(L"pilot");
+    const auto limit=values.Number(L"life_limit");
+    const auto deaths=values.Number(L"deaths");
+    const auto required=values.Number(L"client_cycles_required");
     static uint64_t lastNativeDiagnostic=0;
     if(!basicConfirmed && context->elapsed_ms-lastNativeDiagnostic>=3000) {
         for(uint32_t i=0;i<s.ai_record_count && i<12;++i)if(s.participants[i].pilot_id==pilot) {
@@ -2225,9 +2257,9 @@ int __cdecl ObserveMissionRespawns(const SdgoGameTestContextV1* context) {
     }
     if(wcscmp(status,L"pass")==0) {
         if(!basicConfirmed) {context->Assert(0,"client verifies actual revivals before the human exhaustion fixture");return SDGO_GAME_TEST_FAIL;}
-        const auto humanDeaths=GetPrivateProfileIntW(L"probe",L"human_deaths",0,receipt.c_str());
-        const auto aiAlive=GetPrivateProfileIntW(L"probe",L"ai_alive_before_failure",0,receipt.c_str());
-        const auto nativeFailure=GetPrivateProfileIntW(L"probe",L"native_human_failure",0,receipt.c_str());
+        const auto humanDeaths=values.Number(L"human_deaths");
+        const auto aiAlive=values.Number(L"ai_alive_before_failure");
+        const auto nativeFailure=values.Number(L"native_human_failure");
         if(!nativeFailure || humanDeaths<limit || !aiAlive) {
             context->Assert(0,"exhausting the last human life immediately fails the native mission despite living AI");return SDGO_GAME_TEST_FAIL;
         }
@@ -2236,22 +2268,27 @@ int __cdecl ObserveMissionRespawns(const SdgoGameTestContextV1* context) {
         context->Assert(ended.reply_opcode==0x0871,"the original client consumes the genuine mission failure end reply");
         context->Assert(nativeFailure && humanDeaths>=limit && aiAlive,
             "native human-only life exhaustion triggers the existing failure gate while AI is still alive");
+        if(missionRespawns==2) {
+            const auto serverRespawns=values.Number(L"respawns");
+            context->Assert(deaths>limit && serverRespawns>limit,
+                "separate server-native infinite boundary stress exceeds the player quota after a genuine client revival");
+        }
         char message[192];sprintf_s(message,"native human exhaustion deaths=%u limit=%u living_AI=%u end=%04X/%u",humanDeaths,limit,aiAlive,ended.reply_opcode,ended.result_type);context->Observe(message);
         return SDGO_GAME_TEST_PASS;
     }
     if(basicConfirmed)return SDGO_GAME_TEST_WAIT;
+    if(wcscmp(status,L"cycle")!=0 || required!=1) {
+        context->Assert(0,"a genuine client-originated revival is verified before server-only quota stress");return SDGO_GAME_TEST_FAIL;
+    }
     for(uint32_t i=0;i<s.ai_record_count && i<12;++i) {
         const auto& p=s.participants[i];if(p.pilot_id!=pilot)continue;
         if(p.respawn_count<required)return SDGO_GAME_TEST_WAIT;
         if(!p.mapping_valid || !p.valid_registered_object ||
-           (missionRespawns==2 && (p.current_hp<=0 || !p.ai_enabled || !p.position_valid)) ||
-           (missionRespawns==1 && p.current_hp>0))return SDGO_GAME_TEST_WAIT;
+           p.current_hp<=0 || !p.ai_enabled || !p.position_valid)return SDGO_GAME_TEST_WAIT;
         context->Assert(p.mapping_valid && p.valid_registered_object && p.respawn_count>=required,
-            "the original client retains the same registered wingman through every server-confirmed respawn");
-        if(missionRespawns==2)context->Assert(p.ai_enabled && p.position_valid,
+            "the original client retains its registered wingman through a genuine combat death and revival");
+        context->Assert(p.ai_enabled && p.position_valid,
             "the revived wingman has active native AI and a finite scene position");
-        context->Assert(missionRespawns==2 ? (deaths>limit && p.current_hp>0) : (deaths>=limit && p.current_hp<=0),
-            "infinite wingmen revive beyond the native quota; player-policy wingmen remain down when that quota is exhausted");
         char message[192];sprintf_s(message,"native mission respawn policy=%u pilot=%u limit=%u deaths=%u client_respawns=%u hp=%d",missionRespawns,pilot,limit,deaths,p.respawn_count,p.current_hp);context->Observe(message);
         const std::wstring ack=std::wstring(context->directory)+L"\\mission-respawn-client-ack.ini";
         if(!WritePrivateProfileStringW(L"ack",L"run_id",expectedRun.c_str(),ack.c_str())) {

@@ -1,7 +1,9 @@
 // Development-only native combat fixture. Never included in runtime releases.
 // An authenticated GameTest client creates the mission normally. This probe
-// uses the shipped damage/kill path on one real AI, then observes production
-// respawn ticks and packets. It never edits life quotas or death counters.
+// first observes a genuine client-originated AI death/revival. Only after the
+// client acknowledges that cycle does it test the native human-failure gate
+// through accepted damage. Server-only quota stress is separate: it cannot prove
+// local CNPC death/revival. No HP, life quota or death counter is edited.
 #include <windows.h>
 #include <cstdint>
 #include <cstdio>
@@ -14,31 +16,40 @@ const SdgoApi* g_api=nullptr; SdgoMod* g_mod=nullptr;
 using DamageFn=uint32_t(__thiscall*)(uint8_t*,uint32_t,uint32_t,uint8_t*,uint8_t*,uint32_t,uint32_t,uint32_t,uint16_t,uint8_t,uint32_t,uint8_t,uint32_t);
 DamageFn damage=nullptr;
 std::wstring output,runId;
+std::wstring pendingMarker;
 uint32_t host=0; bool infinite=false,finished=false;
 uint8_t* selected=nullptr;
-uint32_t pilotId=0,limit=0,kills=0,respawns=0;
+uint32_t pilotId=0,limit=0,respawns=0;
 int targetSlot=-1,hostSlot=-1;
 DWORD began=0,lastAction=0;
 bool down=false;
 bool primaryComplete=false;
+bool clientCycleComplete=false;
 uint32_t primaryDeaths=0,primaryRespawns=0,humanDeaths=0,aliveAiBeforeFailure=0;
 constexpr size_t kPilots=0x3CE4,kStride=0x1F54;
 template<class T>T Read(uint8_t* p,size_t at){T v;memcpy(&v,p+at,sizeof(v));return v;}
 uint8_t* Pilot(uint8_t* room,int slot){return room+kPilots+slot*kStride;}
 uint8_t* Unit(uint8_t* pilot){return pilot+0x340+pilot[0x33C]*0x658;}
+void FlushMarker() {
+    if(pendingMarker.empty())return;
+    const std::wstring temp=output+L".tmp";
+    HANDLE f=CreateFileW(temp.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(f==INVALID_HANDLE_VALUE)return;
+    const wchar_t bom=0xFEFF;DWORD written=0;WriteFile(f,&bom,2,&written,nullptr);
+    const DWORD bytes=static_cast<DWORD>(pendingMarker.size()*sizeof(wchar_t));
+    const bool complete=WriteFile(f,pendingMarker.data(),bytes,&written,nullptr) && written==bytes;
+    FlushFileBuffers(f);CloseHandle(f);
+    if(complete && MoveFileExW(temp.c_str(),output.c_str(),MOVEFILE_WRITE_THROUGH|MOVEFILE_REPLACE_EXISTING))pendingMarker.clear();
+}
 void WriteMarker(const wchar_t* status,const wchar_t* reason,uint32_t deaths) {
-    const std::wstring text=L"[probe]\r\nstatus="+std::wstring(status)+
+    pendingMarker=L"[probe]\r\nstatus="+std::wstring(status)+
         L"\r\nrun_id="+runId+L"\r\npilot="+std::to_wstring(pilotId)+L"\r\nlife_limit="+std::to_wstring(limit)+
         L"\r\ndeaths="+std::to_wstring(primaryComplete?primaryDeaths:deaths)+L"\r\nrespawns="+std::to_wstring(primaryComplete?primaryRespawns:respawns)+
+        L"\r\nclient_cycles_required=1"+
         L"\r\nhuman_deaths="+std::to_wstring(humanDeaths)+L"\r\nai_alive_before_failure="+std::to_wstring(aliveAiBeforeFailure)+
         L"\r\nnative_human_failure="+std::to_wstring(finished && wcscmp(status,L"pass")==0?1:0)+
         L"\r\npolicy="+(infinite?L"infinite":L"player")+L"\r\nreason="+reason+L"\r\n";
-    const std::wstring temp=output+L".tmp";
-    HANDLE f=CreateFileW(temp.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
-    if(f==INVALID_HANDLE_VALUE)return;
-    const wchar_t bom=0xFEFF;DWORD written=0;WriteFile(f,&bom,2,&written,nullptr);
-    WriteFile(f,text.data(),static_cast<DWORD>(text.size()*sizeof(wchar_t)),&written,nullptr);
-    FlushFileBuffers(f);CloseHandle(f);MoveFileExW(temp.c_str(),output.c_str(),MOVEFILE_WRITE_THROUGH|MOVEFILE_REPLACE_EXISTING);
+    FlushMarker();
 }
 void Finish(bool passed,const wchar_t* reason,uint32_t deaths) {
     if(finished)return;finished=true;
@@ -89,6 +100,21 @@ void HumanFailureTick(uint8_t* room,uint32_t now,DWORD clock) {
     }
     Finish(failedImmediately && nativeGateClosed,failedImmediately && nativeGateClosed?L"last human life immediately triggers native failure and its existing damage gate despite living AI":L"native human exhaustion failure or damage gate was not immediate",primaryDeaths);
 }
+// This is server-only boundary stress, after one separately acknowledged real
+// client revival. These artificial damage calls are not counted as client cycles.
+void InfiniteBoundaryTick(uint8_t* room,uint32_t now,DWORD clock) {
+    auto victim=Pilot(room,targetSlot);
+    const auto deaths=Read<uint32_t>(victim,0x1A),hp=Read<uint32_t>(Unit(victim),0x34);
+    if(down && hp>0) {
+        ++respawns;down=false;lastAction=clock;
+        g_api->Log(g_mod,SDGO_LOG_INFO,"server-only infinite quota stress: deaths=%u quota=%u revivals=%u human_hp=%u",
+            deaths,limit,respawns,Read<uint32_t>(Unit(Pilot(room,hostSlot)),0x34));
+        if(deaths>limit)PrimaryComplete(L"separate server-native revivals exceed the player quota after a genuine client cycle",deaths);
+        return;
+    }
+    if(down || clock-lastAction<1000)return;
+    if(hp==0 || Lethal(room,now,hostSlot,targetSlot)) {down=true;lastAction=clock;}
+}
 void Tick(uint8_t* room,uint32_t now) {
     if(finished || !room || (room[5]!=5 && room[5]!=8) || Read<uint32_t>(room,0x4CE)!=host)return;
     const DWORD clock=GetTickCount();
@@ -106,6 +132,22 @@ void Tick(uint8_t* room,uint32_t now) {
     if(room!=selected)return;
     if(clock-began>330000) {Finish(false,L"native respawn probe timed out",0);return;}
     if(primaryComplete) {HumanFailureTick(room,now,clock);return;}
+    if(clientCycleComplete) {
+        if(ClientAcknowledged()) {
+            if(infinite)InfiniteBoundaryTick(room,now,clock);
+            else PrimaryComplete(L"genuine client death and revival acknowledged before human failure proof",Read<uint32_t>(Pilot(room,targetSlot),0x1A));
+        }
+        return;
+    }
+    if(!down) {
+        // Select the first wingman killed by actual native mission combat.
+        for(int slot=0;slot<12;++slot) {
+            auto p=Pilot(room,slot);
+            if((Read<uint32_t>(p,0)&0x80000000u) && p[0x33C]<4 && Read<uint32_t>(Unit(p),0x34)==0 && Read<uint32_t>(p,0x1A)>0) {
+                targetSlot=slot;pilotId=Read<uint32_t>(p,0);down=true;lastAction=clock;break;
+            }
+        }
+    }
     auto victim=Pilot(room,targetSlot),attacker=Pilot(room,hostSlot);
     const auto deaths=Read<uint32_t>(victim,0x1A);
     if(Read<uint32_t>(victim,0)!=pilotId || Read<uint32_t>(attacker,0)!=host || victim[0x33C]>=4) {
@@ -116,28 +158,13 @@ void Tick(uint8_t* room,uint32_t now) {
         if(!infinite && deaths>=limit) {Finish(false,L"player-policy AI revived after exhausting its quota",deaths);return;}
         ++respawns;down=false;lastAction=clock;
         g_api->Log(g_mod,SDGO_LOG_INFO,"probe observed native revival %u after death %u",respawns,deaths);
-        if(infinite && deaths>=limit+2) {PrimaryComplete(L"native revivals exceed player quota",deaths);return;}
-    }
-    if(down) {
-        if(!infinite && deaths>=limit && clock-lastAction>=15000)PrimaryComplete(L"native player quota exhausted and wingman stays down",deaths);
+        clientCycleComplete=true;
+        WriteMarker(L"cycle",L"genuine client-originated mission death and native revival; awaiting client readback",deaths);
         return;
-    }
-    if(clock-began<20000 || clock-lastAction<1000)return;
-    if(hp==0) {down=true;lastAction=clock;return;}
-    // Make the real authenticated human an opposing attacker for this isolated
-    // damage call only. The original team byte is restored even on exception.
-    // All victim HP, death stats, deadlines and broadcasts are native effects.
-    if(Lethal(room,now,hostSlot,targetSlot)) {
-        ++kills;down=true;lastAction=clock;
-        if(Read<uint32_t>(victim,0x1A)!=deaths+1) {Finish(false,L"native lethal damage did not increment death counter once",Read<uint32_t>(victim,0x1A));return;}
-        g_api->Log(g_mod,SDGO_LOG_INFO,"probe native lethal damage %u, original team restored, quota=%u",kills,limit);
-        g_api->Log(g_mod,SDGO_LOG_INFO,"probe human native state id=%u deaths=%u hp=%u phase=%u reason=%u",
-            Read<uint32_t>(attacker,0),Read<uint32_t>(attacker,0x1A),Read<uint32_t>(Unit(attacker),0x34),
-            Read<uint32_t>(room,0x316A4),Read<uint32_t>(room,0x316A8));
     }
 }
 void __stdcall GuardedTick(uint8_t* room,uint32_t now) {
-    __try {Tick(room,now);} __except(EXCEPTION_EXECUTE_HANDLER) {Finish(false,L"native probe exception",0);}
+    __try {FlushMarker();Tick(room,now);} __except(EXCEPTION_EXECUTE_HANDLER) {Finish(false,L"native probe exception",0);}
 }
 void* resume=nullptr;
 __declspec(naked) void TickSite() {__asm {
