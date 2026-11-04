@@ -1862,6 +1862,19 @@ def ai_room_command(expected_ai: int, allies: int, policy: str | None = None, te
     return '!ai '+policy
 
 
+def planned_ai_room_command(plan: dict) -> str:
+    """Preserve the sealed AI preset when adding another room command."""
+    if plan.get('ai_layout') == 'allied':
+        return '!ai1 a5 hard'
+    if 'ai_pool_level' in plan:
+        return f"!ai1 lv{plan['ai_pool_level']}"
+    if 'ai_difficulty' in plan:
+        return f"!ai {plan['ai_difficulty'].lower()}"
+    count = plan['expected_ai']
+    return ai_room_command(count, plan.get('ai_allies', count // 2),
+                           plan.get('ai_policy'), plan.get('ai_teams'))
+
+
 def make_plan(
     target_host: str,
     login_port: int,
@@ -2347,21 +2360,26 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                     raise ValueError(
                         f'ai_difficulty requires exactly {required_ai_count} AI'
                     )
-                if any(field in run for field in preparation_fields):
+                if any(field in run for field in preparation_fields if field != 'random_loadout'):
                     raise ValueError('ai_difficulty requires ordinary PvP without preparation scopes')
                 ai_difficulty = raw_ai_difficulty
                 nonce = run['title_nonce']
-                if not re.fullmatch(r'gt[0-9a-f]{4}', nonce):
+                randomized = run.get('random_loadout') == '1'
+                if not re.fullmatch(r'[0-9a-f]{4,5}' if randomized else r'gt[0-9a-f]{4}', nonce):
                     raise ValueError('invalid AI difficulty title nonce')
                 suffix = (
                     ' !ai1 a5 hard'
                     if ai_layout == 'allied'
                     else f' !ai {ai_difficulty.lower()}'
                 )
+                if randomized:
+                    suffix += ' !rand'
                 direct_title = nonce + suffix
                 reused_title = (
                     r'gt[0-9a-f]{4}' + re.escape(nonce[2:]) + re.escape(suffix)
                 )
+                if randomized:
+                    reused_title = r'(?!)'
                 try:
                     title_bytes = run['room_title'].encode('ascii')
                 except UnicodeEncodeError as error:
@@ -2502,9 +2520,9 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 expected_ai = int(run["expected_ai"])
                 allies=plan.get('ai_allies',expected_ai//2)
                 if (
-                    not re.fullmatch(r'[0-9a-f]{4}', nonce)
+                    not re.fullmatch(r'[0-9a-f]{4,5}', nonce)
                     or run['room_title'] !=
-                    f"{nonce} {ai_room_command(expected_ai,allies,plan.get('ai_policy'),plan.get('ai_teams'))} !rand"
+                    f"{nonce} {planned_ai_room_command(plan)} !rand"
                 ):
                     raise ValueError('random native room command differs')
                 plan['random_loadout'] = True
@@ -2926,7 +2944,7 @@ def prepare(
                 raise GameTestError('--ai-difficulty requires --expected-ai 7')
             if mission_mode is not None or any((
                 bootstrap_only, battleship_only, gift_requests_only, deck_only,
-                pages_only, collection_draw, random_loadout, room_titles_only, room_style_preview is not None,
+                pages_only, collection_draw, room_titles_only, room_style_preview is not None,
             )):
                 raise GameTestError('--ai-difficulty requires an ordinary PvP scenario')
 
@@ -3048,17 +3066,19 @@ def prepare(
         )
         if server_session is not None:
             if (not isinstance(server_session,dict) or
-                    not re.fullmatch(r'gt[0-9a-f]{4}',str(server_session.get('nonce',''))) or
+                    not re.fullmatch(r'[0-9a-f]{4}' if random_loadout else r'gt[0-9a-f]{4}',str(server_session.get('nonce',''))) or
                     not re.fullmatch(r'[0-9a-f-]{36}',str(server_session.get('run_id',''))) or
                     not server_session.get('pids') or
                     any(type(p) is not int or p<=0 for p in server_session['pids']) or
-                    any((random_loadout,bootstrap_only,pages_only,mission_mode is not None))):
+                    any((bootstrap_only,pages_only,mission_mode is not None)) or
+                    (random_loadout and not re.fullmatch(r'[0-9a-f]',str(server_session.get('room_suffix',''))))):
                 raise GameTestError('Reusable server session requires a verified ordinary PvP observer binding')
             # Keep the server's existing nonce while adding this fresh run's
             # full random suffix: twenty native bytes, unique per client run.
-            plan['room_title']=server_session['nonce']+plan['room_title'][2:]
-            if len(plan['room_title'].encode('ascii'))>20:
-                raise GameTestError('Reusable native room title exceeds twenty bytes')
+            if not random_loadout:
+                plan['room_title']=server_session['nonce']+plan['room_title'][2:]
+                if len(plan['room_title'].encode('ascii'))>20:
+                    raise GameTestError('Reusable native room title exceeds twenty bytes')
         if random_loadout and any((
             bootstrap_only, battleship_only, gift_requests_only, deck_only,
             pages_only, room_titles_only, mission_mode is not None,
@@ -3068,9 +3088,9 @@ def prepare(
             # Keep the real title within the native twenty-byte limit. The run
             # UUID still owns all receipts; this four-hex nonce has the same
             # sixteen random bits as the ordinary gt-prefixed nonce.
-            plan['title_nonce']=secrets.token_hex(2)
+            plan['title_nonce']=(server_session['nonce']+server_session['room_suffix']) if server_session else secrets.token_hex(2)
             allies=plan.get('ai_allies',expected_ai//2)
-            plan['room_title']=f"{plan['title_nonce']} {ai_room_command(expected_ai,allies,plan.get('ai_policy'),plan.get('ai_teams'))} !rand"
+            plan['room_title']=f"{plan['title_nonce']} {planned_ai_room_command(plan)} !rand"
             plan['random_loadout']=True
         if same_room_rematch:plan['same_room_rematch']=True
         if len(plan['room_title'].encode('utf-8'))>20:
