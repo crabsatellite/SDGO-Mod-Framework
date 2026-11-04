@@ -25,6 +25,11 @@ participating client, including the host, need components from the same release 
 
 Set the room title, ready up and start normally. AI join at battle start.
 
+AI movement starts when the native countdown releases player control. Registered host-controlled bots
+use the normal map-pad request and authoritative movement notice. Destructible-gate completion keeps
+the native damage, countdown and server removal flow. These compatibility fixes apply independently
+of the selected enhanced-AI difficulty; they do not write positions or remove gates locally.
+
 ### Room-title commands
 
 | Title | Effect |
