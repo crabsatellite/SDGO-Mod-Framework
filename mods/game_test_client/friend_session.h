@@ -75,6 +75,7 @@ class FriendSession {
         const wchar_t* names[]={L"",L"ensure",L"refresh",L"page",L"add",L"accept",L"reject",L"open",L"send",L"remove",L"close",L"profile",L"room_create",L"invite_send",L"invite_arm_accept",L"invite_arm_reject",L"invite_decide",L"room_leave",L"gift_context",L"gift_open",L"gift_select_unit",L"gift_note",L"gift_preview",L"gift_confirm",L"gift_cancel",L"gift_storage",L"gift_inbox",L"gift_returned",L"gift_select",L"gift_accept",L"gift_return",L"gift_takeback",L"gift_provenance",L"gift_receipt",L"room_join",L"room_ready",L"room_start",L"battle_finish"};
         if(!wcscmp(text,L"gift_native_card"))return 38;
         if(!wcscmp(text,L"gift_storage_back"))return 39;
+        if(!wcscmp(text,L"gift_home_context"))return 40;
         for(uint32_t i=1;i<38;++i)if(!wcscmp(text,names[i]))return i;
         return 0;
     }
@@ -332,7 +333,7 @@ public:
             context->Assert(0,"friend command is malformed");return SDGO_GAME_TEST_FAIL;
         }
         pvpCommand_=command.operation>=34&&command.operation<=37;
-        giftCommand_=(command.operation>=18&&command.operation<=33)||(command.operation>=38&&command.operation<=39);
+        giftCommand_=(command.operation>=18&&command.operation<=33)||(command.operation>=38&&command.operation<=40);
         roomCommand_=command.operation>=12&&!giftCommand_&&!pvpCommand_;
         extraCommand_=command.operation>=10&&!roomCommand_&&!giftCommand_&&!pvpCommand_;
         const uint32_t channel=GetPrivateProfileIntW(L"command",L"channel_id",0,commandPath.c_str());
