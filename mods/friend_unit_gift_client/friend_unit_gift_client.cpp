@@ -2,6 +2,7 @@
 
 #include "client_model.h"
 #include "client_runtime_policy.h"
+#include "picker_paging.h"
 #include "native_ui.h"
 #include "card_layout.h"
 #include "native_inventory.h"
@@ -129,6 +130,7 @@ void* g_operator_vtable=nullptr;
 void* g_management_pager_vtable=nullptr;
 using ManagementPageChange=void(__thiscall*)(void*,int,std::uint8_t);
 ManagementPageChange g_management_page_change=nullptr;
+ManagementCallback g_management_pager_callback=nullptr;
 void* g_composer_note=nullptr;
 void* g_composer_primary=nullptr;
 void* g_composer_cancel=nullptr;
@@ -1457,6 +1459,33 @@ bool PickerControlReady(void* control) {
     return control && Read<std::uint8_t>(control,0x162) && Read<std::uint8_t>(control,0x167);
 }
 
+std::uint32_t __stdcall ManagementPagerEventHook(void* service,std::uint32_t event,std::uintptr_t name,void* control) {
+    if (g_picker_selecting && event==0x101 &&
+        Read<void*>(service)==g_management_pager_vtable && PickerControlReady(control)) {
+        int button=-1;
+        if (control==Read<void*>(service,0x48)) button=10;
+        else if (control==Read<void*>(service,0x4C)) button=11;
+        else for (int i=0;i<10;++i) {
+            if (control==Read<void*>(service,0x50+static_cast<unsigned>(i)*4) ||
+                control==Read<void*>(service,0xA0+static_cast<unsigned>(i)*4)) {button=i;break;}
+        }
+        if (button>=0) {
+            const int current=Read<int>(service,0xDC),pages=Read<int>(service,0xD4);
+            const int target=sdgo::friend_unit_gift::client::paging::TargetPage(current,pages,button);
+            if (target>=0 && g_management_page_change) {
+                // Browsing the gift picker changes only the native view. It
+                // must not wait on unrelated friend/unit-detail requests.
+                const auto steps=sdgo::friend_unit_gift::client::paging::Steps(current,target);
+                g_picker_target_uid=0;g_picker_next_action=0;
+                for (unsigned i=0;i<steps.count;++i)
+                    g_management_page_change(service,steps.index[i],steps.forward[i]);
+            }
+            return 0;
+        }
+    }
+    return g_management_pager_callback(service,event,name,control);
+}
+
 std::uint32_t __stdcall ManagementEventHook(void* service,std::uint32_t event,std::uintptr_t name,void* control) {
     if (!g_picker_selecting || event!=0x803 || Read<void*>(service)!=g_inventory_service_vtable)
         return g_management_callback(service,event,name,control);
@@ -2682,9 +2711,9 @@ bool ExecuteObserverAction(
         break;
     case SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_CLICK_GIFT: {
         ui::FriendEntry* entry = nullptr;
-        if (g_friend_main.ready()) entry = &g_friend_main;
+        if (g_friend_community.ready()) entry = &g_friend_community;
+        else if (g_friend_main.ready()) entry = &g_friend_main;
         else if (g_friend_three_d.ready()) entry = &g_friend_three_d;
-        else if (g_friend_community.ready()) entry = &g_friend_community;
         if (entry && ControlReady(entry->button())) {
             if (entry==&g_friend_community)
                 CommunityFriendEvent(entry->service(),0x101,0,entry->button());
@@ -3142,6 +3171,46 @@ extern "C" __declspec(dllexport) int __cdecl SdgoHomeFriendsGetSnapshotV1(SdgoHo
     __except(EXCEPTION_EXECUTE_HANDLER) {return 0;}
 }
 
+extern "C" __declspec(dllexport) int __cdecl SdgoGiftPickerGetSnapshotV1(SdgoGiftPickerSnapshotV1* output) {
+    if (!output || output->size!=sizeof(*output) || output->version!=1) return 0;
+    __try {
+        SdgoGiftPickerSnapshotV1 result{};result.size=sizeof(result);result.version=1;
+        result.run_hash=SyncObserver();result.process_id=GetCurrentProcessId();
+        if (!result.run_hash) return 0;
+        result.selecting=g_picker_selecting ? 1u:0u;
+        auto* grid=ResolveService(L"UnitIndexingCubbyhole",g_inventory_service_vtable);
+        auto* root=grid ? Read<void*>(grid,0x44):nullptr;
+        auto* pager=ResolveService(L"UnitIndexingPage",g_management_pager_vtable);
+        if (root && Read<std::uint8_t>(root,0x162) && pager) {
+            result.open=1;result.grid_page=Read<std::uint32_t>(grid,0x838);
+            result.pager_page=Read<std::uint32_t>(pager,0xDC);result.page_count=Read<std::uint32_t>(pager,0xD4);
+            for (unsigned i=0;i<12;++i) {
+                auto* button=Read<void*>(pager,i<10 ? 0x50+i*4 : (i==10?0x48:0x4C));
+                if (PickerControlReady(button)) {
+                    result.page_button_mask|=1u<<i;
+                    const auto rect=Read<RECT>(button,0x138);
+                    auto* parent=Read<void*>(button,0x15C);
+                    result.page_x[i]=rect.left+(rect.right-rect.left)/2+(parent?static_cast<int>(Read<float>(parent,0x148)):0);
+                    result.page_y[i]=rect.top+(rect.bottom-rect.top)/2+(parent?static_cast<int>(Read<float>(parent,0x14C)):0);
+                }
+            }
+            for (unsigned i=0;i<36;++i) {
+                result.slots[i]=Read<std::uint16_t>(grid,0x7AC+i*2);
+                auto* icon=Read<void*>(grid,0xE0+i*4);
+                if (icon) {
+                    const auto rect=Read<RECT>(icon,0x138);auto* parent=Read<void*>(icon,0x15C);
+                    result.unit_x[i]=rect.left+(rect.right-rect.left)/2+(parent?static_cast<int>(Read<float>(parent,0x148)):0);
+                    result.unit_y[i]=rect.top+(rect.bottom-rect.top)/2+(parent?static_cast<int>(Read<float>(parent,0x14C)):0);
+                }
+                if (result.slots[i] && g_unit_info && *g_unit_info) {
+                    std::uint8_t brief[25]{};g_brief(*g_unit_info,brief,result.slots[i]);result.unit_uids[i]=Read<std::uint64_t>(brief,4);
+                }
+            }
+        }
+        *output=result;return 1;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return 0;}
+}
+
 SDGO_MOD_ENTRY {
     g_api = api;
     g_mod = mod;
@@ -3276,6 +3345,9 @@ SDGO_MOD_ENTRY {
     if (!api->HookCode(mod,"friend_unit_gift.management_callback",
             reinterpret_cast<void*>(&ManagementEventHook),
             reinterpret_cast<void**>(&g_management_callback))) return 0;
+    if (!api->HookCode(mod,"friend_unit_gift.management_pager_callback",
+            reinterpret_cast<void*>(&ManagementPagerEventHook),
+            reinterpret_cast<void**>(&g_management_pager_callback))) return 0;
 
     if (!api->HookCode(mod,"friend_unit_gift.community_init",reinterpret_cast<void*>(&CommunityFriendInit),
             reinterpret_cast<void**>(&g_friend_community_init)) ||

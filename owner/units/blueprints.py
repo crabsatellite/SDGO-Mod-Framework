@@ -11,8 +11,11 @@ import re
 
 PROTOCOL='sdgo.unit-blueprint'
 SCHEMA_VERSION=1
-# Enabled only when compiler, native consumer and guarded repository share it.
-NATIVE_REGISTRATION_SUPPORTED=False
+# Baseline-backed typed recipes use the compiler, native UI/transport and
+# guarded repository. Arbitrary source presentation records have a separate
+# admission gate until their resource and consumer closure is established.
+NATIVE_REGISTRATION_SUPPORTED=True
+RAW_TEMPLATE_NATIVE_REGISTRATION_SUPPORTED=False
 SOURCES={'source-recovered','authored','unknown'}
 RECIPE_FIRST=209000
 RECIPE_LAST=209999

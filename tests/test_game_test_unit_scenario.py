@@ -7,6 +7,32 @@ import test_game_test as runner_fixture
 game_test=runner_fixture.game_test
 
 class UnitScenarioTests(unittest.TestCase):
+    def test_blueprint_synthesis_requires_explicit_consumption_scope_and_output(self):
+        context={'pages_only':True,'play_unit_uid':17}
+        blueprint={'recipe_id':301,'book_uid':45,'materials':[{'unit_id':201+i,'uid':71+i} for i in range(3)]}
+        value={'schema':1,'blueprint':blueprint|{'synthesize':True,'output_unit_id':299}}
+        bound=scope.bind(value,context)['unit_scenario']
+        self.assertEqual(scope.cases(bound)[-1],'pages.blueprint.synthesis')
+        self.assertEqual(scope.settings(bound)['BlueprintSynthesize'],'1')
+        for patch in ({'synthesize':False},{'synthesize':1},{'output_unit_id':True},{'materials':[]}):
+            with self.assertRaises(ValueError):scope.bind(value|{'blueprint':value['blueprint']|patch},context)
+
+    def test_blueprint_materials_bind_exact_native_instances_without_synthesis(self):
+        context={'pages_only':True,'play_unit_uid':17}
+        materials=[{'unit_id':201+i,'uid':2**32+i+1} for i in range(3)]
+        value={'schema':1,'blueprint':{'recipe_id':301,'book_uid':45,'materials':materials}}
+        result=scope.bind(value,context)['unit_scenario']
+        self.assertEqual(scope.cases(result)[-1],'pages.blueprint.materials')
+        settings=scope.settings(result)
+        self.assertEqual(settings['BlueprintMaterialCount'],'3')
+        self.assertEqual(settings['BlueprintMaterialUid2'],str(2**32+3))
+        self.assertFalse(any('synthesis' in name for name in scope.cases(result)))
+        invalids=[[],materials[:2],materials+[materials[0]],materials*2,
+                  [materials[0]|{'uid':True},*materials[1:]],
+                  [materials[0]|{'record':bytes(153).hex()},*materials[1:]]]
+        for invalid in invalids:
+            with self.assertRaises(ValueError):scope.bind(value|{'blueprint':value['blueprint']|{'materials':invalid}},context)
+
     def test_blueprint_book_preview_is_sealed_and_cannot_purchase_or_mix_scopes(self):
         context={'pages_only':True,'play_unit_uid':17}
         value={'schema':1,'capture_frames':True,'blueprint':{'recipe_id':201,'book_uid':2**32+7}}
@@ -78,6 +104,19 @@ class SealedUnitScenarioTests(unittest.TestCase):
     make_normal_client=runner_fixture.GameTestRunnerTests.make_normal_client
     make_stage=runner_fixture.GameTestRunnerTests.make_stage
     prepare=runner_fixture.GameTestRunnerTests.prepare
+    def test_synthesis_seals_material_instances_and_cannot_be_enabled_after_prepare(self):
+        scenario={'schema':1,'blueprint':{'recipe_id':301,'book_uid':45,
+            'materials':[{'unit_id':201+i,'uid':71+i} for i in range(3)],
+            'synthesize':True,'output_unit_id':299}}
+        run=self.prepare('blueprint-synthesis',pages_only=True,play_unit_uid=17,unit_scenario=scenario)
+        meta=game_test.validate_metadata(run)
+        self.assertEqual(game_test.required_cases_for_plan(meta['plan'])[-1],'pages.blueprint.synthesis')
+        ini=run/'client/sdgo/mods/game_test_client/mod.ini'
+        config=game_test.read_ini(ini)
+        self.assertEqual(config['settings']['BlueprintMaterialUid2'],'73')
+        config['settings']['BlueprintMaterialUid2']='74';game_test.write_ini(ini,config)
+        with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run)
+
     def test_prepares_and_reads_exact_native_unit_settings(self):
         run=self.prepare('unit-pages',pages_only=True,play_unit_uid=17,
             unit_scenario={'schema':1,'capture_frames':True,

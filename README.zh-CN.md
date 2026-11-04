@@ -65,8 +65,8 @@ Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所
 | 每日双倍时间 <!-- catalog: `daily_rewards` --> | 每天固定时段（默认 18:00–22:00）战斗 GB 和经验翻倍 | [使用说明](docs/daily-rewards.zh-CN.md) |
 | 保管库一键领取 <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
 | 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化商品名称、说明、选项和涂装机体预览，可用中文名称搜索并组合等级、币种筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
-| 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 右键在线或离线好友，在原生机体管理中选机，对方在保管库接受或退还；默认关闭，由服主开启 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
-| 机体族导入（Beta） <!-- catalog: `unit_catalog` --> | 在 Mod Manager 导入可携带资料与素材的机体项目，自动生成带原生边框的设计图图片，并用 G 币或代币模板制作独立活动奖池 | [使用](docs/unit-import.zh-CN.md) |
+| 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 右键在线或离线好友，在原生机体管理中翻页选机，对方在保管库接受或退还；默认关闭，由服主开启 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
+| 机体族导入（Beta） <!-- catalog: `unit_catalog` --> | 在 Mod Manager 导入机体项目，发布带原生边框图片的结构化设计图，并用 G 币或代币模板制作独立活动奖池 | [使用](docs/unit-import.zh-CN.md) |
 
 <!-- /mod-category:gameplay -->
 

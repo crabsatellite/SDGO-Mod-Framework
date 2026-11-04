@@ -202,6 +202,21 @@ bool LoadPlan() {
     wchar_t bookText[32]{};GetPrivateProfileStringW(L"settings",L"BlueprintBookUid",L"0",bookText,32,blueprintIni.c_str());
     blueprintConfig.book=_wcstoui64(bookText,nullptr,10);
     if((blueprintConfig.recipe==0)!=(blueprintConfig.book==0))return false;
+    blueprintConfig.material_count=GetPrivateProfileIntW(L"settings",L"BlueprintMaterialCount",0,blueprintIni.c_str());
+    blueprintConfig.synthesize=GetPrivateProfileIntW(L"settings",L"BlueprintSynthesize",0,blueprintIni.c_str())==1;
+    blueprintConfig.output_unit=GetPrivateProfileIntW(L"settings",L"BlueprintOutputUnit",0,blueprintIni.c_str());
+    if(blueprintConfig.synthesize && (!blueprintConfig.material_count || !blueprintConfig.output_unit))return false;
+    if(!blueprintConfig.synthesize && blueprintConfig.output_unit)return false;
+    if(blueprintConfig.material_count && (blueprintConfig.material_count<3 || blueprintConfig.material_count>5 || !blueprintConfig.recipe))return false;
+    for(uint32_t i=0;i<blueprintConfig.material_count;++i) {
+        wchar_t key[48]{};swprintf_s(key,L"BlueprintMaterialUnit%u",i);
+        blueprintConfig.material_units[i]=GetPrivateProfileIntW(L"settings",key,0,blueprintIni.c_str());
+        swprintf_s(key,L"BlueprintMaterialUid%u",i);wchar_t value[32]{};
+        GetPrivateProfileStringW(L"settings",key,L"0",value,32,blueprintIni.c_str());
+        blueprintConfig.material_uids[i]=_wcstoui64(value,nullptr,10);
+        if(!blueprintConfig.material_units[i] || !blueprintConfig.material_uids[i])return false;
+        for(uint32_t j=0;j<i;++j)if(blueprintConfig.material_uids[i]==blueprintConfig.material_uids[j])return false;
+    }
     unitPagesOnly=GetPrivateProfileIntW(L"settings",L"UnitPagesOnly",0,
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
     captureNativeFrames=GetPrivateProfileIntW(L"settings",L"CaptureNativeFrames",0,
@@ -2050,6 +2065,28 @@ int __cdecl BlueprintBook(const SdgoGameTestContextV1* context){
     return BlueprintResult(context,result);
 }
 int __cdecl BlueprintRecipe(const SdgoGameTestContextV1* context){return BlueprintResult(context,blueprint.SelectBook());}
+int __cdecl BlueprintMaterials(const SdgoGameTestContextV1* context){
+    const auto result=blueprint.SelectMaterials();const auto s=blueprint.State();
+    static uint32_t calls=~0u;
+    if(calls!=s.material_calls) {
+        char message[256];sprintf_s(message,"original material selection index=%u calls=%u slot=%u wanted=%llu actual=%llu phase=%u",
+            s.material_index,s.material_calls,s.material_slot,static_cast<unsigned long long>(s.material_expected_uid),
+            static_cast<unsigned long long>(s.material_actual_uid),s.phase);
+        context->Observe(message);calls=s.material_calls;
+    }
+    return BlueprintResult(context,result);
+}
+int __cdecl BlueprintSynthesis(const SdgoGameTestContextV1* context){
+    const auto result=blueprint.Synthesize();const auto s=blueprint.State();
+    static uint32_t phase=0;
+    if(phase!=s.phase || result>=BlueprintActions::Invalid) {
+        char message[256];sprintf_s(message,"original synthesis phase=%u confirms=%u request=%u/%u reply=%u output=%u uid=%llu slot=%u",
+            s.phase,s.confirms,s.request_sequence,s.request_size,s.reply_sequence,s.output_unit,
+            static_cast<unsigned long long>(s.output_uid),s.output_slot);
+        context->Observe(message);phase=s.phase;
+    }
+    return BlueprintResult(context,result);
+}
 
 int PresentationResult(const SdgoGameTestContextV1* context,UnitPresentationsActions::Result result) {
     const auto& s=unitPresentations.State();
@@ -2570,6 +2607,8 @@ void RegisterPlannedCases() {
         if(blueprintConfig.recipe) {
             plannedCases.push_back({"pages.blueprint.book",120000,&BlueprintBook});
             plannedCases.push_back({"pages.blueprint.recipe",120000,&BlueprintRecipe});
+            if(blueprintConfig.material_count)plannedCases.push_back({"pages.blueprint.materials",120000,&BlueprintMaterials});
+            if(blueprintConfig.synthesize)plannedCases.push_back({"pages.blueprint.synthesis",120000,&BlueprintSynthesis});
             provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
         }
         AppendUnitPresentations();
