@@ -12,6 +12,7 @@
 // objects exercise genuine host functions without editing a live unit or grid.
 class NativeDataGuardProbe {
     using Status = int(__cdecl*)(SdgoNativeDataGuardStatusV1*);
+    using StatusV3 = int(__cdecl*)(SdgoNativeDataGuardStatusV3*);
     using Funnel = void*(__thiscall*)(void*, void*, int, int);
     using Format = void*(__thiscall*)(void*, void*, uint32_t, uint32_t, uint8_t);
     struct NativeString {
@@ -24,15 +25,15 @@ class NativeDataGuardProbe {
     template<class T> static void Put(uint8_t* data, size_t offset, T value) {
         std::memcpy(data + offset, &value, sizeof(value));
     }
-    static bool Invoke(Funnel funnel, Format format, Status status,
+    static bool Invoke(Funnel funnel, Format format, Status status, StatusV3 statusV3,
                        const SdgoGameTestContextV1* context) {
-        __try { return Exercise(funnel, format, status, context); }
+        __try { return Exercise(funnel, format, status, statusV3, context); }
         __except (EXCEPTION_EXECUTE_HANDLER) {
             context->Assert(0, "native data guard primitives must not raise a host exception");
             return false;
         }
     }
-    static bool Exercise(Funnel funnel, Format format, Status status,
+    static bool Exercise(Funnel funnel, Format format, Status status, StatusV3 statusV3,
                          const SdgoGameTestContextV1* context) {
         SdgoNativeDataGuardStatusV1 before{}; before.size = sizeof(before);
         if (!status(&before) || !before.funnel_bounds_corrected) {
@@ -86,8 +87,14 @@ class NativeDataGuardProbe {
         SdgoNativeDataGuardStatusV1 after{}; after.size = sizeof(after);
         const bool observed = status(&after) && after.missing_names >= before.missing_names + 2;
         context->Assert(observed, "production observer records both real missing-name protections");
+        SdgoNativeDataGuardStatusV3 lifecycle{}; lifecycle.size = sizeof(lifecycle);
+        const bool lifecycleReady = statusV3(&lifecycle) &&
+            lifecycle.deferred_message_copy_failures == 0;
+        context->Assert(lifecycleReady,
+            "native lifecycle observer is ready and has no deferred-message copy failure");
         context->Observe("native data guard host primitives accepted; normal authenticated battle flow follows");
-        return observed;
+        context->Observe("unit-management GameTest may compare V3 copy, completion and outstanding counters");
+        return observed && lifecycleReady;
     }
 public:
     bool Run(const SdgoApi* api, SdgoMod* mod, const SdgoGameTestContextV1* context) {
@@ -95,12 +102,14 @@ public:
         const auto module = GetModuleHandleW(L"native_data_guard.dll");
         if (!module) return true;
         const auto status = reinterpret_cast<Status>(GetProcAddress(module, "SdgoNativeDataGuardGetStatusV1"));
+        const auto statusV3 = reinterpret_cast<StatusV3>(
+            GetProcAddress(module, "SdgoNativeDataGuardGetStatusV3"));
         const auto funnel = reinterpret_cast<Funnel>(api->Symbol(mod, "test.native_guard_funnel"));
         const auto format = reinterpret_cast<Format>(api->Symbol(mod, "test.native_guard_name_formatter"));
-        if (!status || !funnel || !format) {
+        if (!status || !statusV3 || !funnel || !format) {
             context->Assert(0, "native guard acceptance requires its observer and verified host bindings"); return false;
         }
-        done_ = Invoke(funnel, format, status, context);
+        done_ = Invoke(funnel, format, status, statusV3, context);
         return done_;
     }
 };

@@ -29,6 +29,10 @@ void* unitHook = nullptr;
 void* informationHook = nullptr;
 void* exceptionHook = nullptr;
 void* stackWalkHook = nullptr;
+void* deferredHook = nullptr;
+void* completionHook = nullptr;
+void* unitIndexingCopyHook = nullptr;
+void* unitIndexingDestroyHook = nullptr;
 bool missingUnit = false, missingName = false, missingSymbol = false;
 unsigned nativeLookups = 0, gridCalls = 0, warnings = 0;
 uint32_t observedUnit = 0, observedIndex = 0;
@@ -51,6 +55,89 @@ using ExceptionWriter = LONG(WINAPI*)(EXCEPTION_POINTERS*);
 EXCEPTION_POINTERS* writerPointers = nullptr;
 LPVOID writerContext = nullptr, walkContext = nullptr;
 CONTEXT writerAfter{}, walkAfter{};
+uint32_t deferredEax = 0, deferredEcx = 0, deferredEdx = 0, deferredFlags = 0;
+unsigned messageClones = 0, messageDestroys = 0;
+unsigned serviceCopies = 0, serviceDestroys = 0;
+uint8_t observedDestroyFlag = 0;
+
+struct FakeMessage {
+    void** table = nullptr;
+    uint32_t id = 0;
+};
+void* __fastcall CloneFakeMessage(FakeMessage* self, void*) {
+    ++messageClones;
+    if (self->id == 0xFFFFFFFFu) return nullptr;
+    if (clobberFp) {
+        _mm_setcsr(0x3F80);
+        __asm { fninit }
+        __asm { fld1 }
+    }
+    return new FakeMessage(*self);
+}
+void* __fastcall DestroyFakeMessage(FakeMessage* self, void*, uint8_t deleting) {
+    ++messageDestroys;
+    if (deleting & 1) delete self;
+    return self;
+}
+void* fakeMessageTable[] = {
+    reinterpret_cast<void*>(&DestroyFakeMessage),
+    reinterpret_cast<void*>(&CloneFakeMessage)
+};
+
+void* __fastcall OriginalUnitIndexingCopy(void* self, void*, const void* source) {
+    ++serviceCopies;
+    std::memcpy(self, source, 0x74);
+    return self;
+}
+void* __fastcall OriginalUnitIndexingDestroy(void* self, void*, uint8_t deleting) {
+    ++serviceDestroys;
+    observedDestroyFlag = deleting;
+    Check(*reinterpret_cast<void**>(static_cast<uint8_t*>(self) + 0x58) == nullptr,
+          "unit-indexing destructor receives a cleared deferred-message slot");
+    return self;
+}
+__declspec(naked) void DeferredContinue() {
+    __asm { mov dword ptr [deferredEax], eax }
+    __asm { mov dword ptr [deferredEcx], ecx }
+    __asm { mov dword ptr [deferredEdx], edx }
+    __asm { pushfd }
+    __asm { pop dword ptr [deferredFlags] }
+    __asm { ret }
+}
+__declspec(naked) void __stdcall InvokeDeferredSite(void*, void*) {
+    __asm { push ebp }
+    __asm { mov ebp, esp }
+    __asm { sub esp, 160h }
+    __asm { mov edx, [ebp+0Ch] }
+    __asm { mov [ebp-160h], edx }
+    __asm { mov eax, 11223344h }
+    __asm { mov ecx, 22334455h }
+    __asm { mov edx, 33445566h }
+    __asm { push 246h }
+    __asm { popfd }
+    __asm { call dword ptr [deferredHook] }
+    __asm { mov esp, ebp }
+    __asm { pop ebp }
+    __asm { ret 8 }
+}
+__declspec(naked) void OriginalCompletionSite() {
+    __asm { mov ecx, [esi+58h] }
+    __asm { test ecx, ecx }
+    __asm { jz empty }
+    __asm { mov eax, [ecx] }
+    __asm { push 1 }
+    __asm { call dword ptr [eax] }
+    __asm { mov dword ptr [esi+58h], 0 }
+empty:
+    __asm { ret }
+}
+__declspec(naked) void __stdcall InvokeCompletionSite(void*) {
+    __asm { push esi }
+    __asm { mov esi, [esp+8] }
+    __asm { call dword ptr [completionHook] }
+    __asm { pop esi }
+    __asm { ret 4 }
+}
 
 void Log(SdgoMod*, int level, const char* format, ...) {
     char text[1024]{};
@@ -159,6 +246,12 @@ void* Symbol(SdgoMod*, const char* key) {
     if (!std::strcmp(key, "native_data_guard.unit_finalize")) return reinterpret_cast<void*>(&FinalizeUnit);
     if (!std::strcmp(key, "native_data_guard.information_denominator"))
         return reinterpret_cast<void*>(&OriginalInformationSite);
+    if (!std::strcmp(key, "native_data_guard.unit_indexing_defer_continue"))
+        return reinterpret_cast<void*>(&DeferredContinue);
+    if (!std::strcmp(key, "native_data_guard.unit_indexing_copy"))
+        return reinterpret_cast<void*>(&OriginalUnitIndexingCopy);
+    if (!std::strcmp(key, "native_data_guard.unit_indexing_destructor"))
+        return reinterpret_cast<void*>(&OriginalUnitIndexingDestroy);
     if (!std::strcmp(key, "native_data_guard.exception_writer"))
         return reinterpret_cast<void*>(&OriginalExceptionWriter);
     return nullptr;
@@ -167,17 +260,40 @@ int HookCode(SdgoMod*, const char* key, void* detour, void** original) {
     if (!std::strcmp(key, "native_data_guard.name_lookup")) {
         lookupHook = detour; *original = reinterpret_cast<void*>(&OriginalName); return 1;
     }
+    if (!std::strcmp(key, "native_data_guard.unit_indexing_copy")) {
+        unitIndexingCopyHook = detour;
+        *original = reinterpret_cast<void*>(&OriginalUnitIndexingCopy);
+        return 1;
+    }
+    if (!std::strcmp(key, "native_data_guard.unit_indexing_destructor")) {
+        unitIndexingDestroyHook = detour;
+        *original = reinterpret_cast<void*>(&OriginalUnitIndexingDestroy);
+        return 1;
+    }
     Check(!std::strcmp(key, "native_data_guard.exception_writer"),
-          "only the verified exception writer is additionally hooked");
+          "only verified native lifecycle and exception functions are additionally hooked");
     exceptionHook = detour; *original = reinterpret_cast<void*>(&OriginalExceptionWriter); return 1;
 }
 int HookSite(SdgoMod*, const char* key, void* detour, void** original) {
     if (!std::strcmp(key, "native_data_guard.unit_transform")) {
         unitHook = detour; *original = reinterpret_cast<void*>(&OriginalUnitSite); return 1;
     }
-    Check(!std::strcmp(key, "native_data_guard.information_denominator"),
-          "only the verified missing-information read is additionally hooked");
-    informationHook = detour; *original = reinterpret_cast<void*>(&OriginalInformationSite); return 1;
+    if (!std::strcmp(key, "native_data_guard.information_denominator")) {
+        informationHook = detour;
+        *original = reinterpret_cast<void*>(&OriginalInformationSite);
+        return 1;
+    }
+    Check(!std::strcmp(key, "native_data_guard.unit_indexing_defer") ||
+          !std::strcmp(key, "native_data_guard.unit_indexing_complete"),
+          "only verified unit-indexing lifecycle sites are additionally hooked");
+    if (!std::strcmp(key, "native_data_guard.unit_indexing_defer")) {
+        deferredHook = detour;
+        *original = reinterpret_cast<void*>(&OriginalInformationSite);
+        return 1;
+    }
+    completionHook = detour;
+    *original = reinterpret_cast<void*>(&OriginalCompletionSite);
+    return 1;
 }
 int HookImport(SdgoMod*, const char* dll, const char* function, void* detour, void** original) {
     Check(!_stricmp(dll, "dbghelp.dll") && !std::strcmp(function, "StackWalk"),
@@ -219,6 +335,7 @@ void Run(SdgoModLoadFn entry, HMODULE dll) {
           "missing verified dependency refuses activation before mutation");
     missingSymbol = false;
     Check(entry(&api, nullptr) && lookupHook && unitHook && informationHook &&
+          deferredHook && completionHook && unitIndexingCopyHook && unitIndexingDestroyHook &&
           exceptionHook && stackWalkHook, "production DLL activates all verified guard paths");
     MakeCaller(code); MakeCaller(code + 64);
     Check(VirtualProtect(code, 4096, PAGE_EXECUTE_READ, &ignored) != 0, "native call fixtures become executable read-only");
@@ -271,6 +388,64 @@ void Run(SdgoModLoadFn entry, HMODULE dll) {
     Check(originalUnitCalls == 2 && finalized == 3, "missing optional metadata skips only unsafe read and still finalizes once");
     Check(afterEax == 0x12345678 && afterEcx == 0x23456789 && afterEdx == 0x3456789A && _mm_getcsr() == mxcsr,
           "site diagnostics preserve volatile native registers and SIMD control state");
+    std::array<uint8_t, 0x74> service{}, copiedService{}, emptyPrototype{}, emptyCopy{};
+    auto* producer = new FakeMessage{fakeMessageTable, 101};
+    FakeMessage second{fakeMessageTable, 202};
+    const auto deferredMxcsr = _mm_getcsr();
+    clobberFp = true;
+    SetLastError(0x4567);
+    InvokeDeferredSite(producer, service.data());
+    clobberFp = false;
+    auto* firstOwned = *reinterpret_cast<FakeMessage**>(service.data() + 0x58);
+    Check(firstOwned && firstOwned != producer && firstOwned->id == producer->id &&
+          messageClones == 1 && !messageDestroys,
+          "deferred unit-management request stores an independent native message clone");
+    Check(GetLastError() == 0x4567 && _mm_getcsr() == deferredMxcsr &&
+          deferredEax == 0x11223344 && deferredEcx == reinterpret_cast<uintptr_t>(producer) &&
+          deferredEdx == reinterpret_cast<uintptr_t>(service.data()) &&
+          (deferredFlags & 0x246u) == 0x246u,
+          "deferred-message ownership hook preserves the displaced register, flag and thread state");
+    DestroyFakeMessage(producer, nullptr, 1);
+    Check(firstOwned->id == 101 && messageDestroys == 1,
+          "dispatcher may reclaim the producer message before the independently owned copy is consumed");
+    InvokeDeferredSite(&second, service.data());
+    auto* secondOwned = *reinterpret_cast<FakeMessage**>(service.data() + 0x58);
+    Check(secondOwned && secondOwned != &second && secondOwned->id == second.id &&
+          messageClones == 2 && messageDestroys == 2,
+          "a repeated deferred request replaces and releases the previous owned clone once");
+    using UnitCopyHook = void*(__fastcall*)(void*, void*, const void*);
+    using UnitDestroyHook = void*(__fastcall*)(void*, void*, uint8_t);
+    Check(reinterpret_cast<UnitCopyHook>(unitIndexingCopyHook)(
+              copiedService.data(), nullptr, service.data()) == copiedService.data(),
+          "unit-indexing copy hook retains the native constructor return contract");
+    auto* copiedPending = *reinterpret_cast<FakeMessage**>(copiedService.data() + 0x58);
+    Check(copiedPending && copiedPending != secondOwned && copiedPending->id == secondOwned->id &&
+          messageClones == 3 && serviceCopies == 1,
+          "active service copies deep-copy the owned deferred request instead of sharing it");
+    Put(emptyPrototype.data(), 0x70, uint32_t{0x13572468});
+    reinterpret_cast<UnitCopyHook>(unitIndexingCopyHook)(
+        emptyCopy.data(), nullptr, emptyPrototype.data());
+    Check(!*reinterpret_cast<void**>(emptyCopy.data() + 0x58) &&
+          *reinterpret_cast<uint32_t*>(emptyCopy.data() + 0x70) == 0x13572468 &&
+          messageClones == 3,
+          "factory prototype copy keeps its normal null deferred slot and leaves other native fields unchanged");
+    // Match the native completion path: queueing clones the owned request, then
+    // the service releases and clears its private copy.
+    auto* queued = static_cast<FakeMessage*>(CloneFakeMessage(secondOwned, nullptr));
+    InvokeCompletionSite(service.data());
+    reinterpret_cast<UnitDestroyHook>(unitIndexingDestroyHook)(service.data(), nullptr, 1);
+    Check(serviceDestroys == 1 && messageDestroys == 3 && observedDestroyFlag == 1,
+          "completion followed by service destruction never releases the completed request twice");
+    DestroyFakeMessage(queued, nullptr, 1);
+    reinterpret_cast<UnitDestroyHook>(unitIndexingDestroyHook)(copiedService.data(), nullptr, 1);
+    reinterpret_cast<UnitDestroyHook>(unitIndexingDestroyHook)(emptyCopy.data(), nullptr, 1);
+    Check(messageClones == 4 && messageDestroys == 5 && serviceDestroys == 3,
+          "queue clone, service copy and teardown each have one matching native release");
+    FakeMessage failed{fakeMessageTable, 0xFFFFFFFFu};
+    InvokeDeferredSite(&failed, emptyPrototype.data());
+    Check(!*reinterpret_cast<void**>(emptyPrototype.data() + 0x58) &&
+          messageClones == 5 && messageDestroys == 5,
+          "copy failure leaves the existing null slot untouched instead of retaining a borrowed message");
     CONTEXT original{};
     original.ContextFlags = CONTEXT_FULL;
     original.Eax = 0x11111111; original.Ebx = 0x22222222;
@@ -321,9 +496,12 @@ void Run(SdgoModLoadFn entry, HMODULE dll) {
           "StackWalk calls outside the native writer retain their original context pointer");
     using StatusFn = int(__cdecl*)(SdgoNativeDataGuardStatusV1*);
     using StatusV2Fn = int(__cdecl*)(SdgoNativeDataGuardStatusV2*);
+    using StatusV3Fn = int(__cdecl*)(SdgoNativeDataGuardStatusV3*);
     const auto status = reinterpret_cast<StatusFn>(GetProcAddress(dll, "SdgoNativeDataGuardGetStatusV1"));
     const auto statusV2 = reinterpret_cast<StatusV2Fn>(
         GetProcAddress(dll, "SdgoNativeDataGuardGetStatusV2"));
+    const auto statusV3 = reinterpret_cast<StatusV3Fn>(
+        GetProcAddress(dll, "SdgoNativeDataGuardGetStatusV3"));
     SdgoNativeDataGuardStatusV1 snapshot{}; snapshot.size = sizeof(snapshot);
     Check(status && status(&snapshot) && snapshot.version == 1 && snapshot.funnel_bounds_corrected &&
           snapshot.missing_names == 4 && snapshot.missing_transform_metadata == 1,
@@ -339,7 +517,17 @@ void Run(SdgoModLoadFn entry, HMODULE dll) {
           "additive V2 observer exposes the new guards without changing V1");
     Check(!statusV2(nullptr), "V2 observer rejects null output");
     snapshotV2.size = 4; Check(!statusV2(&snapshotV2), "V2 observer rejects undersized output");
-    Check(gridCalls > 0 && warnings == 6, "warnings are emitted for missing data only");
+    SdgoNativeDataGuardStatusV3 snapshotV3{}; snapshotV3.size = sizeof(snapshotV3);
+    Check(statusV3 && statusV3(&snapshotV3) && snapshotV3.version == 3 &&
+          snapshotV3.deferred_message_copies == 3 &&
+          snapshotV3.deferred_message_replacements == 1 &&
+          snapshotV3.deferred_message_copy_failures == 1 &&
+          snapshotV3.deferred_message_completions == 1 &&
+          snapshotV3.outstanding_deferred_messages == 0,
+          "additive V3 observer exposes real deferred-message ownership through completion");
+    Check(!statusV3(nullptr), "V3 observer rejects null output");
+    snapshotV3.size = 4; Check(!statusV3(&snapshotV3), "V3 observer rejects undersized output");
+    Check(gridCalls > 0 && warnings == 7, "warnings are emitted only for missing data or failed ownership copy");
     VirtualFree(code, 0, MEM_RELEASE); VirtualFree(bounds, 0, MEM_RELEASE);
 }
 }
