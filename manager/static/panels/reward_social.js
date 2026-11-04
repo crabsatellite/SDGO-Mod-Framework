@@ -8,7 +8,8 @@ export function socialEditor(parent,api,refresh,onError){
  const select=(values,v)=>{const n=e('select');for(const [key,title] of values)n.add(new Option(title,key));n.value=v;return n;};
  const action=(text,fn)=>{const n=e('button',text);n.type='button';n.onclick=()=>Promise.resolve().then(fn).catch(onError);return n;};
  function render(){
-  card.replaceChildren(e('h2','人数倍率与周期聚会奖励'));
+  const scope=e('p','本区单独保存：改完点本区底部「保存人数与聚会规则」，之后的新结算使用。');scope.className='scope-note';
+  card.replaceChildren(e('h2','人数倍率与周期聚会奖励'),scope);
   card.append(e('p','可按本服规模配置。新配置默认不启用聚会补给；固定奖励不乘基础、活动或人数倍率。已有账号跨服务器共用同一规则的领取记录。'));
   const custom=field(card,'使用自定义人数倍率表',input('checkbox',table.length>0));
   const counts=e('div');counts.className='fields';card.append(counts);

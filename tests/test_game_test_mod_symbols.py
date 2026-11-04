@@ -7,6 +7,14 @@ from tools import game_test
 HOST='[host]\nimage=WorldServer.exe\ntimestamp=0x548A86E3\nsize_of_image=0x0010C000\n'
 
 class ModSymbolPreparationTests(unittest.TestCase):
+    def test_complete_backend_map_supplies_dynamic_host_aliases_and_retains_local_aliases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);stage=root/'stage.ini';copied=root/'copied.ini'
+            stage.write_text(HOST+'[gift.world_route]\nkind=code\nrva=0x1000\n')
+            copied.write_text(HOST+'[owner.existing]\nkind=code\nrva=0x2000\n')
+            game_test.merge_required_symbols(stage,copied,[],include_all=True)
+            self.assertEqual(set(game_test.read_ini(copied).sections()),{'host','gift.world_route','owner.existing'})
+
     def test_shipped_shared_maps_have_no_duplicate_symbol_sections(self):
         root=Path(__file__).resolve().parents[1]
         for path in (root/'symbols').glob('*.ini'):

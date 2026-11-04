@@ -148,6 +148,17 @@
       "activation": "restart_required"
     },
     {
+      "id": "unit_pages_only",
+      "key": "UnitPagesOnly",
+      "label": "仅检查导入机体原生页面（需封存测试任务）",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
       "id": "unit_acquisition_kind",
       "key": "UnitAcquisitionKind",
       "label": "机体候选检查（0关闭、1固定、3自定义）",

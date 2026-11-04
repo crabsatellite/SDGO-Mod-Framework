@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import uuid
 from . import distribution, registry, storage
+from owner import timezones
 
 EXES = {'GOnline.exe': 'client', 'BattleServer.exe': 'battle', 'AgentServer.exe': 'agent', 'WorldServer.exe': 'world'}
 
@@ -44,6 +45,11 @@ class Workspace:
         if mode not in ('standard', 'developer'):
             raise ValueError('界面模式无效')
         self.mode = mode
+        return self.public()
+
+    def set_display_timezone(self, offset):
+        self.settings['display_utc_offset_minutes']=timezones.validate_offset(offset)
+        self.save_workspace()
         return self.public()
 
     def add_host(self, path):
@@ -142,7 +148,10 @@ class Workspace:
             raw=path.read_bytes() if path.exists() else b'';global_ini=storage.ini_values(raw)
             hosts.append({**host, 'mods': [m for m in mods if not m['archived']], 'archive':[m for m in mods if m['archived']], 'global_revision': storage.revision(raw),
                           'categories':{key:global_ini.get('categories',key,fallback='1')!='0' for key in ('gameplay','network')}})
+        display_offset=self.settings.get('display_utc_offset_minutes')
         result = {'mode': self.mode, 'hosts': hosts, 'schema_version': 1,
+                  'timezone':{'configured_offset_minutes':display_offset,
+                              'effective_offset_minutes':timezones.effective_offset(display_offset)},
                   'panels':[{'id':key,'title':provider.title} for key,provider in self.providers.items()]}
         return result
 

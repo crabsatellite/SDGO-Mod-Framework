@@ -1,12 +1,13 @@
 """Optional owner-authored participation rules; no server-specific rewards."""
 from __future__ import annotations
 from datetime import datetime,timedelta,timezone
+from owner import timezones
 import copy,re
 
 ID=re.compile(r'[a-z][a-z0-9_-]{0,47}\Z')
 
 def defaults():
-    return {'enabled':False,'utc_offset_minutes':480,'minimum_active_seconds':180,
+    return {'enabled':False,'utc_offset_minutes':timezones.local_offset_minutes(),'minimum_active_seconds':180,
             'require_contribution':True,'rules':[]}
 
 def integer(value,low,high,label):
