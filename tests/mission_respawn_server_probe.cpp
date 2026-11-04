@@ -25,6 +25,10 @@ DWORD began=0,lastAction=0;
 bool down=false;
 bool primaryComplete=false;
 bool clientCycleComplete=false;
+int stressSlot=-1;
+uint32_t stressPilot=0,stressDeaths=0,stressRespawns=0;
+bool stressDown=false,stressComplete=false;
+DWORD lastStress=0;
 uint32_t primaryDeaths=0,primaryRespawns=0,humanDeaths=0,aliveAiBeforeFailure=0;
 constexpr size_t kPilots=0x3CE4,kStride=0x1F54;
 template<class T>T Read(uint8_t* p,size_t at){T v;memcpy(&v,p+at,sizeof(v));return v;}
@@ -46,6 +50,7 @@ void WriteMarker(const wchar_t* status,const wchar_t* reason,uint32_t deaths) {
         L"\r\nrun_id="+runId+L"\r\npilot="+std::to_wstring(pilotId)+L"\r\nlife_limit="+std::to_wstring(limit)+
         L"\r\ndeaths="+std::to_wstring(primaryComplete?primaryDeaths:deaths)+L"\r\nrespawns="+std::to_wstring(primaryComplete?primaryRespawns:respawns)+
         L"\r\nclient_cycles_required=1"+
+        L"\r\nserver_stress_pilot="+std::to_wstring(stressPilot)+
         L"\r\nhuman_deaths="+std::to_wstring(humanDeaths)+L"\r\nai_alive_before_failure="+std::to_wstring(aliveAiBeforeFailure)+
         L"\r\nnative_human_failure="+std::to_wstring(finished && wcscmp(status,L"pass")==0?1:0)+
         L"\r\npolicy="+(infinite?L"infinite":L"player")+L"\r\nreason="+reason+L"\r\n";
@@ -57,7 +62,7 @@ void Finish(bool passed,const wchar_t* reason,uint32_t deaths) {
     g_api->Log(g_mod,passed?SDGO_LOG_INFO:SDGO_LOG_ERROR,"native mission respawn probe %s: deaths=%u quota=%u respawns=%u",passed?"passed":"failed",deaths,limit,respawns);
 }
 void PrimaryComplete(const wchar_t* reason,uint32_t deaths) {
-    primaryComplete=true;primaryDeaths=deaths;primaryRespawns=respawns;lastAction=GetTickCount();
+    primaryComplete=true;primaryDeaths=deaths;primaryRespawns=infinite?stressRespawns:respawns;lastAction=GetTickCount();
     WriteMarker(L"basic",reason,deaths);
 }
 bool ClientAcknowledged() {
@@ -100,20 +105,25 @@ void HumanFailureTick(uint8_t* room,uint32_t now,DWORD clock) {
     }
     Finish(failedImmediately && nativeGateClosed,failedImmediately && nativeGateClosed?L"last human life immediately triggers native failure and its existing damage gate despite living AI":L"native human exhaustion failure or damage gate was not immediate",primaryDeaths);
 }
-// This is server-only boundary stress, after one separately acknowledged real
-// client revival. These artificial damage calls are not counted as client cycles.
+// Independent server-only quota stress on another AI, concurrent with natural
+// combat. Its artificial damage calls are never counted as client cycles.
 void InfiniteBoundaryTick(uint8_t* room,uint32_t now,DWORD clock) {
-    auto victim=Pilot(room,targetSlot);
+    auto victim=Pilot(room,stressSlot);
     const auto deaths=Read<uint32_t>(victim,0x1A),hp=Read<uint32_t>(Unit(victim),0x34);
-    if(down && hp>0) {
-        ++respawns;down=false;lastAction=clock;
+    stressDeaths=deaths;
+    if(stressDown && hp>0) {
+        ++stressRespawns;stressDown=false;lastStress=clock;
         g_api->Log(g_mod,SDGO_LOG_INFO,"server-only infinite quota stress: deaths=%u quota=%u revivals=%u human_hp=%u",
-            deaths,limit,respawns,Read<uint32_t>(Unit(Pilot(room,hostSlot)),0x34));
-        if(deaths>limit)PrimaryComplete(L"separate server-native revivals exceed the player quota after a genuine client cycle",deaths);
+            deaths,limit,stressRespawns,Read<uint32_t>(Unit(Pilot(room,hostSlot)),0x34));
+        if(deaths>limit)stressComplete=true;
         return;
     }
-    if(down || clock-lastAction<1000)return;
-    if(hp==0 || Lethal(room,now,hostSlot,targetSlot)) {down=true;lastAction=clock;}
+    if(stressDown || clock-began<20000 || clock-lastStress<1000)return;
+    if(hp==0 || Lethal(room,now,hostSlot,stressSlot)) {
+        stressDown=true;lastStress=clock;
+        g_api->Log(g_mod,SDGO_LOG_INFO,"server-only quota stimulus pilot=%u deaths=%u human_deaths=%u phase=%u reason=%u",
+            stressPilot,Read<uint32_t>(victim,0x1A),Read<uint32_t>(Pilot(room,hostSlot),0x1A),Read<uint32_t>(room,0x316A4),Read<uint32_t>(room,0x316A8));
+    }
 }
 void Tick(uint8_t* room,uint32_t now) {
     if(finished || !room || (room[5]!=5 && room[5]!=8) || Read<uint32_t>(room,0x4CE)!=host)return;
@@ -127,15 +137,17 @@ void Tick(uint8_t* room,uint32_t now) {
         if(hostSlot<0 || targetSlot<0)return;
         uint8_t* rules=Read<uint8_t*>(room,0x316A0);if(!rules)return;
         limit=Read<uint32_t>(rules,0x28);selected=room;began=lastAction=clock;
+        stressSlot=targetSlot;stressPilot=pilotId;lastStress=clock;
         if(limit>12) {Finish(false,L"native mission quota outside bounded probe range",0);return;}
     }
     if(room!=selected)return;
     if(clock-began>330000) {Finish(false,L"native respawn probe timed out",0);return;}
+    if(infinite && !stressComplete)InfiniteBoundaryTick(room,now,clock);
     if(primaryComplete) {HumanFailureTick(room,now,clock);return;}
     if(clientCycleComplete) {
         if(ClientAcknowledged()) {
-            if(infinite)InfiniteBoundaryTick(room,now,clock);
-            else PrimaryComplete(L"genuine client death and revival acknowledged before human failure proof",Read<uint32_t>(Pilot(room,targetSlot),0x1A));
+            if(infinite && !stressComplete)return;
+            PrimaryComplete(L"genuine client revival acknowledged; independent native quota stress completed when required",infinite?stressDeaths:Read<uint32_t>(Pilot(room,targetSlot),0x1A));
         }
         return;
     }
@@ -143,7 +155,7 @@ void Tick(uint8_t* room,uint32_t now) {
         // Select the first wingman killed by actual native mission combat.
         for(int slot=0;slot<12;++slot) {
             auto p=Pilot(room,slot);
-            if((Read<uint32_t>(p,0)&0x80000000u) && p[0x33C]<4 && Read<uint32_t>(Unit(p),0x34)==0 && Read<uint32_t>(p,0x1A)>0) {
+            if((!infinite || slot!=stressSlot) && (Read<uint32_t>(p,0)&0x80000000u) && p[0x33C]<4 && Read<uint32_t>(Unit(p),0x34)==0 && Read<uint32_t>(p,0x1A)>0) {
                 targetSlot=slot;pilotId=Read<uint32_t>(p,0);down=true;lastAction=clock;break;
             }
         }
