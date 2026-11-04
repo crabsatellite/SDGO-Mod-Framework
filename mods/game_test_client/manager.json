@@ -244,6 +244,47 @@
       "section": "settings",
       "audience": "developer",
       "activation": "restart_required"
+    },
+    {
+      "id": "blueprint_material_count",
+      "key": "BlueprintMaterialCount",
+      "label": "原生设计图材料数（0关闭）",
+      "type": "choice",
+      "default": "0",
+      "options": [
+        "0",
+        "3",
+        "4",
+        "5"
+      ],
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "blueprint_synthesize",
+      "key": "BlueprintSynthesize",
+      "label": "在封存任务中确认原生设计图合成",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "blueprint_output_unit",
+      "key": "BlueprintOutputUnit",
+      "label": "原生合成预期产物机体编号（0未指定）",
+      "type": "integer",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 9999999,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
     }
   ],
   "presentation": "configurable",

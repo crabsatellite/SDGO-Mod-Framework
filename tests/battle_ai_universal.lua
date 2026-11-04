@@ -40,6 +40,10 @@ function SDGO_BattleAI_Route(id,force,x,y,z)
   if not calls.staticRouteObservation then observation.routeActive=result end
   return result
 end
+function SDGO_BattleAI_ExploreMap()
+  calls.explores=(calls.explores or 0)+1
+  return calls.exploreResult or 1
+end
 function SDGO_BattleAI_AdvancePoint(x,y,z,distance,allowRanged)
   calls.advances=(calls.advances or 0)+1
   calls.advanceX=x;calls.advanceY=y;calls.advanceZ=z
@@ -123,9 +127,9 @@ Check(calls.switch==2,'empty rifle switches to another usable weapon instead of 
 Reset();for _,w in pairs(observation.weapons) do w.ammoReady=0 end;Tick(0)
 Check(calls.fire==false and calls.aim==0,'no usable weapon does not fabricate ammo or hits')
 Reset({ReactionMs=0});observation.targets[2].rangedFiring=1
-Tick(0);local first=calls.direction;Tick(500)
+Tick(0);local first=calls.direction;observation.pos={x=50,y=0,z=0};Tick(500)
 Check(calls.jumps==1 and calls.direction~=first and calls.fire==true,'ranged exchange combines native hop with alternating lateral movement and fire')
-Tick(1600)
+observation.pos={x=100,y=0,z=0};Tick(1600)
 Check(calls.jumps==2,'jump requests obey cooldown rather than per-frame refill')
 Reset({ReactionMs=0});observation.boostFraction=0.1;observation.targets[2].rangedFiring=1;Tick(0)
 Check(calls.jumps==0 and calls.mode==UNIT_MOVE_EVENT_MOVE,'low boost uses walking strafe without extra jump')
@@ -135,10 +139,20 @@ Reset({ReactionMs=0,BurstMs=300,BurstPauseMs=200});Tick(0);Tick(300)
 Check(calls.fire==true,'legacy burst configuration cannot create an intent pause')
 Tick(500)
 Check(calls.fire==true,'attack intent stays continuous across the old burst-pause boundary')
-Reset();observation.targets={Target(1,1000,3000)};Tick(0);Tick(100);Tick(800)
+Reset();observation.targets={Target(1,1000,3000)};Tick(0)
+observation.pos={x=0,y=0,z=25};Tick(100);observation.pos={x=0,y=0,z=100};Tick(800)
 Check(calls.routes==2 and calls.fire==false,'out-of-range pursuit uses bounded navigation requests')
+Reset();observation.targets={Target(1,1000,3000)};Tick(0);Tick(10)
+observation.routeActive=0;Tick(20)
+Check(calls.routes==2,'an interrupted native route is rebuilt immediately instead of retaining its old repath throttle')
 Reset();calls.routeResult=0;observation.targets={Target(1,1000,3000)};Tick(0);Tick(100)
-Check(calls.routes==1 and calls.aim==0,'failed route is temporarily excluded from chase')
+Check(calls.routes==1 and calls.aim==0 and (calls.advances or 0)==0,
+      'failed route is temporarily excluded without another direct movement fallback')
+Reset();calls.routeResult=2;calls.staticRouteObservation=true;observation.routeActive=0
+observation.targets={Target(1,1000,3000)};Tick(0);Tick(100)
+Check(calls.routes==1 and (calls.advances or 0)==0 and calls.native==1 and
+      SDGO_BattleAI_Universal.states[20].movementIntent,
+      'incremental native-geometry planning retains pursuit without switching to a direct or stock fallback')
 Reset();observation.hurt=1;Tick(0)
 Check(calls.fire==nil and not calls.stop and calls.routes==0 and calls.jumps==0,
       'hurt state drops policy ownership without replacing native attack or movement transitions')
@@ -177,10 +191,10 @@ observation.targets[1].visible=0;observation.targets[2].visible=0
 observation.targets[2].groundPos={x=3000,y=0,z=999};Tick(100)
 Check(calls.routes==1 and calls.routeX==1000 and not calls.fire,'occluded known enemy is pursued through last visible position rather than live hidden position')
 local priorPatrolMoves=calls.moves;local priorPatrolSafety=calls.safeDirections or 0;Tick(3000)
-Check(calls.moves==priorPatrolMoves+1 and calls.safeDirections==priorPatrolSafety+1 and
+Check(calls.moves==priorPatrolMoves and calls.explores==1 and
       calls.mode==UNIT_MOVE_EVENT_MOVE and calls.aim==0 and calls.fire==false and
       not calls.patrol,
-      'lost target memory expires and safe bounded patrol replaces stationary waiting')
+      'expired target memory starts a public-map search rather than local sidestepping or hidden-position pursuit')
 Reset();observation.targets={};Tick(0)
 local beforeUnavailableNative=calls.native;local beforeUnavailableMoves=calls.moves
 calls.safeDirectionResult=-1;observation.goal=observation.pos;Tick(1)
@@ -664,6 +678,7 @@ for _,branch in pairs({'empty','switch','defence','flank'}) do
 end
 Reset();observation.moving=1;Tick(0);Tick(1500)
 local timed=SDGO_BattleAI_Universal.states[20];local expires=timed.recoverUntil
+observation.pos={x=100,y=0,z=0}
 Tick(expires+1)
 Check(not timed.recovering and calls.recoveryMode==0,'recovery expiry cannot permanently monopolize movement')
 
@@ -694,9 +709,9 @@ Reset();observation.targets={Target(2,200,1000)};Tick(0)
 observation.targets[1].damageProtected=1;observation.targets[1].visible=0;calls.fire=nil
 priorPatrolMoves=calls.moves;priorPatrolSafety=calls.safeDirections or 0;Tick(1)
 Check(SDGO_BattleAI_Universal.states[20].memory[2]==nil and calls.fire==false and calls.aim==0 and
-      calls.moves==priorPatrolMoves+1 and calls.safeDirections==priorPatrolSafety+1 and
+      calls.moves==priorPatrolMoves and calls.explores==1 and
       not calls.patrol,
-      'live protection deletes stale target memory instead of resurrecting an invulnerable chase')
+      'live protection clears stale memory and searches public routes without an invulnerable blind chase')
 Reset();Tick(0)
 observation.targets[2].damageProtected=1;observation.meleeBusy=1;observation.selectedSlot=0
 calls.fire=nil;calls.meleeGate=nil;Tick(1)
@@ -792,8 +807,8 @@ Tick(100)
 Check(calls.advances==1 and calls.target==1 and calls.fire==true and not calls.stop,
       'a failed melee advance is throttled without excluding an attackable target or repeatedly stopping its motor')
 Tick(800)
-Check(calls.advances==2 and calls.fire==true,
-      'a failed melee advance becomes eligible for a bounded later retry')
+Check(calls.advances==1 and SDGO_BattleAI_Universal.states[20].recovering and calls.moves>0 and calls.fire==true,
+      'a failed melee advance starts bounded recovery while its legal gun keeps firing')
 Reset({Difficulty=1});observation.meleeRole=1;observation.targets={Target(1,5000,200)}
 observation.targets[1].rangedVisible=1;observation.targets[1].meleeVisible=0
 Tick(0)
@@ -939,11 +954,90 @@ for _,difficulty in pairs({1,2}) do
   observation.weapons={Weapon(0,'melee',800,1000,600),Weapon(1,'melee',800,2000,600)}
   observation.targets={Target(1,5000,1800)};observation.targets[1].pos={x=0,y=0,z=1800}
   calls.routeResult=0;calls.advanceResult=0
-  Tick(0);Tick(700)
+  Tick(0);Tick(300)
   Check(calls.moves==0 and not calls.fire,'a rejected pursuit does not invent movement or an out-of-range hit: '..difficulty)
   Tick(1401)
   Check(SDGO_BattleAI_Universal.states[20].recovering and calls.recoveryMode==1 and
         calls.moves>0 and calls.safeDirections>0 and calls.native==1,
         'failed navigation retains pursuit demand so bounded safe recovery can run without stock AI: '..difficulty)
 end
+for _,difficulty in pairs({1,2}) do
+  Reset({Difficulty=difficulty});observation.selectedSlot=0;observation.meleeRole=1
+  observation.weapons={Weapon(0,'melee',800,1000,600)}
+  observation.targets={Target(1,5000,1800)};observation.targets[1].pos={x=0,y=0,z=1800}
+  calls.routeResult=0;calls.advanceResult=0
+  Tick(0);Tick(450)
+  Check(SDGO_BattleAI_Universal.states[20].recovering and calls.moves>0 and calls.safeDirections>0,
+        'a stationary rejected pursuit starts safe recovery before one second: '..difficulty)
+  local recoveryDirection=calls.direction
+  Tick(700)
+  Check(SDGO_BattleAI_Universal.states[20].recovering and calls.direction~=recoveryDirection,
+        'a recovery step with no displacement tries the other safe direction within the idle budget: '..difficulty)
+end
+for _,difficulty in pairs({1,2}) do
+  Reset({Difficulty=difficulty});observation.selectedSlot=0;observation.meleeRole=1
+  observation.weapons={Weapon(0,'melee',800,1000,600)}
+  observation.targets={Target(1,5000,3000)};observation.targets[1].groundPos={x=0,y=0,z=3000}
+  calls.advanceResult=0;calls.routeResult=2;calls.staticRouteObservation=true
+  Tick(0)
+  Check(calls.routes>0 and calls.native==1 and SDGO_BattleAI_Universal.states[20].movementIntent,
+        'a body-blocked direct melee advance proceeds through incremental map navigation: '..difficulty)
+end
+Reset();observation.targets={Target(1,1000,3000)}
+local shared=observation.targets[1];shared.visible=0;shared.teamVisible=1;shared.teamSource=40
+shared.pos={x=3000,y=100,z=0};shared.groundPos={x=3000,y=0,z=0}
+Tick(0)
+Check(calls.target==1 and calls.routes>0 and calls.fire==false and calls.aim==0,
+      'an ally sighting immediately starts pursuit without authorizing a shot through the observer wall')
+shared.teamVisible=0;shared.groundPos={x=4500,y=0,z=0};shared.pos={x=4500,y=100,z=0}
+observation.pos={x=50,y=0,z=0}
+Tick(800)
+Check(calls.routeX==3000 and calls.fire==false,
+      'a lost ally sighting pursues the shared last-seen point rather than the hidden live position')
+shared.visible=1;shared.rangedVisible=1;shared.distance=900;shared.rangedDistance=900
+Tick(801)
+Check(calls.fire==true,'own fresh weapon visibility admits fire after supporting an ally sighting')
+Reset();observation.targets={Target(1,1000,3000)}
+shared=observation.targets[1];shared.visible=0;shared.teamVisible=1;shared.teamSource=40;shared.attackable=0
+shared.groundPos={x=3000,y=0,z=0};shared.pos={x=3000,y=100,z=0};Tick(0)
+Check(calls.target==1 and calls.routes>0 and calls.fire==false,
+      'a team-visible contact can be approached while the observer lacks native attack permission')
+Reset({Difficulty=1});observation.moving=1;Tick(0)
+for step=1,10 do observation.pos={x=step*5,y=0,z=0};Tick(step*100) end
+Check(not SDGO_BattleAI_Universal.states[20].recovering,
+      'small genuine horizontal steps do not trigger the stationary-controller watchdog')
+Reset({Difficulty=1});observation.forcedMoving=1;Tick(0)
+Check(calls.native==0 and calls.moves==0 and calls.jumps==0 and calls.fire==true,
+      'native map travel retains legal gun output without initialization, motor or jump replacement')
+observation.forcedMoving=0;Tick(1)
+Check(calls.native==1,'deferred one-time initialization runs after native map travel releases')
+Reset();observation.targets={Target(1,1000,5000)};observation.targets[1].visible=0;Tick(0)
+Check(calls.explores==1 and calls.moves==0 and calls.fire==false,
+      'an unseen live enemy initiates public-map exploration rather than a local sidestep')
+local function Gate()
+  return {id=80,hp=1000,maxHp=1000,enemy=1,attackable=1,visible=1,
+    perceptionVisible=1,rangedVisible=1,meleeVisible=1,mapObstacle=1,
+    distance=400,rangedDistance=400,meleeDistance=120,
+    pos={x=0,y=100,z=400},groundPos={x=0,y=0,z=400}}
+end
+Reset();observation.targets={Target(1,5000,3000)};observation.targets[1].visible=0;observation.obstacle=Gate();Tick(0)
+Check(calls.target==80 and calls.fire==true and not calls.explores,
+      'a real route-blocking destroyable is attacked instead of searching behind the closed gate')
+Reset();observation.selectedSlot=0;observation.weapons={Weapon(0,'melee',250,500,600)}
+observation.targets={Target(1,5000,3000)};observation.targets[1].visible=0;observation.obstacle=Gate();Tick(0)
+Check(calls.target==80 and calls.fire==true and calls.switch~=3,
+      'a melee-only loadout uses ordinary native melee against a blocking gate')
+calls.meleeGate=1;observation.pos={x=0,y=0,z=1};Tick(10)
+Check(calls.meleeGate==0 and calls.fire==true,
+      'a retained blocking gate clears a previous melee-suppression lease before attacking')
+Reset();observation.obstacle=Gate();Tick(0)
+Check(calls.target==2 and calls.fire==true,
+      'a gate does not pull fire away from an already shootable opponent')
+Reset();observation.meleeBusy=1;observation.meleeTracking=1;observation.selectedSlot=0
+observation.targets={Target(1,5000,3000)};observation.targets[1].visible=0;observation.obstacle=Gate();Tick(0)
+Check(calls.meleeGate==1 and calls.cancelTracking==1 and calls.moves==0 and calls.fire==nil,
+      'a blocked uncommitted knife chase releases through the native gate before retargeting the door')
+observation.meleeBusy=0;observation.meleeTracking=0;Tick(10)
+Check(calls.target==80 and calls.meleeGate==0,
+      'the tracking-release lease is removed after Neutral so the new gate target can attack')
 print(string.format('ALL %d UNIVERSAL CONTROLLER CHECKS PASSED (Lua 5.0)',checks))

@@ -68,7 +68,8 @@ local function State(o,now)
   local s=U.states[o.id]
   if not s or s.generation~=o.generation or now-s.seen>6000 then
     s={id=o.id,generation=o.generation,seen=now,decisionAt=0,targetAt=0,weaponAt=0,
-      turnAt=0,hopAt=0,repathAt=0,progressAt=now,anchor=o.pos,attempt=0,recoveryAt=0,memory={},blocked={},patrolAt=0}
+      turnAt=0,hopAt=0,repathAt=0,progressAt=now,anchor=o.pos,motionPos=o.pos,motionAt=now,
+      attempt=0,recoveryAt=0,memory={},blocked={},patrolAt=0}
     U.states[o.id]=s
   end
   s.seen=now
@@ -117,6 +118,9 @@ local function AnyVisible(t)
   end
   return Flag(t.visible)
 end
+local function ContactVisible(t)
+  return AnyVisible(t) or Flag(t.teamVisible)
+end
 local function RoleDistance(o,t)
   if Flag(o.meleeRole) and t.meleeDistance~=nil then return t.meleeDistance end
   if not Flag(o.meleeRole) and t.rangedDistance~=nil then return t.rangedDistance end
@@ -151,14 +155,15 @@ local function ResponseInRange(o,t)
   return false
 end
 local function Candidate(o,s,t,now)
-  return t.id~=s.id and t.hp>0 and not DamageProtected(t) and Flag(t.enemy) and Flag(t.attackable)
+  return t.id~=s.id and t.hp>0 and not DamageProtected(t) and Flag(t.enemy) and
+    (Flag(t.attackable) or Flag(t.teamVisible))
 end
 local function PickTarget(o,s,now)
   o.rangedResponse=RangedResponse(o)
   local current=nil
   for _,t in pairs(o.targets) do
     if t.id==s.target and Candidate(o,s,t,now) then current=t end
-    if Candidate(o,s,t,now) and AnyVisible(t) then
+    if Candidate(o,s,t,now) and ContactVisible(t) then
       local copy=s.memory[t.id] or {}
       for key in pairs(copy) do if key~='seen' and t[key]==nil then copy[key]=nil end end
       for key,value in pairs(t) do copy[key]=value end
@@ -168,14 +173,14 @@ local function PickTarget(o,s,now)
   local currentRange=current and ResponseInRange(o,current)
   local best,near=nil,nil
   for _,t in pairs(o.targets) do
-    if Candidate(o,s,t,now) and AnyVisible(t) then
+    if Candidate(o,s,t,now) and ContactVisible(t) then
       local distance=RoleDistance(o,t)
       local nearDistance=near and RoleDistance(o,near)
       if not near or distance<nearDistance or (distance==nearDistance and t.id<near.id) then near=t end
     end
   end
   for _,t in pairs(o.targets) do
-    if Candidate(o,s,t,now) and AnyVisible(t) then
+    if Candidate(o,s,t,now) and ContactVisible(t) then
       local distance=RoleDistance(o,t)
       local reference=Flag(o.meleeRole) and near or (currentRange and current)
       local referenceDistance=reference and RoleDistance(o,reference)
@@ -193,7 +198,7 @@ local function PickTarget(o,s,now)
     if last and now-last.seen<C.TargetMemoryMs and Candidate(o,s,last,now) then
       local copy={}
       for key,value in pairs(last) do copy[key]=value end
-       copy.visible=0;copy.perceptionVisible=0;copy.rangedVisible=0;copy.meleeVisible=0
+      copy.visible=0;copy.perceptionVisible=0;copy.rangedVisible=0;copy.meleeVisible=0;copy.teamVisible=0
       copy.remembered=true;best=copy
     end
   end
@@ -444,19 +449,12 @@ local function Move(npc,o,s,target,now,force)
   else status=SDGO_BattleAI_Route(target.id,force and 1 or 0) end
   if status==0 then
     s.blocked[target.id]=now+C.RepathMs
-    local point=target.groundPos or target.typedAimPos or target.typedAimpos or target.pos
-    local advanced=false
-    if point and SDGO_BattleAI_AdvancePoint then
-      advanced=SDGO_BattleAI_AdvancePoint(point.x,point.y,point.z,300,0)==1
-    end
-    -- A rejected path is still an unmet pursuit request. Clearing this demand
-    -- made Recover treat a stationary bot as intentionally idle forever when
-    -- both the native route and direct segment were blocked.
+    -- Keep unmet pursuit visible to recovery. The geometry planner already
+    -- validates direct edges; a failed route must not turn into another
+    -- unplanned approach request.
     s.movementIntent=true;s.movementIntentAt=now
-    if advanced then
-      Log(s,'route unavailable: bounded walking fallback',now)
-    else Log(s,'route unavailable: retry throttled',now) end
-    return advanced
+    Log(s,'route unavailable: retry throttled',now)
+    return false
   end
   s.blocked[target.id]=nil
   s.movementIntent=true;s.movementIntentAt=now
@@ -497,7 +495,7 @@ local function MeleeApproach(npc,o,s,w,t,now)
   if not point then return false end
   if s.meleeAdvanceTarget~=t.id then
     if Flag(o.routeActive) then SDGO_BattleAI_CancelRoute() end
-    s.meleeAdvanceTarget=t.id;s.meleeAdvanceAt=0
+    s.meleeAdvanceTarget=t.id;s.meleeAdvanceAt=0;s.meleeAdvanceBlocked=nil
   end
   if Flag(o.rangedBusy) and not Flag(w.movingShot) and not Flag(o.moveCancelOpen) then
     Log(s,'melee role: wait for legal ranged movement window',now)
@@ -508,25 +506,36 @@ local function MeleeApproach(npc,o,s,w,t,now)
     Log(s,'melee role: continue bounded advance',now)
     return true
   end
-  if now<(s.meleeAdvanceAt or 0) then return true end
+  if now<(s.meleeAdvanceAt or 0) then return not s.meleeAdvanceBlocked end
   s.meleeAdvanceAt=now+C.RepathMs
   local allowRanged=w and w.kind~='melee' and Flag(w.movingShot)
   local step=Min(400,Max(100,distance-reach*0.75))
   local advanced=SDGO_BattleAI_AdvancePoint and
     SDGO_BattleAI_AdvancePoint(point.x,point.y,point.z,step,allowRanged and 1 or 0)==1
-  s.movementIntent=advanced
+  -- A blocked closing step still needs movement. Keep that demand visible to
+  -- the same progress watchdog used by ordinary route pursuit.
+  s.movementIntent=true;s.movementIntentAt=now
   if advanced then
-    s.movementIntentAt=now
+    s.meleeAdvanceBlocked=nil
     Log(s,'melee role: close while keeping legal output',now)
-  else Log(s,'melee role: bounded advance unavailable',now) end
-  return true
+    return true
+  end
+  s.meleeAdvanceBlocked=true
+  Log(s,'melee role: direct advance blocked; plan a map route',now)
+  return false
 end
 local function RecoveryMode(active)
   if SDGO_BattleAI_RecoveryMode then SDGO_BattleAI_RecoveryMode(active and 1 or 0) end
 end
 local function Recover(npc,o,s,t,now)
+  local motion=s.motionPos or o.pos
+  local motionX,motionZ=o.pos.x-motion.x,o.pos.z-motion.z
+  if motionX*motionX+motionZ*motionZ>0.01 then
+    s.motionPos=o.pos;s.motionAt=now
+  end
   if Flag(o.hurt) or Flag(o.meleeBusy) or Flag(o.specialBusy) then
     s.recoverUntil=nil;s.recovering=nil;s.anchor=o.pos;s.progressAt=now;RecoveryMode(false)
+    s.motionPos=o.pos;s.motionAt=now
     return false
   end
   -- A stationary-only shot owns the motor until its real cancellation window.
@@ -534,7 +543,13 @@ local function Recover(npc,o,s,t,now)
   if not mayMove then
     for _,w in pairs(o.weapons) do if w.slot==o.selectedSlot and Flag(w.movingShot) then mayMove=true end end
   end
+  if not mayMove then s.motionPos=o.pos;s.motionAt=now end
+  -- Net route progress and a motor that has not moved at all are different.
+  -- Keep the configurable route-progress window, but do not wait 1.4 seconds
+  -- to react to a stationary free controller. Small real steps count too.
+  local stationary=now-(s.motionAt or now)>=450
   if s.recoverUntil and s.recovering and now<s.recoverUntil and
+     (not stationary or now-(s.recoveryStartedAt or now)<250) and
      (not o.goal or Distance2(o.pos,o.goal)>C.ArrivalDistance*C.ArrivalDistance) then
     if mayMove then
       RecoveryMode(true);npc:SetMoveType(UNIT_MOVE_EVENT_MOVE);npc:SetJumpTime(0)
@@ -546,21 +561,24 @@ local function Recover(npc,o,s,t,now)
   end
   if s.recoverUntil then
     s.recoverUntil=nil;s.recovering=nil;s.anchor=o.pos;s.progressAt=now;s.repathAt=0
+    if o.goal and Distance2(o.pos,o.goal)<=C.ArrivalDistance*C.ArrivalDistance then
+      s.motionPos=o.pos;s.motionAt=now;stationary=false
+    end
   end
   RecoveryMode(false)
   local intended=s.movementIntent and now-(s.movementIntentAt or 0)<=C.StuckMs+C.RepathMs
   local wanted=Flag(o.moving) or Flag(o.routeActive) or Flag(o.defenceMoving) or intended or s.cover or s.flanking
   if not wanted or (not intended and (not o.goal or Distance2(o.pos,o.goal)<=C.ArrivalDistance*C.ArrivalDistance)) then
-    s.anchor=o.pos; s.progressAt=now; return false
+    s.anchor=o.pos;s.progressAt=now;s.motionPos=o.pos;s.motionAt=now;return false
   end
   local dx,dz=o.pos.x-s.anchor.x,o.pos.z-s.anchor.z
   -- Repeated vertical hopping against a wall is not horizontal path progress.
   if dx*dx+dz*dz>=C.ProgressDistance*C.ProgressDistance then
     s.anchor=o.pos; s.progressAt=now; s.attempt=0; return false
   end
-  if now-s.progressAt<C.StuckMs or now<s.recoveryAt then return false end
+  if not stationary and (now-s.progressAt<C.StuckMs or now<s.recoveryAt) then return false end
   if not mayMove then return false end
-  s.attempt=s.attempt+1; s.recoveryAt=now+C.RecoveryMs+C.RecoveryCooldownMs
+  s.attempt=s.attempt+1;s.recoveryStartedAt=now;s.recoveryAt=now+C.RecoveryMs+C.RecoveryCooldownMs
   RecoveryMode(true)
   SDGO_BattleAI_CancelRoute()
   npc:MoveStop();npc:SetJumpTime(0)
@@ -630,7 +648,7 @@ local function SpecialTarget(o,t)
     elseif t.rangedVisible~=nil then visible=Flag(t.rangedVisible)
     else visible=Flag(t.visible) end
   end
-  return t and distance and t.hp>0 and not DamageProtected(t) and visible and
+    return t and distance and t.hp>0 and not Flag(t.mapObstacle) and not DamageProtected(t) and visible and
     Flag(t.attackable) and distance<=(o.specialRange or 0)
 end
 local function HasOrdinary(o,slot)
@@ -797,7 +815,7 @@ end
 local function ProtectedTarget(o,s)
   local held,native,nearest=nil,nil,nil
   for _,t in pairs(o.targets or {}) do
-    if t.hp>0 and Flag(t.enemy) and AnyVisible(t) and DamageProtected(t) then
+      if t.hp>0 and Flag(t.enemy) and ContactVisible(t) and DamageProtected(t) then
       if t.id==s.target then held=t
       elseif t.id==o.nativeTarget or t.id==o.policyTarget then native=t
       elseif not nearest or t.distance<nearest.distance or
@@ -879,6 +897,28 @@ local function PositionForProtected(npc,o,s,t,now)
   end
   Log(s,'protected target: walk for the next legal opening',now)
 end
+local function SelectRouteObstacle(npc,o,s,t,now)
+  local obstacle=o.obstacle
+  if obstacle and obstacle.hp>0 and Flag(obstacle.attackable) and AnyVisible(obstacle) and
+     (not t or not AnyInRange(o,t)) and not Flag(o.specialBusy) and not Flag(o.forcedMoving) then
+    local held=s.target==obstacle.id or o.nativeTarget==obstacle.id
+    if Flag(o.meleeTracking) and not Flag(o.meleeSwinging) and not held then
+      -- Only the existing native tracking gate can release this chase.
+      MeleeGate(true,true)
+      Log(s,'release blocked tracking before breaching a route obstacle',now)
+      return t,true
+    end
+    if not Flag(o.meleeBusy) or held then
+      t=obstacle;s.weave=nil;s.cover=nil
+      -- Releasing the old tracking target is a one-step operation. Clear its
+      -- suppression when the blocker becomes the ordinary attack target.
+      MeleeGate(false)
+    end
+  end
+  return t,false
+end
+-- Lua 5.0 limits a closure to32 upvalues. Keep related entry helpers together.
+local Tactics={profile=ProfileTick,obstacle=SelectRouteObstacle}
 local function Tick(npc)
   local o=SDGO_BattleAI_Observe()
   if not o or not Flag(o.valid) or not o.weapons or not o.targets then
@@ -886,7 +926,11 @@ local function Tick(npc)
   end
   local now=SDGO_BattleAI_Now()
   local s=State(o,now)
-  if not s.initialized then
+  if s.routeWasActive and not Flag(o.routeActive) then
+    s.repathAt=0;s.meleeAdvanceAt=0
+  end
+  s.routeWasActive=Flag(o.routeActive)
+  if not s.initialized and not Flag(o.forcedMoving) then
     s.initialized=true
     -- Keep the game's initial terrain/action setup once per spawn. Subsequent
     -- decisions are generic and do not read the original script's shared globals.
@@ -898,8 +942,13 @@ local function Tick(npc)
   if protectedHeld then s.protectedMeleeGate=true;s.weave=nil end
   if s.protectedMeleeGate and not Flag(o.meleeBusy) then s.protectedMeleeGate=nil end
   local t=PickTarget(o,s,now)
+  local releasing;t,releasing=Tactics.obstacle(npc,o,s,t,now)
+  if releasing then return 123 end
+  if t and s.exploring then
+    SDGO_BattleAI_CancelRoute();s.exploring=nil;s.movementIntent=false
+  end
   if t then o.policyTarget=t.id end
-  if ProfileTick(npc,o,now,s.weave~=nil and not Flag(o.hurt)) then
+  if Tactics.profile(npc,o,now,s.weave~=nil and not Flag(o.hurt)) then
     s.weave=nil;s.cover=nil;s.recoverUntil=nil;s.recovering=nil;s.movementIntent=false;s.anchor=o.pos;s.progressAt=now
     RecoveryMode(false);return 123
   end
@@ -912,6 +961,24 @@ local function Tick(npc)
     s.weave=nil;s.cover=nil;MeleeGate(false)
     s.recovering=nil;RecoveryMode(false)
     return 0
+  end
+  if Flag(o.forcedMoving) then
+    -- The map/server owns the trajectory; retain ordinary native attack
+    -- admission without replacing that movement with a route, jump or strafe.
+    SDGO_BattleAI_CancelRoute();s.exploring=nil;s.movementIntent=false
+    s.recoverUntil=nil;s.recovering=nil;RecoveryMode(false)
+    local fire=false
+    if t then
+      for _,weapon in pairs(o.weapons) do
+        if weapon.slot==o.selectedSlot and InRange(weapon,t) then
+          fire=Flag(weapon.ready) or Flag(o.rangedBusy)
+        end
+      end
+    end
+    SDGO_BattleAI_AimTarget(fire and t.id or 0)
+    SafeSetFire(npc,o,fire);SDGO_BattleAI_Cadence(0)
+    Log(s,'native map movement owns the motor; keep legal attack output',now)
+    return 123
   end
   if not t and not s.noTargetLast then
     -- Discard the old chase on the transition to no usable target. Subsequent
@@ -948,26 +1015,37 @@ local function Tick(npc)
   end
   if not t then
     s.readyAt=nil; s.target=nil
-    SDGO_BattleAI_CancelRoute()
     s.weave=nil;s.cover=nil
     if protected then
+      if s.exploring then SDGO_BattleAI_CancelRoute();s.exploring=nil end
       MeleeGate(Flag(s.protectedMeleeGate));PositionForProtected(npc,o,s,protected,now)
       return 123
     end
     SafeSetFire(npc,o,false)
     SDGO_BattleAI_AimTarget(0)
     MeleeGate(Flag(s.protectedMeleeGate))
+    local liveEnemy=false
+    for _,enemy in pairs(o.targets) do if enemy.hp>0 and Flag(enemy.enemy) then liveEnemy=true end end
     if not Flag(o.meleeBusy) and not Flag(o.specialBusy) then
-      if not s.patrolling or not o.goal or Distance2(o.pos,o.goal)<=C.ArrivalDistance*C.ArrivalDistance or now>=s.patrolAt then
-        s.patrolLeft=not s.patrolLeft
-        DirectMove(npc,o,
-          s.patrolLeft and UNIT_MOVE_DIR_LEFT or UNIT_MOVE_DIR_RIGHT,
-          C.StrafeDistance,UNIT_MOVE_EVENT_MOVE)
-        s.patrolling=true
-        s.patrolAt=now+C.PatrolMs
+      if not Flag(o.rangedBusy) then npc:SetAttackTarget(0) end
+      if liveEnemy then
+        local admitted=SDGO_BattleAI_ExploreMap()==1
+        s.exploring=admitted;s.patrolling=false
+        s.movementIntent=true;s.movementIntentAt=now
+        if admitted then npc:SetMoveType(UNIT_MOVE_EVENT_MOVE) end
+      else
+        if s.exploring then SDGO_BattleAI_CancelRoute();s.exploring=nil end
+        if not s.patrolling or not o.goal or Distance2(o.pos,o.goal)<=C.ArrivalDistance*C.ArrivalDistance or now>=s.patrolAt then
+          s.patrolLeft=not s.patrolLeft
+          DirectMove(npc,o,
+            s.patrolLeft and UNIT_MOVE_DIR_LEFT or UNIT_MOVE_DIR_RIGHT,
+            C.StrafeDistance,UNIT_MOVE_EVENT_MOVE)
+          s.patrolling=true
+          s.patrolAt=now+C.PatrolMs
+        end
       end
     end
-    Log(s,'no visible reachable opponent',now)
+    Log(s,liveEnemy and 'search public map routes for an unseen opponent' or 'no remaining opponent',now)
     return 123
   end
   s.patrolling=false
@@ -984,7 +1062,7 @@ local function Tick(npc)
     -- melee action through the stock Neutral transition.
     MeleeGate(true)
   else
-    forced,waiting=Weave(npc,o,s,t,now)
+    if not Flag(t.mapObstacle) then forced,waiting=Weave(npc,o,s,t,now) end
   end
   if waiting then Log(s,'melee weave: release before finisher',now);return 123 end
   if Flag(t.rangedFiring) or Flag(o.hurtRecently) then s.threatUntil=now+C.ThreatMemoryMs end
