@@ -1,6 +1,6 @@
 """Hand framework program ownership to the unit content install receipt.
 
-Only the three public program files may be reconciled against a verified
+Public programs and an optional per-Mod symbol fragment may be reconciled against a verified
 framework artifact. All recorded unit content remains immutable during this
 operation. This module never writes files; its caller owns the transaction.
 """
@@ -20,6 +20,7 @@ from . import storage
 BASE = 'sdgo/mods/unit_catalog/'
 RECEIPT = BASE + 'install-receipt.json'
 PROGRAMS = frozenset(BASE + name for name in ('unit_catalog.dll', 'mod.ini', 'manager.json'))
+OPTIONAL_PROGRAMS = frozenset({BASE+'symbols.fragment.ini'})
 CONTENT = frozenset(BASE + name for name in (
     'catalog.bin', 'definitions.json', 'resource-overlay.ini', 'resources.zdx', 'resources.zpk'))
 RESOURCE_ROOTS = {'anrs', 'fxrs', 'mdrs', 'scp', 'sdrs', 'sol', 'sprs', 'trns', 'txrs', 'uirs'}
@@ -56,7 +57,7 @@ def _mutable_manifest_matches(receipt, current, expected_hash):
 def _program_matches(name, actual, expected, *, legacy):
     if actual == expected:
         return True
-    if name.endswith('/unit_catalog.dll'):
+    if name.endswith(('/unit_catalog.dll','/symbols.fragment.ini')):
         return False
     if name.endswith('/mod.ini'):
         current, source = _ini(actual), _ini(expected)
@@ -77,7 +78,7 @@ def _relative(value):
         or re.search(r'[\x00-\x1f:*?"<>|]', name)):
         raise ValueError('机体安装收据路径无效')
     key = name.casefold()
-    if key not in PROGRAMS | CONTENT:
+    if key not in PROGRAMS | OPTIONAL_PROGRAMS | CONTENT:
         if key.split('/', 1)[0] not in RESOURCE_ROOTS or Path(key).suffix in BLOCKED:
             raise ValueError('机体收据包含其所有权范围以外的文件')
     return name, key
@@ -120,6 +121,8 @@ def prepare(root, source, manifest, planned, child, host_key, *, repair=False):
     if match is None:raise ValueError('框架发行版本无效')
     legacy = tuple(map(int, match.groups())) < (1, 2, 0)
     source_programs = {name: _artifact(source, manifest, name, child) for name in PROGRAMS}
+    source_programs.update({name:_artifact(source,manifest,name,child) for name in OPTIONAL_PROGRAMS
+                            if 'client/'+name in manifest.get('files',{})})
     result = copy.deepcopy(receipt); seen = set(); snapshot = {path: digest(raw)}; changed = []
     snapshot[child(root,'GOnline.exe')]=receipt['host_sha256']
     for entry in result['files']:
@@ -130,7 +133,7 @@ def prepare(root, source, manifest, planned, child, host_key, *, repair=False):
         seen.add(key)
         if not target.is_file():raise ValueError('机体收据中的文件已丢失：' + name)
         current = target.read_bytes(); current_hash = digest(current); snapshot[target] = current_hash
-        if key in PROGRAMS:
+        if key in source_programs:
             if repair and not _program_matches(key, current, source_programs[key], legacy=legacy):
                 raise ValueError('现有机体程序不属于所选框架发行包：' + name)
             mutable=(key==BASE+'mod.ini' and _mutable_manifest_matches(receipt,current,expected))
