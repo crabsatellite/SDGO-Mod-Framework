@@ -379,6 +379,10 @@ class Workspace:
             issues.extend(blueprints.requirements(validating,root_unit_id=root,
                 unit_ids=set(self.repository.catalog.get('units',{}))|set(forms)))
             if recipe.get('client_templates'):
+                if not blueprints.RAW_TEMPLATE_NATIVE_REGISTRATION_SUPPORTED:
+                    need('blueprint_template_native_adapter',
+                        '原始展示模板仍须完成目标客户端资源与消费验证；可以保存项目，暂不能发布此配方',
+                        template_field,'error')
                 try:
                     from .blueprint_templates import validate_binding
                     resolved=validate_binding(recipe['client_templates'],files=member_files)
@@ -502,7 +506,7 @@ class Workspace:
 
     def public(self,selected=None):
         with self.lock:
-            from .blueprints import NATIVE_REGISTRATION_SUPPORTED
+            from .blueprints import NATIVE_REGISTRATION_SUPPORTED,RAW_TEMPLATE_NATIVE_REGISTRATION_SUPPORTED
             from .project import search_text
             state=self.read();result={'revision':model.revision(state),
                 'capabilities':{'projects':{'protocol':'sdgo.unit-project','schema_version':1,'metadata_first':True,'bundled_media':True},
@@ -513,7 +517,7 @@ class Workspace:
                         'recipe_kind':33,'recipe_bytes':1197,'item_kind':34,'item_bytes':614,
                         'source_prepared_sha_bound':True,'direct_resource_refs_verified':True,
                         'semantic_resource_closure_required':True,
-                        'native_registration_authorized':False}}},'drafts':[{
+                        'native_registration_authorized':RAW_TEMPLATE_NATIVE_REGISTRATION_SUPPORTED}}},'drafts':[{
                 'id':d['id'],'name':d['name'],'status':d['status'],'updated':d['updated'],
                 'search_text':search_text(d)}
                 for d in state['drafts'].values()],

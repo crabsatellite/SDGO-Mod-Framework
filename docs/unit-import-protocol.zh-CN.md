@@ -94,13 +94,14 @@ RAR/ZIP 中提供原始机体 BIN（每条 4976 字节）、武器 BIN（每条 
 
 ## 客户端内容与展示
 
-### 设计图制作声明（候选扩展）
+### 设计图制作声明
 
 definitions 可选字段 `blueprints` 接受设计图列表；每个机体族最多16份。
 服务端接口仍使用 `schema_version: 1`。读取导入面板的
 `capabilities.blueprints` 判断制作和原生注册是否开放，不通过修改 source-only 标记跳过门禁。
-当前制作接口与草稿编辑可用，原生编译、事务登记和实机合成适配完成前，
-`native_registration` 为 `false`，含启用配方的草稿不能确认发布。
+`native_registration` 表示使用宿主兼容模板的结构化配方发布能力；此路径支持原生编译、事务登记及原生合成。
+完整上传展示模板独立使用 `client_templates.native_registration_authorized`，当前仍为 false，
+未完成目标资源和消费验证的完整模板只能保存和导出，不能确认发布。
 
 每份声明提供：
 

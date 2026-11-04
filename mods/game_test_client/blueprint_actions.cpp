@@ -1,5 +1,87 @@
 #include "blueprint_actions.h"
 
+void* __cdecl BlueprintActions::ObserveEnqueue(void* source,int flags) {
+    auto* owner=active_;if(!owner || !owner->enqueue_)return nullptr;
+    bool target=false;
+    __try {target=owner->synthArmed_ && source && Read<void*>(source)==owner->dialogVtable_;}
+    __except(EXCEPTION_EXECUTE_HANDLER){target=false;}
+    auto* live=owner->enqueue_(source,flags);
+    __try {
+        if(target && live && Read<void*>(live)==owner->dialogVtable_)
+            InterlockedExchangePointer(&owner->liveDialog_,live);
+    } __except(EXCEPTION_EXECUTE_HANDLER){}
+    return live;
+}
+
+void __stdcall BlueprintActions::ObserveReply(uintptr_t a,uintptr_t b,uintptr_t c,uint32_t opcode,const uint8_t* packet) {
+    auto* owner=active_;if(!owner || !owner->reply_)return;
+    uint32_t unit=0;uint64_t uid=0;uint16_t slot=0;bool accepted=false;
+    __try {
+        if(owner->confirmed_ && opcode==0x7c9 && packet) {
+            unit=Read<uint32_t>(packet+0x60);uid=Read<uint64_t>(packet+0x64);
+            slot=Read<uint16_t>(packet+0x6c);accepted=true;
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER){InterlockedExchange(&owner->replyError_,1);}
+    // Completion is published only after the original consumer updates inventory.
+    owner->reply_(a,b,c,opcode,packet);
+    if(owner->confirmed_ && opcode==0x8bb)InterlockedExchange(&owner->replyError_,1);
+    if(accepted) {
+        owner->replyUnit_=unit;owner->replyUid_=uid;owner->replySlot_=slot;
+        InterlockedIncrement(&owner->replySequence_);
+    }
+}
+
+BlueprintActions::Result BlueprintActions::Synthesize() {
+    __try {
+        if(!config_.synthesize)return Invalid;
+        if(InterlockedCompareExchange(&replyError_,0,0))return Invalid;
+        if(!dialogRequested_) {
+            const auto ready=SelectMaterials();if(ready!=Ready)return ready;
+            auto* picker=Resolve(L"unitmgr");
+            if(!picker || Read<void*>(picker)!=mixingVtable_)return ServiceMismatch;
+            auto* root=Read<uint8_t*>(picker+0x64);
+            auto* button=root ? Find(root,L"MixingBtn",4):nullptr;
+            if(!button || !Match(root,button,L"MixingBtn",4))return ControlMismatch;
+            if(!button[0x162] || !button[0x167])return Waiting;
+            synthArmed_=true;state_.phase=8;
+            mixingCallback_(picker,0x101,button+0x118,button);
+            dialogRequested_=true;return Submitted;
+        }
+        if(!confirmed_) {
+            auto* dialog=static_cast<uint8_t*>(InterlockedCompareExchangePointer(&liveDialog_,nullptr,nullptr));
+            if(!dialog)return Waiting;
+            if(Read<void*>(dialog)!=dialogVtable_)return ServiceMismatch;
+            auto* button=Read<uint8_t*>(dialog+0x4c);
+            auto* root=button ? Read<uint8_t*>(button+0x15c):nullptr;
+            if(!root || !button)return Waiting;
+            if(!Match(root,button,L"OkBtn",4)) {
+                if(api_->Log)api_->Log(mod_,SDGO_LOG_ERROR,"blueprint confirm identity dialog=%p root=%p button=%p found=%p visible=%u enabled=%u",
+                    dialog,root,button,Find(root,L"OkBtn",4),button[0x162],button[0x167]);
+                return ControlMismatch;
+            }
+            if(!button[0x162] || !button[0x167])return Waiting;
+            sendBaseline_=native_->TransportState().send_sequence;
+            confirmed_=true;state_.phase=9;
+            dialogCallback_(dialog,0x101,button+0x118,button);
+            ++state_.confirms;
+            InterlockedCompareExchangePointer(&liveDialog_,nullptr,dialog);
+            return Submitted;
+        }
+        const auto send=native_->FindTransportSince(sendBaseline_,0x9ad);
+        if(!send.send_sequence)return Waiting;
+        state_.request_sequence=send.send_sequence;state_.request_size=send.packet_size;
+        if(send.packet_size!=0x46 || !send.result)return Invalid;
+        const auto replies=InterlockedCompareExchange(&replySequence_,0,0);
+        if(!replies)return Waiting;
+        state_.reply_sequence=replies;state_.output_unit=replyUnit_;
+        state_.output_uid=replyUid_;state_.output_slot=replySlot_;
+        if(replyUnit_!=config_.output_unit || !replyUid_ || !replySlot_ || !*info_)return Invalid;
+        alignas(4) uint8_t brief[25]{};brief_(*info_,brief,replySlot_);
+        if(Read<uint32_t>(brief)!=replyUnit_ || Read<uint64_t>(brief+4)!=replyUid_ || Read<uint16_t>(brief+12)!=replySlot_)return Waiting;
+        state_.phase=10;return Ready;
+    } __except(EXCEPTION_EXECUTE_HANDLER){return NativeFault;}
+}
+
 BlueprintActions::Result BlueprintActions::EnsureBook() {
         __try {
             state_.phase=1;
@@ -67,6 +149,65 @@ BlueprintActions::Result BlueprintActions::EnsureBook() {
             state_.phase=3;return Ready;
         } __except(EXCEPTION_EXECUTE_HANDLER){return NativeFault;}
     }
+
+BlueprintActions::Result BlueprintActions::SelectMaterials() {
+    __try {
+        const auto selected=SelectBook();if(selected!=Ready)return selected;
+        if(!config_.material_count || state_.material_count!=config_.material_count)return Invalid;
+        const uint8_t* recipe=nullptr;auto* grid=gridData_();
+        if(!grid || !gridFind_(grid,&recipe,config_.recipe,0x21,0) || !recipe)return Invalid;
+        auto* profile=*profile_;if(!profile || !*info_)return Waiting;
+        auto* info=static_cast<uint8_t*>(*info_);
+        if(info[0x20]!=1)return Waiting;
+        const auto capacity=Read<int32_t>(info+0x0c);
+        if(capacity<=0 || capacity>8192)return Invalid;
+        for(uint32_t i=0;i<config_.material_count;++i) {
+            if(Read<uint32_t>(recipe+233+i*4)!=config_.material_units[i])return Invalid;
+        }
+        while(material_index_<config_.material_count) {
+            state_.phase=6;state_.material_index=material_index_;
+            const auto wanted=config_.material_uids[material_index_];
+            const auto actual=Read<uint64_t>(profile+0x670+material_index_*8);
+            state_.material_expected_uid=wanted;state_.material_actual_uid=actual;
+            if(actual==wanted){++material_index_;material_pending_=false;continue;}
+            if(material_pending_)return Waiting;
+            uint16_t slot=0;uint32_t matches=0;
+            for(int32_t index=1;index<=capacity;++index) {
+                alignas(4) uint8_t brief[25]{};brief_(info,brief,static_cast<uint16_t>(index));
+                if(Read<uint64_t>(brief+4)!=wanted)continue;
+                if(Read<uint32_t>(brief)!=config_.material_units[material_index_] ||
+                   Read<uint16_t>(brief+12)!=index)return Invalid;
+                slot=static_cast<uint16_t>(index);++matches;
+            }
+            if(matches!=1 || !slot)return Invalid;
+            // SelectBook replaces unitmgr with the original synthesis-specific
+            // subclass (008C3F60 / 008C422E). mixingmgr is a different service.
+            auto* picker=Resolve(L"unitmgr");if(!picker)return Waiting;
+            if(Read<void*>(picker)!=mixingVtable_)return ServiceMismatch;
+            auto* root=Read<uint8_t*>(picker+0x64);
+            auto* list=Read<uint8_t*>(picker+0x1cc);
+            if(!root || !root[0x162] || !list)return Waiting;
+            if(!Match(root,list,L"UnitList",7))return ControlMismatch;
+            state_.material_slot=slot;
+            if(Read<int32_t>(picker+0x74)!=(slot-1)/6)return WrongPage;
+            alignas(4) uint8_t full[153]{};full_(info,full,slot);
+            if(Read<uint32_t>(full)!=config_.material_units[material_index_] ||
+               Read<uint64_t>(full+8)!=wanted)return Waiting;
+            auto* row=static_cast<uint8_t*>(item_(list,slot-1));if(!row)return Waiting;
+            auto* visual=Read<uint8_t*>(row+0x1c);if(!visual)return ControlMismatch;
+            const auto x=Read<float>(visual+0x148),y=Read<float>(visual+0x14c);
+            if(!std::isfinite(x) || !std::isfinite(y) || std::fabs(x)>32760 || std::fabs(y)>32760)return Invalid;
+            const auto px=static_cast<int32_t>(x)+2,py=static_cast<int32_t>(y)+2;
+            if(!mouse_(list,WM_LBUTTONDOWN,px,py,0,0) || !mouse_(list,WM_LBUTTONUP,px,py,0,0) || !row[0x25])return ControlMismatch;
+            // The native 0x701 handler reads this selected row and retrieves
+            // its authentic 153-byte record itself. Never supply a unit buffer
+            // or write the shared material identity pairs from the test.
+            mixingCallback_(picker,0x701,list+0x118,list);
+            ++state_.material_calls;material_pending_=true;return Submitted;
+        }
+        state_.phase=7;state_.material_index=material_index_;return Ready;
+    } __except(EXCEPTION_EXECUTE_HANDLER){return NativeFault;}
+}
 
 BlueprintActions::Result BlueprintActions::SelectBook() {
         __try {
