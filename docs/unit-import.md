@@ -29,8 +29,26 @@ replace the Manager's unit import workflow.
 
 ## Projects, blueprints and activity pools
 
-The optional recipe-card SPR binding keeps a supplied recipe's own image. Missing declared resources block publication;
-without a binding, an authored recipe uses the selected display template. The same setting is available in Manager.
+An optional typed client-template binding keeps a supplied recipe and blueprint
+item's complete presentation records. Each blueprint points to a
+`sdgo.unit-blueprint-client-templates/1` manifest by member path and SHA-256.
+That manifest binds source and reviewed prepared kind-33 (1197-byte) and
+kind-34 (614-byte) records plus every directly referenced resource. The
+baseline recipe/item selections remain separate server-compatibility donors.
+Compilation changes only known identity, name, material, level and reference
+fields, preserves the prepared item's own name in `preserve-template` mode,
+and emits byte-diff/hash receipts. Missing or modified members fail closed.
+Direct resource verification does not claim recursive SPR-to-TXR closure or
+gameplay acceptance. Older projects without this binding keep the donor-based
+path, while their large blueprint picture and default list picture reuse the
+unit's selected capsule artwork. The list picture shares the capsule portrait
+crop. The large left picture uses the native 252×101 canvas and automatically
+adds the original outline and cut corner recovered from the selected client's
+blueprint resources. The right list picture keeps its separate 183×87 canvas
+and native control frame. Generated resources travel with the project publication;
+unrelated donor-unit art is not retained. If the client's border cannot be recovered
+reliably, generation stops with an error. Explicit picture overrides and reviewed
+full templates retain their own bindings.
 
 The blueprint authoring candidate adds editable recipes with explicit recovered,
 authored or unknown provenance. A recipe requires its blueprint item, output,
