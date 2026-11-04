@@ -332,9 +332,12 @@ inline bool ReadOnce(std::uint8_t* unit, Capabilities& out) noexcept {
     value.alternate = alternate != 0;
     if (selected >= 0 && selected < 4) value.selectedSlot = selected;
 
-    // 0x0068D2D0 defines the native non-interruptible special-state set.
+    // Include SpecialMapWeaponAttack/Combo (native updates 6C7040/6C73B0).
+    // They wait for animation events plus STRIKE/CLEAR acknowledgements and
+    // must retain ownership just like the other committed special families.
     auto busyState=[&](std::size_t offset) {return StateIs(fsm,currentState,offset)||StateIs(fsm,pendingState,offset);};
-    value.specialBusy = busyState(0x098)||busyState(0x0AC)||busyState(0x0C0)||busyState(0x0D4)||busyState(0x1D8)||busyState(0x1EC);
+    value.specialBusy = busyState(0x098)||busyState(0x0AC)||busyState(0x0C0)||busyState(0x0D4)||
+        busyState(0x0E8)||busyState(0x0FC)||busyState(0x1D8)||busyState(0x1EC);
     // GetCurrentStateId 0x0068CFC0 identifies the melee chain/tracking states.
     value.meleeBusy =
         busyState(0x048)||busyState(0x05C)||busyState(0x070)||busyState(0x084)||busyState(0x098)||

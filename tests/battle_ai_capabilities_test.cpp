@@ -221,6 +221,17 @@ int main() {
                   battle_ai::native::WeaponKind::Other,
           "ordinary funnel remains a valid opaque native weapon");
 
+    Fixture mapSpecial;
+    for(std::size_t state:{std::size_t(0xE8),std::size_t(0xFC)})
+        for(std::size_t field:{std::size_t(4),std::size_t(8)}) {
+            PutPointer(mapSpecial.fsm,4,mapSpecial.fsm+0x20);Put(mapSpecial.fsm,8,std::uint32_t(0));
+            PutPointer(mapSpecial.fsm,field,mapSpecial.fsm+state);
+            Check(battle_ai::native::ReadCapabilities(mapSpecial.unit,capabilities)&&capabilities.specialBusy,
+                  "native current/pending map-weapon strike and combo retain special ownership");
+        }
+    PutPointer(mapSpecial.fsm,4,mapSpecial.fsm+0x48);Put(mapSpecial.fsm,8,std::uint32_t(0));
+    Check(battle_ai::native::ReadCapabilities(mapSpecial.unit,capabilities)&&!capabilities.specialBusy,
+          "ordinary melee tracking is not relabeled as a committed special");
     Fixture protection;
     std::uint8_t movement[0x200]{};
     PutPointer(protection.unit,0x9C8,movement);Put(protection.unit,0x9D8,std::uint32_t{1});

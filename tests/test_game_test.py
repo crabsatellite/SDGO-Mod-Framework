@@ -649,6 +649,18 @@ rva=state
         with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run_dir)
         with self.assertRaises(game_test.GameTestError):self.prepare('random-pages',pages_only=True,random_loadout=True)
 
+    def test_random_hard_reuses_exact_server_session_with_a_distinct_twenty_byte_title(self):
+        binding={'run_id':'00000000-0000-0000-0000-000000000004','nonce':'cafe','pids':[1234],'room_suffix':'b'}
+        run_dir=self.prepare('random-hard-server-session',expected_ai=7,ai_difficulty='Hard',random_loadout=True,server_session=binding)
+        meta=game_test.validate_metadata(run_dir)
+        self.assertEqual(meta['plan']['room_title'],'cafeb !ai hard !rand')
+        self.assertEqual(len(meta['plan']['room_title'].encode('ascii')),20)
+        self.assertEqual(meta['plan']['title_nonce'],'cafeb')
+        self.assertEqual(meta['server_session'],binding)
+        for invalid in ['', 'bb', 'G']:
+            with self.subTest(suffix=invalid),self.assertRaises(game_test.GameTestError):
+                self.prepare('bad-random-server-'+str(len(invalid))+invalid,expected_ai=7,ai_difficulty='Hard',random_loadout=True,server_session={**binding,'room_suffix':invalid})
+
     def test_ai_pool_level_uses_compact_sealed_one_ai_title(self):
         run_dir = self.prepare('ai-pool-level', expected_ai=1, ai_pool_level=4)
         meta = self.metadata(run_dir)
@@ -837,13 +849,18 @@ rva=state
                 ai_difficulty='Hard',
                 pages_only=True,
             )
-        with self.assertRaisesRegex(game_test.GameTestError, 'ordinary PvP'):
-            self.prepare(
-                'ai-difficulty-random',
-                expected_ai=7,
-                ai_difficulty='Hard',
-                random_loadout=True,
-            )
+        randomized = self.prepare(
+            'ai-difficulty-random', expected_ai=7,
+            ai_difficulty='Hard', random_loadout=True,
+        )
+        plan = game_test.validate_metadata(randomized)['plan']
+        self.assertEqual(plan['ai_difficulty'], 'Hard')
+        self.assertTrue(plan['random_loadout'])
+        self.assertEqual(plan['room_title'], f"{plan['title_nonce']} !ai hard !rand")
+        self.assertEqual(len(plan['room_title'].encode('ascii')), 19)
+        with self.assertRaisesRegex(game_test.GameTestError, 'twenty bytes'):
+            self.prepare('ai-medium-random-too-long', expected_ai=7,
+                         ai_difficulty='Medium', random_loadout=True)
 
     def test_ai_allied_layout_seals_fresh_hard_six_ai_room(self):
         plan = game_test.make_plan(

@@ -23,3 +23,12 @@ struct SdgoBattleAiUnitSnapshotV1 {
     uint64_t backward_primary_dispatches;
 };
 typedef int(__cdecl* SdgoBattleAiGetUnitSnapshotV1Fn)(uint32_t, SdgoBattleAiUnitSnapshotV1*);
+
+// Separate read-only ABI so the published 208-byte unit snapshot stays intact.
+#define SDGO_BATTLE_AI_NAVIGATION_OBSERVER_EXPORT "SdgoBattleAiGetNavigationSnapshotV1"
+struct SdgoBattleAiNavigationSnapshotV1 {
+    uint32_t size,version,object_id,shared_target,shared_source,search_goal_kind;
+    uint64_t generation,shared_contact_frames,shared_pursuit_frames,exploration_routes;
+    float goal_x,goal_y,goal_z;
+};
+typedef int(__cdecl* SdgoBattleAiGetNavigationSnapshotV1Fn)(uint32_t,SdgoBattleAiNavigationSnapshotV1*);
