@@ -7,6 +7,28 @@ from tools import game_test
 HOST='[host]\nimage=WorldServer.exe\ntimestamp=0x548A86E3\nsize_of_image=0x0010C000\n'
 
 class ModSymbolPreparationTests(unittest.TestCase):
+    def test_client_preflight_accepts_only_its_own_matching_sidecar(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);client=root/'client';stage=root/'stage'
+            host=HOST.replace('WorldServer.exe','GOnline.exe')
+            host=host.replace('0x548A86E3','0x54BE1568').replace('0x0010C000','0x00C97000')
+            for base in (client,stage/'client'):
+                (base/'sdgo/symbols').mkdir(parents=True)
+                (base/'sdgo/symbols'/f'{game_test.HOST_KEY}.ini').write_text(host)
+            observer=stage/'client/sdgo/mods/game_test_client';observer.mkdir(parents=True)
+            (observer/'mod.ini').write_text('[mod]\nid=game_test_client\nrequires=observer.local\n')
+            (observer/'game_test_client.dll').write_bytes(b'fixture observer')
+            fragment=observer/'symbols.fragment.ini'
+            fragment.write_text(host+'[observer.local]\nkind=code\nrva=0x1000\n')
+            (stage/'client/sdgo/core.dll').write_bytes(b'fixture core')
+            target=client/'sdgo/mods/match_ai';target.mkdir(parents=True)
+            (target/'mod.ini').write_text('[mod]\nid=match_ai\n')
+            (target/'match_ai.dll').write_bytes(b'fixture target')
+            game_test.validate_observer_stage(client,stage)
+            fragment.write_text(host.replace('0x54BE1568','0x54BE1569')+'[observer.local]\nkind=code\nrva=0x1000\n')
+            with self.assertRaisesRegex(game_test.GameTestError,'does not match'):
+                game_test.validate_observer_stage(client,stage)
+
     def test_complete_backend_map_supplies_dynamic_host_aliases_and_retains_local_aliases(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);stage=root/'stage.ini';copied=root/'copied.ini'

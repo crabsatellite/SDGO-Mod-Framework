@@ -659,12 +659,10 @@ bool StorageView::Attach(void* service,void* root,const Bindings& bindings) {
 
 void StorageView::Detach(void* service) noexcept {
     if (service != service_) return;
-    RestoreStockControls(false);
-    ApplyClaimAllVisibility(true);
-    if (bindings_) {
-        bindings_->SetState(button_, false, false);
-        ApplyCustomVisibility(false);
-    }
+    // The native owner may have released every child before its next init
+    // emits the detach notification. Invalidate only: even hiding a control or
+    // restoring its caption would call through a potentially retired pointer.
+    // Live-page restoration belongs to SetAvailable/ShowStatus instead.
     bindings_ = nullptr;
     service_ = nullptr;
     dialog_ = nullptr;
@@ -676,6 +674,10 @@ void StorageView::Detach(void* service) noexcept {
     claim_all_hidden_ = false;
     rows_.fill(nullptr);
     row_gifts_.fill(0);
+    native_accept_.fill(nullptr);
+    native_return_.fill(nullptr);
+    row_directions_.fill(ListDirection::inbox);
+    receipt_available_ = false;
     previous_ = nullptr;
     next_ = nullptr;
     accept_ = nullptr;

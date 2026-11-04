@@ -9,6 +9,8 @@ The feature is off by default. Server owners turn on **启用好友机体赠送*
 
 ## Send and receive
 
+Client component 0.1.6 fixes a crash when reopening Storage after its old native controls have been released. Closing invalidates the cached gift-page controls; reopening binds the new page. Restart the client after updating.
+
 1. Right-click an accepted friend in the home screen's top-right **USER LIST** or the messenger, then choose the unit-gift action. Online and offline recipients are supported.
 2. The action opens native unit management. Double-click the owned instance, review its name and level in the native unit-information card, and optionally write a note. Review the server's preflight result, then confirm.
 3. The unit enters pending storage and is no longer usable by the sender. The recipient may be offline.
