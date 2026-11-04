@@ -6,8 +6,8 @@
   "category": "gameplay",
   "hosts": ["client"],
   "provider": "announcements",
-  "description": "在登录公告和游戏内 GM 公告中，组合日期、星期、每日时段、游戏事件、间隔和次数上限。",
+  "description": "设置登录与游戏内公告，自动获取每日新闻、科技资讯、限免游戏及历史趣闻，缓存、去重并控制展示频率。",
   "presentation": "configurable",
-  "mechanism": "登录公告使用原生网页浏览控件；游戏内文字通过原生 GM 公告队列显示。次数按本客户端规则累计。",
+  "mechanism": "登录公告使用原生网页浏览控件；游戏内文字通过原生 GM 公告队列显示。资讯请求在后台限时执行，使用本地缓存；新闻逐条去重并在过期后停止展示，游戏内资讯仅在大厅展示。Manager 管理定时更新服务。",
   "settings": []
 }

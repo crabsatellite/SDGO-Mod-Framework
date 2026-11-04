@@ -47,7 +47,7 @@ Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所
 
 | 功能 | 简介 | 文档 |
 |---|---|---|
-| 公告与展示规则 <!-- catalog: `announcements` --> | 组合时段、游戏事件、展示间隔和次数，控制登录与游戏内公告 | [使用说明](docs/announcements.zh-CN.md) |
+| 公告与展示规则 <!-- catalog: `announcements` --> | 组合公告规则，自动获取新闻、科技、限免和历史资讯，缓存去重并控制投放频率 | [使用说明](docs/announcements.zh-CN.md) |
 | 任务 AI 僚机 <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai`，由 AI 僚机补位 | [使用说明](docs/coop-wingmen.zh-CN.md) |
 | 对战 AI <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友；可让真人自动同队，选择双方补位、只补对面或指定数量 | [使用说明](docs/pvp-ai.zh-CN.md) |
 | AI 机体目录（独立附加包） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |

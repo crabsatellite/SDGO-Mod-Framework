@@ -14,6 +14,12 @@ struct Rule {
     bool enabled=false;
     int surfaces=0, triggers=0, days=127, start=0, end=0, date_start=0, date_end=0;
     uint32_t duration=10, interval=60, max_session=0, max_day=0, max_total=0, priority=0;
+    // Dynamic feed constraints are internal; authored rules retain their ABI.
+    uint64_t expires_at=0;
+    bool dynamic=false,lobby_only=false;
+    std::wstring group;
+    uint32_t group_max_day=0,group_max_session=0,group_interval=0;
+    std::vector<std::wstring> consumes;
 };
 struct Count { uint32_t session=0, daily=0, total=0; int date=0; uint64_t last=0; };
 inline bool InWindow(const Rule& r, const Clock& c) {
@@ -23,7 +29,7 @@ inline bool InWindow(const Rule& r, const Clock& c) {
         if(c.minute>=r.end && c.minute<r.start)return false;
         if(c.minute<r.end){date=c.previous_date;weekday=(weekday+6)%7;}
     }
-    return r.enabled && (r.days & (1<<weekday)) && (!r.date_start || date>=r.date_start) &&
+    return r.enabled && (!r.expires_at || c.seconds<r.expires_at) && (r.days & (1<<weekday)) && (!r.date_start || date>=r.date_start) &&
         (!r.date_end || date<=r.date_end);
 }
 class Scheduler {
@@ -40,13 +46,24 @@ public:
             if((r.max_session && count.session>=r.max_session) || (r.max_day && daily>=r.max_day) ||
                (r.max_total && count.total>=r.max_total) ||
                (count.last && (clock.seconds<count.last || clock.seconds-count.last<r.interval)))continue;
+            if(!r.group.empty()) {
+                auto g=counts.find(r.group);const Count group=g==counts.end()?Count{}:g->second;
+                if((r.group_max_day && group.date==clock.date && group.daily>=r.group_max_day) ||
+                   (r.group_max_session && group.session>=r.group_max_session) ||
+                   (group.last && (clock.seconds<group.last || clock.seconds-group.last<r.group_interval)))continue;
+            }
             if(best<0 || rules[static_cast<size_t>(best)].priority<r.priority)best=static_cast<int>(i);
         }
         return best;
     }
-    void Shown(const Rule& r,const Clock& clock) {
-        auto& c=counts[r.id];if(c.date!=clock.date){c.date=clock.date;c.daily=0;}
+    void Record(const std::wstring& id,const Clock& clock) {
+        auto& c=counts[id];if(c.date!=clock.date){c.date=clock.date;c.daily=0;}
         ++c.session;++c.daily;++c.total;c.last=clock.seconds;
     }
+    void Shown(const Rule& r,const Clock& clock) {
+        Record(r.id,clock);if(!r.group.empty())Record(r.group,clock);
+        for(const auto& id:r.consumes)if(id!=r.id)Record(id,clock);
+    }
+    bool Seen(const std::wstring& id) const {const auto p=counts.find(id);return p!=counts.end() && p->second.total>0;}
 };
 }
