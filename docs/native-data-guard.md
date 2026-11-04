@@ -1,4 +1,4 @@
-# Native battle data guards
+# Native data and lifecycle guards
 
 [中文](native-data-guard.zh-CN.md) · [Feature index](../README.md)
 
@@ -41,4 +41,4 @@ The unit-management lifecycle guard acts only on the verified deferred-message s
 
 The exception-report guard wraps the native writer and, only for that thread and invocation, redirects the writable `DBGHELP!StackWalk` `ContextRecord` to an independent copy. The original writer retains its stack trace and report flow, while the walk can no longer mutate the registers printed afterward.
 
-`native_data_guard_actual_dll` exercises the built DLL and its actual site stubs, including deferred-message save, replacement, service copy, normal completion and teardown. When this Mod is installed, the native GameTest bootstrap also exercises the host's funnel and name-format functions before continuing through its authenticated room/battle flow. `SdgoNativeDataGuardGetStatusV1` and `V2` preserve their existing observer ABIs; `SdgoNativeDataGuardGetStatusV3` adds read-only counters for deferred native message copies, replacements, copy failures, native completions and currently outstanding owned messages.
+`native_data_guard_actual_dll` exercises the built DLL and its actual site stubs, including deferred-message save, replacement, service copy, normal completion and teardown. When this Mod is installed, the native GameTest bootstrap also exercises the host's funnel, name-format and information-refresh functions before continuing through its authenticated room/battle flow. The information refresh uses private display receivers and checks the original default-percentage output without editing a live unit or table. `SdgoNativeDataGuardGetStatusV1` and `V2` preserve their existing observer ABIs; `SdgoNativeDataGuardGetStatusV3` adds read-only counters for deferred native message copies, replacements, copy failures, native completions and currently outstanding owned messages.

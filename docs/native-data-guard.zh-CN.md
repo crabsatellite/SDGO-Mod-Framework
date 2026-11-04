@@ -1,4 +1,4 @@
-# 原生战斗数据崩溃修复
+# 原生数据与生命周期崩溃修复
 
 [English](native-data-guard.md) · [功能目录](../README.zh-CN.md)
 
@@ -41,4 +41,4 @@
 
 异常报告保护包装原生异常记录器，并只在该线程、该次记录期间把 `DBGHELP!StackWalk` 的可写 `ContextRecord` 指向独立副本。原生记录器继续执行原有的栈回溯和报告流程，但回溯不能再改写随后打印的寄存器。
 
-`native_data_guard_actual_dll` 执行实际构建的 DLL 和站点跳板，并覆盖延迟消息保存、替换、服务复制、正常完成和销毁。安装本 Mod 后，原生 GameTest 的 bootstrap 还会调用宿主的挂点和名称格式函数，再继续认证、建房及战斗流程。`SdgoNativeDataGuardGetStatusV1` 和 `V2` 保持原有观察器 ABI；`SdgoNativeDataGuardGetStatusV3` 追加原生延迟消息复制、替换、复制失败、原生完成次数和当前仍由服务持有的消息数。
+`native_data_guard_actual_dll` 执行实际构建的 DLL 和站点跳板，并覆盖延迟消息保存、替换、服务复制、正常完成和销毁。安装本 Mod 后，原生 GameTest 的 bootstrap 还会调用宿主的挂点、名称格式和信息刷新函数，再继续认证、建房及战斗流程；信息刷新使用私有展示接收器核对原生默认百分比，不改写活机体或数据表。`SdgoNativeDataGuardGetStatusV1` 和 `V2` 保持原有观察器 ABI；`SdgoNativeDataGuardGetStatusV3` 追加原生延迟消息复制、替换、复制失败、原生完成次数和当前仍由服务持有的消息数。
