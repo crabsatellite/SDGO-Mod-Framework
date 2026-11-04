@@ -7,6 +7,24 @@ import test_game_test as runner_fixture
 game_test=runner_fixture.game_test
 
 class UnitScenarioTests(unittest.TestCase):
+    def test_native_id_probe_is_bounded_explicit_and_separate_from_game_actions(self):
+        context={'pages_only':True,'play_unit_uid':17}
+        value={'schema':1,'native_id_probe':{'ids':[9000001,35001,35000],
+            'witness_unit_id':10003,'require_absent':True}}
+        scope_value=scope.bind(value,context)['unit_scenario']
+        self.assertEqual(scope_value['native_id_probe']['ids'],[35000,35001,9000001])
+        self.assertEqual(scope.cases(scope_value),('framework.bootstrap','flow.login','flow.onboarding','setup.active_unit','catalog.native_id_occupancy'))
+        settings=scope.settings(scope_value)
+        self.assertEqual(settings['NativeIdProbeChunk0'],'35000,35001,9000001')
+        self.assertEqual(settings['NativeIdProbeChunks'],'1')
+        self.assertEqual(settings['UnitPresentations'],'0')
+        for change in ({'ids':[]},{'ids':[1,1]},{'ids':[True]},{'ids':[10_000_000]},
+                       {'ids':list(range(1,3074))},{'witness_unit_id':0},{'require_absent':1}):
+            with self.assertRaises(ValueError):scope.bind(value|{'native_id_probe':value['native_id_probe']|change},context)
+        for change in ({'portraits':True,'capture_frames':True},{'collection_preview':True},
+                       {'blueprint':{'recipe_id':5,'book_uid':6}}):
+            with self.assertRaises(ValueError):scope.bind(value|change,context)
+
     def test_blueprint_synthesis_requires_explicit_consumption_scope_and_output(self):
         context={'pages_only':True,'play_unit_uid':17}
         blueprint={'recipe_id':301,'book_uid':45,'materials':[{'unit_id':201+i,'uid':71+i} for i in range(3)]}
@@ -104,6 +122,28 @@ class SealedUnitScenarioTests(unittest.TestCase):
     make_normal_client=runner_fixture.GameTestRunnerTests.make_normal_client
     make_stage=runner_fixture.GameTestRunnerTests.make_stage
     prepare=runner_fixture.GameTestRunnerTests.prepare
+    def test_historical_non_probe_capsules_keep_their_original_sealed_defaults(self):
+        from unittest.mock import patch
+        previous={key:value for key,value in scope.SETTINGS.items() if not key.startswith('NativeIdProbe')}
+        with patch.dict(scope.SETTINGS,previous,clear=True):
+            run=self.prepare('historical-unit-scope',pages_only=True,play_unit_uid=17,unit_scenario={'schema':1})
+        metadata=game_test.validate_metadata(run)
+        self.assertNotIn('native_id_probe',metadata['plan']['unit_scenario'])
+        game_test.verify_hashes(metadata)
+
+    def test_large_candidate_set_is_sealed_in_bounded_chunks_and_tampering_is_rejected(self):
+        ids=list(range(9000001,9000001+2587))
+        scenario={'schema':1,'native_id_probe':{'ids':ids,'witness_unit_id':10003,'require_absent':True}}
+        run=self.prepare('large-native-id-probe',pages_only=True,play_unit_uid=17,unit_scenario=scenario)
+        meta=game_test.validate_metadata(run)
+        self.assertEqual(meta['plan']['unit_scenario']['native_id_probe']['ids'],ids)
+        self.assertEqual(game_test.required_cases_for_plan(meta['plan'])[-1],'catalog.native_id_occupancy')
+        ini=run/'client/sdgo/mods/game_test_client/mod.ini';config=game_test.read_ini(ini)
+        self.assertEqual(config['settings']['NativeIdProbeCount'],'2587')
+        self.assertEqual(config['settings']['NativeIdProbeChunks'],'11')
+        config['settings']['NativeIdProbeChunk10']='9000001';game_test.write_ini(ini,config)
+        with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run)
+
     def test_synthesis_seals_material_instances_and_cannot_be_enabled_after_prepare(self):
         scenario={'schema':1,'blueprint':{'recipe_id':301,'book_uid':45,
             'materials':[{'unit_id':201+i,'uid':71+i} for i in range(3)],

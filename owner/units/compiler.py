@@ -97,8 +97,22 @@ def publish(workspace,state,selected,transaction):
         if not family:continue
         family=copy.deepcopy(family);published.append(family);family_blueprint_receipts=[]
         root=family['root_unit_id'];plan=workspace.plan(family);plans.append(plan)
+        template_members=set()
+        if any(r.get('client_templates') for r in family.get('blueprints',[])):
+            from . import blueprint_templates
+            family_files={entry['path']:workspace.blob(entry['sha']) for entry in family['files']}
+            blueprint_templates.validate_project_bindings({'blueprints':family['blueprints']},files=family_files)
+            for declaration in family['blueprints']:
+                if not declaration.get('client_templates'):continue
+                resolved=blueprint_templates.validate_binding(declaration['client_templates'],files=family_files)
+                blueprint_templates.require_native_admission(resolved['manifest'])
+                template_members.update(resolved['members'])
         for entry in family['files']:
             path=entry['path'].replace('\\','/').lower()
+            # Evidence members never become implicit native files, even when
+            # an author gives them a name under sprs/ or txrs/. Prepared runtime
+            # resources are installed explicitly from the validated graph below.
+            if entry['path'] in template_members:continue
             if path.startswith(('mdrs/','anrs/','txrs/','fxrs/','sprs/','sdrs/','scp/')):
                 asset(path,workspace.blob(entry['sha']))
         from .presentation import publication_images,contract
@@ -177,7 +191,8 @@ def publish(workspace,state,selected,transaction):
                 if declaration.get('client_templates'):
                     compiled=blueprint_templates.compile_binding(
                         compiling,root_unit_id=root,files=family_files)
-                    for resource in compiled['resolved']['manifest']['resources']:
+                    compiled['receipt']['native_registration_authorized']=True
+                    for resource in compiled['runtime_resources']:
                         asset(resource['path'],family_files[resource['member']])
                     records.append((33,declaration['id'],compiled['recipe']))
                     records.append((34,declaration['item_category_id'],compiled['item']))
@@ -249,9 +264,9 @@ def publish(workspace,state,selected,transaction):
             'schema':'sdgo.unit-blueprint-client-template-receipts/1',
             'items':blueprint_receipts,
             'direct_resource_refs_verified':bool(blueprint_receipts),
-            'resource_closure_verified':False,
-            'semantic_resource_closure_required':bool(blueprint_receipts),
-            'native_registration_authorized':False,
+            'resource_closure_verified':bool(blueprint_receipts) and all(row['resource_closure_verified'] for row in blueprint_receipts),
+            'semantic_resource_closure_required':any(not row['resource_closure_verified'] for row in blueprint_receipts),
+            'native_registration_authorized':bool(blueprint_receipts) and all(row['native_registration_authorized'] for row in blueprint_receipts),
             'native_runtime_accepted':False},ensure_ascii=False,indent=2).encode(),
         'README.zh-CN.txt':('关闭游戏，运行 Install-UnitCatalog.ps1 -ClientRoot <客户端目录>。之后使用原启动器。\n'
             '此包登记机体和展示资源，不自动给玩家发机体、不自动添加商城商品或扭蛋条目。\n'

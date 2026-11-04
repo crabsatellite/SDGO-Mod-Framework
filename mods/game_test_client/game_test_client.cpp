@@ -82,6 +82,9 @@ BattleShipDeckActions decks;
 HangarNavigation hangarNavigation;
 BlueprintActions blueprint;
 BlueprintActions::Config blueprintConfig{};
+std::vector<uint32_t> nativeIdProbeIds;
+uint32_t nativeIdProbeWitness=0;
+bool nativeIdProbeRequireAbsent=false;
 PageTestActions pages;
 OperatorCatalogActions operatorCatalog;
 AiCatalogActions aiCatalog;
@@ -198,6 +201,29 @@ std::vector<MotionSample> motionSamples;
 bool LoadPlan() {
     const std::wstring job = sdgo_test::directory + L"\\run.ini";
     const std::wstring blueprintIni=sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini";
+    const auto probeCount=GetPrivateProfileIntW(L"settings",L"NativeIdProbeCount",0,blueprintIni.c_str());
+    const auto probeChunks=GetPrivateProfileIntW(L"settings",L"NativeIdProbeChunks",0,blueprintIni.c_str());
+    nativeIdProbeWitness=GetPrivateProfileIntW(L"settings",L"NativeIdProbeWitness",0,blueprintIni.c_str());
+    nativeIdProbeRequireAbsent=GetPrivateProfileIntW(L"settings",L"NativeIdProbeRequireAbsent",0,blueprintIni.c_str())==1;
+    if(probeCount>3072 || probeChunks!=(probeCount+255)/256 ||
+       ((probeCount!=0)!=(nativeIdProbeWitness!=0)) || nativeIdProbeWitness>9999999)return false;
+    nativeIdProbeIds.clear();
+    for(uint32_t index=0;index<probeChunks;++index) {
+        wchar_t key[48]{},value[4096]{};swprintf_s(key,L"NativeIdProbeChunk%u",index);
+        const auto length=GetPrivateProfileStringW(L"settings",key,L"",value,4096,blueprintIni.c_str());
+        if(!length || length>=4095)return false;
+        const auto before=nativeIdProbeIds.size();const wchar_t* cursor=value;
+        while(*cursor) {
+            wchar_t* end=nullptr;errno=0;const auto id=wcstoul(cursor,&end,10);
+            if(errno || end==cursor || !id || id>9999999 || (*end && *end!=L',') ||
+                (!nativeIdProbeIds.empty() && id<=nativeIdProbeIds.back()))return false;
+            nativeIdProbeIds.push_back(id);
+            if(!*end)break;
+            cursor=end+1;if(!*cursor)return false;
+        }
+        if(nativeIdProbeIds.size()-before!=std::min<uint32_t>(256,probeCount-index*256))return false;
+    }
+    if(nativeIdProbeIds.size()!=probeCount)return false;
     blueprintConfig.recipe=GetPrivateProfileIntW(L"settings",L"BlueprintRecipe",0,blueprintIni.c_str());
     wchar_t bookText[32]{};GetPrivateProfileStringW(L"settings",L"BlueprintBookUid",L"0",bookText,32,blueprintIni.c_str());
     blueprintConfig.book=_wcstoui64(bookText,nullptr,10);
@@ -317,7 +343,10 @@ bool LoadPlan() {
         if(!playUnitUid || errno || !end || *end)return false;
     }
     if(testUnitPresentations && !playUnitUid)return false;
-    if(unitPagesOnly && (!pagesOnly || (!testUnitPresentations && !blueprintConfig.recipe) || collectionDraw || testShopCatalog))return false;
+    if(unitPagesOnly && (!pagesOnly || (!testUnitPresentations && !blueprintConfig.recipe && nativeIdProbeIds.empty()) || collectionDraw || testShopCatalog))return false;
+    if(!nativeIdProbeIds.empty() && (!unitPagesOnly || !pagesOnly || !playUnitUid || testUnitPresentations ||
+        blueprintConfig.recipe || captureUnitPortraits || unitAcquisitionConfig.machine_kind || collectionPreviewOnly ||
+        collectionDraw || activityDrawOnce || testShopCatalog || roomTitlesOnly))return false;
     if(blueprintConfig.recipe && (!unitPagesOnly || !pagesOnly || !playUnitUid || testUnitPresentations ||
             captureUnitPortraits || unitAcquisitionConfig.machine_kind || collectionPreviewOnly || collectionDraw ||
             activityDrawOnce || testShopCatalog || roomTitlesOnly))return false;
@@ -2016,6 +2045,67 @@ int __cdecl SelectPlayUnit(const SdgoGameTestContextV1* context) {
     return SDGO_GAME_TEST_PASS;
 }
 const SdgoGameTestCaseV1 playUnitCase{"setup.active_unit",120000,&SelectPlayUnit};
+bool ReadNativeIdOccupancy(const SdgoGameTestContextV1* context,uint8_t* present,uintptr_t* gridAddress) {
+    using Data=void*(__cdecl*)();
+    using Find=uint8_t(__thiscall*)(void*,const uint8_t**,uint32_t,int,char);
+    using MapFind=void(__thiscall*)(void*,void**,const uint32_t*);
+    const auto data=reinterpret_cast<Data>(context->api->Symbol(sdgo_test::mod,"grid.data"));
+    const auto find=reinterpret_cast<Find>(context->api->Symbol(sdgo_test::mod,"grid.find"));
+    const auto mapFind=reinterpret_cast<MapFind>(context->api->Symbol(sdgo_test::mod,"grid.map_find"));
+    if(!data || !find || !mapFind)return false;
+    __try {
+        auto* grid=data();if(!grid)return false;
+        auto* end=*reinterpret_cast<void**>(static_cast<uint8_t*>(grid)+4);if(!end)return false;
+        const uint8_t* witness=nullptr;
+        if(!find(grid,&witness,nativeIdProbeWitness,2,0) || !witness ||
+            *reinterpret_cast<const uint32_t*>(witness)!=nativeIdProbeWitness)return false;
+        void* witnessNode=nullptr;mapFind(grid,&witnessNode,&nativeIdProbeWitness);
+        if(!witnessNode || witnessNode==end)return false;
+        *gridAddress=reinterpret_cast<uintptr_t>(grid);
+        // The original map lookup is the same key-only query used by the
+        // importer's collision guard. It does not allocate/register records,
+        // traverse assumed node layouts, or filter out unknown record kinds.
+        for(size_t index=0;index<nativeIdProbeIds.size();++index) {
+            void* node=nullptr;const auto id=nativeIdProbeIds[index];mapFind(grid,&node,&id);
+            if(!node)return false;
+            present[index]=node!=end;
+        }
+        return data()==grid && *reinterpret_cast<void**>(static_cast<uint8_t*>(grid)+4)==end;
+    } __except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+int __cdecl NativeIdOccupancy(const SdgoGameTestContextV1* context) {
+    uint8_t present[3072]{};uintptr_t grid=0;
+    if(nativeIdProbeIds.empty() || !ReadNativeIdOccupancy(context,present,&grid)) {
+        context->Assert(0,"the original native grid and positive unit witness are available");return SDGO_GAME_TEST_FAIL;
+    }
+    uint32_t occupied=0;
+    std::string report="{\"schema\":\"sdgo.native-id-occupancy/1\",\"run_id\":\""+std::string(context->run_id)+
+        "\",\"witness_unit_id\":"+std::to_string(nativeIdProbeWitness)+",\"native_grid\":"+std::to_string(grid)+
+        ",\"thread_id\":"+std::to_string(GetCurrentThreadId())+",\"queried_ids\":[";
+    for(size_t index=0;index<nativeIdProbeIds.size();++index) {
+        if(index)report+=",";report+=std::to_string(nativeIdProbeIds[index]);
+    }
+    report+="],\"occupied_ids\":[";
+    for(size_t index=0;index<nativeIdProbeIds.size();++index)if(present[index]) {
+        if(occupied++)report+=",";report+=std::to_string(nativeIdProbeIds[index]);
+    }
+    report+="],\"ids_reserved\":false,\"database_writes\":false,\"scope\":\"post-login prepared client global-tree lookup; revalidation at installation remains required\"}\n";
+    const auto path=sdgo_test::directory+L"\\native-id-occupancy.json";
+    auto file=CreateFileW(path.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(file==INVALID_HANDLE_VALUE) {
+        context->Assert(0,"a fresh owned native-ID observation file is created");return SDGO_GAME_TEST_FAIL;
+    }
+    DWORD written=0;const auto ok=WriteFile(file,report.data(),static_cast<DWORD>(report.size()),&written,nullptr);
+    CloseHandle(file);
+    if(!ok || written!=report.size()) {
+        context->Assert(0,"the complete native-ID observation is written");return SDGO_GAME_TEST_FAIL;
+    }
+    char message[192];sprintf_s(message,"original native map queried=%u occupied=%u witness=%u grid=%08X; no registration or reservation",
+        static_cast<uint32_t>(nativeIdProbeIds.size()),occupied,nativeIdProbeWitness,static_cast<uint32_t>(grid));
+    context->Observe(message);
+    context->Assert(!nativeIdProbeRequireAbsent || !occupied,"every required candidate ID is absent from this actual native global tree");
+    return nativeIdProbeRequireAbsent && occupied ? SDGO_GAME_TEST_FAIL:SDGO_GAME_TEST_PASS;
+}
 int BlueprintResult(const SdgoGameTestContextV1* context,BlueprintActions::Result result) {
     const auto s=blueprint.State();
     static uint32_t previous=0,phase=0,rows=0;static uintptr_t form=0;
@@ -2606,6 +2696,10 @@ void RegisterPlannedCases() {
             plannedCases.push_back({"pages.blueprint.recipe",120000,&BlueprintRecipe});
             if(blueprintConfig.material_count)plannedCases.push_back({"pages.blueprint.materials",120000,&BlueprintMaterials});
             if(blueprintConfig.synthesize)plannedCases.push_back({"pages.blueprint.synthesis",120000,&BlueprintSynthesis});
+            provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+        }
+        if(!nativeIdProbeIds.empty()) {
+            plannedCases.push_back({"catalog.native_id_occupancy",120000,&NativeIdOccupancy});
             provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
         }
         AppendUnitPresentations();

@@ -362,6 +362,7 @@ class Workspace:
         except (ValueError,OSError) as error:
             need('project_blob',f'制作项目资源已丢失或被修改：{error}',None,'error')
         template_resource_entries={}
+        template_evidence_members=set()
         if draft.get('blueprints'):
             try:
                 from .blueprint_templates import validate_project_bindings
@@ -379,22 +380,26 @@ class Workspace:
             issues.extend(blueprints.requirements(validating,root_unit_id=root,
                 unit_ids=set(self.repository.catalog.get('units',{}))|set(forms)))
             if recipe.get('client_templates'):
-                if not blueprints.RAW_TEMPLATE_NATIVE_REGISTRATION_SUPPORTED:
-                    need('blueprint_template_native_adapter',
-                        '原始展示模板仍须完成目标客户端资源与消费验证；可以保存项目，暂不能发布此配方',
-                        template_field,'error')
                 try:
-                    from .blueprint_templates import validate_binding
+                    from .blueprint_templates import validate_binding,require_native_admission
                     resolved=validate_binding(recipe['client_templates'],files=member_files)
-                    for resource in resolved['manifest']['resources']:
+                    try:require_native_admission(resolved['manifest'])
+                    except ValueError as error:
+                        need('blueprint_template_native_adapter',str(error),template_field,'error')
+                    template_evidence_members.update(resolved['members'])
+                    for resource in resolved['manifest']['runtime_resources']:
                         member=resource['member']
                         if member not in file_entries:
                             raise ValueError('blueprint client-template resource is missing: '+member)
                         template_resource_entries[resource['path']]=file_entries[member]
-                    need('blueprint_template_semantic_closure',
-                        f"设计图 {recipe.get('id') or recipe.get('name','')} 的原始/准备记录、哈希和直接资源引用已验证；"
-                        'SPR→TXR 等递归语义闭包仍须由资源解析和实机验收确认',
-                        template_field,'warning')
+                    if resolved['manifest']['admission']['resource_closure_verified']:
+                        need('blueprint_template_native_ui',
+                            '准备版本的 SPR→TXR 引用与纹理解码已验证；目标客户端的真实显示与交互仍需验收',template_field,'warning')
+                    else:
+                        need('blueprint_template_semantic_closure',
+                            f"设计图 {recipe.get('id') or recipe.get('name','')} 的原始/准备记录、哈希和直接资源引用已验证；"
+                            'SPR→TXR 等递归语义闭包仍须由资源解析和实机验收确认',
+                            template_field,'warning')
                 except (ValueError,OSError) as error:
                     need('blueprint_template_binding',str(error),
                         template_field,'error')
@@ -447,7 +452,8 @@ class Workspace:
                      f"forms.{omission['form_id']}.{omission['field']}",'warning')
         required={r['recipe_sprite'] for r in draft.get('blueprints',[]) if r.get('recipe_sprite')}
         for row in draft['forms']+draft['weapons']:required.update(row.get('resource_refs',[]))
-        owned={f['path'].replace('\\','/').lower():f for f in draft['files']}
+        owned={f['path'].replace('\\','/').lower():f for f in draft['files']
+               if f['path'] not in template_evidence_members}
         for path,entry in template_resource_entries.items():
             if path in owned and owned[path]['sha']!=entry['sha']:
                 need('blueprint_template_resource_conflict',
@@ -514,9 +520,12 @@ class Workspace:
                     'native_registration':NATIVE_REGISTRATION_SUPPORTED,'target_record_kind':33,
                     'target_record_size':1197,'material_minimum':3,'material_maximum':5,'raw_material_maximum':7,
                     'client_templates':{'schema':'sdgo.unit-blueprint-client-templates/1',
+                        'schemas':['sdgo.unit-blueprint-client-templates/1','sdgo.unit-blueprint-client-templates/2'],
+                        'prepared_sprite_texture_closure':True,
                         'recipe_kind':33,'recipe_bytes':1197,'item_kind':34,'item_bytes':614,
                         'source_prepared_sha_bound':True,'direct_resource_refs_verified':True,
                         'semantic_resource_closure_required':True,
+                        'native_registration_schemas':['sdgo.unit-blueprint-client-templates/2'] if RAW_TEMPLATE_NATIVE_REGISTRATION_SUPPORTED else [],
                         'native_registration_authorized':RAW_TEMPLATE_NATIVE_REGISTRATION_SUPPORTED}}},'drafts':[{
                 'id':d['id'],'name':d['name'],'status':d['status'],'updated':d['updated'],
                 'search_text':search_text(d)}

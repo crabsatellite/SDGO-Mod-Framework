@@ -24,6 +24,7 @@ public:
         uint32_t phase=0,recipe=0,rows=0,row_index=0,page=0,material_count=0;
         uint32_t mouse_calls=0,book_calls=0,visible=0;
         uint32_t material_index=0,material_calls=0,material_slot=0;
+        uint32_t material_page_calls=0,material_page=0;
         uint64_t material_expected_uid=0,material_actual_uid=0;
         uint32_t confirms=0,request_sequence=0,request_size=0,reply_sequence=0,output_unit=0,output_slot=0;
         uint64_t output_uid=0;
@@ -122,6 +123,7 @@ private:
     void* mixingVtable_=nullptr;Callback mixingCallback_=nullptr;
     void** info_=nullptr;UnitRecord brief_=nullptr,full_=nullptr;
     uint32_t material_index_=0;bool material_pending_=false;
+    bool material_page_pending_=false;uint32_t material_page_from_=0;
     void* dialogVtable_=nullptr;Callback dialogCallback_=nullptr;Enqueue enqueue_=nullptr;Reply reply_=nullptr;
     void* volatile liveDialog_=nullptr;volatile LONG replySequence_=0,replyError_=0;
     uint32_t replyUnit_=0;uint64_t replyUid_=0;uint16_t replySlot_=0;

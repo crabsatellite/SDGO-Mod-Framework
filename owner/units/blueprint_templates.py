@@ -3,10 +3,9 @@
 This module validates complete kind-33 recipe and kind-34 blueprint-item
 records.  The records are client presentation inputs only: they never become
 server definitions, replace the existing baseline/server donors, or authorize
-native registration.  Resource validation covers only paths referenced
-directly by the two records or their approved rewrite spans.  It does not
-interpret SPR payloads or prove recursive dependencies such as SPR-to-TXR
-links; the caller must provide that semantic closure before runtime admission.
+native registration. Version 1 validates direct record references; version 2
+also validates the prepared SPR/TXR closure. Target runtime behavior remains a
+separate check, and validation alone never authorizes a package installation.
 """
 from __future__ import annotations
 
@@ -22,6 +21,7 @@ from . import blueprint_codec, codec
 
 
 SCHEMA = "sdgo.unit-blueprint-client-templates/1"
+RESOURCE_CLOSURE_SCHEMA = "sdgo.unit-blueprint-client-templates/2"
 BINDING_FIELDS = frozenset({"manifest_path", "manifest_sha256"})
 RECIPE_ROLE = "client_recipe_template"
 ITEM_ROLE = "client_item_template"
@@ -395,6 +395,8 @@ def _template(
         "display_name": display_name,
         "recipe_reference_id": prepared_record["reference_id"],
         "resource_refs": sorted(resource_refs),
+        "source_resource_refs": sorted(source_record["resource_refs"]),
+        "prepared_resource_refs": sorted(prepared_record["resource_refs"]),
         "client_presentation_only": True,
         "server_definition_eligible": False,
     }
@@ -415,13 +417,15 @@ def validate_manifest(
     Callers must run a semantic resource-closure validator before treating the
     package as complete or eligible for native runtime registration.
     """
+    schema = value.get('schema') if isinstance(value,Mapping) else None
+    optional = {'resource_dependencies'} if schema == RESOURCE_CLOSURE_SCHEMA else set()
     manifest = _exact_dict(
         value,
-        {"schema", "owner", "templates", "resources"},
+        {"schema", "owner", "templates", "resources"} | optional,
         {"schema", "owner", "templates", "resources"},
         "blueprint client-template manifest",
     )
-    if manifest["schema"] != SCHEMA:
+    if manifest["schema"] not in {SCHEMA,RESOURCE_CLOSURE_SCHEMA}:
         raise ValueError("unsupported blueprint client-template schema")
     owner = _owner(manifest["owner"])
     if not isinstance(files, Mapping):
@@ -495,14 +499,41 @@ def validate_manifest(
             f"blueprint template resources are unreferenced: {extra}"
         )
 
+    prepared_refs = set(recipe['prepared_resource_refs']) | set(item['prepared_resource_refs'])
+    runtime_resources = {path:normalized_resources[path] for path in sorted(prepared_refs)}
+    dependency_resources = []
+    closure = None
+    if manifest['schema'] == RESOURCE_CLOSURE_SCHEMA:
+        dependencies = manifest.get('resource_dependencies')
+        if not isinstance(dependencies,list) or len(dependencies)>128:
+            raise ValueError('blueprint resource_dependencies must be a bounded list')
+        members = set(used_members)
+        for index,raw in enumerate(dependencies):
+            entry = _exact_dict(raw,{'path','member','sha256'},{'path','member','sha256'},'blueprint texture dependency')
+            path = _resource_path(entry['path'],'texture dependency path')
+            member = _member(entry['member'],'texture dependency member')
+            digest = _hash(entry['sha256'],'texture dependency')
+            if not path.startswith('txrs/') or not path.endswith('.txr') or PurePosixPath(member).suffix.lower()!='.txr':
+                raise ValueError('blueprint dependency must be a TXR resource')
+            if path in normalized_resources or path in runtime_resources or member in members:
+                raise ValueError('blueprint dependency path/member is duplicated or reused')
+            _blob(files,member,None,digest,'texture dependency '+path)
+            normalized = {'path':path,'member':member,'sha256':digest}
+            dependency_resources.append(normalized);runtime_resources[path]=normalized;members.add(member)
+        from .blueprint_resources import inspect_closure
+        closure = inspect_closure(sorted(prepared_refs),runtime_resources,lambda member:files[member])
+
     return {
-        "schema": SCHEMA,
+        "schema": manifest['schema'],
         "owner": owner,
         "templates": copy.deepcopy(normalized_templates),
         "resources": [
             copy.deepcopy(normalized_resources[path])
             for path in sorted(normalized_resources)
         ],
+        'resource_dependencies':sorted(dependency_resources,key=lambda row:row['path']),
+        'runtime_resources':[copy.deepcopy(runtime_resources[path]) for path in sorted(runtime_resources)],
+        'resource_closure':closure,
         "admission": {
             "typed_record_kinds": {
                 RECIPE_ROLE: 33,
@@ -511,8 +542,9 @@ def validate_manifest(
             "source_prepared_sha_bound": True,
             "outside_rewrite_spans_preserved": True,
             "direct_resource_refs_verified": True,
-            "resource_closure_verified": False,
-            "semantic_resource_closure_required": True,
+            "resource_closure_verified": closure is not None,
+            "semantic_resource_closure_required": closure is None,
+            "target_native_ui_acceptance_required": True,
             "item_template_name_preserved": (
                 item["display_name_mode"] == "preserve-template"
             ),
@@ -522,6 +554,21 @@ def validate_manifest(
             "native_runtime_accepted": False,
         },
     }
+
+
+def require_native_admission(validated_manifest):
+    """Apply framework support policy to a freshly validated manifest.
+
+    Producer-supplied flags are not accepted by the manifest schema. Resource
+    closure here is derived by validate_manifest, never supplied by a package.
+    This permits compilation, not a claim of acceptance for that owner's art.
+    """
+    from .blueprints import RAW_TEMPLATE_NATIVE_REGISTRATION_SUPPORTED
+    if not RAW_TEMPLATE_NATIVE_REGISTRATION_SUPPORTED:
+        raise ValueError('完整展示模板的原生编译尚未开放')
+    if (validated_manifest['schema'] != RESOURCE_CLOSURE_SCHEMA or
+            not validated_manifest['admission']['resource_closure_verified']):
+        raise ValueError('完整展示模板发布需要版本2清单及完整的准备 SPR→TXR 资源闭包；版本1仅用于传输')
 
 
 def normalize_binding(value: Any) -> dict[str, str]:
@@ -578,7 +625,7 @@ def validate_binding(
             (template["source"]["path"], template["prepared"]["path"])
         )
     resource_members = {
-        resource["member"] for resource in manifest["resources"]
+        resource["member"] for resource in manifest["resources"]+manifest['resource_dependencies']
     }
     if binding["manifest_path"] in template_members | resource_members:
         raise ValueError(
@@ -628,7 +675,7 @@ def validate_project_bindings(
                 + ", ".join(sorted(overlap))
             )
         template_members.update(result["template_members"])
-        for resource in result["manifest"]["resources"]:
+        for resource in result["manifest"]["resources"]+result['manifest']['resource_dependencies']:
             key = resource["path"]
             witness = (resource["member"], resource["sha256"])
             if key in resource_map and resource_map[key] != witness:
@@ -825,6 +872,7 @@ def compile_binding(
         "recipe": recipe,
         "item": item,
         "resolved": resolved,
+        'runtime_resources':copy.deepcopy(manifest['runtime_resources']),
         "receipt": {
             "schema": "sdgo.unit-blueprint-client-template-receipt/1",
             "blueprint_id": compiling["id"],
@@ -848,7 +896,9 @@ def compile_binding(
                 ),
             ],
             "direct_resource_refs_verified": True,
-            "resource_closure_verified": False,
+            "resource_closure_verified": manifest['admission']['resource_closure_verified'],
+            'resource_closure':copy.deepcopy(manifest['resource_closure']),
+            'runtime_resources':copy.deepcopy(manifest['runtime_resources']),
             "native_registration_authorized": False,
             "native_runtime_accepted": False,
         },

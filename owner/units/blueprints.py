@@ -12,10 +12,10 @@ import re
 PROTOCOL='sdgo.unit-blueprint'
 SCHEMA_VERSION=1
 # Baseline-backed typed recipes use the compiler, native UI/transport and
-# guarded repository. Arbitrary source presentation records have a separate
-# admission gate until their resource and consumer closure is established.
+# guarded repository. Full presentation templates additionally require the v2
+# prepared SPR/TXR closure profile; v1 remains transport-only.
 NATIVE_REGISTRATION_SUPPORTED=True
-RAW_TEMPLATE_NATIVE_REGISTRATION_SUPPORTED=False
+RAW_TEMPLATE_NATIVE_REGISTRATION_SUPPORTED=True
 SOURCES={'source-recovered','authored','unknown'}
 RECIPE_FIRST=209000
 RECIPE_LAST=209999

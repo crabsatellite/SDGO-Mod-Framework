@@ -390,7 +390,7 @@ def inspect_upload(
     if project is not None:
         for binding in project.get("client_template_bindings", []):
             typed_members.update(binding["members"])
-            for resource in binding["manifest"]["resources"]:
+            for resource in binding["manifest"]["resources"]+binding['manifest']['resource_dependencies']:
                 typed_resource_members.setdefault(resource["member"], []).append(
                     resource
                 )

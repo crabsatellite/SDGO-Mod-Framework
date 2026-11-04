@@ -29,15 +29,19 @@ replace the Manager's unit import workflow.
 
 An optional typed client-template binding keeps a supplied recipe and blueprint
 item's complete presentation records. Each blueprint points to a
-`sdgo.unit-blueprint-client-templates/1` manifest by member path and SHA-256.
+`sdgo.unit-blueprint-client-templates/1` or `/2` manifest by member path and SHA-256.
 That manifest binds source and reviewed prepared kind-33 (1197-byte) and
 kind-34 (614-byte) records plus every directly referenced resource. The
 baseline recipe/item selections remain separate server-compatibility donors.
 Compilation changes only known identity, name, material, level and reference
 fields, preserves the prepared item's own name in `preserve-template` mode,
 and emits byte-diff/hash receipts. Missing or modified members fail closed.
-Direct resource verification does not claim recursive SPR-to-TXR closure or
-gameplay acceptance. Older projects without this binding keep the donor-based
+Version 1 verifies transport and direct references. Version 2 also requires
+`resource_dependencies`: hash-bound TXR members for every frame of the prepared
+SPRs. The validator checks native SPR layouts, texture decoding and resource
+budgets. Only prepared references and their textures become runtime resources;
+source-only records and artwork remain project evidence. Neither check proves
+native UI or gameplay acceptance. Older projects without this binding keep the donor-based
 path, while their large blueprint picture and default list picture reuse the
 unit's selected capsule artwork. The list picture shares the capsule portrait
 crop. The large left picture uses the native 252×101 canvas and automatically
@@ -62,9 +66,13 @@ does not grant the player a blueprint or its materials.
 
 Read `capabilities.blueprints.native_registration` for typed-recipe support and
 `capabilities.blueprints.client_templates.native_registration_authorized` for
-supplied full presentation records. The latter remains false: their projects
-can be saved and exported, but publication stays blocked until target resources
-and consumers have been validated. A source-record hash is not native acceptance.
+supplied full presentation records. Projects can be saved and exported using
+either manifest version. Publication supports
+version 2 with a complete validated prepared-resource graph; read
+`native_registration_schemas` for the supported versions. Version 1 stays
+transport-only. Every new unit and its artwork still require target-server
+testing before use. Compilation receipts do not claim that a particular
+owner's package has passed native runtime acceptance.
 
 The acquisition preview uses the configured host's real sources. Every imported
 S-rank-or-higher root requires its own activity machine; A/B/C roots use a complete

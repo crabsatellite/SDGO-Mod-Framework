@@ -12,7 +12,7 @@ from owner.units.workspace import Workspace
 from unit_import_support import Baseline,Repository,archive,complete,png,publisher,wchar
 from test_unit_blueprints import declaration
 from test_unit_blueprint_codec import donor
-from test_unit_blueprint_templates import bound_fixture
+from test_unit_blueprint_resources import closure_fixture,sha
 
 
 class BlueprintBaseline(Baseline):
@@ -93,7 +93,15 @@ class BlueprintCompiler(unittest.TestCase):
             try:
                 state=complete(engine,engine.inspect('unit.zip',archive(),engine.public()['revision']))
                 family=copy.deepcopy(engine.read()['drafts'][state['draft']['id']])
-                binding,files=bound_fixture()
+                manifest,files=closure_fixture()
+                # A transport member may resemble a native path. Only the
+                # prepared graph may install it; source-only art stays evidence.
+                for resource in manifest['resources']:
+                    old=resource['member'];resource['member']=resource['path']
+                    files[resource['member']]=files.pop(old)
+                manifest_path='blueprints/209000/client-templates.json'
+                encoded=json.dumps(manifest,sort_keys=True).encode();files[manifest_path]=encoded
+                binding={'manifest_path':manifest_path,'manifest_sha256':sha(encoded)}
                 for path,data in files.items():
                     digest=engine._store(data)
                     family['files'].append({'path':path,'sha':digest,'bytes':len(data)})
@@ -113,6 +121,13 @@ class BlueprintCompiler(unittest.TestCase):
                     catalog=z.read('client/sdgo/mods/unit_catalog/catalog.bin')
                     receipts=json.loads(z.read('blueprint-template-receipts.json'))
                     registrations=json.loads(z.read('registrations.json'))
+                    self.assertIn('client/sprs/owned-a.spr',z.namelist())
+                    self.assertIn('client/sprs/owned-b.spr',z.namelist())
+                    self.assertIn('client/sprs/i1.spr',z.namelist())
+                    self.assertIn('client/txrs/a.txr',z.namelist())
+                    self.assertNotIn('client/sprs/source-a.spr',z.namelist())
+                    self.assertNotIn('client/sprs/source-b.spr',z.namelist())
+                    self.assertNotIn('client/sprs/i0.spr',z.namelist())
                 records={};cursor=32
                 for _ in range(struct.unpack_from('<I',catalog,16)[0]):
                     kind,identity,size,*_=struct.unpack_from('<6I',catalog,cursor);cursor+=24
@@ -121,7 +136,8 @@ class BlueprintCompiler(unittest.TestCase):
                 self.assertEqual('Separate Item Name',item[5:105].decode('utf-16-le').split('\0')[0])
                 self.assertEqual('示例设计图',records[(33,209000)][5:105].decode('utf-16-le').split('\0')[0])
                 self.assertEqual(1,len(receipts['items']))
-                self.assertFalse(receipts['resource_closure_verified'])
+                self.assertTrue(receipts['resource_closure_verified'])
+                self.assertTrue(receipts['native_registration_authorized'])
                 self.assertFalse(receipts['items'][0]['native_runtime_accepted'])
                 self.assertTrue(receipts['items'][0]['records'][0]['compiled_changes'])
                 registered=registrations['items'][0]['blueprints'][0]
