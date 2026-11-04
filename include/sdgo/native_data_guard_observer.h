@@ -9,3 +9,14 @@ typedef struct SdgoNativeDataGuardStatusV1 {
     uint32_t missing_names;
     uint32_t missing_transform_metadata;
 } SdgoNativeDataGuardStatusV1;
+
+// Additive observer ABI. V1 remains exported for existing GameTest clients.
+typedef struct SdgoNativeDataGuardStatusV2 {
+    uint32_t size;
+    uint32_t version;
+    uint32_t funnel_bounds_corrected;
+    uint32_t missing_names;
+    uint32_t missing_transform_metadata;
+    uint32_t missing_information_records;
+    uint32_t preserved_exception_contexts;
+} SdgoNativeDataGuardStatusV2;
