@@ -1,9 +1,10 @@
 """Guarded native ItemMachine registration for reviewed imported units.
 
 This module uses the original ItemMachine tables and stored procedures.  It
-does not replace the draw path, call the native reset procedure, or touch any
-player table.  The only mutable scope is one authenticated machine ID plus its
-owner ledger row.
+does not replace the draw path, call the native reset procedure, or write any
+player table.  Renumbering only reads the native player-machine table to refuse
+IDs already used by a player.  The mutable scope is one authenticated machine
+ID plus its owner ledger row.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from pathlib import Path
 import re
 from typing import Any, Mapping, Sequence
 
+from .activity_ids import is_supported_machine_id
 from .activity_pool import compile_pool
 from .repository import SQL_SCHEMAS, _connect, database_target_key
 
@@ -22,8 +24,6 @@ SCHEMA_VERSION = 1
 OWNER_KEY = "sdgo-unit-activity"
 OWNER_PROPERTY = "unit_import/activity/v1"
 APP_LOCK = "SDGO:unit-import-activity"
-MACHINE_ID_FIRST = 1_990_001
-MACHINE_ID_LAST = 1_990_999
 POOL_SIZE = 10_000
 PRIME_COUNT = 704
 _HASH = re.compile(r"[0-9a-f]{64}\Z")
@@ -158,9 +158,12 @@ def normalize_config(value: Any) -> dict[str, Any]:
         raise ValueError("活动机台配置字段与 schema v1 不一致")
     if value["schema_version"] != SCHEMA_VERSION:
         raise ValueError("不支持的活动机台配置版本")
-    machine_id = _integer(
-        value["id"], "活动机台编号", MACHINE_ID_FIRST, MACHINE_ID_LAST
-    )
+    machine_id = value["id"]
+    if not is_supported_machine_id(machine_id):
+        raise ValueError(
+            "活动机台编号必须是标准 101..989901（末两位 01），"
+            "或兼容旧版 1990001..1990999"
+        )
     unit_id = _integer(value["unit_id"], "活动机体编号", 1, 9_999_999)
     project_key = value["project_key"]
     if not isinstance(project_key, str) or _PROJECT.fullmatch(project_key) is None:
@@ -1017,6 +1020,182 @@ SELECT @@ROWCOUNT AS AffectedRows;
         _append_ledger_text(cursor, config, installed_hash, field, inspection[key])
 
 
+def _renumber_config_identity(config: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: copy.deepcopy(value)
+        for key, value in config.items()
+        if key not in ("id", "revision")
+    }
+
+
+def _source_config(ledger: Mapping[str, Any], from_id: int) -> dict[str, Any]:
+    try:
+        raw = json.loads(ledger["ConfigJson"])
+    except (TypeError, json.JSONDecodeError):
+        raise ValueError("原活动机台账本 ConfigJson 损坏") from None
+    config = normalize_config(raw)
+    if config["id"] != from_id:
+        raise ValueError("原活动机台账本 ConfigJson 的 MachineID 不一致")
+    if (
+        ledger["Revision"] != config["revision"]
+        or ledger["ProjectKey"] != config["project_key"]
+        or ledger["UnitID"] != config["unit_id"]
+        or ledger["TemplateMachineID"] != config["template_machine_id"]
+        or ledger["ConfigJson"] != _canonical_json(config)
+    ):
+        raise ValueError("原活动机台账本 ConfigJson 与所有权字段不一致")
+    return config
+
+
+def _player_machine_exists(cursor, machine_id: int, *, locked: bool) -> bool:
+    hint = " WITH (UPDLOCK,HOLDLOCK)" if locked else ""
+    row = cursor.execute(
+        "SELECT TOP (1) MachineID "
+        f"FROM dbo.tbl_UserItemMachineList{hint} WHERE MachineID=?",
+        machine_id,
+    ).fetchone()
+    return row is not None
+
+
+def _renumber_state(
+    state: Mapping[str, Sequence[Mapping[str, Any]]],
+    machine_id: int,
+) -> dict[str, list[dict]]:
+    result = copy.deepcopy(state)
+    for table, _ in STATE_TABLES:
+        for row in result[table]:
+            row["MachineID"] = machine_id
+    return result
+
+
+def _inspect_renumber(
+    cursor,
+    config: Mapping[str, Any],
+    from_id: int,
+    *,
+    locked: bool,
+) -> dict[str, Any]:
+    if not is_supported_machine_id(from_id):
+        raise ValueError("原活动机台编号不属于支持的普通或旧版号段")
+    if from_id == config["id"]:
+        raise ValueError("活动机台原编号与目标编号不能相同")
+
+    source_state = _fetch_state(cursor, from_id, locked=locked)
+    source_ledger = _fetch_ledger(cursor, from_id, locked=locked)
+    target_state = _fetch_state(cursor, config["id"], locked=locked)
+    target_ledger = _fetch_ledger(cursor, config["id"], locked=locked)
+    source_has_rows = any(_state_presence(source_state).values())
+    target_has_rows = any(_state_presence(target_state).values())
+
+    if _player_machine_exists(cursor, from_id, locked=locked):
+        raise ValueError(
+            "原活动机台已有玩家抽取状态，拒绝改号；"
+            "tbl_UserItemMachineList 将保持原样"
+        )
+
+    if source_ledger is None:
+        if source_has_rows:
+            raise ValueError("原活动机台五表存在但缺少本组件所有权账本")
+        if target_ledger is None:
+            if target_has_rows:
+                raise ValueError("目标 MachineID 已被原生或其他内容占用")
+            raise ValueError("原活动机台及其所有权账本不存在，无法改号")
+        if not target_has_rows:
+            raise ValueError("目标活动机台账本存在但原生五表记录缺失")
+        target_inspection = _inspect(cursor, config, locked=locked)
+        if target_inspection["action"] != "unchanged":
+            raise ValueError("目标活动机台不是同 owner 的已完成改号状态")
+        return {
+            "action": "unchanged",
+            "config": config,
+            "from_id": from_id,
+            "source": None,
+            "target": target_inspection,
+            "target_hash": target_inspection["target_hash"],
+            "runtime_observation": target_inspection["runtime_observation"],
+        }
+
+    if source_ledger["OwnerKey"] != OWNER_KEY:
+        raise ValueError("原活动机台属于其他活动机台提供者")
+    if not source_has_rows:
+        raise ValueError("原活动机台账本存在但原生五表记录缺失")
+    if target_ledger is not None or target_has_rows:
+        raise ValueError("目标 MachineID 的五表或所有权账本已被占用")
+
+    source_config = _source_config(source_ledger, from_id)
+    if _renumber_config_identity(source_config) != _renumber_config_identity(config):
+        raise ValueError("改号配置除 id/revision 外必须与原活动机台完全一致")
+    source_inspection = _inspect(cursor, source_config, locked=locked)
+    if source_inspection["action"] != "unchanged":
+        raise ValueError("原活动机台五表、账本或配置哈希不完整")
+    migrated = _renumber_state(source_inspection["current"], config["id"])
+    target_hash = canonical_state_hash(migrated)
+    return {
+        "action": "renumber",
+        "config": config,
+        "from_id": from_id,
+        "source": source_inspection,
+        "target": None,
+        "migrated_state": migrated,
+        "target_hash": target_hash,
+        "runtime_observation": _runtime_observation(source_inspection["current"]),
+    }
+
+
+def _cas_exact(cursor, expected: int, message: str) -> None:
+    for _ in range(4):
+        if cursor.description:
+            if [column[0] for column in cursor.description] != ["AffectedRows"]:
+                break
+            row = cursor.fetchone()
+            if row is not None and len(row) == 1 and int(row[0]) == expected:
+                return
+            break
+        if not cursor.nextset():
+            break
+    raise ValueError(message)
+
+
+def _write_renumber(cursor, inspection: Mapping[str, Any]) -> None:
+    source = inspection["source"]
+    config = inspection["config"]
+    from_id = inspection["from_id"]
+    for table, _ in STATE_TABLES:
+        expected = len(source["current"][table])
+        cursor.execute(
+            f"UPDATE dbo.{table} SET MachineID=? WHERE MachineID=?; "
+            "SELECT @@ROWCOUNT AS AffectedRows;",
+            config["id"],
+            from_id,
+        )
+        _cas_exact(
+            cursor,
+            expected,
+            f"{table} 改号时行数变化，拒绝留下部分迁移",
+        )
+    ledger = source["ledger"]
+    cursor.execute(
+        """
+UPDATE dbo.sdgo_UnitActivityMachines
+SET MachineID=?,ConfigJson=?,Revision=?,InstalledHash=?
+WHERE MachineID=? AND OwnerKey=? AND ProjectKey=? AND UnitID=?
+  AND Revision=? AND InstalledHash=?;
+SELECT @@ROWCOUNT AS AffectedRows;
+""",
+        config["id"],
+        _canonical_json(config),
+        config["revision"],
+        inspection["target_hash"],
+        from_id,
+        OWNER_KEY,
+        config["project_key"],
+        config["unit_id"],
+        ledger["Revision"],
+        ledger["InstalledHash"],
+    )
+    _cas_exact(cursor, 1, "活动机台所有权账本改号 CAS 失败")
+
+
 class ActivityRepository:
     """Read, install, and verify one owner-scoped native activity machine."""
 
@@ -1027,6 +1206,200 @@ class ActivityRepository:
         if self.server_ini is None:
             raise ValueError("未配置服务端 INI，不能访问原生活动机台")
         return _connect(self.server_ini)
+
+    @staticmethod
+    def _renumber_result(
+        inspection: Mapping[str, Any],
+        *,
+        writes_performed: bool,
+        transaction_owned_by_caller: bool,
+        server_target: str | None = None,
+    ) -> dict[str, Any]:
+        config = inspection["config"]
+        result = {
+            "schema_version": SCHEMA_VERSION,
+            "from_machine_id": inspection["from_id"],
+            "machine_id": config["id"],
+            "unit_id": config["unit_id"],
+            "project_key": config["project_key"],
+            "revision": config["revision"],
+            "action": inspection["action"],
+            "installed_hash": inspection["target_hash"],
+            "runtime_observation": inspection["runtime_observation"],
+            "valid": True,
+            "writes_performed": writes_performed,
+            "player_tables_read": True,
+            "player_tables_changed": False,
+            "player_state_reset": False,
+            "stored_procedures_changed": False,
+            "server_restart_required": False,
+            "transaction_owned_by_caller": transaction_owned_by_caller,
+        }
+        if server_target is not None:
+            result["server_target"] = server_target
+        return result
+
+    def preflight_renumber(
+        self,
+        config: Any,
+        from_id: int,
+        *,
+        connection=None,
+    ) -> dict[str, Any]:
+        """Read-only validation for moving one fully owned native machine."""
+        normalized = normalize_config(config)
+        if not is_supported_machine_id(from_id):
+            raise ValueError("原活动机台编号不属于支持的普通或旧版号段")
+        if from_id == normalized["id"]:
+            raise ValueError("活动机台原编号与目标编号不能相同")
+        owns_connection = connection is None
+        active_connection = self._connection() if owns_connection else connection
+        try:
+            cursor = active_connection.cursor()
+            if owns_connection:
+                cursor.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+            inspection = _inspect_renumber(
+                cursor, normalized, from_id, locked=False
+            )
+            if owns_connection:
+                active_connection.rollback()
+            return self._renumber_result(
+                inspection,
+                writes_performed=False,
+                transaction_owned_by_caller=not owns_connection,
+            )
+        except ValueError:
+            if owns_connection:
+                try:
+                    active_connection.rollback()
+                except Exception:
+                    pass
+            raise
+        except Exception:
+            if owns_connection:
+                try:
+                    active_connection.rollback()
+                except Exception:
+                    pass
+            raise ValueError(
+                "读取活动机台改号状态失败，未进行任何写入"
+            ) from None
+        finally:
+            if owns_connection:
+                active_connection.close()
+
+    def _renumber_on_connection(
+        self,
+        connection,
+        normalized: Mapping[str, Any],
+        from_id: int,
+        *,
+        owns_transaction: bool,
+        target_key: str,
+    ) -> dict[str, Any]:
+        cursor = connection.cursor()
+        if owns_transaction:
+            cursor.execute("SET XACT_ABORT ON")
+            cursor.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+            cursor.execute("BEGIN TRANSACTION")
+        cursor.execute(
+            """
+DECLARE @Result int;
+EXEC @Result=sys.sp_getapplock
+    @Resource=?,@LockMode=N'Exclusive',@LockOwner=N'Transaction',
+    @LockTimeout=5000;
+SELECT @Result;
+""",
+            APP_LOCK,
+        )
+        lock = cursor.fetchone()
+        if lock is None or int(lock[0]) < 0:
+            raise ValueError("另一项活动机台更新正在进行，请稍后重试")
+        inspection = _inspect_renumber(
+            cursor, normalized, from_id, locked=True
+        )
+        changed = inspection["action"] == "renumber"
+        if changed:
+            _write_renumber(cursor, inspection)
+            readback = _inspect_renumber(
+                cursor, normalized, from_id, locked=True
+            )
+            if (
+                readback["action"] != "unchanged"
+                or readback["target_hash"] != inspection["target_hash"]
+                or readback["runtime_observation"]
+                != inspection["runtime_observation"]
+            ):
+                raise ValueError("活动机台改号后读回不一致")
+            inspection = readback
+            inspection = {**inspection, "action": "renumbered"}
+        if owns_transaction:
+            cursor.execute("COMMIT TRANSACTION")
+            connection.commit()
+        return self._renumber_result(
+            inspection,
+            writes_performed=changed,
+            transaction_owned_by_caller=not owns_transaction,
+            server_target=target_key,
+        )
+
+    def renumber(
+        self,
+        config: Any,
+        from_id: int,
+        *,
+        connection=None,
+        in_transaction: bool = False,
+    ) -> dict[str, Any]:
+        """Move an owned machine ID without rebuilding native sequence state."""
+        normalized = normalize_config(config)
+        if not is_supported_machine_id(from_id):
+            raise ValueError("原活动机台编号不属于支持的普通或旧版号段")
+        if from_id == normalized["id"]:
+            raise ValueError("活动机台原编号与目标编号不能相同")
+        target_key = database_target_key(self.server_ini)
+        if connection is not None:
+            if not in_transaction:
+                raise ValueError("共享数据库连接必须声明由调用方管理事务")
+            try:
+                return self._renumber_on_connection(
+                    connection,
+                    normalized,
+                    from_id,
+                    owns_transaction=False,
+                    target_key=target_key,
+                )
+            except ValueError:
+                raise
+            except Exception:
+                raise ValueError(
+                    "原生活动机台改号事务失败，请由调用方回滚共享事务"
+                ) from None
+        if in_transaction:
+            raise ValueError("未提供共享数据库连接，不能使用调用方事务模式")
+        owned_connection = self._connection()
+        try:
+            return self._renumber_on_connection(
+                owned_connection,
+                normalized,
+                from_id,
+                owns_transaction=True,
+                target_key=target_key,
+            )
+        except ValueError:
+            try:
+                owned_connection.rollback()
+            except Exception:
+                pass
+            raise
+        except Exception:
+            try:
+                owned_connection.rollback()
+            except Exception:
+                pass
+            raise ValueError("活动机台改号事务失败，全部更改已回滚") from None
+        finally:
+            owned_connection.close()
 
     def preflight(self, config: Any) -> dict[str, Any]:
         """Read non-player configuration only; perform no writes."""

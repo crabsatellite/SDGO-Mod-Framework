@@ -589,7 +589,7 @@ def _validate_semantic_bundle(bundle_root, catalog, revision):
             raise ValueError(f"Semantic bundle hash mismatch: {name}")
     for key in ("fixed_machines", "custom_machines", "units",
                 "custom_candidate_policy", "portrait_overrides", "project_assets",
-                "activity_drafts", "activity_machines", "activity_preferences"):
+                "activity_drafts", "activity_machines", "activity_preferences", "activity_machine_renames"):
         if client_body.get(key) != catalog.get(key):
             raise ValueError("Semantic bundle differs from the requested catalog: " + key)
     return client_path, server_path, manifest_path
@@ -1092,7 +1092,7 @@ def _validate_server_result(row, revision, verify=False):
         raise ServerDeploymentError("Server verification did not pass")
 
 
-def _apply_server(connection, server_dir, revision, *, activity_machines=(), server_ini=None):
+def _apply_server(connection, server_dir, revision, *, activity_machines=(), activity_renames=(), server_ini=None):
     install = _safe_join(server_dir, "install.sql").read_text(encoding="utf-8")
     verify = _safe_join(server_dir, "verify.sql").read_text(encoding="utf-8")
     cursor = connection.cursor()
@@ -1115,6 +1115,11 @@ def _apply_server(connection, server_dir, revision, *, activity_machines=(), ser
             activity_results = []
             for machine in activity_machines:
                 config = {key: machine[key] for key in fields}
+                change=next((row for row in activity_renames if row['to_id']==machine['id']),None)
+                if change is not None:
+                    if any(change[key]!=config[key] for key in ('project_key','unit_id')):
+                        raise ServerDeploymentError('Activity rename belongs to a different project/unit')
+                    repository.renumber(config,change['from_id'],connection=connection,in_transaction=True)
                 repository.apply(config, connection=connection, in_transaction=True)
                 activity_results.append(repository.verify(config, connection=connection))
             verified = {**verified, "activity_machines": activity_results}
@@ -1517,6 +1522,7 @@ class DeploymentTarget:
                         _safe_join(package_root, "server"),
                         revision,
                         activity_machines=catalog.get("activity_machines", ()),
+                        activity_renames=catalog.get("activity_machine_renames", ()),
                         server_ini=self.server_ini,
                     )
                     server_applied = True

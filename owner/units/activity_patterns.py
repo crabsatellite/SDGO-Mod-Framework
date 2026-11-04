@@ -35,7 +35,7 @@ def normalize_preferences(value=None):
     return result
 
 
-def build_pattern(pattern_id, root, root_category, *, units, categories, prices, pool, listed_machines,preferences=None):
+def build_pattern(pattern_id, root, root_category, *, units, categories, prices, pool, listed_machines,preferences=None,excluded_machine_ids=()):
     pattern = next((r for r in PATTERNS if r['id'] == pattern_id), None)
     if pattern is None:
         raise ValueError('请选择 G 币、少量代币或 99 代币活动模板')
@@ -44,7 +44,7 @@ def build_pattern(pattern_id, root, root_category, *, units, categories, prices,
     # Dedicated imports and the dynamic collection pool are consumers of the
     # presets, not stock references for the next imported unit.
     listed_machines = {mid for mid in listed_machines
-                       if not 1990001 <= mid <= 1990999 and mid != 990001}
+                       if not 1990001 <= mid <= 1990999 and mid != 990001 and mid not in excluded_machine_ids}
     reference_prices = [r for r in prices if not premium or r['Price'] == 99]
     balance = recommend(root, units=units, categories=categories, prices=reference_prices,
                         pool=pool, listed_machines=listed_machines,

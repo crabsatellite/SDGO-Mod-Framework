@@ -446,6 +446,7 @@ def validate_project_assets(catalog):
 
 def validate_activity_drafts(catalog):
     from owner.units.project import normalize_metadata
+    from owner.units.activity_ids import is_supported_machine_id
     rows=catalog.get('activity_drafts',[])
     if not isinstance(rows,list) or len(rows)>999:raise ValueError('Activity draft list is invalid')
     assets={r['key']:r for r in catalog.get('project_assets',[])}
@@ -455,7 +456,7 @@ def validate_activity_drafts(catalog):
             or row.get('changes_applied') is not False or row.get('status')!='draft'):
             raise ValueError('Activity candidates must remain explicitly disabled drafts')
         mid=row.get('id');root=row.get('unit_id')
-        if type(mid) is not int or not 1990001<=mid<=1990999 or mid in seen:raise ValueError('Invalid activity draft machine ID')
+        if not is_supported_machine_id(mid) or mid in seen:raise ValueError('Invalid activity draft machine ID')
         if type(root) is not int or root<=0 or root in roots:raise ValueError('Duplicate or invalid dedicated activity root')
         seen.add(mid);roots.add(root)
         if type(row.get('price')) is not int or row['price']<=0 or row.get('currency_type') not in (0,1,2):
@@ -496,6 +497,21 @@ def validate_activity_machines(catalog):
             raise ValueError('Activity featured unit category is invalid')
         if not any(entry['category_id']==row['unit_category_id'] and entry['amount']==1 for entry in config['pool']):
             raise ValueError('The dedicated machine must include its featured root')
+    changes=catalog.get('activity_machine_renames',[])
+    if not isinstance(changes,list) or len(changes)>999:raise ValueError('Invalid activity machine rename list')
+    from owner.units.activity_ids import is_supported_machine_id,machine_id_from_number
+    active={row['id']:row for row in rows};sources=set();targets=set()
+    for change in changes:
+        if not isinstance(change,dict) or set(change)!={'from_id','to_id','project_key','unit_id'}:
+            raise ValueError('Invalid activity machine rename fields')
+        old,new=change['from_id'],change['to_id']
+        if (not is_supported_machine_id(old) or type(new) is not int or
+                machine_id_from_number(new//100)!=new or old==new or old in sources or new in targets or
+                old in active):raise ValueError('Invalid or overlapping activity machine rename')
+        target=active.get(new)
+        if not target or any(target[key]!=change[key] for key in ('project_key','unit_id')):
+            raise ValueError('Activity rename target is not its owned project/unit')
+        sources.add(old);targets.add(new)
 
 
 def patterns(catalog):
@@ -1857,6 +1873,7 @@ def export_bundle(catalog, output):
     if 'project_assets' in catalog:payload['project_assets']=copy.deepcopy(catalog['project_assets'])
     if 'activity_drafts' in catalog:payload['activity_drafts']=copy.deepcopy(catalog['activity_drafts'])
     if 'activity_machines' in catalog:payload['activity_machines']=copy.deepcopy(catalog['activity_machines'])
+    if 'activity_machine_renames' in catalog:payload['activity_machine_renames']=copy.deepcopy(catalog['activity_machine_renames'])
     if 'activity_preferences' in catalog:payload['activity_preferences']=copy.deepcopy(catalog['activity_preferences'])
     # Identical semantic payloads prevent client/server configuration divergence.
     for role in ("client", "server"):

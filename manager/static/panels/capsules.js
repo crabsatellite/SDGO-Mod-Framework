@@ -1481,6 +1481,21 @@ function initializeActivityEditor(){
     currency.value=machine.currency_type;
     const price=el('input');price.type='number';price.min='1';price.step='1';price.value=machine.price;
     price.setAttribute('aria-label','活动机台单次价格');fields.append(labeled('名称',name),labeled('货币',currency),labeled('单次价格',price));
+    const number=el('input');number.type='number';number.min='1';number.max='9899';number.step='1';number.value=Math.floor(machine.id/100);
+    number.setAttribute('aria-label','活动机台显示编号');
+    const renumber=el('button','保存编号');renumber.type='button';renumber.disabled=machine.status==='draft';
+    renumber.onclick=async()=>{
+      if(state.dirty){showToast('请先保存当前奖池和价格，再修改编号。');return;}
+      renumber.disabled=true;
+      try{const result=await apiPost('/api/providers/capsules/api/projects/activity-number',{
+        expected_revision:state.revision,id:machine.id,number:Number(number.value)});
+        state.revision=result.catalog_revision;if(state.bootstrap)state.bootstrap.catalog_revision=state.revision;
+        $('#revision').textContent='revision '+state.revision.slice(0,12);selected=result.machine;
+        status.textContent=result.message;await load();
+      }catch(error){status.textContent=error.message;}finally{renumber.disabled=false;}
+    };
+    const numbering=el('div');numbering.className='activity-presets';
+    numbering.append(labeled('显示编号（9900及以上保留置顶；先保存配置，再改号）',number),renumber);
     const pattern=el('select');pattern.setAttribute('aria-label','活动机台奖池模板');
     for(const preset of snapshot.patterns||[]){const option=el('option',preset.title);option.value=preset.id;pattern.append(option);}
     pattern.value=machine.pattern_id||'gp_rare';
@@ -1553,7 +1568,7 @@ function initializeActivityEditor(){
       }catch(error){status.textContent=error.message;}finally{save.disabled=false;}
     };
     const presets=el('div');presets.className='activity-presets';presets.append(labeled('价格与奖池模板',pattern),usePattern);
-    editor.append(fields,presets,picker,rewards,total,save);drawRows();
+    editor.append(fields,numbering,presets,picker,rewards,total,save);drawRows();
   }
   async function load(){
     refresh.disabled=true;
