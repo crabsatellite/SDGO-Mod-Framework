@@ -58,7 +58,7 @@ jobs:
         run: |
           python -m unittest discover -s tests -p "test_announcements.py" -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m unittest discover -s tests -p "test_announcement_news.py" -v
+          python -m unittest discover -s tests -p "test_announcement_news*.py" -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -p "test_game_test_atomic_write.py" -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
