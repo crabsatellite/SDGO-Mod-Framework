@@ -48,6 +48,12 @@ std::array<uint8_t, 0xCD4> packet{};
 std::array<uint8_t, 0x100> manager{};
 void* um = &manager;
 bool network = true, observer = false, failAppend = false, throwCamera = false, throwUdp = false;
+LONG transitionAccessViolations=0;
+LONG CALLBACK CountTransitionAccessViolation(EXCEPTION_POINTERS* exception) {
+    if(exception&&exception->ExceptionRecord&&exception->ExceptionRecord->ExceptionCode==EXCEPTION_ACCESS_VIOLATION)
+        InterlockedIncrement(&transitionAccessViolations);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
 int created = 0, playerCount = 0, enabled = 0, calculated = 0, hudGauge = 0, hudCalls = 0;
 int switchCalls = 0, switchedForm = -1, udpCalls = 0, natCalls = 0, originalPlayback = 0;
 int slotColourIndex = -1, slotColourValue = -1, originalLookups = 0, nativeSlotCalls = 0;
@@ -906,6 +912,17 @@ int main() {
     CHECK(SdgoPvpAiClientGetLuaStatusV1(&lua) == 0);
     g_gameApp = savedApp;
 
+    SCENARIO("battle-start mode observation rejects an unreadable transition pointer without an access violation");
+    auto modeApp=g_gameApp;g_gameApp=&App;
+    Put(app.data(),kAppGameMain,service.data());Put(service.data(),kServiceMode,mode.data());
+    Put(mode.data(),kModeRoom,room.data());Put(room.data(),kModeRoomMode,uint16_t(3));
+    CHECK(ReadReceivedBattleMode()==3);
+    Put(service.data(),kServiceMode,reinterpret_cast<uint8_t*>(1));
+    transitionAccessViolations=0;auto exceptionObserver=AddVectoredExceptionHandler(1,&CountTransitionAccessViolation);
+    CHECK(exceptionObserver!=nullptr);
+    CHECK(ReadReceivedBattleMode()==0&&transitionAccessViolations==0);
+    CHECK(RemoveVectoredExceptionHandler(exceptionObserver)!=0);
+    Put(service.data(),kServiceMode,mode.data());g_gameApp=modeApp;
     CHECK(MH_DisableHook(reinterpret_cast<void*>(&NativeTeamOnlyGate)) == MH_OK);
     CHECK(MH_Uninitialize() == MH_OK);
     for (void* p : allocations) std::free(p); allocations.clear();

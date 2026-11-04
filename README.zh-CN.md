@@ -49,7 +49,7 @@ Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所
 | 功能 | 简介 | 文档 |
 |---|---|---|
 | 公告与展示规则 <!-- catalog: `announcements` --> | 默认仅显示一次登录简报，时区可随服务器本地，游戏内公告默认关闭；可配置新闻、科技、限免和历史资讯 | [使用说明](docs/announcements.zh-CN.md) |
-| 任务 AI 僚机 <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai`，由 AI 僚机补位 | [使用说明](docs/coop-wingmen.zh-CN.md) |
+| 任务 AI 僚机 <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai`，AI 按玩家生命额度复活；`!ai3 inf` 开启 AI 无限复活 | [使用说明](docs/coop-wingmen.zh-CN.md) |
 | 对战 AI <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友；可让真人自动同队，选择双方补位、只补对面或指定数量 | [使用说明](docs/pvp-ai.zh-CN.md) |
 | AI 机体目录（独立附加包） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |
 | 战斗贡献奖励 <!-- catalog: `battle_rewards` --> | 按贡献发放 GB/MB，可配置人数倍率与按账号去重的聚会奖励 | [使用说明](docs/battle-rewards.zh-CN.md) |
@@ -57,7 +57,7 @@ Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所
 | 每局随机机体 <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组 | [使用说明](docs/room-random.zh-CN.md) |
 | FPS 上限 <!-- catalog: `fps_limit` --> | 提高渲染帧率上限，保留原生游戏速度 | [使用说明](docs/fps-limit.zh-CN.md) |
 | 长房名 <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 普通、AI、队伍及任务房的建房、设置和改名入口支持最长 128 字 | [使用说明](docs/room-titles.zh-CN.md) |
-| 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | 房名选择 Easy / Medium / Hard，实时索敌、持续追敌和原生武器切换 | [使用说明](docs/battle-ai.zh-CN.md) |
+| 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | 房名选择 Easy / Medium / Hard，共享队友视野、按碰撞地形追敌并切换原生武器 | [使用说明](docs/battle-ai.zh-CN.md) |
 | 自动机库容量 <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） | [使用说明](docs/hangar-capacity.zh-CN.md) |
 | 机库管理 <!-- catalog: `hangar_manager` --> | 页内整理和重复兑换（GB 服务端批量入账），关闭后停止重复刷新 | [使用说明](docs/hangar-manager.zh-CN.md) |
 | 副官补给与管理 <!-- catalog: `operator_catalog` --> | 五位免费补给副官，以及副官名称、头像和掉落的管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
@@ -65,7 +65,7 @@ Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所
 | 每日双倍时间 <!-- catalog: `daily_rewards` --> | 每天固定时段（默认 18:00–22:00）战斗 GB 和经验翻倍 | [使用说明](docs/daily-rewards.zh-CN.md) |
 | 保管库一键领取 <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
 | 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化商品名称、说明、选项和涂装机体预览，可用中文名称搜索并组合等级、币种筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
-| 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 右键在线或离线好友，在原生机体管理中选机，对方在保管库接受或退还；默认关闭，由服主开启 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
+| 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 右键在线或离线好友，在原生机体管理中翻页选机，对方在保管库接受或退还；重新打开保管库会绑定新页面，默认关闭，由服主开启 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
 | 机体族导入（Beta） <!-- catalog: `unit_catalog` --> | 在 Mod Manager 导入机体项目，发布带原生边框的设计图或纹理闭包已验证的 v2 完整展示模板，并制作 G 币或代币活动奖池 | [使用](docs/unit-import.zh-CN.md) |
 
 <!-- /mod-category:gameplay -->

@@ -1,8 +1,9 @@
-param([string]$Config='Release')
+param([string]$Config='Release',[string]$BuildDir='build')
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
-$run=Join-Path $repo ('build\battle_ai_native_runs\'+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))
-$bin=Join-Path $repo "build\$Config"
+$build=[IO.Path]::GetFullPath($(if([IO.Path]::IsPathRooted($BuildDir)){$BuildDir}else{Join-Path $repo $BuildDir}))
+$run=Join-Path $build ('battle_ai_native_runs\'+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))
+$bin=Join-Path $build $Config
 foreach($case in 'enabled','disabled','bad-signature','missing-script','generic','easy','medium') {
     $dir=Join-Path $run $case
     $mod=Join-Path $dir 'sdgo\mods\battle_ai'

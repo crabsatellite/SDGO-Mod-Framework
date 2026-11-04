@@ -7,6 +7,8 @@ spaces; names are case-insensitive. Each Mod reads its own command without chang
 
 | Title | Effect |
 |---|---|
+| `!ai3 inf !rand` | Missions: three wingmen with unlimited AI respawns; randomize humans |
+| `!ai3 player` | Missions: three wingmen with the native player life allowance (default) |
 | `!ai3 lv4 !rand` | Request three level-4 enemies in PvP or wingmen in missions; randomize humans each round |
 | `!rand !ai e2 a1 lv4` | Two enemy AI and one ally from the level-4 pool in PvP; randomize humans |
 | `!ai e2 a1 lv4 !rand` | Same as the previous example |
@@ -21,6 +23,8 @@ Existing team/free-slot limits still apply. Keep `e2`, `a1` and `lv4` after `!ai
 before the next `!command`. In `!ai !rand lv4`, `lv4` belongs to `!rand` and does
 not change the AI level. Unknown `!commands` also end the preceding argument span.
 The first valid occurrence wins. `!aim`, `room!ai3`, `!ai3x` and `!rand!ai3` are not `!ai`.
+
+Mission `inf` and `player` belong to the `!ai` argument span. AI revival is independent of humans waiting to respawn; all human lives exhausted immediately fails the mission, even with living AI. See [mission wingmen](coop-wingmen.md).
 
 In PvP, enemy/ally mean opposite/alongside the host after human team selection.
 Human policy and AI population are independent: default or explicit `versus`

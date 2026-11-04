@@ -11,6 +11,17 @@ int main() {
     ok=ok&&ReadSealedRoomTitle(file,title)&&!strcmp(title,"gt1234abcd !ai e2 a1");
     ok=ok&&WritePrivateProfileStringW(L"run",L"room_title",L"gt1234abcde !ai e2 a1",file);
     ok=ok&&!ReadSealedRoomTitle(file,title);
+    ok=ok&&WritePrivateProfileStringW(L"run",L"room_title",L"abcd0 !ai hard !rand",file);
+    ok=ok&&ReadPvpRoomTitle(file,"abcd0",true,4,3,title)&&!strcmp(title,"abcd0 !ai hard !rand");
+    ok=ok&&!ReadPvpRoomTitle(file,"abcd1",true,4,3,title);
+    ok=ok&&!ReadPvpRoomTitle(file,"abcde0",true,4,3,title);
+    ok=ok&&!ReadPvpRoomTitle(file,"abcdx",true,4,3,title);
+    ok=ok&&WritePrivateProfileStringW(L"run",L"room_title",L"abcde0 !ai hard !rand",file);
+    ok=ok&&!ReadPvpRoomTitle(file,"abcd0",true,4,3,title);
+    ok=ok&&WritePrivateProfileStringW(L"run",L"room_title",nullptr,file);
+    ok=ok&&!ReadPvpRoomTitle(file,"abcd0",true,4,3,title);
+    ok=ok&&ReadPvpRoomTitle(file,"abcd",true,4,3,title)&&!strcmp(title,"abcd !ai e4 a3 !rand");
+    ok=ok&&ReadPvpRoomTitle(file,"gt1234",false,2,1,title)&&!strcmp(title,"gt1234 !ai e2 a1");
     unsigned allies=0,enemies=0;
     ok=ok&&ReadSealedAiTeamCounts(file,3,"gt1234 !ai e2 a1",allies,enemies)&&allies==1&&enemies==2;
     ok=ok&&WritePrivateProfileStringW(L"run",L"ai_layout",L"allied",file);

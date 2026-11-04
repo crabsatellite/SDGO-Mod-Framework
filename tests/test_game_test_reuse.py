@@ -244,6 +244,35 @@ class ReuseOwnedClientTests(unittest.TestCase):
         self.assertFalse(list(self.base.glob('.gametest-*')))
         game_test.verify_hashes(game_test.validate_metadata(run))
 
+    def test_reuse_updates_the_matching_sidecar_without_exporting_its_aliases(self):
+        run=self.fixture.prepare('sidecar-update')
+        staged=self.fixture.stage/'client/sdgo/mods/match_ai'
+        staged.mkdir()
+        (staged/'match_ai.dll').write_bytes(b'updated-match-fixture')
+        (staged/'mod.ini').write_text(fixtures.MATCH_MANIFEST)
+        manifest=game_test.read_ini(staged/'mod.ini')
+        manifest['mod']['requires']='game.app,match.local_update'
+        game_test.write_ini(staged/'mod.ini',manifest)
+        shared=self.fixture.stage/f'client/sdgo/symbols/{game_test.HOST_KEY}.ini'
+        symbols=game_test.read_ini(shared)
+        symbols['host']['timestamp']='0x54BE1568'
+        symbols['host']['size_of_image']='0x00C97000'
+        game_test.write_ini(shared,symbols)
+        fragment=game_test.ini_parser();fragment['host']=dict(symbols['host'])
+        fragment['match.local_update']={'kind':'code','rva':'0x1234','expect':'55 8B EC'}
+        game_test.write_ini(staged/'symbols.fragment.ini',fragment)
+        game_test.reuse_prepared(self.fixture.template,self.fixture.stage,run)
+        installed=run/'client/sdgo/mods/match_ai/symbols.fragment.ini'
+        self.assertEqual(installed.read_bytes(),(staged/'symbols.fragment.ini').read_bytes())
+        copied=game_test.read_ini(run/f'client/sdgo/symbols/{game_test.HOST_KEY}.ini')
+        self.assertNotIn('match.local_update',copied)
+        game_test.verify_hashes(game_test.validate_metadata(run))
+        other=self.fixture.stage/'client/sdgo/mods/other_mod';other.mkdir(exist_ok=True)
+        (other/'mod.ini').write_text(fixtures.OTHER_MANIFEST+'requires=match.local_update\n')
+        (other/'other_mod.dll').write_bytes(b'updated-other-fixture')
+        with self.assertRaisesRegex(game_test.GameTestError,'stage host symbols lack.*match.local_update'):
+            game_test.validate_observer_stage(run/'client',self.fixture.stage)
+
     def test_linked_player_directory_cannot_be_validated_or_reused(self):
         run=self.fixture.prepare('linked');client=run/'client';saved=run/'owned-original'
         client.rename(saved)

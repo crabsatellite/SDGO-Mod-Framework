@@ -9,6 +9,9 @@ std::array<uint8_t, 0x80> room{};
 std::array<uint8_t, 12 * kRecordSize> humans{}, ais{};
 std::array<std::array<uint8_t, 0x3300>, 12> units{};
 std::array<uint8_t, 0x40> start{};
+std::array<uint8_t, 0x500> app{};
+std::array<uint8_t, 0x20> service{};
+uint8_t* __cdecl App() { return app.data(); }
 std::array<ModeVirtualFn, 8> vtable{};
 int manager = 0;
 void* um = &manager;
@@ -51,6 +54,8 @@ void Reset(int h, int a, bool master) {
     g_game.setPlayerInfo = reinterpret_cast<SetPlayerInfoFn>(&Info);
     g_game.addAiUnit = reinterpret_cast<AddAiUnitFn>(&Add); g_game.calculateTeam = reinterpret_cast<CalculateTeamFn>(&Calculate);
     g_game.originalInit = reinterpret_cast<ModeInitFn>(&Init); g_game.missionVtable = vtable.data();
+    Put(app.data(), 0x4A4, service.data()); Put(service.data(), 0x0C, mode.data());
+    g_gameApp = &App;
 }
 }
 
@@ -85,6 +90,15 @@ int main() {
     CHECK(fixture::initialized == 1 && fixture::created == 3 && fixture::remote == 0 && fixture::calculated == 1);
     CHECK(g_wingmen == (std::vector<uint32_t>{1001, 1002, 1003}));
     CHECK(g_localWingmen == g_wingmen);
+    SCENARIO("mission respawn mappings retain only this mission's exact wingman objects");
+    CHECK(MissionObjectForPilot(fixture::um, 0x80000010u) == 1001);
+    CHECK(MissionSlotForObject(fixture::um, 1001) == 1);
+    CHECK(KeepDeadMissionUnit(fixture::units[0].data()) == 1);
+    CHECK(KeepDeadMissionUnit(fixture::units[5].data()) == 0);
+    CHECK(MissionObjectForPilot(fixture::um, 123) == 0);
+    CHECK(MissionSlotForObject(nullptr, 1001) == -1);
+    ai_test::Put(fixture::service.data(), 0x0C, static_cast<uint8_t*>(nullptr));
+    CHECK(MissionSlotForObject(fixture::um, 1001) == -1 && !KeepDeadMissionUnit(fixture::units[0].data()));
     CHECK(fixture::slots == (std::vector<int>{1, 2, 3}));
     fixture::Reset(1, 2, false); MissionInit(fixture::mode.data(), nullptr);
     CHECK(fixture::remote == 2);

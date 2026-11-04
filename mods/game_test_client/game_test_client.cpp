@@ -103,6 +103,9 @@ bool testShopCatalog=false;
 bool shopVisualOnly=false;
 MissionFlowActions mission;
 uint16_t missionMode=0;
+uint32_t missionRespawns=0; // 1: player quota, 2: infinite; explicit native probe scope
+uint32_t observedMissionGeneration=0,observedMissionRoom=0;
+uint32_t observedMissionEndBaseline=0;
 SdgoMissionAiClientGetSnapshotV1Fn getMissionSnapshot=nullptr;
 uint64_t playUnitUid=0;
 bool collectionDraw=false;
@@ -428,17 +431,21 @@ bool LoadPlan() {
     if(rematchFlag>1)return false;
     sameRoomRematch=rematchFlag==1;
     if(sameRoomRematch && (missionMode || bootstrapOnly || battleshipOnly || giftRequestsOnly || deckOnly || pagesOnly || randomLoadout))return false;
-    if(randomLoadout && strlen(narrowNonce)!=4)return false;
-    if(sprintf_s(roomTitle,randomLoadout?"%s !ai e%u a%u !rand":"%s !ai e%u a%u",narrowNonce,expectedEnemies,expectedAllies)<0)return false;
     if(missionMode) {
         expectedAi=GetPrivateProfileIntW(L"run",L"mission_ai_count",0,job.c_str());
         const auto level=GetPrivateProfileIntW(L"run",L"mission_ai_level",0,job.c_str());
-        if(expectedAi!=3 || level!=2 || sprintf_s(roomTitle,"%s !ai3 lv2",narrowNonce)<0)return false;
+        wchar_t respawns[16]{};GetPrivateProfileStringW(L"run",L"mission_respawns",L"",respawns,16,job.c_str());
+        if(*respawns) {
+            if(wcscmp(respawns,L"player")==0)missionRespawns=1;
+            else if(wcscmp(respawns,L"infinite")==0)missionRespawns=2;
+            else return false;
+        }
+        if(expectedAi!=3 || level!=2 || sprintf_s(roomTitle,missionRespawns==2?"%s !ai3 lv2 inf":"%s !ai3 lv2",narrowNonce)<0)return false;
         wchar_t actualTitle[32]{};GetPrivateProfileStringW(L"run",L"room_title",L"",actualTitle,32,job.c_str());
         const std::wstring expectedTitle(roomTitle,roomTitle+strlen(roomTitle));
         if(expectedTitle!=actualTitle)return false;
     }
-    if (!missionMode && !ReadSealedRoomTitle(job,roomTitle)) return false;
+    if (!missionMode && !ReadPvpRoomTitle(job,narrowNonce,randomLoadout,expectedEnemies,expectedAllies,roomTitle)) return false;
     if (!missionMode && !ReadSealedAiTeamCounts(job,expectedAi,roomTitle,expectedAllies,expectedEnemies)) return false;
     retryCount = static_cast<unsigned>(GetPrivateProfileIntW(L"run", L"retry_count", 1, job.c_str()));
     if (retryCount < 1 || retryCount > 2) return false;
@@ -882,6 +889,11 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
     SdgoPvpAiClientSnapshotV1 snapshot{};
     if (!context->tick) motionSamples.clear();
     if (!Snapshot(snapshot) || snapshot.native_app_state != 22) return SDGO_GAME_TEST_WAIT;
+    SdgoPvpAiClientStartStatusV1 activityStart{};
+    activityStart.size=sizeof(activityStart);activityStart.version=SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
+    if(getStartStatus&&getStartStatus(&activityStart)&&
+       activityStart.battle_start_sequence==snapshot.received_battle_start_count&&activityStart.player_control_enabled)
+        if(!battleAiBehavior.Observe(context,snapshot))return SDGO_GAME_TEST_FAIL;
     scoreboardInput.Hold(true);
     if (sdgo_test::api->SettingInt(sdgo_test::mod, "ApsalusRoundtrip", 0)) {
         SdgoPvpAiClientStartStatusV1 control{};
@@ -1555,6 +1567,7 @@ int __cdecl ReadAiCatalog(const SdgoGameTestContextV1* context) {
 }
 int __cdecl ReadStoragePage(const SdgoGameTestContextV1* context) {
     static bool shopExitRequested=false;
+    static bool clicked=false;
     if(actions.AppState()==9) {
         if(!shopExitRequested) {
             const auto navigation=hangarNavigation.ClickBottomRadio(L"GameRoomRadio",0x48);
@@ -1572,6 +1585,7 @@ int __cdecl ReadStoragePage(const SdgoGameTestContextV1* context) {
         return SDGO_GAME_TEST_FAIL;
     }
     if(result==StorageTestActions::Ready) {
+        clicked=false;
         const auto state=storage.State();
         if(!state.timer_observed)return SDGO_GAME_TEST_WAIT;
         char message[192];
@@ -1582,7 +1596,6 @@ int __cdecl ReadStoragePage(const SdgoGameTestContextV1* context) {
         context->Assert(!state.busy && !state.outstanding,"normal storage list and native business are idle before batch confirmation");
         return SDGO_GAME_TEST_PASS;
     }
-    static bool clicked=false;
     if(!clicked) {
         const auto navigation=hangarNavigation.ClickOperatorMenuButton(L"SalaryBtn",0x74);
         if(navigation>=HangarNavigation::kDownmenuServiceMismatch || navigation==HangarNavigation::kUnbound) {
@@ -1598,9 +1611,13 @@ int FriendStorageAction(const SdgoGameTestContextV1* context,uint32_t operation)
     if(!bound){if(!storage.Bind())return SDGO_GAME_TEST_FAIL;bound=true;}
     if(operation==1)return ReadStoragePage(context);
     if(operation==3) {
-        const auto closed=storage.Close(context);
-        if(closed>=StorageTestActions::Invalid)return SDGO_GAME_TEST_FAIL;
-        if(closed!=StorageTestActions::Complete)return SDGO_GAME_TEST_WAIT;
+        static bool storageClosed=false;
+        if(!storageClosed) {
+            const auto closed=storage.Close(context);
+            if(closed>=StorageTestActions::Invalid)return SDGO_GAME_TEST_FAIL;
+            if(closed!=StorageTestActions::Complete)return SDGO_GAME_TEST_WAIT;
+            storageClosed=true;
+        }
         static bool boundHangar=false;
         if(!boundHangar){
             if(!hangarNavigation.Bind(sdgo_test::api,sdgo_test::mod,&actions) || !pages.Bind())return SDGO_GAME_TEST_FAIL;
@@ -1615,7 +1632,8 @@ int FriendStorageAction(const SdgoGameTestContextV1* context,uint32_t operation)
         static uint32_t previousRead=UINT32_MAX;
         if(read!=previousRead){char text[128];sprintf_s(text,"post-storage native inventory read=%s",PageTestActions::ResultName(read));context->Observe(text);previousRead=read;}
         if(read>=PageTestActions::kInvalidContext)return SDGO_GAME_TEST_FAIL;
-        return read==PageTestActions::kReadReady?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_WAIT;
+        if(read==PageTestActions::kReadReady){storageClosed=false;return SDGO_GAME_TEST_PASS;}
+        return SDGO_GAME_TEST_WAIT;
     }
     const auto result=storage.Claim(context);
     if(result>=StorageTestActions::Invalid)return SDGO_GAME_TEST_FAIL;
@@ -2321,6 +2339,7 @@ int __cdecl StartMission(const SdgoGameTestContextV1* context) {
     const auto s=mission.PollSnapshot();
     context->Assert(s.start_request_sent && s.start_opcode==0x08A7 && s.battle_start_consumed,
         "the original mission start command sent 08A7 and consumed its own genuine 06C3 before stage-three entry");
+    observedMissionEndBaseline=rooms.BattleEndState().sequence;
     return SDGO_GAME_TEST_PASS;
 }
 bool MissionSnapshot(SdgoMissionAiClientSnapshotV1& s) {
@@ -2337,6 +2356,7 @@ int __cdecl SpawnMissionAi(const SdgoGameTestContextV1* context) {
     context->Assert(s.battle_generation && s.local_is_host && !s.local_is_observer && s.local_wingman_count==expectedAi && s.human_participant_count==1 &&
         s.unit_manager_player_count==1,"the actual co-op room spawned every server wingman while preserving the original human-count contract");
     context->Assert(ready,"each real mission AI maps its pilot/NPC to its uniquely registered native object");
+    observedMissionGeneration=s.battle_generation;observedMissionRoom=s.room_object;
     return SDGO_GAME_TEST_PASS;
 }
 int __cdecl ObserveMissionCombat(const SdgoGameTestContextV1* context) {
@@ -2359,6 +2379,121 @@ const SdgoGameTestCaseV1 missionCases[]={
     {"mission.room",180000,&CreateMission},{"mission.start",180000,&StartMission},
     {"mission.ai_spawn",120000,&SpawnMissionAi},{"mission.combat",120000,&ObserveMissionCombat},
 };
+// Read each atomic probe receipt without the profile API's persistent file
+// cache, which can prevent the server replacing its preceding receipt.
+struct MissionRespawnReceipt {
+    std::wstring text;
+    bool Load(const std::wstring& path) {
+        HANDLE file=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+            nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+        if(file==INVALID_HANDLE_VALUE)return false;
+        LARGE_INTEGER size{};DWORD read=0;
+        bool ok=GetFileSizeEx(file,&size) && size.QuadPart>=2 && size.QuadPart<=16384 && size.QuadPart%2==0;
+        if(ok) {
+            text.resize(static_cast<size_t>(size.QuadPart/2));
+            ok=ReadFile(file,text.data(),static_cast<DWORD>(size.QuadPart),&read,nullptr) &&
+                read==size.QuadPart && text[0]==0xFEFF;
+        }
+        CloseHandle(file);return ok;
+    }
+    std::wstring Value(const wchar_t* key) const {
+        const std::wstring prefix=L"\n"+std::wstring(key)+L"=";
+        const auto found=text.find(prefix);
+        if(found==std::wstring::npos)return {};
+        const auto begin=found+prefix.size(),end=text.find_first_of(L"\r\n",begin);
+        return text.substr(begin,end==std::wstring::npos?end:end-begin);
+    }
+    uint32_t Number(const wchar_t* key) const {
+        const auto value=Value(key);wchar_t* end=nullptr;
+        const auto number=wcstoul(value.c_str(),&end,10);
+        return !value.empty() && end && !*end ? static_cast<uint32_t>(number):0;
+    }
+};
+int __cdecl ObserveMissionRespawns(const SdgoGameTestContextV1* context) {
+    static bool basicConfirmed=false;
+    SdgoMissionAiClientSnapshotV1 s{};
+    if(!basicConfirmed) {
+        if(!MissionSnapshot(s) || !s.active) {
+            if(rooms.BattleEndState().sequence>observedMissionEndBaseline) {
+                const auto ended=rooms.BattleEndState();char early[128];sprintf_s(early,"native early mission end opcode=%04X result=%u app=%u",ended.reply_opcode,ended.result_type,ended.native_app_state);context->Observe(early);
+                context->Assert(0,"mission ended before native revival verification");return SDGO_GAME_TEST_FAIL;
+            }
+            return SDGO_GAME_TEST_WAIT;
+        }
+        if(s.lua_pcall_error_count || s.native_exception_count || s.room_mode!=missionMode ||
+           s.battle_generation!=observedMissionGeneration || s.room_object!=observedMissionRoom) {
+            context->Assert(0,"native mission remains valid throughout repeated wingman death and respawn");return SDGO_GAME_TEST_FAIL;
+        }
+    }
+    const std::wstring expectedRun(context->run_id,context->run_id+strlen(context->run_id));
+    const std::wstring receipt=std::wstring(context->directory)+L"\\mission-respawn-server-"+expectedRun+L".ini";
+    MissionRespawnReceipt values;
+    if(!values.Load(receipt))return SDGO_GAME_TEST_WAIT;
+    wchar_t status[16]{},run[64]{};
+    wcsncpy_s(status,values.Value(L"status").c_str(),_TRUNCATE);
+    wcsncpy_s(run,values.Value(L"run_id").c_str(),_TRUNCATE);
+    if(!*status)return SDGO_GAME_TEST_WAIT;
+    if(expectedRun!=run || (wcscmp(status,L"cycle")!=0 && wcscmp(status,L"basic")!=0 && wcscmp(status,L"pass")!=0)) {
+        context->Assert(0,"same-run native mission respawn server probe completed successfully");return SDGO_GAME_TEST_FAIL;
+    }
+    const auto pilot=values.Number(L"pilot");
+    const auto limit=values.Number(L"life_limit");
+    const auto deaths=values.Number(L"deaths");
+    const auto required=values.Number(L"client_cycles_required");
+    static uint64_t lastNativeDiagnostic=0;
+    if(!basicConfirmed && context->elapsed_ms-lastNativeDiagnostic>=3000) {
+        for(uint32_t i=0;i<s.ai_record_count && i<12;++i)if(s.participants[i].pilot_id==pilot) {
+            const auto& p=s.participants[i];char diagnostic[224];sprintf_s(diagnostic,
+                "native revival readback pilot=%u object=%u hp=%d observed=%u required=%u mapping=%u registered=%u AI=%u position=%u",
+                pilot,p.object_id,p.current_hp,p.respawn_count,required,p.mapping_valid,p.valid_registered_object,p.ai_enabled,p.position_valid);context->Observe(diagnostic);
+        }
+        lastNativeDiagnostic=context->elapsed_ms;
+    }
+    if(wcscmp(status,L"pass")==0) {
+        if(!basicConfirmed) {context->Assert(0,"client verifies actual revivals before the human exhaustion fixture");return SDGO_GAME_TEST_FAIL;}
+        const auto humanDeaths=values.Number(L"human_deaths");
+        const auto aiAlive=values.Number(L"ai_alive_before_failure");
+        const auto nativeFailure=values.Number(L"native_human_failure");
+        if(!nativeFailure || humanDeaths<limit || !aiAlive) {
+            context->Assert(0,"exhausting the last human life immediately fails the native mission despite living AI");return SDGO_GAME_TEST_FAIL;
+        }
+        const auto ended=rooms.BattleEndState();
+        if(ended.sequence<=observedMissionEndBaseline || !ended.original_handler_completed)return SDGO_GAME_TEST_WAIT;
+        context->Assert(ended.reply_opcode==0x0871,"the original client consumes the genuine mission failure end reply");
+        context->Assert(nativeFailure && humanDeaths>=limit && aiAlive,
+            "native human-only life exhaustion triggers the existing failure gate while AI is still alive");
+        if(missionRespawns==2) {
+            const auto serverRespawns=values.Number(L"respawns");
+            context->Assert(deaths>limit && serverRespawns>limit,
+                "separate server-native infinite boundary stress exceeds the player quota after a genuine client revival");
+        }
+        char message[192];sprintf_s(message,"native human exhaustion deaths=%u limit=%u living_AI=%u end=%04X/%u",humanDeaths,limit,aiAlive,ended.reply_opcode,ended.result_type);context->Observe(message);
+        return SDGO_GAME_TEST_PASS;
+    }
+    if(basicConfirmed)return SDGO_GAME_TEST_WAIT;
+    if(wcscmp(status,L"cycle")!=0 || required!=1) {
+        context->Assert(0,"a genuine client-originated revival is verified before server-only quota stress");return SDGO_GAME_TEST_FAIL;
+    }
+    for(uint32_t i=0;i<s.ai_record_count && i<12;++i) {
+        const auto& p=s.participants[i];if(p.pilot_id!=pilot)continue;
+        if(p.respawn_count<required)return SDGO_GAME_TEST_WAIT;
+        if(!p.mapping_valid || !p.valid_registered_object ||
+           p.current_hp<=0 || !p.ai_enabled || !p.position_valid)return SDGO_GAME_TEST_WAIT;
+        context->Assert(p.mapping_valid && p.valid_registered_object && p.respawn_count>=required,
+            "the original client retains its registered wingman through a genuine combat death and revival");
+        context->Assert(p.ai_enabled && p.position_valid,
+            "the revived wingman has active native AI and a finite scene position");
+        char message[192];sprintf_s(message,"native mission respawn policy=%u pilot=%u limit=%u deaths=%u client_respawns=%u hp=%d",missionRespawns,pilot,limit,deaths,p.respawn_count,p.current_hp);context->Observe(message);
+        const std::wstring ack=std::wstring(context->directory)+L"\\mission-respawn-client-ack-"+expectedRun+L".ini";
+        if(!WritePrivateProfileStringW(L"ack",L"run_id",expectedRun.c_str(),ack.c_str())) {
+            context->Assert(0,"native revival observations are acknowledged before testing human exhaustion");return SDGO_GAME_TEST_FAIL;
+        }
+        basicConfirmed=true;
+        return SDGO_GAME_TEST_WAIT;
+    }
+    context->Assert(0,"same-run respawn probe identifies a real wingman of this exact mission");return SDGO_GAME_TEST_FAIL;
+}
+const SdgoGameTestCaseV1 missionRespawnCase={"mission.respawn",360000,&ObserveMissionRespawns};
 const SdgoGameTestCaseV1 collectionCases[]={
     {"pages.collection.preview",120000,&PreviewCollection},
     {"pages.collection.draw",120000,&DrawCollection},
@@ -2656,6 +2791,7 @@ void RegisterPlannedCases() {
         plannedCases.assign(realCases,realCases+3);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
         plannedCases.insert(plannedCases.end(),std::begin(missionCases),std::end(missionCases));
+        if(missionRespawns)plannedCases.push_back(missionRespawnCase);
         provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
     }
     if (bootstrapOnly) { provider.count = 3; return; }
@@ -2986,6 +3122,7 @@ SDGO_MOD_ENTRY {
             sdgo_test::directory+L"\\inputs\\shop-assertions.ini",sdgo_test::directory+L"\\inputs\\shop-runtime-display.ini") || shopCatalog.VisualOnly()!=shopVisualOnly)) ||
         (roomTitlesOnly && !roomTitles.Bind(api,mod,&actions)) ||
         (!missionMode && !rooms.Bind(api, mod, &actions, config)) ||
+        (missionRespawns && !rooms.BindBattleEndObserver(api,mod,&actions)) ||
         !tutorial.Bind(api, mod, &actions) || !onboarding.Bind(api, mod, &actions))
         sdgo_test::Fail("normal-flow native request bindings or private account configuration are unavailable");
     if (friendsOnly) {
