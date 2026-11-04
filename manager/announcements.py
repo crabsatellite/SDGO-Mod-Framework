@@ -142,6 +142,25 @@ class Announcements(Provider):
     id, title = 'announcements', '公告与展示规则'
     fields = {'client': '要配置的游戏客户端目录'}
 
+    def __init__(self, workspace):
+        super().__init__(workspace)
+        from .announcement_news import NewsService
+        self.news_service=NewsService()
+        if hasattr(workspace,'services'):
+            workspace.services.register('announcements.news','公告资讯更新',self.news_service,
+                lambda:self.news_service.start(self))
+
+    def configure(self, values):
+        if self.news_service.state()['running']:
+            raise ValueError('更换客户端目录前，请先停止公告资讯更新；展示规则仍可直接编辑')
+        return super().configure(values)
+
+    def news_settings(self):
+        from . import announcement_news as news
+        path=self.directory()/'news-settings.json'
+        raw=path.read_bytes() if path.is_file() else storage.json_bytes(news.DEFAULT)
+        return news.validate(json.loads(raw)),storage.revision(raw)
+
     def describe(self):
         with self.lock:
             clients = [host for host in self.workspace.settings.get('hosts', []) if host.get('role') == 'client']
@@ -163,6 +182,23 @@ class Announcements(Provider):
 
     def request(self, method, path, body, headers):
         directory = self.directory()
+        if path.startswith('/api/announcements/news'):
+            from . import announcement_news as news
+            settings,revision=self.news_settings()
+            if method=='GET' and path=='/api/announcements/news':
+                return {**news.public(directory,settings),'revision':revision,'service':self.news_service.state()}
+            if method=='POST' and path=='/api/announcements/news/settings':
+                with storage.LOCK:
+                    if body.get('revision')!=revision:raise storage.Conflict('资讯设置已改变，请重新打开面板')
+                    settings=news.validate(body.get('settings'))
+                    storage.atomic(directory/'news-settings.json',storage.json_bytes(settings))
+                    storage.atomic(directory/'news.ini',news.compile_settings(settings))
+                self.news_service.request()
+                return self.request('GET','/api/announcements/news',{}, {})
+            if method=='POST' and path=='/api/announcements/news/refresh':
+                with self.news_service.lock:news.refresh(directory,settings)
+                return self.request('GET','/api/announcements/news',{}, {})
+            raise ValueError('资讯操作未登记')
         file = directory / 'rules.json'
         with storage.LOCK:
             raw = file.read_bytes() if file.is_file() else storage.json_bytes(DEFAULT)
@@ -177,6 +213,10 @@ class Announcements(Provider):
                 files = runtime_inputs(validate(json.loads(raw)))
                 for name in ('announcements.dll', 'mod.ini', 'manager.json', 'symbols.fragment.ini'):
                     files[name] = (directory/name).read_bytes()
+                from . import announcement_news as news
+                settings=self.news_settings()[0]
+                files['news-settings.json']=storage.json_bytes(settings)
+                files['news.ini']=news.compile_settings(settings)
                 result = io.BytesIO()
                 with zipfile.ZipFile(result, 'w', zipfile.ZIP_DEFLATED) as archive:
                     for name, data in sorted(files.items()):

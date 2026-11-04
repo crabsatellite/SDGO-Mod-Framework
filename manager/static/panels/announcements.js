@@ -1,10 +1,12 @@
 import {e,button,field,download} from '/panel_helpers.js';
+import {mountNews} from './announcement_news.js';
 
 export async function mount(root,ctx){
  root.classList.add('announcement-panel');
  const style=e('style');style.textContent='.announcement-panel fieldset{display:flex;flex-wrap:wrap;gap:10px 20px;border:1px solid var(--ui-line-strong,#2d415a);padding:12px;margin:8px 0 18px}.announcement-panel fieldset label{display:flex;align-items:center;gap:8px;min-width:130px}.announcement-panel fieldset input{width:17px;height:17px;margin:0}.announcement-panel h3{margin-top:20px;margin-bottom:8px}.announcement-panel .notice-rule{margin:16px 0}.announcement-panel .notice-rule>summary{font-size:18px;font-weight:700;cursor:pointer}.announcement-panel .notice-rule[open]>summary{margin-bottom:20px}';root.append(style);
  const api=(body)=>ctx.request('/api/announcements',body,body?'POST':'GET');
  let data=await api();
+ await mountNews(root,ctx);
  root.append(e('p','规则内的日期、星期、每日时段和次数限制同时满足时，任一选中的事件可以触发。开始与结束时间相同表示全天；跨午夜时按开始日的星期计算。','intro'));
  root.append(e('p','登录位置使用原生网页公告，游戏内位置使用左侧 GM 文字公告。无需 Manager 常驻。保存后约一秒内载入；次数按本客户端累计，两处共享上限，0 表示不限。','muted'));
  const zone=field('时区（UTC 偏移分钟，例如日本 540、中国 480）',data.policy.utc_offset_minutes,'number');root.append(zone.box);
