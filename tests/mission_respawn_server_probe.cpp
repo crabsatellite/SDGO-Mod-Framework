@@ -110,8 +110,8 @@ void HumanFailureTick(uint8_t* room,uint32_t now,DWORD clock,bool allowFinal=tru
     }
     Finish(failedImmediately && nativeGateClosed,failedImmediately && nativeGateClosed?L"last human life immediately triggers native failure and its existing damage gate despite living AI":L"native human exhaustion failure or damage gate was not immediate",primaryDeaths);
 }
-// Independent server-only quota stress on another AI, concurrent with natural
-// combat. Its artificial damage calls are never counted as client cycles.
+// Independent server-only quota stress, concurrent with natural combat. Its
+// artificial damage calls are never counted as client cycles.
 void InfiniteBoundaryTick(uint8_t* room,uint32_t now,DWORD clock) {
     auto victim=Pilot(room,stressSlot);
     const auto deaths=Read<uint32_t>(victim,0x1A),hp=Read<uint32_t>(Unit(victim),0x34);
@@ -157,7 +157,7 @@ void Tick(uint8_t* room,uint32_t now) {
     if(clock-began>330000) {Finish(false,L"native respawn probe timed out",0);return;}
     if(infinite && !stressComplete)InfiniteBoundaryTick(room,now,clock);
     if(primaryComplete) {HumanFailureTick(room,now,clock);return;}
-    if(infinite)HumanFailureTick(room,now,clock,false);
+    HumanFailureTick(room,now,clock,false);
     if(clientCycleComplete) {
         if(ClientAcknowledged()) {
             if(infinite && !stressComplete)return;
@@ -166,10 +166,12 @@ void Tick(uint8_t* room,uint32_t now) {
         return;
     }
     if(!down) {
-        // Select the first wingman killed by actual native mission combat.
+        // After quota stress ends no artificial AI damage is issued. The same
+        // pilot may subsequently die in real combat; require client CNPC proof
+        // for that separate cycle, just as for any other wingman.
         for(int slot=0;slot<12;++slot) {
             auto p=Pilot(room,slot);
-            if((!infinite || slot!=stressSlot) && (Read<uint32_t>(p,0)&0x80000000u) && p[0x33C]<4 && Read<uint32_t>(Unit(p),0x34)==0 && Read<uint32_t>(p,0x1A)>0) {
+            if((!infinite || slot!=stressSlot || stressComplete) && (Read<uint32_t>(p,0)&0x80000000u) && p[0x33C]<4 && Read<uint32_t>(Unit(p),0x34)==0 && Read<uint32_t>(p,0x1A)>0) {
                 targetSlot=slot;pilotId=Read<uint32_t>(p,0);down=true;lastAction=clock;break;
             }
         }
