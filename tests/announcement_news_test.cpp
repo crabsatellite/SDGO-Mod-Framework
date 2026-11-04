@@ -11,6 +11,8 @@ int main(int argc,char** argv){
         for(size_t i=0;i<n::kinds.size();++i){auto items=n::Normalize(i,json::Parser(n::Fetch(base+n::paths[i],GetTickCount64()+15000)).Parse(),current,48*3600);std::printf("native live %s: %u valid items\n",n::kinds[i].c_str(),static_cast<unsigned>(items.size()));}
         return 0;
     }
+    const auto shipped=n::ReadSettings((std::filesystem::path(__FILE__).parent_path().parent_path()/L"mods/announcements/news.ini").wstring());
+    Check(shipped.enabled && shipped.login && !shipped.game && !shipped.gameTriggers,"shipped settings retain login and clear every in-game trigger");
     const uint64_t now=n::Date("2026-11-04")+12*3600;
     const std::string raw=R"({"code":200,"data":{"date":"2026-11-04","news":["测试新闻一","科技 &amp; 游戏 <b>快报</b>","测试新闻一"],"link":"https://example.com/news"}})";
     auto daily=n::Normalize(0,json::Parser(raw).Parse(),now,48*3600);
@@ -32,6 +34,10 @@ int main(int argc,char** argv){
     Check(reread.feeds[0].items[0].id==daily[0].id && reread.feeds[2].items[0].expires==now+86400,"cache roundtrip retains expiry and identity");
     n::Settings settings;settings.enabled=true;settings.sources={L"https://example.com"};Scheduler scheduler;
     Clock clock{20261104,20261103,2,720,now+n::kWindowsEpoch};
+    auto defaults=n::Rules(settings,cache,scheduler,now);
+    Check(defaults.size()==1 && defaults[0].surfaces==1,"defaults generate only the login digest");
+    Check(scheduler.Select(defaults,2,127,clock)==-1,"no default rule can display in-game");
+    settings.game=true;settings.gameTriggers=Timer|Login|Lobby;
     auto rules=n::Rules(settings,cache,scheduler,now);
     Check(rules.size()>=4 && rules[0].surfaces==1,"digest and individual native cards are generated");
     scheduler.Shown(rules[0],clock);

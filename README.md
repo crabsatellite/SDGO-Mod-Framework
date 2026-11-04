@@ -48,7 +48,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 
 | Feature | Overview | Documentation |
 |---|---|---|
-| Announcements <!-- catalog: `announcements` --> | Scheduled notices and cached daily news, technology, free-game and history cards with read-state and display limits | [Use](docs/announcements.md) |
+| Announcements <!-- catalog: `announcements` --> | Login-only daily digest by default; optional scheduled notices with cached news, technology, free-game and history cards | [Use](docs/announcements.md) |
 | Mission AI wingmen <!-- catalog: `coop_ai`, `mission_ai` --> | `!ai` in a co-op room title adds AI wingmen to the team | [Use](docs/coop-wingmen.md) |
 | PvP AI <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` in a room title adds AI opponents and teammates; optionally group all humans, fill both sides, fill opponents only or add exact counts | [Use](docs/pvp-ai.md) |
 | AI mech catalog (separate addon) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools | [Use](docs/ai-catalog.md) |
