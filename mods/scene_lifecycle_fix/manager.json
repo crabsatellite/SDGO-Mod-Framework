@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "scene_lifecycle_fix",
+  "title": "场景登记生命周期修复",
+  "category": "fixes",
+  "hosts": [
+    "client"
+  ],
+  "description": "避免场景对象切换空间节点时因原生节点分配失败而失去有效登记。",
+  "settings": [],
+  "presentation": "automatic_fix",
+  "mechanism": "先使用原生分配器准备目标链表节点，成功后再移除旧登记并提交原生链表和所有者字段；正常移动结果保持原逻辑。"
+}
