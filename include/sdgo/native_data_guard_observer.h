@@ -20,3 +20,19 @@ typedef struct SdgoNativeDataGuardStatusV2 {
     uint32_t missing_information_records;
     uint32_t preserved_exception_contexts;
 } SdgoNativeDataGuardStatusV2;
+
+// Additive observer ABI for the unit-management deferred-message lifecycle.
+typedef struct SdgoNativeDataGuardStatusV3 {
+    uint32_t size;
+    uint32_t version;
+    uint32_t funnel_bounds_corrected;
+    uint32_t missing_names;
+    uint32_t missing_transform_metadata;
+    uint32_t missing_information_records;
+    uint32_t preserved_exception_contexts;
+    uint32_t deferred_message_copies;
+    uint32_t deferred_message_replacements;
+    uint32_t deferred_message_copy_failures;
+    uint32_t deferred_message_completions;
+    uint32_t outstanding_deferred_messages;
+} SdgoNativeDataGuardStatusV3;
