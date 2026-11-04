@@ -665,6 +665,11 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
         enabled_ports={row['port'] for row in channels}
         selected=[spec for spec in manifest['services'] if spec['folder'] in configured and
             (not spec['folder'].startswith('Battle') or spec['port'] in enabled_ports)]
+        if native_local:
+            # World actively connects to its peers while initializing. Starting
+            # it last lets those native listeners accept its first table stream
+            # instead of racing World initialization and losing that stream.
+            selected.sort(key=lambda spec: spec['folder']=='WorldServer')
         skipped=[spec['folder'] for spec in manifest['services'] if spec not in selected]
         login_port=int(client['plan']['login_port'])
         assert_listener_endpoints_free(
@@ -676,6 +681,17 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
         for spec in selected:
             exe=Path(spec['exe']);folder=exe.parent
             if not exe.is_relative_to(work/'Server') or game_test.sha256(exe)!=spec['sha256']: raise RuntimeError('Copied service identity changed')
+            if native_local and spec['folder']=='WorldServer':
+                # Creating peer processes is not enough: World can connect and
+                # begin its initial stream before their native listeners exist.
+                peers_deadline=time.monotonic()+startup_timeout
+                for peer,peer_row in ready_services:
+                    while (target_ip,peer_row['port']) not in listeners(peer.pid):
+                        if (work/'stop.request').exists():raise InterruptedError('Owned backend stop requested')
+                        if peer.poll() is not None or time.monotonic()>peers_deadline:
+                            raise RuntimeError('Native peer listener not ready before World: '+peer_row['folder'])
+                        time.sleep(.2)
+                emit('native_peer_listeners_ready',count=len(ready_services))
             env=child_environment()
             if spec['folder'].startswith('Battle') and not fps_suite:
                 job=folder/'sdgo/gametest'

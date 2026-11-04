@@ -2191,6 +2191,7 @@ int __cdecl ObserveMissionRespawns(const SdgoGameTestContextV1* context) {
     if(!basicConfirmed) {
         if(!MissionSnapshot(s) || !s.active) {
             if(rooms.BattleEndState().sequence>observedMissionEndBaseline) {
+                const auto ended=rooms.BattleEndState();char early[128];sprintf_s(early,"native early mission end opcode=%04X result=%u app=%u",ended.reply_opcode,ended.result_type,ended.native_app_state);context->Observe(early);
                 context->Assert(0,"mission ended before native revival verification");return SDGO_GAME_TEST_FAIL;
             }
             return SDGO_GAME_TEST_WAIT;
@@ -2213,6 +2214,15 @@ int __cdecl ObserveMissionRespawns(const SdgoGameTestContextV1* context) {
     const auto limit=GetPrivateProfileIntW(L"probe",L"life_limit",0,receipt.c_str());
     const auto deaths=GetPrivateProfileIntW(L"probe",L"deaths",0,receipt.c_str());
     const auto required=GetPrivateProfileIntW(L"probe",L"respawns",0,receipt.c_str());
+    static uint64_t lastNativeDiagnostic=0;
+    if(!basicConfirmed && context->elapsed_ms-lastNativeDiagnostic>=3000) {
+        for(uint32_t i=0;i<s.ai_record_count && i<12;++i)if(s.participants[i].pilot_id==pilot) {
+            const auto& p=s.participants[i];char diagnostic[224];sprintf_s(diagnostic,
+                "native revival readback pilot=%u object=%u hp=%d observed=%u required=%u mapping=%u registered=%u AI=%u position=%u",
+                pilot,p.object_id,p.current_hp,p.respawn_count,required,p.mapping_valid,p.valid_registered_object,p.ai_enabled,p.position_valid);context->Observe(diagnostic);
+        }
+        lastNativeDiagnostic=context->elapsed_ms;
+    }
     if(wcscmp(status,L"pass")==0) {
         if(!basicConfirmed) {context->Assert(0,"client verifies actual revivals before the human exhaustion fixture");return SDGO_GAME_TEST_FAIL;}
         const auto humanDeaths=GetPrivateProfileIntW(L"probe",L"human_deaths",0,receipt.c_str());
@@ -2235,12 +2245,12 @@ int __cdecl ObserveMissionRespawns(const SdgoGameTestContextV1* context) {
         if(p.respawn_count<required)return SDGO_GAME_TEST_WAIT;
         if(!p.mapping_valid || !p.valid_registered_object ||
            (missionRespawns==2 && (p.current_hp<=0 || !p.ai_enabled || !p.position_valid)) ||
-           (missionRespawns==1 && p.current_hp!=0))return SDGO_GAME_TEST_WAIT;
+           (missionRespawns==1 && p.current_hp>0))return SDGO_GAME_TEST_WAIT;
         context->Assert(p.mapping_valid && p.valid_registered_object && p.respawn_count>=required,
             "the original client retains the same registered wingman through every server-confirmed respawn");
         if(missionRespawns==2)context->Assert(p.ai_enabled && p.position_valid,
             "the revived wingman has active native AI and a finite scene position");
-        context->Assert(missionRespawns==2 ? (deaths>limit && p.current_hp>0) : (deaths>=limit && p.current_hp==0),
+        context->Assert(missionRespawns==2 ? (deaths>limit && p.current_hp>0) : (deaths>=limit && p.current_hp<=0),
             "infinite wingmen revive beyond the native quota; player-policy wingmen remain down when that quota is exhausted");
         char message[192];sprintf_s(message,"native mission respawn policy=%u pilot=%u limit=%u deaths=%u client_respawns=%u hp=%d",missionRespawns,pilot,limit,deaths,p.respawn_count,p.current_hp);context->Observe(message);
         const std::wstring ack=std::wstring(context->directory)+L"\\mission-respawn-client-ack.ini";

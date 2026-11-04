@@ -69,7 +69,7 @@ void HumanFailureTick(uint8_t* room,uint32_t now,DWORD clock) {
     if(!ClientAcknowledged())return;
     uint8_t* human=Pilot(room,hostSlot);
     if(Read<uint32_t>(human,0)!=host || human[0x33C]>=4) {Finish(false,L"human identity changed before exhaustion proof",primaryDeaths);return;}
-    if(Read<uint32_t>(Unit(human),0x34)==0 || clock-lastAction<8000)return;
+    if(Read<uint32_t>(Unit(human),0x34)==0 || clock-lastAction<1000)return;
     int attacker=-1;aliveAiBeforeFailure=0;
     for(int slot=0;slot<12;++slot) {
         auto p=Pilot(room,slot);
@@ -80,7 +80,14 @@ void HumanFailureTick(uint8_t* room,uint32_t now,DWORD clock) {
     lastAction=clock;humanDeaths=Read<uint32_t>(human,0x1A);
     if(humanDeaths<limit)return;
     const bool failedImmediately=Read<uint32_t>(room,0x316A4)==6 && Read<uint32_t>(room,0x316A8)==0x13DF;
-    Finish(failedImmediately,failedImmediately?L"last human life immediately triggers native mission failure despite living AI":L"human exhaustion did not immediately trigger native failure",primaryDeaths);
+    bool nativeGateClosed=failedImmediately;
+    if(failedImmediately) {
+        auto survivor=Pilot(room,attacker);const auto hp=Read<uint32_t>(Unit(survivor),0x34);
+        const auto deaths=Read<uint32_t>(survivor,0x1A);
+        Lethal(room,now,hostSlot,attacker);
+        nativeGateClosed=Read<uint32_t>(Unit(survivor),0x34)==hp && Read<uint32_t>(survivor,0x1A)==deaths;
+    }
+    Finish(failedImmediately && nativeGateClosed,failedImmediately && nativeGateClosed?L"last human life immediately triggers native failure and its existing damage gate despite living AI":L"native human exhaustion failure or damage gate was not immediate",primaryDeaths);
 }
 void Tick(uint8_t* room,uint32_t now) {
     if(finished || !room || (room[5]!=5 && room[5]!=8) || Read<uint32_t>(room,0x4CE)!=host)return;
@@ -115,7 +122,7 @@ void Tick(uint8_t* room,uint32_t now) {
         if(!infinite && deaths>=limit && clock-lastAction>=15000)PrimaryComplete(L"native player quota exhausted and wingman stays down",deaths);
         return;
     }
-    if(clock-began<20000 || clock-lastAction<8000)return;
+    if(clock-began<20000 || clock-lastAction<1000)return;
     if(hp==0) {down=true;lastAction=clock;return;}
     // Make the real authenticated human an opposing attacker for this isolated
     // damage call only. The original team byte is restored even on exception.
@@ -124,6 +131,9 @@ void Tick(uint8_t* room,uint32_t now) {
         ++kills;down=true;lastAction=clock;
         if(Read<uint32_t>(victim,0x1A)!=deaths+1) {Finish(false,L"native lethal damage did not increment death counter once",Read<uint32_t>(victim,0x1A));return;}
         g_api->Log(g_mod,SDGO_LOG_INFO,"probe native lethal damage %u, original team restored, quota=%u",kills,limit);
+        g_api->Log(g_mod,SDGO_LOG_INFO,"probe human native state id=%u deaths=%u hp=%u phase=%u reason=%u",
+            Read<uint32_t>(attacker,0),Read<uint32_t>(attacker,0x1A),Read<uint32_t>(Unit(attacker),0x34),
+            Read<uint32_t>(room,0x316A4),Read<uint32_t>(room,0x316A8));
     }
 }
 void __stdcall GuardedTick(uint8_t* room,uint32_t now) {
