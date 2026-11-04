@@ -22,6 +22,7 @@
 
 #include "sdgo/mission_ai_client_observer.h"
 #include "sdgo/sdgo_api.h"
+#include "sdgo/mission_ai_lifecycle.h"
 
 namespace
 {
@@ -187,6 +188,15 @@ namespace
         FindObjectFn findObject;
     };
     GameCalls g_game = {};
+    using GameAppFn = uint8_t*(__cdecl*)();
+    GameAppFn g_gameApp = nullptr;
+    using ObjectIdFromPilotFn = uint32_t(__thiscall*)(void*, uint32_t);
+    using SetSlotColourFn = void(__thiscall*)(void*, int, int);
+    using IsPlayerObjectFn = bool(__thiscall*)(void*, uint32_t);
+    ObjectIdFromPilotFn g_objectIdFromPilot = nullptr;
+    SetSlotColourFn g_setSlotColour = nullptr;
+    PlayerSlotFn g_playerSlot = nullptr;
+    IsPlayerObjectFn g_isPlayerObject = nullptr;
 
     std::vector<uint32_t> g_wingmen; // object ids of the AI participants of this mission
     std::vector<uint32_t> g_localWingmen; // only this client's simulated participants
@@ -196,10 +206,13 @@ namespace
         uint32_t recordIndex = 0;
         uint32_t pilotId = 0;
         uint32_t objectId = 0;
+        int slot = -1;
         uint8_t* spawnedUnit = nullptr;
         bool local = false;
         bool hasPosition = false;
         bool moved = false;
+        bool wasDead = false;
+        uint32_t respawns = 0;
         float lastX = 0.0f;
         float lastY = 0.0f;
         float lastZ = 0.0f;
@@ -217,6 +230,71 @@ namespace
     SdgoMissionAiClientSnapshotV1 g_observerSnapshot = {};
     volatile LONG g_observerSnapshotVersion = 0;
     SRWLOCK g_observerSnapshotLock = SRWLOCK_INIT;
+
+    bool ActiveMission(void* um)
+    {
+        if (!um || !g_game.unitManager || um != *g_game.unitManager || !g_gameApp) return false;
+        uint8_t* app = g_gameApp();
+        uint8_t* service = app ? *reinterpret_cast<uint8_t**>(app + 0x4A4) : nullptr;
+        uint8_t* mode = service ? *reinterpret_cast<uint8_t**>(service + 0x0C) : nullptr;
+        return mode && mode == g_observedMode &&
+            *reinterpret_cast<const void* const*>(mode) == g_game.missionVtable;
+    }
+
+    int __cdecl MissionSlotForObject(void* um, uint32_t object)
+    {
+        __try {
+            if (!ActiveMission(um)) return -1;
+            for (const ObservedWingman& wingman : g_observedWingmen)
+                if (wingman.objectId == object && wingman.spawnedUnit &&
+                    *reinterpret_cast<uint32_t*>(wingman.spawnedUnit + kUnitObjectId) == object &&
+                    *reinterpret_cast<uint32_t*>(wingman.spawnedUnit + kUnitServerId) == wingman.pilotId)
+                    return wingman.slot;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        return -1;
+    }
+
+    uint32_t __cdecl MissionObjectForPilot(void* um, uint32_t pilot)
+    {
+        __try {
+            if (!ActiveMission(um)) return 0;
+            for (const ObservedWingman& wingman : g_observedWingmen)
+                if (wingman.pilotId == pilot && MissionSlotForObject(um, wingman.objectId) >= 0)
+                    return wingman.objectId;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        return 0;
+    }
+
+    int __cdecl KeepDeadMissionUnit(uint8_t* unit)
+    {
+        __try {
+            if (!unit || !g_game.unitManager || !ActiveMission(*g_game.unitManager)) return 0;
+            for (const ObservedWingman& wingman : g_observedWingmen)
+                if (wingman.spawnedUnit == unit &&
+                    MissionSlotForObject(*g_game.unitManager, wingman.objectId) >= 0) return 1;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        return 0;
+    }
+
+    uint32_t __fastcall ObjectIdFromPilot(void* um, void*, uint32_t pilot)
+    {
+        const uint32_t object = MissionObjectForPilot(um, pilot);
+        return object ? object : g_objectIdFromPilot(um, pilot);
+    }
+    uint8_t* __fastcall PlayerSlot(void* um, void*, int index)
+    {
+        const int slot = index >= 1000 ? MissionSlotForObject(um, static_cast<uint32_t>(index) + 1) : -1;
+        return g_playerSlot(um, slot >= 0 ? slot : index);
+    }
+    void __fastcall SetSlotColour(void* um, void*, int index, int colour)
+    {
+        const int slot = index >= 1000 ? MissionSlotForObject(um, static_cast<uint32_t>(index) + 1) : -1;
+        g_setSlotColour(um, slot >= 0 ? slot : index, colour);
+    }
+    bool __fastcall IsPlayerObject(void* um, void*, uint32_t object)
+    {
+        return MissionSlotForObject(um, object) >= 0 || g_isPlayerObject(um, object);
+    }
 
     uint32_t PointerValue(const void* pointer)
     {
@@ -467,6 +545,12 @@ namespace
             copied.current_hp =
                 *reinterpret_cast<const int32_t*>(
                     unit + kObjectHp);
+            if (copied.current_hp <= 0) observed->wasDead = true;
+            else if (observed->wasDead) {
+                ++observed->respawns;
+                observed->wasDead = false;
+            }
+            copied.respawn_count = observed->respawns;
             copied.unit_team = unit[kUnitTeam];
             copied.local_control =
                 unit[kUnitLocalControl] != 0 ? 1 : 0;
@@ -644,6 +728,7 @@ namespace
                 *reinterpret_cast<uint32_t*>(
                     record + kRecordServerId);
             observed.objectId = objectId;
+            observed.slot = slot;
             observed.spawnedUnit = unit;
             observed.local = local;
             g_observedWingmen.push_back(observed);
@@ -1026,6 +1111,43 @@ namespace
     }
 }
 
+static void* g_deadListResume = nullptr;
+static void* g_deadPoolResume = nullptr;
+static int __stdcall KeepMissionNode(uint8_t* node)
+{
+    __try {
+        return node ? KeepDeadMissionUnit(*reinterpret_cast<uint8_t**>(node + 0x10)) : 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+static __declspec(naked) void MissionDeadListDetour()
+{
+    __asm {
+        pushad
+        push ebx
+        call KeepMissionNode
+        test eax, eax
+        jz native_answer
+        mov byte ptr [esp + 28], 1
+    native_answer:
+        popad
+        jmp dword ptr [g_deadListResume]
+    }
+}
+static __declspec(naked) void MissionDeadPoolDetour()
+{
+    __asm {
+        pushad
+        push ebx
+        call KeepMissionNode
+        test eax, eax
+        jz native_answer
+        mov byte ptr [esp + 28], 1
+    native_answer:
+        popad
+        jmp dword ptr [g_deadPoolResume]
+    }
+}
+
 extern "C" __declspec(dllexport) int __cdecl
 SdgoMissionAiClientGetSnapshotV1(
     SdgoMissionAiClientSnapshotV1* snapshot)
@@ -1055,7 +1177,7 @@ SDGO_MOD_ENTRY
                  Bind(g_game.createRemoteNpc, "mode.create_remote_npc") &&
                  Bind(g_game.setPlayerInfo, "um.set_player_info") && Bind(g_game.playerSlot, "um.player_slot") &&
                  Bind(g_game.assign, "wstring.assign") && Bind(g_game.addAiUnit, "um.add_ai_unit") &&
-                 Bind(g_game.calculateTeam, "um.calculate_team");
+                 Bind(g_game.calculateTeam, "um.calculate_team") && Bind(g_gameApp, "game.app");
     if (!bound)
         return 0;
     g_game.findObject = reinterpret_cast<FindObjectFn>(
@@ -1086,6 +1208,22 @@ SDGO_MOD_ENTRY
     if (!api->HookSlot(mod, "CMissionMode.vtbl.Update", reinterpret_cast<void*>(&MissionUpdate),
                        reinterpret_cast<void**>(&g_originalUpdate)))
         return 0;
+    static const SdgoMissionClientLifecycleV1 lifecycle = {
+        sizeof(lifecycle), 1, &MissionObjectForPilot, &MissionSlotForObject, &KeepDeadMissionUnit};
+    HMODULE match = sdgo::MissionSibling(api, mod, L"match_ai\\match_ai.dll");
+    if (match) {
+        auto share = reinterpret_cast<SdgoRegisterMissionClientV1>(
+            GetProcAddress(match, "SdgoMatchAiRegisterMissionV1"));
+        if (!share || !share(&lifecycle)) {
+            api->Log(mod, SDGO_LOG_ERROR, "matching match_ai lifecycle bridge is required; update both Mods");
+            return 0;
+        }
+    } else if (!api->HookCode(mod, "um.object_id_from_pilot", reinterpret_cast<void*>(&ObjectIdFromPilot), reinterpret_cast<void**>(&g_objectIdFromPilot)) ||
+               !api->HookCode(mod, "um.player_slot", reinterpret_cast<void*>(&PlayerSlot), reinterpret_cast<void**>(&g_playerSlot)) ||
+               !api->HookCode(mod, "um.set_slot_colour", reinterpret_cast<void*>(&SetSlotColour), reinterpret_cast<void**>(&g_setSlotColour)) ||
+               !api->HookCode(mod, "um.is_player_object", reinterpret_cast<void*>(&IsPlayerObject), reinterpret_cast<void**>(&g_isPlayerObject)) ||
+               !api->HookCode(mod, "um.update_dead_npc_list", reinterpret_cast<void*>(&MissionDeadListDetour), &g_deadListResume) ||
+               !api->HookCode(mod, "um.update_dead_npc_pool", reinterpret_cast<void*>(&MissionDeadPoolDetour), &g_deadPoolResume)) return 0;
     api->Log(mod, SDGO_LOG_INFO, "ready: co-op missions spawn the AI participants the server adds (room title !ai)");
     return 1;
 }

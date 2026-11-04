@@ -1664,8 +1664,8 @@ def validate_ai_layout(value: str | None) -> str | None:
     return value
 
 
-def mission_room_title(title_nonce: str) -> str:
-    return f"{title_nonce} !ai{MISSION_AI_COUNT} lv{MISSION_AI_LEVEL}"
+def mission_room_title(title_nonce: str, respawns: str | None = None) -> str:
+    return f"{title_nonce} !ai{MISSION_AI_COUNT} lv{MISSION_AI_LEVEL}" + (' inf' if respawns == 'infinite' else '')
 
 
 def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
@@ -1677,7 +1677,9 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                          shop_catalog: bool = False, friends_only: bool = False, room_titles_only: bool = False,
                          room_style_preview: str | None = None,
                          same_room_rematch: bool = False, shop_visual_only: bool = False,
-                         page_group: str | None = None) -> tuple[str, ...]:
+                         page_group: str | None = None, mission_respawns: str | None = None) -> tuple[str, ...]:
+    if mission_respawns is not None and (mission_respawns not in ('player','infinite') or mission_mode is None):
+        raise GameTestError('mission_respawns requires a native mission and player or infinite policy')
     if page_group is not None and (page_group != 'hangar' or not pages_only or shop_catalog or collection_draw):
         raise GameTestError('page_group=hangar requires read-only pages without shop or collection scope')
     mission_mode = validate_mission_mode(mission_mode)
@@ -1718,7 +1720,7 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
             raise GameTestError("--mission-mode cannot be combined with a PvP mode sequence")
         if any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,collection_draw)):
             raise GameTestError("--mission-mode cannot be combined with pages or account preparation scopes")
-        return FLOW_CASES[:3] + selection + MISSION_FLOW_CASES
+        return FLOW_CASES[:3] + selection + MISSION_FLOW_CASES + (('mission.respawn',) if mission_respawns else ())
     modes = parse_mode_sequence(mode_sequence)
     if pages_only:
         if page_group == 'hangar':
@@ -1804,6 +1806,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         room_style_preview=plan.get("room_style_preview"),
         shop_visual_only=plan.get('shop_visual_only', False),
         page_group=plan.get('page_group'),
+        mission_respawns=plan.get('mission_respawns'),
     )
 
 
@@ -1876,7 +1879,10 @@ def make_plan(
     ai_pool_level: int | None = None,
     ai_difficulty: str | None = None,
     ai_layout: str | None = None,
+    mission_respawns: str | None = None,
 ) -> dict:
+    if mission_respawns is not None and (mission_mode is None or mission_respawns not in ('player','infinite')):
+        raise GameTestError('mission_respawns requires a native mission and player or infinite policy')
     if not 1 <= login_port <= 65535:
         raise GameTestError("login_port must be between 1 and 65535")
     if retry_count < 1 or retry_count > 2:
@@ -1941,8 +1947,9 @@ def make_plan(
             "mission_clear_claim": False,
             "mission_result_claim": False,
             "mission_active_exit_claim": False,
-            "room_title": mission_room_title(title_nonce),
+            "room_title": mission_room_title(title_nonce, mission_respawns),
         })
+        if mission_respawns is not None: plan['mission_respawns'] = mission_respawns
     else:
         enemies = (expected_ai + 1) // 2
         allies = expected_ai - enemies
@@ -2098,6 +2105,7 @@ def write_job(
             "mission_result_claim": "0",
             "mission_active_exit_claim": "0",
         })
+        if 'mission_respawns' in plan: run['run']['mission_respawns'] = plan['mission_respawns']
     else:
         run["run"]["mode_sequence"] = plan["mode_sequence"]
         run["run"]["expected_ai"] = str(plan["expected_ai"])
@@ -2264,10 +2272,14 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 raise ValueError('mission run id must use canonical lowercase UUID form')
             if not re.fullmatch(r'gt[0-9a-f]{4}', run['title_nonce']):
                 raise ValueError('invalid mission title nonce')
-            if run['room_title'] != mission_room_title(run['title_nonce']):
+            mission_respawns = run.get('mission_respawns')
+            if mission_respawns is not None and mission_respawns not in ('player','infinite'):
+                raise ValueError('invalid mission respawn policy')
+            if run['room_title'] != mission_room_title(run['title_nonce'], mission_respawns):
                 raise ValueError('mission room title differs from the sealed native plan')
             expected_cases = required_flow_cases(
                 '1', play_unit_uid=play_unit_uid, mission_mode=mission_mode,
+                mission_respawns=mission_respawns,
             )
             allowed = {
                 'id', 'role', 'suite', 'normal_flow', 'endpoint',
@@ -2276,7 +2288,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 'first_unit_draw', 'acknowledge_game_windows', 'process_entry',
                 'account_path', 'retry_count', 'expect_first_fail',
                 'required_cases', 'mission_mode', 'mission_scope',
-                'mission_ai_count', 'mission_ai_level', *MISSION_CLAIM_FIELDS,
+                'mission_ai_count', 'mission_ai_level', 'mission_respawns', *MISSION_CLAIM_FIELDS,
                 'play_unit_uid', 'network_policy',
                 *ROUTE_PLAN_FIELDS, 'quiet', 'quiet_loopback',
             }
@@ -2289,7 +2301,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             mode_sequence = None
         else:
             if any(field in run for field in (
-                'mission_scope', 'mission_ai_count', 'mission_ai_level',
+                'mission_scope', 'mission_ai_count', 'mission_ai_level', 'mission_respawns',
                 *MISSION_CLAIM_FIELDS,
             )):
                 raise ValueError('mission fields require native-mission-smoke suite')
@@ -2440,6 +2452,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 'mission_result_claim': False,
                 'mission_active_exit_claim': False,
             })
+            if mission_respawns is not None: plan['mission_respawns'] = mission_respawns
         else:
             plan['mode_sequence'] = mode_sequence
             plan['expected_ai'] = int(run['expected_ai'])
@@ -2753,6 +2766,7 @@ def prepare(
     ai_layout: str | None = None,
     play_unit_uid: int | None = None,
     mission_mode: int | None = None,
+    mission_respawns: str | None = None,
     launcher_path: str | None = None,
     account_profile: Path | None = None,
     create_test_account: bool = False,
@@ -3033,6 +3047,7 @@ def prepare(
             ai_pool_level,
             ai_difficulty,
             ai_layout,
+            mission_respawns,
         )
         if server_session is not None:
             if (not isinstance(server_session,dict) or
@@ -3452,7 +3467,7 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
                     raise GameTestError(f"run.json mission plan disagrees with run.ini for {key}")
         elif any(field in plan for field in (
             "mission_mode", "mission_scope", "mission_ai_count",
-            "mission_ai_level", *MISSION_CLAIM_FIELDS,
+            "mission_ai_level", "mission_respawns", *MISSION_CLAIM_FIELDS,
         )):
             raise GameTestError("run.json cannot add mission scope to a non-mission plan")
         for flag in (
@@ -4413,6 +4428,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "AI spawn and combat only; no clear, result, or active-exit claim"
         ),
     )
+    prepare_parser.add_argument('--mission-respawns',choices=('player','infinite'),help='native mission repeated-death acceptance with the isolated server combat probe')
     prepare_parser.add_argument("--retry-count", type=int, choices=(1, 2))
     prepare_parser.add_argument("--expected-ai", type=int, default=3)
     prepare_parser.add_argument('--ai-allies',type=int,help='exact allied AI count for the single host; remaining --expected-ai are enemies')
@@ -4539,6 +4555,7 @@ def main(argv: list[str] | None = None) -> int:
                 ai_layout=args.ai_layout,
                 play_unit_uid=args.play_unit_uid,
                 mission_mode=args.mission_mode,
+                mission_respawns=args.mission_respawns,
                 launcher_path=args.launcher_path,
                 account_profile=args.account_profile,
                 create_test_account=args.create_test_account,

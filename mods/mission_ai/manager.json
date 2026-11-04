@@ -7,7 +7,7 @@
   "hosts": [
     "client"
   ],
-  "description": "在任务房名中添加 !ai 请求 AI 队友，需要配套服务器支持。",
+  "description": "在任务房名中添加 !ai 请求 AI 队友，显示死亡与复活；次数由配套服务器按任务规则或房名 inf 控制。",
   "settings": [
     {
       "id": "enemies_target_wingmen",

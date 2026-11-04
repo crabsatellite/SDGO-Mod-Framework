@@ -40,6 +40,19 @@
 // object id -> player slot steps answer for them the way that mode's PlayerSlot remap does.
 
 #include <windows.h>
+#include "sdgo/mission_ai_lifecycle.h"
+
+static SdgoMissionClientLifecycleV1* g_missionLifecycle = nullptr;
+extern "C" __declspec(dllexport) int __cdecl SdgoMatchAiRegisterMissionV1(
+    const SdgoMissionClientLifecycleV1* hooks)
+{
+    if (!hooks || hooks->size != sizeof(*hooks) || hooks->version != 1 ||
+        !hooks->object_for_pilot || !hooks->slot_for_object || !hooks->keep_dead) return 0;
+    auto previous = InterlockedCompareExchangePointer(
+        reinterpret_cast<void* volatile*>(&g_missionLifecycle),
+        const_cast<SdgoMissionClientLifecycleV1*>(hooks), nullptr);
+    return previous == nullptr || previous == hooks;
+}
 #include <intrin.h>
 
 #include <algorithm>
@@ -1432,12 +1445,16 @@ namespace
     {
         if (const Bot* bot = BotByPilot(um, pilotId))
             return bot->objectId;
+        if (g_missionLifecycle)
+            if (const uint32_t object = g_missionLifecycle->object_for_pilot(um, pilotId))
+                return object;
         return g_originalObjectIdFromPilot(um, pilotId);
     }
 
     bool __fastcall IsPlayerObject(void* um, void* /*edx*/, uint32_t objectId)
     {
-        return g_originalIsPlayerObject(um, objectId) || BotByObject(um, objectId) != nullptr;
+        return g_originalIsPlayerObject(um, objectId) || BotByObject(um, objectId) != nullptr ||
+            (g_missionLifecycle && g_missionLifecycle->slot_for_object(um, objectId) >= 0);
     }
 
     uint8_t* __fastcall PlayerSlot(void* um, void* /*edx*/, int index)
@@ -1445,6 +1462,9 @@ namespace
         if (index >= 1000) {
             if (const Bot* bot = BotByObject(um, static_cast<uint32_t>(index) + 1))
                 return g_originalPlayerSlot(um, bot->slot);
+            const int missionSlot = g_missionLifecycle ?
+                g_missionLifecycle->slot_for_object(um, static_cast<uint32_t>(index) + 1) : -1;
+            if (missionSlot >= 0) return g_originalPlayerSlot(um, missionSlot);
             if (OutsideAiModes()) {
                 LogStraySlot(index, _ReturnAddress());
                 memset(g_scratchSlot, 0, sizeof(g_scratchSlot));
@@ -1793,6 +1813,12 @@ namespace
     void __fastcall SetSlotColour(void* um, void* /*edx*/, int index, int colour)
     {
         if (index >= 1000) {
+            const int missionSlot = g_missionLifecycle ?
+                g_missionLifecycle->slot_for_object(um, static_cast<uint32_t>(index) + 1) : -1;
+            if (missionSlot >= 0) {
+                g_originalSetSlotColour(um, missionSlot, colour);
+                return;
+            }
             if (const Bot* found = BotByObject(um, static_cast<uint32_t>(index) + 1)) {
                 Bot* bot = const_cast<Bot*>(found);
                 g_api->Log(g_mod, SDGO_LOG_INFO, "AI player %08lX respawns: object %lu %s, slot %d, deck index %d",
@@ -1986,6 +2012,7 @@ namespace
     {
         __try {
             uint8_t* object = *reinterpret_cast<uint8_t**>(node + 0x10);
+            if (object && g_missionLifecycle && g_missionLifecycle->keep_dead(object)) return 1;
             if (!object || !g_botMode || CurrentPvpMode() != g_botMode)
                 return 0;
             for (const Bot& bot : g_botTable) {
