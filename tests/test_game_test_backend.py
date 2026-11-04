@@ -85,11 +85,11 @@ class BackendSafetyTests(unittest.TestCase):
             with mock.patch.object(backend.os,'kill',side_effect=AssertionError('No signal is a read-only probe')):
                 self.assertTrue(backend._pid_exists(child.pid))
                 self.assertIsNone(child.poll())
-                child.terminate();child.wait(timeout=10)
+                child.terminate();child.wait(timeout=backend.game_test.OWNED_PROCESS_EXIT_TIMEOUT)
                 self.assertFalse(backend._pid_exists(child.pid))
         finally:
             if child.poll() is None:child.terminate()
-            child.wait(timeout=10)
+            child.wait(timeout=backend.game_test.OWNED_PROCESS_EXIT_TIMEOUT)
 
     @unittest.skipUnless(os.name=='nt','Windows process handles')
     def test_inaccessible_pid_is_preserved_and_absent_pid_is_distinguished(self):

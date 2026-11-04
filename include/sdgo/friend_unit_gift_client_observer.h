@@ -28,6 +28,7 @@ enum SdgoFriendUnitGiftClientActionV1 : std::uint32_t {
     SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_QUERY_RECEIPT = 16,
     SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_UNIT_TEMPLATE = 17,
     SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_ORDINARY_STORAGE = 18,
+    SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_HOME_FRIEND_CONTEXT = 19,
 };
 
 enum SdgoFriendUnitGiftClientComposerPhaseV1 : std::uint32_t {
@@ -136,3 +137,16 @@ using SdgoFriendUnitGiftClientGetSnapshotV1Fn =
     int(__cdecl*)(SdgoFriendUnitGiftClientSnapshotV1* output);
 using SdgoFriendUnitGiftClientActionV1Fn =
     int(__cdecl*)(const SdgoFriendUnitGiftClientActionRequestV1* request);
+
+// Separate scoped readback keeps the original V1 inventory ABI intact.
+struct SdgoHomeFriendRowV1 {
+    std::uint32_t account, level, step, presence;
+    std::uint32_t rank_visible, rank_draw, sprite_frame, skin_first_frame, skin_last_frame;
+};
+struct SdgoHomeFriendsSnapshotV1 {
+    std::uint32_t size, version;
+    std::uint64_t run_hash;
+    std::uint32_t process_id, open, mode, row_count, context_target, captions_chinese;
+    SdgoHomeFriendRowV1 rows[8];
+};
+using SdgoHomeFriendsSnapshotV1Fn = int(__cdecl*)(SdgoHomeFriendsSnapshotV1*);

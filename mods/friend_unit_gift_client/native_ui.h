@@ -98,6 +98,7 @@ struct Bindings {
 class FriendEntry {
 public:
     bool Attach(void* service, const Bindings& bindings);
+    bool AttachCommunity(void* service, const Bindings& bindings);
     bool Click(void* service, void* control) const noexcept;
     void SetAvailable(bool available) noexcept;
     void Detach(void* service) noexcept;
@@ -108,6 +109,8 @@ public:
     }
 
 private:
+    bool AttachDialog(void* service, const Bindings& bindings,
+                      void* dialog, void* source, bool community);
     void ApplyGeometry(bool expanded) noexcept;
 
     const Bindings* bindings_ = nullptr;
@@ -116,6 +119,11 @@ private:
     void* button_ = nullptr;
     void* background_ = nullptr;
     void* bottom_ = nullptr;
+    void* frame_ = nullptr;
+    void* frame_sprite_ = nullptr;
+    float original_frame_scale_y_ = 1.0f;
+    std::uint8_t original_frame_scaled_ = 0;
+    int original_frame_height_ = 0;
     float original_bottom_y_ = 0.0f;
     float expanded_bottom_y_ = 0.0f;
     int original_dialog_height_ = 0;
