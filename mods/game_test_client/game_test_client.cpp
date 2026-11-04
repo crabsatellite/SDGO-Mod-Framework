@@ -399,8 +399,6 @@ bool LoadPlan() {
     if(rematchFlag>1)return false;
     sameRoomRematch=rematchFlag==1;
     if(sameRoomRematch && (missionMode || bootstrapOnly || battleshipOnly || giftRequestsOnly || deckOnly || pagesOnly || randomLoadout))return false;
-    if(randomLoadout && strlen(narrowNonce)!=4)return false;
-    if(sprintf_s(roomTitle,randomLoadout?"%s !ai e%u a%u !rand":"%s !ai e%u a%u",narrowNonce,expectedEnemies,expectedAllies)<0)return false;
     if(missionMode) {
         expectedAi=GetPrivateProfileIntW(L"run",L"mission_ai_count",0,job.c_str());
         const auto level=GetPrivateProfileIntW(L"run",L"mission_ai_level",0,job.c_str());
@@ -409,7 +407,7 @@ bool LoadPlan() {
         const std::wstring expectedTitle(roomTitle,roomTitle+strlen(roomTitle));
         if(expectedTitle!=actualTitle)return false;
     }
-    if (!missionMode && !ReadSealedRoomTitle(job,roomTitle)) return false;
+    if (!missionMode && !ReadPvpRoomTitle(job,narrowNonce,randomLoadout,expectedEnemies,expectedAllies,roomTitle)) return false;
     if (!missionMode && !ReadSealedAiTeamCounts(job,expectedAi,roomTitle,expectedAllies,expectedEnemies)) return false;
     retryCount = static_cast<unsigned>(GetPrivateProfileIntW(L"run", L"retry_count", 1, job.c_str()));
     if (retryCount < 1 || retryCount > 2) return false;
@@ -853,6 +851,11 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
     SdgoPvpAiClientSnapshotV1 snapshot{};
     if (!context->tick) motionSamples.clear();
     if (!Snapshot(snapshot) || snapshot.native_app_state != 22) return SDGO_GAME_TEST_WAIT;
+    SdgoPvpAiClientStartStatusV1 activityStart{};
+    activityStart.size=sizeof(activityStart);activityStart.version=SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
+    if(getStartStatus&&getStartStatus(&activityStart)&&
+       activityStart.battle_start_sequence==snapshot.received_battle_start_count&&activityStart.player_control_enabled)
+        if(!battleAiBehavior.Observe(context,snapshot))return SDGO_GAME_TEST_FAIL;
     scoreboardInput.Hold(true);
     if (sdgo_test::api->SettingInt(sdgo_test::mod, "ApsalusRoundtrip", 0)) {
         SdgoPvpAiClientStartStatusV1 control{};

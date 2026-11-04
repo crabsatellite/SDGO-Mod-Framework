@@ -34,10 +34,14 @@ int sightQueries = 0;
 int rayCalls = 0;
 bool invalidRay = false;
 bool blocked = false;
+bool allySightOnly = false;
+bool ownerAttackable = true;
 std::array<uint8_t, 0x180> wall{};
 std::array<void*, 16> unitVtable{}, sceneVtable{};
 bool __fastcall IsA(void*, void*, int kind) { return kind == 0x15; }
-bool __fastcall Attackable(void*, void*, uint8_t*) { return true; }
+bool __fastcall Attackable(void*, void*, uint8_t* observer) {
+    return ownerAttackable||*reinterpret_cast<uint32_t*>(observer+4)!=1001;
+}
 bool __fastcall Terrain(void*, void*, int kind) { return kind == 3; }
 battle_ai::native::Ray3* __fastcall Ray(uint8_t*, void*, Ray3* ray) {
     ++rayCalls;
@@ -45,14 +49,39 @@ battle_ai::native::Ray3* __fastcall Ray(uint8_t*, void*, Ray3* ray) {
     *ray = {{0, 0, 0}, {0, 0, 1}};
     return ray;
 }
-void __fastcall Query(void*, void*, void** scenes, int* count, int, const battle_ai::native::Aabb*) {
+void __fastcall Query(void*, void*, void** scenes, int* count, int, const battle_ai::native::Aabb* bounds) {
     ++sightQueries;
-    *count = blocked ? 1 : 0;
-    if (blocked) scenes[0] = wall.data();
+    const bool hit=blocked&&(!allySightOnly||bounds->min.z<1000);
+    *count = hit ? 1 : 0;
+    if (hit) scenes[0] = wall.data();
 }
 bool __cdecl Segment(const Vec3*, const Vec3*, const battle_ai::native::Aabb*) { return true; }
 bool __fastcall TerrainRay(void*, void*, const Ray3*, float* distance) { *distance = 10; return true; }
 bool __cdecl ShapeRay(const Ray3*, const void*, float*) { return false; }
+std::array<uint8_t,0x600> publicNavigation{};
+std::array<uint8_t,0x190> publicNode{};
+std::array<uint8_t,0x40> publicSpawn{};
+Vec3 routePoint{},submittedGoal{};
+int nodeQueries=0,routeQueries=0,routeFrees=0,goalSubmissions=0;
+int navigationStops=0;
+void __fastcall StopNavigation(uint8_t*,void*) {++navigationStops;}
+uint8_t* __fastcall PublicSpawn(uint8_t*,void*,int colour,int index) {
+    CHECK(colour==2&&index==0);return publicSpawn.data();
+}
+uint8_t* __fastcall PublicNodeForPoint(uint8_t* nav,void*,Vec3 point) {
+    CHECK(nav==publicNavigation.data()&&point.x==2000&&point.y==600&&point.z==0);
+    ++nodeQueries;return publicNode.data();
+}
+uint8_t* __fastcall PublicNodeAt(uint8_t* nav,void*,int index) {
+    CHECK(nav==publicNavigation.data()&&index==0);++nodeQueries;return publicNode.data();
+}
+Vec3* __fastcall PublicRoute(uint8_t* nav,void*,uint32_t,Vec3,Vec3 destination,Vec3*,uint32_t* count) {
+    CHECK(nav==publicNavigation.data());++routeQueries;routePoint=destination;*count=1;return &routePoint;
+}
+void __cdecl ReleasePublicRoute(void* point) {CHECK(point==&routePoint);++routeFrees;}
+int __fastcall SubmitPublicGoal(uint8_t*,void*,const Vec3* goal,int mode) {
+    CHECK(mode==1);submittedGoal=*goal;++goalSubmissions;return 1;
+}
 
 struct World {
     Storage owner;
@@ -92,6 +121,7 @@ struct World {
     }
     explicit World(size_t count) {
         blocked = false;
+        allySightOnly=false;ownerAttackable=true;
         invalidRay=false;rayCalls=0;
         unitVtable[1] = reinterpret_cast<void*>(&IsA);
         unitVtable[10] = reinterpret_cast<void*>(&Attackable);
@@ -132,6 +162,7 @@ uint64_t Digest(const Observation& o) {
         const auto& target = o.targets[i];
         add(target.id); add(target.hp); add(target.visible); add(target.rangedVisible);
         add(target.meleeVisible); add(target.hurt); add(target.damageProtected);
+        add(target.teamVisible);add(target.teamSource);
         add(uint64_t(target.distance * 1000));
     }
     return value;
@@ -204,6 +235,85 @@ int main(int argc, char**) {
         Put(world->owner.attack.data(),0x248,world->weapons[1].data());
         Observation missingGunOrigin{};
         CHECK(!Capture(missingGunOrigin)&&rayCalls==1);
+    }
+    {
+        auto world=std::make_unique<World>(2);
+        Put(world->enemies[1].unit.data(),0x20,int32_t(1));
+        Put(world->enemies[1].node.data(),0x88,Vec3{0,0,1500});
+        blocked=true;allySightOnly=true;
+        Observation shared{};
+        CHECK(Capture(shared)&&shared.count==1&&shared.allyCount==1);
+        CHECK(!shared.targets[0].visible&&!shared.targets[0].rangedVisible&&!shared.targets[0].meleeVisible);
+        CHECK(shared.targets[0].teamVisible&&shared.targets[0].teamSource==2001);
+        Observation uncached{};
+        CHECK(GuardedCapture(uncached)&&Digest(shared)==Digest(uncached));
+        Put(world->enemies[1].node.data(),0x88,Vec3{0,0,100});
+        Observation occluded{};
+        CHECK(Capture(occluded)&&!occluded.targets[0].teamVisible);
+        Put(world->enemies[1].node.data(),0x88,Vec3{0,0,1500});
+        Put(world->enemies[1].unit.data(),0x38,int32_t(0));
+        Observation deadAlly{};
+        CHECK(Capture(deadAlly)&&deadAlly.allyCount==0&&!deadAlly.targets[0].teamVisible);
+        Put(world->enemies[1].unit.data(),0x38,int32_t(1000));ownerAttackable=false;
+        Observation differentPermission{};
+        CHECK(Capture(differentPermission)&&differentPermission.count==1);
+        CHECK(!differentPermission.targets[0].attackable&&!differentPermission.targets[0].visible&&
+              differentPermission.targets[0].teamVisible);
+    }
+    {
+        publicNavigation={};uint32_t count=0;
+        CHECK(!NavigationNodeCount(publicNavigation.data(),count));
+        Put(publicNavigation.data(),0x580,int32_t(1));
+        CHECK(NavigationNodeCount(publicNavigation.data(),count)&&count==1);
+        Put(publicNavigation.data(),0x580,int32_t(-1));
+        CHECK(!NavigationNodeCount(publicNavigation.data(),count));
+        std::array<uint32_t,2> nodes{};
+        Put(publicNavigation.data(),0x560,reinterpret_cast<uint8_t*>(nodes.data()));
+        Put(publicNavigation.data(),0x564,reinterpret_cast<uint8_t*>(nodes.data()+2));
+        CHECK(NavigationNodeCount(publicNavigation.data(),count)&&count==2);
+        Put(publicNavigation.data(),0x564,reinterpret_cast<uint8_t*>(nodes.data())+1);
+        CHECK(!NavigationNodeCount(publicNavigation.data(),count));
+
+        auto world=std::make_unique<World>(1);
+        publicNavigation={};Put(publicNavigation.data(),0x580,int32_t(1));
+        Put(world->document.data(),0x8364,publicNavigation.data());
+        Put(publicSpawn.data(),0x24,Vec3{2000,600,0});
+        Put(publicNode.data(),0x180,Vec3{2000,0,0});
+        g_startPoint=reinterpret_cast<StartPointFn>(&PublicSpawn);
+        g_navigationNode=reinterpret_cast<NavigationNodeFn>(&PublicNodeForPoint);
+        g_navigationNodeAt=reinterpret_cast<NavigationNodeAtFn>(&PublicNodeAt);
+        g_route=reinterpret_cast<RouteFn>(&PublicRoute);g_delete=&ReleasePublicRoute;
+        g_setGoal=reinterpret_cast<GoalFn>(&SubmitPublicGoal);
+        nodeQueries=routeQueries=routeFrees=goalSubmissions=0;
+        const bool explored=ExploreMapUnsafe();
+        std::printf("PUBLIC NAV admitted=%d nodes=%d routes=%d frees=%d submissions=%d available=%d cursor=%u\n",
+            explored,nodeQueries,routeQueries,routeFrees,goalSubmissions,MovementAvailable(g_current,false),ActorFor(g_current).searchCursor);
+        CHECK(explored);
+        CHECK(nodeQueries==1&&routeQueries==1&&routeFrees==1&&goalSubmissions==1);
+        CHECK(submittedGoal.x==2000&&submittedGoal.y==0&&submittedGoal.z==0);
+        CHECK(ActorFor(g_current).explorationOwned&&ActorFor(g_current).explorationRoutes==1);
+        Put(world->owner.movement.data(),8,world->owner.movement.data()+0x124);
+        CHECK(!MovementAvailable(g_current,true)&&!ExploreMapUnsafe());
+        CHECK(goalSubmissions==1);
+    }
+    {
+        auto world=std::make_unique<World>(1);
+        g_stop=reinterpret_cast<decltype(g_stop)>(&StopNavigation);navigationStops=0;
+        auto& actor=ActorFor(g_current);actor.defenceMoveOwned=true;actor.path={{1000,0,0}};
+        actor.geometryOwned=true;actor.geometryFinal=true;
+        Put(world->owner.movement.data(),4,world->owner.movement.data()+0x20);
+        Put(world->owner.movement.data(),8,world->owner.movement.data()+0x124);
+        ApplyDefence(g_current,actor);
+        CHECK(navigationStops==0&&!actor.defenceMoveOwned&&actor.path.empty());
+        actor.path={{1000,0,0}};actor.geometryOwned=true;actor.geometryFinal=true;
+        CHECK(!FollowPath(g_current,actor)&&actor.path.empty()&&!actor.geometryOwned&&!actor.geometryFinal);
+        Put(world->owner.movement.data(),8,uint32_t(0));
+        Put(world->owner.attack.data(),4,world->owner.attack.data()+0x48);
+        actor.defenceMoveOwned=true;actor.path={{1000,0,0}};
+        ApplyDefence(g_current,actor);CHECK(navigationStops==0&&!actor.defenceMoveOwned);
+        Put(world->owner.attack.data(),4,world->owner.attack.data()+0x20);
+        actor.defenceMoveOwned=true;actor.path={{1000,0,0}};
+        ApplyDefence(g_current,actor);CHECK(navigationStops==1&&!actor.defenceMoveOwned);
     }
     ai_test::api.Symbol=&ResolveLookup;
     auto document=lookupDocument.data();g_document=&document;
