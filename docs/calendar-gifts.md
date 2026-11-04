@@ -15,7 +15,7 @@ Automatic delivery starts disabled. The bundled editable rules provide:
 
 An exhausted birthday tier searches higher rarity, then lower rarity within the same base rank. Choices within one bundle remain distinct. AU, BU and CU can be enabled separately. An exhausted tier and fallback range are skipped rather than filled with duplicates.
 
-New workspaces contain all 14 holidays. Existing policies are preserved: use **补充常见节日** in the event section and save the rules to add missing new presets. Existing IDs, names, switches, rewards and private rosters remain intact; a festival already configured under another ID is not duplicated. New events start on the save date, so downtime recovery does not retroactively grant holidays from before they were added.
+New workspaces contain all 14 holidays. Existing policies are preserved: use **补充常见节日** in the event section and **保存通用规则** in the save bar to add missing new presets. Existing IDs, names, switches, rewards and private rosters remain intact; a festival already configured under another ID is not duplicated. New events start on the save date, so downtime recovery does not retroactively grant holidays from before they were added.
 
 Ownership checks include the hangar, permanent units awaiting collection in native Storage, and relevant units held by the friend unit gift module. Eligible units need an existing valid permanent-unit reward definition on the server. Fixed-unit rewards also skip owned or pending types.
 
@@ -25,7 +25,9 @@ Ownership checks include the hangar, permanent units awaiting collection in nati
 2. Select a separate private configuration directory and this server's `WorldServer.ini`. Private data cannot be placed inside a distributable Mod directory. Existing INI credentials remain local and are not returned by the API or included in rule exports.
 3. Configure each event's date, audience and rewards. Choose one missing unit, one per selected tier, fixed units, or native items found by name in the server catalog.
 4. Register birthday month/day values by player name, or import existing birthday registrations. If the old table has been removed, select its private JSON backup in the directory settings. Import retains only player identities and birthdays, preserves existing dates, and does not store email addresses.
-5. Save the rules, review a player/date with the read-only preview, then start the supervised calendar task.
+5. Save with **保存通用规则** (common rules) and **保存私人名单** (private roster) in the save bar at the bottom of the
+   page, which marks the part that is still unsaved. Review a player/date with the read-only preview, then start the
+   supervised calendar task with **保存全部并重启后台任务** (save both and restart the task).
 
 Private player groups support anniversaries and one-time events. February 29 birthdays can use February 28, March 1, or leap years only.
 
