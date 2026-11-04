@@ -304,6 +304,24 @@ def manifest_requires(path: Path) -> set[str]:
     return {item.strip() for item in manifest_mod(path).get('requires','').split(',') if item.strip()}
 
 
+def shared_manifest_requires(manifest: Path, source) -> set[str]:
+    names = manifest_requires(manifest)
+    fragment = manifest.parent / 'symbols.fragment.ini'
+    if fragment.is_file():
+        local = read_ini(fragment)
+        try:
+            matching_host = (local['host']['image'].casefold() == source['host']['image'].casefold() and
+                all(int(local['host'][key], 0) == int(source['host'][key], 0)
+                    for key in ('timestamp', 'size_of_image')))
+        except (KeyError, ValueError):
+            matching_host = False
+        if not matching_host:
+            raise GameTestError('Mod symbol fragment does not match the selected host: ' + manifest.parent.name)
+        # Core verifies this Mod's sidecar in its own namespace.
+        names -= set(local.sections()) - {'host'}
+    return names
+
+
 def merge_required_symbols(
     stage_symbols: Path,
     copied_symbols: Path,
@@ -322,23 +340,7 @@ def merge_required_symbols(
         # Keep the complete matching staged map while preserving local aliases.
         required.update(source.sections())
     for manifest in manifests:
-        names = manifest_requires(manifest)
-        fragment = manifest.parent / 'symbols.fragment.ini'
-        if fragment.is_file():
-            local = read_ini(fragment)
-            try:
-                matching_host = (local['host']['image'].casefold() == source['host']['image'].casefold() and
-                    all(int(local['host'][key], 0) == int(source['host'][key], 0)
-                        for key in ('timestamp', 'size_of_image')))
-            except (KeyError, ValueError):
-                matching_host = False
-            if not matching_host:
-                raise GameTestError('Mod symbol fragment does not match the selected host: ' + manifest.parent.name)
-            # Core loads and verifies this Mod's sidecar itself. Keep its aliases
-            # local rather than moving them into the shared map or satisfying
-            # another Mod's requirements with them.
-            names -= set(local.sections()) - {'host'}
-        required.update(names)
+        required.update(shared_manifest_requires(manifest, source))
     missing = sorted(section for section in required if not source.has_section(section) and
                      not (preserve_existing and destination.has_section(section)))
     if missing and not allow_missing:
@@ -514,7 +516,7 @@ def validate_observer_stage(
                 raise GameTestError('fps_limit manifest has the wrong identity')
     source=read_ini(client/f'sdgo/symbols/{HOST_KEY}.ini')
     required={'host'}
-    for manifest in updated.values():required.update(manifest_requires(manifest))
+    for manifest in updated.values():required.update(shared_manifest_requires(manifest, source))
     existing_path=root/f'sdgo/symbols/{HOST_KEY}.ini'
     existing=read_ini(existing_path) if existing_path.is_file() else ini_parser()
     missing=sorted(

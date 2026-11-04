@@ -3,10 +3,11 @@
 #include <cstdio>
 namespace {
 SdgoStorageGameTestSnapshotV1 snapshot{};
-unsigned calls=0,failures=0;
+unsigned calls=0,closeCalls=0,failures=0;
 bool allow=true;
 int __cdecl Get(SdgoStorageGameTestSnapshotV1* output){*output=snapshot;return 1;}
 int __cdecl Action(uint64_t hash,uint32_t action){
+    if(allow && hash==snapshot.run_hash && action==SDGO_STORAGE_GAME_TEST_ACTION_CLOSE){++closeCalls;return 1;}
     if(!allow || hash!=snapshot.run_hash || action!=SDGO_STORAGE_GAME_TEST_ACTION_CLAIM_ALL)return 0;
     ++calls;++snapshot.action_sequence;
     if(!snapshot.armed)snapshot.armed=1;
@@ -22,7 +23,7 @@ void Reset(){
     snapshot={};snapshot.size=sizeof(snapshot);snapshot.version=SDGO_GAME_TEST_PAGE_OBSERVER_VERSION;
     const auto c=Context();snapshot.run_hash=sdgo::game_test_page_observer::ClientRunHash(c.run_id,36,c.role,6);
     snapshot.session=11;snapshot.process_id=GetCurrentProcessId();snapshot.ui_thread_id=GetCurrentThreadId();
-    snapshot.loaded=1;snapshot.visible=1;calls=0;allow=true;
+    snapshot.loaded=1;snapshot.visible=1;calls=0;closeCalls=0;allow=true;
 }
 StorageTestActions Driver(){StorageTestActions d;d.Bind({&Get,&Action});return d;}
 void Start(StorageTestActions& d,const SdgoGameTestContextV1& c){
@@ -32,6 +33,14 @@ void Start(StorageTestActions& d,const SdgoGameTestContextV1& c){
 }
 int main(){
     const auto c=Context();Reset();auto d=Driver();
+    for(unsigned cycle=0;cycle<3;++cycle){
+        snapshot.visible=1;
+        Check(d.Close(&c)==StorageTestActions::Waiting && closeCalls==cycle+1,"reopened native page gets one fresh close action");
+        Check(d.Close(&c)==StorageTestActions::Waiting && closeCalls==cycle+1,"pending native close is not duplicated");
+        snapshot.visible=0;
+        Check(d.Close(&c)==StorageTestActions::Complete,"observed native close resets the next lifecycle");
+    }
+    Reset();d=Driver();
     Check(d.Read(&c)==StorageTestActions::Ready,"same-run native page is ready");
     snapshot.visible=0;Check(d.Read(&c)==StorageTestActions::Waiting,"invisible page stays pending");snapshot.visible=1;
     ++snapshot.run_hash;Check(d.Read(&c)==StorageTestActions::IdentityMismatch,"foreign run rejected");--snapshot.run_hash;
