@@ -562,7 +562,7 @@ def validate_local_native_sql(private, work):
     finally:db.close()
 
 
-def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_id=None):
+def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_id=None,mission_respawn_probe=None):
     work=work.resolve();stage=stage.resolve();startup_xml=startup_xml.resolve()
     private=json.loads((work/'private.json').read_text())
     manifest=json.loads((work/'backend.json').read_text())
@@ -576,6 +576,11 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
     fps_suite=suite=='native-fps-limit'
     host_pilot_id=observer_host_id(fps_suite,host_pilot_id)
     native_local=private.get('kind')=='native-local-test'
+    respawn_policy=client['plan'].get('mission_respawns')
+    if respawn_policy and (not native_local or mission_respawn_probe is None or not mission_respawn_probe.is_file()):
+        raise RuntimeError('Mission respawn acceptance requires the explicit isolated native combat probe DLL')
+    if mission_respawn_probe is not None and not respawn_policy:
+        raise RuntimeError('Native combat probe requires a sealed mission respawn plan')
     if native_local:validate_local_native_sql(private,work)
     else:raise RuntimeError('Docker service startup is retired; use a copied native-local-test backend. Legacy cleanup remains available.')
     lock,lock_token=game_test.acquire_lock(work)
@@ -684,6 +689,18 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                 cfg['run']={'id':client['run_id'],'role':'server','suite':'pvp-ai'}
                 cfg['observer']={'nonce':client['plan']['title_nonce'],'host_pilot_id':str(host_pilot_id),
                     'mode':'0','minimum_ai':str(client['plan'].get('expected_ai',client['plan'].get('mission_ai_count',3))),'require_end':'1'}
+                if respawn_policy:
+                    cfg['mission_respawn_probe']={
+                        'output':str(Path(client['client']['root'])/'sdgo/gametest/mission-respawn-server.ini'),
+                        'infinite':'1' if respawn_policy=='infinite' else '0'}
+                    probe=folder/'sdgo/mods/mission_respawn_server_probe'
+                    probe.mkdir(parents=True,exist_ok=True)
+                    shutil.copy2(mission_respawn_probe,probe/'mission_respawn_server_probe.dll')
+                    (probe/'mod.ini').write_text('[mod]\ndistribution=public\nid=mission_respawn_server_probe\nname=Native mission respawn combat fixture\ncategory=development\nfeature=game-test\nversion=1.0.0\napi=1\ndll=mission_respawn_server_probe.dll\norder=900\nhosts=BattleServer-548A891D-0046C000\n')
+                    symbols=folder/'sdgo/symbols/BattleServer-548A891D-0046C000.ini'
+                    text=symbols.read_text(encoding='utf-8-sig')
+                    if '[gametest.mission_respawn_tick]' not in text:
+                        symbols.write_text(text+'\n[gametest.mission_respawn_tick]\nkind=code\nrva=0x000884D9\nexpect=C7 45 F4 00 00 00 00\n',encoding='utf-8')
                 game_test.write_ini(job/'run.ini',cfg)
                 env.update(SDGO_GAME_TEST_RUN=client['run_id'],SDGO_GAME_TEST_ROLE='server')
                 settings=game_test.read_ini(folder/'sdgo/sdgo.ini')
@@ -691,6 +708,12 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                     if not settings.has_section(section): settings.add_section(section)
                 settings['categories']['development']='1';settings['features']['game-test']='1'
                 settings['mods']['game_test_server']='1';settings['mods']['pvp_ai']='1'
+                if respawn_policy:
+                    settings['mods']['mission_respawn_server_probe']='1'
+                    settings['mods']['coop_ai']='1'
+                    settings['features']['coop-wingmen']='1'
+                else:
+                    settings['mods']['mission_respawn_server_probe']='0'
                 game_test.write_ini(folder/'sdgo/sdgo.ini',settings)
             for attempt in range(1,3):
                 console=work/(spec['folder']+'.console.log')
@@ -924,6 +947,7 @@ def build_parser():
     serve_cmd.add_argument('--startup-timeout',type=int,default=240)
     serve_cmd.add_argument('--host-pilot-id',type=int,
         help='actual reused account pilot ID for authenticated suites; omit for FPS')
+    serve_cmd.add_argument('--mission-respawn-probe',type=Path,help='development-only native combat fixture for a sealed mission respawn plan')
     stop_cmd=commands.add_parser('stop')
     stop_cmd.add_argument('--work',type=Path,required=True)
     stop_cmd.add_argument('--reason',default='bounded GameTest backend stop')
@@ -943,7 +967,7 @@ def main(argv=None):
         elif args.action=='serve':
             if not 60<=args.lifetime<=7200:raise RuntimeError('Lifetime must be between 60 and 7200 seconds')
             if not 30<=args.startup_timeout<=600:raise RuntimeError('Startup timeout must be between 30 and 600 seconds')
-            serve(args.work,args.client_run,args.lifetime,args.stage,args.startup_xml,args.startup_timeout,args.host_pilot_id)
+            serve(args.work,args.client_run,args.lifetime,args.stage,args.startup_xml,args.startup_timeout,args.host_pilot_id,args.mission_respawn_probe)
         elif args.action=='stop':
             stop(args.work,args.reason)
         elif args.action=='cleanup':

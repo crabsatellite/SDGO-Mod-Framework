@@ -29,7 +29,7 @@ class MissionPlanContractTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def plan(self, mode=5, play_unit_uid=None, target_host="127.0.0.1"):
+    def plan(self, mode=5, play_unit_uid=None, target_host="127.0.0.1", respawns=None):
         plan = game_test.make_plan(
             target_host,
             5001,
@@ -42,6 +42,7 @@ class MissionPlanContractTests(unittest.TestCase):
             None,
             play_unit_uid=play_unit_uid,
             mission_mode=mode,
+            mission_respawns=respawns,
         )
         plan["network_policy"] = "direct"
         plan["quiet"] = True
@@ -71,6 +72,7 @@ class MissionPlanContractTests(unittest.TestCase):
         *,
         route=False,
         account_state="existing_account",
+        respawns=None,
     ):
         self.sequence += 1
         run_dir = self.base / f"run-{self.sequence}"
@@ -79,7 +81,7 @@ class MissionPlanContractTests(unittest.TestCase):
         game = client / game_test.GAME_EXE
         game.write_bytes(b"offline mission plan fixture")
         run_id = str(uuid.uuid4())
-        plan = self.plan(mode, play_unit_uid)
+        plan = self.plan(mode, play_unit_uid, respawns=respawns)
         if route:
             plan.update({
                 "target_host": "127.90.0.1",
@@ -138,6 +140,23 @@ class MissionPlanContractTests(unittest.TestCase):
 
     def metadata(self, run_dir):
         return game_test.read_json(run_dir / "run.json")
+
+    def test_respawn_policy_roundtrips_in_the_sealed_mission_scope(self):
+        for policy in ('player','infinite'):
+            run=self.capsule(respawns=policy)
+            metadata=game_test.validate_metadata(run)
+            self.assertEqual(metadata['plan']['mission_respawns'],policy)
+            self.assertEqual(game_test.required_cases_for_plan(metadata['plan'])[-1],'mission.respawn')
+            self.assertEqual(metadata['plan']['room_title'].endswith(' inf'),policy=='infinite')
+
+    def test_respawn_policy_cannot_be_changed_independently_of_the_room_title(self):
+        run=self.capsule(respawns='player')
+        self.mutate_run_ini(run,'mission_respawns','infinite')
+        with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run)
+
+    def test_respawn_probe_requires_a_mission(self):
+        with self.assertRaises(game_test.GameTestError):
+            game_test.make_plan('127.0.0.1',5001,'1','1','1',1,False,3,None,mission_respawns='infinite')
 
     def write_metadata(self, run_dir, metadata):
         game_test.atomic_write(
