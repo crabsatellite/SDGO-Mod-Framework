@@ -707,7 +707,7 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                     'mode':'0','minimum_ai':str(client['plan'].get('expected_ai',client['plan'].get('mission_ai_count',3))),'require_end':'1'}
                 if respawn_policy:
                     cfg['mission_respawn_probe']={
-                        'output':str(Path(client['client']['root'])/'sdgo/gametest/mission-respawn-server.ini'),
+                        'output':str(Path(client['client']['root'])/'sdgo/gametest'/('mission-respawn-server-'+client['run_id']+'.ini')),
                         'infinite':'1' if respawn_policy=='infinite' else '0'}
                     probe=folder/'sdgo/mods/mission_respawn_server_probe'
                     probe.mkdir(parents=True,exist_ok=True)
@@ -807,6 +807,11 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
             if any(process.poll() is not None for process,_ in ready_services) or time.monotonic()>deadline:
                 raise RuntimeError('Owned native client login listener was not ready')
             time.sleep(.2)
+        if respawn_policy:
+            current_client=game_test.validate_metadata(client_run.resolve())
+            if (current_client['run_id']!=client['run_id'] or
+                    current_client['plan']['room_title']!=client['plan']['room_title']):
+                raise RuntimeError('Mission client capsule changed during backend startup; finish preparation before starting its backend')
         publish('ready');emit('backend_ready',ip=target_ip,lifetime=lifetime,client_login_port=login_port)
         until=time.monotonic()+lifetime
         while time.monotonic()<until and not (work/'stop.request').exists():
