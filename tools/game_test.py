@@ -3862,15 +3862,21 @@ def stop_owned_entry_process(process, timeout: float = OWNED_PROCESS_EXIT_TIMEOU
 
 def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 30.0, *, on_process=None, on_poll=None) -> dict:
     run_dir = run_dir.resolve()
-    metadata = validate_metadata(run_dir)
-    verify_hashes(metadata)
-    if metadata.get("execution") is not None:
-        raise GameTestError("this capsule already has an execution receipt; prepare a fresh run")
-    events = Path(metadata["client"]["events"])
-    if events.exists():
-        raise GameTestError(f"native event file already exists; prepare a fresh run: {events}")
-
+    validate_metadata(run_dir)
     lock, token = acquire_lock(run_dir)
+    try:
+        # Preparation can move/reseal the capsule. Hold its ownership lock while
+        # reading the final identity and hashing inputs, not only after hashing.
+        metadata = validate_metadata(run_dir)
+        verify_hashes(metadata)
+        if metadata.get("execution") is not None:
+            raise GameTestError("this capsule already has an execution receipt; prepare a fresh run")
+        events = Path(metadata["client"]["events"])
+        if events.exists():
+            raise GameTestError(f"native event file already exists; prepare a fresh run: {events}")
+    except BaseException:
+        release_owned_lock(lock, token)
+        raise
     account_lock = None
     account_token = None
     receipt_dir = run_dir / "receipts"
