@@ -46,13 +46,14 @@ class UnitFrameworkUpdates(unittest.TestCase):
     def save_receipt(self):
         storage.atomic(self.host/ownership.RECEIPT,storage.json_bytes(self.receipt))
 
-    def framework(self,version,legacy=False):
+    def framework(self,version,legacy=False,fragment=False):
         raw,_,_=bundle('beta',version)
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:catalog=json.loads(archive.read('client/sdgo/catalog.json'))
         mod={'id':'unit_catalog','feature':'unit-import','target':'client','category':'gameplay',
              'hosts':[KEY],'version':'0.4.0','channel':'beta','files':['manager.json'],
              'config_files':[],'runtime_files':[]}
         if not legacy:mod['distribution']='public'
+        if fragment:mod['files'].append('symbols.fragment.ini')
         catalog['mods'].append(mod);catalog['features']['unit-import']={'category':'gameplay','mods':['unit_catalog']}
         scope=b'' if legacy else b'distribution=public\n'
         ini=b'[mod]\nid=unit_catalog\nversion=0.4.0\n'+scope+b'enabled=0\n[settings]\nEnabled=1\nNewOption=7\n'
@@ -62,6 +63,7 @@ class UnitFrameworkUpdates(unittest.TestCase):
             'client/'+ownership.BASE+'unit_catalog.dll':b'verified new unit program',
             'client/'+ownership.BASE+'mod.ini':ini,
             'client/'+ownership.BASE+'manager.json':storage.json_bytes(manager)}
+        if fragment:payload['client/'+ownership.BASE+'symbols.fragment.ini']=b'[unit.signature]\nrva=42\n'
         raw,asset,_=bundle('beta',version,extra=payload)
         path=self.root/('framework-'+version);manifest=u.unpack(raw,asset,path)
         return path,manifest
@@ -99,6 +101,18 @@ class UnitFrameworkUpdates(unittest.TestCase):
         for path,data in before.items():self.assertEqual(data,path.read_bytes())
         again=u.install_host(self.record,self.bundle,self.manifest,self.cache,lambda _:False)
         self.assertEqual(0,again['changed_files'])
+
+    def test_framework_updates_a_recorded_symbol_fragment_without_claiming_foreign_ownership(self):
+        fragment=self.mod/'symbols.fragment.ini';fragment.write_bytes(b'[unit.signature]\nrva=21\n')
+        self.receipt['files'].append({'path':ownership.BASE+'symbols.fragment.ini',
+            'installed_sha256':u.digest(fragment.read_bytes()),'owned':False});self.save_receipt()
+        source,manifest=self.framework('1.3.2-beta.1',fragment=True)
+        self.assertEqual('installed',u.install_host(self.record,source,manifest,self.cache,lambda _:False)['status'])
+        receipt=self.check_receipt();self.assertFalse(receipt['files'][-1]['owned'])
+        self.assertEqual((source/'client'/ownership.BASE/'symbols.fragment.ini').read_bytes(),fragment.read_bytes())
+        fragment.write_bytes(fragment.read_bytes()+b'external change');before=self.all_bytes()
+        with self.assertRaises(ValueError):u.install_host(self.record,source,manifest,self.cache,lambda _:False)
+        self.assertEqual(before,self.all_bytes())
 
     def test_legacy_already_updated_programs_are_reconciled_without_touching_runtime(self):
         self.set_already_updated();before=self.all_bytes()
