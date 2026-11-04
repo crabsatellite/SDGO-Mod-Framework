@@ -20,7 +20,8 @@ CATEGORY_FIRST=1599000
 CATEGORY_LAST=1599999
 FIELDS={'schema_version','id','enabled','name','source','recipe_template_id',
         'item_template_id','item_category_id','output_unit_id','materials',
-        'minimum_player_level','repay_point','encyclopedia_primary','internal_name','recipe_sprite'}
+        'minimum_player_level','repay_point','encyclopedia_primary','internal_name','recipe_sprite',
+        'client_templates'}
 
 
 def _number(value,label,maximum=2_147_483_647,minimum=0,nullable=True):
@@ -70,6 +71,13 @@ def normalize(value,*,root_unit_id):
                 not re.fullmatch(r'sprs/[a-z0-9_-]+\.spr',sprite)):
                 raise ValueError('设计图卡面须为受支持的 sprs/名称.spr 路径')
             result['recipe_sprite']=sprite
+    if 'client_templates' in result:
+        binding=result['client_templates']
+        if binding is None:
+            result.pop('client_templates')
+        else:
+            from .blueprint_templates import normalize_binding
+            result['client_templates']=normalize_binding(binding)
     for key in ('id','recipe_template_id','item_template_id','item_category_id'):
         result[key]=_number(result.get(key),key,minimum=1)
     output=_number(result.get('output_unit_id'), '设计图产物',minimum=1)

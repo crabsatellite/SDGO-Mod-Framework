@@ -80,7 +80,7 @@ def publish(workspace,state,selected,transaction):
     from .codec import patch_weapon,patch_unit,UNIT_FIELDS
     from owner.native_archive import build_archive
     binary,mod_manifest,symbols,installer=_adapter_files(workspace)
-    records=[];assets={};registrations=[];plans=[];published=[]
+    records=[];assets={};registrations=[];plans=[];published=[];blueprint_receipts=[]
     index_rows=workspace.baseline.unit_index()
     next_index=0x375BE1+len(index_rows)
     def asset(name,raw):
@@ -95,7 +95,7 @@ def publish(workspace,state,selected,transaction):
         # They also preserve the last active record while an update is a draft.
         family=draft.get('published')
         if not family:continue
-        family=copy.deepcopy(family);published.append(family)
+        family=copy.deepcopy(family);published.append(family);family_blueprint_receipts=[]
         root=family['root_unit_id'];plan=workspace.plan(family);plans.append(plan)
         for entry in family['files']:
             path=entry['path'].replace('\\','/').lower()
@@ -112,6 +112,11 @@ def publish(workspace,state,selected,transaction):
             texture=f'txrs/u{root}{letter}.txr';sprite=f'sprs/u{root}{letter}.spr'
             asset(texture,png);asset(sprite,sprite_binary(texture.replace('/','\\'),width,height));display[role]=sprite
         display['capsule']=display.get('capsule_fixed',display['custom'])
+        if any(not row.get('client_templates') for row in family.get('blueprints',[])):
+            for role,letter in (('blueprint_preview','b'),('blueprint_card','r')):
+                png=generated[role];width,height=_png_dimensions(png)
+                texture=f'txrs/u{root}{letter}.txr';sprite=f'sprs/u{root}{letter}.spr'
+                asset(texture,png);asset(sprite,sprite_binary(texture.replace('/','\\'),width,height));display[role]=sprite
         for row in family['forms']:
             source=workspace.blob(row['source_sha'])
             shared={key:value for key,value in row['server'].items() if key in UNIT_FIELDS and UNIT_FIELDS[key]['type'] not in ('utf16le',)}
@@ -154,29 +159,44 @@ def publish(workspace,state,selected,transaction):
         index_position=len(records)
         records.append((85,index_id,bytes(index)))
         if family.get('blueprints'):
-            from . import blueprints,blueprint_codec
+            from . import blueprints,blueprint_codec,blueprint_templates
+            family_files={entry['path']:workspace.blob(entry['sha']) for entry in family.get('files',[])}
             for declaration in family['blueprints']:
                 template=workspace.baseline.record('blueprint',declaration['recipe_template_id'])
                 if template is None:raise ValueError('客户端缺少所选设计图模板')
+                blueprint_codec.decode(template)
                 compiling=copy.deepcopy(declaration);compiling['enabled']=True
                 sprite=declaration.get('recipe_sprite')
-                if sprite and sprite not in assets and not workspace.baseline.exists(sprite):
+                if (sprite and not declaration.get('client_templates') and
+                        sprite not in assets and not workspace.baseline.exists(sprite)):
                     raise ValueError('设计图卡面尚未提供：'+sprite)
-                raw=blueprint_codec.patch(template,compiling,root_unit_id=root,recipe_sprite=sprite)
-                records.append((33,declaration['id'],raw))
                 template_item=workspace.baseline.record('item',declaration['item_template_id'])
                 if not template_item or len(template_item)!=614 or template_item[4]!=0:
                     raise ValueError('客户端缺少启用的原生图纸物品模板')
                 if struct.unpack_from('<I',template_item)[0]//100000!=15:raise ValueError('图纸模板不是原生15类物品')
-                item=bytearray(template_item)
-                struct.pack_into('<I',item,0,declaration['item_category_id'])
-                wchar(item,5,50,declaration['name'])
-                struct.pack_into('<I',item,105,declaration['id'])
-                records.append((34,declaration['item_category_id'],bytes(item)))
+                if declaration.get('client_templates'):
+                    compiled=blueprint_templates.compile_binding(
+                        compiling,root_unit_id=root,files=family_files)
+                    for resource in compiled['resolved']['manifest']['resources']:
+                        asset(resource['path'],family_files[resource['member']])
+                    records.append((33,declaration['id'],compiled['recipe']))
+                    records.append((34,declaration['item_category_id'],compiled['item']))
+                    blueprint_receipts.append(compiled['receipt'])
+                    family_blueprint_receipts.append(compiled['receipt'])
+                else:
+                    raw=blueprint_codec.patch(template,compiling,root_unit_id=root,
+                        recipe_sprite=sprite or display['blueprint_card'],preview_sprite=display['blueprint_preview'])
+                    records.append((33,declaration['id'],raw))
+                    item=bytearray(template_item)
+                    struct.pack_into('<I',item,0,declaration['item_category_id'])
+                    wchar(item,5,50,declaration['name'])
+                    struct.pack_into('<I',item,105,declaration['id'])
+                    records.append((34,declaration['item_category_id'],bytes(item)))
             primary=blueprints.primary_id(family['blueprints'])
             if primary:struct.pack_into('<I',index,10,primary)
             # Replace only this root's pending index bytes, not a native table.
             records[index_position]=(85,index_id,bytes(index))
+        family_receipts={row['blueprint_id']:row for row in family_blueprint_receipts}
         registrations.append({'key':'unit:'+str(root),'provider':'unit_catalog','kind':'unit','unit_id':root,
             'category_id':family['category_id'],'family_key':family['family_key'],'revision':model.content_revision(family),
             'unit_index_id':index_id,
@@ -188,12 +208,22 @@ def publish(workspace,state,selected,transaction):
             'presentation':contract(workspace,family),
             'metadata':copy.deepcopy(family.get('metadata',{})),
             'primary_blueprint_id':blueprints.primary_id(family['blueprints']) if family.get('blueprints') else 0,
-            'blueprints':[{'id':r['id'],'item_category_id':r['item_category_id'],'enabled':r['enabled']} for r in family.get('blueprints',[])],
+            'blueprints':[{'id':r['id'],'item_category_id':r['item_category_id'],'enabled':r['enabled'],
+                'client_template_bound':r['id'] in family_receipts,
+                **({'client_template_compiled_sha256':{
+                    record['role']:record['compiled_sha256']
+                    for record in family_receipts[r['id']]['records']}}
+                   if r['id'] in family_receipts else {})}
+                for r in family.get('blueprints',[])],
             'shop_image_sha256':hashlib.sha256(generated['index_owned']).hexdigest(),
             'shop_source_sha256':family['presentation']['shop']['asset_sha'],'capsule_image_sha256':family['presentation']['capsule']['asset_sha'],
             'enabled':state['drafts'][family['id']]['status']!='disabled','storefront_changes':False,'gacha_changes':False})
     catalog=native_catalog(records)
-    content_revision=model.revision({'families':published,'record_hash':hashlib.sha256(catalog).hexdigest()})
+    # Generated artwork can change without changing a record's SPR path.
+    # Bind the actual resource bytes so an old bare image cannot share a
+    # publication revision with its corrected native-frame replacement.
+    content_revision=model.revision({'families':published,'record_hash':hashlib.sha256(catalog).hexdigest(),
+        'resource_hashes':{path:hashlib.sha256(raw).hexdigest() for path,raw in sorted(assets.items())}})
     prefix='client/sdgo/mods/unit_catalog/'
     overlay_extensions={'mdrs':'.mod','anrs':'.ani','txrs':'.txr','fxrs':'.zfx',
                         'sprs':'.spr','sdrs':'.zsd','scp':'.scp'}
@@ -215,6 +245,14 @@ def publish(workspace,state,selected,transaction):
             'families':published,'registrations':registrations},ensure_ascii=False,indent=2).encode(),
         'symbols.fragment.ini':symbols,'Install-UnitCatalog.ps1':installer,
         'registrations.json':json.dumps({'schema_version':1,'provider':'unit_catalog','revision':content_revision,'items':registrations},ensure_ascii=False,indent=2).encode(),
+        'blueprint-template-receipts.json':json.dumps({
+            'schema':'sdgo.unit-blueprint-client-template-receipts/1',
+            'items':blueprint_receipts,
+            'direct_resource_refs_verified':bool(blueprint_receipts),
+            'resource_closure_verified':False,
+            'semantic_resource_closure_required':bool(blueprint_receipts),
+            'native_registration_authorized':False,
+            'native_runtime_accepted':False},ensure_ascii=False,indent=2).encode(),
         'README.zh-CN.txt':('关闭游戏，运行 Install-UnitCatalog.ps1 -ClientRoot <客户端目录>。之后使用原启动器。\n'
             '此包登记机体和展示资源，不自动给玩家发机体、不自动添加商城商品或扭蛋条目。\n'
             '商城/扭蛋模块使用 registrations.json 中的同版原生图片路径。\n'

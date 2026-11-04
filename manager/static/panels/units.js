@@ -484,7 +484,7 @@ function renderBlueprints(){
   panel.replaceChildren();blueprintEditors=[];
   const title=document.createElement("h3");title.textContent="设计图配方";
   const note=document.createElement("p");note.className="note";
-  note.textContent="可保存自己的配方或补传有来源的定义。当前支持3至5个材料，第一个是保留的关键机体，其余材料会消耗；图纸本身也必须有获取途径。新增原生适配通过验收前，配方保持草稿。";
+  note.textContent="可保存自己的配方，或随制作项目导入有来源的设计图和图纸素材。内置兼容模板用于生成服务器配置，上传的展示模板负责客户端卡面与名称。当前支持3至5个材料，第一个是保留的关键机体，其余材料会消耗；图纸本身也必须有获取途径。新增原生适配通过验收前，配方保持草稿。";
   const add=document.createElement("button");add.type="button";add.textContent="添加设计图";
   add.dataset.blueprintLocked=draft.root_unit_id?"0":"1";
   add.disabled=busy||draft.status==="disabled"||!draft.root_unit_id;
@@ -508,9 +508,19 @@ function renderBlueprints(){
     const origin=blueprintSelect(fields,"来源 *",recipe.source?.kind||"unknown",Object.entries(sourceNames).map(([id,name])=>({id,name})),false);
     const enabled=blueprintSelect(fields,"配方状态",recipe.enabled===false?"0":"1",[{id:"1",name:"启用"},{id:"0",name:"停用（保留已持有图纸定义）"}],false);
     const primary=blueprintSelect(fields,"图鉴主设计图（多份启用配方需指定一份）",recipe.encyclopedia_primary?"1":"0",[{id:"0",name:"非主配方"},{id:"1",name:"图鉴默认显示此配方"}],false);
-    const template=blueprintSelect(fields,"原生配方显示模板 *",recipe.recipe_template_id,state.templates?.blueprints||[]);
-    const sprite=blueprintInput(fields,"配方卡面 SPR（留空沿用所选模板）",recipe.recipe_sprite||"");
-    const item=blueprintSelect(fields,"原生图纸物品模板 *",recipe.item_template_id,state.templates?.blueprint_items||[]);
+    const template=blueprintSelect(fields,"服务器配方兼容模板 *",recipe.recipe_template_id,state.templates?.blueprints||[]);
+    const sprite=blueprintInput(fields,"配方卡面 SPR（留空复用机体扭蛋图像；绑定展示模板时须与准备记录一致）",recipe.recipe_sprite||"");
+    const item=blueprintSelect(fields,"服务器图纸兼容模板 *",recipe.item_template_id,state.templates?.blueprint_items||[]);
+    const clientManifest=blueprintInput(fields,"客户端展示模板清单路径",recipe.client_templates?.manifest_path||"");
+    const clientManifestHash=blueprintInput(fields,"客户端展示模板清单 SHA-256",recipe.client_templates?.manifest_sha256||"");
+    const templateStatus=document.createElement("p");templateStatus.className="note";
+    const templateField="blueprints."+(recipe.id||recipe.name||"draft")+".client_templates";
+    const templateIssue=(draft.requirements||[]).find(row=>row.code==="blueprint_template_binding"&&row.field===templateField);
+    const semanticNote=(draft.requirements||[]).find(row=>row.code==="blueprint_template_semantic_closure"&&row.field===templateField);
+    if(templateIssue)templateStatus.textContent="客户端展示模板校验失败："+templateIssue.message;
+    else if(recipe.client_templates)templateStatus.textContent=semanticNote?.message||
+      "客户端展示模板已绑定；保存时会核对源/准备记录、哈希、允许的 SPR 改写和全部直接资源。递归资源语义与实机仍需单独验收。";
+    else templateStatus.textContent="未绑定客户端展示模板：使用所选内置兼容模板的卡面与名称。";
     const level=blueprintInput(fields,"玩家最低等级 *（0为不限制）",recipe.minimum_player_level,"number");level.max="255";
     const repay=blueprintInput(fields,"回收图纸返还点数 *",recipe.repay_point,"number");
     const sourceDomain=blueprintInput(fields,"恢复来源域（恢复数据必填）",recipe.source?.domain);
@@ -529,10 +539,14 @@ function renderBlueprints(){
       for(const [key,value] of Object.entries({domain:sourceDomain.value.trim(),record_id:number(sourceId),record_sha256:sourceHash.value.trim()})){
         if(value==null||value==="")delete source[key];else source[key]=value;
       }
-      return {...recipe,name:name.value.trim(),internal_name:internal.value.trim(),source,enabled:enabled.value!=="0",encyclopedia_primary:primary.value==="1",
+      const result={...recipe,name:name.value.trim(),internal_name:internal.value.trim(),source,enabled:enabled.value!=="0",encyclopedia_primary:primary.value==="1",
         recipe_template_id:number(template),item_template_id:number(item),recipe_sprite:sprite.value.trim()||null,
         output_unit_id:draft.root_unit_id,minimum_player_level:number(level),repay_point:number(repay),
         materials:materialInputs.map(read=>read())};
+      const manifestPath=clientManifest.value.trim(),manifestHash=clientManifestHash.value.trim();
+      if(manifestPath||manifestHash)result.client_templates={manifest_path:manifestPath,manifest_sha256:manifestHash};
+      else delete result.client_templates;
+      return result;
     };
     blueprintEditors.push(read);
     const addMaterial=document.createElement("button");addMaterial.type="button";addMaterial.textContent="添加材料槽（最多5个）";
@@ -548,7 +562,7 @@ function renderBlueprints(){
     remove.dataset.blueprintLocked=remove.disabled?"1":"0";
     remove.onclick=()=>{const rows=collectBlueprints();rows.splice(index,1);draft.blueprints=rows;renderBlueprints();markDirty();};
     const actions=document.createElement("div");actions.className="actions";actions.append(addMaterial,removeMaterial,remove);
-    body.append(fields,materialArea,actions);card.append(summary,body);panel.append(card);
+    body.append(fields,templateStatus,materialArea,actions);card.append(summary,body);panel.append(card);
   });
 }
 

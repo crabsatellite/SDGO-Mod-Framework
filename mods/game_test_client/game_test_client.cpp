@@ -16,6 +16,7 @@
 #include "battle_combat_actions.h"
 #include "apsalus_transform_probe.h"
 #include "unit_presentations_actions.h"
+#include "blueprint_actions.h"
 #include "unit_acquisition_actions.h"
 #include "capsule_draw_actions.h"
 #include "unit_select_actions.h"
@@ -79,6 +80,8 @@ ChannelActions channels;
 BattleShipActions battleships;
 BattleShipDeckActions decks;
 HangarNavigation hangarNavigation;
+BlueprintActions blueprint;
+BlueprintActions::Config blueprintConfig{};
 PageTestActions pages;
 OperatorCatalogActions operatorCatalog;
 AiCatalogActions aiCatalog;
@@ -194,6 +197,11 @@ std::vector<MotionSample> motionSamples;
 
 bool LoadPlan() {
     const std::wstring job = sdgo_test::directory + L"\\run.ini";
+    const std::wstring blueprintIni=sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini";
+    blueprintConfig.recipe=GetPrivateProfileIntW(L"settings",L"BlueprintRecipe",0,blueprintIni.c_str());
+    wchar_t bookText[32]{};GetPrivateProfileStringW(L"settings",L"BlueprintBookUid",L"0",bookText,32,blueprintIni.c_str());
+    blueprintConfig.book=_wcstoui64(bookText,nullptr,10);
+    if((blueprintConfig.recipe==0)!=(blueprintConfig.book==0))return false;
     unitPagesOnly=GetPrivateProfileIntW(L"settings",L"UnitPagesOnly",0,
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
     captureNativeFrames=GetPrivateProfileIntW(L"settings",L"CaptureNativeFrames",0,
@@ -294,7 +302,10 @@ bool LoadPlan() {
         if(!playUnitUid || errno || !end || *end)return false;
     }
     if(testUnitPresentations && !playUnitUid)return false;
-    if(unitPagesOnly && (!pagesOnly || !testUnitPresentations || collectionDraw || testShopCatalog))return false;
+    if(unitPagesOnly && (!pagesOnly || (!testUnitPresentations && !blueprintConfig.recipe) || collectionDraw || testShopCatalog))return false;
+    if(blueprintConfig.recipe && (!unitPagesOnly || !pagesOnly || !playUnitUid || testUnitPresentations ||
+            captureUnitPortraits || unitAcquisitionConfig.machine_kind || collectionPreviewOnly || collectionDraw ||
+            activityDrawOnce || testShopCatalog || roomTitlesOnly))return false;
     if(captureUnitPortraits && (!testUnitPresentations || !captureNativeFrames))return false;
     if (static_cast<unsigned>(bootstrapOnly) + battleshipOnly + giftRequestsOnly + deckOnly + pagesOnly + friendsOnly + roomTitlesOnly > 1) return false;
     if (friendsOnly && (missionMode || playUnitUid || collectionDraw || testShopCatalog))return false;
@@ -1990,6 +2001,53 @@ int __cdecl SelectPlayUnit(const SdgoGameTestContextV1* context) {
     return SDGO_GAME_TEST_PASS;
 }
 const SdgoGameTestCaseV1 playUnitCase{"setup.active_unit",120000,&SelectPlayUnit};
+int BlueprintResult(const SdgoGameTestContextV1* context,BlueprintActions::Result result) {
+    const auto s=blueprint.State();
+    static uint32_t previous=0,phase=0,rows=0;static uintptr_t form=0;
+    if(previous!=result || phase!=s.phase || rows!=s.rows || form!=s.form) {
+        char message[384];sprintf_s(message,"original blueprint result=%u phase=%u recipe=%u book=%llu selected=%llu rows=%u row=%u page=%u materials=%u form=%08X list=%08X mixing=%08X slots=%08X visible=%u mouse=%u select=%u radio=%ls",
+            result,s.phase,s.recipe,static_cast<unsigned long long>(s.book),static_cast<unsigned long long>(s.selected_book),
+            s.rows,s.row_index,s.page,s.material_count,static_cast<uint32_t>(s.form),static_cast<uint32_t>(s.list),
+            static_cast<uint32_t>(s.mixing),static_cast<uint32_t>(s.slots),s.visible,s.mouse_calls,s.book_calls,s.entry_control);
+        context->Observe(message);previous=result;phase=s.phase;rows=s.rows;form=s.form;
+    }
+    if(result>=BlueprintActions::Invalid) {
+        context->Assert(0,"original blueprint services, controls and authentic book identity remain valid");return SDGO_GAME_TEST_FAIL;
+    }
+    if(result!=BlueprintActions::Ready)return SDGO_GAME_TEST_WAIT;
+    if(captureNativeFrames) {
+        static std::string capturedCase;static uint64_t readyAt=0;static bool requested=false;
+        if(capturedCase!=context->case_id) {
+            capturedCase=context->case_id;readyAt=GetTickCount64();requested=false;
+        }
+        if(!requested) {
+            if(GetTickCount64()-readyAt<500)return SDGO_GAME_TEST_WAIT;
+            const auto folder=sdgo_test::directory+L"\\visual";CreateDirectoryW(folder.c_str(),nullptr);
+            const std::wstring name(capturedCase.begin(),capturedCase.end());
+            requested=quietGraphics.CaptureNextFrame((folder+L"\\"+name+L".bmp").c_str());
+            if(!requested){context->Assert(0,"the original blueprint backbuffer capture was requested");return SDGO_GAME_TEST_FAIL;}
+            return SDGO_GAME_TEST_WAIT;
+        }
+        const auto captured=quietGraphics.CaptureFrameResult();
+        if(captured==E_PENDING)return SDGO_GAME_TEST_WAIT;
+        if(FAILED(captured)){context->Assert(0,"the original blueprint backbuffer was saved");return SDGO_GAME_TEST_FAIL;}
+    }
+    context->Assert(1,"the original blueprint UI reached the requested state without supplied selection data");return SDGO_GAME_TEST_PASS;
+}
+int __cdecl BlueprintBook(const SdgoGameTestContextV1* context){
+    const auto result=blueprint.EnsureBook();
+    if(result>=BlueprintActions::Invalid && captureNativeFrames) {
+        static bool requested=false;
+        if(!requested) {
+            const auto folder=sdgo_test::directory+L"\\visual";CreateDirectoryW(folder.c_str(),nullptr);
+            requested=quietGraphics.CaptureNextFrame((folder+L"\\blueprint-entry-diagnostic.bmp").c_str());
+            if(requested)return SDGO_GAME_TEST_WAIT;
+        } else if(quietGraphics.CaptureFrameResult()==E_PENDING)return SDGO_GAME_TEST_WAIT;
+    }
+    return BlueprintResult(context,result);
+}
+int __cdecl BlueprintRecipe(const SdgoGameTestContextV1* context){return BlueprintResult(context,blueprint.SelectBook());}
+
 int PresentationResult(const SdgoGameTestContextV1* context,UnitPresentationsActions::Result result) {
     const auto& s=unitPresentations.State();
     static uint32_t previous=0,phase=0,flags=0,first=0,detailFlags=0;static uintptr_t model=0,detail=0;
@@ -2506,6 +2564,11 @@ void RegisterPlannedCases() {
             plannedCases.push_back(shopCatalogCase);
             provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
         }
+        if(blueprintConfig.recipe) {
+            plannedCases.push_back({"pages.blueprint.book",120000,&BlueprintBook});
+            plannedCases.push_back({"pages.blueprint.recipe",120000,&BlueprintRecipe});
+            provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+        }
         AppendUnitPresentations();
         if(unitPagesOnly) {
             if(unitAcquisitionConfig.machine_kind || collectionPreviewOnly)plannedCases.push_back(pageCases[7]);
@@ -2775,6 +2838,7 @@ SDGO_MOD_ENTRY {
         !battleships.Bind(api,mod,&actions) || !gifts.Bind(api,mod,&actions) ||
         (deckOnly && !decks.Bind(api,mod,&actions)) ||
         (!hangarNavigation.Bind(api,mod,&actions)) ||
+        (blueprintConfig.recipe && !blueprint.Bind(api,mod,&actions,&hangarNavigation,blueprintConfig)) ||
         (testUnitPresentations && !unitPresentations.Bind(api,mod,&hangarNavigation)) ||
         (unitAcquisitionConfig.machine_kind && !unitAcquisition.Bind(api,mod,&hangarNavigation,unitAcquisitionConfig)) ||
         (pagesOnly && !pages.Bind()) ||

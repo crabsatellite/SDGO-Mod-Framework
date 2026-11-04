@@ -385,9 +385,45 @@ def inspect_upload(
     global_references: set[str] = set()
     identities: dict[int, str] = {}
     warnings: list[str] = []
+    typed_members: set[str] = set()
+    typed_resource_members: dict[str, list[dict[str, str]]] = {}
+    if project is not None:
+        for binding in project.get("client_template_bindings", []):
+            typed_members.update(binding["members"])
+            for resource in binding["manifest"]["resources"]:
+                typed_resource_members.setdefault(resource["member"], []).append(
+                    resource
+                )
 
     for path, data in files.items():
         _reject_payload(path)
+        if path in typed_members:
+            for resource in typed_resource_members.get(path, []):
+                virtual = resource["path"]
+                if virtual in package_resources:
+                    existing = next(
+                        row for row in resources if row["path"] == virtual
+                    )
+                    if existing.get("sha256") != resource["sha256"]:
+                        raise ValueError(
+                            "blueprint template resource conflicts with "
+                            + virtual
+                        )
+                    continue
+                package_resources.add(virtual)
+                suffix = PurePosixPath(virtual).suffix.lower()
+                resources.append(
+                    {
+                        "path": virtual,
+                        "kind": _RESOURCE_KINDS.get(suffix, "resource"),
+                        "member": path,
+                        "sha256": resource["sha256"],
+                    }
+                )
+                global_references.update(
+                    codec.scan_resource_references(data, suffix)
+                )
+            continue
         suffix = PurePosixPath(path).suffix.lower()
         if suffix == ".bin":
             decoded = codec.decode_record(data)
