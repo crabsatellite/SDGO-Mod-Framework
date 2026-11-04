@@ -81,10 +81,13 @@ bool Lethal(uint8_t* room,uint32_t now,int from,int to) {
     } __finally {attacker[4]=team;}
     return Read<uint32_t>(Unit(victim),0x34)==0;
 }
-void HumanFailureTick(uint8_t* room,uint32_t now,DWORD clock) {
-    if(!ClientAcknowledged())return;
+void HumanFailureTick(uint8_t* room,uint32_t now,DWORD clock,bool allowFinal=true) {
+    if(allowFinal && !ClientAcknowledged())return;
     uint8_t* human=Pilot(room,hostSlot);
     if(Read<uint32_t>(human,0)!=host || human[0x33C]>=4) {Finish(false,L"human identity changed before exhaustion proof",primaryDeaths);return;}
+    // Prepare the penultimate native life concurrently, keeping the final life
+    // until both revival observations are acknowledged. Native timing is intact.
+    if(!allowFinal && (!limit || Read<uint32_t>(human,0x1A)>=limit-1 || clock-began<20000))return;
     if(Read<uint32_t>(Unit(human),0x34)==0 || clock-lastAction<1000)return;
     int attacker=-1;aliveAiBeforeFailure=0;
     for(int slot=0;slot<12;++slot) {
@@ -94,6 +97,8 @@ void HumanFailureTick(uint8_t* room,uint32_t now,DWORD clock) {
     if(attacker<0) {Finish(false,L"no living native AI for human exhaustion fixture",primaryDeaths);return;}
     if(!Lethal(room,now,attacker,hostSlot))return;
     lastAction=clock;humanDeaths=Read<uint32_t>(human,0x1A);
+    g_api->Log(g_mod,SDGO_LOG_INFO,"native human life stimulus: deaths=%u quota=%u final_allowed=%u phase=%u reason=%u",
+        humanDeaths,limit,allowFinal?1:0,Read<uint32_t>(room,0x316A4),Read<uint32_t>(room,0x316A8));
     if(humanDeaths<limit)return;
     const bool failedImmediately=Read<uint32_t>(room,0x316A4)==6 && Read<uint32_t>(room,0x316A8)==0x13DF;
     bool nativeGateClosed=failedImmediately;
@@ -119,7 +124,15 @@ void InfiniteBoundaryTick(uint8_t* room,uint32_t now,DWORD clock) {
         return;
     }
     if(stressDown || clock-began<20000 || clock-lastStress<1000)return;
-    if(hp==0 || Lethal(room,now,hostSlot,stressSlot)) {
+    int from=hostSlot;
+    if(Read<uint32_t>(Unit(Pilot(room,from)),0x34)==0) {
+        from=-1;
+        for(int slot=0;slot<12;++slot) {
+            auto p=Pilot(room,slot);
+            if(slot!=stressSlot && (Read<uint32_t>(p,0)&0x80000000u) && p[0x33C]<4 && Read<uint32_t>(Unit(p),0x34)>0) {from=slot;break;}
+        }
+    }
+    if(hp==0 || (from>=0 && Lethal(room,now,from,stressSlot))) {
         stressDown=true;lastStress=clock;
         g_api->Log(g_mod,SDGO_LOG_INFO,"server-only quota stimulus pilot=%u deaths=%u human_deaths=%u phase=%u reason=%u",
             stressPilot,Read<uint32_t>(victim,0x1A),Read<uint32_t>(Pilot(room,hostSlot),0x1A),Read<uint32_t>(room,0x316A4),Read<uint32_t>(room,0x316A8));
@@ -144,6 +157,7 @@ void Tick(uint8_t* room,uint32_t now) {
     if(clock-began>330000) {Finish(false,L"native respawn probe timed out",0);return;}
     if(infinite && !stressComplete)InfiniteBoundaryTick(room,now,clock);
     if(primaryComplete) {HumanFailureTick(room,now,clock);return;}
+    if(infinite)HumanFailureTick(room,now,clock,false);
     if(clientCycleComplete) {
         if(ClientAcknowledged()) {
             if(infinite && !stressComplete)return;
