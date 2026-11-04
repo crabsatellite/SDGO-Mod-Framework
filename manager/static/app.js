@@ -25,16 +25,24 @@ const STICKY=new ResizeObserver(()=>{const header=document.querySelector('.manag
  document.documentElement.style.setProperty('--mm-header-h',header+'px');document.documentElement.style.setProperty('--mm-sticky-top',(header+index)+'px');});
 STICKY.observe(document.querySelector('.manager-header'));STICKY.observe($('page-index'));
 let indexTimer=0,indexed=[];
-function sections(){return [...$('content').querySelectorAll('.manager-card > h2, .provider-root section > h2')].filter(h=>!h.closest('.mod-card,.support-box')&&h.textContent.trim());}
+function sections(){
+ const found=[...$('content').querySelectorAll('.manager-card > h2, .provider-root section > h2')];
+ // Panels drawn in an open shadow root (rewards and the like) list their section headings too.
+ for(const host of $('content').querySelectorAll('.provider-root'))if(host.shadowRoot)found.push(...host.shadowRoot.querySelectorAll('section > h2'));
+ const at=h=>{const r=h.getBoundingClientRect();return [Math.round(r.top),r.left];};
+ return found.filter(h=>!h.closest('.mod-card,.support-box')&&h.textContent.trim()).sort((a,b)=>{const [ay,ax]=at(a),[by,bx]=at(b);return ay-by||ax-bx;});
+}
+function stickyTop(){return parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--mm-sticky-top'))||140;}
 function buildIndex(){
  const found=sections(),long=document.documentElement.scrollHeight>innerHeight*1.6,bar=$('page-index');
  indexed=found.length>=3&&long?found:[];bar.hidden=!indexed.length;
- bar.replaceChildren(...(indexed.length?[element('span','本页','page-index-label')]:[]),...indexed.map(h=>{const b=element('button',h.textContent.trim(),'page-index-item');b.type='button';b.onclick=()=>h.scrollIntoView({block:'start',behavior:'smooth'});return b;}));
+ bar.replaceChildren(...(indexed.length?[element('span','本页','page-index-label')]:[]),...indexed.map(h=>{const b=element('button',h.textContent.trim(),'page-index-item');b.type='button';b.onclick=()=>scrollTo({top:h.getBoundingClientRect().top+scrollY-stickyTop()-16,behavior:'smooth'});return b;}));
  markIndex();
 }
 function markIndex(){
- const top=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--mm-sticky-top'))||140;let current=0;
- indexed.forEach((h,i)=>{if(h.getBoundingClientRect().top<=top+24)current=i;});
+ const top=stickyTop();let current=0;
+ // Side-by-side sections share a row: the row's first (leftmost) heading stands for it.
+ let row=null;indexed.forEach((h,i)=>{const y=h.getBoundingClientRect().top;if(y<=top+24&&(row===null||Math.abs(y-row)>4)){current=i;row=y;}});
  [...$('page-index').querySelectorAll('.page-index-item')].forEach((b,i)=>b.classList.toggle('is-active',i===current));
  $('to-top').hidden=scrollY<600;
 }

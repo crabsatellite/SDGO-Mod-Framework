@@ -159,9 +159,15 @@ body.is-developer .manager-header::before { content: ""; position: absolute; lef
 .savebar-scopes { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; }
 .savebar-scope { color: var(--ui-text-dim); font-size: var(--ui-size-sm); }
 .savebar-scope.is-dirty { color: var(--ui-amber); font-weight: 600; }
+.savebar-scope.is-link { min-height: 0; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; font: inherit; font-size: var(--ui-size-sm); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.savebar-scope.is-link:not(.is-dirty) { color: var(--ui-text-dim); }
+.savebar-scope.is-link:hover { color: var(--ui-text); }
+.savebar-hint { flex-basis: 100%; color: var(--ui-text-dim); font-size: var(--ui-size-xs); }
 .settings-field { display: flex; flex-direction: column; gap: 8px; }
 .field-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .section-scope { margin-left: 10px; vertical-align: middle; }
+/* What a section's button saves (or that the section only previews): directly under its heading. */
+.section-scope-note { margin: -4px 0 14px; padding: 2px 0 2px 10px; border-left: 3px solid rgb(57 225 255 / 45%); }
 
 /* ---------------------------------------------------------------- legacy plates */
 .manager-card, .mod-card, .empty-state, .provider-root .card, .provider-root .panel, .provider-root .notice {
