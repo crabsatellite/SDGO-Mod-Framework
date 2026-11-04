@@ -27,7 +27,8 @@ export async function mountNews(root,ctx){
  source.append(e('p','来源使用兼容 60s API 的 HTTPS 接口。公共实例可能限流或不可用，正式运行也可使用自建实例。不会上传账号、机库或对局数据。','muted'));card.append(source);
  const status=e('p',undefined,'muted'),preview=e('div');card.append(status);
  function showStatus(){
-  const failed=data.failed_categories.length?'；部分内容暂未更新：'+data.failed_categories.join('、'):'';
+  const names={news:'每日新闻',tech:'科技资讯',epic:'游戏限免',history:'历史上的今天'};
+  const failed=data.failed_categories.length?'；部分内容暂未更新：'+data.failed_categories.map(k=>names[k]||'资讯').join('、'):'';
   status.textContent=`缓存中有 ${data.available_count} 条有效资讯。${data.last_attempt?'最近尝试：'+new Date(data.last_attempt*1000).toLocaleString('zh-CN',{hour12:false}):'尚未获取资讯'}${failed}。`;
   preview.replaceChildren();for(const item of data.items.slice(0,12)){
    const row=e('p'),link=e('a',item.title);if(String(item.url).startsWith('https://')){link.href=item.url;link.target='_blank';link.rel='noopener noreferrer';}
