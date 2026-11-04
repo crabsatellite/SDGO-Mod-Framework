@@ -56,9 +56,17 @@ three to five ordered materials and minimum levels; seven raw slots are retained
 as source structure while unsupported UI counts remain blocked. The native first material
 is the retained key unit. Unknown fields stay required. Published definitions
 can be retired without deleting data needed by already-owned blueprint items.
-Read `capabilities.blueprints.native_registration` before expecting a playable
-recipe: it remains false until the paired native compiler, guarded installation
-and original game synthesis path are verified.
+Baseline-backed typed recipes support paired native compilation, guarded
+definition registration and the original synthesis workflow. The original game
+retains the first material as its key unit and consumes the other materials and
+the blueprint according to the selected server's rules. Importing a definition
+does not grant the player a blueprint or its materials.
+
+Read `capabilities.blueprints.native_registration` for typed-recipe support and
+`capabilities.blueprints.client_templates.native_registration_authorized` for
+supplied full presentation records. The latter remains false: their projects
+can be saved and exported, but publication stays blocked until target resources
+and consumers have been validated. A source-record hash is not native acceptance.
 
 The acquisition preview uses the configured host's real sources. Every imported
 S-rank-or-higher root requires its own activity machine; A/B/C roots use a complete
