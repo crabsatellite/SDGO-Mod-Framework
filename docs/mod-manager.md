@@ -26,6 +26,24 @@ unknown keys and comments, validate registered values and reject stale revisions
 Games continue using their normal launchers. A saved setting takes effect after the
 reported restart of the game or server.
 
+How saving works is stated on every page:
+
+- A feature card's switch saves as soon as it is clicked; it takes effect after the game or server restarts.
+- Settings pages and tool pages with manual saves keep a save bar in view at the bottom: it lists unsaved changes
+  and offers save and discard. Each setting is tagged **重启后生效** (after restart) or **即时生效** (immediately).
+  Leaving a page with unsaved changes asks first.
+- Holiday and birthday gifts save in two parts, the common rules and the server's private roster; each section
+  names its part, and **保存全部并重启后台任务** saves both and restarts the background task.
+- Battle rewards saves each part with the button in its own section; each heading says what it saves, and the
+  preview sections say they save nothing. The bottom bar lists unsaved parts and jumps to them. Saving one part
+  reloads the page from the saved configuration, so Manager asks first when another part has unsaved changes.
+- FRP keeps **保存配置** (save) and **导出玩家配置包（先保存）** (export, saving first) in the bottom bar; the
+  collection capsule page numbers its generate, check, install and export steps.
+- Save results appear at the bottom right of the window, wherever the page is scrolled; errors stay until closed.
+- Long pages list their sections under the title for one-click jumps, with a back-to-top button.
+- The capsule machine list and editor scroll separately; the editor's save button and the footer's export and
+  **导入到游戏** (apply to game) stay in view.
+
 ## Updates
 
 Framework updates also synchronize the program entries in unit-content installation receipts.
@@ -70,6 +88,8 @@ Install these addons under `sdgo/local-mods/<id>/`. Both the core and Manager di
 Manager imports marked local-only packages there automatically. Ignore the whole `sdgo/local-mods/`
 directory in version control. Public package, export and source guards reject its contents, so additional
 local addons do not need individual exclusion rules.
+These guards compare reserved directory and manifest names without regard to case,
+matching Windows paths; changing letter case does not make the contents exportable.
 
 An owner-only Mod stays in a separate private repository. Its `[mod]` manifest uses
 `distribution=local_only`, its `manager.json` uses `"distribution": "local_only"`,
@@ -101,3 +121,5 @@ Git hooks may add `--allow-legacy-public`. This accepts only a fully undeclared 
 pair and still rejects local-only declarations, mismatches, repository/source markers
 and marked binary bytes. Public framework source, Manager builds and packages use the
 strict commands above.
+
+Configurable timezone defaults are initialized from the server’s local timezone; saved offsets are instance settings. The Updates page also offers a display-timezone override. Leave it empty to use server-local time. This setting does not change the Windows system timezone.

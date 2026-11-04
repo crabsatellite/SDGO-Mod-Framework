@@ -54,6 +54,29 @@ def init_repo(repo: Path) -> None:
 
 
 class DistributionGuardTests(unittest.TestCase):
+    def test_local_directory_is_private_with_any_path_case(self):
+        for folder in ("local-mods", "LOCAL-MODS", "Local-Mods"):
+            for leaf in ("mod.ini", "settings.dat"):
+                with self.subTest(folder=folder, leaf=leaf):
+                    with self.assertRaises(ValueError):
+                        guard.check_entries({f"CLIENT/SDGO/{folder}/example/{leaf}": b"unmarked"})
+
+    def test_case_varied_manifests_preserve_distribution_checks(self):
+        def mixed(scope):
+            return {name.replace("mods/", "MODS/").replace("mod.ini", "MOD.INI")
+                    .replace("manager.json", "Manager.JSON"): raw
+                    for name, raw in manifests(scope).items()}
+        self.assertEqual(guard.check_entries(mixed("public")), 1)
+        with self.assertRaises(ValueError):
+            guard.check_entries(mixed("local_only"))
+        with self.assertRaises(ValueError):
+            guard.check_entries({"DISTribution.JSON": b'{"redistributable":false}'})
+        with tempfile.TemporaryDirectory() as folder:
+            package = Path(folder) / "renamed.dat"
+            package.write_bytes(archive({"SDGO/LOCAL-MODS/example/settings.dat": b"unmarked"}))
+            with self.assertRaises(ValueError):
+                guard.check_archive(package)
+
     def test_scanner_changes_invalidate_safe_blob_cache_automatically(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
