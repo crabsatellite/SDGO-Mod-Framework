@@ -678,6 +678,12 @@ private:
         const int result =
             actions->networkSend_(network, stream, packet, size, flag);
         const DWORD error = GetLastError();
+        if (opcode==0x08A7 && packet && size>=8 && actions->api_ && actions->api_->Log) {
+            uint32_t pilot=0;uint8_t mode=0;
+            __try {memcpy(&pilot,static_cast<const uint8_t*>(packet)+2,4);mode=static_cast<const uint8_t*>(packet)[7];}
+            __except(EXCEPTION_EXECUTE_HANDLER) {}
+            actions->api_->Log(actions->mod_,SDGO_LOG_INFO,"original battle start header pilot=%u mode=%u bytes=%d result=%d",pilot,mode,size,result);
+        }
         if (inventoryCursorValid && InterlockedIncrement(&actions->inventoryPageObservations_)<=5 && actions->api_ && actions->api_->Log)
             actions->api_->Log(actions->mod_,SDGO_LOG_INFO,"original inventory page request cursor=%llu bytes=%d result=%d",
                 static_cast<unsigned long long>(inventoryCursor),size,result);
