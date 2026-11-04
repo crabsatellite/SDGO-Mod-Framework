@@ -2231,14 +2231,14 @@ int __cdecl ObserveMissionRespawns(const SdgoGameTestContextV1* context) {
             context->Assert(0,"native mission remains valid throughout repeated wingman death and respawn");return SDGO_GAME_TEST_FAIL;
         }
     }
-    const std::wstring receipt=std::wstring(context->directory)+L"\\mission-respawn-server.ini";
+    const std::wstring expectedRun(context->run_id,context->run_id+strlen(context->run_id));
+    const std::wstring receipt=std::wstring(context->directory)+L"\\mission-respawn-server-"+expectedRun+L".ini";
     MissionRespawnReceipt values;
     if(!values.Load(receipt))return SDGO_GAME_TEST_WAIT;
     wchar_t status[16]{},run[64]{};
     wcsncpy_s(status,values.Value(L"status").c_str(),_TRUNCATE);
     wcsncpy_s(run,values.Value(L"run_id").c_str(),_TRUNCATE);
     if(!*status)return SDGO_GAME_TEST_WAIT;
-    const std::wstring expectedRun(context->run_id,context->run_id+strlen(context->run_id));
     if(expectedRun!=run || (wcscmp(status,L"cycle")!=0 && wcscmp(status,L"basic")!=0 && wcscmp(status,L"pass")!=0)) {
         context->Assert(0,"same-run native mission respawn server probe completed successfully");return SDGO_GAME_TEST_FAIL;
     }
@@ -2290,7 +2290,7 @@ int __cdecl ObserveMissionRespawns(const SdgoGameTestContextV1* context) {
         context->Assert(p.ai_enabled && p.position_valid,
             "the revived wingman has active native AI and a finite scene position");
         char message[192];sprintf_s(message,"native mission respawn policy=%u pilot=%u limit=%u deaths=%u client_respawns=%u hp=%d",missionRespawns,pilot,limit,deaths,p.respawn_count,p.current_hp);context->Observe(message);
-        const std::wstring ack=std::wstring(context->directory)+L"\\mission-respawn-client-ack.ini";
+        const std::wstring ack=std::wstring(context->directory)+L"\\mission-respawn-client-ack-"+expectedRun+L".ini";
         if(!WritePrivateProfileStringW(L"ack",L"run_id",expectedRun.c_str(),ack.c_str())) {
             context->Assert(0,"native revival observations are acknowledged before testing human exhaustion");return SDGO_GAME_TEST_FAIL;
         }
