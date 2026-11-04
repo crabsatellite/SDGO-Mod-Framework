@@ -49,7 +49,7 @@ Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所
 | 功能 | 简介 | 文档 |
 |---|---|---|
 | 公告与展示规则 <!-- catalog: `announcements` --> | 默认仅显示一次登录简报，时区可随服务器本地，游戏内公告默认关闭；可配置新闻、科技、限免和历史资讯 | [使用说明](docs/announcements.zh-CN.md) |
-| 任务 AI 僚机 <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai`，由 AI 僚机补位 | [使用说明](docs/coop-wingmen.zh-CN.md) |
+| 任务 AI 僚机 <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai`，AI 按玩家生命额度复活；`!ai3 inf` 开启 AI 无限复活 | [使用说明](docs/coop-wingmen.zh-CN.md) |
 | 对战 AI <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友；可让真人自动同队，选择双方补位、只补对面或指定数量 | [使用说明](docs/pvp-ai.zh-CN.md) |
 | AI 机体目录（独立附加包） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |
 | 战斗贡献奖励 <!-- catalog: `battle_rewards` --> | 按贡献发放 GB/MB，可配置人数倍率与按账号去重的聚会奖励 | [使用说明](docs/battle-rewards.zh-CN.md) |
