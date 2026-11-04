@@ -3,7 +3,7 @@ import {e,button,field} from '/panel_helpers.js';
 export async function mountNews(root,ctx){
  const api=(path='',body)=>ctx.request('/api/announcements/news'+path,body,body?'POST':'GET');
  let data=await api();const card=e('section',undefined,'manager-card');root.append(card);
- card.append(e('h2','每天变化的资讯'),e('p','登录页显示简报，游戏内在大厅逐条展示。已读标题不会再次投放；超过有效期停止展示。客户端后台获取，不需要 Manager 常驻。','muted'));
+ card.append(e('h2','每天变化的资讯'),e('p','默认仅在登录页显示一次简报，游戏内提示默认关闭。已读标题不会再次投放；超过有效期停止展示。客户端后台获取，不需要 Manager 常驻。','muted'));
  const options=e('div',undefined,'settings-grid');card.append(options);
  function bind(key,title,type='number'){
   const f=field(title,data.settings[key],type);f.input.oninput=()=>data.settings[key]=type==='checkbox'?f.input.checked:Number(f.input.value);options.append(f.box);return f.input;

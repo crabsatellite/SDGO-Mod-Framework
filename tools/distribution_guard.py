@@ -99,17 +99,18 @@ def _require_public(
 
 def _manifest_base(name: str) -> tuple[str, str] | None:
     parts = normalized(name).split("/")
-    if "local-mods" in parts:
+    folded = [part.casefold() for part in parts]
+    if "local-mods" in folded:
         raise ValueError("The entire local-mods directory is nonredistributable")
-    if (len(parts) >= 3 and parts[-3] in {"mods", "addons", "support"}
-            and parts[-1] in {"mod.ini", "manager.json"}):
-        return "/".join(parts[:-1]), parts[-1]
+    if (len(parts) >= 3 and folded[-3] in {"mods", "addons", "support"}
+            and folded[-1] in {"mod.ini", "manager.json"}):
+        return "/".join(parts[:-1]), folded[-1]
     return None
 
 
 def _is_distribution_file(name: str) -> bool:
     parts = normalized(name).split("/")
-    return parts[-1] == "distribution.json" and len(parts) <= 2
+    return parts[-1].casefold() == "distribution.json" and len(parts) <= 2
 
 
 def _check_distribution_file(name: str, raw: bytes) -> None:

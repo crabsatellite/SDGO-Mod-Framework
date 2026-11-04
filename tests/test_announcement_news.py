@@ -19,6 +19,12 @@ class NewsTests(unittest.TestCase):
         settings=copy.deepcopy(news.DEFAULT);news.validate(settings)
         text=news.compile_settings(settings).decode('utf-16')
         self.assertIn('max_age_hours=48',text)
+        self.assertTrue(settings['login_enabled'])
+        self.assertFalse(settings['game_enabled'])
+        self.assertEqual(settings['game_triggers'],[])
+        self.assertIn('game_enabled=0',text)
+        settings['game_enabled']=True
+        with self.assertRaises(ValueError):news.validate(settings)
         self.assertNotIn('60s.viki.moe',text)
         for source in settings['sources']:self.assertTrue(source.startswith('https://'))
 
