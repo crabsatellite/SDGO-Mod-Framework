@@ -25,6 +25,7 @@ inline std::array<std::array<uint8_t,0x1400>,5> movements{};
 inline std::array<std::array<uint8_t,0x24>,5> specialResults{};
 inline std::array<std::array<uint8_t,0x300>,5> nodes{},scenes{};
 inline std::array<std::array<uint8_t,0x100>,5> targetShapes{};
+inline std::array<std::array<uint8_t,0x20>,5> bodySpheres{};
 inline std::array<uint8_t*,5> configuredUnits{};
 inline std::array<int,5> unitKinds{};
 inline std::array<std::array<uint8_t,0x800>,4> weapons{};
@@ -209,6 +210,9 @@ struct Callbacks {
         if(id==20)return source;if(id==1)return enemy1.data();if(id==2)return enemy2.data();
         if(id==3)return remoteHuman.data();if(id==4)return sameTeamNpc.data();return nullptr;
     }
+    __declspec(noinline) uint8_t* NavigationNode(Vec3) {return nullptr;}
+    __declspec(noinline) uint8_t* NavigationNodeAt(int) {return nullptr;}
+    __declspec(noinline) uint8_t* StartPoint(int,int) {return nullptr;}
     __declspec(noinline) Vec3* Path(uint32_t,Vec3 start,Vec3 end,Vec3*,uint32_t* count) {
         ++pathCalls;
         if(pathMode==1) return nullptr;
@@ -313,6 +317,8 @@ __declspec(noinline) inline bool __cdecl Obb(const Ray3* ray,const void*,float* 
     *t=200;return ray->direction.z>0.02f;
 }
 __declspec(noinline) inline bool __cdecl Sphere(const Ray3*,const void*,float*) { return false; }
+__declspec(noinline) inline bool __cdecl SphereObb(const void*,const void*) {return false;}
+__declspec(noinline) inline bool __cdecl SphereObbContact(const void*,const void*,const Vec3*,Vec3*,float*) {return false;}
 __declspec(noinline) inline int __cdecl Dispatch(const char* name,uint8_t*) {
     int top=lua_gettop(state);lua_getglobal(state,name);lua_getglobal(state,"npc");
     int err=lua_pcall(state,1,1,0);
@@ -337,6 +343,8 @@ inline void Configure(uint8_t* unit,size_t index,uint32_t id,int team,int hp,flo
     Put(node,0x88,Vec3{x,0,z});Put(scene,0,sceneVtable.data());Put(scene,0x0C,unit);
     Put(node,0x6C,Vec3{0,0,1});Put(unit,0x3090,Vec3{0,0,1});
     Put(scene,0xBC,Aabb{{x-40,50,z-40},{x+40,150,z+40}});
+    bodySpheres[index].fill(0);Put(bodySpheres[index].data(),0x10,Vec3{x,100,z});Put(bodySpheres[index].data(),0x1C,40.0f);
+    Put(scene,0xDC,int32_t(1));Put(scene,0xE0,bodySpheres[index].data());scene[0x115]=1;
     Put(def,0,uint32_t(987654+index));def[0x247]=3;
     for(int i=0;i<3;++i) {
         Put(def,0x249+i*4,uint32_t(101+i));
@@ -394,6 +402,7 @@ inline void Initialize(uint8_t* unit,lua_State* L) {
     Configure(enemy2.data(),2,2,1,100,1400,100);enemy2[0xDCD]=1;
     head={&a,&b,nullptr};a={&b,&head,enemy1.data()};b={&head,&a,enemy2.data()};
     Put(document.data(),0x48,&head);Put(document.data(),0x82C4,document.data());Put(document.data(),0x8364,document.data());
+    Put(document.data(),0x580,int32_t(1)); // This fixture exercises its authored native Path provider.
     Put(wall.data(),0,sceneVtable.data());Put(wall.data(),0x0C,enemy1.data());
     Put(wall.data(),0xD4,int(1));Put(wall.data(),0xD8,wall.data()+0x180);
     lua_getglobal(L,"npc");
@@ -438,6 +447,9 @@ inline void Symbols(FILE* f,void(*symbol)(FILE*,const char*,void*,bool)) {
     symbol(f,"npc.set_attack_intent",Address(&Callbacks::AttackIntent),false);
     symbol(f,"npc.move_stop",Address(&Callbacks::StopMotor),false);
     symbol(f,"navigation.route",Address(&Callbacks::Path),false);
+    symbol(f,"navigation.node_for_point",Address(&Callbacks::NavigationNode),false);
+    symbol(f,"navigation.node_at",Address(&Callbacks::NavigationNodeAt),false);
+    symbol(f,"um.find_start_point",Address(&Callbacks::StartPoint),false);
     symbol(f,"crt.operator_delete",reinterpret_cast<void*>(&Free),false);
     symbol(f,"um.find_object",Address(&Callbacks::Find),false);
     symbol(f,"collision.query",Address(&Callbacks::Query),false);
@@ -445,6 +457,8 @@ inline void Symbols(FILE* f,void(*symbol)(FILE*,const char*,void*,bool)) {
     symbol(f,"collision.terrain_ray",Address(&Callbacks::Terrain),false);
     symbol(f,"collision.ray_obb",reinterpret_cast<void*>(&Obb),false);
     symbol(f,"collision.ray_sphere",reinterpret_cast<void*>(&Sphere),false);
+    symbol(f,"collision.sphere_obb_overlap",reinterpret_cast<void*>(&SphereObb),false);
+    symbol(f,"collision.sphere_obb_contact",reinterpret_cast<void*>(&SphereObbContact),false);
     auto base=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     auto site=[&](const char* name,void* address) {
         std::fprintf(f,"[%s]\nkind=site\nrva=0x%08lX\nexpect=",name,

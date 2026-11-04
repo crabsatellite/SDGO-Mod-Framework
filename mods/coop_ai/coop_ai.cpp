@@ -27,16 +27,19 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <array>
+#include <map>
 
 #include "sdgo/sdgo_api.h"
 #include "sdgo/room_titles_lookup.h"
 #include "sdgo/room_commands.h"
 #include "sdgo/ai_catalog_provider.h"
+#include "sdgo/mission_ai_lifecycle.h"
 
 namespace
 {
     // ---- battle room layout (WaitRoomEx), as read and written by 0x004B79D0/0x004B88E0 ----
-    constexpr size_t kRoomMode = 0x05;          // u8, 9 = co-op mission
+    constexpr size_t kRoomMode = 0x05;          // u8; co-op mission modes 5, 8, 10
     constexpr size_t kRoomTitleMax = 20;
     constexpr int kSlots = 12;
     constexpr size_t kSlotInfo = 0x533;         // slot info records, stride 0x48E
@@ -66,6 +69,11 @@ namespace
     using MapFindFn = int(__thiscall*)(void* map, const uint32_t* key, int* value);
     using LobbyRoomFn = uint8_t*(__thiscall*)(void* proc, int index, int tag);
     using LobbyReleaseFn = void(__thiscall*)(void* proc, int index);
+    using RoomTickFn = int(__thiscall*)(uint8_t*, uint32_t);
+    using BattleEndFn = void(__thiscall*)(uint8_t*, uint16_t, uint16_t, int);
+    using RespawnPilotFn = int(__thiscall*)(uint8_t*, uint32_t, uint8_t*, uint32_t, uint32_t);
+    using RespawnRefreshFn = void(__thiscall*)(uint8_t*, int, uint8_t*, int, int);
+    using PilotStateRespawnFn = int(__thiscall*)(uint8_t*);
 
     // ---- lobby room layout (WaitRoom), as the create-room handler writes it ----------
     constexpr size_t kLobbyMapLock = 0x38;      // CRITICAL_SECTION in the lobby proc
@@ -89,6 +97,119 @@ namespace
     MapFindFn g_lobbyMapFind = nullptr;
     LobbyRoomFn g_lobbyRoom = nullptr;
     LobbyReleaseFn g_lobbyRelease = nullptr;
+    RoomTickFn g_roomTick = nullptr;
+    BattleEndFn g_battleEnd = nullptr;
+    RespawnPilotFn g_respawnPilot = nullptr;
+    RespawnRefreshFn g_respawnRefresh = nullptr;
+    PilotStateRespawnFn g_pilotStateRespawn = nullptr;
+    uint32_t& SlotPilotId(uint8_t* room, int slot);
+
+    struct MissionLives {
+        bool infinite = false;
+        std::array<uint32_t, kSlots> pilots{};
+    };
+    SRWLOCK g_livesLock = SRWLOCK_INIT;
+    std::map<uint8_t*, MissionLives> g_lives;
+    // Only our own native respawn call may bypass the mission quota. Never
+    // change death statistics, mission data, room mode or human life counts.
+    thread_local uint8_t* g_infinitePilot = nullptr;
+
+    bool CopyLives(uint8_t* room, MissionLives* lives)
+    {
+        AcquireSRWLockShared(&g_livesLock);
+        auto found = g_lives.find(room);
+        const bool tracked = found != g_lives.end();
+        if (tracked) *lives = found->second;
+        ReleaseSRWLockShared(&g_livesLock);
+        return tracked;
+    }
+
+    // -1: another room keeps its native scan; 0: humans exhausted; 1: a human
+    // still has a native life available. AI revival timing is independent.
+    int HumanMissionState(uint8_t* room)
+    {
+        MissionLives lives;
+        if (!room || !IsMissionMode(room[kRoomMode]) || !CopyLives(room, &lives)) return -1;
+        bool owned = false;
+        for (int slot = 0; slot < kSlots; ++slot)
+            if (lives.pilots[slot] && SlotPilotId(room, slot) == lives.pilots[slot] &&
+                *reinterpret_cast<uint32_t*>(room + kPilots + slot * kPilotStride) == lives.pilots[slot]) owned = true;
+        if (!owned) return -1;
+        uint8_t* rules = *reinterpret_cast<uint8_t**>(room + 0x316A0);
+        const uint32_t limit = rules ? *reinterpret_cast<uint32_t*>(rules + 0x28) : 0;
+        for (int slot = 0; slot < kSlots; ++slot) {
+            const uint32_t id = SlotPilotId(room, slot);
+            uint8_t* pilot = room + kPilots + slot * kPilotStride;
+            if (!id || (id & 0x80000000u) || *reinterpret_cast<uint32_t*>(pilot) != id) continue;
+            if (*reinterpret_cast<uint32_t*>(pilot + 0x1A) < limit) return 1;
+        }
+        return 0;
+    }
+
+    void __cdecl MissionRespawnTick(uint8_t* room, uint32_t now)
+    {
+        if (!room || !IsMissionMode(room[kRoomMode])) return;
+        MissionLives lives;
+        if (!CopyLives(room, &lives)) return;
+        __try {
+            for (int slot = 0; slot < kSlots; ++slot) {
+                const uint32_t id = lives.pilots[slot];
+                if (!id || SlotPilotId(room, slot) != id) continue;
+                uint8_t* pilot = room + kPilots + slot * kPilotStride;
+                if (*reinterpret_cast<uint32_t*>(pilot) != id || pilot[kPilotForm] >= 4) continue;
+                uint8_t* unit = pilot + kPilotUnits + pilot[kPilotForm] * kUnitStride;
+                if (*reinterpret_cast<uint32_t*>(unit + 0x34) != 0) continue;
+                uint8_t* previous = g_infinitePilot;
+                int result = 0;
+                __try {
+                    g_infinitePilot = lives.infinite ? pilot : nullptr;
+                    result = g_respawnPilot(room, now, pilot, id,
+                        *reinterpret_cast<uint32_t*>(room + kSlotInfo + slot * kSlotInfoStride + 0x472));
+                } __finally {
+                    g_infinitePilot = previous;
+                }
+                if (!result || *reinterpret_cast<uint32_t*>(unit + 0x34) == 0) continue;
+                g_respawnRefresh(room, 0, pilot, 0, 0);
+                g_pilotStateRespawn(pilot + 0x1D90);
+                g_api->Log(g_mod, SDGO_LOG_INFO,
+                    "mission AI %08lX respawned: %s, native deaths %lu",
+                    static_cast<unsigned long>(id), lives.infinite ? "infinite" : "player",
+                    static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(pilot + 0x1A)));
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            g_api->Log(g_mod, SDGO_LOG_ERROR, "exception %08lX in mission AI respawn", GetExceptionCode());
+        }
+    }
+
+    void __cdecl MissionEnded(uint8_t* room)
+    {
+        // Native end has already released pilot battle state. Remove only this
+        // Mod's exact AI records before the lobby updates human account data.
+        AcquireSRWLockExclusive(&g_livesLock);
+        auto found = g_lives.find(room);
+        if (found != g_lives.end()) {
+            for (int slot = 0; slot < kSlots; ++slot)
+                if (found->second.pilots[slot] && SlotPilotId(room, slot) == found->second.pilots[slot]) {
+                    memset(room + kSlotInfo + slot * kSlotInfoStride, 0, kSlotInfoStride);
+                    memset(room + kPilots + slot * kPilotStride, 0, kPilotStride);
+                }
+            g_lives.erase(found);
+        }
+        ReleaseSRWLockExclusive(&g_livesLock);
+    }
+
+    int __fastcall RoomTick(uint8_t* room, void*, uint32_t now)
+    {
+        const int result = g_roomTick(room, now);
+        MissionRespawnTick(room, now);
+        return result;
+    }
+
+    void __fastcall BattleEnd(uint8_t* room, void*, uint16_t a, uint16_t b, int now)
+    {
+        g_battleEnd(room, a, b, now);
+        MissionEnded(room);
+    }
 
     struct Settings
     {
@@ -176,6 +297,7 @@ namespace
         bool enabled = false;
         int count = 0;
         int level = 2;
+        bool infinite = false;
     };
 
     // "!ai", "!ai3", options after it: lvN. Case-insensitive.
@@ -199,6 +321,10 @@ namespace
             const char* token=title+argument.offset;
             if(argument.length==3 && commands::Lower(token[0])=='l' && commands::Lower(token[1])=='v'
                && token[2]>='1' && token[2]<='5') plan.level=token[2]-'0';
+            std::string option(token, argument.length);
+            for (char& c : option) c = commands::Lower(c);
+            if (option == "inf" || option == "infinite" || option == "respawn=infinite") plan.infinite = true;
+            if (option == "player" || option == "respawn=player") plan.infinite = false;
         }
         return plan;
     }
@@ -399,8 +525,14 @@ namespace
                     pick = pool[NextRandom() % pool.size()];
                 }
             }
-            if (AddAiPilot(room, slot, pick))
+            if (AddAiPilot(room, slot, pick)) {
+                AcquireSRWLockExclusive(&g_livesLock);
+                MissionLives& lives = g_lives[room];
+                lives.infinite = plan.infinite;
+                lives.pilots[slot] = SlotPilotId(room, slot);
+                ReleaseSRWLockExclusive(&g_livesLock);
                 ++added;
+            }
         }
         g_api->Log(g_mod, SDGO_LOG_INFO, "%d wingmen added (level %d)", added, plan.level);
     }
@@ -420,6 +552,18 @@ namespace
                                 uint32_t b)
     {
         if (room && IsMissionMode(room[kRoomMode])) {
+            // A second start announcement for the same native pilots must not
+            // discard their policy. New slot identities invalidate old state.
+            AcquireSRWLockExclusive(&g_livesLock);
+            auto found = g_lives.find(room);
+            if (found != g_lives.end()) {
+                for (int slot = 0; slot < kSlots; ++slot)
+                    if (found->second.pilots[slot] && found->second.pilots[slot] != SlotPilotId(room, slot)) {
+                        g_lives.erase(found);
+                        break;
+                    }
+            }
+            ReleaseSRWLockExclusive(&g_livesLock);
             DWORD code = 0;
             if (!GuardedAddWingmen(room, &code))
                 g_api->Log(g_mod, SDGO_LOG_ERROR, "exception %08lX while adding wingmen; this battle has none", code);
@@ -435,6 +579,67 @@ namespace
     }
 }
 
+static void* g_missionGateOriginal = nullptr;
+static void* g_missionGateAllowed = nullptr;
+static void* g_missionDefeatOriginal = nullptr;
+static void* g_missionDefeatContinue = nullptr;
+static void* g_missionDefeatExhausted = nullptr;
+static int __stdcall InfiniteMissionPilot(uint8_t* pilot)
+{
+    return pilot && pilot == g_infinitePilot;
+}
+static __declspec(naked) void MissionRespawnGate()
+{
+    __asm {
+        pushfd
+        pushad
+        push dword ptr [ebp + 0x0C]
+        call InfiniteMissionPilot
+        test eax, eax
+        jz native_gate
+        popad
+        popfd
+        jmp dword ptr [g_missionGateAllowed]
+    native_gate:
+        popad
+        popfd
+        jmp dword ptr [g_missionGateOriginal]
+    }
+}
+
+static int __stdcall HumanMissionRoom(uint8_t* room)
+{
+    __try { return HumanMissionState(room); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+}
+
+// Replace only the mission's all-participant life scan with a human-only
+// decision. A living AI cannot prevent defeat once the humans are exhausted.
+// Objective, protected-target, timer and scripted failures remain native.
+static __declspec(naked) void MissionDefeatGate()
+{
+    __asm {
+        pushfd
+        pushad
+        push dword ptr [ebp - 0x480]
+        call HumanMissionRoom
+        test eax, eax
+        js native_scan
+        jz humans_exhausted
+        popad
+        popfd
+        jmp dword ptr [g_missionDefeatContinue]
+    humans_exhausted:
+        popad
+        popfd
+        jmp dword ptr [g_missionDefeatExhausted]
+    native_scan:
+        popad
+        popfd
+        jmp dword ptr [g_missionDefeatOriginal]
+    }
+}
+
 SDGO_MOD_ENTRY
 {
     g_api = api;
@@ -446,7 +651,13 @@ SDGO_MOD_ENTRY
                  Bind(g_pilotStateMode, "battle.pilot_state_mode") && Bind(g_setupAiPilot, "battle.setup_ai_pilot") &&
                  Bind(g_lobbyProc, "battle.lobby_proc") &&
                  Bind(g_lobbyMapFind, "battle.lobby_map_find") && Bind(g_lobbyRoom, "battle.lobby_room") &&
-                 Bind(g_lobbyRelease, "battle.lobby_release");
+                 Bind(g_lobbyRelease, "battle.lobby_release") &&
+                 Bind(g_respawnPilot, "battle.respawn_pilot") &&
+                 Bind(g_respawnRefresh, "battle.respawn_refresh") &&
+                 Bind(g_pilotStateRespawn, "battle.pilot_state_respawn") &&
+                 Bind(g_missionGateAllowed, "battle.mission_respawn_allowed") &&
+                 Bind(g_missionDefeatContinue, "battle.mission_defeat_continue") &&
+                 Bind(g_missionDefeatExhausted, "battle.mission_lives_exhausted");
     if (!bound)
         return 0;
     LoadSettings();
@@ -456,6 +667,24 @@ SDGO_MOD_ENTRY
     if (!api->HookCode(mod, "battle.start_notify", reinterpret_cast<void*>(&StartNotify),
                        reinterpret_cast<void**>(&g_startNotify)))
         return 0;
+    if (!api->HookCode(mod, "battle.mission_respawn_gate", reinterpret_cast<void*>(&MissionRespawnGate),
+                       &g_missionGateOriginal)) return 0;
+    if (!api->HookCode(mod, "battle.mission_human_lives_check", reinterpret_cast<void*>(&MissionDefeatGate),
+                       &g_missionDefeatOriginal)) return 0;
+    static const SdgoMissionServerLifecycleV1 lifecycle = {
+        sizeof(lifecycle), 1, &MissionRespawnTick, &MissionEnded};
+    HMODULE pvp = sdgo::MissionSibling(api, mod, L"pvp_ai\\pvp_ai.dll");
+    if (pvp) {
+        auto share = reinterpret_cast<SdgoRegisterMissionServerV1>(
+            GetProcAddress(pvp, "SdgoPvpAiRegisterMissionV1"));
+        if (!share || !share(&lifecycle)) {
+            api->Log(mod, SDGO_LOG_ERROR, "matching pvp_ai lifecycle bridge is required; update both Mods");
+            return 0;
+        }
+    } else if (!api->HookCode(mod, "battle.room_tick", reinterpret_cast<void*>(&RoomTick),
+                              reinterpret_cast<void**>(&g_roomTick)) ||
+               !api->HookCode(mod, "battle.end", reinterpret_cast<void*>(&BattleEnd),
+                              reinterpret_cast<void**>(&g_battleEnd))) return 0;
     api->Log(mod, SDGO_LOG_INFO, "ready: co-op missions whose room title has !ai get AI wingmen");
     return 1;
 }

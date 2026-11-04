@@ -127,6 +127,21 @@ public:
         uint8_t original_handler_completed;
     };
 
+    // Passive end receipt for mission-only tests; installs no PvP room actions.
+    bool BindBattleEndObserver(const SdgoApi* api, SdgoMod* mod, NativeActions* native)
+    {
+        if (!api || !mod || !native || (active_ && active_ != this)) return false;
+        api_=api;mod_=mod;native_=native;
+        battleEndHandler_=Symbol<BattleEndHandlerFn>("flow.battle_end_handler");
+        if (!battleEndHandler_) return false;
+        active_=this;
+        if (!api_->HookCode(mod_,"flow.battle_end_handler",reinterpret_cast<void*>(&ObserveBattleEndHandler),
+                            reinterpret_cast<void**>(&battleEndHandler_))) {
+            active_=nullptr;return false;
+        }
+        return true;
+    }
+
     bool Bind(
         const SdgoApi* api,
         SdgoMod* mod,

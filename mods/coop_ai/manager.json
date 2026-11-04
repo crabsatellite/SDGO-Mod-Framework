@@ -7,7 +7,7 @@
   "hosts": [
     "battle"
   ],
-  "description": "为任务房间添加 AI 队友。",
+  "description": "为任务房间添加 AI 队友，默认按任务的玩家额度复活；在 !ai 后加 inf 可让 AI 无限复活。",
   "settings": [
     {
       "id": "require_room_command",
@@ -127,5 +127,5 @@
     }
   ],
   "presentation": "configurable",
-  "mechanism": "对战服务器按房名 !ai 指令在任务空席加入 AI 队友，再由配套客户端显示和运行；不超过原生房间席位。"
+  "mechanism": "对战服务器按房名 !ai 指令在任务空席加入 AI 队友，并复用原生任务复活额度与等待时间；!ai3 inf 只取消 AI 的次数限制，!ai3 player 显式恢复跟随玩家规则。真人等待复活时 AI 仍照常复活；全部真人生命耗尽即触发原生任务失败，AI 不能维持任务。由配套客户端保留死亡机体并处理原生复活通知，不超过原生房间席位。房名修改从下一局开始生效。"
 }

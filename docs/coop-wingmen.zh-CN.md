@@ -27,8 +27,13 @@
 | `!ai` | 用僚机补满空位 |
 | `!ai2` | 两个僚机（仍不超过空位） |
 | `!ai3 lv4` | 三个 4 级池的僚机 |
+| `!ai3 inf` | 三个僚机，AI 无限复活 |
+| `!ai3 player` | 三个僚机，按当前任务的玩家生命额度复活（默认） |
 | 没有 `!ai` | 不加僚机（除非 `RequireRoomCommand=0`） |
 
+* 默认使用当前任务的玩家生命额度；在 `!ai` 参数后加 `inf` 可取消 AI 的次数限制，`player` 显式选择默认规则。原生复活等待时间照常生效，真人等待复活时 AI 可以先复活作战。
+* 全部真人的原生生命数耗尽时，立即判任务失败，即使仍有 AI 存活。之后沿用原版任务失败的伤害与击破 gate。目标失败、保护对象死亡和超时仍按原版规则处理。
+* 房名规则从下一局生效。服主和所有客户端应通过服主提供的客户端包或更新同步升级；装有对战 AI 时，也需配齐同版 `pvp_ai` 和 `match_ai`，它们共用任务生命周期 Hook。更新 DLL 后需重启对应程序；现有设置的两秒热加载不加载新 DLL。
 * 开局时由对战服务器按 AI 对战模式的方式把 AI 驾驶员加入你的队伍，游戏把它们当作真正的参战者：
   击破、被攻击、被击落都正常计算。
 * 使用游戏原生的 AI 对战机器人 AI（AI 对战机器人的 `VSAI_*` 脚本），在房主客户端上运行。
@@ -48,7 +53,7 @@
 上限为 128 个 Unicode 标量 / 512 字节 UTF-8。例如：
 `周末朋友任务房，慢慢打一起练习 !ai3 lv4 !rand`。
 它请求 3 个 4 级僚机；另装并启用 `room_random` 后，真人每局随机机体。
-僚机仍受空位限制，客户端仍需 `mission_ai`。`lv4` 要写在 `!ai` 后、`!rand` 前。
+僚机仍受空位限制，客户端仍需 `mission_ai`。`lv4`、`inf`、`player` 要写在 `!ai` 后、`!rand` 前。
 未启用长房名配套时，原生上限仍为 20 字节。更多例子见[房名组合指令](room-commands.zh-CN.md)。
 
 ## 设置
@@ -141,5 +146,7 @@ mission_ai: mission 1: 3 wingmen
 | 没有 `coop_ai: mission start`（`LogRoom=1` 时） | 该对战服务器没有加载 `coop_ai`（看日志开头），或者房间不是任务模式 |
 | `wingmen not requested` | 标题没有 `!ai`，且 `RequireRoomCommand=1` |
 | `no NPC of LevelN is in the server's AI-NPC list` | 该服务器数据库里 3604001–3607000 范围内没有这个池的任何 id，见[增加更多僚机机体](#增加更多僚机机体) |
+| 客户端日志提示 `matching match_ai lifecycle bridge is required` | 从同一框架包安装配套的 `mission_ai` 和 `match_ai`，重启游戏 |
+| 僚机死亡后不复活或消失 | 配套更新同版客户端与服务端 AI 组件，重启对应程序并开始新一局；`inf` 仅取消 AI 次数上限 |
 | 服务器加了僚机，某客户端日志没有 `AI participant` | 该客户端没装 `mission_ai` |
 | 客户端：`AI participant ...: creating NPC N failed` | 该客户端没有 NPC 记录 N（客户端 `0198` 表） |

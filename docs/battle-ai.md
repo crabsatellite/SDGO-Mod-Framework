@@ -35,6 +35,18 @@ full title, e.g. `Friends practicing together !ai e2 a1 lv4 hard !rand`.
 Neither level is weakened with artificial idle, delayed reactions or deliberate misses. Ammo, cooldowns,
 physics and damage remain native.
 
+Living teammates share fresh visual contacts, including contacts observed by human players. A bot can
+pursue an enemy seen by an ally without seeing it itself. Shooting still requires the bot's own weapon
+range, clear muzzle line of sight and native attack permission. When shared sight is lost, pursuit uses
+the last observed position rather than the hidden enemy's current coordinates.
+
+On PvP maps without native navigation nodes, pursuit searches the loaded terrain and solid map geometry,
+using the bot's actual collision sphere. Public spawn and relocation points provide exploration goals
+when no teammate has a current contact. Paths account for platforms, safe drops, solid obstacles and
+DeathZone volumes. A blocking destructible can be attacked through normal weapons; indestructible and
+destroyed-but-still-solid objects remain obstacles. Forced-movement pads retain native motor control.
+These checks do not guarantee that every unit can traverse every complex map without stalling.
+
 | | Medium: skilled player | Hard: expert player |
 |---|---|---|
 | Output | continuous decisions, fires as soon as native rules allow, focuses low HP | same, plus legal advanced chains |
@@ -78,8 +90,9 @@ unchanged. Bots on either team target opposing humans and AI and never teammates
 
 General behaviour: real weapon-slot data drives weapon choice and range; aim removes the native NPC
 offset and leads projectiles whose speed is known or learned from stable samples (curved or variable
-trajectories are not linearly predicted); navigation uses the client's native path search with stuck
-detection and re-planning; line of sight is checked per target with the client's collision primitives.
+trajectories are not linearly predicted); navigation uses authored native paths where available and
+collision-aware PvP routes otherwise, with progress checks and re-planning. Line of sight is checked
+per target with the client's collision primitives.
 
 With many units present, sensing reads only what it needs to keep overhead low; target range, scan
 frequency, reaction speed and combat decisions are unchanged, and combat state and visibility are still read

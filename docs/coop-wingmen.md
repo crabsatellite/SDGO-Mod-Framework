@@ -29,8 +29,13 @@ Put a command in the co-op mission room title:
 | `!ai` | fill the free player slots with wingmen |
 | `!ai2` | two wingmen (still capped by the free slots) |
 | `!ai3 lv4` | three wingmen from the level 4 pool |
+| `!ai3 inf` | three wingmen with unlimited respawns |
+| `!ai3 player` | three wingmen using the mission's player life allowance (the default) |
 | no `!ai` | no wingmen (unless `RequireRoomCommand=0`) |
 
+* Wingmen normally share the current mission's player life allowance. Add `inf` after `!ai` for unlimited AI respawns, or `player` to select the default explicitly. The game's respawn delay still applies. AI can respawn while humans are waiting to respawn.
+* As soon as every human has exhausted their native lives, the mission fails even if AI are alive. The original mission failure and damage/kill gates apply. Objective, protected-target and timer failures also keep their native rules.
+* Room-title changes apply from the next round. Update the server and all clients together through the server owner's client package or update. With PvP AI installed, use matching `pvp_ai` and `match_ai` components because they share mission lifecycle hooks. Restart updated hosts; the existing two-second setting reload does not reload DLL code.
 * Wingmen are added when the mission starts. They are AI pilots on your team, added by the
   battle server the same way the AI battle modes add theirs, so the game treats them as
   real participants: their kills count, enemies' hits on them count, and they are destroyed
@@ -58,7 +63,7 @@ With the [extended-title client, Agent and Battle Mods](room-titles.md) enabled 
 For example, `Weekend mission with friends !ai3 lv4 !rand` requests level-4 wingmen and,
 when `room_random` is installed and enabled, randomizes the humans each round.
 Existing free-slot limits and `mission_ai` client requirements still apply.
-Keep `lv4` inside the `!ai` argument span, before `!rand`.
+Keep `lv4`, `inf` or `player` inside the `!ai` argument span, before `!rand`.
 Without the title extension, the native limit remains 20 bytes.
 See [combined commands](room-commands.md) for both mission and PvP examples.
 
@@ -160,6 +165,8 @@ mission_ai: mission 1: 3 wingmen
 | no `coop_ai: mission start` line (with `LogRoom=1`) | `coop_ai` is not loaded on that battle server (check the top of its log), or the room is not a co-op mission |
 | `wingmen not requested` | the room title has no `!ai` and `RequireRoomCommand=1` |
 | `no NPC of LevelN is in the server's AI-NPC list` | that battle server's database has none of the pool's ids in 3604001–3607000; see [Adding more bot units](#adding-more-bot-units) |
+| client log says `matching match_ai lifecycle bridge is required` | install the paired `mission_ai` and `match_ai` components from the same framework package and restart the game |
+| wingmen never revive or disappear after death | update both server and client AI components from the same framework version, restart updated hosts, and start a new round; `inf` removes only the AI quota |
 | server adds wingmen, a client log has no `AI participant` line | that client does not have `mission_ai` |
 | client: `AI participant ...: creating NPC N failed` | that client has no NPC record N (client table `0198`) |
 
@@ -191,6 +198,8 @@ deaths go through the normal battle code. The wingmen reuse exactly that.
   per-slot setup of the AI modes with team 1 (`battle.pilot_reset`, `pilot_state_*`,
   `battle.setup_ai_pilot`). The announcement then includes the new slots.
 
+The server reuses the original pilot respawn, refresh and state functions. Only the exact wingman selected by this Mod's infinite-policy call bypasses the native life-quota gate. Human death statistics and respawn timing stay native. The mission life scan considers humans and immediately enters the original failure block when none have a life remaining.
+
 **Client (`mission_ai`).**
 
 * The client puts the room's AI participants into `room+0x3C` (records of 0x344 bytes), but
@@ -200,6 +209,7 @@ deaths go through the normal battle code. The wingmen reuse exactly that.
   runs the Lua AI named by its NPC data, the AI battle bots' `VSAI_*` scripts) or
   `mode.create_remote_npc` elsewhere, `um.set_player_info`, the NPC name, `um.add_ai_unit`,
   and the server id at `unit+0x2B68`; then `um.calculate_team`.
+* A wingman killed by native combat retains its registered client object. Original revival notifications resolve the same pilot/object identity and restore its native AI lifecycle. The mission and PvP components share these hooks through `include/sdgo/mission_ai_lifecycle.h`.
 * The player count stays at the humans: mission scripts loop over `GetPlayer(1..n)`, which
   only knows humans.
 * Some `VSAI_*` melee families only call `SearchLockOnlyPlayer`. For registered wingmen the script

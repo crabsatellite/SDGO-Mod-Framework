@@ -1081,7 +1081,7 @@ bool __fastcall FakeHasState(
     g_addStateAbiValid =
         g_addStateAbiValid &&
         self == g_manager &&
-        state == 12 &&
+        (state == 12 || state == 14) &&
         extra == 0;
     return g_hasStartState;
 }
@@ -1098,13 +1098,21 @@ void __fastcall FakeAddState(
     g_addStateAbiValid =
         g_addStateAbiValid &&
         self == g_manager &&
-        state == 12 &&
+        state == 14 &&
         payload == nullptr &&
         queue == 1 &&
         extra == 0;
     g_hasStartState = true;
     if (g_addStateSendsImmediately)
         SendNativePacket(0x08A7, 8);
+}
+
+void __fastcall FakeMissionStartBusiness(void* self,void*)
+{
+    g_addStateAbiValid=g_addStateAbiValid && self==g_mainState;
+    // The real button business admits the team through state14 before the
+    // shared state12 can send its final request. This is a boundary fixture.
+    FakeAddState(g_manager,nullptr,14,nullptr,1,0);
 }
 
 bool __stdcall FakeIsRoomMaster(
@@ -1308,6 +1316,8 @@ void* LookupSymbol(const char* name)
             name,
             "flow.mission_3d_main_vtable") == 0)
         return g_mainVtable;
+    if(std::strcmp(name,"flow.mission_3d_start_business")==0)
+        return reinterpret_cast<void*>(&FakeMissionStartBusiness);
     if (std::strcmp(
             name,
             "flow.mission_3d_start_reply_dispatch") == 0)
@@ -1836,7 +1846,7 @@ void TestCompleteMode5Flow(
                 kStartQueued &&
             g_addStateCalls == 1 &&
             g_addStateAbiValid,
-        "Start queues native state 12 once with the verified x86 arguments");
+        "Start invokes the real mission business and queues team admission before battle start");
     Check(
         actions.Start() ==
             MissionFlowActions::

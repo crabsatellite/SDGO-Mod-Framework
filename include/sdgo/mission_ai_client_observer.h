@@ -47,7 +47,7 @@ struct SdgoMissionAiParticipantSnapshotV1 {
     uint8_t mapping_valid;
     uint8_t movement_observed;
     uint8_t spawned;
-    uint8_t reserved[4];
+    uint32_t respawn_count; // observed native down -> alive transitions; formerly reserved
 };
 
 struct SdgoMissionAiClientSnapshotV1 {

@@ -289,7 +289,7 @@ int wmain(int argc, wchar_t** argv) {
     std::array<std::uint16_t, 201> tooLong{};
     check(actions.Invoke(&context, 0, 0, 0, 0, nullptr, 0) ==
               friends::FriendActions::kInvalidCommand &&
-              actions.Invoke(&context, 20, 0, 0, 0, nullptr, 0) ==
+              actions.Invoke(&context, SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_CLICK_PICKER_UNIT + 1, 0, 0, 0, nullptr, 0) ==
               friends::FriendActions::kInvalidCommand &&
               actions.Invoke(
                   &context, SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_SET_NOTE,

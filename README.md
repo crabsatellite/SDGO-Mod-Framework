@@ -50,7 +50,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Feature | Overview | Documentation |
 |---|---|---|
 | Announcements <!-- catalog: `announcements` --> | Login-only daily digest with server-local timezone defaults; optional scheduled notices with cached news, technology, free-game and history cards | [Use](docs/announcements.md) |
-| Mission AI wingmen <!-- catalog: `coop_ai`, `mission_ai` --> | `!ai` in a co-op room title adds AI wingmen to the team | [Use](docs/coop-wingmen.md) |
+| Mission AI wingmen <!-- catalog: `coop_ai`, `mission_ai` --> | `!ai` adds mission wingmen with the player life allowance; `!ai3 inf` allows unlimited AI respawns | [Use](docs/coop-wingmen.md) |
 | PvP AI <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` in a room title adds AI opponents and teammates; optionally group all humans, fill both sides, fill opponents only or add exact counts | [Use](docs/pvp-ai.md) |
 | AI mech catalog (separate addon) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards <!-- catalog: `battle_rewards` --> | Contribution GB/MB, configurable human multipliers and optional per-account gathering rewards | [Use](docs/battle-rewards.md) |
@@ -58,7 +58,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Per-round random loadouts <!-- catalog: `room_random`, `room_random_client` --> | `!rand` in a room title draws each player's unit or deck from their own hangar every round | [Use](docs/room-random.md) |
 | FPS cap <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed | [Use](docs/fps-limit.md) |
 | Extended room titles <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Enter up to 128 characters in normal, AI, team and mission room creation, settings and rename controls | [Use](docs/room-titles.md) |
-| Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Room-selected Easy / Medium / Hard; live perception, pursuit and native weapon handoff | [Use](docs/battle-ai.md) |
+| Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Room-selected Easy / Medium / Hard; shared teammate vision, collision-aware pursuit and native weapon handoff | [Use](docs/battle-ai.md) |
 | Automatic hangar capacity <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) | [Use](docs/hangar-capacity.md) |
 | Hangar manager <!-- catalog: `hangar_manager` --> | Native-page sorting and duplicate exchange, server-side GB batches, and no repeated closed-panel rendering | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager <!-- catalog: `operator_catalog` --> | Five free supply officers, plus operator names, portraits and drops | [Use](docs/operator-assistant.md) |
@@ -66,7 +66,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Daily double rewards <!-- catalog: `daily_rewards` --> | Double battle GB and EXP in a daily window (default 18:00–22:00) | [Use](docs/daily-rewards.md) |
 | Storage claim all <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation | [Use](docs/storage-claim.md) |
 | Chinese shop localization and search <!-- catalog: `shop_localization` --> | Translate shop names, descriptions, options and paint-page unit previews; search by Chinese name combined with rank and payment filters | [Use](docs/shop-localization.md) |
-| Friend unit gifts (optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Right-click an online or offline friend, select an owned unit in native unit management, and let the friend accept or return it in Storage. Off by default | [Use](docs/friend-unit-gift.md) |
+| Friend unit gifts (optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Right-click an online or offline friend, page through owned units in native unit management, and let the friend accept or return the gift in Storage. Reopening Storage binds its new native page. Off by default | [Use](docs/friend-unit-gift.md) |
 | Unit family import (Beta) <!-- catalog: `unit_catalog` --> | Import portable unit projects, publish framed blueprints or complete v2 presentation templates with checked textures, and author GP or token activity pools in Mod Manager | [Use](docs/unit-import.md) |
 
 <!-- /mod-category:gameplay -->

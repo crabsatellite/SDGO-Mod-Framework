@@ -233,6 +233,7 @@ public:
         missionThreeDMainVtable_ =
             Symbol<void*>(
                 "flow.mission_3d_main_vtable");
+        missionStartBusiness_=Symbol<MissionStartBusinessFn>("flow.mission_3d_start_business");
         missionStartReplyDispatch_ =
             Symbol<MissionReplyDispatchFn>(
                 "flow.mission_3d_start_reply_dispatch");
@@ -258,7 +259,7 @@ public:
             !threeDRoomHasState_ || !threeDRoomAddState_ ||
             !missionThreeDManagerVtable_ ||
             !missionThreeDMainVtable_ ||
-            !missionStartReplyDispatch_ || !isRoomMaster_ || !roomInfo_)
+            !missionStartReplyDispatch_ || !missionStartBusiness_ || !isRoomMaster_ || !roomInfo_)
             return false;
 
         __try {
@@ -496,9 +497,9 @@ public:
         }
     }
 
-    // Queues the shipped mission 3D Start state exactly once. The native state
-    // command later sends 0x08A7; its own 0x06C3 dispatcher is observed
-    // separately. A queued state is never reported as a started battle.
+    // Invoke the actual mission Start business. It first queues team admission
+    // (state 0x0E), then the native battle-start command (0x0C). Bypassing the
+    // first state sends 08A7 before a battle room exists and yields 0FB7.
     Result Start()
     {
         if (!bound_ || !native_)
@@ -564,12 +565,12 @@ public:
                 static_cast<LONG>(
                     before.send_sequence));
             InterlockedExchange(&startQueued_, 1);
-            threeDRoomAddState_(
-                room.manager,
-                kStartState,
-                nullptr,
-                kQueueBack,
-                0);
+            missionStartBusiness_(room.main_state);
+            if(!threeDRoomHasState_(room.manager,0x0E,0) &&
+               !threeDRoomHasState_(room.manager,kStartState,0)) {
+                InterlockedExchange(&startQueued_,0);
+                return Publish(kWaitingForNativeRoom);
+            }
             const NativeActions::TransportObservation after =
                 native_->TransportState();
             if (after.send_sequence >
@@ -2431,6 +2432,8 @@ private:
     ThreeDRoomAddStateFn threeDRoomAddState_ = nullptr;
     void* missionThreeDManagerVtable_ = nullptr;
     void* missionThreeDMainVtable_ = nullptr;
+    using MissionStartBusinessFn=void(__thiscall*)(void*);
+    MissionStartBusinessFn missionStartBusiness_=nullptr;
     MissionReplyDispatchFn missionStartReplyDispatch_ = nullptr;
     using RoomInfoFn=uint8_t*(__thiscall*)(uint8_t*);
     RoomInfoFn roomInfo_=nullptr;

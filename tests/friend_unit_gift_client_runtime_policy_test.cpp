@@ -1,4 +1,5 @@
 #include "../mods/friend_unit_gift_client/client_runtime_policy.h"
+#include "../mods/friend_unit_gift_client/picker_paging.h"
 
 #include <array>
 #include <cstdint>
@@ -56,6 +57,25 @@ static_assert(
 } // namespace
 
 int main() {
+    namespace paging=sdgo::friend_unit_gift::client::paging;
+    Check(paging::TargetPage(0,4,11)==1 && paging::TargetPage(1,4,10)==0,
+          "gift arrows visit adjacent populated pages instead of skipping a ten-page group");
+    Check(paging::TargetPage(0,4,10)==0 && paging::TargetPage(3,4,11)==3,
+          "first and last page arrows stay within the native capacity");
+    Check(paging::TargetPage(9,34,11)==10 && paging::TargetPage(10,34,10)==9,
+          "adjacent arrows cross native page groups in both directions");
+    Check(paging::TargetPage(30,34,3)==33 && paging::TargetPage(30,34,4)==-1,
+          "the final partial group admits only existing page circles");
+    Check(paging::TargetPage(0,0,0)==-1 && paging::TargetPage(-1,4,0)==-1 &&
+          paging::TargetPage(4,4,0)==-1 && paging::TargetPage(0,4,12)==-1,
+          "uninitialized or unknown native paging input is rejected");
+    const auto previous=paging::Steps(10,9),next=paging::Steps(9,10),circle=paging::Steps(1,3);
+    Check(previous.count==2 && previous.index[0]==-1 && !previous.forward[0] && previous.index[1]==9,
+          "back across a native group selects its last page rather than its first");
+    Check(next.count==1 && next.index[0]==-1 && next.forward[0],
+          "forward across a native group uses its original first-page transition");
+    Check(circle.count==1 && circle.index[0]==3 && paging::Steps(3,3).count==0,
+          "page circles keep the native group index and current-page clicks are inert");
     std::array<std::uint8_t,25> brief{};
     brief[14]=12;brief[15]=1;
     Check(NativeBriefAllowsGift(brief.data()),

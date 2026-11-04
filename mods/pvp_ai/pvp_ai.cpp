@@ -43,6 +43,20 @@
 
 #include "sdgo/ai_catalog_provider.h"
 #include "sdgo/room_commands.h"
+#include "sdgo/mission_ai_lifecycle.h"
+
+static SdgoMissionServerLifecycleV1* g_missionLifecycle = nullptr;
+
+extern "C" __declspec(dllexport) int __cdecl SdgoPvpAiRegisterMissionV1(
+    const SdgoMissionServerLifecycleV1* hooks)
+{
+    if (!hooks || hooks->size != sizeof(*hooks) || hooks->version != 1 ||
+        !hooks->tick || !hooks->end) return 0;
+    auto previous = InterlockedCompareExchangePointer(
+        reinterpret_cast<void* volatile*>(&g_missionLifecycle),
+        const_cast<SdgoMissionServerLifecycleV1*>(hooks), nullptr);
+    return previous == nullptr || previous == hooks;
+}
 #include "sdgo/pvp_team_plan.h"
 
 namespace
@@ -1731,6 +1745,8 @@ namespace
     int __fastcall RoomTick(uint8_t* room, void* /*edx*/, uint32_t now)
     {
         int result = g_roomTick(room, now);
+        if (room && g_missionLifecycle)
+            g_missionLifecycle->tick(room, now);
         if (room && !GuardedRespawn(room, now))
             g_api->Log(g_mod, SDGO_LOG_ERROR, "exception while respawning AI pilots");
         if (room)
@@ -1950,6 +1966,8 @@ namespace
         const bool copied = observed && GuardedObserverCopyEvent(
             SDGO_PVP_AI_EVENT_BATTLE_END, room, 0, false, &endEvent);
         g_battleEnd(room, a, b, now);
+        if (room && g_missionLifecycle)
+            g_missionLifecycle->end(room);
         if (copied) {
             __try {
                 g_api->Log(g_mod,SDGO_LOG_INFO,
