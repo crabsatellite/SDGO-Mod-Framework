@@ -23,10 +23,12 @@ edits sources, categories, weekdays, daily windows, triggers and display limits,
 and offers a manual refresh. Manual notices win ties at the same priority.
 
 The login digest defaults to three news and two technology headlines, once per
-day and process, displayed for 25 seconds. Later in-game cards skip the exact
-articles already delivered in that digest. In-game defaults allow five cards
-per day, three per process, with at least ten minutes between cards. They appear
-only in the lobby, for ten seconds per native page. This lobby restriction can
+day and process, displayed for 25 seconds. In-game notices are disabled by default
+and no in-game triggers are selected. New authored rules also select only the login
+location, with a limit of one per day and process. Enable in-game notices and choose
+triggers explicitly to use them. Their optional limits are five cards per day, three
+per process, with at least ten minutes between cards and ten seconds per native page.
+The lobby-only restriction remains available and can
 be changed in the panel; otherwise a room/battle trigger waits for the lobby.
 Intervals and read state belong to the client installation, not a server account.
 
