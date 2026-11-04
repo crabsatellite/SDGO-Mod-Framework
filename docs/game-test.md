@@ -359,6 +359,25 @@ authentication and the server authorize/process the mail; GameTest still waits
 for an independent processing receipt and never grants currency or inventory
 directly. Keep credentials and command configuration local.
 
+### Blueprint synthesis
+
+The Python `prepare` / `reuse_prepared` API accepts a sealed `unit_scenario`
+with `schema: 1` and `blueprint: {recipe_id, book_uid}` for the original book
+and recipe pages. Use `pages_only=True` and an existing `play_unit_uid`.
+Optional `materials` contains three to five ordered `{unit_id, uid}` objects
+for genuinely owned instances. The original selection callbacks populate the
+material slots; the test never supplies a full-unit record or writes selection
+state.
+
+Material selection does not consume anything. To exercise synthesis, explicitly
+add `synthesize: true` and `output_unit_id` to the blueprint scope. This test
+consumes its isolated account's existing book and materials through the native
+confirmation dialog. It requires the original `0x09AD` request, `0x07C9` reply
+consumer and matching output brief inventory record. Keep an independent SQL
+before/after receipt and verify persistence with a new native login; a success
+reply alone does not prove reload or acquisition-route closure. All identities
+and consumption settings are hash-bound before launch.
+
 ### Coordinated multiplayer
 
 Prepare one quiet `--friends-only` run for each distinct existing account, using
