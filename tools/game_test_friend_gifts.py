@@ -552,6 +552,80 @@ class GiftCampaign:
                    same_payload(payload,self.db.unit(self.uid)) and self.db.counts_valid(aid) and self.db.counts_valid(bid))
         self.native.stop('b');self.native.stop('a');self.receipt['status']='pass';self.save()
 
+    def picker_pagination(self):
+        sender,account,_=self.native.start('a')
+        recipient=int(self.binding['recipient']['account_id'])
+        self.check('picker actor is the bound existing sender',account==int(self.binding['sender']['account_id']))
+        before=self.db.unit(self.uid)
+        self.check('picker fixture is a genuine owned instance beyond the first page',
+                   before and int(before['AccountNumber'])==account and int(before['UserUnitSlotNumber'])>36)
+        expected={int(row[0]):int(row[1]) for row in self.db.connection.cursor().execute(
+            'SELECT UserUnitSlotNumber,UserUnitNumber FROM dbo.tbl_UserUnits WHERE AccountNumber=?',account)}
+
+        def ready(state):
+            p=state.get('gift_picker',{})
+            return p.get('open')=='1' and p.get('selecting')=='1' and int(p.get('page_count','0'))>0 and p.get('pointer_phase')=='0'
+        def open_picker():
+            self.command(sender,'gift_home_context' if self.args.friend_surface=='home' else 'gift_context',
+                         target_id=recipient,cursor_x=480,cursor_y=263)
+            sender.wait(lambda s:int(s.get('unit_gift',{}).get('control_flags','0'))&2,60)
+            self.command(sender,'gift_open',target_id=recipient)
+            return sender.wait(ready,60)['gift_picker']
+        def click(value,page,label):
+            sender.wait(ready,30)
+            self.command(sender,'gift_picker_page',target_id=value)
+            p=sender.wait(lambda s:ready(s) and s['gift_picker'].get('grid_page')==str(page),20)['gift_picker']
+            visible={int(p['slot'+str(i)]):int(p['uid'+str(i)]) for i in range(36) if int(p['slot'+str(i)])}
+            self.check(label, p['pager_page']==str(page) and
+                       all(page*36<slot<=(page+1)*36 and uid==expected.get(slot,0) for slot,uid in visible.items()) and
+                       int(p['pointer_position_reads'])>0 and int(p['pointer_state_reads'])>0)
+            return p
+        p=open_picker();count=int(p['page_count'])
+        self.check('native picker exposes enough real pages for group-boundary coverage',count>=12)
+        def go(page):
+            for _ in range(count+2):
+                current=int(sender.wait(ready,30)['gift_picker']['grid_page'])
+                if current==page:return
+                if current//10==page//10:click(page+1,page,'native page circle '+str(page+1));return
+                if current//10<page//10:
+                    edge=min(current-current%10+9,count-1)
+                    if current!=edge:click(edge+1,edge,'native last circle before next group')
+                    else:click(4294967295,current+1,'native next arrow across page group')
+                else:
+                    edge=current-current%10
+                    if current!=edge:click(edge+1,edge,'native first circle before previous group')
+                    else:click(4294967294,current-1,'native previous arrow across page group')
+            raise game_test.GameTestError('native picker could not reach its requested page')
+        go(0)
+        click(4294967294,0,'previous arrow at first page is inert')
+        click(4294967295,1,'next arrow visits the adjacent second page')
+        self.capture(sender,'gift-picker-second-page')
+        click(4294967294,0,'previous arrow returns to the adjacent first page')
+        for page in (3,8,9):go(page)
+        click(4294967295,10,'next arrow crosses from page ten to eleven')
+        self.capture(sender,'gift-picker-eleventh-page')
+        click(4294967294,9,'previous arrow crosses from page eleven to ten')
+        for page in (11,count-1):go(page)
+        click(4294967295,count-1,'next arrow at last page is inert')
+        self.capture(sender,'gift-picker-last-page')
+        go(0)
+        target=(int(before['UserUnitSlotNumber'])-1)//36
+        for attempt in range(2):
+            if attempt:open_picker()
+            go(target)
+            p=sender.wait(ready,30)['gift_picker']
+            self.check('chosen instance is visible before the native double-click',str(self.uid) in [p['uid'+str(i)] for i in range(36)])
+            self.command(sender,'gift_picker_select',unit_uid=self.uid)
+            sender.wait(lambda s:s.get('unit_gift',{}).get('selected_unit_uid')==str(self.uid) and
+                        int(s['unit_gift'].get('control_flags','0'))&32,120)
+            self.capture(sender,'gift-picker-selected-'+str(attempt))
+            self.command(sender,'gift_cancel')
+            sender.wait(lambda s:s.get('unit_gift',{}).get('composer_phase')=='0' and
+                        s.get('gift_picker',{}).get('pointer_phase')=='0',30)
+            self.check('selection cancellation preserves every native instance field',same_payload(before,self.db.unit(self.uid)))
+        self.native.stop('a');self.receipt['actors']=list(self.native.receipt['actors'])
+        self.receipt['status']='pass';self.save()
+
     def close(self):
         for label in list(self.native.running):
             actor,future,_=self.native.running[label]
@@ -576,7 +650,7 @@ def main():
     parser.add_argument('--target-host',required=True)
     parser.add_argument('--friend-surface',choices=('home','messenger'),default='home',
                         help='use the top-right USER LIST or the older messenger context')
-    parser.add_argument('--phase',choices=('enabled','accept-pending','verify-accepted','return-pending','prepare-off-resolution','verify-pending-handoff','disabled-resolution','verify-disabled-accepted'),default='enabled')
+    parser.add_argument('--phase',choices=('enabled','accept-pending','verify-accepted','return-pending','prepare-off-resolution','verify-pending-handoff','disabled-resolution','verify-disabled-accepted','picker-pagination'),default='enabled')
     parser.add_argument('--prepare-off-resolution',action='store_true',help='retain one genuine pending gift for a later disabled-resolution phase')
     parser.add_argument('--resume-gift-id',type=int,help='accepted gift to verify for source information and restart persistence')
     args=parser.parse_args()
@@ -585,6 +659,7 @@ def main():
     campaign=GiftCampaign(args)
     try:
         if args.phase=='enabled':campaign.enabled()
+        elif args.phase=='picker-pagination':campaign.picker_pagination()
         elif args.phase=='accept-pending':campaign.accept_pending()
         elif args.phase=='verify-accepted':campaign.verify_accepted()
         elif args.phase=='return-pending':campaign.return_pending()
