@@ -1,11 +1,15 @@
 // Execute the production DLL, its x86 site stub and patched branch in owned memory.
 #include <windows.h>
+#include <dbghelp.h>
 #include <xmmintrin.h>
 #include <array>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <string>
+#include <vector>
 #include "sdgo/sdgo_api.h"
 #include "sdgo/native_data_guard_observer.h"
 
@@ -22,6 +26,9 @@ uint8_t* code = nullptr;
 uint8_t* bounds = nullptr;
 void* lookupHook = nullptr;
 void* unitHook = nullptr;
+void* informationHook = nullptr;
+void* exceptionHook = nullptr;
+void* stackWalkHook = nullptr;
 bool missingUnit = false, missingName = false, missingSymbol = false;
 unsigned nativeLookups = 0, gridCalls = 0, warnings = 0;
 uint32_t observedUnit = 0, observedIndex = 0;
@@ -32,9 +39,25 @@ const uint32_t kUnit = 10014, kIndex = 2, kNameGroup = 29;
 const uint32_t kNameId = (kNameGroup + 0x63F) * 100 + kIndex;
 volatile LONG originalUnitCalls = 0, finalized = 0;
 uint32_t afterEax = 0, afterEcx = 0, afterEdx = 0;
+uint32_t informationDenominator = 0, informationEax = 0;
 bool clobberFp = false;
+std::vector<std::string> logs;
 
-void Log(SdgoMod*, int level, const char*, ...) {
+using StackWalkFn = BOOL(WINAPI*)(
+    DWORD, HANDLE, HANDLE, LPSTACKFRAME, LPVOID,
+    PREAD_PROCESS_MEMORY_ROUTINE, PFUNCTION_TABLE_ACCESS_ROUTINE,
+    PGET_MODULE_BASE_ROUTINE, PTRANSLATE_ADDRESS_ROUTINE);
+using ExceptionWriter = LONG(WINAPI*)(EXCEPTION_POINTERS*);
+EXCEPTION_POINTERS* writerPointers = nullptr;
+LPVOID writerContext = nullptr, walkContext = nullptr;
+CONTEXT writerAfter{}, walkAfter{};
+
+void Log(SdgoMod*, int level, const char* format, ...) {
+    char text[1024]{};
+    va_list args; va_start(args, format);
+    vsnprintf_s(text, sizeof(text), _TRUNCATE, format, args);
+    va_end(args);
+    logs.emplace_back(text);
     SetLastError(0xBAD0);
     if (level == SDGO_LOG_WARN) ++warnings;
     if (clobberFp) {
@@ -73,6 +96,12 @@ __declspec(naked) void OriginalUnitSite() {
     __asm { inc dword ptr [originalUnitCalls] }
     __asm { jmp FinalizeUnit }
 }
+__declspec(naked) void OriginalInformationSite() {
+    __asm { mov edi, [eax+39h] }
+    __asm { mov dword ptr [informationDenominator], edi }
+    __asm { mov dword ptr [informationEax], eax }
+    __asm { ret }
+}
 __declspec(naked) void __stdcall InvokeUnitSite(const uint8_t*, const uint8_t*) {
     __asm { push ebp }
     __asm { mov ebp, esp }
@@ -89,6 +118,38 @@ __declspec(naked) void __stdcall InvokeUnitSite(const uint8_t*, const uint8_t*) 
     __asm { pop ebp }
     __asm { ret 8 }
 }
+__declspec(naked) void __stdcall InvokeInformationSite(const uint8_t*) {
+    __asm { push ebp }
+    __asm { mov ebp, esp }
+    __asm { push edi }
+    __asm { mov eax, [ebp+8] }
+    __asm { call dword ptr [informationHook] }
+    __asm { pop edi }
+    __asm { pop ebp }
+    __asm { ret 4 }
+}
+BOOL WINAPI OriginalStackWalk(
+    DWORD, HANDLE, HANDLE, LPSTACKFRAME, LPVOID context,
+    PREAD_PROCESS_MEMORY_ROUTINE, PFUNCTION_TABLE_ACCESS_ROUTINE,
+    PGET_MODULE_BASE_ROUTINE, PTRANSLATE_ADDRESS_ROUTINE) {
+    walkContext = context;
+    auto* native = static_cast<CONTEXT*>(context);
+    native->Eax = 0xDEADBEEF;
+    native->Ebp = 0x001AFFEC;
+    native->Esp = 0x001AFFE4;
+    walkAfter = *native;
+    return FALSE;
+}
+LONG WINAPI OriginalExceptionWriter(EXCEPTION_POINTERS* pointers) {
+    writerPointers = pointers;
+    writerContext = pointers ? pointers->ContextRecord : nullptr;
+    STACKFRAME frame{};
+    reinterpret_cast<StackWalkFn>(stackWalkHook)(
+        IMAGE_FILE_MACHINE_I386, GetCurrentProcess(), GetCurrentThread(), &frame,
+        pointers->ContextRecord, nullptr, nullptr, nullptr, nullptr);
+    writerAfter = *pointers->ContextRecord;
+    return 1;
+}
 void* Symbol(SdgoMod*, const char* key) {
     if (!std::strcmp(key, "grid.data")) return reinterpret_cast<void*>(&Grid);
     if (!std::strcmp(key, "grid.find")) return missingSymbol ? nullptr : reinterpret_cast<void*>(&Find);
@@ -96,15 +157,32 @@ void* Symbol(SdgoMod*, const char* key) {
     if (!std::strcmp(key, "native_data_guard.name_call_plain")) return code + 8;
     if (!std::strcmp(key, "native_data_guard.name_call_bracketed")) return code + 72;
     if (!std::strcmp(key, "native_data_guard.unit_finalize")) return reinterpret_cast<void*>(&FinalizeUnit);
+    if (!std::strcmp(key, "native_data_guard.information_denominator"))
+        return reinterpret_cast<void*>(&OriginalInformationSite);
+    if (!std::strcmp(key, "native_data_guard.exception_writer"))
+        return reinterpret_cast<void*>(&OriginalExceptionWriter);
     return nullptr;
 }
 int HookCode(SdgoMod*, const char* key, void* detour, void** original) {
-    Check(!std::strcmp(key, "native_data_guard.name_lookup"), "only the named lookup entry is hooked");
-    lookupHook = detour; *original = reinterpret_cast<void*>(&OriginalName); return 1;
+    if (!std::strcmp(key, "native_data_guard.name_lookup")) {
+        lookupHook = detour; *original = reinterpret_cast<void*>(&OriginalName); return 1;
+    }
+    Check(!std::strcmp(key, "native_data_guard.exception_writer"),
+          "only the verified exception writer is additionally hooked");
+    exceptionHook = detour; *original = reinterpret_cast<void*>(&OriginalExceptionWriter); return 1;
 }
 int HookSite(SdgoMod*, const char* key, void* detour, void** original) {
-    Check(!std::strcmp(key, "native_data_guard.unit_transform"), "only optional metadata site is hooked");
-    unitHook = detour; *original = reinterpret_cast<void*>(&OriginalUnitSite); return 1;
+    if (!std::strcmp(key, "native_data_guard.unit_transform")) {
+        unitHook = detour; *original = reinterpret_cast<void*>(&OriginalUnitSite); return 1;
+    }
+    Check(!std::strcmp(key, "native_data_guard.information_denominator"),
+          "only the verified missing-information read is additionally hooked");
+    informationHook = detour; *original = reinterpret_cast<void*>(&OriginalInformationSite); return 1;
+}
+int HookImport(SdgoMod*, const char* dll, const char* function, void* detour, void** original) {
+    Check(!_stricmp(dll, "dbghelp.dll") && !std::strcmp(function, "StackWalk"),
+          "only the host StackWalk import is hooked");
+    stackWalkHook = detour; *original = reinterpret_cast<void*>(&OriginalStackWalk); return 1;
 }
 void MakeCaller(uint8_t* target) {
     const uint8_t bytes[] = {0xFF,0x74,0x24,0x08,0xFF,0x74,0x24,0x08,0xE8,0,0,0,0,0xC2,0x08,0};
@@ -134,12 +212,14 @@ void Run(SdgoModLoadFn entry, HMODULE dll) {
     const wchar_t label[] = L"valid";
     std::memcpy(name.data()+13, label, sizeof(label));
     SdgoApi api{}; api.size = sizeof(api); api.version = SDGO_API_VERSION;
-    api.Symbol = Symbol; api.HookCode = HookCode; api.HookSite = HookSite; api.Log = Log;
+    api.Symbol = Symbol; api.HookCode = HookCode; api.HookSite = HookSite;
+    api.HookImport = HookImport; api.Log = Log;
     missingSymbol = true;
     Check(!entry(&api, nullptr) && !lookupHook && bounds[6] == 0x7F,
           "missing verified dependency refuses activation before mutation");
     missingSymbol = false;
-    Check(entry(&api, nullptr) && lookupHook && unitHook, "production DLL activates all three guarded paths");
+    Check(entry(&api, nullptr) && lookupHook && unitHook && informationHook &&
+          exceptionHook && stackWalkHook, "production DLL activates all verified guard paths");
     MakeCaller(code); MakeCaller(code + 64);
     Check(VirtualProtect(code, 4096, PAGE_EXECUTE_READ, &ignored) != 0, "native call fixtures become executable read-only");
     FlushInstructionCache(GetCurrentProcess(), code, 4096);
@@ -168,6 +248,17 @@ void Run(SdgoModLoadFn entry, HMODULE dll) {
     Check(reinterpret_cast<DirectLookup>(lookupHook)(self, nullptr, kUnit, kIndex) == nullptr,
           "an unrelated native caller retains its original null result");
     missingName = false;
+    std::array<uint8_t, 0x40> information{};
+    Put(information.data(), 0x39, uint32_t{240});
+    InvokeInformationSite(information.data());
+    Check(informationDenominator == 240 && informationEax == reinterpret_cast<uintptr_t>(information.data()),
+          "present information data retains the original denominator record");
+    const auto informationMxcsr = _mm_getcsr(); clobberFp = true;
+    SetLastError(0x2345);
+    InvokeInformationSite(nullptr); clobberFp = false;
+    Check(GetLastError() == 0x2345 && informationDenominator == 0 && informationEax != 0 &&
+          _mm_getcsr() == informationMxcsr,
+          "missing information takes the native zero-denominator path while preserving thread state");
     std::array<uint8_t, 0x140> metadata{};
     std::array<uint8_t, 12> object{}; Put(object.data(), 4, kUnit);
     InvokeUnitSite(metadata.data(), object.data());
@@ -180,15 +271,75 @@ void Run(SdgoModLoadFn entry, HMODULE dll) {
     Check(originalUnitCalls == 2 && finalized == 3, "missing optional metadata skips only unsafe read and still finalizes once");
     Check(afterEax == 0x12345678 && afterEcx == 0x23456789 && afterEdx == 0x3456789A && _mm_getcsr() == mxcsr,
           "site diagnostics preserve volatile native registers and SIMD control state");
+    CONTEXT original{};
+    original.ContextFlags = CONTEXT_FULL;
+    original.Eax = 0x11111111; original.Ebx = 0x22222222;
+    original.Ecx = 0x33333333; original.Edx = 0x44444444;
+    original.Esi = 0x55555555; original.Edi = 0x66666666;
+    original.Ebp = 0x77777777; original.Esp = 0x88888888;
+    original.Eip = 0x99999999;
+    const CONTEXT originalBefore = original;
+    EXCEPTION_RECORD record{};
+    record.ExceptionCode = EXCEPTION_ACCESS_VIOLATION;
+    record.ExceptionAddress = reinterpret_cast<void*>(&OriginalExceptionWriter);
+    record.NumberParameters = 2;
+    record.ExceptionInformation[0] = 1;
+    record.ExceptionInformation[1] = 0xDEADC0DE;
+    EXCEPTION_POINTERS pointers{&record, &original};
+    SetLastError(0x3456);
+    Check(reinterpret_cast<ExceptionWriter>(exceptionHook)(&pointers) == 1,
+          "wrapped native exception writer retains its original return contract");
+    Check(GetLastError() == 0x3456 && !std::memcmp(&original, &originalBefore, sizeof(original)),
+          "exception diagnostics preserve caller context and last-error state");
+    Check(writerPointers && writerPointers != &pointers && writerContext &&
+          writerContext != &original && walkContext && walkContext != writerContext,
+          "native writer and StackWalk receive independent owned context copies");
+    Check(writerAfter.Eax == originalBefore.Eax && writerAfter.Ebp == originalBefore.Ebp &&
+          writerAfter.Esp == originalBefore.Esp && walkAfter.Eax == 0xDEADBEEF &&
+          walkAfter.Ebp == 0x001AFFEC && walkAfter.Esp == 0x001AFFE4,
+          "StackWalk mutation cannot pollute the registers printed by the native writer");
+    bool hasRecord = false, hasRegisters = false, hasModule = false;
+    for (const auto& line : logs) {
+        hasRecord = hasRecord || (line.find("code=C0000005") != std::string::npos &&
+            line.find("access=1") != std::string::npos &&
+            line.find("fault=DEADC0DE") != std::string::npos);
+        hasRegisters = hasRegisters || (line.find("eax=11111111") != std::string::npos &&
+            line.find("ebp=77777777") != std::string::npos &&
+            line.find("esp=88888888") != std::string::npos &&
+            line.find("eip=99999999") != std::string::npos);
+        hasModule = hasModule || (line.find("module=00000000..00000000") == std::string::npos &&
+            line.find("module=") != std::string::npos);
+    }
+    Check(hasRecord && hasRegisters && hasModule,
+          "accurate exception, access, module-range and original-register diagnostics are recorded");
+    CONTEXT outside{}; outside.Eax = 7;
+    STACKFRAME outsideFrame{}; walkContext = nullptr;
+    reinterpret_cast<StackWalkFn>(stackWalkHook)(
+        IMAGE_FILE_MACHINE_I386, GetCurrentProcess(), GetCurrentThread(), &outsideFrame,
+        &outside, nullptr, nullptr, nullptr, nullptr);
+    Check(walkContext == &outside && outside.Eax == 0xDEADBEEF,
+          "StackWalk calls outside the native writer retain their original context pointer");
     using StatusFn = int(__cdecl*)(SdgoNativeDataGuardStatusV1*);
+    using StatusV2Fn = int(__cdecl*)(SdgoNativeDataGuardStatusV2*);
     const auto status = reinterpret_cast<StatusFn>(GetProcAddress(dll, "SdgoNativeDataGuardGetStatusV1"));
+    const auto statusV2 = reinterpret_cast<StatusV2Fn>(
+        GetProcAddress(dll, "SdgoNativeDataGuardGetStatusV2"));
     SdgoNativeDataGuardStatusV1 snapshot{}; snapshot.size = sizeof(snapshot);
     Check(status && status(&snapshot) && snapshot.version == 1 && snapshot.funnel_bounds_corrected &&
           snapshot.missing_names == 4 && snapshot.missing_transform_metadata == 1,
           "read-only native observer counts actual guards without changing data");
     Check(!status(nullptr), "observer rejects null output");
     snapshot.size = 4; Check(!status(&snapshot), "observer rejects undersized output");
-    Check(gridCalls > 0 && warnings == 5, "diagnostics are emitted for missing data only");
+    SdgoNativeDataGuardStatusV2 snapshotV2{}; snapshotV2.size = sizeof(snapshotV2);
+    Check(statusV2 && statusV2(&snapshotV2) && snapshotV2.version == 2 &&
+          snapshotV2.funnel_bounds_corrected && snapshotV2.missing_names == 4 &&
+          snapshotV2.missing_transform_metadata == 1 &&
+          snapshotV2.missing_information_records == 1 &&
+          snapshotV2.preserved_exception_contexts == 1,
+          "additive V2 observer exposes the new guards without changing V1");
+    Check(!statusV2(nullptr), "V2 observer rejects null output");
+    snapshotV2.size = 4; Check(!statusV2(&snapshotV2), "V2 observer rejects undersized output");
+    Check(gridCalls > 0 && warnings == 6, "warnings are emitted for missing data only");
     VirtualFree(code, 0, MEM_RELEASE); VirtualFree(bounds, 0, MEM_RELEASE);
 }
 }
