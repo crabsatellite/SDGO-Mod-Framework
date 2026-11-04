@@ -66,7 +66,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Daily double rewards <!-- catalog: `daily_rewards` --> | Double battle GB and EXP in a daily window (default 18:00–22:00) | [Use](docs/daily-rewards.md) |
 | Storage claim all <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation | [Use](docs/storage-claim.md) |
 | Chinese shop localization and search <!-- catalog: `shop_localization` --> | Translate shop names, descriptions, options and paint-page unit previews; search by Chinese name combined with rank and payment filters | [Use](docs/shop-localization.md) |
-| Friend unit gifts (optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Right-click an online or offline friend, select an owned unit in native unit management, and let the friend accept or return it in Storage. Off by default | [Use](docs/friend-unit-gift.md) |
+| Friend unit gifts (optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Right-click an online or offline friend, page through owned units in native unit management, and let the friend accept or return the gift in Storage. Off by default | [Use](docs/friend-unit-gift.md) |
 | Unit family import (Beta) <!-- catalog: `unit_catalog` --> | Import portable unit projects, publish typed blueprints with native framed artwork, and author dedicated activity pools with GP or token presets in Mod Manager | [Use](docs/unit-import.md) |
 
 <!-- /mod-category:gameplay -->
