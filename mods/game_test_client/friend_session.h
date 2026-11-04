@@ -8,6 +8,8 @@
 #include "unit_gift_actions.h"
 #include "pvp_session_actions.h"
 #include "sdgo/game_test.h"
+#include "sdgo/native_data_guard_observer.h"
+#include "sdgo/scene_lifecycle_observer.h"
 
 namespace friends {
 
@@ -194,6 +196,25 @@ class FriendSession {
         if(storageWrite_)storageWrite_(f);
         fprintf(f,"[capture]\npending=%u\nhresult=%lu\n",capturePending_?1u:0u,static_cast<unsigned long>(captureResult_));
         if(pvpActions_)pvpActions_->Append(f);
+        if(const auto module=GetModuleHandleW(L"scene_lifecycle_fix.dll")) {
+            const auto status=reinterpret_cast<SdgoSceneLifecycleGetStatusV1Fn>(
+                GetProcAddress(module,SDGO_SCENE_LIFECYCLE_STATUS_EXPORT));
+            SdgoSceneLifecycleStatusV1 value{};value.size=sizeof(value);value.version=1;
+            if(status&&status(&value))fprintf(f,
+                "[scene_lifecycle]\nversion=%u\nprocess_id=%u\nreparent_calls=%u\nallocation_attempts=%u\ntransfers=%u\nsame_owner=%u\nfrom_unowned=%u\nallocator_null=%u\ncapacity_errors=%u\n",
+                value.version,value.process_id,value.reparent_calls,value.allocation_attempts,
+                value.transfers,value.same_owner,value.from_unowned,value.allocator_null,value.capacity_errors);
+        }
+        if(const auto module=GetModuleHandleW(L"native_data_guard.dll")) {
+            using Status=int(__cdecl*)(SdgoNativeDataGuardStatusV3*);
+            const auto status=reinterpret_cast<Status>(GetProcAddress(module,"SdgoNativeDataGuardGetStatusV3"));
+            SdgoNativeDataGuardStatusV3 value{};value.size=sizeof(value);value.version=3;
+            if(status&&status(&value))fprintf(f,
+                "[native_lifecycle]\nversion=%u\nmissing_information_records=%u\ndeferred_message_copies=%u\ndeferred_message_replacements=%u\ndeferred_message_copy_failures=%u\ndeferred_message_completions=%u\noutstanding_deferred_messages=%u\n",
+                value.version,value.missing_information_records,value.deferred_message_copies,
+                value.deferred_message_replacements,value.deferred_message_copy_failures,
+                value.deferred_message_completions,value.outstanding_deferred_messages);
+        }
         fclose(f);
         const bool published=MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=0;
         lastWrite_=GetTickCount64();

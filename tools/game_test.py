@@ -2532,7 +2532,10 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             if run['random_loadout'] not in ('0', '1'):
                 raise ValueError('invalid random loadout policy')
             if run['random_loadout'] == '1':
-                if any((bootstrap_only, battleship_only, gift_requests_only, deck_only, pages_only,friends_only)):
+                # Coordinated PvP uses the native actor command session. Its
+                # random title is sealed here too; friends.session alone still
+                # makes no autonomous battle or settlement acceptance claim.
+                if any((bootstrap_only, battleship_only, gift_requests_only, deck_only, pages_only)):
                     raise ValueError('random scenario requires PvP')
                 nonce = run['title_nonce']
                 expected_ai = int(run["expected_ai"])
