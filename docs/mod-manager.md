@@ -70,6 +70,8 @@ Install these addons under `sdgo/local-mods/<id>/`. Both the core and Manager di
 Manager imports marked local-only packages there automatically. Ignore the whole `sdgo/local-mods/`
 directory in version control. Public package, export and source guards reject its contents, so additional
 local addons do not need individual exclusion rules.
+These guards compare reserved directory and manifest names without regard to case,
+matching Windows paths; changing letter case does not make the contents exportable.
 
 An owner-only Mod stays in a separate private repository. Its `[mod]` manifest uses
 `distribution=local_only`, its `manager.json` uses `"distribution": "local_only"`,

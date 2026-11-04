@@ -8,11 +8,11 @@
 
 namespace sdgo::announcements::news {
 struct Settings {
-    bool enabled=false,login=true,game=true,lobbyOnly=true;
+    bool enabled=false,login=true,game=false,lobbyOnly=true;
     uint32_t refresh=360,age=48,newsCount=3,techCount=2,loginDuration=25;
     uint32_t gameDay=5,gameSession=3,gameInterval=600,gameDuration=10;
     int days=127,start=0,end=0;
-    uint32_t gameTriggers=Timer|Login|Lobby;
+    uint32_t gameTriggers=0;
     std::array<bool,4> categories{{true,true,true,true}};
     std::vector<std::wstring> sources;
 };
@@ -41,7 +41,7 @@ inline bool Endpoint(const std::wstring& value){
 inline Settings ReadSettings(const std::wstring& path){
     Settings s;if(GetFileAttributesW(path.c_str())==INVALID_FILE_ATTRIBUTES)return s;
     if(Setting(path,L"schema_version",0,1,1)!=1)return s;
-    s.enabled=Setting(path,L"enabled",1,0,1)!=0;s.login=Setting(path,L"login_enabled",1,0,1)!=0;s.game=Setting(path,L"game_enabled",1,0,1)!=0;
+    s.enabled=Setting(path,L"enabled",1,0,1)!=0;s.login=Setting(path,L"login_enabled",1,0,1)!=0;s.game=Setting(path,L"game_enabled",0,0,1)!=0;
     s.refresh=Setting(path,L"refresh_minutes",360,30,1440);s.age=Setting(path,L"max_age_hours",48,1,72);
     s.newsCount=Setting(path,L"login_news_count",3,0,5);s.techCount=Setting(path,L"login_tech_count",2,0,5);
     s.loginDuration=Setting(path,L"login_duration_seconds",25,5,120);
@@ -55,7 +55,9 @@ inline Settings ReadSettings(const std::wstring& path){
     for(const auto& day:Split(Ini(path,L"weekdays",L"0,1,2,3,4,5,6"))){if(day.size()!=1 || day[0]<L'0'||day[0]>L'6')throw std::runtime_error("invalid news weekdays");s.days|=1<<(day[0]-L'0');}
     s.gameTriggers=0;
     const std::array<std::wstring,7> eventNames={L"enter",L"timer",L"login",L"lobby",L"room",L"battle_start",L"battle_end"};
-    for(const auto& event:Split(Ini(path,L"game_triggers",L"login,lobby,timer"))){const auto found=std::find(eventNames.begin(),eventNames.end(),event);if(found==eventNames.end())throw std::runtime_error("invalid news trigger");s.gameTriggers|=1u<<static_cast<unsigned>(found-eventNames.begin());}
+    const auto events=Ini(path,L"game_triggers");
+    if(!events.empty())for(const auto& event:Split(events)){const auto found=std::find(eventNames.begin(),eventNames.end(),event);if(found==eventNames.end())throw std::runtime_error("invalid news trigger");s.gameTriggers|=1u<<static_cast<unsigned>(found-eventNames.begin());}
+    if(s.game && !s.gameTriggers)throw std::runtime_error("select an in-game news trigger");
     s.sources=Split(Ini(path,L"sources",L"https://60s.crystelf.top,https://60s.okbaike.com"));
     if(s.sources.empty()||s.sources.size()>3)throw std::runtime_error("invalid news sources");
     for(const auto& source:s.sources)if(!Endpoint(source))throw std::runtime_error("invalid news source address");

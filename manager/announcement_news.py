@@ -23,10 +23,10 @@ LABELS = {'news': '每日新闻', 'tech': '科技资讯', 'epic': '游戏限免'
 DEFAULT = dict(schema_version=1, enabled=True,
     sources=['https://60s.crystelf.top', 'https://60s.okbaike.com'], categories=list(KINDS),
     refresh_minutes=360, max_age_hours=48, login_enabled=True, login_news_count=3,
-    login_tech_count=2, login_duration_seconds=25, game_enabled=True,
+    login_tech_count=2, login_duration_seconds=25, game_enabled=False,
     game_max_day=5, game_max_session=3, game_interval_seconds=600, game_duration_seconds=10,
     start_time='00:00',end_time='00:00',weekdays=list(range(7)),
-    game_triggers=['login','lobby','timer'],game_lobby_only=True)
+    game_triggers=[],game_lobby_only=True)
 
 
 def endpoint(value):
@@ -64,7 +64,7 @@ def validate(value):
     if (not isinstance(value['weekdays'],list) or not value['weekdays'] or
         any(type(day) is not int or not 0<=day<=6 for day in value['weekdays']) or len(set(value['weekdays']))!=len(value['weekdays'])):raise ValueError('资讯星期无效')
     from .announcements import EVENTS
-    if (not isinstance(value['game_triggers'],list) or not value['game_triggers'] or
+    if (not isinstance(value['game_triggers'],list) or (value['game_enabled'] and not value['game_triggers']) or
         any(not isinstance(event,str) or event not in EVENTS for event in value['game_triggers']) or
         len(set(value['game_triggers']))!=len(value['game_triggers'])):raise ValueError('资讯触发事件无效')
     for key,low,high in [('refresh_minutes',30,1440),('max_age_hours',1,72),('login_news_count',0,5),
