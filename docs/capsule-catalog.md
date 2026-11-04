@@ -74,3 +74,15 @@ their native selection constraints; adding candidates does not add SR slots.
 Other Mods should use the [integration contract](capsule-integration.md). Native
 card, list-position and price-display details are in the
 [developer notes (Chinese)](capsule-display-fix.zh-CN.md).
+
+New dedicated activity drafts follow the displayed numbers of existing ordinary
+activity machines. Pinned numbers from 9900 upward are excluded from automatic
+allocation. After saving an activity configuration, choose a displayed number
+from 1 to 9899 in the Manager and save it, then compile and apply both sides.
+Renumbering preserves the poster, price, rewards and native draw sequence;
+it does not create a second machine or reset player progress. A machine with
+existing player draw state cannot be renumbered, so choose its number before
+making it available to players.
+When the collection capsule is installed, its own resource adapter keeps that
+machine pinned above authenticated imported activities. Unknown-provider rows
+are preserved; compilation refuses to move a pinned row across them.

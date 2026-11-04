@@ -12,6 +12,7 @@ from owner.units.workspace import Workspace
 from unit_import_support import Baseline,Repository,archive,complete,png,publisher,wchar
 from test_unit_blueprints import declaration
 from test_unit_blueprint_codec import donor
+from test_unit_blueprint_templates import bound_fixture
 
 
 class BlueprintBaseline(Baseline):
@@ -31,12 +32,12 @@ class BlueprintCompiler(unittest.TestCase):
             try:
                 state=complete(engine,engine.inspect('unit.zip',archive(),engine.public()['revision']))
                 family=copy.deepcopy(engine.read()['drafts'][state['draft']['id']])
-                recipe=declaration();recipe['recipe_sprite']='sprs/uniqueplan.spr'
+                recipe=declaration();recipe.pop('recipe_sprite',None)
                 family['blueprints']=[recipe];family['metadata']={'description':'Private author content'}
                 family['status']='confirmed';family['published']=copy.deepcopy(family)
                 state=engine.read();state['drafts'][family['id']]=family
                 transaction=root/'transaction';transaction.mkdir()
-                images={role:png() for role in ('unit_primary','shop','custom','capsule_fixed','index_owned','index_missing')}
+                images={role:png() for role in ('unit_primary','shop','custom','capsule_fixed','index_owned','index_missing','blueprint_preview','blueprint_card')}
                 with patch.object(compiler,'_adapter_files',return_value=(b'MZ'+bytes(510),b'[mod]\nenabled=0\nfiles=\n',b'symbols',b'installer')), \
                      patch('owner.units.presentation.publication_images',return_value=images), \
                      patch('owner.units.presentation.contract',return_value={'schema':3}):
@@ -56,17 +57,77 @@ class BlueprintCompiler(unittest.TestCase):
                     kind,identity,size,*_=struct.unpack_from('<6I',raw,cursor);cursor+=24
                     records[(kind,identity)]=raw[cursor:cursor+size];cursor+=size
                 self.assertEqual(1197,len(records[(33,209000)]))
-                self.assertEqual('sprs/uniqueplan.spr',records[(33,209000)][169:229].decode('utf-16-le').split('\0')[0].replace('\\','/'))
+                self.assertEqual('sprs/u90001r.spr',records[(33,209000)][169:229].decode('utf-16-le').split('\0')[0].replace('\\','/'))
+                self.assertEqual(donor()[109:169],records[(33,209000)][109:169])
+                self.assertEqual('sprs/u90001b.spr',records[(33,209000)][289:349].decode('utf-16-le').split('\0')[0].replace('\\','/'))
+                self.assertIn('client/txrs/u90001b.txr',manifest['files'])
+                self.assertIn('client/txrs/u90001r.txr',manifest['files'])
                 self.assertEqual(90001,struct.unpack_from('<I',records[(33,209000)],229)[0])
                 self.assertEqual(209000,struct.unpack_from('<I',records[(34,1599000)],105)[0])
                 self.assertEqual(209000,struct.unpack_from('<I',records[(85,0x375BE2)],10)[0])
                 self.assertEqual('Private author content',output['registrations'][0]['metadata']['description'])
                 self.assertEqual(209000,server['families'][0]['blueprints'][0]['id'])
                 self.assertFalse(result.get('player_tables_changed',False))
+                # A generated-picture correction keeps its SPR path and all
+                # record bytes, but must invalidate the published resource revision.
+                import io
+                from PIL import Image
+                stream=io.BytesIO();Image.new('RGBA',(2,2),(20,90,140,255)).save(stream,'PNG')
+                corrected=dict(images,blueprint_preview=stream.getvalue())
+                second=root/'corrected';second.mkdir()
+                with patch.object(compiler,'_adapter_files',return_value=(b'MZ'+bytes(510),b'[mod]\nenabled=0\nfiles=\n',b'symbols',b'installer')), \
+                     patch('owner.units.presentation.publication_images',return_value=corrected), \
+                     patch('owner.units.presentation.contract',return_value={'schema':3}):
+                    updated=compiler.publish(engine,state,family['id'],second)
+                with zipfile.ZipFile(updated['client_zip']) as z:
+                    self.assertEqual(raw,z.read('client/sdgo/mods/unit_catalog/catalog.bin'))
+                self.assertNotEqual(result['revision'],updated['revision'])
             finally:engine.close()
 
     def test_type13_remains_rejected_by_native_container(self):
         with self.assertRaises(ValueError):compiler.native_catalog([(13,70000,bytes(1132))])
+
+    def test_bound_raw_templates_preserve_item_name_and_emit_diff_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);engine=Workspace(root/'workspace',baseline=BlueprintBaseline(),repository=Repository(),publisher=publisher)
+            try:
+                state=complete(engine,engine.inspect('unit.zip',archive(),engine.public()['revision']))
+                family=copy.deepcopy(engine.read()['drafts'][state['draft']['id']])
+                binding,files=bound_fixture()
+                for path,data in files.items():
+                    digest=engine._store(data)
+                    family['files'].append({'path':path,'sha':digest,'bytes':len(data)})
+                recipe=declaration()
+                recipe['recipe_sprite']='sprs/owned-b.spr'
+                recipe['client_templates']=binding
+                family['blueprints']=[recipe]
+                family['status']='confirmed';family['published']=copy.deepcopy(family)
+                current=engine.read();current['drafts'][family['id']]=family
+                transaction=root/'transaction';transaction.mkdir()
+                images={role:png() for role in ('unit_primary','shop','custom','capsule_fixed','index_owned','index_missing')}
+                with patch.object(compiler,'_adapter_files',return_value=(b'MZ'+bytes(510),b'[mod]\nenabled=0\nfiles=\n',b'symbols',b'installer')), \
+                     patch('owner.units.presentation.publication_images',return_value=images), \
+                     patch('owner.units.presentation.contract',return_value={'schema':3}):
+                    result=compiler.publish(engine,current,family['id'],transaction)
+                with zipfile.ZipFile(result['client_zip']) as z:
+                    catalog=z.read('client/sdgo/mods/unit_catalog/catalog.bin')
+                    receipts=json.loads(z.read('blueprint-template-receipts.json'))
+                    registrations=json.loads(z.read('registrations.json'))
+                records={};cursor=32
+                for _ in range(struct.unpack_from('<I',catalog,16)[0]):
+                    kind,identity,size,*_=struct.unpack_from('<6I',catalog,cursor);cursor+=24
+                    records[(kind,identity)]=catalog[cursor:cursor+size];cursor+=size
+                item=records[(34,1599000)]
+                self.assertEqual('Separate Item Name',item[5:105].decode('utf-16-le').split('\0')[0])
+                self.assertEqual('示例设计图',records[(33,209000)][5:105].decode('utf-16-le').split('\0')[0])
+                self.assertEqual(1,len(receipts['items']))
+                self.assertFalse(receipts['resource_closure_verified'])
+                self.assertFalse(receipts['items'][0]['native_runtime_accepted'])
+                self.assertTrue(receipts['items'][0]['records'][0]['compiled_changes'])
+                registered=registrations['items'][0]['blueprints'][0]
+                self.assertTrue(registered['client_template_bound'])
+                self.assertIn('client_template_compiled_sha256',registered)
+            finally:engine.close()
 
 
 if __name__=='__main__':unittest.main()

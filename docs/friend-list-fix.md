@@ -5,12 +5,13 @@
 Fixes problems in the native friend list and chat window: offline friends disappearing, outdated pilot names,
 being unable to open a conversation with an offline friend, and the chat window loading the wrong layout without
 its input box. Adding friends, viewing the list and messaging
-still use the game's own friend page.
+still use the game's own friend page. The home screen's top-right **USER LIST** also uses Chinese context-menu
+actions and displays a friend's rank when the corresponding game profile is available.
 
 | mod | host | part |
 |---|---|---|
-| `friend_list_fix` | WorldServer | returns the complete list with current pilot names |
-| `friend_list_client_fix` | client | restores the messenger layout, preserves known names during lossy status updates and opens accepted offline conversations |
+| `friend_list_fix` | WorldServer | returns the complete list with current pilot names and a fallback for missing member-rank records |
+| `friend_list_client_fix` | client | restores the messenger layout, preserves known names during lossy status updates, localizes the home context menu and opens accepted offline conversations |
 
 ## Use
 
@@ -23,6 +24,12 @@ the friend list once per login, so reopening the friend tab does not refresh an 
 should be read later.
 
 The WorldServer database account needs permission to create a schema and procedures and to read metadata.
+For missing member-rank records, it also needs read access to the game database selected by the native INI's
+`[DB Game] DBName`. Existing member ranks take precedence. If game-rank lookup is unavailable, the complete
+friend list still works using the member database.
+
+If the server enables [friend unit gifts](friend-unit-gift.md), right-clicking an accepted offline friend in
+the home USER LIST also offers unit gifting. Native actions keep their original enabled/disabled state.
 
 ## Logs
 
@@ -52,6 +59,10 @@ Client 1.1.2 preserves a complete cached name when a status reply for the same
 pilot contains question marks. The original updater still applies presence,
 location and relationship changes and rebuilds the display text. A complete
 new name follows the normal update path.
+
+Server 0.1.4 fills only missing rank number/step fields from the matching game profile; it does not create
+member-profile records or overwrite saved ranks. Client 1.1.3 handles the home community list's separate
+context menu as well as the messenger, preserving its stock action meanings and button skins.
 
 
 The stock query left-joins online status, clan and other optional data and sends SQL NULLs to a native OLE DB

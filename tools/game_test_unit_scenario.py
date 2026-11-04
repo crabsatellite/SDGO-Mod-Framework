@@ -9,13 +9,13 @@ SETTINGS = {'UnitPagesOnly':'0','UnitPresentations':'0','UnitPortraits':'0',
     'CaptureNativeFrames':'0','CollectionPreviewOnly':'0',
     'UnitAcquisitionKind':'0','UnitAcquisitionMachine':'0','UnitAcquisitionUnit':'0',
     'CapsulePreviewMachine':'990001','CapsulePreviewPrice':'100000','CapsulePreviewCurrency':'0',
-    'ActivityDrawOnce':'0','ActivityRewardCount':'0'}
+    'ActivityDrawOnce':'0','ActivityRewardCount':'0','BlueprintRecipe':'0','BlueprintBookUid':'0'}
 INDEX_CASES = ('pages.unit_index.list','pages.unit_index.detail',
     'pages.unit_index.alternate','pages.unit_index.base','pages.unit_index.close')
 PORTRAIT_CASES = ('pages.unit_index.pose_wait','pages.unit_index.pose_ready')
 
 def validate(value, plan):
-    if not isinstance(value,dict) or set(value)-{'schema','capture_frames','portraits','acquisition','collection_preview','activity_target','activity_draw','reward_pairs'}:
+    if not isinstance(value,dict) or set(value)-{'schema','capture_frames','portraits','acquisition','collection_preview','activity_target','activity_draw','reward_pairs','blueprint'}:
         raise ValueError('invalid native unit scenario fields')
     if type(value.get('schema')) is not int or value['schema']!=1:
         raise ValueError('unsupported native unit scenario schema')
@@ -30,6 +30,16 @@ def validate(value, plan):
         if field!='activity_draw' or field in value:result[field]=flag
     if result['portraits'] and not result['capture_frames']:
         raise ValueError('native portraits require genuine frame capture')
+    if 'blueprint' in value:
+        blueprint=value['blueprint']
+        if (not isinstance(blueprint,dict) or set(blueprint)!={'recipe_id','book_uid'} or
+            type(blueprint['recipe_id']) is not int or not 0<blueprint['recipe_id']<2**31 or
+            type(blueprint['book_uid']) is not int or not 0<blueprint['book_uid']<2**63):
+            raise ValueError('blueprint preview needs an exact recipe and owned book identity')
+        if (plan.get('page_group') or result['portraits'] or result['collection_preview'] or result.get('activity_draw') or
+            any(field in value for field in ('acquisition','activity_target','reward_pairs'))):
+            raise ValueError('blueprint preview cannot be mixed with other unit-page scopes')
+        result['blueprint']=dict(blueprint)
     if 'activity_target' in value:
         target=value['activity_target']
         if not result['collection_preview'] or not isinstance(target,dict) or set(target)!={'machine_id','price','currency'}:
@@ -71,6 +81,9 @@ def settings(value=None):
     result.update(UnitPagesOnly='1',UnitPresentations='1',
         UnitPortraits=str(int(value['portraits'])),CaptureNativeFrames=str(int(value['capture_frames'])),
         CollectionPreviewOnly=str(int(value['collection_preview'])))
+    if value.get('blueprint'):
+        result.update(UnitPresentations='0',BlueprintRecipe=str(value['blueprint']['recipe_id']),
+                      BlueprintBookUid=str(value['blueprint']['book_uid']))
     if value.get('acquisition'):
         a=value['acquisition'];result.update(UnitAcquisitionKind=str(a['kind']),
             UnitAcquisitionMachine=str(a['machine_id']),UnitAcquisitionUnit=str(a['unit_id']))
@@ -86,6 +99,8 @@ def settings(value=None):
 
 def cases(value):
     result=('framework.bootstrap','flow.login','flow.onboarding','setup.active_unit')+INDEX_CASES[:2]
+    if value.get('blueprint'):
+        return result[:4]+('pages.blueprint.book','pages.blueprint.recipe')
     if value['portraits']:result+=PORTRAIT_CASES
     result+=INDEX_CASES[2:]
     if value.get('acquisition'):result+=('catalog.capsule','pages.unit_acquisition')
@@ -105,7 +120,7 @@ def read(root, digest, plan, read_ini):
     if raw!=encoded(value):raise ValueError('native unit scenario must use its canonical input bytes')
     config=read_ini(root/'sdgo/mods/game_test_client/mod.ini')
     for key,expected in settings(value).items():
-        fallback=SETTINGS.get(key) if key.startswith(('CapsulePreview','Activity')) else None
+        fallback=SETTINGS.get(key) if key.startswith(('CapsulePreview','Activity','Blueprint')) else None
         if config.get('settings',key,fallback=fallback)!=expected:
             raise ValueError('native unit observer settings disagree with sealed scenario: '+key)
     return {'unit_scenario':value,'unit_scenario_sha256':digest}

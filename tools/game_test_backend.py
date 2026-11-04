@@ -638,7 +638,7 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                     for module_manifest in manifests:
                         module_hosts=game_test.read_ini(module_manifest).get('mod','hosts',fallback='').split(',')
                         if symbol.stem in module_hosts or '*' in module_hosts:applicable.append(module_manifest)
-                    game_test.merge_required_symbols(symbol,symbols/symbol.name,applicable)
+                    game_test.merge_required_symbols(symbol,symbols/symbol.name,applicable,include_all=True)
             payload_receipt.append({'folder':owned_spec['folder'],'core':game_test.sha256(owned_folder/'sdgo/core.dll'),
                 'mods':{m.parent.name:game_test.sha256(m.parent/(m.parent.name+'.dll')) for m in manifests if (m.parent/(m.parent.name+'.dll')).is_file()}})
         write(work/'runtime-overlay.json',{'source':game_test.git_source_ref(REPO),'hosts':payload_receipt})

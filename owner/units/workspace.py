@@ -355,12 +355,47 @@ class Workspace:
         def need(code,message,field=None,level='required',accept=None):
             issues.append({'code':code,'message':message,'field':field,'level':level,**({'accept':accept} if accept else {})})
         root=draft.get('root_unit_id');forms={r['id']:r for r in draft['forms']};newweapons={r['id'] for r in draft['weapons']}
+        file_entries={entry['path']:entry for entry in draft.get('files',[])}
+        member_files={}
+        try:
+            member_files={path:self.blob(entry['sha']) for path,entry in file_entries.items()}
+        except (ValueError,OSError) as error:
+            need('project_blob',f'制作项目资源已丢失或被修改：{error}',None,'error')
+        template_resource_entries={}
+        if draft.get('blueprints'):
+            try:
+                from .blueprint_templates import validate_project_bindings
+                validate_project_bindings(
+                    {'blueprints':draft['blueprints']},files=member_files)
+            except (ValueError,OSError) as error:
+                need('blueprint_template_project_binding',str(error),
+                    'blueprints.client_templates','error')
         from . import blueprints
         for recipe in draft.get('blueprints',[]):
-            issues.extend(blueprints.requirements(recipe,root_unit_id=root,
+            template_field=f"blueprints.{recipe.get('id') or recipe.get('name','draft')}.client_templates"
+            validating=recipe
+            if recipe.get('enabled',True) is False:
+                validating=copy.deepcopy(recipe);validating['enabled']=True
+            issues.extend(blueprints.requirements(validating,root_unit_id=root,
                 unit_ids=set(self.repository.catalog.get('units',{}))|set(forms)))
-            if recipe.get('enabled',True) and not blueprints.NATIVE_REGISTRATION_SUPPORTED:
-                need('blueprint_native_adapter','设计图客户端、事务和实机适配尚未开放；可以保存草稿，不能发布','blueprints','error')
+            if recipe.get('client_templates'):
+                try:
+                    from .blueprint_templates import validate_binding
+                    resolved=validate_binding(recipe['client_templates'],files=member_files)
+                    for resource in resolved['manifest']['resources']:
+                        member=resource['member']
+                        if member not in file_entries:
+                            raise ValueError('blueprint client-template resource is missing: '+member)
+                        template_resource_entries[resource['path']]=file_entries[member]
+                    need('blueprint_template_semantic_closure',
+                        f"设计图 {recipe.get('id') or recipe.get('name','')} 的原始/准备记录、哈希和直接资源引用已验证；"
+                        'SPR→TXR 等递归语义闭包仍须由资源解析和实机验收确认',
+                        template_field,'warning')
+                except (ValueError,OSError) as error:
+                    need('blueprint_template_binding',str(error),
+                        template_field,'error')
+        if draft.get('blueprints') and not blueprints.NATIVE_REGISTRATION_SUPPORTED:
+            need('blueprint_native_adapter','设计图客户端、事务和实机适配尚未开放；可以保存草稿，不能发布','blueprints','error')
         if draft.get('blueprints'):
             try:blueprints.primary_id(draft['blueprints'])
             except ValueError as error:need('blueprint_primary',str(error),'blueprints','required')
@@ -409,8 +444,16 @@ class Workspace:
         required={r['recipe_sprite'] for r in draft.get('blueprints',[]) if r.get('recipe_sprite')}
         for row in draft['forms']+draft['weapons']:required.update(row.get('resource_refs',[]))
         owned={f['path'].replace('\\','/').lower():f for f in draft['files']}
+        for path,entry in template_resource_entries.items():
+            if path in owned and owned[path]['sha']!=entry['sha']:
+                need('blueprint_template_resource_conflict',
+                    '客户端展示模板资源与项目同名资源内容不同：'+path,
+                    'blueprints.client_templates','error')
+        owned.update(template_resource_entries)
+        required.update(template_resource_entries)
         for name,entry in owned.items():
-            if Path(name).suffix.lower()!='.bin':required.update(scan_resource_references(self.blob(entry['sha']),Path(name).suffix))
+            if Path(name).suffix.lower()!='.bin':
+                required.update(scan_resource_references(self.blob(entry['sha']),Path(name).suffix))
         for name in sorted(required):
             name=name.replace('\\','/').lower()
             if name not in owned and not self.baseline.exists(name):need('resource','缺少资源：'+name,name,accept=Path(name).suffix)
@@ -437,8 +480,11 @@ class Workspace:
                 try:self.blob(sha)
                 except (ValueError,OSError):need('preview_missing',label+'图片已丢失或被修改',None,'error')
         state=state or self.read()
-        total=len(draft['forms'])+len(draft['weapons'])+2
-        total+=sum(len(other['published']['forms'])+len(other['published']['weapons'])+2 for other in state['drafts'].values() if other['id']!=draft['id'] and other.get('published'))
+        total=len(draft['forms'])+len(draft['weapons'])+2+2*len(draft.get('blueprints',[]))
+        total+=sum(len(other['published']['forms'])+len(other['published']['weapons'])+2+
+            2*len(other['published'].get('blueprints',[]))
+            for other in state['drafts'].values()
+            if other['id']!=draft['id'] and other.get('published'))
         if total>4096:need('catalog_capacity','已登记内容超过客户端目录的 4096 条记录上限',None,'error')
         ownids={r['id'] for r in draft['forms']+draft['weapons']}
         claimed={r['id']:other['id'] for other in state['drafts'].values() if other['id']!=draft['id'] and other['status'] in ('confirmed','disabled') for r in other['forms']+other['weapons']}
@@ -462,7 +508,12 @@ class Workspace:
                 'capabilities':{'projects':{'protocol':'sdgo.unit-project','schema_version':1,'metadata_first':True,'bundled_media':True},
                     'blueprints':{'schema_version':1,'authoring':True,
                     'native_registration':NATIVE_REGISTRATION_SUPPORTED,'target_record_kind':33,
-                    'target_record_size':1197,'material_minimum':3,'material_maximum':5,'raw_material_maximum':7}},'drafts':[{
+                    'target_record_size':1197,'material_minimum':3,'material_maximum':5,'raw_material_maximum':7,
+                    'client_templates':{'schema':'sdgo.unit-blueprint-client-templates/1',
+                        'recipe_kind':33,'recipe_bytes':1197,'item_kind':34,'item_bytes':614,
+                        'source_prepared_sha_bound':True,'direct_resource_refs_verified':True,
+                        'semantic_resource_closure_required':True,
+                        'native_registration_authorized':False}}},'drafts':[{
                 'id':d['id'],'name':d['name'],'status':d['status'],'updated':d['updated'],
                 'search_text':search_text(d)}
                 for d in state['drafts'].values()],

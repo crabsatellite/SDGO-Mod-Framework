@@ -542,6 +542,41 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(0,connection.commits);self.assertEqual(1,connection.rollbacks)
         self.assertFalse(connection.closed)
 
+    def test_activity_rename_runs_before_apply_and_verify_in_one_transaction(self):
+        server=self.root/'server-renumber';server.mkdir()
+        (server/'install.sql').write_text('InstalledUtc WeightedMachines')
+        (server/'verify.sql').write_text('AS Verified')
+        connection=FakeConnection(self.revision);events=[]
+        machine={'schema_version':1,'id':9401,'unit_id':90001,'project_key':'fixture',
+                 'revision':'a'*64,'currency_type':0,'price':10000,'template_machine_id':1101,'pool':[]}
+        change={'from_id':1990001,'to_id':9401,'unit_id':90001,'project_key':'fixture'}
+        with patch('owner.units.activity_repository.ActivityRepository') as repository:
+            for name in ('renumber','apply','verify'):
+                def record(*args,_name=name,**kwargs):
+                    self.assertIs(connection,kwargs['connection']);self.assertEqual(0,connection.commits)
+                    events.append(_name);return {'verified':True}
+                getattr(repository.return_value,name).side_effect=record
+            deployment._apply_server(connection,server,self.revision,activity_machines=[machine],
+                activity_renames=[change],server_ini=self.root/'fixture.ini')
+            repository.return_value.renumber.assert_called_once_with(machine,1990001,connection=connection,in_transaction=True)
+        self.assertEqual(['renumber','apply','verify'],events)
+        self.assertEqual(1,connection.commits);self.assertEqual(0,connection.rollbacks)
+
+    def test_activity_rename_failure_prevents_apply_and_rolls_back(self):
+        server=self.root/'server-renumber-failure';server.mkdir()
+        (server/'install.sql').write_text('InstalledUtc WeightedMachines')
+        (server/'verify.sql').write_text('AS Verified')
+        connection=FakeConnection(self.revision)
+        machine={'schema_version':1,'id':9401,'unit_id':90001,'project_key':'fixture',
+                 'revision':'a'*64,'currency_type':0,'price':10000,'template_machine_id':1101,'pool':[]}
+        with patch('owner.units.activity_repository.ActivityRepository') as repository:
+            repository.return_value.renumber.side_effect=ValueError('Used activity cannot be renumbered')
+            with self.assertRaisesRegex(ValueError,'renumbered'):
+                deployment._apply_server(connection,server,self.revision,activity_machines=[machine],
+                    activity_renames=[{'from_id':1990001,'to_id':9401,'unit_id':90001,'project_key':'fixture'}],server_ini=self.root/'fixture.ini')
+            repository.return_value.apply.assert_not_called()
+        self.assertEqual(0,connection.commits);self.assertEqual(1,connection.rollbacks)
+
     def test_foreign_loader_is_chained_and_sdgo_ini_is_minimally_updated(self):
         client = make_client(self.root, foreign_loader=True, own_core=True)
         result = self.apply(client)

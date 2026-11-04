@@ -9,10 +9,14 @@ The feature is off by default. Server owners turn on **启用好友机体赠送*
 
 ## Send and receive
 
-1. Right-click a friend in the game and choose the unit-gift action.
+1. Right-click an accepted friend in the home screen's top-right **USER LIST** or the messenger, then choose the unit-gift action. Online and offline recipients are supported.
 2. The action opens native unit management. Double-click the owned instance, review its name and level in the native unit-information card, and optionally write a note. Review the server's preflight result, then confirm.
 3. The unit enters pending storage and is no longer usable by the sender. The recipient may be offline.
-4. The recipient opens unit gifts in Storage, using its existing unit-entry layout. Click the unit icon for the sender, timestamps and note, then accept or return the offer.
+4. The recipient opens unit gifts in Storage, using its existing unit-entry layout. Click the unit icon for the sender, timestamps and note in the native information card, then accept or return the offer. Notes stay in the card rather than the Storage row.
+
+The menu follows the right-click position and uses the game's blue button background. The information card
+keeps the native unit model, name, level and skills; its lower-right area provides a single panel for the
+note and confirmation controls using existing game assets.
 
 Acceptance requires a free recipient slot. A capacity refusal leaves the offer pending. Returns prefer the sender's original slot, then another free slot. If the sender is full, the unit remains stored until the sender can take it back.
 

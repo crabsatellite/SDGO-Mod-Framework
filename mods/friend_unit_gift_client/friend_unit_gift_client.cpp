@@ -3,6 +3,7 @@
 #include "client_model.h"
 #include "client_runtime_policy.h"
 #include "native_ui.h"
+#include "card_layout.h"
 #include "native_inventory.h"
 #include "native_reply_queue.h"
 #include "transport.h"
@@ -154,12 +155,24 @@ void* g_inventory_service_vtable = nullptr;
 ui::Bindings g_ui;
 ui::FriendEntry g_friend_main;
 ui::FriendEntry g_friend_three_d;
+ui::FriendEntry g_friend_community;
+bool g_community_friend = false;
 ui::StorageView g_storage_view;
 ui::UnitDetailView g_unit_detail_view;
 NativeSession g_session = nullptr;
 NativeApp g_app = nullptr;
 FriendInit g_friend_main_init = nullptr;
 FriendInit g_friend_three_d_init = nullptr;
+FriendInit g_friend_community_init = nullptr;
+using CommunityDtor=void*(__thiscall*)(void*,std::uint32_t);
+CommunityDtor g_friend_community_dtor = nullptr;
+using CommunityCallback=std::uint32_t(__stdcall*)(void*,std::uint32_t,std::uintptr_t,void*);
+CommunityCallback g_friend_community_callback = nullptr;
+FriendCallback g_home_upmenu_callback = nullptr;
+void* g_home_upmenu_vtable = nullptr;
+void* g_home_community_vtable = nullptr;
+std::uint32_t g_home_context_target = 0;
+bool g_home_context_opened = false;
 FriendCallback g_friend_callback = nullptr;
 UnitDetailInit g_unit_detail_init = nullptr;
 UnitDetailEvent g_unit_detail_event = nullptr;
@@ -270,6 +283,7 @@ void CloseComposer();
 bool BeginGiftAction(Command command);
 void* ResolveService(const wchar_t* name,const void* expectedVtable);
 void RefreshUnitDetailView();
+bool OpenHomeFriendContext(std::uint32_t receiver);
 bool ArmGameThread();
 std::uint64_t CurrentSessionKey() noexcept;
 void RefreshNativeInventoryView();
@@ -471,6 +485,7 @@ void RefreshAvailability() {
         g_native_ready && g_model.CanResolveExisting();
     g_friend_main.SetAvailable(offer);
     g_friend_three_d.SetAvailable(offer);
+    g_friend_community.SetAvailable(offer && g_community_friend);
     g_storage_view.SetAvailable(resolve);
     // A late stock inbox refresh can reset the borrowed native row controls.
     // Restore the active gift presentation on the normal UI timer as well as
@@ -1529,34 +1544,48 @@ bool AttachComposerControls(void* service) {
     // scaled; its cached frames and the original archive remain untouched.
     const std::wstring panelName=L"GiftNotePanel",panelPath=L"sprs\\17459.spr";
     const auto panelKey=NativeView(panelName),panelSkin=NativeView(panelPath);
-    const int panelY=g_composer_received ? 231:338;
-    const int panelHeight=g_composer_received ? 197:82;
-    g_ui.add_icon(root,&panelKey,315,panelY,271,panelHeight);
+    const auto stockRect=[&](const wchar_t* name,int type) {
+        ui::CardRect rect;auto* control=g_ui.FindNamed(root,name,type);
+        if (control) rect={static_cast<int>(Read<float>(control,0x148)),static_cast<int>(Read<float>(control,0x14C)),
+            Read<int>(control,0x154),Read<int>(control,0x158)};
+        return rect;
+    };
+    const auto layout=ui::InformationCardLayout(stockRect(L"SkillIcon0",1),stockRect(L"SkillIcon3",1),
+        stockRect(L"SkillTitleStatic0",3),stockRect(L"LevelGageIcon",1),g_composer_received);
+    if (!layout.valid) return false;
+    g_ui.add_icon(root,&panelKey,layout.background.x,layout.background.y,
+        layout.background.width,layout.background.height);
     auto* panel=g_ui.FindNamed(root,panelName.c_str(),1);
     if (!panel) return false;
     g_ui.skin(panel,&panelSkin,0,0,0);
     auto** skins=Read<std::uint8_t**>(panel,0x1A4);
     auto* sprite=skins && *skins ? Read<std::uint8_t*>(*skins) : nullptr;
     if (!sprite) return false;
-    Put<float>(sprite,0x94,271.0f/262.0f);Put<float>(sprite,0x98,static_cast<float>(panelHeight)/61.0f);
+    Put<float>(sprite,0x94,static_cast<float>(layout.background.width)/262.0f);
+    Put<float>(sprite,0x98,static_cast<float>(layout.background.height)/61.0f);
     Put<std::uint8_t>(sprite,0xA0,1);
     Put<std::uint8_t>(panel,0x168,0);
     g_ui.SetState(panel,true,false);
-    auto* noteLabel=g_ui.AddTextButton(root,L"GiftNoteLabel",326,panelY+6,252,15,g_composer_received ? L"赠送寄语":L"寄语（可选，最多 200 字）");
+    const std::wstring label=g_composer_received ? L"赠送寄语":L"寄语（可选，最多 200 字）";
+    auto* noteLabel=g_ui.AddTextButton(root,L"GiftNoteLabel",layout.label.x,layout.label.y,
+        layout.label.width,layout.label.height,label);
+    g_ui.SetText(noteLabel,label,1);
     g_ui.SetState(noteLabel,true,false);
-    g_add_edit(root,&noteKey,326,g_composer_received ? 252:365,251,g_composer_received ? 167:44);
+    g_add_edit(root,&noteKey,layout.note.x,layout.note.y,layout.note.width,layout.note.height);
     g_composer_note=g_ui.FindNamed(root,noteName.c_str(),8);
     if (!g_composer_note) return false;
     Put<std::uint8_t>(g_composer_note,0x168,0);
     auto* nativeName=g_ui.FindNamed(root,L"UnitNameStatic",3);
     auto noteFont=nativeName ? Read<std::uint32_t>(nativeName,0x16C) : 1u;
     g_set_font(g_composer_note,noteFont);
-    g_api->Log(g_mod,SDGO_LOG_INFO,"native gift card controls initialized: note_font=%u panel=271x82",noteFont);
+    g_api->Log(g_mod,SDGO_LOG_INFO,"native gift card layout: received=%u note=%d,%d/%dx%d buttons_y=%d footer_bottom=%d",
+        g_composer_received?1u:0u,layout.panel.x,layout.panel.y,layout.panel.width,layout.panel.height,
+        layout.primary.y,layout.primary.bottom());
     Put<std::uint8_t>(g_composer_note,0x29F,1);
     Put<std::uint32_t>(g_composer_note,0x2A4,2);
     g_ui.SetState(g_composer_note,true,g_ui.SetNoteLimit(g_composer_note));
-    const auto addBlue=[&](const wchar_t* name,int x,const std::wstring& caption) {
-        auto* control=g_ui.AddTextButton(root,name,x,420,82,31,caption);
+    const auto addBlue=[&](const wchar_t* name,const ui::CardRect& rect,const std::wstring& caption) {
+        auto* control=g_ui.AddTextButton(root,name,rect.x,rect.y,rect.width,rect.height,caption);
         if (!control) return control;
         for (int i=0;i<3;++i) {
             const std::wstring skinPath=L"sprs\\"+std::to_wstring(17530+i)+L".spr";
@@ -1564,8 +1593,8 @@ bool AttachComposerControls(void* service) {
         }
         g_ui.SetState(control,true,true);return control;
     };
-    g_composer_primary=addBlue(L"GiftConfirm",410,L"服务器预检");
-    g_composer_cancel=addBlue(L"GiftCancel",502,L"取消");
+    g_composer_primary=addBlue(L"GiftConfirm",layout.primary,L"服务器预检");
+    g_composer_cancel=addBlue(L"GiftCancel",layout.cancel,L"取消");
     g_composer_notice=g_ui.AddTextButton(root,L"GiftNotice",25,56,558,15,L"");
     g_ui.SetState(g_composer_notice,true,false);
     // Keep the original native frame, model, weapons, skills and level table.
@@ -1759,6 +1788,45 @@ bool OpenFriendContextFor(std::uint32_t receiver) {
     return true;
 }
 
+bool OpenHomeFriendContext(std::uint32_t receiver) {
+    auto* community=ResolveService(L"ServiceCommunity",g_home_community_vtable);
+    if (!community) {
+        if (g_home_context_opened) return false;
+        auto* header=ResolveService(L"upmenu",g_home_upmenu_vtable);
+        if (!header) return false;
+        using Dialog=void*(__thiscall*)(void*,const ui::NativeString*);
+        const auto name=NativeView(L"dlg");
+        auto get=reinterpret_cast<Dialog>(Read<void*>(Read<void*>(header),0x5C));
+        auto* root=get(header,&name);
+        auto* button=g_ui.FindNamed(root,L"MessengerBtn",4);
+        if (!ControlReady(button)) return false;
+        g_home_upmenu_callback(header,0x101,reinterpret_cast<std::uintptr_t>(static_cast<std::uint8_t*>(button)+0x118),button);
+        g_home_context_opened=true;
+        return false;
+    }
+    if (Read<std::uint32_t>(community,0x44)!=3) return false;
+    if (Read<std::uint32_t>(community,0x50)!=2) {
+        using SelectTab=void(__thiscall*)(void*,std::uint32_t);
+        auto select=reinterpret_cast<SelectTab>(Read<void*>(Read<void*>(community),0x78));
+        select(community,2);
+        return false;
+    }
+    auto* first=Read<std::uint8_t*>(community,0x78);
+    auto* last=Read<std::uint8_t*>(community,0x7C);
+    if (!first || !last || last<first || last-first>8*0x38 || (last-first)%0x38) return false;
+    for (unsigned index=0;first+index*0x38<last;++index) {
+        if (Read<std::uint32_t>(first+index*0x38)!=receiver) continue;
+        auto* control=Read<void*>(community,0x90+index*4);
+        if (!ControlReady(control)) return false;
+        using RightClick=void(__thiscall*)(void*,void*);
+        auto right=reinterpret_cast<RightClick>(g_api->Symbol(g_mod,"friend_unit_gift.community_right_click"));
+        if (!right) return false;
+        right(community,control);
+        return true;
+    }
+    return false;
+}
+
 bool CaptureFriendAndOpen(void* service) {
     auto* record = Read<std::uint8_t*>(service, 0x50);
     if (!record) return false;
@@ -1867,6 +1935,58 @@ void __stdcall FriendEvent(
         return;
     }
     g_friend_callback(service, event, second, control);
+}
+
+void __fastcall CommunityFriendInit(void* service, void*, std::uint32_t argument) {
+    g_friend_community_init(service,argument);
+    __try {
+        ArmGameThread();
+        if (g_friend_community.service() && g_friend_community.service()!=service)
+            g_friend_community.Detach(g_friend_community.service());
+        const bool eligible=Read<std::uint32_t>(service,0x64)==2 &&
+            Read<std::uint32_t>(service,0x8C)==7 &&
+            Read<std::uint32_t>(service,0x84)!=0;
+        g_community_friend=false;
+        if (!g_friend_community.AttachCommunity(service,g_ui))
+            g_api->Log(g_mod,SDGO_LOG_WARN,"home friend gift attachment failed: %s",g_ui.last_error);
+        else g_community_friend=eligible;
+        RefreshAvailability();
+        auto* first=Read<void*>(service,0x4C);
+        auto* root=first ? Read<void*>(first,0x15C):nullptr;
+        if (root) {
+            g_friend_context_x=static_cast<std::int32_t>(Read<float>(root,0x148));
+            g_friend_context_y=static_cast<std::int32_t>(Read<float>(root,0x14C));
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        g_friend_community.Detach(service);g_community_friend=false;
+    }
+}
+
+void* __fastcall CommunityFriendDtor(void* service, void*, std::uint32_t flags) {
+    if (g_friend_community.service()==service) {
+        g_friend_community.Detach(service);g_community_friend=false;
+    }
+    return g_friend_community_dtor(service,flags);
+}
+
+std::uint32_t __stdcall CommunityFriendEvent(void* service,std::uint32_t event,std::uintptr_t name,void* control) {
+    if (event==0x101 && g_friend_community.Click(service,control)) {
+        __try {
+            if (g_community_friend && Read<std::uint32_t>(service,0x64)==2 &&
+                Read<std::uint32_t>(service,0x8C)==7) {
+                const auto* text=reinterpret_cast<const ui::NativeString*>(static_cast<const std::uint8_t*>(service)+0x68);
+                if (text->length && text->length<=20 && text->capacity>=text->length) {
+                    g_receiver_id=Read<std::uint32_t>(service,0x84);
+                    g_receiver_name.assign(text->capacity<8?text->data.small:text->data.pointer,text->length);
+                    if (g_receiver_id && OpenComposer()) {
+                        g_friend_community.Detach(service);g_close(service,1);
+                    }
+                }
+            }
+        } __except(EXCEPTION_EXECUTE_HANDLER) {}
+        return 0;
+    }
+    return g_friend_community_callback(service,event,name,control);
 }
 
 void __fastcall UnitDetailInitHook(
@@ -2419,6 +2539,8 @@ void CALLBACK Tick(HWND, UINT, UINT_PTR, DWORD) {
             }
         }
         RefreshAvailability();
+        if (g_home_context_target && OpenHomeFriendContext(g_home_context_target))
+            g_home_context_target=0;
     } __finally {
         g_tick_active = false;
     }
@@ -2523,7 +2645,7 @@ bool ExecuteObserverAction(
         request.action <=
             SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_NONE ||
         request.action >
-            SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_ORDINARY_STORAGE) {
+            SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_HOME_FRIEND_CONTEXT) {
         return false;
     }
     if (!g_game_thread_ready) {
@@ -2537,6 +2659,12 @@ bool ExecuteObserverAction(
 
     bool accepted = false;
     switch (request.action) {
+    case SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_HOME_FRIEND_CONTEXT:
+        if (request.receiver_id) {
+            g_home_context_target=request.receiver_id;g_home_context_opened=false;accepted=true;
+            if (OpenHomeFriendContext(request.receiver_id)) g_home_context_target=0;
+        }
+        break;
     case SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_UNIT_TEMPLATE:
         if (request.unit_uid && OwnBriefContains(request.unit_uid)) {
             if (g_inventory_sync.HasFull(request.unit_uid)) accepted=ShowNativeUnitCard(request.unit_uid);
@@ -2556,9 +2684,11 @@ bool ExecuteObserverAction(
         ui::FriendEntry* entry = nullptr;
         if (g_friend_main.ready()) entry = &g_friend_main;
         else if (g_friend_three_d.ready()) entry = &g_friend_three_d;
+        else if (g_friend_community.ready()) entry = &g_friend_community;
         if (entry && ControlReady(entry->button())) {
-            FriendEvent(
-                entry->service(), 0x101, 0, entry->button());
+            if (entry==&g_friend_community)
+                CommunityFriendEvent(entry->service(),0x101,0,entry->button());
+            else FriendEvent(entry->service(), 0x101, 0, entry->button());
             accepted = g_composer != nullptr || g_composer_opening || g_picker_selecting;
         }
         break;
@@ -2775,14 +2905,15 @@ static int GetSnapshot(
     snapshot.friend_context_x = g_friend_context_x;
     snapshot.friend_context_y = g_friend_context_y;
     if (g_friend_main.service() ||
-        g_friend_three_d.service()) {
+        g_friend_three_d.service() || g_friend_community.service()) {
         snapshot.control_flags |=
             SDGO_FRIEND_UNIT_GIFT_CLIENT_CONTROL_FRIEND_CONTEXT;
     }
     if ((g_friend_main.ready() &&
          ControlReady(g_friend_main.button())) ||
         (g_friend_three_d.ready() &&
-         ControlReady(g_friend_three_d.button()))) {
+         ControlReady(g_friend_three_d.button())) ||
+        (g_friend_community.ready() && ControlReady(g_friend_community.button()))) {
         snapshot.control_flags |=
             SDGO_FRIEND_UNIT_GIFT_CLIENT_CONTROL_GIFT_BUTTON;
     }
@@ -2969,6 +3100,48 @@ int __cdecl SdgoFriendUnitGiftClientActionV1(
     }
 }
 
+int HomeFriendsSnapshot(SdgoHomeFriendsSnapshotV1* output) {
+        const auto hash=SyncObserver();if(!hash)return 0;
+        SdgoHomeFriendsSnapshotV1 result{};result.size=sizeof(result);result.version=1;
+        result.run_hash=hash;result.process_id=GetCurrentProcessId();
+        auto* service=ResolveService(L"ServiceCommunity",g_home_community_vtable);
+        if (service && Read<std::uint32_t>(service,0x44)==3) {
+            result.open=1;result.mode=Read<std::uint32_t>(service,0x50);
+            auto* first=Read<std::uint8_t*>(service,0x78);auto* last=Read<std::uint8_t*>(service,0x7C);
+            if (result.mode==2 && first && last && last>=first && last-first<=8*0x38 && (last-first)%0x38==0) {
+                result.row_count=static_cast<std::uint32_t>((last-first)/0x38);
+                for (unsigned i=0;i<result.row_count;++i) {
+                    auto& row=result.rows[i];const auto* data=first+i*0x38;
+                    row.account=Read<std::uint32_t>(data);row.level=Read<std::uint16_t>(data,4);
+                    row.step=Read<std::uint32_t>(data,6);row.presence=Read<std::uint32_t>(data,0x1C);
+                    auto* icon=Read<void*>(service,0x130+i*4);
+                    if (icon) {
+                        row.rank_visible=Read<std::uint8_t>(icon,0x162);row.rank_draw=Read<std::uint8_t>(icon,0x163);
+                        auto** begin=Read<void**>(icon,0x1A4);auto** end=Read<void**>(icon,0x1A8);
+                        if (begin && end>begin && end-begin<16 && *begin) {
+                            row.skin_first_frame=Read<std::uint32_t>(*begin,0x3C);
+                            row.skin_last_frame=Read<std::uint32_t>(*begin,0x40);
+                            auto* sprite=Read<void*>(*begin);if(sprite)row.sprite_frame=Read<std::uint16_t>(sprite,0x120);
+                        }
+                    }
+                }
+            }
+        }
+        if (g_friend_community.service()) {
+            auto* context=g_friend_community.service();result.context_target=Read<std::uint32_t>(context,0x84);
+            const wchar_t* expected[]={L"私聊",L"玩家资料",L"机体资料",L"发送信件",L"删除好友",L"屏蔽"};
+            result.captions_chinese=1;
+            for(unsigned i=0;i<6;++i){std::wstring text;g_ui.ReadText(Read<void*>(context,0x4C+i*4),&text);
+                if(text!=expected[i] && !(i==4 && text==L"添加好友") && !(i==5 && text==L"取消屏蔽"))result.captions_chinese=0;}
+        }
+        *output=result;return 1;
+}
+extern "C" __declspec(dllexport) int __cdecl SdgoHomeFriendsGetSnapshotV1(SdgoHomeFriendsSnapshotV1* output) {
+    if (!output || output->size!=sizeof(*output) || output->version!=1) return 0;
+    __try {return HomeFriendsSnapshot(output);}
+    __except(EXCEPTION_EXECUTE_HANDLER) {return 0;}
+}
+
 SDGO_MOD_ENTRY {
     g_api = api;
     g_mod = mod;
@@ -3103,6 +3276,17 @@ SDGO_MOD_ENTRY {
     if (!api->HookCode(mod,"friend_unit_gift.management_callback",
             reinterpret_cast<void*>(&ManagementEventHook),
             reinterpret_cast<void**>(&g_management_callback))) return 0;
+
+    if (!api->HookCode(mod,"friend_unit_gift.community_init",reinterpret_cast<void*>(&CommunityFriendInit),
+            reinterpret_cast<void**>(&g_friend_community_init)) ||
+        !api->HookCode(mod,"friend_unit_gift.community_dtor",reinterpret_cast<void*>(&CommunityFriendDtor),
+            reinterpret_cast<void**>(&g_friend_community_dtor)) ||
+        !api->HookCode(mod,"friend_unit_gift.community_event",reinterpret_cast<void*>(&CommunityFriendEvent),
+            reinterpret_cast<void**>(&g_friend_community_callback))) return 0;
+
+    if (!Bind(g_home_upmenu_callback,"friend_unit_gift.home_upmenu_callback") ||
+        !Bind(g_home_upmenu_vtable,"friend_unit_gift.home_upmenu_vtable") ||
+        !Bind(g_home_community_vtable,"friend_unit_gift.home_community_vtable")) return 0;
 
     if (!RegisterStorageBroker() && !InstallStorageFallback()) {
         return 0;

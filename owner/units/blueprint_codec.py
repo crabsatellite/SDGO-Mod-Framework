@@ -21,6 +21,7 @@ LEVEL_OFFSET=261
 MINIMUM_PLAYER_OFFSET=1189
 REPAY_OFFSET=1193
 RECIPE_SPRITE_OFFSET=169
+PREVIEW_SPRITE_OFFSET=289
 
 
 def decode(raw):
@@ -49,7 +50,7 @@ def decode(raw):
         'source_sha256':hashlib.sha256(raw).hexdigest()}
 
 
-def patch(template,declaration,*,root_unit_id,recipe_sprite=None):
+def patch(template,declaration,*,root_unit_id,recipe_sprite=None,preview_sprite=None):
     original=decode(template)
     value=blueprints.normalize(declaration,root_unit_id=root_unit_id)
     blueprints.server_rows(value,root_unit_id=root_unit_id)
@@ -65,9 +66,10 @@ def patch(template,declaration,*,root_unit_id,recipe_sprite=None):
         if material:struct.pack_into('<I',result,LEVEL_OFFSET+4*slot,material['minimum_level'])
     struct.pack_into('<I',result,MINIMUM_PLAYER_OFFSET,value['minimum_player_level'])
     struct.pack_into('<I',result,REPAY_OFFSET,value['repay_point'])
-    if recipe_sprite is not None:
-        path=codec._virtual_path(recipe_sprite,'blueprint sprite')
+    for offset,sprite in ((RECIPE_SPRITE_OFFSET,recipe_sprite),(PREVIEW_SPRITE_OFFSET,preview_sprite)):
+        if sprite is None:continue
+        path=codec._virtual_path(sprite,'blueprint sprite')
         if not path.startswith('sprs/') or not path.endswith('.spr'):raise ValueError('设计图图片必须为原生SPR')
-        codec._put_utf16(result,RECIPE_SPRITE_OFFSET,60,path.replace('/','\\'),'blueprint sprite')
+        codec._put_utf16(result,offset,60,path.replace('/','\\'),'blueprint sprite')
     decode(bytes(result))
     return bytes(result)

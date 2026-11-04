@@ -393,14 +393,17 @@ def create_project_activity_draft(provider,body):
             {'unit_id':root,'rank':4,'subgrade':form['server']['UnitGradeNumber2']},family['category_id'],
             units=configuration_units,categories=tables[('GOnlineGame','tbl_ItemCategory')],
             prices=tables[('GOnlineGame','tbl_ItemMachinePrice')],pool=tables[('GOnlineGame','tbl_ItemMachineList')],
-            listed_machines=listed,preferences=catalog.get('activity_preferences'))
+            listed_machines=listed,preferences=catalog.get('activity_preferences'),
+            excluded_machine_ids={r['id'] for r in catalog.get('activity_machines',[])+catalog.get('activity_drafts',[])})
         balance=preset['balance']
         candidate=copy.deepcopy(catalog)
         drafts=candidate.setdefault('activity_drafts',[])
         existing=next((r for r in drafts if r['project_key']==source['family_key'] and r['unit_id']==root),None)
         occupied={r['MachineID'] for r in tables[('GOnlineGame','tbl_ItemMachinePrice')]}|{r['id'] for r in drafts}
-        machine_id=existing['id'] if existing else next((i for i in range(1990001,1991000) if i not in occupied),None)
-        if machine_id is None:raise ValueError('活动机台保留编号已用满')
+        from owner.units.activity_ids import allocate_activity_id
+        authored_ids={r['id'] for r in drafts+candidate.get('activity_machines',[])}
+        occupied.update(authored_ids)
+        machine_id=existing['id'] if existing else allocate_activity_id(occupied,listed=listed|authored_ids)
         poster_key=source['family_key']+':activity_poster'
         artwork=next((r for r in candidate.get('project_assets',[]) if r['key']==poster_key),None)
         if not artwork:raise ValueError('请先将该项目的活动海报存入扭蛋制作素材')
