@@ -34,7 +34,7 @@ class GatheringContracts(unittest.TestCase):
         self.assertEqual(len(gathering.awards(job(mode='pve',contributed=False),c)),1)
 
     def test_match_day_week_use_captured_time_and_configured_zone(self):
-        c=config();r=c['rules'][0]
+        c=config();c['utc_offset_minutes']=480;r=c['rules'][0]
         self.assertEqual(gathering.awards(job(),c)[0]['period_key'],'2026-11-02')
         self.assertEqual(gathering.awards(job(completed_unix=epoch('2026-11-01T15:59:59')),c)[0]['period_key'],'2026-10-26')
         r['period']='day';self.assertEqual(gathering.awards(job(),c)[0]['period_key'],'2026-11-02')

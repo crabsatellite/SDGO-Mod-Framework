@@ -142,3 +142,5 @@ python tools/distribution_guard.py --archive dist\SDGO-ModFramework-X.Y.Z.zip
 `--allow-legacy-public`。它只兼容“两份声明都缺失”的旧公共清单，仍会拒绝
 `local_only`、单边声明、仓库/源码标记和带禁止分发标记的二进制。公共框架源码、
 Manager 构建和发布包仍使用上面的严格命令。
+
+可配置时区默认从服务器本地初始化；保存的时区值属于该实例配置。更新页的“时间显示”留空时跟随服务器本地，也可只为当前 Manager 实例填写 UTC 偏移分钟。这不会修改 Windows 系统时区。
