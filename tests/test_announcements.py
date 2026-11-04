@@ -21,15 +21,31 @@ def rule():
 
 
 class AnnouncementsTest(unittest.TestCase):
-    def test_default_timezone_matches_other_business_defaults(self):
+    def test_server_local_defaults_and_explicit_instance_override(self):
+        from owner import timezones
         from owner.calendar_gifts.model import defaults as calendar_defaults
         from owner.collection_capsule.rules import defaults as collection_defaults
         from owner.rewards.gathering import defaults as gathering_defaults
-        offsets=[announcements.DEFAULT['utc_offset_minutes'],calendar_defaults()['utc_offset_minutes'],
-                 collection_defaults()['utc_offset_minutes'],gathering_defaults()['utc_offset_minutes']]
-        self.assertEqual(offsets,[480]*4)
-        compiled,_=announcements.compile_rules(announcements.DEFAULT)
-        self.assertIn('offset=480\r\n',compiled.decode('utf-16'))
+        self.assertIsNone(announcements.DEFAULT['utc_offset_minutes'])
+        with patch.object(timezones,'local_offset_minutes',return_value=330):
+            self.assertEqual([calendar_defaults()['utc_offset_minutes'],collection_defaults()['utc_offset_minutes'],
+                              gathering_defaults()['utc_offset_minutes']],[330,330,330])
+            self.assertIn('offset=330',announcements.compile_rules(announcements.DEFAULT)[0].decode('utf-16'))
+            fixed={**announcements.DEFAULT,'utc_offset_minutes':480}
+            self.assertIn('offset=480',announcements.compile_rules(fixed)[0].decode('utf-16'))
+
+    def test_manager_display_timezone_is_an_instance_setting(self):
+        from manager.workspace import Workspace
+        from owner import timezones
+        source=Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp:
+            workspace=Workspace(Path(temp),source/'mods')
+            try:
+                with patch.object(timezones,'local_offset_minutes',return_value=-300):
+                    self.assertEqual(workspace.public()['timezone']['effective_offset_minutes'],-300)
+                    self.assertEqual(workspace.set_display_timezone(480)['timezone']['effective_offset_minutes'],480)
+                    self.assertEqual(workspace.set_display_timezone(None)['timezone']['effective_offset_minutes'],-300)
+            finally:workspace.close()
 
     def policy(self):
         return {**copy.deepcopy(announcements.DEFAULT), 'rules': [rule()]}

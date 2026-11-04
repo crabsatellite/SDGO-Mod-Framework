@@ -70,6 +70,8 @@ def make_server(workspace, port=0):
                     if name not in allowed: raise ValueError('面板未登记')
                     return self.response(200, (static / 'panels' / name).read_bytes(), 'text/javascript; charset=utf-8')
                 if method == 'GET' and path == '/api/state': return self.send_json(200, {**workspace.public(), 'session_token': token})
+                if method == 'POST' and path == '/api/timezone':
+                    return self.send_json(200,{**workspace.set_display_timezone(body.get('utc_offset_minutes')),'session_token':token})
                 if method=='POST' and path=='/api/entrypoints':
                     executable=getattr(getattr(workspace,'updates',None),'manager_exe',None)
                     if executable is None:raise ValueError('请使用打包版 Manager 创建快捷入口')

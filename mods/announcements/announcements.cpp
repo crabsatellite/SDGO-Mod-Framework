@@ -44,7 +44,8 @@ std::vector<policy::Rule> authoredRules;
 policy::news::Engine news;
 policy::Scheduler scheduler;
 FILETIME fileStamp{};
-int offset=480,lastState=-1;
+int offset=0,lastState=-1;
+bool serverLocalTime=true;
 uint64_t lastPoll=0,loginUntil=0,gameUntil=0;
 bool inLogin=false,loginManaged=false;
 void* lastViewer=nullptr;
@@ -77,10 +78,15 @@ policy::Clock Clock() {
     FILETIME utc{};GetSystemTimeAsFileTime(&utc);
     ULARGE_INTEGER time{};time.LowPart=utc.dwLowDateTime;time.HighPart=utc.dwHighDateTime;
     policy::Clock clock;clock.seconds=time.QuadPart/10000000;
-    time.QuadPart=static_cast<uint64_t>(static_cast<int64_t>(time.QuadPart)+static_cast<int64_t>(offset)*600000000);
-    FILETIME local{time.LowPart,time.HighPart};SYSTEMTIME date{};FileTimeToSystemTime(&local,&date);
+    SYSTEMTIME date{};
+    if(serverLocalTime){FILETIME local{};FileTimeToLocalFileTime(&utc,&local);FileTimeToSystemTime(&local,&date);}
+    else {
+        time.QuadPart=static_cast<uint64_t>(static_cast<int64_t>(time.QuadPart)+static_cast<int64_t>(offset)*600000000);
+        FILETIME shifted{time.LowPart,time.HighPart};FileTimeToSystemTime(&shifted,&date);
+    }
     clock.date=date.wYear*10000+date.wMonth*100+date.wDay;
     clock.weekday=(date.wDayOfWeek+6)%7;clock.minute=date.wHour*60+date.wMinute;
+    FILETIME local{};SystemTimeToFileTime(&date,&local);time.LowPart=local.dwLowDateTime;time.HighPart=local.dwHighDateTime;
     time.QuadPart-=864000000000;local={time.LowPart,time.HighPart};FileTimeToSystemTime(&local,&date);
     clock.previous_date=date.wYear*10000+date.wMonth*100+date.wDay;
     return clock;
@@ -128,7 +134,9 @@ void Load() {
     fileStamp=data.ftLastWriteTime;
     std::vector<policy::Rule> next;
     const int count=Number(runtime,L"announcements",L"count",-1);
-    const int nextOffset=Number(runtime,L"announcements",L"offset",9999);
+    const auto rawOffset=Read(runtime,L"announcements",L"offset");
+    const bool nextServerLocal=rawOffset.empty() || _wcsicmp(rawOffset.c_str(),L"local")==0;
+    const int nextOffset=nextServerLocal?0:Number(runtime,L"announcements",L"offset",9999);
     if(Number(runtime,L"announcements",L"schema")!=1 || count<0 || count>128 || nextOffset<-720 || nextOffset>840)return;
     for(int i=0;i<count;++i) {
         const auto section=L"rule"+std::to_wstring(i);policy::Rule r;
@@ -160,7 +168,7 @@ void Load() {
         }
         next.push_back(std::move(r));
     }
-    authoredRules=std::move(next);rules=authoredRules;rules.insert(rules.end(),dynamic.begin(),dynamic.end());offset=nextOffset;
+    authoredRules=std::move(next);rules=authoredRules;rules.insert(rules.end(),dynamic.begin(),dynamic.end());offset=nextOffset;serverLocalTime=nextServerLocal;
     api->Log(mod,SDGO_LOG_INFO,"loaded %u authored announcement rules",static_cast<unsigned>(authoredRules.size()));
 }
 // Native MSVC strings have a 16-byte SSO buffer, then size/capacity. Vector

@@ -3,5 +3,6 @@ export function button(text,fn,ctx,cls=''){const n=e('button',text,cls);n.onclic
 export function field(label,value,type='text'){const box=e('label',label),input=document.createElement('input');input.type=type;if(type==='checkbox')input.checked=!!value;else input.value=value??'';box.append(input);return {box,input};}
 export async function download(response,name){const blob=await response.blob(),url=URL.createObjectURL(blob),link=e('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);}
 
-export const CHINA_TIME_ZONE='Asia/Shanghai';
-export function chinaDateTime(value){return new Date(value).toLocaleString('zh-CN',{timeZone:CHINA_TIME_ZONE,hour12:false});}
+let displayUtcOffsetMinutes=0;
+export function setDisplayUtcOffset(value){if(Number.isInteger(value)&&value>=-720&&value<=840)displayUtcOffsetMinutes=value;}
+export function serverDateTime(value){return new Date(new Date(value).getTime()+displayUtcOffsetMinutes*60000).toLocaleString('zh-CN',{timeZone:'UTC',hour12:false});}
