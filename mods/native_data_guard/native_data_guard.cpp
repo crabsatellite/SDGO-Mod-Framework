@@ -17,6 +17,10 @@ using GridData = void*(__cdecl*)();
 using GridFind = bool(__thiscall*)(void*, const uint8_t**, uint32_t, int, char);
 using NameLookup = const uint8_t*(__thiscall*)(void*, uint32_t, uint32_t);
 using ExceptionWriter = LONG(WINAPI*)(EXCEPTION_POINTERS*);
+using NativeMessageClone = void*(__thiscall*)(void*);
+using NativeMessageDestroy = void*(__thiscall*)(void*, uint8_t);
+using UnitIndexingCopy = void*(__thiscall*)(void*, const void*);
+using UnitIndexingDestroy = void*(__thiscall*)(void*, uint8_t);
 using StackWalkFn = BOOL(WINAPI*)(
     DWORD, HANDLE, HANDLE, LPSTACKFRAME, LPVOID,
     PREAD_PROCESS_MEMORY_ROUTINE, PFUNCTION_TABLE_ACCESS_ROUTINE,
@@ -25,13 +29,21 @@ GridData g_grid = nullptr;
 GridFind g_find = nullptr;
 NameLookup g_name = nullptr;
 ExceptionWriter g_exceptionWriter = nullptr;
+UnitIndexingCopy g_unitIndexingCopy = nullptr;
+UnitIndexingDestroy g_unitIndexingDestroy = nullptr;
 StackWalkFn g_stackWalk = nullptr;
 void* g_unitContinue = nullptr;
 void* g_unitSkip = nullptr;
 void* g_informationContinue = nullptr;
+void* g_deferredContinue = nullptr;
+void* g_deferredTrampoline = nullptr;
+void* g_completionTrampoline = nullptr;
 std::array<uintptr_t, 2> g_nameCallers{};
 volatile LONG g_missingNames = 0, g_missingTransforms = 0, g_missingInformation = 0;
 volatile LONG g_preservedExceptions = 0;
+volatile LONG g_deferredMessageCopies = 0, g_deferredMessageReplacements = 0;
+volatile LONG g_deferredMessageCopyFailures = 0;
+volatile LONG g_deferredMessageCompletions = 0, g_outstandingDeferredMessages = 0;
 bool g_boundsCorrected = false;
 const DWORD g_defaultMxcsr = 0x1F80;
 const uint8_t g_missingInformationRecord[0x40]{};
@@ -102,6 +114,146 @@ void __stdcall MissingInformation() {
         g_api->Log(g_mod, SDGO_LOG_WARN,
             "derived information data is unavailable; the native default percentage is retained");
     SetLastError(error);
+}
+
+void* CloneNativeMessage(void* message) {
+    if (!message) return nullptr;
+    auto** table = *static_cast<void***>(message);
+    auto clone = reinterpret_cast<NativeMessageClone>(table[1]);
+    return clone(message);
+}
+
+void DestroyNativeMessage(void* message) {
+    if (!message) return;
+    auto** table = *static_cast<void***>(message);
+    auto destroy = reinterpret_cast<NativeMessageDestroy>(table[0]);
+    destroy(message, 1);
+}
+
+void LogDeferredCopyFailure() {
+    if (InterlockedIncrement(&g_deferredMessageCopyFailures) <= 16)
+        g_api->Log(g_mod, SDGO_LOG_WARN,
+            "unit-management request could not be copied; reopen the page after loading completes");
+}
+
+void __stdcall OwnDeferredUnitIndexingMessage(void* service, void* incoming) {
+    const DWORD error = GetLastError();
+    void* copy = CloneNativeMessage(incoming);
+    if (!copy) {
+        LogDeferredCopyFailure();
+        SetLastError(error);
+        return;
+    }
+    auto** slot = reinterpret_cast<void**>(static_cast<uint8_t*>(service) + 0x58);
+    void* replaced = *slot;
+    *slot = copy;
+    InterlockedIncrement(&g_deferredMessageCopies);
+    if (replaced) {
+        InterlockedIncrement(&g_deferredMessageReplacements);
+        DestroyNativeMessage(replaced);
+    } else {
+        InterlockedIncrement(&g_outstandingDeferredMessages);
+    }
+    SetLastError(error);
+}
+
+// Recv_Msg_BeginUnitIndexing used to retain the dispatcher-owned incoming
+// message directly. The completion path later calls its clone virtual and
+// deletes it, after the dispatcher may already have reclaimed it. Preserve the
+// original register/flag/FPU state while installing an independently owned
+// native clone in the service's existing deferred-message slot.
+__declspec(naked) void UnitIndexingDeferredSite() {
+    __asm { pushfd }
+    __asm { pushad }
+    __asm { mov eax, esp }
+    __asm { sub esp, 210h }
+    __asm { and esp, 0FFFFFFF0h }
+    __asm { mov [esp+200h], eax }
+    __asm { fxsave [esp] }
+    __asm { fninit }
+    __asm { ldmxcsr dword ptr [g_defaultMxcsr] }
+    __asm { cld }
+    __asm { mov eax, [ebp-160h] }
+    __asm { mov ecx, [ebp+8] }
+    __asm { push ecx }
+    __asm { push eax }
+    __asm { call OwnDeferredUnitIndexingMessage }
+    __asm { fxrstor [esp] }
+    __asm { mov esp, [esp+200h] }
+    __asm { popad }
+    __asm { popfd }
+    __asm { mov ecx, [ebp+8] }
+    __asm { mov edx, [ebp-160h] }
+    __asm { jmp dword ptr [g_deferredContinue] }
+}
+
+void __stdcall ObserveUnitIndexingCompletion(void* service) {
+    const DWORD error = GetLastError();
+    if (*reinterpret_cast<void**>(static_cast<uint8_t*>(service) + 0x58)) {
+        InterlockedIncrement(&g_deferredMessageCompletions);
+        InterlockedDecrement(&g_outstandingDeferredMessages);
+    }
+    SetLastError(error);
+}
+
+// Count the genuine native completion immediately before its unchanged
+// virtual destruction and slot clear. This is read-only acceptance evidence;
+// the trampoline still performs the original release.
+__declspec(naked) void UnitIndexingCompletionSite() {
+    __asm { pushfd }
+    __asm { pushad }
+    __asm { mov eax, esp }
+    __asm { sub esp, 210h }
+    __asm { and esp, 0FFFFFFF0h }
+    __asm { mov [esp+200h], eax }
+    __asm { fxsave [esp] }
+    __asm { fninit }
+    __asm { ldmxcsr dword ptr [g_defaultMxcsr] }
+    __asm { cld }
+    __asm { push esi }
+    __asm { call ObserveUnitIndexingCompletion }
+    __asm { fxrstor [esp] }
+    __asm { mov esp, [esp+200h] }
+    __asm { popad }
+    __asm { popfd }
+    __asm { jmp dword ptr [g_completionTrampoline] }
+}
+
+void* __fastcall CopyUnitIndexingService(void* self, void*, const void* source) {
+    void* result = g_unitIndexingCopy(self, source);
+    const DWORD error = GetLastError();
+    auto** destination =
+        reinterpret_cast<void**>(static_cast<uint8_t*>(self) + 0x58);
+    void* pending =
+        *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(source) + 0x58);
+    // The native copy constructor copied this pointer shallowly. Never release
+    // that borrowed value from the destination; replace it with a deep copy.
+    *destination = nullptr;
+    if (pending) {
+        void* copy = CloneNativeMessage(pending);
+        if (copy) {
+            *destination = copy;
+            InterlockedIncrement(&g_deferredMessageCopies);
+            InterlockedIncrement(&g_outstandingDeferredMessages);
+        } else {
+            LogDeferredCopyFailure();
+        }
+    }
+    SetLastError(error);
+    return result;
+}
+
+void* __fastcall DestroyUnitIndexingService(void* self, void*, uint8_t deleting) {
+    const DWORD error = GetLastError();
+    auto** slot = reinterpret_cast<void**>(static_cast<uint8_t*>(self) + 0x58);
+    void* pending = *slot;
+    *slot = nullptr;
+    if (pending) {
+        InterlockedDecrement(&g_outstandingDeferredMessages);
+        DestroyNativeMessage(pending);
+    }
+    SetLastError(error);
+    return g_unitIndexingDestroy(self, deleting);
 }
 
 // At this site the primary model has already been loaded. EBX is the result
@@ -283,6 +435,31 @@ extern "C" __declspec(dllexport) int __cdecl SdgoNativeDataGuardGetStatusV2(
     return 1;
 }
 
+extern "C" __declspec(dllexport) int __cdecl SdgoNativeDataGuardGetStatusV3(
+    SdgoNativeDataGuardStatusV3* out) {
+    if (!out || out->size < sizeof(*out)) return 0;
+    out->version = 3;
+    out->funnel_bounds_corrected = g_boundsCorrected ? 1u : 0u;
+    out->missing_names = static_cast<uint32_t>(InterlockedCompareExchange(&g_missingNames, 0, 0));
+    out->missing_transform_metadata =
+        static_cast<uint32_t>(InterlockedCompareExchange(&g_missingTransforms, 0, 0));
+    out->missing_information_records =
+        static_cast<uint32_t>(InterlockedCompareExchange(&g_missingInformation, 0, 0));
+    out->preserved_exception_contexts =
+        static_cast<uint32_t>(InterlockedCompareExchange(&g_preservedExceptions, 0, 0));
+    out->deferred_message_copies =
+        static_cast<uint32_t>(InterlockedCompareExchange(&g_deferredMessageCopies, 0, 0));
+    out->deferred_message_replacements =
+        static_cast<uint32_t>(InterlockedCompareExchange(&g_deferredMessageReplacements, 0, 0));
+    out->deferred_message_copy_failures =
+        static_cast<uint32_t>(InterlockedCompareExchange(&g_deferredMessageCopyFailures, 0, 0));
+    out->deferred_message_completions =
+        static_cast<uint32_t>(InterlockedCompareExchange(&g_deferredMessageCompletions, 0, 0));
+    out->outstanding_deferred_messages =
+        static_cast<uint32_t>(InterlockedCompareExchange(&g_outstandingDeferredMessages, 0, 0));
+    return 1;
+}
+
 SDGO_MOD_ENTRY {
     if (!api || api->size < offsetof(SdgoApi, HookImport) + sizeof(api->HookImport) ||
         !api->Symbol || !api->HookCode || !api->HookSite || !api->HookImport || !api->Log) return 0;
@@ -293,20 +470,33 @@ SDGO_MOD_ENTRY {
     g_unitSkip = symbol("native_data_guard.unit_finalize");
     auto* information = static_cast<uint8_t*>(symbol("native_data_guard.information_denominator"));
     auto* bounds = static_cast<uint8_t*>(symbol("native_data_guard.funnel_bounds"));
+    g_deferredContinue = symbol("native_data_guard.unit_indexing_defer_continue");
     for (size_t i = 0; i < g_nameCallers.size(); ++i) {
         const auto address = reinterpret_cast<uintptr_t>(symbol(i ?
             "native_data_guard.name_call_bracketed" : "native_data_guard.name_call_plain"));
         if (!address) return 0;
         g_nameCallers[i] = address + 5;
     }
-    if (!g_grid || !g_find || !g_unitSkip || !information || !bounds ||
-        !symbol("native_data_guard.exception_writer")) return 0;
+    if (!g_grid || !g_find || !g_unitSkip || !information || !bounds || !g_deferredContinue ||
+        !symbol("native_data_guard.exception_writer") ||
+        !symbol("native_data_guard.unit_indexing_copy") ||
+        !symbol("native_data_guard.unit_indexing_destructor")) return 0;
     if (!api->HookCode(mod, "native_data_guard.name_lookup", reinterpret_cast<void*>(&FindName),
                        reinterpret_cast<void**>(&g_name)) ||
         !api->HookSite(mod, "native_data_guard.unit_transform", reinterpret_cast<void*>(&UnitTransformSite),
                        &g_unitContinue) ||
         !api->HookSite(mod, "native_data_guard.information_denominator",
                        reinterpret_cast<void*>(&InformationReadSite), &g_informationContinue) ||
+        !api->HookSite(mod, "native_data_guard.unit_indexing_defer",
+                       reinterpret_cast<void*>(&UnitIndexingDeferredSite), &g_deferredTrampoline) ||
+        !api->HookSite(mod, "native_data_guard.unit_indexing_complete",
+                       reinterpret_cast<void*>(&UnitIndexingCompletionSite), &g_completionTrampoline) ||
+        !api->HookCode(mod, "native_data_guard.unit_indexing_copy",
+                       reinterpret_cast<void*>(&CopyUnitIndexingService),
+                       reinterpret_cast<void**>(&g_unitIndexingCopy)) ||
+        !api->HookCode(mod, "native_data_guard.unit_indexing_destructor",
+                       reinterpret_cast<void*>(&DestroyUnitIndexingService),
+                       reinterpret_cast<void**>(&g_unitIndexingDestroy)) ||
         !api->HookCode(mod, "native_data_guard.exception_writer",
                        reinterpret_cast<void*>(&PreserveExceptionContext),
                        reinterpret_cast<void**>(&g_exceptionWriter)) ||
@@ -316,6 +506,6 @@ SDGO_MOD_ENTRY {
     if (!CorrectBounds(bounds)) return 0;
     g_boundsCorrected = true;
     api->Log(mod, SDGO_LOG_INFO,
-        "native data guards active: bounded reads, missing records, and original exception contexts");
+        "native data guards active: bounded reads, owned deferred messages, and original exception contexts");
     return 1;
 }
