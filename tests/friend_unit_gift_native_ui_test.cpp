@@ -21,7 +21,27 @@ static_assert(sizeof(void*) == 4, "native UI fixture requires x86");
 
 struct Control {
     std::array<std::uint8_t, 0x300> bytes{};
+
+    // Give native-owned fixture children separate pages so destruction can be
+    // represented by inaccessible memory without protecting the fixture heap.
+    static void* operator new(std::size_t size) {
+        auto* result = VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        if (!result) throw std::bad_alloc();
+        return result;
+    }
+    static void operator delete(void* pointer) noexcept {
+        if (pointer) VirtualFree(pointer, 0, MEM_RELEASE);
+    }
 };
+
+bool DetachRetiredStorage(StorageView* view, void* service) {
+    __try {
+        view->Detach(service);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
 
 template <class T>
 T Read(const void* pointer, std::size_t offset = 0) {
@@ -833,8 +853,38 @@ int main() {
     }
     Check(!view.ready(), "unsupported storage entry is hidden");
 
-    view.Detach(service.bytes.data());
+    // The native owner may have destroyed the old page before the next init
+    // notifies its subscribers. Detach is invalidation, not a live UI action.
+    view.SetAvailable(true);
+    view.ShowStatus(L"retiring page", true);
+    auto* retiredButton = view.button();
+    const auto retiredCaption = g_captions[retiredButton];
+    const auto stockBeforeDetach = stock;
+    const auto claimBeforeDetach = claim->bytes;
+    DWORD oldProtection = 0;
+    Check(VirtualProtect(retiredButton, sizeof(Control), PAGE_NOACCESS, &oldProtection) != 0,
+          "retired native child is inaccessible");
+    const bool detachedRetired = DetachRetiredStorage(&view, service.bytes.data());
+    DWORD ignoredProtection = 0;
+    Check(VirtualProtect(retiredButton, sizeof(Control), oldProtection, &ignoredProtection) != 0,
+          "fixture restores its retired allocation after the check");
+    Check(detachedRetired, "retired storage detach must not dereference freed controls");
     Check(!view.attached(), "storage companion detaches cleanly");
+    Check(g_captions[retiredButton] == retiredCaption,
+          "detach does not send a caption update to the retired native page");
+    Check(claim->bytes == claimBeforeDetach,
+          "detach does not restore visibility through retired Claim All pointers");
+    for (std::size_t index = 0; index < stock.size(); ++index)
+        Check(stock[index].bytes == stockBeforeDetach[index].bytes,
+              "detach does not write through retired stock control pointers");
+    Check(view.Attach(service.bytes.data(), dialog.bytes.data(), bindings) && view.ready(),
+          "the same native service can bind a fresh page after retirement");
+    view.ShowStatus(L"fresh page", true);
+    view.RenderRows(rows, 2, 1, 2, 100, true, false);
+    Check(view.GiftFor(view.RowActionForGift(100)) == 100,
+          "fresh gift rows retain their operation identity after reattachment");
+    view.SetAvailable(false);
+    view.Detach(service.bytes.data());
     std::cout << "friend_unit_gift_native_ui_test: PASS\n";
     return 0;
 }
