@@ -304,6 +304,25 @@ def manifest_requires(path: Path) -> set[str]:
     return {item.strip() for item in manifest_mod(path).get('requires','').split(',') if item.strip()}
 
 
+def manifest_shared_requires(manifest: Path, source) -> set[str]:
+    names = manifest_requires(manifest)
+    fragment = manifest.parent / 'symbols.fragment.ini'
+    if fragment.is_file():
+        local = read_ini(fragment)
+        try:
+            matching_host = (local['host']['image'].casefold() == source['host']['image'].casefold() and
+                all(int(local['host'][key], 0) == int(source['host'][key], 0)
+                    for key in ('timestamp', 'size_of_image')))
+        except (KeyError, ValueError):
+            matching_host = False
+        if not matching_host:
+            raise GameTestError('Mod symbol fragment does not match the selected host: ' + manifest.parent.name)
+        # Core verifies this Mod's sidecar. Its aliases stay local and cannot
+        # satisfy another Mod's dependencies.
+        names -= set(local.sections()) - {'host'}
+    return names
+
+
 def merge_required_symbols(
     stage_symbols: Path,
     copied_symbols: Path,
@@ -317,23 +336,7 @@ def merge_required_symbols(
     destination = read_ini(copied_symbols) if copied_symbols.is_file() else ini_parser()
     required = {"host"}
     for manifest in manifests:
-        names = manifest_requires(manifest)
-        fragment = manifest.parent / 'symbols.fragment.ini'
-        if fragment.is_file():
-            local = read_ini(fragment)
-            try:
-                matching_host = (local['host']['image'].casefold() == source['host']['image'].casefold() and
-                    all(int(local['host'][key], 0) == int(source['host'][key], 0)
-                        for key in ('timestamp', 'size_of_image')))
-            except (KeyError, ValueError):
-                matching_host = False
-            if not matching_host:
-                raise GameTestError('Mod symbol fragment does not match the selected host: ' + manifest.parent.name)
-            # Core loads and verifies this Mod's sidecar itself. Keep its aliases
-            # local rather than moving them into the shared map or satisfying
-            # another Mod's requirements with them.
-            names -= set(local.sections()) - {'host'}
-        required.update(names)
+        required.update(manifest_shared_requires(manifest, source))
     missing = sorted(section for section in required if not source.has_section(section) and
                      not (preserve_existing and destination.has_section(section)))
     if missing and not allow_missing:
@@ -509,7 +512,7 @@ def validate_observer_stage(
                 raise GameTestError('fps_limit manifest has the wrong identity')
     source=read_ini(client/f'sdgo/symbols/{HOST_KEY}.ini')
     required={'host'}
-    for manifest in updated.values():required.update(manifest_requires(manifest))
+    for manifest in updated.values():required.update(manifest_shared_requires(manifest, source))
     existing_path=root/f'sdgo/symbols/{HOST_KEY}.ini'
     existing=read_ini(existing_path) if existing_path.is_file() else ini_parser()
     missing=sorted(
@@ -601,6 +604,8 @@ def overlay_observer(
                     current_manifest['settings'][key]=value
             write_ini(target_manifest,current_manifest)
             shutil.copy2(staged_target_dll, target_dll)
+            sidecar=staged_target_dll.with_name('symbols.fragment.ini')
+            if sidecar.is_file():shutil.copy2(sidecar,target_dll.with_name(sidecar.name))
 
     # Exercise the built master implementation of every already-installed Mod,
     # including its Lua policy, while keeping private owner settings local.
@@ -673,7 +678,7 @@ def overlay_observer(
         write_ini(installed_manifest,current)
         updated_manifests.append(installed_manifest)
         for payload in staged_manifest.parent.iterdir():
-            if payload.is_file() and payload.suffix.lower() in ('.dll','.lua'):
+            if payload.is_file() and (payload.suffix.lower() in ('.dll','.lua') or payload.name=='symbols.fragment.ini'):
                 shutil.copy2(payload,destination/payload.name)
     if disabled_mods:
         settings=read_ini(root/'sdgo/sdgo.ini')
