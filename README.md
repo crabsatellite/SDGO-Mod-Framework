@@ -36,7 +36,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Apsalus III transform input fix <!-- catalog: `transform_input_fix` --> | Release the native transform lock when a form has no transform animation | [Use](docs/transform-input-fix.md) |
 | Agent relay log fix <!-- catalog: `agent_relay_log_fix` --> | Fix an Agent relay log that reads invalid memory | [Use](docs/agent-relay-log-fix.md) |
 | Battle rank regression fix <!-- catalog: `rank_progression_fix` --> | Stop battle settlement from lowering a pilot's rank (WorldServer) | [Use](docs/rank-progression-fix.md) |
-| Friend list fix <!-- catalog: `friend_list_fix`, `friend_list_client_fix` --> | Retain offline friends and Chinese names through status updates; restore the built-in messenger UI | [Use](docs/friend-list-fix.md) |
+| Friend list fix <!-- catalog: `friend_list_fix`, `friend_list_client_fix` --> | Keep offline friends, current names and ranks; Chinese actions in the home USER LIST and the built-in messenger | [Use](docs/friend-list-fix.md) |
 | New-account starter profile <!-- catalog: `new_account_profile` --> | Configurable starting GP, cash, rank and unit gifts instead of the stock 9,999,999 / rank 15 | [Use](docs/new-account-profile.md) |
 | Shop rental and Unicode labels <!-- catalog: `shop_labels` --> | Readable rental/permanent labels, numeric quantities and Chinese shop options | [Use](docs/shop-labels.md) |
 | Chinese shop artwork labels <!-- catalog: `shop_art_localization` --> | Translate rank text baked into supported paint artwork | [Use](docs/shop-art-localization.md) |
@@ -66,7 +66,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Daily double rewards <!-- catalog: `daily_rewards` --> | Double battle GB and EXP in a daily window (default 18:00–22:00) | [Use](docs/daily-rewards.md) |
 | Storage claim all <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation | [Use](docs/storage-claim.md) |
 | Chinese shop localization and search <!-- catalog: `shop_localization` --> | Translate shop names, descriptions, options and paint-page unit previews; search by Chinese name combined with rank and payment filters | [Use](docs/shop-localization.md) |
-| Friend unit gifts (optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Give an owned unit to a friend as-is; the friend accepts or returns it in Storage. Off until the owner enables it | [Use](docs/friend-unit-gift.md) |
+| Friend unit gifts (optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Right-click an online or offline friend, select an owned unit in native unit management, and let the friend accept or return it in Storage. Off by default | [Use](docs/friend-unit-gift.md) |
 | Unit family import (Beta) <!-- catalog: `unit_catalog` --> | Import units and portable metadata/artwork, complete paired definitions, and author dedicated activity pools with GP or token presets in Mod Manager | [Use](docs/unit-import.md) |
 
 <!-- /mod-category:gameplay -->
