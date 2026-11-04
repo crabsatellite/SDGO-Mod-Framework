@@ -114,7 +114,11 @@ Manager 中的服务器配方／图纸兼容模板只用于宿主兼容基线，
 无法可靠恢复客户端边框时会明确报错。
 显式指定的卡面和已审核的完整展示模板仍按各自绑定生成。
 
-请先读取 `capabilities.blueprints.native_registration`：为 false 时只能准备数据，不能据此认为已经可以在游戏内合成。
+使用宿主兼容模板的结构化配方支持两端编译、受保护的定义登记及原生合成流程。
+第一台材料是原生保留的关键机体，其他材料和图纸按所选服务端的规则消耗；导入定义不会向玩家发放图纸或材料。
+`capabilities.blueprints.native_registration` 表示这条结构化路径是否可用。
+完整上传展示记录另看 `capabilities.blueprints.client_templates.native_registration_authorized`：当前仍为 false，
+可保存和导出项目，但目标资源与消费者未验证前不能发布。源记录哈希不代表实机验收。
 获取路线还会检查设计图物品及材料是否确实可得。S 级及以上的库存根形态使用独立活动机；
 A/B/C 级优先检查闭合的设计图路线，否则使用普通扭蛋。预览路线不会自动写入机台、价格或奖池。
 
