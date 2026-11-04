@@ -9,7 +9,7 @@ export async function mount(root,ctx){
  await mountNews(root,ctx);
  root.append(e('p','规则内的日期、星期、每日时段和次数限制同时满足时，任一选中的事件可以触发。开始与结束时间相同表示全天；跨午夜时按开始日的星期计算。','intro'));
  root.append(e('p','登录位置使用原生网页公告，游戏内位置使用左侧 GM 文字公告。无需 Manager 常驻。保存后约一秒内载入；次数按本客户端累计，两处共享上限，0 表示不限。','muted'));
- const zone=field('时区（UTC 偏移分钟，例如日本 540、中国 480）',data.policy.utc_offset_minutes,'number');root.append(zone.box);
+ const zone=field('时区（默认北京时间 UTC+8，偏移分钟 480）',data.policy.utc_offset_minutes,'number');root.append(zone.box);
  const list=e('div');root.append(list);
  const triggers=[['enter','进入该公告位置'],['timer','在时段内定时'],['login','登录成功'],['lobby','进入大厅'],['room','进入房间'],['battle_start','战斗开始'],['battle_end','战斗结束']];
  function bind(parent,r,key,label,type='text'){const f=field(label,r[key],type);if(type==='number'){f.input.min=key==='duration_seconds'||key==='interval_seconds'?'3':'0';f.input.max=key==='duration_seconds'?'120':key==='interval_seconds'?'86400':key==='priority'?'100':'1000000';}f.input.oninput=()=>r[key]=type==='checkbox'?f.input.checked:type==='number'?Number(f.input.value):f.input.value;parent.append(f.box);}

@@ -142,3 +142,5 @@ python tools/distribution_guard.py --archive dist\SDGO-ModFramework-X.Y.Z.zip
 `--allow-legacy-public`。它只兼容“两份声明都缺失”的旧公共清单，仍会拒绝
 `local_only`、单边声明、仓库/源码标记和带禁止分发标记的二进制。公共框架源码、
 Manager 构建和发布包仍使用上面的严格命令。
+
+默认业务时区和时间显示采用中国标准时间（北京时间，Asia/Shanghai，UTC+8）。
