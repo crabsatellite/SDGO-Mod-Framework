@@ -465,7 +465,8 @@ rva=state
         run_dir = self.prepare()
         client = run_dir / "client"
         self.assertEqual((client / "GOnline.exe").read_bytes(), b"normal-game")
-        self.assertEqual((client / "3_SD敢达快速启动.exe").read_bytes(), b"normal-launcher")
+        self.assertFalse((client / "3_SD敢达快速启动.exe").exists())
+        self.assertEqual((self.template / "3_SD敢达快速启动.exe").read_bytes(), b"normal-launcher")
         self.assertTrue((client / "配置文件.ini").is_file())
         self.assertEqual((client / "BGM" / "theme.ogg").read_bytes(), b"music")
         self.assertFalse((client / "old.log").exists())
