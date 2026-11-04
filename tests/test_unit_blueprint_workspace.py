@@ -5,6 +5,7 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 from owner.units.workspace import Workspace
@@ -53,8 +54,19 @@ class BlueprintWorkspace(unittest.TestCase):
         self.assertEqual(209001,d['blueprints'][0]['id'])
         self.assertEqual(1599001,d['blueprints'][0]['item_category_id'])
 
-    def test_pending_native_adapter_is_explicitly_blocked_not_ignored(self):
+    def test_native_capabilities_distinguish_typed_recipes_from_raw_templates(self):
+        capability=self.engine.public()['capabilities']['blueprints']
+        self.assertTrue(capability['native_registration'])
+        self.assertFalse(capability['client_templates']['native_registration_authorized'])
         d=self.save([draft_recipe()])
+        codes=[row['code'] for row in d['requirements']]
+        self.assertNotIn('blueprint_native_adapter',codes)
+        self.assertIn('blueprint_field',codes)
+        self.assertFalse(d['can_confirm'])
+
+    def test_unavailable_native_adapter_is_explicitly_blocked_not_ignored(self):
+        with patch('owner.units.blueprints.NATIVE_REGISTRATION_SUPPORTED',False):
+            d=self.save([draft_recipe()])
         self.assertIn('blueprint_native_adapter',[r['code'] for r in d['requirements']])
         self.assertFalse(d['can_confirm'])
 
@@ -63,8 +75,16 @@ class BlueprintWorkspace(unittest.TestCase):
         d=self.save([recipe])
         codes=[row['code'] for row in d['requirements']]
         self.assertIn('blueprint_field',codes)
-        self.assertIn('blueprint_native_adapter',codes)
+        self.assertNotIn('blueprint_native_adapter',codes)
         self.assertFalse(d['can_confirm'])
+
+    def test_raw_template_transport_validation_does_not_authorize_native_publication(self):
+        binding,files=bound_fixture()
+        draft=self.draft_with_template_files(files)
+        recipe=template_declaration(binding);recipe['output_unit_id']=draft['root_unit_id']
+        draft['blueprints']=[recipe]
+        issues=self.engine.requirements(draft)
+        self.assertTrue(any(row['code']=='blueprint_template_native_adapter' and row['level']=='error' for row in issues))
 
     def test_definition_patch_accepts_optional_blueprint_declaration(self):
         patch=model.definitions({'schema_version':1,'blueprints':[draft_recipe()]})
