@@ -1,4 +1,4 @@
-import {e,button,field,download} from '/panel_helpers.js';
+import {e,button,field,download,saveBar} from '/panel_helpers.js';
 export async function mount(root,ctx){
  let state=await ctx.request('/api/profile');let profile=state.profile||{schema_version:2,udp_bind_ip:'127.0.0.1',login:{logical_ip:'127.0.0.1',logical_port:5001,external_host:'',external_port:0},udp:[]};
  const box=e('section',undefined,'manager-card');box.append(e('h2','服主端点配置'),e('p','填写你自己的 Sakura 隧道地址。玩家只接收导出的客户端配置，不需要填写端口或使用专用启动器。','intro'));
@@ -9,5 +9,10 @@ export async function mount(root,ctx){
  function capture(){profile.udp=udpInputs.map(row=>Object.fromEntries(Object.entries(row).map(([k,v])=>[k,k.includes('port')?Number(v.value):v.value.trim()])));}
  pool.append(button('添加 UDP 端口',()=>{capture();profile.udp.push({local_port:(profile.udp.at(-1)?.local_port||10000)+1,external_host:inputs.external.value,external_port:0});renderPool();},ctx));renderPool();
  async function save(){capture();profile.login={...profile.login,logical_ip:inputs.ip.value.trim(),logical_port:Number(inputs.port.value),external_host:inputs.external.value.trim(),external_port:Number(inputs.externalPort.value)};profile.udp_bind_ip=inputs.bind.value.trim();state=await ctx.request('/api/profile',{profile,revision:state.revision});ctx.message('FRP 配置已保存。导出并分发后，相关客户端和 Agent 需按配置重启。');}
- root.append(button('保存配置',save,ctx,'primary'),button('导出玩家配置包',async()=>{await save();await download(await ctx.request('/api/export',{}),'SDGO-player-connection.zip');},ctx));
+ // The save buttons stay in view at the bottom of the page, however long the UDP pool grows.
+ const values=()=>JSON.stringify([...root.querySelectorAll('input')].map(n=>n.value));
+ root.append(saveBar(root,ctx,'FRP 配置与分发',[{title:'服主端点与 UDP 端口池',snapshot:values}],[
+  {label:'导出玩家配置包（先保存）',covers:[0],run:async()=>{await save();await download(await ctx.request('/api/export',{}),'SDGO-player-connection.zip');ctx.message('已保存并导出玩家配置包，请在浏览器下载中查看并分发。');}},
+  {label:'保存配置',covers:[0],primary:true,run:save}],
+  '改完点「保存配置」；导出玩家配置包会先保存。分发后，相关客户端和 Agent 需按新配置重启。'));
 }
