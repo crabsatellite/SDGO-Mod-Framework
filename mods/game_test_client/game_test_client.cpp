@@ -1538,6 +1538,7 @@ int __cdecl ReadAiCatalog(const SdgoGameTestContextV1* context) {
 }
 int __cdecl ReadStoragePage(const SdgoGameTestContextV1* context) {
     static bool shopExitRequested=false;
+    static bool clicked=false;
     if(actions.AppState()==9) {
         if(!shopExitRequested) {
             const auto navigation=hangarNavigation.ClickBottomRadio(L"GameRoomRadio",0x48);
@@ -1555,6 +1556,7 @@ int __cdecl ReadStoragePage(const SdgoGameTestContextV1* context) {
         return SDGO_GAME_TEST_FAIL;
     }
     if(result==StorageTestActions::Ready) {
+        clicked=false;
         const auto state=storage.State();
         if(!state.timer_observed)return SDGO_GAME_TEST_WAIT;
         char message[192];
@@ -1565,7 +1567,6 @@ int __cdecl ReadStoragePage(const SdgoGameTestContextV1* context) {
         context->Assert(!state.busy && !state.outstanding,"normal storage list and native business are idle before batch confirmation");
         return SDGO_GAME_TEST_PASS;
     }
-    static bool clicked=false;
     if(!clicked) {
         const auto navigation=hangarNavigation.ClickOperatorMenuButton(L"SalaryBtn",0x74);
         if(navigation>=HangarNavigation::kDownmenuServiceMismatch || navigation==HangarNavigation::kUnbound) {
@@ -1581,9 +1582,13 @@ int FriendStorageAction(const SdgoGameTestContextV1* context,uint32_t operation)
     if(!bound){if(!storage.Bind())return SDGO_GAME_TEST_FAIL;bound=true;}
     if(operation==1)return ReadStoragePage(context);
     if(operation==3) {
-        const auto closed=storage.Close(context);
-        if(closed>=StorageTestActions::Invalid)return SDGO_GAME_TEST_FAIL;
-        if(closed!=StorageTestActions::Complete)return SDGO_GAME_TEST_WAIT;
+        static bool storageClosed=false;
+        if(!storageClosed) {
+            const auto closed=storage.Close(context);
+            if(closed>=StorageTestActions::Invalid)return SDGO_GAME_TEST_FAIL;
+            if(closed!=StorageTestActions::Complete)return SDGO_GAME_TEST_WAIT;
+            storageClosed=true;
+        }
         static bool boundHangar=false;
         if(!boundHangar){
             if(!hangarNavigation.Bind(sdgo_test::api,sdgo_test::mod,&actions) || !pages.Bind())return SDGO_GAME_TEST_FAIL;
@@ -1598,7 +1603,8 @@ int FriendStorageAction(const SdgoGameTestContextV1* context,uint32_t operation)
         static uint32_t previousRead=UINT32_MAX;
         if(read!=previousRead){char text[128];sprintf_s(text,"post-storage native inventory read=%s",PageTestActions::ResultName(read));context->Observe(text);previousRead=read;}
         if(read>=PageTestActions::kInvalidContext)return SDGO_GAME_TEST_FAIL;
-        return read==PageTestActions::kReadReady?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_WAIT;
+        if(read==PageTestActions::kReadReady){storageClosed=false;return SDGO_GAME_TEST_PASS;}
+        return SDGO_GAME_TEST_WAIT;
     }
     const auto result=storage.Claim(context);
     if(result>=StorageTestActions::Invalid)return SDGO_GAME_TEST_FAIL;

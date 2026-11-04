@@ -158,6 +158,7 @@ public:
         void* service,
         void* root,
         const Bindings& bindings);
+    // Invalidates cached references; the native page may already be destroyed.
     void Detach(void* service) noexcept;
     bool Click(void* service, void* control) const noexcept;
     Action ActionFor(void* service, void* control) const noexcept;

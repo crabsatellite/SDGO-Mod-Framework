@@ -60,7 +60,7 @@ public:
     Result Close(const SdgoGameTestContextV1* context) {
         const auto read=Read(context);
         if(read>=Invalid)return read;
-        if(!state_.loaded || !state_.visible)return Complete;
+        if(!state_.loaded || !state_.visible){closing_=false;return Complete;}
         if(closing_)return Waiting;
         if(state_.busy || state_.outstanding)return Waiting;
         if(!exports_.action(state_.run_hash,SDGO_STORAGE_GAME_TEST_ACTION_CLOSE))return Rejected;

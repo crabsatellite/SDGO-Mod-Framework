@@ -304,7 +304,7 @@ def manifest_requires(path: Path) -> set[str]:
     return {item.strip() for item in manifest_mod(path).get('requires','').split(',') if item.strip()}
 
 
-def manifest_shared_requires(manifest: Path, source) -> set[str]:
+def shared_manifest_requires(manifest: Path, source) -> set[str]:
     names = manifest_requires(manifest)
     fragment = manifest.parent / 'symbols.fragment.ini'
     if fragment.is_file():
@@ -341,7 +341,7 @@ def merge_required_symbols(
         # Keep the complete matching staged map while preserving local aliases.
         required.update(source.sections())
     for manifest in manifests:
-        required.update(manifest_shared_requires(manifest, source))
+        required.update(shared_manifest_requires(manifest, source))
     missing = sorted(section for section in required if not source.has_section(section) and
                      not (preserve_existing and destination.has_section(section)))
     if missing and not allow_missing:
@@ -517,7 +517,7 @@ def validate_observer_stage(
                 raise GameTestError('fps_limit manifest has the wrong identity')
     source=read_ini(client/f'sdgo/symbols/{HOST_KEY}.ini')
     required={'host'}
-    for manifest in updated.values():required.update(manifest_shared_requires(manifest, source))
+    for manifest in updated.values():required.update(shared_manifest_requires(manifest, source))
     existing_path=root/f'sdgo/symbols/{HOST_KEY}.ini'
     existing=read_ini(existing_path) if existing_path.is_file() else ini_parser()
     missing=sorted(
