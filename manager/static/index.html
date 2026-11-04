@@ -50,8 +50,10 @@
       <p>普通玩家请使用游戏启动器，不要自行使用本工具修改 Mod。客户端 Mod 与服务器配置不匹配，可能导致无法进入游戏、断线或崩溃；需要调整时请联系服主。</p></div>
       <button id="create-entrypoints" class="ui-btn is-ghost is-small" type="button">创建目录入口</button>
     </section>
-    <div id="manager-message" class="ui-log" role="status"></div>
+    <nav id="page-index" class="page-index" aria-label="本页内容" hidden></nav>
     <main id="content"></main>
+    <div id="manager-message" class="ui-log" role="status" aria-live="polite"><span id="manager-message-text"></span><button id="manager-message-close" class="toast-close" type="button" aria-label="关闭提示">×</button></div>
+    <button id="to-top" class="ui-btn is-ghost is-small to-top" type="button" hidden>回到顶部</button>
   </div>
 </div>
 <dialog id="path-dialog" class="ui-dialog">

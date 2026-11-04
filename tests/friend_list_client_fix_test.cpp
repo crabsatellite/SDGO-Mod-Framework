@@ -141,6 +141,11 @@ namespace
 
     int FakeHookCode(SdgoMod*, const char* name, void* detour, void** original)
     {
+        if (Same(name,"friend_list.client.community_menu_labels")) {
+            // Menu caption behavior is exercised by the native community
+            // regression; this fixture owns the older messenger trampolines.
+            *original=reinterpret_cast<void*>(&NativeUpdateFixture);return 1;
+        }
         if (!Same(name,friend_list_client_fix::kNameUpdateSymbol)) return 0;
         g_updateHookRequested = true;
         void* target = reinterpret_cast<void*>(&NativeUpdateFixture);
@@ -150,6 +155,10 @@ namespace
 
     void* FakeSymbol(SdgoMod*, const char* name)
     {
+        if (Same(name,"friend_list.client.community_text_item") ||
+            Same(name,"friend_list.client.ignore_cache") || Same(name,"friend_list.client.is_blocked") ||
+            Same(name,"friend_list.client.native_ansi") || Same(name,"friends.player_data_pointer"))
+            return g_assignCode;
         if (Same(name,friend_list_client_fix::kNameUpdateSymbol)) {
             g_updateRequested = true;
             return g_rejectUpdate ? nullptr : reinterpret_cast<void*>(&NativeUpdateFixture);

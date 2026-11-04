@@ -25,6 +25,7 @@ class UnitGiftActions {
     inline static thread_local ULONGLONG cursorUntil_ = 0;
     unsigned lastCursorCalls_ = 0;
     int lastCursorX_ = -1, lastCursorY_ = -1;
+    uint32_t cursorHomeReceiver_ = 0;
     static void __cdecl CursorInput(int* x,int* y) {
         originalCursor_(x,y);
         if (injectCursor_ && GetTickCount64()>cursorUntil_) injectCursor_=false;
@@ -120,8 +121,15 @@ public:
         valid_ = true;
         if (injectCursor_) {
             lastCursorCalls_=cursorCalls_;
+            bool targetMatches=true;
+            if (cursorHomeReceiver_) {
+                const auto homeQuery=Procedure<SdgoHomeFriendsSnapshotV1Fn>(module,"SdgoHomeFriendsGetSnapshotV1");
+                SdgoHomeFriendsSnapshotV1 home{};home.size=sizeof(home);home.version=1;
+                targetMatches=homeQuery && homeQuery(&home) && home.run_hash==runHash &&
+                    home.process_id==GetCurrentProcessId() && home.context_target==cursorHomeReceiver_;
+            }
             if ((snapshot_.control_flags & SDGO_FRIEND_UNIT_GIFT_CLIENT_CONTROL_GIFT_BUTTON) &&
-                snapshot_.friend_context_x==cursorX_ && snapshot_.friend_context_y==cursorY_)
+                snapshot_.friend_context_x==cursorX_ && snapshot_.friend_context_y==cursorY_ && targetMatches)
                 injectCursor_=false;
         }
         return true;
@@ -131,7 +139,7 @@ public:
         const SdgoGameTestContextV1* context, uint32_t action,
         uint32_t receiver, uint64_t unit, uint64_t gift,
         const uint16_t* note, uint16_t noteLength,int cursorX=-1,int cursorY=-1) {
-        if (action < 1 || action > SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_ORDINARY_STORAGE || noteLength > 200 ||
+        if (action < 1 || action > SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_HOME_FRIEND_CONTEXT || noteLength > 200 ||
             (noteLength && !note))
             return FriendActions::kInvalidCommand;
         const auto runHash = RunHash(context);
@@ -151,11 +159,13 @@ public:
         if (noteLength)
             std::memcpy(request.note, note, noteLength * sizeof(uint16_t));
         if ((cursorX>=0 || cursorY>=0) &&
-            (action!=SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_FRIEND_CONTEXT ||
+            ((action!=SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_FRIEND_CONTEXT &&
+              action!=SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_HOME_FRIEND_CONTEXT) ||
              cursorX<0 || cursorY<0 || cursorX>16383 || cursorY>16383 || !originalCursor_))
             return FriendActions::kInvalidCommand;
         int accepted=0;
         if (cursorX>=0 && cursorY>=0) {
+            cursorHomeReceiver_=action==SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_HOME_FRIEND_CONTEXT?receiver:0;
             cursorX_=cursorX;cursorY_=cursorY;cursorCalls_=0;injectCursor_=true;
             cursorUntil_=GetTickCount64()+15000;
             __try { accepted=invoke(&request); }
@@ -226,6 +236,16 @@ public:
                 row.peer_account, row.unit_number, row.level, row.state, row.direction);
             HexText(file, row.peer_name, row.peer_name_code_units);
             std::fprintf(file, "\n");
+        }
+        const auto homeQuery=Procedure<SdgoHomeFriendsSnapshotV1Fn>(
+            GetModuleHandleW(L"friend_unit_gift_client.dll"),"SdgoHomeFriendsGetSnapshotV1");
+        SdgoHomeFriendsSnapshotV1 home{};home.size=sizeof(home);home.version=1;
+        if(homeQuery && homeQuery(&home) && home.run_hash==RunHash(context) && home.process_id==GetCurrentProcessId()) {
+            std::fprintf(file,"[home_friends]\nopen=%u\nmode=%u\nrow_count=%u\ncontext_target=%u\ncaptions_chinese=%u\n",
+                home.open,home.mode,home.row_count,home.context_target,home.captions_chinese);
+            for(unsigned i=0;i<home.row_count && i<8;++i){const auto& row=home.rows[i];
+                std::fprintf(file,"[home_friend%u]\nid=%u\nlevel=%u\nstep=%u\npresence=%u\nrank_visible=%u\nrank_draw=%u\nsprite_frame=%u\nskin_first_frame=%u\nskin_last_frame=%u\n",
+                    i,row.account,row.level,row.step,row.presence,row.rank_visible,row.rank_draw,row.sprite_frame,row.skin_first_frame,row.skin_last_frame);}
         }
     }
 

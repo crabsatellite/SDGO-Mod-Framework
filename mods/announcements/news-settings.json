@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "enabled": true,
+  "sources": [
+    "https://60s.crystelf.top",
+    "https://60s.okbaike.com"
+  ],
+  "categories": [
+    "news",
+    "tech",
+    "epic",
+    "history"
+  ],
+  "refresh_minutes": 360,
+  "max_age_hours": 48,
+  "login_enabled": true,
+  "login_news_count": 3,
+  "login_tech_count": 2,
+  "login_duration_seconds": 25,
+  "game_enabled": false,
+  "game_max_day": 5,
+  "game_max_session": 3,
+  "game_interval_seconds": 600,
+  "game_duration_seconds": 10,
+  "start_time": "00:00",
+  "end_time": "00:00",
+  "weekdays": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "game_triggers": [],
+  "game_lobby_only": true
+}

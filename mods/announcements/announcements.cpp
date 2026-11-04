@@ -12,6 +12,7 @@
 #include "sdgo/sdgo_api.h"
 #include "sdgo/announcement_policy.h"
 #include "embedded_browser.h"
+#include "news_runtime.h"
 
 namespace {
 namespace policy=sdgo::announcements;
@@ -39,9 +40,12 @@ Enqueue enqueue;
 uint8_t** profilePointer;
 std::wstring directory,runtime,statePath,originalUrl;
 std::vector<policy::Rule> rules;
+std::vector<policy::Rule> authoredRules;
+policy::news::Engine news;
 policy::Scheduler scheduler;
 FILETIME fileStamp{};
-int offset=540,lastState=-1;
+int offset=0,lastState=-1;
+bool serverLocalTime=true;
 uint64_t lastPoll=0,loginUntil=0,gameUntil=0;
 bool inLogin=false,loginManaged=false;
 void* lastViewer=nullptr;
@@ -74,10 +78,15 @@ policy::Clock Clock() {
     FILETIME utc{};GetSystemTimeAsFileTime(&utc);
     ULARGE_INTEGER time{};time.LowPart=utc.dwLowDateTime;time.HighPart=utc.dwHighDateTime;
     policy::Clock clock;clock.seconds=time.QuadPart/10000000;
-    time.QuadPart=static_cast<uint64_t>(static_cast<int64_t>(time.QuadPart)+static_cast<int64_t>(offset)*600000000);
-    FILETIME local{time.LowPart,time.HighPart};SYSTEMTIME date{};FileTimeToSystemTime(&local,&date);
+    SYSTEMTIME date{};
+    if(serverLocalTime){FILETIME local{};FileTimeToLocalFileTime(&utc,&local);FileTimeToSystemTime(&local,&date);}
+    else {
+        time.QuadPart=static_cast<uint64_t>(static_cast<int64_t>(time.QuadPart)+static_cast<int64_t>(offset)*600000000);
+        FILETIME shifted{time.LowPart,time.HighPart};FileTimeToSystemTime(&shifted,&date);
+    }
     clock.date=date.wYear*10000+date.wMonth*100+date.wDay;
     clock.weekday=(date.wDayOfWeek+6)%7;clock.minute=date.wHour*60+date.wMinute;
+    FILETIME local{};SystemTimeToFileTime(&date,&local);time.LowPart=local.dwLowDateTime;time.HighPart=local.dwHighDateTime;
     time.QuadPart-=864000000000;local={time.LowPart,time.HighPart};FileTimeToSystemTime(&local,&date);
     clock.previous_date=date.wYear*10000+date.wMonth*100+date.wDay;
     return clock;
@@ -104,13 +113,30 @@ bool SaveCounts() {
 }
 void Load() {
     const uint64_t now=GetTickCount64();if(now-lastPoll<500)return;lastPoll=now;
+    news.Poll();
+    // Cached articles are filtered again against absolute expiry and persisted
+    // read state on every decision boundary, including while completely offline.
+    const auto loadCount=[](const std::wstring& id){
+        if(scheduler.counts.count(id))return;
+        policy::Count count;count.date=Number(statePath,id,L"date");
+        count.daily=static_cast<uint32_t>(std::max(0,Number(statePath,id,L"daily")));
+        count.total=static_cast<uint32_t>(std::max(0,Number(statePath,id,L"total")));
+        count.last=_wcstoui64(Read(statePath,id,L"last").c_str(),nullptr,10);scheduler.counts[id]=count;
+    };
+    for(const auto& feed:news.Snapshot().feeds)for(const auto& item:feed.items)loadCount(item.id);
+    loadCount(L"@news.login");loadCount(L"@news.game");
+    auto dynamic=policy::news::Rules(news.Config(),news.Snapshot(),scheduler,policy::news::Now());
+    for(const auto& r:dynamic)loadCount(r.id);
+    rules=authoredRules;rules.insert(rules.end(),dynamic.begin(),dynamic.end());
     WIN32_FILE_ATTRIBUTE_DATA data{};
     if(!GetFileAttributesExW(runtime.c_str(),GetFileExInfoStandard,&data))return;
     if(CompareFileTime(&data.ftLastWriteTime,&fileStamp)==0)return;
     fileStamp=data.ftLastWriteTime;
     std::vector<policy::Rule> next;
     const int count=Number(runtime,L"announcements",L"count",-1);
-    const int nextOffset=Number(runtime,L"announcements",L"offset",9999);
+    const auto rawOffset=Read(runtime,L"announcements",L"offset");
+    const bool nextServerLocal=rawOffset.empty() || _wcsicmp(rawOffset.c_str(),L"local")==0;
+    const int nextOffset=nextServerLocal?0:Number(runtime,L"announcements",L"offset",9999);
     if(Number(runtime,L"announcements",L"schema")!=1 || count<0 || count>128 || nextOffset<-720 || nextOffset>840)return;
     for(int i=0;i<count;++i) {
         const auto section=L"rule"+std::to_wstring(i);policy::Rule r;
@@ -142,8 +168,8 @@ void Load() {
         }
         next.push_back(std::move(r));
     }
-    rules=std::move(next);offset=nextOffset;
-    api->Log(mod,SDGO_LOG_INFO,"loaded %u announcement rules",static_cast<unsigned>(rules.size()));
+    authoredRules=std::move(next);rules=authoredRules;rules.insert(rules.end(),dynamic.begin(),dynamic.end());offset=nextOffset;serverLocalTime=nextServerLocal;
+    api->Log(mod,SDGO_LOG_INFO,"loaded %u authored announcement rules",static_cast<unsigned>(authoredRules.size()));
 }
 // Native MSVC strings have a 16-byte SSO buffer, then size/capacity. Vector
 // elements additionally retain the host allocator word. These are non-owning
@@ -170,7 +196,7 @@ bool GameShow(const policy::Rule& r) {
     enqueue(profile+0x5e0,&record);
     return true;
 }
-bool HasLoginRules(){return std::any_of(rules.begin(),rules.end(),[](const auto& r){return r.enabled&&(r.surfaces&1);});}
+bool HasLoginRules(){return (news.Config().enabled&&news.Config().login) || std::any_of(rules.begin(),rules.end(),[](const auto& r){return r.enabled&&(r.surfaces&1);});}
 uint32_t __fastcall BrowserCreateHook(void* native,void*) {
     if(!embeddedLogin)return originalBrowserCreate(native);
     const HRESULT result=announcement_browser::Create(native);
@@ -188,7 +214,7 @@ void __fastcall VisibleHook(void* native,void*,uint8_t shown) {
 void __fastcall NavigateHook(void* viewer,void*,const wchar_t* url) {
     if(url && wcsstr(url,L"/Announce/")){
         originalUrl=url;lastViewer=viewer;Load();
-        if(std::any_of(rules.begin(),rules.end(),[](const auto& r){return r.enabled&&(r.surfaces&1);})){
+        if(HasLoginRules()){
             originalNavigate(viewer,L"about:blank");return;
         }
     }
@@ -224,7 +250,7 @@ void __fastcall LoginUpdate(uint8_t* self,void*) {
     // The service can receive its first update while the native browser wrapper
     // exists but its COM interface has not yet been initialized.
     if(!*reinterpret_cast<void**>(static_cast<uint8_t*>(viewer)+8))return;
-    const bool managed=std::any_of(rules.begin(),rules.end(),[](const auto& r){return r.enabled&&(r.surfaces&1);});
+    const bool managed=HasLoginRules();
     const uint64_t now=GetTickCount64();
     const bool entered=!inLogin || viewer!=lastViewer;inLogin=true;lastViewer=viewer;
     if(!pendingLogin.empty()) {
@@ -244,7 +270,9 @@ void __fastcall LoginUpdate(uint8_t* self,void*) {
     if(!loginUntil && pendingLogin.empty()) {
         const auto clock=Clock();const int selected=scheduler.Select(rules,1,policy::Timer|(entered?policy::Enter:0),clock);
         if(selected>=0) {
-            const auto& r=rules[static_cast<size_t>(selected)];const auto page=directory+L"\\pages\\"+r.page;
+            const auto& r=rules[static_cast<size_t>(selected)];
+            if(r.dynamic && !news.WritePage(r))return;
+            const auto page=r.dynamic?news.PagePath(r.page):directory+L"\\pages\\"+r.page;
             if(GetFileAttributesW(page.c_str())==INVALID_FILE_ATTRIBUTES)return;
             originalNavigate(viewer,page.c_str());loginEvent(self,0x101,nullptr,*reinterpret_cast<void**>(self+0xd4));
             pendingLogin=r.id;pendingLoginSince=now;loginManaged=true;
@@ -278,6 +306,7 @@ void __fastcall GameUpdate(uint8_t* self,void*) {
     auto candidates=rules;
     for(auto& r:candidates)if(!(r.triggers&policy::Timer) &&
         std::find(gameEvents.begin(),gameEvents.end(),r.id)==gameEvents.end())r.enabled=false;
+    for(auto& r:candidates)if(r.lobby_only && state!=6)r.enabled=false;
     int chosen=-1;
     if(now>=gameUntil && pendingGame.empty()){chosen=scheduler.Select(candidates,2,127,clock);
         if(chosen>=0 && !GameShow(rules[static_cast<size_t>(chosen)]))chosen=-1;}
@@ -303,7 +332,7 @@ extern "C" __declspec(dllexport) uint32_t __cdecl SdgoAnnouncementObserved(uint3
 }
 SDGO_MOD_ENTRY {
     if(!api || api->version!=SDGO_API_VERSION)return 0;
-    ::api=api;::mod=mod;directory=api->ModDirectory(mod);runtime=directory+L"\\runtime.ini";
+    ::api=api;::mod=mod;directory=api->ModDirectory(mod);runtime=directory+L"\\runtime.ini";news.Initialize(directory);
     const auto root=directory.substr(0,directory.find_last_of(L"\\/"));
     statePath=root+L"\\..\\local-state";CreateDirectoryW(statePath.c_str(),nullptr);statePath+=L"\\announcement-counts.ini";
     app=reinterpret_cast<Getter>(api->Symbol(mod,"game.app"));

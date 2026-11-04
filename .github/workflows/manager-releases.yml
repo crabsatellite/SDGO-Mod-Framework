@@ -58,6 +58,8 @@ jobs:
         run: |
           python -m unittest discover -s tests -p "test_announcements.py" -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -p "test_announcement_news*.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -p "test_game_test_atomic_write.py" -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -p "test_game_test_runtime_outputs.py" -v
@@ -100,11 +102,13 @@ jobs:
       - name: Native announcement policy
         shell: pwsh
         run: |
-          cmake --build build --config Release --target announcement_policy_test announcement_window_messages_test --parallel 2
+          cmake --build build --config Release --target announcement_policy_test announcement_window_messages_test announcement_news_test --parallel 2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & build/Release/announcement_policy_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & build/Release/announcement_window_messages_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & build/Release/announcement_news_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Publish immutable versioned asset
         if: env.PREPARE_ONLY != 'true'

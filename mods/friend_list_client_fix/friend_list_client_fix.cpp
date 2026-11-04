@@ -11,9 +11,32 @@
 #include "chat_open_policy.h"
 #include "messenger_layout_policy.h"
 #include "name_update_policy.h"
+#include "community_menu.h"
 
 namespace
 {
+    using CommunityLabels = void(__thiscall*)(void*);
+    CommunityLabels g_communityLabels = nullptr;
+    friend_list_client_fix::MenuText g_menuText = nullptr;
+    using IgnoreCache = void*(__thiscall*)(void*);
+    using IsBlocked = std::uint32_t(__thiscall*)(void*, const char*);
+    using NativeAnsi = const char*(__cdecl*)(unsigned,const wchar_t*);
+    void** g_playerData = nullptr;
+    IgnoreCache g_ignoreCache = nullptr;
+    IsBlocked g_isBlocked = nullptr;
+    NativeAnsi g_nativeAnsi = nullptr;
+    void __fastcall CommunityMenuLabels(void* self, void*) {
+        g_communityLabels(self);
+        __try {
+            const auto* name=static_cast<const std::uint8_t*>(self)+0x68;
+            const auto* wide=friend_list_client_fix::MenuRead<unsigned>(name,0x14)<8
+                ? reinterpret_cast<const wchar_t*>(name)
+                : friend_list_client_fix::MenuRead<const wchar_t*>(name,0);
+            const auto* ansi=g_nativeAnsi(874,wide);
+            const bool blocked=ansi && *g_playerData && g_isBlocked(g_ignoreCache(*g_playerData),ansi)!=0;
+            friend_list_client_fix::LocalizeCommunityMenu(self,g_menuText,blocked);
+        } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    }
     using UpdateRecord = std::uintptr_t(__thiscall*)(void*, const void*);
     UpdateRecord g_originalUpdate = nullptr;
 
@@ -158,6 +181,16 @@ SDGO_MOD_ENTRY
         !IsExpectedAssignCall(popupCall, popupReturn, assign)) {
         return 0;
     }
+
+    g_menuText=reinterpret_cast<friend_list_client_fix::MenuText>(
+        api->Symbol(mod,friend_list_client_fix::kCommunityTextSymbol));
+    g_playerData=static_cast<void**>(api->Symbol(mod,"friends.player_data_pointer"));
+    g_ignoreCache=reinterpret_cast<IgnoreCache>(api->Symbol(mod,"friend_list.client.ignore_cache"));
+    g_isBlocked=reinterpret_cast<IsBlocked>(api->Symbol(mod,"friend_list.client.is_blocked"));
+    g_nativeAnsi=reinterpret_cast<NativeAnsi>(api->Symbol(mod,"friend_list.client.native_ansi"));
+    if (!g_menuText || !g_playerData || !g_ignoreCache || !g_isBlocked || !g_nativeAnsi ||
+        !api->HookCode(mod,friend_list_client_fix::kCommunityLabelsSymbol,
+            reinterpret_cast<void*>(&CommunityMenuLabels),reinterpret_cast<void**>(&g_communityLabels))) return 0;
 
     g_originalLayout = originalLayout;
 

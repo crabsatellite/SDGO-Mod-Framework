@@ -112,6 +112,12 @@ class InventoryReadback:
             'FROM dbo.tbl_Users u WHERE u.AccountNumber=?',account).fetchone()
         return bool(row) and int(row[0])==int(row[2]) and int(row[1])==int(row[3])
 
+    def counter_values(self,account:int):
+        row=self.connection.cursor().execute(
+            'SELECT UserUnitTotalCnt,UserUnitKindCnt FROM dbo.tbl_Users WHERE AccountNumber=?',account).fetchone()
+        if row is None:raise game_test.GameTestError('native inventory counter owner is unavailable')
+        return tuple(row)
+
     def gift_record(self,gift:int):
         cursor=self.connection.cursor()
         rows=cursor.execute(
@@ -180,19 +186,29 @@ class GiftCampaign:
     def wait_reply(self,actor,command,baseline,*,gift=None,unit=None):
         def matches(state):
             view=state.get('unit_gift',{})
-            return (view.get('valid')=='1' and int(view.get('reply_sequence','0'))>baseline and
-                    int(view.get('last_reply_command','0'))==command and
-                    int(view.get('last_reply_status','-1'))==0 and
-                    (gift is None or int(view.get('last_reply_gift_id','0'))==gift) and
+            received=(view.get('valid')=='1' and int(view.get('reply_sequence','0'))>baseline and
+                      int(view.get('last_reply_command','0'))==command)
+            if received and int(view.get('last_reply_status','-1'))!=0:
+                raise game_test.GameTestError('native gift command '+str(command)+' rejected with status '+view['last_reply_status'])
+            return (received and (gift is None or int(view.get('last_reply_gift_id','0'))==gift) and
                     (unit is None or int(view.get('last_reply_unit_uid','0'))==unit))
         return actor.wait(matches,120)
 
     def open_draft(self,sender,recipient,note):
-        self.command(sender,'gift_context',target_id=recipient,cursor_x=480,cursor_y=263)
-        placement=sender.wait(lambda state:int(state.get('unit_gift',{}).get('control_flags','0'))&2,60)['unit_gift']
+        surface=getattr(self.args,'friend_surface','home')
+        self.command(sender,'gift_home_context' if surface=='home' else 'gift_context',
+                     target_id=recipient,cursor_x=480,cursor_y=263)
+        placement=sender.wait(lambda state:(int(state.get('unit_gift',{}).get('control_flags','0'))&2) and
+            (surface!='home' or (state.get('home_friends',{}).get('context_target')==str(recipient) and
+             int(state.get('unit_gift',{}).get('cursor_input_calls','0'))>0)),60)['unit_gift']
         self.check('native friend popup follows the supplied friend-row mouse input',
                    int(placement.get('cursor_input_calls','0'))>0 and
                    (placement.get('friend_context_x'),placement.get('friend_context_y'))==('480','263'))
+        if surface=='home':
+            home=sender.state().get('home_friends',{})
+            self.check('home USER LIST opens the exact selected friend with Chinese context captions',
+                       home.get('open')=='1' and home.get('mode')=='2' and
+                       home.get('context_target')==str(recipient) and home.get('captions_chinese')=='1')
         self.capture(sender,'gift-context-'+str(sender.sequence))
         self.command(sender,'gift_open',target_id=recipient)
         sender.wait(lambda state:state.get('unit_gift',{}).get('composer_phase')=='1' and
@@ -368,6 +384,7 @@ class GiftCampaign:
             self.return_and_prepare_off(sender,aid,recipient,bid,returning_payload,returned)
 
     def return_and_prepare_off(self,recipient,recipient_id,sender,sender_id,payload,gift):
+        recipient_counters=self.db.counter_values(recipient_id)
         self.command(sender,'storage_hangar',timeout=180)
         self.check('the open native sender inventory excludes the escrowed instance',
                    not any(k.startswith('storage_inventory_unit') and int(v.get('uid','0'))==self.uid
@@ -379,8 +396,8 @@ class GiftCampaign:
         self.wait_reply(recipient,7,baseline,gift=gift,unit=self.uid)
         self.check('the native unit-information return button restores all fifty original sender fields',
                    same_payload(payload,self.db.unit(self.uid)) and self.db.escrow(self.uid) is None)
-        self.check('native unit-information return retains both inventory counters',
-                   self.db.counts_valid(recipient_id) and self.db.counts_valid(sender_id))
+        self.check('native return restores sender counters and leaves the unaccepted recipient counters unchanged',
+                   self.db.counter_values(recipient_id)==recipient_counters and self.db.counts_valid(sender_id))
         sender.wait(lambda current:int(current.get('unit_gift',{}).get('inventory_last_added_uid','0'))==self.uid and
                     current['unit_gift'].get('inventory_sync_busy')=='0',120)
         self.check('the existing open native sender inventory receives the returned instance without relogin',
@@ -557,6 +574,8 @@ def main():
     parser.add_argument('--pair',choices=('primary_friend_pair','all_payload_groups_pair'),default='all_payload_groups_pair')
     parser.add_argument('--asset-baseline',type=Path)
     parser.add_argument('--target-host',required=True)
+    parser.add_argument('--friend-surface',choices=('home','messenger'),default='home',
+                        help='use the top-right USER LIST or the older messenger context')
     parser.add_argument('--phase',choices=('enabled','accept-pending','verify-accepted','return-pending','prepare-off-resolution','verify-pending-handoff','disabled-resolution','verify-disabled-accepted'),default='enabled')
     parser.add_argument('--prepare-off-resolution',action='store_true',help='retain one genuine pending gift for a later disabled-resolution phase')
     parser.add_argument('--resume-gift-id',type=int,help='accepted gift to verify for source information and restart persistence')
