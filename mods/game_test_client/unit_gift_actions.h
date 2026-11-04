@@ -8,6 +8,7 @@
 #include <iterator>
 
 #include "friend_actions.h"
+#include "shop_pointer_input.h"
 #include "sdgo/friend_unit_gift_client_observer.h"
 #include "sdgo/game_test.h"
 #include "sdgo/game_test_page_observer.h"
@@ -26,6 +27,53 @@ class UnitGiftActions {
     unsigned lastCursorCalls_ = 0;
     int lastCursorX_ = -1, lastCursorY_ = -1;
     uint32_t cursorHomeReceiver_ = 0;
+    const SdgoApi* api_=nullptr;
+    SdgoMod* mod_=nullptr;
+    ShopPointerInput pointer_;
+    bool pointerInstalled_=false;
+    unsigned pointerPhase_=0;
+    ULONGLONG pointerAt_=0;
+    std::uint64_t pointerRun_=0;
+    bool pointerDouble_=false;
+    void PumpPointer(const SdgoGameTestContextV1* context) {
+        if (!pointerPhase_) return;
+        const auto now=GetTickCount64();
+        if (RunHash(context)!=pointerRun_ || now>pointerAt_+3000) {pointer_.Clear();pointerPhase_=0;return;}
+        if (now<pointerAt_+350)return;
+        if (pointerPhase_==1) {pointer_.SetLeftButton(true);pointerPhase_=2;}
+        else if (pointerPhase_==2) {pointer_.SetLeftButton(false);pointerPhase_=3;}
+        else if(pointerPhase_==3 && pointerDouble_) {pointer_.SetLeftButton(true,true);pointerPhase_=4;}
+        else if(pointerPhase_==4) {pointer_.SetLeftButton(false);pointerPhase_=5;}
+        else {pointer_.Clear();pointerPhase_=0;}
+        pointerAt_=now;
+    }
+    FriendActions::Result ClickPickerPage(const SdgoGameTestContextV1* context,uint32_t page) {
+        if (pointerPhase_==3 && !pointerDouble_) {pointer_.Clear();pointerPhase_=0;}
+        if (!page || pointerPhase_) return FriendActions::kInvalidCommand;
+        const auto query=Procedure<SdgoGiftPickerSnapshotV1Fn>(GetModuleHandleW(L"friend_unit_gift_client.dll"),"SdgoGiftPickerGetSnapshotV1");
+        SdgoGiftPickerSnapshotV1 s{};s.size=sizeof(s);s.version=1;
+        const bool arrow=page==UINT32_MAX || page==UINT32_MAX-1;
+        if(!query || !query(&s) || s.run_hash!=RunHash(context) || s.process_id!=GetCurrentProcessId() || !s.open || !s.selecting || !s.page_count || (!arrow && page>s.page_count))return FriendActions::kInvalidCommand;
+        const auto target=page-1;
+        const unsigned button=arrow ? (page==UINT32_MAX?11u:10u) : target/10==s.pager_page/10 ? target%10 : (target>s.pager_page?11u:10u);
+        if (!(s.page_button_mask&(1u<<button)))return FriendActions::kInvalidCommand;
+        if (!pointerInstalled_) {pointerInstalled_=pointer_.Install(api_,mod_);if(!pointerInstalled_)return FriendActions::kUnsupported;}
+        if (!pointer_.MoveToClientPoint(s.page_x[button],s.page_y[button]))return FriendActions::kNativeFault;
+        pointerDouble_=false;pointer_.SetLeftButton(false);pointerAt_=GetTickCount64();pointerPhase_=1;pointerRun_=RunHash(context);
+        return FriendActions::kReady;
+    }
+    FriendActions::Result ClickPickerUnit(const SdgoGameTestContextV1* context,uint64_t uid) {
+        if (!uid || pointerPhase_)return FriendActions::kInvalidCommand;
+        const auto query=Procedure<SdgoGiftPickerSnapshotV1Fn>(GetModuleHandleW(L"friend_unit_gift_client.dll"),"SdgoGiftPickerGetSnapshotV1");
+        SdgoGiftPickerSnapshotV1 s{};s.size=sizeof(s);s.version=1;
+        if(!query || !query(&s) || s.run_hash!=RunHash(context) || s.process_id!=GetCurrentProcessId() || !s.open || !s.selecting)return FriendActions::kInvalidCommand;
+        unsigned index=36;for(unsigned i=0;i<36;++i)if(s.unit_uids[i]==uid){index=i;break;}
+        if(index==36)return FriendActions::kInvalidCommand;
+        if(!pointerInstalled_) {pointerInstalled_=pointer_.Install(api_,mod_);if(!pointerInstalled_)return FriendActions::kUnsupported;}
+        if(!pointer_.MoveToClientPoint(s.unit_x[index],s.unit_y[index]))return FriendActions::kNativeFault;
+        pointerDouble_=true;pointer_.SetLeftButton(false);pointerAt_=GetTickCount64();pointerPhase_=1;pointerRun_=RunHash(context);
+        return FriendActions::kReady;
+    }
     static void __cdecl CursorInput(int* x,int* y) {
         originalCursor_(x,y);
         if (injectCursor_ && GetTickCount64()>cursorUntil_) injectCursor_=false;
@@ -35,6 +83,7 @@ class UnitGiftActions {
     }
 public:
     bool BindCursor(const SdgoApi* api,SdgoMod* mod) {
+        api_=api;mod_=mod;
         return api && api->HookCode && api->Symbol &&
             api->Symbol(mod,"friends.cursor_position") &&
             api->HookCode(mod,"friends.cursor_position",reinterpret_cast<void*>(&CursorInput),
@@ -67,6 +116,7 @@ public:
     }
 
     bool Capture(const SdgoGameTestContextV1* context) {
+        PumpPointer(context);
         snapshot_ = {};
         available_ = false;
         valid_ = false;
@@ -139,11 +189,13 @@ public:
         const SdgoGameTestContextV1* context, uint32_t action,
         uint32_t receiver, uint64_t unit, uint64_t gift,
         const uint16_t* note, uint16_t noteLength,int cursorX=-1,int cursorY=-1) {
-        if (action < 1 || action > SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_HOME_FRIEND_CONTEXT || noteLength > 200 ||
+        if (action < 1 || action > SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_CLICK_PICKER_UNIT || noteLength > 200 ||
             (noteLength && !note))
             return FriendActions::kInvalidCommand;
         const auto runHash = RunHash(context);
         if (!runHash) return FriendActions::kInvalidCommand;
+        if(action==SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_CLICK_PICKER_PAGE)return ClickPickerPage(context,receiver);
+        if(action==SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_CLICK_PICKER_UNIT)return ClickPickerUnit(context,unit);
         const auto invoke = Procedure<SdgoFriendUnitGiftClientActionV1Fn>(
             SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_EXPORT);
         if (!invoke) return FriendActions::kUnsupported;
@@ -246,6 +298,15 @@ public:
             for(unsigned i=0;i<home.row_count && i<8;++i){const auto& row=home.rows[i];
                 std::fprintf(file,"[home_friend%u]\nid=%u\nlevel=%u\nstep=%u\npresence=%u\nrank_visible=%u\nrank_draw=%u\nsprite_frame=%u\nskin_first_frame=%u\nskin_last_frame=%u\n",
                     i,row.account,row.level,row.step,row.presence,row.rank_visible,row.rank_draw,row.sprite_frame,row.skin_first_frame,row.skin_last_frame);}
+        }
+        const auto pickerQuery=Procedure<SdgoGiftPickerSnapshotV1Fn>(
+            GetModuleHandleW(L"friend_unit_gift_client.dll"),"SdgoGiftPickerGetSnapshotV1");
+        SdgoGiftPickerSnapshotV1 picker{};picker.size=sizeof(picker);picker.version=1;
+        if (pickerQuery && pickerQuery(&picker) && picker.run_hash==RunHash(context) && picker.process_id==GetCurrentProcessId()) {
+            std::fprintf(file,"[gift_picker]\nopen=%u\nselecting=%u\ngrid_page=%u\npager_page=%u\npage_count=%u\npage_button_mask=%u\n",
+                picker.open,picker.selecting,picker.grid_page,picker.pager_page,picker.page_count,picker.page_button_mask);
+            std::fprintf(file,"pointer_phase=%u\npointer_position_reads=%u\npointer_state_reads=%u\n",pointerPhase_,pointer_.PositionReads(),pointer_.StateReads());
+            for(unsigned i=0;i<36;++i) std::fprintf(file,"slot%u=%u\nuid%u=%llu\n",i,picker.slots[i],i,static_cast<unsigned long long>(picker.unit_uids[i]));
         }
     }
 

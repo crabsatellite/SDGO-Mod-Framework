@@ -95,8 +95,26 @@ public:
         return true;
     }
 
+    bool MoveToClientPoint(int x,int y) {
+        if (!installed_ || !EnsureDevicePatched()) return false;
+        HWND window=FindOwnedGameWindow();RECT client{};
+        if (!window || !GetClientRect(window,&client) || x<0 || y<0 || x>=client.right || y>=client.bottom) return false;
+        POINT screen{x,y};if(!ClientToScreen(window,&screen))return false;
+        PublishPoint(screen);
+        return PostMessageW(window,WM_MOUSEMOVE,0,PackClientPoint(x,y))!=FALSE;
+    }
+    void SetLeftButton(bool down,bool doubleClick=false) {
+        const LONG value=down?1:0;
+        if (InterlockedExchange(&leftButton_,value)==value) return;
+        HWND window=FindOwnedGameWindow();if(!window)return;
+        AcquireSRWLockShared(&pointLock_);POINT point=fakePoint_;ReleaseSRWLockShared(&pointLock_);
+        if (ScreenToClient(window,&point))
+            PostMessageW(window,down?(doubleClick?WM_LBUTTONDBLCLK:WM_LBUTTONDOWN):WM_LBUTTONUP,down?MK_LBUTTON:0,PackClientPoint(point.x,point.y));
+    }
+
     void Clear() {
         if (!installed_) return;
+        SetLeftButton(false);
         HWND window = ValidateOwnedWindow(ownedWindow_) ? ownedWindow_ : FindOwnedGameWindow();
         SetOffscreen(window);
     }
@@ -556,6 +574,7 @@ private:
         }
 
         std::memset(data, 0, bytes);
+        static_cast<BYTE*>(data)[12]=InterlockedCompareExchange(&self->leftButton_,0,0) ? 0x80u:0u;
         InterlockedIncrement(&self->stateReads_);
         return S_OK;
     }
@@ -586,4 +605,5 @@ private:
     volatile LONG devicePatched_ = 0;
     volatile LONG positionReads_ = 0;
     volatile LONG stateReads_ = 0;
+    volatile LONG leftButton_ = 0;
 };

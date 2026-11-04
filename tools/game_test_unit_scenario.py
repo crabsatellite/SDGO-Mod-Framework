@@ -9,7 +9,8 @@ SETTINGS = {'UnitPagesOnly':'0','UnitPresentations':'0','UnitPortraits':'0',
     'CaptureNativeFrames':'0','CollectionPreviewOnly':'0',
     'UnitAcquisitionKind':'0','UnitAcquisitionMachine':'0','UnitAcquisitionUnit':'0',
     'CapsulePreviewMachine':'990001','CapsulePreviewPrice':'100000','CapsulePreviewCurrency':'0',
-    'ActivityDrawOnce':'0','ActivityRewardCount':'0','BlueprintRecipe':'0','BlueprintBookUid':'0'}
+    'ActivityDrawOnce':'0','ActivityRewardCount':'0','BlueprintRecipe':'0','BlueprintBookUid':'0',
+    'BlueprintMaterialCount':'0','BlueprintSynthesize':'0','BlueprintOutputUnit':'0'}
 INDEX_CASES = ('pages.unit_index.list','pages.unit_index.detail',
     'pages.unit_index.alternate','pages.unit_index.base','pages.unit_index.close')
 PORTRAIT_CASES = ('pages.unit_index.pose_wait','pages.unit_index.pose_ready')
@@ -32,7 +33,8 @@ def validate(value, plan):
         raise ValueError('native portraits require genuine frame capture')
     if 'blueprint' in value:
         blueprint=value['blueprint']
-        if (not isinstance(blueprint,dict) or set(blueprint)!={'recipe_id','book_uid'} or
+        if (not isinstance(blueprint,dict) or not {'recipe_id','book_uid'}<=set(blueprint) or
+            set(blueprint)-{'recipe_id','book_uid','materials','synthesize','output_unit_id'} or
             type(blueprint['recipe_id']) is not int or not 0<blueprint['recipe_id']<2**31 or
             type(blueprint['book_uid']) is not int or not 0<blueprint['book_uid']<2**63):
             raise ValueError('blueprint preview needs an exact recipe and owned book identity')
@@ -40,6 +42,22 @@ def validate(value, plan):
             any(field in value for field in ('acquisition','activity_target','reward_pairs'))):
             raise ValueError('blueprint preview cannot be mixed with other unit-page scopes')
         result['blueprint']=dict(blueprint)
+        if 'materials' in blueprint:
+            materials=blueprint['materials']
+            if not isinstance(materials,list) or not 3<=len(materials)<=5:
+                raise ValueError('native blueprint material selection needs three to five owned instances')
+            seen=set()
+            for material in materials:
+                if (not isinstance(material,dict) or set(material)!={'unit_id','uid'} or
+                    type(material['unit_id']) is not int or not 0<material['unit_id']<2**31 or
+                    type(material['uid']) is not int or not 0<material['uid']<2**63 or material['uid'] in seen):
+                    raise ValueError('native blueprint material identities must be exact and distinct')
+                seen.add(material['uid'])
+            result['blueprint']['materials']=[dict(m) for m in materials]
+        if 'synthesize' in blueprint or 'output_unit_id' in blueprint:
+            if (blueprint.get('synthesize') is not True or not blueprint.get('materials') or
+                type(blueprint.get('output_unit_id')) is not int or not 0<blueprint['output_unit_id']<2**31):
+                raise ValueError('native blueprint synthesis needs explicit consent, materials and expected output')
     if 'activity_target' in value:
         target=value['activity_target']
         if not result['collection_preview'] or not isinstance(target,dict) or set(target)!={'machine_id','price','currency'}:
@@ -84,6 +102,13 @@ def settings(value=None):
     if value.get('blueprint'):
         result.update(UnitPresentations='0',BlueprintRecipe=str(value['blueprint']['recipe_id']),
                       BlueprintBookUid=str(value['blueprint']['book_uid']))
+        materials=value['blueprint'].get('materials',[])
+        result['BlueprintMaterialCount']=str(len(materials))
+        result['BlueprintSynthesize']=str(int(value['blueprint'].get('synthesize',False)))
+        result['BlueprintOutputUnit']=str(value['blueprint'].get('output_unit_id',0))
+        for index,material in enumerate(materials):
+            result['BlueprintMaterialUnit'+str(index)]=str(material['unit_id'])
+            result['BlueprintMaterialUid'+str(index)]=str(material['uid'])
     if value.get('acquisition'):
         a=value['acquisition'];result.update(UnitAcquisitionKind=str(a['kind']),
             UnitAcquisitionMachine=str(a['machine_id']),UnitAcquisitionUnit=str(a['unit_id']))
@@ -100,7 +125,9 @@ def settings(value=None):
 def cases(value):
     result=('framework.bootstrap','flow.login','flow.onboarding','setup.active_unit')+INDEX_CASES[:2]
     if value.get('blueprint'):
-        return result[:4]+('pages.blueprint.book','pages.blueprint.recipe')
+        return result[:4]+('pages.blueprint.book','pages.blueprint.recipe')+(
+            ('pages.blueprint.materials',) if value['blueprint'].get('materials') else ())+(
+            ('pages.blueprint.synthesis',) if value['blueprint'].get('synthesize') else ())
     if value['portraits']:result+=PORTRAIT_CASES
     result+=INDEX_CASES[2:]
     if value.get('acquisition'):result+=('catalog.capsule','pages.unit_acquisition')
