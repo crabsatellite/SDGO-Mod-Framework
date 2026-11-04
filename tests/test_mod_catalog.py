@@ -258,7 +258,8 @@ class PublicTextTests(unittest.TestCase):
 
     # Add a public reference here when a guide needs to link to it.
     LINK_TARGETS = ("github.com/crabsatellite/SDGO-Mod-Framework", "learn.microsoft.com/",
-                    "www.hko.gov.hk/", "www.lua.org/")
+                    "www.hko.gov.hk/", "www.lua.org/", "github.com/vikiboss/60s",
+                    "docs.60s-api.viki.moe/")
     PRIVATE = re.compile(r"update\.bat|install\.bat|朋友服|friend[- ]servers?\b|"
                          r"\b[A-Za-z]:\\(?:Dev|Users)\\|\]\((?:\.\./)*skills/", re.I)
 

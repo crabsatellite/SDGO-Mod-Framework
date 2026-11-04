@@ -12,7 +12,48 @@ The login location embeds Windows' web control in the client's original announce
 with its native open and close buttons. The
 in-game location uses the original left-side GM text panel, including its native
 animation and pagination. Rules support titles and plain text; text is escaped
-for the login page. Empty defaults leave the original announcements available.
+for the login page. Authored rules start empty. Dynamic public news is enabled
+by default and can be disabled independently of authored announcements.
+
+## Dynamic news
+
+The same panel provides daily news, technology headlines, active Epic game
+giveaways and an occasional historical item. It previews the current cache,
+edits sources, categories, weekdays, daily windows, triggers and display limits,
+and offers a manual refresh. Manual notices win ties at the same priority.
+
+The login digest defaults to three news and two technology headlines, once per
+day and process, displayed for 25 seconds. Later in-game cards skip the exact
+articles already delivered in that digest. In-game defaults allow five cards
+per day, three per process, with at least ten minutes between cards. They appear
+only in the lobby, for ten seconds per native page. This lobby restriction can
+be changed in the panel; otherwise a room/battle trigger waits for the lobby.
+Intervals and read state belong to the client installation, not a server account.
+
+Clients perform bounded background fetches when their cache needs refreshing;
+the render/login thread does not wait for the network. The default refresh
+interval is six hours and content lifetime is at most 48 hours. Source failure
+retains recent cache; expired news, mismatched history dates and inactive/future
+giveaways are excluded. Giveaway validity uses the explicit start/end timestamps,
+not an upstream `is_free_now` flag. The actual offer deadline is distinct from
+the cache expiration time. Dates and source names are retained; a previous-day
+digest is never relabeled as today's news.
+
+Two keyless community instances of the open-source [60s API](https://github.com/vikiboss/60s)
+are configured for ordered fallback. Public instances have no availability
+guarantee. Choose compatible instances from the project's
+[public list](https://docs.60s-api.viki.moe/7306811m0), or a self-hosted endpoint.
+The upstream main demo domain is intended for development and is not a default
+production source. Public endpoints must use HTTPS without URL credentials or
+query tokens; literal loopback HTTP is also available for local endpoints.
+Responses have size, structure and timeout limits, and fetched text is escaped
+before it enters the login page. No account, inventory or battle data is sent.
+
+The optional **公告资讯更新** service uses the normal Manager background-services
+controls. It keeps the selected installation's cache warm while Manager is open;
+the client's own finite fetches remain available after Manager closes. Stop this
+service before changing the selected client directory. Source/cache status and
+article preview stay in the announcement panel.
 
 Each rule combines an optional date range, selected weekdays and a daily time
 window with one or more events: entering the location, periodic evaluation,
@@ -41,9 +82,11 @@ The limits count automatic delivery. The native login buttons also allow a
 player to reread the current notice. Server-originated immediate GM broadcasts
 continue through the original broadcast queue.
 
-Shared authoring inputs are `rules.json`, `runtime.ini` and generated `pages`
+Shared authoring inputs are `rules.json`, `runtime.ini`, `news-settings.json`,
+`news.ini` and generated manual `pages`
 under the Mod directory. Framework updates preserve authored rule files.
-Counters remain under `sdgo/local-state` and must not be distributed. Saving
+Counters and fetched cache/pages remain under `sdgo/local-state` and are not
+included in the exported configuration package. Saving
 uses a revision check to prevent overwriting another editor's changes. Changes
 apply to subsequent display decisions; an already displayed notice completes
 its native animation. The supported client build is checked through verified

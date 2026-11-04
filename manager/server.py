@@ -66,6 +66,7 @@ def make_server(workspace, port=0):
                     name = path[len('/panels/'):]
                     allowed={key + '.js' for key in workspace.providers}
                     if 'rewards' in workspace.providers:allowed.add('reward_social.js')
+                    if 'announcements' in workspace.providers:allowed.add('announcement_news.js')
                     if name not in allowed: raise ValueError('面板未登记')
                     return self.response(200, (static / 'panels' / name).read_bytes(), 'text/javascript; charset=utf-8')
                 if method == 'GET' and path == '/api/state': return self.send_json(200, {**workspace.public(), 'session_token': token})
