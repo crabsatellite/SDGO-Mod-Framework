@@ -1,4 +1,5 @@
 import {icon, enhance, chip, led, applyArt} from '/ui.js';
+import {setDisplayUtcOffset} from '/panel_helpers.js';
 const $=id=>document.getElementById(id);
 const ROLES={client:'客户端',battle:'对战服务器',agent:'中继服务器',world:'世界服务器'};
 const OWNER_KEY='sdgo-manager-owner-tools';
@@ -18,7 +19,7 @@ function developer(){return state.mode==='developer';}
 // Owner tools (shop, operators, rewards, background work) only matter once a server is managed.
 function hasServer(){return state.hosts.some(h=>h.role!=='client');}
 function ownerTools(){return developer()||hasServer()||localStorage.getItem(OWNER_KEY)==='1';}
-function accept(value){state=value;hostId=selectedHost()?.id;renderFrame();}
+function accept(value){state=value;setDisplayUtcOffset(value.timezone?.effective_offset_minutes);hostId=selectedHost()?.id;renderFrame();}
 function renderFrame(){
  const dev=developer(),owner=ownerTools();
  $('change-mode').textContent=dev?'收起开发信息':'显示开发信息';$('eyebrow').textContent=dev?'开发调试':'服主与维护';
@@ -138,6 +139,12 @@ $('nav-services').onclick=()=>showServices().catch(e=>message(e.message,true));
 async function showUpdates(){
  ++navigation;activePanel='updates';clear();renderFrame();$('page-title').textContent='更新';document.querySelector('.host-tools').hidden=true;
  const root=$('content'),card=element('section',undefined,'manager-card');root.append(card);
+ const timeCard=element('section',undefined,'manager-card'),zone=element('input');zone.type='number';zone.min='-720';zone.max='840';
+ zone.value=state.timezone?.configured_offset_minutes??'';zone.placeholder='留空跟随服务器本地';
+ const timeLabel=element('label','时间显示的 UTC 偏移分钟');timeLabel.append(zone);
+ timeCard.append(element('h2','时间显示'),element('p','默认跟随服务器本地时区。仅本实例需要固定时区时填写偏移分钟，例如中国时间为 480。','muted'),timeLabel,
+  button('保存时间显示设置',async()=>{accept(await request('/api/timezone',{utc_offset_minutes:zone.value.trim()===''?null:Number(zone.value)}));message('已保存，重新打开相关面板后按所选时区显示。');},'ui-btn is-primary'));
+ root.append(timeCard);
  let pending=false;
  const refresh=async()=>{if(pending)return;pending=true;try{
   const u=await request('/api/updates');card.replaceChildren(element('h2','版本更新'),element('p','Stable 提供正式功能；Beta 同时更新正式与测试功能。游戏或服务器运行时先下载，关闭后自动安装。','intro'));

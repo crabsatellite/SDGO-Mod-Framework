@@ -10,11 +10,12 @@ import unicodedata
 
 from . import storage
 from .providers import Provider
+from owner import timezones
 
 EVENTS = {'enter': 1, 'timer': 2, 'login': 4, 'lobby': 8, 'room': 16,
           'battle_start': 32, 'battle_end': 64}
 SURFACES = {'login': 1, 'game': 2}
-DEFAULT = {'schema_version': 1, 'utc_offset_minutes': 540, 'rules': []}
+DEFAULT = {'schema_version': 1, 'utc_offset_minutes': None, 'rules': []}
 
 
 def integer(value, low, high, name):
@@ -26,7 +27,7 @@ def integer(value, low, high, name):
 def validate(value):
     if not isinstance(value, dict) or set(value) != set(DEFAULT) or value['schema_version'] != 1:
         raise ValueError('公告规则版本无效')
-    integer(value['utc_offset_minutes'], -720, 840, '时区偏移')
+    timezones.validate_offset(value['utc_offset_minutes'])
     if not isinstance(value['rules'], list) or len(value['rules']) > 128:
         raise ValueError('最多支持 128 条公告')
     ids = set()
@@ -96,7 +97,7 @@ def lines(text):
 
 def compile_rules(value):
     validate(value)
-    output = ['[announcements]', 'schema=1', f"offset={value['utc_offset_minutes']}",
+    output = ['[announcements]', 'schema=1', f"offset={timezones.effective_offset(value['utc_offset_minutes'])}",
               f"count={len(value['rules'])}"]
     pages = {}
     for i, rule in enumerate(value['rules']):
@@ -210,7 +211,9 @@ class Announcements(Provider):
                 from .distribution import require_public
                 from .providers import Binary
                 require_public((directory/'mod.ini').read_bytes(), (directory/'manager.json').read_bytes())
-                files = runtime_inputs(validate(json.loads(raw)))
+                exported=validate(json.loads(raw))
+                exported['utc_offset_minutes']=timezones.effective_offset(exported['utc_offset_minutes'])
+                files = runtime_inputs(exported)
                 for name in ('announcements.dll', 'mod.ini', 'manager.json', 'symbols.fragment.ini'):
                     files[name] = (directory/name).read_bytes()
                 from . import announcement_news as news

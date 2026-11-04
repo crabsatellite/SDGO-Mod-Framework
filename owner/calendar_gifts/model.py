@@ -5,6 +5,7 @@ import datetime as dt
 import json
 from pathlib import Path
 import re
+from owner import timezones
 
 HERE=Path(__file__).parent
 GRADES=((4,3),(4,4),(4,2),(3,3),(3,4),(3,2),(2,3),(2,4),(2,2),(1,3),(1,4),(1,2))
@@ -28,7 +29,7 @@ def default_rewards(each_grade=False):
 
 
 def defaults():
-    return {'schema':1,'enabled':False,'utc_offset_minutes':480,'catchup_days':7,
+    return {'schema':1,'enabled':False,'utc_offset_minutes':timezones.local_offset_minutes(),'catchup_days':7,
             'birthday':{'enabled':True,'feb29':'feb28','rewards':default_rewards(True)},
             'events':[{'id':key,'title':name,'enabled':True,'calendar':'festival','festival':key,
                        'month_day':'','date':'','group':'all','rewards':default_rewards()} for key,name in FESTIVALS.items()]}
