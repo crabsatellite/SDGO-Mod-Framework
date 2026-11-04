@@ -649,6 +649,21 @@ rva=state
         with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run_dir)
         with self.assertRaises(game_test.GameTestError):self.prepare('random-pages',pages_only=True,random_loadout=True)
 
+    def test_coordinated_actor_random_title_round_trips_without_claiming_battle_acceptance(self):
+        run_dir=self.prepare('coordinated-random',friends_only=True,random_loadout=True,
+                             expected_ai=4,ai_allies=2,mode_sequence='3')
+        meta=game_test.validate_metadata(run_dir)
+        self.assertEqual(meta['suite'],'native-friends')
+        self.assertTrue(meta['plan']['friends_only'])
+        self.assertTrue(meta['plan']['random_loadout'])
+        self.assertTrue(meta['plan']['room_title'].endswith(' !rand'))
+        self.assertEqual(game_test.read_public_plan(run_dir/'client'),meta['plan'])
+        self.assertEqual(game_test.required_flow_cases('3',friends_only=True),
+                         game_test.FLOW_CASES[:3]+('friends.session',))
+        meta['plan']['random_loadout']=False
+        game_test.atomic_write(run_dir/'run.json',json.dumps(meta))
+        with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run_dir)
+
     def test_random_hard_reuses_exact_server_session_with_a_distinct_twenty_byte_title(self):
         binding={'run_id':'00000000-0000-0000-0000-000000000004','nonce':'cafe','pids':[1234],'room_suffix':'b'}
         run_dir=self.prepare('random-hard-server-session',expected_ai=7,ai_difficulty='Hard',random_loadout=True,server_session=binding)
