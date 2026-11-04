@@ -95,3 +95,5 @@ its native animation. The supported client build is checked through verified
 symbols. Login notices use the Windows ATL/WebBrowser components; in-game text
 uses a separate native path. Installing or updating the Mod requires restarting
 the client; saved rules then reload automatically.
+
+An unset announcement timezone follows the local timezone of the server running this server owner’s Manager. A numeric UTC-minute offset is an explicit instance override (for example, 480 for UTC+8). Saving or exporting resolves that server-local offset for the distributed client configuration.

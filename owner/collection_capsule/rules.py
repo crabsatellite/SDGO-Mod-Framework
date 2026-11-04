@@ -1,5 +1,6 @@
 """Shared public price/quota contract for SQL, native client data and posters."""
-def defaults():return {'price_gp':100000,'limit_period':'week','draw_limit':15,'utc_offset_minutes':480}
+from owner import timezones
+def defaults():return {'price_gp':100000,'limit_period':'week','draw_limit':15,'utc_offset_minutes':timezones.local_offset_minutes()}
 
 def validate(value):
     if not isinstance(value,dict) or set(value)!=set(defaults()):raise ValueError('收藏扭蛋规则字段不完整')
