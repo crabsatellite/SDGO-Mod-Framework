@@ -100,6 +100,203 @@ def baseline():
 
 
 class ActivityClientTests(unittest.TestCase):
+    def test_explicit_owned_rename_changes_only_machine_id_and_is_idempotent(self):
+        gdt, resources, _ = baseline()
+        artwork = asset()
+        first = activity_client.compile_activity_client(
+            gdt, resources, [machine(artwork=artwork)], [artwork]
+        )
+        rename = {
+            "from_id": 1990001,
+            "to_id": 9401,
+            "project_key": "owner.s.machine",
+            "unit_id": 70001,
+        }
+        renamed_machine = machine(9401, artwork=artwork)
+        renamed = activity_client.compile_activity_client(
+            first["gdt"],
+            first["resources"],
+            [renamed_machine],
+            [artwork],
+            ownership=first["ownership"],
+            renames=[rename],
+        )
+
+        _, before_rows, before_extra = capsule.decode_gdt(first["gdt"])
+        _, after_rows, after_extra = capsule.decode_gdt(renamed["gdt"])
+        self.assertEqual(before_extra, after_extra)
+        self.assertEqual(before_rows[:-1], after_rows[:-1])
+        before = before_rows[-1]
+        after = after_rows[-1]
+        self.assertEqual(before[:5], after[:5])
+        self.assertEqual(before[9:], after[9:])
+        self.assertEqual(struct.unpack_from("<I", before, 5)[0], 1990001)
+        self.assertEqual(struct.unpack_from("<I", after, 5)[0], 9401)
+        self.assertEqual(
+            {
+                path: raw
+                for path, raw in renamed["resources"].items()
+                if path.lower().replace("\\", "/") != "gdrs/0099.gdt"
+            },
+            {
+                path: raw
+                for path, raw in first["resources"].items()
+                if path.lower().replace("\\", "/") != "gdrs/0099.gdt"
+            },
+        )
+        self.assertEqual(renamed["placements"][0]["action"], "renamed")
+        self.assertEqual(renamed["placements"][0]["grid_id"], 145004)
+        self.assertEqual(renamed["placements"][0]["price"], 25)
+        self.assertEqual(renamed["ownership"][0]["machine_id"], 9401)
+        self.assertEqual(
+            renamed["ownership"][0]["row_sha256"],
+            hashlib.sha256(after).hexdigest(),
+        )
+        for field in (
+            "grid_id",
+            "sprite_path",
+            "texture_path",
+            "sprite_sha256",
+            "texture_sha256",
+            "project_key",
+            "unit_id",
+            "artwork_sha256",
+        ):
+            self.assertEqual(
+                renamed["ownership"][0][field],
+                first["ownership"][0][field],
+            )
+
+        repeated = activity_client.compile_activity_client(
+            renamed["gdt"],
+            renamed["resources"],
+            [renamed_machine],
+            [artwork],
+            ownership=renamed["ownership"],
+            renames=[rename],
+        )
+        self.assertEqual(repeated["gdt"], renamed["gdt"])
+        self.assertEqual(repeated["resources"], renamed["resources"])
+        self.assertEqual(repeated["ownership"], renamed["ownership"])
+        self.assertEqual(repeated["placements"][0]["action"], "unchanged")
+
+        with self.assertRaisesRegex(
+            activity_client.ActivityClientError,
+            "cannot also change native content",
+        ):
+            activity_client.compile_activity_client(
+                first["gdt"],
+                first["resources"],
+                [machine(9401, price=99, artwork=artwork)],
+                [artwork],
+                ownership=first["ownership"],
+                renames=[rename],
+            )
+
+    def test_rename_rejects_unowned_source_foreign_target_other_owner_and_forgery(self):
+        gdt, resources, rows = baseline()
+        artwork = asset()
+        first = activity_client.compile_activity_client(
+            gdt, resources, [machine(artwork=artwork)], [artwork]
+        )
+        rename = {
+            "from_id": 1990001,
+            "to_id": 9401,
+            "project_key": "owner.s.machine",
+            "unit_id": 70001,
+        }
+
+        for source in (9000, 990001):
+            with self.subTest(source=source), self.assertRaisesRegex(
+                activity_client.ActivityClientError, "source .* is not owned"
+            ):
+                activity_client.compile_activity_client(
+                    gdt,
+                    resources,
+                    [],
+                    [],
+                    renames=[{**rename, "from_id": source}],
+                )
+
+        _, installed_rows, installed_extra = capsule.decode_gdt(first["gdt"])
+        foreign_rows = list(installed_rows)
+        foreign_rows[0] = activity_row(0, 9401, r"sprs\21000.spr")
+        foreign_gdt = capsule.encode_gdt(179, foreign_rows, installed_extra)
+        foreign_resources = dict(first["resources"])
+        foreign_resources["gdrs/0099.gdt"] = foreign_gdt
+        with self.assertRaisesRegex(
+            activity_client.ActivityClientError, "target 9401.*foreign row"
+        ):
+            activity_client.compile_activity_client(
+                foreign_gdt,
+                foreign_resources,
+                [],
+                [],
+                ownership=first["ownership"],
+                renames=[rename],
+            )
+
+        other_artwork = asset("owner.other.machine", png((1, 2, 3)))
+        two_owned = activity_client.compile_activity_client(
+            gdt,
+            resources,
+            [
+                machine(1990001, 70001, "owner.s.machine", artwork=artwork),
+                machine(9401, 70002, "owner.other.machine", artwork=other_artwork),
+            ],
+            [artwork, other_artwork],
+        )
+        with self.assertRaisesRegex(
+            activity_client.ActivityClientError, "target 9401.*another owner"
+        ):
+            activity_client.compile_activity_client(
+                two_owned["gdt"],
+                two_owned["resources"],
+                [],
+                [],
+                ownership=two_owned["ownership"],
+                renames=[rename],
+            )
+
+        for field, value in (
+            ("project_key", "owner.forged"),
+            ("unit_id", 70002),
+        ):
+            with self.subTest(field=field), self.assertRaisesRegex(
+                activity_client.ActivityClientError, "source 1990001 ownership differs"
+            ):
+                activity_client.compile_activity_client(
+                    first["gdt"],
+                    first["resources"],
+                    [],
+                    [],
+                    ownership=first["ownership"],
+                    renames=[{**rename, field: value}],
+                )
+
+        with self.assertRaisesRegex(
+            activity_client.ActivityClientError, "rename mappings overlap"
+        ):
+            activity_client.compile_activity_client(
+                first["gdt"],
+                first["resources"],
+                [],
+                [],
+                ownership=first["ownership"],
+                renames=[rename, {**rename, "to_id": 9402}],
+            )
+        with self.assertRaisesRegex(
+            activity_client.ActivityClientError, "fields differ from schema"
+        ):
+            activity_client.compile_activity_client(
+                first["gdt"],
+                first["resources"],
+                [],
+                [],
+                ownership=first["ownership"],
+                renames=[{**rename, "owner": "forged"}],
+            )
+
     def test_allocator_also_reserves_base_archive_ids_without_loading_resource_bytes(self):
         gdt,resources,_=baseline();artwork=asset()
         result=activity_client.compile_activity_client(gdt,resources,[machine(artwork=artwork)],[artwork],
@@ -137,8 +334,9 @@ class ActivityClientTests(unittest.TestCase):
         placement = result["placements"][0]
         self.assertEqual(placement["action"], "added")
         self.assertEqual(placement["grid_id"], 145004)
-        self.assertEqual(placement["native_position"], 4)
-        self.assertEqual((placement["page"], placement["page_slot"]), (1, 4))
+        self.assertEqual(placement["native_position"], 1)
+        self.assertEqual((placement["page"], placement["page_slot"]), (1, 1))
+        self.assertTrue(placement["native_position_predicted"])
         self.assertEqual(placement["resource_id"], 62002)
         self.assertEqual(
             placement["asset"]["asset_sha256"], artwork["asset_sha256"]
@@ -187,7 +385,7 @@ class ActivityClientTests(unittest.TestCase):
         gdt, resources, _ = baseline()
         artworks = []
         configurations = []
-        for index in range(6):
+        for index in range(10):
             project = f"owner.s.machine.{index}"
             artwork = asset(project, png((20 + index, 40, 60)))
             artworks.append(artwork)
@@ -205,16 +403,17 @@ class ActivityClientTests(unittest.TestCase):
         )
         self.assertEqual(
             [row["grid_id"] for row in result["placements"]],
-            list(range(145004, 145010)),
+            list(range(145004, 145014)),
         )
         self.assertEqual(
             [row["resource_id"] for row in result["placements"]],
-            list(range(62002, 62008)),
+            list(range(62002, 62012)),
         )
         self.assertEqual(
             (result["placements"][-1]["page"], result["placements"][-1]["page_slot"]),
-            (2, 1),
+            (1, 1),
         )
+        self.assertEqual((result['placements'][0]['page'],result['placements'][0]['page_slot']),(2,2))
 
     def test_omitted_owned_machine_is_verified_and_retained_without_deletion(self):
         gdt, resources, _ = baseline()

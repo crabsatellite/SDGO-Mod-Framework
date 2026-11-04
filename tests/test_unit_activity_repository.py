@@ -58,6 +58,16 @@ def config(*, revision: str = "a" * 64, price: int = 99) -> dict:
     }
 
 
+def renumber_configs() -> tuple[dict, dict]:
+    source = config(price=10_000)
+    source["pool"][0].update(amount=30, entries=20)
+    source["pool"][1]["entries"] = 4_980
+    target = copy.deepcopy(source)
+    target["id"] = 9_401
+    target["revision"] = "b" * 64
+    return source, target
+
+
 def template_state(machine_id: int = TEMPLATE_ID) -> dict[str, list[dict]]:
     return {
         "tbl_ItemMachinePrice": [
@@ -162,10 +172,12 @@ class Backend:
             table: copy.deepcopy(SQL_SCHEMAS[table])
             for table in ("tbl_ItemCategory", "tbl_Units")
         }
+        self.user_machine_ids: set[int] = set()
         self.statements: list[tuple[str, tuple]] = []
         self.executemany_batches: list[tuple[str, int]] = []
         self.lossy_list_name = False
         self.force_ledger_cas_failure = False
+        self.fail_machine_update_table = None
 
     def snapshot(self):
         return copy.deepcopy(
@@ -261,6 +273,12 @@ class FakeCursor:
                 ]
             )
         elif compact.startswith(
+            "SELECT TOP (1) MachineID FROM dbo.tbl_UserItemMachineList"
+        ):
+            self.result = Result(
+                [(params[0],)] if params[0] in self.backend.user_machine_ids else []
+            )
+        elif compact.startswith(
             "SELECT MachineID,OwnerKey,ProjectKey,UnitID "
             "FROM dbo.sdgo_UnitActivityMachines"
         ):
@@ -327,6 +345,20 @@ class FakeCursor:
                 row["MachineID"]
             ] = [row]
             self.rowcount = 1
+        elif (
+            compact.startswith("UPDATE dbo.tbl_ItemMachine")
+            and " SET MachineID=? WHERE MachineID=?" in compact
+        ):
+            table = compact.split("UPDATE dbo.", 1)[1].split(" ", 1)[0]
+            if self.backend.fail_machine_update_table == table:
+                raise RuntimeError("simulated machine move failure")
+            target, source = params
+            rows = self.backend.tables[table].pop(source, [])
+            for row in rows:
+                row["MachineID"] = target
+            if rows:
+                self.backend.tables[table][target] = rows
+            self.rowcount = len(rows)
         elif compact.startswith("UPDATE dbo.tbl_ItemMachinePrice"):
             type_, price, disable, machine_id = params
             rows = self.backend.tables["tbl_ItemMachinePrice"].get(
@@ -375,6 +407,43 @@ class FakeCursor:
             if row and row['InstalledHash'] == installed_hash and row['Revision'] == revision:
                 field = 'ConfigJson' if 'SET ConfigJson=' in compact else 'SourceJson'
                 row[field] += ''.join(params[:-3])
+                self.rowcount = 1
+            else:
+                self.rowcount = 0
+        elif compact.startswith(
+            "UPDATE dbo.sdgo_UnitActivityMachines "
+            "SET MachineID=?,ConfigJson=?,Revision=?,InstalledHash=?"
+        ):
+            (
+                target,
+                config_json,
+                revision,
+                installed_hash,
+                source,
+                owner,
+                project,
+                unit,
+                old_revision,
+                old_hash,
+            ) = params
+            row = self.backend.ledger.get(source)
+            if (
+                row is not None
+                and target not in self.backend.ledger
+                and row["OwnerKey"] == owner
+                and row["ProjectKey"] == project
+                and row["UnitID"] == unit
+                and row["Revision"] == old_revision
+                and row["InstalledHash"] == old_hash
+            ):
+                self.backend.ledger.pop(source)
+                row.update(
+                    MachineID=target,
+                    ConfigJson=config_json,
+                    Revision=revision,
+                    InstalledHash=installed_hash,
+                )
+                self.backend.ledger[target] = row
                 self.rowcount = 1
             else:
                 self.rowcount = 0
@@ -482,8 +551,11 @@ class RepositoryFixture:
 
 
 class ValidationTests(unittest.TestCase):
-    def test_normalize_requires_exact_10000_and_reserved_machine_range(self):
+    def test_normalize_requires_exact_10000_and_supported_machine_id(self):
         self.assertEqual(normalize_config(config())["id"], MACHINE_ID)
+        standard = config()
+        standard["id"] = 9_401
+        self.assertEqual(normalize_config(standard)["id"], 9_401)
         candidate = config()
         candidate["pool"][0]["entries"] -= 1
         with self.assertRaisesRegex(ValueError, "10000"):
@@ -834,6 +906,170 @@ class RepositoryTests(unittest.TestCase):
         self.backend.force_ledger_cas_failure=True
         with self.assertRaisesRegex(ValueError,'CAS'):
             self.apply(config(revision='e'*64,price=301))
+
+    def test_renumber_preserves_native_sequence_pool_and_pinned_machine(self):
+        source, target = renumber_configs()
+        self.apply(source)
+        before_state = {
+            table: copy.deepcopy(self.backend.tables[table][MACHINE_ID])
+            for table, _ in STATE_TABLES
+        }
+        before_ledger = copy.deepcopy(self.backend.ledger[MACHINE_ID])
+        pinned = copy.deepcopy(
+            self.backend.tables["tbl_ItemMachinePrice"][990001]
+        )
+        statement_start = len(self.backend.statements)
+
+        preflight = self.repository.preflight_renumber(target, MACHINE_ID)
+        self.assertEqual(preflight["action"], "renumber")
+        self.assertFalse(preflight["writes_performed"])
+        self.assertTrue(preflight["player_tables_read"])
+        self.assertEqual(
+            self.backend.tables["tbl_ItemMachinePrice"][990001], pinned
+        )
+
+        result = self.repository.renumber(target, MACHINE_ID)
+        self.assertEqual(result["action"], "renumbered")
+        self.assertTrue(result["writes_performed"])
+        self.assertFalse(result["player_tables_changed"])
+        self.assertFalse(result["player_state_reset"])
+        self.assertEqual(result["runtime_observation"]["share_cur_pnum"], 4036)
+        for table, _ in STATE_TABLES:
+            self.assertNotIn(MACHINE_ID, self.backend.tables[table])
+            moved = copy.deepcopy(self.backend.tables[table][target["id"]])
+            for row in moved:
+                row["MachineID"] = MACHINE_ID
+            self.assertEqual(moved, before_state[table])
+        self.assertNotIn(MACHINE_ID, self.backend.ledger)
+        ledger = self.backend.ledger[target["id"]]
+        for field in (
+            "OwnerKey",
+            "ProjectKey",
+            "UnitID",
+            "TemplateMachineID",
+            "TemplateHash",
+            "PoolSize",
+            "SourceJson",
+        ):
+            self.assertEqual(ledger[field], before_ledger[field])
+        self.assertEqual(ledger["MachineID"], target["id"])
+        self.assertEqual(ledger["Revision"], target["revision"])
+        self.assertEqual(json.loads(ledger["ConfigJson"]), target)
+        self.assertEqual(
+            ledger["InstalledHash"],
+            canonical_state_hash(
+                {
+                    table: self.backend.tables[table][target["id"]]
+                    for table, _ in STATE_TABLES
+                }
+            ),
+        )
+        price = self.backend.tables["tbl_ItemMachinePrice"][target["id"]][0]
+        self.assertEqual(price["Price"], 10_000)
+        rare = [
+            row
+            for row in self.backend.tables["tbl_ItemMachineList"][target["id"]]
+            if row["CategoryID"] == ROOT_CATEGORY
+        ]
+        self.assertEqual(len(rare), 20)
+        self.assertTrue(all(row["Amount"] == 30 for row in rare))
+        self.assertEqual(
+            self.backend.tables["tbl_ItemMachinePrice"][990001], pinned
+        )
+        self.assertTrue(self.repository.verify(target)["verified"])
+        sql = "\n".join(
+            statement for statement, _ in self.backend.statements[statement_start:]
+        )
+        self.assertNotIn("EXEC sp_ResetUserItemMachineInfo", sql)
+        self.assertNotIn("EXEC dbo.sp_ResetUserItemMachineInfo", sql)
+        self.assertNotIn("UPDATE dbo.tbl_User", sql)
+        self.assertNotIn("DELETE FROM dbo.tbl_ItemMachine", sql)
+        self.assertNotIn("INSERT dbo.tbl_ItemMachine", sql)
+
+        repeat_start = len(self.backend.statements)
+        repeat = self.repository.renumber(target, MACHINE_ID)
+        self.assertEqual(repeat["action"], "unchanged")
+        self.assertFalse(repeat["writes_performed"])
+        later = "\n".join(
+            statement for statement, _ in self.backend.statements[repeat_start:]
+        )
+        self.assertNotIn(" SET MachineID=? WHERE MachineID=?", later)
+
+    def test_renumber_rejects_player_state_without_changing_anything(self):
+        source, target = renumber_configs()
+        self.apply(source)
+        self.backend.user_machine_ids.add(MACHINE_ID)
+        before = self.backend.snapshot()
+        with self.assertRaisesRegex(
+            ValueError, "tbl_UserItemMachineList 将保持原样"
+        ):
+            self.repository.renumber(target, MACHINE_ID)
+        self.assertEqual(self.backend.snapshot(), before)
+        self.assertIn(MACHINE_ID, self.backend.user_machine_ids)
+        self.assertTrue(self.fixture.connections[-1].rolled_back)
+
+    def test_renumber_requires_exact_config_and_empty_target(self):
+        source, target = renumber_configs()
+        self.apply(source)
+        changed = copy.deepcopy(target)
+        changed["price"] += 1
+        with self.assertRaisesRegex(ValueError, "除 id/revision 外"):
+            self.repository.preflight_renumber(changed, MACHINE_ID)
+        self.backend.tables["tbl_ItemMachinePrice"][target["id"]] = [
+            {
+                "MachineID": target["id"],
+                "Type": 0,
+                "Price": 1,
+                "Disable": 0,
+            }
+        ]
+        with self.assertRaisesRegex(ValueError, "目标 MachineID"):
+            self.repository.preflight_renumber(target, MACHINE_ID)
+        self.assertIn(MACHINE_ID, self.backend.ledger)
+
+    def test_renumber_rejects_source_hash_tamper_before_writes(self):
+        source, target = renumber_configs()
+        self.apply(source)
+        self.backend.tables["tbl_ItemMachinePrime"][MACHINE_ID][0]["PNum"] += 2
+        before = self.backend.snapshot()
+        with self.assertRaisesRegex(ValueError, "账本外修改"):
+            self.repository.renumber(target, MACHINE_ID)
+        self.assertEqual(self.backend.snapshot(), before)
+
+    def test_renumber_rolls_back_all_tables_on_midway_failure(self):
+        source, target = renumber_configs()
+        self.apply(source)
+        before = self.backend.snapshot()
+        self.backend.fail_machine_update_table = "tbl_ItemMachineConditionList"
+        with self.assertRaisesRegex(ValueError, "全部更改已回滚"):
+            self.repository.renumber(target, MACHINE_ID)
+        self.assertEqual(self.backend.snapshot(), before)
+        self.assertTrue(self.fixture.connections[-1].rolled_back)
+
+    def test_shared_transaction_can_renumber_then_apply_and_verify(self):
+        source, target = renumber_configs()
+        self.apply(source)
+        connection = FakeConnection(self.backend)
+        moved = self.repository.renumber(
+            target,
+            MACHINE_ID,
+            connection=connection,
+            in_transaction=True,
+        )
+        self.assertTrue(moved["transaction_owned_by_caller"])
+        self.assertFalse(connection.committed)
+        self.assertFalse(connection.rolled_back)
+        self.assertFalse(connection.closed)
+        applied = self.repository.apply(
+            target, connection=connection, in_transaction=True
+        )
+        self.assertEqual(applied["action"], "unchanged")
+        self.assertTrue(
+            self.repository.verify(target, connection=connection)["verified"]
+        )
+        self.assertFalse(connection.committed)
+        self.assertFalse(connection.rolled_back)
+        self.assertFalse(connection.closed)
 
 
 if __name__ == "__main__":

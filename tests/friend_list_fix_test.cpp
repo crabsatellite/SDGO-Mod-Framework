@@ -29,9 +29,11 @@ int main() {
     wchar_t path[32768]{};GetModuleFileNameW(nullptr,path,32768);std::wstring ini(path);
     ini.replace(ini.find_last_of(L'.'),std::wstring::npos,L".ini");
     CHECK(WritePrivateProfileStringW(L"DB Member",L"DBName",L"friend_fixture",ini.c_str())!=0);
+    CHECK(WritePrivateProfileStringW(L"DB Game",L"DBName",L"friend_game_fixture",ini.c_str())!=0);
     auto api=ai_test::api;api.Symbol=Symbol;api.HookCode=Hook;api.HookSlot=Slot;
     CHECK(SdgoModLoad(&api,reinterpret_cast<SdgoMod*>(1))==1);
     CHECK(database==L"friend_fixture");preparePolicy=PrepareFixture;
+    CHECK(gameDatabase==L"friend_game_fixture");
     int count=8;SetLastError(42);
     SCENARIO("failed initialization cannot publish an empty successful list");
     CHECK(List(nullptr,nullptr,reinterpret_cast<void*>(2),nullptr,nullptr,8,&count)==1);

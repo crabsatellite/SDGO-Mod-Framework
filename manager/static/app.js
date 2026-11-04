@@ -3,9 +3,52 @@ import {setDisplayUtcOffset} from '/panel_helpers.js';
 const $=id=>document.getElementById(id);
 const ROLES={client:'客户端',battle:'对战服务器',agent:'中继服务器',world:'世界服务器'};
 const OWNER_KEY='sdgo-manager-owner-tools';
-let state, token, hostId, panelCleanup=()=>{}, activePanel=null, archiveView=false, navigation=0;
+let state, token, hostId, panelCleanup=()=>{}, activePanel=null, archiveView=false, navigation=0, guard=null, messageTimer=0;
 function element(tag, text, cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node;}
-function message(text,error=false){$('manager-message').textContent=text;$('manager-message').classList.toggle('error',error);}
+// Results float above the page, so they are seen wherever it is scrolled: successes fade, errors and
+// progress ("…") stay until replaced or closed.
+function message(text,error=false){
+ const box=$('manager-message');clearTimeout(messageTimer);$('manager-message-text').textContent=text;
+ box.classList.toggle('error',error);box.classList.toggle('is-visible',!!text);
+ if(text&&!error&&!/(…|\.\.\.)$/.test(text))messageTimer=setTimeout(()=>box.classList.remove('is-visible'),6000);
+}
+$('manager-message-close').onclick=()=>{clearTimeout(messageTimer);$('manager-message').classList.remove('is-visible');};
+// The open page may hold unsaved edits (a settings form, a panel): guard() describes them, or returns ''.
+function leave(){
+ const pending=guard?guard():'';
+ if(pending&&!confirm(pending+'\n\n离开后这些修改会丢失。确定离开吗？'))return false;
+ guard=null;return true;
+}
+window.addEventListener('beforeunload',event=>{if(guard&&guard())event.preventDefault();});
+// Long pages get a bar of their sections under the header, and a way back to the top.
+const STICKY=new ResizeObserver(()=>{const header=document.querySelector('.manager-header').offsetHeight,index=$('page-index').hidden?0:$('page-index').offsetHeight;
+ document.documentElement.style.setProperty('--mm-header-h',header+'px');document.documentElement.style.setProperty('--mm-sticky-top',(header+index)+'px');});
+STICKY.observe(document.querySelector('.manager-header'));STICKY.observe($('page-index'));
+let indexTimer=0,indexed=[];
+function sections(){
+ const found=[...$('content').querySelectorAll('.manager-card > h2, .provider-root section > h2')];
+ // Panels drawn in an open shadow root (rewards and the like) list their section headings too.
+ for(const host of $('content').querySelectorAll('.provider-root'))if(host.shadowRoot)found.push(...host.shadowRoot.querySelectorAll('section > h2'));
+ const at=h=>{const r=h.getBoundingClientRect();return [Math.round(r.top),r.left];};
+ return found.filter(h=>!h.closest('.mod-card,.support-box')&&h.textContent.trim()).sort((a,b)=>{const [ay,ax]=at(a),[by,bx]=at(b);return ay-by||ax-bx;});
+}
+function stickyTop(){return parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--mm-sticky-top'))||140;}
+function buildIndex(){
+ const found=sections(),long=document.documentElement.scrollHeight>innerHeight*1.6,bar=$('page-index');
+ indexed=found.length>=3&&long?found:[];bar.hidden=!indexed.length;
+ bar.replaceChildren(...(indexed.length?[element('span','本页','page-index-label')]:[]),...indexed.map(h=>{const b=element('button',h.textContent.trim(),'page-index-item');b.type='button';b.onclick=()=>scrollTo({top:h.getBoundingClientRect().top+scrollY-stickyTop()-16,behavior:'smooth'});return b;}));
+ markIndex();
+}
+function markIndex(){
+ const top=stickyTop();let current=0;
+ // Side-by-side sections share a row: the row's first (leftmost) heading stands for it.
+ let row=null;indexed.forEach((h,i)=>{const y=h.getBoundingClientRect().top;if(y<=top+24&&(row===null||Math.abs(y-row)>4)){current=i;row=y;}});
+ [...$('page-index').querySelectorAll('.page-index-item')].forEach((b,i)=>b.classList.toggle('is-active',i===current));
+ $('to-top').hidden=scrollY<600;
+}
+new MutationObserver(()=>{clearTimeout(indexTimer);indexTimer=setTimeout(buildIndex,250);}).observe($('content'),{childList:true,subtree:true});
+window.addEventListener('scroll',markIndex,{passive:true});window.addEventListener('resize',()=>{clearTimeout(indexTimer);indexTimer=setTimeout(buildIndex,250);});
+$('to-top').onclick=()=>scrollTo({top:0,behavior:'smooth'});
 async function request(path,body,method='POST',extra={}){
  const response=await fetch(path,body===undefined?{}:{method,headers:{'Content-Type':'application/json','X-ModManager-Token':token,...extra},body:JSON.stringify(body)});
  const type=response.headers.get('Content-Type')||'';
@@ -13,7 +56,7 @@ async function request(path,body,method='POST',extra={}){
  const result=await response.json();if(!response.ok)throw Error(result.error||'请求失败');return result;
 }
 function button(text,fn,cls=''){const b=element('button',text,cls);b.onclick=()=>Promise.resolve().then(fn).catch(e=>message(e.message,true));return b;}
-function clear(){panelCleanup();panelCleanup=()=>{};$('content').replaceChildren();message('');}
+function clear(){panelCleanup();panelCleanup=()=>{};guard=null;$('content').replaceChildren();message('');}
 function selectedHost(){return state.hosts.find(h=>h.id===hostId)||state.hosts[0];}
 function developer(){return state.mode==='developer';}
 // Owner tools (shop, operators, rewards, background work) only matter once a server is managed.
@@ -27,7 +70,7 @@ function renderFrame(){
  $('host-select').hidden=!state.hosts.length;
  $('nav-mods').classList.toggle('selected',activePanel===null&&!archiveView);$('nav-archive').classList.toggle('selected',activePanel===null&&archiveView);$('nav-services').classList.toggle('selected',activePanel==='services');
  $('nav-updates').classList.toggle('selected',activePanel==='updates');
- $('provider-nav').replaceChildren();for(const panel of state.panels||[]){const item=button(panel.title,()=>showProvider(panel.id),'nav-item ui-nav-item'+(activePanel===panel.id?' selected':''));item.prepend(icon(panel.id));$('provider-nav').append(item);}
+ $('provider-nav').replaceChildren();for(const panel of state.panels||[]){const item=button(panel.title,()=>leave()&&showProvider(panel.id),'nav-item ui-nav-item'+(activePanel===panel.id?' selected':''));item.prepend(icon(panel.id));$('provider-nav').append(item);}
  $('owner-group').hidden=!owner;$('owner-show').hidden=owner;$('owner-hide').hidden=dev||hasServer();
  document.body.classList.toggle('is-developer',dev);$('ui-kit-link').hidden=!dev;enhance();
 }
@@ -42,6 +85,11 @@ function importButton(host){
  file.onchange=async()=>{try{const bytes=new Uint8Array(await file.files[0].arrayBuffer());let text='';for(let i=0;i<bytes.length;i+=8192)text+=String.fromCharCode(...bytes.subarray(i,i+8192));const result=await request('/api/import',{host:host.id,package:btoa(text)});accept(result.state);showMods(archiveView);message('配置包已导入，用原来的方式重新打开游戏即可。');}catch(error){message(error.message,true);}};
  const importer=button('导入配置包',()=>file.click(),'ui-btn is-ghost is-small');importer.title='导入服主发给你的客户端配置包（ZIP）';importer.prepend(icon('import'));
  const wrap=element('span');wrap.append(file,importer);return wrap;
+}
+function howItWorks(steps){
+ const box=element('div',undefined,'how-it-works');
+ for(const [title,text] of steps){const step=element('div',undefined,'how-step');step.append(element('b',title),element('span',text));box.append(step);}
+ return box;
 }
 function categorySwitches(host){
  const box=element('details',undefined,'manager-card batch-switches');box.append(element('summary','批量开关'));
@@ -59,7 +107,8 @@ function showMods(isArchive=false){
  const summary=element('section',undefined,'hangar-summary'),info=element('div',undefined,'summary-info');
  info.append(element('strong',host.name),chip(ROLES[host.role]||host.role,'blue'),element('span',archiveView?listed.length+' 项自动修复':'已启用 '+enabled+' / '+listed.length,'muted'));
  summary.append(info);if(host.role==='client'&&!archiveView)summary.append(importButton(host));root.append(summary);
- root.append(element('p',archiveView?'这些修复随框架自动生效，不需要设置。排查问题时可以查看说明；如需临时关闭，先点左下角“显示开发信息”。':'打开或关闭功能后，重新启动对应的游戏或服务器生效。','intro'));
+ if(archiveView)root.append(element('p','这些修复随框架自动生效，不需要设置。排查问题时可以查看说明；如需临时关闭，先点左下角“显示开发信息”。','intro'));
+ else root.append(howItWorks([['开关','点一下立即保存，不需要再按保存'],['生效','重新启动对应的游戏或服务器后生效'],['设置','进入详细参数，改完点「保存设置」']]));
  const grid=element('div',undefined,'mod-grid');
  let order=0;
  for(const mod of listed){
@@ -67,7 +116,7 @@ function showMods(isArchive=false){
   name.append(element('h2',mod.title));if(developer())name.append(element('span',mod.id+(mod.version?' · v'+mod.version:''),'mod-code'));top.append(name);
   const toggle=document.createElement('input');toggle.type='checkbox';toggle.className='ui-switch';toggle.checked=mod.enabled;toggle.ariaLabel=(mod.enabled?'关闭 ':'启用 ')+mod.title;toggle.title=mod.enabled?'已启用':'已关闭';
   const locked=archiveView&&!developer();
-  toggle.onchange=async()=>{try{const next=await request('/api/toggle',{host:host.id,mod:mod.id,enabled:toggle.checked,revision:{global:host.global_revision,manifest:mod.revision}});accept(next);showMods(archiveView);message('已保存，重新启动对应游戏或服务器后生效。');}catch(e){toggle.checked=!toggle.checked;message(e.message,true);}};
+  toggle.onchange=async()=>{try{const next=await request('/api/toggle',{host:host.id,mod:mod.id,enabled:toggle.checked,revision:{global:host.global_revision,manifest:mod.revision}});accept(next);showMods(archiveView);message('已保存：「'+mod.title+'」已'+(toggle.checked?'开启':'关闭')+'。重新启动对应游戏或服务器后生效。');}catch(e){toggle.checked=!toggle.checked;message(e.message,true);}};
   top.append(locked?chip(mod.enabled?'自动生效':'已关闭',mod.enabled?'green':undefined):toggle);card.append(top,element('p',mod.description||'暂无说明。'));
   const foot=element('div',undefined,'mod-foot'),notes=element('div',undefined,'mod-meta');
   if(mod.blocked_by.length)notes.append(chip('已被批量开关关闭','amber'));
@@ -83,28 +132,44 @@ function showMods(isArchive=false){
 async function showSettings(host,mod){
  const data=await request('/api/settings?'+new URLSearchParams({host,mod}));clear();$('page-title').textContent=data.contract.title;
  const current=selectedHost(),entry=[...(current?.mods||[]),...(current?.archive||[])].find(m=>m.id===mod);
- const root=$('content');const back=button(archiveView?'返回修复归档':'返回功能列表',()=>showMods(archiveView),'back');back.prepend(icon('back'));root.append(back);
+ const root=$('content');const back=button(archiveView?'返回修复归档':'返回功能列表',()=>leave()&&showMods(archiveView),'back');back.prepend(icon('back'));root.append(back);
  const meta=element('div',undefined,'mod-meta detail-meta');if(entry){meta.append(chip(entry.enabled?'已启用':'已关闭',entry.enabled?'green':undefined));if(entry.version)meta.append(chip('版本 '+entry.version));}if(developer())meta.append(element('code',mod,'field-help'));root.append(meta);
  root.append(element('p',data.contract.description||'调整此功能的设置。','intro'));
- if(data.contract.provider&&ownerTools()){const panel=(state.panels||[]).find(p=>p.id===data.contract.provider);if(panel){const link=button('打开服主管理：'+panel.title,()=>showProvider(panel.id),'ui-btn is-ghost is-small');link.prepend(icon(panel.id));root.append(link);}}
+ if(data.contract.provider&&ownerTools()){const panel=(state.panels||[]).find(p=>p.id===data.contract.provider);if(panel){const link=button('打开服主管理：'+panel.title,()=>leave()&&showProvider(panel.id),'ui-btn is-ghost is-small');link.prepend(icon(panel.id));root.append(link);}}
  const box=element('section',undefined,'manager-card settings-plate'),fields=element('div',undefined,'settings-grid'),controls={};
  let restart=false;
- for(const field of data.contract.settings){const label=element('label',field.label),input=document.createElement(field.type==='choice'?'select':'input');input.dataset.key=field.id;
+ for(const field of data.contract.settings){const label=element('label',undefined,'settings-field'),head=element('span',undefined,'field-head'),input=document.createElement(field.type==='choice'?'select':'input');input.dataset.key=field.id;
+  // Each field says when a saved change reaches the game.
+  const hot=field.activation==='hot_reload';if(!hot)restart=true;
+  head.append(element('span',field.label),chip(hot?'即时生效':'重启后生效',hot?'green':'amber'));label.append(head);
   if(field.type==='choice')for(const option of field.options)input.append(new Option(option,option));
   if(field.type!=='choice')input.type=field.type==='boolean'?'checkbox':['integer','number'].includes(field.type)?'number':'text';if(field.type==='boolean')input.className='ui-switch';
   if(field.type==='boolean')input.checked=data.values[field.id];else input.value=data.values[field.id]??'';
   if(field.minimum!==undefined)input.min=field.minimum;if(field.maximum!==undefined)input.max=field.maximum;
   if(field.type==='number')input.step='any';label.append(input);
-  if(field.activation==='hot_reload')label.append(element('span','保存后游戏运行中即可生效','field-help'));else restart=true;
   if(field.audience==='developer')label.classList.add('is-developer-field');
   if(developer())label.append(element('code',field.file+' · '+field.key,'field-help'));fields.append(label);controls[field.id]=input;
  }
  if(data.contract.settings.length){
-  box.append(fields);const actions=element('div',undefined,'save-row');
-  actions.append(button('保存设置',async()=>{const values={};for(const field of data.contract.settings){const c=controls[field.id];values[field.id]=field.type==='boolean'?c.checked:['integer','number'].includes(field.type)?Number(c.value):c.value;}const result=await request('/api/settings',{host,mod,values,revisions:data.revisions});data.revisions=result.revisions;message(restart?'已保存。重新启动对应游戏或服务器后生效。':'已保存。');},'primary'));
-  if(restart)actions.append(element('span','保存后需重新启动对应游戏或服务器','muted'));box.append(actions);
- }else box.append(element('p',data.contract.presentation==='automatic_fix'?'这项修复自动工作，不需要设置。':'这个功能没有需要填写的设置，打开开关即可使用。','muted'));
- root.append(box,supportActions({host,mod}));
+  box.append(fields);
+  const read=field=>{const c=controls[field.id];return field.type==='boolean'?c.checked:['integer','number'].includes(field.type)?Number(c.value):c.value;};
+  const write=(field,value)=>{const c=controls[field.id];if(field.type==='boolean')c.checked=value;else c.value=value??'';};
+  let saved=Object.fromEntries(data.contract.settings.map(field=>[field.id,read(field)])),justSaved=false;
+  const changed=()=>data.contract.settings.filter(field=>read(field)!==saved[field.id]);
+  // Nothing on this form is saved until 保存设置: the bar stays in view and says what is pending.
+  const bar=element('div',undefined,'savebar'),status=element('span',undefined,'savebar-status');
+  const discard=button('放弃修改',()=>{for(const field of data.contract.settings)write(field,saved[field.id]);justSaved=false;refresh();},'ui-btn is-ghost');
+  const save=button('保存设置',async()=>{const values=Object.fromEntries(data.contract.settings.map(field=>[field.id,read(field)]));const result=await request('/api/settings',{host,mod,values,revisions:data.revisions});data.revisions=result.revisions;saved=values;justSaved=true;refresh();message(restart?'已保存。重新启动对应游戏或服务器后生效。':'已保存，运行中的游戏已生效。');},'ui-btn is-primary');
+  function refresh(){
+   const pending=changed().length;bar.classList.toggle('is-dirty',pending>0);bar.classList.toggle('is-saved',!pending&&justSaved);
+   status.textContent=pending?'有 '+pending+' 项修改尚未保存':justSaved?(restart?'已保存 · 重新启动对应游戏或服务器后生效':'已保存 · 运行中的游戏已生效'):(restart?'当前就是已保存的设置。修改后点「保存设置」，重新启动游戏或服务器后生效':'当前就是已保存的设置。修改后点「保存设置」即可生效');
+   save.disabled=!pending;discard.disabled=!pending;
+  }
+  box.addEventListener('input',()=>{justSaved=false;refresh();});box.addEventListener('change',()=>{justSaved=false;refresh();});
+  guard=()=>{const pending=changed().length;return pending?'「'+data.contract.title+'」有 '+pending+' 项设置尚未保存。':'';};
+  bar.append(status,discard,save);refresh();root.append(box,bar);
+ }else{box.append(element('p',data.contract.presentation==='automatic_fix'?'这项修复自动工作，不需要设置。':'这个功能没有需要填写的设置，打开开关即可使用。','muted'));root.append(box);}
+ root.append(supportActions({host,mod}));
 }
 async function showProvider(id){
  const sequence=++navigation;const config=await request('/api/providers/'+id+'/config');if(sequence!==navigation)return;clear();activePanel=id;renderFrame();$('page-title').textContent=config.title;document.querySelector('.host-tools').hidden=true;
@@ -115,7 +180,9 @@ async function showProvider(id){
  if(id==='operators'&&config.configured)card.append(button('更新本机客户端的副官数据',async()=>{const current=await request('/api/providers/operators/api/operators');await request('/api/providers/operators/api/operators/update-client',{},'POST',{'X-Catalog-Revision':current.revision});message('副官数据已更新，重新打开这个客户端后生效。');}));
  if(!config.configured){root.append(element('p','先选择已有配置的位置。这一步不会导入或重置数据库。','intro'),supportActions({provider:id}));return;}
  const mount=element('section',undefined,'provider-root');root.append(mount);
- const timers=new Set(),listeners=[];const ctx={token,request:(path,body,method='POST',headers={})=>request('/api/providers/'+id+path,body,method,headers),fetch:async(path,options={})=>{const headers=new Headers(options.headers);headers.set('X-ModManager-Token',token);return fetch(String(path).startsWith('/api/providers/')?path:'/api/providers/'+id+path,{...options,headers});},setInterval:(fn,ms)=>{const t=setInterval(fn,ms);timers.add(t);return t;},onWindow:(name,fn)=>{window.addEventListener(name,fn);listeners.push([name,fn]);},message};
+ const timers=new Set(),listeners=[];const ctx={token,request:(path,body,method='POST',headers={})=>request('/api/providers/'+id+path,body,method,headers),fetch:async(path,options={})=>{const headers=new Headers(options.headers);headers.set('X-ModManager-Token',token);return fetch(String(path).startsWith('/api/providers/')?path:'/api/providers/'+id+path,{...options,headers});},setInterval:(fn,ms)=>{const t=setInterval(fn,ms);timers.add(t);return t;},onWindow:(name,fn)=>{window.addEventListener(name,fn);listeners.push([name,fn]);},message,
+  // A panel with unsaved edits registers a description of them; leaving the page asks first.
+  guard:fn=>{if(sequence===navigation)guard=fn;}};
  message('正在读取…');const module=await import('/panels/'+id+'.js');if(sequence!==navigation)return;const dispose=await module.mount(mount,ctx);if(sequence===navigation){message('');mount.dataset.ready='1';root.append(supportActions({provider:id}));}
  panelCleanup=()=>{timers.forEach(clearInterval);listeners.forEach(([name,fn])=>window.removeEventListener(name,fn));if(dispose)dispose();};
 }
@@ -135,7 +202,7 @@ async function showServices(){
  }
  if(developer())for(const item of data.resources){const card=element('section',undefined,'manager-card');card.append(element('h2',item.id==='shop.bridge'?'商城业务通道':'内部业务通道'),element('p',item.running?'按需运行，由 Manager 管理':'已停止','muted'));root.append(card);}
 }
-$('nav-services').onclick=()=>showServices().catch(e=>message(e.message,true));
+$('nav-services').onclick=()=>leave()&&showServices().catch(e=>message(e.message,true));
 async function showUpdates(){
  ++navigation;activePanel='updates';clear();renderFrame();$('page-title').textContent='更新';document.querySelector('.host-tools').hidden=true;
  const root=$('content'),card=element('section',undefined,'manager-card');root.append(card);
@@ -164,12 +231,13 @@ async function showUpdates(){
  }finally{pending=false;}};
  await refresh();const timer=setInterval(()=>refresh().catch(e=>message(e.message,true)),3000);panelCleanup=()=>clearInterval(timer);
 }
-$('nav-updates').onclick=()=>showUpdates().catch(e=>message(e.message,true));
+$('nav-updates').onclick=()=>leave()&&showUpdates().catch(e=>message(e.message,true));
 $('create-entrypoints').onclick=async()=>{try{const result=await request('/api/entrypoints',{});message(`已创建 ${result.created} 个快捷入口，保留 ${result.kept} 个已有入口。`);}catch(e){message(e.message,true);}};
-$('nav-mods').onclick=()=>showMods(false);$('nav-archive').onclick=()=>showMods(true);$('host-select').onchange=()=>{hostId=$('host-select').value;showMods(archiveView);};$('add-host').onclick=openPath;
+$('nav-mods').onclick=()=>leave()&&showMods(false);$('nav-archive').onclick=()=>leave()&&showMods(true);
+$('host-select').onchange=()=>{if(!leave()){$('host-select').value=hostId;return;}hostId=$('host-select').value;showMods(archiveView);};$('add-host').onclick=()=>leave()&&openPath();
 $('owner-show').onclick=()=>{localStorage.setItem(OWNER_KEY,'1');renderFrame();};
- $('owner-hide').onclick=()=>{localStorage.removeItem(OWNER_KEY);if(activePanel!==null){showMods(false);}else renderFrame();};
+ $('owner-hide').onclick=()=>{if(activePanel!==null&&!leave())return;localStorage.removeItem(OWNER_KEY);if(activePanel!==null){showMods(false);}else renderFrame();};
 $('confirm-host').onclick=async event=>{event.preventDefault();try{accept(await request('/api/hosts',{path:$('host-path').value.trim()}));$('path-dialog').close();showMods();}catch(e){message(e.message,true);}};
-$('change-mode').onclick=async()=>{try{accept(await request('/api/mode',{mode:state.mode==='standard'?'developer':'standard'}));if(activePanel==='updates')await showUpdates();else if(activePanel==='services'&&ownerTools())await showServices();else if(activePanel&&activePanel!=='services'&&ownerTools())await showProvider(activePanel);else showMods(archiveView);}catch(e){message(e.message,true);}};
-$('exit-manager').onclick=async()=>{if(!confirm('请先保存正在编辑的内容。退出管理器？游戏不会关闭。'))return;try{await request('/api/exit',{});$('content').replaceChildren(element('section','管理器已退出，可以关闭本页。','empty-state'));}catch(e){message(e.message,true);}};
+$('change-mode').onclick=async()=>{if(!leave())return;try{accept(await request('/api/mode',{mode:state.mode==='standard'?'developer':'standard'}));if(activePanel==='updates')await showUpdates();else if(activePanel==='services'&&ownerTools())await showServices();else if(activePanel&&activePanel!=='services'&&ownerTools())await showProvider(activePanel);else showMods(archiveView);}catch(e){message(e.message,true);}};
+$('exit-manager').onclick=async()=>{const pending=guard?guard():'';if(!confirm((pending?pending+'\n\n':'请先保存正在编辑的内容。')+'退出管理器？游戏不会关闭。'))return;try{await request('/api/exit',{});$('content').replaceChildren(element('section','管理器已退出，可以关闭本页。','empty-state'));}catch(e){message(e.message,true);}};
 try{const initial=await request('/api/state');token=initial.session_token;accept(initial);showMods();}catch(e){message(e.message,true);}

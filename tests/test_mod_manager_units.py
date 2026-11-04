@@ -148,6 +148,41 @@ class UnitManagerTests(unittest.TestCase):
         with self.assertRaises(Exception):self.capsules.request('POST','/api/projects/activity',body,{})
         self.assertEqual(saved,self.catalog.read_bytes())
 
+    def test_activity_number_change_stages_paired_migration_and_preserves_rewards_and_art(self):
+        body=self.activity_fixture()
+        with patch('manager.unit_activity.ActivityRepository') as repository:
+            repository.return_value.preflight.return_value={'valid':True}
+            saved=self.capsules.request('POST','/api/projects/activity',body,{})
+            repository.return_value.preflight_renumber.return_value={'valid':True,'writes_performed':False}
+            app=self.capsules.get_engine();before,_=app.store.read()
+            result=self.capsules.request('POST','/api/projects/activity-number',{
+                'expected_revision':saved['catalog_revision'],'id':body['id'],'number':94},{})
+            after,_=app.store.read();changed=after['activity_machines'][0]
+            self.assertEqual(9401,changed['id'])
+            for key in ('pool','currency_type','price','artwork_key','artwork_sha256','unit_id','project_key'):
+                self.assertEqual(before['activity_machines'][0][key],changed[key],key)
+            self.assertEqual(9401,after['activity_drafts'][0]['id'])
+            self.assertEqual([{'from_id':1990001,'to_id':9401,'project_key':changed['project_key'],
+                              'unit_id':90001}],after['activity_machine_renames'])
+            self.assertFalse(result['changes_applied'])
+            repository.return_value.renumber.assert_not_called()
+            from manager.engines.capsules.capsule_catalog import export_bundle
+            export_bundle(after,self.root/'renumber-export')
+            exported=json.loads((self.root/'renumber-export/server.json').read_bytes())
+            self.assertEqual(after['activity_machine_renames'],exported['activity_machine_renames'])
+
+    def test_pinned_activity_number_is_rejected_without_catalog_change(self):
+        body=self.activity_fixture()
+        with patch('manager.unit_activity.ActivityRepository') as repository:
+            repository.return_value.preflight.return_value={'valid':True}
+            saved=self.capsules.request('POST','/api/projects/activity',body,{})
+            app=self.capsules.get_engine();before,raw=app.store.read()
+            with self.assertRaisesRegex(ValueError,'置顶'):
+                self.capsules.request('POST','/api/projects/activity-number',{
+                    'expected_revision':saved['catalog_revision'],'id':body['id'],'number':9900},{})
+            self.assertEqual(raw,app.store.read()[1])
+            repository.return_value.preflight_renumber.assert_not_called()
+
     def test_invalid_activity_pool_is_rejected_before_native_review_or_catalog_write(self):
         body=self.activity_fixture();saved=self.catalog.read_bytes()
         body['pool'][0]['entries']=19

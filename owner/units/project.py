@@ -131,6 +131,8 @@ def export_project(workspace,draft):
         'units':[r['server'] for r in draft.get('forms',[])],
         'weapons':[r['server'] for r in draft.get('weapons',[])],
         'blueprints':draft.get('blueprints',[])}
+    from .blueprint_templates import validate_project_bindings
+    validate_project_bindings(definitions,files=files)
     manifest={'protocol':PROTOCOL,'schema_version':SCHEMA_VERSION,'name':draft['name'],
         'project_key':draft['family_key'],
         'metadata':normalize_metadata(draft.get('metadata',{})),
@@ -176,6 +178,10 @@ def read_project(files):
             raise ValueError('制作项目缺少素材文件')
         if hashlib.sha256(files[path]).hexdigest()!=asset.get('sha'):raise ValueError('素材哈希与资源不一致')
         if asset.get('kind') not in ('image','source-image'):raise ValueError('素材类型无效')
+    definitions=value.get('definitions',{})
+    from .blueprint_templates import validate_project_bindings
+    client_template_bindings=validate_project_bindings(definitions,files=files)
     return {'name':name,'project_key':project_key,'metadata':normalize_metadata(value.get('metadata',{})),
         'media':normalize_media(value.get('media',{}),assets),'presentation':value.get('presentation',{}),
-        'assets':assets,'definitions':value.get('definitions',{})}
+        'assets':assets,'definitions':definitions,
+        'client_template_bindings':client_template_bindings}

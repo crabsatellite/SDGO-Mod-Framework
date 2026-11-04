@@ -2,7 +2,7 @@
 #include "oledb_session.h"
 
 namespace sdgo::friend_fix {
-inline bool Prepare(Session& db,const std::wstring& expectedDatabase) {
+inline bool Prepare(Session& db,const std::wstring& expectedDatabase,const std::wstring& gameDatabase=L"") {
     std::wstring database;
     Need(db.String(L"SELECT CASE WHEN DB_ID("+Literal(expectedDatabase)+L")=DB_ID() THEN N'1' ELSE N'0' END",database),"friend database identity unavailable");
     if(database!=L"1")return false;
@@ -53,7 +53,7 @@ inline bool Prepare(Session& db,const std::wstring& expectedDatabase) {
                 Need(db.String(L"SELECT CONVERT(nvarchar(10),CONVERT(int,uses_ansi_nulls)+2*CONVERT(int,uses_quoted_identifier)) FROM sys.sql_modules WHERE object_id=OBJECT_ID("+alias+L",N'P')",currentOptions));
                 if(savedOptions!=currentOptions)throw std::runtime_error("friend policy SQL options have an external edit");
             }
-            const auto clone=Clone(source,name,!current.empty(),nameCollation);
+            const auto clone=Clone(source,name,!current.empty(),nameCollation,gameDatabase);
             const auto sourceHash=Hash(Canonical(source,name,L"dbo"));
             const auto targetHash=Hash(Canonical(clone,name,kSchema));
             const int options=std::stoi(flags);

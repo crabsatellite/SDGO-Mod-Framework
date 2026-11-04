@@ -1,4 +1,4 @@
-import {e,button,field,download} from '/panel_helpers.js';
+import {e,button,field,download,saveBar} from '/panel_helpers.js';
 import {mountNews} from './announcement_news.js';
 
 export async function mount(root,ctx){
@@ -26,8 +26,12 @@ export async function mount(root,ctx){
   card.append(button('复制',()=>{const clone=structuredClone(r);clone.id='notice_'+crypto.randomUUID().replaceAll('-','').slice(0,16);clone.title+='（副本）';data.policy.rules.splice(index+1,0,clone);render(clone.id);},ctx),button('上移',()=>{if(index){[data.policy.rules[index-1],data.policy.rules[index]]=[r,data.policy.rules[index-1]];render(r.id);}},ctx),button('删除',()=>{data.policy.rules.splice(index,1);render();},ctx));list.append(card);
  }}
  render();
- root.append(button('新增公告',()=>{data.policy.rules.push({id:'notice_'+crypto.randomUUID().replaceAll('-','').slice(0,16),enabled:true,title:'新公告',text:'在这里输入公告内容',surfaces:['login'],triggers:['enter'],weekdays:[0,1,2,3,4,5,6],start_time:'00:00',end_time:'00:00',start_date:'',end_date:'',duration_seconds:10,interval_seconds:60,max_session:1,max_day:1,max_total:0,priority:0});render(data.policy.rules.at(-1).id);},ctx),button('保存全部公告规则',async()=>{data.policy.utc_offset_minutes=zone.input.value.trim()===''?null:Number(zone.input.value);data=await api({policy:data.policy,revision:data.revision});ctx.message('公告规则已保存，游戏自动载入。');},ctx,'primary'));
+ root.append(button('新增公告',()=>{data.policy.rules.push({id:'notice_'+crypto.randomUUID().replaceAll('-','').slice(0,16),enabled:true,title:'新公告',text:'在这里输入公告内容',surfaces:['login'],triggers:['enter'],weekdays:[0,1,2,3,4,5,6],start_time:'00:00',end_time:'00:00',start_date:'',end_date:'',duration_seconds:10,interval_seconds:60,max_session:1,max_day:1,max_total:0,priority:0});render(data.policy.rules.at(-1).id);},ctx));
+ const saveRules=async()=>{data.policy.utc_offset_minutes=zone.input.value.trim()===''?null:Number(zone.input.value);data=await api({policy:data.policy,revision:data.revision});ctx.message('公告规则已保存，游戏自动载入。');};
  root.append(e('p','登录前无法识别账号，次数按客户端设备保存。修改标题和内容不会清零次数；需要独立次数时复制为一条新公告。登录公告使用 Windows 网页控件；首次安装或更新 Mod 后重新打开客户端。','muted'));
  root.append(button('导出已保存的公告配置包',async()=>{const response=await ctx.fetch('/api/announcements/export');if(!response.ok)throw Error('公告导出未完成');await download(response,'SDGO-announcements.zip');},ctx));
  root.append(e('p','配置包包含公告 Mod、规则和登录页，保留本地展示计数。其他客户端关闭游戏后，可从 Manager 的“导入配置包”安装。','muted'));
+ // The rules above (time zone, every notice) wait for one save; the bar keeps it in view and says if any are pending.
+ root.append(saveBar(root,ctx,'公告与展示规则',[{title:'公告规则（时区与全部公告）',snapshot:()=>JSON.stringify([data.policy,zone.input.value])}],
+  [{label:'保存全部公告规则',run:saveRules,covers:[0],primary:true}]));
 }

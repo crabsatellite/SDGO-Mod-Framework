@@ -105,8 +105,9 @@ definitions 可选字段 `blueprints` 接受设计图列表；每个机体族最
 - `schema_version: 1`、`id`、`enabled`、`name`、`output_unit_id`。
 - `source.kind` 为 `source-recovered`、`authored` 或 `unknown`。恢复项还须提供
   `domain`、`record_id`、`record_sha256`；未知项保留在草稿，不能作为完整来源发布。
-- `recipe_template_id` 是目标客户端现有设计图显示模板；`item_template_id` 是现有图纸物品模板。
-  它们与机体的永久物品模板不同，不用于套用另一台机体的材料或战斗数值。
+- `recipe_template_id` 与 `item_template_id` 是宿主现有的配方／图纸物品兼容 donor。
+  它们与机体的永久物品模板不同，也与下面上传的客户端展示记录分开；
+  donor 不会被上传记录替换，不用于套用另一台机体的材料或战斗数值。
 - 可选 `recipe_sprite` 指定配方卡面的 `sprs/名称.spr` 路径，最多29个ASCII字符。
   上传原始配方时保留其卡面引用。该资源及依赖必须来自批准的项目文件或当前客户端；
   缺失时阻止发布，不静默换成模板图片。作者不指定此字段时，明确沿用所选显示模板。
@@ -118,6 +119,37 @@ definitions 可选字段 `blueprints` 接受设计图列表；每个机体族最
   `RepayPoint` 是原生删除图纸的返回点数，不是本扩展定义的合成收费。
 - `internal_name` 为目标SQL可无损保存的ASCII内部名称；`name` 用于客户端本地化展示。
   多份启用配方必须明确选定一份 `encyclopedia_primary`；它只选择图鉴展示关联，不能证明图纸可以获得。
+
+可选的 `client_templates` 为声明自身绑定一份完整客户端展示清单：
+
+```json
+{
+  "client_templates": {
+    "manifest_path": "blueprints/209000/client-templates.json",
+    "manifest_sha256": "<lowercase sha256>"
+  }
+}
+```
+
+清单协议为 `sdgo.unit-blueprint-client-templates/1`，包含 `owner`、两份 `templates` 和
+完整 `resources`。两份 typed 记录必须明确为 kind 33 / 1197字节的
+`client_recipe_template` 与 kind 34 / 614字节的 `client_item_template`；
+不能按长度把614字节记录猜成 kind 85。每份模板分别绑定不同的 `source_path`、
+`prepared_path`、源／准备 SHA-256、源记录编号和审核过的 SPR 改写区间。
+kind 34 可选 `display_name_mode: preserve-template` 保留图纸物品自己的名称，或用
+`explicit` 携带明确名称；配方名称与图纸物品名称互不强制相同。
+
+准备记录只能在清单批准的 SPR 载体区间与源记录不同；项目导入时逐字节确认其他区域不变。
+编译从准备记录出发，只写目标编号、配方名称、材料数量／编号／等级、产物、最低玩家等级、
+RepayPoint，以及图纸物品的目标编号、可选明确名称和配方引用。每条输出记录给出源、准备、
+编译 SHA-256 与连续差异区间收据，未知字节必须保留。
+
+`resources` 为每个直接引用路径绑定项目成员和 SHA-256；项目导出／再导入必须保留清单、
+两对完整记录及资源原字节，缺项、修改或跨声明冲突均拒收。该检查只证明记录可见的直接引用和
+审核改写，不解析 SPR 内容，也不证明 SPR→TXR、模型、动画或特效的递归语义闭包。
+`resource_closure_verified`、`native_registration_authorized` 和
+`native_runtime_accepted` 因此保持 false；修改标志不能跳过既有资源要求或原生登记门禁。
+旧包没有 `client_templates` 时仍沿用 donor 编译路径。
 
 对应 schema 与检查在 `owner/units/blueprints.py`；目标1197字节布局适配在
 `owner/units/blueprint_codec.py`。GDT容器的第三word不能当作逻辑记录kind。

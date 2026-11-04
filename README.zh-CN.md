@@ -8,6 +8,7 @@
 服主与维护人员通过 **SDGO Mod Manager** 安装、配置和[更新](docs/mod-manager.zh-CN.md#更新)功能，
 客户端目录顶部的「0_MOD管理（服主专用）」可直接打开它。普通玩家照常使用原游戏启动器，按服主提供的方式更新，
 不要自行修改 Mod，以免与服务器配置不匹配。
+Manager 每个页面都写明各按钮保存什么、修改何时生效；有未保存的修改时离开会先询问。
 Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所选安装目录中，公开打包与导出工具会拒绝分发，改动路径大小写也不能绕过；
 详见[管理器说明](docs/mod-manager.zh-CN.md)。
 本页仅列出功能概览。具体配置、玩法操作、兼容性与排错方法见各功能文档。
@@ -34,7 +35,7 @@ Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所
 | 阿普萨拉斯 III 变形卡死修复 <!-- catalog: `transform_input_fix` --> | 缺少变形动画时恢复原生状态退出，解除移动与攻击锁定 | [使用说明](docs/transform-input-fix.zh-CN.md) |
 | Agent 中继日志修复 <!-- catalog: `agent_relay_log_fix` --> | 修复 Agent 中继日志读取无效内存 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
 | 军衔回退修复 <!-- catalog: `rank_progression_fix` --> | 防止战斗结算降低已有军衔（WorldServer） | [使用说明](docs/rank-progression-fix.zh-CN.md) |
-| 好友列表修复 <!-- catalog: `friend_list_fix`、`friend_list_client_fix` --> | 保留离线好友及状态更新前的完整中文名，恢复原生好友聊天界面 | [使用说明](docs/friend-list-fix.zh-CN.md) |
+| 好友列表修复 <!-- catalog: `friend_list_fix`、`friend_list_client_fix` --> | 保留离线好友、当前名字和军衔，恢复主页面 USER LIST 的中文菜单及原生聊天界面 | [使用说明](docs/friend-list-fix.zh-CN.md) |
 | 新账号起始资料修复 <!-- catalog: `new_account_profile` --> | 可配置的初始 GP、点券、军衔和赠送机体，替代原服的 9,999,999 / 15 级 | [使用说明](docs/new-account-profile.zh-CN.md) |
 | 商城租赁与中文选项修复 <!-- catalog: `shop_labels` --> | 显示租赁/永久、实际数量和中文选项名 | [使用说明](docs/shop-labels.zh-CN.md) |
 | 商城图片文字汉化 <!-- catalog: `shop_art_localization` --> | 汉化受支持涂料图片内的军衔文字 | [使用说明](docs/shop-art-localization.zh-CN.md) |
@@ -60,12 +61,12 @@ Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所
 | 自动机库容量 <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） | [使用说明](docs/hangar-capacity.zh-CN.md) |
 | 机库管理 <!-- catalog: `hangar_manager` --> | 页内整理和重复兑换（GB 服务端批量入账），关闭后停止重复刷新 | [使用说明](docs/hangar-manager.zh-CN.md) |
 | 副官补给与管理 <!-- catalog: `operator_catalog` --> | 五位免费补给副官，以及副官名称、头像和掉落的管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
-| 扭蛋机编辑器 <!-- catalog: `capsule_catalog` --> | 在 Manager 中新增、修改、下架扭蛋机，设置奖池、价格和权重 | [使用说明](docs/capsule-catalog.zh-CN.md) |
+| 扭蛋机编辑器 <!-- catalog: `capsule_catalog` --> | 在 Manager 中新增、修改、下架扭蛋机，设置奖池、价格和权重，为未使用的独立活动机改号 | [使用说明](docs/capsule-catalog.zh-CN.md) |
 | 每日双倍时间 <!-- catalog: `daily_rewards` --> | 每天固定时段（默认 18:00–22:00）战斗 GB 和经验翻倍 | [使用说明](docs/daily-rewards.zh-CN.md) |
 | 保管库一键领取 <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
 | 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化商品名称、说明、选项和涂装机体预览，可用中文名称搜索并组合等级、币种筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
-| 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 把自己的机体原样送给好友，对方在保管库接受或退还；默认关闭，由服主开启 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
-| 机体族导入（Beta） <!-- catalog: `unit_catalog` --> | 在 Mod Manager 导入机体、资料与图片，补齐两端定义，并用 G 币或代币模板制作独立活动奖池 | [使用](docs/unit-import.zh-CN.md) |
+| 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 右键在线或离线好友，在原生机体管理中选机，对方在保管库接受或退还；默认关闭，由服主开启 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
+| 机体族导入（Beta） <!-- catalog: `unit_catalog` --> | 在 Mod Manager 导入可携带资料与素材的机体项目，自动生成带原生边框的设计图图片，并用 G 币或代币模板制作独立活动奖池 | [使用](docs/unit-import.zh-CN.md) |
 
 <!-- /mod-category:gameplay -->
 

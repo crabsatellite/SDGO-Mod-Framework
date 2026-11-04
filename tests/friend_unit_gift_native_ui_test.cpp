@@ -1,4 +1,6 @@
 #include "../mods/friend_unit_gift_client/native_ui.h"
+#include "../mods/friend_list_client_fix/community_menu.h"
+#include "../mods/friend_unit_gift_client/card_layout.h"
 
 #include <windows.h>
 #include <array>
@@ -253,6 +255,23 @@ int main() {
     bindings.button_vtable = g_button_vtable;
     bindings.static_vtable=g_static_vtable;
     bindings.static_caption=reinterpret_cast<Bindings::Caption>(&StaticCaptionShim);
+    for (const bool received:{false,true}) {
+        const auto card=InformationCardLayout({330,270,48,48},{525,270,48,48},
+            {334,231,150,12},{134,421,167,2},received);
+        Check(card.valid && card.panel.x==315 && card.panel.right()==588 &&
+              card.primary.y==399 && card.primary.bottom()==430 && card.cancel.right()==card.panel.right(),
+              "gift footer aligns inside the shipped information-card content border");
+        Check(card.note.x>=card.panel.x+12 && card.note.right()<=card.panel.right()-12 &&
+              card.note.y>=card.label.bottom()+4 && card.note.bottom()<=card.panel.bottom()-8 &&
+              card.panel.bottom()+8==card.primary.y && card.primary.right()+10==card.cancel.x,
+              "note caption, editable text and native buttons have distinct padded rectangles");
+        Check(card.background.x==card.panel.x && card.background.right()==card.panel.right() &&
+              card.background.y==card.panel.y && card.background.bottom()>=card.cancel.bottom()+8 &&
+              card.background.bottom()<452,
+              "one opaque native backing covers the old PARTS slots and every footer gap inside the stock frame");
+    }
+    Check(!InformationCardLayout({}, {}, {}, {},false).valid,
+          "missing native anchors cannot position controls on an unknown canvas");
     bindings.unit_name=[](std::uint32_t)->std::wstring{return L"测试机体";};
     Control radio;
     Put<std::uint32_t>(radio.bytes.data(),0x134,12);
@@ -483,6 +502,57 @@ int main() {
     transparentEntry.Detach(blankService.bytes.data());
     Check(Read<float>(bottom->bytes.data(),0x14C)==127.0f,
           "detaching restores the original lower border");
+
+    // Home USER LIST has six named controls and +4C is a button, not a dialog.
+    Control homeService,homeDialog;
+    Put<int>(homeDialog.bytes.data(),0x154,126);
+    Put<int>(homeDialog.bytes.data(),0x158,146);
+    auto* homeFirst=NewControl(L"SubMenu01",homeDialog.bytes.data());
+    auto* homeLast=NewControl(L"SubMenu06",homeDialog.bytes.data());
+    Put<void*>(homeService.bytes.data(),0x4C,homeFirst->bytes.data());
+    Put<float>(homeLast->bytes.data(),0x14C,124.0f);
+    Put<int>(homeLast->bytes.data(),0x154,126);Put<int>(homeLast->bytes.data(),0x158,21);
+    PrepareSkinSource(homeLast);
+    auto* homeFrame=NewControl(L"BgIcon",homeDialog.bytes.data());
+    Put<int>(homeFrame->bytes.data(),0x158,146);
+    FriendEntry homeEntry;
+    Check(homeEntry.AttachCommunity(homeService.bytes.data(),bindings),
+          "home context resolves the native button parent instead of treating +4C as a dialog");
+    homeEntry.SetAvailable(true);
+    Check(homeEntry.ready() && Read<int>(homeDialog.bytes.data(),0x158)==168 &&
+          Read<int>(homeFrame->bytes.data(),0x158)==168 &&
+          Read<std::uint8_t>(homeEntry.button(),0x168)==0,
+          "home gift row extends its existing blue frame, keeps bottom padding and disables native debug drawing");
+    homeEntry.Detach(homeService.bytes.data());
+    Check(Read<int>(homeFrame->bytes.data(),0x158)==146,
+          "home context destruction restores native frame geometry");
+
+    Control captionService;
+    std::array<Control*,6> menuButtons{};
+    std::array<std::array<std::uint8_t,0x80>,6> menuLayers{};
+    std::array<std::uint8_t*,6> menuPointers{};
+    for(unsigned i=0;i<6;++i) {
+        menuButtons[i]=NewControl(L"HomeCaption"+std::to_wstring(i),homeDialog.bytes.data());
+        menuPointers[i]=menuLayers[i].data();
+        Put<void*>(menuButtons[i]->bytes.data(),0x190,&menuPointers[i]);
+        Put<void*>(menuButtons[i]->bytes.data(),0x194,&menuPointers[i]+1);
+        Put<void*>(captionService.bytes.data(),0x4C+i*4,menuButtons[i]->bytes.data());
+    }
+    Put<std::uint32_t>(captionService.bytes.data(),0x64,2);
+    Put<std::uint32_t>(captionService.bytes.data(),0x8C,7);
+    friend_list_client_fix::LocalizeCommunityMenu(captionService.bytes.data(),
+        reinterpret_cast<friend_list_client_fix::MenuText>(&TextShim),false);
+    Check(g_captions[menuButtons[0]->bytes.data()]==L"私聊" &&
+          g_captions[menuButtons[2]->bytes.data()]==L"机体资料" &&
+          g_captions[menuButtons[4]->bytes.data()]==L"删除好友" &&
+          g_captions[menuButtons[5]->bytes.data()]==L"屏蔽",
+          "home menu localizes all actions and preserves the accepted-friend delete action");
+    Put<std::uint32_t>(captionService.bytes.data(),0x8C,2);
+    friend_list_client_fix::LocalizeCommunityMenu(captionService.bytes.data(),
+        reinterpret_cast<friend_list_client_fix::MenuText>(&TextShim),true);
+    Check(g_captions[menuButtons[4]->bytes.data()]==L"添加好友" &&
+          g_captions[menuButtons[5]->bytes.data()]==L"取消屏蔽",
+          "pending friendship and existing block state retain their native meanings");
 
     Control detailService;
     Control detailRoot;
