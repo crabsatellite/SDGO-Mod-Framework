@@ -1,4 +1,4 @@
-import {chinaDateTime} from '/panel_helpers.js';
+import {serverDateTime} from '/panel_helpers.js';
 // Unit-family authoring inside the single Mod Manager; no separate session or process.
 export async function mount(root,ctx){
  const shadow=root.attachShadow({mode:"open"});
@@ -134,7 +134,7 @@ function renderList(){
     const title=document.createElement("strong");
     title.textContent=item.name||"未命名机体包";
     const meta=document.createElement("small");
-    const updated=item.updated?chinaDateTime(item.updated)+"（北京时间）":"时间未知";
+    const updated=item.updated?serverDateTime(item.updated):"时间未知";
     meta.textContent=statusLabel(item.status)+" · "+updated;
     button.append(title,meta);
     button.addEventListener("click",()=>loadDraft(item.id));

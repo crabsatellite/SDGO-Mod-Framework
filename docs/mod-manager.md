@@ -104,4 +104,4 @@ pair and still rejects local-only declarations, mismatches, repository/source ma
 and marked binary bytes. Public framework source, Manager builds and packages use the
 strict commands above.
 
-Business timezone defaults and timestamp displays use China Standard Time (Asia/Shanghai, UTC+8).
+Configurable timezone defaults are initialized from the server’s local timezone; saved offsets are instance settings. The Updates page also offers a display-timezone override. Leave it empty to use server-local time. This setting does not change the Windows system timezone.
