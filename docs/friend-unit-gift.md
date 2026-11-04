@@ -18,6 +18,11 @@ The menu follows the right-click position and uses the game's blue button backgr
 keeps the native unit model, name, level and skills; its lower-right area provides a single panel for the
 note and confirmation controls using existing game assets.
 
+During gift selection, the left and right arrows move one page at a time. Page dots select a page in the
+current group, and arrows also cross group boundaries. The first and last pages stay in bounds. Double-click
+an owned instance on any page to open its information card. Cancelling the card lets you browse and choose again.
+Update the client component and restart the client for these controls to take effect.
+
 Acceptance requires a free recipient slot. A capacity refusal leaves the offer pending. Returns prefer the sender's original slot, then another free slot. If the sender is full, the unit remains stored until the sender can take it back.
 
 Ordinary rewards retain their native handling. Claim All does not accept these offers, and deleting an ordinary gift note is not a unit return.
@@ -46,3 +51,10 @@ The friend menu reuses the existing blue menu strip and its transparent normal,
 hover and pressed button states. The native popup routine positions the expanded
 menu at the right-click location; background capability polling does not reset
 that position.
+
+## Developer verification
+
+The native friend-gift runner supports `--phase picker-pagination` with the existing prepared profiles and
+unit binding. It exercises page dots, adjacent arrows, group boundaries, later-page double-clicks and
+cancellation through scoped virtual pointer input. This phase checks the original instance without confirming
+an offer. See [native testing](game-test.md) for the isolated environment and account requirements.
