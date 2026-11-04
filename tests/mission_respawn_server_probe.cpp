@@ -61,7 +61,7 @@ void PrimaryComplete(const wchar_t* reason,uint32_t deaths) {
     WriteMarker(L"basic",reason,deaths);
 }
 bool ClientAcknowledged() {
-    const std::wstring ack=(std::filesystem::path(output).parent_path()/L"mission-respawn-client-ack.ini").wstring();
+    const std::wstring ack=(std::filesystem::path(output).parent_path()/(L"mission-respawn-client-ack-"+runId+L".ini")).wstring();
     wchar_t id[64]{};GetPrivateProfileStringW(L"ack",L"run_id",L"",id,64,ack.c_str());
     return runId==id;
 }
