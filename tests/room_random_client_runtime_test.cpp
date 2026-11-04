@@ -221,6 +221,27 @@ int wmain(int argc,wchar_t** argv) {
     Put<uint32_t>(app.data(),0x4A0,18);room[5]=1;startedModel=0;
     dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
     Check(startedModel==(enabled?11032:15019),"ordinary PvP also uses the corrected complete construction source");
+    // The native 3D manager is authoritative even if an older legacy room
+    // publication remains non-null. A matching owner in that stale buffer must
+    // not make it writable during a 3D transition.
+    auto staleLegacy=room;
+    Put<uint32_t>(staleLegacy.data(),0x57C,15019);
+    const auto staleBefore=staleLegacy;
+    Put<uint32_t>(app.data(),0x4A0,18);
+    Put<uint8_t*>(profile.data(),0xEC,staleLegacy.data());
+    Put<uint32_t>(room.data(),0x57C,15019);
+    dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
+    Check(room_random_client::Read<uint32_t>(room.data(),0x57C)==(enabled?11032u:15019u),
+          "active native 3D model takes precedence over a non-null legacy publication");
+    Check(staleLegacy==staleBefore,"a retained legacy publication is never written by 3D synchronization");
+    const auto liveModelVtable=modelVtable;
+    Put<void*>(modelVtable.data(),0x1C,nullptr);
+    const auto activeBefore=room;
+    dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
+    Check(room==activeBefore&&staleLegacy==staleBefore,
+          "an invalid active 3D model cannot fall back to a stale writable legacy room");
+    modelVtable=liveModelVtable;
+    Put<uint8_t*>(profile.data(),0xEC,nullptr);
     // A real four-human trace can deliver the last full record after 06C3.
     // Rejected packets and that delayed fourth record must not revoke the three
     // already-authorized frozen sources.
