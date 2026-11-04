@@ -44,7 +44,7 @@ std::vector<policy::Rule> authoredRules;
 policy::news::Engine news;
 policy::Scheduler scheduler;
 FILETIME fileStamp{};
-int offset=540,lastState=-1;
+int offset=480,lastState=-1;
 uint64_t lastPoll=0,loginUntil=0,gameUntil=0;
 bool inLogin=false,loginManaged=false;
 void* lastViewer=nullptr;

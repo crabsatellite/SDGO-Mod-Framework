@@ -21,6 +21,16 @@ def rule():
 
 
 class AnnouncementsTest(unittest.TestCase):
+    def test_default_timezone_matches_other_business_defaults(self):
+        from owner.calendar_gifts.model import defaults as calendar_defaults
+        from owner.collection_capsule.rules import defaults as collection_defaults
+        from owner.rewards.gathering import defaults as gathering_defaults
+        offsets=[announcements.DEFAULT['utc_offset_minutes'],calendar_defaults()['utc_offset_minutes'],
+                 collection_defaults()['utc_offset_minutes'],gathering_defaults()['utc_offset_minutes']]
+        self.assertEqual(offsets,[480]*4)
+        compiled,_=announcements.compile_rules(announcements.DEFAULT)
+        self.assertIn('offset=480\r\n',compiled.decode('utf-16'))
+
     def policy(self):
         return {**copy.deepcopy(announcements.DEFAULT), 'rules': [rule()]}
 

@@ -1,4 +1,4 @@
-import {e,button,field} from '/panel_helpers.js';
+import {e,button,field,chinaDateTime} from '/panel_helpers.js';
 
 export async function mountNews(root,ctx){
  const api=(path='',body)=>ctx.request('/api/announcements/news'+path,body,body?'POST':'GET');
@@ -29,7 +29,7 @@ export async function mountNews(root,ctx){
  function showStatus(){
   const names={news:'每日新闻',tech:'科技资讯',epic:'游戏限免',history:'历史上的今天'};
   const failed=data.failed_categories.length?'；部分内容暂未更新：'+data.failed_categories.map(k=>names[k]||'资讯').join('、'):'';
-  status.textContent=`缓存中有 ${data.available_count} 条有效资讯。${data.last_attempt?'最近尝试：'+new Date(data.last_attempt*1000).toLocaleString('zh-CN',{hour12:false}):'尚未获取资讯'}${failed}。`;
+  status.textContent=`缓存中有 ${data.available_count} 条有效资讯。${data.last_attempt?'最近尝试：'+chinaDateTime(data.last_attempt*1000):'尚未获取资讯'}${failed}。`;
   preview.replaceChildren();for(const item of data.items.slice(0,12)){
    const row=e('p'),link=e('a',item.title);if(String(item.url).startsWith('https://')){link.href=item.url;link.target='_blank';link.rel='noopener noreferrer';}
    row.append(link,e('small',' · '+item.date+' · '+item.source,'muted'));preview.append(row);

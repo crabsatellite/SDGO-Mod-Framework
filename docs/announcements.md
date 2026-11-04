@@ -95,3 +95,5 @@ its native animation. The supported client build is checked through verified
 symbols. Login notices use the Windows ATL/WebBrowser components; in-game text
 uses a separate native path. Installing or updating the Mod requires restarting
 the client; saved rules then reload automatically.
+
+The default timezone is China Standard Time (UTC+8, offset 480 minutes).

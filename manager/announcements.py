@@ -14,7 +14,7 @@ from .providers import Provider
 EVENTS = {'enter': 1, 'timer': 2, 'login': 4, 'lobby': 8, 'room': 16,
           'battle_start': 32, 'battle_end': 64}
 SURFACES = {'login': 1, 'game': 2}
-DEFAULT = {'schema_version': 1, 'utc_offset_minutes': 540, 'rules': []}
+DEFAULT = {'schema_version': 1, 'utc_offset_minutes': 480, 'rules': []}
 
 
 def integer(value, low, high, name):
