@@ -29,6 +29,10 @@ enum SdgoFriendUnitGiftClientActionV1 : std::uint32_t {
     SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_UNIT_TEMPLATE = 17,
     SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_ORDINARY_STORAGE = 18,
     SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_OPEN_HOME_FRIEND_CONTEXT = 19,
+    // GameTest translates these scoped pointer operations into native input;
+    // the product V1 action export continues to accept only actions 1..19.
+    SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_CLICK_PICKER_PAGE = 20,
+    SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_CLICK_PICKER_UNIT = 21,
 };
 
 enum SdgoFriendUnitGiftClientComposerPhaseV1 : std::uint32_t {
@@ -150,3 +154,16 @@ struct SdgoHomeFriendsSnapshotV1 {
     SdgoHomeFriendRowV1 rows[8];
 };
 using SdgoHomeFriendsSnapshotV1Fn = int(__cdecl*)(SdgoHomeFriendsSnapshotV1*);
+
+// Scoped diagnostics for the native unit picker; retain the gift V1 ABI.
+struct SdgoGiftPickerSnapshotV1 {
+    std::uint32_t size, version;
+    std::uint64_t run_hash;
+    std::uint32_t process_id, open, selecting, grid_page, pager_page, page_count;
+    std::uint32_t page_button_mask;
+    std::int32_t page_x[12],page_y[12];
+    std::uint16_t slots[36];
+    std::uint64_t unit_uids[36];
+    std::int32_t unit_x[36],unit_y[36];
+};
+using SdgoGiftPickerSnapshotV1Fn = int(__cdecl*)(SdgoGiftPickerSnapshotV1*);

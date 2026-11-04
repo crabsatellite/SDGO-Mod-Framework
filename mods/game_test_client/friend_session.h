@@ -76,6 +76,8 @@ class FriendSession {
         if(!wcscmp(text,L"gift_native_card"))return 38;
         if(!wcscmp(text,L"gift_storage_back"))return 39;
         if(!wcscmp(text,L"gift_home_context"))return 40;
+        if(!wcscmp(text,L"gift_picker_page"))return 41;
+        if(!wcscmp(text,L"gift_picker_select"))return 42;
         for(uint32_t i=1;i<38;++i)if(!wcscmp(text,names[i]))return i;
         return 0;
     }
@@ -333,7 +335,7 @@ public:
             context->Assert(0,"friend command is malformed");return SDGO_GAME_TEST_FAIL;
         }
         pvpCommand_=command.operation>=34&&command.operation<=37;
-        giftCommand_=(command.operation>=18&&command.operation<=33)||(command.operation>=38&&command.operation<=40);
+        giftCommand_=(command.operation>=18&&command.operation<=33)||(command.operation>=38&&command.operation<=42);
         roomCommand_=command.operation>=12&&!giftCommand_&&!pvpCommand_;
         extraCommand_=command.operation>=10&&!roomCommand_&&!giftCommand_&&!pvpCommand_;
         const uint32_t channel=GetPrivateProfileIntW(L"command",L"channel_id",0,commandPath.c_str());
