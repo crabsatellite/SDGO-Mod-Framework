@@ -103,3 +103,5 @@ Git hooks may add `--allow-legacy-public`. This accepts only a fully undeclared 
 pair and still rejects local-only declarations, mismatches, repository/source markers
 and marked binary bytes. Public framework source, Manager builds and packages use the
 strict commands above.
+
+Configurable timezone defaults are initialized from the server’s local timezone; saved offsets are instance settings. The Updates page also offers a display-timezone override. Leave it empty to use server-local time. This setting does not change the Windows system timezone.
