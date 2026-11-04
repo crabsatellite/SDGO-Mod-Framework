@@ -65,7 +65,7 @@ Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所
 | 保管库一键领取 <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
 | 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化商品名称、说明、选项和涂装机体预览，可用中文名称搜索并组合等级、币种筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
 | 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 把自己的机体原样送给好友，对方在保管库接受或退还；默认关闭，由服主开启 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
-| 机体族导入（Beta） <!-- catalog: `unit_catalog` --> | 在 Mod Manager 导入机体、资料与图片，补齐两端定义，并用 G 币或代币模板制作独立活动奖池 | [使用](docs/unit-import.zh-CN.md) |
+| 机体族导入（Beta） <!-- catalog: `unit_catalog` --> | 在 Mod Manager 导入可携带资料与素材的机体项目，自动生成带原生边框的设计图图片，并用 G 币或代币模板制作独立活动奖池 | [使用](docs/unit-import.zh-CN.md) |
 
 <!-- /mod-category:gameplay -->
 

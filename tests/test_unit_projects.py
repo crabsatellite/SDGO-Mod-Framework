@@ -1,5 +1,6 @@
 import io
 import json
+import copy
 from pathlib import Path
 import tempfile
 import unittest
@@ -8,6 +9,7 @@ import zipfile
 from owner.units.project import normalize_metadata,matches,export_project
 from owner.units.workspace import Workspace
 from unit_import_support import Baseline,Repository,publisher,png,archive,complete
+from test_unit_blueprint_templates import bound_fixture,declaration
 
 
 class UnitProjects(unittest.TestCase):
@@ -80,6 +82,58 @@ class UnitProjects(unittest.TestCase):
         self.assertEqual(1110001,imported['draft']['item_template_id'])
         self.assertIsNotNone(imported['draft']['category_id'])
         self.assertTrue(imported['draft']['can_confirm'])
+
+    def test_blueprint_client_templates_round_trip_without_untyped_bin_decode(self):
+        one=self.engine('one')
+        state=complete(one,one.inspect('unit.zip',archive(),one.public()['revision']))
+        draft=copy.deepcopy(state['draft'])
+        binding,files=bound_fixture()
+        for path,data in files.items():
+            digest=one._store(data)
+            draft['files'].append({'path':path,'sha':digest,'bytes':len(data)})
+        recipe=declaration(binding)
+        recipe['output_unit_id']=draft['root_unit_id']
+        draft['blueprints']=[recipe]
+        raw=export_project(one,draft)
+        two=self.engine('two')
+        imported=two.inspect('project.zip',raw,two.public()['revision'])
+        restored=imported['draft']['blueprints'][0]
+        self.assertEqual(binding,restored['client_templates'])
+        paths={entry['path'] for entry in imported['draft']['files']}
+        self.assertTrue(set(files)<=paths)
+        self.assertTrue(any(row['code']=='blueprint_template_semantic_closure'
+                            for row in imported['draft']['requirements']))
+        self.assertFalse(any(row['code']=='blueprint_template_binding'
+                             for row in imported['draft']['requirements']))
+
+    def test_project_rejects_rehashed_manifest_with_stale_declaration_binding(self):
+        one=self.engine('one')
+        state=complete(one,one.inspect('unit.zip',archive(),one.public()['revision']))
+        draft=copy.deepcopy(state['draft'])
+        binding,files=bound_fixture()
+        for path,data in files.items():
+            digest=one._store(data)
+            draft['files'].append({'path':path,'sha':digest,'bytes':len(data)})
+        recipe=declaration(binding);recipe['output_unit_id']=draft['root_unit_id']
+        draft['blueprints']=[recipe]
+        raw=export_project(one,draft)
+        output=io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(raw)) as source:
+            project=json.loads(source.read('project.json'))
+            manifest_path=binding['manifest_path']
+            changed=source.read(manifest_path)+b' '
+            project['files'][manifest_path]=__import__('hashlib').sha256(changed).hexdigest()
+            with zipfile.ZipFile(output,'w') as target:
+                for name in source.namelist():
+                    if name=='project.json':
+                        target.writestr(name,json.dumps(project,ensure_ascii=False))
+                    elif name==manifest_path:
+                        target.writestr(name,changed)
+                    else:
+                        target.writestr(name,source.read(name))
+        two=self.engine('two')
+        with self.assertRaisesRegex(ValueError,'SHA-256 mismatch'):
+            two.inspect('bad-project.zip',output.getvalue(),two.public()['revision'])
 
     def test_manager_can_create_metadata_first_without_a_client_or_host(self):
         from manager.workspace import Workspace as ManagerWorkspace
