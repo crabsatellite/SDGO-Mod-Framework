@@ -725,9 +725,16 @@ int wmain(int argc,wchar_t** argv) {
         Check(true,"constant-speed homing wrapper is not misclassified as a straight projectile");
         Eval("SDGO_BattleAI_GenericUpdate=savedGeneric");
         native_world::weapons[1][0x6E9]=0;
+        // The prior live-controller cases can leave a short recovery/defence
+        // lease. Allocator and short-step checks below require a free synthetic
+        // controller; native-action ownership is checked separately afterwards.
+        Sleep(260);
+        auto routeFsm=native_world::fsms[0].data(),routeMotor=native_world::movements[0].data();
+        native_world::Put(routeFsm,4,routeFsm+0x20);native_world::Put(routeFsm,8,uint32_t(0));
+        native_world::Put(routeMotor,4,routeMotor+0x20);native_world::Put(routeMotor,8,uint32_t(0));
         // Invoke the real C callback during a generic dispatch, while its actor
         // context is valid, to exercise route ownership and native deallocation.
-        Check(Eval("savedGeneric=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) assert(SDGO_BattleAI_Route(1,1)==1); return 123 end"),"route probe installs");
+        Check(Eval("savedGeneric=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_RecoveryMode(0); SDGO_BattleAI_CancelRoute(); assert(SDGO_BattleAI_Route(1,1)==1); return 123 end"),"route probe installs");
         unit.Think();
         Check(native_world::frees>0,"native path buffer copied and released through the EXE allocator");
         Eval("SDGO_BattleAI_GenericUpdate=savedGeneric");

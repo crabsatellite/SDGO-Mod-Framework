@@ -11,6 +11,20 @@ inline bool ReadSealedRoomTitle(const std::wstring& job, char (&title)[21]) {
     return length < 63 && WideCharToMultiByte(CP_UTF8,0,declared,-1,title,21,nullptr,nullptr)!=0;
 }
 
+inline bool ReadPvpRoomTitle(const std::wstring& job, const char* nonce, bool random,
+                             unsigned enemies, unsigned allies, char (&title)[21]) {
+    const size_t length=std::strlen(nonce);
+    if(random&&((length!=4&&length!=5)||std::strspn(nonce,"0123456789abcdef")!=length))return false;
+    // A reused server session has a unique five-digit nonce and a compact
+    // sealed title. Read that title before constructing any legacy default.
+    // The unused e/a default would exceed the native limit for that nonce.
+    title[0]=0;
+    if(!ReadSealedRoomTitle(job,title))return false;
+    if(title[0])return !random||(!std::strncmp(title,nonce,length)&&title[length]==' ');
+    if(random&&length!=4)return false;
+    return sprintf_s(title,random?"%s !ai e%u a%u !rand":"%s !ai e%u a%u",nonce,enemies,allies)>=0;
+}
+
 inline bool ReadSealedAiTeamCounts(const std::wstring& job, unsigned count,
                                   const char* title, unsigned& allies, unsigned& enemies) {
     allies=GetPrivateProfileIntW(L"run",L"ai_allies",count/2,job.c_str());
