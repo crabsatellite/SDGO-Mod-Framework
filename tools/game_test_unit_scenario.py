@@ -10,13 +10,15 @@ SETTINGS = {'UnitPagesOnly':'0','UnitPresentations':'0','UnitPortraits':'0',
     'UnitAcquisitionKind':'0','UnitAcquisitionMachine':'0','UnitAcquisitionUnit':'0',
     'CapsulePreviewMachine':'990001','CapsulePreviewPrice':'100000','CapsulePreviewCurrency':'0',
     'ActivityDrawOnce':'0','ActivityRewardCount':'0','BlueprintRecipe':'0','BlueprintBookUid':'0',
-    'BlueprintMaterialCount':'0','BlueprintSynthesize':'0','BlueprintOutputUnit':'0'}
+    'BlueprintMaterialCount':'0','BlueprintSynthesize':'0','BlueprintOutputUnit':'0',
+    'NativeIdProbeCount':'0','NativeIdProbeChunks':'0','NativeIdProbeWitness':'0','NativeIdProbeRequireAbsent':'0',
+    **{'NativeIdProbeChunk'+str(i):'' for i in range(12)}}
 INDEX_CASES = ('pages.unit_index.list','pages.unit_index.detail',
     'pages.unit_index.alternate','pages.unit_index.base','pages.unit_index.close')
 PORTRAIT_CASES = ('pages.unit_index.pose_wait','pages.unit_index.pose_ready')
 
 def validate(value, plan):
-    if not isinstance(value,dict) or set(value)-{'schema','capture_frames','portraits','acquisition','collection_preview','activity_target','activity_draw','reward_pairs','blueprint'}:
+    if not isinstance(value,dict) or set(value)-{'schema','capture_frames','portraits','acquisition','collection_preview','activity_target','activity_draw','reward_pairs','blueprint','native_id_probe'}:
         raise ValueError('invalid native unit scenario fields')
     if type(value.get('schema')) is not int or value['schema']!=1:
         raise ValueError('unsupported native unit scenario schema')
@@ -31,6 +33,18 @@ def validate(value, plan):
         if field!='activity_draw' or field in value:result[field]=flag
     if result['portraits'] and not result['capture_frames']:
         raise ValueError('native portraits require genuine frame capture')
+    if 'native_id_probe' in value:
+        probe=value['native_id_probe']
+        if (not isinstance(probe,dict) or set(probe)!={'ids','witness_unit_id','require_absent'} or
+            not isinstance(probe['ids'],list) or not 1<=len(probe['ids'])<=3072 or
+            any(type(n) is not int or not 0<n<=9_999_999 for n in probe['ids']) or
+            len(set(probe['ids']))!=len(probe['ids']) or type(probe['witness_unit_id']) is not int or
+            not 0<probe['witness_unit_id']<=9_999_999 or type(probe['require_absent']) is not bool):
+            raise ValueError('native ID probe needs bounded unique IDs and an exact positive unit witness')
+        if (plan.get('page_group') or result['portraits'] or result['collection_preview'] or result.get('activity_draw') or
+            any(field in value for field in ('acquisition','activity_target','reward_pairs','blueprint'))):
+            raise ValueError('native ID probe cannot mix with other unit-page scopes')
+        result['native_id_probe']={**probe,'ids':sorted(probe['ids'])}
     if 'blueprint' in value:
         blueprint=value['blueprint']
         if (not isinstance(blueprint,dict) or not {'recipe_id','book_uid'}<=set(blueprint) or
@@ -99,6 +113,13 @@ def settings(value=None):
     result.update(UnitPagesOnly='1',UnitPresentations='1',
         UnitPortraits=str(int(value['portraits'])),CaptureNativeFrames=str(int(value['capture_frames'])),
         CollectionPreviewOnly=str(int(value['collection_preview'])))
+    if value.get('native_id_probe'):
+        probe=value['native_id_probe'];ids=probe['ids']
+        result.update(UnitPresentations='0',NativeIdProbeCount=str(len(ids)),
+            NativeIdProbeChunks=str((len(ids)+255)//256),NativeIdProbeWitness=str(probe['witness_unit_id']),
+            NativeIdProbeRequireAbsent=str(int(probe['require_absent'])))
+        for index in range((len(ids)+255)//256):
+            result['NativeIdProbeChunk'+str(index)]=','.join(map(str,ids[index*256:(index+1)*256]))
     if value.get('blueprint'):
         result.update(UnitPresentations='0',BlueprintRecipe=str(value['blueprint']['recipe_id']),
                       BlueprintBookUid=str(value['blueprint']['book_uid']))
@@ -124,6 +145,7 @@ def settings(value=None):
 
 def cases(value):
     result=('framework.bootstrap','flow.login','flow.onboarding','setup.active_unit')+INDEX_CASES[:2]
+    if value.get('native_id_probe'):return result[:4]+('catalog.native_id_occupancy',)
     if value.get('blueprint'):
         return result[:4]+('pages.blueprint.book','pages.blueprint.recipe')+(
             ('pages.blueprint.materials',) if value['blueprint'].get('materials') else ())+(
@@ -139,7 +161,7 @@ def read(root, digest, plan, read_ini):
     if not isinstance(digest,str) or len(digest)!=64 or any(c not in '0123456789abcdef' for c in digest):
         raise ValueError('invalid native unit scenario digest')
     root=Path(root);path=root/'sdgo/gametest'/INPUT
-    if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()) or path.stat().st_size>4096:
+    if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()) or path.stat().st_size>64*1024:
         raise ValueError('native unit scenario input escapes its copied client or exceeds its budget')
     raw=path.read_bytes()
     if hashlib.sha256(raw).hexdigest()!=digest:raise ValueError('native unit scenario input hash changed')
@@ -148,6 +170,10 @@ def read(root, digest, plan, read_ini):
     config=read_ini(root/'sdgo/mods/game_test_client/mod.ini')
     for key,expected in settings(value).items():
         fallback=SETTINGS.get(key) if key.startswith(('CapsulePreview','Activity','Blueprint')) else None
+        # A sealed non-probe job may predate this opt-in. Missing inactive
+        # defaults cannot arm a probe; active probes require every exact key.
+        if key.startswith('NativeIdProbe') and 'native_id_probe' not in value:
+            fallback=SETTINGS.get(key)
         if config.get('settings',key,fallback=fallback)!=expected:
             raise ValueError('native unit observer settings disagree with sealed scenario: '+key)
     return {'unit_scenario':value,'unit_scenario_sha256':digest}

@@ -517,10 +517,10 @@ function renderBlueprints(){
     const templateStatus=document.createElement("p");templateStatus.className="note";
     const templateField="blueprints."+(recipe.id||recipe.name||"draft")+".client_templates";
     const templateIssue=(draft.requirements||[]).find(row=>row.code==="blueprint_template_binding"&&row.field===templateField);
-    const semanticNote=(draft.requirements||[]).find(row=>row.code==="blueprint_template_semantic_closure"&&row.field===templateField);
+    const semanticNote=(draft.requirements||[]).find(row=>["blueprint_template_semantic_closure","blueprint_template_native_ui"].includes(row.code)&&row.field===templateField);
     if(templateIssue)templateStatus.textContent="客户端展示模板校验失败："+templateIssue.message;
     else if(recipe.client_templates)templateStatus.textContent=semanticNote?.message||
-      "客户端展示模板已绑定；保存时会核对源/准备记录、哈希、允许的 SPR 改写和全部直接资源。递归资源语义与实机仍需单独验收。";
+      "客户端展示模板已绑定；保存时会核对来源证据和准备图片。v2 还会检查每帧使用的纹理是否完整、可解码；游戏内显示和交互仍需单独验收。";
     else templateStatus.textContent="未绑定客户端展示模板：使用所选内置兼容模板的卡面与名称。";
     const level=blueprintInput(fields,"玩家最低等级 *（0为不限制）",recipe.minimum_player_level,"number");level.max="255";
     const repay=blueprintInput(fields,"回收图纸返还点数 *",recipe.repay_point,"number");

@@ -10,6 +10,7 @@ from owner.units.project import normalize_metadata,matches,export_project
 from owner.units.workspace import Workspace
 from unit_import_support import Baseline,Repository,publisher,png,archive,complete
 from test_unit_blueprint_templates import bound_fixture,declaration
+from test_unit_blueprint_resources import closure_fixture
 
 
 class UnitProjects(unittest.TestCase):
@@ -105,6 +106,26 @@ class UnitProjects(unittest.TestCase):
                             for row in imported['draft']['requirements']))
         self.assertFalse(any(row['code']=='blueprint_template_binding'
                              for row in imported['draft']['requirements']))
+
+    def test_closed_blueprint_resources_round_trip_without_opening_native_admission(self):
+        one=self.engine('closed-one')
+        state=complete(one,one.inspect('unit.zip',archive(),one.public()['revision']))
+        draft=copy.deepcopy(state['draft'])
+        manifest,files=closure_fixture()
+        encoded=json.dumps(manifest).encode();path='blueprints/closed.json';files[path]=encoded
+        binding={'manifest_path':path,'manifest_sha256':__import__('hashlib').sha256(encoded).hexdigest()}
+        for member,data in files.items():
+            draft['files'].append({'path':member,'sha':one._store(data),'bytes':len(data)})
+        recipe=declaration(binding);recipe['output_unit_id']=draft['root_unit_id'];draft['blueprints']=[recipe]
+        exported=export_project(one,draft)
+        two=self.engine('closed-two');imported=two.inspect('closed.zip',exported,two.public()['revision'])
+        restored=imported['draft'];requirements=restored['requirements']
+        self.assertEqual(binding,restored['blueprints'][0]['client_templates'])
+        self.assertIn('dependencies/a.txr',{entry['path'] for entry in restored['files']})
+        self.assertFalse(any(row['code']=='blueprint_template_semantic_closure' for row in requirements))
+        self.assertFalse(any(row['code']=='blueprint_template_native_adapter' for row in requirements))
+        self.assertTrue(any(row['code']=='blueprint_template_native_ui' for row in requirements))
+        self.assertFalse(restored['can_confirm'])
 
     def test_project_rejects_rehashed_manifest_with_stale_declaration_binding(self):
         one=self.engine('one')

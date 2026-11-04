@@ -369,6 +369,10 @@ for genuinely owned instances. The original selection callbacks populate the
 material slots; the test never supplies a full-unit record or writes selection
 state.
 
+The material picker uses the original page arrows when an owned instance is on
+another hangar page. It waits for the corresponding native cache update before
+selecting that exact UID.
+
 Material selection does not consume anything. To exercise synthesis, explicitly
 add `synthesize: true` and `output_unit_id` to the blueprint scope. This test
 consumes its isolated account's existing book and materials through the native
@@ -377,6 +381,19 @@ consumer and matching output brief inventory record. Keep an independent SQL
 before/after receipt and verify persistence with a new native login; a success
 reply alone does not prove reload or acquisition-route closure. All identities
 and consumption settings are hash-bound before launch.
+
+### Native catalog occupancy
+
+A separate sealed unit-page scope accepts
+`native_id_probe: {ids: [...], witness_unit_id: ..., require_absent: true}`.
+It permits up to 3072 unique IDs in the native range 1–9999999. After a real
+login and equip, the observer verifies an existing typed unit witness, then
+uses the original global-map lookup and exact end sentinel for every ID. It
+writes `native-id-occupancy.json` under the run's native diagnostics directory.
+This is a read-only probe: it does not register records or reserve IDs. Absence
+applies only to that exact prepared client at that time; installation still
+needs its own conflict check. Keep this scope separate from blueprint,
+portrait, acquisition and capsule scenarios.
 
 ### Coordinated multiplayer
 

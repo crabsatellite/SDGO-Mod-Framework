@@ -189,7 +189,38 @@ BlueprintActions::Result BlueprintActions::SelectMaterials() {
             if(!root || !root[0x162] || !list)return Waiting;
             if(!Match(root,list,L"UnitList",7))return ControlMismatch;
             state_.material_slot=slot;
-            if(Read<int32_t>(picker+0x74)!=(slot-1)/6)return WrongPage;
+            const auto page=Read<int32_t>(picker+0x74),maximum=Read<int32_t>(picker+0x78);
+            const auto group=Read<int32_t>(picker+0x6c),maximumGroup=Read<int32_t>(picker+0x70);
+            const auto target=static_cast<uint32_t>((slot-1)/6);
+            state_.material_page=page>=0 ? static_cast<uint32_t>(page):~0u;
+            if(page<0 || maximum<0 || page>maximum || target>static_cast<uint32_t>(maximum) ||
+                group<0 || group>maximumGroup)return WrongPage;
+            if(material_page_pending_) {
+                if(static_cast<uint32_t>(page)==material_page_from_)return Waiting;
+                material_page_pending_=false;
+            }
+            if(static_cast<uint32_t>(page)!=target) {
+                const auto targetGroup=target/5;
+                const wchar_t* anchor=targetGroup<static_cast<uint32_t>(group) ? L"LeftBtn":
+                    targetGroup>static_cast<uint32_t>(group) ? L"RightBtn":
+                    target<static_cast<uint32_t>(page) ? L"LeftBtn":L"RightBtn";
+                const wchar_t* command=targetGroup!=static_cast<uint32_t>(group) ? anchor:
+                    target<static_cast<uint32_t>(page) ? L"LeftOneBtn":L"RightOneBtn";
+                auto* arrow=Find(root,anchor,4);
+                if(!arrow || !Match(root,arrow,anchor,4))return ControlMismatch;
+                if(!arrow[0x162] || !arrow[0x167])return Waiting;
+                // Reuse the original unit-manager page business, as used by
+                // UnitSelectActions: a real root-owned directional anchor and
+                // the retained single-page command. No page/cache is written.
+                alignas(4) uint8_t descriptor[24]{};bool constructed=false;
+                __try {
+                    constructed=ctor_(descriptor,command)!=nullptr;
+                    if(!constructed)return NativeFault;
+                    mixingCallback_(picker,0x101,descriptor,arrow);
+                } __finally {if(constructed)dtor_(descriptor);}
+                material_page_pending_=true;material_page_from_=page;
+                ++state_.material_page_calls;return Submitted;
+            }
             alignas(4) uint8_t full[153]{};full_(info,full,slot);
             if(Read<uint32_t>(full)!=config_.material_units[material_index_] ||
                Read<uint64_t>(full+8)!=wanted)return Waiting;

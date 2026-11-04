@@ -57,7 +57,9 @@ class BlueprintWorkspace(unittest.TestCase):
     def test_native_capabilities_distinguish_typed_recipes_from_raw_templates(self):
         capability=self.engine.public()['capabilities']['blueprints']
         self.assertTrue(capability['native_registration'])
-        self.assertFalse(capability['client_templates']['native_registration_authorized'])
+        self.assertTrue(capability['client_templates']['native_registration_authorized'])
+        self.assertEqual(['sdgo.unit-blueprint-client-templates/2'],
+                         capability['client_templates']['native_registration_schemas'])
         d=self.save([draft_recipe()])
         codes=[row['code'] for row in d['requirements']]
         self.assertNotIn('blueprint_native_adapter',codes)

@@ -134,7 +134,7 @@ definitions 可选字段 `blueprints` 接受设计图列表；每个机体族最
 }
 ```
 
-清单协议为 `sdgo.unit-blueprint-client-templates/1`，包含 `owner`、两份 `templates` 和
+清单协议为 `sdgo.unit-blueprint-client-templates/1` 或 `/2`，包含 `owner`、两份 `templates` 和
 完整 `resources`。两份 typed 记录必须明确为 kind 33 / 1197字节的
 `client_recipe_template` 与 kind 34 / 614字节的 `client_item_template`；
 不能按长度把614字节记录猜成 kind 85。每份模板分别绑定不同的 `source_path`、
@@ -148,10 +148,23 @@ RepayPoint，以及图纸物品的目标编号、可选明确名称和配方引�
 编译 SHA-256 与连续差异区间收据，未知字节必须保留。
 
 `resources` 为每个直接引用路径绑定项目成员和 SHA-256；项目导出／再导入必须保留清单、
-两对完整记录及资源原字节，缺项、修改或跨声明冲突均拒收。该检查只证明记录可见的直接引用和
-审核改写，不解析 SPR 内容，也不证明 SPR→TXR、模型、动画或特效的递归语义闭包。
-`resource_closure_verified`、`native_registration_authorized` 和
-`native_runtime_accepted` 因此保持 false；修改标志不能跳过既有资源要求或原生登记门禁。
+两对完整记录及资源原字节，缺项、修改或跨声明冲突均拒收。版本1只证明记录可见的直接引用和
+审核改写，`resource_closure_verified` 保持 false。
+
+版本2额外要求 `resource_dependencies` 列表，每项为 `{path, member, sha256}`，仅接受 TXR。
+验证器从准备记录的 SPR 出发，逐帧读取原生10000/11000布局的第一个纹理载体，检查全部 TXR 的
+哈希并解码 PNG、DDS 或 TGA（含 `ZOATEX1` 包装）。第二个字符串和未分配字段保留为不透明证据，
+不根据看似路径的内容推断依赖。缺纹理、多余依赖、成员重用、冲突、非法 UV 或超预算均拒绝。
+单纹理最多16,777,216像素，闭包最多67,108,864像素、128份资源和128MiB原始字节。
+
+派生的 `runtime_resources` 仅包含准备记录的 SPR 及其纹理；原始版本专用素材随制作项目保留，
+不会自动安装为游戏资源。版本2可返回 `resource_closure_verified: true`，但这只覆盖设计图展示资源的
+静态闭包，不证明模型、动画、特效、原生交互或战斗行为。
+独立验证结果的 `native_registration_authorized` 和 `native_runtime_accepted` 仍为 false。
+发布编译器还须检查框架支持的原生 profile：当前只开放验证通过的版本2；版本1拒绝编译为运行包。
+编译成功的发布收据可标记 `native_registration_authorized: true`，但
+`native_runtime_accepted` 仍为 false，不能用通用消费者测试替代每份包自身的实机验收。
+修改清单标志不能跳过既有资源要求或原生登记门禁。
 旧包没有 `client_templates` 时仍沿用 donor 编译路径。
 
 对应 schema 与检查在 `owner/units/blueprints.py`；目标1197字节布局适配在
