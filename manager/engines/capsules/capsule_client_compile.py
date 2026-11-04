@@ -15,7 +15,7 @@ from .capsule_ui_layout import patch_capsule_price_defaults
 
 
 TABLE_BASES = {"0033": 155001, "0101": 135001, "0154": 3519001, "0155": 3520001}
-COMPILER_VERSION = 10
+COMPILER_VERSION = 13
 
 
 def resident_activity_ownership(client):
@@ -24,6 +24,31 @@ def resident_activity_ownership(client):
     values=read_json(path).get('activity_ownership',[])
     if not isinstance(values,list):raise ValueError('Activity registry ownership must be a list')
     return values
+
+
+def coordinate_activity_priority(result):
+    """Let the collection provider pin its own row after activity compilation."""
+    from owner.collection_capsule.client import pin_collection_activity_rows
+    size,rows=gdt_records(result['gdt'])
+    rows,receipt=pin_collection_activity_rows(rows,
+        movable_machine_ids={row['machine_id'] for row in result['ownership']})
+    result['metadata']['collection_priority']=receipt
+    if receipt['action']!='pinned':return result
+    encoded=encode_gdt(size,rows,extra=result['metadata']['extra'])
+    result['gdt']=encoded;result['resources']['gdrs/0099.gdt']=encoded
+    result['metadata']['gdt_sha256']=hashlib.sha256(encoded).hexdigest()
+    by_machine={struct.unpack_from('<I',row,5)[0]:(index,row) for index,row in enumerate(rows)}
+    for owned in result['ownership']:
+        index,row=by_machine[owned['machine_id']]
+        owned['grid_id']=struct.unpack_from('<I',row,0)[0]
+        owned['row_sha256']=hashlib.sha256(row).hexdigest()
+    for placement in result['placements']:
+        index,row=by_machine[placement['machine_id']];position=len(rows)-index
+        placement.update(grid_id=struct.unpack_from('<I',row,0)[0],row_index=index,
+            native_position=position,page=(position-1)//8+1,page_slot=(position-1)%8+1,
+            native_position_predicted=True,native_position_basis='reverse-grid-before-native-visibility-filter',
+            row_sha256=hashlib.sha256(row).hexdigest())
+    return result
 
 
 def resident_extensions(client, reader):
@@ -374,7 +399,9 @@ def compile_catalog(catalog, client, lookup, output):
         result=compile_activity_client(extension_tables['0099'][0],source_resources,
             [{key:row[key] for key in keys} for row in catalog['activity_machines']],
             catalog.get('project_assets',[]),ownership=activity_ownership,
+            renames=catalog.get('activity_machine_renames',()),
             reserved_resource_ids=occupied_sprite_ids|occupied_texture_ids)
+        result=coordinate_activity_priority(result)
         activity_ownership=result['ownership'];activity_metadata=result['metadata']
         resources.update(result['resources'])
         size,rows=gdt_records(result['gdt']);extension_tables['0099']=(result['gdt'],len(rows))

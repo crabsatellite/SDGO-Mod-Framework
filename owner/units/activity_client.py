@@ -55,6 +55,12 @@ _MACHINE_FIELDS = {
     "artwork_key",
     "artwork_sha256",
 }
+_RENAME_FIELDS = {
+    "from_id",
+    "to_id",
+    "project_key",
+    "unit_id",
+}
 
 
 class ActivityClientError(ValueError):
@@ -247,6 +253,58 @@ def _machines(
                 "project_key": project_key,
                 "price": price,
                 "artwork": artwork,
+            }
+        )
+    return result
+
+
+def _renames(supplied: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    if (
+        not isinstance(supplied, Sequence)
+        or isinstance(supplied, (str, bytes, bytearray))
+        or len(supplied) > 999
+    ):
+        raise ActivityClientError("renames must be a list with at most 999 entries")
+    result: list[dict[str, Any]] = []
+    used_ids: set[int] = set()
+    identities: set[tuple[str, int]] = set()
+    for index, raw_entry in enumerate(supplied):
+        if not isinstance(raw_entry, Mapping) or set(raw_entry) != _RENAME_FIELDS:
+            raise ActivityClientError(
+                f"activity rename {index} fields differ from schema v1"
+            )
+        entry = dict(raw_entry)
+        from_id = _integer(
+            entry["from_id"], f"activity rename {index} from_id", 1, 0x7FFFFFFF
+        )
+        to_id = _integer(
+            entry["to_id"], f"activity rename {index} to_id", 1, 0x7FFFFFFF
+        )
+        if from_id == to_id:
+            raise ActivityClientError(
+                f"activity rename {index} must change the machine ID"
+            )
+        project_key = _project(
+            entry["project_key"], f"activity rename {index} project_key"
+        )
+        unit_id = _integer(
+            entry["unit_id"], f"activity rename {index} unit_id", 1, 9_999_999
+        )
+        identity = (project_key, unit_id)
+        if (
+            from_id in used_ids
+            or to_id in used_ids
+            or identity in identities
+        ):
+            raise ActivityClientError("activity rename mappings overlap")
+        used_ids.update((from_id, to_id))
+        identities.add(identity)
+        result.append(
+            {
+                "from_id": from_id,
+                "to_id": to_id,
+                "project_key": project_key,
+                "unit_id": unit_id,
             }
         )
     return result
@@ -457,6 +515,84 @@ def _machine_rows(rows: Sequence[bytes]) -> dict[int, list[int]]:
     return result
 
 
+def _apply_renames(
+    renames: Sequence[Mapping[str, Any]],
+    rows: list[bytes],
+    rows_by_machine: dict[int, list[int]],
+    owned: dict[int, dict[str, Any]],
+    actions: dict[int, str],
+) -> None:
+    for rename in renames:
+        from_id = rename["from_id"]
+        to_id = rename["to_id"]
+        source = owned.get(from_id)
+        target = owned.get(to_id)
+        source_rows = rows_by_machine.get(from_id, ())
+        target_rows = rows_by_machine.get(to_id, ())
+
+        if not source_rows:
+            if target is None:
+                if target_rows:
+                    raise ActivityClientError(
+                        f"activity rename target {to_id} is occupied by a foreign row"
+                    )
+                raise ActivityClientError(
+                    f"activity rename source {from_id} is not owned"
+                )
+            if (
+                target["project_key"] != rename["project_key"]
+                or target["unit_id"] != rename["unit_id"]
+            ):
+                raise ActivityClientError(
+                    f"activity rename target {to_id} belongs to another owner"
+                )
+            if len(target_rows) != 1:
+                raise ActivityClientError(
+                    f"activity rename target {to_id} is not uniquely owned"
+                )
+            continue
+
+        if source is None:
+            raise ActivityClientError(
+                f"activity rename source {from_id} is not owned"
+            )
+        if (
+            source["project_key"] != rename["project_key"]
+            or source["unit_id"] != rename["unit_id"]
+        ):
+            raise ActivityClientError(
+                f"activity rename source {from_id} ownership differs"
+            )
+        if len(source_rows) != 1:
+            raise ActivityClientError(
+                f"activity rename source {from_id} is not uniquely owned"
+            )
+        if target_rows or target is not None:
+            if target is None:
+                raise ActivityClientError(
+                    f"activity rename target {to_id} is occupied by a foreign row"
+                )
+            raise ActivityClientError(
+                f"activity rename target {to_id} belongs to another owner"
+            )
+
+        row_index = source_rows[0]
+        renamed_row = bytearray(rows[row_index])
+        struct.pack_into("<I", renamed_row, 5, to_id)
+        rows[row_index] = bytes(renamed_row)
+        rows_by_machine.pop(from_id)
+        rows_by_machine[to_id] = [row_index]
+        renamed_ownership = {
+            **source,
+            "machine_id": to_id,
+            "row_sha256": _sha256(rows[row_index]),
+        }
+        owned.pop(from_id)
+        owned[to_id] = renamed_ownership
+        actions.pop(from_id)
+        actions[to_id] = "renamed"
+
+
 def _make_row(grid_id: int, machine: Mapping[str, Any], sprite_path: str) -> bytes:
     row = bytearray(capsule_client.TABLE_SIZES[capsule_client.ACTIVITY_TABLE])
     struct.pack_into("<I", row, 0, grid_id)
@@ -497,8 +633,13 @@ def compile_activity_client(
     *,
     ownership: Sequence[Mapping[str, Any]] = (),
     reserved_resource_ids: Sequence[int] = (),
+    renames: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Compile reviewed dedicated activity machines into a provider resource set.
+
+    Explicit renames authenticate the source through its ownership receipt and
+    change only the native MachineID field.  They cannot combine an identity
+    migration with a price, currency, poster, grid, or resource update.
 
     Omitted prior-owned machines are retained.  There is deliberately no delete
     operation in this pure adapter.
@@ -523,12 +664,20 @@ def compile_activity_client(
     rows_by_machine = _machine_rows(rows)
     assets = _decode_assets(project_assets)
     normalized_machines = _machines(machines, assets)
+    normalized_renames = _renames(renames)
     owned, actions = _ownership(
         ownership,
         rows,
         rows_by_machine,
         output_resources,
         normalized_resources,
+    )
+    _apply_renames(
+        normalized_renames,
+        rows,
+        rows_by_machine,
+        owned,
+        actions,
     )
     owned_units = {
         entry["unit_id"]: machine_id for machine_id, entry in owned.items()
@@ -634,6 +783,17 @@ def compile_activity_client(
         )
         if prior is None:
             action = "added"
+        elif actions.get(machine_id) == "renamed":
+            if (
+                old_row != new_row
+                or old_sprite != sprite
+                or old_texture != texture
+                or prior["artwork_sha256"] != machine["artwork_sha256"]
+            ):
+                raise ActivityClientError(
+                    f"activity rename {machine_id} cannot also change native content"
+                )
+            action = "renamed"
         elif (
             old_row == new_row
             and old_sprite == sprite
@@ -704,7 +864,7 @@ def compile_activity_client(
         if not 0 <= row_index < len(rows):
             raise ActivityClientError(f"owned activity machine {machine_id} grid is invalid")
         row = rows[row_index]
-        native_position = row_index + 1
+        native_position = len(rows) - row_index
         detail = machine_details.get(machine_id)
         placements.append(
             {
@@ -721,6 +881,8 @@ def compile_activity_client(
                 "grid_id": entry["grid_id"],
                 "row_index": row_index,
                 "native_position": native_position,
+                "native_position_predicted": True,
+                "native_position_basis": "reverse-grid-before-native-visibility-filter",
                 "page": (native_position - 1) // 8 + 1,
                 "page_slot": (native_position - 1) % 8 + 1,
                 "currency_type": struct.unpack_from("<I", row, 9)[0],

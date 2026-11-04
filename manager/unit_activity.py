@@ -130,6 +130,38 @@ def save_activity(provider, body):
                 'message': '活动机台配置已保存并通过原生目录检查；编译并应用后才会上架'}
 
 
+def renumber_activity(provider,body):
+    """Stage an owned, unused activity-machine number change for paired apply."""
+    from owner.units.activity_ids import machine_id_from_number
+    if not isinstance(body,dict) or set(body)!={'expected_revision','id','number'}:
+        raise ValueError('活动机台改号字段无效')
+    new_id=machine_id_from_number(body['number'])
+    _,ini=_host(provider);app=provider.get_engine()
+    with app.store.lock:
+        catalog,raw=app.store.read();app.store._expect(catalog,body['expected_revision'])
+        machine=next((row for row in catalog.get('activity_machines',[]) if row['id']==body['id']),None)
+        if machine is None:raise ValueError('请先保存独立活动机配置，再修改编号')
+        if new_id==machine['id']:
+            return {'catalog_revision':digest(catalog),'machine':copy.deepcopy(machine),'changes_applied':False,'message':'活动机台编号未改变'}
+        if any(row['id']==new_id for row in catalog.get('activity_machines',[])+catalog.get('activity_drafts',[])):
+            raise ValueError('该活动机台编号已被其他项目占用')
+        changed=copy.deepcopy(machine);changed['id']=new_id;changed.pop('revision',None);changed['revision']=model.revision(changed)
+        fields=('schema_version','id','unit_id','project_key','revision','currency_type','price','template_machine_id','pool')
+        config={key:changed[key] for key in fields}
+        review=ActivityRepository(ini).preflight_renumber(config,machine['id'])
+        candidate=copy.deepcopy(catalog)
+        candidate['activity_machines']=[changed if row['id']==machine['id'] else row for row in candidate['activity_machines']]
+        for row in candidate.get('activity_drafts',[]):
+            if row['id']==machine['id'] and row['project_key']==machine['project_key']:
+                row['id']=new_id
+        migrations=[row for row in candidate.get('activity_machine_renames',[]) if row['project_key']!=machine['project_key']]
+        migrations.append({'from_id':machine['id'],'to_id':new_id,'project_key':machine['project_key'],'unit_id':machine['unit_id']})
+        candidate['activity_machine_renames']=migrations
+        validate(candidate);app.store._save(candidate,raw)
+        return {'catalog_revision':digest(candidate),'machine':changed,'review':review,'changes_applied':False,
+                'message':'活动机台编号已保存；编译并应用后同步更新客户端和服务器，保留现有奖池与素材'}
+
+
 def preview_activity_pattern(provider, body):
     if not isinstance(body, dict) or set(body) != {'expected_revision', 'id', 'pattern_id'}:
         raise ValueError('活动模板请求无效')
@@ -156,7 +188,8 @@ def preview_activity_pattern(provider, body):
             family['category_id'], units=list(source.repository.catalog['units'].values()),
             categories=tables[('GOnlineGame', 'tbl_ItemCategory')], prices=tables[('GOnlineGame', 'tbl_ItemMachinePrice')],
             pool=tables[('GOnlineGame', 'tbl_ItemMachineList')], listed_machines=listed,
-            preferences=catalog.get('activity_preferences'))
+            preferences=catalog.get('activity_preferences'),
+            excluded_machine_ids={r['id'] for r in catalog.get('activity_machines',[])+catalog.get('activity_drafts',[])})
         if any(r['id'] == row['id'] for r in catalog.get('activity_machines', [])):
             preset['template_machine_id'] = row['template_machine_id']
         items=source.repository.catalog['items']

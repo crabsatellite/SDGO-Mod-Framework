@@ -202,6 +202,9 @@ class Capsules(Provider):
         if method=='POST' and urlsplit(uri).path=='/api/projects/activity':
             from .unit_activity import save_activity
             return save_activity(self,body)
+        if method=='POST' and urlsplit(uri).path=='/api/projects/activity-number':
+            from .unit_activity import renumber_activity
+            return renumber_activity(self,body)
         if method=='POST' and urlsplit(uri).path=='/api/projects/activity-preset':
             from .unit_activity import preview_activity_pattern
             return preview_activity_pattern(self,body)

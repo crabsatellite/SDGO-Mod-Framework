@@ -572,6 +572,46 @@ def _make_activity_row(template: bytes, grid_id: int, machine_id: int,price_gp:i
     return bytes(row)
 
 
+def pin_collection_activity_rows(rows, *, movable_machine_ids=()):
+    """Keep this provider's recognized collection row last in native grid order.
+
+    Only a tail made entirely of authenticated caller-owned activity rows may
+    move with it. Ordinary native or unknown-provider rows remain byte-exact.
+    Native activity controls reverse grid order when displaying the list.
+    """
+    rows=list(rows)
+    matches=[index for index,row in enumerate(rows)
+             if _activity_sprite(row).replace('\\','/').lower()==COLLECTION_SPRITE.replace('\\','/').lower()]
+    if not matches:return rows,{'action':'absent','moves':[]}
+    if len(matches)!=1:raise ClientRegistryError('Collection priority row is ambiguous')
+    at=matches[0];collection=rows[at]
+    machine_id=struct.unpack_from('<I',collection,5)[0]
+    grid_id=struct.unpack_from('<I',collection,0)[0]
+    price=struct.unpack_from('<I',collection,15)[0]
+    if (not _owned_activity_machine(collection,machine_id) or
+            collection!=_make_activity_row(collection,grid_id,machine_id,price)):
+        raise ClientRegistryError('Collection priority row does not match its provider format')
+    if at==len(rows)-1:return rows,{'action':'unchanged','machine_id':machine_id,'moves':[]}
+    allowed=set(movable_machine_ids)
+    tail=rows[at+1:]
+    ids=[struct.unpack_from('<I',row,5)[0] for row in tail]
+    if any(identity not in allowed for identity in ids) or len(ids)!=len(set(ids)):
+        raise ClientRegistryError('Cannot move collection priority across a foreign activity row')
+    ordered=tail+[collection]
+    moves=[]
+    for index,row in enumerate(ordered,at):
+        identity=struct.unpack_from('<I',row,5)[0]
+        old_grid=struct.unpack_from('<I',row,0)[0]
+        new_grid=TABLE_BASES[ACTIVITY_TABLE]+index
+        changed=bytearray(row);struct.pack_into('<I',changed,0,new_grid)
+        rows[index]=bytes(changed)
+        if old_grid!=new_grid:
+            moves.append({'machine_id':identity,'from_grid_id':old_grid,'grid_id':new_grid,
+                          'source_row_sha256':_sha256(row),'row_sha256':_sha256(rows[index])})
+    return rows,{'action':'pinned','machine_id':machine_id,'moves':moves,
+                 'foreign_rows_preserved':True,'only_grid_ids_changed':True}
+
+
 def _normalize_unit_items(unit_items) -> tuple[dict, ...]:
     normalized = []
     category_ids = set()
