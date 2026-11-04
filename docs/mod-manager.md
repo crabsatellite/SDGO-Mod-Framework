@@ -34,6 +34,11 @@ How saving works is stated on every page:
   Leaving a page with unsaved changes asks first.
 - Holiday and birthday gifts save in two parts, the common rules and the server's private roster; each section
   names its part, and **保存全部并重启后台任务** saves both and restarts the background task.
+- Battle rewards saves each part with the button in its own section; each heading says what it saves, and the
+  preview sections say they save nothing. The bottom bar lists unsaved parts and jumps to them. Saving one part
+  reloads the page from the saved configuration, so Manager asks first when another part has unsaved changes.
+- FRP keeps **保存配置** (save) and **导出玩家配置包（先保存）** (export, saving first) in the bottom bar; the
+  collection capsule page numbers its generate, check, install and export steps.
 - Save results appear at the bottom right of the window, wherever the page is scrolled; errors stay until closed.
 - Long pages list their sections under the title for one-click jumps, with a back-to-top button.
 - The capsule machine list and editor scroll separately; the editor's save button and the footer's export and
