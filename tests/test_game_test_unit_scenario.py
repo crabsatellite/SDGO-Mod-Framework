@@ -7,6 +7,21 @@ import test_game_test as runner_fixture
 game_test=runner_fixture.game_test
 
 class UnitScenarioTests(unittest.TestCase):
+    def test_blueprint_book_preview_is_sealed_and_cannot_purchase_or_mix_scopes(self):
+        context={'pages_only':True,'play_unit_uid':17}
+        value={'schema':1,'capture_frames':True,'blueprint':{'recipe_id':201,'book_uid':2**32+7}}
+        result=scope.validate(value,context)
+        self.assertEqual(scope.cases(result)[-2:],('pages.blueprint.book','pages.blueprint.recipe'))
+        self.assertFalse(any('draw' in name or 'claim' in name or 'synthesis' in name for name in scope.cases(result)))
+        settings=scope.settings(result)
+        self.assertEqual(settings['BlueprintBookUid'],str(2**32+7))
+        self.assertEqual(settings['UnitPresentations'],'0')
+        for change in ({'book_uid':True},{'recipe_id':0},{'book_uid':2**63},{'synthesize':True}):
+            with self.assertRaises(ValueError):scope.validate(value|{'blueprint':value['blueprint']|change},context)
+        for change in ({'portraits':True},{'collection_preview':True},{'activity_draw':True}):
+            with self.assertRaises(ValueError):scope.validate(value|change,context)
+        with self.assertRaises(ValueError):scope.validate(value,context|{'page_group':'hangar'})
+
     def test_one_activity_draw_requires_typed_pairs_and_retains_legacy_inputs(self):
         context={'pages_only':True,'play_unit_uid':17}
         old={'schema':1,'capture_frames':True,'portraits':True,'collection_preview':True,

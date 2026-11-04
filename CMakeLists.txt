@@ -207,7 +207,7 @@ sdgo_add_mod(room_random SERVER DESCRIPTION "per-round random owned human loadou
 sdgo_add_mod(net_route DESCRIPTION "configured network endpoint routes" SOURCES mods/net_route/net_route.cpp LIBS ws2_32 shell32 FILES config.example.ini)
 sdgo_add_mod(agent_udp_pool SERVER DESCRIPTION "native Agent UDP port pool" SOURCES mods/agent_udp_pool/agent_udp_pool.cpp LIBS ws2_32 FILES config.example.ini)
 sdgo_add_mod(agent_relay_log_fix SERVER DESCRIPTION "native Agent relay printf fix" SOURCES mods/agent_relay_log_fix/agent_relay_log_fix.cpp)
-sdgo_add_mod(game_test_client DESCRIPTION "isolated native GameTest client" SOURCES mods/game_test_client/game_test_client.cpp LIBS user32 ws2_32)
+sdgo_add_mod(game_test_client DESCRIPTION "isolated native GameTest client" SOURCES mods/game_test_client/game_test_client.cpp mods/game_test_client/blueprint_actions.cpp LIBS user32 ws2_32)
 sdgo_add_mod(game_test_server SERVER DESCRIPTION "isolated native GameTest battle server" SOURCES mods/game_test_server/game_test_server.cpp)
 
 # Bounded developer recorder, outside the installed Mod/runtime trees.
