@@ -311,11 +311,16 @@ def merge_required_symbols(
     *,
     preserve_existing: bool = False,
     allow_missing: bool = False,
+    include_all: bool = False,
 ) -> None:
 
     source = read_ini(stage_symbols)
     destination = read_ini(copied_symbols) if copied_symbols.is_file() else ini_parser()
     required = {"host"}
+    if include_all:
+        # Multi-host Mods resolve their host-specific aliases dynamically.
+        # Keep the complete matching staged map while preserving local aliases.
+        required.update(source.sections())
     for manifest in manifests:
         names = manifest_requires(manifest)
         fragment = manifest.parent / 'symbols.fragment.ini'
@@ -2640,7 +2645,12 @@ def validate_fps_prepared_client(root: Path, plan: dict) -> None:
         raise GameTestError(f"invalid prepared native FPS client: {error}") from error
 
 
-def collect_hashes(root: Path) -> tuple[dict, dict]:
+def unused_direct_executable(relative: Path, launcher_path: str = '') -> bool:
+    return (not launcher_path and relative.parent==Path('.') and
+            relative.suffix.casefold()=='.exe' and relative.name.casefold()!=GAME_EXE.casefold())
+
+
+def collect_hashes(root: Path, launcher_path: str = '') -> tuple[dict, dict]:
     immutable: dict[str, str] = {}
     initial: dict[str, str] = {}
 
@@ -2652,8 +2662,10 @@ def collect_hashes(root: Path) -> tuple[dict, dict]:
         collection[path.relative_to(root).as_posix()] = sha256(path)
 
     bind(root / GAME_EXE, immutable)
+    if launcher_path:bind(root/launcher_path,immutable)
     for path in sorted(root.iterdir(), key=lambda item: item.name.lower()):
-        if path.is_file() and path.suffix.lower() in IMMUTABLE_ROOT_SUFFIXES:
+        if (path.is_file() and path.suffix.lower() in IMMUTABLE_ROOT_SUFFIXES and
+                not unused_direct_executable(path.relative_to(root),launcher_path)):
             bind(path, immutable)
     for path in (
         root / "sdgo" / "core.dll",
@@ -3106,7 +3118,12 @@ def prepare(
                 return str(destination)
             return shutil.copy2(source,destination)
         if _owned_client_transfer is None:
-            shutil.copytree(client_template, client, ignore=copy_ignore,copy_function=copy_client_file)
+            def ignore_client_files(directory,names):
+                ignored=copy_ignore(directory,names)
+                if Path(directory).resolve()==client_template:
+                    ignored.update(name for name in names if unused_direct_executable(Path(name),launcher_path or ''))
+                return ignored
+            shutil.copytree(client_template, client, ignore=ignore_client_files,copy_function=copy_client_file)
         else:
             holding, reuse_token = _owned_client_transfer
             marker=read_json(holding/'.gametest-reusing.json')
@@ -3183,7 +3200,7 @@ def prepare(
         entry = client / (launcher_path or GAME_EXE)
         if not entry.is_file() or not is_relative_to(entry.resolve(), client.resolve()):
             raise GameTestError(f"configured process entry is not inside the copied client: {entry}")
-        immutable, initial = collect_hashes(client)
+        immutable, initial = collect_hashes(client,launcher_path or '')
         source_root = Path(__file__).resolve().parents[1]
         metadata = {
             "schema": SCHEMA_VERSION,
@@ -3273,7 +3290,7 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
     # File transfer does not execute the previous observer. Its original sealed
     # contract can predate new/reordered cases; the new preparation below is
     # still validated against the complete current contract before it can run.
-    previous=validate_metadata(run_dir, for_reuse=True);verify_hashes(previous)
+    previous=validate_metadata(run_dir, for_reuse=True);verify_hashes(previous,for_reuse=True)
     client_root=run_dir/'client'
     fps_only=options.get('fps_cap') is not None
     if fps_only!=(previous.get('suite')==FPS_SUITE):
@@ -3524,7 +3541,7 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
     return metadata
 
 
-def verify_hashes(metadata: dict) -> None:
+def verify_hashes(metadata: dict, *, for_reuse: bool = False) -> None:
     root = Path(metadata["client"]["root"]).resolve()
     hashes = metadata["client"].get("immutable_hashes")
     if not isinstance(hashes, dict) or not hashes:
@@ -3552,6 +3569,11 @@ def verify_hashes(metadata: dict) -> None:
         path = (root / relative_path).resolve()
         if relative_path.is_absolute() or not is_relative_to(path, root):
             raise GameTestError(f"immutable payload path escapes the client capsule: {relative}")
+        # Old direct-mode capsules included desktop/bootstrap tools which the
+        # original game never executes. Reuse migrates to the narrower sealed
+        # input set without reading or restoring quarantined helper programs.
+        if for_reuse and unused_direct_executable(relative_path,plan.get('launcher_path','')):
+            continue
         if (
             not isinstance(expected, str)
             or len(expected) != 64
