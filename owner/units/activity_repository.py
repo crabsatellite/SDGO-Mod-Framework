@@ -891,14 +891,14 @@ def _write_state(cursor, state: Mapping[str, Sequence[Mapping[str, Any]]], *, ex
     if exists:
         cursor.execute(
             "UPDATE dbo.tbl_ItemMachinePrice "
-            "SET Type=?,Price=?,Disable=? WHERE MachineID=?",
+            "SET Type=?,Price=?,Disable=? WHERE MachineID=?; "
+            "SELECT @@ROWCOUNT AS AffectedRows;",
             price["Type"],
             price["Price"],
             price["Disable"],
             machine_id,
         )
-        if getattr(cursor, "rowcount", 1) != 1:
-            raise ValueError("活动机台价格记录在事务中消失")
+        _cas_one(cursor,"活动机台价格记录在事务中消失")
         cursor.execute(
             "DELETE FROM dbo.tbl_ItemMachineList WHERE MachineID=?",
             machine_id,
@@ -942,6 +942,20 @@ def _write_state(cursor, state: Mapping[str, Sequence[Mapping[str, Any]]], *, ex
     )
 
 
+def _cas_one(cursor, message):
+    # A caller's installer can leave SET NOCOUNT ON. ODBC rowcount is then -1
+    # even after a successful update; read the server's actual @@ROWCOUNT.
+    for _ in range(4):
+        if cursor.description:
+            if [column[0] for column in cursor.description] != ['AffectedRows']:
+                break
+            row=cursor.fetchone()
+            if row is not None and len(row)==1 and row[0]==1:return
+            break
+        if not cursor.nextset():break
+    raise ValueError(message)
+
+
 def _append_ledger_text(cursor, config, installed_hash, field, text):
     # The legacy SQL Server ODBC driver uses SQLPutData for long nvarchar
     # parameters and fails on this host with error 7125. Each bound string is
@@ -952,11 +966,11 @@ def _append_ledger_text(cursor, config, installed_hash, field, text):
         expression = "+".join("CAST(? AS nvarchar(max))" for _ in batch)
         cursor.execute(
             f"UPDATE dbo.sdgo_UnitActivityMachines SET {field}={field}+{expression} "
-            "WHERE MachineID=? AND InstalledHash=? AND Revision=?",
+            "WHERE MachineID=? AND InstalledHash=? AND Revision=?; "
+            "SELECT @@ROWCOUNT AS AffectedRows;",
             *batch, config["id"], installed_hash, config["revision"],
         )
-        if getattr(cursor, "rowcount", 1) != 1:
-            raise ValueError("活动机台来源收据分段写入 CAS 失败")
+        _cas_one(cursor,"活动机台来源收据分段写入 CAS 失败")
 
 
 def _upsert_ledger(cursor, inspection: Mapping[str, Any], installed_hash: str) -> None:
@@ -991,14 +1005,14 @@ UPDATE dbo.sdgo_UnitActivityMachines
 SET OwnerKey=?,ProjectKey=?,UnitID=?,Revision=?,TemplateMachineID=?,
     TemplateHash=?,InstalledHash=?,PoolSize=?,ConfigJson=?,SourceJson=?,
     UpdatedAt=SYSUTCDATETIME()
-WHERE MachineID=? AND InstalledHash=?
+WHERE MachineID=? AND InstalledHash=?;
+SELECT @@ROWCOUNT AS AffectedRows;
 """,
             *values,
             config["id"],
             inspection["ledger"]["InstalledHash"],
         )
-        if getattr(cursor, "rowcount", 1) != 1:
-            raise ValueError("活动机台账本 CAS 更新失败")
+        _cas_one(cursor,"活动机台账本 CAS 更新失败")
     for field, key in (("ConfigJson", "config_json"), ("SourceJson", "source_json")):
         _append_ledger_text(cursor, config, installed_hash, field, inspection[key])
 

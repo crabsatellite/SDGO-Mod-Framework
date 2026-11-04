@@ -116,6 +116,7 @@ class Result:
 
 class Backend:
     def __init__(self):
+        self.nocount=False
         self.tables = {
             table: {} for table, _ in STATE_TABLES
         }
@@ -192,6 +193,7 @@ class FakeCursor:
         self.result = Result()
         self.rowcount = -1
         self.fast_executemany = False
+        self.description=None
 
     def fetchone(self):
         return self.result.fetchone()
@@ -208,6 +210,7 @@ class FakeCursor:
         self.backend.statements.append((compact, tuple(params)))
         self.result = Result()
         self.rowcount = -1
+        self.description=None
         if "sys.sp_getapplock" in compact:
             self.result = Result([(0,)])
         elif compact.startswith("SELECT OBJECT_ID(N'dbo.sdgo_UnitActivityMachines'"):
@@ -411,6 +414,10 @@ class FakeCursor:
                 self.rowcount = 1
             else:
                 self.rowcount = 0
+        if 'SELECT @@ROWCOUNT AS AffectedRows' in compact:
+            self.result=Result([(self.rowcount,)])
+            self.description=[('AffectedRows',)]
+        if self.backend.nocount:self.rowcount=-1
         return self
 
     def executemany(self, sql, rows):
@@ -817,6 +824,16 @@ class RepositoryTests(unittest.TestCase):
             self.backend.tables["tbl_ItemMachineList"][MACHINE_ID], old_list
         )
         self.assertEqual(self.backend.ledger[MACHINE_ID], old_ledger)
+
+    def test_nocount_does_not_turn_a_successful_ledger_cas_into_failure(self):
+        self.backend.nocount=True
+        self.assertTrue(self.apply()['applied'])
+        revised=config(revision='d'*64,price=300)
+        self.assertTrue(self.apply(revised)['applied'])
+        self.assertTrue(self.repository.verify(revised)['verified'])
+        self.backend.force_ledger_cas_failure=True
+        with self.assertRaisesRegex(ValueError,'CAS'):
+            self.apply(config(revision='e'*64,price=301))
 
 
 if __name__ == "__main__":
