@@ -52,7 +52,7 @@ public:
         for(unsigned i=0;i<count;++i){
             const auto& packet=local[i];char message[192];
             if(packet.kind==1)sprintf_s(message,"native transform reply opcode=%u error=%u",packet.opcode,packet.error);
-            else sprintf_s(message,"native transform notice opcode=%u pilot=%u target=%u direction=%u",packet.opcode,packet.pilot,packet.target,packet.direction);
+            else sprintf_s(message,"native transform notice opcode=%u pilot=%u target=%u raw14=%u",packet.opcode,packet.pilot,packet.target,packet.raw14);
             context->Observe(message);
         }
         if(dropped){char message[96];sprintf_s(message,"native transform packet observations dropped=%ld",dropped);context->Observe(message);}
