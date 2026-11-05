@@ -289,6 +289,20 @@ the report never invents reverse edges. It describes record references, not play
 inventory eligibility or native transform behavior. More than two forms still
 require an appropriate runtime adapter.
 
+The linkable `sdgo_unit_form_composition` developer library can compose a process-local
+native form bank in separate memory. It requires verified host symbols, the expected
+read-only registry callbacks and initialized mode data. It copies scalar equipment
+bonuses rather than a player object, and retains FP state and `LastError`. It
+requires a zero pre-initialization weapon bank; an already-used bank is rejected.
+The pre-initialization stat slice remains a separate seed. The resulting bank
+contains borrowed native pointers and cannot be stored in a project or reused after
+the room or catalog is reconstructed. `StageInactive` prepares a separate slot image
+and preserves inventory identity, HP, skills, active-bank selection and the active
+weapon state. These helpers provide no installation authority or live transform
+commit. An existing inactive form is reusable only when its header, weapon pointers
+and stat slice match, while its current ammo/cooldowns are retained. The Manager's
+multi-form publication restrictions still apply.
+
 The native server accepts unit numbers in `10001..30000`. Unit-number collisions
 need a type-specific relocation range; the larger weapon/skill range cannot be
 used directly for units. Catalog plans and writes reject invalid unit/transform
