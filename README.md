@@ -55,6 +55,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Battle contribution rewards <!-- catalog: `battle_rewards` --> | Contribution GB/MB, configurable human multipliers and optional per-account gathering rewards | [Use](docs/battle-rewards.md) |
 | Collection capsule <!-- catalog: `collection_capsule` --> | Missing-unit activity machine with configurable price and successful-draw limits; 15 per week by default | [Use](docs/collection-capsule.md) |
 | Per-round random loadouts <!-- catalog: `room_random`, `room_random_client` --> | `!rand` draws from each player's own hangar every round; clients wait for complete loadout data before starting | [Use](docs/room-random.md) |
+| Complete PvP All Map <!-- catalog: `all_maps` --> | Make the room's All Map choice draw from the complete native PvP map catalog while keeping mission-only maps in missions | [Use](docs/all-maps.md) |
 | FPS cap <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed | [Use](docs/fps-limit.md) |
 | Extended room titles <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Enter up to 128 characters in normal, AI, team and mission room creation, settings and rename controls | [Use](docs/room-titles.md) |
 | Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Room-selected Easy / Medium / Hard; adjustable Medium attack pacing, shared vision and multilevel navigation | [Use](docs/battle-ai.md) |
