@@ -28,8 +28,8 @@ export async function mountOwnerUpdates(ctx){
   modes.value=h.mode;card.append(modes,element('p','DIY 和玩家目录不会被程序上游自动覆盖。明确切回基础模式会解除原负责人绑定；已有文件不会因此立即改变。','muted'));
   card.append(element('p','已有 Mod 安装首次登记或升级时先按 DIY 保护；确认愿意接受基础整合包覆盖后，再明确选择基础模式。','muted'),button('保存维护方式',run(async()=>{if(modes.value==='player'){message('请在下方校验并绑定负责人更新地址。');return;}await request('/api/owner-updates',{action:'configure',host:h.id,mode:modes.value});await reload();message('维护边界已保存。');}),'ui-btn is-blue'));
   if(h.role==='client'){
-   const feeds=field('负责人更新地址（HTTPS，每行一个；可填同一负责人的备用源）',(h.source?.feeds||[]).join('\n'),true),bindingBox=element('div');
-   card.append(element('h3','跟随负责人'),feeds.wrap,bindingBox);
+   const feeds=field('负责人更新地址（HTTPS 清单或 git+https://仓库.git#分支，每行一个）',(h.source?.feeds||[]).join('\n'),true),bindingBox=element('div');
+   card.append(element('h3','跟随负责人'),element('p','私有 Git 源复用本机已有的 Git HTTPS 凭据；不在绑定文件中保存服主令牌。可填写同一负责人的备用源。','muted'),feeds.wrap,bindingBox);
    let resolved=null;const autoBind=element('input');autoBind.type='checkbox';autoBind.checked=true;const autoBindLabel=element('label');autoBindLabel.append(autoBind,document.createTextNode('绑定后自动跟随（Manager 运行期间）'));card.append(autoBindLabel);
    card.append(button('查看发布者',run(async()=>{resolved=await request('/api/owner-updates',{action:'resolve',feeds:lines(feeds.input.value)});bindingBox.replaceChildren(element('p',resolved.source.label+' · 整合包版本 '+resolved.revision+' · 发布者 '+resolved.source.publisher_id.slice(0,12)),button('确认绑定此负责人',run(async()=>{await request('/api/owner-updates',{action:'configure',host:h.id,mode:'player',source:resolved.source,automatic:autoBind.checked});await reload();message('已绑定，后续运行文件仅从该负责人获取。');}),'ui-btn is-primary'));}),'ui-btn is-blue'));
    if(h.mode==='player'){
@@ -48,7 +48,7 @@ export async function mountOwnerUpdates(ctx){
     if(!plan.components.length)review.append(element('p','上游文件与当前目录一致。','muted'));else review.append(apply);
    }),'ui-btn is-blue'),review);
    if(h.role==='client'){
-    const p=h.publication||{},label=field('整合包名称',p.label||''),directory=field('专用发布目录（与游戏目录分开）',p.directory||''),urls=field('公开发布地址（HTTPS，每行一个）',(p.feeds||[]).join('\n'),true),remote=field('Git 发布仓库（HTTPS，可留空用于现有静态站点）',p.git_remote||''),branch=field('Git 分支',p.branch||'main'),extras=field('额外共享素材（客户端相对路径，每行一项）',(p.extras||[]).join('\n'),true),preview=element('div');
+    const p=h.publication||{},label=field('整合包名称',p.label||''),directory=field('专用发布目录（与游戏目录分开）',p.directory||''),urls=field('玩家读取地址（HTTPS 清单或 git+https://仓库.git#分支，每行一个）',(p.feeds||[]).join('\n'),true),remote=field('Git 发布仓库（HTTPS，可留空用于现有静态站点）',p.git_remote||''),branch=field('Git 分支',p.branch||'main'),extras=field('额外共享素材（客户端相对路径，每行一项）',(p.extras||[]).join('\n'),true),preview=element('div');
     card.append(element('h3','发布你维护的整合包'),element('p','只打包框架、公开 Mod、共享配置及声明的生成素材；原版游戏、账号、数据库、生日名单和仅本地 Mod 留在本机。静态发布目录应由现有 HTTPS 站点托管；填写 Git 仓库时，Manager 使用已有 Git 凭据提交推送。','muted'));
     for(const x of [label,directory,urls,remote,branch,extras])card.append(x.wrap);
     card.append(button('保存发布设置',run(async()=>{await request('/api/owner-updates',{action:'configure',host:h.id,mode:'owner',publication:{label:label.input.value.trim(),directory:directory.input.value.trim(),feeds:lines(urls.input.value),git_remote:remote.input.value.trim(),branch:branch.input.value.trim(),extras:lines(extras.input.value)}});await reload();message('已保存，下一步预览实际文件。');}),'ui-btn is-blue'));

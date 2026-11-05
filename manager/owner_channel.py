@@ -10,7 +10,7 @@ import re
 import subprocess
 import threading
 import time
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 import uuid
 import zipfile
 from . import distribution, storage, updates
@@ -36,6 +36,16 @@ def https(value):
     return value
 
 
+def feed_url(value):
+    if not isinstance(value,str):raise ValueError('负责人更新地址无效')
+    if not value.startswith('git+https://'):return https(value)
+    parsed=urlsplit(value);ref=parsed.fragment or 'main'
+    https(urlunsplit(('https',parsed.netloc,parsed.path,parsed.query,'')))
+    if (not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_./-]{0,99}',ref) or '..'in ref or '//'in ref or
+            ref.endswith(('/','.')) or any(p.startswith('.')or p.endswith('.lock')for p in ref.split('/'))):raise ValueError('Git 更新分支无效')
+    return value
+
+
 def publisher(value):
     if not isinstance(value,str) or not re.fullmatch('[0-9a-f]{32}',value):raise ValueError('服主发布身份无效')
     return value
@@ -49,7 +59,7 @@ def binding(value):
     label=value.get('label','')
     if not isinstance(label,str) or not label.strip() or len(label)>80:raise ValueError('填写服主或整合包名称')
     return {'schema_version':1,'kind':KIND,'publisher_id':publisher(value.get('publisher_id')),
-            'label':label.strip(),'feeds':[https(u) for u in urls]}
+            'label':label.strip(),'feeds':[feed_url(u) for u in urls]}
 
 
 def installed_binding(root):
@@ -336,6 +346,7 @@ class OwnerChannels:
         self.workspace=workspace;self.fetcher=fetcher;self.cache=workspace.root/'owner-updates'
         self.lock=threading.RLock();self.busy=threading.Lock();self.thread=None;self.stop_event=threading.Event()
         self.jobs=[];self.results={};self.plans={};self.downloads={}
+        self.git_heads={}
 
     def state(self):
         with self.lock:
@@ -458,8 +469,8 @@ class OwnerChannels:
     def check_source(self,source):
         last=None
         for url in source['feeds']:
-            try:raw=self.fetcher(url,2*1024*1024,self.stop_event)
-            except (OSError,TimeoutError) as e:last=e;continue
+            try:raw=self.read_source(url,'owner-feed.json',2*1024*1024,refresh=True)
+            except (OSError,TimeoutError,subprocess.SubprocessError) as e:last=e;continue
             try:feed=json.loads(raw)
             except (ValueError,UnicodeError)as e:last=e;continue
             if not isinstance(feed,dict) or feed.get('kind')!=KIND:
@@ -472,15 +483,15 @@ class OwnerChannels:
             asset=feed.get('asset','')
             updates.safe_name(asset)
             if '/' not in asset or not asset.endswith('.zip'):raise ValueError('整合包下载路径无效')
-            feed['url']=https(urljoin(url,asset));return feed
+            feed['url']=url if url.startswith('git+https://') else https(urljoin(url,asset));return feed
         raise ValueError('服主更新源暂不可用；保留当前版本，不改用官方整合包') from last
 
     def resolve(self,urls):
         if not isinstance(urls,list) or not 1<=len(urls)<=3:raise ValueError('填写一至三个更新地址')
-        urls=[https(u) for u in urls]
+        urls=[feed_url(u) for u in urls]
         for url in urls:
-            try:feed=json.loads(self.fetcher(url,2*1024*1024,self.stop_event))
-            except (OSError,ValueError,UnicodeError):continue
+            try:feed=json.loads(self.read_source(url,'owner-feed.json',2*1024*1024,refresh=True))
+            except (OSError,ValueError,UnicodeError,subprocess.SubprocessError):continue
             if not isinstance(feed,dict) or feed.get('kind')!=KIND:continue
             source=binding({'schema_version':1,'kind':KIND,'publisher_id':feed.get('publisher_id'),
                             'label':feed.get('label'),'feeds':urls})
@@ -507,11 +518,32 @@ class OwnerChannels:
     def download_asset(self,source,feed):
         # Every mirror must supply the exact immutable asset advertised by the
         # pinned publisher, even when the mirror's latest feed has moved on.
-        for url in dict.fromkeys(https(urljoin(base,feed['asset'])) for base in source['feeds']):
-            try:raw=self.fetcher(url,updates.MAX_ARCHIVE,self.stop_event)
-            except (OSError,TimeoutError):continue
+        for url in source['feeds']:
+            try:raw=self.read_source(url,feed['asset'],updates.MAX_ARCHIVE)
+            except (OSError,TimeoutError,subprocess.SubprocessError):continue
             if len(raw)==feed['bytes'] and updates.digest(raw)==feed['sha256']:return raw
         raise ValueError('服主包在所选源均不可用或校验失败；保留当前版本')
+
+    def read_source(self,url,name,limit,refresh=False):
+        feed_url(url);updates.safe_name(name)
+        if not url.startswith('git+https://'):
+            return self.fetcher(url if name=='owner-feed.json' else https(urljoin(url,name)),limit,self.stop_event)
+        parsed=urlsplit(url);remote=urlunsplit(('https',parsed.netloc,parsed.path,'',''));ref=parsed.fragment or 'main'
+        cache=self.cache/'git'/(updates.digest(url.encode())+'.git');cache.mkdir(parents=True,exist_ok=True)
+        try:
+            if not (cache/'HEAD').is_file():
+                self.git(cache,['init','--bare']);self.git(cache,['remote','add','origin',remote])
+            if self.git(cache,['config','--get','remote.origin.url']).decode().strip()!=remote:raise ValueError('Git 缓存与绑定地址不一致')
+            if refresh or url not in self.git_heads:
+                self.git(cache,['fetch','--filter=blob:none','--depth=1','origin','refs/heads/'+ref])
+                commit=self.git(cache,['rev-parse','FETCH_HEAD']).decode().strip()
+                if not re.fullmatch('[0-9a-f]{40}',commit):raise ValueError('Git 提交身份无效')
+                self.git_heads[url]=commit
+            raw=self.git(cache,['show',self.git_heads[url]+':'+name])
+            if len(raw)>limit:raise ValueError('Git 更新文件超过大小限制')
+            return raw
+        except (ValueError,OSError,subprocess.SubprocessError)as e:
+            raise OSError('Git 更新源暂不可用；检查本机 Git 与已有 HTTPS 读取权限')from e
 
     def publish(self,host_id,expected):
         host=self.workspace.host(host_id)
