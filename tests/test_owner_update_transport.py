@@ -94,5 +94,20 @@ class TransportTests(unittest.TestCase):
         self.fixture.owner['publication']['publisher_id']='1'*32
         with self.assertRaises(ValueError):self.controller.verify_publish(self.fixture.owner['id'])
 
+    def test_private_git_owner_source_and_existing_credentials_complete_two_revisions(self):
+        owner=self.fixture.owner;player=self.fixture.player
+        cfg={**self.fixture.source_cfg,'git_remote':'https://owner-git.example/runtime.git',
+             'feeds':['git+https://owner-git.example/runtime.git#main']}
+        self.controller.configure(owner['id'],{'mode':'owner','publication':cfg})
+        plan=self.controller.preview(owner['id']);self.assertEqual(self.controller.publish(owner['id'],plan['digest'])['revision'],1)
+        self.controller.configure(player['id'],{'mode':'player','source':o.binding(owner['publication']),'automatic':False})
+        self.assertEqual(self.controller.check(player['id'],True)['revision'],1)
+        (Path(owner['path'])/'sdgo/mods/example/script.lua').write_bytes(b'-- changed private owner source')
+        plan=self.controller.preview(owner['id']);self.controller.publish(owner['id'],plan['digest'])
+        self.assertEqual(self.controller.check(player['id'],True)['revision'],2)
+        self.assertEqual((Path(player['path'])/'sdgo/mods/example/script.lua').read_bytes(),b'-- changed private owner source')
+        installed=json.loads((Path(player['path'])/o.BINDING).read_text())
+        self.assertEqual(installed['feeds'],cfg['feeds']);self.assertNotIn('token',installed)
+
 
 if __name__=='__main__':unittest.main()
