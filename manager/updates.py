@@ -561,6 +561,17 @@ class Updates:
 
 
 def attach(workspace,distribution,manager_exe=None):
+    # Migration is protective: the new program must not apply a starter update
+    # to an existing, unclassified authored installation on its first launch.
+    changed=False
+    for host in workspace.settings['hosts']:
+        if 'runtime_mode' in host:continue
+        root=Path(host['path'])
+        host['runtime_mode']=('owner' if (root/'sdgo/local-state/owner-maintainer.json').is_file() else
+                              'player' if (root/'sdgo/owner-source.json').is_file() or (root/'sdgo/owner-release.json').is_file() else
+                              'owner' if (root/'sdgo/core.dll').is_file() else 'starter')
+        changed=True
+    if changed:workspace.save_workspace()
     controller=Updates(workspace,distribution,manager_exe)
     workspace.updates=controller
     workspace.services.register(SERVICE,'正式版本自动更新',controller,controller.start)

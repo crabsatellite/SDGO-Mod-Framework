@@ -26,7 +26,7 @@ export async function mountOwnerUpdates(ctx){
   const h=data.hosts.find(h=>h.id===chosen),modes=element('select');modes.className='ui-input';modes.style.marginTop='12px';
   for(const [id,title]of [['starter','基础整合包：接受上游运行更新'],['owner','服主 DIY：自行维护与发布'],...(h.role==='client'?[['player','玩家：仅跟随指定负责人']]:[])]){const o=element('option',title);o.value=id;modes.append(o);}
   modes.value=h.mode;card.append(modes,element('p','DIY 和玩家目录不会被程序上游自动覆盖。明确切回基础模式会解除原负责人绑定；已有文件不会因此立即改变。','muted'));
-  card.append(button('保存维护方式',run(async()=>{if(modes.value==='player'){message('请在下方校验并绑定负责人更新地址。');return;}await request('/api/owner-updates',{action:'configure',host:h.id,mode:modes.value});await reload();message('维护边界已保存。');}),'ui-btn is-blue'));
+  card.append(element('p','已有 Mod 安装首次登记或升级时先按 DIY 保护；确认愿意接受基础整合包覆盖后，再明确选择基础模式。','muted'),button('保存维护方式',run(async()=>{if(modes.value==='player'){message('请在下方校验并绑定负责人更新地址。');return;}await request('/api/owner-updates',{action:'configure',host:h.id,mode:modes.value});await reload();message('维护边界已保存。');}),'ui-btn is-blue'));
   if(h.role==='client'){
    const feeds=field('负责人更新地址（HTTPS，每行一个；可填同一负责人的备用源）',(h.source?.feeds||[]).join('\n'),true),bindingBox=element('div');
    card.append(element('h3','跟随负责人'),feeds.wrap,bindingBox);
