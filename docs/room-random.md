@@ -13,6 +13,11 @@ case-insensitive.
 
 Both are required: `room_random` on BattleServer and `room_random_client` on every participating client.
 
+The client retains each human's complete round-start entry. If a unit or deck notice arrives after
+the start notice, it completes only that human's pending construction data. A rejected notice or a
+later selection for one slot does not discard another player's valid start data. In the 3D room,
+the verified active room model takes precedence over a retained legacy cache pointer.
+
 ## Room-title commands
 
 Combinations such as `!ai !rand`, `!ai3 lv4 !rand` and `!rand !ai e2 a1 lv4` work. Separate commands with
