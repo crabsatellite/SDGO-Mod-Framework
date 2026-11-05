@@ -306,14 +306,41 @@ class OwnerChainTests(unittest.TestCase):
         self.controller.automatic(self.player['id'],False)
         row=next(h for h in self.controller.state()['hosts']if h['id']==self.player['id']);self.assertFalse(row['automatic'])
 
-    def test_legacy_and_newly_registered_existing_installs_require_explicit_starter_opt_in(self):
-        raw,asset,_=bundle();folder=self.root/'upstream';u.unpack(raw,asset,folder)
+    def test_existing_unclassified_installs_follow_starter_and_accept_upstream(self):
+        raw,asset,_=bundle();folder=self.root/'upstream';manifest=u.unpack(raw,asset,folder)
         old=Path(self.owner['path'])/'sdgo/mods/example/script.lua';expected=old.read_bytes()
-        self.owner.pop('runtime_mode');(Path(self.owner['path'])/o.MAINTAINER).unlink()
+        self.owner.pop('runtime_mode');self.owner.pop('runtime_mode_source');self.owner.pop('publication')
+        (Path(self.owner['path'])/o.MAINTAINER).unlink()
         self.workspace.save_workspace();c=u.attach(self.workspace,ROOT)
-        self.assertEqual(o.mode(self.owner),'owner');self.assertEqual(old.read_bytes(),expected)
+        self.assertEqual(o.mode(self.owner),'starter');self.assertEqual(old.read_bytes(),expected)
         another=Workspace(self.root/'fresh',ROOT/'mods');self.addCleanup(another.close);another.add_host(self.owner['path'])
-        self.assertEqual(o.mode(another.settings['hosts'][0]),'owner')
+        self.assertEqual(o.mode(another.settings['hosts'][0]),'starter')
+        c.bundle=folder;c.manifest=manifest;c.apply()
+        self.assertEqual((Path(self.owner['path'])/'sdgo/core.dll').read_bytes(),b'new core')
+        self.assertEqual((Path(self.owner['path'])/'sdgo/mods/example/config.ini').read_bytes(),b'[settings]\nAmount=42\n')
+
+    def test_automatic_diy_from_older_manager_migrates_but_explicit_diy_remains(self):
+        automatic=self.host('automatic-diy');self.mod(automatic,'example');automatic['runtime_mode']='owner'
+        explicit=self.host('explicit-diy');self.controller.configure(explicit['id'],{'mode':'owner'})
+        self.workspace.save_workspace();u.attach(self.workspace,ROOT)
+        self.assertEqual(o.mode(automatic),'starter');self.assertEqual(o.mode(explicit),'owner')
+        self.assertEqual(o.mode(self.owner),'owner')
+        self.assertTrue((Path(explicit['path'])/o.MAINTAINER).is_file())
+
+    def test_bound_player_and_explicit_starter_survive_default_migration(self):
+        self.publish();source=self.bind()
+        self.player['runtime_mode']='owner';self.player.pop('runtime_mode_source')
+        explicit=self.host('explicit-starter');self.controller.configure(explicit['id'],{'mode':'starter'})
+        self.workspace.save_workspace();u.attach(self.workspace,ROOT)
+        self.assertEqual(o.mode(self.player),'player');self.assertEqual(o.installed_binding(self.player['path']),source)
+        self.assertEqual(o.mode(explicit),'starter')
+        another=Workspace(self.root/'new-player-state',ROOT/'mods');self.addCleanup(another.close)
+        another.add_host(self.player['path']);self.assertEqual(o.mode(another.settings['hosts'][0]),'player')
+
+    def test_explicit_diy_choice_remains_if_marker_is_missing(self):
+        explicit=self.host('explicit-missing-marker');self.controller.configure(explicit['id'],{'mode':'owner'})
+        (Path(explicit['path'])/o.MAINTAINER).unlink();self.workspace.save_workspace();u.attach(self.workspace,ROOT)
+        self.assertEqual(o.mode(explicit),'owner')
 
 
 if __name__=='__main__':unittest.main()

@@ -66,12 +66,10 @@ class Workspace:
         for host in self.settings['hosts']:
             if Path(host['path']).resolve() == path:
                 return self.public()
-        # Existing Mod installations may already be authored by another owner.
-        # They require an explicit opt-in before a starter pack may replace them.
-        if (path/'sdgo/local-state/owner-maintainer.json').is_file():runtime_mode='owner'
-        elif (path/'sdgo/owner-source.json').is_file() or (path/'sdgo/owner-release.json').is_file():runtime_mode='player'
-        elif (path/'sdgo/core.dll').is_file():runtime_mode='owner'
-        else:runtime_mode='starter'
+        # Mods alone do not imply DIY ownership. Owners explicitly take over;
+        # copied player bindings continue to follow their publisher.
+        from .owner_channel import default_mode
+        runtime_mode=default_mode(path)
         self.settings['hosts'].append({'id': uuid.uuid4().hex[:12], 'path': str(path), 'name': path.name, 'role': role,
                                        'runtime_mode':runtime_mode})
         self.save_workspace()
