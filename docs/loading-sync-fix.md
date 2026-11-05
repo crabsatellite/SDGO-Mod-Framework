@@ -1,10 +1,10 @@
-# AI room loading timeouts
+# Multiplayer loading synchronization
 
 [简体中文](loading-sync-fix.zh-CN.md) · [Back to the feature index](../README.md)
 
-`loading_sync_fix` prevents the battle server from treating framework AI slots as human clients
-that failed to finish loading. It is an automatic server fix, enabled by default and listed in
-the SDGO Mod Manager fix archive.
+`loading_sync_fix` preserves completed loading when another player is late, and prevents framework
+AI slots from being treated as timed-out human clients. It is an automatic server fix, enabled by
+default and listed in the SDGO Mod Manager fix archive.
 
 ## Install
 
@@ -13,6 +13,12 @@ then restart the affected channels. No additional client files, room command or 
 The supported native host is `BattleServer-548A891D-0046C000`; unsupported signatures refuse to load.
 
 ## Behavior
+
+The server may already have begun resource loading when a slower player's earlier readiness
+acknowledgement arrives. Reinitializing the phase at that point clears completion flags already
+acknowledged to faster players; those clients do not send the completion again. The fix initializes
+this phase only once. Late readiness still receives the original notification, while existing
+completion flags, the current phase and its deadlines remain intact. This applies without AI too.
 
 The original server uses human counts to decide when loading is complete. Its timeout scans also
 visit AI slots, which do not send human loading acknowledgements. Passing one of those slots to
@@ -25,8 +31,8 @@ replacement scan selects another human. Human acknowledgements, native retries a
 an actual timed-out human continue through the original code. The server's existing host rules,
 loading deadlines and start notifications are retained.
 
-This covers the AI-slot timeout defect in PvP and mission rooms using the framework AI identity
-convention. Ordinary rooms keep their native behavior. Network disconnections, missing resources
+The AI-specific protection covers PvP and mission rooms using the framework AI identity
+convention. On-time human acknowledgements keep their native behavior. Network disconnections, missing resources
 and unrelated client work-queue failures can also prevent loading and need separate diagnosis.
 
 ## Troubleshooting

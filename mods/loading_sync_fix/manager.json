@@ -2,11 +2,11 @@
   "schema_version": 1,
   "distribution": "public",
   "id": "loading_sync_fix",
-  "title": "AI 房间加载超时修复",
+  "title": "多人加载同步修复",
   "category": "fixes",
   "hosts": ["battle"],
-  "description": "加载较慢触发超时处理时，避免把 AI 当成未完成加载的真人移除并扣减真人数量。",
+  "description": "防止迟到的准备确认清除已完成的加载状态，并避免加载超时误移除 AI、破坏真人数量。",
   "settings": [],
   "presentation": "automatic_fix",
-  "mechanism": "在三个阶段的原生加载检查中排除框架 AI 槽位，真人房主离开后只选择其他真人继任；保留真人加载完成判断、重试和超时退出流程。安装到所有承载房间的 BattleServer，重启对应通道后生效。"
+  "mechanism": "原生资源加载阶段只初始化一次，迟到的准备确认仍发送通知但不清除其他玩家的完成标记；加载检查排除框架 AI，真人房主离开后只选择其他真人继任。保留原生完成判断、时限和超时退出流程；安装到承载房间的 BattleServer 并重启后生效。"
 }

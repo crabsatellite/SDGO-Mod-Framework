@@ -30,7 +30,7 @@
 | 房间窗口初始化保护 <!-- catalog: `waitroom_window_fix` --> | 修复建房成功后客户端偶尔直接退出 | [使用说明](docs/waitroom-window-fix.zh-CN.md) |
 | 原生数据与生命周期修复 <!-- catalog: `native_data_guard` --> | 修复机体数据缺失或机体管理页等待数据时的闪退，并让闪退日志记录正确现场 | [使用说明](docs/native-data-guard.zh-CN.md) |
 | 场景登记生命周期修复 <!-- catalog: `scene_lifecycle_fix` --> | 修复场景对象切换区域后偶发的清理闪退 | [使用说明](docs/scene-lifecycle-fix.zh-CN.md) |
-| AI 房间加载超时修复 <!-- catalog: `loading_sync_fix` --> | 避免加载超时误移除 AI 槽位并破坏真人计数 | [使用说明](docs/loading-sync-fix.zh-CN.md) |
+| 多人加载同步修复 <!-- catalog: `loading_sync_fix` --> | 防止迟到玩家清除已完成的加载状态，并保护 AI 超时筛选与真人房主继任 | [使用说明](docs/loading-sync-fix.zh-CN.md) |
 | 异常断线登录恢复 <!-- catalog: `login_recovery` --> | 异常断线后重新登录被判为“账号已在线”时，清理旧会话并自动重试一次（WorldServer） | [使用说明](docs/login-recovery.zh-CN.md) |
 | 阿普萨拉斯 III 变形卡死修复 <!-- catalog: `transform_input_fix` --> | 缺少变形动画时恢复原生状态退出，解除移动与攻击锁定 | [使用说明](docs/transform-input-fix.zh-CN.md) |
 | Agent 中继日志修复 <!-- catalog: `agent_relay_log_fix` --> | 修复 Agent 中继日志读取无效内存 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
