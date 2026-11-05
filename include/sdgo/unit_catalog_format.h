@@ -12,11 +12,15 @@ namespace sdgo::unit_catalog {
 constexpr uint32_t kFormatVersion = 1;
 constexpr uint32_t kUnitType = 2;
 constexpr uint32_t kWeaponType = 10;
+constexpr uint32_t kFunnelType = 11;
+constexpr uint32_t kSkillType = 13;
 constexpr uint32_t kBlueprintType = 0x21;
 constexpr uint32_t kItemCategoryType = 0x22;
 constexpr uint32_t kUnitIndexType = 0x55;
 constexpr size_t kUnitBytes = 4976;
 constexpr size_t kWeaponBytes = 1871;
+constexpr size_t kFunnelBytes = 732;
+constexpr size_t kSkillBytes = 1132;
 constexpr size_t kBlueprintBytes = 1197;
 constexpr size_t kItemCategoryBytes = 614;
 constexpr size_t kUnitIndexBytes = 614;
@@ -33,6 +37,9 @@ constexpr size_t kUnitPreviewPathOffsets[] = {4654, 4754, 4854};
 constexpr size_t kUnitPreviewPathBytes = 100;
 constexpr size_t kUnitTransformOffset = 316;
 constexpr size_t kUnitWeaponOffsets[] = {585, 589, 593, 597};
+constexpr size_t kUnitSkillOffsets[] = {575, 579};
+constexpr size_t kWeaponFunnelOffset = 1565;
+constexpr size_t kSkillLinkedSkillOffset = 354;
 constexpr size_t kItemCategoryNameOffset = 5;
 constexpr size_t kItemCategoryNameBytes = 100;
 constexpr size_t kItemCategoryRefOffset = 105;
@@ -76,7 +83,7 @@ struct Header {
 };
 
 struct EntryHeader {
-    uint32_t kind;                  // 2 unit, 10 weapon, 0x21 blueprint, 0x22 item, 0x55 index
+    uint32_t kind;                  // 2 unit, 10 weapon, 11 funnel, 13 skill, 0x21 blueprint, 0x22 item, 0x55 index
     uint32_t id;
     uint32_t byteCount;
     uint32_t recordHash;            // FNV-1a over the following native record
@@ -92,6 +99,8 @@ inline size_t ExpectedBytes(uint32_t kind) {
     switch (kind) {
     case kUnitType: return kUnitBytes;
     case kWeaponType: return kWeaponBytes;
+    case kFunnelType: return kFunnelBytes;
+    case kSkillType: return kSkillBytes;
     case kBlueprintType: return kBlueprintBytes;
     case kItemCategoryType: return kItemCategoryBytes;
     case kUnitIndexType: return kUnitIndexBytes;
@@ -270,6 +279,16 @@ private:
                     return Fail(error, "unit preview path is unsafe or outside sprs");
                 }
             }
+        } else if (entry.kind == kSkillType) {
+            // native-type13-1132-v1 preserves its source record and inserts
+            // these exact target-layout gaps. Other native layouts need a
+            // separate profile rather than treating arbitrary bytes as this one.
+            if (!ValidateUtf16Text(entry.bytes.data()+5,100) || entry.bytes[1131]>3 ||
+                !std::all_of(entry.bytes.begin()+105,entry.bytes.begin()+155,
+                             [](uint8_t value){return value==0;}) ||
+                !std::all_of(entry.bytes.begin()+931,entry.bytes.begin()+1131,
+                             [](uint8_t value){return value==0;}))
+                return Fail(error,"skill record does not match native-type13-1132-v1");
         } else if (entry.kind == kItemCategoryType) {
             if (!ValidateUtf16Text(entry.bytes.data() + kItemCategoryNameOffset,
                                    kItemCategoryNameBytes) ||

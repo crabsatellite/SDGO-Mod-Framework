@@ -90,6 +90,8 @@ Entry MakeRecord(uint32_t kind, uint32_t id) {
         PutUtf16(result.bytes.data() + kUnitPreviewPathOffsets[2], kUnitPreviewPathBytes, "sprs\\room.spr");
         Put32(result.bytes.data() + kUnitTransformOffset, 0);
         Put32(result.bytes.data() + kUnitWeaponOffsets[0], 61165);
+    } else if (kind == kSkillType) {
+        PutUtf16(result.bytes.data()+5,100,"Fixture Skill");
     } else if (kind == kItemCategoryType) {
         PutUtf16(result.bytes.data() + kItemCategoryNameOffset, kItemCategoryNameBytes, "Fixture Unit");
         Put32(result.bytes.data() + kItemCategoryRefOffset,
@@ -391,6 +393,19 @@ std::vector<uint8_t> MakeNativeFixture(const std::string& scenario) {
         Put32(blueprint.bytes.data()+kBlueprintMaterialOffset,999998);
     if(scenario=="blueprint_item_reference_missing")
         Put32(blueprintCategory.bytes.data()+kItemCategoryRefOffset,999998);
+    if(scenario=="skill_reference_missing")Put32(first.bytes.data()+kUnitSkillOffsets[0],999998);
+    if(scenario=="funnel_reference_missing")Put32(weapon.bytes.data()+kWeaponFunnelOffset,999998);
+    if(scenario=="dependency_records_success" || scenario=="linked_skill_reference_missing") {
+        Entry skill=MakeRecord(kSkillType,9000001);
+        Entry linkedSkill=MakeRecord(kSkillType,9000002);
+        Entry funnel=MakeRecord(kFunnelType,198131);
+        Put32(first.bytes.data()+kUnitSkillOffsets[0],skill.id);
+        Put32(weapon.bytes.data()+kWeaponFunnelOffset,funnel.id);
+        Put32(skill.bytes.data()+kSkillLinkedSkillOffset,linkedSkill.id);
+        std::vector<Entry> entries={first,second,weapon,funnel,blueprint,category,blueprintCategory,index,skill};
+        if(scenario=="dependency_records_success")entries.push_back(linkedSkill);
+        return Encode(entries);
+    }
     Put32(first.bytes.data() + kUnitTransformOffset, second.id);
     Put32(second.bytes.data() + kUnitTransformOffset, first.id);
     Put32(first.bytes.data() + kUnitWeaponOffsets[0], weapon.id);
@@ -408,7 +423,9 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
     Check(scenario == "success" || scenario == "conflict" ||
           scenario == "missing_reference" || scenario == "partial_failure_child" ||
           scenario=="index_reference_missing" || scenario=="index_conflict" ||
-          scenario=="blueprint_output_missing" ||
+          scenario=="blueprint_output_missing" || scenario=="skill_reference_missing" ||
+          scenario=="funnel_reference_missing" || scenario=="dependency_records_success" ||
+          scenario=="linked_skill_reference_missing" ||
           scenario=="blueprint_material_missing" ||
           scenario=="blueprint_item_reference_missing" ||
           scenario=="index_blueprint_reference_missing" ||
@@ -473,8 +490,9 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
           "catalog waits for the exact final native table");
     reinterpret_cast<Detour>(g_loadDetour)(g_grid, nullptr, L"gdrs\\0280.gdt", 0x0d);
     Check(g_loadCalls == 2, "original native table loader called before both detours");
-    if (scenario == "success") {
-        Check(g_nodes.size() == 7 && g_integrityRecords == 7,
+    if (scenario == "success" || scenario=="dependency_records_success") {
+        const size_t expected=scenario=="dependency_records_success" ? 10u:7u;
+        Check(g_nodes.size() == expected && static_cast<size_t>(g_integrityRecords) == expected,
                "all unit, weapon, blueprint, item-category and encyclopedia records entered the native tree");
         Catalog parsed;
         std::string error;
@@ -487,7 +505,7 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
                   "native readback preserves every raw byte");
         }
         reinterpret_cast<Detour>(g_loadDetour)(g_grid, nullptr, L"0280.gdt", 0x0d);
-        Check(g_loadCalls == 3 && g_nodes.size() == 7 && g_integrityRecords == 7,
+        Check(g_loadCalls == 3 && g_nodes.size() == expected && static_cast<size_t>(g_integrityRecords) == expected,
               "catalog publication runs only once after the original loader");
         CleanupNativeTree();
     } else {
@@ -639,6 +657,26 @@ int ParserFixture() {
           catalog.Contains(200001, kBlueprintType) &&
           catalog.Contains(1250600, kItemCategoryType), "typed lookup succeeds");
     Check(catalog.Find(7) == catalog.records.size(), "missing lookup is bounded");
+    {
+        Entry skill=MakeRecord(kSkillType,9000001);
+        Entry funnel=MakeRecord(kFunnelType,198131);
+        Check(catalog.Parse(Encode({funnel,skill}),error),"explicit 732-byte funnel and projected 1132-byte skill parsed");
+        for(uint8_t dispatch=0;dispatch<=3;++dispatch) {
+            skill.bytes[1131]=dispatch;
+            Check(catalog.Parse(Encode({skill}),error),"observed skill dispatch range preserved");
+            Check(catalog.records[0].bytes[1131]==dispatch,"skill dispatch is never normalized");
+        }
+        for(const size_t offset:{size_t(105),size_t(154),size_t(931),size_t(1130)}) {
+            Entry invalid=skill;invalid.bytes[offset]=1;
+            Check(!catalog.Parse(Encode({invalid}),error),"non-profile skill padding rejected even with fresh hashes");
+        }
+        for(const uint8_t dispatch:{uint8_t(107),uint8_t(165)}) {
+            Entry invalid=skill;invalid.bytes[1131]=dispatch;
+            Check(!catalog.Parse(Encode({invalid}),error),"unknown source skill dispatch rejected without truncation");
+        }
+        funnel.bytes.pop_back();
+        Check(!catalog.Parse(Encode({funnel}),error),"incomplete funnel rejected");
+    }
     {
         const Entry validBlueprint = MakeRecord(kBlueprintType, 200001);
         for (uint32_t count = kBlueprintMinimumMaterials;

@@ -27,6 +27,17 @@ aliases require target checks. Opaque source game scripts remain data and gain n
 execution permission. This reader does not install resources, register records or
 replace the Manager's unit import workflow.
 
+Developer dependency profiles retain complete skill and funnel source records.
+The skill profile verifies the 882-to-1132-byte projection, explicit ID changes
+and an optional typed linked-skill ID change; the 732-byte funnel profile
+preserves every byte outside its ID word. The native catalog checks fixed
+sizes and typed unit-to-skill, weapon-to-funnel and linked-skill references.
+Manager publication of these new dependency definitions remains blocked until
+their resources, server definitions and actor behavior have been admitted.
+The [native ownership test](game-test.md#native-record-ownership-and-shutdown)
+checks complete record bytes and original grid cleanup independently of battle
+activation, transformation, death and respawn acceptance.
+
 ## Projects, blueprints and activity pools
 
 An optional typed client-template binding keeps a supplied recipe and blueprint
