@@ -71,8 +71,12 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(result['status'],'published')
         pushed=json.loads(subprocess.check_output(['git','--git-dir',str(self.remote),'show','main:owner-feed.json']))
         self.assertEqual(result['sha256'],pushed['sha256'])
-        self.controller.configure(player['id'],{'mode':'player','source':o.binding(owner['publication'])})
+        self.controller.configure(player['id'],{'mode':'player','source':o.binding(owner['publication']),'automatic':False})
         from manager import storage
+        other=self.root/'other-maintenance';subprocess.run(['git','clone','--branch','main',str(self.remote),str(other)],check=True,capture_output=True)
+        (other/'maintenance.txt').write_bytes(b'unrelated concurrent maintenance')
+        for command in (['add','maintenance.txt'],['commit','-m','Unrelated maintenance'],['push','origin','main']):
+            subprocess.run(['git','-C',str(other),*command],check=True,capture_output=True)
         changed=Path(owner['path'])/'sdgo/mods/example/config.ini';changed.write_bytes(b'[settings]\nAmount=81\n')
         p=self.controller.preview(owner['id']);self.controller.publish(owner['id'],p['digest'])
         process=subprocess.run([__import__('sys').executable,'tools/mod_manager.py','--sync-owner-pack',player['path']],
@@ -80,6 +84,7 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(process.returncode,0,process.stderr.decode(errors='replace'))
         self.assertEqual((Path(player['path'])/'sdgo/mods/example/config.ini').read_bytes(),b'[settings]\nAmount=81\n')
         self.assertEqual(storage.read_json(Path(player['path'])/o.RECEIPT)['revision'],2)
+        self.assertEqual(subprocess.check_output(['git','--git-dir',str(self.remote),'show','main:maintenance.txt']),b'unrelated concurrent maintenance')
         self.assertEqual(storage.read_json(Path(player['path'])/'sdgo/local-state/owner-updater/result.json')['status'],'installed')
 
     def test_public_identity_mismatch_never_becomes_a_successful_publish(self):

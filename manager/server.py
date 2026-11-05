@@ -109,6 +109,7 @@ def make_server(workspace, port=0):
                     if method=='POST':
                         action=body.get('action');identity=body.get('host')
                         if action=='resolve':return self.send_json(200,controller.resolve(body.get('feeds')))
+                        if action=='automatic':return self.send_json(200,controller.automatic(identity,body.get('enabled')))
                         if action=='configure':return self.send_json(200,controller.configure(identity,body))
                         if action=='preview':return self.send_json(200,controller.preview(identity))
                         if action in ('publish','check','install','verify_publish'):

@@ -30,13 +30,13 @@ export async function mountOwnerUpdates(ctx){
   if(h.role==='client'){
    const feeds=field('负责人更新地址（HTTPS，每行一个；可填同一负责人的备用源）',(h.source?.feeds||[]).join('\n'),true),bindingBox=element('div');
    card.append(element('h3','跟随负责人'),feeds.wrap,bindingBox);
-   let resolved=null;
-   card.append(button('查看发布者',run(async()=>{resolved=await request('/api/owner-updates',{action:'resolve',feeds:lines(feeds.input.value)});bindingBox.replaceChildren(element('p',resolved.source.label+' · 整合包版本 '+resolved.revision+' · 发布者 '+resolved.source.publisher_id.slice(0,12)),button('确认绑定此负责人',run(async()=>{await request('/api/owner-updates',{action:'configure',host:h.id,mode:'player',source:resolved.source});await reload();message('已绑定，后续运行文件仅从该负责人获取。');}),'ui-btn is-primary'));}),'ui-btn is-blue'));
+   let resolved=null;const autoBind=element('input');autoBind.type='checkbox';autoBind.checked=true;const autoBindLabel=element('label');autoBindLabel.append(autoBind,document.createTextNode('绑定后自动跟随（Manager 运行期间）'));card.append(autoBindLabel);
+   card.append(button('查看发布者',run(async()=>{resolved=await request('/api/owner-updates',{action:'resolve',feeds:lines(feeds.input.value)});bindingBox.replaceChildren(element('p',resolved.source.label+' · 整合包版本 '+resolved.revision+' · 发布者 '+resolved.source.publisher_id.slice(0,12)),button('确认绑定此负责人',run(async()=>{await request('/api/owner-updates',{action:'configure',host:h.id,mode:'player',source:resolved.source,automatic:autoBind.checked});await reload();message('已绑定，后续运行文件仅从该负责人获取。');}),'ui-btn is-primary'));}),'ui-btn is-blue'));
    if(h.mode==='player'){
     card.append(element('p','当前负责人：'+h.source.label+'；已安装整合包版本：'+(h.installed_revision||'尚未安装'),'muted'));
     const actions=element('div',undefined,'actions');
     for(const [action,label]of [['check','检查负责人更新'],['install','同步负责人版本']])actions.append(button(label,run(async()=>{await request('/api/owner-updates',{action,host:h.id});}),'ui-btn is-blue'));
-    actions.append(button('自动跟随负责人',run(async()=>{await request('/api/services/manager.owner_updates',{action:'start'});message('Manager 运行期间自动检查，运行中的客户端会等待关闭。');}),'ui-btn is-ghost'));
+    const auto=element('input');auto.type='checkbox';auto.checked=h.automatic;auto.onchange=run(async()=>{await request('/api/owner-updates',{action:'automatic',host:h.id,enabled:auto.checked});message('自动跟随设置已保存。');});const autoLabel=element('label');autoLabel.append(auto,document.createTextNode('自动检查并同步负责人版本'));actions.append(autoLabel);
     card.append(actions,element('p','负责人源不可用时保留当前版本；不会改用官方整合包。私人登录、画面设置和仅本地 Mod 不随服主包分发。','muted'));
    }
   }

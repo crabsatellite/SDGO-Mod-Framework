@@ -30,10 +30,10 @@ def main(argv=None):
         from manager.update_restart import finish
         if len(effective)!=2:raise ValueError('更新交接参数无效')
         finish(effective[1]);return
-    if effective[:1]==['--sync-owner-pack']:
+    if effective[:1] in (['--sync-owner-pack'],['--check-owner-pack']):
         from manager.owner_channel import sync_client
         if len(effective)!=2:return 2
-        try:return sync_client(effective[1])
+        try:return sync_client(effective[1],effective[0]=='--check-owner-pack')
         except Exception as error:
             announce('Owner update stopped: '+str(error));return 1
     parser = argparse.ArgumentParser(description=__doc__)

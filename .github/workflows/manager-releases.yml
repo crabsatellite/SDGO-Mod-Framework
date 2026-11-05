@@ -77,6 +77,15 @@ jobs:
         run: python tools/build_release.py --build --channel $env:RELEASE_CHANNEL --version $env:RELEASE_VERSION
       - name: Standalone Manager check
         run: python tests/mod_manager_frozen_test.py --exe "build/manager/SDGO Mod Manager.exe"
+      - name: Owner publication and player update contracts
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -p "test_owner_update_chain.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -p "test_owner_update_transport.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/owner_updates_frozen_test.py --exe "build/manager/SDGO Mod Manager.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native login recovery policy
         shell: pwsh
         run: |

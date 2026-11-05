@@ -93,7 +93,12 @@ def tls_context():
     except ImportError:
         if getattr(sys, 'frozen', False): raise
         return ssl.create_default_context()
-    return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    # Honor explicit additional roots without disabling the native chain and
+    # hostname checks. This also permits private HTTPS publication endpoints.
+    if os.environ.get('SSL_CERT_FILE') or os.environ.get('SSL_CERT_DIR'):
+        context.load_verify_locations(cafile=os.environ.get('SSL_CERT_FILE'),capath=os.environ.get('SSL_CERT_DIR'))
+    return context
 
 
 def fetch(url, limit, stop=None):
