@@ -108,6 +108,22 @@ v1–v5 布局读取 emitter 的 32 字节纹理字段，以首个 NUL 为字符
 
 ### 技能与浮游记录 profile
 
+服务端技能制作数据使用 `sdgo.unit-server-dependencies/1`
+（[schema](unit-server-dependencies.schema.json)）。`owner`、`revision` 和 `skills` 必填；
+每项用 `id`、完整 1132 字节客户端记录的 `client_sha256` 及 `definition` 绑定数据。
+`definition.kind=template` 要求既有技能 `id` 和完整目录行摘要，复制所有列后只改变目标编号。
+`kind=explicit` 要求全部 `tbl_SkillRev` 字段及 `origin`，不补缺失列或猜填零。
+
+`owner.units.server_dependencies.apply` 只在调用方已开启的目录事务中工作，共用目录应用锁，
+核对实际 SQL 类型、模板版本、客户端共享字段和关联技能，随后写入定义及独立所有权账本。
+已有原生或其他内容的行不能被接管；同版重复提交复用原数据，外部修改或有损字符串读回会拒绝。
+更新内容需要新修订，提交或回滚仍由调用方管理。
+
+制作数据保持 `native_registration_authorized=false` 和 `actor_accepted=false`。
+目录读取器把这些行标为 `pending_skill_ids`，普通机体发布仍拒绝引用它们。
+SQL `BattleMode` 与客户端末尾调度字段是独立输入，不按相同名称互相推导。
+原生处理器可能按技能编号选择特殊行为；复制一行 SQL 不会自动保留这种行为，需另行处理原生身份绑定。
+
 `owner.units.profiles.skill_target_1132` 验证 kind 13 的882→1132字节投影，保留完整源／目标哈希和逆变换。
 其独立 `validate_relocated_record` 接口使用 `sdgo.native-type13-relocated-record/1`：明确绑定源、目标技能编号，
 默认只允许投影后目标记录的前4字节换号，并保留源、原投影、最终目标三份哈希；原有未换号接口的协议不变。

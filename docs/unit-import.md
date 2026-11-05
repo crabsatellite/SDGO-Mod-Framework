@@ -281,6 +281,18 @@ Version 1 stays transport-only.
 
 ### Skill/funnel dependencies and resource depot
 
+Developer tools can prepare owned server skill data with
+`owner.units.server_dependencies` and
+[`sdgo.unit-server-dependencies/1`](unit-server-dependencies.schema.json).
+Each entry binds a complete client record and either a hash-pinned existing
+server template or a complete explicitly authored server row. The writer uses
+the caller's catalog transaction, compares live schemas and ownership, verifies
+readback, and refuses baseline adoption or outside edits. It supplies no missing
+values and does not derive server `BattleMode` from the client's effect dispatch.
+Data-only rows remain `pending_skill_ids`; ordinary unit publication still rejects
+them. Native ID-specific behavior, resource bindings and actors are separate
+from successfully storing a server definition.
+
 The developer helper `owner.units.effect_resources` prepares owner-scoped ZFX texture names from typed
 emitter fields. It retains selected JPEG/PNG/DDS/TGA texture variants and original bytes, refuses destination
 conflicts and records source/output hashes. Model edges need a separate adapter. See the
