@@ -24,6 +24,12 @@ struct MapGeometry {
     MapSphereObbContactFn sphereObbContact=nullptr;
     bool deferDestroyables=true;
     mutable uint32_t projections=0,groundMisses=0,blocked=0,lastReject=0;
+    mutable uint8_t* rejectedScene=nullptr;
+    mutable uint8_t* rejectedObject=nullptr;
+    mutable uint32_t rejectedShape=0,shapeReject=0;
+    mutable float initialDepth=0,rejectedDepth=0,rejectedRayDistance=0;
+    mutable Vec3 rejectedSphereCenter{};
+    mutable float rejectedSphereRadius=0;
     bool Valid()const {
         return api.query&&api.segmentAabb&&api.terrainRay&&api.rayObb&&api.raySphere&&sphereObb&&sphereObbContact&&document&&owner&&
             Finite(ownerPosition)&&detail::ValidAabb(ownerBounds)&&detail::ValidAabb(bodyBounds)&&
@@ -31,6 +37,7 @@ struct MapGeometry {
             Finite(bodySphere.center)&&std::isfinite(bodySphere.radius)&&bodySphere.radius>0;
     }
     bool ClearObb(Vec3 from,Vec3 to,const void* obb)const {
+        shapeReject=0;initialDepth=rejectedDepth=rejectedRayDistance=0;
         const Vec3 delta=to-from;const double length=Length(delta);
         if(!std::isfinite(length))return false;
         const Vec3 direction=Normalize(delta);
@@ -42,20 +49,22 @@ struct MapGeometry {
             if(!std::isfinite(distance))return false;
             depth=(std::max)(0.0f,sphere.radius-distance);return true;
         };
-        float previous=0;if(!penetration(start,previous))return false;
+        float previous=0;if(!penetration(start,previous)){shapeReject=1;return false;}
+        initialDepth=previous;
         // A body already touching/intersecting geometry must be able to leave
         // it or slide with no increased penetration. Reject crossing its core.
         if(length>1e-6&&previous<bodySphere.radius-0.001f) {
             const Ray3 ray={start.center,direction};float distance=0;
             const bool hit=api.rayObb(&ray,obb,&distance);
-            if(detail::BlockingHit(hit,distance,length))return false;
+            if(detail::BlockingHit(hit,distance,length)){shapeReject=2;rejectedRayDistance=distance;return false;}
         }
         const float interval=(std::max)(1.0f,bodySphere.radius*0.25f);
         const int samples=(std::max)(1,static_cast<int>(std::ceil(length/interval)));
         if(samples>4096)return false;
         for(int sample=1;sample<=samples;++sample) {
             MapBodySphere sphere=start;sphere.center=sphere.center+delta*(static_cast<float>(sample)/static_cast<float>(samples));
-            float depth=0;if(!penetration(sphere,depth)||depth>previous+0.01f)return false;
+            float depth=0;if(!penetration(sphere,depth)){shapeReject=3;return false;}
+            if(depth>previous+0.01f){shapeReject=4;rejectedDepth=depth;return false;}
             previous=depth;
         }
         return true;
@@ -69,19 +78,24 @@ struct MapGeometry {
         const Vec3 nearest=offset+delta*static_cast<float>(factor);
         return Dot(nearest,nearest)>=radius*radius;
     }
-    bool Ground(Vec3 desired,float ceiling,float floor,Vec3& grounded)const {
+    bool Ground(Vec3 desired,float ceiling,float floor,Vec3& grounded,bool terrainRise=false)const {
         ++projections;
         if(!Valid()||!Finite(desired)||!std::isfinite(ceiling)||!std::isfinite(floor)||ceiling<=floor)return false;
         auto tree=*reinterpret_cast<void**>(document+detail::kDocumentQuadTree);
         if(!tree)return false;
+        TerrainSupportSample support{};
+        const auto status=api.support?api.support(api.supportContext,desired,support):TerrainSupportStatus::Missing;
+        if(status==TerrainSupportStatus::Outside||status==TerrainSupportStatus::Invalid){lastReject=10;return false;}
+        bool hit=status==TerrainSupportStatus::Valid&&support.height>=floor&&(terrainRise||support.height<=ceiling);
+        float best=hit?support.height:floor;
         const Aabb bounds={{desired.x-1,floor,desired.z-1},{desired.x+1,ceiling,desired.z+1}};
         void* scenes[detail::kSceneCapacity]{};int count=0;
         api.query(tree,scenes,&count,detail::kSceneCapacity,&bounds);
         if(count<0||count>=detail::kSceneCapacity)return false;
         const Ray3 ray={{desired.x,ceiling,desired.z},{0,-1,0}};
-        float closest=ceiling-floor;bool hit=false;
         const auto recordHit=[&](bool contact,float distance) {
-            if(contact&&std::isfinite(distance)&&distance>=0&&distance<=closest){closest=distance;hit=true;}
+            const float y=ceiling-distance;
+            if(contact&&std::isfinite(distance)&&distance>=0&&y>=floor&&y<=ceiling&&(!hit||y>best)){best=y;hit=true;}
         };
         for(int i=0;i<count;++i) {
             auto scene=static_cast<uint8_t*>(scenes[i]);if(!scene)return false;
@@ -89,14 +103,14 @@ struct MapGeometry {
             if(!table||!table[5])return false;
             const auto isScene=reinterpret_cast<detail::SceneIsAFn>(table[5]);
             float distance=0;bool contact=false;
-            if(isScene(scene,3)) {contact=api.terrainRay(scene,&ray,&distance);recordHit(contact,distance);continue;}
+            if(isScene(scene,3))continue; // physics support is bilinear, not the display mesh
             if(!isScene(scene,2))continue;
             auto object=*reinterpret_cast<uint8_t**>(scene+detail::kSceneBackPointer);
             if(object==owner)continue;
             if(object) {
                 auto objectTable=*reinterpret_cast<void***>(object);if(!objectTable||!objectTable[1])return false;
                 const auto isObject=reinterpret_cast<detail::ObjectIsAFn>(objectTable[1]);
-                if(object[0x1C]||isObject(object,0x15)||isObject(object,9)||isObject(object,0x21)||isObject(object,0x22))continue;
+                if(object[0x1C]||isObject(object,7)||isObject(object,0x15)||isObject(object,9)||isObject(object,0x21)||isObject(object,0x22))continue;
             }
             const int obbCount=*reinterpret_cast<int*>(scene+detail::kObbCount);
             auto obbs=*reinterpret_cast<uint8_t**>(scene+detail::kObbArray);
@@ -112,7 +126,7 @@ struct MapGeometry {
             }
         }
         if(!hit){++groundMisses;lastReject=3;return false;}
-        grounded={desired.x,ceiling-closest,desired.z};return Finite(grounded);
+        grounded={desired.x,best,desired.z};return Finite(grounded);
     }
     bool ClearBody(Vec3 from,Vec3 to,bool hazardsOnly=false)const {
         using namespace detail;
@@ -133,9 +147,27 @@ struct MapGeometry {
         if(count<0||count>=kSceneCapacity)return false;
         const double length=Length(delta);if(!std::isfinite(length))return false;
         if(length<1e-6)return true;
-        const Vec3 direction=delta*static_cast<float>(1/length);
         const Vec3 segmentCenter=(start.min+start.max)*0.5f+delta*0.5f,halfDelta=delta*0.5f;
-        const float low=(std::max)(start.min.y+10,from.y+10),high=(std::max)(low,start.max.y-10);
+        const float low=(std::max)(start.min.y+10,from.y+10);
+        if(!hazardsOnly&&api.support) {
+            TerrainSupportSample support{};
+            auto status=api.support(api.supportContext,to,support);
+            if(status==TerrainSupportStatus::Outside||status==TerrainSupportStatus::Invalid){lastReject=10;return false;}
+            const float spacing=status==TerrainSupportStatus::Valid?support.spacing:25;
+            const double horizontal=std::hypot(double(delta.x),double(delta.z));
+            const int samples=(std::max)(1,static_cast<int>(std::ceil(horizontal/(std::max)(1.0f,spacing))));
+            if(samples>4096)return false;
+            for(int sample=1;sample<=samples;++sample) {
+                const Vec3 point=from+delta*(static_cast<float>(sample)/samples);
+                status=api.support(api.supportContext,point,support);
+                if(status==TerrainSupportStatus::Outside||status==TerrainSupportStatus::Invalid){lastReject=10;return false;}
+                // CUnit::UpdateProc tests the root's native height/normal near
+                // contact. Sphere-box footprint corners are not terrain walls.
+                if(status==TerrainSupportStatus::Valid&&support.height>point.y-10&&support.normal.y<=0.6f) {
+                    ++blocked;lastReject=7;return false;
+                }
+            }
+        }
         for(int i=0;i<count;++i) {
             auto scene=static_cast<uint8_t*>(scenes[i]);if(!scene)return false;
             if(scene==ownScene)continue;
@@ -161,7 +193,7 @@ struct MapGeometry {
                 // Native actors move independently. Destructible blockers are
                 // route actions: the existing live gate observer must breach
                 // them before the native body can pass, never remove them here.
-                if(isA(object,0x15)||isA(object,9)||isA(object,0x21))continue;
+                if(isA(object,7)||isA(object,0x15)||isA(object,9)||isA(object,0x21))continue;
                 if(deferDestroyables&&isA(object,kDestroyableBlockKind)) {
                     using CanAttackFn=bool(__thiscall*)(void*,void*);
                     if(*reinterpret_cast<int32_t*>(object+0x38)>0&&!object[0x1C]&&table[10]&&
@@ -185,21 +217,19 @@ struct MapGeometry {
                 // broad-phase envelopes, including empty/rotated model space.
                 if(sceneBounds.max.y<=low)continue;
                 for(int shape=0;shape<obbCount;++shape)
-                    if(!ClearObb(from,to,obbs+size_t(shape)*kObbStride)){++blocked;lastReject=6;return false;}
+                    if(!ClearObb(from,to,obbs+size_t(shape)*kObbStride)){
+                        ++blocked;lastReject=6;rejectedScene=scene;rejectedObject=object;rejectedShape=static_cast<uint32_t>(shape);return false;
+                    }
                 for(int shape=0;shape<sphereCount;++shape)
                     if(!ClearSphere(from,to,*reinterpret_cast<MapBodySphere*>(spheres+size_t(shape)*kSphereStride)))
-                        {++blocked;lastReject=6;return false;}
+                        {
+                            const auto& sphere=*reinterpret_cast<MapBodySphere*>(spheres+size_t(shape)*kSphereStride);
+                            ++blocked;lastReject=6;rejectedScene=scene;rejectedObject=object;rejectedShape=static_cast<uint32_t>(shape);
+                            shapeReject=5;rejectedSphereCenter=sphere.center;rejectedSphereRadius=sphere.radius;return false;
+                        }
                 continue;
             }
-            // Terrain's broad AABB includes its floor and cannot be treated as
-            // a solid box. Trace the body's footprint at feet, middle and head.
-            for(float x:{start.min.x,(start.min.x+start.max.x)*0.5f,start.max.x})
-                for(float z:{start.min.z,(start.min.z+start.max.z)*0.5f,start.max.z})
-                    for(float y:{low,(low+high)*0.5f,high}) {
-                        const Ray3 ray={{x,y,z},direction};float distance=0;
-                        const bool hit=api.terrainRay(scene,&ray,&distance);
-                        if(BlockingHit(hit,distance,length)){++blocked;lastReject=7;return false;}
-                    }
+            // Terrain support/steep contact was checked at native root samples.
         }
         return true;
     }
@@ -211,7 +241,7 @@ struct MapGeometry {
         Vec3 previous=from,landing=from;bool dropping=false;
         for(int sample=1;sample<=samples;++sample) {
             Vec3 point=from+delta*(static_cast<float>(sample)/samples),floor{};
-            if(!Ground(point,previous.y+80,previous.y-4096,floor))return false;
+            if(!Ground(point,previous.y+60,previous.y-4096,floor,true))return false;
             if(dropping||floor.y<previous.y-80) {
                 // Walk clear of a ledge before descending. Check every possible
                 // fall column for death zones, then the actual landing column.

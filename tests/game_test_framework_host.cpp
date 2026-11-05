@@ -5,7 +5,19 @@
 #include <cstring>
 
 #include "sdgo/sdgo_api.h"
+namespace {
+    unsigned flushCalls = 0;
+    bool slowFlush = false;
+    BOOL WINAPI FixtureFlush(HANDLE handle)
+    {
+        ++flushCalls;
+        if (slowFlush) Sleep(200);
+        return FlushFileBuffers(handle);
+    }
+}
+#define FlushFileBuffers FixtureFlush
 #include "../mods/game_test_shared/runner.h"
+#undef FlushFileBuffers
 
 namespace
 {
@@ -27,6 +39,19 @@ namespace
     {
         MarkOffline(context);
         const char* scenario = Scenario();
+        if (!strcmp(scenario, "slow_observation_disk")) {
+            const unsigned before = flushCalls;
+            slowFlush = true;
+            for (unsigned i = 0; i < 16; ++i)
+                context->Observe("sample retained without synchronous disk wait");
+            slowFlush = false;
+            const unsigned afterSamples = flushCalls;
+            context->Assert(afterSamples == before,
+                "slow durable storage does not stall sampled observations");
+            context->Assert(flushCalls == afterSamples + 1,
+                "assertions durably flush the preceding observation batch");
+            return SDGO_GAME_TEST_PASS;
+        }
         if (!strcmp(scenario, "valid")) {
             if (context->tick < 2)
                 return SDGO_GAME_TEST_WAIT;

@@ -4,6 +4,7 @@
 #include "../battle_ai/native_capabilities.h"
 #include "../match_ai/forced_pad_observer.h"
 #include "../match_ai/gate_status_observer.h"
+#include <algorithm>
 #include <array>
 #include <cmath>
 
@@ -18,7 +19,15 @@ class BattleAiBehaviorProbe {
         uint64_t releaseShots=0;
         uint32_t casterState=0,casterPending=0,casterEndEvent=0,casterApplied=0,casterResult=0,casterReady=0,casterZeroCompletions=0;
         BattleAiActivityClock activity{};
+        BattleAiActivityClock horizontalActivity{};
+        BattleAiVerticalProgress verticalProgress{};
         uint64_t idleReportedAt=0,missingSince=0,lastSnapshotAt=0;
+        bool verticalKnown=false;
+        float minY=0,maxY=0;
+        uint64_t verticalSamples=0,dropFrames=0,traversalDropFrames=0;
+        uint64_t forcedDropFrames=0,hurtDropFrames=0,unknownDropFrames=0,specialDropFrames=0;
+        double verticalDrop=0,traversalVerticalDrop=0;
+        double forcedVerticalDrop=0,hurtVerticalDrop=0,unknownVerticalDrop=0,specialVerticalDrop=0;
     };
     struct Totals {
         uint64_t shots=0,opponentShots=0,attempts=0,zeroCompletions=0;
@@ -29,7 +38,16 @@ class BattleAiBehaviorProbe {
         uint64_t specialCompletions=0;
         uint32_t forcedFrames=0,forcedMovementFrames=0;
         uint64_t maxIdleMs=0,maxSampleGapMs=0,maxMissingMs=0;
+        uint64_t maxHorizontalIdleMs=0,verticalProgressFrames=0;
         uint64_t sharedFrames=0,sharedPursuitFrames=0,explorationRoutes=0;
+        uint32_t lives=0;
+        bool verticalKnown=false;
+        float minY=0,maxY=0;
+        uint64_t dropFrames=0,traversalDropFrames=0;
+        uint64_t forcedDropFrames=0,hurtDropFrames=0,unknownDropFrames=0,specialDropFrames=0;
+        double verticalDrop=0,traversalVerticalDrop=0;
+        double forcedVerticalDrop=0,hurtVerticalDrop=0,unknownVerticalDrop=0,specialVerticalDrop=0;
+        uint64_t physicalLogAt=0;
     };
     std::array<Unit,12> units_{};
     std::array<Totals,12> totals_{};
@@ -64,6 +82,20 @@ class BattleAiBehaviorProbe {
             if(!battle_ai::native::detail::Read(unit,0x38,hp))return true;
             return hp>0;
         } __except(EXCEPTION_EXECUTE_HANDLER) {return true;}
+    }
+    static void LogVerticalLife(const SdgoGameTestContextV1* context,size_t slot,const Unit& state) {
+        if(!state.last.object_id||!state.verticalKnown)return;
+        char detail[640];sprintf_s(detail,
+            "native AI vertical life bot_slot=%zu unit=%u unit_data=%u generation=%llu samples=%llu min_y=%.3f max_y=%.3f drop_frames=%llu vertical_drop=%.3f traversal_drop_frames=%llu traversal_vertical_drop=%.3f forced_drop_frames=%llu forced_vertical_drop=%.3f hurt_drop_frames=%llu hurt_vertical_drop=%.3f unknown_drop_frames=%llu unknown_vertical_drop=%.3f special_drop_frames=%llu special_vertical_drop=%.3f",
+            slot,state.last.object_id,state.last.unit_id,static_cast<unsigned long long>(state.last.generation),
+            static_cast<unsigned long long>(state.verticalSamples),state.minY,state.maxY,
+            static_cast<unsigned long long>(state.dropFrames),state.verticalDrop,
+            static_cast<unsigned long long>(state.traversalDropFrames),state.traversalVerticalDrop,
+            static_cast<unsigned long long>(state.forcedDropFrames),state.forcedVerticalDrop,
+            static_cast<unsigned long long>(state.hurtDropFrames),state.hurtVerticalDrop,
+            static_cast<unsigned long long>(state.unknownDropFrames),state.unknownVerticalDrop,
+            static_cast<unsigned long long>(state.specialDropFrames),state.specialVerticalDrop);
+        context->Observe(detail);
     }
 public:
     bool Observe(const SdgoGameTestContextV1* context,const SdgoPvpAiClientSnapshotV1& battle) {
@@ -115,7 +147,7 @@ public:
                     if(!state.missingSince)state.missingSince=state.lastSnapshotAt?state.lastSnapshotAt:clock;
                     const auto missing=clock-state.missingSince;
                     if(missing>total.maxMissingMs)total.maxMissingMs=missing;
-                } else {state.missingSince=0;state.activity.Observe(clock,false,false);}
+                } else {state.missingSince=0;state.activity.Observe(clock,false,false);state.horizontalActivity.Observe(clock,false,false);}
                 continue;
             }
             const auto& now=current[i];
@@ -123,8 +155,12 @@ public:
             const auto previousNavigation=state.navigation;
             auto& total=totals_[i];
             const bool sameLife=before.object_id==now.object_id&&before.generation==now.generation;
+            const uint64_t sampleGap=state.lastSnapshotAt?clock-state.lastSnapshotAt:0;
+            const bool consecutive=sameLife&&!state.missingSince&&state.lastSnapshotAt&&sampleGap<=1000;
             if(!sameLife) {
+                LogVerticalLife(context,i,state);
                 state={};
+                ++total.lives;
                 char detail[256];sprintf_s(detail,"native AI life pilot=%u object=%u npc=%u unit_data=%u generation=%llu team=%u hp=%d",
                     battle.bots[i].pilot_id,now.object_id,battle.bots[i].npc_id,now.unit_id,
                     static_cast<unsigned long long>(now.generation),battle.bots[i].team,now.hp);context->Observe(detail);
@@ -158,8 +194,75 @@ public:
             const float activityDx=now.x-before.x,activityDz=now.z-before.z;
             const bool moving=sameLife&&!now.control_blocked&&activityDx*activityDx+activityDz*activityDz>0.01f;
             const bool attacking=now.attack_state==0x34||now.attack_state==0x5C||now.special_busy;
-            if(now.movement_state==0x124||now.movement_pending==0x124) {
+            const bool forced=now.movement_state==0x124||now.movement_pending==0x124;
+            const bool autonomousVertical=consecutive&&before.hp>0&&now.hp>0&&
+                !now.control_blocked&&!before.control_blocked&&!now.special_busy&&!before.special_busy&&
+                !forced&&before.movement_state!=0x124&&before.movement_pending!=0x124&&
+                now.hurt_state==1&&before.hurt_state==1;
+            const bool verticalProgress=state.verticalProgress.Observe(now.x,now.y,now.z,autonomousVertical);
+            if(verticalProgress)++total.verticalProgressFrames;
+            if(forced) {
                 ++total.forcedFrames;if(moving)++total.forcedMovementFrames;
+            }
+            // Height ranges contain actual living-life samples. A downward
+            // segment additionally requires adjacent, readable observations
+            // from the same generation; death falls and long gaps are not
+            // physical traversal evidence.
+            if(now.hp>0&&std::isfinite(now.y)) {
+                if(!state.verticalKnown) {
+                    state.verticalKnown=true;state.minY=state.maxY=now.y;
+                } else {
+                    state.minY=(std::min)(state.minY,now.y);state.maxY=(std::max)(state.maxY,now.y);
+                }
+                ++state.verticalSamples;
+                if(!total.verticalKnown) {
+                    total.verticalKnown=true;total.minY=total.maxY=now.y;
+                } else {
+                    total.minY=(std::min)(total.minY,now.y);total.maxY=(std::max)(total.maxY,now.y);
+                }
+                if(consecutive&&before.hp>0&&std::isfinite(before.y)) {
+                    const float drop=before.y-now.y;
+                    if(drop>0.01f) {
+                        ++state.dropFrames;state.verticalDrop+=drop;
+                        ++total.dropFrames;total.verticalDrop+=drop;
+                        const bool specialDrop=now.special_busy||before.special_busy||now.hurt_state==4||before.hurt_state==4;
+                        const bool forcedDrop=forced||before.movement_state==0x124||before.movement_pending==0x124;
+                        const bool hurtDrop=now.control_blocked||before.control_blocked;
+                        // Native state 1 is the observed normal state. Preserve
+                        // other unconfirmed states separately instead of
+                        // calling them hurt or autonomous traversal.
+                        const bool unknownDrop=
+                            (now.hurt_state&&now.hurt_state!=1&&now.hurt_state!=4)||
+                            (before.hurt_state&&before.hurt_state!=1&&before.hurt_state!=4);
+                        if(specialDrop) {
+                            ++state.specialDropFrames;state.specialVerticalDrop+=drop;
+                            ++total.specialDropFrames;total.specialVerticalDrop+=drop;
+                        } else if(forcedDrop) {
+                            ++state.forcedDropFrames;state.forcedVerticalDrop+=drop;
+                            ++total.forcedDropFrames;total.forcedVerticalDrop+=drop;
+                        } else if(hurtDrop) {
+                            ++state.hurtDropFrames;state.hurtVerticalDrop+=drop;
+                            ++total.hurtDropFrames;total.hurtVerticalDrop+=drop;
+                        } else if(unknownDrop) {
+                            ++state.unknownDropFrames;state.unknownVerticalDrop+=drop;
+                            ++total.unknownDropFrames;total.unknownVerticalDrop+=drop;
+                        } else {
+                            ++state.traversalDropFrames;state.traversalVerticalDrop+=drop;
+                            ++total.traversalDropFrames;total.traversalVerticalDrop+=drop;
+                        }
+                    }
+                }
+            }
+            if(!total.physicalLogAt||clock-total.physicalLogAt>=1000) {
+                char detail[640];sprintf_s(detail,
+                    "native AI physical bot_slot=%u pilot=%u unit=%u unit_data=%u generation=%llu sample=%u sample_gap_ms=%llu hp=%d pos=%.3f,%.3f,%.3f selected_slot=%d native_movement=%X/%X native_attack=%X/%X native_moving=%u defence_moving=%u target=%u target_visible=%u control_blocked=%u forced_movement=%u special_busy=%u hurt_state=%u shots=%llu attempts=%llu",
+                    i,battle.bots[i].pilot_id,now.object_id,now.unit_id,
+                    static_cast<unsigned long long>(now.generation),frames_,static_cast<unsigned long long>(sampleGap),
+                    now.hp,now.x,now.y,now.z,now.selected_slot,now.movement_state,now.movement_pending,
+                    now.attack_state,now.attack_pending,now.moving,now.defence_moving,now.target_id,now.target_visible,
+                    now.control_blocked,forced,now.special_busy,now.hurt_state,
+                    static_cast<unsigned long long>(now.ranged_shots),static_cast<unsigned long long>(now.ranged_attempts));
+                context->Observe(detail);total.physicalLogAt=clock;
             }
             const auto opponent=[&](uint32_t id) {
                 if(!id)return false;
@@ -180,7 +283,9 @@ public:
                (!sameLife||now.special_finished!=before.special_finished))++total.specialCompletions;
             const bool eligible=now.hp>0&&enemyAlive&&!now.control_blocked;
             const bool fired=sameLife&&now.ranged_shots>before.ranged_shots;
-            const auto elapsed=state.activity.Observe(clock,eligible,moving||attacking||fired);
+            const auto elapsed=state.activity.Observe(clock,eligible,moving||verticalProgress||attacking||fired);
+            state.horizontalActivity.Observe(clock,eligible,moving||attacking||fired);
+            if(state.horizontalActivity.maxIdleMs>total.maxHorizontalIdleMs)total.maxHorizontalIdleMs=state.horizontalActivity.maxIdleMs;
             if(state.activity.maxIdleMs>total.maxIdleMs)total.maxIdleMs=state.activity.maxIdleMs;
             if(state.activity.maxSampleGapMs>total.maxSampleGapMs)total.maxSampleGapMs=state.activity.maxSampleGapMs;
             if(elapsed>=500 && clock-state.idleReportedAt>=500) {
@@ -278,13 +383,23 @@ public:
                 ++observed;
                 const auto& total=totals_[i];
                 if(total.targetFrames&&(total.meleeSwingFrames||total.opponentShots||total.specialCompletions)&&total.maxIdleMs<=1000&&total.maxSampleGapMs<=1000&&total.maxMissingMs<=1000) ++active;
-                char detail[608];sprintf_s(detail,"native AI activity unit=%u unit_data=%u target_frames=%u movement_frames=%u attack_frames=%u melee_swings=%u special_finish_events=%llu shots=%llu opponent_shots=%llu attempts=%llu backward_dispatches=%llu max_free_idle_ms=%llu max_sample_gap_ms=%llu max_missing_ms=%llu shared_frames=%llu shared_pursuit_frames=%llu exploration_routes=%llu",
+                LogVerticalLife(context,i,units_[i]);
+                char detail[1536];sprintf_s(detail,"native AI activity unit=%u unit_data=%u target_frames=%u movement_frames=%u attack_frames=%u melee_swings=%u special_finish_events=%llu shots=%llu opponent_shots=%llu attempts=%llu backward_dispatches=%llu max_free_idle_ms=%llu max_sample_gap_ms=%llu max_missing_ms=%llu shared_frames=%llu shared_pursuit_frames=%llu exploration_routes=%llu bot_slot=%zu lives=%u generation=%llu min_y=%.3f max_y=%.3f drop_frames=%llu vertical_drop=%.3f traversal_drop_frames=%llu traversal_vertical_drop=%.3f forced_drop_frames=%llu forced_vertical_drop=%.3f hurt_drop_frames=%llu hurt_vertical_drop=%.3f unknown_drop_frames=%llu unknown_vertical_drop=%.3f special_drop_frames=%llu special_vertical_drop=%.3f max_horizontal_idle_ms=%llu vertical_progress_frames=%llu",
                     units_[i].last.object_id,units_[i].last.unit_id,total.targetFrames,total.movementFrames,total.attackFrames,
                     total.meleeSwingFrames,static_cast<unsigned long long>(total.specialCompletions),
                     static_cast<unsigned long long>(total.shots),static_cast<unsigned long long>(total.opponentShots),static_cast<unsigned long long>(total.attempts),static_cast<unsigned long long>(total.backwardDispatches),
                     static_cast<unsigned long long>(total.maxIdleMs),static_cast<unsigned long long>(total.maxSampleGapMs),static_cast<unsigned long long>(total.maxMissingMs),
                     static_cast<unsigned long long>(total.sharedFrames),static_cast<unsigned long long>(total.sharedPursuitFrames),
-                    static_cast<unsigned long long>(total.explorationRoutes));context->Observe(detail);
+                    static_cast<unsigned long long>(total.explorationRoutes),i,total.lives,
+                    static_cast<unsigned long long>(units_[i].last.generation),
+                    total.verticalKnown?total.minY:0,total.verticalKnown?total.maxY:0,
+                    static_cast<unsigned long long>(total.dropFrames),total.verticalDrop,
+                    static_cast<unsigned long long>(total.traversalDropFrames),total.traversalVerticalDrop,
+                    static_cast<unsigned long long>(total.forcedDropFrames),total.forcedVerticalDrop,
+                    static_cast<unsigned long long>(total.hurtDropFrames),total.hurtVerticalDrop,
+                    static_cast<unsigned long long>(total.unknownDropFrames),total.unknownVerticalDrop,
+                    static_cast<unsigned long long>(total.specialDropFrames),total.specialVerticalDrop,
+                    static_cast<unsigned long long>(total.maxHorizontalIdleMs),static_cast<unsigned long long>(total.verticalProgressFrames));context->Observe(detail);
                 char map[208];sprintf_s(map,"native AI map activity unit=%u forced_frames=%u physical_forced_frames=%u gate_authorities=%u",
                     units_[i].last.object_id,total.forcedFrames,total.forcedMovementFrames,gateStatus_.authority_count);context->Observe(map);
                 for(uint32_t j=0;j<padStatus_.bot_count&&j<12;++j) {
