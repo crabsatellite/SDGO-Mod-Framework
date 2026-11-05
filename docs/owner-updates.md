@@ -48,7 +48,8 @@ upstream versions. A newer Manager can review older upstream components without 
 
 1. Select the owner's client directory and save **服主 DIY** mode.
 2. Enter the pack name, a dedicated publication directory outside the game directory, and player read addresses.
-   Use either an HTTPS `owner-feed.json` URL or `git+https://git.example.org/team/client.git#main`.
+   Use either an HTTPS `owner-feed.json` URL or a Git HTTPS repository address prefixed with
+   `git+` and suffixed with `#` followed by the branch name.
    Multiple addresses must belong to the same publisher and serve matching content.
 3. For Git publication, enter an HTTPS Git remote and branch. Manager uses existing local Git credentials;
    grant the publisher write access. The dedicated checkout must be clean and updates must fast-forward.
