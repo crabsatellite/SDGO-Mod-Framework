@@ -289,6 +289,12 @@ the report never invents reverse edges. It describes record references, not play
 inventory eligibility or native transform behavior. More than two forms still
 require an appropriate runtime adapter.
 
+The native server accepts unit numbers in `10001..30000`. Unit-number collisions
+need a type-specific relocation range; the larger weapon/skill range cannot be
+used directly for units. Catalog plans and writes reject invalid unit/transform
+numbers before SQL changes. A relocation preview does not reserve numbers or
+complete the related resources, script constants and runtime installation.
+
 The **配套原生资料** (native dependency data) section reads project bindings for
 [`sdgo.unit-native-content/1`](unit-native-content.schema.json). It shows complete
 skill/funnel records, supplied server definitions, atlases and missing or unsupported

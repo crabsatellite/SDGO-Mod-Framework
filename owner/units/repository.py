@@ -17,6 +17,8 @@ from typing import Any, Iterable
 
 
 INT_MAX = 2_147_483_647
+UNIT_ID_FIRST = 10_001
+UNIT_ID_LAST = 30_000
 FAMILY_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 MANAGED_ITEM_FIRST = 1_119_000
 MANAGED_ITEM_LAST = 1_119_999
@@ -602,6 +604,10 @@ def _validate_plan(
     weapon_map = unique(weapons, "WeaponNo", "武器")
     name_map = unique(names, "UnitNumber", "名称")
     for identity, row in unit_map.items():
+        if not UNIT_ID_FIRST<=identity<=UNIT_ID_LAST:
+            raise ValueError(f"机体 {identity} 超出目标服务端编号范围 {UNIT_ID_FIRST}..{UNIT_ID_LAST}；请先按类型重编号")
+        if row['UnitNumber_Transform'] and not UNIT_ID_FIRST<=row['UnitNumber_Transform']<=UNIT_ID_LAST:
+            raise ValueError(f"机体 {identity} 的变形目标超出目标服务端编号范围 {UNIT_ID_FIRST}..{UNIT_ID_LAST}")
         if not row["UnitModelName"].strip():
             raise ValueError(f"机体 {identity} 的 UnitModelName 不能为空")
         if row["HP"] <= 0:
@@ -816,6 +822,9 @@ def _write_record(
 ) -> tuple[str, str]:
     table, columns, key = TABLES[kind]
     identity = row[key]
+    if kind=='unit' and (type(identity)is not int or not UNIT_ID_FIRST<=identity<=UNIT_ID_LAST or
+            (row['UnitNumber_Transform'] and not UNIT_ID_FIRST<=row['UnitNumber_Transform']<=UNIT_ID_LAST)):
+        raise ValueError('机体或变形目标超出目标服务端编号范围；不能通过数据写入绕过按类型重编号')
     current = _fetch_record(cursor, table, columns, key, identity)
     ledger = cursor.execute(
         """
