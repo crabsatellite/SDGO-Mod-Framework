@@ -41,14 +41,14 @@ data += [(str(root/'tools'/name),'tools') for name in ('install_server.ps1','ins
 data += [(str(path),str(path.parent.relative_to(root))) for path in sorted((root/'mods').glob('*/manager.json'))]
 python_license=Path(sys.base_prefix)/'LICENSE.txt'
 if python_license.is_file():data.append((str(python_license),'licenses/Python'))
-for package in ('Pillow','pyodbc','PyInstaller','defusedxml'):
+for package in ('Pillow','pyodbc','PyInstaller','defusedxml','truststore'):
     try:distribution=metadata.distribution(package)
     except metadata.PackageNotFoundError:continue
     for item in distribution.files or []:
         if ('license' in str(item).lower() or 'copying' in str(item).lower()) and distribution.locate_file(item).is_file():
             data.append((str(distribution.locate_file(item)),'licenses/'+package))
 a = Analysis([str(root/'tools/mod_manager.py')], pathex=[str(root)], datas=data,
-             hiddenimports=['pyodbc','PIL.Image','PIL.ImageDraw'],
+             hiddenimports=['pyodbc','PIL.Image','PIL.ImageDraw','truststore'],
              excludes=['playwright','numpy','scipy','matplotlib','tkinter','pytest'], noarchive=False)
 pyz = PYZ(a.pure)
 exe = EXE(pyz,a.scripts,a.binaries,a.datas,[],name='SDGO Mod Manager',console=False,

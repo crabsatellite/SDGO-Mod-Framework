@@ -13,6 +13,9 @@ missing one, and existing entries keep their workspace. No desktop shortcut is c
 Client/server selection, mod configuration, shop, operators, unit import, capsule machines, rewards, FRP and AI
 catalogs share one local interface. Users do not install Python or launch per-feature programs.
 
+**添加目录** (add folder) and **浏览…** (browse) in settings open the Windows folder or file picker. If the picker
+cannot open, Manager shows a box for typing the path instead.
+
 Each feature card shows only its name, a one-line description and its switch, with
 **设置** (settings) when it has adjustable values. Automatic bug fixes appear in the
 archive as always on. With only a client added, the sidebar shows just the game
@@ -48,7 +51,7 @@ How saving works is stated on every page:
 
 Open **更新** (Update) in the sidebar. New installations default to **Stable**: only published stable features are installed. **Beta** includes Stable and Beta features and follows the newest available release; development diagnostics are excluded from both channels. Switching back to Stable leaves existing Beta and custom Mods in place and updates only the features in the Stable package.
 
-Automatic checking and installation are enabled while Manager runs. It checks at startup and hourly afterward. Use **检查更新** to check now or **立即更新** to install. GitHub Release assets are verified against their SHA-256 and the complete file manifest before installation. Network errors leave the current installation usable and can be retried. Automatic updates can be disabled without disabling manual checks.
+Automatic checking and installation are enabled while Manager runs. It checks at startup and hourly afterward. Use **检查更新** to check now or **立即更新** to install. Downloads come from this project's GitHub Releases; Windows checks the HTTPS certificate, as the browser does. Release assets are verified against their SHA-256 and the complete file manifest before installation. Network errors leave the current installation usable and can be retried. Automatic updates can be disabled without disabling manual checks.
 
 Updates apply to registered client and server directories. Running games/servers are never stopped: their update waits until they close. Mod switches, settings, separately declared configuration files, custom Mods, game resources and private data are preserved. Failed writes roll back the affected host; recovery copies stay in the local Manager workspace.
 
