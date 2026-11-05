@@ -52,18 +52,15 @@ archive are unchanged.
 fallback to the native ANSI result, so mixed Thai database defaults with Chinese Unicode name columns display
 correctly without changing columns.
 
-Server 0.1.3 also reads damaged names through the authenticated native Unicode
-binding and encodes the name field using that column's code page. This handles
-native ANSI binding loss without changing the original procedures or player data.
-Client 1.1.2 preserves a complete cached name when a status reply for the same
-pilot contains question marks. The original updater still applies presence,
-location and relationship changes and rebuilds the display text. A complete
-new name follows the normal update path.
+`friend_list_fix` also reads damaged names through the authenticated native Unicode binding and encodes the
+name field using that column's code page, handling native ANSI binding loss without changing the original
+procedures or player data. It fills only missing rank number/step fields from the matching game profile; it
+does not create member-profile records or overwrite saved ranks.
 
-Server 0.1.4 fills only missing rank number/step fields from the matching game profile; it does not create
-member-profile records or overwrite saved ranks. Client 1.1.3 handles the home community list's separate
-context menu as well as the messenger, preserving its stock action meanings and button skins.
-
+`friend_list_client_fix` preserves a complete cached name when a status reply for the same pilot contains
+question marks. The original updater still applies presence, location and relationship changes and rebuilds
+the display text; a complete new name follows the normal update path. It localizes both the home community
+list's context menu and the messenger's, preserving their stock action meanings and button skins.
 
 The stock query left-joins online status, clan and other optional data and sends SQL NULLs to a native OLE DB
 row binding without status buffers. The row reader stops on the warning, so one offline or incomplete row can

@@ -87,7 +87,7 @@ chain_winmm=
 The core verifies every loaded entry before constructing a stable name index. Address lookup uses
 that index for large tables and a direct scan for very small tables. Repeated calls allocate no strings;
 rejected entries retain their rejection state, duplicate names retain the first entry, and returned
-`Symbol` objects keep their original lifetime. Verification rules and hook batching are unchanged.
+`Symbol` objects keep their original lifetime.
 
 Mods never patch raw addresses. They ask the core for named symbols, and the core only hands
 out addresses whose bytes match what was recorded for that exact build. A different build

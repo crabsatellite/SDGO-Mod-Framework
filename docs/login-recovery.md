@@ -1,11 +1,11 @@
 # Native login recovery
 
-[中文](login-recovery.zh-CN.md) · [Feature index](../README.md)
+[简体中文](login-recovery.zh-CN.md) · [Back to the feature index](../README.md)
 
 ## What it does
 
-`login_recovery` completes the original server's recovery when a reconnecting
-player is rejected as already online. After the original authenticated login has
+After a dropped connection, the original server can reject the player's next login as already
+online. `login_recovery` completes the server's own recovery in that case. After the original authenticated login has
 cleared the previous session, it notifies the old Agent connection and repeats
 the native authentication once in the same request.
 
@@ -16,7 +16,7 @@ currencies or credentials. It does not repair unrelated network interruptions.
 ## Use
 
 Install the matching framework server files on WorldServer and restart that
-host. In Mod Manager, find **异常断线登录恢复** in the automatic fixes archive.
+host. In Mod Manager, find **异常断线登录恢复** under **修复归档** (fix archive).
 The fix is active by default and has no gameplay settings. Disabling it also
 requires restarting the affected host. Players use the server owner's client
 package or update; this fix does not require a separate player application.

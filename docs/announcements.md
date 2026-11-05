@@ -1,5 +1,12 @@
 # Scheduled announcements
 
+[简体中文](announcements.zh-CN.md) · [Back to the feature index](../README.md)
+
+Shows owner notices and a daily news digest on the login page and in game. By default the digest appears once at
+login and in-game notices are off.
+
+## Use
+
 Open **SDGO Mod Manager → Owner tools → 公告与展示规则**, select the client directory,
 then add a rule and save all rules. The client loads saved rules automatically;
 Manager can be closed afterwards. Install the server owner's client package or
@@ -57,6 +64,8 @@ the client's own finite fetches remain available after Manager closes. Stop this
 service before changing the selected client directory. Source/cache status and
 article preview stay in the announcement panel.
 
+## Display rules
+
 Each rule combines an optional date range, selected weekdays and a daily time
 window with one or more events: entering the location, periodic evaluation,
 successful login, entering a lobby or room, battle start and battle end. Events
@@ -73,6 +82,8 @@ sets the minimum time between displays of the same rule. In-game duration is
 per native text page; login duration is for the whole notice. An active native
 page finishes its display when the triggering window ends.
 
+## Limits
+
 Per-start, per-day and lifetime limits are optional; **0 means unlimited**.
 Counts belong to this client installation, persist locally for daily/lifetime
 limits, and are shared between both locations for the same rule. They are not
@@ -83,6 +94,8 @@ original GM renderer to consume the queued notice.
 The limits count automatic delivery. The native login buttons also allow a
 player to reread the current notice. Server-originated immediate GM broadcasts
 continue through the original broadcast queue.
+
+## Configuration files and compatibility
 
 Shared authoring inputs are `rules.json`, `runtime.ini`, `news-settings.json`,
 `news.ini` and generated manual `pages`
@@ -95,5 +108,7 @@ its native animation. The supported client build is checked through verified
 symbols. Login notices use the Windows ATL/WebBrowser components; in-game text
 uses a separate native path. Installing or updating the Mod requires restarting
 the client; saved rules then reload automatically.
+
+## Timezone
 
 An unset announcement timezone follows the local timezone of the server running this server owner’s Manager. A numeric UTC-minute offset is an explicit instance override (for example, 480 for UTC+8). Saving or exporting resolves that server-local offset for the distributed client configuration.
