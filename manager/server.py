@@ -51,7 +51,7 @@ def make_server(workspace, port=0):
                     if not isinstance(body, dict): raise ValueError('请求必须是 JSON 对象')
                 if method == 'GET' and path in ('/', '/ui-kit.html'):
                     return self.response(200, (static / ('index.html' if path == '/' else 'ui-kit.html')).read_bytes(), 'text/html; charset=utf-8')
-                if method == 'GET' and path in ('/app.js', '/style.css', '/panel_helpers.js', '/ui.css', '/ui.js'):
+                if method == 'GET' and path in ('/app.js', '/owner_updates.js', '/style.css', '/panel_helpers.js', '/ui.css', '/ui.js'):
                     return self.response(200, (static / path[1:]).read_bytes(), 'text/javascript; charset=utf-8' if path.endswith('.js') else 'text/css; charset=utf-8')
                 if method=='GET' and path in ('/brand.svg','/favicon.ico'):
                     return self.response(200,(static/('brand.svg' if path=='/brand.svg' else 'brand.ico')).read_bytes(),
@@ -85,6 +85,9 @@ def make_server(workspace, port=0):
                     if method=='GET':return self.send_json(200,updates.state())
                     if method=='POST':
                         action=body.get('action')
+                        if action=='source':return self.send_json(200,updates.source(body.get('repository')))
+                        if action=='runtime_plan':return self.send_json(200,updates.runtime_plan(body.get('host')))
+                        if action=='adopt':return self.send_json(200,updates.adopt(body.get('host'),body.get('components'),body.get('digest')))
                         if action=='channel':return self.send_json(200,updates.channel(body.get('channel')))
                         if action=='automatic':
                             if type(body.get('enabled')) is not bool:raise ValueError('自动更新开关无效')
@@ -97,6 +100,19 @@ def make_server(workspace, port=0):
                             self.send_json(200,{'restarting':True})
                             threading.Thread(target=self.server.shutdown,daemon=True).start();return
                         raise ValueError('更新操作无效')
+                if path=='/api/owner-updates':
+                    controller=getattr(workspace,'owner_channels',None)
+                    if controller is None:raise ValueError('服主发布组件尚未初始化')
+                    if method=='GET':return self.send_json(200,controller.state())
+                    if method=='POST':
+                        action=body.get('action');identity=body.get('host')
+                        if action=='resolve':return self.send_json(200,controller.resolve(body.get('feeds')))
+                        if action=='automatic':return self.send_json(200,controller.automatic(identity,body.get('enabled')))
+                        if action=='configure':return self.send_json(200,controller.configure(identity,body))
+                        if action=='preview':return self.send_json(200,controller.preview(identity))
+                        if action in ('publish','check','install','verify_publish'):
+                            return self.send_json(200,controller.request(action,identity,body.get('digest')))
+                        raise ValueError('服主发布操作无效')
                 if method == 'GET' and path == '/api/developer':
                     workspace.require_developer()
                     host=workspace.host(query['host'][0]);identity=query['mod'][0]

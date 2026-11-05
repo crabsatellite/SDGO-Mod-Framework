@@ -240,7 +240,7 @@ async function showUpdates(){
  root.append(timeCard);
  let pending=false;
  const refresh=async()=>{if(pending)return;pending=true;try{
-  const u=await request('/api/updates');card.replaceChildren(element('h2','版本更新'),element('p','Stable 提供正式功能；Beta 同时更新正式与测试功能。游戏或服务器运行时先下载，关闭后自动安装。','intro'));
+  const u=await request('/api/updates');card.replaceChildren(element('h2','Manager 与基础整合包更新'),element('p','Stable 提供正式功能；Beta 同时更新正式与测试功能。DIY 与已绑定负责人目录只更新 Manager 程序，运行文件由服主审阅发布。','intro'));
   const channels=element('div',undefined,'actions');
   for(const [id,label] of [['stable','只更新 Stable（默认）'],['beta','更新 Beta 功能']]){const b=button(label,async()=>{await request('/api/updates',{action:'channel',channel:id});await refresh();},u.channel===id?'ui-btn is-primary':'ui-btn is-ghost');b.setAttribute('aria-pressed',String(u.channel===id));channels.append(b);}
   const auto=element('input');auto.type='checkbox';auto.className='ui-switch';auto.checked=u.automatic;auto.onchange=async()=>{try{await request('/api/updates',{action:'automatic',enabled:auto.checked});}catch(e){message(e.message,true)}};
@@ -251,11 +251,11 @@ async function showUpdates(){
   if(u.latest_version)actions.append(button('立即更新',async()=>{await request('/api/updates',{action:'install'});},'ui-btn is-primary'));
   if(u.manager_restart)actions.append(button('重启 Manager 完成更新',async()=>{await request('/api/updates',{action:'restart'});message('Manager 正在重启，新页面会自动打开。');},'ui-btn is-primary'));
   card.append(actions);
-  for(const h of u.hosts||[])card.append(element('p',h.name+' · '+({installed:'已更新',waiting:'等待关闭',newer:'已安装较新版本',error:'暂未更新'}[h.status]||h.status)+(h.message?'：'+h.message:''),h.status==='error'?'error':'muted'));
+  for(const h of u.hosts||[])card.append(element('p',h.name+' · '+({installed:'已更新',waiting:'等待关闭',newer:'已安装较新版本',owner:'服主维护',player:'跟随服主',error:'暂未更新'}[h.status]||h.status)+(h.message?'：'+h.message:''),h.status==='error'?'error':'muted'));
   if(u.notes){const details=element('details');details.append(element('summary','版本说明'),element('pre',u.notes,'release-notes'));card.append(details);}
   card.append(element('p','保留 Mod 开关、自定义参数、机体资源和本地数据。Beta 通道不会安装开发诊断工具。','muted'));enhance();
  }finally{pending=false;}};
- await refresh();const timer=setInterval(()=>refresh().catch(e=>message(e.message,true)),3000);panelCleanup=()=>clearInterval(timer);
+ await refresh();const {mountOwnerUpdates}=await import('/owner_updates.js');const stopOwner=await mountOwnerUpdates({root,request,element,button,message,hostId});const timer=setInterval(()=>refresh().catch(e=>message(e.message,true)),3000);panelCleanup=()=>{clearInterval(timer);stopOwner();};
 }
 $('nav-updates').onclick=()=>leave()&&showUpdates().catch(e=>message(e.message,true));
 $('create-entrypoints').onclick=async()=>{try{const result=await request('/api/entrypoints',{});message(`已创建 ${result.created} 个快捷入口，保留 ${result.kept} 个已有入口。`);}catch(e){message(e.message,true);}};

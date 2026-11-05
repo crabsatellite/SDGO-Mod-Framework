@@ -1,0 +1,73 @@
+"""Bound a Manager-owned command and its descendants to its operation lifetime."""
+from __future__ import annotations
+import os
+import signal
+import subprocess
+import time
+
+
+class WindowsJob:
+    def __init__(self,process):
+        import ctypes as c
+        from ctypes import wintypes as w
+        class Basic(c.Structure):
+            _fields_=[('process_time',c.c_int64),('job_time',c.c_int64),('flags',w.DWORD),
+                      ('minimum',c.c_size_t),('maximum',c.c_size_t),('active',w.DWORD),
+                      ('affinity',c.c_size_t),('priority',w.DWORD),('scheduling',w.DWORD)]
+        class Io(c.Structure):
+            _fields_=[(n,c.c_uint64)for n in ('reads','writes','other','read_bytes','write_bytes','other_bytes')]
+        class Limits(c.Structure):
+            _fields_=[('basic',Basic),('io',Io),('process_memory',c.c_size_t),('job_memory',c.c_size_t),
+                      ('peak_process',c.c_size_t),('peak_job',c.c_size_t)]
+        self.kernel=c.WinDLL('kernel32',use_last_error=True)
+        self.kernel.CreateJobObjectW.argtypes=(c.c_void_p,w.LPCWSTR);self.kernel.CreateJobObjectW.restype=w.HANDLE
+        self.kernel.SetInformationJobObject.argtypes=(w.HANDLE,c.c_int,c.c_void_p,w.DWORD)
+        self.kernel.AssignProcessToJobObject.argtypes=(w.HANDLE,w.HANDLE)
+        self.kernel.CloseHandle.argtypes=(w.HANDLE,)
+        self.handle=self.kernel.CreateJobObjectW(None,None)
+        if not self.handle:raise c.WinError(c.get_last_error())
+        try:
+            limits=Limits();limits.basic.flags=0x2000  # KILL_ON_JOB_CLOSE.
+            if not self.kernel.SetInformationJobObject(self.handle,9,c.byref(limits),c.sizeof(limits)):raise c.WinError(c.get_last_error())
+            if not self.kernel.AssignProcessToJobObject(self.handle,w.HANDLE(int(process._handle))):raise c.WinError(c.get_last_error())
+            # The new process is still suspended: no helper can escape before
+            # assignment. Resume only this newly created, owned process.
+            native=c.WinDLL('ntdll');native.NtResumeProcess.argtypes=(w.HANDLE,);native.NtResumeProcess.restype=c.c_long
+            status=native.NtResumeProcess(w.HANDLE(int(process._handle)))
+            if status!=0:raise OSError('Could not resume owned command: '+hex(status&0xffffffff))
+        except Exception:self.close();raise
+
+    def close(self):
+        if self.handle:self.kernel.CloseHandle(self.handle);self.handle=None
+
+
+def run(args,*,cwd,env,timeout=900,stop=None):
+    windows=os.name=='nt'
+    process=subprocess.Popen(args,cwd=cwd,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+        creationflags=(subprocess.CREATE_NO_WINDOW|0x00000004)if windows else 0,
+        start_new_session=not windows)
+    job=None
+    def terminate():
+        if job:job.close()
+        elif not windows:
+            try:os.killpg(process.pid,signal.SIGKILL)
+            except ProcessLookupError:pass
+        if process.poll()is None:process.kill()
+    try:
+        if windows:job=WindowsJob(process)
+        deadline=time.monotonic()+timeout
+        while True:
+            if stop is not None and stop.is_set():
+                terminate();raise InterruptedError('Manager operation cancelled')
+            remaining=deadline-time.monotonic()
+            if remaining<=0:
+                terminate();raise subprocess.TimeoutExpired(args,timeout)
+            try:
+                out,err=process.communicate(timeout=min(.25,remaining))
+                return subprocess.CompletedProcess(args,process.returncode,out,err)
+            except subprocess.TimeoutExpired:continue
+    finally:
+        terminate()
+        try:process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:pass
+
