@@ -303,6 +303,23 @@ commit. An existing inactive form is reusable only when its header, weapon point
 and stat slice match, while its current ammo/cooldowns are retained. The Manager's
 multi-form publication restrictions still apply.
 
+The controller request [`sdgo.unit-form-graphs/1`](unit-form-graphs.schema.json)
+binds declared inventory roots to complete unit-record hashes. The controller reads
+unit and item definitions with their ownership ledgers in one locked transaction;
+entry roots require a matching owned unit item, while shared original nodes require
+independent baseline witnesses. Record keys and rollback JSON enter the snapshot
+fingerprint; audit timestamps do not. The native `sdgo_unit_form_graph` policy permits
+only a recorded directed edge reachable from the inventory root. Auxiliary nodes
+remain inspectable data and are not implicitly selectable entries. Same-ID edges
+are retained as data but need a separate behavior profile before runtime use.
+
+The compiler produces candidate bytes and separate host authority bytes. Install
+authority only through the trusted host controller, outside content packages. The
+parser checks their exact binding and host version; the snapshot fingerprint is
+provenance, not a live database/client drift check. Deployment readback and native
+actor, generation, sender, alive and room-lock checks remain necessary. These
+policy helpers do not enable multi-form publication or activate a native actor.
+
 The native server accepts unit numbers in `10001..30000`. Unit-number collisions
 need a type-specific relocation range; the larger weapon/skill range cannot be
 used directly for units. Catalog plans and writes reject invalid unit/transform
