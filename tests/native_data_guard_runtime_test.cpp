@@ -27,6 +27,7 @@ uint8_t* bounds = nullptr;
 void* lookupHook = nullptr;
 void* unitHook = nullptr;
 void* informationHook = nullptr;
+void* informationRefreshHook = nullptr;
 void* exceptionHook = nullptr;
 void* stackWalkHook = nullptr;
 void* deferredHook = nullptr;
@@ -34,6 +35,8 @@ void* completionHook = nullptr;
 void* unitIndexingCopyHook = nullptr;
 void* unitIndexingDestroyHook = nullptr;
 bool missingUnit = false, missingName = false, missingSymbol = false;
+bool missingGrid = false, nullUnitRecord = false;
+unsigned informationRefreshes = 0;
 unsigned nativeLookups = 0, gridCalls = 0, warnings = 0;
 uint32_t observedUnit = 0, observedIndex = 0;
 void* observedSelf = nullptr;
@@ -153,19 +156,24 @@ void Log(SdgoMod*, int level, const char* format, ...) {
         __asm { fld1 }
     }
 }
-void* Grid() { return unit.data(); }
+void* Grid() { return missingGrid ? nullptr : unit.data(); }
 bool __fastcall Find(void* self, void*, const uint8_t** out, uint32_t id, int type, char logging) {
     ++gridCalls;
     Check(self == unit.data() && !logging, "guard uses native silent lookup and bool ABI");
     *out = nullptr;
     if (type == 2) {
         Check(id == kUnit, "unit lookup retains the real unit key");
-        if (!missingUnit) *out = unit.data();
+        if (!missingUnit && !nullUnitRecord) *out = unit.data();
         return !missingUnit;
     }
     Check(type == 24 && id == kNameId, "packed name-group field derives the shipped type-24 key");
     if (!missingName) *out = name.data();
     return !missingName;
+}
+void __fastcall OriginalInformationRefresh(void* self, void*) {
+    ++informationRefreshes;
+    observedSelf = self;
+    Check(GetLastError() == 0x5678, "valid whole-page refresh restores last-error before native delegation");
 }
 const uint8_t* __fastcall OriginalName(void* self, void*, uint32_t id, uint32_t index) {
     ++nativeLookups; observedSelf = self; observedUnit = id; observedIndex = index;
@@ -246,6 +254,8 @@ void* Symbol(SdgoMod*, const char* key) {
     if (!std::strcmp(key, "native_data_guard.unit_finalize")) return reinterpret_cast<void*>(&FinalizeUnit);
     if (!std::strcmp(key, "native_data_guard.information_denominator"))
         return reinterpret_cast<void*>(&OriginalInformationSite);
+    if (!std::strcmp(key, "native_data_guard.information_refresh"))
+        return reinterpret_cast<void*>(&OriginalInformationRefresh);
     if (!std::strcmp(key, "native_data_guard.unit_indexing_defer_continue"))
         return reinterpret_cast<void*>(&DeferredContinue);
     if (!std::strcmp(key, "native_data_guard.unit_indexing_copy"))
@@ -257,6 +267,11 @@ void* Symbol(SdgoMod*, const char* key) {
     return nullptr;
 }
 int HookCode(SdgoMod*, const char* key, void* detour, void** original) {
+    if (!std::strcmp(key, "native_data_guard.information_refresh")) {
+        informationRefreshHook = detour;
+        *original = reinterpret_cast<void*>(&OriginalInformationRefresh);
+        return 1;
+    }
     if (!std::strcmp(key, "native_data_guard.name_lookup")) {
         lookupHook = detour; *original = reinterpret_cast<void*>(&OriginalName); return 1;
     }
@@ -334,7 +349,7 @@ void Run(SdgoModLoadFn entry, HMODULE dll) {
     Check(!entry(&api, nullptr) && !lookupHook && bounds[6] == 0x7F,
           "missing verified dependency refuses activation before mutation");
     missingSymbol = false;
-    Check(entry(&api, nullptr) && lookupHook && unitHook && informationHook &&
+    Check(entry(&api, nullptr) && lookupHook && unitHook && informationHook && informationRefreshHook &&
           deferredHook && completionHook && unitIndexingCopyHook && unitIndexingDestroyHook &&
           exceptionHook && stackWalkHook, "production DLL activates all verified guard paths");
     MakeCaller(code); MakeCaller(code + 64);
@@ -365,6 +380,34 @@ void Run(SdgoModLoadFn entry, HMODULE dll) {
     Check(reinterpret_cast<DirectLookup>(lookupHook)(self, nullptr, kUnit, kIndex) == nullptr,
           "an unrelated native caller retains its original null result");
     missingName = false;
+    // The primary key is separate from the derived percentage key. A miss
+    // must leave even the transformed detail page untouched; readiness on a
+    // later native callback must delegate again rather than latch a failure.
+    using RefreshHook = void(__fastcall*)(void*, void*);
+    const auto refresh = reinterpret_cast<RefreshHook>(informationRefreshHook);
+    std::array<uint8_t, 0x120> detail{};
+    Put(detail.data(), 0x114, kUnit);
+    for (uint8_t transform : {uint8_t{0}, uint8_t{1}}) {
+        detail[0x11C] = transform;
+        const auto before = detail;
+        missingUnit = true; clobberFp = false;
+        SetLastError(0x5678);
+        refresh(detail.data(), nullptr);
+        Check(informationRefreshes == transform && GetLastError() == 0x5678 && detail == before,
+              "missing primary type-2 record cannot reach normal or transformed detail readers");
+        missingUnit = false;
+        refresh(detail.data(), nullptr);
+        Check(informationRefreshes == unsigned(transform) + 1 && observedSelf == detail.data() && detail == before,
+              "later native callback with a ready base record resumes the original refresh exactly once");
+    }
+    const auto detailBefore = detail;
+    missingGrid = true;
+    refresh(detail.data(), nullptr);
+    missingGrid = false; nullUnitRecord = true;
+    refresh(detail.data(), nullptr);
+    nullUnitRecord = false;
+    Check(informationRefreshes == 2 && detail == detailBefore && GetLastError() == 0x5678,
+          "unavailable grid or empty lookup result cannot enter native detail readers");
     std::array<uint8_t, 0x40> information{};
     Put(information.data(), 0x39, uint32_t{240});
     InvokeInformationSite(information.data());
@@ -527,7 +570,19 @@ void Run(SdgoModLoadFn entry, HMODULE dll) {
           "additive V3 observer exposes real deferred-message ownership through completion");
     Check(!statusV3(nullptr), "V3 observer rejects null output");
     snapshotV3.size = 4; Check(!statusV3(&snapshotV3), "V3 observer rejects undersized output");
-    Check(gridCalls > 0 && warnings == 7, "warnings are emitted only for missing data or failed ownership copy");
+    using StatusV4Fn = int(__cdecl*)(SdgoNativeDataGuardStatusV4*);
+    const auto statusV4 = reinterpret_cast<StatusV4Fn>(
+        GetProcAddress(dll, "SdgoNativeDataGuardGetStatusV4"));
+    SdgoNativeDataGuardStatusV4 snapshotV4{}; snapshotV4.size = sizeof(snapshotV4);
+    Check(statusV4 && statusV4(&snapshotV4) && snapshotV4.version == 4 &&
+          snapshotV4.missing_base_information_records == 4 &&
+          snapshotV4.deferred_message_copies == snapshotV3.deferred_message_copies &&
+          snapshotV4.missing_information_records == snapshotV3.missing_information_records,
+          "V4 counts only skipped primary-record refreshes and retains all earlier observer fields");
+    Check(!statusV4(nullptr), "V4 observer rejects null output");
+    snapshotV4.size = sizeof(snapshotV3);
+    Check(!statusV4(&snapshotV4), "V4 observer rejects V3-sized output");
+    Check(gridCalls > 0 && warnings == 11, "warnings are emitted only for missing data or failed ownership copy");
     VirtualFree(code, 0, MEM_RELEASE); VirtualFree(bounds, 0, MEM_RELEASE);
 }
 }
