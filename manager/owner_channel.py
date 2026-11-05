@@ -67,6 +67,13 @@ def installed_binding(root):
     return binding(json.loads(path.read_bytes())) if path.exists() else None
 
 
+def default_mode(root):
+    root=Path(root)
+    if (root/MAINTAINER).exists():return 'owner'
+    if (root/BINDING).exists() or (root/RECEIPT).exists():return 'player'
+    return 'starter'
+
+
 def mode(host):
     # A copied player package remains bound even in a new Manager workspace.
     try:
@@ -413,6 +420,7 @@ class OwnerChannels:
                             branch.endswith(('/','.')) or any(p.startswith('.') or p.endswith('.lock') for p in branch.split('/'))):raise ValueError('发布分支名称无效')
                     prepared['publication']={**source,'directory':str(directory),'extras':extras,'git_remote':remote,'branch':branch}
             prepared['runtime_mode']=chosen
+            prepared['runtime_mode_source']='explicit'
             with storage.LOCK:
                 before_host=copy.deepcopy(host);before_services=copy.deepcopy(self.workspace.settings.get('services'))
                 paths=[updates.child(root,n) for n in (BINDING,RECEIPT,MAINTAINER)]

@@ -22,8 +22,10 @@ Open **更新** (Update), then **整合包维护与服主发布**. Choose the re
 | 服主 DIY — owner | Keep authored runtime files. Review and explicitly select any upstream components to adopt. |
 | 玩家 — player | Check and install only the pinned owner's confirmed pack. Available for client directories. |
 
-Vanilla directories start in starter mode. Existing unclassified Mod installations are protected as DIY on
-registration or migration. The local DIY marker survives switching Manager workspaces. Explicitly switching
+Unclassified directories start in starter mode, including existing Mod installations. Earlier automatic DIY
+classifications without a maintainer declaration, explicit choice or publication settings migrate to this default.
+To take over maintenance, explicitly save **服主 DIY**. Existing explicit choices and pinned player sources stay
+in place. The local DIY marker survives switching Manager workspaces. Explicitly switching
 back to starter clears the owner binding and permits upstream runtime updates; saving the mode itself does
 not immediately replace files.
 
