@@ -29,6 +29,11 @@ class PickerContract(unittest.TestCase):
         for kind in ('directory', 'file'):
             self.assertTrue(picker.options(kind) & picker.FOS_FORCEFILESYSTEM)
 
+    def test_dialog_is_centred_in_the_work_area(self):
+        self.assertEqual(picker.centred((0, 0, 1920, 1032), 960, 540), (480, 246))
+        self.assertEqual(picker.centred((1920, 0, 4480, 1400), 960, 540), (2720, 430))
+        self.assertEqual(picker.centred((0, 0, 800, 600), 960, 540), (0, 30))
+
     def test_unknown_kind_is_rejected(self):
         with self.assertRaises(ValueError): picker.choose('drive')
 

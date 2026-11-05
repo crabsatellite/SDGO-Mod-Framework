@@ -14,7 +14,8 @@ Client/server selection, mod configuration, shop, operators, unit import, capsul
 catalogs share one local interface. Users do not install Python or launch per-feature programs.
 
 **添加目录** (add folder) and **浏览…** (browse) in settings open the Windows folder or file picker. If the picker
-cannot open, Manager shows a box for typing the path instead.
+cannot open, Manager shows a box for typing the path instead. Manager installs the framework into a newly added
+folder, and the page lists its features once the installation finishes.
 
 Each feature card shows only its name, a one-line description and its switch, with
 **设置** (settings) when it has adjustable values. Automatic bug fixes appear in the

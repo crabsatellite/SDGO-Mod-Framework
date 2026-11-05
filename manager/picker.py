@@ -1,12 +1,13 @@
 """Native file/directory selection requested by a click in the Manager UI.
 
 The Windows common item dialog runs inside the Manager process on its own STA thread. It is owned by an invisible
-topmost window placed at the mouse pointer, so it opens above the browser that sent the click. A cancelled dialog
-returns no path; any failure raises at once so the UI can offer manual path entry.
+topmost window, so it opens above the browser that sent the click, and is centred on the screen the pointer is on.
+A cancelled dialog returns no path; any failure raises at once so the UI can offer manual path entry.
 """
 import ctypes
 import sys
 import threading
+import time
 from ctypes import wintypes
 
 LOCK = threading.Lock()
@@ -20,6 +21,7 @@ SIGDN_FILESYSPATH = -2147123200  # 0x80058000
 # Vtable slots: IUnknown 0-2, IModalWindow::Show 3, IFileDialog 4-26, IShellItem::GetDisplayName 5.
 SHOW, SET_FILE_TYPES, SET_OPTIONS, GET_OPTIONS, GET_RESULT, RELEASE, DISPLAY_NAME = 3, 4, 9, 10, 20, 2, 5
 WS_POPUP, WS_EX_TOPMOST, WS_EX_TOOLWINDOW, WS_EX_LAYERED, LWA_ALPHA, SW_SHOW = 0x80000000, 0x8, 0x80, 0x80000, 0x2, 5
+SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE, MONITOR_DEFAULTTONEAREST = 0x1, 0x4, 0x10, 2
 
 
 class GUID(ctypes.Structure):
@@ -28,6 +30,19 @@ class GUID(ctypes.Structure):
 
 class FilterSpec(ctypes.Structure):
     _fields_ = [('name', wintypes.LPCWSTR), ('spec', wintypes.LPCWSTR)]
+
+
+class MonitorInfo(ctypes.Structure):
+    _fields_ = [('cbSize', wintypes.DWORD), ('rcMonitor', wintypes.RECT), ('rcWork', wintypes.RECT), ('dwFlags', wintypes.DWORD)]
+
+
+WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+
+def centred(work, width, height):
+    """Top-left corner that centres a width x height window in a (left, top, right, bottom) work area."""
+    left, top, right, bottom = work
+    return left + max(0, (right - left - width) // 2), top + max(0, (bottom - top - height) // 2)
 
 
 def options(kind):
@@ -54,6 +69,14 @@ def _bind(ole32, user32):
     user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
     user32.SetForegroundWindow.argtypes = user32.DestroyWindow.argtypes = [wintypes.HWND]
     user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+    user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+    user32.MonitorFromPoint.restype = wintypes.HMONITOR
+    user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MonitorInfo)]
+    user32.EnumThreadWindows.argtypes = [wintypes.DWORD, WNDENUMPROC, wintypes.LPARAM]
+    user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
     ole32.CLSIDFromString.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(GUID)]
     ole32.CLSIDFromString.restype = ole32.CoInitializeEx.restype = ole32.CoCreateInstance.restype = ctypes.c_long
     ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, wintypes.DWORD]
@@ -61,17 +84,49 @@ def _bind(ole32, user32):
     ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
 
 
-def _owner(user32):
-    """Invisible topmost window at the pointer; dialogs it owns stay above the browser."""
+def _work_area(user32):
+    """Work area of the monitor under the pointer (the one showing the browser that was clicked)."""
     point = wintypes.POINT()
     if not user32.GetCursorPos(ctypes.byref(point)): point.x = point.y = 0
+    info = MonitorInfo(cbSize=ctypes.sizeof(MonitorInfo))
+    if not user32.GetMonitorInfoW(user32.MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST), ctypes.byref(info)):
+        return point.x, point.y, point.x + 1, point.y + 1
+    work = info.rcWork
+    return work.left, work.top, work.right, work.bottom
+
+
+def _owner(user32, work):
+    """Invisible topmost window at the screen centre; dialogs it owns stay above the browser."""
+    x, y = centred(work, 1, 1)
     owner = user32.CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED, 'STATIC', 'SDGO Mod Manager', WS_POPUP,
-                                   point.x, point.y, 1, 1, None, None, None, None)
+                                   x, y, 1, 1, None, None, None, None)
     if not owner: raise OSError('CreateWindowExW failed')
     user32.SetLayeredWindowAttributes(owner, 0, 0, LWA_ALPHA)
     user32.ShowWindow(owner, SW_SHOW)
     user32.SetForegroundWindow(owner)
     return owner
+
+
+def _centre_when_shown(user32, thread, work, done):
+    """The dialog picks its own first position; move it to the screen centre as soon as it is visible."""
+    found = []
+
+    def visit(hwnd, _):
+        name = ctypes.create_unicode_buffer(16)
+        user32.GetClassNameW(hwnd, name, 16)
+        if name.value == '#32770' and user32.IsWindowVisible(hwnd): found.append(hwnd); return False
+        return True
+
+    callback = WNDENUMPROC(visit)
+    deadline = time.monotonic() + 15
+    while not done.is_set() and time.monotonic() < deadline and not found:
+        user32.EnumThreadWindows(thread, callback, 0)
+        if not found: done.wait(0.01)
+    if found:
+        rect = wintypes.RECT()
+        user32.GetWindowRect(found[0], ctypes.byref(rect))
+        x, y = centred(work, rect.right - rect.left, rect.bottom - rect.top)
+        user32.SetWindowPos(found[0], None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
 
 
 def _show(kind):
@@ -90,8 +145,13 @@ def _show(kind):
         if kind == 'file':
             specs = (FilterSpec * len(FILTERS))(*FILTERS)
             _check(_call(dialog, SET_FILE_TYPES, wintypes.UINT, ctypes.POINTER(FilterSpec))(dialog, len(FILTERS), specs), 'SetFileTypes')
-        owner = _owner(user32)
-        hr = _call(dialog, SHOW, wintypes.HWND)(dialog, owner)
+        work = _work_area(user32)
+        owner = _owner(user32, work)
+        shown = threading.Event()
+        threading.Thread(target=_centre_when_shown, args=(user32, ctypes.windll.kernel32.GetCurrentThreadId(), work, shown),
+                         name='manager-path-picker-position', daemon=True).start()
+        try: hr = _call(dialog, SHOW, wintypes.HWND)(dialog, owner)
+        finally: shown.set()
         if hr == CANCELLED: return {'path': None}
         _check(hr, 'Show')
         _check(_call(dialog, GET_RESULT, ctypes.POINTER(ctypes.c_void_p))(dialog, ctypes.byref(item)), 'GetResult')
