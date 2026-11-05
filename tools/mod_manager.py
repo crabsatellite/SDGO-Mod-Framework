@@ -30,6 +30,12 @@ def main(argv=None):
         from manager.update_restart import finish
         if len(effective)!=2:raise ValueError('更新交接参数无效')
         finish(effective[1]);return
+    if effective[:1]==['--sync-owner-pack']:
+        from manager.owner_channel import sync_client
+        if len(effective)!=2:return 2
+        try:return sync_client(effective[1])
+        except Exception as error:
+            announce('Owner update stopped: '+str(error));return 1
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--workspace', type=Path, default=Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'SDGO/ModManager')
     parser.add_argument('--port', type=int, default=0)
@@ -64,4 +70,4 @@ def main(argv=None):
         lease.close()
 
 
-if __name__ == '__main__': main()
+if __name__ == '__main__': raise SystemExit(main())

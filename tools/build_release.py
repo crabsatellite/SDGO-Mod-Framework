@@ -12,7 +12,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from tools.mod_catalog import read_catalog, validate_stage
 from manager.distribution import require_redistributable
-from manager.updates import REPOSITORY, MANAGER, version, unpack
+from manager.updates import REPOSITORY, MANAGER, version, unpack, repository as validate_repository
 
 
 def catalog_for(channel):
@@ -23,7 +23,8 @@ def catalog_for(channel):
     return {**full,'profile':channel,'mods':mods,'features':{k:v for k,v in full['features'].items() if k in features}}
 
 
-def build(channel, release_version, stage, manager, output, commit=None):
+def build(channel, release_version, stage, manager, output, commit=None, repository=REPOSITORY):
+    repository=validate_repository(repository)
     version(release_version)
     if (channel=='beta')!=('-beta.' in release_version):raise ValueError('Version must match the release channel')
     catalog=catalog_for(channel);validate_stage(ROOT,stage,catalog)
@@ -40,7 +41,8 @@ def build(channel, release_version, stage, manager, output, commit=None):
             payload[base+name]=(stage/base/name).read_bytes()
     for name,raw in payload.items():require_redistributable(name,raw)
     commit=commit or subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
-    manifest={'schema_version':1,'repository':REPOSITORY,'version':release_version,'channel':channel,
+    manifest={'schema_version':1,'repository':repository,'version':release_version,'channel':channel,
+              'capabilities':{'owner_updates':1},
               'source_commit':commit,'files':{n:{'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()} for n,b in sorted(payload.items())}}
     output.mkdir(parents=True,exist_ok=True)
     path=output/('SDGO-ModFramework-'+release_version+'.zip')
@@ -51,7 +53,7 @@ def build(channel, release_version, stage, manager, output, commit=None):
     raw=path.read_bytes();digest=hashlib.sha256(raw).hexdigest()
     # Validate the exact output using the Manager's production package reader.
     check=output/('verified-'+release_version)
-    unpack(raw,{'bytes':len(raw),'sha256':digest,'version':release_version,'channel':channel},check)
+    unpack(raw,{'bytes':len(raw),'sha256':digest,'version':release_version,'channel':channel},check,repository)
     checksums=path.with_suffix('.sha256');checksums.write_text(digest+'  '+path.name+'\n',encoding='ascii')
     print(json.dumps({'asset':str(path),'sha256':digest,'bytes':len(raw),'channel':channel,
                       'mods':len(catalog['mods']),'source_commit':commit}),flush=True)
@@ -65,6 +67,7 @@ def main():
     p.add_argument('--build-dir',type=Path,default=ROOT/'build')
     p.add_argument('--output',type=Path,default=ROOT/'dist')
     p.add_argument('--build',action='store_true')
+    p.add_argument('--repository',default=REPOSITORY,help='GitHub repository identity for a fork release')
     args=p.parse_args();directory=args.build_dir.resolve()
     if args.build:
         subprocess.run(['cmake','-S',str(ROOT),'-B',str(directory),'-A','Win32','-DBUILD_TESTING=ON'],check=True)
@@ -73,7 +76,7 @@ def main():
         subprocess.run(['cmake','--build',str(directory),'--config','Release','--target','release_'+args.channel+'_payload','unit_catalog','sdgo_data','--parallel','3'],check=True)
         subprocess.run(['powershell.exe','-NoProfile','-File',str(ROOT/'tools/build_mod_manager.ps1'),'-BuildDir',str(directory)],
             check=True,env=dict(os.environ,SDGO_RELEASE_VERSION=args.version))
-    build(args.channel,args.version,directory/'stage/Release',directory/'manager'/MANAGER,args.output.resolve())
+    build(args.channel,args.version,directory/'stage/Release',directory/'manager'/MANAGER,args.output.resolve(),repository=args.repository)
 
 
 if __name__=='__main__':main()
