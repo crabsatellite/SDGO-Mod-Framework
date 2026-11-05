@@ -12,13 +12,14 @@ SETTINGS = {'UnitPagesOnly':'0','UnitPresentations':'0','UnitPortraits':'0',
     'ActivityDrawOnce':'0','ActivityRewardCount':'0','BlueprintRecipe':'0','BlueprintBookUid':'0',
     'BlueprintMaterialCount':'0','BlueprintSynthesize':'0','BlueprintOutputUnit':'0',
     'NativeIdProbeCount':'0','NativeIdProbeChunks':'0','NativeIdProbeWitness':'0','NativeIdProbeRequireAbsent':'0',
+    'NativeRecordLifecycleCount':'0','NativeRecordLifecycleIds':'',
     **{'NativeIdProbeChunk'+str(i):'' for i in range(12)}}
 INDEX_CASES = ('pages.unit_index.list','pages.unit_index.detail',
     'pages.unit_index.alternate','pages.unit_index.base','pages.unit_index.close')
 PORTRAIT_CASES = ('pages.unit_index.pose_wait','pages.unit_index.pose_ready')
 
 def validate(value, plan):
-    if not isinstance(value,dict) or set(value)-{'schema','capture_frames','portraits','acquisition','collection_preview','activity_target','activity_draw','reward_pairs','blueprint','native_id_probe'}:
+    if not isinstance(value,dict) or set(value)-{'schema','capture_frames','portraits','acquisition','collection_preview','activity_target','activity_draw','reward_pairs','blueprint','native_id_probe','native_record_lifecycle'}:
         raise ValueError('invalid native unit scenario fields')
     if type(value.get('schema')) is not int or value['schema']!=1:
         raise ValueError('unsupported native unit scenario schema')
@@ -45,6 +46,16 @@ def validate(value, plan):
             any(field in value for field in ('acquisition','activity_target','reward_pairs','blueprint'))):
             raise ValueError('native ID probe cannot mix with other unit-page scopes')
         result['native_id_probe']={**probe,'ids':sorted(probe['ids'])}
+    if 'native_record_lifecycle' in value:
+        probe=value['native_record_lifecycle']
+        if (not isinstance(probe,dict) or set(probe)!={'ids'} or not isinstance(probe['ids'],list) or
+            not 1<=len(probe['ids'])<=16 or any(type(n) is not int or not 0<n<=9_999_999 for n in probe['ids']) or
+            len(set(probe['ids']))!=len(probe['ids'])):
+            raise ValueError('native record lifecycle observation needs one to sixteen exact unique IDs')
+        if (plan.get('page_group') or result['portraits'] or result['collection_preview'] or result.get('activity_draw') or
+            any(field in value for field in ('acquisition','activity_target','reward_pairs','blueprint','native_id_probe'))):
+            raise ValueError('native record lifecycle observation cannot mix with other unit-page scopes')
+        result['native_record_lifecycle']={'ids':sorted(probe['ids'])}
     if 'blueprint' in value:
         blueprint=value['blueprint']
         if (not isinstance(blueprint,dict) or not {'recipe_id','book_uid'}<=set(blueprint) or
@@ -120,6 +131,10 @@ def settings(value=None):
             NativeIdProbeRequireAbsent=str(int(probe['require_absent'])))
         for index in range((len(ids)+255)//256):
             result['NativeIdProbeChunk'+str(index)]=','.join(map(str,ids[index*256:(index+1)*256]))
+    if value.get('native_record_lifecycle'):
+        ids=value['native_record_lifecycle']['ids']
+        result.update(UnitPresentations='0',NativeRecordLifecycleCount=str(len(ids)),
+                      NativeRecordLifecycleIds=','.join(map(str,ids)))
     if value.get('blueprint'):
         result.update(UnitPresentations='0',BlueprintRecipe=str(value['blueprint']['recipe_id']),
                       BlueprintBookUid=str(value['blueprint']['book_uid']))
@@ -146,6 +161,7 @@ def settings(value=None):
 def cases(value):
     result=('framework.bootstrap','flow.login','flow.onboarding','setup.active_unit')+INDEX_CASES[:2]
     if value.get('native_id_probe'):return result[:4]+('catalog.native_id_occupancy',)
+    if value.get('native_record_lifecycle'):return result[:4]
     if value.get('blueprint'):
         return result[:4]+('pages.blueprint.book','pages.blueprint.recipe')+(
             ('pages.blueprint.materials',) if value['blueprint'].get('materials') else ())+(
@@ -172,7 +188,8 @@ def read(root, digest, plan, read_ini):
         fallback=SETTINGS.get(key) if key.startswith(('CapsulePreview','Activity','Blueprint')) else None
         # A sealed non-probe job may predate this opt-in. Missing inactive
         # defaults cannot arm a probe; active probes require every exact key.
-        if key.startswith('NativeIdProbe') and 'native_id_probe' not in value:
+        if ((key.startswith('NativeIdProbe') and 'native_id_probe' not in value) or
+                (key.startswith('NativeRecordLifecycle') and 'native_record_lifecycle' not in value)):
             fallback=SETTINGS.get(key)
         if config.get('settings',key,fallback=fallback)!=expected:
             raise ValueError('native unit observer settings disagree with sealed scenario: '+key)

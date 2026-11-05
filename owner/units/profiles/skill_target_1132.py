@@ -17,6 +17,8 @@ SOURCE_RECORD_SIZE = 882
 TARGET_RECORD_SIZE = 1132
 SOURCE_DISPATCH_OFFSET = 881
 TARGET_DISPATCH_OFFSET = 1131
+SOURCE_LINKED_SKILL_OFFSET = 304
+TARGET_LINKED_SKILL_OFFSET = 354
 SUPPORTED_DISPATCH_VALUES = frozenset({0, 1, 2, 3})
 
 HOST_GONLINE_SHA256 = (
@@ -203,6 +205,170 @@ def validate_projected_record(
         "target": {
             "size": len(target),
             "sha256": expected_target_hash,
+            "inserted_zero_ranges": _INSERTED_RANGES,
+        },
+        "dispatch": {
+            "value": dispatch,
+            "source_offset": SOURCE_DISPATCH_OFFSET,
+            "target_offset": TARGET_DISPATCH_OFFSET,
+            "supported": supported_dispatch,
+            "supported_values": tuple(sorted(SUPPORTED_DISPATCH_VALUES)),
+        },
+        "admission": {
+            "layout_projected": True,
+            "source_recoverable": True,
+            "dispatch_compatibility_blocked": not supported_dispatch,
+            "native_registration_blocked": True,
+            "native_runtime_accepted": False,
+            "blockers": tuple(blockers),
+        },
+    }
+
+
+def validate_relocated_record(
+    *,
+    source: bytes,
+    target: bytes,
+    source_skill_id: int,
+    target_skill_id: int,
+    source_row: int,
+    source_sha256: str,
+    target_sha256: str,
+    linked_skill_rewrite: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    """Validate a projection whose final record changes only its skill ID."""
+    source, embedded_source_id = _source_record(source)
+    source_skill_id = _identity(source_skill_id, "source_skill_id")
+    target_skill_id = _identity(target_skill_id, "target_skill_id")
+    source_row = _identity(source_row, "source_row", allow_zero=True)
+    if embedded_source_id != source_skill_id:
+        raise ValueError("Type-13 source skill identity mismatch")
+
+    expected_source_hash = _hash(source_sha256, "source record identity")
+    expected_target_hash = _hash(target_sha256, "target record identity")
+    if _sha256(source) != expected_source_hash:
+        raise ValueError("Type-13 source record SHA-256 mismatch")
+
+    target = bytes(target)
+    if len(target) != TARGET_RECORD_SIZE:
+        raise ValueError(
+            f"Type-13 target record must be {TARGET_RECORD_SIZE} bytes"
+        )
+    if _sha256(target) != expected_target_hash:
+        raise ValueError("Type-13 target record SHA-256 mismatch")
+    embedded_target_id = struct.unpack_from("<I", target, 0)[0]
+    if embedded_target_id != target_skill_id:
+        raise ValueError("Type-13 target skill identity mismatch")
+
+    projected = _project(source)
+    linked_skill = None
+    allowed_target_spans = [(0, 4)]
+    if linked_skill_rewrite is not None:
+        if (
+            type(linked_skill_rewrite) is not dict
+            or set(linked_skill_rewrite)
+            != {"source_skill_id", "target_skill_id"}
+        ):
+            raise ValueError(
+                "linked_skill_rewrite must contain only source_skill_id "
+                "and target_skill_id"
+            )
+        source_linked_skill_id = _identity(
+            linked_skill_rewrite["source_skill_id"],
+            "linked_skill_rewrite source_skill_id",
+        )
+        target_linked_skill_id = _identity(
+            linked_skill_rewrite["target_skill_id"],
+            "linked_skill_rewrite target_skill_id",
+        )
+        embedded_source_link = struct.unpack_from(
+            "<I", source, SOURCE_LINKED_SKILL_OFFSET
+        )[0]
+        if embedded_source_link != source_linked_skill_id:
+            raise ValueError("Type-13 source linked-skill identity mismatch")
+        projected_source_link = struct.unpack_from(
+            "<I", projected, TARGET_LINKED_SKILL_OFFSET
+        )[0]
+        if projected_source_link != source_linked_skill_id:
+            raise ValueError("Type-13 projected linked-skill identity mismatch")
+        embedded_target_link = struct.unpack_from(
+            "<I", target, TARGET_LINKED_SKILL_OFFSET
+        )[0]
+        _identity(embedded_target_link, "target linked-skill identity")
+        if embedded_target_link != target_linked_skill_id:
+            raise ValueError("Type-13 target linked-skill identity mismatch")
+        linked_skill = {
+            "record_kind": RECORD_KIND,
+            "reference_kind": RECORD_KIND,
+            "source_offset": SOURCE_LINKED_SKILL_OFFSET,
+            "target_offset": TARGET_LINKED_SKILL_OFFSET,
+            "source_skill_id": source_linked_skill_id,
+            "target_skill_id": target_linked_skill_id,
+        }
+        allowed_target_spans.append(
+            (
+                TARGET_LINKED_SKILL_OFFSET,
+                TARGET_LINKED_SKILL_OFFSET + 4,
+            )
+        )
+
+    restored = bytearray(target)
+    struct.pack_into("<I", restored, 0, source_skill_id)
+    if linked_skill is not None:
+        struct.pack_into(
+            "<I",
+            restored,
+            TARGET_LINKED_SKILL_OFFSET,
+            linked_skill["source_skill_id"],
+        )
+    restored = bytes(restored)
+    if restored != projected:
+        raise ValueError(
+            "Type-13 relocated target bytes do not match the profile"
+        )
+    if recover_source_record(restored) != source:
+        raise ValueError("Type-13 relocated inverse projection mismatch")
+
+    dispatch = source[SOURCE_DISPATCH_OFFSET]
+    supported_dispatch = dispatch in SUPPORTED_DISPATCH_VALUES
+    blockers = [
+        "native consumer kind-13 capability is not enabled",
+        "registration and initialization lifecycle is unresolved",
+        "resource, linked-skill, server-field, and runtime closure is unresolved",
+    ]
+    if not supported_dispatch:
+        blockers.append(
+            "dispatch value is outside the observed target branch domain"
+        )
+    return {
+        "schema": "sdgo.native-type13-relocated-record/1",
+        "profile_id": PROFILE_ID,
+        "record_kind": RECORD_KIND,
+        "source_skill_id": source_skill_id,
+        "target_skill_id": target_skill_id,
+        "source_row": source_row,
+        "identity_rewrite": {
+            "source_skill_id": source_skill_id,
+            "target_skill_id": target_skill_id,
+            "allowed_target_span": (0, 4),
+        },
+        "linked_skill_rewrite": linked_skill,
+        "source": {
+            "size": len(source),
+            "sha256": expected_source_hash,
+            "retention": "complete-record-required",
+        },
+        "projected": {
+            "size": len(projected),
+            "sha256": _sha256(projected),
+            "skill_id": source_skill_id,
+        },
+        "target": {
+            "size": len(target),
+            "sha256": expected_target_hash,
+            "skill_id": target_skill_id,
+            "allowed_rewrite_span": (0, 4),
+            "allowed_rewrite_spans": tuple(allowed_target_spans),
             "inserted_zero_ranges": _INSERTED_RANGES,
         },
         "dispatch": {

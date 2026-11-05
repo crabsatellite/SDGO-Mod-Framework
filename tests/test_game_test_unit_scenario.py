@@ -7,6 +7,24 @@ import test_game_test as runner_fixture
 game_test=runner_fixture.game_test
 
 class UnitScenarioTests(unittest.TestCase):
+    def test_native_record_lifecycle_is_sealed_bounded_and_does_not_add_gameplay_actions(self):
+        context={'pages_only':True,'play_unit_uid':17}
+        value={'schema':1,'native_record_lifecycle':{'ids':[9_100_001,198131]}}
+        bound=scope.bind(value,context)['unit_scenario']
+        self.assertEqual([198131,9_100_001],bound['native_record_lifecycle']['ids'])
+        self.assertEqual(('framework.bootstrap','flow.login','flow.onboarding','setup.active_unit'),scope.cases(bound))
+        settings=scope.settings(bound)
+        self.assertEqual('2',settings['NativeRecordLifecycleCount'])
+        self.assertEqual('198131,9100001',settings['NativeRecordLifecycleIds'])
+        self.assertEqual('0',settings['UnitPresentations'])
+        for ids in ([],[1,1],[True],[0],[10_000_000],list(range(1,18))):
+            with self.assertRaises(ValueError):
+                scope.bind({'schema':1,'native_record_lifecycle':{'ids':ids}},context)
+        for change in ({'blueprint':{'recipe_id':301,'book_uid':45}}, {'portraits':True,'capture_frames':True},
+                       {'native_id_probe':{'ids':[11],'witness_unit_id':10003,'require_absent':True}},
+                       {'collection_preview':True}):
+            with self.assertRaises(ValueError):scope.bind(value|change,context)
+
     def test_native_id_probe_is_bounded_explicit_and_separate_from_game_actions(self):
         context={'pages_only':True,'play_unit_uid':17}
         value={'schema':1,'native_id_probe':{'ids':[9000001,35001,35000],
@@ -124,7 +142,7 @@ class SealedUnitScenarioTests(unittest.TestCase):
     prepare=runner_fixture.GameTestRunnerTests.prepare
     def test_historical_non_probe_capsules_keep_their_original_sealed_defaults(self):
         from unittest.mock import patch
-        previous={key:value for key,value in scope.SETTINGS.items() if not key.startswith('NativeIdProbe')}
+        previous={key:value for key,value in scope.SETTINGS.items() if not key.startswith(('NativeIdProbe','NativeRecordLifecycle'))}
         with patch.dict(scope.SETTINGS,previous,clear=True):
             run=self.prepare('historical-unit-scope',pages_only=True,play_unit_uid=17,unit_scenario={'schema':1})
         metadata=game_test.validate_metadata(run)

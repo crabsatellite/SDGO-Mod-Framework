@@ -41,6 +41,7 @@
 #include "native_death_probe.h"
 #include "native_player_combat_probe.h"
 #include "native_data_guard_probe.h"
+#include "native_record_lifecycle_probe.h"
 #include "sealed_room_title.h"
 #include <cwchar>
 #include <array>
@@ -85,6 +86,8 @@ BlueprintActions::Config blueprintConfig{};
 std::vector<uint32_t> nativeIdProbeIds;
 uint32_t nativeIdProbeWitness=0;
 bool nativeIdProbeRequireAbsent=false;
+std::vector<uint32_t> nativeRecordLifecycleIds;
+NativeRecordLifecycleProbe nativeRecordLifecycle;
 PageTestActions pages;
 OperatorCatalogActions operatorCatalog;
 AiCatalogActions aiCatalog;
@@ -227,6 +230,20 @@ bool LoadPlan() {
         if(nativeIdProbeIds.size()-before!=std::min<uint32_t>(256,probeCount-index*256))return false;
     }
     if(nativeIdProbeIds.size()!=probeCount)return false;
+    const auto lifecycleCount=GetPrivateProfileIntW(L"settings",L"NativeRecordLifecycleCount",0,blueprintIni.c_str());
+    if(lifecycleCount>16)return false;
+    nativeRecordLifecycleIds.clear();
+    wchar_t lifecycleIds[256]{};
+    const auto lifecycleLength=GetPrivateProfileStringW(L"settings",L"NativeRecordLifecycleIds",L"",lifecycleIds,256,blueprintIni.c_str());
+    if(lifecycleLength>=255 || ((lifecycleCount!=0)!=(lifecycleLength!=0)))return false;
+    for(const wchar_t* cursor=lifecycleIds;*cursor;) {
+        wchar_t* end=nullptr;errno=0;const auto id=wcstoul(cursor,&end,10);
+        if(errno || end==cursor || !id || id>9999999 || (*end && *end!=L',') ||
+           (!nativeRecordLifecycleIds.empty() && id<=nativeRecordLifecycleIds.back()))return false;
+        nativeRecordLifecycleIds.push_back(id);if(!*end)break;
+        cursor=end+1;if(!*cursor)return false;
+    }
+    if(nativeRecordLifecycleIds.size()!=lifecycleCount)return false;
     blueprintConfig.recipe=GetPrivateProfileIntW(L"settings",L"BlueprintRecipe",0,blueprintIni.c_str());
     wchar_t bookText[32]{};GetPrivateProfileStringW(L"settings",L"BlueprintBookUid",L"0",bookText,32,blueprintIni.c_str());
     blueprintConfig.book=_wcstoui64(bookText,nullptr,10);
@@ -346,7 +363,10 @@ bool LoadPlan() {
         if(!playUnitUid || errno || !end || *end)return false;
     }
     if(testUnitPresentations && !playUnitUid)return false;
-    if(unitPagesOnly && (!pagesOnly || (!testUnitPresentations && !blueprintConfig.recipe && nativeIdProbeIds.empty()) || collectionDraw || testShopCatalog))return false;
+    if(unitPagesOnly && (!pagesOnly || (!testUnitPresentations && !blueprintConfig.recipe && nativeIdProbeIds.empty() && nativeRecordLifecycleIds.empty()) || collectionDraw || testShopCatalog))return false;
+    if(!nativeRecordLifecycleIds.empty() && (!verifyQuietRuntime || !unitPagesOnly || !pagesOnly || !playUnitUid ||
+        testUnitPresentations || !nativeIdProbeIds.empty() || blueprintConfig.recipe || unitAcquisitionConfig.machine_kind ||
+        collectionPreviewOnly || activityDrawOnce || testShopCatalog || captureUnitPortraits || missionMode))return false;
     if(!nativeIdProbeIds.empty() && (!unitPagesOnly || !pagesOnly || !playUnitUid || testUnitPresentations ||
         blueprintConfig.recipe || captureUnitPortraits || unitAcquisitionConfig.machine_kind || collectionPreviewOnly ||
         collectionDraw || activityDrawOnce || testShopCatalog || roomTitlesOnly))return false;
@@ -2838,6 +2858,9 @@ void RegisterPlannedCases() {
             plannedCases.push_back({"catalog.native_id_occupancy",120000,&NativeIdOccupancy});
             provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
         }
+        if(!nativeRecordLifecycleIds.empty()) {
+            provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+        }
         AppendUnitPresentations();
         if(unitPagesOnly) {
             if(unitAcquisitionConfig.machine_kind || collectionPreviewOnly)plannedCases.push_back(pageCases[7]);
@@ -3056,6 +3079,19 @@ void __fastcall Update(uint8_t* app, void*) {
         }
     }
     sdgo_test::Poll();
+    if (!nativeRecordLifecycleIds.empty() && sdgo_test::finished && !sdgo_test::failures) {
+        static bool closeRequested=false;
+        if (!closeRequested) {
+            const HWND window=*reinterpret_cast<const HWND*>(app+0x3c);
+            DWORD pid=0;GetWindowThreadProcessId(window,&pid);
+            wchar_t name[64]{};GetClassNameW(window,name,64);
+            if (window && pid==GetCurrentProcessId() && !wcscmp(name,L"_GONLINE_")) {
+                closeRequested=PostMessageW(window,WM_CLOSE,0,0)!=FALSE;
+                sdgo_test::api->Log(sdgo_test::mod,SDGO_LOG_INFO,
+                    "owned native lifecycle close requested=%u hwnd=%p",closeRequested,window);
+            }
+        }
+    }
 }
 }
 SDGO_GAME_TEST_PROVIDER_ENTRY { return &provider; }
@@ -3068,6 +3104,9 @@ extern "C" __declspec(dllexport) LONG __cdecl SdgoGameTestCaptureStatusV1(HRESUL
 SDGO_MOD_ENTRY {
     if (!sdgo_test::Open(api, mod, "client")) return 0;
     const bool loaded = LoadPlan();
+    if (!nativeRecordLifecycleIds.empty() && !nativeRecordLifecycle.Install(api,mod,
+        sdgo_test::runId,sdgo_test::directory+L"\\native-record-lifecycle.json",nativeRecordLifecycleIds))return 0;
+    sdgo_test::nativeShutdownAfterSuccess=!nativeRecordLifecycleIds.empty();
     if (!nativeDeathProbe.Install(api,mod)) return 0;
     if (!nativePlayerCombat.Install(api,mod)) return 0;
     if (verifyQuietRuntime) {

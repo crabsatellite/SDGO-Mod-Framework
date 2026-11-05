@@ -3907,6 +3907,52 @@ def stop_owned_entry_process(process, timeout: float = OWNED_PROCESS_EXIT_TIMEOU
     raise AssertionError('unreachable owned process wait state')
 
 
+class NativeClientExitWaiter:
+    """Hold the verified owned process identity while its original exit runs."""
+    def __init__(self, pid):
+        if os.name != 'nt':raise GameTestError('native client cleanup requires Windows')
+        self.kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+        self.kernel.OpenProcess.argtypes=[wintypes.DWORD,wintypes.BOOL,wintypes.DWORD]
+        self.kernel.OpenProcess.restype=wintypes.HANDLE
+        self.kernel.WaitForSingleObject.argtypes=[wintypes.HANDLE,wintypes.DWORD]
+        self.kernel.WaitForSingleObject.restype=wintypes.DWORD
+        self.kernel.GetExitCodeProcess.argtypes=[wintypes.HANDLE,ctypes.POINTER(wintypes.DWORD)]
+        self.kernel.GetExitCodeProcess.restype=wintypes.BOOL
+        self.kernel.CloseHandle.argtypes=[wintypes.HANDLE]
+        self.kernel.CloseHandle.restype=wintypes.BOOL
+        self.handle=self.kernel.OpenProcess(0x00100000|0x1000,False,pid)
+        if not self.handle:raise ctypes.WinError(ctypes.get_last_error())
+
+    def wait(self, timeout=30):
+        result=self.kernel.WaitForSingleObject(self.handle,int(timeout*1000))
+        if result==0x102:raise GameTestError('the original native client shutdown did not finish within its budget')
+        if result!=0:raise ctypes.WinError(ctypes.get_last_error())
+        code=wintypes.DWORD()
+        if not self.kernel.GetExitCodeProcess(self.handle,ctypes.byref(code)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        # The pinned original entry has two final-release return branches:
+        # 00491862 returns 0; 004918C8 returns 1. Both still require the exact
+        # native destruction receipt below; crash and other exit codes fail.
+        if code.value not in (0,1):raise GameTestError(f'original native client shutdown exited with 0x{code.value:08X}')
+        return code.value
+
+    def close(self):
+        if self.handle:
+            handle=self.handle;self.handle=None
+            if not self.kernel.CloseHandle(handle):raise ctypes.WinError(ctypes.get_last_error())
+
+
+def native_record_lifecycle_proof(metadata):
+    from tools.game_test_native_record_lifecycle import verify_receipt
+    scope=metadata['plan']['unit_scenario']['native_record_lifecycle']
+    expected=metadata['client']['immutable_hashes'].get('sdgo/mods/unit_catalog/catalog.bin')
+    try:
+        return verify_receipt(Path(metadata['client']['root']),scope['ids'],metadata['run_id'],
+                              expected_catalog_sha256=expected)
+    except (ValueError,OSError) as error:
+        raise GameTestError('native record lifecycle verification failed: '+str(error)) from error
+
+
 def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 30.0, *, on_process=None, on_poll=None) -> dict:
     run_dir = run_dir.resolve()
     validate_metadata(run_dir)
@@ -3930,6 +3976,7 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
     entry_process = None
     game_process = None
     quiet_runtime = None
+    native_exit_waiter = None
     handles = []
     started = utc_now()
     try:
@@ -3991,6 +4038,8 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
                 "timed_out": False,
                 "error": None,
             }
+            if metadata['plan'].get('unit_scenario',{}).get('native_record_lifecycle'):
+                native_exit_waiter=NativeClientExitWaiter(game_process['pid'])
             if on_process:
                 on_process(game_process['pid'], Path(game_process['image_path']))
             metadata["status"] = "running"
@@ -4001,6 +4050,11 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
             while time.monotonic() < deadline:
                 if on_poll:on_poll()
                 if has_run_end(events):
+                    if native_exit_waiter:
+                        completed=[json.loads(line) for line in events.read_text(encoding='utf-8').splitlines()]
+                        if completed[-1].get('status')=='pass':
+                            metadata['execution']['native_record_lifecycle_exit_code']=native_exit_waiter.wait()
+                            metadata['execution']['native_record_lifecycle']=native_record_lifecycle_proof(metadata)
                     status = "completed"
                     break
                 if quiet_runtime:
@@ -4049,6 +4103,7 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
         if game_process and (not entry_process or game_process['pid'] != entry_process.pid):
             cleanup('verified child stop',lambda:terminate_verified_process(game_process["pid"], Path(metadata["client"]["game"])))
         cleanup('owned entry stop',stop_entry)
+        if native_exit_waiter:cleanup('native exit observation handle close',native_exit_waiter.close)
         for handle in handles:
             cleanup('output stream close',handle.close)
         if entry_process and metadata.get('execution') is not None:
@@ -4425,7 +4480,24 @@ def build_report(run_dir: Path) -> dict:
             "native": native,
         },
     }
-    statuses = (report["layers"]["source"]["status"], launch_status, native["status"])
+    if metadata['plan'].get('unit_scenario',{}).get('native_record_lifecycle'):
+        lifecycle={'status':'pending','observer_scope':'registration-and-native-grid-destruction-only',
+                   'native_actor_lifecycle_accepted':False,'errors':[]}
+        if execution and execution.get('status')=='completed':
+            try:
+                exit_code=execution.get('native_record_lifecycle_exit_code')
+                if type(exit_code) is not int or exit_code not in (0,1):
+                    raise GameTestError('original native process exit is unverified')
+                proof=native_record_lifecycle_proof(metadata)
+                if proof!=execution.get('native_record_lifecycle'):
+                    raise GameTestError('native cleanup proof differs from execution readback')
+                lifecycle.update(proof)
+            except GameTestError as error:
+                lifecycle.update(status='fail',errors=[str(error)])
+        elif execution and execution.get('status') not in ('running',None):
+            lifecycle.update(status='fail',errors=['the native record cleanup scope did not finish'])
+        report['layers']['native_record_lifecycle']=lifecycle
+    statuses = tuple(layer['status'] for layer in report['layers'].values())
     report["status"] = (
         "fail"
         if "fail" in statuses

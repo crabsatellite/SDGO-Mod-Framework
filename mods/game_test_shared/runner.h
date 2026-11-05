@@ -23,6 +23,10 @@ inline size_t index;
 inline uint64_t started;
 inline unsigned assertions, failures, ticks;
 inline bool caseFailed, finished, discovered;
+// Opt-in client ownership tests must return to the original message loop so
+// its normal WM_CLOSE/final-release path can run. Ordinary suites still exit
+// immediately, and failed suites never continue into native gameplay.
+inline bool nativeShutdownAfterSuccess=false;
 
 inline std::string Escape(const char* s) {
     std::string out;
@@ -63,7 +67,8 @@ inline void Finish(bool passed, const char* why) {
     finished = true;
     Emit("run_end", passed && !failures ? "pass" : "fail", why);
     CloseHandle(events); events = INVALID_HANDLE_VALUE;
-    ExitProcess(passed && !failures ? 0 : 1);
+    if (!nativeShutdownAfterSuccess || !passed || failures)
+        ExitProcess(passed && !failures ? 0 : 1);
 }
 inline void Fail(const char* why) { Assert(0, why); Finish(false, why); }
 inline bool RejectJob(const char* why) {
@@ -159,7 +164,10 @@ inline int GuardPoll(SdgoGameTestCallbackV1 callback, const SdgoGameTestContextV
 inline void Poll() {
     if (finished) return;
     if (!discovered) Discover();
-    if (index == cases.size()) Finish(!failures, "all registered native cases completed");
+    if (index == cases.size()) {
+        Finish(!failures, "all registered native cases completed");
+        return;
+    }
     const auto& test = cases[index];
     if (current.empty()) {
         current = test.id; started = GetTickCount64(); ticks = assertions = 0; caseFailed = false;

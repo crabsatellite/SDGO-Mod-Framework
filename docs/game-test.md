@@ -395,6 +395,26 @@ applies only to that exact prepared client at that time; installation still
 needs its own conflict check. Keep this scope separate from blueprint,
 portrait, acquisition and capsule scenarios.
 
+### Native record ownership and shutdown
+
+A separate sealed `native_record_lifecycle: {ids: [...]}` scope observes one to
+sixteen exact records in the owned client's catalog. It requires a quiet
+`pages_only` run and an existing equipped instance. After the ordinary
+bootstrap, login and equip assertions, this scope requests `WM_CLOSE` on the
+owned game window and returns to the original message loop. Other suites keep
+their existing immediate-exit behavior.
+
+The runner holds the process handle and waits for normal exit before cleanup.
+The original host's two final-release branches return exit code 0 or 1; the
+native destruction receipt is required for either branch.
+Its additional report layer checks the native final-release receipt against
+the sealed catalog, including complete record bytes, five distinct owning
+allocation addresses and exactly one release of each address. Missing,
+modified or duplicate evidence fails even when the login cases passed. This
+tests raw-record registration and native grid destruction; skill/funnel actor
+activation, battle behavior and transform/death/respawn cleanup remain separate
+acceptance scopes. The probe does not create server rows or player inventory.
+
 ### Coordinated multiplayer
 
 Prepare one quiet `--friends-only` run for each distinct existing account, using

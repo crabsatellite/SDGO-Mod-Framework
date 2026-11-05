@@ -113,6 +113,32 @@ bool ValidateReferences(void* grid) {
                     return false;
                 }
             }
+            for (const size_t offset : kUnitSkillOffsets) {
+                const uint32_t skill=U32(entry.bytes.data()+offset);
+                if (skill && !ReferenceExists(grid,skill,kSkillType)) {
+                    g_api->Log(g_mod,SDGO_LOG_ERROR,"unit %lu skill %lu is unavailable",
+                        static_cast<unsigned long>(entry.id),static_cast<unsigned long>(skill));
+                    return false;
+                }
+            }
+        } else if (entry.kind == kWeaponType) {
+            // Original CFunnel::Initialize (006409D0) resolves the type-10
+            // weapon, then reads this DWORD and resolves the type-11 record.
+            const uint32_t funnel=U32(entry.bytes.data()+kWeaponFunnelOffset);
+            if (funnel && !ReferenceExists(grid,funnel,kFunnelType)) {
+                g_api->Log(g_mod,SDGO_LOG_ERROR,"weapon %lu funnel %lu is unavailable",
+                    static_cast<unsigned long>(entry.id),static_cast<unsigned long>(funnel));
+                return false;
+            }
+        } else if (entry.kind == kSkillType) {
+            // Original skill activation 0066C580 resolves this DWORD through
+            // the same kind-13 lookup, including the linked record's link.
+            const uint32_t linked=U32(entry.bytes.data()+kSkillLinkedSkillOffset);
+            if (linked && !ReferenceExists(grid,linked,kSkillType)) {
+                g_api->Log(g_mod,SDGO_LOG_ERROR,"skill %lu linked skill %lu is unavailable",
+                    static_cast<unsigned long>(entry.id),static_cast<unsigned long>(linked));
+                return false;
+            }
         } else if (entry.kind == kItemCategoryType) {
             const uint32_t reference = U32(entry.bytes.data() + kItemCategoryRefOffset);
             const bool blueprint =
