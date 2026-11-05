@@ -1577,7 +1577,13 @@ if(BUILD_TESTING)
     add_test(NAME unit_effect_resources_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_effect_resources.py" -v)
     set_tests_properties(unit_effect_resources_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
+    add_test(NAME unit_server_dependencies_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_server_dependencies.py" -v)
+    set_tests_properties(unit_server_dependencies_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
     add_library(native_root_thread_probe SHARED tests/native_root_thread_probe.cpp)
     target_link_libraries(native_root_thread_probe PRIVATE sdgo_script_registration)
     sdgo_strict(native_root_thread_probe)
+    add_library(native_skill_registry_probe SHARED tests/native_skill_registry_probe.cpp)
+    target_link_libraries(native_skill_registry_probe PRIVATE sdgo_api)
+    sdgo_strict(native_skill_registry_probe)
 endif()

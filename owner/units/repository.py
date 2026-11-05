@@ -228,6 +228,7 @@ def _empty_catalog() -> dict[str, Any]:
         "grades": set(),
         "level_indices": set(),
         "skill_ids": set(),
+        "pending_skill_ids": set(),
         "funnel_ids": set(),
         "unit_graph_ids": set(),
     }
@@ -314,6 +315,11 @@ def _load_snapshot(path: Path) -> tuple[dict[str, Any], dict[str, bool]]:
         catalog["skill_ids"] = set(_index(skill_rows, "SkillID", "tbl_SkillRev"))
     else:
         metadata["skills"] = False
+    dependency_file = path / "dbo.sdgo_UnitImportDependencies.json"
+    if dependency_file.is_file():
+        catalog["pending_skill_ids"] = {
+            int(row['RecordID']) for row in _json_rows(dependency_file) if row.get('RecordKind') == 'skill'
+        }
     funnel_file = path / "dbo.tbl_Funnel.json"
     if funnel_file.is_file():
         funnel_rows = _json_rows(funnel_file)
@@ -387,6 +393,11 @@ def _load_cursor_catalog(cursor) -> tuple[dict[str, Any], dict[str, bool]]:
         catalog["skill_ids"] = {
             row["SkillID"]
             for row in _select_rows(cursor, "tbl_SkillRev", SKILL_COLUMNS)
+        }
+    if _object_exists(cursor, 'sdgo_UnitImportDependencies'):
+        catalog['pending_skill_ids'] = {
+            int(row[0]) for row in cursor.execute(
+                "SELECT RecordID FROM dbo.sdgo_UnitImportDependencies WHERE RecordKind='skill'")
         }
     if _object_exists(cursor, "tbl_Funnel"):
         catalog["funnel_ids"] = {
@@ -643,6 +654,8 @@ def _validate_plan(
         if skills and not metadata.get("skills", False):
             raise ValueError("服务端技能目录元数据缺失，技能依赖检查仍为 pending")
         for skill in skills:
+            if skill in catalog.get('pending_skill_ids', set()):
+                raise ValueError(f"技能 {skill} 仅有制作数据，尚不能用于发布机体")
             if skill not in catalog["skill_ids"]:
                 raise ValueError(f"机体 {identity} 的技能 {skill} 不存在")
         graph = row["UnitGraph"]

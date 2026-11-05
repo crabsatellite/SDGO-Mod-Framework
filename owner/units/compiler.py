@@ -95,6 +95,9 @@ def publish(workspace,state,selected,transaction):
         # They also preserve the last active record while an update is a draft.
         family=draft.get('published')
         if not family:continue
+        pending=getattr(getattr(workspace,'repository',None),'catalog',{}).get('pending_skill_ids',set())
+        if any(row['server'].get(field) in pending for row in family['forms'] for field in model.SKILL_REFS):
+            raise ValueError('请保存制作项目；使用新增技能制作数据的机体尚不能发布')
         if family.get('native_programs'):
             raise ValueError('请保存制作项目；带有新增初始化脚本的机体尚不能发布')
         family=copy.deepcopy(family);published.append(family);family_blueprint_receipts=[]

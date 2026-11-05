@@ -453,7 +453,10 @@ class Workspace:
                             need('weapon',f'{row["id"]} 的武器 {weapon} 缺少客户端或服务端定义',f'weapons.{weapon}',accept='.bin,.json')
                     for name in model.SKILL_REFS:
                         skill=row['server'].get(name)
-                        if skill and skill not in self.repository.catalog.get('skill_ids',set()):
+                        if skill and skill in self.repository.catalog.get('pending_skill_ids',set()):
+                            need('skill_runtime_pending',f'技能 {skill} 的制作数据已保存；请先保存草稿，使用该技能的机体尚不能发布',
+                                 f'forms.{row["id"]}.{name}','error')
+                        elif skill and skill not in self.repository.catalog.get('skill_ids',set()):
                             need('skill',f'{row["id"]} 引用的技能 {skill} 未在宿主登记；可补齐定义，或明确选择移除缺失技能后重新预览；本版不生成新技能行为',
                                  f'forms.{row["id"]}.{name}','error')
         for omission in draft.get('skill_omissions',[]):
