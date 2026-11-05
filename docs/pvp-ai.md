@@ -25,11 +25,6 @@ participating client, including the host, need components from the same release 
 
 Set the room title, ready up and start normally. AI join at battle start.
 
-AI movement starts when the native countdown releases player control. Registered host-controlled bots
-use the normal map-pad request and authoritative movement notice. Destructible-gate completion keeps
-the native damage, countdown and server removal flow. These compatibility fixes apply independently
-of the selected enhanced-AI difficulty; they do not write positions or remove gates locally.
-
 ### Room-title commands
 
 | Title | Effect |
@@ -127,7 +122,8 @@ victory conditions follow the selected mode. AI on either team target opposing h
 teammates, at every difficulty.
 
 Teleporting AI move to a native spawn point through the normal flow and keep their current HP; normal damage and
-map hazards still apply.
+map hazards still apply. AI use map movement pads through the normal request, and destructible gates take damage,
+count down and are removed by the server under the native rules.
 
 AI can earn MVP but cannot become room host. When an AI ranks first, the human host who remains in the room
 keeps Start permission, including after a solo loss, so the same room can start another battle. Native transfers
