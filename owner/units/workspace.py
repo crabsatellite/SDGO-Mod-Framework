@@ -356,6 +356,11 @@ class Workspace:
         def need(code,message,field=None,level='required',accept=None):
             issues.append({'code':code,'message':message,'field':field,'level':level,**({'accept':accept} if accept else {})})
         root=draft.get('root_unit_id');forms={r['id']:r for r in draft['forms']};newweapons={r['id'] for r in draft['weapons']}
+        for row in draft['weapons']:
+            funnel=row['server'].get('FunnelID')
+            if funnel and funnel in self.repository.catalog.get('pending_funnel_ids',set()):
+                need('funnel_runtime_pending',f'浮游武器 {funnel} 的制作数据已保存；请先保存草稿，使用该定义的机体尚不能发布',
+                     f'weapons.{row["id"]}.FunnelID','error')
         if draft.get('native_programs'):
             from .native_programs import validate_project_bindings
             try:

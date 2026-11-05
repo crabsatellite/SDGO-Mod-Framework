@@ -179,6 +179,7 @@ sdgo_add_mod(unit_catalog DESCRIPTION "confirmed unit family content"
              SOURCES mods/unit_catalog/client.cpp mods/unit_catalog/preview_runtime.cpp
                      mods/unit_catalog/preview_shop.cpp mods/unit_catalog/preview_capsule.cpp
                      mods/unit_catalog/program_runtime.cpp
+                     mods/unit_catalog/skill_atlas_runtime.cpp
                      support/native_resource_overlay/native_resource_overlay.cpp
                      support/native_resource_overlay/native_resource_overlay.def
              FILES symbols.fragment.ini LIBS sdgo_script_registration)
@@ -1583,12 +1584,29 @@ if(BUILD_TESTING)
     add_test(NAME unit_server_dependencies_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_server_dependencies.py" -v)
     set_tests_properties(unit_server_dependencies_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
+    add_test(NAME unit_model_integrity_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_model_integrity.py" -v)
+    set_tests_properties(unit_model_integrity_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
     add_library(native_root_thread_probe SHARED tests/native_root_thread_probe.cpp)
     target_link_libraries(native_root_thread_probe PRIVATE sdgo_script_registration)
     sdgo_strict(native_root_thread_probe)
     add_library(native_skill_registry_probe SHARED tests/native_skill_registry_probe.cpp)
     target_link_libraries(native_skill_registry_probe PRIVATE sdgo_api)
     sdgo_strict(native_skill_registry_probe)
+    add_library(native_skill_atlas_probe SHARED tests/native_skill_atlas_probe.cpp)
+    target_link_libraries(native_skill_atlas_probe PRIVATE sdgo_api)
+    sdgo_strict(native_skill_atlas_probe)
+    add_library(native_model_binding_probe SHARED tests/native_model_binding_probe.cpp)
+    target_link_libraries(native_model_binding_probe PRIVATE sdgo_api)
+    sdgo_strict(native_model_binding_probe)
+    add_executable(skill_atlas_format_test tests/skill_atlas_format_test.cpp
+        support/native_resource_overlay/native_resource_overlay.cpp)
+    target_link_libraries(skill_atlas_format_test PRIVATE sdgo_script_registration)
+    sdgo_strict(skill_atlas_format_test)
+    add_test(NAME unit_skill_atlases_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_skill_atlases.py" -v)
+    set_tests_properties(unit_skill_atlases_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        ENVIRONMENT "SDGO_SKILL_ATLAS_VALIDATOR=$<TARGET_FILE:skill_atlas_format_test>" TIMEOUT 60)
     add_executable(skill_identity_test tests/skill_identity_test.cpp)
     target_link_libraries(skill_identity_test PRIVATE sdgo_skill_identity)
     sdgo_strict(skill_identity_test)

@@ -339,6 +339,19 @@ class CandidateAdmissionTests(unittest.TestCase):
         with self.assertRaises(self.gt.GameTestError):
             self.fixture.prepare('incomplete-roundtrip',apsalus_roundtrip=True,bootstrap_only=True)
 
+    def test_generic_unit_transform_and_battle_capture_are_explicit_and_hash_bound(self):
+        run=self.fixture.prepare('unit-roundtrip',play_unit_uid=17,unit_transform_roundtrip=True,capture_native_frames=True)
+        path=run/'client/sdgo/mods/game_test_client/mod.ini'
+        self.assertEqual(self.gt.read_ini(path).get('settings','UnitTransformRoundtrip'),'1')
+        self.assertEqual(self.gt.read_ini(path).get('settings','CaptureNativeFrames'),'1')
+        self.assertIn('sdgo/mods/game_test_client/mod.ini',self.fixture.metadata(run)['client']['immutable_hashes'])
+        for options in ({'unit_transform_roundtrip':True,'bootstrap_only':True},
+                        {'unit_transform_roundtrip':True,'pages_only':True,'play_unit_uid':17},
+                        {'unit_transform_roundtrip':True,'apsalus_roundtrip':True,'play_unit_uid':17},
+                        {'capture_native_frames':True,'bootstrap_only':True}):
+            with self.subTest(options=options),self.assertRaises(self.gt.GameTestError):
+                self.fixture.prepare('invalid-unit-roundtrip',**options)
+
     def test_gameplay_fps_cap_is_bound_to_client_settings_and_observer(self):
         import xml.etree.ElementTree as ET
         from tests.test_game_test_fps import FPS_MANIFEST

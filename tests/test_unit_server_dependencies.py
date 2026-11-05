@@ -27,6 +27,32 @@ def planned(manifest,records,templates,**kwargs):
 
 
 class ServerDependencies(unittest.TestCase):
+    def test_funnel_clone_uses_complete_paired_fields_and_separate_schema(self):
+        from owner.units.server_dependencies import FUNNEL_SCHEMA
+        source={'FunnelID':198093,'FunnelProp':3,'AniTime':1,'AttackDelay':1,'AttackCount':2,'Stealable':1}
+        raw=bytearray(732);struct.pack_into('<I',raw,0,9000421);raw[5]=3
+        struct.pack_into('<III',raw,719,1,1,2);raw[731]=1
+        value={'schema':FUNNEL_SCHEMA,'owner':'example','revision':'c'*64,'funnels':[
+            {'id':9000421,'client_sha256':hashlib.sha256(raw).hexdigest(),
+             'definition':{'kind':'template','id':198093,'sha256':row_hash(source,kind='funnel')}}]}
+        result=prepare(value,{9000421:bytes(raw)},templates={198093:source},current={},ownership={},available_ids={198093},kind='funnel')
+        self.assertEqual({**source,'FunnelID':9000421},result[0]['row'])
+        self.assertEqual('funnel',result[0]['kind'])
+        changed=bytearray(raw);struct.pack_into('<I',changed,727,3)
+        value['funnels'][0]['client_sha256']=hashlib.sha256(changed).hexdigest()
+        with self.assertRaisesRegex(ValueError,'shared funnel field'):
+            prepare(value,{9000421:bytes(changed)},templates={198093:source},current={},ownership={},available_ids={198093},kind='funnel')
+        with self.assertRaisesRegex(ValueError,'fields differ'):validate_manifest(value,{9000421:bytes(changed)})
+
+    def test_funnel_explicit_definition_cannot_truncate_client_attack_count(self):
+        from owner.units.server_dependencies import FUNNEL_SCHEMA
+        row={'FunnelID':9000421,'FunnelProp':3,'AniTime':1,'AttackDelay':1,'AttackCount':300,'Stealable':1}
+        raw=bytearray(732);struct.pack_into('<I',raw,0,9000421);raw[5]=3
+        struct.pack_into('<III',raw,719,1,1,300);raw[731]=1
+        value={'schema':FUNNEL_SCHEMA,'owner':'example','revision':'c'*64,'funnels':[
+            {'id':9000421,'client_sha256':hashlib.sha256(raw).hexdigest(),
+             'definition':{'kind':'explicit','origin':'source-derived','values':row}}]}
+        with self.assertRaisesRegex(ValueError,'SQL tinyint'):validate_manifest(value,{9000421:bytes(raw)},kind='funnel')
     def test_clones_complete_template_without_deriving_server_battle_mode_from_client_dispatch(self):
         manifest,records,templates=fixture()
         result=planned(manifest,records,templates)

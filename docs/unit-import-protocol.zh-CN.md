@@ -115,6 +115,12 @@ v1–v5 布局读取 emitter 的 32 字节纹理字段，以首个 NUL 为字符
 
 ### 技能与浮游记录 profile
 
+模型资源经过纹理或特效路径改写后，机体记录中的模型摘要也必须对应最终字节。
+发布编译器从实际发布的 ZOA 模型自动生成 `+672` 的固定 64 字节 UTF-16 字段：
+把模型 MD5 视为四个小端 32 位字，各输出八位大写十六进制，再拼接；此字段不追加 NUL。
+原始机体和模型资料保留。`owner.units.model_integrity.rebind_model_digest` 另提供先验证完整源模型、
+再更新准备记录的严格接口；这一摘要不能替代资源闭包或实际出击检查。
+
 服务端技能制作数据使用 `sdgo.unit-server-dependencies/1`
 （[schema](unit-server-dependencies.schema.json)）。`owner`、`revision` 和 `skills` 必填；
 每项用 `id`、完整 1132 字节客户端记录的 `client_sha256` 及 `definition` 绑定数据。
@@ -128,6 +134,18 @@ v1–v5 布局读取 emitter 的 32 字节纹理字段，以首个 NUL 为字符
 
 制作数据保持 `native_registration_authorized=false` 和 `actor_accepted=false`。
 目录读取器把这些行标为 `pending_skill_ids`，普通机体发布仍拒绝引用它们。
+
+浮游制作数据使用 `sdgo.unit-server-funnels/1`（[schema](unit-server-funnels.schema.json)），
+由同一事务接口以 `kind='funnel'` 写入完整的六列定义和独立所有权账本。
+732 字节客户端记录的 `FunnelProp`、动作时间、攻击延迟、攻击次数及可夺取标记必须与服务端逐值对应；
+不能截断客户端的 32 位攻击次数来迁就服务端列。目录用 `pending_funnel_ids` 保留尚未完成的运行准入。
+
+技能图集制作声明为 `sdgo.unit-skill-atlases/1`（[schema](unit-skill-atlases.schema.json)）。
+`owner.units.skill_atlases` 核对完整 1132 字节技能记录、独立 SPR、每帧的 TXR 引用与文件摘要，
+并检查记录 `+426` 的帧编号。编译的 `skill-atlases.bin` 以 `SDGOAT1`、版本 1、128 字节头绑定完整机体目录和原生资源归档的摘要。
+原生组件按实际登记的技能记录选择图集，分别处理详情控件和战斗技能初始化路径；
+未匹配的原版技能仍使用原版图集。纹理和帧坐标沿用原生解析及绘制，不覆盖全局图集。
+这只是资源消费者组件；新增技能的 Manager 普通发布、服务端特殊行为和整机验收仍需分别完成。
 SQL `BattleMode` 与客户端末尾调度字段是独立输入，不按相同名称互相推导。
 原生处理器可能按技能编号选择特殊行为；复制一行 SQL 不会自动保留这种行为，需另行处理原生身份绑定。
 开发者可使用[原生技能身份选择器](skill-identity.md)在独立所有权校验后只改专用分支的局部选择值，

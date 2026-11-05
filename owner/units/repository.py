@@ -229,6 +229,7 @@ def _empty_catalog() -> dict[str, Any]:
         "level_indices": set(),
         "skill_ids": set(),
         "pending_skill_ids": set(),
+        "pending_funnel_ids": set(),
         "funnel_ids": set(),
         "unit_graph_ids": set(),
     }
@@ -317,9 +318,11 @@ def _load_snapshot(path: Path) -> tuple[dict[str, Any], dict[str, bool]]:
         metadata["skills"] = False
     dependency_file = path / "dbo.sdgo_UnitImportDependencies.json"
     if dependency_file.is_file():
+        dependency_rows=_json_rows(dependency_file)
         catalog["pending_skill_ids"] = {
-            int(row['RecordID']) for row in _json_rows(dependency_file) if row.get('RecordKind') == 'skill'
+            int(row['RecordID']) for row in dependency_rows if row.get('RecordKind') == 'skill'
         }
+        catalog['pending_funnel_ids']={int(row['RecordID']) for row in dependency_rows if row.get('RecordKind')=='funnel'}
     funnel_file = path / "dbo.tbl_Funnel.json"
     if funnel_file.is_file():
         funnel_rows = _json_rows(funnel_file)
@@ -399,6 +402,8 @@ def _load_cursor_catalog(cursor) -> tuple[dict[str, Any], dict[str, bool]]:
             int(row[0]) for row in cursor.execute(
                 "SELECT RecordID FROM dbo.sdgo_UnitImportDependencies WHERE RecordKind='skill'")
         }
+        catalog['pending_funnel_ids']={int(row[0]) for row in cursor.execute(
+            "SELECT RecordID FROM dbo.sdgo_UnitImportDependencies WHERE RecordKind='funnel'")}
     if _object_exists(cursor, "tbl_Funnel"):
         catalog["funnel_ids"] = {
             row["FunnelID"]
@@ -670,6 +675,8 @@ def _validate_plan(
     if used_funnels and not metadata.get("funnels", False):
         raise ValueError("服务端浮游炮目录元数据缺失，FunnelID 检查仍为 pending")
     for funnel in sorted(used_funnels):
+        if funnel in catalog.get('pending_funnel_ids',set()):
+            raise ValueError(f'浮游武器 {funnel} 仅有制作数据，尚不能用于发布机体')
         if funnel not in catalog["funnel_ids"]:
             raise ValueError(f"武器引用的 FunnelID {funnel} 不存在")
 

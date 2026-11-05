@@ -78,6 +78,7 @@ def _adapter_files(workspace):
 def publish(workspace,state,selected,transaction):
     from .assets import sprite_binary
     from .codec import patch_weapon,patch_unit,UNIT_FIELDS
+    from .model_integrity import bind_model_digest
     from owner.native_archive import build_archive
     binary,mod_manifest,symbols,installer=_adapter_files(workspace)
     records=[];assets={};registrations=[];plans=[];published=[];blueprint_receipts=[]
@@ -98,6 +99,9 @@ def publish(workspace,state,selected,transaction):
         pending=getattr(getattr(workspace,'repository',None),'catalog',{}).get('pending_skill_ids',set())
         if any(row['server'].get(field) in pending for row in family['forms'] for field in model.SKILL_REFS):
             raise ValueError('请保存制作项目；使用新增技能制作数据的机体尚不能发布')
+        pending_funnels=getattr(getattr(workspace,'repository',None),'catalog',{}).get('pending_funnel_ids',set())
+        if any(row['server'].get('FunnelID') in pending_funnels for row in family['weapons']):
+            raise ValueError('请保存制作项目；使用新增浮游武器制作数据的机体尚不能发布')
         if family.get('native_programs'):
             raise ValueError('请保存制作项目；带有新增初始化脚本的机体尚不能发布')
         family=copy.deepcopy(family);published.append(family);family_blueprint_receipts=[]
@@ -142,6 +146,10 @@ def publish(workspace,state,selected,transaction):
             raw=bytearray(patch_unit(source,shared))
             if len(raw)!=4976:raise ValueError('机体原始记录已改变')
             wchar(raw,612,30,row['model'].replace('/','\\'))
+            model_path=row['model'].replace('\\','/').lower()
+            model_bytes=assets.get(model_path)
+            if model_bytes is None:model_bytes=workspace.baseline.read(model_path)
+            raw=bytearray(bind_model_digest(bytes(raw),model_bytes))
             for offset in (4654,4754,4854):
                 original=raw[offset:offset+100].decode('utf-16-le').split('\0')[0]
                 wchar(raw,offset,50,original.replace('/','\\'))

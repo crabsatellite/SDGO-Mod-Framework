@@ -8,7 +8,8 @@
 // No keyboard, profile, inventory, model, FSM or server state is fabricated.
 namespace apsalus_probe {
 inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMod* mod, ScoreboardActions& input) {
-    static const bool enabled = api->SettingInt(mod, "ApsalusRoundtrip", 0) != 0;
+    static const bool legacy = api->SettingInt(mod, "ApsalusRoundtrip", 0) != 0;
+    static const bool enabled = legacy || api->SettingInt(mod, "UnitTransformRoundtrip", 0) != 0;
     if (!enabled) return SDGO_GAME_TEST_PASS;
     using Find = unsigned char*(__thiscall*)(void*, unsigned);
     using Request = unsigned(__thiscall*)(void*);
@@ -21,7 +22,7 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
     static auto request = reinterpret_cast<Request>(api->Symbol(mod, "test.apsalus_transform_request"));
     static auto moveInput = reinterpret_cast<InputBusiness>(api->Symbol(mod, "test.apsalus_move_input"));
     static auto fireInput = reinterpret_cast<InputBusiness>(api->Symbol(mod, "test.apsalus_primary_input"));
-    static unsigned issued = 0, completed = 0, initialId = 0, lastMode = ~0u, lastId = 0;
+    static unsigned issued = 0, completed = 0, initialId = 0, alternateId = 0, lastMode = ~0u, lastId = 0;
     static uint64_t issuedAt = 0;
     static unsigned controlsVerified = 0;
     static uint64_t controlAt = 0, settleAt = 0;
@@ -51,11 +52,31 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
     const auto id = *reinterpret_cast<unsigned*>(spec);
     const auto mode = *reinterpret_cast<unsigned*>(move + 0x2c0);
     const auto handle = *reinterpret_cast<unsigned*>(move + 0x1ac);
-    if (id != 24787 && id != 24788) {
+    if (legacy && id != 24787 && id != 24788) {
         context->Assert(0, "Apsalus probe must start with a genuinely owned Apsalus III");
         return SDGO_GAME_TEST_FAIL;
     }
-    if (!initialId) initialId = id;
+    if (!initialId) {
+        using Grid=void*(__cdecl*)();using GridFind=bool(__thiscall*)(void*,const unsigned char**,unsigned,int,char);
+        const auto grid=reinterpret_cast<Grid>(api->Symbol(mod,"grid.data"));
+        const auto lookup=reinterpret_cast<GridFind>(api->Symbol(mod,"grid.find"));
+        const unsigned char* first=nullptr;const unsigned char* second=nullptr;unsigned reciprocal=0;
+        if(!grid||!lookup||!lookup(grid(),&first,id,2,0)||!first) {
+            context->Assert(0,"selected actor has an actual native unit definition");return SDGO_GAME_TEST_FAIL;
+        }
+        std::memcpy(&alternateId,first+316,4);
+        if(!alternateId||alternateId==id||!lookup(grid(),&second,alternateId,2,0)||!second) {
+            context->Assert(0,"roundtrip requires an existing second native form");return SDGO_GAME_TEST_FAIL;
+        }
+        std::memcpy(&reciprocal,second+316,4);
+        if(reciprocal!=id) {
+            context->Assert(0,"two-form roundtrip requires reciprocal original transform references");return SDGO_GAME_TEST_FAIL;
+        }
+        initialId=id;
+    }
+    if(id!=initialId&&id!=alternateId){
+        context->Assert(0,"actor left the selected native two-form family");return SDGO_GAME_TEST_FAIL;
+    }
     if (lastMode != mode || lastId != id) {
         char message[192];
         sprintf_s(message, "apsalus native probe unit=%u bank=%u mode=%u handle=%u issued=%u completed=%u", id, unit[0xe34], mode, handle, issued, completed);
@@ -105,7 +126,7 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
         return SDGO_GAME_TEST_WAIT;
     }
     if (issued > completed) {
-        if (mode == 0 && id != (completed % 2 == 0 ? initialId : (initialId == 24787 ? 24788u : 24787u))) {
+        if (mode == 0 && id == (completed % 2 == 0 ? alternateId : initialId)) {
             ++completed;
             context->Assert(1, "original transform request committed its other form and released movement mode");
         } else if (context->elapsed_ms - issuedAt > 3000) {
