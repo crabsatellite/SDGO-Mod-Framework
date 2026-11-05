@@ -154,7 +154,7 @@ battle_ai::native::TerrainNormalFn g_terrainNormal=nullptr;
 battle_ai::native::TerrainSupportSampler g_terrainSupport;
 battle_ai::native::MapSphereObbOverlapFn g_mapSphereObb=nullptr;
 battle_ai::native::MapSphereObbContactFn g_mapSphereObbContact=nullptr;
-struct RuntimeSettings { bool generic=false,enabled=true,aim=true,lead=true,logDecisions=false; int maxLeadMs=3000,difficulty=1,quickSwing=80; } g_runtime;
+struct RuntimeSettings { bool generic=false,enabled=true,aim=true,lead=true,logDecisions=false; int maxLeadMs=3000,difficulty=1,quickSwing=80,mediumAttackIntervalMs=600; } g_runtime;
 struct DefencePlan {
     battle_ai::DefenceThreat threats[32];size_t count=0;
     battle_ai::DefenceMove movement;
@@ -176,6 +176,7 @@ struct Actor {
     ULONGLONG seen=0,aimAt=0,nextPulse=0;
     uint32_t aimTarget=0;
     int intervalMs=0;
+    bool pacingLogged=false;
     bool ownsIntent=false,ownsAim=false,controlled=false;
     int savedWait=0;
     float savedYawError=0,savedPitchError=0;
@@ -560,6 +561,7 @@ void RestoreIntent(uint8_t* unit,Actor& a) {
     if(a.ownsJumpPermission&&g_setJumpEnabled)g_setJumpEnabled(unit,a.savedJumpPermission);
     a.ownsJumpPermission=false;
     a.controlled=false;a.ownsIntent=false;a.ownsAim=false;a.aimTarget=0;a.hasIssuedGoal=false;a.direct={};
+    a.nextPulse=0;
     a.suppressMelee=false;a.cancelMeleeTracking=false;a.path.clear();
     a.explorationOwned=false;
     a.geometryOwned=false;
@@ -1313,7 +1315,8 @@ int __cdecl Cadence(lua_State* L) {
         a.ownsAim=true;
     }
     double interval=g_lua.tonumber(L,1);
-    a.intervalMs=g_runtime.difficulty>=1?0:(std::isfinite(interval)?static_cast<int>((std::max)(0.0,(std::min)(10000.0,interval))):0);
+    a.intervalMs=g_runtime.difficulty==1?g_runtime.mediumAttackIntervalMs:
+        (g_runtime.difficulty>=2?0:(std::isfinite(interval)?static_cast<int>((std::max)(0.0,(std::min)(10000.0,interval))):0));
     if(!a.intervalMs) a.nextPulse=0;
     return 0;
 }
@@ -2168,8 +2171,19 @@ void __fastcall AttackIntent(uint8_t* unit,void*) {
     if(a.suppressMelee&&!committedTrackingAction&&record&&(record[0x6A]==1||record[0x6A]==8))
         unit[0xDCD]=0;
     ULONGLONG now=GetTickCount64();
-    if(neutral && unit[0xDCD]) {
-        if(now<a.nextPulse) unit[0xDCD]=0;
+    // Pace only fresh ordinary requests. Current/pending actions, melee combo
+    // continuation and special admission retain their original native input.
+    const int slot=fsm?*reinterpret_cast<int*>(fsm+0x240):-1;
+    const bool ordinary=slot>=0&&slot<3&&record&&record[0x6A]!=2;
+    if(neutral && ordinary && unit[0xDCD]) {
+        if(now<a.nextPulse) {
+            unit[0xDCD]=0;
+            if(g_runtime.logDecisions&&!a.pacingLogged) {
+                a.pacingLogged=true;
+                g_api->Log(g_mod,SDGO_LOG_INFO,"Medium ordinary attack pacing observed unit=%u interval_ms=%d; native action and movement retained",
+                    *reinterpret_cast<uint32_t*>(unit+4),a.intervalMs);
+            }
+        }
         else a.nextPulse=now+static_cast<ULONGLONG>(a.intervalMs);
     }
     if(g_runtime.aim) {
@@ -2786,6 +2800,7 @@ const Option kOptions[] = {
     {L"RangedMinDistance",450,0,2000}, {L"TacticCooldownMs",0,0,10000}, {L"LogDecisions",0,0,1},
     {L"TargetHoldMs",0,0,5000},{L"FarTargetSlack",900,0,10000},{L"FarTargetRatioPercent",200,100,1000},
     {L"WeaponHoldMs",0,0,5000},{L"AttackIntervalMs",0,0,10000},
+    {L"MediumAttackIntervalMs",600,0,2000},
     {L"BurstMs",0,0,10000},{L"BurstPauseMs",0,0,5000},
     {L"AirStrafe",1,0,1},{L"StrafeSwitchMs",450,150,3000},{L"StrafeDistance",400,50,1500},
     {L"JumpMs",600,50,1500},{L"JumpCooldownMs",1500,500,10000},{L"BoostReservePercent",20,0,90},
@@ -2848,6 +2863,7 @@ std::string ConfigChunk(RuntimeSettings& next,int roomDifficulty) {
         if(key=="AimAssist") next.aim=value!=0;
         if(key=="ProjectileLead") next.lead=value!=0;
         if(key=="MaxLeadMs") next.maxLeadMs=static_cast<int>(value);
+        if(key=="MediumAttackIntervalMs") next.mediumAttackIntervalMs=static_cast<int>(value);
         if(key=="SwingCancelChance") next.quickSwing=static_cast<int>(value);
     }
     return code + "}\n";

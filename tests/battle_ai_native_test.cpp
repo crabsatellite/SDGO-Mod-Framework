@@ -131,7 +131,9 @@ void Symbols(bool bad) {
 void Config(const char* value) {
     FILE* f=nullptr;
     _wfopen_s(&f,(g_root+L"\\sdgo\\mods\\battle_ai\\config.ini").c_str(),L"wb");
-    if(f) { fputs(value,f); fclose(f); }
+    // Existing tactic cases isolate their native action contracts from pacing.
+    // The separate pacing case below uses the actual published default.
+    if(f) { fputs(value,f); fputs("MediumAttackIntervalMs=0\n",f); fclose(f); }
 }
 }
 int wmain(int argc,wchar_t** argv) {
@@ -141,6 +143,7 @@ int wmain(int argc,wchar_t** argv) {
     bool generic=argc>1 && !wcscmp(argv[1],L"generic");
     bool ownership=argc>1 && !wcscmp(argv[1],L"ownership");
     bool easy=argc>1 && !wcscmp(argv[1],L"easy");
+    bool pacing=argc>1 && !wcscmp(argv[1],L"medium-pacing");
     bool medium=argc>1 && (!wcscmp(argv[1],L"medium")||!wcscmp(argv[1],L"enabled"));
     wchar_t exe[MAX_PATH]; GetModuleFileNameW(nullptr,exe,MAX_PATH); *wcsrchr(exe,L'\\')=0; g_root=exe;
     Symbols(bad);
@@ -167,7 +170,7 @@ int wmain(int argc,wchar_t** argv) {
     SdgoBoot boot={sizeof(boot),"battle_ai_native_test",GetModuleHandleW(nullptr)};
     Check(init(&boot)!=0,"real core initialization");
     Unit unit; unit.bytes[0x326C]=1; *reinterpret_cast<uint32_t*>(unit.bytes+0x3238)=3604001;
-    if(generic||ownership||easy||medium||missing) {
+    if(generic||ownership||easy||medium||missing||pacing) {
         native_world::Initialize(unit.bytes,g_L);
     }
     if(generic||ownership||easy||medium) {
@@ -184,6 +187,38 @@ int wmain(int argc,wchar_t** argv) {
     lua_pushnumber(g_L,987);
     unit.Init(reinterpret_cast<void*>(1)); unit.Think();
     Check(lua_gettop(g_L)==1 && lua_tonumber(g_L,1)==987,"adapter preserves incoming Lua stack");
+    if(pacing) {
+        Check(Eval("SDGO_BattleAI_GenericUpdate=function(n) n:SetAttackOnOff(true); SDGO_BattleAI_Cadence(0); return 123 end"),
+              "pacing fixture keeps requesting native attacks without changing the Lua combat policy");
+        auto fsm=native_world::fsms[0].data();
+        native_world::Put(fsm,4,fsm+0x20);native_world::Put(fsm,8,uint32_t(0));
+        native_world::Put(fsm,0x240,int32_t(1));native_world::Put(fsm,0x248,native_world::weapons[1].data());
+        unit.Init(reinterpret_cast<void*>(2));unit.Think();
+        Check(unit.bytes[0xDCD]!=0,"Medium default admits its first ordinary attack immediately");
+        unit.Think();Check(unit.bytes[0xDCD]==0,"Medium default spaces repeated neutral requests without legacy delay keys");
+        WaitNativeTicks(620);unit.Think();
+        Check(unit.bytes[0xDCD]!=0,"Medium resumes an ordinary request after the default 600ms interval");
+        native_world::Put(fsm,0x240,int32_t(0));native_world::Put(fsm,0x248,native_world::weapons[0].data());
+        unit.Think();Check(unit.bytes[0xDCD]==0,"switching to a knife cannot bypass Medium pacing for a new attack");
+        native_world::Put(fsm,4,fsm+0x5C);unit.Think();
+        Check(unit.bytes[0xDCD]!=0,"a current melee swing keeps its combo input during the pacing interval");
+        native_world::Put(fsm,4,fsm+0x20);native_world::Put(fsm,8,fsm+0x5C);unit.Think();
+        Check(unit.bytes[0xDCD]!=0,"a queued native swing retains its committed input");
+        native_world::Put(fsm,8,uint32_t(0));native_world::Put(fsm,0x240,int32_t(3));
+        native_world::Put(fsm,0x248,native_world::weapons[3].data());unit.Think();
+        Check(unit.bytes[0xDCD]!=0,"neutral special admission is not throttled by the ordinary attack setting");
+        native_world::Put(fsm,0x240,int32_t(1));native_world::Put(fsm,0x248,native_world::weapons[1].data());
+        native_world::Put(fsm,4,fsm+0x34);unit.Think();
+        Check(unit.bytes[0xDCD]!=0,"an active charge or beam keeps held input across the interval");
+        native_world::Put(fsm,4,fsm+0x20);unit.Init(reinterpret_cast<void*>(3));unit.Think();
+        Check(unit.bytes[0xDCD]!=0,"respawn generation has no stale previous-life pacing debt");
+        Config("[settings]\nDifficulty=Medium\n");Sleep(2100);unit.Think();unit.Think();
+        Check(unit.bytes[0xDCD]!=0,"Manager value zero restores continuous ordinary requests for Medium");
+        native_world::SetRoomTitle(L"!ai hard");Sleep(2100);unit.Think();unit.Think();
+        Check(unit.bytes[0xDCD]!=0,"Hard retains continuous ordinary requests");
+        std::printf("NATIVE ADAPTER CHECKS %s\n",g_failures?"FAILED":"PASSED");
+        return g_failures?1:0;
+    }
     if(ownership) {
         Check(Eval("SDGO_BattleAI_GenericUpdate=function(n) sample=SDGO_BattleAI_Observe(); return 123 end"),
               "ownership probe installs an observation callback");
