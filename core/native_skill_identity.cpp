@@ -12,6 +12,7 @@ void* g_enableOriginal=nullptr;void* g_disableOriginal=nullptr;
 void* g_enableContinue=nullptr;void* g_disableContinue=nullptr;
 bool g_attempted=false;
 volatile LONG g_rejected=0;
+volatile LONG g_enableAliases=0,g_disableAliases=0;
 struct Registers {std::uint32_t edi,esi,ebp,savedEsp,ebx,edx,ecx,eax,flags;};
 alignas(16) const std::uint32_t kDefaultMxcsr=0x1f80;
 
@@ -34,13 +35,16 @@ bool Selector(Registers* r,std::uint32_t value){
         r->ecx=value;*reinterpret_cast<std::uint32_t*>(r->ebp-0x1c)=value;return true;
     }__except(EXCEPTION_EXECUTE_HANDLER){return false;}
 }
-int __cdecl Resolve(Registers* r){
+int __cdecl Resolve(Registers* r,int enabling){
     const DWORD incoming=GetLastError();const void* definition=nullptr;std::uint32_t id=0;
     int action=0;
     if(Context(r,&definition,&id)){
         try{
             const auto result=g_bindings->resolve(definition,id,*g_lookup);
-            if(result.resolution==Resolution::Aliased)action=Selector(r,result.selector)?1:2;
+            if(result.resolution==Resolution::Aliased){
+                action=Selector(r,result.selector)?1:2;
+                if(action==1)InterlockedIncrement(enabling?&g_enableAliases:&g_disableAliases);
+            }
             else if(result.resolution==Resolution::Rejected){
                 action=2;
                 if(InterlockedIncrement(&g_rejected)<=4)g_api->Log(g_mod,SDGO_LOG_ERROR,"imported skill identity rejected: %s",result.reason);
@@ -50,7 +54,7 @@ int __cdecl Resolve(Registers* r){
     SetLastError(incoming);return action;
 }
 
-#define IDENTITY_THUNK(name,original,continuation) \
+#define IDENTITY_THUNK(name,original,continuation,enabling) \
 __declspec(naked) void name(){ \
     __asm{pushfd} \
     __asm{pushad} \
@@ -62,9 +66,10 @@ __declspec(naked) void name(){ \
     __asm{fninit} \
     __asm{ldmxcsr dword ptr [kDefaultMxcsr]} \
     __asm{cld} \
+    __asm{push enabling} \
     __asm{push eax} \
     __asm{call Resolve} \
-    __asm{add esp,4} \
+    __asm{add esp,8} \
     __asm{cmp eax,1} \
     __asm{je aliased} \
     __asm{cmp eax,2} \
@@ -90,8 +95,8 @@ rejected: \
     __asm{pop ebp} \
     __asm{ret 8} \
 }
-IDENTITY_THUNK(Enable,g_enableOriginal,g_enableContinue)
-IDENTITY_THUNK(Disable,g_disableOriginal,g_disableContinue)
+IDENTITY_THUNK(Enable,g_enableOriginal,g_enableContinue,1)
+IDENTITY_THUNK(Disable,g_disableOriginal,g_disableContinue,0)
 #undef IDENTITY_THUNK
 
 bool Region(const std::uint8_t* base,std::uint32_t rva,std::size_t size,const std::uint32_t* relocations,
@@ -135,5 +140,10 @@ bool InstallNative(const SdgoApi* api,SdgoMod* mod,std::shared_ptr<const Binding
         error="both skill identity dispatcher hooks must install together";return false;
     }
     return true;
+}
+NativeStatus ReadNativeStatus(){
+    return {static_cast<std::uint32_t>(InterlockedCompareExchange(&g_enableAliases,0,0)),
+        static_cast<std::uint32_t>(InterlockedCompareExchange(&g_disableAliases,0,0)),
+        static_cast<std::uint32_t>(InterlockedCompareExchange(&g_rejected,0,0))};
 }
 }

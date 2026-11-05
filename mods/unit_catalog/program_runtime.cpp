@@ -4,6 +4,8 @@
 #include "sdgo/unit_program_state.h"
 #include <windows.h>
 #include <memory>
+#include <algorithm>
+#include <intrin.h>
 
 namespace sdgo::unit_programs {
 namespace {
@@ -16,6 +18,45 @@ sdgo::scripts::OriginalScriptLoader g_original = nullptr;
 std::unique_ptr<sdgo::scripts::NativeRegistration> g_registration;
 SRWLOCK g_lock = SRWLOCK_INIT;
 SdgoUnitProgramStateV1 g_state = {};
+using ProtectedCall=int(__cdecl*)(void*,int,int,int);
+ProtectedCall g_protectedCall=nullptr;
+bool g_callsAvailable=false;
+std::vector<SdgoUnitProgramCallStateV1> g_callRows;
+
+std::size_t CallIndex(std::uint32_t identity){
+    const auto found=std::lower_bound(g_callRows.begin(),g_callRows.end(),identity,
+        [](const SdgoUnitProgramCallStateV1& row,std::uint32_t value){return row.function_identity<value;});
+    return found!=g_callRows.end()&&found->function_identity==identity?static_cast<std::size_t>(found-g_callRows.begin()):g_callRows.size();
+}
+int __cdecl Call(void* vm,int argc,int results,int errorFunction){
+    const DWORD incoming=GetLastError();alignas(16) unsigned char fp[512];_fxsave(fp);
+    std::uint32_t identity=0,caller=0,thread=0;LARGE_INTEGER now={};
+    AcquireSRWLockShared(&g_lock);
+    const bool active=g_callsAvailable&&g_state.active&&g_state.vm==reinterpret_cast<std::uint32_t>(vm);
+    ReleaseSRWLockShared(&g_lock);
+    if(active&&argc>=0&&argc<g_calls.getTop(vm)&&g_calls.type(vm,-argc-1)==6){
+        identity=reinterpret_cast<std::uint32_t>(g_calls.toPointer(vm,-argc-1));
+        AcquireSRWLockExclusive(&g_lock);const auto index=CallIndex(identity);
+        if(index<g_callRows.size()){
+            caller=reinterpret_cast<std::uint32_t>(_ReturnAddress());thread=GetCurrentThreadId();QueryPerformanceCounter(&now);
+            auto& row=g_callRows[index];++row.calls;row.last_argc=argc;row.last_caller=caller;row.last_thread=thread;row.last_qpc=now.QuadPart;
+            if(row.calls==1){row.first_caller=caller;row.first_thread=thread;row.first_qpc=now.QuadPart;}
+        }else identity=0;
+        ReleaseSRWLockExclusive(&g_lock);
+    }
+    _fxrstor(fp);SetLastError(incoming);
+    const int status=g_protectedCall(vm,argc,results,errorFunction);
+    const DWORD after=GetLastError();_fxsave(fp);
+    if(identity){
+        AcquireSRWLockExclusive(&g_lock);const auto index=CallIndex(identity);
+        if(index<g_callRows.size()){
+            auto& row=g_callRows[index];row.last_status=status;
+            if(status==0)++row.succeeded;else ++row.errors;
+        }
+        ReleaseSRWLockExclusive(&g_lock);
+    }
+    _fxrstor(fp);SetLastError(after);return status;
+}
 
 void __cdecl Close(void*, const char* reason) {
     AcquireSRWLockExclusive(&g_lock); g_state.fatal = 1; g_state.active = 0; ReleaseSRWLockExclusive(&g_lock);
@@ -74,6 +115,14 @@ void __fastcall Load(void* engine, void*, sdgo::scripts::NativeWideString* path)
     g_state.root_thread_id = GetCurrentThreadId();
     g_state.vm = reinterpret_cast<uint32_t>(g_calls.state(nullptr));
     g_state.export_count = static_cast<uint32_t>(result.exports.size());
+    if(g_callRows.empty()){
+        for(const auto& entry:result.exports){
+            SdgoUnitProgramCallStateV1 row={};row.size=sizeof(row);row.version=1;
+            row.vm=g_state.vm;row.function_identity=static_cast<std::uint32_t>(entry.functionIdentity);
+            std::memcpy(row.name,entry.name.c_str(),entry.name.size()+1);g_callRows.push_back(row);
+        }
+        std::sort(g_callRows.begin(),g_callRows.end(),[](const auto& a,const auto& b){return a.function_identity<b.function_identity;});
+    }
     if (!result.exports.empty()) {
         g_state.first_export_function = static_cast<uint32_t>(result.exports[0].functionIdentity);
         std::memcpy(g_state.first_export_name, result.exports[0].name.c_str(), result.exports[0].name.size() + 1);
@@ -99,11 +148,15 @@ bool Attach(const SdgoApi* api, SdgoMod* mod, const sdgo::unit_catalog::Catalog&
     g_state.initial_thread_id = sdgo::scripts::ProcessInitialThreadId(api);
     g_state.owner_count = static_cast<uint32_t>(g_bundle.candidates.size());
     for (const auto& candidate : g_bundle.candidates) g_state.program_count += static_cast<uint32_t>(candidate.programs.size());
+    std::size_t exports=0;for(const auto& candidate:g_bundle.candidates)for(const auto& program:candidate.programs)exports+=program.exports.size();
+    g_callRows.reserve(exports);
     const auto hash = sdgo::scripts::Sha256(bytes);
     std::memcpy(g_state.bundle_sha256, hash.c_str(), 65);
     if (!api->HookCode(mod, "lua.script_load", reinterpret_cast<void*>(&Load), reinterpret_cast<void**>(&g_original))) return false;
     g_registration = std::make_unique<sdgo::scripts::NativeRegistration>(
         g_calls, g_original, sdgo::scripts::ProcessInitialThreadId(api), Close, nullptr);
+    g_callsAvailable=api->HookCode(mod,"lua.pcall",reinterpret_cast<void*>(&Call),reinterpret_cast<void**>(&g_protectedCall))!=0;
+    if(!g_callsAvailable)api->Log(mod,SDGO_LOG_WARN,"native program call observation is unavailable; program registration remains enabled");
     return true;
 }
 
@@ -112,8 +165,18 @@ int ReadState(SdgoUnitProgramStateV1* output) {
     AcquireSRWLockShared(&g_lock); *output = g_state; ReleaseSRWLockShared(&g_lock);
     return output->version == 1;
 }
+int ReadCallState(std::uint32_t index,SdgoUnitProgramCallStateV1* output){
+    if(!output||output->size!=sizeof(*output)||output->version!=1)return 0;
+    AcquireSRWLockShared(&g_lock);
+    const bool available=g_state.active&&index<g_callRows.size();
+    if(available){*output=g_callRows[index];output->available=g_callsAvailable?1:0;output->index=index;output->total=static_cast<std::uint32_t>(g_callRows.size());}
+    ReleaseSRWLockShared(&g_lock);return available?1:0;
+}
 }
 
 extern "C" __declspec(dllexport) int __cdecl SdgoReadUnitProgramStateV1(SdgoUnitProgramStateV1* output) {
     return sdgo::unit_programs::ReadState(output);
+}
+extern "C" __declspec(dllexport) int __cdecl SdgoReadUnitProgramCallStateV1(std::uint32_t index,SdgoUnitProgramCallStateV1* output){
+    return sdgo::unit_programs::ReadCallState(index,output);
 }

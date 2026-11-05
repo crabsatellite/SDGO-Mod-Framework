@@ -9,4 +9,6 @@ namespace sdgo::skill_identity {
 // The lookup object and bindings remain valid for the entire process lifetime.
 bool InstallNative(const SdgoApi* api, SdgoMod* mod,
     std::shared_ptr<const Bindings> bindings, const Lookup* lookup, std::string& error);
+struct NativeStatus { std::uint32_t enableAliases=0,disableAliases=0,rejected=0; };
+NativeStatus ReadNativeStatus();
 }

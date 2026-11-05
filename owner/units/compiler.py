@@ -104,6 +104,8 @@ def publish(workspace,state,selected,transaction):
             raise ValueError('请保存制作项目；使用新增浮游武器制作数据的机体尚不能发布')
         if family.get('native_programs'):
             raise ValueError('请保存制作项目；带有新增初始化脚本的机体尚不能发布')
+        if family.get('native_content'):
+            raise ValueError('请保存制作项目；配套原生数据的完整发布尚未开放')
         family=copy.deepcopy(family);published.append(family);family_blueprint_receipts=[]
         root=family['root_unit_id'];plan=workspace.plan(family);plans.append(plan)
         template_members=set()

@@ -258,12 +258,13 @@ def normalize_bindings(value):
     return result
 
 
-def validate_project_bindings(value, *, files):
+def validate_project_bindings(value, *, files, excluded_members=()):
     """Resolve portable authoring bindings; no runtime authority is issued."""
     bindings = normalize_bindings(value)
     if not bindings: return []
     weapons = {}
     for member, raw in files.items():
+        if member in excluded_members:continue
         if member.lower().endswith('.bin') and len(raw) == 1871:
             identity = struct.unpack_from('<I', raw)[0]
             if identity in weapons: raise ValueError('native program project has duplicate weapon records')

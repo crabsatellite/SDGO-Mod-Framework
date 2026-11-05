@@ -92,7 +92,7 @@ def row_hash(value, *, kind='skill'):
     return hashlib.sha256(canonical(normalize_row(value,kind=kind)).encode('utf-8')).hexdigest()
 
 
-def validate_manifest(value, client_records, *, kind='skill'):
+def validate_manifest(value, client_records, *, kind='skill', authoring=False):
     schema,section,_,_,key,_,extent,_=_spec(kind)
     _exact(value, {'schema', 'owner', 'revision', section}, 'server dependency manifest')
     if value['schema'] != schema: raise ValueError('unsupported server dependency schema')
@@ -114,7 +114,7 @@ def validate_manifest(value, client_records, *, kind='skill'):
             raise ValueError('server dependency complete client record identity/SHA-256 differs')
         if kind=='skill':
             recover_source_record(raw)
-            if raw[1131] > 3: raise ValueError('unsupported native skill dispatch remains blocked')
+            if raw[1131] > 3 and not authoring: raise ValueError('unsupported native skill dispatch remains blocked')
         definition = entry['definition']
         if not isinstance(definition, dict): raise ValueError('server '+kind+' definition must be an object')
         if definition.get('kind') == 'template':

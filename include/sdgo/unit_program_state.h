@@ -13,3 +13,16 @@ struct SdgoUnitProgramStateV1 {
     char bundle_sha256[65];
 };
 using SdgoGetUnitProgramStateV1 = int(__cdecl*)(SdgoUnitProgramStateV1*);
+
+// Natural calls through the original protected-call API, matched against the
+// actual closure identities registered at root completion. Reading never
+// submits a call or alters the VM stack.
+struct SdgoUnitProgramCallStateV1 {
+    std::uint32_t size,version,available,index,total,vm,function_identity;
+    std::uint32_t calls,succeeded,errors;
+    std::int32_t last_status,last_argc;
+    std::uint32_t first_caller,last_caller,first_thread,last_thread;
+    std::uint64_t first_qpc,last_qpc;
+    char name[256];
+};
+using SdgoGetUnitProgramCallStateV1=int(__cdecl*)(std::uint32_t,SdgoUnitProgramCallStateV1*);

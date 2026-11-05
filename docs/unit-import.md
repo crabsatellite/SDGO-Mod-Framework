@@ -281,6 +281,18 @@ Version 1 stays transport-only.
 
 ### Skill/funnel dependencies and resource depot
 
+The **配套原生资料** (native dependency data) section reads project bindings for
+[`sdgo.unit-native-content/1`](unit-native-content.schema.json). It shows complete
+skill/funnel records, supplied server definitions, atlases and missing or unsupported
+items. Upload a dependency ZIP containing `manifest.json` and its members to add data;
+**更新此组资料** explicitly replaces one group. Existing family records and prior
+publications stay intact, and earlier preview approvals expire.
+
+Project export/re-import retains the original bytes, prepared members and source
+evidence. Unknown records and dispatch values stay visible and block admission.
+Saving this authoring data does not enable runtime publication or grant a server
+installation authority.
+
 The publication compiler derives the unit record's model checksum from the final published model bytes,
 including models whose embedded resource paths were prepared. Source records and source assets stay unchanged.
 
@@ -292,6 +304,12 @@ atlas through their original resource consumers. This does not enable ordinary M
 Owned funnel definitions use [`sdgo.unit-server-funnels/1`](unit-server-funnels.schema.json), with the same
 transaction and ownership checks as skill data. All six server columns and their paired client fields are checked;
 `pending_funnel_ids` continues to block ordinary publication until runtime admission is complete.
+
+The disabled-by-default `unit_catalog_server` companion consumes controller-generated
+skill bindings and a separate server installation authority. It preserves allocated
+skill IDs while selecting a supported original server branch. See
+[native skill identity selectors](skill-identity.md); the companion contains no
+server owner's content and does not enable ordinary Manager publication of new dependencies.
 
 Developer tools can prepare owned server skill data with
 `owner.units.server_dependencies` and

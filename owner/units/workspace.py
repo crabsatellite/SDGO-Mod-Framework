@@ -136,6 +136,7 @@ class Workspace:
             if project:
                 if project.get('project_key'):draft['family_key']=project['project_key']
                 if project.get('native_programs'):draft['native_programs']=copy.deepcopy(project['native_programs'])
+                if project.get('native_content'):draft['native_content']=copy.deepcopy(project['native_content'])
                 draft['metadata']=copy.deepcopy(project['metadata']);draft['media']=copy.deepcopy(project['media'])
                 draft['project_kind']='unit-family' if forms else 'metadata-only'
             elif parsed.get('blueprints'):
@@ -248,7 +249,51 @@ class Workspace:
         except (UnicodeError,json.JSONDecodeError):raise ValueError('服务端定义不是有效的 UTF-8 JSON') from None
         return self.update(identity,model.definitions(value),expected)
 
+    def upload_native_content(self,identity,filename,raw,expected,replace_manifest=None):
+        from .archive import _read_zip,MAX_UPLOAD
+        from .native_content import prepare_attachment
+        from .project import resolve_native_parts
+        if not isinstance(filename,str) or not filename.lower().endswith('.zip') or not isinstance(raw,bytes) or not 0<len(raw)<=MAX_UPLOAD:
+            raise ValueError('请选择不超过 32 MiB 的配套原生资料 ZIP')
+        with self.lock:
+            state=self.check(expected);draft=copy.deepcopy(self._get(state,identity))
+            existing={entry['path']:self.blob(entry['sha']) for entry in draft['files']}
+            refs=list(draft.get('native_content',[]))
+            old=resolve_native_parts(files=existing,definitions={'blueprints':draft.get('blueprints',[])},
+                native_programs=draft.get('native_programs',[]),native_content=refs)
+            remove=set()
+            if replace_manifest is not None:
+                selected=next((row for row in old['content'] if row['binding']['manifest_path']==replace_manifest),None)
+                if selected is None:raise ValueError('要更新的配套资料组不存在，请刷新后重试')
+                protected=set().union(*(row['members'] for row in old['blueprints']+old['programs']+
+                    [row for row in old['content'] if row is not selected])) if old['blueprints'] or old['programs'] or len(old['content'])>1 else set()
+                primary={row['source_sha'] for key in ('forms','weapons') for row in draft[key]}
+                protected.update(entry['path'] for entry in draft['files'] if entry['sha'] in primary)
+                remove=selected['members']-protected
+                refs=[row for row in refs if row['manifest_path']!=replace_manifest]
+            binding,added=prepare_attachment(_read_zip(raw),uuid.uuid4().hex)
+            merged={name:data for name,data in existing.items() if name not in remove}
+            if set(merged)&set(added):raise ValueError('配套资料存储空间冲突，请重试')
+            merged.update(added);refs.append(binding)
+            parts=resolve_native_parts(files=merged,definitions={'blueprints':draft.get('blueprints',[])},
+                native_programs=draft.get('native_programs',[]),native_content=refs)
+            primary_ids={row['id'] for key in ('forms','weapons') for row in draft[key]}
+            if any(row['id'] in primary_ids for group in parts['content'] for row in group['records']):
+                raise ValueError('配套原生定义与机体／武器编号冲突，不能覆盖现有记录')
+            draft['files']=[entry for entry in draft['files'] if entry['path'] not in remove]
+            for name,data in added.items():draft['files'].append({'path':name,'sha':self._store(data),'bytes':len(data)})
+            draft['native_content']=refs;self._touch(draft)
+            # Check the same portable output before committing authored state.
+            # Failed uploads may leave immutable orphan blobs, never a partial draft.
+            from .project import export_project
+            export_project(self,draft)
+            state['drafts'][identity]=draft
+            return self._commit(state,identity)
+
     def removable_missing_skills(self,draft):
+        # A complete native-content project must retain its dependency graph.
+        # The legacy explicit-omission option remains available for old imports.
+        if draft.get('native_content'):return []
         known=self.repository.catalog.get('skill_ids')
         if known is None or self.repository.public_info().get('source')=='unavailable':return []
         result={}
@@ -355,22 +400,28 @@ class Workspace:
         issues=[]
         def need(code,message,field=None,level='required',accept=None):
             issues.append({'code':code,'message':message,'field':field,'level':level,**({'accept':accept} if accept else {})})
+        native_groups=[]
         root=draft.get('root_unit_id');forms={r['id']:r for r in draft['forms']};newweapons={r['id'] for r in draft['weapons']}
         for row in draft['weapons']:
             funnel=row['server'].get('FunnelID')
             if funnel and funnel in self.repository.catalog.get('pending_funnel_ids',set()):
                 need('funnel_runtime_pending',f'浮游武器 {funnel} 的制作数据已保存；请先保存草稿，使用该定义的机体尚不能发布',
                      f'weapons.{row["id"]}.FunnelID','error')
-        if draft.get('native_programs'):
-            from .native_programs import validate_project_bindings
+        if draft.get('native_programs') or draft.get('native_content'):
+            from .project import resolve_native_parts
             try:
-                validate_project_bindings(draft['native_programs'],
-                    files={entry['path']:self.blob(entry['sha']) for entry in draft['files']})
-                need('native_program_actor_adapter',
-                     '请保存制作项目；带有新增初始化脚本的机体尚不能发布',
-                     'native_programs','error')
+                parts=resolve_native_parts(files={entry['path']:self.blob(entry['sha']) for entry in draft['files']},
+                    definitions={'blueprints':draft.get('blueprints',[])},native_programs=draft.get('native_programs',[]),native_content=draft.get('native_content',[]))
+                native_groups=parts['content']
+                if draft.get('native_programs'):
+                    need('native_program_actor_adapter','请保存制作项目；带有新增初始化脚本的机体尚不能发布','native_programs','error')
+                for group in parts['content']:
+                    for issue in group['requirements']:
+                        need(issue['code'],issue['message'],issue['field'],issue['level'])
+                if draft.get('native_content'):
+                    need('native_content_publication','配套原生资料已保存；完整发布尚未开放，可保存或导出制作项目','native_content','error')
             except (ValueError,KeyError) as error:
-                need('native_program_binding',str(error),'native_programs','error')
+                need('native_project_binding',str(error),'native_content','error')
         file_entries={entry['path']:entry for entry in draft.get('files',[])}
         member_files={}
         try:
@@ -471,8 +522,16 @@ class Workspace:
                      f"forms.{omission['form_id']}.{omission['field']}",'warning')
         required={r['recipe_sprite'] for r in draft.get('blueprints',[]) if r.get('recipe_sprite')}
         for row in draft['forms']+draft['weapons']:required.update(row.get('resource_refs',[]))
+        native_members=set().union(*(group['members'] for group in native_groups)) if native_groups else set()
         owned={f['path'].replace('\\','/').lower():f for f in draft['files']
-               if f['path'] not in template_evidence_members}
+               if f['path'] not in template_evidence_members and f['path'] not in native_members}
+        for group in native_groups:
+            required.update(group['direct_resource_refs'])
+            for resource in group['resources']:
+                path=resource['path']
+                if path in owned and owned[path]['sha']!=resource['sha256']:
+                    need('native_resource_conflict','配套资料与项目同名资源内容不同：'+path,'native_content','error')
+                else:owned[path]={'path':path,'sha':resource['sha256']}
         for path,entry in template_resource_entries.items():
             if path in owned and owned[path]['sha']!=entry['sha']:
                 need('blueprint_template_resource_conflict',
@@ -538,6 +597,8 @@ class Workspace:
                     'native_programs':{'schema':'sdgo.unit-native-programs/1',
                         'schemas':['sdgo.unit-native-programs/1','sdgo.unit-native-programs/2'],
                         'callback_roles':['ranged','special_ranged','initializer'],'authoring':True,'native_publication':False},
+                    'native_content':{'schema':'sdgo.unit-native-content/1','authoring':True,'bundled_members':True,
+                        'known_record_kinds':[11,13],'opaque_record_retention':True,'native_publication':False},
                     'blueprints':{'schema_version':1,'authoring':True,
                     'native_registration':NATIVE_REGISTRATION_SUPPORTED,'target_record_kind':33,
                     'target_record_size':1197,'material_minimum':3,'material_maximum':5,'raw_material_maximum':7,
@@ -575,6 +636,15 @@ class Workspace:
                 draft['summary']={'files':len(draft['files']),'forms':len(draft['forms']),'weapons':len(draft['weapons']),
                     'external_weapons':sorted(external),'resources':sum(not f['path'].lower().endswith('.bin') for f in draft['files']),
                     'native_program_groups':len(draft.get('native_programs',[]))}
+                draft['native_content_groups']=[]
+                if draft.get('native_content'):
+                    from .native_content import validate_project_bindings
+                    try:
+                        groups=validate_project_bindings(draft['native_content'],files={entry['path']:self.blob(entry['sha']) for entry in draft['files']})
+                        draft['native_content_groups']=[{'binding':group['binding'],'owner':group['manifest']['owner'],
+                            'revision':group['manifest']['revision'],'summary':group['summary'],'records':group['records'],
+                            'requirements':group['requirements'],'native_registration_authorized':False} for group in groups]
+                    except (ValueError,KeyError):pass  # requirements already reports the concrete failure.
                 result['draft']=draft
             return result
 
