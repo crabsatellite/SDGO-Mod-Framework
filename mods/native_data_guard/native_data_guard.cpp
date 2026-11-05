@@ -17,6 +17,7 @@ using GridData = void*(__cdecl*)();
 using GridFind = bool(__thiscall*)(void*, const uint8_t**, uint32_t, int, char);
 using NameLookup = const uint8_t*(__thiscall*)(void*, uint32_t, uint32_t);
 using ExceptionWriter = LONG(WINAPI*)(EXCEPTION_POINTERS*);
+using InformationRefresh = void(__thiscall*)(void*);
 using NativeMessageClone = void*(__thiscall*)(void*);
 using NativeMessageDestroy = void*(__thiscall*)(void*, uint8_t);
 using UnitIndexingCopy = void*(__thiscall*)(void*, const void*);
@@ -29,6 +30,7 @@ GridData g_grid = nullptr;
 GridFind g_find = nullptr;
 NameLookup g_name = nullptr;
 ExceptionWriter g_exceptionWriter = nullptr;
+InformationRefresh g_informationRefresh = nullptr;
 UnitIndexingCopy g_unitIndexingCopy = nullptr;
 UnitIndexingDestroy g_unitIndexingDestroy = nullptr;
 StackWalkFn g_stackWalk = nullptr;
@@ -41,6 +43,7 @@ void* g_completionTrampoline = nullptr;
 std::array<uintptr_t, 2> g_nameCallers{};
 volatile LONG g_missingNames = 0, g_missingTransforms = 0, g_missingInformation = 0;
 volatile LONG g_preservedExceptions = 0;
+volatile LONG g_missingBaseInformation = 0;
 volatile LONG g_deferredMessageCopies = 0, g_deferredMessageReplacements = 0;
 volatile LONG g_deferredMessageCopyFailures = 0;
 volatile LONG g_deferredMessageCompletions = 0, g_outstandingDeferredMessages = 0;
@@ -114,6 +117,28 @@ void __stdcall MissingInformation() {
         g_api->Log(g_mod, SDGO_LOG_WARN,
             "derived information data is unavailable; the native default percentage is retained");
     SetLastError(error);
+}
+
+// The whole-page refresh uses a different type-2 key from the derived
+// percentage lookup. Its native error branch logs a miss but then passes null
+// to the detail readers (or reads null+0x13C in transform mode). Leave this
+// refresh untouched until the real base record is available. Never fabricate
+// a gameplay record, change the selected unit, or swallow a native exception.
+void __fastcall RefreshInformation(void* self, void*) {
+    const DWORD error = GetLastError();
+    const auto unit = Read32(static_cast<const uint8_t*>(self), 0x114);
+    const uint8_t* record = nullptr;
+    void* grid = g_grid();
+    if (!grid || !g_find(grid, &record, unit, 2, 0) || !record) {
+        if (InterlockedIncrement(&g_missingBaseInformation) <= 16)
+            g_api->Log(g_mod, SDGO_LOG_WARN,
+                "unit %lu base information unavailable; waiting for a later native detail refresh",
+                static_cast<unsigned long>(unit));
+        SetLastError(error);
+        return;
+    }
+    SetLastError(error);
+    g_informationRefresh(self);
 }
 
 void* CloneNativeMessage(void* message) {
@@ -460,6 +485,21 @@ extern "C" __declspec(dllexport) int __cdecl SdgoNativeDataGuardGetStatusV3(
     return 1;
 }
 
+extern "C" __declspec(dllexport) int __cdecl SdgoNativeDataGuardGetStatusV4(
+    SdgoNativeDataGuardStatusV4* out) {
+    if (!out || out->size < sizeof(*out)) return 0;
+    const uint32_t size = out->size;
+    SdgoNativeDataGuardStatusV3 previous{};
+    previous.size = sizeof(previous);
+    SdgoNativeDataGuardGetStatusV3(&previous);
+    std::memcpy(out, &previous, sizeof(previous));
+    out->size = size;
+    out->version = 4;
+    out->missing_base_information_records =
+        static_cast<uint32_t>(InterlockedCompareExchange(&g_missingBaseInformation, 0, 0));
+    return 1;
+}
+
 SDGO_MOD_ENTRY {
     if (!api || api->size < offsetof(SdgoApi, HookImport) + sizeof(api->HookImport) ||
         !api->Symbol || !api->HookCode || !api->HookSite || !api->HookImport || !api->Log) return 0;
@@ -479,10 +519,14 @@ SDGO_MOD_ENTRY {
     }
     if (!g_grid || !g_find || !g_unitSkip || !information || !bounds || !g_deferredContinue ||
         !symbol("native_data_guard.exception_writer") ||
+        !symbol("native_data_guard.information_refresh") ||
         !symbol("native_data_guard.unit_indexing_copy") ||
         !symbol("native_data_guard.unit_indexing_destructor")) return 0;
     if (!api->HookCode(mod, "native_data_guard.name_lookup", reinterpret_cast<void*>(&FindName),
                        reinterpret_cast<void**>(&g_name)) ||
+        !api->HookCode(mod, "native_data_guard.information_refresh",
+                       reinterpret_cast<void*>(&RefreshInformation),
+                       reinterpret_cast<void**>(&g_informationRefresh)) ||
         !api->HookSite(mod, "native_data_guard.unit_transform", reinterpret_cast<void*>(&UnitTransformSite),
                        &g_unitContinue) ||
         !api->HookSite(mod, "native_data_guard.information_denominator",

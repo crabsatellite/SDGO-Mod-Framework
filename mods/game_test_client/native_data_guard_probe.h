@@ -13,6 +13,7 @@
 class NativeDataGuardProbe {
     using Status = int(__cdecl*)(SdgoNativeDataGuardStatusV1*);
     using StatusV3 = int(__cdecl*)(SdgoNativeDataGuardStatusV3*);
+    using StatusV4 = int(__cdecl*)(SdgoNativeDataGuardStatusV4*);
     using Funnel = void*(__thiscall*)(void*, void*, int, int);
     using Format = void*(__thiscall*)(void*, void*, uint32_t, uint32_t, uint8_t);
     using InformationRefresh = void(__thiscall*)(void*);
@@ -33,6 +34,37 @@ class NativeDataGuardProbe {
     };
     static_assert(sizeof(CaptionControl) == 8);
     bool done_ = false;
+
+    static bool ExerciseBase(InformationRefresh refresh, StatusV4 status,
+                             const SdgoGameTestContextV1* context) {
+        SdgoNativeDataGuardStatusV4 before{}; before.size = sizeof(before);
+        if (!status(&before)) return false;
+        std::array<uint8_t, 0x120> page{};
+        Put(page.data(), 0x114, uint32_t{0xFFFFFFFEu});
+        for (uint8_t transform : {uint8_t{0}, uint8_t{1}}) {
+            page[0x11C] = transform;
+            const auto saved = page;
+            refresh(page.data());
+            if (page != saved) {
+                context->Assert(0, "missing base information leaves the private page unchanged");
+                return false;
+            }
+        }
+        SdgoNativeDataGuardStatusV4 after{}; after.size = sizeof(after);
+        const bool guarded = status(&after) && after.missing_base_information_records >=
+            before.missing_base_information_records + 2;
+        context->Assert(guarded,
+            "genuine whole-page entry safely rejects missing primary records in normal and transform views");
+        return guarded;
+    }
+    static bool InvokeBase(InformationRefresh refresh, StatusV4 status,
+                           const SdgoGameTestContextV1* context) {
+        __try { return ExerciseBase(refresh, status, context); }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            context->Assert(0, "missing base information must not reach native null detail readers");
+            return false;
+        }
+    }
 
     template<class T> static void Put(uint8_t* data, size_t offset, T value) {
         std::memcpy(data + offset, &value, sizeof(value));
@@ -195,14 +227,19 @@ public:
         const auto status = reinterpret_cast<Status>(GetProcAddress(module, "SdgoNativeDataGuardGetStatusV1"));
         const auto statusV3 = reinterpret_cast<StatusV3>(
             GetProcAddress(module, "SdgoNativeDataGuardGetStatusV3"));
+        const auto statusV4 = reinterpret_cast<StatusV4>(
+            GetProcAddress(module, "SdgoNativeDataGuardGetStatusV4"));
+        const auto baseInformation = reinterpret_cast<InformationRefresh>(
+            api->Symbol(mod, "test.native_guard_base_information_refresh"));
         const auto funnel = reinterpret_cast<Funnel>(api->Symbol(mod, "test.native_guard_funnel"));
         const auto format = reinterpret_cast<Format>(api->Symbol(mod, "test.native_guard_name_formatter"));
         const auto information = reinterpret_cast<InformationRefresh>(
             api->Symbol(mod, "test.native_guard_information_refresh"));
-        if (!status || !statusV3 || !funnel || !format || !information) {
+        if (!status || !statusV3 || !statusV4 || !baseInformation || !funnel || !format || !information) {
             context->Assert(0, "native guard acceptance requires its observer and verified host bindings"); return false;
         }
-        done_ = Invoke(funnel, format, information, status, statusV3, context);
+        done_ = InvokeBase(baseInformation, statusV4, context) &&
+            Invoke(funnel, format, information, status, statusV3, context);
         return done_;
     }
 };
