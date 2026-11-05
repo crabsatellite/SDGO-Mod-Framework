@@ -12,6 +12,8 @@ case-insensitive.
 | `room_random_client` | client | applies the round's result to the client's start data |
 
 Both are required: `room_random` on BattleServer and `room_random_client` on every participating client.
+Use `room_random_client` 0.1.13 or later to wait for delayed round data before the native start
+transition. With AI, use `pvp_ai` 0.3.2 or later for waiting-room cleanup after settlement.
 
 ## Room-title commands
 
@@ -95,6 +97,12 @@ The client retains each human's complete round-start entry. If a unit or deck no
 the start notice, it completes only that human's pending construction data. A rejected notice or a
 later selection for one slot does not discard another player's valid start data. In the 3D room,
 the verified active room model takes precedence over a retained legacy cache pointer.
+
+In random rooms, the client also holds the native start transition until every human's complete
+unit record, and the ship record in deck modes, matches this round. It keeps a private packet
+copy and resumes the original parser once when the final matching notice arrives. Duplicate
+notices cannot start it again; changing rooms or replacing the start discards the old pending
+transition. Ordinary rooms retain the native timing.
 
 Tests: `ctest`, plus `room_random_test.exe <BattleServer.exe> <GOnline.exe>`,
 `tests/room_random_client_runtime_test.ps1 -GameExe <GOnline.exe>` and
