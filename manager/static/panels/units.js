@@ -304,6 +304,30 @@ function renderNativeContent(){
   const note=document.createElement("p");note.textContent="这些新增配套定义目前可保存和导出为制作项目，正式发布尚未开放。";panel.append(note);
 }
 
+function renderTransformGraph(){
+  let panel=$("transform-graph");
+  if(!panel){panel=document.createElement("section");panel.id="transform-graph";panel.className="section";$("summary").after(panel);}
+  panel.replaceChildren();
+  const title=document.createElement("h3");title.textContent="原始形态关系";panel.append(title);
+  const graph=draft.form_graph;
+  const note=document.createElement("p");note.textContent=graph?.error||"箭头来自包内完整机体记录，保留单向关系。共享后续形态的不同入口会分别显示；实际变形条件和运行支持仍需验证。";
+  panel.append(note);
+  if(!graph||graph.error)return;
+  const names=new Map((draft.forms||[]).map(row=>[row.id,row.name+" ("+row.id+")"]));
+  const label=id=>names.get(id)||"外部形态 "+id;
+  const list=document.createElement("ul");
+  for(const node of graph.nodes){
+    const row=document.createElement("li");row.textContent=label(node.id)+(node.transform_target?" → "+label(node.transform_target):" · 没有记录变形目标");list.append(row);
+  }
+  panel.append(list);
+  for(const route of graph.root_routes){
+    const path=document.createElement("p");path.textContent="当前根形态按记录可达："+route.path.map(label).join(" → ")+
+      (route.end==="cycle"?" → "+label(route.terminal_target):route.end==="external"?" → "+label(route.terminal_target):"");panel.append(path);
+    if(route.other_component_ids.length){const other=document.createElement("p");other.className="note";
+      other.textContent="同组其他入口／形态："+route.other_component_ids.map(label).join("、")+"。这些记录会保留，不能据此推断它们能从当前入口变出。";panel.append(other);}
+  }
+}
+
 function editNativeServerDefinition(group,entry){
   if(busy||dirty||!draft)return;
   const draftId=draft.id;
@@ -932,6 +956,7 @@ function renderEditor(){
   $("editor-form").classList.remove("hidden");
   renderIdentity();
   renderSummary();
+  renderTransformGraph();
   renderNativeContent();
   renderRequirements();
   renderRecords("forms",draft.forms||[],"forms","制作包中没有解析出机体形态。");
