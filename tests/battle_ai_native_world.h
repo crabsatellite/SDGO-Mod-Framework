@@ -37,11 +37,15 @@ inline bool coverWall=false;
 inline bool nullRay=false;
 inline bool terrainWall=false;
 inline bool forceObbBlock=false;
+inline bool unknownBackwardScene=false;
+inline bool enclosedStep=false;
+inline bool forwardExit=false;
 inline int pathMode=0;
 inline int pathCalls=0;
 inline bool directPathFixture=false;
 inline void* protectedPath=nullptr;
 inline int jumps=0,moves=0,goalCalls=0,lastGoalMode=0,frees=0,queries=0;
+inline int moveTypeCalls=0,lastMoveType=0;
 inline int stopMotorCalls=0,message41Calls=0;
 inline int obbCalls=0,terrainCalls=0;
 inline Ray3 lastObbRay{},lastTerrainRay{};
@@ -61,7 +65,12 @@ inline uint32_t shotReturn=0xBEEFF00D;
 inline bool replaceShotAction=false,replaceShotWeapon=false;
 inline void* messageEntry=nullptr;
 inline void* contactReturn=nullptr;
+inline void* effectEntry=nullptr;
+inline void* boostPauseReturn=nullptr;
 inline std::array<uint8_t,0x300> wall{};
+inline std::array<uint8_t,0x300> groundScene{};
+inline std::array<uint8_t,0xD200> physicsTerrain{};
+inline std::array<float,129*129> physicsHeights{};
 template<class T> inline void Put(uint8_t* p,size_t off,T value) { memcpy(p+off,&value,sizeof(value)); }
 __declspec(noinline) inline uint8_t* __cdecl App() {return app.data();}
 inline void SetRoomTitle(const wchar_t* value,bool small=false) {
@@ -76,6 +85,19 @@ template<class T> inline void* Address(T method) {
     static_assert(sizeof(T)==sizeof(void*));void* result;memcpy(&result,&method,sizeof(result));return result;
 }
 struct Callbacks {
+    __declspec(noinline) bool EffectActive(uint8_t effect) {
+        const auto unit=reinterpret_cast<uint8_t*>(this);
+        if(!effect||effect>32)return false;
+        return ((*reinterpret_cast<uint32_t*>(unit+0xE90)|*reinterpret_cast<uint32_t*>(unit+0xEA0))&(uint32_t(1)<<(effect-1)))!=0;
+    }
+    __declspec(noinline) float TerrainHeight(float,float) {
+        Put(reinterpret_cast<uint8_t*>(this),0xD1E8,0.0f);return 0;
+    }
+    __declspec(noinline) Vec3* TerrainNormal(Vec3* out,const Vec3*) {
+        *out=terrainWall?Vec3{1,0,0}:Vec3{0,1,0};return out;
+    }
+    __declspec(noinline) int SetMoveType(int value) {++moveTypeCalls;lastMoveType=value;Put(reinterpret_cast<uint8_t*>(this),0xDC0,static_cast<uint8_t>(value));return 1;}
+    __declspec(noinline) void SetJumpEnabled(int value) {Put(reinterpret_cast<uint8_t*>(this),0x3291,static_cast<uint8_t>(value!=0));}
     __declspec(noinline) bool UnitIsA(int kind) {
         auto unit=reinterpret_cast<uint8_t*>(this);
         for(size_t i=0;i<configuredUnits.size();++i)
@@ -194,19 +216,29 @@ struct Callbacks {
         if(nullRay) return nullptr;
         out->origin={12,100,13};out->direction={0,0,1};return out;
     }
-    __declspec(noinline) bool IsTerrain(int) {
-        return terrainWall&&reinterpret_cast<uint8_t*>(this)==wall.data();
+    __declspec(noinline) bool IsTerrain(int kind) {
+        if(reinterpret_cast<uint8_t*>(this)==groundScene.data())return kind==1||kind==3;
+        if(reinterpret_cast<uint8_t*>(this)==wall.data())return (terrainWall&&(kind==1||kind==3))||((enclosedStep||forwardExit)&&(kind==1||kind==2));
+        return false;
     }
-    __declspec(noinline) void Query(void** out,int* count,int,const Aabb*) {
-        ++queries;out[0]=wall.data();*count=(blocked||coverWall)?1:0;
+    __declspec(noinline) void Query(void** out,int* count,int,const Aabb* bounds) {
+        ++queries;out[0]=wall.data();*count=(blocked||coverWall||(unknownBackwardScene&&bounds->min.z<-100))?1:0;
+        out[(*count)++]=groundScene.data();
     }
     __declspec(noinline) bool Terrain(const Ray3* ray,float* distance) {
         ++terrainCalls;lastTerrainRay=*ray;
+        if(reinterpret_cast<uint8_t*>(this)==groundScene.data()) {
+            if(ray->direction.y>=-0.99f)return false;
+            *distance=-ray->origin.y/ray->direction.y;return *distance>=0;
+        }
         if(!terrainWall) return false;
         *distance=1.0f;return true;
     }
     __declspec(noinline) int Goal(const Vec3* point,int goalMode) {
-        auto unit=reinterpret_cast<uint8_t*>(this);Put(unit,0x3078,*point);unit[0x30DC]=1;
+        auto unit=reinterpret_cast<uint8_t*>(this);Vec3 steering=*point;
+        auto node=*reinterpret_cast<uint8_t**>(unit+8);
+        if(node)steering.y=reinterpret_cast<Vec3*>(node+0x88)->y;
+        Put(unit,0x3078,steering);Put(unit,0xDC4,goalMode?goalMode:1);unit[0x30DC]=1;
         ++moves;++goalCalls;lastGoalMode=goalMode;return 1;
     }
     __declspec(noinline) uint8_t* Find(uint32_t id) {
@@ -241,6 +273,17 @@ __declspec(naked) inline bool __cdecl EmitContact(uint8_t*,uint32_t,void*,uint32
         push dword ptr [esp+16]
         call dword ptr [messageEntry]
     contactAfter:
+        ret
+    }
+}
+__declspec(naked) inline bool __cdecl NpcBoostPauseQuery(uint8_t*) {
+    __asm {
+        lea eax,boostPauseAfter
+        mov dword ptr [boostPauseReturn],eax
+        mov ecx,dword ptr [esp+4]
+        push 5
+        call dword ptr [effectEntry]
+    boostPauseAfter:
         ret
     }
 }
@@ -312,6 +355,18 @@ __declspec(noinline) inline void __cdecl Free(void* p) {
 __declspec(noinline) inline bool __cdecl Segment(const Vec3*,const Vec3*,const Aabb*) { return true; }
 __declspec(noinline) inline bool __cdecl Obb(const Ray3* ray,const void*,float* t) {
     ++obbCalls;lastObbRay=*ray;
+    if(forwardExit){
+        const Vec3 facing=*reinterpret_cast<Vec3*>(nodes[0].data()+0x6C);
+        *t=1;return ray->direction.y>-0.99f&&ray->direction.x*facing.x+ray->direction.z*facing.z<0.9f;
+    }
+    if(enclosedStep) {
+        *t=1e30f;
+        for(int axis:{0,2}) {
+            const float origin=axis==0?ray->origin.x:ray->origin.z,delta=axis==0?ray->direction.x:ray->direction.z;
+            if(std::abs(delta)>0.001f)*t=(std::min)(*t,((delta>0?200.0f:-200.0f)-origin)/delta);
+        }
+        return *t>=0&&*t<1e29f;
+    }
     if(forceObbBlock) {*t=1.0f;return true;}
     if(coverWall) {
         if(std::fabs(ray->direction.x)<0.01f) return false;
@@ -321,6 +376,7 @@ __declspec(noinline) inline bool __cdecl Obb(const Ray3* ray,const void*,float* 
     *t=200;return ray->direction.z>0.02f;
 }
 __declspec(noinline) inline bool __cdecl Sphere(const Ray3*,const void*,float*) { return false; }
+__declspec(noinline) inline bool __cdecl Triangle(const Ray3*,const Vec3*,const Vec3*,const Vec3*,float*) {return false;}
 __declspec(noinline) inline bool __cdecl SphereObb(const void*,const void*) {return false;}
 __declspec(noinline) inline bool __cdecl SphereObbContact(const void*,const void*,const Vec3*,Vec3*,float*) {return false;}
 __declspec(noinline) inline int __cdecl Dispatch(const char* name,uint8_t*) {
@@ -387,6 +443,9 @@ inline int Jump(lua_State*){++jumps;return 0;}
 inline void Initialize(uint8_t* unit,lua_State* L) {
     state=L;source=unit;blocked=coverWall=nullRay=terrainWall=forceObbBlock=false;
     genericObject=nullptr;canonicalOverridePilot=canonicalOverrideId=0;
+    unknownBackwardScene=false;
+    enclosedStep=false;
+    forwardExit=false;
     shotReturn=0xBEEFF00D;replaceShotAction=replaceShotWeapon=false;
     jumps=moves=goalCalls=lastGoalMode=frees=queries=obbCalls=terrainCalls=0;
     stopMotorCalls=message41Calls=0;
@@ -396,6 +455,13 @@ inline void Initialize(uint8_t* unit,lua_State* L) {
     wall.fill(0);
     unitVtable[1]=Address(&Callbacks::UnitIsA);
     unitVtable[10]=Address(&Callbacks::CanAttack);sceneVtable[5]=Address(&Callbacks::IsTerrain);
+    groundScene.fill(0);Put(groundScene.data(),0,sceneVtable.data());
+    Put(groundScene.data(),0xBC,Aabb{{-10000,-1,-10000},{10000,0,10000}});
+    physicsTerrain.fill(0);physicsHeights.fill(0);
+    Put(physicsTerrain.data(),0x10,physicsHeights.data());
+    Put(physicsTerrain.data(),0x24,int32_t(128));Put(physicsTerrain.data(),0x28,int32_t(128));
+    Put(physicsTerrain.data(),0x3C,100.0f);Put(physicsTerrain.data(),0x44,100.0f);
+    Put(physicsTerrain.data(),0xD1EC,uint32_t(129*129-1));Put(document.data(),0x82C0,physicsTerrain.data());
     unitVtable[7]=Address(&Callbacks::Receive);
     for(int i=0;i<3;++i) {
         auto w=weapons[i].data();Put(w,0,uint32_t(101+i));w[0x69]=1;w[0x6A]=i==0?1:3;
@@ -418,6 +484,10 @@ inline void Initialize(uint8_t* unit,lua_State* L) {
     lua_pop(L,1);
 }
 inline void Symbols(FILE* f,void(*symbol)(FILE*,const char*,void*,bool)) {
+    effectEntry=Address(&Callbacks::EffectActive);
+    std::array<uint8_t,0x3300> inactive{};NpcBoostPauseQuery(inactive.data());
+    symbol(f,"unit.effect_active",effectEntry,false);
+    symbol(f,"npc.ai_boost_pause_return",boostPauseReturn,false);
     symbol(f,"loadout.set_unit_level",Address(&Callbacks::SetLevel),false);
     symbol(f,"loadout.apply_skill_part",Address(&Callbacks::ApplyPart),false);
     symbol(f,"game.sp_state_notice",Address(&Callbacks::SpStateNotice),false);
@@ -450,9 +520,13 @@ inline void Symbols(FILE* f,void(*symbol)(FILE*,const char*,void*,bool)) {
     symbol(f,"combat.ranged_shot",Address(&Callbacks::Shot),false);
     symbol(f,"combat.projectile_update",Address(&Callbacks::Projectile),false);
     symbol(f,"npc.set_move_goal",Address(&Callbacks::Goal),false);
+    symbol(f,"npc.set_move_type",Address(&Callbacks::SetMoveType),false);
+    symbol(f,"npc.set_jump_enabled",Address(&Callbacks::SetJumpEnabled),false);
     symbol(f,"npc.set_attack_intent",Address(&Callbacks::AttackIntent),false);
     symbol(f,"npc.move_stop",Address(&Callbacks::StopMotor),false);
     symbol(f,"navigation.route",Address(&Callbacks::Path),false);
+    symbol(f,"navigation.terrain_height",Address(&Callbacks::TerrainHeight),false);
+    symbol(f,"navigation.terrain_normal",Address(&Callbacks::TerrainNormal),false);
     symbol(f,"navigation.node_for_point",Address(&Callbacks::NavigationNode),false);
     symbol(f,"navigation.node_at",Address(&Callbacks::NavigationNodeAt),false);
     symbol(f,"um.find_start_point",Address(&Callbacks::StartPoint),false);
@@ -461,6 +535,7 @@ inline void Symbols(FILE* f,void(*symbol)(FILE*,const char*,void*,bool)) {
     symbol(f,"collision.query",Address(&Callbacks::Query),false);
     symbol(f,"collision.segment_aabb",reinterpret_cast<void*>(&Segment),false);
     symbol(f,"collision.terrain_ray",Address(&Callbacks::Terrain),false);
+    symbol(f,"collision.terrain_triangle",reinterpret_cast<void*>(&Triangle),false);
     symbol(f,"collision.ray_obb",reinterpret_cast<void*>(&Obb),false);
     symbol(f,"collision.ray_sphere",reinterpret_cast<void*>(&Sphere),false);
     symbol(f,"collision.sphere_obb_overlap",reinterpret_cast<void*>(&SphereObb),false);

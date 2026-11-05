@@ -20,6 +20,8 @@
 #include "native_navigation.h"
 #include "native_map_gate.h"
 #include "native_map_geometry.h"
+#include "native_terrain_ray.h"
+#include "native_terrain_support.h"
 #include "map_path_search.h"
 #include "difficulty.h"
 #include "defence_math.h"
@@ -61,6 +63,9 @@ struct Lua {
 using ThinkFn = bool(__thiscall*)(uint8_t*);
 using InitFn = void(__thiscall*)(uint8_t*, void*);
 ThinkFn g_think = nullptr;
+using EffectActiveFn=bool(__thiscall*)(uint8_t*,uint8_t);
+EffectActiveFn g_effectActive=nullptr;
+void* g_aiBoostPauseReturn=nullptr;
 InitFn g_init = nullptr;
 const SdgoApi* g_api = nullptr;
 SdgoMod* g_mod = nullptr;
@@ -132,12 +137,21 @@ CanonicalFn g_canonical=nullptr;
 int g_appliedRoomDifficulty=-1;
 void* g_plainProjectileEntry=nullptr;
 GoalFn g_setGoal=nullptr;
+using MoveTypeFn=int(__thiscall*)(uint8_t*,int);
+MoveTypeFn g_setMoveType=nullptr;
+using JumpEnabledFn=void(__thiscall*)(uint8_t*,int);
+JumpEnabledFn g_setJumpEnabled=nullptr;
 RouteFn g_route=nullptr;
 DeleteFn g_delete=nullptr;
 using QueueStateFn=bool(__thiscall*)(uint8_t*,uint8_t*);
 QueueStateFn g_queueState=nullptr;
 uint8_t** g_document=nullptr;
 battle_ai::native::NavigationApi g_navigation={};
+battle_ai::native::TerrainRayIndex g_terrainRays;
+battle_ai::native::TerrainTriangleFn g_terrainTriangle=nullptr;
+battle_ai::native::TerrainHeightFn g_terrainHeight=nullptr;
+battle_ai::native::TerrainNormalFn g_terrainNormal=nullptr;
+battle_ai::native::TerrainSupportSampler g_terrainSupport;
 battle_ai::native::MapSphereObbOverlapFn g_mapSphereObb=nullptr;
 battle_ai::native::MapSphereObbContactFn g_mapSphereObbContact=nullptr;
 struct RuntimeSettings { bool generic=false,enabled=true,aim=true,lead=true,logDecisions=false; int maxLeadMs=3000,difficulty=1,quickSwing=80; } g_runtime;
@@ -168,6 +182,19 @@ struct Actor {
     std::vector<Vec3> path;
     battle_ai::MapPathSearch mapSearch;
     bool geometryOwned=false,geometryFinal=false,pathGeometry=false;
+    int pathMoveType=2;
+    Vec3 issuedGoal{};
+    bool hasIssuedGoal=false;
+    struct DirectIntent {bool owned=false;double direction=0;int mode=2;Vec3 goal{},start{};uint32_t facing=0;} direct;
+    bool unusedGoalLogged=false,breachAvailable=false;
+    bool ownsJumpPermission=false;
+    uint8_t savedJumpPermission=0;
+    struct Cost {
+        uint64_t calls=0,total=0,peak=0;
+        void Record(uint64_t start,uint64_t finish) {const uint64_t elapsed=finish-start;++calls;total+=elapsed;peak=(std::max)(peak,elapsed);}
+    } thinkCost,senseCost,navigationCost;
+    ULONGLONG costLogAt=0;
+    ULONGLONG directionLogAt=0,lastPolicyAt=0,policyGapLogAt=0;
     uint64_t geometryProjections=0,geometryGroundMisses=0,geometryBlocked=0;
     uint32_t geometryReject=0;
     size_t waypoint=0;
@@ -193,7 +220,7 @@ struct Actor {
     uint64_t specialFinished=0;
     SpecialCompletionReceipt specialCompletion;
     uint64_t zeroCompletionCount=0;
-    uint64_t thinkSerial=0;
+    uint64_t thinkSerial=0,policySerial=0;
     uint32_t observedTarget=0,observedFarTargets=0;
     ULONGLONG observedTargetAt=0;
     bool observedTargetVisible=false;
@@ -530,7 +557,9 @@ void RestoreIntent(uint8_t* unit,Actor& a) {
             *reinterpret_cast<float*>(unit+0x3208)=a.savedPitchError;
         }
     } __except(EXCEPTION_EXECUTE_HANDLER) {}
-    a.controlled=false;a.ownsIntent=false;a.ownsAim=false;a.aimTarget=0;
+    if(a.ownsJumpPermission&&g_setJumpEnabled)g_setJumpEnabled(unit,a.savedJumpPermission);
+    a.ownsJumpPermission=false;
+    a.controlled=false;a.ownsIntent=false;a.ownsAim=false;a.aimTarget=0;a.hasIssuedGoal=false;a.direct={};
     a.suppressMelee=false;a.cancelMeleeTracking=false;a.path.clear();
     a.explorationOwned=false;
     a.geometryOwned=false;
@@ -559,6 +588,10 @@ auto MotionSafetyFor(uint8_t* unit,Vec3 destination) {
     return battle_ai::native::CheckMotionSafety(
         g_navigation,*g_document,unit,Position(unit),destination);
 }
+battle_ai::native::TerrainSupportStatus PhysicsSupport(void* context,Vec3 point,battle_ai::native::TerrainSupportSample& output) {
+    if(GetCurrentThreadId()!=g_gameThread||!g_document||context!=*g_document)return battle_ai::native::TerrainSupportStatus::Invalid;
+    return g_terrainSupport.Sample(static_cast<uint8_t*>(context),point,output);
+}
 battle_ai::native::MapGeometry MapGeometryFor(uint8_t* unit) {
     battle_ai::native::MapGeometry geometry{};
     if(!unit||!g_document||!*g_document)return geometry;
@@ -572,8 +605,18 @@ battle_ai::native::MapGeometry MapGeometryFor(uint8_t* unit) {
     const Vec3 extent={radius,radius,radius};geometry.bodyBounds={center-extent,center+extent};
     if(!battle_ai::native::detail::Read(sphere,0,geometry.bodySphere))return geometry;
     geometry.sphereObb=g_mapSphereObb;geometry.sphereObbContact=g_mapSphereObbContact;
-    geometry.api=g_navigation;geometry.document=*g_document;geometry.owner=unit;geometry.ownerPosition=Position(unit);
+    geometry.api=g_navigation;geometry.document=*g_document;geometry.api.supportContext=geometry.document;
+    geometry.owner=unit;geometry.ownerPosition=Position(unit);
+    const auto actor=g_actors.find(unit);
+    geometry.deferDestroyables=actor!=g_actors.end()&&actor->second.breachAvailable;
     return geometry;
+}
+bool __fastcall IndexedTerrainRay(void* scene,void*,const Ray3* ray,float* distance) {
+    const auto faults=g_terrainRays.stats.mismatches;
+    const bool hit=g_terrainRays.Query(scene,ray,distance,g_runtime.logDecisions);
+    if(g_terrainRays.stats.mismatches!=faults&&g_api&&g_api->Log)
+        g_api->Log(g_mod,SDGO_LOG_ERROR,"terrain ray audit mismatch: native geometry retained for scene %p",scene);
+    return hit;
 }
 bool MapGeometryStep(void* context,Vec3 from,Vec3 desired,Vec3& grounded) {
     __try {return static_cast<battle_ai::native::MapGeometry*>(context)->Step(from,desired,grounded);}
@@ -605,7 +648,10 @@ bool InstallGeometryPath(uint8_t* unit,Actor& actor,battle_ai::native::MapGeomet
 }
 void PumpGeometryPath(uint8_t* unit,Actor& actor) {
     if(!actor.geometryOwned)return;
+    battle_ai::native::detail::ReadableRegionCache readableRegions{};
+    battle_ai::native::detail::ScopedReadableRegionCache readableScope(readableRegions);
     auto geometry=MapGeometryFor(unit);if(!geometry.Valid())return;
+    LARGE_INTEGER before{},after{};QueryPerformanceCounter(&before);
     using Status=battle_ai::MapPathSearch::Status;
     if(actor.mapSearch.State()==Status::Pending)actor.mapSearch.Pump(&MapGeometryStep,&geometry,1);
     if(actor.mapSearch.State()==Status::Found&&!actor.geometryFinal)InstallGeometryPath(unit,actor,geometry,true);
@@ -613,6 +659,7 @@ void PumpGeometryPath(uint8_t* unit,Actor& actor) {
     else if(actor.path.empty()&&actor.mapSearch.State()==Status::Unreachable)actor.geometryOwned=false;
     actor.geometryProjections+=geometry.projections;actor.geometryGroundMisses+=geometry.groundMisses;
     actor.geometryBlocked+=geometry.blocked;actor.geometryReject=geometry.lastReject;
+    QueryPerformanceCounter(&after);actor.navigationCost.Record(before.QuadPart,after.QuadPart);
 }
 bool FollowPath(uint8_t* unit,Actor& a) {
     a.followStatus=1;
@@ -635,12 +682,24 @@ bool FollowPath(uint8_t* unit,Actor& a) {
         if(!ControlBlocked(unit)) g_stop(unit);
         return false;
     }
-    Vec3 current=*reinterpret_cast<Vec3*>(unit+0x3078);
     a.followStatus=5;
-    if(unit[0x30DC]==0||battle_ai::Length(current-a.path[a.waypoint])>1)
+    // Native 3A keeps its steering Y at the segment's starting height. It is
+    // not an echo of the requested endpoint, especially across floors.
+    const bool newGoal=unit[0x30DC]==0||!a.hasIssuedGoal||battle_ai::Length(a.issuedGoal-a.path[a.waypoint])>1;
+    if(newGoal) {
         if(!g_setGoal(unit,&a.path[a.waypoint],1)) {
             a.path.clear();return false;
         }
+        a.issuedGoal=a.path[a.waypoint];a.hasIssuedGoal=true;
+    }
+    // The goal's final parameter remains the native default. Locomotion has
+    // its own native SetMoveType transaction; do not confuse the two APIs.
+    const bool descending=a.path[a.waypoint].y<Position(unit).y-25;
+    const bool playerBotRules=PlayerBotRulesMode();
+    const int mode=!a.defenceMoveOwned&&!a.recoveryControlled&&!descending?a.pathMoveType:2;
+    if(playerBotRules&&g_setMoveType&&(newGoal||unit[0xDC0]!=mode)) {
+        g_setMoveType(unit,mode);
+    }
     a.followStatus=6;return true;
 }
 struct TargetObservation {
@@ -658,13 +717,13 @@ struct TargetObservation {
 };
 struct AllyObservation {uint32_t id=0,target=0;Vec3 pos,viewOrigin;uint8_t* object=nullptr;bool meleeTracking=false,meleeSwinging=false;RangedActivity ranged;Contact contact;};
 struct Observation {
-    const char* failure="native observation";
+    const char* volatile failure="native observation";
     battle_ai::native::Capabilities caps={};
     uint32_t id=0;
     uint64_t generation=0;
     int hp=0;
     Vec3 pos,goal;
-    bool moving=false,hurt=false,hurtRecently=false,rangedBusy=false,meleeTracking=false,meleeSwinging=false,comboKnown=false,chainWindow=false,meleePressure=false,forcedMoving=false;
+    bool moving=false,goalKnown=false,hurt=false,hurtRecently=false,rangedBusy=false,meleeTracking=false,meleeSwinging=false,comboKnown=false,chainWindow=false,meleePressure=false,forcedMoving=false;
     int comboIndex=0,comboMax=0;
     AllyObservation allies[64];size_t allyCount=0;
     TargetObservation targets[128];
@@ -820,13 +879,28 @@ void PlanDefence(const Observation& o,Actor& actor,ULONGLONG now) {
     if(g_runtime.difficulty<2) plan.shielding=false;
 }
 bool CaptureUnsafe(Observation& o) {
+    o.failure="ownership and native world context";
     if(!Owned(g_current)||!g_document||!*g_document||GetCurrentThreadId()!=g_gameThread) return false;
     if(!battle_ai::native::ReadCapabilities(g_current,o.caps)) {o.failure="weapon capabilities";return false;}
     bool hasWeapon=false;
     for(const auto& w:o.caps.weapons) if(w.valid) hasWeapon=true;
     if(!hasWeapon) {o.failure="ordinary weapon availability";return false;}
     uint8_t* unit=g_current;
+    o.failure="loadout role metadata";
     auto& actor=ActorFor(unit);
+    uint8_t* breachFsm=nullptr;
+    const bool activeRanged=battle_ai::native::detail::ReadPointer(unit,0x9CC,breachFsm)&&
+        battle_ai::native::detail::InState(breachFsm,0x34);
+    bool breachAvailable=false;
+    for(const auto& weapon:o.caps.weapons)
+        if(weapon.valid&&weapon.ordinary&&weapon.range>0&&
+           (weapon.ammoReady||(activeRanged&&weapon.slot==o.caps.selectedSlot)))breachAvailable=true;
+    if(actor.breachAvailable&&!breachAvailable&&actor.geometryOwned) {
+        // A route through a live destroyable is no longer executable while
+        // every ordinary weapon is empty. Replan with that door still solid.
+        actor.path.clear();actor.geometryOwned=false;actor.geometryFinal=false;actor.hasIssuedGoal=false;
+    }
+    actor.breachAvailable=breachAvailable;
     if(actor.roleUnit!=o.caps.unitId||actor.roleAlternate!=o.caps.alternate) {
         actor.roleUnit=o.caps.unitId;actor.roleAlternate=o.caps.alternate;
         int nativeRole=sdgo::AiCatalogMasteredWeaponType(g_api,g_mod,o.caps.unitId);
@@ -834,6 +908,7 @@ bool CaptureUnsafe(Observation& o) {
         actor.meleeRole=nativeRole==0||(nativeRole<0&&ClientLoadoutProfile(unit,nullptr,&fallback)&&
             fallback.role==battle_ai::loadout::UnitRole::Melee);
     }
+    o.failure="own motion and controller data";
     AdvancePath(unit,actor);
     ULONGLONG now=GetTickCount64();
     o.id=*reinterpret_cast<uint32_t*>(unit+4);o.generation=actor.generation;
@@ -841,6 +916,10 @@ bool CaptureUnsafe(Observation& o) {
     Velocity(unit,o.id,o.pos,now,o.generation);
     o.goal=*reinterpret_cast<Vec3*>(unit+0x3078);
     o.moving=unit[0x30DC]!=0;
+    // 3078 is inactive native steering storage when 30DC is clear. Some
+    // native initializations leave NaN there; absence of a command must not
+    // prevent sensing and issuing the first valid enhanced route.
+    o.goalKnown=o.moving&&battle_ai::Finite(o.goal);
     // CheckHurt consumes a latch. Observe actual/queued MovementFSM control
     // states instead; do not steal the original AI's damage notification.
     o.hurt=ControlBlocked(unit);
@@ -854,6 +933,7 @@ bool CaptureUnsafe(Observation& o) {
     int ownTeam=*reinterpret_cast<int*>(unit+0x20);
     using CanAttack=bool(__thiscall*)(uint8_t*,uint8_t*);
     Ray3 ray={};
+    o.failure="own action state";
     auto fsm=*reinterpret_cast<uint8_t**>(unit+0x9CC);
     if(!fsm) return false;
     o.rangedBusy=battle_ai::native::detail::InState(fsm,0x34);
@@ -878,12 +958,14 @@ bool CaptureUnsafe(Observation& o) {
     // Perception uses the body's native collision point in that posture;
     // actual ranged visibility is available only for the bound gun's own ray.
     ray.origin=meleeOrigin;
+    o.failure="bound weapon muzzle origin";
     if(rangedOrigin) {
         Ray3* nativeRay=g_ray(fsm,&ray);
         if(!nativeRay || !battle_ai::Finite(nativeRay->origin)) {o.failure="native ranged origin";return false;}
         if(nativeRay!=&ray) ray=*nativeRay;
     }
     for(size_t offset:{size_t(0x48),size_t(0x70),size_t(0x7C)}) {
+        o.failure="native target lists";
         auto head=*reinterpret_cast<uint8_t***>(*g_document+offset);
         if(!head) continue;
         auto node=*reinterpret_cast<uint8_t***>(head);
@@ -923,6 +1005,7 @@ bool CaptureUnsafe(Observation& o) {
                !std::isfinite(meleeDistance)) continue;
             auto vtable=*reinterpret_cast<void***>(candidate);
             if(!vtable||!vtable[10]) continue;
+            o.failure="target damage protection and attack permission";
             const auto protection=battle_ai::native::ReadDamageProtection(candidate);
             const bool damageProtected=!protection.known||protection.active;
             const bool attackable=reinterpret_cast<CanAttack>(vtable[10])(candidate,unit);
@@ -931,6 +1014,7 @@ bool CaptureUnsafe(Observation& o) {
             t.id=id;t.hp=hp;t.maxHp=*reinterpret_cast<int*>(candidate+0x3C);
             t.distance=rangedDistance;t.rangedDistance=rangedDistance;t.meleeDistance=meleeDistance;
             t.enemy=true;t.attackable=attackable;t.damageProtected=damageProtected;t.point=point;t.ground=Position(candidate);
+            o.failure="target action and pose";
             t.hurt=HurtState(candidate);
             t.forward=*reinterpret_cast<Vec3*>(*reinterpret_cast<uint8_t**>(candidate+8)+0x6C);
             t.selectedTarget=candidateFsm?*reinterpret_cast<uint32_t*>(candidateFsm+0x200):0;
@@ -946,6 +1030,7 @@ bool CaptureUnsafe(Observation& o) {
             t.velocity=Velocity(candidate,id,point,now);
             if(attackRecord&&(attackRecord[0x6A]==1||attackRecord[0x6A]==8))
                 t.meleeApproaching=battle_ai::Dot(battle_ai::Horizontal(o.pos-t.ground),t.velocity)>30;
+            o.failure="target line of sight";
             t.perceptionVisible=(attackable||damageProtected)&&
                 battle_ai::native::FreshLineClear(g_navigation,*g_document,unit,id,ray.origin,point,true);
             t.rangedVisible=rangedOrigin&&t.perceptionVisible;
@@ -968,6 +1053,7 @@ bool CaptureUnsafe(Observation& o) {
     // authorize pursuit, while each bot retains its own weapon ray and native
     // attack permission for firing. Humans participate through the same live
     // world objects; no cached AI policy or hidden position is treated as sight.
+    o.failure="shared teammate visibility";
     for(size_t i=0;i<o.count;++i) {
         auto& target=o.targets[i];
         if(target.visible||!target.object)continue;
@@ -983,8 +1069,10 @@ bool CaptureUnsafe(Observation& o) {
             }
         }
     }
+    o.failure="blocking map obstacle";
     ObserveBlockingGate(o,actor,now,ray.origin,meleeOrigin,rangedOrigin);
-    if(!battle_ai::Finite(o.pos)||!battle_ai::Finite(o.goal)) return false;
+    o.failure="native unit position finiteness";
+    if(!battle_ai::Finite(o.pos)) return false;
     actor.observedTarget=*reinterpret_cast<uint32_t*>(fsm+0x200);
     actor.observedTargetAt=0;
     actor.observedTargetVisible=false;actor.observedTargetDistance=0;actor.observedFarTargets=0;actor.observedMaxRange=0;
@@ -1016,6 +1104,7 @@ bool CaptureUnsafe(Observation& o) {
     if(countPerception) {
         actor.previousPerceptionPos=o.pos;actor.hasPerceptionPos=true;actor.perceptionSerial=actor.thinkSerial;
     }
+    o.failure="defensive movement plan";
     PlanDefence(o,actor,now);return true;
 }
 bool GuardedCapture(Observation& o) {
@@ -1030,7 +1119,12 @@ bool Capture(Observation& o) {
     // restored when an unguarded engine access fails under /EHsc.
     battle_ai::native::detail::ReadableRegionCache readableRegions{};
     battle_ai::native::detail::ScopedReadableRegionCache readableScope(readableRegions);
-    return GuardedCapture(o);
+    LARGE_INTEGER before{},after{};QueryPerformanceCounter(&before);
+    const bool result=GuardedCapture(o);
+    QueryPerformanceCounter(&after);
+    auto found=g_actors.find(g_current);
+    if(found!=g_actors.end())found->second.senseCost.Record(before.QuadPart,after.QuadPart);
+    return result;
 }
 void Number(lua_State* L,const char* key,double value) {
     g_lua.pushstring(L,key);g_lua.pushnumber(L,value);g_lua.settable(L,-3);
@@ -1126,7 +1220,14 @@ int __cdecl Observe(lua_State* L) {
     Number(L,"actionHandle",attackFsm?*reinterpret_cast<uint32_t*>(attackFsm+0x224):0);
     Number(L,"contactCombo",contact==g_contacts.end()?-1:contact->second.combo);
     Number(L,"contactAction",contact==g_contacts.end()?0:contact->second.action);
-    Vector(L,"pos",o.pos);Vector(L,"goal",o.goal);
+    Vector(L,"pos",o.pos);
+    Number(L,"goalKnown",o.goalKnown);
+    if(o.goalKnown)Vector(L,"goal",o.goal);
+    if(g_runtime.logDecisions&&!battle_ai::Finite(o.goal)&&!ActorFor(g_current).unusedGoalLogged) {
+        ActorFor(g_current).unusedGoalLogged=true;
+        g_api->Log(g_mod,SDGO_LOG_INFO,"native steering storage has no finite active destination unit=%u moving=%u raw_goal=%g,%g,%g; observation remains valid",
+            o.id,o.moving,o.goal.x,o.goal.y,o.goal.z);
+    }
     g_lua.pushstring(L,"weapons");g_lua.newtable(L);
     int index=0;
     for(const auto& w:o.caps.weapons) {
@@ -1187,11 +1288,14 @@ int __cdecl AimTarget(lua_State* L) {
     }
     return 0;
 }
-int __cdecl CancelRoute(lua_State*) {
+int __cdecl CancelRoute(lua_State* L) {
     if(Owned(g_current)) {
         auto& a=ActorFor(g_current);
-        if(!a.path.empty()&&MovementAvailable(g_current,a.pathRanged)) g_stop(g_current);
-        a.path.clear();a.defenceMoveOwned=false;a.explorationOwned=false;
+        const bool handoff=g_lua.gettop(L)>=1&&g_lua.tonumber(L,1)==1;
+        const bool unsafeHandoff=handoff&&g_current[0x30DC]&&a.hasIssuedGoal&&
+            MotionSafetyFor(g_current,*reinterpret_cast<Vec3*>(g_current+0x3078))!=battle_ai::native::MotionSafety::Safe;
+        if((!handoff||unsafeHandoff)&&!a.path.empty()&&MovementAvailable(g_current,a.pathRanged)) g_stop(g_current);
+        a.path.clear();a.defenceMoveOwned=false;a.explorationOwned=false;a.hasIssuedGoal=false;a.direct={};
         a.geometryOwned=false;
     }
     return 0;
@@ -1216,11 +1320,12 @@ int __cdecl Cadence(lua_State* L) {
 int __cdecl RecoveryMode(lua_State* L) {
     if(GetCurrentThreadId()==g_gameThread&&Owned(g_current)) {
         auto& actor=ActorFor(g_current);
-        actor.recoveryControlled=g_lua.tonumber(L,1)==1;
-        actor.recoveryAt=GetTickCount64();
-        if(actor.recoveryControlled) {
+        const bool requested=g_lua.tonumber(L,1)==1;
+        if(requested&&!actor.recoveryControlled) {
+            actor.recoveryAt=GetTickCount64();
             actor.path.clear();actor.defenceMoveOwned=false;actor.geometryOwned=false;actor.geometryFinal=false;
         }
+        actor.recoveryControlled=requested;
     }
     return 0;
 }
@@ -1351,11 +1456,17 @@ bool EmptyNavigation(uint8_t* nav) {
     return nav&&Read(nav,0x560,begin)&&Read(nav,0x564,end)&&Read(nav,0x580,count)&&Read(nav,0x584,array)&&
         !begin&&!end&&!array&&!count;
 }
-bool LoadGeometryRoute(uint8_t* unit,Actor& actor,Vec3 destination) {
+bool LoadGeometryRoute(uint8_t* unit,Actor& actor,Vec3 destination,bool force=false) {
     using Status=battle_ai::MapPathSearch::Status;
-    Vec3 changed=destination-actor.mapSearch.Goal();changed.y=0;
-    if(!actor.geometryOwned||battle_ai::Length(changed)>100||actor.mapSearch.State()==Status::Unreachable) {
-        actor.path.clear();actor.mapSearch.Begin(Position(unit),destination);
+    auto geometry=MapGeometryFor(unit);Vec3 goal{};
+    // Authored spawns may be airborne; enemy roots may be on another floor.
+    // Resolve the destination's own support, never the floor below this bot.
+    if(!geometry.Ground(destination,destination.y+80,destination.y-4096,goal))return false;
+    Vec3 changed=goal-actor.mapSearch.Goal();const float verticalChange=std::abs(changed.y);changed.y=0;
+    if(!actor.geometryOwned||battle_ai::Length(changed)>100||verticalChange>5||actor.mapSearch.State()==Status::Unreachable||
+       (force&&actor.mapSearch.State()!=Status::Pending)) {
+        actor.path.clear();actor.mapSearch.Begin(Position(unit),goal);
+        actor.hasIssuedGoal=false;
         actor.geometryOwned=true;actor.geometryFinal=false;actor.pathGeometry=true;
     }
     actor.routeStatus=11;
@@ -1363,7 +1474,7 @@ bool LoadGeometryRoute(uint8_t* unit,Actor& actor,Vec3 destination) {
     actor.routePointCount=static_cast<uint32_t>(actor.mapSearch.Nodes());
     return followed&&!actor.path.empty();
 }
-bool LoadRouteUnsafe(uint32_t target,const Vec3* lastSeen) {
+bool LoadRouteUnsafe(uint32_t target,const Vec3* lastSeen,bool force) {
     if(!Owned(g_current)||!g_document||!*g_document||GetCurrentThreadId()!=g_gameThread) return false;
     auto& a=ActorFor(g_current);
     a.routeStatus=1;a.routePointCount=0;
@@ -1378,7 +1489,7 @@ bool LoadRouteUnsafe(uint32_t target,const Vec3* lastSeen) {
     Vec3 destination=lastSeen?*lastSeen:Position(other);
     Vec3* points=nullptr;
     a.routeStart=Position(g_current);a.routeGoal=destination;a.routeStatus=4;
-    if(PlayerBotRulesMode()&&EmptyNavigation(nav))return LoadGeometryRoute(g_current,a,destination);
+    if(PlayerBotRulesMode()&&EmptyNavigation(nav))return LoadGeometryRoute(g_current,a,destination,force);
     a.geometryOwned=false;a.pathGeometry=false;
     a.path.clear(); // a failed native repath must never resurrect its previous goal
     if(!QueryRoute(nav,*reinterpret_cast<uint32_t*>(g_current+4),a.routeStart,destination,&points,&count))return false;
@@ -1401,8 +1512,8 @@ bool LoadRouteUnsafe(uint32_t target,const Vec3* lastSeen) {
     a.routeStatus=10;
     return FollowPath(g_current,a);
 }
-bool LoadRoute(uint32_t id,const Vec3* lastSeen) {
-    __try { return LoadRouteUnsafe(id,lastSeen); }
+bool LoadRoute(uint32_t id,const Vec3* lastSeen,bool force=false) {
+    __try { return LoadRouteUnsafe(id,lastSeen,force); }
     __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 bool NavigationNodeCount(uint8_t* nav,uint32_t& count) {
@@ -1522,6 +1633,25 @@ int __cdecl ExploreMap(lua_State* L) {
     }
     g_lua.pushnumber(L,admitted?1:0);return 1;
 }
+int __cdecl EnableNavigationJump(lua_State* L) {
+    const bool valid=GetCurrentThreadId()==g_gameThread&&Owned(g_current)&&PlayerBotRulesMode();
+    if(valid) {
+        auto& actor=ActorFor(g_current);
+        if(!actor.ownsJumpPermission) {
+            actor.savedJumpPermission=g_current[0x3291];actor.ownsJumpPermission=true;
+        }
+        // Native collision probing selects the required obstacle height. This
+        // enables that existing input gate; it changes no physical unit stats.
+        g_setJumpEnabled(g_current,1);
+    }
+    g_lua.pushnumber(L,valid?1:0);return 1;
+}
+int __cdecl RouteMotion(lua_State* L) {
+    const double mode=g_lua.tonumber(L,1);
+    const bool valid=GetCurrentThreadId()==g_gameThread&&Owned(g_current)&&(mode==2||mode==3);
+    if(valid)ActorFor(g_current).pathMoveType=static_cast<int>(mode);
+    g_lua.pushnumber(L,valid?1:0);return 1;
+}
 int __cdecl Route(lua_State* L) {
     double number=g_lua.tonumber(L,1);
     Vec3 frozen={};
@@ -1529,7 +1659,8 @@ int __cdecl Route(lua_State* L) {
     if(Owned(g_current)) {auto& actor=ActorFor(g_current);actor.pathRanged=g_lua.gettop(L)>=6&&g_lua.tonumber(L,6)==1;actor.defenceMoveOwned=false;}
     if(provided) frozen={static_cast<float>(g_lua.tonumber(L,3)),static_cast<float>(g_lua.tonumber(L,4)),static_cast<float>(g_lua.tonumber(L,5))};
     const bool requested=std::isfinite(number)&&number>0&&number<=0xffffffff&&(!provided||battle_ai::Finite(frozen));
-    bool ok=requested&&LoadRoute(static_cast<uint32_t>(number),provided?&frozen:nullptr);
+    const bool force=g_lua.gettop(L)>=2&&g_lua.tonumber(L,2)==1;
+    bool ok=requested&&LoadRoute(static_cast<uint32_t>(number),provided?&frozen:nullptr,force);
     const auto actor=g_actors.find(g_current);
     const bool pending=requested&&!ok&&actor!=g_actors.end()&&actor->second.geometryOwned&&
         actor->second.mapSearch.State()==battle_ai::MapPathSearch::Status::Pending;
@@ -1541,7 +1672,6 @@ bool AdvancePointUnsafe(Vec3 target,float stepLimit,bool allowRanged) {
         return false;
     auto& actor=ActorFor(g_current);
     const bool recovering=actor.recoveryControlled&&GetTickCount64()-actor.recoveryAt<250;
-    if(actor.recoveryControlled&&!recovering) actor.recoveryControlled=false;
     if(actor.defenceMoveOwned&&actor.path.empty()&&!actor.defence.movement.relocate)
         actor.defenceMoveOwned=false;
     if(recovering||actor.defenceMoveOwned||!MovementAvailable(g_current,allowRanged))
@@ -1559,6 +1689,7 @@ bool AdvancePointUnsafe(Vec3 target,float stepLimit,bool allowRanged) {
     std::vector<Vec3> staged;
     try { staged.push_back(goal); } catch(...) { return false; }
     if(!g_setGoal(g_current,&goal,1)) return false;
+    actor.issuedGoal=goal;actor.hasIssuedGoal=true;
     actor.path.swap(staged);actor.waypoint=0;actor.pathRanged=allowRanged;actor.controlled=true;
     actor.geometryOwned=false;actor.pathGeometry=false;
     return true;
@@ -1579,11 +1710,11 @@ int __cdecl AdvancePoint(lua_State* L) {
     }
     g_lua.pushnumber(L,ok?1:0);return 1;
 }
-int __cdecl SafeDirection(lua_State* L) {
+int SafeDirectionImpl(lua_State* L,bool adaptive) {
     double requested=g_lua.tonumber(L,1),distanceValue=g_lua.tonumber(L,2);
     double forwardValue=g_lua.tonumber(L,3),backwardValue=g_lua.tonumber(L,4);
     double leftValue=g_lua.tonumber(L,5),rightValue=g_lua.tonumber(L,6);
-    double selected=-1;
+    double selected=-1,selectedDistance=0;
     if(g_lua.gettop(L)>=6&&Owned(g_current)&&g_document&&*g_document&&
        GetCurrentThreadId()==g_gameThread&&
        std::isfinite(requested)&&std::isfinite(distanceValue)&&distanceValue>0&&
@@ -1598,10 +1729,7 @@ int __cdecl SafeDirection(lua_State* L) {
                 const Vec3 right={forward.z,0,-forward.x};
                 const Vec3 here=Position(g_current);
                 struct Candidate {double value;Vec3 direction;};
-                Candidate candidates[4] = {
-                    {requested,{}},{leftValue,right*-1.0f},
-                    {rightValue,right},{backwardValue,forward*-1.0f}
-                };
+                Candidate candidates[4] = {};
                 auto direction=[&](double value) {
                     if(value==forwardValue) return forward;
                     if(value==backwardValue) return forward*-1.0f;
@@ -1609,24 +1737,133 @@ int __cdecl SafeDirection(lua_State* L) {
                     if(value==rightValue) return right;
                     return Vec3{};
                 };
-                candidates[0].direction=direction(requested);
-                for(const auto& candidate:candidates) {
-                    if(candidate.value!=requested&&candidate.value==forwardValue) continue;
-                    if(battle_ai::Length(candidate.direction)<0.5) continue;
-                    const Vec3 destination=here+candidate.direction*static_cast<float>(distanceValue);
+                size_t candidateCount=0;
+                const auto append=[&](double value) {
+                    for(size_t i=0;i<candidateCount;++i)if(candidates[i].value==value)return;
+                    const Vec3 vector=direction(value);
+                    if(candidateCount<4&&battle_ai::Length(vector)>=0.5)candidates[candidateCount++]={value,vector};
+                };
+                append(requested);append(leftValue);append(rightValue);append(backwardValue);append(forwardValue);
+                int rejected[4]={};size_t tested=0;
+                battle_ai::native::MotionSafetyDiagnostic diagnostic{};
+                battle_ai::native::MotionSafetyDiagnostic unavailable{};
+                battle_ai::native::MapGeometry rejectedGeometry{};
+                const auto clearStep=[&](const Candidate& candidate,double span,int& reason) {
+                    const Vec3 destination=here+candidate.direction*static_cast<float>(span);
                     const auto safety=battle_ai::native::CheckMotionSafety(
-                        g_navigation,*g_document,g_current,here,destination);
-                    if(safety==battle_ai::native::MotionSafety::Unavailable) break;
-                    if(safety==battle_ai::native::MotionSafety::Safe&&ImmediateMotionClear(g_current,destination)) {
-                        selected=candidate.value;break;
+                        g_navigation,*g_document,g_current,here,destination,g_runtime.logDecisions?&diagnostic:nullptr);
+                    if(safety==battle_ai::native::MotionSafety::Unavailable) {unavailable=diagnostic;reason=100+static_cast<int>(diagnostic.stage);return false;}
+                    auto geometry=MapGeometryFor(g_current);geometry.deferDestroyables=false;Vec3 grounded{};
+                    const bool clear=safety==battle_ai::native::MotionSafety::Safe&&
+                        (!PlayerBotRulesMode()||geometry.Step(here,destination,grounded));
+                    reason=safety!=battle_ai::native::MotionSafety::Safe?11:clear?0:static_cast<int>(geometry.lastReject);
+                    if(!clear&&g_runtime.logDecisions)rejectedGeometry=geometry;
+                    return clear;
+                };
+                for(const auto& candidate:candidates) {
+                    if(battle_ai::Length(candidate.direction)<0.5) continue;
+                    int reason=0;const bool clear=clearStep(candidate,distanceValue,reason);rejected[tested++]=reason;
+                    if(clear) {
+                        selected=candidate.value;selectedDistance=distanceValue;break;
                     }
+                }
+                if(adaptive&&selected<0) {
+                    float step=0;
+                    if(battle_ai::native::detail::Read(g_current,0xB2C,step)&&std::isfinite(step)&&step>=0) {
+                        const double minimum=(std::max)(25.0,double(step)*10+25);
+                        for(const auto& candidate:candidates) {
+                            if(battle_ai::Length(candidate.direction)<0.5||distanceValue<minimum)continue;
+                            double low=0,high=distanceValue;int reason=0;
+                            for(int iteration=0;iteration<6;++iteration) {
+                                const double middle=(low+high)*0.5;
+                                if(clearStep(candidate,middle,reason))low=middle;else high=middle;
+                            }
+                            if(low>=minimum&&low>selectedDistance&&clearStep(candidate,low,reason)) {
+                                selected=candidate.value;selectedDistance=low;
+                            }
+                        }
+                    }
+                }
+                auto& actor=ActorFor(g_current);const auto now=GetTickCount64();
+                if(selected<0&&g_runtime.logDecisions&&now>=actor.directionLogAt) {
+                    actor.directionLogAt=now+500;
+                    g_api->Log(g_mod,SDGO_LOG_INFO,"native direction rejected unit=%u requested=%.0f distance=%.1f pos=%.1f,%.1f,%.1f rejects=%d,%d,%d,%d scene=%p object=%p predicate=%p count=%d",
+                        *reinterpret_cast<uint32_t*>(g_current+4),requested,distanceValue,here.x,here.y,here.z,rejected[0],rejected[1],rejected[2],rejected[3],
+                        unavailable.scene,unavailable.object,unavailable.predicate,unavailable.count);
+                    auto geometry=MapGeometryFor(g_current);Vec3 low{},high{},feet{};
+                    const float foot=geometry.bodySphere.center.y-geometry.bodySphere.radius;
+                    const bool lowKnown=geometry.Ground(here,here.y+80,here.y-4096,low);
+                    const bool highKnown=geometry.Ground(here,here.y+800,here.y-4096,high);
+                    const bool feetKnown=geometry.Ground(here,foot+5,foot-4096,feet);
+                    g_api->Log(g_mod,SDGO_LOG_INFO,"native support unit=%u root_y=%.3f foot_y=%.3f local_sphere_y=%.3f local_radius=%.3f sphere_y=%.3f radius=%.3f low=%u/%.3f high=%u/%.3f feet=%u/%.3f bounds_y=%.3f,%.3f",
+                        *reinterpret_cast<uint32_t*>(g_current+4),here.y,foot,geometry.bodySphere.localCenter.y,geometry.bodySphere.localRadius,
+                        geometry.bodySphere.center.y,geometry.bodySphere.radius,lowKnown,low.y,highKnown,high.y,feetKnown,feet.y,
+                        geometry.ownerBounds.min.y,geometry.ownerBounds.max.y);
+                    uint32_t objectId=0;int32_t objectHp=0;uint8_t removed=0,obbEnabled=0,sphereEnabled=0;
+                    using battle_ai::native::detail::Read;
+                    Read(rejectedGeometry.rejectedObject,4,objectId);Read(rejectedGeometry.rejectedObject,0x38,objectHp);
+                    Read(rejectedGeometry.rejectedObject,0x1C,removed);Read(rejectedGeometry.rejectedScene,0x114,obbEnabled);
+                    Read(rejectedGeometry.rejectedScene,0x115,sphereEnabled);
+                    g_api->Log(g_mod,SDGO_LOG_INFO,"native solid rejection unit=%u scene=%p object=%u hp=%d removed=%u flags114=%u flags115=%u shape=%u reason=%u initial_depth=%.3f next_depth=%.3f ray_distance=%.3f obstacle_sphere=%.3f,%.3f,%.3f/%.3f body_sphere=%.3f,%.3f,%.3f/%.3f",
+                        *reinterpret_cast<uint32_t*>(g_current+4),rejectedGeometry.rejectedScene,objectId,objectHp,removed,obbEnabled,sphereEnabled,
+                        rejectedGeometry.rejectedShape,rejectedGeometry.shapeReject,rejectedGeometry.initialDepth,rejectedGeometry.rejectedDepth,rejectedGeometry.rejectedRayDistance,
+                        rejectedGeometry.rejectedSphereCenter.x,rejectedGeometry.rejectedSphereCenter.y,rejectedGeometry.rejectedSphereCenter.z,rejectedGeometry.rejectedSphereRadius,
+                        rejectedGeometry.bodySphere.center.x,rejectedGeometry.bodySphere.center.y,rejectedGeometry.bodySphere.center.z,rejectedGeometry.bodySphere.radius);
                 }
             }
         } __except(EXCEPTION_EXECUTE_HANDLER) {}
     }
-    g_lua.pushnumber(L,selected);return 1;
+    g_lua.pushnumber(L,selected);
+    if(adaptive){g_lua.pushnumber(L,selectedDistance);return 2;}
+    return 1;
 }
+int __cdecl SafeDirection(lua_State* L){return SafeDirectionImpl(L,false);}
+int __cdecl SafeStep(lua_State* L){return SafeDirectionImpl(L,true);}
 int __cdecl Chance(lua_State* L);
+bool DirectIntentUnsafe(double direction,int mode,int action) {
+    if(GetCurrentThreadId()!=g_gameThread||!Owned(g_current))return false;
+    if(action==2)return (mode==2||mode==3)&&std::isfinite(direction)&&
+        *reinterpret_cast<int32_t*>(g_current+0x38)>0&&MovementAvailable(g_current,true);
+    auto& actor=ActorFor(g_current);auto& direct=actor.direct;
+    const bool active=g_current[0x30DC]!=0;
+    const Vec3 goal=*reinterpret_cast<Vec3*>(g_current+0x3078);
+    const Vec3 start=*reinterpret_cast<Vec3*>(g_current+0x3084);
+    const uint32_t facing=*reinterpret_cast<uint32_t*>(g_current+0xDC4);
+    const auto echo=[&] {
+        return active&&battle_ai::Finite(goal)&&battle_ai::Finite(start)&&
+            goal.x==direct.goal.x&&goal.y==direct.goal.y&&goal.z==direct.goal.z&&
+            start.x==direct.start.x&&start.y==direct.start.y&&start.z==direct.start.z&&facing==direct.facing;
+    };
+    if(action==-1) {
+        if(direct.owned&&echo()&&MovementAvailable(g_current,true))g_stop(g_current);
+        direct={};return false;
+    }
+    if((mode!=2&&mode!=3)||!std::isfinite(direction)||!actor.path.empty()||actor.geometryOwned||
+       !MovementAvailable(g_current,true)) {direct={};return false;}
+    if(action==0&&(!direct.owned||direct.direction!=direction||direct.mode!=mode))return false;
+    if(!active||!battle_ai::Finite(goal)||(action==0&&!echo())) {direct={};return false;}
+    auto geometry=MapGeometryFor(g_current);Vec3 grounded{};
+    if(MotionSafetyFor(g_current,goal)!=battle_ai::native::MotionSafety::Safe||
+       (PlayerBotRulesMode()&&!geometry.Step(Position(g_current),goal,grounded))) {
+        if(action==1||direct.owned)g_stop(g_current);
+        direct={};return false;
+    }
+    if(g_setMoveType&&g_current[0xDC0]!=mode)g_setMoveType(g_current,mode);
+    if(action==1) {direct.owned=true;direct.direction=direction;direct.mode=mode;direct.goal=goal;direct.start=start;
+        direct.facing=*reinterpret_cast<uint32_t*>(g_current+0xDC4);}
+    return true;
+}
+bool GuardedDirectIntent(double direction,int mode,int action) {
+    __try {return DirectIntentUnsafe(direction,mode,action);} __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+}
+int __cdecl DirectIntent(lua_State* L) {
+    battle_ai::native::detail::ReadableRegionCache regions{};
+    battle_ai::native::detail::ScopedReadableRegionCache scope(regions);
+    const double direction=g_lua.tonumber(L,1),mode=g_lua.tonumber(L,2),action=g_lua.tonumber(L,3);
+    const bool valid=(mode==2||mode==3)&&(action==-1||action==0||action==1||action==2);
+    const bool accepted=valid&&GuardedDirectIntent(direction,static_cast<int>(mode),static_cast<int>(action));
+    g_lua.pushnumber(L,accepted?1:0);return 1;
+}
 int __cdecl Cover(lua_State* L) {
     g_lua.newtable(L);Number(L,"valid",0);
     if(GetCurrentThreadId()!=g_gameThread||!Owned(g_current)||!g_document||!*g_document) return 1;
@@ -1837,6 +2074,7 @@ int __cdecl Dispatch(const char* name,uint8_t* unit) {
     g_nativeCallback=name;
     int result=0;
     if(unit==g_current && !g_nativeFallback && g_runtime.enabled && g_runtime.difficulty>=1 && Owned(unit)) {
+        auto& policy=ActorFor(unit);policy.policySerial=policy.thinkSerial;policy.lastPolicyAt=GetTickCount64();
         result=g_preparationFault||!g_policyReady ? 123:g_dispatch("SDGO_BattleAI_GenericUpdate",unit);
     } else {
         result=g_dispatch(name,unit);
@@ -1845,6 +2083,30 @@ int __cdecl Dispatch(const char* name,uint8_t* unit) {
     }
     g_nativeCallback=prior;
     return result;
+}
+bool NeutralPolicyAvailable(uint8_t* unit) {
+    if(!WantsGeneric(unit)||g_runtime.difficulty<1||!g_policyReady||g_nativeFallback)return false;
+    using namespace battle_ai::native::detail;
+    ReadableRegionCache regions{};ScopedReadableRegionCache scope(regions);
+    uint8_t* attack=nullptr;uint8_t* movement=nullptr;uint8_t* control=nullptr;
+    int32_t hp=0;uint8_t script=0;
+    // Retain the native dispatch caller's hurt, map travel, control-state,
+    // installed-script admission gates. Boost Down is a resource restriction,
+    // not loss of ordinary movement control.
+    return Read(unit,0x38,hp)&&hp>0&&!ControlBlocked(unit)&&
+        ReadPointer(unit,0x9CC,attack)&&Neutral(attack)&&
+        ReadPointer(unit,0x9C8,movement)&&!InState(movement,0x124)&&
+        ReadPointer(unit,0x9D4,control)&&!InState(control,0x98)&&
+        Read(unit,0x30F0,script)&&script!=0;
+}
+bool __fastcall EffectActive(uint8_t* unit,void*,uint8_t effect) {
+    const void* caller=_ReturnAddress();
+    const bool active=g_effectActive(unit,effect);
+    // Only the stock NPC scheduler's Boost Down pause is replaced. Player
+    // physics, boost depletion and every other effect query see the real bit.
+    if(active&&effect==5&&caller==g_aiBoostPauseReturn&&GetCurrentThreadId()==g_gameThread&&
+       unit==g_current&&!g_nativeFallback&&g_policyReady&&g_runtime.difficulty>=1&&WantsGeneric(unit))return false;
+    return active;
 }
 Ray3* __fastcall RangedRay(uint8_t* fsm,void*,Ray3* out) {
     Ray3* ray=g_ray(fsm,out);
@@ -2620,9 +2882,13 @@ void Prepare() {
     Register(L,"SDGO_BattleAI_Cadence",Cadence);
     Register(L,"SDGO_BattleAI_RecoveryMode",RecoveryMode);
     Register(L,"SDGO_BattleAI_Route",Route);
+    Register(L,"SDGO_BattleAI_RouteMotion",RouteMotion);
+    Register(L,"SDGO_BattleAI_EnableNavigationJump",EnableNavigationJump);
     Register(L,"SDGO_BattleAI_ExploreMap",ExploreMap);
     Register(L,"SDGO_BattleAI_AdvancePoint",AdvancePoint);
     Register(L,"SDGO_BattleAI_SafeDirection",SafeDirection);
+    Register(L,"SDGO_BattleAI_SafeStep",SafeStep);
+    Register(L,"SDGO_BattleAI_DirectIntent",DirectIntent);
     Register(L,"SDGO_BattleAI_CancelRoute",CancelRoute);
     Register(L,"SDGO_BattleAI_Chance",Chance);
     Register(L,"SDGO_BattleAI_Cover",Cover);
@@ -2652,6 +2918,7 @@ void GuardedPrepare() {
     }
 }
 void ResetLifecycle(uint8_t* unit) {
+    g_terrainRays.ClearLayouts();
     if(g_generations.size()>=1024) g_generations.clear();
     g_generations[unit]=++g_serial;
     g_actors.erase(unit);g_rangedShots.erase(unit);g_contacts.erase(unit);g_incoming.erase(unit);g_spSnapshots.erase(unit);
@@ -2682,7 +2949,7 @@ bool __fastcall Think(uint8_t* unit, void*) {
     }
     if(actor!=g_actors.end()) {
         if(actor->second.sideCue&&!WantsGeneric(unit)) ClearStartup(unit,actor->second,true);
-        if((!WantsGeneric(unit)&&(actor->second.controlled||actor->second.ownsIntent)) ||
+        if((!WantsGeneric(unit)&&(actor->second.controlled||actor->second.ownsIntent||actor->second.ownsJumpPermission)) ||
            (!WantsAim(unit)&&actor->second.ownsAim)) RestoreIntent(unit,actor->second);
     }
     if(WantsAim(unit)) {
@@ -2692,7 +2959,18 @@ bool __fastcall Think(uint8_t* unit, void*) {
         }
         *reinterpret_cast<float*>(unit+0x3204)=0;*reinterpret_cast<float*>(unit+0x3208)=0;
     }
+    LARGE_INTEGER costBegin{},costEnd{};QueryPerformanceCounter(&costBegin);
     bool result=g_think(unit);
+    auto decision=g_actors.find(unit);
+    if(decision!=g_actors.end()&&decision->second.controlled&&
+       decision->second.policySerial!=decision->second.thinkSerial&&NeutralPolicyAvailable(unit)) {
+        // Native action completion can omit dispatch_ai for an otherwise free
+        // frame. Drive the same established policy once, preserving native
+        // action ownership and any decision already made during this Think.
+        decision->second.policySerial=decision->second.thinkSerial;
+        decision->second.lastPolicyAt=GetTickCount64();
+        g_dispatch("SDGO_BattleAI_GenericUpdate",unit);
+    }
     auto startup=g_actors.find(unit);
     if(startup!=g_actors.end()&&startup->second.sideCue) {
         __try {
@@ -2705,6 +2983,49 @@ bool __fastcall Think(uint8_t* unit, void*) {
         auto it=g_actors.find(unit);
         if(it!=g_actors.end() && (!it->second.path.empty()||it->second.geometryOwned)&&(WantsGeneric(unit)||it->second.defenceMoveOwned)) {
             __try { FollowPath(unit,it->second); } __except(EXCEPTION_EXECUTE_HANDLER) { it->second.path.clear(); }
+        }
+    }
+    QueryPerformanceCounter(&costEnd);
+    auto costActor=g_actors.find(unit);
+    if(costActor!=g_actors.end()) {
+        auto& actor=costActor->second;actor.thinkCost.Record(costBegin.QuadPart,costEnd.QuadPart);
+        const auto now=GetTickCount64();
+        if(g_runtime.logDecisions&&actor.lastPolicyAt&&now-actor.lastPolicyAt>=500&&now>=actor.policyGapLogAt) {
+            actor.policyGapLogAt=now+250;
+            using battle_ai::native::detail::Read;using battle_ai::native::detail::ReadPointer;
+            uint32_t id=0,state=0,effects=0,pendingEffects=0;
+            uint8_t enabled=0,script=0;uint8_t* secondary=nullptr;uint8_t* attack=nullptr;uint8_t* movement=nullptr;
+            uint32_t sc=0,sp=0,ac=0,ap=0,mc=0,mp=0;
+            Read(unit,4,id);Read(unit,0x9D8,state);Read(unit,0x326C,enabled);Read(unit,0x30F0,script);
+            Read(unit,0xE90,effects);Read(unit,0xEA0,pendingEffects);
+            ReadPointer(unit,0x9D4,secondary);Read(secondary,4,sc);Read(secondary,8,sp);
+            ReadPointer(unit,0x9CC,attack);Read(attack,4,ac);Read(attack,8,ap);
+            ReadPointer(unit,0x9C8,movement);Read(movement,4,mc);Read(movement,8,mp);
+            g_api->Log(g_mod,SDGO_LOG_INFO,"native policy gap unit=%u age=%llu controlled=%u ai326c=%u state=%u effects=%08X/%08X script=%u secondary=%p:%08X/%08X attack=%p:%08X/%08X movement=%p:%08X/%08X serial=%llu/%llu",
+                id,static_cast<unsigned long long>(now-actor.lastPolicyAt),actor.controlled?1u:0u,enabled,state,effects,pendingEffects,script,
+                secondary,sc,sp,attack,ac,ap,movement,mc,mp,static_cast<unsigned long long>(actor.thinkSerial),static_cast<unsigned long long>(actor.policySerial));
+        }
+        if(g_runtime.logDecisions&&now>=actor.costLogAt&&g_api&&g_api->Log) {
+            LARGE_INTEGER frequency{};QueryPerformanceFrequency(&frequency);
+            const double scale=1000000.0/static_cast<double>(frequency.QuadPart);
+            const auto average=[&](const Actor::Cost& value){return value.calls?value.total*scale/static_cast<double>(value.calls):0.0;};
+            g_api->Log(g_mod,SDGO_LOG_INFO,"AI cost unit=%u think_us=%.1f peak_us=%.1f sense_us=%.1f sense_peak_us=%.1f nav_us=%.1f nav_peak_us=%.1f calls=%llu nodes=%u",
+                *reinterpret_cast<uint32_t*>(unit+4),average(actor.thinkCost),actor.thinkCost.peak*scale,
+                average(actor.senseCost),actor.senseCost.peak*scale,average(actor.navigationCost),actor.navigationCost.peak*scale,
+                static_cast<unsigned long long>(actor.thinkCost.calls),static_cast<uint32_t>(actor.mapSearch.Nodes()));
+            const auto& terrain=g_terrainRays.stats;
+            g_api->Log(g_mod,SDGO_LOG_INFO,"terrain rays indexed=%llu native=%llu triangles=%llu audits=%llu mismatches=%llu layouts=%llu rejected=%llu",
+                static_cast<unsigned long long>(terrain.indexed),static_cast<unsigned long long>(terrain.native),
+                static_cast<unsigned long long>(terrain.triangles),static_cast<unsigned long long>(terrain.audits),
+                static_cast<unsigned long long>(terrain.mismatches),static_cast<unsigned long long>(terrain.layouts),static_cast<unsigned long long>(terrain.rejected));
+            float nativeStep=0;uint8_t nativeMode=0;
+            battle_ai::native::detail::Read(unit,0xB2C,nativeStep);battle_ai::native::detail::Read(unit,0xDC0,nativeMode);
+            const Vec3 here=Position(unit);const bool hasWaypoint=!actor.path.empty()&&actor.waypoint<actor.path.size();
+            const Vec3 waypoint=hasWaypoint?actor.path[actor.waypoint]:here;
+            g_api->Log(g_mod,SDGO_LOG_INFO,"native route motor unit=%u mode=%u requested=%d stop_range=%.2f waypoint_distance=%.2f pos=%.1f,%.1f,%.1f waypoint=%.1f,%.1f,%.1f",
+                *reinterpret_cast<uint32_t*>(unit+4),nativeMode,actor.pathMoveType,nativeStep*10,battle_ai::Length(waypoint-here),
+                here.x,here.y,here.z,waypoint.x,waypoint.y,waypoint.z);
+            actor.thinkCost={};actor.senseCost={};actor.navigationCost={};actor.costLogAt=now+5000;
         }
     }
     g_current = prior;
@@ -2813,14 +3134,20 @@ SDGO_MOD_ENTRY {
         !Bind(g_navigationNode,"navigation.node_for_point") || !Bind(g_navigationNodeAt,"navigation.node_at") ||
         !Bind(g_startPoint,"um.find_start_point") ||
         !Bind(g_setIntent,"npc.set_attack_intent") || !Bind(g_selectWeapon,"combat.select_weapon") || !Bind(g_stop,"npc.move_stop") ||
-        !Bind(g_setGoal,"npc.set_move_goal") || !Bind(g_delete,"crt.operator_delete") ||
+        !Bind(g_setGoal,"npc.set_move_goal") || !Bind(g_setMoveType,"npc.set_move_type") || !Bind(g_setJumpEnabled,"npc.set_jump_enabled") || !Bind(g_delete,"crt.operator_delete") ||
         !Bind(g_navigation.query,"collision.query") || !Bind(g_navigation.segmentAabb,"collision.segment_aabb") ||
-        !Bind(g_navigation.terrainRay,"collision.terrain_ray") || !Bind(g_navigation.rayObb,"collision.ray_obb") ||
+        !Bind(g_navigation.terrainRay,"collision.terrain_ray") || !Bind(g_terrainTriangle,"collision.terrain_triangle") || !Bind(g_navigation.rayObb,"collision.ray_obb") ||
         !Bind(g_navigation.raySphere,"collision.ray_sphere") ||
         !Bind(g_mapSphereObb,"collision.sphere_obb_overlap") ||
         !Bind(g_mapSphereObbContact,"collision.sphere_obb_contact")) return 0;
+    g_terrainRays.Bind(g_navigation.terrainRay,g_terrainTriangle);
+    if(!Bind(g_terrainHeight,"navigation.terrain_height")||!Bind(g_terrainNormal,"navigation.terrain_normal"))return 0;
+    g_terrainSupport.Bind(g_terrainHeight,g_terrainNormal);
+    g_navigation.support=&PhysicsSupport;
+    g_navigation.terrainRay=reinterpret_cast<battle_ai::native::TerrainRayFn>(&IndexedTerrainRay);
     if(!Bind(g_app,"game.app")||!Bind(g_queueSwing,"combat.queue_melee_swing")||!Bind(g_faceTarget,"npc.face_target")||!Bind(g_rotate,"unit.rotate_y")) return 0;
-    if(!Bind(g_contactReturn,"combat.melee_contact_return")||!Bind(g_queueState,"fsm.queue_state")) return 0;
+    if(!Bind(g_contactReturn,"combat.melee_contact_return")||!Bind(g_queueState,"fsm.queue_state")||
+       !Bind(g_aiBoostPauseReturn,"npc.ai_boost_pause_return")) return 0;
     if(!Bind(g_playerSkillGate,"combat.player_sp_gate")) return 0;
     if(!Bind(g_canonical,"um.object_id_from_pilot")) return 0;
     if(!Bind(g_loadoutNative.setUnitLevel,"loadout.set_unit_level")||!Bind(g_loadoutNative.applySkillPart,"loadout.apply_skill_part")) return 0;
@@ -2833,6 +3160,7 @@ SDGO_MOD_ENTRY {
     if (!api->HookCode(mod,"npc.think",reinterpret_cast<void*>(&Think),reinterpret_cast<void**>(&g_think)) ||
         !api->HookCode(mod,"npc.init_ai",reinterpret_cast<void*>(&Init),reinterpret_cast<void**>(&g_init)) ||
         !api->HookCode(mod,"npc.dispatch_ai",reinterpret_cast<void*>(&Dispatch),reinterpret_cast<void**>(&g_dispatch)) ||
+        !api->HookCode(mod,"unit.effect_active",reinterpret_cast<void*>(&EffectActive),reinterpret_cast<void**>(&g_effectActive)) ||
         !api->HookCode(mod,"npc.ranged_ray",reinterpret_cast<void*>(&RangedRay),reinterpret_cast<void**>(&g_ray)) ||
         !api->HookCode(mod,"npc.attack_intent",reinterpret_cast<void*>(&AttackIntent),reinterpret_cast<void**>(&g_intent)) ||
         !api->HookCode(mod,"npc.facing_update",reinterpret_cast<void*>(&FacingUpdate),reinterpret_cast<void**>(&g_facingUpdate)) ||

@@ -27,6 +27,7 @@ static_assert(offsetof(SdgoBattleAiUnitSnapshotV1,backward_primary_dispatches)==
 lua_State* g_L = nullptr;
 int g_failures = 0;
 int g_expectedDispatchResult = 123;
+bool g_skipNativeDispatch=false;
 std::wstring g_root;
 uint8_t* g_guardRegion = nullptr;
 SIZE_T g_guardPageSize = 0;
@@ -41,6 +42,12 @@ LONG CALLBACK GuardAccessProbe(EXCEPTION_POINTERS* exception) {
             InterlockedIncrement(&g_guardAccessViolations);
     }
     return EXCEPTION_CONTINUE_SEARCH;
+}
+void WaitNativeTicks(ULONGLONG milliseconds) {
+    // The hooks use GetTickCount64, whose clock can advance in 15.6 ms steps.
+    // A wall-clock Sleep(20/25) can leave their 20 ms sample gate unopened.
+    const auto started=GetTickCount64();
+    while(GetTickCount64()-started<milliseconds)Sleep(1);
 }
 void Check(bool ok,const char* what) {
     std::printf("%s %s\n",ok?"PASS":"FAIL",what); if(!ok) ++g_failures;
@@ -62,8 +69,18 @@ struct Unit {
     unsigned char bytes[0x3300] = {};
     __declspec(noinline) bool Think() {
         if(!bytes[0x326C]) return true;
-        int result=native_world::Dispatch("VSAI_Gunfighter_01_Update",bytes);
-        Check(result==g_expectedDispatchResult,"native dispatcher callback preserves its return value");
+        // Model the independent shared physics effect before the NPC-only
+        // pause check. The enhancement must leave this query and fuel loss.
+        if(reinterpret_cast<native_world::Callbacks*>(this)->EffectActive(5))
+            native_world::Encode(bytes,0xBE1,0xBE5,0xBF5,0.0f);
+        if(native_world::NpcBoostPauseQuery(bytes)) {
+            reinterpret_cast<native_world::Callbacks*>(this)->StopMotor();
+            reinterpret_cast<native_world::Callbacks*>(this)->AttackIntent(0);return true;
+        }
+        if(!g_skipNativeDispatch) {
+            int result=native_world::Dispatch("VSAI_Gunfighter_01_Update",bytes);
+            Check(result==g_expectedDispatchResult,"native dispatcher callback preserves its return value");
+        }
         reinterpret_cast<native_world::Callbacks*>(this)->Intent();
         if(*reinterpret_cast<uint8_t**>(bytes+8)) reinterpret_cast<native_world::Callbacks*>(this)->FacingUpdate();
         reinterpret_cast<native_world::Callbacks*>(this)->ConsumeWeaponInput();
@@ -130,6 +147,8 @@ int wmain(int argc,wchar_t** argv) {
     g_L=lua_open(); luaopen_base(g_L); lua_settop(g_L,0); luaopen_string(g_L); lua_settop(g_L,0);
     native_world::state=g_L;
     Check(Eval(R"(
+      UNIT_MOVE_EVENT_MOVE=2;UNIT_MOVE_EVENT_DASH=3
+      UNIT_MOVE_DIR_FORWARD=1;UNIT_MOVE_DIR_BACKWARD=2;UNIT_MOVE_DIR_LEFT=3;UNIT_MOVE_DIR_RIGHT=4
       calls=0; moves=0
       function VSAI_Gunfighter_01_Update(n) calls=calls+1; return 123 end
       function CheckObejctAlive(id) return true end
@@ -218,6 +237,7 @@ int wmain(int argc,wchar_t** argv) {
         return g_failures?1:0;
     }
     if(generic||medium) {
+        Check(unit.bytes[0x3291]!=0,"enhanced PvP grants native automatic-jump permission without changing movement stats");
         const auto snapshot=reinterpret_cast<SdgoBattleAiGetUnitSnapshotV1Fn>(
             GetProcAddress(GetModuleHandleW(L"battle_ai.dll"),SDGO_BATTLE_AI_UNIT_OBSERVER_EXPORT));
         Check(snapshot!=nullptr,"the optional native behavior observer has a stable export");
@@ -410,6 +430,7 @@ int wmain(int argc,wchar_t** argv) {
             };
             native_world::Put(native_world::enemy1.data(),0x38,int32_t(0));
             native_world::Put(native_world::nodes[2].data(),0x88,native_world::Vec3{0,0,-500});
+            native_world::Put(native_world::nodes[0].data(),0x6C,native_world::Vec3{0,0,1});
             native_world::Put(unit.bytes,0x3090,native_world::Vec3{-1,0,0});
             freshDefenceLifecycle(6);
             Sleep(90);unit.Think();
@@ -686,6 +707,9 @@ int wmain(int argc,wchar_t** argv) {
         Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==1)"),"fresh native collision query excludes lower HP behind an obstacle");
         native_world::blocked=false;Sleep(110);unit.Think();
         Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==2)"),"next fresh query sees newly clear target without a two-second shared cache");
+        native_world::Put(native_world::fsms[0].data(),0x200,uint32_t(0));unit.Think();
+        Check(*reinterpret_cast<uint32_t*>(native_world::fsms[0].data()+0x200)==2,
+              "a free native target cleared by a weapon handoff is rebound while the policy keeps its opponent");
         Eval("geometrySavedGeneric=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) geometryObservation=SDGO_BattleAI_Observe(); return 123 end");
         unit.Think();
         Check(Eval("assert(geometryObservation.attackNeutral==1)"),
@@ -801,11 +825,96 @@ int wmain(int argc,wchar_t** argv) {
         auto routeFsm=native_world::fsms[0].data(),routeMotor=native_world::movements[0].data();
         native_world::Put(routeFsm,4,routeFsm+0x20);native_world::Put(routeFsm,8,uint32_t(0));
         native_world::Put(routeMotor,4,routeMotor+0x20);native_world::Put(routeMotor,8,uint32_t(0));
+        Eval("savedGeneric=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_CancelRoute(); return 123 end");unit.Think();
+        native_world::Put(unit.bytes,0x3078,native_world::Vec3{400,0,0});
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) n:SetMoveTargetPos_Dir(2,400,2,false); directRecorded=SDGO_BattleAI_DirectIntent(2,2,1); return 123 end");unit.Think();
+        Check(Eval("assert(directRecorded==1)"),"relative native movement records its actual active goal transaction");
+        const int acceptedDirectMoves=native_world::moves;
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) directKept=SDGO_BattleAI_DirectIntent(2,2,0); return 123 end");unit.Think();unit.Think();
+        Check(Eval("assert(directKept==1)")&&native_world::moves==acceptedDirectMoves,
+              "an unchanged active native direct goal is retained without clearing its command list again");
+        const int directStops=native_world::stopMotorCalls;
+        native_world::Put(unit.bytes,0x3078,native_world::Vec3{500,0,0});unit.Think();
+        Check(Eval("assert(directKept==0)")&&native_world::stopMotorCalls==directStops,
+              "a goal replaced by another native owner is not claimed or stopped by the direct cache");
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) directRecorded=SDGO_BattleAI_DirectIntent(2,2,1); return 123 end");unit.Think();
+        unit.bytes[0x30DC]=0;
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) directKept=SDGO_BattleAI_DirectIntent(2,2,0); return 123 end");unit.Think();
+        Check(Eval("assert(directKept==0)"),"native completion releases the direct transaction for a fresh segment");
+        native_world::Put(routeFsm,8,routeFsm+0x5C);
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) directAdmission=SDGO_BattleAI_DirectIntent(2,2,2); return 123 end");unit.Think();
+        Check(Eval("assert(directAdmission==0)"),"relative movement admission refuses a pending native attack before any goal submission");
+        native_world::Put(routeFsm,8,uint32_t(0));unit.Think();
+        Check(Eval("assert(directAdmission==1)"),"a neutral native controller admits the next relative movement command");
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_CancelRoute(); return 123 end");unit.Think();
+        native_world::Put(native_world::nodes[0].data(),0x6C,native_world::Vec3{0,0,1});
+        native_world::Put(native_world::wall.data(),0x0C,static_cast<uint8_t*>(nullptr));
+        native_world::unknownBackwardScene=true;
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) safeDirectionResult=SDGO_BattleAI_SafeDirection(2,400,1,2,3,4); return 123 end");unit.Think();
+        Check(Eval("assert(safeDirectionResult==3)"),
+              "unavailable geometry in the preferred direction does not skip independent safe lateral checks");
+        native_world::unknownBackwardScene=false;
+        native_world::Put(native_world::wall.data(),0x0C,native_world::enemy1.data());
+        native_world::enclosedStep=true;native_world::blocked=true;
+        native_world::Put(native_world::wall.data(),0x0C,static_cast<uint8_t*>(nullptr));
+        native_world::Put(native_world::wall.data(),0xBC,native_world::Aabb{{-500,0,-500},{500,300,500}});
+        const auto shortStepPosition=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x88);
+        const auto shortStepSphere=*reinterpret_cast<native_world::Vec3*>(native_world::bodySpheres[0].data()+0x10);
+        // The enclosing planes are centered at zero. Earlier ray-origin tests
+        // move the root without moving the synthetic body sphere with it.
+        native_world::Put(native_world::nodes[0].data(),0x88,native_world::Vec3{0,0,0});
+        native_world::Put(native_world::bodySpheres[0].data(),0x10,native_world::Vec3{0,100,0});
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) shortDirection,shortDistance=SDGO_BattleAI_SafeStep(2,350,1,2,3,4); return 123 end");unit.Think();
+        lua_getglobal(g_L,"shortDirection");const int shortDirection=static_cast<int>(lua_tonumber(g_L,-1));lua_pop(g_L,1);
+        lua_getglobal(g_L,"shortDistance");const float shortDistance=static_cast<float>(lua_tonumber(g_L,-1));lua_pop(g_L,1);
+        // Native defence can turn before this callback. Verify the endpoint
+        // against the actual enclosing planes, including a diagonal heading.
+        const auto shortForward=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x6C);
+        const native_world::Vec3 shortRight={shortForward.z,0,-shortForward.x};
+        const auto shortVector=shortDirection==1?shortForward:shortDirection==2?native_world::Vec3{-shortForward.x,0,-shortForward.z}:
+            shortDirection==3?native_world::Vec3{-shortRight.x,0,-shortRight.z}:shortRight;
+        Check(shortDirection>=1&&shortDirection<=4&&shortDistance>50&&shortDistance<350&&
+              std::abs(shortVector.x*shortDistance)<200&&std::abs(shortVector.z*shortDistance)<200,
+              "solid-bounded space admits a separately verified shorter native step instead of refusing every direction");
+        native_world::Put(native_world::nodes[0].data(),0x88,shortStepPosition);
+        native_world::Put(native_world::bodySpheres[0].data(),0x10,shortStepSphere);
+        native_world::enclosedStep=false;native_world::blocked=false;
+        native_world::blocked=true;native_world::forwardExit=true;
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) forwardEscape=SDGO_BattleAI_SafeDirection(2,350,1,2,3,4); return 123 end");unit.Think();
+        Check(Eval("assert(forwardEscape==1,tostring(forwardEscape))"),"a forward-only exit remains available when retreat and both lateral directions are blocked");
+        native_world::forwardExit=false;native_world::blocked=false;
+        native_world::Put(native_world::wall.data(),0x0C,native_world::enemy1.data());
+        native_world::Put(unit.bytes,0x3078,native_world::Vec3{NAN,NAN,NAN});unit.bytes[0x30DC]=0;
+        Check(Eval("SDGO_BattleAI_GenericUpdate=function(n) local o=SDGO_BattleAI_Observe(); assert(o.valid==1 and o.goal==nil and o.goalKnown==0); return 123 end"),
+              "inactive-native-goal observation probe installs");
+        unit.Think();
+        Check(std::isnan(reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078)->x),
+              "unused nonfinite native steering storage is represented as absent without writing a fabricated goal");
+        Eval("SDGO_BattleAI_GenericUpdate=savedGeneric");
         // Invoke the real C callback during a generic dispatch, while its actor
         // context is valid, to exercise route ownership and native deallocation.
         Check(Eval("savedGeneric=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_RecoveryMode(0); SDGO_BattleAI_CancelRoute(); assert(SDGO_BattleAI_Route(1,1)==1); return 123 end"),"route probe installs");
         unit.Think();
         Check(native_world::frees>0,"native path buffer copied and released through the EXE allocator");
+        const int handoffStops=native_world::stopMotorCalls;
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_CancelRoute(1); return 123 end");unit.Think();
+        Check(native_world::stopMotorCalls==handoffStops&&unit.bytes[0x30DC]!=0,
+              "a planned goal handoff releases adapter ownership without queuing native MoveStop ahead of its replacement");
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) assert(SDGO_BattleAI_RouteMotion(3)==1); assert(SDGO_BattleAI_Route(1,1)==1); return 123 end");
+        unit.Think();
+        Check(native_world::lastGoalMode==1&&native_world::lastMoveType==3,
+              "route goal keeps its native default while locomotion uses the separate native dash setter");
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) assert(SDGO_BattleAI_RouteMotion(2)==1); return 123 end");
+        unit.Think();
+        Check(native_world::lastMoveType==2,"an active route can release dash without generating another route");
+        Check(Eval("assert(SDGO_BattleAI_RouteMotion(3)==0)"),"route locomotion rejects calls outside an owned AI callback");
+        native_world::Put(native_world::nodes[0].data(),0x88,native_world::Vec3{0,37,0});
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) assert(SDGO_BattleAI_Route(1,1)==1); return 123 end");
+        unit.Think();const int heightGoals=native_world::goalCalls;
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) return 123 end");unit.Think();
+        Check(native_world::goalCalls==heightGoals,
+              "native steering Y differs from the endpoint without resubmitting an unchanged path every frame");
+        native_world::Put(native_world::nodes[0].data(),0x88,native_world::Vec3{0,0,0});
         Eval("SDGO_BattleAI_GenericUpdate=savedGeneric");
         Check(Eval("SDGO_BattleAI_GenericUpdate=function(n) assert(SDGO_BattleAI_Route(1,1)==1); assert(SDGO_BattleAI_Route(999,1)==0); return 123 end"),"failed-repath probe installs");
         unit.Think();
@@ -870,10 +979,14 @@ int wmain(int argc,wchar_t** argv) {
         unit.Think();
         Check(Eval("assert(advanceResult==0)")&&native_world::goalCalls==beforeGoals,
               "wall-recovery lease has priority over a new pursuit step");
-        Eval("SDGO_BattleAI_GenericUpdate=function(n) advanceResult=SDGO_BattleAI_AdvancePoint(600,0,0,200,0); return 123 end");
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_RecoveryMode(1); advanceResult=SDGO_BattleAI_AdvancePoint(600,0,0,200,0); return 123 end");
         Sleep(260);beforeGoals=native_world::goalCalls;unit.Think();
         Check(Eval("assert(advanceResult==1)")&&native_world::goalCalls==beforeGoals+1,
-              "an expired wall-recovery lease releases the motor for pursuit");
+              "reasserting recovery does not renew an expired motor lease or erase the pending pursuit");
+        unit.bytes[0x30DC]=0;beforeGoals=native_world::goalCalls;
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_RecoveryMode(1); return 123 end");unit.Think();
+        Check(native_world::goalCalls==beforeGoals+1,
+              "a repeated recovery state preserves the newly planned path after its entry lease expires");
         Check(Eval("assert(SDGO_BattleAI_AdvancePoint(1,2,3,200,0)==0)"),
               "short-step bridge rejects calls outside the current owned AI callback");
         Eval("SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_RecoveryMode(0); SDGO_BattleAI_CancelRoute(); return 123 end");
@@ -980,7 +1093,7 @@ int wmain(int argc,wchar_t** argv) {
         native_world::Put(native_world::nodes[2].data(),0x88,native_world::Vec3{100,0,0});
         native_world::Put(fsm,4,fsm+0x48);native_world::Put(fsm,0x968,int32_t(0));
         auto beforeRotations=native_world::rotations,beforeUpdates=native_world::trackUpdates;
-        callbacks->TrackingEntry(input);callbacks->TrackingUpdate(input);Sleep(20);callbacks->TrackingUpdate(input);
+        callbacks->TrackingEntry(input);callbacks->TrackingUpdate(input);WaitNativeTicks(20);callbacks->TrackingUpdate(input);
         Check(native_world::rotations==beforeRotations+1&&native_world::trackUpdates==beforeUpdates&&
               *reinterpret_cast<uint8_t**>(fsm+8)==fsm+0x5C,
               "selected opener cues only the NPC and skips tracking dash through the native queued swing");
@@ -1303,9 +1416,9 @@ int wmain(int argc,wchar_t** argv) {
         };
         native_world::Put(defenceFsm,0x200,uint32_t(1));
         crossfire();
-        Sleep(25);unit.Think();
+        WaitNativeTicks(25);unit.Think();
         auto movingPosition=location();setPosition(movingPosition+native_world::Vec3{0,0,20});
-        Sleep(25);unit.Think();
+        WaitNativeTicks(25);unit.Think();
         const auto beforeMobileDispatch=readDispatches();
         reinterpret_cast<native_world::Callbacks*>(defenceFsm)->Receipts(nullptr);
         const auto mobileDispatch=readDispatches();
@@ -1315,7 +1428,7 @@ int wmain(int argc,wchar_t** argv) {
               "post-ammo primary dispatches record a bound moving-shot gun with live motor, real defensive motion and physical retreat");
         native_world::Put(defenceMovement,4,defenceMovement+0xD4);
         movingPosition=location();setPosition(movingPosition+native_world::Vec3{0,0,20});
-        Sleep(25);unit.Think();
+        WaitNativeTicks(25);unit.Think();
         reinterpret_cast<native_world::Callbacks*>(defenceFsm)->Receipts(nullptr);
         auto rejectedDispatch=readDispatches();
         Check(rejectedDispatch.mobile_primary_dispatches==mobileDispatch.mobile_primary_dispatches&&
@@ -1324,7 +1437,7 @@ int wmain(int argc,wchar_t** argv) {
               "blocked native control cannot manufacture a mobile primary dispatch witness");
         native_world::Put(defenceMovement,4,defenceMovement+0x20);
         movingPosition=location();setPosition(movingPosition+native_world::Vec3{0,0,20});
-        Sleep(25);unit.Think();unit.bytes[0x30DC]=0;
+        WaitNativeTicks(25);unit.Think();unit.bytes[0x30DC]=0;
         reinterpret_cast<native_world::Callbacks*>(defenceFsm)->Receipts(nullptr);
         rejectedDispatch=readDispatches();
         Check(rejectedDispatch.mobile_primary_dispatches==mobileDispatch.mobile_primary_dispatches&&
@@ -1332,7 +1445,7 @@ int wmain(int argc,wchar_t** argv) {
               rejectedDispatch.backward_primary_dispatches==mobileDispatch.backward_primary_dispatches,
               "a stopped native motor cannot manufacture a mobile primary dispatch witness");
         unit.bytes[0x30DC]=1;
-        Sleep(25);unit.Think();
+        WaitNativeTicks(25);unit.Think();
         reinterpret_cast<native_world::Callbacks*>(defenceFsm)->Receipts(nullptr);
         rejectedDispatch=readDispatches();
         Check(rejectedDispatch.mobile_primary_dispatches==mobileDispatch.mobile_primary_dispatches&&
@@ -1438,6 +1551,53 @@ int wmain(int argc,wchar_t** argv) {
         unit.Think();
         Check(Eval("assert(advanceResult==1)")&&native_world::goalCalls==goalsBeforeStaleDefence+1,
               "an empty obsolete defence route releases motor ownership for pursuit");
+        std::array<uint8_t,0x200> idleControl{};
+        native_world::Put(idleControl.data(),4,idleControl.data()+0x20);
+        native_world::Put(unit.bytes,0x9D4,idleControl.data());unit.bytes[0x30F0]='V';
+        native_world::Put(staleFsm,4,staleFsm+0x20);native_world::Put(staleFsm,8,uint32_t(0));
+        native_world::Put(defenceMovement,4,defenceMovement+0x20);native_world::Put(defenceMovement,8,uint32_t(0));
+        unit.bytes[0x312A]=0;unit.bytes[0x30DC]=0;
+        Eval("idlePolicyCalls=0; SDGO_BattleAI_GenericUpdate=function(n) idlePolicyCalls=idlePolicyCalls+1; local o=SDGO_BattleAI_Observe(); lastIdleBoost=o.boostFraction; assert(o.valid==1); return 123 end");
+        unit.Think();g_skipNativeDispatch=true;unit.Think();unit.Think();
+        Check(Eval("assert(idlePolicyCalls==3)"),"an established enhanced policy keeps receiving one decision on free native frames without dispatch_ai");
+        g_skipNativeDispatch=false;unit.Think();
+        Check(Eval("assert(idlePolicyCalls==4)"),"a native dispatch already made during Think is not followed by a duplicate policy decision");
+        g_skipNativeDispatch=true;
+        native_world::Put(staleFsm,8,staleFsm+0x5C);unit.Think();native_world::Put(staleFsm,8,uint32_t(0));
+        native_world::Put(defenceMovement,4,defenceMovement+0xE8);unit.Think();
+        native_world::Put(defenceMovement,4,defenceMovement+0x124);unit.Think();
+        native_world::Put(defenceMovement,4,defenceMovement+0x20);
+        native_world::Put(defenceMovement,8,defenceMovement+0x124);unit.Think();native_world::Put(defenceMovement,8,uint32_t(0));
+        native_world::Put(idleControl.data(),4,idleControl.data()+0x98);unit.Think();
+        native_world::Put(idleControl.data(),4,idleControl.data()+0x20);
+        native_world::Put(idleControl.data(),8,idleControl.data()+0x98);unit.Think();native_world::Put(idleControl.data(),8,uint32_t(0));
+        unit.bytes[0x30F0]=0;unit.Think();unit.bytes[0x30F0]='V';
+        Check(Eval("assert(idlePolicyCalls==4)"),"continuous neutral decisions preserve pending attacks and native hurt, map, control and script admission gates");
+        native_world::Put(unit.bytes,0xE90,uint32_t(0x10));
+        Check(reinterpret_cast<native_world::Callbacks*>(&unit)->EffectActive(5)&&native_world::NpcBoostPauseQuery(unit.bytes),
+              "effect queries outside the owned NPC Think keep the real Boost Down status");
+        const int boostPauseStops=native_world::stopMotorCalls;
+        unit.Think();
+        Check(Eval("assert(idlePolicyCalls==5 and lastIdleBoost==0)")&&*reinterpret_cast<uint32_t*>(unit.bytes+0xE90)==0x10&&
+              native_world::stopMotorCalls==boostPauseStops,
+              "Boost Down keeps its status bit and native zero fuel while the enhanced controller continues a free frame");
+        native_world::Put(unit.bytes,0xE90,uint32_t(0));native_world::Put(unit.bytes,0xEA0,uint32_t(0x10));unit.Think();
+        Check(Eval("assert(idlePolicyCalls==6)"),"pending Boost Down does not impose the stock NPC-only decision pause");
+        native_world::Put(unit.bytes,0xEA0,uint32_t(0));
+        native_world::Put(unit.bytes,0xE90,uint32_t(0x20));unit.Think();native_world::Put(unit.bytes,0xE90,uint32_t(0));
+        Check(Eval("assert(idlePolicyCalls==7)"),"the native one-based effect-5 gate does not block an unrelated effect bit");
+        unit.Init(reinterpret_cast<void*>(5));unit.Think();
+        Check(Eval("assert(idlePolicyCalls==7)"),"a new generation waits for its first native policy callback before continuous neutral decisions begin");
+        g_skipNativeDispatch=false;
+        native_world::Initialize(unit.bytes,g_L);
+        native_world::Put(native_world::document.data(),0x580,int32_t(0));
+        native_world::SetRoomTitle(generic?L"!ai hard":L"!ai medium");unit.Init(reinterpret_cast<void*>(6));
+        Eval("forceGeometryRoute=0; SDGO_BattleAI_GenericUpdate=function(n) local o=SDGO_BattleAI_Observe(); assert(o.valid==1); assert(SDGO_BattleAI_Route(1,forceGeometryRoute,400,0,0)==1); return 123 end");
+        unit.Think();const int cachedGeometryGoals=native_world::goalCalls;
+        unit.Think();
+        Check(native_world::goalCalls==cachedGeometryGoals,"an unchanged completed geometry plan retains its issued native goal");
+        Eval("forceGeometryRoute=1");unit.Think();
+        Check(native_world::goalCalls>cachedGeometryGoals,"an explicit recovery repath rebuilds the completed geometry plan instead of recycling the blocked waypoint");
     }
     std::printf("NATIVE ADAPTER CHECKS %s\n",g_failures?"FAILED":"PASSED");
     // Mods live for this process; do not unload an installed trampoline.

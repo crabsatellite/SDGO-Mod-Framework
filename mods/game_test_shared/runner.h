@@ -54,7 +54,12 @@ inline void Emit(const char* event, const char* status, const char* message) {
         std::to_string(current.empty() ? 0 : GetTickCount64() - started) + "}\n";
     DWORD written = 0;
     if (events == INVALID_HANDLE_VALUE || !WriteFile(events, line.data(), static_cast<DWORD>(line.size()), &written, nullptr)
-        || written != line.size() || !FlushFileBuffers(events)) ExitProcess(3);
+        || written != line.size()) ExitProcess(3);
+    // Observations are visible to readers after WriteFile. A synchronous disk
+    // flush for each sampled bot can block the engine for seconds and create
+    // the inactivity being measured. Assertions and case/run boundaries flush
+    // all preceding observations too, preserving complete durable receipts.
+    if (strcmp(event, "observation") != 0 && !FlushFileBuffers(events)) ExitProcess(3);
 }
 inline void __cdecl Assert(int pass, const char* message) {
     ++assertions;
