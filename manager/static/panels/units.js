@@ -243,7 +243,8 @@ function renderSummary(){
     metric("机体形态",summary.forms),
     metric("武器",summary.weapons),
     metric("外部武器",summary.external_weapons),
-    metric("资源",summary.resources)
+    metric("资源",summary.resources),
+    metric("初始化脚本组",summary.native_program_groups||0)
   );
 }
 

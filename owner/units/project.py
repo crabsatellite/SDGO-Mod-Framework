@@ -141,6 +141,10 @@ def export_project(workspace,draft):
         'assets':assets,'definitions':definitions,
         'files':{name:hashlib.sha256(raw).hexdigest() for name,raw in sorted(files.items())},
         'runtime_installable':False,'contains_owner_content':True}
+    if draft.get('native_programs'):
+        from .native_programs import normalize_bindings,validate_project_bindings as validate_programs
+        manifest['native_programs']=normalize_bindings(draft['native_programs'])
+        validate_programs(manifest['native_programs'],files=files)
     files['project.json']=json.dumps(manifest,ensure_ascii=False,sort_keys=True).encode('utf-8')
     out=io.BytesIO()
     with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as archive:
@@ -181,7 +185,11 @@ def read_project(files):
     definitions=value.get('definitions',{})
     from .blueprint_templates import validate_project_bindings
     client_template_bindings=validate_project_bindings(definitions,files=files)
+    from .native_programs import normalize_bindings,validate_project_bindings as validate_programs
+    native_programs=normalize_bindings(value.get('native_programs',[]))
+    native_program_bindings=validate_programs(native_programs,files=files)
     return {'name':name,'project_key':project_key,'metadata':normalize_metadata(value.get('metadata',{})),
         'media':normalize_media(value.get('media',{}),assets),'presentation':value.get('presentation',{}),
         'assets':assets,'definitions':definitions,
-        'client_template_bindings':client_template_bindings}
+        'client_template_bindings':client_template_bindings,'native_programs':native_programs,
+        'native_program_bindings':native_program_bindings}

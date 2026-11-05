@@ -4035,6 +4035,9 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
                 "started_utc": started,
                 "finished_utc": None,
                 "entry_pid": entry_process.pid,
+                # Direct native entry only. A launcher child's initial thread
+                # is a different identity and is deliberately not inferred.
+                "entry_initial_thread_id": getattr(entry_process, 'initial_thread_id', 0),
                 "game_pid": game_process["pid"],
                 "game_image_path": str(Path(game_process["image_path"]).resolve()),
                 "status": "running",

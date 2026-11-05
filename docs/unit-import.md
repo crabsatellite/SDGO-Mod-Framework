@@ -17,6 +17,12 @@ real battles on a test server to check its weapons, skills and transformation.
 The generic release contains only the tools, never units. Owner drafts, images, publications and install receipts stay
 in the owner's workspace.
 
+Projects may also retain catalog-bound initialization-script declarations and
+their complete content-addressed program files. Manager shows the script-group
+count and preserves them when exporting the project. Ordinary publication stays
+blocked until their media, server and actor behavior have been admitted; see the
+[script registration contract](script-registration.md#unit-catalog-transport).
+
 Large authoring libraries can use the developer-only paged resource depot reader
 in `owner.units.resource_depot`. It verifies a pinned index, bounded metadata pages,
 compressed shards and streamed content hashes without loading the full library into
@@ -32,6 +38,12 @@ preserves every byte outside its ID word. The native catalog checks fixed
 sizes and typed unit-to-skill, weapon-to-funnel and linked-skill references.
 Manager publication of these new dependency definitions remains blocked until
 their resources, server definitions and actor behavior have been admitted.
+The developer helper `owner.units.effect_resources` prepares owner-scoped ZFX
+texture names from typed emitter fields, preserving the selected texture variant
+and rejecting destination conflicts. It supports original JPEG TXRs alongside
+PNG/DDS/TGA, preserves source bytes and emits source/output hashes. Model edges
+need a separate adapter. This preparation does not register skills or authorize
+gameplay, and is not yet an automatic Manager import step.
 The [native ownership test](game-test.md#native-record-ownership-and-shutdown)
 checks complete record bytes and original grid cleanup independently of battle
 activation, transformation, death and respawn acceptance.

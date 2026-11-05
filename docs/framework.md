@@ -227,10 +227,20 @@ SDGO_MOD_ENTRY      // extern "C" __declspec(dllexport) int __cdecl SdgoModLoad(
 | `ModDirectory(mod)` | absolute folder of the mod |
 | `FindRoomCommand(title, length, name, flags, &out)` | optional API 1 extension: bounded, case-insensitive room-title command lookup; arguments end at the next `!command` |
 | `HookSite(mod, name, detour, &original)` | optional API 1 extension: detour at a verified `kind=site` instruction boundary; preserves the slot used by existing settlement mods |
+| `process_initial_thread_id` | optional API 1 extension: process-initial thread captured during static loader attachment; zero when unavailable |
 | `HookSystemExport(mod, dll, function, detour, &original)` | optional API 1 extension: MinHook detour on a named export in an already loaded system DLL; `dll` is a wide basename, resolved in the system directory |
 
 An instruction site has no function-call ABI. Before using `HookSite`, check
 `api->size >= offsetof(SdgoApi, HookSite) + sizeof(api->HookSite)` and a non-null pointer.
+
+The initial-thread field is independent of the thread that later boots the core.
+The loader captures it only during `DLL_PROCESS_ATTACH` with non-null
+`lpvReserved`, following the Windows [load-time DLL entry contract](https://learn.microsoft.com/en-us/windows/win32/dlls/dllmain).
+Dynamic loading and older loaders leave it zero. Check the optional field's
+extent before reading it; `sdgo::scripts::ProcessInitialThreadId(api)` performs
+that check. Native initialization consumers must refuse an unavailable identity
+instead of substituting their current thread. New cores continue accepting the
+original `SdgoBoot` prefix from older loaders.
 Site detours preserve live registers, flags, stack and FP/SIMD state, then jump to
 the supplied trampoline. Site hooks use the same queued activation, ownership and
 failed-load rollback as `HookCode`. The daily reward Mod also pins separate argument

@@ -1,5 +1,6 @@
 // Public fixtures are neutral programs. Private recovered chunks are optional inputs.
 #include "sdgo/native_script_registration.h"
+#include "sdgo/unit_program_format.h"
 #include "native_lua_image.h"
 #include <windows.h>
 #include <cstdio>
@@ -75,7 +76,10 @@ void Reset() {
     g_loads = g_originals = g_closeRequests = g_failOnLoad = 0; g_originalFinished = false;
     const char* source = "function original_fn() return 17 end"; if (luaL_loadbuffer(g_state, source, std::strlen(source), "=original fixture") || lua_pcall(g_state, 0, 0, 0)) throw std::runtime_error("original fixture setup failed");
 }
-NativeRegistration Adapter() { return {Calls(), reinterpret_cast<OriginalScriptLoader>(&Original), GetCurrentThreadId(), Close, nullptr}; }
+NativeRegistration Adapter() {
+    SdgoApi api = {}; api.size = sizeof(api); api.process_initial_thread_id = GetCurrentThreadId();
+    return {Calls(), reinterpret_cast<OriginalScriptLoader>(&Original), ProcessInitialThreadId(&api), Close, nullptr};
+}
 int GlobalType(const char* name) { lua_getglobal(g_state, name); int type = lua_type(g_state, -1); lua_pop(g_state, 1); return type; }
 int OriginalApiChild(const char* input) {
     wchar_t executable[32768] = {}; if (!GetModuleFileNameW(nullptr, executable, 32768)) throw std::runtime_error("fixture executable identity unavailable");
@@ -98,10 +102,19 @@ int OriginalApiChild(const char* input) {
 }
 void Tests() {
     SdgoApi api = {}; api.size = sizeof(api); api.Symbol = Symbol; NativeLuaCalls bound; std::string missing;
+    api.process_initial_thread_id = GetCurrentThreadId();
+    Check(ProcessInitialThreadId(&api) == GetCurrentThreadId(), "process initial thread is read from the optional core ABI tail");
+    api.size = static_cast<uint32_t>(offsetof(SdgoApi, process_initial_thread_id));
+    Check(ProcessInitialThreadId(&api) == 0 && ProcessInitialThreadId(nullptr) == 0, "older/missing core never infers initial thread from current caller");
+    api.size = sizeof(api); api.process_initial_thread_id = 0;
+    Check(ProcessInitialThreadId(&api) == 0, "dynamic loader's unavailable identity remains zero");
     Check(BindNativeLuaCalls(&api, nullptr, bound, missing) && bound.complete(), "consumer resolves the complete verified framework symbol set");
     g_missingSymbol = true; Check(!BindNativeLuaCalls(&api, nullptr, bound, missing) && !bound.complete() && missing == "lua.rawget", "missing verified symbol cannot leave stale partial bindings"); g_missingSymbol = false;
     Reset(); auto p = Compile("scp/alpha_one.scp", "function alpha_One(x) return original_fn()+x end", {"alpha_One"}); Candidate alpha{"alpha", "v1", {p}};
     auto root = Path(L"scp\\0000.scp"), other = Path(L"scp\\0012.scp"); Engine engine{g_state}; auto adapter = Adapter();
+    NativeRegistration unavailable(Calls(), reinterpret_cast<OriginalScriptLoader>(&Original), 0, Close, nullptr);
+    const auto noThread = unavailable.onOriginalLoad(&engine, &root, alpha);
+    Check(noThread.status == Status::BoundaryUnavailable && !g_originals && !g_loads, "unavailable initial thread refuses root registration before touching the native VM");
     lua_pushnumber(g_state, 99); int top = lua_gettop(g_state);
     auto r = adapter.onOriginalLoad(&engine, &other, alpha); Check(r.status == Status::BoundaryUnavailable && g_loads == 0 && g_originals == 1, "non-root loader never activates content");
     r = adapter.onOriginalLoad(&engine, &root, alpha); Check(r.active() && r.status == Status::Registered && g_loads == 1 && r.exports.size() == 1, "actual dumped closure registers after original root on same VM");
@@ -121,6 +134,29 @@ void Tests() {
     auto traversal = alpha; traversal.programs[0].resource = "scp/alpha_../one.scp"; Check(!Validate(traversal).valid, "non-canonical resource paths are refused");
     auto truncated = alpha; truncated.programs[0].bytes.pop_back(); truncated.programs[0].sha256 = Sha256(truncated.programs[0].bytes); Check(!Validate(truncated).valid, "authenticated truncated chunks are refused by structural decoder");
 
+    Reset(); engine.state = g_state; auto multiple = Adapter(); std::vector<Candidate> owners{alpha, beta};
+    r = multiple.onOriginalLoadBatch(&engine, &root, owners);
+    Check(r.active() && r.exports.size() == 2 && g_loads == 2 && g_originals == 1,
+          "multiple owners register after one original root call in the same VM");
+    r = multiple.onOriginalLoadBatch(&engine, &root, owners);
+    Check(r.status == Status::AlreadyRegistered && !r.executionStarted && g_loads == 2,
+          "same multi-owner revision reads back every existing function without reexecution");
+    Reset(); engine.state = g_state; auto batchConflict = Adapter();
+    lua_pushnumber(g_state, 42); lua_setglobal(g_state, "beta_One");
+    r = batchConflict.onOriginalLoadBatch(&engine, &root, owners);
+    Check(r.status == Status::NameConflict && !g_loads && GlobalType("alpha_One") == LUA_TNIL,
+          "later owner name conflicts are found before the first owner executes");
+    Reset(); engine.state = g_state; auto duplicateOwner = Adapter();
+    r = duplicateOwner.onOriginalLoadBatch(&engine, &root, {alpha, alpha});
+    Check(r.status == Status::InvalidCandidate && !g_loads,
+          "duplicate owner declarations cannot partially publish a batch");
+    Reset(); engine.state = g_state; auto multiFailure = Adapter(); g_failOnLoad = 2;
+    r = multiFailure.onOriginalLoadBatch(&engine, &root, owners);
+    Check(r.status == Status::FatalClientState && r.clientMustClose && g_closeRequests == 1 && g_loads == 2,
+          "failure after another owner executed quarantines the whole candidate client");
+    Check(GlobalType("alpha_One") == LUA_TFUNCTION && GlobalType("beta_One") == LUA_TNIL,
+          "multi-owner partial state is retained as failure evidence rather than claimed rollback");
+
     Reset(); engine.state = g_state; auto fatal = Adapter(); Candidate batch = alpha; batch.programs.push_back(Compile("scp/alpha_two.scp", "function alpha_Two() return 2 end", {"alpha_Two"})); g_failOnLoad = 2;
     r = fatal.onOriginalLoad(&engine, &root, batch); Check(r.status == Status::FatalClientState && r.clientMustClose && g_closeRequests == 1 && g_loads == 2, "partial execution closes/quarantines the candidate client");
     Check(GlobalType("alpha_One") == LUA_TFUNCTION && GlobalType("alpha_Two") == LUA_TNIL, "partial VM side effects are retained as failure evidence, never claimed rolled back");
@@ -135,6 +171,32 @@ void Tests() {
 int main(int argc, char** argv) {
     std::unique_ptr<NativeLuaImage> native;
     try {
+        if (argc == 3 && std::string(argv[1]) == "--unit-program-bundle") {
+            sdgo::unit_catalog::Catalog catalog;
+            sdgo::unit_catalog::Entry entry; entry.kind = 10; entry.id = 90001; entry.bytes.resize(1871);
+            std::memcpy(entry.bytes.data(), &entry.id, 4);
+            const wchar_t name[] = L"example_Init";
+            std::memcpy(entry.bytes.data() + 1771, name, sizeof(name));
+            catalog.records.push_back(entry);
+            std::ifstream input(argv[2], std::ios::binary);
+            if (!input) throw std::runtime_error("program container fixture missing");
+            std::vector<uint8_t> bytes(std::istreambuf_iterator<char>(input), {});
+            sdgo::unit_catalog::ProgramBundle bundle; std::string error;
+            Check(bundle.Parse(bytes, std::string(64, 'a'), catalog, error), error.empty() ? "Python-produced sidecar is consumed by the native parser" : error.c_str());
+            Check(bundle.candidates.size() == 1, "one actual owner is retained");
+            auto badRevision = bytes;
+            const auto revisionStart = 64u + 4u + sdgo::unit_catalog::U32(bytes.data() + 64) + 4u;
+            badRevision[revisionStart] = 'z';
+            Check(!bundle.Parse(badRevision, std::string(64, 'a'), catalog, error) && error.find("revision") != std::string::npos,
+                  "native sidecar revision independently requires a SHA-256");
+            Check(!bundle.Parse(bytes, std::string(64, 'b'), catalog, error) && bundle.candidates.empty(), "different emitted catalog hash refuses and clears a previous parsed candidate");
+            catalog.records[0].bytes[100] ^= 1;
+            Check(!bundle.Parse(bytes, std::string(64, 'a'), catalog, error), "changed imported weapon refuses the initializer binding");
+            catalog.records[0].bytes[100] ^= 1;
+            bytes.push_back(0);
+            Check(!bundle.Parse(bytes, std::string(64, 'a'), catalog, error), "extra native sidecar bytes are refused");
+            return g_failures ? 1 : 0;
+        }
         if (argc == 3 && std::string(argv[1]) == "--native-api") return OriginalApiChild(argv[2]);
         if (argc == 3 && std::string(argv[1]) == "--native-api-child") { native = std::make_unique<NativeLuaImage>(argv[2], true); g_nativeImage = native.get(); }
         if (argc >= 8 && std::string(argv[1]) == "--private-candidate") {
