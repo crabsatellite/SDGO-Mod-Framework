@@ -352,6 +352,21 @@ class CandidateAdmissionTests(unittest.TestCase):
             with self.subTest(options=options),self.assertRaises(self.gt.GameTestError):
                 self.fixture.prepare('invalid-unit-roundtrip',**options)
 
+    def test_directed_unit_transform_path_is_explicit_bounded_and_hash_bound(self):
+        run=self.fixture.prepare('directed-transforms',play_unit_uid=17,unit_transform_steps=3)
+        manifest=run/'client/sdgo/mods/game_test_client/mod.ini';settings=self.gt.read_ini(manifest)['settings']
+        self.assertEqual('1',settings['UnitDirectedTransforms']);self.assertEqual('3',settings['UnitTransformSteps'])
+        self.assertEqual('0',settings['UnitTransformRoundtrip']);self.assertEqual('0',settings['ApsalusRoundtrip'])
+        self.assertIn('sdgo/mods/game_test_client/mod.ini',self.fixture.metadata(run)['client']['immutable_hashes'])
+        options=[{'unit_transform_steps':value,'play_unit_uid':17} for value in (True,0,17,3.0,'3')]
+        options += [{'unit_transform_steps':3,'play_unit_uid':17,field:True} for field in
+                    ('unit_transform_roundtrip','apsalus_roundtrip','bootstrap_only','pages_only','friends_only')]
+        options.append({'unit_transform_steps':3})
+        for row in options:
+            with self.subTest(row=row),self.assertRaises(self.gt.GameTestError):self.fixture.prepare('bad-directed-path',**row)
+        ordinary=self.fixture.prepare('ordinary-path');config=self.gt.read_ini(ordinary/'client/sdgo/mods/game_test_client/mod.ini')
+        self.assertEqual('0',config['settings']['UnitDirectedTransforms'])
+
     def test_gameplay_fps_cap_is_bound_to_client_settings_and_observer(self):
         import xml.etree.ElementTree as ET
         from tests.test_game_test_fps import FPS_MANIFEST
