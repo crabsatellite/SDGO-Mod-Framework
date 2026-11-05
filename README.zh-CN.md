@@ -30,7 +30,7 @@ Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所
 | 输入法卡死修复 <!-- catalog: `findwindow_fix` --> | 防止讯飞等输入法让整合包客户端卡死或崩溃 | [使用说明](docs/findwindow-fix.zh-CN.md) |
 | 启动崩溃修复 <!-- catalog: `startup_crash_fix` --> | 修复开游戏时读取界面随机闪退 | [使用说明](docs/startup-crash-fix.zh-CN.md) |
 | 房间窗口初始化保护 <!-- catalog: `waitroom_window_fix` --> | 处理房间视图尚未绑定时收到的窗口图标查询 | [使用说明](docs/waitroom-window-fix.zh-CN.md) |
-| 原生数据与生命周期修复 <!-- catalog: `native_data_guard` --> | 保护缺失数据读取、延迟机体管理消息及原始异常上下文 | [使用说明](docs/native-data-guard.zh-CN.md) |
+| 原生数据与生命周期修复 <!-- catalog: `native_data_guard` --> | 保护缺失基础与详情数据、延迟机体管理消息及原始异常上下文 | [使用说明](docs/native-data-guard.zh-CN.md) |
 | 场景登记生命周期修复 <!-- catalog: `scene_lifecycle_fix` --> | 新节点分配失败时保留原有空间登记与所有权 | [使用说明](docs/scene-lifecycle-fix.zh-CN.md) |
 | 异常断线登录恢复 <!-- catalog: `login_recovery` --> | 原生旧会话清理后，在 WorldServer 内完成一次认证重试 | [使用说明](docs/login-recovery.zh-CN.md) |
 | 阿普萨拉斯 III 变形卡死修复 <!-- catalog: `transform_input_fix` --> | 缺少变形动画时恢复原生状态退出，解除移动与攻击锁定 | [使用说明](docs/transform-input-fix.zh-CN.md) |
