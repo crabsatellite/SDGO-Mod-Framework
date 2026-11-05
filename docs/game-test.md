@@ -490,3 +490,16 @@ passed battle, using only the owned game window and its process audio. Failed,
 silent or black clips are deleted. Retained clips still need visual review for
 combat activity and framing before editing; a passed AI assertion alone does
 not guarantee a useful shot.
+
+Quiet runs can also keep review footage without showing the window. Set
+`SDGO_GAME_TEST_RECORD_DIR` to a local folder before launching the quiet clients.
+Nothing records until a `record.on` file appears in that folder: its first line
+names the clip and an optional second line limits recording to clients whose
+executable path contains that text. Changing the file switches clips and
+deleting it stops recording. Each client copies its real backbuffer just before
+Present, up to 30 frames per second, and writes `<clip>_<pid>.raw` plus a
+timestamp index from a background thread; a busy disk drops frames instead of
+slowing the game. Convert a pair to a constant-rate video with
+`python tools/game_test_recording.py convert <clip>_<pid>.idx --out clip.mp4 --fps 60`
+(`--size 1920:1080` rescales). Quiet clients stay muted, so the clips have no
+sound. Raw frames are large; delete them once converted.
