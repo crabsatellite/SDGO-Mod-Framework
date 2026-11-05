@@ -36,6 +36,20 @@
       ]
     },
     {
+      "id": "mediumattackintervalms",
+      "key": "MediumAttackIntervalMs",
+      "label": "中等：普通攻击最短间隔（毫秒）",
+      "description": "仅 Medium：新普通攻击请求的最短间隔；0 恢复连续起手。已开始的攻击、近战连段、必杀与移动不受影响。Hard 忽略此参数。",
+      "type": "integer",
+      "default": 600,
+      "minimum": 0,
+      "maximum": 2000,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
       "id": "decisionms",
       "key": "DecisionMs",
       "label": "高级参数 DecisionMs",

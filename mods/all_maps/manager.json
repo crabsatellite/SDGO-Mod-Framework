@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "all_maps",
+  "title": "完整对战随机地图池（服务端）",
+  "category": "gameplay",
+  "hosts": ["battle"],
+  "presentation": "configurable",
+  "description": "房间选择 All Map／随机地图时，从当前全部对战地图抽取，任务专用地图保留在任务模式。修改后重启目标 BattleServer。",
+  "mechanism": "读取原生已加载的地图目录，合并对战模式地图，保留原生地图加载、开战检查和通知。热门、快速及自选随机集合沿用各自原生规则。",
+  "settings": []
+}

@@ -22,7 +22,7 @@ no per-client configuration.
 |---|---|
 | `!ai` / `!ai3` | usual bot counts, Medium |
 | `!ai3 easy` | Easy: the original AI |
-| `!ai e3 a1 medium` | Medium: level 12, continuous decisions, accurate aim and lead, legal specials, front-facing movement |
+| `!ai e3 a1 medium` | Medium: level 12, paced ordinary attack starts, accurate aim and lead, legal specials, front-facing movement |
 | `!ai3 hard` | Hard: EX13, advanced tactics, shield facing, one legal part and one limited item |
 
 Keep `easy`/`medium`/`hard` after `!ai` and before the next `!command`; `!ai !rand hard` does not select
@@ -32,8 +32,16 @@ full title, e.g. `Friends practicing together !ai e2 a1 lv4 hard !rand`.
 
 ## Medium and Hard
 
-Neither level is weakened with artificial idle, delayed reactions or deliberate misses. Ammo, cooldowns,
-physics and damage remain native.
+Both levels keep continuous combat and movement decisions, accurate aim, native ammo, cooldowns,
+physics and damage. Medium defaults to a **600 ms minimum between fresh ordinary attack requests**.
+Hard keeps continuous requests whenever native rules allow them.
+
+Medium's interval uses the existing native attack-intent pacing interface, only while the attack
+controller has no current or queued action. It does not interrupt a charge, beam, melee combo or special,
+pause navigation, delay target selection, or add 600 ms to every weapon's own cooldown. A slower weapon
+remains governed by its longer native cycle. Switching ordinary weapons does not reset this interval;
+respawning starts with no debt from the previous life. This reduces repeated rapid starts, while its
+effect on sustained fire depends on the weapon. It is a tuning baseline, not a promised player win rate.
 
 Living teammates share fresh visual contacts, including contacts observed by human players. A bot can
 pursue an enemy seen by an ally without seeing it itself. Shooting still requires the bot's own weapon
@@ -77,7 +85,7 @@ steering storage is represented as no movement destination instead of invalidati
 
 | | Medium: skilled player | Hard: expert player |
 |---|---|---|
-| Output | continuous decisions, fires as soon as native rules allow, focuses low HP | same, plus legal advanced chains |
+| Output | continuous decisions and low-HP focus; fresh ordinary requests at least 600 ms apart by default | continuous native-permitted requests, plus legal advanced chains |
 | Movement | ground strafing with move-and-fire weapons | air strafing, peeking, flanking, orbwalking |
 | Specials | to escape grabs or clear pressure | also on confirmed openings (target stunned or in melee) |
 | Defensive repositioning | within radius 480 per pressure event | radius 1200; both keep facing the actual threat |
@@ -156,11 +164,20 @@ installed mission AI and catalog runtimes are preserved.
 
 ## Settings
 
-In SDGO Mod Manager, **战斗 AI 难度** (client) has **启用战斗 AI** (enable) and **默认战斗难度** (default
-difficulty); changes apply within two seconds. Tuning parameters and the decision log appear after
+In SDGO Mod Manager, **战斗 AI 难度** (client) has **启用战斗 AI** (enable), **默认战斗难度** (default
+difficulty), and **中等：普通攻击最短间隔（毫秒）** (Medium minimum ordinary attack interval).
+The latter maps to `MediumAttackIntervalMs`, defaults to `600`, and accepts `0`–`2000` ms; `0` restores
+continuous starts and Hard ignores it. Existing configurations without this key receive the new default.
+Changes apply within two seconds. Other tuning parameters and the decision log appear after
 **显示开发信息**. Values live in `sdgo/mods/battle_ai/config.ini`, with defaults in `config.example.ini`;
 see the Chinese guide for the full list. The server part **战斗 AI 资源规则** only has an enable switch.
 Turning the AI off returns control to the native AI within two seconds.
+
+With decision logging enabled, `Medium ordinary attack pacing observed` records the first held-back
+ordinary request per bot generation. The existing x86 native fixture includes a default-pacing case
+covering delayed repeated starts, later resumption, active and queued melee, charge/beam input,
+special admission, respawn, zero override and Hard. Lua policies, navigation and weapon rules retain
+their existing separate regression cases.
 
 ## Developer notes
 

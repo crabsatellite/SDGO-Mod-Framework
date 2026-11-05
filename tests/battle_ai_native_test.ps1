@@ -4,7 +4,7 @@ $repo=Split-Path -Parent $PSScriptRoot
 $build=[IO.Path]::GetFullPath($(if([IO.Path]::IsPathRooted($BuildDir)){$BuildDir}else{Join-Path $repo $BuildDir}))
 $run=Join-Path $build ('battle_ai_native_runs\'+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))
 $bin=Join-Path $build $Config
-foreach($case in 'enabled','disabled','bad-signature','ownership','missing-script','generic','easy','medium') {
+foreach($case in 'enabled','disabled','bad-signature','ownership','missing-script','generic','easy','medium','medium-pacing') {
     $dir=Join-Path $run $case
     $mod=Join-Path $dir 'sdgo\mods\battle_ai'
     New-Item -ItemType Directory -Force -Path $mod,(Join-Path $dir 'sdgo\symbols') | Out-Null
@@ -19,6 +19,7 @@ foreach($case in 'enabled','disabled','bad-signature','ownership','missing-scrip
     if($case -eq 'generic' -or $case -eq 'ownership') { $policy="[settings]`r`nDifficulty=Hard`r`nSwingCancelChance=100`r`nReactionMs=0`r`nTargetHoldMs=0`r`nBurstMs=0`r`n" }
     if($case -eq 'easy') { $policy="[settings]`r`nDifficulty=Easy`r`n" }
     if($case -eq 'medium') { $policy="[settings]`r`nDifficulty=Medium`r`nGenericMode=0`r`nReactionMs=3000`r`nDecisionMs=1000`r`nAttackIntervalMs=10000`r`nBurstMs=1`r`nBurstPauseMs=5000`r`nTargetHoldMs=5000`r`nWeaponHoldMs=5000`r`n" }
+    if($case -ne 'medium-pacing') { $policy+="MediumAttackIntervalMs=0`r`n" }
     [IO.File]::WriteAllText((Join-Path $mod 'config.ini'),$policy)
     $cfg="[core]`r`nlog_level=1`r`n[mods]`r`n"
     if($case -eq 'disabled') { $cfg+="battle_ai=0`r`n" }

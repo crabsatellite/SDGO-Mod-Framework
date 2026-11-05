@@ -55,9 +55,10 @@
 | 战斗贡献奖励 <!-- catalog: `battle_rewards` --> | 按贡献发放 GB/MB，可配置人数倍率与按账号去重的聚会奖励 | [使用说明](docs/battle-rewards.zh-CN.md) |
 | 收藏扭蛋 <!-- catalog: `collection_capsule` --> | 优先补图鉴的活动机台，价格和成功次数可配置，默认每周 15 次 | [使用说明](docs/collection-capsule.zh-CN.md) |
 | 每局随机机体 <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击；客户端等本局完整机体数据到齐后开始 | [使用说明](docs/room-random.zh-CN.md) |
+| 完整对战 All Map <!-- catalog: `all_maps` --> | 房间选择 All Map 时从完整原生对战地图目录抽取，任务专用图仍留在任务模式 | [使用说明](docs/all-maps.zh-CN.md) |
 | FPS 上限 <!-- catalog: `fps_limit` --> | 提高渲染帧率上限，保留原生游戏速度 | [使用说明](docs/fps-limit.zh-CN.md) |
 | 长房名 <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 普通、AI、队伍及任务房的建房、设置和改名入口支持最长 128 字 | [使用说明](docs/room-titles.zh-CN.md) |
-| 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | 房名选择 Easy / Medium / Hard，共享队友视野、多层寻路、原生冲刺/跳跃与武器切换 | [使用说明](docs/battle-ai.zh-CN.md) |
+| 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | 房名选择 Easy / Medium / Hard，可调 Medium 出手间隔、共享视野与多层寻路 | [使用说明](docs/battle-ai.zh-CN.md) |
 | 自动机库容量 <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） | [使用说明](docs/hangar-capacity.zh-CN.md) |
 | 机库管理 <!-- catalog: `hangar_manager` --> | 机体管理页内一键整理和重复机体兑换（GB 服务端批量入账） | [使用说明](docs/hangar-manager.zh-CN.md) |
 | 副官补给与管理 <!-- catalog: `operator_catalog` --> | 五位免费补给副官，以及副官名称、头像和掉落的管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
