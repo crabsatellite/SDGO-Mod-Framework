@@ -183,7 +183,17 @@ def validate_project_bindings(value,*,files):
                 kind=13 if part=='server_skills' else 11;name='skill' if kind==13 else 'funnel'
                 validate_manifest(data,raw_records[kind],kind=name,authoring=True)
                 section='skills' if kind==13 else 'funnels'
-                if {entry['id'] for entry in data[section]}!=set(raw_records[kind]):raise ValueError('native content server record inventory differs')
+                supplied={entry['id'] for entry in data[section]}
+                if not supplied<=set(raw_records[kind]):raise ValueError('native content server record inventory differs')
+                for identity in sorted(set(raw_records[kind])-supplied):
+                    issue('native_server_fields',f'请补充{"技能" if kind==13 else "浮游"} {identity} 的服务端定义')
+                from .server_dependencies import _spec
+                columns=_spec(name)[3]
+                for entry in data[section]:
+                    if entry['definition']['kind']=='draft':
+                        missing=[field for field in columns if field not in entry['definition']['values']]
+                        issue('native_server_fields',f'服务端{"技能" if kind==13 else "浮游"} {entry["id"]} 尚为草稿'+
+                              ('；缺少 '+', '.join(missing) if missing else '；请核对并保存完整定义'))
             elif part=='skill_atlases':
                 from .skill_atlases import validate_manifest
                 validate_manifest(data,raw_records[13],native_resources,authoring=True)
@@ -222,12 +232,12 @@ def validate_project_bindings(value,*,files):
             if server['revision']!=request['revision']:raise ValueError('native content identity/server revisions differ')
             definitions={entry['id']:entry['definition'] for entry in server['skills']}
             for entry in request['bindings']:
-                definition=definitions[entry['target']]
+                definition=definitions.get(entry['target'],{})
                 if definition.get('kind')!='template' or definition.get('id')!=entry['source']:
                     raise ValueError('native content identity request is not the declared server template')
         if members_used&members:raise ValueError('native content bindings reuse transport members')
         members_used.update(members)
-        result.append({'binding':binding,'manifest':manifest,'members':members,'records':summaries,'resources':resource_rows,
+        result.append({'binding':binding,'manifest':manifest,'members':members,'records':summaries,'resources':resource_rows,'components':parts,
             'direct_resource_refs':sorted(direct_refs),'requirements':issues,
             'summary':{'skills':len(raw_records[13]),'funnels':len(raw_records[11]),'resources':len(resource_rows),
                 'unsupported_records':sum(not row['layout_supported'] for row in summaries),

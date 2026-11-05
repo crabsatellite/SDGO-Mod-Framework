@@ -289,12 +289,111 @@ function renderNativeContent(){
       const metadata=document.createElement("details");const label=document.createElement("summary");label.textContent="编号与布局信息";
       const value=document.createElement("p");value.textContent="编号 "+record.id+"；类型 "+record.kind+"；"+record.bytes+" 字节；"+record.profile;
       metadata.append(label,value);row.append(metadata);records.append(row);
+      const definition=(group.server_definitions||[]).find(item=>item.id===record.id);
+      if(definition){
+        const edit=document.createElement("button");edit.type="button";edit.dataset.nativeServerEdit="1";
+        edit.textContent="编辑服务端定义"+(definition.complete?"":"（待补齐）");
+        edit.disabled=busy||dirty||draft.status==="disabled";
+        edit.onclick=()=>editNativeServerDefinition(group,definition);row.append(edit);
+      }
     }
     box.append(records);
     for(const issue of group.requirements||[]){const line=document.createElement("p");line.className="badge warning";line.style.display="block";line.style.whiteSpace="normal";line.style.margin="8px 0";line.textContent=issue.message;box.append(line);}
     box.append(uploadButton("更新此组资料",group.binding.manifest_path));panel.append(box);
   }
   const note=document.createElement("p");note.textContent="这些新增配套定义目前可保存和导出为制作项目，正式发布尚未开放。";panel.append(note);
+}
+
+function editNativeServerDefinition(group,entry){
+  if(busy||dirty||!draft)return;
+  const draftId=draft.id;
+  const dialog=document.createElement("dialog");dialog.id="native-server-editor";
+  dialog.style.cssText="width:min(820px,90vw);max-height:88vh;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:24px;background:var(--panel);color:var(--text);font:14px/1.5 Segoe UI,Microsoft YaHei,sans-serif";
+  const heading=document.createElement("h3");heading.textContent=entry.name+" · 服务端定义";
+  const help=document.createElement("p");help.textContent=entry.note+" 必填项未齐也可保存草稿，导出项目会保留缺项。";
+  const mode=document.createElement("select");mode.setAttribute("aria-label","定义方式");
+  mode.append(new Option("手动填写必填字段","authored"),new Option("使用完整原版模板","template"));
+  const choices=state.templates?.[entry.kind==="skill"?"skills":"funnels"]||[];
+  const search=document.createElement("input");search.type="search";search.placeholder="按名称或编号搜索原版模板";search.setAttribute("aria-label","配套定义模板搜索");
+  const select=document.createElement("select");select.setAttribute("aria-label","配套定义原版模板");
+  const templateArea=document.createElement("div");templateArea.append(search,select);
+  let selected=entry.definition?.kind==="template"?String(entry.definition.id):"";
+  const manual=Object.fromEntries(entry.fields.map(field=>[field.name,field.value]));
+  const fields=document.createElement("div");fields.className="server-fields";
+  const inputs=new Map();const labels=new Map();
+  for(const field of entry.fields){
+    const label=document.createElement("label");label.style.display="grid";label.style.gap="4px";
+    const text=document.createElement("span");text.textContent=field.label+" *"+(field.readonly?" · 从客户端读取":"");text.title=field.name;
+    const input=document.createElement("input");input.dataset.nativeField=field.name;
+    input.type=field.type==="string"?"text":"number";input.step=field.type==="integer"?"1":"any";
+    if(field.minimum!=null)input.min=String(field.minimum);
+    if(field.maximum!=null)input.max=String(field.maximum);
+    if(field.max_length)input.maxLength=field.max_length;
+    input.setAttribute("aria-label",field.label);input.placeholder=field.readonly?"从客户端读取":"必填，尚未提供";
+    input.addEventListener("input",()=>{if(mode.value==="authored")manual[field.name]=input.value;updateStatus();});
+    inputs.set(field.name,input);labels.set(field.name,text);label.append(text,input);fields.append(label);
+  }
+  const status=document.createElement("p");status.setAttribute("role","status");
+  const errors=document.createElement("p");errors.setAttribute("role","alert");errors.style.color="var(--danger)";
+  const actions=document.createElement("div");actions.className="actions";
+  const cancel=document.createElement("button");cancel.type="button";cancel.textContent="取消";
+  const save=document.createElement("button");save.type="button";save.className="primary";save.textContent="保存配套定义";
+  actions.append(cancel,save);
+  const updateStatus=()=>{
+    const missing=entry.fields.filter(field=>!inputs.get(field.name).value.trim());
+    const mismatches=entry.fields.filter(field=>field.readonly&&String(field.value)!==inputs.get(field.name).value);
+    status.textContent=mode.value==="template"?(mismatches.length?"模板与客户端共享字段不一致："+mismatches.map(field=>field.label).join("、"):
+      "模板将完整复制全部服务端字段；保存时再次核对模板版本及两端共享字段。"):
+      missing.length?"还有 "+missing.length+" 个必填字段待提供；保存后仍为草稿。":"必填字段已齐；保存时会重新校验。";
+  };
+  const update=()=>{
+    const template=choices.find(row=>String(row.id)===select.value);
+    const isTemplate=mode.value==="template";templateArea.hidden=!isTemplate;
+    for(const field of entry.fields){
+      const input=inputs.get(field.name);
+      const key=entry.kind==="skill"?"SkillID":"FunnelID";
+      const value=isTemplate?(field.name===key?entry.id:template?.values[field.name]):manual[field.name];
+      input.value=value==null?"":String(value);input.readOnly=isTemplate||field.readonly;
+      labels.get(field.name).textContent=field.label+" *"+(field.readonly?(isTemplate?" · 两端需一致":" · 从客户端读取"):"");
+    }
+    updateStatus();
+    save.disabled=isTemplate&&(!template||entry.fields.some(field=>field.readonly&&String(field.value)!==inputs.get(field.name).value));
+  };
+  const renderChoices=()=>{fillTemplateSelect(select,choices,search.value,selected,"请选择原版模板",row=>row.name+" · "+row.id);update();};
+  mode.value=entry.definition?.kind==="template"?"template":"authored";
+  mode.onchange=update;search.oninput=renderChoices;select.onchange=()=>{selected=select.value;update();};
+  cancel.onclick=()=>dialog.close();
+  dialog.addEventListener("close",()=>dialog.remove(),{once:true});
+  save.onclick=async()=>{
+    const template=choices.find(row=>String(row.id)===select.value);
+    let definition;
+    if(mode.value==="template"){
+      if(!template)return;
+      definition={kind:"template",id:template.id,sha256:template.sha256};
+    }else{
+      const values={};
+      for(const field of entry.fields){
+        const input=inputs.get(field.name);const value=input.value;
+        if(input.validity.badInput){input.reportValidity();return;}
+        if(!value.trim())continue;
+        if(!input.checkValidity()){input.reportValidity();return;}
+        values[field.name]=field.type==="string"?value:Number(value);
+      }
+      definition={kind:"draft",origin:"authored",values};
+    }
+    setBusy(true);save.disabled=true;cancel.disabled=true;errors.textContent="";
+    try{
+      const response=await api("/api/units/drafts/"+encodeURIComponent(draftId)+"/native-server-definition","POST",{
+        manifest_path:group.binding.manifest_path,kind:entry.kind,id:entry.id,definition
+      });
+      await refreshDraftAfterWrite(response);dialog.close();
+      message("配套服务端定义已保存。缺项和原生兼容检查会继续保留，原发布不变。");
+    }catch(error){errors.textContent=error.message;}
+    finally{setBusy(false);cancel.disabled=false;update();}
+  };
+  dialog.addEventListener("cancel",event=>{if(busy)event.preventDefault();});
+  dialog.append(heading,help,mode,templateArea,fields,status,errors,actions);
+  shadow.append(dialog);renderChoices();dialog.showModal();
 }
 
 async function uploadNativeContent(file,replaceManifest){
@@ -871,6 +970,7 @@ function syncActions(){
   });
   document.querySelectorAll("[data-drop-missing-skills]").forEach(button=>button.disabled=busy||dirty||disabled);
   document.querySelectorAll("[data-native-content-upload]").forEach(button=>button.disabled=busy||dirty||disabled);
+  document.querySelectorAll("[data-native-server-edit]").forEach(button=>button.disabled=busy||dirty||disabled);
   document.querySelectorAll("#unit-blueprints button").forEach(button=>button.disabled=busy||disabled||button.dataset.blueprintLocked==="1");
   document.querySelectorAll("#unit-blueprints input,#unit-blueprints select").forEach(input=>input.disabled=busy||disabled);
   const project=$("export-project");if(project){project.href=draft?endpoint("/api/units/drafts/"+draft.id+"/project"):"#";project.classList.toggle("disabled",!draft||dirty||busy);}

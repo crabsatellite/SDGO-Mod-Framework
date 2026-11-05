@@ -41,6 +41,61 @@
                     }
                   }
                 }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Authoring only; runtime writers reject drafts.",
+                "required": [
+                  "kind",
+                  "origin",
+                  "values"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "draft"
+                  },
+                  "origin": {
+                    "enum": [
+                      "authored",
+                      "source-derived",
+                      "target-adaptation"
+                    ]
+                  },
+                  "values": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "FunnelID"
+                    ],
+                    "properties": {
+                      "FunnelID": {
+                        "$ref": "#/$defs/id"
+                      },
+                      "FunnelProp": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 255
+                      },
+                      "AniTime": {
+                        "$ref": "#/$defs/positiveInt32"
+                      },
+                      "AttackDelay": {
+                        "$ref": "#/$defs/positiveInt32"
+                      },
+                      "AttackCount": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 255
+                      },
+                      "Stealable": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 255
+                      }
+                    }
+                  }
+                }
               }
             ]
           }

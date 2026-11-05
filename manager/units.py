@@ -226,7 +226,7 @@ class Units(Provider):
                 return cleanup(engine)
             if method == 'POST' and path == '/api/units/inspect':
                 return engine.inspect(*decode_upload(body), expected)
-            match = re.fullmatch(r'/api/units/drafts/([0-9a-f]{32})(?:/(asset|definitions|native-content|confirm|drop-missing-skills|native-preview|launch-preview))?', path)
+            match = re.fullmatch(r'/api/units/drafts/([0-9a-f]{32})(?:/(asset|definitions|native-content|native-server-definition|confirm|drop-missing-skills|native-preview|launch-preview))?', path)
             if match:
                 identity, action = match.groups()
                 if method == 'PUT' and action is None: return engine.update(identity, body, expected)
@@ -237,6 +237,8 @@ class Units(Provider):
                     return engine.upload_definitions(identity, *decode_upload(body), expected)
                 if method == 'POST' and action == 'native-content':
                     return engine.upload_native_content(identity,*decode_upload(body),expected,body.get('replace_manifest'))
+                if method == 'POST' and action == 'native-server-definition':
+                    return engine.edit_native_server_definition(identity,body,expected)
                 if method == 'POST' and action == 'confirm':
                     from owner.units.native_preview import status
                     from owner.units import presentation as generator

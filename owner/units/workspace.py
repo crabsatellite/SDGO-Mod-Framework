@@ -290,6 +290,24 @@ class Workspace:
             state['drafts'][identity]=draft
             return self._commit(state,identity)
 
+    def edit_native_server_definition(self,identity,value,expected):
+        from .native_server_fields import edit,stock_templates
+        from .project import export_project
+        if not isinstance(value,dict) or set(value)!={'manifest_path','kind','id','definition'}:
+            raise ValueError('服务端配套定义更新字段无效')
+        with self.lock:
+            state=self.check(expected);draft=copy.deepcopy(self._get(state,identity))
+            if draft['status']=='disabled':raise ValueError('请先启用机体项目再编辑配套定义')
+            files={row['path']:self.blob(row['sha']) for row in draft['files']}
+            templates={kind:stock_templates(self.repository.catalog,kind) for kind in ('skill','funnel')}
+            refs,files=edit(draft.get('native_content',[]),files,manifest_path=value['manifest_path'],
+                kind=value['kind'],identity=value['id'],definition=value['definition'],templates=templates)
+            draft['native_content']=refs
+            draft['files']=[{'path':name,'sha':self._store(raw),'bytes':len(raw)} for name,raw in files.items()]
+            self._touch(draft);export_project(self,draft)
+            state['drafts'][identity]=draft
+            return self._commit(state,identity)
+
     def removable_missing_skills(self,draft):
         # A complete native-content project must retain its dependency graph.
         # The legacy explicit-omission option remains available for old imports.
@@ -592,13 +610,16 @@ class Workspace:
         with self.lock:
             from .blueprints import NATIVE_REGISTRATION_SUPPORTED,RAW_TEMPLATE_NATIVE_REGISTRATION_SUPPORTED
             from .project import search_text
+            from .native_server_fields import stock_templates,describe as describe_server_fields
+            server_templates={kind:stock_templates(self.repository.catalog,kind) for kind in ('skill','funnel')}
             state=self.read();result={'revision':model.revision(state),
                 'capabilities':{'projects':{'protocol':'sdgo.unit-project','schema_version':1,'metadata_first':True,'bundled_media':True},
                     'native_programs':{'schema':'sdgo.unit-native-programs/1',
                         'schemas':['sdgo.unit-native-programs/1','sdgo.unit-native-programs/2'],
                         'callback_roles':['ranged','special_ranged','initializer'],'authoring':True,'native_publication':False},
                     'native_content':{'schema':'sdgo.unit-native-content/1','authoring':True,'bundled_members':True,
-                        'known_record_kinds':[11,13],'opaque_record_retention':True,'native_publication':False},
+                        'known_record_kinds':[11,13],'opaque_record_retention':True,'server_field_authoring':True,
+                        'partial_server_drafts':True,'native_publication':False},
                     'blueprints':{'schema_version':1,'authoring':True,
                     'native_registration':NATIVE_REGISTRATION_SUPPORTED,'target_record_kind':33,
                     'target_record_size':1197,'material_minimum':3,'material_maximum':5,'raw_material_maximum':7,
@@ -616,6 +637,7 @@ class Workspace:
                 'baseline':self.baseline.public_info(),'server':self.repository.public_info(),
                 'confirmation_destination':'server' if self.repository.public_info().get('server_configured') else 'workspace',
                 'templates':{'units':[{'id':n,'name':str(r.get('UnitModelName',n))} for n,r in self.repository.catalog.get('units',{}).items()],
+                    'skills':server_templates['skill'],'funnels':server_templates['funnel'],
                     'weapons':[{'id':n,'name':str(r.get('WeaponName',n))} for n,r in self.repository.catalog.get('weapons',{}).items()],
                     'blueprints':getattr(self.baseline,'blueprint_templates',lambda:[])(),
                     'blueprint_items':[{'id':n,'name':str(r.get('Name',n)).split('\0')[0],'recipe_id':r.get('RefIndex')}
@@ -640,10 +662,12 @@ class Workspace:
                 if draft.get('native_content'):
                     from .native_content import validate_project_bindings
                     try:
-                        groups=validate_project_bindings(draft['native_content'],files={entry['path']:self.blob(entry['sha']) for entry in draft['files']})
+                        files={entry['path']:self.blob(entry['sha']) for entry in draft['files']}
+                        groups=validate_project_bindings(draft['native_content'],files=files)
                         draft['native_content_groups']=[{'binding':group['binding'],'owner':group['manifest']['owner'],
                             'revision':group['manifest']['revision'],'summary':group['summary'],'records':group['records'],
-                            'requirements':group['requirements'],'native_registration_authorized':False} for group in groups]
+                            'requirements':group['requirements'],'native_registration_authorized':False,
+                            'server_definitions':describe_server_fields(group,files,server_templates)} for group in groups]
                     except (ValueError,KeyError):pass  # requirements already reports the concrete failure.
                 result['draft']=draft
             return result
