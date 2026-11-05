@@ -7,6 +7,7 @@
 #include <intrin.h>
 #include <new>
 #include "quiet_frame_capture.h"
+#include "quiet_recorder.h"
 #include "sdgo/sdgo_api.h"
 
 // Direct3D 9 cannot enumerate or create a device on a non-input WinSta0
@@ -1193,6 +1194,7 @@ private:
         const uintptr_t returnAddress=reinterpret_cast<uintptr_t>(_ReturnAddress());
         owner->CaptureRequestedFrame(device);
         owner->frameCapture_.BeforePresent(device);
+        owner->recorder_.BeforePresent(device);
         const HRESULT result=record.present(device,source,destination,owner->proxyWindow_,dirty);
         const DWORD presentError=GetLastError();
         if (SUCCEEDED(result)) {
@@ -1226,6 +1228,7 @@ private:
 
     inline static QuietGraphics* active_=nullptr;
     QuietFrameCapture frameCapture_;
+    QuietRecorder recorder_;
     const SdgoApi* api_=nullptr;
     SdgoMod* mod_=nullptr;
     Create9Fn original_=nullptr;
