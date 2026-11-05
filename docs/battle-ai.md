@@ -45,7 +45,35 @@ using the bot's actual collision sphere. Public spawn and relocation points prov
 when no teammate has a current contact. Paths account for platforms, safe drops, solid obstacles and
 DeathZone volumes. A blocking destructible can be attacked through normal weapons; indestructible and
 destroyed-but-still-solid objects remain obstacles. Forced-movement pads retain native motor control.
-On complex maps an individual unit can still stall.
+On complex maps an individual unit can still stall. Version 0.4.9 preserves native control when a
+map device is triggered, but does not actively plan routes through teleport or propulsion devices.
+
+Navigation distinguishes the destination floor from the bot's current floor. Being directly above
+an enemy is not arrival: the route must reach the projected destination height. Pursuit and exploration
+can use native boost while fuel remains above the configured reserve, and descending segments use
+ordinary movement. Native collision probing supplies obstacle heights for automatic jumping; the Mod
+enables that NPC input permission and preserves the unit's original gravity, speed and collision rules.
+Committed attacks, capture and map-controlled movement keep their motor ownership.
+Selecting a special does not reserve an action: an unadmitted request that remains natively neutral
+for 200 ms returns to ordinary combat, with one second before another attempt. Current or queued
+native actions and accepted specials retain their completion ownership.
+After a native action finishes, the enhanced controller resumes on a free update even when the
+original script omits its callback. Relative movement checks native admission before submitting a
+command, and an accepted short step keeps its startup interval instead of being restarted each frame.
+An unreachable last-seen position is discarded so public-map exploration can resume.
+Boost Down keeps its native fuel depletion while the bot can continue ordinary walking and legal
+attacks. A melee weapon remains available when no usable ranged response exists. Live breakable
+gates remain solid to route planning when ordinary weapons cannot currently breach them.
+Side steps follow measured ground contours. A blocked preferred direction does not suppress checks
+of other directions, and rejected positioning requests retain their demand for route recovery.
+Static collision scenes are checked as geometry even when they have no gameplay-object pointer.
+Walking support and slope admission use the game's native bilinear heightmap and root normal;
+rendered triangle height and a model's box corners do not define its walking surface.
+
+Terrain sight queries visit the ray's intersected grid cells and use the original native
+triangle predicate. The layout is validated before indexing; only layout information is retained,
+so current heights, teammate contacts and firing visibility are still read live. Inactive native
+steering storage is represented as no movement destination instead of invalidating the whole observation.
 
 | | Medium: skilled player | Hard: expert player |
 |---|---|---|

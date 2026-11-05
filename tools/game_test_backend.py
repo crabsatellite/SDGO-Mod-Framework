@@ -789,6 +789,9 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                 folder=Path(row['exe']).parent
                 offsets=row['startup_log_offsets']
                 while True:
+                    exited=[(peer_row['folder'],peer.poll()) for peer,peer_row in ready_services if peer.poll() is not None]
+                    if exited:
+                        raise RuntimeError('Native peer exited during table readiness: '+','.join(name+'='+str(code) for name,code in exited))
                     loaded=False
                     for log in (folder/'LogData').glob('*.txt'):
                         with log.open('rb') as stream:

@@ -188,6 +188,16 @@ class NativeControllerAbiTests(unittest.TestCase):
                 ]
                 self.assertEqual(bool(pass_ends), scenario == "valid")
 
+    def test_observations_survive_slow_durable_storage(self):
+        completed, _, events = self.run_scenario("slow_observation_disk")
+        self.assertEqual(completed.returncode, 0)
+        samples = [event for event in events if event["event"] == "observation"
+                   and event["message"] == "sample retained without synchronous disk wait"]
+        self.assertEqual(len(samples), 16)
+        self.assertEqual(events[-1]["event"], "run_end")
+        self.assertEqual(events[-1]["status"], "pass")
+        self.assertFalse(any(event["status"] == "fail" for event in events))
+
     def test_required_and_duplicate_cases_fail_discovery(self):
         for scenario, message in DISCOVERY_FAILURE_SCENARIOS.items():
             with self.subTest(scenario=scenario):
