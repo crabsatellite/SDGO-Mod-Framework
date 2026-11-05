@@ -388,6 +388,14 @@ def inspect_upload(
     typed_members: set[str] = set()
     typed_resource_members: dict[str, list[dict[str, str]]] = {}
     if project is not None:
+        for binding in project.get('native_content_bindings',[]):
+            typed_members.update(binding['members'])
+            for record in binding['records']:
+                if record['id'] in identities:raise ValueError('duplicate native content identity')
+                identities[record['id']]='native:'+str(record['kind'])
+            global_references.update(binding['direct_resource_refs'])
+            for resource in binding['resources']:
+                typed_resource_members.setdefault(resource['member'],[]).append(resource)
         for binding in project.get('native_program_bindings',[]):
             typed_members.update(binding['members'])
         for binding in project.get("client_template_bindings", []):

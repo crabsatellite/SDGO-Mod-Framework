@@ -65,6 +65,23 @@ class UnitManagerTests(unittest.TestCase):
         if revision is None: revision = self.capsules.request('GET', '/api/bootstrap', {}, {})['catalog_revision']
         return self.capsules.request('POST', '/api/units/import', {'expected_revision': revision}, {})
 
+    def test_native_dependency_upload_uses_existing_provider_revision_and_stays_private_draft(self):
+        from test_unit_native_content import fixture as native_fixture,attachment
+        state=self.engine.inspect('unit.zip',archive(),self.engine.public()['revision']);identity=state['draft']['id']
+        manifest,files=native_fixture();before=self.catalog.read_bytes()
+        payload={'filename':'dependencies.zip','data':base64.b64encode(attachment(manifest,files)).decode()}
+        path='/api/units/drafts/'+identity+'/native-content'
+        updated=self.units.request('POST',path,payload,{'X-Catalog-Revision':state['revision']})
+        self.assertEqual(1,len(updated['draft']['native_content_groups']))
+        self.assertFalse(updated['draft']['can_confirm']);self.assertEqual(before,self.catalog.read_bytes())
+        with self.assertRaises(ValueError):self.units.request('POST',path,payload,{'X-Catalog-Revision':state['revision']})
+        exported=self.units.request('GET','/api/units/drafts/'+identity+'/project',{},{}).data
+        import zipfile
+        with zipfile.ZipFile(io.BytesIO(exported)) as archive_file:
+            project=json.loads(archive_file.read('project.json'))
+            self.assertEqual(1,len(project['native_content']));self.assertFalse(project['runtime_installable'])
+            self.assertFalse(any(name.endswith('.dll') for name in archive_file.namelist()))
+
     def test_metadata_only_project_media_is_reused_without_granting_a_prize(self):
         state=self.units.request('POST','/api/units/projects',{'name':'Owner information',
             'metadata':{'description':'Private owner description','aliases':['Owner alias']}},

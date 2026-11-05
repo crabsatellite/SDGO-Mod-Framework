@@ -101,6 +101,17 @@ must finish before the root boundary. `SdgoReadUnitProgramStateV1` exposes a
 read-only process-lifetime snapshot of the VM, thread, bundle hash and verified
 exports; `sdgo/unit_program_state.h` declares its versioned structure.
 This registration does not grant server, allocation, media or actor admission.
+An optional read-only protected-call observer matches the actual Lua closure
+identity against these registered exports. `SdgoReadUnitProgramCallStateV1`
+reports natural call/success/error counts, original caller, VM, thread and
+argument count without pushing/popping the VM stack or submitting a call.
+Observation may be unavailable when another Mod owns the protected-call hook;
+registration remains usable and the getter reports that state explicitly.
+
+The initializer field is consumed by the native weapon family. The bytes at
+`0x6E9` and `0x6EA` are separate native fields; do not interpret them as one
+16-bit initializer type or change them to force a callback. Native Fang state
+initialization and legacy funnel/missile initialization use different consumers.
 Manager can preserve/export declarations in a project and show its script-group
 count. Its ordinary publisher remains blocked for projects that require the
 unfinished actor admission path.

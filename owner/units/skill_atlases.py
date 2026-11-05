@@ -37,7 +37,7 @@ def _path(value,root,suffix):
     return value
 
 
-def validate_manifest(value,records,resources):
+def validate_manifest(value,records,resources,*,authoring=False):
     _exact(value,{'schema','owner','revision','sprites','skills'},'skill atlas manifest')
     if value['schema']!=SCHEMA:raise ValueError('unsupported skill atlas schema')
     if not isinstance(value['owner'],str) or not re.fullmatch('[a-z0-9][a-z0-9._-]{0,63}',value['owner']):
@@ -76,7 +76,7 @@ def validate_manifest(value,records,resources):
         if (not isinstance(raw,bytes) or len(raw)!=1132 or raw[4]!=0 or struct.unpack_from('<I',raw)[0]!=identity or
                 _hash(raw)!=_digest(row['record_sha256'])):raise ValueError('skill atlas complete record identity/SHA-256 differs')
         recover_source_record(raw)
-        if raw[1131]>3:raise ValueError('skill atlas does not admit unknown skill dispatch')
+        if raw[1131]>3 and not authoring:raise ValueError('skill atlas does not admit unknown skill dispatch')
         path=row['sprite']
         if not isinstance(path,str) or path not in sprites:raise ValueError('skill atlas record references an undeclared sprite')
         frame=struct.unpack_from('<H',raw,426)[0]

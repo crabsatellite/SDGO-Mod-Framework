@@ -144,8 +144,15 @@ def export_project(workspace,draft):
     if draft.get('native_programs'):
         from .native_programs import normalize_bindings,validate_project_bindings as validate_programs
         manifest['native_programs']=normalize_bindings(draft['native_programs'])
-        validate_programs(manifest['native_programs'],files=files)
+    if draft.get('native_content'):
+        from .native_content import normalize_bindings,validate_project_bindings as validate_content
+        manifest['native_content']=normalize_bindings(draft['native_content'])
+        validate_content(manifest['native_content'],files=files)
+    resolve_native_parts(files=files,definitions=definitions,native_programs=manifest.get('native_programs',[]),native_content=manifest.get('native_content',[]))
     files['project.json']=json.dumps(manifest,ensure_ascii=False,sort_keys=True).encode('utf-8')
+    from .archive import MAX_FILES,MAX_EXPANDED
+    if len(files)>MAX_FILES or sum(len(raw) for raw in files.values())>MAX_EXPANDED:
+        raise ValueError('制作项目超过可重新导入的文件数量或展开容量上限')
     out=io.BytesIO()
     with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as archive:
         for name,raw in sorted(files.items()):archive.writestr(name,raw)
@@ -183,13 +190,24 @@ def read_project(files):
         if hashlib.sha256(files[path]).hexdigest()!=asset.get('sha'):raise ValueError('素材哈希与资源不一致')
         if asset.get('kind') not in ('image','source-image'):raise ValueError('素材类型无效')
     definitions=value.get('definitions',{})
-    from .blueprint_templates import validate_project_bindings
-    client_template_bindings=validate_project_bindings(definitions,files=files)
-    from .native_programs import normalize_bindings,validate_project_bindings as validate_programs
+    from .native_programs import normalize_bindings
     native_programs=normalize_bindings(value.get('native_programs',[]))
-    native_program_bindings=validate_programs(native_programs,files=files)
+    from .native_content import normalize_bindings as normalize_content
+    native_content=normalize_content(value.get('native_content',[]))
+    parts=resolve_native_parts(files=files,definitions=definitions,native_programs=native_programs,native_content=native_content)
     return {'name':name,'project_key':project_key,'metadata':normalize_metadata(value.get('metadata',{})),
         'media':normalize_media(value.get('media',{}),assets),'presentation':value.get('presentation',{}),
         'assets':assets,'definitions':definitions,
-        'client_template_bindings':client_template_bindings,'native_programs':native_programs,
-        'native_program_bindings':native_program_bindings}
+        'client_template_bindings':parts['blueprints'],'native_programs':native_programs,
+        'native_program_bindings':parts['programs'],'native_content':native_content,
+        'native_content_bindings':parts['content']}
+
+
+def resolve_native_parts(*,files,definitions,native_programs,native_content):
+    from .blueprint_templates import validate_project_bindings as templates
+    from .native_content import validate_project_bindings as content
+    from .native_programs import validate_project_bindings as programs
+    blueprints=templates(definitions,files=files)
+    groups=content(native_content,files=files)
+    excluded=set().union(*(row['members'] for row in blueprints+groups)) if blueprints or groups else set()
+    return {'blueprints':blueprints,'content':groups,'programs':programs(native_programs,files=files,excluded_members=excluded)}

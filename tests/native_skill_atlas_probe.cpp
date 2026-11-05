@@ -4,12 +4,15 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 #include "sdgo/sdgo_api.h"
 #include "sdgo/skill_atlas_state.h"
+#include "sdgo/unit_program_state.h"
 
 namespace {
 std::wstring outputPath;
 std::wstring battleOutputPath;
+std::wstring programOutputPath;
 char runId[80]={};
 void Text(FILE* file,const char* text){
     std::fputc('"',file);for(;*text;++text)std::fputc(*text=='\\'?'/':*text,file);std::fputc('"',file);
@@ -17,12 +20,17 @@ void Text(FILE* file,const char* text){
 DWORD WINAPI Observe(void*){
     const auto start=GetTickCount64();HMODULE module=nullptr;SdgoReadSkillAtlasStateV1Fn read=nullptr;
     SdgoReadSkillAtlasBattleStateV1Fn battleRead=nullptr;
+    SdgoGetUnitProgramCallStateV1 programRead=nullptr;
+    SdgoGetUnitProgramStateV1 programStateRead=nullptr;
     SdgoSkillAtlasStateV1 previous={};
     SdgoSkillAtlasBattleStateV1 previousBattle={};
+    std::vector<SdgoUnitProgramCallStateV1> previousPrograms;
     while(GetTickCount64()-start<600000){
         if(!module&&GetModuleHandleExW(0,L"unit_catalog.dll",&module)){
             read=reinterpret_cast<SdgoReadSkillAtlasStateV1Fn>(GetProcAddress(module,"SdgoReadSkillAtlasStateV1"));
             battleRead=reinterpret_cast<SdgoReadSkillAtlasBattleStateV1Fn>(GetProcAddress(module,"SdgoReadSkillAtlasBattleStateV1"));
+            programRead=reinterpret_cast<SdgoGetUnitProgramCallStateV1>(GetProcAddress(module,"SdgoReadUnitProgramCallStateV1"));
+            programStateRead=reinterpret_cast<SdgoGetUnitProgramStateV1>(GetProcAddress(module,"SdgoReadUnitProgramStateV1"));
         }
         SdgoSkillAtlasStateV1 state={};state.size=sizeof(state);state.version=1;
         if(read&&read(&state)&&(state.slots[0].calls||state.slots[1].calls)&&std::memcmp(&state,&previous,sizeof(state))){
@@ -50,6 +58,25 @@ DWORD WINAPI Observe(void*){
             }
             std::fputs("]}\n",file);std::fclose(file);previousBattle=battle;
         }
+        if(programRead&&programStateRead){
+            SdgoUnitProgramStateV1 base={};base.size=sizeof(base);base.version=1;
+            if(programStateRead(&base)&&base.active){
+                for(unsigned i=0;i<base.export_count&&i<4096;++i){
+                    SdgoUnitProgramCallStateV1 call={};call.size=sizeof(call);call.version=1;
+                    if(!programRead(i,&call)||!call.calls)continue;
+                    if(previousPrograms.size()<base.export_count)previousPrograms.resize(base.export_count);
+                    if(!std::memcmp(&call,&previousPrograms[i],sizeof(call)))continue;
+                    FILE* file=nullptr;if(_wfopen_s(&file,programOutputPath.c_str(),L"ab")||!file)return 3;
+                    std::fprintf(file,"{\"run_id\":\"%s\",\"pid\":%lu,\"bundle_sha256\":\"%s\",\"available\":%lu,\"index\":%lu,\"total\":%lu,\"vm\":\"0x%08lX\",\"function\":\"0x%08lX\",\"name\":\"%s\",\"calls\":%lu,\"succeeded\":%lu,\"errors\":%lu,\"last_status\":%ld,\"last_argc\":%ld,\"first_caller\":\"0x%08lX\",\"last_caller\":\"0x%08lX\",\"first_thread\":%lu,\"last_thread\":%lu,\"root_thread\":%lu,\"first_qpc\":%llu,\"last_qpc\":%llu}\n",
+                        runId,GetCurrentProcessId(),base.bundle_sha256,static_cast<DWORD>(call.available),static_cast<DWORD>(call.index),static_cast<DWORD>(call.total),
+                        static_cast<DWORD>(call.vm),static_cast<DWORD>(call.function_identity),call.name,static_cast<DWORD>(call.calls),static_cast<DWORD>(call.succeeded),static_cast<DWORD>(call.errors),
+                        static_cast<LONG>(call.last_status),static_cast<LONG>(call.last_argc),static_cast<DWORD>(call.first_caller),static_cast<DWORD>(call.last_caller),
+                        static_cast<DWORD>(call.first_thread),static_cast<DWORD>(call.last_thread),static_cast<DWORD>(base.root_thread_id),
+                        static_cast<unsigned long long>(call.first_qpc),static_cast<unsigned long long>(call.last_qpc));
+                    std::fclose(file);previousPrograms[i]=call;
+                }
+            }
+        }
         Sleep(100);
     }
     if(module)FreeLibrary(module);return 0;
@@ -59,5 +86,6 @@ SDGO_MOD_ENTRY{
     if(!api||api->version!=1||GetEnvironmentVariableA("SDGO_GAME_TEST_RUN",runId,sizeof(runId))!=36)return 0;
     outputPath=std::wstring(api->ModDirectory(mod))+L"\\..\\..\\gametest\\skill-atlas-observations.jsonl";
     battleOutputPath=std::wstring(api->ModDirectory(mod))+L"\\..\\..\\gametest\\skill-atlas-battle-observations.jsonl";
+    programOutputPath=std::wstring(api->ModDirectory(mod))+L"\\..\\..\\gametest\\unit-program-invocations.jsonl";
     HANDLE worker=CreateThread(nullptr,0,Observe,nullptr,0,nullptr);if(!worker)return 0;CloseHandle(worker);return 1;
 }

@@ -183,6 +183,8 @@ sdgo_add_mod(unit_catalog DESCRIPTION "confirmed unit family content"
                      support/native_resource_overlay/native_resource_overlay.cpp
                      support/native_resource_overlay/native_resource_overlay.def
              FILES symbols.fragment.ini LIBS sdgo_script_registration)
+sdgo_add_mod(unit_catalog_server SERVER DESCRIPTION "owned imported-unit native skill bindings"
+             SOURCES mods/unit_catalog_server/server.cpp FILES symbols.fragment.ini LIBS sdgo_skill_identity)
 
 sdgo_add_mod(shop_labels DESCRIPTION "shop rental and Unicode labels" SOURCES mods/shop_labels/shop_labels.cpp FILES display.example.ini)
 sdgo_add_mod(shop_localization DESCRIPTION "Chinese shop localization" SOURCES mods/shop_localization/shop_localization.cpp mods/shop_localization/shop_search.cpp FILES zh-CN.ini symbols.fragment.ini LIBS user32)
@@ -1587,12 +1589,18 @@ if(BUILD_TESTING)
     add_test(NAME unit_model_integrity_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_model_integrity.py" -v)
     set_tests_properties(unit_model_integrity_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
+    add_test(NAME unit_native_content_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_native_content.py" -v)
+    set_tests_properties(unit_native_content_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
     add_library(native_root_thread_probe SHARED tests/native_root_thread_probe.cpp)
     target_link_libraries(native_root_thread_probe PRIVATE sdgo_script_registration)
     sdgo_strict(native_root_thread_probe)
     add_library(native_skill_registry_probe SHARED tests/native_skill_registry_probe.cpp)
     target_link_libraries(native_skill_registry_probe PRIVATE sdgo_api)
     sdgo_strict(native_skill_registry_probe)
+    add_library(native_skill_identity_actor_probe SHARED tests/native_skill_identity_actor_probe.cpp)
+    target_link_libraries(native_skill_identity_actor_probe PRIVATE sdgo_api)
+    sdgo_strict(native_skill_identity_actor_probe)
     add_library(native_skill_atlas_probe SHARED tests/native_skill_atlas_probe.cpp)
     target_link_libraries(native_skill_atlas_probe PRIVATE sdgo_api)
     sdgo_strict(native_skill_atlas_probe)
@@ -1611,6 +1619,13 @@ if(BUILD_TESTING)
     target_link_libraries(skill_identity_test PRIVATE sdgo_skill_identity)
     sdgo_strict(skill_identity_test)
     add_test(NAME skill_identity_policy COMMAND skill_identity_test)
+    add_executable(skill_identity_format_test tests/skill_identity_format_test.cpp)
+    target_link_libraries(skill_identity_format_test PRIVATE sdgo_skill_identity)
+    sdgo_strict(skill_identity_format_test)
+    add_test(NAME unit_skill_identity_runtime_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_skill_identity_runtime.py" -v)
+    set_tests_properties(unit_skill_identity_runtime_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        ENVIRONMENT "SDGO_SKILL_IDENTITY_VALIDATOR=$<TARGET_FILE:skill_identity_format_test>" TIMEOUT 60)
     add_executable(skill_identity_native_test tests/skill_identity_native_test.cpp)
     target_link_libraries(skill_identity_native_test PRIVATE sdgo_skill_identity minhook)
     sdgo_strict(skill_identity_native_test)

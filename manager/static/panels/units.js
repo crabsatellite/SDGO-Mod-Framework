@@ -248,6 +248,70 @@ function renderSummary(){
   );
 }
 
+function renderNativeContent(){
+  let panel=$("native-content");
+  if(!panel){
+    panel=document.createElement("section");panel.id="native-content";panel.className="section";
+    $("summary").after(panel);
+  }
+  panel.replaceChildren();
+  const heading=document.createElement("h3");heading.textContent="配套原生资料";panel.append(heading);
+  const help=document.createElement("p");
+  help.textContent="技能、浮游、图集和配套定义随制作项目一起保存。可补传包含 manifest.json 的资料 ZIP；不会修改玩家库存或现有发布。";
+  panel.append(help);
+  const uploadButton=(label,replaceManifest=null)=>{
+    const button=document.createElement("button");button.type="button";button.textContent=label;button.dataset.nativeContentUpload="1";
+    button.disabled=busy||dirty||draft.status==="disabled";
+    button.onclick=()=>{
+      const input=document.createElement("input");input.type="file";input.accept=".zip";
+      input.onchange=()=>uploadNativeContent(input.files?.[0],replaceManifest);input.click();
+    };
+    return button;
+  };
+  panel.append(uploadButton("补充配套资料 ZIP"));
+  const groups=draft.native_content_groups||[];
+  if(!groups.length){
+    const empty=document.createElement("p");empty.textContent="当前项目没有附加的原生依赖资料。";panel.append(empty);return;
+  }
+  for(const [index,group] of groups.entries()){
+    const box=document.createElement("details");box.className="panel";box.style.padding="12px";box.style.marginTop="10px";
+    const title=document.createElement("summary");const s=group.summary||{};
+    title.textContent="资料组 "+(index+1)+" · 技能 "+(s.skills||0)+" · 浮游 "+(s.funnels||0)+" · 资源 "+(s.resources||0)+(s.unsupported_records?" · 待适配 "+s.unsupported_records:"");
+    box.append(title);
+    const supplied=document.createElement("p");const parts=[];
+    if(s.skills)parts.push("服务端技能定义"+(s.server_skills?"已携带":"待补充"),"技能图集"+(s.skill_atlases?"已携带":"待补充"));
+    if(s.funnels)parts.push("服务端浮游定义"+(s.server_funnels?"已携带":"待补充"));
+    supplied.textContent=parts.join("；");box.append(supplied);
+    const records=document.createElement("ul");
+    for(const record of group.records||[]){
+      const row=document.createElement("li");
+      row.textContent=(record.kind===13?"技能：":record.kind===11?"浮游：":"待适配资料：")+(record.name||String(record.id));
+      const metadata=document.createElement("details");const label=document.createElement("summary");label.textContent="编号与布局信息";
+      const value=document.createElement("p");value.textContent="编号 "+record.id+"；类型 "+record.kind+"；"+record.bytes+" 字节；"+record.profile;
+      metadata.append(label,value);row.append(metadata);records.append(row);
+    }
+    box.append(records);
+    for(const issue of group.requirements||[]){const line=document.createElement("p");line.className="badge warning";line.style.display="block";line.style.whiteSpace="normal";line.style.margin="8px 0";line.textContent=issue.message;box.append(line);}
+    box.append(uploadButton("更新此组资料",group.binding.manifest_path));panel.append(box);
+  }
+  const note=document.createElement("p");note.textContent="这些新增配套定义目前可保存和导出为制作项目，正式发布尚未开放。";panel.append(note);
+}
+
+async function uploadNativeContent(file,replaceManifest){
+  if(!file||busy||!draft)return;
+  if(dirty){message("请先保存当前修改，再补充配套资料。",true);return;}
+  if(!file.name.toLowerCase().endsWith(".zip")){message("请选择配套资料 ZIP。",true);return;}
+  setBusy(true);
+  try{
+    message("正在校验配套原生资料…");
+    const data=await fileToBase64(file);
+    await refreshDraftAfterWrite(await api("/api/units/drafts/"+encodeURIComponent(draft.id)+"/native-content","POST",{
+      filename:file.name,data,...(replaceManifest?{replace_manifest:replaceManifest}:{})
+    }));
+    message("配套资料已保存。请查看缺项；制作项目导出会包含完整资料和来源证据。");
+  }catch(error){message(error.message,true);}finally{setBusy(false);}
+}
+
 function renderRequirements(){
   const requirements=Array.isArray(draft&&draft.requirements)?draft.requirements:[];
   $("requirement-count").textContent=requirements.length+" 项";
@@ -769,6 +833,7 @@ function renderEditor(){
   $("editor-form").classList.remove("hidden");
   renderIdentity();
   renderSummary();
+  renderNativeContent();
   renderRequirements();
   renderRecords("forms",draft.forms||[],"forms","制作包中没有解析出机体形态。");
   renderRecords("weapons",draft.weapons||[],"weapons","制作包中没有解析出新武器记录。");
@@ -805,6 +870,7 @@ function syncActions(){
     button.disabled=busy||disabled||dirty||button.dataset.hasSelection!=="1";
   });
   document.querySelectorAll("[data-drop-missing-skills]").forEach(button=>button.disabled=busy||dirty||disabled);
+  document.querySelectorAll("[data-native-content-upload]").forEach(button=>button.disabled=busy||dirty||disabled);
   document.querySelectorAll("#unit-blueprints button").forEach(button=>button.disabled=busy||disabled||button.dataset.blueprintLocked==="1");
   document.querySelectorAll("#unit-blueprints input,#unit-blueprints select").forEach(input=>input.disabled=busy||disabled);
   const project=$("export-project");if(project){project.href=draft?endpoint("/api/units/drafts/"+draft.id+"/project"):"#";project.classList.toggle("disabled",!draft||dirty||busy);}
