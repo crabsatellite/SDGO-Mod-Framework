@@ -135,6 +135,17 @@ sdgo_add_mod(mission_ai DESCRIPTION "co-op mission wingmen (client)"
 sdgo_add_mod(ime_fix DESCRIPTION "Chinese IME candidate and commit fixes" SOURCES mods/ime_fix/ime_fix.cpp FILES symbols.fragment.ini)
 sdgo_add_mod(findwindow_fix DESCRIPTION "FindWindowW fix" SOURCES mods/findwindow_fix/findwindow_fix.cpp LIBS user32)
 sdgo_add_mod(startup_crash_fix DESCRIPTION "random crash at game start fix" SOURCES mods/startup_crash_fix/startup_crash_fix.cpp)
+sdgo_add_mod(lobby_music_fix DESCRIPTION "first login lobby music restoration"
+             SOURCES mods/lobby_music_fix/lobby_music_fix.cpp FILES symbols.fragment.ini)
+if(BUILD_TESTING)
+    add_executable(lobby_music_fix_dll_test tests/lobby_music_fix_dll_test.cpp)
+    target_link_libraries(lobby_music_fix_dll_test PRIVATE sdgo_api)
+    sdgo_strict(lobby_music_fix_dll_test)
+    add_dependencies(lobby_music_fix_dll_test lobby_music_fix)
+    add_test(NAME lobby_music_fix_actual_dll COMMAND lobby_music_fix_dll_test "$<TARGET_FILE:lobby_music_fix>" present)
+    add_test(NAME lobby_music_fix_missing_file COMMAND lobby_music_fix_dll_test "$<TARGET_FILE:lobby_music_fix>" missing)
+    set_tests_properties(lobby_music_fix_actual_dll lobby_music_fix_missing_file PROPERTIES TIMEOUT 30)
+endif()
 sdgo_add_mod(waitroom_window_fix DESCRIPTION "native wait-room window initialization guard"
              SOURCES mods/waitroom_window_fix/waitroom_window_fix.cpp FILES symbols.fragment.ini)
 if(BUILD_TESTING)
