@@ -10,6 +10,9 @@ Server owners and maintainers install, configure and [update](docs/mod-manager.m
 players keep using their normal game launcher, update the way their server owner provides, and should not
 change Mods themselves, so their client stays matched to the server.
 Owners can also manage their own **local-only** addons in Manager; those are never packaged or exported.
+The official pack is a curated starting collection. Once an owner starts DIY, they maintain its configuration,
+scripts, resources, compatibility and releases. [Owner-managed updates](docs/owner-updates.md) let owners review
+upstream components and publish their confirmed pack; players follow only that owner's source.
 This page is a feature index. Configuration, gameplay instructions, compatibility and troubleshooting are in each feature's documentation.
 
 Beta and Experimental after a feature name mark its release channel; unlabeled features are Stable:
