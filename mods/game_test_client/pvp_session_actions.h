@@ -87,6 +87,10 @@ public:
             state_.humans=current.player_count;state_.local_host=current.local_is_host;joined_=true;Complete();
         } else if(op_==Ready) {
             if(!readyStarted_)readyStarted_=join_->Ready();
+            // The returned room can precede its Main state's load gates. Until
+            // this round actually queues Ready, ReadyState may still describe
+            // the previous round's accepted request.
+            if(!readyStarted_)return;
             const auto ready=join_->ReadyState();state_.ready_result=ready.result;
             state_.ready_reply=ready.server_reply_observed;state_.ready_original=ready.original_dispatch_completed;state_.ready_model=ready.post_dispatch_model_ready;
             if(ready.result==JoinT::kReadyRejected){

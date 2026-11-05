@@ -18,9 +18,9 @@ struct Room {
 struct Joiner {
     enum {kJoinRejected=2,kJoinAccepted=3,kReadyRejected=2,kReadyAccepted=3};
     RoomJoinActions::JoinObservation join{};RoomJoinActions::ReadyObservation ready{};
-    unsigned joins=0,readies=0;
+    unsigned joins=0,readies=0;bool canReady=true;
     bool JoinExactTitle(const char*){++joins;return true;}
-    bool Ready(){++readies;return true;}
+    bool Ready(){++readies;return canReady;}
     uint32_t SelectionStage()const{return 8;}
     uint32_t SelectionControlFlags()const{return 31;}
     uint32_t ReadyStage()const{return 10;}
@@ -126,7 +126,19 @@ int main(){
         w.room.end.original_handler_completed=1;w.driver.Tick(&context);
         Check(w.driver.State().settled&&w.driver.State().round==1,"the first acknowledged round settles before reuse");
 
+        w.join.canReady=false;
         w.Ready(4);
+        Check(w.driver.State().result!=F::kReady&&!w.driver.State().ready_reply,
+              "a blocked new Ready cannot consume the previous round's accepted acknowledgement");
+        w.driver.Tick(&context);
+        Check(w.driver.State().result!=F::kReady,
+              "the guest keeps waiting while native Main load gates prevent the new request");
+        w.join.canReady=true;w.join.ready={};w.driver.Tick(&context);
+        Check(w.driver.State().result!=F::kReady,
+              "queuing this round's Ready still requires this round's original acknowledgement");
+        w.join.ready.result=Joiner::kReadyAccepted;w.join.ready.room_id=81;
+        w.join.ready.server_reply_observed=w.join.ready.original_dispatch_completed=w.join.ready.post_dispatch_model_ready=1;
+        w.driver.Tick(&context);
         Check(w.driver.State().round==2&&!w.driver.State().battle_seen&&!w.driver.State().settled&&
               !w.driver.State().frames&&!w.driver.State().movement_events,
               "second-round Ready clears only prior observer evidence");
