@@ -95,9 +95,15 @@ def damage_diagnostic(event, ready, pilot, modes):
     return True
 
 
-def evaluate(metadata: dict, paths: list[Path], pilot: int, *, expected_humans: list[int] | None = None) -> dict:
+def evaluate(metadata: dict, paths: list[Path], pilot: int, *, expected_humans: list[int] | None = None,
+             expected_rounds: int | None = None) -> dict:
     integer(pilot,'expected host pilot',1)
     plan=metadata['plan'];run_id=metadata['run_id']
+    rounds=2 if plan.get('same_room_rematch') else 1
+    if expected_rounds is not None:
+        if type(expected_rounds) is not int or expected_rounds not in (1,2) or expected_rounds<rounds:
+            raise ValueError('expected_rounds must be one or two complete battles and cannot reduce sealed scope')
+        rounds=expected_rounds
     session=metadata.get('server_session')
     server_run_id=session['run_id'] if session else run_id
     server_nonce=session['nonce'] if session else plan['title_nonce']
@@ -179,7 +185,7 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int, *, expected_humans: 
             errors.append(f'{path}: {error}')
     for mode in modes:
         matches=[b for b in battles if b['mode']==mode]
-        expected=2 if plan.get('same_room_rematch') else 1
+        expected=rounds
         if len(matches)!=expected or any(b['phase']!=4 for b in matches):
             errors.append(f'mode {mode} requires exactly {expected} complete four-event native battle lifecycle(s)')
     return {'schema':1,'run_id':run_id,'scope':'passive_native_server_lifecycle',

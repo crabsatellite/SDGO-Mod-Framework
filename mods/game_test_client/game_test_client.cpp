@@ -450,7 +450,7 @@ bool LoadPlan() {
     const auto rematchFlag=GetPrivateProfileIntW(L"run",L"same_room_rematch",0,job.c_str());
     if(rematchFlag>1)return false;
     sameRoomRematch=rematchFlag==1;
-    if(sameRoomRematch && (missionMode || bootstrapOnly || battleshipOnly || giftRequestsOnly || deckOnly || pagesOnly || randomLoadout))return false;
+    if(sameRoomRematch && (missionMode || bootstrapOnly || battleshipOnly || giftRequestsOnly || deckOnly || pagesOnly))return false;
     if(missionMode) {
         expectedAi=GetPrivateProfileIntW(L"run",L"mission_ai_count",0,job.c_str());
         const auto level=GetPrivateProfileIntW(L"run",L"mission_ai_level",0,job.c_str());
@@ -624,8 +624,9 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
         const auto waiting=rooms.NativeRoomState();
         if((actions.AppState()!=18 && actions.AppState()!=20) || !waiting.model_present)return SDGO_GAME_TEST_WAIT;
         const bool valid=sameRoomId && waiting.room_id==sameRoomId && waiting.room_mode==RequestedMode() &&
-            waiting.local_is_host && waiting.player_count==1;
-        context->Assert(valid,"the second battle reuses the exact settled native room with its sole real human host; no new create request");
+            waiting.local_is_host && waiting.player_count==1 && !waiting.ai_pilot_count &&
+            waiting.occupied_slot_count==waiting.player_count;
+        context->Assert(valid,"the second battle reuses the settled room with its human host and no leftover AI slots; no new create request");
         return valid ? SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
     }
     static size_t roomPageBaselineMode=SIZE_MAX;
@@ -794,7 +795,12 @@ int __cdecl Start(const SdgoGameTestContextV1* context) {
     static LONG errorBaseline=0;
     static uint64_t lastStartAttempt=0;
     static uint32_t startSendBaseline=0,startReplyBaseline=0;
-    if(!context->tick){lastStartAttempt=0;startSendBaseline=actions.GameStartSendCount();startReplyBaseline=rooms.NativeStartReplySequence();}
+    if(!context->tick){
+        // A coordinated SDK can submit another Start in the same room. Its
+        // prior observer flags cannot satisfy the next native start reply.
+        startRequested=false;startSequence=0;activeBattleStartSequence=0;
+        lastStartAttempt=0;startSendBaseline=actions.GameStartSendCount();startReplyBaseline=rooms.NativeStartReplySequence();
+    }
     if(rooms.NativeStartReplySequence()>startReplyBaseline && rooms.NativeStartReplyError()!=0) {
         char failure[96];sprintf_s(failure,"native server rejected battle start: 07B5/%04X",rooms.NativeStartReplyError());
         context->Assert(0,failure);return SDGO_GAME_TEST_FAIL;
@@ -1106,6 +1112,22 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
     if (!leaveRequested && (state == 18 || state == 20)) {
         const auto waiting=rooms.NativeRoomState();
         if(!RoomActions::SettledRoomReady(waiting))return SDGO_GAME_TEST_WAIT;
+        static uint32_t rosterBattleSequence=0;
+        static uint64_t rosterWaitStarted=0;
+        if(rosterBattleSequence!=activeBattleStartSequence) {
+            rosterBattleSequence=activeBattleStartSequence;rosterWaitStarted=context->elapsed_ms;
+        }
+        // The native end and room-departure notifications can be consumed in
+        // adjacent UI ticks. Require the actual roster to settle, not merely
+        // its independent human count, before either leaving or starting again.
+        if(waiting.ai_pilot_count && context->elapsed_ms-rosterWaitStarted<2000)return SDGO_GAME_TEST_WAIT;
+        char roster[160];
+        sprintf_s(roster,"settled roster humans=%u occupied=%u AI=%u room=%u battle=%u",
+            waiting.player_count,waiting.occupied_slot_count,waiting.ai_pilot_count,
+            waiting.room_id,activeBattleStartSequence);context->Observe(roster);
+        const bool cleanRoster=!waiting.ai_pilot_count && waiting.occupied_slot_count==waiting.player_count;
+        context->Assert(cleanRoster,"all twelve native waiting-room slots contain only the remaining real humans after settlement");
+        if(!cleanRoster)return SDGO_GAME_TEST_FAIL;
         char ownership[192];
         sprintf_s(ownership,"settled room=%u host=%08X authenticated=%u players=%u mode=%u local_host=%u",
             waiting.room_id,waiting.host_pilot_id,authenticatedPilot,waiting.player_count,

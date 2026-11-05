@@ -90,6 +90,10 @@ public:
         uint32_t room_id;
         uint32_t player_count;
         uint32_t host_pilot_id;
+        uint32_t occupied_slot_count;
+        uint32_t ai_pilot_count;
+        uint32_t slot_pilot_ids[12];
+        uint8_t slot_ready[12];
         uint8_t room_variant;
         uint8_t room_mode;
         uint8_t model_present;
@@ -829,14 +833,17 @@ public:
     NativeRoomObservation NativeRoomState() const
     {
         NativeRoomObservation observed = {};
-        observed.native_app_state =
-            native_ ? native_->AppState() : UINT32_MAX;
+        observed.native_app_state = UINT32_MAX;
         observed.wait_menu_observed =
             HasObservedWaitMenu() ? 1 : 0;
-        if (!profilePointer_ || !isRoomMaster_ || !waitRoomPlayerCount_)
-            return observed;
-
         __try {
+            const auto* app = gameApp_ ? gameApp_() : nullptr;
+            if (app) observed.native_app_state = *reinterpret_cast<const uint32_t*>(app + kGameAppState);
+            // profile+EC can be retired/reused after GAME_MAIN. Observe only
+            // an actual waiting scene through this adapter's bound getter.
+            if ((observed.native_app_state != 18 && observed.native_app_state != 20) ||
+                !profilePointer_ || !isRoomMaster_ || !waitRoomPlayerCount_)
+                return observed;
             uint8_t* profile = *profilePointer_;
             if (!profile)
                 return observed;
@@ -850,6 +857,15 @@ public:
                 static_cast<uint32_t>(waitRoomPlayerCount_(room));
             observed.host_pilot_id =
                 *reinterpret_cast<const uint32_t*>(bytes + 0x4CE);
+            // player_count is humans only. Read the same twelve packed slots
+            // that back CBaseRoomData's native owner/ready getters and UI.
+            for (size_t slot = 0; slot < 12; ++slot) {
+                const uint8_t* entry = bytes + 0x533 + slot * 0x48E;
+                std::memcpy(&observed.slot_pilot_ids[slot], entry + 0x429, sizeof(uint32_t));
+                observed.slot_ready[slot] = entry[0x42F];
+                if (observed.slot_pilot_ids[slot]) ++observed.occupied_slot_count;
+                if (observed.slot_pilot_ids[slot] & 0x80000000u) ++observed.ai_pilot_count;
+            }
             observed.room_variant = *(bytes + 4);
             observed.room_mode = *(bytes + 5);
             observed.model_present = 1;

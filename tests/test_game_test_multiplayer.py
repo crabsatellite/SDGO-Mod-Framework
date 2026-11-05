@@ -85,10 +85,18 @@ class MultiplayerAdmissionTests(unittest.TestCase):
             metadata['plan']['mode_sequence'] = '3,6'
         self.reject('one native battle')
 
-    def test_coordinator_carries_native_room_identity_through_guest_and_host_leave(self):
-        # Protocol fixture only. The real clients must still prove every step.
+    def test_round_count_is_strict_before_native_launch(self):
+        for rounds in (0, 3, True, '2'):
+            with self.subTest(rounds=rounds):
+                with self.assertRaisesRegex(multiplayer.game_test.GameTestError, 'rounds must be 1 or 2'):
+                    multiplayer.campaign(self.runs[0], self.runs[1:], self.pilots, [],
+                                         self.root / 'result.json', rounds=rounds)
+                self.launch.assert_not_called()
+
+    def run_protocol_fixture(self, *, rounds=2, stale_second_start=False, retain_ghost=False):
         calls = []
         fixture = self
+        cohort = {'actors': [], 'joined': 1, 'generation': 0, 'clean': False}
 
         class Actor:
             def __init__(self, run, completion):
@@ -96,16 +104,30 @@ class MultiplayerAdmissionTests(unittest.TestCase):
                 self.metadata = fixture.metadata[run]
                 self.directory = run / 'client/sdgo/gametest'
                 self.directory.mkdir(parents=True)
+                self.round = 0
+                self.battle = False
+                self.settled = False
+                cohort['actors'].append(self)
 
             def state(self):
+                generation = cohort['generation']
+                start_sequence = 1 if stale_second_start and generation == 2 else generation
+                clean = cohort['clean']
                 return {'run': {'ready': '1'}, 'state': {'pilot': str(fixture.pilots[self.index])},
                         'command': {'result': '4', 'done': '1'},
                         'room': {'actual_room_id': '81', 'local_is_host': '1' if self.index == 0 else '0',
-                                 'player_count': '3'},
+                                 'player_count': str(cohort['joined'])},
                         'pvp': {'channel_id': '9304', 'channel_group': '1', 'join_original': '1',
-                                'room': '81', 'host': '17', 'ready_reply': '1', 'ready_original': '1',
-                                'ready_model': '1', 'battle_seen': '1', 'bots': '5', 'local_bots': '5',
-                                'remote_bots': '5', 'settled': '1', 'end_opcode': str(0x0871), 'movement_events': '10'}}
+                                'room': '81', 'host': '17', 'humans': str(cohort['joined']),
+                                'room_occupied': str(3 if clean else cohort['joined'] + (5 if generation else 0)),
+                                'room_ai': '0' if clean else ('5' if generation else '0'),
+                                'round': str(self.round), 'ready_reply': '1', 'ready_original': '1',
+                                'ready_model': '1', 'battle_seen': '1' if self.battle else '0',
+                                'start_sequence': str(start_sequence if self.battle else 0),
+                                'bots': '5', 'local_bots': '5', 'remote_bots': '5',
+                                'settled': '1' if self.settled else '0', 'end_opcode': str(0x0871),
+                                'end_sequence': str(100 + generation if self.settled else 0),
+                                'movement_events': '10' if self.battle else '0'}}
 
             def wait(self, condition, timeout=90):
                 state = self.state()
@@ -115,6 +137,24 @@ class MultiplayerAdmissionTests(unittest.TestCase):
 
             def command(self, operation, **fields):
                 calls.append((self.index, operation, fields))
+                if operation == 'room_create':
+                    cohort['clean'] = False
+                elif operation == 'room_join':
+                    cohort['joined'] += 1
+                    cohort['clean'] = cohort['joined'] == len(fixture.pilots)
+                elif operation == 'room_ready':
+                    self.round = cohort['generation'] + 1
+                    self.battle = self.settled = False
+                elif operation == 'room_start':
+                    cohort['generation'] += 1
+                    cohort['clean'] = False
+                    for actor in cohort['actors']:
+                        actor.round = cohort['generation']
+                        actor.battle = True
+                        actor.settled = False
+                elif operation == 'battle_finish':
+                    self.settled = True
+                    cohort['clean'] = not retain_ghost
                 state = self.state()
                 if operation == 'room_leave' and (fields.get('channel_id') != 9304 or fields.get('room_id') != 81):
                     state['command']['result'] = '258'
@@ -122,13 +162,37 @@ class MultiplayerAdmissionTests(unittest.TestCase):
 
         self.launch.side_effect = None
         self.launch.return_value = {'status': 'pass'}
+        evaluated = {'rounds': None}
+
+        def evaluate(*args, **kwargs):
+            evaluated['rounds'] = kwargs.get('expected_rounds')
+            return {'status': 'pass', 'errors': []}
+
         with mock.patch.object(multiplayer, 'FriendActor', Actor), mock.patch.object(
-                multiplayer.game_test_server_report, 'evaluate', return_value={'status': 'pass', 'errors': []}):
-            result = multiplayer.campaign(self.runs[0], self.runs[1:], self.pilots, [], self.root / 'result.json')
+                multiplayer.game_test_server_report, 'evaluate', side_effect=evaluate):
+            result = multiplayer.campaign(self.runs[0], self.runs[1:], self.pilots, [],
+                                          self.root / 'result.json', rounds=rounds)
+        return result, calls, evaluated
+
+    def test_coordinator_carries_native_room_identity_through_guest_and_host_leave(self):
+        # Protocol fixture only. The real clients must still prove every step.
+        result, calls, evaluated = self.run_protocol_fixture(rounds=2)
         self.assertEqual(result['status'], 'pass')
+        self.assertEqual(result['expected_rounds'], 2)
+        self.assertEqual(evaluated['rounds'], 2)
         self.assertEqual([index for index, operation, _ in calls if operation == 'room_leave'], [1, 2, 0])
-        start = next(i for i, (_, operation, _) in enumerate(calls) if operation == 'room_start')
-        self.assertEqual(sum(operation == 'room_ready' for _, operation, _ in calls[:start]), 2)
+        starts = [i for i, (_, operation, _) in enumerate(calls) if operation == 'room_start']
+        self.assertEqual(len(starts), 2)
+        self.assertEqual([sum(operation == 'room_ready' for _, operation, _ in calls[:start])
+                          for start in starts], [2, 4])
+
+    def test_second_round_cannot_reuse_the_first_native_start_count(self):
+        with self.assertRaisesRegex(AssertionError, 'required coordinator state'):
+            self.run_protocol_fixture(rounds=2, stale_second_start=True)
+
+    def test_coordinator_refuses_to_leave_a_returned_room_with_ghost_ai_slots(self):
+        with self.assertRaisesRegex(AssertionError, 'required coordinator state'):
+            self.run_protocol_fixture(rounds=1, retain_ghost=True)
 
 
 if __name__ == '__main__':

@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstring>
@@ -10,12 +11,14 @@
 
 namespace {
 int failures=0,startedModel=0,factoryCalls=0,fillCalls=0;
+int startParserCalls=0,startParserConstructions=0;
 std::array<uint8_t,0x5DA8> profile{};
 std::array<uint8_t,0x4000> room{};
 std::array<uint8_t,0x4C0> app{};
 std::array<uint8_t,0x10> owner{};
 std::array<uint8_t,0x80> manager{},model{},ownerVtable{};
 std::array<uint8_t,0xA0> modelVtable{};
+std::array<uint8_t,0x20> startParser{},startParserOwner{};
 std::array<uint8_t,0x4000> missionRoom{};
 uint8_t* profilePointer=profile.data();
 uint8_t* appPointer=app.data();
@@ -24,6 +27,7 @@ bool threeD=false;
 std::array<std::array<uint8_t,0x48E>,12> frozen{};
 std::array<uint8_t,0x48E> lastConstruction{};
 std::array<uint8_t,0x344> lastOutput{};
+std::array<int,12> startedModels{};
 std::unique_ptr<room_random_native_test::ClientCopies> nativeCopies;
 template<class T> void Put(uint8_t* p,size_t n,T v){std::memcpy(p+n,&v,sizeof(v));}
 void Check(bool ok,const char* name){std::printf("%s %s\n",ok?"PASS":"FAIL",name);if(!ok)++failures;}
@@ -63,6 +67,29 @@ void Construct(const uint8_t* entry,const uint8_t* source,uint8_t deck) {
     startedModel=static_cast<int>(room_random_client::Read<uint32_t>(output.data(),0x44));
     NativeFactory(15,static_cast<uint32_t>(startedModel));
 }
+void SetTitle(const char* title) {
+    std::memset(room.data()+0x7A,0,20);
+    const auto length=(std::min)(std::strlen(title),size_t{20});
+    room[0x79]=static_cast<uint8_t>(length);
+    std::memcpy(room.data()+0x7A,title,length);
+}
+__declspec(noinline) void __fastcall FakeStartParser(void*,void*,const uint8_t* packet) {
+    ++startParserCalls;
+    if(threeD) {
+        Put<uint32_t>(app.data(),0x4A0,22);
+        const auto deck=room[5]==6 || room[5]==7 ? uint8_t{1} : uint8_t{0};
+        for(size_t slot=0;slot<12;++slot) {
+            const auto* entry=packet+0x20+slot*0x10F;
+            const auto pilot=room_random_client::Read<uint32_t>(entry,0);
+            if(!pilot || (pilot&0x80000000u))continue;
+            Construct(entry,frozen[slot].data(),deck);
+            startedModels[slot]=startedModel;++startParserConstructions;
+        }
+    } else {
+        startedModel=static_cast<int>(room_random_client::Read<uint32_t>(room.data(),0x57C));
+        NativeFactory(15,static_cast<uint32_t>(startedModel));
+    }
+}
 __declspec(noinline) uint8_t* __fastcall NativeRoomInfo(uint8_t* object,void*) {
     return object==model.data() ? room.data() : nullptr;
 }
@@ -80,17 +107,8 @@ void __stdcall QueuedHandler(uint32_t opcode,const uint8_t* packet) {
     // operation from completing before the start command constructs the mode.
     if(opcode==0x0861 && !starting)
         std::memcpy(room.data()+0x57C,packet+0x12,0x99);
-    if(opcode==0x06C3) {
-        if(threeD) {
-            // Conversion also happens after the application leaves room state.
-            // The visible cache and pre-start source are independent objects.
-            Put<uint32_t>(app.data(),0x4A0,22);
-            Construct(packet+0x20,frozen[0].data(),room[5]==6 || room[5]==7 ? 1 : 0);
-        } else {
-            startedModel=static_cast<int>(room_random_client::Read<uint32_t>(room.data(),0x57C));
-            NativeFactory(15,static_cast<uint32_t>(startedModel));
-        }
-    }
+    if(opcode==0x06C3)
+        FakeStartParser(startParser.data(),nullptr,packet);
 }
 __declspec(naked) int NativeDispatch() {
     __asm {
@@ -131,6 +149,7 @@ void Symbols() {
     Symbol(f,"room_random.client_dispatch",reinterpret_cast<const uint8_t*>(&NativeDispatch)+5,"site");
     Symbol(f,"room_random.client_profile",&profilePointer,"data");
     Symbol(f,"room_random.client_fill_human",reinterpret_cast<void*>(&NativeFill),"code");
+    Symbol(f,"room_random.client_begin_start",reinterpret_cast<void*>(&FakeStartParser),"code");
     Symbol(f,"room_random.client_app",&appPointer,"data");
     Symbol(f,"room_random.client_waitroom_vtable",ownerVtable.data(),"data");
     Symbol(f,"room_random.client_room_info",reinterpret_cast<void*>(&NativeRoomInfo),"code");
@@ -162,6 +181,8 @@ int wmain(int argc,wchar_t** argv) {
     std::array<uint8_t,0xCD4> start{};Put<uint16_t>(start.data(),0,0x06C3);
     Put<uint32_t>(start.data(),0x20,1001);Put<uint32_t>(start.data(),0x2E,11032);
     std::array<uint8_t,0x50> dispatcher{};void* head=nullptr;Put<void*>(dispatcher.data(),0x44,&head);
+    Put<uint8_t*>(startParser.data(),0x0C,startParserOwner.data());
+    Put<uint8_t*>(startParserOwner.data(),0x14,model.data());
     auto dispatch=reinterpret_cast<DispatchFn>(&NativeDispatch);
     dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
     Check(startedModel==15019,"baseline reproduces stale model while native start is pending");
@@ -242,13 +263,13 @@ int wmain(int argc,wchar_t** argv) {
           "an invalid active 3D model cannot fall back to a stale writable legacy room");
     modelVtable=liveModelVtable;
     Put<uint8_t*>(profile.data(),0xEC,nullptr);
-    // A real four-human trace can deliver the last full record after 06C3.
-    // Rejected packets and that delayed fourth record must not revoke the three
-    // already-authorized frozen sources.
-    threeD=false;Put<uint32_t>(app.data(),0x4A0,18);
+    // A real four-human random trace can deliver the last full record after
+    // 06C3. The production parser must be held and then invoked once by the
+    // final matching native notice; tests do not synthesize another Construct.
+    threeD=true;Put<uint32_t>(app.data(),0x4A0,18);
     Put<uint32_t>(room.data(),0,40);room[5]=8;
+    SetTitle("1v1 !rand");
     std::array<std::array<uint8_t,0x99>,4> lateUnits{};
-    std::array<std::array<uint8_t,0x48E>,4> lateSources{};
     std::array<std::array<uint8_t,room_random_sync::kPayload+room_random_sync::kUnitSize>,4> lateNotices{};
     std::array<uint8_t,0xCD4> lateStart{};Put<uint16_t>(lateStart.data(),0,0x06C3);
     for(size_t slot=0;slot<4;++slot) {
@@ -263,42 +284,56 @@ int wmain(int argc,wchar_t** argv) {
             0x0861,pilot,static_cast<uint32_t>(slot),40,lateUnits[slot]);
         Put<uint32_t>(lateStart.data(),0x20+slot*0x10F,pilot);
         Put<uint32_t>(lateStart.data(),0x2E+slot*0x10F,newModel);
-        Put<uint32_t>(lateSources[slot].data(),0x429,pilot);
-        Put<uint32_t>(lateSources[slot].data(),0x49,oldModel);
+        frozen[slot]={};
+        Put<uint32_t>(frozen[slot].data(),0x429,pilot);
+        Put<uint32_t>(frozen[slot].data(),0x49,oldModel);
     }
     for(size_t slot=0;slot<3;++slot)
         dispatch(dispatcher.data(),0,0,0,0x0861,lateNotices[slot].data());
+    startParserCalls=0;startParserConstructions=0;startedModels={};
     dispatch(dispatcher.data(),0,0,0,0x06C3,lateStart.data());
+    Check(startParserCalls==(enabled?0:1),
+          "random start is held only while the final human record is missing");
     auto rejectedLate=lateNotices[3];Put<uint32_t>(rejectedLate.data(),6,9999);
     dispatch(dispatcher.data(),0,0,0,0x0861,rejectedLate.data());
     auto rangedLate=lateNotices[3];Put<uint32_t>(rangedLate.data(),10,12);
     dispatch(dispatcher.data(),0,0,0,0x0861,rangedLate.data());
-    for(size_t slot=0;slot<3;++slot) {
-        Construct(lateStart.data()+0x20+slot*0x10F,lateSources[slot].data(),0);
-        Check(startedModel==(enabled?static_cast<int>(14001+slot):static_cast<int>(17001+slot)),
-              "rejected post-start notices preserve an on-time human construction source");
-    }
-    Construct(lateStart.data()+0x20+3*0x10F,lateSources[3].data(),0);
-    Check(startedModel==17004,"missing fourth notice keeps its frozen source unchanged");
-    dispatch(dispatcher.data(),0,0,0,0x0861,lateNotices[3].data());
-    for(size_t slot=0;slot<4;++slot) {
-        Construct(lateStart.data()+0x20+slot*0x10F,lateSources[slot].data(),0);
-        Check(startedModel==(enabled?static_cast<int>(14001+slot):static_cast<int>(17001+slot)),
-              "delayed fourth notice completes one slot without revoking the first three");
-    }
-    auto nextUnit=lateUnits[1];Put<uint32_t>(nextUnit.data(),0,17002);
-    auto nextNotice=room_random_sync::Packet(0x0861,4102,1,40,nextUnit);
-    dispatch(dispatcher.data(),0,0,0,0x0861,nextNotice.data());
-    Construct(lateStart.data()+0x20+0x10F,lateSources[1].data(),0);
-    Check(startedModel==17002,"later selection invalidates only its own frozen source");
-    Construct(lateStart.data()+0x20,lateSources[0].data(),0);
-    Check(startedModel==(enabled?14001:17001),"one later selection preserves another human start authority");
-    Put<uint32_t>(room.data(),0,41);
     dispatch(dispatcher.data(),0,0,0,0x0861,lateNotices[0].data());
-    Construct(lateStart.data()+0x20,lateSources[0].data(),0);
-    Check(startedModel==17001,"room generation change rejects the previous start authority");
+    Check(startParserCalls==(enabled?0:1),
+          "rejected and duplicate notices cannot release an incomplete start");
+    auto replacementStart=lateStart;replacementStart[0x20+5]=0x33;
+    dispatch(dispatcher.data(),0,0,0,0x06C3,replacementStart.data());
+    Check(startParserCalls==(enabled?0:2),
+          "a replacement 06C3 supersedes the older held parser generation");
+    dispatch(dispatcher.data(),0,0,0,0x0861,lateNotices[3].data());
+    Check(startParserCalls==(enabled?1:2) &&
+          startParserConstructions==(enabled?4:8),
+          "the latest original parser runs once when all four humans are complete");
+    for(size_t slot=0;slot<4;++slot) {
+        Check(startedModels[slot]==(enabled?static_cast<int>(14001+slot):static_cast<int>(17001+slot)),
+              "resumed parser constructs every human from one coherent generation");
+    }
+    // A held parser belongs to one room/model generation. Once that identity
+    // changes, a later record must not replay the stale packet or parser.
+    Put<uint32_t>(app.data(),0x4A0,18);Put<uint32_t>(room.data(),0,41);
+    for(size_t slot=0;slot<3;++slot) {
+        Put<uint32_t>(lateNotices[slot].data(),2,41);
+        dispatch(dispatcher.data(),0,0,0,0x0861,lateNotices[slot].data());
+    }
+    auto generationStart=replacementStart;
+    dispatch(dispatcher.data(),0,0,0,0x06C3,generationStart.data());
+    const auto beforeGeneration=startParserCalls;
+    Put<uint32_t>(room.data(),0,42);
+    std::array<uint8_t,2> irrelevant{};Put<uint16_t>(irrelevant.data(),0,0x7777);
+    dispatch(dispatcher.data(),0,0,0,0x7777,irrelevant.data());
+    Put<uint32_t>(lateNotices[3].data(),2,42);
+    dispatch(dispatcher.data(),0,0,0,0x0861,lateNotices[3].data());
+    Check(startParserCalls==beforeGeneration,
+          "room generation change discards a held parser instead of replaying it");
     // Full ship and every native model/attribute projection survive the hook.
-    threeD=true;Put<uint32_t>(room.data(),0,42);room[5]=7;Put<uint32_t>(app.data(),0x4A0,18);
+    threeD=true;Put<uint32_t>(room.data(),0,43);room[5]=7;Put<uint32_t>(app.data(),0x4A0,18);
+    SetTitle("deck !random");
+    frozen[0]=original;
     Put<uint32_t>(room.data(),0x95C,1001);Put<uint32_t>(room.data(),0x57C,15019);
     std::array<uint8_t,0x2BC> ship{};
     for(size_t i=0;i<4;++i) {
@@ -311,8 +346,14 @@ int wmain(int argc,wchar_t** argv) {
     }
     Put<uint64_t>(ship.data(),0x1C,0x100000001ULL);
     auto deck=room_random_sync::Packet(0x098B,1001,0,7,ship);
-    dispatch(dispatcher.data(),0,0,0,0x098B,deck.data());dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
+    startParserCalls=0;startParserConstructions=0;startedModels={};
+    dispatch(dispatcher.data(),0,0,0,0x098B,deck.data());
     dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
+    Check(startParserCalls==(enabled?0:1),
+          "deck start waits when the matching unit record is still late");
+    dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
+    Check(startParserCalls==1 && startParserConstructions==1,
+          "late unit record releases the original deck parser exactly once");
     expected=original;
     if(enabled){std::memcpy(expected.data()+0x49,notice.data()+0x12,0x99);std::memcpy(expected.data()+0x146,ship.data(),ship.size());}
     Check(lastConstruction==expected && frozen[0]==original,"real DLL passes the complete ship with original pilot metadata and immutable source");
@@ -323,7 +364,8 @@ int wmain(int argc,wchar_t** argv) {
     auto ai=start;Put<uint32_t>(ai.data(),0x20,0x80000001u);Construct(ai.data()+0x20,frozen[0].data(),0);
     Check(lastConstruction==original,"AI-tagged source passes through unchanged");
     Put<uint32_t>(app.data(),0x4A0,18);
-    dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());Construct(start.data()+0x20,frozen[0].data(),1);
+    auto changedNotice=notice;changedNotice[0x12+8]^=1;
+    dispatch(dispatcher.data(),0,0,0,0x0861,changedNotice.data());Construct(start.data()+0x20,frozen[0].data(),1);
     Check(lastConstruction==original,"a later loadout notice invalidates previous construction authority");
     std::printf("%s CLIENT START-STATE RUNTIME CHECKS\n",failures?"FAILED":"PASSED");return failures?1:0;
 }

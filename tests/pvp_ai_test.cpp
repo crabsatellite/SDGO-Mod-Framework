@@ -16,6 +16,11 @@ uint32_t failSetup = 0;
 int buildCalls = 0, setupCalls = 0, respawns = 0, refreshes = 0, stateRespawns = 0;
 int originals = 0;
 int resultHostCalls=0,resultHostTransfer=-1;
+std::vector<std::array<uint8_t, 0x1A>> leavePackets;
+std::vector<bool> leaveOriginalReturned;
+std::vector<bool> leaveAiStillPresent;
+int replaceSlotAfterBroadcast = -1;
+uint32_t replacementPilotId = 0;
 void __fastcall NativeResultHost(uint8_t* value,void*,const int* order,const int*,int transfer,int count) {
     ++resultHostCalls;resultHostTransfer=transfer;
     if(transfer>0 && count>0 && order && order[0]>=0 && order[0]<kSlots)
@@ -95,6 +100,29 @@ void __fastcall End(uint8_t* endRoom, void*, uint16_t, uint16_t, int) {
     }
     originalReturnedBeforeObserver = true;
 }
+int __fastcall Broadcast(uint8_t* value, void*, uint8_t* packet, uint32_t length,
+                         uint32_t* attemptedRecipients) {
+    CHECK(length == sizeof(RoomLeavePacket));
+    CHECK(Get<uint16_t>(packet, 0) == 0x1F47);
+    const uint32_t slot = Get<uint32_t>(packet, 0x12);
+    const uint32_t pilotId = Get<uint32_t>(packet, 0x16);
+    CHECK(slot < static_cast<uint32_t>(kSlots));
+    const bool stillPresent = slot < static_cast<uint32_t>(kSlots) &&
+                              SlotPilotId(value, static_cast<int>(slot)) == pilotId &&
+                              (pilotId & kAiPilotBit) != 0;
+    leaveOriginalReturned.push_back(originalReturnedBeforeObserver);
+    leaveAiStillPresent.push_back(stillPresent);
+    std::array<uint8_t, 0x1A> saved{};
+    std::memcpy(saved.data(), packet, saved.size());
+    leavePackets.push_back(saved);
+    *attemptedRecipients = Get<uint32_t>(value, kRoomPlayers);
+    Put(packet, 2, 10u);
+    if (static_cast<int>(slot) == replaceSlotAfterBroadcast) {
+        SlotPilotId(value, static_cast<int>(slot)) = replacementPilotId;
+        std::memset(value + kPilots + slot * kPilotStride, 0x5A, kPilotStride);
+    }
+    return 1;
+}
 void __cdecl Observe(const SdgoPvpAiObserverEventV1* event, void*) {
     CHECK(originalReturnedBeforeObserver);
     observerEvents.push_back(*event);
@@ -127,6 +155,7 @@ void Reset(int mode = 1) {
     g_respawnPilot = reinterpret_cast<RespawnPilotFn>(&Respawn);
     g_respawnRefresh = reinterpret_cast<RespawnRefreshFn>(&Refresh);
     g_pilotStateRespawn = reinterpret_cast<PilotStateRespawnFn>(&StateRespawn);
+    g_broadcast = reinterpret_cast<BroadcastFn>(&Broadcast);
     g_battleEnd = reinterpret_cast<BattleEndFn>(&End);
     g_resultHost = reinterpret_cast<ResultHostFn>(&NativeResultHost);
     resultHostCalls=0;resultHostTransfer=-1;
@@ -145,6 +174,11 @@ void Reset(int mode = 1) {
     clearIdentityAtEnd = false;
     originalReturnedBeforeObserver = false;
     observerEvents.clear();
+    leavePackets.clear();
+    leaveOriginalReturned.clear();
+    leaveAiStillPresent.clear();
+    replaceSlotAfterBroadcast = -1;
+    replacementPilotId = 0;
 }
 int __fastcall NativeHumanSetup(void* proc,void*,uint8_t* value,uint32_t*,uint32_t*,uint8_t) {
     ++nativeHumanCalls;
@@ -382,6 +416,7 @@ int wmain(int argc,wchar_t** argv) {
     Put<uint32_t>(room.data(),kRoomPlayers,3);nativeAssignDuringSetup=true;failBuild=100;
     const auto coopPool=npcIds;npcIds={100,101};coopBefore=room;
     CHECK(AddUsingNativePoolFixture(true)==0x0FBE);
+    CHECK(leavePackets.empty());
     for(int slot:{0,6,11}) {
         CHECK(SlotTeam(room.data(),slot)==SlotTeam(coopBefore.data(),slot));
         CHECK(room[kSlotInfo+slot*kSlotInfoStride+kSlotInfoColour]==coopBefore[kSlotInfo+slot*kSlotInfoStride+kSlotInfoColour]);
@@ -597,14 +632,53 @@ int wmain(int argc,wchar_t** argv) {
     Reset(3);Human(0,1);CHECK(AddAiPilot(room.data(),6,100,2,2));
 
     SCENARIO("battle end removes AI, preserves humans and releases diagnostic state");
-    room[kRoomMode] = 1; before.assign(Pilot(0), Pilot(0) + kPilotStride);
+    room[kRoomMode] = 1; Put<uint32_t>(room.data(), 0, 0x1357u);
+    Put<uint32_t>(room.data(), kRoomPlayers, 1u);
+    CHECK(AddAiPilot(room.data(), 7, 101, 2, 2));
+    const uint32_t firstAi = SlotPilotId(room.data(), 6);
+    const uint32_t secondAi = SlotPilotId(room.data(), 7);
+    const uint32_t hostBeforeEnd = Get<uint32_t>(room.data(), kRoomHost);
+    const uint32_t humansBeforeEnd = Get<uint32_t>(room.data(), kRoomPlayers);
+    before.assign(Pilot(0), Pilot(0) + kPilotStride);
     FindDead(room.data(), SlotPilotId(room.data(), 6), true, 77);
     g_watch[0].room = room.data();
     BattleEnd(room.data(), nullptr, 0, 0, 100);
-    CHECK(originals == 1 && SlotPilotId(room.data(), 6) == 0 && SlotPilotId(room.data(), 0) == 10);
+    CHECK(originals == 1 && SlotPilotId(room.data(), 6) == 0 &&
+          SlotPilotId(room.data(), 7) == 0 && SlotPilotId(room.data(), 0) == 10);
     CHECK(std::equal(before.begin(), before.end(), Pilot(0)));
+    CHECK(Get<uint32_t>(room.data(), kRoomHost) == hostBeforeEnd);
+    CHECK(Get<uint32_t>(room.data(), kRoomPlayers) == humansBeforeEnd);
+    CHECK(leavePackets.size() == 2);
+    CHECK(leaveOriginalReturned.size() == 2 &&
+          std::all_of(leaveOriginalReturned.begin(), leaveOriginalReturned.end(),
+                      [](bool value) { return value; }));
+    CHECK(leaveAiStillPresent.size() == 2 &&
+          std::all_of(leaveAiStillPresent.begin(), leaveAiStillPresent.end(),
+                      [](bool value) { return value; }));
+    if (leavePackets.size() == 2) {
+        CHECK(Get<uint32_t>(leavePackets[0].data(), 0x06) == 0x1357u);
+        CHECK(Get<uint32_t>(leavePackets[0].data(), 0x0A) == humansBeforeEnd);
+        CHECK(Get<uint32_t>(leavePackets[0].data(), 0x0E) == hostBeforeEnd);
+        CHECK(Get<uint32_t>(leavePackets[0].data(), 0x12) == 6u);
+        CHECK(Get<uint32_t>(leavePackets[0].data(), 0x16) == firstAi);
+        CHECK(Get<uint32_t>(leavePackets[1].data(), 0x12) == 7u);
+        CHECK(Get<uint32_t>(leavePackets[1].data(), 0x16) == secondAi);
+    }
     CHECK(g_dead[0].room == nullptr && g_watch[0].room == nullptr);
-    RemoveAiPilots(room.data()); CHECK(SlotPilotId(room.data(), 0) == 10);
+    RemoveAiPilots(room.data(), false); CHECK(SlotPilotId(room.data(), 0) == 10);
+
+    SCENARIO("battle-end cleanup preserves a replacement occupant if a slot changes after its notice");
+    Reset(1); Human(0, 1); CHECK(AddAiPilot(room.data(), 6, 100, 2, 2));
+    const uint32_t replacedAi = SlotPilotId(room.data(), 6);
+    FindDead(room.data(), replacedAi, true, 77);
+    replaceSlotAfterBroadcast = 6;
+    replacementPilotId = 16;
+    BattleEnd(room.data(), nullptr, 0, 0, 100);
+    CHECK(leavePackets.size() == 1);
+    CHECK(SlotPilotId(room.data(), 6) == replacementPilotId);
+    CHECK(std::all_of(Pilot(6), Pilot(6) + kPilotStride,
+                      [](uint8_t value) { return value == 0x5A; }));
+    CHECK(g_dead[0].room == nullptr);
 
     SCENARIO("battle-end observer preserves the real battle identity and publishes only after the native end returns");
     Reset(1);

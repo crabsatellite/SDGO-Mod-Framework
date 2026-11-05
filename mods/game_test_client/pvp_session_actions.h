@@ -24,6 +24,7 @@ public:
     enum Operation:uint32_t {Join=34,Ready=35,Start=36,FinishBattle=37};
     struct Observation {
         uint32_t result=0,operation=0,sequence=0,pilot=0,expected_host=0,host=0,room=0,humans=0;
+        uint32_t round=0,room_occupied=0,room_ai=0;
         uint32_t start_sequence=0,end_sequence=0,frames=0,movement_events=0,bots=0,local_bots=0,remote_bots=0;
         uint32_t join_result=0,ready_result=0,hp_events=0,lua_errors=0,join_stage=0,join_control_flags=0;
         uint16_t end_opcode=0;
@@ -50,11 +51,13 @@ public:
             targetGroup_=group;targetChannel_=channel;
             joinStarted_=false;
         } else if(op_==Ready) {
-            if(state_.pilot==command.target_id||!joined_)return Fail();
+            if(state_.pilot==command.target_id||!joined_||!CleanHumanRoster(current))return Fail();
+            BeginRound();
             readyStarted_=false;
         } else if(op_==Start) {
-            if(state_.battle_seen||state_.pilot!=command.target_id||!current.local_is_host||current.player_count!=humans)return Fail();
+            if(state_.pilot!=command.target_id||!current.local_is_host||!CleanHumanRoster(current))return Fail();
             expectedRoom_=current.room_id;
+            BeginRound();
         } else if(op_==FinishBattle) {
             if(!expectedRoom_||!state_.battle_seen)return Fail();
         } else return Fail();
@@ -62,6 +65,7 @@ public:
     }
     void Tick(const SdgoGameTestContextV1* context) {
         if(!native_||!room_||!join_)return;
+        ObserveRoom(room_->NativeRoomState());
         Track();
         if(!active_)return;
         if(op_==Join) {
@@ -101,12 +105,16 @@ public:
             auto step=*context;step.tick=ticks_++;step.elapsed_ms=GetTickCount64()-at_;
             const int result=start_(&step);
             if(result==SDGO_GAME_TEST_FAIL){Fail();return;}
-            if(result==SDGO_GAME_TEST_PASS)Complete();
+            if(result==SDGO_GAME_TEST_PASS)startAccepted_=true;
+            if(startAccepted_&&state_.battle_seen&&state_.start_sequence>roundStartBaseline_)Complete();
         } else if(op_==FinishBattle) {
             const auto ended=room_->BattleEndState();const auto current=room_->NativeRoomState();
-            if(!ended.sequence||ended.reply_opcode!=0x0871||!ended.original_handler_completed||!RoomT::SettledRoomReady(current))return;
-            if(current.room_id!=expectedRoom_||current.room_mode!=mode_||current.player_count!=expectedHumans_||!current.host_pilot_id||
-               (current.host_pilot_id&0x80000000u)||!state_.movement_events||!state_.frames||state_.lua_errors||
+            ObserveRoom(current);
+            if(ended.sequence<=roundEndBaseline_||ended.reply_opcode!=0x0871||!ended.original_handler_completed||!RoomT::SettledRoomReady(current))return;
+            if(current.room_id!=expectedRoom_||current.room_mode!=mode_||current.player_count!=expectedHumans_||
+               current.host_pilot_id!=state_.expected_host||(current.host_pilot_id&0x80000000u)){Fail();return;}
+            if(!CleanHumanRoster(current))return;
+            if(!state_.movement_events||!state_.frames||state_.lua_errors||
                (state_.pilot==state_.expected_host&&!combat_.State().complete_evidence)){Fail();return;}
             state_.room=current.room_id;state_.host=current.host_pilot_id;state_.humans=current.player_count;
             state_.local_host=current.local_is_host;state_.end_sequence=ended.sequence;state_.end_opcode=ended.reply_opcode;state_.settled=1;
@@ -117,8 +125,8 @@ public:
     Observation State()const{return state_;}
     void Append(FILE* file)const {
         const auto s=State();
-        fprintf(file,"[pvp]\noperation=%u\nsequence=%u\nresult=%u\npilot=%u\nexpected_host=%u\nhost=%u\nroom=%u\nhumans=%u\nlocal_host=%u\nstart_sequence=%u\nend_sequence=%u\nend_opcode=%u\nbattle_seen=%u\nsettled=%u\nframes=%u\nmovement_events=%u\nbots=%u\nlocal_bots=%u\nremote_bots=%u\njoin_result=%u\njoin_original=%u\nready_result=%u\nready_reply=%u\nready_original=%u\nready_model=%u\n",
-            s.operation,s.sequence,s.result,s.pilot,s.expected_host,s.host,s.room,s.humans,s.local_host,s.start_sequence,s.end_sequence,s.end_opcode,s.battle_seen,s.settled,s.frames,s.movement_events,s.bots,s.local_bots,s.remote_bots,s.join_result,s.join_original,s.ready_result,s.ready_reply,s.ready_original,s.ready_model);
+        fprintf(file,"[pvp]\noperation=%u\nsequence=%u\nresult=%u\npilot=%u\nexpected_host=%u\nhost=%u\nroom=%u\nhumans=%u\nlocal_host=%u\nround=%u\nroom_occupied=%u\nroom_ai=%u\nstart_sequence=%u\nend_sequence=%u\nend_opcode=%u\nbattle_seen=%u\nsettled=%u\nframes=%u\nmovement_events=%u\nbots=%u\nlocal_bots=%u\nremote_bots=%u\njoin_result=%u\njoin_original=%u\nready_result=%u\nready_reply=%u\nready_original=%u\nready_model=%u\n",
+            s.operation,s.sequence,s.result,s.pilot,s.expected_host,s.host,s.room,s.humans,s.local_host,s.round,s.room_occupied,s.room_ai,s.start_sequence,s.end_sequence,s.end_opcode,s.battle_seen,s.settled,s.frames,s.movement_events,s.bots,s.local_bots,s.remote_bots,s.join_result,s.join_original,s.ready_result,s.ready_reply,s.ready_original,s.ready_model);
         fprintf(file,"hp_events=%u\nlua_errors=%u\njoin_stage=%u\njoin_control_flags=%u\n",s.hp_events,s.lua_errors,s.join_stage,s.join_control_flags);
         fprintf(file,"ready_stage=%u\nready_context_flags=%u\n",join_->ReadyStage(),join_->ReadyContextFlags());
         const auto selected=native_->OnboardingState();
@@ -133,10 +141,42 @@ private:
     }
     Result Fail(){active_=false;state_.result=friends::FriendActions::kNativeFault;return friends::FriendActions::kNativeFault;}
     void Complete(){active_=false;state_.result=friends::FriendActions::kReady;}
+    template<class ObservationT> bool CleanHumanRoster(const ObservationT& room)const {
+        if(!RoomT::SettledRoomReady(room)||(expectedRoom_&&room.room_id!=expectedRoom_)||
+           room.room_mode!=mode_||room.player_count!=expectedHumans_||
+           room.host_pilot_id!=state_.expected_host||(room.host_pilot_id&0x80000000u)||
+           room.occupied_slot_count!=expectedHumans_||room.ai_pilot_count)return false;
+        uint32_t occupied=0;
+        for(uint32_t pilot:room.slot_pilot_ids) {
+            if(!pilot)continue;
+            if(pilot&0x80000000u)return false;
+            ++occupied;
+        }
+        return occupied==expectedHumans_;
+    }
+    template<class ObservationT> void ObserveRoom(const ObservationT& room) {
+        if(!RoomT::SettledRoomReady(room))return;
+        state_.room_occupied=room.occupied_slot_count;state_.room_ai=room.ai_pilot_count;
+        state_.room=room.room_id;state_.host=room.host_pilot_id;state_.humans=room.player_count;
+        state_.local_host=room.local_is_host;
+    }
+    void BeginRound() {
+        roundStartBaseline_=state_.start_sequence;
+        const auto ended=room_->BattleEndState();
+        roundEndBaseline_=state_.end_sequence>ended.sequence?state_.end_sequence:ended.sequence;
+        ++state_.round;
+        state_.start_sequence=0;state_.end_sequence=0;state_.end_opcode=0;
+        state_.frames=0;state_.movement_events=0;state_.bots=0;state_.local_bots=0;state_.remote_bots=0;
+        state_.hp_events=0;state_.lua_errors=0;state_.battle_seen=0;state_.settled=0;
+        state_.ready_result=0;state_.ready_reply=0;state_.ready_original=0;state_.ready_model=0;
+        samples_={};combat_.Reset();startAccepted_=false;
+    }
     void Track() {
         SdgoPvpAiClientSnapshotV1 s{};
         if(!snapshot_||!snapshot_(s)||s.size<sizeof(s)||s.version!=SDGO_PVP_AI_CLIENT_OBSERVER_VERSION||
-           s.native_app_state!=22||!s.received_battle_start_count||!control_(s.received_battle_start_count))return;
+           s.native_app_state!=22||s.received_battle_start_count<=roundStartBaseline_||
+           !control_(s.received_battle_start_count))return;
+        if(state_.battle_seen&&s.received_battle_start_count!=state_.start_sequence)return;
         if(s.profile_pilot_id!=state_.pilot||s.room_mode!=mode_||wcscmp(s.room_title,wideTitle_)||
            s.human_participant_count!=expectedHumans_||s.bot_count!=expectedBots_)return;
         uint32_t local=0,remote=0;
@@ -147,6 +187,10 @@ private:
         }
         if((state_.pilot==state_.expected_host&&local!=expectedBots_)||
            (state_.pilot!=state_.expected_host&&remote!=expectedBots_))return;
+        if(!state_.battle_seen) {
+            const auto ended=room_->BattleEndState();
+            if(ended.sequence>roundEndBaseline_)roundEndBaseline_=ended.sequence;
+        }
         for(uint32_t i=0;i<s.bot_count;++i) {
             const auto& bot=s.bots[i];auto& before=samples_[i];
             if(before.id==bot.object_id && before.pilot==bot.pilot_id &&
@@ -166,9 +210,10 @@ private:
     NativeT* native_=nullptr;RoomT* room_=nullptr;JoinT* join_=nullptr;SnapshotFn snapshot_=nullptr;StartFn start_=nullptr;ControlFn control_=nullptr;
     ChannelFn channel_=nullptr;uint32_t targetGroup_=UINT32_MAX;uint16_t targetChannel_=0;
     Observation state_{};uint32_t expectedBots_=0,expectedHumans_=0,mode_=0,expectedRoom_=0,op_=0;
+    uint32_t roundStartBaseline_=0,roundEndBaseline_=0;
     std::array<Sample,12> samples_{};
     BattleCombatActions combat_;
     char title_[128]{};wchar_t wideTitle_[32]{};
-    bool active_=false,joined_=false,joinStarted_=false,readyStarted_=false;uint64_t at_=0,ticks_=0;
+    bool active_=false,joined_=false,joinStarted_=false,readyStarted_=false,startAccepted_=false;uint64_t at_=0,ticks_=0;
 };
 using PvpSessionActions=PvpSessionActionsT<>;

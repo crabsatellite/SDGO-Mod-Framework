@@ -110,9 +110,23 @@ class NativeAiTeamPlanTests(unittest.TestCase):
         self.assertIn('pvp.mode9.waiting',cases)
         self.assertIn('pvp.mode9.rematch.start',cases)
 
-    def test_same_room_rematch_rejects_non_battle_or_random_restore_scopes(self):
+    def test_random_loadout_can_rematch_in_the_same_room(self):
+        run=self.fixture.prepare('same-room-random',expected_ai=4,ai_allies=1,
+                                 random_loadout=True,same_room_rematch=True)
+        metadata=self.fixture.metadata(run)
+        self.assertIs(metadata['plan']['same_room_rematch'],True)
+        self.assertIs(metadata['plan']['random_loadout'],True)
+        self.assertTrue(metadata['plan']['room_title'].endswith('!ai e3 a1 !rand'))
+        self.assertIn('pvp.waiting',self.gt.required_cases_for_plan(metadata['plan']))
+        self.assertIn('pvp.rematch.return',self.gt.required_cases_for_plan(metadata['plan']))
+        job=self.gt.read_ini(run/'client/sdgo/gametest/run.ini')
+        self.assertEqual(job['run']['same_room_rematch'],'1')
+        self.assertEqual(job['run']['random_loadout'],'1')
+        self.assertEqual(self.gt.validate_metadata(run)['plan'],metadata['plan'])
+
+    def test_same_room_rematch_rejects_non_battle_scopes(self):
         for args in ({'bootstrap_only':True},{'pages_only':True},{'mission_mode':5},
-                     {'battleship_only':True},{'random_loadout':True}):
+                     {'battleship_only':True}):
             with self.subTest(args=args),self.assertRaises(self.gt.GameTestError):
                 self.fixture.prepare('bad-rematch-'+str(len(str(args))),same_room_rematch=True,**args)
         with self.assertRaises(self.gt.GameTestError):

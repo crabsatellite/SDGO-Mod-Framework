@@ -2859,8 +2859,8 @@ def prepare(
         parsed=re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:[-+].*)?',sdk)
         if not parsed or tuple(map(int,parsed.groups())) < (0,1,8):
             raise GameTestError('the sealed hangar page group requires native observer 0.1.8 or newer')
-    if type(same_room_rematch) is not bool or (same_room_rematch and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,random_loadout)))):
-        raise GameTestError('same-room rematch requires complete PvP without random loadout or preparation-only scopes')
+    if type(same_room_rematch) is not bool or (same_room_rematch and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only)))):
+        raise GameTestError('same-room rematch requires complete PvP without preparation-only scopes')
     if rebind_existing_account:
         raise GameTestError('existing-account rebinding requires --reuse-client')
     if (ai_allies is not None or random_teams or ai_policy is not None or ai_teams is not None) and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,
