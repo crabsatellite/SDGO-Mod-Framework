@@ -31,6 +31,8 @@ def main():
         tls=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);tls.load_cert_chain(cert,key);https_server.socket=tls.wrap_socket(https_server.socket,server_side=True)
         thread=threading.Thread(target=https_server.serve_forever,daemon=True);thread.start()
         feed=f'https://127.0.0.1:{https_server.server_port}/owner-feed.json'
+        ordinary=f.host('existing-default');f.mod(ordinary,'example')
+        ordinary['runtime_mode']='owner'  # Earlier Manager's automatic classification.
         f.workspace.settings['services']['manager.updates']={'enabled':False};f.workspace.save_workspace()
         environment=dict(os.environ,SSL_CERT_FILE=str(cert));environment.pop('PYTHONPATH',None)
         process=subprocess.Popen([str(args.exe.resolve()),'--workspace',str(f.workspace.root),'--no-browser'],cwd=f.root,
@@ -49,6 +51,10 @@ def main():
                 headers={'Content-Type':'application/json','Origin':base,'X-ModManager-Token':token})
             with urllib.request.urlopen(req,timeout=30)as response:return json.load(response)
         token=call('/api/state')['session_token']
+        rows=call('/api/owner-updates')['hosts']
+        assert next(h for h in rows if h['id']==ordinary['id'])['mode']=='starter'
+        assert next(h for h in rows if h['id']==f.owner['id'])['mode']=='owner'
+        assert (Path(ordinary['path'])/'sdgo/core.dll').read_bytes()==b'owner core'
         source_cfg={**f.source_cfg,'feeds':[feed]}
         call('/api/owner-updates',{'action':'configure','host':f.owner['id'],'mode':'owner','publication':source_cfg})
         assert (Path(f.owner['path'])/o.MAINTAINER).is_file()
@@ -80,7 +86,7 @@ def main():
         assert wait_publish()['revision']==2
         cli('--sync-owner-pack');assert (player/'sdgo/mods/example/config.ini').read_bytes()==b'[settings]\nAmount=98\n'
         cli('--check-owner-pack');assert (player/'config.xml').read_bytes()==personal
-        print('PASS standalone owner publication, HTTPS identity pinning, two player revisions, read-only audit and personal-state preservation')
+        print('PASS standalone starter-default migration, explicit DIY preservation, owner publication, HTTPS identity pinning, two player revisions, read-only audit and personal-state preservation')
         call('/api/exit',{});process.wait(timeout=30)
     finally:
         if process and process.poll()is None:
