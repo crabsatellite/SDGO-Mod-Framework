@@ -7,18 +7,55 @@ from pathlib import Path
 import argparse
 import concurrent.futures
 import json
+import time
+from contextlib import contextmanager
 
 import game_test
 from game_test_friends import FriendActor,assert_receipt
 import game_test_server_report
 
 
-def campaign(host:Path,peers:list[Path],pilots:list[int],events:list[Path],output:Path,*,timeout=1200,rounds=1):
+def owned_actor_process(actor):
+    """Resolve the authenticated capsule's exact native image before a delay."""
+    import psutil
+    rows=actor.native_events()
+    pilots={int(row['pid']) for row in rows if row.get('pid')}
+    if len(pilots)!=1:raise game_test.GameTestError('delayed actor must have one observed native process')
+    expected=Path(actor.metadata['client']['game']).resolve()
+    process=psutil.Process(next(iter(pilots)))
+    if Path(process.exe()).resolve()!=expected:
+        raise game_test.GameTestError('refuse to delay a process outside its owned native capsule')
+    return process,expected,process.create_time()
+
+
+@contextmanager
+def pause_owned_actor(actor):
+    """Suspend scheduling, never game state, and always release the owned PID."""
+    import psutil
+    process,expected,created=owned_actor_process(actor)
+    process.suspend()
+    proof={'pid':process.pid,'method':'owned_native_process_suspend','started':time.monotonic()}
+    try:yield proof
+    finally:
+        try:
+            current=psutil.Process(process.pid)
+            if current.create_time()!=created or Path(current.exe()).resolve()!=expected:
+                raise game_test.GameTestError('delayed native process identity changed; foreign process preserved')
+            current.resume();proof['resumed']=True
+        except psutil.NoSuchProcess:proof['resumed']=False
+        proof['elapsed_seconds']=time.monotonic()-proof['started']
+
+
+def campaign(host:Path,peers:list[Path],pilots:list[int],events:list[Path],output:Path,*,timeout=1200,rounds=1,
+             slow_peer_pilot=0,slow_peer_seconds=0):
     if type(rounds) is not int or rounds not in (1,2):
         raise game_test.GameTestError('coordinated multiplayer rounds must be 1 or 2')
     if not pilots:raise game_test.GameTestError('declare the existing human roster before launch')
     roster=sorted(game_test_server_report.human_roster(pilots[0],pilots))
     if len(roster)<2:raise game_test.GameTestError('coordinated multiplayer requires at least two real humans')
+    if (bool(slow_peer_pilot)!=bool(slow_peer_seconds) or
+            (slow_peer_pilot and (slow_peer_pilot not in pilots[1:] or type(slow_peer_seconds) is not int or not 1<=slow_peer_seconds<=25))):
+        raise game_test.GameTestError('a delayed native guest must be a declared peer with a 1..25 second bounded pause')
     runs=[host.resolve(),*[p.resolve() for p in peers]]
     if len(runs)!=len(roster) or len(set(runs))!=len(runs):raise game_test.GameTestError('one distinct owned run per declared human is required')
     metadata=[game_test.validate_metadata(p) for p in runs]
@@ -40,6 +77,7 @@ def campaign(host:Path,peers:list[Path],pilots:list[int],events:list[Path],outpu
     receipt={'schema':1,'scope':'native_multiplayer_cohort','status':'running','host_run_id':metadata[0]['run_id'],
              'room_title':first['room_title'],'expected_human_pilot_ids':roster,'expected_ai':first['expected_ai'],
              'expected_rounds':rounds,
+             'slow_peer':{'pilot':slow_peer_pilot,'seconds':slow_peer_seconds,'round':1} if slow_peer_pilot else None,
              'actors':[{'pilot':pilot,'run_id':m['run_id'],'run_dir':str(p)} for pilot,m,p in zip(pilots,metadata,runs)],'checks':[]}
     def save():game_test.atomic_write(output,json.dumps(receipt,indent=2)+'\n')
     def check(name,ok,**evidence):
@@ -82,8 +120,22 @@ def campaign(host:Path,peers:list[Path],pilots:list[int],events:list[Path],outpu
                 check('guest original Ready acknowledgement',
                       all(ready[k]=='1' for k in ('ready_reply','ready_original','ready_model')) and
                       int(ready['round'])==round_number,round=round_number,pilot=pilot)
-            started=assert_receipt(actors[0].command(
-                'room_start',target_id=pilots[0],human_count=len(pilots),timeout=180))['pvp']
+            if round_number==1 and slow_peer_pilot:
+                delayed=actors[pilots.index(slow_peer_pilot)]
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as starting:
+                    with pause_owned_actor(delayed) as delay:
+                        future=starting.submit(actors[0].command,'room_start',target_id=pilots[0],human_count=len(pilots),timeout=180)
+                        deadline=time.monotonic()+slow_peer_seconds
+                        while time.monotonic()<deadline:
+                            if future.done():assert_receipt(future.result())
+                            time.sleep(min(.1,max(0,deadline-time.monotonic())))
+                    receipt['slow_peer']['observation']=delay;save()
+                    check('delayed guest resumed with the same native identity',delay['resumed'] and
+                          delay['elapsed_seconds']>=slow_peer_seconds,round=round_number,pilot=slow_peer_pilot)
+                    started=assert_receipt(future.result(timeout=190))['pvp']
+            else:
+                started=assert_receipt(actors[0].command(
+                    'room_start',target_id=pilots[0],human_count=len(pilots),timeout=180))['pvp']
             check('human host started the same native room',
                   int(started['room'])==room and int(started['host'])==pilots[0] and
                   int(started['round'])==round_number,round=round_number,pilot=pilots[0])
@@ -141,9 +193,12 @@ def main():
     p.add_argument('--host-run',type=Path,required=True);p.add_argument('--peer-run',type=Path,action='append',required=True)
     p.add_argument('--human-pilots',required=True);p.add_argument('--server-events',type=Path,action='append',required=True)
     p.add_argument('--rounds',type=int,choices=(1,2),default=1)
+    p.add_argument('--slow-peer-pilot',type=int,default=0)
+    p.add_argument('--slow-peer-seconds',type=int,default=0)
     p.add_argument('--output',type=Path,required=True)
     a=p.parse_args();pilots=[int(v) for v in a.human_pilots.split(',')]
-    result=campaign(a.host_run,a.peer_run,pilots,a.server_events,a.output,rounds=a.rounds)
+    result=campaign(a.host_run,a.peer_run,pilots,a.server_events,a.output,rounds=a.rounds,
+                    slow_peer_pilot=a.slow_peer_pilot,slow_peer_seconds=a.slow_peer_seconds)
     print(json.dumps({'status':result['status'],'checks':len(result['checks'])}))
 
 if __name__=='__main__':main()

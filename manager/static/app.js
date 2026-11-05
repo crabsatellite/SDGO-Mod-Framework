@@ -125,7 +125,7 @@ function showMods(isArchive=false){
   const open=button(configurable?'设置':'说明',()=>showSettings(host.id,mod.id),configurable?'ui-btn is-blue is-small':'ui-btn is-ghost is-small');open.prepend(icon(configurable?'settings':'archive'));
   foot.append(notes,open);card.append(foot);grid.append(card);
  }
- if(!listed.length)root.append(element('section',archiveView?'这个目录没有需要归档的自动修复。':'这个目录还没有安装可管理的功能。可以导入服主给你的配置包，或添加你的服务器目录。','empty-state'));
+ if(!listed.length)root.append(element('section',installing.has(host.id)?'正在自动安装框架，装好后这里会列出可管理的功能。':archiveView?'这个目录没有需要归档的自动修复。':'这个目录还没有安装可管理的功能。可以导入服主给你的配置包，或添加你的服务器目录。','empty-state'));
  else root.append(grid);
  if(!archiveView&&listed.length)root.append(categorySwitches(host));
 }
@@ -186,7 +186,33 @@ async function showProvider(id){
  message('正在读取…');const module=await import('/panels/'+id+'.js');if(sequence!==navigation)return;const dispose=await module.mount(mount,ctx);if(sequence===navigation){message('');mount.dataset.ready='1';root.append(supportActions({provider:id}));}
  panelCleanup=()=>{timers.forEach(clearInterval);listeners.forEach(([name,fn])=>window.removeEventListener(name,fn));if(dispose)dispose();};
 }
-async function openPath(){try{const value=await request('/api/pick',{kind:'directory'});if(!value.path)return;accept(await request('/api/hosts',{path:value.path}));showMods();}catch(error){message(error.message,true);$('path-title').textContent='添加客户端或服务器目录';$('host-path').value='';$('path-dialog').showModal();}}
+// Adding a directory installs the framework in the background; follow it so the cards appear without a reload.
+const installing=new Set();
+function installed(host){return host.mods.length>0||host.archive.length>0;}
+async function addHost(path){
+ const before=new Set((state?.hosts||[]).map(h=>h.id));accept(await request('/api/hosts',{path}));
+ const added=state.hosts.filter(h=>!before.has(h.id)&&!installed(h)).map(h=>h.id);
+ added.forEach(id=>installing.add(id));showMods();if(added.length)followInstall(added);
+}
+async function followInstall(ids){
+ const seq=navigation;let rows=[];
+ try{
+  for(let i=0;i<150&&ids.length;i++){
+   await new Promise(resolve=>setTimeout(resolve,2000));
+   let next,updates;try{[next,updates]=await Promise.all([request('/api/state'),request('/api/updates')]);}catch{continue;}
+   rows=(updates.hosts||[]).filter(r=>ids.includes(r.id)&&['error','waiting'].includes(r.status));
+   ids=ids.filter(id=>{const host=next.hosts.find(h=>h.id===id);return host&&!installed(host)&&!rows.some(r=>r.id===id);});
+   if(!ids.length){
+    installing.clear();
+    if(activePanel===null&&navigation===seq&&!document.querySelector('dialog[open]')){accept(next);showMods(archiveView);}else state=next;
+    if(rows.length)message(rows[0].message||'部分目录暂未安装，查看左下角「更新」',rows.some(r=>r.status==='error'));
+    else message('框架已装好，下面列出可管理的功能。');
+    return;
+   }
+  }
+ }finally{installing.clear();}
+}
+async function openPath(){try{const value=await request('/api/pick',{kind:'directory'});if(!value.path)return;await addHost(value.path);}catch(error){message(error.message,true);$('path-title').textContent='添加客户端或服务器目录';$('host-path').value='';$('path-dialog').showModal();}}
 async function showServices(){
  ++navigation;activePanel='services';clear();renderFrame();$('page-title').textContent='后台任务';document.querySelector('.host-tools').hidden=true;
  const data=await request('/api/services'),root=$('content');
@@ -237,7 +263,7 @@ $('nav-mods').onclick=()=>leave()&&showMods(false);$('nav-archive').onclick=()=>
 $('host-select').onchange=()=>{if(!leave()){$('host-select').value=hostId;return;}hostId=$('host-select').value;showMods(archiveView);};$('add-host').onclick=()=>leave()&&openPath();
 $('owner-show').onclick=()=>{localStorage.setItem(OWNER_KEY,'1');renderFrame();};
  $('owner-hide').onclick=()=>{if(activePanel!==null&&!leave())return;localStorage.removeItem(OWNER_KEY);if(activePanel!==null){showMods(false);}else renderFrame();};
-$('confirm-host').onclick=async event=>{event.preventDefault();try{accept(await request('/api/hosts',{path:$('host-path').value.trim()}));$('path-dialog').close();showMods();}catch(e){message(e.message,true);}};
+$('confirm-host').onclick=async event=>{event.preventDefault();try{const path=$('host-path').value.trim();$('path-dialog').close();await addHost(path);}catch(e){message(e.message,true);$('path-dialog').showModal();}};
 $('change-mode').onclick=async()=>{if(!leave())return;try{accept(await request('/api/mode',{mode:state.mode==='standard'?'developer':'standard'}));if(activePanel==='updates')await showUpdates();else if(activePanel==='services'&&ownerTools())await showServices();else if(activePanel&&activePanel!=='services'&&ownerTools())await showProvider(activePanel);else showMods(archiveView);}catch(e){message(e.message,true);}};
 $('exit-manager').onclick=async()=>{const pending=guard?guard():'';if(!confirm((pending?pending+'\n\n':'请先保存正在编辑的内容。')+'退出管理器？游戏不会关闭。'))return;try{await request('/api/exit',{});$('content').replaceChildren(element('section','管理器已退出，可以关闭本页。','empty-state'));}catch(e){message(e.message,true);}};
 try{const initial=await request('/api/state');token=initial.session_token;accept(initial);showMods();}catch(e){message(e.message,true);}

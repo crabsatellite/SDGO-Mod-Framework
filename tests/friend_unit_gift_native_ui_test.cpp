@@ -43,6 +43,30 @@ bool DetachRetiredStorage(StorageView* view, void* service) {
     }
 }
 
+bool DetachRetiredUnitDetail(UnitDetailView* view, void* service) {
+    __try {
+        view->Detach(service);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+volatile LONG g_watch_retired_access = 0;
+volatile LONG g_retired_access_faults = 0;
+
+LONG CALLBACK CountRetiredAccessFault(
+    EXCEPTION_POINTERS* exception) {
+    if (InterlockedCompareExchange(
+            &g_watch_retired_access, 0, 0) != 0 &&
+        exception && exception->ExceptionRecord &&
+        exception->ExceptionRecord->ExceptionCode ==
+            EXCEPTION_ACCESS_VIOLATION) {
+        InterlockedIncrement(&g_retired_access_faults);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 template <class T>
 T Read(const void* pointer, std::size_t offset = 0) {
     T value{};
@@ -694,15 +718,149 @@ int main() {
         true,
         L"展开赠送来源");
     detailView.SetDetail(fullDetail, true);
-    detailView.Detach(detailService.bytes.data());
+    auto* retiredDetailButton = detailView.button();
+    auto* retiredDetailText = detailView.detail();
+    std::array<std::uint8_t, sizeof(Control)> retiredButtonBytes{};
+    std::array<std::uint8_t, sizeof(Control)> retiredTextBytes{};
+    std::memcpy(
+        retiredButtonBytes.data(),
+        retiredDetailButton,
+        retiredButtonBytes.size());
+    std::memcpy(
+        retiredTextBytes.data(),
+        retiredDetailText,
+        retiredTextBytes.size());
+    const auto retiredRenderBytes = detailRender.bytes;
+    DWORD retiredButtonProtection = 0;
+    DWORD retiredTextProtection = 0;
+    Check(
+        VirtualProtect(
+            retiredDetailButton,
+            sizeof(Control),
+            PAGE_NOACCESS,
+            &retiredButtonProtection) != 0 &&
+            VirtualProtect(
+                retiredDetailText,
+                sizeof(Control),
+                PAGE_NOACCESS,
+                &retiredTextProtection) != 0,
+        "retired unit-detail children are inaccessible");
+    auto* retiredFaultHandler =
+        AddVectoredExceptionHandler(
+            1, &CountRetiredAccessFault);
+    Check(
+        retiredFaultHandler != nullptr,
+        "retired unit-detail access observer is installed");
+    InterlockedExchange(&g_retired_access_faults, 0);
+    InterlockedExchange(&g_watch_retired_access, 1);
+    const bool detachedRetiredDetail =
+        DetachRetiredUnitDetail(
+            &detailView, detailService.bytes.data());
+    InterlockedExchange(&g_watch_retired_access, 0);
+    Check(
+        RemoveVectoredExceptionHandler(
+            retiredFaultHandler) != 0,
+        "retired unit-detail access observer is removed");
+    DWORD ignoredButtonProtection = 0;
+    DWORD ignoredTextProtection = 0;
+    Check(
+        VirtualProtect(
+            retiredDetailButton,
+            sizeof(Control),
+            retiredButtonProtection,
+            &ignoredButtonProtection) != 0 &&
+            VirtualProtect(
+                retiredDetailText,
+                sizeof(Control),
+                retiredTextProtection,
+                &ignoredTextProtection) != 0,
+        "fixture restores retired unit-detail allocations");
+    Check(
+        detachedRetiredDetail &&
+            InterlockedCompareExchange(
+                &g_retired_access_faults, 0, 0) == 0,
+        "retired unit-detail detach does not attempt "
+        "SetState or any other child access");
+    Check(
+        detailView.service() == nullptr &&
+            detailView.button() == nullptr &&
+            detailView.detail() == nullptr &&
+            !detailView.ready(),
+        "retired unit-detail detach invalidates every cached owner handle");
+    Check(
+        std::memcmp(
+            retiredButtonBytes.data(),
+            retiredDetailButton,
+            retiredButtonBytes.size()) == 0 &&
+            std::memcmp(
+                retiredTextBytes.data(),
+                retiredDetailText,
+                retiredTextBytes.size()) == 0 &&
+            detailRender.bytes == retiredRenderBytes,
+        "retired unit-detail detach performs no UI writes");
+
+    Control freshDetailService;
+    Control freshDetailRoot;
+    Control freshDetailRender;
+    Put<void*>(
+        freshDetailRender.bytes.data(),
+        0x15C,
+        freshDetailRoot.bytes.data());
+    Put<std::uint8_t>(
+        freshDetailRender.bytes.data(), 0x162, 1);
+    Put<std::uint8_t>(
+        freshDetailRender.bytes.data(), 0x163, 1);
+    Put<std::uint8_t>(
+        freshDetailRender.bytes.data(), 0x167, 1);
+    Put<void*>(
+        freshDetailService.bytes.data(),
+        0x4C,
+        freshDetailRender.bytes.data());
+    auto* freshDetailSkin =
+        NewControl(
+            L"FreshUnitDeleteBtn",
+            freshDetailRoot.bytes.data());
+    PrepareSkinSource(freshDetailSkin);
+    Check(
+        detailView.Attach(
+            freshDetailService.bytes.data(),
+            freshDetailRoot.bytes.data(),
+            freshDetailSkin->bytes.data(),
+            bindings),
+        "unit-detail view rebuilds on a fresh native page");
+    detailView.SetUnit(
+        0x8877665544332211ull,
+        true,
+        true,
+        L"查看新赠送来源");
+    detailView.SetDetail(
+        L"发送方：新好友",
+        true);
+    Check(
+        detailView.ready() &&
+            detailView.service() ==
+                freshDetailService.bytes.data() &&
+            detailView.button() != retiredDetailButton &&
+            detailView.detail() != retiredDetailText &&
+            detailView.detail_visible() &&
+            Read<std::uint8_t>(
+                freshDetailRender.bytes.data(), 0x162) == 0,
+        "fresh unit-detail controls accept normal state after retirement");
+    detailView.SetUnit(
+        0x8877665544332211ull,
+        false,
+        false,
+        L"查看赠送来源");
     Check(
         Read<std::uint8_t>(
-            detailRender.bytes.data(), 0x162) == 1 &&
+            freshDetailRender.bytes.data(), 0x162) == 1 &&
             Read<std::uint8_t>(
-                detailRender.bytes.data(), 0x163) == 1 &&
+                freshDetailRender.bytes.data(), 0x163) == 1 &&
             Read<std::uint8_t>(
-                detailRender.bytes.data(), 0x167) == 1,
-        "detaching provenance restores the 3D viewport");
+                freshDetailRender.bytes.data(), 0x167) == 1,
+        "verified live close restores the fresh native viewport");
+    detailView.Detach(
+        freshDetailService.bytes.data());
 
     Control service;
     Control dialog;

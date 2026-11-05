@@ -49,6 +49,9 @@ jobs:
       - name: Update integrity and install regression
         timeout-minutes: 3
         run: python -m unittest discover -s tests -p "test_manager_updates*.py" -v
+      - name: Native path picker
+        timeout-minutes: 3
+        run: python -m unittest discover -s tests -p "test_manager_picker.py" -v
       - name: Owner shortcut serialization
         timeout-minutes: 3
         run: python -m unittest discover -s tests -p "test_mod_manager_entrypoints.py" -v
