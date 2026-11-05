@@ -9,9 +9,7 @@ Server owners and maintainers install, configure and [update](docs/mod-manager.m
 **SDGO Mod Manager**; the **0_MOD管理（服主专用）** entry at the top of the client folder opens it. Ordinary
 players keep using their normal game launcher, update the way their server owner provides, and should not
 change Mods themselves, so their client stays matched to the server.
-Every Manager page says what each button saves and when the change takes effect, and asks before leaving unsaved changes.
-Manager can also configure addons marked **local-only**. They stay in the selected installation;
-public package and export tools reject them, including case-varied paths. See the [Manager guide](docs/mod-manager.md).
+Owners can also manage their own **local-only** addons in Manager; those are never packaged or exported.
 This page is a feature index. Configuration, gameplay instructions, compatibility and troubleshooting are in each feature's documentation.
 
 Beta and Experimental after a feature name mark its release channel; unlabeled features are Stable:
@@ -30,10 +28,10 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Activity capsule currency <!-- catalog: `capsule_currency_fix` --> | Show machine 9301 as 99 coins in the list and purchase confirmation | [Use](docs/capsule-currency-fix.md) |
 | Input method freeze fix <!-- catalog: `findwindow_fix` --> | Stop input methods such as iFlytek from freezing or crashing the repack client | [Use](docs/findwindow-fix.md) |
 | Startup crash fix <!-- catalog: `startup_crash_fix` --> | Stop random crashes on the loading screen at game start | [Use](docs/startup-crash-fix.md) |
-| Wait-room window initialization guard <!-- catalog: `waitroom_window_fix` --> | Keep window icon queries safe while a room view is attaching | [Use](docs/waitroom-window-fix.md) |
-| Native data and lifecycle guards <!-- catalog: `native_data_guard` --> | Guard missing base/detail data, retain deferred unit-management messages and preserve original crash context | [Use](docs/native-data-guard.md) |
-| Scene registration lifecycle fix <!-- catalog: `scene_lifecycle_fix` --> | Preserve spatial ownership when destination-node allocation fails | [Use](docs/scene-lifecycle-fix.md) |
-| Native login recovery <!-- catalog: `login_recovery` --> | Complete authenticated old-session cleanup and retry login once on WorldServer | [Use](docs/login-recovery.md) |
+| Wait-room window initialization guard <!-- catalog: `waitroom_window_fix` --> | Fix the client sometimes closing right after a room is created | [Use](docs/waitroom-window-fix.md) |
+| Native data and lifecycle guards <!-- catalog: `native_data_guard` --> | Fix crashes when unit data is missing or unit management is still waiting for data; keep crash logs accurate | [Use](docs/native-data-guard.md) |
+| Scene registration lifecycle fix <!-- catalog: `scene_lifecycle_fix` --> | Fix an occasional cleanup crash after a scene object moves to another area | [Use](docs/scene-lifecycle-fix.md) |
+| Native login recovery <!-- catalog: `login_recovery` --> | When a reconnect after a dropped connection is refused as already online, clear the old session and retry once (WorldServer) | [Use](docs/login-recovery.md) |
 | Apsalus III transform input fix <!-- catalog: `transform_input_fix` --> | Release the native transform lock when a form has no transform animation | [Use](docs/transform-input-fix.md) |
 | Agent relay log fix <!-- catalog: `agent_relay_log_fix` --> | Fix an Agent relay log that reads invalid memory | [Use](docs/agent-relay-log-fix.md) |
 | Battle rank regression fix <!-- catalog: `rank_progression_fix` --> | Stop battle settlement from lowering a pilot's rank (WorldServer) | [Use](docs/rank-progression-fix.md) |
@@ -50,7 +48,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 
 | Feature | Overview | Documentation |
 |---|---|---|
-| Announcements <!-- catalog: `announcements` --> | Login-only daily digest with server-local timezone defaults; optional scheduled notices with cached news, technology, free-game and history cards | [Use](docs/announcements.md) |
+| Announcements <!-- catalog: `announcements` --> | Show a news digest once at login; optional in-game owner notices by time and event | [Use](docs/announcements.md) |
 | Mission AI wingmen <!-- catalog: `coop_ai`, `mission_ai` --> | `!ai` adds mission wingmen with the player life allowance; `!ai3 inf` allows unlimited AI respawns | [Use](docs/coop-wingmen.md) |
 | PvP AI <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` in a room title adds AI opponents and teammates; optionally group all humans, fill both sides, fill opponents only or add exact counts | [Use](docs/pvp-ai.md) |
 | AI mech catalog (separate addon) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools | [Use](docs/ai-catalog.md) |
@@ -59,16 +57,16 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Per-round random loadouts <!-- catalog: `room_random`, `room_random_client` --> | `!rand` in a room title draws each player's unit or deck from their own hangar every round | [Use](docs/room-random.md) |
 | FPS cap <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed | [Use](docs/fps-limit.md) |
 | Extended room titles <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Enter up to 128 characters in normal, AI, team and mission room creation, settings and rename controls | [Use](docs/room-titles.md) |
-| Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Room-selected Easy / Medium / Hard; shared teammate vision, collision-aware pursuit and native weapon handoff | [Use](docs/battle-ai.md) |
+| Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Easy / Medium / Hard for PvP AI, chosen in the room title | [Use](docs/battle-ai.md) |
 | Automatic hangar capacity <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) | [Use](docs/hangar-capacity.md) |
-| Hangar manager <!-- catalog: `hangar_manager` --> | Native-page sorting and duplicate exchange, server-side GB batches, and no repeated closed-panel rendering | [Use](docs/hangar-manager.md) |
+| Hangar manager <!-- catalog: `hangar_manager` --> | One-click sorting and duplicate exchange on the unit-management page, with server-side GB batches | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager <!-- catalog: `operator_catalog` --> | Five free supply officers, plus operator names, portraits and drops | [Use](docs/operator-assistant.md) |
 | Capsule catalog editor <!-- catalog: `capsule_catalog` --> | Create, edit and retire machines, pools, prices and weights; renumber unused dedicated activities in the Manager | [Use](docs/capsule-catalog.md) |
 | Daily double rewards <!-- catalog: `daily_rewards` --> | Double battle GB and EXP in a daily window (default 18:00–22:00) | [Use](docs/daily-rewards.md) |
 | Storage claim all <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation | [Use](docs/storage-claim.md) |
 | Chinese shop localization and search <!-- catalog: `shop_localization` --> | Translate shop names, descriptions, options and paint-page unit previews; search by Chinese name combined with rank and payment filters | [Use](docs/shop-localization.md) |
-| Friend unit gifts (optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Right-click an online or offline friend, page through owned units in native unit management, and let the friend accept or return the gift in Storage. Reopening Storage binds its new native page. Off by default | [Use](docs/friend-unit-gift.md) |
-| Unit family import (Beta) <!-- catalog: `unit_catalog` --> | Author portable unit projects, blueprint templates and activity pools in Mod Manager; source-bound skill and funnel profiles are available to developer tools | [Use](docs/unit-import.md) |
+| Friend unit gifts (optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Right-click a friend (online or offline), pick a unit in unit management, and the friend accepts or returns it in Storage. Off until the owner enables it | [Use](docs/friend-unit-gift.md) |
+| Unit family import (Beta) <!-- catalog: `unit_catalog` --> | Import unit archives and author blueprints and activity pools in Mod Manager, generating paired definitions and shop/capsule resources | [Use](docs/unit-import.md) |
 
 <!-- /mod-category:gameplay -->
 

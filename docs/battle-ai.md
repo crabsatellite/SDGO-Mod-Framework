@@ -13,10 +13,6 @@ unit, form and weapons. It starts with the game and stores no FRP address, accou
 PvP AI's `pvp_ai` (server) and `match_ai` (client) are also required. All participants use components
 from the same package.
 
-Native damage notifications can refer to map objects as well as units. NPC-only AI and SP state is
-read or updated only after the original object-type check identifies an NPC; destructible scenery
-continues to use its native behavior.
-
 ## Choosing difficulty in the room title
 
 Clients default to **Medium**. The host writes the difficulty in the `!ai` arguments, so friends need
@@ -49,7 +45,7 @@ using the bot's actual collision sphere. Public spawn and relocation points prov
 when no teammate has a current contact. Paths account for platforms, safe drops, solid obstacles and
 DeathZone volumes. A blocking destructible can be attacked through normal weapons; indestructible and
 destroyed-but-still-solid objects remain obstacles. Forced-movement pads retain native motor control.
-These checks do not guarantee that every unit can traverse every complex map without stalling.
+On complex maps an individual unit can still stall.
 
 | | Medium: skilled player | Hard: expert player |
 |---|---|---|
@@ -75,6 +71,10 @@ If enhanced observation or a policy fails, the Mod logs the bot identity and fai
 input and retries the enhanced policy. It does not silently switch to stock decisions. Easy and the
 enable switch still intentionally select native control. Use the framework log and the developer
 decision log when diagnosing a persistent failure.
+
+Native damage notifications can refer to map objects as well as units. NPC-only AI and SP state is
+read or updated only after the original object-type check identifies an NPC; destructible scenery
+continues to use its native behavior.
 
 Acknowledged zero-damage melee specials complete through the original native finalizer, so a surviving
 victim can leave capture normally. Teleport notifications move locally controlled PvP bots through the

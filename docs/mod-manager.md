@@ -46,12 +46,6 @@ How saving works is stated on every page:
 
 ## Updates
 
-Framework updates also synchronize the program entries in unit-content installation receipts.
-Unit definitions, models, textures, acquisition data and content revision stay unchanged.
-Modified content is rejected; failed program or receipt verification rolls back the update.
-Module enablement and user settings remain intact. Legacy receipt drift is reconciled only
-against verified framework artifacts, never by trusting an unknown installed program.
-
 Open **更新** (Update) in the sidebar. New installations default to **Stable**: only published stable features are installed. **Beta** includes Stable and Beta features and follows the newest available release; development diagnostics are excluded from both channels. Switching back to Stable leaves existing Beta and custom Mods in place and updates only the features in the Stable package.
 
 Automatic checking and installation are enabled while Manager runs. It checks at startup and hourly afterward. Use **检查更新** to check now or **立即更新** to install. GitHub Release assets are verified against their SHA-256 and the complete file manifest before installation. Network errors leave the current installation usable and can be retried. Automatic updates can be disabled without disabling manual checks.
@@ -61,6 +55,10 @@ Updates apply to registered client and server directories. Running games/servers
 Locally installed Mods with a higher version than the release are kept together with their required native symbols instead of being downgraded.
 
 When Manager itself has an update, choose **重启 Manager 完成更新**. The downloaded Manager waits for the old process to close, replaces the verified executable and reopens the same workspace. Ordinary Mod updates do not require restarting Manager.
+
+Updates also check unit-content installation receipts: only program entries change, while unit definitions, models, textures, acquisition data and installation identity are kept. Modified content is rejected and a failed check rolls the update back.
+
+Configurable timezones default to the server's local timezone. The Updates page's display-timezone field follows server-local time when empty, or takes a UTC offset in minutes for this Manager only; it does not change the Windows system timezone.
 
 ## AI handoff and development
 
@@ -121,5 +119,3 @@ Git hooks may add `--allow-legacy-public`. This accepts only a fully undeclared 
 pair and still rejects local-only declarations, mismatches, repository/source markers
 and marked binary bytes. Public framework source, Manager builds and packages use the
 strict commands above.
-
-Configurable timezone defaults are initialized from the server’s local timezone; saved offsets are instance settings. The Updates page also offers a display-timezone override. Leave it empty to use server-local time. This setting does not change the Windows system timezone.

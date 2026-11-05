@@ -8,9 +8,7 @@
 服主与维护人员通过 **SDGO Mod Manager** 安装、配置和[更新](docs/mod-manager.zh-CN.md#更新)功能，
 客户端目录顶部的「0_MOD管理（服主专用）」可直接打开它。普通玩家照常使用原游戏启动器，按服主提供的方式更新，
 不要自行修改 Mod，以免与服务器配置不匹配。
-Manager 每个页面都写明各按钮保存什么、修改何时生效；有未保存的修改时离开会先询问。
-Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所选安装目录中，公开打包与导出工具会拒绝分发，改动路径大小写也不能绕过；
-详见[管理器说明](docs/mod-manager.zh-CN.md)。
+服主自己的「仅本地」扩展也可以放进 Manager 管理，它们不会被打包或导出分发。
 本页仅列出功能概览。具体配置、玩法操作、兼容性与排错方法见各功能文档。
 
 功能名后的 Beta、Experimental 表示发布阶段，未标注的为 Stable：
@@ -29,10 +27,10 @@ Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所
 | 活动扭蛋币种显示 <!-- catalog: `capsule_currency_fix` --> | 9301 号机在列表和购买确认框中显示为 99 代币 | [使用说明](docs/capsule-currency-fix.zh-CN.md) |
 | 输入法卡死修复 <!-- catalog: `findwindow_fix` --> | 防止讯飞等输入法让整合包客户端卡死或崩溃 | [使用说明](docs/findwindow-fix.zh-CN.md) |
 | 启动崩溃修复 <!-- catalog: `startup_crash_fix` --> | 修复开游戏时读取界面随机闪退 | [使用说明](docs/startup-crash-fix.zh-CN.md) |
-| 房间窗口初始化保护 <!-- catalog: `waitroom_window_fix` --> | 处理房间视图尚未绑定时收到的窗口图标查询 | [使用说明](docs/waitroom-window-fix.zh-CN.md) |
-| 原生数据与生命周期修复 <!-- catalog: `native_data_guard` --> | 保护缺失基础与详情数据、延迟机体管理消息及原始异常上下文 | [使用说明](docs/native-data-guard.zh-CN.md) |
-| 场景登记生命周期修复 <!-- catalog: `scene_lifecycle_fix` --> | 新节点分配失败时保留原有空间登记与所有权 | [使用说明](docs/scene-lifecycle-fix.zh-CN.md) |
-| 异常断线登录恢复 <!-- catalog: `login_recovery` --> | 原生旧会话清理后，在 WorldServer 内完成一次认证重试 | [使用说明](docs/login-recovery.zh-CN.md) |
+| 房间窗口初始化保护 <!-- catalog: `waitroom_window_fix` --> | 修复建房成功后客户端偶尔直接退出 | [使用说明](docs/waitroom-window-fix.zh-CN.md) |
+| 原生数据与生命周期修复 <!-- catalog: `native_data_guard` --> | 修复机体数据缺失或机体管理页等待数据时的闪退，并让闪退日志记录正确现场 | [使用说明](docs/native-data-guard.zh-CN.md) |
+| 场景登记生命周期修复 <!-- catalog: `scene_lifecycle_fix` --> | 修复场景对象切换区域后偶发的清理闪退 | [使用说明](docs/scene-lifecycle-fix.zh-CN.md) |
+| 异常断线登录恢复 <!-- catalog: `login_recovery` --> | 异常断线后重新登录被判为“账号已在线”时，清理旧会话并自动重试一次（WorldServer） | [使用说明](docs/login-recovery.zh-CN.md) |
 | 阿普萨拉斯 III 变形卡死修复 <!-- catalog: `transform_input_fix` --> | 缺少变形动画时恢复原生状态退出，解除移动与攻击锁定 | [使用说明](docs/transform-input-fix.zh-CN.md) |
 | Agent 中继日志修复 <!-- catalog: `agent_relay_log_fix` --> | 修复 Agent 中继日志读取无效内存 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
 | 军衔回退修复 <!-- catalog: `rank_progression_fix` --> | 防止战斗结算降低已有军衔（WorldServer） | [使用说明](docs/rank-progression-fix.zh-CN.md) |
@@ -49,7 +47,7 @@ Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所
 
 | 功能 | 简介 | 文档 |
 |---|---|---|
-| 公告与展示规则 <!-- catalog: `announcements` --> | 默认仅显示一次登录简报，时区可随服务器本地，游戏内公告默认关闭；可配置新闻、科技、限免和历史资讯 | [使用说明](docs/announcements.zh-CN.md) |
+| 公告与展示规则 <!-- catalog: `announcements` --> | 登录时显示一次资讯简报；可选在游戏内按时段和事件展示服主公告 | [使用说明](docs/announcements.zh-CN.md) |
 | 任务 AI 僚机 <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai`，AI 按玩家生命额度复活；`!ai3 inf` 开启 AI 无限复活 | [使用说明](docs/coop-wingmen.zh-CN.md) |
 | 对战 AI <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友；可让真人自动同队，选择双方补位、只补对面或指定数量 | [使用说明](docs/pvp-ai.zh-CN.md) |
 | AI 机体目录（独立附加包） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |
@@ -58,16 +56,16 @@ Manager 也能配置标记为「仅本地」的扩展。这些扩展保留在所
 | 每局随机机体 <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组 | [使用说明](docs/room-random.zh-CN.md) |
 | FPS 上限 <!-- catalog: `fps_limit` --> | 提高渲染帧率上限，保留原生游戏速度 | [使用说明](docs/fps-limit.zh-CN.md) |
 | 长房名 <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 普通、AI、队伍及任务房的建房、设置和改名入口支持最长 128 字 | [使用说明](docs/room-titles.zh-CN.md) |
-| 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | 房名选择 Easy / Medium / Hard，共享队友视野、按碰撞地形追敌并切换原生武器 | [使用说明](docs/battle-ai.zh-CN.md) |
+| 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | 对战 AI 的 Easy / Medium / Hard 三档，在房名中选择 | [使用说明](docs/battle-ai.zh-CN.md) |
 | 自动机库容量 <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） | [使用说明](docs/hangar-capacity.zh-CN.md) |
-| 机库管理 <!-- catalog: `hangar_manager` --> | 页内整理和重复兑换（GB 服务端批量入账），关闭后停止重复刷新 | [使用说明](docs/hangar-manager.zh-CN.md) |
+| 机库管理 <!-- catalog: `hangar_manager` --> | 机体管理页内一键整理和重复机体兑换（GB 服务端批量入账） | [使用说明](docs/hangar-manager.zh-CN.md) |
 | 副官补给与管理 <!-- catalog: `operator_catalog` --> | 五位免费补给副官，以及副官名称、头像和掉落的管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
 | 扭蛋机编辑器 <!-- catalog: `capsule_catalog` --> | 在 Manager 中新增、修改、下架扭蛋机，设置奖池、价格和权重，为未使用的独立活动机改号 | [使用说明](docs/capsule-catalog.zh-CN.md) |
 | 每日双倍时间 <!-- catalog: `daily_rewards` --> | 每天固定时段（默认 18:00–22:00）战斗 GB 和经验翻倍 | [使用说明](docs/daily-rewards.zh-CN.md) |
 | 保管库一键领取 <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
 | 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化商品名称、说明、选项和涂装机体预览，可用中文名称搜索并组合等级、币种筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
-| 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 右键在线或离线好友，在原生机体管理中翻页选机，对方在保管库接受或退还；重新打开保管库会绑定新页面，默认关闭，由服主开启 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
-| 机体族导入（Beta） <!-- catalog: `unit_catalog` --> | 在 Mod Manager 制作机体项目、设计图展示模板和活动奖池，并为开发工具提供保留来源的技能／浮游记录 profile | [使用](docs/unit-import.zh-CN.md) |
+| 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 右键好友（在线或离线均可），在机体管理中选机赠送，对方在保管库接受或退还；默认关闭，由服主开启 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
+| 机体族导入（Beta） <!-- catalog: `unit_catalog` --> | 在 Mod Manager 导入机体包、制作设计图和活动奖池，生成两端定义及商城／扭蛋资源 | [使用说明](docs/unit-import.zh-CN.md) |
 
 <!-- /mod-category:gameplay -->
 

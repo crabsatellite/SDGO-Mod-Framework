@@ -9,8 +9,6 @@ The feature is off by default. Server owners turn on **启用好友机体赠送*
 
 ## Send and receive
 
-Client component 0.1.6 fixes a crash when reopening Storage after its old native controls have been released. Closing invalidates the cached gift-page controls; reopening binds the new page. Restart the client after updating.
-
 1. Right-click an accepted friend in the home screen's top-right **USER LIST** or the messenger, then choose the unit-gift action. Online and offline recipients are supported.
 2. The action opens native unit management. Double-click the owned instance, review its name and level in the native unit-information card, and optionally write a note. Review the server's preflight result, then confirm.
 3. The unit enters pending storage and is no longer usable by the sender. The recipient may be offline.
@@ -23,7 +21,6 @@ note and confirmation controls using existing game assets.
 During gift selection, the left and right arrows move one page at a time. Page dots select a page in the
 current group, and arrows also cross group boundaries. The first and last pages stay in bounds. Double-click
 an owned instance on any page to open its information card. Cancelling the card lets you browse and choose again.
-Update the client component and restart the client for these controls to take effect.
 
 Acceptance requires a free recipient slot. A capacity refusal leaves the offer pending. Returns prefer the sender's original slot, then another free slot. If the sender is full, the unit remains stored until the sender can take it back.
 
@@ -49,12 +46,12 @@ After a timeout or disconnect, an operation may remain unconfirmed. Query its or
 
 Unsupported servers retain native friend, mail, shop-gift and storage handling.
 
+## Developer notes
+
 The friend menu reuses the existing blue menu strip and its transparent normal,
 hover and pressed button states. The native popup routine positions the expanded
 menu at the right-click location; background capability polling does not reset
-that position.
-
-## Developer verification
+that position. Closing Storage invalidates the cached gift-page controls, and reopening binds the new page.
 
 The native friend-gift runner supports `--phase picker-pagination` with the existing prepared profiles and
 unit binding. It exercises page dots, adjacent arrows, group boundaries, later-page double-clicks and

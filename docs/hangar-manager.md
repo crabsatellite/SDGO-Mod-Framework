@@ -33,11 +33,10 @@ change nothing; repeated submissions do not pay twice. Log in again afterwards.
 **Item exchange** keeps the native per-unit flow and stops, without retrying, when a reply cannot be
 confirmed, the connection changes or the hangar is modified elsewhere. Confirmed steps are not undone.
 
-## Install
+Leaving the unit-management page cancels an unconfirmed preview and restores the native buttons; reopening
+starts again from the preview.
 
-An already-closed exchange panel skips repeated rendering while its native owner remains valid.
-Leaving the page still clears the preview and confirmation, restores native controls and checks
-the dialog's lifetime. Reopening starts a fresh confirmation flow.
+## Install
 
 **Server:** in SDGO Mod Manager open **机库整理与批量回收服务端** (hangar server), choose the server INI
 containing `DB Game` and `DB Member` (same SQL instance) and install or update. Normal native mail keeps
