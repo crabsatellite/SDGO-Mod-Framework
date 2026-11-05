@@ -80,6 +80,8 @@ jobs:
       - name: Owner publication and player update contracts
         shell: pwsh
         run: |
+          python -m unittest discover -s tests -p "test_owner_owned_process.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -p "test_owner_update_chain.py" -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -p "test_owner_update_transport.py" -v

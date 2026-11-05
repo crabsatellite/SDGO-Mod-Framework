@@ -272,7 +272,7 @@ def unpack(raw,feed,source,destination):
     return m
 
 
-def install(host,bundle,m,cache,is_running=None):
+def install(host,bundle,m,cache,is_running=None,stop=None):
     is_running=is_running or updates.running
     root=Path(host['path']).resolve();exe=root/'GOnline.exe'
     if host['role']!='client' or mode(host)!='player':raise ValueError('该客户端尚未绑定服主更新源')
@@ -311,8 +311,12 @@ def install(host,bundle,m,cache,is_running=None):
             for path,data in previous.items():
                 if data is not None:storage.atomic(updates.child(backup,path.relative_to(root).as_posix()),data)
             if is_running(exe):return {'status':'waiting','message':'等待这个客户端关闭','revision':m['revision']}
-            for path,data in changes.items():storage.atomic(path,data);written.append(path)
-            for path in retired:path.unlink();written.append(path)
+            for path,data in changes.items():
+                if stop is not None and stop.is_set():raise InterruptedError('整合包同步已取消')
+                storage.atomic(path,data);written.append(path)
+            for path in retired:
+                if stop is not None and stop.is_set():raise InterruptedError('整合包同步已取消')
+                path.unlink();written.append(path)
         except Exception:
             for path in reversed(written):
                 if previous[path] is None:path.unlink(missing_ok=True)
@@ -347,6 +351,7 @@ class OwnerChannels:
         self.lock=threading.RLock();self.busy=threading.Lock();self.thread=None;self.stop_event=threading.Event()
         self.jobs=[];self.results={};self.plans={};self.downloads={}
         self.git_heads={}
+        self.source_locks={}
 
     def state(self):
         with self.lock:
@@ -469,6 +474,7 @@ class OwnerChannels:
     def check_source(self,source):
         last=None
         for url in source['feeds']:
+            if self.stop_event.is_set():raise InterruptedError('整合包操作已取消')
             try:raw=self.read_source(url,'owner-feed.json',2*1024*1024,refresh=True)
             except (OSError,TimeoutError,subprocess.SubprocessError) as e:last=e;continue
             try:feed=json.loads(raw)
@@ -510,7 +516,7 @@ class OwnerChannels:
         raw=self.download_asset(source,feed)
         m=unpack(raw,feed,source,folder)
         self.downloads[host_id]=(folder,m)
-        result=(audit(host,m) if audit_only else install(host,folder,m,self.cache) if apply else
+        result=(audit(host,m) if audit_only else install(host,folder,m,self.cache,stop=self.stop_event) if apply else
                 {'status':'available','revision':m['revision'],'file_count':len(m['files'])})
         with self.lock:self.results[host_id]=result
         return result
@@ -519,15 +525,21 @@ class OwnerChannels:
         # Every mirror must supply the exact immutable asset advertised by the
         # pinned publisher, even when the mirror's latest feed has moved on.
         for url in source['feeds']:
+            if self.stop_event.is_set():raise InterruptedError('整合包操作已取消')
             try:raw=self.read_source(url,feed['asset'],updates.MAX_ARCHIVE)
             except (OSError,TimeoutError,subprocess.SubprocessError):continue
             if len(raw)==feed['bytes'] and updates.digest(raw)==feed['sha256']:return raw
         raise ValueError('服主包在所选源均不可用或校验失败；保留当前版本')
 
     def read_source(self,url,name,limit,refresh=False):
+        if self.stop_event.is_set():raise InterruptedError('整合包操作已取消')
         feed_url(url);updates.safe_name(name)
         if not url.startswith('git+https://'):
             return self.fetcher(url if name=='owner-feed.json' else https(urljoin(url,name)),limit,self.stop_event)
+        with self.lock:gate=self.source_locks.setdefault(url,threading.RLock())
+        with gate:return self.read_git_source(url,name,limit,refresh)
+
+    def read_git_source(self,url,name,limit,refresh):
         parsed=urlsplit(url);remote=urlunsplit(('https',parsed.netloc,parsed.path,'',''));ref=parsed.fragment or 'main'
         cache=self.cache/'git'/(updates.digest(url.encode())+'.git');cache.mkdir(parents=True,exist_ok=True)
         try:
@@ -569,7 +581,10 @@ class OwnerChannels:
         # Assets are immutable; the feed pointer is replaced only after validation.
         validate=self.cache/'publish-check'/uuid.uuid4().hex
         unpack(raw,feed,source,validate)
-        storage.atomic(updates.child(output,asset),raw);storage.atomic(feed_path,storage.json_bytes(feed))
+        if self.stop_event.is_set():raise InterruptedError('整合包发布已取消')
+        storage.atomic(updates.child(output,asset),raw)
+        if self.stop_event.is_set():raise InterruptedError('整合包发布已取消')
+        storage.atomic(feed_path,storage.json_bytes(feed))
         if cfg.get('git_remote'):
             self.git(output,['add','--','owner-feed.json','releases'])
             self.git(output,['commit','-m',f'Publish owner Mod pack revision {revision}'])
@@ -596,11 +611,10 @@ class OwnerChannels:
         with self.lock:self.results[host_id]=result
         return result
 
-    @staticmethod
-    def git(root,args):
-        r=subprocess.run(['git','-C',str(root),*args],capture_output=True,timeout=180,
-                         env={**os.environ,'GIT_TERMINAL_PROMPT':'0','GCM_INTERACTIVE':'Never'},
-                         creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+    def git(self,root,args):
+        from .owned_process import run
+        r=run(['git','-C',str(root),*args],cwd=root,timeout=900,stop=self.stop_event,
+              env={**os.environ,'GIT_TERMINAL_PROMPT':'0','GCM_INTERACTIVE':'Never'})
         if r.returncode:raise ValueError('Git 发布未完成；检查仓库权限、分支与已有凭据后重试')
         return r.stdout
 
@@ -653,7 +667,7 @@ class OwnerChannels:
                 for identity,(folder,m) in list(self.downloads.items()):
                     if self.results.get(identity,{}).get('status')=='waiting':
                         try:
-                            result=install(self.workspace.host(identity),folder,m,self.cache)
+                            result=install(self.workspace.host(identity),folder,m,self.cache,stop=self.stop_event)
                             with self.lock:self.results[identity]=result
                         except Exception as e:
                             with self.lock:self.results[identity]={'status':'error','message':str(e)}
