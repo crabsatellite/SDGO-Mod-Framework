@@ -40,7 +40,7 @@ DIY 安装应先使用支持维护方式的 Manager。从不理解这些模式�
 
 1. 选择服主的客户端目录，保存为「服主 DIY」。
 2. 填写整合包名称、位于游戏目录之外的专用发布目录，以及玩家读取地址。
-   地址可为 HTTPS 的 `owner-feed.json`，或 `git+https://git.example.org/team/client.git#main`。
+   地址可为 HTTPS 的 `owner-feed.json`，或在 Git HTTPS 仓库地址前添加 `git+`，并在末尾添加 `#` 和分支名。
    多个地址必须属于同一发布者并提供相同内容。
 3. 使用 Git 发布时填写 HTTPS 仓库和分支，Manager 复用本机已有 Git 凭据，发布者需要写入权限。
    专用工作区必须干净，已有历史只做快进更新。静态托管时留空 Git 仓库，由现有 HTTPS 站点提供发布目录；Manager 不启动公网托管服务。
