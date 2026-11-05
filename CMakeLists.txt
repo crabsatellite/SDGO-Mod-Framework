@@ -99,6 +99,9 @@ sdgo_strict(sdgo_skill_identity)
 add_library(sdgo_unit_form_composition STATIC core/native_unit_form_composition.cpp)
 target_link_libraries(sdgo_unit_form_composition PUBLIC sdgo_api)
 sdgo_strict(sdgo_unit_form_composition)
+add_library(sdgo_unit_form_graph STATIC core/unit_form_graph.cpp)
+target_link_libraries(sdgo_unit_form_graph PUBLIC sdgo_api)
+sdgo_strict(sdgo_unit_form_graph)
 
 # ---- mods: sdgo/mods/<id>/<id>.dll + mod.ini + extra files -------------------------
 # Client mods go to stage/<config>/client/sdgo/mods/<id>, SERVER mods to the server tree.
@@ -1621,6 +1624,17 @@ if(BUILD_TESTING)
     target_link_libraries(native_unit_form_composition_test PRIVATE sdgo_unit_form_composition)
     sdgo_strict(native_unit_form_composition_test)
     add_test(NAME native_unit_form_composition_test COMMAND native_unit_form_composition_test)
+    add_executable(unit_form_graph_test tests/unit_form_graph_test.cpp)
+    target_link_libraries(unit_form_graph_test PRIVATE sdgo_unit_form_graph)
+    sdgo_strict(unit_form_graph_test)
+    add_test(NAME unit_form_graph_test COMMAND unit_form_graph_test)
+    add_executable(unit_form_graph_validate tests/unit_form_graph_validate.cpp)
+    target_link_libraries(unit_form_graph_validate PRIVATE sdgo_unit_form_graph sdgo_script_registration)
+    sdgo_strict(unit_form_graph_validate)
+    add_test(NAME unit_form_graph_runtime_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_form_graph_runtime.py" -v)
+    set_tests_properties(unit_form_graph_runtime_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        ENVIRONMENT "SDGO_FORM_GRAPH_VALIDATOR=$<TARGET_FILE:unit_form_graph_validate>" TIMEOUT 60)
     add_library(native_skill_atlas_probe SHARED tests/native_skill_atlas_probe.cpp)
     target_link_libraries(native_skill_atlas_probe PRIVATE sdgo_api)
     sdgo_strict(native_skill_atlas_probe)
