@@ -20,6 +20,7 @@ DWORD g_loadThread = 0;
 char g_run[80] = {};
 std::wstring g_output;
 char g_expectedBundle[80] = {}, g_expectedProgram[80] = {}, g_expectedExport[160] = {};
+std::uint32_t g_expectedPrograms = 1, g_expectedExports = 1;
 
 void __cdecl Close(void*, const char* reason) {
     g_api->Log(g_mod, SDGO_LOG_ERROR, "root probe stopped: %s", reason);
@@ -48,7 +49,7 @@ DWORD WINAPI ObserveProduct(void*) {
             read = reinterpret_cast<SdgoGetUnitProgramStateV1>(GetProcAddress(module, "SdgoReadUnitProgramStateV1"));
         SdgoUnitProgramStateV1 state = {}; state.size = sizeof(state); state.version = 1;
         if (read && read(&state) && state.active && state.records_ready && state.root_calls) {
-            if (state.fatal || state.owner_count != 1 || state.program_count != 1 || state.export_count != 1 ||
+            if (state.fatal || state.owner_count != 1 || state.program_count != g_expectedPrograms || state.export_count != g_expectedExports ||
                 !state.vm || !state.first_export_function || state.initial_thread_id != sdgo::scripts::ProcessInitialThreadId(g_api) ||
                 state.root_thread_id != state.initial_thread_id || std::strcmp(state.bundle_sha256, g_expectedBundle) ||
                 std::strcmp(state.first_export_name, g_expectedExport)) Close(nullptr, "product program snapshot differs from sealed candidate");
@@ -59,10 +60,12 @@ DWORD WINAPI ObserveProduct(void*) {
                 "\"mod_load_thread_id\":%lu,\"root_thread_id\":%lu,\"observer_thread_id\":%lu,"
                 "\"vm\":\"0x%08lX\",\"registered\":true,\"execution_started\":true,"
                 "\"product_consumer\":true,\"bundle_sha256\":\"%s\",\"program_sha256\":\"%s\","
+                "\"program_count\":%lu,\"export_count\":%lu,"
                 "\"exports\":[{\"name\":\"%s\",\"function\":\"0x%08lX\"}],\"actor_accepted\":false}\n",
                 g_run, GetCurrentProcessId(), static_cast<DWORD>(state.initial_thread_id), g_loadThread,
                 static_cast<DWORD>(state.root_thread_id), GetCurrentThreadId(), static_cast<DWORD>(state.vm),
-                state.bundle_sha256, g_expectedProgram, state.first_export_name, static_cast<DWORD>(state.first_export_function));
+                state.bundle_sha256, g_expectedProgram, static_cast<DWORD>(state.program_count), static_cast<DWORD>(state.export_count),
+                state.first_export_name, static_cast<DWORD>(state.first_export_function));
             std::fclose(output); if (module) FreeLibrary(module); return 0;
         }
         Sleep(50);
@@ -105,6 +108,9 @@ SDGO_MOD_ENTRY {
     if (GetEnvironmentVariableA("SDGO_GAME_TEST_RUN", g_run, sizeof(g_run)) != 36) return 0;
     g_output = std::wstring(api->ModDirectory(mod)) + L"\\..\\..\\gametest\\native-root-receipt.json";
     if (api->SettingInt(mod, "ObserveProduct", 0)) {
+        const int programs = api->SettingInt(mod, "ExpectedPrograms", 1), exports = api->SettingInt(mod, "ExpectedExports", 1);
+        if (programs < 1 || programs > 512 || exports < 1 || exports > 100000) return 0;
+        g_expectedPrograms = static_cast<std::uint32_t>(programs); g_expectedExports = static_cast<std::uint32_t>(exports);
         if (!Text("BundleSha256", g_expectedBundle, sizeof(g_expectedBundle)) ||
             !Text("Sha256", g_expectedProgram, sizeof(g_expectedProgram)) ||
             !Text("Export", g_expectedExport, sizeof(g_expectedExport))) return 0;

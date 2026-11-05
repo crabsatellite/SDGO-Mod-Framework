@@ -530,7 +530,9 @@ class Workspace:
             from .project import search_text
             state=self.read();result={'revision':model.revision(state),
                 'capabilities':{'projects':{'protocol':'sdgo.unit-project','schema_version':1,'metadata_first':True,'bundled_media':True},
-                    'native_programs':{'schema':'sdgo.unit-native-programs/1','authoring':True,'native_publication':False},
+                    'native_programs':{'schema':'sdgo.unit-native-programs/1',
+                        'schemas':['sdgo.unit-native-programs/1','sdgo.unit-native-programs/2'],
+                        'callback_roles':['ranged','special_ranged','initializer'],'authoring':True,'native_publication':False},
                     'blueprints':{'schema_version':1,'authoring':True,
                     'native_registration':NATIVE_REGISTRATION_SUPPORTED,'target_record_kind':33,
                     'target_record_size':1197,'material_minimum':3,'material_maximum':5,'raw_material_maximum':7,

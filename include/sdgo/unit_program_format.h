@@ -21,13 +21,15 @@ public:
                            "native program bundle byte extent");
             reader.require(std::memcmp(bytes.data(), "SDGOPR1\0", 8) == 0, "native program bundle magic");
             reader.offset = 8;
-            reader.require(reader.word() == 1 && reader.word() == 64, "native program bundle version/header");
+            const auto version = reader.word();
+            reader.require((version == 1 || version == 2) && reader.word() == 64, "native program bundle version/header");
             const auto count = reader.word(), payload = reader.word();
             reader.require(count && count <= 128 && payload == bytes.size() - 64, "native program bundle owner/payload count");
             reader.require(reader.hash() == catalogSha256, "native program bundle catalog SHA-256 differs");
             reader.require(reader.word() == 0 && reader.word() == 0, "native program bundle reserved fields");
             std::set<std::string> owners, exports, resources;
-            std::set<uint32_t> weapons;
+            std::map<uint32_t, std::string> weaponOwners;
+            std::set<std::pair<uint32_t,uint32_t>> weaponRoles;
             std::size_t programs = 0, total = 0;
             std::vector<sdgo::scripts::Candidate> prepared;
             for (uint32_t i = 0; i < count; ++i) {
@@ -65,26 +67,33 @@ public:
                 const auto valid = sdgo::scripts::Validate(candidate);
                 reader.require(valid.valid, valid.reason.c_str());
                 const auto bindings = reader.word();
-                reader.require(bindings && bindings <= 4096, "native program initializer count budget");
+                reader.require(bindings && bindings <= 4096, "native program callback count budget");
                 for (uint32_t j = 0; j < bindings; ++j) {
-                    const auto weapon = reader.word(); const auto hash = reader.hash();
+                    const auto weapon = reader.word();
+                    const auto role = version == 2 ? reader.word() : 3u;
+                    reader.require(role >= 1 && role <= 3, "native weapon callback role is unsupported");
+                    const auto hash = reader.hash();
                     const auto name = reader.text(49);
-                    reader.require(weapons.insert(weapon).second && ownerExports.count(name),
-                                   "native initializer weapon/export ownership differs");
+                    const auto previous = weaponOwners.find(weapon);
+                    reader.require((previous == weaponOwners.end() || previous->second == candidate.owner) &&
+                        weaponRoles.insert({weapon,role}).second && ownerExports.count(name),
+                        "native callback weapon/export ownership differs");
+                    weaponOwners[weapon] = candidate.owner;
                     const auto position = catalog.Find(weapon);
-                    reader.require(position != catalog.records.size(), "native initializer weapon is not imported");
+                    reader.require(position != catalog.records.size(), "native callback weapon is not imported");
                     const auto& entry = catalog.records[position];
                     reader.require(entry.kind == kWeaponType && entry.bytes.size() == kWeaponBytes &&
-                        sdgo::scripts::Sha256(entry.bytes) == hash, "native initializer weapon bytes differ");
-                    const auto* field = entry.bytes.data() + 1771;
+                        sdgo::scripts::Sha256(entry.bytes) == hash, "native callback weapon bytes differ");
+                    const std::size_t offsets[] = {1569,1669,1771};
+                    const auto* field = entry.bytes.data() + offsets[role-1];
                     std::string actual; bool terminated = false;
                     for (std::size_t k = 0; k < 50; ++k) {
                         const auto value = uint32_t(field[k * 2]) | (uint32_t(field[k * 2 + 1]) << 8);
                         if (!value) { terminated = true; break; }
-                        reader.require(value < 128, "native initializer export encoding");
+                        reader.require(value < 128, "native callback export encoding");
                         actual += static_cast<char>(value);
                     }
-                    reader.require(terminated && actual == name, "native weapon initializer field differs");
+                    reader.require(terminated && actual == name, "native weapon callback field differs");
                 }
                 prepared.push_back(std::move(candidate));
             }
