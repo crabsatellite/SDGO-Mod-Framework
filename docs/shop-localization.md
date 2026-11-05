@@ -7,7 +7,8 @@ Hangar batch-exchange lists and fixed messages from other Mods use the same Chin
 searched by Chinese name, combined with rank and payment filters.
 
 Paint-page unit previews also use Chinese names, including training units. Descriptions retain paragraph breaks;
-battleship descriptions and usage restrictions appear in their separate fields.
+battleship descriptions and usage restrictions appear in their separate fields. The buy/gift option dialogs and
+the following confirmation pages show translated product titles; numeric purchase values stay native.
 
 Prices, currencies, durations and billing keep their original definitions. Rental/permanent labels are handled by
 the separate [shop rental and Chinese option fix](shop-labels.md).
@@ -98,5 +99,3 @@ source names are marked as such.
 
 Addresses, packets and interfaces: [search and localization reference](investigations/shop-search-localization.md),
 [unit-preview title notes](investigations/shop-preview-title-fix.md).
-
-The initial buy/gift option dialogs and later confirmation pages translate their separate product-title fields. Numeric purchase values remain native.
