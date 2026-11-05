@@ -145,6 +145,17 @@ if(BUILD_TESTING)
     add_test(NAME waitroom_window_fix_actual_dll COMMAND waitroom_window_fix_dll_test "$<TARGET_FILE:waitroom_window_fix>")
     set_tests_properties(waitroom_window_fix_actual_dll PROPERTIES TIMEOUT 30)
 endif()
+sdgo_add_mod(scene_lifecycle_fix DESCRIPTION "transactional native scene registration"
+             SOURCES mods/scene_lifecycle_fix/scene_lifecycle_fix.cpp FILES symbols.fragment.ini)
+if(BUILD_TESTING)
+    add_executable(scene_lifecycle_fix_dll_test tests/scene_lifecycle_fix_dll_test.cpp)
+    target_link_libraries(scene_lifecycle_fix_dll_test PRIVATE sdgo_api)
+    sdgo_strict(scene_lifecycle_fix_dll_test)
+    add_dependencies(scene_lifecycle_fix_dll_test scene_lifecycle_fix)
+    add_test(NAME scene_lifecycle_fix_actual_dll
+             COMMAND scene_lifecycle_fix_dll_test "$<TARGET_FILE:scene_lifecycle_fix>")
+    set_tests_properties(scene_lifecycle_fix_actual_dll PROPERTIES TIMEOUT 30)
+endif()
 sdgo_add_mod(native_data_guard DESCRIPTION "verified native battle data guards"
              SOURCES mods/native_data_guard/native_data_guard.cpp FILES symbols.fragment.ini)
 sdgo_add_mod(login_recovery SERVER DESCRIPTION "native authenticated stale login recovery"

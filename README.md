@@ -31,7 +31,8 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Input method freeze fix <!-- catalog: `findwindow_fix` --> | Stop input methods such as iFlytek from freezing or crashing the repack client | [Use](docs/findwindow-fix.md) |
 | Startup crash fix <!-- catalog: `startup_crash_fix` --> | Stop random crashes on the loading screen at game start | [Use](docs/startup-crash-fix.md) |
 | Wait-room window initialization guard <!-- catalog: `waitroom_window_fix` --> | Keep window icon queries safe while a room view is attaching | [Use](docs/waitroom-window-fix.md) |
-| Native battle data guards <!-- catalog: `native_data_guard` --> | Guard funnel mount indices, missing display names and optional transform metadata | [Use](docs/native-data-guard.md) |
+| Native data and lifecycle guards <!-- catalog: `native_data_guard` --> | Guard missing base/detail data, retain deferred unit-management messages and preserve original crash context | [Use](docs/native-data-guard.md) |
+| Scene registration lifecycle fix <!-- catalog: `scene_lifecycle_fix` --> | Preserve spatial ownership when destination-node allocation fails | [Use](docs/scene-lifecycle-fix.md) |
 | Native login recovery <!-- catalog: `login_recovery` --> | Complete authenticated old-session cleanup and retry login once on WorldServer | [Use](docs/login-recovery.md) |
 | Apsalus III transform input fix <!-- catalog: `transform_input_fix` --> | Release the native transform lock when a form has no transform animation | [Use](docs/transform-input-fix.md) |
 | Agent relay log fix <!-- catalog: `agent_relay_log_fix` --> | Fix an Agent relay log that reads invalid memory | [Use](docs/agent-relay-log-fix.md) |

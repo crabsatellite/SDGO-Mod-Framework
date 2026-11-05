@@ -13,6 +13,10 @@ unit, form and weapons. It starts with the game and stores no FRP address, accou
 PvP AI's `pvp_ai` (server) and `match_ai` (client) are also required. All participants use components
 from the same package.
 
+Native damage notifications can refer to map objects as well as units. NPC-only AI and SP state is
+read or updated only after the original object-type check identifies an NPC; destructible scenery
+continues to use its native behavior.
+
 ## Choosing difficulty in the room title
 
 Clients default to **Medium**. The host writes the difficulty in the `!ai` arguments, so friends need

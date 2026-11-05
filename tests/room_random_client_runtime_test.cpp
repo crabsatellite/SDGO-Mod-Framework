@@ -221,8 +221,85 @@ int wmain(int argc,wchar_t** argv) {
     Put<uint32_t>(app.data(),0x4A0,18);room[5]=1;startedModel=0;
     dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
     Check(startedModel==(enabled?11032:15019),"ordinary PvP also uses the corrected complete construction source");
+    // The native 3D manager is authoritative even if an older legacy room
+    // publication remains non-null. A matching owner in that stale buffer must
+    // not make it writable during a 3D transition.
+    auto staleLegacy=room;
+    Put<uint32_t>(staleLegacy.data(),0x57C,15019);
+    const auto staleBefore=staleLegacy;
+    Put<uint32_t>(app.data(),0x4A0,18);
+    Put<uint8_t*>(profile.data(),0xEC,staleLegacy.data());
+    Put<uint32_t>(room.data(),0x57C,15019);
+    dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
+    Check(room_random_client::Read<uint32_t>(room.data(),0x57C)==(enabled?11032u:15019u),
+          "active native 3D model takes precedence over a non-null legacy publication");
+    Check(staleLegacy==staleBefore,"a retained legacy publication is never written by 3D synchronization");
+    const auto liveModelVtable=modelVtable;
+    Put<void*>(modelVtable.data(),0x1C,nullptr);
+    const auto activeBefore=room;
+    dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
+    Check(room==activeBefore&&staleLegacy==staleBefore,
+          "an invalid active 3D model cannot fall back to a stale writable legacy room");
+    modelVtable=liveModelVtable;
+    Put<uint8_t*>(profile.data(),0xEC,nullptr);
+    // A real four-human trace can deliver the last full record after 06C3.
+    // Rejected packets and that delayed fourth record must not revoke the three
+    // already-authorized frozen sources.
+    threeD=false;Put<uint32_t>(app.data(),0x4A0,18);
+    Put<uint32_t>(room.data(),0,40);room[5]=8;
+    std::array<std::array<uint8_t,0x99>,4> lateUnits{};
+    std::array<std::array<uint8_t,0x48E>,4> lateSources{};
+    std::array<std::array<uint8_t,room_random_sync::kPayload+room_random_sync::kUnitSize>,4> lateNotices{};
+    std::array<uint8_t,0xCD4> lateStart{};Put<uint16_t>(lateStart.data(),0,0x06C3);
+    for(size_t slot=0;slot<4;++slot) {
+        const auto pilot=static_cast<uint32_t>(4101+slot);
+        const auto oldModel=static_cast<uint32_t>(17001+slot);
+        const auto newModel=static_cast<uint32_t>(14001+slot);
+        Put<uint32_t>(room.data(),0x533+slot*0x48E+0x429,pilot);
+        Put<uint32_t>(room.data(),0x533+slot*0x48E+0x49,oldModel);
+        Put<uint32_t>(lateUnits[slot].data(),0,newModel);
+        Put<uint64_t>(lateUnits[slot].data(),8,0x600000001ULL+slot);
+        lateNotices[slot]=room_random_sync::Packet(
+            0x0861,pilot,static_cast<uint32_t>(slot),40,lateUnits[slot]);
+        Put<uint32_t>(lateStart.data(),0x20+slot*0x10F,pilot);
+        Put<uint32_t>(lateStart.data(),0x2E+slot*0x10F,newModel);
+        Put<uint32_t>(lateSources[slot].data(),0x429,pilot);
+        Put<uint32_t>(lateSources[slot].data(),0x49,oldModel);
+    }
+    for(size_t slot=0;slot<3;++slot)
+        dispatch(dispatcher.data(),0,0,0,0x0861,lateNotices[slot].data());
+    dispatch(dispatcher.data(),0,0,0,0x06C3,lateStart.data());
+    auto rejectedLate=lateNotices[3];Put<uint32_t>(rejectedLate.data(),6,9999);
+    dispatch(dispatcher.data(),0,0,0,0x0861,rejectedLate.data());
+    auto rangedLate=lateNotices[3];Put<uint32_t>(rangedLate.data(),10,12);
+    dispatch(dispatcher.data(),0,0,0,0x0861,rangedLate.data());
+    for(size_t slot=0;slot<3;++slot) {
+        Construct(lateStart.data()+0x20+slot*0x10F,lateSources[slot].data(),0);
+        Check(startedModel==(enabled?static_cast<int>(14001+slot):static_cast<int>(17001+slot)),
+              "rejected post-start notices preserve an on-time human construction source");
+    }
+    Construct(lateStart.data()+0x20+3*0x10F,lateSources[3].data(),0);
+    Check(startedModel==17004,"missing fourth notice keeps its frozen source unchanged");
+    dispatch(dispatcher.data(),0,0,0,0x0861,lateNotices[3].data());
+    for(size_t slot=0;slot<4;++slot) {
+        Construct(lateStart.data()+0x20+slot*0x10F,lateSources[slot].data(),0);
+        Check(startedModel==(enabled?static_cast<int>(14001+slot):static_cast<int>(17001+slot)),
+              "delayed fourth notice completes one slot without revoking the first three");
+    }
+    auto nextUnit=lateUnits[1];Put<uint32_t>(nextUnit.data(),0,17002);
+    auto nextNotice=room_random_sync::Packet(0x0861,4102,1,40,nextUnit);
+    dispatch(dispatcher.data(),0,0,0,0x0861,nextNotice.data());
+    Construct(lateStart.data()+0x20+0x10F,lateSources[1].data(),0);
+    Check(startedModel==17002,"later selection invalidates only its own frozen source");
+    Construct(lateStart.data()+0x20,lateSources[0].data(),0);
+    Check(startedModel==(enabled?14001:17001),"one later selection preserves another human start authority");
+    Put<uint32_t>(room.data(),0,41);
+    dispatch(dispatcher.data(),0,0,0,0x0861,lateNotices[0].data());
+    Construct(lateStart.data()+0x20,lateSources[0].data(),0);
+    Check(startedModel==17001,"room generation change rejects the previous start authority");
     // Full ship and every native model/attribute projection survive the hook.
-    room[5]=7;Put<uint32_t>(app.data(),0x4A0,18);
+    threeD=true;Put<uint32_t>(room.data(),0,42);room[5]=7;Put<uint32_t>(app.data(),0x4A0,18);
+    Put<uint32_t>(room.data(),0x95C,1001);Put<uint32_t>(room.data(),0x57C,15019);
     std::array<uint8_t,0x2BC> ship{};
     for(size_t i=0;i<4;++i) {
         auto id=static_cast<uint32_t>(11032+i);
