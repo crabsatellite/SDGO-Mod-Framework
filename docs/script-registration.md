@@ -31,7 +31,9 @@ original globals during registration.
 
 Use `NativeRegistration::onOriginalLoad` from the original file-loader hook.
 Supply the framework's original trampoline, the game main thread identified by
-the host bootstrap, and a mandatory candidate-client close callback. The adapter
+`ProcessInitialThreadId(api)`, and a mandatory candidate-client close callback. A
+zero identity must refuse admission; the current callback thread is not a fallback.
+The adapter
 passes ordinary loads through. For the original root, it first invokes the
 unmodified loader and only then admits registration on that same main thread.
 The engine's first state pointer must equal the original state getter. A newly
@@ -66,6 +68,31 @@ idempotent readback, restart requirements, and a fatal candidate VM. Preserve th
 reason and `executionStarted`/`clientMustClose` in the importer's activation
 receipt. An accepted manifest or a copied SCP file cannot stand in for that
 receipt.
+
+`onOriginalLoadBatch` admits multiple owners at one original root completion.
+It checks every owner's program bytes, resource/export names and existing VM
+globals before executing the first owner. A failure after any owner executes
+quarantines the whole candidate client. It does not rerun the original root once
+per owner or claim to roll back published closures.
+
+## Unit catalog transport
+
+`owner.units.native_programs` validates portable authoring manifests using
+`sdgo.unit-native-programs/1` ([schema](unit-native-programs.schema.json)) and
+compiles the optional `SDGOPR1` sidecar.
+`sdgo/unit_program_format.h` independently consumes that binary format. It binds
+the exact emitted catalog SHA-256, every program's bytes/exports and a complete
+imported weapon's SHA-256 plus its UTF-16 initializer name at offset 1771.
+
+The unit catalog's optional consumer installs the existing original-loader
+adapter only when `native-programs.bin` is present. Native record registration
+must finish before the root boundary. `SdgoReadUnitProgramStateV1` exposes a
+read-only process-lifetime snapshot of the VM, thread, bundle hash and verified
+exports; `sdgo/unit_program_state.h` declares its versioned structure.
+This registration does not grant server, allocation, media or actor admission.
+Manager can preserve/export declarations in a project and show its script-group
+count. Its ordinary publisher remains blocked for projects that require the
+unfinished actor admission path.
 
 ## Verification
 

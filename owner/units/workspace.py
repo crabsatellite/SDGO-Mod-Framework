@@ -135,6 +135,7 @@ class Workspace:
                 'parse_warnings':parsed.get('warnings',[]),'created':now(),'updated':now(),'status':'draft'}
             if project:
                 if project.get('project_key'):draft['family_key']=project['project_key']
+                if project.get('native_programs'):draft['native_programs']=copy.deepcopy(project['native_programs'])
                 draft['metadata']=copy.deepcopy(project['metadata']);draft['media']=copy.deepcopy(project['media'])
                 draft['project_kind']='unit-family' if forms else 'metadata-only'
             elif parsed.get('blueprints'):
@@ -355,6 +356,16 @@ class Workspace:
         def need(code,message,field=None,level='required',accept=None):
             issues.append({'code':code,'message':message,'field':field,'level':level,**({'accept':accept} if accept else {})})
         root=draft.get('root_unit_id');forms={r['id']:r for r in draft['forms']};newweapons={r['id'] for r in draft['weapons']}
+        if draft.get('native_programs'):
+            from .native_programs import validate_project_bindings
+            try:
+                validate_project_bindings(draft['native_programs'],
+                    files={entry['path']:self.blob(entry['sha']) for entry in draft['files']})
+                need('native_program_actor_adapter',
+                     '请保存制作项目；带有新增初始化脚本的机体尚不能发布',
+                     'native_programs','error')
+            except (ValueError,KeyError) as error:
+                need('native_program_binding',str(error),'native_programs','error')
         file_entries={entry['path']:entry for entry in draft.get('files',[])}
         member_files={}
         try:
@@ -516,6 +527,7 @@ class Workspace:
             from .project import search_text
             state=self.read();result={'revision':model.revision(state),
                 'capabilities':{'projects':{'protocol':'sdgo.unit-project','schema_version':1,'metadata_first':True,'bundled_media':True},
+                    'native_programs':{'schema':'sdgo.unit-native-programs/1','authoring':True,'native_publication':False},
                     'blueprints':{'schema_version':1,'authoring':True,
                     'native_registration':NATIVE_REGISTRATION_SUPPORTED,'target_record_kind':33,
                     'target_record_size':1197,'material_minimum':3,'material_maximum':5,'raw_material_maximum':7,
@@ -551,7 +563,8 @@ class Workspace:
                 draft['previews']={role:'/api/units/assets/'+value['asset_sha'] if value.get('asset_sha') else None for role,value in draft['presentation'].items()}
                 external={r['server'].get(name) for r in draft['forms'] for name in model.WEAPON_REFS}-{r['id'] for r in draft['weapons']}-{0,None}
                 draft['summary']={'files':len(draft['files']),'forms':len(draft['forms']),'weapons':len(draft['weapons']),
-                    'external_weapons':sorted(external),'resources':sum(not f['path'].lower().endswith('.bin') for f in draft['files'])}
+                    'external_weapons':sorted(external),'resources':sum(not f['path'].lower().endswith('.bin') for f in draft['files']),
+                    'native_program_groups':len(draft.get('native_programs',[]))}
                 result['draft']=draft
             return result
 

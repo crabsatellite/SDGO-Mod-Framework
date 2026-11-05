@@ -95,6 +95,8 @@ def publish(workspace,state,selected,transaction):
         # They also preserve the last active record while an update is a draft.
         family=draft.get('published')
         if not family:continue
+        if family.get('native_programs'):
+            raise ValueError('请保存制作项目；带有新增初始化脚本的机体尚不能发布')
         family=copy.deepcopy(family);published.append(family);family_blueprint_receipts=[]
         root=family['root_unit_id'];plan=workspace.plan(family);plans.append(plan)
         template_members=set()

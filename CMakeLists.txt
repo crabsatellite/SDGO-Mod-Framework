@@ -175,9 +175,10 @@ sdgo_add_mod(net_probe DESCRIPTION "packet logger" SOURCES mods/net_probe/net_pr
 sdgo_add_mod(unit_catalog DESCRIPTION "confirmed unit family content"
              SOURCES mods/unit_catalog/client.cpp mods/unit_catalog/preview_runtime.cpp
                      mods/unit_catalog/preview_shop.cpp mods/unit_catalog/preview_capsule.cpp
+                     mods/unit_catalog/program_runtime.cpp
                      support/native_resource_overlay/native_resource_overlay.cpp
                      support/native_resource_overlay/native_resource_overlay.def
-             FILES symbols.fragment.ini)
+             FILES symbols.fragment.ini LIBS sdgo_script_registration)
 
 sdgo_add_mod(shop_labels DESCRIPTION "shop rental and Unicode labels" SOURCES mods/shop_labels/shop_labels.cpp FILES display.example.ini)
 sdgo_add_mod(shop_localization DESCRIPTION "Chinese shop localization" SOURCES mods/shop_localization/shop_localization.cpp mods/shop_localization/shop_search.cpp FILES zh-CN.ini symbols.fragment.ini LIBS user32)
@@ -1313,6 +1314,10 @@ if(BUILD_TESTING)
         target_link_options(script_registration_test PRIVATE /BASE:0x18000000 /DYNAMICBASE:NO)
         add_test(NAME script_registration_real_lua50 COMMAND script_registration_test)
         set_tests_properties(script_registration_real_lua50 PROPERTIES TIMEOUT 30)
+        add_test(NAME unit_native_programs_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+            -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_native_programs.py" -v)
+        set_tests_properties(unit_native_programs_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            ENVIRONMENT "SDGO_UNIT_PROGRAM_VALIDATOR=$<TARGET_FILE:script_registration_test>" TIMEOUT 60)
         set(SDGO_SCRIPT_NATIVE_CLIENT "" CACHE FILEPATH "Optional original client for bounded original Lua API replay")
         if(SDGO_SCRIPT_NATIVE_CLIENT)
             add_test(NAME script_registration_original_api_replay COMMAND script_registration_test --native-api "${SDGO_SCRIPT_NATIVE_CLIENT}")
@@ -1538,4 +1543,41 @@ if(BUILD_TESTING)
     target_link_libraries(announcement_news_test PRIVATE sdgo_api winhttp)
     sdgo_strict(announcement_news_test)
     add_test(NAME announcement_news_model COMMAND announcement_news_test)
+endif()
+
+if(BUILD_TESTING)
+    # These fixtures own a separate runtime tree and never enter a release stage.
+    set(thread_fixture_root "${CMAKE_BINARY_DIR}/loader-thread/$<CONFIG>")
+    add_library(loader_thread_probe SHARED tests/loader_thread_probe.cpp)
+    target_link_libraries(loader_thread_probe PRIVATE sdgo_api)
+    sdgo_strict(loader_thread_probe)
+    set_target_properties(loader_thread_probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${thread_fixture_root}/sdgo/mods/loader_thread_probe")
+    file(GENERATE OUTPUT "${thread_fixture_root}/sdgo/mods/loader_thread_probe/mod.ini"
+        CONTENT "[mod]\nid=loader_thread_probe\nname=Loader thread probe\napi=1\nhosts=*\ndll=loader_thread_probe.dll\n")
+    foreach(mode IN ITEMS static dynamic legacy)
+        add_executable(loader_thread_${mode} tests/loader_initial_thread_host.cpp)
+        target_link_libraries(loader_thread_${mode} PRIVATE sdgo_api kernel32)
+        target_compile_options(loader_thread_${mode} PRIVATE /GS- /Zl)
+        target_link_options(loader_thread_${mode} PRIVATE /ENTRY:Run /NODEFAULTLIB)
+        sdgo_strict(loader_thread_${mode})
+        set_target_properties(loader_thread_${mode} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${thread_fixture_root}")
+        add_dependencies(loader_thread_${mode} sdgo_core loader_thread_probe d3d9_shim)
+        if(mode STREQUAL "static")
+            target_compile_definitions(loader_thread_${mode} PRIVATE SDGO_STATIC_THREAD_FIXTURE)
+            target_link_libraries(loader_thread_${mode} PRIVATE d3d9_shim)
+        elseif(mode STREQUAL "legacy")
+            target_compile_definitions(loader_thread_${mode} PRIVATE SDGO_LEGACY_THREAD_FIXTURE)
+        endif()
+        add_custom_command(TARGET loader_thread_${mode} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:d3d9_shim> "${thread_fixture_root}/d3d9.dll"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:sdgo_core> "${thread_fixture_root}/sdgo/core.dll")
+        add_test(NAME loader_initial_thread_${mode} COMMAND loader_thread_${mode})
+        set_tests_properties(loader_initial_thread_${mode} PROPERTIES TIMEOUT 40 RUN_SERIAL TRUE)
+    endforeach()
+    add_test(NAME unit_effect_resources_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_effect_resources.py" -v)
+    set_tests_properties(unit_effect_resources_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
+    add_library(native_root_thread_probe SHARED tests/native_root_thread_probe.cpp)
+    target_link_libraries(native_root_thread_probe PRIVATE sdgo_script_registration)
+    sdgo_strict(native_root_thread_probe)
 endif()

@@ -388,6 +388,8 @@ def inspect_upload(
     typed_members: set[str] = set()
     typed_resource_members: dict[str, list[dict[str, str]]] = {}
     if project is not None:
+        for binding in project.get('native_program_bindings',[]):
+            typed_members.update(binding['members'])
         for binding in project.get("client_template_bindings", []):
             typed_members.update(binding["members"])
             for resource in binding["manifest"]["resources"]+binding['manifest']['resource_dependencies']:
