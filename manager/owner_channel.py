@@ -496,13 +496,22 @@ class OwnerChannels:
         feed=self.check_source(source);old=storage.read_json(Path(host['path'])/RECEIPT,{})
         if old.get('revision',0)>feed['revision']:raise ValueError('拒绝较旧的服主发布版本')
         folder=self.cache/'downloads'/source['publisher_id']/(str(feed['revision'])+'-'+feed['sha256'][:16])
-        raw=self.fetcher(feed['url'],updates.MAX_ARCHIVE,self.stop_event)
+        raw=self.download_asset(source,feed)
         m=unpack(raw,feed,source,folder)
         self.downloads[host_id]=(folder,m)
         result=(audit(host,m) if audit_only else install(host,folder,m,self.cache) if apply else
                 {'status':'available','revision':m['revision'],'file_count':len(m['files'])})
         with self.lock:self.results[host_id]=result
         return result
+
+    def download_asset(self,source,feed):
+        # Every mirror must supply the exact immutable asset advertised by the
+        # pinned publisher, even when the mirror's latest feed has moved on.
+        for url in dict.fromkeys(https(urljoin(base,feed['asset'])) for base in source['feeds']):
+            try:raw=self.fetcher(url,updates.MAX_ARCHIVE,self.stop_event)
+            except (OSError,TimeoutError):continue
+            if len(raw)==feed['bytes'] and updates.digest(raw)==feed['sha256']:return raw
+        raise ValueError('服主包在所选源均不可用或校验失败；保留当前版本')
 
     def publish(self,host_id,expected):
         host=self.workspace.host(host_id)
@@ -548,7 +557,7 @@ class OwnerChannels:
         # Read the actual public endpoint. A local export alone is not publication proof.
         public=self.check_source(source)
         if public['revision']!=feed['revision'] or public['sha256']!=feed['sha256']:raise ValueError('本地包已生成，但公开源尚未同步；同步后使用核对发布，无需重复生成版本')
-        public_raw=self.fetcher(public['url'],updates.MAX_ARCHIVE,self.stop_event)
+        public_raw=self.download_asset(source,public)
         if public_raw!=raw:raise ValueError('公开下载与刚发布的整合包不一致')
         with storage.LOCK:host['published_revision']=feed['revision'];self.workspace.save_workspace()
         result={'status':'published','revision':feed['revision'],'sha256':feed['sha256'],'source':source}
