@@ -283,6 +283,18 @@ Version 1 stays transport-only.
 
 ### Skill/funnel dependencies and resource depot
 
+The publication compiler derives the unit record's model checksum from the final published model bytes,
+including models whose embedded resource paths were prepared. Source records and source assets stay unchanged.
+
+Developer components can prepare an independent skill atlas with
+[`sdgo.unit-skill-atlases/1`](unit-skill-atlases.schema.json). Its sidecar binds complete skill records,
+the catalog and resource archive. Native detail controls and actor skill initialization resolve the declared
+atlas through their original resource consumers. This does not enable ordinary Manager publication of new skills.
+
+Owned funnel definitions use [`sdgo.unit-server-funnels/1`](unit-server-funnels.schema.json), with the same
+transaction and ownership checks as skill data. All six server columns and their paired client fields are checked;
+`pending_funnel_ids` continues to block ordinary publication until runtime admission is complete.
+
 Developer tools can prepare owned server skill data with
 `owner.units.server_dependencies` and
 [`sdgo.unit-server-dependencies/1`](unit-server-dependencies.schema.json).
@@ -306,8 +318,9 @@ The skill profile verifies the 882-to-1132-byte projection, explicit ID changes
 and an optional typed linked-skill ID change; the 732-byte funnel profile
 preserves every byte outside its ID word. The native catalog checks fixed
 sizes and typed unit-to-skill, weapon-to-funnel and linked-skill references.
-Manager cannot publish these new dependency definitions yet, because their resources,
-server definitions and actor behavior are not supported.
+Manager cannot publish these new dependency definitions yet. Preparing server data
+and scoped resources does not complete admission for ID-specific behavior, scripts
+and every actor lifecycle.
 The [native ownership test](game-test.md#native-record-ownership-and-shutdown)
 checks complete record bytes and original grid cleanup; it does not cover battle
 activation, transformation, death or respawn.

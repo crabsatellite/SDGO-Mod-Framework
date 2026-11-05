@@ -2830,6 +2830,8 @@ def prepare(
     extra_mods: tuple[str, ...] = (),
     disabled_mods: tuple[str, ...] = (),
     apsalus_roundtrip: bool = False,
+    unit_transform_roundtrip: bool = False,
+    capture_native_frames: bool = False,
     fps_gameplay_cap: int | None = None,
     server_session: dict | None = None,
     rebind_existing_account: bool = False,
@@ -2877,9 +2879,16 @@ def prepare(
         if fps_cap is not None or any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,collection_draw)) or mission_mode is not None:
             raise GameTestError('gameplay FPS checks require a complete native PvP battle')
         extra_mods=tuple(dict.fromkeys((*extra_mods,FPS_MOD)))
-    if apsalus_roundtrip and (mode_sequence != '1' or play_unit_uid is None or any((bootstrap_only,
+    if type(unit_transform_roundtrip) is not bool or type(capture_native_frames) is not bool:
+        raise GameTestError('native unit observation flags must be booleans')
+    if apsalus_roundtrip and unit_transform_roundtrip:
+        raise GameTestError('choose one native transform roundtrip profile')
+    if (apsalus_roundtrip or unit_transform_roundtrip) and (mode_sequence != '1' or play_unit_uid is None or any((bootstrap_only,
             battleship_only,gift_requests_only,deck_only,pages_only,friends_only)) or mission_mode is not None):
-        raise GameTestError('Apsalus roundtrip requires one complete ordinary battle and an existing owned unit UID')
+        raise GameTestError('Native transform roundtrip requires one complete ordinary battle and an existing owned unit UID')
+    if capture_native_frames and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,
+            battleship_only,gift_requests_only,deck_only,friends_only,room_titles_only))):
+        raise GameTestError('native frame capture requires pages or a complete ordinary battle')
     fps_only = fps_cap is not None
     if fps_only:
         if not quiet or sfx_only:
@@ -3199,9 +3208,11 @@ def prepare(
         observer_config=read_ini(observer_manifest)
         if not observer_config.has_section('settings'):observer_config.add_section('settings')
         observer_config['settings']['ApsalusRoundtrip']='1' if apsalus_roundtrip else '0'
+        observer_config['settings']['UnitTransformRoundtrip']='1' if unit_transform_roundtrip else '0'
         observer_config['settings']['FpsGameplayCap']=str(fps_gameplay_cap or 0)
         for key,value in unit_scenarios.settings(plan.get('unit_scenario')).items():
             observer_config['settings'][key]=value
+        if capture_native_frames:observer_config['settings']['CaptureNativeFrames']='1'
         write_ini(observer_manifest,observer_config)
         if 'unit_scenario' in plan:
             atomic_write(client/'sdgo/gametest'/unit_scenarios.INPUT,unit_scenarios.encoded(plan['unit_scenario']).decode('utf-8'))
