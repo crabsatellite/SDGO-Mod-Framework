@@ -163,6 +163,16 @@ class OwnerChainTests(unittest.TestCase):
         self.unavailable.add('primary.example');self.controller.check(self.player['id'],True)
         self.assertTrue(any('backup.example'in x for x in self.requests))
 
+    def test_login_page_primary_uses_only_the_same_pinned_owner_backup(self):
+        cfg=copy.deepcopy(self.source_cfg);cfg['feeds'].append('https://backup.example/packs/owner-feed.json')
+        self.controller.configure(self.owner['id'],{'mode':'owner','publication':cfg});self.publish();source=self.bind()
+        original=self.controller.fetcher
+        def fetch(url,limit,stop):
+            if 'primary.example'in url:return b'<html>Login required</html>'
+            return original(url,limit,stop)
+        self.controller.fetcher=fetch;self.assertEqual(self.controller.check(self.player['id'],True)['revision'],1)
+        self.assertEqual(o.installed_binding(self.player['path']),source)
+
     def test_wrong_publisher_and_revision_reuse_are_refused(self):
         self.publish();self.bind();self.controller.check(self.player['id'],True)
         feed=json.loads((self.output/'owner-feed.json').read_text());bad={**feed,'publisher_id':'0'*32}
