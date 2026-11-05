@@ -294,8 +294,8 @@ An optional `"acquisition": {"kind": 1, "machine_id": ..., "unit_id": ...}`
 checks a fixed capsule candidate; kind `3` checks a custom candidate. These
 callbacks open the real model preview without buying or changing a selection.
 `"collection_preview": True` instead opens the existing collection confirmation
-without purchasing. Capsule previews and portrait captures remain distinct from
-draw, delivery and gameplay acceptance.
+without purchasing. Capsule previews and portrait captures do not cover draws,
+delivery or gameplay.
 An optional `"activity_target": {"machine_id": ..., "price": ..., "currency": ...}`
 selects another existing native activity confirmation with exact matching. It
 requires `collection_preview`; changed targets cannot submit a draw in this scope.
@@ -315,7 +315,7 @@ The API also accepts `capsule_package=<Manager deployment root>` to install a
 manifest-verified capsule publication before sealing. Its framework and provider
 programs must match the selected stage. The runner uses its trusted installer and
 reads back the installed resource hashes; this path never applies the server SQL.
-With observer 0.1.8 or newer, `--pages-only --page-group hangar` seals only the
+`--pages-only --page-group hangar` seals only the
 hangar read, preview and cancel cases, together with login and optional active-unit
 selection. This read-only group excludes storage claims, purchases and other page
 features; it rejects shop or collection scope and preserves the full suite's assertions.
@@ -379,7 +379,7 @@ consumes its isolated account's existing book and materials through the native
 confirmation dialog. It requires the original `0x09AD` request, `0x07C9` reply
 consumer and matching output brief inventory record. Keep an independent SQL
 before/after receipt and verify persistence with a new native login; a success
-reply alone does not prove reload or acquisition-route closure. All identities
+reply alone does not show that the result survives a reload or that the acquisition route is complete. All identities
 and consumption settings are hash-bound before launch.
 
 ### Native catalog occupancy
@@ -411,9 +411,8 @@ Its additional report layer checks the native final-release receipt against
 the sealed catalog, including complete record bytes, five distinct owning
 allocation addresses and exactly one release of each address. Missing,
 modified or duplicate evidence fails even when the login cases passed. This
-tests raw-record registration and native grid destruction; skill/funnel actor
-activation, battle behavior and transform/death/respawn cleanup remain separate
-acceptance scopes. The probe does not create server rows or player inventory.
+tests raw-record registration and native grid destruction; it does not cover skill/funnel
+actor activation, battle behavior or transform/death/respawn cleanup. The probe does not create server rows or player inventory.
 
 ### Coordinated multiplayer
 
