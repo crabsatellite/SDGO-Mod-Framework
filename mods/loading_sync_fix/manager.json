@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "loading_sync_fix",
+  "title": "AI 房间加载超时修复",
+  "category": "fixes",
+  "hosts": ["battle"],
+  "description": "加载较慢触发超时处理时，避免把 AI 当成未完成加载的真人移除并扣减真人数量。",
+  "settings": [],
+  "presentation": "automatic_fix",
+  "mechanism": "在三个阶段的原生加载检查中排除框架 AI 槽位，真人房主离开后只选择其他真人继任；保留真人加载完成判断、重试和超时退出流程。安装到所有承载房间的 BattleServer，重启对应通道后生效。"
+}
