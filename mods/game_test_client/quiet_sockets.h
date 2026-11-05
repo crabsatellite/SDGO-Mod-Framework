@@ -12,20 +12,83 @@
 class QuietSockets {
 public:
     using BindFn=int(WSAAPI*)(SOCKET,const sockaddr*,int);
-    struct Observation { uint32_t active,binds,redirected,failed,escaped; };
+    using GetHostByNameFn=hostent*(WSAAPI*)(const char*);
+    struct Observation {
+        uint32_t active,binds,redirected,failed,escaped;
+        uint32_t host_lookups,host_redirected,host_delegated;
+    };
     bool Install(const SdgoApi* api,SdgoMod* mod) {
         if (!api || !api->HookImport || (active_ && active_!=this))return false;
         active_=this;
-        if (!api->HookImport(mod,"ws2_32.dll","bind",reinterpret_cast<void*>(&Bind),
-                            reinterpret_cast<void**>(&original_)) || !original_) {active_=nullptr;return false;}
+        if (!api->HookImport(mod,"ws2_32.dll","gethostbyname",
+                            reinterpret_cast<void*>(&GetHostByName),
+                            reinterpret_cast<void**>(&originalGetHostByName_)) ||
+            !originalGetHostByName_ ||
+            !api->HookImport(mod,"ws2_32.dll","bind",reinterpret_cast<void*>(&Bind),
+                            reinterpret_cast<void**>(&original_)) || !original_) {
+            active_=nullptr;return false;
+        }
         installed_=true;return true;
     }
     Observation State() const {
-        return {installed_ ? 1u:0u,Read(binds_),Read(redirected_),Read(failed_),Read(escaped_)};
+        return {
+            installed_ ? 1u:0u,
+            Read(binds_),
+            Read(redirected_),
+            Read(failed_),
+            Read(escaped_),
+            Read(hostLookups_),
+            Read(hostRedirected_),
+            Read(hostDelegated_)
+        };
     }
 private:
+    struct LoopbackHost {
+        hostent entry{};
+        char name[256]{};
+        char* aliases[1]{};
+        u_long address=0;
+        char* addresses[2]{};
+    };
     static uint32_t Read(volatile LONG& value) {
         return static_cast<uint32_t>(InterlockedCompareExchange(&value,0,0));
+    }
+    static hostent* LoopbackResult(const char* localName) {
+        thread_local LoopbackHost result{};
+        strcpy_s(result.name,localName && *localName ? localName:"localhost");
+        result.address=htonl(INADDR_LOOPBACK);
+        result.aliases[0]=nullptr;
+        result.addresses[0]=reinterpret_cast<char*>(&result.address);
+        result.addresses[1]=nullptr;
+        result.entry.h_name=result.name;
+        result.entry.h_aliases=result.aliases;
+        result.entry.h_addrtype=AF_INET;
+        result.entry.h_length=static_cast<short>(sizeof(result.address));
+        result.entry.h_addr_list=result.addresses;
+        return &result.entry;
+    }
+    static hostent* WSAAPI GetHostByName(const char* name) {
+        QuietSockets* self=active_;
+        if (!self || !self->originalGetHostByName_) {
+            WSASetLastError(WSANOTINITIALISED);
+            return nullptr;
+        }
+        InterlockedIncrement(&self->hostLookups_);
+        char localName[256]{};
+        const bool haveLocalName=
+            gethostname(localName,static_cast<int>(sizeof(localName)))==0 &&
+            localName[0];
+        const bool local=
+            !name || !*name ||
+            (haveLocalName && _stricmp(name,localName)==0);
+        if (local) {
+            // Native ACK_IP_EXTERNAL advertises this lookup result to peers.
+            // Keep it reachable from the loopback-only binds above.
+            InterlockedIncrement(&self->hostRedirected_);
+            return LoopbackResult(haveLocalName ? localName:name);
+        }
+        InterlockedIncrement(&self->hostDelegated_);
+        return self->originalGetHostByName_(name);
     }
     static int WSAAPI Bind(SOCKET socket,const sockaddr* address,int length) {
         QuietSockets* self=active_;
@@ -71,6 +134,8 @@ private:
     }
     inline static QuietSockets* active_=nullptr;
     BindFn original_=nullptr;
+    GetHostByNameFn originalGetHostByName_=nullptr;
     bool installed_=false;
     mutable volatile LONG binds_=0,redirected_=0,failed_=0,escaped_=0;
+    mutable volatile LONG hostLookups_=0,hostRedirected_=0,hostDelegated_=0;
 };

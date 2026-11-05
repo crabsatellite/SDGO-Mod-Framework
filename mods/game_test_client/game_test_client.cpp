@@ -2970,8 +2970,9 @@ void PublishQuietSocketReceipt(bool force) {
     const auto temporary=path+L".tmp";
     FILE* file=_wfopen(temporary.c_str(),L"wb");
     if (!file)return;
-    fprintf(file,"[run]\nid=%s\n[policy]\npid=%lu\nactive=%u\nloopback_only=%u\n[sockets]\nbinds=%u\nredirected=%u\nfailed=%u\nescaped=%u\n[audio]\nactive=%u\nopened=%u\nmuted=%u\nfailed=%u\nopen_failed=%u\n",
+    fprintf(file,"[run]\nid=%s\n[policy]\npid=%lu\nactive=%u\nloopback_only=%u\n[sockets]\nbinds=%u\nredirected=%u\nfailed=%u\nescaped=%u\nhost_lookups=%u\nhost_redirected=%u\nhost_delegated=%u\n[audio]\nactive=%u\nopened=%u\nmuted=%u\nfailed=%u\nopen_failed=%u\n",
         sdgo_test::runId.c_str(),GetCurrentProcessId(),observed.active,quietLoopback ? 1u:0u,observed.binds,observed.redirected,observed.failed,observed.escaped,
+        observed.host_lookups,observed.host_redirected,observed.host_delegated,
         audio.active,audio.opened,audio.muted,audio.failed,audio.open_failed);
     fprintf(file,"[graphics]\nactive=%u\nworker_ready=%u\ndispatch_failures=%u\ncreated_devices=%u\nfailed_devices=%u\ncreate_hresult=%ld\npresents=%u\nsuccessful_presents=%u\npresent_qpc_frequency=%llu\nsuccessful_present_min_gap_ticks=%llu\nsuccessful_present_max_gap_ticks=%llu\nproxy_hwnd=%lu\nproxy_visible=%u\nproxy_noactivate=%u\nproxy_toolwindow=%u\nproxy_appwindow=%u\n",
 
