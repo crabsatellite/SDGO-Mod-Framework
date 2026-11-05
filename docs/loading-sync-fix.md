@@ -4,7 +4,7 @@
 
 `loading_sync_fix` preserves completed loading when another player is late, and prevents framework
 AI slots from being treated as timed-out human clients. It is an automatic server fix, enabled by
-default and listed in the SDGO Mod Manager fix archive.
+default and listed under **修复归档** (fix archive) in SDGO Mod Manager.
 
 ## Install
 

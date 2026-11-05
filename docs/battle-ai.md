@@ -41,7 +41,7 @@ controller has no current or queued action. It does not interrupt a charge, beam
 pause navigation, delay target selection, or add 600 ms to every weapon's own cooldown. A slower weapon
 remains governed by its longer native cycle. Switching ordinary weapons does not reset this interval;
 respawning starts with no debt from the previous life. This reduces repeated rapid starts, while its
-effect on sustained fire depends on the weapon. It is a tuning baseline, not a promised player win rate.
+effect on sustained fire depends on the weapon.
 
 Living teammates share fresh visual contacts, including contacts observed by human players. A bot can
 pursue an enemy seen by an ally without seeing it itself. Shooting still requires the bot's own weapon
@@ -53,35 +53,8 @@ using the bot's actual collision sphere. Public spawn and relocation points prov
 when no teammate has a current contact. Paths account for platforms, safe drops, solid obstacles and
 DeathZone volumes. A blocking destructible can be attacked through normal weapons; indestructible and
 destroyed-but-still-solid objects remain obstacles. Forced-movement pads retain native motor control.
-On complex maps an individual unit can still stall. Version 0.4.9 preserves native control when a
-map device is triggered, but does not actively plan routes through teleport or propulsion devices.
-
-Navigation distinguishes the destination floor from the bot's current floor. Being directly above
-an enemy is not arrival: the route must reach the projected destination height. Pursuit and exploration
-can use native boost while fuel remains above the configured reserve, and descending segments use
-ordinary movement. Native collision probing supplies obstacle heights for automatic jumping; the Mod
-enables that NPC input permission and preserves the unit's original gravity, speed and collision rules.
-Committed attacks, capture and map-controlled movement keep their motor ownership.
-Selecting a special does not reserve an action: an unadmitted request that remains natively neutral
-for 200 ms returns to ordinary combat, with one second before another attempt. Current or queued
-native actions and accepted specials retain their completion ownership.
-After a native action finishes, the enhanced controller resumes on a free update even when the
-original script omits its callback. Relative movement checks native admission before submitting a
-command, and an accepted short step keeps its startup interval instead of being restarted each frame.
-An unreachable last-seen position is discarded so public-map exploration can resume.
-Boost Down keeps its native fuel depletion while the bot can continue ordinary walking and legal
-attacks. A melee weapon remains available when no usable ranged response exists. Live breakable
-gates remain solid to route planning when ordinary weapons cannot currently breach them.
-Side steps follow measured ground contours. A blocked preferred direction does not suppress checks
-of other directions, and rejected positioning requests retain their demand for route recovery.
-Static collision scenes are checked as geometry even when they have no gameplay-object pointer.
-Walking support and slope admission use the game's native bilinear heightmap and root normal;
-rendered triangle height and a model's box corners do not define its walking surface.
-
-Terrain sight queries visit the ray's intersected grid cells and use the original native
-triangle predicate. The layout is validated before indexing; only layout information is retained,
-so current heights, teammate contacts and firing visibility are still read live. Inactive native
-steering storage is represented as no movement destination instead of invalidating the whole observation.
+On complex maps an individual unit can still stall. Native control is preserved when a map device is
+triggered; navigation does not yet plan routes through teleport or propulsion devices.
 
 | | Medium: skilled player | Hard: expert player |
 |---|---|---|
@@ -174,12 +147,36 @@ see the Chinese guide for the full list. The server part **战斗 AI 资源规�
 Turning the AI off returns control to the native AI within two seconds.
 
 With decision logging enabled, `Medium ordinary attack pacing observed` records the first held-back
-ordinary request per bot generation. The existing x86 native fixture includes a default-pacing case
-covering delayed repeated starts, later resumption, active and queued melee, charge/beam input,
-special admission, respawn, zero override and Hard. Lua policies, navigation and weapon rules retain
-their existing separate regression cases.
+ordinary request per bot generation.
 
 ## Developer notes
+
+Navigation distinguishes the destination floor from the bot's current floor. Being directly above
+an enemy is not arrival: the route must reach the projected destination height. Pursuit and exploration
+can use native boost while fuel remains above the configured reserve, and descending segments use
+ordinary movement. Native collision probing supplies obstacle heights for automatic jumping; the Mod
+enables that NPC input permission and preserves the unit's original gravity, speed and collision rules.
+Committed attacks, capture and map-controlled movement keep their motor ownership.
+Selecting a special does not reserve an action: an unadmitted request that remains natively neutral
+for 200 ms returns to ordinary combat, with one second before another attempt. Current or queued
+native actions and accepted specials retain their completion ownership.
+After a native action finishes, the enhanced controller resumes on a free update even when the
+original script omits its callback. Relative movement checks native admission before submitting a
+command, and an accepted short step keeps its startup interval instead of being restarted each frame.
+An unreachable last-seen position is discarded so public-map exploration can resume.
+Boost Down keeps its native fuel depletion while the bot can continue ordinary walking and legal
+attacks. A melee weapon remains available when no usable ranged response exists. Live breakable
+gates remain solid to route planning when ordinary weapons cannot currently breach them.
+Side steps follow measured ground contours. A blocked preferred direction does not suppress checks
+of other directions, and rejected positioning requests retain their demand for route recovery.
+Static collision scenes are checked as geometry even when they have no gameplay-object pointer.
+Walking support and slope admission use the game's native bilinear heightmap and root normal;
+rendered triangle height and a model's box corners do not define its walking surface.
+
+Terrain sight queries visit the ray's intersected grid cells and use the original native
+triangle predicate. The layout is validated before indexing; only layout information is retained,
+so current heights, teammate contacts and firing visibility are still read live. Inactive native
+steering storage is represented as no movement destination instead of invalidating the whole observation.
 
 Only locally simulated bots in the reserved AI NPC range are controlled; remote copies, humans and mission
 bosses are not. The Easy-path target search fix in `match_ai` (native enumeration of `1..playerCount`

@@ -12,8 +12,7 @@ case-insensitive.
 | `room_random_client` | client | applies the round's result to the client's start data |
 
 Both are required: `room_random` on BattleServer and `room_random_client` on every participating client.
-Use `room_random_client` 0.1.13 or later to wait for delayed round data before the native start
-transition. With AI, use `pvp_ai` 0.3.2 or later for waiting-room cleanup after settlement.
+Clients need `room_random_client` 0.1.13 or later; with AI, Battle servers need `pvp_ai` 0.3.2 or later.
 
 ## Room-title commands
 

@@ -22,9 +22,6 @@ During gift selection, the left and right arrows move one page at a time. Page d
 current group, and arrows also cross group boundaries. The first and last pages stay in bounds. Double-click
 an owned instance on any page to open its information card. Cancelling the card lets you browse and choose again.
 
-Closing or replacing the native information page retires its old control bindings. Reopening it binds
-the current page again, so changing scenes does not leave the gift view writing to retired controls.
-
 Acceptance requires a free recipient slot. A capacity refusal leaves the offer pending. Returns prefer the sender's original slot, then another free slot. If the sender is full, the unit remains stored until the sender can take it back.
 
 Ordinary rewards retain their native handling. Claim All does not accept these offers, and deleting an ordinary gift note is not a unit return.
@@ -50,6 +47,9 @@ After a timeout or disconnect, an operation may remain unconfirmed. Query its or
 Unsupported servers retain native friend, mail, shop-gift and storage handling.
 
 ## Developer notes
+
+Closing or replacing the native information page retires its old control bindings. Reopening it binds
+the current page again, so changing scenes does not leave the gift view writing to retired controls.
 
 The friend menu reuses the existing blue menu strip and its transparent normal,
 hover and pressed button states. The native popup routine positions the expanded
