@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "lobby_music_fix",
+  "title": "首次登录大厅音乐修复",
+  "category": "fixes",
+  "hosts": ["client"],
+  "description": "首次登录播放 0043，进入过战斗后返房使用 0042；重新登录后恢复首次登录曲目。",
+  "settings": [],
+  "presentation": "automatic_fix",
+  "mechanism": "观察原生服务状态切换，只替换首次战斗前的大厅 0042 请求。沿用原生 Miles 播放器及现有音乐开关、音量、循环和淡入设置；缺失 0043 文件时保留原生曲目。安装后重启客户端生效。"
+}
