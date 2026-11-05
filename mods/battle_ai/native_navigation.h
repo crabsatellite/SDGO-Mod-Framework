@@ -35,18 +35,31 @@ using RouteSearchFn = Vec3*(__thiscall*)(void* navigation, std::uint32_t objectI
                                         Vec3 end, Vec3* unused, std::uint32_t* count);
 using NativeFreeFn = void(__cdecl*)(void* allocation);
 
+enum class TerrainSupportStatus { Missing,Valid,Outside,Invalid };
+struct TerrainSupportSample {float height=0;Vec3 normal{};float spacing=25;};
+using TerrainSupportFn=TerrainSupportStatus(*)(void*,Vec3,TerrainSupportSample&);
+
 struct NavigationApi {
     QueryFn query = nullptr;
     SegmentAabbFn segmentAabb = nullptr;
     TerrainRayFn terrainRay = nullptr;
     RayObbFn rayObb = nullptr;
     RaySphereFn raySphere = nullptr;
+    TerrainSupportFn support=nullptr;
+    void* supportContext=nullptr;
 };
 
 enum class MotionSafety {
     Safe,
     Blocked,
     Unavailable
+};
+struct MotionSafetyDiagnostic {
+    uint32_t stage=0;
+    void* scene=nullptr;
+    void* object=nullptr;
+    void* predicate=nullptr;
+    int count=0;
 };
 
 static_assert(sizeof(Vec3) == 12, "GOnline Vec3 ABI changed");
@@ -109,19 +122,23 @@ inline bool Intersects(const Aabb& left, const Aabb& right) noexcept {
 
 inline MotionSafety MotionSafetyUnsafe(const NavigationApi& api, std::uint8_t* document,
                                        std::uint8_t* owner, Vec3 current,
-                                       Vec3 destination) noexcept {
+                                       Vec3 destination,MotionSafetyDiagnostic* diagnostic=nullptr) noexcept {
+    if(diagnostic)diagnostic->stage=1;
     if (!api.query || !api.segmentAabb || !document || !owner ||
         !Finite(current) || !Finite(destination)) {
         return MotionSafety::Unavailable;
     }
 
+    if(diagnostic)diagnostic->stage=2;
     auto* quadtree = *reinterpret_cast<void**>(document + kDocumentQuadTree);
     auto* ownerScene = *reinterpret_cast<std::uint8_t**>(owner + kOwnerScene);
     if (!quadtree || !ownerScene) return MotionSafety::Unavailable;
 
+    if(diagnostic)diagnostic->stage=3;
     const auto start = *reinterpret_cast<const Aabb*>(ownerScene + kSceneAabb);
     if (!ValidAabb(start)) return MotionSafety::Unavailable;
 
+    if(diagnostic)diagnostic->stage=4;
     const Vec3 delta = destination - current;
     const Aabb finish = {start.min + delta, start.max + delta};
     if (!Finite(delta) || !ValidAabb(finish)) return MotionSafety::Unavailable;
@@ -138,6 +155,7 @@ inline MotionSafety MotionSafetyUnsafe(const NavigationApi& api, std::uint8_t* d
     const Vec3 ownerHalf = (start.max - start.min) * 0.5f;
     const Vec3 segmentCenter = ownerCenter + delta * 0.5f;
     const Vec3 halfDelta = delta * 0.5f;
+    if(diagnostic)diagnostic->stage=5;
     if (!ValidAabb(queryBounds) || !Finite(ownerCenter) || !Finite(ownerHalf) ||
         !Finite(segmentCenter) || !Finite(halfDelta)) {
         return MotionSafety::Unavailable;
@@ -145,31 +163,46 @@ inline MotionSafety MotionSafetyUnsafe(const NavigationApi& api, std::uint8_t* d
 
     void* scenes[kSceneCapacity] = {};
     int sceneCount = 0;
+    if(diagnostic)diagnostic->stage=6;
     api.query(quadtree, scenes, &sceneCount, kSceneCapacity, &queryBounds);
+    if(diagnostic){diagnostic->stage=7;diagnostic->count=sceneCount;}
     if (sceneCount < 0 || sceneCount >= kSceneCapacity) {
         return MotionSafety::Unavailable;
     }
 
     for (int sceneIndex = 0; sceneIndex < sceneCount; ++sceneIndex) {
         auto* scene = static_cast<std::uint8_t*>(scenes[sceneIndex]);
+        if(diagnostic){diagnostic->stage=8;diagnostic->scene=scene;diagnostic->object=nullptr;diagnostic->predicate=nullptr;}
         if (!scene) return MotionSafety::Unavailable;
         if (scene == ownerScene) continue;
 
+        if(diagnostic)diagnostic->stage=9;
         auto* object = *reinterpret_cast<std::uint8_t**>(scene + kSceneBackPointer);
+        if(diagnostic)diagnostic->object=object;
         if (!object) {
+            if(diagnostic)diagnostic->stage=10;
             auto** sceneVtable = *reinterpret_cast<void***>(scene);
             if (!sceneVtable || !sceneVtable[5]) return MotionSafety::Unavailable;
             const auto sceneIsA = reinterpret_cast<SceneIsAFn>(sceneVtable[5]);
-            if (sceneIsA(scene, 3)) continue;
+            if(diagnostic){diagnostic->stage=11;diagnostic->predicate=sceneVtable[5];}
+            // This pass classifies gameplay DeathZone objects. Native scene
+            // nodes without one include models, terrain, lights and effects;
+            // their bounds alone are not evidence of a damage trigger. Verify
+            // the CSceneObject base (kind 1), then leave physical geometry to
+            // the separate body sweep instead of maintaining a subtype list.
+            if (sceneIsA(scene, 1)) continue;
             return MotionSafety::Unavailable;
         }
         if (object == owner) continue;
 
+        if(diagnostic)diagnostic->stage=12;
         auto** vtable = *reinterpret_cast<void***>(object);
         if (!vtable || !vtable[1]) return MotionSafety::Unavailable;
         const auto objectIsA = reinterpret_cast<ObjectIsAFn>(vtable[1]);
+        if(diagnostic){diagnostic->stage=13;diagnostic->predicate=vtable[1];}
         if (!objectIsA(object, 0x22)) continue;
 
+        if(diagnostic)diagnostic->stage=14;
         const auto deathBounds = *reinterpret_cast<const Aabb*>(scene + kSceneAabb);
         if (!ValidAabb(deathBounds)) return MotionSafety::Unavailable;
         const Aabb expanded = {
@@ -327,15 +360,15 @@ inline bool FreshLineClear(const NavigationApi& api, std::uint8_t* document,
 
 inline MotionSafety CheckMotionSafety(const NavigationApi& api, std::uint8_t* document,
                                       std::uint8_t* owner, Vec3 current,
-                                      Vec3 destination) noexcept {
+                                      Vec3 destination,MotionSafetyDiagnostic* diagnostic=nullptr) noexcept {
 #if defined(_MSC_VER) && defined(_WIN32)
     __try {
-        return detail::MotionSafetyUnsafe(api, document, owner, current, destination);
+        return detail::MotionSafetyUnsafe(api, document, owner, current, destination,diagnostic);
     } __except (1 /* EXCEPTION_EXECUTE_HANDLER */) {
         return MotionSafety::Unavailable;
     }
 #else
-    return detail::MotionSafetyUnsafe(api, document, owner, current, destination);
+    return detail::MotionSafetyUnsafe(api, document, owner, current, destination,diagnostic);
 #endif
 }
 

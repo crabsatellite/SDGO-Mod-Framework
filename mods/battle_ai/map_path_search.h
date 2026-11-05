@@ -30,7 +30,7 @@ private:
     size_t limit_=8192;
     Status status_=Status::Unreachable;
     std::vector<Vec3> path_;
-    static double Distance(Vec3 a,Vec3 b) {const double x=a.x-b.x,z=a.z-b.z;return std::sqrt(x*x+z*z);}
+    static double Distance(Vec3 a,Vec3 b) {return Length(a-b);}
     Key MakeKey(int x,int z,float y)const {return {x,z,int(std::floor(double(y)/32))};}
     std::vector<Vec3> Trace(size_t at)const {
         std::vector<Vec3> path;
@@ -60,7 +60,8 @@ public:
             Vec3 end{};
             // Bound a shortcut's native query cost. Longer routes are built
             // through the same checked graph rather than bridging unseen ground.
-            if(Distance(current.point,goal_)<=cell_*4&&step(context,current.point,goal_,end)&&Finite(end)) {
+            if(Distance(current.point,goal_)<=cell_*4&&step(context,current.point,goal_,end)&&Finite(end)&&
+               std::abs(end.y-goal_.y)<=5) {
                 path_=Trace(entry.index);path_.push_back(end);status_=Status::Found;break;
             }
             size_t admitted=0;

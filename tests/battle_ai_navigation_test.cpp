@@ -82,6 +82,9 @@ struct Fixture {
     int obbCalls = 0;
     int sphereCalls = 0;
     std::uint8_t* terrainScene = nullptr;
+    std::uint8_t* solidScene = nullptr;
+    std::uint8_t* lightScene = nullptr;
+    std::uint8_t* effectScene = nullptr;
     bool terrainHit = false;
     float terrainDistance = 0.0f;
 
@@ -156,8 +159,13 @@ void Callbacks::Query(void** output, int* count, int capacity, const Aabb*) {
 }
 
 bool Callbacks::IsA(int kind) {
-    return kind == 3 && active->terrainScene ==
-        reinterpret_cast<std::uint8_t*>(this);
+    if(kind==1) {
+        const auto self=reinterpret_cast<std::uint8_t*>(this);
+        return self==active->terrainScene||self==active->solidScene||self==active->lightScene||self==active->effectScene;
+    }
+    return (kind == 3 && active->terrainScene == reinterpret_cast<std::uint8_t*>(this)) ||
+        (kind == 2 && active->solidScene == reinterpret_cast<std::uint8_t*>(this)) ||
+        (kind == 4 && active->lightScene == reinterpret_cast<std::uint8_t*>(this));
 }
 
 bool Callbacks::ObjectIsA(int kind) {
@@ -298,6 +306,21 @@ void TestDeathZoneMotionSafety() {
         fixture.Results({1});
         Check(Safety(fixture, {10.0f, 0.0f, 0.0f}) == MotionSafety::Safe,
               "a native terrain scene without an object backpointer does not stall motion");
+        fixture.terrainScene = nullptr;
+        fixture.solidScene = fixture.scenes[1].bytes.data();
+        Check(Safety(fixture, {10.0f, 0.0f, 0.0f}) == MotionSafety::Safe,
+              "a known static scene without a gameplay object is classified separately from death zones");
+        fixture.solidScene = nullptr;
+        fixture.lightScene = fixture.scenes[1].bytes.data();
+        Check(Safety(fixture, {10.0f, 0.0f, 0.0f}) == MotionSafety::Safe,
+              "an actual native light volume is not a movement or death-zone blocker");
+        fixture.lightScene = nullptr;
+        fixture.effectScene = fixture.scenes[1].bytes.data();
+        Check(Safety(fixture, {10.0f, 0.0f, 0.0f}) == MotionSafety::Safe,
+              "a native effect scene needs no subtype-specific exception in gameplay death-zone classification");
+        fixture.effectScene = nullptr;
+        Check(Safety(fixture, {10.0f, 0.0f, 0.0f}) == MotionSafety::Unavailable,
+              "an objectless node without the native scene base still fails closed");
     }
     {
         Fixture fixture;
