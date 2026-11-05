@@ -18,7 +18,7 @@ package or update.
 | `match_ai` | Every participating client |
 
 Follow the [installation guide](setup.md#install), then use your usual launcher. Battle servers and every
-participating client, including the host, need components from the same release (`pvp_ai` 0.3.0 and
+participating client, including the host, need components from the same release (`pvp_ai` 0.3.2 and
 `match_ai` 0.1.6 or later); restart the affected programs after updating.
 
 ## Use
@@ -128,6 +128,11 @@ count down and are removed by the server under the native rules.
 AI can earn MVP but cannot become room host. When an AI ranks first, the human host who remains in the room
 keeps Start permission, including after a solo loss, so the same room can start another battle. Native transfers
 to other humans remain available.
+
+After settlement, AI leave every client's waiting-room roster through the native room-departure
+flow. They do not remain as blank names or LOADING entries. Humans can ready up and start again in
+the same room, including with `!rand`; each new start creates the requested AI again. Update every
+Battle server that hosts these rooms, and restart the affected server and client programs.
 
 ## Settings
 

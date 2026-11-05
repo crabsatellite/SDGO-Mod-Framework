@@ -123,6 +123,10 @@ not change firewall profiles or notifications. Nonlocal quiet runs require
 permission to prepare their scoped application rule; setup failure never opens
 a UAC prompt or falls back to an interactive client.
 
+Same-machine direct PvP also resolves the local hostname to loopback inside the test process, so
+native peer-address advertisements match its loopback-only UDP sockets. Other names and addresses
+use the original resolver. Native adjacent-port retries remain unchanged.
+
 If a protected input desktop denies read access, FPS and local direct PvP tests
 can verify the fixed `WinSta0\Default` desktop instead. It must contain only
 the same process's exact hidden, nonactivating graphics proxy; game windows
@@ -186,7 +190,8 @@ to verify the refund. Keep the default `0` for a separate successful draw/claim.
 
 `prepare --same-room-rematch` checks that the human retains room ownership after
 settlement, starts a second full battle in that same room, and leaves only after
-the rematch. It cannot combine with random loadouts, pages or account preparation.
+the rematch. It can combine with `--random-loadout`; pages and account preparation remain separate.
+Each settlement must remove every AI slot while keeping the declared humans and original human host.
 The passive server report requires two complete battle lifecycles per mode.
 
 For asymmetric population regression, `prepare` accepts
@@ -442,6 +447,12 @@ business. Ready uses the original 3D Main action and player state machine: its
 sender must emit the real request, then the original reply consumer must update
 the live room model. The coordinator starts only after every guest completes
 these steps. It never sets a Ready flag or inserts room participants.
+
+Add `--rounds 2` to repeat the complete battle in the same room. Both settlements must leave only
+the declared humans across all twelve slots. The second Ready requires a newly queued native
+request and its original acknowledgement; the previous round's successful receipt cannot satisfy it.
+Every actor must observe a fresh start and end sequence for each round, and the independent server
+report must contain the same number of complete lifecycles. The default is one round.
 
 Battle checks require local AI authority on the host, synchronized remote copies
 on guests, real movement, host combat evidence, and original settlement back in
