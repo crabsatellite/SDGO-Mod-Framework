@@ -281,6 +281,12 @@ Version 1 stays transport-only.
 
 ### Skill/funnel dependencies and resource depot
 
+**原始形态关系** shows directed targets read from complete unit records and the
+path from the selected root. Other entries sharing later forms remain visible;
+the report never invents reverse edges. It describes record references, not player
+inventory eligibility or native transform behavior. More than two forms still
+require an appropriate runtime adapter.
+
 The **配套原生资料** (native dependency data) section reads project bindings for
 [`sdgo.unit-native-content/1`](unit-native-content.schema.json). It shows complete
 skill/funnel records, supplied server definitions, atlases and missing or unsupported

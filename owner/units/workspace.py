@@ -614,6 +614,8 @@ class Workspace:
             server_templates={kind:stock_templates(self.repository.catalog,kind) for kind in ('skill','funnel')}
             state=self.read();result={'revision':model.revision(state),
                 'capabilities':{'projects':{'protocol':'sdgo.unit-project','schema_version':1,'metadata_first':True,'bundled_media':True},
+                    'form_graph':{'schema':'sdgo.unit-transform-graph/1','directed_record_report':True,
+                        'retains_other_entries':True,'infers_inventory_or_runtime_support':False},
                     'native_programs':{'schema':'sdgo.unit-native-programs/1',
                         'schemas':['sdgo.unit-native-programs/1','sdgo.unit-native-programs/2'],
                         'callback_roles':['ranged','special_ranged','initializer'],'authoring':True,'native_publication':False},
@@ -648,6 +650,11 @@ class Workspace:
             if selected is None and state['drafts']:selected=next(reversed(state['drafts']))
             if selected:
                 draft=copy.deepcopy(self._get(state,selected));draft['content_revision']=model.content_revision(draft)
+                from .transform_graph import inspect as inspect_transforms
+                try:
+                    draft['form_graph']=inspect_transforms({row['id']:self.blob(row['source_sha']) for row in draft['forms']},
+                        [draft['root_unit_id']] if draft.get('root_unit_id') in {row['id'] for row in draft['forms']} else [])
+                except (ValueError,OSError):draft['form_graph']={'error':'形态原始记录无效，请查看缺项检查。'}
                 draft['requirements']=self.requirements(draft,state);draft['can_confirm']=not any(i['level']!='warning' for i in draft['requirements'])
                 draft['removable_missing_skills']=self.removable_missing_skills(draft)
                 for key,kind in (('forms','unit'),('weapons','weapon')):
