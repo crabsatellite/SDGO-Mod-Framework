@@ -31,6 +31,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Wait-room window initialization guard <!-- catalog: `waitroom_window_fix` --> | Fix the client sometimes closing right after a room is created | [Use](docs/waitroom-window-fix.md) |
 | Native data and lifecycle guards <!-- catalog: `native_data_guard` --> | Fix crashes when unit data is missing or unit management is still waiting for data; keep crash logs accurate | [Use](docs/native-data-guard.md) |
 | Scene registration lifecycle fix <!-- catalog: `scene_lifecycle_fix` --> | Fix an occasional cleanup crash after a scene object moves to another area | [Use](docs/scene-lifecycle-fix.md) |
+| AI room loading timeout fix <!-- catalog: `loading_sync_fix` --> | Keep loading timeouts from removing AI slots and corrupting the human count | [Use](docs/loading-sync-fix.md) |
 | Native login recovery <!-- catalog: `login_recovery` --> | When a reconnect after a dropped connection is refused as already online, clear the old session and retry once (WorldServer) | [Use](docs/login-recovery.md) |
 | Apsalus III transform input fix <!-- catalog: `transform_input_fix` --> | Release the native transform lock when a form has no transform animation | [Use](docs/transform-input-fix.md) |
 | Agent relay log fix <!-- catalog: `agent_relay_log_fix` --> | Fix an Agent relay log that reads invalid memory | [Use](docs/agent-relay-log-fix.md) |

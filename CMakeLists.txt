@@ -158,6 +158,23 @@ if(BUILD_TESTING)
 endif()
 sdgo_add_mod(native_data_guard DESCRIPTION "verified native battle data guards"
              SOURCES mods/native_data_guard/native_data_guard.cpp FILES symbols.fragment.ini)
+sdgo_add_mod(loading_sync_fix SERVER DESCRIPTION "AI-safe native loading timeout participants"
+             SOURCES mods/loading_sync_fix/loading_sync_fix.cpp FILES symbols.fragment.ini)
+if(BUILD_TESTING)
+    add_executable(loading_sync_fix_native_test tests/loading_sync_fix_native_test.cpp)
+    target_link_libraries(loading_sync_fix_native_test PRIVATE sdgo_api bcrypt)
+    sdgo_strict(loading_sync_fix_native_test)
+    add_dependencies(loading_sync_fix_native_test loading_sync_fix)
+    set(SDGO_LOADING_SYNC_NATIVE_HOST "" CACHE FILEPATH "Locally supplied supported BattleServer.exe for loading synchronization replay")
+    if(SDGO_LOADING_SYNC_NATIVE_HOST)
+        add_test(NAME loading_sync_fix_actual_dll COMMAND loading_sync_fix_native_test
+                 "$<TARGET_FILE:loading_sync_fix>" "${SDGO_LOADING_SYNC_NATIVE_HOST}")
+        set_tests_properties(loading_sync_fix_actual_dll PROPERTIES TIMEOUT 60)
+    endif()
+    add_test(NAME game_test_multiplayer_delay_offline COMMAND "${Python3_EXECUTABLE}"
+             -m unittest discover -s tests -p test_game_test_multiplayer_delay.py -v)
+    set_tests_properties(game_test_multiplayer_delay_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
+endif()
 sdgo_add_mod(login_recovery SERVER DESCRIPTION "native authenticated stale login recovery"
              SOURCES mods/login_recovery/login_recovery.cpp FILES symbols.fragment.ini)
 add_executable(login_recovery_policy_test tests/login_recovery_policy_test.cpp)
