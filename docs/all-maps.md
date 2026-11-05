@@ -1,9 +1,9 @@
 # Complete PvP All Map
 
+[简体中文](all-maps.zh-CN.md) · [Back to the feature index](../README.md#gameplay-extensions)
+
 Expand the room's **All Map / Random Map** choice to the complete PvP map
 catalog. Mission-only maps remain available only in mission modes.
-
-[简体中文](all-maps.zh-CN.md) · [Feature index](../README.md#gameplay-extensions)
 
 | Mod | Install on | Purpose |
 |---|---|---|

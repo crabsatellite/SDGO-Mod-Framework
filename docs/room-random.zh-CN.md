@@ -11,8 +11,7 @@
 | `room_random_client` | 客户端 | 把本局结果同步到客户端的开局数据 |
 
 两部分都需要：对战服务器装 `room_random`，所有参战客户端装 `room_random_client`。
-客户端使用 `room_random_client` 0.1.13 或更新版本，才能在本局数据迟到时等待完整数据后进入原生开局流程。
-搭配 AI 时，对战服务器使用 `pvp_ai` 0.3.2 或更新版本，以在结算后清理等待房中的 AI。
+客户端需 `room_random_client` 0.1.13 或更新；搭配 AI 时，对战服务器需 `pvp_ai` 0.3.2 或更新。
 
 ## 房名指令
 
