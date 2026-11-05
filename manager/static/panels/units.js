@@ -485,7 +485,7 @@ function renderBlueprints(){
   panel.replaceChildren();blueprintEditors=[];
   const title=document.createElement("h3");title.textContent="设计图配方";
   const note=document.createElement("p");note.className="note";
-  note.textContent="可保存自己的配方，或随制作项目导入有来源的设计图和图纸素材。内置兼容模板用于生成服务器配置，上传的展示模板负责客户端卡面与名称。当前支持3至5个材料，第一个是保留的关键机体，其余材料会消耗；图纸本身也必须有获取途径。新增原生适配通过验收前，配方保持草稿。";
+  note.textContent="可保存自己的配方，或随制作项目导入有来源的设计图和图纸素材。内置兼容模板用于生成服务器配置，上传的展示模板负责客户端卡面与名称。当前支持3至5个材料，第一个是保留的关键机体，其余材料会消耗；图纸本身也必须有获取途径。需要新原生适配的配方暂时只能保存为草稿。";
   const add=document.createElement("button");add.type="button";add.textContent="添加设计图";
   add.dataset.blueprintLocked=draft.root_unit_id?"0":"1";
   add.disabled=busy||draft.status==="disabled"||!draft.root_unit_id;
@@ -520,7 +520,7 @@ function renderBlueprints(){
     const semanticNote=(draft.requirements||[]).find(row=>["blueprint_template_semantic_closure","blueprint_template_native_ui"].includes(row.code)&&row.field===templateField);
     if(templateIssue)templateStatus.textContent="客户端展示模板校验失败："+templateIssue.message;
     else if(recipe.client_templates)templateStatus.textContent=semanticNote?.message||
-      "客户端展示模板已绑定；保存时会核对来源证据和准备图片。v2 还会检查每帧使用的纹理是否完整、可解码；游戏内显示和交互仍需单独验收。";
+      "客户端展示模板已绑定；保存时会核对来源证据和准备图片。v2 还会检查每帧使用的纹理是否完整、可解码；上线前请在游戏中确认显示和交互。";
     else templateStatus.textContent="未绑定客户端展示模板：使用所选内置兼容模板的卡面与名称。";
     const level=blueprintInput(fields,"玩家最低等级 *（0为不限制）",recipe.minimum_player_level,"number");level.max="255";
     const repay=blueprintInput(fields,"回收图纸返还点数 *",recipe.repay_point,"number");

@@ -26,7 +26,7 @@ export async function mount(root,ctx){
  for(const [n,text] of [['1','生成 / 更新配套资源'],['2','检查安装条件（不写入）'],['3','安装目标 World 和本机客户端（先关闭对应程序）'],['4','导出玩家包']]){const step=e('div',undefined,'how-step');step.append(e('b',n),e('span',text));steps.append(step);}
  const summary=e('p'),result=e('p'),actions=e('div',undefined,'actions');
  flow.append(e('h2','生成、检查与安装'),e('p','按顺序操作。「更新为图鉴规则」只用于升级旧版数据库，不需要重启 World。','muted section-scope-note'),steps,summary,actions,result);root.append(flow);
- const render=()=>{const position=state.placement?`活动机台第${state.placement.page}页、第${state.placement.page_slot}格。`:'';summary.textContent=state.generated?`已生成 · ${state.eligible_roots} 个可用初始形态 · ${state.price_gp.toLocaleString()} GP。${position}生成不代表已安装或游戏验收通过。`:'尚无与当前配置匹配的构建。';};render();
+ const render=()=>{const position=state.placement?`活动机台第${state.placement.page}页、第${state.placement.page_slot}格。`:'';summary.textContent=state.generated?`已生成 · ${state.eligible_roots} 个可用初始形态 · ${state.price_gp.toLocaleString()} GP。${position}生成后还需要分别安装到 World 和客户端。`:'尚无与当前配置匹配的构建。';};render();
  for(const [id,label] of [['upgrade-catalog','更新为图鉴规则（无需重启）'],['generate','生成 / 更新配套资源'],['check-install','检查安装条件'],['install-server','安装 / 更新目标 World'],['install-client','安装 / 更新本机客户端'],['export','导出玩家包']]){
   actions.append(button(label,async()=>{
    if(id==='upgrade-catalog'&&!confirm('以当前永久机库和未领取单位奖品初始化图鉴，删除旧完整历史证明与额外历史表；以后先补图鉴，全解锁后补机库。原生账号、机体和抽取记录保留。继续更新已安装的收藏扭蛋规则？'))return;
@@ -44,5 +44,5 @@ export async function mount(root,ctx){
   report('初始形态已登记，可重新生成配套资源。');
  }catch(error){ctx.message(error.message,true);}finally{family.value='';}};
  root.append(family,button('登记导入机体的初始形态',()=>family.click(),ctx));
- root.append(e('p','安装时会以当前永久机体和领取箱内尚未领取的永久机体建立最小图鉴解锁基线。Mod 只保存账号与已解锁机体 ID，不导入旧版完整获得历史，也不记录时间、来源或抽取事件。普通扭蛋目录另行更新后，请在本页重新生成并安装客户端资源，再导出最新玩家包。实际扣费、动画和重启持久化仍需手动验收。','intro'));
+ root.append(e('p','安装时会以当前永久机体和领取箱内尚未领取的永久机体建立最小图鉴解锁基线。Mod 只保存账号与已解锁机体 ID，不导入旧版完整获得历史，也不记录时间、来源或抽取事件。普通扭蛋目录另行更新后，请在本页重新生成并安装客户端资源，再导出最新玩家包。','intro'));
 }
