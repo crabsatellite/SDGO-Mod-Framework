@@ -84,6 +84,17 @@ compiles the optional `SDGOPR1` sidecar.
 the exact emitted catalog SHA-256, every program's bytes/exports and a complete
 imported weapon's SHA-256 plus its UTF-16 initializer name at offset 1771.
 
+Version 2 ([schema](unit-native-programs-v2.schema.json)) replaces
+`weapon_initializers` with `weapon_callbacks`. Each binding adds a `role`:
+`ranged` at weapon offset 1569, `special_ranged` at 1669, or `initializer`
+at 1771. The 100-byte UTF-16 fields are verified against the actual exported
+function and complete weapon bytes. Multiple roles can share one weapon within
+one owner; another owner cannot bind a different callback on that same weapon.
+The sidecar retains the `SDGOPR1` magic with header version 2 and a typed role
+word per binding. Version 1 inputs keep their original layout and behavior.
+These roles describe function-name fields; they do not name script files or
+grant a callback's native host/object dependencies.
+
 The unit catalog's optional consumer installs the existing original-loader
 adapter only when `native-programs.bin` is present. Native record registration
 must finish before the root boundary. `SdgoReadUnitProgramStateV1` exposes a

@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import unittest
 
-from owner.units.native_programs import compile_bundle, inspect_chunk, validate_manifest, validate_project_bindings
+from owner.units.native_programs import compile_bundle, inspect_chunk, validate_manifest, validate_project_bindings, CALLBACK_SCHEMA, CALLBACK_ROLES
 
 
 def chunk(name='example_Init'):
@@ -38,21 +38,67 @@ def fixture(owner='example', identity=90001):
     return manifest, {owner + '.scp': program}, {identity: bytes(weapon)}
 
 
+def callback_fixture(owner='example', identity=90001):
+    manifest,files,weapons=fixture(owner,identity)
+    weapon=bytearray(weapons[identity])
+    names={'ranged':owner+'_Ranged','special_ranged':owner+'_Special','initializer':owner+'_Init'}
+    for role in ('ranged','special_ranged'):
+        name=names[role];member=owner+'_'+role+'.scp';program=chunk(name);files[member]=program
+        manifest['programs'].append({'resource':'scp/'+member,'member':member,
+            'sha256':hashlib.sha256(program).hexdigest(),'exports':[name]})
+        offset=CALLBACK_ROLES[role][1];encoded=(name+'\0').encode('utf-16-le')
+        weapon[offset:offset+len(encoded)]=encoded
+    manifest['schema']=CALLBACK_SCHEMA;manifest.pop('weapon_initializers')
+    manifest['weapon_callbacks']=[{'weapon_id':identity,'weapon_sha256':hashlib.sha256(weapon).hexdigest(),
+                                  'role':role,'export':names[role]} for role in CALLBACK_ROLES]
+    return manifest,files,{identity:bytes(weapon)}
+
+
 class NativePrograms(unittest.TestCase):
     @unittest.skipUnless(os.environ.get('SDGO_UNIT_PROGRAM_VALIDATOR'), 'set the built native validator path for the cross-consumer check')
     def test_python_output_is_consumed_and_executed_by_the_native_sdk(self):
-        manifest, files, weapons = fixture()
-        with tempfile.TemporaryDirectory(prefix='sdgo-native-program-contract-') as directory:
-            bundle = Path(directory) / 'native-programs.bin'
-            bundle.write_bytes(compile_bundle([manifest], 'a' * 64, files, weapons))
-            program = Path(directory) / 'program.scp'
-            program.write_bytes(files['example.scp'])
-            executable = os.environ['SDGO_UNIT_PROGRAM_VALIDATOR']
-            for arguments in (['--unit-program-bundle', str(bundle)],
-                              ['--private-chunk', str(program), 'example', 'example_Init']):
-                with self.subTest(arguments=arguments):
-                    result = subprocess.run([executable, *arguments], capture_output=True, text=True, timeout=30)
-                    self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        for factory in (fixture,callback_fixture):
+            manifest,files,weapons=factory()
+            with self.subTest(schema=manifest['schema']),tempfile.TemporaryDirectory(prefix='sdgo-native-program-contract-') as directory:
+                bundle=Path(directory)/'native-programs.bin'
+                bundle.write_bytes(compile_bundle([manifest],'a'*64,files,weapons))
+                arguments=['--private-candidate',manifest['owner'],manifest['revision']]
+                for program in manifest['programs']:
+                    member=Path(directory)/program['member'];member.write_bytes(files[program['member']])
+                    arguments.extend([str(member),program['resource'],program['sha256'],','.join(program['exports'])])
+                executable=os.environ['SDGO_UNIT_PROGRAM_VALIDATOR']
+                for command in (['--unit-program-bundle',str(bundle)],arguments):
+                    result=subprocess.run([executable,*command],capture_output=True,text=True,timeout=30)
+                    self.assertEqual(0,result.returncode,result.stdout+result.stderr)
+
+    def test_three_typed_callback_roles_bind_distinct_fields_on_one_weapon(self):
+        manifest,files,weapons=callback_fixture()
+        normalized=validate_manifest(manifest,files,weapons)
+        self.assertEqual(['ranged','special_ranged','initializer'],[row['role'] for row in normalized['weapon_callbacks']])
+        binary=compile_bundle([manifest],'a'*64,files,weapons)
+        self.assertEqual(2,struct.unpack_from('<I',binary,8)[0])
+        bad=copy.deepcopy(manifest);bad['weapon_callbacks'][0]['export']='example_Special'
+        with self.assertRaisesRegex(ValueError,'ranged field'):validate_manifest(bad,files,weapons)
+        bad=copy.deepcopy(manifest);bad['weapon_callbacks'].append(dict(bad['weapon_callbacks'][0]))
+        with self.assertRaisesRegex(ValueError,'repeats'):validate_manifest(bad,files,weapons)
+        bad=copy.deepcopy(manifest);bad['weapon_callbacks'][0]['role']='arbitrary-offset'
+        with self.assertRaisesRegex(ValueError,'role'):validate_manifest(bad,files,weapons)
+
+    def test_callback_schema_does_not_mix_legacy_fields_or_split_a_weapon_across_owners(self):
+        manifest,files,weapons=callback_fixture()
+        bad=copy.deepcopy(manifest);bad['weapon_initializers']=[]
+        with self.assertRaisesRegex(ValueError,'fields differ'):validate_manifest(bad,files,weapons)
+        raw=bytearray(weapons[90001]);name='second_Special';encoded=(name+'\0').encode('utf-16-le')
+        raw[1669:1769]=encoded.ljust(100,b'\0');digest=hashlib.sha256(raw).hexdigest()
+        manifest['weapon_callbacks']=[row for row in manifest['weapon_callbacks'] if row['role']!='special_ranged']
+        for row in manifest['weapon_callbacks']:row['weapon_sha256']=digest
+        second,other_files,_=fixture('second')
+        second['schema']=CALLBACK_SCHEMA;second.pop('weapon_initializers')
+        program=chunk(name);other_files={'second.scp':program}
+        second['programs']=[{'resource':'scp/second_special.scp','member':'second.scp','sha256':hashlib.sha256(program).hexdigest(),'exports':[name]}]
+        second['weapon_callbacks']=[{'weapon_id':90001,'weapon_sha256':digest,'role':'special_ranged','export':name}]
+        with self.assertRaisesRegex(ValueError,'owners share a weapon'):
+            compile_bundle([manifest,second],'a'*64,{**files,**other_files},{90001:bytes(raw)})
 
     def test_complete_chunk_inspection_and_catalog_bound_container(self):
         manifest, files, weapons = fixture()

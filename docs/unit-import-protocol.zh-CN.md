@@ -97,6 +97,13 @@ v1–v5 布局读取 emitter 的 32 字节纹理字段，以首个 NUL 为字符
 - `weapon_initializers`：每项含 `weapon_id`、完整源武器 `weapon_sha256` 和 `export`；
   函数必须与该 1871 字节武器记录 `+1771` 的 UTF-16 初始化名称一致。
 
+版本 2（[schema](unit-native-programs-v2.schema.json)）使用 `weapon_callbacks` 代替
+`weapon_initializers`，每项另外必填 `role`：`ranged` 对应 `+1569`，`special_ranged`
+对应 `+1669`，`initializer` 对应 `+1771`。均检查实际 100 字节 UTF-16 字段，不能传任意偏移。
+同一所有者可绑定同一武器的不同回调，不能让多个所有者分别接管同一武器。
+运行侧容器保留 `SDGOPR1` 标识，header version 为 2，各绑定额外携带角色码；旧版本 1 保持原布局。
+这些字段保存函数名，不是脚本文件路径；其他原生回调、共享状态和资源仍需各自明确绑定。
+
 `owner.units.native_programs` 完整解析目标 Lua 5.0 二进制块；根代码只能发布不捕获外部局部变量的函数并返回。
 普通文本、LuaJIT 块、未声明导出、原版全局名覆盖及未绑定武器不会获得执行许可。
 原始恢复数据与适配后的目标程序应分别保留来源，目标块通过不等于源行为还原或机体可玩。
@@ -123,6 +130,8 @@ v1–v5 布局读取 emitter 的 32 字节纹理字段，以首个 NUL 为字符
 目录读取器把这些行标为 `pending_skill_ids`，普通机体发布仍拒绝引用它们。
 SQL `BattleMode` 与客户端末尾调度字段是独立输入，不按相同名称互相推导。
 原生处理器可能按技能编号选择特殊行为；复制一行 SQL 不会自动保留这种行为，需另行处理原生身份绑定。
+开发者可使用[原生技能身份选择器](skill-identity.md)在独立所有权校验后只改专用分支的局部选择值，
+保留实际技能记录和网络同步编号；该组件仍不替代整机行为与资源验证。
 
 `owner.units.profiles.skill_target_1132` 验证 kind 13 的882→1132字节投影，保留完整源／目标哈希和逆变换。
 其独立 `validate_relocated_record` 接口使用 `sdgo.native-type13-relocated-record/1`：明确绑定源、目标技能编号，

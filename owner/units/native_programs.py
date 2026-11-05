@@ -12,6 +12,8 @@ import re
 import struct
 
 SCHEMA = 'sdgo.unit-native-programs/1'
+CALLBACK_SCHEMA = 'sdgo.unit-native-programs/2'
+CALLBACK_ROLES = {'ranged': (1, 1569), 'special_ranged': (2, 1669), 'initializer': (3, 1771)}
 NATIVE_PUBLICATION_SUPPORTED = False
 MAGIC = b'SDGOPR1\0'
 MAX_BYTES = 128 * 1024 * 1024
@@ -125,8 +127,10 @@ def inspect_chunk(raw):
 
 
 def validate_manifest(value, files, weapons):
-    _fields(value, {'schema', 'owner', 'revision', 'vm_abi', 'phase', 'root_profile', 'programs', 'weapon_initializers'})
-    if (value['schema'] != SCHEMA or value['vm_abi'] != 'lua50-x86-double64' or
+    version = value.get('schema') if isinstance(value, dict) else None
+    binding_key = 'weapon_callbacks' if version == CALLBACK_SCHEMA else 'weapon_initializers'
+    _fields(value, {'schema', 'owner', 'revision', 'vm_abi', 'phase', 'root_profile', 'programs', binding_key})
+    if (version not in (SCHEMA, CALLBACK_SCHEMA) or value['vm_abi'] != 'lua50-x86-double64' or
             value['phase'] != 'after-original-root-loader' or value['root_profile'] != 'closure-publications-only-v1'):
         raise ValueError('unsupported native program profile')
     owner = value['owner']
@@ -166,36 +170,44 @@ def validate_manifest(value, files, weapons):
         if total > MAX_BYTES:
             raise ValueError('native program total byte budget')
         programs.append({**row, 'raw': raw})
-    bindings = value['weapon_initializers']
+    bindings = value[binding_key]
     if not isinstance(bindings, list) or not 1 <= len(bindings) <= 4096:
-        raise ValueError('native program initializer count budget')
+        raise ValueError('native program callback count budget')
     seen = set()
+    callbacks = []
     for row in bindings:
-        _fields(row, {'weapon_id', 'weapon_sha256', 'export'})
+        _fields(row, {'weapon_id', 'weapon_sha256', 'export', *({'role'} if version == CALLBACK_SCHEMA else set())})
+        role = row['role'] if version == CALLBACK_SCHEMA else 'initializer'
+        if role not in CALLBACK_ROLES: raise ValueError('unsupported native weapon callback role')
         identity = row['weapon_id']
-        if type(identity) is not int or not 1 <= identity <= 9_999_999 or identity in seen:
-            raise ValueError('native program weapon identity')
-        seen.add(identity)
+        if type(identity) is not int or not 1 <= identity <= 9_999_999 or (identity, role) in seen:
+            raise ValueError('native program weapon identity/callback repeats')
+        seen.add((identity, role))
         record = weapons.get(identity)
         if not isinstance(record, bytes) or len(record) != 1871 or record[4] != 0 or struct.unpack_from('<I', record)[0] != identity:
             raise ValueError('native program must bind a complete imported weapon')
         if _hash(record) != _digest(row['weapon_sha256']):
             raise ValueError('native program weapon SHA-256 differs')
         if not isinstance(row['export'], str) or row['export'] not in names or len(row['export']) > 49:
-            raise ValueError('native initializer must be a declared bounded export')
-        field = record[1771:1871]
+            raise ValueError('native callback must be a declared bounded export')
+        _, offset = CALLBACK_ROLES[role]
+        field = record[offset:offset + 100]
         terminator = next((offset for offset in range(0, 100, 2) if field[offset:offset + 2] == b'\0\0'), None)
         if terminator is None or field[:terminator].decode('utf-16-le') != row['export']:
-            raise ValueError('native weapon initializer field does not match export')
+            raise ValueError('native weapon ' + role + ' field does not match export')
+        callbacks.append({**row, 'role': role})
     return {'owner': owner, 'revision': value['revision'], 'programs': programs,
-            'weapon_initializers': [dict(row) for row in bindings]}
+            'weapon_callbacks': callbacks,
+            'weapon_initializers': [{key: row[key] for key in ('weapon_id','weapon_sha256','export')}
+                                    for row in callbacks if row['role']=='initializer']}
 
 
 def compile_bundle(manifests, catalog_sha256, files, weapons):
     """Encode the optional runtime sidecar against the exact emitted catalog."""
     if not isinstance(manifests, list) or not 1 <= len(manifests) <= 128:
         raise ValueError('native program owner count budget')
-    owners, exports, bound = set(), set(), set()
+    owners, exports, bound, weapon_owners = set(), set(), set(), {}
+    version = 2 if any(isinstance(value, dict) and value.get('schema') == CALLBACK_SCHEMA for value in manifests) else 1
     program_count = 0
     payload = bytearray()
 
@@ -216,13 +228,18 @@ def compile_bundle(manifests, catalog_sha256, files, weapons):
                 if export in exports: raise ValueError('native program owners share an export')
                 exports.add(export); text(export)
             word(len(program['raw'])); payload.extend(program['raw'])
-        word(len(candidate['weapon_initializers']))
-        for binding in candidate['weapon_initializers']:
-            if binding['weapon_id'] in bound: raise ValueError('native program owners share a weapon')
-            bound.add(binding['weapon_id']); word(binding['weapon_id'])
+        word(len(candidate['weapon_callbacks']))
+        for binding in candidate['weapon_callbacks']:
+            identity, role = binding['weapon_id'], binding['role']
+            if identity in weapon_owners and weapon_owners[identity] != candidate['owner']:
+                raise ValueError('native program owners share a weapon')
+            weapon_owners[identity] = candidate['owner']
+            if (identity,role) in bound: raise ValueError('native weapon callback repeats')
+            bound.add((identity,role)); word(identity)
+            if version == 2: word(CALLBACK_ROLES[role][0])
             payload.extend(bytes.fromhex(binding['weapon_sha256'])); text(binding['export'])
         if len(payload) > MAX_BYTES: raise ValueError('native program bundle byte budget')
-    return (struct.pack('<8s4I', MAGIC, 1, 64, len(manifests), len(payload)) +
+    return (struct.pack('<8s4I', MAGIC, version, 64, len(manifests), len(payload)) +
             bytes.fromhex(_digest(catalog_sha256)) + bytes(8) + payload)
 
 

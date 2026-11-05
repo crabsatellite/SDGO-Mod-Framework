@@ -171,6 +171,24 @@ void Tests() {
 int main(int argc, char** argv) {
     std::unique_ptr<NativeLuaImage> native;
     try {
+        if (argc == 4 && std::string(argv[1]) == "--validate-unit-program-bundle") {
+            sdgo::unit_catalog::Catalog catalog; std::string error;
+            const int size=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,argv[3],-1,nullptr,0);
+            if(!size)throw std::runtime_error("program catalog path encoding");
+            std::vector<wchar_t> path(size);MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,argv[3],-1,path.data(),size);
+            if(!catalog.Load(path.data(),error))throw std::runtime_error(error);
+            std::ifstream file(argv[3],std::ios::binary);std::vector<uint8_t> raw(std::istreambuf_iterator<char>(file),{});
+            std::ifstream input(argv[2],std::ios::binary);if(!input)throw std::runtime_error("program sidecar unavailable");
+            std::vector<uint8_t> bytes(std::istreambuf_iterator<char>(input),{});
+            sdgo::unit_catalog::ProgramBundle bundle;
+            if(!bundle.Parse(bytes,Sha256(raw),catalog,error))throw std::runtime_error(error);
+            Reset();Engine engine{g_state};auto adapter=Adapter();auto root=Path(L"scp\\0000.scp");
+            const auto result=adapter.onOriginalLoadBatch(&engine,&root,bundle.candidates);
+            Check(result.active(),result.reason.empty()?"actual unit program transport registers in the same official Lua VM":result.reason.c_str());
+            std::printf("owners=%zu exports=%zu actorAccepted=false nativeGameClientExecuted=false\n",bundle.candidates.size(),result.exports.size());
+            if(g_state){lua_close(g_state);g_state=nullptr;}
+            return g_failures?1:0;
+        }
         if (argc == 3 && std::string(argv[1]) == "--unit-program-bundle") {
             sdgo::unit_catalog::Catalog catalog;
             sdgo::unit_catalog::Entry entry; entry.kind = 10; entry.id = 90001; entry.bytes.resize(1871);
@@ -181,6 +199,11 @@ int main(int argc, char** argv) {
             std::ifstream input(argv[2], std::ios::binary);
             if (!input) throw std::runtime_error("program container fixture missing");
             std::vector<uint8_t> bytes(std::istreambuf_iterator<char>(input), {});
+            if (bytes.size() >= 64 && sdgo::unit_catalog::U32(bytes.data()+8) == 2) {
+                const wchar_t ranged[] = L"example_Ranged", special[] = L"example_Special";
+                std::memcpy(catalog.records[0].bytes.data()+1569,ranged,sizeof(ranged));
+                std::memcpy(catalog.records[0].bytes.data()+1669,special,sizeof(special));
+            }
             sdgo::unit_catalog::ProgramBundle bundle; std::string error;
             Check(bundle.Parse(bytes, std::string(64, 'a'), catalog, error), error.empty() ? "Python-produced sidecar is consumed by the native parser" : error.c_str());
             Check(bundle.candidates.size() == 1, "one actual owner is retained");
