@@ -3,6 +3,11 @@
 Core fixes and optional extensions for SD Gundam Online clients and private servers.
 Unofficial fan project; no game files are included. [简体中文](README.zh-CN.md)
 
+The game version is the client and server of the **SD Gundam Online Ultimate Repack** published by Bilibili
+uploader 屮仔丿 ([video BV1Qa4y1z7eW](https://www.bilibili.com/video/BV1Qa4y1z7eW/)). The framework is verified and tested against that pack's
+executables; supported builds are listed under [Installation](docs/setup.md#supported-game-builds). This project
+does not distribute the pack.
+
 [Installation](docs/setup.md) · [SDGO Mod Manager](docs/mod-manager.md) · [Latest release](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
 
 Server owners and maintainers install, configure and [update](docs/mod-manager.md#updates) features with
@@ -32,11 +37,11 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Activity capsule currency <!-- catalog: `capsule_currency_fix` --> | Show machine 9301 as 99 coins in the list and purchase confirmation | [Use](docs/capsule-currency-fix.md) |
 | Input method freeze fix <!-- catalog: `findwindow_fix` --> | Stop input methods such as iFlytek from freezing or crashing the repack client | [Use](docs/findwindow-fix.md) |
 | Startup crash fix <!-- catalog: `startup_crash_fix` --> | Stop random crashes on the loading screen at game start | [Use](docs/startup-crash-fix.md) |
-| First login lobby music <!-- catalog: `lobby_music_fix` --> | Play 0043 before the first battle, then retain 0042 on room return | [Use](docs/lobby-music-fix.md) |
+| First login lobby music <!-- catalog: `lobby_music_fix` --> | Restore the lobby music on first login | [Use](docs/lobby-music-fix.md) |
 | Wait-room window initialization guard <!-- catalog: `waitroom_window_fix` --> | Fix the client sometimes closing right after a room is created | [Use](docs/waitroom-window-fix.md) |
 | Native data and lifecycle guards <!-- catalog: `native_data_guard` --> | Fix crashes when unit data is missing or unit management is still waiting for data; keep crash logs accurate | [Use](docs/native-data-guard.md) |
 | Scene registration lifecycle fix <!-- catalog: `scene_lifecycle_fix` --> | Fix an occasional cleanup crash after a scene object moves to another area | [Use](docs/scene-lifecycle-fix.md) |
-| Multiplayer loading synchronization <!-- catalog: `loading_sync_fix` --> | Preserve completed loading when another player is late; keep AI out of human timeout and host selection | [Use](docs/loading-sync-fix.md) |
+| Multiplayer loading synchronization <!-- catalog: `loading_sync_fix` --> | Fix multiplayer starts that occasionally hang on the loading screen (BattleServer) | [Use](docs/loading-sync-fix.md) |
 | Native login recovery <!-- catalog: `login_recovery` --> | When a reconnect after a dropped connection is refused as already online, clear the old session and retry once (WorldServer) | [Use](docs/login-recovery.md) |
 | Apsalus III transform input fix <!-- catalog: `transform_input_fix` --> | Release the native transform lock when a form has no transform animation | [Use](docs/transform-input-fix.md) |
 | Agent relay log fix <!-- catalog: `agent_relay_log_fix` --> | Fix an Agent relay log that reads invalid memory | [Use](docs/agent-relay-log-fix.md) |
@@ -56,15 +61,15 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 |---|---|---|
 | Announcements <!-- catalog: `announcements` --> | Show a news digest once at login; optional in-game owner notices by time and event | [Use](docs/announcements.md) |
 | Mission AI wingmen <!-- catalog: `coop_ai`, `mission_ai` --> | `!ai` adds mission wingmen with the player life allowance; `!ai3 inf` allows unlimited AI respawns | [Use](docs/coop-wingmen.md) |
-| PvP AI <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` adds opponents and teammates; AI leave the waiting room after settlement so humans can ready up and play again | [Use](docs/pvp-ai.md) |
+| PvP AI <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` in a room title adds AI opponents and teammates; optionally group all humans, fill both sides, fill opponents only or add exact counts | [Use](docs/pvp-ai.md) |
 | AI mech catalog (separate addon) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards <!-- catalog: `battle_rewards` --> | Contribution GB/MB, configurable human multipliers and optional per-account gathering rewards | [Use](docs/battle-rewards.md) |
 | Collection capsule <!-- catalog: `collection_capsule` --> | Missing-unit activity machine with configurable price and successful-draw limits; 15 per week by default | [Use](docs/collection-capsule.md) |
-| Per-round random loadouts <!-- catalog: `room_random`, `room_random_client` --> | `!rand` draws from each player's own hangar every round; clients wait for complete loadout data before starting | [Use](docs/room-random.md) |
+| Per-round random loadouts <!-- catalog: `room_random`, `room_random_client` --> | `!rand` in a room title draws each player's unit or deck from their own hangar every round | [Use](docs/room-random.md) |
 | Complete PvP All Map <!-- catalog: `all_maps` --> | Make the room's All Map choice draw from the complete native PvP map catalog while keeping mission-only maps in missions | [Use](docs/all-maps.md) |
 | FPS cap <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed | [Use](docs/fps-limit.md) |
 | Extended room titles <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Enter up to 128 characters in normal, AI, team and mission room creation, settings and rename controls | [Use](docs/room-titles.md) |
-| Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Room-selected Easy / Medium / Hard; adjustable Medium attack pacing, shared vision and multilevel navigation | [Use](docs/battle-ai.md) |
+| Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Easy / Medium / Hard for PvP AI, chosen in the room title | [Use](docs/battle-ai.md) |
 | Automatic hangar capacity <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) | [Use](docs/hangar-capacity.md) |
 | Hangar manager <!-- catalog: `hangar_manager` --> | One-click sorting and duplicate exchange on the unit-management page, with server-side GB batches | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager <!-- catalog: `operator_catalog` --> | Five free supply officers, plus operator names, portraits and drops | [Use](docs/operator-assistant.md) |

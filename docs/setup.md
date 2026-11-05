@@ -8,13 +8,17 @@ parts; server-only features such as new-account defaults need no player client M
 
 ## Supported game builds
 
+The framework is developed and tested against the SD Gundam Online Ultimate Repack published by Bilibili uploader
+屮仔丿 ([video BV1Qa4y1z7eW](https://www.bilibili.com/video/BV1Qa4y1z7eW/)); both the client and the servers come from that pack. This project does not
+distribute the pack or any game files.
+
 The framework only touches code it can verify. Each exe build has a *host key*,
 `<exe name>-<TimeDateStamp>-<SizeOfImage>`, and a matching file in `sdgo\symbols\`:
 
 | exe | host key | known distributions |
 |---|---|---|
-| GOnline.exe | `GOnline-54BE1568-00C97000` | SDGO Ultimate Repack v1.2 (and the client it is based on) |
-| BattleServer.exe | `BattleServer-548A891D-0046C000` | the common private server pack (BattleServer1..N folders) |
+| GOnline.exe | `GOnline-54BE1568-00C97000` | SD Gundam Online Ultimate Repack v1.2 (published by 屮仔丿, and the client it is based on) |
+| BattleServer.exe | `BattleServer-548A891D-0046C000` | the same pack's servers (BattleServer1..N folders) |
 | AgentServer.exe | `AgentServer-548A86BC-000D7000` | Native Agent relay hosts |
 | WorldServer.exe | `WorldServer-548A86E3-0010C000` | Native World account initialization and settlement host |
 

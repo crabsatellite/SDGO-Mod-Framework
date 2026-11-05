@@ -7,13 +7,16 @@
 
 ## 支持的游戏版本
 
+本框架基于 B 站 UP 主屮仔丿发布的 SD敢达 Ultimate Repack 整合包（[视频 BV1Qa4y1z7eW](https://www.bilibili.com/video/BV1Qa4y1z7eW/)）开发和测试，
+客户端与服务端都来自这套整合包。本项目不提供整合包或其中的游戏文件。
+
 框架只改动它能校验的代码。每个 exe 版本有一个 *host key*（`<exe 名>-<TimeDateStamp>-<SizeOfImage>`），
 `sdgo\symbols\` 里要有对应文件：
 
 | exe | host key | 已知发行版 |
 |---|---|---|
-| GOnline.exe | `GOnline-54BE1568-00C97000` | SDGO Ultimate Repack v1.2（及其底包客户端） |
-| BattleServer.exe | `BattleServer-548A891D-0046C000` | 常见私服服务端包（BattleServer1..N 目录） |
+| GOnline.exe | `GOnline-54BE1568-00C97000` | SD敢达 Ultimate Repack v1.2（屮仔丿发布，及其底包客户端） |
+| BattleServer.exe | `BattleServer-548A891D-0046C000` | 同一整合包的服务端（BattleServer1..N 目录） |
 | AgentServer.exe | `AgentServer-548A86BC-000D7000` | 原生 Agent 中继宿主 |
 | WorldServer.exe | `WorldServer-548A86E3-0010C000` | 原生 World 账号初始化与结算宿主 |
 

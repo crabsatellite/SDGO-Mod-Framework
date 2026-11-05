@@ -259,7 +259,7 @@ class PublicTextTests(unittest.TestCase):
     # Add a public reference here when a guide needs to link to it.
     LINK_TARGETS = ("github.com/crabsatellite/SDGO-Mod-Framework", "learn.microsoft.com/",
                     "www.hko.gov.hk/", "www.lua.org/", "github.com/vikiboss/60s",
-                    "docs.60s-api.viki.moe/")
+                    "docs.60s-api.viki.moe/", "www.bilibili.com/video/BV1Qa4y1z7eW")
     PRIVATE = re.compile(r"update\.bat|install\.bat|朋友服|friend[- ]servers?\b|"
                          r"\b[A-Za-z]:\\(?:Dev|Users)\\|\]\((?:\.\./)*skills/", re.I)
 
@@ -278,7 +278,8 @@ class PublicTextTests(unittest.TestCase):
     def test_external_links_are_public_references(self):
         hits = [f"{name}: {url}" for name, text in self.public_texts()
                 for url in re.findall(r"https?://([^\s)>`'\"]+)", text)
-                if not url.startswith(self.LINK_TARGETS)]
+                if not url.startswith(self.LINK_TARGETS)
+                and not re.match(r"(?:[\w-]+\.)*example\.(?:org|com|net)/", url)]
         self.assertEqual(hits, [])
 
 
