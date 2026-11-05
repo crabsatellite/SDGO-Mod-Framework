@@ -95,8 +95,6 @@ def make_server(workspace, port=0):
                             return self.send_json(200,updates.state())
                         if action in ('check','install'):return self.send_json(200,updates.request(action=='install'))
                         if action=='restart':
-                            owner=getattr(workspace,'owner_channels',None)
-                            if owner is not None and owner.busy.locked():raise storage.Conflict('整合包操作进行中，完成后再重启 Manager')
                             from .update_restart import schedule
                             schedule(updates)
                             self.send_json(200,{'restarting':True})
@@ -133,8 +131,6 @@ def make_server(workspace, port=0):
                     if method == 'POST' and body.get('action') == 'stop': return self.send_json(200, workspace.services.stop(identity))
                     raise ValueError('后台任务操作无效')
                 if method == 'POST' and path == '/api/exit':
-                    owner=getattr(workspace,'owner_channels',None)
-                    if owner is not None and owner.busy.locked():raise storage.Conflict('整合包操作进行中，完成后再退出 Manager')
                     self.send_json(200,{'stopping':'manager_only'})
                     threading.Thread(target=self.server.shutdown,daemon=True).start()
                     return

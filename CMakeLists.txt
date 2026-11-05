@@ -1521,6 +1521,7 @@ endif()
 
 if(BUILD_TESTING)
     add_test(NAME owner_update_chain_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover -s tests -p test_owner_update_chain.py -v)
+    add_test(NAME owner_owned_process_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover -s tests -p test_owner_owned_process.py -v)
     add_test(NAME owner_update_transport_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover -s tests -p test_owner_update_transport.py -v)
     set_tests_properties(owner_update_chain_offline owner_update_transport_offline PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 180)
