@@ -34,6 +34,41 @@
       "activation": "restart_required"
     },
     {
+      "id": "unit_transform_roundtrip",
+      "key": "UnitTransformRoundtrip",
+      "label": "原生双形态往返检查",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "unit_directed_transforms",
+      "key": "UnitDirectedTransforms",
+      "label": "原生有向变形路径检查",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "unit_transform_steps",
+      "key": "UnitTransformSteps",
+      "label": "有向变形检查步数",
+      "type": "integer",
+      "default": 3,
+      "minimum": 1,
+      "maximum": 16,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
       "id": "battle_ai_behavior",
       "key": "BattleAiBehavior",
       "label": "要求必杀恢复、移动开火及远距追敌实测",

@@ -2831,6 +2831,7 @@ def prepare(
     disabled_mods: tuple[str, ...] = (),
     apsalus_roundtrip: bool = False,
     unit_transform_roundtrip: bool = False,
+    unit_transform_steps: int | None = None,
     capture_native_frames: bool = False,
     fps_gameplay_cap: int | None = None,
     server_session: dict | None = None,
@@ -2883,6 +2884,14 @@ def prepare(
         raise GameTestError('native unit observation flags must be booleans')
     if apsalus_roundtrip and unit_transform_roundtrip:
         raise GameTestError('choose one native transform roundtrip profile')
+    if unit_transform_steps is not None:
+        if type(unit_transform_steps)is not int or not 1<=unit_transform_steps<=16:
+            raise GameTestError('native directed transform steps must be an integer from 1 to 16')
+        if apsalus_roundtrip or unit_transform_roundtrip:
+            raise GameTestError('choose one native transform path profile')
+        if fps_cap is not None or mode_sequence!='1' or play_unit_uid is None or any((bootstrap_only,
+                battleship_only,gift_requests_only,deck_only,pages_only,friends_only,room_titles_only)) or mission_mode is not None:
+            raise GameTestError('native directed transforms require one complete ordinary battle and an existing owned unit UID')
     if (apsalus_roundtrip or unit_transform_roundtrip) and (mode_sequence != '1' or play_unit_uid is None or any((bootstrap_only,
             battleship_only,gift_requests_only,deck_only,pages_only,friends_only)) or mission_mode is not None):
         raise GameTestError('Native transform roundtrip requires one complete ordinary battle and an existing owned unit UID')
@@ -3209,6 +3218,8 @@ def prepare(
         if not observer_config.has_section('settings'):observer_config.add_section('settings')
         observer_config['settings']['ApsalusRoundtrip']='1' if apsalus_roundtrip else '0'
         observer_config['settings']['UnitTransformRoundtrip']='1' if unit_transform_roundtrip else '0'
+        observer_config['settings']['UnitDirectedTransforms']='1' if unit_transform_steps is not None else '0'
+        observer_config['settings']['UnitTransformSteps']=str(unit_transform_steps or 3)
         observer_config['settings']['FpsGameplayCap']=str(fps_gameplay_cap or 0)
         for key,value in unit_scenarios.settings(plan.get('unit_scenario')).items():
             observer_config['settings'][key]=value

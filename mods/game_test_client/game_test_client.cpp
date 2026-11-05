@@ -916,7 +916,8 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
         if(!battleAiBehavior.Observe(context,snapshot))return SDGO_GAME_TEST_FAIL;
     scoreboardInput.Hold(true);
     if (sdgo_test::api->SettingInt(sdgo_test::mod, "ApsalusRoundtrip", 0)||
-        sdgo_test::api->SettingInt(sdgo_test::mod, "UnitTransformRoundtrip", 0)) {
+        sdgo_test::api->SettingInt(sdgo_test::mod, "UnitTransformRoundtrip", 0)||
+        sdgo_test::api->SettingInt(sdgo_test::mod, "UnitDirectedTransforms", 0)) {
         SdgoPvpAiClientStartStatusV1 control{};
         control.size=sizeof(control);control.version=SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
         if (!getStartStatus || !getStartStatus(&control) ||
@@ -3111,6 +3112,7 @@ SDGO_MOD_ENTRY {
     sdgo_test::nativeShutdownAfterSuccess=!nativeRecordLifecycleIds.empty();
     if (!nativeDeathProbe.Install(api,mod)) return 0;
     if (!nativePlayerCombat.Install(api,mod)) return 0;
+    if (!apsalus_probe::packetObserver.Install(api,mod)) return 0;
     if (verifyQuietRuntime) {
         // DLLs have their own import tables. Observe every dialog in this
         // isolated test process so a Mod cannot leak a desktop prompt while
