@@ -18,7 +18,7 @@ int main(){
     Check(!DecodeReply(reply,7,packet)&&!packet.kind,"short replies fail without retaining stale fields");
     unsigned char notice[19]{0x53,0x06};unsigned pilot=0xfedcba98,target=0x89abcdef;
     std::memcpy(notice+6,&pilot,4);std::memcpy(notice+10,&target,4);notice[14]=1;
-    Check(DecodeNotice(notice,sizeof(notice),packet)&&packet.pilot==pilot&&packet.target==target&&packet.direction==1,
+    Check(DecodeNotice(notice,sizeof(notice),packet)&&packet.pilot==pilot&&packet.target==target&&packet.raw14==1,
         "notification decoding keeps both full-width identities separate");
     Check(!DecodeNotice(notice,18,packet)&&!packet.target,"short notifications fail without reading target data");
     Check(!DecodeNotice(nullptr,19,packet),"null packet is never evidence");
