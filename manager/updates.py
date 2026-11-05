@@ -26,6 +26,12 @@ MAX_EXPANDED = 512 * 1024 * 1024
 EXES = {'client': 'GOnline.exe', 'battle': 'BattleServer.exe', 'agent': 'AgentServer.exe', 'world': 'WorldServer.exe'}
 
 
+def repository(value):
+    if not isinstance(value,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}',value):
+        raise ValueError('上游仓库使用 GitHub 的 owner/repository 格式')
+    return value
+
+
 def version(value):
     if not isinstance(value, str) or not re.fullmatch(r'v?\d+\.\d+\.\d+(?:-beta\.\d+)?', value):
         raise ValueError('更新版本号无效')
@@ -91,24 +97,26 @@ def fetch(url, limit, stop=None):
         return b''.join(chunks)
 
 
-def release_asset(data, channel='stable'):
+def release_asset(data, channel='stable', source_repository=REPOSITORY):
+    source_repository=repository(source_repository)
     if data.get('draft') or (data.get('prerelease') and channel!='beta'): raise ValueError('当前通道不接收测试 release')
     tag=data.get('tag_name'); version(tag)
     label=tag.lstrip('v'); name='SDGO-ModFramework-'+label+'.zip'
     if bool(data.get('prerelease'))!=('-beta.' in label):raise ValueError('release 通道标记不一致')
     assets=[a for a in data.get('assets',[]) if a.get('name')==name and a.get('state')=='uploaded']
     if len(assets)!=1: raise ValueError('此 release 没有可验证的 Manager 更新包')
-    asset=assets[0]; expected='https://github.com/'+REPOSITORY+'/releases/download/'+tag+'/'+name
+    asset=assets[0]; expected='https://github.com/'+source_repository+'/releases/download/'+tag+'/'+name
     if asset.get('browser_download_url')!=expected or not re.fullmatch(r'sha256:[0-9a-f]{64}', asset.get('digest','')):
         raise ValueError('release 下载来源或 SHA-256 无效')
     size=asset.get('size')
     if type(size) is not int or not 0<size<=MAX_ARCHIVE: raise ValueError('release 大小无效')
     return {'version':label,'url':expected,'sha256':asset['digest'][7:],'bytes':size,
             'channel':'beta' if data.get('prerelease') else 'stable',
-            'notes':str(data.get('body',''))[:16000], 'page':'https://github.com/'+REPOSITORY+'/releases/tag/'+tag}
+            'notes':str(data.get('body',''))[:16000], 'page':'https://github.com/'+source_repository+'/releases/tag/'+tag}
 
 
-def unpack(raw, asset, destination):
+def unpack(raw, asset, destination, source_repository=REPOSITORY):
+    source_repository=repository(source_repository)
     if len(raw)!=asset['bytes'] or digest(raw)!=asset['sha256']:
         raise ValueError('下载文件校验失败，未安装任何文件')
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
@@ -123,7 +131,7 @@ def unpack(raw, asset, destination):
             names.add(name);folded.add(name.casefold())
         manifest=json.loads(archive.read('release.json'))
         version(manifest.get('version'))
-        if (manifest.get('schema_version')!=1 or manifest.get('repository')!=REPOSITORY or manifest.get('version')!=asset['version'] or
+        if (manifest.get('schema_version')!=1 or manifest.get('repository')!=source_repository or manifest.get('version')!=asset['version'] or
                 manifest.get('channel')!=asset['channel']):
             raise ValueError('更新包身份与 release 不一致')
         if not re.fullmatch('[0-9a-f]{40}',manifest.get('source_commit','')): raise ValueError('更新包缺少源码提交')
@@ -222,7 +230,7 @@ def host_key(executable):
     return f'{executable.stem}-{stamp:08X}-{size:08X}'
 
 
-def install_host(host, bundle, manifest, cache, is_running=None):
+def install_host(host, bundle, manifest, cache, is_running=None, mod_ids=None, framework=True):
     is_running=is_running or running
     root=Path(host['path']).resolve();role=host['role'];exe=root/EXES[role]
     marker=root/'sdgo/release.json';prior=storage.read_json(marker,{})
@@ -233,8 +241,12 @@ def install_host(host, bundle, manifest, cache, is_running=None):
     key=host_key(exe);symbols='sdgo/symbols/'+key+'.ini'
     if not (source/symbols).is_file():raise ValueError('此游戏程序版本暂不支持自动更新')
     catalog=json.loads((source/'sdgo/catalog.json').read_text(encoding='utf-8'))
-    supported=[m for m in catalog['mods'] if m['target']==tree and key in m['hosts']]
+    supported=[m for m in catalog['mods'] if m['target']==tree and key in m['hosts'] and (mod_ids is None or m['id'] in mod_ids)]
     selected=[];retained=[];protected_symbols=set()
+    if mod_ids is not None:
+        for ini in (root/'sdgo/mods').glob('*/mod.ini'):
+            if ini.parent.name not in mod_ids:
+                protected_symbols.update(x.strip() for x in read_ini(ini.read_bytes()).get('mod','requires',fallback='').split(',') if x.strip())
     for mod in supported:
         ini=child(root,'sdgo/mods/'+mod['id']+'/mod.ini')
         old=read_ini(ini.read_bytes()) if ini.exists() else None
@@ -247,7 +259,7 @@ def install_host(host, bundle, manifest, cache, is_running=None):
     loader='d3d9.dll' if role=='client' else 'winmm.dll'
     if (root/loader).exists() and not (root/'sdgo/core.dll').exists():
         raise ValueError('这个目录有其他图形/音频扩展，请先用框架安装器完成首次安装')
-    names=[loader,'sdgo/core.dll','sdgo/sdgo.ini',symbols]
+    names=[loader,'sdgo/core.dll','sdgo/sdgo.ini',symbols] if framework else [symbols]
     preserve=set()
     for mod in selected:
         base='sdgo/mods/'+mod['id']+'/'
@@ -283,13 +295,13 @@ def install_host(host, bundle, manifest, cache, is_running=None):
         catbytes=storage.json_bytes(current)
         if not catpath.exists() or catpath.read_bytes()!=catbytes:changes[catpath]=catbytes
         installed={'schema_version':1,'version':manifest['version'],'channel':manifest['channel'],'source_commit':manifest['source_commit'],
-                   'mods':{m['id']:m['version'] for m in selected+retained}}
+                   'mods':{**prior.get('mods',{}),**{m['id']:m['version'] for m in selected+retained}}}
         mbytes=storage.json_bytes(installed)
         if not marker.exists() or marker.read_bytes()!=mbytes:changes[marker]=mbytes
         unit_plan=None
         if role=='client' and any(mod['id']=='unit_catalog' for mod in selected):
             from . import unit_receipts
-            unit_plan=unit_receipts.prepare(root,source,manifest,changes,child,key)
+            unit_plan=unit_receipts.prepare(root,source,manifest,changes,child,key,trusted_repository=manifest['repository'])
             if unit_plan is not None:changes[unit_plan['path']]=unit_plan['data']
         # Recheck immediately before touching runtime files. Locked files also
         # cause a transaction rollback; no game process is ever stopped.
@@ -349,11 +361,62 @@ class Updates:
         self.status={'phase':'idle','message':'等待检查更新','hosts':[],'error':'','checked_at':None,'manager_restart':False}
         self.install_requested=False
 
+    def source_repository(self):
+        return repository(self.workspace.settings.get('updates',{}).get('repository',REPOSITORY))
+
+    def source(self,value):
+        value=repository(value)
+        if not self.busy.acquire(blocking=False):raise storage.Conflict('正在处理更新，请稍后切换上游')
+        try:
+            with storage.LOCK:
+                self.workspace.settings.setdefault('updates',{})['repository']=value;self.workspace.save_workspace()
+            self.latest=None;self.bundle=None;self.manifest=None
+            self.change(phase='idle',message='已更换程序上游；服主 DIY 与玩家绑定不变',hosts=[],error='',manager_restart=False)
+        finally:self.busy.release()
+        return self.state()
+
+    def runtime_plan(self,host_id):
+        from .owner_channel import mode
+        host=self.workspace.host(host_id)
+        if mode(host)!='owner':raise ValueError('仅服主 DIY 目录可以手动采用上游组件；玩家跟随负责人')
+        if not self.manifest or not self.bundle:raise ValueError('先检查并下载上游发行版本')
+        tree='client' if host['role']=='client' else 'server';root=Path(host['path']);key=host_key(root/EXES[host['role']])
+        components={};snapshot={}
+        catalog=json.loads((self.bundle/tree/'sdgo/catalog.json').read_text(encoding='utf-8'))
+        mods={m['id']:m for m in catalog['mods'] if m['target']==tree and key in m['hosts']}
+        for name,expected in self.manifest['files'].items():
+            if not name.startswith(tree+'/'):continue
+            relative=name[len(tree)+1:];parts=relative.split('/')
+            identity=parts[2] if len(parts)>=4 and parts[:2]==['sdgo','mods'] else 'framework'
+            if identity!='framework' and identity not in mods:continue
+            path=child(root,relative);old=digest(path.read_bytes()) if path.is_file() else None
+            snapshot[relative]=old
+            if old!=expected['sha256']:
+                title=self.workspace.contracts.get(identity,{}).get('title') or mods.get(identity,{}).get('name') or identity
+                row=components.setdefault(identity,{'id':identity,'title':title if identity in mods else '框架程序与符号','files':[]})
+                row['files'].append(relative)
+        plan={'host':host_id,'repository':self.source_repository(),'release_sha256':digest(storage.json_bytes(self.manifest)),
+              'snapshot':snapshot,'components':list(components.values())}
+        return {**plan,'digest':digest(storage.json_bytes(plan))}
+
+    def adopt(self,host_id,components,expected):
+        if not isinstance(components,list) or not components or len(set(components))!=len(components):raise ValueError('选择要采用的上游组件')
+        if not self.busy.acquire(blocking=False):raise storage.Conflict('另一更新正在进行')
+        try:
+            with storage.LOCK:
+                plan=self.runtime_plan(host_id)
+                if expected!=plan['digest']:raise storage.Conflict('上游或本地文件已变化，请重新审阅')
+                if not set(components)<=set(c['id'] for c in plan['components']):raise ValueError('所选组件不在审阅清单中')
+                return install_host(self.workspace.host(host_id),self.bundle,self.manifest,self.cache,
+                    mod_ids=set(components)-{'framework'},framework='framework' in components)
+        finally:self.busy.release()
+
     def state(self):
         with self.lock:
             return {**self.status,'running':bool(self.thread and self.thread.is_alive()),'healthy':True,
                     'automatic':self.workspace.services.desired(SERVICE),'current_version':self.current,
                     'channel':self.workspace.settings.get('updates',{}).get('channel','stable'),
+                    'repository':self.source_repository(),
                     'latest_version':self.latest['version'] if self.latest else None,
                     'release_url':self.latest['page'] if self.latest else None,
                     'notes':self.latest['notes'] if self.latest else ''}
@@ -406,25 +469,29 @@ class Updates:
         try:
             self.change(phase='checking',message='正在检查更新',error='')
             channel=self.workspace.settings.get('updates',{}).get('channel','stable')
-            data=json.loads(self.fetcher(RELEASES if channel=='beta' else LATEST,2*1024*1024,self.stop_event))
+            selected_repository=self.source_repository()
+            endpoint='https://api.github.com/repos/'+selected_repository+('/releases?per_page=30' if channel=='beta' else '/releases/latest')
+            data=json.loads(self.fetcher(endpoint,2*1024*1024,self.stop_event))
             if channel=='beta':
                 choices=[]
                 for row in data:
-                    try:choices.append(release_asset(row,channel))
+                    try:choices.append(release_asset(row,channel,selected_repository))
                     except (ValueError,TypeError,KeyError):continue
                 if not choices:raise ValueError('尚无可用的 Beta 或 Stable 更新包')
                 # Beta packages include additional Mods, so prefer that payload
                 # over Stable for the same core version. A newer core wins.
                 latest=max(choices,key=lambda r:(version(r['version'])[:3],r['channel']=='beta',version(r['version'])[-1]))
-            else:latest=release_asset(data,channel)
+            else:latest=release_asset(data,channel,selected_repository)
             self.latest=latest;self.change(checked_at=time.time())
-            if version(latest['version'])[:3]<version(self.current)[:3]:
+            from .owner_channel import mode
+            owner_review=any(mode(h)=='owner' for h in self.workspace.settings['hosts'])
+            if version(latest['version'])[:3]<version(self.current)[:3] and not owner_review:
                 self.change(phase='current',message='当前版本已是最新');return
             folder=self.cache/'releases'/(latest['version']+'-'+latest['sha256'][:12])
             if self.manifest is None or self.manifest['version']!=latest['version'] or self.bundle!=folder:
                 self.change(phase='downloading',message='正在下载并校验正式版本')
                 raw=self.fetcher(latest['url'],MAX_ARCHIVE,self.stop_event)
-                self.manifest=unpack(raw,latest,folder);self.bundle=folder
+                self.manifest=unpack(raw,latest,folder,selected_repository);self.bundle=folder
             self.change(phase='available',message='发现新版本，可安装')
             if install:self._apply()
         finally:self.busy.release()
@@ -436,6 +503,11 @@ class Updates:
 
     def _apply(self):
         if not self.manifest:return
+        from .owner_channel import mode
+        program_eligible=version(self.manifest['version'])>=version(self.current)
+        if (self.manager_exe and program_eligible and any(mode(h)!='starter' for h in self.workspace.settings['hosts']) and
+                self.manifest.get('capabilities',{}).get('owner_updates')!=1):
+            raise ValueError('这个上游 Manager 未声明服主更新协议支持，保留当前 Manager 与维护边界')
         rows=[]
         # Always verify cached input again before an installation/retry.
         for name,expected in self.manifest['files'].items():
@@ -444,9 +516,15 @@ class Updates:
         self.change(phase='installing',message='正在安装已关闭目录中的更新')
         hosts=list(self.workspace.settings['hosts'])
         for host in hosts:
-            try:rows.append(install_host(host,self.bundle,self.manifest,self.cache))
+            try:
+                from .owner_channel import mode
+                selected_mode=mode(host)
+                if selected_mode!='starter':
+                    rows.append({'id':host['id'],'name':host['name'],'status':selected_mode,
+                                 'message':'DIY 内容由服主审阅发布' if selected_mode=='owner' else '运行文件仅跟随已绑定服主'})
+                else:rows.append(install_host(host,self.bundle,self.manifest,self.cache))
             except Exception as error:rows.append({'id':host['id'],'name':host['name'],'status':'error','message':str(error)})
-        if self.manager_exe:
+        if self.manager_exe and program_eligible:
             target=self.manager_exe.parent/'framework'
             # The local distribution is a cache, not the user's writable host.
             # Keep private/custom additions and replace only declared payloads.
@@ -454,7 +532,7 @@ class Updates:
                 if name==MANAGER:continue
                 dest=child(target,name);raw=child(self.bundle,name).read_bytes()
                 if not dest.exists() or digest(dest.read_bytes())!=expected['sha256']:storage.atomic(dest,raw)
-        restart=bool(self.manager_exe and digest(self.manager_exe.read_bytes())!=self.manifest['files'][MANAGER]['sha256'])
+        restart=bool(self.manager_exe and program_eligible and digest(self.manager_exe.read_bytes())!=self.manifest['files'][MANAGER]['sha256'])
         waiting=any(r['status']=='waiting' for r in rows);errors=any(r['status']=='error' for r in rows)
         phase='error' if errors else 'waiting' if waiting else 'ready' if restart else 'current'
         self.change(phase=phase,hosts=rows,manager_restart=restart,
@@ -466,6 +544,8 @@ def attach(workspace,distribution,manager_exe=None):
     controller=Updates(workspace,distribution,manager_exe)
     workspace.updates=controller
     workspace.services.register(SERVICE,'正式版本自动更新',controller,controller.start)
+    from .owner_channel import attach as attach_owner
+    attach_owner(workspace)
     with storage.LOCK:
         if SERVICE not in workspace.settings.get('services',{}):
             workspace.settings.setdefault('services',{})[SERVICE]={'enabled':True};workspace.save_workspace()

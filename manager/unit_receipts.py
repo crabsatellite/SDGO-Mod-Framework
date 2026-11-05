@@ -95,7 +95,8 @@ def _artifact(source, manifest, name, child):
     return raw
 
 
-def prepare(root, source, manifest, planned, child, host_key, *, repair=False):
+def prepare(root, source, manifest, planned, child, host_key, *, repair=False,
+            trusted_repository='crabsatellite/SDGO-Mod-Framework'):
     """Return a receipt write and a current-file CAS snapshot, or None.
 
     ``manifest`` and ``source`` must come from the existing verified release
@@ -114,7 +115,7 @@ def prepare(root, source, manifest, planned, child, host_key, *, repair=False):
     files = receipt.get('files')
     if not isinstance(files, list) or not 1 <= len(files) <= 4096:
         raise ValueError('机体安装收据文件清单无效')
-    if (manifest.get('repository') != 'crabsatellite/SDGO-Mod-Framework'
+    if (manifest.get('repository') != trusted_repository
         or not re.fullmatch('[0-9a-f]{40}', str(manifest.get('source_commit', '')))):
         raise ValueError('机体程序必须来自已校验的框架发行包')
     match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:-beta\.\d+)?', str(manifest.get('version', '')))
