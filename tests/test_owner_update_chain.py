@@ -287,5 +287,14 @@ class OwnerChainTests(unittest.TestCase):
         self.controller.automatic(self.player['id'],False)
         row=next(h for h in self.controller.state()['hosts']if h['id']==self.player['id']);self.assertFalse(row['automatic'])
 
+    def test_legacy_and_newly_registered_existing_installs_require_explicit_starter_opt_in(self):
+        raw,asset,_=bundle();folder=self.root/'upstream';u.unpack(raw,asset,folder)
+        old=Path(self.owner['path'])/'sdgo/mods/example/script.lua';expected=old.read_bytes()
+        self.owner.pop('runtime_mode');(Path(self.owner['path'])/o.MAINTAINER).unlink()
+        self.workspace.save_workspace();c=u.attach(self.workspace,ROOT)
+        self.assertEqual(o.mode(self.owner),'owner');self.assertEqual(old.read_bytes(),expected)
+        another=Workspace(self.root/'fresh',ROOT/'mods');self.addCleanup(another.close);another.add_host(self.owner['path'])
+        self.assertEqual(o.mode(another.settings['hosts'][0]),'owner')
+
 
 if __name__=='__main__':unittest.main()
