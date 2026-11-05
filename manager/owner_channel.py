@@ -4,6 +4,7 @@ import io
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -18,10 +19,13 @@ from .unit_receipts import BLOCKED as RESOURCE_BLOCKED
 SERVICE = 'manager.owner_updates'
 BINDING = 'sdgo/owner-source.json'
 RECEIPT = 'sdgo/owner-release.json'
+MAINTAINER = 'sdgo/local-state/owner-maintainer.json'
+GLOBAL = 'sdgo/sdgo.ini'
 KIND = 'sdgo-owner-modpack'
 RESOURCE_ROOTS = {'anrs','fxrs','gdrs','mdrs','scp','sdrs','sol','sprs','trns','txrs','uirs'}
 SECRET_KEYS = {'password','passwd','pwd','username','loginaccount','loginpassword',
-               'savedaccount','savedpassword','token','secret','apikey','privatekey'}
+               'savedaccount','savedpassword','token','secret','apikey','privatekey',
+               'birthdays','birthdaypeople','birthdayplayers','accountprofiles','savedaccounts'}
 
 
 def https(value):
@@ -56,7 +60,14 @@ def installed_binding(root):
 def mode(host):
     # A copied player package remains bound even in a new Manager workspace.
     try:
+        marker=updates.child(host['path'],MAINTAINER)
+        if marker.exists():
+            value=json.loads(marker.read_bytes())
+            if value.get('schema_version')!=1 or value.get('mode')!='owner':return 'blocked'
+            return 'owner'
+        if host.get('runtime_mode')=='owner':return 'owner'
         if installed_binding(host['path']) is not None:return 'player'
+        if updates.child(host['path'],RECEIPT).exists():return 'blocked'
     except (ValueError,OSError):return 'blocked'
     return host.get('runtime_mode','starter')
 
@@ -97,6 +108,29 @@ def public_file(name,raw):
         inspect(json.loads(raw))
 
 
+def shared_ini(raw,scope):
+    original=updates.read_ini(raw);result=updates.read_ini(b'')
+    for section in ('core','mods','features','categories'):
+        source=next((s for s in original.sections() if s.casefold()==section),None)
+        if source is None:continue
+        permitted={x.casefold() for x in scope.get(section,[])}
+        fields={k:v for k,v in original[source].items() if section=='core' or k.casefold() in permitted}
+        if fields:result[section]=fields
+    return updates.serialize_ini(result)
+
+
+def preserve_local_ini(incoming,previous,scope):
+    result=updates.read_ini(incoming);old=updates.read_ini(previous)
+    for section in old.sections():
+        normalized=section.casefold()
+        if normalized=='core':continue
+        for key,value in old[section].items():
+            if normalized in ('mods','features','categories') and key.casefold() in {x.casefold() for x in scope.get(normalized,[])}:continue
+            if not result.has_section(section):result.add_section(section)
+            result[section][key]=value
+    return updates.serialize_ini(result)
+
+
 def snapshot(host,source,extras):
     root=Path(host['path']).resolve()
     if host['role']!='client':raise ValueError('玩家整合包从已配置的客户端生成')
@@ -108,11 +142,13 @@ def snapshot(host,source,extras):
         before=path.stat();raw=path.read_bytes();after=path.stat()
         if (before.st_mtime_ns,before.st_size)!=(after.st_mtime_ns,after.st_size):raise storage.Conflict('发布文件正在变化：'+name)
         if len(raw)>64*1024*1024:raise ValueError('单个整合包文件超过 64 MiB：'+name)
-        public_file(name,raw);files[name]=raw
+        if name==GLOBAL:distribution.require_redistributable(name,raw)
+        else:public_file(name,raw)
+        files[name]=raw
         watched[path]=(after.st_size,after.st_mtime_ns)
     for name in ('d3d9.dll','sdgo/core.dll','sdgo/sdgo.ini'):add(name)
     for path in sorted((root/'sdgo/symbols').glob('*.ini')):add(path.relative_to(root).as_posix())
-    public_ids=set()
+    public_ids=set();features=set();categories=set()
     for folder in sorted((root/'sdgo/mods').glob('*')):
         if not folder.is_dir() or not (folder/'mod.ini').is_file():continue
         name=folder.name;cfg=updates.read_ini(updates.child(root,'sdgo/mods/'+name+'/mod.ini').read_bytes())
@@ -124,6 +160,7 @@ def snapshot(host,source,extras):
         if scope==distribution.LOCAL_ONLY or cfg.get('mod','category',fallback='')=='development':excluded.append(name);continue
         if cfg.get('mod','id',fallback='')!=name:raise ValueError('Mod 目录与身份不匹配：'+name)
         public_ids.add(name)
+        features.add(cfg.get('mod','feature',fallback=name));categories.add(cfg.get('mod','category',fallback='other'))
         names={name+'.dll','mod.ini','manager.json'};configs=set()
         for key in ('files','runtime_files','config_files'):
             items={x.strip() for x in cfg.get('mod',key,fallback='').split(',') if x.strip()}
@@ -162,6 +199,8 @@ def snapshot(host,source,extras):
     catalog=storage.read_json(root/'sdgo/catalog.json',{'schema_version':1,'mods':[],'features':{},'categories':{}})
     catalog['mods']=[m for m in catalog['mods'] if m['id'] in public_ids]
     files['sdgo/catalog.json']=storage.json_bytes(catalog)
+    global_scope={'mods':sorted(public_ids),'features':sorted(features),'categories':sorted(categories)}
+    files[GLOBAL]=shared_ini(files[GLOBAL],global_scope);public_file(GLOBAL,files[GLOBAL])
     files[BINDING]=storage.json_bytes(source)
     if len(files)>10000 or sum(map(len,files.values()))>updates.MAX_EXPANDED:raise ValueError('整合包超过文件数量或大小限制')
     expected={n:{'bytes':len(b),'sha256':updates.digest(b)} for n,b in sorted(files.items())}
@@ -176,7 +215,7 @@ def snapshot(host,source,extras):
         actual=path.stat()
         if (actual.st_size,actual.st_mtime_ns)!=stamp:raise storage.Conflict('发布期间文件发生变化，请重新预览')
     plan={'publisher_id':source['publisher_id'],'host_key':host_id,'host_sha256':file_hash(root/'GOnline.exe'),
-          'game_base':game_base,'files':expected,'excluded_mods':excluded,'extras':extras}
+          'game_base':game_base,'global_scope':global_scope,'files':expected,'excluded_mods':excluded,'extras':extras}
     return files,plan,updates.digest(storage.json_bytes(plan))
 
 
@@ -198,6 +237,11 @@ def unpack(raw,feed,source,destination):
             if type(expected.get('bytes'))is not int or expected['bytes']<0 or not re.fullmatch('[0-9a-f]{64}',expected.get('sha256','')):raise ValueError('原版素材身份无效')
         files=m.get('files')
         if not isinstance(files,dict) or set(names)!=set(files)|{'owner-release.json'}:raise ValueError('整合包清单不完整')
+        if not {'d3d9.dll','sdgo/core.dll',GLOBAL,'sdgo/catalog.json',BINDING}<=set(files):raise ValueError('整合包缺少框架或绑定文件')
+        scope=m.get('global_scope')
+        if not isinstance(scope,dict) or set(scope)!={'mods','features','categories'}:raise ValueError('共享设置范围无效')
+        for values in scope.values():
+            if not isinstance(values,list) or len(values)>10000 or not all(isinstance(v,str) and 0<len(v)<=128 for v in values) or len(set(values))!=len(values):raise ValueError('共享设置范围无效')
         payload={}
         for name,expected in files.items():
             data=z.read(name);public_file(name,data)
@@ -206,6 +250,7 @@ def unpack(raw,feed,source,destination):
         next_binding=binding(json.loads(payload[BINDING]))
         if any(next_binding[k]!=source[k] for k in ('publisher_id','feeds','kind','schema_version')):raise ValueError('更新包不能悄悄更换玩家绑定源')
         roots={'/'.join(n.split('/')[:3]) for n in payload if n.startswith('sdgo/mods/')}
+        if set(scope['mods'])!={r.split('/')[-1] for r in roots} or shared_ini(payload[GLOBAL],scope)!=payload[GLOBAL]:raise ValueError('共享设置与公开模组清单不一致')
         for base in roots:
             data=payload.get(base+'/mod.ini',b'');distribution.require_public(data,payload.get(base+'/manager.json'))
             cfg=updates.read_ini(data);identity=base.split('/')[-1]
@@ -237,6 +282,7 @@ def install(host,bundle,m,cache,is_running=None):
         data=updates.child(bundle,name).read_bytes();public_file(name,data)
         if len(data)!=expected['bytes'] or updates.digest(data)!=expected['sha256']:raise ValueError('下载缓存已变化：'+name)
         dest=updates.child(root,name)
+        if name==GLOBAL and dest.is_file():data=preserve_local_ini(data,dest.read_bytes(),m['global_scope'])
         if not dest.exists() or dest.read_bytes()!=data:changes[dest]=data
     for name,expected in old.get('files',{}).items():
         if name in m['files']:continue
@@ -265,6 +311,26 @@ def install(host,bundle,m,cache,is_running=None):
     return {'status':'installed','revision':m['revision'],'changed_files':len(changes)-1,'retired_files':len(retired)}
 
 
+def audit(host,m):
+    root=Path(host['path']);exe=root/'GOnline.exe';base_ok=(updates.host_key(exe)==m['host_key'] and file_hash(exe)==m['host_sha256'])
+    for name,expected in m.get('game_base',{}).items():
+        path=updates.child(root,name)
+        base_ok=base_ok and path.is_file() and path.stat().st_size==expected['bytes'] and file_hash(path)==expected['sha256']
+    different=[]
+    for name,expected in m['files'].items():
+        path=updates.child(root,name)
+        if not path.is_file():different.append(name);continue
+        raw=shared_ini(path.read_bytes(),m['global_scope']) if name==GLOBAL else None
+        if raw is not None:
+            if len(raw)!=expected['bytes'] or updates.digest(raw)!=expected['sha256']:different.append(name)
+        elif path.stat().st_size!=expected['bytes'] or file_hash(path)!=expected['sha256']:different.append(name)
+    prior=storage.read_json(root/RECEIPT,{})
+    retired=[name for name in prior.get('files',{}) if name not in m['files'] and allowed(name) and updates.child(root,name).exists()]
+    matches=base_ok and not different and not retired
+    return {'status':'current' if matches else 'different','revision':m['revision'],
+            'base_matches':base_ok,'different_files':different,'retired_files':retired,'matches_owner_runtime':matches}
+
+
 class OwnerChannels:
     def __init__(self,workspace,fetcher=updates.fetch):
         self.workspace=workspace;self.fetcher=fetcher;self.cache=workspace.root/'owner-updates'
@@ -278,9 +344,15 @@ class OwnerChannels:
                 try:source=installed_binding(h['path']);error=''
                 except (ValueError,OSError):source=None;error='本地负责人绑定损坏；请明确切换维护方式或重新绑定'
                 cfg=h.get('publication',{})
+                try:
+                    receipt=storage.read_json(Path(h['path'])/RECEIPT,{})
+                    if not isinstance(receipt,dict):raise ValueError('receipt')
+                    installed_revision=receipt.get('revision')
+                except (ValueError,OSError):installed_revision=None;error='本地安装收据损坏；请先明确解除绑定，再重新绑定负责人'
                 hosts.append({'id':h['id'],'name':h['name'],'role':h['role'],'mode':mode(h),'source':source,
+                    'automatic':h.get('owner_automatic',True) and self.workspace.services.desired(SERVICE),
                     'publication':cfg,'result':self.results.get(h['id'],{}) or ({'status':'error','message':error} if error else {}),
-                    'installed_revision':storage.read_json(Path(h['path'])/RECEIPT,{}).get('revision')})
+                    'installed_revision':installed_revision})
             return {'running':bool(self.thread and self.thread.is_alive()),'healthy':True,'hosts':hosts}
 
     def configure(self,host_id,value):
@@ -298,16 +370,21 @@ class OwnerChannels:
                 if chosen=='player':raise ValueError('先解除损坏的负责人绑定，再绑定新源')
                 old={'invalid_binding':True}
             if chosen=='player':
+                automatic=value.get('automatic',True)
+                if type(automatic)is not bool:raise ValueError('自动跟随开关无效')
+                prepared['owner_automatic']=automatic
                 source=binding(value['source'])
                 if old and old['publisher_id']!=source['publisher_id']:
                     raise ValueError('先解除原服主绑定，再选择新负责人')
+                prior=storage.read_json(updates.child(root,RECEIPT),{})
+                if prior and prior.get('publisher_id')!=source['publisher_id']:raise ValueError('先解除原服主绑定，再选择新负责人')
                 self.check_source(source)
             elif chosen=='owner':
                 if 'publication' in value:
                     cfg=value.get('publication',{});directory=Path(cfg.get('directory','')).expanduser()
                     if not cfg.get('directory') or not directory.is_absolute():raise ValueError('请选择绝对发布目录')
                     directory=directory.resolve();base=root.resolve()
-                    if directory.is_relative_to(base) or base.is_relative_to(directory):raise ValueError('发布目录必须与客户端目录分开')
+                    if directory==directory.parent or directory.is_relative_to(base) or base.is_relative_to(directory):raise ValueError('发布目录必须与客户端目录分开，不能使用磁盘根目录')
                     urls=cfg.get('feeds',[])
                     identity=host.get('publication',{}).get('publisher_id') or uuid.uuid4().hex
                     source=binding({'schema_version':1,'kind':KIND,'publisher_id':identity,'label':cfg.get('label',''),'feeds':urls})
@@ -316,23 +393,26 @@ class OwnerChannels:
                     for name in extras:updates.child(root,name)
                     remote=cfg.get('git_remote','').strip();branch=cfg.get('branch','main')
                     if remote:https(remote)
-                    if not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_/-]{0,99}',branch) or '..' in branch or '//' in branch:raise ValueError('发布分支名称无效')
+                    if (not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_./-]{0,99}',branch) or '..' in branch or '//' in branch or
+                            branch.endswith(('/','.')) or any(p.startswith('.') or p.endswith('.lock') for p in branch.split('/'))):raise ValueError('发布分支名称无效')
                     prepared['publication']={**source,'directory':str(directory),'extras':extras,'git_remote':remote,'branch':branch}
             prepared['runtime_mode']=chosen
             with storage.LOCK:
                 before_host=copy.deepcopy(host);before_services=copy.deepcopy(self.workspace.settings.get('services'))
-                paths=[updates.child(root,n) for n in (BINDING,RECEIPT)]
+                paths=[updates.child(root,n) for n in (BINDING,RECEIPT,MAINTAINER)]
                 before_files={p:p.read_bytes() if p.exists() else None for p in paths}
                 try:
                     if source is not None and chosen=='player':storage.atomic(paths[0],storage.json_bytes(source))
-                    elif old:
+                    elif paths[0].exists() or paths[1].exists():
                         # Explicit role change is the only path out of a player binding.
                         saved=self.cache/'unbound'/uuid.uuid4().hex
-                        storage.atomic(saved/'source.json',before_files[paths[0]])
+                        if before_files[paths[0]] is not None:storage.atomic(saved/'source.json',before_files[paths[0]])
                         if paths[1].exists():storage.atomic(saved/'release.json',before_files[paths[1]]);paths[1].unlink()
-                        paths[0].unlink()
+                        paths[0].unlink(missing_ok=True)
+                    if chosen=='owner':storage.atomic(paths[2],storage.json_bytes({'schema_version':1,'mode':'owner'}))
+                    else:paths[2].unlink(missing_ok=True)
                     host.clear();host.update(prepared)
-                    if chosen=='player' and SERVICE not in self.workspace.settings.get('services',{}):
+                    if chosen=='player' and automatic:
                         self.workspace.settings.setdefault('services',{})[SERVICE]={'enabled':True}
                     self.workspace.save_workspace()
                 except Exception:
@@ -344,8 +424,19 @@ class OwnerChannels:
                         else:storage.atomic(p,raw)
                     raise
                 self.plans.pop(host_id,None);self.downloads.pop(host_id,None)
-            if chosen=='player' and self.workspace.services.desired(SERVICE):self.start()
+            if chosen=='player' and automatic:self.start()
         finally:self.busy.release()
+        return self.state()
+
+    def automatic(self,identity,enabled):
+        if type(enabled)is not bool:raise ValueError('自动跟随开关无效')
+        host=self.workspace.host(identity)
+        if mode(host)!='player':raise ValueError('只有已绑定客户端可以自动跟随')
+        with storage.LOCK:
+            host['owner_automatic']=enabled
+            if enabled:self.workspace.settings.setdefault('services',{})[SERVICE]={'enabled':True}
+            self.workspace.save_workspace()
+        if enabled:self.start()
         return self.state()
 
     def preview(self,host_id):
@@ -393,17 +484,19 @@ class OwnerChannels:
             return {'source':source,'revision':validated['revision'],'sha256':validated['sha256']}
         raise ValueError('负责人更新源暂不可用')
 
-    def check(self,host_id,apply=False):
+    def check(self,host_id,apply=False,audit_only=False):
         host=self.workspace.host(host_id)
         source=installed_binding(host['path'])
-        if mode(host)!='player' or source is None:raise ValueError('先绑定负责人的发布源')
+        selected_mode=mode(host)
+        if source is None or (selected_mode!='player' and not (audit_only and selected_mode=='owner')):raise ValueError('先绑定负责人的发布源')
         feed=self.check_source(source);old=storage.read_json(Path(host['path'])/RECEIPT,{})
         if old.get('revision',0)>feed['revision']:raise ValueError('拒绝较旧的服主发布版本')
         folder=self.cache/'downloads'/source['publisher_id']/(str(feed['revision'])+'-'+feed['sha256'][:16])
         raw=self.fetcher(feed['url'],updates.MAX_ARCHIVE,self.stop_event)
         m=unpack(raw,feed,source,folder)
         self.downloads[host_id]=(folder,m)
-        result=install(host,folder,m,self.cache) if apply else {'status':'available','revision':m['revision'],'file_count':len(m['files'])}
+        result=(audit(host,m) if audit_only else install(host,folder,m,self.cache) if apply else
+                {'status':'available','revision':m['revision'],'file_count':len(m['files'])})
         with self.lock:self.results[host_id]=result
         return result
 
@@ -413,6 +506,7 @@ class OwnerChannels:
         cfg=host['publication'];source=binding(cfg);files,plan,digest=snapshot(host,source,cfg.get('extras',[]))
         if not expected or expected!=digest or self.plans.get(host_id,{}).get('digest')!=expected:raise storage.Conflict('发布预览已变化，请重新检查')
         output=Path(cfg['directory']);output.mkdir(parents=True,exist_ok=True)
+        if cfg.get('git_remote'):self.git_prepare(output,cfg)
         feed_path=output/'owner-feed.json';old=storage.read_json(feed_path,{})
         if old and old.get('publisher_id')!=source['publisher_id']:raise ValueError('发布目录属于另一发布者')
         revision=max(old.get('revision',0),host.get('published_revision',0))+1
@@ -430,7 +524,6 @@ class OwnerChannels:
         # Assets are immutable; the feed pointer is replaced only after validation.
         validate=self.cache/'publish-check'/uuid.uuid4().hex
         unpack(raw,feed,source,validate)
-        if cfg.get('git_remote'):self.git_prepare(output,cfg)
         storage.atomic(updates.child(output,asset),raw);storage.atomic(feed_path,storage.json_bytes(feed))
         if cfg.get('git_remote'):
             self.git(output,['add','--','owner-feed.json','releases'])
@@ -461,6 +554,7 @@ class OwnerChannels:
     @staticmethod
     def git(root,args):
         r=subprocess.run(['git','-C',str(root),*args],capture_output=True,timeout=180,
+                         env={**os.environ,'GIT_TERMINAL_PROMPT':'0','GCM_INTERACTIVE':'Never'},
                          creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         if r.returncode:raise ValueError('Git 发布未完成；检查仓库权限、分支与已有凭据后重试')
         return r.stdout
@@ -470,15 +564,23 @@ class OwnerChannels:
             if any(root.iterdir()):raise ValueError('Git 发布请选择已克隆的干净仓库或空目录')
             self.git(root,['init','-b',cfg['branch']])
             self.git(root,['remote','add','origin',cfg['git_remote']])
+            self.git(root,['sparse-checkout','init','--cone'])
+            self.git(root,['sparse-checkout','set','releases'])
             # Reuse existing history and credentials instead of replacing a
             # remote branch with a newly initialized unrelated history.
             refs=self.git(root,['ls-remote','--heads','origin','refs/heads/'+cfg['branch']])
             if refs.strip():
-                self.git(root,['fetch','--depth=1','origin',cfg['branch']])
+                self.git(root,['fetch','--filter=blob:none','--depth=64','origin',cfg['branch']])
                 self.git(root,['reset','--hard','FETCH_HEAD'])
         if self.git(root,['status','--porcelain']).strip():raise storage.Conflict('发布仓库有未提交修改，请先处理')
         branch=self.git(root,['symbolic-ref','--short','HEAD']).decode().strip()
         if branch!=cfg['branch']:raise ValueError('发布仓库当前分支与所选分支不一致')
+        remote=self.git(root,['config','--get','remote.origin.url']).decode().strip()
+        if remote!=cfg['git_remote']:raise ValueError('现有发布仓库的上游与所填地址不一致；请选择正确的专用目录')
+        refs=self.git(root,['ls-remote','--heads','origin','refs/heads/'+cfg['branch']])
+        if refs.strip():
+            self.git(root,['fetch','--filter=blob:none','--depth=64','origin',cfg['branch']])
+            self.git(root,['merge','--ff-only','FETCH_HEAD'])
 
     def start(self):
         if self.thread and self.thread.is_alive():return
@@ -500,7 +602,7 @@ class OwnerChannels:
                 elif self.workspace.services.desired(SERVICE) and time.monotonic()>=next_poll:
                     next_poll=time.monotonic()+3600
                     for host in self.workspace.settings['hosts']:
-                        if host['role']=='client' and mode(host)=='player':
+                        if host['role']=='client' and mode(host)=='player' and host.get('owner_automatic',True):
                             with self.lock:self.jobs.append(('install',host['id'],None))
                 # A downloaded update waiting for game closure uses the same sealed cache.
                 for identity,(folder,m) in list(self.downloads.items()):
@@ -524,17 +626,18 @@ def attach(workspace):
     return c
 
 
-def sync_client(game_dir):
+def sync_client(game_dir,check_only=False):
     """Headless entry in the same Manager EXE for an owner's player shortcut."""
     from .workspace import Workspace
     root=Path(game_dir).resolve()
     if not (root/'GOnline.exe').is_file() or installed_binding(root) is None:raise ValueError('这个客户端没有服主更新绑定')
+    if mode({'path':str(root)})=='owner' and not check_only:raise ValueError('这是 DIY 维护目录；请在 Manager 审阅和发布，不拉取玩家运行版本')
     workspace=Workspace(updates.child(root,'sdgo/local-state/owner-updater'),Path(__file__).parent/'addons')
     try:
         workspace.add_host(root);host=workspace.settings['hosts'][0];host['runtime_mode']='player'
-        controller=OwnerChannels(workspace);result=controller.check(host['id'],True)
+        controller=OwnerChannels(workspace);result=controller.check(host['id'],not check_only,audit_only=check_only)
         storage.atomic(workspace.root/'result.json',storage.json_bytes(result))
-        return 0 if result['status'] in ('installed','current') else 2
+        return 0 if result['status'] in ('installed','current') else 3 if result['status']=='different' else 2
     except Exception as e:
         storage.atomic(workspace.root/'result.json',storage.json_bytes({'status':'error','message':str(e)}))
         return 1

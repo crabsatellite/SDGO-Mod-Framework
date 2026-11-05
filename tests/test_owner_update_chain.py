@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 import urllib.error
@@ -33,6 +34,7 @@ class OwnerChainTests(unittest.TestCase):
             if len(raw)>limit:raise ValueError('fixture download budget')
             return raw
         self.controller=o.OwnerChannels(self.workspace,fetch)
+        self.addCleanup(self.controller.stop)
         self.owner=self.host('owner');self.player=self.host('player')
         self.mod(self.owner,'example')
         self.source_cfg={'directory':str(self.output),'label':'Example server',
@@ -66,9 +68,9 @@ class OwnerChainTests(unittest.TestCase):
         result=self.controller.publish(self.owner['id'],plan['digest'])
         self.assertEqual(result['status'],'published');return result
 
-    def bind(self):
+    def bind(self,automatic=False):
         source=o.binding(self.owner['publication'])
-        self.controller.configure(self.player['id'],{'mode':'player','source':source})
+        self.controller.configure(self.player['id'],{'mode':'player','source':source,'automatic':automatic})
         return source
 
     def test_owner_publish_player_update_and_independent_second_revision(self):
@@ -258,6 +260,32 @@ class OwnerChainTests(unittest.TestCase):
         self.assertTrue(c.runtime_plan(self.owner['id'])['components'])
         c.apply();self.assertFalse(c.state()['manager_restart'])
         self.assertEqual(exe.read_bytes(),b'newer installed manager')
+
+    def test_private_global_toggles_stay_local_while_shared_values_follow_owner(self):
+        original=Path(self.owner['path'])/o.GLOBAL
+        original.write_bytes(b'[mods]\nexample=1\npersonal_addon=1\n[personal]\npassword=private setting\n')
+        self.publish();source=self.bind();root=Path(self.player['path'])
+        (root/o.GLOBAL).write_bytes(b'[mods]\nexample=0\npersonal_addon=0\n[personal]\nNick=keep\n')
+        self.controller.check(self.player['id'],True)
+        cfg=u.read_ini((root/o.GLOBAL).read_bytes())
+        self.assertEqual(cfg['mods']['example'],'1');self.assertEqual(cfg['mods']['personal_addon'],'0');self.assertEqual(cfg['personal']['Nick'],'keep')
+        self.assertEqual(self.controller.check(self.player['id'],audit_only=True)['status'],'current')
+        feed=json.loads((self.output/'owner-feed.json').read_text())
+        with zipfile.ZipFile(self.output/feed['asset'])as z:
+            public=z.read(o.GLOBAL);self.assertNotIn(b'personal_addon',public);self.assertNotIn(b'private setting',public)
+
+    def test_diy_maintainer_marker_survives_new_workspace_and_blocks_player_shortcut(self):
+        root=Path(self.owner['path']);(root/o.BINDING).write_bytes(storage.json_bytes(o.binding(self.owner['publication'])))
+        self.assertEqual(o.mode({'path':str(root)}),'owner')
+        with self.assertRaises(ValueError):o.sync_client(root)
+
+    def test_automatic_binding_runs_in_registered_lifecycle_and_can_be_disabled_per_client(self):
+        self.publish();self.bind(automatic=True)
+        receipt=Path(self.player['path'])/o.RECEIPT;end=time.monotonic()+6
+        while not receipt.exists() and time.monotonic()<end:time.sleep(.05)
+        self.assertTrue(receipt.exists());self.assertTrue(self.controller.state()['running'])
+        self.controller.automatic(self.player['id'],False)
+        row=next(h for h in self.controller.state()['hosts']if h['id']==self.player['id']);self.assertFalse(row['automatic'])
 
 
 if __name__=='__main__':unittest.main()
