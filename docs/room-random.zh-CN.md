@@ -106,6 +106,18 @@ MaxRowsPerPlayer=4096
 
 ## 开发测试
 
+开发者可通过 `sdgo/battle_human_unit_observer.h` 观察人类机体构造。
+已加载的服务端模块提供 V1 注册及状态接口，每进程允许一个只读、全生命周期的观察者。
+每次新开局先重置房间代际，再围绕唯一一次原生构造调用，发布最终选机输入的 BEFORE／AFTER 配对事件。
+原生开局成功且同步完成后发布 START_ACCEPTED；回滚、取消和原生释放使房间缓存失效。
+这些事件不证明网络送达或实际战斗验收。
+
+回调可在不同原生线程并发交错，不能阻塞、修改原生数据或重入提供者；返回前须复制所需的有界前像，
+AFTER 的机体数据仅在原生返回成功时可用。提供者保留 FP／SSE 状态和 `LastError`，异常观察者会被禁用。
+使用缓存代际前必须核对状态仍已注册，序号水位不能证明回调已完成。
+注册须作为使用方加载流程的最后一步，观察者须存活到进程结束。
+已加载但不兼容的提供者应拒绝接入，不能另行争抢相同原生 hook。
+
 ```powershell
 cmake -S . -B build -G "Visual Studio 17 2022" -A Win32 -DBUILD_TESTING=ON
 cmake --build build --config Release

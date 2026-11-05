@@ -99,3 +99,20 @@ the verified active room model takes precedence over a retained legacy cache poi
 Tests: `ctest`, plus `room_random_test.exe <BattleServer.exe> <GOnline.exe>`,
 `tests/room_random_client_runtime_test.ps1 -GameExe <GOnline.exe>` and
 `tests/room_random_install_test.ps1 -NativeExe <BattleServer.exe>` with locally supplied executables.
+
+Developer consumers can observe human construction through
+`sdgo/battle_human_unit_observer.h`. The loaded server Mod exports V1 registration
+and status functions for one process-lifetime read-only sink. A new start resets
+the room generation, then each final rewritten input has paired BEFORE/AFTER
+events around exactly one native constructor call. START_ACCEPTED follows native
+success and synchronization; rollback, abort and native release invalidate the room.
+These events do not prove packet delivery or gameplay acceptance.
+
+Callbacks may interleave across native threads and must not block, mutate native
+data or reenter the provider. Copy bounded preimages before returning; AFTER data
+is usable only on native success. The provider preserves FP/SSE state and
+`LastError`, and disables a faulting sink. Consumers must check registered status
+before using cached generations; the sequence watermark does not prove callback
+completion. Register only as the consumer's final load action and retain the sink
+for the process lifetime. A loaded incompatible provider must fail closed rather
+than be bypassed by another hook at the same native address.

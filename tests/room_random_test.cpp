@@ -5,6 +5,7 @@
 #include "room_random_native_copy.h"
 #include <functional>
 #include <set>
+#include <float.h>
 
 namespace room_random_inventory {
 bool Read(const Settings&,const std::vector<uint32_t>&,
@@ -29,6 +30,29 @@ bool changeReady=false;
 bool addAiAfterValidation=false;
 bool nativeOverrideSecond=false;
 bool freshNativeSetup=true;
+bool nativeModeMismatch=false;
+bool observeHumans=false,observerChangesFp=false;
+struct HumanObservation { SdgoBattleHumanUnitEventV1 event;uint32_t owner=0,sourceUnit=0,pilotUnit=0;int builds=0,notices=0; };
+std::vector<HumanObservation> humanObservations;
+void __cdecl ObserveHumanEvent(const SdgoBattleHumanUnitEventV1* event,void*) {
+    if(observeHumans) {
+        HumanObservation value;value.event=*event;value.builds=builds;value.notices=noticeCalls;
+        if(event->source) {
+            const auto* source=static_cast<const uint8_t*>(event->source);
+            value.owner=Get<uint32_t>(source,kOwner);
+            value.sourceUnit=Get<uint32_t>(source,UsesDeck(event->mode)?kDeck:kActive);
+        }
+        if(event->type==SDGO_BATTLE_HUMAN_UNIT_AFTER&&event->native_result&&event->player)
+            value.pilotUnit=Get<uint32_t>(static_cast<const uint8_t*>(event->player),0x340);
+        humanObservations.push_back(value);
+    }
+    if(observerChangesFp) { unsigned ignored=0;_controlfp_s(&ignored,_RC_UP,_MCW_RC);SetLastError(1111); }
+}
+DWORD nativeIncomingError=0;unsigned nativeIncomingCw=0;int nativeContractResult=1;
+int __fastcall ContractBuild(void*,void*,uint8_t*,uint8_t*,uint8_t*,uint8_t,uint8_t) {
+    nativeIncomingError=GetLastError();_controlfp_s(&nativeIncomingCw,0,0);
+    unsigned ignored=0;_controlfp_s(&ignored,_RC_CHOP,_MCW_RC);SetLastError(9999);return nativeContractResult;
+}
 std::string fullTitle;
 uint32_t __cdecl FullTitle(uint32_t owner,char* out,uint32_t capacity) {
     if(owner!=1001 || fullTitle.empty() || capacity<=fullTitle.size()) return 0;
@@ -138,7 +162,8 @@ int __fastcall DispatchNative(void* proc,void*,int,void*,uint32_t*,uint32_t*) {
             Put<uint32_t>(Info(slot),kActive,99999);
             Put<uint32_t>(Info(slot),kDeck,99999);
         }
-        if(!Build(proc,nullptr,room.data(),Info(slot),room.data()+0x3CE4+slot*0x1F54,room[4],room[5])) return kStartError;
+        const auto buildMode=nativeModeMismatch?static_cast<uint8_t>(UsesDeck(room[5])?1:6):room[5];
+        if(!Build(proc,nullptr,room.data(),Info(slot),room.data()+0x3CE4+slot*0x1F54,room[4],buildMode)) return kStartError;
         if(failAfter && builds>=failAfter) return kStartError;
     }
     return 0;
@@ -151,12 +176,14 @@ uint8_t* __fastcall LobbyRoom(void*,void*,int,uint16_t) { return lobby.data(); }
 void __fastcall LobbyUnlock(void*,void*,int) {}
 
 void Reset(uint8_t mode=1,const char* title="!rand") {
+    humanObservations.clear();observeHumans=observerChangesFp=false;
     g_titleApi=nullptr;fullTitle.clear();
     g_saved.clear();g_history.clear();g_attempt=nullptr;g_token=0;
     std::fill(room.begin(),room.end(),uint8_t{0});std::fill(lobby.begin(),lobby.end(),uint8_t{0});
     inventory.clear();metadata.clear();built.clear();requestedOwners.clear();ai_test::logs.clear();
     notices.clear();noticeCalls=failNotice=0;
     freshNativeSetup=true;
+    nativeModeMismatch=false;
     std::fill(client.begin(),client.end(),uint8_t{0xCC});
     reads=builds=releases=failAfter=validationError=0;readFailure=changeOwner=changeReady=addAiAfterValidation=nativeOverrideSecond=false;
     Put<uint32_t>(room.data(),0,0x10077); room[4]=1;room[5]=mode;
@@ -556,6 +583,64 @@ int wmain(int argc,wchar_t** argv) {
     for(const auto& hook:hooks) {
         CHECK(hook!="battle.setup_humans");CHECK(hook!="battle.start_notify");
         CHECK(hook!="battle.end");CHECK(hook!="battle.room_tick");
+    }
+    SCENARIO("human observer sees final random inputs and native results before synchronization in all modes");
+    SdgoBattleHumanUnitObserverSinkV1 sink{sizeof(sink),1,&ObserveHumanEvent,nullptr};
+    CHECK(SdgoBattleRegisterHumanUnitObserverV1(&sink)==1);
+    for(uint8_t mode=1;mode<=14;++mode) {
+        Reset(mode,"!rand !ai");observeHumans=true;CHECK(Start()==0);CHECK(humanObservations.size()==6);
+        CHECK(humanObservations.front().event.type==SDGO_BATTLE_HUMAN_UNIT_ROOM_INVALIDATED);
+        for(size_t n=1;n<5;n+=2) {
+            const auto& preEvent=humanObservations[n];const auto& postEvent=humanObservations[n+1];
+            CHECK(preEvent.event.type==SDGO_BATTLE_HUMAN_UNIT_BEFORE && postEvent.event.type==SDGO_BATTLE_HUMAN_UNIT_AFTER);
+            CHECK(preEvent.event.sequence==postEvent.event.sequence && preEvent.event.thread_id==GetCurrentThreadId());
+            CHECK(preEvent.sourceUnit==built.at(preEvent.owner).front() && postEvent.pilotUnit==preEvent.sourceUnit);
+            CHECK(postEvent.event.native_result==1 && postEvent.builds==preEvent.builds+1 && postEvent.notices==0);
+            CHECK(preEvent.event.mode==mode && preEvent.event.rule==room[4]);
+        }
+        CHECK(humanObservations[1].event.sequence!=humanObservations[3].event.sequence && noticeCalls>0);
+        CHECK(humanObservations.back().event.type==SDGO_BATTLE_HUMAN_UNIT_START_ACCEPTED);
+        Release(room.data(),nullptr);CHECK(humanObservations.size()==7);
+        CHECK(humanObservations.back().event.type==SDGO_BATTLE_HUMAN_UNIT_ROOM_RELEASED);
+        CHECK(!humanObservations.back().event.source && !humanObservations.back().event.player);
+    }
+    SCENARIO("pre-original random veto emits no misleading human lifecycle event");
+    Reset();observeHumans=true;readFailure=true;CHECK(Start()==kStartError);CHECK(humanObservations.empty());
+    SCENARIO("fresh starts reset pooled room generations even without a native release callback");
+    Reset();observeHumans=true;CHECK(Start()==0);humanObservations.clear();CHECK(Start()==0);
+    CHECK(humanObservations.front().event.type==SDGO_BATTLE_HUMAN_UNIT_ROOM_INVALIDATED);
+    CHECK(humanObservations.back().event.type==SDGO_BATTLE_HUMAN_UNIT_START_ACCEPTED);
+    CHECK(std::count_if(humanObservations.begin(),humanObservations.end(),[](const auto& event) {
+        return event.event.type==SDGO_BATTLE_HUMAN_UNIT_ROOM_INVALIDATED;
+    })==1);
+    SCENARIO("retired room generations stay invalid even if a later pre-original mode gate fails");
+    Reset();observeHumans=true;CHECK(Start()==0);humanObservations.clear();nativeModeMismatch=true;
+    CHECK(Start()==kStartError);CHECK(!humanObservations.empty());
+    CHECK(std::all_of(humanObservations.begin(),humanObservations.end(),[](const auto& event) {
+        return event.event.type==SDGO_BATTLE_HUMAN_UNIT_ROOM_INVALIDATED;
+    }));
+    SCENARIO("post-build start rollback invalidates every already-observed room generation");
+    for(bool lateFailure:{false,true}) {
+        Reset();observeHumans=true;
+        if(lateFailure)failAfter=1;else failNotice=1;
+        CHECK(Start()==kStartError);CHECK(humanObservations.size()>=3);
+        CHECK(std::any_of(humanObservations.begin(),humanObservations.end(),[](const auto& event) {
+            return event.event.type==SDGO_BATTLE_HUMAN_UNIT_AFTER && event.event.native_result==1;
+        }));
+        CHECK(humanObservations.back().event.type==SDGO_BATTLE_HUMAN_UNIT_ROOM_INVALIDATED);
+        CHECK(humanObservations.back().event.room==room.data() && !humanObservations.back().event.source);
+    }
+    SCENARIO("nonrandom direct builds preserve native FP/error and report even native zero results");
+    Reset();g_build=reinterpret_cast<BuildFn>(&ContractBuild);observeHumans=observerChangesFp=true;
+    for(int result:{0,1}) {
+        humanObservations.clear();nativeContractResult=result;unsigned originalCw=0,expectedCw=0,afterCw=0;
+        _controlfp_s(&originalCw,0,0);_controlfp_s(&expectedCw,_RC_DOWN,_MCW_RC);SetLastError(8080);
+        CHECK(Build(nullptr,nullptr,room.data(),Info(0),room.data()+0x3CE4,1,1)==result);
+        _controlfp_s(&afterCw,0,0);
+        CHECK(nativeIncomingError==8080 && nativeIncomingCw==expectedCw && GetLastError()==9999);
+        CHECK((afterCw&_MCW_RC)==_RC_CHOP && humanObservations.size()==2);
+        CHECK(humanObservations.back().event.native_result==result);
+        _controlfp_s(&afterCw,originalCw,_MCW_RC);
     }
     return ai_test::Finish();
 }
