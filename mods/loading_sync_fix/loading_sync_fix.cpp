@@ -83,9 +83,9 @@ namespace
     }
 
     // The stock initial-load ACK handler enters phase 2 after every human has
-    // reached phase 1. A late duplicate ACK can arrive after another client
-    // has already advanced the room; replaying the stock initialization then
-    // resets every +0x966 stage to zero and strands the advanced clients.
+    // reached phase 1. The periodic check may already have advanced the room
+    // while one peer was slow. Its first late ACK, or a repeated ACK, must not
+    // reset every +0x966 stage and strand clients whose completion was accepted.
     //
     // At this site EBP is the native handler frame and [EBP-0x14] is the room.
     // Preserve the incoming context while deciding. Phase 1 replays the exact
