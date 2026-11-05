@@ -172,7 +172,7 @@ class SnapshotAndValidationTests(unittest.TestCase):
             repository = Repository(root, None)
             self.assertEqual(set(repository.catalog), {
                 "units", "weapons", "items", "names", "grades",
-            "level_indices", "skill_ids", "pending_skill_ids", "funnel_ids", "pending_funnel_ids",
+                "level_indices", "skills", "skill_ids", "pending_skill_ids", "funnels", "funnel_ids", "pending_funnel_ids",
                 "unit_graph_ids",
             })
             self.assertEqual(set(repository.catalog["units"]), {10001})

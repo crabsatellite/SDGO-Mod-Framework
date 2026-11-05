@@ -288,6 +288,16 @@ items. Upload a dependency ZIP containing `manifest.json` and its members to add
 **更新此组资料** explicitly replaces one group. Existing family records and prior
 publications stay intact, and earlier preview approvals expire.
 
+Each supported skill/funnel record has an **编辑服务端定义** editor. Audited shared
+fields come from the actual client record and remain read-only. Supply the other
+required fields, or search and select a complete stock template from the configured
+server/catalog snapshot. Saving rechecks the template hash and paired fields;
+incompatible templates cannot supply guessed values. Server BattleMode is independent
+of the client's skill dispatch byte. Incomplete entries can be saved and exported as
+drafts; missing values remain visible after re-import. Complete, valid entries become
+explicit definitions. A stale editor cannot replace a newer revision, and original
+source data and prior publications remain intact.
+
 Project export/re-import retains the original bytes, prepared members and source
 evidence. Unknown records and dispatch values stay visible and block admission.
 Saving this authoring data does not enable runtime publication or grant a server

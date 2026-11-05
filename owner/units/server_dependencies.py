@@ -88,6 +88,31 @@ def normalize_row(value, *, kind='skill'):
     return result
 
 
+def normalize_partial_row(value, *, kind='skill'):
+    """Validate supplied authoring fields without manufacturing missing values."""
+    _,_,_,columns,_,schema,_,_=_spec(kind)
+    if not isinstance(value,dict) or set(value)-set(columns):
+        raise ValueError('server '+kind+' authoring fields differ')
+    result={}
+    for name,sql_kind,size,nullable in schema:
+        if name not in value:continue
+        _validate_scalar(name,value[name],sql_kind,size,nullable)
+        result[name]=struct.unpack('<f',struct.pack('<f',value[name]))[0] if sql_kind=='real' else value[name]
+        if sql_kind=='real' and not math.isfinite(result[name]):raise ValueError('server skill real value is not finite')
+    if kind=='skill' and 'SkillName' in result and not result['SkillName'].strip():
+        raise ValueError('server skill name must be supplied')
+    return result
+
+
+def paired_values(raw, *, kind='skill'):
+    """Only fields with an audited shared encoding; dispatch is not SQL BattleMode."""
+    _,_,_,_,key,_,extent,shared=_spec(kind)
+    if not isinstance(raw,bytes) or len(raw)!=extent or raw[4]!=0:
+        raise ValueError('server dependency complete client record differs')
+    return {key:struct.unpack_from('<I',raw)[0],**{
+        name:struct.unpack_from('<'+primitive,raw,offset)[0] for name,(offset,primitive) in shared.items()}}
+
+
 def row_hash(value, *, kind='skill'):
     return hashlib.sha256(canonical(normalize_row(value,kind=kind)).encode('utf-8')).hexdigest()
 
@@ -121,6 +146,15 @@ def validate_manifest(value, client_records, *, kind='skill', authoring=False):
             _exact(definition, {'kind', 'id', 'sha256'}, 'server '+kind+' template')
             if _id(definition['id']) == identity: raise ValueError('server '+kind+' template cannot be its destination')
             _hash(definition['sha256'])
+        elif definition.get('kind') == 'draft' and authoring:
+            _exact(definition, {'kind', 'origin', 'values'}, 'draft server '+kind)
+            if definition['origin'] not in ('authored', 'source-derived', 'target-adaptation'):
+                raise ValueError('draft server '+kind+' origin must be declared')
+            values=normalize_partial_row(definition['values'],kind=kind)
+            if values.get(key)!=identity:raise ValueError('draft server '+kind+' destination differs')
+            for name,expected in paired_values(raw,kind=kind).items():
+                if name in values and values[name]!=expected:
+                    raise ValueError('server/client shared '+kind+' field differs: '+name)
         elif definition.get('kind') == 'explicit':
             _exact(definition, {'kind', 'origin', 'values'}, 'explicit server '+kind)
             if definition['origin'] not in ('authored', 'source-derived', 'target-adaptation'):

@@ -228,9 +228,11 @@ def _empty_catalog() -> dict[str, Any]:
         "grades": set(),
         "level_indices": set(),
         "skill_ids": set(),
+        "skills": {},
         "pending_skill_ids": set(),
         "pending_funnel_ids": set(),
         "funnel_ids": set(),
+        "funnels": {},
         "unit_graph_ids": set(),
     }
 
@@ -313,7 +315,8 @@ def _load_snapshot(path: Path) -> tuple[dict[str, Any], dict[str, bool]]:
     skill_file = path / "dbo.tbl_SkillRev.json"
     if skill_file.is_file():
         skill_rows = _json_rows(skill_file)
-        catalog["skill_ids"] = set(_index(skill_rows, "SkillID", "tbl_SkillRev"))
+        catalog["skills"] = _index(skill_rows, "SkillID", "tbl_SkillRev")
+        catalog["skill_ids"] = set(catalog["skills"])
     else:
         metadata["skills"] = False
     dependency_file = path / "dbo.sdgo_UnitImportDependencies.json"
@@ -326,7 +329,8 @@ def _load_snapshot(path: Path) -> tuple[dict[str, Any], dict[str, bool]]:
     funnel_file = path / "dbo.tbl_Funnel.json"
     if funnel_file.is_file():
         funnel_rows = _json_rows(funnel_file)
-        catalog["funnel_ids"] = set(_index(funnel_rows, "FunnelID", "tbl_Funnel"))
+        catalog["funnels"] = _index(funnel_rows, "FunnelID", "tbl_Funnel")
+        catalog["funnel_ids"] = set(catalog["funnels"])
     else:
         metadata["funnels"] = False
     graph_file = path / "dbo.tbl_UnitGraph.json"
@@ -393,10 +397,8 @@ def _load_cursor_catalog(cursor) -> tuple[dict[str, Any], dict[str, bool]]:
     }
     catalog["level_indices"] = {row["UnitLevelIndex"] for row in levels}
     if metadata["skills"]:
-        catalog["skill_ids"] = {
-            row["SkillID"]
-            for row in _select_rows(cursor, "tbl_SkillRev", SKILL_COLUMNS)
-        }
+        catalog["skills"] = _index(_select_rows(cursor,"tbl_SkillRev",SKILL_COLUMNS),"SkillID","tbl_SkillRev")
+        catalog["skill_ids"] = set(catalog["skills"])
     if _object_exists(cursor, 'sdgo_UnitImportDependencies'):
         catalog['pending_skill_ids'] = {
             int(row[0]) for row in cursor.execute(
@@ -405,10 +407,8 @@ def _load_cursor_catalog(cursor) -> tuple[dict[str, Any], dict[str, bool]]:
         catalog['pending_funnel_ids']={int(row[0]) for row in cursor.execute(
             "SELECT RecordID FROM dbo.sdgo_UnitImportDependencies WHERE RecordKind='funnel'")}
     if _object_exists(cursor, "tbl_Funnel"):
-        catalog["funnel_ids"] = {
-            row["FunnelID"]
-            for row in _select_rows(cursor, "tbl_Funnel", FUNNEL_COLUMNS)
-        }
+        catalog["funnels"] = _index(_select_rows(cursor,"tbl_Funnel",FUNNEL_COLUMNS),"FunnelID","tbl_Funnel")
+        catalog["funnel_ids"] = set(catalog["funnels"])
     else:
         metadata["funnels"] = False
     if _object_exists(cursor, "tbl_UnitGraph"):

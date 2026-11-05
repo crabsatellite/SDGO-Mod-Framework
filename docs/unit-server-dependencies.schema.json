@@ -35,6 +35,108 @@
                   "origin": {"enum": ["authored", "source-derived", "target-adaptation"]},
                   "values": {"$ref": "#/$defs/values"}
                 }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Authoring only; runtime writers reject drafts.",
+                "required": [
+                  "kind",
+                  "origin",
+                  "values"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "draft"
+                  },
+                  "origin": {
+                    "enum": [
+                      "authored",
+                      "source-derived",
+                      "target-adaptation"
+                    ]
+                  },
+                  "values": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "SkillID"
+                    ],
+                    "properties": {
+                      "SkillID": {
+                        "$ref": "#/$defs/id"
+                      },
+                      "SkillName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 50
+                      },
+                      "Activate": {
+                        "$ref": "#/$defs/byte"
+                      },
+                      "ActivateValue": {
+                        "$ref": "#/$defs/short"
+                      },
+                      "MoveLv": {
+                        "$ref": "#/$defs/short"
+                      },
+                      "DashLv": {
+                        "$ref": "#/$defs/short"
+                      },
+                      "QuickLv": {
+                        "$ref": "#/$defs/short"
+                      },
+                      "MotiveLv": {
+                        "$ref": "#/$defs/short"
+                      },
+                      "BoostIncreaseRate": {
+                        "$ref": "#/$defs/real"
+                      },
+                      "BoostPower": {
+                        "$ref": "#/$defs/short"
+                      },
+                      "Attack": {
+                        "$ref": "#/$defs/short"
+                      },
+                      "Defense": {
+                        "$ref": "#/$defs/short"
+                      },
+                      "RadarRadius": {
+                        "$ref": "#/$defs/short"
+                      },
+                      "SpIncreaseRate": {
+                        "$ref": "#/$defs/short"
+                      },
+                      "Scale": {
+                        "$ref": "#/$defs/real"
+                      },
+                      "AutoBulletChargeRate": {
+                        "$ref": "#/$defs/real"
+                      },
+                      "BulletChargeRate": {
+                        "$ref": "#/$defs/real"
+                      },
+                      "AtkSpdRate": {
+                        "$ref": "#/$defs/real"
+                      },
+                      "ActiveResult": {
+                        "$ref": "#/$defs/short"
+                      },
+                      "Feature": {
+                        "$ref": "#/$defs/byte"
+                      },
+                      "UseTarget": {
+                        "$ref": "#/$defs/byte"
+                      },
+                      "BattleMode": {
+                        "$ref": "#/$defs/byte"
+                      },
+                      "PartSpLevel": {
+                        "$ref": "#/$defs/byte"
+                      }
+                    }
+                  }
+                }
               }
             ]
           }
