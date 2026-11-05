@@ -98,9 +98,9 @@ jobs:
       - name: Native client data guards
         shell: pwsh
         run: |
-          cmake --build build --config Release --target native_data_guard_runtime_test game_test_quiet_wait_room_test
+          cmake --build build --config Release --target native_data_guard_runtime_test game_test_quiet_wait_room_test lobby_music_fix_dll_test
           if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
-          ctest --test-dir build -C Release -R '^(native_data_guard_actual_dll|game_test_quiet_wait_room_offline)$' --output-on-failure
+          ctest --test-dir build -C Release -R '^(native_data_guard_actual_dll|game_test_quiet_wait_room_offline|lobby_music_fix_actual_dll|lobby_music_fix_missing_file)$' --output-on-failure
           if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
       - name: Retain prepared package
         # Candidate branches build exact install bytes before runtime delivery.
