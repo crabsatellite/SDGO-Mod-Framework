@@ -77,10 +77,9 @@ calling convention and root gate, name conflicts, multiple owners, exact
 idempotency, VM stack preservation and a partial execution failure that requires
 client closure. Its default fixtures contain no private game content.
 
-Those checks prove the consumer contract and VM/ABI fixtures. A target symbol
-profile, integration into the original loader, and actual original-client use
-remain separate acceptance steps. No native-game activation is implied by the
-offline fixture.
+Those checks cover the consumer contract and VM/ABI fixtures. A target symbol
+profile, integration into the original loader and actual original-client use
+are separate steps; the offline fixture does not activate anything in the native game.
 
 An optional `SDGO_SCRIPT_NATIVE_CLIENT` enables bounded original-API replay. The
 fixture maps only the authenticated original executable bytes into a private

@@ -32,7 +32,7 @@ guessed wider classification.
 
 The component verifies publication witnesses; it is not a ZFX/model parser.
 The source adapter must also validate the complete typed resource closure and
-format compatibility. A valid hash alone is not rendering acceptance.
+format compatibility. A valid hash alone does not show that the resource renders.
 
 ## Native integration
 
@@ -67,5 +67,4 @@ the original retained effect pointer, baseline pass-through, a second owner and
 immediate fatal-context termination. The string-constructor callee is a bounded
 fixture capture and execution stops before the native effect loader. No original
 entry/TLS/import initialization, game window, renderer or native effect lifetime
-runs. This is ABI/call-site evidence, not original-game rendering or gameplay
-acceptance.
+runs. It covers the ABI and call sites, not original-game rendering or gameplay.
