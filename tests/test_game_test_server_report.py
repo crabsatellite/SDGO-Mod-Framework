@@ -40,9 +40,9 @@ class ServerReportTests(unittest.TestCase):
                     slots=copy.deepcopy([host]+(bots if setup else [])),score_team_1=24,score_team_2=36))
         return events
 
-    def evaluate(self,events):
+    def evaluate(self,events,**kwargs):
         self.path.write_text('\n'.join(json.dumps(e) for e in events)+'\n',encoding='utf-8')
-        return report.evaluate(self.metadata,[self.path],9229)
+        return report.evaluate(self.metadata,[self.path],9229,**kwargs)
 
     def test_real_matrix_requires_every_mode_not_only_first_server_summary(self):
         self.metadata['plan']['mode_sequence']='1,3,6,7,9'
@@ -92,6 +92,16 @@ class ServerReportTests(unittest.TestCase):
         self.assertEqual(self.evaluate(self.stream((1,1)))['status'],'fail')
         events=self.stream();events[3]['sequence']=events[2]['sequence']
         self.assertEqual(self.evaluate(events)['status'],'fail')
+
+    def test_coordinated_rematch_requires_two_fresh_complete_lifecycles(self):
+        self.assertEqual(self.evaluate(self.stream(),expected_rounds=2)['status'],'fail')
+        self.assertEqual(self.evaluate(self.stream((1,1)),expected_rounds=2)['status'],'pass')
+        self.assertNotIn('same_room_rematch',self.metadata['plan'])
+        for value in (True,0,3,'2'):
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                self.evaluate(self.stream(),expected_rounds=value)
+        self.metadata['plan']['same_room_rematch']=True
+        with self.assertRaises(ValueError):self.evaluate(self.stream(),expected_rounds=1)
 
     def test_participant_identity_and_ally_enemy_placement_are_verified(self):
         for mutate in (

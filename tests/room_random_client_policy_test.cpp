@@ -3,6 +3,7 @@
 #include <cstring>
 #include "../mods/room_random/loadout_sync.h"
 #include "../mods/room_random_client/cache_sync.h"
+#include "../mods/room_random_client/pending_start.h"
 namespace {
 int checks=0,failures=0;
 void Check(bool ok,const char* text){++checks;if(!ok){++failures;std::printf("FAIL %s\n",text);}}
@@ -133,6 +134,8 @@ int main() {
         auto lateResult=late.Process(lateContext,0x06C3,lateStart.data());
         Check(lateResult.applied==3 && lateResult.mismatched==1,
               "start records one missing human notice without discarding the other three");
+        Check(!late.ReadyForStart(lateContext,lateStart.data()),
+              "one missing human record keeps the whole native start closed");
         auto rejected=notices[3];Put<uint32_t>(rejected.data(),6,9999);
         Check(late.Process(lateContext,0x0861,rejected.data()).reason==4,
               "wrong-owner notice is rejected after start");
@@ -148,23 +151,50 @@ int main() {
               "missing fourth notice cannot authorize a partial frozen source");
         Check(late.Process(lateContext,0x0861,notices[3].data()).applied==1,
               "matching fourth notice is accepted after start");
+        Check(late.ReadyForStart(lateContext,lateStart.data()),
+              "the native start becomes ready only after all four humans are complete");
         for(size_t slot=0;slot<4;++slot) {
             const auto fixed=late.PrepareConstruction(
                 lateContext,sources[slot].data(),lateStart.data()+0x20+slot*0x10F,0);
             Check(fixed.applied && fixed.after==12001+slot,
                   "late fourth notice completes its slot without revoking the first three");
         }
-        auto nextUnit=units[1];Put<uint32_t>(nextUnit.data(),0,15002);
-        const auto next=room_random_sync::Packet(0x0861,2002,1,20,nextUnit);
-        Check(late.Process(lateContext,0x0861,next.data()).applied==1,
-              "a later selection still updates its native slot");
+        Check(late.Process(lateContext,0x0861,notices[3].data()).applied==1 &&
+              late.ReadyForStart(lateContext,lateStart.data()),
+              "an identical duplicate notice is idempotent while a start is ready");
+        auto changedRecord=notices[1];
+        Put<uint64_t>(changedRecord.data(),0x12+8,0x777777777ULL);
+        Check(late.Process(lateContext,0x0861,changedRecord.data()).applied==1,
+              "a later full record still updates its native slot");
         Check(!late.PrepareConstruction(lateContext,sources[1].data(),
                                         lateStart.data()+0x20+0x10F,0).applied,
-              "a later selection invalidates only its own start authority");
+              "a changed full record invalidates only its own start authority");
+        Check(!late.ReadyForStart(lateContext,lateStart.data()),
+              "a changed record cannot release the earlier held start");
         for(size_t slot : {size_t(0),size_t(2),size_t(3)})
             Check(late.PrepareConstruction(lateContext,sources[slot].data(),
                                            lateStart.data()+0x20+slot*0x10F,0).applied,
                   "one player's later selection preserves the other start authorities");
+        late.Process(lateContext,0x06C3,lateStart.data());
+        Check(late.ReadyForStart(lateContext,lateStart.data()),
+              "a replacement start binds the latest complete full record");
+        auto packetMismatch=lateStart;packetMismatch[0x20+5]^=1;
+        Check(!late.ReadyForStart(lateContext,packetMismatch.data()),
+              "readiness is bound to the exact native start entries");
+        auto invalidModel=lateStart;Put<uint32_t>(invalidModel.data(),0x2E+3*0x10F,0);
+        late.Process(lateContext,0x06C3,invalidModel.data());
+        Check(!late.ReadyForStart(lateContext,invalidModel.data()),
+              "a human entry with no model fails closed instead of being skipped");
+        auto invalidOwner=lateStart;Put<uint32_t>(invalidOwner.data(),0x20+3*0x10F,9999);
+        late.Process(lateContext,0x06C3,invalidOwner.data());
+        Check(!late.ReadyForStart(lateContext,invalidOwner.data()),
+              "a human entry that does not own its native slot fails closed");
+        auto withAi=lateStart;
+        Put<uint32_t>(withAi.data(),0x20+4*0x10F,0x80000005u);
+        Put<uint32_t>(withAi.data(),0x2E+4*0x10F,19001);
+        late.Process(lateContext,0x06C3,withAi.data());
+        Check(late.ReadyForStart(lateContext,withAi.data()),
+              "AI entries are excluded from the human completeness gate");
         Put<uint32_t>(lateRoom.data(),0,21);
         Check(late.Process(lateContext,0x0861,notices[0].data()).applied==1,
               "a notice in the next room generation still updates its cache");
@@ -199,6 +229,8 @@ int main() {
         auto deckResult=shipFirst.Process(deckContext,0x06C3,deckStart.data());
         Check(deckResult.applied==0 && deckResult.mismatched==1,
               "deck start waits when both full notices are late");
+        Check(!shipFirst.ReadyForStart(deckContext,deckStart.data()),
+              "deck readiness requires both unit and ship records");
         Check(shipFirst.Process(deckContext,0x098B,shipPacket.data()).applied==1 &&
               !shipFirst.PrepareConstruction(deckContext,deckSource.data(),deckStart.data()+0x20,1).applied,
               "late ship notice alone keeps deck construction closed");
@@ -211,6 +243,8 @@ int main() {
         std::memcpy(expectedDeck.data()+0x146,deckNotice.data(),deckNotice.size());
         Check(deckPrepared.applied && deckPrepared.pilot==expectedDeck,
               "ship-first late notices preserve the complete deck source");
+        Check(shipFirst.ReadyForStart(deckContext,deckStart.data()),
+              "ship-first deck becomes globally ready after the unit record");
         Put<uint32_t>(deckRoom.data(),0,31);Put<uint32_t>(deckRoom.data(),kSlotBase+0x49,16001);
         CacheSync unitFirst;
         unitFirst.Process(deckContext,0x06C3,deckStart.data());
@@ -220,6 +254,46 @@ int main() {
         Check(unitFirst.Process(deckContext,0x098B,shipPacket.data()).applied==1 &&
               unitFirst.PrepareConstruction(deckContext,deckSource.data(),deckStart.data()+0x20,1).applied,
               "unit-first and ship-first late deck notices both complete the same start");
+        Check(unitFirst.ReadyForStart(deckContext,deckStart.data()),
+              "unit-first deck becomes globally ready after the ship record");
+    }
+    {
+        std::array<uint8_t,0x5DA8> pendingProfile{};
+        std::array<uint8_t,0x4000> pendingRoom{};
+        std::array<uint8_t,16> modelA{},modelB{};
+        Context pendingContext;
+        pendingContext.profile=pendingProfile.data();
+        pendingContext.room=pendingRoom.data();
+        pendingContext.local=4001;
+        pendingContext.model=modelA.data();
+        Put<uint32_t>(pendingRoom.data(),0,50);
+        std::array<uint8_t,kStartPacketSize> first{},replacement{};
+        Put<uint16_t>(first.data(),0,0x06C3);first[100]=0x5A;
+        Put<uint16_t>(replacement.data(),0,0x06C3);replacement[100]=0xA5;
+        int parserA=1,parserB=2;
+        PendingStart pending;
+        Check(pending.Hold(pendingContext,&parserA,first.data()),
+              "pending start accepts a complete live generation");
+        first[100]=0;
+        Check(pending.Packet() && pending.Packet()[100]==0x5A,
+              "pending start owns a deep copy of the native packet");
+        Check(pending.Hold(pendingContext,&parserB,replacement.data()) &&
+              pending.Parser()==&parserB && pending.Packet()[100]==0xA5,
+              "a replacement 06C3 drops the older parser generation");
+        auto call=pending.Take(pendingContext,&parserB);
+        Check(call && call.parser==&parserB && call.packet[100]==0xA5 && !pending.Active(),
+              "take clears retained pointers before returning one original call");
+        Check(!pending.Take(pendingContext,&parserB),
+              "a taken start cannot execute a second time");
+        pending.Hold(pendingContext,&parserA,replacement.data());
+        Put<uint32_t>(pendingRoom.data(),0,51);
+        Check(!pending.Revalidate(pendingContext) && !pending.Active(),
+              "room-key generation change clears a held start");
+        Put<uint32_t>(pendingRoom.data(),0,52);
+        pending.Hold(pendingContext,&parserA,replacement.data());
+        pendingContext.model=modelB.data();
+        Check(!pending.Revalidate(pendingContext) && !pending.Active(),
+              "model generation change clears a held start");
     }
     std::printf("%d CLIENT CACHE POLICY CHECKS, %d failures\n",checks,failures);return failures?1:0;
 }

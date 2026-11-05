@@ -27,6 +27,8 @@
 
 #include <windows.h>
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <atomic>
 #include <cstdio>
@@ -99,7 +101,7 @@ namespace
     constexpr size_t kRoomScoreTeam1 = 0x2EEE4;
     constexpr size_t kRoomScoreTeam2 = 0x2EEE8;
     constexpr uint32_t kAiPilotBit = 0x80000000u;
-    bool GuardedRemove(uint8_t* room);
+    bool GuardedRemove(uint8_t* room, bool notifyClients = false);
 
     // The dispatcher keeps a copy of the room in its frame (ebp - 0x328AC); its team checks
     // read that copy.
@@ -125,6 +127,8 @@ namespace
     using PilotStateModeFn = void(__thiscall*)(uint8_t* part, uint8_t a, uint8_t b);
     using SetupAiPilotFn = int(__thiscall*)(void* proc, uint8_t* info, uint8_t* pilot, uint8_t a, uint8_t b);
     using WaitRoomTickFn = int(__thiscall*)(void* proc);
+    using BroadcastFn = int(__thiscall*)(uint8_t* room, uint8_t* packet, uint32_t byteLength,
+                                         uint32_t* attemptedRecipients);
     using DamageFn = uint32_t(__thiscall*)(uint8_t* room, uint32_t now, uint32_t attackerSlot,
                                           uint8_t* attackerPilot, uint8_t* weapon, uint32_t targetState,
                                           uint32_t targetPilotId, uint32_t proposedDamage, uint16_t stun,
@@ -172,6 +176,7 @@ namespace
     PilotStateModeFn g_pilotStateMode = nullptr;
     SetupAiPilotFn g_setupAiPilot = nullptr;
     WaitRoomTickFn g_waitRoomTick = nullptr;
+    BroadcastFn g_broadcast = nullptr;
     DamageFn g_damage = nullptr;
     MapFindFn g_mapFind = nullptr;
     MapInsertFn g_mapInsert = nullptr;
@@ -1896,24 +1901,75 @@ namespace
     // (0x0047DF90). The AI pilots of a PvP room joined for that battle only (the next start
     // adds them again from the title); left in the slots, the clients took them for room
     // members in the waiting room and loaded a 3D model for a pilot without unit data
-    // (0x00729C50 read through NULL). Right after the battle end each AI pilot's slot record
-    // and pilot record are cleared, as the room delete (0x004849E0) clears a pilot's.
+    // (0x00729C50 read through NULL). Right after the battle end, the stock 0x1F47 room-leave
+    // packet removes each AI row from every human client's CWaitRoom model before the matching
+    // slot and battle-pilot records are cleared.
 
-    void RemoveAiPilots(uint8_t* room)
+    #pragma pack(push, 1)
+    struct RoomLeavePacket
+    {
+        uint16_t opcode = 0x1F47;
+        uint32_t recipient = 0; // overwritten for every human by the native broadcaster
+        uint32_t roomId = 0;
+        uint32_t humanCount = 0;
+        uint32_t hostPilotId = 0;
+        uint32_t slot = 0;
+        uint32_t pilotId = 0;
+    };
+    #pragma pack(pop)
+    static_assert(sizeof(RoomLeavePacket) == 0x1A);
+    static_assert(offsetof(RoomLeavePacket, slot) == 0x12);
+    static_assert(offsetof(RoomLeavePacket, pilotId) == 0x16);
+
+    struct AiSlot
+    {
+        int slot = -1;
+        uint32_t pilotId = 0;
+    };
+
+    void RemoveAiPilots(uint8_t* room, bool notifyClients)
     {
         if (!IsPvpMode(room[kRoomMode]))
             return;
-        EndRoomItems(room);
-        int removed = 0;
+        std::array<AiSlot, kSlots> ai{};
+        int aiCount = 0;
         for (int slot = 0; slot < kSlots; ++slot) {
             uint32_t id = SlotPilotId(room, slot);
             if (!(id & kAiPilotBit))
                 continue;
-            memset(room + kSlotInfo + slot * kSlotInfoStride, 0, kSlotInfoStride);
-            memset(room + kPilots + slot * kPilotStride, 0, kPilotStride);
-            if (DeadAi* dead = FindDead(room, id, false, 0))
+            ai[aiCount++] = {slot, id};
+        }
+        if (notifyClients) {
+            for (int i = 0; i < aiCount; ++i) {
+                const AiSlot& entry = ai[i];
+                if (SlotPilotId(room, entry.slot) != entry.pilotId)
+                    continue;
+                RoomLeavePacket packet{};
+                packet.roomId = *reinterpret_cast<const uint32_t*>(room);
+                packet.humanCount = *reinterpret_cast<const uint32_t*>(room + kRoomPlayers);
+                packet.hostPilotId = *reinterpret_cast<const uint32_t*>(room + kRoomHost);
+                packet.slot = static_cast<uint32_t>(entry.slot);
+                packet.pilotId = entry.pilotId;
+                uint32_t attemptedRecipients = 0;
+                if (!g_broadcast(room, reinterpret_cast<uint8_t*>(&packet), sizeof(packet),
+                                 &attemptedRecipients)) {
+                    g_api->Log(g_mod, SDGO_LOG_ERROR,
+                               "battle end: native room-leave notice failed for AI pilot %08lX in slot %d",
+                               static_cast<unsigned long>(entry.pilotId), entry.slot);
+                }
+            }
+        }
+        EndRoomItems(room);
+        int removed = 0;
+        for (int i = 0; i < aiCount; ++i) {
+            const AiSlot& entry = ai[i];
+            if (SlotPilotId(room, entry.slot) == entry.pilotId) {
+                memset(room + kSlotInfo + entry.slot * kSlotInfoStride, 0, kSlotInfoStride);
+                memset(room + kPilots + entry.slot * kPilotStride, 0, kPilotStride);
+                ++removed;
+            }
+            if (DeadAi* dead = FindDead(room, entry.pilotId, false, 0))
                 dead->room = nullptr;
-            ++removed;
         }
         for (RoomWatch& w : g_watch)
             if (w.room == room)
@@ -1922,10 +1978,10 @@ namespace
             g_api->Log(g_mod, SDGO_LOG_INFO, "battle end: %d AI pilot(s) left the room", removed);
     }
 
-    bool GuardedRemove(uint8_t* room)
+    bool GuardedRemove(uint8_t* room, bool notifyClients)
     {
         __try {
-            RemoveAiPilots(room);
+            RemoveAiPilots(room, notifyClients);
             return true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return false;
@@ -1966,6 +2022,8 @@ namespace
         const bool copied = observed && GuardedObserverCopyEvent(
             SDGO_PVP_AI_EVENT_BATTLE_END, room, 0, false, &endEvent);
         g_battleEnd(room, a, b, now);
+        if (room && !GuardedRemove(room, true))
+            g_api->Log(g_mod, SDGO_LOG_ERROR, "exception while removing the AI pilots at battle end");
         if (room && g_missionLifecycle)
             g_missionLifecycle->end(room);
         if (copied) {
@@ -1981,8 +2039,6 @@ namespace
             }
             GuardedObserverPublishEvent(&endEvent);
         }
-        if (room && !GuardedRemove(room))
-            g_api->Log(g_mod, SDGO_LOG_ERROR, "exception while removing the AI pilots at battle end");
         if (room)
             GuardedObserverForget(room);
     }
@@ -2081,6 +2137,7 @@ SDGO_MOD_ENTRY
                  Bind(g_respawnRefresh, "battle.respawn_refresh") &&
                   Bind(g_pilotStateRespawn, "battle.pilot_state_respawn") &&
                   Bind(g_waitRoomTick, "items.waitroom_tick") &&
+                  Bind(g_broadcast, "battle.room_random_broadcast") &&
                   Bind(g_damage, "items.accepted_damage") &&
                   Bind(g_mapFind, "items.pilot_map_find") &&
                   Bind(g_mapInsert, "items.pilot_map_insert") &&

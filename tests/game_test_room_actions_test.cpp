@@ -316,7 +316,7 @@ void TestStartWaitsForOriginalMainState(RoomActions& rooms)
     uint8_t* states[13] = {};
     auto put=[](void* p,size_t offset,const auto& value){std::memcpy(static_cast<uint8_t*>(p)+offset,&value,sizeof(value));};
     const uint32_t appState=18, readyStage=2;void* vtable=&g_nonNullObject;
-    uint8_t model[8]={},packedRoom[0x1000]={},staleRoom[0x1000]={};
+    uint8_t model[8]={},packedRoom[0x4000]={},staleRoom[0x4000]={};
     void* modelVtable[8]={};modelVtable[7]=reinterpret_cast<void*>(&FakeRoomInfo);
     uint8_t* managerPointer=manager;uint8_t* ownerPointer=owner;uint8_t* context=manager+0x24;
     uint8_t** statePointer=states;void* room=&g_nonNullObject;
@@ -325,10 +325,24 @@ void TestStartWaitsForOriginalMainState(RoomActions& rooms)
     put(manager,0,vtable);put(manager,0x38,static_cast<uint8_t*>(model));
     put(model,0,static_cast<void**>(modelVtable));put(model,4,static_cast<uint8_t*>(packedRoom));
     put(packedRoom,0,uint32_t{23});packedRoom[5]=3;put(packedRoom,0x4CE,uint32_t{31});
+    put(packedRoom,0x533+0x429,uint32_t{31});packedRoom[0x533+0x42F]=1;
     put(staleRoom,0,uint32_t{999});put(profile,0xEC,static_cast<uint8_t*>(staleRoom));
     auto observed=rooms.NativeRoomState();
     Check(observed.room_id==23 && observed.host_pilot_id==31 && observed.player_count==1,
         "the active native scene model overrides a stale legacy profile cache after settlement");
+    Check(observed.occupied_slot_count==1 && !observed.ai_pilot_count &&
+          observed.slot_pilot_ids[0]==31 && observed.slot_ready[0]==1,
+          "the waiting observer reads the actual native owner and ready fields across all slots");
+    put(packedRoom,0x533+7*0x48E+0x429,uint32_t{0x80000123});
+    observed=rooms.NativeRoomState();
+    Check(observed.player_count==1 && observed.occupied_slot_count==2 && observed.ai_pilot_count==1 &&
+          observed.slot_pilot_ids[7]==0x80000123 && !observed.slot_ready[7],
+          "an unchanged human count cannot hide an unnamed loading AI in a later waiting-room slot");
+    std::memset(packedRoom+0x533+7*0x48E,0,0x48E);
+    put(g_app,0x4A0,uint32_t{22});
+    Check(!rooms.NativeRoomState().model_present,
+          "GAME_MAIN cannot publish a stale profile room as current waiting-room identity");
+    put(g_app,0x4A0,appState);
     modelVtable[7]=nullptr;
     Check(!rooms.NativeRoomState().model_present,
         "an unverified scene getter cannot fall back to stale profile room data");

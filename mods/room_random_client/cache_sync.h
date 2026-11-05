@@ -39,9 +39,16 @@ class CacheSync {
     std::array<uint32_t,kSlots> expected_{};
     std::array<std::array<uint8_t,0x10F>,kSlots> starts_{};
     std::array<bool,kSlots> constructing_{};
+    std::array<bool,kSlots> humans_{};
+    std::array<bool,kSlots> invalid_{};
     std::array<uint8_t,kSlots> awaiting_{};
+    bool startSeen_=false;
     static constexpr uint8_t kAwaitUnit=1,kAwaitShip=2;
     bool Deck(const Context& c) const {return c.room[5]==6 || c.room[5]==7;}
+    bool SameContext(const Context& c) const {
+        return c.profile && c.room && c.local && c.room==room_ &&
+            c.model==model_ && Read<uint32_t>(c.room,0)==key_;
+    }
     bool UnitMatches(size_t slot,const Pending& p) const {
         return expected_[slot] && p.unit &&
             p.owner==Read<uint32_t>(starts_[slot].data(),0) &&
@@ -66,7 +73,8 @@ class CacheSync {
         return true;
     }
     void Invalidate(size_t slot) {
-        expected_[slot]=0;starts_[slot]={};constructing_[slot]=false;awaiting_[slot]=0;
+        expected_[slot]=0;constructing_[slot]=false;awaiting_[slot]=0;
+        if(humans_[slot])invalid_[slot]=true;
     }
     void Refresh(const Context& c,size_t slot,const Pending& p) {
         constructing_[slot]=expected_[slot] && !awaiting_[slot] &&
@@ -93,20 +101,27 @@ public:
         const uint32_t key=Read<uint32_t>(c.room,0);
         if(c.room!=room_ || key!=key_ || c.model!=model_) {
             room_=c.room;key_=key;model_=c.model;pending_={};expected_={};
-            starts_={};constructing_={};awaiting_={};
+            starts_={};constructing_={};humans_={};invalid_={};
+            awaiting_={};startSeen_=false;
         }
         if(opcode==0x0861 || opcode==0x098B) {
             const uint32_t slot=Read<uint32_t>(packet,10),owner=Read<uint32_t>(packet,6);
             if(slot>=kSlots || !owner || (owner&0x80000000u)) {result.reason=3;return result;}
             if(c.Owner(slot)!=owner || !c.Active(slot)) {result.reason=4;return result;}
             const uint8_t component=opcode==0x0861 ? kAwaitUnit : kAwaitShip;
+            auto& p=pending_[slot];
             if(expected_[slot]) {
-                if(!PacketMatches(slot,opcode,packet,c) || !awaiting_[slot])
+                const bool duplicate=opcode==0x0861 ?
+                    (p.owner==owner && p.unit &&
+                     std::memcmp(p.active.data(),packet+0x12,p.active.size())==0) :
+                    (p.owner==owner && p.ship &&
+                     std::memcmp(p.deck.data(),packet+0x12,p.deck.size())==0);
+                if(!PacketMatches(slot,opcode,packet,c) ||
+                   (!(awaiting_[slot]&component) && !duplicate))
                     Invalidate(slot);
                 else
                     awaiting_[slot]&=static_cast<uint8_t>(~component);
             }
-            auto& p=pending_[slot];
             if(p.owner!=owner) p={};
             p.owner=owner;
             if(opcode==0x0861) {
@@ -119,14 +134,20 @@ public:
             Refresh(c,slot,p);
             result.applied=1;result.owner=owner;
         } else if(opcode==0x06C3) {
-            expected_={};starts_={};constructing_={};awaiting_={};
+            expected_={};starts_={};constructing_={};humans_={};
+            invalid_={};awaiting_={};startSeen_=true;
             for(size_t slot=0;slot<kSlots;++slot) {
                 const auto* entry=packet+0x20+slot*0x10F;
                 const uint32_t owner=Read<uint32_t>(entry,0),model=Read<uint32_t>(entry,0x0E);
-                if(!owner || (owner&0x80000000u) || !model ||
-                   c.Owner(slot)!=owner || !c.Active(slot)) continue;
-                expected_[slot]=model;
+                if(!owner || (owner&0x80000000u)) continue;
+                humans_[slot]=true;
                 std::memcpy(starts_[slot].data(),entry,starts_[slot].size());
+                if(!model || c.Owner(slot)!=owner || !c.Active(slot)) {
+                    invalid_[slot]=true;++result.mismatched;
+                    result.owner=owner;result.model=model;
+                    continue;
+                }
+                expected_[slot]=model;
                 auto& p=pending_[slot];
                 const bool unit=UnitMatches(slot,p);
                 const bool ship=!Deck(c) || ShipMatches(slot,p);
@@ -143,6 +164,28 @@ public:
             }
         }
         return result;
+    }
+    bool ReadyForStart(const Context& c,const uint8_t* packet) const {
+        if(!packet || !startSeen_ || !SameContext(c) ||
+           Read<uint16_t>(packet,0)!=0x06C3) return false;
+        bool anyHuman=false;
+        for(size_t slot=0;slot<kSlots;++slot) {
+            const auto* entry=packet+0x20+slot*0x10F;
+            const uint32_t owner=Read<uint32_t>(entry,0);
+            if(!owner || (owner&0x80000000u)) {
+                if(humans_[slot])return false;
+                continue;
+            }
+            anyHuman=true;
+            const auto& p=pending_[slot];
+            if(!humans_[slot] || invalid_[slot] || !constructing_[slot] ||
+               !expected_[slot] || p.owner!=owner || c.Owner(slot)!=owner ||
+               !c.Active(slot) ||
+               std::memcmp(entry,starts_[slot].data(),starts_[slot].size())!=0 ||
+               !UnitMatches(slot,p) || (Deck(c) && !ShipMatches(slot,p)))
+                return false;
+        }
+        return anyHuman;
     }
     // Mission construction reads a normalized snapshot captured before start,
     // independently of the visible room cache. Give the native converter a
