@@ -98,9 +98,17 @@ class UpdateTests(unittest.TestCase):
         seen={}
         class Response(io.BytesIO):
             headers={'Content-Length':'2'}
+            def geturl(self):return u.LATEST
         def urlopen(request,timeout,context):seen['context']=context;return Response(b'{}')
         with mock.patch.object(u.urllib.request,'urlopen',urlopen):self.assertEqual(u.fetch(u.LATEST,1024),b'{}')
         self.assertIsInstance(seen['context'],truststore.SSLContext)
+
+    def test_download_redirect_cannot_downgrade_https(self):
+        class Response(io.BytesIO):
+            headers={}
+            def geturl(self):return 'http://example.invalid/insecure'
+        with mock.patch.object(u.urllib.request,'urlopen',return_value=Response(b'{}')):
+            with self.assertRaises(ValueError):u.fetch(u.LATEST,1024)
 
     def test_stable_is_default_and_rejects_prerelease(self):
         c=self.controller();self.assertEqual(c.state()['channel'],'stable')

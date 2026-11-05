@@ -15,6 +15,7 @@ import threading
 import time
 import urllib.request
 import zipfile
+from urllib.parse import urlsplit
 from . import distribution, storage
 
 REPOSITORY = 'crabsatellite/SDGO-Mod-Framework'
@@ -104,6 +105,7 @@ def tls_context():
 def fetch(url, limit, stop=None):
     request = urllib.request.Request(url, headers={'User-Agent': 'SDGO-Mod-Manager', 'Accept': 'application/vnd.github+json'})
     with urllib.request.urlopen(request, timeout=20, context=tls_context()) as response:
+        if urlsplit(response.geturl()).scheme!='https':raise ValueError('更新下载不能从 HTTPS 降级到不安全连接')
         if int(response.headers.get('Content-Length', '0')) > limit:
             raise ValueError('更新下载超过大小限制')
         chunks=[]; size=0

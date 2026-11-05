@@ -460,7 +460,10 @@ class OwnerChannels:
         for url in source['feeds']:
             try:raw=self.fetcher(url,2*1024*1024,self.stop_event)
             except (OSError,TimeoutError) as e:last=e;continue
-            feed=json.loads(raw)
+            try:feed=json.loads(raw)
+            except (ValueError,UnicodeError)as e:last=e;continue
+            if not isinstance(feed,dict) or feed.get('kind')!=KIND:
+                last=ValueError('更新端点未返回整合包发布清单');continue
             if (feed.get('schema_version')!=1 or feed.get('kind')!=KIND or feed.get('publisher_id')!=source['publisher_id'] or
                 type(feed.get('revision')) is not int or feed['revision']<1 or
                 type(feed.get('bytes')) is not int or not 0<feed['bytes']<=updates.MAX_ARCHIVE or
@@ -477,7 +480,8 @@ class OwnerChannels:
         urls=[https(u) for u in urls]
         for url in urls:
             try:feed=json.loads(self.fetcher(url,2*1024*1024,self.stop_event))
-            except OSError:continue
+            except (OSError,ValueError,UnicodeError):continue
+            if not isinstance(feed,dict) or feed.get('kind')!=KIND:continue
             source=binding({'schema_version':1,'kind':KIND,'publisher_id':feed.get('publisher_id'),
                             'label':feed.get('label'),'feeds':urls})
             validated=self.check_source(source)
