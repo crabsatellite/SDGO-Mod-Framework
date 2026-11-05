@@ -19,117 +19,9 @@ real battles on a test server to check its weapons, skills and transformation.
 The generic release contains only the tools, never units. Owner drafts, images, publications and install receipts stay
 in the owner's workspace.
 
-Projects may also retain catalog-bound initialization-script declarations and
-their complete content-addressed program files. Manager shows the script-group
-count and preserves them when exporting the project. Ordinary publication stays
-blocked until their media, server and actor behavior have been admitted; see the
-[script registration contract](script-registration.md#unit-catalog-transport).
-
-Large authoring libraries can use the developer-only paged resource depot reader
-in `owner.units.resource_depot`. It verifies a pinned index, bounded metadata pages,
-compressed shards and streamed content hashes without loading the full library into
-memory. Conflicting logical paths retain their variants; baseline reuse and owner
-aliases require target checks. Opaque source game scripts remain data and gain no
-execution permission. This reader does not install resources, register records or
-replace the Manager's unit import workflow.
-
-Developer dependency profiles retain complete skill and funnel source records.
-The skill profile verifies the 882-to-1132-byte projection, explicit ID changes
-and an optional typed linked-skill ID change; the 732-byte funnel profile
-preserves every byte outside its ID word. The native catalog checks fixed
-sizes and typed unit-to-skill, weapon-to-funnel and linked-skill references.
-Manager publication of these new dependency definitions remains blocked until
-their resources, server definitions and actor behavior have been admitted.
-The developer helper `owner.units.effect_resources` prepares owner-scoped ZFX
-texture names from typed emitter fields, preserving the selected texture variant
-and rejecting destination conflicts. It supports original JPEG TXRs alongside
-PNG/DDS/TGA, preserves source bytes and emits source/output hashes. Model edges
-need a separate adapter. This preparation does not register skills or authorize
-gameplay, and is not yet an automatic Manager import step.
-The [native ownership test](game-test.md#native-record-ownership-and-shutdown)
-checks complete record bytes and original grid cleanup independently of battle
-activation, transformation, death and respawn acceptance.
-
-## Projects, blueprints and activity pools
-
-An optional typed client-template binding keeps a supplied recipe and blueprint
-item's complete presentation records. Each blueprint points to a
-`sdgo.unit-blueprint-client-templates/1` or `/2` manifest by member path and SHA-256.
-That manifest binds source and reviewed prepared kind-33 (1197-byte) and
-kind-34 (614-byte) records plus every directly referenced resource. The
-baseline recipe/item selections remain separate server-compatibility donors.
-Compilation changes only known identity, name, material, level and reference
-fields, preserves the prepared item's own name in `preserve-template` mode,
-and emits byte-diff/hash receipts. Missing or modified members fail closed.
-Version 1 verifies transport and direct references. Version 2 also requires
-`resource_dependencies`: hash-bound TXR members for every frame of the prepared
-SPRs. The validator checks native SPR layouts, texture decoding and resource
-budgets. Only prepared references and their textures become runtime resources;
-source-only records and artwork remain project evidence. Neither check proves
-native UI or gameplay acceptance. Older projects without this binding keep the donor-based
-path, while their large blueprint picture and default list picture reuse the
-unit's selected capsule artwork. The list picture shares the capsule portrait
-crop. The large left picture uses the native 252×101 canvas and automatically
-adds the original outline and cut corner recovered from the selected client's
-blueprint resources. The right list picture keeps its separate 183×87 canvas
-and native control frame. Generated resources travel with the project publication;
-unrelated donor-unit art is not retained. If the client's border cannot be recovered
-reliably, generation stops with an error. Explicit picture overrides and reviewed
-full templates retain their own bindings.
-
-The blueprint authoring candidate adds editable recipes with explicit recovered,
-authored or unknown provenance. A recipe requires its blueprint item, output,
-three to five ordered materials and minimum levels; seven raw slots are retained
-as source structure while unsupported UI counts remain blocked. The native first material
-is the retained key unit. Unknown fields stay required. Published definitions
-can be retired without deleting data needed by already-owned blueprint items.
-Baseline-backed typed recipes support paired native compilation, guarded
-definition registration and the original synthesis workflow. The original game
-retains the first material as its key unit and consumes the other materials and
-the blueprint according to the selected server's rules. Importing a definition
-does not grant the player a blueprint or its materials.
-
-Read `capabilities.blueprints.native_registration` for typed-recipe support and
-`capabilities.blueprints.client_templates.native_registration_authorized` for
-supplied full presentation records. Projects can be saved and exported using
-either manifest version. Publication supports
-version 2 with a complete validated prepared-resource graph; read
-`native_registration_schemas` for the supported versions. Version 1 stays
-transport-only. Every new unit and its artwork still require target-server
-testing before use. Compilation receipts do not claim that a particular
-owner's package has passed native runtime acceptance.
-
-The acquisition preview uses the configured host's real sources. Every imported
-S-rank-or-higher root requires its own activity machine; A/B/C roots use a complete
-obtainable blueprint route or ordinary native capsule patterns. Previewing a route
-does not apply machine pricing, probabilities or rewards.
-
-The Manager also supports metadata-first `sdgo.unit-project` authoring. Keep
-descriptions, aliases, search examples, sources and original activity posters in
-the project; a portable authoring ZIP carries those files with exact hashes.
-Capsule editors can read the same project library and copy selected images and
-metadata into their own portable catalog before a unit is ready for runtime
-publication. This never registers a prize or applies a machine. User content
-remains private owner data; the framework release contains only the tools.
-
-The capsule panel also edits dedicated activity pools. Choose **普通 G 币**
-(ordinary GP), **少量代币** (small token cost), or **99 代币高阶** (premium).
-The **本服模板参数** controls store the owner's target frequency and price in
-the private authoring catalog. Unset values use the configured host's native
-reference frequency and most common matching price. The premium preset is
-explicit and uses the native same-tier mean at 99 tokens. A missing ordinary
-reference never silently selects the premium preset.
-Owner machine data, unit content and preset overrides are not framework defaults.
-
-Presets fill an editable form with native reference rewards. Adjust currency,
-price, units, blueprints, consumables, amounts and frequencies before saving.
-Multiple amounts of the same item are supported. Frequencies total 10000 slots;
-all amounts of any category together must stay at or below 50% for the native
-repeat-avoidance path. These are configured sequence frequencies, not a promise
-of independent random draws. Native starts, limits, billing and delivery remain
-in effect. Save validates the host catalog; compile and apply pair the client
-poster with the server pool in the existing deployment transaction. Updates
-preserve native runtime state and player progress rather than resetting them.
+Projects can retain initialization-script declarations and their complete program files. Manager displays the
+number of script groups and includes the files in exported projects. Save these projects for editing; units
+requiring newly supplied scripts cannot be published yet.
 
 ## Setup
 
@@ -227,6 +119,62 @@ Import writes only non-player definition tables, this module's ownership ledger 
 enabled, family metadata (root form and links) for its live pool. Balances, hangars, grants, native SQL procedures, shop
 prices and capsule odds are untouched.
 
+## Blueprints, projects and activity pools
+
+Blueprint authoring adds editable recipes with explicit recovered,
+authored or unknown provenance. A recipe requires its blueprint item, output,
+three to five ordered materials and minimum levels; seven raw slots are retained
+as source structure while unsupported UI counts remain blocked. The native first material
+is the retained key unit. Unknown fields stay required. Published definitions
+can be retired without deleting data needed by already-owned blueprint items.
+Baseline-backed typed recipes support paired native compilation, guarded
+definition registration and the original synthesis workflow. The original game
+retains the first material as its key unit and consumes the other materials and
+the blueprint according to the selected server's rules. Importing a definition
+does not grant the player a blueprint or its materials.
+
+Without a client-template binding the donor-based path is used, and the large blueprint picture and default list picture reuse the
+unit's selected capsule artwork. The list picture shares the capsule portrait
+crop. The large left picture uses the native 252×101 canvas and automatically
+adds the original outline and cut corner recovered from the selected client's
+blueprint resources. The right list picture keeps its separate 183×87 canvas
+and native control frame. Generated resources travel with the project publication;
+unrelated donor-unit art is not retained. If the client's border cannot be recovered
+reliably, generation stops with an error. Explicit picture overrides and reviewed
+full templates retain their own bindings.
+
+The acquisition preview uses the configured host's real sources. Every imported
+S-rank-or-higher root requires its own activity machine; A/B/C roots use a complete
+obtainable blueprint route or ordinary native capsule patterns. Previewing a route
+does not apply machine pricing, probabilities or rewards.
+
+The Manager also supports metadata-first `sdgo.unit-project` authoring. Keep
+descriptions, aliases, search examples, sources and original activity posters in
+the project; a portable authoring ZIP carries those files with exact hashes.
+Capsule editors can read the same project library and copy selected images and
+metadata into their own portable catalog before a unit is ready for runtime
+publication. This never registers a prize or applies a machine. User content
+remains private owner data; the framework release contains only the tools.
+
+The capsule panel also edits dedicated activity pools. Choose **普通 G 币**
+(ordinary GP), **少量代币** (small token cost), or **99 代币高阶** (premium).
+The **本服模板参数** controls store the owner's target frequency and price in
+the private authoring catalog. Unset values use the configured host's native
+reference frequency and most common matching price. The premium preset is
+explicit and uses the native same-tier mean at 99 tokens. A missing ordinary
+reference never silently selects the premium preset.
+Owner machine data, unit content and preset overrides are not framework defaults.
+
+Presets fill an editable form with native reference rewards. Adjust currency,
+price, units, blueprints, consumables, amounts and frequencies before saving.
+Multiple amounts of the same item are supported. Frequencies total 10000 slots;
+all amounts of any category together must stay at or below 50% for the native
+repeat-avoidance path. These are configured sequence frequencies, not a promise
+of independent random draws. Native starts, limits, billing and delivery remain
+in effect. Save validates the host catalog; compile and apply pair the client
+poster with the server pool in the existing deployment transaction. Updates
+preserve native runtime state and player progress rather than resetting them.
+
 ## Making units obtainable
 
 **Confirmation does not grant units, create products, set prices or add capsule slots.** The owner sets that up:
@@ -308,6 +256,57 @@ separate resources, not the unit's three UI sprite fields.
 The source-only Type-13 skill profile validates paired record layouts and dependency evidence, but new skill
 registration is not enabled. Record formats, image fields, resource archives, transactions and extension points are
 described in the [native unit archive interface](unit-import-protocol.zh-CN.md) (Chinese).
+
+### Blueprint records and presentation templates
+
+An optional typed client-template binding keeps a supplied recipe and blueprint
+item's complete presentation records. Each blueprint points to a
+`sdgo.unit-blueprint-client-templates/1` or `/2` manifest by member path and SHA-256.
+That manifest binds source and reviewed prepared kind-33 (1197-byte) and
+kind-34 (614-byte) records plus every directly referenced resource. The
+baseline recipe/item selections remain separate server-compatibility donors.
+Compilation changes only known identity, name, material, level and reference
+fields, preserves the prepared item's own name in `preserve-template` mode,
+and emits byte-diff/hash receipts. Missing or modified members fail closed.
+Version 1 verifies transport and direct references. Version 2 also requires
+`resource_dependencies`: hash-bound TXR members for every frame of the prepared
+SPRs. The validator checks native SPR layouts, texture decoding and resource
+budgets. Only prepared references and their textures become runtime resources;
+source-only records and artwork remain project evidence.
+
+Read `capabilities.blueprints.native_registration` for typed-recipe support and
+`capabilities.blueprints.client_templates.native_registration_authorized` for
+supplied full presentation records. Projects can be saved and exported using
+either manifest version. Publication supports version 2 with a complete validated
+prepared-resource graph; read `native_registration_schemas` for the supported versions.
+Version 1 stays transport-only.
+
+### Skill/funnel dependencies and resource depot
+
+The developer helper `owner.units.effect_resources` prepares owner-scoped ZFX texture names from typed
+emitter fields. It retains selected JPEG/PNG/DDS/TGA texture variants and original bytes, refuses destination
+conflicts and records source/output hashes. Model edges need a separate adapter. See the
+[script transport contract](script-registration.md#unit-catalog-transport) for project declarations and
+the optional catalog-bound native program consumer. These helpers do not publish script-dependent units.
+
+Developer dependency profiles retain complete skill and funnel source records.
+The skill profile verifies the 882-to-1132-byte projection, explicit ID changes
+and an optional typed linked-skill ID change; the 732-byte funnel profile
+preserves every byte outside its ID word. The native catalog checks fixed
+sizes and typed unit-to-skill, weapon-to-funnel and linked-skill references.
+Manager cannot publish these new dependency definitions yet, because their resources,
+server definitions and actor behavior are not supported.
+The [native ownership test](game-test.md#native-record-ownership-and-shutdown)
+checks complete record bytes and original grid cleanup; it does not cover battle
+activation, transformation, death or respawn.
+
+Large authoring libraries can use the developer-only paged resource depot reader
+in `owner.units.resource_depot`. It verifies a pinned index, bounded metadata pages,
+compressed shards and streamed content hashes without loading the full library into
+memory. Conflicting logical paths retain their variants; baseline reuse and owner
+aliases require target checks. Opaque source game scripts remain data and gain no
+execution permission. This reader does not install resources, register records or
+replace the Manager's unit import workflow.
 
 ### GameTest checks and captures
 

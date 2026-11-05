@@ -57,14 +57,14 @@ BattleServer. The panel shows a connection only when the policy, native settleme
 heartbeat are all confirmed. See the [Manager guide](mod-manager.md).
 
 Keep the Manager running to deliver queued cash awards. It restores enabled services and reconnects
-broken database sessions. With `battle_rewards 0.2.2`, the worker first verifies and persists the native
+broken database sessions. The worker first verifies and persists the native
 ledger identity separately from its short-lived heartbeat. Later Manager pauses, updates or restarts
 do not cancel contribution calculation or durable jobs: Battle uses the frozen match policy and the
 verified binding. An uninitialized or mismatched wallet, invalid policy or failed durable write still
 rejects custom settlement and reports the cause. Update Manager and start its wallet service before
 updating each stopped, idle BattleServer.
 
-A listening BattleServer port alone does not prove the wallet has recovered. Saved jobs remain queued
+A listening BattleServer port alone does not mean the wallet has recovered. Saved jobs remain queued
 while the panel reports a disconnected worker; restoring the same workspace processes them automatically
 without waiting for a nightly batch. For unattended operation, add the existing Manager and workspace
 to the operating system's normal startup configuration.

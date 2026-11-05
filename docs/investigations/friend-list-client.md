@@ -36,7 +36,7 @@ nickname at `+0x0A` and rebuilds its wide display string at cached offset
 `+0x38`. A name already reduced to question marks therefore overwrites a
 previously valid list entry as soon as the next status list arrives.
 
-Client 1.1.2 hooks this friend-record updater. When both identities are equal
+The client fix hooks this friend-record updater. When both identities are equal
 and nonzero, both names are terminated within 17 bytes, the cached name is
 nonempty and complete, and the incoming name contains a question mark, it
 passes a local copy of the native status row with only the known name restored.
