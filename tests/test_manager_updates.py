@@ -91,6 +91,17 @@ class UpdateTests(unittest.TestCase):
         c.current='1.0.0'  # The installed fixture is independent of the source release.
         self.addCleanup(c.stop);return c
 
+    def test_release_downloads_verify_through_windows_trust_store(self):
+        # A fresh Windows lacks GitHub's root until Windows itself builds a chain; OpenSSL alone never triggers that.
+        import truststore
+        self.assertIsInstance(u.tls_context(),truststore.SSLContext)
+        seen={}
+        class Response(io.BytesIO):
+            headers={'Content-Length':'2'}
+        def urlopen(request,timeout,context):seen['context']=context;return Response(b'{}')
+        with mock.patch.object(u.urllib.request,'urlopen',urlopen):self.assertEqual(u.fetch(u.LATEST,1024),b'{}')
+        self.assertIsInstance(seen['context'],truststore.SSLContext)
+
     def test_stable_is_default_and_rejects_prerelease(self):
         c=self.controller();self.assertEqual(c.state()['channel'],'stable')
         _,_,api=bundle('beta','1.1.7-beta.1')
