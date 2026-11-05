@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "loading_sync_fix",
+  "title": "多人加载同步修复",
+  "category": "fixes",
+  "hosts": ["battle"],
+  "description": "防止迟到的准备确认清除已完成的加载状态，并避免加载超时误移除 AI、破坏真人数量。",
+  "settings": [],
+  "presentation": "automatic_fix",
+  "mechanism": "原生资源加载阶段只初始化一次，迟到的准备确认仍发送通知但不清除其他玩家的完成标记；加载检查排除框架 AI，真人房主离开后只选择其他真人继任。保留原生完成判断、时限和超时退出流程；安装到承载房间的 BattleServer 并重启后生效。"
+}

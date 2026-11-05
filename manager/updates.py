@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import ssl
 import stat
 import sys
 import threading
@@ -81,9 +82,23 @@ def serialize_ini(value):
     return stream.getvalue().encode('utf-8')
 
 
+def tls_context():
+    """Certificate checks by the Windows trust store itself.
+
+    OpenSSL only sees roots already in the store. A fresh Windows downloads a trusted root the first time Windows
+    itself builds a chain that needs it, so release downloads verify through Windows like the browser does.
+    """
+    try:
+        import truststore
+    except ImportError:
+        if getattr(sys, 'frozen', False): raise
+        return ssl.create_default_context()
+    return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+
 def fetch(url, limit, stop=None):
     request = urllib.request.Request(url, headers={'User-Agent': 'SDGO-Mod-Manager', 'Accept': 'application/vnd.github+json'})
-    with urllib.request.urlopen(request, timeout=20) as response:
+    with urllib.request.urlopen(request, timeout=20, context=tls_context()) as response:
         if int(response.headers.get('Content-Length', '0')) > limit:
             raise ValueError('更新下载超过大小限制')
         chunks=[]; size=0

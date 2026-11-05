@@ -1039,11 +1039,10 @@ bool UnitDetailView::Attach(
 
 void UnitDetailView::Detach(void* service) noexcept {
     if (service != service_) return;
-    ApplyDetailVisibility(false);
-    if (bindings_) {
-        bindings_->SetState(button_, false, false);
-        bindings_->SetState(detail_, false, false);
-    }
+    // Unit-detail init can replace the service only after its previous native
+    // owner has released the page and children. Detach is therefore
+    // invalidation only. Live visibility restoration belongs to SetUnit and
+    // ApplyDetailVisibility while the page is still known to be owned.
     bindings_ = nullptr;
     service_ = nullptr;
     root_ = nullptr;

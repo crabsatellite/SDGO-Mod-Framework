@@ -3,7 +3,7 @@
 ## Unified Manager runtime
 
 The self-contained Manager bundles Python (PSF license), Pillow (HPND license),
-pyodbc (MIT), and, when present in the build, defusedxml (PSF license). Its executable
+pyodbc (MIT), truststore (MIT), and, when present in the build, defusedxml (PSF license). Its executable
 uses the PyInstaller bootloader (GPL with its distribution exception). Their full
 license texts are bundled inside the EXE under `licenses/`. The build uses the
 installed package versions; it does not include game resources or owner data.

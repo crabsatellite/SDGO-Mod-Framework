@@ -454,6 +454,13 @@ request and its original acknowledgement; the previous round's successful receip
 Every actor must observe a fresh start and end sequence for each round, and the independent server
 report must contain the same number of complete lifecycles. The default is one round.
 
+For delayed-client processing, add `--slow-peer-pilot <existing-guest-id> --slow-peer-seconds 12`.
+The coordinator declares this fault before launch, pauses only that authenticated capsule's exact
+native process immediately before the first Start, and resumes it after the bounded 1–25 second
+interval, including when the host action fails. It verifies the process identity again before
+resuming. This delays a guest's processing; it is not a packet-loss or Internet-latency simulation.
+All ordinary roster, battle, settlement and server-report checks remain required.
+
 Battle checks require local AI authority on the host, synchronized remote copies
 on guests, real movement, host combat evidence, and original settlement back in
 the same human-owned room. Guests then leave before the host through native

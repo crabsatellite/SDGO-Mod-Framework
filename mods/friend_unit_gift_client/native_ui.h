@@ -237,6 +237,8 @@ public:
         void* root,
         void* skinSource,
         const Bindings& bindings);
+    // Invalidates cached references; the native owner may already have
+    // destroyed the unit-detail page and all of its child controls.
     void Detach(void* service) noexcept;
     void SetUnit(
         std::uint64_t unitUid,

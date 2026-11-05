@@ -31,7 +31,7 @@ jobs:
       - name: Profiles and distribution
         run: python -m unittest discover -s tests -p "test_frp*.py" -v
       - name: Categorized mod contracts
-        run: ctest --test-dir build -C Release --output-on-failure -R "(mod_catalog|catalog_gates|package_catalog)_offline"
+        run: ctest --test-dir build -C Release --output-on-failure -R "(all_maps|mod_catalog|catalog_gates|package_catalog)_offline"
       - name: Unified Manager and contribution disclosure
         run: ctest --test-dir build -C Release --output-on-failure -R "(mod_manager|pr_ai_disclosure)_offline"
       - name: Framework regressions
