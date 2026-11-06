@@ -157,15 +157,19 @@ jobs:
           if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
       - name: Publish verified Git runtime for SSH downloads
         if: env.PREPARE_ONLY != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          python tools/publish_framework_runtime.py --asset "dist/SDGO-ModFramework-$env:RELEASE_VERSION.zip" --push
+          gh release download "v$env:RELEASE_VERSION" --pattern "SDGO-ModFramework-$env:RELEASE_VERSION.zip" --dir published-runtime --clobber
+          if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+          python tools/publish_framework_runtime.py --asset "published-runtime/SDGO-ModFramework-$env:RELEASE_VERSION.zip" --push
           if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
       - name: Synchronize configured runtime mirror
         if: env.PREPARE_ONLY != 'true' && vars.RUNTIME_GIT_MIRROR_URL != ''
         env:
           RUNTIME_GIT_MIRROR_URL: ${{ vars.RUNTIME_GIT_MIRROR_URL }}
           RUNTIME_GIT_MIRROR_TOKEN: ${{ secrets.RUNTIME_GIT_MIRROR_TOKEN }}
-          RUNTIME_GIT_MIRROR_TARGETS: ${{ vars.RUNTIME_GIT_MIRROR_TARGETS }}
+          RUNTIME_GIT_MIRROR_TARGETS: ${{ secrets.RUNTIME_GIT_MIRROR_TARGETS }}
           RUNTIME_GITHUB_MIRROR_TOKEN: ${{ secrets.RUNTIME_GITHUB_MIRROR_TOKEN }}
         run: python tools/sync_runtime_mirror.py
