@@ -10,7 +10,9 @@ import json
 from pathlib import Path
 
 
-def imported_roots(rows: list[dict], manifests: list[dict]) -> dict[int, str]:
+def imported_roots(rows: list[dict], manifests: list[dict], external_forms=frozenset()) -> dict[int, str]:
+    """external_forms: live form IDs already registered by other packages that a
+    family may transform into without claiming them (an entry variant's pair form)."""
     units = {row["UnitNumber"]: row for row in rows}
     roots = {}
     claimed = {}
@@ -43,8 +45,13 @@ def imported_roots(rows: list[dict], manifests: list[dict]) -> dict[int, str]:
             root = by_key.get(root)
         if type(root) is not int or root not in ids or units[root].get("SallyReady") != 1:
             raise ValueError("Imported family must identify one independently ownable inventory root")
-        if any((units[uid].get("UnitNumber_Transform") or 0) not in ids | {0} for uid in ids):
-            raise ValueError("Imported family is missing a referenced transform form")
+        # A transform target is either one of this family's forms or a live form that
+        # another package owns (an entry variant entering an installed pair); it is never
+        # claimed here and the caller supplies its row for the reference check.
+        for uid in ids:
+            target = units[uid].get("UnitNumber_Transform") or 0
+            if target and target not in ids and (target not in units or target not in external_forms):
+                raise ValueError("Imported family is missing a referenced transform form")
         if root in roots:
             raise ValueError("An inventory root was declared more than once")
         digest = hashlib.sha256(json.dumps(manifest, sort_keys=True, ensure_ascii=False,

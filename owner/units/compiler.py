@@ -30,7 +30,7 @@ def fnv(raw):
 def native_catalog(records):
     seen=set();parts=[]
     for kind,identity,raw in sorted(records,key=lambda r:r[1]):
-        if kind not in {2,10,33,34,85} or len(raw)!={2:4976,10:1871,33:1197,34:614,85:614}[kind]:raise ValueError('不支持的原生记录类型或长度')
+        if kind not in {2,10,11,13,20,33,34,85} or len(raw)!={2:4976,10:1871,11:732,13:1132,20:106,33:1197,34:614,85:614}[kind]:raise ValueError('不支持的原生记录类型或长度')
         if type(identity) is not int or identity<=0 or identity in seen or struct.unpack_from('<I',raw)[0]!=identity or raw[4]!=0:
             raise ValueError('原生记录身份、发布标记或全局编号冲突')
         if kind==33:
@@ -78,6 +78,7 @@ def _adapter_files(workspace):
 def publish(workspace,state,selected,transaction):
     from .assets import sprite_binary
     from .codec import patch_weapon,patch_unit,UNIT_FIELDS
+    from .model_integrity import bind_model_digest
     from owner.native_archive import build_archive
     binary,mod_manifest,symbols,installer=_adapter_files(workspace)
     records=[];assets={};registrations=[];plans=[];published=[];blueprint_receipts=[]
@@ -95,6 +96,10 @@ def publish(workspace,state,selected,transaction):
         # They also preserve the last active record while an update is a draft.
         family=draft.get('published')
         if not family:continue
+        if family.get('native_programs'):
+            raise ValueError('请保存制作项目；带有新增初始化脚本的机体尚不能发布')
+        if family.get('native_content'):
+            raise ValueError('请保存制作项目；配套原生数据的完整发布尚未开放')
         family=copy.deepcopy(family);published.append(family);family_blueprint_receipts=[]
         root=family['root_unit_id'];plan=workspace.plan(family);plans.append(plan)
         template_members=set()
@@ -137,6 +142,10 @@ def publish(workspace,state,selected,transaction):
             raw=bytearray(patch_unit(source,shared))
             if len(raw)!=4976:raise ValueError('机体原始记录已改变')
             wchar(raw,612,30,row['model'].replace('/','\\'))
+            model_path=row['model'].replace('\\','/').lower()
+            model_bytes=assets.get(model_path)
+            if model_bytes is None:model_bytes=workspace.baseline.read(model_path)
+            raw=bytearray(bind_model_digest(bytes(raw),model_bytes))
             for offset in (4654,4754,4854):
                 original=raw[offset:offset+100].decode('utf-16-le').split('\0')[0]
                 wchar(raw,offset,50,original.replace('/','\\'))

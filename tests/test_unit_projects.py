@@ -1,6 +1,7 @@
 import io
 import json
 import copy
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -73,6 +74,39 @@ class UnitProjects(unittest.TestCase):
     def test_legacy_record_package_still_imports(self):
         engine=self.engine('one');state=engine.inspect('legacy.zip',archive(),engine.public()['revision'])
         self.assertEqual(1,len(state['draft']['forms']))
+
+    def test_native_programs_round_trip_but_cannot_apply_before_actor_admission(self):
+        from test_unit_native_programs import fixture
+        from unit_import_support import weapon
+        one=self.engine('one');state=complete(one,one.inspect('unit.zip',archive(),one.public()['revision']))
+        declaration,program_files,_=fixture(identity=90010)
+        record=bytearray(weapon(90010));name='example_Init'.encode('utf-16-le')
+        record[1771:1771+len(name)]=name
+        declaration['weapon_initializers'][0]['weapon_sha256']=hashlib.sha256(record).hexdigest()
+        manifest_path='native-programs/manifest.json'
+        program_manifest=json.dumps(declaration).encode()
+        binding={'manifest_path':manifest_path,'manifest_sha256':hashlib.sha256(program_manifest).hexdigest()}
+        with zipfile.ZipFile(io.BytesIO(export_project(one,state['draft']))) as source:
+            files={name:source.read(name) for name in source.namelist()}
+        project=json.loads(files.pop('project.json'))
+        files['gdrs/first.bin']=bytes(record);files.update(program_files);files[manifest_path]=program_manifest
+        project['native_programs']=[binding]
+        project['files']={name:hashlib.sha256(raw).hexdigest() for name,raw in files.items()}
+        files['project.json']=json.dumps(project).encode()
+        output=io.BytesIO()
+        with zipfile.ZipFile(output,'w') as target:
+            for name,raw in files.items():target.writestr(name,raw)
+        two=self.engine('two');imported=two.inspect('program-project.zip',output.getvalue(),two.public()['revision'])
+        self.assertEqual([binding],imported['draft']['native_programs'])
+        self.assertEqual(1,imported['draft']['summary']['native_program_groups'])
+        self.assertFalse(imported['draft']['can_confirm'])
+        self.assertTrue(any(row['code']=='native_program_actor_adapter' for row in imported['draft']['requirements']))
+        self.assertFalse(imported['capabilities']['native_programs']['native_publication'])
+        self.assertEqual([],two.repository.applied)
+        with zipfile.ZipFile(io.BytesIO(export_project(two,imported['draft']))) as result:
+            self.assertEqual([binding],json.loads(result.read('project.json'))['native_programs'])
+            self.assertEqual(program_manifest,result.read(manifest_path))
+            self.assertEqual(program_files['example.scp'],result.read('example.scp'))
 
     def test_full_record_project_keeps_definitions_and_allocates_local_item_identity(self):
         one=self.engine('one');state=complete(one,one.inspect('unit.zip',archive(),one.public()['revision']))

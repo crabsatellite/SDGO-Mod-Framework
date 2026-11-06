@@ -14,6 +14,19 @@ Changing the Manager program upstream does not change a player's owner binding.
 
 ## Choose a maintenance mode
 
+### Complete client sources
+
+The dual-source format uses `schema_version=2` in `sdgo/client-source.json`. The content source keeps its pinned publisher, label and mirror `feeds`; `framework` declares a separate identity, repository, channel and Git mirrors. Mirrors within each source serve the same content, while the two layers retain independent versions and commits.
+
+A `framework-feed.json` references an immutable `SDGO-ModFramework-<version>.zip`. Publish Git runtime branches with `tools/publish_framework_runtime.py`; mirror delivery uses deployment-configured Git addresses and existing credentials. Keep private endpoints and identities out of public packages.
+
+The content runtime manifest declares `layers.minimum_framework`, `required_mods` and `shared_files`. In `sdgo/shared-settings.json`, `patches` maps client-relative Mod INIs to parameter changes in `[settings]` or `[mod] enabled`; Mod identity, DLL names and interfaces cannot be overwritten. `personal_settings` explicitly lists the `file`, `section` and `key` of personal INI preferences. Login and display settings remain local by default. Shared files can override declared Mod configuration inputs only; framework programs and metadata belong to the program source.
+
+The combined transaction verifies compatibility and both inventories before writing and restores both on failure. Content maintainers publish units and shared settings independently of framework versions through their authoritative runtime workflow. Framework Releases exclude original games, birthday rosters and private credentials.
+
+Git SSH sources use the `git+ssh://git@host/repository.git#branch` form. Existing SSH configuration, identities and agents are preserved;
+no publisher credentials are stored in the binding or downloaded pack.
+
 Open **更新** (Update), then **整合包维护与服主发布**. Choose the registered directory and save its mode.
 
 | Mode | Runtime update behavior |

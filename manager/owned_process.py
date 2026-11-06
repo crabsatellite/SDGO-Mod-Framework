@@ -4,6 +4,7 @@ import os
 import signal
 import subprocess
 import time
+from contextlib import ExitStack
 
 
 class WindowsJob:
@@ -24,6 +25,8 @@ class WindowsJob:
         self.kernel.SetInformationJobObject.argtypes=(w.HANDLE,c.c_int,c.c_void_p,w.DWORD)
         self.kernel.AssignProcessToJobObject.argtypes=(w.HANDLE,w.HANDLE)
         self.kernel.CloseHandle.argtypes=(w.HANDLE,)
+        self.kernel.TerminateJobObject.argtypes=(w.HANDLE,w.UINT)
+        self.kernel.QueryInformationJobObject.argtypes=(w.HANDLE,c.c_int,c.c_void_p,w.DWORD,c.POINTER(w.DWORD))
         self.handle=self.kernel.CreateJobObjectW(None,None)
         if not self.handle:raise c.WinError(c.get_last_error())
         try:
@@ -38,12 +41,36 @@ class WindowsJob:
         except Exception:self.close();raise
 
     def close(self):
-        if self.handle:self.kernel.CloseHandle(self.handle);self.handle=None
+        if self.handle:
+            import ctypes as c
+            from ctypes import wintypes as w
+            class Accounting(c.Structure):
+                _fields_=[('user',c.c_int64),('kernel',c.c_int64),('period_user',c.c_int64),('period_kernel',c.c_int64),
+                          ('faults',w.DWORD),('total',w.DWORD),('active',w.DWORD),('terminated',w.DWORD)]
+            # Closing a kill-on-close job initiates asynchronous termination.
+            # Reap the complete owned tree before releasing redirected files.
+            self.kernel.TerminateJobObject(self.handle,1)
+            deadline=time.monotonic()+15
+            try:
+                while True:
+                    state=Accounting()
+                    if not self.kernel.QueryInformationJobObject(self.handle,1,c.byref(state),c.sizeof(state),None):
+                        raise c.WinError(c.get_last_error())
+                    if state.active==0:break
+                    if time.monotonic()>=deadline:raise TimeoutError('Owned command descendants have not finished closing')
+                    time.sleep(.01)
+            finally:self.kernel.CloseHandle(self.handle);self.handle=None
 
 
-def run(args,*,cwd,env,timeout=900,stop=None):
+def run(args,*,cwd,env,timeout=900,stop=None,input=None,output=None):
+    with ExitStack()as files:
+        destination=files.enter_context(open(output,'wb'))if output is not None else subprocess.PIPE
+        return _run(args,cwd=cwd,env=env,timeout=timeout,stop=stop,input=input,stdout=destination)
+
+
+def _run(args,*,cwd,env,timeout,stop,input,stdout):
     windows=os.name=='nt'
-    process=subprocess.Popen(args,cwd=cwd,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+    process=subprocess.Popen(args,cwd=cwd,env=env,stdin=subprocess.PIPE if input is not None else None,stdout=stdout,stderr=subprocess.PIPE,
         creationflags=(subprocess.CREATE_NO_WINDOW|0x00000004)if windows else 0,
         start_new_session=not windows)
     job=None
@@ -63,7 +90,8 @@ def run(args,*,cwd,env,timeout=900,stop=None):
             if remaining<=0:
                 terminate();raise subprocess.TimeoutExpired(args,timeout)
             try:
-                out,err=process.communicate(timeout=min(.25,remaining))
+                try:out,err=process.communicate(input=input,timeout=min(.25,remaining))
+                finally:input=None
                 return subprocess.CompletedProcess(args,process.returncode,out,err)
             except subprocess.TimeoutExpired:continue
     finally:

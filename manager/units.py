@@ -73,7 +73,10 @@ class Units(Provider):
                 form = next(r for r in family['forms'] if r['id'] == root)
                 from owner.units.model import content_revision
                 _,shop_sha=self._published_shop(engine,family)
-                result.append({'key': 'unit:'+str(root), 'provider': 'unit_catalog', 'kind': 'unit',
+                server_result=draft.get('published_server_result',draft.get('server_result',{}))
+                from .operations import activation
+                active=activation(self.config['server_ini'],server_result.get('activation_id'))if self.config.get('server_ini')else{'status':'offline'}
+                result.append({'key': 'unit:'+str(root), 'provider': 'unit_catalog', 'kind': 'unit','activation':active,
                     'unit_id': root, 'category_id': family['category_id'], 'family_key': family['family_key'],
                     'revision': content_revision(family), 'display_name': family['name'],
                     'forms': [r['id'] for r in family['forms']],
@@ -96,7 +99,7 @@ class Units(Provider):
         with self.lock:
             from owner.units.repository import database_target_key
             target = database_target_key(Path(ini))
-            return [r for r in self.registrations() if r['server_applied'] and r['server_target'] == target]
+            return [r for r in self.registrations() if r['server_applied'] and r['server_target'] == target and r['activation']['status']in('active','legacy')]
 
     def acquisition_preview(self):
         from owner.units.acquisition import route_roots
@@ -226,7 +229,7 @@ class Units(Provider):
                 return cleanup(engine)
             if method == 'POST' and path == '/api/units/inspect':
                 return engine.inspect(*decode_upload(body), expected)
-            match = re.fullmatch(r'/api/units/drafts/([0-9a-f]{32})(?:/(asset|definitions|confirm|drop-missing-skills|native-preview|launch-preview))?', path)
+            match = re.fullmatch(r'/api/units/drafts/([0-9a-f]{32})(?:/(asset|definitions|native-content|native-server-definition|confirm|drop-missing-skills|native-preview|launch-preview))?', path)
             if match:
                 identity, action = match.groups()
                 if method == 'PUT' and action is None: return engine.update(identity, body, expected)
@@ -235,6 +238,10 @@ class Units(Provider):
                     return engine.upload_asset(identity, *decode_upload(body), body.get('role'), expected)
                 if method == 'POST' and action == 'definitions':
                     return engine.upload_definitions(identity, *decode_upload(body), expected)
+                if method == 'POST' and action == 'native-content':
+                    return engine.upload_native_content(identity,*decode_upload(body),expected,body.get('replace_manifest'))
+                if method == 'POST' and action == 'native-server-definition':
+                    return engine.edit_native_server_definition(identity,body,expected)
                 if method == 'POST' and action == 'confirm':
                     from owner.units.native_preview import status
                     from owner.units import presentation as generator

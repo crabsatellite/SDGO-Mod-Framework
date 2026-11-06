@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Owned unit skill selector request",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "owner", "revision", "bindings"],
+  "properties": {
+    "schema": {"const": "sdgo.unit-skill-identities/1"},
+    "owner": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+    "revision": {"$ref": "#/$defs/sha256"},
+    "bindings": {
+      "type": "array", "minItems": 1, "maxItems": 4096,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["target", "source", "client_sha256"],
+        "properties": {
+          "target": {"type": "integer", "minimum": 1, "maximum": 9999999},
+          "source": {"enum": [70116, 70138, 70207, 70234]},
+          "client_sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    }
+  },
+  "$defs": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

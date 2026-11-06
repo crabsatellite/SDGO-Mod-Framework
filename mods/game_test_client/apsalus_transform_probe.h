@@ -1,6 +1,8 @@
 #pragma once
 #include <cmath>
 #include "scoreboard_actions.h"
+#include "unit_transform_path.h"
+#include "native_transform_packets.h"
 
 // Opt-in native GameTest scenario, sealed in the copied observer manifest.
 // Uses the normal, owned unit selected by
@@ -8,10 +10,13 @@
 // No keyboard, profile, inventory, model, FSM or server state is fabricated.
 namespace apsalus_probe {
 inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMod* mod, ScoreboardActions& input) {
-    static const bool enabled = api->SettingInt(mod, "ApsalusRoundtrip", 0) != 0;
+    static const bool legacy = api->SettingInt(mod, "ApsalusRoundtrip", 0) != 0;
+    static const bool directed = api->SettingInt(mod, "UnitDirectedTransforms", 0) != 0;
+    static const bool enabled = legacy || directed || api->SettingInt(mod, "UnitTransformRoundtrip", 0) != 0;
     if (!enabled) return SDGO_GAME_TEST_PASS;
+    packetObserver.Observe(context);
     using Find = unsigned char*(__thiscall*)(void*, unsigned);
-    using Request = unsigned(__thiscall*)(void*);
+    using Request = unsigned char(__thiscall*)(void*);
     // Both original input consumers take the real InputSlotSystem on stack
     // and return with RET 4; their CUnit owner is ECX.
     using InputBusiness = void(__thiscall*)(unsigned char*, void*);
@@ -22,7 +27,9 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
     static auto moveInput = reinterpret_cast<InputBusiness>(api->Symbol(mod, "test.apsalus_move_input"));
     static auto fireInput = reinterpret_cast<InputBusiness>(api->Symbol(mod, "test.apsalus_primary_input"));
     static unsigned issued = 0, completed = 0, initialId = 0, lastMode = ~0u, lastId = 0;
+    static sdgo_test::transforms::Path path{};
     static uint64_t issuedAt = 0;
+    static uint64_t admissionAt = 0, lastRequestAt = 0, deniedObservationAt = 0;
     static unsigned controlsVerified = 0;
     static uint64_t controlAt = 0, settleAt = 0;
     static float baseline[3] = {};
@@ -51,14 +58,44 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
     const auto id = *reinterpret_cast<unsigned*>(spec);
     const auto mode = *reinterpret_cast<unsigned*>(move + 0x2c0);
     const auto handle = *reinterpret_cast<unsigned*>(move + 0x1ac);
-    if (id != 24787 && id != 24788) {
+    if (legacy && id != 24787 && id != 24788) {
         context->Assert(0, "Apsalus probe must start with a genuinely owned Apsalus III");
         return SDGO_GAME_TEST_FAIL;
     }
-    if (!initialId) initialId = id;
+    if (!initialId) {
+        using Grid=void*(__cdecl*)();using GridFind=bool(__thiscall*)(void*,const unsigned char**,unsigned,int,char);
+        const auto grid=reinterpret_cast<Grid>(api->Symbol(mod,"grid.data"));
+        const auto lookup=reinterpret_cast<GridFind>(api->Symbol(mod,"grid.find"));
+        if(!grid||!lookup) {
+            context->Assert(0,"selected actor has an actual native unit definition");return SDGO_GAME_TEST_FAIL;
+        }
+        const int configured=directed?api->SettingInt(mod,"UnitTransformSteps",3):2;
+        const char* error=nullptr;
+        if(configured<1||configured>static_cast<int>(sdgo_test::transforms::MaxSteps)||
+            !sdgo_test::transforms::Build(id,static_cast<unsigned>(configured),!directed||legacy,
+                [&](unsigned identity){const unsigned char* raw=nullptr;
+                    return lookup(grid(),&raw,identity,2,0)&&raw?sdgo_test::transforms::Record{raw,4976}:sdgo_test::transforms::Record{};
+                },path,error)){
+            context->Assert(0,error?error:"native transform path step count is outside 1..16");return SDGO_GAME_TEST_FAIL;
+        }
+        initialId=id;
+        for(unsigned i=0;i<path.steps;++i){char message[160];
+            sprintf_s(message,"native transform path step=%u source=%u target=%u field=316",i+1,path.ids[i],path.ids[i+1]);
+            context->Observe(message);
+        }
+    }
+    if(!path.contains(id)){
+        context->Assert(0,"actor left the selected native record-derived transform path");return SDGO_GAME_TEST_FAIL;
+    }
     if (lastMode != mode || lastId != id) {
-        char message[192];
-        sprintf_s(message, "apsalus native probe unit=%u bank=%u mode=%u handle=%u issued=%u completed=%u", id, unit[0xe34], mode, handle, issued, completed);
+        using Grid=void*(__cdecl*)();using GridFind=bool(__thiscall*)(void*,const unsigned char**,unsigned,int,char);
+        const auto grid=reinterpret_cast<Grid>(api->Symbol(mod,"grid.data"));
+        const auto lookup=reinterpret_cast<GridFind>(api->Symbol(mod,"grid.find"));
+        const unsigned char* declared=nullptr;unsigned actorTarget=0,declaredTarget=0;
+        std::memcpy(&actorTarget,spec+316,4);
+        if(grid&&lookup&&lookup(grid(),&declared,id,2,0)&&declared)std::memcpy(&declaredTarget,declared+316,4);
+        char message[288];
+        sprintf_s(message, "apsalus native probe unit=%u bank=%u mode=%u handle=%u issued=%u completed=%u actor_target=%u grid_target=%u actor_spec=%p grid_spec=%p", id, unit[0xe34], mode, handle, issued, completed,actorTarget,declaredTarget,spec,declared);
         context->Observe(message); lastMode = mode; lastId = id;
     }
     if (completed > controlsVerified) {
@@ -105,21 +142,50 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
         return SDGO_GAME_TEST_WAIT;
     }
     if (issued > completed) {
-        if (mode == 0 && id != (completed % 2 == 0 ? initialId : (initialId == 24787 ? 24788u : 24787u))) {
+        if (mode == 0 && completed<path.steps && id == path.ids[completed+1]) {
             ++completed;
+            char message[192];sprintf_s(message,"native transform committed step=%u expected=%u actual=%u mode=%u bank=%u",completed,path.ids[completed],id,mode,unit[0xe34]);
+            context->Observe(message);
             context->Assert(1, "original transform request committed its other form and released movement mode");
         } else if (context->elapsed_ms - issuedAt > 3000) {
-            context->Assert(0, "original Apsalus transformation did not release after three seconds; retain unit/bank/mode/handle observations");
+            char message[224];sprintf_s(message,"admitted native transform failed its record-derived commit after three seconds: expected=%u actual=%u mode=%u bank=%u",path.ids[completed+1],id,mode,unit[0xe34]);
+            context->Assert(0,message);
             return SDGO_GAME_TEST_FAIL;
         }
         return SDGO_GAME_TEST_WAIT;
     }
-    if (completed == 2 && controlsVerified == 2) return SDGO_GAME_TEST_PASS;
+    if (completed == path.steps && controlsVerified == path.steps) return SDGO_GAME_TEST_PASS;
     if (context->elapsed_ms > 500 && context->elapsed_ms-settleAt > 500 && mode == 0) {
+        if(lastRequestAt&&context->elapsed_ms-lastRequestAt<500)return SDGO_GAME_TEST_WAIT;
+        lastRequestAt=context->elapsed_ms;
+        if(!admissionAt)admissionAt=context->elapsed_ms;
         const unsigned result = request(move);
+        // AL is the native admission result. A denied local request has not
+        // started a transformation; wait for normal reload/cooldown/eligibility
+        // instead of treating that denial as an unfinished committed transform.
+        if(!result){
+            if(!deniedObservationAt||context->elapsed_ms-deniedObservationAt>=2000){
+                const auto* action=*reinterpret_cast<const unsigned char**>(move+0x224);
+                const auto* definition=*reinterpret_cast<const unsigned char**>(unit+0xab0);
+                const unsigned condition=definition?definition[0x140]:0;
+                short ammo=-1,maximum=-1;
+                if(action&&(condition==2||condition==5)){
+                    const unsigned offset=condition==2?0x3dc:0x6fc;
+                    const auto* weapon=*reinterpret_cast<const unsigned char*const*>(action+offset+12);
+                    std::memcpy(&ammo,action+offset,2);if(weapon)std::memcpy(&maximum,weapon+0x7c,2);
+                }
+                char message[224];sprintf_s(message,"native transform admission denied unit=%u condition=%u action_block=%u ammo=%d max=%d waited_ms=%llu",id,condition,action?action[0x9b2]:0,ammo,maximum,static_cast<unsigned long long>(context->elapsed_ms-admissionAt));
+                context->Observe(message);deniedObservationAt=context->elapsed_ms;
+            }
+            if(context->elapsed_ms-admissionAt>20000){
+                context->Assert(0,"native transform admission stayed denied after normal reload/cooldown waiting; eligibility was not overridden");return SDGO_GAME_TEST_FAIL;
+            }
+            return SDGO_GAME_TEST_WAIT;
+        }
+        admissionAt=deniedObservationAt=0;
         ++issued; issuedAt = context->elapsed_ms;
-        // The network path returns zero after dispatch. Only the subsequent
-        // form commit and release prove acceptance; never resend each frame.
+        // Admission alone is insufficient. Require the actual form commit and
+        // released movement state; never resend an admitted request each frame.
         char message[192];
         sprintf_s(message,"apsalus probe: original transform request issued, immediate return=%u; await real form commit and release",result);
         context->Observe(message);

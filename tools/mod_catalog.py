@@ -203,7 +203,11 @@ def validate_stage(root: Path, stage: Path, catalog: dict) -> None:
             if not path.is_file():
                 raise ValueError(f"Missing staged mod payload: {mod['id']}/{name}")
             distribution.require_redistributable(f"{mod['id']}/{name}", path.read_bytes())
-            if name not in mod["runtime_files"] and not name.endswith(".dll") and path.read_bytes() != (root / "mods" / mod["id"] / name).read_bytes():
+            expected=(root / "mods" / mod["id"] / name).read_bytes()if name not in mod['runtime_files']and not name.endswith('.dll')else None
+            if name=='mod.ini':
+                from manager.configuration import render
+                expected=render(expected,json.loads((root/'mods'/mod['id']/'manager.json').read_text('utf-8-sig')))
+            if expected is not None and path.read_bytes()!=expected:
                 raise ValueError(f"Stale staged mod data: {mod['id']}/{name}")
         distribution.require_public(
             (folder / "mod.ini").read_bytes(),

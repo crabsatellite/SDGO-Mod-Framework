@@ -52,6 +52,16 @@ jobs:
       - name: Native path picker
         timeout-minutes: 3
         run: python -m unittest discover -s tests -p "test_manager_picker.py" -v
+      - name: Manager dependencies, maintenance and complete client updates
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -p "test_manager_safety.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -p "test_client_runtime.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -p "test_runtime_layers.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Owner shortcut serialization
         timeout-minutes: 3
         run: python -m unittest discover -s tests -p "test_mod_manager_entrypoints.py" -v
@@ -145,3 +155,21 @@ jobs:
           if($env:RELEASE_CHANNEL -eq 'beta'){$options+=@('--prerelease','--latest=false')}else{$options+='--latest'}
           gh release create $tag "dist/SDGO-ModFramework-$env:RELEASE_VERSION.zip" "dist/SDGO-ModFramework-$env:RELEASE_VERSION.sha256" @options
           if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+      - name: Publish verified Git runtime for SSH downloads
+        if: env.PREPARE_ONLY != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release download "v$env:RELEASE_VERSION" --pattern "SDGO-ModFramework-$env:RELEASE_VERSION.zip" --dir published-runtime --clobber
+          if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+          python tools/publish_framework_runtime.py --asset "published-runtime/SDGO-ModFramework-$env:RELEASE_VERSION.zip" --push
+          if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+      - name: Synchronize configured runtime mirror
+        if: env.PREPARE_ONLY != 'true' && vars.RUNTIME_GIT_MIRROR_URL != ''
+        env:
+          RUNTIME_GIT_MIRROR_URL: ${{ vars.RUNTIME_GIT_MIRROR_URL }}
+          RUNTIME_GIT_MIRROR_TOKEN: ${{ secrets.RUNTIME_GIT_MIRROR_TOKEN }}
+          RUNTIME_GIT_MIRROR_TARGETS: ${{ secrets.RUNTIME_GIT_MIRROR_TARGETS }}
+          RUNTIME_GITHUB_MIRROR_TOKEN: ${{ secrets.RUNTIME_GITHUB_MIRROR_TOKEN }}
+        run: python tools/sync_runtime_mirror.py

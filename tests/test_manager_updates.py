@@ -180,6 +180,16 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(controller.state()['phase'],'current')
         self.assertEqual(calls,[u.LATEST])
 
+    def test_new_bytes_on_disk_still_require_old_running_manager_to_restart(self):
+        executable=self.root/u.MANAGER;executable.write_bytes(b'new manager')
+        controller=u.Updates(self.workspace,ROOT,executable);controller.current='1.1.3'
+        controller.bundle=self.bundle;controller.manifest=self.manifest
+        self.addCleanup(controller.stop)
+        with mock.patch.object(u,'running',return_value=False):controller.apply()
+        self.assertTrue(controller.state()['manager_restart'])
+        self.assertEqual(controller.state()['phase'],'ready')
+        self.assertNotIn('已是最新',controller.state()['message'])
+
     def test_traversal_case_duplicates_and_game_originals_are_rejected(self):
         for name in ('client/../escape.dll','client/SDGO/core.dll','client/GOnline.exe','server/data.mdf'):
             raw,asset,_=bundle(extra={name:b'invalid'})
@@ -250,7 +260,9 @@ class UpdateTests(unittest.TestCase):
             c=self.controller();c.cycle(True)
         self.assertEqual(c.state()['phase'],'waiting');self.assertFalse((self.host/'sdgo').exists())
         with mock.patch.object(u,'running',return_value=False):c.apply()
-        self.assertEqual(c.state()['phase'],'current');self.assertTrue((self.host/'sdgo/release.json').exists())
+        self.assertEqual(c.state()['phase'],'available');self.assertTrue((self.host/'sdgo/release.json').exists())
+        self.assertFalse(c.state()['manager_restart'])
+        self.assertIn('打包版',c.state()['message'])
         self.assertEqual((self.host/'GOnline.exe').read_bytes(),before)
 
     def test_failed_write_rolls_back_already_written_runtime(self):

@@ -253,8 +253,18 @@ def host_key(executable):
 
 
 def install_host(host, bundle, manifest, cache, is_running=None, mod_ids=None, framework=True):
+    from .target_locks import lease
+    with lease('host:'+str(Path(host['path']).resolve()).casefold()):
+        return _install_host(host,bundle,manifest,cache,is_running,mod_ids,framework)
+
+
+def _install_host(host,bundle,manifest,cache,is_running=None,mod_ids=None,framework=True):
     is_running=is_running or running
     root=Path(host['path']).resolve();role=host['role'];exe=root/EXES[role]
+    from .operations import CORE_CONTRACT
+    core=root/'sdgo/core.dll';incoming=Path(bundle)/('client'if role=='client'else'server')/'sdgo/core.dll'
+    if framework and core.is_file()and incoming.is_file()and CORE_CONTRACT in core.read_bytes()and CORE_CONTRACT not in incoming.read_bytes():
+        raise ValueError('这个上游框架缺少数据维护保护，保留当前版本')
     marker=root/'sdgo/release.json';prior=storage.read_json(marker,{})
     if prior.get('version') and prior.get('channel')==manifest['channel'] and version(prior['version'])>version(manifest['version']):
         return {'id':host['id'],'name':host['name'],'status':'newer','version':prior['version']}
@@ -328,6 +338,8 @@ def install_host(host, bundle, manifest, cache, is_running=None, mod_ids=None, f
         # Recheck immediately before touching runtime files. Locked files also
         # cause a transaction rollback; no game process is ever stopped.
         if is_running(exe):return {'id':host['id'],'name':host['name'],'status':'waiting','message':'等待对应游戏或服务器关闭'}
+        from .dependencies import enforce_install
+        enforce_install(root,{p.relative_to(root).as_posix():data for p,data in changes.items()if p.name=='manager.json'or p.suffix=='.ini'},role)
         if unit_plan is not None:unit_receipts.verify_snapshot(unit_plan)
         previous={p:p.read_bytes() if p.exists() else None for p in changes};written=[]
         backup=cache/'backups'/manifest['version']/digest(str(root).encode())[:16]
@@ -386,12 +398,27 @@ class Updates:
     def source_repository(self):
         return repository(self.workspace.settings.get('updates',{}).get('repository',REPOSITORY))
 
+    def managed_by_client(self):
+        if self.manager_exe is None:return False
+        from .owner_channel import mode
+        return any(h['role']=='client'and Path(h['path']).resolve()==self.manager_exe.parent and
+                   (Path(h['path'])/'sdgo/client-source.json').is_file()and mode(h)!='owner'for h in self.workspace.settings['hosts'])
+
     def source(self,value):
+        git_binding=None
+        if isinstance(value,dict):
+            from .framework_source import binding
+            git_binding=binding(value);value=git_binding['repository']
         value=repository(value)
         if not self.busy.acquire(blocking=False):raise storage.Conflict('正在处理更新，请稍后切换上游')
         try:
             with storage.LOCK:
-                self.workspace.settings.setdefault('updates',{})['repository']=value;self.workspace.save_workspace()
+                self.workspace.settings.setdefault('updates',{})['repository']=value
+                if git_binding:
+                    self.workspace.settings['updates']['git_source']=git_binding
+                    self.workspace.settings['updates']['channel']=git_binding['channel']
+                else:self.workspace.settings['updates'].pop('git_source',None)
+                self.workspace.save_workspace()
             self.latest=None;self.bundle=None;self.manifest=None
             self.change(phase='idle',message='已更换程序上游；服主 DIY 与玩家绑定不变',hosts=[],error='',manager_restart=False)
         finally:self.busy.release()
@@ -417,7 +444,7 @@ class Updates:
                 title=self.workspace.contracts.get(identity,{}).get('title') or mods.get(identity,{}).get('name') or identity
                 row=components.setdefault(identity,{'id':identity,'title':title if identity in mods else '框架程序与符号','files':[]})
                 row['files'].append(relative)
-        plan={'host':host_id,'repository':self.source_repository(),'release_sha256':digest(storage.json_bytes(self.manifest)),
+        plan={'host':host_id,'repository':self.source_repository(),'git_source':self.workspace.settings.get('updates',{}).get('git_source'),'release_sha256':digest(storage.json_bytes(self.manifest)),
               'snapshot':snapshot,'components':list(components.values())}
         return {**plan,'digest':digest(storage.json_bytes(plan))}
 
@@ -436,9 +463,11 @@ class Updates:
     def state(self):
         with self.lock:
             return {**self.status,'running':bool(self.thread and self.thread.is_alive()),'healthy':True,
+                    'program_managed_by_client':self.managed_by_client(),
+                    'manager_restart':self.status['manager_restart']and not self.managed_by_client(),
                     'automatic':self.workspace.services.desired(SERVICE),'current_version':self.current,
                     'channel':self.workspace.settings.get('updates',{}).get('channel','stable'),
-                    'repository':self.source_repository(),
+                    'repository':self.source_repository(),'git_source':self.workspace.settings.get('updates',{}).get('git_source'),
                     'latest_version':self.latest['version'] if self.latest else None,
                     'release_url':self.latest['page'] if self.latest else None,
                     'notes':self.latest['notes'] if self.latest else ''}
@@ -448,6 +477,8 @@ class Updates:
 
     def channel(self,value):
         if value not in ('stable','beta'):raise ValueError('更新通道无效')
+        git_source=self.workspace.settings.get('updates',{}).get('git_source')
+        if git_source and git_source['channel']!=value:raise ValueError('这个 Git 来源固定通道；请同时修改来源通道和对应分支')
         if not self.busy.acquire(blocking=False):raise storage.Conflict('正在处理更新，请完成后切换通道')
         try:
             with storage.LOCK:
@@ -489,27 +520,42 @@ class Updates:
     def cycle(self,install=False):
         if not self.busy.acquire(blocking=False):return
         try:
+            if self.managed_by_client():
+                self.change(phase='managed',message='Manager 程序与运行文件由完整客户端来源统一维护',error='',manager_restart=False)
+                return
             self.change(phase='checking',message='正在检查更新',error='')
             channel=self.workspace.settings.get('updates',{}).get('channel','stable')
             selected_repository=self.source_repository()
-            endpoint='https://api.github.com/repos/'+selected_repository+('/releases?per_page=30' if channel=='beta' else '/releases/latest')
-            data=json.loads(self.fetcher(endpoint,2*1024*1024,self.stop_event))
-            if channel=='beta':
-                choices=[]
-                for row in data:
-                    try:choices.append(release_asset(row,channel,selected_repository))
-                    except (ValueError,TypeError,KeyError):continue
-                if not choices:raise ValueError('尚无可用的 Beta 或 Stable 更新包')
-                # Beta packages include additional Mods, so prefer that payload
-                # over Stable for the same core version. A newer core wins.
-                latest=max(choices,key=lambda r:(version(r['version'])[:3],r['channel']=='beta',version(r['version'])[-1]))
-            else:latest=release_asset(data,channel,selected_repository)
+            git_binding=self.workspace.settings.get('updates',{}).get('git_source')
+            if git_binding:
+                from .framework_source import load
+                release=load(self.workspace.client_runtime,git_binding)
+                import shutil
+                folder=self.cache/'releases'/(release['version']+'-'+release['sha256'][:12])
+                shutil.copytree(release['bundle'],folder,dirs_exist_ok=True)
+                self.bundle=folder;self.manifest=release['manifest']
+                latest={'version':release['version'],'channel':release['channel'],'sha256':release['sha256'],
+                        'page':'https://github.com/'+selected_repository+'/releases/tag/v'+release['version'],
+                        'notes':'框架运行包通过已配置的 Git 来源校验下载'}
+            else:
+                endpoint='https://api.github.com/repos/'+selected_repository+('/releases?per_page=30' if channel=='beta' else '/releases/latest')
+                data=json.loads(self.fetcher(endpoint,2*1024*1024,self.stop_event))
+                if channel=='beta':
+                    choices=[]
+                    for row in data:
+                        try:choices.append(release_asset(row,channel,selected_repository))
+                        except (ValueError,TypeError,KeyError):continue
+                    if not choices:raise ValueError('尚无可用的 Beta 或 Stable 更新包')
+                    # Beta packages include additional Mods, so prefer that payload
+                    # over Stable for the same core version. A newer core wins.
+                    latest=max(choices,key=lambda r:(version(r['version'])[:3],r['channel']=='beta',version(r['version'])[-1]))
+                else:latest=release_asset(data,channel,selected_repository)
             self.latest=latest;self.change(checked_at=time.time())
             from .owner_channel import mode
             owner_review=any(mode(h)=='owner' for h in self.workspace.settings['hosts'])
             if version(latest['version'])[:3]<version(self.current)[:3] and not owner_review:
                 self.change(phase='current',message='当前版本已是最新');return
-            folder=self.cache/'releases'/(latest['version']+'-'+latest['sha256'][:12])
+            folder=self.bundle if git_binding else self.cache/'releases'/(latest['version']+'-'+latest['sha256'][:12])
             if self.manifest is None or self.manifest['version']!=latest['version'] or self.bundle!=folder:
                 self.change(phase='downloading',message='正在下载并校验正式版本')
                 raw=self.fetcher(latest['url'],MAX_ARCHIVE,self.stop_event)
@@ -526,7 +572,13 @@ class Updates:
     def _apply(self):
         if not self.manifest:return
         from .owner_channel import mode
-        program_eligible=version(self.manifest['version'])>=version(self.current)
+        program_eligible=not self.managed_by_client()and version(self.manifest['version'])>=version(self.current)
+        from .client_runtime import installed_source
+        if self.manager_exe and program_eligible and any(h['role']=='client'and installed_source(h['path'])is not None for h in self.workspace.settings['hosts']):
+            if self.manifest.get('capabilities',{}).get('client_runtime')!=1 or self.manifest.get('capabilities',{}).get('runtime_safety')!=1:
+                raise ValueError('此 Manager 更新缺少完整客户端或数据维护协议，保留现有更新入口和配置')
+            if any((installed_source(h['path'])or{}).get('schema_version')==2 for h in self.workspace.settings['hosts']if h['role']=='client')and self.manifest.get('capabilities',{}).get('runtime_layers')!=1:
+                raise ValueError('此 Manager 更新不支持双源安装，保留当前程序与来源配置')
         if (self.manager_exe and program_eligible and any(mode(h)!='starter' for h in self.workspace.settings['hosts']) and
                 self.manifest.get('capabilities',{}).get('owner_updates')!=1):
             raise ValueError('这个上游 Manager 未声明服主更新协议支持，保留当前 Manager 与维护边界')
@@ -539,9 +591,13 @@ class Updates:
         hosts=list(self.workspace.settings['hosts'])
         for host in hosts:
             try:
+                from .client_runtime import installed_source
                 from .owner_channel import mode
                 selected_mode=mode(host)
-                if selected_mode!='starter':
+                if host['role']=='client'and installed_source(host['path'])is not None:
+                    rows.append({'id':host['id'],'name':host['name'],'status':'client_runtime',
+                                 'message':'此目录通过 Manager 的完整客户端更新同步，避免独立替换配套 Mod'})
+                elif selected_mode!='starter':
                     rows.append({'id':host['id'],'name':host['name'],'status':selected_mode,
                                  'message':'DIY 内容由服主审阅发布' if selected_mode=='owner' else '运行文件仅跟随已绑定服主'})
                 else:rows.append(install_host(host,self.bundle,self.manifest,self.cache))
@@ -554,12 +610,13 @@ class Updates:
                 if name==MANAGER:continue
                 dest=child(target,name);raw=child(self.bundle,name).read_bytes()
                 if not dest.exists() or digest(dest.read_bytes())!=expected['sha256']:storage.atomic(dest,raw)
-        restart=bool(self.manager_exe and program_eligible and digest(self.manager_exe.read_bytes())!=self.manifest['files'][MANAGER]['sha256'])
+        newer=version(self.manifest['version'])>version(self.current)
+        restart=bool(self.manager_exe and program_eligible and (newer or digest(self.manager_exe.read_bytes())!=self.manifest['files'][MANAGER]['sha256']))
         waiting=any(r['status']=='waiting' for r in rows);errors=any(r['status']=='error' for r in rows)
-        phase='error' if errors else 'waiting' if waiting else 'ready' if restart else 'current'
+        phase='error' if errors else 'waiting' if waiting else 'ready' if restart else 'available'if newer else 'current'
         self.change(phase=phase,hosts=rows,manager_restart=restart,
                     message='部分目录暂未安装，查看下方原因' if errors else '等待游戏或服务器关闭后自动安装' if waiting else
-                            'Mod 已更新，重启 Manager 完成管理器更新' if restart else '已是最新正式版本')
+                            '运行文件已核对，重启 Manager 加载新版本' if restart else '发现较新 Manager，请使用打包版完成程序更新'if newer else '所选来源的运行文件已核对，当前 Manager 版本无需升级')
 
 
 def attach(workspace,distribution,manager_exe=None):
@@ -580,6 +637,8 @@ def attach(workspace,distribution,manager_exe=None):
     workspace.services.register(SERVICE,'正式版本自动更新',controller,controller.start)
     from .owner_channel import attach as attach_owner
     attach_owner(workspace)
+    from .client_runtime import attach as attach_client
+    attach_client(workspace)
     with storage.LOCK:
         if SERVICE not in workspace.settings.get('services',{}):
             workspace.settings.setdefault('services',{})[SERVICE]={'enabled':True};workspace.save_workspace()
