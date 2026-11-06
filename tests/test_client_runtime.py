@@ -169,6 +169,26 @@ class CompleteRuntime(unittest.TestCase):
         self.assertEqual(controller.state()['phase'],'managed');self.assertFalse(controller.state()['manager_restart'])
         self.host['runtime_mode']='owner';self.assertFalse(controller.managed_by_client())
 
+    def test_blob_fetch_failure_and_timeout_use_the_next_bound_mirror(self):
+        from manager import owned_process
+        for failure in (subprocess.CompletedProcess([],1,b'',b'network transfer failed'),subprocess.TimeoutExpired('git',120)):
+            controller=c.ClientRuntime(self.workspace);key=str(self.repo.resolve())
+            controller.fetch_mirrors[key]=[(2,'https://example.invalid/fallback.git')]
+            with self.subTest(failure=type(failure).__name__),patch.object(owned_process,'run',side_effect=[failure,subprocess.CompletedProcess([],0,b'objects',b'')])as run:
+                result=controller.git(self.repo,['fetch','--stdin','origin'],input=b'a'*40+b'\n')
+                self.assertEqual(result,b'objects');self.assertEqual(controller.fetch_mirror[key],2)
+                self.assertEqual(run.call_args_list[1].args[0][-1],'https://example.invalid/fallback.git')
+                self.assertEqual(run.call_args_list[0].kwargs['input'],run.call_args_list[1].kwargs['input'])
+                self.assertIn('http.lowSpeedTime=60',run.call_args_list[0].args[0])
+
+    def test_cancelled_blob_fetch_does_not_start_another_mirror(self):
+        from manager import owned_process
+        controller=c.ClientRuntime(self.workspace)
+        controller.fetch_mirrors[str(self.repo.resolve())]=[(2,'https://example.invalid/fallback.git')]
+        with patch.object(owned_process,'run',side_effect=InterruptedError('cancelled'))as run:
+            with self.assertRaises(InterruptedError):controller.git(self.repo,['fetch','--stdin','origin'],input=b'a'*40+b'\n')
+            self.assertEqual(run.call_count,1)
+
     def test_core_safety_cannot_be_downgraded_by_a_complete_pack(self):
         from manager.operations import CORE_CONTRACT
         (self.game/'sdgo/core.dll').write_bytes(CORE_CONTRACT)
