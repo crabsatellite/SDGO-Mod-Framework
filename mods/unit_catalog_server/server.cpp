@@ -43,10 +43,15 @@ extern "C" __declspec(dllexport) int __cdecl SdgoReadUnitFormGateStateV1(SdgoUni
     if(!state||state->size!=sizeof(*state)||state->version!=1)return 0;
     *state=unit_catalog_server::ReadFormGateState();return state->installed?1:0;
 }
+extern "C" __declspec(dllexport) int __cdecl SdgoReadUnitFormRebindStateV1(SdgoUnitFormRebindStateV1* state){
+    if(!state||state->size!=sizeof(*state)||state->version!=1)return 0;
+    *state=unit_catalog_server::ReadFormRebindState();return state->compiled_for_testing?1:0;
+}
 
 extern "C" __declspec(dllexport) int __cdecl SdgoReadUnitFormRuntimeStateV1(SdgoUnitFormRuntimeStateV1* state){
     if(!state||state->size!=sizeof(*state)||state->version!=1||!g_formState.capture_installed||!g_capture)return 0;
     *state=g_formState;const auto status=g_capture->Status();
+    state->live_transform_commits=unit_catalog_server::ReadFormGateState().actor_writes;
     state->observer_healthy=g_capture->Healthy()?1u:0u;state->rooms=status.rooms;state->players=status.players;state->pending=status.pending;
     state->completed=status.completed;state->rejected=status.rejected;
     sdgo::unit_forms::HumanUnitCaptureSnapshot sample;
