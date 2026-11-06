@@ -281,6 +281,9 @@ def package_client_registry(
     support_dll = _file(support_dll, "capsule registry support DLL")
     if SUPPORT_MARKER not in support_dll.read_bytes():
         raise ClientPackageError('Update the shared capsule provider: activity posters and retained unit gifts require the current six-table build')
+    from owner.collection_capsule.acquisition import FILE as acquisition_file,MARKER as acquisition_marker
+    if (registry/acquisition_file).is_file() and acquisition_marker not in support_dll.read_bytes():
+        raise ClientPackageError('Update the shared capsule provider: collection acquisition explanations require the current build')
     output = _absolute(output)
     if output.exists():
         raise FileExistsError(f"Client package output already exists: {output}")

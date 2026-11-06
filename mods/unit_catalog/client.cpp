@@ -219,6 +219,13 @@ int InstallRecords(void* grid) {
     g_api->Log(g_mod, SDGO_LOG_INFO, "native record context pid=%lu grid=%p",
                static_cast<unsigned long>(GetCurrentProcessId()), grid);
 
+    // Optional collection hints are applied to our own record copies before
+    // preflight, preserving exact duplicate checks and native allocation ABI.
+    using ApplyHint=int(__cdecl*)(void*,uint32_t);
+    auto provider=GetModuleHandleW(L"capsule_catalog.dll");
+    const auto hint=provider?reinterpret_cast<ApplyHint>(GetProcAddress(provider,"SdgoCollectionAcquisitionApplyV1")):nullptr;
+    if(hint)for(auto& entry:g_catalog.records)
+        if(entry.kind==kUnitIndexType)hint(entry.bytes.data(),static_cast<uint32_t>(entry.bytes.size()));
     std::vector<const Entry*> pending;
     int existing = 0;
     for (const auto& entry : g_catalog.records) {

@@ -134,7 +134,7 @@ def make_stage(root):
         encoding="utf-8",
     )
     (stage / "sdgo/mods/capsule_catalog/capsule_catalog.dll").write_bytes(
-        b"CAPSULE MOD DLL SDGO_CAPSULE_REGISTRY_6TABLE_V2"
+        b"CAPSULE MOD DLL SDGO_CAPSULE_REGISTRY_6TABLE_V2 SDGO_COLLECTION_ACQUISITION_V1"
     )
     (stage / "sdgo/mods/capsule_catalog/manager.json").write_text(
         '{"schema_version":1,"id":"capsule_catalog","settings":[]}',
