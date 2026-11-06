@@ -10,7 +10,7 @@ import zipfile
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-from tools.mod_catalog import read_catalog, validate_stage
+from tools.mod_catalog import public_payload_files, read_catalog, validate_stage
 from manager.distribution import require_redistributable
 from manager.updates import REPOSITORY, MANAGER, version, unpack, repository as validate_repository
 
@@ -37,12 +37,12 @@ def build(channel, release_version, stage, manager, output, commit=None, reposit
         payload[tree+'/sdgo/catalog.json']=(json.dumps(catalog,ensure_ascii=False,indent=2)+'\n').encode('utf-8')
     for mod in catalog['mods']:
         base=mod['target']+'/sdgo/mods/'+mod['id']+'/'
-        for name in (mod['id']+'.dll','mod.ini',*mod['files'],*mod.get('runtime_files',[])):
+        for name in public_payload_files(mod):
             payload[base+name]=(stage/base/name).read_bytes()
     for name,raw in payload.items():require_redistributable(name,raw)
     commit=commit or subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
     manifest={'schema_version':1,'repository':repository,'version':release_version,'channel':channel,
-              'capabilities':{'owner_updates':1},
+              'capabilities':{'owner_updates':1,'client_runtime':1,'runtime_safety':1},
               'source_commit':commit,'files':{n:{'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()} for n,b in sorted(payload.items())}}
     output.mkdir(parents=True,exist_ok=True)
     path=output/('SDGO-ModFramework-'+release_version+'.zip')

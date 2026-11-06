@@ -9,17 +9,17 @@
 [安装说明](docs/setup.zh-CN.md) · [统一 Mod Manager](docs/mod-manager.zh-CN.md) · [最新发布](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
 
 服主与维护人员通过 **SDGO Mod Manager** 安装、配置和[更新](docs/mod-manager.zh-CN.md#更新)功能，
-客户端目录顶部的「0_MOD管理（服主专用）」可直接打开它。普通玩家照常使用原游戏启动器，按服主提供的方式更新，
-不要自行修改 Mod，以免与服务器配置不匹配。
+客户端目录顶部的「0_更新与管理」可直接打开它。玩家可在 Manager 更新服主提供的完整客户端，游戏仍使用原来的启动入口；共享配置由服主维护。
 服主自己的「仅本地」扩展也可以放进 Manager 管理，它们不会被打包或导出分发。
 默认跟随我们提供的基础整合包。服主需要自行维护时，明确选择「服主 DIY」接管；接管后由服主维护配置、脚本、素材、兼容性与发布版本。
 [服主整合包更新](docs/owner-updates.zh-CN.md)支持审阅并采用上游组件、发布服主确认的版本，玩家只跟随该服主的来源。
+Manager 会检查模块依赖、内容退役和数据变更影响，区分配置保存与运行生效；完整来源的程序、资源和 Mod 统一更新，保留个人配置与已有内容。详见[更新与维护保护](docs/mod-manager.zh-CN.md#依赖数据与生效状态)。
 本页仅列出功能概览。具体配置、玩法操作、兼容性与排错方法见各功能文档。
 
 功能名后的 Beta、Experimental 表示发布阶段，未标注的为 Stable：
 
 - **Stable**：基本功能可以正常使用，之后的问题通过新版本修复。Manager 更新默认只安装 Stable。
-- **Beta**：基本流程仍在开发，目前只有机体族导入。在 Manager 更新中切换到 Beta 通道后安装。
+- **Beta**：基本流程仍在开发。当前 Beta 功能包括机体族导入；在 Manager 更新中切换到 Beta 通道后安装。
 - **Experimental**：开发诊断工具。开发诊断类功能不随 Manager 更新安装。
 
 ## 基础修复
@@ -56,6 +56,7 @@
 |---|---|---|
 | 公告与展示规则 <!-- catalog: `announcements` --> | 登录时显示一次资讯简报；可选在游戏内按时段和事件展示服主公告 | [使用说明](docs/announcements.zh-CN.md) |
 | 任务 AI 僚机 <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai`，AI 按玩家生命额度复活；`!ai3 inf` 开启 AI 无限复活 | [使用说明](docs/coop-wingmen.zh-CN.md) |
+| 任务行为版本 <!-- catalog: `mission_behavior`、`mission_behavior_server` --> | 为一个客户端和服务端组全部 Battle 频道统一选择 OC 默认行为或 G改现有行为 | [使用说明](docs/mission-behavior.zh-CN.md) |
 | 对战 AI <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友；可让真人自动同队，选择双方补位、只补对面或指定数量 | [使用说明](docs/pvp-ai.zh-CN.md) |
 | AI 机体目录（独立附加包） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |
 | 战斗贡献奖励 <!-- catalog: `battle_rewards` --> | 按贡献发放 GB/MB，可配置人数倍率与按账号去重的聚会奖励 | [使用说明](docs/battle-rewards.zh-CN.md) |

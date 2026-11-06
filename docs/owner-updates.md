@@ -14,6 +14,20 @@ Changing the Manager program upstream does not change a player's owner binding.
 
 ## Choose a maintenance mode
 
+### Complete client sources
+
+A client can carry `sdgo/client-source.json` with a pinned publisher and credential-free Git SSH/HTTPS sources.
+Manager's complete-client page installs, checks and recovers original programs, archives and Mods together. The embedded player Manager
+uses this same update authority. The public framework Release still contains only framework/Mod files; the owner supplies the client package or update.
+Matching mirrors cover commit metadata, runtime blobs and archive segments; a successful metadata request does not disable download fallback.
+
+Existing preferences and Mod settings survive. Mod-only synchronization cannot write to a complete-source client, and source failure never
+switches it to the official starter pack. Explicit DIY takeover protects the runtime from automatic replacement. Complete client publication
+uses that distributor's authoritative runtime workflow; the Mod-only publication steps below apply to installations without a complete source.
+
+Git SSH sources use the `git+ssh://git@host/repository.git#branch` form. Existing SSH configuration, identities and agents are preserved;
+no publisher credentials are stored in the binding or downloaded pack.
+
 Open **更新** (Update), then **整合包维护与服主发布**. Choose the registered directory and save its mode.
 
 | Mode | Runtime update behavior |

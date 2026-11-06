@@ -579,6 +579,18 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
     if not startup_xml.is_file(): raise RuntimeError('Server startup XML is missing')
     suite=client.get('suite') or client['plan'].get('suite','')
     fps_suite=suite=='native-fps-limit'
+    mission_behavior_suite=suite=='native-mission-behavior'
+    if mission_behavior_suite:
+        required=[
+            stage/'server/sdgo/mods'/module/name
+            for module in ('game_test_server','mission_behavior_server')
+            for name in (module+'.dll','mod.ini')
+        ]
+        missing=[str(path) for path in required if not path.is_file()]
+        if missing:
+            raise RuntimeError(
+                'Mission behavior server stage is incomplete: '+
+                ', '.join(missing))
     host_pilot_id=observer_host_id(fps_suite,host_pilot_id)
     native_local=private.get('kind')=='native-local-test'
     respawn_policy=client['plan'].get('mission_respawns')
@@ -606,9 +618,32 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
             except Exception:
                 if time.monotonic()>deadline: raise RuntimeError('Owned application SQL databases not ready') from None
                 time.sleep(.5)
+        # Select native channels before requiring or installing their payload.
+        # Inactive folders are not participants in this sealed server job.
+        configured={Path(row.attrib['Path'].replace('\\','/')).parent.name
+            for row in ET.parse(startup_xml).getroot().findall('Process')
+            if row.attrib.get('Run','').lower()=='true'}
+        db=sql_connect(private)
+        try:
+            channels=[{'port':int(r[0]),'server_id':int(r[1])} for r in db.cursor().execute(
+                'SELECT AddrPT,ServerID FROM dbo.tbl_ChannelInfo ORDER BY AddrPT').fetchall()]
+        finally:db.close()
+        enabled_ports={row['port'] for row in channels}
+        selected=[spec for spec in manifest['services'] if spec['folder'] in configured and
+            (not spec['folder'].startswith('Battle') or spec['port'] in enabled_ports)]
+        if native_local:
+            selected.sort(key=lambda spec: spec['folder']=='WorldServer')
+        skipped=[spec['folder'] for spec in manifest['services'] if spec not in selected]
+        login_port=int(client['plan']['login_port'])
+        assert_listener_endpoints_free(
+            target_ip,[spec['port'] for spec in selected]+[login_port]
+        )
+        write(work/'launch-selection.json',{'native_xml':str(startup_xml),'database_channels':channels,
+            'selected':[{'folder':x['folder'],'port':x['port']} for x in selected],'skipped':skipped})
+        emit('launch_selection',selected=len(selected),skipped=skipped)
         stage_server=stage/'server'
         payload_receipt=[]
-        for owned_spec in manifest['services']:
+        for owned_spec in selected:
             owned_folder=Path(owned_spec['exe']).parent
             if not owned_folder.is_relative_to(work/'Server'):raise RuntimeError('Owned payload path escaped')
             for core_file in ('winmm.dll','sdgo/core.dll'):
@@ -626,8 +661,15 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                 if not target_manifest.is_file():continue
                 updated=game_test.read_ini(source_manifest);previous=game_test.read_ini(target_manifest)
                 if previous.has_option('mod','enabled'):updated['mod']['enabled']=previous['mod']['enabled']
-                if source_manifest.parent.name in ('game_test_server','pvp_ai') and owned_spec['folder'].startswith('Battle'):
-                    updated['mod']['enabled']='0' if fps_suite else '1'
+                if source_manifest.parent.name in (
+                    'game_test_server','pvp_ai','mission_behavior_server'
+                ) and owned_spec['folder'].startswith('Battle'):
+                    if source_manifest.parent.name=='game_test_server':
+                        updated['mod']['enabled']='0' if fps_suite else '1'
+                    elif source_manifest.parent.name=='pvp_ai':
+                        updated['mod']['enabled']='1' if not fps_suite and not mission_behavior_suite else '0'
+                    else:
+                        updated['mod']['enabled']='1' if mission_behavior_suite else '0'
                 if previous.has_section('settings'):
                     if not updated.has_section('settings'):updated.add_section('settings')
                     for key,value in previous.items('settings',raw=True):updated['settings'][key]=value
@@ -644,6 +686,20 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                         module_hosts=game_test.read_ini(module_manifest).get('mod','hosts',fallback='').split(',')
                         if symbol.stem in module_hosts or '*' in module_hosts:applicable.append(module_manifest)
                     game_test.merge_required_symbols(symbol,symbols/symbol.name,applicable,include_all=True)
+            if mission_behavior_suite and owned_spec['folder'].startswith('Battle'):
+                behavior=owned_folder/'sdgo/mods/mission_behavior_server'
+                manifest_path=behavior/'mod.ini'
+                profile_path=behavior/'profile.bin'
+                if (not manifest_path.is_file() or
+                    game_test.read_ini(manifest_path).get('mod','id',fallback='')!='mission_behavior_server' or
+                    not profile_path.is_file()):
+                    raise RuntimeError(
+                        'Owned Battle host lacks the server owner mission profile')
+                config_path=behavior/'config.ini'
+                config=game_test.read_ini(config_path) if config_path.is_file() else game_test.ini_parser()
+                if not config.has_section('settings'):config.add_section('settings')
+                config['settings']['Profile']=client['plan']['mission_behavior_profile']
+                game_test.write_ini(config_path,config)
             payload_receipt.append({'folder':owned_spec['folder'],'core':game_test.sha256(owned_folder/'sdgo/core.dll'),
                 'mods':{m.parent.name:game_test.sha256(m.parent/(m.parent.name+'.dll')) for m in manifests if (m.parent/(m.parent.name+'.dll')).is_file()}})
         write(work/'runtime-overlay.json',{'source':game_test.git_source_ref(REPO),'hosts':payload_receipt})
@@ -657,32 +713,6 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                     if re.match(r'(?i)^[a-z]:[\\/]',value) and not Path(value).resolve().is_relative_to(work):
                         raise RuntimeError('Copied Mod still points outside its owned backend: '+copied_config.parent.name+'/'+key)
 
-        # A copied folder is not an enabled native channel. Keep the original
-        # Unit Support Info count check and launch only configured hosts.
-        configured={Path(row.attrib['Path'].replace('\\','/')).parent.name
-            for row in ET.parse(startup_xml).getroot().findall('Process')
-            if row.attrib.get('Run','').lower()=='true'}
-        db=sql_connect(private)
-        try:
-            channels=[{'port':int(r[0]),'server_id':int(r[1])} for r in db.cursor().execute(
-                'SELECT AddrPT,ServerID FROM dbo.tbl_ChannelInfo ORDER BY AddrPT').fetchall()]
-        finally:db.close()
-        enabled_ports={row['port'] for row in channels}
-        selected=[spec for spec in manifest['services'] if spec['folder'] in configured and
-            (not spec['folder'].startswith('Battle') or spec['port'] in enabled_ports)]
-        if native_local:
-            # World actively connects to its peers while initializing. Starting
-            # it last lets those native listeners accept its first table stream
-            # instead of racing World initialization and losing that stream.
-            selected.sort(key=lambda spec: spec['folder']=='WorldServer')
-        skipped=[spec['folder'] for spec in manifest['services'] if spec not in selected]
-        login_port=int(client['plan']['login_port'])
-        assert_listener_endpoints_free(
-            target_ip,[spec['port'] for spec in selected]+[login_port]
-        )
-        write(work/'launch-selection.json',{'native_xml':str(startup_xml),'database_channels':channels,
-            'selected':[{'folder':x['folder'],'port':x['port']} for x in selected],'skipped':skipped})
-        emit('launch_selection',selected=len(selected),skipped=skipped)
         for spec in selected:
             exe=Path(spec['exe']);folder=exe.parent
             if not exe.is_relative_to(work/'Server') or game_test.sha256(exe)!=spec['sha256']: raise RuntimeError('Copied service identity changed')
@@ -707,7 +737,16 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                     job.rename(archive)
                 job.mkdir()
                 cfg=configparser.ConfigParser(interpolation=None)
-                cfg['run']={'id':client['run_id'],'role':'server','suite':'pvp-ai'}
+                server_suite=(
+                    'native-mission-behavior'
+                    if mission_behavior_suite else 'pvp-ai'
+                )
+                cfg['run']={'id':client['run_id'],'role':'server','suite':server_suite}
+                if mission_behavior_suite:
+                    cfg['run'].update({
+                        'mission_behavior_profile':client['plan']['mission_behavior_profile'],
+                        'mission_game_mode_id':str(client['plan']['mission_game_mode_id']),
+                    })
                 cfg['observer']={'nonce':client['plan']['title_nonce'],'host_pilot_id':str(host_pilot_id),
                     'mode':'0','minimum_ai':str(client['plan'].get('expected_ai',client['plan'].get('mission_ai_count',3))),'require_end':'1'}
                 if respawn_policy:
@@ -728,7 +767,9 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                 for section in ('categories','features','mods'):
                     if not settings.has_section(section): settings.add_section(section)
                 settings['categories']['development']='1';settings['features']['game-test']='1'
-                settings['mods']['game_test_server']='1';settings['mods']['pvp_ai']='1'
+                settings['mods']['game_test_server']='1'
+                settings['mods']['pvp_ai']='0' if mission_behavior_suite else '1'
+                settings['mods']['mission_behavior_server']='1' if mission_behavior_suite else '0'
                 if respawn_policy:
                     settings['mods']['mission_respawn_server_probe']='1'
                     settings['mods']['coop_ai']='1'

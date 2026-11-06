@@ -33,6 +33,30 @@ struct SdgoBattleAiNavigationSnapshotV1 {
 };
 typedef int(__cdecl* SdgoBattleAiGetNavigationSnapshotV1Fn)(uint32_t,SdgoBattleAiNavigationSnapshotV1*);
 
+// Passive receipt for a genuine mission Boss special-start notice already
+// consumed by the original client handler. This does not drive AI, HP, input,
+// packets or mission state.
+#define SDGO_BATTLE_AI_MISSION_BOSS_SPECIAL_EXPORT \
+    "SdgoBattleAiGetMissionBossSpecialV1"
+struct SdgoBattleAiMissionBossSpecialV1 {
+    uint32_t size,version;
+    uint64_t sequence,battle_epoch,event_tick_ms;
+    uint32_t mission_object,unit,pilot_id,object_id,npc_data_id,weapon_id;
+    uint32_t native_app_state;
+    int32_t hp_before,max_hp_before,hp_after,max_hp_after,original_result;
+    uint32_t state_before_valid,state_after_valid;
+    uint32_t special_busy_before,special_busy_after;
+    uint32_t attack_state_before,attack_state_after;
+    uint32_t original_returned;
+};
+typedef int(__cdecl* SdgoBattleAiGetMissionBossSpecialV1Fn)(
+    SdgoBattleAiMissionBossSpecialV1*);
+
+#ifdef __cplusplus
+static_assert(
+    sizeof(SdgoBattleAiMissionBossSpecialV1) == 112,
+    "unexpected mission Boss special observer ABI");
+#endif
 // Independent passive ABI for directed native map-action navigation.
 #define SDGO_BATTLE_AI_TRANSPORT_OBSERVER_EXPORT "SdgoBattleAiGetTransportSnapshotV1"
 struct SdgoBattleAiTransportSnapshotV1 {

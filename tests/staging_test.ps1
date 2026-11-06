@@ -1,16 +1,21 @@
 <# Verify data-only mod files are restaged by an incremental VS build. No game runs. #>
-param([string]$Config = 'Release', [string]$BuildDir = 'build')
+param([string]$Config = 'Release', [string]$BuildDir = 'build', [string]$Python = 'python')
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $buildRoot = [IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($BuildDir)) { $BuildDir } else { Join-Path $repo $BuildDir }))
 $stage = Join-Path $buildRoot "stage\$Config\client\sdgo\mods\mission_ai"
 $saved = @{}
+$expectedManifest = Join-Path $buildRoot ('expected-stage-' + [Guid]::NewGuid().ToString('N') + '.ini')
 function Hash([string]$Path) {
     $sha = [Security.Cryptography.SHA256]::Create()
     try { return [BitConverter]::ToString($sha.ComputeHash([IO.File]::ReadAllBytes($Path))) }
     finally { $sha.Dispose() }
 }
 try {
+    # Staged INIs include the runtime contract derived from manager.json.
+    Copy-Item -LiteralPath (Join-Path $repo 'mods\mission_ai\mod.ini') -Destination $expectedManifest
+    & $Python (Join-Path $repo 'tools\mod_runtime_contract.py') --manifest $expectedManifest --contract (Join-Path $repo 'mods\mission_ai\manager.json')
+    if ($LASTEXITCODE -ne 0) { throw 'Expected runtime contract generation failed' }
     foreach ($name in @('mod.ini', 'mission_ai.lua')) {
         $path = Join-Path $stage $name
         $saved[$name] = [IO.File]::ReadAllBytes($path)
@@ -20,6 +25,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Incremental build failed: $output" }
     foreach ($name in @('mod.ini', 'mission_ai.lua')) {
         $source = Join-Path $repo "mods\mission_ai\$name"
+        if ($name -eq 'mod.ini') { $source = $expectedManifest }
         $actual = Join-Path $stage $name
         # Use byte equality without depending on optional cmdlet/module discovery
         # in a Windows PowerShell child launched by CTest or a newer PowerShell.
@@ -45,6 +51,7 @@ try {
     }
     Write-Host 'CATALOG DATA RESTAGING CHECKS PASSED'
 } finally {
+    if (Test-Path -LiteralPath $expectedManifest) { Remove-Item -LiteralPath $expectedManifest }
     foreach ($name in $saved.Keys) {
         $path = if ([IO.Path]::IsPathRooted($name)) { $name } else { Join-Path $stage $name }
         [IO.File]::WriteAllBytes($path, $saved[$name])
