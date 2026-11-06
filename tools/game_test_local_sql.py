@@ -148,7 +148,7 @@ def start(root, binaries, master_only=False):
             raise RuntimeError('The selected test SQL endpoint is already running; reuse it.')
     engine = root / 'server/LiteSQL/MSSQL'
     (engine / 'Log').mkdir(exist_ok=True)
-    environment = dict(os.environ, SDGO_TEST_SQL_REGISTRY=data['registry'])
+    environment = dict(os.environ, SDGO_TEST_SQL_REGISTRY=data['registry'],SDGO_TEST_SQL_DATA_ROOT=str(engine/'DATA'))
     executable = binaries / 'sql_local.exe'
     dll = binaries / 'sql_registry.dll'
     command = [str(executable), str(dll), str(engine / 'Binn/sqlservr.exe'),

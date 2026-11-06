@@ -1425,6 +1425,17 @@ class DeploymentTarget:
         self.symbol_fragment = _absolute(self.symbol_fragment)
 
     def apply(self, catalog, runtime_output: Path, bundle_root: Path) -> dict:
+        from manager.target_locks import lease
+        from manager.operations import server_change
+        with lease('host:'+str(self.client_target.resolve())):
+            if self.server_ini:
+                try:_assert_client_stopped(self.client_target)
+                except ClientRunningError:return self._apply(catalog,runtime_output,bundle_root)
+                with server_change(self.server_ini,'capsule_catalog.publish')as change:
+                    return change.result(self._apply(catalog,runtime_output,bundle_root))
+            return self._apply(catalog,runtime_output,bundle_root)
+
+    def _apply(self, catalog, runtime_output: Path, bundle_root: Path) -> dict:
         """Build a revision-aligned package and apply configured targets."""
         from .capsule_catalog import digest, export_bundle
         from .capsule_server_runtime import build as build_server

@@ -10,6 +10,14 @@ from manager.owned_process import run
 
 
 class OwnedCommandTests(unittest.TestCase):
+    def test_streamed_binary_output_and_stdin_survive_communicate_timeouts(self):
+        with tempfile.TemporaryDirectory()as d:
+            root=Path(d);output=root/'raw.blob';data=bytes(range(256))*8192
+            code='import sys,time;data=sys.stdin.buffer.read();time.sleep(.5);sys.stdout.buffer.write(data);sys.stderr.buffer.write(b"done")'
+            r=run([sys.executable,'-c',code],cwd=root,env=dict(os.environ),timeout=10,input=data,output=output)
+            self.assertEqual(r.returncode,0);self.assertIsNone(r.stdout)
+            self.assertEqual(r.stderr,b'done');self.assertEqual(output.read_bytes(),data)
+
     def test_success_returns_original_output(self):
         r=run([sys.executable,'-c','print("owned command")'],cwd=Path.cwd(),env=dict(os.environ),timeout=5)
         self.assertEqual(r.returncode,0);self.assertIn(b'owned command',r.stdout)

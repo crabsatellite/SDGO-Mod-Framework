@@ -4,6 +4,7 @@ import copy
 from pathlib import Path
 import re
 import uuid
+from contextlib import ExitStack, contextmanager
 from . import distribution, registry, storage
 from owner import timezones
 
@@ -23,6 +24,8 @@ class Workspace:
             raise ValueError('Manager 工作区版本无效')
         from .supervisor import ServiceRegistry
         self.services = ServiceRegistry(self)
+        from .change_review import ChangeReviews
+        self.change_reviews=ChangeReviews(self)
 
     def require_developer(self):
         if self.mode != 'developer':
@@ -55,6 +58,10 @@ class Workspace:
     def add_host(self, path):
         path = Path(path).resolve(strict=True)
         role = next((role for exe, role in EXES.items() if (path / exe).is_file()), None)
+        if role is None and(path/'sdgo/client-source.json').is_file():
+            from .client_runtime import installed_source
+            if path==path.parent:raise ValueError('请选择独立的客户端文件夹')
+            installed_source(path);role='client'
         if role is None:
             candidates=[child for child in path.iterdir() if child.is_dir() and not child.is_symlink()]
             for child in list(candidates):
@@ -88,7 +95,7 @@ class Workspace:
         if len(installed)>1:raise ValueError('Mod 标识在共享目录与本地目录中重复：'+identity)
         return installed[0] if installed else candidates[0]
 
-    def _installed(self, host):
+    def _installed(self, host, all_mods=False):
         result = []
         roots = [Path(host['path'])/'sdgo'/tree for tree in ('mods','local-mods')]
         folders = [folder for root in roots if root.is_dir() for folder in sorted(root.iterdir())]
@@ -115,7 +122,7 @@ class Workspace:
             global_ini = storage.ini_values(global_raw)
             enabled = value.getint('mod', 'enabled', fallback=1) != 0
             category = value.get('mod', 'category', fallback=contract.get('category','other') if contract else 'other')
-            if self.mode != 'developer' and category == 'development':
+            if not all_mods and self.mode != 'developer' and category == 'development':
                 continue
             feature = value.get('mod', 'feature', fallback=folder.name)
             blocked = []
@@ -123,9 +130,14 @@ class Workspace:
                 if global_ini.get(section, key, fallback='1').strip() == '0':
                     blocked.append(section + '.' + key)
             title = contract['title'] if contract else value.get('mod', 'name', fallback=folder.name)
+            runtime_enabled=enabled and not blocked
+            if contract and contract.get('runtime_enabled_setting'):
+                field=next(f for f in contract['settings']if f['id']==contract['runtime_enabled_setting'])
+                cfg=value if field['file']=='mod.ini'else storage.ini_values((folder/field['file']).read_bytes()if(folder/field['file']).is_file()else b'')
+                runtime_enabled=runtime_enabled and cfg.getboolean('settings',field['key'],fallback=field.get('default',True))
             result.append({'id': folder.name, 'title': title, 'category': category, 'feature': feature,
                            'description': contract.get('description', '') if contract else '此 Mod 未登记详细配置。',
-                           'enabled': enabled and not blocked, 'manifest_enabled': enabled,
+                           'enabled': enabled and not blocked, 'manifest_enabled': enabled,'runtime_enabled':runtime_enabled,
                            'blocked_by': blocked, 'registered': contract is not None,
                            'distribution': scope, 'redistributable': scope == distribution.PUBLIC,
                            'version': value.get('mod', 'version', fallback=''),
@@ -135,6 +147,52 @@ class Workspace:
                            'configured': 'installed', 'runtime_status': 'unverified',
                            'settings_count': len([f for f in contract.get('settings',[]) if f['audience']=='user' or self.mode=='developer']) if contract else 0})
         return result
+
+    @contextmanager
+    def _change_lease(self):
+        from .target_locks import lease
+        with ExitStack()as stack:
+            for path in sorted({str(Path(h['path']).resolve()).casefold()for h in self.settings['hosts']}):
+                stack.enter_context(lease('host:'+path))
+            yield
+
+    def dependency_nodes(self):
+        nodes=[]
+        for host in self.settings['hosts']:
+            roots={tree:Path(host['path'])/'sdgo'/tree for tree in ('mods','local-mods')}
+            contracts={tree:registry.load(path)for tree,path in roots.items()}
+            for mod in self._installed(host,True):
+                root=self._mod_directory(host,mod['id']);contract=contracts[root.parent.name].get(mod['id'],{})
+                values={};files={}
+                for field in contract.get('settings',[]):
+                    name=field['file']
+                    if self._client_xml_field(field):
+                        path=Path(host['path'])/name;value=storage.client_timer_fps(path.read_bytes())if path.exists()else field.get('default','')
+                    else:
+                        if name not in files:
+                            path=root/name;files[name]=storage.ini_values(path.read_bytes()if path.exists()else b'')
+                        value=files[name].get('settings',field['key'],fallback=None)
+                        if value is None and name=='config.ini':value=storage.ini_values((root/'mod.ini').read_bytes()).get('settings',field['key'],fallback=None)
+                        if value is None:value=field.get('default','')
+                    if field['type']=='boolean':value=str(value).lower()in('1','true')
+                    elif field['type']=='integer':value=int(value)
+                    elif field['type']=='number':value=float(value)
+                    values[field['id']]=value
+                gate=contract.get('runtime_enabled_setting')
+                nodes.append({**mod,'enabled':mod['enabled']and(not gate or bool(values.get(gate))),
+                              'host':host['id'],'role':host['role'],'root':str(root),'contract':contract,'settings':values})
+        return nodes
+
+    def _check_transition(self,before,after):
+        from .dependencies import enforce_transition
+        enforce_transition(before,after)
+        old={(n['host'],n['id']):n for n in before}
+        for node in after:
+            prior=old[(node['host'],node['id'])]
+            if not prior['enabled']or node['enabled']:continue
+            files=node['contract'].get('retirement',{}).get('content_files',[])
+            if any((Path(node['root'])/name).is_file()and(Path(node['root'])/name).stat().st_size for name in files):
+                raise ValueError(node['title']+'：已安装内容仍需要这个运行时；请先处理获取途径与内容引用，现有玩家资产不会自动删除')
 
     def require_redistributable(self, host_id, mod_ids):
         installed = {item['id']: item for item in self._installed(self.host(host_id))}
@@ -150,8 +208,12 @@ class Workspace:
         for host in self.settings['hosts']:
             path = Path(host['path']) / 'sdgo/sdgo.ini'
             mods=self._installed(host)
+            from .runtime_state import host_mod_states
+            observed=host_mod_states(host,mods)
+            for mod in mods:
+                mod['runtime']=observed[mod['id']];mod['runtime_status']=mod['runtime']['status']
             raw=path.read_bytes() if path.exists() else b'';global_ini=storage.ini_values(raw)
-            hosts.append({**host, 'mods': [m for m in mods if not m['archived']], 'archive':[m for m in mods if m['archived']], 'global_revision': storage.revision(raw),
+            hosts.append({**host,'complete_runtime':host['role']=='client'and(Path(host['path'])/'sdgo/client-source.json').is_file(), 'mods': [m for m in mods if not m['archived']], 'archive':[m for m in mods if m['archived']], 'global_revision': storage.revision(raw),
                           'categories':{key:global_ini.get('categories',key,fallback='1')!='0' for key in ('gameplay','network')}})
         display_offset=self.settings.get('display_utc_offset_minutes')
         result = {'mode': self.mode, 'hosts': hosts, 'schema_version': 1,
@@ -199,14 +261,17 @@ class Workspace:
             elif field['type'] == 'number':
                 value = float(value)
             values[field['id']] = value
-        return {'contract': contract, 'values': values, 'revisions': {name: entry['revision'] for name, entry in files.items()}}
+        from .runtime_state import mod_state
+        installed=next((m for m in self._installed(host)if m['id']==mod_id),{})
+        return {'contract': contract, 'values': values, 'revisions': {name: entry['revision'] for name, entry in files.items()},
+                'runtime':mod_state(host,mod_id,installed.get('runtime_enabled',installed.get('enabled',False)))}
 
     @staticmethod
     def _client_xml_field(field):
         return (field['file'], field.get('section', 'settings'), field['key']) == registry.CLIENT_XML_SETTING
 
     def configure(self, host_id, mod_id, values, revisions):
-        with storage.LOCK:
+        with self._change_lease(), storage.LOCK:
             current = self.details(host_id, mod_id)
             fields = {field['id']: field for field in current['contract'].get('settings', [])}
             if not isinstance(values, dict) or set(values) - fields.keys():
@@ -215,6 +280,13 @@ class Workspace:
             for key, value in values.items():
                 field = fields[key]
                 updates.setdefault(field['file'], []).append((field, registry.validate(field, value)))
+            before=self.dependency_nodes();after=copy.deepcopy(before)
+            next(n for n in after if n['host']==host_id and n['id']==mod_id)['settings'].update(values)
+            for node in after:
+                if node['host']==host_id and node['id']==mod_id:
+                    gate=node['contract'].get('runtime_enabled_setting')
+                    if gate:node['enabled']=node['manifest_enabled']and not node['blocked_by']and bool(node['settings'].get(gate))
+            self._check_transition(before,after)
             host = self.host(host_id)
             root = self._mod_directory(host, mod_id)
             candidates = {}
@@ -242,7 +314,11 @@ class Workspace:
                 for path in reversed(written):
                     storage.atomic(path, candidates[path][0])
                 raise
-            return {**self.details(host_id, mod_id), 'saved': True, 'activation': 'restart_required'}
+            from .runtime_state import mod_state
+            enabled=next(n for n in after if n['host']==host_id and n['id']==mod_id)['enabled']
+            runtime=mod_state(host,mod_id,enabled)
+            hot=bool(values)and all(fields[k].get('activation')=='hot_reload'for k in values)
+            return {**self.details(host_id, mod_id), 'saved': True, 'activation':'hot_reload'if hot else'restart_required','runtime':runtime}
 
     def toggle(self, host_id, mod_id, enabled, expected):
         if type(enabled) is not bool or not registry.ID.fullmatch(mod_id):
@@ -251,10 +327,15 @@ class Workspace:
         if mod_id not in {item['id'] for item in self._installed(host)}:
             raise ValueError('Mod 未安装')
         path = storage.safe_child(host['path'],'sdgo/sdgo.ini')
-        with storage.LOCK:
+        with self._change_lease(), storage.LOCK:
             raw = path.read_bytes() if path.exists() else b''
             manifest = self._mod_directory(host, mod_id)/'mod.ini'
             mod_raw = manifest.read_bytes()
+            before=self.dependency_nodes();after=copy.deepcopy(before)
+            node=next(n for n in after if n['host']==host_id and n['id']==mod_id)
+            gate=node['contract'].get('runtime_enabled_setting')
+            node['enabled']=enabled and not[b for b in node['blocked_by']if b!='mods.'+mod_id]and(not gate or bool(node['settings'].get(gate)))
+            self._check_transition(before,after)
             if not isinstance(expected, dict) or expected.get('global') != storage.revision(raw) or expected.get('manifest') != storage.revision(mod_raw):
                 raise storage.Conflict('全局配置已改变，请刷新后重试')
             storage.atomic(manifest, storage.patch_ini(mod_raw, [('mod', 'enabled', '1' if enabled else '0')]))
@@ -268,8 +349,15 @@ class Workspace:
     def category(self,host_id,key,enabled,expected):
         if key not in ('gameplay','network') or type(enabled) is not bool:raise ValueError('功能分类开关无效')
         host=self.host(host_id);path=storage.safe_child(host['path'],'sdgo/sdgo.ini')
-        with storage.LOCK:
+        with self._change_lease(), storage.LOCK:
             raw=path.read_bytes() if path.exists() else b''
+            before=self.dependency_nodes();after=copy.deepcopy(before)
+            for node in after:
+                if node['host']==host_id and node['category']==key:
+                    node['enabled']=enabled and node['manifest_enabled']and not[b for b in node['blocked_by']if b!='categories.'+key]
+                    gate=node['contract'].get('runtime_enabled_setting')
+                    if gate:node['enabled']=node['enabled']and bool(node['settings'].get(gate))
+            self._check_transition(before,after)
             if expected!=storage.revision(raw):raise storage.Conflict('配置已经改变，请刷新后重试')
             storage.atomic(path,storage.patch_ini(raw,[('categories',key,'1' if enabled else '0')]))
         return {**self.public(),'saved':True,'activation':'restart_required'}
