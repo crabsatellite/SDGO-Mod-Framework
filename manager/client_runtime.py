@@ -152,6 +152,8 @@ class ClientRuntime:
                 if not OID.fullmatch(commit):raise ValueError('客户端提交身份无效')
                 manifest=json.loads(self.git(repo,['show',commit+':player-package.json']))
                 contract=validate_contract(manifest,binding)
+                incoming=source(json.loads(self.git(repo,['show',commit+':'+SOURCE])))
+                if incoming!=binding:raise ValueError('这个镜像的来源绑定尚未同步，继续检查同身份备用源')
                 key=str(repo.resolve());self.fetch_mirror[key]=index+1
                 self.fetch_mirrors[key]=[(i+1,git_source.parse(value)[0])for i,value in enumerate(binding['feeds'])if i>index]
                 return repo,commit,manifest,contract,index+1

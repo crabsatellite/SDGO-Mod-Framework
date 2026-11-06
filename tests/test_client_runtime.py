@@ -160,7 +160,7 @@ class CompleteRuntime(unittest.TestCase):
                 if remotes[str(repo)].startswith('ssh:'):raise ValueError('SSH identity unavailable')
                 return b''
             if args[0]=='rev-parse':return self.commit.encode()
-            if args[0]=='show':return storage.json_bytes({'runtime':self.contract})
+            if args[0]=='show':return storage.json_bytes(self.binding if args[1].endswith(':'+c.SOURCE)else{'runtime':self.contract})
             raise AssertionError(args)
         with patch.object(controller,'git',side_effect=git):
             result=controller.repository(self.binding)
