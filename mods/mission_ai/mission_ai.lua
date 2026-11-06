@@ -144,6 +144,10 @@ function PlayerWarp(player, position, direction)
   if MissionLive() then
     local ok,err=ProtectedCall(WarpWingmen,player,position,direction)
     if not ok then Log('wingman stage warp failed: %s',tostring(err)) end
+    if SDGO_MissionAI_ObserveStageWarp then
+      local observed,observeErr=ProtectedCall(SDGO_MissionAI_ObserveStageWarp,player)
+      if not observed then Log('wingman stage warp observation failed: %s',tostring(observeErr)) end
+    end
   end
   return result
 end

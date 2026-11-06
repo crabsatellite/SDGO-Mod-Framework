@@ -125,6 +125,11 @@ Teleporting AI move to a native spawn point through the normal flow and keep the
 map hazards still apply. AI use map movement pads through the normal request, and destructible gates take damage,
 count down and are removed by the server under the native rules.
 
+With [Battle AI](battle-ai.md) enabled, terrain routes can deliberately approach a useful propulsion
+pad. Its original three-dimensional movement remains under native control; after arrival, the bot
+replans from its actual position and resumes fighting. Update the host and participating clients
+together so movement requests and notifications use matching components.
+
 AI can earn MVP but cannot become room host. When an AI ranks first, the human host who remains in the room
 keeps Start permission, including after a solo loss, so the same room can start another battle. Native transfers
 to other humans remain available.
