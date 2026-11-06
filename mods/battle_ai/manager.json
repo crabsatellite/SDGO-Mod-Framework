@@ -534,6 +534,18 @@
       "section": "settings",
       "audience": "developer",
       "activation": "restart_required"
+    },
+    {
+      "id": "terrainrayaudit",
+      "key": "TerrainRayAudit",
+      "label": "地形射线原生对照审计",
+      "description": "开发诊断：逐条对照索引射线与原生遍历，复杂地图开销较高；日常日志无需开启。",
+      "type": "boolean",
+      "default": false,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
     }
   ],
   "presentation": "configurable",
