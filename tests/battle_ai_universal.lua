@@ -5,6 +5,7 @@ local calls={}
 UNIT_MOVE_DIR_FORWARD=1;UNIT_MOVE_DIR_LEFT=3;UNIT_MOVE_DIR_RIGHT=4;UNIT_MOVE_DIR_BACKWARD=2
 UNIT_MOVE_EVENT_MOVE=2;UNIT_MOVE_EVENT_DASH=3
 function SDGO_BattleAI_Now() return now end
+function SDGO_BattleAI_RequestTransform() calls.transforms=(calls.transforms or 0)+1; if calls.transformQueued~=nil then return calls.transformQueued end; return 1 end
 function SDGO_BattleAI_Authority() return 1 end
 function SDGO_BattleAI_Generation() return generation end
 function SDGO_BattleAI_Observe() return observation end
@@ -47,9 +48,10 @@ function SDGO_BattleAI_CancelRoute(handoff)
   if handoff~=1 then calls.routeStops=(calls.routeStops or 0)+1 end
   if not calls.staticRouteObservation then observation.routeActive=0 end
 end
-function SDGO_BattleAI_Route(id,force,x,y,z)
+function SDGO_BattleAI_Route(id,force,x,y,z,allowRanged)
   calls.routes=calls.routes+1; calls.routeId=id;calls.force=force
-    calls.routeX=x
+  calls.routeX=x;calls.routeY=y;calls.routeZ=z
+  calls.routeAllowRanged=allowRanged
   local result=calls.routeResult or 1
   if not calls.staticRouteObservation then observation.routeActive=result end
   return result
@@ -88,7 +90,7 @@ function npc:SetJumpTime(seconds)
   if seconds>0 then calls.positiveJumps=(calls.positiveJumps or 0)+1 else calls.jumpCancels=(calls.jumpCancels or 0)+1 end
 end
 local function Target(id,hp,distance)
-  return {id=id,hp=hp,distance=distance,enemy=1,attackable=1,visible=1,rangedFiring=0}
+  return {id=id,hp=hp,alive=hp>0 and 1 or 0,distance=distance,enemy=1,attackable=1,visible=1,rangedFiring=0}
 end
 local function Weapon(slot,kind,range,damage,cycle)
   return {slot=slot,kind=kind,range=range,damage=damage,cycleMs=cycle,
@@ -123,8 +125,22 @@ observation.targets[2].hp=1;Tick(100)
 Check(calls.target==2,'new lower-HP target replaces the old target without a hold timer')
 Tick(700)
 Check(calls.target==2,'lowest HP remains selected while it stays the best candidate')
-observation.targets[2].hp=0;Tick(800)
+observation.targets[2].hp=0;observation.targets[2].alive=0;Tick(800)
 Check(calls.target==1,'death invalidates held target immediately')
+for _,difficulty in ipairs({1,2}) do
+  Reset({Difficulty=difficulty})
+  observation.targets={Target(9,0,1000)}
+  local zero=observation.targets[1]
+  zero.alive=1;zero.maxHp=10000;zero.hurt=1;zero.damageProtected=1
+  Tick(0)
+  Check(calls.fire==false,'a zero-HP living unit retains native knockdown protection')
+  zero.damageProtected=0;calls.fire=nil;Tick(100)
+  Check(calls.target==9 and calls.aim==9 and calls.fire==true and zero.hp==0,
+        'a recovered native-alive zero-HP opponent is attacked without clamping its HP')
+  zero.hp=50;zero.alive=0;calls.fire=nil;Tick(200)
+  Check(calls.fire==false and calls.aim==0,
+        'a native death receipt excludes an opponent even when a positive HP sample remains')
+end
 Reset();observation.weapons[2].range=4000;observation.targets[1].distance=500
 observation.targets[2].hp=2000;Tick(0)
 observation.targets[2].hp=1;observation.targets[2].distance=2800;Tick(700)
@@ -201,11 +217,11 @@ Check(calls.fire==nil and calls.moves==0 and not calls.releaseIntent,
 Reset({ReactionMs=0,BurstMs=100});observation.rangedBusy=1;observation.weapons[2].active=1
 observation.weapons[2].ammoReady=0;observation.weapons[2].ready=0;Tick(0);Tick(1000)
 Check(calls.switch==nil and calls.fire==true,'native charged/continuous ranged state retains held input after ammo consumption and burst expiry')
-Reset();for _,target in pairs(observation.targets) do target.hp=0 end
+Reset();for _,target in pairs(observation.targets) do target.hp=0;target.alive=0 end
 observation.rangedBusy=1;observation.weapons[2].active=1;Tick(0)
 Check(calls.releaseIntent==1 and calls.fire==nil,
       'losing the last target during a ranged action releases held input without queuing Neutral')
-Reset();for _,target in pairs(observation.targets) do target.hp=0 end
+Reset();for _,target in pairs(observation.targets) do target.hp=0;target.alive=0 end
 observation.meleeBusy=1;observation.selectedSlot=0;observation.specialAcknowledged=1;observation.attackNeutral=0;Tick(0)
 Check(not calls.releaseIntent and calls.fire==nil,
       'losing the last target cannot let a stale special receipt clear an ordinary melee combo')
@@ -387,7 +403,7 @@ observation.selectedSlot=1;now=1200;SDGO_BattleAI_ProfileUpdate(npc)
 Check(SDGO_BattleAI_Universal.profiles[20].special==nil,'confirmed previous ordinary slot releases the special lease')
 Reset({Difficulty=1});observation.nativeTarget=2;observation.specialAvailable=1;observation.specialRange=1800;observation.spReady=1
 observation.targets[2].selectedTarget=20;observation.targets[2].rangedFiring=1;observation.targets[2].hp=2000
-SDGO_BattleAI_ProfileUpdate(npc);observation.selectedSlot=3;observation.specialSelected=1;observation.targets[2].hp=0
+SDGO_BattleAI_ProfileUpdate(npc);observation.selectedSlot=3;observation.specialSelected=1;observation.targets[2].hp=0;observation.targets[2].alive=0
 now=100;calls.fire=nil;SDGO_BattleAI_ProfileUpdate(npc)
 Check(calls.switch==1 and calls.releaseIntent==1 and calls.fire==nil,
       'special target death clears its held request without queuing Neutral and returns to the prior ordinary weapon')
@@ -430,12 +446,13 @@ for _,difficulty in pairs({1,2}) do
   Check(calls.fire==true and SDGO_BattleAI_Universal.states[20].recoverUntil==nil,'an orphaned recovery timestamp without motor ownership is discarded: '..difficulty)
   observation.weapons[3].ready=0;Tick(11)
   Check(not calls.fire and calls.moves>0,'native weapon cooldown uses movement without inventing an attack: '..difficulty)
-  Reset({Difficulty=difficulty});observation.targets={};Tick(0)
-  local patrolMoves=calls.moves;local patrolSafety=calls.safeDirections
-  observation.goal=observation.pos;Tick(1)
-  Check(calls.moves==patrolMoves+1 and calls.safeDirections==patrolSafety+1 and
-        calls.mode==UNIT_MOVE_EVENT_MOVE and not calls.patrol,
-        'arriving at a patrol goal selects the next safe bounded goal without a patrol pause: '..difficulty)
+  Reset({Difficulty=difficulty});observation.targets={};observation.moving=1;Tick(0)
+  Check(calls.moves==0 and calls.routes==0 and not calls.explores and
+        calls.stop==1 and not calls.patrol,
+        'no remaining opponent and no native objective stops in place: '..difficulty)
+  observation.moving=0;Tick(1)
+  Check(calls.stop==1 and calls.moves==0,
+        'stationary no-opponent idle does not repeat native stop requests: '..difficulty)
   Reset({Difficulty=difficulty});observation.defenceMoving=1;Tick(0)
   Check(calls.fire==true and not calls.stop and not calls.cancelled,
         'ordinary firing never cancels the native front/rear escape route: '..difficulty)
@@ -575,7 +592,7 @@ Check(calls.switch==1,
 DefensiveSpecial();observation.specialBusy=1;now=1;calls.fire=nil;SDGO_BattleAI_ProfileUpdate(npc)
 Check(calls.releaseIntent==1 and calls.fire==nil and SDGO_BattleAI_Universal.profiles[20].special.active,
       'an admitted native special clears held slot-three intent without queuing Neutral while its animation owns completion')
-observation.targets[2].hp=0;calls.switch=nil;now=2;SDGO_BattleAI_ProfileUpdate(npc)
+observation.targets[2].hp=0;observation.targets[2].alive=0;calls.switch=nil;now=2;SDGO_BattleAI_ProfileUpdate(npc)
 Check(calls.releaseIntent==2 and calls.fire==nil and not calls.switch,
       'a special miss or vanished target cannot cancel the still-busy native animation or keep attack held')
 observation.specialBusy=0;now=3;SDGO_BattleAI_ProfileUpdate(npc)
@@ -932,7 +949,7 @@ observation.targets[1].rangedVisible=1;observation.targets[1].meleeVisible=0
 Tick(0)
 Check(calls.target==1 and calls.fire==true,
       'typed ranged distance and line of sight allow legal output outside the navigation-map distance')
-Reset();observation.targets[1].hp=0
+Reset();observation.targets[1].hp=0;observation.targets[1].alive=0
 observation.targets[2].pos={x=1000,y=0,z=0};observation.targets[2].groundPos={x=1000,y=0,z=0}
 Tick(0)
 local heldState=SDGO_BattleAI_Universal.states[20]
@@ -1156,6 +1173,16 @@ Check(calls.native==0 and calls.moves==0 and calls.jumps==0 and calls.fire==true
       'native map travel retains legal gun output without initialization, motor or jump replacement')
 observation.forcedMoving=0;Tick(1)
 Check(calls.native==1,'deferred one-time initialization runs after native map travel releases')
+Reset({Difficulty=1});observation.transportMotorReserved=1;Tick(0)
+Check(calls.native==0 and calls.moves==0 and calls.jumps==0 and calls.fire==true and
+      (calls.cancelled or 0)==1,
+      'a submitted map action survives ordinary combat cancellation while retaining legal gun output')
+observation.transportMotorReserved=0;Tick(1)
+Check(calls.native==1,'one-time initialization resumes after the submitted map action releases its motor lease')
+Reset({Difficulty=1});observation.transportMotorReserved=1;observation.transportLanding=1
+observation.weapons[2].movingShot=0;Tick(0)
+Check(calls.fire==false and calls.moves==0 and calls.jumps==0,
+      'landing continuation releases a stationary-only gun so its ordinary route motor can resume')
 Reset();observation.targets={Target(1,1000,5000)};observation.targets[1].visible=0;Tick(0)
 Check(calls.explores==1 and calls.moves==0 and calls.fire==false,
       'an unseen live enemy initiates public-map exploration rather than a local sidestep')
@@ -1167,6 +1194,17 @@ Tick(1)
 Check(not SDGO_BattleAI_Universal.states[20].exploring and calls.target==1 and
       (calls.routeStops or 0)==explorationStops,
       'a shared contact replaces exploration without braking the safe native motor')
+Reset({Difficulty=1});observation.targets={Target(1,1000,5000)};Tick(0)
+observation.transportWaiting=1;Tick(200)
+Check(not SDGO_BattleAI_Universal.states[20].recovering and calls.moves==0,
+      'a bounded native map notice wait preserves its entrance goal without a recovery sidestep')
+observation.transportWaiting=0;Tick(400)
+Check(SDGO_BattleAI_Universal.states[20].recovering and calls.moves>0,
+      'ending a native map notice wait immediately restores ordinary progress recovery')
+observation.transportCompleted=0;Tick(401)
+local transported=SDGO_BattleAI_Universal.states[20];transported.repathAt=10000
+observation.transportCompleted=1;Tick(402)
+Check(transported.repathAt<10000,'a native map arrival clears the old route throttle before the next pursuit')
 Reset({Difficulty=1});observation.targets={Target(1,1000,5000)};Tick(0)
 Check(calls.routes>0 and calls.routeMode==UNIT_MOVE_EVENT_DASH,
       'Medium pursuit can use native boost instead of always walking')
@@ -1181,7 +1219,7 @@ Reset({Difficulty=1});observation.canJump=0;Tick(0)
 Check(calls.navigationJump==1,'enhanced PvP initialization enables the native obstacle-height jump gate')
 Tick(1);Check(calls.navigationJump==1,'native automatic jump permission is initialized once per life')
 local function Gate()
-  return {id=80,hp=1000,maxHp=1000,enemy=1,attackable=1,visible=1,
+  return {id=80,hp=1000,alive=1,maxHp=1000,enemy=1,attackable=1,visible=1,
     perceptionVisible=1,rangedVisible=1,meleeVisible=1,mapObstacle=1,
     distance=400,rangedDistance=400,meleeDistance=120,
     pos={x=0,y=100,z=400},groundPos={x=0,y=0,z=400}}
@@ -1216,6 +1254,81 @@ Check(calls.meleeGate==1 and calls.cancelTracking==1 and calls.moves==0 and call
 observation.meleeBusy=0;observation.meleeTracking=0;Tick(10)
 Check(calls.target==80 and calls.meleeGate==0,
       'the tracking-release lease is removed after Neutral so the new gate target can attack')
+Reset();observation.targets={};observation.moving=1;Tick(0)
+Check(calls.routes==0 and calls.explores==nil and calls.moves==0 and
+      calls.stop==1 and calls.fire==false,
+      'no opponent and no native objective stops movement and remains idle')
+local function RangedOther()
+  return {unitId=999998,allowed=1,weapons={Weapon(0,'hitscan',2400,500,300)}}
+end
+for _,difficulty in ipairs({1,2}) do
+  Reset({Difficulty=difficulty});observation.targets={Target(1,5000,1000)}
+  observation.weapons={Weapon(0,'melee',250,1200,600)};observation.selectedSlot=0
+  observation.otherForm=RangedOther();Tick(0)
+  Check(calls.transforms==1 and calls.fire==nil,
+        'a distant opponent makes a melee-only form request its native ranged form')
+  observation.transforming=1;observation.weapons=nil;observation.targets=nil
+  local stops=calls.stop or 0;local cancelled=calls.cancelled or 0
+  Tick(20)
+  Check((calls.stop or 0)==stops and (calls.cancelled or 0)==cancelled and calls.fire==nil,
+        'native transformation handoff tolerates an incomplete weapon sample without stopping either controller')
+  observation.transforming=0;observation.unitId=999998;observation.alternate=1
+  observation.formRevision=1;observation.weapons=RangedOther().weapons
+  observation.targets={Target(1,5000,1000)};Tick(100)
+  Check(calls.fire==true and calls.aim==1 and calls.switch~=1,
+        'the committed ranged-only form immediately fires its actual slot instead of retaining the old knife role')
+  observation.otherForm={unitId=999999,allowed=1,weapons={Weapon(0,'melee',250,5000,100)}}
+  observation.targets[1].distance=100;Tick(200)
+  Check(calls.transforms==1,'a new form has a bounded dwell instead of oscillating on the next decision')
+end
+Reset();observation.targets={Target(1,5000,1000)}
+for _,w in pairs(observation.weapons) do w.ammoReady=0;w.ready=0 end
+observation.otherForm=RangedOther();Tick(0)
+Check(calls.transforms==1,'empty current-form weapons select another form with real ammunition')
+Reset();observation.targets={Target(1,5000,1000)}
+observation.weapons[2].ammoReady=0;observation.weapons[2].ready=0
+observation.otherForm=RangedOther();Tick(0)
+Check(calls.transforms==1,'an empty rifle selects a loaded ranged form even while an unlimited knife remains usable')
+Reset();observation.targets={Target(1,5000,1000)}
+observation.weapons={Weapon(0,'melee',250,1200,600)};observation.selectedSlot=0
+observation.otherForm=RangedOther();observation.otherForm.weapons[1].ammoReady=0
+Tick(0)
+Check(not calls.transforms and calls.routes>0,'an empty other form does not replace a usable current melee weapon')
+Reset();observation.targets={Target(1,5000,100)}
+observation.weapons={Weapon(0,'hitscan',2000,300,500)};observation.selectedSlot=0
+observation.otherForm={unitId=999998,allowed=1,weapons={Weapon(0,'melee',250,1500,300)}};Tick(0)
+Check(calls.transforms==1,'a close engagement can select a substantially stronger ready melee form')
+Reset();observation.targets={Target(1,100,100)}
+observation.otherForm={unitId=999998,allowed=1,weapons={Weapon(0,'melee',250,5000,100)}};Tick(0)
+Check(not calls.transforms and calls.fire==true,'an available lethal current weapon finishes its target without a needless transformation')
+Reset({AutoTransform=0});observation.targets={Target(1,5000,1000)}
+observation.weapons={Weapon(0,'melee',250,1200,600)};observation.otherForm=RangedOther();Tick(0)
+Check(not calls.transforms,'the Manager automatic-transformation setting is respected')
+for _,blocked in ipairs({'hurt','meleeBusy','rangedBusy','specialBusy','forcedMoving','transportMotorReserved'}) do
+  Reset();observation.targets={Target(1,5000,1000)}
+  observation.weapons={Weapon(0,'melee',250,1200,600)};observation.selectedSlot=0
+  observation.otherForm=RangedOther();observation[blocked]=1;Tick(0)
+  Check(not calls.transforms,'transformation preserves native action ownership: '..blocked)
+end
+Reset();observation.targets={Target(1,5000,1000)}
+observation.weapons={Weapon(0,'melee',250,1200,600)};observation.selectedSlot=0
+observation.otherForm=RangedOther();observation.otherForm.allowed=0;Tick(0)
+Check(not calls.transforms and calls.routes>0,'a native transformation restriction retains normal pursuit')
+Reset();observation.targets={Target(1,5000,1000)}
+observation.weapons={Weapon(0,'melee',250,1200,600)};observation.selectedSlot=0
+observation.otherForm=RangedOther();calls.transformQueued=0;Tick(0);Tick(100)
+Check(calls.transforms==1 and calls.routes>0,'a rejected transform request keeps combat pursuit running with a bounded retry')
+Tick(500)
+Check(calls.transforms==2,'a rejected request can be retried without inventing a form acknowledgement')
+Reset();observation.formRevision=1;Tick(0)
+local formState=SDGO_BattleAI_Universal.states[20]
+formState.meleeAdvanceTarget=55;formState.meleeAdvanceAt=9999;formState.recoverUntil=9999
+formState.recovering=true;formState.requestedSlot=2;formState.repathAt=9999
+observation.formRevision=2;observation.weapons={Weapon(0,'hitscan',2000,500,300)}
+observation.selectedSlot=0;calls.switch=nil;Tick(100)
+Check(formState.meleeAdvanceTarget==nil and not formState.recovering and
+      formState.requestedSlot==nil and formState.meleeAdvanceAt==0 and calls.fire==true,
+      'a committed weapon-layout revision clears stale knife pursuit, switch and recovery state before firing')
 UNIT_MOVE_EVENT_MOVE=1;UNIT_MOVE_EVENT_DASH=4
 local enumOk,enumError=pcall(dofile,'mods/battle_ai/universal_ai.lua')
 Check(not enumOk and string.find(tostring(enumError),'native locomotion enum mismatch'),

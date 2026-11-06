@@ -56,6 +56,7 @@ extern "C" __declspec(dllexport) int __cdecl SdgoMatchAiRegisterMissionV1(
 #include <intrin.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -68,6 +69,7 @@ extern "C" __declspec(dllexport) int __cdecl SdgoMatchAiRegisterMissionV1(
 #include "../battle_ai/native_map_gate.h"
 #include "sdgo/room_titles_current.h"
 #include "sdgo/ai_scoring.h"
+#include "sdgo/mission_ai_forced_pad_observer.h"
 #include "sdgo/pvp_ai_client_observer.h"
 #include "forced_pad_observer.h"
 #include "gate_status_observer.h"
@@ -99,6 +101,7 @@ namespace
     constexpr size_t kUnitNpcState = 0x3070;    // u32, 0x0065EEF0
     constexpr size_t kUnitMasterNpc = 0x3074;   // u8
     constexpr size_t kUnitNpcFlag = 0x31ED;     // u8
+    constexpr size_t kUnitAiEnabled = 0x326C;   // u8
     constexpr size_t kUnitPendingControl = 0x30D8;
     constexpr size_t kSlotName = 0x08;          // std::wstring in the player slot
     constexpr size_t kModeCreateNpcSlot = 13;
@@ -114,7 +117,10 @@ namespace
     using PlayerSlotFn = uint8_t*(__thiscall*)(void* um, int slot);
     using WStringAssignFn = void(__thiscall*)(void* string, const wchar_t* text, size_t length);
     using AddAiUnitFn = void(__thiscall*)(void* um, uint8_t* unit);
-    using AddObjectFn = void(__thiscall*)(void* um, uint8_t* unit, uint32_t id, int flag);
+    // Native 0x0049BA20 exposes a boolean in AL but does not normalize the
+    // upper 24 bits of EAX.  Keep the complete machine return so an observer
+    // detour can return the trampoline's value byte-for-byte.
+    using AddObjectFn = uint32_t(__thiscall*)(void* um, uint8_t* unit, uint32_t id, int flag);
     using CalculateTeamFn = void(__thiscall*)(void* um);
     using GameReadyFn = void(__thiscall*)(uint8_t* service);
     using EnableAiFn = void(__thiscall*)(uint8_t* unit);
@@ -288,6 +294,9 @@ namespace
         uint32_t lastResult =
             static_cast<uint32_t>(battle_ai::native::MapTransportResult::InvalidContract);
         uint32_t lastClearReason = 0;
+        volatile LONG requestVersion = 0;
+        uint32_t requestSequence = 0;
+        uint32_t padObjectId = 0;
         battle_ai::native::ForceMoveRequest085A request{};
         battle_ai::Vec3 activationPosition{};
         bool activationPositionValid = false;
@@ -309,27 +318,35 @@ namespace
         int pendingForm = -1;
         uint32_t generation = 0;
         bool pendingInitialize = false;
+        bool missionLifeObserved = false;
+        bool missionAlive = false;
         ForcedPadState forcedPad{};
     };
     std::vector<Bot> g_botTable;
+    std::vector<Bot> g_missionPadBots;
+    uint8_t* g_missionPadMode = nullptr;
+    volatile LONG g_missionForcedPadTicks = 0;
     int g_roomDifficulty = 1;
     uint32_t g_nextUnitGeneration = 0;
     bool g_logPackets = false; // diagnostics: server packets from the spawn of AI players on
     int g_viewStateLogs = 0;   // diagnostics: dead view clicks logged this game
     bool g_logDiagnostics = false;
 
+
     struct ModeClass
     {
         const char* name;
         const char* slot; // symbol of its vftable Init slot
         ModeInitFn original;
+        const char* updateSlot;
+        int(__thiscall* updateOriginal)(uint8_t*);
     };
     ModeClass g_classes[] = {
-        {"normal", "CNormalGameMode.vtbl.Init", nullptr},
-        {"death match", "CDeathMatchGameMode.vtbl.Init", nullptr},
-        {"grid match", "CGridMatchGameMode.vtbl.Init", nullptr},
-        {"leader match", "CLeaderMatchGameMode.vtbl.Init", nullptr},
-        {"tag match", "CTagMatchGameMode.vtbl.Init", nullptr},
+        {"normal", "CNormalGameMode.vtbl.Init", nullptr,"CNormalGameMode.vtbl.Update",nullptr},
+        {"death match", "CDeathMatchGameMode.vtbl.Init", nullptr,"CDeathMatchGameMode.vtbl.Update",nullptr},
+        {"grid match", "CGridMatchGameMode.vtbl.Init", nullptr,"CGridMatchGameMode.vtbl.Update",nullptr},
+        {"leader match", "CLeaderMatchGameMode.vtbl.Init", nullptr,"CLeaderMatchGameMode.vtbl.Update",nullptr},
+        {"tag match", "CTagMatchGameMode.vtbl.Init", nullptr,"CTagMatchGameMode.vtbl.Update",nullptr},
     };
     void** g_vtables[5] = {}; // vftable of each class, from its Init slot
 
@@ -988,12 +1005,26 @@ namespace
 
     // ---- game ready: switch the AI on --------------------------------------------------
     //
-    // GameReady (0x004B2390) runs every frame, including while players are frozen.
+    // GameReady (0x004B2390) owns the startup handshake while players are frozen.
     // At 0x004B25DA it commits phase 3, then releases player control (0x00671170)
     // and enables script-mode AI (0x004B272B). PvP bots must wait for that same
     // native phase, regardless of difficulty or whether battle_ai is installed.
+    // Map volumes are polled by each PvP mode's continuous Update instead.
 
     bool GuardedUpdateForcedPads();
+    volatile LONG g_forcedPadTicks=0;
+    template<size_t I>
+    int __fastcall ModeUpdate(uint8_t* mode,void*)
+    {
+        const int result=g_classes[I].updateOriginal(mode);
+        if(mode==g_botMode&&g_aiEnabled) {
+            InterlockedIncrement(&g_forcedPadTicks);
+            GuardedUpdateForcedPads();
+        }
+        return result;
+    }
+    using ModeUpdateDetour=int(__fastcall*)(uint8_t*,void*);
+    const ModeUpdateDetour g_updateDetours[]={&ModeUpdate<0>,&ModeUpdate<1>,&ModeUpdate<2>,&ModeUpdate<3>,&ModeUpdate<4>};
 
     void EnableBots(uint8_t* service)
     {
@@ -1037,8 +1068,6 @@ namespace
         __try {
             const bool enabledBefore = g_aiEnabled;
             EnableBots(service);
-            if (!GuardedUpdateForcedPads())
-                return false;
             ObserveStart(service, !enabledBefore && g_aiEnabled);
             return true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -1319,11 +1348,12 @@ namespace
         return nullptr;
     }
 
-    // ---- authored ForcedMove map volumes for locally owned PvP bots ----------------------
+    // ---- authored ForcedMove map volumes for locally owned AI participants ----------------
     //
     // The stock map-volume path admits only the native local-player kind.  A match_ai
     // participant is a registered CNPC, so the room master's copy must perform the same
-    // read-only map query and submit the same ordinary request.  The server remains the
+    // read-only map query and submit the same ordinary request.  PvP bots and co-op mission
+    // wingmen retain separate native participant lifecycles.  The server remains the
     // authority: no local movement state, position, HP, or notification is manufactured.
 
     constexpr size_t kUnitMovementController = 0x9C8;
@@ -1331,7 +1361,7 @@ namespace
     constexpr size_t kUnitControlWord = 0x9D8;
     constexpr size_t kUnitPositionNode = 0x08;
     constexpr size_t kForcedPadNodePosition = 0x88;
-    constexpr DWORD kForcedPadRequestTimeoutMs = 3000;
+    constexpr DWORD kForcedPadRequestTimeoutMs = battle_ai::native::kMapTransportRequestTimeoutMs;
     constexpr DWORD kForcedPadDisplacementTimeoutMs = 10000;
     constexpr float kForcedPadDisplacementSquared = 0.0001f;
     constexpr size_t kForcedMoveStateNode = 0x124;
@@ -1339,8 +1369,7 @@ namespace
 
     // This is the integration's explicit finite payload contract.  Authored data outside
     // this envelope is rejected instead of being guessed, clamped, or written back.
-    const battle_ai::native::MapTransportBounds kForcedPadBounds{
-        1.0f, 80.0f, 1.0f, 120.0f, 0.5f, 1.5f};
+    const auto kForcedPadBounds=battle_ai::native::kAuthoredMapTransportBounds;
 
     enum class ForcedPadClearReason : uint32_t
     {
@@ -1353,11 +1382,49 @@ namespace
         SendFailure = 6
     };
 
+    enum class ForcedPadScope : uint8_t
+    {
+        Pvp,
+        Mission
+    };
+
     struct ForcedPadAttempt
     {
         Bot* bot;
         void* unitManager;
+        ForcedPadScope scope = ForcedPadScope::Pvp;
+        uint8_t* padObject = nullptr;
+        uint32_t padObjectId = 0;
     };
+
+    bool IsMissionRoomMode(uint16_t mode)
+    {
+        return mode == 5 || mode == 8 || mode == 10;
+    }
+
+    bool MissionBotRegistered(void* um, const Bot& bot)
+    {
+        if (!um || !g_missionLifecycle || !bot.unit ||
+            g_missionLifecycle->object_for_pilot(um, bot.pilotId) !=
+                bot.objectId ||
+            g_missionLifecycle->slot_for_object(um, bot.objectId) !=
+                bot.slot) {
+            return false;
+        }
+        return g_findObject(um, bot.objectId) == bot.unit;
+    }
+
+    const Bot* MissionBotByPilot(void* um, uint32_t pilotId)
+    {
+        if (!(pilotId & kAiPilotBit) || !g_missionPadMode ||
+            CurrentMode() != g_missionPadMode) {
+            return nullptr;
+        }
+        for (const Bot& bot : g_missionPadBots)
+            if (bot.pilotId == pilotId && MissionBotRegistered(um, bot))
+                return &bot;
+        return nullptr;
+    }
 
     bool ReadBotPosition(const Bot& bot, battle_ai::Vec3& position)
     {
@@ -1397,13 +1464,111 @@ namespace
         InterlockedExchange(&state.outstanding, 0);
         state.generation = bot.generation;
         state.outstandingGeneration = 0;
+        InterlockedIncrement(&state.requestVersion);
+        state.request = {};
+        state.requestSequence = 0;
+        state.padObjectId = 0;
         state.requestTick = 0;
+        InterlockedIncrement(&state.requestVersion);
         state.activationTick = 0;
         state.activationPosition = {};
         state.activationPositionValid = false;
         state.awaitingDisplacement = false;
         state.lastClearReason =
             static_cast<uint32_t>(ForcedPadClearReason::GenerationChange);
+    }
+
+    bool MissionPadScope(
+        uint8_t* mode, uint8_t** roomOut, void** unitManagerOut)
+    {
+        if (!mode || mode != CurrentMode() || !g_missionLifecycle ||
+            !g_game.unitManager || !g_game.isNetwork ||
+            !g_game.isNetwork()) {
+            return false;
+        }
+        uint8_t* room = *reinterpret_cast<uint8_t**>(mode + kModeRoom);
+        void* unitManager = *g_game.unitManager;
+        if (!room || !unitManager ||
+            !IsMissionRoomMode(
+                *reinterpret_cast<uint16_t*>(room + kModeRoomMode)) ||
+            !LocalIsRoomMaster(room) ||
+            g_game.isObserver(unitManager)) {
+            return false;
+        }
+        *roomOut = room;
+        *unitManagerOut = unitManager;
+        return true;
+    }
+
+    void RefreshMissionPadBots(
+        uint8_t* mode, uint8_t* room, void* unitManager)
+    {
+        std::vector<Bot> refreshed;
+        const int count =
+            RecordCount(room, kRoomAiBegin, kRoomAiEnd);
+        uint8_t* records =
+            *reinterpret_cast<uint8_t**>(room + kRoomAiBegin);
+        if (count <= 0 || !records) {
+            g_missionPadBots.clear();
+            g_missionPadMode = nullptr;
+            return;
+        }
+        refreshed.reserve(static_cast<size_t>(count));
+        for (int index = 0; index < count; ++index) {
+            uint8_t* record = records + index * kRecordSize;
+            const uint32_t pilotId =
+                *reinterpret_cast<uint32_t*>(
+                    record + kRecordServerId);
+            if (!(pilotId & kAiPilotBit))
+                continue;
+            const uint32_t objectId =
+                g_missionLifecycle->object_for_pilot(
+                    unitManager, pilotId);
+            const int slot =
+                objectId
+                    ? g_missionLifecycle->slot_for_object(
+                          unitManager, objectId)
+                    : -1;
+            auto* unit = objectId
+                             ? static_cast<uint8_t*>(
+                                   g_findObject(unitManager, objectId))
+                             : nullptr;
+            if (!unit || slot < 0)
+                continue;
+
+            Bot* previous = nullptr;
+            for (Bot& candidate : g_missionPadBots)
+                if (candidate.pilotId == pilotId &&
+                    candidate.objectId == objectId &&
+                    candidate.slot == slot &&
+                    candidate.unit == unit) {
+                    previous = &candidate;
+                    break;
+                }
+            Bot bot =
+                previous ? *previous
+                         : Bot{pilotId, objectId, slot, unit};
+            if (!previous)
+                bot.generation = NextUnitGeneration();
+
+            int32_t hp = 0;
+            const bool alive =
+                battle_ai::native::detail::Read(
+                    unit, static_cast<size_t>(0x38), hp) &&
+                hp > 0;
+            if (bot.missionLifeObserved &&
+                bot.missionAlive != alive) {
+                bot.generation = NextUnitGeneration();
+            }
+            bot.missionLifeObserved = true;
+            bot.missionAlive = alive;
+            if (bot.forcedPad.generation != bot.generation)
+                ResetForcedPadGeneration(bot);
+            refreshed.push_back(bot);
+        }
+        g_missionPadBots.swap(refreshed);
+        g_missionPadMode =
+            g_missionPadBots.empty() ? nullptr : mode;
     }
 
     void MarkForcedPadActivation(Bot& bot, DWORD now)
@@ -1419,14 +1584,22 @@ namespace
     {
         auto* attempt = static_cast<ForcedPadAttempt*>(opaque);
         if (!attempt || !attempt->bot || !attempt->unitManager ||
-            !g_aiEnabled || !g_botMode || CurrentMode() != g_botMode ||
             !g_game.unitManager || *g_game.unitManager != attempt->unitManager) {
             return false;
         }
         const Bot& bot = *attempt->bot;
+        const bool registered =
+            attempt->scope == ForcedPadScope::Pvp
+                ? g_aiEnabled && g_botMode &&
+                      CurrentMode() == g_botMode &&
+                      SlotHolds(attempt->unitManager, bot)
+                : g_missionPadMode &&
+                      CurrentMode() == g_missionPadMode &&
+                      MissionBotRegistered(
+                          attempt->unitManager, bot);
         if (!unit || bot.unit != unit || bot.generation == 0 ||
             bot.forcedPad.generation != bot.generation ||
-            !SlotHolds(attempt->unitManager, bot) ||
+            !registered ||
             g_findObject(attempt->unitManager, bot.objectId) != unit) {
             return false;
         }
@@ -1435,7 +1608,8 @@ namespace
         uint8_t localControl = 0;
         uint8_t remote = 0;
         uint8_t masterNpc = 0;
-        return battle_ai::native::detail::Read(
+        const bool identity =
+               battle_ai::native::detail::Read(
                    unit, kUnitObjectId, objectId) &&
                battle_ai::native::detail::Read(
                    unit, kUnitServerId, pilotId) &&
@@ -1448,7 +1622,19 @@ namespace
                objectId == bot.objectId && pilotId == bot.pilotId &&
                (pilotId & kAiPilotBit) != 0 &&
                localControl != 0 && remote == 0 && masterNpc != 0;
+        if (!identity ||
+            attempt->scope == ForcedPadScope::Pvp)
+            return identity;
+        uint8_t aiEnabled = 0;
+        return battle_ai::native::detail::Read(
+                   unit, kUnitAiEnabled, aiEnabled) &&
+               aiEnabled != 0;
     }
+
+    bool ForcedPadActionAllowed(
+        void*, const uint8_t* unit);
+    bool ForcedPadControlAllowed(
+        void*, const uint8_t* unit);
 
     bool GateOwnedLocalNpc(void*,uint32_t pilot,uint32_t objectId)
     {
@@ -1562,6 +1748,33 @@ namespace
         return NativeForcedMoving(unit);
     }
 
+    uint8_t* ForcedPadRoom(const ForcedPadAttempt& attempt)
+    {
+        uint8_t* mode = nullptr;
+        if (attempt.scope == ForcedPadScope::Pvp) {
+            mode = CurrentPvpMode();
+            if (mode != g_botMode)
+                return nullptr;
+        } else {
+            mode = CurrentMode();
+            if (mode != g_missionPadMode)
+                return nullptr;
+        }
+        return mode
+                   ? *reinterpret_cast<uint8_t**>(
+                         mode + kModeRoom)
+                   : nullptr;
+    }
+
+    const Bot* ForcedPadBotByPilot(
+        const ForcedPadAttempt& attempt, uint32_t pilotId)
+    {
+        return attempt.scope == ForcedPadScope::Pvp
+                   ? BotByPilot(attempt.unitManager, pilotId)
+                   : MissionBotByPilot(
+                         attempt.unitManager, pilotId);
+    }
+
     bool ForcedPadAuthority(
         void* opaque, const uint8_t* unit,
         const uint8_t* forcedMoveObject,
@@ -1577,17 +1790,26 @@ namespace
             (request->pilotId & kAiPilotBit) == 0) {
             return false;
         }
-        uint8_t* mode = CurrentPvpMode();
-        uint8_t* room =
-            mode == g_botMode
-                ? *reinterpret_cast<uint8_t**>(mode + kModeRoom)
-                : nullptr;
+        uint8_t* room = ForcedPadRoom(*attempt);
         if (!room || !LocalIsRoomMaster(room) ||
             g_game.isObserver(attempt->unitManager)) {
             return false;
         }
-        return BotByPilot(attempt->unitManager, request->pilotId) ==
-               attempt->bot;
+        if (ForcedPadBotByPilot(
+                *attempt, request->pilotId) !=
+            attempt->bot)
+            return false;
+        attempt->padObject = const_cast<uint8_t*>(
+            forcedMoveObject);
+        uint32_t objectId = 0;
+        attempt->padObjectId =
+            battle_ai::native::detail::Read(
+                forcedMoveObject,
+                kUnitObjectId,
+                objectId)
+                ? objectId
+                : 0;
+        return true;
     }
 
     bool ForcedPadSubmit(
@@ -1604,11 +1826,7 @@ namespace
             return false;
         }
 
-        uint8_t* mode = CurrentPvpMode();
-        uint8_t* room =
-            mode == g_botMode
-                ? *reinterpret_cast<uint8_t**>(mode + kModeRoom)
-                : nullptr;
+        uint8_t* room = ForcedPadRoom(*attempt);
         if (!room || !LocalIsRoomMaster(room) ||
             g_game.isObserver(attempt->unitManager)) {
             return false;
@@ -1617,13 +1835,9 @@ namespace
         // The native getter can initialize its singleton.  Reach it only after
         // the live battle, ownership, host, and network checks above.
         uint8_t* sender = g_forceMoveSender ? g_forceMoveSender() : nullptr;
-        uint8_t* networkImplementation = nullptr;
-        uint8_t* connection = nullptr;
+        uint32_t connection = 0;
         if (!sender || !g_sendForceMovePacket ||
-            !battle_ai::native::detail::ReadPointer(
-                sender, 0x10, networkImplementation) ||
-            !battle_ai::native::detail::ReadPointer(
-                sender, 0x14, connection)) {
+            !battle_ai::native::ReadForceMoveConnection(sender,connection)) {
             return false;
         }
 
@@ -1632,8 +1846,13 @@ namespace
         if (InterlockedCompareExchange(&state.outstanding, 1, 0) != 0)
             return false;
         state.outstandingGeneration = bot.generation;
+        InterlockedIncrement(&state.requestVersion);
         state.request = *request;
+        state.requestSequence = 0;
+        state.padObjectId =
+            attempt->padObjectId;
         state.requestTick = GetTickCount();
+        InterlockedIncrement(&state.requestVersion);
         state.awaitingDisplacement = false;
         state.activationPositionValid = false;
         state.lastClearReason =
@@ -1642,24 +1861,38 @@ namespace
         ++*reinterpret_cast<uint32_t*>(sender + 0x58);
         *reinterpret_cast<uint32_t*>(sender + 0x5C) +=
             static_cast<uint32_t>(sizeof(*request));
+        // 6D0C21..6D0C36 forwards sender+14 as an opaque connection value and
+        // uses the sender itself as ECX. It does not dereference that value or
+        // inspect sender+10. ReadPointer would reject valid native handles.
         const int sent = g_sendForceMovePacket(
-            sender, connection, request, static_cast<int>(sizeof(*request)), 0);
+            sender, reinterpret_cast<void*>(static_cast<uintptr_t>(connection)), request, static_cast<int>(sizeof(*request)), 0);
         if (!sent) {
             ++state.sendFailureCount;
+            InterlockedIncrement(
+                &state.requestVersion);
+            state.requestSequence = 0;
+            InterlockedIncrement(
+                &state.requestVersion);
             ClearForcedPadOutstanding(
                 bot, ForcedPadClearReason::SendFailure);
             return false;
         }
+        InterlockedIncrement(&state.requestVersion);
         ++state.requestCount;
+        state.requestSequence =
+            state.requestCount;
+        InterlockedIncrement(&state.requestVersion);
         return true;
     }
 
-    void ReconcileForcedPad(Bot& bot, void* unitManager, DWORD now)
+    void ReconcileForcedPad(
+        Bot& bot, void* unitManager, DWORD now,
+        ForcedPadScope scope)
     {
         if (bot.forcedPad.generation != bot.generation)
             ResetForcedPadGeneration(bot);
 
-        ForcedPadAttempt attempt{&bot, unitManager};
+        ForcedPadAttempt attempt{&bot, unitManager, scope};
         if (!ForcedPadOwnedLocalAi(&attempt, bot.unit)) {
             if (ClearForcedPadOutstanding(
                     bot, ForcedPadClearReason::OwnershipLoss)) {
@@ -1725,12 +1958,15 @@ namespace
             g_game.unitManager ? *g_game.unitManager : nullptr;
         const DWORD now = GetTickCount();
         for (Bot& bot : g_botTable) {
-            ReconcileForcedPad(bot, unitManager, now);
+            ReconcileForcedPad(
+                bot, unitManager, now,
+                ForcedPadScope::Pvp);
             if (!unitManager || !g_aiEnabled || !g_botMode ||
                 CurrentMode() != g_botMode || bot.generation == 0) {
                 continue;
             }
-            ForcedPadAttempt attempt{&bot, unitManager};
+            ForcedPadAttempt attempt{
+                &bot, unitManager, ForcedPadScope::Pvp};
             battle_ai::native::MapTransportApi api = g_forcedPadApi;
             api.context = &attempt;
             const auto result = battle_ai::native::TryMapTransport(
@@ -1738,6 +1974,49 @@ namespace
                 static_cast<uint8_t*>(unitManager), bot.unit,
                 &bot.forcedPad.transport);
             bot.forcedPad.lastResult = static_cast<uint32_t>(result);
+        }
+    }
+
+    void UpdateMissionForcedPads(uint8_t* mode)
+    {
+        if (!g_forcedPadBridgeAvailable) {
+            g_missionPadBots.clear();
+            g_missionPadMode = nullptr;
+            return;
+        }
+        uint8_t* room = nullptr;
+        void* unitManager = nullptr;
+        if (!MissionPadScope(
+                mode, &room, &unitManager)) {
+            g_missionPadBots.clear();
+            g_missionPadMode = nullptr;
+            return;
+        }
+        RefreshMissionPadBots(
+            mode, room, unitManager);
+        const DWORD now = GetTickCount();
+        for (Bot& bot : g_missionPadBots) {
+            ReconcileForcedPad(
+                bot, unitManager, now,
+                ForcedPadScope::Mission);
+            if (g_missionPadMode != mode ||
+                bot.generation == 0) {
+                continue;
+            }
+            ForcedPadAttempt attempt{
+                &bot, unitManager,
+                ForcedPadScope::Mission};
+            battle_ai::native::MapTransportApi api =
+                g_forcedPadApi;
+            api.context = &attempt;
+            const auto result =
+                battle_ai::native::TryMapTransport(
+                    api, kForcedPadBounds,
+                    static_cast<uint8_t*>(unitManager),
+                    bot.unit,
+                    &bot.forcedPad.transport);
+            bot.forcedPad.lastResult =
+                static_cast<uint32_t>(result);
         }
     }
 
@@ -1761,12 +2040,19 @@ namespace
         const battle_ai::native::ForceMoveNotice0584& notice)
     {
         if (notice.opcode != battle_ai::native::kForceMoveNoticeOpcode ||
-            !(notice.pilotId & kAiPilotBit) || !g_botMode ||
-            CurrentMode() != g_botMode || !g_game.unitManager) {
+            !(notice.pilotId & kAiPilotBit) ||
+            !g_game.unitManager) {
             return;
         }
         void* unitManager = *g_game.unitManager;
-        const Bot* found = BotByPilot(unitManager, notice.pilotId);
+        const Bot* found = nullptr;
+        if (g_botMode && CurrentMode() == g_botMode)
+            found = BotByPilot(
+                unitManager, notice.pilotId);
+        if (!found && g_missionPadMode &&
+            CurrentMode() == g_missionPadMode)
+            found = MissionBotByPilot(
+                unitManager, notice.pilotId);
         if (!found)
             return;
         Bot& bot = *const_cast<Bot*>(found);
@@ -2566,6 +2852,106 @@ namespace
 #include "observer.inl"
 
 extern "C" __declspec(dllexport) int __cdecl
+SdgoMatchAiMissionTickV1(uint8_t* mode)
+{
+    if (!mode || !g_api)
+        return 0;
+    __try {
+        InterlockedIncrement(
+            &g_missionForcedPadTicks);
+        UpdateMissionForcedPads(mode);
+        return 1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_missionPadBots.clear();
+        g_missionPadMode = nullptr;
+        if (g_forcedPadFaults++ < 5)
+            g_api->Log(
+                g_mod, SDGO_LOG_ERROR,
+                "exception %08lX in the mission forced-pad bridge",
+                GetExceptionCode());
+        return 0;
+    }
+}
+
+extern "C" __declspec(dllexport) int __cdecl
+SdgoMissionAiClientGetForcedPadStatusV1(
+    SdgoMissionAiClientForcedPadStatusV1* status)
+{
+    __try {
+        if (!status || status->size < sizeof(*status) ||
+            status->version !=
+                SDGO_MISSION_AI_CLIENT_FORCED_PAD_STATUS_VERSION) {
+            return 0;
+        }
+        SdgoMissionAiClientForcedPadStatusV1 snapshot{};
+        snapshot.size = sizeof(snapshot);
+        snapshot.version =
+            SDGO_MISSION_AI_CLIENT_FORCED_PAD_STATUS_VERSION;
+        snapshot.mode_object = static_cast<uint32_t>(
+            reinterpret_cast<uintptr_t>(
+                g_missionPadMode));
+        snapshot.bridge_available =
+            g_forcedPadBridgeAvailable ? 1u : 0u;
+        snapshot.tick_count = static_cast<uint32_t>(
+            InterlockedCompareExchange(
+                &g_missionForcedPadTicks, 0, 0));
+        const size_t count = (std::min)(
+            g_missionPadBots.size(),
+            static_cast<size_t>(12));
+        snapshot.bot_count =
+            static_cast<uint32_t>(count);
+        for (size_t index = 0; index < count;
+             ++index) {
+            const Bot& bot =
+                g_missionPadBots[index];
+            const ForcedPadState& state =
+                bot.forcedPad;
+            auto& copied = snapshot.bots[index];
+            copied.pilot_id = bot.pilotId;
+            copied.object_id = bot.objectId;
+            copied.generation = bot.generation;
+            copied.request_count =
+                state.requestCount;
+            copied.notice_count =
+                state.noticeCount;
+            copied.displacement_count =
+                state.displacementCount;
+            copied.timeout_count =
+                state.timeoutCount;
+            copied.send_failure_count =
+                state.sendFailureCount;
+            copied.ownership_loss_count =
+                state.ownershipLossCount;
+            copied.outstanding =
+                InterlockedCompareExchange(
+                    const_cast<volatile LONG*>(
+                        &state.outstanding),
+                    0, 0) != 0
+                    ? 1u
+                    : 0u;
+            copied.outstanding_generation =
+                state.outstandingGeneration;
+            copied.last_result = state.lastResult;
+            copied.last_clear_reason =
+                state.lastClearReason;
+            copied.activation_position_valid =
+                state.activationPositionValid ? 1u
+                                              : 0u;
+            copied.activation_position_x =
+                state.activationPosition.x;
+            copied.activation_position_y =
+                state.activationPosition.y;
+            copied.activation_position_z =
+                state.activationPosition.z;
+        }
+        *status = snapshot;
+        return 1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+extern "C" __declspec(dllexport) int __cdecl
 SdgoPvpAiClientGetForcedPadStatusV1(
     SdgoPvpAiClientForcedPadStatusV1* status)
 {
@@ -2620,6 +3006,205 @@ SdgoPvpAiClientGetForcedPadStatusV1(
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return 0;
     }
+}
+
+extern "C" __declspec(dllexport) int __cdecl
+SdgoMissionAiClientGetForcedPadStatusV2(
+    SdgoMissionAiClientForcedPadStatusV2* status)
+{
+    __try {
+        if (!status || status->size < sizeof(*status) ||
+            status->version !=
+                SDGO_MISSION_AI_CLIENT_FORCED_PAD_STATUS_V2_VERSION) {
+            return 0;
+        }
+        SdgoMissionAiClientForcedPadStatusV2 snapshot{};
+        snapshot.size = sizeof(snapshot);
+        snapshot.version =
+            SDGO_MISSION_AI_CLIENT_FORCED_PAD_STATUS_V2_VERSION;
+        snapshot.mode_object = static_cast<uint32_t>(
+            reinterpret_cast<uintptr_t>(g_missionPadMode));
+        snapshot.bridge_available =
+            g_forcedPadBridgeAvailable ? 1u : 0u;
+        snapshot.tick_count = GetTickCount();
+        const size_t count = (std::min)(
+            g_missionPadBots.size(),
+            static_cast<size_t>(12));
+        snapshot.bot_count = static_cast<uint32_t>(count);
+        for (size_t index = 0; index < count; ++index) {
+            const Bot& bot = g_missionPadBots[index];
+            const ForcedPadState& state = bot.forcedPad;
+            auto& copied = snapshot.bots[index];
+            copied.pilot_id = bot.pilotId;
+            copied.object_id = bot.objectId;
+            copied.generation = bot.generation;
+            copied.notice_count = state.noticeCount;
+            copied.outstanding =
+                InterlockedCompareExchange(
+                    const_cast<volatile LONG*>(&state.outstanding), 0, 0) != 0
+                    ? 1u
+                    : 0u;
+            copied.outstanding_generation =
+                state.outstandingGeneration;
+            copied.last_result = state.lastResult;
+            copied.last_clear_reason = state.lastClearReason;
+
+            battle_ai::native::ForceMoveRequest085A request{};
+            uint32_t requestCount = 0;
+            uint32_t requestSequence = 0;
+            uint32_t padObjectId = 0;
+            DWORD requestTick = 0;
+            bool stable = false;
+            for (int retry = 0; retry < 8; ++retry) {
+                const LONG before = InterlockedCompareExchange(
+                    const_cast<volatile LONG*>(&state.requestVersion), 0, 0);
+                if ((before & 1) != 0)
+                    continue;
+                request = state.request;
+                requestCount = state.requestCount;
+                requestSequence = state.requestSequence;
+                padObjectId = state.padObjectId;
+                requestTick = state.requestTick;
+                MemoryBarrier();
+                const LONG after = InterlockedCompareExchange(
+                    const_cast<volatile LONG*>(&state.requestVersion), 0, 0);
+                if (before == after && (after & 1) == 0) {
+                    stable = true;
+                    break;
+                }
+            }
+            copied.request_count = requestCount;
+            copied.request_tick = requestTick;
+            const bool payloadValid =
+                stable &&
+                state.generation == bot.generation &&
+                requestSequence != 0 &&
+                requestSequence == requestCount &&
+                request.opcode ==
+                    battle_ai::native::kForceMoveRequestOpcode &&
+                request.routeId == 0 &&
+                request.pilotId == bot.pilotId;
+            copied.payload_valid = payloadValid ? 1u : 0u;
+            if (payloadValid) {
+                copied.pad_object_valid =
+                    padObjectId != 0 ? 1u : 0u;
+                copied.pad_object_id = padObjectId;
+                copied.request_pilot_id = request.pilotId;
+                copied.speed = request.speed;
+                copied.duration_updates =
+                    request.durationUpdates;
+                copied.direction_x = request.direction.x;
+                copied.direction_y = request.direction.y;
+                copied.direction_z = request.direction.z;
+            }
+        }
+        *status = snapshot;
+        return 1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+extern "C" __declspec(dllexport) int __cdecl
+SdgoPvpAiClientGetForcedPadStatusV2(
+    SdgoPvpAiClientForcedPadStatusV2* status)
+{
+    __try {
+        if (!status || status->size < sizeof(*status) ||
+            status->version !=
+                SDGO_PVP_AI_CLIENT_FORCED_PAD_STATUS_V2_VERSION) {
+            return 0;
+        }
+        SdgoPvpAiClientForcedPadStatusV2 snapshot{};
+        snapshot.size = sizeof(snapshot);
+        snapshot.version =
+            SDGO_PVP_AI_CLIENT_FORCED_PAD_STATUS_V2_VERSION;
+        snapshot.battle_start_sequence =
+            static_cast<uint32_t>(InterlockedCompareExchange(
+                &g_receivedBattleStartCount, 0, 0));
+        snapshot.bridge_available =
+            g_forcedPadBridgeAvailable ? 1u : 0u;
+        snapshot.tick_count = GetTickCount();
+        const size_t count =
+            (std::min)(g_botTable.size(), static_cast<size_t>(12));
+        snapshot.bot_count = static_cast<uint32_t>(count);
+        for (size_t index = 0; index < count; ++index) {
+            const Bot& bot = g_botTable[index];
+            const ForcedPadState& state = bot.forcedPad;
+            auto& copied = snapshot.bots[index];
+            copied.pilot_id = bot.pilotId;
+            copied.object_id = bot.objectId;
+            copied.generation = bot.generation;
+            copied.notice_count = state.noticeCount;
+            copied.outstanding =
+                InterlockedCompareExchange(
+                    const_cast<volatile LONG*>(&state.outstanding), 0, 0) != 0
+                    ? 1u
+                    : 0u;
+            copied.outstanding_generation =
+                state.outstandingGeneration;
+            copied.last_result = state.lastResult;
+            copied.last_clear_reason = state.lastClearReason;
+
+            battle_ai::native::ForceMoveRequest085A request{};
+            uint32_t requestCount = 0;
+            uint32_t requestSequence = 0;
+            uint32_t padObjectId = 0;
+            DWORD requestTick = 0;
+            bool stable = false;
+            for (int retry = 0; retry < 8; ++retry) {
+                const LONG before = InterlockedCompareExchange(
+                    const_cast<volatile LONG*>(&state.requestVersion), 0, 0);
+                if ((before & 1) != 0)
+                    continue;
+                request = state.request;
+                requestCount = state.requestCount;
+                requestSequence = state.requestSequence;
+                padObjectId = state.padObjectId;
+                requestTick = state.requestTick;
+                MemoryBarrier();
+                const LONG after = InterlockedCompareExchange(
+                    const_cast<volatile LONG*>(&state.requestVersion), 0, 0);
+                if (before == after && (after & 1) == 0) {
+                    stable = true;
+                    break;
+                }
+            }
+            copied.request_count = requestCount;
+            copied.request_tick = requestTick;
+            const bool payloadValid =
+                stable &&
+                state.generation == bot.generation &&
+                requestSequence != 0 &&
+                requestSequence == requestCount &&
+                request.opcode ==
+                    battle_ai::native::kForceMoveRequestOpcode &&
+                request.routeId == 0 &&
+                request.pilotId == bot.pilotId;
+            copied.payload_valid = payloadValid ? 1u : 0u;
+            if (payloadValid) {
+                copied.pad_object_valid =
+                    padObjectId != 0 ? 1u : 0u;
+                copied.pad_object_id = padObjectId;
+                copied.request_pilot_id = request.pilotId;
+                copied.speed = request.speed;
+                copied.duration_updates =
+                    request.durationUpdates;
+                copied.direction_x = request.direction.x;
+                copied.direction_y = request.direction.y;
+                copied.direction_z = request.direction.z;
+            }
+        }
+        *status = snapshot;
+        return 1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+extern "C" __declspec(dllexport) uint32_t __cdecl SdgoPvpAiClientGetForcedPadTickCountV1()
+{
+    return static_cast<uint32_t>(InterlockedCompareExchange(&g_forcedPadTicks,0,0));
 }
 
 extern "C" __declspec(dllexport) int __cdecl SdgoPvpAiClientGetGateStatusV1(SdgoPvpAiClientGateStatusV1* output)
@@ -2770,6 +3355,14 @@ static __declspec(naked) void DeadNpcPoolDetour()
 
 SDGO_MOD_ENTRY
 {
+    if (!api || !mod ||
+        api->version != SDGO_API_VERSION ||
+        api->size <
+            offsetof(SdgoApi, HookSite) +
+                sizeof(api->HookSite) ||
+        !api->Symbol || !api->HookCode ||
+        !api->HookSite || !api->Log)
+        return 0;
     g_api = api;
     g_mod = mod;
     bool bound = Bind(g_game.unitManager, "game.unit_manager") && Bind(g_game.isNetwork, "game.is_network") &&
@@ -2928,8 +3521,11 @@ SDGO_MOD_ENTRY
         if (auto slot = reinterpret_cast<void**>(api->Symbol(mod, g_classes[i].slot)))
             g_vtables[i] = slot - kModeInitSlot;
         if (api->HookSlot(mod, g_classes[i].slot, reinterpret_cast<void*>(g_detours[i]),
-                          reinterpret_cast<void**>(&g_classes[i].original)))
+                          reinterpret_cast<void**>(&g_classes[i].original))) {
+            if(!api->HookSlot(mod,g_classes[i].updateSlot,reinterpret_cast<void*>(g_updateDetours[i]),
+                              reinterpret_cast<void**>(&g_classes[i].updateOriginal)))return 0;
             ++hooked;
+        }
         else
             api->Log(mod, SDGO_LOG_WARN, "%s mode not hooked; it gets no AI players", g_classes[i].name);
     }

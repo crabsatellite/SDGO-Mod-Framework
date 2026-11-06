@@ -144,6 +144,7 @@ int wmain(int argc,wchar_t** argv) {
     bool ownership=argc>1 && !wcscmp(argv[1],L"ownership");
     bool easy=argc>1 && !wcscmp(argv[1],L"easy");
     bool pacing=argc>1 && !wcscmp(argv[1],L"medium-pacing");
+    bool forms=argc>1 && !wcscmp(argv[1],L"forms");
     bool medium=argc>1 && (!wcscmp(argv[1],L"medium")||!wcscmp(argv[1],L"enabled"));
     wchar_t exe[MAX_PATH]; GetModuleFileNameW(nullptr,exe,MAX_PATH); *wcsrchr(exe,L'\\')=0; g_root=exe;
     Symbols(bad);
@@ -170,7 +171,7 @@ int wmain(int argc,wchar_t** argv) {
     SdgoBoot boot={sizeof(boot),"battle_ai_native_test",GetModuleHandleW(nullptr)};
     Check(init(&boot)!=0,"real core initialization");
     Unit unit; unit.bytes[0x326C]=1; *reinterpret_cast<uint32_t*>(unit.bytes+0x3238)=3604001;
-    if(generic||ownership||easy||medium||missing||pacing) {
+    if(generic||ownership||easy||medium||missing||pacing||forms) {
         native_world::Initialize(unit.bytes,g_L);
     }
     if(generic||ownership||easy||medium) {
@@ -187,6 +188,48 @@ int wmain(int argc,wchar_t** argv) {
     lua_pushnumber(g_L,987);
     unit.Init(reinterpret_cast<void*>(1)); unit.Think();
     Check(lua_gettop(g_L)==1 && lua_tonumber(g_L,1)==987,"adapter preserves incoming Lua stack");
+    if(forms) {
+        auto movement=native_world::movements[0].data();
+        auto attack=native_world::fsms[0].data();
+        auto definition=*reinterpret_cast<uint8_t**>(unit.bytes+0x9C4);
+        std::array<uint8_t,0x300> parked{};
+        native_world::Put(unit.bytes,0xAB0,parked.data());
+        native_world::Put(movement,0x21C,unit.bytes);native_world::Put(movement,0x224,attack);
+        definition[0x272]=3;native_world::Put(definition,0x13C,uint32_t(888777));
+        native_world::Put(parked.data(),0,uint32_t(888777));parked[0x140]=3;parked[0x247]=1;parked[0x272]=3;
+        native_world::Put(parked.data(),0x13C,*reinterpret_cast<uint32_t*>(definition));
+        native_world::Put(parked.data(),0x249,uint32_t(102));
+        native_world::Put(attack,0x56C,int16_t(7));native_world::Put(attack,0x56C+8,int16_t(0));
+        native_world::Put(attack,0x56C+0xC,native_world::weapons[1].data());
+        Check(Eval("wantForm=1; SDGO_BattleAI_GenericUpdate=function(n) formSample=SDGO_BattleAI_Observe(); if wantForm==1 then formQueued=SDGO_BattleAI_RequestTransform() end; return 123 end"),
+              "form bridge probe uses the real DLL observation and request exports");
+        unit.Think();
+        Check(Eval("assert(formSample.otherForm.unitId==888777 and formSample.otherForm.allowed==1 and formSample.otherForm.weapons[1].ammoReady==1 and formQueued==1)"),
+              "another form's real bank is serialized and its original request can queue");
+        Check(*reinterpret_cast<uint32_t*>(movement+0x2F0)==1&&
+              *reinterpret_cast<uint8_t**>(movement+8)==movement+0xD4&&
+              *reinterpret_cast<uint8_t**>(unit.bytes+0x9C4)==definition&&unit.bytes[0xE34]==0,
+              "the adapter calls the original request receiver without changing either form definition or the bank flag");
+        Check(Eval("wantForm=0"),"form probe releases its request");unit.Think();
+        Check(Eval("assert(formSample.valid==1 and formSample.transforming==1 and formSample.weapons==nil)"),
+              "a queued native transformation is observed as controller ownership rather than a broken capability sample");
+        // Fixture commits a simulated native handoff. This validates adapter
+        // reads only; actual native/network transformation is a separate gate.
+        native_world::Put(movement,8,uint32_t(0));
+        native_world::Put(unit.bytes,0x9C4,parked.data());native_world::Put(unit.bytes,0xAB0,definition);
+        unit.bytes[0xE34]=1;native_world::Put(attack,0x240,int32_t(0));
+        native_world::Put(attack,0x248,native_world::weapons[1].data());unit.Think();
+        Check(Eval("assert(formSample.unitId==888777 and formSample.alternate==1 and formSample.selectedSlot==0 and formSample.meleeRole==0 and formSample.weapons[1].kind=='hitscan')"),
+              "a committed ranged-only form uses its actual weapon bank and replaces the previous combat role");
+        movement[0x2F4]=1;WaitNativeTicks(510);
+        Check(Eval("wantForm=1"),"form rejection probe requests through the same export");unit.Think();
+        Check(Eval("assert(formQueued==0 and formSample.valid==1 and not formSample.transforming)"),
+              "a refused native request is not acknowledged as a transformation");
+        Check(*reinterpret_cast<uint32_t*>(movement+0x2F0)==2&&*reinterpret_cast<uint32_t*>(movement+8)==0,
+              "native refusal leaves movement ownership free instead of fabricating a pending form");
+        std::printf("NATIVE FORM BRIDGE CHECKS %s\n",g_failures?"FAILED":"PASSED");
+        return g_failures?1:0;
+    }
     if(pacing) {
         Check(Eval("SDGO_BattleAI_GenericUpdate=function(n) n:SetAttackOnOff(true); SDGO_BattleAI_Cadence(0); return 123 end"),
               "pacing fixture keeps requesting native attacks without changing the Lua combat policy");

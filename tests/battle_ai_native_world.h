@@ -85,6 +85,13 @@ template<class T> inline void* Address(T method) {
     static_assert(sizeof(T)==sizeof(void*));void* result;memcpy(&result,&method,sizeof(result));return result;
 }
 struct Callbacks {
+    __declspec(noinline) bool TransformRequest() {
+        auto movement=reinterpret_cast<uint8_t*>(this);
+        Put(movement,0x2F0,*reinterpret_cast<uint32_t*>(movement+0x2F0)+1);
+        if(movement[0x2F4])return false;
+        Put(movement,8,movement+0xD4);
+        return true;
+    }
     __declspec(noinline) bool EffectActive(uint8_t effect) {
         const auto unit=reinterpret_cast<uint8_t*>(this);
         if(!effect||effect>32)return false;
@@ -499,6 +506,7 @@ inline void Symbols(FILE* f,void(*symbol)(FILE*,const char*,void*,bool)) {
     symbol(f,"npc.facing_update",Address(&Callbacks::FacingUpdate),false);
     symbol(f,"combat.attack_admission",Address(&Callbacks::AttackAdmission),false);
     symbol(f,"combat.select_weapon",Address(&Callbacks::SelectWeapon),false);
+    symbol(f,"combat.transform_request",Address(&Callbacks::TransformRequest),false);
     symbol(f,"combat.player_sp_gate",Address(&Callbacks::PlayerSpGate),false);
     SetRoomTitle(L"",true);symbol(f,"game.app",reinterpret_cast<void*>(&App),false);
     symbol(f,"npc.tracking_entry",Address(&Callbacks::TrackingEntry),false);

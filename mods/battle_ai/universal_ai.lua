@@ -1,7 +1,7 @@
 -- Capability-driven controller. The native adapter supplies the current form's
 -- weapon records and target observations; no VSAI family or machine-ID policy.
 assert(UNIT_MOVE_EVENT_MOVE==2 and UNIT_MOVE_EVENT_DASH==3,'native locomotion enum mismatch')
-local D={GenericMode=1,Difficulty=1,Enabled=1,DecisionMs=0,ReactionMs=0,TargetHoldMs=0,
+local D={GenericMode=1,Difficulty=1,Enabled=1,AutoTransform=1,DecisionMs=0,ReactionMs=0,TargetHoldMs=0,
   FarTargetSlack=900,FarTargetRatioPercent=200,WeaponHoldMs=0,AttackIntervalMs=0,
   BurstMs=0,BurstPauseMs=0,AirStrafe=1,StrafeSwitchMs=450,StrafeDistance=400,
   JumpMs=600,JumpCooldownMs=1500,BoostReservePercent=20,ThreatMemoryMs=1600,
@@ -81,9 +81,14 @@ local function State(o,now)
   end
   s.seen=now
   if not s.blocked then s.blocked={} end
-  if s.unitId~=o.unitId or s.alternate~=o.alternate then
+  if s.unitId~=o.unitId or s.alternate~=o.alternate or s.formRevision~=o.formRevision then
+    if s.unitId~=nil then SDGO_BattleAI_CancelRoute(1);s.formHoldUntil=now+1000 end
     s.unitId=o.unitId;s.alternate=o.alternate;s.slot=nil;s.weaponAt=0;s.readyAt=nil
+    s.formRevision=o.formRevision;s.requestedSlot=nil
     s.weave=nil;s.cover=nil;s.orbUntil=nil
+    s.meleeAdvanceTarget=nil;s.meleeAdvanceAt=0;s.meleeAdvanceBlocked=nil
+    s.recoverUntil=nil;s.recovering=nil;s.routeRecoveryUntil=nil
+    s.exploring=nil;s.flanking=false;s.movementIntent=false;s.repathAt=0
   end
   if not U.sweepAt or now>=U.sweepAt then
     U.sweepAt=now+2000
@@ -136,6 +141,10 @@ end
 local function DamageProtected(t)
   return t and Flag(t.damageProtected)
 end
+local function TargetAlive(t)
+  assert(t and t.alive~=nil,'native target lifecycle unavailable')
+  return Flag(t.alive)
+end
 local function InRange(w,t)
   local distance=TargetDistance(w,t)
   if not Usable(w) or not distance or DamageProtected(t) or distance>w.range then return false end
@@ -161,7 +170,7 @@ local function ResponseInRange(o,t)
   return false
 end
 local function Candidate(o,s,t,now)
-  return t.id~=s.id and t.hp>0 and not DamageProtected(t) and Flag(t.enemy) and
+  return t.id~=s.id and TargetAlive(t) and not DamageProtected(t) and Flag(t.enemy) and
     (Flag(t.attackable) or Flag(t.teamVisible))
 end
 local function PickTarget(o,s,now)
@@ -174,7 +183,7 @@ local function PickTarget(o,s,now)
       for key in pairs(copy) do if key~='seen' and t[key]==nil then copy[key]=nil end end
       for key,value in pairs(t) do copy[key]=value end
       copy.seen=now;s.memory[t.id]=copy
-    elseif t.hp<=0 or DamageProtected(t) then s.memory[t.id]=nil end
+    elseif not TargetAlive(t) or DamageProtected(t) then s.memory[t.id]=nil end
   end
   local currentRange=current and ResponseInRange(o,current)
   local best,near=nil,nil
@@ -256,6 +265,57 @@ local function PickWeapon(o,s,t,threat,now,forceKind)
 end
 local function Chance(percent)
   return SDGO_BattleAI_Chance and SDGO_BattleAI_Chance(percent)==1
+end
+local function FormWeapons(weapons,t)
+  local view={ammo=false,ranged=false,rangedAmmo=false,range=0,melee=0,engage=false,fire=false,finisher=false,meleeValue=0,rangedValue=0}
+  for _,w in pairs(weapons or {}) do
+    if Ordinary(w) and Flag(w.valid) then
+      if w.kind~='melee' then view.ranged=true end
+      if Usable(w) then
+        view.ammo=true;view.range=Max(view.range,w.range)
+        if w.kind=='melee' then view.melee=Max(view.melee,w.range)
+        else view.rangedAmmo=true end
+        if InRange(w,t) then
+          view.engage=true
+          if Flag(w.ready) then
+            view.fire=true
+            if (w.damage or 0)>=t.hp then view.finisher=true end
+            local value=Max(w.damage or 1,1)*1000/Max(w.cycleMs or 300,50)
+            if w.kind=='melee' then view.meleeValue=Max(view.meleeValue,value)
+            else view.rangedValue=Max(view.rangedValue,value) end
+          end
+        end
+      end
+    end
+  end
+  return view
+end
+local function ChangeForm(o,s,t,now)
+  local other=o.otherForm
+  if C.AutoTransform~=1 or not t or t.remembered or not other or not Flag(other.allowed) or
+     Flag(o.hurt) or Flag(o.meleeBusy) or Flag(o.rangedBusy) or Flag(o.specialBusy) or
+     Flag(o.forcedMoving) or Flag(o.transportMotorReserved) or now<(s.formHoldUntil or 0) or
+     now<(s.formAttemptAt or 0) then return false end
+  local current=FormWeapons(o.weapons,t)
+  local nextForm=FormWeapons(other.weapons,t)
+  local empty=not current.ammo and nextForm.ammo
+  local usableRange=not current.engage and nextForm.engage
+  local rangedDry=current.ranged and not current.rangedAmmo and nextForm.rangedAmmo
+  local distantMelee=not current.rangedAmmo and current.melee>0 and
+    (t.meleeDistance or t.distance)>current.melee*1.5 and nextForm.rangedAmmo and nextForm.range>current.range+200
+  local closeMelee=nextForm.melee>0 and (t.meleeDistance or t.distance)<=nextForm.melee*0.9 and
+    nextForm.meleeValue>current.rangedValue*1.5 and nextForm.meleeValue>current.meleeValue
+  if not empty and not rangedDry and current.finisher then return false end
+  if not (empty or usableRange or rangedDry or distantMelee or closeMelee) then return false end
+  s.formAttemptAt=now+500
+  assert(SDGO_BattleAI_RequestTransform,'native transform request unavailable')
+  local queued=SDGO_BattleAI_RequestTransform()==1
+  if queued then
+    s.weave=nil;s.cover=nil;s.meleeAdvanceTarget=nil;s.recoverUntil=nil;s.recovering=nil
+    s.movementIntent=false;s.repathAt=0
+    Log(s,empty and 'transform: current ammunition unavailable' or 'transform: other native form fits engagement',now)
+  end
+  return queued
 end
 local function MeleeGate(value,cancelTracking)
   if SDGO_BattleAI_MeleeGate then
@@ -585,6 +645,10 @@ local function Recover(npc,o,s,t,now)
     for _,w in pairs(o.weapons) do if w.slot==o.selectedSlot and Flag(w.movingShot) then mayMove=true end end
   end
   if not mayMove then s.motionPos=o.pos;s.motionAt=now end
+  -- A native pad request retains its bridge's bounded notification deadline. Keep the admitted
+  -- entrance goal while the original bridge waits for its real notification;
+  -- do not reset progress clocks or count this intent as physical activity.
+  if Flag(o.transportWaiting) then return false end
   if s.routeRecoveryUntil then
     if mayMove and now<s.routeRecoveryUntil then
       -- Native movement admission spans more than one frame. Keep the newly
@@ -725,7 +789,7 @@ local function SpecialTarget(o,t)
     elseif t.rangedVisible~=nil then visible=Flag(t.rangedVisible)
     else visible=Flag(t.visible) end
   end
-    return t and distance and t.hp>0 and not Flag(t.mapObstacle) and not DamageProtected(t) and visible and
+    return t and distance and TargetAlive(t) and not Flag(t.mapObstacle) and not DamageProtected(t) and visible and
     Flag(t.attackable) and distance<=(o.specialRange or 0)
 end
 local function HasOrdinary(o,slot)
@@ -901,7 +965,7 @@ end
 local function ProtectedTarget(o,s)
   local held,native,nearest=nil,nil,nil
   for _,t in pairs(o.targets or {}) do
-      if t.hp>0 and Flag(t.enemy) and ContactVisible(t) and DamageProtected(t) then
+      if TargetAlive(t) and Flag(t.enemy) and ContactVisible(t) and DamageProtected(t) then
       if t.id==s.target then held=t
       elseif t.id==o.nativeTarget or t.id==o.policyTarget then native=t
       elseif not nearest or t.distance<nearest.distance or
@@ -1036,19 +1100,31 @@ local function ControllerDiagnostic(o,s,t,now)
     Flag(o.routeActive) and 1 or 0,Flag(o.moving) and 1 or 0,weapon and weapon.kind or 'none',
     weapon and Flag(weapon.ready) and 1 or 0,weapon and Flag(weapon.ammoReady) and 1 or 0,weapon and Flag(weapon.movingShot) and 1 or 0,tostring(s.reason or 'initial')))
 end
-local Tactics={profile=ProfileTick,obstacle=SelectRouteObstacle,motion=RouteMotion,diagnostic=ControllerDiagnostic,bind=BindTarget}
+local Tactics={profile=ProfileTick,obstacle=SelectRouteObstacle,motion=RouteMotion,
+  diagnostic=ControllerDiagnostic,bind=BindTarget,transform=ChangeForm}
 local function Tick(npc)
   local o=SDGO_BattleAI_Observe()
+  if o and Flag(o.valid) and Flag(o.transforming) then
+    -- The original transform Entry/Update/Release owns both controllers and
+    -- the bank handoff. Do not turn a transient weapon sample into attack-off
+    -- or MoveStop while that native action is committing its new form.
+    return 123
+  end
   if not o or not Flag(o.valid) or not o.weapons or not o.targets then
     error('native observation unavailable: '..tostring(o and o.failure or 'incomplete observation'))
   end
   local now=SDGO_BattleAI_Now()
   local s=State(o,now)
+  if o.transportCompleted~=nil and s.transportCompleted~=o.transportCompleted then
+    if s.transportCompleted~=nil then s.repathAt=0;s.movementIntent=false end
+    s.transportCompleted=o.transportCompleted
+  end
   if s.routeWasActive and not Flag(o.routeActive) then
     s.repathAt=0;s.meleeAdvanceAt=0
   end
   s.routeWasActive=Flag(o.routeActive)
-  if not s.initialized and not Flag(o.forcedMoving) then
+  if not s.initialized and not Flag(o.forcedMoving) and
+     not Flag(o.transportMotorReserved) then
     s.initialized=true
     -- Keep the game's initial terrain/action setup once per spawn. Subsequent
     -- decisions are generic and do not read the original script's shared globals.
@@ -1072,7 +1148,10 @@ local function Tick(npc)
   end
   if t then o.policyTarget=t.id end
   Tactics.diagnostic(o,s,t,now)
-  if Tactics.profile(npc,o,now,s.weave~=nil and not Flag(o.hurt)) then
+  if Tactics.transform(o,s,t or protected,now) then return 123 end
+  if Tactics.profile(npc,o,now,
+       (s.weave~=nil and not Flag(o.hurt)) or Flag(o.forcedMoving) or
+       Flag(o.transportMotorReserved)) then
     s.weave=nil;s.cover=nil;s.recoverUntil=nil;s.recovering=nil;s.movementIntent=false;s.anchor=o.pos;s.progressAt=now
     RecoveryMode(false);return 123
   end
@@ -1086,8 +1165,9 @@ local function Tick(npc)
     s.recovering=nil;RecoveryMode(false)
     return 0
   end
-  if Flag(o.forcedMoving) then
-    -- The map/server owns the trajectory; retain ordinary native attack
+  if Flag(o.forcedMoving) or Flag(o.transportMotorReserved) then
+    -- The selected map action owns the motor from the exact submitted request
+    -- through native travel and its measured landing. Retain ordinary attack
     -- admission without replacing that movement with a route, jump or strafe.
     SDGO_BattleAI_CancelRoute();s.exploring=nil;s.movementIntent=false
     s.recoverUntil=nil;s.recovering=nil;RecoveryMode(false)
@@ -1095,13 +1175,14 @@ local function Tick(npc)
     if t then
       for _,weapon in pairs(o.weapons) do
         if weapon.slot==o.selectedSlot and InRange(weapon,t) then
-          fire=Flag(weapon.ready) or Flag(o.rangedBusy)
+          fire=(Flag(weapon.ready) or Flag(o.rangedBusy)) and
+            (not Flag(o.transportLanding) or Flag(weapon.movingShot))
         end
       end
     end
     SDGO_BattleAI_AimTarget(fire and t.id or 0)
     SafeSetFire(npc,o,fire);SDGO_BattleAI_Cadence(0)
-    Log(s,'native map movement owns the motor; keep legal attack output',now)
+    Log(s,'map action owns the motor; keep legal attack output',now)
     return 123
   end
   if not t and not s.noTargetLast then
@@ -1134,7 +1215,7 @@ local function Tick(npc)
   end
   if s.weave or Flag(o.meleeBusy) then
     for _,held in pairs(o.targets) do
-      if held.id==s.target and held.hp>0 and not DamageProtected(held) and Flag(held.attackable) and
+      if held.id==s.target and TargetAlive(held) and not DamageProtected(held) and Flag(held.attackable) and
          (AnyVisible(held) or Flag(o.meleeBusy)) then t=held end
     end
   end
@@ -1143,6 +1224,7 @@ local function Tick(npc)
     s.weave=nil;s.cover=nil
     if protected then
       if s.exploring then SDGO_BattleAI_CancelRoute();s.exploring=nil end
+      s.noOpponentIdle=nil
       MeleeGate(Flag(s.protectedMeleeGate));PositionForProtected(npc,o,s,protected,now)
       return 123
     end
@@ -1150,30 +1232,29 @@ local function Tick(npc)
     SDGO_BattleAI_AimTarget(0)
     MeleeGate(Flag(s.protectedMeleeGate))
     local liveEnemy=false
-    for _,enemy in pairs(o.targets) do if enemy.hp>0 and Flag(enemy.enemy) then liveEnemy=true end end
+    for _,enemy in pairs(o.targets) do if TargetAlive(enemy) and Flag(enemy.enemy) then liveEnemy=true end end
     if not Flag(o.meleeBusy) and not Flag(o.specialBusy) then
       if not Flag(o.rangedBusy) then npc:SetAttackTarget(0) end
       if liveEnemy then
+        s.noOpponentIdle=nil
         Tactics.motion(o)
         local admitted=SDGO_BattleAI_ExploreMap()==1
         s.exploring=admitted;s.patrolling=false
         s.movementIntent=true;s.movementIntentAt=now
       else
         if s.exploring then SDGO_BattleAI_CancelRoute();s.exploring=nil end
-        if not s.patrolling or not o.goal or Distance2(o.pos,o.goal)<=C.ArrivalDistance*C.ArrivalDistance or now>=s.patrolAt then
-          s.patrolLeft=not s.patrolLeft
-          DirectMove(npc,o,
-            s.patrolLeft and UNIT_MOVE_DIR_LEFT or UNIT_MOVE_DIR_RIGHT,
-            C.StrafeDistance,UNIT_MOVE_EVENT_MOVE)
-          s.patrolling=true
-          s.patrolAt=now+C.PatrolMs
+        if not s.noOpponentIdle and
+           (Flag(o.moving) or Flag(o.routeActive) or s.patrolling) then
+          npc:MoveStop()
         end
+        s.noOpponentIdle=true;s.patrolling=false
+        s.movementIntent=false
       end
     end
     Log(s,liveEnemy and 'search public map routes for an unseen opponent' or 'no remaining opponent',now)
     return 123
   end
-  s.patrolling=false
+  s.patrolling=false;s.noOpponentIdle=nil
   Tactics.bind(npc,o,s,t,now)
   local forced,waiting=nil,false
   if s.protectedMeleeGate and Flag(o.meleeBusy) then
