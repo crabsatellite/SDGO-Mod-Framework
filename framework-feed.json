@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "kind": "sdgo-framework-runtime",
+  "source_id": "af01a76ab7ecb52ac0730657308e7aaf",
+  "repository": "crabsatellite/SDGO-Mod-Framework",
+  "version": "1.7.10",
+  "channel": "stable",
+  "source_commit": "91ba53c855a8406ffda0d924b76c34a8033ee867",
+  "asset": {
+    "path": "releases/SDGO-ModFramework-1.7.10.zip",
+    "bytes": 33212167,
+    "sha256": "b8c6a9e571e2568e10a48accc03998fb03583d0f53efb4793d78ea7774b0924b"
+  }
+}
