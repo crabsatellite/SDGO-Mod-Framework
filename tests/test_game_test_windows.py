@@ -137,6 +137,7 @@ WINDOW_PROBE = textwrap.dedent(
         raise RuntimeError(proxy_result.get("error", "default proxy timed out"))
     print(json.dumps({
         "pid": os.getpid(),
+        "initial_thread_id": int(kernel.GetCurrentThreadId()),
         "marker": os.environ["SDGO_BACKGROUND_PROBE"],
         "cwd": os.getcwd(),
         "window": int(window),
@@ -590,6 +591,8 @@ class BackgroundProcessWin32Tests(unittest.TestCase):
             try:
                 self.assertIsNotNone(process.stdout)
                 ready = json.loads(process.stdout.readline())
+                self.assertGreater(process.initial_thread_id, 0)
+                self.assertEqual(process.initial_thread_id, ready['initial_thread_id'])
                 self.assertEqual(ready["pid"], process.pid)
                 self.assertEqual(ready["marker"], "isolated")
                 self.assertEqual(ready["priority_class"], game_test_windows.NORMAL_PRIORITY_CLASS)

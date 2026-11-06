@@ -926,7 +926,9 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
        activityStart.battle_start_sequence==snapshot.received_battle_start_count&&activityStart.player_control_enabled)
         if(!battleAiBehavior.Observe(context,snapshot))return SDGO_GAME_TEST_FAIL;
     scoreboardInput.Hold(true);
-    if (sdgo_test::api->SettingInt(sdgo_test::mod, "ApsalusRoundtrip", 0)) {
+    if (sdgo_test::api->SettingInt(sdgo_test::mod, "ApsalusRoundtrip", 0)||
+        sdgo_test::api->SettingInt(sdgo_test::mod, "UnitTransformRoundtrip", 0)||
+        sdgo_test::api->SettingInt(sdgo_test::mod, "UnitDirectedTransforms", 0)) {
         SdgoPvpAiClientStartStatusV1 control{};
         control.size=sizeof(control);control.version=SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
         if (!getStartStatus || !getStartStatus(&control) ||
@@ -2833,7 +2835,8 @@ void WrapNativeCaptures() {
     // Capture the requested native pages without holding authentication behind
     // a screenshot of an initialization state.
     for(auto& test:capturedCases)
-        if(std::strncmp(test.id,"pages.",6)==0)test.poll=&ObserveThenCapture;
+        if(std::strncmp(test.id,"pages.",6)==0||
+           (std::strncmp(test.id,"pvp.",4)==0&&std::strstr(test.id,".ai_spawn")))test.poll=&ObserveThenCapture;
     provider.cases=capturedCases.data();
 }
 
@@ -3190,6 +3193,7 @@ SDGO_MOD_ENTRY {
     if (!nativeDeathProbe.Install(api,mod)) return 0;
     if (!nativePlayerCombat.Install(api,mod)) return 0;
     reviewCamera.Install(api,mod);
+    if (!apsalus_probe::packetObserver.Install(api,mod)) return 0;
     if (verifyQuietRuntime) {
         // DLLs have their own import tables. Observe every dialog in this
         // isolated test process so a Mod cannot leak a desktop prompt while

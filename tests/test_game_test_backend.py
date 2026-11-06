@@ -10,6 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -77,6 +78,42 @@ class FakeProcess:
 
 
 class BackendSafetyTests(unittest.TestCase):
+    @unittest.skipUnless(os.name=='nt','Windows file sharing semantics')
+    def test_status_write_survives_a_transient_native_reader_delete_lock(self):
+        import ctypes
+        from ctypes import wintypes
+        kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+        kernel.CreateFileW.argtypes=[wintypes.LPCWSTR,wintypes.DWORD,wintypes.DWORD,
+                                    ctypes.c_void_p,wintypes.DWORD,wintypes.DWORD,wintypes.HANDLE]
+        kernel.CreateFileW.restype=wintypes.HANDLE
+        kernel.CloseHandle.argtypes=[wintypes.HANDLE]
+        kernel.CloseHandle.restype=wintypes.BOOL
+        with tempfile.TemporaryDirectory() as temporary:
+            path=Path(temporary)/'status.json'
+            path.write_text('{"phase":"old"}')
+            # FILE_SHARE_READ|FILE_SHARE_WRITE deliberately omits DELETE.
+            handle=kernel.CreateFileW(str(path),0x80000000,3,None,3,0,None)
+            self.assertNotEqual(handle,ctypes.c_void_p(-1).value)
+            timer=threading.Timer(1.25,lambda:kernel.CloseHandle(handle))
+            timer.start()
+            try:
+                backend.write(path,{'phase':'ready'})
+            finally:
+                timer.join()
+            self.assertEqual(json.loads(path.read_bytes()),{'phase':'ready'})
+            self.assertEqual(list(path.parent.glob('.*.tmp')),[])
+
+    def test_status_write_keeps_persistent_permission_failure_bounded(self):
+        denied=PermissionError('persistent status denial')
+        with mock.patch.object(backend,'atomic_bytes',side_effect=denied) as writer, \
+                mock.patch.object(backend.time,'monotonic',side_effect=[10,11,14,15]), \
+                mock.patch.object(backend.time,'sleep') as sleep:
+            with self.assertRaises(PermissionError) as caught:
+                backend.write(Path('status.json'),{'phase':'ready'})
+        self.assertIs(caught.exception,denied)
+        self.assertEqual(writer.call_count,3)
+        self.assertEqual(sleep.call_count,2)
+
     @unittest.skipUnless(os.name=='nt','Windows process handles')
     def test_live_pid_probe_never_sends_a_console_signal_and_observes_real_child_exit(self):
         child=subprocess.Popen([sys.executable,'-c','import threading; threading.Event().wait(60)'],

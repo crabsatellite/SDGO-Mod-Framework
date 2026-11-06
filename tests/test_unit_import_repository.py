@@ -165,6 +165,22 @@ def make_snapshot(root: Path, *, skills=True):
 
 
 class SnapshotAndValidationTests(unittest.TestCase):
+    def test_unit_numbers_respect_the_native_server_domain_before_any_write(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);make_snapshot(root);repository=Repository(root,None)
+            for identity in (10000,30001,35000,9000421):
+                value=plan();value['root_unit_id']=identity;value['units'][0]['UnitNumber']=identity
+                value['names'][0]['UnitNumber']=identity;value['item']['RefIndex']=identity
+                with self.subTest(identity=identity),self.assertRaisesRegex(ValueError,'编号范围'):
+                    repository.check_plan(value)
+            value=plan();value['units'][0]['UnitNumber_Transform']=35000
+            with self.assertRaisesRegex(ValueError,'变形目标'):repository.check_plan(value)
+            class NoSql:
+                def execute(self,*args):raise AssertionError('invalid IDs must fail before SQL')
+            for identity in (35000,9000421):
+                with self.assertRaisesRegex(ValueError,'编号范围'):
+                    unit_repository._write_record(NoSql(),kind='unit',row=unit_row(identity),family='example',revision='test')
+
     def test_only_whitelisted_catalog_files_are_loaded(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -172,7 +188,7 @@ class SnapshotAndValidationTests(unittest.TestCase):
             repository = Repository(root, None)
             self.assertEqual(set(repository.catalog), {
                 "units", "weapons", "items", "names", "grades",
-                "level_indices", "skill_ids", "funnel_ids",
+                "level_indices", "skills", "skill_ids", "pending_skill_ids", "funnels", "funnel_ids", "pending_funnel_ids",
                 "unit_graph_ids",
             })
             self.assertEqual(set(repository.catalog["units"]), {10001})

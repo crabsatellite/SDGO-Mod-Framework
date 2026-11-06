@@ -418,7 +418,7 @@ namespace
 
 extern "C" __declspec(dllexport) int __cdecl SdgoCoreInit(const SdgoBoot* boot)
 {
-    if (g_started || !boot || boot->size < sizeof(SdgoBoot))
+    if (g_started || !boot || boot->size < offsetof(SdgoBoot, process_initial_thread_id))
         return g_started ? 1 : 0;
     g_started = true;
 
@@ -462,6 +462,9 @@ extern "C" __declspec(dllexport) int __cdecl SdgoCoreInit(const SdgoBoot* boot)
     g_api.HookSystemExport = Api_HookSystemExport;
     g_api.HookSite = Api_HookSite;
     g_api.FindRoomCommand = sdgo::room_commands::Parse;
+    g_api.process_initial_thread_id =
+        boot->size >= offsetof(SdgoBoot, process_initial_thread_id) + sizeof(boot->process_initial_thread_id)
+            ? boot->process_initial_thread_id : 0;
 
     LoadMods();
     size_t active = 0;

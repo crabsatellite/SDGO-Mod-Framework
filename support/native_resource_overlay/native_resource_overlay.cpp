@@ -460,6 +460,12 @@ namespace
 
 namespace sdgo::resource_overlay
 {
+    bool InspectUnitBundleFiles(const wchar_t* modDirectory, BundleRegistration& bundle, std::string& error)
+    {
+        bundle = {}; error.clear();
+        return LoadUnitBundle(modDirectory, L"resource-overlay.ini", bundle, error);
+    }
+
     struct Provider::Impl
     {
         struct StoredBundle
