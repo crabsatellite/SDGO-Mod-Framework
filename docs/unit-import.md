@@ -301,6 +301,14 @@ commit. An existing inactive form is reusable only when its header, weapon point
 and stat slice match, while its current ammo/cooldowns are retained. The Manager's
 multi-form publication restrictions still apply.
 
+`StageEquivalentInactive` handles a narrower preparation case: complete fresh
+source/target banks and their stat slices must match except for the unit ID and
+definition pointer. All five live weapon-definition pointers must also match.
+It then prepares only those two identity fields in a separate slot image,
+retaining every runtime byte, SP and modified stat. This comparison does not
+establish unit/skill semantic equivalence, safe form retirement, or death/deck
+restoration; those remain native-adapter requirements before a live commit.
+
 The controller request [`sdgo.unit-form-graphs/1`](unit-form-graphs.schema.json)
 binds declared inventory roots to complete unit-record hashes. The controller reads
 unit and item definitions with their ownership ledgers in one locked transaction;
