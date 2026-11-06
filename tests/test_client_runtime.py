@@ -80,6 +80,17 @@ class CompleteRuntime(unittest.TestCase):
         requests=b''.join(call.kwargs.get('input')or b''for call in calls if call.args[1]==['cat-file','--batch-check'])
         self.assertNotIn(archive_oid,requests)
 
+    def test_cached_blobs_are_not_downloaded_again(self):
+        self.controller.plan(self.host)
+        self.assertFalse(any(call.args[1][:1]==['fetch']for call in self.controller.git.call_args_list))
+
+    def test_polling_working_install_does_not_read_the_live_journal(self):
+        self.controller.results[self.host['id']]={'status':'working'}
+        self.controller.plans[self.host['id']]={'binding':self.binding}
+        with patch.object(self.controller,'unresolved',side_effect=PermissionError('journal being replaced')),patch.object(c,'installed_source',side_effect=PermissionError('descriptor being replaced')):
+            state=self.controller.state()['hosts'][0]
+            self.assertEqual(state['result']['status'],'working');self.assertFalse(state['recovery_required']);self.assertEqual(state['source'],self.binding)
+
     def test_existing_authored_settings_and_unknown_custom_content_survive(self):
         p=self.game/'sdgo/mods/example';p.mkdir(parents=True)
         (p/'mod.ini').write_bytes(b'[mod]\nid=example\nconfig_files=config.ini\nenabled=0\n[settings]\nValue=77\n')

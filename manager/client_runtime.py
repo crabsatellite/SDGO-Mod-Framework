@@ -198,9 +198,13 @@ class ClientRuntime:
             else:unknown.append(name)
         if unknown:
             requests=b''.join((entries[n]['git_blob']+'\n').encode()for n in unknown)
+            # Enumerate local objects without causing promisor downloads.
+            # Explicit noop fetches would otherwise retransmit cached blobs.
+            cached={row.split()[0]for row in self.git(repo,['cat-file','--batch-all-objects','--batch-check','--unordered']).splitlines()if row}
+            missing=b''.join((entries[n]['git_blob']+'\n').encode()for n in unknown if entries[n]['git_blob'].encode()not in cached)
             # Fetch all wanted runtime objects in one transport operation.
             # Otherwise a promisor cat-file can authenticate/fetch once per file.
-            self.git(repo,['fetch','--no-tags','--no-write-fetch-head','--recurse-submodules=no','--filter=blob:none','--stdin','origin'],input=requests)
+            if missing:self.git(repo,['fetch','--no-tags','--no-write-fetch-head','--recurse-submodules=no','--filter=blob:none','--stdin','origin'],input=missing)
             rows=self.git(repo,['cat-file','--batch-check'],input=requests).splitlines()
             if len(rows)!=len(unknown):raise ValueError('运行文件对象信息不完整')
             for name,row in zip(unknown,rows):
@@ -470,10 +474,15 @@ class ClientRuntime:
         rows=[]
         for host in self.workspace.settings['hosts']:
             if host['role']!='client':continue
-            try:binding=installed_source(host['path']);error=''
-            except (ValueError,OSError)as e:binding=None;error=str(e)
-            rows.append({'id':host['id'],'name':host['name'],'source':binding,'error':error,'result':self.results.get(host['id'],{}),
-                         'recovery_required':bool(self.unresolved(host['path']))})
+            with self.lock:
+                result=dict(self.results.get(host['id'],{}));plan=self.plans.get(host['id'])
+                working=result.get('status')in('queued','working')
+                try:binding=plan['binding']if working and plan else installed_source(host['path']);error=''
+                except (ValueError,OSError)as e:binding=None;error=str(e)
+                # Pair journal reads with the worker's transition to working.
+                recovery=False if working else bool(self.unresolved(host['path']))
+            rows.append({'id':host['id'],'name':host['name'],'source':binding,'error':error,'result':result,
+                         'recovery_required':recovery})
         return {'healthy':True,'running':bool(self.thread and self.thread.is_alive()),'hosts':rows,
                 'automatic':self.workspace.services.desired(SERVICE)if hasattr(self.workspace,'services')else False}
 
