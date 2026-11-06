@@ -498,12 +498,18 @@ class Workspace:
         if profile not in model.PROFILES:need('behavior','请选择原生变形类型','behavior_profile')
         elif profile=='native-single-form-v1' and (len(forms)!=1 or any(r['transform_target'] for r in forms.values())):
             need('behavior_mismatch','这份记录有变形目标，不能作为无变形机体发布','behavior_profile','error')
-        elif profile=='native-linked-forms-v1':
-            if len(forms)!=2:need('unsupported_forms','当前适配器要求双形态；不支持任意多段变形','behavior_profile','error')
+        elif profile in ('native-linked-forms-v1','native-one-way-forms-v1'):
+            if len(forms)!=2:need('unsupported_forms','当前适配器要求双形态；三形态以上的有向图需要原生形态图运行时','behavior_profile','error')
             if root in forms:
                 reached=set();cursor=root
                 while cursor in forms and cursor not in reached:reached.add(cursor);cursor=forms[cursor]['transform_target']
                 if reached!=set(forms):need('unreachable_form','有形态无法从根形态到达，请核对原始变形关系',None,'error')
+                other=next((r for i,r in forms.items() if i!=root),None)
+                if other is not None:
+                    if profile=='native-linked-forms-v1' and other['transform_target']!=root:
+                        need('behavior_mismatch','双向形态要求两条互相匹配的变形关系；单向脱甲请选择 native-one-way-forms-v1','behavior_profile','error')
+                    if profile=='native-one-way-forms-v1' and other['transform_target']:
+                        need('behavior_mismatch','单向形态要求终态的变形目标为 0','behavior_profile','error')
         for key,kind,columns in (('forms','unit',model.UNIT_COLUMNS),('weapons','weapon',model.WEAPON_COLUMNS)):
             for row in draft[key]:
                 try:

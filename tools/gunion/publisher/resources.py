@@ -36,10 +36,16 @@ def _alias(owner: str, path: str, digest: str) -> str:
     return path.split('/')[0] + '/o' + owner_hash + token + PurePosixPath(path).suffix
 
 
-def _skill_carriers(raw: bytes) -> list:
+def _skill_carriers(raw: bytes, opaque: list | None = None) -> list:
     if len(raw) != SKILL_BYTES:
         raise ValueError('skill target record extent')
-    carrier = field(raw, 358, 60, 'utf-16-le', 'skill-effect', 'fixed-native-grid-field')
+    try:
+        carrier = field(raw, 358, 60, 'utf-16-le', 'skill-effect', 'fixed-native-grid-field')
+    except (ValueError, UnicodeError) as error:
+        if opaque is not None:
+            literal = raw[358:418].split(b'\0\0')[0].decode('utf-16-le', errors='replace')
+            opaque.append({'offset': 358, 'role': 'skill-effect', 'literal': literal[:60], 'reason': str(error)})
+        return []
     return [carrier] if carrier else []
 
 
@@ -58,7 +64,7 @@ def _record_carriers(kind: int, raw: bytes, opaque: list | None = None) -> list:
                  'weaponHudSelectedTexturePath', 'projectileTexturePath', 'secondarySoundPath']
         fields = tuple((*WEAPON_TEXT[name], 'weapon-' + name) for name in names)
     elif kind == 13:
-        return _skill_carriers(raw)
+        return _skill_carriers(raw, opaque)
     elif kind == 11:
         fields = _FUNNEL_FIELDS
     else:
@@ -191,11 +197,17 @@ def build(config: Config) -> dict:
                     blob = _portrait_sources(delivery, family, carrier.path)
                     if blob is not None:
                         remember(carrier.path, sha256(blob), blob)
+    def safe_sprite_carriers(raw: bytes, path: str) -> list:
+        try:
+            return sprite_carriers(raw, path)
+        except (ValueError, UnicodeError, struct.error, IndexError):
+            return []
+
     # Sprite frames of generated portraits reference generated textures.
     for path in list(contents):
         if path.startswith('sprs/g546v2u'):
             for digest in list(contents[path]):
-                for carrier in sprite_carriers(read(path, digest), path):
+                for carrier in safe_sprite_carriers(read(path, digest), path):
                     if carrier.path not in contents:
                         for family in families['families']:
                             blob = _portrait_sources(delivery, family, carrier.path)
@@ -294,7 +306,7 @@ def build(config: Config) -> dict:
                     family_contents[carrier.path] = sorted(contents[carrier.path])[0]
         for path in list(family_contents):
             if path.startswith('sprs/g546v2u'):
-                for carrier in sprite_carriers(read(path, family_contents[path]), path):
+                for carrier in safe_sprite_carriers(read(path, family_contents[path]), path):
                     if carrier.path not in family_contents and carrier.path in contents:
                         family_contents[carrier.path] = sorted(contents[carrier.path])[0]
         # Alias closure inside this family: any resource whose carriers name an aliased path is aliased.
