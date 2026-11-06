@@ -127,6 +127,46 @@ Assert-ResourceOverlay $copies $overlayPaths
             self.assertNotEqual(incomplete.returncode,0)
             self.assertIn('declared overlay paths',incomplete.stderr)
 
+    def test_installer_accepts_a_split_archive_and_rejects_missing_or_extra_parts(self):
+        from owner.native_archive import build_archive_file
+        script=r'''
+param([string]$Installer,[string]$InputPath)
+$ErrorActionPreference='Stop'
+Set-StrictMode -Version Latest
+$ast=[Management.Automation.Language.Parser]::ParseFile($Installer,[ref]$null,[ref]$null)
+foreach($f in $ast.FindAll({param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst]},$true)){
+ if($f.Name -in @('Get-NormalizedRelativePath','Get-IniSection','Assert-ResourceOverlay')){Invoke-Expression $f.Extent.Text}
+}
+$spec=Get-Content -LiteralPath $InputPath -Raw | ConvertFrom-Json
+$copies=@{};foreach($f in $spec.files){$copies[$f.name]=$f}
+$overlayPaths=@{};foreach($raw in @($spec.manifest.resource_overlay.paths)){$overlayPaths[(Get-NormalizedRelativePath ([string]$raw))]=$true}
+Assert-ResourceOverlay $copies $overlayPaths
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);runner=root/'verify.ps1';runner.write_text(script,encoding='utf-8')
+            module=root/'module';module.mkdir()
+            resources={'mdrs/a.mod':b'first model','mdrs/b.mod':b'second model','txrs/c.txr':b'texture'}
+            index,inventory=build_archive_file(resources,lambda _:True,module/'resources.zpk',part_chunks=2)
+            self.assertEqual(['resources.zpk','resources.1.zpk'],[part['name'] for part in inventory['parts']])
+            config=('[runtime]\nschema=1\nindex=resources.zdx\nindex_sha256='+hashlib.sha256(index).hexdigest()+
+                '\narchive=resources.zpk\narchive_sha256='+inventory['archive_sha256']+'\nparts=2\npart_chunks=2\n').encode()
+            (module/'resources.zdx').write_bytes(index);(module/'resource-overlay.ini').write_bytes(config)
+            def run(names):
+                files=[{'name':'sdgo\\mods\\unit_catalog\\'+name,'source':str(module/name),
+                        'sha256':hashlib.sha256((module/name).read_bytes()).hexdigest()} for name in names]
+                manifest={'owned_paths':[],'resource_overlay':{'schema':1,'paths':sorted(resources)}}
+                payload=root/'input.json';payload.write_text(json.dumps({'files':files,'manifest':manifest}))
+                return subprocess.run(['pwsh','-NoProfile','-File',str(runner),'-Installer',str(ROOT/'tools/install_unit_catalog.ps1'),
+                    '-InputPath',str(payload)],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=45)
+            base=['resource-overlay.ini','resources.zdx','resources.zpk']
+            accepted=run(base+['resources.1.zpk'])
+            self.assertEqual(accepted.returncode,0,accepted.stdout+accepted.stderr)
+            missing=run(base)
+            self.assertIn('archive part is missing',missing.stderr)
+            (module/'resources.2.zpk').write_bytes(b'\0'*520)
+            extra=run(base+['resources.1.zpk','resources.2.zpk'])
+            self.assertIn('undeclared archive part',extra.stderr)
+
     @staticmethod
     def write_export_fixture(path):
         data=bytearray(0x600);data[:2]=b'MZ';struct.pack_into('<I',data,0x3c,0x80)

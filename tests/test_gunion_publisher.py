@@ -1,6 +1,7 @@
 """Roster publisher helpers: server-side name folding, shared weapon rows and config adaptations."""
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -29,6 +30,36 @@ class OverlayCarryTests(unittest.TestCase):
             path.write_bytes(archive[:-1])
             with self.assertRaises(ValueError):
                 read_archive(index, path)
+
+    def test_split_archive_parts_stay_below_the_part_size_and_read_back(self):
+        from owner.native_archive import build_archive, build_archive_file, read_archive
+        def noise(seed, size):  # incompressible bytes, so each entry spans several chunks
+            return b''.join(hashlib.sha256(f'{seed}:{i}'.encode()).digest() for i in range(size // 32))
+        resources = {'mdrs/a.mod': noise('a', 2400), 'anrs/b.ani': noise('b', 1600),
+                     'txrs/c.txr': noise('c', 3200), 'sprs/d.spr': b'sprite'}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'resources.9.zpk').write_bytes(b'stale part')
+            index, inventory = build_archive_file(resources, lambda _: True, root / 'resources.zpk', part_chunks=8)
+            parts = inventory['parts']
+            self.assertGreater(len(parts), 1)
+            self.assertFalse((root / 'resources.9.zpk').exists())
+            self.assertTrue(all(row['bytes'] == 8 * 520 for row in parts[:-1]))
+            self.assertLessEqual(parts[-1]['bytes'], 8 * 520)
+            joined = b''.join((root / row['name']).read_bytes() for row in parts)
+            self.assertEqual(hashlib.sha256(joined).hexdigest(), inventory['archive_sha256'])
+            for entry in inventory['entries']:
+                self.assertEqual(entry['start_chunk'] // 8, (entry['start_chunk'] + entry['chunks'] - 1) // 8)
+            self.assertEqual(resources, read_archive(index, root / 'resources.zpk', len(parts), 8))
+            with self.assertRaises(ValueError):
+                read_archive(index, root / 'resources.zpk')
+            # Without parts the stream is byte-identical to the single-archive encoder.
+            single_index, single = build_archive_file(resources, lambda _: True, root / 'single.zpk')
+            self.assertNotIn('parts', single)
+            expected_index, expected_archive, _ = build_archive(resources, lambda _: True)
+            self.assertEqual((expected_index, expected_archive), (single_index, (root / 'single.zpk').read_bytes()))
+            with self.assertRaises(ValueError):
+                build_archive_file({'mdrs/big.mod': noise('big', 4000)}, lambda _: True, root / 'big.zpk', part_chunks=2)
 
 
 class FamilyShapeTests(unittest.TestCase):

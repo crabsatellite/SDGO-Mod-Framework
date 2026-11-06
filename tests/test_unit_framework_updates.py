@@ -102,6 +102,22 @@ class UnitFrameworkUpdates(unittest.TestCase):
         again=u.install_host(self.record,self.bundle,self.manifest,self.cache,lambda _:False)
         self.assertEqual(0,again['changed_files'])
 
+    def test_optional_sealed_content_and_archive_parts_stay_unchanged_through_an_update(self):
+        extra={'native-programs.bin':b'sealed programs','skill-atlases.bin':b'sealed atlases',
+               'resources.1.zpk':b'second archive part','resources.2.zpk':b'third archive part'}
+        for name,data in extra.items():
+            (self.mod/name).write_bytes(data)
+            self.receipt['files'].append({'path':ownership.BASE+name,'installed_sha256':u.digest(data),'owned':True})
+        self.save_receipt()
+        result=u.install_host(self.record,self.bundle,self.manifest,self.cache,lambda _:False)
+        self.assertEqual('installed',result['status'],result);self.check_receipt()
+        for name,data in extra.items():self.assertEqual(data,(self.mod/name).read_bytes())
+        self.assertNotIn(ownership.BASE+'resources.32.zpk',ownership.OPTIONAL_CONTENT)
+        (self.mod/'resources.1.zpk').write_bytes(b'changed outside the receipt')
+        source,manifest=self.framework('1.3.1-beta.1')
+        with self.assertRaisesRegex(ValueError,'安装收据之外'):
+            u.install_host(self.record,source,manifest,self.cache,lambda _:False)
+
     def test_framework_updates_a_recorded_symbol_fragment_without_claiming_foreign_ownership(self):
         fragment=self.mod/'symbols.fragment.ini';fragment.write_bytes(b'[unit.signature]\nrva=21\n')
         self.receipt['files'].append({'path':ownership.BASE+'symbols.fragment.ini',

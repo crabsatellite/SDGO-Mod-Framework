@@ -254,7 +254,9 @@ some records were inserted, the native tree cannot be rolled back, so the Mod lo
 
 The game does not read new models from the working directory. Client packages carry `resource-overlay.ini`,
 `resources.zdx` and `resources.zpk`, and the game reads models, animations, textures and effects from that archive.
-With the capsule catalog also enabled, both share one resource reader.
+With the capsule catalog also enabled, both share one resource reader. A large archive may be split into parts
+(`resources.zpk`, `resources.1.zpk`, ...) so every file stays below the per-file limit of common Git hosts; the
+index and the archive SHA-256 still describe the parts as one archive.
 
 `registrations.json` and Manager's `/api/providers/units/api/units/registrations` expose stable `unit:<root ID>`
 identities, categories, names, forms and the matching `shop_sprite` / `capsule_sprite`. Capsule machine cards are
@@ -530,7 +532,9 @@ that are in use. `FormChains=0` turns the client part off and leaves entry varia
 When the config names `existing_catalog` (the `catalog.bin` of an installed `unit_catalog`), the assembler carries
 that installation's records, families, registrations and overlay resources into the new package, so installing the
 roster keeps units imported earlier. The installed overlay must still match its seal. A carried resource that
-differs from a roster resource with the same path stops the assembly instead of replacing either one.
+differs from a roster resource with the same path stops the assembly instead of replacing either one. The base is the
+installation as it was before the roster: keep a copy of it for republication, because an `existing_catalog` that
+already holds this owner's publication is refused.
 
 ### GameTest checks and captures
 
