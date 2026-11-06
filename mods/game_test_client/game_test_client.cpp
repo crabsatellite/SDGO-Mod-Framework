@@ -1060,7 +1060,9 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
         SdgoPvpAiClientStartStatusV1 nativeControl{};
         nativeControl.size=sizeof(nativeControl);nativeControl.version=SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
         if(getStartStatus) getStartStatus(&nativeControl);
-        if(!nativePlayerCombat.Poll(context,live,nativeControl,scoreboardInput)) return SDGO_GAME_TEST_FAIL;
+        // Review footage keeps the battle running on a failed combat-input observation: the
+        // failure is still recorded, but the recording is the point of such a run.
+        if(!nativePlayerCombat.Poll(context,live,nativeControl,scoreboardInput) && !reviewFootage) return SDGO_GAME_TEST_FAIL;
         SdgoPvpAiClientScoreboardStatusV1 roster{};
         roster.size = sizeof(roster); roster.version = SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
         if (getScoreboardStatus && getScoreboardStatus(&roster) && roster.battle_start_sequence == activeBattleStartSequence) {
