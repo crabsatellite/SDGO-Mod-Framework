@@ -25,6 +25,17 @@ def node(identity,enabled=True,**contract):
 
 
 class Dependencies(unittest.TestCase):
+    def test_legacy_content_receives_data_guards_without_rewriting_its_contract(self):
+        contract={'id':'unit_catalog','distribution':'public'};before=copy.deepcopy(contract)
+        names=d.content_files(contract);self.assertTrue(names);self.assertEqual(contract,before)
+        with tempfile.TemporaryDirectory()as temp:
+            root=Path(temp);mod=root/'sdgo/mods/unit_catalog';mod.mkdir(parents=True)
+            (mod/'mod.ini').write_bytes(b'[mod]\nid=unit_catalog\nversion=1.0.0\nenabled=1\n')
+            (mod/'manager.json').write_bytes(storage.json_bytes(contract))
+            data=mod/names[0];data.parent.mkdir(parents=True,exist_ok=True);data.write_bytes(b'existing authored content')
+            with self.assertRaises(ValueError):d.enforce_install(root,{'sdgo/mods/unit_catalog/mod.ini':b'[mod]\nid=unit_catalog\nversion=1.0.0\nenabled=0\n'},'client')
+            self.assertEqual(data.read_bytes(),b'existing authored content')
+
     def test_required_optional_conflict_and_versioned_capability(self):
         consumer=node('consumer',dependencies={'required':[{'id':'provider','minimum':'1.2.0','capability':'example.bridge','capability_version':2}]})
         provider=node('provider',provides={'example.bridge':2})
