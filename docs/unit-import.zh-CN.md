@@ -224,7 +224,9 @@ python -B tools/mod_manager.py --workspace D:/ModManager
 若部分记录写入后原生注册意外失败，原生数据树无法回滚，因此记录诊断并终止本次客户端。
 
 游戏不会从工作目录读取新增模型。客户端包附带 `resource-overlay.ini`、`resources.zdx` 和 `resources.zpk` 原生归档，
-游戏从中读取模型、动作、纹理和特效；与扭蛋目录同时启用时，两者共用同一个资源读取器。
+游戏从中读取模型、动作、纹理和特效；与扭蛋目录同时启用时，两者共用同一个资源读取器。较大的归档可以拆成多个分段
+（`resources.zpk`、`resources.1.zpk`……），让每个文件都低于常见 Git 托管的单文件上限；索引和归档 SHA-256 仍把这些
+分段当作同一个归档描述。
 
 `registrations.json` 以及 Manager 的 `/api/providers/units/api/units/registrations` 提供稳定的 `unit:<根形态 ID>`、
 类别、名称、形态和同版的 `shop_sprite` / `capsule_sprite`。扭蛋机台卡面是独立资源，与机体的三个 UI 图片字段分开。

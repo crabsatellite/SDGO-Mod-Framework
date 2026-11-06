@@ -256,7 +256,9 @@ some records were inserted, the native tree cannot be rolled back, so the Mod lo
 
 The game does not read new models from the working directory. Client packages carry `resource-overlay.ini`,
 `resources.zdx` and `resources.zpk`, and the game reads models, animations, textures and effects from that archive.
-With the capsule catalog also enabled, both share one resource reader.
+With the capsule catalog also enabled, both share one resource reader. A large archive may be split into parts
+(`resources.zpk`, `resources.1.zpk`, ...) so every file stays below the per-file limit of common Git hosts; the
+index and the archive SHA-256 still describe the parts as one archive.
 
 `registrations.json` and Manager's `/api/providers/units/api/units/registrations` expose stable `unit:<root ID>`
 identities, categories, names, forms and the matching `shop_sprite` / `capsule_sprite`. Capsule machine cards are
