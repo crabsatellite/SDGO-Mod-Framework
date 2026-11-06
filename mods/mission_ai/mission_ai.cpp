@@ -13,6 +13,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -21,6 +22,7 @@
 #include <vector>
 
 #include "sdgo/mission_ai_client_observer.h"
+#include "sdgo/mission_ai_stage_warp_observer.h"
 #include "sdgo/sdgo_api.h"
 #include "sdgo/mission_ai_lifecycle.h"
 
@@ -58,6 +60,7 @@ namespace
 
     using MissionUpdateFn = void(__thiscall*)(void* mode);
     MissionUpdateFn g_originalUpdate = nullptr;
+    SdgoMatchAiMissionTickV1Fn g_matchAiMissionTick = nullptr;
 
     std::string g_configChunk; // SDGO_MissionAI_Config = {...}, built from mod.ini
     bool g_configurationReadRaced=false;
@@ -153,6 +156,7 @@ namespace
     constexpr size_t kUnitAiEnabled = 0x326C;
     constexpr size_t kNodePosition = 0x88;
     constexpr size_t kUnitManagerPlayerCount = 0x8C;
+    constexpr size_t kSlotObjectId = 0x04;
     constexpr size_t kSlotName = 0x08;          // std::wstring in the player slot
     constexpr size_t kModeIsNetworkSlot = 0x1C / sizeof(void*);
 
@@ -231,6 +235,10 @@ namespace
     SdgoMissionAiClientSnapshotV1 g_observerSnapshot = {};
     volatile LONG g_observerSnapshotVersion = 0;
     SRWLOCK g_observerSnapshotLock = SRWLOCK_INIT;
+    SdgoMissionAiStageWarpSnapshotV1 g_stageWarpSnapshot = {};
+    volatile LONG g_stageWarpSnapshotVersion = 0;
+    volatile LONG g_stageWarpCount = 0;
+    SRWLOCK g_stageWarpSnapshotLock = SRWLOCK_INIT;
 
     bool ActiveMission(void* um)
     {
@@ -300,6 +308,48 @@ namespace
     uint32_t PointerValue(const void* pointer)
     {
         return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(pointer));
+    }
+
+    void PublishStageWarpSnapshot(
+        const SdgoMissionAiStageWarpSnapshotV1& snapshot)
+    {
+        AcquireSRWLockExclusive(&g_stageWarpSnapshotLock);
+        InterlockedIncrement(&g_stageWarpSnapshotVersion);
+        g_stageWarpSnapshot = snapshot;
+        InterlockedIncrement(&g_stageWarpSnapshotVersion);
+        ReleaseSRWLockExclusive(&g_stageWarpSnapshotLock);
+    }
+
+    void ResetStageWarpObserver(uint8_t* mode)
+    {
+        InterlockedExchange(&g_stageWarpCount, 0);
+        SdgoMissionAiStageWarpSnapshotV1 snapshot = {};
+        snapshot.size = sizeof(snapshot);
+        snapshot.version =
+            SDGO_MISSION_AI_STAGE_WARP_OBSERVER_VERSION;
+        snapshot.battle_generation =
+            static_cast<uint32_t>(
+                InterlockedCompareExchange(
+                    &g_battleGeneration,
+                    0,
+                    0));
+        snapshot.mode_object = PointerValue(mode);
+        if (mode) {
+            snapshot.exact_plain_mission =
+                *reinterpret_cast<const void* const*>(mode) ==
+                        g_game.missionVtable
+                    ? 1
+                    : 0;
+            uint8_t* room =
+                *reinterpret_cast<uint8_t**>(mode + kModeRoom);
+            if (room)
+                snapshot.room_mode =
+                    *reinterpret_cast<const uint16_t*>(
+                        room + kModeRoomMode);
+            snapshot.active =
+                snapshot.exact_plain_mission ? 1 : 0;
+        }
+        PublishStageWarpSnapshot(snapshot);
     }
 
     RecordSpan ReadRecordSpan(uint8_t* room, size_t begin, size_t end)
@@ -374,6 +424,7 @@ namespace
         g_observedWingmen.clear();
         ResetBattleCounters();
         InterlockedIncrement(&g_battleGeneration);
+        ResetStageWarpObserver(mode);
     }
 
     void CountPcallError(bool tick)
@@ -667,6 +718,247 @@ namespace
         }
     }
 
+    bool ReadUnitPose(
+        const uint8_t* unit,
+        uint32_t expectedObjectId,
+        float& x,
+        float& y,
+        float& z)
+    {
+        if (!unit ||
+            !expectedObjectId ||
+            *reinterpret_cast<const uint32_t*>(
+                unit + kUnitObjectId) !=
+                expectedObjectId)
+            return false;
+        const uint8_t* node =
+            *reinterpret_cast<uint8_t* const*>(
+                unit + kUnitNode);
+        if (!node)
+            return false;
+        const float* position =
+            reinterpret_cast<const float*>(
+                node + kNodePosition);
+        if (!std::isfinite(position[0]) ||
+            !std::isfinite(position[1]) ||
+            !std::isfinite(position[2]))
+            return false;
+        x = position[0];
+        y = position[1];
+        z = position[2];
+        return true;
+    }
+
+    bool RecordStageWarp(uint32_t playerIndex)
+    {
+        if (playerIndex < 1 ||
+            playerIndex > 12 ||
+            !g_game.unitManager ||
+            !g_game.playerSlot ||
+            !g_game.findObject)
+            return false;
+        void* unitManager = *g_game.unitManager;
+        uint8_t* mode = g_observedMode;
+        if (!unitManager ||
+            !mode ||
+            !ActiveMission(unitManager))
+            return false;
+        uint8_t* room =
+            *reinterpret_cast<uint8_t**>(
+                mode + kModeRoom);
+        const RecordSpan humans =
+            ReadRecordSpan(
+                room,
+                kRoomHumansBegin,
+                kRoomHumansEnd);
+        const RecordSpan ai =
+            ReadRecordSpan(
+                room,
+                kRoomAiBegin,
+                kRoomAiEnd);
+        if (!humans.valid ||
+            !ai.valid ||
+            playerIndex > humans.count)
+            return false;
+
+        SdgoMissionAiStageWarpSnapshotV1 snapshot = {};
+        snapshot.size = sizeof(snapshot);
+        snapshot.version =
+            SDGO_MISSION_AI_STAGE_WARP_OBSERVER_VERSION;
+        snapshot.battle_generation =
+            static_cast<uint32_t>(
+                InterlockedCompareExchange(
+                    &g_battleGeneration,
+                    0,
+                    0));
+        snapshot.mode_object = PointerValue(mode);
+        snapshot.room_mode =
+            *reinterpret_cast<const uint16_t*>(
+                room + kModeRoomMode);
+        snapshot.warp_count =
+            static_cast<uint32_t>(
+                InterlockedIncrement(
+                    &g_stageWarpCount));
+        snapshot.last_player_index = playerIndex;
+        snapshot.last_player_slot =
+            playerIndex - 1;
+        snapshot.last_warp_tick = GetTickCount();
+        snapshot.active = 1;
+        snapshot.exact_plain_mission = 1;
+        snapshot.room_records_valid = 1;
+
+        uint8_t* humanSlot =
+            g_game.playerSlot(
+                unitManager,
+                static_cast<int>(
+                    snapshot.last_player_slot));
+        snapshot.human_object_id =
+            humanSlot
+                ? *reinterpret_cast<const uint32_t*>(
+                      humanSlot + kSlotObjectId)
+                : 0;
+        const uint8_t* humanUnit =
+            static_cast<const uint8_t*>(
+                g_game.findObject(
+                    unitManager,
+                    snapshot.human_object_id));
+        if (ReadUnitPose(
+                humanUnit,
+                snapshot.human_object_id,
+                snapshot.human_position_x,
+                snapshot.human_position_y,
+                snapshot.human_position_z))
+            snapshot.human_position_valid = 1;
+
+        uint32_t localOrdinal = 0;
+        uint32_t copied = 0;
+        for (const ObservedWingman& observed :
+             g_observedWingmen) {
+            if (!observed.local)
+                continue;
+            const uint32_t assigned =
+                localOrdinal %
+                    humans.count +
+                1;
+            ++localOrdinal;
+            if (assigned != playerIndex)
+                continue;
+
+            const uint8_t* unit =
+                static_cast<const uint8_t*>(
+                    g_game.findObject(
+                        unitManager,
+                        observed.objectId));
+            if (!unit ||
+                unit != observed.spawnedUnit ||
+                *reinterpret_cast<const uint32_t*>(
+                    unit + kUnitObjectId) !=
+                    observed.objectId ||
+                *reinterpret_cast<const int32_t*>(
+                    unit + kObjectHp) <= 0)
+                continue;
+            ++snapshot.assigned_alive_local_count;
+            if (copied >= 12)
+                continue;
+
+            auto& wingman =
+                snapshot.wingmen[copied++];
+            wingman.pilot_id =
+                observed.pilotId;
+            wingman.object_id =
+                observed.objectId;
+            wingman.slot = observed.slot;
+            wingman.alive = 1;
+            wingman.local_control =
+                unit[kUnitLocalControl] != 0 &&
+                        unit[kUnitRemote] == 0
+                    ? 1
+                    : 0;
+            wingman.assigned_to_player = 1;
+            if (ReadUnitPose(
+                    unit,
+                    observed.objectId,
+                    wingman.position_x,
+                    wingman.position_y,
+                    wingman.position_z)) {
+                wingman.position_valid = 1;
+                ++snapshot.pose_valid_count;
+                if (snapshot.human_position_valid) {
+                    const float dx =
+                        wingman.position_x -
+                        snapshot.human_position_x;
+                    const float dy =
+                        wingman.position_y -
+                        snapshot.human_position_y;
+                    const float dz =
+                        wingman.position_z -
+                        snapshot.human_position_z;
+                    wingman.distance_to_human =
+                        std::sqrt(
+                            dx * dx +
+                            dy * dy +
+                            dz * dz);
+                    snapshot.maximum_pose_distance =
+                        (std::max)(
+                            snapshot.maximum_pose_distance,
+                            wingman.distance_to_human);
+                    if (wingman.local_control &&
+                        wingman.distance_to_human <= 5.0f) {
+                        wingman.matches_human_pose = 1;
+                        ++snapshot.mirrored_count;
+                    }
+                }
+            }
+        }
+        snapshot.all_assigned_mirrored =
+            snapshot.human_position_valid &&
+                    snapshot.assigned_alive_local_count > 0 &&
+                    snapshot.pose_valid_count ==
+                        snapshot.assigned_alive_local_count &&
+                    snapshot.mirrored_count ==
+                        snapshot.assigned_alive_local_count
+                ? 1
+                : 0;
+        PublishStageWarpSnapshot(snapshot);
+        return true;
+    }
+
+    bool CopyStageWarpSnapshot(
+        SdgoMissionAiStageWarpSnapshotV1* output)
+    {
+        if (!output ||
+            output->size < sizeof(*output) ||
+            output->version !=
+                SDGO_MISSION_AI_STAGE_WARP_OBSERVER_VERSION)
+            return false;
+        AcquireSRWLockShared(
+            &g_stageWarpSnapshotLock);
+        SdgoMissionAiStageWarpSnapshotV1 snapshot =
+            g_stageWarpSnapshot;
+        ReleaseSRWLockShared(
+            &g_stageWarpSnapshotLock);
+        if (snapshot.size == 0) {
+            snapshot.size = sizeof(snapshot);
+            snapshot.version =
+                SDGO_MISSION_AI_STAGE_WARP_OBSERVER_VERSION;
+        }
+        AcquireSRWLockShared(&g_observerSnapshotLock);
+        const SdgoMissionAiClientSnapshotV1 mission =
+            g_observerSnapshot;
+        ReleaseSRWLockShared(&g_observerSnapshotLock);
+        if (snapshot.active &&
+            (!mission.active ||
+             mission.battle_generation !=
+                 snapshot.battle_generation ||
+             mission.mode_object != snapshot.mode_object ||
+             GetTickCount() -
+                     mission.last_native_update_tick >
+                 3000))
+            snapshot.active = 0;
+        *output = snapshot;
+        return true;
+    }
+
     void SpawnAiParticipants(uint8_t* mode)
     {
         g_wingmen.clear();
@@ -811,6 +1103,26 @@ namespace
         return static_cast<int>(g_localWingmen.size());
     }
 
+    // Called after the original mission PlayerWarp and the existing wingman
+    // mirror. Lua passes only the one-based player index; native code reads
+    // every published pose from the original player slot and unit nodes.
+    int __cdecl Lua_ObserveStageWarp(lua_State* L)
+    {
+        const double raw = g_lua.tonumber(L, 1);
+        if (!std::isfinite(raw) ||
+            raw < 1.0 ||
+            raw > 12.0 ||
+            std::floor(raw) != raw)
+            return 0;
+        __try {
+            RecordStageWarp(
+                static_cast<uint32_t>(raw));
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            RecordNativeException(GetExceptionCode());
+        }
+        return 0;
+    }
+
     // Called by the Lua wrapper only after one of its nested protected calls
     // returns an error. This records the real pcall outcome; it does not create
     // or alter any game state.
@@ -906,6 +1218,10 @@ namespace
         SetGlobalFunction(L, "SDGO_Now", Lua_Now);
         SetGlobalFunction(L, "SDGO_Wingmen", Lua_Wingmen);
         SetGlobalFunction(L, "SDGO_LocalWingmen", Lua_LocalWingmen);
+        SetGlobalFunction(
+            L,
+            "SDGO_MissionAI_ObserveStageWarp",
+            Lua_ObserveStageWarp);
         SetGlobalFunction(
             L,
             "SDGO_MissionAI_PcallError",
@@ -1039,6 +1355,9 @@ namespace
             RecordNativeException(code);
             g_api->Log(g_mod, SDGO_LOG_WARN, "exception %08lX while observing mission update", code);
         }
+        if (g_matchAiMissionTick)
+            g_matchAiMissionTick(
+                static_cast<uint8_t*>(mode));
     }
 
     // ---- configuration -----------------------------------------------------
@@ -1174,6 +1493,17 @@ SdgoMissionAiClientGetSnapshotV1(
     }
 }
 
+extern "C" __declspec(dllexport) int __cdecl
+SdgoMissionAiClientGetStageWarpSnapshotV1(
+    SdgoMissionAiStageWarpSnapshotV1* snapshot)
+{
+    __try {
+        return CopyStageWarpSnapshot(snapshot) ? 1 : 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
 SDGO_MOD_ENTRY
 {
     g_api = api;
@@ -1204,6 +1534,7 @@ SDGO_MOD_ENTRY
             "read-only mission GameTest object validation is unavailable");
     PublishObserverSnapshot(
         BuildObserverSnapshot(nullptr));
+    ResetStageWarpObserver(nullptr);
 
     std::wstring directory = api->ModDirectory(mod);
     g_scriptPathW = directory + L"\\mission_ai.lua";
@@ -1229,7 +1560,13 @@ SDGO_MOD_ENTRY
     if (match) {
         auto share = reinterpret_cast<SdgoRegisterMissionClientV1>(
             GetProcAddress(match, "SdgoMatchAiRegisterMissionV1"));
-        if (!share || !share(&lifecycle)) {
+        g_matchAiMissionTick =
+            reinterpret_cast<SdgoMatchAiMissionTickV1Fn>(
+                GetProcAddress(
+                    match,
+                    SDGO_MATCH_AI_MISSION_TICK_EXPORT));
+        if (!share || !g_matchAiMissionTick ||
+            !share(&lifecycle)) {
             api->Log(mod, SDGO_LOG_ERROR, "matching match_ai lifecycle bridge is required; update both Mods");
             return 0;
         }

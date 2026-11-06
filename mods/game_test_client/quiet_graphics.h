@@ -1160,6 +1160,7 @@ private:
         const HWND originalDeviceWindow=parameters ? parameters->hDeviceWindow:nullptr;
         if (parameters)r.parameters=owner->ProxyParameters(*parameters,nullptr,false);
         const bool completed=owner->Dispatch(r,[](QuietGraphics* context,R* v){
+            context->recorder_.BeforeReset();   // default-pool capture ring must not outlive the reset
             context->SizeProxy(v->hasParameters ? &v->parameters:nullptr);
             v->result=v->original(v->device,v->hasParameters ? &v->parameters:nullptr);
         });

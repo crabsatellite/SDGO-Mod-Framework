@@ -25,10 +25,15 @@ std::array<uint8_t, 0x700> mode{};
 std::array<uint8_t, 0x100> room{};
 std::array<uint8_t, 12 * kRecordSize> humans{};
 std::array<uint8_t, 12 * kRecordSize> ais{};
+std::array<std::array<uint8_t, 0x3300>, 12> humanUnits{};
+std::array<std::array<uint8_t, 0x100>, 12> humanNodes{};
 std::array<std::array<uint8_t, 0x3300>, 12> units{};
 std::array<std::array<uint8_t, 0x100>, 12> nodes{};
+std::array<std::array<uint8_t, 0x80>, 12> slots{};
 std::array<uint8_t, 0x100> manager{};
 std::array<uint8_t, 0x40> start{};
+std::array<uint8_t, 0x500> app{};
+std::array<uint8_t, 0x20> service{};
 std::array<ModeVirtualFn, 8> vtable{};
 
 void* um = manager.data();
@@ -47,6 +52,7 @@ uint8_t* replacementObject = nullptr;
 int findCalls = 0;
 
 bool __cdecl Network() { return network; }
+uint8_t* __cdecl App() { return app.data(); }
 bool __fastcall Observer(void*, void*) { return observer; }
 int __fastcall Virtual(uint8_t*, void*) { return 1; }
 uint8_t* __fastcall Start(void*, void*, int, int) {
@@ -111,15 +117,26 @@ uint8_t* __fastcall Remote(
     creatingRemote = false;
     return unit;
 }
+uint8_t* __fastcall Slot(void*, void*, int index)
+{
+    return index >= 0 && index < 12
+               ? slots[static_cast<size_t>(index)].data()
+               : nullptr;
+}
 void __fastcall Info(
     void*,
     void*,
+    int slot,
     int,
-    int,
-    uint32_t,
+    uint32_t objectId,
     uint32_t,
     uint8_t*)
 {
+    if (slot >= 0 && slot < 12)
+        Put(
+            slots[static_cast<size_t>(slot)].data(),
+            kSlotObjectId,
+            objectId);
 }
 void __fastcall Add(void*, void*, uint8_t*) {}
 void __fastcall Calculate(void*, void*) { ++calculated; }
@@ -133,6 +150,10 @@ void* __fastcall Find(void*, void*, uint32_t objectId)
     if (objectId == replacementObjectId &&
         replacementObject)
         return replacementObject;
+    for (auto& unit : humanUnits)
+        if (Get<uint32_t>(unit.data(), kUnitObjectId) ==
+            objectId)
+            return unit.data();
     for (auto& unit : units)
         if (Get<uint32_t>(unit.data(), kUnitObjectId) ==
             objectId)
@@ -177,10 +198,15 @@ void Reset(int humanCount, int aiCount, bool master, uint16_t modeId)
     room.fill(0);
     humans.fill(0);
     ais.fill(0);
+    humanUnits = {};
+    humanNodes = {};
     units = {};
     nodes = {};
+    slots = {};
     manager.fill(0);
     start.fill(0);
+    app.fill(0);
+    service.fill(0);
     vtable.fill(nullptr);
     created = initialized = updated = calculated = 0;
     pcallResult = 0;
@@ -201,6 +227,9 @@ void Reset(int humanCount, int aiCount, bool master, uint16_t modeId)
     g_observedMode = nullptr;
     g_observerSnapshot = {};
     g_observerSnapshotVersion = 0;
+    g_stageWarpSnapshot = {};
+    g_stageWarpSnapshotVersion = 0;
+    g_stageWarpCount = 0;
     g_battleGeneration = 0;
     ResetBattleCounters();
     g_disabled = false;
@@ -214,6 +243,8 @@ void Reset(int humanCount, int aiCount, bool master, uint16_t modeId)
         reinterpret_cast<ModeVirtualFn>(&Virtual);
     Put(mode.data(), 0, vtable.data());
     Put(mode.data(), kModeRoom, room.data());
+    Put(app.data(), 0x4A4, service.data());
+    Put(service.data(), 0x0C, mode.data());
     mode[kModeRoomMaster] = master ? 1 : 0;
     Put(room.data(), kModeRoomMode, modeId);
     Put(
@@ -233,6 +264,32 @@ void Reset(int humanCount, int aiCount, bool master, uint16_t modeId)
         manager.data(),
         kUnitManagerPlayerCount,
         static_cast<uint32_t>(humanCount));
+    for (int i = 0; i < humanCount; ++i) {
+        const uint32_t objectId =
+            501u + static_cast<uint32_t>(i);
+        Put(
+            slots[static_cast<size_t>(i)].data(),
+            kSlotObjectId,
+            objectId);
+        Put(
+            humanUnits[static_cast<size_t>(i)].data(),
+            kUnitObjectId,
+            objectId);
+        Put(
+            humanUnits[static_cast<size_t>(i)].data(),
+            kUnitNode,
+            humanNodes[static_cast<size_t>(i)].data());
+        Put(
+            humanUnits[static_cast<size_t>(i)].data(),
+            kObjectHp,
+            1000);
+        auto* position = reinterpret_cast<float*>(
+            humanNodes[static_cast<size_t>(i)].data() +
+            kNodePosition);
+        position[0] = 100.0f * i;
+        position[1] = 10.0f;
+        position[2] = -100.0f * i;
+    }
     for (int i = 0; i < aiCount; ++i) {
         uint8_t* record =
             ais.data() + i * kRecordSize;
@@ -266,12 +323,15 @@ void Reset(int humanCount, int aiCount, bool master, uint16_t modeId)
         reinterpret_cast<CreateNpcFn>(&Remote);
     g_game.setPlayerInfo =
         reinterpret_cast<SetPlayerInfoFn>(&Info);
+    g_game.playerSlot =
+        reinterpret_cast<PlayerSlotFn>(&Slot);
     g_game.addAiUnit =
         reinterpret_cast<AddAiUnitFn>(&Add);
     g_game.calculateTeam =
         reinterpret_cast<CalculateTeamFn>(&Calculate);
     g_game.findObject =
         reinterpret_cast<FindObjectFn>(&Find);
+    g_gameApp = &App;
     g_originalUpdate =
         reinterpret_cast<MissionUpdateFn>(&Update);
 
@@ -304,6 +364,18 @@ SdgoMissionAiClientSnapshotV1 Snapshot()
     CHECK(
         SdgoMissionAiClientGetSnapshotV1(&snapshot) ==
         1);
+    return snapshot;
+}
+
+SdgoMissionAiStageWarpSnapshotV1 StageWarpSnapshot()
+{
+    SdgoMissionAiStageWarpSnapshotV1 snapshot = {};
+    snapshot.size = sizeof(snapshot);
+    snapshot.version =
+        SDGO_MISSION_AI_STAGE_WARP_OBSERVER_VERSION;
+    CHECK(
+        SdgoMissionAiClientGetStageWarpSnapshotV1(
+            &snapshot) == 1);
     return snapshot;
 }
 }
@@ -342,6 +414,19 @@ int main()
             reinterpret_cast<
                 SdgoMissionAiClientSnapshotV1*>(1)) ==
         0);
+    SdgoMissionAiStageWarpSnapshotV1 invalidWarp = {};
+    invalidWarp.size = sizeof(invalidWarp) - 1;
+    invalidWarp.version =
+        SDGO_MISSION_AI_STAGE_WARP_OBSERVER_VERSION;
+    CHECK(
+        SdgoMissionAiClientGetStageWarpSnapshotV1(
+            &invalidWarp) == 0);
+    invalidWarp.size = sizeof(invalidWarp);
+    invalidWarp.version =
+        SDGO_MISSION_AI_STAGE_WARP_OBSERVER_VERSION + 1;
+    CHECK(
+        SdgoMissionAiClientGetStageWarpSnapshotV1(
+            &invalidWarp) == 0);
 
     SCENARIO("real mission Init generation maps native wingmen read-only");
     fixture::Reset(1, 3, true, 5);
@@ -405,6 +490,98 @@ int main()
     const int callsBeforeExport = fixture::findCalls;
     snapshot = fixture::Snapshot();
     CHECK(fixture::findCalls == callsBeforeExport);
+
+    SCENARIO("post-warp witness reads actual human and assigned local-wingman poses only");
+    fixture::Reset(2, 3, true, 5);
+    MissionInit(fixture::mode.data(), nullptr);
+    auto* human0 = reinterpret_cast<float*>(
+        fixture::humanNodes[0].data() + kNodePosition);
+    human0[0] = 13200.0f;
+    human0[1] = 1070.0f;
+    human0[2] = -8300.0f;
+    auto* human1 = reinterpret_cast<float*>(
+        fixture::humanNodes[1].data() + kNodePosition);
+    human1[0] = 13200.0f;
+    human1[1] = 1070.0f;
+    human1[2] = -8000.0f;
+    for (int index : {0, 2}) {
+        auto* position = reinterpret_cast<float*>(
+            fixture::nodes[static_cast<size_t>(index)].data() +
+            kNodePosition);
+        position[0] = human0[0];
+        position[1] = human0[1];
+        position[2] = human0[2];
+    }
+    auto* assignedSecond = reinterpret_cast<float*>(
+        fixture::nodes[1].data() + kNodePosition);
+    assignedSecond[0] = human1[0];
+    assignedSecond[1] = human1[1];
+    assignedSecond[2] = human1[2];
+    const auto modeBeforeWarp = fixture::mode;
+    const auto roomBeforeWarp = fixture::room;
+    const auto humansBeforeWarp = fixture::humanUnits;
+    const auto wingmenBeforeWarp = fixture::units;
+    CHECK(RecordStageWarp(1));
+    auto warp = fixture::StageWarpSnapshot();
+    CHECK(fixture::mode == modeBeforeWarp);
+    CHECK(fixture::room == roomBeforeWarp);
+    CHECK(fixture::humanUnits == humansBeforeWarp);
+    CHECK(fixture::units == wingmenBeforeWarp);
+    CHECK(warp.active == 1);
+    CHECK(warp.exact_plain_mission == 1);
+    CHECK(warp.room_records_valid == 1);
+    CHECK(warp.battle_generation == 1);
+    CHECK(warp.mode_object == PointerValue(fixture::mode.data()));
+    CHECK(warp.room_mode == 5);
+    CHECK(warp.warp_count == 1);
+    CHECK(warp.last_player_index == 1);
+    CHECK(warp.last_player_slot == 0);
+    CHECK(warp.human_object_id == 501);
+    CHECK(warp.human_position_valid == 1);
+    CHECK(warp.human_position_x == 13200.0f);
+    CHECK(warp.human_position_y == 1070.0f);
+    CHECK(warp.human_position_z == -8300.0f);
+    CHECK(warp.assigned_alive_local_count == 2);
+    CHECK(warp.pose_valid_count == 2);
+    CHECK(warp.mirrored_count == 2);
+    CHECK(warp.all_assigned_mirrored == 1);
+    CHECK(warp.maximum_pose_distance == 0.0f);
+    CHECK(warp.wingmen[0].object_id == 1001);
+    CHECK(warp.wingmen[0].slot == 2);
+    CHECK(warp.wingmen[0].local_control == 1);
+    CHECK(warp.wingmen[0].matches_human_pose == 1);
+    CHECK(warp.wingmen[1].object_id == 1003);
+    CHECK(warp.wingmen[1].slot == 4);
+    CHECK(warp.wingmen[1].matches_human_pose == 1);
+
+    SCENARIO("mismatch and dead assignment stay visible without inventing a mirror");
+    auto* mismatched = reinterpret_cast<float*>(
+        fixture::nodes[2].data() + kNodePosition);
+    mismatched[0] += 25.0f;
+    CHECK(RecordStageWarp(1));
+    warp = fixture::StageWarpSnapshot();
+    CHECK(warp.warp_count == 2);
+    CHECK(warp.assigned_alive_local_count == 2);
+    CHECK(warp.mirrored_count == 1);
+    CHECK(warp.all_assigned_mirrored == 0);
+    CHECK(warp.maximum_pose_distance == 25.0f);
+    Put(fixture::units[2].data(), kObjectHp, 0);
+    CHECK(RecordStageWarp(1));
+    warp = fixture::StageWarpSnapshot();
+    CHECK(warp.warp_count == 3);
+    CHECK(warp.assigned_alive_local_count == 1);
+    CHECK(warp.pose_valid_count == 1);
+    CHECK(warp.mirrored_count == 1);
+    CHECK(warp.all_assigned_mirrored == 1);
+
+    SCENARIO("a new battle generation clears the cached stage-warp count");
+    fixture::Reset(1, 1, true, 8);
+    MissionInit(fixture::mode.data(), nullptr);
+    warp = fixture::StageWarpSnapshot();
+    CHECK(warp.battle_generation == 1);
+    CHECK(warp.room_mode == 8);
+    CHECK(warp.warp_count == 0);
+    CHECK(warp.all_assigned_mirrored == 0);
 
     SCENARIO("duplicate pilot ids remain bound to their native record slots");
     fixture::Reset(1, 2, true, 5);
