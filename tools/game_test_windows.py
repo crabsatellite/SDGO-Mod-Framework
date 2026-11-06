@@ -118,6 +118,7 @@ class _Spawned:
     pid: int
     stdout: BinaryIO | None
     stderr: BinaryIO | None
+    initial_thread_id: int = 0
 
 
 @dataclass
@@ -573,6 +574,7 @@ class _Win32Api:
             return _Spawned(
                 int(process.hProcess), int(process.dwProcessId),
                 parent_stdout, parent_stderr,
+                int(process.dwThreadId),
             )
         except BaseException:
             if parent_stdout is not None:
@@ -750,6 +752,7 @@ class WindowsBackgroundProcess:
         self.desktop_path = f"WinSta0\\{self.desktop_name}"
         self.returncode: int | None = None
         self.pid = 0
+        self.initial_thread_id = 0
         self.stdout: BinaryIO | None = None
         self.stderr: BinaryIO | None = None
         self._closed = False
@@ -796,6 +799,7 @@ class WindowsBackgroundProcess:
             raise
         self._process_handle = spawned.process_handle
         self.pid = spawned.pid
+        self.initial_thread_id = spawned.initial_thread_id
         self.stdout = spawned.stdout
         self.stderr = spawned.stderr
 
@@ -834,6 +838,7 @@ class WindowsBackgroundProcess:
             "verified": False,
             "run_id": self.run_id,
             "entry_pid": self.pid,
+            "entry_initial_thread_id": getattr(self, 'initial_thread_id', 0),
             "target_pid": selected_pid,
             "desktop_name": self.desktop_name,
             "desktop_path": self.desktop_path,

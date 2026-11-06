@@ -1659,6 +1659,15 @@ def parse_mode_sequence(value: str) -> tuple[int, ...]:
     return modes
 
 
+def validate_oc_allocate(value: str | None) -> str | None:
+    """OC acceptance input: '<stat>:<points>' with stat 0..5 and 1..20 normal points."""
+    if value is None:
+        return None
+    if type(value) is not str or not re.fullmatch(r'[0-5]:(?:[1-9]|1[0-9]|20)', value):
+        raise GameTestError("oc_allocate must be '<stat 0-5>:<points 1-20>'")
+    return value
+
+
 def validate_play_unit_uid(value: int | None) -> int | None:
     if value is None:
         return None
@@ -1776,10 +1785,23 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                          room_style_preview: str | None = None,
                          same_room_rematch: bool = False, shop_visual_only: bool = False,
                          page_group: str | None = None, mission_respawns: str | None = None,
+                         oc_allocate: str | None = None,
                          mission_behavior_profile: str | None = None,
-                         mission_game_mode_id: int | None = None) -> tuple[str, ...]:
+                         mission_game_mode_id: int | None = None,
+                         oc_panel: bool = False, oc_challenge: bool = False) -> tuple[str, ...]:
     if mission_respawns is not None and (mission_respawns not in ('player','infinite') or mission_mode is None):
         raise GameTestError('mission_respawns requires a native mission and player or infinite policy')
+    oc_allocate = validate_oc_allocate(oc_allocate)
+    if oc_allocate is not None and (play_unit_uid is None or mission_mode is not None or any((
+            bootstrap_only, battleship_only, gift_requests_only, deck_only, pages_only, friends_only,
+            room_titles_only, collection_draw, same_room_rematch, room_style_preview is not None))):
+        raise GameTestError('oc_allocate requires an ordinary PvP battle with an existing owned play unit')
+    if type(oc_panel) is not bool or type(oc_challenge) is not bool:
+        raise GameTestError('oc_panel and oc_challenge must be booleans')
+    if oc_challenge and not (oc_panel or oc_allocate is not None):
+        raise GameTestError('oc_challenge runs inside the OC panel check')
+    if oc_panel and (play_unit_uid is None or not (oc_allocate is not None or (pages_only and page_group == 'hangar'))):
+        raise GameTestError('oc_panel runs after the OC PvP battle or the read-only hangar pages with an existing owned play unit')
     if page_group is not None and (page_group != 'hangar' or not pages_only or shop_catalog or collection_draw):
         raise GameTestError('page_group=hangar requires read-only pages without shop or collection scope')
     mission_mode = validate_mission_mode(mission_mode)
@@ -1818,6 +1840,11 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         selection=('setup.active_unit',) if play_unit_uid is not None else ()
         return FLOW_CASES[:3]+selection+tuple('room_titles.'+x for x in ('pvp.create','pvp.rename','pvp.leave','grid.create','grid.rename','grid.leave','mission.create','mission.rename','mission.leave','team.create','team.native_view','team.leave','start.create','start.rename','start'))
     selection = ('setup.active_unit',) if play_unit_uid is not None else ()
+    if oc_allocate is not None:
+        # Allocate first, then equip: the equip reply is the owned record every
+        # native copy (profile, room pilot) is built from, so it must already
+        # carry the new OC payload before the battle.
+        selection = ('oc.allocate',) + selection
     if mission_mode is not None:
         if mode_sequence != "1":
             raise GameTestError("--mission-mode cannot be combined with a PvP mode sequence")
@@ -1833,7 +1860,8 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
     modes = parse_mode_sequence(mode_sequence)
     if pages_only:
         if page_group == 'hangar':
-            return FLOW_CASES[:3] + selection + ('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel')
+            return FLOW_CASES[:3] + selection + ('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel') + (
+                ('oc.panel',) if oc_panel else ())
         if shop_visual_only:
             return FLOW_CASES[:2] + ('flow.shop_ready',) + selection + ('pages.shop.catalog',)
         shop_cases = ('pages.shop.catalog',) if shop_catalog else ()
@@ -1857,11 +1885,13 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
             cases.extend(f'{name}.{step}' for step in ('room','start','ai_spawn','waiting'))
             cases.extend(f'{name}.rematch.{step}' for step in MODE_FLOW_STEPS)
         return prefix+tuple(cases)
+    # The OC panel check runs last, after the settled return to the lobby.
+    panel = ('oc.panel',) if (oc_allocate is not None or oc_panel) else ()
     if len(modes) == 1:
-        return prefix + FLOW_CASES[3:]
+        return prefix + FLOW_CASES[3:] + panel
     return prefix + tuple(
         f"pvp.mode{mode}.{step}" for mode in modes for step in MODE_FLOW_STEPS
-    )
+    ) + panel
 
 
 def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
@@ -1928,8 +1958,11 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         shop_visual_only=plan.get('shop_visual_only', False),
         page_group=plan.get('page_group'),
         mission_respawns=plan.get('mission_respawns'),
+        oc_allocate=plan.get('oc_allocate'),
         mission_behavior_profile=plan.get("mission_behavior_profile"),
         mission_game_mode_id=plan.get("mission_game_mode_id"),
+        oc_panel=plan.get('oc_panel', False),
+        oc_challenge=plan.get('oc_challenge', False),
     )
 
 
@@ -2290,6 +2323,12 @@ def write_job(
             run["run"]["ai_layout"] = plan["ai_layout"]
     if 'play_unit_uid' in plan:
         run['run']['play_unit_uid'] = str(plan['play_unit_uid'])
+    if 'oc_allocate' in plan:
+        run['run']['oc_allocate'] = plan['oc_allocate']
+    if plan.get('oc_panel'):
+        run['run']['oc_panel'] = '1'
+    if plan.get('oc_challenge'):
+        run['run']['oc_challenge'] = '1'
     if 'unit_scenario_sha256' in plan:
         run['run']['unit_scenario_sha256'] = plan['unit_scenario_sha256']
     if 'page_group' in plan:
@@ -2591,6 +2630,12 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                     )
                 ):
                     raise ValueError('AI difficulty room command differs from the sealed native plan')
+            oc_allocate = run.get('oc_allocate')
+            if oc_allocate is not None:
+                try:
+                    validate_oc_allocate(oc_allocate)
+                except GameTestError as error:
+                    raise ValueError(str(error)) from error
             expected_cases = required_flow_cases(
                 mode_sequence, bootstrap_only, battleship_only,
                 gift_requests_only, deck_only, pages_only, collection_draw,
@@ -2599,6 +2644,9 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 shop_visual_only=bool(shop_plan and shop_plan.get('shop_visual_only')),
                 same_room_rematch=same_room_rematch,
                 page_group=page_group,
+                oc_allocate=oc_allocate,
+                oc_panel=run.get('oc_panel') == '1',
+                oc_challenge=run.get('oc_challenge') == '1',
             )
 
         unit_binding={}
@@ -2698,6 +2746,12 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 plan['ai_layout'] = ai_layout
         if play_unit_uid is not None:
             plan['play_unit_uid'] = play_unit_uid
+        if run.get('oc_allocate'):
+            plan['oc_allocate'] = validate_oc_allocate(run['oc_allocate'])
+        if run.get('oc_panel') == '1':
+            plan['oc_panel'] = True
+        if run.get('oc_challenge') == '1':
+            plan['oc_challenge'] = True
         plan.update(unit_binding)
         if shop_plan is not None:
             plan.update(shop_plan)
@@ -3028,7 +3082,13 @@ def prepare(
     extra_mods: tuple[str, ...] = (),
     disabled_mods: tuple[str, ...] = (),
     apsalus_roundtrip: bool = False,
+    unit_transform_roundtrip: bool = False,
+    unit_transform_steps: int | None = None,
+    capture_native_frames: bool = False,
     fps_gameplay_cap: int | None = None,
+    oc_allocate: str | None = None,
+    oc_panel: bool = False,
+    oc_challenge: bool = False,
     server_session: dict | None = None,
     rebind_existing_account: bool = False,
     fps_cap: int | None = None,
@@ -3075,11 +3135,38 @@ def prepare(
         if fps_cap is not None or any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,collection_draw)) or mission_mode is not None:
             raise GameTestError('gameplay FPS checks require a complete native PvP battle')
         extra_mods=tuple(dict.fromkeys((*extra_mods,FPS_MOD)))
-    if apsalus_roundtrip and (mode_sequence != '1' or play_unit_uid is None or any((bootstrap_only,
+    if type(unit_transform_roundtrip) is not bool or type(capture_native_frames) is not bool:
+        raise GameTestError('native unit observation flags must be booleans')
+    if apsalus_roundtrip and unit_transform_roundtrip:
+        raise GameTestError('choose one native transform roundtrip profile')
+    if unit_transform_steps is not None:
+        if type(unit_transform_steps)is not int or not 1<=unit_transform_steps<=16:
+            raise GameTestError('native directed transform steps must be an integer from 1 to 16')
+        if apsalus_roundtrip or unit_transform_roundtrip:
+            raise GameTestError('choose one native transform path profile')
+        if fps_cap is not None or mode_sequence!='1' or play_unit_uid is None or any((bootstrap_only,
+                battleship_only,gift_requests_only,deck_only,pages_only,friends_only,room_titles_only)) or mission_mode is not None:
+            raise GameTestError('native directed transforms require one complete ordinary battle and an existing owned unit UID')
+    if (apsalus_roundtrip or unit_transform_roundtrip) and (mode_sequence != '1' or play_unit_uid is None or any((bootstrap_only,
             battleship_only,gift_requests_only,deck_only,pages_only,friends_only)) or mission_mode is not None):
-        raise GameTestError('Apsalus roundtrip requires one complete ordinary battle and an existing owned unit UID')
+        raise GameTestError('Native transform roundtrip requires one complete ordinary battle and an existing owned unit UID')
+    oc_allocate = validate_oc_allocate(oc_allocate)
+    if oc_allocate is not None and (mode_sequence != '1' or play_unit_uid is None or fps_cap is not None or
+            any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,friends_only,
+                 room_titles_only,collection_draw,same_room_rematch)) or mission_mode is not None):
+        raise GameTestError('--oc-allocate requires one complete ordinary PvP battle and an existing owned unit UID')
+    if type(oc_panel) is not bool:
+        raise GameTestError('--oc-panel must be a flag')
+    if oc_panel and (play_unit_uid is None or fps_cap is not None or mission_mode is not None or
+                     not (oc_allocate is not None or (pages_only and page_group == 'hangar'))):
+        raise GameTestError('--oc-panel requires --play-unit-uid with either --oc-allocate or --pages-only --page-group hangar')
+    if type(oc_challenge) is not bool or (oc_challenge and not (oc_panel or oc_allocate is not None)):
+        raise GameTestError('--oc-challenge runs inside the OC panel check (--oc-panel or --oc-allocate)')
     if review_footage and (not quiet or fps_cap is not None):
         raise GameTestError('review footage is a quiet-lane recording profile; it does not apply to visible or FPS runs')
+    if capture_native_frames and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,
+            battleship_only,gift_requests_only,deck_only,friends_only,room_titles_only))):
+        raise GameTestError('native frame capture requires pages or a complete ordinary battle')
     fps_only = fps_cap is not None
     if fps_only:
         if not quiet or sfx_only:
@@ -3302,6 +3389,12 @@ def prepare(
             mission_game_mode_id,
             review_footage=review_footage,
         )
+        if oc_allocate is not None:
+            plan['oc_allocate'] = oc_allocate
+        if oc_panel:
+            plan['oc_panel'] = True
+        if oc_challenge:
+            plan['oc_challenge'] = True
         if server_session is not None:
             if (not isinstance(server_session,dict) or
                     not re.fullmatch(r'[0-9a-f]{4}' if random_loadout else r'gt[0-9a-f]{4}',str(server_session.get('nonce',''))) or
@@ -3419,9 +3512,13 @@ def prepare(
         observer_config=read_ini(observer_manifest)
         if not observer_config.has_section('settings'):observer_config.add_section('settings')
         observer_config['settings']['ApsalusRoundtrip']='1' if apsalus_roundtrip else '0'
+        observer_config['settings']['UnitTransformRoundtrip']='1' if unit_transform_roundtrip else '0'
+        observer_config['settings']['UnitDirectedTransforms']='1' if unit_transform_steps is not None else '0'
+        observer_config['settings']['UnitTransformSteps']=str(unit_transform_steps or 3)
         observer_config['settings']['FpsGameplayCap']=str(fps_gameplay_cap or 0)
         for key,value in unit_scenarios.settings(plan.get('unit_scenario')).items():
             observer_config['settings'][key]=value
+        if capture_native_frames:observer_config['settings']['CaptureNativeFrames']='1'
         write_ini(observer_manifest,observer_config)
         if 'unit_scenario' in plan:
             atomic_write(client/'sdgo/gametest'/unit_scenarios.INPUT,unit_scenarios.encoded(plan['unit_scenario']).decode('utf-8'))
@@ -3578,7 +3675,10 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
     previous_pid=(previous.get('execution') or {}).get('game_pid')
     for row in process_snapshot():
         value=row.get('image_path')
-        if (value and is_relative_to(Path(value).resolve(),run_dir)) or (row['pid']==previous_pid and not value):
+        # A finished client's PID can be reused by an unrelated process whose
+        # image path is unreadable; only the same executable name keeps the hold.
+        if (value and is_relative_to(Path(value).resolve(),run_dir)) or (
+                row['pid']==previous_pid and not value and str(row.get('name','')).casefold()==image.name.casefold()):
             raise GameTestError('the owned client may still be running; reuse made no changes')
     account_lock_path=None;target_account_lock_path=None;account_rebound=False
     if fps_only:
@@ -3977,6 +4077,7 @@ def process_snapshot() -> list[dict]:
                     {
                         "pid": pid,
                         "parent_pid": int(entry.th32ParentProcessID),
+                        "name": str(entry.szExeFile),
                         "image_path": process_image_path(pid),
                     }
                 )
@@ -4256,6 +4357,9 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
                 "started_utc": started,
                 "finished_utc": None,
                 "entry_pid": entry_process.pid,
+                # Direct native entry only. A launcher child's initial thread
+                # is a different identity and is deliberately not inferred.
+                "entry_initial_thread_id": getattr(entry_process, 'initial_thread_id', 0),
                 "game_pid": game_process["pid"],
                 "game_image_path": str(Path(game_process["image_path"]).resolve()),
                 "status": "running",
@@ -4852,6 +4956,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--rebind-existing-account',action='store_true',help='with --reuse-client and --account-profile, switch the stopped client to another already registered account')
     prepare_parser.add_argument('--include-mod',action='append',default=[],help='explicit staged client Mod to install before runtime hashes freeze')
     prepare_parser.add_argument('--fps-gameplay-cap',type=int,help='verify native 60 Hz gameplay and the selected render cap during a full PvP battle')
+    prepare_parser.add_argument('--oc-allocate',help="OC six-stat acceptance '<stat 0-5>:<points>': allocate normal OC points to the --play-unit-uid unit through the production client Mod before the PvP battle")
+    prepare_parser.add_argument('--oc-panel',action='store_true',help='open the original factory upgrade page for the --play-unit-uid unit at the end (after --oc-allocate or the read-only hangar pages) and drive the OC client panel on it: refresh, normal-point reset, one HP point')
+    prepare_parser.add_argument('--oc-challenge',action='store_true',help='inside the OC panel check, also press the OC challenge (can change the unit\'s OC level)')
     prepare_parser.add_argument(
         "--fps-cap",
         type=int,
@@ -4955,6 +5062,9 @@ def main(argv: list[str] | None = None) -> int:
                 fps_mod_enabled=not args.fps_mod_disabled,
                 extra_mods=tuple(args.include_mod),
                 fps_gameplay_cap=args.fps_gameplay_cap,
+                oc_allocate=args.oc_allocate,
+                oc_panel=args.oc_panel,
+                oc_challenge=args.oc_challenge,
             )
         elif args.command == "run":
             result = run_prepared(args.run_dir, args.timeout, args.launch_timeout)

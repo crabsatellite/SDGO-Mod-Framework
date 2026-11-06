@@ -65,6 +65,56 @@ std::mutex g_database_gate;
 std::atomic<bool> g_database_binding_proven{false};
 std::atomic<bool> g_database_ready{false};
 
+// Extension handlers register during mod load (single-threaded) before the
+// queued hooks activate, so the table is read without locking afterwards.
+struct ExtensionRegistration {
+    std::uint16_t first = 0;
+    std::uint16_t last = 0;
+    ExtensionHandlerFn handler = nullptr;
+    void* user = nullptr;
+};
+std::array<ExtensionRegistration, 8> g_extensions{};
+thread_local void* g_extension_request = nullptr;
+std::size_t g_extension_count = 0;
+LONG g_extension_replies = 0;
+
+const ExtensionRegistration* FindExtension(Command command) noexcept {
+    const auto value = static_cast<std::uint16_t>(command);
+    for (std::size_t index = 0; index < g_extension_count; ++index) {
+        const auto& entry = g_extensions[index];
+        if (value >= entry.first && value <= entry.last && entry.handler)
+            return &entry;
+    }
+    return nullptr;
+}
+
+WireStatus RunExtension(
+    const ExtensionRegistration& entry,
+    std::uint32_t actor,
+    const Request& request,
+    const NativeDatabaseSessions& sessions,
+    Reply* reply) noexcept {
+    std::uint32_t produced = 0;
+    std::int32_t status = static_cast<std::int32_t>(WireStatus::transport_invalid);
+    __try {
+        status = entry.handler(
+            entry.user, actor,
+            static_cast<std::uint16_t>(request.command),
+            request.extension.data(), request.extension_bytes,
+            sessions.member, sessions.game,
+            reply->extension.data(),
+            static_cast<std::uint32_t>(reply->extension.size()),
+            &produced);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        status = static_cast<std::int32_t>(WireStatus::database_unavailable);
+        produced = 0;
+    }
+    if (produced > kMaximumExtensionPayloadBytes) produced = 0;
+    reply->extension_bytes = static_cast<std::uint16_t>(produced);
+    const auto decoded = static_cast<WireStatus>(status);
+    return wire::ValidStatus(decoded) ? decoded : WireStatus::transport_invalid;
+}
+
 struct LastErrorGuard {
     DWORD value = GetLastError();
     ~LastErrorGuard() { SetLastError(value); }
@@ -427,6 +477,35 @@ int __fastcall WorldGiftHandler(
         capability_expanded_requests |
         capability_agent_validated;
 
+    if (IsExtensionCommand(request.command)) {
+        // The client's capability probe (hello) always precedes extension
+        // traffic, so the native sessions are already proven read-only.
+        const auto* entry = FindExtension(request.command);
+        if (!g_database_binding_proven.load(std::memory_order_acquire)) {
+            reply.status = WireStatus::database_unavailable;
+        } else if (!entry) {
+            reply.status = WireStatus::disabled;
+        } else {
+            g_extension_request = self;
+            reply.status = RunExtension(*entry, actor, request, sessions, &reply);
+            g_extension_request = nullptr;
+        }
+        std::array<std::uint8_t, kCarrierBytes> extension_encoded{};
+        if (!EncodeReply(actor, reply, &extension_encoded) ||
+            !SendWorldReply(view, extension_encoded)) {
+            if (g_api && g_api->Log &&
+                InterlockedIncrement(&g_world_custom_replies) <= 5) {
+                g_api->Log(
+                    g_mod, SDGO_LOG_ERROR,
+                    "extension carrier reply transport failed for command 0x%X",
+                    static_cast<unsigned>(request.command));
+            }
+            return 0;
+        }
+        InterlockedIncrement(&g_extension_replies);
+        return 0;
+    }
+
     bool stop_after_binding_probe = false;
     if (!g_database_binding_proven.load(std::memory_order_acquire)) {
         if (request.command != Command::hello) {
@@ -567,6 +646,43 @@ bool ConfigureDatabase(const SdgoApi* api, SdgoMod* mod) {
 }
 
 } // namespace
+
+extern "C" __declspec(dllexport)
+void* __cdecl SdgoFriendUnitGiftCurrentRequestV1() {
+    return g_extension_request;
+}
+
+extern "C" __declspec(dllexport)
+int __cdecl SdgoFriendUnitGiftRegisterExtensionV1(
+    std::uint16_t first_command,
+    std::uint16_t last_command,
+    ExtensionHandlerFn handler,
+    void* user) {
+    if (!handler || first_command > last_command ||
+        first_command < kExtensionCommandFirst ||
+        last_command > kExtensionCommandLast ||
+        g_extension_count >= g_extensions.size())
+        return 0;
+    // Only the World host dispatches extension requests; the Agent host only
+    // validates and forwards the carrier.
+    if (!g_api || !g_api->host_key ||
+        std::strcmp(g_api->host_key, kWorldHost) != 0 ||
+        !g_world_original)
+        return 0;
+    for (std::size_t index = 0; index < g_extension_count; ++index) {
+        const auto& entry = g_extensions[index];
+        if (first_command <= entry.last && last_command >= entry.first)
+            return 0;
+    }
+    g_extensions[g_extension_count++] = {first_command, last_command, handler, user};
+    if (g_api->Log)
+        g_api->Log(
+            g_mod, SDGO_LOG_INFO,
+            "carrier extension commands 0x%X..0x%X registered",
+            static_cast<unsigned>(first_command),
+            static_cast<unsigned>(last_command));
+    return 1;
+}
 
 SDGO_MOD_ENTRY {
     if (!api || !mod ||

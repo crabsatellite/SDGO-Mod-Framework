@@ -173,4 +173,72 @@ Result Registry::activate(const Candidate& candidate, Vm& vm) {
         vm.restoreStack(top); result.status = Status::Registered; vm_ = vm.identity(); owners_[candidate.owner] = {candidate.revision, fingerprint, result.exports}; return result;
     } catch (const std::exception& e) { return fatal(std::string("native registration exception: ") + e.what()); }
 }
+
+Result Registry::activateBatch(const Candidate* candidates, std::size_t count, Vm& vm) {
+    if (poisoned_) { auto r = Failure(Status::FatalClientState, "candidate client is already quarantined"); r.clientMustClose = true; return r; }
+    if (!candidates || !count || count > 128) return Failure(Status::InvalidCandidate, "registration owner count");
+    if (!vm.atRootCompletionBoundary() || !vm.identity()) return Failure(Status::BoundaryUnavailable, "original root completion / initialization thread / same VM gate missing");
+    if (vm_ && vm_ != vm.identity()) return Failure(Status::RestartRequired, "registry belongs to a different native VM lifetime");
+    std::set<std::string> owners, names, resources;
+    std::size_t total = 0, programs = 0;
+    // Validate the whole set before reading globals or publishing any closure.
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto& candidate = candidates[i];
+        const auto valid = Validate(candidate);
+        if (!valid.valid) return Failure(Status::InvalidCandidate, valid.reason);
+        if (!owners.insert(candidate.owner).second) return Failure(Status::InvalidCandidate, "duplicate registration owner");
+        for (const auto& name : valid.exports)
+            if (!names.insert(name).second) return Failure(Status::NameConflict, "registration owners share an export: " + name);
+        for (const auto& p : candidate.programs) {
+            if (++programs > 4096 || p.bytes.size() > kMaximumBytes - total)
+                return Failure(Status::InvalidCandidate, "registration batch byte/program budget");
+            total += p.bytes.size();
+            if (!resources.insert(p.resource).second) return Failure(Status::InvalidCandidate, "registration owners share a resource");
+        }
+    }
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto& candidate = candidates[i];
+        const auto existing = owners_.find(candidate.owner);
+        if (existing != owners_.end()) {
+            if (existing->second.revision != candidate.revision || existing->second.contentFingerprint != Fingerprint(candidate))
+                return Failure(Status::RestartRequired, "registered owner revision cannot be replaced in a live VM");
+            for (const auto& entry : existing->second.exports) {
+                if (vm.globalType(entry.name) != kFunction || vm.functionIdentity(entry.name) != entry.functionIdentity) {
+                    poisoned_ = true;
+                    auto r = Failure(Status::FatalClientState, "previously registered function identity has changed");
+                    r.clientMustClose = true; vm.failClosed(r.reason); return r;
+                }
+            }
+        } else {
+            for (const auto& p : candidate.programs) for (const auto& name : p.exports)
+                if (vm.globalType(name) != kNil) return Failure(Status::NameConflict, "export name already exists: " + name);
+        }
+    }
+    Result batch; batch.status = Status::AlreadyRegistered;
+    try {
+        for (std::size_t i = 0; i < count; ++i) {
+            auto result = activate(candidates[i], vm);
+            const bool changed = batch.executionStarted || result.executionStarted;
+            if (!result.active()) {
+                if (changed && !result.clientMustClose) {
+                    poisoned_ = true; result.status = Status::FatalClientState;
+                    result.clientMustClose = true; vm.failClosed(result.reason);
+                }
+                result.executionStarted = changed;
+                return result;
+            }
+            batch.executionStarted = changed;
+            if (changed) batch.status = Status::Registered;
+            batch.exports.insert(batch.exports.end(), result.exports.begin(), result.exports.end());
+        }
+    } catch (const std::exception& error) {
+        auto result = Failure(Status::InvalidCandidate, error.what());
+        if (batch.executionStarted || poisoned_) {
+            poisoned_ = true; result.status = Status::FatalClientState;
+            result.executionStarted = true; result.clientMustClose = true; vm.failClosed(result.reason);
+        }
+        return result;
+    }
+    return batch;
+}
 } // namespace sdgo::scripts

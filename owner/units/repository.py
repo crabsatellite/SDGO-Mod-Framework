@@ -17,6 +17,8 @@ from typing import Any, Iterable
 
 
 INT_MAX = 2_147_483_647
+UNIT_ID_FIRST = 10_001
+UNIT_ID_LAST = 30_000
 FAMILY_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 MANAGED_ITEM_FIRST = 1_119_000
 MANAGED_ITEM_LAST = 1_119_999
@@ -172,7 +174,9 @@ def _read_ini(path: Path) -> configparser.ConfigParser:
             text = raw.decode("utf-8-sig")
         except UnicodeDecodeError:
             text = raw.decode("mbcs")
-    parser = configparser.ConfigParser(interpolation=None)
+    # Original server INIs repeat credential keys in both cases (id/ID, pwd/PWD);
+    # the native reader is case-insensitive, so accept the repeat instead of failing.
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
     parser.read_string(text)
     if "DB Game" not in parser:
         raise ValueError("服务端配置缺少 [DB Game]")
@@ -228,7 +232,11 @@ def _empty_catalog() -> dict[str, Any]:
         "grades": set(),
         "level_indices": set(),
         "skill_ids": set(),
+        "skills": {},
+        "pending_skill_ids": set(),
+        "pending_funnel_ids": set(),
         "funnel_ids": set(),
+        "funnels": {},
         "unit_graph_ids": set(),
     }
 
@@ -311,13 +319,22 @@ def _load_snapshot(path: Path) -> tuple[dict[str, Any], dict[str, bool]]:
     skill_file = path / "dbo.tbl_SkillRev.json"
     if skill_file.is_file():
         skill_rows = _json_rows(skill_file)
-        catalog["skill_ids"] = set(_index(skill_rows, "SkillID", "tbl_SkillRev"))
+        catalog["skills"] = _index(skill_rows, "SkillID", "tbl_SkillRev")
+        catalog["skill_ids"] = set(catalog["skills"])
     else:
         metadata["skills"] = False
+    dependency_file = path / "dbo.sdgo_UnitImportDependencies.json"
+    if dependency_file.is_file():
+        dependency_rows=_json_rows(dependency_file)
+        catalog["pending_skill_ids"] = {
+            int(row['RecordID']) for row in dependency_rows if row.get('RecordKind') == 'skill'
+        }
+        catalog['pending_funnel_ids']={int(row['RecordID']) for row in dependency_rows if row.get('RecordKind')=='funnel'}
     funnel_file = path / "dbo.tbl_Funnel.json"
     if funnel_file.is_file():
         funnel_rows = _json_rows(funnel_file)
-        catalog["funnel_ids"] = set(_index(funnel_rows, "FunnelID", "tbl_Funnel"))
+        catalog["funnels"] = _index(funnel_rows, "FunnelID", "tbl_Funnel")
+        catalog["funnel_ids"] = set(catalog["funnels"])
     else:
         metadata["funnels"] = False
     graph_file = path / "dbo.tbl_UnitGraph.json"
@@ -384,15 +401,18 @@ def _load_cursor_catalog(cursor) -> tuple[dict[str, Any], dict[str, bool]]:
     }
     catalog["level_indices"] = {row["UnitLevelIndex"] for row in levels}
     if metadata["skills"]:
-        catalog["skill_ids"] = {
-            row["SkillID"]
-            for row in _select_rows(cursor, "tbl_SkillRev", SKILL_COLUMNS)
+        catalog["skills"] = _index(_select_rows(cursor,"tbl_SkillRev",SKILL_COLUMNS),"SkillID","tbl_SkillRev")
+        catalog["skill_ids"] = set(catalog["skills"])
+    if _object_exists(cursor, 'sdgo_UnitImportDependencies'):
+        catalog['pending_skill_ids'] = {
+            int(row[0]) for row in cursor.execute(
+                "SELECT RecordID FROM dbo.sdgo_UnitImportDependencies WHERE RecordKind='skill'")
         }
+        catalog['pending_funnel_ids']={int(row[0]) for row in cursor.execute(
+            "SELECT RecordID FROM dbo.sdgo_UnitImportDependencies WHERE RecordKind='funnel'")}
     if _object_exists(cursor, "tbl_Funnel"):
-        catalog["funnel_ids"] = {
-            row["FunnelID"]
-            for row in _select_rows(cursor, "tbl_Funnel", FUNNEL_COLUMNS)
-        }
+        catalog["funnels"] = _index(_select_rows(cursor,"tbl_Funnel",FUNNEL_COLUMNS),"FunnelID","tbl_Funnel")
+        catalog["funnel_ids"] = set(catalog["funnels"])
     else:
         metadata["funnels"] = False
     if _object_exists(cursor, "tbl_UnitGraph"):
@@ -528,8 +548,11 @@ def _validate_plan(
     }
     if not isinstance(plan, dict):
         raise ValueError("导入计划必须是对象")
-    if set(plan)-{'blueprints'} != fields:
-        unknown = set(plan) - fields-{'blueprints'}
+    # behavior_profile is optional metadata: native-self-transform-v1 declares a record
+    # whose transform target is itself (both native banks hold the same definition).
+    optional = {'blueprints', 'behavior_profile'}
+    if set(plan)-optional != fields:
+        unknown = set(plan) - fields-optional
         missing = fields - set(plan)
         details = []
         if unknown:
@@ -586,11 +609,15 @@ def _validate_plan(
     weapon_map = unique(weapons, "WeaponNo", "武器")
     name_map = unique(names, "UnitNumber", "名称")
     for identity, row in unit_map.items():
+        if not UNIT_ID_FIRST<=identity<=UNIT_ID_LAST:
+            raise ValueError(f"机体 {identity} 超出目标服务端编号范围 {UNIT_ID_FIRST}..{UNIT_ID_LAST}；请先按类型重编号")
+        if row['UnitNumber_Transform'] and not UNIT_ID_FIRST<=row['UnitNumber_Transform']<=UNIT_ID_LAST:
+            raise ValueError(f"机体 {identity} 的变形目标超出目标服务端编号范围 {UNIT_ID_FIRST}..{UNIT_ID_LAST}")
         if not row["UnitModelName"].strip():
             raise ValueError(f"机体 {identity} 的 UnitModelName 不能为空")
         if row["HP"] <= 0:
             raise ValueError(f"机体 {identity} 的 HP 必须大于零")
-        if row["UnitNumber_Transform"] == identity:
+        if row["UnitNumber_Transform"] == identity and plan.get('behavior_profile') != 'native-self-transform-v1':
             raise ValueError(f"机体 {identity} 不能把自身作为变形目标")
     for identity, row in weapon_map.items():
         if not row["WeaponName"].strip():
@@ -796,6 +823,9 @@ def _write_record(
 ) -> tuple[str, str]:
     table, columns, key = TABLES[kind]
     identity = row[key]
+    if kind=='unit' and (type(identity)is not int or not UNIT_ID_FIRST<=identity<=UNIT_ID_LAST or
+            (row['UnitNumber_Transform'] and not UNIT_ID_FIRST<=row['UnitNumber_Transform']<=UNIT_ID_LAST)):
+        raise ValueError('机体或变形目标超出目标服务端编号范围；不能通过数据写入绕过按类型重编号')
     current = _fetch_record(cursor, table, columns, key, identity)
     ledger = cursor.execute(
         """

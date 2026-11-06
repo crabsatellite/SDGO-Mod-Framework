@@ -97,11 +97,11 @@ extern "C" void WINAPI Shim_D3DPERF_SetRegion(D3DCOLOR color, LPCWSTR name)
         fn(color, name);
 }
 
-BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID)
+BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(instance);
-        EarlyBootInstall("d3d9");
+        EarlyBootInstall("d3d9", reserved ? GetCurrentThreadId() : 0);
     }
     // Process-lifetime module: nothing is torn down under the loader lock.
     return TRUE;

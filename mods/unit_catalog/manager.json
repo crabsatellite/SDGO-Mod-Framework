@@ -20,6 +20,17 @@
       "section": "settings",
       "audience": "user",
       "activation": "restart_required"
+    },
+    {
+      "id": "form_chains",
+      "key": "FormChains",
+      "label": "入口形态第三形态链（需服务端形态图授权）",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
     }
   ],
   "configuration_files": [
