@@ -277,6 +277,57 @@ def compile_files(prepared):
     return bytes(candidate), bytes(authority)
 
 
+def compile_native_files(prepared, installed_rows, grade_rows):
+    """Add complete native battle expectations to independent host authority.
+
+    Rows are the controller's locked SQL/ledger snapshot, not project fields.
+    All graph nodes (including shared originals) must match their complete row
+    hashes before their native payload is compiled. Candidate content is still
+    v1; it cannot replace the separately installed host witness. This adds no
+    actor/transition acceptance or publication capability.
+    """
+    from .native_battle_definition import PAYLOAD_BYTES, expected_payload, normalize_grades
+    candidate, _ = compile_files(prepared)
+    nodes={}
+    for owner in prepared['owners']:
+        for node in owner['nodes']:
+            previous=nodes.get(node['id'])
+            if previous is not None and previous!=node:raise ValueError('native unit form shared node differs')
+            nodes[node['id']]=node
+    if not isinstance(installed_rows,dict) or set(installed_rows)!=set(nodes):
+        raise ValueError('native unit form snapshot must cover exactly the graph nodes')
+    grades=normalize_grades(grade_rows)
+    witness=bytearray()
+    for identity,node in sorted(nodes.items()):
+        row=installed_rows[identity]
+        key=(row.get('UnitGradeNumber'),row.get('UnitGradeNumber2')) if isinstance(row,dict) else None
+        if key not in grades:raise ValueError('native unit form grade join is missing')
+        raw=expected_payload(row,grades[key])
+        if (row['UnitNumber']!=identity or row['UnitNumber_Transform']!=node['target'] or
+            repo._row_hash(row,repo.UNIT_COLUMNS)!=node['server_sha256']):
+            raise ValueError('native unit form complete server row differs')
+        witness.extend(struct.pack('<I',identity));witness.extend(raw)
+    assert len(witness)==len(nodes)*(4+PAYLOAD_BYTES)
+    fingerprint=_sha(repo._canonical_json({'unit_snapshot_sha256':_hash(prepared['server_fingerprint']),
+        'grade_rows':[grades[key] for key in sorted(grades)]}).encode('utf-8'))
+    authority=(struct.pack('<8s4I',b'SDGOUA2\0',2,160,len(prepared['owners']),len(candidate)-64)+
+        bytes.fromhex(_sha(candidate))+bytes.fromhex(fingerprint)+
+        bytes.fromhex(HOST_SHA256)+bytes.fromhex(_sha(witness))+struct.pack('<II',len(nodes),0)+
+        candidate[64:]+witness)
+    return candidate,bytes(authority)
+
+
+def _read_units(cursor):
+    rows={}
+    for row in cursor.execute('SELECT '+','.join('['+column+']' for column in repo.UNIT_COLUMNS)+
+                              ' FROM dbo.tbl_Units WITH (HOLDLOCK)'):
+        identity=int(row[0])
+        if identity in rows:raise ValueError('unit form server snapshot repeats a unit ID')
+        if len(rows)>=100000:raise ValueError('unit form server snapshot budget')
+        rows[identity]=dict(zip(repo.UNIT_COLUMNS,row))
+    return rows
+
+
 def prepare_from_cursor(cursor, requests, client_records, *, originals):
     """Read a consistent installed graph/entry snapshot; never write rows."""
     from .server_dependencies import _schema
@@ -288,8 +339,7 @@ def prepare_from_cursor(cursor, requests, client_records, *, originals):
     if lock is None or int(lock[0]) < 0:raise ValueError('another unit catalog transaction is active')
     for table in ('tbl_Units', 'tbl_ItemCategory'):_schema(cursor, table, repo.SQL_SCHEMAS[table])
     _schema(cursor, 'sdgo_UnitImportDefinitions', repo.LEDGER_SCHEMA)
-    rows = {int(row[0]): dict(zip(repo.UNIT_COLUMNS, row)) for row in cursor.execute(
-        'SELECT '+','.join('['+column+']' for column in repo.UNIT_COLUMNS)+' FROM dbo.tbl_Units WITH (HOLDLOCK)')}
+    rows = _read_units(cursor)
     items = {int(row[0]): dict(zip(repo.ITEM_COLUMNS, row)) for row in cursor.execute(
         'SELECT '+','.join('['+column+']' for column in repo.ITEM_COLUMNS)+' FROM dbo.tbl_ItemCategory WITH (HOLDLOCK)')}
     ledgers = {(str(row[0]), int(row[1])): dict(zip(('record_kind','record_id','owner_key','family',
@@ -300,3 +350,24 @@ def prepare_from_cursor(cursor, requests, client_records, *, originals):
     ownership = {identity: ledger for (kind, identity), ledger in ledgers.items() if kind == 'unit'}
     return prepare(requests, client_records, server_rows=rows, ownership=ownership, originals=originals, item_rows=items,
                    item_ownership={identity: ledger for (kind, identity), ledger in ledgers.items() if kind == 'item'})
+
+
+def prepare_native_from_cursor(cursor, requests, client_records, *, originals):
+    """Compile host-only native witnesses in the same existing locked transaction.
+
+    The original download joins tbl_UnitGradeInfo for LevelRating. It does not
+    serialize DailyLimit/MonthLimit at the tail of the battle unit payload.
+    Missing grade mappings refuse compilation; they are never guessed or added.
+    """
+    from .server_dependencies import _schema
+    from .native_battle_definition import GRADE_TABLE_SCHEMA
+    prepared=prepare_from_cursor(cursor,requests,client_records,originals=originals)
+    _schema(cursor,'tbl_UnitGradeInfo',GRADE_TABLE_SCHEMA)
+    grades={}
+    for row in cursor.execute('SELECT UnitGradeNumber,UnitGradeNumber2,LevelRating FROM dbo.tbl_UnitGradeInfo WITH(HOLDLOCK)'):
+        key=(int(row[0]),int(row[1]))
+        if key in grades:raise ValueError('native unit grade join repeats its key')
+        grades[key]=dict(zip(('UnitGradeNumber','UnitGradeNumber2','LevelRating'),row))
+    ids={node['id'] for owner in prepared['owners'] for node in owner['nodes']}
+    rows={identity:row for identity,row in _read_units(cursor).items() if identity in ids}
+    return compile_native_files(prepared,rows,grades)
