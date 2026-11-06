@@ -39,6 +39,7 @@ public:
     static std::shared_ptr<const GraphBindings> Build(const std::vector<GraphOwner>&,
                                                     const GraphAuthority&, std::string& error);
     EdgeResult evaluate(std::uint32_t inventoryRoot, std::uint32_t current, std::uint32_t target) const;
+    bool hasEntry(std::uint32_t root) const { return roots_.count(root) != 0; }
     // Data inspection only, including auxiliary/unreachable nodes. Never use
     // this method as permission to compose or commit a requested transform.
     const GraphNode* inspectNode(std::uint32_t inventoryRoot, std::uint32_t id) const;

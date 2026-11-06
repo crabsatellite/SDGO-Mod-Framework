@@ -318,6 +318,26 @@ provenance, not a live database/client drift check. Deployment readback and nati
 actor, generation, sender, alive and room-lock checks remain necessary. These
 policy helpers do not enable multi-form publication or activate a native actor.
 
+With paired graph inputs, `unit_catalog_server` captures the original human-unit
+constructor's pre-initialization seed and successful output. It uses the shared
+`room_random` lifecycle observer when available; an incompatible or occupied
+observer is rejected. Otherwise it installs the complete native start/build/release
+observation scope. A bounded callback queue defers bookkeeping to a worker. Only an
+accepted start exposes a snapshot; release or a fresh start retires the old room
+epoch and player generation, including when pointers and inventory UIDs are reused.
+Modes 6/7 capture all four deck slots. Provider faults, queue overflow, mismatched
+phases or stale tokens refuse reuse. Captured definitions remain borrowed process
+pointers. Snapshot validity does not authorize an actor mutation: the original
+sender, room lock, current registry, HP, skills and weapon lifecycle still require
+native checks. This consumer currently performs no live transform commits.
+
+`ReadNativeTransformContext` reads the supported host's paired-bank transform
+boundary after the original sender, room, HP and two-definition checks. Its
+source UID, selected deck and native actor identity can be compared with the
+captured start. Returned pointers expire with that locked invocation; readable
+headers do not prove registry freshness. It provides neither a single-bank
+profile nor permission to replace a weapon bank.
+
 The native server accepts unit numbers in `10001..30000`. Unit-number collisions
 need a type-specific relocation range; the larger weapon/skill range cannot be
 used directly for units. Catalog plans and writes reject invalid unit/transform
