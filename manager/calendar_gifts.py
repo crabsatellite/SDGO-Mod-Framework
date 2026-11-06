@@ -49,6 +49,10 @@ class CalendarGiftService:
                             for account in accounts:
                                 if self.stop_event.is_set():break
                                 if budget<=0:pending=True;break
+                            from .operations import pending as catalog_pending,target_key
+                            from .target_locks import lease
+                            with lease('database:'+target_key(ini)):
+                                if catalog_pending(ini):pending=True;break
                                 phase='delivery';outcome=repository.deliver(occurrence,account)
                                 self.delivered+=outcome['delivery_count'];budget-=1
                             if self.stop_event.is_set():break

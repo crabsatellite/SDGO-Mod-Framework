@@ -49,7 +49,14 @@ def connection(server_ini: Path, section: str = "DB Game"):
         raise RuntimeError(f"Owner SQL connection failed (SQLSTATE {str(error.args[0])[:5]})") from None
 
 
-def upgrade_catalog(db):
+def upgrade_catalog(db,server_ini):
+    from manager.operations import server_change,backup_tables
+    with server_change(server_ini,'collection_capsule.upgrade',('schema_migration',))as change:
+        backup_tables(db,change,['sdgo_collection_capsule.'+name for name in('Seen','Coverage','DrawLog')])
+        return change.result(_upgrade_catalog(db))
+
+
+def _upgrade_catalog(db):
     """Apply the owned, data-only catalog policy upgrade without a World restart."""
     from .sql import catalog_upgrade
     cursor = db.cursor()

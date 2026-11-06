@@ -10,6 +10,34 @@ export async function mountOwnerUpdates(ctx){
  program.append(element('h2','程序上游'),element('p','基础整合包可作为起点。进入 DIY 后，配置、脚本、素材与发布版本由服主维护；切换程序上游不会解除玩家绑定。','muted'),repo.wrap,
   button('保存程序上游',run(async()=>{await request('/api/updates',{action:'source',repository:repo.input.value.trim()});message('已保存程序上游，维护方式与玩家绑定保持不变。');}),'ui-btn is-blue'));
  root.append(program);
+ const runtimeCard=element('section',undefined,'manager-card');
+ runtimeCard.append(element('h2','完整客户端更新'),element('p','由 Manager 校验并同步原版程序、资源归档和配套 Mod。登录与画面设置、仅本地内容和数据库保留；服主 DIY 目录需要自行审阅维护。','muted'));
+ const runtimeRows=element('div');runtimeCard.append(runtimeRows);root.prepend(runtimeCard);
+ let runtimeDisposed=false;
+ async function refreshRuntime(){
+  const state=await request('/api/client-updates');if(runtimeDisposed)return;
+  runtimeRows.replaceChildren();
+  if(state.hosts.some(h=>h.source)){
+   const automatic=element('input');automatic.type='checkbox';automatic.checked=state.automatic;
+   automatic.onchange=run(async()=>{await request('/api/services/manager.client_updates',{action:automatic.checked?'start':'stop'});});
+   const label=element('label');label.append(automatic,document.createTextNode('Manager 运行期间自动同步完整客户端；游戏运行时等待关闭'));runtimeRows.append(label);
+  }
+  for(const host of state.hosts){
+   const row=element('div',undefined,'manager-card'),r=host.result||{};
+   row.append(element('h3',host.name),element('p',host.source?.label||host.error||'由服主提供的客户端包配置完整更新来源','muted'));
+   if(host.source){
+    if(host.recovery_required)row.append(button('恢复未完成更新',run(async()=>{await request('/api/client-updates',{action:'recover',host:host.id});await refreshRuntime();}),'ui-btn is-blue'));
+    const busy=['queued','working'].includes(r.status),check=button('检查完整客户端更新',run(async()=>{await request('/api/client-updates',{action:'check',host:host.id});await refreshRuntime();}),'ui-btn is-blue');check.disabled=busy;row.append(check);
+    if(r.status==='available')row.append(element('p',r.changed_files+' 个文件需要更新，'+r.retired_files+' 个旧文件将保留到恢复目录。','muted'),button('确认更新完整客户端',run(async()=>{await request('/api/client-updates',{action:'install',host:host.id,digest:r.digest});await refreshRuntime();}),'ui-btn is-primary'));
+    if(r.status==='restart_required')row.append(button('重启 Manager 完成客户端更新',run(async()=>{await request('/api/client-updates',{action:'restart',host:host.id});message('正在交接，更新完成后 Manager 会重新打开。');}),'ui-btn is-primary'));
+    const label={queued:'已排队',working:'正在校验和同步',current:'完整客户端已是当前版本',installed:'完整客户端已同步并核验',recovered:'原文件已恢复',waiting:'等待游戏关闭',error:'更新未完成',restart_required:'等待重启 Manager'}[r.status]||'';
+    row.append(element('p',label+(r.message?' · '+r.message:'')+(r.commit?' · '+r.commit.slice(0,8):''),r.status==='error'?'error':'muted'));
+   }
+   runtimeRows.append(row);
+  }
+ }
+ await refreshRuntime();
+ const runtimeTimer=setInterval(()=>refreshRuntime().catch(e=>message(e.message,true)),2000);
  const card=element('section',undefined,'manager-card');root.append(card);
  let data=await request('/api/owner-updates'),chosen=ctx.hostId||data.hosts[0]?.id,disposed=false;
  let resultNode=null,lastResult='';
@@ -60,5 +88,5 @@ export async function mountOwnerUpdates(ctx){
  }
  draw();
  const timer=setInterval(async()=>{if(disposed)return;try{const latest=await request('/api/owner-updates');result(latest.hosts.find(h=>h.id===chosen));}catch(e){if(resultNode)resultNode.textContent=e.message;}},2000);
- return ()=>{disposed=true;clearInterval(timer);};
+ return ()=>{disposed=true;runtimeDisposed=true;clearInterval(timer);clearInterval(runtimeTimer);};
 }
