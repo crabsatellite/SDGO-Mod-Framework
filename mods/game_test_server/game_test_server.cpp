@@ -11,9 +11,13 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
+#include <vector>
 
 #include "sdgo/battle_rewards_damage_observer.h"
+#include "sdgo/mission_behavior_profile.h"
+#include "sdgo/mission_behavior_server_observer.h"
 #include "sdgo/pvp_ai_observer.h"
 #include "sdgo/sdgo_api.h"
 
@@ -56,6 +60,8 @@ namespace
         uint8_t mode = 0;
         uint8_t minimumAi = 1;
         bool requireEnd = false;
+        uint32_t missionBehaviorProfile = 0;
+        uint32_t missionGameModeId = 0;
     };
 
     struct Lifecycle
@@ -131,6 +137,10 @@ namespace
     volatile LONG g_damageSequence = 0;
     volatile LONG g_abortWorker = 0;
     volatile LONG g_writeErrorLogged = 0;
+    sdgo::mission_behavior::Bundle g_missionProfileBundle;
+    SdgoMissionBehaviorServerObserveV1Fn g_missionProfileObserve = nullptr;
+    SdgoMissionBehaviorServerReadRowV1Fn g_missionProfileReadRow = nullptr;
+    SdgoMissionBehaviorServerGetCreationV1Fn g_missionProfileCreation = nullptr;
 
     std::string EscapeJson(const char* text)
     {
@@ -260,7 +270,8 @@ namespace
             strcmp(configuredRun, environmentRun) != 0 ||
             strcmp(configuredRole, "server") != 0 ||
             (strcmp(g_config.suite, "pvp-ai-real") != 0 &&
-             strcmp(g_config.suite, "pvp-ai") != 0)) {
+             strcmp(g_config.suite, "pvp-ai") != 0 &&
+             strcmp(g_config.suite, "native-mission-behavior") != 0)) {
             *error = "run.ini and launcher do not describe the same supported server job";
             return false;
         }
@@ -318,6 +329,28 @@ namespace
         }
         if (result == NumberResult::Valid)
             g_config.requireEnd = number != 0;
+        if (strcmp(g_config.suite, "native-mission-behavior") == 0) {
+            char profile[8] = {};
+            if (!ReadAscii(
+                    g_runIni, L"run", L"mission_behavior_profile",
+                    profile, sizeof(profile))) {
+                *error = "mission behavior profile is missing";
+                return false;
+            }
+            g_config.missionBehaviorProfile =
+                strcmp(profile, "oc") == 0 ? 1u :
+                strcmp(profile, "gco") == 0 ? 2u : 0u;
+            number = 0;
+            result = ReadNumber(
+                g_runIni, L"run", L"mission_game_mode_id", &number);
+            if (!g_config.missionBehaviorProfile ||
+                result != NumberResult::Valid ||
+                (number != 88006 && number != 88009)) {
+                *error = "mission behavior selection is invalid";
+                return false;
+            }
+            g_config.missionGameModeId = number;
+        }
         return true;
     }
 
@@ -924,6 +957,281 @@ namespace
         return true;
     }
 
+    bool BindMissionProfileObserver(std::string* error)
+    {
+        HMODULE module = GetModuleHandleW(L"mission_behavior_server.dll");
+        if (!module) {
+            *error = "mission_behavior_server is not loaded";
+            return false;
+        }
+        g_missionProfileObserve =
+            reinterpret_cast<SdgoMissionBehaviorServerObserveV1Fn>(
+                GetProcAddress(
+                    module,
+                    SDGO_MISSION_BEHAVIOR_SERVER_SNAPSHOT_EXPORT));
+        g_missionProfileReadRow =
+            reinterpret_cast<SdgoMissionBehaviorServerReadRowV1Fn>(
+                GetProcAddress(
+                    module,
+                    SDGO_MISSION_BEHAVIOR_SERVER_READ_ROW_EXPORT));
+        g_missionProfileCreation =
+            reinterpret_cast<SdgoMissionBehaviorServerGetCreationV1Fn>(
+                GetProcAddress(
+                    module,
+                    SDGO_MISSION_BEHAVIOR_SERVER_CREATION_EXPORT));
+        if (!g_missionProfileObserve ||
+            !g_missionProfileReadRow ||
+            !g_missionProfileCreation) {
+            *error = "mission behavior server observer ABI is incomplete";
+            return false;
+        }
+        wchar_t modulePath[32768] = {};
+        const DWORD length = GetModuleFileNameW(
+            module,
+            modulePath,
+            static_cast<DWORD>(_countof(modulePath)));
+        if (!length || length >= _countof(modulePath)) {
+            *error = "mission behavior server path is unavailable";
+            return false;
+        }
+        std::string profileError;
+        const std::filesystem::path profilePath =
+            std::filesystem::path(modulePath).parent_path() / L"profile.bin";
+        if (!sdgo::mission_behavior::LoadProfileFile(
+                profilePath,
+                g_missionProfileBundle,
+                profileError)) {
+            *error = "mission behavior profile data is invalid: " + profileError;
+            return false;
+        }
+        return true;
+    }
+
+    bool VerifyMissionProfile(
+        const SdgoMissionBehaviorServerSnapshotV1& status,
+        uint32_t* rowCrc,
+        uint32_t* selectedMissionRows,
+        std::string* error)
+    {
+        using namespace sdgo::mission_behavior;
+        const uint32_t expectedState =
+            g_config.missionBehaviorProfile == 1 ? 1u : 2u;
+        if (status.profile != g_config.missionBehaviorProfile ||
+            status.state != expectedState ||
+            status.entries != g_missionProfileBundle.entries.size() ||
+            status.payload_crc32 !=
+                g_missionProfileBundle.header.payload_crc32 ||
+            !status.ready_epochs ||
+            status.conflict_id) {
+            *error = "mission behavior server status does not match the sealed profile";
+            return false;
+        }
+        if ((expectedState == 1 &&
+             status.applied != g_missionProfileBundle.entries.size()) ||
+            (expectedState == 2 && status.applied != 0) ||
+            status.baseline_matches != g_missionProfileBundle.entries.size()) {
+            *error = "mission behavior server did not accept every profile row";
+            return false;
+        }
+
+        std::vector<NpcRow> rows;
+        rows.reserve(g_missionProfileBundle.entries.size());
+        uint32_t selected = 0;
+        for (const auto& entry : g_missionProfileBundle.entries) {
+            SdgoMissionBehaviorServerRowV1 observed{};
+            if (!g_missionProfileReadRow(
+                    entry.baseline.id,
+                    &observed,
+                    sizeof(observed))) {
+                *error = "mission behavior server row readback is incomplete";
+                return false;
+            }
+            static_assert(
+                sizeof(observed) == sizeof(NpcRow),
+                "mission behavior row observer layout differs");
+            NpcRow native{};
+            std::memcpy(&native, &observed, sizeof(native));
+            const NpcRow& expected =
+                expectedState == 1 ? entry.oc : entry.baseline;
+            if (!SameRow(native, expected)) {
+                *error = "mission behavior server row readback differs";
+                return false;
+            }
+            rows.push_back(native);
+            if (native.mission == g_config.missionGameModeId)
+                ++selected;
+        }
+        const uint32_t crc = Crc32(
+            reinterpret_cast<const uint8_t*>(rows.data()),
+            rows.size() * sizeof(NpcRow));
+        if (crc != status.native_rows_crc32) {
+            *error = "mission behavior server aggregate row receipt differs";
+            return false;
+        }
+        *rowCrc = crc;
+        *selectedMissionRows = selected;
+        return true;
+    }
+
+    std::string MissionProfileJson(
+        const SdgoMissionBehaviorServerSnapshotV1& status,
+        uint32_t rowCrc,
+        uint32_t selectedMissionRows)
+    {
+        return
+            "{\"run_id\":\"" + EscapeJson(g_config.runId) +
+            "\",\"role\":\"server\",\"suite\":\"" +
+            EscapeJson(g_config.suite) +
+            "\",\"event\":\"mission_profile_ready\"" +
+            ",\"profile\":" + std::to_string(status.profile) +
+            ",\"state\":" + std::to_string(status.state) +
+            ",\"entries\":" + std::to_string(status.entries) +
+            ",\"applied\":" + std::to_string(status.applied) +
+            ",\"baseline_matches\":" +
+            std::to_string(status.baseline_matches) +
+            ",\"payload_crc32\":" +
+            std::to_string(status.payload_crc32) +
+            ",\"native_rows_crc32\":" +
+            std::to_string(status.native_rows_crc32) +
+            ",\"verified_rows\":" +
+            std::to_string(g_missionProfileBundle.entries.size()) +
+            ",\"verified_rows_crc32\":" + std::to_string(rowCrc) +
+            ",\"selected_mission_rows\":" +
+            std::to_string(selectedMissionRows) +
+            ",\"ready_epochs\":" + std::to_string(status.ready_epochs) +
+            "}\n";
+    }
+
+    std::string MissionCreationJson(
+        const SdgoMissionBehaviorServerCreationV1& receipt)
+    {
+        return
+            "{\"run_id\":\"" + EscapeJson(g_config.runId) +
+            "\",\"role\":\"server\",\"suite\":\"" +
+            EscapeJson(g_config.suite) +
+            "\",\"event\":\"mission_profile_creation\"" +
+            ",\"sequence\":" + std::to_string(receipt.sequence) +
+            ",\"profile\":" + std::to_string(receipt.profile) +
+            ",\"original_result\":" +
+            std::to_string(receipt.original_result) +
+            ",\"tracked\":" + std::to_string(receipt.tracked) +
+            ",\"profile_match\":" +
+            std::to_string(receipt.profile_match) +
+            ",\"mission_npc_id\":" +
+            std::to_string(receipt.mission_npc_id) +
+            ",\"mission_id\":" + std::to_string(receipt.mission_id) +
+            ",\"difficulty\":" + std::to_string(receipt.difficulty) +
+            ",\"part\":" + std::to_string(receipt.part) +
+            ",\"npc_id\":" + std::to_string(receipt.npc_id) +
+            ",\"native_pilot_id\":" +
+            std::to_string(receipt.native_pilot_id) +
+            ",\"native_unit_hp\":" +
+            std::to_string(receipt.native_unit_hp) +
+            "}\n";
+    }
+
+    DWORD WINAPI MissionWorker(void*)
+    {
+        WaitForSingleObject(g_startGate, INFINITE);
+        if (InterlockedCompareExchange(&g_abortWorker, 0, 0) != 0) {
+            CloseHandle(g_eventFile);
+            g_eventFile = INVALID_HANDLE_VALUE;
+            return 0;
+        }
+
+        Lifecycle lifecycle;
+        lifecycle.reason = "waiting for mission behavior tables";
+        bool readyPublished = false;
+        uint64_t lastCreation = 0;
+        for (;;) {
+            bool statusChanged = false;
+            if (!readyPublished) {
+                SdgoMissionBehaviorServerSnapshotV1 status{};
+                status.size = sizeof(status);
+                status.version = 1;
+                if (!g_missionProfileObserve(
+                        &status,
+                        sizeof(status))) {
+                    Fail(&lifecycle, "mission behavior server status is unreadable");
+                    statusChanged = true;
+                } else if (status.state == 3 || status.state == 4) {
+                    Fail(
+                        &lifecycle,
+                        status.state == 4
+                            ? "mission behavior server rollback failed"
+                            : "mission behavior server rejected its profile");
+                    statusChanged = true;
+                } else if (status.state == 1 || status.state == 2) {
+                    uint32_t rowCrc = 0;
+                    uint32_t selectedMissionRows = 0;
+                    std::string error;
+                    if (!VerifyMissionProfile(
+                            status,
+                            &rowCrc,
+                            &selectedMissionRows,
+                            &error)) {
+                        Fail(&lifecycle, error.c_str());
+                        statusChanged = true;
+                    } else if (!WriteReceipt(
+                                   MissionProfileJson(
+                                       status,
+                                       rowCrc,
+                                       selectedMissionRows)) ||
+                               !WriteReceipt(
+                                   ObserverReadyJson(
+                                       GetCurrentProcessId(),
+                                       g_api->host_key))) {
+                        Fail(
+                            &lifecycle,
+                            "mission profile readiness receipt could not be flushed");
+                        statusChanged = true;
+                    } else {
+                        readyPublished = true;
+                        lifecycle.reason =
+                            "mission profile ready; waiting for native row consumption";
+                        statusChanged = true;
+                    }
+                }
+            } else {
+                SdgoMissionBehaviorServerCreationV1 creation{};
+                creation.size = sizeof(creation);
+                creation.version = 1;
+                if (g_missionProfileCreation(
+                        &creation,
+                        sizeof(creation)) &&
+                    creation.sequence > lastCreation) {
+                    lastCreation = creation.sequence;
+                    if (creation.tracked &&
+                        creation.mission_id ==
+                            g_config.missionGameModeId) {
+                        if (!WriteReceipt(MissionCreationJson(creation))) {
+                            Fail(
+                                &lifecycle,
+                                "mission creation receipt could not be flushed");
+                        } else if (!creation.original_result ||
+                                   !creation.profile_match ||
+                                   creation.profile !=
+                                       g_config.missionBehaviorProfile) {
+                            Fail(
+                                &lifecycle,
+                                "mission creation did not consume the sealed profile");
+                        } else {
+                            lifecycle.reason =
+                                "native mission creation consumed the sealed profile";
+                        }
+                        statusChanged = true;
+                    }
+                }
+            }
+            if (statusChanged && !WriteStatus(lifecycle))
+                g_api->Log(
+                    g_mod,
+                    SDGO_LOG_ERROR,
+                    "GameTest server observer could not update mission profile status");
+            Sleep(25);
+        }
+    }
+
     DWORD WINAPI Worker(void*)
     {
         WaitForSingleObject(g_startGate, INFINITE);
@@ -1034,6 +1342,16 @@ SDGO_MOD_ENTRY
             api->Log(mod, SDGO_LOG_ERROR, "GameTest server observer inactive: %s", error.c_str());
         return 0;
     }
+    const bool missionBehaviorRun =
+        strcmp(g_config.suite, "native-mission-behavior") == 0;
+    if (missionBehaviorRun && !BindMissionProfileObserver(&error)) {
+        api->Log(
+            mod,
+            SDGO_LOG_ERROR,
+            "GameTest server observer inactive: %s",
+            error.c_str());
+        return 0;
+    }
     const int deathSetting =
         api->SettingInt(mod, "BattleAiDeaths", 0);
     if (deathSetting != 0 && deathSetting != 1) {
@@ -1042,14 +1360,15 @@ SDGO_MOD_ENTRY
             "GameTest server observer inactive: BattleAiDeaths must be 0 or 1");
         return 0;
     }
-    g_deathEnabled = deathSetting != 0;
+    g_deathEnabled = !missionBehaviorRun && deathSetting != 0;
 
-    HMODULE pvpAi = GetModuleHandleW(L"pvp_ai.dll");
+    HMODULE pvpAi =
+        missionBehaviorRun ? nullptr : GetModuleHandleW(L"pvp_ai.dll");
     auto registerObserver = pvpAi
         ? reinterpret_cast<SdgoPvpAiRegisterObserverV1Fn>(
             GetProcAddress(pvpAi, SDGO_PVP_AI_OBSERVER_EXPORT))
         : nullptr;
-    if (!registerObserver) {
+    if (!missionBehaviorRun && !registerObserver) {
         api->Log(mod, SDGO_LOG_ERROR, "GameTest server observer inactive: pvp_ai observer ABI unavailable");
         return 0;
     }
@@ -1073,7 +1392,13 @@ SDGO_MOD_ENTRY
         DeleteCriticalSection(&g_queueLock);
         return 0;
     }
-    HANDLE worker = CreateThread(nullptr, 0, &Worker, nullptr, 0, nullptr);
+    HANDLE worker = CreateThread(
+        nullptr,
+        0,
+        missionBehaviorRun ? &MissionWorker : &Worker,
+        nullptr,
+        0,
+        nullptr);
     if (!worker) {
         api->Log(mod, SDGO_LOG_ERROR, "GameTest server observer inactive: worker creation failed");
         CloseHandle(g_startGate);
@@ -1122,7 +1447,7 @@ SDGO_MOD_ENTRY
 
     const SdgoPvpAiObserverSinkV1 sink = {
         sizeof(sink), SDGO_PVP_AI_OBSERVER_VERSION, &ObservePvpAi, nullptr};
-    if (!registerObserver(&sink)) {
+    if (!missionBehaviorRun && !registerObserver(&sink)) {
         InterlockedExchange(&g_abortWorker, 1);
         SetEvent(g_startGate);
         WaitForSingleObject(worker, INFINITE);
@@ -1138,7 +1463,7 @@ SDGO_MOD_ENTRY
         return 0;
     }
 
-    if (g_deathEnabled && battleRewards) {
+    if (!missionBehaviorRun && g_deathEnabled && battleRewards) {
         const SdgoBattleRewardsDamageObserverSinkV1 damageSink = {
             sizeof(damageSink),
             SDGO_BATTLE_REWARDS_DAMAGE_OBSERVER_VERSION,
@@ -1159,10 +1484,19 @@ SDGO_MOD_ENTRY
 
     SetEvent(g_startGate);
     CloseHandle(worker);
-    api->Log(mod, SDGO_LOG_INFO,
-             "ready: passive GameTest observer follows normal BattleServer startup and real PvP AI rooms%s",
-             g_deathEnabled && !g_deathSetupFailed
-                 ? " with native HP-loss receipts"
-                 : "");
+    if (missionBehaviorRun) {
+        api->Log(
+            mod,
+            SDGO_LOG_INFO,
+            "ready: passive GameTest observer verifies mission profile rows and native consumption");
+    } else {
+        api->Log(
+            mod,
+            SDGO_LOG_INFO,
+            "ready: passive GameTest observer follows normal BattleServer startup and real PvP AI rooms%s",
+            g_deathEnabled && !g_deathSetupFailed
+                ? " with native HP-loss receipts"
+                : "");
+    }
     return 1;
 }

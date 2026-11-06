@@ -40,6 +40,7 @@
 namespace {
 static_assert(sizeof(SdgoBattleAiUnitSnapshotV1)==208);
 static_assert(sizeof(SdgoBattleAiNavigationSnapshotV1)==72);
+static_assert(sizeof(SdgoBattleAiMissionBossSpecialV1)==112);
 static_assert(offsetof(SdgoBattleAiUnitSnapshotV1,special_zero_completions)==164);
 static_assert(offsetof(SdgoBattleAiUnitSnapshotV1,ranged_attempts)==168);
 static_assert(offsetof(SdgoBattleAiUnitSnapshotV1,ranged_nonzero_returns)==176);
@@ -348,6 +349,11 @@ std::vector<SpNotice> g_pendingSp;
 std::atomic<uint64_t> g_spSequence{0};
 struct SpSnapshot {uint64_t sequence=0;int32_t value=0;};
 std::unordered_map<uint8_t*,SpSnapshot> g_spSnapshots;
+SRWLOCK g_missionBossSpecialLock=SRWLOCK_INIT;
+SdgoBattleAiMissionBossSpecialV1 g_missionBossSpecial={
+    sizeof(SdgoBattleAiMissionBossSpecialV1),1};
+uint8_t* g_missionBossDocument=nullptr;
+uint64_t g_missionBossSequence=0,g_missionBossEpoch=0;
 std::mutex g_loadoutMutex;
 std::unordered_map<uint8_t*,battle_ai::loadout::ClientApplyState> g_loadouts;
 battle_ai::loadout::ClientNativeFunctions g_loadoutNative;
@@ -506,6 +512,111 @@ uint8_t* FindObject(uint32_t id) {
     // Resolve its immutable, manifest-verified entry once at Mod load. Targets
     // themselves are still looked up live for every shot/notice/decision.
     return g_findObject(*g_document,id);
+}
+bool IsM1MissionBoss(uint32_t npc) {
+    constexpr uint32_t bosses[]={
+        85054,85058,85062,85079,85080,85081,
+        85082,85083,85084,85169,85170,85171,
+    };
+    return std::find(std::begin(bosses),std::end(bosses),npc)!=std::end(bosses);
+}
+bool MissionBossState(
+    uint8_t* unit,
+    uint32_t& specialBusy,
+    uint32_t& attackState)
+{
+    battle_ai::native::Capabilities capabilities{};
+    uint8_t* fsm=nullptr;
+    uint32_t current=0;
+    if(!battle_ai::native::ReadCapabilities(unit,capabilities) ||
+       !battle_ai::native::detail::ReadPointer(
+           unit,battle_ai::native::detail::kAttackFsm,fsm) ||
+       !battle_ai::native::detail::Read(
+           fsm,battle_ai::native::detail::kCurrentState,current))
+        return false;
+    const uintptr_t base=reinterpret_cast<uintptr_t>(fsm);
+    if(current<base || current>=base+0x210)
+        return false;
+    specialBusy=capabilities.specialBusy?1u:0u;
+    attackState=current-static_cast<uint32_t>(base);
+    return true;
+}
+struct PendingMissionBossSpecial {
+    bool valid=false;
+    uint8_t* document=nullptr;
+    uint8_t* unit=nullptr;
+    SdgoBattleAiMissionBossSpecialV1 receipt{};
+};
+PendingMissionBossSpecial CaptureMissionBossSpecial(const SpNotice& notice) {
+    PendingMissionBossSpecial pending;
+    if(!notice.begin || !notice.weapon || !g_document || !*g_document ||
+       !g_canonical || !g_app)
+        return pending;
+    __try {
+        auto* document=*g_document;
+        const uint32_t object=g_canonical(document,notice.pilot);
+        auto* unit=object?FindObject(object):nullptr;
+        auto* app=g_app();
+        if(!unit || !app ||
+           *reinterpret_cast<uint32_t*>(unit+4)!=object ||
+           *reinterpret_cast<uint32_t*>(unit+0x2B68)!=notice.pilot)
+            return pending;
+        const uint32_t npc=*reinterpret_cast<uint32_t*>(unit+0x3238);
+        const int32_t hp=*reinterpret_cast<int32_t*>(unit+0x38);
+        const int32_t maxHp=*reinterpret_cast<int32_t*>(unit+0x3C);
+        const uint32_t appState=*reinterpret_cast<uint32_t*>(app+0x4A0);
+        if(!IsM1MissionBoss(npc) || hp<=0 || maxHp<=0 || hp>maxHp ||
+           appState!=22)
+            return pending;
+        pending.valid=true;
+        pending.document=document;
+        pending.unit=unit;
+        auto& receipt=pending.receipt;
+        receipt.size=sizeof(receipt);
+        receipt.version=1;
+        receipt.event_tick_ms=notice.time;
+        receipt.mission_object=
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(document));
+        receipt.unit=static_cast<uint32_t>(reinterpret_cast<uintptr_t>(unit));
+        receipt.pilot_id=notice.pilot;
+        receipt.object_id=object;
+        receipt.npc_data_id=npc;
+        receipt.weapon_id=notice.weapon;
+        receipt.native_app_state=appState;
+        receipt.hp_before=hp;
+        receipt.max_hp_before=maxHp;
+        receipt.state_before_valid=MissionBossState(
+            unit,receipt.special_busy_before,receipt.attack_state_before)?1u:0u;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        pending={};
+    }
+    return pending;
+}
+void PublishMissionBossSpecial(
+    PendingMissionBossSpecial& pending,
+    int originalResult)
+{
+    if(!pending.valid || !pending.document || !pending.unit)
+        return;
+    __try {
+        auto& receipt=pending.receipt;
+        receipt.hp_after=*reinterpret_cast<int32_t*>(pending.unit+0x38);
+        receipt.max_hp_after=*reinterpret_cast<int32_t*>(pending.unit+0x3C);
+        receipt.state_after_valid=MissionBossState(
+            pending.unit,receipt.special_busy_after,receipt.attack_state_after)?1u:0u;
+        receipt.original_result=originalResult;
+        receipt.original_returned=1;
+        AcquireSRWLockExclusive(&g_missionBossSpecialLock);
+        if(g_missionBossDocument!=pending.document) {
+            g_missionBossDocument=pending.document;
+            ++g_missionBossEpoch;
+        }
+        receipt.sequence=++g_missionBossSequence;
+        receipt.battle_epoch=g_missionBossEpoch;
+        g_missionBossSpecial=receipt;
+        ReleaseSRWLockExclusive(&g_missionBossSpecialLock);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+    }
 }
 bool ControlBlocked(uint8_t* unit) {
     uint8_t* movement=nullptr;
@@ -3500,7 +3611,11 @@ void DrainSpNotices() {
 }
 int __fastcall SpecialNotice(uint8_t* handler,void*,const uint8_t* packet) {
     SpNotice notice;bool valid=ParseSpNotice(packet,0x12,true,notice,NextSpSequence());
-    int result=g_specialNotice(handler,packet);if(valid) SubmitSpNotice(notice);return result;
+    auto missionBoss=valid?CaptureMissionBossSpecial(notice):PendingMissionBossSpecial{};
+    int result=g_specialNotice(handler,packet);
+    if(valid) SubmitSpNotice(notice);
+    PublishMissionBossSpecial(missionBoss,result);
+    return result;
 }
 int __fastcall MeleeNotice(uint8_t* handler,void*,const uint8_t* packet) {
     SpNotice notice;bool valid=ParseMeleeCompletion(packet,notice,NextSpSequence());
@@ -4205,6 +4320,21 @@ extern "C" __declspec(dllexport) int __cdecl SdgoBattleAiGetNavigationSnapshotV1
         result.goal_x=actor.searchGoal.x;result.goal_y=actor.searchGoal.y;result.goal_z=actor.searchGoal.z;
         *output=result;return 1;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return 0;}
+}
+extern "C" __declspec(dllexport) int __cdecl SdgoBattleAiGetMissionBossSpecialV1(
+    SdgoBattleAiMissionBossSpecialV1* output)
+{
+    __try {
+        if(!output || output->size<sizeof(*output) || output->version!=1)
+            return 0;
+        AcquireSRWLockShared(&g_missionBossSpecialLock);
+        const auto snapshot=g_missionBossSpecial;
+        ReleaseSRWLockShared(&g_missionBossSpecialLock);
+        *output=snapshot;
+        return 1;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
 }
 extern "C" __declspec(dllexport) int __cdecl SdgoBattleAiGetTransportSnapshotV1(uint32_t id,SdgoBattleAiTransportSnapshotV1* output) {
     __try {
