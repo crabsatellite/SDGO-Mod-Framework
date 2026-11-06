@@ -288,6 +288,16 @@ class SnapshotAndValidationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "离线模式"):
                 Repository(root, None).apply(plan())
 
+    def test_server_ini_with_case_repeated_credential_keys_is_read(self):
+        """Original WorldServer.ini files carry id/ID and pwd/PWD pairs per DB section."""
+        with tempfile.TemporaryDirectory() as temporary:
+            ini = Path(temporary) / "WorldServer.ini"
+            ini.write_text("[DB Game]\nDBServerName=127.0.0.1,1433\nDBName=GOnlineGame\n"
+                           "id=app\npwd=secret\nID=app\nPWD=secret\n", encoding="utf-8")
+            section = unit_repository._read_ini(ini)["DB Game"]
+            self.assertEqual(("app", "secret", "GOnlineGame"), (section["ID"], section["PWD"], section["DBName"]))
+            self.assertEqual(unit_repository.database_target_key(ini), unit_repository.database_target_key(ini))
+
 
 class Result:
     def __init__(self, rows=()):

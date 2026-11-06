@@ -89,7 +89,9 @@ ready/selection poses (see [developer notes](#gametest-checks-and-captures)), up
   links and duplicate paths are rejected, and installers or database scripts inside the archive never run.
 - A new unit ID that collides with a stock or other imported unit blocks confirmation; there is no blind binary
   renumbering.
-- Only single-form units or complete, explicit two-form links are supported.
+- Only single-form units and complete two-form links are supported: reciprocal links (`native-linked-forms-v1`) and
+  one-way links whose second form transforms back to nothing (`native-one-way-forms-v1`). Groups with a third or
+  fourth entry form stay deferred until the native form-graph runtime admits them.
 - A missing skill blocks confirmation by default. For skill slots 1 and 2 the panel offers **移除缺失技能 … 后导入**
   (remove the missing skill and import): every form referencing it gets `0` on both client and server, the source
   RAR/BIN is kept, earlier preview approvals are invalidated and the skill's effect is gone. Other skills, weapons and
@@ -463,6 +465,32 @@ memory. Conflicting logical paths retain their variants; baseline reuse and owne
 aliases require target checks. Opaque source game scripts remain data and gain no
 execution permission. This reader does not install resources, register records or
 replace the Manager's unit import workflow.
+
+### Protocol-ready batch packages
+
+Manager accepts batch packages prepared from any source when they satisfy the published
+content contracts and the destination's supported runtime capabilities. Source extraction,
+source-format conversion and content preparation are separate from the public import tools.
+
+A publication folder contains `server-plan.json`, `form-graph-requests.json` and the client
+package under `package/`. The client package binds its catalog, resource overlay, native
+programs and skill atlases through their declared manifests and hashes. Package preparation
+must retain content already installed by other owners and satisfy the supported record limits.
+
+Use [the Manager's batch apply](#applying-a-batch-roster-to-the-server) for read-only preflight,
+stopped-server application and readback. The same import operations are available from Python:
+
+```python
+from owner.units import batch_server
+batch_server.preflight(publication_folder, world_server_ini)
+batch_server.apply(publication_folder, world_server_ini, progress)
+batch_server.readback(publication_folder, world_server_ini)
+```
+
+Families are applied in dependency order through the ordinary ownership transactions.
+Declared form-graph requests are compiled from the installed rows by the destination
+runtime. Native programs and skill atlases must match the installed catalog and overlay;
+the importer refuses stale or inconsistent package members.
 
 ### GameTest checks and captures
 

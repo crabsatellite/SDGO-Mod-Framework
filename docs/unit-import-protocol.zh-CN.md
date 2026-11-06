@@ -327,8 +327,10 @@ RepayPoint，以及图纸物品的目标编号、可选明确名称和配方引�
 原生游戏不会从工作目录自动读取新增模型。编译器在 `unit_catalog` 运行目录生成
 `resource-overlay.ini`、`resources.zdx` 和 `resources.zpk`，使用既有原生归档编码器；
 INI 的 schema 为 1，分别声明 index/archive 文件名及 SHA-256。归档只包含清单中批准的
-模型、动作、纹理、特效、图片、声音和游戏脚本资源。安装器核对归档条目与 `owned_paths` 的精确对应。
-松散副本只供工具读取，游戏不会读取它们。
+模型、动作、纹理、特效、图片、声音和游戏脚本资源。安装器核对归档条目与清单
+`resource_overlay.paths` 的精确对应；没有该列表的旧包继续按 `owned_paths` 核对。
+松散副本只供工具读取，游戏不会读取它们；只带归档、不带松散副本的包（`owned_paths` 为空）
+同样被接受。归档上限为 2 GiB，单个资源 64 MiB。
 
 机体目录独立启用时自行提供资源读取；与扭蛋目录同时启用时复用单一资源 broker，
 通过版本化 `SdgoGetResourceOverlayBrokerV1` 接口登记独立资源包。

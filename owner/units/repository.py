@@ -174,7 +174,9 @@ def _read_ini(path: Path) -> configparser.ConfigParser:
             text = raw.decode("utf-8-sig")
         except UnicodeDecodeError:
             text = raw.decode("mbcs")
-    parser = configparser.ConfigParser(interpolation=None)
+    # Original server INIs repeat credential keys in both cases (id/ID, pwd/PWD);
+    # the native reader is case-insensitive, so accept the repeat instead of failing.
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
     parser.read_string(text)
     if "DB Game" not in parser:
         raise ValueError("服务端配置缺少 [DB Game]")
