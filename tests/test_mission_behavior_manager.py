@@ -75,6 +75,12 @@ class MissionBehaviorManagerTests(unittest.TestCase):
         self.workspace.save_workspace()
         self.provider = MissionBehavior(self.workspace)
         self.workspace.providers[self.provider.id] = self.provider
+        # Offline filesystem fixtures must not inspect unrelated live games or
+        # race a native backend shutting down elsewhere on the machine. The
+        # running-target case below supplies its own explicit process result.
+        running = mock.patch.object(MissionBehavior, "_is_running", return_value=False)
+        running.start()
+        self.addCleanup(running.stop)
         patcher = mock.patch(
             "manager.mission_behavior.decode_profile",
             side_effect=self.decode_profile,
