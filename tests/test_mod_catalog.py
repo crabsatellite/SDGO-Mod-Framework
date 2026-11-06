@@ -10,6 +10,7 @@ from unittest import mock
 import zipfile
 
 from tools import build_release
+from manager.configuration import render as render_runtime_contract
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("mod_catalog", ROOT / "tools/mod_catalog.py")
@@ -287,7 +288,7 @@ class CatalogTests(unittest.TestCase):
         (source / "manager.json").write_bytes(manager)
         (source / "profile.bin").write_bytes(b"owner data must remain local")
         (output / "mission_behavior.dll").write_bytes(b"fixture")
-        (output / "mod.ini").write_bytes(mod_ini)
+        (output / "mod.ini").write_bytes(render_runtime_contract(mod_ini,json.loads(manager)))
         (output / "manager.json").write_bytes(manager)
         release_catalog = {"mods": [mod]}
         catalog.validate_stage(root, stage, release_catalog)
@@ -394,6 +395,8 @@ class CatalogTests(unittest.TestCase):
             (out / f"{mod['id']}.dll").write_bytes(b"fixture")
             for name in ("mod.ini", *mod["files"]):
                 shutil.copyfile(self.root / "mods" / mod["id"] / name, out / name)
+            registration=json.loads((out/'manager.json').read_text(encoding='utf-8-sig'))
+            (out/'mod.ini').write_bytes(render_runtime_contract((out/'mod.ini').read_bytes(),registration))
         catalog.validate_stage(self.root, stage, c)
         script = stage / "client/sdgo/mods/mission_ai/mission_ai.lua"
         script.write_text("old script", encoding="utf-8")

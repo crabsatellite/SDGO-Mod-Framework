@@ -93,3 +93,64 @@ def process_image_paths(image_name):
         if ctypes.get_last_error()!=18:raise ctypes.WinError(ctypes.get_last_error())
     finally:k.CloseHandle(snapshot)
     return result
+
+
+def native_processes(image_name):
+    """Exact process identity and native socket readiness without starting a shell."""
+    if os.name!='nt':return []
+    import ctypes
+    from ctypes import wintypes as w
+    import struct
+    if Path(image_name).name!=image_name:raise ValueError('Expected executable basename')
+    k=ctypes.WinDLL('kernel32',use_last_error=True);ip=ctypes.WinDLL('iphlpapi',use_last_error=True)
+    class Entry(ctypes.Structure):
+        _fields_=[('size',w.DWORD),('usage',w.DWORD),('pid',w.DWORD),('heap',ctypes.c_size_t),('module',w.DWORD),('threads',w.DWORD),('parent',w.DWORD),('priority',w.LONG),('flags',w.DWORD),('name',w.WCHAR*260)]
+    k.CreateToolhelp32Snapshot.argtypes=(w.DWORD,w.DWORD);k.CreateToolhelp32Snapshot.restype=w.HANDLE
+    k.Process32FirstW.argtypes=(w.HANDLE,ctypes.POINTER(Entry));k.Process32FirstW.restype=w.BOOL
+    k.Process32NextW.argtypes=k.Process32FirstW.argtypes;k.Process32NextW.restype=w.BOOL
+    k.OpenProcess.argtypes=(w.DWORD,w.BOOL,w.DWORD);k.OpenProcess.restype=w.HANDLE
+    k.QueryFullProcessImageNameW.argtypes=(w.HANDLE,w.DWORD,w.LPWSTR,ctypes.POINTER(w.DWORD));k.QueryFullProcessImageNameW.restype=w.BOOL
+    k.GetProcessTimes.argtypes=(w.HANDLE,ctypes.POINTER(w.FILETIME),ctypes.POINTER(w.FILETIME),ctypes.POINTER(w.FILETIME),ctypes.POINTER(w.FILETIME));k.GetProcessTimes.restype=w.BOOL
+    k.CloseHandle.argtypes=(w.HANDLE,)
+    def socket_ports(name,table_class,row_size,pid_offset,port_offset):
+        fn=getattr(ip,name);fn.argtypes=(w.LPVOID,ctypes.POINTER(w.DWORD),w.BOOL,w.ULONG,w.ULONG,w.ULONG);fn.restype=w.DWORD
+        size=w.DWORD();code=fn(None,ctypes.byref(size),False,2,table_class,0)
+        if code not in(0,122)or size.value>32*1024*1024:raise ValueError('无法读取原生监听状态')
+        for _ in range(3):
+            buf=ctypes.create_string_buffer(size.value);code=fn(buf,ctypes.byref(size),False,2,table_class,0)
+            if code==122:continue
+            if code:raise ValueError('无法读取原生监听状态')
+            raw=buf.raw[:size.value];count=struct.unpack_from('<I',raw)[0]
+            if len(raw)<4+count*row_size:raise ValueError('原生监听表结构无效')
+            import socket
+            result={}
+            for i in range(count):
+                start=4+i*row_size;pid=struct.unpack_from('<I',raw,start+pid_offset)[0]
+                port=socket.ntohs(struct.unpack_from('<I',raw,start+port_offset)[0]&65535)
+                result.setdefault(pid,set()).add(port)
+            return result
+        raise ValueError('原生监听状态正在变化，请重试')
+    tcp=socket_ports('GetExtendedTcpTable',3,24,20,8);udp=socket_ports('GetExtendedUdpTable',1,12,8,4)
+    snapshot=k.CreateToolhelp32Snapshot(2,0)
+    if snapshot==ctypes.c_void_p(-1).value:raise ctypes.WinError(ctypes.get_last_error())
+    result=[]
+    try:
+        entry=Entry();entry.size=ctypes.sizeof(Entry);more=k.Process32FirstW(snapshot,ctypes.byref(entry))
+        while more:
+            if entry.name.casefold()==image_name.casefold():
+                process=k.OpenProcess(0x1000,False,entry.pid)
+                if not process:
+                    if ctypes.get_last_error()not in(87,1168):result.append({'pid':entry.pid,'path':None})
+                else:
+                    try:
+                        buf=ctypes.create_unicode_buffer(32768);size=w.DWORD(len(buf));times=[w.FILETIME()for _ in range(4)]
+                        if not k.QueryFullProcessImageNameW(process,0,buf,ctypes.byref(size))or not k.GetProcessTimes(process,*[ctypes.byref(t)for t in times]):
+                            result.append({'pid':entry.pid,'path':None})
+                        else:
+                            ticks=(times[0].dwHighDateTime<<32)|times[0].dwLowDateTime
+                            result.append({'pid':entry.pid,'path':buf.value,'creation_ticks':str(ticks),'started_ns':(ticks-116444736000000000)*100,'listening':entry.pid in tcp or entry.pid in udp,'tcp_listening':entry.pid in tcp,'ports':sorted(tcp.get(entry.pid,set())|udp.get(entry.pid,set()))})
+                    finally:k.CloseHandle(process)
+            more=k.Process32NextW(snapshot,ctypes.byref(entry))
+        if ctypes.get_last_error()!=18:raise ctypes.WinError(ctypes.get_last_error())
+    finally:k.CloseHandle(snapshot)
+    return result

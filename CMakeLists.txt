@@ -81,9 +81,18 @@ sdgo_version_resource(winmm_shim winmm.dll "SDGO mod framework loader (server)")
 sdgo_stage(winmm_shim "server")
 
 # ---- core: sdgo/core.dll ----------------------------------------------------------
-add_library(sdgo_core SHARED core/core.cpp core/hooks.cpp core/log.cpp core/symbols.cpp)
+add_library(sdgo_core SHARED core/core.cpp core/hooks.cpp core/log.cpp core/symbols.cpp core/runtime_state.cpp)
 set_target_properties(sdgo_core PROPERTIES OUTPUT_NAME core)
-target_link_libraries(sdgo_core PRIVATE sdgo_api minhook)
+target_link_libraries(sdgo_core PRIVATE sdgo_api minhook bcrypt)
+if(BUILD_TESTING)
+    add_library(manager_safety_fixture SHARED tests/manager_safety_fixture.cpp)
+    target_link_libraries(manager_safety_fixture PRIVATE sdgo_api)
+    sdgo_strict(manager_safety_fixture)
+    add_executable(manager_safety_host tests/manager_safety_host.cpp)
+    target_link_libraries(manager_safety_host PRIVATE sdgo_api)
+    sdgo_strict(manager_safety_host)
+    add_dependencies(manager_safety_host sdgo_core manager_safety_fixture)
+endif()
 sdgo_strict(sdgo_core)
 sdgo_version_resource(sdgo_core core.dll "SDGO mod framework core")
 sdgo_stage(sdgo_core "client/sdgo")
@@ -121,6 +130,8 @@ function(sdgo_add_mod id)
         list(APPEND mod_data_commands COMMAND "${CMAKE_COMMAND}" -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/mods/${id}/${file}" "${SDGO_STAGE}/${root}/mods/${id}/${file}")
     endforeach()
+    list(APPEND mod_data_commands COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/mod_runtime_contract.py"
+        --manifest "${SDGO_STAGE}/${root}/mods/${id}/mod.ini" --contract "${CMAKE_CURRENT_SOURCE_DIR}/mods/${id}/manager.json")
     add_custom_target(${id}_data ${mod_data_commands} VERBATIM)
     add_dependencies(${id} ${id}_data)
     file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/mods/${id}/mod.ini" release_channel REGEX "^channel=")
@@ -1363,7 +1374,7 @@ if(BUILD_TESTING)
         set_tests_properties(installer_offline PROPERTIES TIMEOUT 180)
         add_test(NAME mod_staging_offline COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/staging_test.ps1"
-            -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
+            -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}" -Python "${Python3_EXECUTABLE}")
         set_tests_properties(mod_staging_offline PROPERTIES TIMEOUT 90)
     endif()
 
