@@ -190,7 +190,8 @@ class Workspace:
         for node in after:
             prior=old[(node['host'],node['id'])]
             if not prior['enabled']or node['enabled']:continue
-            files=node['contract'].get('retirement',{}).get('content_files',[])
+            from .dependencies import content_files
+            files=content_files({'id':node['id'],**node['contract']})
             if any((Path(node['root'])/name).is_file()and(Path(node['root'])/name).stat().st_size for name in files):
                 raise ValueError(node['title']+'：已安装内容仍需要这个运行时；请先处理获取途径与内容引用，现有玩家资产不会自动删除')
 

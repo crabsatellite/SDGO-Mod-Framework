@@ -105,6 +105,17 @@ def enforce_transition(before,after):
     if new:raise ValueError('；'.join(p['message']for p in new))
 
 
+def content_files(contract):
+    """Older installed manifests inherit known data guards, without edits."""
+    retirement=contract.get('retirement')
+    if retirement is None and contract.get('distribution')!='local_only'and ID.fullmatch(contract.get('id','')):
+        from pathlib import Path
+        import json
+        path=Path(__file__).resolve().parents[1]/'mods'/contract['id']/'manager.json'
+        if path.is_file():retirement=json.loads(path.read_bytes()).get('retirement')
+    return(retirement or{}).get('content_files',[])
+
+
 def enforce_install(root,changes,role):
     """Evaluate the actual candidate metadata and settings before file writes."""
     from pathlib import Path
@@ -144,8 +155,9 @@ def enforce_install(root,changes,role):
     old={n['id']:n for n in before};new={n['id']:n for n in after}
     for identity,node in old.items():
         if not node['enabled']or new.get(identity,{}).get('enabled'):continue
-        for name in node['contract'].get('retirement',{}).get('content_files',[]):
-            if(root/'sdgo/mods'/identity/name).is_file():raise ValueError('已安装内容仍需要 '+identity+'，先处理内容引用后再退役运行时')
+        for name in content_files(node['contract']):
+            path=root/'sdgo/mods'/identity/name
+            if path.is_file()and path.stat().st_size:raise ValueError('已安装内容仍需要 '+identity+'，先处理内容引用后再退役运行时')
 
 
 def runtime_sections(contract):
