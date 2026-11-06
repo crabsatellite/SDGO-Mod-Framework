@@ -19,6 +19,7 @@ extern "C" {
 #include "battle_ai_native_world.h"
 namespace {
 static_assert(sizeof(SdgoBattleAiUnitSnapshotV1)==208);
+static_assert(sizeof(SdgoBattleAiMissionBossSpecialV1)==112);
 static_assert(offsetof(SdgoBattleAiUnitSnapshotV1,ranged_attempts)==168);
 static_assert(offsetof(SdgoBattleAiUnitSnapshotV1,ranged_nonzero_returns)==176);
 static_assert(offsetof(SdgoBattleAiUnitSnapshotV1,mobile_primary_dispatches)==184);
@@ -519,7 +520,79 @@ int wmain(int argc,wchar_t** argv) {
             native_world::Put(accepted,6,uint32_t(0x80000014));native_world::Put(accepted,0xA,uint32_t(104));native_world::Put(accepted,0x12,int32_t(20000));
             using NoticeFn=int(__thiscall*)(uint8_t*,const uint8_t*);
             NoticeFn volatile notify=reinterpret_cast<NoticeFn>(native_world::Address(&native_world::Callbacks::SpecialNotice));
-            int noticeReturn=notify(native_world::document.data(),accepted);unit.Think();
+            const auto missionBossSpecial=
+                reinterpret_cast<SdgoBattleAiGetMissionBossSpecialV1Fn>(
+                    GetProcAddress(
+                        GetModuleHandleW(L"battle_ai.dll"),
+                        SDGO_BATTLE_AI_MISSION_BOSS_SPECIAL_EXPORT));
+            Check(
+                missionBossSpecial!=nullptr,
+                "the passive mission Boss special observer has a stable export");
+            SdgoBattleAiMissionBossSpecialV1 bossBefore{};
+            bossBefore.size=sizeof(bossBefore);bossBefore.version=1;
+            Check(
+                missionBossSpecial && missionBossSpecial(&bossBefore)==1,
+                "the passive mission Boss observer exposes a readable empty baseline");
+            if(missionBossSpecial) {
+                auto invalid=bossBefore;
+                invalid.size=sizeof(invalid)-1;
+                Check(
+                    missionBossSpecial(&invalid)==0,
+                    "the mission Boss observer rejects short ABI buffers");
+                invalid=bossBefore;invalid.version=2;
+                Check(
+                    missionBossSpecial(&invalid)==0,
+                    "the mission Boss observer rejects unknown ABI versions");
+                Check(
+                    missionBossSpecial(
+                        reinterpret_cast<SdgoBattleAiMissionBossSpecialV1*>(1))==0,
+                    "the mission Boss observer rejects an unreadable caller buffer");
+            }
+            const auto savedMissionNpc=
+                *reinterpret_cast<uint32_t*>(unit.bytes+0x3238);
+            const auto savedMissionHp=
+                *reinterpret_cast<int32_t*>(unit.bytes+0x38);
+            const auto savedMissionMaxHp=
+                *reinterpret_cast<int32_t*>(unit.bytes+0x3C);
+            const auto savedMissionAppState=
+                *reinterpret_cast<uint32_t*>(native_world::app.data()+0x4A0);
+            native_world::Put(unit.bytes,0x3238,uint32_t(85054));
+            native_world::Put(unit.bytes,0x38,int32_t(700));
+            native_world::Put(unit.bytes,0x3C,int32_t(1000));
+            native_world::Put(native_world::app.data(),0x4A0,uint32_t(22));
+            int noticeReturn=notify(native_world::document.data(),accepted);
+            SdgoBattleAiMissionBossSpecialV1 bossAfter{};
+            bossAfter.size=sizeof(bossAfter);bossAfter.version=1;
+            Check(
+                missionBossSpecial && missionBossSpecial(&bossAfter)==1 &&
+                bossAfter.sequence>bossBefore.sequence &&
+                bossAfter.battle_epoch &&
+                bossAfter.event_tick_ms &&
+                bossAfter.mission_object==
+                    static_cast<uint32_t>(reinterpret_cast<uintptr_t>(
+                        native_world::document.data())) &&
+                bossAfter.unit==
+                    static_cast<uint32_t>(reinterpret_cast<uintptr_t>(
+                        unit.bytes)) &&
+                bossAfter.pilot_id==0x80000014 &&
+                bossAfter.object_id==20 &&
+                bossAfter.npc_data_id==85054 &&
+                bossAfter.weapon_id==104 &&
+                bossAfter.native_app_state==22 &&
+                bossAfter.hp_before==700 &&
+                bossAfter.max_hp_before==1000 &&
+                bossAfter.hp_after==700 &&
+                bossAfter.max_hp_after==1000 &&
+                bossAfter.state_before_valid &&
+                bossAfter.state_after_valid &&
+                bossAfter.original_result==0x51A7 &&
+                bossAfter.original_returned,
+                "a genuine original special notice publishes the exact live M1 Boss identity, 70-percent HP and before/after state");
+            native_world::Put(unit.bytes,0x3238,savedMissionNpc);
+            native_world::Put(unit.bytes,0x38,savedMissionHp);
+            native_world::Put(unit.bytes,0x3C,savedMissionMaxHp);
+            native_world::Put(native_world::app.data(),0x4A0,savedMissionAppState);
+            unit.Think();
             Check(noticeReturn==0x51A7&&*reinterpret_cast<int*>(unit.bytes+0xBC8)==20000,
                   "matched server special acceptance preserves native return and applies authoritative SP through native command18");
             Eval("savedAcceptedSpecial=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) staleAckRelease=SDGO_BattleAI_ReleaseHeldIntent(); return 123 end");

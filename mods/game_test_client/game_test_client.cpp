@@ -25,6 +25,8 @@
 #include "sdgo/net_route_observer.h"
 #include "mission_flow_actions.h"
 #include "sdgo/mission_ai_client_observer.h"
+#include "sdgo/battle_ai_observer.h"
+#include "../mission_behavior/observer.h"
 #include "gift_actions.h"
 #include "room_actions.h"
 #include "room_title_actions.h"
@@ -106,10 +108,16 @@ bool testShopCatalog=false;
 bool shopVisualOnly=false;
 MissionFlowActions mission;
 uint16_t missionMode=0;
+uint32_t missionGameModeId=0;
+uint32_t missionBehaviorProfile=0; // 1: OC, 2: GCO
 uint32_t missionRespawns=0; // 1: player quota, 2: infinite; explicit native probe scope
 uint32_t observedMissionGeneration=0,observedMissionRoom=0;
 uint32_t observedMissionEndBaseline=0;
+uint64_t observedMissionBossSpecialBaseline=0;
+uint64_t observedMissionStartedAt=0;
 SdgoMissionAiClientGetSnapshotV1Fn getMissionSnapshot=nullptr;
+SdgoMissionBehaviorClientGetStatusV1Fn getMissionBehaviorStatus=nullptr;
+SdgoBattleAiGetMissionBossSpecialV1Fn getMissionBossSpecial=nullptr;
 uint64_t playUnitUid=0;
 bool collectionDraw=false;
 bool collectionPreviewOnly=false;
@@ -355,6 +363,28 @@ bool LoadPlan() {
          unitAcquisitionConfig.machine_kind!=UnitAcquisitionActions::kCustomMachine)))return false;
     missionMode=static_cast<uint16_t>(GetPrivateProfileIntW(L"run",L"mission_mode",0,job.c_str()));
     if(missionMode && (missionMode!=5 && missionMode!=8))return false;
+    wchar_t missionProfile[8]{};
+    GetPrivateProfileStringW(
+        L"run",
+        L"mission_behavior_profile",
+        L"",
+        missionProfile,
+        static_cast<DWORD>(std::size(missionProfile)),
+        job.c_str());
+    missionGameModeId=static_cast<uint32_t>(
+        GetPrivateProfileIntW(
+            L"run",
+            L"mission_game_mode_id",
+            0,
+            job.c_str()));
+    missionBehaviorProfile=
+        !wcscmp(missionProfile,L"oc") ? 1u :
+        !wcscmp(missionProfile,L"gco") ? 2u : 0u;
+    if(missionProfile[0] || missionGameModeId) {
+        if(!missionBehaviorProfile || missionMode!=5 ||
+           (missionGameModeId!=88006 && missionGameModeId!=88009))
+            return false;
+    }
     wchar_t playUid[32]{};
     GetPrivateProfileStringW(L"run",L"play_unit_uid",L"",playUid,32,job.c_str());
     if(playUid[0]) {
@@ -460,6 +490,7 @@ bool LoadPlan() {
             else if(wcscmp(respawns,L"infinite")==0)missionRespawns=2;
             else return false;
         }
+        if(missionBehaviorProfile && missionRespawns)return false;
         if(expectedAi!=3 || level!=2 || sprintf_s(roomTitle,missionRespawns==2?"%s !ai3 lv2 inf":"%s !ai3 lv2",narrowNonce)<0)return false;
         wchar_t actualTitle[32]{};GetPrivateProfileStringW(L"run",L"room_title",L"",actualTitle,32,job.c_str());
         const std::wstring expectedTitle(roomTitle,roomTitle+strlen(roomTitle));
@@ -2355,8 +2386,9 @@ int MissionProgress(const SdgoGameTestContextV1* context,MissionFlowActions::Res
     static uint32_t previous=UINT32_MAX;
     if(previous!=result) {
         const auto s=mission.PollSnapshot();char message[384];
-        sprintf_s(message,"native mission result=%s app=%u channel=%u/%u mission=%u mode=%u room=%u/%u create=%04X consumed=%u start=%04X queued=%u consumed=%u control=%u/%u main=%08X/%u command=%08X ctx=%u reply=%04X/%04X",
-            MissionFlowActions::ResultName(result),s.native_app_state,s.selected_channel_group,s.selected_channel,s.selected_mission_id,
+        sprintf_s(message,"native mission result=%s app=%u channel=%u/%u mission=%u/%u mode=%u room=%u/%u create=%04X consumed=%u start=%04X queued=%u consumed=%u control=%u/%u main=%08X/%u command=%08X ctx=%u reply=%04X/%04X",
+            MissionFlowActions::ResultName(result),s.native_app_state,s.selected_channel_group,s.selected_channel,
+            s.requested_mission_id,s.selected_mission_id,
             s.native_room_mode,s.requested_room_id,s.native_room_id,s.create_opcode,s.create_reply_consumed,s.start_opcode,s.start_queued,s.battle_start_consumed,s.create_control_kind,s.create_control_flags,s.native_main_vtable,s.native_main_state,s.native_command_vtable,s.native_context_flags,s.last_start_reply_opcode,s.last_start_reply_status);
         context->Observe(message);previous=result;
         char channel[384];sprintf_s(channel,"mission channel scan=%u ready=%u valid=%u polls=%u callbacks=%u pageMode=%u request=%u groups=%u raw=%u mode2=%u eligible=%u rejected=%u/%u/%u/%u/%u",
@@ -2368,11 +2400,21 @@ int MissionProgress(const SdgoGameTestContextV1* context,MissionFlowActions::Res
     return SDGO_GAME_TEST_WAIT;
 }
 int __cdecl CreateMission(const SdgoGameTestContextV1* context) {
-    const auto result=mission.EnsureRoom(missionMode,roomTitle);const auto pending=MissionProgress(context,result);
+    const auto result=mission.EnsureRoom(
+        missionMode,
+        roomTitle,
+        true,
+        missionGameModeId);
+    const auto pending=MissionProgress(context,result);
     if(pending==SDGO_GAME_TEST_FAIL || result!=MissionFlowActions::kRoomReady)return pending;
     const auto s=mission.PollSnapshot();
     context->Assert(s.native_room_id && s.native_room_id==s.requested_room_id && s.native_room_mode==missionMode && s.local_is_host &&
         s.create_reply_consumed && s.create_opcode==0x0640,"a genuine server-created mission room and original reply consumer retain the selected listed mission and real host");
+    if(missionGameModeId)
+        context->Assert(
+            s.requested_mission_id==missionGameModeId &&
+            s.selected_mission_id==missionGameModeId,
+            "the real mission create dialog and accepted room retain the sealed exact GameModeID");
     return SDGO_GAME_TEST_PASS;
 }
 int __cdecl StartMission(const SdgoGameTestContextV1* context) {
@@ -2382,6 +2424,12 @@ int __cdecl StartMission(const SdgoGameTestContextV1* context) {
     context->Assert(s.start_request_sent && s.start_opcode==0x08A7 && s.battle_start_consumed,
         "the original mission start command sent 08A7 and consumed its own genuine 06C3 before stage-three entry");
     observedMissionEndBaseline=rooms.BattleEndState().sequence;
+    observedMissionStartedAt=GetTickCount64();
+    SdgoBattleAiMissionBossSpecialV1 boss{};
+    boss.size=sizeof(boss);boss.version=1;
+    observedMissionBossSpecialBaseline=
+        getMissionBossSpecial && getMissionBossSpecial(&boss)
+            ? boss.sequence : 0;
     return SDGO_GAME_TEST_PASS;
 }
 bool MissionSnapshot(SdgoMissionAiClientSnapshotV1& s) {
@@ -2414,12 +2462,144 @@ int __cdecl ObserveMissionCombat(const SdgoGameTestContextV1* context) {
     char message[192];sprintf_s(message,"native mission bounded observation mode=%u generation=%u spawned=%u moved=%u targets=%u lua=%u tick=%u",
         s.room_mode,s.battle_generation,s.spawned_wingman_count,moved,targets,s.lua_pcall_error_count,s.lua_tick_count);context->Observe(message);
     context->Assert(moved && targets && s.lua_successful_tick_count>0,"real mission wingmen move and acquire living native targets across ordinary updates with zero cumulative Lua error");
-    context->Observe("bounded native mission smoke ends here; objective clear, natural results, active exit and a remote peer are not claimed");
+    context->Observe(
+        missionBehaviorProfile
+            ? "bounded wingman smoke is complete; profile activation and one genuine Boss special event are checked next, while the full repeated pattern remains a manual acceptance"
+            : "bounded native mission smoke ends here; objective clear, natural results, active exit and a remote peer are not claimed");
     return SDGO_GAME_TEST_PASS;
+}
+enum class MissionBehaviorReadiness {
+    Waiting,
+    Ready,
+    Failed,
+};
+MissionBehaviorReadiness MissionBehaviorClientReady(
+    const SdgoGameTestContextV1* context,
+    SdgoMissionBehaviorClientStatusV1& status)
+{
+    status={};
+    status.size=sizeof(status);
+    status.version=1;
+    if(!getMissionBehaviorStatus ||
+       !getMissionBehaviorStatus(&status) ||
+       !status.hook_installed ||
+       !status.table_generation)
+        return MissionBehaviorReadiness::Waiting;
+    if(status.active_profile!=missionBehaviorProfile ||
+       status.requested_profile!=missionBehaviorProfile ||
+       status.conflict_records ||
+       status.observed_records!=12) {
+        char failure[224];
+        sprintf_s(
+            failure,
+            "mission behavior client mismatch requested=%u active=%u valid=%u generation=%u observed=%u applied=%u restored=%u unchanged=%u conflicts=%u",
+            status.requested_profile,status.active_profile,status.profile_data_valid,
+            status.table_generation,status.observed_records,status.applied_records,
+            status.restored_records,status.unchanged_records,status.conflict_records);
+        context->Observe(failure);
+        context->Assert(0,"the production mission behavior Mod must activate the sealed profile without native-record conflicts");
+        return MissionBehaviorReadiness::Failed;
+    }
+    const uint32_t accepted=
+        missionBehaviorProfile==1
+            ? status.applied_records+status.unchanged_records
+            : status.restored_records+status.unchanged_records;
+    if(accepted<12)
+        return MissionBehaviorReadiness::Waiting;
+    if(missionBehaviorProfile==1 && !status.profile_data_valid) {
+        context->Assert(0,"the OC profile requires the validated owner mission bundle");
+        return MissionBehaviorReadiness::Failed;
+    }
+    char message[224];
+    sprintf_s(
+        message,
+        "mission behavior client profile=%s generation=%u observed=%u applied=%u restored=%u unchanged=%u data=%u flags=%u",
+        missionBehaviorProfile==1?"oc":"gco",status.table_generation,
+        status.observed_records,status.applied_records,status.restored_records,
+        status.unchanged_records,status.profile_data_valid,status.profile_data_flags);
+    context->Observe(message);
+    context->Assert(
+        accepted>=12 && !status.conflict_records,
+        "all twelve bounded M1 Boss bindings were accepted through the production client table loader");
+    return MissionBehaviorReadiness::Ready;
+}
+int __cdecl ObserveMissionBehavior(const SdgoGameTestContextV1* context) {
+    SdgoMissionBehaviorClientStatusV1 status{};
+    const auto readiness=MissionBehaviorClientReady(context,status);
+    if(readiness!=MissionBehaviorReadiness::Ready)
+        return readiness==MissionBehaviorReadiness::Failed
+            ? SDGO_GAME_TEST_FAIL : SDGO_GAME_TEST_WAIT;
+    SdgoMissionAiClientSnapshotV1 missionSnapshot{};
+    if(!MissionSnapshot(missionSnapshot) || !missionSnapshot.active)
+        return SDGO_GAME_TEST_WAIT;
+    const bool sameBattle=
+        missionSnapshot.room_mode==missionMode &&
+        missionSnapshot.battle_generation==observedMissionGeneration &&
+        missionSnapshot.room_object==observedMissionRoom &&
+        !missionSnapshot.lua_pcall_error_count &&
+        !missionSnapshot.native_exception_count;
+    if(!sameBattle) {
+        context->Assert(
+            0,
+            "mission behavior observation remains attached to the same error-free native battle generation");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if(missionGameModeId==88009) {
+        context->Observe(
+            "M2 client admission is complete; the authoritative server profile receipt is evaluated separately and is required before the overall run can pass");
+        return SDGO_GAME_TEST_PASS;
+    }
+    if(missionBehaviorProfile==2) {
+        context->Observe(
+            "GCO restored all twelve current Boss bindings and intentionally retains the current task behavior");
+        return SDGO_GAME_TEST_PASS;
+    }
+    SdgoBattleAiMissionBossSpecialV1 boss{};
+    boss.size=sizeof(boss);boss.version=1;
+    if(!getMissionBossSpecial || !getMissionBossSpecial(&boss) ||
+       boss.sequence<=observedMissionBossSpecialBaseline)
+        return SDGO_GAME_TEST_WAIT;
+    const bool exactEasyBoss=
+        boss.npc_data_id==85054 ||
+        boss.npc_data_id==85079 ||
+        boss.npc_data_id==85080;
+    const bool threshold=
+        boss.hp_before>0 && boss.max_hp_before>0 &&
+        static_cast<int64_t>(boss.hp_before)*100<=
+            static_cast<int64_t>(boss.max_hp_before)*70;
+    char message[320];
+    sprintf_s(
+        message,
+        "native M1 Boss special sequence=%llu epoch=%llu mission=%08X unit=%08X pilot=%u object=%u npc=%u weapon=%u hp=%d/%d->%d/%d app=%u state=%u/%u busy=%u/%u original=%d",
+        static_cast<unsigned long long>(boss.sequence),
+        static_cast<unsigned long long>(boss.battle_epoch),
+        boss.mission_object,boss.unit,boss.pilot_id,boss.object_id,
+        boss.npc_data_id,boss.weapon_id,boss.hp_before,boss.max_hp_before,
+        boss.hp_after,boss.max_hp_after,boss.native_app_state,
+        boss.attack_state_before,boss.attack_state_after,
+        boss.special_busy_before,boss.special_busy_after,
+        boss.original_result);
+    context->Observe(message);
+    const bool valid=
+        boss.battle_epoch &&
+        boss.event_tick_ms>=observedMissionStartedAt &&
+        boss.mission_object && boss.unit && boss.pilot_id &&
+        boss.object_id && exactEasyBoss && boss.weapon_id &&
+        boss.native_app_state==22 && threshold &&
+        boss.hp_after>0 && boss.max_hp_after==boss.max_hp_before &&
+        boss.state_before_valid && boss.state_after_valid &&
+        boss.original_returned;
+    context->Assert(
+        valid,
+        "an exact OC M1 Easy Boss at or below 70-percent HP issued a genuine special-start notice consumed by the original client in this battle");
+    return valid?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
 }
 const SdgoGameTestCaseV1 missionCases[]={
     {"mission.room",180000,&CreateMission},{"mission.start",180000,&StartMission},
     {"mission.ai_spawn",120000,&SpawnMissionAi},{"mission.combat",120000,&ObserveMissionCombat},
+};
+const SdgoGameTestCaseV1 missionBehaviorCases[]={
+    {"mission.behavior",120000,&ObserveMissionBehavior},
 };
 // Read each atomic probe receipt without the profile API's persistent file
 // cache, which can prevent the server replacing its preceding receipt.
@@ -2833,6 +3013,11 @@ void RegisterPlannedCases() {
         plannedCases.assign(realCases,realCases+3);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
         plannedCases.insert(plannedCases.end(),std::begin(missionCases),std::end(missionCases));
+        if(missionBehaviorProfile)
+            plannedCases.insert(
+                plannedCases.end(),
+                std::begin(missionBehaviorCases),
+                std::end(missionBehaviorCases));
         if(missionRespawns)plannedCases.push_back(missionRespawnCase);
         provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
     }
@@ -3219,6 +3404,24 @@ SDGO_MOD_ENTRY {
     if(missionMode) {
         getMissionSnapshot=reinterpret_cast<SdgoMissionAiClientGetSnapshotV1Fn>(GetProcAddress(GetModuleHandleW(L"mission_ai.dll"),SDGO_MISSION_AI_CLIENT_SNAPSHOT_EXPORT));
         if(!getMissionSnapshot)sdgo_test::Fail("production native mission observation export is unavailable");
+        if(missionBehaviorProfile) {
+            getMissionBehaviorStatus=
+                reinterpret_cast<SdgoMissionBehaviorClientGetStatusV1Fn>(
+                    GetProcAddress(
+                        GetModuleHandleW(L"mission_behavior.dll"),
+                        SDGO_MISSION_BEHAVIOR_CLIENT_STATUS_EXPORT));
+            if(!getMissionBehaviorStatus)
+                sdgo_test::Fail(
+                    "production mission behavior profile observation export is unavailable");
+            getMissionBossSpecial=
+                reinterpret_cast<SdgoBattleAiGetMissionBossSpecialV1Fn>(
+                    GetProcAddress(
+                        GetModuleHandleW(L"battle_ai.dll"),
+                        SDGO_BATTLE_AI_MISSION_BOSS_SPECIAL_EXPORT));
+            if(!getMissionBossSpecial)
+                sdgo_test::Fail(
+                    "passive production mission Boss special observation export is unavailable");
+        }
     }
     } // normal authenticated scenarios
     if (!AddVectoredExceptionHandler(1, &NativeFault)) return 0;

@@ -19,7 +19,7 @@
 功能名后的 Beta、Experimental 表示发布阶段，未标注的为 Stable：
 
 - **Stable**：基本功能可以正常使用，之后的问题通过新版本修复。Manager 更新默认只安装 Stable。
-- **Beta**：基本流程仍在开发，目前只有机体族导入。在 Manager 更新中切换到 Beta 通道后安装。
+- **Beta**：基本流程仍在开发。当前 Beta 功能包括机体族导入和任务行为版本；在 Manager 更新中切换到 Beta 通道后安装。
 - **Experimental**：开发诊断工具。开发诊断类功能不随 Manager 更新安装。
 
 ## 基础修复
@@ -56,6 +56,7 @@
 |---|---|---|
 | 公告与展示规则 <!-- catalog: `announcements` --> | 登录时显示一次资讯简报；可选在游戏内按时段和事件展示服主公告 | [使用说明](docs/announcements.zh-CN.md) |
 | 任务 AI 僚机 <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai`，AI 按玩家生命额度复活；`!ai3 inf` 开启 AI 无限复活 | [使用说明](docs/coop-wingmen.zh-CN.md) |
+| 任务行为版本（Beta） <!-- catalog: `mission_behavior`、`mission_behavior_server` --> | 为一个客户端和服务端组全部 Battle 频道统一选择 OC 默认行为或 G改现有行为 | [使用说明](docs/mission-behavior.zh-CN.md) |
 | 对战 AI <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友；可让真人自动同队，选择双方补位、只补对面或指定数量 | [使用说明](docs/pvp-ai.zh-CN.md) |
 | AI 机体目录（独立附加包） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |
 | 战斗贡献奖励 <!-- catalog: `battle_rewards` --> | 按贡献发放 GB/MB，可配置人数倍率与按账号去重的聚会奖励 | [使用说明](docs/battle-rewards.zh-CN.md) |
