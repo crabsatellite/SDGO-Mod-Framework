@@ -283,22 +283,227 @@ class Bridge:
             if self.process.stdout:self.process.stdout.close()
 
 
+_OPERATOR_STOREFRONT_FIELDS = {'name', 'label', 'price', 'currency', 'validity'}
+_CHINESE_TEXT = re.compile(r'[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]')
+
+
+def _shop_text(value, field):
+    if (not isinstance(value, str) or not value or len(value.encode('utf-16-le')) // 2 > 50
+            or any(character in value for character in '\r\n\0')
+            or value.startswith('"') or value.endswith('"')):
+        raise ValueError(field + '需要 1–50 个字符，不可换行或以双引号开头/结尾')
+    if not _CHINESE_TEXT.search(value):
+        raise ValueError(field + '必须包含至少一个汉字')
+    return value
+
+
+def _operator_registrations(workspace, shop_world=None):
+    provider = workspace.providers.get('operators')
+    if provider is None:
+        return []
+    config = provider.config
+    engine = getattr(provider, 'engine', None)
+    if engine is None:
+        if not all(config.get(key) for key in ('workspace', 'client', 'snapshot')):
+            return []
+        engine = provider.get_engine()
+    catalog = engine.read()
+    from .engines.operators import model
+    exported = model.registrations(catalog)
+    operators = {op['id']: op for op in catalog.get('operators', [])}
+    result = []
+    operator_ids, category_ids = {}, {}
+    for registration in exported.get('items', []):
+        operator_id = registration.get('operator_id')
+        op = operators.get(operator_id)
+        if (not op or not op.get('managed') or not op.get('enabled')
+                or op.get('delivery') != 'product'):
+            continue
+        category_id = registration.get('category_id')
+        if (type(operator_id) is not int or not 60001 <= operator_id <= 60999
+                or type(category_id) is not int or category_id // 100000 != 12
+                or registration.get('key') != 'operator:' + str(operator_id)
+                or registration.get('kind') != 'operator'):
+            raise ValueError('副官商品登记身份无效')
+        if operator_id in operator_ids:
+            if operator_ids[operator_id] == category_id:
+                raise ValueError('副官商品登记重复')
+            raise ValueError('同一副官登记了多个商城物品类别')
+        if category_id in category_ids:
+            if category_ids[category_id] == operator_id:
+                raise ValueError('副官商品登记重复')
+            raise ValueError('多个副官登记了同一商城物品类别')
+        operator_ids[operator_id] = category_id
+        category_ids[category_id] = operator_id
+        registered_storefront = registration.get('storefront')
+        operator_storefront = op.get('storefront')
+        if registered_storefront is not None and operator_storefront is not None and registered_storefront != operator_storefront:
+            raise ValueError('副官商品预填配置不一致')
+        storefront = registered_storefront if registered_storefront is not None else operator_storefront
+        if storefront is None:
+            storefront = {}
+        item = dict(registration)
+        item['storefront'] = dict(storefront) if isinstance(storefront, dict) else storefront
+        result.append(item)
+    if result and config.get('server_ini') and shop_world:
+        from owner.units.repository import database_target_key
+        operator_target = database_target_key(Path(config['server_ini']))
+        shop_target = database_target_key(Path(shop_world) / 'WorldServer.ini')
+        if operator_target != shop_target:
+            raise ValueError('副官目录与商城必须使用同一宿主数据库')
+    return result
+
+
+def _operator_draft(registration, item):
+    operator_id = registration['operator_id']
+    if type(item.get('RefIndex')) is not int or item['RefIndex'] != operator_id:
+        raise ValueError('副官商品类别与原生副官编号冲突')
+    storefront = registration['storefront']
+    if not isinstance(storefront, dict) or set(storefront) - _OPERATOR_STOREFRONT_FIELDS:
+        raise ValueError('副官商品预填配置包含不支持的字段')
+    name = _shop_text(storefront.get('name', registration.get('display_name')), '副官商品中文名称')
+    values = {'name': name, 'enabled': False}
+    if 'label' in storefront:
+        values['label'] = _shop_text(storefront['label'], '副官商品销售标签')
+    if 'price' in storefront:
+        price = storefront['price']
+        if type(price) is not int or price < 1 or price > INT_MAX:
+            raise ValueError('副官商品预填售价必须为正整数')
+        values['price'] = price
+    if 'currency' in storefront:
+        if storefront['currency'] not in ('GB', 'MB'):
+            raise ValueError('副官商品预填币种只能是 GB 或 MB')
+        values['currency'] = storefront['currency']
+    if 'validity' in storefront:
+        validity = storefront['validity']
+        maximum = 36500 if item.get('TimeLimit') == 1 else 1000000
+        if type(validity) is not int or not 1 <= validity <= maximum:
+            raise ValueError('副官商品预填期限或数量无效')
+        values['validity'] = validity
+    return {'category_id': registration['category_id'], 'name': name}, values
+
+
+def _decorate_shop_state(value, operator_registrations, unit_imports):
+    value['unit_imports'] = unit_imports
+    operator_imports = {}
+    items = {}
+    for item in value.get('items', []):
+        identity = str(item.get('Id'))
+        if identity in items:
+            raise ValueError('商城物品目录包含重复编号')
+        items[identity] = item
+    products = value.get('catalog', {}).get('products', [])
+    for registration in operator_registrations:
+        identity = str(registration['category_id'])
+        public = dict(registration)
+        item = items.get(identity)
+        public['available'] = item is not None
+        public['shop_product_keys'] = [
+            product['key'] for product in products
+            if product.get('category_id') == registration['category_id'] and not product.get('retired')
+        ]
+        if identity in unit_imports:
+            public['draft_error'] = '机体与副官登记使用了同一商城物品类别'
+        elif item is None:
+            public['draft_error'] = '副官商品类别尚未应用到当前商城宿主'
+        else:
+            try:
+                create, values = _operator_draft(registration, item)
+            except ValueError as error:
+                public['draft_error'] = str(error)
+            else:
+                item['Name'] = create['name']
+                public['draft_defaults'] = values
+                if public['shop_product_keys']:
+                    public['draft_error'] = '此副官已经存在未删除的商城商品草稿'
+        operator_imports[identity] = public
+    value['operator_imports'] = operator_imports
+    return value
+
+
 class Shop(Provider):
     id, title = 'shop', '商城商品'
     fields = {'workspace':'现有商城配置目录','world':'WorldServer 目录','client':'客户端目录（显示标签更新）','demo':'演示模式（仅测试时填 1）'}
     def request(self, method, path, body, headers):
+        with self.lock:
+            return self._request_locked(method, path, body, headers)
+
+    def _request_locked(self, method, path, body, headers):
         if not self.config.get('workspace'): raise ValueError('请先选择商城配置工作区')
         if method=='GET' and path=='/api/shop/client-package':
             return Binary(client_package(self.config.get('client',''),headers.get('X-Shop-Revision','')),
                           'application/zip','SDGO-shop-client-update.zip')
         bridge = self.workspace.services.resource('shop.bridge', Bridge)
         action = 'read' if method=='GET' else path.rsplit('/',1)[-1]
-        value=bridge.call({**self.config,'action':action,'body':body,'revision':headers.get('X-Shop-Revision','')})
-        if method=='GET' and path.endswith('/export'): return Binary(storage.json_bytes(value['catalog']),'application/json','shop.json')
+        if method == 'GET' and path.endswith('/export'):
+            value = bridge.call({**self.config, 'action':'read', 'body':body, 'revision':''})
+            return Binary(storage.json_bytes(value['catalog']), 'application/json', 'shop.json')
+        operator_registrations = _operator_registrations(self.workspace, self.config.get('world'))
+        by_category = {registration['category_id']: registration for registration in operator_registrations}
         units = self.workspace.providers.get('units')
         registrations = units.for_server(Path(self.config['world'])/'WorldServer.ini') if units and self.config.get('world') else []
-        value['unit_imports'] = {str(r['category_id']): r for r in registrations}
+        unit_imports = {str(r['category_id']): r for r in registrations}
+        requested_category = body.get('category_id') if action == 'create' else None
+        if action == 'create' and type(requested_category) is not int:
+            candidate = None
+            if isinstance(requested_category, str) and re.fullmatch(r'[0-9]+', requested_category):
+                candidate = int(requested_category)
+            elif isinstance(requested_category, float) and requested_category.is_integer():
+                candidate = int(requested_category)
+            if candidate in by_category:
+                raise ValueError('副官商品类别必须使用整数编号')
+        if action == 'create' and requested_category in by_category:
+            if str(requested_category) in unit_imports:
+                raise ValueError('机体与副官登记使用了同一商城物品类别')
+            before = bridge.call({**self.config, 'action':'read', 'body':{}, 'revision':''})
+            item = next((row for row in before.get('items', []) if row.get('Id') == requested_category), None)
+            if item is None:
+                raise ValueError('副官商品类别尚未应用到当前商城宿主')
+            registration = by_category[requested_category]
+            create, values = _operator_draft(registration, item)
+            if any(product.get('category_id') == requested_category and not product.get('retired')
+                   for product in before.get('catalog', {}).get('products', [])):
+                raise ValueError('此副官已经存在未删除的商城商品草稿')
+            created = bridge.call({**self.config, 'action':'create', 'body':create,
+                                   'revision':headers.get('X-Shop-Revision','')})
+            previous = {product.get('key') for product in before.get('catalog', {}).get('products', [])}
+            added = [product for product in created.get('catalog', {}).get('products', [])
+                     if product.get('key') not in previous]
+            if len(added) != 1 or added[0].get('category_id') != requested_category:
+                if len(added) == 1 and isinstance(added[0].get('key'), str):
+                    try:
+                        bridge.call({**self.config, 'action':'delete',
+                                     'body':{'key':added[0]['key']}, 'revision':created['revision']})
+                    except Exception as cleanup_error:
+                        raise ValueError(
+                            '商城没有返回唯一的副官商品草稿且自动删除未完成；请刷新商城检查。'
+                            + ' 删除错误：' + str(cleanup_error)) from None
+                raise ValueError('商城没有返回唯一的副官商品草稿')
+            current_revision = created['revision']
+            try:
+                label = values.pop('label', None) if 'validity' in values else None
+                value = bridge.call({**self.config, 'action':'update',
+                                     'body':{'key':added[0]['key'], 'values':values},
+                                     'revision':current_revision})
+                current_revision = value['revision']
+                if label is not None:
+                    value = bridge.call({**self.config, 'action':'update',
+                                         'body':{'key':added[0]['key'], 'values':{'label':label}},
+                                         'revision':current_revision})
+                    current_revision = value['revision']
+            except Exception as update_error:
+                try:
+                    bridge.call({**self.config, 'action':'delete',
+                                 'body':{'key':added[0]['key']}, 'revision':current_revision})
+                except Exception as cleanup_error:
+                    raise ValueError(
+                        '副官商城草稿预填失败且自动删除未完成；请刷新商城并删除该草稿。'
+                        + ' 预填错误：' + str(update_error)
+                        + '；删除错误：' + str(cleanup_error)) from None
+                raise update_error
+        else:
+            value=bridge.call({**self.config,'action':action,'body':body,'revision':headers.get('X-Shop-Revision','')})
         for item in value.get('items', []):
-            if str(item['Id']) in value['unit_imports']:
-                item['Name'] = value['unit_imports'][str(item['Id'])]['display_name']
-        return value
+            if str(item['Id']) in unit_imports:
+                item['Name'] = unit_imports[str(item['Id'])]['display_name']
+        return _decorate_shop_state(value, operator_registrations, unit_imports)

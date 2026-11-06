@@ -25,7 +25,9 @@ inline bool PatchOperator(uint8_t* row, size_t size, uint32_t id, const std::wst
     if (!row || size != kOperatorSize || !avatarProfile || id < 60001 || id > 60999 ||
         name.empty() || name.size() > 48 || (!customSprite.empty() && customSprite.size() >= 50)) return false;
     WriteId(row, id);
-    if (!Text(row + 5, 100, name)) return false;
+    // Name is 50 wchar; the next 50-wchar field at +105 is the
+    // operator's dialogue table. A 100-wchar clear silently erased it.
+    if (!Text(row + 5, 50, name)) return false;
     for (size_t i = 0; i < 7; ++i) {
         if (customSprite.empty())
             std::memcpy(row + kAvatarOffsets[i], avatarProfile + kAvatarOffsets[i], kAvatarCapacities[i] * 2);

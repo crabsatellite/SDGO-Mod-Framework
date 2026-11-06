@@ -20,8 +20,11 @@ namespace
     constexpr uint32_t kMaxEntries = 100000;
     constexpr uint64_t kMaxIndexBytes = 64ull * 1024ull * 1024ull;
     constexpr uint64_t kMaxArchiveBytes = 512ull * 1024ull * 1024ull;
+    constexpr uint64_t kMaxOperatorArchiveBytes = 64ull * 1024ull * 1024ull;
+    constexpr uint64_t kMaxManifestBytes = 4096;
     constexpr uint32_t kMaxStoredBytes = 64u * 1024u * 1024u;
     constexpr size_t kMaxPathCharacters = 240;
+    constexpr size_t kMaxSpriteTexturePathCharacters = 31;
 
     using OpenFileFn = void*(__thiscall*)(void*, const void*, bool);
     using FileCtorFn = void*(__thiscall*)(
@@ -61,6 +64,37 @@ namespace
             return false;
         value = static_cast<uint32_t>(parsed);
         return true;
+    }
+
+    bool ParseExactOperatorId(const std::wstring& text, uint32_t& value)
+    {
+        if (text.size() != 5 ||
+            !std::all_of(text.begin(), text.end(), [](wchar_t character) {
+                return character >= L'0' && character <= L'9';
+            }))
+            return false;
+        value = 0;
+        for (wchar_t character : text)
+            value = value * 10u + static_cast<uint32_t>(character - L'0');
+        return value >= 60001 && value <= 60999;
+    }
+
+    bool ParseOperatorOwner(const char* owner, uint32_t& operatorId)
+    {
+        static constexpr char prefix[] = "operator_catalog:";
+        if (!owner || std::strncmp(owner, prefix, sizeof(prefix) - 1) != 0)
+            return false;
+        const char* digits = owner + sizeof(prefix) - 1;
+        if (std::strlen(digits) != 5)
+            return false;
+        operatorId = 0;
+        for (size_t index = 0; index < 5; ++index) {
+            if (digits[index] < '0' || digits[index] > '9')
+                return false;
+            operatorId = operatorId * 10u +
+                         static_cast<uint32_t>(digits[index] - '0');
+        }
+        return operatorId >= 60001 && operatorId <= 60999;
     }
 
     bool ValidHash(const std::wstring& text)
@@ -252,6 +286,62 @@ namespace
         return false;
     }
 
+    bool OperatorResourcePath(const std::wstring& path, uint32_t operatorId)
+    {
+        static constexpr wchar_t shortPrefix[] = L"sdgo\\optex\\";
+        if (path.size() <= kMaxSpriteTexturePathCharacters &&
+            path.rfind(shortPrefix, 0) == 0) {
+            const size_t idBegin = std::size(shortPrefix) - 1;
+            const size_t slash = path.find(L'\\', idBegin);
+            uint32_t pathOperatorId = 0;
+            if (slash != std::wstring::npos &&
+                ParseExactOperatorId(path.substr(idBegin, slash - idBegin),
+                                     pathOperatorId) &&
+                pathOperatorId == operatorId) {
+                const std::wstring file = path.substr(slash + 1);
+                static constexpr wchar_t extension[] = L".txr";
+                const size_t extensionLength = std::size(extension) - 1;
+                if (file.size() > extensionLength &&
+                    file.compare(file.size() - extensionLength, extensionLength,
+                                 extension) == 0 &&
+                    std::all_of(
+                        file.begin(), file.end() - extensionLength,
+                        [](wchar_t character) {
+                            return character >= L'0' && character <= L'9';
+                        }))
+                    return true;
+            }
+            return false;
+        }
+
+        const std::wstring base =
+            L"sdgo\\mods\\operator_catalog\\assets\\" +
+            std::to_wstring(operatorId);
+        const std::wstring nested = base + L"\\";
+        if (path.rfind(nested, 0) == 0) {
+            static constexpr const wchar_t* extensions[] = {
+                L".gdt", L".spr", L".zsd", L".txr",
+            };
+            const std::wstring relative = path.substr(nested.size());
+            if (relative.empty())
+                return false;
+            for (const wchar_t* extension : extensions) {
+                const size_t length = wcslen(extension);
+                if (relative.size() > length &&
+                    relative.compare(relative.size() - length, length, extension) == 0)
+                    return true;
+            }
+            return false;
+        }
+        if (path == base + L".txr")
+            return true;
+        for (uint32_t frame = 0; frame < 7; ++frame) {
+            if (path == base + L"_" + std::to_wstring(frame) + L".spr")
+                return true;
+        }
+        return false;
+    }
+
     bool NormalizeResourcePath(std::wstring& path)
     {
         if (path.empty() || path.size() > kMaxPathCharacters)
@@ -265,9 +355,54 @@ namespace
         return SafeRelativeFile(path);
     }
 
-    bool ParseUnitIndex(const std::vector<uint8_t>& bytes, uint64_t archiveSize,
-                        sdgo::resource_overlay::BundleRegistration& bundle,
-                        std::string& error)
+    bool ReservedOperatorTextureClaim(
+        const sdgo::resource_overlay::BundleRegistration& bundle,
+        std::string& error)
+    {
+        for (const auto& item : bundle.entries) {
+            std::wstring normalized = item.first;
+            for (wchar_t& value : normalized) {
+                if (value == L'/')
+                    value = L'\\';
+                if (value >= L'A' && value <= L'Z')
+                    value = static_cast<wchar_t>(value + (L'a' - L'A'));
+            }
+            if (normalized != L"sdgo\\optex" &&
+                normalized.rfind(L"sdgo\\optex\\", 0) != 0)
+                continue;
+
+            uint32_t operatorId = 0;
+            std::wstring canonical = item.first;
+            if (!NormalizeResourcePath(canonical) || canonical != item.first ||
+                !ParseOperatorOwner(bundle.owner.c_str(), operatorId) ||
+                !OperatorResourcePath(item.first, operatorId)) {
+                error =
+                    "sdgo/optex paths require canonical numeric TXR keys owned by "
+                    "operator_catalog:<same-id>";
+                return false;
+            }
+        }
+        return true;
+    }
+
+    using ResourcePathCheck = bool (*)(
+        const std::wstring& path, uint32_t context);
+
+    bool UnitResourcePathCheck(const std::wstring& path, uint32_t)
+    {
+        return UnitResourcePath(path);
+    }
+
+    bool OperatorResourcePathCheck(const std::wstring& path, uint32_t operatorId)
+    {
+        return OperatorResourcePath(path, operatorId);
+    }
+
+    bool ParseNativeIndex(const std::vector<uint8_t>& bytes, uint64_t archiveSize,
+                          bool requireEntries, bool requireCanonicalPath,
+                          ResourcePathCheck pathCheck, uint32_t pathContext,
+                          sdgo::resource_overlay::BundleRegistration& bundle,
+                          std::string& error)
     {
         if (bytes.size() < 24) {
             error = "resources.zdx header is truncated";
@@ -280,6 +415,7 @@ namespace
         const uint32_t entryCount = ReadU32(bytes, 16);
         const uint32_t reserved1 = ReadU32(bytes, 20);
         if (version != 1 || chunkSize != kChunkSize || entryCount > kMaxEntries ||
+            (requireEntries && entryCount == 0) ||
             reserved0 != 0 || reserved1 != 0) {
             error = "resources.zdx header is unsupported";
             return false;
@@ -314,7 +450,10 @@ namespace
                 }
                 path.push_back(value);
             }
-            if (!terminated || !NormalizeResourcePath(path) || !UnitResourcePath(path) ||
+            const std::wstring encodedPath = path;
+            if (!terminated || !NormalizeResourcePath(path) ||
+                (requireCanonicalPath && path != encodedPath) ||
+                !pathCheck(path, pathContext) ||
                 cursor + 36 > bytes.size()) {
                 error = "resource path or metadata is invalid";
                 return false;
@@ -349,6 +488,14 @@ namespace
         }
         bundle.chunkSize = chunkSize;
         return true;
+    }
+
+    bool ParseUnitIndex(const std::vector<uint8_t>& bytes, uint64_t archiveSize,
+                        sdgo::resource_overlay::BundleRegistration& bundle,
+                        std::string& error)
+    {
+        return ParseNativeIndex(bytes, archiveSize, false, false,
+                                &UnitResourcePathCheck, 0, bundle, error);
     }
 
     bool LoadUnitBundle(const wchar_t* modDirectory, const wchar_t* configName,
@@ -407,6 +554,154 @@ namespace
         return true;
     }
 
+    struct OperatorManifest
+    {
+        uint32_t operatorId = 0;
+        std::wstring indexName;
+        std::wstring indexHash;
+        std::wstring archiveName;
+        std::wstring archiveHash;
+    };
+
+    std::wstring WidenAscii(const std::string& value)
+    {
+        return std::wstring(value.begin(), value.end());
+    }
+
+    bool ReadOperatorManifest(const std::wstring& path, OperatorManifest& manifest,
+                              std::string& error)
+    {
+        std::vector<uint8_t> bytes;
+        if (!ReadFileLimited(path, kMaxManifestBytes, bytes, error))
+            return false;
+        if (bytes.empty()) {
+            error = "operator resource manifest is empty";
+            return false;
+        }
+        for (uint8_t value : bytes) {
+            if ((value < 0x20 || value > 0x7e) && value != '\r' && value != '\n') {
+                error = "operator resource manifest must be ASCII text";
+                return false;
+            }
+        }
+
+        std::vector<std::string> lines;
+        size_t cursor = 0;
+        while (cursor < bytes.size()) {
+            size_t end = cursor;
+            while (end < bytes.size() && bytes[end] != '\n')
+                ++end;
+            std::string line(
+                reinterpret_cast<const char*>(bytes.data() + cursor), end - cursor);
+            if (!line.empty() && line.back() == '\r')
+                line.pop_back();
+            if (line.find('\r') != std::string::npos || line.empty()) {
+                error = "operator resource manifest has an invalid line";
+                return false;
+            }
+            lines.push_back(std::move(line));
+            cursor = end < bytes.size() ? end + 1 : end;
+        }
+
+        static constexpr const char* keys[] = {
+            "schema", "format", "operator_id", "index", "index_sha256",
+            "archive", "archive_sha256",
+        };
+        if (lines.size() != 8 || lines[0] != "[runtime]") {
+            error = "operator resource manifest must contain only the runtime schema";
+            return false;
+        }
+        std::array<std::string, std::size(keys)> values;
+        for (size_t index = 0; index < values.size(); ++index) {
+            const std::string prefix = std::string(keys[index]) + "=";
+            if (lines[index + 1].rfind(prefix, 0) != 0 ||
+                lines[index + 1].size() == prefix.size()) {
+                error = "operator resource manifest keys are missing or out of order";
+                return false;
+            }
+            values[index] = lines[index + 1].substr(prefix.size());
+        }
+        if (values[0] != "1" ||
+            values[1] != "sdgo-native-resource-overlay-v1" ||
+            !ParseExactOperatorId(WidenAscii(values[2]), manifest.operatorId)) {
+            error = "operator resource manifest identity is invalid";
+            return false;
+        }
+        manifest.indexName = WidenAscii(values[3]);
+        manifest.indexHash = WidenAscii(values[4]);
+        manifest.archiveName = WidenAscii(values[5]);
+        manifest.archiveHash = WidenAscii(values[6]);
+        if (manifest.indexName != L"resources.zdx" ||
+            manifest.archiveName != L"resources.zpk" ||
+            !ValidHash(manifest.indexHash) || !ValidHash(manifest.archiveHash)) {
+            error = "operator resource manifest declarations are invalid";
+            return false;
+        }
+        return true;
+    }
+
+    bool LoadOperatorBundle(const wchar_t* modDirectory, const wchar_t* configName,
+                            const char* owner,
+                            sdgo::resource_overlay::BundleRegistration& bundle,
+                            std::string& error)
+    {
+        uint32_t operatorId = 0;
+        if (!modDirectory || !*modDirectory ||
+            !ParseOperatorOwner(owner, operatorId)) {
+            error = "operator resource owner is invalid";
+            return false;
+        }
+        const std::wstring id = std::to_wstring(operatorId);
+        const std::wstring expectedConfig =
+            L"assets\\" + id + L"\\resource-overlay.ini";
+        if (!configName || expectedConfig != configName) {
+            error = "operator resource config path does not match its owner";
+            return false;
+        }
+
+        const std::wstring modRoot(modDirectory);
+        const std::wstring assetRoot = Join(modRoot, L"assets\\" + id);
+        const std::wstring ini = Join(modRoot, expectedConfig);
+        OperatorManifest manifest;
+        if (!ReadOperatorManifest(ini, manifest, error))
+            return false;
+        if (manifest.operatorId != operatorId) {
+            error = "operator resource manifest ID does not match its owner";
+            return false;
+        }
+
+        std::string indexHash;
+        std::string archiveHash;
+        uint64_t indexSize = 0;
+        uint64_t archiveSize = 0;
+        const std::wstring indexPath = Join(assetRoot, manifest.indexName);
+        const std::wstring archivePath = Join(assetRoot, manifest.archiveName);
+        if (!HashFile(indexPath, kMaxIndexBytes, indexHash, indexSize, error) ||
+            !HashFile(archivePath, kMaxOperatorArchiveBytes - 1,
+                      archiveHash, archiveSize, error))
+            return false;
+        if (indexHash != LowerHash(manifest.indexHash)) {
+            error = "SHA-256 mismatch for operator resources.zdx";
+            return false;
+        }
+        if (archiveHash != LowerHash(manifest.archiveHash)) {
+            error = "SHA-256 mismatch for operator resources.zpk";
+            return false;
+        }
+
+        std::vector<uint8_t> index;
+        if (!ReadFileLimited(indexPath, kMaxIndexBytes, index, error))
+            return false;
+        bundle.owner = owner;
+        bundle.identity = indexHash + ":" + archiveHash;
+        bundle.archivePath = archivePath;
+        if (!ParseNativeIndex(index, archiveSize, true, true,
+                              &OperatorResourcePathCheck, operatorId,
+                              bundle, error))
+            return false;
+        return true;
+    }
+
     bool TryMainName(const void* nativeString, std::wstring& result)
     {
         __try {
@@ -460,6 +755,24 @@ namespace
 
 namespace sdgo::resource_overlay
 {
+    bool LoadBundleFiles(const wchar_t* modDirectory, const wchar_t* configName,
+                         const char* owner, BundleRegistration& bundle,
+                         std::string& error)
+    {
+        bundle = BundleRegistration{};
+        if (!owner) {
+            error = "broker does not support the requested resource domain";
+            return false;
+        }
+        if (std::strcmp(owner, "unit_catalog") == 0)
+            return LoadUnitBundle(modDirectory, configName, bundle, error);
+        uint32_t operatorId = 0;
+        if (ParseOperatorOwner(owner, operatorId))
+            return LoadOperatorBundle(modDirectory, configName, owner, bundle, error);
+        error = "broker does not support the requested resource domain";
+        return false;
+    }
+
     struct Provider::Impl
     {
         struct StoredBundle
@@ -500,6 +813,8 @@ namespace sdgo::resource_overlay
                 error = "overlay bundle metadata is invalid";
                 return false;
             }
+            if (!ReservedOperatorTextureClaim(candidate, error))
+                return false;
             AcquireSRWLockExclusive(&lock);
             for (const StoredBundle& existing : bundles) {
                 if (existing.owner == candidate.owner) {
@@ -631,12 +946,8 @@ namespace sdgo::resource_overlay
     bool Provider::RegisterBundleFiles(const wchar_t* modDirectory, const wchar_t* configName,
                                        const char* owner, std::string& error)
     {
-        if (!owner || std::strcmp(owner, "unit_catalog") != 0) {
-            error = "broker does not support the requested resource domain";
-            return false;
-        }
         BundleRegistration candidate;
-        if (!LoadUnitBundle(modDirectory, configName, candidate, error))
+        if (!LoadBundleFiles(modDirectory, configName, owner, candidate, error))
             return false;
         return impl_->Register(candidate, error);
     }

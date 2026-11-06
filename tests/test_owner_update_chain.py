@@ -3,6 +3,7 @@ import copy
 import io
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import time
 import unittest
@@ -72,6 +73,30 @@ class OwnerChainTests(unittest.TestCase):
         source=o.binding(self.owner['publication'])
         self.controller.configure(self.player['id'],{'mode':'player','source':source,'automatic':automatic})
         return source
+
+    def large_authored_asset(self,size=24*1024):
+        data=b''.join(
+            bytes.fromhex(u.digest(index.to_bytes(4,'little')))
+            for index in range((size+31)//32)
+        )[:size]
+        folder=Path(self.owner['path'])/'sdgo/mods/example'
+        (folder/'payload.bin').write_bytes(data)
+        manifest=folder/'mod.ini'
+        manifest.write_text(
+            manifest.read_text(encoding='utf-8').replace(
+                'files=script.lua', 'files=script.lua,payload.bin'
+            ),
+            encoding='utf-8',
+        )
+        return data
+
+    def publish_split(self,part_size=2048):
+        payload=self.large_authored_asset()
+        with patch.object(o,'MAX_CONTENT_PART',part_size):
+            result=self.publish()
+        feed=storage.read_json(self.output/'owner-feed.json')
+        self.assertIn('parts',feed)
+        return result,feed,payload
 
     def test_owner_publish_player_update_and_independent_second_revision(self):
         self.publish();source=self.bind()
@@ -163,6 +188,34 @@ class OwnerChainTests(unittest.TestCase):
         self.unavailable.add('primary.example');self.controller.check(self.player['id'],True)
         self.assertTrue(any('backup.example'in x for x in self.requests))
 
+    def test_authored_content_has_a_separate_bounded_download_budget(self):
+        self.publish();source=self.bind()
+        path=self.output/'owner-feed.json';feed=storage.read_json(path)
+        feed['bytes']=u.MAX_ARCHIVE+1
+        sizes=[o.MAX_CONTENT_PART,o.MAX_CONTENT_PART,feed['bytes']-2*o.MAX_CONTENT_PART]
+        feed['parts']=[
+            {'path':f"{feed['asset']}.part{index:03d}",'bytes':size,'sha256':'0'*64}
+            for index,size in enumerate(sizes)
+        ]
+        storage.atomic(path,storage.json_bytes(feed))
+        self.assertEqual(self.controller.check_source(source)['bytes'],u.MAX_ARCHIVE+1)
+        feed['bytes']=o.MAX_CONTENT_ARCHIVE+1
+        storage.atomic(path,storage.json_bytes(feed))
+        with self.assertRaises(ValueError):self.controller.check_source(source)
+
+    def test_legacy_single_zip_above_part_threshold_remains_supported(self):
+        self.publish();feed=storage.read_json(self.output/'owner-feed.json')
+        self.assertNotIn('parts',feed)
+        threshold=max(1,feed['bytes']//2)
+        self.assertGreater(feed['bytes'],threshold)
+        self.bind()
+        with patch.object(o,'MAX_CONTENT_PART',threshold):
+            self.assertEqual(self.controller.check(self.player['id'],True)['revision'],1)
+        self.assertEqual(
+            (Path(self.player['path'])/'sdgo/mods/example/script.lua').read_bytes(),
+            b'-- owner authored script',
+        )
+
     def test_login_page_primary_uses_only_the_same_pinned_owner_backup(self):
         cfg=copy.deepcopy(self.source_cfg);cfg['feeds'].append('https://backup.example/packs/owner-feed.json')
         self.controller.configure(self.owner['id'],{'mode':'owner','publication':cfg});self.publish();source=self.bind()
@@ -181,6 +234,126 @@ class OwnerChainTests(unittest.TestCase):
             if 'primary.example'in url and url.endswith('.zip'):return b'<html>Login required</html>'
             return original(url,limit,stop)
         self.controller.fetcher=fetch;self.assertEqual(self.controller.check(self.player['id'],True)['revision'],1)
+
+    def test_large_content_uses_bounded_immutable_git_parts_and_round_trips(self):
+        part_size=2048
+        _result,feed,payload=self.publish_split(part_size)
+        self.assertFalse((self.output/feed['asset']).exists())
+        self.assertGreater(len(feed['parts']),1)
+        self.assertEqual(
+            b''.join((self.output/part['path']).read_bytes() for part in feed['parts']),
+            o.assemble_asset(
+                feed,
+                lambda name,limit:(self.output/name).read_bytes(),
+            ),
+        )
+        for index,part in enumerate(feed['parts']):
+            self.assertEqual(part['path'],f"{feed['asset']}.part{index:03d}")
+            self.assertLessEqual(part['bytes'],part_size)
+            self.assertEqual((self.output/part['path']).stat().st_size,part['bytes'])
+            self.assertEqual(u.digest((self.output/part['path']).read_bytes()),part['sha256'])
+
+        subprocess.run(['git','init','-b','main',str(self.output)],check=True,capture_output=True)
+        subprocess.run(['git','-C',str(self.output),'config','user.name','fixture'],check=True)
+        subprocess.run(['git','-C',str(self.output),'config','user.email','fixture@example.invalid'],check=True)
+        subprocess.run(['git','-C',str(self.output),'add','--','owner-feed.json','releases'],check=True)
+        subprocess.run(['git','-C',str(self.output),'commit','-m','fixture split release'],check=True,capture_output=True)
+        tree=subprocess.run(
+            ['git','-C',str(self.output),'ls-tree','-lr','HEAD','releases'],
+            check=True,capture_output=True,text=True,
+        ).stdout.splitlines()
+        blobs={line.split('\t',1)[1]:int(line.split()[3]) for line in tree}
+        self.assertEqual(set(blobs),{part['path'] for part in feed['parts']})
+        self.assertTrue(all(size<=part_size for size in blobs.values()))
+
+        self.bind()
+        self.assertEqual(self.controller.check(self.player['id'],True)['revision'],1)
+        self.assertEqual(
+            (Path(self.player['path'])/'sdgo/mods/example/payload.bin').read_bytes(),
+            payload,
+        )
+
+    def test_split_feed_rejects_bad_count_order_path_fields_and_total(self):
+        _result,feed,_payload=self.publish_split()
+        source=o.binding(self.owner['publication'])
+        cases={}
+        bad=copy.deepcopy(feed);bad['parts']=bad['parts'][:1];cases['count']=bad
+        bad=copy.deepcopy(feed);bad['parts'][0],bad['parts'][1]=bad['parts'][1],bad['parts'][0];cases['order']=bad
+        bad=copy.deepcopy(feed);bad['parts'][1]['path']=bad['parts'][0]['path'];cases['duplicate']=bad
+        bad=copy.deepcopy(feed);bad['parts'][0]['path']='releases/../escape.part000';cases['path']=bad
+        bad=copy.deepcopy(feed);bad['parts'][0]['extra']='unknown';cases['fields']=bad
+        bad=copy.deepcopy(feed);bad['bytes']+=1;cases['total']=bad
+        bad=copy.deepcopy(feed);bad['parts']=[{}]*(o.MAX_CONTENT_PARTS+1);cases['too-many']=bad
+        bad=copy.deepcopy(feed);bad['parts'][0]['bytes']=True;cases['bool-size']=bad
+        bad=copy.deepcopy(feed);bad['parts'][0]['bytes']=0;cases['zero-size']=bad
+        bad=copy.deepcopy(feed);bad['parts'][0]['bytes']=o.MAX_CONTENT_PART+1;cases['oversize']=bad
+        bad=copy.deepcopy(feed);bad['parts'][0]['sha256']=bad['parts'][0]['sha256'].upper();cases['hash-format']=bad
+        for label,value in cases.items():
+            with self.subTest(label=label):
+                storage.atomic(self.output/'owner-feed.json',storage.json_bytes(value))
+                with self.assertRaises(ValueError):self.controller.check_source(source)
+
+    def test_corrupt_split_part_is_rejected_before_unpack(self):
+        _result,feed,_payload=self.publish_split()
+        self.bind()
+        (self.output/feed['parts'][0]['path']).write_bytes(b'corrupt')
+        with self.assertRaises(ValueError):self.controller.check(self.player['id'],True)
+        self.assertFalse((Path(self.player['path'])/'d3d9.dll').exists())
+
+    def test_split_final_logical_hash_is_enforced(self):
+        _result,feed,_payload=self.publish_split()
+        feed['sha256']='0'*64
+        storage.atomic(self.output/'owner-feed.json',storage.json_bytes(feed))
+        self.bind()
+        with self.assertRaises(ValueError):self.controller.check(self.player['id'],True)
+        self.assertFalse((Path(self.player['path'])/'d3d9.dll').exists())
+
+    def test_split_download_restarts_from_part_zero_on_the_next_source(self):
+        cfg=copy.deepcopy(self.source_cfg)
+        cfg['feeds'].append('https://backup.example/packs/owner-feed.json')
+        self.controller.configure(self.owner['id'],{'mode':'owner','publication':cfg})
+        _result,feed,_payload=self.publish_split()
+        self.bind()
+        original=self.controller.fetcher;bad=feed['parts'][1]['path']
+        def fetch(url,limit,stop):
+            if 'primary.example' in url and url.endswith(bad):
+                self.requests.append(url)
+                raw=(self.output/bad).read_bytes()
+                return bytes([raw[0]^1])+raw[1:]
+            return original(url,limit,stop)
+        self.controller.fetcher=fetch;self.requests.clear()
+        self.assertEqual(self.controller.check(self.player['id'],True)['revision'],1)
+        primary=[url for url in self.requests if 'primary.example' in url and '.part' in url]
+        backup=[url for url in self.requests if 'backup.example' in url and '.part' in url]
+        self.assertEqual(
+            [url.rsplit('/',1)[1] for url in primary],
+            [Path(feed['parts'][0]['path']).name,Path(feed['parts'][1]['path']).name],
+        )
+        self.assertEqual(
+            [url.rsplit('/',1)[1] for url in backup],
+            [Path(part['path']).name for part in feed['parts']],
+        )
+        self.assertFalse(any('backup.example' in url and url.endswith('owner-feed.json') for url in self.requests))
+
+    def test_legacy_single_zip_feed_remains_supported(self):
+        self.publish();feed=storage.read_json(self.output/'owner-feed.json')
+        self.assertNotIn('parts',feed)
+        self.assertTrue((self.output/feed['asset']).is_file())
+        self.bind()
+        self.assertEqual(self.controller.check(self.player['id'],True)['revision'],1)
+
+    def test_publish_assets_are_immutable(self):
+        path=self.output/'releases/asset.zip.part000'
+        o.write_immutable(path,b'first')
+        o.write_immutable(path,b'first')
+        with self.assertRaises(storage.Conflict):o.write_immutable(path,b'second')
+        self.assertEqual(path.read_bytes(),b'first')
+
+    def test_local_publish_feed_rejects_non_integer_length(self):
+        self.publish();path=self.output/'owner-feed.json';feed=storage.read_json(path)
+        feed['bytes']=True;storage.atomic(path,storage.json_bytes(feed))
+        with self.assertRaisesRegex(ValueError,'本地发布清单无效'):
+            self.controller.verify_publish(self.owner['id'])
 
     def test_wrong_publisher_and_revision_reuse_are_refused(self):
         self.publish();self.bind();self.controller.check(self.player['id'],True)

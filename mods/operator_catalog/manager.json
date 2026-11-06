@@ -2,13 +2,13 @@
   "schema_version": 1,
   "distribution": "public",
   "id": "operator_catalog",
-  "title": "副官目录",
+  "title": "副官资源与能力",
   "category": "gameplay",
   "hosts": [
     "client"
   ],
   "provider": "operators",
-  "description": "显示服主配置的副官名称、头像和新增副官，以及免费补给副官的固定名称。",
+  "description": "导入独立副官素材包，管理名称、多帧立绘、语音、能力、获取规则和商品登记。",
   "settings": [
     {
       "id": "enabled",
@@ -22,5 +22,19 @@
       "activation": "restart_required"
     }
   ],
-  "presentation": "configurable"
+  "presentation": "configurable",
+  "developer_protocol": {
+    "format": "sdgo.operator-pack",
+    "format_version": 1,
+    "layers": {
+      "resources": 1,
+      "abilities": 1,
+      "acquisition": 1,
+      "storefront": 1
+    },
+    "endpoint": "/api/providers/operators/api/operators/protocol",
+    "documentation": "docs/operator-pack-protocol.md",
+    "distribution": "client-content only; no operator art or voices bundled with Manager/framework releases",
+    "native_reward_extension": "include/sdgo/operator_reward_filter.h"
+  }
 }

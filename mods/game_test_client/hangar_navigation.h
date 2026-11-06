@@ -137,6 +137,7 @@ public:
 
         lobbyRequestInvoked_ = false;
         unitRadioInvoked_ = false;
+        unitManagerReentryPhases_ = 0;
         unitManagementInvoked_ = false;
         InterlockedExchange(
             &lastResult_,
@@ -246,6 +247,32 @@ public:
             gameRoomInvoked_=true;
             return Publish(kOpeningGameRoom);
         }__except(EXCEPTION_EXECUTE_HANDLER){return Publish(kNativeFault);}
+    }
+
+    enum UnitManagerReentryPhase { kBeforeOperatorShop=1, kAfterOperatorFlow=2 };
+
+    // Arm once per explicitly completed operator-flow phase. This only
+    // resets our previous observer action seal; EnsureHangar still validates
+    // and invokes the original UnitRadio callback when unitmgr is absent.
+    bool AllowUnitManagerReentry(UnitManagerReentryPhase phase=kAfterOperatorFlow)
+    {
+        if (phase!=kBeforeOperatorShop && phase!=kAfterOperatorFlow)return false;
+        const uint32_t bit=1u<<static_cast<unsigned>(phase);
+        if (!bound_ || !native_ || (unitManagerReentryPhases_&bit))return false;
+        __try {
+            if (native_->AppState()!=kHangarAppState)return false;
+            void* current=nullptr;
+            if (ResolveService(L"unitmgr",unitManagerVtable_,&current)==kServiceMismatched)return false;
+            void* mainframe=nullptr;
+            if (ResolveService(L"mainframe",mainframeVtable_,&mainframe)!=kServiceMatched || !mainframe)return false;
+            void* root=*reinterpret_cast<void**>(static_cast<uint8_t*>(mainframe)+kMainframeRoot);
+            void* control=root ? FindControl(root,L"UnitRadio") : nullptr;
+            if (!control || *reinterpret_cast<void**>(static_cast<uint8_t*>(control)+kControlParent)!=root ||
+                !ControlHasName(control,L"UnitRadio"))return false;
+            unitManagerReentryPhases_|=bit;
+            unitRadioInvoked_=false;
+            return true;
+        } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
 
     // UnitRadio selects the 3D unit viewer. The actual unit-management grid
@@ -826,6 +853,7 @@ private:
     bool bound_ = false;
     bool lobbyRequestInvoked_ = false;
     bool unitRadioInvoked_ = false;
+    uint32_t unitManagerReentryPhases_ = 0;
     bool unitManagementInvoked_ = false;
     mutable volatile LONG lastResult_ = kUnbound;
     mutable volatile LONG requestTransportSequence_ = 0;

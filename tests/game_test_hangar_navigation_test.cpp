@@ -1230,6 +1230,24 @@ void TestBottomRadioValidation(SdgoApi& api,NativeActions& native) {
     Check(page.ClickBottomRadio(L"GameRoomRadio",0x48)==HangarNavigation::kDownmenuControlMismatch && g_downmenuCalls==1,
         "foreign-parent native radio never dispatches");
 }
+
+void TestExplicitUnitViewerReentry(SdgoApi& api,NativeActions& native) {
+    ResetFixture(5);g_registerUnitManagerImmediately=true;
+    HangarNavigation page;Check(BindNavigation(page,api,native),"unit viewer reentry binds");
+    Check(page.EnsureHangar()==HangarNavigation::kReady && g_mainframeCalls==1,"initial original UnitRadio creates unitmgr");
+    g_unitManagerVisible=false;
+    Check(page.EnsureHangar()==HangarNavigation::kWaitingForUnitManager && g_mainframeCalls==1,"removed unitmgr does not cause unbounded repeated clicks");
+    Check(page.AllowUnitManagerReentry() && g_mainframeCalls==1,"completed non-unit page may arm one observer reentry without native writes");
+    Check(page.EnsureHangar()==HangarNavigation::kReady && g_mainframeCalls==2,"reentry uses original UnitRadio callback and genuine service registration");
+    g_unitManagerVisible=false;
+    Check(!page.AllowUnitManagerReentry() && page.EnsureHangar()==HangarNavigation::kWaitingForUnitManager && g_mainframeCalls==2,"reentry cannot be rearmed repeatedly");
+    ResetFixture(5);g_registerUnitManagerImmediately=true;
+    HangarNavigation phases;Check(BindNavigation(phases,api,native) && phases.EnsureHangar()==HangarNavigation::kReady,"separate operator phases start from a genuine viewer");
+    g_unitManagerVisible=false;
+    Check(phases.AllowUnitManagerReentry(HangarNavigation::kBeforeOperatorShop) && phases.EnsureHangar()==HangarNavigation::kReady && g_mainframeCalls==2,"inventory baseline has its own single viewer reentry before shop requests");
+    g_unitManagerVisible=false;
+    Check(!phases.AllowUnitManagerReentry(HangarNavigation::kBeforeOperatorShop) && phases.AllowUnitManagerReentry(HangarNavigation::kAfterOperatorFlow) && phases.EnsureHangar()==HangarNavigation::kReady && g_mainframeCalls==3,"completed activation has an independent final reentry without reopening a used phase");
+}
 } // namespace
 
 int main()
@@ -1283,6 +1301,7 @@ int main()
         TestTeamGameRoomReadiness(api,native);
         TestUnitManagementNavigation(api,native);
         TestBottomRadioValidation(api,native);
+        TestExplicitUnitViewerReentry(api,native);
     }
 
     DestroyNativeString(

@@ -37,6 +37,18 @@ int main() {
     Check(actions.Check(filename) && actions.State().verified==1,"actual post-load native records agree with configured values");
     const auto original=op;const auto category=item;
     Check(actions.Check(filename) && op==original && item==category,"readback never writes the native catalog");
+    WritePrivateProfileStringW(L"catalog",L"Version",L"2",filename);
+    Check(actions.Check(filename) && actions.State().verified==1,"version two uses the same loaded native identity contract");
+    WritePrivateProfileStringW(L"operator:60003",L"Dialogue",L"sdgo\\mods\\operator_catalog\\assets\\1.gdt",filename);
+    Check(!actions.Check(filename) && actions.State().error==10,"version two rejects an unapplied dialogue resource path");
+    const wchar_t dialogue[]=L"sdgo\\mods\\operator_catalog\\assets\\1.gdt";
+    memcpy(op.data()+105,dialogue,sizeof(dialogue));
+    Check(actions.Check(filename),"version two reads imported resource paths from the actual native row");
+    WritePrivateProfileStringW(L"operator:60003",L"Dialogue",nullptr,filename);
+    op=original;
+    WritePrivateProfileStringW(L"operator:60004",L"Enabled",L"0",filename);
+    Check(actions.Check(filename) && actions.State().configured==1,"disabled version two overrides do not require custom native names");
+    WritePrivateProfileStringW(L"operator:60004",nullptr,nullptr,filename);
     item[4]=1;Check(!actions.Check(filename) && actions.State().error==7,"filtered security row cannot stand in for an eligible item");item=category;
     sdgo::operators::WriteId(item.data()+105,60004);
     Check(!actions.Check(filename) && actions.State().error==7,"category must reference the same operator");item=category;
