@@ -91,7 +91,7 @@ def make_server(workspace, port=0):
                     if method=='GET':return self.send_json(200,updates.state())
                     if method=='POST':
                         action=body.get('action')
-                        if action=='source':return self.send_json(200,updates.source(body.get('repository')))
+                        if action=='source':return self.send_json(200,updates.source(body.get('source',body.get('repository'))))
                         if action=='runtime_plan':return self.send_json(200,updates.runtime_plan(body.get('host')))
                         if action=='adopt':return self.send_json(200,updates.adopt(body.get('host'),body.get('components'),body.get('digest')))
                         if action=='channel':return self.send_json(200,updates.channel(body.get('channel')))
