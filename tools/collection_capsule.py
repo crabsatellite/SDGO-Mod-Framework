@@ -242,6 +242,13 @@ class ServerFiles:
 
 
 def install_server(package, server_ini, *, check_only=False):
+    if check_only:return _install_server(package,server_ini,check_only=True)
+    from manager.operations import server_change
+    with server_change(server_ini,'collection_capsule.install')as change:
+        return change.result(_install_server(package,server_ini))
+
+
+def _install_server(package, server_ini, *, check_only=False):
     model, sql = checked_model(package)
     target = server_ini.resolve().parent
     executable = target / "WorldServer.exe"
@@ -371,7 +378,7 @@ def main():
         print(json.dumps({"disabled": True, "catalog_unlocks_preserved": True, "restart_world_required": True}))
     elif args.command == "upgrade-catalog":
         with contextlib.closing(connection(args.server_ini)) as db:
-            print(json.dumps(upgrade_catalog(db)))
+            print(json.dumps(upgrade_catalog(db,args.server_ini)))
     elif args.command == "export":
         with contextlib.closing(connection(args.server_ini)) as db:
             print(json.dumps(export_configuration(db, args.out)))

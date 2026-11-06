@@ -481,6 +481,12 @@ class FakeConnection:
 
 class TransactionTests(unittest.TestCase):
     def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.server_ini=Path(self.temp.name)/'WorldServer.ini'
+        self.server_ini.write_text('[DB Game]\nDBServerName=127.0.0.1,7\nDBName=fixture\n')
+        self.server_ini.with_name('WorldServer.exe').write_bytes(b'stopped owned transaction fixture')
+        from manager.operations import CORE_CONTRACT
+        (self.server_ini.parent/'sdgo').mkdir();(self.server_ini.parent/'sdgo/core.dll').write_bytes(CORE_CONTRACT)
         target = patch.object(unit_repository, 'database_target_key', return_value='fixture-database')
         target.start();self.addCleanup(target.stop)
 
@@ -488,7 +494,7 @@ class TransactionTests(unittest.TestCase):
         fake = FakeConnection()
         repository = object.__new__(Repository)
         repository.snapshot = None
-        repository.server_ini = Path("private.ini")
+        repository.server_ini = self.server_ini
         repository.catalog, repository._metadata = unit_repository._load_cursor_catalog(
             fake.cursor()
         )
@@ -523,7 +529,7 @@ class TransactionTests(unittest.TestCase):
         fake = FakeConnection()
         repository = object.__new__(Repository)
         repository.snapshot = None
-        repository.server_ini = Path("private.ini")
+        repository.server_ini = self.server_ini
         repository.catalog, repository._metadata = unit_repository._load_cursor_catalog(
             fake.cursor()
         )
@@ -547,7 +553,7 @@ class TransactionTests(unittest.TestCase):
         fake.lossy_table = "tbl_UnitNames"
         repository = object.__new__(Repository)
         repository.snapshot = None
-        repository.server_ini = Path("private.ini")
+        repository.server_ini = self.server_ini
         repository.catalog, repository._metadata = unit_repository._load_cursor_catalog(
             fake.cursor()
         )
@@ -564,7 +570,7 @@ class TransactionTests(unittest.TestCase):
         fake.collection_schema = 7
         repository = object.__new__(Repository)
         repository.snapshot = None
-        repository.server_ini = Path('private.ini')
+        repository.server_ini = self.server_ini
         repository.catalog, repository._metadata = unit_repository._load_cursor_catalog(fake.cursor())
         repository._ownership = {}
         repository._source = 'server'
@@ -588,7 +594,7 @@ class TransactionTests(unittest.TestCase):
         fake.collection_schema = 7
         repository = object.__new__(Repository)
         repository.snapshot = None
-        repository.server_ini = Path('private.ini')
+        repository.server_ini = self.server_ini
         repository.catalog, repository._metadata = unit_repository._load_cursor_catalog(fake.cursor())
         repository._ownership = {}
         repository._source = 'server'

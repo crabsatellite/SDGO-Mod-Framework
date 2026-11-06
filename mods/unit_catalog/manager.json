@@ -4,9 +4,33 @@
   "id": "unit_catalog",
   "title": "机体内容导入（Beta）",
   "description": "解析机体包、补齐定义，并在独立客户端的原生商城机体视图及扭蛋 unitview 中核对后导入。登记不自动送机体或上架。",
-  "hosts": ["client"],
+  "hosts": [
+    "client"
+  ],
   "category": "gameplay",
   "provider": "units",
-  "settings": [{"id":"enabled","key":"Enabled","label":"机体目录功能","type":"boolean","default":true,
-                "file":"mod.ini","section":"settings","audience":"user","activation":"restart_required"}]
+  "settings": [
+    {
+      "id": "enabled",
+      "key": "Enabled",
+      "label": "机体目录功能",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    }
+  ],
+  "configuration_files": [
+    "definitions.json",
+    "catalog.bin"
+  ],
+  "retirement": {
+    "content_files": [
+      "definitions.json",
+      "catalog.bin"
+    ]
+  },
+  "runtime_enabled_setting": "enabled"
 }
