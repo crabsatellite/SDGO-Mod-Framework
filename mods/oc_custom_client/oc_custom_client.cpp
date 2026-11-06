@@ -10,6 +10,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <string>
 
@@ -49,10 +50,14 @@ ui::Bindings g_bindings;
 ui::Panel g_panel;
 ClientExtensionSendFn g_send = nullptr;
 ClientExtensionStateFn g_state = nullptr;
-using PageInit = void(__thiscall*)(void*);
+// The page component's Init is __thiscall with one unused stack argument
+// (it returns with RET 4); the hook must pop it the same way.
+using PageInit = void(__thiscall*)(void*, void*);
 using PageCallback = void(__stdcall*)(void*, std::uint32_t, std::uintptr_t, void*);
 PageInit g_init_original = nullptr;
 PageCallback g_callback_original = nullptr;
+using PageUpdate = void(__thiscall*)(void*);
+PageUpdate g_update_original = nullptr;
 // Native session and sender (same bindings the friend-gift transport uses) for
 // re-requesting the active unit after a saved allocation, so every native copy
 // of the owned record (profile, room pilot) carries the new OC payload.
@@ -61,13 +66,17 @@ using NativeSend = int(__thiscall*)(void*, int, const std::uint8_t*, int, int);
 NativeSession g_session = nullptr;
 NativeSend g_native_send = nullptr;
 std::uint8_t** g_profile = nullptr;
-constexpr std::uint16_t kActiveWaitRequestOpcode = 0x04CF;
+constexpr std::uint16_t kUserInfoRequestOpcode = 0x06B3;
 constexpr std::size_t kProfileAccount = 0x138;
 constexpr std::size_t kProfileActiveRecord = 0x1A9;
 int g_panel_left = 560;
 int g_panel_top = 96;
 DWORD g_ui_thread = 0;
 UINT_PTR g_timer = 0;
+// Page component handed over by the loader-thread Init hook; the service's
+// per-frame update (game thread) builds the panel for that same page.
+void* volatile g_pending_page = nullptr;
+void* g_upgrade_vtable = nullptr;
 bool g_tick_active = false;
 
 enum class Pending : std::uint8_t { none, mode, profile, set_normal, set_over, reset_cost, reset, challenge };
@@ -183,8 +192,10 @@ void ApplyProfile(const Profile& profile) {
     s.pending_over = profile.over;
 }
 
-// After a saved change, re-select the active unit through the original
-// request so the World server sends the record again with the new payload.
+// After a saved change, ask for the user info again through the client's own
+// request (0x6B3: opcode, account). Its 0x5C1 reply rebuilds the profile's
+// active-unit record with the new payload before the next room is created.
+// Re-selecting the already active unit (0x04CF) is answered without a record.
 bool RefreshActiveUnitUnsafe() {
     const auto& s = g_state_data;
     if (!g_session || !g_native_send || !g_profile || !*g_profile || !s.unit_uid) return false;
@@ -196,10 +207,9 @@ bool RefreshActiveUnitUnsafe() {
     if (!session) return false;
     const auto connection = Read<int>(session, 0x14);
     if (connection < 0) return false;
-    std::uint8_t packet[14]{};
-    sdgo::friend_unit_gift::wire::Write16(packet, kActiveWaitRequestOpcode);
+    std::uint8_t packet[6]{};
+    sdgo::friend_unit_gift::wire::Write16(packet, kUserInfoRequestOpcode);
     sdgo::friend_unit_gift::wire::Write32(packet + 2, account);
-    sdgo::friend_unit_gift::wire::Write64(packet + 6, s.unit_uid);
     auto packets = Read<std::uint32_t>(session, 0x58);
     auto bytes = Read<std::uint32_t>(session, 0x5C);
     ++packets;
@@ -424,6 +434,14 @@ void Queue(Pending pending, std::uint8_t work = 0) {
 
 void HandleAction(ui::Action action, std::size_t stat_override, bool from_observer) {
     auto& s = g_state_data;
+    if (action == ui::Action::panel_toggle) {
+        g_panel.Toggle();
+        if (g_panel.open() && s.unit_uid && !s.profile_present && s.outstanding == Pending::none &&
+            s.queued == Pending::none)
+            Queue(s.mode_known ? Pending::profile : Pending::mode);
+        RenderPanel();
+        return;
+    }
     if (!s.unit_uid) return;
     const std::size_t stat = from_observer ? stat_override : ui::StatOf(action);
     if (stat >= stat_count) return;
@@ -510,10 +528,32 @@ void* FindSkinSource(void* dialog) {
     return nullptr;
 }
 
+void AttachUnsafe(void* service);
+
+void TraceActiveRecord() {
+    static std::uint64_t last_uid = 0;
+    static std::uint32_t last_revision = ~0u;
+    if (!g_profile || !*g_profile) return;
+    std::uint8_t record[kUnitRecordBytes];
+    std::memcpy(record, *g_profile + kProfileActiveRecord, sizeof(record));
+    Carrier carrier{};
+    const bool present = ReadCarrier(record, &carrier);
+    const auto uid = Read<std::uint64_t>(record, 8);
+    const auto revision = present ? carrier.revision : 0u;
+    if (uid == last_uid && revision == last_revision) return;
+    last_uid = uid;
+    last_revision = revision;
+    char line[160];
+    std::snprintf(line, sizeof(line), "oc active record uid=%llu carrier=%u revision=%u hp=%d",
+                  static_cast<unsigned long long>(uid), present ? 1u : 0u, revision, present ? carrier.delta[1] : 0);
+    Log(SDGO_LOG_INFO, line);
+}
+
 void CALLBACK Tick(HWND, UINT, UINT_PTR, DWORD) {
     if (g_tick_active || GetCurrentThreadId() != g_ui_thread) return;
     g_tick_active = true;
     __try {
+        TraceActiveRecord();
         if (g_panel.Ready() && !g_panel.Alive()) {
             g_panel.Detach();
             g_state_data.service = nullptr;
@@ -559,11 +599,19 @@ void AttachUnsafe(void* service) {
     }
     s.outstanding = Pending::none; // a reply for a previous page is handled by the gift transport failing it
     void* source = FindSkinSource(dialog);
+    char trace[240];
+    std::snprintf(trace, sizeof(trace), "oc panel page component=%p dialog=%p size=%dx%d visible=%u skin=%p uid=%llu carrier=%u",
+                  service, dialog, Read<int>(dialog, 0x154), Read<int>(dialog, 0x158), Read<std::uint8_t>(dialog, 0x162), source,
+                  static_cast<unsigned long long>(uid), s.carrier_present ? 1u : 0u);
+    Log(SDGO_LOG_INFO, trace);
     if (!g_panel.Attach(service, dialog, source, g_bindings, g_panel_left, g_panel_top)) {
-        Log(SDGO_LOG_WARN, "oc panel could not attach to the factory upgrade page");
+        std::snprintf(trace, sizeof(trace), "oc panel could not attach to the factory upgrade page: %s",
+                      g_panel.last_failure() ? g_panel.last_failure() : "unknown");
+        Log(SDGO_LOG_WARN, trace);
         return;
     }
-    if (!source) Log(SDGO_LOG_WARN, "oc panel found no native button skins; the panel is read-only");
+    Log(SDGO_LOG_INFO, "oc panel attached to the factory upgrade page");
+    if (!source) Log(SDGO_LOG_INFO, "oc panel uses the client's standard button sprites");
     ArmTimer();
     if (!TransportReady()) {
         s.status = L"等待服务器能力握手…";
@@ -576,11 +624,24 @@ void AttachUnsafe(void* service) {
     RenderPanel();
 }
 
-void __fastcall PageInitHook(void* service, void*) {
-    g_init_original(service);
+void __fastcall PageInitHook(void* service, void*, void* argument) {
+    g_init_original(service, argument);
+    // Init runs on the game's resource loader thread. Native controls are
+    // created on the game thread by the service's per-frame update.
+    InterlockedExchangePointer(&g_pending_page, service);
+}
+
+// CServiceFactoryRoomUnitUpGrade per-frame update (vtable slot 12), game thread.
+void __fastcall PageUpdateHook(void* owner, void*) {
+    g_update_original(owner);
     const DWORD error = GetLastError();
     __try {
-        AttachUnsafe(service);
+        if (!g_timer) ArmTimer();
+        void* component = static_cast<std::uint8_t*>(owner) + kPageComponent;
+        if (g_pending_page == component &&
+            InterlockedCompareExchangePointer(&g_pending_page, nullptr, component) == component &&
+            Read<void*>(owner) == g_upgrade_vtable)
+            AttachUnsafe(component);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         g_panel.Detach();
     }
@@ -712,8 +773,8 @@ SDGO_MOD_ENTRY {
     g_api = api;
     g_mod = mod;
     if (!api->SettingInt(mod, "Enabled", 1)) return 0;
-    g_panel_left = api->SettingInt(mod, "PanelLeft", 560);
-    g_panel_top = api->SettingInt(mod, "PanelTop", 96);
+    g_panel_left = api->SettingInt(mod, "PanelLeft", 4);
+    g_panel_top = api->SettingInt(mod, "PanelTop", 172);
     if (!g_bindings.Bind(api, mod)) return 0;
     g_session = reinterpret_cast<NativeSession>(api->Symbol(mod, "storage.session"));
     g_native_send = reinterpret_cast<NativeSend>(api->Symbol(mod, "net.send_packet"));
@@ -731,10 +792,17 @@ SDGO_MOD_ENTRY {
                  "friend_unit_gift_client is required for OC lobby requests; over-custom panel inactive");
         return 0;
     }
+    g_upgrade_vtable = api->Symbol(mod, "oc_custom.client_upgrade_vtable");
+    if (!g_upgrade_vtable) {
+        Log(SDGO_LOG_WARN, "oc panel: the factory upgrade service vtable symbol is missing");
+        return 0;
+    }
     if (!api->HookCode(mod, "oc_custom.client_upgrade_init", reinterpret_cast<void*>(&PageInitHook),
                        reinterpret_cast<void**>(&g_init_original)) ||
         !api->HookCode(mod, "oc_custom.client_upgrade_callback", reinterpret_cast<void*>(&PageCallbackHook),
-                       reinterpret_cast<void**>(&g_callback_original)))
+                       reinterpret_cast<void**>(&g_callback_original)) ||
+        !api->HookCode(mod, "oc_custom.client_upgrade_update", reinterpret_cast<void*>(&PageUpdateHook),
+                       reinterpret_cast<void**>(&g_update_original)))
         return 0;
     api->Log(mod, SDGO_LOG_INFO, "ready: OC allocation panel on the factory upgrade page");
     return 1;

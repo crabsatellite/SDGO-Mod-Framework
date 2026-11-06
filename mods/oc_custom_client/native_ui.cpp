@@ -49,6 +49,17 @@ const wchar_t* kStatNames[stat_count] = {L"速度", L"HP", L"攻击", L"防御",
 
 } // namespace
 
+// The factory upgrade page dialog is a 279 px wide column. The overlay is
+// 271 px wide: inner 259 px = name 28 + 2 + value 169 + 4 + minus 26 + 4 + plus 26,
+// or two 126 px buttons with a 7 px gap. Height: toggle row 24, inner 290
+// (title, points, six 22 px rows, three button rows, two status lines), margins.
+constexpr int kOverlayWidth = 271;
+constexpr int kOverlayHeight = 324;
+constexpr int kInner = 259;
+// Natural drawn size of the client's blue button sprites sprs\17530-17532.spr.
+constexpr float kButtonSpriteWidth = 82.0f;
+constexpr float kButtonSpriteHeight = 28.0f;
+
 bool Bindings::Bind(const SdgoApi* api, SdgoMod* mod) noexcept {
     if (!api || !mod || !api->Symbol) return false;
     add = reinterpret_cast<Add>(api->Symbol(mod, "hangar.ui_add_button"));
@@ -56,8 +67,9 @@ bool Bindings::Bind(const SdgoApi* api, SdgoMod* mod) noexcept {
     text = reinterpret_cast<Text>(api->Symbol(mod, "hangar.ui_text_item"));
     skin = reinterpret_cast<Skin>(api->Symbol(mod, "hangar.ui_add_skin"));
     empty_skin = reinterpret_cast<EmptySkin>(api->Symbol(mod, "friend_unit_gift.ui_add_empty_skin"));
+    add_icon = reinterpret_cast<AddIcon>(api->Symbol(mod, "friend_unit_gift.ui_add_icon"));
     button_vtable = api->Symbol(mod, "hangar.ui_button_vtable");
-    return add && find && text && skin && empty_skin && button_vtable;
+    return add && find && text && skin && empty_skin && add_icon && button_vtable;
 }
 
 bool Panel::Add(const wchar_t* name, const wchar_t* label, Action action, int x, int y, int w, int h) {
@@ -88,6 +100,25 @@ bool Panel::Add(const wchar_t* name, const wchar_t* label, Action action, int x,
                            Read<std::uint8_t>(first[index], 0x44), Read<std::uint32_t>(first[index], 0x3C),
                            Read<std::uint32_t>(first[index], 0x40));
         }
+    } else if (action != Action::none) {
+        // No button to copy on this page: use the client's own blue button
+        // sprites (normal, hover with a 4 px inset, pressed).
+        for (int index = 0; index < 3; ++index) {
+            const std::wstring path = L"sprs\\" + std::to_wstring(17530 + index) + L".spr";
+            const auto native_path = ViewOf(path);
+            bindings_.skin(child, &native_path, 0, index == 1 ? 4u : 0u, index == 1 ? 4u : 0u);
+        }
+        // These sprites draw at their natural 82x28 size; scale this
+        // control's instances (normal, hover, pressed) to the control size.
+        auto** first = Read<std::uint8_t**>(child, 0x1A4);
+        auto** last = Read<std::uint8_t**>(child, 0x1A8);
+        for (auto** entry = first; first && last && entry < last && entry < first + 3; ++entry) {
+            auto* sprite = *entry ? Read<std::uint8_t*>(*entry) : nullptr;
+            if (!sprite) continue;
+            Put<float>(sprite, 0x94, static_cast<float>(w) / kButtonSpriteWidth);
+            Put<float>(sprite, 0x98, static_cast<float>(h) / kButtonSpriteHeight);
+            Put<std::uint8_t>(sprite, 0xA0, 1);
+        }
     }
     controls_.push_back({child, action, w, {}, 0, false});
     SetText(controls_.back(), label, text_color_);
@@ -96,12 +127,18 @@ bool Panel::Add(const wchar_t* name, const wchar_t* label, Action action, int x,
 
 bool Panel::Attach(void* service, void* dialog, void* skin_source, const Bindings& bindings, int left, int top) {
     Detach();
+    last_failure_ = nullptr;
     bindings_ = bindings;
-    if (!service || !dialog || !bindings_.add || !bindings_.find || !bindings_.text || !bindings_.button_vtable)
+    if (!service || !dialog || !bindings_.add || !bindings_.find || !bindings_.text || !bindings_.button_vtable) {
+        last_failure_ = "missing native UI bindings";
         return false;
+    }
     const int width = Read<int>(dialog, 0x154);
     const int height = Read<int>(dialog, 0x158);
-    if (width < 400 || width > 4096 || height < 300 || height > 4096) return false;
+    if (width < kOverlayWidth || width > 4096 || height < kOverlayHeight || height > 4096) {
+        last_failure_ = "page dialog size outside the supported range";
+        return false;
+    }
     if (skin_source && (Read<void*>(skin_source) != bindings_.button_vtable || !ChildOf(skin_source, dialog)))
         skin_source = nullptr;
     skin_source_ = skin_source;
@@ -116,38 +153,71 @@ bool Panel::Attach(void* service, void* dialog, void* skin_source, const Binding
     }
     service_ = service;
     dialog_ = dialog;
-    constexpr int kRow = 24, kLabelW = 48, kValueW = 196, kButtonW = 26, kWideW = 118;
-    const int x = std::clamp(left, 0, std::max(0, width - 440));
-    const int y = std::clamp(top, 0, std::max(0, height - 300));
-    bool ok = Add(L"ModOcTitle", L"OC 六维强化", Action::none, x, y, 420, 20);
-    ok = ok && Add(L"ModOcPoints", L"", Action::none, x, y + kRow, 420, 20);
+    open_ = false;
+    constexpr int kRow = 22, kLabelW = 28, kValueW = 169, kButtonW = 26, kWideW = 126, kLine = 18;
+    const int x0 = std::clamp(left, 0, std::max(0, width - kOverlayWidth));
+    const int y0 = std::clamp(top, 0, std::max(0, height - kOverlayHeight));
+    bool ok = Add(L"ModOcToggle", L"OC 六维强化", Action::panel_toggle, x0 + kOverlayWidth - 110, y0, 110, 20);
+    // Opaque backdrop so the overlay reads cleanly over the native item area.
+    {
+        const std::wstring key = L"ModOcBackground";
+        const auto native = ViewOf(key);
+        const std::wstring path = L"sprs\\17459.spr";
+        const auto native_path = ViewOf(path);
+        bindings_.add_icon(dialog_, &native, x0, y0 + 24, kOverlayWidth, kOverlayHeight - 24);
+        auto* icon = bindings_.find(dialog_, &native, 1);
+        if (icon && ChildOf(icon, dialog_)) {
+            Put<std::uint8_t>(icon, 0x162, 0);
+            Put<std::uint8_t>(icon, 0x163, 0);
+            Put<std::uint8_t>(icon, 0x167, 0);
+            Put<std::uint8_t>(icon, 0x168, 0);
+            bindings_.skin(icon, &native_path, 0, 0, 0);
+            auto** skins = Read<std::uint8_t**>(icon, 0x1A4);
+            auto* sprite = skins && *skins ? Read<std::uint8_t*>(*skins) : nullptr;
+            if (sprite) {
+                // Base sprite is 262x61; only this instance is scaled.
+                Put<float>(sprite, 0x94, static_cast<float>(kOverlayWidth) / 262.0f);
+                Put<float>(sprite, 0x98, static_cast<float>(kOverlayHeight - 24) / 61.0f);
+                Put<std::uint8_t>(sprite, 0xA0, 1);
+                background_ = {icon, Action::none, kOverlayWidth, {}, 0, false};
+                background_ready_ = true;
+            }
+        }
+    }
+    const int x = x0 + 6;
+    const int y = y0 + 28;
+    ok = ok && Add(L"ModOcTitle", L"", Action::none, x, y, kInner, kLine);
+    ok = ok && Add(L"ModOcPoints", L"", Action::none, x, y + 20, kInner, kLine);
     for (std::size_t stat = 0; ok && stat < stat_count; ++stat) {
-        const int row_y = y + kRow * (2 + static_cast<int>(stat));
+        const int row_y = y + 44 + kRow * static_cast<int>(stat);
         const std::wstring name = L"ModOcName" + std::to_wstring(stat);
         const std::wstring value = L"ModOcValue" + std::to_wstring(stat);
         const std::wstring minus = L"ModOcMinus" + std::to_wstring(stat);
         const std::wstring plus = L"ModOcPlus" + std::to_wstring(stat);
-        ok = Add(name.c_str(), kStatNames[stat], Action::none, x, row_y, kLabelW, 20) &&
-             Add(value.c_str(), L"", Action::none, x + kLabelW + 4, row_y, kValueW, 20) &&
+        ok = Add(name.c_str(), kStatNames[stat], Action::none, x, row_y, kLabelW, kLine) &&
+             Add(value.c_str(), L"", Action::none, x + kLabelW + 2, row_y, kValueW, kLine) &&
              Add(minus.c_str(), L"-", static_cast<Action>(static_cast<int>(Action::minus0) + static_cast<int>(stat)),
-                 x + kLabelW + kValueW + 12, row_y, kButtonW, 20) &&
+                 x + kLabelW + kValueW + 6, row_y, kButtonW, kLine) &&
              Add(plus.c_str(), L"+", static_cast<Action>(static_cast<int>(Action::plus0) + static_cast<int>(stat)),
-                 x + kLabelW + kValueW + kButtonW + 18, row_y, kButtonW, 20);
+                 x + kLabelW + kValueW + kButtonW + 10, row_y, kButtonW, kLine);
     }
-    const int buttons_y = y + kRow * 8 + 4;
-    ok = ok && Add(L"ModOcOverToggle", L"切换 Over", Action::over_toggle, x, buttons_y, kWideW, 22) &&
-         Add(L"ModOcApply", L"确认加点", Action::apply, x + kWideW + 8, buttons_y, kWideW, 22) &&
-         Add(L"ModOcReset", L"洗点", Action::reset, x + 2 * (kWideW + 8), buttons_y, kWideW, 22) &&
-         Add(L"ModOcChallenge", L"OC 挑战", Action::challenge, x, buttons_y + 28, kWideW, 22) &&
-         Add(L"ModOcRefresh", L"刷新", Action::refresh, x + kWideW + 8, buttons_y + 28, kWideW, 22) &&
-         Add(L"ModOcStatus", L"", Action::none, x, buttons_y + 56, 420, 20) &&
-         Add(L"ModOcStatus2", L"", Action::none, x, buttons_y + 78, 420, 20);
+    const int buttons_y = y + 44 + kRow * 6 + 4;
+    ok = ok && Add(L"ModOcOverToggle", L"", Action::over_toggle, x, buttons_y, kWideW, 20) &&
+         Add(L"ModOcApply", L"", Action::apply, x + kWideW + 7, buttons_y, kWideW, 20) &&
+         Add(L"ModOcReset", L"", Action::reset, x, buttons_y + 24, kWideW, 20) &&
+         Add(L"ModOcChallenge", L"", Action::challenge, x + kWideW + 7, buttons_y + 24, kWideW, 20) &&
+         Add(L"ModOcRefresh", L"", Action::refresh, x, buttons_y + 48, kWideW, 20) &&
+         Add(L"ModOcStatus", L"", Action::none, x, buttons_y + 72, kInner, kLine) &&
+         Add(L"ModOcStatus2", L"", Action::none, x, buttons_y + 92, kInner, kLine);
     if (!ok) {
         for (auto& control : controls_) Put<std::uint8_t>(control.pointer, 0x162, 0);
+        if (background_ready_) Put<std::uint8_t>(background_.pointer, 0x162, 0);
         Detach();
+        last_failure_ = "a native button could not be created on the page dialog";
         return false;
     }
     std::size_t index = 0;
+    toggle_ = &controls_[index++];
     title_ = &controls_[index++];
     points_ = &controls_[index++];
     for (std::size_t stat = 0; stat < stat_count; ++stat) {
@@ -169,6 +239,10 @@ bool Panel::Attach(void* service, void* dialog, void* skin_source, const Binding
 void Panel::Detach() noexcept {
     service_ = dialog_ = skin_source_ = nullptr;
     controls_.clear();
+    background_ = {};
+    background_ready_ = false;
+    open_ = false;
+    toggle_ = nullptr;
     value_labels_ = {};
     minus_buttons_ = {};
     plus_buttons_ = {};
@@ -229,8 +303,16 @@ void Panel::Render(const View& view) {
     const std::uint32_t body = 0xFFE3EEF6;
     const std::uint32_t dim = 0xFF70808A;
     const std::uint32_t accent = 0xFFFFD27A;
+    const std::uint32_t warn = 0xFFFF8A7A;
     const bool interactive = view.server_oc_mode && view.profile_present && !view.busy;
-    const bool clickable = skin_source_ != nullptr;
+    SetText(*toggle_, open_ ? L"收起 OC" : L"OC 六维强化", text_color_);
+    SetState(*toggle_, true, true);
+    if (background_ready_) SetState(background_, open_, false);
+    if (!open_) {
+        for (auto& control : controls_)
+            if (&control != toggle_) SetState(control, false, false);
+        return;
+    }
     SetText(*title_, view.unit_caption.empty() ? L"OC 六维强化" : L"OC 六维强化 · " + view.unit_caption, accent);
     std::wstring points;
     if (!view.server_oc_mode) {
@@ -238,49 +320,52 @@ void Panel::Render(const View& view) {
     } else if (!view.profile_present) {
         points = L"OC 档未读取";
     } else {
-        points = L"OC 等级 " + std::to_wstring(view.oc_level) + L"（机体等级 " + std::to_wstring(view.native_level) +
-                 L"）  普通点 " + std::to_wstring(view.normal_points_left) + L"  Over 点 " +
-                 std::to_wstring(view.over_points_left) +
-                 (view.over_mode ? L"  [编辑 Over]" : L"  [编辑普通]") +
-                 (view.dirty ? L"  待分配 " + std::to_wstring(view.pending_left) : L"");
+        points = L"OC Lv" + std::to_wstring(view.oc_level) + L" 机体 Lv" + std::to_wstring(view.native_level) +
+                 L"  普通 " + std::to_wstring(view.normal_points_left) + L"  Over " +
+                 std::to_wstring(view.over_points_left) + (view.over_mode ? L"  [Over]" : L"  [普通]");
+        if (view.dirty) points += L" 余" + std::to_wstring(view.pending_left);
     }
     SetText(*points_, points, body);
     for (std::size_t stat = 0; stat < stat_count; ++stat) {
         std::wstring value;
+        bool over_cap = false;
         if (view.profile_present) {
-            const auto normal = view.over_mode ? view.normal[stat] : view.pending_normal[stat];
-            const auto over = view.over_mode ? view.pending_over[stat] : view.over[stat];
-            const auto total = view.base[stat] + normal * view.normal_gain[stat] + over * view.over_gain[stat];
-            value = std::to_wstring(view.base[stat]) + L" + " + std::to_wstring(normal) + L"×" +
-                    std::to_wstring(view.normal_gain[stat]) + L" + " + std::to_wstring(over) + L"×" +
-                    std::to_wstring(view.over_gain[stat]) + L" = " + std::to_wstring(total);
-            if (total > kStatCaps[stat]) value += L" (超上限 " + std::to_wstring(kStatCaps[stat]) + L")";
+            const int normal = view.over_mode ? view.normal[stat] : view.pending_normal[stat];
+            const int over = view.over_mode ? view.pending_over[stat] : view.over[stat];
+            const int from_normal = normal * view.normal_gain[stat];
+            const int from_over = over * view.over_gain[stat];
+            const int total = view.base[stat] + from_normal + from_over;
+            over_cap = total > kStatCaps[stat];
+            // points normal|over, then base + normal gain + over gain = total
+            value = std::to_wstring(normal) + L"|" + std::to_wstring(over) + L"  " + std::to_wstring(view.base[stat]) +
+                    L"+" + std::to_wstring(from_normal) + L"+" + std::to_wstring(from_over) + L"=" +
+                    std::to_wstring(total);
         }
-        SetText(*value_labels_[stat], value, body);
+        SetText(*value_labels_[stat], value, over_cap ? warn : body);
         const auto current = view.over_mode ? view.pending_over[stat] : view.pending_normal[stat];
         const bool can_minus = interactive && current > 0;
         const bool can_plus = interactive && view.pending_left > 0;
         SetText(*minus_buttons_[stat], L"-", can_minus ? text_color_ : dim);
         SetText(*plus_buttons_[stat], L"+", can_plus ? text_color_ : dim);
-        SetState(*minus_buttons_[stat], true, can_minus && clickable);
-        SetState(*plus_buttons_[stat], true, can_plus && clickable);
+        SetState(*minus_buttons_[stat], true, can_minus);
+        SetState(*plus_buttons_[stat], true, can_plus);
     }
     SetText(*over_toggle_, view.over_mode ? L"编辑普通点" : L"编辑 Over 点", interactive ? text_color_ : dim);
-    SetState(*over_toggle_, true, interactive && clickable);
+    SetState(*over_toggle_, true, interactive);
     SetText(*apply_, L"确认加点", interactive && view.dirty ? text_color_ : dim);
-    SetState(*apply_, true, interactive && view.dirty && clickable);
+    SetState(*apply_, true, interactive && view.dirty);
     SetText(*reset_, view.reset_caption.empty() ? L"洗点" : view.reset_caption, interactive ? text_color_ : dim);
-    SetState(*reset_, true, interactive && clickable);
+    SetState(*reset_, true, interactive);
     SetText(*challenge_, view.challenge_caption.empty() ? L"OC 挑战" : view.challenge_caption,
             interactive && view.challenge_available ? text_color_ : dim);
-    SetState(*challenge_, true, interactive && view.challenge_available && clickable);
+    SetState(*challenge_, true, interactive && view.challenge_available);
     SetText(*refresh_, L"刷新", !view.busy ? text_color_ : dim);
-    SetState(*refresh_, true, !view.busy && clickable);
+    SetState(*refresh_, true, !view.busy);
     std::wstring status = view.status;
     std::wstring second;
-    if (status.size() > 30) {
-        second = status.substr(30);
-        status.resize(30);
+    if (status.size() > 22) {
+        second = status.substr(22);
+        status.resize(22);
     }
     SetText(*status_, status, body);
     SetText(*status2_, second, body);
@@ -289,7 +374,7 @@ void Panel::Render(const View& view) {
     SetState(*status_, true, false);
     SetState(*status2_, true, false);
     for (std::size_t stat = 0; stat < stat_count; ++stat) {
-        SetState(controls_[2 + stat * 4], true, false);
+        SetState(controls_[3 + stat * 4], true, false);
         SetState(*value_labels_[stat], true, false);
     }
 }

@@ -124,6 +124,10 @@ uint64_t playUnitUid=0;
 // OC six-stat acceptance: allocate ocAllocatePoints normal points to stat
 // ocAllocateStat (0 speed .. 5 special) on the play unit before the battle.
 int ocAllocateStat=-1,ocAllocatePoints=0;
+// Open the original factory upgrade page at the end and check the OC panel.
+bool ocPanel=false;
+// Also press the panel's OC challenge (it can change the unit's OC level).
+bool ocChallenge=false;
 bool collectionDraw=false;
 bool collectionPreviewOnly=false;
 uint32_t collectionExpectedStatus=0;
@@ -409,6 +413,10 @@ bool LoadPlan() {
         ocAllocateStat=ocAllocate[0]-L'0';ocAllocatePoints=_wtoi(ocAllocate+2);
         if(ocAllocatePoints<1 || ocAllocatePoints>20)return false;
     }
+    ocPanel=GetPrivateProfileIntW(L"run",L"oc_panel",0,job.c_str())!=0;
+    ocChallenge=GetPrivateProfileIntW(L"run",L"oc_challenge",0,job.c_str())!=0;
+    if(ocChallenge && !ocPanel && ocAllocateStat<0)return false;
+    if(ocPanel && (!playUnitUid || (ocAllocateStat<0 && !hangarPagesOnly)))return false;
     if(testUnitPresentations && !playUnitUid)return false;
     if(unitPagesOnly && (!pagesOnly || (!testUnitPresentations && !blueprintConfig.recipe && nativeIdProbeIds.empty() && nativeRecordLifecycleIds.empty()) || collectionDraw || testShopCatalog))return false;
     if(!nativeRecordLifecycleIds.empty() && (!verifyQuietRuntime || !unitPagesOnly || !pagesOnly || !playUnitUid ||
@@ -2229,32 +2237,55 @@ const SdgoGameTestCaseV1 ocAllocateCase{"oc.allocate",180000,&OcAllocate};
 int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
     static SdgoOcCustomClientGetSnapshotV1Fn snapshotFn=nullptr;
     static int phase=0;static void* page=nullptr;static uint32_t beforeReplies=0,beforeRequests=0;static uint64_t readyAt=0;
-    static bool captureRequested=false;static HangarNavigation::Result previous=HangarNavigation::kUnbound;
-    if(!context->tick){phase=0;page=nullptr;beforeReplies=0;beforeRequests=0;readyAt=0;captureRequested=false;previous=HangarNavigation::kUnbound;}
-    if(!snapshotFn) {
-        const HMODULE module=GetModuleHandleW(L"oc_custom_client.dll");
-        snapshotFn=module ? reinterpret_cast<SdgoOcCustomClientGetSnapshotV1Fn>(GetProcAddress(module,"SdgoOcCustomClientGetSnapshotV1")):nullptr;
-        if(!snapshotFn){context->Assert(0,"the OC client Mod exposes its observer export");return SDGO_GAME_TEST_FAIL;}
-    }
-    SdgoOcCustomClientSnapshotV1 s{};s.size=sizeof(s);s.version=SDGO_OC_CUSTOM_CLIENT_OBSERVER_VERSION;
-    if(!snapshotFn(&s)){context->Assert(0,"the OC client observer snapshot is readable");return SDGO_GAME_TEST_FAIL;}
+    static int captureState=0;static HangarNavigation::Result previous=HangarNavigation::kUnbound;
+    static uint32_t resetCost=0,sumBefore=0,leftBefore=0,revisionBefore=0;
+    if(!context->tick){phase=0;page=nullptr;beforeReplies=0;beforeRequests=0;readyAt=0;captureState=0;previous=HangarNavigation::kUnbound;
+        resetCost=sumBefore=leftBefore=revisionBefore=0;}
+    // Keep one frame of the real page: first the original page alone, later the page with the panel.
+    const auto capture=[&](const wchar_t* name)->int {
+        if(captureState==0) {
+            if(GetTickCount64()-readyAt<1500)return SDGO_GAME_TEST_WAIT;
+            const auto folder=sdgo_test::directory+L"\\visual";CreateDirectoryW(folder.c_str(),nullptr);
+            captureState=quietGraphics.CaptureNextFrame((folder+L"\\"+name+L".bmp").c_str()) ? 1:2;
+            if(captureState==2)context->Observe("native frame capture unavailable for the factory page");
+            return SDGO_GAME_TEST_WAIT;
+        }
+        if(captureState==1) {
+            const auto captured=quietGraphics.CaptureFrameResult();
+            if(captured==E_PENDING)return SDGO_GAME_TEST_WAIT;
+            context->Observe(FAILED(captured) ? "native frame capture of the factory page failed" : "native frame of the factory page saved under visual\\");
+            captureState=2;
+        }
+        return SDGO_GAME_TEST_PASS;
+    };
     if(phase==0) {
         const auto result=hangarNavigation.EnsureFactoryUpgradePage(&page);
         if(result!=previous) {
-            char message[200];sprintf_s(message,"native factory navigation result=%s app=%u clicks=%u/%u button_offset=0x%X service_vtable=%08X",
+            char message[200];sprintf_s(message,"native factory navigation result=%s app=%u clicks=%u/%u service_vtable=%08X",
                 HangarNavigation::ResultName(result),actions.AppState(),hangarNavigation.FactoryClicks(),hangarNavigation.FactoryTabClicks(),
-                static_cast<unsigned>(hangarNavigation.OperatorMenuButtonOffset()),static_cast<unsigned>(hangarNavigation.LastServiceVtable()));
+                static_cast<unsigned>(hangarNavigation.LastServiceVtable()));
             context->Observe(message);previous=result;
         }
         if(result>=HangarNavigation::kDownmenuServiceMismatch || result==HangarNavigation::kUnbound) {
             context->Assert(0,"original factory navigation accepted its native service and control identities");return SDGO_GAME_TEST_FAIL;
         }
         if(result!=HangarNavigation::kReady || !page)return SDGO_GAME_TEST_WAIT;
-        context->Observe("original factory unit upgrade page is open");phase=1;return SDGO_GAME_TEST_WAIT;
+        context->Observe("original factory unit upgrade page is open");readyAt=GetTickCount64();captureState=0;phase=1;return SDGO_GAME_TEST_WAIT;
     }
     if(phase==1) {
+        if(capture(L"factory-upgrade")!=SDGO_GAME_TEST_PASS)return SDGO_GAME_TEST_WAIT;
+        context->Observe("original factory upgrade page stayed alive for the frame");readyAt=GetTickCount64();phase=2;return SDGO_GAME_TEST_WAIT;
+    }
+    if(!snapshotFn) {
+        const HMODULE module=GetModuleHandleW(L"oc_custom_client.dll");
+        snapshotFn=module ? reinterpret_cast<SdgoOcCustomClientGetSnapshotV1Fn>(GetProcAddress(module,"SdgoOcCustomClientGetSnapshotV1")):nullptr;
+        if(!snapshotFn){context->Assert(0,"the OC client Mod is loaded and exposes its observer export");return SDGO_GAME_TEST_FAIL;}
+    }
+    SdgoOcCustomClientSnapshotV1 s{};s.size=sizeof(s);s.version=SDGO_OC_CUSTOM_CLIENT_OBSERVER_VERSION;
+    if(!snapshotFn(&s)){context->Assert(0,"the OC client observer snapshot is readable");return SDGO_GAME_TEST_FAIL;}
+    if(phase==2) {
         if(!s.panel_attached) {
-            if(context->elapsed_ms>90000){context->Assert(0,"the OC panel attached to the original factory upgrade page");return SDGO_GAME_TEST_FAIL;}
+            if(GetTickCount64()-readyAt>60000){context->Assert(0,"the OC panel attached to the original factory upgrade page");return SDGO_GAME_TEST_FAIL;}
             return SDGO_GAME_TEST_WAIT;
         }
         if(s.busy)return SDGO_GAME_TEST_WAIT;
@@ -2263,17 +2294,37 @@ int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
             s.carrier_delta[2],s.carrier_delta[3],s.carrier_delta[4],s.carrier_delta[5],s.request_count,s.reply_count,s.last_status);
         context->Observe(attached);
         context->Assert(s.unit_uid==playUnitUid,"the panel follows the page's active unit record, which is the configured play unit");
-        beforeReplies=s.reply_count;beforeRequests=s.request_count;
-        const auto clicked=hangarNavigation.ClickFactoryPageControl(page,L"ModOcRefresh");
+        readyAt=GetTickCount64();phase=6;return SDGO_GAME_TEST_WAIT;
+    }
+    if(phase==6) {
+        // The OC overlay opens from its toggle button on the page.
+        const auto clicked=hangarNavigation.ClickFactoryPageControl(page,L"ModOcToggle");
+        if(clicked==HangarNavigation::kWaitingForFactoryPage && GetTickCount64()-readyAt<20000)return SDGO_GAME_TEST_WAIT;
         if(clicked!=HangarNavigation::kReady) {
-            char failure[160];sprintf_s(failure,"the panel's refresh button is reachable through the page's original UI callback (%s)",HangarNavigation::ResultName(clicked));
+            char failure[200];sprintf_s(failure,"the OC toggle button is reachable through the page's original UI callback (%s flags=%u)",
+                HangarNavigation::ResultName(clicked),hangarNavigation.LastPageFlags());
             context->Assert(0,failure);return SDGO_GAME_TEST_FAIL;
         }
-        phase=2;return SDGO_GAME_TEST_WAIT;
+        context->Observe("opened the OC overlay with its toggle button through the page's original UI callback");
+        readyAt=GetTickCount64();phase=5;return SDGO_GAME_TEST_WAIT;
     }
-    if(phase==2) {
+    if(phase==5) {
+        // The refresh button is enabled once the panel's pending requests settle.
+        if(s.busy)return SDGO_GAME_TEST_WAIT;
+        beforeReplies=s.reply_count;beforeRequests=s.request_count;
+        const auto clicked=hangarNavigation.ClickFactoryPageControl(page,L"ModOcRefresh");
+        if(clicked==HangarNavigation::kWaitingForFactoryPage && GetTickCount64()-readyAt<20000)return SDGO_GAME_TEST_WAIT;
+        if(clicked!=HangarNavigation::kReady) {
+            char failure[200];sprintf_s(failure,"the panel's refresh button is reachable through the page's original UI callback (%s flags=%u)",
+                HangarNavigation::ResultName(clicked),hangarNavigation.LastPageFlags());
+            context->Assert(0,failure);return SDGO_GAME_TEST_FAIL;
+        }
+        context->Observe("pressed the panel's refresh button through the page's original UI callback");
+        readyAt=GetTickCount64();phase=3;return SDGO_GAME_TEST_WAIT;
+    }
+    if(phase==3) {
         if(s.busy || s.reply_count<=beforeReplies) {
-            if(context->elapsed_ms>150000){context->Assert(0,"the refresh pressed on the panel produced a profile reply");return SDGO_GAME_TEST_FAIL;}
+            if(GetTickCount64()-readyAt>90000){context->Assert(0,"the refresh pressed on the panel produced a profile reply");return SDGO_GAME_TEST_FAIL;}
             return SDGO_GAME_TEST_WAIT;
         }
         context->Assert(s.request_count>beforeRequests,"the refresh button sent a profile request through the page's original callback");
@@ -2283,19 +2334,86 @@ int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
             static_cast<unsigned long long>(s.unit_uid),s.oc_level,s.native_level,s.revision,s.normal[0],s.normal[1],s.normal[2],s.normal[3],s.normal[4],s.normal[5],
             s.normal_points_left,s.over_points_left,s.carrier_present,s.carrier_delta[0],s.carrier_delta[1],s.carrier_delta[2],s.carrier_delta[3],s.carrier_delta[4],s.carrier_delta[5]);
         context->Observe(message);
-        readyAt=GetTickCount64();phase=3;return SDGO_GAME_TEST_WAIT;
+        readyAt=GetTickCount64();phase=10;return SDGO_GAME_TEST_WAIT;
     }
-    if(!captureRequested) {
-        if(GetTickCount64()-readyAt<750)return SDGO_GAME_TEST_WAIT;
-        const auto folder=sdgo_test::directory+L"\\visual";CreateDirectoryW(folder.c_str(),nullptr);
-        captureRequested=true;
-        if(!quietGraphics.CaptureNextFrame((folder+L"\\oc-panel.bmp").c_str())){context->Observe("oc panel frame capture unavailable");return SDGO_GAME_TEST_PASS;}
-        return SDGO_GAME_TEST_WAIT;
+    // The remaining OC rules run through the panel's own buttons, each pressed
+    // through the page's original UI callback once the panel enables it.
+    const auto press=[&](const wchar_t* name,int next)->int {
+        if(s.busy){
+            if(GetTickCount64()-readyAt>60000){context->Assert(0,"the OC panel settled before the next button press");return SDGO_GAME_TEST_FAIL;}
+            return SDGO_GAME_TEST_WAIT;
+        }
+        const auto clicked=hangarNavigation.ClickFactoryPageControl(page,name);
+        if(clicked==HangarNavigation::kWaitingForFactoryPage && GetTickCount64()-readyAt<20000)return SDGO_GAME_TEST_WAIT;
+        if(clicked!=HangarNavigation::kReady) {
+            char failure[200];sprintf_s(failure,"the panel button %ls is enabled and reachable through the page's original UI callback (%s flags=%u)",
+                name,HangarNavigation::ResultName(clicked),hangarNavigation.LastPageFlags());
+            context->Assert(0,failure);return SDGO_GAME_TEST_FAIL;
+        }
+        char pressed[96];sprintf_s(pressed,"pressed panel button %ls",name);context->Observe(pressed);
+        beforeReplies=s.reply_count;readyAt=GetTickCount64();phase=next;return SDGO_GAME_TEST_WAIT;
+    };
+    const auto replied=[&](const char* what)->int {
+        if(s.busy || s.reply_count<=beforeReplies) {
+            if(GetTickCount64()-readyAt>60000){context->Assert(0,what);return SDGO_GAME_TEST_FAIL;}
+            return SDGO_GAME_TEST_WAIT;
+        }
+        return SDGO_GAME_TEST_PASS;
+    };
+    const auto sum=[&](){uint32_t total=0;for(int i=0;i<6;++i)total+=s.normal[i];return total;};
+    if(phase==10) {
+        sumBefore=sum();leftBefore=s.normal_points_left;
+        return press(L"ModOcReset",11);
     }
-    const auto captured=quietGraphics.CaptureFrameResult();
-    if(captured==E_PENDING)return SDGO_GAME_TEST_WAIT;
-    context->Observe(FAILED(captured) ? "oc panel frame capture failed" : "oc panel frame saved under visual\\oc-panel.bmp");
-    return SDGO_GAME_TEST_PASS;
+    if(phase==11) {
+        const auto r=replied("the reset button produced a reset cost reply");if(r!=SDGO_GAME_TEST_PASS)return r;
+        context->Assert(s.last_command==0x1005 && s.last_status==0 && s.last_ret_val==0,
+            "the server quoted the normal-point reset cost through the original reset-cost procedure");
+        resetCost=s.last_reset_gp;
+        char message[128];sprintf_s(message,"oc reset cost gp=%u normal=%u left=%u",resetCost,sumBefore,leftBefore);context->Observe(message);
+        readyAt=GetTickCount64();phase=12;return SDGO_GAME_TEST_WAIT;
+    }
+    if(phase==12)return press(L"ModOcReset",13);
+    if(phase==13) {
+        const auto r=replied("the confirmed reset produced a reset reply");if(r!=SDGO_GAME_TEST_PASS)return r;
+        context->Assert(s.last_command==0x1006 && s.last_status==0 && s.last_ret_val==0,
+            "the server reset the normal points and charged the quoted GP in one transaction");
+        context->Assert(sum()==0 && s.normal_points_left==leftBefore+sumBefore,
+            "every normal point returned to the unit's unallocated budget");
+        char message[160];sprintf_s(message,"oc reset done gp=%u normal=%u/%u/%u/%u/%u/%u left=%u revision=%u",resetCost,
+            s.normal[0],s.normal[1],s.normal[2],s.normal[3],s.normal[4],s.normal[5],s.normal_points_left,s.revision);
+        context->Observe(message);revisionBefore=s.revision;
+        readyAt=GetTickCount64();phase=14;return SDGO_GAME_TEST_WAIT;
+    }
+    if(phase==14)return press(L"ModOcPlus1",15);
+    if(phase==15) {
+        if(s.pending_normal[1]!=1) {
+            if(GetTickCount64()-readyAt>10000){context->Assert(0,"the HP plus button added one pending normal point");return SDGO_GAME_TEST_FAIL;}
+            return SDGO_GAME_TEST_WAIT;
+        }
+        return press(L"ModOcApply",16);
+    }
+    if(phase==16) {
+        const auto r=replied("the apply button produced a save reply");if(r!=SDGO_GAME_TEST_PASS)return r;
+        context->Assert(s.last_command==0x1002 && s.last_status==0 && s.last_ret_val==0 && s.normal[1]==1 && s.revision>revisionBefore,
+            "the panel saved one HP normal point through the original allocation procedure");
+        char message[160];sprintf_s(message,"oc panel allocation saved normal=%u/%u/%u/%u/%u/%u left=%u revision=%u",
+            s.normal[0],s.normal[1],s.normal[2],s.normal[3],s.normal[4],s.normal[5],s.normal_points_left,s.revision);
+        context->Observe(message);
+        readyAt=GetTickCount64();phase=ocChallenge ? 17:19;return SDGO_GAME_TEST_WAIT;
+    }
+    if(phase==17)return press(L"ModOcChallenge",18);
+    if(phase==18) {
+        const auto r=replied("the challenge button produced an upgrade reply");if(r!=SDGO_GAME_TEST_PASS)return r;
+        context->Assert(s.last_command==0x1004 && s.last_status==0,
+            "the server answered the OC challenge through the original upgrade procedure");
+        char message[200];sprintf_s(message,"oc challenge ret=%d success=%u oc_level=%u over_left=%u normal_left=%u revision=%u",
+            s.last_ret_val,s.last_upgrade_success,s.oc_level,s.over_points_left,s.normal_points_left,s.revision);
+        context->Observe(message);
+        readyAt=GetTickCount64();phase=19;return SDGO_GAME_TEST_WAIT;
+    }
+    if(phase==19){readyAt=GetTickCount64();captureState=0;phase=4;return SDGO_GAME_TEST_WAIT;}
+    return capture(L"oc-panel");
 }
 const SdgoGameTestCaseV1 ocPanelCase{"oc.panel",240000,&OcPanel};
 bool ReadNativeIdOccupancy(const SdgoGameTestContextV1* context,uint8_t* present,uintptr_t* gridAddress) {
@@ -3240,6 +3358,7 @@ void RegisterPlannedCases() {
         if(playUnitUid)plannedCases.push_back(playUnitCase);
         if(hangarPagesOnly) {
             plannedCases.insert(plannedCases.end(),std::begin(pageCases),std::begin(pageCases)+3);
+            if(ocPanel)plannedCases.push_back(ocPanelCase);
             provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
         }
         if(testShopCatalog && shopVisualOnly) {
@@ -3281,7 +3400,7 @@ void RegisterPlannedCases() {
     }
     const bool needsShip = battleshipOnly || deckOnly || std::find(requestedModes.begin(),requestedModes.end(),6)!=requestedModes.end() ||
         std::find(requestedModes.begin(),requestedModes.end(),7)!=requestedModes.end();
-    if (requestedModes.size() == 1 && !needsShip && !giftRequestsOnly && !playUnitUid && !sameRoomRematch && ocAllocateStat<0) return;
+    if (requestedModes.size() == 1 && !needsShip && !giftRequestsOnly && !playUnitUid && !sameRoomRematch && ocAllocateStat<0 && !ocPanel) return;
     const size_t count = 4 + requestedModes.size() * (sameRoomRematch?8:4);
     caseNames.reserve(count); plannedCases.reserve(count);
     for (unsigned i = 0; i < 3; ++i) plannedCases.push_back(realCases[i]);
@@ -3306,7 +3425,7 @@ void RegisterPlannedCases() {
       }
     }
     // The OC panel check runs last, after the settled return to the lobby.
-    if(playUnitUid && ocAllocateStat>=0 && !giftRequestsOnly && !battleshipOnly && !deckOnly)plannedCases.push_back(ocPanelCase);
+    if(playUnitUid && (ocAllocateStat>=0 || ocPanel) && !giftRequestsOnly && !battleshipOnly && !deckOnly)plannedCases.push_back(ocPanelCase);
     provider.count = static_cast<uint32_t>(plannedCases.size());
     provider.cases = plannedCases.data();
 }

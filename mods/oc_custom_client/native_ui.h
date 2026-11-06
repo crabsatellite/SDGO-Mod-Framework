@@ -31,6 +31,7 @@ enum class Action : std::uint8_t {
     challenge,
     refresh,
     over_toggle,
+    panel_toggle,
 };
 
 inline bool IsMinus(Action action) noexcept {
@@ -52,11 +53,13 @@ struct Bindings {
                                    std::uint32_t, std::uint8_t, std::uint32_t, int);
     using Skin = void(__thiscall*)(void*, const NativeString*, std::uint8_t, std::uint32_t, std::uint32_t);
     using EmptySkin = void(__thiscall*)(void*);
+    using AddIcon = std::uint32_t(__thiscall*)(void*, const NativeString*, int, int, int, int);
     Add add = nullptr;
     Find find = nullptr;
     Text text = nullptr;
     Skin skin = nullptr;
     EmptySkin empty_skin = nullptr;
+    AddIcon add_icon = nullptr;
     void* button_vtable = nullptr;
     bool Bind(const SdgoApi* api, SdgoMod* mod) noexcept;
 };
@@ -98,6 +101,11 @@ public:
     Action Click(void* control) const noexcept;
     void Render(const View& view);
     bool Alive() const noexcept;
+    const char* last_failure() const noexcept { return last_failure_; }
+    // The OC page opens over the native item area only on request; the
+    // toggle button stays on the page.
+    bool open() const noexcept { return open_; }
+    void Toggle() noexcept { open_ = !open_; }
 
 private:
     struct Control {
@@ -117,6 +125,10 @@ private:
     void* dialog_ = nullptr;
     void* skin_source_ = nullptr;
     std::vector<Control> controls_;
+    const char* last_failure_ = nullptr;
+    bool open_ = false;
+    Control background_{};
+    bool background_ready_ = false;
     std::uint32_t font_ = 1;
     std::uint32_t text_color_ = 0xFF9CB8C8;
     std::uint32_t shadow_color_ = 0xFF000000;
@@ -132,6 +144,7 @@ private:
     Control* challenge_ = nullptr;
     Control* refresh_ = nullptr;
     Control* over_toggle_ = nullptr;
+    Control* toggle_ = nullptr;
 };
 
 } // namespace sdgo::oc_custom::client::ui

@@ -921,6 +921,12 @@ using RegisterExtensionFn = int(__cdecl*)(
     void* user);
 #define SDGO_FRIEND_UNIT_GIFT_REGISTER_EXTENSION_EXPORT \
     "SdgoFriendUnitGiftRegisterExtensionV1"
+// While an extension handler runs, the native World request object (CRequest)
+// that carried it; null on any other thread or outside a handler. Handlers use
+// it to call other native request handlers with the same database sessions.
+using CurrentRequestFn = void*(__cdecl*)();
+#define SDGO_FRIEND_UNIT_GIFT_CURRENT_REQUEST_EXPORT \
+    "SdgoFriendUnitGiftCurrentRequestV1"
 
 // Extension sending on the client host (friend_unit_gift_client.dll). The
 // callback runs on the game thread once, with the reply payload on success or
