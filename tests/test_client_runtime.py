@@ -14,7 +14,7 @@ class CompleteRuntime(unittest.TestCase):
         cls._repo_data=None
 
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=Path(self.temp.name)
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=Path(self.temp.name).resolve()
         self.game=self.root/'game';self.game.mkdir();self.repo=Path(type(self)._runtime_repository_temp.name)/'repo'
         self.binding={'schema_version':1,'kind':'sdgo-client-runtime','source_id':'a'*32,'label':'Example pack',
                       'feeds':['git+ssh://git@example.invalid/pack.git#main','git+https://example.invalid/pack.git#main']}
@@ -70,6 +70,15 @@ class CompleteRuntime(unittest.TestCase):
         receipt=storage.read_json(self.game/c.RECEIPT);self.assertFalse(receipt['data_migrations'])
         self.assertTrue((Path(receipt['backup'])/'retired.cmd').is_file())
         self.assertEqual(self.controller.plan(self.host)['status'],'current')
+
+    def test_partial_inventory_never_requests_sizes_of_unrelated_archives(self):
+        self.controller.plan(self.host)
+        calls=self.controller.git.call_args_list
+        listings=[call.args[1]for call in calls if call.args[1][:1]==['ls-tree']]
+        self.assertTrue(listings);self.assertTrue(all('-l'not in args for args in listings))
+        archive_oid=self.git('rev-parse','HEAD:GPackData.zpk.part1.zip').encode()
+        requests=b''.join(call.kwargs.get('input')or b''for call in calls if call.args[1]==['cat-file','--batch-check'])
+        self.assertNotIn(archive_oid,requests)
 
     def test_existing_authored_settings_and_unknown_custom_content_survive(self):
         p=self.game/'sdgo/mods/example';p.mkdir(parents=True)

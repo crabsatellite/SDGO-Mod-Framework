@@ -162,17 +162,32 @@ class ClientRuntime:
         if old_binding and old_binding['publisher_id']!=binding['source_id']:
             raise ValueError('原负责人和完整客户端来源不同，请先审阅来源迁移，保留现有内容')
         repo,commit,manifest,contract,index=self.repository(binding);excluded=self.local_modules(root);entries={};case=set()
-        for raw in self.git(repo,['ls-tree','-r','-l','-z',commit]).split(b'\0'):
+        unknown=[]
+        # Asking ls-tree for sizes (-l) makes a partial clone fetch every blob,
+        # including historical release archives outside the runtime scope.
+        for raw in self.git(repo,['ls-tree','-r','-z',commit]).split(b'\0'):
             if not raw:continue
             header,name=raw.split(b'\t',1);name=name.decode('utf-8')
             if name=='config.xml':continue
             if not runtime_path(name,contract):continue
             if any(name==p or name.startswith(p+'/')for p in excluded):raise ValueError('上游与仅本地 Mod 冲突：'+name)
-            match=re.fullmatch(rb'100(?:644|755) blob ([a-f0-9]{40})\s+([0-9]+)',header)
+            match=re.fullmatch(rb'100(?:644|755) blob ([a-f0-9]{40})',header)
             if not match or name.casefold()in case:raise ValueError('客户端清单包含链接或重复路径')
-            size=int(match[2])
-            if size>512*1024*1024:raise ValueError('客户端单文件超过限制')
-            entries[name]={'git_blob':match[1].decode(),'bytes':size};case.add(name.casefold());updates.child(root,name)
+            oid=match[1].decode();path=updates.child(root,name)
+            entries[name]={'git_blob':oid};case.add(name.casefold())
+            if path.is_file()and path.stat().st_size<=512*1024*1024 and file_hash(path,git=True)==oid:
+                entries[name]['bytes']=path.stat().st_size
+            else:unknown.append(name)
+        if unknown:
+            requests=b''.join((entries[n]['git_blob']+'\n').encode()for n in unknown)
+            rows=self.git(repo,['cat-file','--batch-check'],input=requests).splitlines()
+            if len(rows)!=len(unknown):raise ValueError('运行文件对象信息不完整')
+            for name,row in zip(unknown,rows):
+                fields=row.split()
+                if len(fields)!=3 or fields[0].decode()!=entries[name]['git_blob']or fields[1]!=b'blob':raise ValueError('运行文件对象信息无效')
+                size=int(fields[2])
+                if not 0<=size<=512*1024*1024:raise ValueError('客户端单文件超过限制')
+                entries[name]['bytes']=size
         if not {'GOnline.exe',updates.MANAGER,'sdgo/core.dll',SOURCE}<=entries.keys():raise ValueError('完整客户端清单缺少必要程序或更新源')
         incoming=source(json.loads(self.git(repo,['show',commit+':'+SOURCE])))
         if incoming!=binding:raise ValueError('上游试图改变客户端绑定；请在 Manager 明确选择新的来源')
