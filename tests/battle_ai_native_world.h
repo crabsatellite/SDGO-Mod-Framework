@@ -13,8 +13,6 @@ using battle_ai::native::Ray3;
 using battle_ai::native::Aabb;
 inline lua_State* state=nullptr;
 inline uint8_t* source=nullptr;
-inline uint8_t* genericObject=nullptr;
-inline uint32_t canonicalOverridePilot=0,canonicalOverrideId=0;
 inline std::array<uint8_t,0x8500> document{};
 inline uint8_t* documentPointer=document.data();
 inline std::array<uint8_t,0x500> app{};
@@ -44,7 +42,8 @@ inline int pathMode=0;
 inline int pathCalls=0;
 inline bool directPathFixture=false;
 inline void* protectedPath=nullptr;
-inline int jumps=0,moves=0,goalCalls=0,lastGoalMode=0,frees=0,queries=0;
+inline int jumps=0,positiveJumps=0,moves=0,goalCalls=0,lastGoalMode=0,frees=0,queries=0;
+inline double lastJumpSeconds=0;
 inline int moveTypeCalls=0,lastMoveType=0;
 inline int stopMotorCalls=0,message41Calls=0;
 inline int obbCalls=0,terrainCalls=0;
@@ -54,6 +53,7 @@ inline int trackEntries=0,trackUpdates=0,swingEntries=0,rotations=0,faces=0;
 inline uint8_t* volatile lastCallbackSelf=nullptr;
 inline int swingInput=-1;
 inline int attackAdmissions=0;
+inline int phaseHideCalls=0,phaseUnhideCalls=0;
 inline int levelApplications=0,partApplications=0;
 inline uint32_t lastPart=0;
 inline int ordinaryNotices=0;
@@ -92,6 +92,8 @@ struct Callbacks {
         Put(movement,8,movement+0xD4);
         return true;
     }
+    __declspec(noinline) void PhaseHide(uint32_t) {++phaseHideCalls;}
+    __declspec(noinline) void PhaseUnhide(uint32_t) {++phaseUnhideCalls;}
     __declspec(noinline) bool EffectActive(uint8_t effect) {
         const auto unit=reinterpret_cast<uint8_t*>(this);
         if(!effect||effect>32)return false;
@@ -108,7 +110,8 @@ struct Callbacks {
     __declspec(noinline) bool UnitIsA(int kind) {
         auto unit=reinterpret_cast<uint8_t*>(this);
         for(size_t i=0;i<configuredUnits.size();++i)
-            if(configuredUnits[i]==unit) return unitKinds[i]==kind;
+            if(configuredUnits[i]==unit)
+                return kind==10||unitKinds[i]==kind;
         return false;
     }
     __declspec(noinline) void SetLevel(int level) {++levelApplications;Put(reinterpret_cast<uint8_t*>(this),0xB0C,level);}
@@ -125,7 +128,6 @@ struct Callbacks {
         return 0x51D0;
     }
     __declspec(noinline) uint32_t Canonical(uint32_t pilot) {
-        if(pilot==canonicalOverridePilot)return canonicalOverrideId;
         for(auto unit:configuredUnits)
             if(unit&&*reinterpret_cast<uint32_t*>(unit+0x2B68)==pilot) return *reinterpret_cast<uint32_t*>(unit+4);
         return 0;
@@ -250,8 +252,7 @@ struct Callbacks {
     }
     __declspec(noinline) uint8_t* Find(uint32_t id) {
         if(id==20)return source;if(id==1)return enemy1.data();if(id==2)return enemy2.data();
-        if(id==3)return remoteHuman.data();if(id==4)return sameTeamNpc.data();
-        if(id==13038)return genericObject;return nullptr;
+        if(id==3)return remoteHuman.data();if(id==4)return sameTeamNpc.data();return nullptr;
     }
     __declspec(noinline) uint8_t* NavigationNode(Vec3) {return nullptr;}
     __declspec(noinline) uint8_t* NavigationNodeAt(int) {return nullptr;}
@@ -446,15 +447,19 @@ inline int Stop(lua_State*){++stopMotorCalls;source[0x30DC]=0;return 0;}
 inline int Change(lua_State* L){int i=static_cast<int>(lua_tonumber(L,2));if(*reinterpret_cast<int*>(source+0xDD0)!=i){uint8_t message[0x14]={};Put(message,0,uint16_t(0x48));message[0x10]=static_cast<uint8_t>(i);reinterpret_cast<Callbacks*>(source)->Receive(message);}return 0;}
 inline int Direction(lua_State*){++moves;source[0x30DC]=1;return 0;}
 inline int Mode(lua_State*){return 0;}
-inline int Jump(lua_State*){++jumps;return 0;}
+inline int Jump(lua_State* L){
+    ++jumps;lastJumpSeconds=lua_tonumber(L,2);
+    if(lastJumpSeconds>0)++positiveJumps;
+    return 0;
+}
 inline void Initialize(uint8_t* unit,lua_State* L) {
     state=L;source=unit;blocked=coverWall=nullRay=terrainWall=forceObbBlock=false;
-    genericObject=nullptr;canonicalOverridePilot=canonicalOverrideId=0;
     unknownBackwardScene=false;
     enclosedStep=false;
     forwardExit=false;
     shotReturn=0xBEEFF00D;replaceShotAction=replaceShotWeapon=false;
-    jumps=moves=goalCalls=lastGoalMode=frees=queries=obbCalls=terrainCalls=0;
+    jumps=positiveJumps=moves=goalCalls=lastGoalMode=frees=queries=obbCalls=terrainCalls=0;
+    lastJumpSeconds=0;
     stopMotorCalls=message41Calls=0;
     specialCompletionCalls=0;specialCompletionDamage=0;specialCompletionOwner=specialCompletionResult=specialCompletionFsm=0;
     specialCompletionEdx=specialCompletionEdi=specialCompletionEbp=0;
@@ -476,8 +481,7 @@ inline void Initialize(uint8_t* unit,lua_State* L) {
         Put(w,0x72,uint32_t(i==0?200:2000));Put(w,0x7C,uint16_t(i==0?0:30));
         Put(w,0x82,uint16_t(i==0?30:6));w[0x8F]=1;
     }
-    Configure(unit,0,20,2,1000,0,0);unitKinds[0]=10;
-    Configure(enemy1.data(),1,1,1,1000,1000,0);
+    Configure(unit,0,20,2,1000,0,0);Configure(enemy1.data(),1,1,1,1000,1000,0);
     Configure(enemy2.data(),2,2,1,100,1400,100);enemy2[0xDCD]=1;
     head={&a,&b,nullptr};a={&b,&head,enemy1.data()};b={&head,&a,enemy2.data()};
     Put(document.data(),0x48,&head);Put(document.data(),0x82C4,document.data());Put(document.data(),0x8364,document.data());
@@ -493,6 +497,8 @@ inline void Initialize(uint8_t* unit,lua_State* L) {
 inline void Symbols(FILE* f,void(*symbol)(FILE*,const char*,void*,bool)) {
     effectEntry=Address(&Callbacks::EffectActive);
     std::array<uint8_t,0x3300> inactive{};NpcBoostPauseQuery(inactive.data());
+    symbol(f,"map.phase_hide",Address(&Callbacks::PhaseHide),false);
+    symbol(f,"map.phase_unhide",Address(&Callbacks::PhaseUnhide),false);
     symbol(f,"unit.effect_active",effectEntry,false);
     symbol(f,"npc.ai_boost_pause_return",boostPauseReturn,false);
     symbol(f,"loadout.set_unit_level",Address(&Callbacks::SetLevel),false);

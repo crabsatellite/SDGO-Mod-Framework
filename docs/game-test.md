@@ -171,6 +171,11 @@ The target must declare `registered` or `existing_account`, without registration
 retries. Both profiles are locked and preserved while the same client files are
 reused. Bind the server observer to the target account's actual pilot ID too.
 
+In a plain co-op mission, the opt-in `BattlePlayerCombat` probe also uses the mapped native
+movement, firing and lock inputs. It binds to the actual mission generation, room, authenticated
+pilot and released local player control. A native result or a return to the waiting room before
+the required observation completes fails the case immediately. It never writes gameplay state.
+
 For a gun-fire regression, enable `BattlePlayerCombat` in the copied test observer and set
 `BattlePlayerWeaponSlot` to an ordinary ranged slot (`0`–`2`). The probe submits the native
 weapon-change request, waits for the actual binding, and requires real ammunition consumption
