@@ -144,13 +144,27 @@ def prepare(requests, client_records, *, server_rows, ownership, originals, item
         _hash(witness['client_sha256']);_hash(witness['server_sha256'])
     owners, claimed, distinct, declarations, output = set(), set(), set(), 0, []
     entries = {}
+    grouped_families = set()
     for request in requests:
-        _exact(request, {'schema', 'owner', 'revision', 'roots', 'records'}, 'unit form request')
+        if not isinstance(request, dict) or 'families' not in request:
+            _exact(request, {'schema', 'owner', 'revision', 'roots', 'records'}, 'unit form request')
+        else:
+            _exact(request, {'schema', 'owner', 'revision', 'roots', 'records', 'families'}, 'unit form request')
         owner = request['owner'];revision = _revision(request['revision'])
         if (request['schema'] != SCHEMA or not isinstance(owner, str) or
                 repo.FAMILY_KEY.fullmatch(owner) is None or owner in owners):
             raise ValueError('unit form schema/owner is invalid or repeated')
         owners.add(owner)
+        # A family group: one graph owner spanning the installed families of one
+        # transform context (a core pair and its entry-variant roots). Every member
+        # is a ledger family at this same revision; the owner itself must be one of them.
+        families = request.get('families', [owner])
+        if (not isinstance(families, list) or not 1 <= len(families) <= 64 or owner not in families or
+                len(set(families)) != len(families) or any(not isinstance(f, str) or repo.FAMILY_KEY.fullmatch(f) is None for f in families)):
+            raise ValueError('unit form family group is invalid')
+        if grouped_families & set(families):
+            raise ValueError('unit form family group overlaps another owner')
+        grouped_families.update(families)
         roots = request['roots'];records = request['records']
         if (not isinstance(roots, list) or not 1 <= len(roots) <= MAX_NODES or
                 not isinstance(records, list) or not 1 <= len(records) <= MAX_NODES):
@@ -175,7 +189,7 @@ def prepare(requests, client_records, *, server_rows, ownership, originals, item
                 raise ValueError('unit form client/server shared fields differ')
             ledger = ownership.get(identity)
             if ledger is not None:
-                if (ledger['owner_key'] != repo.OWNER_KEY or ledger['family'] != owner or
+                if (ledger['owner_key'] != repo.OWNER_KEY or ledger['family'] not in families or
                         ledger['revision'] != request['revision'] or identity in claimed):
                     raise ValueError('unit form installed ownership/revision differs')
                 repo._validate_complete_row(installed, 'tbl_Units', repo.UNIT_COLUMNS)
@@ -198,12 +212,12 @@ def prepare(requests, client_records, *, server_rows, ownership, originals, item
         for root in roots:
             matches = [(item, item_ownership[identity]) for identity, item in item_rows.items()
                 if item['RefIndex'] == root and identity//100000 == 11 and identity in item_ownership and
-                item_ownership[identity]['family'] == owner and item_ownership[identity]['revision'] == request['revision']]
+                item_ownership[identity]['family'] in families and item_ownership[identity]['revision'] == request['revision']]
             if len(matches) != 1:raise ValueError('unit form owned inventory entry is absent or ambiguous')
             item, ledger = matches[0]
             repo._validate_complete_row(item, 'tbl_ItemCategory', repo.ITEM_COLUMNS)
             if (item['CatalogueID'] // 100000 != 11 or item['RefIndex'] != root or
-                    ledger['owner_key'] != repo.OWNER_KEY or ledger['family'] != owner or
+                    ledger['owner_key'] != repo.OWNER_KEY or ledger['family'] not in families or
                     ledger['revision'] != request['revision'] or
                     _hash(ledger['installed_hash']) != repo._row_hash(item, repo.ITEM_COLUMNS)):
                 raise ValueError('unit form installed inventory entry differs')

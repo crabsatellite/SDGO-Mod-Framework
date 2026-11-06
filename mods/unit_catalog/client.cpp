@@ -9,6 +9,7 @@
 #include "skill_presentation.h"
 #include "program_runtime.h"
 #include "skill_atlas_runtime.h"
+#include "form_chain_runtime.h"
 #include "../../support/native_resource_overlay/native_resource_overlay.h"
 
 namespace {
@@ -437,6 +438,7 @@ SDGO_MOD_ENTRY {
     if (!sdgo::unit_preview::Attach(api, mod, g_catalog)) return 0;
     if (!sdgo::unit_skill_presentation::Attach(api, mod, g_catalog, g_data, g_find)) return 0;
     if (!sdgo::unit_skill_atlas::Attach(api, mod, g_catalog, g_data, g_find)) return 0;
+    if (!sdgo::unit_form_chain::Attach(api, mod, g_catalog, g_data, g_find)) return 0;
     if (!sdgo::unit_programs::Attach(api, mod, g_catalog, &g_recordsReady)) return 0;
     if (!RegisterResourceOverlay()) return 0;
     api->Log(mod, SDGO_LOG_INFO,

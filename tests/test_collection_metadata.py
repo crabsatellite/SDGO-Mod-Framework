@@ -47,6 +47,16 @@ class MetadataTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             imported_roots(self.rows, [value])
 
+    def test_entry_variant_may_transform_into_a_form_registered_by_another_package(self):
+        entry = {"protocol": "sdgo.unit-family", "protocol_version": 1, "installable": True, "package_id": "fixture.entry",
+                 "family": {"root_form": "entry", "forms": [{"id": 90003, "key": "entry", "transform_target": 90001}]}}
+        rows = self.rows + [unit(90003, 90001)]
+        roots = imported_roots(rows, [entry], external_forms=frozenset({90001}))
+        self.assertEqual([90003], list(roots))
+        # The same reference is refused when the pair form is not registered elsewhere.
+        with self.assertRaises(ValueError):
+            imported_roots(rows, [entry])
+
     def test_sql_source_fields_cannot_inject_statements(self):
         self.rows[0]["UnitGraph"] = "0);DROP TABLE dbo.tbl_Users;--"
         with self.assertRaises(ValueError):

@@ -73,8 +73,11 @@ Manager 已内置 Python、Pillow 和 pyodbc；解析 RAR 需要本机安装 7-Z
 - 主包最多 32 MiB，解包后最多 128 MiB、512 个文件；PNG 最多 8 MiB，边长 1–2048。
   路径越界、链接和重复路径会被拒绝，包内的安装程序和数据库脚本不会运行。
 - 新机体 ID 与原生机体或其他已导入机体冲突时无法确认，工具不做二进制整体换号。
-- 只支持单形态和完整的双形态关系：互相变形（`native-linked-forms-v1`），以及第二形态不再变回的单向变形
-  （`native-one-way-forms-v1`）。带第三、第四个入口形态的组合继续推迟，等原生形态图运行时接纳后再发布。
+- 原生行为配置：单形态（`native-single-form-v1`）、互相变形的双形态（`native-linked-forms-v1`）、第二形态不再变回的
+  单向变形（`native-one-way-forms-v1`）、变形目标为自身的记录（`native-self-transform-v1`），以及变入已发布双向形态之一的
+  入口形态（`native-entry-forms-v1`）。入口形态是独立的库存根：第一次变形走原生双槽机制，之后在双向形态之间的往返需要
+  形态图运行时——服务端 Mod 在已安装的形态图允许该边时把第三形态写入未激活的原生槽，客户端 Mod 在原生交换前把记录／模型
+  对重新指向该形态。没有安装形态图授权时，服务端会继续拒绝第二跳，机体停留在双向形态的第一个形态。
 - 缺少技能时默认无法确认。对技能 1、2，界面会逐个提供「移除缺失技能 … 后导入」。确认后，
   所有引用该技能的形态在客户端和服务端同时清为 `0`，原 RAR/BIN 保留，旧的预览确认失效，该技能的效果不再存在。
   其他技能、武器和变形关系不受影响。技能 3 暂不提供移除。
@@ -387,7 +390,16 @@ python -B -m tools.gunion.publisher assemble  --config <私有配置.json>
 
 该包只带归档：`manifest.json` 用 `resource_overlay.paths` 声明归档条目，不带游戏从不读取的松散副本；
 安装器同时接受这种布局和 Manager 的 `owned_paths` 布局。服务端先写共享的技能、浮游炮和势力行，再按族通过
-普通仓库事务写入；原生服务端直接读取这些行，单形态、互相变形和单向变形的族不需要形态图或技能身份授权。
+普通仓库事务写入；原生服务端直接读取这些行，单形态、互相变形、单向变形和自变形的族不需要形态图或技能身份授权。
+
+入口形态作为独立的族发布（`native-entry-forms-v1`；变入单向终态时为 `native-one-way-forms-v1`），与核心族共用目标形态：
+共用形态的记录、行和名称仍由核心族拥有（`shared_form_ids`）。物品类别和每个共用武器行的所有者族都固定在回执旁的
+`allocations.json` 里，重新发布不会挪动已安装族的类别，也不会把武器行换到别的族名下。对每个带入口形态的上下文，装配阶段还会写出 `form-graph-requests.json`：
+每个上下文一条 `sdgo.unit-form-graphs/1` 请求，其 `families` 把核心族和入口族归入同一个形态图所有者。
+可信的服务端控制器在行写入后用 `owner.units.form_graph_runtime.prepare_native_from_cursor` 编译它们，把 `form-graphs.bin`
+放到 `unit_catalog_server` Mod 目录、把 `sdgo/install-state/unit-form-authority.bin` 放到每个战斗主机；
+之后服务端 Mod 会把允许的第三形态写入未激活的原生槽，客户端 `unit_catalog`（`FormChains=1`）在原生交换前
+把备用记录／模型改指向该形态。
 
 ### 用 GameTest 截图和核对
 

@@ -25,6 +25,28 @@ int main(){
         DWORD protection=0;assert(VirtualProtect(memory,4096,PAGE_READONLY,&protection));
         assert(CommitEquivalentIdentity(memory,before,staged)==IdentityCommit::refused);
         assert(VirtualProtect(memory,4096,PAGE_READWRITE,&protection));
+
+        // Whole inactive bank replacement: every byte of the inactive bank and its stat
+        // slice may change, nothing else; the active bank and header stay untouched.
+        auto bank=before;const auto stats=kStatsOffset+(active^1)*kStatsBytes;
+        for(std::size_t i=0;i<kBankBytes;++i)bank[at+i]=static_cast<std::uint8_t>(0xA0+i);
+        for(std::size_t i=0;i<kStatsBytes;++i)bank[stats+i]=static_cast<std::uint8_t>(0x50+i);
+        Put(bank,at,15003);Put(bank,at+8,0x20000000);
+        std::memcpy(memory,before.data(),before.size());SetLastError(77);
+        assert(CommitInactiveBank(memory,before,bank)==IdentityCommit::committed&&GetLastError()==77);
+        assert(!std::memcmp(memory,bank.data(),bank.size()));
+        auto activeTouched=bank;activeTouched[kBankOffset+active*kBankBytes+0x20]^=1;
+        std::memcpy(memory,before.data(),before.size());
+        assert(CommitInactiveBank(memory,before,activeTouched)==IdentityCommit::refused&&!std::memcmp(memory,before.data(),before.size()));
+        auto sameId=bank;Put(sameId,at,15001);
+        assert(CommitInactiveBank(memory,before,sameId)==IdentityCommit::refused);
+        auto activeId=bank;Put(activeId,at,static_cast<std::uint32_t>(*reinterpret_cast<const std::uint32_t*>(before.data()+kBankOffset+active*kBankBytes)));
+        assert(CommitInactiveBank(memory,before,activeId)==IdentityCommit::refused);
+        memory[0x30]^=1;assert(CommitInactiveBank(memory,before,bank)==IdentityCommit::refused);
+        std::memcpy(memory,before.data(),before.size());
+        assert(VirtualProtect(memory,4096,PAGE_READONLY,&protection));
+        assert(CommitInactiveBank(memory,before,bank)==IdentityCommit::refused);
+        assert(VirtualProtect(memory,4096,PAGE_READWRITE,&protection));
     }
     assert(VirtualFree(memory,0,MEM_RELEASE));
 }

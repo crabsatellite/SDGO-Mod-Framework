@@ -548,8 +548,11 @@ def _validate_plan(
     }
     if not isinstance(plan, dict):
         raise ValueError("导入计划必须是对象")
-    if set(plan)-{'blueprints'} != fields:
-        unknown = set(plan) - fields-{'blueprints'}
+    # behavior_profile is optional metadata: native-self-transform-v1 declares a record
+    # whose transform target is itself (both native banks hold the same definition).
+    optional = {'blueprints', 'behavior_profile'}
+    if set(plan)-optional != fields:
+        unknown = set(plan) - fields-optional
         missing = fields - set(plan)
         details = []
         if unknown:
@@ -614,7 +617,7 @@ def _validate_plan(
             raise ValueError(f"机体 {identity} 的 UnitModelName 不能为空")
         if row["HP"] <= 0:
             raise ValueError(f"机体 {identity} 的 HP 必须大于零")
-        if row["UnitNumber_Transform"] == identity:
+        if row["UnitNumber_Transform"] == identity and plan.get('behavior_profile') != 'native-self-transform-v1':
             raise ValueError(f"机体 {identity} 不能把自身作为变形目标")
     for identity, row in weapon_map.items():
         if not row["WeaponName"].strip():

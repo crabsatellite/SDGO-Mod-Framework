@@ -87,9 +87,15 @@ ready/selection poses (see [developer notes](#gametest-checks-and-captures)), up
   links and duplicate paths are rejected, and installers or database scripts inside the archive never run.
 - A new unit ID that collides with a stock or other imported unit blocks confirmation; there is no blind binary
   renumbering.
-- Only single-form units and complete two-form links are supported: reciprocal links (`native-linked-forms-v1`) and
-  one-way links whose second form transforms back to nothing (`native-one-way-forms-v1`). Groups with a third or
-  fourth entry form stay deferred until the native form-graph runtime admits them.
+- Native behavior profiles: single form (`native-single-form-v1`), reciprocal two-form links
+  (`native-linked-forms-v1`), one-way links whose second form transforms back to nothing
+  (`native-one-way-forms-v1`), a record that transforms into itself (`native-self-transform-v1`), and entry forms
+  that transform into one form of an already published reciprocal pair (`native-entry-forms-v1`). An entry form is
+  its own inventory root; its first transform uses the original two-bank mechanism, and the following hops between
+  the pair's two forms need the form-graph runtime: the server Mod composes the third form into the inactive native
+  bank when the installed graph allows the edge, and the client Mod rebases its record/model pair before the native
+  swap. Without the installed graph authority the server keeps refusing the second hop, so the unit stays in the
+  pair's first form.
 - A missing skill blocks confirmation by default. For skill slots 1 and 2 the panel offers **移除缺失技能 … 后导入**
   (remove the missing skill and import): every form referencing it gets `0` on both client and server, the source
   RAR/BIN is kept, earlier preview approvals are invalidated and the skill's effect is gone. Other skills, weapons and
@@ -503,7 +509,19 @@ The package is overlay-only: `manifest.json` declares the archive entries in `re
 loose copies, which the game never reads. The installer accepts both this layout and the Manager's `owned_paths`
 layout. The server side is applied family by family through the ordinary repository transaction after the shared
 skill, funnel and affiliation rows; the native server reads the resulting rows directly, so no form-graph or
-skill-identity authority is required for single-form, reciprocal or one-way families.
+skill-identity authority is required for single-form, reciprocal, one-way or self-transform families.
+
+Entry variants are published as their own families (`native-entry-forms-v1`, or `native-one-way-forms-v1` when they
+enter a one-way terminal form) that share the core family's target form; the shared form's record, row and name stay
+owned by the core family (`shared_form_ids`). Item categories and the owning family of every shared weapon row are
+pinned in `allocations.json` beside the receipts so a republication never shifts an installed family's category or
+moves a weapon row to another family. For every context with entry variants the
+assembler also writes `form-graph-requests.json`: one `sdgo.unit-form-graphs/1` request per context whose `families`
+list groups the core family and its entry families under one graph owner. The trusted server controller compiles
+them with `owner.units.form_graph_runtime.prepare_native_from_cursor` after the rows are installed and places
+`form-graphs.bin` in the `unit_catalog_server` Mod directory and `sdgo/install-state/unit-form-authority.bin` on
+each battle host; the server Mod then composes an allowed third form into the inactive native bank, and the client's
+`unit_catalog` (`FormChains=1`) rebases its alternate record/model to that form before the native swap.
 
 ### GameTest checks and captures
 

@@ -47,6 +47,37 @@ def grade_rows(rows):
 
 
 class UnitFormGraphRuntime(unittest.TestCase):
+    def test_family_group_lets_an_entry_root_owned_by_a_sibling_family_join_its_core_graph(self):
+        # Core pair 15002 <-> 15003 owned by example.core; entry 15004 -> 15003 owned by example.entry.
+        requests, records, rows, ownership, originals, items, item_ownership = fixture({15002: 15003, 15003: 15002, 15004: 15003})
+        for identity in (15002, 15003):
+            ownership[identity]['family'] = 'example.core';ownership[identity]['record_key'] = f'example.core/unit/{identity}'
+        ownership[15004]['family'] = 'example.entry';ownership[15004]['record_key'] = 'example.entry/unit/15004'
+        core_item = dict(zip(repo.ITEM_COLUMNS, (1119000, 'Core unit', 15002, 0, 0, 0)))
+        entry_item = dict(zip(repo.ITEM_COLUMNS, (1119001, 'Entry unit', 15004, 0, 0, 0)))
+        items = {1119000: core_item, 1119001: entry_item}
+        item_ownership = {1119000: ledger('item', 1119000, core_item, repo.ITEM_COLUMNS),
+                          1119001: ledger('item', 1119001, entry_item, repo.ITEM_COLUMNS)}
+        item_ownership[1119000].update(family='example.core', record_key='example.core/item/1119000')
+        item_ownership[1119001].update(family='example.entry', record_key='example.entry/item/1119001')
+        request = dict(requests[0], owner='example.core', roots=[15002, 15004], families=['example.core', 'example.entry'])
+        result = prepare([request], records, server_rows=rows, ownership=ownership, originals=originals,
+                         item_rows=items, item_ownership=item_ownership)
+        owner = result['owners'][0]
+        self.assertEqual([15002, 15004], owner['roots'])
+        self.assertEqual({15002: 15003, 15003: 15002, 15004: 15003}, {n['id']: n['target'] for n in owner['nodes']})
+        self.assertTrue(all(n['origin'] == 'owned' for n in owner['nodes']))
+        candidate, authority = compile_files(result)
+        self.assertEqual(b'SDGOUF1\0', candidate[:8])
+        # Without the group the entry's ledger family does not match the owner.
+        plain = dict(request);del plain['families']
+        with self.assertRaisesRegex(ValueError, 'ownership/revision differs'):
+            prepare([plain], records, server_rows=rows, ownership=ownership, originals=originals, item_rows=items, item_ownership=item_ownership)
+        # A family may belong to one group only, and the owner must be a member.
+        with self.assertRaisesRegex(ValueError, 'family group is invalid'):
+            prepare([dict(request, families=['example.entry'])], records, server_rows=rows, ownership=ownership, originals=originals,
+                    item_rows=items, item_ownership=item_ownership)
+
     def test_sql_snapshot_does_not_silently_replace_duplicate_unit_rows(self):
         source=fixture()[2][15001];values=tuple(source[name] for name in repo.UNIT_COLUMNS)
         class Cursor:

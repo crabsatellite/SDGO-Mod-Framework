@@ -175,6 +175,12 @@ class SnapshotAndValidationTests(unittest.TestCase):
                     repository.check_plan(value)
             value=plan();value['units'][0]['UnitNumber_Transform']=35000
             with self.assertRaisesRegex(ValueError,'变形目标'):repository.check_plan(value)
+            # A record that transforms into itself is refused unless the plan declares the
+            # self-transform profile; the row itself is otherwise unchanged.
+            value=plan();value['units'][0]['UnitNumber_Transform']=value['units'][0]['UnitNumber']
+            with self.assertRaisesRegex(ValueError,'自身作为变形目标'):repository.check_plan(value)
+            value['behavior_profile']='native-self-transform-v1'
+            repository.check_plan(value)  # accepted with the declared profile
             class NoSql:
                 def execute(self,*args):raise AssertionError('invalid IDs must fail before SQL')
             for identity in (35000,9000421):

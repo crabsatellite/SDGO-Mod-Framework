@@ -149,10 +149,31 @@ def build(config: Config) -> dict:
         records.extend(carried)
     occupied = {identity for _, identity, _ in records}
 
-    def allocate(first: int, last: int) -> int:
+    # Item categories are server rows owned per family: once a family has one, every later
+    # publication keeps it, so the ledger beside the receipts pins family_key -> category.
+    ledger_path = config.output / 'allocations.json'
+    ledger = load_json(ledger_path) if ledger_path.is_file() else {'schema': 'sdgo.gunion-roster-allocations/1', 'item_categories': {}}
+    pinned_categories = {str(key): int(value) for key, value in ledger.get('item_categories', {}).items()}
+    reserved = set(pinned_categories.values())
+    # Shared weapon rows are owned by exactly one family in the server ledger; the ledger
+    # pins weapon_id -> owning family so inserting families never moves an installed row.
+    pinned_weapon_owners = {int(key): str(value) for key, value in ledger.get('weapon_owners', {}).items()}
+    weapon_users: dict[int, list[str]] = {}
+    for family in families['families']:
+        for weapon in family['weapons']:
+            weapon_users.setdefault(weapon['id'], []).append(family['family_key'])
+    weapon_owner_plan = {identity: (pinned_weapon_owners[identity] if pinned_weapon_owners.get(identity) in users else users[0])
+                         for identity, users in weapon_users.items()}
+
+    def allocate(first: int, last: int, pinned: int | None = None) -> int:
+        if pinned is not None:
+            if pinned in occupied or baseline.any_id(pinned):
+                raise ValueError('pinned identity %d is already occupied' % pinned)
+            occupied.add(pinned)
+            return pinned
         candidate = first
         while candidate <= last:
-            if candidate not in occupied and not baseline.any_id(candidate):
+            if candidate not in occupied and candidate not in reserved and not baseline.any_id(candidate):
                 occupied.add(candidate)
                 return candidate
             candidate += 1
@@ -180,10 +201,18 @@ def build(config: Config) -> dict:
             raw = (config.output / receipt['records']['2:%d' % form['id']]['member']).read_bytes()
             if u32(raw, 0) != form['id'] or len(raw) != UNIT_BYTES:
                 raise ValueError('prepared unit record differs: %d' % form['id'])
+            entry = {'id': form['id'], 'transform_target': form['transform'], 'model': wide_field(raw, 612, 60),
+                     'server': form['values'], 'names': form['names'], 'record_sha256': sha256(raw)}
+            if form.get('shared_from'):
+                # Owned (record, row, name) by the core family that was assembled earlier.
+                if form['id'] not in occupied or form['shared_from'] not in {row['family_key'] for row in published}:
+                    raise ValueError('shared form %d precedes its owning family' % form['id'])
+                entry['shared_from'] = form['shared_from']
+                forms.append(entry)
+                continue
             records.append((2, form['id'], raw))
             occupied.add(form['id'])
-            forms.append({'id': form['id'], 'transform_target': form['transform'], 'model': wide_field(raw, 612, 60),
-                          'server': form['values'], 'names': form['names'], 'record_sha256': sha256(raw)})
+            forms.append(entry)
         weapons = []
         for weapon in family['weapons']:
             rewritten = config.output / 'programs' / 'weapons' / ('10-%d.bin' % weapon['id'])
@@ -195,16 +224,18 @@ def build(config: Config) -> dict:
             if weapon['id'] in weapons_final:
                 if weapons_final[weapon['id']] != raw:
                     raise ValueError('families prepare different bytes for weapon %d' % weapon['id'])
-                # The server ledger owns each weapon row through exactly one family: the first
-                # family (in publication order) that uses it owns the row, later ones reference it.
-                weapons.append({'id': weapon['id'], 'server': _server_weapon(weapon, renamed_weapons), 'record_sha256': sha256(raw),
-                                'shared_from': weapon_owner[weapon['id']]})
-                continue
-            weapons_final[weapon['id']] = raw
-            weapon_owner[weapon['id']] = family['family_key']
-            records.append((10, weapon['id'], raw))
-            occupied.add(weapon['id'])
-            weapons.append({'id': weapon['id'], 'server': _server_weapon(weapon, renamed_weapons), 'record_sha256': sha256(raw)})
+            else:
+                weapons_final[weapon['id']] = raw
+                records.append((10, weapon['id'], raw))
+                occupied.add(weapon['id'])
+            # The server ledger owns each weapon row through exactly one family: the pinned
+            # owner, else the first family (in publication order) that uses it; others reference it.
+            owner_key = weapon_owner_plan[weapon['id']]
+            weapon_owner[weapon['id']] = owner_key
+            row = {'id': weapon['id'], 'server': _server_weapon(weapon, renamed_weapons), 'record_sha256': sha256(raw)}
+            if owner_key != family['family_key']:
+                row['shared_from'] = owner_key
+            weapons.append(row)
         for identity in family['owned_skill_ids']:
             if identity not in skill_records:
                 raw = (config.output / 'records' / 'shared' / ('13-%d.bin' % identity)).read_bytes()
@@ -218,7 +249,8 @@ def build(config: Config) -> dict:
         template = baseline.record('item', family['item_template_id'])
         if not template or len(template) != ITEM_BYTES or template[4] != 0:
             raise ValueError('baseline item template missing: %d' % family['item_template_id'])
-        category = allocate(config.item_category_first, 1_119_999)
+        category = allocate(config.item_category_first, 1_119_999, pinned_categories.get(family['family_key']))
+        pinned_categories[family['family_key']] = category
         root_form = next(form for form in forms if form['id'] == root)
         name_cn = root_form['names']['NameCN'][:48]
         item = bytearray(template)
@@ -276,13 +308,15 @@ def build(config: Config) -> dict:
         item_row = {'CatalogueID': category, 'RefIndex': root,
                     'Name': _ascii_name(root_form['names']['NameEN'], 'UNION_U_%d' % root, renamed_names, 'item:%d' % category)[:48]}
         server_plans.append({'family_key': family['family_key'], 'root_unit_id': root, 'item_template_id': family['item_template_id'],
-                             'units': [form['server'] for form in forms],
+                             'units': [form['server'] for form in forms if 'shared_from' not in form],
+                             'shared_form_ids': {str(form['id']): form['shared_from'] for form in forms if 'shared_from' in form},
+                             'behavior_profile': family['behavior_profile'],
                              'weapons': [weapon['server'] for weapon in weapons if 'shared_from' not in weapon],
                              'shared_weapon_ids': {str(weapon['id']): weapon['shared_from'] for weapon in weapons if 'shared_from' in weapon},
                              'item': item_row,
                              'names': [{'UnitNumber': form['id'], 'NameCN': form['names']['NameCN'][:48],
                                         'NameEN': _ascii_name(form['names']['NameEN'], 'UNION_U_%d' % form['id'], renamed_names, 'unit:%d' % form['id'])[:48]}
-                                       for form in forms]})
+                                       for form in forms if 'shared_from' not in form]})
     # Every relocated skill record ships (linked-skill references may point at unreferenced ones).
     for (kind, identity), row in plan_requests.items():
         if kind == 13 and identity not in skill_records:
@@ -351,6 +385,28 @@ def build(config: Config) -> dict:
                    'families': published, 'registrations': registrations, 'affiliations': affiliations,
                    'skills': sorted(skill_records), 'deferred_entries': families['deferred_entries'],
                    'excluded_contexts': families['excluded_contexts']}
+    # Native form-graph controller requests: one graph owner per transform context that
+    # has entry variants (core pair + entry roots as a family group). The trusted server
+    # controller turns them into form-graphs.bin / unit-form-authority.bin after the rows
+    # are installed; self-transform and plain two-form families stay unmanaged.
+    by_key = {row['family_key']: row for row in published}
+    source_families = {row['family_key']: row for row in families['families']}
+    graph_requests = []
+    for family in families['families']:
+        entry_ids = family.get('entry_variant_ids') or []
+        if not entry_ids or family['family_key'] not in by_key:
+            continue
+        group = [family['family_key']] + [row['family_key'] for row in families['families']
+                                          if row.get('core_family_key') == family['family_key'] and row['family_key'] in by_key]
+        roots = [by_key[key]['root_unit_id'] for key in group]
+        graph_records = {}
+        for key in group:
+            for form in by_key[key]['forms']:
+                graph_records[form['id']] = form['record_sha256']
+        graph_requests.append({'schema': 'sdgo.unit-form-graphs/1', 'owner': family['family_key'], 'revision': content_revision,
+                               'families': group, 'roots': sorted(roots),
+                               'records': [{'id': identity, 'client_sha256': digest} for identity, digest in sorted(graph_records.items())]})
+    del source_families
     (module_dir / 'definitions.json').write_bytes((json.dumps(definitions, ensure_ascii=False, indent=2) + '\n').encode('utf-8'))
     repo_root = Path(__file__).resolve().parents[3]
     module_source = repo_root / 'mods' / 'unit_catalog'
@@ -404,6 +460,8 @@ def build(config: Config) -> dict:
         block = server_plan[section]
         block['revision'] = sha256(json.dumps({k: v for k, v in block.items() if k != 'revision'}, sort_keys=True).encode())
     dump_json(publication_root / 'server-plan.json', server_plan)
+    dump_json(publication_root / 'form-graph-requests.json', {'schema': 'sdgo.gunion-roster-form-graphs/1', 'owner': config.owner,
+                                                               'revision': content_revision, 'requests': graph_requests})
     counts = {'families': len(published), 'records': len(records), 'carried_records': len(carried),
               'kinds': {str(kind): sum(1 for row in records if row[0] == kind) for kind in sorted({row[0] for row in records})},
               'catalog_bytes': len(catalog), 'overlay_entries': len(inventory['entries']), 'overlay_bytes': inventory['archive_bytes'],
@@ -417,5 +475,8 @@ def build(config: Config) -> dict:
                'shared_weapon_owners': {str(k): v for k, v in sorted(weapon_owner.items()) if any(
                    str(k) in row.get('shared_weapon_ids', {}) for row in server_plans)},
                'ids_reserved': False, 'native_acceptance_claimed': False}
+    dump_json(ledger_path, {'schema': 'sdgo.gunion-roster-allocations/1',
+                            'item_categories': dict(sorted(pinned_categories.items())),
+                            'weapon_owners': {str(identity): owner for identity, owner in sorted(weapon_owner.items())}})
     dump_json(config.output / 'publication.json', receipt)
     return receipt

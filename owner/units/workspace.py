@@ -498,6 +498,11 @@ class Workspace:
         if profile not in model.PROFILES:need('behavior','请选择原生变形类型','behavior_profile')
         elif profile=='native-single-form-v1' and (len(forms)!=1 or any(r['transform_target'] for r in forms.values())):
             need('behavior_mismatch','这份记录有变形目标，不能作为无变形机体发布','behavior_profile','error')
+        elif profile=='native-self-transform-v1' and (len(forms)!=1 or any(r['transform_target']!=i for i,r in forms.items())):
+            need('behavior_mismatch','自变形机体要求单条记录且变形目标为自身','behavior_profile','error')
+        elif profile=='native-entry-forms-v1':
+            if len(forms)!=1 or not any(r['transform_target'] and r['transform_target'] not in forms for r in forms.values()):
+                need('behavior_mismatch','入口形态要求单条记录，其变形目标为已发布的双向形态之一','behavior_profile','error')
         elif profile in ('native-linked-forms-v1','native-one-way-forms-v1'):
             if len(forms)!=2:need('unsupported_forms','当前适配器要求双形态；三形态以上的有向图需要原生形态图运行时','behavior_profile','error')
             if root in forms:

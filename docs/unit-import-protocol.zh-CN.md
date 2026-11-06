@@ -202,7 +202,9 @@ SQL `BattleMode` 与客户端末尾调度字段是独立输入，不按相同名
 补充定义接口使用 `schema_version: 1`，允许以下顶层字段：
 
 - `root_unit_id`：明确选择进入机库的根形态，必须属于该包。
-- `behavior_profile`：`native-single-form-v1` 或 `native-linked-forms-v1`。
+- `behavior_profile`：`native-single-form-v1`、`native-linked-forms-v1`、`native-one-way-forms-v1`、
+  `native-entry-forms-v1`（入口形态，变入已发布双向形态之一；第二跳需要原生形态图运行时）或
+  `native-self-transform-v1`（单条记录，变形目标为自身）。
 - `item_template_id`：客户端和服务端都存在的永久机体物品类别模板。
 - `units`、`weapons`：按内部编号匹配的类型化服务端字段。
 

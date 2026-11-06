@@ -12,7 +12,34 @@ sys.path.insert(0, str(ROOT))
 
 from tools.gunion.publisher.assemble import _ascii_name, _server_weapon
 from tools.gunion.publisher.common import Config
+from tools.gunion.publisher.families import ENTRY, LINKED, ONE_WAY, SELF, SINGLE, _classify
 from tools.gunion.publisher.resources import NATIVE_SUFFIX, UNSUPPORTED
+
+
+class FamilyShapeTests(unittest.TestCase):
+    def test_single_reciprocal_and_one_way_contexts(self):
+        self.assertEqual((SINGLE, [11102], []), self.shape([11102], 11102, {11102: 0}))
+        self.assertEqual((LINKED, [15261, 15262], []), self.shape([15261, 15262], 15261, {15261: 15262, 15262: 15261}))
+        self.assertEqual((ONE_WAY, [15207, 27000], []), self.shape([15207, 27000], 15207, {15207: 27000, 27000: 0}))
+
+    def test_self_transform_loop_is_a_native_profile(self):
+        shape = _classify([25066], 25066, {25066: 25066})
+        self.assertEqual((SELF, [25066], []), (shape['profile'], shape['forms'], shape['entries']))
+
+    def test_entry_variants_carry_the_profile_of_their_target(self):
+        linked = _classify([11307, 27099, 27100], 27099, {11307: 27099, 27099: 27100, 27100: 27099})
+        self.assertEqual((LINKED, [27099, 27100], [11307], ENTRY),
+                         (linked['profile'], linked['forms'], linked['entries'], linked['entry_profile']))
+        one_way = _classify([26101, 26106, 26097, 26098], 26101, {26101: 26106, 26106: 0, 26097: 26106, 26098: 26106})
+        self.assertEqual((ONE_WAY, [26101, 26106], [26097, 26098], ONE_WAY),
+                         (one_way['profile'], one_way['forms'], one_way['entries'], one_way['entry_profile']))
+        with self.assertRaises(ValueError):
+            _classify([1, 2, 3], 1, {1: 2, 2: 3, 3: 1})
+
+    @staticmethod
+    def shape(members, root, transforms):
+        value = _classify(members, root, transforms)
+        return value['profile'], value['forms'], value['entries']
 
 
 class ServerNameTests(unittest.TestCase):
