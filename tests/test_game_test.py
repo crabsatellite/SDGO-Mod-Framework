@@ -1983,6 +1983,27 @@ state=pending_first_login
 
 
 class RecordingAudioSettingsTests(unittest.TestCase):
+    def test_review_footage_keeps_post_effects_and_plays_at_1080p(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / 'config.xml'
+            path.write_text('<Config><Video><ScreenMode width="1024" height="768" bpp="32" mode="window" windowFull="0"/>'
+                            '<GameScreenRes level="13"/><PostEffect>'
+                            '<Bloom Enable="true" BloomLevel="1"/><DOF Enable="true" DOFLevel="1"/>'
+                            '</PostEffect></Video><Sound><BGMVolume Value="22" use="true"/>'
+                            '<EffectVolume Value="22" use="true"/><VoiceVolume Value="56" use="true"/></Sound></Config>')
+            game_test.configure_muted_audio(root, review_footage=True)
+            tree = ET.parse(path)
+            self.assertEqual(tree.find('Video/GameScreenRes').get('level'), '12')
+            self.assertEqual(tree.find('Video/PostEffect/Bloom').attrib, {'Enable': 'true', 'BloomLevel': '1'})
+            self.assertEqual(tree.find('Sound/BGMVolume').get('Value'), '0')
+            with self.assertRaises(game_test.GameTestError):
+                game_test.validate_muted_audio(root)
+            game_test.validate_muted_audio(root, review_footage=True)
+            game_test.configure_muted_audio(root)
+            self.assertEqual(ET.parse(path).find('Video/PostEffect/Bloom').get('BloomLevel'), '0')
+            game_test.validate_muted_audio(root)
+
     def test_sfx_only_disables_music_and_preserves_other_settings(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
