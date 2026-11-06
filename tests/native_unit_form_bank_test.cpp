@@ -72,6 +72,43 @@ int main() {
         const auto capturedBefore = captured;
         assert(!Capture(staged, 2, captured));
         assert(captured.bytes == capturedBefore.bytes && captured.stats == capturedBefore.stats);
+
+        Bank initialSource{},initialTarget{};
+        Put(initialSource.bytes.data(),0,15000);Put(initialSource.bytes.data(),4,3000);
+        Put(initialSource.bytes.data(),8,0x30000000);
+        for(unsigned weapon=0;weapon<5;++weapon)
+            Put(initialSource.bytes.data(),12+weapon*0x94,weapon<4?0x40000000+weapon*0x100:0);
+        initialSource.stats.fill(0x19);initialTarget=initialSource;
+        Put(initialTarget.bytes.data(),0,15002);Put(initialTarget.bytes.data(),8,0x50000000);
+        auto equivalent=original;const auto inactiveAt=kBankOffset+(active^1)*kBankBytes;
+        // Preserve nonzero runtime state even in weapon slots 3 and 4, which
+        // the original three-weapon reset does not fully initialize.
+        Put(equivalent.data(),inactiveAt,initialSource.id());
+        Put(equivalent.data(),inactiveAt+8,Read32(initialSource.bytes.data()+8));
+        for(unsigned weapon=0;weapon<5;++weapon)
+            Put(equivalent.data(),inactiveAt+12+weapon*0x94,Read32(initialSource.bytes.data()+12+weapon*0x94));
+        const auto equivalentBefore=equivalent;
+        assert(StageEquivalentInactive(equivalent,15000,15001,initialSource,initialTarget,staged)==StageResult::prepared);
+        assert(equivalent==equivalentBefore);
+        for(std::size_t i=0;i<kSlotBytes;++i)
+            if(!((i>=inactiveAt&&i<inactiveAt+4)||(i>=inactiveAt+8&&i<inactiveAt+12)))
+                assert(staged[i]==equivalentBefore[i]);
+        assert(Read32(staged.data()+inactiveAt)==15002&&Read32(staged.data()+inactiveAt+8)==0x50000000);
+        assert(StageEquivalentInactive(staged,15000,15001,initialSource,initialTarget,untouched)==StageResult::already_cached);
+        assert(untouched==before);
+        for(std::size_t at:{4u,12u,12u+3u*0x94u,12u+4u*0x94u,0x2efu}) {
+            auto changed=initialTarget;changed.bytes[at]^=1;
+            assert(StageEquivalentInactive(equivalent,15000,15001,initialSource,changed,untouched)==StageResult::invalid);
+            assert(untouched==before);
+        }
+        auto differentStats=initialTarget;differentStats.stats[8]^=1;
+        assert(StageEquivalentInactive(equivalent,15000,15001,initialSource,differentStats,untouched)==StageResult::invalid);
+        for(unsigned weapon=0;weapon<5;++weapon) {
+            auto changed=equivalent;changed[inactiveAt+12+weapon*0x94]^=1;
+            assert(StageEquivalentInactive(changed,15000,15001,initialSource,initialTarget,untouched)==StageResult::invalid);
+        }
+        assert(StageEquivalentInactive(equivalent,15000,15001,initialSource,initialTarget,equivalent)==StageResult::invalid);
+        assert(equivalent==equivalentBefore&&untouched==before);
     }
     std::puts("native_unit_form_bank_test: PASS (staging only, no native activation)");
 }
