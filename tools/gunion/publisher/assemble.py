@@ -19,7 +19,7 @@ import struct
 import unicodedata
 from types import SimpleNamespace
 
-from owner.native_archive import build_archive_file
+from owner.native_archive import build_archive_file, read_archive
 from owner.units.assets import Baseline, sprite_binary
 from owner.units.compiler import HOST, HOST_SHA256, fnv, wchar
 from owner.units.native_programs import compile_bundle as compile_programs
@@ -144,9 +144,31 @@ def build(config: Config) -> dict:
 
     records: list[tuple[int, int, bytes]] = []
     carried = []
+    carried_definitions = {'families': [], 'registrations': []}
+    carried_overlay = 0
     if config.existing_catalog is not None:
         carried = _parse_catalog(Path(config.existing_catalog).read_bytes())
         records.extend(carried)
+        # The installed module's other content (families, registrations and the overlay
+        # resources its records name) is carried too, so installing this package keeps them.
+        existing_dir = Path(config.existing_catalog).parent
+        if (existing_dir / 'definitions.json').is_file():
+            previous = load_json(existing_dir / 'definitions.json')
+            carried_definitions = {'families': list(previous.get('families', [])),
+                                   'registrations': list(previous.get('registrations', []))}
+        if (existing_dir / 'resource-overlay.ini').is_file():
+            settings = dict(line.split('=', 1) for line in (existing_dir / 'resource-overlay.ini').read_text(encoding='ascii').splitlines()
+                            if '=' in line)
+            index = (existing_dir / settings['index']).read_bytes()
+            if sha256(index) != settings.get('index_sha256') or sha256((existing_dir / settings['archive']).read_bytes()) != settings.get('archive_sha256'):
+                raise ValueError('installed overlay differs from its seal')
+            for path, raw in read_archive(index, existing_dir / settings['archive']).items():
+                if path in overlay:
+                    if sha256(overlay[path]()) != sha256(raw):
+                        raise ValueError('installed overlay resource conflicts with the roster: ' + path)
+                    continue
+                overlay[path] = (lambda value=raw: value)
+                carried_overlay += 1
     occupied = {identity for _, identity, _ in records}
 
     # Item categories are server rows owned per family: once a family has one, every later
@@ -381,10 +403,15 @@ def build(config: Config) -> dict:
     # Definitions, registrations, server plan and installer manifest.
     content_revision = sha256(json.dumps({'catalog': catalog_sha, 'overlay': inventory['archive_sha256'], 'programs': sha256(bundle),
                                           'families': [row['family_key'] for row in published]}, sort_keys=True).encode())
+    own_keys = {row['family_key'] for row in published}
+    kept_families = [row for row in carried_definitions['families'] if row.get('family_key') not in own_keys]
+    kept_registrations = [row for row in carried_definitions['registrations'] if row.get('family_key') not in own_keys]
     definitions = {'protocol': 'sdgo.unit-family', 'schema_version': 1, 'revision': content_revision, 'owner': config.owner,
-                   'families': published, 'registrations': registrations, 'affiliations': affiliations,
+                   'families': kept_families + published, 'registrations': kept_registrations + registrations,
+                   'affiliations': affiliations,
                    'skills': sorted(skill_records), 'deferred_entries': families['deferred_entries'],
                    'excluded_contexts': families['excluded_contexts']}
+    registrations = kept_registrations + registrations
     # Native form-graph controller requests: one graph owner per transform context that
     # has entry variants (core pair + entry roots as a family group). The trusted server
     # controller turns them into form-graphs.bin / unit-form-authority.bin after the rows
@@ -463,6 +490,7 @@ def build(config: Config) -> dict:
     dump_json(publication_root / 'form-graph-requests.json', {'schema': 'sdgo.gunion-roster-form-graphs/1', 'owner': config.owner,
                                                                'revision': content_revision, 'requests': graph_requests})
     counts = {'families': len(published), 'records': len(records), 'carried_records': len(carried),
+              'carried_families': len(kept_families), 'carried_overlay_resources': carried_overlay,
               'kinds': {str(kind): sum(1 for row in records if row[0] == kind) for kind in sorted({row[0] for row in records})},
               'catalog_bytes': len(catalog), 'overlay_entries': len(inventory['entries']), 'overlay_bytes': inventory['archive_bytes'],
               'program_bundle_bytes': len(bundle), 'skill_atlas': atlas_receipt, 'affiliations': len(affiliations),

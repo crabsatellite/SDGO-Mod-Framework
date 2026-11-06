@@ -16,6 +16,21 @@ from tools.gunion.publisher.families import ENTRY, LINKED, ONE_WAY, SELF, SINGLE
 from tools.gunion.publisher.resources import NATIVE_SUFFIX, UNSUPPORTED
 
 
+class OverlayCarryTests(unittest.TestCase):
+    def test_installed_overlay_entries_read_back_byte_identical(self):
+        from owner.native_archive import build_archive, read_archive
+        resources = {'mdrs/body.mod': bytes(range(256)) * 9, 'anrs/walk.ani': b'native animation',
+                     'txrs/skin.txr': bytes(i % 251 for i in range(5000))}
+        index, archive, _ = build_archive(resources, lambda _: True)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'resources.zpk'
+            path.write_bytes(archive)
+            self.assertEqual(resources, read_archive(index, path))
+            path.write_bytes(archive[:-1])
+            with self.assertRaises(ValueError):
+                read_archive(index, path)
+
+
 class FamilyShapeTests(unittest.TestCase):
     def test_single_reciprocal_and_one_way_contexts(self):
         self.assertEqual((SINGLE, [11102], []), self.shape([11102], 11102, {11102: 0}))

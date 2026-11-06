@@ -21,7 +21,6 @@ using Destroy=void(__fastcall*)(std::uint8_t*,void*);
 using WeaponTables=void(__thiscall*)(void*);
 // CUnit::CreateModel(this, record, &model): thiscall on the battle unit (it reads this+0xD4).
 using ModelCreate=void(__thiscall*)(void*,const std::uint8_t*,void**);
-using ModelDelete=void(__thiscall*)(void*,unsigned);
 
 struct Chain { std::uint32_t form=0;const std::uint8_t* record=nullptr;void* model=nullptr; };
 
@@ -143,45 +142,31 @@ void __fastcall OnSwap(std::uint8_t* unit,void* edx){
     }
 }
 
-// Before the original destructor frees the deck pair, put the deck-owned models back
-// into the live pair and release the chain model the deck does not know about.
-bool RestorePair(std::uint8_t* unit,Chain* chain){
+// The original destructor frees the live (current, alternate) models in its own order
+// (after the attack controller has detached weapon attachments from them) and skips
+// the deck entry whose model is live. While a chain model is live, the deck entry
+// still names the entry form's model instead, so the destructor would free the
+// pair form twice. Point that entry at the live pair form so the original code frees
+// exactly the live pair, chain model included, at its native place. The entry form's
+// detached model is intentionally left alive: nothing references it any more.
+enum class HandOver { not_needed, handed_over, refused };
+HandOver HandOverPair(std::uint8_t* unit,const Chain* chain){
     __try{
         auto* current=Read<std::uint8_t*>(unit,kCurrentModel);auto* alternate=Read<std::uint8_t*>(unit,kAlternateModel);
-        if(current!=chain->model&&alternate!=chain->model)return true; // The deck pair is already live (respawn restored it).
+        if(current!=chain->model&&alternate!=chain->model)return HandOver::not_needed; // Respawn restored the deck pair.
         const auto* begin=Read<const std::uint8_t*>(unit,kDeckBegin);
         const auto index=Read<std::int32_t>(unit,kDeckIndex);
-        if(!begin||index<0||index>15)return false;
-        // The deck entry is validated by content, not by a vector bound: its alternate
-        // record/model must be the live pair member the chain did not replace, and the
-        // chain's own form is never a deck form.
-        const auto* entry=begin+static_cast<std::size_t>(index)*kDeckEntryBytes;
-        const auto* deckRecord=Read<const std::uint8_t*>(entry,0);auto* deckModel=Read<std::uint8_t*>(entry,4);
-        const auto* deckAlternateRecord=Read<const std::uint8_t*>(entry,8);auto* deckAlternateModel=Read<std::uint8_t*>(entry,12);
-        if(!deckRecord||!deckModel||!deckAlternateRecord||!deckAlternateModel)return false;
-        const auto* currentRecord=Read<const std::uint8_t*>(unit,kCurrentRecord);const auto* alternateRecord=Read<const std::uint8_t*>(unit,kAlternateRecord);
-        const auto* survivingRecord=current==chain->model?alternateRecord:currentRecord;
-        auto* survivingModel=current==chain->model?alternate:current;
-        if(survivingRecord!=deckAlternateRecord||survivingModel!=deckAlternateModel||
-           deckModel==chain->model||deckAlternateModel==chain->model||Read<std::uint32_t>(deckRecord,0)==chain->form)return false;
-        // The surviving deck model is the one the chain did not replace.
-        const bool keepCurrent=(current==deckModel||current==deckAlternateModel);
-        auto* other=keepCurrent?current:alternate;
-        const bool otherIsBase=other==deckModel;
-        Write(unit,kCurrentModel,otherIsBase?deckAlternateModel:deckModel);Write(unit,kAlternateModel,other);
-        Write(unit,kCurrentRecord,otherIsBase?deckAlternateRecord:deckRecord);Write(unit,kAlternateRecord,otherIsBase?deckRecord:deckAlternateRecord);
-        Write<std::uint8_t>(unit,kTransform,otherIsBase?1:0);
-        Write(unit,8,Read<std::uint8_t*>(unit,kCurrentModel)); // Scene node follows the current model, as in the native swap.
-        return true;
-    }__except(EXCEPTION_EXECUTE_HANDLER){return false;}
-}
-
-void ReleaseModel(void* model){
-    __try{
-        auto** table=*reinterpret_cast<void***>(model);
-        reinterpret_cast<ModelDelete>(table[0])(model,1);
-        InterlockedIncrement64(&g_modelsReleased);
-    }__except(EXCEPTION_EXECUTE_HANDLER){}
+        if(!begin||index<0||index>15)return HandOver::refused;
+        // Validated by content, not by a vector bound: the entry's alternate model is the
+        // live pair form the chain did not replace, and its model is not live.
+        auto* entry=const_cast<std::uint8_t*>(begin)+static_cast<std::size_t>(index)*kDeckEntryBytes;
+        auto* deckModel=Read<std::uint8_t*>(entry,4);auto* deckAlternateModel=Read<std::uint8_t*>(entry,12);
+        auto* pairModel=current==chain->model?alternate:current;
+        if(!deckModel||deckAlternateModel!=pairModel||deckModel==current||deckModel==alternate||deckModel==chain->model)
+            return HandOver::refused;
+        Write(entry,4,pairModel);
+        return HandOver::handed_over;
+    }__except(EXCEPTION_EXECUTE_HANDLER){return HandOver::refused;}
 }
 
 void __fastcall OnDestroy(std::uint8_t* unit,void* edx){
@@ -190,21 +175,15 @@ void __fastcall OnDestroy(std::uint8_t* unit,void* edx){
     const auto found=g_chains->find(unit);
     if(found!=g_chains->end()){chain=found->second;g_chains->erase(found);known=true;}
     LeaveCriticalSection(&g_lock);
-    // The deck pair goes back into the live pair before the original destructor so it
-    // frees exactly the deck-owned models. The chain model is released only after the
-    // destructor returns: weapon/effect objects built from the alternate pair can still
-    // reference it while the unit tears them down.
-    bool release=false;
     if(known&&chain.model){
-        release=RestorePair(unit,&chain);
-        if(release)InterlockedIncrement64(&g_unitsRestored);
-        else g_api->Log(g_mod,SDGO_LOG_WARN,"unit form chain: deck pair could not be restored before destruction; chain model %p retained",chain.model);
+        const auto result=HandOverPair(unit,&chain);
+        if(result==HandOver::handed_over){
+            InterlockedIncrement64(&g_unitsRestored);InterlockedIncrement64(&g_modelsReleased);
+            g_api->Log(g_mod,SDGO_LOG_INFO,"unit form chain: live pair with chain model %p handed to the original destructor",chain.model);
+        }else if(result==HandOver::refused)
+            g_api->Log(g_mod,SDGO_LOG_WARN,"unit form chain: deck entry did not match the live pair; destructor left unchanged");
     }
     g_destroy(unit,edx);
-    if(release){
-        ReleaseModel(chain.model);
-        g_api->Log(g_mod,SDGO_LOG_INFO,"unit form chain: deck pair restored; chain model %p released after destruction",chain.model);
-    }
 }
 } // namespace
 

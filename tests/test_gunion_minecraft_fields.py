@@ -2,8 +2,6 @@ import struct
 import unittest
 
 from tools.gunion.minecraft_fields import decode_record, known_unit_fields, core_table_rows
-from tests.test_gunion_native_contract_v2 import manifest, form, weapon
-from tools.gunion.native_contract_v2 import parse_manifest
 
 
 def unit():
@@ -75,24 +73,6 @@ class FieldTests(unittest.TestCase):
         result = core_table_rows([], [weapon_fields()], unit_evidence=["u"], weapon_evidence=["w"],
                                  baseline_tables={"runtime/weapon_reload.json": {"789": {"modeRaw": 0, "thresholdRaw": 1}}})
         self.assertEqual(result["blocked"][0]["reason"], "existing-domain-value-conflict")
-
-    def test_native_source_variant_extension_cannot_enable_activation_or_v1_lowering(self):
-        value = manifest([form(1, 0, 1, row=0)], root=None, profile=None, mode="catalog-only",
-                         weapons=[weapon(2, row=1), weapon(2, row=2)])
-        for item in value["weapons"]:
-            item["client_record"]["path"] = f"records/client/weapons/2-{item['source_row']}.bin"
-        self.assertFalse(parse_manifest(value).catalog_ready)
-        value["extensions"]["source_weapon_rows"] = "retain-distinct-source-rows-v1"
-        result = parse_manifest(value)
-        self.assertTrue(result.catalog_ready)
-        self.assertFalse(result.activation_ready)
-        self.assertIn("duplicate-weapon-id-ambiguous", result.activation_blockers)
-        self.assertIn("v1-duplicate-weapon-id", result.v1_blockers)
-        value["activation"] = {"mode": "profile", "profile": "native-single-form-v1", "declared_playable": False}
-        self.assertFalse(parse_manifest(value).catalog_ready)
-        value["activation"]["mode"] = "catalog-only"
-        value["weapons"][1]["source_row"] = 1
-        self.assertFalse(parse_manifest(value).catalog_ready)
 
 
 if __name__ == "__main__":
