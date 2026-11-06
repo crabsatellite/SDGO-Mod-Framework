@@ -278,6 +278,14 @@ sdgo_add_mod(friend_unit_gift_server SERVER DESCRIPTION "optional authenticated 
              SOURCES mods/friend_unit_gift_server/friend_unit_gift_server.cpp
                      mods/friend_unit_gift_server/server_database.cpp
              LIBS ole32 oleaut32 bcrypt uuid)
+sdgo_add_mod(oc_custom_server SERVER DESCRIPTION "over-custom six-stat enhancement (World)"
+             SOURCES mods/oc_custom_server/oc_custom_server.cpp
+             LIBS ole32 oleaut32 uuid FILES oc_schema.sql oc_unit_rev.tsv)
+sdgo_add_mod(oc_custom_battle SERVER DESCRIPTION "over-custom six-stat enhancement (Battle)"
+             SOURCES mods/oc_custom_battle/oc_custom_battle.cpp)
+sdgo_add_mod(oc_custom_client DESCRIPTION "over-custom six-stat enhancement (client)"
+             SOURCES mods/oc_custom_client/oc_custom_client.cpp mods/oc_custom_client/native_ui.cpp
+             LIBS user32)
 
 
 # Private feature libraries; no room metadata or gameplay state enters the core.

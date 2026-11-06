@@ -97,6 +97,13 @@ const SdgoApi* g_api = nullptr;
 SdgoMod* g_mod = nullptr;
 Transport g_transport;
 Model g_model;
+// One extension request (another Mod riding the carrier) may be outstanding.
+// Its reply never touches the gift model.
+ClientExtensionCallbackFn g_extension_callback = nullptr;
+void* g_extension_user = nullptr;
+Command g_extension_command = Command::hello;
+RequestId g_extension_request_id{};
+bool g_extension_pending = false;
 NativeInventorySync g_inventory_sync;
 NativeReplyQueue g_native_replies;
 NativeUnitDetailQueue g_native_details;
@@ -1155,10 +1162,46 @@ bool BeginReceiptQuery() {
     return true;
 }
 
+void CompleteExtension(
+    std::int32_t status,
+    const std::uint8_t* payload,
+    std::uint32_t payload_bytes) {
+    if (!g_extension_pending) return;
+    const auto callback = g_extension_callback;
+    const auto user = g_extension_user;
+    const auto command = g_extension_command;
+    g_extension_pending = false;
+    g_extension_callback = nullptr;
+    g_extension_user = nullptr;
+    g_extension_request_id = {};
+    if (!callback) return;
+    __try {
+        callback(user, static_cast<std::uint16_t>(command), status,
+                 payload, payload_bytes);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
 void __cdecl OnTransport(
     const TransportEvent* event,
     void*) {
     if (!event) return;
+    if (IsExtensionCommand(event->command)) {
+        if (!g_extension_pending ||
+            event->command != g_extension_command ||
+            event->request_id != g_extension_request_id)
+            return;
+        if (event->kind == EventKind::reply && event->reply) {
+            CompleteExtension(
+                static_cast<std::int32_t>(event->reply->status),
+                event->reply->extension.data(),
+                event->reply->extension_bytes);
+        } else if (event->kind == EventKind::request_failed) {
+            CompleteExtension(
+                static_cast<std::int32_t>(event->status), nullptr, 0);
+        }
+        return;
+    }
     const auto session = CurrentSessionKey();
     if (event->kind == EventKind::reply && event->reply) {
         const bool matched = g_model.Receive(session, *event->reply);
@@ -3100,6 +3143,62 @@ static int GetSnapshot(
     }
     std::memcpy(output, &snapshot, sizeof(snapshot));
     return 1;
+}
+
+int ExtensionState() {
+    if (!g_game_thread_ready || GetCurrentThreadId() != g_ui_thread ||
+        !g_transport.Ready())
+        return 0;
+    return g_extension_pending || g_transport.HasOutstanding() ||
+                   g_model.pending()
+               ? 2
+               : 1;
+}
+
+extern "C" __declspec(dllexport)
+int __cdecl SdgoFriendUnitGiftClientExtensionStateV1() {
+    __try {
+        return ExtensionState();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+extern "C" __declspec(dllexport)
+int __cdecl SdgoFriendUnitGiftClientExtensionSendV1(
+    std::uint16_t command,
+    const std::uint8_t* payload,
+    std::uint32_t payload_bytes,
+    ClientExtensionCallbackFn callback,
+    void* user) {
+    __try {
+        const auto wrapped = static_cast<Command>(command);
+        if (!IsExtensionCommand(wrapped) || !callback ||
+            payload_bytes > kMaximumExtensionPayloadBytes ||
+            (payload_bytes && !payload) || ExtensionState() != 1)
+            return 0;
+        Request request;
+        request.command = wrapped;
+        request.request_id = NewRequestId();
+        request.extension_bytes = static_cast<std::uint16_t>(payload_bytes);
+        if (payload_bytes)
+            std::memcpy(request.extension.data(), payload, payload_bytes);
+        g_extension_pending = true;
+        g_extension_callback = callback;
+        g_extension_user = user;
+        g_extension_command = wrapped;
+        g_extension_request_id = request.request_id;
+        if (!g_transport.Send(request)) {
+            g_extension_pending = false;
+            g_extension_callback = nullptr;
+            g_extension_user = nullptr;
+            g_extension_request_id = {};
+            return 0;
+        }
+        return 1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
 }
 
 extern "C" __declspec(dllexport)
