@@ -89,9 +89,15 @@ ready/selection poses (see [developer notes](#gametest-checks-and-captures)), up
   links and duplicate paths are rejected, and installers or database scripts inside the archive never run.
 - A new unit ID that collides with a stock or other imported unit blocks confirmation; there is no blind binary
   renumbering.
-- Only single-form units and complete two-form links are supported: reciprocal links (`native-linked-forms-v1`) and
-  one-way links whose second form transforms back to nothing (`native-one-way-forms-v1`). Groups with a third or
-  fourth entry form stay deferred until the native form-graph runtime admits them.
+- Native behavior profiles: single form (`native-single-form-v1`), reciprocal two-form links
+  (`native-linked-forms-v1`), one-way links whose second form transforms back to nothing
+  (`native-one-way-forms-v1`), a record that transforms into itself (`native-self-transform-v1`), and entry forms
+  that transform into one form of an already published reciprocal pair (`native-entry-forms-v1`). An entry form is
+  its own inventory root; its first transform uses the original two-bank mechanism, and the following hops between
+  the pair's two forms need the form-graph runtime: the server Mod composes the third form into the inactive native
+  bank when the installed graph allows the edge, and the client Mod rebases its record/model pair before the native
+  swap. Without the installed graph authority the server keeps refusing the second hop, so the unit stays in the
+  pair's first form.
 - A missing skill blocks confirmation by default. For skill slots 1 and 2 the panel offers **移除缺失技能 … 后导入**
   (remove the missing skill and import): every form referencing it gets `0` on both client and server, the source
   RAR/BIN is kept, earlier preview approvals are invalidated and the skill's effect is gone. Other skills, weapons and

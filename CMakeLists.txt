@@ -99,6 +99,9 @@ sdgo_strict(sdgo_skill_identity)
 add_library(sdgo_unit_form_composition STATIC core/native_unit_form_composition.cpp)
 target_link_libraries(sdgo_unit_form_composition PUBLIC sdgo_api)
 sdgo_strict(sdgo_unit_form_composition)
+add_library(sdgo_native_unit_form_commit STATIC core/native_unit_form_commit.cpp)
+target_link_libraries(sdgo_native_unit_form_commit PUBLIC sdgo_api)
+sdgo_strict(sdgo_native_unit_form_commit)
 add_library(sdgo_unit_form_graph STATIC core/unit_form_graph.cpp)
 target_link_libraries(sdgo_unit_form_graph PUBLIC sdgo_api)
 sdgo_strict(sdgo_unit_form_graph)
@@ -223,12 +226,14 @@ sdgo_add_mod(unit_catalog DESCRIPTION "confirmed unit family content"
                      mods/unit_catalog/preview_shop.cpp mods/unit_catalog/preview_capsule.cpp
                      mods/unit_catalog/program_runtime.cpp
                      mods/unit_catalog/skill_atlas_runtime.cpp
+                     mods/unit_catalog/form_chain_runtime.cpp
                      support/native_resource_overlay/native_resource_overlay.cpp
                      support/native_resource_overlay/native_resource_overlay.def
              FILES symbols.fragment.ini LIBS sdgo_script_registration)
 sdgo_add_mod(unit_catalog_server SERVER DESCRIPTION "owned imported-unit runtime bindings"
              SOURCES mods/unit_catalog_server/server.cpp mods/unit_catalog_server/human_build_capture.cpp mods/unit_catalog_server/native_form_gate.cpp
-             FILES symbols.fragment.ini LIBS sdgo_skill_identity sdgo_human_unit_capture sdgo_unit_form_preflight)
+             FILES symbols.fragment.ini LIBS sdgo_skill_identity sdgo_human_unit_capture sdgo_unit_form_preflight
+                                             sdgo_unit_form_composition sdgo_native_unit_form_commit)
 
 sdgo_add_mod(shop_labels DESCRIPTION "shop rental and Unicode labels" SOURCES mods/shop_labels/shop_labels.cpp FILES display.example.ini)
 sdgo_add_mod(shop_localization DESCRIPTION "Chinese shop localization" SOURCES mods/shop_localization/shop_localization.cpp mods/shop_localization/shop_search.cpp FILES zh-CN.ini symbols.fragment.ini LIBS user32)
@@ -1686,10 +1691,7 @@ if(BUILD_TESTING)
     add_library(native_unit_form_gate_probe SHARED tests/native_unit_form_gate_probe.cpp)
     target_link_libraries(native_unit_form_gate_probe PRIVATE sdgo_api)
     sdgo_strict(native_unit_form_gate_probe)
-    # Unshipped controlled native prototype; regular server Mod stays read-only.
-    add_library(sdgo_native_unit_form_commit STATIC core/native_unit_form_commit.cpp)
-    target_link_libraries(sdgo_native_unit_form_commit PUBLIC sdgo_api)
-    sdgo_strict(sdgo_native_unit_form_commit)
+    # Test build of the server Mod with the same third-form composition as the shipped one.
     add_library(unit_catalog_server_form_test SHARED EXCLUDE_FROM_ALL mods/unit_catalog_server/server.cpp
         mods/unit_catalog_server/human_build_capture.cpp mods/unit_catalog_server/native_form_gate.cpp)
     target_compile_definitions(unit_catalog_server_form_test PRIVATE SDGO_TEST_NATIVE_FORM_REBIND=1)
