@@ -14,6 +14,10 @@
 #include "sdgo/sdgo_api.h"
 #include "sdgo/room_commands.h"
 #include "symbols.h"
+#include "runtime_state.h"
+#include "sdgo/mod_dependencies.h"
+
+struct ModDependency {std::string id,minimum,capability;int capabilityVersion=1;};
 
 struct SdgoMod
 {
@@ -27,6 +31,10 @@ struct SdgoMod
     std::wstring dllPath;
     std::vector<std::string> hosts;
     std::vector<std::string> required;
+    std::vector<ModDependency> requiredMods,optionalMods,conflicts;
+    std::vector<std::string> configurationFiles;
+    std::string configurationRevision;
+    bool eligible=false,attempted=false,declarationValid=true;
     sdgo::SymbolTable symbols;
     int api = 0;
     int order = 100;
@@ -44,6 +52,16 @@ namespace
     std::string g_hostKey;
     std::wstring g_root; // <game dir>\sdgo
     bool g_started = false;
+    std::wstring g_executable;
+    SRWLOCK g_runtimeLock=SRWLOCK_INIT;
+
+    void WriteRuntimeState() noexcept {
+        try {
+        std::vector<sdgo::runtime::ModState> states;
+        for(const auto* mod:g_mods)states.push_back({mod->id,mod->version,mod->configurationRevision,mod->configurationFiles,mod->enabled,mod->active});
+        sdgo::runtime::Write(g_root,g_executable,g_hostKey,states);
+        }catch(...){/* Status diagnostics must not interrupt a native process. */}
+    }
 
     std::string Narrow(const std::wstring& text)
     {
@@ -253,6 +271,20 @@ namespace
         return mod ? mod->directory.c_str() : L"";
     }
 
+    uint32_t Api_ConfigurationRevision(SdgoMod* mod,char* out,uint32_t size) {
+        if(!mod||!out||size<65)return 0;
+        const auto value=sdgo::runtime::ConfigurationRevision(mod->directory,mod->configurationFiles);
+        if(value.empty()){out[0]=0;return 0;}strncpy_s(out,size,value.c_str(),_TRUNCATE);return static_cast<uint32_t>(value.size());
+    }
+    int Api_ConfigurationApplied(SdgoMod* mod,const char* revision) {
+        if(!mod||!revision||strlen(revision)!=64)return 0;
+        auto current=sdgo::runtime::ConfigurationRevision(mod->directory,mod->configurationFiles);
+        if(current.empty()||current!=revision)return 0;
+        AcquireSRWLockExclusive(&g_runtimeLock);
+        if(!mod->active){ReleaseSRWLockExclusive(&g_runtimeLock);return 0;}
+        mod->configurationRevision.swap(current);WriteRuntimeState();ReleaseSRWLockExclusive(&g_runtimeLock);return 1;
+    }
+
     // ---- mod discovery and loading -----------------------------------------
 
     SdgoMod* ReadManifest(const std::wstring& directory, const std::wstring& folderName)
@@ -270,6 +302,28 @@ namespace
         mod->enabled = GetPrivateProfileIntW(L"mod", L"enabled", 1, mod->manifest.c_str()) != 0;
         mod->hosts = SplitList(IniString(mod->manifest, L"mod", L"hosts", L""));
         mod->required = SplitList(IniString(mod->manifest, L"mod", L"requires", L""));
+        mod->configurationFiles=sdgo::runtime::ConfigurationFiles(mod->manifest);
+        const auto enabledKey=IniString(mod->manifest,L"framework.dependencies",L"enabled_key",L"");
+        if(!enabledKey.empty()) {
+            const auto file=IniString(mod->manifest,L"framework.dependencies",L"enabled_file",L"mod.ini");
+            if(file!=L"mod.ini"&&file!=L"config.ini")mod->declarationValid=false;
+            else if(!GetPrivateProfileIntW(L"settings",enabledKey.c_str(),GetPrivateProfileIntW(L"framework.dependencies",L"enabled_default",1,mod->manifest.c_str()),(mod->directory+L"\\"+file).c_str()))mod->enabled=false;
+        }
+        const int dependencySchema=GetPrivateProfileIntW(L"framework.dependencies",L"schema",0,mod->manifest.c_str());
+        if(dependencySchema>1)mod->declarationValid=false;
+        const std::pair<const wchar_t*,std::vector<ModDependency>*> groups[]={{L"required",&mod->requiredMods},{L"optional",&mod->optionalMods},{L"conflicts",&mod->conflicts}};
+        if(dependencySchema==1)for(const auto& group:groups)for(const auto& id:SplitList(IniString(mod->manifest,L"framework.dependencies",group.first,L""))) {
+            const auto section=L"framework.dependency."+Widen(id.c_str());
+            const auto when=IniString(mod->manifest,section.c_str(),L"when_key",L"");
+            if(!when.empty()) {
+                const auto file=IniString(mod->manifest,section.c_str(),L"when_file",L"mod.ini");
+                if(file!=L"mod.ini"&&file!=L"config.ini"){mod->declarationValid=false;continue;}
+                const auto expected=IniString(mod->manifest,section.c_str(),L"when_value",L"");
+                const auto fallback=IniString(mod->manifest,section.c_str(),L"when_default",L"");
+                if(IniString(mod->directory+L"\\"+file,L"settings",when.c_str(),fallback.c_str())!=expected)continue;
+            }
+            group.second->push_back({id,Narrow(IniString(mod->manifest,section.c_str(),L"minimum",L"")),Narrow(IniString(mod->manifest,section.c_str(),L"capability",L"")),static_cast<int>(GetPrivateProfileIntW(section.c_str(),L"capability_version",1,mod->manifest.c_str()))});
+        }
         mod->dllPath = directory + L"\\" + IniString(mod->manifest, L"mod", L"dll", (folderName + L".dll").c_str());
 
         // sdgo.ini [mods] <id>=0 switches a mod off without touching its folder.
@@ -292,6 +346,7 @@ namespace
             sdgo::log::Writef(mod->id.c_str(), SDGO_LOG_INFO, "disabled by configuration");
             return false;
         }
+        if(!mod->declarationValid){sdgo::log::Writef(mod->id.c_str(),SDGO_LOG_ERROR,"unsupported runtime dependency declaration");return false;}
         if (mod->api < 1 || mod->api > SDGO_API_VERSION) {
             sdgo::log::Writef(mod->id.c_str(), SDGO_LOG_ERROR, "needs API %d, core provides %d", mod->api, SDGO_API_VERSION);
             return false;
@@ -343,8 +398,9 @@ namespace
 
     void LoadMod(SdgoMod* mod)
     {
-        if (!Eligible(mod))
+        if (!mod->eligible)
             return;
+        const auto before=sdgo::runtime::ConfigurationRevision(mod->directory,mod->configurationFiles);
         mod->module = LoadLibraryExW(mod->dllPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
         if (!mod->module) {
             sdgo::log::Writef(mod->id.c_str(), SDGO_LOG_ERROR, "LoadLibrary failed (%lu)", GetLastError());
@@ -365,7 +421,10 @@ namespace
             mod->module = nullptr;
             return;
         }
-        mod->active = true;
+        auto after=sdgo::runtime::ConfigurationRevision(mod->directory,mod->configurationFiles);
+        AcquireSRWLockExclusive(&g_runtimeLock);mod->active = true;
+        if(before==after)mod->configurationRevision.swap(after);
+        ReleaseSRWLockExclusive(&g_runtimeLock);
         sdgo::log::Writef(mod->id.c_str(), SDGO_LOG_INFO, "loaded %s %s", mod->name.c_str(), mod->version.c_str());
     }
 
@@ -399,20 +458,43 @@ namespace
         std::stable_sort(g_mods.begin(), g_mods.end(), [](const SdgoMod* a, const SdgoMod* b) {
             return a->order != b->order ? a->order < b->order : a->id < b->id;
         });
+        for(auto* mod:g_mods)mod->eligible=Eligible(mod);
         // The game's own code has not started yet, so the mods' hooks on it (HookCode) are
         // switched on together after the last mod has loaded; system export hooks stay
         // immediate, other threads may run that code. One by one they took about 70 ms each,
         // and GUpdate.exe gives the game 3 s to reach WinMain (it closes the "9YOU SDGO"
         // event the game opens there; without it the game exits silently).
         sdgo::hooks::BeginBatch();
-        for (SdgoMod* mod : g_mods)
-            LoadMod(mod);
+        auto find=[](const std::string& id)->SdgoMod* {for(auto* m:g_mods)if(m->id==id)return m;return nullptr;};
+        size_t remaining=g_mods.size();bool progress=true;
+        while(remaining&&progress) {
+            progress=false;
+            for(auto* mod:g_mods) {
+                if(mod->attempted)continue;
+                bool wait=false,blocked=!mod->eligible;
+                for(const auto& rule:mod->conflicts){const auto* peer=find(rule.id);if(peer&&peer->eligible){blocked=true;sdgo::log::Writef(mod->id.c_str(),SDGO_LOG_ERROR,"conflicts with %s",rule.id.c_str());}}
+                const std::pair<const std::vector<ModDependency>*,bool> groups[]={{&mod->requiredMods,true},{&mod->optionalMods,false}};
+                for(const auto& group:groups)for(const auto& rule:*group.first) {
+                    const auto* peer=find(rule.id);
+                    if(peer&&peer->eligible&&!peer->attempted){wait=true;continue;}
+                    if(!peer||!peer->active){if(group.second){blocked=true;sdgo::log::Writef(mod->id.c_str(),SDGO_LOG_ERROR,"required Mod %s is not active",rule.id.c_str());}continue;}
+                    const int capability=rule.capability.empty()?rule.capabilityVersion:GetPrivateProfileIntW(L"framework.capabilities",Widen(rule.capability.c_str()).c_str(),0,peer->manifest.c_str());
+                    if(!sdgo::dependency::Compatible(peer->version,rule.minimum)||capability!=rule.capabilityVersion){blocked=true;sdgo::log::Writef(mod->id.c_str(),SDGO_LOG_ERROR,"Mod %s has an incompatible version or capability",rule.id.c_str());}
+                }
+                if(wait&&!blocked)continue;
+                mod->attempted=true;--remaining;progress=true;if(!blocked)LoadMod(mod);
+            }
+        }
+        for(auto* mod:g_mods)if(!mod->attempted)sdgo::log::Writef(mod->id.c_str(),SDGO_LOG_ERROR,"cyclic runtime Mod dependencies");
         size_t enabled = 0;
         std::string error;
         if (sdgo::hooks::EndBatch(&enabled, error))
             sdgo::log::Writef("core", SDGO_LOG_INFO, "%u code hooks switched on", static_cast<unsigned>(enabled));
-        else
+        else {
             sdgo::log::Writef("core", SDGO_LOG_ERROR, "switching on the code hooks failed (%s)", error.c_str());
+            AcquireSRWLockExclusive(&g_runtimeLock);for(auto* mod:g_mods)mod->active=false;ReleaseSRWLockExclusive(&g_runtimeLock);
+        }
+        AcquireSRWLockExclusive(&g_runtimeLock);WriteRuntimeState();ReleaseSRWLockExclusive(&g_runtimeLock);
     }
 }
 
@@ -425,6 +507,7 @@ extern "C" __declspec(dllexport) int __cdecl SdgoCoreInit(const SdgoBoot* boot)
     g_host = static_cast<HMODULE>(boot->host_module);
     wchar_t exePath[MAX_PATH * 2] = {};
     GetModuleFileNameW(g_host, exePath, MAX_PATH * 2);
+    g_executable=exePath;
     std::wstring gameDir = exePath;
     gameDir = gameDir.substr(0, gameDir.find_last_of(L'\\'));
     g_root = gameDir + L"\\sdgo";
@@ -459,6 +542,8 @@ extern "C" __declspec(dllexport) int __cdecl SdgoCoreInit(const SdgoBoot* boot)
     g_api.SettingInt = Api_SettingInt;
     g_api.SettingString = Api_SettingString;
     g_api.ModDirectory = Api_ModDirectory;
+    g_api.ConfigurationRevision=Api_ConfigurationRevision;
+    g_api.ConfigurationApplied=Api_ConfigurationApplied;
     g_api.HookSystemExport = Api_HookSystemExport;
     g_api.HookSite = Api_HookSite;
     g_api.FindRoomCommand = sdgo::room_commands::Parse;

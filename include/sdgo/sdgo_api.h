@@ -111,6 +111,12 @@ typedef struct SdgoApi {
      * as a fallback for older cores. */
     int (*FindRoomCommand)(const char* title, uint32_t title_length, const char* name,
                            uint32_t flags, SdgoRoomCommand* out);
+    /* Optional API 1 extensions: check size before reading either pointer.
+     * Capture a revision before reading declared configuration inputs. After
+     * successful application, acknowledge that exact revision. An intervening
+     * file change is refused. The receipt contains hashes, never setting values. */
+    uint32_t (*ConfigurationRevision)(SdgoMod* mod, char* out, uint32_t out_size);
+    int (*ConfigurationApplied)(SdgoMod* mod, const char* revision);
 
     /* Windows' process-initial thread, captured by a statically loaded shim's
      * DLL_PROCESS_ATTACH (non-null lpvReserved). Zero for older/dynamically

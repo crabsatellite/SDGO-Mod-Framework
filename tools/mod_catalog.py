@@ -24,7 +24,13 @@ CATEGORIES = {
 CHANNELS = {"stable", "beta", "experimental"}
 ACTIVATIONS = {"automatic", "room-title", "manual"}
 ID = re.compile(r"[a-z][a-z0-9_-]*\Z")
-CONFIG_EXTENSIONS = {".ini", ".json", ".toml", ".yaml", ".yml", ".cfg", ".txt", ".tsv"}
+CONFIG_EXTENSIONS = {
+    ".ini", ".json", ".toml", ".yaml", ".yml", ".cfg", ".txt", ".tsv",
+    # Process-local data compiled from an owner's private reference is authored
+    # configuration too. It is preserved at the installation target and is not
+    # copied into a public framework stage unless separately declared as data.
+    ".bin",
+}
 
 
 def safe_file(name: str) -> str:
@@ -39,6 +45,21 @@ def safe_file(name: str) -> str:
 
 def list_value(text: str) -> list[str]:
     return [item.strip() for item in text.split(",") if item.strip()]
+
+
+def public_payload_files(mod: dict) -> list[str]:
+    """Files copied into a public framework package for one Mod.
+
+    config_files only declare target-side preservation. Owner-authored files
+    such as profile.bin enter a player package only through the owner's
+    explicit export flow, never through this generic release list.
+    """
+    return [
+        f"{mod['id']}.dll",
+        "mod.ini",
+        *mod["files"],
+        *mod.get("runtime_files", []),
+    ]
 
 
 def read_catalog(root: Path, *, check_build: bool = True) -> dict:
@@ -177,12 +198,16 @@ def validate_stage(root: Path, stage: Path, catalog: dict) -> None:
                 raise ValueError(f"Missing staged framework file: {target}/{name}")
     for mod in catalog["mods"]:
         folder = stage / mod["target"] / "sdgo/mods" / mod["id"]
-        for name in (f"{mod['id']}.dll", "mod.ini", *mod["files"], *mod["runtime_files"]):
+        for name in public_payload_files(mod):
             path = folder / name
             if not path.is_file():
                 raise ValueError(f"Missing staged mod payload: {mod['id']}/{name}")
             distribution.require_redistributable(f"{mod['id']}/{name}", path.read_bytes())
-            if name not in mod["runtime_files"] and not name.endswith(".dll") and path.read_bytes() != (root / "mods" / mod["id"] / name).read_bytes():
+            expected=(root / "mods" / mod["id"] / name).read_bytes()if name not in mod['runtime_files']and not name.endswith('.dll')else None
+            if name=='mod.ini':
+                from manager.configuration import render
+                expected=render(expected,json.loads((root/'mods'/mod['id']/'manager.json').read_text('utf-8-sig')))
+            if expected is not None and path.read_bytes()!=expected:
                 raise ValueError(f"Stale staged mod data: {mod['id']}/{name}")
         distribution.require_public(
             (folder / "mod.ini").read_bytes(),

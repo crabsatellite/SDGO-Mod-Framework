@@ -4,8 +4,8 @@ import os
 from pathlib import Path
 import uuid
 
-CLIENT_NAME='0_MOD管理（服主专用）.lnk'
-DESCRIPTION='服主与维护人员工具。普通玩家请使用游戏启动器，勿自行修改 Mod；客户端与服务器配置不匹配可能导致断线或崩溃。'
+CLIENT_NAME='0_更新与管理.lnk'
+DESCRIPTION='使用 Manager 更新完整客户端；共享 Mod 配置由服主维护。游戏仍使用原来的启动入口。'
 
 class GUID(c.Structure):
     _fields_=[('a',c.c_uint32),('b',c.c_uint16),('d',c.c_uint16),('tail',c.c_ubyte*8)]
