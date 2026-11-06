@@ -9,6 +9,7 @@ executables; supported builds are listed under [Installation](docs/setup.md#supp
 does not distribute the pack.
 
 [Installation](docs/setup.md) · [SDGO Mod Manager](docs/mod-manager.md) · [Latest release](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
+Dual-source client updates track framework programs and owner unit/configuration content separately, with one verified installation transaction.
 
 Server owners and maintainers install, configure and [update](docs/mod-manager.md#updates) features with
 **SDGO Mod Manager**; the **0_更新与管理** entry at the top of the client folder opens it. Players can update
