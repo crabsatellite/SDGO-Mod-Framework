@@ -1,4 +1,5 @@
-# Shared installer contract. Mod-relative config_files are preserved on updates;
+# Shared installer contract. Mod-relative config_files, including bounded
+# compiled owner configuration, are preserved on updates and uninstall;
 # the package's manifest/code and example files still update normally.
 function Get-ModConfigPaths([string]$sourceRoot) {
     $modsRoot = Join-Path $sourceRoot 'sdgo\mods'
@@ -17,7 +18,7 @@ function Get-ModConfigPaths([string]$sourceRoot) {
                 @($parts | Where-Object { $_ -in @('', '.', '..') -or $_.EndsWith(' ') -or $_.EndsWith('.') }).Count) {
                 throw "Unsafe config_files path in $manifest : $file"
             }
-            if ([IO.Path]::GetExtension($file).ToLowerInvariant() -notin @('.ini','.json','.toml','.yaml','.yml','.cfg','.txt','.tsv') -or
+            if ([IO.Path]::GetExtension($file).ToLowerInvariant() -notin @('.ini','.json','.toml','.yaml','.yml','.cfg','.txt','.tsv','.bin') -or
                 [IO.Path]::GetFileName($file) -ieq 'mod.ini') {
                 throw "Not a user config file in $manifest : $file"
             }
@@ -25,4 +26,23 @@ function Get-ModConfigPaths([string]$sourceRoot) {
         }
     }
     $paths
+}
+
+function Get-ModConfigBytes([string]$root) {
+    $saved = [ordered]@{}
+    foreach ($relative in @(Get-ModConfigPaths $root)) {
+        $path = Join-Path $root $relative
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            $saved[$relative] = [IO.File]::ReadAllBytes($path)
+        }
+    }
+    $saved
+}
+
+function Restore-ModConfigBytes([string]$root, [Collections.IDictionary]$saved) {
+    foreach ($relative in $saved.Keys) {
+        $path = Join-Path $root $relative
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+        [IO.File]::WriteAllBytes($path, [byte[]]$saved[$relative])
+    }
 }

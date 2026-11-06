@@ -19,6 +19,7 @@ const ICONS = {
   rewards: 'M8 3h8l-1 6H9z M12 9v3 M7 16a5 5 0 1 0 10 0 5 5 0 0 0-10 0z M12 14v4',
   frp: 'M12 3v4 M5 21l3-6h8l3 6 M8 15V9h8v6 M3 9h3 M18 9h3 M10 12h4',
   ai_catalog: 'M7 7h10v10H7z M10 3v4 M14 3v4 M10 17v4 M14 17v4 M3 10h4 M3 14h4 M17 10h4 M17 14h4 M10 10h4v4h-4z',
+  mission_behavior: 'M4 5h7v6H4z M13 5h7v6h-7z M4 13h7v6H4z M13 13h7v6h-7z M7.5 8h.01 M16.5 8h.01 M7.5 16h.01 M16.5 16h.01',
   developer: 'M8 7l-5 5 5 5 M16 7l5 5-5 5 M14 4l-4 16',
   exit: 'M12 3v8 M6.3 6.3a8 8 0 1 0 11.4 0',
   add: 'M12 5v14 M5 12h14',

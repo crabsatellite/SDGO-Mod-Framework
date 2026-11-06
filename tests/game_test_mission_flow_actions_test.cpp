@@ -1424,11 +1424,14 @@ uint8_t* AllocateGuardedReply(
 
 bool EnterMissionLobby(
     MissionFlowActions& actions,
-    uint16_t mode)
+    uint16_t mode,
+    uint32_t missionId = 0)
 {
     if (actions.EnsureRoom(
             mode,
-            "mission-ai") !=
+            "mission-ai",
+            true,
+            missionId) !=
         MissionFlowActions::
             kEnteringMissionChannel)
         return false;
@@ -1447,21 +1450,27 @@ bool EnterMissionLobby(
 
 bool OpenCreateDialog(
     MissionFlowActions& actions,
-    uint16_t mode)
+    uint16_t mode,
+    uint32_t missionId = 0)
 {
     if (!EnterMissionLobby(
             actions,
-            mode))
+            mode,
+            missionId))
         return false;
     if (actions.EnsureRoom(
             mode,
-            "mission-ai") !=
+            "mission-ai",
+            true,
+            missionId) !=
         MissionFlowActions::
             kSelectingMultiplayer)
         return false;
     return actions.EnsureRoom(
                mode,
-               "mission-ai") ==
+               "mission-ai",
+               true,
+               missionId) ==
            MissionFlowActions::
                kOpeningCreateDialog;
 }
@@ -1530,6 +1539,15 @@ void TestBoundaryAndTopEntry(
                 MissionFlowActions::
                     kInvalidTitle,
         "room title validation fails before any native callback");
+    Check(
+        actions.EnsureRoom(
+            5,
+            "mission-ai",
+            true,
+            0x00400000) ==
+            MissionFlowActions::
+                kInvalidMode,
+        "an exact mission id from another native mission mode is rejected before callbacks");
 
     if (g_choiceDetour)
         g_choiceDetour(
@@ -2184,6 +2202,47 @@ void TestMode8AndMissionWrap(
     g_descriptorIds[1] = 0x00300000;
 }
 
+void TestExactMissionSelection(
+    MissionFlowActions& actions)
+{
+    ResetFixture(actions, 0);
+    g_descriptorIds[0] = 88010;
+    g_descriptorIds[1] = 88006;
+    Check(
+        OpenCreateDialog(
+            actions,
+            5,
+            88006),
+        "exact mission fixture reached the original create dialog");
+    Check(
+        actions.EnsureRoom(
+            5,
+            "mission-ai",
+            true,
+            88006) ==
+            MissionFlowActions::
+                kCyclingMission,
+        "same-mode descriptor is skipped when its exact GameModeID does not match");
+    ApplyPendingDescriptor();
+    Check(
+        actions.EnsureRoom(
+            5,
+            "mission-ai",
+            true,
+            88006) ==
+            MissionFlowActions::
+                kSettingRoomTitle,
+        "the requested exact GameModeID is selected through the native MapRight callback");
+    const auto selected = actions.PollSnapshot();
+    Check(
+        selected.requested_mission_id == 88006 &&
+            selected.selected_mission_id == 88006,
+        "the adapter publishes both sealed and actual exact mission identities");
+
+    g_descriptorIds[0] = 0x00400000;
+    g_descriptorIds[1] = 0x00300000;
+}
+
 void TestFailClosedBoundaries(
     MissionFlowActions& actions)
 {
@@ -2621,6 +2680,7 @@ int main()
     TestSharedNativeStartReceipt(actions);
     TestStartRejectAndLatchedSend(actions);
     TestMode8AndMissionWrap(actions);
+    TestExactMissionSelection(actions);
     TestFailClosedBoundaries(actions);
 
     DestroyControls();
