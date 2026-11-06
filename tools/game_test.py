@@ -1633,6 +1633,15 @@ def parse_mode_sequence(value: str) -> tuple[int, ...]:
     return modes
 
 
+def validate_oc_allocate(value: str | None) -> str | None:
+    """OC acceptance input: '<stat>:<points>' with stat 0..5 and 1..20 normal points."""
+    if value is None:
+        return None
+    if type(value) is not str or not re.fullmatch(r'[0-5]:(?:[1-9]|1[0-9]|20)', value):
+        raise GameTestError("oc_allocate must be '<stat 0-5>:<points 1-20>'")
+    return value
+
+
 def validate_play_unit_uid(value: int | None) -> int | None:
     if value is None:
         return None
@@ -1687,9 +1696,15 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                          shop_catalog: bool = False, friends_only: bool = False, room_titles_only: bool = False,
                          room_style_preview: str | None = None,
                          same_room_rematch: bool = False, shop_visual_only: bool = False,
-                         page_group: str | None = None, mission_respawns: str | None = None) -> tuple[str, ...]:
+                         page_group: str | None = None, mission_respawns: str | None = None,
+                         oc_allocate: str | None = None) -> tuple[str, ...]:
     if mission_respawns is not None and (mission_respawns not in ('player','infinite') or mission_mode is None):
         raise GameTestError('mission_respawns requires a native mission and player or infinite policy')
+    oc_allocate = validate_oc_allocate(oc_allocate)
+    if oc_allocate is not None and (play_unit_uid is None or mission_mode is not None or any((
+            bootstrap_only, battleship_only, gift_requests_only, deck_only, pages_only, friends_only,
+            room_titles_only, collection_draw, same_room_rematch, room_style_preview is not None))):
+        raise GameTestError('oc_allocate requires an ordinary PvP battle with an existing owned play unit')
     if page_group is not None and (page_group != 'hangar' or not pages_only or shop_catalog or collection_draw):
         raise GameTestError('page_group=hangar requires read-only pages without shop or collection scope')
     mission_mode = validate_mission_mode(mission_mode)
@@ -1725,6 +1740,11 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         selection=('setup.active_unit',) if play_unit_uid is not None else ()
         return FLOW_CASES[:3]+selection+tuple('room_titles.'+x for x in ('pvp.create','pvp.rename','pvp.leave','grid.create','grid.rename','grid.leave','mission.create','mission.rename','mission.leave','team.create','team.native_view','team.leave','start.create','start.rename','start'))
     selection = ('setup.active_unit',) if play_unit_uid is not None else ()
+    if oc_allocate is not None:
+        # Allocate first, then equip: the equip reply is the owned record every
+        # native copy (profile, room pilot) is built from, so it must already
+        # carry the new OC payload before the battle.
+        selection = ('oc.allocate',) + selection
     if mission_mode is not None:
         if mode_sequence != "1":
             raise GameTestError("--mission-mode cannot be combined with a PvP mode sequence")
@@ -1758,11 +1778,13 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
             cases.extend(f'{name}.{step}' for step in ('room','start','ai_spawn','waiting'))
             cases.extend(f'{name}.rematch.{step}' for step in MODE_FLOW_STEPS)
         return prefix+tuple(cases)
+    # The OC panel check runs last, after the settled return to the lobby.
+    panel = ('oc.panel',) if oc_allocate is not None else ()
     if len(modes) == 1:
-        return prefix + FLOW_CASES[3:]
+        return prefix + FLOW_CASES[3:] + panel
     return prefix + tuple(
         f"pvp.mode{mode}.{step}" for mode in modes for step in MODE_FLOW_STEPS
-    )
+    ) + panel
 
 
 def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
@@ -1817,6 +1839,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         shop_visual_only=plan.get('shop_visual_only', False),
         page_group=plan.get('page_group'),
         mission_respawns=plan.get('mission_respawns'),
+        oc_allocate=plan.get('oc_allocate'),
     )
 
 
@@ -2144,6 +2167,8 @@ def write_job(
             run["run"]["ai_layout"] = plan["ai_layout"]
     if 'play_unit_uid' in plan:
         run['run']['play_unit_uid'] = str(plan['play_unit_uid'])
+    if 'oc_allocate' in plan:
+        run['run']['oc_allocate'] = plan['oc_allocate']
     if 'unit_scenario_sha256' in plan:
         run['run']['unit_scenario_sha256'] = plan['unit_scenario_sha256']
     if 'page_group' in plan:
@@ -2409,6 +2434,12 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                     )
                 ):
                     raise ValueError('AI difficulty room command differs from the sealed native plan')
+            oc_allocate = run.get('oc_allocate')
+            if oc_allocate is not None:
+                try:
+                    validate_oc_allocate(oc_allocate)
+                except GameTestError as error:
+                    raise ValueError(str(error)) from error
             expected_cases = required_flow_cases(
                 mode_sequence, bootstrap_only, battleship_only,
                 gift_requests_only, deck_only, pages_only, collection_draw,
@@ -2417,6 +2448,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 shop_visual_only=bool(shop_plan and shop_plan.get('shop_visual_only')),
                 same_room_rematch=same_room_rematch,
                 page_group=page_group,
+                oc_allocate=oc_allocate,
             )
 
         unit_binding={}
@@ -2507,6 +2539,8 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 plan['ai_layout'] = ai_layout
         if play_unit_uid is not None:
             plan['play_unit_uid'] = play_unit_uid
+        if run.get('oc_allocate'):
+            plan['oc_allocate'] = validate_oc_allocate(run['oc_allocate'])
         plan.update(unit_binding)
         if shop_plan is not None:
             plan.update(shop_plan)
@@ -2831,6 +2865,7 @@ def prepare(
     disabled_mods: tuple[str, ...] = (),
     apsalus_roundtrip: bool = False,
     fps_gameplay_cap: int | None = None,
+    oc_allocate: str | None = None,
     server_session: dict | None = None,
     rebind_existing_account: bool = False,
     fps_cap: int | None = None,
@@ -2880,6 +2915,11 @@ def prepare(
     if apsalus_roundtrip and (mode_sequence != '1' or play_unit_uid is None or any((bootstrap_only,
             battleship_only,gift_requests_only,deck_only,pages_only,friends_only)) or mission_mode is not None):
         raise GameTestError('Apsalus roundtrip requires one complete ordinary battle and an existing owned unit UID')
+    oc_allocate = validate_oc_allocate(oc_allocate)
+    if oc_allocate is not None and (mode_sequence != '1' or play_unit_uid is None or fps_cap is not None or
+            any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,friends_only,
+                 room_titles_only,collection_draw,same_room_rematch)) or mission_mode is not None):
+        raise GameTestError('--oc-allocate requires one complete ordinary PvP battle and an existing owned unit UID')
     fps_only = fps_cap is not None
     if fps_only:
         if not quiet or sfx_only:
@@ -3087,6 +3127,8 @@ def prepare(
             ai_layout,
             mission_respawns,
         )
+        if oc_allocate is not None:
+            plan['oc_allocate'] = oc_allocate
         if server_session is not None:
             if (not isinstance(server_session,dict) or
                     not re.fullmatch(r'[0-9a-f]{4}' if random_loadout else r'gt[0-9a-f]{4}',str(server_session.get('nonce',''))) or
@@ -4609,6 +4651,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--rebind-existing-account',action='store_true',help='with --reuse-client and --account-profile, switch the stopped client to another already registered account')
     prepare_parser.add_argument('--include-mod',action='append',default=[],help='explicit staged client Mod to install before runtime hashes freeze')
     prepare_parser.add_argument('--fps-gameplay-cap',type=int,help='verify native 60 Hz gameplay and the selected render cap during a full PvP battle')
+    prepare_parser.add_argument('--oc-allocate',help="OC six-stat acceptance '<stat 0-5>:<points>': allocate normal OC points to the --play-unit-uid unit through the production client Mod before the PvP battle")
     prepare_parser.add_argument(
         "--fps-cap",
         type=int,
@@ -4709,6 +4752,7 @@ def main(argv: list[str] | None = None) -> int:
                 fps_mod_enabled=not args.fps_mod_disabled,
                 extra_mods=tuple(args.include_mod),
                 fps_gameplay_cap=args.fps_gameplay_cap,
+                oc_allocate=args.oc_allocate,
             )
         elif args.command == "run":
             result = run_prepared(args.run_dir, args.timeout, args.launch_timeout)
