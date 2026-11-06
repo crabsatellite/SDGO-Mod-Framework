@@ -48,7 +48,6 @@ constexpr std::size_t kActiveUnitDefinition = 0x9C4;
 constexpr std::size_t kParkedUnitDefinition = 0xAB0;
 constexpr std::size_t kAlternateBankFlag = 0xE34;
 constexpr std::size_t kTransformPeerId = 0x13C;
-constexpr std::size_t kTransformKind = 0x272;
 
 constexpr std::size_t kSelectedSlot = 0x240;
 constexpr std::size_t kSelectedWeapon = 0x248;
@@ -322,10 +321,8 @@ inline bool ReadOnce(std::uint8_t* unit, Capabilities& out, bool otherForm=false
     std::uint8_t activeAlternate=0;
     if(!Read(unit,kAlternateBankFlag,activeAlternate)||activeAlternate>1)return false;
     if(otherForm) {
-        std::uint8_t transformKind=0;
         std::uint32_t peerId=0,parkedId=0;
-        if(!Read(activeDefinition,kTransformKind,transformKind)||!transformKind||
-           !Read(activeDefinition,kTransformPeerId,peerId)||!peerId||
+        if(!Read(activeDefinition,kTransformPeerId,peerId)||!peerId||
            !ReadPointer(unit,kParkedUnitDefinition,definition)||definition==activeDefinition||
            !Readable(definition,kWeaponIds+16)||!Read(definition,kUnitId,parkedId)||parkedId!=peerId)
             return false;
