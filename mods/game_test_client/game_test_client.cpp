@@ -40,6 +40,7 @@
 #include "battle_ai_behavior_probe.h"
 #include "native_death_probe.h"
 #include "native_player_combat_probe.h"
+#include "review_camera.h"
 #include "native_data_guard_probe.h"
 #include "native_record_lifecycle_probe.h"
 #include "sealed_room_title.h"
@@ -157,6 +158,9 @@ FpsTestActions fpsActions;
 bool verifyDirectNetwork = false;
 bool verifyRoutedNetwork = false;
 bool verifyQuietRuntime = false;
+bool reviewFootage = false;
+bool rosterClosedForReview = false;
+ReviewCamera reviewCamera;
 bool quietLoopback = false;
 QuietSockets quietSockets;
 QuietAudio quietAudio;
@@ -302,6 +306,7 @@ bool LoadPlan() {
     verifyRoutedNetwork=!wcscmp(networkPolicy,L"routed_loopback");
     verifyDirectNetwork = !wcscmp(networkPolicy,L"direct") || verifyRoutedNetwork;
     verifyQuietRuntime=GetPrivateProfileIntW(L"run",L"quiet",0,job.c_str())!=0;
+    reviewFootage=GetPrivateProfileIntW(L"run",L"review_footage",0,job.c_str())!=0;
     quietLoopback=verifyQuietRuntime && GetPrivateProfileIntW(L"run",L"quiet_loopback",0,job.c_str())==1;
     fpsOnly=sdgo_test::suiteId=="native-fps-limit";
     if(collectionPreviewOnly && fpsOnly)return false;
@@ -1037,11 +1042,19 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
     context->Assert(moved != 0, "at least one locally enabled AI moved horizontally across normal game ticks");
     context->Assert(snapshot.lua_error_observer_available, "Lua error observation is active for this real battle");
     context->Assert(snapshot.lua_error_count == 0, "the real battle ran without a Lua AI error");
+    if (reviewFootage && !rosterClosedForReview) {
+        // Review footage: the roster has been verified above; a second TAB press closes it so it does
+        // not cover the recording. Its later render-based combat check is skipped for such runs.
+        scoreboardInput.Hold(false); scoreboardInput.Hold(true); rosterClosedForReview = true;
+    }
     return SDGO_GAME_TEST_PASS;
 }
 int __cdecl Return(const SdgoGameTestContextV1* context) {
     SdgoPvpAiClientSnapshotV1 live{};
     if(Snapshot(live) && live.native_app_state==22) {
+        // Review footage: the closing TAB press was delivered on the frame the spawn case passed; release
+        // the key now so the native roster animates shut and stays out of the recording.
+        if (reviewFootage && rosterClosedForReview) scoreboardInput.Hold(false);
         if(!battleAiBehavior.Observe(context,live)) return SDGO_GAME_TEST_FAIL;
         if(!nativeDeathProbe.Observe(context)) return SDGO_GAME_TEST_FAIL;
         SdgoPvpAiClientStartStatusV1 nativeControl{};
@@ -1097,7 +1110,7 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
         battleAiBehavior.Finish(context);
         nativeDeathProbe.Finish(context);
         nativePlayerCombat.Finish(context,scoreboardInput);
-        context->Assert(scoreboardCombatSequence == activeBattleStartSequence && scoreboardCombatChanges > 0,
+        context->Assert(reviewFootage || (scoreboardCombatSequence == activeBattleStartSequence && scoreboardCombatChanges > 0),
             "the native TAB kill/assist/points renderer reflected actual AI combat-counter changes during this full battle");
         const auto combat=battleCombat.State();char evidence[256];
         sprintf_s(evidence,"native combat frames=%u targets=%u moved=%u hp_events=%u hp_total=%llu witness=%u:%d->%d",
@@ -2403,8 +2416,40 @@ int __cdecl SpawnMissionAi(const SdgoGameTestContextV1* context) {
 }
 int __cdecl ObserveMissionCombat(const SdgoGameTestContextV1* context) {
     SdgoMissionAiClientSnapshotV1 s{};
-    if(!MissionSnapshot(s) || !s.active)return SDGO_GAME_TEST_WAIT;
+    const bool missionSnapshotAvailable=MissionSnapshot(s);
+    const auto player=actions.OnboardingState();
+    const auto ended=rooms.BattleEndState();
+    const bool returnedToWaitRoom=player.native_app_state==18;
+    const bool nativeResultObserved=
+        ended.sequence>observedMissionEndBaseline;
+    if(returnedToWaitRoom || nativeResultObserved) {
+        nativePlayerCombat.Finish(context,scoreboardInput);
+        char terminal[448]{};
+        sprintf_s(terminal,
+            "native mission terminated before required combat gate elapsed=%llu app=%u pilot=%u snapshot=%u active=%u generation=%u/%u room=%u/%u records=%u spawned=%u lua=%u/%u exception=%u end_sequence=%u/%u end_opcode=%04X result=%u handler=%u",
+            static_cast<unsigned long long>(context->elapsed_ms),
+            player.native_app_state,player.profile_pilot_id,
+            missionSnapshotAvailable?1u:0u,s.active,
+            s.battle_generation,observedMissionGeneration,
+            s.room_object,observedMissionRoom,
+            s.ai_record_count,s.spawned_wingman_count,
+            s.lua_tick_count,s.lua_successful_tick_count,
+            s.native_exception_count,
+            ended.sequence,observedMissionEndBaseline,
+            ended.reply_opcode,ended.result_type,
+            ended.original_handler_completed);
+        context->Observe(terminal);
+        context->Assert(0,
+            "the genuine mission must remain in its released battle state until the required mapped-input and AI observation gate completes");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if(!missionSnapshotAvailable || !s.active)return SDGO_GAME_TEST_WAIT;
     if(s.room_mode!=missionMode || s.lua_pcall_error_count || s.native_exception_count){context->Assert(0,"whole native mission smoke observation remains error-free and same-mode");return SDGO_GAME_TEST_FAIL;}
+    if(!nativePlayerCombat.PollMission(
+            context,s,observedMissionGeneration,
+            observedMissionRoom,player.native_app_state,
+            player.profile_pilot_id,scoreboardInput))
+        return SDGO_GAME_TEST_FAIL;
     unsigned moved=0,targets=0;
     for(uint32_t i=0;i<s.ai_record_count && i<12;++i) {
         const auto& p=s.participants[i];if(!p.mapping_valid || !p.valid_registered_object)continue;
@@ -2413,6 +2458,7 @@ int __cdecl ObserveMissionCombat(const SdgoGameTestContextV1* context) {
     if(context->elapsed_ms<15000 || !moved || !targets)return SDGO_GAME_TEST_WAIT;
     char message[192];sprintf_s(message,"native mission bounded observation mode=%u generation=%u spawned=%u moved=%u targets=%u lua=%u tick=%u",
         s.room_mode,s.battle_generation,s.spawned_wingman_count,moved,targets,s.lua_pcall_error_count,s.lua_tick_count);context->Observe(message);
+    nativePlayerCombat.Finish(context,scoreboardInput);
     context->Assert(moved && targets && s.lua_successful_tick_count>0,"real mission wingmen move and acquire living native targets across ordinary updates with zero cumulative Lua error");
     context->Observe("bounded native mission smoke ends here; objective clear, natural results, active exit and a remote peer are not claimed");
     return SDGO_GAME_TEST_PASS;
@@ -3097,9 +3143,20 @@ void __fastcall Update(uint8_t* app, void*) {
                 "quiet native graphics effective postfx=%u/%u/%u/%u/%u aggregate=%u thread=%lu",
                 app[0xA7],app[0xA8],app[0xA9],app[0xAA],app[0xAB],renderer ? renderer[0x19C]:255,
                 GetCurrentThreadId());
-            if (!renderer || app[0xA7] || app[0xA8] || app[0xA9] || app[0xAA] || app[0xAB] || renderer[0x19C])
-                sdgo_test::Fail("native graphics did not apply the copied no-postprocessing profile");
+            if (!renderer || app[0xA7] || app[0xA8] || app[0xA9] || app[0xAA] || app[0xAB] || renderer[0x19C]) {
+                if (reviewFootage)
+                    sdgo_test::api->Log(sdgo_test::mod,SDGO_LOG_INFO,"review footage keeps the template's native post-processing profile");
+                else
+                    sdgo_test::Fail("native graphics did not apply the copied no-postprocessing profile");
+            }
         }
+    }
+    if (reviewCamera.Enabled()) {
+        SdgoPvpAiClientSnapshotV1 pvp{}; const bool havePvp=Snapshot(pvp);
+        SdgoMissionAiClientSnapshotV1 missionSnapshot{}; missionSnapshot.size=sizeof(missionSnapshot);
+        missionSnapshot.version=SDGO_MISSION_AI_CLIENT_OBSERVER_VERSION;
+        const bool haveMission=getMissionSnapshot && getMissionSnapshot(&missionSnapshot)!=0;
+        reviewCamera.Tick(state==22,havePvp ? &pvp:nullptr,haveMission ? &missionSnapshot:nullptr);
     }
     sdgo_test::Poll();
     if (!nativeRecordLifecycleIds.empty() && sdgo_test::finished && !sdgo_test::failures) {
@@ -3132,6 +3189,7 @@ SDGO_MOD_ENTRY {
     sdgo_test::nativeShutdownAfterSuccess=!nativeRecordLifecycleIds.empty();
     if (!nativeDeathProbe.Install(api,mod)) return 0;
     if (!nativePlayerCombat.Install(api,mod)) return 0;
+    reviewCamera.Install(api,mod);
     if (verifyQuietRuntime) {
         // DLLs have their own import tables. Observe every dialog in this
         // isolated test process so a Mod cannot leak a desktop prompt while
@@ -3212,7 +3270,7 @@ SDGO_MOD_ENTRY {
     api->HookCode(mod,"game.error_name",reinterpret_cast<void*>(&ObserveNativeErrorName),reinterpret_cast<void**>(&originalErrorName));
     getStartStatus = reinterpret_cast<SdgoPvpAiClientGetStartStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_START_STATUS_EXPORT));
     getScoreboardStatus = reinterpret_cast<SdgoPvpAiClientGetScoreboardStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_SCOREBOARD_STATUS_EXPORT));
-    if (!missionMode && !fpsOnly && !bootstrapOnly && !pagesOnly && !scoreboardInput.Install(api, mod)) return 0;
+    if (!fpsOnly && !bootstrapOnly && !pagesOnly && !scoreboardInput.Install(api, mod)) return 0;
     if (!getSnapshot) sdgo_test::Fail("production PvP AI observation export is unavailable");
     getLuaStatus = reinterpret_cast<SdgoPvpAiClientGetLuaStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_LUA_STATUS_EXPORT));
     if (!getLuaStatus) sdgo_test::Fail("production whole-battle Lua counter export is unavailable");

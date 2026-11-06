@@ -15,6 +15,7 @@ namespace
     int g_failures = 0;
     int g_setting = 1;
     int g_continuousSetting = 0;
+    int g_secondarySetting = 0;
     int g_weaponSlotSetting = -1;
     int g_weaponRequests = 0;
     bool g_consumeAmmo = true;
@@ -43,10 +44,12 @@ namespace
 
     int g_moveInputCalls = 0;
     int g_fireInputCalls = 0;
+    int g_lockInputCalls = 0;
     int g_moveDispatchCalls = 0;
     int g_attackDispatchCalls = 0;
     bool g_moveHeld = false;
     bool g_fireHeld = false;
+    bool g_lockHeld = false;
     void* g_lastMoveInput = nullptr;
     void* g_lastFireInput = nullptr;
     void* g_lastMoveContext = nullptr;
@@ -137,6 +140,15 @@ namespace
             g_heldDetour(input, nullptr, 9) != 0;
     }
 
+    void __fastcall LockInput(
+        uint8_t* unit, void*, void* input)
+    {
+        ++g_lockInputCalls;
+        CHECK(unit == g_unit);
+        g_lockHeld =
+            g_heldDetour(input, nullptr, 10) != 0;
+    }
+
     void __fastcall MoveDispatch(
         uint8_t* move, void*, void* context)
     {
@@ -177,6 +189,9 @@ namespace
                 key,
                 "BattlePlayerCombatContinuous") == 0)
             return g_continuousSetting;
+        if (std::strcmp(
+                key, "BattlePlayerSecondary") == 0)
+            return g_secondarySetting;
         if (std::strcmp(key, "BattlePlayerWeaponSlot") == 0)
             return g_weaponSlotSetting;
         return fallback;
@@ -203,6 +218,9 @@ namespace
         if (std::strcmp(
                 name, "test.apsalus_primary_input") == 0)
             return FunctionAddress(&FireInput);
+        if (std::strcmp(
+                name, "test.player_secondary_input") == 0)
+            return FunctionAddress(&LockInput);
         if (std::strcmp(name, "test.player_weapon_input") == 0)
             return FunctionAddress(&WeaponInput);
         return nullptr;
@@ -292,6 +310,18 @@ namespace
         return status;
     }
 
+    SdgoMissionAiClientSnapshotV1 MissionSnapshot()
+    {
+        SdgoMissionAiClientSnapshotV1 snapshot = {};
+        snapshot.size = sizeof(snapshot);
+        snapshot.version =
+            SDGO_MISSION_AI_CLIENT_OBSERVER_VERSION;
+        snapshot.active = 1;
+        snapshot.battle_generation = 73;
+        snapshot.room_object = 0x123400;
+        return snapshot;
+    }
+
     void ResetNativeWorld()
     {
         std::memset(g_manager, 0, sizeof(g_manager));
@@ -328,10 +358,12 @@ namespace
         Put(g_node, 0x90, 0.0f);
         g_moveInputCalls = 0;
         g_fireInputCalls = 0;
+        g_lockInputCalls = 0;
         g_moveDispatchCalls = 0;
         g_attackDispatchCalls = 0;
         g_moveHeld = false;
         g_fireHeld = false;
+        g_lockHeld = false;
         g_lastMoveInput = nullptr;
         g_lastFireInput = nullptr;
         g_lastMoveContext = nullptr;
@@ -386,6 +418,7 @@ namespace
         ResetNativeWorld();
         RangedProfile();
         g_setting = g_continuousSetting = 1;
+        g_secondarySetting = 0;
         g_weaponSlotSetting = 2;
         auto api = Api();
         ScoreboardActions input;
@@ -499,6 +532,7 @@ namespace
         SdgoApi api = Api();
         g_setting = 0;
         g_continuousSetting = 0;
+        g_secondarySetting = 0;
         g_symbolCalls = 0;
         g_missingSymbol = nullptr;
         NativePlayerCombatProbe disabled;
@@ -517,6 +551,12 @@ namespace
         CHECK(g_symbolCalls == 0);
 
         g_continuousSetting = 0;
+        g_secondarySetting = 2;
+        NativePlayerCombatProbe invalidSecondary;
+        CHECK(!invalidSecondary.Install(&api, nullptr));
+        CHECK(g_symbolCalls == 0);
+
+        g_secondarySetting = 0;
         g_missingSymbol =
             "test.apsalus_primary_input";
         NativePlayerCombatProbe missing;
@@ -531,6 +571,7 @@ namespace
         SdgoApi api = Api();
         g_setting = 1;
         g_continuousSetting = 0;
+        g_secondarySetting = 0;
         g_symbolCalls = 0;
 
         ScoreboardActions input;
@@ -776,12 +817,162 @@ namespace
                     std::string::npos;
         CHECK(continuousObserved);
     }
+
+    void MissionLeaseTests()
+    {
+        ResetNativeWorld();
+        SdgoApi api = Api();
+        g_setting = 1;
+        g_continuousSetting = 1;
+        g_secondarySetting = 1;
+        g_weaponSlotSetting = -1;
+        g_symbolCalls = 0;
+
+        ScoreboardActions input;
+        CHECK(input.Install(&api, nullptr));
+        CHECK(
+            g_heldDetour(
+                g_nativeInput, nullptr, 31) == 0);
+        CHECK(input.NativeInput() == g_nativeInput);
+
+        NativePlayerCombatProbe probe;
+        CHECK(probe.Install(&api, nullptr));
+        CHECK(g_symbolCalls == 6);
+
+        auto mission = MissionSnapshot();
+        const auto originalMission = mission;
+        auto context = Context(5000);
+        const auto noNativeCalls =
+            [&](uint32_t expectedGeneration,
+                uint32_t expectedRoom,
+                uint32_t appState,
+                uint32_t pilotId) {
+                const int moveBefore =
+                    g_moveInputCalls;
+                const int fireBefore =
+                    g_fireInputCalls;
+                const int lockBefore =
+                    g_lockInputCalls;
+                CHECK(probe.PollMission(
+                    &context, mission,
+                    expectedGeneration,
+                    expectedRoom,
+                    appState, pilotId, input));
+                CHECK(
+                    g_moveInputCalls == moveBefore &&
+                    g_fireInputCalls == fireBefore &&
+                    g_lockInputCalls == lockBefore);
+                CHECK(
+                    g_heldDetour(
+                        g_nativeInput,
+                        nullptr, 0) == 0 &&
+                    g_heldDetour(
+                        g_nativeInput,
+                        nullptr, 9) == 0 &&
+                    g_heldDetour(
+                        g_nativeInput,
+                        nullptr, 10) == 0);
+            };
+
+        mission.active = 0;
+        noNativeCalls(
+            originalMission.battle_generation,
+            originalMission.room_object,
+            22, kPilotId);
+        mission = originalMission;
+        noNativeCalls(
+            mission.battle_generation,
+            mission.room_object,
+            18, kPilotId);
+        noNativeCalls(
+            mission.battle_generation + 1,
+            mission.room_object,
+            22, kPilotId);
+        noNativeCalls(
+            mission.battle_generation,
+            mission.room_object + 4,
+            22, kPilotId);
+        noNativeCalls(
+            mission.battle_generation,
+            mission.room_object,
+            22, 0);
+
+        CHECK(probe.PollMission(
+            &context, mission,
+            mission.battle_generation,
+            mission.room_object,
+            22, kPilotId, input));
+        CHECK(
+            g_moveInputCalls == 1 &&
+            g_fireInputCalls == 1 &&
+            g_lockInputCalls == 1);
+        CHECK(g_moveHeld && !g_fireHeld && g_lockHeld);
+        CHECK(
+            input.GameplayQueries(0) == 1 &&
+            input.GameplayQueries(9) == 0 &&
+            input.GameplayQueries(10) == 1);
+        CHECK(Get<float>(g_node, 0x88) == 2.0f);
+
+        context.elapsed_ms = 5180;
+        CHECK(probe.PollMission(
+            &context, mission,
+            mission.battle_generation,
+            mission.room_object,
+            22, kPilotId, input));
+        CHECK(
+            !g_moveHeld && g_fireHeld &&
+            g_lockHeld);
+        CHECK(
+            Get<void*>(g_attack, 4) ==
+            g_attack + 0x40);
+        CHECK(
+            std::memcmp(
+                &mission, &originalMission,
+                sizeof(mission)) == 0);
+
+        probe.Finish(&context, input);
+        CHECK(g_assertions.size() == 3);
+        if (g_assertions.size() == 3) {
+            CHECK(
+                g_assertions[0] == 1 &&
+                g_assertions[1] == 1 &&
+                g_assertions[2] == 1);
+        }
+        CHECK(
+            g_heldDetour(
+                g_nativeInput, nullptr, 0) == 0 &&
+            g_heldDetour(
+                g_nativeInput, nullptr, 9) == 0 &&
+            g_heldDetour(
+                g_nativeInput, nullptr, 10) == 0);
+
+        const int finishedMove =
+            g_moveInputCalls;
+        const int finishedFire =
+            g_fireInputCalls;
+        const int finishedLock =
+            g_lockInputCalls;
+        context.elapsed_ms = 9000;
+        CHECK(probe.PollMission(
+            &context, mission,
+            mission.battle_generation,
+            mission.room_object,
+            18, kPilotId, input));
+        CHECK(
+            g_moveInputCalls == finishedMove &&
+            g_fireInputCalls == finishedFire &&
+            g_lockInputCalls == finishedLock);
+
+        g_secondarySetting = 0;
+        g_continuousSetting = 0;
+    }
 }
 
 int main()
 {
     InstallTests();
     GatingAndAbiTests();
+    MissionLeaseTests();
     RangedWeaponAcknowledgementTests();
     std::cout << g_checks << " checks, "
               << g_failures << " failures\n";

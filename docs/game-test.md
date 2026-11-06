@@ -171,6 +171,11 @@ The target must declare `registered` or `existing_account`, without registration
 retries. Both profiles are locked and preserved while the same client files are
 reused. Bind the server observer to the target account's actual pilot ID too.
 
+In a plain co-op mission, the opt-in `BattlePlayerCombat` probe also uses the mapped native
+movement, firing and lock inputs. It binds to the actual mission generation, room, authenticated
+pilot and released local player control. A native result or a return to the waiting room before
+the required observation completes fails the case immediately. It never writes gameplay state.
+
 For a gun-fire regression, enable `BattlePlayerCombat` in the copied test observer and set
 `BattlePlayerWeaponSlot` to an ordinary ranged slot (`0`–`2`). The probe submits the native
 weapon-change request, waits for the actual binding, and requires real ammunition consumption
@@ -497,9 +502,29 @@ Nothing records until a `record.on` file appears in that folder: its first line
 names the clip and an optional second line limits recording to clients whose
 executable path contains that text. Changing the file switches clips and
 deleting it stops recording. Each client copies its real backbuffer just before
-Present, up to 30 frames per second, and writes `<clip>_<pid>.raw` plus a
-timestamp index from a background thread; a busy disk drops frames instead of
-slowing the game. Convert a pair to a constant-rate video with
+Present, up to 60 frames per second (`SDGO_GAME_TEST_RECORD_FPS` lowers the
+bound), through a small ring of render targets that is read back two frames
+later, so the copy never waits for the frame being drawn. A background thread
+writes `<clip>_<pid>.raw` plus a timestamp index; a busy disk drops frames
+instead of slowing the game. Convert a pair to a constant-rate video with
 `python tools/game_test_recording.py convert <clip>_<pid>.idx --out clip.mp4 --fps 60`
-(`--size 1920:1080` rescales). Quiet clients stay muted, so the clips have no
-sound. Raw frames are large; delete them once converted.
+(`--size 1920:1080` rescales). When `SDGO_GAME_TEST_RECORD_FFMPEG` names an
+`ffmpeg` executable, the thread feeds that encoder directly instead and the clip
+lands as `<clip>_<pid>.mkv` (`SDGO_GAME_TEST_RECORD_ENCODER` replaces the default
+`-c:v libx264 -preset veryfast -crf 16 -pix_fmt yuv420p` output options); each
+frame carries its wall-clock time, so the clip stays true to real time at the
+game's own rate, and is re-encoded to a constant rate before editing. Quiet
+clients stay muted, so the clips have no sound. Raw frames are large; delete
+them once converted.
+
+Two options shape such footage. `prepare --review-footage` keeps the template's
+post-processing settings (bloom, heat haze, depth of field) and plays battles
+at 1920x1080 instead of the logic tests' no-postprocessing profile; the run
+stays hidden and silent, and the runner records the choice in the sealed task.
+The observer setting `BattleReviewCamera=1` (with `BattleReviewCameraSeconds`,
+default 6) points the native tracking camera at one AI unit at a time during a
+battle, so the recording follows the AI fighting rather than the idle test
+pilot. In such runs the native TAB roster is opened only for its spawn check and
+released afterwards, and the roster-render part of the return check is skipped.
+Both are review aids for the development lane: they assert nothing and are not
+part of any acceptance.
