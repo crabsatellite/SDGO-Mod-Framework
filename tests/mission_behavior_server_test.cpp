@@ -25,7 +25,9 @@ void __cdecl Continue(){++continued;}
 void __cdecl Rejected(){++rejected;}
 void Log(SdgoMod*,int,const char*,...){}
 std::uint32_t Setting(SdgoMod*,const char*,const char* fallback,char* out,std::uint32_t capacity){
-    const auto value=selected=="default"?std::string(fallback):selected;
+    // The manifest remains OC. GCO must be read from the same standalone
+    // config.ini that Manager writes, rather than from this legacy callback.
+    const auto value=std::string(fallback);
     if(value.size()+1>capacity)return 0;
     std::memcpy(out,value.c_str(),value.size()+1);return static_cast<std::uint32_t>(value.size());
 }
@@ -67,6 +69,11 @@ int main(int argc,char** argv){
     selected=(test=="gco"||test=="default")?test:"oc";
     const auto root=std::filesystem::current_path()/"mission-behavior-fixture"/test;
     std::filesystem::create_directories(root);directory=root.wstring();
+    std::filesystem::remove(root/"config.ini");
+    if(test!="default"){
+        std::ofstream config(root/"config.ini",std::ios::binary);
+        config<<"[settings]\r\nProfile="<<selected<<"\r\n";
+    }
     std::array<NpcOverride,2> entries{};
     for(std::size_t i=0;i<entries.size();++i){
         auto& e=entries[i];e.baseline={520001+static_cast<std::uint32_t>(i),88009,2,1,85063,
@@ -141,6 +148,6 @@ int main(int argc,char** argv){
         }
     }
     FreeLibrary(module);
-    if(ok){std::filesystem::remove(root/"profile.bin");std::filesystem::remove(root);std::puts("PASS: real server module, native row ABI and ready-site contract");}
+    if(ok){std::filesystem::remove(root/"profile.bin");std::filesystem::remove(root/"config.ini");std::filesystem::remove(root);std::puts("PASS: real server module, standalone profile configuration, native row ABI and ready-site contract");}
     return ok?0:1;
 }

@@ -3430,6 +3430,19 @@ SDGO_MOD_ENTRY {
         return 0;
     const bool namedProxyAllowed=fpsOnly ||
         (quietLoopback&&verifyDirectNetwork&&!verifyRoutedNetwork&&!missionMode);
+    if (verifyQuietRuntime && missionBehaviorProfile) {
+        // This sealed mission suite uses native edit setters, not IME input.
+        // Disable IMM only inside its test process before creating windows;
+        // a private-desktop text-services loader can otherwise contend with
+        // the graphics worker's first native driver load.
+        using DisableImeFn=BOOL(WINAPI*)(DWORD);
+        HMODULE imm=GetModuleHandleW(L"imm32.dll");
+        const auto disable=imm ? reinterpret_cast<DisableImeFn>(
+            GetProcAddress(imm,"ImmDisableIME")) : nullptr;
+        const BOOL disabled=disable ? disable(static_cast<DWORD>(-1)) : FALSE;
+        api->Log(mod,disabled ? SDGO_LOG_INFO : SDGO_LOG_WARN,
+            "sealed mission process IME isolation: %s",disabled ? "active" : "unavailable");
+    }
     if (verifyQuietRuntime && !quietWaitRoomMessages.Install(api,mod))return 0;
     if (verifyQuietRuntime && !quietGraphics.Install(api,mod,namedProxyAllowed))return 0;
     PublishQuietSocketReceipt();
