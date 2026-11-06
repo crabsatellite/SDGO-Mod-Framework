@@ -52,9 +52,19 @@ On PvP maps without native navigation nodes, pursuit searches the loaded terrain
 using the bot's actual collision sphere. Public spawn and relocation points provide exploration goals
 when no teammate has a current contact. Paths account for platforms, safe drops, solid obstacles and
 DeathZone volumes. A blocking destructible can be attacked through normal weapons; indestructible and
-destroyed-but-still-solid objects remain obstacles. Forced-movement pads retain native motor control.
-On complex maps an individual unit can still stall. Native control is preserved when a map device is
-triggered; navigation does not yet plan routes through teleport or propulsion devices.
+destroyed-but-still-solid objects remain obstacles.
+
+These routes can select propulsion devices loaded in the actual map. When the entrance is reachable
+and the authored trajectory has a suitable supported exit, a bot approaches the entrance and uses
+the original request and notification flow. Native movement owns the trip; the bot replans from its
+actual arrival position and continues combat afterward. Paths retain map-boundary and DeathZone
+checks. Mission scripts hiding or restoring geometry invalidate old routes and device candidates.
+Devices are selected for a useful route, so a bot need not use one in every battle.
+
+Enemy life is read from the native unit lifecycle, separately from the HP sample. A living,
+attackable opponent with a zero HP reading remains a target; actual death, knockdown and get-up
+protection still apply. Observation and attack resolve the same current registered object, so an
+older object with the same ID cannot retain a stale protection state for its replacement.
 
 | | Medium: skilled player | Hard: expert player |
 |---|---|---|
@@ -148,6 +158,10 @@ Turning the AI off returns control to the native AI within two seconds.
 
 With decision logging enabled, `Medium ordinary attack pacing observed` records the first held-back
 ordinary request per bot generation.
+
+The developer setting `TerrainRayAudit` defaults to `0`. Set it to `1` only to compare indexed
+terrain rays with the native traversal; the extra queries increase host work. `LogDecisions` does
+not enable this audit.
 
 ## Developer notes
 

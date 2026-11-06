@@ -23,6 +23,9 @@ struct SdgoMissionClientLifecycleV1 {
 using SdgoRegisterMissionServerV1 = int (__cdecl*)(const SdgoMissionServerLifecycleV1*);
 using SdgoRegisterMissionClientV1 = int (__cdecl*)(const SdgoMissionClientLifecycleV1*);
 
+#define SDGO_MATCH_AI_MISSION_TICK_EXPORT "SdgoMatchAiMissionTickV1"
+using SdgoMatchAiMissionTickV1Fn = int (__cdecl*)(uint8_t* mode);
+
 namespace sdgo {
 inline HMODULE MissionSibling(const SdgoApi* api, SdgoMod* mod, const wchar_t* name) {
     if (!api || !api->ModDirectory) return nullptr;

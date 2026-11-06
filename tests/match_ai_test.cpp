@@ -881,6 +881,110 @@ int main() {
     CHECK(static_cast<uint32_t>(g_createReplyDetails) == 0x0918);
     CHECK(ServicePacket(nullptr, nullptr, 0, 0, 0, 0x1234, nullptr) == 73);
     CHECK(g_createReplySequence == 2);
+    Bot& mapBot = g_botTable[0];
+    SCENARIO("forced-pad V2 retains the exact selected-pad payload through ACK and invalidates it on generation change");
+    CHECK(sizeof(SdgoPvpAiClientForcedPadBotStatusV2) == 76);
+    CHECK(sizeof(SdgoPvpAiClientForcedPadStatusV2) == 936);
+    ForcedPadState& padState = mapBot.forcedPad;
+    padState.generation = mapBot.generation;
+    padState.outstandingGeneration = mapBot.generation;
+    InterlockedExchange(&padState.outstanding, 1);
+    InterlockedIncrement(&padState.requestVersion);
+    padState.request = {};
+    padState.request.opcode =
+        battle_ai::native::kForceMoveRequestOpcode;
+    padState.request.routeId = 0;
+    padState.request.pilotId = mapBot.pilotId;
+    padState.request.speed = 37.5f;
+    padState.request.durationUpdates = 44.0f;
+    padState.request.direction = {0.25f, -0.5f, 1.0f};
+    padState.requestTick = 12345;
+    padState.padObjectId = 0x778899u;
+    padState.requestCount = 9;
+    padState.requestSequence = 9;
+    InterlockedIncrement(&padState.requestVersion);
+    padState.noticeCount = 8;
+    CHECK(ClearForcedPadOutstanding(
+        mapBot, ForcedPadClearReason::Notice));
+    SdgoPvpAiClientForcedPadStatusV2 padV2{
+        sizeof(padV2),
+        SDGO_PVP_AI_CLIENT_FORCED_PAD_STATUS_V2_VERSION};
+    CHECK(SdgoPvpAiClientGetForcedPadStatusV2(&padV2) == 1);
+    CHECK(padV2.bot_count != 0 &&
+          padV2.bots[0].pilot_id == mapBot.pilotId &&
+          padV2.bots[0].generation == mapBot.generation &&
+          padV2.bots[0].request_count == 9 &&
+          padV2.bots[0].notice_count == 8 &&
+          padV2.bots[0].outstanding == 0 &&
+          padV2.bots[0].payload_valid == 1 &&
+          padV2.bots[0].pad_object_valid == 1 &&
+          padV2.bots[0].pad_object_id == 0x778899u &&
+          padV2.bots[0].request_pilot_id == mapBot.pilotId &&
+          Near(padV2.bots[0].speed, 37.5f) &&
+          Near(padV2.bots[0].duration_updates, 44.0f) &&
+          Near(padV2.bots[0].direction_x, 0.25f) &&
+          Near(padV2.bots[0].direction_y, -0.5f) &&
+          Near(padV2.bots[0].direction_z, 1.0f));
+    SCENARIO("mission forced-pad V2 uses the same exact payload contract and keeps the mode-object gate");
+    CHECK(sizeof(SdgoMissionAiClientForcedPadBotStatusV2) == 76);
+    CHECK(sizeof(SdgoMissionAiClientForcedPadStatusV2) == 936);
+    g_missionPadBots.clear();
+    g_missionPadBots.push_back(mapBot);
+    g_missionPadMode = mode.data();
+    SdgoMissionAiClientForcedPadStatusV2 missionPadV2{
+        sizeof(missionPadV2),
+        SDGO_MISSION_AI_CLIENT_FORCED_PAD_STATUS_V2_VERSION};
+    CHECK(SdgoMissionAiClientGetForcedPadStatusV2(&missionPadV2) == 1);
+    CHECK(missionPadV2.mode_object ==
+              static_cast<uint32_t>(
+                  reinterpret_cast<uintptr_t>(mode.data())) &&
+          missionPadV2.bot_count == 1 &&
+          missionPadV2.bots[0].pilot_id == mapBot.pilotId &&
+          missionPadV2.bots[0].generation == mapBot.generation &&
+          missionPadV2.bots[0].request_count == 9 &&
+          missionPadV2.bots[0].notice_count == 8 &&
+          missionPadV2.bots[0].outstanding == 0 &&
+          missionPadV2.bots[0].payload_valid == 1 &&
+          missionPadV2.bots[0].pad_object_valid == 1 &&
+          missionPadV2.bots[0].pad_object_id == 0x778899u &&
+          missionPadV2.bots[0].request_pilot_id == mapBot.pilotId &&
+          Near(missionPadV2.bots[0].speed, 37.5f) &&
+          Near(missionPadV2.bots[0].duration_updates, 44.0f) &&
+          Near(missionPadV2.bots[0].direction_x, 0.25f) &&
+          Near(missionPadV2.bots[0].direction_y, -0.5f) &&
+          Near(missionPadV2.bots[0].direction_z, 1.0f));
+    ++g_missionPadBots[0].generation;
+    ResetForcedPadGeneration(g_missionPadBots[0]);
+    missionPadV2 = {
+        sizeof(missionPadV2),
+        SDGO_MISSION_AI_CLIENT_FORCED_PAD_STATUS_V2_VERSION};
+    CHECK(SdgoMissionAiClientGetForcedPadStatusV2(&missionPadV2) == 1 &&
+          missionPadV2.bots[0].payload_valid == 0 &&
+          missionPadV2.bots[0].pad_object_valid == 0);
+    CHECK(SdgoMissionAiClientGetForcedPadStatusV2(nullptr) == 0);
+    missionPadV2.size = sizeof(missionPadV2) - 1;
+    CHECK(SdgoMissionAiClientGetForcedPadStatusV2(&missionPadV2) == 0);
+    missionPadV2.size = sizeof(missionPadV2);
+    missionPadV2.version =
+        SDGO_MISSION_AI_CLIENT_FORCED_PAD_STATUS_V2_VERSION + 1;
+    CHECK(SdgoMissionAiClientGetForcedPadStatusV2(&missionPadV2) == 0);
+    g_missionPadBots.clear();
+    g_missionPadMode = nullptr;
+    ++mapBot.generation;
+    ResetForcedPadGeneration(mapBot);
+    padV2 = {
+        sizeof(padV2),
+        SDGO_PVP_AI_CLIENT_FORCED_PAD_STATUS_V2_VERSION};
+    CHECK(SdgoPvpAiClientGetForcedPadStatusV2(&padV2) == 1 &&
+          padV2.bots[0].payload_valid == 0 &&
+          padV2.bots[0].pad_object_valid == 0);
+    CHECK(SdgoPvpAiClientGetForcedPadStatusV2(nullptr) == 0);
+    padV2.size = sizeof(padV2) - 1;
+    CHECK(SdgoPvpAiClientGetForcedPadStatusV2(&padV2) == 0);
+    padV2.size = sizeof(padV2);
+    padV2.version =
+        SDGO_PVP_AI_CLIENT_FORCED_PAD_STATUS_V2_VERSION + 1;
+    CHECK(SdgoPvpAiClientGetForcedPadStatusV2(&padV2) == 0);
     SCENARIO("Lua observation survives missing battle objects and preserves the published room ABI");
     CHECK(sizeof(SdgoPvpAiClientSnapshotV1) == 1280);
     CHECK(sizeof(SdgoPvpAiClientLuaStatusV1) == 20);
