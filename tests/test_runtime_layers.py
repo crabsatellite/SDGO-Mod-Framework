@@ -132,11 +132,19 @@ class GitFrameworkTransport(unittest.TestCase):
                 subprocess.run(['git','init','--bare',str(remote)],capture_output=True,check=True)
                 git(source,'init');git(source,'remote','add','origin',str(remote))
                 self.assertNotEqual(git(source,'var','GIT_COMMITTER_IDENT').returncode,0)
-                raw,_,_=bundle(release='1.7.10');archive=root/'SDGO-ModFramework-1.7.10.zip';archive.write_bytes(raw)
+                git(source,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Source')
+                source_commit=git(source,'rev-parse','HEAD').stdout.decode().strip()
+                raw,_,_=bundle(release='1.7.10');archive=root/'SDGO-ModFramework-1.7.10.zip'
+                with zipfile.ZipFile(io.BytesIO(raw))as old,zipfile.ZipFile(archive,'w')as new:
+                    for name in old.namelist():
+                        data=old.read(name)
+                        if name=='release.json':
+                            manifest=json.loads(data);manifest['source_commit']=source_commit;data=storage.json_bytes(manifest)
+                        new.writestr(name,data)
                 feed,commit=publish(archive,source,push=True)
                 self.assertEqual(git(remote,'rev-parse','refs/heads/runtime/stable').stdout.decode().strip(),commit)
-                bot='github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>'
-                self.assertEqual(git(source,'log','-1','--format=%an <%ae>|%cn <%ce>',commit).stdout.decode().strip(),bot+'|'+bot)
+                author='Fixture <fixture@example.invalid>'
+                self.assertEqual(git(source,'log','-1','--format=%an <%ae>|%cn <%ce>',commit).stdout.decode().strip(),author+'|'+author)
                 self.assertNotEqual(git(source,'var','GIT_COMMITTER_IDENT').returncode,0)
                 self.assertEqual(publish(archive,source,push=True)[1],commit)
                 older,_,_=bundle(release='1.7.9');stale=root/'SDGO-ModFramework-1.7.9.zip';stale.write_bytes(older)

@@ -3,8 +3,6 @@ from pathlib import Path
 import argparse,hashlib,json,os,subprocess,sys,tempfile,zipfile
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
 from manager import storage,updates
-BOT='github-actions[bot]';BOT_EMAIL='41898282+github-actions[bot]@users.noreply.github.com'
-PUBLISHER={'GIT_AUTHOR_NAME':BOT,'GIT_AUTHOR_EMAIL':BOT_EMAIL,'GIT_COMMITTER_NAME':BOT,'GIT_COMMITTER_EMAIL':BOT_EMAIL}
 
 
 def publish(asset,repository=ROOT,remote='origin',push=False):
@@ -38,9 +36,14 @@ def publish(asset,repository=ROOT,remote='origin',push=False):
         oid=git('hash-object','-w','--stdin',input=data).decode().strip();git('update-index','--add','--cacheinfo','100644',oid,path)
     tree=git('write-tree').decode().strip();args=['commit-tree',tree]
     if parent:args+=['-p',parent]
-    # A maintainer keeps their configured identity; a runner without one commits as the Actions bot, for this call only.
+    # Keep maintainer authorship on hosted runners without rewriting Git config.
     known=all(run('var',name).returncode==0 for name in('GIT_AUTHOR_IDENT','GIT_COMMITTER_IDENT'))
-    commit=git(*args,input=('Publish Manager '+version+' verified runtime\n').encode(),extra=None if known else PUBLISHER).decode().strip()
+    identity=None
+    if not known:
+        author=git('show','-s','--format=%an%x00%ae',manifest['source_commit']).decode().strip().split('\0')
+        if len(author)!=2 or not all(author):raise ValueError('Release source has no maintainer identity')
+        identity={'GIT_AUTHOR_NAME':author[0],'GIT_AUTHOR_EMAIL':author[1],'GIT_COMMITTER_NAME':author[0],'GIT_COMMITTER_EMAIL':author[1]}
+    commit=git(*args,input=('Publish Manager '+version+' verified runtime\n').encode(),extra=identity).decode().strip()
     if push:
         git('push',remote,commit+':'+branch)
         if git('ls-remote',remote,branch).decode().split()[0]!=commit:raise ValueError('Published runtime readback differs')
