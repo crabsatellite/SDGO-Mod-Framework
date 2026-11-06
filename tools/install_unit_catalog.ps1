@@ -87,7 +87,7 @@ function Assert-ResourceOverlay($Copies, $OwnedPaths) {
     $count = [BitConverter]::ToUInt32($bytes, 16)
     $archiveSize = (Get-Item -LiteralPath $Copies[$base + 'resources.zpk'].source).Length
     if ($version -ne 1 -or $chunkSize -ne 512 -or $count -lt 1 -or $count -gt 100000 -or
-        $archiveSize -gt 512MB -or [uint64]$chunkCount * 520 -ne $archiveSize) { throw 'Invalid resource overlay archive layout' }
+        $archiveSize -gt 2048MB -or [uint64]$chunkCount * 520 -ne $archiveSize) { throw 'Invalid resource overlay archive layout' }
     $cursor = 24
     $entries = @{}
     for ($i = 0; $i -lt $count; $i++) {
