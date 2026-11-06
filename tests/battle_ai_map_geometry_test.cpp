@@ -158,6 +158,12 @@ int main() {
     Put(obstacle.data(),detail::kSceneAabb,Aabb{{-10,0,-1000},{10,300,1000}});
     Put(obstacleObb.data(),0,Aabb{{-10,0,900},{10,300,1000}});
     check(geometry.ClearBody({-200,0,0},{200,0,0}));
+    Put(obstacleObb.data(),0,Aabb{{-10,0,-1000},{10,300,1000}});
+    const Aabb mapBounds{{-1000,-1000000,-1000},{1000,1000000,1000}};
+    check(!geometry.ClearBody({-200,0,0},{200,0,0})&&
+          geometry.ClearForcedTravel({-200,0,0},{200,0,0},mapBounds));
+    check(!geometry.ClearForcedTravel({-200,0,0},{1200,0,0},mapBounds)&&
+          geometry.lastReject==10);
     Put(obstacle.data(),detail::kSceneAabb,Aabb{{-300,300,-200},{100,400,200}});
     Put(obstacleObb.data(),0,Aabb{{-300,300,-200},{100,400,200}});
     check(geometry.Step({-100,400,0},{-50,400,0},grounded)&&grounded.y==400);
@@ -179,8 +185,11 @@ int main() {
         previous=point;
     }
     check(leftPlatform&&Length(previous-Vec3{-100,0,0})<1);
+    haveObstacle=false;
     haveHazard=true;
     Put(hazardScene.data(),detail::kSceneAabb,Aabb{{150,-100,-100},{250,200,100}});
     check(!geometry.Step({-100,400,0},{300,400,0},grounded));
+    check(!geometry.ClearForcedTravel({-100,0,0},{300,0,0},mapBounds)&&
+          geometry.lastReject==5);
     std::printf("%d map geometry checks, %d failures\n",checks,errors);return errors?1:0;
 }

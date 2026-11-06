@@ -22,6 +22,9 @@
 #include "native_map_geometry.h"
 #include "native_terrain_ray.h"
 #include "native_terrain_support.h"
+#include "native_transport_catalog.h"
+#include "mission_wingman_scope.h"
+#include "../match_ai/forced_pad_observer.h"
 #include "map_path_search.h"
 #include "difficulty.h"
 #include "defence_math.h"
@@ -31,6 +34,8 @@
 #include "sdgo/room_titles_current.h"
 #include "sdgo/ai_catalog_provider.h"
 #include "sdgo/battle_ai_observer.h"
+#include "sdgo/mission_ai_client_observer.h"
+#include "sdgo/mission_ai_forced_pad_observer.h"
 
 namespace {
 static_assert(sizeof(SdgoBattleAiUnitSnapshotV1)==208);
@@ -63,7 +68,13 @@ struct Lua {
 } g_lua = {};
 using ThinkFn = bool(__thiscall*)(uint8_t*);
 using InitFn = void(__thiscall*)(uint8_t*, void*);
+using PhaseGeometryFn = void(__thiscall*)(uint8_t*, uint32_t);
 ThinkFn g_think = nullptr;
+PhaseGeometryFn g_phaseHide = nullptr, g_phaseUnhide = nullptr;
+std::atomic<uint64_t> g_phaseGeometryRevision{1};
+std::atomic<uint64_t> g_phaseHideCount{0},g_phaseUnhideCount{0};
+std::atomic<uint64_t> g_phaseEventSequence{0};
+std::atomic<uint32_t> g_phaseLastObject{0},g_phaseLastAction{0};
 using EffectActiveFn=bool(__thiscall*)(uint8_t*,uint8_t);
 EffectActiveFn g_effectActive=nullptr;
 void* g_aiBoostPauseReturn=nullptr;
@@ -148,6 +159,7 @@ using QueueStateFn=bool(__thiscall*)(uint8_t*,uint8_t*);
 QueueStateFn g_queueState=nullptr;
 uint8_t** g_document=nullptr;
 battle_ai::native::NavigationApi g_navigation={};
+battle_ai::native::TransportCatalog g_transportCatalog;
 battle_ai::native::TerrainRayIndex g_terrainRays;
 battle_ai::native::TerrainTriangleFn g_terrainTriangle=nullptr;
 battle_ai::native::TerrainHeightFn g_terrainHeight=nullptr;
@@ -155,7 +167,11 @@ battle_ai::native::TerrainNormalFn g_terrainNormal=nullptr;
 battle_ai::native::TerrainSupportSampler g_terrainSupport;
 battle_ai::native::MapSphereObbOverlapFn g_mapSphereObb=nullptr;
 battle_ai::native::MapSphereObbContactFn g_mapSphereObbContact=nullptr;
-struct RuntimeSettings { bool generic=false,enabled=true,aim=true,lead=true,logDecisions=false; int maxLeadMs=3000,difficulty=1,quickSwing=80,mediumAttackIntervalMs=600; } g_runtime;
+struct RuntimeSettings {
+    bool generic=true,enabled=true,aim=true,lead=true,logDecisions=false;
+    bool terrainRayAudit=false;
+    int maxLeadMs=3000,difficulty=1,quickSwing=80,mediumAttackIntervalMs=600;
+} g_runtime;
 struct DefencePlan {
     battle_ai::DefenceThreat threats[32];size_t count=0;
     battle_ai::DefenceMove movement;
@@ -184,6 +200,46 @@ struct Actor {
     std::vector<Vec3> path;
     battle_ai::MapPathSearch mapSearch;
     bool geometryOwned=false,geometryFinal=false,pathGeometry=false;
+    struct PlannedTransport {
+        battle_ai::MapPathSearch::Transport edge;
+        battle_ai::native::TransportVolume volume;
+        Vec3 forcedExit{};
+    };
+    std::vector<PlannedTransport> cachedTransports,searchTransports;
+    std::vector<battle_ai::native::TransportVolume> searchVolumes;
+    struct TransportBlocker {uint8_t* object=nullptr;uint8_t* scene=nullptr;uint64_t signature=0;};
+    std::vector<TransportBlocker> transportBlockers;
+    uint64_t transportRevision=0,transportGraphRevision=0,transportSearchRevision=0;
+    uint64_t transportDiagnosticRevision=0;
+    uint64_t phaseGeometryRevision=0;
+    uint64_t phaseInvalidations=0,phaseRouteRebuilds=0,pathGeneration=0;
+    bool phaseRebuildPending=false;
+    uint32_t transportGroundRejected=0,transportCorridorRejected=0;
+    ULONGLONG transportCheckedAt=0;
+    float transportRadius=0;
+    float transportRunStep=0,transportGravityField=0;
+    bool transportOrdinaryReady=false;
+    Vec3 transportLocalCenter{};
+    uint8_t* transportDefinition=nullptr;
+    uint8_t transportAlternate=0;
+    struct TransportRoute {
+        bool active=false,native=false;
+        bool landingGoalIssued=false;
+        uint32_t phase=0,id=0;
+        battle_ai::native::TransportVolume volume{};
+        battle_ai::native::TransportRequestLease request{};
+        Vec3 entry{},forcedExit{},exit{},activated{},arrived{};
+        uint32_t landingPredictedUpdates=0,landingObservedUpdates=0;
+        uint64_t landingObservedThinkSerial=0;
+        ULONGLONG waitingAt=0,landingAt=0,completedAt=0,avoidUntil=0;
+        uint8_t* avoidObject=nullptr;
+        bool leaseTraceValid=false,leaseTraceOverlap=false;
+        uint32_t leaseTraceRequest=0,leaseTraceNotice=0;
+        uint32_t leaseTraceRequestTick=0,leaseTraceSnapshotTick=0;
+        uint32_t leaseTracePadObject=0,leaseTraceSelectedObject=0;
+        uint32_t leaseTraceFlags=0;
+        uint64_t selected=0,activations=0,completed=0,routeAccepted=0,routeRejected=0,rejected=0,resumed=0;
+    } transport;
     int pathMoveType=2;
     Vec3 issuedGoal{};
     bool hasIssuedGoal=false;
@@ -222,7 +278,7 @@ struct Actor {
     uint64_t specialFinished=0;
     SpecialCompletionReceipt specialCompletion;
     uint64_t zeroCompletionCount=0;
-    uint64_t thinkSerial=0,policySerial=0;
+    uint64_t thinkSerial=0,policySerial=0,nativeThinkSerial=0;
     uint32_t observedTarget=0,observedFarTargets=0;
     ULONGLONG observedTargetAt=0;
     bool observedTargetVisible=false;
@@ -253,7 +309,7 @@ struct Actor {
 };
 std::unordered_map<uint8_t*,Actor> g_actors;
 void ClearStartup(uint8_t*,Actor&,bool);
-bool PlayerBotRulesMode();
+bool PlayerBotRulesMode(uint8_t* unit);
 struct Motion {
     uint8_t* unit=nullptr;
     uint64_t generation=0;
@@ -348,12 +404,28 @@ bool ObjectIsA(uint8_t* object,int kind) {
         return reinterpret_cast<IsA>(table[1])(object,kind);
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+bool CombatTargetAlive(uint8_t* object,int hp) {
+    if(!object)return false;
+    // CheckObejctAlive (0x5013A0) uses native lifecycle +EC4 for
+    // player/NPC kinds 8/10. A zero HP sample is not its death receipt.
+    if(ObjectIsA(object,8)||ObjectIsA(object,10)) {
+        uint32_t state=0;
+        return battle_ai::native::detail::Read(object,0xEC4,state)&&state!=0;
+    }
+    // Destructible scene objects retain their separate HP-based lifecycle.
+    return hp>0;
+}
+bool CombatTargetAlive(uint8_t* object) {
+    int32_t hp=0;
+    return object&&battle_ai::native::detail::Read(object,0x38,hp)&&CombatTargetAlive(object,hp);
+}
 bool Owned(uint8_t* unit) {
     __try {
-        // UnitManager uses this same virtual IsA(10) gate before it reads or
-        // removes NPC state. DeliverMessage accepts every object kind, so a
-        // successful id lookup alone does not make its receiver a CNPC.
-        return ObjectIsA(unit,10) && unit[0x2B65]==0 && unit[0x326C]!=0 &&
+        // UnitManager uses this virtual IsA(10) gate before it reads or
+        // removes NPC state. Document lookup alone also returns map objects.
+        if(!ObjectIsA(unit,10)||
+           !battle_ai::native::detail::Readable(unit,0x326D))return false;
+        return unit[0x2B65]==0 && unit[0x326C]!=0 &&
             *reinterpret_cast<uint32_t*>(unit+0x3238)>=3604001 &&
             *reinterpret_cast<uint32_t*>(unit+0x3238)<=3607000;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -564,7 +636,7 @@ bool ArmMeleeCompletion(uint8_t* unit,Actor& actor,const SpNotice& notice,uint64
         auto victimId=g_canonical(*g_document,notice.victimPilot);
         auto victim=FindObject(victimId);
         if(notice.damage!=0||!action||!result||!victimId||!victim||
-           *reinterpret_cast<int32_t*>(victim+0x38)<=0||
+           !CombatTargetAlive(victim)||
            *reinterpret_cast<uint32_t*>(result+0x10)!=notice.damage||
            *reinterpret_cast<uint32_t*>(result+0x14)!=victimId||
            *reinterpret_cast<uint32_t*>(victim+0x9D8)!=4||
@@ -576,7 +648,7 @@ bool ArmMeleeCompletion(uint8_t* unit,Actor& actor,const SpNotice& notice,uint64
 }
 bool AllowZeroDamageCompletion(uint8_t* fsm,uint8_t* owner,uint8_t* result) {
     if(GetCurrentThreadId()!=g_gameThread||!g_runtime.enabled||g_runtime.difficulty<1||
-       g_preparationFault||!PlayerBotRulesMode()) return false;
+       g_preparationFault||!PlayerBotRulesMode(owner)) return false;
     __try {
         if(!Owned(owner)||!fsm||!result||owner[0xEC8]!=0||*reinterpret_cast<uint8_t**>(owner+0x9CC)!=fsm||
            *reinterpret_cast<uint8_t**>(fsm+0x9BC)!=result||*reinterpret_cast<uint8_t**>(fsm+4)!=fsm+0xAC||
@@ -594,7 +666,7 @@ bool AllowZeroDamageCompletion(uint8_t* fsm,uint8_t* owner,uint8_t* result) {
            receipt.action!=action||
            receipt.caster!=caster||receipt.victim!=victimId||receipt.damage!=0) return false;
         auto victim=FindObject(victimId);
-        if(!victim||*reinterpret_cast<int32_t*>(victim+0x38)<=0||
+        if(!CombatTargetAlive(victim)||
            *reinterpret_cast<uint32_t*>(victim+0x9D8)!=4||
            *reinterpret_cast<uint32_t*>(victim+0xEB8)!=caster) return false;
         receipt.armed=false;++actor.zeroCompletionCount;return true;
@@ -649,15 +721,49 @@ bool FairSpecialResource(uint8_t* fsm,uint8_t* owner) {
             battle_ai::native::detail::Read(controller,0x2C0,restriction)&&restriction==0;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
-bool PlayerBotRulesMode() {
+uint8_t* CurrentRulesMode() {
     __try {
-        auto app=g_app?g_app():nullptr;if(!app) return false;
-        auto service=*reinterpret_cast<uint8_t**>(app+0x4A4);if(!service) return false;
-        auto mode=*reinterpret_cast<uint8_t**>(service+0xC);if(!mode) return false;
+        auto app=g_app?g_app():nullptr;if(!app) return nullptr;
+        auto service=*reinterpret_cast<uint8_t**>(app+0x4A4);if(!service) return nullptr;
+        return *reinterpret_cast<uint8_t**>(service+0xC);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return nullptr;}
+}
+bool PvpPlayerBotRulesMode() {
+    __try {
+        auto mode=CurrentRulesMode();if(!mode) return false;
         auto room=*reinterpret_cast<uint8_t**>(mode+8);if(!room) return false;
         auto kind=*reinterpret_cast<uint16_t*>(room+0x66);
         return kind!=5&&kind!=8&&kind!=10&&kind!=11&&kind!=12;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+}
+bool MissionWingmanRulesUnit(uint8_t* unit) {
+    __try {
+        if(!unit||!g_document||!*g_document)return false;
+        auto mode=CurrentRulesMode();if(!mode)return false;
+        auto room=*reinterpret_cast<uint8_t**>(mode+8);if(!room)return false;
+        const auto kind=*reinterpret_cast<uint16_t*>(room+0x66);
+        if(kind!=5&&kind!=8&&kind!=10)return false;
+        static SdgoMissionAiClientGetSnapshotV1Fn snapshot=nullptr;
+        if(!snapshot) {
+            const auto module=GetModuleHandleW(L"mission_ai.dll");
+            if(module)snapshot=reinterpret_cast<SdgoMissionAiClientGetSnapshotV1Fn>(
+                GetProcAddress(module,SDGO_MISSION_AI_CLIENT_SNAPSHOT_EXPORT));
+        }
+        if(!snapshot)return false;
+        SdgoMissionAiClientSnapshotV1 status{};status.size=sizeof(status);status.version=1;
+        if(!snapshot(&status))return false;
+        uint32_t object=0,pilot=0;
+        if(!battle_ai::native::detail::Read(unit,4,object)||
+           !battle_ai::native::detail::Read(unit,0x2B68,pilot))return false;
+        return battle_ai::mission::AdmitsWingman(
+            status,
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(mode)),
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(*g_document)),
+            kind,object,pilot);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+}
+bool PlayerBotRulesMode(uint8_t* unit) {
+    return PvpPlayerBotRulesMode()||MissionWingmanRulesUnit(unit);
 }
 void RestoreIntent(uint8_t* unit,Actor& a) {
     __try {
@@ -676,14 +782,40 @@ void RestoreIntent(uint8_t* unit,Actor& a) {
     a.suppressMelee=false;a.cancelMeleeTracking=false;a.path.clear();
     a.explorationOwned=false;
     a.geometryOwned=false;
+    a.transport.active=false;a.transport.native=false;a.transport.phase=0;
+    a.transport.request={};
     a.defenceMoveOwned=false;a.defence={};
     a.recoveryControlled=false;
+}
+bool TransportRouteProtected(const Actor::TransportRoute& trip,ULONGLONG now) {
+    if(!trip.active)return false;
+    if(trip.native||trip.phase==5||trip.request.committed)return true;
+    return trip.phase==1&&
+        ((trip.waitingAt&&now>=trip.waitingAt&&
+          now-trip.waitingAt<
+              battle_ai::native::TransportEntranceWaitMs(false))||
+         battle_ai::native::TransportRequestAdmissionOpen(
+             trip.request,now));
+}
+bool TransportMotorReserved(const Actor::TransportRoute& trip,ULONGLONG now) {
+    return trip.active&&!trip.native&&
+        (trip.phase==5||trip.request.committed||
+         (trip.phase==1&&
+          ((trip.waitingAt&&now>=trip.waitingAt&&
+            now-trip.waitingAt<
+                battle_ai::native::TransportEntranceWaitMs(false))||
+           battle_ai::native::TransportRequestAdmissionOpen(
+               trip.request,now))));
 }
 void AdvancePath(uint8_t* unit,Actor& a) {
     if(a.path.empty()) return;
     const Vec3 here=Position(unit);
     while(a.waypoint<a.path.size()&&battle_ai::Length(a.path[a.waypoint]-here)<(a.pathRanged||a.pathGeometry?25:100)) ++a.waypoint;
-    if(a.waypoint>=a.path.size()) a.path.clear();
+    if(a.waypoint>=a.path.size()) {
+        a.path.clear();
+        if(a.transport.active&&!a.transport.native&&a.transport.phase==1&&!a.transport.waitingAt)
+            a.transport.waitingAt=GetTickCount64();
+    }
 }
 bool MovementAvailable(uint8_t* unit,bool allowRanged) {
     auto fsm=*reinterpret_cast<uint8_t**>(unit+0x9CC);
@@ -695,6 +827,50 @@ bool MovementAvailable(uint8_t* unit,bool allowRanged) {
        (*reinterpret_cast<uint8_t**>(fsm+8)&&*reinterpret_cast<uint8_t**>(fsm+8)!=fsm+0x34)) return false;
     auto record=*reinterpret_cast<uint8_t**>(fsm+0x248);
     return record&&(record[0x8F]==1||fsm[0xB38]==1);
+}
+void SynchronizePhaseGeometry(uint8_t* unit,Actor& actor) {
+    const uint64_t revision=g_phaseGeometryRevision.load(std::memory_order_acquire);
+    if(actor.phaseGeometryRevision==revision)return;
+    const bool ownedRoute=!actor.path.empty()||actor.geometryOwned||actor.explorationOwned||
+        actor.defenceMoveOwned||actor.direct.owned||(actor.transport.active&&!actor.transport.native);
+    if(actor.phaseGeometryRevision) {
+        ++actor.phaseInvalidations;
+        if(ownedRoute)actor.phaseRebuildPending=true;
+    }
+    actor.phaseGeometryRevision=revision;
+    actor.path.clear();actor.waypoint=0;actor.geometryOwned=false;actor.geometryFinal=false;
+    actor.pathGeometry=false;actor.explorationOwned=false;actor.defenceMoveOwned=false;
+    actor.hasIssuedGoal=false;actor.direct={};
+    if(!actor.transport.native) {
+        actor.transport.active=false;actor.transport.phase=0;
+        actor.transport.request={};
+    }
+    actor.cachedTransports.clear();actor.searchTransports.clear();actor.searchVolumes.clear();
+    actor.transportBlockers.clear();actor.transportRevision=UINT64_MAX;
+    if(ownedRoute&&g_stop&&MovementAvailable(unit,actor.pathRanged))g_stop(unit);
+}
+void RecordRouteInstall(Actor& actor) {
+    ++actor.pathGeneration;
+    if(actor.phaseRebuildPending) {
+        ++actor.phaseRouteRebuilds;
+        actor.phaseRebuildPending=false;
+    }
+}
+void RecordPhaseGeometryEvent(uint32_t objectId,uint32_t action) {
+    if(action==1)g_phaseHideCount.fetch_add(1,std::memory_order_relaxed);
+    else if(action==2)g_phaseUnhideCount.fetch_add(1,std::memory_order_relaxed);
+    g_phaseLastObject.store(objectId,std::memory_order_relaxed);
+    g_phaseLastAction.store(action,std::memory_order_relaxed);
+    g_phaseEventSequence.fetch_add(1,std::memory_order_release);
+    g_phaseGeometryRevision.fetch_add(1,std::memory_order_release);
+}
+void __fastcall PhaseHide(uint8_t* mode,void*,uint32_t objectId) {
+    g_phaseHide(mode,objectId);
+    RecordPhaseGeometryEvent(objectId,1);
+}
+void __fastcall PhaseUnhide(uint8_t* mode,void*,uint32_t objectId) {
+    g_phaseUnhide(mode,objectId);
+    RecordPhaseGeometryEvent(objectId,2);
 }
 auto MotionSafetyFor(uint8_t* unit,Vec3 destination) {
     if(!g_document||!*g_document) return battle_ai::native::MotionSafety::Unavailable;
@@ -726,7 +902,8 @@ battle_ai::native::MapGeometry MapGeometryFor(uint8_t* unit) {
 }
 bool __fastcall IndexedTerrainRay(void* scene,void*,const Ray3* ray,float* distance) {
     const auto faults=g_terrainRays.stats.mismatches;
-    const bool hit=g_terrainRays.Query(scene,ray,distance,g_runtime.logDecisions);
+    const bool hit=g_terrainRays.Query(
+        scene,ray,distance,g_runtime.terrainRayAudit);
     if(g_terrainRays.stats.mismatches!=faults&&g_api&&g_api->Log)
         g_api->Log(g_mod,SDGO_LOG_ERROR,"terrain ray audit mismatch: native geometry retained for scene %p",scene);
     return hit;
@@ -736,27 +913,811 @@ bool MapGeometryStep(void* context,Vec3 from,Vec3 desired,Vec3& grounded) {
     __except(EXCEPTION_EXECUTE_HANDLER) {static_cast<battle_ai::native::MapGeometry*>(context)->lastReject=9;return false;}
 }
 bool ImmediateMotionClear(uint8_t* unit,Vec3 destination) {
-    if(!PlayerBotRulesMode())return true;
+    if(!PlayerBotRulesMode(unit))return true;
     __try {
         auto geometry=MapGeometryFor(unit);geometry.deferDestroyables=false;
         return geometry.Valid()&&geometry.ClearBody(Position(unit),destination);
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
+uint64_t TransportBlockSignature(uint8_t* object,uint8_t* scene) {
+    using battle_ai::native::detail::Read;
+    uint8_t removed=0,solid=0,sphereEnabled=0;int hp=0,obbs=0,spheres=0;uint32_t id=0;
+    if(!Read(object,4,id)||!Read(object,0x1C,removed)||!Read(object,0x38,hp)||
+       !Read(scene,0x114,solid)||!Read(scene,0x115,sphereEnabled)||
+       !Read(scene,0xD4,obbs)||!Read(scene,0xDC,spheres))return 0;
+    uint64_t value=uint64_t(id)+1;
+    for(uint32_t field:{uint32_t(removed),uint32_t(hp<=0),uint32_t(solid),uint32_t(sphereEnabled),uint32_t(obbs),uint32_t(spheres)})
+        value=(value^field)*1099511628211ull;
+    return value;
+}
+enum class TransportOrdinaryProfileState : uint8_t {
+    Forced,
+    Unsupported,
+    Ready
+};
+bool NativeTransportMoveForced(uint8_t* unit) {
+    uint8_t* movement=nullptr;
+    return battle_ai::native::detail::ReadPointer(
+               unit,0x9C8,movement)&&
+        battle_ai::native::detail::InState(movement,0x124);
+}
+bool NativeTransportJumpForced(uint8_t* unit) {
+    uint8_t* jump=nullptr;
+    return battle_ai::native::detail::ReadPointer(
+               unit,0x9D4,jump)&&
+        battle_ai::native::detail::InState(jump,0x98);
+}
+TransportOrdinaryProfileState ReadTransportOrdinaryProfile(
+    uint8_t* unit,
+    battle_ai::native::TransportOrdinaryMotionProfile& profile) {
+    using namespace battle_ai::native;
+    profile={};
+    uint8_t* movement=nullptr;uint8_t* jump=nullptr;
+    uint8_t* attack=nullptr;uint8_t* definition=nullptr;
+    uint8_t* context=nullptr;uint8_t* jumpOwner=nullptr;
+    uint8_t* jumpMovement=nullptr;uint8_t* jumpAttack=nullptr;
+    if(!detail::ReadPointer(unit,0x9C8,movement)||
+       !detail::ReadPointer(unit,0x9D4,jump)||
+       !detail::ReadPointer(unit,0x9CC,attack)||
+       !detail::ReadPointer(unit,0x9C4,definition))
+        return TransportOrdinaryProfileState::Unsupported;
+    if(detail::InState(movement,0x124)||
+       detail::InState(jump,0x98))
+        return TransportOrdinaryProfileState::Forced;
+    if(!detail::Neutral(movement)||!detail::Neutral(jump)||
+       !detail::ReadPointer(jump,0xD0,jumpOwner)||
+       !detail::ReadPointer(jump,0xD4,jumpMovement)||
+       !detail::ReadPointer(jump,0xD8,jumpAttack)||
+       jumpOwner!=unit||jumpMovement!=movement||jumpAttack!=attack||
+       !detail::ReadPointer(unit,0x34,context))
+        return TransportOrdinaryProfileState::Unsupported;
+    uint32_t definitionId=0,attachedGround=0;
+    uint32_t motionFlags=0,contextOverride=0;
+    uint8_t definitionProfile=0,jumpSpecial=0;
+    uint8_t jumpHeld=0,jumpSuppressRoot=0;
+    uint8_t attackOverride=0;
+    float runStep=0,gravityField=0;
+    Vec3 velocity{};
+    if(!detail::Read(definition,0,definitionId)||
+       !detail::Read(definition,0x131,definitionProfile)||
+       !detail::Read(jump,0xB4,jumpSpecial)||
+       !detail::Read(jump,0xC8,jumpHeld)||
+       !detail::Read(jump,0xBF,jumpSuppressRoot)||
+       !detail::Read(unit,0xD88,attachedGround)||
+       !detail::Read(attack,0xBC8,attackOverride)||
+       !detail::Read(unit,0xD48,motionFlags)||
+       !detail::Read(context,0xF8,contextOverride)||
+       !detail::Read(unit,0xB2C,runStep)||
+       !detail::Read(unit,0xD10,gravityField)||
+       !detail::Read(movement,0x19C,velocity.x)||
+       !detail::Read(jump,0xAC,velocity.y)||
+       !detail::Read(movement,0x1A4,velocity.z)||
+       !TransportOrdinaryGravityProfileAllowed(
+           definitionId,definitionProfile,jumpSpecial,jumpHeld,
+           jumpSuppressRoot,attachedGround,attackOverride,
+           motionFlags,contextOverride,runStep,gravityField)||
+       !Finite(velocity))
+        return TransportOrdinaryProfileState::Unsupported;
+    profile.runStep=runStep;
+    profile.gravityField=gravityField;
+    profile.state={Position(unit),velocity};
+    return Finite(profile.state.position)?
+        TransportOrdinaryProfileState::Ready:
+        TransportOrdinaryProfileState::Unsupported;
+}
+bool TransportOrdinaryPathClear(
+    battle_ai::native::MapGeometry& geometry,
+    const battle_ai::native::TransportOrdinaryAirArrival& arrival,
+    Vec3 landing) {
+    if(!arrival.reachable||arrival.path.size()<2)return false;
+    for(size_t i=1;i<arrival.path.size();++i)
+        if(!geometry.ClearBody(
+               arrival.path[i-1],arrival.path[i]))
+            return false;
+    return geometry.ClearBody(arrival.path.back(),landing);
+}
+bool TransportLandingGoalCurrent(
+    uint8_t* unit,const Actor::TransportRoute& trip) {
+    using namespace battle_ai::native;
+    Vec3 goal{};uint32_t mode=0;
+    return unit&&unit[0x30DC]!=0&&
+        detail::Read(unit,0x3078,goal)&&
+        detail::Read(unit,0xDC4,mode)&&
+        TransportOrdinaryGoalModeAllowed(mode)&&
+        Finite(goal)&&Length(goal-trip.exit)<=1;
+}
+bool EnsureTransportLandingGoal(
+    uint8_t* unit,const Actor::TransportRoute& trip) {
+    using namespace battle_ai::native;
+    if(TransportLandingGoalCurrent(unit,trip))return true;
+    return g_setGoal&&
+        g_setGoal(
+            unit,&trip.exit,
+            static_cast<int>(kTransportOrdinaryGoalMode));
+}
+bool TransportLandingObservationExpired(
+    uint32_t observedUpdates,uint32_t predictedUpdates) {
+    // Think is the native unit update callback. One additional observation
+    // lets the accepted 3A command become the movement record before rejecting
+    // a goal that has failed to produce the modeled landing.
+    return !predictedUpdates||
+        uint64_t(observedUpdates)>
+            uint64_t(predictedUpdates)+1;
+}
+void RefreshTransportCandidates(uint8_t* unit,Actor& actor,battle_ai::native::MapGeometry& geometry) {
+    using namespace battle_ai::native;
+    if(!PlayerBotRulesMode(unit)||!geometry.Valid())return;
+    Aabb bounds{};if(!g_terrainSupport.Bounds(geometry.document,bounds))return;
+    const auto now=GetTickCount64();g_transportCatalog.Pump(g_navigation.query,geometry.document,bounds,now);
+    uint8_t* definition=nullptr;uint8_t alternate=0;
+    if(!detail::ReadPointer(unit,0x9C4,definition)||!detail::Read(unit,0xE34,alternate))return;
+    TransportOrdinaryMotionProfile ordinaryProfile{};
+    const bool ordinaryProfileReady=
+        ReadTransportOrdinaryProfile(unit,ordinaryProfile)==
+            TransportOrdinaryProfileState::Ready;
+    bool changedBlock=false;
+    for(const auto& blocker:actor.transportBlockers)
+        if(TransportBlockSignature(blocker.object,blocker.scene)!=blocker.signature) {changedBlock=true;break;}
+    const bool diagnosticPending=g_runtime.logDecisions&&g_transportCatalog.Complete()&&
+        actor.transportDiagnosticRevision!=g_transportCatalog.Revision();
+    if(!changedBlock&&actor.transportRevision==g_transportCatalog.Revision()&&
+       actor.transportDefinition==definition&&actor.transportAlternate==alternate&&
+       std::abs(actor.transportRadius-geometry.bodySphere.radius)<0.01f&&
+       actor.transportOrdinaryReady==ordinaryProfileReady&&
+       (!ordinaryProfileReady||
+        (std::abs(actor.transportRunStep-ordinaryProfile.runStep)<0.0001f&&
+         std::abs(
+             actor.transportGravityField-
+             ordinaryProfile.gravityField)<0.0001f))&&
+       battle_ai::Length(actor.transportLocalCenter-geometry.bodySphere.localCenter)<0.01f&&
+       !diagnosticPending)return;
+    const auto previous=actor.cachedTransports;
+    actor.cachedTransports.clear();actor.transportBlockers.clear();actor.transportRevision=g_transportCatalog.Revision();actor.transportCheckedAt=now;
+    actor.transportDefinition=definition;actor.transportAlternate=alternate;actor.transportRadius=geometry.bodySphere.radius;
+    actor.transportOrdinaryReady=ordinaryProfileReady;
+    actor.transportRunStep=ordinaryProfile.runStep;
+    actor.transportGravityField=ordinaryProfile.gravityField;
+    actor.transportLocalCenter=geometry.bodySphere.localCenter;
+    actor.transportGroundRejected=actor.transportCorridorRejected=0;
+    auto corridor=geometry;corridor.deferDestroyables=false;
+    uint32_t diagnosticUnit=0;
+    detail::Read(unit,4,diagnosticUnit);
+    const bool logCandidates=g_runtime.logDecisions&&g_transportCatalog.Complete()&&g_api&&g_api->Log&&
+        actor.transportDiagnosticRevision!=g_transportCatalog.Revision();
+    std::vector<Vec3> authoredSupports;
+    for(const auto& anchor:g_transportCatalog.Volumes()) {
+        if(!anchor.Live())continue;
+        Vec3 support{};
+        if(!corridor.Ground(
+               anchor.position,anchor.bounds.max.y+80,
+               anchor.bounds.min.y-256,support))
+            continue;
+        const auto duplicate=std::find_if(
+            authoredSupports.begin(),authoredSupports.end(),
+            [&](Vec3 known){return Length(known-support)<=1;});
+        if(duplicate==authoredSupports.end())
+            authoredSupports.push_back(support);
+    }
+    for(const auto& volume:g_transportCatalog.Volumes()) {
+        if(!volume.Live()||actor.cachedTransports.size()>=64)continue;
+        Vec3 entry{NAN,NAN,NAN},predicted{NAN,NAN,NAN};
+        corridor.rejectedObject=nullptr;corridor.rejectedScene=nullptr;
+        corridor.rejectedShape=0;corridor.lastReject=0;
+        const bool entryGround=corridor.Ground(
+            volume.position,volume.bounds.max.y+80,volume.bounds.min.y-256,entry);
+        const bool forecast=entryGround&&PredictTransportExit(volume,entry,predicted);
+        const bool forceCorridor=forecast&&
+            corridor.ClearForcedTravel(entry,predicted,bounds);
+        if(!entryGround||!forecast||!forceCorridor) {
+            if(logCandidates) {
+                const char* stage=!entryGround?"entry_ground":
+                    !forecast?"forecast":"force_corridor";
+                g_api->Log(g_mod,SDGO_LOG_INFO,
+                    "map transport candidate unit=%u volume=%u object=%p stage=%s reason=%u pos=%.1f,%.1f,%.1f direction=%.5f,%.5f,%.5f speed=%.1f updates=%.1f entry=%.1f,%.1f,%.1f forecast=%.1f,%.1f,%.1f body_radius=%.1f",
+                    diagnosticUnit,volume.id,volume.object,stage,corridor.lastReject,
+                    volume.position.x,volume.position.y,volume.position.z,
+                    volume.direction.x,volume.direction.y,volume.direction.z,
+                    volume.speed,volume.updates,
+                    entry.x,entry.y,entry.z,predicted.x,predicted.y,predicted.z,
+                    geometry.bodySphere.radius);
+            }
+            if(!entryGround||!forecast)++actor.transportGroundRejected;
+            else ++actor.transportCorridorRejected;
+            if(corridor.rejectedObject&&corridor.rejectedScene&&
+               map_transport_detail::IsKind(corridor.rejectedObject,1,kDestroyableBlockKind))
+                actor.transportBlockers.push_back({corridor.rejectedObject,corridor.rejectedScene,
+                    TransportBlockSignature(corridor.rejectedObject,corridor.rejectedScene)});
+            continue;
+        }
+        std::vector<Vec3> supports;
+        Vec3 direct{};
+        if(corridor.Ground(
+               predicted,predicted.y+80,predicted.y-4096,direct))
+            supports.push_back(direct);
+        for(const auto support:authoredSupports)
+            if(std::none_of(
+                   supports.begin(),supports.end(),
+                   [&](Vec3 known){return Length(known-support)<=1;}))
+                supports.push_back(support);
+        uint32_t supportOrdinal=0;
+        for(const auto exit:supports) {
+            if(actor.cachedTransports.size()>=64)break;
+            ++supportOrdinal;
+            if(!TransportGroundExitUseful(
+                   volume,entry,predicted,exit,
+                   geometry.bodySphere.radius))
+                continue;
+            corridor.rejectedObject=nullptr;
+            corridor.rejectedScene=nullptr;
+            corridor.rejectedShape=0;
+            corridor.lastReject=0;
+            const double directHorizontal=std::hypot(
+                double(exit.x-predicted.x),
+                double(exit.z-predicted.z));
+            bool landingCorridor=false;
+            uint32_t ordinaryUpdates=0;
+            if(directHorizontal<=
+               (std::max)(25.0,double(geometry.bodySphere.radius))) {
+                landingCorridor=corridor.ClearBody(predicted,exit);
+            } else if(ordinaryProfileReady) {
+                auto arrival=PredictTransportOrdinaryAirArrival(
+                    TransportForceTerminalAirState(volume,predicted),
+                    exit,ordinaryProfile.runStep,
+                    ordinaryProfile.gravityField);
+                if(arrival.reachable) {
+                    arrival=PredictTransportOrdinaryAirArrival(
+                        TransportForceTerminalAirState(
+                            volume,predicted),
+                        exit,ordinaryProfile.runStep,
+                        ordinaryProfile.gravityField,true);
+                    ordinaryUpdates=arrival.updates;
+                    landingCorridor=TransportOrdinaryPathClear(
+                        corridor,arrival,exit);
+                }
+            }
+            if(!landingCorridor) {
+                ++actor.transportCorridorRejected;
+                if(corridor.rejectedObject&&corridor.rejectedScene&&
+                   map_transport_detail::IsKind(
+                       corridor.rejectedObject,1,
+                       kDestroyableBlockKind))
+                    actor.transportBlockers.push_back({
+                        corridor.rejectedObject,corridor.rejectedScene,
+                        TransportBlockSignature(
+                            corridor.rejectedObject,
+                            corridor.rejectedScene)});
+                continue;
+            }
+            const uint32_t edgeId=
+                supportOrdinal==1?volume.id:
+                0x10000u+volume.id*64u+supportOrdinal;
+            const double cost=double(volume.updates)*10.0+50.0+
+                double(ordinaryUpdates)*ordinaryProfile.runStep;
+            actor.cachedTransports.push_back({
+                {edgeId,entry,exit,cost},volume,predicted});
+            if(logCandidates)
+                g_api->Log(g_mod,SDGO_LOG_INFO,
+                    "map transport candidate unit=%u volume=%u link=%u object=%p stage=usable reason=0 ordinary_updates=%u pos=%.1f,%.1f,%.1f direction=%.5f,%.5f,%.5f speed=%.1f updates=%.1f entry=%.1f,%.1f,%.1f forecast=%.1f,%.1f,%.1f ground_exit=%.1f,%.1f,%.1f body_radius=%.1f",
+                    diagnosticUnit,volume.id,edgeId,volume.object,
+                    ordinaryUpdates,
+                    volume.position.x,volume.position.y,volume.position.z,
+                    volume.direction.x,volume.direction.y,volume.direction.z,
+                    volume.speed,volume.updates,
+                    entry.x,entry.y,entry.z,
+                    predicted.x,predicted.y,predicted.z,
+                    exit.x,exit.y,exit.z,
+                    geometry.bodySphere.radius);
+        }
+    }
+    if(logCandidates)actor.transportDiagnosticRevision=g_transportCatalog.Revision();
+    bool changed=previous.size()!=actor.cachedTransports.size();
+    if(!changed)for(size_t i=0;i<previous.size();++i)
+        if(previous[i].edge.id!=actor.cachedTransports[i].edge.id||
+           previous[i].volume.object!=actor.cachedTransports[i].volume.object||
+           std::abs(
+               previous[i].edge.cost-
+               actor.cachedTransports[i].edge.cost)>0.01||
+           battle_ai::Length(previous[i].edge.entry-actor.cachedTransports[i].edge.entry)>1||
+           battle_ai::Length(previous[i].edge.exit-actor.cachedTransports[i].edge.exit)>1||
+           battle_ai::Length(
+               previous[i].forcedExit-
+               actor.cachedTransports[i].forcedExit)>1) {
+            changed=true;break;
+        }
+    if(changed)++actor.transportGraphRevision;
+}
+void BeginGeometrySearch(uint8_t* unit,Actor& actor,battle_ai::native::MapGeometry& geometry,Vec3 goal) {
+    if(TransportRouteProtected(actor.transport,GetTickCount64()))return;
+    RefreshTransportCandidates(unit,actor,geometry);
+    if(!actor.transport.native&&actor.transport.phase!=5) {
+        actor.transport.active=false;
+        actor.transport.request={};
+    }
+    actor.searchTransports=actor.cachedTransports;
+    actor.searchVolumes.clear();
+    for(const auto& volume:g_transportCatalog.Volumes())if(volume.Live())actor.searchVolumes.push_back(volume);
+    actor.transportSearchRevision=actor.transportGraphRevision;
+    std::vector<battle_ai::MapPathSearch::Transport> edges;
+    const auto now=GetTickCount64();
+    for(const auto& candidate:actor.searchTransports)
+        if(candidate.volume.object!=actor.transport.avoidObject||now>=actor.transport.avoidUntil)edges.push_back(candidate.edge);
+    actor.mapSearch.Begin(Position(unit),goal,100,8192,edges);
+}
+struct TransportWalkingContext {battle_ai::native::MapGeometry* geometry;const Actor* actor;};
+bool TransportWalkingStep(void* opaque,Vec3 from,Vec3 desired,Vec3& grounded,bool entering) {
+    auto& context=*static_cast<TransportWalkingContext*>(opaque);
+    auto& geometry=*context.geometry;
+    if(!MapGeometryStep(&geometry,from,desired,grounded))return false;
+    const Vec3 offset=geometry.bodySphere.center-geometry.ownerPosition;
+    const float radius=geometry.bodySphere.radius;const Vec3 extent{radius,radius,radius};
+    for(const auto& volume:context.actor->searchVolumes) {
+        const battle_ai::native::Aabb bounds{volume.bounds.min-offset-extent,volume.bounds.max-offset+extent};
+        const bool inside=from.x>=bounds.min.x&&from.x<=bounds.max.x&&from.y>=bounds.min.y&&from.y<=bounds.max.y&&
+            from.z>=bounds.min.z&&from.z<=bounds.max.z;
+        if(inside)continue; // retain a legal escape from a native landing/trigger edge
+        bool selectedEntrance=false;
+        if(entering)for(const auto& candidate:context.actor->searchTransports)
+            if(candidate.volume.object==volume.object&&battle_ai::Length(candidate.edge.entry-grounded)<1)selectedEntrance=true;
+        if(selectedEntrance)continue;
+        const Vec3 center=(from+grounded)*0.5f,half=(grounded-from)*0.5f;
+        if(geometry.api.segmentAabb(&center,&half,&bounds))return false;
+    }
+    return true;
+}
+bool MapWalkingStep(void* context,Vec3 from,Vec3 desired,Vec3& grounded) {
+    return TransportWalkingStep(context,from,desired,grounded,false);
+}
+bool MapEntranceStep(void* context,Vec3 from,Vec3 desired,Vec3& grounded) {
+    return TransportWalkingStep(context,from,desired,grounded,true);
+}
+bool NativeTransportMoving(uint8_t* unit) {
+    return NativeTransportMoveForced(unit)||
+        NativeTransportJumpForced(unit);
+}
+bool SelectedTransportOverlap(
+    uint8_t* unit,const Actor::TransportRoute& trip) {
+    using namespace battle_ai::native;
+    if(!unit||!g_mapSphereObb||!trip.active||
+       !trip.volume.scene||!trip.volume.Live())return false;
+    __try {
+        uint8_t* ownerScene=nullptr;uint8_t* sphere=nullptr;uint8_t* pad=nullptr;
+        return detail::ReadPointer(unit,0x34,ownerScene)&&
+            detail::ReadPointer(ownerScene,0xE0,sphere)&&
+            detail::ReadPointer(trip.volume.scene,0xD8,pad)&&
+            g_mapSphereObb(
+                reinterpret_cast<const MapBodySphere*>(sphere),pad);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+}
+battle_ai::native::TransportRequestStatus NativeTransportRequestStatus(
+    uint8_t* unit,
+    const battle_ai::native::TransportVolume* selectedVolume=nullptr) {
+    using battle_ai::native::TransportRequestStatus;
+    TransportRequestStatus result{};
+    static SdgoPvpAiClientGetForcedPadStatusV2Fn pvpSnapshotV2=nullptr;
+    static SdgoMissionAiClientGetForcedPadStatusV2Fn missionSnapshotV2=nullptr;
+    static SdgoPvpAiClientGetForcedPadStatusV1Fn pvpSnapshot=nullptr;
+    static SdgoMissionAiClientGetForcedPadStatusV1Fn missionSnapshot=nullptr;
+    if(!pvpSnapshotV2||!missionSnapshotV2||
+       !pvpSnapshot||!missionSnapshot) {
+        const auto module=GetModuleHandleW(L"match_ai.dll");
+        if(module) {
+            if(!pvpSnapshotV2)pvpSnapshotV2=
+                reinterpret_cast<SdgoPvpAiClientGetForcedPadStatusV2Fn>(
+                    GetProcAddress(
+                        module,
+                        SDGO_PVP_AI_CLIENT_FORCED_PAD_STATUS_V2_EXPORT));
+            if(!missionSnapshotV2)missionSnapshotV2=
+                reinterpret_cast<SdgoMissionAiClientGetForcedPadStatusV2Fn>(
+                    GetProcAddress(
+                        module,
+                        SDGO_MISSION_AI_CLIENT_FORCED_PAD_STATUS_V2_EXPORT));
+            if(!pvpSnapshot)pvpSnapshot=reinterpret_cast<SdgoPvpAiClientGetForcedPadStatusV1Fn>(
+                GetProcAddress(module,SDGO_PVP_AI_CLIENT_FORCED_PAD_STATUS_EXPORT));
+            if(!missionSnapshot)missionSnapshot=reinterpret_cast<SdgoMissionAiClientGetForcedPadStatusV1Fn>(
+                GetProcAddress(module,SDGO_MISSION_AI_CLIENT_FORCED_PAD_STATUS_EXPORT));
+        }
+    }
+    uint32_t object=0,pilot=0;
+    if(!battle_ai::native::detail::Read(unit,4,object)||
+       !battle_ai::native::detail::Read(unit,0x2B68,pilot))return result;
+    const auto copyV1=[&](const auto& bot) {
+        result.available=true;
+        result.generation=bot.generation;
+        result.requestCount=bot.request_count;
+        result.noticeCount=bot.notice_count;
+        result.timeoutCount=bot.timeout_count;
+        result.sendFailureCount=bot.send_failure_count;
+        result.ownershipLossCount=bot.ownership_loss_count;
+        result.outstanding=bot.outstanding!=0;
+        result.outstandingGeneration=bot.outstanding_generation;
+    };
+    const auto copyV2=[&](const auto& bot,uint32_t snapshotTick) {
+        result.available=true;
+        result.exactWitness=true;
+        result.generation=bot.generation;
+        result.requestCount=bot.request_count;
+        result.noticeCount=bot.notice_count;
+        result.outstanding=bot.outstanding!=0;
+        result.outstandingGeneration=bot.outstanding_generation;
+        result.snapshotTick=snapshotTick;
+        result.requestTick=bot.request_tick;
+        result.payloadValid=bot.payload_valid!=0;
+        result.padObjectValid=bot.pad_object_valid!=0;
+        result.padObjectId=bot.pad_object_id;
+        result.requestPilotId=bot.request_pilot_id;
+        result.requestSpeed=bot.speed;
+        result.requestDurationUpdates=bot.duration_updates;
+        result.requestDirection={
+            bot.direction_x,bot.direction_y,bot.direction_z};
+        result.exactFailure=
+            bot.last_clear_reason==3||
+            bot.last_clear_reason==4||
+            bot.last_clear_reason==6;
+        uint32_t selectedObject=0;
+        if(selectedVolume)
+            battle_ai::native::detail::Read(
+                selectedVolume->object,4,selectedObject);
+        result.selectedPadObjectId=selectedObject;
+        result.exactPayload=selectedVolume&&
+            selectedObject&&
+            battle_ai::native::TransportPayloadMatches(
+                *selectedVolume,selectedObject,
+                result.payloadValid,
+                result.padObjectValid,result.padObjectId,
+                result.requestPilotId,pilot,
+                result.requestSpeed,result.requestDurationUpdates,
+                result.requestDirection);
+    };
+    if(PvpPlayerBotRulesMode()) {
+        if(pvpSnapshotV2) {
+            SdgoPvpAiClientForcedPadStatusV2 status{};
+            status.size=sizeof(status);
+            status.version=
+                SDGO_PVP_AI_CLIENT_FORCED_PAD_STATUS_V2_VERSION;
+            if(!pvpSnapshotV2(&status)||!status.bridge_available)
+                return result;
+            for(uint32_t i=0;i<status.bot_count&&i<12;++i) {
+                const auto& bot=status.bots[i];
+                if(bot.object_id==object&&bot.pilot_id==pilot) {
+                    copyV2(bot,status.tick_count);return result;
+                }
+            }
+            return result;
+        }
+        if(!pvpSnapshot)return result;
+        SdgoPvpAiClientForcedPadStatusV1 status{};status.size=sizeof(status);status.version=1;
+        if(pvpSnapshot(&status)&&status.bridge_available)
+            for(uint32_t i=0;i<status.bot_count&&i<12;++i) {
+                const auto& bot=status.bots[i];
+                if(bot.object_id==object&&bot.pilot_id==pilot) {
+                    copyV1(bot);return result;
+                }
+            }
+        return result;
+    }
+    if(missionSnapshotV2) {
+        SdgoMissionAiClientForcedPadStatusV2 status{};
+        status.size=sizeof(status);
+        status.version=
+            SDGO_MISSION_AI_CLIENT_FORCED_PAD_STATUS_V2_VERSION;
+        const auto mode=CurrentRulesMode();
+        if(!missionSnapshotV2(&status)||!status.bridge_available||
+           !mode||status.mode_object!=static_cast<uint32_t>(
+               reinterpret_cast<uintptr_t>(mode)))
+            return result;
+        for(uint32_t i=0;i<status.bot_count&&i<12;++i) {
+            const auto& bot=status.bots[i];
+            if(bot.object_id==object&&bot.pilot_id==pilot) {
+                copyV2(bot,status.tick_count);return result;
+            }
+        }
+        return result;
+    }
+    if(missionSnapshot) {
+        SdgoMissionAiClientForcedPadStatusV1 status{};status.size=sizeof(status);status.version=1;
+        const auto mode=CurrentRulesMode();
+        if(missionSnapshot(&status)&&status.bridge_available&&mode&&
+           status.mode_object==static_cast<uint32_t>(reinterpret_cast<uintptr_t>(mode)))
+            for(uint32_t i=0;i<status.bot_count&&i<12;++i) {
+                const auto& bot=status.bots[i];
+                if(bot.object_id==object&&bot.pilot_id==pilot) {
+                    copyV1(bot);return result;
+                }
+            }
+    }
+    return result;
+}
+void RejectTransportRoute(Actor& actor,ULONGLONG now) {
+    auto& trip=actor.transport;
+    trip.active=false;trip.native=false;trip.phase=4;++trip.rejected;++trip.routeRejected;
+    trip.landingGoalIssued=false;trip.landingPredictedUpdates=0;
+    trip.landingObservedUpdates=0;trip.landingObservedThinkSerial=0;
+    trip.avoidObject=trip.volume.object;trip.avoidUntil=now+5000;
+    trip.resumed=trip.completed;
+    trip.request={};
+    actor.path.clear();actor.geometryOwned=false;actor.geometryFinal=false;actor.hasIssuedGoal=false;
+}
+auto ReconcileTransportRequestStatus(
+    Actor& actor,const battle_ai::native::TransportRequestStatus& status,
+    bool selectedOverlap,ULONGLONG now,uint8_t* unit=nullptr) {
+    using namespace battle_ai::native;
+    auto& trip=actor.transport;
+    if(!trip.active||trip.native||trip.phase!=1)
+        return TransportRequestUpdate::Idle;
+    const auto update=ObserveTransportRequestLease(
+        trip.request,status,selectedOverlap,now);
+    const uint32_t traceFlags=
+        (status.available?1u:0u)|
+        (status.exactWitness?2u:0u)|
+        (status.payloadValid?4u:0u)|
+        (status.padObjectValid?8u:0u)|
+        (status.exactPayload?16u:0u)|
+        (status.exactFailure?32u:0u)|
+        (status.outstanding?64u:0u)|
+        (trip.request.committed?128u:0u)|
+        (trip.request.acknowledged?256u:0u)|
+        (static_cast<uint32_t>(update)<<16);
+    const bool traceChanged=!trip.leaseTraceValid||
+        trip.leaseTraceOverlap!=selectedOverlap||
+        trip.leaseTraceRequest!=status.requestCount||
+        trip.leaseTraceNotice!=status.noticeCount||
+        trip.leaseTraceRequestTick!=status.requestTick||
+        trip.leaseTraceSnapshotTick!=status.snapshotTick||
+        trip.leaseTracePadObject!=status.padObjectId||
+        trip.leaseTraceSelectedObject!=status.selectedPadObjectId||
+        trip.leaseTraceFlags!=traceFlags;
+    if(g_runtime.logDecisions&&traceChanged&&g_api&&g_api->Log) {
+        uint32_t unitObject=0,object=0;
+        if(unit)battle_ai::native::detail::Read(unit,4,unitObject);
+        if(actor.transport.volume.object)
+            battle_ai::native::detail::Read(
+                actor.transport.volume.object,4,object);
+        const uint32_t tickAge=status.exactWitness?
+            uint32_t(status.snapshotTick-status.requestTick):0;
+        g_api->Log(g_mod,SDGO_LOG_INFO,
+            "map transport lease unit=%u link=%u phase=%u overlap=%u update=%u generation=%u/%u request=%u/%u notice=%u/%u outstanding=%u payload_valid=%u pad_valid=%u pad=%u selected_pad=%u live_pad=%u exact_payload=%u exact_failure=%u snapshot_tick=%u request_tick=%u tick_age=%u committed=%u acknowledged=%u speed=%.3f updates=%.3f direction=%.6f,%.6f,%.6f",
+            unitObject,trip.id,trip.phase,selectedOverlap?1u:0u,
+            static_cast<uint32_t>(update),
+            status.generation,status.outstandingGeneration,
+            status.requestCount,trip.request.requestBaseline,
+            status.noticeCount,trip.request.noticeBaseline,
+            status.outstanding?1u:0u,status.payloadValid?1u:0u,
+            status.padObjectValid?1u:0u,status.padObjectId,
+            status.selectedPadObjectId,object,
+            status.exactPayload?1u:0u,status.exactFailure?1u:0u,
+            status.snapshotTick,status.requestTick,tickAge,
+            trip.request.committed?1u:0u,
+            trip.request.acknowledged?1u:0u,
+            status.requestSpeed,status.requestDurationUpdates,
+            status.requestDirection.x,status.requestDirection.y,
+            status.requestDirection.z);
+    }
+    trip.leaseTraceValid=true;
+    trip.leaseTraceOverlap=selectedOverlap;
+    trip.leaseTraceRequest=status.requestCount;
+    trip.leaseTraceNotice=status.noticeCount;
+    trip.leaseTraceRequestTick=status.requestTick;
+    trip.leaseTraceSnapshotTick=status.snapshotTick;
+    trip.leaseTracePadObject=status.padObjectId;
+    trip.leaseTraceSelectedObject=status.selectedPadObjectId;
+    trip.leaseTraceFlags=traceFlags;
+    if(update==TransportRequestUpdate::Failed||
+       update==TransportRequestUpdate::GenerationChanged)
+        RejectTransportRoute(actor,now);
+    return update;
+}
+auto RefreshTransportRequest(uint8_t* unit,Actor& actor) {
+    return ReconcileTransportRequestStatus(
+        actor,NativeTransportRequestStatus(
+            unit,&actor.transport.volume),
+        SelectedTransportOverlap(unit,actor.transport),GetTickCount64(),unit);
+}
+void CompleteTransportRoute(Actor& actor,ULONGLONG now) {
+    auto& trip=actor.transport;
+    trip.active=false;trip.native=false;trip.phase=3;trip.completedAt=now;++trip.routeAccepted;
+    trip.landingGoalIssued=false;trip.landingPredictedUpdates=0;
+    trip.landingObservedUpdates=0;trip.landingObservedThinkSerial=0;
+    trip.request={};
+    actor.path.clear();actor.geometryOwned=false;actor.geometryFinal=false;
+}
+bool ContinueTransportLanding(uint8_t* unit,Actor& actor) {
+    using namespace battle_ai::native;
+    auto& trip=actor.transport;
+    if(!trip.active||trip.native||trip.phase!=5)return false;
+    const auto now=GetTickCount64();const Vec3 actual=Position(unit);trip.arrived=actual;
+    auto geometry=MapGeometryFor(unit);
+    if(*reinterpret_cast<int*>(unit+0x38)<=0||!geometry.Valid()) {
+        RejectTransportRoute(actor,now);return true;
+    }
+    if(TransportAtRouteExit(actual,trip.exit,geometry.bodySphere.radius)) {
+        CompleteTransportRoute(actor,now);return true;
+    }
+    if(NativeTransportMoveForced(unit)||
+       NativeTransportJumpForced(unit))
+        return true;
+    if(trip.landingGoalIssued&&
+       trip.landingObservedThinkSerial!=actor.nativeThinkSerial) {
+        trip.landingObservedThinkSerial=actor.nativeThinkSerial;
+        if(trip.landingObservedUpdates<UINT32_MAX)
+            ++trip.landingObservedUpdates;
+        if(TransportLandingObservationExpired(
+               trip.landingObservedUpdates,
+               trip.landingPredictedUpdates)) {
+            RejectTransportRoute(actor,now);return true;
+        }
+    }
+    if(ControlBlocked(unit)||!MovementAvailable(unit,true)) {
+        RejectTransportRoute(actor,now);return true;
+    }
+    TransportOrdinaryMotionProfile profile{};
+    if(ReadTransportOrdinaryProfile(unit,profile)!=
+       TransportOrdinaryProfileState::Ready) {
+        RejectTransportRoute(actor,now);return true;
+    }
+    auto arrival=PredictTransportOrdinaryAirArrival(
+        profile.state,trip.exit,profile.runStep,
+        profile.gravityField);
+    if(!arrival.reachable) {
+        RejectTransportRoute(actor,now);return true;
+    }
+    arrival=PredictTransportOrdinaryAirArrival(
+        profile.state,trip.exit,profile.runStep,
+        profile.gravityField,true);
+    auto corridor=geometry;corridor.deferDestroyables=false;
+    if(!TransportOrdinaryPathClear(
+           corridor,arrival,trip.exit)) {
+        RejectTransportRoute(actor,now);return true;
+    }
+    const bool landingGoalCurrent=
+        TransportLandingGoalCurrent(unit,trip);
+    if(!EnsureTransportLandingGoal(unit,trip)) {
+        RejectTransportRoute(actor,now);return true;
+    }
+    if(!landingGoalCurrent&&g_setMoveType&&
+       PlayerBotRulesMode(unit))
+        g_setMoveType(unit,2);
+    if(!trip.landingGoalIssued) {
+        trip.landingGoalIssued=true;
+        trip.landingPredictedUpdates=arrival.updates;
+        trip.landingObservedUpdates=0;
+        trip.landingObservedThinkSerial=actor.nativeThinkSerial;
+    }
+    return true;
+}
+void ReconcileTransportRoute(uint8_t* unit,Actor& actor) {
+    using battle_ai::native::TransportRequestUpdate;
+    auto& trip=actor.transport;
+    if(trip.active&&!trip.native&&trip.phase==5) {
+        ContinueTransportLanding(unit,actor);return;
+    }
+    if(trip.phase!=5&&trip.completed>trip.resumed&&!NativeTransportMoving(unit)&&!ControlBlocked(unit)) {
+        Vec3 progress=Position(unit)-trip.arrived;progress.y=0;
+        uint8_t* attack=nullptr;
+        const bool action=battle_ai::native::detail::ReadPointer(unit,0x9CC,attack)&&actor.lastPolicyAt>=trip.completedAt&&
+            (battle_ai::native::detail::InState(attack,0x34)||battle_ai::native::detail::InState(attack,0x48)||
+             battle_ai::native::detail::InState(attack,0x5C));
+        if(battle_ai::Length(progress)>25&&(actor.direct.owned||(actor.hasIssuedGoal&&!actor.path.empty())||action))trip.resumed=trip.completed;
+    }
+    if(!trip.active)return;
+    if(!trip.native&&trip.phase==1) {
+        const auto request=RefreshTransportRequest(unit,actor);
+        if(request==TransportRequestUpdate::Failed||
+           request==TransportRequestUpdate::GenerationChanged)return;
+    }
+    const bool moveForced=NativeTransportMoveForced(unit);
+    const bool jumpForced=NativeTransportJumpForced(unit);
+    if(moveForced) {
+        if(!trip.native) {
+            uint8_t* movement=nullptr;Vec3 direction{};
+            const auto geometry=MapGeometryFor(unit);const Vec3 actual=Position(unit);
+            const double reach=geometry.bodySphere.radius+battle_ai::Length(trip.volume.bounds.max-trip.volume.bounds.min)*0.5+trip.volume.speed*2;
+            if(!trip.request.committed||
+               !battle_ai::native::detail::ReadPointer(unit,0x9C8,movement)||
+               !battle_ai::native::detail::Read(movement,0x1FC,direction)||
+               battle_ai::Length(direction-trip.volume.direction)>0.01||battle_ai::Length(actual-trip.entry)>reach) {
+                RejectTransportRoute(actor,GetTickCount64());return;
+            }
+            trip.native=true;trip.phase=2;trip.activated=actual;++trip.activations;
+            trip.waitingAt=0;trip.landingAt=0;actor.direct={};actor.hasIssuedGoal=false;
+        }
+        actor.path.clear();actor.geometryOwned=false;actor.geometryFinal=false;return;
+    }
+    if(jumpForced) {
+        if(trip.native) {
+            actor.path.clear();actor.geometryOwned=false;
+            actor.geometryFinal=false;
+        }
+        return;
+    }
+    if(!trip.native)return;
+    const Vec3 actual=Position(unit);trip.arrived=actual;
+    const auto now=GetTickCount64();
+    auto geometry=MapGeometryFor(unit);
+    const bool moved=!ControlBlocked(unit)&&*reinterpret_cast<int*>(unit+0x38)>0&&
+        battle_ai::native::TransportMadeProgress(
+            trip.activated,actual,trip.volume.direction);
+    if(moved)++trip.completed;
+    if(!moved||!geometry.Valid()||
+       !battle_ai::native::TransportReachedRouteProgress(
+            trip.activated,actual,trip.forcedExit,
+            trip.volume,geometry.bodySphere.radius)) {
+        RejectTransportRoute(actor,now);return;
+    }
+    trip.native=false;actor.path.clear();actor.geometryOwned=false;actor.geometryFinal=false;actor.hasIssuedGoal=false;
+    if(battle_ai::native::TransportAtRouteExit(actual,trip.exit,geometry.bodySphere.radius))
+        CompleteTransportRoute(actor,now);
+    else {
+        trip.active=true;trip.phase=5;trip.landingAt=now;
+        trip.landingGoalIssued=false;
+        trip.landingPredictedUpdates=0;
+        trip.landingObservedUpdates=0;
+        trip.landingObservedThinkSerial=0;
+    }
+}
 bool InstallGeometryPath(uint8_t* unit,Actor& actor,battle_ai::native::MapGeometry& geometry,bool complete) {
-    std::vector<Vec3> path=complete?actor.mapSearch.Path():actor.mapSearch.Prefix();
+    const auto steps=complete?actor.mapSearch.Steps():actor.mapSearch.PrefixSteps();
+    std::vector<Vec3> path;
+    bool usesTransport=false;
+    for(const auto& point:steps) {
+        if(!point.transport) {path.push_back(point.position);continue;}
+        const auto selected=std::find_if(actor.searchTransports.begin(),actor.searchTransports.end(),
+            [&](const auto& candidate){return candidate.edge.id==point.transport;});
+        if(selected==actor.searchTransports.end()||!selected->volume.Live()) {
+            actor.transportRevision=UINT64_MAX;actor.path.clear();return false;
+        }
+        usesTransport=true;
+        auto& trip=actor.transport;
+        const bool changedSelection=
+            trip.id!=point.transport||
+            trip.volume.object!=selected->volume.object||
+            battle_ai::Length(trip.entry-selected->edge.entry)>1||
+            battle_ai::Length(
+                trip.forcedExit-selected->forcedExit)>1||
+            battle_ai::Length(trip.exit-selected->edge.exit)>1;
+        if(!trip.active||
+           (!TransportRouteProtected(
+                trip,GetTickCount64())&&changedSelection)) {
+            trip.active=true;trip.native=false;trip.phase=1;trip.id=point.transport;trip.volume=selected->volume;
+            trip.entry=selected->edge.entry;
+            trip.forcedExit=selected->forcedExit;
+            trip.exit=selected->edge.exit;
+            trip.waitingAt=0;trip.landingAt=0;
+            trip.landingGoalIssued=false;
+            trip.landingPredictedUpdates=0;
+            trip.landingObservedUpdates=0;
+            trip.landingObservedThinkSerial=0;
+            trip.leaseTraceValid=false;
+            battle_ai::native::BeginTransportRequestLease(
+                trip.request,NativeTransportRequestStatus(
+                    unit,&selected->volume));
+            ++trip.selected;
+        }
+        if(path.empty()||battle_ai::Length(path.back()-trip.entry)>1)path.push_back(trip.entry);
+        break; // The exit is a native action, never a MoveTargetPos destination.
+    }
+    if(!usesTransport&&!TransportRouteProtected(
+           actor.transport,GetTickCount64())) {
+        actor.transport.active=false;actor.transport.phase=0;
+        actor.transport.request={};
+    }
     if(path.empty())return false;
     const Vec3 here=Position(unit);size_t nearest=0;double best=1e30;
+    TransportWalkingContext walking{&geometry,&actor};
     for(size_t i=0;i<path.size();++i) {
         const double distance=battle_ai::Length(path[i]-here);Vec3 reached{};
-        if(distance<best&&distance<=800&&MapGeometryStep(&geometry,here,path[i],reached)&&std::abs(reached.y-path[i].y)<=5) {nearest=i;best=distance;}
+        const bool entrance=actor.transport.active&&battle_ai::Length(path[i]-actor.transport.entry)<1;
+        const auto step=entrance?&MapEntranceStep:&MapWalkingStep;
+        if(distance<best&&distance<=800&&step(&walking,here,path[i],reached)&&std::abs(reached.y-path[i].y)<=5) {nearest=i;best=distance;}
     }
     if(best==1e30) {
         if(!actor.path.empty()&&MovementAvailable(unit,actor.pathRanged))g_stop(unit);
-        actor.mapSearch.Begin(here,actor.mapSearch.Goal());actor.geometryFinal=false;actor.path.clear();return false;
+        const Vec3 goal=actor.mapSearch.Goal();BeginGeometrySearch(unit,actor,geometry,goal);
+        actor.geometryFinal=false;actor.path.clear();return false;
     }
     while(nearest+1<path.size()&&battle_ai::Length(path[nearest]-here)<25)++nearest;
     path.erase(path.begin(),path.begin()+nearest);
     actor.path.swap(path);actor.waypoint=0;actor.pathGeometry=true;actor.geometryFinal=complete;
+    RecordRouteInstall(actor);
     return true;
 }
 void PumpGeometryPath(uint8_t* unit,Actor& actor) {
@@ -764,9 +1725,15 @@ void PumpGeometryPath(uint8_t* unit,Actor& actor) {
     battle_ai::native::detail::ReadableRegionCache readableRegions{};
     battle_ai::native::detail::ScopedReadableRegionCache readableScope(readableRegions);
     auto geometry=MapGeometryFor(unit);if(!geometry.Valid())return;
+    RefreshTransportCandidates(unit,actor,geometry);
+    if(actor.transportSearchRevision!=actor.transportGraphRevision&&!actor.transport.native) {
+        const auto goal=actor.mapSearch.Goal();BeginGeometrySearch(unit,actor,geometry,goal);
+        actor.geometryFinal=false;
+    }
     LARGE_INTEGER before{},after{};QueryPerformanceCounter(&before);
     using Status=battle_ai::MapPathSearch::Status;
-    if(actor.mapSearch.State()==Status::Pending)actor.mapSearch.Pump(&MapGeometryStep,&geometry,1);
+    TransportWalkingContext walking{&geometry,&actor};
+    if(actor.mapSearch.State()==Status::Pending)actor.mapSearch.Pump(&MapWalkingStep,&walking,1,&MapEntranceStep);
     if(actor.mapSearch.State()==Status::Found&&!actor.geometryFinal)InstallGeometryPath(unit,actor,geometry,true);
     else if(actor.path.empty()&&actor.mapSearch.State()==Status::Pending)InstallGeometryPath(unit,actor,geometry,false);
     else if(actor.path.empty()&&actor.mapSearch.State()==Status::Unreachable)actor.geometryOwned=false;
@@ -776,6 +1743,30 @@ void PumpGeometryPath(uint8_t* unit,Actor& actor) {
 }
 bool FollowPath(uint8_t* unit,Actor& a) {
     a.followStatus=1;
+    ReconcileTransportRoute(unit,a);
+    if(a.transport.active&&a.transport.native)return false;
+    if(a.transport.active&&a.transport.phase==5) {
+        ContinueTransportLanding(unit,a);return a.transport.active||a.transport.phase==3;
+    }
+    if(a.transport.active&&!a.transport.native&&a.transport.phase==1&&
+       TransportMotorReserved(a.transport,GetTickCount64())) {
+        const auto now=GetTickCount64();
+        const bool pendingAdmission=
+            battle_ai::native::TransportRequestAdmissionOpen(
+                a.transport.request,now);
+        const auto since=a.transport.request.committed?
+            a.transport.request.committedAt:a.transport.waitingAt;
+        const auto deadline=battle_ai::native::TransportEntranceWaitMs(
+            a.transport.request.committed);
+        if(!a.transport.volume.Live()||
+           (a.transport.request.committed?
+                (!since||now<since||now-since>=deadline):
+                (!pendingAdmission&&
+                 (!since||now<since||now-since>=deadline)))) {
+            RejectTransportRoute(a,now);return false;
+        }
+        return true;
+    }
     if(a.recoveryControlled&&GetTickCount64()-a.recoveryAt<250)return false;
     a.followStatus=2;
     if(!MovementAvailable(unit,a.pathRanged)) {
@@ -784,10 +1775,34 @@ bool FollowPath(uint8_t* unit,Actor& a) {
         a.path.clear();a.geometryOwned=false;a.geometryFinal=false;return false;
     }
     if(a.geometryOwned)PumpGeometryPath(unit,a);
-    if(a.path.empty())return true;
     AdvancePath(unit,a);
     a.followStatus=3;
-    if(a.path.empty()) return true;
+    if(a.path.empty()) {
+        auto& trip=a.transport;
+        if(!trip.active)return true;
+        const auto now=GetTickCount64();trip.waitingAt=trip.waitingAt?trip.waitingAt:now;
+        const auto request=RefreshTransportRequest(unit,a);
+        if(request==battle_ai::native::TransportRequestUpdate::Failed||
+           request==battle_ai::native::TransportRequestUpdate::GenerationChanged)
+            return false;
+        const auto since=trip.request.committed?
+            trip.request.committedAt:trip.waitingAt;
+        const auto deadline=battle_ai::native::TransportEntranceWaitMs(
+            trip.request.committed);
+        const bool pendingAdmission=
+            battle_ai::native::TransportRequestAdmissionOpen(
+                trip.request,now);
+        if(!trip.volume.Live()||
+           (trip.request.committed?
+                (!since||now<since||now-since>=deadline):
+                (!pendingAdmission&&
+                 (!since||now<since||now-since>=deadline)))) {
+            RejectTransportRoute(a,now);return false;
+        }
+        // Keep the already admitted goal at the real trigger. The existing
+        // match_ai overlap bridge owns REQ085A/NTF0584; do not send or apply it here.
+        return true;
+    }
     a.followStatus=4;
     if(MotionSafetyFor(unit,a.path[a.waypoint])==battle_ai::native::MotionSafety::Blocked) {
         a.path.clear();
@@ -808,16 +1823,21 @@ bool FollowPath(uint8_t* unit,Actor& a) {
     // The goal's final parameter remains the native default. Locomotion has
     // its own native SetMoveType transaction; do not confuse the two APIs.
     const bool descending=a.path[a.waypoint].y<Position(unit).y-25;
-    const bool playerBotRules=PlayerBotRulesMode();
+    const bool playerBotRules=PlayerBotRulesMode(unit);
     const int mode=!a.defenceMoveOwned&&!a.recoveryControlled&&!descending?a.pathMoveType:2;
     if(playerBotRules&&g_setMoveType&&(newGoal||unit[0xDC0]!=mode)) {
         g_setMoveType(unit,mode);
+    }
+    if(a.transport.completed>a.transport.resumed&&!a.transport.active&&a.hasIssuedGoal) {
+        Vec3 progress=Position(unit)-a.transport.arrived;progress.y=0;
+        if(battle_ai::Length(progress)>25)a.transport.resumed=a.transport.completed;
     }
     a.followStatus=6;return true;
 }
 struct TargetObservation {
     uint32_t id=0;
     int hp=0,maxHp=0;
+    bool alive=false;
     float distance=0,rangedDistance=0,meleeDistance=0;
     bool visible=false,perceptionVisible=false,rangedVisible=false,meleeVisible=false,enemy=false,attackable=false,rangedFiring=false,meleeTracking=false,meleeSwinging=false,hurt=false,damageProtected=false;
     uint32_t selectedTarget=0;
@@ -845,7 +1865,11 @@ struct Observation {
     bool hasObstacle=false;
 };
 bool Destroyable(uint8_t* object) {
-    return ObjectIsA(object,battle_ai::native::kDestroyableBlockKind);
+    if(!object)return false;
+    auto table=*reinterpret_cast<void***>(object);
+    if(!table||!table[1])return false;
+    using IsA=bool(__thiscall*)(void*,int);
+    return reinterpret_cast<IsA>(table[1])(object,battle_ai::native::kDestroyableBlockKind);
 }
 void ObserveBlockingGate(Observation& o,Actor& actor,ULONGLONG now,Vec3 perceptionOrigin,Vec3 meleeOrigin,bool rangedOrigin) {
     using namespace battle_ai::native::detail;
@@ -895,7 +1919,7 @@ void ObserveBlockingGate(Observation& o,Actor& actor,ULONGLONG now,Vec3 percepti
         if(!battle_ai::Finite(point)||!std::isfinite(distance)||distance>=closest)continue;
         if(!battle_ai::native::FreshLineClear(g_navigation,*g_document,g_current,id,perceptionOrigin,point,true))continue;
         auto& target=o.obstacle;target={};
-        target.id=id;target.object=object;target.hp=hp;target.maxHp=maxHp;
+        target.id=id;target.object=object;target.hp=hp;target.maxHp=maxHp;target.alive=true;
         target.enemy=true;target.attackable=true;target.visible=true;target.perceptionVisible=true;
         target.mapObstacle=true;target.point=point;target.ground=Position(object);
         target.distance=static_cast<float>(battle_ai::Length(point-perceptionOrigin));target.rangedDistance=target.distance;
@@ -934,7 +1958,7 @@ void PlanDefence(const Observation& o,Actor& actor,ULONGLONG now) {
         if(melee&&distance<nearest) {nearest=distance;plan.shieldThreat=point;plan.shielding=true;plan.shieldHitType=hitType;plan.shieldHitKnown=hitKnown;}
     };
     for(size_t i=0;i<o.count;++i) {
-        const auto& t=o.targets[i];if(!t.visible||(!t.attackable&&!t.damageProtected)||t.hp<=0) continue;
+        const auto& t=o.targets[i];if(!t.visible||(!t.attackable&&!t.damageProtected)||!t.alive) continue;
         const double groundDistance=battle_ai::Length(t.ground-o.pos);
         if(!std::isfinite(groundDistance)) continue;
         bool engaged=!t.damageProtected&&t.selectedTarget==o.id&&(t.rangedFiring||t.meleeTracking||t.meleeSwinging);
@@ -1023,6 +2047,8 @@ bool CaptureUnsafe(Observation& o) {
     }
     o.failure="own motion and controller data";
     AdvancePath(unit,actor);
+    if(actor.transport.active&&!actor.transport.native&&actor.transport.phase==1)
+        RefreshTransportRequest(unit,actor);
     ULONGLONG now=GetTickCount64();
     o.id=*reinterpret_cast<uint32_t*>(unit+4);o.generation=actor.generation;
     o.hp=*reinterpret_cast<int*>(unit+0x38);o.pos=Position(unit);
@@ -1092,9 +2118,15 @@ bool CaptureUnsafe(Observation& o) {
             for(size_t i=0;i<o.count;++i) if(o.targets[i].id==id) duplicate=true;
             for(size_t i=0;i<o.allyCount;++i) if(o.allies[i].id==id) duplicate=true;
             if(!id||duplicate) continue;
+            // Document lists can retain another view of an object ID across
+            // native lifetime transitions. Observe the same registered object
+            // that aim, admission and tracking resolve, rather than letting an
+            // older list entry hide its current HP or protection state.
+            candidate=FindObject(id);
+            if(!candidate||*reinterpret_cast<uint32_t*>(candidate+4)!=id||candidate==unit) continue;
             int team=*reinterpret_cast<int*>(candidate+0x20);
             int hp=*reinterpret_cast<int*>(candidate+0x38);
-            if(hp<=0) continue;
+            if(!CombatTargetAlive(candidate,hp)) continue;
             auto candidateFsm=*reinterpret_cast<uint8_t**>(candidate+0x9CC);
             if(team==ownTeam && ownTeam!=0 && ownTeam!=5) {
                 if(o.allyCount<64) {
@@ -1124,7 +2156,7 @@ bool CaptureUnsafe(Observation& o) {
             const bool attackable=reinterpret_cast<CanAttack>(vtable[10])(candidate,unit);
             auto& t=o.targets[o.count++];
             t.object=candidate;
-            t.id=id;t.hp=hp;t.maxHp=*reinterpret_cast<int*>(candidate+0x3C);
+            t.id=id;t.hp=hp;t.maxHp=*reinterpret_cast<int*>(candidate+0x3C);t.alive=true;
             t.distance=rangedDistance;t.rangedDistance=rangedDistance;t.meleeDistance=meleeDistance;
             t.enemy=true;t.attackable=attackable;t.damageProtected=damageProtected;t.point=point;t.ground=Position(candidate);
             o.failure="target action and pose";
@@ -1251,7 +2283,7 @@ void Vector(lua_State* L,const char* key,Vec3 v) {
 }
 void PushTarget(lua_State* L,const TargetObservation& t) {
     g_lua.newtable(L);
-    Number(L,"id",t.id);Number(L,"hp",t.hp);Number(L,"maxHp",t.maxHp);Number(L,"distance",t.distance);
+    Number(L,"id",t.id);Number(L,"hp",t.hp);Number(L,"alive",t.alive);Number(L,"maxHp",t.maxHp);Number(L,"distance",t.distance);
     Number(L,"rangedDistance",t.rangedDistance);Number(L,"meleeDistance",t.meleeDistance);
     Number(L,"enemy",t.enemy);Number(L,"visible",t.visible);Number(L,"attackable",t.attackable);
     Number(L,"rangedVisible",t.rangedVisible);Number(L,"meleeVisible",t.meleeVisible);
@@ -1276,7 +2308,15 @@ int __cdecl Observe(lua_State* L) {
     Number(L,"meleeRole",ActorFor(g_current).meleeRole);
     Number(L,"moving",o.moving);Number(L,"hurtRecently",o.hurtRecently);
     Number(L,"forcedMoving",o.forcedMoving);
-    Number(L,"routeActive",!ActorFor(g_current).path.empty());
+    const auto& trip=ActorFor(g_current).transport;
+    Number(L,"transportCommitted",trip.request.committed);
+    Number(L,"transportLanding",trip.active&&!trip.native&&trip.phase==5);
+    Number(L,"transportMotorReserved",
+        TransportMotorReserved(trip,GetTickCount64()));
+    Number(L,"routeActive",!ActorFor(g_current).path.empty()||trip.active);
+    Number(L,"transportCompleted",static_cast<double>(trip.completed));
+    Number(L,"transportWaiting",trip.active&&!trip.native&&trip.phase==1&&
+        TransportMotorReserved(trip,GetTickCount64()));
     const auto& observedActor=ActorFor(g_current);
     const bool recovering=observedActor.recoveryControlled&&GetTickCount64()-observedActor.recoveryAt<250;
     Number(L,"movementRecovery",recovering);
@@ -1306,7 +2346,7 @@ int __cdecl Observe(lua_State* L) {
     uint8_t* specialRecord=nullptr;
     bool specialKnown=attackFsm&&battle_ai::native::detail::ReadPointer(attackFsm,(o.caps.alternate?0x56C:0x24C)+3*0xC8+0xC,specialRecord)&&
         battle_ai::native::detail::Readable(specialRecord,0x6A)&&specialRecord[0x69]==2;
-    Number(L,"specialAvailable",PlayerBotRulesMode()&&specialKnown&&o.caps.weapons[3].id!=0&&o.caps.weapons[3].range>0);
+    Number(L,"specialAvailable",PlayerBotRulesMode(g_current)&&specialKnown&&o.caps.weapons[3].id!=0&&o.caps.weapons[3].range>0);
     uint8_t* movement=nullptr;int restriction=1;
     bool controllerKnown=attackFsm&&battle_ai::native::detail::ReadPointer(attackFsm,0xB30,movement)&&
         battle_ai::native::detail::Read(movement,0x2C0,restriction);
@@ -1401,15 +2441,25 @@ int __cdecl AimTarget(lua_State* L) {
     }
     return 0;
 }
+void CancelOwnedRoute(uint8_t* unit,Actor& a,bool handoff) {
+    const bool unsafeHandoff=handoff&&unit[0x30DC]&&a.hasIssuedGoal&&
+        MotionSafetyFor(unit,*reinterpret_cast<Vec3*>(unit+0x3078))!=
+            battle_ai::native::MotionSafety::Safe;
+    if((!handoff||unsafeHandoff)&&!a.path.empty()&&
+       MovementAvailable(unit,a.pathRanged))g_stop(unit);
+    a.path.clear();a.defenceMoveOwned=false;a.explorationOwned=false;
+    a.hasIssuedGoal=false;a.direct={};a.geometryOwned=false;
+    if(!TransportRouteProtected(a.transport,GetTickCount64())&&
+       !NativeTransportMoving(unit)) {
+        a.transport.active=false;a.transport.phase=0;
+        a.transport.request={};
+    }
+}
 int __cdecl CancelRoute(lua_State* L) {
     if(Owned(g_current)) {
         auto& a=ActorFor(g_current);
         const bool handoff=g_lua.gettop(L)>=1&&g_lua.tonumber(L,1)==1;
-        const bool unsafeHandoff=handoff&&g_current[0x30DC]&&a.hasIssuedGoal&&
-            MotionSafetyFor(g_current,*reinterpret_cast<Vec3*>(g_current+0x3078))!=battle_ai::native::MotionSafety::Safe;
-        if((!handoff||unsafeHandoff)&&!a.path.empty()&&MovementAvailable(g_current,a.pathRanged)) g_stop(g_current);
-        a.path.clear();a.defenceMoveOwned=false;a.explorationOwned=false;a.hasIssuedGoal=false;a.direct={};
-        a.geometryOwned=false;
+        CancelOwnedRoute(g_current,a,handoff);
     }
     return 0;
 }
@@ -1576,26 +2626,42 @@ bool LoadGeometryRoute(uint8_t* unit,Actor& actor,Vec3 destination,bool force=fa
     // Authored spawns may be airborne; enemy roots may be on another floor.
     // Resolve the destination's own support, never the floor below this bot.
     if(!geometry.Ground(destination,destination.y+80,destination.y-4096,goal))return false;
+    auto& trip=actor.transport;
+    if(trip.active&&!trip.native&&
+       TransportRouteProtected(trip,GetTickCount64()))
+        return FollowPath(unit,actor)&&trip.active;
+    if(trip.active&&!trip.native&&trip.waitingAt&&actor.path.empty()&&
+       battle_ai::Length(goal-actor.mapSearch.Goal())<=100)return FollowPath(unit,actor)&&trip.active;
+    if(trip.active&&!trip.native&&!force&&actor.geometryOwned&&
+       (battle_ai::Length(goal-actor.mapSearch.Goal())<=750||
+        battle_ai::Length(Position(unit)-goal)>battle_ai::Length(Position(unit)-trip.entry)+
+            battle_ai::Length(trip.exit-goal)+100)) {
+        // A moving opponent changes the final leg, not the chosen entrance.
+        // Re-evaluate the final pursuit from the actual native landing instead
+        // of discarding the approach on each 100-unit target update.
+        return FollowPath(unit,actor)&&(!actor.path.empty()||trip.active);
+    }
     Vec3 changed=goal-actor.mapSearch.Goal();const float verticalChange=std::abs(changed.y);changed.y=0;
     if(!actor.geometryOwned||battle_ai::Length(changed)>100||verticalChange>5||actor.mapSearch.State()==Status::Unreachable||
        (force&&actor.mapSearch.State()!=Status::Pending)) {
-        actor.path.clear();actor.mapSearch.Begin(Position(unit),goal);
+        actor.path.clear();BeginGeometrySearch(unit,actor,geometry,goal);
         actor.hasIssuedGoal=false;
         actor.geometryOwned=true;actor.geometryFinal=false;actor.pathGeometry=true;
     }
     actor.routeStatus=11;
     const bool followed=FollowPath(unit,actor);
     actor.routePointCount=static_cast<uint32_t>(actor.mapSearch.Nodes());
-    return followed&&!actor.path.empty();
+    return followed&&(!actor.path.empty()||actor.transport.active);
 }
 bool LoadRouteUnsafe(uint32_t target,const Vec3* lastSeen,bool force) {
     if(!Owned(g_current)||!g_document||!*g_document||GetCurrentThreadId()!=g_gameThread) return false;
     auto& a=ActorFor(g_current);
+    SynchronizePhaseGeometry(g_current,a);
     a.routeStatus=1;a.routePointCount=0;
     a.explorationOwned=false;
     auto other=lastSeen?nullptr:FindObject(target);
     a.routeStatus=2;
-    if(!lastSeen&&(!other||*reinterpret_cast<int*>(other+0x38)<=0)) {a.path.clear();a.geometryOwned=false;return false;}
+    if(!lastSeen&&!CombatTargetAlive(other)) {a.path.clear();a.geometryOwned=false;return false;}
     auto nav=*reinterpret_cast<uint8_t**>(*g_document+0x8364);
     a.routeStatus=3;
     if(!nav) {a.path.clear();a.geometryOwned=false;return false;}
@@ -1603,7 +2669,7 @@ bool LoadRouteUnsafe(uint32_t target,const Vec3* lastSeen,bool force) {
     Vec3 destination=lastSeen?*lastSeen:Position(other);
     Vec3* points=nullptr;
     a.routeStart=Position(g_current);a.routeGoal=destination;a.routeStatus=4;
-    if(PlayerBotRulesMode()&&EmptyNavigation(nav))return LoadGeometryRoute(g_current,a,destination,force);
+    if(PlayerBotRulesMode(g_current)&&EmptyNavigation(nav))return LoadGeometryRoute(g_current,a,destination,force);
     a.geometryOwned=false;a.pathGeometry=false;
     a.path.clear(); // a failed native repath must never resurrect its previous goal
     if(!QueryRoute(nav,*reinterpret_cast<uint32_t*>(g_current+4),a.routeStart,destination,&points,&count))return false;
@@ -1622,7 +2688,7 @@ bool LoadRouteUnsafe(uint32_t target,const Vec3* lastSeen,bool force) {
     if(!valid||!released) return false;
     a.routeStatus=9;
     for(Vec3 p:staged) if(!battle_ai::Finite(p)) return false;
-    a.path.swap(staged);a.waypoint=0;
+    a.path.swap(staged);a.waypoint=0;RecordRouteInstall(a);
     a.routeStatus=10;
     return FollowPath(g_current,a);
 }
@@ -1671,7 +2737,7 @@ bool ExploreMapUnsafe() {
     uint8_t* nav=nullptr;uint32_t count=0;
     actor.explorationStatus=2;
     if(!ReadPointer(*g_document,0x8364,nav))return false;
-    const bool geometry=PlayerBotRulesMode()&&EmptyNavigation(nav);
+    const bool geometry=PlayerBotRulesMode(g_current)&&EmptyNavigation(nav);
     if(!geometry&&!NavigationNodeCount(nav,count))return false;
     actor.explorationNodeCount=count;actor.explorationStatus=3;
     const Vec3 here=Position(g_current);
@@ -1748,7 +2814,7 @@ int __cdecl ExploreMap(lua_State* L) {
     g_lua.pushnumber(L,admitted?1:0);return 1;
 }
 int __cdecl EnableNavigationJump(lua_State* L) {
-    const bool valid=GetCurrentThreadId()==g_gameThread&&Owned(g_current)&&PlayerBotRulesMode();
+    const bool valid=GetCurrentThreadId()==g_gameThread&&Owned(g_current)&&PlayerBotRulesMode(g_current);
     if(valid) {
         auto& actor=ActorFor(g_current);
         if(!actor.ownsJumpPermission) {
@@ -1869,7 +2935,7 @@ int SafeDirectionImpl(lua_State* L,bool adaptive) {
                     if(safety==battle_ai::native::MotionSafety::Unavailable) {unavailable=diagnostic;reason=100+static_cast<int>(diagnostic.stage);return false;}
                     auto geometry=MapGeometryFor(g_current);geometry.deferDestroyables=false;Vec3 grounded{};
                     const bool clear=safety==battle_ai::native::MotionSafety::Safe&&
-                        (!PlayerBotRulesMode()||geometry.Step(here,destination,grounded));
+                        (!PlayerBotRulesMode(g_current)||geometry.Step(here,destination,grounded));
                     reason=safety!=battle_ai::native::MotionSafety::Safe?11:clear?0:static_cast<int>(geometry.lastReject);
                     if(!clear&&g_runtime.logDecisions)rejectedGeometry=geometry;
                     return clear;
@@ -1958,7 +3024,7 @@ bool DirectIntentUnsafe(double direction,int mode,int action) {
     if(!active||!battle_ai::Finite(goal)||(action==0&&!echo())) {direct={};return false;}
     auto geometry=MapGeometryFor(g_current);Vec3 grounded{};
     if(MotionSafetyFor(g_current,goal)!=battle_ai::native::MotionSafety::Safe||
-       (PlayerBotRulesMode()&&!geometry.Step(Position(g_current),goal,grounded))) {
+       (PlayerBotRulesMode(g_current)&&!geometry.Step(Position(g_current),goal,grounded))) {
         if(action==1||direct.owned)g_stop(g_current);
         direct={};return false;
     }
@@ -1986,7 +3052,7 @@ int __cdecl Cover(lua_State* L) {
         Vec3 target={static_cast<float>(g_lua.tonumber(L,2)),static_cast<float>(g_lua.tonumber(L,3)),static_cast<float>(g_lua.tonumber(L,4))};
         if(!std::isfinite(id)||id<=0||id>0xffffffff||!battle_ai::Finite(target)) return 1;
         auto targetId=static_cast<uint32_t>(id);auto other=FindObject(targetId);
-        if(!other||*reinterpret_cast<int*>(other+0x38)<=0) return 1;
+        if(!CombatTargetAlive(other)) return 1;
         auto self=g_current;Vec3 here=Position(self),center=AimPoint(self);
         Vec3 toward=target-center;toward.y=0;double len=battle_ai::Length(toward);
         if(len<100) return 1;
@@ -2236,7 +3302,7 @@ Ray3* __fastcall RangedRay(uint8_t* fsm,void*,Ray3* out) {
         } else targetId=*reinterpret_cast<uint32_t*>(fsm+0x200);
         if(!targetId) return ray;
         auto target=FindObject(targetId);
-        if(!target || *reinterpret_cast<int*>(target+0x38)<=0) return ray;
+        if(!CombatTargetAlive(target)) return ray;
         battle_ai::native::Capabilities caps={};
         if(!battle_ai::native::ReadCapabilities(owner,caps)) return ray;
         float speed=0;
@@ -2473,7 +3539,7 @@ void ApplySpNotice(const SpNotice& notice) {
     __try {
         if(!g_document||!*g_document) return;
         auto unit=FindObject(g_canonical(*g_document,notice.pilot));auto found=g_actors.find(unit);
-        if(!ObjectIsA(unit,10)||*reinterpret_cast<uint32_t*>(unit+0x2B68)!=notice.pilot) return;
+        if(!unit||*reinterpret_cast<uint32_t*>(unit+0x2B68)!=notice.pilot) return;
         auto npc=*reinterpret_cast<uint32_t*>(unit+0x3238);if(npc<3604001||npc>3607000) return;
         auto latest=g_spSnapshots.find(unit);
         if(latest!=g_spSnapshots.end()&&notice.sequence<latest->second.sequence) {
@@ -2618,7 +3684,7 @@ bool QuickSwingSafe(uint8_t* fsm,uint8_t* owner) {
     if(g_runtime.difficulty<2||!WantsGeneric(owner)||ControlBlocked(owner)||fsm[0x9B1]||*reinterpret_cast<int*>(owner+0x38)<=0) return false;
     auto target=FindObject(*reinterpret_cast<uint32_t*>(fsm+0x200));
     auto record=*reinterpret_cast<uint8_t**>(fsm+0x248);
-    if(!target||Destroyable(target)||*reinterpret_cast<int*>(target+0x38)<=0||!record||record[0x6A]!=1) return false;
+    if(!target||Destroyable(target)||!CombatTargetAlive(target)||!record||record[0x6A]!=1) return false;
     const auto protection=battle_ai::native::ReadDamageProtection(target);
     if(!protection.known||protection.active) return false;
     battle_ai::native::Capabilities caps={};
@@ -2913,6 +3979,7 @@ const Option kOptions[] = {
     {L"StuckMs",1400,300,10000}, {L"ProgressDistance",30,1,300}, {L"ArrivalDistance",100,10,500},
     {L"RecoveryDistance",350,50,1500}, {L"RecoveryMs",650,150,2000}, {L"RecoveryCooldownMs",1000,250,10000},
     {L"RangedMinDistance",450,0,2000}, {L"TacticCooldownMs",0,0,10000}, {L"LogDecisions",0,0,1},
+    {L"TerrainRayAudit",0,0,1},
     {L"TargetHoldMs",0,0,5000},{L"FarTargetSlack",900,0,10000},{L"FarTargetRatioPercent",200,100,1000},
     {L"WeaponHoldMs",0,0,5000},{L"AttackIntervalMs",0,0,10000},
     {L"MediumAttackIntervalMs",600,0,2000},
@@ -2975,6 +4042,7 @@ std::string ConfigChunk(RuntimeSettings& next,int roomDifficulty) {
         if(key=="Enabled") next.enabled=value!=0;
         if(key=="GenericMode") next.generic=value!=0;
         if(key=="LogDecisions") next.logDecisions=value!=0;
+        if(key=="TerrainRayAudit") next.terrainRayAudit=value!=0;
         if(key=="AimAssist") next.aim=value!=0;
         if(key=="ProjectileLead") next.lead=value!=0;
         if(key=="MaxLeadMs") next.maxLeadMs=static_cast<int>(value);
@@ -3050,6 +4118,7 @@ void GuardedPrepare() {
 }
 void ResetLifecycle(uint8_t* unit) {
     g_terrainRays.ClearLayouts();
+    g_transportCatalog.Clear();
     if(g_generations.size()>=1024) g_generations.clear();
     g_generations[unit]=++g_serial;
     g_actors.erase(unit);g_rangedShots.erase(unit);g_contacts.erase(unit);g_incoming.erase(unit);g_spSnapshots.erase(unit);
@@ -3074,6 +4143,9 @@ bool __fastcall Think(uint8_t* unit, void*) {
     }
     if(WantsGeneric(unit)) ++ActorFor(unit).thinkSerial;
     auto actor=g_actors.find(unit);
+    if(actor!=g_actors.end())++actor->second.nativeThinkSerial;
+    if(actor!=g_actors.end())SynchronizePhaseGeometry(unit,actor->second);
+    if(actor!=g_actors.end())ReconcileTransportRoute(unit,actor->second);
     if(actor!=g_actors.end()&&actor->second.specialSlotLease>=0&&
        (!g_runtime.enabled||g_runtime.difficulty<1||g_preparationFault)&&Owned(unit)) {
         g_dispatch("SDGO_BattleAI_ProfileRelease",unit);
@@ -3112,7 +4184,7 @@ bool __fastcall Think(uint8_t* unit, void*) {
     }
     if(WantsGeneric(unit)||(g_runtime.enabled&&g_runtime.difficulty>=1&&Owned(unit))) {
         auto it=g_actors.find(unit);
-        if(it!=g_actors.end() && (!it->second.path.empty()||it->second.geometryOwned)&&(WantsGeneric(unit)||it->second.defenceMoveOwned)) {
+        if(it!=g_actors.end() && (!it->second.path.empty()||it->second.geometryOwned||it->second.transport.active)&&(WantsGeneric(unit)||it->second.defenceMoveOwned)) {
             __try { FollowPath(unit,it->second); } __except(EXCEPTION_EXECUTE_HANDLER) { it->second.path.clear(); }
         }
     }
@@ -3264,6 +4336,80 @@ extern "C" __declspec(dllexport) int __cdecl SdgoBattleAiGetMissionBossSpecialV1
         return 0;
     }
 }
+extern "C" __declspec(dllexport) int __cdecl SdgoBattleAiGetTransportSnapshotV1(uint32_t id,SdgoBattleAiTransportSnapshotV1* output) {
+    __try {
+        if(!output||output->size<sizeof(*output)||output->version!=1||GetCurrentThreadId()!=g_gameThread)return 0;
+        auto unit=FindObject(id);auto found=g_actors.find(unit);
+        if(!unit||found==g_actors.end()||!Owned(unit))return 0;
+        const auto& actor=found->second;const auto& trip=actor.transport;
+        SdgoBattleAiTransportSnapshotV1 result{};
+        result.size=sizeof(result);result.version=1;result.object_id=id;result.generation=actor.generation;
+        result.phase=trip.phase;result.link_id=trip.id;result.catalog_count=static_cast<uint32_t>(g_transportCatalog.Volumes().size());
+        result.catalog_complete=g_transportCatalog.Complete();result.catalog_queries=g_transportCatalog.Queries();result.catalog_saturated=g_transportCatalog.Saturated();
+        result.selected=trip.selected;result.activations=trip.activations;result.completed=trip.completed;result.rejected=trip.rejected;result.resumed=trip.resumed;
+        result.entry_x=trip.entry.x;result.entry_y=trip.entry.y;result.entry_z=trip.entry.z;
+        result.exit_x=trip.exit.x;result.exit_y=trip.exit.y;result.exit_z=trip.exit.z;
+        result.activated_x=trip.activated.x;result.activated_y=trip.activated.y;result.activated_z=trip.activated.z;
+        result.arrived_x=trip.arrived.x;result.arrived_y=trip.arrived.y;result.arrived_z=trip.arrived.z;
+        result.usable_links=static_cast<uint32_t>(actor.cachedTransports.size());result.ground_rejected=actor.transportGroundRejected;
+        result.corridor_rejected=actor.transportCorridorRejected;result.search_nodes=static_cast<uint32_t>(actor.mapSearch.Nodes());
+        if(trip.volume.scene&&trip.volume.Live()&&battle_ai::Length(Position(unit)-trip.entry)<250) {
+            using namespace battle_ai::native;
+            uint8_t* scene=nullptr;uint8_t* sphere=nullptr;uint8_t* obb=nullptr;Aabb own{};
+            if(detail::ReadPointer(unit,0x34,scene)&&detail::ReadPointer(scene,0xE0,sphere)&&
+               detail::ReadPointer(trip.volume.scene,0xD8,obb)&&detail::Read(scene,0xBC,own)) {
+                Vec3 center{};float radius=0;
+                if(detail::Read(sphere,0x10,center)&&detail::Read(sphere,0x1C,radius)) {
+                    result.contact_available=1;result.sphere_x=center.x;result.sphere_y=center.y;result.sphere_z=center.z;result.sphere_radius=radius;
+                    result.pad_min_x=trip.volume.bounds.min.x;result.pad_min_y=trip.volume.bounds.min.y;result.pad_min_z=trip.volume.bounds.min.z;
+                    result.pad_max_x=trip.volume.bounds.max.x;result.pad_max_y=trip.volume.bounds.max.y;result.pad_max_z=trip.volume.bounds.max.z;
+                    result.owner_min_x=own.min.x;result.owner_min_y=own.min.y;result.owner_min_z=own.min.z;
+                    result.owner_max_x=own.max.x;result.owner_max_y=own.max.y;result.owner_max_z=own.max.z;
+                    result.native_overlap=g_mapSphereObb(reinterpret_cast<const MapBodySphere*>(sphere),obb);
+                    void* candidates[128]{};int count=0;
+                    auto tree=*reinterpret_cast<void**>(*g_document+0x82C4);
+                    g_navigation.query(tree,candidates,&count,128,&own);result.query_count=static_cast<uint32_t>(count);
+                    if(count>=0&&count<128)for(int i=0;i<count;++i)if(candidates[i]==trip.volume.scene)result.query_contains_pad=1;
+                }
+            }
+        }
+        *output=result;return 1;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return 0;}
+}
+extern "C" __declspec(dllexport) int __cdecl SdgoBattleAiGetPhaseGeometrySnapshotV1(
+    uint32_t id,SdgoBattleAiPhaseGeometrySnapshotV1* output) {
+    __try {
+        if(!output||output->size<sizeof(*output)||output->version!=1||
+           GetCurrentThreadId()!=g_gameThread)return 0;
+        SdgoBattleAiPhaseGeometrySnapshotV1 result{};
+        result.size=sizeof(result);result.version=1;
+        result.global_revision=
+            g_phaseGeometryRevision.load(std::memory_order_acquire);
+        result.hide_count=g_phaseHideCount.load(std::memory_order_relaxed);
+        result.unhide_count=g_phaseUnhideCount.load(std::memory_order_relaxed);
+        result.last_object_id=
+            g_phaseLastObject.load(std::memory_order_relaxed);
+        result.last_action=
+            g_phaseLastAction.load(std::memory_order_relaxed);
+        result.last_event_sequence=
+            g_phaseEventSequence.load(std::memory_order_acquire);
+        if(id) {
+            auto unit=FindObject(id);auto found=g_actors.find(unit);
+            if(unit&&found!=g_actors.end()&&Owned(unit)) {
+                const auto& actor=found->second;
+                result.actor_valid=1;
+                result.actor_generation=actor.generation;
+                result.actor_seen_revision=actor.phaseGeometryRevision;
+                result.actor_invalidation_count=actor.phaseInvalidations;
+                result.actor_route_rebuild_count=actor.phaseRouteRebuilds;
+                result.actor_path_generation=actor.pathGeneration;
+                result.route_active=!actor.path.empty()||
+                    actor.geometryOwned||actor.transport.active;
+            }
+        }
+        *output=result;return 1;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return 0;}
+}
 SDGO_MOD_ENTRY {
     g_api = api; g_mod = mod;
     if(!api||api->version!=SDGO_API_VERSION||
@@ -3305,6 +4451,8 @@ SDGO_MOD_ENTRY {
     if (!Read(g_script,check)||!Read(g_universalScript,check)) api->Log(mod,SDGO_LOG_ERROR,"missing AI policy script");
     if (!api->HookCode(mod,"npc.think",reinterpret_cast<void*>(&Think),reinterpret_cast<void**>(&g_think)) ||
         !api->HookCode(mod,"npc.init_ai",reinterpret_cast<void*>(&Init),reinterpret_cast<void**>(&g_init)) ||
+        !api->HookCode(mod,"map.phase_hide",reinterpret_cast<void*>(&PhaseHide),reinterpret_cast<void**>(&g_phaseHide)) ||
+        !api->HookCode(mod,"map.phase_unhide",reinterpret_cast<void*>(&PhaseUnhide),reinterpret_cast<void**>(&g_phaseUnhide)) ||
         !api->HookCode(mod,"npc.dispatch_ai",reinterpret_cast<void*>(&Dispatch),reinterpret_cast<void**>(&g_dispatch)) ||
         !api->HookCode(mod,"unit.effect_active",reinterpret_cast<void*>(&EffectActive),reinterpret_cast<void**>(&g_effectActive)) ||
         !api->HookCode(mod,"npc.ranged_ray",reinterpret_cast<void*>(&RangedRay),reinterpret_cast<void**>(&g_ray)) ||

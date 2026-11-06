@@ -233,6 +233,20 @@ struct MapGeometry {
         }
         return true;
     }
+    bool ClearForcedTravel(Vec3 from,Vec3 to,const Aabb& mapBounds)const {
+        if(!Valid()||!Finite(from)||!Finite(to)||!detail::ValidAabb(mapBounds))return false;
+        // CUnit::UpdateProc runs the native solid-contact correction after the
+        // Move/Jump FSMs, including ForceMove. A walking-style no-contact sweep
+        // would reject authored launch corridors which the native motor slides
+        // or projects through. The terrain layout still defines the valid X/Z
+        // domain, and DeathZone contact remains unsafe for the complete body.
+        const auto inside=[&](Vec3 point) {
+            return point.x>=mapBounds.min.x&&point.x<mapBounds.max.x&&
+                   point.z>=mapBounds.min.z&&point.z<mapBounds.max.z;
+        };
+        if(!inside(from)||!inside(to)){lastReject=10;return false;}
+        return ClearBody(from,to,true);
+    }
     bool Step(Vec3 from,Vec3 desired,Vec3& grounded)const {
         if(!Valid()||!Finite(from)||!Finite(desired))return false;
         Vec3 delta=desired-from;delta.y=0;const double length=Length(delta);
