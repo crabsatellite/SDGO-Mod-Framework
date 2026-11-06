@@ -126,6 +126,10 @@ python tools/game_test.py run --run-dir build/gametest/pvp --timeout 3600
 `registered` 或 `existing_account`，且不使用注册重试。框架同时锁定旧、新账号配置，保留两份配置，
 复用客户端文件；需要服务端回执时，观察器也须绑定目标账号的实际驾驶员 ID。
 复用功能需要开发环境安装 `Send2Trash`，缺少时会停止，不会降级为永久删除。
+普通合作任务也可在测试副本中启用 `BattlePlayerCombat`，通过原生映射输入前进、开火和锁定。
+输入严格绑定实际任务 generation、房间、认证驾驶员与已解除控制冻结的本机玩家。
+要求的观察完成前，若收到原生结算或返回等待室，立即判该项失败；测试不会改写游戏状态。
+
 进行枪械开火回归时，在测试副本的观察组件中启用 `BattlePlayerCombat`，并将
 `BattlePlayerWeaponSlot` 设为普通远程武器槽（`0`–`2`）。程序发送原生换武器请求，等待实际绑定，
 除输入、移动和攻击状态外，还要求观察到真实弹药消耗。默认 `-1` 保持当前武器；

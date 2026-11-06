@@ -56,6 +56,11 @@ Put a command in the co-op mission room title:
 * Melee enemies whose scripts only search for human players also find wingmen.
 * When a stage moves the players to a new area (`PlayerWarp`), living wingmen move with them.
 
+With [Battle AI](battle-ai.md) enabled, locally controlled wingmen can use loaded map propulsion
+devices through the same native movement flow as PvP AI. Ownership is checked against the actual
+mission participants, so mission enemies and protected NPCs keep their own scripts. Routes read the
+current geometry again after a mission script hides or restores an obstacle.
+
 ## Longer names and combined commands
 
 With the [extended-title client, Agent and Battle Mods](room-titles.md) enabled and an updated

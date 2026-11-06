@@ -2416,8 +2416,40 @@ int __cdecl SpawnMissionAi(const SdgoGameTestContextV1* context) {
 }
 int __cdecl ObserveMissionCombat(const SdgoGameTestContextV1* context) {
     SdgoMissionAiClientSnapshotV1 s{};
-    if(!MissionSnapshot(s) || !s.active)return SDGO_GAME_TEST_WAIT;
+    const bool missionSnapshotAvailable=MissionSnapshot(s);
+    const auto player=actions.OnboardingState();
+    const auto ended=rooms.BattleEndState();
+    const bool returnedToWaitRoom=player.native_app_state==18;
+    const bool nativeResultObserved=
+        ended.sequence>observedMissionEndBaseline;
+    if(returnedToWaitRoom || nativeResultObserved) {
+        nativePlayerCombat.Finish(context,scoreboardInput);
+        char terminal[448]{};
+        sprintf_s(terminal,
+            "native mission terminated before required combat gate elapsed=%llu app=%u pilot=%u snapshot=%u active=%u generation=%u/%u room=%u/%u records=%u spawned=%u lua=%u/%u exception=%u end_sequence=%u/%u end_opcode=%04X result=%u handler=%u",
+            static_cast<unsigned long long>(context->elapsed_ms),
+            player.native_app_state,player.profile_pilot_id,
+            missionSnapshotAvailable?1u:0u,s.active,
+            s.battle_generation,observedMissionGeneration,
+            s.room_object,observedMissionRoom,
+            s.ai_record_count,s.spawned_wingman_count,
+            s.lua_tick_count,s.lua_successful_tick_count,
+            s.native_exception_count,
+            ended.sequence,observedMissionEndBaseline,
+            ended.reply_opcode,ended.result_type,
+            ended.original_handler_completed);
+        context->Observe(terminal);
+        context->Assert(0,
+            "the genuine mission must remain in its released battle state until the required mapped-input and AI observation gate completes");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if(!missionSnapshotAvailable || !s.active)return SDGO_GAME_TEST_WAIT;
     if(s.room_mode!=missionMode || s.lua_pcall_error_count || s.native_exception_count){context->Assert(0,"whole native mission smoke observation remains error-free and same-mode");return SDGO_GAME_TEST_FAIL;}
+    if(!nativePlayerCombat.PollMission(
+            context,s,observedMissionGeneration,
+            observedMissionRoom,player.native_app_state,
+            player.profile_pilot_id,scoreboardInput))
+        return SDGO_GAME_TEST_FAIL;
     unsigned moved=0,targets=0;
     for(uint32_t i=0;i<s.ai_record_count && i<12;++i) {
         const auto& p=s.participants[i];if(!p.mapping_valid || !p.valid_registered_object)continue;
@@ -2426,6 +2458,7 @@ int __cdecl ObserveMissionCombat(const SdgoGameTestContextV1* context) {
     if(context->elapsed_ms<15000 || !moved || !targets)return SDGO_GAME_TEST_WAIT;
     char message[192];sprintf_s(message,"native mission bounded observation mode=%u generation=%u spawned=%u moved=%u targets=%u lua=%u tick=%u",
         s.room_mode,s.battle_generation,s.spawned_wingman_count,moved,targets,s.lua_pcall_error_count,s.lua_tick_count);context->Observe(message);
+    nativePlayerCombat.Finish(context,scoreboardInput);
     context->Assert(moved && targets && s.lua_successful_tick_count>0,"real mission wingmen move and acquire living native targets across ordinary updates with zero cumulative Lua error");
     context->Observe("bounded native mission smoke ends here; objective clear, natural results, active exit and a remote peer are not claimed");
     return SDGO_GAME_TEST_PASS;
@@ -3237,7 +3270,7 @@ SDGO_MOD_ENTRY {
     api->HookCode(mod,"game.error_name",reinterpret_cast<void*>(&ObserveNativeErrorName),reinterpret_cast<void**>(&originalErrorName));
     getStartStatus = reinterpret_cast<SdgoPvpAiClientGetStartStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_START_STATUS_EXPORT));
     getScoreboardStatus = reinterpret_cast<SdgoPvpAiClientGetScoreboardStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_SCOREBOARD_STATUS_EXPORT));
-    if (!missionMode && !fpsOnly && !bootstrapOnly && !pagesOnly && !scoreboardInput.Install(api, mod)) return 0;
+    if (!fpsOnly && !bootstrapOnly && !pagesOnly && !scoreboardInput.Install(api, mod)) return 0;
     if (!getSnapshot) sdgo_test::Fail("production PvP AI observation export is unavailable");
     getLuaStatus = reinterpret_cast<SdgoPvpAiClientGetLuaStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_LUA_STATUS_EXPORT));
     if (!getLuaStatus) sdgo_test::Fail("production whole-battle Lua counter export is unavailable");
