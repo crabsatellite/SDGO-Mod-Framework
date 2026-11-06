@@ -30,7 +30,7 @@ def fnv(raw):
 def native_catalog(records):
     seen=set();parts=[]
     for kind,identity,raw in sorted(records,key=lambda r:r[1]):
-        if kind not in {2,10,33,34,85} or len(raw)!={2:4976,10:1871,33:1197,34:614,85:614}[kind]:raise ValueError('不支持的原生记录类型或长度')
+        if kind not in {2,10,11,13,20,33,34,85} or len(raw)!={2:4976,10:1871,11:732,13:1132,20:106,33:1197,34:614,85:614}[kind]:raise ValueError('不支持的原生记录类型或长度')
         if type(identity) is not int or identity<=0 or identity in seen or struct.unpack_from('<I',raw)[0]!=identity or raw[4]!=0:
             raise ValueError('原生记录身份、发布标记或全局编号冲突')
         if kind==33:
@@ -96,12 +96,6 @@ def publish(workspace,state,selected,transaction):
         # They also preserve the last active record while an update is a draft.
         family=draft.get('published')
         if not family:continue
-        pending=getattr(getattr(workspace,'repository',None),'catalog',{}).get('pending_skill_ids',set())
-        if any(row['server'].get(field) in pending for row in family['forms'] for field in model.SKILL_REFS):
-            raise ValueError('请保存制作项目；使用新增技能制作数据的机体尚不能发布')
-        pending_funnels=getattr(getattr(workspace,'repository',None),'catalog',{}).get('pending_funnel_ids',set())
-        if any(row['server'].get('FunnelID') in pending_funnels for row in family['weapons']):
-            raise ValueError('请保存制作项目；使用新增浮游武器制作数据的机体尚不能发布')
         if family.get('native_programs'):
             raise ValueError('请保存制作项目；带有新增初始化脚本的机体尚不能发布')
         if family.get('native_content'):
