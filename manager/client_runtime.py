@@ -17,7 +17,7 @@ PROTECTED=('config.xml','.git','ScreenShots','app_log','zoa_log','sdgo/logs','sd
            'sdgo/local-state','sdgo/backups','sdgo/install-receipts','sdgo/install-state')
 EXTENSIONS={'.exe','.dll','.asi','.ini','.xml','.ttf','.dat','.des','.mpg','.zdx','.zpk'}
 TREES={'BGM','Briefing','miles','mods','anrs','fxrs','gdrs','mdrs','scp','sdrs','sol','sprs','trns','txrs','uirs','sdgo/mods','sdgo/symbols'}
-FIXED={'sdgo/core.dll','sdgo/sdgo.ini','sdgo/catalog.json',SOURCE}
+FIXED={'sdgo/core.dll','sdgo/sdgo.ini','sdgo/catalog.json','player-package.json',SOURCE}
 HASH=re.compile('[0-9a-f]{64}');OID=re.compile('[0-9a-f]{40}')
 
 
@@ -57,6 +57,7 @@ def runtime_path(name,contract):
     updates.safe_name(name)
     if protected(name):return False
     if name in FIXED:return True
+    if name in contract.get('documentation',[]):return True
     if '/'not in name:return Path(name).suffix.casefold()in contract['root_extensions']or name in contract['entrypoints']
     return any(name.startswith(tree+'/')for tree in contract['trees'])
 
@@ -67,6 +68,11 @@ def validate_contract(manifest,binding):
     if not isinstance(c.get('root_extensions'),list)or not set(c['root_extensions'])<=EXTENSIONS:raise ValueError('客户端文件范围无效')
     if not isinstance(c.get('trees'),list)or not set(c['trees'])<=TREES:raise ValueError('客户端资源范围无效')
     if c.get('entrypoints')not in([],['SDGO Mod Manager.exe']):raise ValueError('客户端更新必须由 Manager 统一管理')
+    documentation=c.get('documentation',[])
+    if not isinstance(documentation,list)or len(documentation)>12:raise ValueError('客户端说明文件清单无效')
+    for name in documentation:
+        updates.safe_name(name)
+        if '/'in name or not name.casefold().endswith('.md'):raise ValueError('客户端说明须为根目录 Markdown 文件')
     for name in c.get('remove_paths',[]):
         updates.safe_name(name)
         if protected(name)or Path(name).suffix.casefold()in('.mdf','.ldf','.ndf'):raise ValueError('退役清单与私人数据范围冲突')
@@ -97,6 +103,21 @@ class ClientRuntime:
             stop=self.stop_event,env=git_source.environment(),input=input,output=output)
         if result.returncode:raise ValueError(git_source.failure(result.stderr))
         return result.stdout
+
+    @staticmethod
+    def move_image(source,target,run):
+        # Windows cannot replace an existing name while its image barrier is
+        # open. Move that still-locked inode aside, then expose the locked new
+        # inode at the now-absent name. Neither executable can start in between.
+        previous=None
+        if target.exists():
+            if not target.is_file():raise storage.Conflict('程序目标不是普通文件：'+target.name)
+            previous=run/'pinned-images'/(uuid.uuid4().hex+'-'+target.name)
+            previous.parent.mkdir(parents=True,exist_ok=True);os.rename(target,previous)
+        try:os.rename(source,target)
+        except BaseException:
+            if previous is not None:os.rename(previous,target)
+            raise
 
     def repository(self,binding):
         errors=[]
@@ -183,6 +204,7 @@ class ClientRuntime:
         retired=set(contract.get('remove_paths',[]))|{n for n in previous.get('files',{})if n not in entries and runtime_path(n,contract)}
         retired=sorted(n for n in retired if n not in entries and not protected(n)and not any(n==p or n.startswith(p+'/')for p in excluded)and updates.child(root,n).is_file())
         snapshot={n:file_hash(updates.child(root,n))if updates.child(root,n).is_file()else None for n in set(needed)|set(retired)}
+        snapshot[RECEIPT]=file_hash(root/RECEIPT)if(root/RECEIPT).is_file()else None
         value={'source_id':binding['source_id'],'commit':commit,'entries':entries,'needed':needed,'retired':retired,
                'snapshot':snapshot,'binding':binding,'mirror':index,'contract':contract,'repository':str(repo),
                'effective':effective,'preserved':preserved,'merged':list(merged)}
@@ -268,7 +290,9 @@ class ClientRuntime:
             if mode(host)=='owner'or installed_source(root)!=plan['binding']:raise storage.Conflict('维护方式或更新来源已改变，请重新检查')
             if updates.running(root/'GOnline.exe'):return {'status':'waiting','message':'请关闭这个客户端后重试'}
             from .operations import unmapped_image
-            for executable in(root/'GOnline.exe',stage/'GOnline.exe'):
+            executables=[root/'GOnline.exe']
+            if updates.MANAGER in plan['needed']:executables.append(root/updates.MANAGER)
+            for executable in executables:
                 if executable.is_file():barrier.enter_context(unmapped_image(executable,replace=True))
             for name,old in plan['snapshot'].items():
                 path=updates.child(root,name)
@@ -290,7 +314,10 @@ class ClientRuntime:
                     if self.stop_event.is_set():raise InterruptedError('客户端更新已取消')
                     target=updates.child(root,name);saved=updates.child(backup,name);saved.parent.mkdir(parents=True,exist_ok=True)
                     old=plan['snapshot'][name]
-                    if target.is_file():shutil.copy2(target,saved)
+                    if(file_hash(target)if target.is_file()else None)!=old:raise storage.Conflict('文件已被外部修改：'+name)
+                    if target.is_file():
+                        shutil.copy2(target,saved)
+                        if file_hash(saved)!=old:raise storage.Conflict('备份期间文件已改变：'+name)
                     row={'path':name,'previous':old,'installed':None};changes.append(row)
                     storage.atomic(run/'transaction.json',storage.json_bytes(journal))
                     if name in plan['retired']:target.unlink()
@@ -299,13 +326,22 @@ class ClientRuntime:
                         storage.atomic(run/'transaction.json',storage.json_bytes(journal))
                         temporary=target.with_name(target.name+'.'+run.name+'.tmp')
                         try:
-                            shutil.copyfile(updates.child(stage,name),temporary);os.replace(temporary,target)
+                            shutil.copyfile(updates.child(stage,name),temporary)
+                            if name in('GOnline.exe',updates.MANAGER):barrier.enter_context(unmapped_image(temporary,replace=True))
+                            if name in('GOnline.exe',updates.MANAGER):self.move_image(temporary,target,run)
+                            else:os.replace(temporary,target)
                         finally:temporary.unlink(missing_ok=True)
                 different=[n for n,e in plan['effective'].items()if not matches(updates.child(root,n),e)]
                 if different:raise ValueError('完整客户端读回失败：'+', '.join(different[:8]))
                 receipt={'schema_version':1,'source_id':plan['source_id'],'commit':plan['commit'],'mirror':plan['mirror'],
                          'files':plan['entries'],'effective_files':plan['effective'],'personal_state_preserved':True,'data_migrations':False,'backup':str(backup)}
-                storage.atomic(root/RECEIPT,storage.json_bytes(receipt));journal['status']='complete'
+                marker=root/RECEIPT;marker_before=file_hash(marker)if marker.is_file()else None
+                if marker.is_file():
+                    saved=updates.child(backup,RECEIPT);saved.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(marker,saved)
+                raw=storage.json_bytes(receipt)
+                changes.append({'path':RECEIPT,'previous':marker_before,'installed':updates.digest(raw)})
+                storage.atomic(run/'transaction.json',storage.json_bytes(journal))
+                storage.atomic(marker,raw);journal['status']='complete'
                 storage.atomic(run/'transaction.json',storage.json_bytes(journal))
                 return {'status':'installed','commit':plan['commit'],'verified_files':len(plan['entries']),'data_migrations':False}
             except BaseException:
@@ -318,7 +354,9 @@ class ClientRuntime:
                         if current!=row['installed']:raise ValueError('文件被外部修改')
                         if row['previous']:
                             if file_hash(saved)!=row['previous']:raise ValueError('恢复文件已变化')
-                            os.replace(saved,path)
+                            if row['path']in('GOnline.exe',updates.MANAGER):barrier.enter_context(unmapped_image(saved,replace=True))
+                            if row['path']in('GOnline.exe',updates.MANAGER):self.move_image(saved,path,run)
+                            else:os.replace(saved,path)
                         elif path.exists():path.unlink()
                     except (OSError,ValueError):failures.append(row['path'])
                 journal.update(status='recovery_required'if failures else'rolled_back',recovery_required=failures)
@@ -341,6 +379,8 @@ class ClientRuntime:
             with lease('host:'+str(root).casefold()),ExitStack()as barrier:
                 from .operations import unmapped_image
                 if(root/'GOnline.exe').is_file():barrier.enter_context(unmapped_image(root/'GOnline.exe',replace=True))
+                if any(r['path']==updates.MANAGER for r in value['changes'])and(root/updates.MANAGER).is_file():
+                    barrier.enter_context(unmapped_image(root/updates.MANAGER,replace=True))
                 for row in reversed(value['changes']):
                     path=updates.child(root,row['path']);saved=updates.child(run/'recovery',row['path'])
                     current=file_hash(path)if path.is_file()else None
@@ -349,7 +389,11 @@ class ClientRuntime:
                     if row['previous']:
                         if file_hash(saved)!=row['previous']:raise ValueError('恢复副本校验失败：'+row['path'])
                         path.parent.mkdir(parents=True,exist_ok=True);temporary=path.with_name(path.name+'.recover.tmp')
-                        try:shutil.copyfile(saved,temporary);os.replace(temporary,path)
+                        try:
+                            shutil.copyfile(saved,temporary)
+                            if row['path']in('GOnline.exe',updates.MANAGER):barrier.enter_context(unmapped_image(temporary,replace=True))
+                            if row['path']in('GOnline.exe',updates.MANAGER):self.move_image(temporary,path,run)
+                            else:os.replace(temporary,path)
                         finally:temporary.unlink(missing_ok=True)
                     elif path.exists():path.unlink()
                 value['status']='rolled_back';storage.atomic(journal_path,storage.json_bytes(value))
