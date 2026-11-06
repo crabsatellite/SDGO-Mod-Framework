@@ -14,7 +14,9 @@ import io
 import json
 from pathlib import Path
 import re
+import shutil
 import struct
+import unicodedata
 from types import SimpleNamespace
 
 from owner.native_archive import build_archive_file
@@ -28,6 +30,37 @@ from .common import (AFFILIATION_BYTES, Config, FUNNEL_BYTES, ITEM_BYTES, SKILL_
                      dump_json, load_json, sha256, u32, wide_field)
 
 SCHEMA = 'sdgo.gunion-roster-publication/1'
+
+
+_ASCII_FOLD = str.maketrans({'’': "'", '‘': "'", '“': '"', '”': '"', '—': '-', '–': '-', '・': '-', '·': '-',
+                             'ν': 'nu', 'Ν': 'Nu', 'α': 'alpha', 'β': 'beta', 'γ': 'gamma', 'δ': 'delta', 'ε': 'epsilon',
+                             'ζ': 'zeta', 'η': 'eta', 'θ': 'theta', 'λ': 'lambda', 'μ': 'mu', 'ξ': 'xi', 'π': 'pi',
+                             'ρ': 'rho', 'σ': 'sigma', 'τ': 'tau', 'φ': 'phi', 'χ': 'chi', 'ψ': 'psi', 'ω': 'omega', 'Ω': 'Omega'})
+
+
+def _ascii_name(text: str, fallback: str, renamed: dict[str, str] | None = None, key: str = '') -> str:
+    """ASCII label for the server's varchar name columns (tbl_UnitNames.NameEN,
+    tbl_ItemCategory.Name): fold width/compatibility forms and Greek letters, drop
+    the rest. The client shows its own UTF-16 record names, never these columns."""
+    folded = unicodedata.normalize('NFKC', text).translate(_ASCII_FOLD)
+    ascii_text = ' '.join(''.join(ch if ch.isascii() and ch.isprintable() else ' ' for ch in folded).split())
+    if ascii_text == text:
+        return text
+    if renamed is not None:
+        renamed[key] = text
+    return ascii_text or fallback
+
+
+def _server_weapon(weapon: dict, renamed: dict[int, str]) -> dict:
+    """Server row values; the native WeaponName column is a non-CJK varchar, so a
+    non-ASCII design name becomes the same UNION_W_<id> label the other rows use.
+    Players see the client record's own name, never this column."""
+    values = dict(weapon['values'])
+    name = values.get('WeaponName', '')
+    if not isinstance(name, str) or not name.isascii() or not name:
+        values['WeaponName'] = 'UNION_W_%d' % weapon['id']
+        renamed[weapon['id']] = name
+    return values
 KIND_BYTES = {2: UNIT_BYTES, 10: WEAPON_BYTES, 11: FUNNEL_BYTES, 13: SKILL_BYTES, 20: AFFILIATION_BYTES, 33: 1197, 34: ITEM_BYTES, 85: ITEM_BYTES}
 INDEX_FIRST = 0x375BE1
 OVERLAY_ROOTS = {'mdrs': '.mod', 'anrs': '.ani', 'txrs': '.txr', 'fxrs': '.zfx', 'sprs': '.spr', 'sdrs': '.zsd'}
@@ -78,10 +111,20 @@ def build(config: Config) -> dict:
     families = load_json(config.output / 'families.json')
     resources = load_json(config.output / 'resources.json')
     programs = load_json(config.output / 'programs.json')
+    for stage, receipt_path in (('families', 'families.json'), ('resources', 'resources.json')):
+        if programs.get(stage + '_sha256') != sha256((config.output / receipt_path).read_bytes()):
+            raise ValueError('programs stage is older than the %s stage; rerun programs' % stage)
+    if resources.get('families_sha256') != sha256((config.output / 'families.json').read_bytes()):
+        raise ValueError('resources stage is older than the families stage; rerun resources')
     declaration = load_json(config.output / 'programs' / 'declaration.json')
     baseline = Baseline(config.baseline_client)
     baseline._loose_roots = []
-    module_dir = config.output / 'publication' / 'unit_catalog'
+    # publication/package is the exact installer source (manifest.json, symbols.fragment.ini and
+    # client/...); registrations, the server plan and the receipt live beside it, not inside.
+    package_root = config.output / 'publication' / 'package'
+    module_dir = package_root / 'client' / 'sdgo' / 'mods' / 'unit_catalog'
+    if package_root.is_dir():
+        shutil.rmtree(package_root)
     module_dir.mkdir(parents=True, exist_ok=True)
 
     # Shipped overlay resources as loaders over the content-addressed blobs.
@@ -119,6 +162,9 @@ def build(config: Config) -> dict:
     next_index = INDEX_FIRST + len(index_rows) + sum(1 for kind, _, _ in carried if kind == 85)
     plan_requests = {(row['kind'], row['requestedTargetId']): row for row in load_json(config.plan_dir / 'plan.json')['requests']}
     weapons_final: dict[int, bytes] = {}
+    weapon_owner: dict[int, str] = {}
+    renamed_weapons: dict[int, str] = {}
+    renamed_names: dict[str, str] = {}
     skill_records: dict[int, bytes] = {}
     registrations = []
     published = []
@@ -140,17 +186,25 @@ def build(config: Config) -> dict:
                           'server': form['values'], 'names': form['names'], 'record_sha256': sha256(raw)})
         weapons = []
         for weapon in family['weapons']:
-            raw = (config.output / receipt['records']['10:%d' % weapon['id']]['member']).read_bytes()
+            rewritten = config.output / 'programs' / 'weapons' / ('10-%d.bin' % weapon['id'])
+            raw = (rewritten if rewritten.is_file() else config.output / receipt['records']['10:%d' % weapon['id']]['member']).read_bytes()
             if u32(raw, 0) != weapon['id'] or len(raw) != WEAPON_BYTES:
                 raise ValueError('prepared weapon record differs: %d' % weapon['id'])
+            if sha256(raw) != programs['weapon_records'].get(str(weapon['id'])):
+                raise ValueError('weapon record differs from the programs stage: %d' % weapon['id'])
             if weapon['id'] in weapons_final:
                 if weapons_final[weapon['id']] != raw:
                     raise ValueError('families prepare different bytes for weapon %d' % weapon['id'])
-            else:
-                weapons_final[weapon['id']] = raw
-                records.append((10, weapon['id'], raw))
-                occupied.add(weapon['id'])
-            weapons.append({'id': weapon['id'], 'server': weapon['values'], 'record_sha256': sha256(raw)})
+                # The server ledger owns each weapon row through exactly one family: the first
+                # family (in publication order) that uses it owns the row, later ones reference it.
+                weapons.append({'id': weapon['id'], 'server': _server_weapon(weapon, renamed_weapons), 'record_sha256': sha256(raw),
+                                'shared_from': weapon_owner[weapon['id']]})
+                continue
+            weapons_final[weapon['id']] = raw
+            weapon_owner[weapon['id']] = family['family_key']
+            records.append((10, weapon['id'], raw))
+            occupied.add(weapon['id'])
+            weapons.append({'id': weapon['id'], 'server': _server_weapon(weapon, renamed_weapons), 'record_sha256': sha256(raw)})
         for identity in family['owned_skill_ids']:
             if identity not in skill_records:
                 raw = (config.output / 'records' / 'shared' / ('13-%d.bin' % identity)).read_bytes()
@@ -219,11 +273,15 @@ def build(config: Config) -> dict:
                               'custom_candidate_sprite': wide_field(root_raw, 4854, 100).replace('\\', '/').lower(),
                               'enabled': True, 'storefront_changes': False, 'gacha_changes': False, 'blueprints': [],
                               'primary_blueprint_id': 0})
-        item_row = {'CatalogueID': category, 'RefIndex': root, 'Name': root_form['names']['NameEN'][:48]}
+        item_row = {'CatalogueID': category, 'RefIndex': root,
+                    'Name': _ascii_name(root_form['names']['NameEN'], 'UNION_U_%d' % root, renamed_names, 'item:%d' % category)[:48]}
         server_plans.append({'family_key': family['family_key'], 'root_unit_id': root, 'item_template_id': family['item_template_id'],
-                             'units': [form['server'] for form in forms], 'weapons': [weapon['server'] for weapon in weapons],
+                             'units': [form['server'] for form in forms],
+                             'weapons': [weapon['server'] for weapon in weapons if 'shared_from' not in weapon],
+                             'shared_weapon_ids': {str(weapon['id']): weapon['shared_from'] for weapon in weapons if 'shared_from' in weapon},
                              'item': item_row,
-                             'names': [{'UnitNumber': form['id'], 'NameCN': form['names']['NameCN'][:48], 'NameEN': form['names']['NameEN'][:48]}
+                             'names': [{'UnitNumber': form['id'], 'NameCN': form['names']['NameCN'][:48],
+                                        'NameEN': _ascii_name(form['names']['NameEN'], 'UNION_U_%d' % form['id'], renamed_names, 'unit:%d' % form['id'])[:48]}
                                        for form in forms]})
     # Every relocated skill record ships (linked-skill references may point at unreferenced ones).
     for (kind, identity), row in plan_requests.items():
@@ -308,15 +366,21 @@ def build(config: Config) -> dict:
     binary = Path(config.module_binary).read_bytes()
     (module_dir / 'unit_catalog.dll').write_bytes(binary)
     module_files = {path.name: sha256(path.read_bytes()) for path in module_dir.iterdir() if path.is_file()}
-    package_root = config.output / 'publication'
+    publication_root = config.output / 'publication'
     manifest = {'module': 'unit_catalog', 'schema_version': 1, 'revision': content_revision, 'host': HOST, 'host_sha256': HOST_SHA256,
                 'files': {'client/sdgo/mods/unit_catalog/' + name: digest for name, digest in module_files.items()},
-                'owned_paths': [], 'resource_overlay': {'index_sha256': sha256(zdx), 'archive_sha256': inventory['archive_sha256'],
-                                                        'entries': len(inventory['entries'])}}
+                # Overlay-only package: the game reads imported resources from the archive, so no
+                # loose copies are shipped; the installer checks the archive against these paths.
+                'owned_paths': [], 'resource_overlay': {'schema': 1, 'config': 'client/sdgo/mods/unit_catalog/resource-overlay.ini',
+                                                        'index': 'client/sdgo/mods/unit_catalog/resources.zdx',
+                                                        'archive': 'client/sdgo/mods/unit_catalog/resources.zpk',
+                                                        'index_sha256': sha256(zdx), 'archive_sha256': inventory['archive_sha256'],
+                                                        'entries': len(inventory['entries']),
+                                                        'paths': sorted(entry['path'] for entry in inventory['entries'])}}
     manifest['files']['symbols.fragment.ini'] = module_files['symbols.fragment.ini']
     (package_root / 'symbols.fragment.ini').write_bytes((module_dir / 'symbols.fragment.ini').read_bytes())
     dump_json(package_root / 'manifest.json', manifest)
-    dump_json(package_root / 'registrations.json', {'schema_version': 1, 'provider': 'unit_catalog', 'revision': content_revision, 'items': registrations})
+    dump_json(publication_root / 'registrations.json', {'schema_version': 1, 'provider': 'unit_catalog', 'revision': content_revision, 'items': registrations})
     skill_definitions = load_json(config.delivery / 'native' / 'design-adaptation-v1' / 'skill-server-definitions.json')
     server_plan = {'schema': 'sdgo.gunion-roster-server-plan/1', 'owner': config.owner, 'revision': content_revision,
                    'families': server_plans,
@@ -339,7 +403,7 @@ def build(config: Config) -> dict:
     for section in ('skills', 'funnels'):
         block = server_plan[section]
         block['revision'] = sha256(json.dumps({k: v for k, v in block.items() if k != 'revision'}, sort_keys=True).encode())
-    dump_json(package_root / 'server-plan.json', server_plan)
+    dump_json(publication_root / 'server-plan.json', server_plan)
     counts = {'families': len(published), 'records': len(records), 'carried_records': len(carried),
               'kinds': {str(kind): sum(1 for row in records if row[0] == kind) for kind in sorted({row[0] for row in records})},
               'catalog_bytes': len(catalog), 'overlay_entries': len(inventory['entries']), 'overlay_bytes': inventory['archive_bytes'],
@@ -348,6 +412,10 @@ def build(config: Config) -> dict:
               'item_categories': sorted(row['category_id'] for row in published)[:3] + ['...'] + sorted(row['category_id'] for row in published)[-1:]}
     receipt = {'schema': SCHEMA, 'owner': config.owner, 'revision': content_revision, 'catalog_sha256': catalog_sha, 'counts': counts,
                'module_files': module_files, 'program_declaration_sha256': programs['declaration_sha256'],
+               'server_weapon_names_normalized': {str(k): v for k, v in sorted(renamed_weapons.items())},
+               'server_names_normalized': dict(sorted(renamed_names.items())),
+               'shared_weapon_owners': {str(k): v for k, v in sorted(weapon_owner.items()) if any(
+                   str(k) in row.get('shared_weapon_ids', {}) for row in server_plans)},
                'ids_reserved': False, 'native_acceptance_claimed': False}
     dump_json(config.output / 'publication.json', receipt)
     return receipt

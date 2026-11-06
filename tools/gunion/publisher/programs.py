@@ -130,12 +130,19 @@ def build(config: Config) -> dict:
 
     # Needed callback names across the prepared weapon records.
     weapon_records: dict[int, tuple[str, Path, bytes]] = {}
+    # A weapon shared by several families has one prepared member per family; the
+    # resource stage members stay untouched and the rewritten record is written once
+    # under programs/weapons so this stage can be rerun without a resources rerun.
     needed: dict[str, list[tuple[int, str]]] = {}
     for family in families['families']:
         receipt = next(row for row in resources['families'] if row['family_key'] == family['family_key'])
         for weapon in family['weapons']:
             member = config.output / receipt['records']['10:%d' % weapon['id']]['member']
             raw = member.read_bytes()
+            if weapon['id'] in weapon_records:
+                if weapon_records[weapon['id']][2] != raw:
+                    raise ValueError('families prepare different bytes for weapon %d' % weapon['id'])
+                continue
             weapon_records[weapon['id']] = (family['family_key'], member, raw)
             for role, name in _callback_fields(raw).items():
                 if name:
@@ -155,11 +162,32 @@ def build(config: Config) -> dict:
     module_exports: dict[str, list[str]] = {}
 
     lowering_matches: dict[str, bool] = {}
+    adaptations_applied: dict[str, list] = {}
+    adapted_dir = config.output / 'programs' / 'adapted-sources'
+
+    def adapted_source(name: str) -> Path:
+        """Apply reviewed textual adaptations (Lua 5.1 syntax to 5.0) before compiling."""
+        rules = config.script_adaptations.get(name)
+        if not rules:
+            return scp_dir / name
+        text = text_modules[name]
+        applied = []
+        for rule in rules:
+            find, replace = rule['find'].encode('utf-8'), rule['replace'].encode('utf-8')
+            count = text.count(find)
+            if count != int(rule.get('count', 1)):
+                raise ValueError('script adaptation for %s matched %d times, expected %s' % (name, count, rule.get('count', 1)))
+            text = text.replace(find, replace)
+            applied.append({'find': rule['find'], 'replace': rule['replace'], 'count': count})
+        adapted_dir.mkdir(parents=True, exist_ok=True)
+        target = adapted_dir / name
+        target.write_bytes(text)
+        adaptations_applied[name] = applied
+        return target
 
     def compile_module(name: str):
         if name in compiled or name in compile_errors or name in root_shape_errors:
             return
-        source = scp_dir / name
         try:
             if name in luajit_modules:
                 lowered, _info = native_lua50_chunk(parse_dump(luajit_modules[name]))
@@ -168,7 +196,7 @@ def build(config: Config) -> dict:
                     lowering_matches[name] = sha256(lowered) == derived_references[name]
                 chunk = parse_chunk(lowered)
             else:
-                chunk, _receipt = compile_source(source, toolchain_dir / (name + '.luac'), toolchain=toolchain)
+                chunk, _receipt = compile_source(adapted_source(name), toolchain_dir / (name + '.luac'), toolchain=toolchain)
         except (Lua50CompileError, LoweringError, LuaJITFormatError, ValueError) as error:
             compile_errors[name] = str(error)[:300]
             return
@@ -200,11 +228,12 @@ def build(config: Config) -> dict:
                 if 'GETGLOBAL' in operations and literal not in baseline_defined and literal in declared_by and declared_by[literal] not in closure:
                     pending.append(declared_by[literal])
     scoped_modules = [name for name in closure if name in compiled]
+    # Every global a scoped module publishes is renamed under the owner prefix, including
+    # names the baseline also defines: the module's own closure stays isolated, while weapon
+    # callbacks that name a baseline function keep binding the original mechanism.
     scoped_exports: dict[str, str] = {}
     for name in scoped_modules:
         for export in module_exports[name]:
-            if export in baseline_defined:
-                continue
             scoped_exports[export] = prefix + export
     # Mutable scratch globals: SETGLOBAL outside root closure publications, across scoped modules.
     mutable: set[str] = set()
@@ -282,6 +311,7 @@ def build(config: Config) -> dict:
         source_raw = text_modules.get(name) or luajit_modules[name]
         proofs[resource] = {'source': 'scp/' + name, 'source_kind': 'luajit-dump' if name in luajit_modules else 'plain-text',
                             'source_sha256': sha256(source_raw), 'compiled_sha256': sha256(raw),
+                            'source_adaptations': adaptations_applied.get(name, []),
                             'lowering_matches_earlier_reference': lowering_matches.get(name),
                             'scoped_sha256': sha256(scoped), 'carriers': proof['carriers'], 'exports': exports}
         programs.append({'resource': resource, 'member': resource, 'sha256': sha256(scoped), 'exports': exports})
@@ -306,12 +336,25 @@ def build(config: Config) -> dict:
     weapons_final: dict[int, bytes] = {}
     callbacks: list[dict] = []
     callback_open: list[dict] = []
+    substitutions_applied: list[dict] = []
+    rewritten_dir = config.output / 'programs' / 'weapons'
+    if rewritten_dir.is_dir():
+        for stale in rewritten_dir.glob('10-*.bin'):
+            stale.unlink()
     for identity, (family_key, member, raw) in weapon_records.items():
         output = bytearray(raw)
         for role, (_, offset) in CALLBACK_ROLES.items():
             name = wide_field(raw, offset, 100)
             if not name:
                 continue
+            if name in config.callback_substitutions:
+                replacement = config.callback_substitutions[name]
+                substitutions_applied.append({'weapon_id': identity, 'family': family_key, 'role': role,
+                                              'name': name, 'replacement': replacement})
+                write_wide(output, offset, 50, replacement)
+                name = replacement
+                if not name:
+                    continue
             plain = name[len(prefix):] if name.startswith(prefix) else name
             if plain in scoped_exports and scoped_exports[plain] in export_map:
                 bound = scoped_exports[plain]
@@ -329,7 +372,8 @@ def build(config: Config) -> dict:
         final = bytes(output)
         weapons_final[identity] = final
         if final != raw:
-            member.write_bytes(final)
+            rewritten_dir.mkdir(parents=True, exist_ok=True)
+            (rewritten_dir / ('10-%d.bin' % identity)).write_bytes(final)
     for row in callbacks:
         row['weapon_sha256'] = sha256(weapons_final[row['weapon_id']])
     declaration = {'schema': CALLBACK_SCHEMA, 'owner': owner, 'revision': '', 'vm_abi': 'lua50-x86-double64',
@@ -349,14 +393,19 @@ def build(config: Config) -> dict:
               'lowering_reference_matches': lowering_matches,
               'modules_in_closure': len(closure), 'modules_compiled': len(scoped_modules),
               'compile_errors': len(compile_errors), 'root_shape_errors': len(root_shape_errors),
-              'programs': len(programs), 'prescoped_programs': len(prescoped), 'callbacks_bound': len(callbacks),
+              'programs': len(programs), 'callbacks_bound': len(callbacks),
               'callbacks_open': len(callback_open), 'open_items': len(open_items), 'ambiguous_aliases': len(ambiguous_aliases),
               'baseline_scripts_unparsed': baseline_unparsed}
     receipt = {'schema': SCHEMA, 'owner': owner, 'counts': counts, 'toolchain': toolchain.json(),
                'undefined_callback_names': undefined, 'reused_baseline_names': sorted(reuse_baseline),
+               'callback_substitutions': substitutions_applied,
                'compile_errors': compile_errors, 'root_shape_errors': root_shape_errors, 'open_items': open_items,
                'callback_open': callback_open, 'mutable_globals': sorted(mutable), 'proofs': proofs,
                'declaration_sha256': sha256((programs_dir / 'declaration.json').read_bytes()),
+               # Weapon callback fields are rewritten inside the resource-stage record members, so a
+               # later resources rerun invalidates this stage; assemble checks these hashes.
+               'families_sha256': sha256((config.output / 'families.json').read_bytes()),
+               'resources_sha256': sha256((config.output / 'resources.json').read_bytes()),
                'weapon_records': {str(identity): sha256(raw) for identity, raw in weapons_final.items()},
                'native_acceptance_claimed': False}
     dump_json(config.output / 'programs.json', receipt)

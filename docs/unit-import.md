@@ -87,7 +87,9 @@ ready/selection poses (see [developer notes](#gametest-checks-and-captures)), up
   links and duplicate paths are rejected, and installers or database scripts inside the archive never run.
 - A new unit ID that collides with a stock or other imported unit blocks confirmation; there is no blind binary
   renumbering.
-- Only single-form units or complete, explicit two-form links are supported.
+- Only single-form units and complete two-form links are supported: reciprocal links (`native-linked-forms-v1`) and
+  one-way links whose second form transforms back to nothing (`native-one-way-forms-v1`). Groups with a third or
+  fourth entry form stay deferred until the native form-graph runtime admits them.
 - A missing skill blocks confirmation by default. For skill slots 1 and 2 the panel offers **移除缺失技能 … 后导入**
   (remove the missing skill and import): every form referencing it gets `0` on both client and server, the source
   RAR/BIN is kept, earlier preview approvals are invalidated and the skill's effect is gone. Other skills, weapons and
@@ -461,6 +463,47 @@ memory. Conflicting logical paths retain their variants; baseline reuse and owne
 aliases require target checks. Opaque source game scripts remain data and gain no
 execution permission. This reader does not install resources, register records or
 replace the Manager's unit import workflow.
+
+### Batch roster publication (`tools/gunion/publisher`)
+
+A recovered roster of many families is published in one `unit_catalog` package by the batch publisher instead of
+one Manager import per family. It runs as four stages, each writing a receipt under the configured output root:
+
+```powershell
+python -B -m tools.gunion.publisher families  --config <private-config.json>
+python -B -m tools.gunion.publisher resources --config <private-config.json>
+python -B -m tools.gunion.publisher programs  --config <private-config.json>
+python -B -m tools.gunion.publisher assemble  --config <private-config.json>
+```
+
+- **families** classifies every recovered unit context by its complete records: single form, reciprocal two-form
+  link or one-way link. Self-transform loops and third/fourth entry forms are listed in `deferred_entries` with a
+  reason; contexts whose models are missing are `excluded_contexts`.
+- **resources** walks each family's resource graph (models, animations, textures, effects, sprites, sounds), keeps
+  baseline-identical files, ships absent files under their logical path and aliases files that differ from the
+  baseline under an owner-hashed name, rewriting every typed reference (records, model materials, effects, sprite
+  frames). Files whose extension the original loader of that root never opens (for example a `.psd` under `txrs`) are
+  recorded as `unsupported` and not shipped. Skill and funnel records are prepared as shared records.
+- **programs** compiles the script closure with the official Lua 5.0 toolchain (LuaJIT dumps are lowered first),
+  scopes exported names under the owner prefix, binds weapon callback fields and writes rewritten weapon records to
+  `programs/weapons/`. Two reviewed, recorded adaptations are read from the config: `script_adaptations` (textual
+  find/replace with an expected count, for Lua 5.1 syntax the 5.0 compiler lacks) and `callback_substitutions`
+  (callback names that no baseline or shipped script defines; the client resolves a callback as a Lua global and a
+  missing one only raises a caught error, so an empty substitution restores the engine's default path and another
+  name rebinds). Every applied adaptation is listed in `programs.json`.
+- **assemble** builds `catalog.bin` (kinds 2, 10, 11, 13, 20, 33, 34, 85), the overlay archive, the native program
+  bundle, the skill atlases and the installer package under `publication/package/`, plus `registrations.json` and
+  `server-plan.json` beside it. It refuses to run when the programs receipt is older than the families or resources
+  receipts. A weapon shared by several families is owned by the first family in publication order and only
+  referenced by the others (`shared_weapon_ids`), because the server ledger keeps one owning family per row. Server
+  `varchar` name columns receive ASCII-folded values (`server_names_normalized`,
+  `server_weapon_names_normalized` in `publication.json`); the client keeps the original wide-character names.
+
+The package is overlay-only: `manifest.json` declares the archive entries in `resource_overlay.paths` and ships no
+loose copies, which the game never reads. The installer accepts both this layout and the Manager's `owned_paths`
+layout. The server side is applied family by family through the ordinary repository transaction after the shared
+skill, funnel and affiliation rows; the native server reads the resulting rows directly, so no form-graph or
+skill-identity authority is required for single-form, reciprocal or one-way families.
 
 ### GameTest checks and captures
 

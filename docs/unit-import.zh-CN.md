@@ -73,7 +73,8 @@ Manager 已内置 Python、Pillow 和 pyodbc；解析 RAR 需要本机安装 7-Z
 - 主包最多 32 MiB，解包后最多 128 MiB、512 个文件；PNG 最多 8 MiB，边长 1–2048。
   路径越界、链接和重复路径会被拒绝，包内的安装程序和数据库脚本不会运行。
 - 新机体 ID 与原生机体或其他已导入机体冲突时无法确认，工具不做二进制整体换号。
-- 只支持单形态，或完整、显式的双形态关系。
+- 只支持单形态和完整的双形态关系：互相变形（`native-linked-forms-v1`），以及第二形态不再变回的单向变形
+  （`native-one-way-forms-v1`）。带第三、第四个入口形态的组合继续推迟，等原生形态图运行时接纳后再发布。
 - 缺少技能时默认无法确认。对技能 1、2，界面会逐个提供「移除缺失技能 … 后导入」。确认后，
   所有引用该技能的形态在客户端和服务端同时清为 `0`，原 RAR/BIN 保留，旧的预览确认失效，该技能的效果不再存在。
   其他技能、武器和变形关系不受影响。技能 3 暂不提供移除。
@@ -354,6 +355,39 @@ v1 许可不会安装这一检查入口。
 大型制作素材库可使用仅供开发的分页资源仓库读取器 `owner.units.resource_depot`。它校验固定索引、有界元数据页、
 压缩分片和流式内容哈希，不把整个素材库载入内存；逻辑路径冲突时保留各个变体，复用基线和服主别名需要目标检查。
 原始游戏脚本只作为数据保留，不获得执行权限。该读取器不安装资源、不登记记录，也不替代 Manager 的导入流程。
+
+### 批量机体阵容发布（`tools/gunion/publisher`）
+
+恢复出来的整套阵容（几百个机体族）由批量发布器一次做成一个 `unit_catalog` 包，而不是在 Manager 里逐族导入。
+它分四个阶段运行，每个阶段在配置的输出目录写一份回执：
+
+```powershell
+python -B -m tools.gunion.publisher families  --config <私有配置.json>
+python -B -m tools.gunion.publisher resources --config <私有配置.json>
+python -B -m tools.gunion.publisher programs  --config <私有配置.json>
+python -B -m tools.gunion.publisher assemble  --config <私有配置.json>
+```
+
+- **families** 按完整记录给每个机体上下文分类：单形态、互相变形的双形态、单向双形态。自变形回环和第三、第四个入口
+  形态记入 `deferred_entries` 并附原因；缺模型的上下文记入 `excluded_contexts`。
+- **resources** 遍历每个族的资源图（模型、动作、纹理、特效、图片、声音）：与基线相同的文件直接复用，基线没有的文件
+  按原路径发布，与基线不同的文件改用带所有者哈希的别名发布，并改写所有类型化引用（记录、模型材质、特效、
+  图片帧）。该目录原生读取器不会打开的扩展名（例如 `txrs` 下的 `.psd`）记为 `unsupported`，不发布。
+  技能和浮游炮记录作为共享记录准备。
+- **programs** 用官方 Lua 5.0 工具链编译脚本闭包（LuaJIT 转储先降级），把导出名放到所有者前缀下，绑定武器回调字段，
+  并把改写后的武器记录写到 `programs/weapons/`。配置里有两类经过人工审核并记录的适配：`script_adaptations`
+  （带期望次数的文本替换，用于 5.0 编译器没有的 5.1 语法）和 `callback_substitutions`（基线和发布脚本都没有定义的
+  回调名；客户端把回调当作 Lua 全局量查找，缺失时只会抛出被捕获的错误，所以替换成空值即恢复引擎默认路径，
+  替换成别的名字即重新绑定）。所有实际应用的适配都列在 `programs.json`。
+- **assemble** 生成 `catalog.bin`（kind 2、10、11、13、20、33、34、85）、资源归档、原生脚本包、技能图集和
+  `publication/package/` 下的安装包，并在旁边输出 `registrations.json` 与 `server-plan.json`。programs 回执
+  比 families 或 resources 回执旧时拒绝运行。多个族共用的武器由发布顺序里第一个族拥有，其余族只引用
+  （`shared_weapon_ids`），因为服务端账本每行只记一个所有者族。服务端 `varchar` 名称列写入折叠成 ASCII 的值
+  （`publication.json` 的 `server_names_normalized`、`server_weapon_names_normalized`），客户端仍保留原来的宽字符名。
+
+该包只带归档：`manifest.json` 用 `resource_overlay.paths` 声明归档条目，不带游戏从不读取的松散副本；
+安装器同时接受这种布局和 Manager 的 `owned_paths` 布局。服务端先写共享的技能、浮游炮和势力行，再按族通过
+普通仓库事务写入；原生服务端直接读取这些行，单形态、互相变形和单向变形的族不需要形态图或技能身份授权。
 
 ### 用 GameTest 截图和核对
 

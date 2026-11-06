@@ -75,6 +75,13 @@ class Config:
         self.item_category_first = int(value.get('item_category_first', 1_119_010))
         self.affiliation_dictionary = value.get('affiliation_dictionary')
         self.module_binary = value.get('module_binary')
+        # Explicit, reviewed source adaptations for plain-text scripts that use
+        # syntax the official Lua 5.0 compiler lacks; each entry is recorded.
+        self.script_adaptations = {str(k): list(v) for k, v in value.get('script_adaptations', {}).items()}
+        # Reviewed weapon callback-name substitutions for names no script defines: the
+        # original client looks the name up as a Lua global and a missing one only raises a
+        # caught error, so '' restores the engine's default path and another name rebinds.
+        self.callback_substitutions = {str(k): str(v) for k, v in value.get('callback_substitutions', {}).items()}
         for required in (self.delivery, self.native, self.plan_dir, self.baseline_client):
             if not required.is_dir():
                 raise FileNotFoundError(str(required))

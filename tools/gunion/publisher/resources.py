@@ -27,7 +27,11 @@ from .common import Config, FUNNEL_BYTES, SKILL_BYTES, UNIT_BYTES, WEAPON_BYTES,
 
 SCHEMA = 'sdgo.gunion-roster-resources/1'
 SKIP, PLAIN, ALIAS = 'baseline-identical', 'absent-ship-logical-path', 'owner-alias'
+UNSUPPORTED = 'unsupported-native-type'
 RUNTIME_ROOTS = ('mdrs', 'anrs', 'txrs', 'fxrs', 'sprs', 'sdrs')
+# The original loaders read exactly one container type per root; anything else
+# (a stray .psd under txrs) is a source authoring leftover the client never opens.
+NATIVE_SUFFIX = {'mdrs': '.mod', 'anrs': '.ani', 'txrs': '.txr', 'fxrs': '.zfx', 'sprs': '.spr', 'sdrs': '.zsd'}
 
 
 def _alias(owner: str, path: str, digest: str) -> str:
@@ -217,7 +221,14 @@ def build(config: Config) -> dict:
 
     # Pass 2: disposition per (path, content) against the baseline and sibling contents.
     dispositions: dict[tuple[str, str], dict] = {}
+    unsupported: dict[str, dict] = {}
     for path, variants in contents.items():
+        root_name = path.split('/')[0]
+        if PurePosixPath(path).suffix.lower() != NATIVE_SUFFIX.get(root_name):
+            for digest in variants:
+                dispositions[(path, digest)] = {'status': UNSUPPORTED, 'target': None}
+            unsupported[path] = {'digests': sorted(variants), 'families': []}
+            continue
         baseline_raw = baseline.read(path) if baseline.exists(path) else None
         baseline_digest = sha256(baseline_raw) if baseline_raw is not None else None
         for digest in variants:
@@ -329,6 +340,9 @@ def build(config: Config) -> dict:
         for path, digest in family_contents.items():
             disposition = dispositions[(path, digest)]
             target = aliases.get(path, path)
+            if disposition['status'] == UNSUPPORTED:
+                unsupported[path]['families'].append(family['family_key'])
+                continue
             if disposition['status'] == SKIP and path not in aliases:
                 continue
             if target in shipped:
@@ -339,7 +353,11 @@ def build(config: Config) -> dict:
             prepared, spans = rewrite_prefixes(raw, carriers[(path, digest)], aliases)
             if (path, digest) in obs_proofs and spans:
                 offset = obs_proofs[(path, digest)]['offset']
-                _, after = obs_carriers(prepared, offset)
+                carrier_module.OPAQUE_LITERALS = []
+                try:
+                    _, after = obs_carriers(prepared, offset)
+                finally:
+                    carrier_module.OPAQUE_LITERALS = None
                 before = obs_proofs[(path, digest)]['proof']
                 if before != after:
                     raise ValueError('OBS structure changed by alias rewrite: ' + path)
@@ -398,10 +416,12 @@ def build(config: Config) -> dict:
               'aliased': sum(row['status'] == ALIAS for row in shipped.values()),
               'plain': sum(row['status'] == PLAIN for row in shipped.values()),
               'open_nodes': len(open_nodes), 'parser_errors': len(parse_errors), 'opaque_literal_resources': len(opaque_literals),
+              'unsupported_native_types': len(unsupported),
               'by_root': {root: sum(1 for target in shipped if target.startswith(root + '/')) for root in RUNTIME_ROOTS},
               'bytes_by_root': {root: sum(row['bytes'] for target, row in shipped.items() if target.startswith(root + '/')) for root in RUNTIME_ROOTS}}
     receipt = {'schema': SCHEMA, 'owner': config.owner, 'families_sha256': sha256((config.output / 'families.json').read_bytes()),
                'counts': counts, 'resources': shipped, 'families': family_receipts, 'open_nodes': open_nodes,
-               'parser_errors': parse_errors, 'opaque_literals': opaque_literals, 'native_acceptance_claimed': False}
+               'parser_errors': parse_errors, 'opaque_literals': opaque_literals, 'unsupported': unsupported,
+               'native_acceptance_claimed': False}
     dump_json(config.output / 'resources.json', receipt)
     return receipt
