@@ -1943,6 +1943,11 @@ bool CaptureUnsafe(Observation& o) {
     if(actor.roleUnit!=o.caps.unitId||actor.roleAlternate!=o.caps.alternate||actor.weaponSignature!=weaponSignature) {
         if(actor.pendingFormId&&actor.pendingFormId==o.caps.unitId) {
             ++actor.formCompleted;actor.pendingFormId=0;
+            if(g_runtime.logDecisions)g_api->Log(g_mod,SDGO_LOG_INFO,
+                "native AI form committed object=%u from=%u to=%u alternate=%u completed=%llu weapons=%u,%u,%u",
+                *reinterpret_cast<uint32_t*>(unit+4),actor.lastFormSource,o.caps.unitId,o.caps.alternate?1u:0u,
+                static_cast<unsigned long long>(actor.formCompleted),
+                o.caps.weapons[0].id,o.caps.weapons[1].id,o.caps.weapons[2].id);
         }
         actor.roleUnit=o.caps.unitId;actor.roleAlternate=o.caps.alternate;
         actor.weaponSignature=weaponSignature;++actor.formRevision;
