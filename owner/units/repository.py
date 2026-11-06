@@ -172,7 +172,7 @@ def _read_ini(path: Path) -> configparser.ConfigParser:
             text = raw.decode("utf-8-sig")
         except UnicodeDecodeError:
             text = raw.decode("mbcs")
-    parser = configparser.ConfigParser(interpolation=None)
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
     parser.read_string(text)
     if "DB Game" not in parser:
         raise ValueError("服务端配置缺少 [DB Game]")
