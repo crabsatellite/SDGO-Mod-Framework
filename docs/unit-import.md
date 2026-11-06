@@ -328,6 +328,28 @@ provenance, not a live database/client drift check. Deployment readback and nati
 actor, generation, sender, alive and room-lock checks remain necessary. These
 policy helpers do not enable multi-form publication or activate a native actor.
 
+For native battle-definition witnesses, `prepare_native_from_cursor` reads the
+same locked unit/entry snapshot and the host's `tbl_UnitGradeInfo` mappings. It
+produces the same `SDGOUF1` candidate and independent `SDGOUA2` authority with a
+complete 114-byte expectation for every graph node. The native table payload
+ends with `UserGradeLimit` at `+0x6A` and joined `LevelRating` at `+0x6E`;
+`DailyLimit` and `MonthLimit` are not those tail fields. Missing grade joins are
+rejected. SQL-only fields remain bound by the complete server-row hashes.
+The v2 fingerprint also binds the grade snapshot. The parser checks exact node
+coverage, ordering, identity/edge agreement, payload hashes and host binding.
+Legacy v1 authority remains capture-only and supplies no native expectations.
+These server expectations do not replace complete 4,976-byte client unit records.
+Their independence relies on the controller-managed installation path and write
+boundary; payload hashes are not digital signatures, and content projects cannot
+write host `install-state` files.
+
+Consumers must compare actual current registry data with those host expectations
+before using a definition. `MatchBattleDefinition` permits only the original
+default-weapon normalization from an out-of-range index to `1`; all other bytes
+must match. Allocation padding and intrusive list links are excluded. Neither
+an expectation nor a successful comparison supplies actor/edge/lifecycle
+permission or enables a live multi-form transition.
+
 With paired graph inputs, `unit_catalog_server` captures the original human-unit
 constructor's pre-initialization seed and successful output. It uses the shared
 `room_random` lifecycle observer when available; an incompatible or occupied

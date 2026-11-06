@@ -85,7 +85,7 @@ SDGO_MOD_ENTRY {
     }
     if(graphs){
         if(!Read(graphPath,graphCandidate,64+sdgo::unit_forms::graph_format::kMaxBytes)||
-           !Read(graphReceipt,graphAuthority,128+sdgo::unit_forms::graph_format::kMaxBytes)||!g_graphs.Parse(graphCandidate,graphAuthority,error)){
+           !Read(graphReceipt,graphAuthority,sdgo::unit_forms::graph_format::kMaxAuthorityBytes)||!g_graphs.Parse(graphCandidate,graphAuthority,error)){
             api->Log(mod,SDGO_LOG_ERROR,"unit form installation rejected: %s",error.c_str());return 0;}
         g_capture=std::make_unique<unit_catalog_server::HumanBuildCapture>();
         if(!g_capture->Prepare(api,mod,g_graphs.bindings,error)){

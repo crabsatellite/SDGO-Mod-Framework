@@ -10,7 +10,7 @@ import unittest
 
 from owner.units import repository as repo
 from owner.units.codec import decode_unit
-from owner.units.form_graph_runtime import SCHEMA, prepare, compile_files
+from owner.units.form_graph_runtime import SCHEMA, prepare, compile_files, compile_native_files, _read_units
 from unit_import_support import unit
 
 
@@ -41,8 +41,20 @@ def prepared(value=None):
     return prepare(requests, records, server_rows=rows, ownership=ownership, originals=originals,
                    item_rows=items, item_ownership=item_ownership)
 
+def grade_rows(rows):
+    return {(r['UnitGradeNumber'],r['UnitGradeNumber2']):{
+        'UnitGradeNumber':r['UnitGradeNumber'],'UnitGradeNumber2':r['UnitGradeNumber2'],'LevelRating':-3} for r in rows.values()}
+
 
 class UnitFormGraphRuntime(unittest.TestCase):
+    def test_sql_snapshot_does_not_silently_replace_duplicate_unit_rows(self):
+        source=fixture()[2][15001];values=tuple(source[name] for name in repo.UNIT_COLUMNS)
+        class Cursor:
+            def execute(self,statement):
+                if 'HOLDLOCK' not in statement:raise AssertionError('snapshot must stay locked')
+                return iter((values,values))
+        with self.assertRaisesRegex(ValueError,'repeats a unit ID'):_read_units(Cursor())
+
     def test_directed_edges_are_derived_from_complete_records_with_no_reverse_or_inventory_inference(self):
         result = prepared(fixture({15001: 15002, 15002: 15003, 15003: 15002, 15004: 15003}))
         owner = result['owners'][0]
@@ -146,6 +158,30 @@ class UnitFormGraphRuntime(unittest.TestCase):
         other['nodes'][0]['origin'] = 'owned';data['owners'].append(other)
         with self.assertRaises(ValueError):compile_files(data)
 
+    def test_native_witness_uses_exact_complete_installed_rows_and_not_candidate_flags(self):
+        data=fixture();state=prepared(data);candidate,authority=compile_native_files(state,data[2],grade_rows(data[2]))
+        legacy,_=compile_files(state);self.assertEqual(legacy,candidate)
+        self.assertEqual((b'SDGOUA2\0',2,160,1,len(candidate)-64),struct.unpack_from('<8s4I',authority))
+        self.assertEqual((3,0),struct.unpack_from('<II',authority,152))
+        graph_end=160+len(candidate)-64
+        self.assertEqual(candidate[64:],authority[160:graph_end])
+        self.assertEqual(hashlib.sha256(authority[graph_end:]).digest(),authority[120:152])
+        self.assertEqual(3*118,len(authority)-graph_end)
+        for index,identity in enumerate(sorted(data[2])):
+            at=graph_end+index*118
+            self.assertEqual(identity,struct.unpack_from('<I',authority,at)[0])
+            self.assertEqual(identity,struct.unpack_from('<I',authority,at+4)[0])
+            self.assertEqual(data[2][identity]['UnitNumber_Transform'],struct.unpack_from('<I',authority,at+4+0xc)[0])
+        for field in ('HP','ViewOrder','SallyReady'):
+            changed=copy.deepcopy(data[2]);changed[15001][field]+=1
+            with self.subTest(field=field),self.assertRaises(ValueError):compile_native_files(state,changed,grade_rows(data[2]))
+        changed=copy.deepcopy(data[2]);del changed[15003]
+        with self.assertRaises(ValueError):compile_native_files(state,changed,grade_rows(data[2]))
+        grades=grade_rows(data[2]);changed=copy.deepcopy(grades)
+        for row in changed.values():row['LevelRating']+=1
+        _,other=compile_native_files(state,data[2],changed)
+        self.assertNotEqual(authority[56:88],other[56:88])
+
     @unittest.skipUnless(os.environ.get('SDGO_FORM_GRAPH_VALIDATOR'), 'set the built form graph validator')
     def test_producer_bytes_are_consumed_by_actual_native_parser_and_policy(self):
         candidate, authority = compile_files(prepared())
@@ -154,6 +190,30 @@ class UnitFormGraphRuntime(unittest.TestCase):
             result = subprocess.run([os.environ['SDGO_FORM_GRAPH_VALIDATOR'], str(root/'candidate.bin'), str(root/'authority.bin')],
                                     capture_output=True, text=True, timeout=30)
             self.assertEqual(0, result.returncode, result.stdout+result.stderr)
+
+    @unittest.skipUnless(os.environ.get('SDGO_FORM_GRAPH_VALIDATOR'), 'set the built form graph validator')
+    def test_native_v2_witnesses_are_consumed_and_tampering_is_refused(self):
+        data=fixture();candidate,authority=compile_native_files(prepared(data),data[2],grade_rows(data[2]))
+        graph_end=160+len(candidate)-64
+        cases=[(authority,0,'valid native witness')]
+        for offset,label in [(120,'witness digest'),(graph_end+8,'witness bytes'),(156,'reserved')]:
+            changed=bytearray(authority);changed[offset]^=1;cases.append((bytes(changed),1,label))
+        for at,value,label in [(graph_end,15009,'foreign ID'),(graph_end+4,15009,'payload ID'),
+                              (graph_end+4+0xc,15003,'wrong edge'),(graph_end+118,15001,'duplicate ID')]:
+            changed=bytearray(authority);struct.pack_into('<I',changed,at,value)
+            changed[120:152]=hashlib.sha256(changed[graph_end:]).digest();cases.append((bytes(changed),1,label))
+        cases.extend([(authority[:-1],1,'truncated'),(authority+b'\0',1,'trailing')])
+        cases.append((authority,0,'valid again after refused inputs'))
+        with tempfile.TemporaryDirectory(prefix='sdgo-native-form-witness-') as directory:
+            root=Path(directory);(root/'candidate.bin').write_bytes(candidate)
+            command=[os.environ['SDGO_FORM_GRAPH_VALIDATOR'],'--batch']
+            for index,(host,code,label) in enumerate(cases):
+                path=root/f'authority-{index}.bin';path.write_bytes(host)
+                command.extend([str(root/'candidate.bin'),str(path),str(code)])
+            result=subprocess.run(command,capture_output=True,text=True,timeout=30,
+                creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+            self.assertEqual(0,result.returncode,str([r[2] for r in cases])+': '+result.stdout+result.stderr)
+            self.assertIn('3 native expectations',result.stdout)
 
     @unittest.skipUnless(os.environ.get('SDGO_FORM_GRAPH_VALIDATOR'), 'set the built form graph validator')
     def test_native_parser_refuses_independent_authority_drift_and_resealed_invalid_policy(self):
@@ -187,13 +247,13 @@ class UnitFormGraphRuntime(unittest.TestCase):
         cases.extend([(candidate[:-1], authority, 'truncated candidate'),
                       (candidate, authority+b'\0', 'authority trailing bytes')])
         with tempfile.TemporaryDirectory(prefix='sdgo-form-graph-negative-') as directory:
-            root = Path(directory)
-            for raw, host, label in cases:
-                with self.subTest(case=label):
-                    (root/'candidate.bin').write_bytes(raw);(root/'authority.bin').write_bytes(host)
-                    result = subprocess.run([os.environ['SDGO_FORM_GRAPH_VALIDATOR'], str(root/'candidate.bin'), str(root/'authority.bin')],
-                        capture_output=True, text=True, timeout=30, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-                    self.assertEqual(1, result.returncode, label+': '+result.stdout+result.stderr)
+            root=Path(directory);command=[os.environ['SDGO_FORM_GRAPH_VALIDATOR'],'--batch']
+            for index,(raw,host,label) in enumerate(cases):
+                content=root/f'candidate-{index}.bin';trusted=root/f'authority-{index}.bin'
+                content.write_bytes(raw);trusted.write_bytes(host);command.extend([str(content),str(trusted),'1'])
+            result=subprocess.run(command,capture_output=True,text=True,timeout=30,
+                creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+            self.assertEqual(0,result.returncode,str([r[2] for r in cases])+': '+result.stdout+result.stderr)
 
 
 if __name__ == '__main__':unittest.main()

@@ -1,6 +1,7 @@
 #pragma once
 #include "sdgo/unit_form_graph.h"
 #include "sdgo/script_registration.h"
+#include "sdgo/unit_battle_definition.h"
 #include <cstring>
 #include <set>
 #include <stdexcept>
@@ -8,6 +9,7 @@
 namespace sdgo::unit_forms {
 namespace graph_format {
 constexpr std::size_t kMaxBytes = 8u * 1024u * 1024u;
+constexpr std::size_t kMaxAuthorityBytes=160+kMaxBytes+4096*(4+kBattleDefinitionBytes);
 class Reader {
 public:
     const std::vector<std::uint8_t>& bytes;std::size_t at = 0;
@@ -80,8 +82,11 @@ public:
     InstalledGraphAuthority authority;
     std::shared_ptr<const GraphBindings> bindings;
     std::string candidateSha256, serverFingerprint;
+    // Present only in independently installed v2 authority, never inferred
+    // from candidate content. A v1 capture-only authority has no witnesses.
+    std::map<std::uint32_t,BattleDefinition> nativeDefinitions;
     bool Parse(const std::vector<std::uint8_t>& candidate, const std::vector<std::uint8_t>& trusted, std::string& error) {
-        candidates.clear();authority = {};bindings.reset();candidateSha256.clear();serverFingerprint.clear();error.clear();
+        candidates.clear();authority = {};bindings.reset();candidateSha256.clear();serverFingerprint.clear();nativeDefinitions.clear();error.clear();
         try {
             graph_format::Reader content(candidate), installation(trusted);
             content.require(candidate.size() >= 64 && candidate.size() <= 64+graph_format::kMaxBytes, "unit form candidate byte budget");
@@ -90,23 +95,48 @@ public:
             const auto digest = content.hash();content.require(content.word() == 0 && content.word() == 0, "unit form candidate reserved bytes");
             content.require(scripts::Sha256(std::vector<std::uint8_t>(candidate.begin()+64, candidate.end())) == digest, "unit form payload SHA-256 differs");
             auto requested = content.owners(count);content.require(content.at == candidate.size(), "unit form candidate trailing bytes");
-            installation.require(trusted.size() >= 128 && trusted.size() <= 128+graph_format::kMaxBytes, "unit form authority byte budget");
-            installation.magic("SDGOUA1\0");installation.require(installation.word() == 1 && installation.word() == 128, "unit form authority version/header");
+            installation.require(trusted.size() >= 128 && trusted.size() <= graph_format::kMaxAuthorityBytes, "unit form authority byte budget");
+            const bool native=!std::memcmp(trusted.data(),"SDGOUA2\0",8);const unsigned header=native?160u:128u;
+            installation.magic(native?"SDGOUA2\0":"SDGOUA1\0");
+            installation.require(installation.word() == (native?2u:1u) && installation.word() == header, "unit form authority version/header");
             const auto owners = installation.word(), extent = installation.word();
-            installation.require(owners == count && extent == trusted.size()-128 && extent == size, "unit form authority extent/count");
+            installation.require(owners == count && extent == size, "unit form authority extent/count");
             const auto candidateHash = installation.hash(), fingerprint = installation.hash();
-            installation.require(installation.hash() == "f74d16037fc8f4fe49a8041488aabd1948df1b1a9f2d125de9dad4a2347b63a4" &&
-                installation.word() == 0 && installation.word() == 0, "unit form authority host/reserved bytes");
+            installation.require(installation.hash() == "f74d16037fc8f4fe49a8041488aabd1948df1b1a9f2d125de9dad4a2347b63a4", "unit form authority host differs");
+            std::string nativeDigest;std::uint32_t nativeCount=0;
+            if(native){nativeDigest=installation.hash();nativeCount=installation.word();
+                installation.require(nativeCount&&nativeCount<=4096&&installation.word()==0,"unit form native witness count/reserved");}
+            else installation.require(installation.word()==0&&installation.word()==0,"unit form authority reserved bytes");
+            const auto nativeBytes=static_cast<std::size_t>(nativeCount)*(4+kBattleDefinitionBytes);
+            installation.require(trusted.size()==header+size+nativeBytes,"unit form authority total extent");
             installation.require(candidateHash == scripts::Sha256(candidate), "unit form candidate differs from installed authority");
-            installation.require(!std::memcmp(candidate.data()+64, trusted.data()+128, size), "unit form installed graph payload differs");
-            auto allowed = installation.owners(owners);installation.require(installation.at == trusted.size(), "unit form authority trailing bytes");
+            installation.require(!std::memcmp(candidate.data()+64, trusted.data()+header, size), "unit form installed graph payload differs");
+            auto allowed = installation.owners(owners);installation.require(installation.at == header+size, "unit form authority graph extent differs");
             InstalledGraphAuthority resolved;
             for (const auto& owner : allowed)
                 installation.require(resolved.owners_.emplace(owner.owner, owner).second, "unit form authority repeats owner");
             std::string reason;auto policy = GraphBindings::Build(requested, resolved, reason);
             installation.require(bool(policy), reason.empty() ? "unit form policy rejected" : reason.c_str());
+            std::map<std::uint32_t,BattleDefinition> definitions;
+            if(native){
+                const auto start=installation.at;
+                installation.require(scripts::Sha256(std::vector<std::uint8_t>(trusted.begin()+start,trusted.end()))==nativeDigest,"unit form native witness SHA-256 differs");
+                std::map<std::uint32_t,std::uint32_t> targets;
+                for(const auto& owner:requested)for(const auto& node:owner.nodes)targets.emplace(node.id,node.target);
+                installation.require(targets.size()==nativeCount,"unit form native witness node coverage differs");
+                std::uint32_t previous=0;
+                for(std::uint32_t i=0;i<nativeCount;++i){
+                    const auto id=installation.word();installation.require(id>previous&&targets.count(id),"unit form native witness identity/order differs");previous=id;
+                    BattleDefinition definition{};
+                    installation.require(installation.at<=trusted.size()&&trusted.size()-installation.at>=definition.size(),"truncated unit form native witness");
+                    std::memcpy(definition.data(),trusted.data()+installation.at,definition.size());installation.at+=definition.size();
+                    installation.require(DefinitionWord(definition,0)==id&&DefinitionWord(definition,0xc)==targets.at(id),"unit form native witness identity/edge differs");
+                    definitions.emplace(id,definition);
+                }
+            }
+            installation.require(installation.at==trusted.size(),"unit form authority trailing bytes");
             candidates = std::move(requested);authority = std::move(resolved);bindings = std::move(policy);
-            candidateSha256 = candidateHash;serverFingerprint = fingerprint;return true;
+            candidateSha256 = candidateHash;serverFingerprint = fingerprint;nativeDefinitions=std::move(definitions);return true;
         } catch (const std::exception& exception) { error = exception.what();return false; }
     }
 };
