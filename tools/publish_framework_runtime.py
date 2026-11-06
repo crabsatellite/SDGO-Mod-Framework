@@ -3,6 +3,8 @@ from pathlib import Path
 import argparse,hashlib,json,os,subprocess,sys,tempfile,zipfile
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
 from manager import storage,updates
+BOT='github-actions[bot]';BOT_EMAIL='41898282+github-actions[bot]@users.noreply.github.com'
+PUBLISHER={'GIT_AUTHOR_NAME':BOT,'GIT_AUTHOR_EMAIL':BOT_EMAIL,'GIT_COMMITTER_NAME':BOT,'GIT_COMMITTER_EMAIL':BOT_EMAIL}
 
 
 def publish(asset,repository=ROOT,remote='origin',push=False):
@@ -15,9 +17,10 @@ def publish(asset,repository=ROOT,remote='origin',push=False):
     branch='refs/heads/runtime/'+channel
     index=repository/'build/framework-publish'/((channel)+'.index');index.parent.mkdir(parents=True,exist_ok=True)
     env={**os.environ,'GIT_INDEX_FILE':str(index)}
-    def git(*args,input=None,check=True):
-        p=subprocess.run(['git','-C',str(repository),*args],env=env,input=input,capture_output=True)
-        if check and p.returncode:raise RuntimeError(p.stderr.decode(errors='replace'))
+    def run(*args,input=None,extra=None):return subprocess.run(['git','-C',str(repository),*args],env={**env,**(extra or{})},input=input,capture_output=True)
+    def git(*args,input=None,extra=None):
+        p=run(*args,input=input,extra=extra)
+        if p.returncode:raise RuntimeError(p.stderr.decode(errors='replace'))
         return p.stdout
     previous=git('ls-remote',remote,branch).decode().split();parent=None
     if previous:
@@ -35,7 +38,9 @@ def publish(asset,repository=ROOT,remote='origin',push=False):
         oid=git('hash-object','-w','--stdin',input=data).decode().strip();git('update-index','--add','--cacheinfo','100644',oid,path)
     tree=git('write-tree').decode().strip();args=['commit-tree',tree]
     if parent:args+=['-p',parent]
-    commit=git(*args,input=('Publish Manager '+version+' verified runtime\n').encode()).decode().strip()
+    # A maintainer keeps their configured identity; a runner without one commits as the Actions bot, for this call only.
+    known=all(run('var',name).returncode==0 for name in('GIT_AUTHOR_IDENT','GIT_COMMITTER_IDENT'))
+    commit=git(*args,input=('Publish Manager '+version+' verified runtime\n').encode(),extra=None if known else PUBLISHER).decode().strip()
     if push:
         git('push',remote,commit+':'+branch)
         if git('ls-remote',remote,branch).decode().split()[0]!=commit:raise ValueError('Published runtime readback differs')

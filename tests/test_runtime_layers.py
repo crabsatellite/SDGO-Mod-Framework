@@ -1,7 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
-import copy,hashlib,io,json,subprocess,tempfile,unittest,zipfile
+import copy,hashlib,io,json,os,subprocess,tempfile,unittest,zipfile
 from manager import client_runtime as c,framework_source as f,storage,updates
 from tests.test_manager_updates import bundle
 from tools.publish_framework_runtime import publish
@@ -104,6 +104,8 @@ class GitFrameworkTransport(unittest.TestCase):
             git(source,'init');git(source,'config','user.name','Fixture');git(source,'config','user.email','fixture@example.invalid');git(source,'remote','add','origin',str(remote))
             raw,asset,_=bundle(release='1.7.10');archive=root/'SDGO-ModFramework-1.7.10.zip';archive.write_bytes(raw)
             feed,commit=publish(archive,source,push=True);self.assertEqual(publish(archive,source,push=True)[1],commit)
+            self.assertEqual(git(source,'log','-1','--format=%an <%ae>|%cn <%ce>',commit).decode().strip(),
+                             'Fixture <fixture@example.invalid>|Fixture <fixture@example.invalid>')
             controller=c.ClientRuntime(SimpleNamespace(root=root/'workspace'));original=controller.git
             def local(repo,args,input=None,output=None):
                 if args[:1]==['fetch']:
@@ -118,6 +120,30 @@ class GitFrameworkTransport(unittest.TestCase):
             changed,_,_=bundle(release='1.7.10',extra={'client/sdgo/sdgo.ini':b'[core]\nlog=debug\n'})
             archive.write_bytes(changed)
             with self.assertRaisesRegex(ValueError,'immutable'):publish(archive,source,push=True)
+
+    def test_runner_without_git_identity_publishes_as_actions_bot(self):
+        # Hosted CI runners have no user.name/user.email and no usable host email to guess from.
+        with tempfile.TemporaryDirectory()as temporary:
+            root=Path(temporary).resolve();source=root/'source';source.mkdir();remote=root/'remote.git';config=root/'global.gitconfig'
+            config.write_text('[user]\n\tuseConfigOnly = true\n',encoding='utf-8')
+            with patch.dict('os.environ',{'GIT_CONFIG_GLOBAL':str(config),'GIT_CONFIG_NOSYSTEM':'1'}):
+                for name in('GIT_AUTHOR_NAME','GIT_AUTHOR_EMAIL','GIT_COMMITTER_NAME','GIT_COMMITTER_EMAIL','EMAIL'):os.environ.pop(name,None)
+                def git(path,*args):return subprocess.run(['git','-C',str(path),*args],capture_output=True)
+                subprocess.run(['git','init','--bare',str(remote)],capture_output=True,check=True)
+                git(source,'init');git(source,'remote','add','origin',str(remote))
+                self.assertNotEqual(git(source,'var','GIT_COMMITTER_IDENT').returncode,0)
+                raw,_,_=bundle(release='1.7.10');archive=root/'SDGO-ModFramework-1.7.10.zip';archive.write_bytes(raw)
+                feed,commit=publish(archive,source,push=True)
+                self.assertEqual(git(remote,'rev-parse','refs/heads/runtime/stable').stdout.decode().strip(),commit)
+                bot='github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>'
+                self.assertEqual(git(source,'log','-1','--format=%an <%ae>|%cn <%ce>',commit).stdout.decode().strip(),bot+'|'+bot)
+                self.assertNotEqual(git(source,'var','GIT_COMMITTER_IDENT').returncode,0)
+                self.assertEqual(publish(archive,source,push=True)[1],commit)
+                older,_,_=bundle(release='1.7.9');stale=root/'SDGO-ModFramework-1.7.9.zip';stale.write_bytes(older)
+                with self.assertRaisesRegex(ValueError,'newer'):publish(stale,source,push=True)
+                changed,_,_=bundle(release='1.7.10',extra={'client/sdgo/sdgo.ini':b'[core]\nlog=debug\n'});archive.write_bytes(changed)
+                with self.assertRaisesRegex(ValueError,'immutable'):publish(archive,source,push=True)
+                self.assertEqual(git(remote,'rev-parse','refs/heads/runtime/stable').stdout.decode().strip(),commit)
 
     def test_source_identity_and_asset_convention_are_validated(self):
         for value in ({},{'schema_version':1,'kind':'sdgo-framework-runtime','source_id':'a'*32,'repository':updates.REPOSITORY,
