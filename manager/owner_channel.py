@@ -73,7 +73,7 @@ def installed_binding(root):
 def default_mode(root):
     root=Path(root)
     if (root/MAINTAINER).exists():return 'owner'
-    if (root/BINDING).exists() or (root/RECEIPT).exists():return 'player'
+    if (root/BINDING).exists() or (root/RECEIPT).exists()or(root/'sdgo/client-source.json').exists():return 'player'
     return 'starter'
 
 
@@ -86,10 +86,12 @@ def mode(host):
             if value.get('schema_version')!=1 or value.get('mode')!='owner':return 'blocked'
             return 'owner'
         if host.get('runtime_mode')=='owner':return 'owner'
+        from .client_runtime import installed_source
+        if installed_source(host['path'])is not None:return 'player'
         if installed_binding(host['path']) is not None:return 'player'
         if updates.child(host['path'],RECEIPT).exists():return 'blocked'
     except (ValueError,OSError):return 'blocked'
-    return host.get('runtime_mode','starter')
+    return 'blocked'if host.get('runtime_mode')=='player'else host.get('runtime_mode','starter')
 
 
 def file_hash(path):
@@ -291,6 +293,7 @@ def install(host,bundle,m,cache,is_running=None,stop=None):
 def _install(host,bundle,m,cache,is_running=None,stop=None):
     is_running=is_running or updates.running
     root=Path(host['path']).resolve();exe=root/'GOnline.exe'
+    if(root/'sdgo/client-source.json').is_file():raise ValueError('此目录使用完整客户端更新，不能再独立同步旧的 Mod 整合包')
     if host['role']!='client' or mode(host)!='player':raise ValueError('该客户端尚未绑定服主更新源')
     source=installed_binding(root)
     if m['publisher_id']!=source['publisher_id']:raise ValueError('发布者与玩家绑定不一致')
@@ -390,6 +393,7 @@ class OwnerChannels:
                     installed_revision=receipt.get('revision')
                 except (ValueError,OSError):installed_revision=None;error='本地安装收据损坏；请先明确解除绑定，再重新绑定负责人'
                 hosts.append({'id':h['id'],'name':h['name'],'role':h['role'],'mode':mode(h),'source':source,
+                    'complete_runtime':(Path(h['path'])/'sdgo/client-source.json').is_file(),
                     'automatic':h.get('owner_automatic',True) and self.workspace.services.desired(SERVICE),
                     'publication':cfg,'result':self.results.get(h['id'],{}) or ({'status':'error','message':error} if error else {}),
                     'installed_revision':installed_revision})
@@ -532,6 +536,7 @@ class OwnerChannels:
 
     def check(self,host_id,apply=False,audit_only=False):
         host=self.workspace.host(host_id)
+        if(Path(host['path'])/'sdgo/client-source.json').is_file():raise ValueError('此目录通过完整客户端更新同步，请使用 Manager 的完整客户端更新页面')
         source=installed_binding(host['path'])
         selected_mode=mode(host)
         if source is None or (selected_mode!='player' and not (audit_only and selected_mode=='owner')):raise ValueError('先绑定负责人的发布源')
@@ -688,7 +693,7 @@ class OwnerChannels:
                 elif self.workspace.services.desired(SERVICE) and time.monotonic()>=next_poll:
                     next_poll=time.monotonic()+3600
                     for host in self.workspace.settings['hosts']:
-                        if host['role']=='client' and mode(host)=='player' and host.get('owner_automatic',True):
+                        if host['role']=='client' and not(Path(host['path'])/'sdgo/client-source.json').is_file()and mode(host)=='player' and host.get('owner_automatic',True):
                             with self.lock:self.jobs.append(('install',host['id'],None))
                 # A downloaded update waiting for game closure uses the same sealed cache.
                 for identity,(folder,m) in list(self.downloads.items()):

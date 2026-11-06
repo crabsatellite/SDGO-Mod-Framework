@@ -398,6 +398,12 @@ class Updates:
     def source_repository(self):
         return repository(self.workspace.settings.get('updates',{}).get('repository',REPOSITORY))
 
+    def managed_by_client(self):
+        if self.manager_exe is None:return False
+        from .owner_channel import mode
+        return any(h['role']=='client'and Path(h['path']).resolve()==self.manager_exe.parent and
+                   (Path(h['path'])/'sdgo/client-source.json').is_file()and mode(h)!='owner'for h in self.workspace.settings['hosts'])
+
     def source(self,value):
         value=repository(value)
         if not self.busy.acquire(blocking=False):raise storage.Conflict('正在处理更新，请稍后切换上游')
@@ -448,6 +454,8 @@ class Updates:
     def state(self):
         with self.lock:
             return {**self.status,'running':bool(self.thread and self.thread.is_alive()),'healthy':True,
+                    'program_managed_by_client':self.managed_by_client(),
+                    'manager_restart':self.status['manager_restart']and not self.managed_by_client(),
                     'automatic':self.workspace.services.desired(SERVICE),'current_version':self.current,
                     'channel':self.workspace.settings.get('updates',{}).get('channel','stable'),
                     'repository':self.source_repository(),
@@ -501,6 +509,9 @@ class Updates:
     def cycle(self,install=False):
         if not self.busy.acquire(blocking=False):return
         try:
+            if self.managed_by_client():
+                self.change(phase='managed',message='Manager 程序与运行文件由完整客户端来源统一维护',error='',manager_restart=False)
+                return
             self.change(phase='checking',message='正在检查更新',error='')
             channel=self.workspace.settings.get('updates',{}).get('channel','stable')
             selected_repository=self.source_repository()
@@ -538,7 +549,7 @@ class Updates:
     def _apply(self):
         if not self.manifest:return
         from .owner_channel import mode
-        program_eligible=version(self.manifest['version'])>=version(self.current)
+        program_eligible=not self.managed_by_client()and version(self.manifest['version'])>=version(self.current)
         from .client_runtime import installed_source
         if self.manager_exe and program_eligible and any(h['role']=='client'and installed_source(h['path'])is not None for h in self.workspace.settings['hosts']):
             if self.manifest.get('capabilities',{}).get('client_runtime')!=1 or self.manifest.get('capabilities',{}).get('runtime_safety')!=1:
