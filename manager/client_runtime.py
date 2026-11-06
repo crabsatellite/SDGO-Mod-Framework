@@ -110,7 +110,7 @@ class ClientRuntime:
         for index,arguments in attempts:
             try:
                 result=run(
-                    ['git','-C',str(repository),*prefix,*arguments],cwd=repository,timeout=1200 if output is not None or args[:1]==['cat-file']or'--stdin'in args else 120,
+                    ['git','-C',str(repository),*prefix,*arguments],cwd=repository,timeout=180 if fetching else 1200 if output is not None or args[:1]==['cat-file']else 120,
                     stop=self.stop_event,env=git_source.environment(),input=input,output=output)
             except subprocess.TimeoutExpired:
                 errors.append('读取更新仓库超时');continue
