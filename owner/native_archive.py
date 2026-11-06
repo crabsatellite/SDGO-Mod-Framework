@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+from pathlib import Path
 import re
 import struct
 from typing import Callable
 
 
+MAX_PARTS = 32
 MAX_ENTRIES = 100_000
 MAX_RESOURCE_BYTES = 64 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
@@ -63,18 +65,53 @@ def build_archive(resources: dict[str, bytes], allowed: Callable[[str], bool]) -
     return _index(entries,len(chunks)),b''.join(chunks),{'chunk_size':CHUNK_SIZE,'entries':entries}
 
 
-def read_archive(index: bytes, archive_path) -> dict[str, bytes]:
-    """Read every entry of an existing overlay (index bytes + archive file) back to raw bytes."""
+def part_paths(archive_path, parts: int) -> list[Path]:
+    """Part 0 is the archive itself; part k is `resources.<k>.zpk` beside it."""
+    archive_path=Path(archive_path)
+    return [archive_path]+[archive_path.with_name(f'{archive_path.stem}.{k}{archive_path.suffix}') for k in range(1,parts)]
+
+
+class _Parts:
+    """Read chunks by global number from a single or split archive."""
+    def __init__(self, paths, part_chunks, chunk_count):
+        self.files=[];self.part_chunks=part_chunks or chunk_count
+        try:
+            for path in paths:self.files.append(open(path,'rb'))
+            sizes=[]
+            for file in self.files:
+                file.seek(0,2);sizes.append(file.tell())
+            full=self.part_chunks*(CHUNK_SIZE+8)
+            if len(paths)==1:
+                if sizes[0]!=chunk_count*(CHUNK_SIZE+8):raise ValueError('Native overlay archive size differs from its index')
+            elif (any(size!=full for size in sizes[:-1]) or not 0<sizes[-1]<=full or sizes[-1]%(CHUNK_SIZE+8)
+                  or (len(paths)-1)*self.part_chunks+sizes[-1]//(CHUNK_SIZE+8)!=chunk_count):
+                raise ValueError('Native overlay archive parts differ from their index')
+        except BaseException:
+            self.close();raise
+
+    def read(self, start, chunks):
+        part=start//self.part_chunks
+        if part!=(start+chunks-1)//self.part_chunks or part>=len(self.files):
+            raise ValueError('Native overlay entry crosses an archive part')
+        file=self.files[part];file.seek((start-part*self.part_chunks)*(CHUNK_SIZE+8))
+        return b''.join(file.read(CHUNK_SIZE+8)[8:] for _ in range(chunks))
+
+    def close(self):
+        for file in self.files:file.close()
+
+
+def read_archive(index: bytes, archive_path, parts: int = 1, part_chunks: int = 0) -> dict[str, bytes]:
+    """Read every entry of an existing overlay (index bytes + archive file or parts) back to raw bytes."""
     if len(index)<24 or len(index)>MAX_INDEX_BYTES:
         raise ValueError('Native overlay index size is unsupported')
     version,chunk_size,chunk_count,_,count,_=struct.unpack_from('<6I',index,0)
     if version!=1 or chunk_size!=CHUNK_SIZE or count>MAX_ENTRIES:
         raise ValueError('Native overlay index header is unsupported')
+    if parts!=1 and (parts<2 or parts>MAX_PARTS or part_chunks<1):
+        raise ValueError('Native overlay archive parts are invalid')
     cursor=24;result={}
-    with open(archive_path,'rb') as archive:
-        archive.seek(0,2)
-        if archive.tell()!=chunk_count*(CHUNK_SIZE+8):
-            raise ValueError('Native overlay archive size differs from its index')
+    archive=_Parts(part_paths(archive_path,parts),part_chunks if parts>1 else 0,chunk_count)
+    try:
         for _ in range(count):
             name=[]
             while True:
@@ -87,22 +124,36 @@ def read_archive(index: bytes, archive_path) -> dict[str, bytes]:
             path=''.join(name).replace('\\','/').lower()
             if path in result or start+chunks>chunk_count or chunks*CHUNK_SIZE<zsize or zsize<12:
                 raise ValueError('Native overlay entry is invalid: '+path)
-            archive.seek(start*(CHUNK_SIZE+8))
-            packed=b''.join(archive.read(CHUNK_SIZE+8)[8:] for _ in range(chunks))[:zsize]
+            packed=archive.read(start,chunks)[:zsize]
             if packed[:8]!=b'ZOAGZIP1':raise ValueError('Native overlay entry encoding is unsupported: '+path)
             raw=gzip.decompress(packed[12:])
             if len(raw)!=struct.unpack_from('<I',packed,8)[0]:raise ValueError('Native overlay entry size differs: '+path)
             result[path]=raw
+    finally:
+        archive.close()
     if cursor!=len(index):raise ValueError('Native overlay index has trailing bytes')
     return result
 
 
-def build_archive_file(resources, allowed: Callable[[str], bool], archive_path) -> tuple[bytes, dict]:
-    """Stream a large overlay to disk: `resources` maps names to byte loaders."""
+def build_archive_file(resources, allowed: Callable[[str], bool], archive_path, part_chunks: int = 0) -> tuple[bytes, dict]:
+    """Stream a large overlay to disk: `resources` maps names to byte loaders.
+
+    With `part_chunks`, the archive is split into files of at most that many chunks
+    (`resources.zpk`, `resources.1.zpk`, ...) so each stays below a per-file size limit.
+    Index chunk numbers stay global; a part that cannot fit the next entry is padded to
+    exactly `part_chunks` chunks, so no entry crosses a part, and chunk links inside a
+    part are part-relative. `archive_sha256` covers all parts as one stream.
+    """
     if len(resources)>MAX_ENTRIES:
         raise ValueError('Native overlay exceeds 100000 resources')
-    entries=[];seen=set();chunk_count=0;digest=hashlib.sha256()
-    with open(archive_path,'wb') as output:
+    if part_chunks<0 or part_chunks*(CHUNK_SIZE+8)>MAX_ARCHIVE_BYTES:
+        raise ValueError('Native overlay part size is unsupported')
+    archive_path=Path(archive_path)
+    for stale in archive_path.parent.glob(f'{archive_path.stem}.*{archive_path.suffix}'):
+        if re.fullmatch(re.escape(archive_path.stem)+r'\.[0-9]+'+re.escape(archive_path.suffix),stale.name):stale.unlink()
+    entries=[];seen=set();chunk_count=0;digest=hashlib.sha256();written=[archive_path];local=0
+    output=open(archive_path,'wb')
+    try:
         for supplied_name in sorted(resources):
             name=supplied_name.replace('\\','/').lower()
             _validate_name(name,seen,allowed)
@@ -110,15 +161,30 @@ def build_archive_file(resources, allowed: Callable[[str], bool], archive_path) 
             loader=resources[supplied_name]
             raw=loader() if callable(loader) else loader
             packed=_pack(name,raw)
-            start=chunk_count;count=(len(packed)+CHUNK_SIZE-1)//CHUNK_SIZE
+            count=(len(packed)+CHUNK_SIZE-1)//CHUNK_SIZE
+            if part_chunks:
+                if count>part_chunks:raise ValueError('Native overlay resource exceeds one archive part: '+name)
+                if local+count>part_chunks:
+                    padding=b'\0'*(CHUNK_SIZE+8)
+                    for _ in range(part_chunks-local):
+                        output.write(padding);digest.update(padding);chunk_count+=1
+                    output.close()
+                    if len(written)>=MAX_PARTS:raise ValueError('Native overlay needs more than 32 archive parts')
+                    written.append(part_paths(archive_path,len(written)+1)[-1]);output=open(written[-1],'wb');local=0
+            start=chunk_count
             if (start+count)*(CHUNK_SIZE+8)>MAX_ARCHIVE_BYTES:
                 raise ValueError('Native overlay archive exceeds its size limit')
             for index in range(count):
-                cursor=chunk_count
-                chunk=(struct.pack('<II',cursor+1,max(0,cursor-1))+
+                chunk=(struct.pack('<II',local+1,max(0,local-1))+
                        packed[index*CHUNK_SIZE:(index+1)*CHUNK_SIZE].ljust(CHUNK_SIZE,b'\0'))
-                output.write(chunk);digest.update(chunk);chunk_count+=1
+                output.write(chunk);digest.update(chunk);chunk_count+=1;local+=1
             entries.append({'path':name,'zsize':len(packed),'start_chunk':start,'chunks':count,
                             'sha256':hashlib.sha256(raw).hexdigest()})
-    return _index(entries,chunk_count),{'chunk_size':CHUNK_SIZE,'entries':entries,'archive_sha256':digest.hexdigest(),
-                                        'archive_bytes':chunk_count*(CHUNK_SIZE+8)}
+    finally:
+        output.close()
+    inventory={'chunk_size':CHUNK_SIZE,'entries':entries,'archive_sha256':digest.hexdigest(),
+               'archive_bytes':chunk_count*(CHUNK_SIZE+8)}
+    if len(written)>1:
+        inventory.update(part_chunks=part_chunks,
+                         parts=[{'name':path.name,'bytes':path.stat().st_size,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()} for path in written])
+    return _index(entries,chunk_count),inventory

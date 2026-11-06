@@ -22,6 +22,7 @@ namespace
     constexpr uint64_t kMaxArchiveBytes = 2048ull * 1024ull * 1024ull;
     constexpr uint32_t kMaxStoredBytes = 64u * 1024u * 1024u;
     constexpr size_t kMaxPathCharacters = 240;
+    constexpr uint32_t kMaxParts = 32;
 
     using OpenFileFn = void*(__thiscall*)(void*, const void*, bool);
     using FileCtorFn = void*(__thiscall*)(
@@ -156,21 +157,34 @@ namespace
         return result;
     }
 
-    bool HashFile(const std::wstring& path, uint64_t limit, std::string& hash,
-                  uint64_t& size, std::string& error)
+    // One SHA-256 over the files in order (a split archive hashes like its concatenation).
+    // sizes receives each file's length; the combined length must stay within limit.
+    bool HashFiles(const std::vector<std::wstring>& paths, uint64_t limit, std::string& hash,
+                   std::vector<uint64_t>& sizes, std::string& error)
     {
-        HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
-                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (file == INVALID_HANDLE_VALUE) {
-            error = "cannot open " + Narrow(path);
-            return false;
-        }
-        LARGE_INTEGER length = {};
-        if (!GetFileSizeEx(file, &length) || length.QuadPart < 0 ||
-            static_cast<uint64_t>(length.QuadPart) > limit) {
-            CloseHandle(file);
-            error = "cannot size or file is too large: " + Narrow(path);
-            return false;
+        sizes.clear();
+        std::vector<HANDLE> files;
+        uint64_t total = 0;
+        for (const std::wstring& path : paths) {
+            HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                                      OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (file == INVALID_HANDLE_VALUE) {
+                for (HANDLE opened : files)
+                    CloseHandle(opened);
+                error = "cannot open " + Narrow(path);
+                return false;
+            }
+            files.push_back(file);
+            LARGE_INTEGER length = {};
+            if (!GetFileSizeEx(file, &length) || length.QuadPart < 0 ||
+                static_cast<uint64_t>(length.QuadPart) > limit - total) {
+                for (HANDLE opened : files)
+                    CloseHandle(opened);
+                error = "cannot size or file is too large: " + Narrow(path);
+                return false;
+            }
+            total += static_cast<uint64_t>(length.QuadPart);
+            sizes.push_back(static_cast<uint64_t>(length.QuadPart));
         }
 
         BCRYPT_ALG_HANDLE algorithm = nullptr;
@@ -195,16 +209,26 @@ namespace
                                   nullptr, 0, 0) >= 0;
         }
 
-        std::array<uint8_t, 64 * 1024> buffer = {};
-        while (ok) {
-            DWORD got = 0;
-            if (!ReadFile(file, buffer.data(), static_cast<DWORD>(buffer.size()), &got, nullptr)) {
-                ok = false;
-                break;
+        std::vector<uint8_t> buffer(64 * 1024);
+        for (size_t index = 0; ok && index < files.size(); ++index) {
+            uint64_t remaining = sizes[index];
+            while (ok) {
+                DWORD got = 0;
+                if (!ReadFile(files[index], buffer.data(), static_cast<DWORD>(buffer.size()), &got, nullptr)) {
+                    ok = false;
+                    break;
+                }
+                if (got == 0)
+                    break;
+                if (got > remaining) {
+                    ok = false; // The file grew while it was hashed.
+                    break;
+                }
+                remaining -= got;
+                ok = BCryptHashData(state, buffer.data(), got, 0) >= 0;
             }
-            if (got == 0)
-                break;
-            ok = BCryptHashData(state, buffer.data(), got, 0) >= 0;
+            if (ok && remaining != 0)
+                ok = false;
         }
         if (ok)
             ok = BCryptFinishHash(state, digest.data(),
@@ -213,13 +237,23 @@ namespace
             BCryptDestroyHash(state);
         if (algorithm)
             BCryptCloseAlgorithmProvider(algorithm, 0);
-        CloseHandle(file);
+        for (HANDLE file : files)
+            CloseHandle(file);
         if (!ok) {
-            error = "cannot hash " + Narrow(path);
+            error = "cannot hash " + Narrow(paths.empty() ? std::wstring() : paths.front());
             return false;
         }
-        size = static_cast<uint64_t>(length.QuadPart);
         hash = Hex(digest.data(), digest.size());
+        return true;
+    }
+
+    bool HashFile(const std::wstring& path, uint64_t limit, std::string& hash,
+                  uint64_t& size, std::string& error)
+    {
+        std::vector<uint64_t> sizes;
+        if (!HashFiles({path}, limit, hash, sizes, error))
+            return false;
+        size = sizes.front();
         return true;
     }
 
@@ -267,7 +301,7 @@ namespace
 
     bool ParseUnitIndex(const std::vector<uint8_t>& bytes, uint64_t archiveSize,
                         sdgo::resource_overlay::BundleRegistration& bundle,
-                        std::string& error)
+                        std::string& error, uint32_t partChunks = 0)
     {
         if (bytes.size() < 24) {
             error = "resources.zdx header is truncated";
@@ -338,6 +372,11 @@ namespace
                 error = "resource chunk range or metadata is invalid";
                 return false;
             }
+            if (partChunks != 0 &&
+                firstChunk / partChunks != (static_cast<uint64_t>(firstChunk) + chunks - 1) / partChunks) {
+                error = "resource crosses an archive part boundary";
+                return false;
+            }
             if (!bundle.entries.emplace(path, entry).second) {
                 error = "resource archive contains a duplicate normalized path";
                 return false;
@@ -378,14 +417,32 @@ namespace
             return false;
         }
 
+        // Optional split archive: parts=N (2..kMaxParts) and part_chunks=C. Part 0 is
+        // resources.zpk, part k is resources.<k>.zpk; archive_sha256 covers the parts in
+        // order, so the identity equals that of the same bytes in one file.
+        uint32_t parts = 1;
+        uint32_t partChunks = 0;
+        const std::wstring partsText = IniValue(ini, L"runtime", L"parts");
+        const std::wstring partChunksText = IniValue(ini, L"runtime", L"part_chunks");
+        if (!partsText.empty() || !partChunksText.empty()) {
+            if (!ParseUnsigned(partsText, parts) || parts < 2 || parts > kMaxParts ||
+                !ParseUnsigned(partChunksText, partChunks) || partChunks == 0 ||
+                static_cast<uint64_t>(partChunks) * (kChunkSize + 8u) > kMaxArchiveBytes) {
+                error = "resource-overlay.ini archive parts are invalid";
+                return false;
+            }
+        }
+
         std::string indexHash;
         std::string archiveHash;
         uint64_t indexSize = 0;
-        uint64_t archiveSize = 0;
         const std::wstring indexPath = Join(root, indexName);
-        const std::wstring archivePath = Join(root, archiveName);
+        std::vector<std::wstring> partPaths{Join(root, archiveName)};
+        for (uint32_t part = 1; part < parts; ++part)
+            partPaths.push_back(Join(root, L"resources." + std::to_wstring(part) + L".zpk"));
+        std::vector<uint64_t> partSizes;
         if (!HashFile(indexPath, kMaxIndexBytes, indexHash, indexSize, error) ||
-            !HashFile(archivePath, kMaxArchiveBytes, archiveHash, archiveSize, error))
+            !HashFiles(partPaths, kMaxArchiveBytes, archiveHash, partSizes, error))
             return false;
         if (indexHash != LowerHash(indexExpected)) {
             error = "SHA-256 mismatch for resources.zdx";
@@ -395,14 +452,29 @@ namespace
             error = "SHA-256 mismatch for resources.zpk";
             return false;
         }
+        uint64_t archiveSize = 0;
+        const uint64_t fullPart = static_cast<uint64_t>(partChunks) * (kChunkSize + 8u);
+        for (size_t part = 0; part < partSizes.size(); ++part) {
+            const bool last = part + 1 == partSizes.size();
+            if (parts > 1 && (last ? partSizes[part] == 0 || partSizes[part] > fullPart
+                                   : partSizes[part] != fullPart)) {
+                error = "resource archive part size does not match part_chunks";
+                return false;
+            }
+            archiveSize += partSizes[part];
+        }
 
         std::vector<uint8_t> index;
         if (!ReadFileLimited(indexPath, kMaxIndexBytes, index, error))
             return false;
         bundle.owner = "unit_catalog";
         bundle.identity = indexHash + ":" + archiveHash;
-        bundle.archivePath = archivePath;
-        if (!ParseUnitIndex(index, archiveSize, bundle, error))
+        bundle.archivePath = partPaths.front();
+        if (parts > 1) {
+            bundle.archiveParts = partPaths;
+            bundle.partChunks = partChunks;
+        }
+        if (!ParseUnitIndex(index, archiveSize, bundle, error, partChunks))
             return false;
         return true;
     }
@@ -466,6 +538,21 @@ namespace sdgo::resource_overlay
         return LoadUnitBundle(modDirectory, L"resource-overlay.ini", bundle, error);
     }
 
+    bool ResolveArchivePart(const std::vector<std::wstring>& parts, uint32_t partChunks,
+                            std::wstring& archivePath, NativeFileInfo& info)
+    {
+        if (parts.empty())
+            return true;
+        if (partChunks == 0)
+            return false;
+        const uint32_t part = info.words[1] / partChunks;
+        if (part >= parts.size())
+            return false;
+        archivePath = parts[part];
+        info.words[1] -= part * partChunks;
+        return true;
+    }
+
     struct Provider::Impl
     {
         struct StoredBundle
@@ -475,6 +562,8 @@ namespace sdgo::resource_overlay
             std::wstring archivePath;
             uint32_t chunkSize = 0;
             std::unordered_map<std::wstring, OverlayEntry> entries;
+            std::vector<std::wstring> archiveParts;
+            uint32_t partChunks = 0;
         };
 
         struct FoundResource
@@ -502,7 +591,9 @@ namespace sdgo::resource_overlay
         bool Register(const BundleRegistration& candidate, std::string& error)
         {
             if (candidate.owner.empty() || candidate.identity.empty() ||
-                candidate.archivePath.empty() || candidate.chunkSize != kChunkSize) {
+                candidate.archivePath.empty() || candidate.chunkSize != kChunkSize ||
+                (candidate.archiveParts.empty() != (candidate.partChunks == 0)) ||
+                candidate.archiveParts.size() > kMaxParts) {
                 error = "overlay bundle metadata is invalid";
                 return false;
             }
@@ -534,6 +625,8 @@ namespace sdgo::resource_overlay
             stored.archivePath = candidate.archivePath;
             stored.chunkSize = candidate.chunkSize;
             stored.entries = candidate.entries;
+            stored.archiveParts = candidate.archiveParts;
+            stored.partChunks = candidate.partChunks;
             bundles.push_back(std::move(stored));
             ReleaseSRWLockExclusive(&lock);
             return true;
@@ -547,12 +640,14 @@ namespace sdgo::resource_overlay
                 const auto found = bundle.entries.find(path);
                 if (found == bundle.entries.end())
                     continue;
-                result.found = true;
                 result.owner = bundle.owner;
                 result.path = path;
                 result.archivePath = bundle.archivePath;
                 result.chunkSize = bundle.chunkSize;
                 result.info = found->second.info;
+                // The native stream reads chunk offsets inside one file.
+                result.found = ResolveArchivePart(bundle.archiveParts, bundle.partChunks,
+                                                  result.archivePath, result.info);
                 break;
             }
             ReleaseSRWLockShared(&lock);
