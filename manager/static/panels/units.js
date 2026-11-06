@@ -818,7 +818,8 @@ function renderIdentity(){
     profile.required=false;
   }else{
     addOption(profile,"","请选择原生行为配置");
-    addOption(profile,"native-linked-forms-v1","native-linked-forms-v1 · 原生关联形态");
+    addOption(profile,"native-linked-forms-v1","native-linked-forms-v1 · 原生关联形态（双向变形）");
+    addOption(profile,"native-one-way-forms-v1","native-one-way-forms-v1 · 原生单向形态（终态不可变回）");
     addOption(profile,"native-single-form-v1","native-single-form-v1 · 原生单形态");
     if(draft.behavior_profile&&!Array.from(profile.options).some(option=>option.value===draft.behavior_profile)){
       addOption(profile,draft.behavior_profile,draft.behavior_profile+" · 后端提供");
