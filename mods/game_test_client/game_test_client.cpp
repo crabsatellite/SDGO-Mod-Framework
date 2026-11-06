@@ -177,6 +177,7 @@ bool captureNativeFrames=false;
 bool unitPagesOnly=false;
 bool activityDrawOnce=false;
 bool testUnitPresentations=false;
+uint32_t unitPresentationTarget=0;
 bool captureUnitPortraits=false;
 UnitPresentationsActions unitPresentations;
 UnitAcquisitionActions unitAcquisition;
@@ -281,6 +282,8 @@ bool LoadPlan() {
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
     testUnitPresentations=GetPrivateProfileIntW(L"settings",L"UnitPresentations",0,
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
+    unitPresentationTarget=GetPrivateProfileIntW(L"settings",L"UnitPresentationTarget",0,
+        (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str());
     captureUnitPortraits=GetPrivateProfileIntW(L"settings",L"UnitPortraits",0,
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
     collectionPreviewOnly=GetPrivateProfileIntW(L"settings",L"CollectionPreviewOnly",0,
@@ -2312,7 +2315,7 @@ int __cdecl ImportedIndex(const SdgoGameTestContextV1* context) {
     if(!activeSelection.Read(authenticatedPilot,&s) || !s.inventory_matches || s.uid!=playUnitUid) {
         context->Assert(0,"encyclopedia checks use the genuinely equipped owned unit");return SDGO_GAME_TEST_FAIL;
     }
-    const auto result=unitPresentations.EnsureList(s.unit);
+    const auto result=unitPresentations.EnsureList(unitPresentationTarget?unitPresentationTarget:s.unit);
     if(captureNativeFrames && !diagnosticRequested && result==UnitPresentationsActions::Waiting &&
             unitPresentations.State().phase==5 && context->elapsed_ms>=3000) {
         const auto folder=sdgo_test::directory+L"\\visual";
@@ -2322,7 +2325,21 @@ int __cdecl ImportedIndex(const SdgoGameTestContextV1* context) {
     return PresentationResult(context,result);
 }
 int __cdecl ImportedDetail(const SdgoGameTestContextV1* context) {
-    return PresentationResult(context,unitPresentations.OpenDetail());
+    const auto result=unitPresentations.OpenDetail();
+    static bool requested=false;
+    if(captureNativeFrames && result==UnitPresentationsActions::Ready) {
+        if(!requested) {
+            const auto folder=sdgo_test::directory+L"\\visual";
+            CreateDirectoryW(folder.c_str(),nullptr);
+            requested=quietGraphics.CaptureNextFrame((folder+L"\\unit-acquisition-detail.bmp").c_str());
+            if(!requested)return SDGO_GAME_TEST_FAIL;
+            return SDGO_GAME_TEST_WAIT;
+        }
+        if(quietGraphics.CaptureFrameResult()==E_PENDING)return SDGO_GAME_TEST_WAIT;
+        context->Assert(SUCCEEDED(quietGraphics.CaptureFrameResult()),"the original acquisition panel was captured after its native text consumer completed");
+        if(FAILED(quietGraphics.CaptureFrameResult()))return SDGO_GAME_TEST_FAIL;
+    }
+    return PresentationResult(context,result);
 }
 bool ImportedTransformTarget(uint32_t& target) {
     using Grid=void*(__cdecl*)();using Find=uint8_t(__thiscall*)(void*,const uint8_t**,uint32_t,int,char);

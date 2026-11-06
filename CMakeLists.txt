@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
+add_custom_target(collection_acquisition_validation_build DEPENDS capsule_catalog capsule_registry_support capsule_client_runtime_harness unit_catalog game_test_client game_test_server sdgo_data sdgo_catalog)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" SDGO_VERSION LIMIT_COUNT 1)
 # CMake's project VERSION is numeric; package and file-version strings retain
 # the complete release identity, including a candidate's Beta suffix.

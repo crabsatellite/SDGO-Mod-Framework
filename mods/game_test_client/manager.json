@@ -172,6 +172,19 @@
       "activation": "restart_required"
     },
     {
+      "id": "unit_presentation_target",
+      "key": "UnitPresentationTarget",
+      "label": "原生图鉴检查的指定机体（0 使用当前机体）",
+      "type": "integer",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 2147483647,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
       "id": "unit_pages_only",
       "key": "UnitPagesOnly",
       "label": "仅检查导入机体原生页面（需封存测试任务）",
