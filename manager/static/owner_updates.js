@@ -10,6 +10,7 @@ export async function mountOwnerUpdates(ctx){
  program.append(element('h2','程序上游'),element('p','基础整合包可作为起点。进入 DIY 后，配置、脚本、素材与发布版本由服主维护；切换程序上游不会解除玩家绑定。','muted'),repo.wrap,
   button('保存程序上游',run(async()=>{await request('/api/updates',{action:'source',repository:repo.input.value.trim()});message('已保存程序上游，维护方式与玩家绑定保持不变。');}),'ui-btn is-blue'));
  root.append(program);
+ const gitSource=field('框架 Git 来源（JSON；支持现有 SSH 配置）',JSON.stringify(upstream.git_source||{schema_version:1,kind:'sdgo-framework-runtime',source_id:'',repository:upstream.repository,channel:upstream.channel,feeds:[]},null,2),true);program.append(gitSource.wrap,button('保存 Git 程序来源',run(async()=>{await request('/api/updates',{action:'source',source:JSON.parse(gitSource.input.value)});message('已保存框架 Git 来源，复用本机已有 Git 身份。');}),'ui-btn is-blue'));
  if(upstream.program_managed_by_client){program.replaceChildren(element('h2','Manager 程序上游'),element('p','这个 Manager 随完整客户端来源更新，避免独立升级与整合包修复互相覆盖。DIY 维护者可以明确接管后审阅上游。','muted'));}
  const runtimeCard=element('section',undefined,'manager-card');
  runtimeCard.append(element('h2','完整客户端更新'),element('p','由 Manager 校验并同步原版程序、资源归档和配套 Mod。登录与画面设置、仅本地内容和数据库保留；服主 DIY 目录需要自行审阅维护。','muted'));
@@ -28,6 +29,8 @@ export async function mountOwnerUpdates(ctx){
    const row=element('div',undefined,'manager-card'),r=host.result||{};
    row.append(element('h3',host.name),element('p',host.source?.label||host.error||'由服主提供的客户端包配置完整更新来源','muted'));
    if(host.source){
+    if(host.source.framework)row.append(element('p','框架源：'+host.source.framework.repository+' · '+host.source.framework.channel+'；内容源：'+host.source.label,'muted'));
+    if(r.framework_version)row.append(element('p','已检查框架 '+r.framework_version+' · 内容提交 '+r.commit.slice(0,12),'muted'));
     if(host.recovery_required)row.append(button('恢复未完成更新',run(async()=>{await request('/api/client-updates',{action:'recover',host:host.id});await refreshRuntime();}),'ui-btn is-blue'));
     const busy=['queued','working'].includes(r.status),check=button('检查完整客户端更新',run(async()=>{await request('/api/client-updates',{action:'check',host:host.id});await refreshRuntime();}),'ui-btn is-blue');check.disabled=busy;row.append(check);
     if(r.status==='available'){
