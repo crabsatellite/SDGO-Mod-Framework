@@ -113,6 +113,30 @@
       "activation": "restart_required"
     },
     {
+      "id": "battle_review_camera",
+      "key": "BattleReviewCamera",
+      "label": "录制素材时镜头轮流跟随 AI 机体",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "battle_review_camera_seconds",
+      "key": "BattleReviewCameraSeconds",
+      "label": "镜头停留在每台 AI 上的秒数",
+      "type": "integer",
+      "default": 6,
+      "minimum": 1,
+      "maximum": 120,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
       "id": "battle_map",
       "key": "BattleMap",
       "label": "原生测试地图编号（0 随机）",
