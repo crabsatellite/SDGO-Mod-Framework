@@ -17,8 +17,13 @@ def main():
             env.update(GIT_ASKPASS=str(helper),GIT_TERMINAL_PROMPT='0',GCM_INTERACTIVE='Never')
         def git(*args):
             prefix=['-c','http.https://github.com/.extraheader=']if any(a.startswith('https://github.com/')for a in args)else[]
-            r=subprocess.run(['git',*prefix,*args],env=env,capture_output=True)
-            if r.returncode:raise RuntimeError('Runtime mirror Git operation failed (exit '+str(r.returncode)+')')
+            if args[:1]==('push',):prefix+=['-c','http.postBuffer=134217728','-c','http.version=HTTP/1.1']
+            r=subprocess.run(['git',*prefix,*args],env=env,capture_output=True,timeout=1200)
+            if r.returncode:
+                detail=r.stderr.decode(errors='replace')
+                for value in [t['url']for t in targets]+[env.get(k,'')for k in('RUNTIME_GIT_MIRROR_TOKEN','RUNTIME_GITHUB_MIRROR_TOKEN')]:
+                    if value:detail=detail.replace(value,'[configured mirror]')
+                raise RuntimeError('Runtime mirror Git operation failed (exit '+str(r.returncode)+'): '+detail[-3000:])
             return r.stdout.decode().strip()
         published={}
         for number,target in enumerate(targets):
@@ -26,7 +31,12 @@ def main():
             for branch in target['branches']:
                 ref='refs/heads/'+branch;rows=git('ls-remote','origin',ref).split()
                 if not rows:continue
-                commit=rows[0];git('fetch','--no-tags','origin',ref);git('push',target['url'],commit+':'+ref)
+                commit=rows[0];current=git('ls-remote',target['url'],ref).split()
+                if current and current[0]==commit:
+                    published[str(number)+':'+branch]=commit;continue
+                git('fetch','--no-tags','origin',ref)
+                if current:git('fetch','--no-tags',target['url'],ref)
+                git('push',target['url'],commit+':'+ref)
                 if git('ls-remote',target['url'],ref).split()[0]!=commit:raise ValueError('Runtime mirror readback differs')
                 published[str(number)+':'+branch]=commit
         print('Verified mirrored refs: '+', '.join(published),flush=True)
