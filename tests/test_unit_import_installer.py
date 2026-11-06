@@ -42,7 +42,7 @@ if($actual -ne $spec.expected){throw 'Receipt setting classification differs'}
                     'snapshot':base64.b64encode(original).decode(),'sha256':hashlib.sha256(original).hexdigest(),
                     'expected':expected}))
                 result=subprocess.run(['pwsh','-NoProfile','-File',str(runner),'-Installer',str(ROOT/'tools/install_unit_catalog.ps1'),
-                    '-InputPath',str(spec)],capture_output=True,text=True,timeout=45)
+                    '-InputPath',str(spec)],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=45)
                 self.assertEqual(0,result.returncode,result.stdout+result.stderr)
 
     def test_installer_accepts_exact_overlay_and_rejects_an_undeclared_model(self):
@@ -75,7 +75,7 @@ if(Test-NativeExport $spec.dll '_SdgoGetResourceOverlayBrokerV1'){throw 'A decor
                     files.append({'name':'sdgo\\mods\\unit_catalog\\'+name,'source':str(file),'sha256':hashlib.sha256(data).hexdigest()})
                 payload=root/'input.json';payload.write_text(json.dumps({'files':files,'owned':['mdrs\\body.mod'],'dll':str(root/'provider.dll')}))
                 return subprocess.run(['pwsh','-NoProfile','-File',str(runner),'-Installer',str(ROOT/'tools/install_unit_catalog.ps1'),
-                    '-InputPath',str(payload)],capture_output=True,text=True,timeout=45)
+                    '-InputPath',str(payload)],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=45)
             accepted=run(index)
             self.assertEqual(accepted.returncode,0,accepted.stdout+accepted.stderr)
             old=b''.join(struct.pack('<H',ord(c)^0xAA) for c in 'body.mod')
@@ -120,7 +120,7 @@ Assert-ResourceOverlay $copies $overlayPaths
                 manifest={'owned_paths':[],'resource_overlay':{'schema':1,'paths':paths}}
                 payload=root/'input.json';payload.write_text(json.dumps({'files':files,'manifest':manifest}))
                 return subprocess.run(['pwsh','-NoProfile','-File',str(runner),'-Installer',str(ROOT/'tools/install_unit_catalog.ps1'),
-                    '-InputPath',str(payload)],capture_output=True,text=True,timeout=45)
+                    '-InputPath',str(payload)],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=45)
             accepted=run(['mdrs/body.mod','anrs/walk.ani'])
             self.assertEqual(accepted.returncode,0,accepted.stdout+accepted.stderr)
             incomplete=run(['mdrs/body.mod'])

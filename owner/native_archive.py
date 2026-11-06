@@ -63,6 +63,40 @@ def build_archive(resources: dict[str, bytes], allowed: Callable[[str], bool]) -
     return _index(entries,len(chunks)),b''.join(chunks),{'chunk_size':CHUNK_SIZE,'entries':entries}
 
 
+def read_archive(index: bytes, archive_path) -> dict[str, bytes]:
+    """Read every entry of an existing overlay (index bytes + archive file) back to raw bytes."""
+    if len(index)<24 or len(index)>MAX_INDEX_BYTES:
+        raise ValueError('Native overlay index size is unsupported')
+    version,chunk_size,chunk_count,_,count,_=struct.unpack_from('<6I',index,0)
+    if version!=1 or chunk_size!=CHUNK_SIZE or count>MAX_ENTRIES:
+        raise ValueError('Native overlay index header is unsupported')
+    cursor=24;result={}
+    with open(archive_path,'rb') as archive:
+        archive.seek(0,2)
+        if archive.tell()!=chunk_count*(CHUNK_SIZE+8):
+            raise ValueError('Native overlay archive size differs from its index')
+        for _ in range(count):
+            name=[]
+            while True:
+                if cursor+2>len(index):raise ValueError('Truncated native overlay index')
+                character=struct.unpack_from('<H',index,cursor)[0]^0xAA;cursor+=2
+                if character==0:break
+                name.append(chr(character))
+            if cursor+36>len(index):raise ValueError('Truncated native overlay index')
+            zsize,start,chunks=struct.unpack_from('<III',index,cursor);cursor+=36
+            path=''.join(name).replace('\\','/').lower()
+            if path in result or start+chunks>chunk_count or chunks*CHUNK_SIZE<zsize or zsize<12:
+                raise ValueError('Native overlay entry is invalid: '+path)
+            archive.seek(start*(CHUNK_SIZE+8))
+            packed=b''.join(archive.read(CHUNK_SIZE+8)[8:] for _ in range(chunks))[:zsize]
+            if packed[:8]!=b'ZOAGZIP1':raise ValueError('Native overlay entry encoding is unsupported: '+path)
+            raw=gzip.decompress(packed[12:])
+            if len(raw)!=struct.unpack_from('<I',packed,8)[0]:raise ValueError('Native overlay entry size differs: '+path)
+            result[path]=raw
+    if cursor!=len(index):raise ValueError('Native overlay index has trailing bytes')
+    return result
+
+
 def build_archive_file(resources, allowed: Callable[[str], bool], archive_path) -> tuple[bytes, dict]:
     """Stream a large overlay to disk: `resources` maps names to byte loaders."""
     if len(resources)>MAX_ENTRIES:

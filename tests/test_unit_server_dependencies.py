@@ -129,7 +129,10 @@ class ServerDependencies(unittest.TestCase):
         del manifest['native_registration_authorized'];manifest['skills']*=2
         with self.assertRaisesRegex(ValueError,'duplicate'):validate_manifest(manifest,records)
 
-    def test_data_library_rows_do_not_open_the_ordinary_unit_publisher(self):
+    def test_dependency_writer_skills_are_valid_unit_references(self):
+        # Owned skill rows installed by the dependency writer are registered natively by
+        # the client catalog (kind 13) in the same publication, so a unit family that
+        # names them is publishable; they stay visible as owned dependency rows.
         from test_unit_import_repository import make_snapshot,plan,write_json
         from owner.units.repository import Repository
         with tempfile.TemporaryDirectory() as directory:
@@ -138,7 +141,7 @@ class ServerDependencies(unittest.TestCase):
             repository=Repository(snapshot=root)
             self.assertIn(70001,repository.catalog['skill_ids'])
             self.assertIn(70001,repository.catalog['pending_skill_ids'])
-            with self.assertRaisesRegex(ValueError,'仅有制作数据'):repository.check_plan(plan())
+            self.assertEqual('fixture-imported-family',repository.check_plan(plan())['family_key'])
 
 
 if __name__=='__main__':unittest.main()
