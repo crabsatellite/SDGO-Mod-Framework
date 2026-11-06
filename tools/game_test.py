@@ -749,7 +749,10 @@ def configure_sfx_only(root: Path) -> dict:
         raise GameTestError(f"cannot configure SFX-only test client: {error}") from error
 
 
-def configure_muted_audio(root: Path) -> dict:
+REVIEW_FOOTAGE_SCREEN_RES = 12   # the native 1920x1080 battle resolution
+
+
+def configure_muted_audio(root: Path, *, review_footage: bool = False) -> dict:
     path=root/'config.xml'
     try:
         tree=ET.parse(path)
@@ -758,16 +761,22 @@ def configure_muted_audio(root: Path) -> dict:
         screen=video.find('ScreenMode')
         if screen is None:screen=ET.SubElement(video,'ScreenMode',{'width':'1024','height':'768','bpp':'32'})
         screen.set('mode','window');screen.set('windowFull','0')
-        effects=video.find('PostEffect')
-        if effects is None:effects=ET.SubElement(video,'PostEffect')
-        for key,level in (('MotionBlur','MotionBlurLevel'),('HeatHaze','HeatHazeLevel'),
-                          ('Bloom','BloomLevel'),('EdgeLine','EdgeLineType'),('DOF','DOFLevel')):
-            effect=effects.find(key)
-            if effect is None:effect=ET.SubElement(effects,key)
-            effect.set('Enable','false')
-            # The original settings Apply recomputes Enable from these levels.
-            # Enable=false alone is overwritten as soon as the native app starts.
-            effect.set(level,'0')
+        if review_footage:
+            # Review footage keeps the template's post-processing and plays battles at 1920x1080.
+            resolution=video.find('GameScreenRes')
+            if resolution is None:resolution=ET.SubElement(video,'GameScreenRes')
+            resolution.set('level',str(REVIEW_FOOTAGE_SCREEN_RES))
+        else:
+            effects=video.find('PostEffect')
+            if effects is None:effects=ET.SubElement(video,'PostEffect')
+            for key,level in (('MotionBlur','MotionBlurLevel'),('HeatHaze','HeatHazeLevel'),
+                              ('Bloom','BloomLevel'),('EdgeLine','EdgeLineType'),('DOF','DOFLevel')):
+                effect=effects.find(key)
+                if effect is None:effect=ET.SubElement(effects,key)
+                effect.set('Enable','false')
+                # The original settings Apply recomputes Enable from these levels.
+                # Enable=false alone is overwritten as soon as the native app starts.
+                effect.set(level,'0')
         sound=tree.getroot().find('Sound')
         if sound is None:raise ValueError('missing Sound settings')
         for key in ('BGMVolume','EffectVolume','VoiceVolume'):
@@ -811,13 +820,13 @@ def configure_fps_test(root: Path, fps_cap: int) -> None:
         raise GameTestError(f"cannot configure native FPS test client: {error}") from error
 
 
-def validate_muted_audio(root: Path) -> None:
+def validate_muted_audio(root: Path, *, review_footage: bool = False) -> None:
     try:
         document=ET.parse(root/'config.xml').getroot()
         screen=document.find('Video/ScreenMode')
         if screen is None or screen.get('mode')!='window' or screen.get('windowFull')!='0':
             raise ValueError('background tests must use a windowed device and may not change the display mode')
-        if any(document.find('Video/PostEffect/'+key) is None or
+        if not review_footage and any(document.find('Video/PostEffect/'+key) is None or
                document.find('Video/PostEffect/'+key).get('Enable')!='false' or
                document.find('Video/PostEffect/'+key).get(level)!='0'
                for key,level in (('MotionBlur','MotionBlurLevel'),('HeatHaze','HeatHazeLevel'),
@@ -889,7 +898,8 @@ class QuietRuntime:
         except json.JSONDecodeError as error:raise GameTestError('invalid quiet firewall readback') from error
 
     def start(self) -> None:
-        validate_muted_audio(Path(self.metadata['client']['root']))
+        validate_muted_audio(Path(self.metadata['client']['root']),
+                             review_footage=bool(self.metadata['plan'].get('review_footage')))
         # Scope stays on the declared server. Routed/non-IPv4 tests must supply
         # an explicit endpoint before a quiet run can open a native listener.
         try:ipaddress.IPv4Address(self.metadata['plan']['target_host'])
@@ -1921,6 +1931,7 @@ def make_plan(
     ai_difficulty: str | None = None,
     ai_layout: str | None = None,
     mission_respawns: str | None = None,
+    review_footage: bool = False,
 ) -> dict:
     if mission_respawns is not None and (mission_mode is None or mission_respawns not in ('player','infinite')):
         raise GameTestError('mission_respawns requires a native mission and player or infinite policy')
@@ -1979,6 +1990,7 @@ def make_plan(
         "acknowledge_game_windows": True,
         "launcher_path": launcher_path or "",
     }
+    if review_footage: plan["review_footage"] = True
     if mission_mode is not None:
         plan.update({
             "mission_mode": mission_mode,
@@ -2183,6 +2195,7 @@ def write_job(
         for field in ROUTE_PLAN_FIELDS:
             run['run'][field] = str(plan[field])
     if 'quiet' in plan:run['run']['quiet']='1' if plan['quiet'] else '0'
+    if plan.get('review_footage'):run['run']['review_footage']='1'
     if plan.get('quiet'):
         run['run']['quiet_loopback']='1' if (
             plan.get('network_policy') == ROUTED_LOOPBACK_POLICY or
@@ -2346,7 +2359,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 'required_cases', 'mission_mode', 'mission_scope',
                 'mission_ai_count', 'mission_ai_level', 'mission_respawns', *MISSION_CLAIM_FIELDS,
                 'play_unit_uid', 'network_policy',
-                *ROUTE_PLAN_FIELDS, 'quiet', 'quiet_loopback',
+                *ROUTE_PLAN_FIELDS, 'quiet', 'quiet_loopback', 'review_footage',
             }
             unexpected = set(run.keys()) - allowed
             if unexpected:
@@ -2633,6 +2646,10 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 raise ValueError('quiet loopback policy disagrees with the network plan')
         elif 'quiet_loopback' in run:
             raise ValueError('quiet_loopback requires a quiet run')
+        if 'review_footage' in run:
+            if run['review_footage'] != '1' or not plan.get('quiet'):
+                raise ValueError('review footage requires a quiet run')
+            plan['review_footage'] = True
         if operator_present:
             plan.update(operator_scenarios.read(root, run, plan))
         return plan
@@ -2877,6 +2894,7 @@ def prepare(
     network_policy: str = 'direct',
     route_profile: Path | None = None,
     quiet: bool = True,
+    review_footage: bool = False,
     asset_baseline: Path | None = None,
     extra_mods: tuple[str, ...] = (),
     disabled_mods: tuple[str, ...] = (),
@@ -2932,6 +2950,8 @@ def prepare(
     if apsalus_roundtrip and (mode_sequence != '1' or play_unit_uid is None or any((bootstrap_only,
             battleship_only,gift_requests_only,deck_only,pages_only,friends_only)) or mission_mode is not None):
         raise GameTestError('Apsalus roundtrip requires one complete ordinary battle and an existing owned unit UID')
+    if review_footage and (not quiet or fps_cap is not None):
+        raise GameTestError('review footage is a quiet-lane recording profile; it does not apply to visible or FPS runs')
     fps_only = fps_cap is not None
     if fps_only:
         if not quiet or sfx_only:
@@ -3148,6 +3168,7 @@ def prepare(
             ai_difficulty,
             ai_layout,
             mission_respawns,
+            review_footage=review_footage,
         )
         if server_session is not None:
             if (not isinstance(server_session,dict) or
@@ -3301,7 +3322,7 @@ def prepare(
             }:
                 raise GameTestError('installed operator inputs differ from their sealed plan')
         recording = configure_sfx_only(client) if sfx_only else None
-        if quiet:configure_muted_audio(client)
+        if quiet:configure_muted_audio(client,review_footage=review_footage)
         if fps_only:configure_fps_test(client, fps_cap)
         if room_titles_only:
             # Bind protocol diagnostics before collecting immutable hashes.
@@ -4717,6 +4738,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--route-profile',type=Path,
                                 help='strict net_route INI used only with --network-policy routed_loopback')
     prepare_parser.add_argument('--visible',action='store_true',help='explicit developer opt-in to a visible client; default tests use an isolated desktop and muted audio')
+    prepare_parser.add_argument('--review-footage',action='store_true',help='quiet review-footage profile: keep the template post-processing settings and play battles at 1920x1080 for SDGO_GAME_TEST_RECORD_DIR recordings')
     prepare_parser.add_argument('--asset-baseline',type=Path,help='reuse verified read-only native archives from a passed owned build run; never links original player files')
     prepare_parser.add_argument('--reuse-client',action='store_true',help='reuse the stopped owned run-dir client in place with a fresh run UUID and compact prior receipt; no full client copy')
     prepare_parser.add_argument('--rebind-existing-account',action='store_true',help='with --reuse-client and --account-profile, switch the stopped client to another already registered account')
@@ -4807,6 +4829,7 @@ def main(argv: list[str] | None = None) -> int:
                 account_profile=args.account_profile,
                 create_test_account=args.create_test_account,
                 sfx_only=args.sfx_only,
+                review_footage=args.review_footage,
                 bootstrap_only=args.bootstrap_only,
                 battleship_only=args.battleship_only,
                 gift_requests_only=args.gift_requests_only,

@@ -6,6 +6,7 @@
 #include <cstdio>
 
 #include "sdgo/game_test.h"
+#include "sdgo/mission_ai_client_observer.h"
 #include "sdgo/pvp_ai_client_observer.h"
 #include "sdgo/sdgo_api.h"
 
@@ -208,18 +209,7 @@ public:
         const SdgoPvpAiClientStartStatusV1& start,
         ScoreboardActions& input)
     {
-        if (!enabled_)
-            return true;
-        if (!context)
-            return false;
-        // Result handling may still report app state 22 for several updates.
-        // Finish ends this battle's input lease even before that state changes.
-        if (finished_ && battleSequence_ == snapshot.received_battle_start_count) {
-            Release(input);
-            return true;
-        }
-
-        const bool genuineReleasedBattle =
+        const bool released =
             snapshot.size == sizeof(snapshot) &&
             snapshot.version ==
                 SDGO_PVP_AI_CLIENT_OBSERVER_VERSION &&
@@ -232,21 +222,83 @@ public:
             start.battle_start_sequence ==
                 snapshot.received_battle_start_count &&
             start.player_control_enabled != 0;
-        if (!genuineReleasedBattle) {
+        return PollReleased(
+            context,
+            snapshot.native_app_state,
+            snapshot.profile_pilot_id,
+            snapshot.received_battle_start_count,
+            released,
+            "battle",
+            input);
+    }
+
+    bool PollMission(
+        const SdgoGameTestContextV1* context,
+        const SdgoMissionAiClientSnapshotV1& snapshot,
+        uint32_t expectedGeneration,
+        uint32_t expectedRoom,
+        uint32_t nativeAppState,
+        uint32_t profilePilotId,
+        ScoreboardActions& input)
+    {
+        const bool released =
+            snapshot.size == sizeof(snapshot) &&
+            snapshot.version ==
+                SDGO_MISSION_AI_CLIENT_OBSERVER_VERSION &&
+            snapshot.active != 0 &&
+            snapshot.battle_generation != 0 &&
+            snapshot.battle_generation ==
+                expectedGeneration &&
+            snapshot.room_object != 0 &&
+            snapshot.room_object == expectedRoom &&
+            nativeAppState == 22 &&
+            profilePilotId != 0;
+        return PollReleased(
+            context,
+            nativeAppState,
+            profilePilotId,
+            snapshot.battle_generation,
+            released,
+            "mission",
+            input);
+    }
+
+private:
+    bool PollReleased(
+        const SdgoGameTestContextV1* context,
+        uint32_t nativeAppState,
+        uint32_t profilePilotId,
+        uint32_t sequence,
+        bool released,
+        const char* scope,
+        ScoreboardActions& input)
+    {
+        if (!enabled_)
+            return true;
+        if (!context)
+            return false;
+        // Result handling may still report app state 22 for several updates.
+        // Finish ends this battle's input lease even before that state changes.
+        if (finished_ && battleSequence_ == sequence) {
+            Release(input);
+            return true;
+        }
+
+        if (!released) {
             if (context->tick % 300 == 0) {
                 char text[192];
-                sprintf_s(text, "native fire probe waits for released battle: app=%u battle=%u control_battle=%u enabled=%u",
-                          snapshot.native_app_state, snapshot.received_battle_start_count,
-                          start.battle_start_sequence, start.player_control_enabled);
+                sprintf_s(
+                    text,
+                    "native fire probe waits for released %s: app=%u sequence=%u pilot=%u",
+                    scope, nativeAppState, sequence,
+                    profilePilotId);
                 context->Observe(text);
             }
             Release(input);
             return true;
         }
-        if (battleSequence_ !=
-            snapshot.received_battle_start_count) {
-            BeginBattle(
-                snapshot.received_battle_start_count, input);
+        if (battleSequence_ != sequence) {
+            BeginBattle(sequence, input);
         }
 
         void* manager =
@@ -261,7 +313,7 @@ public:
 
         const uint32_t objectId =
             objectIdFromPilot_(
-                manager, snapshot.profile_pilot_id);
+                manager, profilePilotId);
         uint8_t* unit =
             objectId ? findObject_(manager, objectId) : nullptr;
         if (!unit) {
@@ -288,7 +340,7 @@ public:
                 unit + kUnitObjectId) == objectId &&
             *reinterpret_cast<uint32_t*>(
                 unit + kUnitPilotId) ==
-                snapshot.profile_pilot_id &&
+                profilePilotId &&
             *reinterpret_cast<int32_t*>(
                 unit + kUnitHp) > 0 &&
             unit[kUnitPlayerControlEnabled] != 0 &&
@@ -479,6 +531,7 @@ public:
         return true;
     }
 
+public:
     void Finish(
         const SdgoGameTestContextV1* context,
         ScoreboardActions& input)
