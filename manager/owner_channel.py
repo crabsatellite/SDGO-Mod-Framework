@@ -38,6 +38,9 @@ def https(value):
 
 def feed_url(value):
     if not isinstance(value,str):raise ValueError('负责人更新地址无效')
+    if value.startswith('git+ssh://'):
+        from .git_source import parse
+        parse(value);return value
     if not value.startswith('git+https://'):return https(value)
     parsed=urlsplit(value);ref=parsed.fragment or 'main'
     https(urlunsplit(('https',parsed.netloc,parsed.path,parsed.query,'')))
@@ -70,7 +73,7 @@ def installed_binding(root):
 def default_mode(root):
     root=Path(root)
     if (root/MAINTAINER).exists():return 'owner'
-    if (root/BINDING).exists() or (root/RECEIPT).exists():return 'player'
+    if (root/BINDING).exists() or (root/RECEIPT).exists()or(root/'sdgo/client-source.json').exists():return 'player'
     return 'starter'
 
 
@@ -83,10 +86,12 @@ def mode(host):
             if value.get('schema_version')!=1 or value.get('mode')!='owner':return 'blocked'
             return 'owner'
         if host.get('runtime_mode')=='owner':return 'owner'
+        from .client_runtime import installed_source
+        if installed_source(host['path'])is not None:return 'player'
         if installed_binding(host['path']) is not None:return 'player'
         if updates.child(host['path'],RECEIPT).exists():return 'blocked'
     except (ValueError,OSError):return 'blocked'
-    return host.get('runtime_mode','starter')
+    return 'blocked'if host.get('runtime_mode')=='player'else host.get('runtime_mode','starter')
 
 
 def file_hash(path):
@@ -280,8 +285,15 @@ def unpack(raw,feed,source,destination):
 
 
 def install(host,bundle,m,cache,is_running=None,stop=None):
+    from .target_locks import lease
+    with lease('host:'+str(Path(host['path']).resolve()).casefold()):
+        return _install(host,bundle,m,cache,is_running,stop)
+
+
+def _install(host,bundle,m,cache,is_running=None,stop=None):
     is_running=is_running or updates.running
     root=Path(host['path']).resolve();exe=root/'GOnline.exe'
+    if(root/'sdgo/client-source.json').is_file():raise ValueError('此目录使用完整客户端更新，不能再独立同步旧的 Mod 整合包')
     if host['role']!='client' or mode(host)!='player':raise ValueError('该客户端尚未绑定服主更新源')
     source=installed_binding(root)
     if m['publisher_id']!=source['publisher_id']:raise ValueError('发布者与玩家绑定不一致')
@@ -311,6 +323,14 @@ def install(host,bundle,m,cache,is_running=None,stop=None):
     marker=updates.child(root,RECEIPT);changes[marker]=storage.json_bytes(m)
     if is_running(exe):return {'status':'waiting','message':'等待这个客户端关闭','revision':m['revision']}
     with storage.LOCK:
+        from .dependencies import enforce_install
+        from .operations import CORE_CONTRACT
+        incoming=changes.get(root/'sdgo/core.dll');core=root/'sdgo/core.dll'
+        if incoming is not None and core.is_file()and CORE_CONTRACT in core.read_bytes()and CORE_CONTRACT not in incoming:
+            raise ValueError('服主包缺少数据维护保护，不能替换当前框架')
+        metadata={p.relative_to(root).as_posix():raw for p,raw in changes.items()if p.suffix=='.ini'or p.name=='manager.json'}
+        metadata.update({p.relative_to(root).as_posix():None for p in retired if p.suffix=='.ini'or p.name=='manager.json'})
+        enforce_install(root,metadata,'client')
         previous={p:p.read_bytes() if p.exists() else None for p in [*changes,*retired]};written=[]
         backup=Path(cache)/'backups'/source['publisher_id']/str(m['revision'])/updates.digest(str(root).encode())[:16]
         try:
@@ -373,6 +393,7 @@ class OwnerChannels:
                     installed_revision=receipt.get('revision')
                 except (ValueError,OSError):installed_revision=None;error='本地安装收据损坏；请先明确解除绑定，再重新绑定负责人'
                 hosts.append({'id':h['id'],'name':h['name'],'role':h['role'],'mode':mode(h),'source':source,
+                    'complete_runtime':(Path(h['path'])/'sdgo/client-source.json').is_file(),
                     'automatic':h.get('owner_automatic',True) and self.workspace.services.desired(SERVICE),
                     'publication':cfg,'result':self.results.get(h['id'],{}) or ({'status':'error','message':error} if error else {}),
                     'installed_revision':installed_revision})
@@ -497,8 +518,8 @@ class OwnerChannels:
             asset=feed.get('asset','')
             updates.safe_name(asset)
             if '/' not in asset or not asset.endswith('.zip'):raise ValueError('整合包下载路径无效')
-            feed['url']=url if url.startswith('git+https://') else https(urljoin(url,asset));return feed
-        raise ValueError('服主更新源暂不可用；保留当前版本，不改用官方整合包') from last
+            feed['url']=url if url.startswith(('git+https://','git+ssh://')) else https(urljoin(url,asset));return feed
+        raise ValueError('服主更新源暂不可用；保留当前版本，不改用官方整合包。'+(str(last)if last else'')) from last
 
     def resolve(self,urls):
         if not isinstance(urls,list) or not 1<=len(urls)<=3:raise ValueError('填写一至三个更新地址')
@@ -515,6 +536,7 @@ class OwnerChannels:
 
     def check(self,host_id,apply=False,audit_only=False):
         host=self.workspace.host(host_id)
+        if(Path(host['path'])/'sdgo/client-source.json').is_file():raise ValueError('此目录通过完整客户端更新同步，请使用 Manager 的完整客户端更新页面')
         source=installed_binding(host['path'])
         selected_mode=mode(host)
         if source is None or (selected_mode!='player' and not (audit_only and selected_mode=='owner')):raise ValueError('先绑定负责人的发布源')
@@ -542,13 +564,14 @@ class OwnerChannels:
     def read_source(self,url,name,limit,refresh=False):
         if self.stop_event.is_set():raise InterruptedError('整合包操作已取消')
         feed_url(url);updates.safe_name(name)
-        if not url.startswith('git+https://'):
+        if not url.startswith(('git+https://','git+ssh://')):
             return self.fetcher(url if name=='owner-feed.json' else https(urljoin(url,name)),limit,self.stop_event)
         with self.lock:gate=self.source_locks.setdefault(url,threading.RLock())
         with gate:return self.read_git_source(url,name,limit,refresh)
 
     def read_git_source(self,url,name,limit,refresh):
-        parsed=urlsplit(url);remote=urlunsplit(('https',parsed.netloc,parsed.path,'',''));ref=parsed.fragment or 'main'
+        from .git_source import parse
+        remote,ref=parse(url)
         cache=self.cache/'git'/(updates.digest(url.encode())+'.git');cache.mkdir(parents=True,exist_ok=True)
         try:
             if not (cache/'HEAD').is_file():
@@ -563,7 +586,7 @@ class OwnerChannels:
             if len(raw)>limit:raise ValueError('Git 更新文件超过大小限制')
             return raw
         except (ValueError,OSError,subprocess.SubprocessError)as e:
-            raise OSError('Git 更新源暂不可用；检查本机 Git 与已有 HTTPS 读取权限')from e
+            raise OSError('Git 更新源暂不可用；'+str(e))from e
 
     def publish(self,host_id,expected):
         host=self.workspace.host(host_id)
@@ -621,9 +644,10 @@ class OwnerChannels:
 
     def git(self,root,args):
         from .owned_process import run
+        from .git_source import environment,failure
         r=run(['git','-C',str(root),*args],cwd=root,timeout=900,stop=self.stop_event,
-              env={**os.environ,'GIT_TERMINAL_PROMPT':'0','GCM_INTERACTIVE':'Never'})
-        if r.returncode:raise ValueError('Git 发布未完成；检查仓库权限、分支与已有凭据后重试')
+              env=environment())
+        if r.returncode:raise ValueError(failure(r.stderr))
         return r.stdout
 
     def git_prepare(self,root,cfg):
@@ -669,7 +693,7 @@ class OwnerChannels:
                 elif self.workspace.services.desired(SERVICE) and time.monotonic()>=next_poll:
                     next_poll=time.monotonic()+3600
                     for host in self.workspace.settings['hosts']:
-                        if host['role']=='client' and mode(host)=='player' and host.get('owner_automatic',True):
+                        if host['role']=='client' and not(Path(host['path'])/'sdgo/client-source.json').is_file()and mode(host)=='player' and host.get('owner_automatic',True):
                             with self.lock:self.jobs.append(('install',host['id'],None))
                 # A downloaded update waiting for game closure uses the same sealed cache.
                 for identity,(folder,m) in list(self.downloads.items()):

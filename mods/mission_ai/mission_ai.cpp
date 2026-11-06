@@ -63,6 +63,7 @@ namespace
     SdgoMatchAiMissionTickV1Fn g_matchAiMissionTick = nullptr;
 
     std::string g_configChunk; // SDGO_MissionAI_Config = {...}, built from mod.ini
+    bool g_configurationReadRaced=false;
     std::string g_scriptPath;  // absolute path of mission_ai.lua (ANSI, for the chunk name)
     std::wstring g_scriptPathW;
     std::wstring g_manifestPathW;
@@ -1195,6 +1196,11 @@ namespace
 
     bool LoadScripts(lua_State* L)
     {
+        g_configurationReadRaced=false;
+        char configurationRevision[65]{};
+        const bool canReport=g_api->size>=offsetof(SdgoApi,ConfigurationApplied)+sizeof(g_api->ConfigurationApplied)&&
+            g_api->ConfigurationRevision&&g_api->ConfigurationApplied;
+        if(canReport)g_api->ConfigurationRevision(g_mod,configurationRevision,sizeof(configurationRevision));
         std::string script;
         FILETIME scriptTime = WriteTime(g_scriptPathW);
         FILETIME manifestTime = WriteTime(g_manifestPathW);
@@ -1204,6 +1210,10 @@ namespace
         }
         if (!BuildConfig())
             return false;
+        if(canReport&&configurationRevision[0]) {
+            char current[65]{};g_api->ConfigurationRevision(g_mod,current,sizeof(current));
+            if(strcmp(current,configurationRevision)!=0){g_configurationReadRaced=true;return false;}
+        }
         SetGlobalFunction(L, "SDGO_Log", Lua_Log);
         SetGlobalFunction(L, "SDGO_Now", Lua_Now);
         SetGlobalFunction(L, "SDGO_Wingmen", Lua_Wingmen);
@@ -1221,6 +1231,11 @@ namespace
         std::string chunkName = "@" + g_scriptPath;
         if (!RunChunk(L, script, chunkName.c_str()))
             return false;
+        if(canReport&&configurationRevision[0]&&!g_api->ConfigurationApplied(g_mod,configurationRevision)) {
+            g_configurationReadRaced=true;
+            g_api->Log(g_mod,SDGO_LOG_WARN,"configuration changed during reload; awaiting another stable read");
+            return false;
+        }
         g_loadedScriptTime = scriptTime;
         g_loadedManifestTime = manifestTime;
         g_api->Log(g_mod, SDGO_LOG_INFO, "mission_ai.lua loaded into Lua state %p", L);
@@ -1247,7 +1262,7 @@ namespace
         g_api->Log(g_mod, SDGO_LOG_INFO, "mission_ai.lua or mod.ini changed; reloading");
         g_loadFailures = 0;
         g_tickErrors = 0;
-        if (!LoadScripts(L)) {
+        if (!LoadScripts(L)&&!g_configurationReadRaced) {
             // Keep the previous definitions running; retry after the next edit.
             g_loadedScriptTime = WriteTime(g_scriptPathW);
             g_loadedManifestTime = WriteTime(g_manifestPathW);

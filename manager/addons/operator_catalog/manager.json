@@ -22,5 +22,12 @@
       "activation": "restart_required"
     }
   ],
-  "presentation": "configurable"
+  "presentation": "configurable",
+  "retirement": {
+    "content_files": [
+      "definitions.json",
+      "display.ini"
+    ]
+  },
+  "runtime_enabled_setting": "enabled"
 }

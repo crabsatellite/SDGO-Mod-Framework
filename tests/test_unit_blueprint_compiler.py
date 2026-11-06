@@ -57,6 +57,14 @@ class BlueprintCompiler(unittest.TestCase):
                     kind,identity,size,*_=struct.unpack_from('<6I',raw,cursor);cursor+=24
                     records[(kind,identity)]=raw[cursor:cursor+size];cursor+=size
                 self.assertEqual(1197,len(records[(33,209000)]))
+                # The compiler derives this complete fixed-width carrier from
+                # the bytes it actually publishes; it never edits source blobs.
+                from owner.units.model_integrity import model_digest
+                with zipfile.ZipFile(result['client_zip']) as z:
+                    published_model=z.read('client/mdrs/test.mod')
+                self.assertEqual(model_digest(published_model),records[(2,90001)][672:736])
+                source_form=family['forms'][0]
+                self.assertEqual(bytes(64),engine.blob(source_form['source_sha'])[672:736])
                 self.assertEqual('sprs/u90001r.spr',records[(33,209000)][169:229].decode('utf-16-le').split('\0')[0].replace('\\','/'))
                 self.assertEqual(donor()[109:169],records[(33,209000)][109:169])
                 self.assertEqual('sprs/u90001b.spr',records[(33,209000)][289:349].decode('utf-16-le').split('\0')[0].replace('\\','/'))

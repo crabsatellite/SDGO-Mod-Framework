@@ -26,6 +26,10 @@ def announce(url):
 
 def main(argv=None):
     effective=sys.argv[1:] if argv is None else argv
+    if effective[:1]==['--finish-client-update']:
+        from manager.client_runtime import finish
+        if len(effective)!=2:raise ValueError('客户端更新交接参数无效')
+        finish(effective[1]);return
     if effective[:1]==['--finish-update']:
         from manager.update_restart import finish
         if len(effective)!=2:raise ValueError('更新交接参数无效')
@@ -37,7 +41,10 @@ def main(argv=None):
         except Exception as error:
             announce('Owner update stopped: '+str(error));return 1
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--workspace', type=Path, default=Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'SDGO/ModManager')
+    sibling=Path(sys.executable).parent if getattr(sys,'frozen',False)else None
+    local_client=bool(sibling and((sibling/'GOnline.exe').is_file()or(sibling/'sdgo/client-source.json').is_file()))
+    default_workspace=sibling/'sdgo/local-state/manager'if local_client else Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'SDGO/ModManager'
+    parser.add_argument('--workspace', type=Path, default=default_workspace)
     parser.add_argument('--port', type=int, default=0)
     parser.add_argument('--no-browser', action='store_true')
     args = parser.parse_args(argv)
@@ -49,6 +56,8 @@ def main(argv=None):
         announce(url)
         return
     workspace = Workspace(args.workspace, ROOT / 'mods')
+    if local_client and not any(Path(h['path']).resolve()==sibling.resolve()for h in workspace.settings['hosts']):
+        workspace.add_host(sibling)
     attach(workspace)
     from manager.updates import attach as attach_updates
     executable=Path(sys.executable) if getattr(sys,'frozen',False) else None

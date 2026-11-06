@@ -50,6 +50,10 @@ namespace sdgo::resource_overlay
         void* native_stream,
         void* context);
 
+    // Validate the same sealed unit archive without publishing it or installing
+    // hooks. Consumers can bind optional sidecars to its exact identity/paths.
+    bool InspectUnitBundleFiles(const wchar_t* modDirectory, BundleRegistration& bundle, std::string& error);
+
     class Provider
     {
     public:

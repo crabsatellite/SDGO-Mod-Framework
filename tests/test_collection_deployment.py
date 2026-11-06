@@ -164,9 +164,10 @@ class CollectionDeploymentTests(unittest.TestCase):
         executable = target / "WorldServer.exe"
         executable.write_bytes(b"verified fixture world")
         (target / "winmm.dll").write_bytes(b"old loader")
-        (target / "sdgo/core.dll").write_bytes(b"old core")
+        from manager.operations import CORE_CONTRACT
+        (target / "sdgo/core.dll").write_bytes(b"old fixture core "+CORE_CONTRACT)
         server_ini = target / "WorldServer.ini"
-        server_ini.write_text("[DB Game]\n", encoding="ascii")
+        server_ini.write_text("[DB Game]\nDBServerName=127.0.0.1,7\nDBName=fixture\n", encoding="ascii")
         model = {
             "machine_id": 990001,
             "price_gp": 100000,
@@ -285,6 +286,7 @@ class CollectionDeploymentTests(unittest.TestCase):
             files.observe()
             files.restore()
             self.assertEqual((target / "winmm.dll").read_bytes(), b"old loader")
+            from manager.operations import CORE_CONTRACT
             self.assertEqual((target / "sdgo/core.dll").read_bytes(), b"old core")
             self.assertFalse((target / "winmm_chain.dll").exists())
             self.assertTrue((files.backup / "before.json").is_file())
@@ -393,7 +395,8 @@ class CollectionDeploymentTests(unittest.TestCase):
                 ),
             )
             self.assertEqual((target / "winmm.dll").read_bytes(), b"old loader")
-            self.assertEqual((target / "sdgo/core.dll").read_bytes(), b"old core")
+            from manager.operations import CORE_CONTRACT
+            self.assertEqual((target / "sdgo/core.dll").read_bytes(), b"old fixture core "+CORE_CONTRACT)
             self.assertFalse((target / "winmm_chain.dll").exists())
             self.assertFalse(
                 (target / "sdgo/mods/collection_capsule/collection_capsule.dll").exists()

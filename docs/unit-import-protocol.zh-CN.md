@@ -69,7 +69,121 @@ RAR/ZIP 中提供原始机体 BIN（每条 4976 字节）、武器 BIN（每条 
 执行或登记需要独立的目标脚本注册协议；资源库不得签发编号、SQL、原生登记或可玩性权限。
 这个开发者读取接口只提供制作数据，不是 Manager 导入入口，也不是运行时多归档安装器。
 
+### 特效纹理的资源域准备
+
+`owner.units.effect_resources` 提供独立的制作辅助接口。`texture_carriers` 按完整 ZFX
+v1–v5 布局读取 emitter 的 32 字节纹理字段，以首个 NUL 为字符串终点；不扫描字段尾部来增加依赖。
+截断、未终止的名称、超出预算或无法完整解析的尾部都会拒绝处理。
+`scope_textures(owner, effects, read_texture, destination_read)` 要求调用者明确选择来源版本，
+为特效及纹理生成服主资源域名称，并重新解析检查输出引用。目标路径已有不同字节时拒绝生成，
+不会用同名资源覆盖原客户端。仅改写实际的纹理名称字段，新的终止符之后保留原存储字节。
+
+特效 TXR 检查支持原生 PNG、DDS、TGA 和 JPEG，完整解码但保留原始文件字节。
+同一逻辑名称的不同纹理内容保持独立身份；ZFX 的模型依赖需要单独的模型资源域适配器。
+输出含来源及结果摘要、明确的字段位置和依赖边，不包含原生登记或可玩性许可。
+这是开发者制作接口，尚未作为 Manager 自动导入步骤开放。
+
+### 初始化脚本制作声明
+
+项目可用 `native_programs` 数组携带 `{manifest_path, manifest_sha256}` 绑定。
+声明及全部 SCP 文件必须在项目的精确文件清单内。Manager 会保留它们、显示脚本组数量并随项目导出；
+修改文件、缺少源武器或函数名不匹配时拒绝导入。当前普通发布仍阻止这些项目，直到资源、服务端及实际机体行为准入完成。
+
+声明 schema 为 `sdgo.unit-native-programs/1`，必填：
+
+- `owner`、`revision`：独立的函数命名空间及内容修订摘要。
+- `vm_abi=lua50-x86-double64`、`phase=after-original-root-loader`、`root_profile=closure-publications-only-v1`。
+- `programs`：每项含 `resource`、项目内 `member`、`sha256` 和完整 `exports`。
+- `weapon_initializers`：每项含 `weapon_id`、完整源武器 `weapon_sha256` 和 `export`；
+  函数必须与该 1871 字节武器记录 `+1771` 的 UTF-16 初始化名称一致。
+
+版本 2（[schema](unit-native-programs-v2.schema.json)）使用 `weapon_callbacks` 代替
+`weapon_initializers`，每项另外必填 `role`：`ranged` 对应 `+1569`，`special_ranged`
+对应 `+1669`，`initializer` 对应 `+1771`。均检查实际 100 字节 UTF-16 字段，不能传任意偏移。
+同一所有者可绑定同一武器的不同回调，不能让多个所有者分别接管同一武器。
+运行侧容器保留 `SDGOPR1` 标识，header version 为 2，各绑定额外携带角色码；旧版本 1 保持原布局。
+这些字段保存函数名，不是脚本文件路径；其他原生回调、共享状态和资源仍需各自明确绑定。
+
+`owner.units.native_programs` 完整解析目标 Lua 5.0 二进制块；根代码只能发布不捕获外部局部变量的函数并返回。
+普通文本、LuaJIT 块、未声明导出、原版全局名覆盖及未绑定武器不会获得执行许可。
+原始恢复数据与适配后的目标程序应分别保留来源，目标块通过不等于源行为还原或机体可玩。
+
+底层 `compile_bundle` 生成 `SDGOPR1` 运行侧文件，绑定完整目录 SHA-256、程序摘要及具体武器字节。
+原生 `unit_catalog` 的可选消费者再次验证这些条件，在机体目录完整登记后、原版根脚本返回时注册；
+初始线程身份缺失、已有函数冲突或部分执行失败会拒绝并关闭候选客户端。
+该底层消费者不签发资源、SQL、编号保留或实际机体验收权限。通用发布编译器尚不输出这个文件。
+
 ### 技能与浮游记录 profile
+
+制作项目可用 `native_content` 数组携带 `{manifest_path, manifest_sha256}`，指向
+`sdgo.unit-native-content/1`（[schema](unit-native-content.schema.json)）。它把完整原生记录、资源、
+服务端技能／浮游定义、技能图集、身份绑定请求和来源证据组织成同一个有界项目。
+所有成员逐项核对 SHA-256，原始来源和准备记录分别保留。已知记录检查固定布局；
+未知类型或调度值保留完整字节并列为待适配项，不能凭包内许可字段放行。
+
+Manager 的「配套原生资料」可补充 ZIP，或明确更新指定资料组。附件 ZIP 包含一个
+`manifest.json` 或 `native-content.json` 及其引用成员。补传后使用独立传输命名空间，保留原清单与成员映射，
+不修改机体／武器原始记录、不覆盖此前发布。内容改变后预览确认失效；失败或旧修订不提交部分草稿。
+项目导出保留完整配套资料并检查重新导入的容量限制。
+来源证据不会因恰好具有记录长度而被自动识别为另一条武器或运行资源。
+新增配套数据目前支持制作项目保存和重新导入，完整运行发布仍单独受控。
+
+`POST /api/providers/units/api/units/drafts/<id>/native-server-definition` 使用既有会话和
+`X-Catalog-Revision`，请求为 `{manifest_path, kind, id, definition}`；`kind` 为 `skill` 或 `funnel`。
+`definition` 可选完整哈希绑定的 `template`、完整 `explicit`，或制作阶段的 `draft`。
+`draft` 使用 `{kind:"draft", origin, values}`，允许缺项但仅接受既有列名及有限 SQL 类型，
+保存时从对应完整客户端记录补入已证实的共享字段，其余不设默认值。
+字段齐全时转为 `explicit`；默认验证器、数据写入器和运行编译器拒绝 `draft`。
+资料组可暂缺部分服务端条目，每条缺项仍单列为发布阻塞。
+模板来自宿主定义目录，不能选取已属导入账本的行；保存时按完整行哈希及共享字段复核。
+客户端技能末字节不是服务端 `BattleMode` 的默认值。改变已有原生行为绑定对应的模板会拒绝，
+不会通过移除绑定来放行；只更新数据修订不发出安装许可。
+编辑保留原始清单与服务端资料作为证据，独立保存作者版本并使旧预览确认失效。
+
+模型资源经过纹理或特效路径改写后，机体记录中的模型摘要也必须对应最终字节。
+发布编译器从实际发布的 ZOA 模型自动生成 `+672` 的固定 64 字节 UTF-16 字段：
+把模型 MD5 视为四个小端 32 位字，各输出八位大写十六进制，再拼接；此字段不追加 NUL。
+原始机体和模型资料保留。`owner.units.model_integrity.rebind_model_digest` 另提供先验证完整源模型、
+再更新准备记录的严格接口；这一摘要不能替代资源闭包或实际出击检查。
+
+服务端技能制作数据使用 `sdgo.unit-server-dependencies/1`
+（[schema](unit-server-dependencies.schema.json)）。`owner`、`revision` 和 `skills` 必填；
+每项用 `id`、完整 1132 字节客户端记录的 `client_sha256` 及 `definition` 绑定数据。
+`definition.kind=template` 要求既有技能 `id` 和完整目录行摘要，复制所有列后只改变目标编号。
+`kind=explicit` 要求全部 `tbl_SkillRev` 字段及 `origin`，不补缺失列或猜填零。
+
+`owner.units.server_dependencies.apply` 只在调用方已开启的目录事务中工作，共用目录应用锁，
+核对实际 SQL 类型、模板版本、客户端共享字段和关联技能，随后写入定义及独立所有权账本。
+已有原生或其他内容的行不能被接管；同版重复提交复用原数据，外部修改或有损字符串读回会拒绝。
+更新内容需要新修订，提交或回滚仍由调用方管理。
+
+制作数据保持 `native_registration_authorized=false` 和 `actor_accepted=false`。
+目录读取器把这些行标为 `pending_skill_ids`，普通机体发布仍拒绝引用它们。
+
+浮游制作数据使用 `sdgo.unit-server-funnels/1`（[schema](unit-server-funnels.schema.json)），
+由同一事务接口以 `kind='funnel'` 写入完整的六列定义和独立所有权账本。
+732 字节客户端记录的 `FunnelProp`、动作时间、攻击延迟、攻击次数及可夺取标记必须与服务端逐值对应；
+不能截断客户端的 32 位攻击次数来迁就服务端列。目录用 `pending_funnel_ids` 保留尚未完成的运行准入。
+
+技能图集制作声明为 `sdgo.unit-skill-atlases/1`（[schema](unit-skill-atlases.schema.json)）。
+`owner.units.skill_atlases` 核对完整 1132 字节技能记录、独立 SPR、每帧的 TXR 引用与文件摘要，
+并检查记录 `+426` 的帧编号。编译的 `skill-atlases.bin` 以 `SDGOAT1`、版本 1、128 字节头绑定完整机体目录和原生资源归档的摘要。
+原生组件按实际登记的技能记录选择图集，分别处理详情控件和战斗技能初始化路径；
+未匹配的原版技能仍使用原版图集。纹理和帧坐标沿用原生解析及绘制，不覆盖全局图集。
+这只是资源消费者组件；新增技能的 Manager 普通发布、服务端特殊行为和整机验收仍需分别完成。
+SQL `BattleMode` 与客户端末尾调度字段是独立输入，不按相同名称互相推导。
+原生处理器可能按技能编号选择特殊行为；复制一行 SQL 不会自动保留这种行为，需另行处理原生身份绑定。
+开发者可使用[原生技能身份选择器](skill-identity.md)在独立所有权校验后只改专用分支的局部选择值，
+保留实际技能记录和网络同步编号；该组件仍不替代整机行为与资源验证。
+
+服务端运行请求使用 `sdgo.unit-skill-identities/1`
+（[schema](unit-skill-identities.schema.json)），只声明所有者、当前安装修订及目标／源编号和客户端记录摘要。
+可信控制器通过 `owner.units.skill_identity_runtime.prepare_from_cursor` 在目录事务中独立读回完整 SQL 定义、
+所有权、原版编号集合和模板，核对配对字段后生成候选文件及独立的宿主安装记录。
+`unit_catalog_server` 默认关闭且不携带内容；它校验实际服务器程序和两个文件，使用原生登记表的真实借用指针，
+保留目标记录及同步编号，只改变受支持分支的局部选择值。内容项目不能自行提供生效许可。
+安装记录位于宿主 `sdgo/install-state`，不作为项目资源导入；定义改变后需由控制器重新生成并读回。
+这一服务端组件不等于新增依赖的普通 Manager 发布流程已经开放。
 
 `owner.units.profiles.skill_target_1132` 验证 kind 13 的882→1132字节投影，保留完整源／目标哈希和逆变换。
 其独立 `validate_relocated_record` 接口使用 `sdgo.native-type13-relocated-record/1`：明确绑定源、目标技能编号，
@@ -88,7 +202,9 @@ RAR/ZIP 中提供原始机体 BIN（每条 4976 字节）、武器 BIN（每条 
 补充定义接口使用 `schema_version: 1`，允许以下顶层字段：
 
 - `root_unit_id`：明确选择进入机库的根形态，必须属于该包。
-- `behavior_profile`：`native-single-form-v1` 或 `native-linked-forms-v1`。
+- `behavior_profile`：`native-single-form-v1`、`native-linked-forms-v1`、`native-one-way-forms-v1`、
+  `native-entry-forms-v1`（入口形态，变入已发布双向形态之一；第二跳需要原生形态图运行时）或
+  `native-self-transform-v1`（单条记录，变形目标为自身）。
 - `item_template_id`：客户端和服务端都存在的永久机体物品类别模板。
 - `units`、`weapons`：按内部编号匹配的类型化服务端字段。
 
@@ -99,6 +215,10 @@ RAR/ZIP 中提供原始机体 BIN（每条 4976 字节）、武器 BIN（每条 
 
 单形态要求变形目标为零。当前双形态 profile 要求完整、互相匹配的两条关系；
 三形态以上的有向图需要新的 profile，不会删掉多余形态后当作兼容。
+Manager 的 `form_graph` 报告使用 `sdgo.unit-transform-graph/1`，从完整4976字节记录
+的 `+316` 四字节字段读取目标，逐条绑定记录 SHA-256。报告单列弱连通分组、有向环、
+选定根路径、同组未从该根到达的其他入口及外部目标；不补反向边，不从连通分组推断库存身份。
+生成或导出报告不会开放运行登记。
 库存根形态在发布后保持稳定。原始 BIN/RAR 始终保留，编译只写回已验证的共享字段。
 
 技能依赖默认必须存在。只有已验证可同步编码的技能 1/2 支持服主逐项明确移除，效果会丢失并记录来源；
@@ -207,8 +327,10 @@ RepayPoint，以及图纸物品的目标编号、可选明确名称和配方引�
 原生游戏不会从工作目录自动读取新增模型。编译器在 `unit_catalog` 运行目录生成
 `resource-overlay.ini`、`resources.zdx` 和 `resources.zpk`，使用既有原生归档编码器；
 INI 的 schema 为 1，分别声明 index/archive 文件名及 SHA-256。归档只包含清单中批准的
-模型、动作、纹理、特效、图片、声音和游戏脚本资源。安装器核对归档条目与 `owned_paths` 的精确对应。
-松散副本只供工具读取，游戏不会读取它们。
+模型、动作、纹理、特效、图片、声音和游戏脚本资源。安装器核对归档条目与清单
+`resource_overlay.paths` 的精确对应；没有该列表的旧包继续按 `owned_paths` 核对。
+松散副本只供工具读取，游戏不会读取它们；只带归档、不带松散副本的包（`owned_paths` 为空）
+同样被接受。归档上限为 2 GiB，单个资源 64 MiB。
 
 机体目录独立启用时自行提供资源读取；与扭蛋目录同时启用时复用单一资源 broker，
 通过版本化 `SdgoGetResourceOverlayBrokerV1` 接口登记独立资源包。
@@ -235,6 +357,67 @@ INI 的 schema 为 1，分别声明 index/archive 文件名及 SHA-256。归档�
 
 ## 扩展接口
 
+### 按类型重编号与宿主范围
+
+`owner.units.relocation.plan` 接受 SHA-256 绑定的编号请求、目标占用快照和逐条源字节。
+版本1使用共同编号区间；`sdgo:record-relocation-request/2` 另支持
+`allocation.kindPolicies[{kind, ranges, maxTargetId}]`，让机体等记录使用各自的合法范围。
+区间仍共享全局占用集合，不会因为类型不同而重复使用同一个全局编号。
+源键区分同号的不同版本；只改身份字及明确声明、核对过原值的四字节引用，其余源字节不变。
+
+控制器可通过独立的 `target_domains={kind:(minimum, maximum)}` 限制当前宿主范围。
+包内区间与宿主范围取交集，空交集会拒绝；保留源编号及外部引用也受该范围检查。
+当前原生服务端的机体编号范围为 `10001..30000`，不能把武器／技能的大编号池直接用于机体。
+目录计划和数据写入器都在写 SQL 前检查机体及变形目标的范围。
+输出保留输入、源／生成记录摘要和变更区间，不发出编号预约或运行安装许可。
+宿主安装时仍需重新检查当前占用、所有权和实际表约束。
+
+重编号后，机体定义、变形引用、两端字段、编号派生的展示资源和脚本常量需要一起刷新。
+源恢复计划的成功不代表这些派生内容已完成，也不证明实际出击行为。
+
+### 形态图控制器请求与宿主许可
+
+`owner.units.form_graph_runtime` 处理 [`sdgo.unit-form-graphs/1`](unit-form-graphs.schema.json)。
+请求只携带 owner、revision、roots 和逐条完整机体记录的 SHA-256，不接收安装许可或验收标记。
+有向目标由原始记录 `+316` 读取，并与服务端所有已核对的共享标量一起验证，不从弱连通关系补反向边。
+库存入口必须另有真实机体物品行和匹配账本；只拥有形态定义不足以声明一个入口。
+同源原版节点依靠独立的两端基线摘要只读复用，不能借此接管其他内容所有者的记录。
+
+SQL 控制器要求调用者已有可提交事务，取得既有应用锁，并以 `HOLDLOCK` 读取固定定义和完整账本。
+记录身份、`RecordKey`、`OriginalJson`、修订及安装摘要均参与快照约束，`UpdatedAt` 明确仅作审计时间。
+既有只读文本的 NUL 填充按原值保留，所有快照标量类型与范围仍需校验；新写入的所有者行使用更严格的写入验证。
+编译输出使用内容 `SDGOUF1` 和独立宿主 `SDGOUA1` 容器，分别有界并绑定完整 SHA-256、宿主版本和同一图负载。
+许可留在受信任的宿主安装状态中；它不是内容成员，也不是可以由项目自报的能力。
+`GraphBindings::resolveTarget` 仅在有向边和根路径验证通过后返回目标；`inspectNode` 只供资料检查。
+指纹不替代部署后的数据库、客户端资源、原生缓存和实体生命周期读回，这一层不宣称实际多段变形可用。
+
+独立宿主许可 v2 `SDGOUA2` 使用 160 字节头，绑定内容摘要、复合快照指纹、宿主摘要、
+原生定义区摘要及条目数。其后是与内容候选逐字节相同的形态图，随后按编号递增存储
+`u32 ID + 114 字节原生战斗定义`；每个不同节点必须恰好一条，内部编号和变形目标须与图一致。
+这 114 字节是宿主服务端表的预期数据，不替代客户端 kind `2` 的完整 4976 字节记录。
+这些字节来自受信任控制器的完整 SQL 行及等级关联，不接受内容包自报的运行许可。
+`compile_native_files` 检查所有节点的完整服务端行摘要；`prepare_native_from_cursor` 在既有事务／锁内
+读取同一批记录和 `tbl_UnitGradeInfo`，不修改等级配置。缺失关联拒绝编译。
+复合指纹同时约束原有机体／入口快照及等级快照。
+独立性依靠控制器管理的固定安装路径和写入边界；文件摘要不是数字签名，
+内容项目及其导出包不得写入宿主 `install-state`。
+
+`owner.units.native_battle_definition` 描述原生表复制的 `0x72` 字节数据区；
+`UserGradeLimit` 位于 `0x6A`，等级表的有符号 `LevelRating` 位于 `0x6E`。
+`DailyLimit`、`MonthLimit`、`SallyReady` 等 SQL 字段保留在完整行约束中，不能填入这两个位置。
+结构尾部的分配填充和链表链接不进入文件。所有者仍须完成实际原生目录读回，
+并在使用时核对记录及当前生命周期。v1 不提供这些见证，v2 也不等于实际变形准入。
+
+`unit_catalog_server` 的形态输入与技能输入各自成对验证，缺少任意一半会拒绝加载。
+`HumanUnitCapture` 只为已登记的库存入口保留原始构造数据；同步回调复制有界 POD，
+不分配、阻塞或调用游戏原生函数。异步排空按调用、线程、房间代际和玩家代际匹配前后阶段，
+仅在成功返回且开始范围已接受后提供快照。释放是幂等的，新开始始终获得新代际。
+状态读取 `SdgoReadUnitFormRuntimeStateV1` 只提供本进程的诊断标量及内容／许可摘要，
+不输出源记录，不授予变形权限。`Current` 必须在原始房间锁内于任何后续实体操作前重新检查；
+它只检查生命周期 token，不能替代当前实体、目录及效果状态核验。
+
+### 获取制作数据
+
 活动制作数据属于胶囊目录协议：`project_assets` 携带项目资料与已校验的 PNG，
 `activity_drafts` 保存尚未应用的模板草稿，`activity_machines` 保存审核后的活动机台。
 机台分别绑定稳定的 `project_key`、机库根 ID、原生机体物品类别及海报哈希，
@@ -252,10 +435,12 @@ INI 的 schema 为 1，分别声明 index/archive 文件名及 SHA-256。归档�
 作者端负责类型约束、缺项、冲突、编译、事务和 Manager 集成；原生适配器负责宿主布局与实际运行验证。
 新 profile 或依赖表不能靠猜值、用旧版本资源全局覆盖或忽略缺失行为来实现。
 
-Type-13 技能扩展目前只有源码层的布局 profile 与带来源的依赖中间表示，初始化、服务端字段和运行行为尚无实现，因此不开放导入注册。
+Type-13 技能扩展具有布局 profile、带来源的依赖中间表示及原生固定记录读取能力；
+Manager 的发布编译器仍未开放新技能登记，需要继续完成资源、脚本、服务端和实际机体行为准入。
 `owner/units/profiles/skill_target_1132.py` 验证完整的 882 字节源记录和 1132 字节目标记录、两端 SHA-256 及逆变换。
 投影为 `source[:105] + zero[50] + source[105:881] + zero[200] + source[881:882]`；
 末字节位于目标偏移 `1131`，插入区间为 `[105,155)` 和 `[931,1131)`。
 调度值必须保留原值；已观察的分支域为 `0..3`，域外值不能截断或归零。
 `owner/units/dependencies.py` 单列图标、特效、关联技能、调度及两端引用；
-即使依赖文件已齐全，两层仍返回 `native_registration_blocked=true`，编译器和原生消费者也不会接受 kind `13`。
+即使依赖文件已齐全，两层仍返回 `native_registration_blocked=true`，发布编译器也不会因此接受 kind `13`。
+原生目录能够读取 kind `13` 并验证类型化引用；记录分配与正常退出析构不等于技能激活、战斗或变形验收。

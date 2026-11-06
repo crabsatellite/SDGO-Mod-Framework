@@ -9,16 +9,19 @@ executables; supported builds are listed under [Installation](docs/setup.md#supp
 does not distribute the pack.
 
 [Installation](docs/setup.md) · [SDGO Mod Manager](docs/mod-manager.md) · [Latest release](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
+Dual-source client updates track framework programs and owner unit/configuration content separately, with one verified installation transaction.
 
 Server owners and maintainers install, configure and [update](docs/mod-manager.md#updates) features with
-**SDGO Mod Manager**; the **0_MOD管理（服主专用）** entry at the top of the client folder opens it. Ordinary
-players keep using their normal game launcher, update the way their server owner provides, and should not
-change Mods themselves, so their client stays matched to the server.
+**SDGO Mod Manager**; the **0_更新与管理** entry at the top of the client folder opens it. Players can update
+an owner-provided complete client in Manager and keep using their normal game launcher. Shared Mod configuration
+remains the server owner's responsibility.
 Owners can also manage their own **local-only** addons in Manager; those are never packaged or exported.
 Installations follow the official curated starter pack by default. Owners explicitly choose DIY when taking over
 maintenance. Once an owner starts DIY, they maintain its configuration,
 scripts, resources, compatibility and releases. [Owner-managed updates](docs/owner-updates.md) let owners review
 upstream components and publish their confirmed pack; players follow only that owner's source.
+Manager checks dependencies, data impact and content retirement, separates saved settings from observed activation, and can update an owner-provided complete client while preserving existing configuration and content. See [Manager safety and updates](docs/mod-manager.md#dependencies-data-and-activation).
+
 This page is a feature index. Configuration, gameplay instructions, compatibility and troubleshooting are in each feature's documentation.
 
 Beta and Experimental after a feature name mark its release channel; unlabeled features are Stable:
@@ -80,7 +83,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Chinese shop localization and search <!-- catalog: `shop_localization` --> | Translate shop names, descriptions, options and paint-page unit previews; search by Chinese name combined with rank and payment filters | [Use](docs/shop-localization.md) |
 | Friend unit gifts (optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Right-click a friend (online or offline), pick a unit in unit management, and the friend accepts or returns it in Storage. Off until the owner enables it | [Use](docs/friend-unit-gift.md) |
 | Over-custom six-stat enhancement (Beta) <!-- catalog: `oc_custom_client`, `oc_custom_server`, `oc_custom_battle` --> | The original OC normal/Over points, challenge and reset on the factory upgrade page, stored beside the current custom parts; the owner picks which rule set battles use | [Use](docs/over-custom.md) |
-| Unit family import (Beta) <!-- catalog: `unit_catalog` --> | Import unit archives and author blueprints and activity pools in Mod Manager, generating paired definitions and shop/capsule resources | [Use](docs/unit-import.md) |
+| Unit family import (Beta) <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | Import unit archives, edit skill/funnel dependency fields, retain script declarations, author blueprints and activity pools in Mod Manager, and batch-publish a recovered roster of single, reciprocal, one-way and self-transform families plus third-form entry variants | [Use](docs/unit-import.md) |
 
 <!-- /mod-category:gameplay -->
 

@@ -41,7 +41,10 @@ $RequiredModuleFiles = @(
 )
 $AllowedModuleFiles = $RequiredModuleFiles + @(
     'sdgo\mods\unit_catalog\manager.json',
-    'sdgo\mods\unit_catalog\symbols.fragment.ini'
+    'sdgo\mods\unit_catalog\symbols.fragment.ini',
+    # Optional sealed sidecars: native Lua program bundle (SDGOPR1) and skill atlases (SDGOAT1).
+    'sdgo\mods\unit_catalog\native-programs.bin',
+    'sdgo\mods\unit_catalog\skill-atlases.bin'
 )
 $AllowedResourceRoots = @("anrs", "fxrs", "mdrs", "scp", "sdrs", "sol", "sprs", "trns", "txrs", "uirs")
 $BlockedResourceExtensions = @(".bat", ".cmd", ".com", ".dll", ".exe", ".js", ".lnk", ".msi", ".ps1", ".scr", ".vbs")
@@ -62,7 +65,10 @@ function Get-NormalizedRelativePath([string]$Value) {
     return $relative
 }
 
-function Assert-ResourceOverlay($Copies, $OwnedPaths) {
+function Assert-ResourceOverlay($Copies, $OverlayPaths) {
+    # $OverlayPaths is the exact set of archive entries the manifest declares
+    # (resource_overlay.paths); older packages declare them through owned_paths,
+    # where every entry was also shipped as a loose copy the game never reads.
     $base = 'sdgo\mods\unit_catalog\'
     $config = [IO.File]::ReadAllText($Copies[$base + 'resource-overlay.ini'].source)
     $section = Get-IniSection $config 'runtime'
@@ -87,7 +93,7 @@ function Assert-ResourceOverlay($Copies, $OwnedPaths) {
     $count = [BitConverter]::ToUInt32($bytes, 16)
     $archiveSize = (Get-Item -LiteralPath $Copies[$base + 'resources.zpk'].source).Length
     if ($version -ne 1 -or $chunkSize -ne 512 -or $count -lt 1 -or $count -gt 100000 -or
-        $archiveSize -gt 512MB -or [uint64]$chunkCount * 520 -ne $archiveSize) { throw 'Invalid resource overlay archive layout' }
+        $archiveSize -gt 2048MB -or [uint64]$chunkCount * 520 -ne $archiveSize) { throw 'Invalid resource overlay archive layout' }
     $cursor = 24
     $entries = @{}
     for ($i = 0; $i -lt $count; $i++) {
@@ -102,8 +108,8 @@ function Assert-ResourceOverlay($Copies, $OwnedPaths) {
         }
         if (-not $terminated -or $name.Length -gt 240 -or $cursor + 36 -gt $bytes.Length) { throw 'Truncated resource overlay entry' }
         $path = Get-NormalizedRelativePath $name.ToString()
-        if ($path -cne $path.ToLowerInvariant() -or $entries.ContainsKey($path) -or -not $OwnedPaths.ContainsKey($path)) {
-            throw 'Resource overlay paths differ from owned_paths'
+        if ($path -cne $path.ToLowerInvariant() -or $entries.ContainsKey($path) -or -not $OverlayPaths.ContainsKey($path)) {
+            throw 'Resource overlay paths differ from the declared overlay paths'
         }
         $root = ($path -split '\\', 2)[0]
         $extensions = @{mdrs='.mod';anrs='.ani';txrs='.txr';fxrs='.zfx';sprs='.spr';sdrs='.zsd';scp='.scp'}
@@ -116,7 +122,7 @@ function Assert-ResourceOverlay($Copies, $OwnedPaths) {
         $cursor += 36
         $entries[$path] = $true
     }
-    if ($cursor -ne $bytes.Length -or $entries.Count -ne $OwnedPaths.Count) { throw 'Resource overlay does not cover the exact owned resource set' }
+    if ($cursor -ne $bytes.Length -or $entries.Count -ne $OverlayPaths.Count) { throw 'Resource overlay does not cover the exact declared resource set' }
 }
 
 function Get-PathWithin([string]$Root, [string]$Relative) {
@@ -341,7 +347,23 @@ function Read-Package([string]$Root) {
             throw "owned_paths is not an exact loose-resource target: $owned"
         }
     }
-    Assert-ResourceOverlay $copyByTarget $ownedPaths
+    # An overlay-only package lists its archive entries in resource_overlay.paths and
+    # ships no loose copies; a package without that list keeps the owned_paths contract.
+    $overlayPaths = $ownedPaths
+    $overlayInfo = $manifest.resource_overlay
+    if ($null -ne $overlayInfo -and ($overlayInfo.PSObject.Properties.Name -contains 'paths')) {
+        $overlayPaths = @{}
+        foreach ($raw in @($overlayInfo.paths)) {
+            $relative = Get-NormalizedRelativePath ([string]$raw)
+            if ($overlayPaths.ContainsKey($relative)) { throw "Duplicate resource_overlay.paths entry: $relative" }
+            if ($relative.StartsWith("sdgo\", [StringComparison]::OrdinalIgnoreCase)) { throw "resource_overlay.paths entry is not a resource: $relative" }
+            $overlayPaths[$relative] = $true
+        }
+        foreach ($owned in $ownedPaths.Keys) {
+            if (-not $overlayPaths.ContainsKey($owned)) { throw "owned_paths entry is absent from resource_overlay.paths: $owned" }
+        }
+    }
+    Assert-ResourceOverlay $copyByTarget $overlayPaths
 
     if (-not $hashes.ContainsKey("symbols.fragment.ini")) {
         throw "Package hash whitelist has no symbols.fragment.ini"
