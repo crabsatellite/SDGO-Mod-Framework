@@ -95,13 +95,18 @@ def emit(phase,**values): print(json.dumps({'phase':phase,**values}),flush=True)
 def write(path,value):
     # Readers/antivirus can briefly hold Windows JSON files. A private temp
     # name also avoids colliding with a previous controller's interrupted write.
-    for attempt in range(20):
+    # A transient share/delete denial must not terminate every owned host.
+    # Keep the write atomic and bounded; persistent permission failures still
+    # reach the controller's normal error/cleanup path.
+    until=time.monotonic()+5
+    while True:
         try:
             atomic_bytes(path,json.dumps(value,indent=2).encode('utf-8'))
             return
         except PermissionError:
-            if attempt==19:raise
-            time.sleep(.05)
+            remaining=until-time.monotonic()
+            if remaining<=0:raise
+            time.sleep(min(.05,remaining))
 def literal(value): return "N'"+value.replace("'","''")+"'"
 def docker(*args,env=None,input=None,timeout=180):
     r=subprocess.run(['docker',*args],env=env,input=input if input is not None else '',text=True,capture_output=True,

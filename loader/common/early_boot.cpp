@@ -6,6 +6,7 @@
 namespace
 {
     const char* g_loaderName = "loader";
+    DWORD g_processInitialThreadId = 0;
     INIT_ONCE g_bootOnce = INIT_ONCE_STATIC_INIT;
     sdgo::loader::LauncherHandshake g_launcherHandshake;
 
@@ -60,6 +61,7 @@ namespace
         boot.size = sizeof(boot);
         boot.loader = g_loaderName;
         boot.host_module = GetModuleHandleW(nullptr);
+        boot.process_initial_thread_id = g_processInitialThreadId;
         init(&boot);
         return TRUE;
     }
@@ -178,9 +180,10 @@ void EarlyBoot()
     InitOnceExecuteOnce(&g_bootOnce, BootCallback, nullptr, nullptr);
 }
 
-void EarlyBootInstall(const char* loaderName)
+void EarlyBootInstall(const char* loaderName, DWORD processInitialThreadId)
 {
     g_loaderName = loaderName;
+    g_processInitialThreadId = processInitialThreadId;
     auto slot = reinterpret_cast<GetSystemTimeAsFileTimeFn*>(FindImportSlot(GetModuleHandleW(nullptr), "GetSystemTimeAsFileTime"));
     if (!slot) {
         EarlyBootTrace(L"early boot import not found; core starts at the first forwarded call");

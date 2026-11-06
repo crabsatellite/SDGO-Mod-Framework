@@ -17,6 +17,10 @@ real battles on a test server to check its weapons, skills and transformation.
 The generic release contains only the tools, never units. Owner drafts, images, publications and install receipts stay
 in the owner's workspace.
 
+Projects can retain initialization-script declarations and their complete program files. Manager displays the
+number of script groups and includes the files in exported projects. Save these projects for editing; units
+requiring newly supplied scripts cannot be published yet.
+
 ## Setup
 
 Open `SDGO Mod Manager.exe`, choose **机体导入** in the sidebar and set:
@@ -277,13 +281,175 @@ Version 1 stays transport-only.
 
 ### Skill/funnel dependencies and resource depot
 
+**原始形态关系** shows directed targets read from complete unit records and the
+path from the selected root. Other entries sharing later forms remain visible;
+the report never invents reverse edges. It describes record references, not player
+inventory eligibility or native transform behavior. More than two forms still
+require an appropriate runtime adapter.
+
+The linkable `sdgo_unit_form_composition` developer library can compose a process-local
+native form bank in separate memory. It requires verified host symbols, the expected
+read-only registry callbacks and initialized mode data. It copies scalar equipment
+bonuses rather than a player object, and retains FP state and `LastError`. It
+requires a zero pre-initialization weapon bank; an already-used bank is rejected.
+The pre-initialization stat slice remains a separate seed. The resulting bank
+contains borrowed native pointers and cannot be stored in a project or reused after
+the room or catalog is reconstructed. `StageInactive` prepares a separate slot image
+and preserves inventory identity, HP, skills, active-bank selection and the active
+weapon state. These helpers provide no installation authority or live transform
+commit. An existing inactive form is reusable only when its header, weapon pointers
+and stat slice match, while its current ammo/cooldowns are retained. The Manager's
+multi-form publication restrictions still apply.
+
+`StageEquivalentInactive` handles a narrower preparation case: complete fresh
+source/target banks and their stat slices must match except for the unit ID and
+definition pointer. All five live weapon-definition pointers must also match.
+It then prepares only those two identity fields in a separate slot image,
+retaining every runtime byte, SP and modified stat. This comparison does not
+establish unit/skill semantic equivalence, safe form retirement, or death/deck
+restoration; those remain native-adapter requirements before a live commit.
+
+The controller request [`sdgo.unit-form-graphs/1`](unit-form-graphs.schema.json)
+binds declared inventory roots to complete unit-record hashes. The controller reads
+unit and item definitions with their ownership ledgers in one locked transaction;
+entry roots require a matching owned unit item, while shared original nodes require
+independent baseline witnesses. Record keys and rollback JSON enter the snapshot
+fingerprint; audit timestamps do not. The native `sdgo_unit_form_graph` policy permits
+only a recorded directed edge reachable from the inventory root. Auxiliary nodes
+remain inspectable data and are not implicitly selectable entries. Same-ID edges
+are retained as data but need a separate behavior profile before runtime use.
+
+The compiler produces candidate bytes and separate host authority bytes. Install
+authority only through the trusted host controller, outside content packages. The
+parser checks their exact binding and host version; the snapshot fingerprint is
+provenance, not a live database/client drift check. Deployment readback and native
+actor, generation, sender, alive and room-lock checks remain necessary. These
+policy helpers do not enable multi-form publication or activate a native actor.
+
+For native battle-definition witnesses, `prepare_native_from_cursor` reads the
+same locked unit/entry snapshot and the host's `tbl_UnitGradeInfo` mappings. It
+produces the same `SDGOUF1` candidate and independent `SDGOUA2` authority with a
+complete 114-byte expectation for every graph node. The native table payload
+ends with `UserGradeLimit` at `+0x6A` and joined `LevelRating` at `+0x6E`;
+`DailyLimit` and `MonthLimit` are not those tail fields. Missing grade joins are
+rejected. SQL-only fields remain bound by the complete server-row hashes.
+The v2 fingerprint also binds the grade snapshot. The parser checks exact node
+coverage, ordering, identity/edge agreement, payload hashes and host binding.
+Legacy v1 authority remains capture-only and supplies no native expectations.
+These server expectations do not replace complete 4,976-byte client unit records.
+Their independence relies on the controller-managed installation path and write
+boundary; payload hashes are not digital signatures, and content projects cannot
+write host `install-state` files.
+
+Consumers must compare actual current registry data with those host expectations
+before using a definition. `MatchBattleDefinition` permits only the original
+default-weapon normalization from an out-of-range index to `1`; all other bytes
+must match. Allocation padding and intrusive list links are excluded. Neither
+an expectation nor a successful comparison supplies actor/edge/lifecycle
+permission or enables a live multi-form transition.
+
+With v2 authority installed, `unit_catalog_server` checks managed human transform
+requests inside the original authorized room-lock boundary. The inventory UID,
+captured generation, directed edge, current registry bytes and cached definition
+pointers must agree. Refused requests use the original error/unlock path; valid
+cached requests continue through the original transform and notification.
+Unmanaged units and NPCs retain their original path. Unit-table hot rebuilding
+is outside this profile; restart the host after installation changes. An uncached
+directed target is only inspected: this layer does not rebind a bank or migrate
+skills, ammo, cooldowns or in-flight state. v1 authority installs no such gate.
+
+With paired graph inputs, `unit_catalog_server` captures the original human-unit
+constructor's pre-initialization seed and successful output. It uses the shared
+`room_random` lifecycle observer when available; an incompatible or occupied
+observer is rejected. Otherwise it installs the complete native start/build/release
+observation scope. A bounded callback queue defers bookkeeping to a worker. Only an
+accepted start exposes a snapshot; release or a fresh start retires the old room
+epoch and player generation, including when pointers and inventory UIDs are reused.
+Modes 6/7 capture all four deck slots. Provider faults, queue overflow, mismatched
+phases or stale tokens refuse reuse. Captured definitions remain borrowed process
+pointers. Snapshot validity does not authorize an actor mutation: the original
+sender, room lock, current registry, HP, skills and weapon lifecycle still require
+native checks. This consumer currently performs no live transform commits.
+
+`ReadNativeTransformContext` reads the supported host's paired-bank transform
+boundary after the original sender, room, HP and two-definition checks. Its
+source UID, selected deck and native actor identity can be compared with the
+captured start. Returned pointers expire with that locked invocation; readable
+headers do not prove registry freshness. It provides neither a single-bank
+profile nor permission to replace a weapon bank.
+
+The native server accepts unit numbers in `10001..30000`. Unit-number collisions
+need a type-specific relocation range; the larger weapon/skill range cannot be
+used directly for units. Catalog plans and writes reject invalid unit/transform
+numbers before SQL changes. A relocation preview does not reserve numbers or
+complete the related resources, script constants and runtime installation.
+
+The **配套原生资料** (native dependency data) section reads project bindings for
+[`sdgo.unit-native-content/1`](unit-native-content.schema.json). It shows complete
+skill/funnel records, supplied server definitions, atlases and missing or unsupported
+items. Upload a dependency ZIP containing `manifest.json` and its members to add data;
+**更新此组资料** explicitly replaces one group. Existing family records and prior
+publications stay intact, and earlier preview approvals expire.
+
+Each supported skill/funnel record has an **编辑服务端定义** editor. Audited shared
+fields come from the actual client record and remain read-only. Supply the other
+required fields, or search and select a complete stock template from the configured
+server/catalog snapshot. Saving rechecks the template hash and paired fields;
+incompatible templates cannot supply guessed values. Server BattleMode is independent
+of the client's skill dispatch byte. Incomplete entries can be saved and exported as
+drafts; missing values remain visible after re-import. Complete, valid entries become
+explicit definitions. A stale editor cannot replace a newer revision, and original
+source data and prior publications remain intact.
+
+Project export/re-import retains the original bytes, prepared members and source
+evidence. Unknown records and dispatch values stay visible and block admission.
+Saving this authoring data does not enable runtime publication or grant a server
+installation authority.
+
+The publication compiler derives the unit record's model checksum from the final published model bytes,
+including models whose embedded resource paths were prepared. Source records and source assets stay unchanged.
+
+Developer components can prepare an independent skill atlas with
+[`sdgo.unit-skill-atlases/1`](unit-skill-atlases.schema.json). Its sidecar binds complete skill records,
+the catalog and resource archive. Native detail controls and actor skill initialization resolve the declared
+atlas through their original resource consumers. This does not enable ordinary Manager publication of new skills.
+
+Owned funnel definitions use [`sdgo.unit-server-funnels/1`](unit-server-funnels.schema.json), with the same
+transaction and ownership checks as skill data. All six server columns and their paired client fields are checked;
+`pending_funnel_ids` continues to block ordinary publication until runtime admission is complete.
+
+The disabled-by-default `unit_catalog_server` companion consumes controller-generated
+skill bindings and a separate server installation authority. It preserves allocated
+skill IDs while selecting a supported original server branch. See
+[native skill identity selectors](skill-identity.md); the companion contains no
+server owner's content and does not enable ordinary Manager publication of new dependencies.
+
+Developer tools can prepare owned server skill data with
+`owner.units.server_dependencies` and
+[`sdgo.unit-server-dependencies/1`](unit-server-dependencies.schema.json).
+Each entry binds a complete client record and either a hash-pinned existing
+server template or a complete explicitly authored server row. The writer uses
+the caller's catalog transaction, compares live schemas and ownership, verifies
+readback, and refuses baseline adoption or outside edits. It supplies no missing
+values and does not derive server `BattleMode` from the client's effect dispatch.
+Data-only rows remain `pending_skill_ids`; ordinary unit publication still rejects
+them. Native ID-specific behavior, resource bindings and actors are separate
+from successfully storing a server definition.
+
+The developer helper `owner.units.effect_resources` prepares owner-scoped ZFX texture names from typed
+emitter fields. It retains selected JPEG/PNG/DDS/TGA texture variants and original bytes, refuses destination
+conflicts and records source/output hashes. Model edges need a separate adapter. See the
+[script transport contract](script-registration.md#unit-catalog-transport) for project declarations and
+the optional catalog-bound native program consumer. These helpers do not publish script-dependent units.
+
 Developer dependency profiles retain complete skill and funnel source records.
 The skill profile verifies the 882-to-1132-byte projection, explicit ID changes
 and an optional typed linked-skill ID change; the 732-byte funnel profile
 preserves every byte outside its ID word. The native catalog checks fixed
 sizes and typed unit-to-skill, weapon-to-funnel and linked-skill references.
-Manager cannot publish these new dependency definitions yet, because their resources,
-server definitions and actor behavior are not supported.
+Manager cannot publish these new dependency definitions yet. Preparing server data
+and scoped resources does not complete admission for ID-specific behavior, scripts
+and every actor lifecycle.
 The [native ownership test](game-test.md#native-record-ownership-and-shutdown)
 checks complete record bytes and original grid cleanup; it does not cover battle
 activation, transformation, death or respawn.

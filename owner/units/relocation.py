@@ -69,8 +69,25 @@ def _fields(value, required, optional=()):
         raise RelocationError('missing or unknown contract fields')
 
 
+def _ranges(value, maximum=MAX_TARGET_ID):
+    if not isinstance(value, list) or not value:
+        raise RelocationError('explicit allocation ranges required')
+    result = []
+    for interval in value:
+        _fields(interval, ('first', 'last'))
+        first = _int(interval['first'], 'first target ID', maximum)
+        last = _int(interval['last'], 'last target ID', maximum)
+        if last < first:
+            raise RelocationError('allocation interval inverted')
+        result.append((first, last))
+    result.sort()
+    if any(right[0] <= left[1] for left, right in zip(result, result[1:])):
+        raise RelocationError('allocation intervals overlap')
+    return result
+
+
 def plan(request_bytes: bytes, snapshot_bytes: bytes, source_records: Mapping[str, bytes], *,
-         request_sha256: str, snapshot_sha256: str):
+         request_sha256: str, snapshot_sha256: str, target_domains=None):
     """Return ``(JSON plan, generated record copies)`` with no external writes.
 
     Record keys, not ambiguous numeric IDs, identify reference targets. Only the
@@ -82,7 +99,8 @@ def plan(request_bytes: bytes, snapshot_bytes: bytes, source_records: Mapping[st
     _fields(request, ('schema', 'owner', 'revision', 'allocation', 'records', 'references',
                       'referenceInventoryComplete'), ('unresolved', 'evidence'))
     _fields(snapshot, ('schema', 'revision', 'occupiedIds', 'typedRecords', 'coverage', 'sources'))
-    if request['schema'] != 'sdgo:record-relocation-request/1' or snapshot['schema'] != 'sdgo:record-key-snapshot/1':
+    version = {'sdgo:record-relocation-request/1': 1, 'sdgo:record-relocation-request/2': 2}.get(request['schema'])
+    if version is None or snapshot['schema'] != 'sdgo:record-key-snapshot/1':
         raise RelocationError('unsupported relocation contract')
     if not isinstance(request['owner'], str) or not re.fullmatch('[a-z_][a-z0-9_]{0,47}', request['owner']):
         raise RelocationError('owner invalid')
@@ -116,19 +134,39 @@ def plan(request_bytes: bytes, snapshot_bytes: bytes, source_records: Mapping[st
             raise RelocationError('typed record identity is absent or ambiguous')
         typed[identity] = record['sha256']
     policy = request['allocation']
-    _fields(policy, ('ranges', 'preserveUnobservedSourceIds'))
+    _fields(policy, ('ranges', 'preserveUnobservedSourceIds'), ('kindPolicies',) if version == 2 else ())
     if type(policy['preserveUnobservedSourceIds']) is not bool or not isinstance(policy['ranges'], list) or not policy['ranges']:
         raise RelocationError('explicit allocation policy required')
-    ranges = []
-    for interval in policy['ranges']:
-        _fields(interval, ('first', 'last'))
-        first, last = _int(interval['first'], 'first target ID'), _int(interval['last'], 'last target ID')
-        if last < first:
-            raise RelocationError('allocation interval inverted')
-        ranges.append((first, last))
-    ranges.sort()
-    if any(right[0] <= left[1] for left, right in zip(ranges, ranges[1:])):
-        raise RelocationError('allocation intervals overlap')
+    ranges = _ranges(policy['ranges'])
+    kind_policies = {}
+    if 'kindPolicies' in policy:
+        if not isinstance(policy['kindPolicies'], list) or not policy['kindPolicies']:
+            raise RelocationError('kind allocation policies must be a nonempty list')
+        for entry in policy['kindPolicies']:
+            _fields(entry, ('kind','ranges','maxTargetId'))
+            kind = _int(entry['kind'], 'policy kind', 0xFFFFFFFF)
+            if kind in kind_policies:
+                raise RelocationError('duplicate kind allocation policy')
+            maximum = _int(entry['maxTargetId'], 'kind maximum target ID')
+            kind_policies[kind] = (_ranges(entry['ranges'], maximum), maximum)
+    domains={}
+    if target_domains is not None:
+        if not isinstance(target_domains,dict) or not target_domains or len(target_domains)>255:
+            raise RelocationError('host target domains must be a nonempty bounded map')
+        for kind,bounds in target_domains.items():
+            _int(kind,'host target kind',0xFFFFFFFF)
+            if not isinstance(bounds,(list,tuple)) or len(bounds)!=2:
+                raise RelocationError('host target domain bounds invalid')
+            first,last=(_int(value,'host target domain bound') for value in bounds)
+            if first>last:raise RelocationError('host target domain inverted')
+            domains[kind]=(first,last)
+    def allowed(kind):
+        selected,maximum=kind_policies.get(kind,(ranges,MAX_TARGET_ID))
+        if kind not in domains:return selected
+        first,last=domains[kind];last=min(last,maximum)
+        result=[(max(a,first),min(b,last)) for a,b in selected if max(a,first)<=min(b,last)]
+        if not result:raise RelocationError('allocation ranges are outside the host target domain for kind '+str(kind))
+        return result
     if not isinstance(request['records'], list) or not 1 <= len(request['records']) <= 100000:
         raise RelocationError('source record count invalid')
     records, raws = {}, {}
@@ -151,23 +189,29 @@ def plan(request_bytes: bytes, snapshot_bytes: bytes, source_records: Mapping[st
     if policy['preserveUnobservedSourceIds']:
         for key in keys:
             value = records[key]['id']
-            if value not in used:
+            maximum = kind_policies.get(records[key]['kind'], (None, MAX_TARGET_ID))[1]
+            first,last=domains.get(records[key]['kind'],(1,maximum))
+            if value not in used and first<=value<=min(last,maximum):
                 target[key] = value; used.add(value); disposition[key] = 'source-id-not-observed-in-snapshot'
-    cursor = 0; next_id = ranges[0][0]
+    cursors = {}
     for key in keys:
         if key in target:
             continue
-        while cursor < len(ranges):
-            if next_id > ranges[cursor][1]:
+        policy_key = records[key]['kind'] if records[key]['kind'] in kind_policies or records[key]['kind'] in domains else None
+        allowed_ranges = allowed(records[key]['kind'])
+        cursor, next_id = cursors.get(policy_key, (0, allowed_ranges[0][0]))
+        while cursor < len(allowed_ranges):
+            if next_id > allowed_ranges[cursor][1]:
                 cursor += 1
-                if cursor < len(ranges): next_id = ranges[cursor][0]
+                if cursor < len(allowed_ranges): next_id = allowed_ranges[cursor][0]
                 continue
             if next_id not in used:
                 break
             next_id += 1
-        if cursor == len(ranges):
+        if cursor == len(allowed_ranges):
             raise RelocationError('requested target ID range exhausted')
         target[key] = next_id; used.add(next_id); next_id += 1
+        cursors[policy_key] = (cursor, next_id)
         disposition[key] = 'new-id-requested-for-source-collision' if records[key]['id'] in occupied else 'new-id-requested-by-policy-or-source-duplicate'
 
     if not isinstance(request['references'], list) or len(request['references']) > 1_000_000:
@@ -200,6 +244,8 @@ def plan(request_bytes: bytes, snapshot_bytes: bytes, source_records: Mapping[st
             value = target[dest]; item.update(target=dest, requestedTargetId=value, mode='owned-reference-rewritten')
         else:
             value = _int(ref['externalId'], 'external ID')
+            if kind in domains and not domains[kind][0]<=value<=domains[kind][1]:
+                raise RelocationError('external reference exceeds its host target domain')
             if value != source_id:
                 raise RelocationError('external reference cannot silently change its source ID')
             observed = typed.get((kind, value)); expected = ref.get('expectedExternalSha256')
@@ -220,4 +266,8 @@ def plan(request_bytes: bytes, snapshot_bytes: bytes, source_records: Mapping[st
     if not isinstance(unresolved, list) or any(not isinstance(item, dict) for item in unresolved):
         raise RelocationError('unresolved reference inventory invalid')
     result = dict(schema='sdgo:record-relocation-plan/1', owner=request['owner'], sourceRevision=request['revision'], requestSha256=request_sha256, snapshotSha256=snapshot_sha256, snapshotRevision=snapshot['revision'], snapshotCoverage=snapshot['coverage'], sourceEvidence=snapshot['sources'], requests=requests, references=edges, unresolved=unresolved, referenceInventoryComplete=request['referenceInventoryComplete'], originalSourceRecordsChanged=False, generatedCopiesOnly=True, unknownBytesPreserved=True, requiresInstallerLockAndCAS=True, requiresOwnerReservationAndRuntimeReadback=True, allocationAuthorityIssued=False, idsReserved=False, nativeRecordRegistrationAllowed=False, activationAllowed=False)
+    if version == 2:
+        result.update(schema='sdgo:record-relocation-plan/2', allocationPolicy=policy)
+    if domains:
+        result['targetDomains']=[{'kind':kind,'first':first,'last':last} for kind,(first,last) in sorted(domains.items())]
     return result, output

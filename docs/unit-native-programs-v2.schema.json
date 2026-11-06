@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Native unit weapon callback declaration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "owner",
+    "revision",
+    "vm_abi",
+    "phase",
+    "root_profile",
+    "programs",
+    "weapon_callbacks"
+  ],
+  "properties": {
+    "schema": {
+      "const": "sdgo.unit-native-programs/2"
+    },
+    "owner": {
+      "type": "string",
+      "pattern": "^[a-z_][a-z0-9_]{0,47}$"
+    },
+    "revision": {
+      "$ref": "#/$defs/sha256"
+    },
+    "vm_abi": {
+      "const": "lua50-x86-double64"
+    },
+    "phase": {
+      "const": "after-original-root-loader"
+    },
+    "root_profile": {
+      "const": "closure-publications-only-v1"
+    },
+    "programs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 512,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resource",
+          "member",
+          "sha256",
+          "exports"
+        ],
+        "properties": {
+          "resource": {
+            "type": "string",
+            "maxLength": 240,
+            "pattern": "^scp/[a-z0-9_][a-z0-9_.-]*\\.scp$"
+          },
+          "member": {
+            "type": "string",
+            "maxLength": 240,
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./-]*$"
+          },
+          "sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "exports": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "maxLength": 255,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            }
+          }
+        }
+      }
+    },
+    "weapon_callbacks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4096,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "weapon_id",
+          "weapon_sha256",
+          "export",
+          "role"
+        ],
+        "properties": {
+          "weapon_id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9999999
+          },
+          "weapon_sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "export": {
+            "type": "string",
+            "maxLength": 49,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "role": {
+            "enum": [
+              "ranged",
+              "special_ranged",
+              "initializer"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}
