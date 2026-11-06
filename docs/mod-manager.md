@@ -70,20 +70,15 @@ new receipt retains its legacy status. Interrupted changes keep recovery records
 
 ### Complete clients
 
-The server owner's client package or update may supply `sdgo/client-source.json`. The same Manager installs, checks, updates and recovers
-the complete runtime: original programs, resource archives and matching Mods. Public framework Releases continue to contain framework
-and Mod files only. Place the matching Manager and source descriptor in a dedicated client folder, then review and confirm the complete update.
+The server owner's client package or update can provide `sdgo/client-source.json`. A dual-source installation binds a framework/Mod program source and an owner content source separately. Both support credential-free Git SSH/HTTPS mirrors using existing local Git identities and SSH configuration.
 
-Sources pin the publisher and support matching Git SSH/HTTPS mirrors using existing local Git identities. Runtime files are checked against
-raw Git objects; large original archives use verified segments and a final digest, reusing intact segments. Login/graphics preferences,
-authored Mod parameters, declared independent configurations, local-only Mods and custom files not explicitly retired are preserved.
-Runtime and archive-segment transfers also try later mirrors when a source fails after serving commit metadata. Stalled connections are bounded;
-fallback objects still have to match the pinned commit and digests.
-Retired files have recovery copies. Interrupted updates can be recovered; externally modified files are not forcibly overwritten.
+The framework source supplies Manager, the core, Mod programs, interface declarations and defaults. The content source supplies original client resources, added units, models, textures, generated catalogs and shared settings. Its manifest declares the minimum framework version and required Mods. Dedicated Git runtime branches distribute the same verified ZIP format as Releases; a source-code mirror alone is insufficient.
 
-An embedded player Manager follows the same complete source for its own program, preventing independent updaters from replacing each other.
-Mod-only synchronization does not apply to a complete-source client. All-source failure preserves the installed version and displays the reason.
-Updates wait for the game to close and block program startup during executable swaps. A self-update uses a normal Manager restart handoff.
+Review both layers in **完整客户端更新** before installing. Manager downloads and verifies both, checks compatibility and commits one transaction, rolling both back on failure. An unavailable source preserves the installation. Transfers and archive segments try later mirrors of the same identity. Updating Manager uses its normal restart handoff and waits for the game to close.
+
+Shared configuration follows the owner, including declared configuration files, scripts and Mod parameters; old local values do not suppress owner updates. Login, display/FPS preferences, explicitly declared personal parameters, local-only Mods and non-retired extra custom files remain local. Receipts record framework version, framework commit and content commit separately. Framework updates perform no server database migration.
+
+A standalone Manager can configure a Git framework source. A bound client uses the combined transaction instead of two independent installers. New program bytes on disk still require the running Manager to restart; that state is not reported as current.
 
 ### Framework and Mod Releases
 

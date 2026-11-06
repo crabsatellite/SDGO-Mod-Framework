@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Portable unit native dependency authoring",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "owner", "revision", "records", "resources"],
+  "properties": {
+    "schema": {"const": "sdgo.unit-native-content/1"},
+    "owner": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+    "revision": {"$ref": "#/$defs/sha256"},
+    "records": {
+      "type": "array", "maxItems": 4096,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["kind", "id", "profile", "member", "sha256"],
+        "properties": {
+          "kind": {"type": "integer", "minimum": 1, "maximum": 255},
+          "id": {"type": "integer", "minimum": 1, "maximum": 9999999},
+          "profile": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$"},
+          "member": {"$ref": "#/$defs/member"}, "sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    "resources": {
+      "type": "array", "maxItems": 512,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["path", "member", "sha256"],
+        "properties": {
+          "path": {"type": "string", "maxLength": 240,
+            "pattern": "^(?:mdrs/[a-z0-9][a-z0-9_./-]*\\.mod|anrs/[a-z0-9][a-z0-9_./-]*\\.ani|txrs/[a-z0-9][a-z0-9_./-]*\\.txr|fxrs/[a-z0-9][a-z0-9_./-]*\\.zfx|sprs/[a-z0-9][a-z0-9_./-]*\\.spr|sdrs/[a-z0-9][a-z0-9_./-]*\\.(?:wav|ogg|zsd))$"},
+          "member": {"$ref": "#/$defs/member"}, "sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    "evidence": {"type": "array", "maxItems": 512, "items": {"$ref": "#/$defs/artifact"}},
+    "server_skills": {"$ref": "#/$defs/binding"},
+    "server_funnels": {"$ref": "#/$defs/binding"},
+    "skill_atlases": {"$ref": "#/$defs/binding"},
+    "skill_identities": {"$ref": "#/$defs/binding"},
+    "source_evidence": {"$ref": "#/$defs/binding"}
+  },
+  "$defs": {
+    "member": {"type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./-]{0,511}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "artifact": {"type": "object", "additionalProperties": false, "required": ["member", "sha256"],
+      "properties": {"member": {"$ref": "#/$defs/member"}, "sha256": {"$ref": "#/$defs/sha256"}}},
+    "binding": {"type": "object", "additionalProperties": false, "required": ["manifest_path", "manifest_sha256"],
+      "properties": {"manifest_path": {"$ref": "#/$defs/member"}, "manifest_sha256": {"$ref": "#/$defs/sha256"}}}
+  }
+}

@@ -23,7 +23,11 @@ WEAPON_COLUMNS = (
 ).split()
 WEAPON_REFS = ('WeaponNumber_1', 'WeaponNumber_2', 'WeaponNumber_3', 'WeaponNumber_FatalAttack')
 SKILL_REFS = ('SkillNumber_1', 'SkillNumber_2', 'SkillNumber_3')
-PROFILES = {'native-single-form-v1', 'native-linked-forms-v1'}
+# native-entry-forms-v1: an entry form that transforms into one form of an existing
+# reciprocal pair (the second hop needs the native form-graph runtime).
+# native-self-transform-v1: a single record whose transform target is itself.
+PROFILES = {'native-single-form-v1', 'native-linked-forms-v1', 'native-one-way-forms-v1',
+            'native-entry-forms-v1', 'native-self-transform-v1'}
 
 
 class RevisionConflict(ValueError):

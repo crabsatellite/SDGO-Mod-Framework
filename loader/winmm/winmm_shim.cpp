@@ -35,11 +35,11 @@ extern "C" DWORD WINAPI Shim_timeGetTime()
     return g_timeGetTime ? g_timeGetTime() : GetTickCount();
 }
 
-BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID)
+BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(instance);
-        EarlyBootInstall("winmm");
+        EarlyBootInstall("winmm", reserved ? GetCurrentThreadId() : 0);
     }
     // Process-lifetime module: nothing is torn down under the loader lock.
     return TRUE;

@@ -41,8 +41,11 @@ $RequiredModuleFiles = @(
 )
 $AllowedModuleFiles = $RequiredModuleFiles + @(
     'sdgo\mods\unit_catalog\manager.json',
-    'sdgo\mods\unit_catalog\symbols.fragment.ini'
-)
+    'sdgo\mods\unit_catalog\symbols.fragment.ini',
+    # Optional sealed sidecars: native Lua program bundle (SDGOPR1) and skill atlases (SDGOAT1).
+    'sdgo\mods\unit_catalog\native-programs.bin',
+    'sdgo\mods\unit_catalog\skill-atlases.bin'
+) + @(1..31 | ForEach-Object { "sdgo\mods\unit_catalog\resources.$_.zpk" })  # split archive parts
 $AllowedResourceRoots = @("anrs", "fxrs", "mdrs", "scp", "sdrs", "sol", "sprs", "trns", "txrs", "uirs")
 $BlockedResourceExtensions = @(".bat", ".cmd", ".com", ".dll", ".exe", ".js", ".lnk", ".msi", ".ps1", ".scr", ".vbs")
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -62,7 +65,10 @@ function Get-NormalizedRelativePath([string]$Value) {
     return $relative
 }
 
-function Assert-ResourceOverlay($Copies, $OwnedPaths) {
+function Assert-ResourceOverlay($Copies, $OverlayPaths) {
+    # $OverlayPaths is the exact set of archive entries the manifest declares
+    # (resource_overlay.paths); older packages declare them through owned_paths,
+    # where every entry was also shipped as a loose copy the game never reads.
     $base = 'sdgo\mods\unit_catalog\'
     $config = [IO.File]::ReadAllText($Copies[$base + 'resource-overlay.ini'].source)
     $section = Get-IniSection $config 'runtime'
@@ -75,19 +81,45 @@ function Assert-ResourceOverlay($Copies, $OwnedPaths) {
     }
     if ($values.schema -cne '1' -or $values.index -cne 'resources.zdx' -or
         $values.archive -cne 'resources.zpk') { throw 'Unsupported unit resource overlay configuration' }
-    foreach ($name in @('index', 'archive')) {
-        $entry = $Copies[$base + $values[$name]]
-        if ($values[$name + '_sha256'] -cne $entry.sha256) { throw 'Resource overlay seal differs from package hash map' }
+    # Optional split archive: parts=N (2..32), part_chunks=C; part k is resources.<k>.zpk and
+    # archive_sha256 covers all parts in order.
+    $parts = 1; $partChunks = 0
+    if ($values.ContainsKey('parts') -or $values.ContainsKey('part_chunks')) {
+        if ($values.parts -notmatch '^[0-9]{1,2}$' -or $values.part_chunks -notmatch '^[1-9][0-9]{0,8}$') { throw 'Invalid resource overlay archive parts' }
+        $parts = [int]$values.parts; $partChunks = [uint64]$values.part_chunks
+        if ($parts -lt 2 -or $parts -gt 32 -or $partChunks * 520 -gt 2048MB) { throw 'Invalid resource overlay archive parts' }
     }
+    $partNames = @('resources.zpk')
+    if ($parts -gt 1) { $partNames += @(1..($parts - 1) | ForEach-Object { "resources.$_.zpk" }) }
+    foreach ($name in $partNames) { if (-not $Copies.ContainsKey($base + $name)) { throw "Resource overlay archive part is missing: $name" } }
+    for ($k = $parts; $k -le 31; $k++) { if ($Copies.ContainsKey($base + "resources.$k.zpk")) { throw 'Resource overlay ships an undeclared archive part' } }
+    if ($values.index_sha256 -cne $Copies[$base + 'resources.zdx'].sha256) { throw 'Resource overlay seal differs from package hash map' }
+    $hasher = [Security.Cryptography.IncrementalHash]::CreateHash([Security.Cryptography.HashAlgorithmName]::SHA256)
+    $partSizes = @()
+    foreach ($name in $partNames) {
+        $stream = [IO.File]::OpenRead($Copies[$base + $name].source)
+        try {
+            $buffer = New-Object byte[] (1MB)
+            while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) { $hasher.AppendData($buffer, 0, $read) }
+            $partSizes += [uint64]$stream.Length
+        } finally { $stream.Dispose() }
+    }
+    $archiveHash = ([BitConverter]::ToString($hasher.GetHashAndReset())).Replace('-', '').ToLowerInvariant()
+    $hasher.Dispose()
+    if ($values.archive_sha256 -cne $archiveHash) { throw 'Resource overlay seal differs from package hash map' }
     $bytes = [IO.File]::ReadAllBytes($Copies[$base + 'resources.zdx'].source)
     if ($bytes.Length -lt 24 -or $bytes.Length -gt 64MB) { throw 'Invalid resource overlay index size' }
     $version = [BitConverter]::ToUInt32($bytes, 0)
     $chunkSize = [BitConverter]::ToUInt32($bytes, 4)
     $chunkCount = [BitConverter]::ToUInt32($bytes, 8)
     $count = [BitConverter]::ToUInt32($bytes, 16)
-    $archiveSize = (Get-Item -LiteralPath $Copies[$base + 'resources.zpk'].source).Length
+    $archiveSize = [uint64]0; foreach ($size in $partSizes) { $archiveSize += $size }
+    if ($parts -gt 1) {
+        for ($k = 0; $k -lt $parts - 1; $k++) { if ($partSizes[$k] -ne $partChunks * 520) { throw 'Resource overlay archive part size differs from part_chunks' } }
+        if ($partSizes[$parts - 1] -lt 1 -or $partSizes[$parts - 1] -gt $partChunks * 520) { throw 'Resource overlay archive part size differs from part_chunks' }
+    }
     if ($version -ne 1 -or $chunkSize -ne 512 -or $count -lt 1 -or $count -gt 100000 -or
-        $archiveSize -gt 512MB -or [uint64]$chunkCount * 520 -ne $archiveSize) { throw 'Invalid resource overlay archive layout' }
+        $archiveSize -gt 2048MB -or [uint64]$chunkCount * 520 -ne $archiveSize) { throw 'Invalid resource overlay archive layout' }
     $cursor = 24
     $entries = @{}
     for ($i = 0; $i -lt $count; $i++) {
@@ -102,8 +134,8 @@ function Assert-ResourceOverlay($Copies, $OwnedPaths) {
         }
         if (-not $terminated -or $name.Length -gt 240 -or $cursor + 36 -gt $bytes.Length) { throw 'Truncated resource overlay entry' }
         $path = Get-NormalizedRelativePath $name.ToString()
-        if ($path -cne $path.ToLowerInvariant() -or $entries.ContainsKey($path) -or -not $OwnedPaths.ContainsKey($path)) {
-            throw 'Resource overlay paths differ from owned_paths'
+        if ($path -cne $path.ToLowerInvariant() -or $entries.ContainsKey($path) -or -not $OverlayPaths.ContainsKey($path)) {
+            throw 'Resource overlay paths differ from the declared overlay paths'
         }
         $root = ($path -split '\\', 2)[0]
         $extensions = @{mdrs='.mod';anrs='.ani';txrs='.txr';fxrs='.zfx';sprs='.spr';sdrs='.zsd';scp='.scp'}
@@ -113,10 +145,13 @@ function Assert-ResourceOverlay($Copies, $OwnedPaths) {
         $chunks = [BitConverter]::ToUInt32($bytes, $cursor + 8)
         if ($stored -lt 1 -or $stored -gt 64MB -or $chunks -lt 1 -or
             [uint64]$first + $chunks -gt $chunkCount -or [uint64]$chunks * 512 -lt $stored) { throw 'Resource overlay chunk range is invalid' }
+        if ($partChunks -gt 0 -and [math]::Floor($first / $partChunks) -ne [math]::Floor(([uint64]$first + $chunks - 1) / $partChunks)) {
+            throw 'Resource overlay entry crosses an archive part'
+        }
         $cursor += 36
         $entries[$path] = $true
     }
-    if ($cursor -ne $bytes.Length -or $entries.Count -ne $OwnedPaths.Count) { throw 'Resource overlay does not cover the exact owned resource set' }
+    if ($cursor -ne $bytes.Length -or $entries.Count -ne $OverlayPaths.Count) { throw 'Resource overlay does not cover the exact declared resource set' }
 }
 
 function Get-PathWithin([string]$Root, [string]$Relative) {
@@ -341,7 +376,23 @@ function Read-Package([string]$Root) {
             throw "owned_paths is not an exact loose-resource target: $owned"
         }
     }
-    Assert-ResourceOverlay $copyByTarget $ownedPaths
+    # An overlay-only package lists its archive entries in resource_overlay.paths and
+    # ships no loose copies; a package without that list keeps the owned_paths contract.
+    $overlayPaths = $ownedPaths
+    $overlayInfo = $manifest.resource_overlay
+    if ($null -ne $overlayInfo -and ($overlayInfo.PSObject.Properties.Name -contains 'paths')) {
+        $overlayPaths = @{}
+        foreach ($raw in @($overlayInfo.paths)) {
+            $relative = Get-NormalizedRelativePath ([string]$raw)
+            if ($overlayPaths.ContainsKey($relative)) { throw "Duplicate resource_overlay.paths entry: $relative" }
+            if ($relative.StartsWith("sdgo\", [StringComparison]::OrdinalIgnoreCase)) { throw "resource_overlay.paths entry is not a resource: $relative" }
+            $overlayPaths[$relative] = $true
+        }
+        foreach ($owned in $ownedPaths.Keys) {
+            if (-not $overlayPaths.ContainsKey($owned)) { throw "owned_paths entry is absent from resource_overlay.paths: $owned" }
+        }
+    }
+    Assert-ResourceOverlay $copyByTarget $overlayPaths
 
     if (-not $hashes.ContainsKey("symbols.fragment.ini")) {
         throw "Package hash whitelist has no symbols.fragment.ini"

@@ -31,7 +31,9 @@ original globals during registration.
 
 Use `NativeRegistration::onOriginalLoad` from the original file-loader hook.
 Supply the framework's original trampoline, the game main thread identified by
-the host bootstrap, and a mandatory candidate-client close callback. The adapter
+`ProcessInitialThreadId(api)`, and a mandatory candidate-client close callback. A
+zero identity must refuse admission; the current callback thread is not a fallback.
+The adapter
 passes ordinary loads through. For the original root, it first invokes the
 unmodified loader and only then admits registration on that same main thread.
 The engine's first state pointer must equal the original state getter. A newly
@@ -66,6 +68,53 @@ idempotent readback, restart requirements, and a fatal candidate VM. Preserve th
 reason and `executionStarted`/`clientMustClose` in the importer's activation
 receipt. An accepted manifest or a copied SCP file cannot stand in for that
 receipt.
+
+`onOriginalLoadBatch` admits multiple owners at one original root completion.
+It checks every owner's program bytes, resource/export names and existing VM
+globals before executing the first owner. A failure after any owner executes
+quarantines the whole candidate client. It does not rerun the original root once
+per owner or claim to roll back published closures.
+
+## Unit catalog transport
+
+`owner.units.native_programs` validates portable authoring manifests using
+`sdgo.unit-native-programs/1` ([schema](unit-native-programs.schema.json)) and
+compiles the optional `SDGOPR1` sidecar.
+`sdgo/unit_program_format.h` independently consumes that binary format. It binds
+the exact emitted catalog SHA-256, every program's bytes/exports and a complete
+imported weapon's SHA-256 plus its UTF-16 initializer name at offset 1771.
+
+Version 2 ([schema](unit-native-programs-v2.schema.json)) replaces
+`weapon_initializers` with `weapon_callbacks`. Each binding adds a `role`:
+`ranged` at weapon offset 1569, `special_ranged` at 1669, or `initializer`
+at 1771. The 100-byte UTF-16 fields are verified against the actual exported
+function and complete weapon bytes. Multiple roles can share one weapon within
+one owner; another owner cannot bind a different callback on that same weapon.
+The sidecar retains the `SDGOPR1` magic with header version 2 and a typed role
+word per binding. Version 1 inputs keep their original layout and behavior.
+These roles describe function-name fields; they do not name script files or
+grant a callback's native host/object dependencies.
+
+The unit catalog's optional consumer installs the existing original-loader
+adapter only when `native-programs.bin` is present. Native record registration
+must finish before the root boundary. `SdgoReadUnitProgramStateV1` exposes a
+read-only process-lifetime snapshot of the VM, thread, bundle hash and verified
+exports; `sdgo/unit_program_state.h` declares its versioned structure.
+This registration does not grant server, allocation, media or actor admission.
+An optional read-only protected-call observer matches the actual Lua closure
+identity against these registered exports. `SdgoReadUnitProgramCallStateV1`
+reports natural call/success/error counts, original caller, VM, thread and
+argument count without pushing/popping the VM stack or submitting a call.
+Observation may be unavailable when another Mod owns the protected-call hook;
+registration remains usable and the getter reports that state explicitly.
+
+The initializer field is consumed by the native weapon family. The bytes at
+`0x6E9` and `0x6EA` are separate native fields; do not interpret them as one
+16-bit initializer type or change them to force a callback. Native Fang state
+initialization and legacy funnel/missile initialization use different consumers.
+Manager can preserve/export declarations in a project and show its script-group
+count. Its ordinary publisher remains blocked for projects that require the
+unfinished actor admission path.
 
 ## Verification
 
