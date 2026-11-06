@@ -248,9 +248,9 @@ async function showUpdates(){
  const refresh=async()=>{if(pending)return;pending=true;try{
   const u=await request('/api/updates');if(u.program_managed_by_client){card.replaceChildren(element('h2','Manager 版本'),element('p','当前版本 '+u.current_version+'；程序与运行文件统一跟随上方完整客户端更新。','muted'));return;}card.replaceChildren(element('h2','Manager 与基础整合包更新'),element('p','Stable 提供正式功能；Beta 同时更新正式与测试功能。DIY 与已绑定负责人目录只更新 Manager 程序，运行文件由服主审阅发布。','intro'));
   const channels=element('div',undefined,'actions');
-  for(const [id,label] of [['stable','只更新 Stable（默认）'],['beta','更新 Beta 功能']]){const b=button(label,async()=>{await request('/api/updates',{action:'channel',channel:id});await refresh();},u.channel===id?'ui-btn is-primary':'ui-btn is-ghost');b.setAttribute('aria-pressed',String(u.channel===id));channels.append(b);}
+  for(const [id,label] of (u.git_source?[]:[['stable','只更新 Stable（默认）'],['beta','更新 Beta 功能']])){const b=button(label,async()=>{await request('/api/updates',{action:'channel',channel:id});await refresh();},u.channel===id?'ui-btn is-primary':'ui-btn is-ghost');b.setAttribute('aria-pressed',String(u.channel===id));channels.append(b);}
   const auto=element('input');auto.type='checkbox';auto.className='ui-switch';auto.checked=u.automatic;auto.onchange=async()=>{try{await request('/api/updates',{action:'automatic',enabled:auto.checked});}catch(e){message(e.message,true)}};
-  const autoLabel=element('label',undefined,'update-auto');autoLabel.append(auto,document.createTextNode('自动检查并安装更新'));card.append(channels,autoLabel);
+  const autoLabel=element('label',undefined,'update-auto');autoLabel.append(auto,document.createTextNode('自动检查并安装更新'));if(u.git_source)channels.append(element('p','Git 框架来源 · '+u.git_source.channel+'；修改通道时请同步修改来源分支。','muted'));card.append(channels,autoLabel);
   card.append(element('p','Manager '+u.current_version+(u.latest_version?' · 可用版本 '+u.latest_version:''),'muted'),element('p',u.message,'update-status'));
   if(u.error)card.append(element('p',u.error,'error'));
   const actions=element('div',undefined,'actions');actions.append(button('检查更新',async()=>{await request('/api/updates',{action:'check'});},'ui-btn is-blue'));
