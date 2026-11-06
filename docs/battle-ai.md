@@ -42,6 +42,9 @@ request and server acknowledgement, including native health, ammunition and acti
 AI preserves native control during the animation, then reads the committed form's actual weapon bank
 and clears its previous pursuit and weapon-switch state. Requests are retried at most every 500 ms;
 a committed form is retained for at least one second. A refused request leaves ordinary combat running.
+Each committed form supplies its own outgoing native transformation link. One-way armor removal stays
+one-way, and forms excluded from ordinary R input retain their native skill or timed control. Respawn
+recovery and native action admission finish before AI can request another transformation.
 This applies to the enhanced Medium/Hard controller; Easy keeps its existing behavior. Install the
 matching client package and restart the game to activate the updated adapter.
 

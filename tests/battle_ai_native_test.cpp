@@ -208,16 +208,26 @@ int wmain(int argc,wchar_t** argv) {
         auto attack=native_world::fsms[0].data();
         auto definition=*reinterpret_cast<uint8_t**>(unit.bytes+0x9C4);
         std::array<uint8_t,0x300> parked{};
+        std::array<uint8_t,0x100> secondary{};
         native_world::Put(unit.bytes,0xAB0,parked.data());
         native_world::Put(movement,0x21C,unit.bytes);native_world::Put(movement,0x224,attack);
-        definition[0x272]=3;native_world::Put(definition,0x13C,uint32_t(888777));
-        native_world::Put(parked.data(),0,uint32_t(888777));parked[0x140]=3;parked[0x247]=1;parked[0x272]=3;
+        native_world::Put(unit.bytes,0x9D4,secondary.data());
+        native_world::Put(movement,0x220,secondary.data());
+        native_world::Put(secondary.data(),4,secondary.data()+0x20);
+        attack[0xB38]=1;unit.bytes[0xDCD]=0;unit.bytes[0x312A]=0;
+        native_world::Put(definition,0x13C,uint32_t(888777));
+        native_world::Put(parked.data(),0,uint32_t(888777));parked[0x140]=0;parked[0x247]=1;
         native_world::Put(parked.data(),0x13C,*reinterpret_cast<uint32_t*>(definition));
         native_world::Put(parked.data(),0x249,uint32_t(102));
         native_world::Put(attack,0x56C,int16_t(7));native_world::Put(attack,0x56C+8,int16_t(0));
         native_world::Put(attack,0x56C+0xC,native_world::weapons[1].data());
         Check(Eval("wantForm=1; SDGO_BattleAI_GenericUpdate=function(n) formSample=SDGO_BattleAI_Observe(); if wantForm==1 then formQueued=SDGO_BattleAI_RequestTransform() end; return 123 end"),
               "form bridge probe uses the real DLL observation and request exports");
+        native_world::Put(unit.bytes,0x9D8,uint32_t(6));unit.Think();
+        Check(Eval("assert(formSample.otherForm.allowed==0 and formQueued==0)")&&
+              *reinterpret_cast<uint32_t*>(movement+0x2F0)==0&&*reinterpret_cast<uint32_t*>(movement+8)==0,
+              "a just-respawned Neutral unit retains its recovery controller instead of entering transform D4");
+        native_world::Put(unit.bytes,0x9D8,uint32_t(1));
         unit.Think();
         Check(Eval("assert(formSample.otherForm.unitId==888777 and formSample.otherForm.allowed==1 and formSample.otherForm.weapons[1].ammoReady==1 and formQueued==1)"),
               "another form's real bank is serialized and its original request can queue");

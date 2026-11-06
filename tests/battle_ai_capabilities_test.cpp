@@ -48,15 +48,17 @@ void EncodeProtectedFloat(std::uint8_t* unit, std::size_t permutationOffset,
 struct Fixture {
     std::uint8_t unit[0x3300]{};
     std::uint8_t definition[0x300]{};
-    std::uint8_t fsm[0xA00]{};
+    std::uint8_t fsm[0xC50]{};
     std::uint8_t weapons[3][0x700]{};
-    std::uint8_t parked[0x300]{},movement[0x300]{},otherWeapon[0x700]{};
+    std::uint8_t parked[0x300]{},movement[0x300]{},secondary[0x100]{},otherWeapon[0x700]{};
 
     void PrepareOtherForm() {
         PutPointer(unit,0xAB0,parked);PutPointer(unit,0x9C8,movement);
         PutPointer(movement,0x21C,unit);PutPointer(movement,0x224,fsm);
+        PutPointer(movement,0x220,secondary);PutPointer(unit,0x9D4,secondary);
+        PutPointer(secondary,4,secondary+0x20);fsm[0xB38]=1;
         PutPointer(movement,4,movement+0x20);
-        Put(definition,0x13C,std::uint32_t(20002));definition[0x272]=3;
+        Put(definition,0x13C,std::uint32_t(20002));
         Put(parked,0,std::uint32_t(20002));parked[0x140]=3;parked[0x247]=1;
         Put(parked,0x249,std::uint32_t(52001));
         std::memcpy(otherWeapon,weapons[1],sizeof(otherWeapon));Put(otherWeapon,0,std::uint32_t(52001));
@@ -128,6 +130,47 @@ int main() {
         auto transition=battle_ai::native::ReadFormTransition(forms.unit);
         Check(transition.known&&transition.available&&transition.allowed&&!transition.busy,
               "native unconditional transformation is available through a real parked peer definition");
+        forms.definition[0x140]=3;
+        Check(!battle_ai::native::ReadFormTransition(forms.unit).allowed,
+              "a current automatic-only form cannot invent a physical return request");
+        forms.definition[0x140]=0;Put(forms.definition,0x13C,std::uint32_t(0));
+        Check(!battle_ai::native::ReadFormTransition(forms.unit).available&&
+              !battle_ai::native::ReadOtherFormCapabilities(forms.unit,other),
+              "a one-way target with no outgoing edge cannot return merely because its parked base form exists");
+        Put(forms.definition,0x13C,std::uint32_t(20002));forms.fsm[0xB38]=0;
+        Check(!battle_ai::native::ReadFormTransition(forms.unit).allowed,
+              "the original attack-controller cancel window is required before transforming");
+        forms.fsm[0xB38]=1;forms.unit[0xDCD]=1;
+        Check(!battle_ai::native::ReadFormTransition(forms.unit).allowed,
+              "a held ordinary attack obeys the original physical R input gate");
+        forms.unit[0xDCD]=0;
+        for(const auto offset:{0x34u,0x5Cu}) {
+            PutPointer(forms.secondary,8,forms.secondary+offset);
+            Check(!battle_ai::native::ReadFormTransition(forms.unit).allowed,
+                  "a queued native secondary control state blocks a transform before respawn recovery commits");
+        }
+        Put(forms.secondary,8,std::uint32_t(0));
+        for(const auto offset:{0x34u,0x98u,0xC0u,0x48u,0x5Cu}) {
+            PutPointer(forms.fsm,8,forms.fsm+offset);
+            Check(!battle_ai::native::ReadFormTransition(forms.unit).allowed,
+                  "a queued native attack action preserves its transformation admission restriction");
+        }
+        PutPointer(forms.fsm,4,forms.fsm+0x5C);PutPointer(forms.fsm,8,forms.fsm+0x20);
+        Check(battle_ai::native::ReadFormTransition(forms.unit).allowed,
+              "input admission follows native pending-state precedence without rewriting action ownership");
+        PutPointer(forms.fsm,4,forms.fsm+0x20);Put(forms.fsm,8,std::uint32_t(0));
+        for(const auto offset:{0xFCu,0x110u}) {
+            PutPointer(forms.movement,8,forms.movement+offset);
+            Check(!battle_ai::native::ReadFormTransition(forms.unit).allowed,
+                  "queued native hurt and get-up movement blocks a transformation request");
+        }
+        Put(forms.movement,8,std::uint32_t(0));
+        Put(forms.unit,0x9D8,std::uint32_t(6));
+        Check(!battle_ai::native::ReadFormTransition(forms.unit).allowed,
+              "native respawn state blocks a transformation even when movement is briefly Neutral");
+        Put(forms.unit,0x9D8,std::uint32_t(1));
+        Check(battle_ai::native::ReadFormTransition(forms.unit).allowed,
+              "the original respawn-to-normal receipt restores transformation admission without a timer fallback");
         PutPointer(forms.movement,8,forms.movement+0xD4);
         Check(battle_ai::native::TransformOwnsMotor(forms.unit)&&!battle_ai::native::ReadFormTransition(forms.unit).allowed,
               "a queued native transformation owns the motor before its Entry runs");
