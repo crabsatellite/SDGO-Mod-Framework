@@ -94,6 +94,7 @@ public:
         uint32_t native_app_state;
         uint32_t selected_channel_group;
         uint32_t target_channel_group;
+        uint32_t requested_mission_id;
         uint32_t selected_mission_id;
         uint32_t selected_mission_key;
         uint32_t requested_room_id;
@@ -389,6 +390,7 @@ public:
             &startCommandOwner_,
             nullptr);
         requestedMode_ = 0;
+        requestedMissionId_ = 0;
         title_[0] = '\0';
         topEntryInvoked_ = false;
         makeRoomInvoked_ = false;
@@ -414,17 +416,22 @@ public:
     Result EnsureRoom(
         uint16_t mode,
         const char* roomTitle,
-        bool submit = true)
+        bool submit = true,
+        uint32_t missionId = 0)
     {
         if (!bound_ || !native_)
             return Publish(kUnbound);
         if (mode != 5 && mode != 8)
             return Publish(kInvalidMode);
+        if (missionId != 0 &&
+            (missionId <= kCreateMissionThreshold ? 5 : 8) != mode)
+            return Publish(kInvalidMode);
         if (!ValidTitle(roomTitle))
             return Publish(kInvalidTitle);
-        if (!ArmScenario(mode, roomTitle))
+        if (!ArmScenario(mode, roomTitle, missionId))
             return Publish(
-                requestedMode_ == mode
+                requestedMode_ == mode &&
+                        requestedMissionId_ == missionId
                     ? kInvalidTitle
                     : kInvalidMode);
         prepareOnly_ = !submit;
@@ -618,6 +625,8 @@ public:
             static_cast<uint32_t>(
                 InterlockedCompareExchange(
                     &targetChannelGroup_, 0, 0));
+        observed.requested_mission_id =
+            requestedMissionId_;
         observed.selected_mission_id =
             selectedMissionId_;
         observed.selected_mission_key =
@@ -1036,11 +1045,13 @@ private:
 
     bool ArmScenario(
         uint16_t mode,
-        const char* roomTitle)
+        const char* roomTitle,
+        uint32_t missionId)
     {
         if (requestedMode_ == 0) {
             requestedMode_ =
                 static_cast<uint8_t>(mode);
+            requestedMissionId_ = missionId;
             strcpy_s(
                 title_,
                 sizeof(title_),
@@ -1048,6 +1059,7 @@ private:
             return true;
         }
         return requestedMode_ == mode &&
+               requestedMissionId_ == missionId &&
                strcmp(title_, roomTitle) == 0;
     }
 
@@ -1323,7 +1335,9 @@ private:
             missionId <= kCreateMissionThreshold
                 ? 5
                 : 8;
-        if (actualMode != requestedMode_) {
+        if (actualMode != requestedMode_ ||
+            (requestedMissionId_ != 0 &&
+             missionId != requestedMissionId_)) {
             if (initialMissionKey_ == 0)
                 initialMissionKey_ = currentKey;
             else if (currentKey == initialMissionKey_ &&
@@ -2441,6 +2455,7 @@ private:
 
     bool bound_ = false;
     uint8_t requestedMode_ = 0;
+    uint32_t requestedMissionId_ = 0;
     char title_[21] = {};
     bool topEntryInvoked_ = false;
     bool makeRoomInvoked_ = false;

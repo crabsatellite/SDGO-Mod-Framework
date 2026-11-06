@@ -32,6 +32,7 @@ __pycache__/
 # Owner-generated game data; generic distributions contain tools and code only.
 catalog.bin
 catalog.json
+profile.bin
 
 # Local native GameTest runtimes and private databases are never source payloads.
 /test/

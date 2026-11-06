@@ -24,7 +24,7 @@ This page is a feature index. Configuration, gameplay instructions, compatibilit
 Beta and Experimental after a feature name mark its release channel; unlabeled features are Stable:
 
 - **Stable**: the basic workflow works; later problems are fixed in new versions. Manager updates install Stable by default.
-- **Beta**: the basic workflow is still under development, currently only unit family import. Switch Manager updates to the Beta channel to install it.
+- **Beta**: the basic workflow is still under development. Current Beta features include unit family import. Switch Manager updates to the Beta channel to install them.
 - **Experimental**: development diagnostics. Development tools are not installed by Manager updates.
 
 ## Core fixes
@@ -61,6 +61,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 |---|---|---|
 | Announcements <!-- catalog: `announcements` --> | Show a news digest once at login; optional in-game owner notices by time and event | [Use](docs/announcements.md) |
 | Mission AI wingmen <!-- catalog: `coop_ai`, `mission_ai` --> | `!ai` adds mission wingmen with the player life allowance; `!ai3 inf` allows unlimited AI respawns | [Use](docs/coop-wingmen.md) |
+| Mission behavior profiles <!-- catalog: `mission_behavior`, `mission_behavior_server` --> | Select paired OC-default or current GCO mission behavior for one client and every Battle channel in a server group | [Use](docs/mission-behavior.md) |
 | PvP AI <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` in a room title adds AI opponents and teammates; optionally group all humans, fill both sides, fill opponents only or add exact counts | [Use](docs/pvp-ai.md) |
 | AI mech catalog (separate addon) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards <!-- catalog: `battle_rewards` --> | Contribution GB/MB, configurable human multipliers and optional per-account gathering rewards | [Use](docs/battle-rewards.md) |

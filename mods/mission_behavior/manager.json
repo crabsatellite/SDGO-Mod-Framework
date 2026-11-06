@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "mission_behavior",
+  "title": "任务行为配置 · 客户端",
+  "category": "gameplay",
+  "hosts": [
+    "client"
+  ],
+  "description": "选择与服务端一致的任务行为。OC 为默认；缺少或拒绝服主生成的配套数据时保留客户端原行为。",
+  "settings": [],
+  "presentation": "configurable",
+  "provider": "mission_behavior",
+  "mechanism": "客户端与服务端读取同一份服主生成的任务行为数据。客户端只在已验证的 OC 范围内覆盖对应原生 NPC AI 绑定；G改保留当前绑定，切换后需要重启。"
+}

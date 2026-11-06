@@ -6,6 +6,10 @@ import re
 import shutil
 import tempfile
 import unittest
+from unittest import mock
+import zipfile
+
+from tools import build_release
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("mod_catalog", ROOT / "tools/mod_catalog.py")
@@ -68,6 +72,30 @@ class CatalogTests(unittest.TestCase):
         self.assertIn('zh-CN.ini',mod['files'])
         base=catalog.select_catalog(c,'base')
         self.assertNotIn('shop_localization',{m['id'] for m in base['mods']})
+
+    def test_mission_behavior_is_one_paired_manager_feature_with_owner_data_outside_release(self):
+        c = catalog.read_catalog(self.root)
+        feature = c["features"]["mission-behavior"]
+        self.assertEqual(
+            set(feature["mods"]),
+            {"mission_behavior", "mission_behavior_server"},
+        )
+        self.assertEqual(feature["category"], "gameplay")
+        self.assertEqual(feature["channel"], "stable")
+        for identity in feature["mods"]:
+            mod = next(item for item in c["mods"] if item["id"] == identity)
+            self.assertEqual(
+                set(mod["config_files"]),
+                {"config.ini", "profile.bin"},
+            )
+            self.assertNotIn("profile.bin", mod["files"])
+            registration = json.loads(
+                (self.root / "mods" / identity / "manager.json").read_text(
+                    encoding="utf-8-sig"
+                )
+            )
+            self.assertEqual(registration["provider"], "mission_behavior")
+            self.assertEqual(registration["settings"], [])
 
     def test_shop_components_are_classified_and_generated_helper_is_declared(self):
         c = catalog.read_catalog(self.root)
@@ -220,6 +248,129 @@ class CatalogTests(unittest.TestCase):
         c = catalog.read_catalog(self.root)
         mod = next(m for m in c["mods"] if m["id"] == "mission_ai")
         self.assertEqual(mod["config_files"], ["config.ini", "settings/roster.json"])
+
+    def test_compiled_owner_data_can_be_preserved_without_entering_the_release_payload(self):
+        self.assertIn(".bin", catalog.CONFIG_EXTENSIONS)
+        self.assertNotIn(".dll", catalog.CONFIG_EXTENSIONS)
+        self.assertNotIn(".exe", catalog.CONFIG_EXTENSIONS)
+        mod = {
+            "id": "mission_behavior",
+            "target": "client",
+            "files": ["manager.json"],
+            "runtime_files": [],
+            "config_files": ["config.ini", "profile.bin"],
+        }
+        self.assertEqual(
+            catalog.public_payload_files(mod),
+            ["mission_behavior.dll", "mod.ini", "manager.json"],
+        )
+
+        root = self.root / "owner-profile-contract"
+        stage = root / "stage"
+        source = root / "mods/mission_behavior"
+        output = stage / "client/sdgo/mods/mission_behavior"
+        source.mkdir(parents=True)
+        output.mkdir(parents=True)
+        for side, loader in (("client", "d3d9.dll"), ("server", "winmm.dll")):
+            for name in (loader, "sdgo/core.dll", "sdgo/sdgo.ini"):
+                path = stage / side / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"fixture")
+        mod_ini = (
+            b"[mod]\n"
+            b"distribution=public\n"
+            b"id=mission_behavior\n"
+            b"config_files=config.ini,profile.bin\n"
+        )
+        manager = b'{"distribution":"public"}'
+        (source / "mod.ini").write_bytes(mod_ini)
+        (source / "manager.json").write_bytes(manager)
+        (source / "profile.bin").write_bytes(b"owner data must remain local")
+        (output / "mission_behavior.dll").write_bytes(b"fixture")
+        (output / "mod.ini").write_bytes(mod_ini)
+        (output / "manager.json").write_bytes(manager)
+        release_catalog = {"mods": [mod]}
+        catalog.validate_stage(root, stage, release_catalog)
+        self.assertFalse((output / "profile.bin").exists())
+        self.assertNotIn(
+            "profile.bin",
+            {
+                path.name
+                for path in (
+                    output / name for name in catalog.public_payload_files(mod)
+                )
+            },
+        )
+
+    def test_generic_framework_release_ignores_stale_owner_profile_in_stage(self):
+        root = self.root / "release-owner-profile-contract"
+        stage = root / "stage"
+        for side, loader in (("client", "d3d9.dll"), ("server", "winmm.dll")):
+            for name in (loader, "sdgo/core.dll", "sdgo/sdgo.ini"):
+                path = stage / side / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"fixture")
+        mod = {
+            "id": "mission_behavior",
+            "feature": "mission-behavior",
+            "target": "client",
+            "category": "gameplay",
+            "hosts": ["GOnline-fixture"],
+            "version": "0.1.0",
+            "channel": "beta",
+            "files": ["manager.json"],
+            "runtime_files": [],
+            "config_files": ["config.ini", "profile.bin"],
+            "distribution": "public",
+        }
+        folder = stage / "client/sdgo/mods/mission_behavior"
+        folder.mkdir(parents=True)
+        (folder / "mission_behavior.dll").write_bytes(b"fixture")
+        (folder / "mod.ini").write_bytes(
+            b"[mod]\ndistribution=public\nid=mission_behavior\n"
+        )
+        (folder / "manager.json").write_bytes(b'{"distribution":"public"}')
+        (folder / "profile.bin").write_bytes(b"stale owner data in build stage")
+        manager = root / "SDGO Mod Manager.exe"
+        manager.write_bytes(b"fixture")
+        release_catalog = {
+            "schema_version": 1,
+            "profile": "beta",
+            "categories": {"gameplay": {"en": "Gameplay"}},
+            "features": {
+                "mission-behavior": {
+                    "category": "gameplay",
+                    "channel": "beta",
+                    "mods": ["mission_behavior"],
+                }
+            },
+            "mods": [mod],
+        }
+        output = root / "dist"
+        with (
+            mock.patch.object(build_release, "catalog_for", return_value=release_catalog),
+            mock.patch.object(build_release, "validate_stage"),
+            mock.patch.object(build_release, "require_redistributable"),
+            mock.patch.object(build_release, "unpack"),
+        ):
+            archive_path = build_release.build(
+                "beta",
+                "99.0.0-beta.1",
+                stage,
+                manager,
+                output,
+                commit="a" * 40,
+            )
+        with zipfile.ZipFile(archive_path) as archive:
+            names = set(archive.namelist())
+        self.assertIn(
+            "client/sdgo/mods/mission_behavior/mission_behavior.dll",
+            names,
+        )
+        self.assertNotIn(
+            "client/sdgo/mods/mission_behavior/profile.bin",
+            names,
+        )
 
     def test_generated_catalog_is_stable_and_portable(self):
         c = catalog.read_catalog(self.root)

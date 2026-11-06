@@ -205,6 +205,15 @@ class UpdateTests(unittest.TestCase):
         again=u.install_host(self.record,self.bundle,self.manifest,self.root/'cache',lambda _:False)
         self.assertEqual(again['changed_files'],0)
 
+    def test_update_preserves_compiled_owner_profile_declared_as_configuration(self):
+        base=self.existing();profile=base/'profile.bin';profile.write_bytes(b'owner-authored mission deltas')
+        catalog_path=self.bundle/'client/sdgo/catalog.json'
+        catalog=json.loads(catalog_path.read_text(encoding='utf-8'))
+        catalog['mods'][0]['config_files'].append('profile.bin')
+        storage.atomic(catalog_path,storage.json_bytes(catalog))
+        u.install_host(self.record,self.bundle,self.manifest,self.root/'cache',lambda _:False)
+        self.assertEqual(profile.read_bytes(),b'owner-authored mission deltas')
+
     def test_newer_installed_mod_and_its_symbol_contract_are_preserved(self):
         base=self.existing()
         (base/'mod.ini').write_bytes(b'[mod]\nid=example\nversion=3.0.0\nchannel=stable\nrequires=new.alias\nenabled=0\n')

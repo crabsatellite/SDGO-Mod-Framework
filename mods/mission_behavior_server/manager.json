@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "mission_behavior_server",
+  "distribution": "public",
+  "title": "任务行为（服务端）",
+  "description": "与客户端统一选择 OC 或 G改任务行为，OC 为默认。",
+  "provider": "mission_behavior",
+  "settings": []
+}
