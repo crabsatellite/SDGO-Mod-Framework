@@ -98,8 +98,9 @@ class ClientRuntime:
 
     def git(self,repository,args,input=None,output=None):
         from .owned_process import run
+        prefix=['-c','fetch.negotiationAlgorithm=noop']if'--stdin'in args else[]
         result=run(
-            ['git','-C',str(repository),*args],cwd=repository,timeout=1200 if output is not None or args[:1]==['cat-file']else 120,
+            ['git','-C',str(repository),*prefix,*args],cwd=repository,timeout=1200 if output is not None or args[:1]==['cat-file']or'--stdin'in args else 120,
             stop=self.stop_event,env=git_source.environment(),input=input,output=output)
         if result.returncode:raise ValueError(git_source.failure(result.stderr))
         return result.stdout
@@ -180,6 +181,9 @@ class ClientRuntime:
             else:unknown.append(name)
         if unknown:
             requests=b''.join((entries[n]['git_blob']+'\n').encode()for n in unknown)
+            # Fetch all wanted runtime objects in one transport operation.
+            # Otherwise a promisor cat-file can authenticate/fetch once per file.
+            self.git(repo,['fetch','--no-tags','--no-write-fetch-head','--recurse-submodules=no','--filter=blob:none','--stdin','origin'],input=requests)
             rows=self.git(repo,['cat-file','--batch-check'],input=requests).splitlines()
             if len(rows)!=len(unknown):raise ValueError('运行文件对象信息不完整')
             for name,row in zip(unknown,rows):
