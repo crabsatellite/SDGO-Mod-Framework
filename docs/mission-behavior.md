@@ -1,4 +1,4 @@
-# Mission behavior profiles (Beta)
+# Mission behavior profiles
 
 [中文](mission-behavior.zh-CN.md) · [Feature index](../README.md)
 
@@ -12,8 +12,8 @@ the unchanged current-data option. The Manager applies one selection and, when n
 | `mission_behavior` | Each participating client | Applies the verified M1 client AI bindings for the selected profile |
 | `mission_behavior_server` | Every Battle channel in the selected group | Applies the verified mission NPC-row differences for the selected profile |
 
-This is a bounded restoration, not a claim that every historical mission script or every original
-release has been reconstructed.
+OC restores the verified historical bindings and spawn differences listed below. Other mission data
+stays on the current version.
 
 ## Profile scope
 
@@ -21,9 +21,13 @@ release has been reconstructed.
 
 The current OC profile restores only the differences supported by the verified reference:
 
-- 12 M1 client bindings: ten Boss001 bindings and two Boss002 bindings;
+- 12 M1 client bindings: ten Boss001 bindings and two Boss002 bindings, selecting the existing
+  HP-driven map-special AI outside Very Easy;
 - 1,198 older mission NPC-row differences across 18 difficulty modes;
 - those modes belong to five mission groups: G2, G5, G7, G15 and G17.
+
+The original Boss scripts keep their own HP conditions and special limits. Very Easy keeps its current
+binding. The profile does not add an unlimited-SP rule.
 
 Mission data without a verified older row continues to use the current G改 data. The complete current
 set of 39 missions remains installed. The profile does not replace rewards, reward multipliers, unit

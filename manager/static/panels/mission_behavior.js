@@ -16,7 +16,7 @@ export async function mount(root,ctx){
  const intro=e('section',undefined,'manager-card');
  intro.append(
   e('h2','任务行为版本'),
-  e('p','OC 是默认版本，恢复已经核实的早期任务行为；未核实或 OC 没有数据的模式继续使用 G改现有行为。当前 39 个任务都会保留，奖励和倍率不在这里修改。','muted')
+  e('p','OC 是默认版本，恢复已经核实的早期任务行为；未核实或 OC 没有数据的模式继续使用 G改现有行为。保留当前任务目录，奖励和倍率在原有配置中管理。','muted')
  );
  root.append(intro);
 

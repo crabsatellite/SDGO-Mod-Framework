@@ -81,7 +81,7 @@ class CatalogTests(unittest.TestCase):
             {"mission_behavior", "mission_behavior_server"},
         )
         self.assertEqual(feature["category"], "gameplay")
-        self.assertEqual(feature["channel"], "beta")
+        self.assertEqual(feature["channel"], "stable")
         for identity in feature["mods"]:
             mod = next(item for item in c["mods"] if item["id"] == identity)
             self.assertEqual(
