@@ -7,9 +7,16 @@
 //   1. Lobby requests ride the friend-gift carrier as extension commands and
 //      run the ported procedures with the request's own database session.
 //   2. In "oc" mode every owned-unit record the World server sends (unit
-//      pages, active-unit replies, unit info, login user info) carries the
-//      allocation's stat deltas in its reserved gap, and the four current
-//      custom-skill slots are blanked so only one rule set is active.
+//      pages, active-unit replies, unit info, user info, end-of-battle user
+//      update) carries the allocation's stat deltas in its reserved gap, and
+//      the four current custom-skill slots are blanked so only one rule set is
+//      active.
+//   3. Battle servers keep a per-account copy of the user info (requested when
+//      the player enters their channel) and build room pilots from it. After a
+//      saved allocation, reset or challenge the native user-info handler is
+//      replayed to every peer that holds that account's user info, which is the
+//      native refresh path (outside a room it updates the cached user, inside a
+//      room it updates the pilot and broadcasts it).
 #include <windows.h>
 
 #include <array>
@@ -64,7 +71,22 @@ LONG g_fill_log_budget = 20;
 thread_local void* g_request = nullptr;
 
 using Handler = int(__fastcall*)(void*, void*);
-std::array<Handler, 4> g_handler_original{};
+std::array<Handler, 5> g_handler_original{};
+sdgo::friend_unit_gift::CurrentRequestFn g_current_request = nullptr;
+
+// Peers (native connection ids) that received an account's user info (0x5C1).
+struct UserInfoPeers {
+    std::uint32_t account = 0;
+    std::array<std::uint32_t, 4> peers{};
+    std::uint64_t stamp = 0;
+};
+std::array<UserInfoPeers, 512> g_user_info_peers{};
+SRWLOCK g_user_info_lock = SRWLOCK_INIT;
+std::uint64_t g_user_info_clock = 0;
+constexpr std::uint16_t kUserInfoReply = 0x05C1;
+constexpr std::uint16_t kUserInfoRequest = 0x06B3;
+constexpr int kUserInfoReplyBytes = 0x431;
+LONG g_refresh_log_budget = 40;
 using WorldSend = int(__thiscall*)(void*, std::uint32_t, const std::uint8_t*, int, std::uint32_t);
 WorldSend g_send_original = nullptr;
 
@@ -367,10 +389,40 @@ constexpr PacketLayout kLayouts[] = {
     {0x08F2, -1, 7, 6},       // CRequest::ReqUnitSlotPage
     {0x09B4, 0xA1, 8, 1},     // CRequest::ReqActiveWaitUnit
     {0x0699, 0xA7, 0x0E, 1},  // CRequest::ReqGetUserUnitInfo
-    {0x05C1, 0x431, 0x51, 1}, // CRequest::ReqUserInfo (login user info)
+    {0x05C1, 0x431, 0x51, 1}, // CRequest::ReqUserInfo (user info)
+    {0x04A9, 0x134, 0x2B, 1}, // end-of-battle user update to the Battle server (request 0x68D)
 };
 
-void PatchPacket(std::uint8_t* packet, int size) {
+void RememberUserInfoPeer(const std::uint8_t* packet, int size, std::uint32_t destination) {
+    std::uint16_t opcode = 0;
+    std::uint32_t account = 0;
+    if (size != kUserInfoReplyBytes || !ReadAt(packet, 0, &opcode) || opcode != kUserInfoReply ||
+        !ReadAt(packet, 2, &account) || !account)
+        return;
+    AcquireSRWLockExclusive(&g_user_info_lock);
+    UserInfoPeers* slot = nullptr;
+    UserInfoPeers* oldest = &g_user_info_peers[0];
+    for (auto& entry : g_user_info_peers) {
+        if (entry.account == account) { slot = &entry; break; }
+        if (entry.stamp < oldest->stamp) oldest = &entry;
+    }
+    if (!slot) {
+        slot = oldest;
+        *slot = UserInfoPeers{};
+        slot->account = account;
+    }
+    slot->stamp = ++g_user_info_clock;
+    bool known = false;
+    for (auto peer : slot->peers) known = known || peer == destination;
+    if (!known) {
+        // Newest first; the oldest peer falls off.
+        for (std::size_t index = slot->peers.size() - 1; index > 0; --index) slot->peers[index] = slot->peers[index - 1];
+        slot->peers[0] = destination;
+    }
+    ReleaseSRWLockExclusive(&g_user_info_lock);
+}
+
+void PatchPacket(std::uint8_t* packet, int size, std::uint32_t destination) {
     if (!packet || size < 7 || !g_request) return;
     std::uint16_t opcode = 0;
     if (!ReadAt(packet, 0, &opcode)) return;
@@ -405,6 +457,8 @@ void PatchPacket(std::uint8_t* packet, int size) {
         return;
     }
     unsigned filled = 0;
+    std::uint64_t first_uid = 0;
+    Carrier first{};
     for (std::size_t index = 0; index < count; ++index) {
         auto* record = packet + layout->first + index * kUnitRecordBytes;
         std::uint64_t uid = 0;
@@ -417,18 +471,30 @@ void PatchPacket(std::uint8_t* packet, int size) {
         if (!CopyBytes(copy, record, sizeof(copy))) continue;
         WriteCarrier(copy, carrier);
         ClearCustomSkills(copy);
-        if (CopyBytes(record, copy, sizeof(copy))) ++filled;
+        if (CopyBytes(record, copy, sizeof(copy))) {
+            if (!filled) {
+                first_uid = uid;
+                first = carrier;
+            }
+            ++filled;
+        }
     }
     if (g_settings.log_fill && filled && InterlockedDecrement(&g_fill_log_budget) >= 0)
-        Log(SDGO_LOG_INFO, "oc carrier filled %u record(s) in opcode 0x%X (%u with a profile)", filled, opcode,
-            static_cast<unsigned>(rows.size()));
+        Log(SDGO_LOG_INFO,
+            "oc carrier filled %u record(s) in opcode 0x%X (%u with a profile) to 0x%X; first uid=%llu revision=%u hp=%d",
+            filled, opcode, static_cast<unsigned>(rows.size()), destination,
+            static_cast<unsigned long long>(first_uid), first.revision, first.delta[stat_hp]);
 }
 
 int __fastcall SendHook(void* network, void*, std::uint32_t destination, std::uint8_t* packet, int size,
                         std::uint32_t flags) {
     if (g_request && g_settings.enabled && g_settings.oc_mode) {
         const DWORD error = GetLastError();
-        PatchPacket(packet, size);
+        PatchPacket(packet, size, destination);
+        __try {
+            RememberUserInfoPeer(packet, size, destination);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
         SetLastError(error);
     }
     return g_send_original(network, destination, packet, size, flags);
@@ -640,6 +706,50 @@ std::int32_t HandleMode(std::uint8_t* reply, std::uint32_t* produced) {
     return static_cast<std::int32_t>(WireStatus::success);
 }
 
+// Replays the native user-info handler (CRequest::ReqUserInfo) for the
+// account to every peer that already holds its user info, except the agent
+// that carried this request. The copied request keeps the native database
+// sessions (+0x14 game, +0x20 and +0x24 by the user-info builder); only the
+// destination ([0]) and the packet buffer ([2]) change.
+unsigned RefreshUserInfo(std::uint32_t account) {
+    if (!g_current_request) return 0;
+    void* request = g_current_request();
+    if (!request) return 0;
+    std::uint32_t origin = 0;
+    if (!ReadAt(request, 0, &origin)) return 0;
+    std::array<std::uint32_t, 4> peers{};
+    AcquireSRWLockShared(&g_user_info_lock);
+    for (const auto& entry : g_user_info_peers)
+        if (entry.account == account) { peers = entry.peers; break; }
+    ReleaseSRWLockShared(&g_user_info_lock);
+    unsigned sent = 0;
+    for (auto peer : peers) {
+        if (!peer || peer == origin) continue;
+        alignas(8) std::uint8_t fake[0x80] = {};
+        alignas(8) std::uint8_t buffer[0x440] = {};
+        bool copied = false;
+        __try {
+            std::memcpy(fake, request, sizeof(fake));
+            copied = true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+        if (!copied) break;
+        std::memcpy(fake, &peer, sizeof(peer));
+        void* buffer_pointer = buffer;
+        std::memcpy(fake + 8, &buffer_pointer, sizeof(buffer_pointer));
+        std::memcpy(buffer, &kUserInfoRequest, sizeof(kUserInfoRequest));
+        std::memcpy(buffer + 2, &account, sizeof(account));
+        __try {
+            // Through the hook, so this send is filled like any other.
+            if (HandlerHook<3>(fake, nullptr) == 0) ++sent;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    }
+    if (g_settings.log_fill && InterlockedDecrement(&g_refresh_log_budget) >= 0)
+        Log(SDGO_LOG_INFO, "oc user info refreshed for account %u on %u peer(s)", account, sent);
+    return sent;
+}
+
 std::int32_t __cdecl ExtensionHandler(void*, std::uint32_t actor, std::uint16_t command, const std::uint8_t* payload,
                                       std::uint32_t payload_bytes, void*, void* game_database,
                                       std::uint8_t* reply, std::uint32_t reply_capacity, std::uint32_t* produced) {
@@ -649,24 +759,38 @@ std::int32_t __cdecl ExtensionHandler(void*, std::uint32_t actor, std::uint16_t 
     const auto wrapped = static_cast<Command>(command);
     if (wrapped == Command::mode) return HandleMode(reply, produced);
     if (!g_settings.enabled || !g_settings.oc_mode) return static_cast<std::int32_t>(WireStatus::disabled);
-    Session session(20);
-    if (!OpenGameSession(game_database, session)) return static_cast<std::int32_t>(WireStatus::database_unavailable);
-    switch (wrapped) {
-    case Command::get_profile:
-        return HandleGetProfile(session, actor, payload, payload_bytes, reply, produced);
-    case Command::set_normal:
-        return HandleSet(session, actor, false, payload, payload_bytes, reply, produced);
-    case Command::set_over:
-        return HandleSet(session, actor, true, payload, payload_bytes, reply, produced);
-    case Command::upgrade:
-        return HandleUpgrade(session, actor, payload, payload_bytes, reply, produced);
-    case Command::reset_cost:
-        return HandleResetCost(session, actor, payload, payload_bytes, reply, produced);
-    case Command::reset:
-        return HandleReset(session, actor, payload, payload_bytes, reply, produced);
-    default:
-        return static_cast<std::int32_t>(WireStatus::invalid_argument);
+    std::int32_t status = static_cast<std::int32_t>(WireStatus::invalid_argument);
+    {
+        Session session(20);
+        if (!OpenGameSession(game_database, session))
+            return static_cast<std::int32_t>(WireStatus::database_unavailable);
+        switch (wrapped) {
+        case Command::get_profile:
+            return HandleGetProfile(session, actor, payload, payload_bytes, reply, produced);
+        case Command::set_normal:
+            status = HandleSet(session, actor, false, payload, payload_bytes, reply, produced);
+            break;
+        case Command::set_over:
+            status = HandleSet(session, actor, true, payload, payload_bytes, reply, produced);
+            break;
+        case Command::upgrade:
+            status = HandleUpgrade(session, actor, payload, payload_bytes, reply, produced);
+            break;
+        case Command::reset_cost:
+            return HandleResetCost(session, actor, payload, payload_bytes, reply, produced);
+        case Command::reset:
+            status = HandleReset(session, actor, payload, payload_bytes, reply, produced);
+            break;
+        default:
+            return static_cast<std::int32_t>(WireStatus::invalid_argument);
+        }
     }
+    // A changed profile reaches the Battle servers through the native user info.
+    std::int32_t ret_val = -1;
+    if (status == static_cast<std::int32_t>(WireStatus::success) && *produced >= sizeof(ret_val))
+        std::memcpy(&ret_val, reply, sizeof(ret_val));
+    if (ret_val == 0) RefreshUserInfo(actor);
+    return status;
 }
 
 // ---------------------------------------------------------------------------
@@ -703,6 +827,12 @@ bool RegisterExtension() {
     if (!gift) return false;
     const auto register_fn = reinterpret_cast<sdgo::friend_unit_gift::RegisterExtensionFn>(
         GetProcAddress(gift, SDGO_FRIEND_UNIT_GIFT_REGISTER_EXTENSION_EXPORT));
+    g_current_request = reinterpret_cast<sdgo::friend_unit_gift::CurrentRequestFn>(
+        GetProcAddress(gift, SDGO_FRIEND_UNIT_GIFT_CURRENT_REQUEST_EXPORT));
+    if (!g_current_request && g_api && g_api->Log)
+        g_api->Log(g_mod, SDGO_LOG_WARN,
+                   "friend_unit_gift_server has no current-request export; Battle servers refresh OC values on the "
+                   "next channel entry");
     return register_fn && register_fn(kFirstCommand, kLastCommand, &ExtensionHandler, nullptr) != 0;
 }
 
@@ -738,12 +868,14 @@ SDGO_MOD_ENTRY {
         "oc_custom.world_req_active_wait_unit",
         "oc_custom.world_req_get_user_unit_info",
         "oc_custom.world_req_user_info",
+        "oc_custom.world_req_battle_end_user",
     };
     void* detours[] = {
         reinterpret_cast<void*>(&HandlerHook<0>), reinterpret_cast<void*>(&HandlerHook<1>),
         reinterpret_cast<void*>(&HandlerHook<2>), reinterpret_cast<void*>(&HandlerHook<3>),
+        reinterpret_cast<void*>(&HandlerHook<4>),
     };
-    for (std::size_t index = 0; index < 4; ++index) {
+    for (std::size_t index = 0; index < std::size(handlers); ++index) {
         if (!api->HookCode(mod, handlers[index], detours[index],
                            reinterpret_cast<void**>(&g_handler_original[index])))
             return 0;

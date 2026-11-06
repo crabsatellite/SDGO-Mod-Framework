@@ -167,9 +167,9 @@ void ApplyUnsafe(
     if (g_log_apply && g_api && g_api->Log) {
         g_api->Log(
             g_mod, SDGO_LOG_INFO,
-            "oc applied uid=%llu form=%d level=%u hp=%d atk=%u def=%u sp=%.1f "
+            "oc applied uid=%llu revision=%u form=%d level=%u hp=%d atk=%u def=%u sp=%.1f "
             "(delta hp=%d atk=%d def=%d sp=%d speed=%d agility=%d)",
-            static_cast<unsigned long long>(uid), form, carrier.oc_level,
+            static_cast<unsigned long long>(uid), carrier.revision, form, carrier.oc_level,
             hp_after, attack_after, defense_after, special_after,
             carrier.delta[stat_hp], carrier.delta[stat_attack],
             carrier.delta[stat_defense], carrier.delta[stat_special],

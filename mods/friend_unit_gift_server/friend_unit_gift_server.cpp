@@ -74,6 +74,7 @@ struct ExtensionRegistration {
     void* user = nullptr;
 };
 std::array<ExtensionRegistration, 8> g_extensions{};
+thread_local void* g_extension_request = nullptr;
 std::size_t g_extension_count = 0;
 LONG g_extension_replies = 0;
 
@@ -485,7 +486,9 @@ int __fastcall WorldGiftHandler(
         } else if (!entry) {
             reply.status = WireStatus::disabled;
         } else {
+            g_extension_request = self;
             reply.status = RunExtension(*entry, actor, request, sessions, &reply);
+            g_extension_request = nullptr;
         }
         std::array<std::uint8_t, kCarrierBytes> extension_encoded{};
         if (!EncodeReply(actor, reply, &extension_encoded) ||
@@ -643,6 +646,11 @@ bool ConfigureDatabase(const SdgoApi* api, SdgoMod* mod) {
 }
 
 } // namespace
+
+extern "C" __declspec(dllexport)
+void* __cdecl SdgoFriendUnitGiftCurrentRequestV1() {
+    return g_extension_request;
+}
 
 extern "C" __declspec(dllexport)
 int __cdecl SdgoFriendUnitGiftRegisterExtensionV1(
