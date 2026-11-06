@@ -166,4 +166,6 @@ jobs:
         env:
           RUNTIME_GIT_MIRROR_URL: ${{ vars.RUNTIME_GIT_MIRROR_URL }}
           RUNTIME_GIT_MIRROR_TOKEN: ${{ secrets.RUNTIME_GIT_MIRROR_TOKEN }}
+          RUNTIME_GIT_MIRROR_TARGETS: ${{ vars.RUNTIME_GIT_MIRROR_TARGETS }}
+          RUNTIME_GITHUB_MIRROR_TOKEN: ${{ secrets.RUNTIME_GITHUB_MIRROR_TOKEN }}
         run: python tools/sync_runtime_mirror.py
