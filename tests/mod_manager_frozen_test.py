@@ -44,11 +44,20 @@ def main():
                 with urllib.request.urlopen(request,timeout=30) as response:return json.load(response)
             info=call('/api/state');token=info['session_token']
             with urllib.request.urlopen(base+'/',timeout=10) as response:html=response.read().decode('utf-8')
-            assert '服主与维护人员专用' in html and '普通玩家请使用游戏启动器' in html and 'owner-notice' in html
+            assert '客户端更新与服主管理' in html and '玩家可以在此更新完整客户端' in html and 'owner-notice' in html
             assert 'href="/brand.svg"' in html
             with urllib.request.urlopen(base+'/favicon.ico',timeout=10) as response:
                 assert response.read()==(repo/'manager/static/brand.ico').read_bytes()
             assert info['mode']=='standard'
+            assert call('/api/safety')['changes']==[]
+            runtime=call('/api/client-updates');assert runtime['hosts'][0]['id']=='client'
+            assert runtime['hosts'][0]['source'] is None
+            call('/api/client-updates',{'action':'check','host':'client'})
+            for _ in range(100):
+                result=call('/api/client-updates')['hosts'][0]['result']
+                if result.get('status')=='error':break
+                time.sleep(.05)
+            assert result['status']=='error' and '未配置完整运行更新源' in result['message']
             assert [mod['id'] for mod in info['hosts'][0]['mods']]==['mission_ai']
             assert [mod['id'] for mod in info['hosts'][0]['archive']]==['findwindow_fix']
             personal=client/'sdgo/mods/personal_fixture';personal.mkdir(parents=True)

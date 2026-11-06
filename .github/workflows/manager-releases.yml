@@ -52,6 +52,14 @@ jobs:
       - name: Native path picker
         timeout-minutes: 3
         run: python -m unittest discover -s tests -p "test_manager_picker.py" -v
+      - name: Manager dependencies, maintenance and complete client updates
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -p "test_manager_safety.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -p "test_client_runtime.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Owner shortcut serialization
         timeout-minutes: 3
         run: python -m unittest discover -s tests -p "test_mod_manager_entrypoints.py" -v

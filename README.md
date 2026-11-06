@@ -11,14 +11,16 @@ does not distribute the pack.
 [Installation](docs/setup.md) · [SDGO Mod Manager](docs/mod-manager.md) · [Latest release](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
 
 Server owners and maintainers install, configure and [update](docs/mod-manager.md#updates) features with
-**SDGO Mod Manager**; the **0_MOD管理（服主专用）** entry at the top of the client folder opens it. Ordinary
-players keep using their normal game launcher, update the way their server owner provides, and should not
-change Mods themselves, so their client stays matched to the server.
+**SDGO Mod Manager**; the **0_更新与管理** entry at the top of the client folder opens it. Players can update
+an owner-provided complete client in Manager and keep using their normal game launcher. Shared Mod configuration
+remains the server owner's responsibility.
 Owners can also manage their own **local-only** addons in Manager; those are never packaged or exported.
 Installations follow the official curated starter pack by default. Owners explicitly choose DIY when taking over
 maintenance. Once an owner starts DIY, they maintain its configuration,
 scripts, resources, compatibility and releases. [Owner-managed updates](docs/owner-updates.md) let owners review
 upstream components and publish their confirmed pack; players follow only that owner's source.
+Manager checks dependencies, data impact and content retirement, separates saved settings from observed activation, and can update an owner-provided complete client while preserving existing configuration and content. See [Manager safety and updates](docs/mod-manager.md#dependencies-data-and-activation).
+
 This page is a feature index. Configuration, gameplay instructions, compatibility and troubleshooting are in each feature's documentation.
 
 Beta and Experimental after a feature name mark its release channel; unlabeled features are Stable:
