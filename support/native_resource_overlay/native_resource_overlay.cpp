@@ -19,7 +19,7 @@ namespace
     constexpr uint32_t kChunkSize = 512;
     constexpr uint32_t kMaxEntries = 100000;
     constexpr uint64_t kMaxIndexBytes = 64ull * 1024ull * 1024ull;
-    constexpr uint64_t kMaxArchiveBytes = 512ull * 1024ull * 1024ull;
+    constexpr uint64_t kMaxArchiveBytes = 2048ull * 1024ull * 1024ull;
     constexpr uint32_t kMaxStoredBytes = 64u * 1024u * 1024u;
     constexpr size_t kMaxPathCharacters = 240;
 

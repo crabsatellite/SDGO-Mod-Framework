@@ -665,8 +665,6 @@ def _validate_plan(
         if skills and not metadata.get("skills", False):
             raise ValueError("服务端技能目录元数据缺失，技能依赖检查仍为 pending")
         for skill in skills:
-            if skill in catalog.get('pending_skill_ids', set()):
-                raise ValueError(f"技能 {skill} 仅有制作数据，尚不能用于发布机体")
             if skill not in catalog["skill_ids"]:
                 raise ValueError(f"机体 {identity} 的技能 {skill} 不存在")
         graph = row["UnitGraph"]
@@ -681,8 +679,6 @@ def _validate_plan(
     if used_funnels and not metadata.get("funnels", False):
         raise ValueError("服务端浮游炮目录元数据缺失，FunnelID 检查仍为 pending")
     for funnel in sorted(used_funnels):
-        if funnel in catalog.get('pending_funnel_ids',set()):
-            raise ValueError(f'浮游武器 {funnel} 仅有制作数据，尚不能用于发布机体')
         if funnel not in catalog["funnel_ids"]:
             raise ValueError(f"武器引用的 FunnelID {funnel} 不存在")
 
