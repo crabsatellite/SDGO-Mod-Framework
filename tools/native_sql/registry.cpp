@@ -4,6 +4,7 @@
 #include <string>
 #include <cwchar>
 #include "MinHook.h"
+#include "file_guard.h"
 
 namespace {
 using Open = LSTATUS(WINAPI*)(HKEY, LPCWSTR, DWORD, REGSAM, PHKEY);
@@ -76,6 +77,8 @@ extern "C" __declspec(dllexport) DWORD WINAPI InitializeSqlRegistry(void*) {
         return ERROR_BAD_ENVIRONMENT;
     private_root = root;
     if (MH_Initialize() != MH_OK) return ERROR_INVALID_FUNCTION;
+    const DWORD file_status = PrepareSqlFileGuard();
+    if (file_status != ERROR_SUCCESS) return file_status;
     if (MH_CreateHookApi(L"advapi32.dll", "RegOpenKeyExW", reinterpret_cast<void*>(open_key),
                          reinterpret_cast<void**>(&original_open)) != MH_OK ||
         MH_CreateHookApi(L"advapi32.dll", "RegCreateKeyExW", reinterpret_cast<void*>(create_key),
