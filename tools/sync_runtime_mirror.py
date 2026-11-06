@@ -16,8 +16,9 @@ def main():
             helper=Path(directory)/'ask.sh';helper.write_text('#!/bin/sh\nexec "'+sys.executable.replace('\\','/')+'" "'+ask.as_posix()+'" "$@"\n',encoding='utf-8');helper.chmod(0o700)
             env.update(GIT_ASKPASS=str(helper),GIT_TERMINAL_PROMPT='0',GCM_INTERACTIVE='Never')
         def git(*args):
-            r=subprocess.run(['git',*args],env=env,capture_output=True)
-            if r.returncode:raise RuntimeError('Runtime mirror Git operation failed: '+r.stderr.decode(errors='replace'))
+            prefix=['-c','http.https://github.com/.extraheader=']if any(a.startswith('https://github.com/')for a in args)else[]
+            r=subprocess.run(['git',*prefix,*args],env=env,capture_output=True)
+            if r.returncode:raise RuntimeError('Runtime mirror Git operation failed (exit '+str(r.returncode)+')')
             return r.stdout.decode().strip()
         published={}
         for number,target in enumerate(targets):
