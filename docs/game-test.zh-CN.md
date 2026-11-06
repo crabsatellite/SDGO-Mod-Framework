@@ -121,6 +121,8 @@ python tools/game_test.py run --run-dir build/gametest/pvp --timeout 3600
 在确认进程已停止、文件完整后复用现有客户端，每轮生成新的运行 ID。
 上一轮回执与二进制哈希集中保存，旧任务及重复文件进入回收站；不会再复制整套客户端。
 被其他任务引用的只读归档基线不能作为复用目标。同一账号禁止并发运行。
+Windows 上若上一局 PID 的完整映像路径不可读，会结合系统提供的原生程序名判断 PID 是否已被其他程序重用。
+确认是不同程序时可继续复用；身份不明或仍与游戏同名时，继续拒绝修改客户端。
 需要换用另一个已有测试账号时，在 `--reuse-client` 后同时指定
 `--rebind-existing-account --account-profile <已有账号配置>`。客户端必须已停止；目标配置须声明
 `registered` 或 `existing_account`，且不使用注册重试。框架同时锁定旧、新账号配置，保留两份配置，

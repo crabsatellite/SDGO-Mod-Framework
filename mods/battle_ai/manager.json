@@ -22,7 +22,7 @@
     {
       "id": "autotransform",
       "key": "AutoTransform",
-      "label": "按射程与弹药主动变形",
+      "label": "自动选择战斗形态",
       "description": "按实际原生形态武器、弹药及变形限制选择形态。",
       "type": "boolean",
       "default": true,

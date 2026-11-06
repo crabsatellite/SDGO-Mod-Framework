@@ -234,7 +234,7 @@ int wmain(int argc,wchar_t** argv) {
         native_world::Put(unit.bytes,0x9C4,parked.data());native_world::Put(unit.bytes,0xAB0,definition);
         unit.bytes[0xE34]=1;native_world::Put(attack,0x240,int32_t(0));
         native_world::Put(attack,0x248,native_world::weapons[1].data());unit.Think();
-        Check(Eval("assert(formSample.unitId==888777 and formSample.alternate==1 and formSample.selectedSlot==0 and formSample.meleeRole==0 and formSample.weapons[1].kind=='hitscan')"),
+        Check(Eval("assert(formSample.unitId==888777 and formSample.alternate==1 and formSample.selectedSlot==0 and formSample.meleeRole==0 and formSample.weapons[1].kind=='projectile')"),
               "a committed ranged-only form uses its actual weapon bank and replaces the previous combat role");
         movement[0x2F4]=1;WaitNativeTicks(510);
         Check(Eval("wantForm=1"),"form rejection probe requests through the same export");unit.Think();

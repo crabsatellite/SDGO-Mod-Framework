@@ -32,6 +32,19 @@ full title, e.g. `Friends practicing together !ai e2 a1 lv4 hard !rand`.
 
 ## Medium and Hard
 
+Automatic form selection is enabled by default (`AutoTransform=1`). AI reads the weapons, ammunition
+and cooldowns of each native form. It can change a melee-only form to a usable ranged form for a distant
+opponent, choose a stronger melee form at close range, or use another form when its current ranged
+ammunition runs out. A ready current weapon that can finish the opponent takes priority.
+
+The **自动选择战斗形态** setting in Manager controls this behavior. Transformation uses the original
+request and server acknowledgement, including native health, ammunition and action restrictions.
+AI preserves native control during the animation, then reads the committed form's actual weapon bank
+and clears its previous pursuit and weapon-switch state. Requests are retried at most every 500 ms;
+a committed form is retained for at least one second. A refused request leaves ordinary combat running.
+This applies to the enhanced Medium/Hard controller; Easy keeps its existing behavior. Install the
+matching client package and restart the game to activate the updated adapter.
+
 Both levels keep continuous combat and movement decisions, accurate aim, native ammo, cooldowns,
 physics and damage. Medium defaults to a **600 ms minimum between fresh ordinary attack requests**.
 Hard keeps continuous requests whenever native rules allow them.

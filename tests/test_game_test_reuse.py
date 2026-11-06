@@ -190,6 +190,30 @@ class ReuseOwnedClientTests(unittest.TestCase):
         self.assertEqual(archived['required_cases'],list(historical))
         game_test.verify_hashes(game_test.validate_metadata(run))
 
+    def test_recycled_pid_with_a_different_native_image_name_does_not_block_reuse(self):
+        run=self.fixture.prepare('recycled-pid');old=self.fixture.metadata(run)
+        old['execution']={'game_pid':42}
+        (run/'run.json').write_text(json.dumps(old),encoding='utf-8')
+        row={'pid':42,'image_path':None,'image_name':'MpDefenderCoreService.exe'}
+        with mock.patch.object(game_test,'process_snapshot',return_value=[row]):
+            result=game_test.reuse_prepared(self.fixture.template,self.fixture.stage,run)
+        self.assertNotEqual(result['run_id'],old['run_id'])
+        self.assertEqual(result['reuse']['previous_run_id'],old['run_id'])
+        game_test.verify_hashes(game_test.validate_metadata(run))
+
+    def test_previous_pid_with_unknown_or_matching_image_name_is_still_protected(self):
+        for index,name in enumerate((None,'GOnline.exe','gonline.EXE')):
+            with self.subTest(name=name):
+                run=self.fixture.prepare('unknown-pid-'+str(index));old=self.fixture.metadata(run)
+                old['execution']={'game_pid':42};(run/'run.json').write_text(json.dumps(old),encoding='utf-8')
+                before=(run/'run.json').read_bytes()
+                row={'pid':42,'image_path':None,'image_name':name}
+                with mock.patch.object(game_test,'process_snapshot',return_value=[row]):
+                    with self.assertRaisesRegex(game_test.GameTestError,'running'):
+                        game_test.reuse_prepared(self.fixture.template,self.fixture.stage,run)
+                self.assertEqual(before,(run/'run.json').read_bytes())
+                self.assertFalse(self.recycled)
+
     def test_referenced_archive_baseline_is_protected(self):
         run=self.fixture.prepare('baseline');other=self.base/'another';other.mkdir()
         (other/'run.json').write_text(json.dumps({'assets':{'baseline':str(run)}}))
