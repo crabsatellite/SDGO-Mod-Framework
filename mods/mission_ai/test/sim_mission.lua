@@ -43,6 +43,13 @@ function CheckObejctAlive(id) local o = W.objects[id] return o ~= nil and o.aliv
 function SDGO_Now() return W.now end
 function SDGO_Wingmen() return unpack(W.wingmen) end
 function SDGO_LocalWingmen() return unpack(W.localWingmen or W.wingmen) end
+function SDGO_MissionAI_ObserveStageWarp(player)
+  W.stageWarpObservations=(W.stageWarpObservations or 0)+1
+  W.lastStageWarpPlayer=player
+  local ids=W.localWingmen or W.wingmen
+  local object=ids[1] and W.objects[ids[1]]
+  W.firstWingmanAtObservation=object and object.pos or nil
+end
 function GetNumPlayer() return W.humans or 1 end
 function PlayerWarp(player,pos,dir)
   W.humanWarps=(W.humanWarps or 0)+1
@@ -204,9 +211,12 @@ Check(W.objects[1001].pos==p and W.objects[1001].direction==d,
 Check(W.objects[1001].target==0 and W.objects[1001].attack==false and
   W.objects[1001].stopped and W.objects[1001].jump==0,'old target and locomotion are released after warp')
 Check(not W.objects[1002].warps and not W.objects[1003].warps,'dead and remote wingmen are never warped')
+Check(W.stageWarpObservations==1 and W.lastStageWarpPlayer==1 and
+  W.firstWingmanAtObservation==p,'read-only native witness runs after the wingman mirror with only the player index')
 W.now=W.now+5000
 PlayerWarp(1,p,d)
 Check(W.objects[1001].warps==1,'outside a live mission only the original player warp executes')
+Check(W.stageWarpObservations==1,'outside a live mission no stage-warp witness is published')
 
 print('scenario 12: each stage loop distributes wingmen across actual human destinations once')
 NewWorld({1001,1002,1003})
@@ -218,6 +228,8 @@ Check(W.objects[1001].pos==p and W.objects[1002].pos==p2 and W.objects[1003].pos
   'wingmen follow assigned human slots without changing GetNumPlayer')
 Check(W.objects[1001].warps==1 and W.objects[1002].warps==1 and W.objects[1003].warps==1,
   'one native player loop does not repeatedly warp the whole squad')
+Check(W.stageWarpObservations==2 and W.lastStageWarpPlayer==2,
+  'one lightweight stage witness is recorded for each original player warp')
 Check(GetNumPlayer()==2,'mission objective and difficulty human counts remain native')
 print("")
 if failures == 0 then
