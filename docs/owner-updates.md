@@ -19,6 +19,7 @@ Changing the Manager program upstream does not change a player's owner binding.
 A client can carry `sdgo/client-source.json` with a pinned publisher and credential-free Git SSH/HTTPS sources.
 Manager's complete-client page installs, checks and recovers original programs, archives and Mods together. The embedded player Manager
 uses this same update authority. The public framework Release still contains only framework/Mod files; the owner supplies the client package or update.
+Matching mirrors cover commit metadata, runtime blobs and archive segments; a successful metadata request does not disable download fallback.
 
 Existing preferences and Mod settings survive. Mod-only synchronization cannot write to a complete-source client, and source failure never
 switches it to the official starter pack. Explicit DIY takeover protects the runtime from automatic replacement. Complete client publication

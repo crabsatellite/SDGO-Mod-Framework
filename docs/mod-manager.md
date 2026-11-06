@@ -77,6 +77,8 @@ and Mod files only. Place the matching Manager and source descriptor in a dedica
 Sources pin the publisher and support matching Git SSH/HTTPS mirrors using existing local Git identities. Runtime files are checked against
 raw Git objects; large original archives use verified segments and a final digest, reusing intact segments. Login/graphics preferences,
 authored Mod parameters, declared independent configurations, local-only Mods and custom files not explicitly retired are preserved.
+Runtime and archive-segment transfers also try later mirrors when a source fails after serving commit metadata. Stalled connections are bounded;
+fallback objects still have to match the pinned commit and digests.
 Retired files have recovery copies. Interrupted updates can be recovered; externally modified files are not forcibly overwritten.
 
 An embedded player Manager follows the same complete source for its own program, preventing independent updaters from replacing each other.

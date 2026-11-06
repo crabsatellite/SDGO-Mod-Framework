@@ -95,15 +95,30 @@ class ClientRuntime:
     def __init__(self,workspace):
         self.workspace=workspace;self.cache=workspace.root/'client-updates';self.stop_event=threading.Event()
         self.lock=threading.RLock();self.busy=threading.Lock();self.thread=None;self.jobs=[];self.results={};self.plans={}
+        self.fetch_mirrors={};self.fetch_mirror={}
 
     def git(self,repository,args,input=None,output=None):
         from .owned_process import run
+        fetching=args[:1]==['fetch'];key=str(Path(repository).resolve())
         prefix=['-c','fetch.negotiationAlgorithm=noop']if'--stdin'in args else[]
-        result=run(
-            ['git','-C',str(repository),*prefix,*args],cwd=repository,timeout=1200 if output is not None or args[:1]==['cat-file']or'--stdin'in args else 120,
-            stop=self.stop_event,env=git_source.environment(),input=input,output=output)
-        if result.returncode:raise ValueError(git_source.failure(result.stderr))
-        return result.stdout
+        if fetching:prefix+=['-c','http.lowSpeedLimit=1024','-c','http.lowSpeedTime=60']
+        attempts=[(None,args)]
+        if fetching and 'origin'in args:
+            for index,remote in self.fetch_mirrors.get(key,[]):
+                alternate=list(args);alternate[alternate.index('origin')]=remote;attempts.append((index,alternate))
+        errors=[]
+        for index,arguments in attempts:
+            try:
+                result=run(
+                    ['git','-C',str(repository),*prefix,*arguments],cwd=repository,timeout=1200 if output is not None or args[:1]==['cat-file']or'--stdin'in args else 120,
+                    stop=self.stop_event,env=git_source.environment(),input=input,output=output)
+            except subprocess.TimeoutExpired:
+                errors.append('读取更新仓库超时');continue
+            if result.returncode:
+                errors.append(git_source.failure(result.stderr));continue
+            if index is not None:self.fetch_mirror[key]=index
+            return result.stdout
+        raise ValueError('；'.join(errors))
 
     @staticmethod
     def move_image(source,target,run):
@@ -133,6 +148,8 @@ class ClientRuntime:
                 if not OID.fullmatch(commit):raise ValueError('客户端提交身份无效')
                 manifest=json.loads(self.git(repo,['show',commit+':player-package.json']))
                 contract=validate_contract(manifest,binding)
+                key=str(repo.resolve());self.fetch_mirror[key]=index+1
+                self.fetch_mirrors[key]=[(i+1,git_source.parse(value)[0])for i,value in enumerate(binding['feeds'])if i>index]
                 return repo,commit,manifest,contract,index+1
             except (OSError,ValueError,subprocess.SubprocessError)as error:errors.append('源 '+str(index+1)+'：'+str(error))
         raise ValueError('；'.join(errors)+'。保留当前客户端。')
@@ -225,7 +242,7 @@ class ClientRuntime:
         snapshot={n:file_hash(updates.child(root,n))if updates.child(root,n).is_file()else None for n in set(needed)|set(retired)}
         snapshot[RECEIPT]=file_hash(root/RECEIPT)if(root/RECEIPT).is_file()else None
         value={'source_id':binding['source_id'],'commit':commit,'entries':entries,'needed':needed,'retired':retired,
-               'snapshot':snapshot,'binding':binding,'mirror':index,'contract':contract,'repository':str(repo),
+               'snapshot':snapshot,'binding':binding,'mirror':self.fetch_mirror.get(str(repo.resolve()),index),'contract':contract,'repository':str(repo),
                'effective':effective,'preserved':preserved,'merged':list(merged)}
         value['digest']=updates.digest(storage.json_bytes(value));self.plans[host['id']]=value
         return {'status':'available'if needed or retired else'current','commit':commit,'source':binding['label'],
@@ -265,7 +282,12 @@ class ClientRuntime:
                     segment=self.cache/'segments'/(part['sha256']+'.zip');segment.parent.mkdir(parents=True,exist_ok=True)
                     with lease('client-segment:'+str(segment.resolve())):
                         if not segment.is_file()or segment.stat().st_size!=part['bytes']or file_hash(segment)!=part['sha256']:
-                            temporary=run/'segment.download';self.git(repo,['show',base['commit']+':'+part['path']],output=temporary)
+                            # Explicitly fetch the pinned blob so segment data
+                            # uses the same mirror fallback as regular files.
+                            oid=self.git(repo,['rev-parse',base['commit']+':'+part['path']]).decode().strip()
+                            if not OID.fullmatch(oid):raise ValueError('归档分段对象身份无效')
+                            self.git(repo,['fetch','--no-tags','--no-write-fetch-head','--recurse-submodules=no','--filter=blob:none','--stdin','origin'],input=(oid+'\n').encode())
+                            temporary=run/'segment.download';self.git(repo,['cat-file','blob',oid],output=temporary)
                             if temporary.stat().st_size!=part['bytes']or file_hash(temporary)!=part['sha256']:raise ValueError('归档分段校验失败')
                             os.replace(temporary,segment)
                     with zipfile.ZipFile(segment)as z:
