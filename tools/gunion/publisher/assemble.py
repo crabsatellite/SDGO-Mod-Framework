@@ -10,6 +10,7 @@ installs, writes SQL or claims native acceptance.
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -19,7 +20,7 @@ import struct
 import unicodedata
 from types import SimpleNamespace
 
-from owner.native_archive import build_archive_file, read_archive
+from owner.native_archive import build_archive_file, part_paths, read_archive
 from owner.units.assets import Baseline, sprite_binary
 from owner.units.compiler import HOST, HOST_SHA256, fnv, wchar
 from owner.units.native_programs import compile_bundle as compile_programs
@@ -63,6 +64,8 @@ def _server_weapon(weapon: dict, renamed: dict[int, str]) -> dict:
     return values
 KIND_BYTES = {2: UNIT_BYTES, 10: WEAPON_BYTES, 11: FUNNEL_BYTES, 13: SKILL_BYTES, 20: AFFILIATION_BYTES, 33: 1197, 34: ITEM_BYTES, 85: ITEM_BYTES}
 INDEX_FIRST = 0x375BE1
+# 180000 chunks of 520 bytes is about 94 MB per archive part.
+OVERLAY_PART_CHUNKS = 180_000
 OVERLAY_ROOTS = {'mdrs': '.mod', 'anrs': '.ani', 'txrs': '.txr', 'fxrs': '.zfx', 'sprs': '.spr', 'sdrs': '.zsd'}
 
 
@@ -154,15 +157,24 @@ def build(config: Config) -> dict:
         existing_dir = Path(config.existing_catalog).parent
         if (existing_dir / 'definitions.json').is_file():
             previous = load_json(existing_dir / 'definitions.json')
+            if previous.get('owner') == config.owner:
+                # Carrying this owner's own installed publication would duplicate every record;
+                # the base must be the installation as it was before this roster.
+                raise ValueError('existing_catalog already holds this owner\'s publication; '
+                                 'point it at the installation from before the roster')
             carried_definitions = {'families': list(previous.get('families', [])),
                                    'registrations': list(previous.get('registrations', []))}
         if (existing_dir / 'resource-overlay.ini').is_file():
             settings = dict(line.split('=', 1) for line in (existing_dir / 'resource-overlay.ini').read_text(encoding='ascii').splitlines()
                             if '=' in line)
             index = (existing_dir / settings['index']).read_bytes()
-            if sha256(index) != settings.get('index_sha256') or sha256((existing_dir / settings['archive']).read_bytes()) != settings.get('archive_sha256'):
+            parts = int(settings.get('parts', '1')); part_chunks = int(settings.get('part_chunks', '0'))
+            archive_digest = hashlib.sha256()
+            for part in part_paths(existing_dir / settings['archive'], parts):
+                archive_digest.update(part.read_bytes())
+            if sha256(index) != settings.get('index_sha256') or archive_digest.hexdigest() != settings.get('archive_sha256'):
                 raise ValueError('installed overlay differs from its seal')
-            for path, raw in read_archive(index, existing_dir / settings['archive']).items():
+            for path, raw in read_archive(index, existing_dir / settings['archive'], parts, part_chunks).items():
                 if path in overlay:
                     if sha256(overlay[path]()) != sha256(raw):
                         raise ValueError('installed overlay resource conflicts with the roster: ' + path)
@@ -375,10 +387,13 @@ def build(config: Config) -> dict:
     def allowed(name: str) -> bool:
         root_name = name.split('/', 1)[0]
         return root_name in OVERLAY_ROOTS and name.endswith(OVERLAY_ROOTS[root_name])
-    zdx, inventory = build_archive_file(overlay, allowed, module_dir / 'resources.zpk')
+    # Parts keep every published file below common Git host limits (100 MB per file).
+    zdx, inventory = build_archive_file(overlay, allowed, module_dir / 'resources.zpk', part_chunks=OVERLAY_PART_CHUNKS)
     (module_dir / 'resources.zdx').write_bytes(zdx)
+    archive_parts = [row['name'] for row in inventory.get('parts', [])]
     overlay_ini = ('[runtime]\nschema=1\nindex=resources.zdx\nindex_sha256=' + sha256(zdx) + '\narchive=resources.zpk\narchive_sha256='
-                   + inventory['archive_sha256'] + '\n').encode('ascii')
+                   + inventory['archive_sha256'] + '\n'
+                   + (f'parts={len(archive_parts)}\npart_chunks={inventory["part_chunks"]}\n' if archive_parts else '')).encode('ascii')
     (module_dir / 'resource-overlay.ini').write_bytes(overlay_ini)
 
     # Skill atlas sidecar: the recovered atlas sprite ships under its owner alias.
@@ -439,7 +454,8 @@ def build(config: Config) -> dict:
     module_source = repo_root / 'mods' / 'unit_catalog'
     mod_ini = (module_source / 'mod.ini').read_text(encoding='utf-8-sig')
     mod_ini = re.sub(r'(?m)^enabled\s*=.*$', 'enabled=1', mod_ini)
-    files_line = 'files=symbols.fragment.ini,catalog.bin,definitions.json,resource-overlay.ini,resources.zdx,resources.zpk,native-programs.bin'
+    files_line = ('files=symbols.fragment.ini,catalog.bin,definitions.json,resource-overlay.ini,resources.zdx,resources.zpk,'
+                  + ''.join(name + ',' for name in archive_parts[1:]) + 'native-programs.bin')
     if atlas_receipt:
         files_line += ',skill-atlases.bin'
     mod_ini = re.sub(r'(?m)^files\s*=.*$', files_line, mod_ini)
@@ -460,6 +476,9 @@ def build(config: Config) -> dict:
                                                         'index_sha256': sha256(zdx), 'archive_sha256': inventory['archive_sha256'],
                                                         'entries': len(inventory['entries']),
                                                         'paths': sorted(entry['path'] for entry in inventory['entries'])}}
+    if archive_parts:
+        manifest['resource_overlay']['parts'] = ['client/sdgo/mods/unit_catalog/' + name for name in archive_parts]
+        manifest['resource_overlay']['part_chunks'] = inventory['part_chunks']
     manifest['files']['symbols.fragment.ini'] = module_files['symbols.fragment.ini']
     (package_root / 'symbols.fragment.ini').write_bytes((module_dir / 'symbols.fragment.ini').read_bytes())
     dump_json(package_root / 'manifest.json', manifest)

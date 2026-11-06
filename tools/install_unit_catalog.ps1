@@ -45,7 +45,7 @@ $AllowedModuleFiles = $RequiredModuleFiles + @(
     # Optional sealed sidecars: native Lua program bundle (SDGOPR1) and skill atlases (SDGOAT1).
     'sdgo\mods\unit_catalog\native-programs.bin',
     'sdgo\mods\unit_catalog\skill-atlases.bin'
-)
+) + @(1..31 | ForEach-Object { "sdgo\mods\unit_catalog\resources.$_.zpk" })  # split archive parts
 $AllowedResourceRoots = @("anrs", "fxrs", "mdrs", "scp", "sdrs", "sol", "sprs", "trns", "txrs", "uirs")
 $BlockedResourceExtensions = @(".bat", ".cmd", ".com", ".dll", ".exe", ".js", ".lnk", ".msi", ".ps1", ".scr", ".vbs")
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -81,17 +81,43 @@ function Assert-ResourceOverlay($Copies, $OverlayPaths) {
     }
     if ($values.schema -cne '1' -or $values.index -cne 'resources.zdx' -or
         $values.archive -cne 'resources.zpk') { throw 'Unsupported unit resource overlay configuration' }
-    foreach ($name in @('index', 'archive')) {
-        $entry = $Copies[$base + $values[$name]]
-        if ($values[$name + '_sha256'] -cne $entry.sha256) { throw 'Resource overlay seal differs from package hash map' }
+    # Optional split archive: parts=N (2..32), part_chunks=C; part k is resources.<k>.zpk and
+    # archive_sha256 covers all parts in order.
+    $parts = 1; $partChunks = 0
+    if ($values.ContainsKey('parts') -or $values.ContainsKey('part_chunks')) {
+        if ($values.parts -notmatch '^[0-9]{1,2}$' -or $values.part_chunks -notmatch '^[1-9][0-9]{0,8}$') { throw 'Invalid resource overlay archive parts' }
+        $parts = [int]$values.parts; $partChunks = [uint64]$values.part_chunks
+        if ($parts -lt 2 -or $parts -gt 32 -or $partChunks * 520 -gt 2048MB) { throw 'Invalid resource overlay archive parts' }
     }
+    $partNames = @('resources.zpk')
+    if ($parts -gt 1) { $partNames += @(1..($parts - 1) | ForEach-Object { "resources.$_.zpk" }) }
+    foreach ($name in $partNames) { if (-not $Copies.ContainsKey($base + $name)) { throw "Resource overlay archive part is missing: $name" } }
+    for ($k = $parts; $k -le 31; $k++) { if ($Copies.ContainsKey($base + "resources.$k.zpk")) { throw 'Resource overlay ships an undeclared archive part' } }
+    if ($values.index_sha256 -cne $Copies[$base + 'resources.zdx'].sha256) { throw 'Resource overlay seal differs from package hash map' }
+    $hasher = [Security.Cryptography.IncrementalHash]::CreateHash([Security.Cryptography.HashAlgorithmName]::SHA256)
+    $partSizes = @()
+    foreach ($name in $partNames) {
+        $stream = [IO.File]::OpenRead($Copies[$base + $name].source)
+        try {
+            $buffer = New-Object byte[] (1MB)
+            while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) { $hasher.AppendData($buffer, 0, $read) }
+            $partSizes += [uint64]$stream.Length
+        } finally { $stream.Dispose() }
+    }
+    $archiveHash = ([BitConverter]::ToString($hasher.GetHashAndReset())).Replace('-', '').ToLowerInvariant()
+    $hasher.Dispose()
+    if ($values.archive_sha256 -cne $archiveHash) { throw 'Resource overlay seal differs from package hash map' }
     $bytes = [IO.File]::ReadAllBytes($Copies[$base + 'resources.zdx'].source)
     if ($bytes.Length -lt 24 -or $bytes.Length -gt 64MB) { throw 'Invalid resource overlay index size' }
     $version = [BitConverter]::ToUInt32($bytes, 0)
     $chunkSize = [BitConverter]::ToUInt32($bytes, 4)
     $chunkCount = [BitConverter]::ToUInt32($bytes, 8)
     $count = [BitConverter]::ToUInt32($bytes, 16)
-    $archiveSize = (Get-Item -LiteralPath $Copies[$base + 'resources.zpk'].source).Length
+    $archiveSize = [uint64]0; foreach ($size in $partSizes) { $archiveSize += $size }
+    if ($parts -gt 1) {
+        for ($k = 0; $k -lt $parts - 1; $k++) { if ($partSizes[$k] -ne $partChunks * 520) { throw 'Resource overlay archive part size differs from part_chunks' } }
+        if ($partSizes[$parts - 1] -lt 1 -or $partSizes[$parts - 1] -gt $partChunks * 520) { throw 'Resource overlay archive part size differs from part_chunks' }
+    }
     if ($version -ne 1 -or $chunkSize -ne 512 -or $count -lt 1 -or $count -gt 100000 -or
         $archiveSize -gt 2048MB -or [uint64]$chunkCount * 520 -ne $archiveSize) { throw 'Invalid resource overlay archive layout' }
     $cursor = 24
@@ -119,6 +145,9 @@ function Assert-ResourceOverlay($Copies, $OverlayPaths) {
         $chunks = [BitConverter]::ToUInt32($bytes, $cursor + 8)
         if ($stored -lt 1 -or $stored -gt 64MB -or $chunks -lt 1 -or
             [uint64]$first + $chunks -gt $chunkCount -or [uint64]$chunks * 512 -lt $stored) { throw 'Resource overlay chunk range is invalid' }
+        if ($partChunks -gt 0 -and [math]::Floor($first / $partChunks) -ne [math]::Floor(([uint64]$first + $chunks - 1) / $partChunks)) {
+            throw 'Resource overlay entry crosses an archive part'
+        }
         $cursor += 36
         $entries[$path] = $true
     }
