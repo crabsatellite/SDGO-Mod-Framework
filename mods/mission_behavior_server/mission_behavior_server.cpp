@@ -5,6 +5,7 @@
 #include <set>
 #include <vector>
 #include "sdgo/sdgo_api.h"
+#include "sdgo/mod_settings.h"
 #include "sdgo/mission_behavior_profile.h"
 #include "sdgo/mission_behavior_server_observer.h"
 #include "native_rows.h"
@@ -272,7 +273,8 @@ SdgoMissionBehaviorServerGetCreationV1(
 SDGO_MOD_ENTRY {
     g_api=api;g_mod=mod;
     g_status.size=sizeof(g_status);g_status.version=1;
-    char selected[16]{};api->SettingString(mod,"Profile","oc",selected,sizeof(selected));
+    const sdgo::ModSettings settings(api,mod);
+    char selected[16]{};settings.String("Profile","oc",selected,sizeof(selected));
     if(!ParseProfile(selected,g_profile)){
         api->Log(mod,SDGO_LOG_ERROR,"invalid task profile; select OC or GCO in Mod Manager");return 0;
     }
