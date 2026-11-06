@@ -70,7 +70,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Complete PvP All Map <!-- catalog: `all_maps` --> | Make the room's All Map choice draw from the complete native PvP map catalog while keeping mission-only maps in missions | [Use](docs/all-maps.md) |
 | FPS cap <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed | [Use](docs/fps-limit.md) |
 | Extended room titles <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Enter up to 128 characters in normal, AI, team and mission room creation, settings and rename controls | [Use](docs/room-titles.md) |
-| Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Easy / Medium / Hard for PvP AI, chosen in the room title | [Use](docs/battle-ai.md) |
+| Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Easy / Medium / Hard, shared enemy contacts and routes through map propulsion devices | [Use](docs/battle-ai.md) |
 | Automatic hangar capacity <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) | [Use](docs/hangar-capacity.md) |
 | Hangar manager <!-- catalog: `hangar_manager` --> | One-click sorting and duplicate exchange on the unit-management page, with server-side GB batches | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager <!-- catalog: `operator_catalog` --> | Five free supply officers, plus operator names, portraits and drops | [Use](docs/operator-assistant.md) |

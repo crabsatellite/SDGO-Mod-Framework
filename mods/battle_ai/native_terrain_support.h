@@ -61,6 +61,13 @@ class TerrainSupportSampler {
     }
 public:
     void Bind(TerrainHeightFn height,TerrainNormalFn normal)noexcept {height_=height;normal_=normal;}
+    bool Bounds(uint8_t* document,Aabb& output)const noexcept {
+        Layout layout{};if(ReadLayout(document,layout)!=TerrainSupportStatus::Valid)return false;
+        const double x=double(layout.spacingX)*layout.width*0.5,z=double(layout.spacingZ)*layout.height*0.5;
+        if(!std::isfinite(x)||!std::isfinite(z)||x<=0||z<=0||x>1000000||z>1000000)return false;
+        output={{-static_cast<float>(x),-1000000,-static_cast<float>(z)},
+                {static_cast<float>(x),1000000,static_cast<float>(z)}};return true;
+    }
     TerrainSupportStatus Sample(uint8_t* document,Vec3 point,TerrainSupportSample& output)const noexcept {
         if(!height_||!normal_||!Finite(point))return TerrainSupportStatus::Invalid;
         Layout layout{};const auto status=ReadLayout(document,layout);

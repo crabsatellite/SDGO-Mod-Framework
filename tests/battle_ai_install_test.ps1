@@ -30,7 +30,7 @@ $match=[IO.File]::ReadAllText((Join-Path $work 'sdgo\mods\match_ai\mod.ini'))
 if(-not $match.Contains('LogDiagnostics=1') -or -not $match.Contains('[private.extra]') -or $match.Contains('version=old')) { throw 'Match AI manifest/user-section preservation failed' }
 if(-not (Test-Path -LiteralPath (Join-Path $work 'sdgo\mods\match_ai\match_ai.dll'))) { throw 'Matching loadout bridge missing' }
 foreach($id in 'battle_ai','match_ai','mission_ai','ai_catalog') {
-    $management=Get-Content -LiteralPath (Join-Path $work "sdgo\mods\$id\manager.json") -Raw | ConvertFrom-Json
+    $management=Get-Content -LiteralPath (Join-Path $work "sdgo\mods\$id\manager.json") -Raw -Encoding UTF8 | ConvertFrom-Json
     if($management.id -ne $id) { throw "Missing or wrong Manager registration for $id" }
 }
 if([IO.File]::ReadAllText((Join-Path $work 'sdgo\mods\ai_catalog\catalog.bin')) -ne 'owner-catalog-preserved' -or
