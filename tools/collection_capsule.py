@@ -53,9 +53,11 @@ def build(snapshot, output, machine_id, families, framework_stage=None, *, clien
         claimed.update(form["id"] for form in manifest["family"]["forms"])
     native = resolve_native_roots(rows, client_root=client_root, client_gdrs=client_gdrs)
     imported_root_ids = set(existing) | set(explicit)
+    # Published entry variants can contribute several valid inventory roots to
+    # one connected transform component; every member is still verified above.
     missing_native = [item for item in native["audit"].get("unresolved", [])
                       if not (set(item["forms"]) <= claimed
-                              and len(set(item["forms"]) & imported_root_ids) == 1)]
+                              and bool(set(item["forms"]) & imported_root_ids))]
     if missing_native:
         raise ValueError("Initial-form metadata is missing or inconsistent for "
                          + str(len(missing_native)) + " native/imported families")
