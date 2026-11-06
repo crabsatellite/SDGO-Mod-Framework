@@ -24,4 +24,10 @@ int main(){
         assert(MatchBattleDefinition(expected,actual)==DefinitionMatch::exact);
         Put(actual,initial==1?2:1);assert(MatchBattleDefinition(expected,actual)==DefinitionMatch::different);
     }
+    auto target=expected;std::uint32_t identity=15001;std::memcpy(expected.data(),&identity,4);identity=15003;std::memcpy(target.data(),&identity,4);
+    Put(target,2);assert(EquivalentPrologueData(expected,target));
+    for(std::size_t i=4;i<expected.size();++i){
+        auto changed=target;changed[i]^=1;
+        assert(EquivalentPrologueData(expected,changed)==((i>=0x45&&i<0x49)||(i>=0x59&&i<0x5d)));
+    }
 }

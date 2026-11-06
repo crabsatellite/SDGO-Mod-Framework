@@ -8,11 +8,13 @@
 #include "sdgo/unit_form_gate_state.h"
 namespace {
 SdgoReadUnitFormGateStateV1Fn readState=nullptr;
+SdgoReadUnitFormRebindStateV1Fn readRebind=nullptr;
 char run[80]{};std::wstring output;
 DWORD WINAPI Pump(void*){
     FILE* file=_wfsopen(output.c_str(),L"wb",_SH_DENYNO);if(!file)return 1;
     std::fprintf(file,"{\"event\":\"probe_ready\",\"run_id\":\"%s\",\"pid\":%lu}\n",run,GetCurrentProcessId());std::fflush(file);
     SdgoUnitFormGateStateV1 previous{};
+    SdgoUnitFormRebindStateV1 previousRebind{};
     for(;;){
         SdgoUnitFormGateStateV1 state{};state.size=sizeof(state);state.version=1;
         if(readState(&state)&&std::memcmp(&state,&previous,sizeof(state))){
@@ -20,6 +22,13 @@ DWORD WINAPI Pump(void*){
                 run,GetCurrentProcessId(),state.installed,state.expected_definitions,state.calls,state.unmanaged,state.cached_allowed,
                 state.uncached_directed,state.rejected,state.stale_capture,state.definition_checks,state.normalization_observations,state.actor_writes);
             previous=state;std::fflush(file);
+        }
+        SdgoUnitFormRebindStateV1 rebind{};rebind.size=sizeof(rebind);rebind.version=1;
+        if(readRebind&&readRebind(&rebind)&&std::memcmp(&rebind,&previousRebind,sizeof(rebind))){
+            std::fprintf(file,"{\"event\":\"rebind_state\",\"run_id\":\"%s\",\"pid\":%lu,\"compiled_for_testing\":%u,\"root\":%u,\"current\":%u,\"target\":%u,\"stage\":%u,\"native_fault\":%u,\"commit_result\":%u,\"attempts\":%llu,\"committed\":%llu}\n",
+                run,GetCurrentProcessId(),rebind.compiled_for_testing,rebind.last_root,rebind.last_current,rebind.last_target,
+                rebind.last_stage,rebind.last_native_fault,rebind.last_commit_result,rebind.attempts,rebind.committed);
+            previousRebind=rebind;std::fflush(file);
         }
         Sleep(20);
     }
@@ -31,6 +40,7 @@ SDGO_MOD_ENTRY {
     for(const auto* p=run;*p;++p)if(!((*p>='0'&&*p<='9')||(*p>='a'&&*p<='f')||*p=='-'))return 0;
     const auto module=GetModuleHandleW(L"unit_catalog_server.dll");if(!module)return 0;
     readState=reinterpret_cast<SdgoReadUnitFormGateStateV1Fn>(GetProcAddress(module,"SdgoReadUnitFormGateStateV1"));if(!readState)return 0;
+    readRebind=reinterpret_cast<SdgoReadUnitFormRebindStateV1Fn>(GetProcAddress(module,"SdgoReadUnitFormRebindStateV1"));
     output=std::wstring(api->ModDirectory(mod))+L"\\gate-"+std::wstring(run,run+36)+L".jsonl";
     if(GetFileAttributesW(output.c_str())!=INVALID_FILE_ATTRIBUTES)return 0;
     HANDLE thread=CreateThread(nullptr,0,&Pump,nullptr,0,nullptr);if(!thread)return 0;CloseHandle(thread);return 1;

@@ -14,3 +14,15 @@ typedef int (__cdecl* SdgoReadUnitFormGateStateV1Fn)(SdgoUnitFormGateStateV1*);
 #ifdef __cplusplus
 static_assert(sizeof(SdgoUnitFormGateStateV1)==88,"unit form gate state ABI changed");
 #endif
+
+#pragma pack(push,4)
+typedef struct SdgoUnitFormRebindStateV1 {
+    uint32_t size,version,compiled_for_testing;
+    uint32_t last_root,last_current,last_target,last_stage,last_native_fault,last_commit_result,reserved;
+    uint64_t attempts,committed;
+} SdgoUnitFormRebindStateV1;
+#pragma pack(pop)
+typedef int (__cdecl* SdgoReadUnitFormRebindStateV1Fn)(SdgoUnitFormRebindStateV1*);
+#ifdef __cplusplus
+static_assert(sizeof(SdgoUnitFormRebindStateV1)==56,"unit form rebind state ABI changed");
+#endif

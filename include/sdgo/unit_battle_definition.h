@@ -24,4 +24,14 @@ inline DefinitionMatch MatchBattleDefinition(const BattleDefinition& expected,co
         if(!(i>=0x45&&i<0x49)&&expected[i]!=actual[i])return DefinitionMatch::different;
     return DefinitionMatch::native_default_normalized;
 }
+// Candidate data comparison only. Identity, original default-weapon selection
+// and catalog ordering can differ; every other native payload byte must agree.
+// Fresh native bank equivalence and all actor/edge/lifecycle checks are still
+// required. This is not a general weapon/skill state-migration profile.
+inline bool EquivalentPrologueData(const BattleDefinition& source,const BattleDefinition& target){
+    if(DefinitionWord(source,0)==DefinitionWord(target,0))return false;
+    for(std::size_t i=4;i<source.size();++i)
+        if(!((i>=0x45&&i<0x49)||(i>=0x59&&i<0x5d))&&source[i]!=target[i])return false;
+    return true;
+}
 } // namespace sdgo::unit_forms

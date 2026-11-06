@@ -8,4 +8,5 @@ bool InstallFormGate(const SdgoApi*,SdgoMod*,std::shared_ptr<const sdgo::unit_fo
                      const std::map<std::uint32_t,sdgo::unit_forms::BattleDefinition>*,
                      const HumanBuildCapture*,std::string&);
 SdgoUnitFormGateStateV1 ReadFormGateState();
+SdgoUnitFormRebindStateV1 ReadFormRebindState();
 } // namespace unit_catalog_server

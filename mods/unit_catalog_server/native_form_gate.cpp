@@ -1,6 +1,10 @@
 #include <windows.h>
 #include <intrin.h>
 #include "native_form_gate.h"
+#ifdef SDGO_TEST_NATIVE_FORM_REBIND
+#include "sdgo/native_unit_form_composition.h"
+#include "sdgo/native_unit_form_commit.h"
+#endif
 
 namespace unit_catalog_server {
 namespace {
@@ -12,6 +16,8 @@ const std::map<std::uint32_t,BattleDefinition>* expected=nullptr;
 const HumanBuildCapture* capture=nullptr;
 void* original=nullptr;void* rejected=nullptr;
 alignas(8) volatile LONG64 calls=0,unmanaged=0,cached=0,uncached=0,denied=0,stale=0,checks=0,normalized=0;
+alignas(8) volatile LONG64 rebindAttempts=0,rebound=0;
+volatile LONG lastRoot=0,lastCurrent=0,lastTarget=0,lastStage=0,lastFault=0,lastCommit=0;
 bool installed=false;
 alignas(16) const std::uint32_t defaultMxcsr=0x1f80;
 class Lookup final:public UnitDefinitionLookup {
@@ -29,6 +35,63 @@ public:
         __except(EXCEPTION_EXECUTE_HANDLER){return nullptr;}
     }
 } lookup;
+#ifdef SDGO_TEST_NATIVE_FORM_REBIND
+NativeBindings composer;
+volatile LONG compositionBusy=0;
+struct TestCompositionLease {
+    const bool held=InterlockedCompareExchange(&compositionBusy,1,0)==0;
+    ~TestCompositionLease(){if(held)InterlockedExchange(&compositionBusy,0);}
+};
+bool CopySlot(const void* address,Slot* output){
+    __try{std::memcpy(output->data(),address,output->size());return true;}
+    __except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+bool RebindTestPrologue(const NativeTransformContext& context,const HumanUnitCaptureSnapshot& snapshot){
+    // The native callbacks' cross-room reentrancy is not established. Refuse
+    // a concurrent test composition rather than wait while holding room locks.
+    TestCompositionLease lease;
+    if(!lease.held)return false;
+    InterlockedIncrement64(&rebindAttempts);
+    InterlockedExchange(&lastRoot,context.root);InterlockedExchange(&lastCurrent,context.current);
+    InterlockedExchange(&lastTarget,context.target);InterlockedExchange(&lastStage,1);
+    InterlockedExchange(&lastFault,0);InterlockedExchange(&lastCommit,0);
+    // This unshipped prototype covers one ordinary-mode prologue -> A <-> B
+    // mechanism only. Non-equivalent weapons/skills require real migration;
+    // they never get substituted, cleared or declared compatible here.
+    if(expected->size()!=3||context.mode!=1||context.active!=1||context.forms[0]!=context.root||context.forms[1]!=context.current||
+       context.root==context.current||context.root==context.target||context.current==context.target)return false;
+    const auto& root=expected->at(context.root);const auto& middle=expected->at(context.current);
+    const auto& target=expected->at(context.target);
+    if(DefinitionWord(root,0xc)!=context.current||DefinitionWord(middle,0xc)!=context.target||
+       DefinitionWord(target,0xc)!=context.current||!EquivalentPrologueData(root,target))return false;
+    InterlockedExchange(&lastStage,2);Slot before{},staged{};
+    if(!CopySlot(context.slot,&before))return false;
+    Bank sourceBank{},targetBank{};std::uint32_t fault=0;
+    const auto first=ComposeNativeBank(composer,snapshot.unit.composition,context.root,sourceBank,fault);
+    InterlockedExchange(&lastFault,fault);InterlockedExchange(&lastStage,3);
+    if(first!=CompositionResult::composed)return false;
+    const auto second=ComposeNativeBank(composer,snapshot.unit.composition,context.target,targetBank,fault);
+    InterlockedExchange(&lastFault,fault);InterlockedExchange(&lastStage,4);
+    if(second!=CompositionResult::composed)return false;
+    if(StageEquivalentInactive(before,context.root,context.current,sourceBank,targetBank,staged)!=StageResult::prepared)return false;
+    InterlockedExchange(&lastStage,5);
+    NativeTransformContext current;
+    const auto index=(reinterpret_cast<std::uintptr_t>(context.player)-reinterpret_cast<std::uintptr_t>(context.room)-0x3ce4)/0x1f54;
+    if(!ReadNativeTransformContext(context.room,static_cast<std::uint32_t>(index),context.slot,context.target,current)||
+       CheckUnitForm(*graphs,*expected,current,snapshot,lookup).decision!=PreflightDecision::native_uncached||
+       !capture->Current(snapshot))return false;
+    // A matching record at a new address must not leave the freshly composed
+    // target with an old borrowed pointer. The supported registry remains a
+    // process-lifetime table; this is not a concurrent catalog-reload protocol.
+    if(lookup.find(context.target)!=reinterpret_cast<const void*>(Read32(targetBank.bytes.data()+8)))return false;
+    InterlockedExchange(&lastStage,6);
+    const auto commit=CommitEquivalentIdentity(const_cast<void*>(context.slot),before,staged);
+    InterlockedExchange(&lastCommit,static_cast<LONG>(commit));
+    if(commit==IdentityCommit::unrecoverable){InterlockedExchange(&lastStage,9);RaiseFailFastException(nullptr,nullptr,0);}
+    if(commit!=IdentityCommit::committed){InterlockedExchange(&lastStage,8);return false;}
+    InterlockedIncrement64(&rebound);InterlockedExchange(&lastStage,7);return true;
+}
+#endif
 bool ReadFrame(const Registers* r,Frame* frame) {
     __try {
         frame->room=*reinterpret_cast<const void*const*>(r->ebp-0x18);
@@ -59,6 +122,9 @@ int __cdecl Evaluate(const Registers* registers) {
                         if(capture->Current(snapshot)){
                             InterlockedIncrement64(policy.decision==PreflightDecision::native_cached?&cached:&uncached);
                             result=0;
+#ifdef SDGO_TEST_NATIVE_FORM_REBIND
+                            if(policy.decision==PreflightDecision::native_uncached&&!RebindTestPrologue(context,snapshot))result=1;
+#endif
                         }else InterlockedIncrement64(&stale);
                     }
                 }else InterlockedIncrement64(&stale);
@@ -114,6 +180,19 @@ bool InstallFormGate(const SdgoApi* api,SdgoMod* mod,std::shared_ptr<const Graph
        hash!=base+0x321b30||compare!=base+0x321ae0){
         error="native form gate symbol boundaries differ";return false;}
     graphs=std::move(bindings);expected=definitions;capture=lifecycle;rejected=failure;lookup.registry=registry;lookup.query=reinterpret_cast<Lookup::Find>(find);lookup.hash=hash;lookup.compare=compare;
+#ifdef SDGO_TEST_NATIVE_FORM_REBIND
+    const auto symbol=[&](const char* name,std::uint32_t rva){auto* value=api->Symbol(mod,name);return value==base+rva?value:nullptr;};
+    composer.unit_registry=registry;composer.find=lookup.query;composer.map_hash=hash;composer.map_compare=compare;
+    composer.weapon_registry=symbol("unit_form.weapon_registry",0x42aa2c);
+    composer.stats=reinterpret_cast<NativeBindings::Stats>(symbol("unit_form.stats",0xd6790));
+    composer.weapons=reinterpret_cast<NativeBindings::Weapons>(symbol("unit_form.weapons",0xd8280));
+    composer.boost=reinterpret_cast<NativeBindings::Boost>(symbol("unit_form.boost",0x79120));
+    composer.deck_boost=reinterpret_cast<NativeBindings::DeckBoost>(symbol("unit_form.deck_boost",0x79170));
+    composer.reset=reinterpret_cast<NativeBindings::Reset>(symbol("unit_form.reset",0x7a9f0));
+    composer.mode_singleton=reinterpret_cast<void*const*>(symbol("unit_form.mode_singleton",0x42ee70));
+    if(!composer.weapon_registry||!composer.stats||!composer.weapons||!composer.boost||!composer.deck_boost||!composer.reset||!composer.mode_singleton){
+        error="test form composer symbols differ";return false;}
+#endif
     if(!api->HookSite(mod,"unit_form.gate",reinterpret_cast<void*>(&Gate),&original)){
         error="native form gate installation was refused";return false;}
     installed=true;return true;
@@ -123,6 +202,16 @@ SdgoUnitFormGateStateV1 ReadFormGateState(){
     state.expected_definitions=expected?static_cast<std::uint32_t>(expected->size()):0;
     state.calls=Counter(&calls);state.unmanaged=Counter(&unmanaged);state.cached_allowed=Counter(&cached);
     state.uncached_directed=Counter(&uncached);state.rejected=Counter(&denied);state.stale_capture=Counter(&stale);
-    state.definition_checks=Counter(&checks);state.normalization_observations=Counter(&normalized);return state;
+    state.definition_checks=Counter(&checks);state.normalization_observations=Counter(&normalized);state.actor_writes=Counter(&rebound);return state;
+}
+SdgoUnitFormRebindStateV1 ReadFormRebindState(){
+    SdgoUnitFormRebindStateV1 state{};state.size=sizeof(state);state.version=1;
+#ifdef SDGO_TEST_NATIVE_FORM_REBIND
+    state.compiled_for_testing=1;
+#endif
+    const auto word=[](volatile LONG* value){return static_cast<std::uint32_t>(InterlockedCompareExchange(value,0,0));};
+    state.last_root=word(&lastRoot);state.last_current=word(&lastCurrent);state.last_target=word(&lastTarget);
+    state.last_stage=word(&lastStage);state.last_native_fault=word(&lastFault);state.last_commit_result=word(&lastCommit);
+    state.attempts=Counter(&rebindAttempts);state.committed=Counter(&rebound);return state;
 }
 } // namespace unit_catalog_server
