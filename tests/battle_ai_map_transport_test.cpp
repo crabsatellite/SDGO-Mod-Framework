@@ -6,6 +6,7 @@
 #include <limits>
 
 #include "../mods/battle_ai/native_map_transport.h"
+#include "../mods/battle_ai/native_transport_catalog.h"
 
 namespace {
 
@@ -400,6 +401,350 @@ void TestPayloadAuthorityAndSubmission() {
     }
 }
 
+void TestPublicMapDiscovery() {
+    using battle_ai::native::TransportVolume;
+    using battle_ai::native::TransportCatalog;
+    Fixture fixture;
+    Check(battle_ai::native::TransportEntranceWaitMs(false)==200&&
+          battle_ai::native::TransportEntranceWaitMs(true)==battle_ai::native::kMapTransportRequestTimeoutMs,
+          "only an actual outstanding native request receives the bridge's full notification deadline");
+    Check(battle_ai::native::TransportMadeProgress({0,0,0},{101,0,0},{2,0,0})&&
+          !battle_ai::native::TransportMadeProgress({0,0,0},{100,0,0},{1,0,0})&&
+          !battle_ai::native::TransportMadeProgress({0,0,0},{0,0,200},{1,0,0})&&
+          !battle_ai::native::TransportMadeProgress({0,0,0},{NAN,0,0},{1,0,0}),
+          "native arrival acceptance requires finite progress beyond the launch threshold along the authored direction");
+    std::array<uint8_t,0x20> sender{};uint32_t connection=99;
+    Check(battle_ai::native::ReadForceMoveConnection(sender.data(),connection)&&connection==0,
+          "a native zero connection value is preserved rather than rejected as a null memory pointer");
+    Put(sender.data(),0x14,uint32_t(17));
+    Check(battle_ai::native::ReadForceMoveConnection(sender.data(),connection)&&connection==17,
+          "an opaque native connection handle needs no readable memory allocation at its value");
+    Check(!battle_ai::native::ReadForceMoveConnection(nullptr,connection),
+          "connection decoding still rejects an unavailable sender object");
+    const auto original=fixture.scenes[1].object;
+    TransportVolume volume{};
+    Check(TransportVolume::Read(fixture.scenes[1].bytes.data(),volume)&&volume.Live()&&
+          volume.object==fixture.scenes[1].object.data()&&volume.speed==40&&volume.updates==35,
+          "map discovery reads a live registered native force volume without changing its data");
+    Check(fixture.scenes[1].object==original&&fixture.submitCalls==0,
+          "discovering a public entrance neither sends a packet nor moves a unit");
+    Vec3 exit{};
+    Check(battle_ai::native::PredictTransportExit(volume,{0,400,0},exit)&&
+          std::abs(exit.x-1292.4f)<0.01f&&exit.y==400&&exit.z==0,
+          "horizontal route forecasting includes native per-tick damping and the terminal update");
+    auto vertical=volume;vertical.direction={0,1,0};
+    Check(battle_ai::native::PredictTransportExit(vertical,{10,400,20},exit)&&exit.x==10&&exit.z==20&&
+          std::abs(exit.y-1692.4f)<0.01f,
+          "native JumpFSM force movement contributes real vertical displacement to route forecasting");
+    Check(battle_ai::native::TransportReachedRouteProgress(
+              {0,300,0},{0,1180,0},{0,1160,0},vertical,42)&&
+          !battle_ai::native::TransportReachedRouteProgress(
+              {0,300,0},{0,600,0},{0,1160,0},vertical,42)&&
+          !battle_ai::native::TransportReachedRouteProgress(
+              {0,300,0},{500,300,0},{0,1160,0},vertical,42),
+          "route quality separately requires native force travel to reach the planned exit height");
+    Check(battle_ai::native::TransportAtRouteExit({20,1170,10},{0,1160,0},42)&&
+          !battle_ai::native::TransportAtRouteExit({100,1170,10},{0,1160,0},42)&&
+          !battle_ai::native::TransportAtRouteExit({20,1300,10},{0,1160,0},42),
+          "landing completion requires both horizontal support proximity and the measured support height");
+    vertical.speed=100;vertical.updates=300;
+    Check(battle_ai::native::PredictTransportExit(vertical,{0,0,0},exit)&&std::abs(exit.y-27081)<0.01f,
+          "the complete authored speed and duration envelope includes long and fast launchers");
+    vertical.updates=301;
+    Check(!battle_ai::native::PredictTransportExit(vertical,{0,0,0},exit),
+          "transport forecasts still reject motion outside the verified authored envelope");
+    fixture.scenes[1].object[0x1C]=1;
+    Check(!volume.Live(),"removed map volumes cannot retain a planned transport link");
+    fixture.scenes[1].object[0x1C]=0;
+    Put(fixture.scenes[1].bytes.data(),0x88,Vec3{NAN,0,0});
+    Check(!volume.Live(),"invalid live entrance transforms invalidate the old planning snapshot");
+    Put(fixture.scenes[1].bytes.data(),0x88,Vec3{});
+    const Aabb map{{-1000,-1000,-1000},{1000,1000,1000}};
+    TransportCatalog catalog;
+    fixture.reportedCount=128;
+    auto api=fixture.Api();catalog.Pump(api.query,fixture.document.data(),map,0);
+    Check(catalog.Volumes().empty()&&!catalog.Complete()&&catalog.Queries()==1,
+          "a truncated public map query is subdivided instead of accepting a partial inventory");
+    fixture.Results({0,1});catalog.Pump(api.query,fixture.document.data(),map,1);
+    Check(catalog.Queries()==1,"discovery cannot repeat a native scene query in the same engine interval");
+    catalog.Pump(api.query,fixture.document.data(),map,16);
+    const auto revision=catalog.Revision();
+    for(uint64_t tick=32;tick<=64;tick+=16)catalog.Pump(api.query,fixture.document.data(),map,tick);
+    Check(catalog.Complete()&&catalog.Volumes().size()==1&&catalog.Revision()==revision,
+          "overlapping spatial queries deduplicate a native entrance while completing the map inventory");
+    catalog.Clear();Check(catalog.Volumes().empty()&&!catalog.Complete()&&catalog.Revision()>revision,
+          "map lifecycle reset drops all previous entrance pointers and advances discovery identity");
+    fixture.reportedCount=-1;catalog.Pump(api.query,fixture.document.data(),map,80);
+    Check(!catalog.Complete()&&catalog.Saturated()==1,
+          "a failed native query cannot turn an unexamined region into completed map discovery");
+}
+
+void TestRequestLease() {
+    using namespace battle_ai::native;
+    const auto Snapshot=[](
+        uint32_t generation,uint32_t request,uint32_t notice) {
+        TransportRequestStatus value{};
+        value.available=true;
+        value.generation=generation;
+        value.requestCount=request;
+        value.noticeCount=notice;
+        return value;
+    };
+    TransportRequestStatus status{};
+    status.available=true;status.generation=7;
+    status.requestCount=10;status.noticeCount=20;
+    TransportRequestLease lease{};
+    BeginTransportRequestLease(lease,status);
+    status.requestCount=11;status.outstanding=true;
+    status.outstandingGeneration=7;
+    Check(ObserveTransportRequestLease(lease,status,false,100)==
+              TransportRequestUpdate::Idle&&!lease.committed,
+          "another pad's outstanding request cannot claim a planned route without selected-pad overlap");
+
+    BeginTransportRequestLease(lease,Snapshot(7,10,20));
+    Check(ObserveTransportRequestLease(
+              lease,Snapshot(7,10,20),true,100)==
+              TransportRequestUpdate::Idle&&!lease.committed,
+          "selected-pad overlap alone does not manufacture a submitted request");
+    status={};status.available=true;status.generation=7;
+    status.requestCount=11;status.noticeCount=20;
+    status.outstanding=true;status.outstandingGeneration=7;
+    Check(ObserveTransportRequestLease(lease,status,false,150)==
+              TransportRequestUpdate::Committed&&lease.committed&&
+              lease.requestCount==11&&lease.committedAt==150,
+          "a new exact-generation request remains associated with the selected pad across the next engine frames");
+    status.outstanding=false;status.noticeCount=21;
+    Check(ObserveTransportRequestLease(lease,status,false,180)==
+              TransportRequestUpdate::Acknowledged&&lease.acknowledged,
+          "the correlated lease survives request clearing until the matching native notice can start movement");
+
+    ++status.timeoutCount;
+    Check(ObserveTransportRequestLease(lease,status,false,200)==
+              TransportRequestUpdate::Failed,
+          "a timeout counter increase terminates the exact submitted route lease");
+
+    BeginTransportRequestLease(lease,Snapshot(7,10,20));
+    status={};status.available=true;status.generation=8;
+    Check(ObserveTransportRequestLease(lease,status,true,100)==
+              TransportRequestUpdate::GenerationChanged,
+          "a bot generation reset cannot inherit an earlier pad selection");
+
+    BeginTransportRequestLease(lease,Snapshot(7,10,20));
+    ObserveTransportRequestLease(
+        lease,Snapshot(7,10,20),true,100);
+    Check(TransportRequestAdmissionOpen(lease,100)&&
+          TransportRequestAdmissionOpen(
+              lease,100+kTransportRequestAssociationWindowMs)&&
+          !TransportRequestAdmissionOpen(
+              lease,100+kTransportRequestAssociationWindowMs+1),
+          "selected entrance contact opens one bounded admission window");
+    ObserveTransportRequestLease(
+        lease,Snapshot(7,10,20),true,
+        100+kTransportRequestAssociationWindowMs);
+    Check(!TransportRequestAdmissionOpen(
+              lease,100+kTransportRequestAssociationWindowMs+1),
+          "continued overlap cannot extend a stale selected entrance admission");
+    status={};status.available=true;status.generation=7;
+    status.requestCount=11;status.noticeCount=21;
+    Check(ObserveTransportRequestLease(
+              lease,status,false,
+              100+kTransportRequestAssociationWindowMs+1)==
+              TransportRequestUpdate::Idle&&!lease.committed,
+          "a later incidental request cannot reuse stale selected-pad contact");
+
+    BeginTransportRequestLease(lease,Snapshot(7,10,20));
+    ObserveTransportRequestLease(
+        lease,Snapshot(7,10,20),true,0);
+    status=Snapshot(7,11,20);
+    status.outstanding=true;
+    status.outstandingGeneration=7;
+    Check(ObserveTransportRequestLease(
+              lease,status,false,50)==
+              TransportRequestUpdate::Committed,
+          "selected-pad contact at process tick zero remains a valid bounded association");
+
+    BeginTransportRequestLease(lease,Snapshot(7,10,20));
+    status=Snapshot(7,11,21);
+    status.exactWitness=true;
+    status.exactPayload=true;status.requestTick=0xfffffff0u;
+    status.snapshotTick=0x20u;
+    Check(ObserveTransportRequestLease(lease,status,false,500)==
+              TransportRequestUpdate::Acknowledged&&lease.committed&&
+              lease.acknowledged&&lease.requestCount==11,
+          "an exact V2 payload associates an ACK-cleared request without overlap and handles DWORD tick wrap");
+    BeginTransportRequestLease(lease,Snapshot(7,10,20));
+    status.exactPayload=false;
+    Check(ObserveTransportRequestLease(lease,status,false,500)==
+              TransportRequestUpdate::Idle&&!lease.committed,
+          "a mismatched V2 payload cannot claim the selected route after ACK clearing");
+    Check(ObserveTransportRequestLease(lease,status,true,501)==
+              TransportRequestUpdate::Idle&&!lease.committed,
+          "selected-pad overlap cannot override a mismatched exact V2 payload");
+    status.exactPayload=true;status.snapshotTick=
+        status.requestTick+kMapTransportRequestTimeoutMs+1;
+    Check(ObserveTransportRequestLease(lease,status,false,500)==
+              TransportRequestUpdate::Idle&&!lease.committed,
+          "a stale exact payload cannot be reused by a later planned route");
+
+    BeginTransportRequestLease(lease,Snapshot(7,10,20));
+    status=Snapshot(7,11,21);
+    status.exactWitness=true;
+    status.exactPayload=true;
+    status.exactFailure=true;
+    status.requestTick=100;
+    status.snapshotTick=120;
+    Check(ObserveTransportRequestLease(
+              lease,status,false,500)==
+              TransportRequestUpdate::Failed,
+          "a V2 timeout or ownership-loss clear rejects the exact current request");
+    BeginTransportRequestLease(lease,Snapshot(7,10,20));
+    Check(ObserveTransportRequestLease(
+              lease,status,false,500)==
+              TransportRequestUpdate::Failed&&!lease.committed,
+          "a fresh exact V2 failure rejects its selected route before an outstanding or notice witness can appear");
+    BeginTransportRequestLease(lease,Snapshot(7,10,20));
+    status=Snapshot(7,11,20);
+    status.exactWitness=true;status.exactPayload=true;
+    status.outstanding=true;status.outstandingGeneration=7;
+    status.requestTick=100;status.snapshotTick=120;
+    Check(ObserveTransportRequestLease(
+              lease,status,false,500)==
+              TransportRequestUpdate::Committed&&lease.committed,
+          "a fresh exact V2 outstanding request commits its own request tick");
+    status.exactPayload=false;status.exactFailure=true;
+    Check(ObserveTransportRequestLease(
+              lease,status,true,516)==
+              TransportRequestUpdate::Committed&&lease.committed,
+          "a later mismatched V2 failure cannot terminate an already committed exact route");
+
+    Check(TransportAboveRouteExit({0,800,0},{0,400,0},50)&&
+          !TransportAboveRouteExit({100,800,0},{0,400,0},50)&&
+          TransportAtRouteExit({25,425,0},{0,400,0},50),
+          "passive post-Force landing requires support directly below the native trajectory");
+    const Aabb map31PadBounds{
+        {-77.45846f,-112.43821f,-67.61916f},
+        {77.45846f,112.43821f,67.61916f}};
+    TransportVolume map31West{};map31West.bounds=map31PadBounds;
+    map31West.speed=40;map31West.updates=30;
+    map31West.direction={-0.72070497f,0.69322199f,-0.005237f};
+    Vec3 map31WestPredicted{};
+    TransportVolume map31East=map31West;
+    map31East.direction={0.64037299f,0.76775301f,0.02186f};
+    Vec3 map31EastPredicted{};
+    Check(PredictTransportExit(
+              map31West,{1484.01184f,1.7f,1038.77234f},
+              map31WestPredicted)&&
+          PredictTransportExit(
+              map31East,{-1598.77954f,1.7f,-812.63953f},
+              map31EastPredicted)&&
+          std::hypot(
+              double(map31WestPredicted.x-1484.01184f),
+              double(map31WestPredicted.z-1038.77234f))>800&&
+          std::hypot(
+              double(map31EastPredicted.x+1598.77954f),
+              double(map31EastPredicted.z+812.63953f))>712&&
+          TransportGroundExitUseful(
+              map31West,{1484.01184f,1.7f,1038.77234f},
+              map31WestPredicted,
+              {map31WestPredicted.x,3.3f,map31WestPredicted.z},90)&&
+          TransportGroundExitUseful(
+              map31East,{-1598.77954f,1.7f,-812.63953f},
+              map31EastPredicted,
+              {map31EastPredicted.x,3.3f,map31EastPredicted.z},90),
+          "Map31 diagonal launchers keep their 712-800 unit horizontal navigation benefit at ground height");
+
+    TransportVolume vertical=map31West;vertical.direction={0,1,0};
+    Vec3 verticalPredicted{};
+    Check(PredictTransportExit(vertical,{0,1.7f,0},verticalPredicted)&&
+          !TransportGroundExitUseful(
+              vertical,{0,1.7f,0},verticalPredicted,
+              {0,3.3f,0},90)&&
+          TransportGroundExitUseful(
+              vertical,{0,320,0},verticalPredicted,
+              {0,1168.3f,0},90),
+          "a pure-Y launcher needs a measured higher layer because it has no horizontal route gain");
+    TransportVolume horizontal=map31West;horizontal.direction={1,0,0};
+    Vec3 horizontalPredicted{};
+    Check(PredictTransportExit(horizontal,{0,200,0},horizontalPredicted)&&
+          TransportGroundExitUseful(
+              horizontal,{0,200,0},horizontalPredicted,
+              {horizontalPredicted.x,0,horizontalPredicted.z},50),
+          "horizontal launchers remain useful without an elevation gain");
+    Check(TransportPayloadMatches(
+              horizontal,7001,true,true,7001,9001,9001,
+              horizontal.speed,horizontal.updates,
+              horizontal.direction)&&
+          !TransportPayloadMatches(
+              horizontal,7001,true,true,7002,9001,9001,
+              horizontal.speed,horizontal.updates,
+              horizontal.direction)&&
+          !TransportPayloadMatches(
+              horizontal,7001,true,false,0,9001,9001,
+              horizontal.speed+1,horizontal.updates,
+              horizontal.direction),
+          "V2 association requires the exact pilot and payload, plus the exact pad object whenever its ID is available");
+
+    const auto terminal=TransportForceTerminalAirState(
+        vertical,{10,100,20});
+    Check(std::abs(terminal.velocity.x)<0.0001f&&
+          std::abs(terminal.velocity.y-
+                   vertical.speed*0.8999999761581421f)<0.0001f&&
+          std::abs(terminal.velocity.z)<0.0001f,
+          "post-Force planning starts from native terminal Move damping and retained Jump Y velocity");
+    Check(TransportOrdinaryGravityProfileAllowed(
+              10001,0,0,0,0,0,0,0,0,2,1)&&
+          !TransportOrdinaryGravityProfileAllowed(
+              0x4290,0,0,0,0,0,0,0,0,2,1)&&
+          !TransportOrdinaryGravityProfileAllowed(
+              10001,1,0,0,0,0,0,0,0,2,1)&&
+          !TransportOrdinaryGravityProfileAllowed(
+              10001,0,0,0,0,0,0,0x1000,0,2,1)&&
+          !TransportOrdinaryGravityProfileAllowed(
+              10001,0,0,0,0,0,0,0,1,2,1),
+          "ordinary landing continuation admits only the exact native default gravity profile");
+    Check(TransportOrdinaryGoalModeAllowed(1)&&
+          !TransportOrdinaryGoalModeAllowed(2),
+          "ordinary post-Force steering is restricted to native goal mode 1 and never assumes the mode-2 0.8 branch");
+
+    TransportOrdinaryAirState air{{0,100,0},{2,10,-1}};
+    Check(AdvanceTransportOrdinaryAir(air,{1,0,0},1,2)&&
+          std::abs(air.velocity.x-2.20000005f)<0.0001f&&
+          std::abs(air.velocity.y-9.40000057f)<0.0001f&&
+          std::abs(air.velocity.z+0.60000002f)<0.0001f&&
+          std::abs(air.position.x-2.20000005f)<0.0001f&&
+          std::abs(air.position.y-109.400001f)<0.0001f,
+          "ordinary post-Force motion matches native 0.6 run retention and 0.98Y-0.2D10 gravity");
+    const auto rejectedModeState=air;
+    Check(!AdvanceTransportOrdinaryAir(
+              air,{1,0,0},1,2,2)&&
+          air.position.x==rejectedModeState.position.x&&
+          air.position.y==rejectedModeState.position.y&&
+          air.velocity.x==rejectedModeState.velocity.x,
+          "the forecast fails closed before mutating state for a non-3A movement mode");
+    const auto reachable=PredictTransportOrdinaryAirArrival(
+        {{0,100,0},{0,12,0}},{25,100,0},2,2);
+    const auto unreachable=PredictTransportOrdinaryAirArrival(
+        {{0,100,0},{0,12,0}},{2500,100,0},2,2);
+    Check(reachable.reachable&&reachable.arrivalUpdate>0&&
+          reachable.updates>=reachable.arrivalUpdate&&
+          reachable.peakY>100&&!unreachable.reachable,
+          "measured elevated support is admitted only inside the native recurrence flight window");
+    const auto braking=PredictTransportOrdinaryAirArrival(
+        {{0,100,0},{2,12,0}},{25,100,0},2,2,true);
+    Check(braking.reachable&&!braking.path.empty()&&
+          std::abs(braking.path.front().x)<0.001f&&
+          std::abs(braking.path.back().x-25)<=20.001f&&
+          std::abs(braking.path.back().y-100)<0.001f,
+          "arrival prediction retains native zero-command XZ damping and clips the last collision sweep at the measured landing plane");
+    Vec3 crossing{};
+    Check(TransportLandingCrossing(
+              {0,110,0},{10,90,20},100,crossing)&&
+          crossing.x==5&&crossing.y==100&&crossing.z==10&&
+          !TransportLandingCrossing(
+              {0,90,0},{10,80,20},100,crossing),
+          "landing collision clipping preserves the real swept segment and rejects a segment already below support");
+}
+
 } // namespace
 
 int main() {
@@ -407,6 +752,8 @@ int main() {
     TestFailClosedGates();
     TestRegisteredOverlapAndDeathZoneIsolation();
     TestPayloadAuthorityAndSubmission();
+    TestPublicMapDiscovery();
+    TestRequestLease();
     if (failures != 0) {
         std::printf("%d battle AI map transport tests failed\n", failures);
         return 1;

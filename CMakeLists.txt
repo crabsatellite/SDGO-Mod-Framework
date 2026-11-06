@@ -1,7 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" SDGO_VERSION LIMIT_COUNT 1)
-project(sdgo_mod_framework VERSION ${SDGO_VERSION} LANGUAGES C CXX RC)
+# CMake's project VERSION is numeric; package and file-version strings retain
+# the complete release identity, including a candidate's Beta suffix.
+string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" SDGO_PROJECT_VERSION "${SDGO_VERSION}")
+project(sdgo_mod_framework VERSION ${SDGO_PROJECT_VERSION} LANGUAGES C CXX RC)
 find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
 set(SDGO_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
 set(SDGO_VERSION_MINOR ${PROJECT_VERSION_MINOR})
@@ -132,6 +135,37 @@ endfunction()
 
 sdgo_add_mod(mission_ai DESCRIPTION "co-op mission wingmen (client)"
              SOURCES mods/mission_ai/mission_ai.cpp FILES mission_ai.lua)
+sdgo_add_mod(mission_behavior DESCRIPTION "OC and current mission behavior (client)"
+             SOURCES mods/mission_behavior/client.cpp FILES symbols.fragment.ini)
+sdgo_add_mod(mission_behavior_server SERVER DESCRIPTION "OC and current mission behavior (server)"
+             SOURCES mods/mission_behavior_server/mission_behavior_server.cpp FILES symbols.fragment.ini)
+if(BUILD_TESTING)
+    add_executable(mission_behavior_client_policy_test
+        mods/mission_behavior/tests/client_policy_test.cpp)
+    target_link_libraries(mission_behavior_client_policy_test PRIVATE sdgo_api)
+    sdgo_strict(mission_behavior_client_policy_test)
+    add_test(NAME mission_behavior_client_policy
+        COMMAND mission_behavior_client_policy_test)
+
+    add_executable(mission_behavior_client_runtime_test
+        mods/mission_behavior/tests/client_runtime_test.cpp)
+    target_link_libraries(mission_behavior_client_runtime_test PRIVATE sdgo_api)
+    sdgo_strict(mission_behavior_client_runtime_test)
+    add_dependencies(mission_behavior_client_runtime_test mission_behavior)
+    add_test(NAME mission_behavior_client_runtime
+        COMMAND mission_behavior_client_runtime_test
+            $<TARGET_FILE:mission_behavior>)
+
+    add_executable(mission_behavior_server_test tests/mission_behavior_server_test.cpp)
+    target_link_libraries(mission_behavior_server_test PRIVATE sdgo_api)
+    target_include_directories(mission_behavior_server_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(mission_behavior_server_test)
+    add_dependencies(mission_behavior_server_test mission_behavior_server)
+    foreach(profile_case default oc gco conflict corrupt)
+        add_test(NAME mission_behavior_server_${profile_case}
+            COMMAND mission_behavior_server_test $<TARGET_FILE:mission_behavior_server> ${profile_case})
+    endforeach()
+endif()
 sdgo_add_mod(ime_fix DESCRIPTION "Chinese IME candidate and commit fixes" SOURCES mods/ime_fix/ime_fix.cpp FILES symbols.fragment.ini)
 sdgo_add_mod(findwindow_fix DESCRIPTION "FindWindowW fix" SOURCES mods/findwindow_fix/findwindow_fix.cpp LIBS user32)
 sdgo_add_mod(startup_crash_fix DESCRIPTION "random crash at game start fix" SOURCES mods/startup_crash_fix/startup_crash_fix.cpp)

@@ -15,6 +15,7 @@ constexpr std::uint16_t kForceMoveNoticeOpcode = 0x0584;
 constexpr std::uint16_t kForceMoveObjectMessageType = 0x001E;
 constexpr int kForcedMoveObjectKind = 0x21;
 constexpr int kCollisionSceneKind = 7;
+constexpr uint32_t kMapTransportRequestTimeoutMs = 3000;
 
 #pragma pack(push, 1)
 // REQ 0x085A and NTF 0x0584 have the same wire layout. The request constructor
@@ -96,6 +97,12 @@ using ApplyForceMoveObjectMessageFn =
     void(__thiscall*)(void* movementController, const ForceMoveObjectMessage* message);
 using ShapeOverlapFn = bool(__cdecl*)(const void* ownerShape, const void* padShape);
 
+// Native 6D0C21 forwards this field to 5238A0 without dereferencing it. Zero
+// and small channel/connection values are not readable-memory pointers.
+inline bool ReadForceMoveConnection(const uint8_t* sender,uint32_t& connection) noexcept {
+    return sender&&detail::Read(sender,0x14,connection);
+}
+
 struct MapTransportBounds {
     float minimumSpeed = 0.0f;
     float maximumSpeed = 0.0f;
@@ -104,6 +111,11 @@ struct MapTransportBounds {
     float minimumDirectionLength = 0.0f;
     float maximumDirectionLength = 0.0f;
 };
+
+// Complete authored TRN inventory for this client: native speed16..100 and
+// duration10..300 source updates. Keep the same finite envelope in discovery
+// and the authenticated overlap bridge; never clamp an authored trajectory.
+inline constexpr MapTransportBounds kAuthoredMapTransportBounds{1,100,1,300,0.5f,1.5f};
 
 using MapTransportUnitGateFn =
     bool (*)(void* context, const std::uint8_t* unit);
