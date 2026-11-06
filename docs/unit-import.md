@@ -350,6 +350,16 @@ must match. Allocation padding and intrusive list links are excluded. Neither
 an expectation nor a successful comparison supplies actor/edge/lifecycle
 permission or enables a live multi-form transition.
 
+With v2 authority installed, `unit_catalog_server` checks managed human transform
+requests inside the original authorized room-lock boundary. The inventory UID,
+captured generation, directed edge, current registry bytes and cached definition
+pointers must agree. Refused requests use the original error/unlock path; valid
+cached requests continue through the original transform and notification.
+Unmanaged units and NPCs retain their original path. Unit-table hot rebuilding
+is outside this profile; restart the host after installation changes. An uncached
+directed target is only inspected: this layer does not rebind a bank or migrate
+skills, ammo, cooldowns or in-flight state. v1 authority installs no such gate.
+
 With paired graph inputs, `unit_catalog_server` captures the original human-unit
 constructor's pre-initialization seed and successful output. It uses the shared
 `room_random` lifecycle observer when available; an incompatible or occupied

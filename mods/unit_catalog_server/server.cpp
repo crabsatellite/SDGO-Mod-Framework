@@ -6,6 +6,7 @@
 #include "sdgo/unit_form_graph_format.h"
 #include "sdgo/unit_form_runtime_state.h"
 #include "human_build_capture.h"
+#include "native_form_gate.h"
 
 namespace {
 using namespace sdgo::skill_identity;
@@ -36,6 +37,11 @@ bool Read(const std::filesystem::path& path,std::vector<std::uint8_t>& bytes,std
     CloseHandle(file);return valid;
 }
 
+}
+
+extern "C" __declspec(dllexport) int __cdecl SdgoReadUnitFormGateStateV1(SdgoUnitFormGateStateV1* state){
+    if(!state||state->size!=sizeof(*state)||state->version!=1)return 0;
+    *state=unit_catalog_server::ReadFormGateState();return state->installed?1:0;
 }
 
 extern "C" __declspec(dllexport) int __cdecl SdgoReadUnitFormRuntimeStateV1(SdgoUnitFormRuntimeStateV1* state){
@@ -97,6 +103,9 @@ SDGO_MOD_ENTRY {
     }
     if(skills&&!InstallNative(api,mod,std::move(bindings),&g_lookup,error)){
         api->Log(mod,SDGO_LOG_ERROR,"unit skill native binding rejected: %s",error.c_str());return 0;}
+    if(graphs&&!g_graphs.nativeDefinitions.empty()&&!unit_catalog_server::InstallFormGate(
+            api,mod,g_graphs.bindings,&g_graphs.nativeDefinitions,g_capture.get(),error)){
+        api->Log(mod,SDGO_LOG_ERROR,"unit form native preflight rejected: %s",error.c_str());return 0;}
     if(skills){
     g_state.size=sizeof(g_state);g_state.version=1;
     for(const auto& owner:g_input.candidates)g_state.bindings+=static_cast<std::uint32_t>(owner.skills.size());
@@ -106,7 +115,7 @@ SDGO_MOD_ENTRY {
     std::memcpy(g_state.server_fingerprint,g_input.serverFingerprint.c_str(),65);g_state.installed=1;
     api->Log(mod,SDGO_LOG_INFO,"unit skill bindings installed: %lu mappings; server fingerprint %s",static_cast<DWORD>(g_state.bindings),g_state.server_fingerprint);
     }
-    if(graphs)api->Log(mod,SDGO_LOG_INFO,"unit form lifecycle capture prepared; live transform commits remain inactive");
+    if(graphs)api->Log(mod,SDGO_LOG_INFO,"unit form lifecycle/preflight prepared; Mod-authored form rebinding remains inactive");
     // A registered provider retains raw callback/user pointers for this process.
     // No fallible work or logging may follow this final external registration.
     return graphs?(g_capture->Attach()?1:0):1;

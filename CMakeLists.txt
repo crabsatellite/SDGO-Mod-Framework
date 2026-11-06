@@ -108,6 +108,9 @@ sdgo_strict(sdgo_human_unit_capture)
 add_library(sdgo_native_unit_transform_context STATIC core/native_unit_transform_context.cpp)
 target_link_libraries(sdgo_native_unit_transform_context PUBLIC sdgo_api sdgo_human_unit_capture)
 sdgo_strict(sdgo_native_unit_transform_context)
+add_library(sdgo_unit_form_preflight STATIC core/unit_form_preflight.cpp)
+target_link_libraries(sdgo_unit_form_preflight PUBLIC sdgo_native_unit_transform_context)
+sdgo_strict(sdgo_unit_form_preflight)
 
 # ---- mods: sdgo/mods/<id>/<id>.dll + mod.ini + extra files -------------------------
 # Client mods go to stage/<config>/client/sdgo/mods/<id>, SERVER mods to the server tree.
@@ -196,8 +199,8 @@ sdgo_add_mod(unit_catalog DESCRIPTION "confirmed unit family content"
                      support/native_resource_overlay/native_resource_overlay.def
              FILES symbols.fragment.ini LIBS sdgo_script_registration)
 sdgo_add_mod(unit_catalog_server SERVER DESCRIPTION "owned imported-unit runtime bindings"
-             SOURCES mods/unit_catalog_server/server.cpp mods/unit_catalog_server/human_build_capture.cpp
-             FILES symbols.fragment.ini LIBS sdgo_skill_identity sdgo_human_unit_capture)
+             SOURCES mods/unit_catalog_server/server.cpp mods/unit_catalog_server/human_build_capture.cpp mods/unit_catalog_server/native_form_gate.cpp
+             FILES symbols.fragment.ini LIBS sdgo_skill_identity sdgo_human_unit_capture sdgo_unit_form_preflight)
 
 sdgo_add_mod(shop_labels DESCRIPTION "shop rental and Unicode labels" SOURCES mods/shop_labels/shop_labels.cpp FILES display.example.ini)
 sdgo_add_mod(shop_localization DESCRIPTION "Chinese shop localization" SOURCES mods/shop_localization/shop_localization.cpp mods/shop_localization/shop_search.cpp FILES zh-CN.ini symbols.fragment.ini LIBS user32)
@@ -1630,6 +1633,9 @@ if(BUILD_TESTING)
     add_library(native_unit_form_capture_probe SHARED tests/native_unit_form_capture_probe.cpp)
     target_link_libraries(native_unit_form_capture_probe PRIVATE sdgo_api)
     sdgo_strict(native_unit_form_capture_probe)
+    add_library(native_unit_form_gate_probe SHARED tests/native_unit_form_gate_probe.cpp)
+    target_link_libraries(native_unit_form_gate_probe PRIVATE sdgo_api)
+    sdgo_strict(native_unit_form_gate_probe)
     add_library(native_unit_transform_context_probe SHARED tests/native_unit_transform_context_probe.cpp)
     target_link_libraries(native_unit_transform_context_probe PRIVATE sdgo_native_unit_transform_context)
     sdgo_strict(native_unit_transform_context_probe)
@@ -1663,6 +1669,10 @@ if(BUILD_TESTING)
     target_link_libraries(unit_battle_definition_test PRIVATE sdgo_api)
     sdgo_strict(unit_battle_definition_test)
     add_test(NAME unit_battle_definition_test COMMAND unit_battle_definition_test)
+    add_executable(unit_form_preflight_test tests/unit_form_preflight_test.cpp)
+    target_link_libraries(unit_form_preflight_test PRIVATE sdgo_unit_form_preflight)
+    sdgo_strict(unit_form_preflight_test)
+    add_test(NAME unit_form_preflight_test COMMAND unit_form_preflight_test)
     add_test(NAME unit_battle_definition_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_battle_definition.py" -v)
     set_tests_properties(unit_battle_definition_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
