@@ -58,7 +58,9 @@ class MissionBehaviorManagerTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        # Hosts are canonicalized by Workspace. Resolve the fixture root too
+        # so failure injection also matches Windows temporary 8.3 aliases.
+        self.root = Path(temporary.name).resolve()
         contracts = self.root / "contracts"
         contracts.mkdir()
         self.workspace = Workspace(self.root / "workspace", contracts)

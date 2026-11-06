@@ -613,9 +613,32 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
             except Exception:
                 if time.monotonic()>deadline: raise RuntimeError('Owned application SQL databases not ready') from None
                 time.sleep(.5)
+        # Select native channels before requiring or installing their payload.
+        # Inactive folders are not participants in this sealed server job.
+        configured={Path(row.attrib['Path'].replace('\\','/')).parent.name
+            for row in ET.parse(startup_xml).getroot().findall('Process')
+            if row.attrib.get('Run','').lower()=='true'}
+        db=sql_connect(private)
+        try:
+            channels=[{'port':int(r[0]),'server_id':int(r[1])} for r in db.cursor().execute(
+                'SELECT AddrPT,ServerID FROM dbo.tbl_ChannelInfo ORDER BY AddrPT').fetchall()]
+        finally:db.close()
+        enabled_ports={row['port'] for row in channels}
+        selected=[spec for spec in manifest['services'] if spec['folder'] in configured and
+            (not spec['folder'].startswith('Battle') or spec['port'] in enabled_ports)]
+        if native_local:
+            selected.sort(key=lambda spec: spec['folder']=='WorldServer')
+        skipped=[spec['folder'] for spec in manifest['services'] if spec not in selected]
+        login_port=int(client['plan']['login_port'])
+        assert_listener_endpoints_free(
+            target_ip,[spec['port'] for spec in selected]+[login_port]
+        )
+        write(work/'launch-selection.json',{'native_xml':str(startup_xml),'database_channels':channels,
+            'selected':[{'folder':x['folder'],'port':x['port']} for x in selected],'skipped':skipped})
+        emit('launch_selection',selected=len(selected),skipped=skipped)
         stage_server=stage/'server'
         payload_receipt=[]
-        for owned_spec in manifest['services']:
+        for owned_spec in selected:
             owned_folder=Path(owned_spec['exe']).parent
             if not owned_folder.is_relative_to(work/'Server'):raise RuntimeError('Owned payload path escaped')
             for core_file in ('winmm.dll','sdgo/core.dll'):
@@ -685,32 +708,6 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                     if re.match(r'(?i)^[a-z]:[\\/]',value) and not Path(value).resolve().is_relative_to(work):
                         raise RuntimeError('Copied Mod still points outside its owned backend: '+copied_config.parent.name+'/'+key)
 
-        # A copied folder is not an enabled native channel. Keep the original
-        # Unit Support Info count check and launch only configured hosts.
-        configured={Path(row.attrib['Path'].replace('\\','/')).parent.name
-            for row in ET.parse(startup_xml).getroot().findall('Process')
-            if row.attrib.get('Run','').lower()=='true'}
-        db=sql_connect(private)
-        try:
-            channels=[{'port':int(r[0]),'server_id':int(r[1])} for r in db.cursor().execute(
-                'SELECT AddrPT,ServerID FROM dbo.tbl_ChannelInfo ORDER BY AddrPT').fetchall()]
-        finally:db.close()
-        enabled_ports={row['port'] for row in channels}
-        selected=[spec for spec in manifest['services'] if spec['folder'] in configured and
-            (not spec['folder'].startswith('Battle') or spec['port'] in enabled_ports)]
-        if native_local:
-            # World actively connects to its peers while initializing. Starting
-            # it last lets those native listeners accept its first table stream
-            # instead of racing World initialization and losing that stream.
-            selected.sort(key=lambda spec: spec['folder']=='WorldServer')
-        skipped=[spec['folder'] for spec in manifest['services'] if spec not in selected]
-        login_port=int(client['plan']['login_port'])
-        assert_listener_endpoints_free(
-            target_ip,[spec['port'] for spec in selected]+[login_port]
-        )
-        write(work/'launch-selection.json',{'native_xml':str(startup_xml),'database_channels':channels,
-            'selected':[{'folder':x['folder'],'port':x['port']} for x in selected],'skipped':skipped})
-        emit('launch_selection',selected=len(selected),skipped=skipped)
         for spec in selected:
             exe=Path(spec['exe']);folder=exe.parent
             if not exe.is_relative_to(work/'Server') or game_test.sha256(exe)!=spec['sha256']: raise RuntimeError('Copied service identity changed')
