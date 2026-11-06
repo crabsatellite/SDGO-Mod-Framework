@@ -9,11 +9,11 @@
 [安装说明](docs/setup.zh-CN.md) · [统一 Mod Manager](docs/mod-manager.zh-CN.md) · [最新发布](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
 
 服主与维护人员通过 **SDGO Mod Manager** 安装、配置和[更新](docs/mod-manager.zh-CN.md#更新)功能，
-客户端目录顶部的「0_MOD管理（服主专用）」可直接打开它。普通玩家照常使用原游戏启动器，按服主提供的方式更新，
-不要自行修改 Mod，以免与服务器配置不匹配。
+客户端目录顶部的「0_更新与管理」可直接打开它。玩家可在 Manager 更新服主提供的完整客户端，游戏仍使用原来的启动入口；共享配置由服主维护。
 服主自己的「仅本地」扩展也可以放进 Manager 管理，它们不会被打包或导出分发。
 默认跟随我们提供的基础整合包。服主需要自行维护时，明确选择「服主 DIY」接管；接管后由服主维护配置、脚本、素材、兼容性与发布版本。
 [服主整合包更新](docs/owner-updates.zh-CN.md)支持审阅并采用上游组件、发布服主确认的版本，玩家只跟随该服主的来源。
+Manager 会检查模块依赖、内容退役和数据变更影响，区分配置保存与运行生效；完整来源的程序、资源和 Mod 统一更新，保留个人配置与已有内容。详见[更新与维护保护](docs/mod-manager.zh-CN.md#依赖数据与生效状态)。
 本页仅列出功能概览。具体配置、玩法操作、兼容性与排错方法见各功能文档。
 
 功能名后的 Beta、Experimental 表示发布阶段，未标注的为 Stable：

@@ -2,11 +2,11 @@
 
 [简体中文](mod-manager.zh-CN.md) · [Back to the feature index](../README.md)
 
-**For server owners and maintainers.** Ordinary players keep using the game launcher and follow their server
-owner's installation and update instructions. Client Mods that do not match the server configuration can prevent
-joining, cause disconnects or crash the game. A notice at the top of every Manager page says the same.
+Manager handles client updates, Mod configuration and owner tools. Players use the server owner's client package or update.
+A client with a complete-runtime source opens the update page directly. Shared Mods and content remain the owner's responsibility;
+the game keeps its normal launch entry.
 
-Open Manager from **0_MOD管理（服主专用）** at the top of the client folder, or from **SDGO Mod Manager.exe** in the
+Open Manager from **0_更新与管理** at the top of the client folder, or from **SDGO Mod Manager.exe** in the
 framework package. The first normal launch creates the folder entry; **创建目录入口** (create folder entry) restores a
 missing one, and existing entries keep their workspace. No desktop shortcut is created.
 
@@ -48,7 +48,42 @@ How saving works is stated on every page:
 - The capsule machine list and editor scroll separately; the editor's save button and the footer's export and
   **导入到游戏** (apply to game) stay in view.
 
+## Dependencies, data and activation
+
+Manager checks required and optional dependencies, interface versions, conflicts and loading cycles before toggles,
+category changes, setting writes and runtime installations. Required providers must be enabled. Optional providers may be absent,
+but enabled providers must satisfy the declared interface. Installed unit, operator and capsule content protects its required runtime
+from accidental retirement. Known older installations receive the same data safeguards without rewriting their history or IDs.
+
+Upgrading Manager or the framework performs no automatic SQL migration, switch reset or content removal.
+Explicit unit, capsule, operator and collection-rule applications present their data impact before confirmation.
+Fixed catalog writes require the selected native service group to stop and use a matching core with maintenance receipts.
+Manager never stops native services for the operator. Maintenance of a remote database must run on a machine where the full native
+service group can be verified.
+
+Saved configuration, committed data and observed activation are separate states. Hot reload needs an acknowledgement for the exact
+configuration revision; other settings wait for the next process start. Fixed catalogs remain pending until new native processes,
+listeners and current table-loading completion are observed. New acquisition paths wait for activation. Existing content without a
+new receipt retains its legacy status. Interrupted changes keep recovery records and are not reported as rolled back or active.
+
 ## Updates
+
+### Complete clients
+
+The server owner's client package or update may supply `sdgo/client-source.json`. The same Manager installs, checks, updates and recovers
+the complete runtime: original programs, resource archives and matching Mods. Public framework Releases continue to contain framework
+and Mod files only. Place the matching Manager and source descriptor in a dedicated client folder, then review and confirm the complete update.
+
+Sources pin the publisher and support matching Git SSH/HTTPS mirrors using existing local Git identities. Runtime files are checked against
+raw Git objects; large original archives use verified segments and a final digest, reusing intact segments. Login/graphics preferences,
+authored Mod parameters, declared independent configurations, local-only Mods and custom files not explicitly retired are preserved.
+Retired files have recovery copies. Interrupted updates can be recovered; externally modified files are not forcibly overwritten.
+
+An embedded player Manager follows the same complete source for its own program, preventing independent updaters from replacing each other.
+Mod-only synchronization does not apply to a complete-source client. All-source failure preserves the installed version and displays the reason.
+Updates wait for the game to close and block program startup during executable swaps. A self-update uses a normal Manager restart handoff.
+
+### Framework and Mod Releases
 
 Open **更新** (Update) in the sidebar. New installations default to **Stable**: only published stable features are installed. **Beta** includes Stable and Beta features and follows the newest available release; development diagnostics are excluded from both channels. Switching back to Stable leaves existing Beta and custom Mods in place and updates only the features in the Stable package.
 
