@@ -74,7 +74,7 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 | 保管库一键领取 <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
 | 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化商品名称、说明、选项和涂装机体预览，可用中文名称搜索并组合等级、币种筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
 | 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 右键好友（在线或离线均可），在机体管理中选机赠送，对方在保管库接受或退还；默认关闭，由服主开启 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
-| 机体族导入（Beta） <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | 在 Mod Manager 导入机体包、编辑技能／浮游依赖字段、保存脚本声明，制作设计图和活动奖池，并可把恢复出的整套阵容（单形态、互相变形、单向变形）批量发布 | [使用说明](docs/unit-import.zh-CN.md) |
+| 机体族导入（Beta） <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | 在 Mod Manager 导入机体包、编辑技能／浮游依赖字段、保存脚本声明，制作设计图和活动奖池，并可把恢复出的整套阵容（单形态、互相变形、单向变形、自变形，以及第三形态的入口形态）批量发布 | [使用说明](docs/unit-import.zh-CN.md) |
 
 <!-- /mod-category:gameplay -->
 

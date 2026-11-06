@@ -372,8 +372,9 @@ python -B -m tools.gunion.publisher programs  --config <私有配置.json>
 python -B -m tools.gunion.publisher assemble  --config <私有配置.json>
 ```
 
-- **families** 按完整记录给每个机体上下文分类：单形态、互相变形的双形态、单向双形态。自变形回环和第三、第四个入口
-  形态记入 `deferred_entries` 并附原因；缺模型的上下文记入 `excluded_contexts`。
+- **families** 按完整记录给每个机体上下文分类：单形态、互相变形的双形态、单向双形态、自变形回环
+  （`native-self-transform-v1`）和入口形态（变入互变双形态之一的第三形态，`native-entry-forms-v1`）。原生运行时无法表达的
+  结构记入 `deferred_entries` 并附原因；缺模型的上下文记入 `excluded_contexts`。
 - **resources** 遍历每个族的资源图（模型、动作、纹理、特效、图片、声音）：与基线相同的文件直接复用，基线没有的文件
   按原路径发布，与基线不同的文件改用带所有者哈希的别名发布，并改写所有类型化引用（记录、模型材质、特效、
   图片帧）。该目录原生读取器不会打开的扩展名（例如 `txrs` 下的 `.psd`）记为 `unsupported`，不发布。
@@ -400,7 +401,12 @@ python -B -m tools.gunion.publisher assemble  --config <私有配置.json>
 可信的服务端控制器在行写入后用 `owner.units.form_graph_runtime.prepare_native_from_cursor` 编译它们，把 `form-graphs.bin`
 放到 `unit_catalog_server` Mod 目录、把 `sdgo/install-state/unit-form-authority.bin` 放到每个战斗主机；
 之后服务端 Mod 会把允许的第三形态写入未激活的原生槽，客户端 `unit_catalog`（`FormChains=1`）在原生交换前
-把备用记录／模型改指向该形态。
+把备用记录／模型改指向该形态。战斗单位销毁时，客户端把当前使用中的一对形态交给原版析构流程，由它只释放正在使用的模型。
+`FormChains=0` 关闭客户端部分，入口形态退回原生的双形态路径。
+
+配置里写了 `existing_catalog`（已安装 `unit_catalog` 的 `catalog.bin`）时，装配阶段会把该安装的记录、族、注册信息和
+归档资源一并带入新包，所以安装整套机体不会丢掉之前导入的机体。已安装的归档必须仍与其封存值一致；带入的资源与本次
+发布同路径的资源内容不同时，装配直接停止，不会替换其中任何一方。
 
 ### 用 GameTest 截图和核对
 

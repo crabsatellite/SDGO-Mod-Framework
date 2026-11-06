@@ -484,8 +484,9 @@ python -B -m tools.gunion.publisher assemble  --config <private-config.json>
 ```
 
 - **families** classifies every recovered unit context by its complete records: single form, reciprocal two-form
-  link or one-way link. Self-transform loops and third/fourth entry forms are listed in `deferred_entries` with a
-  reason; contexts whose models are missing are `excluded_contexts`.
+  link, one-way link, self-transform loop (`native-self-transform-v1`) or entry variant (a third form that enters
+  one form of a reciprocal pair, `native-entry-forms-v1`). Shapes the native runtime cannot express are listed in
+  `deferred_entries` with a reason; contexts whose models are missing are `excluded_contexts`.
 - **resources** walks each family's resource graph (models, animations, textures, effects, sprites, sounds), keeps
   baseline-identical files, ships absent files under their logical path and aliases files that differ from the
   baseline under an owner-hashed name, rewriting every typed reference (records, model materials, effects, sprite
@@ -522,7 +523,14 @@ list groups the core family and its entry families under one graph owner. The tr
 them with `owner.units.form_graph_runtime.prepare_native_from_cursor` after the rows are installed and places
 `form-graphs.bin` in the `unit_catalog_server` Mod directory and `sdgo/install-state/unit-form-authority.bin` on
 each battle host; the server Mod then composes an allowed third form into the inactive native bank, and the client's
-`unit_catalog` (`FormChains=1`) rebases its alternate record/model to that form before the native swap.
+`unit_catalog` (`FormChains=1`) rebases its alternate record/model to that form before the native swap. When the
+battle unit is destroyed, the client hands the live pair to the original destructor so it frees exactly the models
+that are in use. `FormChains=0` turns the client part off and leaves entry variants on their native two-form path.
+
+When the config names `existing_catalog` (the `catalog.bin` of an installed `unit_catalog`), the assembler carries
+that installation's records, families, registrations and overlay resources into the new package, so installing the
+roster keeps units imported earlier. The installed overlay must still match its seal. A carried resource that
+differs from a roster resource with the same path stops the assembly instead of replacing either one.
 
 ### GameTest checks and captures
 
