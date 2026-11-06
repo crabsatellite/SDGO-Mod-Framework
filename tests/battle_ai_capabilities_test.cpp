@@ -8,6 +8,7 @@
 #include "../mods/battle_ai/difficulty.h"
 #include "../mods/battle_ai/native_defence.h"
 #include "../mods/battle_ai/native_protection.h"
+#include "../mods/battle_ai/native_form_switch.h"
 
 namespace {
 
@@ -49,6 +50,19 @@ struct Fixture {
     std::uint8_t definition[0x300]{};
     std::uint8_t fsm[0xA00]{};
     std::uint8_t weapons[3][0x700]{};
+    std::uint8_t parked[0x300]{},movement[0x300]{},otherWeapon[0x700]{};
+
+    void PrepareOtherForm() {
+        PutPointer(unit,0xAB0,parked);PutPointer(unit,0x9C8,movement);
+        PutPointer(movement,0x21C,unit);PutPointer(movement,0x224,fsm);
+        PutPointer(movement,4,movement+0x20);
+        Put(definition,0x13C,std::uint32_t(20002));definition[0x272]=3;
+        Put(parked,0,std::uint32_t(20002));parked[0x140]=3;parked[0x247]=1;
+        Put(parked,0x249,std::uint32_t(52001));
+        std::memcpy(otherWeapon,weapons[1],sizeof(otherWeapon));Put(otherWeapon,0,std::uint32_t(52001));
+        Put(fsm,0x56C,std::int16_t(3));PutPointer(fsm,0x56C+0xC,otherWeapon);
+        Put(unit,0x38,std::int32_t(1000));Put(unit,0x3C,std::int32_t(1000));
+    }
 
     Fixture() {
         PutPointer(unit, 0x9C4, definition);
@@ -97,6 +111,47 @@ struct Fixture {
 
 int main() {
     static_assert(sizeof(void*) == 4, "GOnline capability fixture is Win32");
+    {
+        Fixture forms;forms.PrepareOtherForm();
+        std::uint8_t unitBefore[sizeof(forms.unit)],fsmBefore[sizeof(forms.fsm)];
+        std::memcpy(unitBefore,forms.unit,sizeof(unitBefore));std::memcpy(fsmBefore,forms.fsm,sizeof(fsmBefore));
+        battle_ai::native::Capabilities current{},other{};
+        Check(battle_ai::native::ReadCapabilities(forms.unit,current)&&current.weapons[0].kind==battle_ai::native::WeaponKind::Melee&&
+              battle_ai::native::ReadOtherFormCapabilities(forms.unit,other)&&other.unitId==20002&&other.alternate&&
+              other.selectedSlot==-1&&other.weapons[0].kind==battle_ai::native::WeaponKind::Hitscan&&other.weapons[0].ammoReady,
+              "inactive form reads its own ranged weapon and real bank ammunition independently of the current melee slot");
+        Check(std::memcmp(unitBefore,forms.unit,sizeof(unitBefore))==0&&std::memcmp(fsmBefore,forms.fsm,sizeof(fsmBefore))==0,
+              "previewing another form never changes a live definition, form flag, binding or ammunition");
+        Put(forms.fsm,0x56C,std::int16_t(0));
+        Check(battle_ai::native::ReadOtherFormCapabilities(forms.unit,other)&&!other.weapons[0].ammoReady,
+              "an empty inactive bank is observed empty instead of inventing a reload");
+        auto transition=battle_ai::native::ReadFormTransition(forms.unit);
+        Check(transition.known&&transition.available&&transition.allowed&&!transition.busy,
+              "native unconditional transformation is available through a real parked peer definition");
+        PutPointer(forms.movement,8,forms.movement+0xD4);
+        Check(battle_ai::native::TransformOwnsMotor(forms.unit)&&!battle_ai::native::ReadFormTransition(forms.unit).allowed,
+              "a queued native transformation owns the motor before its Entry runs");
+        Put(forms.movement,8,std::uint32_t(0));forms.parked[0x140]=1;
+        Put(forms.unit,0x38,std::int32_t(400));
+        Check(!battle_ai::native::ReadFormTransition(forms.unit).allowed,"native low-health transformation rejects the exact forty-percent boundary");
+        Put(forms.unit,0x38,std::int32_t(399));
+        Check(battle_ai::native::ReadFormTransition(forms.unit).allowed,"native low-health transformation admits a genuine value below forty percent");
+        forms.parked[0x140]=2;
+        Check(battle_ai::native::ReadFormTransition(forms.unit).allowed,"native standard-bank full-ammo transformation uses the third weapon counter");
+        Put(forms.fsm,0x24C+2*0xC8,std::int16_t(3));forms.parked[0x140]=4;
+        Check(!battle_ai::native::ReadFormTransition(forms.unit).allowed,"native ammo-count transformation rejects three rounds");
+        Put(forms.fsm,0x24C+2*0xC8,std::int16_t(4));
+        Check(battle_ai::native::ReadFormTransition(forms.unit).allowed,"native ammo-count transformation admits more than three rounds");
+        forms.parked[0x140]=5;
+        Check(battle_ai::native::ReadFormTransition(forms.unit).allowed,"native alternate-bank full-ammo restriction reads the independent bank");
+        forms.parked[0x140]=6;Put(forms.fsm,0x56C+2*0xC8,std::int16_t(3));
+        Check(!battle_ai::native::ReadFormTransition(forms.unit).allowed,"native alternate ammo-count restriction is preserved");
+        Put(forms.fsm,0x56C+2*0xC8,std::int16_t(4));
+        Check(battle_ai::native::ReadFormTransition(forms.unit).allowed,"native alternate ammo-count restriction admits its actual counter");
+        Put(forms.parked,0,std::uint32_t(99999));
+        Check(!battle_ai::native::ReadOtherFormCapabilities(forms.unit,other)&&!battle_ai::native::ReadFormTransition(forms.unit).available,
+              "an unrelated parked definition cannot be used as a transform destination");
+    }
     auto page = static_cast<std::uint8_t*>(
         VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
     Check(page != nullptr, "readable-region cache fixture allocates one private page");
