@@ -94,7 +94,8 @@ ready/selection poses (see [developer notes](#gametest-checks-and-captures)), up
   its own inventory root; its first transform uses the original two-bank mechanism, and the following hops between
   the pair's two forms need the form-graph runtime: the server Mod composes the third form into the inactive native
   bank when the installed graph allows the edge, and the client Mod rebases its record/model pair before the native
-  swap. Without the installed graph authority the server keeps refusing the second hop, so the unit stays in the
+  swap. After the entry hop the client also treats the pair form it landed on as the base form (the pair's
+  transform animations belong to the other form), so the next hop plays the pair's own animations. Without the installed graph authority the server keeps refusing the second hop, so the unit stays in the
   pair's first form.
 - A missing skill blocks confirmation by default. For skill slots 1 and 2 the panel offers **移除缺失技能 … 后导入**
   (remove the missing skill and import): every form referencing it gets `0` on both client and server, the source
