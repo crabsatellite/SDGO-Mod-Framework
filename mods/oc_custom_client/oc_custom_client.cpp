@@ -318,6 +318,12 @@ void RenderWindows(bool active, const ui::EntryView& entry, const ui::OverView& 
     }
 }
 
+void HideUnderWindows() noexcept;
+void RestoreHidden() noexcept;
+void ForgetHidden() noexcept;
+void SetTabLook(bool oc) noexcept;
+bool OcModeActive(bool active);
+
 void Render() {
     if (!g_ui.Alive()) return;
     const auto& s = g_state_data;
@@ -328,8 +334,8 @@ void Render() {
     entry.visible = oc;
     entry.lit = oc && ChallengeAvailable(s) && !s.challenge_open;
     ui::OverView over;
-    // The allocation window (OC tab) and the challenge window never showed together.
-    over.visible = oc && !s.challenge_open;
+    // The allocation window is the OC tab's content; it never showed with the challenge window.
+    over.visible = oc && OcModeActive(active) && !s.challenge_open;
     if (oc) {
         static const std::uint32_t kLabels[stat_count] = {126638, 126639, 126640, 126641, 126642, 126643};
         static const wchar_t* kFallback[stat_count] = {L"推进力", L"耐久力", L"攻击力", L"防御力", L"机动力", L"必杀技"};
@@ -375,6 +381,12 @@ void Render() {
     confirm.line1 = s.confirm_line1;
     confirm.cancel = s.confirm != Confirm::message;
     RenderWindows(active, entry, over, challenge, confirm);
+    if (active) {
+        SetTabLook(OcModeActive(active));
+        HideUnderWindows();
+    } else {
+        RestoreHidden();
+    }
 }
 
 // --- Requests ---------------------------------------------------------------
@@ -753,7 +765,10 @@ void CALLBACK Tick(HWND, UINT, UINT_PTR, DWORD) {
     g_tick_active = true;
     __try {
         TraceActiveRecord();
-        if (g_ui.Loaded() && !g_ui.Alive()) g_ui.Detach();
+        if (g_ui.Loaded() && !g_ui.Alive()) {
+            ForgetHidden(); // the page and its siblings are gone
+            g_ui.Detach();
+        }
         PumpQueue();
         Render();
     } __finally {
@@ -1005,6 +1020,274 @@ __declspec(naked) void DeriveCallDetour() {
     }
 }
 
+// --- OC tab and overlap --------------------------------------------------------
+//
+// The OC-era factory had a 终极强化 tab (OverCustomRadio in uirs\0801/1028)
+// whose page showed the allocation window where the current pages show the
+// factory inventory. The tab is re-created in the current tab bar after
+// 经验值转换 (the bar is reflowed to fit eight tabs); it opens the upgrade page
+// in OC mode. While an OC window is open, native dialogs lying under it (the
+// inventory) are hidden and restored when it closes.
+
+using RefreshGeometryFn = void(__thiscall*)(void*);
+using TabCallback = void(__stdcall*)(void*, std::uint32_t, std::uintptr_t, void*);
+using TabUpdate = void(__thiscall*)(void*);
+TabCallback g_tab_callback_original = nullptr;
+TabUpdate g_tab_update_original = nullptr;
+RefreshGeometryFn g_refresh_geometry = nullptr;
+void* g_tab_vtable = nullptr;
+constexpr std::uint32_t kRadioEvent = 0x301;
+constexpr std::size_t kTabRadios = 0xD4;   // seven radio controls cached by the tab menu service
+constexpr std::size_t kTabRadioCount = 7;
+
+struct OcTab {
+    void* service = nullptr;
+    void* dialog = nullptr;
+    void* button = nullptr;
+    void* unit_up = nullptr;
+    bool mode = false;        // the upgrade page shows the OC tab content
+    bool requested = false;   // entering OC mode once the upgrade page is active
+};
+OcTab g_tab;
+
+struct HiddenDialog {
+    void* dialog = nullptr;
+    std::uint8_t visible = 0;
+};
+std::array<HiddenDialog, 16> g_hidden{};
+std::size_t g_hidden_count = 0;
+
+template <class T>
+void PutValue(void* pointer, std::size_t offset, T value) {
+    std::memcpy(static_cast<std::uint8_t*>(pointer) + offset, &value, sizeof(value));
+}
+
+struct Rect {
+    float left = 0, top = 0, right = 0, bottom = 0;
+    bool empty() const { return right <= left || bottom <= top; }
+};
+
+Rect RectOf(void* dialog) {
+    Rect rect;
+    rect.left = Read<float>(dialog, 0x148);
+    rect.top = Read<float>(dialog, 0x14C);
+    rect.right = rect.left + static_cast<float>(Read<int>(dialog, 0x154));
+    rect.bottom = rect.top + static_cast<float>(Read<int>(dialog, 0x158));
+    return rect;
+}
+
+void ForgetHidden() noexcept { g_hidden_count = 0; }
+
+void RestoreHidden() noexcept {
+    __try {
+        for (std::size_t index = 0; index < g_hidden_count; ++index)
+            if (g_hidden[index].dialog) PutValue<std::uint8_t>(g_hidden[index].dialog, 0x162, g_hidden[index].visible);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    g_hidden_count = 0;
+}
+
+bool OwnDialog(void* dialog) {
+    if (dialog == g_ui.page_dialog()) return true;
+    for (int window = 0; window < ui::window_count; ++window)
+        if (dialog == g_ui.window_dialog(static_cast<ui::Window>(window))) return true;
+    return false;
+}
+
+// Hide the frame's other dialogs that lie mostly under the open OC windows.
+void HideUnderWindows() noexcept {
+    __try {
+        Rect area;
+        bool any = false;
+        for (int window = 0; window < ui::window_count; ++window) {
+            const auto id = static_cast<ui::Window>(window);
+            if (!g_ui.window_shown(id) || !g_ui.window_dialog(id)) continue;
+            const auto rect = RectOf(g_ui.window_dialog(id));
+            if (!any) area = rect;
+            area.left = std::min(area.left, rect.left);
+            area.top = std::min(area.top, rect.top);
+            area.right = std::max(area.right, rect.right);
+            area.bottom = std::max(area.bottom, rect.bottom);
+            any = true;
+        }
+        if (!any) {
+            RestoreHidden();
+            return;
+        }
+        static bool traced = false;
+        for (void* owner : {Read<void*>(g_ui.page_dialog(), 0x15C), Read<void*>(g_ui.window_dialog(ui::window_over), 0x15C)}) {
+            if (!owner) continue;
+            auto* head = Read<std::uint8_t*>(owner, 0x23C);
+            if (!head) continue;
+            std::size_t guard = 0;
+            for (auto* node = Read<std::uint8_t*>(head); node && node != head && ++guard < 512; node = Read<std::uint8_t*>(node)) {
+                void* child = Read<void*>(node, 8);
+                if (!child || OwnDialog(child)) continue;
+                const auto rect = RectOf(child);
+                if (rect.empty()) continue;
+                const float width = rect.right - rect.left, height = rect.bottom - rect.top;
+                if (width >= 1000.0f || height >= 740.0f) continue; // full-screen layers (background, unit view)
+                const float overlap_w = std::min(rect.right, area.right) - std::max(rect.left, area.left);
+                const float overlap_h = std::min(rect.bottom, area.bottom) - std::max(rect.top, area.top);
+                if (overlap_w <= 0 || overlap_h <= 0 || overlap_w * overlap_h < 0.6f * width * height) continue;
+                bool known = false;
+                for (std::size_t index = 0; index < g_hidden_count; ++index) known = known || g_hidden[index].dialog == child;
+                const auto visible = Read<std::uint8_t>(child, 0x162);
+                if (!known && visible && g_hidden_count < g_hidden.size()) {
+                    g_hidden[g_hidden_count++] = {child, visible};
+                    if (!traced) {
+                        char line[160];
+                        std::snprintf(line, sizeof(line), "oc windows cover native dialog %p at %.0f,%.0f %.0fx%.0f",
+                                      child, rect.left, rect.top, width, height);
+                        Log(SDGO_LOG_INFO, line);
+                    }
+                }
+                if (visible) PutValue<std::uint8_t>(child, 0x162, 0);
+            }
+        }
+        traced = true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+void SetTabLook(bool oc) noexcept {
+    __try {
+        if (g_tab.button) PutValue<std::uint16_t>(g_tab.button, 0x21C, oc ? 1 : 0);
+        if (g_tab.unit_up && oc) PutValue<std::uint8_t>(g_tab.unit_up, 0x21C, 0);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+bool OcModeActive(bool active) {
+    if (g_tab.requested && active) g_tab.mode = true;
+    return g_tab.mode && active;
+}
+
+void ExitOcMode() {
+    if (!g_tab.mode && !g_tab.requested) return;
+    g_tab.mode = g_tab.requested = false;
+    SetTabLook(false);
+    RestoreHidden();
+}
+
+bool CreateTab(void* service) {
+    void* component = static_cast<std::uint8_t*>(service) + kPageComponent;
+    void* dialog = Read<void*>(component, 0x28);
+    if (!dialog || !g_bindings.add || !g_bindings.find || !g_bindings.skin || !g_bindings.text) return false;
+    std::array<void*, kTabRadioCount> radios{};
+    for (std::size_t index = 0; index < kTabRadioCount; ++index) {
+        radios[index] = Read<void*>(service, kTabRadios + index * sizeof(void*));
+        if (!radios[index] || Read<void*>(radios[index], 0x15C) != dialog) return false;
+    }
+    const std::wstring unit_up_name = L"UnitUpRadio";
+    const auto native_unit_up = ui::ViewOf(unit_up_name);
+    void* unit_up = g_bindings.find(dialog, &native_unit_up, 12);
+    if (!unit_up || Read<void*>(unit_up, 0x15C) != dialog) return false;
+    // Reflow: the native radios ordered by position, the OC tab right after 经验值转换.
+    std::array<void*, kTabRadioCount> ordered = radios;
+    std::sort(ordered.begin(), ordered.end(),
+              [](void* a, void* b) { return Read<float>(a, 0x148) < Read<float>(b, 0x148); });
+    const int width = Read<int>(unit_up, 0x154);
+    const int height = Read<int>(unit_up, 0x158);
+    const float top = Read<float>(unit_up, 0x14C);
+    const float step = 125.0f;
+    float x = 12.0f, oc_x = 0.0f;
+    for (void* radio : ordered) {
+        PutValue<float>(radio, 0x148, x);
+        if (g_refresh_geometry) g_refresh_geometry(radio);
+        x += step;
+        if (radio == unit_up) {
+            oc_x = x;
+            x += step;
+        }
+    }
+    const std::wstring name = L"OverCustomRadio";
+    const auto native_name = ui::ViewOf(name);
+    g_bindings.add(dialog, &native_name, static_cast<int>(oc_x), static_cast<int>(top), width, height, 0);
+    void* button = g_bindings.find(dialog, &native_name, 4);
+    if (!button || Read<void*>(button, 0x15C) != dialog) return false;
+    PutValue<std::uint8_t>(button, 0x168, 0);
+    // Same skins and caption style as the native tab radios.
+    auto** first = Read<std::uint8_t**>(unit_up, 0x1A4);
+    auto** last = Read<std::uint8_t**>(unit_up, 0x1A8);
+    const auto count = first && last && last >= first ? static_cast<std::size_t>(last - first) : 0;
+    for (std::size_t index = 0; index < count && index < 3; ++index) {
+        if (!first[index] || !Read<void*>(first[index])) continue;
+        g_bindings.skin(button, reinterpret_cast<const ui::NativeString*>(first[index] + 4), Read<std::uint8_t>(first[index], 0x44),
+                        Read<std::uint32_t>(first[index], 0x3C), Read<std::uint32_t>(first[index], 0x40));
+    }
+    if (count < 3) {
+        const std::wstring sprite = L"sprs\\8464.spr";
+        const auto native_sprite = ui::ViewOf(sprite);
+        for (int state = 0; state < 3; ++state) g_bindings.skin(button, &native_sprite, 0, 0, 0);
+    }
+    std::uint32_t font = 1, color = 0xFFFFFFFF, shadow = 0xFF000000;
+    auto** items = Read<std::uint8_t**>(unit_up, 0x190);
+    auto** items_end = Read<std::uint8_t**>(unit_up, 0x194);
+    if (items && items_end && items_end > items && *items) {
+        font = Read<std::uint32_t>(*items, 0x6C);
+        color = Read<std::uint32_t>(*items, 0x58);
+        shadow = Read<std::uint32_t>(*items, 0x5C);
+    }
+    const auto caption = Text(126631, L"终极强化");
+    const auto native_caption = ui::ViewOf(caption);
+    g_bindings.text(button, 0, &native_caption, 2, std::max(0, (height - 14) / 2), std::max(1, width - 4), 14, color, shadow,
+                    0, font, 2);
+    PutValue<std::uint8_t>(button, 0x162, 1);
+    PutValue<std::uint8_t>(button, 0x163, 1);
+    PutValue<std::uint8_t>(button, 0x167, 1);
+    if (g_refresh_geometry) g_refresh_geometry(button);
+    g_tab.service = service;
+    g_tab.dialog = dialog;
+    g_tab.button = button;
+    g_tab.unit_up = unit_up;
+    char line[200];
+    std::snprintf(line, sizeof(line), "oc tab restored in the factory tab bar at x=%.0f (radio skins=%u, caption=%ls)", oc_x,
+                  static_cast<unsigned>(count), caption.c_str());
+    Log(SDGO_LOG_INFO, line);
+    return true;
+}
+
+void __fastcall TabUpdateHook(void* service, void*) {
+    g_tab_update_original(service);
+    const DWORD error = GetLastError();
+    __try {
+        if (Read<void*>(service) == g_tab_vtable && Read<std::uint8_t>(service, kServiceActive)) {
+            void* component = static_cast<std::uint8_t*>(service) + kPageComponent;
+            const bool alive = g_tab.button && g_tab.service == service && Read<void*>(component, 0x28) == g_tab.dialog &&
+                               Read<void*>(g_tab.button, 0x15C) == g_tab.dialog;
+            if (!alive) {
+                g_tab = OcTab{};
+                // The OC tab only appears while the server runs OC mode.
+                const auto& s = g_state_data;
+                if (s.mode_known && s.server_oc_mode) CreateTab(service);
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_tab = OcTab{};
+    }
+    SetLastError(error);
+}
+
+void __stdcall TabCallbackHook(void* service, std::uint32_t event, std::uintptr_t second, void* control) {
+    if (control && control == g_tab.button && service == g_tab.service) {
+        if (event == kButtonClickEvent) {
+            g_tab.requested = true;
+            const bool upgrade_active = g_ui.Alive() && PageActive();
+            if (upgrade_active) {
+                g_tab.mode = true;
+                Render();
+            } else if (g_tab.unit_up) {
+                // Open the upgrade page natively first, then show the OC content on it.
+                g_tab_callback_original(service, kRadioEvent, 0, g_tab.unit_up);
+            }
+        }
+        return;
+    }
+    if (event == kRadioEvent && service == g_tab.service) ExitOcMode();
+    g_tab_callback_original(service, event, second, control);
+}
+
 // --- Observer ---------------------------------------------------------------------
 
 int Snapshot(SdgoOcCustomClientSnapshotV2* output) {
@@ -1048,6 +1331,8 @@ int Snapshot(SdgoOcCustomClientSnapshotV2* output) {
     if (g_ui.Visible("over")) snapshot.windows |= SDGO_OC_WINDOW_OVER;
     if (g_ui.Visible("challenge")) snapshot.windows |= SDGO_OC_WINDOW_CHALLENGE;
     if (g_ui.Visible("confirm")) snapshot.windows |= SDGO_OC_WINDOW_CONFIRM;
+    if (g_tab.button) snapshot.windows |= SDGO_OC_WINDOW_TAB;
+    if (g_tab.mode) snapshot.windows |= SDGO_OC_WINDOW_TAB_ACTIVE;
     snapshot.confirm_text_id = s.confirm != Confirm::none ? s.confirm_text_id : 0;
     snapshot.challenge_items = s.items.count;
     for (std::size_t slot = 0; slot < s.items.count && slot < 10; ++slot) {
@@ -1100,6 +1385,11 @@ int Action(const SdgoOcCustomClientActionV2& request) {
 
 int Click(const char* window, const wchar_t* name) {
     if (GetCurrentThreadId() != g_ui_thread && g_ui_thread) return 0;
+    if (window && !std::strcmp(window, "tab")) {
+        if (!g_tab.button || !g_tab.service || !name || std::wcscmp(name, L"OverCustomRadio")) return 0;
+        TabCallbackHook(g_tab.service, kButtonClickEvent, 0, g_tab.button);
+        return 1;
+    }
     void* control = g_ui.Control(window, name);
     if (!control || !g_ui.Alive()) return 0;
     void* service = static_cast<std::uint8_t*>(g_ui.component()) - kPageComponent;
@@ -1173,6 +1463,16 @@ SDGO_MOD_ENTRY {
         !api->HookCode(mod, "oc_custom.client_upgrade_update", reinterpret_cast<void*>(&PageUpdateHook),
                        reinterpret_cast<void**>(&g_update_original)))
         return 0;
+    g_tab_vtable = api->Symbol(mod, "oc_custom.client_tab_menu_vtable");
+    g_refresh_geometry = reinterpret_cast<RefreshGeometryFn>(api->Symbol(mod, "friend_unit_gift.ui_refresh_geometry"));
+    if (!g_tab_vtable ||
+        !api->HookCode(mod, "oc_custom.client_tab_menu_update", reinterpret_cast<void*>(&TabUpdateHook),
+                       reinterpret_cast<void**>(&g_tab_update_original)) ||
+        !api->HookCode(mod, "oc_custom.client_tab_menu_callback", reinterpret_cast<void*>(&TabCallbackHook),
+                       reinterpret_cast<void**>(&g_tab_callback_original))) {
+        Log(SDGO_LOG_WARN, "oc: the factory tab menu hooks are unavailable; the OC tab is inactive");
+        return 0;
+    }
     if (api->SettingInt(mod, "BattleMobility", 1)) {
         g_derive = reinterpret_cast<DeriveFn>(api->Symbol(mod, "oc_custom.client_unit_derive"));
         if (!g_derive || !api->HookSite ||

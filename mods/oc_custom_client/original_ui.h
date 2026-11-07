@@ -130,6 +130,9 @@ public:
     void* Control(const char* window, const wchar_t* name) const noexcept;
     bool Visible(const char* window) const noexcept;
     bool entry_ready() const noexcept { return entry_button_ != nullptr; }
+    void* page_dialog() const noexcept { return page_dialog_; }
+    void* window_dialog(Window window) const noexcept { return dialogs_[window]; }
+    bool window_shown(Window window) const noexcept { return shown_[window]; }
     const char* last_failure() const noexcept { return last_failure_; }
 
 private:

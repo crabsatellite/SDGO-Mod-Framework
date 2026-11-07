@@ -11,6 +11,8 @@
 #define SDGO_OC_WINDOW_OVER 0x04u       // uirs\0794.uir allocation window
 #define SDGO_OC_WINDOW_CHALLENGE 0x08u  // uirs\0813.uir challenge window
 #define SDGO_OC_WINDOW_CONFIRM 0x10u    // uirs\0819.uir confirmation popup
+#define SDGO_OC_WINDOW_TAB 0x20u        // 终极强化 tab restored in the factory tab bar
+#define SDGO_OC_WINDOW_TAB_ACTIVE 0x40u // the upgrade page shows the OC tab content
 
 struct SdgoOcCustomClientSnapshotV2 {
     uint32_t size;
@@ -72,7 +74,7 @@ struct SdgoOcCustomClientActionV2 {
 
 // SdgoOcCustomClientClickV2 delivers a real UI event for an original control
 // to the page service's OnUIEvent (button 0x101, check box 0x401), exactly as
-// a mouse click does. window: "entry", "over", "challenge" or "confirm";
+// a mouse click does. window: "tab", "entry", "over", "challenge" or "confirm";
 // control: the original control name (for example L"SpeedUpBtn").
 using SdgoOcCustomClientGetSnapshotV2Fn = int(__cdecl*)(SdgoOcCustomClientSnapshotV2*);
 using SdgoOcCustomClientActionV2Fn = int(__cdecl*)(const SdgoOcCustomClientActionV2*);
