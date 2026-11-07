@@ -56,6 +56,7 @@ struct PacketWork {
     room_random_client::Result result;
     uint16_t opcode=0;
     const uint8_t* packet=nullptr;
+    bool orderedStart=false;
 };
 PacketWork GuardedPacket(BYTE* frame) {
     PacketWork work;
@@ -68,7 +69,16 @@ PacketWork GuardedPacket(BYTE* frame) {
             g_pending.Clear();
         if(work.opcode!=0x0861 && work.opcode!=0x098B && work.opcode!=0x06C3)
             return work;
-        work.result=g_sync.Process(context,work.opcode,work.packet);
+        // Repeated delivery of the exact held start belongs to that same
+        // generation. Keep any fresh records already collected for it.
+        if(work.opcode==0x06C3 && work.packet && g_pending.Active() &&
+           std::memcmp(g_pending.Packet(),work.packet,
+                       room_random_client::kStartPacketSize)==0)
+            return work;
+        work.orderedStart=work.opcode==0x06C3 &&
+            context.model && RandomRoom(context);
+        work.result=g_sync.Process(
+            context,work.opcode,work.packet,work.orderedStart);
         // A new genuine start supersedes any older held parser generation. Its
         // own parser hook below will either forward it or retain a fresh copy.
         if(work.opcode==0x06C3) {
@@ -91,7 +101,7 @@ void __stdcall OnPacket(BYTE* frame) {
     else if(result.reason && (opcode==0x0861 || opcode==0x098B || opcode==0x06C3))
         g_api->Log(g_mod,SDGO_LOG_WARN,"native %04X cache update skipped: context reason %u",opcode,result.reason);
     if(opcode==0x06C3 && (result.applied || result.mismatched))
-        g_api->Log(g_mod,result.mismatched ? SDGO_LOG_ERROR : SDGO_LOG_INFO,
+        g_api->Log(g_mod,result.mismatched && !work.orderedStart ? SDGO_LOG_ERROR : SDGO_LOG_INFO,
             "battle start cache: %u refreshed, %u mismatch; server unit %lu, cached unit %lu",
             result.applied,result.mismatched,static_cast<unsigned long>(result.model),static_cast<unsigned long>(result.cached));
     SetLastError(error);

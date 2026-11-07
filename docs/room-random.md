@@ -103,7 +103,10 @@ later selection for one slot does not discard another player's valid start data.
 the verified active room model takes precedence over a retained legacy cache pointer.
 
 In random rooms, the client holds the native start transition until every human's complete
-unit record, and the ship record in deck modes, matches this round. It also waits for each human's
+unit record, and the ship record in deck modes, arrives after this round's start notice. A cached
+record from a previous round cannot satisfy that wait, even when the model is identical; serials
+and attributes must come from the new notification. An identical repeated notice for the held start
+keeps the fresh records already received. It also waits for each human's
 native unit/ship update tasks to finish. After the genuine start is held, the local room-view request
 queued by the same loadout notice is obsolete. The Mod binds the exact live local state object,
 transfers its queued payload to the native cleanup owner, and returns control to the original scheduler,

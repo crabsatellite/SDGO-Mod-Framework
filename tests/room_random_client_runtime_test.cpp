@@ -418,12 +418,15 @@ int wmain(int argc,wchar_t** argv) {
     Put<void*>(modelVtable.data(),0x90,reinterpret_cast<void*>(&MissionShip));
     Put<uint8_t*>(startParser.data(),0x10,manager.data());
     Put<uint32_t>(missionRoom.data(),0x9EF,1001);Put<uint32_t>(missionRoom.data(),0x60F,15019);threeD=true;
+    SetTitle("fixture !rand");
     for(size_t i=0;i<frozen[0].size();++i)frozen[0][i]=static_cast<uint8_t>(i*13);
     Put<uint32_t>(frozen[0].data(),0x429,1001);Put<uint32_t>(frozen[0].data(),0x49,15019);
     const auto original=frozen[0];
     Put<uint32_t>(room.data(),0x57C,15019);startedModel=0;
     fillCalls=0;
-    dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
+    dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
+    dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
+    reinterpret_cast<room_random_client::ManagerUpdateFn>(&NativeManagerUpdate)(manager.data());
     Check(startedModel==(enabled?11032:15019),"real DLL corrects the frozen 3D mission source after the scene transition");
     Check(fillCalls==1,"native human converter executes exactly once");
     auto expected=original;
@@ -443,7 +446,9 @@ int wmain(int argc,wchar_t** argv) {
     Put<void*>(modelVtable.data(),0x8C,reinterpret_cast<void*>(&NormalSetShip));
     Put<void*>(modelVtable.data(),0x90,reinterpret_cast<void*>(&NormalShip));
     Put<uint32_t>(app.data(),0x4A0,18);room[5]=1;startedModel=0;
-    dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
+    dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
+    dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
+    reinterpret_cast<room_random_client::ManagerUpdateFn>(&NativeManagerUpdate)(manager.data());
     Check(startedModel==(enabled?11032:15019),"ordinary PvP also uses the corrected complete construction source");
     // The native 3D manager is authoritative even if an older legacy room
     // publication remains non-null. A matching owner in that stale buffer must
@@ -480,8 +485,8 @@ int wmain(int argc,wchar_t** argv) {
     Put<uint32_t>(room.data(),0x95C,1001);Put<uint32_t>(room.data(),0x57C,15019);
     Put<uint32_t>(frozen[0].data(),0x429,1001);Put<uint32_t>(frozen[0].data(),0x49,15019);
     startParserCalls=0;startParserConstructions=0;startedModel=0;
-    dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
     dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
+    dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
     Check(userStates[0].size()==2 && userStates[0][0]==0x0E &&
           userStates[0][1]==0x0C,
           "fixture queues the native loadout task before its local room-view request");
@@ -598,6 +603,124 @@ int wmain(int argc,wchar_t** argv) {
               "complete late record releases the held parser only after E and the replacement C settle");
         tick(manager.data());
 
+        // Two ordered starts may choose the same model. The second 06C3 must
+        // fence the first round's complete record so its old serial/attributes
+        // cannot authorize construction before this round's fresh 0861.
+        ResetUserQueues();rootStartQueued=false;
+        roomViewRuns=0;roomViewRequests=0;startParserCalls=0;
+        startParserConstructions=0;startedModels={};
+        Put<uint32_t>(app.data(),0x4A0,18);
+        Put<uint32_t>(room.data(),0,47);room[5]=8;SetTitle("same !rand");
+        Put<uint32_t>(room.data(),0x95C,1001);
+        Put<uint32_t>(room.data(),0x57C,11032);
+        Put<uint32_t>(frozen[0].data(),0x429,1001);
+        Put<uint32_t>(frozen[0].data(),0x49,11032);
+        auto sameStart=start;
+        Put<uint32_t>(sameStart.data(),0x20,1001);
+        Put<uint32_t>(sameStart.data(),0x2E,11032);
+        std::array<uint8_t,0x99> firstRoundUnit{};
+        Put<uint32_t>(firstRoundUnit.data(),0,11032);
+        Put<uint64_t>(firstRoundUnit.data(),8,0x111111111111ULL);
+        Put<uint32_t>(firstRoundUnit.data(),0x14,0xA1A1A1A1);
+        auto firstRoundNotice=room_random_sync::Packet(
+            0x0861,1001,0,47,firstRoundUnit);
+        dispatch(dispatcher.data(),0,0,0,0x06C3,sameStart.data());
+        dispatch(dispatcher.data(),0,0,0,0x0861,firstRoundNotice.data());
+        for(int i=0;i<3;++i)tick(manager.data());
+        Check(startParserCalls==1 && rootStartQueued,
+              "first identical-model round waits for its ordered fresh record");
+        tick(manager.data());
+        Check(room_random_client::Read<uint64_t>(
+                  lastConstruction.data(),0x49+8)==0x111111111111ULL &&
+              room_random_client::Read<uint32_t>(
+                  lastConstruction.data(),0x49+0x14)==0xA1A1A1A1,
+              "first round constructs from its complete serial and attributes");
+
+        ResetUserQueues();rootStartQueued=false;
+        roomViewRuns=0;roomViewRequests=0;startParserCalls=0;
+        startParserConstructions=0;startedModels={};
+        Put<uint32_t>(app.data(),0x4A0,18);
+        dispatch(dispatcher.data(),0,0,0,0x06C3,sameStart.data());
+        EnqueueUserState(0,0x0C,5);
+        EnqueueUserState(0,0x0C,6);
+        for(int i=0;i<5;++i)tick(manager.data());
+        Check(startParserCalls==0 && roomViewServices[0].frees==2,
+              "second identical-model start retires multiple C requests but rejects the old complete record");
+        std::array<uint8_t,0x99> secondRoundUnit{};
+        Put<uint32_t>(secondRoundUnit.data(),0,11032);
+        Put<uint64_t>(secondRoundUnit.data(),8,0x222222222222ULL);
+        Put<uint32_t>(secondRoundUnit.data(),0x14,0xB2B2B2B2);
+        auto secondRoundNotice=room_random_sync::Packet(
+            0x0861,1001,0,47,secondRoundUnit);
+        dispatch(dispatcher.data(),0,0,0,0x0861,secondRoundNotice.data());
+        for(int i=0;i<3;++i)tick(manager.data());
+        Check(startParserCalls==1 && rootStartQueued,
+              "second identical-model parser opens only after its fresh post-start record and native tasks");
+        tick(manager.data());
+        Check(room_random_client::Read<uint64_t>(
+                  lastConstruction.data(),0x49+8)==0x222222222222ULL &&
+              room_random_client::Read<uint32_t>(
+                  lastConstruction.data(),0x49+0x14)==0xB2B2B2B2,
+              "second round uses the fresh serial and attributes instead of the prior matching model");
+
+        // A byte-identical retransmission of the held start is the same
+        // generation. It must retain fresh records already received after the
+        // first 06C3 while the remaining humans and native C/E work complete.
+        ResetUserQueues();rootStartQueued=false;
+        roomViewRuns=0;roomViewRequests=0;startParserCalls=0;
+        startParserConstructions=0;startedModels={};
+        Put<uint32_t>(app.data(),0x4A0,18);
+        Put<uint32_t>(room.data(),0,48);room[5]=8;SetTitle("duplicate !rand");
+        std::array<uint8_t,0xCD4> duplicateStart{};
+        Put<uint16_t>(duplicateStart.data(),0,0x06C3);
+        std::array<std::array<uint8_t,0x99>,2> duplicateUnits{};
+        std::array<std::array<uint8_t,room_random_sync::kPayload+
+            room_random_sync::kUnitSize>,2> duplicateNotices{};
+        for(size_t slot=0;slot<2;++slot) {
+            const auto ownerId=static_cast<uint32_t>(1001+slot);
+            const auto modelId=static_cast<uint32_t>(12001+slot);
+            Put<uint32_t>(room.data(),0x533+slot*0x48E+0x429,ownerId);
+            Put<uint32_t>(room.data(),0x533+slot*0x48E+0x49,
+                          static_cast<uint32_t>(13001+slot));
+            frozen[slot]={};
+            Put<uint32_t>(frozen[slot].data(),0x429,ownerId);
+            Put<uint32_t>(frozen[slot].data(),0x49,
+                          static_cast<uint32_t>(13001+slot));
+            Put<uint32_t>(duplicateStart.data(),0x20+slot*0x10F,ownerId);
+            Put<uint32_t>(duplicateStart.data(),0x2E+slot*0x10F,modelId);
+            Put<uint32_t>(duplicateUnits[slot].data(),0,modelId);
+            Put<uint64_t>(duplicateUnits[slot].data(),8,
+                          0x333333333333ULL+slot);
+            Put<uint32_t>(duplicateUnits[slot].data(),0x14,
+                          static_cast<uint32_t>(0xC3C3C3C3+slot));
+            duplicateNotices[slot]=room_random_sync::Packet(
+                0x0861,ownerId,static_cast<uint32_t>(slot),48,
+                duplicateUnits[slot]);
+        }
+        dispatch(dispatcher.data(),0,0,0,0x06C3,duplicateStart.data());
+        dispatch(dispatcher.data(),0,0,0,0x0861,duplicateNotices[0].data());
+        dispatch(dispatcher.data(),0,0,0,0x06C3,duplicateStart.data());
+        dispatch(dispatcher.data(),0,0,0,0x0861,duplicateNotices[1].data());
+        for(int i=0;i<3;++i)tick(manager.data());
+        Check(startParserCalls==1 && rootStartQueued &&
+              roomViewServices[0].frees==1,
+              "identical held 06C3 retains earlier fresh records and resumes once after C/E cleanup");
+        tick(manager.data());
+        Check(startParserCalls==1 && startParserConstructions==2 &&
+              startedModels[0]==12001 && startedModels[1]==12002,
+              "duplicate start constructs both humans exactly once");
+        Check(room_random_client::Read<uint64_t>(
+                  profile.data(),0x1A9+8)==0x333333333333ULL &&
+              room_random_client::Read<uint32_t>(
+                  profile.data(),0x1A9+0x14)==0xC3C3C3C3,
+              "local record received before duplicate 06C3 retains its fresh serial and attributes");
+        Check(room_random_client::Read<uint64_t>(
+                  lastConstruction.data(),0x49+8)==0x333333333334ULL &&
+              room_random_client::Read<uint32_t>(
+                  lastConstruction.data(),0x49+0x14)==0xC3C3C3C4,
+              "record received after duplicate 06C3 supplies fresh construction serial and attributes");
+        Put<uint32_t>(room.data(),0x533+0x48E+0x429,0);
+
         // A state from a superseded room generation is ordinary native work.
         // Revalidation clears the held token and forwards C unchanged.
         ResetUserQueues();rootStartQueued=false;
@@ -646,10 +769,10 @@ int wmain(int argc,wchar_t** argv) {
         Put<uint32_t>(frozen[slot].data(),0x429,pilot);
         Put<uint32_t>(frozen[slot].data(),0x49,oldModel);
     }
-    for(size_t slot=0;slot<3;++slot)
-        dispatch(dispatcher.data(),0,0,0,0x0861,lateNotices[slot].data());
     startParserCalls=0;startParserConstructions=0;startedModels={};
     dispatch(dispatcher.data(),0,0,0,0x06C3,lateStart.data());
+    for(size_t slot=0;slot<3;++slot)
+        dispatch(dispatcher.data(),0,0,0,0x0861,lateNotices[slot].data());
     Check(startParserCalls==(enabled?0:1),
           "random start is held only while the final human record is missing");
     auto rejectedLate=lateNotices[3];Put<uint32_t>(rejectedLate.data(),6,9999);
@@ -663,7 +786,8 @@ int wmain(int argc,wchar_t** argv) {
     dispatch(dispatcher.data(),0,0,0,0x06C3,replacementStart.data());
     Check(startParserCalls==(enabled?0:2),
           "a replacement 06C3 supersedes the older held parser generation");
-    dispatch(dispatcher.data(),0,0,0,0x0861,lateNotices[3].data());
+    for(size_t slot=0;slot<4;++slot)
+        dispatch(dispatcher.data(),0,0,0,0x0861,lateNotices[slot].data());
     Check(startParserCalls==(enabled?0:2),
           "the last notice cannot resume a parser from inside packet dispatch");
     tick(manager.data());
@@ -708,8 +832,8 @@ int wmain(int argc,wchar_t** argv) {
     Put<uint64_t>(ship.data(),0x1C,0x100000001ULL);
     auto deck=room_random_sync::Packet(0x098B,1001,0,7,ship);
     startParserCalls=0;startParserConstructions=0;startedModels={};
-    dispatch(dispatcher.data(),0,0,0,0x098B,deck.data());
     dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
+    dispatch(dispatcher.data(),0,0,0,0x098B,deck.data());
     Check(startParserCalls==(enabled?0:1),
           "deck start waits when the matching unit record is still late");
     dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());

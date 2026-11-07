@@ -97,7 +97,8 @@ public:
     // The caller must resolve its complete live vtable/room identity again.
     uint8_t* ObservedModel() const {return model_;}
     uint8_t* ObservedManager() const {return manager_;}
-    Result Process(const Context& c,uint16_t opcode,const uint8_t* packet) {
+    Result Process(const Context& c,uint16_t opcode,const uint8_t* packet,
+                   bool orderedStart=false) {
         Result result;result.source=c.source;
         if(!c.profile || !c.room || !c.local || !packet) {result.reason=1;return result;}
         if(Read<uint16_t>(packet,0)!=opcode) {result.reason=2;return result;}
@@ -147,6 +148,16 @@ public:
                 if(!owner || (owner&0x80000000u)) continue;
                 humans_[slot]=true;
                 std::memcpy(starts_[slot].data(),entry,starts_[slot].size());
+                if(orderedStart) {
+                    // Server 0.1.8 submits 06C3 before this round's records.
+                    // A matching model from the previous round is therefore
+                    // stale even when its owner and model ID are unchanged.
+                    // Retain the slot owner/context, but require fresh full
+                    // unit/ship candidates following this exact start.
+                    auto& stale=pending_[slot];
+                    stale.unit=false;stale.ship=false;
+                    stale.active={};stale.deck={};
+                }
                 if(!model || c.Owner(slot)!=owner || !c.Active(slot)) {
                     invalid_[slot]=true;++result.mismatched;
                     result.owner=owner;result.model=model;
