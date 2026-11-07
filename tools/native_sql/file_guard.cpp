@@ -1,4 +1,4 @@
-// Confine copied SQL database files and filesystem writes to its marked test root.
+// Confine copied SQL database files to its marked test root.
 // Registry redirection alone does not relocate paths stored in a copied master.
 #include "file_guard.h"
 #include <winternl.h>
@@ -147,14 +147,15 @@ struct Object {
     UNICODE_STRING name{};
     std::wstring storage;
 };
-bool check(POBJECT_ATTRIBUTES attributes, bool write, Object& target, bool map_resource = true) {
+bool check(POBJECT_ATTRIBUTES attributes, bool write, Object& target, bool map_resource = true,
+    bool database_source = false) {
     std::wstring input;
     if (!object_path(attributes, input)) return !write && !database_file(input);
     if (ipc(input)) return !database_file(input);
     if (map_resource && resource_file(input)) {
         input = resource_root + L"\\" + leaf(input);
         InterlockedIncrement(&redirected_count);
-    } else if (!write && !database_file(input)) return true;
+    } else if (!database_file(input) && !database_source) return true;
     std::wstring path;
     if (!full_path(input, path) || !confined(path)) return false;
     target.storage = L"\\??\\" + path;
@@ -237,8 +238,27 @@ NTSTATUS NTAPI create_file(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTE
     PIO_STATUS_BLOCK status, PLARGE_INTEGER allocation, ULONG flags, ULONG share,
     ULONG disposition, ULONG options, PVOID ea, ULONG ea_length) {
     Object target;
-    if (!resolving && !check(attributes, writes(access) || disposition != 1, target))
-        return reject(handle, status, "CreateFile", attributes, access);
+    if (!resolving && !check(attributes, writes(access) || disposition != 1, target)) {
+        // CAPI uses OPEN_IF even for read-only directory discovery. Remove
+        // creation semantics rather than grant writes to an outside directory.
+        if (!writes(access) && disposition == 3 && check(attributes, false, target))
+            disposition = 1; // FILE_OPEN: a missing external object stays missing
+        else if (!writes(access) && disposition == 2 && (options & 1) &&
+            check(attributes, false, target)) {
+            std::wstring input, existing;
+            if (object_path(attributes, input) && directory_path(dos(input), existing)) {
+                // CreateDirectory on an existing read-only directory normally
+                // reports ALREADY_EXISTS. Preserve that result without creating
+                // or changing anything outside the task copy.
+                constexpr auto collision = static_cast<NTSTATUS>(0xC0000035L);
+                if (handle) *handle = nullptr;
+                if (status) { status->Status = collision; status->Information = 0; }
+                return collision;
+            }
+            return reject(handle, status, "CreateDirectory", attributes, access);
+        }
+        else return reject(handle, status, "CreateFile", attributes, access);
+    }
     auto* original = result_object(attributes, target);
     const NTSTATUS result = original_create(handle, access, original, status,
         allocation, flags, share, disposition, options, ea, ea_length);
@@ -275,7 +295,7 @@ NTSTATUS NTAPI set_file(HANDLE handle, PIO_STATUS_BLOCK status, PVOID informatio
     ULONG length, FILE_INFORMATION_CLASS kind) {
     const int type = static_cast<int>(kind);
     if (!resolving && (type == 11 || type == 57 || type == 72 || type == 73))
-        return reject(nullptr, status); // hard links, including bypass-access-check variants
+        return reject(nullptr, status); // SQL never needs to create database hard links
     if (!resolving && (type == 10 || type == 56 || type == 65 || type == 66)) {
         // Both native rename layouts use an aligned HANDLE, ULONG byte count,
         // then UTF-16 bytes. Validate the destination before any rename occurs.
@@ -288,7 +308,12 @@ NTSTATUS NTAPI set_file(HANDLE handle, PIO_STATUS_BLOCK status, PVOID informatio
         UNICODE_STRING name{static_cast<USHORT>(rename->bytes), static_cast<USHORT>(rename->bytes), rename->name};
         OBJECT_ATTRIBUTES attributes{sizeof(attributes), rename->directory, &name};
         Object target;
-        if (!check(&attributes, true, target, false))
+        std::wstring source;
+        {
+            Resolution scope;
+            if (!final_path(handle, source)) return reject(nullptr, status, "RenameSourceUnknown");
+        }
+        if (!check(&attributes, true, target, false, database_file(source)))
             return reject(nullptr, status, "RenameFile", &attributes, DELETE);
         // Destination validation is enough; leave the caller's native layout intact.
     }

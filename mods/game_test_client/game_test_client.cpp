@@ -2128,6 +2128,14 @@ int __cdecl RunOperatorFlow(const SdgoGameTestContextV1* context) {
             inventory.page_control_parent_address,inventory.page_control_root_address,
             inventory.page_control_actual_name);
         context->Observe(message);
+        if (inventory.result == OperatorInventoryActions::kNamingPopupMismatch) {
+            const auto scan = operatorInventory.InputPopupState();
+            char diagnostic[384]{};
+            sprintf_s(diagnostic, "native operator input popup scan=%u list=%u active=%u pending=%u expectedVtable=%08X actual=%u/%llu state=%u",
+                scan.code, scan.list, scan.active_count, scan.pending_count, scan.expected_vtable,
+                scan.found_operator, static_cast<unsigned long long>(scan.found_uid), scan.native_state);
+            context->Observe(diagnostic);
+        }
         if(state.shop_product_id || state.shop_native_name_status) {
             char details[512]{};
             sprintf_s(details,

@@ -43,9 +43,12 @@ def main():
         for path, expected in before.items():
             assert hashlib.sha256(path.read_bytes()).hexdigest() == expected, path.name
         assert not (outside / "absent.ldf").exists()
+        assert not (outside / "absent.txt").exists()
+        assert not (outside / "absent-directory").exists()
+        assert not (outside / "renamed.mdf").exists()
         assert not (outside / "renamed.tmp").exists()
         assert not (outside / "new-relative.ndf").exists()
-        assert not (outside / "bypass.tmp").exists()
+        assert not (outside / "bypass.mdf").exists()
         assert (allowed / "new.ndf").is_file()
         assert not (allowed / "new-link.mdf").exists()
         assert (allowed / "local.mdf").read_bytes().startswith(b"clone")

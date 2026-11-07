@@ -920,6 +920,37 @@ void TestFullDelayedFlow(
         "every lookup used and destroyed the full type-1 native-wstring descriptor");
 }
 
+void TestOperatorShopReturn(SdgoApi& api, NativeActions& native)
+{
+    ResetFixture(6);
+    HangarNavigation navigation;
+    Check(BindNavigation(navigation, api, native) &&
+              navigation.EnsureHangar() == HangarNavigation::kOpeningHangar,
+          "operator baseline enters the hangar through the original request");
+    *reinterpret_cast<uint32_t*>(g_app + 0x4A0) = 5;
+    g_mainframeVisible = true;
+    g_unitManagerVisible = true;
+    Check(navigation.EnsureHangar() == HangarNavigation::kReady,
+          "operator baseline reached its genuine unit viewer");
+    *reinterpret_cast<uint32_t*>(g_app + 0x4A0) = 9;
+    g_unitManagerVisible = false;
+    Check(navigation.EnsureHangar() != HangarNavigation::kOpeningHangar &&
+              g_downmenuCalls == 1,
+          "shop return is not automatically armed during purchase confirmation");
+    Check(navigation.BeginOperatorShopReturn() &&
+              navigation.EnsureHangar() == HangarNavigation::kOpeningHangar &&
+              g_downmenuCalls == 2 && g_downmenuCallbackValid && g_networkPacketValid,
+          "completed purchase returns through the original MyRoomRadio and 0621 transport");
+    Check(navigation.BeginOperatorShopReturn() &&
+              navigation.EnsureHangar() == HangarNavigation::kWaitingForHangar &&
+              g_downmenuCalls == 2,
+          "readback polling cannot resend the already-issued shop return");
+    *reinterpret_cast<uint32_t*>(g_app + 0x4A0) = 5;
+    g_registerUnitManagerImmediately = true;
+    Check(navigation.EnsureHangar() == HangarNavigation::kReady && g_mainframeCalls == 1,
+          "native hangar reply restores its unit viewer before inventory readback");
+}
+
 void TestDefaultAndImmediateConstruction(
     SdgoApi& api,
     NativeActions& native)
@@ -1302,6 +1333,7 @@ int main()
         TestUnitManagementNavigation(api,native);
         TestBottomRadioValidation(api,native);
         TestExplicitUnitViewerReentry(api,native);
+        TestOperatorShopReturn(api,native);
     }
 
     DestroyNativeString(
