@@ -58,6 +58,12 @@ class ManagerTests(unittest.TestCase):
     def advanced(self):
         self.assertEqual(self.call('POST','/api/mode',{'mode':'developer'})[0],200)
 
+    def test_operator_panel_dependency_is_served_without_widening_static_access(self):
+        status,body=self.call('GET','/panels/operator_protocol_ui.js')
+        self.assertEqual(status,200)
+        self.assertIn(b'export function createAbilitiesEditor',body)
+        self.assertEqual(self.call('GET','/panels/not_registered.js')[0],400)
+
     def install_fps_limit(self, root=None):
         root = root or self.client
         mod = root/'sdgo/mods/fps_limit'

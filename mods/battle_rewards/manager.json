@@ -32,6 +32,22 @@
       "activation": "restart_required"
     },
     {
+      "id": "gp_policy",
+      "key": "GpPolicy",
+      "label": "GB 结算策略",
+      "description": "replace 使用贡献奖励替换原版 GB；native 保留原版 GB。",
+      "type": "choice",
+      "default": "replace",
+      "options": [
+        "replace",
+        "native"
+      ],
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
       "id": "trace",
       "key": "Trace",
       "label": "诊断日志",

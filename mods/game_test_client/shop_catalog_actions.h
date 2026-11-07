@@ -26,7 +26,9 @@
 // the shipped AllSerchRadio and its FilterBtn, pages with the shipped room-manager callback and
 // opens the shipped buy/gift option services. It invokes only each popup's
 // BuyCancelBtn. It never invokes a popup BuyBtn, writes a wallet/inventory,
-// constructs a reply, or treats callback return as completion.
+// constructs a reply, or treats callback return as completion. An explicitly
+// sealed operator-purchase scope may hand its validated buy preview to the
+// separate mutating adapter before the ordinary cancellation stage.
 class ShopCatalogActions
 {
 public:
@@ -104,6 +106,18 @@ public:
         kStageSubmitSearch,
         kStageShowHover,
         kStageFinishProduct,
+    };
+
+    enum NativeNameStatus : uint32_t
+    {
+        kNativeNameUnchecked = 0,
+        kNativeNameReady = 1,
+        kNativeNameGridUnavailable = 2,
+        kNativeNameTargetMissing = 3,
+        kNativeNameTargetMalformed = 4,
+        kNativeNameTargetDuplicate = 5,
+        kNativeNameValueMismatch = 6,
+        kNativeNameGuardedNeutral = 7,
     };
 
     using GameAppFn = uint8_t*(__cdecl*)();
@@ -235,6 +249,12 @@ public:
         uint32_t popup_count = 0;
         uint32_t stock_assertions = 0;
         uint32_t duplicate_native_title_rows = 0;
+        uint32_t native_name_status = kNativeNameUnchecked;
+        uint32_t native_name_grid_ready = 0;
+        uint32_t native_name_row_id = 0;
+        uint32_t native_name_occurrences = 0;
+        uint32_t native_name_rows_scanned = 0;
+        uint32_t native_name_scan_stop_id = 0;
         uint32_t native_page_slots = 0;
         uint32_t native_page_nonempty = 0;
         uint32_t native_page_bytes = 0;
@@ -260,7 +280,9 @@ public:
         uint32_t process_id = 0;
         uint32_t ui_thread_id = 0;
         std::vector<uint32_t> duplicate_native_product_ids;
+        std::wstring sealed_name;
         std::wstring native_name;
+        std::wstring duplicate_native_name;
         std::wstring visible_name;
         std::wstring option_label;
     };
@@ -408,6 +430,7 @@ public:
         runtime_.clear();
         stockAssertions_ = false;
         configured_ = false;
+        operatorPreview_ = false;
         unsigned configurationPhase=0;
         try {
             configurationPhase=1;
@@ -530,6 +553,9 @@ public:
         verifiedKeys_.clear();
         requestedInventoryPages_.clear();
         nativeNames_.clear();
+        nativeNameRows_.clear();
+        nativeNameOccurrences_.clear();
+        nativeDuplicateNames_.clear();
         observation_ = {};
         observation_.result =
             bound_ ? kUnconfigured : kUnbound;
@@ -541,6 +567,27 @@ public:
     Observation State() const
     {
         return observation_;
+    }
+
+    const Bindings& NativeBindings() const { return bindings_; }
+
+    bool ConfigureOperatorPreview(const std::wstring& catalog, const std::wstring& display) {
+        operatorPreview_=false;
+        if (!Configure(catalog,display) || stockAssertions_ || visualOnly_ ||
+            products_.size()!=1 || products_[0].category/100000!=12 ||
+            !bindings_.edit_set_text || !bindings_.edit_get_text) return false;
+        query_=products_[0].name.substr(0,36);
+        if (!query_.empty() && query_.back()>=0xD800 && query_.back()<=0xDBFF)query_.pop_back();
+        operatorPreview_=!query_.empty();
+        return operatorPreview_;
+    }
+
+    bool HandoffBuyOptions(uint32_t product, uint32_t category, void** output) const {
+        if (!operatorPreview_ || !output || stage_ != kStageCancelBuy || !target_ || !popup_ ||
+            target_->productId != product || target_->category != category ||
+            !HasVtable(popup_, bindings_.buy_vtable)) return false;
+        *output = popup_;
+        return true;
     }
 
     const IntegrityImage& Baseline() const
@@ -2015,6 +2062,19 @@ private:
         uint32_t row)
     {
         observation_.product_id=product.productId;
+        observation_.sealed_name=product.name;
+        observation_.native_name.clear();
+        observation_.duplicate_native_name.clear();
+        observation_.visible_name.clear();
+        observation_.native_name_row_id=
+            nativeNameRows_[product.productId];
+        observation_.native_name_occurrences=
+            nativeNameOccurrences_[product.productId];
+        const auto duplicateName=
+            nativeDuplicateNames_.find(product.productId);
+        if(duplicateName!=nativeDuplicateNames_.end())
+            observation_.duplicate_native_name=
+                duplicateName->second;
         const auto artRank=ValidateArtRank(product,row);
         if(artRank!=kComplete)return artRank;
         if(!product.previewName.empty()) {
@@ -2041,9 +2101,8 @@ private:
         observation_.native_page_options=static_cast<uint32_t>(observedOptions.size());
         const auto name =
             nativeNames_.find(product.productId);
-        if (name == nativeNames_.end() ||
-            name->second != product.name)
-            return kNativeNameMismatch;
+        if(name!=nativeNames_.end())
+            observation_.native_name=name->second;
 
         const std::wstring controlName =
             L"GoodsStatic" +
@@ -2053,25 +2112,52 @@ private:
                 roomRoot_,
                 controlName.c_str(),
                 kStaticKind);
-        if (!control ||
-            !HasVtable(
+        const bool controlMatches=
+            control &&
+            HasVtable(
                 control,
-                bindings_.static_text_vtable) ||
-            !ControlIdentity(
+                bindings_.static_text_vtable) &&
+            ControlIdentity(
                 control,
                 roomRoot_,
-                controlName.c_str()))
-            return kControlMismatch;
+                controlName.c_str());
         std::wstring visible;
-        if (!ReadHostString(
+        const bool visibleRead=
+            controlMatches &&
+            ReadHostString(
                 static_cast<uint8_t*>(
                     control) +
                     kControlText,
                 64,
-                &visible))
+                &visible);
+        if(visibleRead)
+            observation_.visible_name=visible;
+        if(name==nativeNames_.end()) {
+            observation_.native_name_status=
+                kNativeNameTargetMissing;
+            return kNativeNameMismatch;
+        }
+        // Custom operator stock keeps a neutral raw grid title. The
+        // localization hook exposes the sealed author title only after the
+        // live option tuple matches. Ordinary stock assertions still require
+        // exact raw-title equality.
+        const bool guardedNeutral=
+            operatorPreview_ &&
+            name->second==L"自定义商品";
+        if(name->second!=product.name &&
+           !guardedNeutral) {
+            observation_.native_name_status=
+                kNativeNameValueMismatch;
+            return kNativeNameMismatch;
+        }
+        observation_.native_name_status=
+            guardedNeutral
+                ? kNativeNameGuardedNeutral
+                : kNativeNameReady;
+        if(!controlMatches)
+            return kControlMismatch;
+        if(!visibleRead)
             return kUiNameMismatch;
-        observation_.native_name = name->second;
-        observation_.visible_name = visible;
         std::wstring shortened;
         if (product.displayName.size() > 10)
             shortened =
@@ -2418,12 +2504,35 @@ private:
     bool LoadNativeNames()
     {
         nativeNames_.clear();
+        nativeNameRows_.clear();
+        nativeNameOccurrences_.clear();
+        nativeDuplicateNames_.clear();
         observation_.duplicate_native_product_ids.clear();
         observation_.duplicate_native_title_rows = 0;
+        observation_.native_name_status=kNativeNameUnchecked;
+        observation_.native_name_grid_ready=0;
+        observation_.native_name_row_id=0;
+        observation_.native_name_occurrences=0;
+        observation_.native_name_rows_scanned=0;
+        observation_.native_name_scan_stop_id=0;
+        observation_.sealed_name.clear();
+        observation_.native_name.clear();
+        observation_.duplicate_native_name.clear();
+        observation_.visible_name.clear();
         std::set<uint32_t> duplicateProductIds;
         void* data = nullptr;
-        if (!ReadGridData(&data) || !data)
+        if (!ReadGridData(&data) || !data) {
+            observation_.native_name_status=
+                kNativeNameGridUnavailable;
+            if(!products_.empty()) {
+                observation_.product_id=
+                    products_.front().productId;
+                observation_.sealed_name=
+                    products_.front().name;
+            }
             return false;
+        }
+        observation_.native_name_grid_ready=1;
         for (uint32_t id = 210001;
              id < 310001;
              ++id) {
@@ -2432,17 +2541,29 @@ private:
                     data,
                     id,
                     0x23,
-                    &row))
+                    &row)) {
+                observation_.native_name_scan_stop_id=id;
                 break;
+            }
+            ++observation_.native_name_rows_scanned;
             uint32_t productId = 0;
             memcpy(
                 &productId,
                 row + 5,
                 sizeof(productId));
             std::wstring name;
-            const bool requested=std::any_of(products_.begin(),products_.end(),
-                [productId](const Product& product){return product.productId==productId;});
+            const auto requested=std::find_if(
+                products_.begin(),
+                products_.end(),
+                [productId](const Product& product){
+                    return product.productId==productId;
+                });
             if (!productId)continue;
+            if(requested!=products_.end()) {
+                ++nativeNameOccurrences_[productId];
+                if(!nativeNameRows_.count(productId))
+                    nativeNameRows_[productId]=id;
+            }
             if (!ReadBoundedWide(
                     reinterpret_cast<
                         const wchar_t*>(
@@ -2453,15 +2574,27 @@ private:
                 // Stock titles outside this read-only plan can fill all 50
                 // native characters without a terminator. They do not make
                 // an independently identified target title ambiguous.
-                if(requested)return false;
+                if(requested!=products_.end()) {
+                    observation_.product_id=productId;
+                    observation_.sealed_name=requested->name;
+                    observation_.native_name_status=
+                        kNativeNameTargetMalformed;
+                    observation_.native_name_row_id=id;
+                    observation_.native_name_occurrences=
+                        nativeNameOccurrences_[productId];
+                    return false;
+                }
                 continue;
             }
             const auto inserted =
                 nativeNames_.emplace(
                     productId,
-                    std::move(name));
+                    name);
             if (!inserted.second) {
                 duplicateProductIds.insert(productId);
+                if(requested!=products_.end() &&
+                   !nativeDuplicateNames_.count(productId))
+                    nativeDuplicateNames_[productId]=name;
                 ++observation_.
                     duplicate_native_title_rows;
             }
@@ -2470,11 +2603,28 @@ private:
             duplicateProductIds.begin(),
             duplicateProductIds.end());
         for (const Product& product : products_) {
-            if (!nativeNames_.count(
-                    product.productId) ||
-                duplicateProductIds.count(
-                    product.productId))
+            const auto name=nativeNames_.find(product.productId);
+            if(name==nativeNames_.end() ||
+               duplicateProductIds.count(product.productId)) {
+                observation_.product_id=product.productId;
+                observation_.sealed_name=product.name;
+                observation_.native_name_row_id=
+                    nativeNameRows_[product.productId];
+                observation_.native_name_occurrences=
+                    nativeNameOccurrences_[product.productId];
+                if(name!=nativeNames_.end())
+                    observation_.native_name=name->second;
+                const auto duplicateName=
+                    nativeDuplicateNames_.find(product.productId);
+                if(duplicateName!=nativeDuplicateNames_.end())
+                    observation_.duplicate_native_name=
+                        duplicateName->second;
+                observation_.native_name_status=
+                    name==nativeNames_.end()
+                        ? kNativeNameTargetMissing
+                        : kNativeNameTargetDuplicate;
                 return false;
+            }
         }
         return true;
     }
@@ -3403,10 +3553,14 @@ private:
     std::vector<Product> products_;
     std::map<uint32_t, RuntimeOption> runtime_;
     std::map<uint32_t, std::wstring> nativeNames_;
+    std::map<uint32_t, uint32_t> nativeNameRows_;
+    std::map<uint32_t, uint32_t> nativeNameOccurrences_;
+    std::map<uint32_t, std::wstring> nativeDuplicateNames_;
     std::set<std::wstring> verifiedKeys_;
     std::set<uint32_t> requestedInventoryPages_;
     bool stockAssertions_ = false;
     bool visualOnly_ = false;
+    bool operatorPreview_ = false;
     std::wstring query_;
     IntegrityImage baseline_;
     bool hasBaseline_ = false;

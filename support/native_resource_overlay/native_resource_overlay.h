@@ -51,6 +51,12 @@ namespace sdgo::resource_overlay
         uint32_t partChunks = 0;
     };
 
+    // Parses and authenticates a sealed bundle using the strict domain selected
+    // by owner. This does not publish the bundle or install a native hook.
+    bool LoadBundleFiles(const wchar_t* modDirectory, const wchar_t* configName,
+                         const char* owner, BundleRegistration& bundle,
+                         std::string& error);
+
     using OpenObserver = void (__cdecl*)(
         const char* owner,
         const wchar_t* normalized_path,
@@ -75,6 +81,7 @@ namespace sdgo::resource_overlay
         Provider& operator=(const Provider&) = delete;
 
         // Used by providers which already validated their own sealed archive.
+        // Reserved virtual domains still enforce their owner-specific claim rules.
         bool RegisterTrustedBundle(const BundleRegistration& bundle, std::string& error);
 
         // Used by the public broker ABI. The provider selects a strict parser

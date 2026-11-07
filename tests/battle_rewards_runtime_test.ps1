@@ -15,7 +15,7 @@ param(
     [string]$Config = "Release",
     [string]$BuildDir = "",
     [string]$DailyRewardsDll = "",
-    [ValidateSet('basic','daily','progression','outage')][string[]]$Cases = @()
+    [ValidateSet('basic','daily','progression','outage','native','filter_failures')][string[]]$Cases = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -67,6 +67,7 @@ $battleRequires = @(
     "battle.rewards.augment.tag",
     "battle.rewards.augment.death_grid",
     "battle.rewards.augment.mission",
+    "battle.rewards.final.mission",
     "battle.rewards.record_damage",
     "battle.rewards.layout.personal",
     "battle.rewards.layout.team",
@@ -130,6 +131,7 @@ requires=$battleRequires
 [settings]
 RuntimeDirectory=$runtime
 InstanceId=battle-fixture
+GpPolicy=$(if ($Name -in @("native", "filter_failures")) { "native" } else { "replace" })
 Trace=1
 "@
     Set-Content -LiteralPath (Join-Path $battle "mod.ini") -Value $battleManifest -Encoding Ascii
@@ -177,7 +179,9 @@ try {
     $rewardCases = @(
         @{ Name = "basic"; Daily = $false },
         @{ Name = "daily"; Daily = $true },
-        @{ Name = "outage"; Daily = $false }
+        @{ Name = "outage"; Daily = $false },
+        @{ Name = "native"; Daily = $false },
+        @{ Name = "filter_failures"; Daily = $false }
     )
     if ($env:SDGO_REWARD_SQL_INTEGRATION -eq '1') { $rewardCases += @{ Name='progression'; Daily=$false } }
     foreach ($entry in $rewardCases) {
@@ -198,12 +202,12 @@ try {
             throw "runtime case $($entry.Name) failed with exit $exitCode"
         }
         if (-not $log.Contains("loaded Battle contribution rewards (Beta) runtime-fixture") -or
-            -not $log.Contains("11 code hooks switched on") -and -not $entry.Daily) {
+            -not $log.Contains("12 code hooks switched on") -and -not $entry.Daily) {
             throw "battle_rewards did not load through the real core in $($entry.Name)"
         }
         if ($entry.Daily -and
             (-not $log.Contains("loaded Daily double battle rewards (Beta) runtime-fixture") -or
-             -not $log.Contains("21 code hooks switched on"))) {
+             -not $log.Contains("22 code hooks switched on"))) {
             throw "daily_rewards coexistence did not load through the real core"
         }
     }
