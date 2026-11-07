@@ -15,7 +15,7 @@ Manager 提供审阅、打包和校验交付能力，无法判断任意自定义
 
 `sdgo/client-source.json` 的双源格式使用 `schema_version=2`，内容来源保留固定发布者身份、名称与备用 `feeds`，另用 `framework` 声明框架来源身份、仓库、通道和备用 Git 地址。每个来源内的备用地址必须提供同一内容；框架源与内容源则有各自的版本及提交。
 
-框架程序通过 `framework-feed.json` 引用不可变的 `SDGO-ModFramework-<版本>.zip`，可由 `tools/publish_framework_runtime.py` 发布到 Git 运行分支；配套镜像同步可使用部署环境配置的 Git 地址和既有凭据。不要把私人地址或身份写入公共包。
+框架程序通过 `framework-feed.json` 引用不可变的 `SDGO-ModFramework-<版本>.zip`，可由 `tools/publish_framework_runtime.py` 发布到 Git 运行分支；配套镜像先将运行分支写入配置的 GitHub 分发仓库，再调用现有拉取镜像任务；Codeup 导入镜像沿用既有同步入口，不作为另一套直接推送目标。不要把私人地址或身份写入公共包。
 
 服主内容的运行清单在 `layers` 声明 `minimum_framework`、`required_mods` 与 `shared_files`。`sdgo/shared-settings.json` 的 `patches` 按客户端相对路径声明 Mod 参数；仅能修改 `[settings]` 和 `[mod] enabled`，不能替换 Mod 身份、DLL 或接口。需要保留的个人 INI 参数以 `personal_settings` 显式列出 `file`、`section`、`key`；登录与画面配置默认保留。共享文件只能覆盖 Mod 已声明的配置文件，框架程序和元数据属于框架源。
 
