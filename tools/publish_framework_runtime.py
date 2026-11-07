@@ -15,9 +15,10 @@ def publish(asset,repository=ROOT,remote='origin',push=False):
     branch='refs/heads/runtime/'+channel
     index=repository/'build/framework-publish'/((channel)+'.index');index.parent.mkdir(parents=True,exist_ok=True)
     env={**os.environ,'GIT_INDEX_FILE':str(index)}
-    def git(*args,input=None,check=True):
-        p=subprocess.run(['git','-C',str(repository),*args],env=env,input=input,capture_output=True)
-        if check and p.returncode:raise RuntimeError(p.stderr.decode(errors='replace'))
+    def run(*args,input=None,extra=None):return subprocess.run(['git','-C',str(repository),*args],env={**env,**(extra or{})},input=input,capture_output=True)
+    def git(*args,input=None,extra=None):
+        p=run(*args,input=input,extra=extra)
+        if p.returncode:raise RuntimeError(p.stderr.decode(errors='replace'))
         return p.stdout
     previous=git('ls-remote',remote,branch).decode().split();parent=None
     if previous:
@@ -35,7 +36,14 @@ def publish(asset,repository=ROOT,remote='origin',push=False):
         oid=git('hash-object','-w','--stdin',input=data).decode().strip();git('update-index','--add','--cacheinfo','100644',oid,path)
     tree=git('write-tree').decode().strip();args=['commit-tree',tree]
     if parent:args+=['-p',parent]
-    commit=git(*args,input=('Publish Manager '+version+' verified runtime\n').encode()).decode().strip()
+    # Keep maintainer authorship on hosted runners without rewriting Git config.
+    known=all(run('var',name).returncode==0 for name in('GIT_AUTHOR_IDENT','GIT_COMMITTER_IDENT'))
+    identity=None
+    if not known:
+        author=git('show','-s','--format=%an%x00%ae',manifest['source_commit']).decode().strip().split('\0')
+        if len(author)!=2 or not all(author):raise ValueError('Release source has no maintainer identity')
+        identity={'GIT_AUTHOR_NAME':author[0],'GIT_AUTHOR_EMAIL':author[1],'GIT_COMMITTER_NAME':author[0],'GIT_COMMITTER_EMAIL':author[1]}
+    commit=git(*args,input=('Publish Manager '+version+' verified runtime\n').encode(),extra=identity).decode().strip()
     if push:
         git('push',remote,commit+':'+branch)
         if git('ls-remote',remote,branch).decode().split()[0]!=commit:raise ValueError('Published runtime readback differs')

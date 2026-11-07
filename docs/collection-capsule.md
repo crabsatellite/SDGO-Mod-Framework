@@ -5,7 +5,7 @@ It adds one machine to the native activity capsule page:
 
 - default machine ID `990001`;
 - a configurable GB (native GP) price, initially **100,000 GB** per draw;
-- **15 successful draws per account each week** by default, usable together; Monday 00:00 at UTC+8 resets the quota;
+- **15 successful draws per account each week** by default, usable together; Monday 00:00 in the configured timezone resets the quota;
 - rank-first selection with **C 35% / B 30% / A 20% / S 15%**;
 - tier 1 selects an eligible permanent base/initial form that the account has not
   unlocked in this Mod's catalog;
@@ -16,6 +16,8 @@ It adds one machine to the native activity capsule page:
 The active tier is chosen before rank selection. Ranks with no candidate in that
 tier leave the lottery and the remaining weights are renormalized; the number of
 units in a rank does not multiply its total probability.
+
+Installing or updating the paired player package adds a collection-capsule explanation to the native encyclopedia's completed-product acquisition panel for eligible initial forms. It uses the built price and successful-draw limit, retains every original source and blueprint field, and uses a short hint when the original explanation nearly fills the native text field. Ordinary capsule recompilation retains this metadata. Installing a disabled registry or uninstalling the package restores the original explanations after a client restart. A server-only disable cannot update an already distributed client hint; rebuild and distribute paired resources after content or rule changes.
 
 Native activity draws deliver to the **prize box**. The awarded item represents a
 permanent level-1 initial-form unit, created when the player claims it. The family

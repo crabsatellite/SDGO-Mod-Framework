@@ -15,10 +15,12 @@
 
 #include "capsule_runtime.h"
 #include "sdgo/sdgo_api.h"
+#include "sdgo/collection_acquisition.h"
 
 namespace
 {
     const char kProviderMarker[] = "SDGO_CAPSULE_REGISTRY_6TABLE_V2";
+    const char kAcquisitionMarker[] = "SDGO_COLLECTION_ACQUISITION_V1";
 
     const SdgoApi* g_api = nullptr;
     SdgoMod* g_mod = nullptr;
@@ -241,6 +243,16 @@ namespace
         if (!grid)
             grid = gridThis;
         NativeCounts counts = ReadNativeCounts(grid);
+        uint32_t hinted=0;
+        // Type-85 rows belong to this native grid and remain alive until its
+        // normal teardown. Only the completed-product explanation is changed.
+        for(int id=3628001;id<3648001;++id) {
+            void* record=nullptr;
+            if(!TryGridFind(grid,id,0x55,&record))break;
+            if(g_bundle.acquisition.Apply(record,614))++hinted;
+        }
+        if(!g_bundle.acquisition.units.empty())
+            g_api->Log(g_mod,SDGO_LOG_INFO,"%s: native acquisition explanations updated for %u catalog entries",kAcquisitionMarker,hinted);
         bool match = CountsMatch(counts);
         WriteReceipt(counts, match);
         g_api->Log(g_mod, match ? SDGO_LOG_INFO : SDGO_LOG_ERROR,
@@ -254,6 +266,13 @@ namespace
                    counts.lastCandidateMachine, counts.lastCandidateUnit);
         return true;
     }
+}
+
+extern "C" __declspec(dllexport) int __cdecl SdgoCollectionAcquisitionApplyV1(void* row,uint32_t bytes) {
+    return g_bundle.acquisition.Apply(row,bytes)?1:0;
+}
+extern "C" __declspec(dllexport) const wchar_t* __cdecl SdgoCollectionAcquisitionExpectedV1(uint32_t unit) {
+    return g_bundle.acquisition.units.count(unit)?g_bundle.acquisition.text.c_str():nullptr;
 }
 
 SDGO_MOD_ENTRY

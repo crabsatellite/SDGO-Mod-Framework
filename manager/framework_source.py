@@ -18,7 +18,7 @@ def binding(value):
             'repository':updates.repository(value.get('repository')),'channel':channel,'feeds':feeds}
 
 
-def load(controller,source):
+def load(controller,source,constraints=None):
     """Pin a feed commit and verify the same ZIP format as the Release updater."""
     source=binding(source);errors=[]
     for index,url in enumerate(source['feeds']):
@@ -34,6 +34,10 @@ def load(controller,source):
                or feed.get('repository')!=source['repository']or feed.get('channel')!=source['channel']):raise ValueError('框架发布与所选身份或通道不一致')
             label=feed.get('version');updates.version(label)
             if ('-beta.'in label)!=(source['channel']=='beta'):raise ValueError('框架包版本与通道不一致')
+            if constraints:
+                core=updates.version(label)[:3]
+                if core<updates.version(constraints['minimum_framework'])[:3]or constraints.get('maximum_framework')and core>updates.version(constraints['maximum_framework'])[:3]:
+                    raise ValueError('这个框架镜像尚未提供服主内容需要的兼容版本')
             name='SDGO-ModFramework-'+label+'.zip';entry=feed.get('asset',{})
             if(entry.get('path')!='releases/'+name or not re.fullmatch('[0-9a-f]{64}',str(entry.get('sha256','')))
                or type(entry.get('bytes'))is not int or not 0<entry['bytes']<=updates.MAX_ARCHIVE):raise ValueError('框架发布资产命名或摘要无效')
@@ -50,6 +54,10 @@ def load(controller,source):
                     temporary.replace(archive)
                 finally:temporary.unlink(missing_ok=True)
             manifest=updates.unpack(archive.read_bytes(),{**entry,'version':label,'channel':source['channel']},folder,source['repository'])
+            if constraints:
+                mods={m['id']:m for m in storage.read_json(folder/'client/sdgo/catalog.json')['mods']}
+                for identity,required in constraints.get('required_mods',{}).items():
+                    if identity not in mods or updates.version(mods[identity]['version'])<updates.version(required):raise ValueError('这个框架镜像缺少服主内容需要的 Mod：'+identity)
             return {'source_id':source['source_id'],'commit':commit,'version':label,'channel':source['channel'],
                     'sha256':entry['sha256'],'mirror':controller.fetch_mirror.get(str(repo.resolve()),index+1),
                     'bundle':str(folder),'manifest':manifest}
