@@ -636,10 +636,10 @@ def apply_catalog(catalog, server_ini, *, runtime_evidence=None):
     validate(catalog)
     from manager.operations import server_change
     with server_change(server_ini,'operator_catalog.publish',('fixed_catalog','player_migration'))as change:
-        return change.result(_apply_catalog(catalog,server_ini))
+        return change.result(_apply_catalog(catalog,server_ini,runtime_evidence=runtime_evidence))
 
 
-def _apply_catalog(catalog, server_ini):
+def _apply_catalog(catalog, server_ini, *, runtime_evidence=None):
     validate(catalog)
     cn = connect(server_ini)
     try:

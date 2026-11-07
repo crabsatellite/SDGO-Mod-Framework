@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from contextlib import nullcontext
 import hashlib
 import json
 import os
@@ -1070,6 +1071,30 @@ class OperatorServerAndWorkspaceRuntimeTests(unittest.TestCase):
             self.assertFalse(status["runtime_loaded"])
             self.assertTrue(status["restart_required"])
             self.assertFalse(status["running_effective"])
+
+
+class CatalogApplyEvidenceTests(unittest.TestCase):
+    def test_public_apply_rejects_untrusted_runtime_before_catalog_writes(self):
+        connection = mock.MagicMock()
+        cursor = connection.cursor.return_value
+        cursor.execute.return_value = cursor
+        cursor.fetchone.return_value = (0,)
+        evidence = object()
+        with (
+            mock.patch("manager.operations.server_change", return_value=nullcontext(mock.Mock())),
+            mock.patch.object(server, "connect", return_value=connection),
+            mock.patch.object(server, "definition", return_value="native procedure"),
+            mock.patch.object(runtime, "verify_installed_runtime", side_effect=ValueError(
+                "runtime evidence rejected")) as verify,
+        ):
+            with self.assertRaisesRegex(ValueError, "runtime evidence rejected"):
+                server.apply_catalog(catalog(), Path("fixture.ini"), runtime_evidence=evidence)
+        self.assertIs(verify.call_args.args[0], evidence)
+        statements = [str(call.args[0]) for call in cursor.execute.call_args_list]
+        self.assertIn("IF XACT_STATE()<>0 ROLLBACK TRANSACTION", statements)
+        self.assertFalse(any(sql.startswith("UPDATE dbo.sdgo_OperatorProfiles") for sql in statements))
+        connection.commit.assert_not_called()
+        connection.close.assert_called_once()
 
 
 if __name__ == "__main__":
