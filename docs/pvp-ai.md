@@ -117,8 +117,8 @@ native battle roster, including their names, kills, assists and points with norm
 
 Every battle draws new units for each AI from its pool, without duplicates and within the
 mode's point and unit-count limits. The host runs the AI and other clients display synchronized copies.
-An AI already executing a transformation consumes another notice for the same target form without
-restarting that transformation. Native one-way forms, new skill transitions, deferred special actions
+An AI waiting for transformation confirmation uses the native player acknowledgement path to continue
+its current action. Native one-way forms, new skill transitions, deferred special actions
 and respawn handling retain their original rules.
 Grid/Tag modes can use AI decks. The existing dead view can follow AI players. Respawn, life consumption and
 victory conditions follow the selected mode. AI on either team target opposing humans and AI and never their

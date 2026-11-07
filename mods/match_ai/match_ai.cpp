@@ -160,6 +160,7 @@ namespace
     using NativeStateFn = uint8_t(__thiscall*)(uint8_t* controller);
     using ForceMoveNoticeFn = int(__stdcall*)(const uint8_t* packet);
     using TransformNoticeFn = int(__stdcall*)(const uint8_t* packet);
+    using UnitMessageFn = void(__thiscall*)(uint8_t* unit,const uint8_t* message);
 
     constexpr size_t kAppGameMain = 0x4A4;      // game-main service* of the game application
     constexpr size_t kServiceMode = 0x0C;       // game mode* of the game-main service
@@ -262,6 +263,9 @@ namespace
     SwitchDeckFn g_switchDeck = nullptr;
     PlaybackUnitFn g_originalPlaybackUnit = nullptr;
     TransformNoticeFn g_originalTransformNotice = nullptr;
+    UnitMessageFn g_originalUnitNetworkMessage=nullptr,g_unitCombatEvent=nullptr;
+    struct TransformConfirmation {bool active=false;uint32_t pilot=0,object=0,target=0;};
+    thread_local TransformConfirmation g_transformConfirmation{};
     HMODULE g_battleAiModule = nullptr;
     BattleAiInitializeUnitFn g_battleAiInitializeUnit = nullptr;
     ForceMoveSenderFn g_forceMoveSender = nullptr;
@@ -1680,10 +1684,33 @@ namespace
         return true;
     }
 
+    void __fastcall UnitNetworkMessage(uint8_t* unit,void*,const uint8_t* message)
+    {
+        if(!g_transformConfirmation.active) {g_originalUnitNetworkMessage(unit,message);return;}
+        const DWORD savedError=GetLastError();bool local=false;
+        __try {
+            using battle_ai::native::detail::Read;
+            uint16_t type=0;uint32_t object=0,mode=0,target=0;
+            match_ai::transform::LocalActor actor{};
+            local=Read(unit,kUnitObjectId,object)&&object==g_transformConfirmation.object&&
+                Read(message,0,type)&&type==0x1D&&Read(message,0x10,mode)&&mode==1&&
+                Read(message,0x14,target)&&target==g_transformConfirmation.target&&
+                ReadLocalTransformActor(g_transformConfirmation.pilot,actor)&&
+                match_ai::transform::ReusesLocalTransform(actor,actor.pilot,target,0);
+        } __except(EXCEPTION_EXECUTE_HANDLER) {local=false;}
+        SetLastError(savedError);
+        // The local receiver accepts this original Msg1D and starts mode1.
+        // The generic receiver instead queues D4 again, even for replay0 ACKs.
+        // The native receiver owns every FSM/model change.
+        if(local)g_unitCombatEvent(unit,message);
+        else g_originalUnitNetworkMessage(unit,message);
+    }
+
     int __stdcall TransformNotice(const uint8_t* packet)
     {
         const DWORD savedError=GetLastError();
         uint8_t adjusted[0x13]{};const uint8_t* delivered=packet;
+        const auto previous=g_transformConfirmation;
         __try {
             using battle_ai::native::detail::Read;
             uint16_t opcode=0;uint32_t pilot=0,target=0;uint8_t replay=0;
@@ -1694,15 +1721,19 @@ namespace
                 const bool retained=owned&&match_ai::transform::ReusesLocalTransform(actor,pilot,target,replay);
                 if(retained) {
                     memcpy(adjusted,packet,sizeof(adjusted));adjusted[0xE]=0;delivered=adjusted;
+                    g_transformConfirmation={true,pilot,actor.object,target};
                 }
                 if(g_logDiagnostics&&(pilot&kAiPilotBit))g_api->Log(g_mod,SDGO_LOG_INFO,
                     "native AI transform notice pilot=%08X object=%u target=%u replay=%u owned=%u transforming=%u latch=%u hurt=%u local=%u remote=%u master=%u retained=%u",
                     pilot,actor.object,target,replay,owned,actor.transforming,actor.latchedTarget,actor.hurtState,
                     actor.localControl,actor.remoteCopy,actor.masterNpc,retained);
             }
-        } __except(EXCEPTION_EXECUTE_HANDLER) {delivered=packet;}
+        } __except(EXCEPTION_EXECUTE_HANDLER) {delivered=packet;g_transformConfirmation=previous;}
         SetLastError(savedError);
-        return g_originalTransformNotice(delivered);
+        int result=0;
+        __try {result=g_originalTransformNotice(delivered);}
+        __finally {g_transformConfirmation=previous;}
+        return result;
     }
 
     bool ForcedPadActionAllowed(
@@ -3455,7 +3486,10 @@ SDGO_MOD_ENTRY
                  Bind(g_addDeckUnit, "unit.add_deck_unit") && Bind(g_switchDeck, "unit.switch_deck");
     if (!bound)
         return 0;
-    if(!api->HookCode(mod,"match_ai.transform_notice",reinterpret_cast<void*>(&TransformNotice),
+    if(!Bind(g_unitCombatEvent,"match_ai.unit_combat_event")||
+       !api->HookCode(mod,"match_ai.unit_network_message",reinterpret_cast<void*>(&UnitNetworkMessage),
+                      reinterpret_cast<void**>(&g_originalUnitNetworkMessage))||
+       !api->HookCode(mod,"match_ai.transform_notice",reinterpret_cast<void*>(&TransformNotice),
                       reinterpret_cast<void**>(&g_originalTransformNotice)))return 0;
     if (!Bind(g_forcedPadApi.query, "match_ai.pad.query") ||
         !Bind(g_forcedPadApi.overlap, "match_ai.pad.overlap") ||

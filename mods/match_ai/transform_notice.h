@@ -11,14 +11,15 @@ struct LocalActor {
 
 // NTF_TRANSFORM_UNIT (0x0A44) is 19 packed bytes. Its byte14 is copied to
 // native Msg1D+18 by 0x004CFE00. A value1 asks the receiver to enter D4.
-// An already-running local transition can consume the same-target notice: native
-// D4 Release/Entry would otherwise swap the model and send another request.
+// An already-running local transition consumes its confirmation through the
+// native local combat-event receiver. The generic NPC receiver re-enters D4
+// for both replay values, releasing the form and sending another request.
 // Keep unrepresented server events, native deferred/respawn handling, and
 // every other receiver on the original path. A pending-only D4 has no fresh
 // Entry latch and is not proof that this transition already owns control.
 inline bool ReusesLocalTransform(const LocalActor& actor,std::uint32_t pilot,
         std::uint32_t target,std::uint8_t replay) noexcept {
-    return replay==1&&target&&actor.registered&&actor.network&&actor.roomMaster&&
+    return replay<=1&&target&&actor.registered&&actor.network&&actor.roomMaster&&
         !actor.observer&&actor.localControl&&!actor.remoteCopy&&actor.masterNpc&&
         actor.object&&actor.object==actor.liveObject&&actor.pilot==pilot&&
         actor.pilot==actor.livePilot&&(pilot&0x80000000u)&&actor.lifeState&&
