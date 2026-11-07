@@ -22,3 +22,10 @@
 - Every test agent must clean up owned processes and temporary copies, including superseded Docker containers/volumes. Use old environment list/recover only for legacy cleanup. After validation and necessary deployment readback, delete successful test logs, receipts, screenshots and temporary research records. Preserve reusable test assets and unresolved diagnostics until the problem is solved.
 
 See `docs/mod-manager.zh-CN.md`, `docs/mod-manager-design.zh-CN.md` and `docs/contributing.zh-CN.md`.
+
+## Framework and owner profile boundary
+
+- Generic player distribution starts with a compatible original client, official framework/Mod programs and an owner profile/content contract. A complete-client repository or fixed Git branch layout is an optional owner backup/output, never a framework prerequisite.
+- Owner profiles select and lock actual Mod versions and shared settings. Git SSH/HTTPS, HTTPS manifests/files and offline directories share the same resolver, ownership checks and installation transaction. Original game programs/archives are not owner-profile payloads.
+- Public SQL implementation ownership is declared in `distribution/artifact-ownership.json`. Generated owner definition/apply plans and live account/inventory/currency data stay separate. A player profile does not execute SQL or ship credentials, private rosters, databases or local recovery state.
+- Keep README, `docs/content-boundaries*`, Manager/owner guides and packaging guards consistent with these boundaries. Private deployment repositories/mirrors remain configuration outside the public framework.

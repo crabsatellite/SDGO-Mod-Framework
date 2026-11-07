@@ -478,11 +478,13 @@ class Updates:
     def channel(self,value):
         if value not in ('stable','beta'):raise ValueError('更新通道无效')
         git_source=self.workspace.settings.get('updates',{}).get('git_source')
-        if git_source and git_source['channel']!=value:raise ValueError('这个 Git 来源固定通道；请同时修改来源通道和对应分支')
+        if git_source and git_source.get('transport')!='github-releases'and git_source['channel']!=value:raise ValueError('这个 Git 来源固定通道；请同时修改来源通道和对应分支')
         if not self.busy.acquire(blocking=False):raise storage.Conflict('正在处理更新，请完成后切换通道')
         try:
             with storage.LOCK:
                 self.workspace.settings.setdefault('updates',{})['channel']=value;self.workspace.save_workspace()
+                if git_source and git_source.get('transport')=='github-releases':
+                    git_source['channel']=value;self.workspace.save_workspace()
             self.latest=None;self.manifest=None;self.bundle=None
             self.change(phase='idle',message='已切换到 '+value.title(),hosts=[],manager_restart=False,error='')
         finally:self.busy.release()
@@ -579,6 +581,8 @@ class Updates:
                 raise ValueError('此 Manager 更新缺少完整客户端或数据维护协议，保留现有更新入口和配置')
             if any((installed_source(h['path'])or{}).get('schema_version')==2 for h in self.workspace.settings['hosts']if h['role']=='client')and self.manifest.get('capabilities',{}).get('runtime_layers')!=1:
                 raise ValueError('此 Manager 更新不支持双源安装，保留当前程序与来源配置')
+            if any((installed_source(h['path'])or{}).get('schema_version')==3 for h in self.workspace.settings['hosts']if h['role']=='client')and self.manifest.get('capabilities',{}).get('runtime_profiles')!=1:
+                raise ValueError('此 Manager 更新不支持通用服主配置档，保留当前程序和内容绑定')
         if (self.manager_exe and program_eligible and any(mode(h)!='starter' for h in self.workspace.settings['hosts']) and
                 self.manifest.get('capabilities',{}).get('owner_updates')!=1):
             raise ValueError('这个上游 Manager 未声明服主更新协议支持，保留当前 Manager 与维护边界')

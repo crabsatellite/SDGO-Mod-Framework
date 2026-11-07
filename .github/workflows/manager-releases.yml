@@ -40,6 +40,8 @@ jobs:
           "PREPARE_ONLY=$($prepareOnly.ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
       - name: Reject local-only source from public publication
         run: python tools/distribution_guard.py --git-tree $env:GITHUB_SHA
+      - name: Check framework SQL and profile ownership boundaries
+        run: python tools/check_artifact_ownership.py --source .
       - name: Reject local-only bytes in every newly published commit
         if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
         env:
@@ -63,6 +65,8 @@ jobs:
           python -m unittest discover -s tests -p "test_client_runtime.py" -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -p "test_runtime_layers.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -p "test_server_profiles.py" -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Owner shortcut serialization
         timeout-minutes: 3

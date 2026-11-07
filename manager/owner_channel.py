@@ -153,7 +153,7 @@ def preserve_local_ini(incoming,previous,scope):
     return updates.serialize_ini(result)
 
 
-def snapshot(host,source,extras):
+def snapshot(host,source,extras,max_file_bytes=64*1024*1024,include_game_base=True):
     root=Path(host['path']).resolve()
     if host['role']!='client':raise ValueError('玩家整合包从已配置的客户端生成')
     if updates.running(root/'GOnline.exe'):raise ValueError('关闭这个客户端后再生成发布快照')
@@ -163,7 +163,7 @@ def snapshot(host,source,extras):
         if not path.is_file():raise ValueError('发布文件不存在：'+name)
         before=path.stat();raw=path.read_bytes();after=path.stat()
         if (before.st_mtime_ns,before.st_size)!=(after.st_mtime_ns,after.st_size):raise storage.Conflict('发布文件正在变化：'+name)
-        if len(raw)>64*1024*1024:raise ValueError('单个整合包文件超过 64 MiB：'+name)
+        if len(raw)>max_file_bytes:raise ValueError('单个共享内容文件超过限制：'+name)
         if name==GLOBAL:distribution.require_redistributable(name,raw)
         else:public_file(name,raw)
         files[name]=raw
@@ -228,7 +228,7 @@ def snapshot(host,source,extras):
     expected={n:{'bytes':len(b),'sha256':updates.digest(b)} for n,b in sorted(files.items())}
     host_id=updates.host_key(root/'GOnline.exe')
     game_base={}
-    for name in ('GPackData.zdx','GPackData.zpk'):
+    for name in (('GPackData.zdx','GPackData.zpk')if include_game_base else()):
         path=updates.child(root,name)
         if path.is_file():
             before=path.stat();game_base[name]={'bytes':before.st_size,'sha256':file_hash(path)}

@@ -19,6 +19,13 @@ spec.loader.exec_module(catalog)
 
 
 class CatalogTests(unittest.TestCase):
+    def test_ai_catalog_programs_are_generic_and_owner_data_is_not_bundled(self):
+        full=catalog.read_catalog(ROOT)
+        providers=[m for m in full['mods']if m['id']=='ai_catalog']
+        self.assertEqual({m['target']for m in providers},{'client','server'})
+        for mod in providers:
+            self.assertFalse(mod['enabled_by_default']);self.assertIn('catalog.bin',mod['config_files'])
+            self.assertNotIn('catalog.bin',catalog.public_payload_files(mod))
     def test_friend_fix_is_distributed_as_complete_automatic_client_server_feature(self):
         full=catalog.read_catalog(ROOT)
         base=catalog.select_catalog(full,'base')

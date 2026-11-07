@@ -65,7 +65,12 @@ def public_payload_files(mod: dict) -> list[str]:
 def read_catalog(root: Path, *, check_build: bool = True) -> dict:
     root = root.resolve()
     mods = []
-    for path in sorted((root / "mods").glob("*/mod.ini")):
+    manifests=list((root / "mods").glob("*/mod.ini"))
+    # Process-specific providers can share one native Mod identity. Their
+    # programs still belong to the framework; only compiled owner data differs.
+    variants=[p for role in ('client','server') for p in (root/'mods').glob('*/'+role+'.ini')
+              if not(p.parent/'mod.ini').exists()and(p.parent/'manager.json').is_file()]
+    for path in sorted(manifests+variants):
         parser = configparser.ConfigParser(interpolation=None)
         parser.read_string(path.read_text(encoding="utf-8-sig"))
         cfg = parser["mod"]
@@ -131,7 +136,7 @@ def read_catalog(root: Path, *, check_build: bool = True) -> dict:
                      "hosts": list_value(cfg.get("hosts", "")), "version": cfg.get("version", "0"),
                      "target": next(iter(targets)), "enabled_by_default": bool(enabled),
                      "files": files, "runtime_files": runtime_files, "config_files": configs,
-                     "guide": f"docs/{feature}.md"})
+                     "guide": f"docs/{feature}.md",**({'manifest':path.name}if path.name!='mod.ini'else{})})
     if not mods:
         raise ValueError("No bundled mod manifests found")
     category_order = {key: i for i, key in enumerate(CATEGORIES)}
@@ -139,6 +144,7 @@ def read_catalog(root: Path, *, check_build: bool = True) -> dict:
     if check_build:
         cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
         built = set(re.findall(r"\bsdgo_add_mod\(([a-z][a-z0-9_]*)\b", cmake))
+        built.update(p.parent.name for p in variants if 'mods/'+p.parent.name+'/${role}.cpp'in cmake)
         declared = {mod["id"] for mod in mods}
         if built != declared:
             raise ValueError(f"Build/catalog mismatch: built-only={sorted(built-declared)}, manifest-only={sorted(declared-built)}")
@@ -149,7 +155,7 @@ def read_catalog(root: Path, *, check_build: bool = True) -> dict:
                                                    "activation": mod["activation"], "toolkit": mod["toolkit"], "mods": [], "guide": mod["guide"]})
         if any(old[key] != mod[key] for key in ("category", "channel", "activation", "toolkit", "distribution")):
             raise ValueError(f"Feature metadata disagrees: {mod['feature']}")
-        old["mods"].append(mod["id"])
+        if mod['id']not in old['mods']:old["mods"].append(mod["id"])
     catalog = {"schema_version": 1, "categories": CATEGORIES, "features": features, "mods": mods}
     validate_readmes(root, catalog)
     return catalog
@@ -203,7 +209,8 @@ def validate_stage(root: Path, stage: Path, catalog: dict) -> None:
             if not path.is_file():
                 raise ValueError(f"Missing staged mod payload: {mod['id']}/{name}")
             distribution.require_redistributable(f"{mod['id']}/{name}", path.read_bytes())
-            expected=(root / "mods" / mod["id"] / name).read_bytes()if name not in mod['runtime_files']and not name.endswith('.dll')else None
+            source_name=mod.get('manifest','mod.ini')if name=='mod.ini'else name
+            expected=(root / "mods" / mod["id"] / source_name).read_bytes()if name not in mod['runtime_files']and not name.endswith('.dll')else None
             if name=='mod.ini':
                 from manager.configuration import render
                 expected=render(expected,json.loads((root/'mods'/mod['id']/'manager.json').read_text('utf-8-sig')))

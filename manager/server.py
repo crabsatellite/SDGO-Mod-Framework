@@ -111,6 +111,10 @@ def make_server(workspace, port=0):
                     if controller is None:raise ValueError('完整客户端更新尚未初始化')
                     if method=='GET':return self.send_json(200,controller.state())
                     if method=='POST':
+                        if body.get('action')=='profile_install':
+                            return self.send_json(200,controller.bind_profile(body.get('host'),body.get('feeds',[]),body.get('offline')))
+                        if body.get('action')=='profile_publish':
+                            return self.send_json(200,controller.publish_profile(body.get('host'),body.get('directory'),body.get('feeds',[]),body.get('extras',[]),body.get('zip_payload',False),body.get('git_remote',''),body.get('branch','content')))
                         if body.get('action')=='restart':
                             controller.restart(body.get('host'));self.send_json(200,{'restarting':True})
                             threading.Thread(target=self.server.shutdown,daemon=True).start();return
