@@ -2313,9 +2313,9 @@ const SdgoGameTestCaseV1 ocMobilityCase{"oc.mobility",60000,&OcMobility};
 int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
     static int phase=0;static void* page=nullptr;static uint32_t beforeReplies=0;static uint64_t readyAt=0;
     static int captureState=0;static int afterCapture=0;static HangarNavigation::Result previous=HangarNavigation::kUnbound;
-    static uint32_t sumBefore=0,leftBefore=0,revisionBefore=0;static uint8_t speedBefore=0;static uint32_t resetWork=1;
+    static uint32_t sumBefore=0,leftBefore=0,revisionBefore=0;static uint8_t speedBefore=0;static uint32_t resetWork=1;static bool agilityNormal=true;
     if(!context->tick){phase=0;page=nullptr;beforeReplies=0;readyAt=0;captureState=0;afterCapture=0;previous=HangarNavigation::kUnbound;
-        sumBefore=leftBefore=revisionBefore=0;speedBefore=0;resetWork=1;}
+        sumBefore=leftBefore=revisionBefore=0;speedBefore=0;resetWork=1;agilityNormal=true;}
     const auto capture=[&](const wchar_t* name)->int {
         if(captureState==0) {
             if(GetTickCount64()-readyAt<1200)return SDGO_GAME_TEST_WAIT;
@@ -2372,6 +2372,15 @@ int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
     };
     const auto sumNormal=[&](){uint32_t total=0;for(int i=0;i<6;++i)total+=s.normal[i];return total;};
     const auto sumOver=[&](){uint32_t total=0;for(int i=0;i<6;++i)total+=s.over[i];return total;};
+    if(phase==1 && s.transport_ready && s.reply_count>0 && !s.busy && !s.server_oc_mode) {
+        // The server runs the current custom-parts system: the factory stays native.
+        if(GetTickCount64()-readyAt<4000)return SDGO_GAME_TEST_WAIT;
+        context->Assert(s.windows==0 && s.hidden_dialogs==0,
+            "with the server in current mode the factory shows no OC tab, entry or window and hides nothing");
+        context->Observe("server runs the current custom-parts system; the factory upgrade page stays native");
+        readyAt=GetTickCount64();phase=60;return SDGO_GAME_TEST_WAIT;
+    }
+    if(phase==60)return capture(L"oc-current-mode");
     if(phase==1) {
         const uint32_t wanted=SDGO_OC_WINDOW_ENTRY|SDGO_OC_WINDOW_TAB;
         if(!s.windows_loaded || !s.profile_present || s.busy || (s.windows&wanted)!=wanted)
@@ -2382,6 +2391,7 @@ int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
     if(phase==50) {
         const uint32_t wanted=SDGO_OC_WINDOW_OVER|SDGO_OC_WINDOW_TAB_ACTIVE;
         if((s.windows&wanted)!=wanted)return timeout(20000,"the OC tab opened the original 0794 allocation window");
+        if(!s.hidden_dialogs)return timeout(10000,"the factory inventory under the allocation window is hidden while the OC tab is open");
         char attached[300];sprintf_s(attached,"original OC windows shown=0x%X uid=%llu unit=%u oc_level=%u normal=%u/%u/%u/%u/%u/%u over=%u/%u/%u/%u/%u/%u left=%u+%u carrier=%u",
             s.windows,static_cast<unsigned long long>(s.unit_uid),s.unit_number,s.oc_level,s.normal[0],s.normal[1],s.normal[2],s.normal[3],s.normal[4],s.normal[5],
             s.over[0],s.over[1],s.over[2],s.over[3],s.over[4],s.over[5],s.normal_points_left,s.over_points_left,s.carrier_present);
@@ -2450,13 +2460,13 @@ int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
         readyAt=GetTickCount64();phase=3;return SDGO_GAME_TEST_WAIT;
     }
     // Re-allocate agility through AgiUpBtn so the next battle keeps a gain.
-    if(phase==12)return press("over",L"AgiUpBtn",13);
+    if(phase==12){agilityNormal=s.normal_points_left>0;return press("over",L"AgiUpBtn",13);}
     if(phase==13) {
         const auto r=confirmShown(126262,126262,"AgiUpBtn opened the 0819 confirmation");if(r!=SDGO_GAME_TEST_PASS)return r;
         return press("confirm",L"OKBtn",14);
     }
     if(phase==14) {
-        const auto r=replied(resetWork==1 || !s.over_points_left ? 0x1002u:0x1003u,"the confirmed agility allocation produced a save reply");
+        const auto r=replied(agilityNormal ? 0x1002u:0x1003u,"the confirmed agility allocation produced a save reply");
         if(r!=SDGO_GAME_TEST_PASS)return r;
         context->Assert(s.last_status==0 && s.last_ret_val==0 && s.revision>revisionBefore,"AgiUpBtn saved one agility point through the original procedure");
         readyAt=GetTickCount64();
@@ -2522,14 +2532,19 @@ int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
     }
     if(phase==21) {
         const auto r=replied(0x1004,"the confirmed challenge produced an upgrade reply");if(r!=SDGO_GAME_TEST_PASS)return r;
-        context->Assert(s.last_status==0 && s.last_ret_val==0,"the server ran the OC challenge through the original upgrade procedure");
+        // ret 0 rolled the challenge; 2 and 6 are the original conditions (level/experience, battle count).
+        context->Assert(s.last_status==0 && (s.last_ret_val==0 || s.last_ret_val==2 || s.last_ret_val==6),
+            "the server answered the OC challenge through the original upgrade procedure");
         char message[200];sprintf_s(message,"oc challenge success=%u oc_level=%u over_left=%u normal_left=%u revision=%u message=%u",
             s.last_upgrade_success,s.oc_level,s.over_points_left,s.normal_points_left,s.revision,s.confirm_text_id);
         context->Observe(message);
         readyAt=GetTickCount64();phase=22;return SDGO_GAME_TEST_WAIT;
     }
     if(phase==22) {
-        const auto r=confirmShown(126691,126704,"the challenge result shows the original success or failure message");if(r!=SDGO_GAME_TEST_PASS)return r;
+        const auto r=s.last_ret_val==6 ? confirmShown(126719,126719,"the battle-count condition shows its original message")
+            : s.last_ret_val==2 ? confirmShown(126680,126680,"the experience condition shows its original message")
+            : confirmShown(126690,126704,"the challenge result shows the original success or failure message");
+        if(r!=SDGO_GAME_TEST_PASS)return r;
         if(capture(L"oc-challenge-result")!=SDGO_GAME_TEST_PASS)return SDGO_GAME_TEST_WAIT;
         return press("confirm",L"OKBtn",23);
     }

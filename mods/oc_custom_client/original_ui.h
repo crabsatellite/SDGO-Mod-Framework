@@ -95,6 +95,7 @@ struct OverView {
 struct ChallengeView {
     bool visible = false;
     std::wstring title, unit, state, target_title, target, message0, over_title, message1;
+    std::wstring start; // StartBtn caption
     bool start_enabled = false;
     bool left_enabled = false;
     bool right_enabled = false;

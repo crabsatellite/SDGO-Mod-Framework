@@ -440,8 +440,10 @@ void OriginalUi::Render(const EntryView& entry, const OverView& over, const Chal
         SetStatic(window_challenge, L"MessageStatic0", challenge.message0);
         SetStatic(window_challenge, L"OverCustomTittle", challenge.over_title);
         SetStatic(window_challenge, L"MessageStatic1", challenge.message1);
-        if (auto* start = Find(window_challenge, L"StartBtn"))
+        if (auto* start = Find(window_challenge, L"StartBtn")) {
+            SetLabel(*start, challenge.start, 2);
             SetState(start->pointer, true, challenge.start_enabled && !confirm.visible);
+        }
         if (auto* close = Find(window_challenge, L"CloseBtn")) SetState(close->pointer, true, !confirm.visible);
         if (auto* left = Find(window_challenge, L"LeftBtn")) SetState(left->pointer, true, challenge.left_enabled);
         if (auto* right = Find(window_challenge, L"RightBtn")) SetState(right->pointer, true, challenge.right_enabled);

@@ -55,6 +55,13 @@ T Read(const void* pointer, std::size_t offset = 0) {
     return value;
 }
 
+template <class T>
+void PutValue(void* pointer, std::size_t offset, T value) {
+    std::memcpy(static_cast<std::uint8_t*>(pointer) + offset, &value, sizeof(value));
+}
+using RefreshGeometryFn = void(__thiscall*)(void*);
+RefreshGeometryFn g_refresh_geometry = nullptr;
+
 const SdgoApi* g_api = nullptr;
 SdgoMod* g_mod = nullptr;
 ui::Bindings g_bindings;
@@ -100,7 +107,15 @@ bool g_tick_active = false;
 // {type, record}. Type 0x3B is the UI text table (record: id, flag, UTF-16
 // text at +5); type 2 is the unit table (name at +5, DashLevel +0x21E,
 // MotivePower +0x221, UnitNumber_Transform +0x13C).
+const std::uint8_t* GridEntry(std::int32_t id, std::int32_t* type) noexcept;
+
 const std::uint8_t* GridRecord(std::int32_t id, std::int32_t type) noexcept {
+    std::int32_t found = 0;
+    const auto* record = GridEntry(id, &found);
+    return record && found == type ? record : nullptr;
+}
+
+const std::uint8_t* GridEntry(std::int32_t id, std::int32_t* type) noexcept {
     __try {
         auto* manager = g_grid ? *g_grid : nullptr;
         if (!manager) return nullptr;
@@ -117,7 +132,8 @@ const std::uint8_t* GridRecord(std::int32_t id, std::int32_t type) noexcept {
         }
         if (best == head || Read<std::int32_t>(best, 0xC) != id) return nullptr;
         auto* value = Read<std::int32_t*>(best, 0x10);
-        if (!value || value[0] != type) return nullptr;
+        if (!value) return nullptr;
+        *type = value[0];
         return reinterpret_cast<const std::uint8_t*>(value[1]);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return nullptr;
@@ -149,7 +165,11 @@ std::wstring RecordText(const std::uint8_t* record, std::size_t offset, std::siz
 // when the table lookup fails.
 std::wstring Text(std::uint32_t id, const wchar_t* fallback) {
     auto text = RecordText(GridRecord(static_cast<std::int32_t>(id), 0x3B), 5, 512);
-    return text.empty() ? std::wstring(fallback) : text;
+    if (text.empty()) text = fallback;
+    // The client table keeps line breaks as the two characters backslash and n.
+    for (std::size_t at = text.find(L"\\n"); at != std::wstring::npos; at = text.find(L"\\n", at))
+        text.replace(at, 2, L"\n");
+    return text;
 }
 
 // Formats a table string that carries exactly the listed conversions.
@@ -195,13 +215,35 @@ std::wstring UnitName(std::uint32_t unit_number) {
     return RecordText(GridRecord(static_cast<std::int32_t>(unit_number), 2), 5, 50);
 }
 
+void Log(int level, const char* message);
+
 std::wstring ItemName(std::int32_t item) {
     // Item records carry their name at +5 like the other client tables.
-    for (std::int32_t type : {3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}) {
-        auto name = RecordText(GridRecord(item, type), 5, 50);
-        if (!name.empty()) return name;
+    std::int32_t type = 0;
+    auto name = RecordText(GridEntry(item, &type), 5, 50);
+    static bool traced = false;
+    if (!traced) {
+        traced = true;
+        char line[96];
+        std::snprintf(line, sizeof(line), "oc challenge item %d is client table type %d (name %s)", item, type,
+                      name.empty() ? "missing" : "found");
+        Log(SDGO_LOG_INFO, line);
     }
-    return std::to_wstring(item);
+    return name.empty() ? std::to_wstring(item) : name;
+}
+
+// The current client retired the OC challenge items: their table entries read
+// 「不可用」. Such an item is described by its effect from the item data.
+std::wstring ItemLabel(const ChallengeItem& item) {
+    auto name = ItemName(item.item);
+    if (!name.empty() && name != std::to_wstring(item.item) && name != L"不可用") return name;
+    std::wstring label;
+    if (item.probability_plus > 0) {
+        const int whole = item.probability_plus / 100, part = item.probability_plus % 100;
+        label = L"成功率+" + std::to_wstring(whole) + (part ? L"." + std::to_wstring(part / 10) : L"") + L"%";
+    }
+    if (item.lv_prevention) label += label.empty() ? L"等级保护" : L" 等级保护";
+    return label.empty() ? std::to_wstring(item.item) : label;
 }
 
 // --- State ----------------------------------------------------------------
@@ -360,6 +402,7 @@ void Render() {
     challenge.visible = oc && s.challenge_open;
     if (challenge.visible) {
         challenge.title = Text(126631, L"终极强化");
+        challenge.start = Text(126708, L"开始");
         challenge.unit = UnitName(s.unit_number);
         challenge.state = Format(Text(126720, L"对战次数:%d回"), L"d", std::to_wstring(s.profile.battles));
         challenge.target_title = Text(127182, L"等级");
@@ -372,7 +415,7 @@ void Render() {
             const auto& item = s.items.items[slot];
             challenge.item_visible[slot] = true;
             challenge.item_checked[slot] = s.item_selected[slot];
-            challenge.item_text[slot] = ItemName(item.item) + L" x" + std::to_wstring(item.count);
+            challenge.item_text[slot] = ItemLabel(item) + L" x" + std::to_wstring(item.count);
         }
     }
     ui::ConfirmView confirm;
@@ -538,6 +581,10 @@ void __cdecl OnReply(void*, std::uint16_t command, std::int32_t status, const st
                 ShowMessage(126700, Text(126700, L"该机体等级不能进行终极强化."));
             } else if (reply.success) {
                 ShowMessage(126704, Format(Text(126704, L"[ %s ]强化成功!"), L"s", LevelName(reply.oc_level)));
+            } else if (reply.lv_prevention) {
+                // A level-protection item kept the level.
+                ShowMessage(126690, Format(Text(126690, L"终极强化失败.\n当前机体等级的经验值下降为%s."), L"s",
+                                           LevelName(reply.oc_level)));
             } else {
                 ShowMessage(126691, Format(Text(126691, L"终极强化失败.\n机体等級下降为%s."), L"s",
                                            LevelName(reply.oc_level)));
@@ -801,6 +848,12 @@ void AttachUnsafe() {
         return;
     }
     AdoptRecord(g_ui.component());
+    // The current page keeps its unit-view buttons along y 590..612 where the
+    // OC-era layout put the reset bar; the allocation window sits 40 px higher.
+    if (void* over = g_ui.window_dialog(ui::window_over)) {
+        PutValue<float>(over, 0x14C, Read<float>(over, 0x14C) - 40.0f);
+        if (g_refresh_geometry) g_refresh_geometry(over);
+    }
     auto& s = g_state_data;
     char trace[220];
     std::snprintf(trace, sizeof(trace),
@@ -1029,12 +1082,10 @@ __declspec(naked) void DeriveCallDetour() {
 // in OC mode. While an OC window is open, native dialogs lying under it (the
 // inventory) are hidden and restored when it closes.
 
-using RefreshGeometryFn = void(__thiscall*)(void*);
 using TabCallback = void(__stdcall*)(void*, std::uint32_t, std::uintptr_t, void*);
 using TabUpdate = void(__thiscall*)(void*);
 TabCallback g_tab_callback_original = nullptr;
 TabUpdate g_tab_update_original = nullptr;
-RefreshGeometryFn g_refresh_geometry = nullptr;
 void* g_tab_vtable = nullptr;
 constexpr std::uint32_t kRadioEvent = 0x301;
 constexpr std::size_t kTabRadios = 0xD4;   // seven radio controls cached by the tab menu service
@@ -1056,11 +1107,6 @@ struct HiddenDialog {
 };
 std::array<HiddenDialog, 16> g_hidden{};
 std::size_t g_hidden_count = 0;
-
-template <class T>
-void PutValue(void* pointer, std::size_t offset, T value) {
-    std::memcpy(static_cast<std::uint8_t*>(pointer) + offset, &value, sizeof(value));
-}
 
 struct Rect {
     float left = 0, top = 0, right = 0, bottom = 0;
@@ -1094,7 +1140,79 @@ bool OwnDialog(void* dialog) {
     return false;
 }
 
-// Hide the frame's other dialogs that lie mostly under the open OC windows.
+// The factory inventory service (CServiceFactoryRoomInventory) draws the
+// item grid where the OC-era OC tab showed the allocation window. Its dialogs
+// sit in the service's dialog map (service +0x30, std::map<wstring, dialog*>,
+// the map the service loader files dialogs in); all factory dialogs are
+// top-level, so they are found there.
+using InventoryUpdate = void(__thiscall*)(void*);
+InventoryUpdate g_inventory_update_original = nullptr;
+void* g_inventory_vtable = nullptr;
+// Several pages host their own inventory instance; every instance updated in
+// the last two seconds is checked (only dialogs under the OC windows are hidden).
+struct InventorySeen {
+    void* service = nullptr;
+    ULONGLONG tick = 0;
+};
+std::array<InventorySeen, 4> g_inventories{};
+
+void __fastcall InventoryUpdateHook(void* service, void*) {
+    g_inventory_update_original(service);
+    __try {
+        if (Read<void*>(service) != g_inventory_vtable) return;
+        const auto now = GetTickCount64();
+        InventorySeen* slot = nullptr;
+        for (auto& seen : g_inventories)
+            if (seen.service == service) slot = &seen;
+        if (!slot)
+            for (auto& seen : g_inventories)
+                if (!slot || seen.tick < slot->tick) slot = &seen;
+        slot->service = service;
+        slot->tick = now;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+// Map node: left, parent, right, key (std::wstring, 0x1C bytes) at +0x0C,
+// dialog at +0x28, color +0x2C, isnil +0x2D.
+bool Readable(const void* pointer, std::size_t bytes) noexcept {
+    if (!pointer) return false;
+    MEMORY_BASIC_INFORMATION info{};
+    if (!VirtualQuery(pointer, &info, sizeof(info)) || info.State != MEM_COMMIT ||
+        (info.Protect & (PAGE_GUARD | PAGE_NOACCESS)) ||
+        !(info.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE)))
+        return false;
+    const auto end = static_cast<const std::uint8_t*>(info.BaseAddress) + info.RegionSize;
+    return static_cast<const std::uint8_t*>(pointer) + bytes <= end;
+}
+
+std::size_t ServiceDialogs(void* service, void** out, std::size_t capacity) {
+    std::size_t count = 0;
+    auto* tree = static_cast<std::uint8_t*>(service) + 0x30;
+    for (std::size_t slot = 0; slot < 3 && !count; ++slot) {
+        auto* head = Read<std::uint8_t*>(tree, slot * 4);
+        // Only one slot holds the head; the others are padding or the size.
+        if (!Readable(head, 0x30) || Read<std::uint8_t>(head, 0x2D) != 1) continue;
+        std::uint8_t* stack[32];
+        std::size_t depth = 0;
+        auto* root = Read<std::uint8_t*>(head, 4);
+        if (root && root != head) stack[depth++] = root;
+        std::size_t guard = 0;
+        while (depth && count < capacity && ++guard < 64) {
+            auto* node = stack[--depth];
+            if (!node || node == head || !Readable(node, 0x30) || Read<std::uint8_t>(node, 0x2D)) continue;
+            void* dialog = Read<void*>(node, 0x28);
+            if (Readable(dialog, 0x170)) out[count++] = dialog;
+            for (std::size_t child : {0u, 8u}) {
+                auto* next = Read<std::uint8_t*>(node, child);
+                if (next && next != head && depth < 32) stack[depth++] = next;
+            }
+        }
+    }
+    return count;
+}
+
+// Hide the inventory dialogs lying mostly under the open OC windows.
 void HideUnderWindows() noexcept {
     __try {
         Rect area;
@@ -1115,37 +1233,45 @@ void HideUnderWindows() noexcept {
             return;
         }
         static bool traced = false;
-        for (void* owner : {Read<void*>(g_ui.page_dialog(), 0x15C), Read<void*>(g_ui.window_dialog(ui::window_over), 0x15C)}) {
-            if (!owner) continue;
-            auto* head = Read<std::uint8_t*>(owner, 0x23C);
-            if (!head) continue;
-            std::size_t guard = 0;
-            for (auto* node = Read<std::uint8_t*>(head); node && node != head && ++guard < 512; node = Read<std::uint8_t*>(node)) {
-                void* child = Read<void*>(node, 8);
-                if (!child || OwnDialog(child)) continue;
-                const auto rect = RectOf(child);
-                if (rect.empty()) continue;
-                const float width = rect.right - rect.left, height = rect.bottom - rect.top;
-                if (width >= 1000.0f || height >= 740.0f) continue; // full-screen layers (background, unit view)
-                const float overlap_w = std::min(rect.right, area.right) - std::max(rect.left, area.left);
-                const float overlap_h = std::min(rect.bottom, area.bottom) - std::max(rect.top, area.top);
-                if (overlap_w <= 0 || overlap_h <= 0 || overlap_w * overlap_h < 0.6f * width * height) continue;
-                bool known = false;
-                for (std::size_t index = 0; index < g_hidden_count; ++index) known = known || g_hidden[index].dialog == child;
-                const auto visible = Read<std::uint8_t>(child, 0x162);
-                if (!known && visible && g_hidden_count < g_hidden.size()) {
-                    g_hidden[g_hidden_count++] = {child, visible};
-                    if (!traced) {
-                        char line[160];
-                        std::snprintf(line, sizeof(line), "oc windows cover native dialog %p at %.0f,%.0f %.0fx%.0f",
-                                      child, rect.left, rect.top, width, height);
-                        Log(SDGO_LOG_INFO, line);
-                    }
-                }
-                if (visible) PutValue<std::uint8_t>(child, 0x162, 0);
+        void* dialogs[16]{};
+        std::size_t count = 0;
+        const auto now = GetTickCount64();
+        std::size_t live = 0;
+        for (const auto& seen : g_inventories)
+            if (seen.service && now - seen.tick < 2000) {
+                ++live;
+                count += ServiceDialogs(seen.service, dialogs + count, 16 - count);
             }
+        static bool reported = false;
+        if (!reported) {
+            reported = true;
+            char line[120];
+            std::snprintf(line, sizeof(line), "oc windows open: %u live inventory instance(s), %u dialog(s)",
+                          static_cast<unsigned>(live), static_cast<unsigned>(count));
+            Log(SDGO_LOG_INFO, line);
         }
-        traced = true;
+        for (std::size_t index = 0; index < count; ++index) {
+            void* child = dialogs[index];
+            if (!child || OwnDialog(child)) continue;
+            const auto rect = RectOf(child);
+            if (rect.empty()) continue;
+            const float width = rect.right - rect.left, height = rect.bottom - rect.top;
+            const float overlap_w = std::min(rect.right, area.right) - std::max(rect.left, area.left);
+            const float overlap_h = std::min(rect.bottom, area.bottom) - std::max(rect.top, area.top);
+            if (!traced && Read<std::uint8_t>(child, 0x162)) {
+                char line[200];
+                std::snprintf(line, sizeof(line), "oc inventory dialog %p at %.0f,%.0f %.0fx%.0f visible=%u (of %u)", child,
+                              rect.left, rect.top, width, height, Read<std::uint8_t>(child, 0x162), static_cast<unsigned>(count));
+                Log(SDGO_LOG_INFO, line);
+            }
+            if (overlap_w <= 0 || overlap_h <= 0 || overlap_w * overlap_h < 0.5f * width * height) continue;
+            traced = true;
+            bool known = false;
+            for (std::size_t slot = 0; slot < g_hidden_count; ++slot) known = known || g_hidden[slot].dialog == child;
+            const auto visible = Read<std::uint8_t>(child, 0x162);
+            if (!known && visible && g_hidden_count < g_hidden.size()) g_hidden[g_hidden_count++] = {child, visible};
+            if (visible) PutValue<std::uint8_t>(child, 0x162, 0);
+        }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
 }
@@ -1242,8 +1368,8 @@ bool CreateTab(void* service) {
     g_tab.button = button;
     g_tab.unit_up = unit_up;
     char line[200];
-    std::snprintf(line, sizeof(line), "oc tab restored in the factory tab bar at x=%.0f (radio skins=%u, caption=%ls)", oc_x,
-                  static_cast<unsigned>(count), caption.c_str());
+    std::snprintf(line, sizeof(line), "oc tab restored in the factory tab bar at x=%.0f (radio skins=%u, caption text %s)", oc_x,
+                  static_cast<unsigned>(count), GridRecord(126631, 0x3B) ? "126631" : "fallback");
     Log(SDGO_LOG_INFO, line);
     return true;
 }
@@ -1339,6 +1465,7 @@ int Snapshot(SdgoOcCustomClientSnapshotV2* output) {
         snapshot.challenge_item_ids[slot] = s.items.items[slot].item;
         if (s.item_selected[slot]) snapshot.challenge_selected |= 1u << slot;
     }
+    snapshot.hidden_dialogs = static_cast<std::uint32_t>(g_hidden_count);
     snapshot.mobility_applied = g_mobility.applied;
     snapshot.mobility_unit_number = g_mobility.unit_number;
     snapshot.mobility_dash_base = g_mobility.dash_base;
@@ -1463,6 +1590,11 @@ SDGO_MOD_ENTRY {
         !api->HookCode(mod, "oc_custom.client_upgrade_update", reinterpret_cast<void*>(&PageUpdateHook),
                        reinterpret_cast<void**>(&g_update_original)))
         return 0;
+    g_inventory_vtable = api->Symbol(mod, "oc_custom.client_inventory_vtable");
+    if (!g_inventory_vtable ||
+        !api->HookCode(mod, "oc_custom.client_inventory_update", reinterpret_cast<void*>(&InventoryUpdateHook),
+                       reinterpret_cast<void**>(&g_inventory_update_original)))
+        Log(SDGO_LOG_WARN, "oc: the factory inventory hook is unavailable; OC windows draw over the inventory");
     g_tab_vtable = api->Symbol(mod, "oc_custom.client_tab_menu_vtable");
     g_refresh_geometry = reinterpret_cast<RefreshGeometryFn>(api->Symbol(mod, "friend_unit_gift.ui_refresh_geometry"));
     if (!g_tab_vtable ||
