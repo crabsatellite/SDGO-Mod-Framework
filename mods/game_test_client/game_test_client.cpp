@@ -4,6 +4,7 @@
 #include "quiet_wait_room_messages.h"
 #include "../game_test_shared/runner.h"
 #include "native_actions.h"
+#include "login_recovery_actions.h"
 #include "channel_actions.h"
 #include "battleship_actions.h"
 #include "battleship_deck_actions.h"
@@ -82,6 +83,7 @@ MessageBoxWFn originalMessageBoxW;
 MessageBoxAFn originalMessageBoxA;
 DWORD mainThread;
 NativeActions actions;
+LoginRecoveryActions loginRecovery;
 ChannelActions channels;
 BattleShipActions battleships;
 BattleShipDeckActions decks;
@@ -282,6 +284,7 @@ bool IsLoopbackEndpoint(const std::wstring& job) {
 }
 
 bool LoadPlan() {
+    if (!loginRecovery.Configure(sdgo_test::directory + L"\\run.ini")) return false;
     const std::wstring job = sdgo_test::directory + L"\\run.ini";
     if(!OperatorSessionActions::LoadConfig(job,&operatorSessionConfig,&testOperatorFlow))return false;
     const std::wstring blueprintIni=sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini";
@@ -711,6 +714,7 @@ int __cdecl Bootstrap(const SdgoGameTestContextV1* context) {
     return ProbeLoginShowcase(context);
 }
 int __cdecl Login(const SdgoGameTestContextV1* context) {
+    if (loginRecovery.Enabled()) return loginRecovery.PollLogin(context, actions);
     const auto auth = actions.LoginState();
     static uint64_t nextProgress=0;
     if(!context->tick)nextProgress=0;
@@ -1531,6 +1535,10 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
         state.profile_pilot_id,
     };
     if (sdgo_game_test::IsOnboardingComplete(completion)) {
+        if (loginRecovery.Enabled()) {
+            const int recovery = loginRecovery.VerifyCompletion(context, actions, authenticatedPilot);
+            if (recovery != SDGO_GAME_TEST_PASS) return recovery;
+        }
         context->Assert(1, "the authenticated account has a real initialized inventory containing an owned unit");
         context->Assert(authenticatedPilot && state.profile_pilot_id == authenticatedPilot, "onboarding retains the real profile loaded after the accepted login");
         context->Assert(1, "every attempted one-time native onboarding action completed before the lobby");

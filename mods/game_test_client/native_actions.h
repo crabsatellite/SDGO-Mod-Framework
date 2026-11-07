@@ -347,11 +347,10 @@ public:
     void* LoginService() const
     {
         const uint32_t appState = AppState();
-        // CServiceGate is released when the original client leaves the gate.
-        // The dispatch hook intentionally keeps only an observational pointer,
-        // so never expose it after its two owning application states end.
-        if (appState != kLoginServiceAppState &&
-            appState != kLoginServiceTransitionAppState)
+        // Application state 25 has already destroyed the state-4 service-gate
+        // owner. The dispatch hook intentionally keeps only an observational
+        // pointer, so dereferencing it is legal only while state 4 owns it.
+        if (appState != kLoginServiceAppState)
             return nullptr;
         return InterlockedCompareExchangePointer(&loginService_, nullptr, nullptr);
     }
@@ -523,7 +522,6 @@ private:
     static constexpr size_t kLoginServiceState = 0x2058;
     static constexpr size_t kProfilePilotId = 0x138;
     static constexpr uint32_t kLoginServiceAppState = 4;
-    static constexpr uint32_t kLoginServiceTransitionAppState = 25;
     static constexpr size_t kTransportHistoryCapacity = 64;
 
     struct TransportEventSlot
