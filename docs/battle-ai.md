@@ -58,8 +58,9 @@ pause navigation, delay target selection, or add 600 ms to every weapon's own co
 remains governed by its longer native cycle. Switching ordinary weapons does not reset this interval;
 respawning starts with no debt from the previous life. This reduces repeated rapid starts, while its
 effect on sustained fire depends on the weapon. A native refusal adds no interval before the next
-legal attempt. A stationary gun lets an already-started boost produce its first physical step before
-braking, avoiding consecutive boost-start and boost-end animations with no movement or attack.
+legal attempt. A ready ranged weapon with a target in range retains an already-started boost until
+its first physical step, then resumes normal firing and movement decisions. This also covers mobile
+scripted guns, preventing repeated strafe requests from interrupting native startup.
 
 Living teammates share fresh visual contacts, including contacts observed by human players. A bot can
 pursue an enemy seen by an ally without seeing it itself. Shooting still requires the bot's own weapon

@@ -1109,7 +1109,7 @@ local function ControllerDiagnostic(o,s,t,now)
     weapon and Flag(weapon.ready) and 1 or 0,weapon and Flag(weapon.ammoReady) and 1 or 0,weapon and Flag(weapon.movingShot) and 1 or 0,tostring(s.reason or 'initial')))
 end
 local function FinishBoostStart(o,s,w,inRange)
-  if not w or w.kind=='melee' or Flag(w.movingShot) or not Flag(w.ready) or not inRange then
+  if not w or w.kind=='melee' or not Flag(w.ready) or not inRange then
     s.stationaryBoostAnchor=nil;return false
   end
   local starting=o.movementState==72 or o.movementPending==72
@@ -1120,9 +1120,10 @@ local function FinishBoostStart(o,s,w,inRange)
   if not anchor then return false end
   local dx,dy,dz=o.pos.x-anchor.x,o.pos.y-anchor.y,o.pos.z-anchor.z
   local progressed=dx*dx+dz*dz>0.01 or dy*dy>4
-  -- Original 0x48 starts boost without displacement; immediately braking
-  -- chains its animation into 0x70. Retain the existing motor until an actual
-  -- step separates those two native phases, then stop normally to shoot.
+  -- Original 0x48 starts boost without displacement. Braking or issuing a new
+  -- strafe before its first step can chain/restart native startup and end.
+  -- This admission belongs to mobile scripted guns too. Retain the motor
+  -- until a real step, then resume the weapon's ordinary firing/movement path.
   if starting or (o.movementState==92 and not progressed) then return true end
   s.stationaryBoostAnchor=nil;return false
 end
@@ -1426,7 +1427,7 @@ local function Tick(npc)
   if Tactics.finishBoost(o,s,w,inRange) then
     npc:SetAttackOnOff(reaction);SDGO_BattleAI_Cadence(C.AttackIntervalMs)
     if pendingSlot then ChangeWeapon(npc,pendingSlot) end
-    Log(s,'finish native boost startup before stationary fire braking',now)
+    Log(s,'finish native boost startup before the next firing or movement decision',now)
     return 123
   end
   local covered,peek=CoverStep(npc,o,s,w,t,now)
