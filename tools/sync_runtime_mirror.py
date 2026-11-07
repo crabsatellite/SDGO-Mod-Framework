@@ -47,8 +47,9 @@ def main():
                         published[str(number)+':'+branch]=commit;continue
                     git('fetch','--no-tags','origin',ref)
                     if current:git('fetch','--no-tags',target['url'],ref)
-                    git('push',target['url'],commit+':'+ref)
-                    if git('ls-remote',target['url'],ref).split()[:1]!=[commit]:raise ValueError('readback differs')
+                    try:git('push',target['url'],commit+':'+ref);rejected=None
+                    except RuntimeError as error:rejected=error  # a concurrent release run may have mirrored this commit after the check above
+                    if git('ls-remote',target['url'],ref).split()[:1]!=[commit]:raise rejected or ValueError('readback differs')
                     published[str(number)+':'+branch]=commit
                 except(RuntimeError,ValueError,subprocess.TimeoutExpired)as error:failed.append('target '+str(number)+' '+branch+': '+str(error))
         print('Verified mirrored refs: '+(', '.join(published)or'none'),flush=True)
