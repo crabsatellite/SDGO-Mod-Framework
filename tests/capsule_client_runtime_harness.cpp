@@ -66,6 +66,24 @@ int wmain(int argc, wchar_t** argv)
         return 4;
     }
     std::puts("CHECKSUM_GATE 1");
+    if(!bundle.acquisition.units.empty()) {
+        std::vector<uint8_t> row(614,0),before;
+        const uint32_t unit=*bundle.acquisition.units.begin();
+        row[5]=1;std::memcpy(row.data()+6,&unit,4);
+        const wchar_t existing[]=L"Existing activity source";
+        std::memcpy(row.data()+214,existing,sizeof(existing));before=row;
+        if(!bundle.acquisition.Apply(row.data(),614) ||
+           std::memcmp(row.data(),before.data(),214) ||
+           std::memcmp(row.data()+414,before.data()+414,200))return 5;
+        const auto once=row;
+        if(!bundle.acquisition.Apply(row.data(),614) || row!=once)return 6;
+        for(size_t i=0;i<81;++i)std::memcpy(row.data()+214+2*i,L"a",2);
+        std::memset(row.data()+214+2*81,0,200-2*81);
+        if(!bundle.acquisition.Apply(row.data(),614))return 7;
+        const uint32_t other=0;std::memcpy(row.data()+6,&other,4);before=row;
+        if(bundle.acquisition.Apply(row.data(),614) || row!=before)return 8;
+        std::puts("ACQUISITION 1");
+    }
     std::printf("OK %s %u\n", bundle.catalogRevision.c_str(),
                 static_cast<unsigned>(bundle.entries.size()));
     for (const wchar_t* name : {L"gdrs\\0033.gdt", L"gdrs\\0101.gdt",

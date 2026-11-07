@@ -299,6 +299,29 @@ private:
         if(!model)return Waiting;
         state_.detail=reinterpret_cast<uintptr_t>(detail);state_.model=reinterpret_cast<uintptr_t>(model);
         state_.form=form;state_.animation_state=Read<float>(detail+0x1E4);
+        using Expected=const wchar_t*(__cdecl*)(uint32_t);
+        auto module=GetModuleHandleW(L"capsule_catalog.dll");
+        auto expected=module?reinterpret_cast<Expected>(GetProcAddress(module,"SdgoCollectionAcquisitionExpectedV1")):nullptr;
+        if(expected && expected(state_.unit)) {
+            // Observe the original FinishedProduct service's own copied event
+            // strings after its native type-85 consumer populated the panel.
+            bool copied=false;
+            for(unsigned index=0;index<10;++index) {
+                wchar_t name[64]{};swprintf_s(name,L"FinishedProduct%u",index);
+                auto* source=Resolve(name);
+                if(!source || Read<uint32_t>(source+0x44)!=state_.unit)continue;
+                const auto first=Read<uintptr_t>(source+0x178),last=Read<uintptr_t>(source+0x17C);
+                if(!first || last<first || last-first>28*256 || (last-first)%28)continue;
+                for(auto at=first;at<last;at+=28) {
+                    const auto* value=reinterpret_cast<const uint8_t*>(at);
+                    const auto length=Read<uint32_t>(value+16),capacity=Read<uint32_t>(value+20);
+                    if(!length || length>512 || capacity<length)continue;
+                    const auto* text=capacity<8?reinterpret_cast<const wchar_t*>(value):Read<const wchar_t*>(value);
+                    if(text && wcsstr(text,L"收藏扭蛋"))copied=true;
+                }
+            }
+            if(!copied)return Waiting;
+        }
         return Ready;
     }
     const SdgoApi* api_=nullptr;SdgoMod* mod_=nullptr;HangarNavigation* navigation_=nullptr;

@@ -98,6 +98,17 @@ def resident_extensions(client, reader):
         ui = path.read_bytes()
         if hashlib.sha256(ui).hexdigest() != runtime.get('ui', '1161_sha256'):
             raise ValueError('Installed shared capsule UI hash differs')
+    hint_file=runtime.get('acquisition','file',fallback=None)
+    if hint_file:
+        from owner.collection_capsule.acquisition import FILE
+        if hint_file!=FILE:raise ValueError('Unsupported collection acquisition metadata path')
+        raw=(root/FILE).read_bytes()
+        if hashlib.sha256(raw).hexdigest()!=runtime.get('acquisition','sha256',fallback=''):
+            raise ValueError('Installed collection acquisition metadata hash differs')
+        # Metadata stays outside the native archive; carry it as extension state
+        # so ordinary capsule recompiles cannot erase the collection explanation.
+        metadata={**(metadata or {}),'collection_acquisition':{'bytes_hex':raw.hex(),
+            'manifest':read_json(root/'manifest.json').get('collection_acquisition')}}
     return resources, tables, metadata, ui
 
 
@@ -431,6 +442,14 @@ def compile_catalog(catalog, client, lookup, output):
     lines += ["", "[ui]", "1161=ui\\1161.uir",
               f"1161_sha256={files['ui/1161.uir']}"]
     counts = {"fixed": len(fixed_rows), "coin": len(coin_rows), "custom": len(custom_rows), "candidates": len(candidate_rows)}
+    collection_acquisition=None
+    if isinstance(unit_items,dict) and unit_items.get('collection_acquisition'):
+        from owner.collection_capsule.acquisition import FILE
+        hint=unit_items['collection_acquisition'];raw=bytes.fromhex(hint['bytes_hex'])
+        (out/FILE).write_bytes(raw);files[FILE]=hashlib.sha256(raw).hexdigest()
+        lines+=['','[acquisition]','file='+FILE,'sha256='+files[FILE]]
+        collection_acquisition=hint['manifest']
+        unit_items={key:value for key,value in unit_items.items() if key!='collection_acquisition'}
     counts.update(activity=extension_tables['0099'][1], item_categories=extension_tables['0031'][1])
     lines += ["", "[counts]"] + [f"{key}={value}" for key, value in counts.items()]
     (out / "runtime.ini").write_text("\n".join(lines) + "\n", encoding="ascii")
@@ -438,6 +457,7 @@ def compile_catalog(catalog, client, lookup, output):
     write_json(out / "placements.json", {"catalog_revision": revision, "machines": placement})
     write_json(out / "manifest.json", {"schema_version": 1, "compiler_version": COMPILER_VERSION,
         "unit_items": unit_items,
+        "collection_acquisition": collection_acquisition,
         "activity_ownership":activity_ownership,"activity_metadata":activity_metadata,
         "preserved_extensions_signature": extension_signature,
         "catalog_revision": revision,

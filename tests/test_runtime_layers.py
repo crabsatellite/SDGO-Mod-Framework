@@ -157,7 +157,9 @@ class GitFrameworkTransport(unittest.TestCase):
         with tempfile.TemporaryDirectory()as temporary:
             root=Path(temporary).resolve();mirrors=root/'mirrors';work=root/'work';placeholder=root/'placeholder';origin=root/'origin.git';checkout=root/'checkout'
             def git(path,*args):return subprocess.run(['git','-C',str(path),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid',*args],capture_output=True,check=True).stdout.decode().strip()
-            for bare in(origin,mirrors/'framework.git',mirrors/'client.git'):subprocess.run(['git','init','-q','--bare',str(bare)],check=True)
+            for bare in(origin,mirrors/'framework.git',mirrors/'client.git',mirrors/'locked.git'):subprocess.run(['git','init','-q','--bare',str(bare)],check=True)
+            # A hosted mirror that refuses pushes explains why in its own language.
+            hook=mirrors/'locked.git/hooks/pre-receive';hook.write_bytes('#!/bin/sh\necho "镜像仓库不允许直接推送" >&2\nexit 1\n'.encode());hook.chmod(0o755)
             for path in(work,placeholder):path.mkdir();git(path,'init','-q')
             git(work,'commit','-q','--allow-empty','-m','Source');git(work,'push','-q',str(origin),'HEAD:refs/heads/master')
             git(work,'checkout','-q','--orphan','runtime');git(work,'commit','-q','--allow-empty','-m','Runtime');git(work,'push','-q',str(origin),'HEAD:refs/heads/runtime/beta')
@@ -167,14 +169,17 @@ class GitFrameworkTransport(unittest.TestCase):
             runtime=git(origin,'rev-parse','refs/heads/runtime/beta');initial=git(mirrors/'framework.git','rev-parse','refs/heads/master')
             def mirror(targets):
                 env={**os.environ,'GIT_CONFIG_COUNT':'1','GIT_CONFIG_KEY_0':'url.'+mirrors.as_posix()+'/.insteadOf','GIT_CONFIG_VALUE_0':'https://mirror.invalid/',
-                     'RUNTIME_GIT_MIRROR_URL':'https://mirror.invalid/framework.git','RUNTIME_GIT_MIRROR_TOKEN':'mirror-secret-value','RUNTIME_GIT_MIRROR_TARGETS':json.dumps(targets)}
-                return subprocess.run([sys.executable,str(Path(__file__).resolve().parents[1]/'tools/sync_runtime_mirror.py')],cwd=checkout,env=env,capture_output=True,text=True)
+                     'RUNTIME_GIT_MIRROR_URL':'https://mirror.invalid/framework.git','RUNTIME_GIT_MIRROR_TOKEN':'mirror-secret-value','RUNTIME_GIT_MIRROR_TARGETS':json.dumps(targets),
+                     'PYTHONIOENCODING':'cp1252'}
+                return subprocess.run([sys.executable,str(Path(__file__).resolve().parents[1]/'tools/sync_runtime_mirror.py')],cwd=checkout,env=env,capture_output=True,encoding='utf-8',errors='replace')
             framework='https://mirror.invalid/framework.git';client='https://mirror.invalid/client.git'
-            result=mirror([{'url':framework,'branches':['master','runtime/stable','runtime/beta']},{'url':client,'branches':['runtime/beta']}])
-            self.assertEqual(result.returncode,1,result.stdout+result.stderr)
+            result=mirror([{'url':framework,'branches':['master','runtime/stable','runtime/beta']},{'url':client,'branches':['runtime/beta']},
+                           {'url':'https://mirror.invalid/locked.git','branches':['runtime/beta']}])
+            self.assertEqual(result.returncode,1,result.stdout+result.stderr);self.assertNotIn('Traceback',result.stderr)
             self.assertIn('Verified mirrored refs: 0:runtime/beta, 1:runtime/beta',result.stdout)
             errors=[l for l in result.stdout.splitlines()if l.startswith('::error')]
-            self.assertEqual(len(errors),1,result.stdout);self.assertRegex(errors[0],r'target 0 master: push exited 1: .*(fetch first|rejected)')
+            self.assertEqual(len(errors),2,result.stdout);self.assertRegex(errors[0],r'target 0 master: push exited 1: .*(fetch first|rejected)')
+            self.assertRegex(errors[1],r'target 2 runtime/beta: push exited 1: .*remote: 镜像仓库不允许直接推送.*pre-receive hook declined')
             for leak in('mirror.invalid',mirrors.as_posix(),str(mirrors),'mirror-secret-value'):self.assertNotIn(leak,result.stdout+result.stderr)
             self.assertEqual(git(mirrors/'framework.git','rev-parse','refs/heads/runtime/beta'),runtime)
             self.assertEqual(git(mirrors/'client.git','rev-parse','refs/heads/runtime/beta'),runtime)
