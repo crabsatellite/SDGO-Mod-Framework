@@ -1,6 +1,7 @@
 #pragma once
 #include "sdgo/battle_ai_observer.h"
 #include "battle_ai_activity_clock.h"
+#include "native_respawn_transform_probe.h"
 #include "../battle_ai/native_capabilities.h"
 #include "../match_ai/forced_pad_observer.h"
 #include "../match_ai/gate_status_observer.h"
@@ -166,6 +167,26 @@ public:
                     static_cast<unsigned long long>(now.generation),battle.bots[i].team,now.hp);context->Observe(detail);
             }
             state.missingSince=0;state.lastSnapshotAt=clock;
+            if(now.hp>0&&now.hurt_state==6) {
+                using namespace battle_ai::native::detail;
+                uint8_t *manager=nullptr,*unit=nullptr,*movement=nullptr,*owner=nullptr;
+                uint32_t object=0;int32_t remaining=0;uint8_t ready=0;
+                if(!find_)find_=reinterpret_cast<FindObjectFn>(context->api->Symbol(sdgo_test::mod,"um.find_object"));
+                if(!find_||!Manager(context,manager)||(unit=find_(manager,now.object_id))==nullptr||
+                   !Read(unit,4,object)||object!=now.object_id||!ReadPointer(unit,0x9C8,movement)||
+                   !ReadPointer(movement,0x21C,owner)||owner!=unit||
+                   !Read(movement,0x1E4,remaining)||!Read(movement,0x21B,ready)) {
+                    context->Assert(0,"native respawn recovery evidence belongs to the current registered bot");return false;
+                }
+                if(NativeRespawnBlockedByTransform(now.hurt_state,remaining,ready!=0,
+                        now.movement_state,now.movement_pending)) {
+                    char detail[240];sprintf_s(detail,
+                        "native AI respawn blocked unit=%u unit_data=%u generation=%llu updates=%d ready=%u movement=%X/%X",
+                        now.object_id,now.unit_id,static_cast<unsigned long long>(now.generation),
+                        remaining,ready,now.movement_state,now.movement_pending);context->Observe(detail);
+                    context->Assert(0,"ready native respawn recovery is not trapped in the transformation controller");return false;
+                }
+            }
             if(getNavigation_) {
                 SdgoBattleAiNavigationSnapshotV1 navigation{};navigation.size=sizeof(navigation);navigation.version=1;
                 if(!getNavigation_(now.object_id,&navigation)||navigation.object_id!=now.object_id||navigation.generation!=now.generation) {

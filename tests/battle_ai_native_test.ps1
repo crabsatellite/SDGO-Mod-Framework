@@ -4,7 +4,7 @@ $repo=Split-Path -Parent $PSScriptRoot
 $build=[IO.Path]::GetFullPath($(if([IO.Path]::IsPathRooted($BuildDir)){$BuildDir}else{Join-Path $repo $BuildDir}))
 $run=Join-Path $build ('battle_ai_native_runs\'+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))
 $bin=Join-Path $build $Config
-foreach($case in 'enabled','disabled','bad-signature','missing-script','config-independence','projectile-lead','generic','easy','medium') {
+foreach($case in 'enabled','disabled','bad-signature','missing-script','config-independence','projectile-lead','generic','easy','medium','forms') {
     $dir=Join-Path $run $case
     $mod=Join-Path $dir 'sdgo\mods\battle_ai'
     New-Item -ItemType Directory -Force -Path $mod,(Join-Path $dir 'sdgo\symbols') | Out-Null
