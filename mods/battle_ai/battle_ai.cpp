@@ -2383,6 +2383,15 @@ int __cdecl Observe(lua_State* L) {
         (observedActor.defence.movement.relocate&&!o.hurt&&!o.caps.meleeBusy&&!o.caps.specialBusy)));
     Number(L,"hurt",o.hurt);
     Number(L,"boostFraction",o.caps.boostFraction);
+    auto movementFsm=*reinterpret_cast<uint8_t**>(g_current+0x9C8);
+    if(movementFsm) {
+        const auto base=reinterpret_cast<uintptr_t>(movementFsm);
+        const auto offset=[&](size_t field) {
+            const auto state=reinterpret_cast<uintptr_t>(*reinterpret_cast<uint8_t**>(movementFsm+field));
+            return state>=base&&state<base+0x210?static_cast<uint32_t>(state-base):0u;
+        };
+        Number(L,"movementState",offset(4));Number(L,"movementPending",offset(8));
+    }
     // Lua SetJumpEnable writes +3291. This is permission for native automatic
     // jump requests, not a promise that every form can fly; the motor decides.
     Number(L,"canJump",g_current[0x3291]!=0);
@@ -3432,7 +3441,7 @@ void __fastcall AttackIntent(uint8_t* unit,void*) {
     // Pace only fresh ordinary requests. Current/pending actions, melee combo
     // continuation and special admission retain their original native input.
     const int slot=fsm?*reinterpret_cast<int*>(fsm+0x240):-1;
-    const bool ordinary=slot>=0&&slot<3&&record&&record[0x6A]!=2;
+    const bool ordinary=slot>=0&&slot<3&&record&&record[0x69]!=2;
     if(neutral && ordinary && unit[0xDCD]) {
         if(now<a.nextPulse) {
             unit[0xDCD]=0;
@@ -3442,7 +3451,6 @@ void __fastcall AttackIntent(uint8_t* unit,void*) {
                     *reinterpret_cast<uint32_t*>(unit+4),a.intervalMs);
             }
         }
-        else a.nextPulse=now+static_cast<ULONGLONG>(a.intervalMs);
     }
     if(g_runtime.aim) {
         *reinterpret_cast<float*>(unit+0x3204)=0;
@@ -3585,10 +3593,22 @@ void __fastcall FireReceipts(uint8_t* fsm,void*,void* event) {
     __try {g_fireReceipts(fsm,event);} __finally {g_receiptFsm=prior;}
 }
 void __fastcall AttackAdmission(uint8_t* fsm,void*) {
+    uint8_t* pacedOwner=nullptr;
+    uint64_t pacedGeneration=0;
+    int pacedInterval=0;
     if(GetCurrentThreadId()==g_gameThread&&g_runtime.enabled&&g_runtime.difficulty>=1&&!g_preparationFault) {
         __try {
             auto owner=*reinterpret_cast<uint8_t**>(fsm+0xB2C);
             auto record=*reinterpret_cast<uint8_t**>(fsm+0x248);
+            const int selected=*reinterpret_cast<int*>(fsm+0x240);
+            if(WantsGeneric(owner)&&record&&selected>=0&&selected<3&&record[0x69]!=2&&
+               battle_ai::native::detail::Neutral(fsm)) {
+                const auto actor=g_actors.find(owner);
+                if(actor!=g_actors.end()&&actor->second.ownsIntent&&actor->second.intervalMs>0) {
+                    pacedOwner=owner;pacedGeneration=actor->second.generation;
+                    pacedInterval=actor->second.intervalMs;
+                }
+            }
             if(Owned(owner)&&record&&record[0x69]!=2&&(record[0x6A]==1||record[0x6A]==8)) {
                 auto target=FindObject(*reinterpret_cast<uint32_t*>(fsm+0x200));
                 if(target&&!Destroyable(target)) {
@@ -3606,6 +3626,25 @@ void __fastcall AttackAdmission(uint8_t* fsm,void*) {
         } __except(EXCEPTION_EXECUTE_HANDLER) {return;}
     }
     g_attackAdmission(fsm);
+    // Native CanAttack can reject a ready input during boost start/end or
+    // another admission restriction. Only the original controller's newly
+    // committed action starts the interval; a refused input adds no wait.
+    if(pacedOwner) {
+        __try {
+            using namespace battle_ai::native::detail;
+            uint32_t current=0,pending=0;
+            const uintptr_t base=reinterpret_cast<uintptr_t>(fsm);
+            const auto action=[&](uint32_t state) {
+                return state>=base+0x34&&state<base+0x210&&
+                    (state-base-0x20)%0x14==0;
+            };
+            if(Read(fsm,4,current)&&Read(fsm,8,pending)&&(action(pending)||action(current))) {
+                auto actor=g_actors.find(pacedOwner);
+                if(actor!=g_actors.end()&&actor->second.generation==pacedGeneration&&actor->second.ownsIntent)
+                    actor->second.nextPulse=GetTickCount64()+static_cast<ULONGLONG>(pacedInterval);
+            }
+        } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    }
 }
 struct AbsoluteSpMessage {uint16_t type=0x18,padding=0;uint32_t reserved[3]={};int32_t value=0;};
 static_assert(sizeof(AbsoluteSpMessage)==20);

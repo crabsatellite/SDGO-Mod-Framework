@@ -457,6 +457,13 @@ int wmain(int argc,wchar_t** argv) {
         unit.bytes[0x30DC]=0;
     }
     if(easy||medium) {
+        if(medium) {
+            auto pacedFsm=native_world::fsms[0].data();
+            native_world::acceptOrdinaryAdmission=true;
+            reinterpret_cast<native_world::Callbacks*>(pacedFsm)->AttackAdmission();
+            native_world::acceptOrdinaryAdmission=false;
+            native_world::Put(pacedFsm,4,pacedFsm+0x20);native_world::Put(pacedFsm,8,uint32_t(0));
+        }
         native_world::Put(unit.bytes,0x31F4,77);unit.Think();
         if(easy) {
             Check(Eval("assert(calls==2 and SDGO_BattleAI_Universal.states[20]==nil and SDGO_BattleAI.states[20]==nil)"),
@@ -499,7 +506,7 @@ int wmain(int argc,wchar_t** argv) {
                     state.attack_pending);
             }
             Check(pacedWindow,
-                  "Medium clears native NPC idle wait and paces a consecutive fresh ordinary attack without Hard air tactics");
+                  "Medium clears native NPC idle wait and paces an admitted ordinary attack without Hard air tactics");
         }
         native_world::Ray3 profileRay;
         reinterpret_cast<native_world::Callbacks*>(native_world::fsms[0].data())->Ray(&profileRay);
@@ -1644,9 +1651,12 @@ int wmain(int argc,wchar_t** argv) {
         native_world::Put(native_world::document.data(),0x70,&canonicalHead);
         native_world::Put(native_world::document.data(),0x7C,static_cast<native_world::ListNode*>(nullptr));
 
+        // Let the documented configuration reload finish before installing a
+        // probe callback; otherwise a slow host can reload over the callback.
+        WaitNativeTicks(2100);unit.Init(reinterpret_cast<void*>(6));unit.Think();
         Eval("canonicalIdentityPolicy=SDGO_BattleAI_GenericUpdate; "
              "SDGO_BattleAI_GenericUpdate=function(n) canonicalIdentityObservation=SDGO_BattleAI_Observe(); return 123 end");
-        unit.Init(reinterpret_cast<void*>(6));unit.Think();
+        unit.Think();
         Check(Eval(
                   "local t=nil; for _,candidate in ipairs(canonicalIdentityObservation.targets) do "
                   "if candidate.id==2 then t=candidate end end; "
@@ -2034,13 +2044,30 @@ int wmain(int argc,wchar_t** argv) {
             unit.Think();
             Check(unit.bytes[0xDCD]!=0,
                   "Medium pacing admits the first ordinary request of a fresh generation");
+            native_world::acceptOrdinaryAdmission=false;
+            reinterpret_cast<native_world::Callbacks*>(fsm)->AttackAdmission();
+            unit.Think();
+            Check(unit.bytes[0xDCD]!=0,
+                  "a native refusal adds no artificial interval before the next legal attack attempt");
+            native_world::acceptOrdinaryAdmission=true;
+            reinterpret_cast<native_world::Callbacks*>(fsm)->AttackAdmission();
+            Check(*reinterpret_cast<uint8_t**>(fsm+8)==fsm+0x34,
+                  "only the original controller queues the successfully admitted ranged action");
+            native_world::Put(fsm,4,fsm+0x20);native_world::Put(fsm,8,uint32_t(0));
             unit.Think();
             Check(unit.bytes[0xDCD]==0,
-                  "Medium pacing suppresses a repeated neutral ordinary request inside 600ms");
+                  "Medium pacing suppresses a fresh request inside 600ms of native admission");
             WaitNativeTicks(620);
             unit.Think();
             Check(unit.bytes[0xDCD]!=0,
                   "Medium pacing resumes the ordinary request after the published 600ms interval");
+            const auto rangeType=native_world::weapons[1][0x6A];
+            native_world::weapons[1][0x6A]=2;
+            reinterpret_cast<native_world::Callbacks*>(fsm)->AttackAdmission();
+            native_world::Put(fsm,4,fsm+0x20);native_world::Put(fsm,8,uint32_t(0));unit.Think();
+            Check(unit.bytes[0xDCD]==0,
+                  "ordinary range-type2 shots use attack style instead of the range field for pacing");
+            native_world::weapons[1][0x6A]=rangeType;native_world::acceptOrdinaryAdmission=false;
         }
     }
     std::printf("NATIVE ADAPTER CHECKS %s\n",g_failures?"FAILED":"PASSED");

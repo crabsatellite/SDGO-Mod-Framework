@@ -53,6 +53,7 @@ inline int trackEntries=0,trackUpdates=0,swingEntries=0,rotations=0,faces=0;
 inline uint8_t* volatile lastCallbackSelf=nullptr;
 inline int swingInput=-1;
 inline int attackAdmissions=0;
+inline bool acceptOrdinaryAdmission=false;
 inline int phaseHideCalls=0,phaseUnhideCalls=0;
 inline int levelApplications=0,partApplications=0;
 inline uint32_t lastPart=0;
@@ -160,7 +161,13 @@ struct Callbacks {
         auto cache=*reinterpret_cast<Vec3*>(unit+0x3090);
         Put(node,0x6C,battle_ai::Horizontal(cache));Put(unit,0xD98,0.0f);
     }
-    __declspec(noinline) void AttackAdmission() {lastCallbackSelf=reinterpret_cast<uint8_t*>(this);++attackAdmissions;}
+    __declspec(noinline) void AttackAdmission() {
+        auto fsm=reinterpret_cast<uint8_t*>(this);
+        lastCallbackSelf=fsm;++attackAdmissions;
+        // Native range/sniper admission queues +34 only after CanAttack.
+        // A refused request leaves the neutral controller unchanged.
+        if(acceptOrdinaryAdmission)Put(fsm,8,fsm+0x34);
+    }
     __declspec(noinline) bool PlayerSpGate() {
         auto owner=*reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(this)+0xB2C);
         return *reinterpret_cast<int*>(owner+0xBC8)>29999;
