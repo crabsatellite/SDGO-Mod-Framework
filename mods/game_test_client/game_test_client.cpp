@@ -553,6 +553,8 @@ bool LoadPlan() {
     return true;
 }
 
+#include "login_showcase_probe.h"
+
 int __cdecl Bootstrap(const SdgoGameTestContextV1* context) {
     const uint32_t state = fpsOnly ? fpsActions.State():actions.AppState();
     if (state == UINT32_MAX || state < 4) return SDGO_GAME_TEST_WAIT;
@@ -625,7 +627,7 @@ int __cdecl Bootstrap(const SdgoGameTestContextV1* context) {
     context->Assert(GetCurrentThreadId() == mainThread, "test polling runs on the observed original app-update thread");
     context->Observe("the original client update reached the login stage without supplied game data or an application-state write");
     if (!nativeDataGuardProbe.Run(sdgo_test::api, sdgo_test::mod, context)) return SDGO_GAME_TEST_FAIL;
-    return SDGO_GAME_TEST_PASS;
+    return ProbeLoginShowcase(context);
 }
 int __cdecl Login(const SdgoGameTestContextV1* context) {
     const auto auth = actions.LoginState();
