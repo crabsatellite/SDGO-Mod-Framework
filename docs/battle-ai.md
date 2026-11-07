@@ -49,7 +49,7 @@ This applies to the enhanced Medium/Hard controller; Easy keeps its existing beh
 matching client package and restart the game to activate the updated adapter.
 
 Both levels keep continuous combat and movement decisions, accurate aim, native ammo, cooldowns,
-physics and damage. Medium defaults to a **600 ms minimum between fresh ordinary attack requests**.
+physics and damage. Medium defaults to a **600 ms minimum between fresh ordinary attacks admitted by the native controller**.
 Hard keeps continuous requests whenever native rules allow them.
 
 Medium's interval uses the existing native attack-intent pacing interface, only while the attack
@@ -57,7 +57,9 @@ controller has no current or queued action. It does not interrupt a charge, beam
 pause navigation, delay target selection, or add 600 ms to every weapon's own cooldown. A slower weapon
 remains governed by its longer native cycle. Switching ordinary weapons does not reset this interval;
 respawning starts with no debt from the previous life. This reduces repeated rapid starts, while its
-effect on sustained fire depends on the weapon.
+effect on sustained fire depends on the weapon. A native refusal adds no interval before the next
+legal attempt. A stationary gun lets an already-started boost produce its first physical step before
+braking, avoiding consecutive boost-start and boost-end animations with no movement or attack.
 
 Living teammates share fresh visual contacts, including contacts observed by human players. A bot can
 pursue an enemy seen by an ally without seeing it itself. Shooting still requires the bot's own weapon

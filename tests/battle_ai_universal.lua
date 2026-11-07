@@ -1258,6 +1258,27 @@ Reset();observation.targets={};observation.moving=1;Tick(0)
 Check(calls.routes==0 and calls.explores==nil and calls.moves==0 and
       calls.stop==1 and calls.fire==false,
       'no opponent and no native objective stops movement and remains idle')
+Reset({Difficulty=1});observation.targets={Target(1,5000,1000)}
+observation.weapons[2].movingShot=0;observation.movementState=72
+observation.movementPending=0;observation.moving=1;observation.routeActive=1;Tick(0)
+Check(not calls.stop and not calls.routeStops and calls.fire==true,
+      'a ready stationary gun retains native boost startup instead of chaining it immediately into boost end')
+Tick(400);observation.movementState=92;Tick(500)
+Check(not calls.stop and SDGO_BattleAI_Universal.states[20].stationaryBoostAnchor,
+      'a steady boost without its first physical step retains the existing motor rather than inventing progress')
+observation.pos={x=5,y=0,z=0};Tick(516)
+Check(calls.stop and calls.fire==true and not SDGO_BattleAI_Universal.states[20].stationaryBoostAnchor,
+      'the first actual boost step hands a stationary gun back to ordinary braking and fire')
+Reset();observation.targets={Target(1,5000,1000)};observation.weapons[2].movingShot=0
+observation.movementState=32;observation.movementPending=72;observation.moving=1;Tick(0)
+Check(not calls.stop and calls.fire==true,
+      'a queued boost start is preserved before its native Entry consumes the existing movement input')
+Reset();observation.targets={Target(1,5000,1000)};observation.weapons[2].movingShot=0
+observation.movementState=112;observation.moving=1;Tick(0)
+Check(calls.stop and not SDGO_BattleAI_Universal.states[20].stationaryBoostAnchor,
+      'native boost end keeps its normal stop path without an idle exemption')
+Reset();observation.targets={};observation.movementState=72;observation.moving=1;Tick(0)
+Check(calls.stop and calls.fire==false,'no remaining opponent still permits standby during boost startup')
 local function RangedOther()
   return {unitId=999998,allowed=1,weapons={Weapon(0,'hitscan',2400,500,300)}}
 end

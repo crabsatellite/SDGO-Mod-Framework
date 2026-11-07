@@ -84,7 +84,7 @@ local function State(o,now)
   if s.unitId~=o.unitId or s.alternate~=o.alternate or s.formRevision~=o.formRevision then
     if s.unitId~=nil then SDGO_BattleAI_CancelRoute(1);s.formHoldUntil=now+1000 end
     s.unitId=o.unitId;s.alternate=o.alternate;s.slot=nil;s.weaponAt=0;s.readyAt=nil
-    s.formRevision=o.formRevision;s.requestedSlot=nil
+    s.formRevision=o.formRevision;s.requestedSlot=nil;s.stationaryBoostAnchor=nil
     s.weave=nil;s.cover=nil;s.orbUntil=nil
     s.meleeAdvanceTarget=nil;s.meleeAdvanceAt=0;s.meleeAdvanceBlocked=nil
     s.recoverUntil=nil;s.recovering=nil;s.routeRecoveryUntil=nil
@@ -627,6 +627,14 @@ local function Recover(npc,o,s,t,now)
     s.motionPos=o.pos;s.motionAt=now
     return false
   end
+  if o.movementState==72 or o.movementPending==72 then
+    -- Boost startup owns a native animation before displacement is possible.
+    -- Do not let the shorter no-motion watchdog cancel that admitted motor.
+    -- The independent activity observer still measures actual inactivity.
+    s.recoverUntil=nil;s.recovering=nil;s.routeRecoveryUntil=nil
+    s.anchor=o.pos;s.progressAt=now;s.motionPos=o.pos;s.motionAt=now
+    RecoveryMode(false);return false
+  end
   if t and Flag(t.mapObstacle) then
     for _,weapon in pairs(o.weapons) do
       if Usable(weapon) and InRange(weapon,t) and Flag(weapon.ready) then
@@ -1100,8 +1108,26 @@ local function ControllerDiagnostic(o,s,t,now)
     Flag(o.routeActive) and 1 or 0,Flag(o.moving) and 1 or 0,weapon and weapon.kind or 'none',
     weapon and Flag(weapon.ready) and 1 or 0,weapon and Flag(weapon.ammoReady) and 1 or 0,weapon and Flag(weapon.movingShot) and 1 or 0,tostring(s.reason or 'initial')))
 end
+local function FinishBoostStart(o,s,w,inRange)
+  if not w or w.kind=='melee' or Flag(w.movingShot) or not Flag(w.ready) or not inRange then
+    s.stationaryBoostAnchor=nil;return false
+  end
+  local starting=o.movementState==72 or o.movementPending==72
+  local anchor=s.stationaryBoostAnchor
+  if starting and not anchor then
+    anchor={x=o.pos.x,y=o.pos.y,z=o.pos.z};s.stationaryBoostAnchor=anchor
+  end
+  if not anchor then return false end
+  local dx,dy,dz=o.pos.x-anchor.x,o.pos.y-anchor.y,o.pos.z-anchor.z
+  local progressed=dx*dx+dz*dz>0.01 or dy*dy>4
+  -- Original 0x48 starts boost without displacement; immediately braking
+  -- chains its animation into 0x70. Retain the existing motor until an actual
+  -- step separates those two native phases, then stop normally to shoot.
+  if starting or (o.movementState==92 and not progressed) then return true end
+  s.stationaryBoostAnchor=nil;return false
+end
 local Tactics={profile=ProfileTick,obstacle=SelectRouteObstacle,motion=RouteMotion,
-  diagnostic=ControllerDiagnostic,bind=BindTarget,transform=ChangeForm}
+  diagnostic=ControllerDiagnostic,bind=BindTarget,transform=ChangeForm,finishBoost=FinishBoostStart}
 local function Tick(npc)
   local o=SDGO_BattleAI_Observe()
   if o and Flag(o.valid) and Flag(o.transforming) then
@@ -1395,6 +1421,12 @@ local function Tick(npc)
   if roleApproaching then
     npc:SetAttackOnOff(reaction);SDGO_BattleAI_Cadence(C.AttackIntervalMs)
     if pendingSlot then ChangeWeapon(npc,pendingSlot) end
+    return 123
+  end
+  if Tactics.finishBoost(o,s,w,inRange) then
+    npc:SetAttackOnOff(reaction);SDGO_BattleAI_Cadence(C.AttackIntervalMs)
+    if pendingSlot then ChangeWeapon(npc,pendingSlot) end
+    Log(s,'finish native boost startup before stationary fire braking',now)
     return 123
   end
   local covered,peek=CoverStep(npc,o,s,w,t,now)
