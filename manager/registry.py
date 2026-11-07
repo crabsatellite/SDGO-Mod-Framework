@@ -21,6 +21,9 @@ def load(root):
             raise ValueError('管理注册重复或宿主无效：' + identity)
         if value.get('distribution') is not None and value['distribution'] not in DISTIBUTIONS:
             raise ValueError('Mod 分发范围无效：' + identity)
+        provider_audience=value.get('provider_audience','owner')
+        if provider_audience not in ('owner','user') or provider_audience=='user' and not value.get('provider'):
+            raise ValueError('管理面板可见层级无效：'+identity)
         seen = set()
         for field in value.get('settings', []):
             key = field['id']

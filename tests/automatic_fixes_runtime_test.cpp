@@ -50,9 +50,11 @@ int __fastcall Find(void* grid,void*,const uint8_t** out,uint32_t id,int type,ch
 void __fastcall Original(void* self,void*,int arg,const uint8_t* set) {
     ++originalCalls;shown=set;shownScreen=self;shownArg=arg;
 }
+void __fastcall ModelUpdate(void*,void*) {}
 void* Symbol(SdgoMod*,const char* name) {
     if(!std::strcmp(name,"grid.data"))return reinterpret_cast<void*>(&Grid);
     if(!std::strcmp(name,"grid.find"))return reinterpret_cast<void*>(&Find);
+    if(!std::strcmp(name,"model.commit"))return reinterpret_cast<void*>(&ModelUpdate);
     return nullptr;
 }
 int Hook(SdgoMod*,const char* name,void* detour,void** original) {

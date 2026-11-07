@@ -201,7 +201,28 @@ if(BUILD_TESTING)
 endif()
 sdgo_add_mod(ime_fix DESCRIPTION "Chinese IME candidate and commit fixes" SOURCES mods/ime_fix/ime_fix.cpp FILES symbols.fragment.ini)
 sdgo_add_mod(findwindow_fix DESCRIPTION "FindWindowW fix" SOURCES mods/findwindow_fix/findwindow_fix.cpp LIBS user32)
-sdgo_add_mod(startup_crash_fix DESCRIPTION "random crash at game start fix" SOURCES mods/startup_crash_fix/startup_crash_fix.cpp)
+sdgo_add_mod(startup_crash_fix DESCRIPTION "random crash at game start fix"
+             SOURCES mods/startup_crash_fix/startup_crash_fix.cpp
+             FILES symbols.fragment.ini)
+sdgo_add_mod(login_showcase DESCRIPTION "configurable native login unit showcase"
+             SOURCES mods/login_showcase/login_showcase.cpp)
+if(BUILD_TESTING)
+    add_executable(login_showcase_fit_test tests/login_showcase_fit_test.cpp)
+    target_include_directories(login_showcase_fit_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(login_showcase_fit_test)
+    add_test(NAME login_showcase_fit COMMAND login_showcase_fit_test)
+    add_executable(login_showcase_selection_test tests/login_showcase_selection_test.cpp)
+    sdgo_strict(login_showcase_selection_test)
+    add_test(NAME login_showcase_selection COMMAND login_showcase_selection_test)
+    add_executable(login_showcase_runtime_test tests/login_showcase_runtime_test.cpp)
+    target_link_libraries(login_showcase_runtime_test PRIVATE sdgo_api)
+    sdgo_strict(login_showcase_runtime_test)
+    add_dependencies(login_showcase_runtime_test startup_crash_fix login_showcase)
+    add_test(NAME login_showcase_actual_dll COMMAND login_showcase_runtime_test
+             "$<TARGET_FILE:startup_crash_fix>" "$<TARGET_FILE:login_showcase>")
+    set_tests_properties(login_showcase_fit login_showcase_selection
+                         login_showcase_actual_dll PROPERTIES TIMEOUT 30)
+endif()
 sdgo_add_mod(lobby_music_fix DESCRIPTION "first login lobby music restoration"
              SOURCES mods/lobby_music_fix/lobby_music_fix.cpp FILES symbols.fragment.ini)
 if(BUILD_TESTING)
