@@ -1,17 +1,25 @@
 #include <windows.h>
+#include <bcrypt.h>
 #include <process.h>
 #include <array>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 #include "sdgo/sdgo_api.h"
 #include "sdgo/operator_model.h"
+#include "../support/native_resource_overlay/native_resource_overlay.h"
+
+#pragma comment(lib, "bcrypt.lib")
 
 namespace {
+namespace fs = std::filesystem;
 using namespace sdgo::operators;
 struct Box { uint32_t type; void* data; };
 struct Pair { uint32_t id; Box* box; };
@@ -27,8 +35,13 @@ std::wstring g_directory;
 std::vector<std::string> g_logs;
 SdgoApi g_apiFixture = {};
 void* g_hook = nullptr;
+void* g_resourceHook = nullptr;
 int g_originalCalls = 0;
 int g_allocationCalls = 0;
+int g_resourceHookCalls = 0;
+int g_overlayArchiveOpens = 0;
+int g_stockResourceOpens = 0;
+int g_resourceConstructs = 0;
 bool g_legacy = false;
 
 void RequireImpl(bool ok, int line)
@@ -74,6 +87,29 @@ void* __cdecl Allocate(size_t size)
 
 void __cdecl Free(void* value) { Require(HeapFree(GetProcessHeap(), 0, value) != 0); }
 
+void* __cdecl OpenArchive(const wchar_t*, const wchar_t*)
+{
+    ++g_overlayArchiveOpens;
+    return reinterpret_cast<void*>(0x51515151);
+}
+
+void* __fastcall ConstructResource(
+    void* storage, void*, void* archive,
+    sdgo::resource_overlay::NativeFileInfo& info,
+    uint32_t chunkSize, bool)
+{
+    Require(storage != nullptr && archive == reinterpret_cast<void*>(0x51515151));
+    Require(chunkSize == 512 && info.words[0] == 1 && info.words[2] == 1);
+    ++g_resourceConstructs;
+    return storage;
+}
+
+void* __fastcall StockResourceOpen(void*, void*, const void*, bool)
+{
+    ++g_stockResourceOpens;
+    return reinterpret_cast<void*>(0x61616161);
+}
+
 void* __fastcall Make(void* self, void*, const Pair* pair)
 {
     Require(self == Grid());
@@ -117,15 +153,30 @@ void* Symbol(SdgoMod*, const char* name)
     if (!strcmp(name, "operator.grid_insert")) return reinterpret_cast<void*>(&Insert);
     if (!strcmp(name, "operator.native_new")) return reinterpret_cast<void*>(&Allocate);
     if (!strcmp(name, "operator.native_delete")) return reinterpret_cast<void*>(&Free);
+    if (!strcmp(name, "capsule.main.file_ctor"))
+        return reinterpret_cast<void*>(&ConstructResource);
+    if (!strcmp(name, "capsule.main.operator_new"))
+        return reinterpret_cast<void*>(&Allocate);
+    if (!strcmp(name, "capsule.main.wfopen"))
+        return reinterpret_cast<void*>(&OpenArchive);
     return nullptr;
 }
 
 int Hook(SdgoMod*, const char* name, void* detour, void** original)
 {
-    Require(!strcmp(name, "operator.load_data"));
-    g_hook = detour;
-    *original = reinterpret_cast<void*>(&Original);
-    return 1;
+    if (!strcmp(name, "operator.load_data")) {
+        g_hook = detour;
+        *original = reinterpret_cast<void*>(&Original);
+        return 1;
+    }
+    if (!strcmp(name, "capsule.main.open_file")) {
+        ++g_resourceHookCalls;
+        g_resourceHook = detour;
+        *original = reinterpret_cast<void*>(&StockResourceOpen);
+        return 1;
+    }
+    Require(false);
+    return 0;
 }
 
 void Log(SdgoMod*, int, const char* format, ...)
@@ -153,12 +204,135 @@ void Put(const std::wstring& file, const wchar_t* section, const wchar_t* key, c
     Require(WritePrivateProfileStringW(section, key, value, file.c_str()) != 0);
 }
 
+void PutU32(std::vector<uint8_t>& bytes, uint32_t value)
+{
+    const size_t offset = bytes.size();
+    bytes.resize(offset + sizeof(value));
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+}
+
+std::string Sha256(const std::vector<uint8_t>& bytes)
+{
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    BCRYPT_HASH_HANDLE state = nullptr;
+    DWORD stateBytes = 0;
+    DWORD hashBytes = 0;
+    DWORD received = 0;
+    Require(BCryptOpenAlgorithmProvider(
+                &algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) >= 0);
+    Require(BCryptGetProperty(
+                algorithm, BCRYPT_OBJECT_LENGTH,
+                reinterpret_cast<PUCHAR>(&stateBytes), sizeof(stateBytes),
+                &received, 0) >= 0);
+    Require(BCryptGetProperty(
+                algorithm, BCRYPT_HASH_LENGTH,
+                reinterpret_cast<PUCHAR>(&hashBytes), sizeof(hashBytes),
+                &received, 0) >= 0 && hashBytes == 32);
+    std::vector<uint8_t> storage(stateBytes);
+    std::vector<uint8_t> digest(hashBytes);
+    Require(BCryptCreateHash(
+                algorithm, &state, storage.data(), stateBytes, nullptr, 0, 0) >= 0);
+    Require(bytes.empty() || BCryptHashData(
+                state, const_cast<PUCHAR>(bytes.data()),
+                static_cast<ULONG>(bytes.size()), 0) >= 0);
+    Require(BCryptFinishHash(state, digest.data(), hashBytes, 0) >= 0);
+    BCryptDestroyHash(state);
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+    static constexpr char digits[] = "0123456789abcdef";
+    std::string result(64, '0');
+    for (size_t index = 0; index < digest.size(); ++index) {
+        result[index * 2] = digits[digest[index] >> 4];
+        result[index * 2 + 1] = digits[digest[index] & 0x0f];
+    }
+    return result;
+}
+
+void WriteBytes(const fs::path& path, const std::vector<uint8_t>& bytes)
+{
+    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+    stream.write(reinterpret_cast<const char*>(bytes.data()),
+                 static_cast<std::streamsize>(bytes.size()));
+    Require(static_cast<bool>(stream));
+}
+
+void WriteResourceBundle(uint32_t operatorId,
+                         const std::vector<std::wstring>& paths)
+{
+    const fs::path root =
+        fs::path(g_directory) / "assets" / std::to_string(operatorId);
+    fs::create_directories(root);
+    std::vector<uint8_t> archive(paths.size() * 520u, 0);
+    std::vector<uint8_t> index;
+    for (size_t entry = 0; entry < paths.size(); ++entry) {
+        const uint32_t next = static_cast<uint32_t>(entry + 1);
+        const uint32_t previous =
+            entry ? static_cast<uint32_t>(entry - 1) : 0;
+        std::memcpy(archive.data() + entry * 520u, &next, sizeof(next));
+        std::memcpy(archive.data() + entry * 520u + 4, &previous,
+                    sizeof(previous));
+        archive[entry * 520u + 8] = static_cast<uint8_t>(entry + 1);
+    }
+    for (uint32_t value :
+         {1u, 512u, static_cast<uint32_t>(paths.size()), 0u,
+          static_cast<uint32_t>(paths.size()), 0u})
+        PutU32(index, value);
+    for (size_t entry = 0; entry < paths.size(); ++entry) {
+        for (wchar_t value : paths[entry]) {
+            const uint16_t encoded =
+                static_cast<uint16_t>(value) ^ 0x00aa;
+            const size_t offset = index.size();
+            index.resize(offset + sizeof(encoded));
+            std::memcpy(index.data() + offset, &encoded, sizeof(encoded));
+        }
+        const uint16_t terminator = 0x00aa;
+        const size_t offset = index.size();
+        index.resize(offset + sizeof(terminator));
+        std::memcpy(index.data() + offset, &terminator, sizeof(terminator));
+        for (uint32_t value :
+             {1u, static_cast<uint32_t>(entry), 1u,
+              0u, 0u, 0u, 0u, 0u, 0u})
+            PutU32(index, value);
+    }
+    WriteBytes(root / "resources.zdx", index);
+    WriteBytes(root / "resources.zpk", archive);
+    std::ofstream manifest(
+        root / "resource-overlay.ini", std::ios::binary | std::ios::trunc);
+    manifest << "[runtime]\n"
+             << "schema=1\n"
+             << "format=sdgo-native-resource-overlay-v1\n"
+             << "operator_id=" << operatorId << "\n"
+             << "index=resources.zdx\n"
+             << "index_sha256=" << Sha256(index) << "\n"
+             << "archive=resources.zpk\n"
+             << "archive_sha256=" << Sha256(archive) << "\n";
+    Require(static_cast<bool>(manifest));
+}
+
+struct HostString
+{
+    uint8_t bytes[24] = {};
+    std::wstring text;
+
+    explicit HostString(std::wstring value) : text(std::move(value))
+    {
+        static_assert(sizeof(void*) == 4);
+        const wchar_t* pointer = text.c_str();
+        std::memcpy(bytes, &pointer, sizeof(pointer));
+        const uint32_t size = static_cast<uint32_t>(text.size());
+        const uint32_t capacity = size;
+        std::memcpy(bytes + 0x10, &size, sizeof(size));
+        std::memcpy(bytes + 0x14, &capacity, sizeof(capacity));
+    }
+};
+
 void NativeRow(std::array<uint8_t, kOperatorSize>& row, uint32_t id, const wchar_t* marker)
 {
     row.fill(0x3A);
     WriteId(row.data(), id);
     row[4] = 0;
-    Require(Text(row.data() + 5, 100, marker));
+    Require(Text(row.data() + 5, 50, marker));
+    Require(Text(row.data()+105,50,L"gdrs\\"+std::to_wstring(id)+L".gdt"));
+    Require(Text(row.data()+933,50,L"sdrs\\"+std::to_wstring(id)+L".zsd"));
     for (size_t i = 0; i < 7; ++i)
         Require(Text(row.data() + kAvatarOffsets[i], kAvatarCapacities[i],
                      std::wstring(marker) + std::to_wstring(i)));
@@ -217,6 +391,52 @@ void WriteConfig(int mode)
     OperatorConfig(file, 60047, 1219047, L"conflicting operator");
     OperatorConfig(file, 60048, 1219048, L"new operator",
                    L"sdgo\\mods\\operator_catalog\\assets\\60048.spr");
+    if(mode>=10) {
+        Put(file,L"catalog",L"Version",L"2");
+        Put(file,L"operator:60048",L"AvatarSprite",L"");
+        Put(file,L"operator:60048",L"MissionParts",L"0");
+        Put(file,L"operator:60048",L"Dialogue",L"sdgo\\mods\\operator_catalog\\assets\\60048\\0.gdt");
+        Put(file,L"operator:60048",L"IntroVoice",L"sdgo\\mods\\operator_catalog\\assets\\60048\\1.zsd");
+        for(size_t i=0;i<7;++i) {
+            const std::wstring key=L"Sprite"+std::to_wstring(i);
+            const std::wstring value=L"sdgo\\mods\\operator_catalog\\assets\\60048\\"+std::to_wstring(i+2)+L".spr";
+            Put(file,L"operator:60048",key.c_str(),value.c_str());
+        }
+        Put(file,L"operator:60003",L"Enabled",L"0");
+    }
+    if (mode == 12) {
+        for (uint32_t id : {60003u, 60013u, 60018u, 60025u, 60041u}) {
+            const std::wstring section = L"operator:" + std::to_wstring(id);
+            Put(file, section.c_str(), L"FixedName", L"0");
+        }
+    }
+
+    if (mode == 1 || mode == 2 || mode == 11)
+        return;
+    std::vector<std::wstring> paths;
+    if (mode >= 10) {
+        paths = {
+            L"sdgo\\mods\\operator_catalog\\assets\\60048\\0.gdt",
+            L"sdgo\\mods\\operator_catalog\\assets\\60048\\1.zsd",
+            L"sdgo\\mods\\operator_catalog\\assets\\60048\\2.spr",
+            L"sdgo\\mods\\operator_catalog\\assets\\60048\\3.spr",
+            L"sdgo\\mods\\operator_catalog\\assets\\60048\\4.spr",
+            L"sdgo\\mods\\operator_catalog\\assets\\60048\\5.spr",
+            L"sdgo\\mods\\operator_catalog\\assets\\60048\\6.spr",
+            L"sdgo\\mods\\operator_catalog\\assets\\60048\\7.spr",
+            L"sdgo\\mods\\operator_catalog\\assets\\60048\\8.spr",
+        };
+        if (mode == 13)
+            paths.pop_back();
+    } else {
+        paths.push_back(
+            L"sdgo\\mods\\operator_catalog\\assets\\60048.txr");
+        for (uint32_t frame = 0; frame < 7; ++frame)
+            paths.push_back(
+                L"sdgo\\mods\\operator_catalog\\assets\\60048_" +
+                std::to_wstring(frame) + L".spr");
+    }
+    WriteResourceBundle(60048, paths);
 }
 
 void BaseRows()
@@ -272,6 +492,23 @@ void InvalidCandidate(int mode)
 }
 
 using HookFn = uint8_t(__fastcall*)(void*, void*, const wchar_t*, int);
+using ResourceHookFn = void*(__fastcall*)(void*, void*, const void*, bool);
+
+void CheckResourceOpen(const std::wstring& path)
+{
+    Require(g_resourceHook != nullptr);
+    const int archiveBefore = g_overlayArchiveOpens;
+    const int constructBefore = g_resourceConstructs;
+    const int stockBefore = g_stockResourceOpens;
+    HostString native(path);
+    void* stream = reinterpret_cast<ResourceHookFn>(g_resourceHook)(
+        reinterpret_cast<void*>(1), nullptr, native.bytes, false);
+    Require(stream != nullptr && stream != reinterpret_cast<void*>(0x61616161));
+    Require(g_overlayArchiveOpens == archiveBefore + 1);
+    Require(g_resourceConstructs == constructBefore + 1);
+    Require(g_stockResourceOpens == stockBefore);
+    Free(stream);
+}
 
 HMODULE LoadMod(const wchar_t* path, int mode)
 {
@@ -289,10 +526,10 @@ HMODULE LoadMod(const wchar_t* path, int mode)
     g_apiFixture.ModDirectory = &Directory;
     g_apiFixture.HookImport = &Import;
     const int loaded = entry(&g_apiFixture, reinterpret_cast<SdgoMod*>(1));
-    if (mode == 1 || mode == 2) {
-        Require(loaded == 0 && !g_hook);
+    if (mode == 1 || mode == 2 || mode == 11 || mode == 13) {
+        Require(loaded == 0 && !g_hook && !g_resourceHook);
     } else {
-        Require(loaded != 0 && g_hook);
+        Require(loaded != 0 && g_hook && g_resourceHook);
     }
     return module;
 }
@@ -364,6 +601,9 @@ void RunNormal(const wchar_t* dll, int mode)
     const auto existingBBefore = g_existingB;
     const auto conflictBefore = g_conflict;
     HMODULE module = LoadMod(dll, mode);
+    Require(g_resourceHookCalls == 1);
+    CheckResourceOpen(
+        L"sdgo\\mods\\operator_catalog\\assets\\60048_0.spr");
     CheckNameHook();
     auto invoke = reinterpret_cast<HookFn>(g_hook);
     Require(invoke(Grid(), nullptr, L"other.gdt", 2) == 1 && g_a == before &&
@@ -386,6 +626,8 @@ void RunNormal(const wchar_t* dll, int mode)
     CheckCreatedCategory(1219048, 60048, L"new operator");
 
     Require(g_a[1200] == before[1200] && g_a[kMissionPartsOffset] == 1);
+    Require(!memcmp(g_a.data()+105,before.data()+105,100));
+    Require(!memcmp(g_a.data()+933,before.data()+933,100));
     for (uint32_t id : {60013u, 60018u, 60025u, 60041u})
         Require(g_rows.at({static_cast<int>(id), 0x2C}).data[kMissionPartsOffset] == 1);
     for (size_t i = 0; i < 7; ++i)
@@ -440,18 +682,91 @@ void RunChildCases(wchar_t** argv)
         Require(_wspawnv(_P_WAIT, argv[0], child) == 0);
     }
 }
+
+void RunResources(const wchar_t* dll) {
+    NormalCategories();g_a[kMissionPartsOffset]=1;
+    const auto original=g_a;const auto unrelated=g_unrelated;
+    HMODULE module=LoadMod(dll,10);auto invoke=reinterpret_cast<HookFn>(g_hook);
+    Require(g_resourceHookCalls==1);
+    CheckResourceOpen(
+        L"sdgo\\mods\\operator_catalog\\assets\\60048\\0.gdt");
+    Require(invoke(Grid(),nullptr,L"gdrs\\0255.gdt",0x2C)==1);
+    Require(g_a==original && g_unrelated==unrelated);
+    const auto& created=g_rows.at({60048,0x2C});
+    wchar_t value[100]{};
+    memcpy(value,created.data+105,100);
+    Require(std::wstring(value)==L"sdgo\\mods\\operator_catalog\\assets\\60048\\0.gdt");
+    memcpy(value,created.data+933,100);
+    Require(std::wstring(value)==L"sdgo\\mods\\operator_catalog\\assets\\60048\\1.zsd");
+    for(size_t i=0;i<7;++i) {
+        memcpy(value,created.data+kAvatarOffsets[i],100);
+        Require(std::wstring(value)==L"sdgo\\mods\\operator_catalog\\assets\\60048\\"+std::to_wstring(i+2)+L".spr");
+    }
+    Require(created.data[kMissionPartsOffset]==0);
+    Cleanup(module);
+}
+
+void RunResourceFailure(const wchar_t* dll, int mode)
+{
+    NormalCategories();
+    const auto beforeRows = SnapshotRows();
+    HMODULE module = LoadMod(dll, mode);
+    Require(SnapshotRows() == beforeRows);
+    Require(g_resourceHookCalls == 0 && !g_resourceHook && !g_hook);
+    if (mode == 11)
+        Require(HasLog("resources rejected before publication"));
+    else
+        Require(HasLog("missing required resource"));
+    FreeLibrary(module);
+}
+
+void RunSharedProvider(const wchar_t* dll)
+{
+    NormalCategories();
+    const fs::path providerPath = fs::path(g_directory) / "unit_catalog.dll";
+    Require(CopyFileW(dll, providerPath.c_str(), FALSE) != 0);
+    HMODULE provider = LoadMod(providerPath.c_str(), 12);
+    Require(GetModuleHandleW(L"unit_catalog.dll") == provider);
+    Require(g_resourceHookCalls == 1 && g_resourceHook);
+
+    g_hook = nullptr;
+    HMODULE consumer = LoadMod(dll, 12);
+    Require(g_resourceHookCalls == 1);
+    Require(HasLog("registered with unit_catalog.dll"));
+    CheckResourceOpen(
+        L"sdgo\\mods\\operator_catalog\\assets\\60048\\0.gdt");
+    auto invoke = reinterpret_cast<HookFn>(g_hook);
+    Require(invoke(Grid(), nullptr, L"gdrs\\0255.gdt", 0x2C) == 1);
+    Require(g_rows.count({60048, 0x2C}) != 0);
+
+    Cleanup(consumer);
+    Require(FreeLibrary(provider) != 0);
+}
+
+void RunResourceChildCases(wchar_t** argv)
+{
+    for (int mode = 11; mode <= 13; ++mode) {
+        const std::wstring value = std::to_wstring(mode);
+        const wchar_t* child[] = {
+            argv[0], argv[1], argv[2], value.c_str(), nullptr,
+        };
+        Require(_wspawnv(_P_WAIT, argv[0], child) == 0);
+    }
+}
 }
 
 int wmain(int argc, wchar_t** argv)
 {
     Require(argc == 4);
     const int mode = _wtoi(argv[3]);
-    Require(mode >= 0 && mode <= 9);
+    Require(mode >= 0 && mode <= 13);
     g_legacy = mode == 3;
     Require(CreateDirectoryW(argv[2], nullptr) != 0 || GetLastError() == ERROR_ALREADY_EXISTS);
     g_directory = std::wstring(argv[2]) + L"\\runtime-" + std::to_wstring(mode);
-    Require(CreateDirectoryW(g_directory.c_str(), nullptr) != 0 ||
-            GetLastError() == ERROR_ALREADY_EXISTS);
+    std::error_code cleanupError;
+    fs::remove_all(g_directory, cleanupError);
+    Require(!cleanupError);
+    Require(fs::create_directories(g_directory));
     WriteConfig(mode);
     BaseRows();
     if (mode == 1 || mode == 2) {
@@ -461,7 +776,13 @@ int wmain(int argc, wchar_t** argv)
         FreeLibrary(module);
         return 0;
     }
-    if (mode <= 3) RunNormal(argv[1], mode);
+    if(mode==10) {
+        RunResources(argv[1]);
+        RunResourceChildCases(argv);
+    }
+    else if(mode==11 || mode==13)RunResourceFailure(argv[1],mode);
+    else if(mode==12)RunSharedProvider(argv[1]);
+    else if (mode <= 3) RunNormal(argv[1], mode);
     else RunInvalidCandidate(argv[1], mode);
     if (mode == 0) RunChildCases(argv);
     return 0;

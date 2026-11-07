@@ -29,8 +29,10 @@ const SdgoApi* g_api=nullptr;SdgoMod* g_mod=nullptr;
 using LoadFn=uint8_t(__thiscall*)(void*,const wchar_t*,int);
 using RenderFn=void(__thiscall*)(void*);
 LoadFn g_load=nullptr;RenderFn g_render=nullptr;
+using InitialPopupFn=void(__thiscall*)(void*);
 using PopupFn=void(__thiscall*)(void*,uint32_t);
 using HoverFn=void(__stdcall*)(void*,void*);
+InitialPopupFn g_buyOptions=nullptr,g_giftOptions=nullptr;
 PopupFn g_buyPopup=nullptr,g_giftPopup=nullptr;
 HoverFn g_hover=nullptr,g_hoverAlt=nullptr;
 bool g_registrationWarning=false;
@@ -44,24 +46,35 @@ uint8_t __fastcall LoadStore(void* self,void*,const wchar_t* filename,int type)
 {
     const auto result=g_load(self,filename,type);if(result&&type==0x23)RegisterCustom();return result;
 }
-void ObserveSafely(void* self,int mode)
+void ObserveSafely(void* self,size_t offset)
 {
-    try {if(mode==1)g_custom.ObservePopup(self);else g_custom.Observe(self,mode==2?0:0x88);}
+    try {g_custom.Observe(self,offset);}
+    catch(const std::exception&){CustomProducts::Clear();}
+}
+void ObservePopupSafely(void* self)
+{
+    try {g_custom.ObservePopup(self);}
     catch(const std::exception&){CustomProducts::Clear();}
 }
 void __fastcall RenderList(void* self,void*)
 {
-    RegisterCustom();ObserveSafely(self,0);__try {g_render(self);}__finally {CustomProducts::Clear();}
+    RegisterCustom();ObserveSafely(self,0x88);__try {g_render(self);}__finally {CustomProducts::Clear();}
 }
+void InitialPopup(void* self,size_t offset,InitialPopupFn original)
+{
+    ObserveSafely(self,offset);__try {original(self);}__finally {CustomProducts::Clear();}
+}
+void __fastcall BuyOptions(void* self,void*){InitialPopup(self,0xB0,g_buyOptions);}
+void __fastcall GiftOptions(void* self,void*){InitialPopup(self,0xB4,g_giftOptions);}
 void Popup(void* self,uint32_t argument,PopupFn original)
 {
-    ObserveSafely(self,1);__try {original(self,argument);}__finally {CustomProducts::Clear();}
+    ObservePopupSafely(self);__try {original(self,argument);}__finally {CustomProducts::Clear();}
 }
 void __fastcall BuyPopup(void* self,void*,uint32_t argument){Popup(self,argument,g_buyPopup);}
 void __fastcall GiftPopup(void* self,void*,uint32_t argument){Popup(self,argument,g_giftPopup);}
 void Hover(void* self,void* options,HoverFn original)
 {
-    ObserveSafely(options,2);__try {original(self,options);}__finally {CustomProducts::Clear();}
+    ObserveSafely(options,0);__try {original(self,options);}__finally {CustomProducts::Clear();}
 }
 void __stdcall HoverTooltip(void* self,void* options){Hover(self,options,g_hover);}
 void __stdcall HoverTooltipAlt(void* self,void* options){Hover(self,options,g_hoverAlt);}
@@ -231,6 +244,8 @@ SDGO_MOD_ENTRY
         if (!BindSearchHooks(api, mod, &g_searchChinese, &g_interfaces)) return 0;
         if(!g_custom.Empty()&&(!api->HookCode(mod,"shop_localization.load_store",reinterpret_cast<void*>(&LoadStore),reinterpret_cast<void**>(&g_load))||
            !api->HookCode(mod,"shop_localization.render_list",reinterpret_cast<void*>(&RenderList),reinterpret_cast<void**>(&g_render))||
+           !api->HookCode(mod,"shop_localization.buy_options",reinterpret_cast<void*>(&BuyOptions),reinterpret_cast<void**>(&g_buyOptions))||
+           !api->HookCode(mod,"shop_localization.gift_options",reinterpret_cast<void*>(&GiftOptions),reinterpret_cast<void**>(&g_giftOptions))||
            !api->HookCode(mod,"shop_localization.buy_popup",reinterpret_cast<void*>(&BuyPopup),reinterpret_cast<void**>(&g_buyPopup))||
            !api->HookCode(mod,"shop_localization.gift_popup",reinterpret_cast<void*>(&GiftPopup),reinterpret_cast<void**>(&g_giftPopup))||
            !api->HookCode(mod,"shop_localization.hover",reinterpret_cast<void*>(&HoverTooltip),reinterpret_cast<void**>(&g_hover))||

@@ -312,7 +312,26 @@ sdgo_add_mod(hangar_manager DESCRIPTION "native hangar sorting and duplicate exc
 sdgo_add_mod(storage_claim DESCRIPTION "native storage claim-all button"
              SOURCES mods/storage_claim/storage_claim.cpp mods/storage_claim/native_ui.cpp LIBS user32)
 sdgo_add_mod(operator_catalog DESCRIPTION "operator names, portraits and item registration"
-             SOURCES mods/operator_catalog/operator_catalog.cpp FILES display.example.ini)
+             SOURCES mods/operator_catalog/operator_catalog.cpp
+                     support/native_resource_overlay/native_resource_overlay.cpp
+                     support/native_resource_overlay/native_resource_overlay.def FILES display.example.ini)
+sdgo_add_mod(operator_catalog_server SERVER DESCRIPTION "native operator reward effects"
+             SOURCES mods/operator_catalog_server/operator_catalog_server.cpp FILES effects.example.ini symbols.fragment.ini)
+if(BUILD_TESTING)
+    add_library(operator_reward_filter_fixture SHARED tests/operator_reward_filter_fixture.cpp)
+    target_link_libraries(operator_reward_filter_fixture PRIVATE sdgo_api)
+    sdgo_strict(operator_reward_filter_fixture)
+    set_target_properties(operator_reward_filter_fixture PROPERTIES OUTPUT_NAME battle_rewards
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/operator_catalog_server_fixture/$<CONFIG>")
+    add_executable(operator_catalog_server_test tests/operator_catalog_server_test.cpp)
+    target_link_libraries(operator_catalog_server_test PRIVATE sdgo_api)
+    sdgo_strict(operator_catalog_server_test)
+    add_dependencies(operator_catalog_server_test operator_catalog_server operator_reward_filter_fixture)
+    foreach(mode shared extension unknown maximum_json fallback_refused fallback_nonone fallback_missing fallback_mission fallback_identity invalid_config)
+        add_test(NAME operator_catalog_server_${mode} COMMAND operator_catalog_server_test
+                 "$<TARGET_FILE:operator_catalog_server>" "$<TARGET_FILE:operator_reward_filter_fixture>" ${mode})
+    endforeach()
+endif()
 sdgo_add_mod(battle_rewards SERVER DESCRIPTION "native contribution rewards and owner multipliers"
              SOURCES mods/battle_rewards/battle_rewards.cpp LIBS bcrypt FILES config.example.ini)
 sdgo_add_mod(room_random_client DESCRIPTION "native random loadout client synchronization"
@@ -721,6 +740,9 @@ if(BUILD_TESTING)
             "${CMAKE_BINARY_DIR}/shop-localization-case-${case}" "${case}")
         set_tests_properties(shop_localization_${case} PROPERTIES TIMEOUT 30)
     endforeach()
+    add_test(NAME shop_localization_custom_scope COMMAND shop_localization_test "$<TARGET_FILE:shop_localization>"
+        "${CMAKE_BINARY_DIR}/shop-localization-custom/mods/shop_localization" "7")
+    set_tests_properties(shop_localization_custom_scope PROPERTIES TIMEOUT 30)
     add_test(NAME shop_localization_dictionary COMMAND shop_localization_test "$<TARGET_FILE:shop_localization>"
         "${CMAKE_BINARY_DIR}/shop-localization-case-bank" "6" "${CMAKE_CURRENT_SOURCE_DIR}/mods/shop_localization/zh-CN.ini")
     add_library(localization_service_fixture SHARED tests/localization_service_fixture.cpp)
@@ -754,7 +776,7 @@ if(BUILD_TESTING)
     add_executable(shop_custom_display_test tests/shop_custom_display_test.cpp)
     target_link_libraries(shop_custom_display_test PRIVATE sdgo_api)
     sdgo_strict(shop_custom_display_test)
-    foreach(case RANGE 0 2)
+    foreach(case RANGE 0 3)
         add_test(NAME shop_custom_chinese_display_${case} COMMAND shop_custom_display_test
             "${CMAKE_BINARY_DIR}/shop-custom-display-${case}" "${case}")
     endforeach()
@@ -882,6 +904,16 @@ if(BUILD_TESTING)
     target_link_libraries(game_test_operator_catalog_actions_test PRIVATE sdgo_api)
     sdgo_strict(game_test_operator_catalog_actions_test)
     add_test(NAME game_test_operator_catalog_actions_offline COMMAND game_test_operator_catalog_actions_test)
+    add_executable(game_test_operator_flow_actions_test tests/game_test_operator_flow_actions_test.cpp)
+    target_link_libraries(game_test_operator_flow_actions_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_operator_flow_actions_test)
+    target_compile_options(game_test_operator_flow_actions_test PRIVATE /utf-8)
+    add_test(NAME game_test_operator_flow_actions_offline COMMAND game_test_operator_flow_actions_test --suite)
+    add_executable(game_test_operator_session_actions_test tests/game_test_operator_session_actions_test.cpp)
+    target_link_libraries(game_test_operator_session_actions_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_operator_session_actions_test)
+    target_compile_options(game_test_operator_session_actions_test PRIVATE /utf-8)
+    add_test(NAME game_test_operator_session_actions_offline COMMAND game_test_operator_session_actions_test)
     target_link_libraries(game_test_hangar_navigation_test PRIVATE sdgo_api)
     sdgo_strict(game_test_hangar_navigation_test)
     add_test(NAME game_test_hangar_navigation_offline COMMAND game_test_hangar_navigation_test)
@@ -1035,6 +1067,13 @@ if(BUILD_TESTING)
     foreach(case RANGE 0 3)
         add_test(NAME operator_catalog_${case} COMMAND operator_catalog_test "$<TARGET_FILE:operator_catalog>"
                  "${CMAKE_BINARY_DIR}/operator-case-${case}" "${case}")
+    endforeach()
+    add_test(NAME operator_catalog_resources COMMAND operator_catalog_test "$<TARGET_FILE:operator_catalog>"
+             "${CMAKE_BINARY_DIR}/operator-resource-case" "10")
+    foreach(suite pack_protocol extract_pack capabilities package_install shop_bridge)
+        add_test(NAME operator_${suite}_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+                 -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_operator_${suite}.py" -v)
+        set_tests_properties(operator_${suite}_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 90)
     endforeach()
     add_test(NAME operator_assistant_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
              -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_operator_assistant.py")

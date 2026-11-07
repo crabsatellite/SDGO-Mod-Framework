@@ -25,12 +25,14 @@ public:
     bool Check(const std::wstring& file) {
         state_={};
         if (!data_ || !find_)return Fail(1);
-        if (GetPrivateProfileIntW(L"catalog",L"Version",0,file.c_str())!=1)return Fail(2);
+        const auto version=GetPrivateProfileIntW(L"catalog",L"Version",0,file.c_str());
+        if (version!=1 && version!=2)return Fail(2);
         std::vector<wchar_t> sections(65536);
         if (GetPrivateProfileSectionNamesW(sections.data(),static_cast<DWORD>(sections.size()),file.c_str())>=sections.size()-2)
             return Fail(3);
         for (const wchar_t* section=sections.data();*section;section+=wcslen(section)+1) {
             if (wcsncmp(section,L"operator:",9))continue;
+            if (version==2 && !GetPrivateProfileIntW(section,L"Enabled",1,file.c_str()))continue;
             wchar_t* end=nullptr;
             const auto id=wcstoul(section+9,&end,10);
             const auto category=GetPrivateProfileIntW(section,L"Category",0,file.c_str());
@@ -68,6 +70,19 @@ public:
                 return Fail(7);
             std::array<wchar_t,100> actual{};memcpy(actual.data(),op.data()+5,actual.size()*sizeof(wchar_t));
             if (wmemcmp(actual.data(),expected.c_str(),expected.size()+1))return Fail(8);
+            if (version==2) {
+                const wchar_t* keys[]={L"Dialogue",L"Sprite0",L"Sprite1",L"Sprite2",L"Sprite3",L"Sprite4",L"Sprite5",L"Sprite6",L"IntroVoice"};
+                const size_t offsets[]={105,205,313,421,533,633,733,833,933};
+                const size_t capacities[]={50,54,54,54,50,50,50,50,50};
+                for (size_t field=0;field<9;++field) {
+                    wchar_t configured[55]{},loaded[55]{};
+                    const auto count=GetPrivateProfileStringW(section,keys[field],L"\x01",configured,55,file.c_str());
+                    if (count==1 && configured[0]==1)continue;
+                    if (count>=capacities[field])return Fail(10);
+                    memcpy(loaded,op.data()+offsets[field],capacities[field]*sizeof(wchar_t));
+                    if (wcsnlen_s(loaded,capacities[field])>=capacities[field] || wcscmp(configured,loaded))return Fail(10);
+                }
+            }
             ++state_.verified;
         }
         if (!state_.configured)return Fail(9);

@@ -920,6 +920,37 @@ void TestFullDelayedFlow(
         "every lookup used and destroyed the full type-1 native-wstring descriptor");
 }
 
+void TestOperatorShopReturn(SdgoApi& api, NativeActions& native)
+{
+    ResetFixture(6);
+    HangarNavigation navigation;
+    Check(BindNavigation(navigation, api, native) &&
+              navigation.EnsureHangar() == HangarNavigation::kOpeningHangar,
+          "operator baseline enters the hangar through the original request");
+    *reinterpret_cast<uint32_t*>(g_app + 0x4A0) = 5;
+    g_mainframeVisible = true;
+    g_unitManagerVisible = true;
+    Check(navigation.EnsureHangar() == HangarNavigation::kReady,
+          "operator baseline reached its genuine unit viewer");
+    *reinterpret_cast<uint32_t*>(g_app + 0x4A0) = 9;
+    g_unitManagerVisible = false;
+    Check(navigation.EnsureHangar() != HangarNavigation::kOpeningHangar &&
+              g_downmenuCalls == 1,
+          "shop return is not automatically armed during purchase confirmation");
+    Check(navigation.BeginOperatorShopReturn() &&
+              navigation.EnsureHangar() == HangarNavigation::kOpeningHangar &&
+              g_downmenuCalls == 2 && g_downmenuCallbackValid && g_networkPacketValid,
+          "completed purchase returns through the original MyRoomRadio and 0621 transport");
+    Check(navigation.BeginOperatorShopReturn() &&
+              navigation.EnsureHangar() == HangarNavigation::kWaitingForHangar &&
+              g_downmenuCalls == 2,
+          "readback polling cannot resend the already-issued shop return");
+    *reinterpret_cast<uint32_t*>(g_app + 0x4A0) = 5;
+    g_registerUnitManagerImmediately = true;
+    Check(navigation.EnsureHangar() == HangarNavigation::kReady && g_mainframeCalls == 1,
+          "native hangar reply restores its unit viewer before inventory readback");
+}
+
 void TestDefaultAndImmediateConstruction(
     SdgoApi& api,
     NativeActions& native)
@@ -1230,6 +1261,24 @@ void TestBottomRadioValidation(SdgoApi& api,NativeActions& native) {
     Check(page.ClickBottomRadio(L"GameRoomRadio",0x48)==HangarNavigation::kDownmenuControlMismatch && g_downmenuCalls==1,
         "foreign-parent native radio never dispatches");
 }
+
+void TestExplicitUnitViewerReentry(SdgoApi& api,NativeActions& native) {
+    ResetFixture(5);g_registerUnitManagerImmediately=true;
+    HangarNavigation page;Check(BindNavigation(page,api,native),"unit viewer reentry binds");
+    Check(page.EnsureHangar()==HangarNavigation::kReady && g_mainframeCalls==1,"initial original UnitRadio creates unitmgr");
+    g_unitManagerVisible=false;
+    Check(page.EnsureHangar()==HangarNavigation::kWaitingForUnitManager && g_mainframeCalls==1,"removed unitmgr does not cause unbounded repeated clicks");
+    Check(page.AllowUnitManagerReentry() && g_mainframeCalls==1,"completed non-unit page may arm one observer reentry without native writes");
+    Check(page.EnsureHangar()==HangarNavigation::kReady && g_mainframeCalls==2,"reentry uses original UnitRadio callback and genuine service registration");
+    g_unitManagerVisible=false;
+    Check(!page.AllowUnitManagerReentry() && page.EnsureHangar()==HangarNavigation::kWaitingForUnitManager && g_mainframeCalls==2,"reentry cannot be rearmed repeatedly");
+    ResetFixture(5);g_registerUnitManagerImmediately=true;
+    HangarNavigation phases;Check(BindNavigation(phases,api,native) && phases.EnsureHangar()==HangarNavigation::kReady,"separate operator phases start from a genuine viewer");
+    g_unitManagerVisible=false;
+    Check(phases.AllowUnitManagerReentry(HangarNavigation::kBeforeOperatorShop) && phases.EnsureHangar()==HangarNavigation::kReady && g_mainframeCalls==2,"inventory baseline has its own single viewer reentry before shop requests");
+    g_unitManagerVisible=false;
+    Check(!phases.AllowUnitManagerReentry(HangarNavigation::kBeforeOperatorShop) && phases.AllowUnitManagerReentry(HangarNavigation::kAfterOperatorFlow) && phases.EnsureHangar()==HangarNavigation::kReady && g_mainframeCalls==3,"completed activation has an independent final reentry without reopening a used phase");
+}
 } // namespace
 
 int main()
@@ -1283,6 +1332,8 @@ int main()
         TestTeamGameRoomReadiness(api,native);
         TestUnitManagementNavigation(api,native);
         TestBottomRadioValidation(api,native);
+        TestExplicitUnitViewerReentry(api,native);
+        TestOperatorShopReturn(api,native);
     }
 
     DestroyNativeString(
