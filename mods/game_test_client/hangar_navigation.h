@@ -169,13 +169,27 @@ public:
 
             if (lobbyRequestInvoked_)
                 return Publish(kWaitingForHangar);
-            if (appState != kGameRoomAppState)
+            if (appState != kGameRoomAppState &&
+                !(appState == kShopAppState && operatorShopReturnArmed_))
                 return Publish(kWaitingForLobby);
 
             return OpenHangar();
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return Publish(kNativeFault);
         }
+    }
+
+    // A completed original shop purchase leaves app state 9 active. Arm one
+    // real MyRoomRadio return before reading the inventory in the hangar.
+    bool BeginOperatorShopReturn()
+    {
+        if (!bound_ || !native_) return false;
+        if (operatorShopReturnArmed_) return true;
+        if (native_->AppState() != kShopAppState) return false;
+        operatorShopReturnArmed_ = true;
+        lobbyRequestInvoked_ = false;
+        unitRadioInvoked_ = false;
+        return true;
     }
 
     // A successful channel-switch reply can precede reconstruction of the
@@ -488,6 +502,7 @@ private:
 
     static constexpr uint32_t kHangarAppState = 5;
     static constexpr uint32_t kGameRoomAppState = 6;
+    static constexpr uint32_t kShopAppState = 9;
     static constexpr uint32_t kRadioMessage = 0x301;
     static constexpr uint16_t kHangarRequestOpcode = 0x0621;
     static constexpr uint32_t kHangarRequestSize = 10;
@@ -852,6 +867,7 @@ private:
     void* unitManagerVtable_ = nullptr;
     bool bound_ = false;
     bool lobbyRequestInvoked_ = false;
+    bool operatorShopReturnArmed_ = false;
     bool unitRadioInvoked_ = false;
     uint32_t unitManagerReentryPhases_ = 0;
     bool unitManagementInvoked_ = false;

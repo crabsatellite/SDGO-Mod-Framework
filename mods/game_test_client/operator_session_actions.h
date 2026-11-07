@@ -1147,6 +1147,10 @@ private:
         const SdgoGameTestContextV1* context)
     {
         const auto before = purchase_->State();
+        if (before.stage == OperatorFlowActions::kStageReadback &&
+            native_->AppState() == 9 &&
+            !navigation_->BeginOperatorShopReturn())
+            return Fail(kShopRecoveryRejected);
         // Queue checkpoint 2 before the original Options BuyBtn callback
         // opens the confirmation dialog. The graphics gate keeps that request
         // pending until one genuine Present observes the exact initialized
@@ -2262,10 +2266,9 @@ private:
                 &slot,
                 packet + 0x16,
                 sizeof(slot));
-            memcpy(
-                &enabled,
-                packet + 0x18,
-                sizeof(enabled));
+            // Original 08A0 dispatch clears every active flag and sets the
+            // returned slot to active. The serialized old flag is not an ACK.
+            enabled = 1;
             if (InterlockedCompareExchange(
                     &activationReplySequence_,
                     -1,

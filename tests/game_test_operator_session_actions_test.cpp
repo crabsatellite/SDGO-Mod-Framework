@@ -570,7 +570,7 @@ void TestReplyPublication()
     std::array<uint8_t, 0x56> activation = {};
     const uint32_t operatorId = kOperatorId;
     const uint16_t slot = 9;
-    const uint8_t enabled = 1;
+    const uint8_t enabled = 0; // Native reply can carry the pre-activation flag.
     std::memcpy(
         activation.data() + 6,
         &kTargetUid,

@@ -285,23 +285,11 @@ const void* __fastcall FacadeEditGetText(
                : nullptr;
 }
 
-void* __fastcall FacadeListItemByIndex(
-    void* list,
-    void*,
-    int index)
+void* __fastcall FacadeListItemByIndex(void* list, void*, int index)
 {
-    const int page =
-        *reinterpret_cast<int32_t*>(
-            g_operatorInventory + 0xB8);
-    const int absolute =
-        page * 6 + index;
-    return list == g_operatorList &&
-                   index >= 0 &&
-           index < 6 &&
-           absolute >= 0 &&
-           absolute < 12
-               ? g_operatorRows[absolute]
-               : nullptr;
+    // Original OpInv passes page*6+local to CUIList::GetItemByIndex.
+    return list == g_operatorList && index >= 0 && index < 12
+        ? g_operatorRows[index] : nullptr;
 }
 
 uint8_t __fastcall FacadeListMouse(
@@ -1806,6 +1794,7 @@ void TestOperatorInventoryFacade()
             sizeof(y));
     }
 
+    *reinterpret_cast<uint32_t*>(g_operatorInput + 0x44) = 3;
     *reinterpret_cast<uint32_t*>(
         g_operatorInput + 0x4C) =
         kOperatorId;
@@ -1931,10 +1920,33 @@ void TestOperatorInventoryFacade()
                       kNavigatingPage &&
               g_operatorPageCalls == 1,
           "naming navigates with original RightOneBtn callback");
-    Check(actions.NamingPopupReady(
-              kOperatorId,
-              targetUid),
-          "target naming popup can be observed before submission");
+    Check(actions.NamingPopupReady(kOperatorId, targetUid),
+          "pending target naming popup is observed before submission");
+    SetActivePopup(g_operatorInput);
+    SetManagedList(0x54, 0x58, g_sentinel, g_node, g_options);
+    Check(actions.NamingPopupReady(kOperatorId, targetUid),
+          "active target naming popup remains visible alongside an unrelated pending service");
+    Check(!actions.NamingPopupReady(kOperatorId, targetUid + 1),
+          "active naming popup never accepts a different owned UID");
+    *reinterpret_cast<void**>(g_options) = g_operatorInputVtable;
+    *reinterpret_cast<uint32_t*>(g_options + 0x44) = 3;
+    *reinterpret_cast<uint32_t*>(g_options + 0x4C) = kOperatorId + 1;
+    *reinterpret_cast<uint32_t*>(g_options + 0x50) = static_cast<uint32_t>(targetUid + 1);
+    *reinterpret_cast<uint32_t*>(g_options + 0x54) = static_cast<uint32_t>((targetUid + 1) >> 32);
+    Check(actions.NamingPopupReady(kOperatorId, targetUid),
+          "unrelated ready input service does not shadow the exact owned target");
+    *reinterpret_cast<uint32_t*>(g_options + 0x4C) = kOperatorId;
+    *reinterpret_cast<uint32_t*>(g_options + 0x50) = static_cast<uint32_t>(targetUid);
+    *reinterpret_cast<uint32_t*>(g_options + 0x54) = static_cast<uint32_t>(targetUid >> 32);
+    *reinterpret_cast<uint32_t*>(g_options + 0x44) = 4;
+    Check(actions.NamingPopupReady(kOperatorId, targetUid),
+          "closing duplicate target input is not actionable");
+    *reinterpret_cast<uint32_t*>(g_options + 0x44) = 3;
+    Check(!actions.NamingPopupReady(kOperatorId, targetUid),
+          "two distinct ready dialogs for one owned UID remain ambiguous");
+    SetManagedList(0x54, 0x58, g_sentinel, g_node, g_operatorInput);
+    Check(actions.NamingPopupReady(kOperatorId, targetUid),
+          "one popup moving between active and pending lists is not a duplicate mutation target");
     Check(actions.SubmitNickname(
               kOperatorId,
               targetUid,
@@ -2004,6 +2016,7 @@ void TestOperatorInventoryFacade()
         g_profileStorage + 0x242,
         targetRecord,
         0x50);
+    g_profileStorage[0x242 + 0x12] = 0; // Native profile retains serialized old flag.
     std::memcpy(
         g_operatorReplyRecords,
         g_operatorRecords,
@@ -2021,7 +2034,7 @@ void TestOperatorInventoryFacade()
                   kOperatorId &&
               active.slot == 12 &&
               active.enabled == 1,
-          "inventory enabled flag and profile active record agree exactly");
+          "active profile identity agrees with enabled inventory even when serialized profile flag is stale");
 
     *reinterpret_cast<int32_t*>(
         g_operatorInventory + 0xB8) = 0;

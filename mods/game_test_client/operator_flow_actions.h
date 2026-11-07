@@ -2330,6 +2330,13 @@ public:
         char page_control_actual_name[24] = {};
     };
 
+    struct InputPopupInspection {
+        uint32_t code = 0, list = 0, active_count = 0, pending_count = 0;
+        uint32_t expected_vtable = 0, found_operator = 0, native_state = 0;
+        uint64_t found_uid = 0;
+    };
+    InputPopupInspection InputPopupState() const { return inputInspection_; }
+
     bool Bind(
         const Bindings& bindings,
         HangarNavigation* navigation)
@@ -3012,7 +3019,7 @@ public:
                     bindings_.
                         list_item_by_index(
                             list,
-                            localIndex));
+                            static_cast<int>(slot - 1)));
             if (!row)
                 return Publish(
                     kNativeSelectionRejected);
@@ -3276,8 +3283,10 @@ public:
                 record +
                     kRecordSlot,
                 sizeof(value.slot));
-            value.enabled =
-                record[kRecordEnabled];
+            // Profile+0x242 is the active descriptor, copied verbatim from
+            // 08A0 (including its old inventory flag). Its location denotes
+            // selection; only the inventory backing vector owns enabled bits.
+            value.enabled = 1;
             if (!value.uid ||
                 !value.operator_id ||
                 !value.slot ||
@@ -4239,100 +4248,63 @@ private:
         uint64_t uid,
         void** output) const
     {
-        if (output)
-            *output = nullptr;
-        if (!output)
-            return kPopupFault;
-        auto* manager =
-            static_cast<uint8_t*>(
-                *bindings_.
-                     service_managed_pointer);
-        if (!manager)
-            return kPopupFault;
-        void* sentinel =
-            *reinterpret_cast<void**>(
-                manager +
-                kManagerPopupSentinel);
-        const uint32_t count =
-            *reinterpret_cast<uint32_t*>(
-                manager +
-                kManagerPopupCount);
-        if (!sentinel ||
-            count > kMaximumPopups)
-            return kPopupFault;
-        void* node =
-            *reinterpret_cast<void**>(
-                sentinel);
-        void* previous = sentinel;
+        inputInspection_ = {};
+        inputInspection_.expected_vtable = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(bindings_.input_vtable));
+        const auto done = [this](PopupResult result, uint32_t code) {
+            inputInspection_.code = code; return result;
+        };
+        if (output) *output = nullptr;
+        if (!output) return done(kPopupFault, 1);
+        auto* manager = static_cast<uint8_t*>(*bindings_.service_managed_pointer);
+        if (!manager) return done(kPopupFault, 2);
+        inputInspection_.active_count = *reinterpret_cast<uint32_t*>(manager + 0x48);
+        inputInspection_.pending_count = *reinterpret_cast<uint32_t*>(manager + 0x58);
         void* matched = nullptr;
-        uint32_t seen = 0;
-        while (node != sentinel) {
-            if (!node || seen >= count ||
-                *reinterpret_cast<void**>(
-                    static_cast<uint8_t*>(
-                        node) +
-                    4) != previous)
-                return kPopupFault;
-            void* service =
-                *reinterpret_cast<void**>(
-                    static_cast<uint8_t*>(
-                        node) +
-                    8);
-            if (!service)
-                return kPopupFault;
-            if (*reinterpret_cast<void**>(
-                    service) ==
-                bindings_.input_vtable) {
-                if (matched)
-                    return
-                        kPopupMismatched;
-                const auto* bytes =
-                    static_cast<
-                        const uint8_t*>(
-                        service);
-                uint32_t popupId = 0;
-                uint32_t low = 0;
-                uint32_t high = 0;
-                memcpy(
-                    &popupId,
-                    bytes +
-                        kInputOperatorId,
-                    sizeof(popupId));
-                memcpy(
-                    &low,
-                    bytes +
-                        kInputUidLow,
-                    sizeof(low));
-                memcpy(
-                    &high,
-                    bytes +
-                        kInputUidHigh,
-                    sizeof(high));
-                if (popupId != operatorId ||
-                    (static_cast<uint64_t>(
-                         high)
-                         << 32 |
-                     low) != uid)
-                    return
-                        kPopupMismatched;
-                matched = service;
+        // Native services move from the pending list to the active list before
+        // the next observer tick. Neither list alone owns popup discovery.
+        const size_t sentinels[] = {0x44, kManagerPopupSentinel};
+        const size_t counts[] = {0x48, kManagerPopupCount};
+        for (unsigned list = 0; list < 2; ++list) {
+            inputInspection_.list = list;
+            void* sentinel = *reinterpret_cast<void**>(manager + sentinels[list]);
+            const uint32_t count = *reinterpret_cast<uint32_t*>(manager + counts[list]);
+            if (!sentinel || count > (list ? kMaximumPopups : 256)) return done(kPopupFault, 3);
+            void* node = *reinterpret_cast<void**>(sentinel);
+            void* previous = sentinel;
+            uint32_t seen = 0;
+            while (node != sentinel) {
+                if (!node || seen >= count ||
+                    *reinterpret_cast<void**>(static_cast<uint8_t*>(node) + 4) != previous)
+                    return done(kPopupFault, 4);
+                void* service = *reinterpret_cast<void**>(static_cast<uint8_t*>(node) + 8);
+                if (!service) return done(kPopupFault, 5);
+                if (*reinterpret_cast<void**>(service) == bindings_.input_vtable) {
+                    const auto* bytes = static_cast<const uint8_t*>(service);
+                    uint32_t popupId = 0, low = 0, high = 0;
+                    memcpy(&popupId, bytes + kInputOperatorId, sizeof(popupId));
+                    memcpy(&low, bytes + kInputUidLow, sizeof(low));
+                    memcpy(&high, bytes + kInputUidHigh, sizeof(high));
+                    inputInspection_.found_operator = popupId;
+                    inputInspection_.found_uid = static_cast<uint64_t>(high) << 32 | low;
+                    const uint32_t nativeState = *reinterpret_cast<const uint32_t*>(bytes + 0x44);
+                    inputInspection_.native_state = nativeState;
+                    // The manager retains inactive and closing dialogs. Only
+                    // the ready dialog for this exact owned instance is actionable.
+                    if (popupId == operatorId && (static_cast<uint64_t>(high) << 32 | low) == uid && nativeState == 3) {
+                        if (matched && matched != service) return done(kPopupMismatched, 6);
+                        matched = service;
+                    }
+                }
+                previous = node;
+                node = *reinterpret_cast<void**>(node);
+                ++seen;
             }
-            previous = node;
-            node =
-                *reinterpret_cast<void**>(
-                    node);
-            ++seen;
+            if (seen != count || *reinterpret_cast<void**>(static_cast<uint8_t*>(sentinel) + 4) != previous)
+                return done(kPopupFault, 8);
         }
-        if (seen != count ||
-            *reinterpret_cast<void**>(
-                static_cast<uint8_t*>(
-                    sentinel) +
-                4) != previous)
-            return kPopupFault;
-        if (!matched)
-            return kPopupAbsent;
+        if (!matched) return done(kPopupAbsent, 9);
         *output = matched;
-        return kPopupMatched;
+        return done(kPopupMatched, 10);
     }
 
     void* ResolvePopupRoot(
@@ -4385,7 +4357,7 @@ private:
                         list_item_by_index(
                             list,
                             static_cast<int>(
-                                local)));
+                                page * kRecordsPerPage + local)));
             if (!row)
                 return false;
             const bool selected =
@@ -4544,6 +4516,7 @@ private:
 
     Bindings bindings_ = {};
     HangarNavigation* navigation_ = nullptr;
+    mutable InputPopupInspection inputInspection_ = {};
     Observation observation_ = {};
     void* liveInventory_ = nullptr;
     void* liveRoot_ = nullptr;

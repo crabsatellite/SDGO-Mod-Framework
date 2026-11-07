@@ -79,15 +79,16 @@ restore databases on every retry. The backend's `backend.json`, `private.json`
 and actual SQL files must identify the same test copy; startup checks the live
 SQL process and data-file paths.
 
-The copied SQL launcher also confines database opens and filesystem writes to
+The copied SQL launcher also confines database-file operations to
 the marked test root before resuming the engine. It checks native NT file
 operations, resolved directory links and hard-link counts; registry redirection
 alone does not relocate a copied master's model, msdb or tempdb paths. Relocate
 every catalog path before normal startup. Only the two Resource database files
 are redirected to the copy's own engine directory. An invalid root or rejected
 file operation must be diagnosed rather than bypassed. The launcher rejects
-retired registry-only helpers. This is a boundary for the SQL process, not its
-child programs: keep the task copy exclusive, do not change its directory links
+retired registry-only helpers. Windows cryptography providers retain their normal
+certificate-cache access. This is a database-file boundary for the SQL process,
+not a general filesystem sandbox or a boundary for its child programs: keep the task copy exclusive, do not change its directory links
 while it is running, and do not run shell commands through SQL. Database read
 checks cover the native `.mdf`, `.ndf` and `.ldf` filenames; startup still verifies
 the actual catalog and open-file paths.

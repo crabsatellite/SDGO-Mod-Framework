@@ -67,14 +67,20 @@ int wmain(int argc, wchar_t** argv) {
     blocked(base / L"allowed-other" / L"model.mdf", GENERIC_WRITE, "sibling prefix denied");
     blocked(allowed / L"junction" / L"model.mdf", GENERIC_WRITE, "junction escape denied");
     blocked(allowed / L"shared.mdf", GENERIC_WRITE, "shared hardlink denied");
-    blocked(outside / L"note.txt", GENERIC_WRITE, "outside ordinary write denied");
+    HANDLE ordinary = open(outside / L"note.txt", GENERIC_WRITE);
+    expect(ordinary != INVALID_HANDLE_VALUE, "ordinary OS files are outside the database boundary");
+    if (ordinary != INVALID_HANDLE_VALUE) CloseHandle(ordinary);
     const auto denial_counter = reinterpret_cast<Initialize>(GetProcAddress(dll, "SqlFileGuardDeniedCount"));
     const DWORD before_security = denial_counter ? denial_counter(nullptr) : 0;
-    blocked(outside / L"note.txt", GENERIC_READ | ACCESS_SYSTEM_SECURITY, "outside SACL access denied");
-    expect(denial_counter && denial_counter(nullptr) == before_security + 1, "SACL request rejected by guard");
+    blocked(outside / L"model.mdf", GENERIC_READ | ACCESS_SYSTEM_SECURITY, "outside database SACL access denied");
+    expect(denial_counter && denial_counter(nullptr) == before_security + 1, "database SACL request rejected by guard");
     HANDLE text = open(outside / L"note.txt", GENERIC_READ);
     expect(text != INVALID_HANDLE_VALUE, "ordinary outside read remains usable");
     if (text != INVALID_HANDLE_VALUE) CloseHandle(text);
+    text = open(outside / L"note.txt", GENERIC_READ, OPEN_ALWAYS);
+    expect(text != INVALID_HANDLE_VALUE, "outside read-only open-if becomes existing-only open");
+    if (text != INVALID_HANDLE_VALUE) CloseHandle(text);
+    blocked(outside / L"model.mdf", GENERIC_READ, "outside database open-if still denied", OPEN_ALWAYS);
     blocked(fs::path(L"\\\\?\\" + (outside / L"model.mdf").wstring()), GENERIC_WRITE, "extended DOS path denied");
 
     using NtOpen = NTSTATUS(NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK, ULONG, ULONG);
@@ -98,10 +104,10 @@ int wmain(int argc, wchar_t** argv) {
         "relative direct NT creation denied");
     using NtDelete = NTSTATUS(NTAPI*)(POBJECT_ATTRIBUTES);
     const auto nt_delete = reinterpret_cast<NtDelete>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtDeleteFile"));
-    relative = L"note.txt";
+    relative = L"model.mdf";
     name = {static_cast<USHORT>(relative.size() * 2), static_cast<USHORT>(relative.size() * 2), relative.data()};
     expect(nt_delete(&attributes) == static_cast<NTSTATUS>(0xC0000022L), "relative direct NT deletion denied");
-    std::wstring absolute = L"\\??\\" + (outside / L"note.txt").wstring();
+    std::wstring absolute = L"\\??\\" + (outside / L"model.mdf").wstring();
     name = {static_cast<USHORT>(absolute.size() * 2), static_cast<USHORT>(absolute.size() * 2), absolute.data()};
     attributes.RootDirectory = nullptr;
     expect(nt_delete(&attributes) == static_cast<NTSTATUS>(0xC0000022L), "absolute direct NT deletion denied");
@@ -141,7 +147,7 @@ int wmain(int argc, wchar_t** argv) {
     const auto nt_set = reinterpret_cast<NtSet>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtSetInformationFile"));
     struct Rename { ULONG flags; HANDLE directory; ULONG bytes; WCHAR name[1024]; };
     Rename rename{};
-    const auto destination = L"\\??\\" + (outside / L"bypass.tmp").wstring();
+    const auto destination = L"\\??\\" + (outside / L"bypass.mdf").wstring();
     rename.bytes = static_cast<ULONG>(destination.size() * sizeof(wchar_t));
     std::copy(destination.begin(), destination.end(), rename.name);
     HANDLE moving = open(allowed / L"local.mdf", GENERIC_READ | DELETE);
