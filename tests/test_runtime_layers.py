@@ -121,7 +121,7 @@ class GitFrameworkTransport(unittest.TestCase):
             archive.write_bytes(changed)
             with self.assertRaisesRegex(ValueError,'immutable'):publish(archive,source,push=True)
 
-    def test_runner_without_git_identity_publishes_as_actions_bot(self):
+    def test_runner_without_git_identity_publishes_as_release_source_author(self):
         # Hosted CI runners have no user.name/user.email and no usable host email to guess from.
         with tempfile.TemporaryDirectory()as temporary:
             root=Path(temporary).resolve();source=root/'source';source.mkdir();remote=root/'remote.git';config=root/'global.gitconfig'
@@ -157,26 +157,29 @@ class GitFrameworkTransport(unittest.TestCase):
         with tempfile.TemporaryDirectory()as temporary:
             root=Path(temporary).resolve();mirrors=root/'mirrors';work=root/'work';placeholder=root/'placeholder';origin=root/'origin.git';checkout=root/'checkout'
             def git(path,*args):return subprocess.run(['git','-C',str(path),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid',*args],capture_output=True,check=True).stdout.decode().strip()
-            for bare in(origin,mirrors/'framework.git',mirrors/'client.git',mirrors/'locked.git'):subprocess.run(['git','init','-q','--bare',str(bare)],check=True)
+            for bare in(origin,mirrors/'framework.git',mirrors/'client.git',mirrors/'locked.git',mirrors/'raced.git'):subprocess.run(['git','init','-q','--bare',str(bare)],check=True)
             # A hosted mirror that refuses pushes explains why in its own language.
             hook=mirrors/'locked.git/hooks/pre-receive';hook.write_bytes('#!/bin/sh\necho "镜像仓库不允许直接推送" >&2\nexit 1\n'.encode());hook.chmod(0o755)
             for path in(work,placeholder):path.mkdir();git(path,'init','-q')
             git(work,'commit','-q','--allow-empty','-m','Source');git(work,'push','-q',str(origin),'HEAD:refs/heads/master')
             git(work,'checkout','-q','--orphan','runtime');git(work,'commit','-q','--allow-empty','-m','Runtime');git(work,'push','-q',str(origin),'HEAD:refs/heads/runtime/beta')
+            # Another release run already mirrored this commit; pushing it again would fail here.
+            git(work,'push','-q',str(mirrors/'raced.git'),'HEAD:refs/heads/runtime/beta')
             # A hosted mirror created with its own initial commit shares no history with master.
             git(placeholder,'commit','-q','--allow-empty','-m','Initial commit');git(placeholder,'push','-q',str(mirrors/'framework.git'),'HEAD:refs/heads/master')
             subprocess.run(['git','clone','-q',str(origin),str(checkout)],capture_output=True,check=True)
             runtime=git(origin,'rev-parse','refs/heads/runtime/beta');initial=git(mirrors/'framework.git','rev-parse','refs/heads/master')
             def mirror(targets):
-                env={**os.environ,'GIT_CONFIG_COUNT':'1','GIT_CONFIG_KEY_0':'url.'+mirrors.as_posix()+'/.insteadOf','GIT_CONFIG_VALUE_0':'https://mirror.invalid/',
+                env={**os.environ,'GIT_CONFIG_COUNT':'2','GIT_CONFIG_KEY_0':'url.'+mirrors.as_posix()+'/.insteadOf','GIT_CONFIG_VALUE_0':'https://mirror.invalid/',
+                     'GIT_CONFIG_KEY_1':'url.'+(root/'gone').as_posix()+'/.pushInsteadOf','GIT_CONFIG_VALUE_1':'https://mirror.invalid/raced',
                      'RUNTIME_GIT_MIRROR_URL':'https://mirror.invalid/framework.git','RUNTIME_GIT_MIRROR_TOKEN':'mirror-secret-value','RUNTIME_GIT_MIRROR_TARGETS':json.dumps(targets),
                      'PYTHONIOENCODING':'cp1252'}
                 return subprocess.run([sys.executable,str(Path(__file__).resolve().parents[1]/'tools/sync_runtime_mirror.py')],cwd=checkout,env=env,capture_output=True,encoding='utf-8',errors='replace')
             framework='https://mirror.invalid/framework.git';client='https://mirror.invalid/client.git'
             result=mirror([{'url':framework,'branches':['master','runtime/stable','runtime/beta']},{'url':client,'branches':['runtime/beta']},
-                           {'url':'https://mirror.invalid/locked.git','branches':['runtime/beta']}])
+                           {'url':'https://mirror.invalid/locked.git','branches':['runtime/beta']},{'url':'https://mirror.invalid/raced.git','branches':['runtime/beta']}])
             self.assertEqual(result.returncode,1,result.stdout+result.stderr);self.assertNotIn('Traceback',result.stderr)
-            self.assertIn('Verified mirrored refs: 0:runtime/beta, 1:runtime/beta',result.stdout)
+            self.assertIn('Verified mirrored refs: 0:runtime/beta, 1:runtime/beta, 3:runtime/beta',result.stdout)
             errors=[l for l in result.stdout.splitlines()if l.startswith('::error')]
             self.assertEqual(len(errors),2,result.stdout);self.assertRegex(errors[0],r'target 0 master: push exited 1: .*(fetch first|rejected)')
             self.assertRegex(errors[1],r'target 2 runtime/beta: push exited 1: .*remote: 镜像仓库不允许直接推送.*pre-receive hook declined')
@@ -186,6 +189,23 @@ class GitFrameworkTransport(unittest.TestCase):
             self.assertEqual(git(mirrors/'framework.git','rev-parse','refs/heads/master'),initial)
             result=mirror([{'url':framework,'branches':['runtime/stable','runtime/beta']},{'url':client,'branches':['runtime/beta']}])
             self.assertEqual(result.returncode,0,result.stdout+result.stderr);self.assertIn('Verified mirrored refs: 0:runtime/beta, 1:runtime/beta',result.stdout)
+
+    def test_mirror_push_that_loses_a_concurrent_race_is_verified_by_readback(self):
+        import tools.sync_runtime_mirror as mirror
+        commit='e'*40;state={'mirror':'2'*40}
+        def git(argv,**_):
+            operation=next(a for a in argv if a in('ls-remote','fetch','push'));where=argv[argv.index(operation)+1]
+            if operation=='push':
+                state['mirror']=commit  # the concurrent run's push landed between this run's check and push
+                return SimpleNamespace(returncode=1,stdout=b'',stderr=b" ! [remote rejected] e -> runtime/beta (cannot lock ref 'refs/heads/runtime/beta': is at e but expected 2)\n")
+            out=(commit if where=='origin' else state['mirror'])+'\trefs/heads/runtime/beta\n'if operation=='ls-remote'else''
+            return SimpleNamespace(returncode=0,stdout=out.encode(),stderr=b'')
+        output=io.TextIOWrapper(io.BytesIO(),encoding='utf-8')
+        targets=json.dumps([{'url':'https://mirror.invalid/a.git','branches':['runtime/beta']}])
+        with patch.dict('os.environ',{'RUNTIME_GIT_MIRROR_TARGETS':targets}),patch.object(mirror.subprocess,'run',side_effect=git),patch('sys.stdout',output):
+            mirror.main()
+            output.flush();text=output.buffer.getvalue().decode()
+        self.assertIn('Verified mirrored refs: 0:runtime/beta',text);self.assertNotIn('::error',text)
 
     def test_mirror_diagnostics_drop_addresses_and_tokens(self):
         from tools.sync_runtime_mirror import reason
