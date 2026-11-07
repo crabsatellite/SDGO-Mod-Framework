@@ -1,7 +1,7 @@
 -- Capability-driven controller. The native adapter supplies the current form's
 -- weapon records and target observations; no VSAI family or machine-ID policy.
 assert(UNIT_MOVE_EVENT_MOVE==2 and UNIT_MOVE_EVENT_DASH==3,'native locomotion enum mismatch')
-local D={GenericMode=1,Difficulty=1,Enabled=1,DecisionMs=0,ReactionMs=0,TargetHoldMs=0,
+local D={GenericMode=1,Difficulty=1,Enabled=1,AutoTransform=1,DecisionMs=0,ReactionMs=0,TargetHoldMs=0,
   FarTargetSlack=900,FarTargetRatioPercent=200,WeaponHoldMs=0,AttackIntervalMs=0,
   BurstMs=0,BurstPauseMs=0,AirStrafe=1,StrafeSwitchMs=450,StrafeDistance=400,
   JumpMs=600,JumpCooldownMs=1500,BoostReservePercent=20,ThreatMemoryMs=1600,
@@ -81,9 +81,14 @@ local function State(o,now)
   end
   s.seen=now
   if not s.blocked then s.blocked={} end
-  if s.unitId~=o.unitId or s.alternate~=o.alternate then
+  if s.unitId~=o.unitId or s.alternate~=o.alternate or s.formRevision~=o.formRevision then
+    if s.unitId~=nil then SDGO_BattleAI_CancelRoute(1);s.formHoldUntil=now+1000 end
     s.unitId=o.unitId;s.alternate=o.alternate;s.slot=nil;s.weaponAt=0;s.readyAt=nil
+    s.formRevision=o.formRevision;s.requestedSlot=nil;s.stationaryBoostAnchor=nil
     s.weave=nil;s.cover=nil;s.orbUntil=nil
+    s.meleeAdvanceTarget=nil;s.meleeAdvanceAt=0;s.meleeAdvanceBlocked=nil
+    s.recoverUntil=nil;s.recovering=nil;s.routeRecoveryUntil=nil
+    s.exploring=nil;s.flanking=false;s.movementIntent=false;s.repathAt=0
   end
   if not U.sweepAt or now>=U.sweepAt then
     U.sweepAt=now+2000
@@ -260,6 +265,57 @@ local function PickWeapon(o,s,t,threat,now,forceKind)
 end
 local function Chance(percent)
   return SDGO_BattleAI_Chance and SDGO_BattleAI_Chance(percent)==1
+end
+local function FormWeapons(weapons,t)
+  local view={ammo=false,ranged=false,rangedAmmo=false,range=0,melee=0,engage=false,fire=false,finisher=false,meleeValue=0,rangedValue=0}
+  for _,w in pairs(weapons or {}) do
+    if Ordinary(w) and Flag(w.valid) then
+      if w.kind~='melee' then view.ranged=true end
+      if Usable(w) then
+        view.ammo=true;view.range=Max(view.range,w.range)
+        if w.kind=='melee' then view.melee=Max(view.melee,w.range)
+        else view.rangedAmmo=true end
+        if InRange(w,t) then
+          view.engage=true
+          if Flag(w.ready) then
+            view.fire=true
+            if (w.damage or 0)>=t.hp then view.finisher=true end
+            local value=Max(w.damage or 1,1)*1000/Max(w.cycleMs or 300,50)
+            if w.kind=='melee' then view.meleeValue=Max(view.meleeValue,value)
+            else view.rangedValue=Max(view.rangedValue,value) end
+          end
+        end
+      end
+    end
+  end
+  return view
+end
+local function ChangeForm(o,s,t,now)
+  local other=o.otherForm
+  if C.AutoTransform~=1 or not t or t.remembered or not other or not Flag(other.allowed) or
+     Flag(o.hurt) or Flag(o.meleeBusy) or Flag(o.rangedBusy) or Flag(o.specialBusy) or
+     Flag(o.forcedMoving) or Flag(o.transportMotorReserved) or now<(s.formHoldUntil or 0) or
+     now<(s.formAttemptAt or 0) then return false end
+  local current=FormWeapons(o.weapons,t)
+  local nextForm=FormWeapons(other.weapons,t)
+  local empty=not current.ammo and nextForm.ammo
+  local usableRange=not current.engage and nextForm.engage
+  local rangedDry=current.ranged and not current.rangedAmmo and nextForm.rangedAmmo
+  local distantMelee=not current.rangedAmmo and current.melee>0 and
+    (t.meleeDistance or t.distance)>current.melee*1.5 and nextForm.rangedAmmo and nextForm.range>current.range+200
+  local closeMelee=nextForm.melee>0 and (t.meleeDistance or t.distance)<=nextForm.melee*0.9 and
+    nextForm.meleeValue>current.rangedValue*1.5 and nextForm.meleeValue>current.meleeValue
+  if not empty and not rangedDry and current.finisher then return false end
+  if not (empty or usableRange or rangedDry or distantMelee or closeMelee) then return false end
+  s.formAttemptAt=now+500
+  assert(SDGO_BattleAI_RequestTransform,'native transform request unavailable')
+  local queued=SDGO_BattleAI_RequestTransform()==1
+  if queued then
+    s.weave=nil;s.cover=nil;s.meleeAdvanceTarget=nil;s.recoverUntil=nil;s.recovering=nil
+    s.movementIntent=false;s.repathAt=0
+    Log(s,empty and 'transform: current ammunition unavailable' or 'transform: other native form fits engagement',now)
+  end
+  return queued
 end
 local function MeleeGate(value,cancelTracking)
   if SDGO_BattleAI_MeleeGate then
@@ -570,6 +626,14 @@ local function Recover(npc,o,s,t,now)
     s.recoverUntil=nil;s.recovering=nil;s.routeRecoveryUntil=nil;s.anchor=o.pos;s.progressAt=now;RecoveryMode(false)
     s.motionPos=o.pos;s.motionAt=now
     return false
+  end
+  if o.movementState==72 or o.movementPending==72 then
+    -- Boost startup owns a native animation before displacement is possible.
+    -- Do not let the shorter no-motion watchdog cancel that admitted motor.
+    -- The independent activity observer still measures actual inactivity.
+    s.recoverUntil=nil;s.recovering=nil;s.routeRecoveryUntil=nil
+    s.anchor=o.pos;s.progressAt=now;s.motionPos=o.pos;s.motionAt=now
+    RecoveryMode(false);return false
   end
   if t and Flag(t.mapObstacle) then
     for _,weapon in pairs(o.weapons) do
@@ -1044,10 +1108,35 @@ local function ControllerDiagnostic(o,s,t,now)
     Flag(o.routeActive) and 1 or 0,Flag(o.moving) and 1 or 0,weapon and weapon.kind or 'none',
     weapon and Flag(weapon.ready) and 1 or 0,weapon and Flag(weapon.ammoReady) and 1 or 0,weapon and Flag(weapon.movingShot) and 1 or 0,tostring(s.reason or 'initial')))
 end
+local function FinishBoostStart(o,s,w,inRange)
+  if not w or w.kind=='melee' or not Flag(w.ready) or not inRange then
+    s.stationaryBoostAnchor=nil;return false
+  end
+  local starting=o.movementState==72 or o.movementPending==72
+  local anchor=s.stationaryBoostAnchor
+  if starting and not anchor then
+    anchor={x=o.pos.x,y=o.pos.y,z=o.pos.z};s.stationaryBoostAnchor=anchor
+  end
+  if not anchor then return false end
+  local dx,dy,dz=o.pos.x-anchor.x,o.pos.y-anchor.y,o.pos.z-anchor.z
+  local progressed=dx*dx+dz*dz>0.01 or dy*dy>4
+  -- Original 0x48 starts boost without displacement. Braking or issuing a new
+  -- strafe before its first step can chain/restart native startup and end.
+  -- This admission belongs to mobile scripted guns too. Retain the motor
+  -- until a real step, then resume the weapon's ordinary firing/movement path.
+  if starting or (o.movementState==92 and not progressed) then return true end
+  s.stationaryBoostAnchor=nil;return false
+end
 local Tactics={profile=ProfileTick,obstacle=SelectRouteObstacle,motion=RouteMotion,
-  diagnostic=ControllerDiagnostic,bind=BindTarget}
+  diagnostic=ControllerDiagnostic,bind=BindTarget,transform=ChangeForm,finishBoost=FinishBoostStart}
 local function Tick(npc)
   local o=SDGO_BattleAI_Observe()
+  if o and Flag(o.valid) and Flag(o.transforming) then
+    -- The original transform Entry/Update/Release owns both controllers and
+    -- the bank handoff. Do not turn a transient weapon sample into attack-off
+    -- or MoveStop while that native action is committing its new form.
+    return 123
+  end
   if not o or not Flag(o.valid) or not o.weapons or not o.targets then
     error('native observation unavailable: '..tostring(o and o.failure or 'incomplete observation'))
   end
@@ -1086,6 +1175,7 @@ local function Tick(npc)
   end
   if t then o.policyTarget=t.id end
   Tactics.diagnostic(o,s,t,now)
+  if Tactics.transform(o,s,t or protected,now) then return 123 end
   if Tactics.profile(npc,o,now,
        (s.weave~=nil and not Flag(o.hurt)) or Flag(o.forcedMoving) or
        Flag(o.transportMotorReserved)) then
@@ -1332,6 +1422,12 @@ local function Tick(npc)
   if roleApproaching then
     npc:SetAttackOnOff(reaction);SDGO_BattleAI_Cadence(C.AttackIntervalMs)
     if pendingSlot then ChangeWeapon(npc,pendingSlot) end
+    return 123
+  end
+  if Tactics.finishBoost(o,s,w,inRange) then
+    npc:SetAttackOnOff(reaction);SDGO_BattleAI_Cadence(C.AttackIntervalMs)
+    if pendingSlot then ChangeWeapon(npc,pendingSlot) end
+    Log(s,'finish native boost startup before the next firing or movement decision',now)
     return 123
   end
   local covered,peek=CoverStep(npc,o,s,w,t,now)

@@ -3761,10 +3761,14 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
     previous_pid=(previous.get('execution') or {}).get('game_pid')
     for row in process_snapshot():
         value=row.get('image_path')
-        # A finished client's PID can be reused by an unrelated process whose
-        # image path is unreadable; only the same executable name keeps the hold.
-        if (value and is_relative_to(Path(value).resolve(),run_dir)) or (
-                row['pid']==previous_pid and not value and str(row.get('name','')).casefold()==image.name.casefold()):
+        # Windows can recycle a completed game's PID into a protected system
+        # process whose full path cannot be queried. Toolhelp still supplies
+        # its native image name. A different name proves this is not our game;
+        # an unknown name or a matching game name remains fail-closed.
+        name=row.get('name')
+        ambiguous_previous=(row['pid']==previous_pid and not value and
+                            (not name or name.casefold()==image.name.casefold()))
+        if (value and is_relative_to(Path(value).resolve(),run_dir)) or ambiguous_previous:
             raise GameTestError('the owned client may still be running; reuse made no changes')
     account_lock_path=None;target_account_lock_path=None;account_rebound=False
     if fps_only:

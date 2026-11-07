@@ -65,7 +65,7 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 | 完整对战 All Map <!-- catalog: `all_maps` --> | 房间选择 All Map 时从完整原生对战地图目录抽取，任务专用图仍留在任务模式 | [使用说明](docs/all-maps.zh-CN.md) |
 | FPS 上限 <!-- catalog: `fps_limit` --> | 提高渲染帧率上限，保留原生游戏速度 | [使用说明](docs/fps-limit.zh-CN.md) |
 | 长房名 <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 普通、AI、队伍及任务房的建房、设置和改名入口支持最长 128 字 | [使用说明](docs/room-titles.zh-CN.md) |
-| 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | Easy / Medium / Hard 三档、共享敌情，并主动利用地图推进装置寻路 | [使用说明](docs/battle-ai.zh-CN.md) |
+| 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | Easy / Medium / Hard 三档、按原生武装选择形态、共享敌情和地图推进装置寻路 | [使用说明](docs/battle-ai.zh-CN.md) |
 | 自动机库容量 <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） | [使用说明](docs/hangar-capacity.zh-CN.md) |
 | 机库管理 <!-- catalog: `hangar_manager` --> | 机体管理页内一键整理和重复机体兑换（GB 服务端批量入账） | [使用说明](docs/hangar-manager.zh-CN.md) |
 | 副官补给、资源与能力 <!-- catalog: `operator_catalog`、`operator_catalog_server` --> | 五位免费补给副官，以及独立资源包、数值能力、掉落和商城草稿管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
