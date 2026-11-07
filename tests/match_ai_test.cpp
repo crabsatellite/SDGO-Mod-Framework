@@ -454,6 +454,41 @@ void Spawn(int classIndex = 0, int roomMode = 1, int humanCount = 1, int aiCount
     Reset(classIndex, roomMode); Records(humanCount, aiCount); SpawnAiPlayers(mode.data(), "test");
 }
 bool Near(float a, float b) { return std::fabs(a - b) < 0.0001f; }
+std::array<uint8_t,0x13> deliveredTransform{};
+int deliveredTransformCalls=0;
+DWORD transformIncomingError=0;
+bool deliverTransformMessage=false,transformLateRespawn=false;
+uint16_t transformMessageType=0x1D;
+uint32_t transformMessageMode=1;
+int localTransformMessages=0,networkTransformMessages=0;
+std::array<uint8_t,0x20> deliveredTransformMessage{};
+void __fastcall NativeTransformCombatEvent(uint8_t* unit,void*,const uint8_t* message) {
+    ++localTransformMessages;std::memcpy(deliveredTransformMessage.data(),message,deliveredTransformMessage.size());
+    // This is the original local receiver's Msg1D mode admission, simulated
+    // only in the fixture. Production invokes that receiver without writes.
+    auto* movement=Get<uint8_t*>(unit,0x9C8);
+    Put(movement,0x2C0,Get<uint32_t>(message,0x10));
+}
+void __fastcall NativeTransformNetworkMessage(uint8_t* unit,void*,const uint8_t* message) {
+    ++networkTransformMessages;
+    if(Get<uint16_t>(message,0)==0x1D&&Get<uint32_t>(message,0x10)!=2) {
+        auto* movement=Get<uint8_t*>(unit,0x9C8);
+        Put(movement,8,movement+0xD4);
+    }
+}
+int __stdcall NativeTransformNotice(const uint8_t* noticeData) {
+    ++deliveredTransformCalls;transformIncomingError=GetLastError();
+    std::memcpy(deliveredTransform.data(),noticeData,deliveredTransform.size());
+    if(deliverTransformMessage) {
+        std::array<uint8_t,0x20> message{};
+        Put(message.data(),0,transformMessageType);Put(message.data(),0x10,transformMessageMode);
+        Put(message.data(),0x14,Get<uint32_t>(noticeData,0xA));message[0x18]=noticeData[0xE];
+        auto* unit=g_botTable[0].unit;
+        if(transformLateRespawn)Put(unit,0x9D8,uint32_t(6));
+        UnitNetworkMessage(unit,nullptr,message.data());
+    }
+    SetLastError(0x4455u);return 0x3344;
+}
 uint32_t hostForwarded=0;
 int hostForwardCalls=0;
 bool hostNativeResult=true;
@@ -502,6 +537,75 @@ void TestHumanHost() {
 
 int main() {
     using namespace fixture;
+    SCENARIO("same-target native transform notices preserve the locally owned AI controller");
+    const int transformModes[]={1,3,6,9,7};
+    for(int modeIndex=0;modeIndex<5;++modeIndex) {
+        Spawn(modeIndex,transformModes[modeIndex]);
+        auto& bot=g_botTable[0];auto* unit=bot.unit;
+        std::array<uint8_t,0x300> movement{};
+        Put(unit,0x9C8,movement.data());Put(movement.data(),0x21C,unit);
+        Put(movement.data(),4,movement.data()+0xD4);Put(movement.data(),8,uint32_t(0));
+        Put(movement.data(),0x2B0,uint32_t(10209));Put(unit,0xEC4,uint32_t(1));Put(unit,0x9D8,uint32_t(1));
+        std::array<uint8_t,0x13> notice{};Put(notice.data(),0,uint16_t(0xA44));
+        Put(notice.data(),6,bot.pilotId);Put(notice.data(),0xA,uint32_t(10209));notice[0xE]=1;
+        Put(notice.data(),0xF,uint32_t(0xAABBCCDD));
+        g_originalTransformNotice=&NativeTransformNotice;deliveredTransformCalls=0;
+        SetLastError(0x2233u);
+        CHECK(TransformNotice(notice.data())==0x3344&&deliveredTransformCalls==1);
+        CHECK(deliveredTransform[0xE]==0&&notice[0xE]==1);
+        CHECK(transformIncomingError==0x2233u&&GetLastError()==0x4455u);
+        for(size_t n=0;n<notice.size();++n)if(n!=0xE)CHECK(deliveredTransform[n]==notice[n]);
+        CHECK(Get<uint8_t*>(movement.data(),4)==movement.data()+0xD4&&
+              Get<uint32_t>(movement.data(),8)==0&&Get<uint32_t>(movement.data(),0x2B0)==10209);
+        g_originalUnitNetworkMessage=reinterpret_cast<UnitMessageFn>(&NativeTransformNetworkMessage);
+        g_unitCombatEvent=reinterpret_cast<UnitMessageFn>(&NativeTransformCombatEvent);
+        deliverTransformMessage=true;
+        for(uint8_t replay:{uint8_t(0),uint8_t(1)}) {
+            notice[0xE]=replay;localTransformMessages=networkTransformMessages=0;
+            Put(movement.data(),0x2C0,uint32_t(0));Put(movement.data(),8,uint32_t(0));
+            CHECK(TransformNotice(notice.data())==0x3344);
+            CHECK(localTransformMessages==1&&networkTransformMessages==0);
+            CHECK(Get<uint32_t>(movement.data(),0x2C0)==1&&Get<uint32_t>(movement.data(),8)==0);
+            CHECK(Get<uint8_t*>(movement.data(),4)==movement.data()+0xD4&&Get<uint32_t>(movement.data(),0x2B0)==10209);
+            CHECK(deliveredTransformMessage[0x18]==0&&Get<uint32_t>(deliveredTransformMessage.data(),0x14)==10209);
+            CHECK(!g_transformConfirmation.active&&notice[0xE]==replay);
+        }
+        for(int negative=0;negative<3;++negative) {
+            localTransformMessages=networkTransformMessages=0;
+            transformMessageMode=negative==0?2u:1u;
+            transformMessageType=negative==1?0x18:0x1D;
+            transformLateRespawn=negative==2;
+            TransformNotice(notice.data());
+            CHECK(localTransformMessages==0&&networkTransformMessages==1);
+            Put(unit,0x9D8,uint32_t(1));Put(movement.data(),8,uint32_t(0));
+        }
+        deliverTransformMessage=false;transformLateRespawn=false;transformMessageMode=1;transformMessageType=0x1D;
+        notice[0xE]=1;CHECK(!g_transformConfirmation.active);
+        for(int condition=0;condition<10;++condition) {
+            const auto saved=notice;
+            switch(condition) {
+            case 0:unit[kUnitRemote]=1;break;
+            case 1:humans[kRecordMaster]=0;break;
+            case 2:observer=true;break;
+            case 3:network=false;break;
+            case 4:Put(unit,0x9D8,uint32_t(6));break;
+            case 5:Put(notice.data(),0xA,uint32_t(10208));break;
+            case 6:Put(movement.data(),4,movement.data()+0x20);break;
+            case 7:Put(notice.data(),6,uint32_t(7));break;
+            case 8:Put(unit,0x9D8,uint32_t(3));break;
+            case 9:Put(unit,0x9D8,uint32_t(4));break;
+            }
+            CHECK(TransformNotice(notice.data())==0x3344);
+            CHECK(deliveredTransform==notice);
+            notice=saved;unit[kUnitRemote]=0;humans[kRecordMaster]=1;observer=false;network=true;
+            Put(unit,0x9D8,uint32_t(1));Put(movement.data(),4,movement.data()+0xD4);
+        }
+        // Pending-only D4 has not run Entry and its latch can be stale.
+        // An ordinary acknowledgement already carrying zero needs no change.
+        Put(movement.data(),4,movement.data()+0x20);Put(movement.data(),8,movement.data()+0xD4);
+        CHECK(TransformNotice(notice.data())==0x3344&&deliveredTransform==notice);
+        notice[0xE]=0;CHECK(TransformNotice(notice.data())==0x3344&&deliveredTransform==notice);
+    }
     SCENARIO("AI MVP cannot own a player room; native human transfers and no-change results are preserved");
     TestHumanHost();
     CHECK(MH_Initialize() == MH_OK);

@@ -4,7 +4,9 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+from contextlib import nullcontext
+from manager.calendar_gifts import CalendarGiftService
 from manager.workspace import Workspace
 from manager.providers import attach
 from manager.server import make_server
@@ -119,6 +121,58 @@ class CalendarManagerContracts(unittest.TestCase):
             {'account_id':73492,'month_day':'02-29','enabled':True}])
         self.assertNotIn('never-export',json.dumps(result))
         self.assertNotIn('never-export',self.provider.get_engine().people_file.read_text(encoding='utf-8'))
+
+
+class CalendarWorkerContracts(unittest.TestCase):
+    def run_batch(self, accounts, pending=False):
+        service=CalendarGiftService()
+        repository=Mock()
+        repository.accounts.side_effect=accounts
+        repository.deliver.return_value={'delivery_count':1}
+        engine=Mock()
+        engine.policy.return_value={'enabled':True}
+        engine.window.return_value=(None,None)
+        engine.occurrences.return_value=[{'key':str(i)} for i in range(len(accounts))]
+        # Finish after one complete batch without a timing-dependent sleep.
+        service.stop_event.wait=Mock(side_effect=lambda _:service.stop_event.set())
+        with tempfile.TemporaryDirectory() as directory:
+            engine.root=Path(directory)
+            with patch('manager.database.connect') as connect, \
+                 patch('owner.calendar_gifts.repository.Repository',return_value=repository), \
+                 patch('manager.operations.pending',return_value=pending), \
+                 patch('manager.operations.target_key',return_value='calendar-worker-fixture'), \
+                 patch('manager.target_locks.lease',side_effect=lambda _:nullcontext()), \
+                 patch('threading.excepthook') as thread_errors:
+                service.start('selected-local-server.ini',engine)
+                service.thread.join(timeout=5)
+                self.assertFalse(service.thread.is_alive())
+                thread_errors.assert_not_called()
+                self.assertEqual(service.error,'')
+                connect.return_value.close.assert_called_once()
+        return service,repository
+
+    def test_empty_recipient_list_does_not_stop_later_occurrences(self):
+        service,repository=self.run_batch([[],[101,102,103]])
+        self.assertEqual(repository.accounts.call_count,2)
+        self.assertEqual([call.args[1] for call in repository.deliver.call_args_list],[101,102,103])
+        self.assertEqual(service.delivered,3)
+
+    def test_empty_batch_does_not_attempt_delivery(self):
+        service,repository=self.run_batch([[]])
+        repository.deliver.assert_not_called()
+        self.assertEqual(service.delivered,0)
+
+    def test_pending_catalog_defers_the_entire_batch_before_delivery(self):
+        service,repository=self.run_batch([[101,102],[103]],pending=True)
+        repository.deliver.assert_not_called()
+        self.assertEqual(repository.accounts.call_count,1)
+        self.assertEqual(service.delivered,0)
+
+    def test_batch_budget_defers_remaining_accounts_and_occurrences(self):
+        service,repository=self.run_batch([list(range(205)),[300]])
+        self.assertEqual([call.args[1] for call in repository.deliver.call_args_list],list(range(200)))
+        self.assertEqual(repository.accounts.call_count,1)
+        self.assertEqual(service.delivered,200)
 
 
 if __name__=='__main__':unittest.main()

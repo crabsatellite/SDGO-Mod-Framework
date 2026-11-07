@@ -45,7 +45,9 @@ namespace detail {
 // SHA256 e2dba73c10302b50cb0e6f2e58dd0a14effa8d224989ae570a7f8e05af79ff92.
 constexpr std::size_t kAttackFsm = 0x9CC;
 constexpr std::size_t kActiveUnitDefinition = 0x9C4;
+constexpr std::size_t kParkedUnitDefinition = 0xAB0;
 constexpr std::size_t kAlternateBankFlag = 0xE34;
+constexpr std::size_t kTransformPeerId = 0x13C;
 
 constexpr std::size_t kSelectedSlot = 0x240;
 constexpr std::size_t kSelectedWeapon = 0x248;
@@ -285,10 +287,11 @@ inline WeaponKind Classify(std::uint8_t attackStyle, std::uint8_t rangeType,
     return WeaponKind::Other;
 }
 
-inline bool ReadOnce(std::uint8_t* unit, Capabilities& out) noexcept {
+inline bool ReadOnce(std::uint8_t* unit, Capabilities& out, bool otherForm=false) noexcept {
 #if defined(_WIN64)
     (void)unit;
     (void)out;
+    (void)otherForm;
     return false;
 #else
     // Capability fields repeatedly touch the same handful of committed heap
@@ -314,6 +317,17 @@ inline bool ReadOnce(std::uint8_t* unit, Capabilities& out) noexcept {
         !Readable(fsm, 0x9B2) || !Readable(definition, kWeaponIds + 16))
         return false;
 
+    const auto activeDefinition=definition;
+    std::uint8_t activeAlternate=0;
+    if(!Read(unit,kAlternateBankFlag,activeAlternate)||activeAlternate>1)return false;
+    if(otherForm) {
+        std::uint32_t peerId=0,parkedId=0;
+        if(!Read(activeDefinition,kTransformPeerId,peerId)||!peerId||
+           !ReadPointer(unit,kParkedUnitDefinition,definition)||definition==activeDefinition||
+           !Readable(definition,kWeaponIds+16)||!Read(definition,kUnitId,parkedId)||parkedId!=peerId)
+            return false;
+    }
+
     if (!Read(definition, kUnitId, value.unitId) ||
         value.unitId == 0 || value.unitId > 9'999'999)
         return false;
@@ -322,15 +336,15 @@ inline bool ReadOnce(std::uint8_t* unit, Capabilities& out) noexcept {
     std::uint8_t ordinaryCount = 0;
     std::int32_t selected = -1;
     std::uint32_t currentState = 0, pendingState = 0;
-    if (!Read(unit, kAlternateBankFlag, alternate) ||
-        !Read(definition, kOrdinaryWeaponCount, ordinaryCount) ||
+    alternate=otherForm?std::uint8_t(1-activeAlternate):activeAlternate;
+    if (!Read(definition, kOrdinaryWeaponCount, ordinaryCount) ||
         !Read(fsm, kSelectedSlot, selected) ||
         !Read(fsm, kCurrentState, currentState) ||
         !Read(fsm, kPendingState, pendingState) ||
         alternate > 1 || ordinaryCount == 0 || ordinaryCount > 3)
         return false;
     value.alternate = alternate != 0;
-    if (selected >= 0 && selected < 4) value.selectedSlot = selected;
+    if (!otherForm && selected >= 0 && selected < 4) value.selectedSlot = selected;
 
     // Include SpecialMapWeaponAttack/Combo (native updates 6C7040/6C73B0).
     // They wait for animation events plus STRIKE/CLEAR acknowledgements and
@@ -482,13 +496,17 @@ inline bool ReadOnce(std::uint8_t* unit, Capabilities& out) noexcept {
     if (!ReadPointer(unit, kAttackFsm, endingFsm) ||
         !ReadPointer(unit, kActiveUnitDefinition, endingDefinition) ||
         !Read(unit, kAlternateBankFlag, endingAlternate) ||
-        endingFsm != fsm || endingDefinition != definition || endingAlternate != alternate)
+        endingFsm != fsm || endingDefinition != activeDefinition || endingAlternate != activeAlternate)
         return false;
+    if(otherForm) {
+        std::uint8_t* endingParked=nullptr;
+        if(!ReadPointer(unit,kParkedUnitDefinition,endingParked)||endingParked!=definition)return false;
+    }
 
     // When the selected slot is ordinary, +248 is the actual native bound
     // weapon record. Check it against the sampled bank rather than trusting a
     // ChangeWeapon request, which only queues message 0x48.
-    if (value.selectedSlot >= 0 && value.selectedSlot < ordinaryCount) {
+    if (!otherForm && value.selectedSlot >= 0 && value.selectedSlot < ordinaryCount) {
         std::uint8_t* selectedRecord = nullptr;
         std::uint8_t* bankRecord = nullptr;
         const std::size_t selectedState =
@@ -518,6 +536,17 @@ inline bool ReadCapabilities(std::uint8_t* unit, Capabilities& out) noexcept {
     if (!detail::ReadOnce(unit, second)) return false;
     out = second;
     return true;
+}
+
+// The inactive native bank owns its real ammunition/cooldown records. Read
+// those records against the parked definition without changing the live form,
+// selected slot, weapon binding or either bank.
+inline bool ReadOtherFormCapabilities(std::uint8_t* unit, Capabilities& out) noexcept {
+    Capabilities first{};
+    if(detail::ReadOnce(unit,first,true)) {out=first;return true;}
+    Capabilities second{};
+    if(!detail::ReadOnce(unit,second,true))return false;
+    out=second;return true;
 }
 
 }  // namespace battle_ai::native

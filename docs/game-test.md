@@ -184,6 +184,9 @@ profile. Later runs reuse that profile. After the first preparation, add
 with a new run UUID. The previous receipt and binary hashes are consolidated;
 retired jobs go to the Recycle Bin instead of keeping another full client.
 An archive baseline referenced by another capsule cannot be reused this way.
+On Windows, reuse also checks the native executable name when the previous PID
+has no readable image path. A PID recycled into a different executable does not
+block reuse; an unknown identity or a matching game name still blocks all changes.
 To switch a stopped client to another existing test identity, combine
 `--reuse-client --rebind-existing-account --account-profile <existing-profile>`.
 The target must declare `registered` or `existing_account`, without registration
