@@ -106,9 +106,18 @@ class Rewards(Provider):
 
 
 class Operators(Provider):
-    id, title = 'operators', '副官与掉落'
+    id, title = 'operators', '副官与能力'
     fields = {'workspace': '现有副官工作区', 'client': '配套客户端目录', 'snapshot': '副官快照 JSON',
-              'module_binary': '副官客户端 DLL（用于导出）', 'server_ini': '原生服务器 INI（留空只编辑草稿）'}
+              'module_binary': '副官客户端 DLL（用于导出）', 'server_ini': '原生服务器 INI（留空只编辑草稿）',
+              'server_root':'原生服务端根目录（含 ServerStartUp）',
+              'package_root':'已解压的配套框架包目录（用于安装副官能力组件）'}
+
+    def describe(self):
+        result=super().describe()
+        if self.workspace.mode=='developer':
+            from .engines.operators.protocol import describe
+            result['developer_protocol']=describe()
+        return result
 
     def get_engine(self):
         if self.engine is None:
@@ -126,15 +135,20 @@ class Operators(Provider):
                 if dll.is_file():c['module_binary']=str(dll)
             if not all(c.get(key) for key in ('workspace', 'client', 'snapshot')):
                 raise ValueError('请先设置副官工作区、客户端和快照')
-            self.engine = Workspace(c['workspace'], c['client'], c['snapshot'], c.get('module_binary'), c.get('server_ini'))
+            self.engine = Workspace(c['workspace'], c['client'], c['snapshot'], c.get('module_binary'), c.get('server_ini'),c.get('server_root'),c.get('package_root'))
         return self.engine
 
     def request(self, method, path, body, headers):
         from .engines.operators import model
+        if method=='GET' and path=='/api/operators/protocol':
+            from .engines.operators.protocol import describe
+            return describe()
         engine = self.get_engine()
         with model.LOCK:
             if method == 'GET':
                 if path == '/api/operators': return engine.public()
+                if path == '/api/operators/runtime-plan': return engine.runtime_plan()
+                if path == '/api/operators/runtime-status': return engine.runtime_status()
                 if path == '/api/operators/package': return Binary(engine.package(), 'application/zip', 'SDGO-operator-client.zip')
                 if path == '/api/operators/registrations':
                     return Binary(storage.json_bytes(model.registrations(engine.read())), 'application/json', 'operator-registrations.json')
@@ -145,14 +159,29 @@ class Operators(Provider):
                 match = re.fullmatch('/api/operators/upload/([0-9a-f]{64})', path)
                 if match and match[1] in engine.read()['uploaded_assets']:
                     return Binary((engine.root / 'uploads' / (match[1] + '.png')).read_bytes(), 'image/png')
+                match=re.fullmatch('/api/operators/packs/([0-9a-f]{64})/portrait',path)
+                if match:return Binary(engine.pack(match[1]).portrait(),'image/png')
+                match=re.fullmatch('/api/operators/([0-9]+)/share',path)
+                if match:return Binary(engine.share(int(match[1])),'application/zip','operator-'+match[1]+'.opack')
             expected = headers.get('X-Catalog-Revision', '')
             catalog = engine.check(expected)
+            if method=='POST' and path=='/api/operators/import-preview':
+                if 'path' in body:
+                    source=Path(body['path']).expanduser().resolve()
+                    if not source.is_file() or source.stat().st_size>128*1024*1024:raise ValueError('副官包文件不存在或过大')
+                    raw=source.read_bytes();filename=source.name
+                else:
+                    raw=base64.b64decode(body['zip'],validate=True);filename=body.get('filename','')
+                return engine.preview_pack(raw,filename,expected)
+            if method=='POST' and path=='/api/operators/import':
+                return engine.import_pack(body['sha256'],expected,name=body.get('name'),template_id=body.get('template_id'),source_template=body.get('source_template'))
             if method == 'POST' and path == '/api/operators/new':
                 updated, identity = model.create_operator(catalog, int(body['template_id']))
                 return {**engine.commit(updated), 'selected_id': identity}
             if method == 'POST' and path == '/api/operators/avatar':
                 return engine.upload(base64.b64decode(body['png'], validate=True), expected)
             if method == 'POST' and path == '/api/operators/apply': return {'applied': engine.apply(expected)}
+            if method == 'POST' and path == '/api/operators/install-runtime': return engine.install_runtime(expected)
             if method == 'POST' and path == '/api/operators/update-client':
                 from .packages import import_client
                 client=Path(self.config['client']).resolve()
@@ -217,12 +246,18 @@ class Capsules(Provider):
         if method=='POST' and urlsplit(uri).path=='/api/projects/activity-draft':
             from .units import create_project_activity_draft
             return create_project_activity_draft(self,body)
+        if method=='POST' and urlsplit(uri).path=='/api/projects/activity-poster':
+            from .units import store_activity_poster
+            return store_activity_poster(self,body)
+        if method=='GET' and urlsplit(uri).path=='/api/projects/batch-units':
+            from .unit_activity import batch_units
+            return batch_units(self)
         engine = self.get_engine()
         parsed = urlsplit(uri); path = parsed.path; query = parse_qs(parsed.query)
         one = lambda name, default='': query.get(name, [default])[0]
         if method == 'POST' and path == '/api/units/import':
             from .units import sync_capsule_units
-            return sync_capsule_units(self, body.get('expected_revision'))
+            return sync_capsule_units(self, body.get('expected_revision'), body.get('unit_ids'))
         if method == 'GET':
             if path == '/api/bootstrap': return self.imported_previews(engine.bootstrap())
             if path == '/api/machine': return engine.machine(one('kind'), int(one('id')))

@@ -40,6 +40,55 @@ void WaitNativeTicks(ULONGLONG milliseconds) {
 void Check(bool ok,const char* what) {
     std::printf("%s %s\n",ok?"PASS":"FAIL",what); if(!ok) ++g_failures;
 }
+std::atomic<ULONGLONG> g_actorClock{0};
+ULONGLONG WINAPI ActorClock() {return g_actorClock.load();}
+// A fixture frame must not age by hundreds of milliseconds just because this
+// process was descheduled. Control only this DLL's imported policy clock while
+// driving a bounded synthetic scenario; actual-game tests retain the real clock.
+class ScopedActorClock {
+    IMAGE_THUNK_DATA* slot_=nullptr;
+    DWORD previous_=0;
+public:
+    ScopedActorClock() {
+        auto module=reinterpret_cast<uint8_t*>(GetModuleHandleW(L"battle_ai.dll"));
+        if(module) {
+            auto dos=reinterpret_cast<IMAGE_DOS_HEADER*>(module);
+            auto nt=reinterpret_cast<IMAGE_NT_HEADERS*>(module+dos->e_lfanew);
+            auto imports=reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(module+
+                nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
+            for(auto descriptor=imports;descriptor->Name&&!slot_;++descriptor) {
+                if(!descriptor->OriginalFirstThunk)continue;
+                auto names=reinterpret_cast<IMAGE_THUNK_DATA*>(module+descriptor->OriginalFirstThunk);
+                auto addresses=reinterpret_cast<IMAGE_THUNK_DATA*>(module+descriptor->FirstThunk);
+                for(;names->u1.AddressOfData;++names,++addresses) {
+                    if(IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal))continue;
+                    auto name=reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(module+names->u1.AddressOfData);
+                    if(std::strcmp(reinterpret_cast<const char*>(name->Name),"GetTickCount64")==0) {
+                        DWORD protection=0;
+                        if(VirtualProtect(&addresses->u1.Function,sizeof(addresses->u1.Function),PAGE_READWRITE,&protection)) {
+                            g_actorClock=GetTickCount64();slot_=addresses;previous_=addresses->u1.Function;
+                            addresses->u1.Function=reinterpret_cast<DWORD>(&ActorClock);
+                            DWORD ignored=0;VirtualProtect(&addresses->u1.Function,sizeof(addresses->u1.Function),protection,&ignored);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        Check(slot_!=nullptr,"synthetic actor frames bind the exact candidate DLL clock import");
+    }
+    void Advance(ULONGLONG milliseconds) {g_actorClock.fetch_add(milliseconds);}
+    ~ScopedActorClock() {
+        if(!slot_)return;
+        // Keep the restored clock monotonic even on an otherwise idle host.
+        while(GetTickCount64()<g_actorClock.load())Sleep(1);
+        DWORD protection=0;
+        if(VirtualProtect(&slot_->u1.Function,sizeof(slot_->u1.Function),PAGE_READWRITE,&protection)) {
+            slot_->u1.Function=previous_;
+            DWORD ignored=0;VirtualProtect(&slot_->u1.Function,sizeof(slot_->u1.Function),protection,&ignored);
+        } else Check(false,"synthetic actor clock import restores after its scenario");
+    }
+};
 bool Eval(const char* s) {
     int top=lua_gettop(g_L);
     bool ok=luaL_loadbuffer(g_L,s,strlen(s),"=native fixture")==0 && lua_pcall(g_L,0,0,0)==0;
@@ -157,6 +206,7 @@ int wmain(int argc,wchar_t** argv) {
     bool easy=argc>1 && !wcscmp(argv[1],L"easy");
     bool configIndependence=argc>1 && !wcscmp(argv[1],L"config-independence");
     bool projectileLead=argc>1 && !wcscmp(argv[1],L"projectile-lead");
+    bool forms=argc>1 && !wcscmp(argv[1],L"forms");
     bool medium=argc>1 && (!wcscmp(argv[1],L"medium")||!wcscmp(argv[1],L"enabled"));
     wchar_t exe[MAX_PATH]; GetModuleFileNameW(nullptr,exe,MAX_PATH); *wcsrchr(exe,L'\\')=0; g_root=exe;
     Symbols(bad);
@@ -183,7 +233,7 @@ int wmain(int argc,wchar_t** argv) {
     SdgoBoot boot={sizeof(boot),"battle_ai_native_test",GetModuleHandleW(nullptr)};
     Check(init(&boot)!=0,"real core initialization");
     Unit unit; unit.bytes[0x326C]=1; *reinterpret_cast<uint32_t*>(unit.bytes+0x3238)=3604001;
-    if(generic||easy||medium||missing||configIndependence||projectileLead) {
+    if(generic||easy||medium||missing||configIndependence||projectileLead||forms) {
         native_world::Initialize(unit.bytes,g_L);
         native_world::Put(native_world::fsms[0].data(),0x200,uint32_t(2));
         native_world::enemy2[0xDCD]=0;
@@ -203,6 +253,58 @@ int wmain(int argc,wchar_t** argv) {
                 GetModuleHandleW(L"battle_ai.dll"),
                 SDGO_BATTLE_AI_UNIT_OBSERVER_EXPORT));
     Check(lua_gettop(g_L)==1 && lua_tonumber(g_L,1)==987,"adapter preserves incoming Lua stack");
+    if(forms) {
+        auto movement=native_world::movements[0].data();
+        auto attack=native_world::fsms[0].data();
+        auto definition=*reinterpret_cast<uint8_t**>(unit.bytes+0x9C4);
+        std::array<uint8_t,0x300> parked{};
+        std::array<uint8_t,0x100> secondary{};
+        native_world::Put(unit.bytes,0xAB0,parked.data());
+        native_world::Put(movement,0x21C,unit.bytes);native_world::Put(movement,0x224,attack);
+        native_world::Put(unit.bytes,0x9D4,secondary.data());
+        native_world::Put(movement,0x220,secondary.data());
+        native_world::Put(secondary.data(),4,secondary.data()+0x20);
+        attack[0xB38]=1;unit.bytes[0xDCD]=0;unit.bytes[0x312A]=0;
+        native_world::Put(definition,0x13C,uint32_t(888777));
+        native_world::Put(parked.data(),0,uint32_t(888777));parked[0x140]=0;parked[0x247]=1;
+        native_world::Put(parked.data(),0x13C,*reinterpret_cast<uint32_t*>(definition));
+        native_world::Put(parked.data(),0x249,uint32_t(102));
+        native_world::Put(attack,0x56C,int16_t(7));native_world::Put(attack,0x56C+8,int16_t(0));
+        native_world::Put(attack,0x56C+0xC,native_world::weapons[1].data());
+        Check(Eval("wantForm=1; SDGO_BattleAI_GenericUpdate=function(n) formSample=SDGO_BattleAI_Observe(); if wantForm==1 then formQueued=SDGO_BattleAI_RequestTransform() end; return 123 end"),
+              "form bridge probe uses the real DLL observation and request exports");
+        native_world::Put(unit.bytes,0x9D8,uint32_t(6));unit.Think();
+        Check(Eval("assert(formSample.otherForm.allowed==0 and formQueued==0)")&&
+              *reinterpret_cast<uint32_t*>(movement+0x2F0)==0&&*reinterpret_cast<uint32_t*>(movement+8)==0,
+              "a just-respawned Neutral unit retains its recovery controller instead of entering transform D4");
+        native_world::Put(unit.bytes,0x9D8,uint32_t(1));
+        unit.Think();
+        Check(Eval("assert(formSample.otherForm.unitId==888777 and formSample.otherForm.allowed==1 and formSample.otherForm.weapons[1].ammoReady==1 and formQueued==1)"),
+              "another form's real bank is serialized and its original request can queue");
+        Check(*reinterpret_cast<uint32_t*>(movement+0x2F0)==1&&
+              *reinterpret_cast<uint8_t**>(movement+8)==movement+0xD4&&
+              *reinterpret_cast<uint8_t**>(unit.bytes+0x9C4)==definition&&unit.bytes[0xE34]==0,
+              "the adapter calls the original request receiver without changing either form definition or the bank flag");
+        Check(Eval("wantForm=0"),"form probe releases its request");unit.Think();
+        Check(Eval("assert(formSample.valid==1 and formSample.transforming==1 and formSample.weapons==nil)"),
+              "a queued native transformation is observed as controller ownership rather than a broken capability sample");
+        // Fixture commits a simulated native handoff. This validates adapter
+        // reads only; actual native/network transformation is a separate gate.
+        native_world::Put(movement,8,uint32_t(0));
+        native_world::Put(unit.bytes,0x9C4,parked.data());native_world::Put(unit.bytes,0xAB0,definition);
+        unit.bytes[0xE34]=1;native_world::Put(attack,0x240,int32_t(0));
+        native_world::Put(attack,0x248,native_world::weapons[1].data());unit.Think();
+        Check(Eval("assert(formSample.unitId==888777 and formSample.alternate==1 and formSample.selectedSlot==0 and formSample.meleeRole==0 and formSample.weapons[1].kind=='projectile')"),
+              "a committed ranged-only form uses its actual weapon bank and replaces the previous combat role");
+        movement[0x2F4]=1;WaitNativeTicks(510);
+        Check(Eval("wantForm=1"),"form rejection probe requests through the same export");unit.Think();
+        Check(Eval("assert(formQueued==0 and formSample.valid==1 and not formSample.transforming)"),
+              "a refused native request is not acknowledged as a transformation");
+        Check(*reinterpret_cast<uint32_t*>(movement+0x2F0)==2&&*reinterpret_cast<uint32_t*>(movement+8)==0,
+              "native refusal leaves movement ownership free instead of fabricating a pending form");
+        std::printf("NATIVE FORM BRIDGE CHECKS %s\n",g_failures?"FAILED":"PASSED");
+        return g_failures?1:0;
+    }
     if(configIndependence) {
         Check(Eval(
             "assert(SDGO_BattleAI_ConfigProbe.LogDecisions==1 and "
@@ -404,6 +506,13 @@ int wmain(int argc,wchar_t** argv) {
         unit.bytes[0x30DC]=0;
     }
     if(easy||medium) {
+        if(medium) {
+            auto pacedFsm=native_world::fsms[0].data();
+            native_world::acceptOrdinaryAdmission=true;
+            reinterpret_cast<native_world::Callbacks*>(pacedFsm)->AttackAdmission();
+            native_world::acceptOrdinaryAdmission=false;
+            native_world::Put(pacedFsm,4,pacedFsm+0x20);native_world::Put(pacedFsm,8,uint32_t(0));
+        }
         native_world::Put(unit.bytes,0x31F4,77);unit.Think();
         if(easy) {
             Check(Eval("assert(calls==2 and SDGO_BattleAI_Universal.states[20]==nil and SDGO_BattleAI.states[20]==nil)"),
@@ -446,7 +555,7 @@ int wmain(int argc,wchar_t** argv) {
                     state.attack_pending);
             }
             Check(pacedWindow,
-                  "Medium clears native NPC idle wait and paces a consecutive fresh ordinary attack without Hard air tactics");
+                  "Medium clears native NPC idle wait and paces an admitted ordinary attack without Hard air tactics");
         }
         native_world::Ray3 profileRay;
         reinterpret_cast<native_world::Callbacks*>(native_world::fsms[0].data())->Ray(&profileRay);
@@ -536,10 +645,14 @@ int wmain(int argc,wchar_t** argv) {
             native_world::Put(fsm,0x248,native_world::weapons[1].data());
             auto pressureMotor=native_world::movements[0].data();
             native_world::Put(pressureMotor,4,pressureMotor+0xE8);
-            native_world::Put(unit.bytes,0xBC8,int32_t(30000));unit.Think();
-            Check(*reinterpret_cast<int*>(fsm+0x240)==3&&unit.bytes[0x312A]==0,
-                  "Medium uses full SP for a player-permitted hurt counter through the native weapon-change API");
-            unit.Think();Check(unit.bytes[0x312A]!=0,"Medium waits for special selection commit then requests native attack");
+            {
+                ScopedActorClock clock;
+                native_world::Put(unit.bytes,0xBC8,int32_t(30000));unit.Think();
+                Check(*reinterpret_cast<int*>(fsm+0x240)==3&&unit.bytes[0x312A]==0,
+                      "Medium uses full SP for a player-permitted hurt counter through the native weapon-change API");
+                clock.Advance(16);unit.Think();
+                Check(unit.bytes[0x312A]!=0,"Medium waits for special selection commit then requests native attack");
+            }
             native_world::Put(pressureMotor,4,pressureMotor+0x20);
             requestSpecial();Check(native_world::attackAdmissions==beforeRequests+1,"legal native special request forwards to original authorization path");
             native_world::Put(unit.bytes,0x2B68,uint32_t(0x80000014));
@@ -794,15 +907,19 @@ int wmain(int argc,wchar_t** argv) {
             native_world::Put(unit.bytes,0xBC8,int32_t(30000));unit.Think();unit.Think();
             native_world::Put(pressureMotor,4,pressureMotor+0x20);
             native_world::deferSwitch=true;
-            Config("[settings]\nDifficulty=Easy\n");Sleep(2100);unit.Think();
-            Check(native_world::requestedSlot==1&&*reinterpret_cast<int*>(fsm+0x240)==3,
-                  "profile disable retains a pending restore while the native weapon switch is deferred");
-            native_world::deferSwitch=false;int priorSwitches=native_world::switchRequests;
-            const int priorSelections=native_world::nativeSelections;unit.Think();
-            Check(native_world::nativeSelections==priorSelections+1&&*reinterpret_cast<int*>(fsm+0x240)==1,
-                  "Easy handoff retries the previous weapon until the native selection commits");
-            priorSwitches=native_world::switchRequests;unit.Think();
-            Check(native_world::switchRequests==priorSwitches,"confirmed ordinary slot releases pending restore without repeated commands");
+            Config("[settings]\nDifficulty=Easy\n");Sleep(2100);
+            int priorSwitches=0;
+            {
+                ScopedActorClock clock;unit.Think();
+                Check(native_world::requestedSlot==1&&*reinterpret_cast<int*>(fsm+0x240)==3,
+                      "profile disable retains a pending restore while the native weapon switch is deferred");
+                native_world::deferSwitch=false;priorSwitches=native_world::switchRequests;
+                const int priorSelections=native_world::nativeSelections;clock.Advance(16);unit.Think();
+                Check(native_world::nativeSelections==priorSelections+1&&*reinterpret_cast<int*>(fsm+0x240)==1,
+                      "Easy handoff retries the previous weapon until the native selection commits");
+                priorSwitches=native_world::switchRequests;clock.Advance(16);unit.Think();
+                Check(native_world::switchRequests==priorSwitches,"confirmed ordinary slot releases pending restore without repeated commands");
+            }
             reinterpret_cast<native_world::Callbacks*>(native_world::fsms[0].data())->Ray(&profileRay);
             Check(profileRay.direction.x==0 && *reinterpret_cast<float*>(unit.bytes+0x3204)==0.5f,
                   "Medium to Easy reload restores original aim behavior");
@@ -1188,7 +1305,10 @@ int wmain(int argc,wchar_t** argv) {
         native_world::coverWall=true;auto beforeCoverMoves=native_world::moves;
         Eval("SDGO_BattleAI_GenericUpdate=function(n) coverSample=SDGO_BattleAI_Cover(2,1400,100,0); coverRepeat=SDGO_BattleAI_Cover(2,1400,100,0); count80=0; for i=1,1000 do count80=count80+SDGO_BattleAI_Chance(80) end; return 123 end");
         int maxCoverQueries=0;
-        for(int frame=0;frame<6;++frame) {int previousQueries=native_world::queries;unit.Think();maxCoverQueries=(std::max)(maxCoverQueries,native_world::queries-previousQueries);}
+        {
+            ScopedActorClock clock;
+            for(int frame=0;frame<6;++frame) {clock.Advance(20);int previousQueries=native_world::queries;unit.Think();maxCoverQueries=(std::max)(maxCoverQueries,native_world::queries-previousQueries);}
+        }
         Check(maxCoverQueries<=46&&Eval("assert(coverRepeat.pending==1)"),
               "cover geometry is bounded per Think and repeated same-frame calls do not repeat the search");
         Check(Eval("assert(coverSample.valid==1 and coverSample.exposure<=3 and coverSample.peek.z>0)"),"real native bridge samples a minimally exposed fireable cover edge using private collision queries");
@@ -1591,9 +1711,12 @@ int wmain(int argc,wchar_t** argv) {
         native_world::Put(native_world::document.data(),0x70,&canonicalHead);
         native_world::Put(native_world::document.data(),0x7C,static_cast<native_world::ListNode*>(nullptr));
 
+        // Let the documented configuration reload finish before installing a
+        // probe callback; otherwise a slow host can reload over the callback.
+        WaitNativeTicks(2100);unit.Init(reinterpret_cast<void*>(6));unit.Think();
         Eval("canonicalIdentityPolicy=SDGO_BattleAI_GenericUpdate; "
              "SDGO_BattleAI_GenericUpdate=function(n) canonicalIdentityObservation=SDGO_BattleAI_Observe(); return 123 end");
-        unit.Init(reinterpret_cast<void*>(6));unit.Think();
+        unit.Think();
         Check(Eval(
                   "local t=nil; for _,candidate in ipairs(canonicalIdentityObservation.targets) do "
                   "if candidate.id==2 then t=candidate end end; "
@@ -1780,19 +1903,22 @@ int wmain(int argc,wchar_t** argv) {
             return state;
         };
         native_world::Put(defenceFsm,0x200,uint32_t(1));
-        crossfire();
-        WaitNativeTicks(25);unit.Think();
-        auto movingPosition=location();setPosition(movingPosition+native_world::Vec3{0,0,20});
-        WaitNativeTicks(25);unit.Think();
-        const auto beforeMobileDispatch=readDispatches();
-        reinterpret_cast<native_world::Callbacks*>(defenceFsm)->Receipts(nullptr);
-        const auto mobileDispatch=readDispatches();
-        Check(mobileDispatch.mobile_primary_dispatches==beforeMobileDispatch.mobile_primary_dispatches+2&&
-              mobileDispatch.mobile_defensive_dispatches==beforeMobileDispatch.mobile_defensive_dispatches+2&&
-              mobileDispatch.backward_primary_dispatches==beforeMobileDispatch.backward_primary_dispatches+2,
-              "post-ammo primary dispatches record a bound moving-shot gun with live motor, real defensive motion and physical retreat");
+        SdgoBattleAiUnitSnapshotV1 mobileDispatch{};
+        {
+            ScopedActorClock clock;crossfire();
+            clock.Advance(25);unit.Think();
+            auto movingPosition=location();setPosition(movingPosition+native_world::Vec3{0,0,20});
+            clock.Advance(25);unit.Think();
+            const auto beforeMobileDispatch=readDispatches();
+            reinterpret_cast<native_world::Callbacks*>(defenceFsm)->Receipts(nullptr);
+            mobileDispatch=readDispatches();
+            Check(mobileDispatch.mobile_primary_dispatches==beforeMobileDispatch.mobile_primary_dispatches+2&&
+                  mobileDispatch.mobile_defensive_dispatches==beforeMobileDispatch.mobile_defensive_dispatches+2&&
+                  mobileDispatch.backward_primary_dispatches==beforeMobileDispatch.backward_primary_dispatches+2,
+                  "post-ammo primary dispatches record a bound moving-shot gun with live motor, real defensive motion and physical retreat");
+        }
         native_world::Put(defenceMovement,4,defenceMovement+0xD4);
-        movingPosition=location();setPosition(movingPosition+native_world::Vec3{0,0,20});
+        auto movingPosition=location();setPosition(movingPosition+native_world::Vec3{0,0,20});
         WaitNativeTicks(25);unit.Think();
         reinterpret_cast<native_world::Callbacks*>(defenceFsm)->Receipts(nullptr);
         auto rejectedDispatch=readDispatches();
@@ -1829,6 +1955,8 @@ int wmain(int argc,wchar_t** argv) {
         setPosition({0,0,0});native_world::Put(unit.bytes,0x3078,native_world::Vec3{0,0,0});unit.bytes[0x30DC]=0;
         native_world::Put(defenceFsm,4,defenceFsm+0x20);native_world::Put(defenceFsm,8,uint32_t(0));
         unit.bytes[0x312A]=0;native_world::Put(unit.bytes,0xDCD,uint16_t(0));
+        {
+        ScopedActorClock clock;
         const auto anchor=location();
         const int radiusStartPaths=native_world::pathCalls;
         crossfire();unit.Think();
@@ -1836,13 +1964,13 @@ int wmain(int argc,wchar_t** argv) {
         Check(unit.bytes[0x30DC]&&native_world::pathCalls>radiusStartPaths&&
               battle_ai::Length(radiusStartGoal-anchor)>25&&battle_ai::Length(radiusStartGoal-anchor)<=radius+0.1,
               "the independent continuous-crossfire fixture starts a bounded native defensive route");
-        crossfire();unit.Think();
+        crossfire();clock.Advance(20);unit.Think();
         radiusStartGoal=*reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078);
         Check(Eval("assert(defenceObservation.routeActive==1 and defenceObservation.defenceMoving==1)"),
               "the independent continuous-crossfire route is observable as adapter-owned on its next policy frame");
         const int goalsBeforeDefence=native_world::goalCalls;
         Eval("savedDefenceProbe=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) advanceResult=SDGO_BattleAI_AdvancePoint(1000,0,0,200,1); return 123 end");
-        unit.Think();
+        clock.Advance(20);unit.Think();
         Check(Eval("assert(advanceResult==0)")&&native_world::goalCalls==goalsBeforeDefence,
               "front/rear defensive route retains motor ownership from a pursuit step");
         Eval("SDGO_BattleAI_GenericUpdate=savedDefenceProbe");
@@ -1850,7 +1978,7 @@ int wmain(int argc,wchar_t** argv) {
         native_world::pathMode=0;
         bool bounded=true;double furthest=0;
         for(int step=0;step<12;++step) {
-            unit.Think();
+            clock.Advance(20);unit.Think();
             if(unit.bytes[0x30DC]) {
                 auto goal=*reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078);
                 double distance=battle_ai::Length(goal-anchor);furthest=(std::max)(furthest,distance);
@@ -1863,6 +1991,7 @@ int wmain(int argc,wchar_t** argv) {
                 location().x,location().y,location().z,static_cast<unsigned>(unit.bytes[0x30DC]));
         Check(bounded&&furthest>radius-1,
               "a continuous crossfire episode reaches but never exceeds its Medium/Hard defensive destination radius");
+        }
         const auto nextAnchor=location();
         native_world::Put(native_world::nodes[1].data(),0x88,nextAnchor+native_world::Vec3{0,0,1000});
         native_world::Put(native_world::nodes[2].data(),0x88,nextAnchor+native_world::Vec3{10,0,1100});
@@ -1981,13 +2110,30 @@ int wmain(int argc,wchar_t** argv) {
             unit.Think();
             Check(unit.bytes[0xDCD]!=0,
                   "Medium pacing admits the first ordinary request of a fresh generation");
+            native_world::acceptOrdinaryAdmission=false;
+            reinterpret_cast<native_world::Callbacks*>(fsm)->AttackAdmission();
+            unit.Think();
+            Check(unit.bytes[0xDCD]!=0,
+                  "a native refusal adds no artificial interval before the next legal attack attempt");
+            native_world::acceptOrdinaryAdmission=true;
+            reinterpret_cast<native_world::Callbacks*>(fsm)->AttackAdmission();
+            Check(*reinterpret_cast<uint8_t**>(fsm+8)==fsm+0x34,
+                  "only the original controller queues the successfully admitted ranged action");
+            native_world::Put(fsm,4,fsm+0x20);native_world::Put(fsm,8,uint32_t(0));
             unit.Think();
             Check(unit.bytes[0xDCD]==0,
-                  "Medium pacing suppresses a repeated neutral ordinary request inside 600ms");
+                  "Medium pacing suppresses a fresh request inside 600ms of native admission");
             WaitNativeTicks(620);
             unit.Think();
             Check(unit.bytes[0xDCD]!=0,
                   "Medium pacing resumes the ordinary request after the published 600ms interval");
+            const auto rangeType=native_world::weapons[1][0x6A];
+            native_world::weapons[1][0x6A]=2;
+            reinterpret_cast<native_world::Callbacks*>(fsm)->AttackAdmission();
+            native_world::Put(fsm,4,fsm+0x20);native_world::Put(fsm,8,uint32_t(0));unit.Think();
+            Check(unit.bytes[0xDCD]==0,
+                  "ordinary range-type2 shots use attack style instead of the range field for pacing");
+            native_world::weapons[1][0x6A]=rangeType;native_world::acceptOrdinaryAdmission=false;
         }
     }
     std::printf("NATIVE ADAPTER CHECKS %s\n",g_failures?"FAILED":"PASSED");

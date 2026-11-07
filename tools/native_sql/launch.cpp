@@ -58,7 +58,10 @@ int wmain(int argc, wchar_t** argv) {
     if (!thread || WaitForSingleObject(thread, 30000) != WAIT_OBJECT_0) return fail(9);
     DWORD status = ERROR_GEN_FAILURE;
     GetExitCodeThread(thread, &status); CloseHandle(thread);
-    if (status != ERROR_SUCCESS) return fail(10);
+    if (status != ERROR_SUCCESS) {
+        std::cerr << "Private native SQL initialization refused with status " << status << "\n";
+        return fail(10);
+    }
     if (ResumeThread(process.hThread) == static_cast<DWORD>(-1)) return fail(11);
     std::cout << process.dwProcessId << std::endl;
     CloseHandle(process.hThread); CloseHandle(process.hProcess);

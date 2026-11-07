@@ -6,6 +6,7 @@
 #include <cstring>
 #include "mods/battle_rewards/site_bridge.h"
 #include "mods/battle_rewards/daily_schedule.h"
+#include "mods/battle_rewards/reward_filter.h"
 
 namespace {
 int failures = 0;
@@ -97,7 +98,37 @@ int main() {
         Check(!memcmp(beforeFx, afterFx, 512), "x87 control/stack and SIMD state survive the bridge");
         Check(lastError == 1234, "Win32 last error survives the collector");
     }
-    Check(callbacks == 10, "all ten settlement bridges execute once");
+    Check(callbacks == 11, "all eleven settlement bridges execute once");
+    const auto& reward = kSettlementSites[1];
+    const uint16_t pilot = 65000, pilotEvent = 10;
+    const uint16_t unit = 100, unitEvent = 60;
+    const uint16_t gp = 200, gpEvent = 7;
+    memcpy(expectedFrame + reward.pilot_exp, &pilot, sizeof(pilot));
+    memcpy(expectedFrame + reward.pilot_event, &pilotEvent, sizeof(pilotEvent));
+    memcpy(expectedFrame + reward.unit_exp, &unit, sizeof(unit));
+    memcpy(expectedFrame + reward.unit_event, &unitEvent, sizeof(unitEvent));
+    memcpy(expectedFrame + reward.g_amount, &gp, sizeof(gp));
+    memcpy(expectedFrame + reward.g_event, &gpEvent, sizeof(gpEvent));
+    NativeRewardAmounts amounts;
+    Check(ReadNativeRewardAmounts(expectedFrame, 1, &amounts) &&
+              amounts.pilot_exp == pilot && amounts.pilot_event == pilotEvent &&
+              amounts.unit_exp == unit && amounts.unit_event == unitEvent &&
+              amounts.gp == gp && amounts.gp_event == gpEvent,
+          "shared reward reader captures all total and event buckets");
+    Check(WriteNativeExpTargets(
+              expectedFrame, 1,
+              SDGO_OPERATOR_REWARD_FIELD_PILOT_EXP |
+                  SDGO_OPERATOR_REWARD_FIELD_UNIT_EXP,
+              70000, 80),
+          "shared EXP writer accepts both writable totals");
+    Check(ReadNativeRewardAmounts(expectedFrame, 1, &amounts) &&
+              amounts.pilot_exp == 65535 && amounts.pilot_event == 545 &&
+              amounts.unit_exp == 80 && amounts.unit_event == 40,
+          "EXP totals and event buckets saturate together in both directions");
+    Check(WriteNativeGpTarget(expectedFrame, 1, 70000) &&
+              ReadNativeRewardAmounts(expectedFrame, 1, &amounts) &&
+              amounts.gp == 65535 && amounts.gp_event == 65342,
+          "native GP target saturates and retains its event accounting");
     DailySchedule schedule;
     Check(schedule.Factor(18 * 60) == 1, "no double multiplier when the daily component is absent");
     schedule.module_loaded = true;

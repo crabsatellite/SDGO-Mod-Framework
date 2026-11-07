@@ -13,7 +13,7 @@ from urllib.error import HTTPError
 from urllib.request import Request,urlopen
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"tools"))
-from manager.engines.operators import model,server,presets
+from manager.engines.operators import assets,model,server,presets
 from manager.engines.operators.assets import validate_png,sprite_binary,put_wchar
 from manager.engines.operators.workspace import Workspace
 from manager.workspace import Workspace as ManagerWorkspace
@@ -107,9 +107,13 @@ class ModelTests(unittest.TestCase):
         b=io.BytesIO();Image.new('RGBA',(2,3),(20,30,40,128)).save(b,'PNG')
         self.assertEqual(validate_png(b.getvalue()),(2,3))
         with self.assertRaises(ValueError):validate_png(b'not an image')
-        spr=sprite_binary('sdgo\\mods\\operator_catalog\\assets\\60003.txr',128,134)
+        texture='sdgo\\optex\\60003\\0.txr'
+        spr=sprite_binary(texture,128,134)
         self.assertEqual(len(spr),176)
-        self.assertIn('60003.txr'.encode('utf-16-le'),spr)
+        self.assertEqual(assets.wchar(spr,44,assets.SPR_TEXTURE_WCHARS),texture)
+        self.assertEqual(spr[108:176],b'\0'*68)
+        with self.assertRaises(ValueError):
+            sprite_binary('sdgo\\optex\\60003\\'+'1'*12+'.txr',128,134)
 
     def test_fresh_assistant_recovers_installed_custom_definitions(self):
         import struct

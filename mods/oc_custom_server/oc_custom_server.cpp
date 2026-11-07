@@ -19,6 +19,7 @@
 //      room it updates the pilot and broadcasts it).
 #include <windows.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -662,6 +663,44 @@ std::int32_t HandleResetCost(Session& session, std::uint32_t account, const std:
     return static_cast<std::int32_t>(WireStatus::success);
 }
 
+// The original OC challenge window lists the account's challenge items (type 3
+// etc items with a success bonus or level protection) usable at the unit's
+// current OC level; sdgo_mod_oc_Upgrade applies the same table checks.
+std::int32_t HandleChallengeItems(Session& session, std::uint32_t account, const std::uint8_t* payload,
+                                  std::uint32_t bytes, std::uint8_t* reply, std::uint32_t* produced) {
+    UnitRequest request;
+    if (!ReadUnitRequest(payload, bytes, &request)) return static_cast<std::int32_t>(WireStatus::invalid_argument);
+    ResultSets sets;
+    if (!session.Query(
+            L"SET NOCOUNT ON; DECLARE @lv INT; SELECT @lv = P.OcLevel FROM dbo.sdgo_mod_oc_UserUnitCustom P "
+            L"WHERE P.AccountNumber = " + Num(account) + L" AND P.UserUnitNumber = " +
+                Num(static_cast<std::int64_t>(request.unit_uid)) +
+                L"; SELECT TOP 10 TUEV.EtcItemNumber, TUEV.RemainCount, ISNULL(TE.ProbabilityPlus,0), "
+                L"ISNULL(TE.LvPrevention,0), ISNULL(TE.UseMinLv,0), ISNULL(TE.UseMaxLv,0) "
+                L"FROM dbo.tbl_UserEtcItemView TUEV INNER JOIN dbo.tbl_EtcItems TE ON TUEV.EtcItemNumber = TE.EtcItemNumber "
+                L"WHERE @lv IS NOT NULL AND TUEV.AccountNumber = " + Num(account) +
+                L" AND TUEV.ItemType = 3 AND TUEV.RemainCount > 0 AND (ISNULL(TE.ProbabilityPlus,0) > 0 OR ISNULL(TE.LvPrevention,0) = 1) "
+                L"AND @lv BETWEEN ISNULL(TE.UseMinLv,0) AND ISNULL(TE.UseMaxLv,255) ORDER BY TUEV.EtcItemNumber;",
+            &sets) ||
+        sets.size() != 1)
+        return static_cast<std::int32_t>(WireStatus::database_unavailable);
+    ChallengeItemsReply result;
+    for (const auto& row : sets[0]) {
+        if (row.size() != 6 || result.count >= kChallengeItemMax) continue;
+        auto& item = result.items[result.count];
+        item.item = static_cast<std::int32_t>(Int64Or(row, 0));
+        item.count = static_cast<std::int16_t>(std::min<std::int64_t>(Int64Or(row, 1), 32767));
+        item.probability_plus = static_cast<std::int16_t>(std::min<std::int64_t>(Int64Or(row, 2), 32767));
+        item.lv_prevention = static_cast<std::uint8_t>(Int64Or(row, 3) ? 1 : 0);
+        item.min_level = static_cast<std::uint8_t>(std::clamp<std::int64_t>(Int64Or(row, 4), 0, 255));
+        item.max_level = static_cast<std::uint8_t>(std::clamp<std::int64_t>(Int64Or(row, 5), 0, 255));
+        if (item.item > 0 && item.count > 0) ++result.count;
+    }
+    WriteChallengeItemsReply(reply, result);
+    *produced = static_cast<std::uint32_t>(kChallengeItemsReplyBytes);
+    return static_cast<std::int32_t>(WireStatus::success);
+}
+
 std::int32_t HandleReset(Session& session, std::uint32_t account, const std::uint8_t* payload,
                          std::uint32_t bytes, std::uint8_t* reply, std::uint32_t* produced) {
     WorkRequest request;
@@ -778,6 +817,8 @@ std::int32_t __cdecl ExtensionHandler(void*, std::uint32_t actor, std::uint16_t 
             break;
         case Command::reset_cost:
             return HandleResetCost(session, actor, payload, payload_bytes, reply, produced);
+        case Command::challenge_items:
+            return HandleChallengeItems(session, actor, payload, payload_bytes, reply, produced);
         case Command::reset:
             status = HandleReset(session, actor, payload, payload_bytes, reply, produced);
             break;

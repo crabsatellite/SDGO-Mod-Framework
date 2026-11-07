@@ -9,7 +9,7 @@
 [安装说明](docs/setup.zh-CN.md) · [统一 Mod Manager](docs/mod-manager.zh-CN.md) · [最新发布](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
 
 服主与维护人员通过 **SDGO Mod Manager** 安装、配置和[更新](docs/mod-manager.zh-CN.md#更新)功能，
-客户端目录顶部的「0_更新与管理」可直接打开它。玩家可在 Manager 更新服主提供的完整客户端，游戏仍使用原来的启动入口；共享配置由服主维护。双源更新分别跟随框架程序与服主机体／配置内容，统一校验和回滚。
+客户端目录顶部的「0_更新与管理」可直接打开它。玩家取得兼容原版客户端后，可在 Manager 一键安装服主配置档：按锁定清单组合官方 Mod、服主共享配置和自定义素材，统一校验与回滚。Git、HTTPS 和离线目录使用同一内容契约；完整客户端仓库仅是服主可选备份。
 服主自己的「仅本地」扩展也可以放进 Manager 管理，它们不会被打包或导出分发。
 默认跟随我们提供的基础整合包。服主需要自行维护时，明确选择「服主 DIY」接管；接管后由服主维护配置、脚本、素材、兼容性与发布版本。
 [服主整合包更新](docs/owner-updates.zh-CN.md)支持审阅并采用上游组件、发布服主确认的版本，玩家只跟随该服主的来源。
@@ -58,24 +58,24 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 | 任务 AI 僚机 <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai`，AI 按玩家生命额度复活；`!ai3 inf` 开启 AI 无限复活 | [使用说明](docs/coop-wingmen.zh-CN.md) |
 | 任务行为版本 <!-- catalog: `mission_behavior`、`mission_behavior_server` --> | 为一个客户端和服务端组全部 Battle 频道统一选择 OC 默认行为或 G改现有行为 | [使用说明](docs/mission-behavior.zh-CN.md) |
 | 对战 AI <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友；可让真人自动同队，选择双方补位、只补对面或指定数量 | [使用说明](docs/pvp-ai.zh-CN.md) |
-| AI 机体目录（独立附加包） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |
+| AI 机体目录（可选） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |
 | 战斗贡献奖励 <!-- catalog: `battle_rewards` --> | 按贡献发放 GB/MB，可配置人数倍率与按账号去重的聚会奖励 | [使用说明](docs/battle-rewards.zh-CN.md) |
 | 收藏扭蛋 <!-- catalog: `collection_capsule` --> | 优先补图鉴的活动机台，安装时补充图鉴获取说明；价格和次数可配置，默认每周 15 次 | [使用说明](docs/collection-capsule.zh-CN.md) |
 | 每局随机机体 <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组 | [使用说明](docs/room-random.zh-CN.md) |
 | 完整对战 All Map <!-- catalog: `all_maps` --> | 房间选择 All Map 时从完整原生对战地图目录抽取，任务专用图仍留在任务模式 | [使用说明](docs/all-maps.zh-CN.md) |
 | FPS 上限 <!-- catalog: `fps_limit` --> | 提高渲染帧率上限，保留原生游戏速度 | [使用说明](docs/fps-limit.zh-CN.md) |
 | 长房名 <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 普通、AI、队伍及任务房的建房、设置和改名入口支持最长 128 字 | [使用说明](docs/room-titles.zh-CN.md) |
-| 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | Easy / Medium / Hard 三档、共享敌情，并主动利用地图推进装置寻路 | [使用说明](docs/battle-ai.zh-CN.md) |
+| 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | Easy / Medium / Hard 三档、按原生武装选择形态、共享敌情和地图推进装置寻路 | [使用说明](docs/battle-ai.zh-CN.md) |
 | 自动机库容量 <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） | [使用说明](docs/hangar-capacity.zh-CN.md) |
 | 机库管理 <!-- catalog: `hangar_manager` --> | 机体管理页内一键整理和重复机体兑换（GB 服务端批量入账） | [使用说明](docs/hangar-manager.zh-CN.md) |
-| 副官补给与管理 <!-- catalog: `operator_catalog` --> | 五位免费补给副官，以及副官名称、头像和掉落的管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
+| 副官补给、资源与能力 <!-- catalog: `operator_catalog`、`operator_catalog_server` --> | 五位免费补给副官，以及独立资源包、数值能力、掉落和商城草稿管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
 | 扭蛋机编辑器 <!-- catalog: `capsule_catalog` --> | 在 Manager 中新增、修改、下架扭蛋机，设置奖池、价格和权重，为未使用的独立活动机改号 | [使用说明](docs/capsule-catalog.zh-CN.md) |
 | 每日双倍时间 <!-- catalog: `daily_rewards` --> | 每天固定时段（默认 18:00–22:00）战斗 GB 和经验翻倍 | [使用说明](docs/daily-rewards.zh-CN.md) |
 | 保管库一键领取 <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
 | 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化商品名称、说明、选项和涂装机体预览，可用中文名称搜索并组合等级、币种筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
 | 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 右键好友（在线或离线均可），在机体管理中选机赠送，对方在保管库接受或退还；默认关闭，由服主开启 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
-| OC 六维强化（Beta） <!-- catalog: `oc_custom_client`、`oc_custom_server`、`oc_custom_battle` --> | 工厂升级页内的原版 OC 普通点、Over 点、挑战与洗点，与现行改造部件数据并存，由服主选择战斗使用哪一套 | [使用说明](docs/over-custom.zh-CN.md) |
-| 机体族导入（Beta） <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | 在 Mod Manager 导入机体包、编辑技能／浮游依赖字段、保存脚本声明，制作设计图和活动奖池，并可导入任何来源按协议做好的整套阵容（单形态、互相变形、单向变形、自变形，以及第三形态的入口形态）批量发布，再由 Mod Manager 应用到服务端 | [使用说明](docs/unit-import.zh-CN.md) |
+| OC 六维强化 <!-- catalog: `oc_custom_client`、`oc_custom_server`、`oc_custom_battle` --> | 工厂升级页使用客户端包内原有的 OC 窗口：普通点、Over 点、OVER CUSTOM 终极强化与洗点，战斗中生效 OC 推进力与机动力；与现行改造部件数据并存，由服主选择战斗使用哪一套 | [使用说明](docs/over-custom.zh-CN.md) |
+| 机体族导入（Beta） <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | 在 Mod Manager 导入机体包、编辑技能／浮游依赖字段、保存脚本声明，制作设计图和活动奖池，并可导入任何来源按协议做好的整套阵容（单形态、互相变形、单向变形、自变形，以及第三形态的入口形态）批量发布，再由 Mod Manager 应用到服务端，并交给商城、扭蛋机和独立活动机选用（活动海报可随时更换） | [使用说明](docs/unit-import.zh-CN.md) |
 
 <!-- /mod-category:gameplay -->
 
@@ -115,3 +115,5 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 [构建与开发接口](docs/framework.md) · [贡献与 AI 披露规则](docs/contributing.zh-CN.md) · [配置与排错](docs/setup.zh-CN.md)
 
 MIT，见 [LICENSE](LICENSE)。第三方许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+框架、SQL、服主内容和个人数据的归属见[内容边界](docs/content-boundaries.zh-CN.md)。
