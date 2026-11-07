@@ -128,6 +128,9 @@ try {
     }
     $fullArchive = [IO.Compression.ZipFile]::OpenRead($fullZip)
     try {
+        foreach ($required in @('client/sdgo/mods/ai_catalog/ai_catalog.dll','server/sdgo/mods/ai_catalog/ai_catalog.dll','server/sdgo/mods/operator_catalog_server/operator_catalog_server.dll')) {
+            if (-not $fullArchive.GetEntry($required)) { throw "Full package lacks its paired provider runtime: $required" }
+        }
         foreach ($required in @('collection/tools/collection_capsule.py','collection/owner/collection_capsule/native_catalog.py','collection/framework/support/capsule-registry/capsule_catalog.dll','collection/SHA256.json')) {
             if (-not $fullArchive.GetEntry($required)) { throw "Full package lost collection owner component: $required" }
         }
