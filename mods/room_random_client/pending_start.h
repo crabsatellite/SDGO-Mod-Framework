@@ -11,6 +11,7 @@ constexpr size_t kStartPacketSize=0xCD4;
 struct PendingCall {
     void* parser=nullptr;
     std::array<uint8_t,kStartPacketSize> packet{};
+    bool fallback=false;
     explicit operator bool() const {return parser!=nullptr;}
 };
 
@@ -56,6 +57,10 @@ public:
     const uint8_t* Packet() const {return active_ ? packet_.data() : nullptr;}
     bool Matches(const Context& c,void* parser=nullptr) const {
         return Same(c,parser);
+    }
+    bool MatchesPacket(const Context& c,void* parser,const uint8_t* packet) const {
+        return packet && Same(c,parser) &&
+            std::memcmp(packet_.data(),packet,packet_.size())==0;
     }
     bool Revalidate(const Context& c) {
         if(active_ && !Same(c,nullptr))Clear();

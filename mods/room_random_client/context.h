@@ -99,22 +99,15 @@ inline bool HumanStartTasksSettled(const Bindings& b,const Context& c,
 // queue inside the state object. Resolve only the exact live local service;
 // a room title or a matching address alone is not authority to retire it.
 inline uint8_t* CurrentHumanRoomViewState(const Bindings& b,const Context& c,
-                                          const uint8_t* packet) {
-    if(c.source!=2 || !packet || !c.manager || !c.local ||
-       !b.userHasState || !b.changeRoomView || !b.changeRoomViewVtable ||
-       Read<uint16_t>(packet,0)!=0x06C3)return nullptr;
+                                          uint32_t owner,int localSlot) {
+    if(c.source!=2 || !c.manager || !c.local || owner!=c.local ||
+       !b.userHasState || !b.changeRoomView || !b.changeRoomViewVtable)
+        return nullptr;
     const int count=Read<int>(c.manager,0x6C);
     auto** users=Read<uint8_t**>(c.manager,0x70);
     if(count<=0 || count>static_cast<int>(kSlots) || !users)return nullptr;
-    int localSlot=-1;
-    for(size_t slot=0;slot<kSlots;++slot) {
-        const uint32_t owner=Read<uint32_t>(packet+0x20+slot*0x10F,0);
-        if(owner!=c.local)continue;
-        if(localSlot!=-1)return nullptr;
-        localSlot=static_cast<int>(slot);
-    }
     if(localSlot<0 || localSlot>=count || !users[localSlot] ||
-       c.Owner(static_cast<size_t>(localSlot))!=c.local ||
+       c.Owner(static_cast<size_t>(localSlot))!=owner ||
        !b.userHasState(c.manager,localSlot,0x0C,0))return nullptr;
     auto** states=Read<uint8_t**>(users[localSlot],0x0C);
     auto* state=states ? states[0x0C] : nullptr;
@@ -125,6 +118,19 @@ inline uint8_t* CurrentHumanRoomViewState(const Bindings& b,const Context& c,
                b.changeRoomView)
         return nullptr;
     return state;
+}
+
+inline uint8_t* CurrentHumanRoomViewState(const Bindings& b,const Context& c,
+                                          const uint8_t* packet) {
+    if(!packet || Read<uint16_t>(packet,0)!=0x06C3)return nullptr;
+    int localSlot=-1;
+    for(size_t slot=0;slot<kSlots;++slot) {
+        const uint32_t owner=Read<uint32_t>(packet+0x20+slot*0x10F,0);
+        if(owner!=c.local)continue;
+        if(localSlot!=-1)return nullptr;
+        localSlot=static_cast<int>(slot);
+    }
+    return CurrentHumanRoomViewState(b,c,c.local,localSlot);
 }
 
 // Mirror 0x00735E59..0x00735E6B before returning zero to the native scheduler.

@@ -16,6 +16,8 @@
 namespace {
 int failures=0,startedModel=0,factoryCalls=0,fillCalls=0;
 int startParserCalls=0,startParserConstructions=0;
+uint32_t nativeNoticeRoute=0;
+uint8_t nativeParserEpoch=0;
 std::array<uint8_t,0x5DA8> profile{};
 std::array<uint8_t,0x4000> room{};
 std::array<uint8_t,0x4C0> app{};
@@ -35,6 +37,7 @@ uint8_t* appPointer=app.data();
 bool starting=true;
 bool threeD=false;
 bool asyncNativeQueues=false;
+bool skipNativeRoomViewQueue=false;
 bool autoAckRoomView=true;
 bool rootStartQueued=false;
 bool rootRanWithViewPending=false;
@@ -169,6 +172,7 @@ void ExecuteQueuedStart(const uint8_t* packet) {
 }
 __declspec(noinline) void __fastcall FakeStartParser(void*,void*,const uint8_t* packet) {
     ++startParserCalls;
+    nativeParserEpoch=packet[room_random_sync::kStartEpochOffset];
     if(asyncNativeQueues) {
         std::memcpy(queuedStart.data(),packet,queuedStart.size());
         rootStartQueued=true;
@@ -286,12 +290,15 @@ void __stdcall QueuedHandler(uint32_t opcode,const uint8_t* packet) {
         if(slot<userStates.size()) {
             EnqueueUserState(slot,opcode==0x0861 ? 0x0E : 0x0F);
             if(room_random_client::Read<uint32_t>(packet,6)==
-               room_random_client::Read<uint32_t>(profile.data(),0x138))
+               room_random_client::Read<uint32_t>(profile.data(),0x138) &&
+               !skipNativeRoomViewQueue)
                 EnqueueUserState(slot,0x0C);
         }
     }
     if(opcode==0x0861 && !starting)
         std::memcpy(room.data()+0x57C,packet+0x12,0x99);
+    if(opcode==0x0861 || opcode==0x098B)
+        nativeNoticeRoute=room_random_client::Read<uint32_t>(packet,14);
     if(opcode==0x06C3)
         FakeStartParser(startParser.data(),nullptr,packet);
 }
@@ -354,6 +361,13 @@ void Symbols() {
     Symbol(f,"room_random.client_mission_set_ship",reinterpret_cast<void*>(&MissionSetShip),"code");
     fclose(f);
 }
+template<size_t N>
+void TagNotice(std::array<uint8_t,N>& packet,uint16_t roomIndex,uint8_t epoch) {
+    Put<uint32_t>(packet.data(),14,room_random_sync::TaggedRoute(roomIndex,epoch));
+}
+void TagStart(std::array<uint8_t,0xCD4>& packet,uint8_t epoch) {
+    packet[room_random_sync::kStartEpochOffset]=epoch;
+}
 }
 int wmain(int argc,wchar_t** argv) {
     const bool enabled=argc>=2 && !std::wcscmp(argv[1],L"enabled");
@@ -374,23 +388,36 @@ int wmain(int argc,wchar_t** argv) {
     Put<uint32_t>(room.data(),0,7);room[4]=2;room[5]=8;
     Put<uint32_t>(room.data(),0x95C,1001);Put<uint32_t>(room.data(),0x57C,15019);
     std::array<uint8_t,0x99> unit{};Put<uint32_t>(unit.data(),0,11032);Put<uint64_t>(unit.data(),8,0x123456789ABCULL);
-    auto notice=room_random_sync::Packet(0x0861,1001,0,7,unit);
+    auto notice=room_random_sync::Packet(
+        0x0861,1001,0,room_random_sync::TaggedRoute(7,1),unit);
     std::array<uint8_t,0xCD4> start{};Put<uint16_t>(start.data(),0,0x06C3);
+    TagStart(start,1);
     Put<uint32_t>(start.data(),0x20,1001);Put<uint32_t>(start.data(),0x2E,11032);
     std::array<uint8_t,0x50> dispatcher{};void* head=nullptr;Put<void*>(dispatcher.data(),0x44,&head);
     Put<uint8_t*>(startParser.data(),0x0C,startParserOwner.data());
     Put<uint8_t*>(startParserOwner.data(),0x14,model.data());
     auto dispatch=reinterpret_cast<DispatchFn>(&NativeDispatch);
+    TagNotice(notice,7,1);
     dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
     Check(startedModel==15019,"baseline reproduces stale model while native start is pending");
     Symbols();HMODULE core=LoadLibraryW(L"sdgo/core.dll");Check(core!=nullptr,"real core loads");if(!core)return 2;
     auto init=reinterpret_cast<SdgoCoreInitFn>(GetProcAddress(core,"SdgoCoreInit"));
     SdgoBoot boot{sizeof(SdgoBoot),"room_random_client_runtime_test",GetModuleHandleW(nullptr)};
     Check(init && init(&boot),"real core initializes both entry and interior hook owners");
-    startedModel=0;factoryCalls=0;
+    startedModel=0;factoryCalls=0;nativeNoticeRoute=0;nativeParserEpoch=0;
+    SetTitle("fixture !rand");
+    TagNotice(notice,7,1);
     dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
     Check(startedModel==(enabled?11032:15019),"start uses the authoritative model only when synchronization is enabled");
     Check(factoryCalls==1,"native factory still executes once");
+    Check(nativeNoticeRoute==(enabled ? 7u :
+              room_random_sync::TaggedRoute(7,1)),
+          "enabled hook strips the private epoch signature before the native notice handler");
+    if(nativeParserEpoch!=(enabled ? 0u : 1u))
+        std::printf("parser epoch observed: %u\n",
+                    static_cast<unsigned>(nativeParserEpoch));
+    Check(nativeParserEpoch==(enabled ? 0u : 1u),
+          "enabled hook passes a canonical zero reserved byte to the original parser");
     Put<uint32_t>(frozen[0].data(),0x429,1001);Put<uint32_t>(frozen[0].data(),0x49,15019);
     Construct(start.data()+0x20,frozen[0].data(),0);
     Check(startedModel==(enabled?11032:15019),"the static converter's unrelated ECX cannot replace the verified lobby packet context");
@@ -424,6 +451,7 @@ int wmain(int argc,wchar_t** argv) {
     const auto original=frozen[0];
     Put<uint32_t>(room.data(),0x57C,15019);startedModel=0;
     fillCalls=0;
+    TagStart(start,1);TagNotice(notice,7,1);
     dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
     dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
     reinterpret_cast<room_random_client::ManagerUpdateFn>(&NativeManagerUpdate)(manager.data());
@@ -446,6 +474,7 @@ int wmain(int argc,wchar_t** argv) {
     Put<void*>(modelVtable.data(),0x8C,reinterpret_cast<void*>(&NormalSetShip));
     Put<void*>(modelVtable.data(),0x90,reinterpret_cast<void*>(&NormalShip));
     Put<uint32_t>(app.data(),0x4A0,18);room[5]=1;startedModel=0;
+    TagStart(start,2);TagNotice(notice,7,2);
     dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
     dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
     reinterpret_cast<room_random_client::ManagerUpdateFn>(&NativeManagerUpdate)(manager.data());
@@ -459,6 +488,7 @@ int wmain(int argc,wchar_t** argv) {
     Put<uint32_t>(app.data(),0x4A0,18);
     Put<uint8_t*>(profile.data(),0xEC,staleLegacy.data());
     Put<uint32_t>(room.data(),0x57C,15019);
+    TagNotice(notice,7,2);
     dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
     Check(room_random_client::Read<uint32_t>(room.data(),0x57C)==(enabled?11032u:15019u),
           "active native 3D model takes precedence over a non-null legacy publication");
@@ -466,6 +496,7 @@ int wmain(int argc,wchar_t** argv) {
     const auto liveModelVtable=modelVtable;
     Put<void*>(modelVtable.data(),0x1C,nullptr);
     const auto activeBefore=room;
+    TagNotice(notice,7,2);
     dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
     Check(room==activeBefore&&staleLegacy==staleBefore,
           "an invalid active 3D model cannot fall back to a stale writable legacy room");
@@ -485,6 +516,7 @@ int wmain(int argc,wchar_t** argv) {
     Put<uint32_t>(room.data(),0x95C,1001);Put<uint32_t>(room.data(),0x57C,15019);
     Put<uint32_t>(frozen[0].data(),0x429,1001);Put<uint32_t>(frozen[0].data(),0x49,15019);
     startParserCalls=0;startParserConstructions=0;startedModel=0;
+    TagStart(start,3);TagNotice(notice,39,3);
     dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
     dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
     Check(userStates[0].size()==2 && userStates[0][0]==0x0E &&
@@ -578,30 +610,53 @@ int wmain(int argc,wchar_t** argv) {
         Put<uint32_t>(room.data(),0,44);room[5]=8;SetTitle("multi !rand");
         Put<uint32_t>(room.data(),0x95C,1001);
         Put<uint32_t>(room.data(),0x57C,15019);
+        TagStart(start,4);
         dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
         Check(startParserCalls==0,
               "missing human record holds the random start before C cleanup");
-        EnqueueUserState(0,0x0C,1);
-        EnqueueUserState(0,0x0C,2);
-        tick(manager.data());
-        tick(manager.data());
-        Check(roomViewServices[0].frees==1 &&
-              userStates[0].size()==1 && startParserCalls==0,
-              "first of multiple C requests retires one payload and cannot release an incomplete start");
-        tick(manager.data());
-        tick(manager.data());
-        Check(roomViewServices[0].frees==2 && userStates[0].empty() &&
-              roomViewRequests==0 && startParserCalls==0,
-              "multiple C requests each retire through native cleanup exactly once");
+        TagNotice(notice,44,4);
         dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
-        tick(manager.data());
-        tick(manager.data());
-        tick(manager.data());
-        Check(roomViewServices[0].frees==3 &&
+        TagNotice(notice,44,4);
+        dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
+        for(int i=0;i<6;++i)tick(manager.data());
+        Check(roomViewServices[0].frees==2 &&
               roomViewRequests==0 && startParserCalls==1 &&
               rootStartQueued,
-              "complete late record releases the held parser only after E and the replacement C settle");
+              "each tagged duplicate retires its own C and the held parser resumes once after both E/C pairs settle");
         tick(manager.data());
+
+        // The shipped notice handler can skip enqueueing local state C when
+        // its native flag 4 is set. The tagged-notice cleanup permit belongs
+        // only to the matching held start and must expire when that start is
+        // released, or a later ordinary waiting-room C would be cancelled.
+        ResetUserQueues();rootStartQueued=false;
+        roomViewRuns=0;roomViewRequests=0;startParserCalls=0;
+        Put<uint32_t>(app.data(),0x4A0,18);
+        Put<uint32_t>(room.data(),0,49);room[5]=8;SetTitle("skip C !rand");
+        Put<uint32_t>(room.data(),0x95C,1001);
+        Put<uint32_t>(room.data(),0x57C,15019);
+        TagNotice(notice,49,13);
+        TagStart(start,13);
+        skipNativeRoomViewQueue=true;
+        dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
+        dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
+        Check(userStates[0].size()==1 && userStates[0][0]==0x0E &&
+              startParserCalls==0,
+              "native flag-4 fixture queues E without a synthetic local C");
+        tick(manager.data());
+        Check(startParserCalls==1 && rootStartQueued &&
+              userStates[0].empty(),
+              "matching start resumes after the only native E task settles");
+        skipNativeRoomViewQueue=false;
+        autoAckRoomView=false;
+        EnqueueUserState(0,0x0C,13);
+        for(int i=0;i<2;++i)tick(manager.data());
+        Check(roomViewRequests==1 && roomViewRuns==0 &&
+              userStates[0].size()==1,
+              "released epoch cannot cancel a later ordinary waiting-room C");
+        Check(roomViewServices[0].Cleanup(),
+              "fixture acknowledges the post-start ordinary room-view request");
+        userStates[0].clear();autoAckRoomView=true;
 
         // Two ordered starts may choose the same model. The second 06C3 must
         // fence the first round's complete record so its old serial/attributes
@@ -618,12 +673,13 @@ int wmain(int argc,wchar_t** argv) {
         auto sameStart=start;
         Put<uint32_t>(sameStart.data(),0x20,1001);
         Put<uint32_t>(sameStart.data(),0x2E,11032);
+        TagStart(sameStart,5);
         std::array<uint8_t,0x99> firstRoundUnit{};
         Put<uint32_t>(firstRoundUnit.data(),0,11032);
         Put<uint64_t>(firstRoundUnit.data(),8,0x111111111111ULL);
         Put<uint32_t>(firstRoundUnit.data(),0x14,0xA1A1A1A1);
         auto firstRoundNotice=room_random_sync::Packet(
-            0x0861,1001,0,47,firstRoundUnit);
+            0x0861,1001,0,room_random_sync::TaggedRoute(47,5),firstRoundUnit);
         dispatch(dispatcher.data(),0,0,0,0x06C3,sameStart.data());
         dispatch(dispatcher.data(),0,0,0,0x0861,firstRoundNotice.data());
         for(int i=0;i<3;++i)tick(manager.data());
@@ -640,18 +696,17 @@ int wmain(int argc,wchar_t** argv) {
         roomViewRuns=0;roomViewRequests=0;startParserCalls=0;
         startParserConstructions=0;startedModels={};
         Put<uint32_t>(app.data(),0x4A0,18);
+        TagStart(sameStart,6);
         dispatch(dispatcher.data(),0,0,0,0x06C3,sameStart.data());
-        EnqueueUserState(0,0x0C,5);
-        EnqueueUserState(0,0x0C,6);
-        for(int i=0;i<5;++i)tick(manager.data());
-        Check(startParserCalls==0 && roomViewServices[0].frees==2,
-              "second identical-model start retires multiple C requests but rejects the old complete record");
+        for(int i=0;i<2;++i)tick(manager.data());
+        Check(startParserCalls==0 && roomViewServices[0].frees==0,
+              "next epoch rejects the prior complete record without consuming an unrelated C request");
         std::array<uint8_t,0x99> secondRoundUnit{};
         Put<uint32_t>(secondRoundUnit.data(),0,11032);
         Put<uint64_t>(secondRoundUnit.data(),8,0x222222222222ULL);
         Put<uint32_t>(secondRoundUnit.data(),0x14,0xB2B2B2B2);
         auto secondRoundNotice=room_random_sync::Packet(
-            0x0861,1001,0,47,secondRoundUnit);
+            0x0861,1001,0,room_random_sync::TaggedRoute(47,6),secondRoundUnit);
         dispatch(dispatcher.data(),0,0,0,0x0861,secondRoundNotice.data());
         for(int i=0;i<3;++i)tick(manager.data());
         Check(startParserCalls==1 && rootStartQueued,
@@ -673,6 +728,7 @@ int wmain(int argc,wchar_t** argv) {
         Put<uint32_t>(room.data(),0,48);room[5]=8;SetTitle("duplicate !rand");
         std::array<uint8_t,0xCD4> duplicateStart{};
         Put<uint16_t>(duplicateStart.data(),0,0x06C3);
+        TagStart(duplicateStart,7);
         std::array<std::array<uint8_t,0x99>,2> duplicateUnits{};
         std::array<std::array<uint8_t,room_random_sync::kPayload+
             room_random_sync::kUnitSize>,2> duplicateNotices{};
@@ -694,7 +750,8 @@ int wmain(int argc,wchar_t** argv) {
             Put<uint32_t>(duplicateUnits[slot].data(),0x14,
                           static_cast<uint32_t>(0xC3C3C3C3+slot));
             duplicateNotices[slot]=room_random_sync::Packet(
-                0x0861,ownerId,static_cast<uint32_t>(slot),48,
+                0x0861,ownerId,static_cast<uint32_t>(slot),
+                room_random_sync::TaggedRoute(48,7),
                 duplicateUnits[slot]);
         }
         dispatch(dispatcher.data(),0,0,0,0x06C3,duplicateStart.data());
@@ -727,6 +784,7 @@ int wmain(int argc,wchar_t** argv) {
         roomViewRuns=0;roomViewRequests=0;startParserCalls=0;
         Put<uint32_t>(app.data(),0x4A0,18);
         Put<uint32_t>(room.data(),0,45);Put<uint32_t>(room.data(),0x57C,15019);
+        TagStart(start,8);
         dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
         EnqueueUserState(0,0x0C,4);
         Put<int>(roomViewServices[0].object.data(),8,1);
@@ -753,6 +811,7 @@ int wmain(int argc,wchar_t** argv) {
     std::array<std::array<uint8_t,0x99>,4> lateUnits{};
     std::array<std::array<uint8_t,room_random_sync::kPayload+room_random_sync::kUnitSize>,4> lateNotices{};
     std::array<uint8_t,0xCD4> lateStart{};Put<uint16_t>(lateStart.data(),0,0x06C3);
+    TagStart(lateStart,9);
     for(size_t slot=0;slot<4;++slot) {
         const auto pilot=static_cast<uint32_t>(4101+slot);
         const auto oldModel=static_cast<uint32_t>(17001+slot);
@@ -762,7 +821,8 @@ int wmain(int argc,wchar_t** argv) {
         Put<uint32_t>(lateUnits[slot].data(),0,newModel);
         Put<uint64_t>(lateUnits[slot].data(),8,0x600000001ULL+slot);
         lateNotices[slot]=room_random_sync::Packet(
-            0x0861,pilot,static_cast<uint32_t>(slot),40,lateUnits[slot]);
+            0x0861,pilot,static_cast<uint32_t>(slot),
+            room_random_sync::TaggedRoute(40,9),lateUnits[slot]);
         Put<uint32_t>(lateStart.data(),0x20+slot*0x10F,pilot);
         Put<uint32_t>(lateStart.data(),0x2E+slot*0x10F,newModel);
         frozen[slot]={};
@@ -779,15 +839,19 @@ int wmain(int argc,wchar_t** argv) {
     dispatch(dispatcher.data(),0,0,0,0x0861,rejectedLate.data());
     auto rangedLate=lateNotices[3];Put<uint32_t>(rangedLate.data(),10,12);
     dispatch(dispatcher.data(),0,0,0,0x0861,rangedLate.data());
+    TagNotice(lateNotices[0],40,9);
     dispatch(dispatcher.data(),0,0,0,0x0861,lateNotices[0].data());
     Check(startParserCalls==(enabled?0:1),
           "rejected and duplicate notices cannot release an incomplete start");
     auto replacementStart=lateStart;replacementStart[0x20+5]=0x33;
+    TagStart(replacementStart,10);
     dispatch(dispatcher.data(),0,0,0,0x06C3,replacementStart.data());
     Check(startParserCalls==(enabled?0:2),
           "a replacement 06C3 supersedes the older held parser generation");
-    for(size_t slot=0;slot<4;++slot)
+    for(size_t slot=0;slot<4;++slot) {
+        TagNotice(lateNotices[slot],40,10);
         dispatch(dispatcher.data(),0,0,0,0x0861,lateNotices[slot].data());
+    }
     Check(startParserCalls==(enabled?0:2),
           "the last notice cannot resume a parser from inside packet dispatch");
     tick(manager.data());
@@ -802,16 +866,17 @@ int wmain(int argc,wchar_t** argv) {
     // changes, a later record must not replay the stale packet or parser.
     Put<uint32_t>(app.data(),0x4A0,18);Put<uint32_t>(room.data(),0,41);
     for(size_t slot=0;slot<3;++slot) {
-        Put<uint32_t>(lateNotices[slot].data(),2,41);
+        TagNotice(lateNotices[slot],41,11);
         dispatch(dispatcher.data(),0,0,0,0x0861,lateNotices[slot].data());
     }
     auto generationStart=replacementStart;
+    TagStart(generationStart,11);
     dispatch(dispatcher.data(),0,0,0,0x06C3,generationStart.data());
     const auto beforeGeneration=startParserCalls;
     Put<uint32_t>(room.data(),0,42);
     std::array<uint8_t,2> irrelevant{};Put<uint16_t>(irrelevant.data(),0,0x7777);
     dispatch(dispatcher.data(),0,0,0,0x7777,irrelevant.data());
-    Put<uint32_t>(lateNotices[3].data(),2,42);
+    TagNotice(lateNotices[3],42,11);
     dispatch(dispatcher.data(),0,0,0,0x0861,lateNotices[3].data());
     Check(startParserCalls==beforeGeneration,
           "room generation change discards a held parser instead of replaying it");
@@ -830,12 +895,15 @@ int wmain(int argc,wchar_t** argv) {
         Put<uint32_t>(start.data(),0x2E+i*0x32,id);
     }
     Put<uint64_t>(ship.data(),0x1C,0x100000001ULL);
-    auto deck=room_random_sync::Packet(0x098B,1001,0,7,ship);
+    auto deck=room_random_sync::Packet(
+        0x098B,1001,0,room_random_sync::TaggedRoute(43,12),ship);
+    TagStart(start,12);TagNotice(notice,43,12);
     startParserCalls=0;startParserConstructions=0;startedModels={};
     dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
     dispatch(dispatcher.data(),0,0,0,0x098B,deck.data());
     Check(startParserCalls==(enabled?0:1),
           "deck start waits when the matching unit record is still late");
+    TagNotice(notice,43,12);
     dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
     Check(startParserCalls==(enabled?0:1),
           "late unit completion does not re-enter the parser from dispatch");
@@ -852,7 +920,7 @@ int wmain(int argc,wchar_t** argv) {
     auto ai=start;Put<uint32_t>(ai.data(),0x20,0x80000001u);Construct(ai.data()+0x20,frozen[0].data(),0);
     Check(lastConstruction==original,"AI-tagged source passes through unchanged");
     Put<uint32_t>(app.data(),0x4A0,18);
-    auto changedNotice=notice;changedNotice[0x12+8]^=1;
+    auto changedNotice=notice;TagNotice(changedNotice,43,12);changedNotice[0x12+8]^=1;
     dispatch(dispatcher.data(),0,0,0,0x0861,changedNotice.data());Construct(start.data()+0x20,frozen[0].data(),1);
     Check(lastConstruction==original,"a later loadout notice invalidates previous construction authority");
     std::printf("%s CLIENT START-STATE RUNTIME CHECKS\n",failures?"FAILED":"PASSED");return failures?1:0;

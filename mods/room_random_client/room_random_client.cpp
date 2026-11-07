@@ -55,35 +55,32 @@ bool RandomRoom(const room_random_client::Context& context) {
 struct PacketWork {
     room_random_client::Result result;
     uint16_t opcode=0;
-    const uint8_t* packet=nullptr;
-    bool orderedStart=false;
+    uint8_t* packet=nullptr;
+    bool strict=false;
 };
 PacketWork GuardedPacket(BYTE* frame) {
     PacketWork work;
     __try {
         work.opcode=static_cast<uint16_t>(room_random_client::Read<uint32_t>(frame,0x14));
-        work.packet=room_random_client::Read<const uint8_t*>(frame,0x18);
+        work.packet=room_random_client::Read<uint8_t*>(frame,0x18);
         const auto context=room_random_client::Resolve(g_bindings);
         if(g_pending.Active() &&
            (!g_pending.Revalidate(context) || !ParserMatches(g_pending.Parser(),context)))
             g_pending.Clear();
         if(work.opcode!=0x0861 && work.opcode!=0x098B && work.opcode!=0x06C3)
             return work;
-        // Repeated delivery of the exact held start belongs to that same
-        // generation. Keep any fresh records already collected for it.
-        if(work.opcode==0x06C3 && work.packet && g_pending.Active() &&
-           std::memcmp(g_pending.Packet(),work.packet,
-                       room_random_client::kStartPacketSize)==0)
-            return work;
-        work.orderedStart=work.opcode==0x06C3 &&
-            context.model && RandomRoom(context);
-        work.result=g_sync.Process(
-            context,work.opcode,work.packet,work.orderedStart);
+        work.strict=context.model && RandomRoom(context);
+        work.result=g_sync.Process(context,work.opcode,work.packet,work.strict);
+        if((work.opcode==0x0861 || work.opcode==0x098B) && work.packet) {
+            const uint32_t route=room_random_client::Read<uint32_t>(work.packet,14);
+            if(room_random_sync::HasRoundSignature(route)) {
+                const uint32_t nativeRoute=route&0xFFFFu;
+                std::memcpy(work.packet+14,&nativeRoute,sizeof(nativeRoute));
+            }
+        }
         // A new genuine start supersedes any older held parser generation. Its
         // own parser hook below will either forward it or retain a fresh copy.
-        if(work.opcode==0x06C3) {
-            g_pending.Clear();
-        }
+        if(work.opcode==0x06C3 && work.result.newStart)g_pending.Clear();
         return work;
     } __except(EXCEPTION_EXECUTE_HANDLER) {
         g_pending.Clear();work.result.reason=5;return work;
@@ -100,10 +97,15 @@ void __stdcall OnPacket(BYTE* frame) {
         opcode,result.applied,static_cast<unsigned long>(result.model),result.source);
     else if(result.reason && (opcode==0x0861 || opcode==0x098B || opcode==0x06C3))
         g_api->Log(g_mod,SDGO_LOG_WARN,"native %04X cache update skipped: context reason %u",opcode,result.reason);
+    if(result.protocolMismatch)
+        g_api->Log(g_mod,SDGO_LOG_ERROR,
+            "random loadout protocol mismatch for native %04X epoch %u; using the native start path",
+            opcode,result.epoch);
     if(opcode==0x06C3 && (result.applied || result.mismatched))
-        g_api->Log(g_mod,result.mismatched && !work.orderedStart ? SDGO_LOG_ERROR : SDGO_LOG_INFO,
-            "battle start cache: %u refreshed, %u mismatch; server unit %lu, cached unit %lu",
-            result.applied,result.mismatched,static_cast<unsigned long>(result.model),static_cast<unsigned long>(result.cached));
+        g_api->Log(g_mod,result.mismatched && !work.strict ? SDGO_LOG_ERROR : SDGO_LOG_INFO,
+            "battle start cache epoch %u: %u refreshed, %u mismatch; server unit %lu, cached unit %lu",
+            result.epoch,result.applied,result.mismatched,
+            static_cast<unsigned long>(result.model),static_cast<unsigned long>(result.cached));
     SetLastError(error);
 }
 // Interior site +5 coexists with match_ai's function-entry hook: its trampoline
@@ -169,7 +171,10 @@ struct BeginDecision {
     bool random=false;
     bool ready=false;
     bool held=false;
+    bool duplicate=false;
+    bool canonical=false;
     unsigned reason=0;
+    std::array<uint8_t,room_random_client::kStartPacketSize> packet{};
 };
 BeginDecision GuardedBegin(void* self,const uint8_t* packet) {
     BeginDecision decision;
@@ -180,19 +185,45 @@ BeginDecision GuardedBegin(void* self,const uint8_t* packet) {
         decision.random=RandomRoom(context);
         if(!decision.random) {
             g_pending.Clear();
+            g_sync.AbandonRoomViewPermits(context);
             return decision;
         }
+        std::memcpy(decision.packet.data(),packet,decision.packet.size());
+        decision.packet[room_random_sync::kStartEpochOffset]=0;
+        decision.canonical=true;
         if(!context.model || !ParserMatches(self,context)) {
-            g_pending.Clear();decision.reason=1;return decision;
+            g_pending.Clear();g_sync.AbandonRoomViewPermits(context);
+            decision.reason=1;return decision;
+        }
+        if(!packet[room_random_sync::kStartEpochOffset] ||
+           g_sync.ProtocolMismatch(context,packet)) {
+            g_pending.Clear();
+            if(!g_sync.ReleaseStart(context,packet))
+                g_sync.AbandonRoomViewPermits(context);
+            decision.reason=4;return decision;
+        }
+        if(g_pending.MatchesPacket(context,self,packet)) {
+            decision.forward=false;decision.held=true;decision.duplicate=true;
+            return decision;
+        }
+        if(g_sync.StartClaimed(context,packet)) {
+            decision.forward=false;decision.duplicate=true;
+            return decision;
+        }
+        if(!g_sync.ClaimStart(context,packet)) {
+            g_pending.Clear();g_sync.AbandonRoomViewPermits(context);
+            decision.reason=5;return decision;
         }
         if(g_sync.ReadyForStart(context,packet) &&
            room_random_client::HumanStartTasksSettled(
                g_bindings,context,packet)) {
-            g_pending.Clear();decision.ready=true;return decision;
+            g_pending.Clear();g_sync.ReleaseStart(context,packet);
+            decision.ready=true;return decision;
         }
         if(g_pending.Hold(context,self,packet)) {
             decision.forward=false;decision.held=true;return decision;
         }
+        g_sync.AbandonRoomViewPermits(context);
         decision.reason=2;return decision;
     } __except(EXCEPTION_EXECUTE_HANDLER) {
         g_pending.Clear();decision.reason=3;return decision;
@@ -204,29 +235,36 @@ void __fastcall BeginStart(void* self,void*,const uint8_t* packet) {
     const auto decision=GuardedBegin(self,packet);
     LeaveCriticalSection(&g_lock);
     if(decision.held)
-        g_api->Log(g_mod,SDGO_LOG_WARN,
-            "random battle start held until every human loadout is complete and native room tasks settle");
+        g_api->Log(g_mod,decision.duplicate ? SDGO_LOG_INFO : SDGO_LOG_WARN,
+            decision.duplicate ?
+                "duplicate random battle start retained by the existing epoch" :
+                "random battle start held until every human loadout is complete and native room tasks settle");
     else if(decision.random && decision.ready)
         g_api->Log(g_mod,SDGO_LOG_INFO,
             "random battle start already has complete human loadout records");
     else if(decision.random && decision.reason)
         g_api->Log(g_mod,SDGO_LOG_ERROR,
-            "random battle start could not bind the live parser generation; forwarding unchanged (reason %u)",
+            "random battle start uses native fallback after protocol/context validation reason %u",
             decision.reason);
     SetLastError(error);
-    if(decision.forward)g_beginStart(self,packet);
+    if(decision.forward)
+        g_beginStart(self,decision.canonical ? decision.packet.data() : packet);
 }
 bool GuardedChangeRoomView(uint8_t* self) {
     __try {
-        if(!g_pending.Active())return false;
         const auto context=room_random_client::Resolve(g_bindings);
-        if(!g_pending.Revalidate(context) ||
-           !ParserMatches(g_pending.Parser(),context))
+        if(!context.model || !RandomRoom(context))return false;
+        if(g_pending.Active() &&
+           (!g_pending.Revalidate(context) ||
+            !ParserMatches(g_pending.Parser(),context)))
+            g_pending.Clear();
+        const auto notice=g_sync.PendingRoomView(context);
+        if(!notice ||
+           room_random_client::CurrentHumanRoomViewState(
+               g_bindings,context,notice.owner,notice.slot)!=self ||
+           !room_random_client::PrimeRoomViewPayloadForNativeCleanup(self))
             return false;
-        if(room_random_client::CurrentHumanRoomViewState(
-               g_bindings,context,g_pending.Packet())!=self)
-            return false;
-        return room_random_client::PrimeRoomViewPayloadForNativeCleanup(self);
+        return g_sync.ConsumeRoomView(notice);
     } __except(EXCEPTION_EXECUTE_HANDLER) {
         g_pending.Clear();return false;
     }
@@ -255,11 +293,18 @@ room_random_client::PendingCall GuardedManagerUpdate(uint8_t* self) {
            !ParserMatches(g_pending.Parser(),context)) {
             g_pending.Clear();return call;
         }
-        if(context.manager==self &&
+        if(context.manager==self && g_sync.ProtocolMismatch(
+               context,g_pending.Packet())) {
+            g_sync.ReleaseStart(context,g_pending.Packet());
+            call=g_pending.Take(context,g_pending.Parser());
+            call.fallback=static_cast<bool>(call);
+        } else if(context.manager==self &&
            g_sync.ReadyForStart(context,g_pending.Packet()) &&
            room_random_client::HumanStartTasksSettled(
-               g_bindings,context,g_pending.Packet()))
+               g_bindings,context,g_pending.Packet())) {
+            g_sync.ReleaseStart(context,g_pending.Packet());
             call=g_pending.Take(context,g_pending.Parser());
+        }
         return call;
     } __except(EXCEPTION_EXECUTE_HANDLER) {
         g_pending.Clear();return call;
@@ -271,13 +316,16 @@ void __fastcall ManagerUpdate(uint8_t* self,void*) {
     _fxsave(fp.bytes);
     const DWORD error=GetLastError();
     EnterCriticalSection(&g_lock);
-    const auto call=GuardedManagerUpdate(self);
+    auto call=GuardedManagerUpdate(self);
     LeaveCriticalSection(&g_lock);
     if(call) {
-        g_api->Log(g_mod,SDGO_LOG_INFO,
-            "random battle start resumed after every human native loadout task and obsolete local room-view cleanup completed");
+        g_api->Log(g_mod,call.fallback ? SDGO_LOG_ERROR : SDGO_LOG_INFO,
+            call.fallback ?
+                "random battle start resumed through native fallback after a protocol mismatch" :
+                "random battle start resumed after every human native loadout task and obsolete local room-view cleanup completed");
         SetLastError(error);
         _fxrstor(fp.bytes);
+        call.packet[room_random_sync::kStartEpochOffset]=0;
         g_beginStart(call.parser,call.packet.data());
         return;
     }

@@ -103,18 +103,21 @@ later selection for one slot does not discard another player's valid start data.
 the verified active room model takes precedence over a retained legacy cache pointer.
 
 In random rooms, the client holds the native start transition until every human's complete
-unit record, and the ship record in deck modes, arrives after this round's start notice. A cached
-record from a previous round cannot satisfy that wait, even when the model is identical; serials
-and attributes must come from the new notification. An identical repeated notice for the held start
-keeps the fresh records already received. It also waits for each human's
-native unit/ship update tasks to finish. After the genuine start is held, the local room-view request
-queued by the same loadout notice is obsolete. The Mod binds the exact live local state object,
+unit record, and the ship record in deck modes, carries the same round marker as the start notice.
+Native callbacks may deliver records before, after or interleaved with that notice. A previous round's
+record cannot satisfy the wait, even when the model is identical. Repeated start notices for the
+same round keep the matching records already received. It also waits for each human's
+native unit/ship update tasks to finish. A tagged random-loadout notice proves that the server has submitted this round's start, so its local
+room-view request is obsolete even if the start callback has not run yet. The Mod binds the exact live local state object,
 transfers its queued payload to the native cleanup owner, and returns control to the original scheduler,
 which retires and frees that one request normally without sending another room-view RPC. It keeps a
 private packet copy and resumes the original parser once after the waiting-room manager has processed
 the remaining queues.
 Late notices update the pending records; the packet dispatcher does not reenter the start parser.
-This uses native completion conditions rather than a fixed loading delay. Duplicate
+The server advances a per-room marker from 1 through 255, wrapping to 1. It uses the native start
+packet's reserved byte and unused high bits of the loadout route field; the client restores the native
+values before original processing. Missing or incompatible markers use the native fallback and are
+reported as a component-version mismatch. This uses native completion conditions rather than a fixed loading delay. Duplicate
 notices cannot start it again; changing rooms or replacing the start discards the old pending
 transition. Ordinary rooms retain the native timing.
 

@@ -213,12 +213,14 @@ struct History { std::vector<uint32_t> units; uint64_t stamp=0; };
 std::mutex g_state;
 std::map<uint8_t*,SavedRoom> g_saved;
 std::map<uint64_t,History> g_history;
+std::map<uint32_t,uint8_t> g_wireEpochs;
 std::atomic<uint64_t> g_token{0};
 
 struct Attempt {
     uint64_t token=0;
     bool checked=false,enabled=false,prepared=false,applied=false,failed=false,cleanupChecked=false;
     bool noticesPrepared=false,startSubmitted=false,noticesAttempted=false,noticesQueued=false,noticeFailure=false;
+    uint8_t wireEpoch=0,previousWireEpoch=0;
     uint8_t* preview=nullptr;
     uint8_t* actual=nullptr;
     Signature signature;
@@ -360,6 +362,30 @@ bool Notify(uint8_t* room,int slot,const Source& source,bool deck,unsigned human
                                         static_cast<uint32_t>(slot),Get<uint32_t>(room,0),source.active);
     return Broadcast(room,active,humans);
 }
+uint8_t NextWireEpoch(uint8_t previous) {
+    return previous==0 || previous==255 ? 1 : static_cast<uint8_t>(previous+1);
+}
+bool PrepareWireEpoch(Attempt& a,uint8_t* room) {
+    const uint32_t key=Get<uint32_t>(room,0);
+    if(key>0xFFFFu) {
+        Fail(a,"native room pool index exceeds the tagged loadout protocol");return false;
+    }
+    std::lock_guard<std::mutex> lock(g_state);
+    const auto found=g_wireEpochs.find(key);
+    a.previousWireEpoch=found==g_wireEpochs.end() ? 0 : found->second;
+    a.wireEpoch=NextWireEpoch(a.previousWireEpoch);
+    return true;
+}
+bool CommitWireEpoch(Attempt& a,uint8_t* room) {
+    if(!a.wireEpoch)return false;
+    const uint32_t key=Get<uint32_t>(room,0);
+    std::lock_guard<std::mutex> lock(g_state);
+    const auto found=g_wireEpochs.find(key);
+    const uint8_t current=found==g_wireEpochs.end() ? 0 : found->second;
+    if(current!=a.previousWireEpoch)return false;
+    g_wireEpochs[key]=a.wireEpoch;
+    return true;
+}
 bool FreshNativePilots(uint8_t* room,const Signature& signature) {
     // The native setup zeroes all twelve battle-pilot records before building
     // the first human. A new start can reuse the same pooled room without ever
@@ -418,6 +444,9 @@ bool PrepareNotices(Attempt& a,uint8_t* room) {
     if(!std::all_of(a.players.begin(),a.players.end(),[](const Player& p){return p.built;})) {
         Fail(a,"native start broadcast preceded complete human construction"); return false;
     }
+    if(!PrepareWireEpoch(a,room))return false;
+    const auto route=room_random_sync::TaggedRoute(
+        static_cast<uint16_t>(Get<uint32_t>(room,0)),a.wireEpoch);
     std::vector<std::vector<uint8_t>> notices;
     for(const auto& p:a.players) {
         Source source;
@@ -426,11 +455,11 @@ bool PrepareNotices(Attempt& a,uint8_t* room) {
         }
         if(UsesDeck(a.signature.mode)) {
             auto ship=room_random_sync::Packet(room_random_sync::kShipOpcode,source.owner,
-                                               static_cast<uint32_t>(p.slot),Get<uint32_t>(room,0),source.ship);
+                                               static_cast<uint32_t>(p.slot),route,source.ship);
             notices.emplace_back(ship.begin(),ship.end());
         }
         auto active=room_random_sync::Packet(room_random_sync::kUnitOpcode,source.owner,
-                                             static_cast<uint32_t>(p.slot),Get<uint32_t>(room,0),source.active);
+                                             static_cast<uint32_t>(p.slot),route,source.active);
         notices.emplace_back(active.begin(),active.end());
     }
     {
@@ -479,10 +508,18 @@ int __fastcall BroadcastStart(uint8_t* room,void*,uint8_t* packet,uint32_t lengt
     if(!genuineStart || attempt->startSubmitted)
         return g_broadcast(room,packet,length,attemptedRoutes);
     if(attempt->failed || !PrepareNotices(*attempt,room)) return 0;
+    if(packet[room_random_sync::kStartEpochOffset]!=0) {
+        Fail(*attempt,"native start reserved epoch byte is not canonical");return 0;
+    }
+    if(!CommitWireEpoch(*attempt,room)) {
+        Fail(*attempt,"random room epoch changed before native start submission");return 0;
+    }
     // Entering the native announcer is the point of no rollback: it may have
     // already queued the genuine start even if a later route reports failure.
+    packet[room_random_sync::kStartEpochOffset]=attempt->wireEpoch;
     attempt->startSubmitted=true;
     const int result=g_broadcast(room,packet,length,attemptedRoutes);
+    packet[room_random_sync::kStartEpochOffset]=0;
     SendPreparedNotices(*attempt,room);
     return result;
 }

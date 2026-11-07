@@ -17,6 +17,7 @@ std::vector<uint8_t> room(0x33000),preview(0x33000),lobby(0x2218),lobbyProc(0x10
 std::vector<uint8_t> client(0x4000);
 std::vector<std::vector<uint8_t>> notices;
 std::vector<uint16_t> transmissions;
+std::vector<uint8_t> startEpochs;
 int noticeCalls=0,failNotice=0;
 using CopyNoticeFn=std::function<void(std::vector<uint8_t>&,const uint8_t*,uint16_t)>;
 CopyNoticeFn nativeCopyNotice;
@@ -134,6 +135,8 @@ int __fastcall BroadcastNative(uint8_t* actual,void*,uint8_t* packet,uint32_t le
     }
     if(opcode==0x06C3) {
         CHECK(length==0xCD4u);
+        const uint8_t epoch=packet[room_random_sync::kStartEpochOffset];
+        if(epoch)startEpochs.push_back(epoch);
         return 1;
     }
     ++noticeCalls;
@@ -143,7 +146,13 @@ int __fastcall BroadcastNative(uint8_t* actual,void*,uint8_t* packet,uint32_t le
     const uint32_t slot=Get<uint32_t>(packet,10),owner=Get<uint32_t>(packet,6);
     CHECK(slot<12);CHECK((owner&kAiBit)==0);
     CHECK(Get<uint32_t>(actual+kSlotBase+slot*kSlotStride,kOwner)==owner);
-    CHECK(Get<uint32_t>(packet,14)==Get<uint32_t>(actual,0));
+    const auto route=room_random_sync::DecodeRoute(Get<uint32_t>(packet,14));
+    if(route.tagged) {
+        CHECK(route.room==Get<uint32_t>(actual,0));
+        CHECK(!startEpochs.empty() && route.epoch==startEpochs.back());
+    } else {
+        CHECK(Get<uint32_t>(packet,14)==Get<uint32_t>(actual,0));
+    }
     notices.emplace_back(packet,packet+length);
     if(nativeCopyNotice) nativeCopyNotice(client,packet,opcode);
     else std::memcpy(client.data()+0x5D7+slot*0x48E+(opcode==0x0861 ? 0x49 : 0x146),
@@ -190,15 +199,15 @@ void __fastcall LobbyUnlock(void*,void*,int) {}
 void Reset(uint8_t mode=1,const char* title="!rand") {
     humanObservations.clear();observeHumans=observerChangesFp=false;
     g_titleApi=nullptr;fullTitle.clear();
-    g_saved.clear();g_history.clear();g_attempt=nullptr;g_token=0;
+    g_saved.clear();g_history.clear();g_wireEpochs.clear();g_attempt=nullptr;g_token=0;
     std::fill(room.begin(),room.end(),uint8_t{0});std::fill(lobby.begin(),lobby.end(),uint8_t{0});
     inventory.clear();metadata.clear();built.clear();requestedOwners.clear();ai_test::logs.clear();
-    notices.clear();transmissions.clear();noticeCalls=failNotice=0;
+    notices.clear();transmissions.clear();startEpochs.clear();noticeCalls=failNotice=0;
     freshNativeSetup=true;
     nativeModeMismatch=false;
     std::fill(client.begin(),client.end(),uint8_t{0xCC});
     reads=builds=releases=failAfter=validationError=0;readFailure=changeOwner=changeReady=addAiAfterValidation=nativeOverrideSecond=false;
-    Put<uint32_t>(room.data(),0,0x10077); room[4]=1;room[5]=mode;
+    Put<uint32_t>(room.data(),0,0x77); room[4]=1;room[5]=mode;
     Title(room,title);
     for(int s=0;s<2;++s) {
         Put<uint32_t>(Info(s),kOwner,1001u+s);
@@ -308,6 +317,20 @@ int wmain(int argc,wchar_t** argv) {
         }
         Release(room.data(),nullptr);CHECK(client==originalClient);
     }
+
+    SCENARIO("wire epochs commit only with the native start and wrap without zero");
+    Reset();g_wireEpochs[0x77]=255;
+    CHECK(Start()==0);
+    CHECK(startEpochs==std::vector<uint8_t>({1}));
+    CHECK(g_wireEpochs[0x77]==1);
+    Reset();g_wireEpochs[0x77]=42;failAfter=1;
+    CHECK(Start()==kStartError);
+    CHECK(startEpochs.empty());
+    CHECK(g_wireEpochs[0x77]==42);
+    Reset();Put<uint32_t>(room.data(),0,0x10077);
+    CHECK(Start()==kStartError);
+    CHECK(startEpochs.empty());
+    CHECK(g_wireEpochs.empty());
 
     SCENARIO("post-submit notification failure retains the accepted random room until release");
     for(int failure:{1,2,3,4}) {
