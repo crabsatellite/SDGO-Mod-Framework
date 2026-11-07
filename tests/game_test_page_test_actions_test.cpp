@@ -29,6 +29,7 @@ uint32_t g_gbRemoved = 0;
 uint32_t g_itemRemoved = 0;
 bool g_exchange = false;
 bool g_itemPending = false;
+bool g_gbSubmitPending = false;
 bool g_snapshotCallFails = false;
 bool g_unitPageMismatch = false;
 bool g_rejectOpen = false;
@@ -132,6 +133,7 @@ void ResetFixture(
     g_itemRemoved = itemRemoved;
     g_exchange = false;
     g_itemPending = false;
+    g_gbSubmitPending = false;
     g_snapshotCallFails = false;
     g_unitPageMismatch = false;
     g_rejectOpen = false;
@@ -210,6 +212,13 @@ int __cdecl FakeHangarAction(
             (!g_snapshot.preview_removed &&
              !g_acceptEmptyConfirm))
             return 0;
+        if (!g_snapshot.armed) {
+            g_snapshot.armed = 1;
+        } else {
+            g_snapshot.armed = 0;
+            g_snapshot.busy = 1;
+            g_gbSubmitPending = true;
+        }
         break;
     case SDGO_HANGAR_GAME_TEST_ACTION_CANCEL:
         if (!g_exchange)
@@ -224,6 +233,18 @@ int __cdecl FakeHangarAction(
     ++g_snapshot.action_sequence;
     g_snapshot.last_action = action;
     return 1;
+}
+
+void CompleteGbSubmission()
+{
+    Check(
+        g_gbSubmitPending,
+        "GB completion follows the explicitly armed second confirmation");
+    g_gbSubmitPending = false;
+    g_exchange = false;
+    g_snapshot.busy = 0;
+    g_snapshot.visible = 0;
+    g_snapshot.needs_relog = 1;
 }
 
 int __cdecl FakeStorageSnapshot(
@@ -520,6 +541,100 @@ void TestCandidatePreviewNeverConfirms()
         "candidate cancellation preserves unit layout and active slot");
 }
 
+void TestExplicitGbCommitRequiresTwoConfirmsAndRelog()
+{
+    ResetFixture(1, 0);
+    auto context = Context();
+    PageTestActions pages;
+    pages.Bind(AllExports());
+    Check(
+        pages.PollHangarRead(&context) ==
+            PageTestActions::kReadReady,
+        "explicit GB case captures the exact pre-transaction inventory");
+    Check(
+        pages.PollHangarCommitGB(&context) ==
+            PageTestActions::kActionAccepted,
+        "explicit GB case opens through the native action");
+    Check(
+        pages.PollHangarCommitGB(&context) ==
+            PageTestActions::kPreviewStepDone,
+        "explicit GB open has a separate completion receipt");
+    Check(
+        pages.PollHangarCommitGB(&context) ==
+            PageTestActions::kActionAccepted,
+        "explicit GB case requests the server-backed preview");
+    Check(
+        pages.PollHangarCommitGB(&context) ==
+            PageTestActions::kPreviewStepDone,
+        "explicit GB preview observes an eligible duplicate");
+    Check(
+        pages.PollHangarCommitGB(&context) ==
+            PageTestActions::kActionAccepted,
+        "first native Confirm arms the reviewed GB preview");
+    Check(
+        pages.PollHangarCommitGB(&context) ==
+            PageTestActions::kPreviewStepDone &&
+            g_snapshot.armed,
+        "arming is observed before a transaction can be submitted");
+    Check(
+        pages.PollHangarCommitGB(&context) ==
+            PageTestActions::kActionAccepted &&
+            g_gbSubmitPending,
+        "second native Confirm starts the real GB submission path");
+    Check(
+        pages.PollHangarCommitGB(&context) ==
+            PageTestActions::kWaitingAction,
+        "GB submission remains pending until the Mod finishes its native sends");
+    CompleteGbSubmission();
+    Check(
+        pages.PollHangarCommitGB(&context) ==
+            PageTestActions::kGbSubmittedRelogRequired,
+        "GB submission passes only after the native page closes and requires relog");
+    const auto state = pages.State();
+    Check(
+        state.scope ==
+                PageTestActions::
+                    kScopeGbSubmittedRelogRequired &&
+            state.gb_preview_removed == 1 &&
+            state.snapshot.needs_relog &&
+            !state.snapshot.visible &&
+            !state.snapshot.busy,
+        "explicit GB receipt preserves the reviewed count and final relog state");
+    Check(
+        g_actionCalls[
+            SDGO_HANGAR_GAME_TEST_ACTION_CONFIRM] == 2 &&
+            state.snapshot.action_sequence == 4,
+        "explicit GB scope performs exactly the two original Confirm actions");
+    Check(
+        pages.BeforeUnits().size() ==
+                pages.CurrentUnits().size() &&
+            pages.BeforeUnits()[2].protection_flags ==
+                SDGO_HANGAR_GAME_TEST_PROTECTED_ACTIVE,
+        "submission keeps the observed protected-unit baseline for SQL and reconnect comparison");
+
+    ResetFixture(0, 0);
+    PageTestActions empty;
+    empty.Bind(AllExports());
+    Check(
+        empty.PollHangarRead(&context) ==
+            PageTestActions::kReadReady,
+        "empty explicit GB case captures the baseline");
+    Check(
+        empty.PollHangarCommitGB(&context) ==
+                PageTestActions::kActionAccepted &&
+            empty.PollHangarCommitGB(&context) ==
+                PageTestActions::kPreviewStepDone &&
+            empty.PollHangarCommitGB(&context) ==
+                PageTestActions::kActionAccepted &&
+            empty.PollHangarCommitGB(&context) ==
+                PageTestActions::kGbCandidateMissing,
+        "explicit GB scope fails closed when no removable duplicate is previewed");
+    Check(
+        !g_actionCalls[
+            SDGO_HANGAR_GAME_TEST_ACTION_CONFIRM],
+        "missing duplicate candidates never reach either Confirm action");
+}
+
 void TestUnsafeAndDriftFailures()
 {
     ResetFixture();
@@ -582,6 +697,7 @@ int main()
     TestMissingAndIdentityFailures();
     TestNegativePreviewAndCancel();
     TestCandidatePreviewNeverConfirms();
+    TestExplicitGbCommitRequiresTwoConfirmsAndRelog();
     TestUnsafeAndDriftFailures();
     if (g_failures) {
         std::fprintf(
@@ -591,6 +707,6 @@ int main()
         return 1;
     }
     std::printf(
-        "PAGE TEST ACTIONS OFFLINE FIXTURE PASSED: ABI binding, identity gates, read/preview/disabled-confirm/cancel receipts, candidate safety and storage binding-only scope\n");
+        "PAGE TEST ACTIONS OFFLINE FIXTURE PASSED: ABI binding, identity gates, read/preview/disabled-confirm/cancel receipts, sealed double-confirm GB submission, candidate safety and storage binding-only scope\n");
     return 0;
 }

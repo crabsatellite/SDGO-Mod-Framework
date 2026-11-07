@@ -1,10 +1,12 @@
 #include "sdgo/hangar_model.h"
+#include "sdgo/hangar_rule_catalog.h"
 #include "sdgo/hangar_sort_request.h"
 #include <cassert>
 #include <cstring>
 #include <iostream>
 #include <random>
 using namespace sdgo::hangar;
+using namespace sdgo::unit_catalog;
 Unit Make(uint64_t uid,uint32_t type,uint16_t slot) {
     Unit u;u.uid=uid;u.type=type;u.slot=slot;u.level=1;u.fullReady=true;
     memcpy(u.full.data(),&type,4);memcpy(u.full.data()+4,&slot,2);memcpy(u.full.data()+8,&uid,8);u.full[16]=1;return u;
@@ -16,6 +18,40 @@ Snapshot Base() {Snapshot s;s.session=91;s.capacity=8;s.activeSlot=8;return s;}
 Snapshot Execute(Plan p) {
     auto s=p.before;for(const auto& a:p.actions){assert(Allowed(s,a));s=Applied(s,a);Validate(s);}return s;
 }
+void PutText(std::vector<uint8_t>& raw,size_t offset,size_t bytes,const std::wstring& text) {
+    assert((text.size()+1)*2<=bytes);
+    for(size_t i=0;i<text.size();++i) {
+        raw[offset+i*2]=static_cast<uint8_t>(text[i]&0xff);
+        raw[offset+i*2+1]=static_cast<uint8_t>((text[i]>>8)&0xff);
+    }
+}
+Entry Imported(uint32_t id,int rank,int subrank,const std::wstring& name) {
+    Entry entry;entry.kind=kUnitType;entry.id=id;entry.bytes.resize(kUnitBytes);
+    Put32(entry.bytes.data(),id);
+    PutText(entry.bytes,kUnitNameOffset,kUnitNameBytes,name);
+    entry.bytes[kUnitGradeOffset]=static_cast<uint8_t>(rank);
+    entry.bytes[kUnitSubgradeOffset]=static_cast<uint8_t>(subrank);
+    PutText(entry.bytes,kUnitModelPathOffset,kUnitModelPathBytes,L"mdrs\\synthetic.mod");
+    entry.recordHash=Hash32(entry.bytes.data(),entry.bytes.size());
+    return entry;
+}
+std::vector<uint8_t> CatalogBytes(const std::vector<Entry>& entries) {
+    std::vector<uint8_t> payload;
+    for(const auto& entry:entries) {
+        EntryHeader header{};header.kind=entry.kind;header.id=entry.id;
+        header.byteCount=static_cast<uint32_t>(entry.bytes.size());
+        header.recordHash=Hash32(entry.bytes.data(),entry.bytes.size());
+        const auto* raw=reinterpret_cast<const uint8_t*>(&header);
+        payload.insert(payload.end(),raw,raw+sizeof(header));
+        payload.insert(payload.end(),entry.bytes.begin(),entry.bytes.end());
+    }
+    Header header{};memcpy(header.magic,"SDGOUN1",8);header.version=kFormatVersion;
+    header.headerBytes=sizeof(Header);header.count=static_cast<uint32_t>(entries.size());
+    header.payloadBytes=static_cast<uint32_t>(payload.size());
+    header.payloadHash=Hash32(payload.data(),payload.size());
+    std::vector<uint8_t> result(sizeof(header));memcpy(result.data(),&header,sizeof(header));
+    result.insert(result.end(),payload.begin(),payload.end());return result;
+}
 int main() {
     const auto request=ServerSortRequest("NativeFixture","12345678-1234-1234-1234-123456789abc");
     assert(request[0]==0x91 && request[1]==0x08 && !request[2]);
@@ -23,6 +59,47 @@ int main() {
         bool rejected=false;try{ServerSortRequest("NativeFixture",invalid);}catch(const std::invalid_argument&){rejected=true;}assert(rejected);
     }
     const auto rules=Definitions();
+    {
+        Rules importedRules=rules;
+        const auto override=Imported(10,4,4,L"catalog override must lose");
+        const auto added=Imported(900001,1,2,L"合成导入机体");
+        const auto unknown=Imported(900002,4,5,L"unknown reward grade");
+        Catalog catalog;std::string error;
+        const auto bytes=CatalogBytes({override,added,unknown});
+        assert(catalog.Parse(bytes,error));
+        const auto stats=MergeCatalogRules(importedRules,catalog);
+        assert(stats.catalogUnits==3 && stats.added==1 && stats.explicitRules==1 &&
+               stats.unknownGrades==1 && !stats.ambiguousGrades);
+        assert(importedRules.at(10).rank==1);
+        assert(importedRules.at(900001).name==L"合成导入机体");
+        assert(importedRules.at(900001).gb==400 &&
+               importedRules.at(900001).item==2220008 &&
+               importedRules.at(900001).amount==3);
+        auto s=Base();s.units={Make(1,900001,1),Make(2,900001,2),Make(3,900001,3)};
+        const auto plan=Duplicates(s,importedRules,2,Kind::GB,false);
+        assert(plan.removed==1 && plan.expectedGB==400);
+
+        auto truncated=bytes;truncated.pop_back();Catalog invalid;
+        assert(!invalid.Parse(truncated,error));
+        const auto duplicateIds=CatalogBytes({added,added});
+        assert(!invalid.Parse(duplicateIds,error));
+        const auto unchanged=importedRules;
+        bool rejected=false;
+        Catalog malformed;malformed.records.push_back(added);
+        malformed.records.back().bytes.pop_back();
+        try{MergeCatalogRules(importedRules,malformed);}catch(const std::invalid_argument&){rejected=true;}
+        assert(rejected && importedRules.size()==unchanged.size() &&
+               importedRules.at(900001).name==unchanged.at(900001).name);
+    }
+    {
+        Rules ambiguous=rules;
+        Rule conflict=ambiguous.at(10);conflict.unit=11;conflict.gb=999;
+        ambiguous.emplace(conflict.unit,conflict);
+        Catalog catalog;catalog.records.push_back(Imported(900003,1,2,L"ambiguous reward"));
+        const auto stats=MergeCatalogRules(ambiguous,catalog);
+        assert(!stats.added && stats.ambiguousGrades==1 &&
+               !stats.unknownGrades && !ambiguous.count(900003));
+    }
     {
         auto s=Base();for(int i=1;i<=50;++i){auto u=Make(i,10,static_cast<uint16_t>(i));u.fullReady=false;s.units.push_back(u);}s.capacity=60;s.activeSlot=60;
         auto plan=GBPreview(s,rules,2);assert(plan.serverBatch && plan.removed==48 && plan.expectedGB==48*400);

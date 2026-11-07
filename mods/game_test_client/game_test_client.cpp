@@ -206,6 +206,7 @@ UnitAcquisitionActions::Config unitAcquisitionConfig{};
 void PublishQuietSocketReceipt(bool force=false);
 bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false, pagesOnly = false, friendsOnly = false;
 bool hangarPagesOnly = false;
+bool hangarConfirmGb = false;
 uint64_t deckUnitUids[4]{};
 char giftRecipient[17]{};
 uint32_t giftSenderPilot = 0, giftRecipientPilot = 0, giftCount = 0, giftSent = 0;
@@ -429,6 +430,10 @@ bool LoadPlan() {
            collectionPreviewOnly || testUnitPresentations || captureUnitPortraits || unitAcquisitionConfig.machine_kind)return false;
         hangarPagesOnly=true;
     }
+    const auto hangarConfirmFlag=GetPrivateProfileIntW(L"run",L"hangar_confirm_gb",0,job.c_str());
+    if(hangarConfirmFlag<0 || hangarConfirmFlag>1)return false;
+    hangarConfirmGb=hangarConfirmFlag==1;
+    if(hangarConfirmGb && !hangarPagesOnly)return false;
     if(collectionDraw && !pagesOnly)return false;
     if(collectionPreviewOnly && (!pagesOnly || collectionDraw))return false;
     if(activityDrawOnce && (!unitPagesOnly || !collectionPreviewOnly || collectionDraw || !testUnitPresentations))return false;
@@ -1743,6 +1748,32 @@ int __cdecl PreviewHangarPage(const SdgoGameTestContextV1* context) {
 int __cdecl CancelHangarPage(const SdgoGameTestContextV1* context) {
     return PageResult(context,pages.PollHangarCancel(context),PageTestActions::kCancelled);
 }
+int __cdecl ConfirmHangarGb(const SdgoGameTestContextV1* context) {
+    const auto result=pages.PollHangarCommitGB(context);
+    const auto state=pages.State();
+    static uint32_t lastResult=UINT32_MAX,lastReceipt=UINT32_MAX;
+    if(state.result!=lastResult || state.receipt_count!=lastReceipt) {
+        char message[384];
+        sprintf_s(message,"native hangar GB result=%s stage=%u scope=%u units=%u/%u preview=%u armed=%u busy=%u relog=%u actions=%u replies=%u receipts=%u",
+            PageTestActions::ResultName(result),state.stage,state.scope,state.before_unit_count,state.current_unit_count,
+            state.gb_preview_removed,state.snapshot.armed,state.snapshot.busy,state.snapshot.needs_relog,
+            state.snapshot.action_sequence,state.snapshot.reply_sequence,state.receipt_count);
+        context->Observe(message);lastResult=state.result;lastReceipt=state.receipt_count;
+    }
+    if(result>=PageTestActions::kInvalidContext || result==PageTestActions::kHangarUnavailable) {
+        context->Assert(0,"sealed native hangar GB confirmation rejected its candidate, identity, double confirmation or submit state");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if(result!=PageTestActions::kGbSubmittedRelogRequired)return SDGO_GAME_TEST_WAIT;
+    context->Assert(state.gb_preview_removed>0,
+        "the server-backed GB preview selected at least one genuine duplicate before confirmation");
+    context->Assert(state.scope==PageTestActions::kScopeGbSubmittedRelogRequired &&
+        state.snapshot.needs_relog && !state.snapshot.visible && !state.snapshot.busy && !state.snapshot.armed,
+        "two original Confirm actions submit once, close the page and require reconnect verification");
+    context->Assert(state.layout_unchanged && state.active_slot_unchanged,
+        "the submission receipt retains the exact pre-transaction UID/slot/protection baseline for SQL and reconnect comparison");
+    return SDGO_GAME_TEST_PASS;
+}
 int __cdecl ReadOperatorCatalog(const SdgoGameTestContextV1* context) {
     if (!GetModuleHandleW(L"operator_catalog.dll")) {
         context->Assert(0,"configured operator catalog Mod is required for native catalog acceptance");
@@ -2445,6 +2476,8 @@ const SdgoGameTestCaseV1 pageCases[]={
     {"catalog.capsule",60000,&ReadCapsuleCatalog},
     {"pages.capsule.currency",60000,&ReadCapsuleCurrency},
 };
+const SdgoGameTestCaseV1 hangarGbCase{
+    "pages.hangar.confirm_gb",120000,&ConfirmHangarGb};
 int CollectionResult(const SdgoGameTestContextV1* context,CapsuleDrawActions::Result result) {
     static uint32_t previous=UINT32_MAX,reply=UINT32_MAX;
     const auto s=collection.State();
@@ -4022,7 +4055,9 @@ void RegisterPlannedCases() {
         if(testOperatorFlow)plannedCases.push_back(operatorFlowCase);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
         if(hangarPagesOnly) {
-            plannedCases.insert(plannedCases.end(),std::begin(pageCases),std::begin(pageCases)+3);
+            plannedCases.push_back(pageCases[0]);
+            if(hangarConfirmGb)plannedCases.push_back(hangarGbCase);
+            else plannedCases.insert(plannedCases.end(),std::begin(pageCases)+1,std::begin(pageCases)+3);
             if(ocPanel)plannedCases.push_back(ocPanelCase);
             provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
         }
