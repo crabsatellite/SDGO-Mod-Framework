@@ -194,7 +194,7 @@ class ReuseOwnedClientTests(unittest.TestCase):
         run=self.fixture.prepare('recycled-pid');old=self.fixture.metadata(run)
         old['execution']={'game_pid':42}
         (run/'run.json').write_text(json.dumps(old),encoding='utf-8')
-        row={'pid':42,'image_path':None,'image_name':'MpDefenderCoreService.exe'}
+        row={'pid':42,'image_path':None,'name':'MpDefenderCoreService.exe'}
         with mock.patch.object(game_test,'process_snapshot',return_value=[row]):
             result=game_test.reuse_prepared(self.fixture.template,self.fixture.stage,run)
         self.assertNotEqual(result['run_id'],old['run_id'])
@@ -207,7 +207,7 @@ class ReuseOwnedClientTests(unittest.TestCase):
                 run=self.fixture.prepare('unknown-pid-'+str(index));old=self.fixture.metadata(run)
                 old['execution']={'game_pid':42};(run/'run.json').write_text(json.dumps(old),encoding='utf-8')
                 before=(run/'run.json').read_bytes()
-                row={'pid':42,'image_path':None,'image_name':name}
+                row={'pid':42,'image_path':None,'name':name}
                 with mock.patch.object(game_test,'process_snapshot',return_value=[row]):
                     with self.assertRaisesRegex(game_test.GameTestError,'running'):
                         game_test.reuse_prepared(self.fixture.template,self.fixture.stage,run)

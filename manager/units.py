@@ -7,6 +7,8 @@ import copy
 import hashlib
 from pathlib import Path
 import re
+import threading
+import time
 
 from .providers import Provider, Binary
 from . import storage
@@ -32,6 +34,93 @@ class Units(Provider):
               'snapshot': '原生定义快照目录', 'module_binary': '机体客户端 DLL（用于导出）',
               'archive_executable': '7-Zip 程序（可选）'}
     developer_fields = Provider.developer_fields | {'archive_executable'}
+
+    def __init__(self, workspace):
+        super().__init__(workspace)
+        # The batch job keeps its own lock: provider requests hold self.lock, and
+        # progress must stay readable while the job runs in its own thread.
+        self._batch_lock = threading.Lock()
+        self._batch = {'status': 'idle'}
+        self._batch_thread = None
+
+    def batch_state(self):
+        with self._batch_lock:
+            return {'batch': copy.deepcopy(self._batch), 'server_configured': bool(self.config.get('server_ini')),
+                    'changes_applied': False}
+
+    @staticmethod
+    def _batch_folder(body):
+        if not isinstance(body, dict) or set(body) - {'publication'}:
+            raise ValueError('批量发布请求无效')
+        folder = body.get('publication')
+        if not isinstance(folder, str) or not folder.strip() or len(folder) > 1024 or '\0' in folder:
+            raise ValueError('请选择批量发布目录')
+        return folder.strip()
+
+    def _batch_server_ini(self):
+        ini = self.config.get('server_ini')
+        if not ini:
+            raise ValueError('请先在机体导入模块配置 WorldServer INI；批量阵容只能应用到已配置的服务器')
+        return ini
+
+    def start_batch(self, folder, wait=120.0):
+        """Run the batch apply in its own thread; return once the stopped-server gate decided."""
+        from owner.units import batch_server
+        ini = self._batch_server_ini()
+        with self._batch_lock:
+            if self._batch.get('status') in ('starting', 'running'):
+                raise ValueError('批量阵容正在应用，请等待当前任务结束')
+            self._batch = {'status': 'starting', 'stage': 'gate', 'done': 0, 'total': 0, 'detail': '',
+                           'started_at': time.time()}
+        decided = threading.Event()
+
+        def progress(event):
+            with self._batch_lock:
+                self._batch.update(event, status='running')
+            if event.get('stage') != 'gate':
+                decided.set()
+
+        def run():
+            try:
+                result = batch_server.apply(folder, ini, progress)
+            except ValueError as error:
+                outcome = {'status': 'failed', 'error': str(error)[:1200]}
+            except BaseException:
+                import traceback
+                try:
+                    self.workspace.root.mkdir(parents=True, exist_ok=True)
+                    with (self.workspace.root / 'manager-errors.log').open('a', encoding='utf-8') as stream:
+                        stream.write(traceback.format_exc() + '\n')
+                except OSError:
+                    pass
+                outcome = {'status': 'failed', 'error': '批量阵容应用未完成，请查看本机 Manager 日志；已提交的机体族可直接重新应用'}
+            else:
+                outcome = {'status': 'completed', 'result': result}
+            with self._batch_lock:
+                self._batch.update(outcome, finished_at=time.time())
+            decided.set()
+
+        # Not a daemon: closing Manager waits for the current family transaction.
+        thread = threading.Thread(target=run, name='units-batch-apply')
+        self._batch_thread = thread
+        thread.start()
+        decided.wait(wait)
+        state = self.batch_state()
+        if state['batch'].get('status') == 'failed' and state['batch'].get('stage') in ('gate', 'check'):
+            raise ValueError(state['batch']['error'])
+        return state
+
+    def _batch_request(self, method, path, body):
+        from owner.units import batch_server
+        if method == 'GET' and path == '/api/units/batch':
+            return self.batch_state()
+        if method == 'POST' and path == '/api/units/batch/preflight':
+            return {'preflight': batch_server.preflight(self._batch_folder(body), self._batch_server_ini()), 'changes_applied': False}
+        if method == 'POST' and path == '/api/units/batch/readback':
+            return {'readback': batch_server.readback(self._batch_folder(body), self._batch_server_ini()), 'changes_applied': False}
+        if method == 'POST' and path == '/api/units/batch/apply':
+            return self.start_batch(self._batch_folder(body))
+        return None
 
     def _published_shop(self, engine, family):
         from owner.units.model import content_revision
@@ -144,6 +233,10 @@ class Units(Provider):
                 'changes_applied':False,'grants_units':False}
 
     def request(self, method, path, body, headers):
+        if path == '/api/units/batch' or path.startswith('/api/units/batch/'):
+            result = self._batch_request(method, path, body)
+            if result is None: raise ValueError('机体操作未登记')
+            return result
         result=self._request(method,path,body,headers)
         if isinstance(result,dict) and 'draft' in result:
             from owner.units.native_preview import status
@@ -229,7 +322,7 @@ class Units(Provider):
                 return cleanup(engine)
             if method == 'POST' and path == '/api/units/inspect':
                 return engine.inspect(*decode_upload(body), expected)
-            match = re.fullmatch(r'/api/units/drafts/([0-9a-f]{32})(?:/(asset|definitions|confirm|drop-missing-skills|native-preview|launch-preview))?', path)
+            match = re.fullmatch(r'/api/units/drafts/([0-9a-f]{32})(?:/(asset|definitions|native-content|native-server-definition|confirm|drop-missing-skills|native-preview|launch-preview))?', path)
             if match:
                 identity, action = match.groups()
                 if method == 'PUT' and action is None: return engine.update(identity, body, expected)
@@ -238,6 +331,10 @@ class Units(Provider):
                     return engine.upload_asset(identity, *decode_upload(body), body.get('role'), expected)
                 if method == 'POST' and action == 'definitions':
                     return engine.upload_definitions(identity, *decode_upload(body), expected)
+                if method == 'POST' and action == 'native-content':
+                    return engine.upload_native_content(identity,*decode_upload(body),expected,body.get('replace_manifest'))
+                if method == 'POST' and action == 'native-server-definition':
+                    return engine.edit_native_server_definition(identity,body,expected)
                 if method == 'POST' and action == 'confirm':
                     from owner.units.native_preview import status
                     from owner.units import presentation as generator

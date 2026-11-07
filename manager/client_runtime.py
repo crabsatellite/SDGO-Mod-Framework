@@ -17,19 +17,23 @@ PROTECTED=('config.xml','.git','ScreenShots','app_log','zoa_log','sdgo/logs','sd
            'sdgo/local-state','sdgo/backups','sdgo/install-receipts','sdgo/install-state')
 EXTENSIONS={'.exe','.dll','.asi','.ini','.xml','.ttf','.dat','.des','.mpg','.zdx','.zpk'}
 TREES={'BGM','Briefing','miles','mods','anrs','fxrs','gdrs','mdrs','scp','sdrs','sol','sprs','trns','txrs','uirs','sdgo/mods','sdgo/symbols'}
-FIXED={'sdgo/core.dll','sdgo/sdgo.ini','sdgo/catalog.json','player-package.json',SOURCE}
+FIXED={'sdgo/core.dll','sdgo/sdgo.ini','sdgo/catalog.json','player-package.json','sdgo/shared-settings.json',SOURCE}
 HASH=re.compile('[0-9a-f]{64}');OID=re.compile('[0-9a-f]{40}')
 
 
 def source(value):
-    if(not isinstance(value,dict)or value.get('schema_version')!=1 or value.get('kind')!='sdgo-client-runtime'or
+    if(not isinstance(value,dict)or value.get('schema_version')not in(1,2) or value.get('kind')!='sdgo-client-runtime'or
        not re.fullmatch('[0-9a-f]{32}',str(value.get('source_id','')))):
         raise ValueError('完整客户端更新源身份无效')
     feeds=value.get('feeds');label=value.get('label')
     if not isinstance(feeds,list)or not 1<=len(feeds)<=3 or len(set(feeds))!=len(feeds):raise ValueError('配置一至三个不同的客户端 Git 源')
     for url in feeds:git_source.parse(url)
     if not isinstance(label,str)or not label.strip()or len(label)>80:raise ValueError('客户端更新源名称无效')
-    return {'schema_version':1,'kind':'sdgo-client-runtime','source_id':value['source_id'],'label':label.strip(),'feeds':feeds}
+    result={'schema_version':value['schema_version'],'kind':'sdgo-client-runtime','source_id':value['source_id'],'label':label.strip(),'feeds':feeds}
+    if value['schema_version']==2:
+        from .framework_source import binding
+        result['framework']=binding(value.get('framework'))
+    return result
 
 
 def installed_source(root):
@@ -148,6 +152,8 @@ class ClientRuntime:
                 if not OID.fullmatch(commit):raise ValueError('客户端提交身份无效')
                 manifest=json.loads(self.git(repo,['show',commit+':player-package.json']))
                 contract=validate_contract(manifest,binding)
+                incoming=source(json.loads(self.git(repo,['show',commit+':'+SOURCE])))
+                if incoming!=binding:raise ValueError('这个镜像的来源绑定尚未同步，继续检查同身份备用源')
                 key=str(repo.resolve());self.fetch_mirror[key]=index+1
                 self.fetch_mirrors[key]=[(i+1,git_source.parse(value)[0])for i,value in enumerate(binding['feeds'])if i>index]
                 return repo,commit,manifest,contract,index+1
@@ -186,8 +192,9 @@ class ClientRuntime:
         for raw in self.git(repo,['ls-tree','-r','-z',commit]).split(b'\0'):
             if not raw:continue
             header,name=raw.split(b'\t',1);name=name.decode('utf-8')
-            if name=='config.xml':continue
-            if not runtime_path(name,contract):continue
+            if name=='config.xml':
+                if (root/name).is_file():continue
+            elif not runtime_path(name,contract):continue
             if any(name==p or name.startswith(p+'/')for p in excluded):raise ValueError('上游与仅本地 Mod 冲突：'+name)
             match=re.fullmatch(rb'100(?:644|755) blob ([a-f0-9]{40})',header)
             if not match or name.casefold()in case:raise ValueError('客户端清单包含链接或重复路径')
@@ -213,7 +220,8 @@ class ClientRuntime:
                 size=int(fields[2])
                 if not 0<=size<=512*1024*1024:raise ValueError('客户端单文件超过限制')
                 entries[name]['bytes']=size
-        if not {'GOnline.exe',updates.MANAGER,'sdgo/core.dll',SOURCE}<=entries.keys():raise ValueError('完整客户端清单缺少必要程序或更新源')
+        required={'GOnline.exe',SOURCE}if binding['schema_version']==2 else{'GOnline.exe',updates.MANAGER,'sdgo/core.dll',SOURCE}
+        if not required<=entries.keys():raise ValueError('完整客户端清单缺少必要程序或更新源')
         incoming=source(json.loads(self.git(repo,['show',commit+':'+SOURCE])))
         if incoming!=binding:raise ValueError('上游试图改变客户端绑定；请在 Manager 明确选择新的来源')
         entries['GPackData.zpk']={k:contract['base'][k]for k in('sha256','bytes')}
@@ -222,24 +230,30 @@ class ClientRuntime:
         if previous and previous.get('source_id')!=binding['source_id']:raise ValueError('此目录已有不同来源的安装记录，请先审阅迁移')
         # Private/addon-only files remain outside the source-owned inventory.
         # Authored INI settings use the framework's existing preservation rules.
-        preserved={};merged={}
-        for ini in(root/'sdgo/mods').glob('*/mod.ini'):
-            relative=ini.relative_to(root).as_posix()
-            if relative not in entries:continue
-            cfg=updates.read_ini(ini.read_bytes())
-            for name in cfg.get('mod','config_files',fallback='').split(','):
-                if not name.strip():continue
-                path=updates.child(ini.parent,name.strip());key=path.relative_to(root).as_posix()
-                if key in entries and path.is_file():preserved[key]={'bytes':path.stat().st_size,'sha256':file_hash(path)}
-            incoming=self.git(repo,['show',commit+':'+relative]);patches=[]
-            for section in cfg.sections():
-                for key,value in cfg[section].items():
-                    if section.casefold()=='settings'or(section.casefold()=='mod'and key.casefold()=='enabled'):patches.append((section,key,value))
-            raw=storage.patch_ini(incoming,patches)
-            if raw!=incoming:merged[relative]={'bytes':len(raw),'sha256':updates.digest(raw)}
-        global_path=root/'sdgo/sdgo.ini'
-        if 'sdgo/sdgo.ini'in entries and global_path.is_file():preserved['sdgo/sdgo.ini']={'bytes':global_path.stat().st_size,'sha256':file_hash(global_path)}
-        effective={**entries,**preserved,**merged}
+        layers={}
+        if binding['schema_version']==2:
+            from .runtime_layers import compose
+            entries,effective,layers=compose(self,binding,contract,root,entries,repo,commit)
+            preserved={};merged={}
+        else:
+            preserved={};merged={}
+            for ini in(root/'sdgo/mods').glob('*/mod.ini'):
+                relative=ini.relative_to(root).as_posix()
+                if relative not in entries:continue
+                cfg=updates.read_ini(ini.read_bytes())
+                for name in cfg.get('mod','config_files',fallback='').split(','):
+                    if not name.strip():continue
+                    path=updates.child(ini.parent,name.strip());key=path.relative_to(root).as_posix()
+                    if key in entries and path.is_file():preserved[key]={'bytes':path.stat().st_size,'sha256':file_hash(path)}
+                incoming=self.git(repo,['show',commit+':'+relative]);patches=[]
+                for section in cfg.sections():
+                    for key,value in cfg[section].items():
+                        if section.casefold()=='settings'or(section.casefold()=='mod'and key.casefold()=='enabled'):patches.append((section,key,value))
+                raw=storage.patch_ini(incoming,patches)
+                if raw!=incoming:merged[relative]={'bytes':len(raw),'sha256':updates.digest(raw)}
+            global_path=root/'sdgo/sdgo.ini'
+            if 'sdgo/sdgo.ini'in entries and global_path.is_file():preserved['sdgo/sdgo.ini']={'bytes':global_path.stat().st_size,'sha256':file_hash(global_path)}
+            effective={**entries,**preserved,**merged}
         needed=[n for n,e in effective.items()if not matches(updates.child(root,n),e)]
         retired=set(contract.get('remove_paths',[]))|{n for n in previous.get('files',{})if n not in entries and runtime_path(n,contract)}
         retired=sorted(n for n in retired if n not in entries and not protected(n)and not any(n==p or n.startswith(p+'/')for p in excluded)and updates.child(root,n).is_file())
@@ -247,15 +261,17 @@ class ClientRuntime:
         snapshot[RECEIPT]=file_hash(root/RECEIPT)if(root/RECEIPT).is_file()else None
         value={'source_id':binding['source_id'],'commit':commit,'entries':entries,'needed':needed,'retired':retired,
                'snapshot':snapshot,'binding':binding,'mirror':self.fetch_mirror.get(str(repo.resolve()),index),'contract':contract,'repository':str(repo),
-               'effective':effective,'preserved':preserved,'merged':list(merged)}
+               'effective':effective,'preserved':preserved,'merged':list(merged),**layers}
         value['digest']=updates.digest(storage.json_bytes(value));self.plans[host['id']]=value
         return {'status':'available'if needed or retired else'current','commit':commit,'source':binding['label'],
                 'changed_files':len(needed),'retired_files':len(retired),'bytes':sum(entries[n]['bytes']for n in needed),'preserved_settings':len(preserved)+len(merged),
-                'digest':value['digest'],'files':needed,'retired':retired,'data_migrations':False}
+                'digest':value['digest'],'files':needed,'retired':retired,'data_migrations':False,
+                'framework_version':layers.get('framework',{}).get('version'),'framework_commit':layers.get('framework',{}).get('commit'),
+                'shared_configuration_files':len(layers.get('shared_files',[]))}
 
     def stage(self,plan,run,root):
         repo=Path(plan['repository']);commit=plan['commit'];stage=run/'payload';stage.mkdir(parents=True)
-        needed=[n for n in plan['needed']if n!='GPackData.zpk']
+        needed=[n for n in plan['needed']if n!='GPackData.zpk'and(not plan.get('framework')or n in plan['content_files'])]
         if needed:
             # Read raw objects. git archive/checkouts can apply EOL or export
             # attributes and therefore do not prove byte-identical delivery.
@@ -297,6 +313,9 @@ class ClientRuntime:
                     with zipfile.ZipFile(segment)as z:
                         if z.namelist()!=[part['entry']]or z.getinfo(part['entry']).file_size!=part['unpacked_bytes']:raise ValueError('归档分段解包清单无效')
                         with z.open(part['entry'])as src:shutil.copyfileobj(src,output,1024*1024)
+        if plan.get('framework'):
+            from .runtime_layers import stage as stage_framework
+            stage_framework(plan,stage)
         for name in plan['needed']:
             if not matches(updates.child(stage,name),plan['entries'][name]):raise ValueError('下载文件校验失败：'+name)
         for name in plan['merged']:
@@ -307,6 +326,11 @@ class ClientRuntime:
                     if section.casefold()=='settings'or(section.casefold()=='mod'and key.casefold()=='enabled'):patches.append((section,key,value))
             path=updates.child(stage,name);storage.atomic(path,storage.patch_ini(path.read_bytes(),patches))
             if not matches(path,plan['effective'][name]):raise storage.Conflict('保留配置发生变化，请重新检查')
+        if plan.get('framework'):
+            from .runtime_layers import render
+            render(plan,stage)
+            for name in plan['needed']:
+                if not matches(updates.child(stage,name),plan['effective'][name]):raise ValueError('双源配置校验失败：'+name)
         return stage
 
     def install(self,host,expected):
@@ -379,7 +403,9 @@ class ClientRuntime:
                 different=[n for n,e in plan['effective'].items()if not matches(updates.child(root,n),e)]
                 if different:raise ValueError('完整客户端读回失败：'+', '.join(different[:8]))
                 receipt={'schema_version':1,'source_id':plan['source_id'],'commit':plan['commit'],'mirror':plan['mirror'],
-                         'files':plan['entries'],'effective_files':plan['effective'],'personal_state_preserved':True,'data_migrations':False,'backup':str(backup)}
+                         'files':plan['entries'],'effective_files':plan['effective'],'personal_state_preserved':True,'data_migrations':False,'backup':str(backup),
+                         'framework':{k:v for k,v in plan.get('framework',{}).items()if k not in('bundle','manifest')},
+                         'content_commit':plan['commit'],'shared_files':plan.get('shared_files',[])}
                 marker=root/RECEIPT;marker_before=file_hash(marker)if marker.is_file()else None
                 if marker.is_file():
                     saved=updates.child(backup,RECEIPT);saved.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(marker,saved)

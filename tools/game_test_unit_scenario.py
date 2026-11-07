@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 INPUT = 'inputs/unit-scenario.json'
-SETTINGS = {'UnitPagesOnly':'0','UnitPresentations':'0','UnitPortraits':'0',
+SETTINGS = {'UnitPagesOnly':'0','UnitPresentations':'0','UnitPortraits':'0','UnitPresentationTarget':'0',
     'CaptureNativeFrames':'0','CollectionPreviewOnly':'0',
     'UnitAcquisitionKind':'0','UnitAcquisitionMachine':'0','UnitAcquisitionUnit':'0',
     'CapsulePreviewMachine':'990001','CapsulePreviewPrice':'100000','CapsulePreviewCurrency':'0',
@@ -19,7 +19,7 @@ INDEX_CASES = ('pages.unit_index.list','pages.unit_index.detail',
 PORTRAIT_CASES = ('pages.unit_index.pose_wait','pages.unit_index.pose_ready')
 
 def validate(value, plan):
-    if not isinstance(value,dict) or set(value)-{'schema','capture_frames','portraits','acquisition','collection_preview','activity_target','activity_draw','reward_pairs','blueprint','native_id_probe','native_record_lifecycle'}:
+    if not isinstance(value,dict) or set(value)-{'schema','capture_frames','portraits','presentation_target','acquisition','collection_preview','activity_target','activity_draw','reward_pairs','blueprint','native_id_probe','native_record_lifecycle'}:
         raise ValueError('invalid native unit scenario fields')
     if type(value.get('schema')) is not int or value['schema']!=1:
         raise ValueError('unsupported native unit scenario schema')
@@ -28,6 +28,11 @@ def validate(value, plan):
         any(k.startswith('shop_') for k in plan)):
         raise ValueError('native unit scenarios require pages_only and an existing owned unit UID')
     result={'schema':1}
+    if 'presentation_target' in value:
+        target=value['presentation_target']
+        if type(target) is not int or not 0<target<=0x7fffffff:
+            raise ValueError('native encyclopedia target must be a positive unit ID')
+        result['presentation_target']=target
     for field in ('capture_frames','portraits','collection_preview','activity_draw'):
         flag=value.get(field,False)
         if type(flag) is not bool:raise ValueError('native unit scenario flags must be boolean')
@@ -122,6 +127,7 @@ def settings(value=None):
     result=dict(SETTINGS)
     if value is None:return result
     result.update(UnitPagesOnly='1',UnitPresentations='1',
+        UnitPresentationTarget=str(value.get('presentation_target',0)),
         UnitPortraits=str(int(value['portraits'])),CaptureNativeFrames=str(int(value['capture_frames'])),
         CollectionPreviewOnly=str(int(value['collection_preview'])))
     if value.get('native_id_probe'):

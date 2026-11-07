@@ -243,8 +243,196 @@ function renderSummary(){
     metric("机体形态",summary.forms),
     metric("武器",summary.weapons),
     metric("外部武器",summary.external_weapons),
-    metric("资源",summary.resources)
+    metric("资源",summary.resources),
+    metric("初始化脚本组",summary.native_program_groups||0)
   );
+}
+
+function renderNativeContent(){
+  let panel=$("native-content");
+  if(!panel){
+    panel=document.createElement("section");panel.id="native-content";panel.className="section";
+    $("summary").after(panel);
+  }
+  panel.replaceChildren();
+  const heading=document.createElement("h3");heading.textContent="配套原生资料";panel.append(heading);
+  const help=document.createElement("p");
+  help.textContent="技能、浮游、图集和配套定义随制作项目一起保存。可补传包含 manifest.json 的资料 ZIP；不会修改玩家库存或现有发布。";
+  panel.append(help);
+  const uploadButton=(label,replaceManifest=null)=>{
+    const button=document.createElement("button");button.type="button";button.textContent=label;button.dataset.nativeContentUpload="1";
+    button.disabled=busy||dirty||draft.status==="disabled";
+    button.onclick=()=>{
+      const input=document.createElement("input");input.type="file";input.accept=".zip";
+      input.onchange=()=>uploadNativeContent(input.files?.[0],replaceManifest);input.click();
+    };
+    return button;
+  };
+  panel.append(uploadButton("补充配套资料 ZIP"));
+  const groups=draft.native_content_groups||[];
+  if(!groups.length){
+    const empty=document.createElement("p");empty.textContent="当前项目没有附加的原生依赖资料。";panel.append(empty);return;
+  }
+  for(const [index,group] of groups.entries()){
+    const box=document.createElement("details");box.className="panel";box.style.padding="12px";box.style.marginTop="10px";
+    const title=document.createElement("summary");const s=group.summary||{};
+    title.textContent="资料组 "+(index+1)+" · 技能 "+(s.skills||0)+" · 浮游 "+(s.funnels||0)+" · 资源 "+(s.resources||0)+(s.unsupported_records?" · 待适配 "+s.unsupported_records:"");
+    box.append(title);
+    const supplied=document.createElement("p");const parts=[];
+    if(s.skills)parts.push("服务端技能定义"+(s.server_skills?"已携带":"待补充"),"技能图集"+(s.skill_atlases?"已携带":"待补充"));
+    if(s.funnels)parts.push("服务端浮游定义"+(s.server_funnels?"已携带":"待补充"));
+    supplied.textContent=parts.join("；");box.append(supplied);
+    const records=document.createElement("ul");
+    for(const record of group.records||[]){
+      const row=document.createElement("li");
+      row.textContent=(record.kind===13?"技能：":record.kind===11?"浮游：":"待适配资料：")+(record.name||String(record.id));
+      const metadata=document.createElement("details");const label=document.createElement("summary");label.textContent="编号与布局信息";
+      const value=document.createElement("p");value.textContent="编号 "+record.id+"；类型 "+record.kind+"；"+record.bytes+" 字节；"+record.profile;
+      metadata.append(label,value);row.append(metadata);records.append(row);
+      const definition=(group.server_definitions||[]).find(item=>item.id===record.id);
+      if(definition){
+        const edit=document.createElement("button");edit.type="button";edit.dataset.nativeServerEdit="1";
+        edit.textContent="编辑服务端定义"+(definition.complete?"":"（待补齐）");
+        edit.disabled=busy||dirty||draft.status==="disabled";
+        edit.onclick=()=>editNativeServerDefinition(group,definition);row.append(edit);
+      }
+    }
+    box.append(records);
+    for(const issue of group.requirements||[]){const line=document.createElement("p");line.className="badge warning";line.style.display="block";line.style.whiteSpace="normal";line.style.margin="8px 0";line.textContent=issue.message;box.append(line);}
+    box.append(uploadButton("更新此组资料",group.binding.manifest_path));panel.append(box);
+  }
+  const note=document.createElement("p");note.textContent="这些新增配套定义目前可保存和导出为制作项目，正式发布尚未开放。";panel.append(note);
+}
+
+function renderTransformGraph(){
+  let panel=$("transform-graph");
+  if(!panel){panel=document.createElement("section");panel.id="transform-graph";panel.className="section";$("summary").after(panel);}
+  panel.replaceChildren();
+  const title=document.createElement("h3");title.textContent="原始形态关系";panel.append(title);
+  const graph=draft.form_graph;
+  const note=document.createElement("p");note.textContent=graph?.error||"箭头来自包内完整机体记录，保留单向关系。共享后续形态的不同入口会分别显示；实际变形条件和运行支持仍需验证。";
+  panel.append(note);
+  if(!graph||graph.error)return;
+  const names=new Map((draft.forms||[]).map(row=>[row.id,row.name+" ("+row.id+")"]));
+  const label=id=>names.get(id)||"外部形态 "+id;
+  const list=document.createElement("ul");
+  for(const node of graph.nodes){
+    const row=document.createElement("li");row.textContent=label(node.id)+(node.transform_target?" → "+label(node.transform_target):" · 没有记录变形目标");list.append(row);
+  }
+  panel.append(list);
+  for(const route of graph.root_routes){
+    const path=document.createElement("p");path.textContent="当前根形态按记录可达："+route.path.map(label).join(" → ")+
+      (route.end==="cycle"?" → "+label(route.terminal_target):route.end==="external"?" → "+label(route.terminal_target):"");panel.append(path);
+    if(route.other_component_ids.length){const other=document.createElement("p");other.className="note";
+      other.textContent="同组其他入口／形态："+route.other_component_ids.map(label).join("、")+"。这些记录会保留，不能据此推断它们能从当前入口变出。";panel.append(other);}
+  }
+}
+
+function editNativeServerDefinition(group,entry){
+  if(busy||dirty||!draft)return;
+  const draftId=draft.id;
+  const dialog=document.createElement("dialog");dialog.id="native-server-editor";
+  dialog.style.cssText="width:min(820px,90vw);max-height:88vh;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:24px;background:var(--panel);color:var(--text);font:14px/1.5 Segoe UI,Microsoft YaHei,sans-serif";
+  const heading=document.createElement("h3");heading.textContent=entry.name+" · 服务端定义";
+  const help=document.createElement("p");help.textContent=entry.note+" 必填项未齐也可保存草稿，导出项目会保留缺项。";
+  const mode=document.createElement("select");mode.setAttribute("aria-label","定义方式");
+  mode.append(new Option("手动填写必填字段","authored"),new Option("使用完整原版模板","template"));
+  const choices=state.templates?.[entry.kind==="skill"?"skills":"funnels"]||[];
+  const search=document.createElement("input");search.type="search";search.placeholder="按名称或编号搜索原版模板";search.setAttribute("aria-label","配套定义模板搜索");
+  const select=document.createElement("select");select.setAttribute("aria-label","配套定义原版模板");
+  const templateArea=document.createElement("div");templateArea.append(search,select);
+  let selected=entry.definition?.kind==="template"?String(entry.definition.id):"";
+  const manual=Object.fromEntries(entry.fields.map(field=>[field.name,field.value]));
+  const fields=document.createElement("div");fields.className="server-fields";
+  const inputs=new Map();const labels=new Map();
+  for(const field of entry.fields){
+    const label=document.createElement("label");label.style.display="grid";label.style.gap="4px";
+    const text=document.createElement("span");text.textContent=field.label+" *"+(field.readonly?" · 从客户端读取":"");text.title=field.name;
+    const input=document.createElement("input");input.dataset.nativeField=field.name;
+    input.type=field.type==="string"?"text":"number";input.step=field.type==="integer"?"1":"any";
+    if(field.minimum!=null)input.min=String(field.minimum);
+    if(field.maximum!=null)input.max=String(field.maximum);
+    if(field.max_length)input.maxLength=field.max_length;
+    input.setAttribute("aria-label",field.label);input.placeholder=field.readonly?"从客户端读取":"必填，尚未提供";
+    input.addEventListener("input",()=>{if(mode.value==="authored")manual[field.name]=input.value;updateStatus();});
+    inputs.set(field.name,input);labels.set(field.name,text);label.append(text,input);fields.append(label);
+  }
+  const status=document.createElement("p");status.setAttribute("role","status");
+  const errors=document.createElement("p");errors.setAttribute("role","alert");errors.style.color="var(--danger)";
+  const actions=document.createElement("div");actions.className="actions";
+  const cancel=document.createElement("button");cancel.type="button";cancel.textContent="取消";
+  const save=document.createElement("button");save.type="button";save.className="primary";save.textContent="保存配套定义";
+  actions.append(cancel,save);
+  const updateStatus=()=>{
+    const missing=entry.fields.filter(field=>!inputs.get(field.name).value.trim());
+    const mismatches=entry.fields.filter(field=>field.readonly&&String(field.value)!==inputs.get(field.name).value);
+    status.textContent=mode.value==="template"?(mismatches.length?"模板与客户端共享字段不一致："+mismatches.map(field=>field.label).join("、"):
+      "模板将完整复制全部服务端字段；保存时再次核对模板版本及两端共享字段。"):
+      missing.length?"还有 "+missing.length+" 个必填字段待提供；保存后仍为草稿。":"必填字段已齐；保存时会重新校验。";
+  };
+  const update=()=>{
+    const template=choices.find(row=>String(row.id)===select.value);
+    const isTemplate=mode.value==="template";templateArea.hidden=!isTemplate;
+    for(const field of entry.fields){
+      const input=inputs.get(field.name);
+      const key=entry.kind==="skill"?"SkillID":"FunnelID";
+      const value=isTemplate?(field.name===key?entry.id:template?.values[field.name]):manual[field.name];
+      input.value=value==null?"":String(value);input.readOnly=isTemplate||field.readonly;
+      labels.get(field.name).textContent=field.label+" *"+(field.readonly?(isTemplate?" · 两端需一致":" · 从客户端读取"):"");
+    }
+    updateStatus();
+    save.disabled=isTemplate&&(!template||entry.fields.some(field=>field.readonly&&String(field.value)!==inputs.get(field.name).value));
+  };
+  const renderChoices=()=>{fillTemplateSelect(select,choices,search.value,selected,"请选择原版模板",row=>row.name+" · "+row.id);update();};
+  mode.value=entry.definition?.kind==="template"?"template":"authored";
+  mode.onchange=update;search.oninput=renderChoices;select.onchange=()=>{selected=select.value;update();};
+  cancel.onclick=()=>dialog.close();
+  dialog.addEventListener("close",()=>dialog.remove(),{once:true});
+  save.onclick=async()=>{
+    const template=choices.find(row=>String(row.id)===select.value);
+    let definition;
+    if(mode.value==="template"){
+      if(!template)return;
+      definition={kind:"template",id:template.id,sha256:template.sha256};
+    }else{
+      const values={};
+      for(const field of entry.fields){
+        const input=inputs.get(field.name);const value=input.value;
+        if(input.validity.badInput){input.reportValidity();return;}
+        if(!value.trim())continue;
+        if(!input.checkValidity()){input.reportValidity();return;}
+        values[field.name]=field.type==="string"?value:Number(value);
+      }
+      definition={kind:"draft",origin:"authored",values};
+    }
+    setBusy(true);save.disabled=true;cancel.disabled=true;errors.textContent="";
+    try{
+      const response=await api("/api/units/drafts/"+encodeURIComponent(draftId)+"/native-server-definition","POST",{
+        manifest_path:group.binding.manifest_path,kind:entry.kind,id:entry.id,definition
+      });
+      await refreshDraftAfterWrite(response);dialog.close();
+      message("配套服务端定义已保存。缺项和原生兼容检查会继续保留，原发布不变。");
+    }catch(error){errors.textContent=error.message;}
+    finally{setBusy(false);cancel.disabled=false;update();}
+  };
+  dialog.addEventListener("cancel",event=>{if(busy)event.preventDefault();});
+  dialog.append(heading,help,mode,templateArea,fields,status,errors,actions);
+  shadow.append(dialog);renderChoices();dialog.showModal();
+}
+
+async function uploadNativeContent(file,replaceManifest){
+  if(!file||busy||!draft)return;
+  if(dirty){message("请先保存当前修改，再补充配套资料。",true);return;}
+  if(!file.name.toLowerCase().endsWith(".zip")){message("请选择配套资料 ZIP。",true);return;}
+  setBusy(true);
+  try{
+    message("正在校验配套原生资料…");
+    const data=await fileToBase64(file);
+    await refreshDraftAfterWrite(await api("/api/units/drafts/"+encodeURIComponent(draft.id)+"/native-content","POST",{
+      filename:file.name,data,...(replaceManifest?{replace_manifest:replaceManifest}:{})
+    }));
+    message("配套资料已保存。请查看缺项；制作项目导出会包含完整资料和来源证据。");
+  }catch(error){message(error.message,true);}finally{setBusy(false);}
 }
 
 function renderRequirements(){
@@ -630,7 +818,10 @@ function renderIdentity(){
     profile.required=false;
   }else{
     addOption(profile,"","请选择原生行为配置");
-    addOption(profile,"native-linked-forms-v1","native-linked-forms-v1 · 原生关联形态");
+    addOption(profile,"native-linked-forms-v1","native-linked-forms-v1 · 原生关联形态（双向变形）");
+    addOption(profile,"native-one-way-forms-v1","native-one-way-forms-v1 · 原生单向形态（终态不可变回）");
+    addOption(profile,"native-entry-forms-v1","native-entry-forms-v1 · 入口形态（变入已发布的双向形态）");
+    addOption(profile,"native-self-transform-v1","native-self-transform-v1 · 自变形（变形目标为自身）");
     addOption(profile,"native-single-form-v1","native-single-form-v1 · 原生单形态");
     if(draft.behavior_profile&&!Array.from(profile.options).some(option=>option.value===draft.behavior_profile)){
       addOption(profile,draft.behavior_profile,draft.behavior_profile+" · 后端提供");
@@ -768,6 +959,8 @@ function renderEditor(){
   $("editor-form").classList.remove("hidden");
   renderIdentity();
   renderSummary();
+  renderTransformGraph();
+  renderNativeContent();
   renderRequirements();
   renderRecords("forms",draft.forms||[],"forms","制作包中没有解析出机体形态。");
   renderRecords("weapons",draft.weapons||[],"weapons","制作包中没有解析出新武器记录。");
@@ -804,6 +997,8 @@ function syncActions(){
     button.disabled=busy||disabled||dirty||button.dataset.hasSelection!=="1";
   });
   document.querySelectorAll("[data-drop-missing-skills]").forEach(button=>button.disabled=busy||dirty||disabled);
+  document.querySelectorAll("[data-native-content-upload]").forEach(button=>button.disabled=busy||dirty||disabled);
+  document.querySelectorAll("[data-native-server-edit]").forEach(button=>button.disabled=busy||dirty||disabled);
   document.querySelectorAll("#unit-blueprints button").forEach(button=>button.disabled=busy||disabled||button.dataset.blueprintLocked==="1");
   document.querySelectorAll("#unit-blueprints input,#unit-blueprints select").forEach(input=>input.disabled=busy||disabled);
   const project=$("export-project");if(project){project.href=draft?endpoint("/api/units/drafts/"+draft.id+"/project"):"#";project.classList.toggle("disabled",!draft||dirty||busy);}
@@ -1163,6 +1358,97 @@ $("sync-capsules").onclick=async()=>{
     data=await response.json();if(!response.ok)throw Error(data.error);message(data.message||"已同步；请在扭蛋机面板配置机台并编译应用。");
   }catch(error){message(error.message,true);}
 };
+
+// Batch roster: apply a batch publication's server plan to the configured server group.
+const batchCard=document.createElement("section");
+batchCard.className="panel";batchCard.style.cssText="padding:14px;margin-bottom:16px";
+batchCard.innerHTML='<strong>批量阵容服务端应用（Beta）</strong><p>批量发布器生成的发布目录（含 server-plan.json）在这里写入已配置的 WorldServer 数据库：先写共享技能、浮游炮和势力行，再按依赖顺序写入每个机体族，最后为每个 BattleServer 安装形态图。不发放机体，也不改商城、扭蛋或玩家资产。</p>'
+ +'<div class="template-tool"><label><span>批量发布目录</span><input id="batch-folder" placeholder="批量发布器输出的 publication 目录"></label><button type="button" id="batch-pick">选择目录…</button></div>'
+ +'<div class="actions" style="margin-top:10px"><button type="button" id="batch-preflight">只读预检</button><button type="button" class="primary" id="batch-apply" disabled>停服后应用…</button><button type="button" id="batch-readback">读回核对</button></div>'
+ +'<div class="progress hidden" id="batch-progress"><span id="batch-progress-bar"></span></div>'
+ +'<p class="note" id="batch-status">应用前请先停止此服务组的全部原生服务；Manager 不会替你结束或启动游戏进程。玩家仍需安装同版本的机体客户端包。</p>'
+ +'<div class="requirements" id="batch-details"></div>';
+$("sync-capsules").closest("section").after(batchCard);
+const BATCH_STAGES={gate:"检查停服状态",check:"按依赖顺序检查机体族",shared:"写入共享技能、浮游炮和势力行",families:"写入机体族",graphs:"编译并安装形态图",readback:"读回核对"};
+let batchChecked=null,batchJob={status:"idle"},batchBusy=false;
+function batchMessage(text,isError=false){$("batch-status").textContent=text||"";$("batch-status").style.color=isError?"var(--danger)":"";}
+function batchRunning(){return batchJob.status==="starting"||batchJob.status==="running";}
+function syncBatch(){
+  const folder=$("batch-folder").value.trim(),locked=batchBusy||batchRunning();
+  $("batch-apply").disabled=locked||!batchChecked||batchChecked.folder!==folder||!batchChecked.ready;
+  for(const id of ["batch-preflight","batch-readback","batch-pick"])$(id).disabled=locked;
+  $("batch-folder").disabled=locked;
+}
+function batchRow(level,title,text){
+  const row=document.createElement("div");row.className="requirement "+level;
+  const mark=document.createElement("span");mark.textContent=level==="error"?"✕":level==="required"?"!":"·";
+  const body=document.createElement("div"),strong=document.createElement("strong"),small=document.createElement("small");
+  strong.textContent=title;small.textContent=text;body.append(strong,small);row.append(mark,body);return row;
+}
+function renderBatchPreflight(p){
+  const s=p.publication,rows=[];
+  rows.push(batchRow("warning","发布内容",s.families+" 个机体族 · "+s.units+" 个形态 · "+s.weapons+" 把武器 · "+s.skills+" 个技能 · "+s.funnels+" 个浮游炮 · "+s.affiliations+" 个势力 · "+s.form_graph_requests+" 个形态图请求"));
+  rows.push(batchRow("warning","机体族","新写入 "+p.families_new+" 个；已安装、将按账本重新应用 "+p.families_installed+" 个"));
+  if(p.shared?.skills)rows.push(batchRow("warning","共享行","技能 新增 "+p.shared.skills.inserted+" / 更新 "+p.shared.skills.updated+" / 沿用 "+p.shared.skills.reused
+    +"；浮游炮 新增 "+p.shared.funnels.inserted+" / 更新 "+p.shared.funnels.updated+" / 沿用 "+p.shared.funnels.reused+"；势力 新增 "+p.shared.affiliations.inserted));
+  if(s.form_graph_requests)rows.push(batchRow(p.graph_hosts.length&&p.graph_hosts.every(h=>h.installed)?"warning":"error","形态图主机",
+    p.graph_hosts.length?p.graph_hosts.map(h=>h.host+(h.installed?(h.graph_sha256?"（已有形态图）":"（待写入）"):"（缺少服务端绑定）")).join("、"):"没有 BattleServer"));
+  rows.push(batchRow(p.servers_stopped?"warning":"required","服务状态",p.servers_stopped?"此服务组的原生服务均已停止":"仍在运行："+p.running_services.join("、")+"。停止后重新预检。"));
+  for(const warning of p.warnings||[])rows.push(batchRow("required","提醒",warning));
+  for(const problem of p.problems.slice(0,20))rows.push(batchRow("error",problem.family_key||"发布检查",problem.error));
+  if(p.problems.length>20)rows.push(batchRow("error","其余问题","另有 "+(p.problems.length-20)+" 项未列出"));
+  $("batch-details").replaceChildren(...rows);
+  batchMessage(p.ready?"预检通过：可以应用。":p.problems.length?"预检发现 "+p.problems.length+" 个问题，处理后重新预检。":"预检通过，但服务仍在运行；停止后重新预检。",Boolean(p.problems.length));
+}
+function renderBatchReadback(r,applied){
+  batchMessage((applied?"已应用。":"读回：")+"机体 "+r.units+" / "+r.plan_units+"，武器 "+r.weapons+" / "+r.plan_weapons+"，名称 "+r.names+" / "+r.plan_units
+    +"，物品类别 "+r.items+" / "+r.plan_items+"，本版本账本机体族 "+r.ledger_families_at_revision+" / "+r.plan_families+"，形态图主机 "+r.graph_hosts_installed+" / "+r.graph_hosts+"。"
+    +(r.complete?(applied?"请重启此服务组，并在 Manager 的变更记录中核对就绪。":""):"仍有未对齐的项目。"),!r.complete);
+}
+function renderBatchJob(job){
+  batchJob=job||{status:"idle"};
+  const running=batchRunning();
+  $("batch-progress").classList.toggle("hidden",!running);
+  if(running){
+    const fraction=batchJob.stage==="families"&&batchJob.total?batchJob.done/batchJob.total:batchJob.stage==="graphs"||batchJob.stage==="readback"?1:0;
+    $("batch-progress-bar").style.width=Math.round(fraction*100)+"%";
+    batchMessage((BATCH_STAGES[batchJob.stage]||"准备中")+(batchJob.stage==="families"?"："+batchJob.done+" / "+batchJob.total+(batchJob.detail?" · "+batchJob.detail:""):"")+" …");
+  }else if(batchJob.status==="completed")renderBatchReadback(batchJob.result.readback,true);
+  else if(batchJob.status==="failed")batchMessage("批量应用未完成："+batchJob.error,true);
+  syncBatch();
+}
+$("batch-folder").oninput=()=>syncBatch();
+$("batch-pick").onclick=async()=>{
+  try{
+    const response=await globalThis.fetch("/api/pick",{method:"POST",headers:{"Content-Type":"application/json","X-ModManager-Token":ctx.token},body:JSON.stringify({kind:"directory"})});
+    const data=await response.json();if(!response.ok)throw Error(data.error||"无法打开目录选择，请直接输入路径");
+    if(data.path){$("batch-folder").value=data.path;syncBatch();}
+  }catch(error){batchMessage(error.message,true);}
+};
+$("batch-preflight").onclick=async()=>{
+  const folder=$("batch-folder").value.trim();if(!folder){batchMessage("请先选择批量发布目录。",true);return;}
+  batchBusy=true;batchChecked=null;syncBatch();batchMessage("正在只读预检（读取服务端目录，不写入）…");
+  try{const data=await ctx.request("/api/units/batch/preflight",{publication:folder});batchChecked={folder,ready:data.preflight.ready};renderBatchPreflight(data.preflight);}
+  catch(error){$("batch-details").replaceChildren();batchMessage(error.message,true);}
+  finally{batchBusy=false;syncBatch();}
+};
+$("batch-apply").onclick=async()=>{
+  const folder=$("batch-folder").value.trim();
+  if(!batchChecked||batchChecked.folder!==folder||!batchChecked.ready){batchMessage("请先对当前目录完成只读预检并处理所有问题。",true);return;}
+  batchBusy=true;syncBatch();
+  try{const data=await ctx.request("/api/units/batch/apply",{publication:folder});batchChecked=null;renderBatchJob(data.batch);}
+  catch(error){batchMessage(error.message,true);}
+  finally{batchBusy=false;syncBatch();}
+};
+$("batch-readback").onclick=async()=>{
+  const folder=$("batch-folder").value.trim();if(!folder){batchMessage("请先选择批量发布目录。",true);return;}
+  batchBusy=true;syncBatch();
+  try{const data=await ctx.request("/api/units/batch/readback",{publication:folder});renderBatchReadback(data.readback,false);}
+  catch(error){batchMessage(error.message,true);}
+  finally{batchBusy=false;syncBatch();}
+};
+ctx.request("/api/units/batch",undefined,"GET").then(data=>{if(data.batch.status!=="idle")renderBatchJob(data.batch);}).catch(()=>{});
+ctx.setInterval(async()=>{if(!batchRunning())return;try{const data=await ctx.request("/api/units/batch",undefined,"GET");renderBatchJob(data.batch);}catch{}},1000);
 
 function renderNativePreview(){
  const current=draft?.native_preview||{};

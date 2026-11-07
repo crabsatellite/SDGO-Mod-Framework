@@ -123,4 +123,73 @@ class RelocationPlanTests(unittest.TestCase):
         with self.assertRaises(RelocationError):plan(bad,encoded(self.snapshot),self.blobs,request_sha256=sha(bad),snapshot_sha256=sha(encoded(self.snapshot)))
 
 
+    def kind_policy(self, first=40, last=90, maximum=90):
+        self.request['schema']='sdgo:record-relocation-request/2'
+        self.request['allocation']['kindPolicies']=[dict(kind=2,ranges=[dict(first=first,last=last)],maxTargetId=maximum)]
+
+    def test_kind_limit_changes_unit_range_and_all_declared_references_only(self):
+        self.kind_policy()
+        result,raw=self.run_plan()
+        rows={r['key']:r for r in result['requests']}
+        self.assertEqual(rows['unit:100:1']['requestedTargetId'],40)
+        self.assertEqual(rows['weapon:200:2']['requestedTargetId'],1001)
+        self.assertEqual(struct.unpack_from('<I',raw['unit:100:1'],8)[0],1001)
+        self.assertEqual(raw['unit:100:1'][12:],self.blobs['unit:100:1'][12:])
+        self.assertEqual(result['schema'],'sdgo:record-relocation-plan/2')
+        self.assertEqual(result['allocationPolicy'],self.request['allocation'])
+        self.assertFalse(result['idsReserved'])
+
+    def test_kind_limit_also_applies_to_unobserved_source_id_preservation(self):
+        self.kind_policy();self.snapshot['occupiedIds']=[];self.snapshot['typedRecords']=[]
+        result,_=self.run_plan()
+        self.assertEqual([r['requestedTargetId'] for r in result['requests']],[40,200])
+
+    def test_kind_ranges_still_share_one_global_collision_space(self):
+        self.kind_policy(first=1001,last=1002,maximum=1002)
+        result,_=self.run_plan()
+        self.assertEqual([r['requestedTargetId'] for r in result['requests']],[1001,1002])
+
+    def test_invalid_or_legacy_kind_policy_is_refused(self):
+        self.kind_policy()
+        for change in ('legacy','over-limit','duplicate','empty','exhausted'):
+            request=copy.deepcopy(self.request)
+            if change=='legacy':request['schema']='sdgo:record-relocation-request/1'
+            elif change=='over-limit':request['allocation']['kindPolicies'][0]['maxTargetId']=39
+            elif change=='duplicate':request['allocation']['kindPolicies']*=2
+            elif change=='empty':request['allocation']['kindPolicies']=[]
+            else:request['allocation']['kindPolicies'][0].update(ranges=[dict(first=100,last=100)],maxTargetId=100)
+            with self.subTest(change=change),self.assertRaises(RelocationError):self.run_plan(request=request)
+
+    def test_kind_policy_is_deterministic_under_source_record_reordering(self):
+        self.kind_policy();first,raw1=self.run_plan()
+        self.request['records'].reverse();second,raw2=self.run_plan()
+        self.assertEqual(first['requests'],second['requests']);self.assertEqual(raw1,raw2)
+
+    def test_host_domain_prevents_package_ranges_from_widening_the_target(self):
+        self.kind_policy(first=35000,last=46340,maximum=46340)
+        a,b=encoded(self.request),encoded(self.snapshot)
+        with self.assertRaisesRegex(RelocationError,'host target domain'):
+            plan(a,b,self.blobs,request_sha256=sha(a),snapshot_sha256=sha(b),target_domains={2:(10001,30000)})
+        self.kind_policy(first=27000,last=35000,maximum=46340)
+        a=encoded(self.request)
+        result,_=plan(a,b,self.blobs,request_sha256=sha(a),snapshot_sha256=sha(b),target_domains={2:(10001,30000)})
+        self.assertEqual(27000,result['requests'][0]['requestedTargetId'])
+        self.assertEqual([{'kind':2,'first':10001,'last':30000}],result['targetDomains'])
+        self.assertFalse(result['allocationAuthorityIssued'])
+
+    def test_host_lower_bound_also_applies_when_source_identity_is_unobserved(self):
+        self.snapshot.update(occupiedIds=[],typedRecords=[])
+        self.kind_policy(first=27000,last=30000,maximum=30000)
+        a,b=encoded(self.request),encoded(self.snapshot)
+        result,_=plan(a,b,self.blobs,request_sha256=sha(a),snapshot_sha256=sha(b),target_domains={2:(10001,30000)})
+        self.assertEqual([27000,200],[row['requestedTargetId'] for row in result['requests']])
+
+    def test_external_unit_reference_cannot_bypass_host_domain(self):
+        self.kind_policy(first=27000,last=30000,maximum=30000)
+        self.request['references']=[{'record':'unit:100:1','offset':8,'sourceId':200,'targetKind':2,'externalId':200}]
+        a,b=encoded(self.request),encoded(self.snapshot)
+        with self.assertRaisesRegex(RelocationError,'external reference'):
+            plan(a,b,self.blobs,request_sha256=sha(a),snapshot_sha256=sha(b),target_domains={2:(10001,30000)})
+
+
 if __name__=='__main__':unittest.main()

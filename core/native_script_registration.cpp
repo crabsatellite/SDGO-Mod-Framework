@@ -20,6 +20,11 @@ bool NativeLuaCalls::complete() const {
     return state && getTop && setTop && pushString && rawGet && type && toPointer && runBuffer;
 }
 
+std::uint32_t ProcessInitialThreadId(const SdgoApi* api) {
+    if (!api || api->size < offsetof(SdgoApi, process_initial_thread_id) + sizeof(api->process_initial_thread_id)) return 0;
+    return api->process_initial_thread_id;
+}
+
 bool BindNativeLuaCalls(const SdgoApi* api, SdgoMod* mod, NativeLuaCalls& out, std::string& missing) {
     out = {}; missing.clear();
     if (!api || api->size < offsetof(SdgoApi, Symbol) + sizeof(api->Symbol) || !api->Symbol) { missing = "verified framework symbol API unavailable"; return false; }
@@ -39,6 +44,14 @@ NativeRegistration::NativeRegistration(NativeLuaCalls calls, OriginalScriptLoade
     : calls_(calls), original_(original), mainThread_(gameMainThreadId), close_(closeClient), closeContext_(closeContext) {}
 
 Result NativeRegistration::onOriginalLoad(void* engine, NativeWideString* path, const Candidate& candidate) {
+    return load(engine, path, &candidate, 1);
+}
+
+Result NativeRegistration::onOriginalLoadBatch(void* engine, NativeWideString* path, const std::vector<Candidate>& candidates) {
+    return load(engine, path, candidates.data(), candidates.size());
+}
+
+Result NativeRegistration::load(void* engine, NativeWideString* path, const Candidate* candidates, std::size_t count) {
     if (registry_.poisoned()) { Result result; result.status = Status::FatalClientState; result.reason = "candidate client is quarantined"; result.clientMustClose = true; return result; }
     if (!original_) return Denied("original script loader is not bound");
     const bool root = IsOriginalRoot(path);
@@ -52,7 +65,10 @@ Result NativeRegistration::onOriginalLoad(void* engine, NativeWideString* path, 
     void* engineVm = nullptr; std::memcpy(&engineVm, engine, sizeof(engineVm));
     if (!engineVm || calls_.state(nullptr) != engineVm) return Denied("root engine and native VM getter disagree");
     currentVm_ = engineVm; boundary_ = true;
-    try { auto result = registry_.activate(candidate, *this); boundary_ = false; currentVm_ = nullptr; return result; }
+    try {
+        auto result = count == 1 ? registry_.activate(*candidates, *this) : registry_.activateBatch(candidates, count, *this);
+        boundary_ = false; currentVm_ = nullptr; return result;
+    }
     catch (...) { boundary_ = false; currentVm_ = nullptr; throw; }
 }
 

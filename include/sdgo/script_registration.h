@@ -71,6 +71,9 @@ Validation Validate(const Candidate& candidate);
 class Registry {
 public:
     Result activate(const Candidate& candidate, Vm& vm);
+    // Preflight all owners before executing any chunk. The caller retains the
+    // immutable candidate array for this call. Partial execution is fatal.
+    Result activateBatch(const Candidate* candidates, std::size_t count, Vm& vm);
     bool poisoned() const { return poisoned_; }
 private:
     struct Registration {

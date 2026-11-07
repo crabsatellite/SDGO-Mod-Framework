@@ -117,6 +117,12 @@ typedef struct SdgoApi {
      * file change is refused. The receipt contains hashes, never setting values. */
     uint32_t (*ConfigurationRevision)(SdgoMod* mod, char* out, uint32_t out_size);
     int (*ConfigurationApplied)(SdgoMod* mod, const char* revision);
+
+    /* Windows' process-initial thread, captured by a statically loaded shim's
+     * DLL_PROCESS_ATTACH (non-null lpvReserved). Zero for older/dynamically
+     * loaded shims or an unavailable identity. This is independent of which
+     * thread later triggers EarlyBoot. Optional API 1 extension: check size. */
+    uint32_t process_initial_thread_id;
 } SdgoApi;
 
 /* Every mod DLL exports this. Return nonzero when the mod is active. */
@@ -134,6 +140,8 @@ typedef struct SdgoBoot {
     uint32_t size;
     const char* loader; /* which shim started the core, e.g. "d3d9" */
     void* host_module;  /* HMODULE of the host executable */
+    /* Optional tail; old loader prefixes remain accepted by newer cores. */
+    uint32_t process_initial_thread_id;
 } SdgoBoot;
 
 typedef int(__cdecl* SdgoCoreInitFn)(const SdgoBoot* boot);
