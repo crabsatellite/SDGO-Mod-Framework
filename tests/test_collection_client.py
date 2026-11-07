@@ -557,7 +557,7 @@ class CollectionClientPackageTests(unittest.TestCase):
             (stage / "sdgo/symbols" / packaging.HOST_SYMBOL).write_bytes(symbol_profile())
             support = root / "capsule_catalog.dll"
             support.write_bytes(
-                b"CURRENT CAPSULE SUPPORT SDGO_CAPSULE_REGISTRY_6TABLE_V2"
+                b"CURRENT CAPSULE SUPPORT SDGO_CAPSULE_REGISTRY_6TABLE_V2 SDGO_COLLECTION_ACQUISITION_V1"
             )
             output = root / "player"
             result = packaging.package_client_registry(
@@ -574,7 +574,7 @@ class CollectionClientPackageTests(unittest.TestCase):
             )
             self.assertEqual(
                 (output / "client/sdgo/mods/capsule_catalog/capsule_catalog.dll").read_bytes(),
-                b"CURRENT CAPSULE SUPPORT SDGO_CAPSULE_REGISTRY_6TABLE_V2",
+                b"CURRENT CAPSULE SUPPORT SDGO_CAPSULE_REGISTRY_6TABLE_V2 SDGO_COLLECTION_ACQUISITION_V1",
             )
             manifest = json.loads(
                 (output / "package-manifest.json").read_text(encoding="utf-8")

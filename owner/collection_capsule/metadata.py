@@ -114,7 +114,8 @@ def registered_imports(rows: list[dict], snapshot: Path, *, ignore_packages: set
     for (package, revision, root), ids in groups.items():
         if root not in ids or units[root]["SallyReady"] != 1:
             raise ValueError("Published importer root is missing or unownable")
-        if any((units[uid].get("UnitNumber_Transform") or 0) not in ids | {0} for uid in ids):
+        # Entry variants may share a target owned by another verified imported family.
+        if any((units[uid].get("UnitNumber_Transform") or 0) not in claimed | {0} for uid in ids):
             raise ValueError("Published importer family is incomplete")
         if root in roots:
             raise ValueError("A published importer root has conflicting declarations")

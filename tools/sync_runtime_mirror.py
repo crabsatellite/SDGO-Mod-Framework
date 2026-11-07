@@ -15,6 +15,8 @@ def reason(stderr,env):
 
 
 def main():
+    # Hosted mirrors answer in their own language; Windows runners default stdout to a legacy code page.
+    sys.stdout.reconfigure(encoding='utf-8',errors='replace')
     targets=json.loads(os.environ.get('RUNTIME_GIT_MIRROR_TARGETS')or'[]')or[{'url':os.environ['RUNTIME_GIT_MIRROR_URL'],'branches':['master','runtime/stable','runtime/beta']}]
     for target in targets:
         if not target['url'].startswith('https://')or'@'in target['url']or not set(target['branches'])<={'master','runtime/stable','runtime/beta'}:raise ValueError('Use credential-free HTTPS mirrors and declared runtime refs')

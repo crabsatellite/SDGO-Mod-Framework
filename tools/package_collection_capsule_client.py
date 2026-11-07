@@ -15,10 +15,12 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import sys
 import uuid
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 HOST_SYMBOL = "GOnline-54BE1568-00C97000.ini"
 PACKAGE_ID = "collection-capsule-client"
 SUPPORT_MARKER = b'SDGO_CAPSULE_REGISTRY_6TABLE_V2'
@@ -281,6 +283,9 @@ def package_client_registry(
     support_dll = _file(support_dll, "capsule registry support DLL")
     if SUPPORT_MARKER not in support_dll.read_bytes():
         raise ClientPackageError('Update the shared capsule provider: activity posters and retained unit gifts require the current six-table build')
+    from owner.collection_capsule.acquisition import FILE as acquisition_file,MARKER as acquisition_marker
+    if (registry/acquisition_file).is_file() and acquisition_marker not in support_dll.read_bytes():
+        raise ClientPackageError('Update the shared capsule provider: collection acquisition explanations require the current build')
     output = _absolute(output)
     if output.exists():
         raise FileExistsError(f"Client package output already exists: {output}")
