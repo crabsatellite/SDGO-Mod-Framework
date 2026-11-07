@@ -9,6 +9,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from frozen_process import stop_manager
 
 
 def main():
@@ -126,7 +127,7 @@ def main():
             assert rewards['policy']['progression']['daily_mb']==400
             with urllib.request.urlopen(base+'/panels/reward_social.js',timeout=10) as response:
                 assert '保存人数与聚会规则' in response.read().decode('utf-8')
-            call('/api/exit',{});process.wait(timeout=30)
+            stop_manager(process,state/'manager-session.json',lambda:call('/api/exit',{}))
             assert process.returncode==0
             print('PASS frozen EXE: standalone launch, local-only module discovery/configuration, private calendar gift policies/export, daily mode, fix archive, collection provider, AI/PR guidance, C# shop CRUD and solo MB preset')
         finally:

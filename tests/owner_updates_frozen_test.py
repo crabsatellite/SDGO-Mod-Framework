@@ -12,6 +12,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from frozen_process import stop_manager
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT));sys.path.insert(0,str(ROOT/'tests'))
@@ -87,7 +88,7 @@ def main():
         cli('--sync-owner-pack');assert (player/'sdgo/mods/example/config.ini').read_bytes()==b'[settings]\nAmount=98\n'
         cli('--check-owner-pack');assert (player/'config.xml').read_bytes()==personal
         print('PASS standalone starter-default migration, explicit DIY preservation, owner publication, HTTPS identity pinning, two player revisions, read-only audit and personal-state preservation')
-        call('/api/exit',{});process.wait(timeout=30)
+        stop_manager(process,f.workspace.root/'manager-session.json',lambda:call('/api/exit',{}))
     finally:
         if process and process.poll()is None:
             if base:

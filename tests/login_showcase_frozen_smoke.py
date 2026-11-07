@@ -12,6 +12,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from frozen_process import stop_manager
 
 
 def main():
@@ -158,8 +159,7 @@ def main():
             assert "Mode=recent" in text and "RecentCount=3" in text
             assert "; frozen smoke preservation marker" in text and "Keep=unchanged" in text
 
-            call("/api/exit", {})
-            process.wait(timeout=30)
+            stop_manager(process, state / "manager-session.json", lambda: call("/api/exit", {}))
             assert process.returncode == 0
             print(
                 "PASS frozen login-showcase Manager: packaged player panel, real baseline names, "
