@@ -335,6 +335,13 @@ private:
         SetEvent(item->done);
         ReleaseItem(item);
     }
+    bool PumpWorkerMessage(MSG& message) {
+        if(!PeekMessageW(&message,nullptr,0,0,PM_REMOVE))return false;
+        InterlockedIncrement(&workerMessages_);
+        InterlockedExchange(&workerLastMessage_,static_cast<LONG>(message.message));
+        TranslateMessage(&message);DispatchMessageW(&message);
+        return true;
+    }
     void InvokePending() {
         auto* item=static_cast<DispatchItem*>(InterlockedExchangePointer(&pending_,nullptr));
         if(!item)return;
@@ -403,14 +410,18 @@ private:
         for (;;) {
             const DWORD wait=MsgWaitForMultipleObjectsEx(1,handles,INFINITE,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
             if (wait==WAIT_OBJECT_0) {
+                // A steady stream of TestCooperativeLevel calls must not
+                // starve the proxy window's posted device-state messages.
+                // Service one queued message, then retain request priority.
+                PumpWorkerMessage(message);
                 InvokePending();
             } else if (wait==WAIT_OBJECT_0+1) {
                 for(unsigned batch=0;batch<32;++batch) {
-                    if(WaitForSingleObject(requestEvent_,0)==WAIT_OBJECT_0) {InvokePending();break;}
-                    if(!PeekMessageW(&message,nullptr,0,0,PM_REMOVE))break;
-                    InterlockedIncrement(&workerMessages_);
-                    InterlockedExchange(&workerLastMessage_,static_cast<LONG>(message.message));
-                    TranslateMessage(&message);DispatchMessageW(&message);
+                    if(WaitForSingleObject(requestEvent_,0)==WAIT_OBJECT_0) {
+                        PumpWorkerMessage(message);
+                        InvokePending();break;
+                    }
+                    if(!PumpWorkerMessage(message))break;
                 }
             } else break;
         }

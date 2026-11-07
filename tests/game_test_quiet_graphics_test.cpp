@@ -58,6 +58,10 @@ bool cooperativeSentCompleted=false;
 WNDPROC cooperativeFloodOriginalProc=nullptr;
 HANDLE cooperativeFloodStarted=nullptr,cooperativeFloodStop=nullptr;
 volatile LONG cooperativeFloodEnabled=0,cooperativeFloodMessages=0;
+WNDPROC cooperativeGateOriginalProc=nullptr;
+HANDLE cooperativeGateEntered=nullptr,cooperativeGateRelease=nullptr;
+volatile LONG cooperativeGateMarkerMessages=0,cooperativeGateRequireMarker=0;
+volatile LONG cooperativeGateObservedMarker=0;
 LRESULT CALLBACK CooperativeWindowProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam) {
     if(message==WM_APP+71){InterlockedIncrement(&cooperativeSentCallbacks);return 0x53;}
     if(message==WM_APP+72){InterlockedIncrement(&cooperativePostedCallbacks);return 0;}
@@ -75,6 +79,20 @@ LRESULT CALLBACK CooperativeFloodWindowProc(HWND window,UINT message,WPARAM wpar
         ? CallWindowProcW(cooperativeFloodOriginalProc,window,message,wparam,lparam)
         : DefWindowProcW(window,message,wparam,lparam);
 }
+LRESULT CALLBACK CooperativeGateWindowProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam) {
+    if(message==WM_APP+74) {
+        if(cooperativeGateEntered)SetEvent(cooperativeGateEntered);
+        if(cooperativeGateRelease)WaitForSingleObject(cooperativeGateRelease,2000);
+        return 0;
+    }
+    if(message==WM_APP+75) {
+        InterlockedIncrement(&cooperativeGateMarkerMessages);
+        return 0;
+    }
+    return cooperativeGateOriginalProc
+        ? CallWindowProcW(cooperativeGateOriginalProc,window,message,wparam,lparam)
+        : DefWindowProcW(window,message,wparam,lparam);
+}
 DWORD WINAPI StopCooperativeFlood(void*) {
     if(cooperativeFloodStop)WaitForSingleObject(cooperativeFloodStop,2000);
     else Sleep(2000);
@@ -83,12 +101,26 @@ DWORD WINAPI StopCooperativeFlood(void*) {
 }
 HRESULT STDMETHODCALLTYPE FakeCooperativeLevel(IDirect3DDevice9*) {
     lastWorkerThread=GetCurrentThreadId();
+    if(InterlockedCompareExchange(&cooperativeGateRequireMarker,0,0))
+        InterlockedExchange(&cooperativeGateObservedMarker,
+            InterlockedCompareExchange(&cooperativeGateMarkerMessages,0,0)>0 ? 1:0);
     if(cooperativeCallbackWindow) {
         DWORD_PTR reply=0;
         cooperativeSentCompleted=SendMessageTimeoutW(cooperativeCallbackWindow,WM_APP+71,0,0,
             SMTO_ABORTIFHUNG|SMTO_BLOCK,2000,&reply)!=0 && reply==0x53;
     }
     return cooperativeResult;
+}
+struct CooperativeRequest {
+    IDirect3DDevice9* device;
+    HANDLE entered;
+    HRESULT result;
+};
+DWORD WINAPI RunCooperativeRequest(void* raw) {
+    auto* request=static_cast<CooperativeRequest*>(raw);
+    SetEvent(request->entered);
+    request->result=request->device->TestCooperativeLevel();
+    return 0;
 }
 HRESULT STDMETHODCALLTYPE FakeGetBackBuffer(IDirect3DDevice9*,UINT,UINT,D3DBACKBUFFER_TYPE,
                                              IDirect3DSurface9** surface) {
@@ -458,6 +490,51 @@ int main() {
         if(cooperativeFloodStop)CloseHandle(cooperativeFloodStop);
         cooperativeFloodOriginalProc=nullptr;
         cooperativeFloodStarted=nullptr;cooperativeFloodStop=nullptr;
+
+        SetLastError(ERROR_SUCCESS);
+        cooperativeGateOriginalProc=reinterpret_cast<WNDPROC>(SetWindowLongPtrW(
+            state.proxy_hwnd,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(&CooperativeGateWindowProc)));
+        const DWORD gateSubclassError=GetLastError();
+        cooperativeGateEntered=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+        cooperativeGateRelease=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+        HANDLE cooperativeCallerEntered=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+        HANDLE cooperativeCaller=nullptr;
+        CooperativeRequest cooperativeRequest{device,cooperativeCallerEntered,D3DERR_NOTAVAILABLE};
+        bool gateReady=(cooperativeGateOriginalProc || gateSubclassError==ERROR_SUCCESS) &&
+            cooperativeGateEntered && cooperativeGateRelease && cooperativeCallerEntered &&
+            PostMessageW(state.proxy_hwnd,WM_APP+74,0,0) &&
+            WaitForSingleObject(cooperativeGateEntered,500)==WAIT_OBJECT_0;
+        if(gateReady) {
+            InterlockedExchange(&cooperativeGateMarkerMessages,0);
+            InterlockedExchange(&cooperativeGateObservedMarker,0);
+            InterlockedExchange(&cooperativeGateRequireMarker,1);
+            cooperativeCaller=CreateThread(nullptr,0,&RunCooperativeRequest,&cooperativeRequest,0,nullptr);
+            gateReady=cooperativeCaller &&
+                WaitForSingleObject(cooperativeCallerEntered,500)==WAIT_OBJECT_0;
+            if(gateReady) {
+                Sleep(50);
+                gateReady=PostMessageW(state.proxy_hwnd,WM_APP+75,0,0)!=FALSE;
+            }
+        }
+        if(cooperativeGateRelease)SetEvent(cooperativeGateRelease);
+        if(cooperativeCaller) {
+            if(WaitForSingleObject(cooperativeCaller,3000)!=WAIT_OBJECT_0)++failures;
+            CloseHandle(cooperativeCaller);
+        }
+        InterlockedExchange(&cooperativeGateRequireMarker,0);
+        if(!gateReady || cooperativeRequest.result!=cooperativeResult ||
+           !InterlockedCompareExchange(&cooperativeGateObservedMarker,0,0) ||
+           InterlockedCompareExchange(&cooperativeGateMarkerMessages,0,0)!=1 ||
+           lastWorkerThread!=state.proxy_thread_id)++failures;
+        if(cooperativeGateOriginalProc)
+            SetWindowLongPtrW(state.proxy_hwnd,GWLP_WNDPROC,
+                reinterpret_cast<LONG_PTR>(cooperativeGateOriginalProc));
+        if(cooperativeGateEntered)CloseHandle(cooperativeGateEntered);
+        if(cooperativeGateRelease)CloseHandle(cooperativeGateRelease);
+        if(cooperativeCallerEntered)CloseHandle(cooperativeCallerEntered);
+        cooperativeGateOriginalProc=nullptr;
+        cooperativeGateEntered=nullptr;cooperativeGateRelease=nullptr;
+
         lastWindow=nullptr;
         presentLastError=ERROR_RETRY;
         SetLastError(ERROR_ACCESS_DENIED);
@@ -581,7 +658,7 @@ int main() {
     state=quiet.State();
     if (state.factory_calls!=2 || state.factories!=1 || state.create_attempts!=4 ||
         state.created_devices!=1 || state.failed_devices!=3 || state.resets!=14 ||
-        state.presents!=4 || state.successful_presents!=3 || state.cooperative_checks!=4 || state.last_create_hresult!=S_OK ||
+        state.presents!=4 || state.successful_presents!=3 || state.cooperative_checks!=5 || state.last_create_hresult!=S_OK ||
         state.last_reset_hresult!=resetResult || state.last_present_hresult!=presentResult ||
         state.last_cooperative_hresult!=cooperativeResult || state.last_backbuffer_hresult!=S_OK ||
         state.last_actual_width!=640 || state.last_actual_height!=480 ||
