@@ -84,7 +84,7 @@ try {
     Check-Package $operatorZip ($baseMods + @('operator_catalog','operator_catalog_server'))
     $operatorArchive = [IO.Compression.ZipFile]::OpenRead($operatorZip)
     try {
-        foreach ($required in @('SDGO Mod Manager.exe','client/sdgo/mods/operator_catalog/manager.json','client/sdgo/mods/operator_catalog/operator_catalog.dll')) {
+        foreach ($required in @('SDGO Mod Manager.exe','client/sdgo/mods/operator_catalog/manager.json','client/sdgo/mods/operator_catalog/operator_catalog.dll','server/sdgo/mods/operator_catalog_server/operator_catalog_server.dll')) {
             if (-not $operatorArchive.GetEntry($required)) { throw "Operator feature package lacks $required" }
         }
         foreach ($forbidden in @('tools/assistant_modules/rewards/ui.html','frp/install_frp.ps1','rewards/tools/install_battle_rewards.py')) {
