@@ -47,7 +47,7 @@ function Check-Package([string]$zip, [string[]]$expected) {
         if ($names -match 'stale_fixture_|fixture_.*\.json') { throw 'Unregistered/undeclared payload entered the archive' }
         $reader = New-Object IO.StreamReader ($archive.GetEntry('client/sdgo/catalog.json').Open())
         try { $catalog = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
-        if (@(Compare-Object (@($catalog.mods | ForEach-Object { $_.id }) | Sort-Object) ($expected | Sort-Object)).Count) {
+        if (@(Compare-Object (@($catalog.mods | ForEach-Object { $_.id }) | Sort-Object -Unique) ($expected | Sort-Object)).Count) {
             throw 'Package catalog differs from actual payload'
         }
     } finally { $archive.Dispose() }
@@ -81,7 +81,7 @@ try {
         }
     } finally { $allMapsArchive.Dispose() }
     $operatorZip = Invoke-Package 'Full' 'operator-assistant' (Join-Path $work 'operators')
-    Check-Package $operatorZip ($baseMods + @('operator_catalog'))
+    Check-Package $operatorZip ($baseMods + @('operator_catalog','operator_catalog_server'))
     $operatorArchive = [IO.Compression.ZipFile]::OpenRead($operatorZip)
     try {
         foreach ($required in @('SDGO Mod Manager.exe','client/sdgo/mods/operator_catalog/manager.json','client/sdgo/mods/operator_catalog/operator_catalog.dll')) {
@@ -109,7 +109,7 @@ try {
         if ($rewardArchive.GetEntry('frp/install_frp.ps1')) { throw 'Reward-only package unexpectedly contains the FRP toolkit' }
     } finally { $rewardArchive.Dispose() }
     $fullZip = Invoke-Package 'Full' '' (Join-Path $work 'full')
-    Check-Package $fullZip ($baseMods + @('capsule_catalog','capsule_price_probe','match_ai','pvp_ai','battle_ai','battle_ai_server','mission_ai','mission_behavior','mission_behavior_server','coop_ai','room_random','room_random_client','all_maps','unit_catalog','unit_catalog_server','room_titles','room_titles_agent','room_titles_server','battle_rewards','daily_rewards','operator_catalog','net_probe','net_route','agent_udp_pool','shop_catalog','shop_localization','hangar_capacity','hangar_manager','storage_claim','collection_capsule','game_test_client','game_test_server','fps_limit','friend_unit_gift_client','friend_unit_gift_server','oc_custom_client','oc_custom_server','oc_custom_battle','announcements'))
+    Check-Package $fullZip ($baseMods + @('capsule_catalog','capsule_price_probe','match_ai','pvp_ai','battle_ai','battle_ai_server','mission_ai','mission_behavior','mission_behavior_server','coop_ai','room_random','room_random_client','all_maps','unit_catalog','unit_catalog_server','room_titles','room_titles_agent','room_titles_server','battle_rewards','daily_rewards','operator_catalog','operator_catalog_server','ai_catalog','net_probe','net_route','agent_udp_pool','shop_catalog','shop_localization','hangar_capacity','hangar_manager','storage_claim','collection_capsule','game_test_client','game_test_server','fps_limit','friend_unit_gift_client','friend_unit_gift_server','oc_custom_client','oc_custom_server','oc_custom_battle','announcements'))
     $dailyZip = Invoke-Package 'Full' 'daily-rewards' (Join-Path $work 'daily')
     Check-Package $dailyZip ($baseMods + @('daily_rewards'))
     $dailyFolder = Join-Path $work 'daily-unpacked'
@@ -128,6 +128,9 @@ try {
     }
     $fullArchive = [IO.Compression.ZipFile]::OpenRead($fullZip)
     try {
+        foreach ($required in @('client/sdgo/mods/ai_catalog/ai_catalog.dll','server/sdgo/mods/ai_catalog/ai_catalog.dll','server/sdgo/mods/operator_catalog_server/operator_catalog_server.dll')) {
+            if (-not $fullArchive.GetEntry($required)) { throw "Full package lacks its paired provider runtime: $required" }
+        }
         foreach ($required in @('collection/tools/collection_capsule.py','collection/owner/collection_capsule/native_catalog.py','collection/framework/support/capsule-registry/capsule_catalog.dll','collection/SHA256.json')) {
             if (-not $fullArchive.GetEntry($required)) { throw "Full package lost collection owner component: $required" }
         }
