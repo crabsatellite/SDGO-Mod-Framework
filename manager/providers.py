@@ -217,12 +217,18 @@ class Capsules(Provider):
         if method=='POST' and urlsplit(uri).path=='/api/projects/activity-draft':
             from .units import create_project_activity_draft
             return create_project_activity_draft(self,body)
+        if method=='POST' and urlsplit(uri).path=='/api/projects/activity-poster':
+            from .units import store_activity_poster
+            return store_activity_poster(self,body)
+        if method=='GET' and urlsplit(uri).path=='/api/projects/batch-units':
+            from .unit_activity import batch_units
+            return batch_units(self)
         engine = self.get_engine()
         parsed = urlsplit(uri); path = parsed.path; query = parse_qs(parsed.query)
         one = lambda name, default='': query.get(name, [default])[0]
         if method == 'POST' and path == '/api/units/import':
             from .units import sync_capsule_units
-            return sync_capsule_units(self, body.get('expected_revision'))
+            return sync_capsule_units(self, body.get('expected_revision'), body.get('unit_ids'))
         if method == 'GET':
             if path == '/api/bootstrap': return self.imported_previews(engine.bootstrap())
             if path == '/api/machine': return engine.machine(one('kind'), int(one('id')))
