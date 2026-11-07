@@ -128,6 +128,42 @@ Import writes only non-player definition tables, this module's ownership ledger 
 enabled, family metadata (root form and links) for its live pool. Balances, hangars, grants, native SQL procedures, shop
 prices and capsule odds are untouched.
 
+## Applying a batch roster to the server
+
+A roster package prepared from any source to the documented protocols is applied from the same panel.
+Its publication folder holds `server-plan.json`, `form-graph-requests.json` and the client package.
+
+1. Set **WorldServer INI** in the panel settings. The roster is applied to that server group: the WorldServer folder
+   and, in the standard `Server` layout, its sibling BattleServer, AgentServer and StoreServer folders.
+2. Under **批量阵容服务端应用** (batch roster server apply), choose the protocol package publication folder and click **只读预检** (read-only preflight). The preflight only reads. It shows the content counts, how
+   many families are new or already installed, the shared skill, funnel and affiliation rows that would be inserted,
+   updated or kept, every BattleServer and whether it has `unit_catalog_server`, the services that are still running,
+   and every family that would be refused.
+3. Stop every native service of the group yourself. Manager never stops or starts game processes.
+4. Click **停服后应用…** (apply after stopping), review the change dialog and confirm. The panel shows each stage:
+   stopped-server check, ordered family check, shared rows, families (done / total), form graphs and readback.
+5. Restart the group and check readiness in Manager's change list. Players need the matching unit client package.
+
+What the batch apply writes:
+
+- The shared skill, funnel and affiliation rows, in one transaction. An affiliation that already exists keeps its
+  name; a new one whose name the `varchar` column cannot store gets the label `Affiliation <n>` (players see the
+  client's own affiliation record).
+- Every family, through the same transaction a single confirmation uses, in dependency order: a family whose forms
+  use another family's weapon or transform into another family's form is applied after that family. A dependency
+  cycle between families is refused before anything is written. The ordered list is first checked against the live
+  catalog, so a family that would be refused stops the batch before its first write.
+- For a publication with form-graph requests: `form-graphs.bin` in each BattleServer's `unit_catalog_server` folder and
+  `sdgo/install-state/unit-form-authority.bin`, compiled from the installed rows, and `unit_catalog_server` is turned
+  on. Every BattleServer of the group needs the framework's `unit_catalog_server` first. The files they replace are
+  kept beside the change receipt under `sdgo/local-state/changes/backups/`.
+- No grants, products, prices or capsule slots. Acquisition stays with the shop and capsule panels.
+
+**读回核对** (readback) counts the installed units, weapons, names and item categories, the families recorded in the
+ownership ledger at this publication's revision, and the BattleServers that hold the graph files. Applying the same
+publication again is safe: owned rows are updated in place through the ownership ledger, so after an interruption the
+batch is simply applied again.
+
 ## Blueprints, projects and activity pools
 
 Blueprint authoring adds editable recipes with explicit recovered,
