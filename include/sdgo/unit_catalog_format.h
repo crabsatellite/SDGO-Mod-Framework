@@ -34,6 +34,10 @@ constexpr uint32_t kMaxId = 9999999;
 constexpr uint32_t kMaxRecords = 4096;
 constexpr uint32_t kMaxPayloadBytes = 64u * 1024u * 1024u;
 
+constexpr size_t kUnitNameOffset = 5;
+constexpr size_t kUnitNameBytes = 100;
+constexpr size_t kUnitGradeOffset = 308;
+constexpr size_t kUnitSubgradeOffset = 309;
 constexpr size_t kUnitModelPathOffset = 612;
 constexpr size_t kUnitModelPathBytes = 60;
 constexpr size_t kUnitPreviewPathOffsets[] = {4654, 4754, 4854};

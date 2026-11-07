@@ -19,6 +19,8 @@ Manager lists it under **修复归档** (fix archive). To switch it off while tr
 
 None.
 
+The protection also stays active when optional login-showcase fitting is unavailable. In that case the expanded showcase is disabled and the original loading selection still receives the missing-unit check.
+
 ## Logs and troubleshooting
 
 On the first loading screen the mod lists the loading sets whose unit is missing (numbers depend
@@ -37,6 +39,7 @@ startup_crash_fix: loading set <set id> picked: its unit <unit id> is missing, s
 | `... no set has a known unit; shown as the game would` | no usable replacement exists in this client's data |
 | crash when clicking login, `access violation at 008FEE6B` | mod version 1.0.0 is installed; update the framework |
 | `required symbol gate.show_set_unit ...` | unsupported client build; the mod stays off |
+| `login showcase fitting unavailable; original startup crash protection remains active` | update the framework to restore showcase support; the startup guard is already working |
 
 ## How it works
 

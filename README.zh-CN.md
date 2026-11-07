@@ -19,7 +19,7 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 功能名后的 Beta、Experimental 表示发布阶段，未标注的为 Stable：
 
 - **Stable**：基本功能可以正常使用，之后的问题通过新版本修复。Manager 更新默认只安装 Stable。
-- **Beta**：基本流程仍在开发。当前 Beta 功能包括机体族导入；在 Manager 更新中切换到 Beta 通道后安装。
+- **Beta**：基本流程仍在开发。当前 Beta 功能包括机体族导入与 OC 六维强化；在 Manager 更新中切换到 Beta 通道后安装。
 - **Experimental**：开发诊断工具。开发诊断类功能不随 Manager 更新安装。
 
 ## 基础修复
@@ -31,9 +31,9 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 | 中文输入法候选与提交修复 <!-- catalog: `ime_fix` --> | 恢复候选窗请求，按旧拼音范围提交中文，保留英文和数字前后缀 | [使用说明](docs/ime-fix.zh-CN.md) |
 | 活动扭蛋币种显示 <!-- catalog: `capsule_currency_fix` --> | 9301 号机在列表和购买确认框中显示为 99 代币 | [使用说明](docs/capsule-currency-fix.zh-CN.md) |
 | 输入法卡死修复 <!-- catalog: `findwindow_fix` --> | 防止讯飞等输入法让整合包客户端卡死或崩溃 | [使用说明](docs/findwindow-fix.zh-CN.md) |
-| 启动崩溃修复 <!-- catalog: `startup_crash_fix` --> | 修复开游戏时读取界面随机闪退 | [使用说明](docs/startup-crash-fix.zh-CN.md) |
+| 启动崩溃修复 <!-- catalog: `startup_crash_fix` --> | 修复读取界面随机闪退，可选展示缩放不可用时仍保留防护 | [使用说明](docs/startup-crash-fix.zh-CN.md) |
 | 房间窗口初始化保护 <!-- catalog: `waitroom_window_fix` --> | 修复建房成功后客户端偶尔直接退出 | [使用说明](docs/waitroom-window-fix.zh-CN.md) |
-| 原生数据与生命周期修复 <!-- catalog: `native_data_guard` --> | 修复机体数据缺失或机体管理页等待数据时的闪退，并让闪退日志记录正确现场 | [使用说明](docs/native-data-guard.zh-CN.md) |
+| 原生数据与生命周期修复 <!-- catalog: `native_data_guard` --> | 保护缺失机体数据、加载期模型材质、房间相机和机体管理延迟请求，并保留真实崩溃现场 | [使用说明](docs/native-data-guard.zh-CN.md) |
 | 场景登记生命周期修复 <!-- catalog: `scene_lifecycle_fix` --> | 修复场景对象切换区域后偶发的清理闪退 | [使用说明](docs/scene-lifecycle-fix.zh-CN.md) |
 | 多人加载同步修复 <!-- catalog: `loading_sync_fix` --> | 修复多人开局时偶发卡在加载画面（BattleServer） | [使用说明](docs/loading-sync-fix.zh-CN.md) |
 | 首次登录大厅音乐 <!-- catalog: `lobby_music_fix` --> | 恢复首次登录时的大厅音乐 | [使用说明](docs/lobby-music-fix.zh-CN.md) |
@@ -68,14 +68,14 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 | 长房名 <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 普通、AI、队伍及任务房的建房、设置和改名入口支持最长 128 字 | [使用说明](docs/room-titles.zh-CN.md) |
 | 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | Easy / Medium / Hard 三档、按实际攻击距离选择武装和形态、共享敌情和地图推进装置寻路 | [使用说明](docs/battle-ai.zh-CN.md) |
 | 自动机库容量 <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） | [使用说明](docs/hangar-capacity.zh-CN.md) |
-| 机库管理 <!-- catalog: `hangar_manager` --> | 机体管理页内一键整理和重复机体兑换（GB 服务端批量入账） | [使用说明](docs/hangar-manager.zh-CN.md) |
+| 机库管理 <!-- catalog: `hangar_manager` --> | 整理和兑换重复机体，支持导入机体；拦截跨账号删除并保留删除记录 | [使用说明](docs/hangar-manager.zh-CN.md) |
 | 副官补给、资源与能力 <!-- catalog: `operator_catalog`、`operator_catalog_server` --> | 五位免费补给副官，以及独立资源包、数值能力、掉落和商城草稿管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
 | 扭蛋机编辑器 <!-- catalog: `capsule_catalog` --> | 在 Manager 中新增、修改、下架扭蛋机，设置奖池、价格和权重，为未使用的独立活动机改号 | [使用说明](docs/capsule-catalog.zh-CN.md) |
 | 每日双倍时间 <!-- catalog: `daily_rewards` --> | 每天固定时段（默认 18:00–22:00）战斗 GB 和经验翻倍 | [使用说明](docs/daily-rewards.zh-CN.md) |
 | 保管库一键领取 <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
 | 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化商品名称、说明、选项和涂装机体预览，可用中文名称搜索并组合等级、币种筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
 | 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 右键好友（在线或离线均可），在机体管理中选机赠送，对方在保管库接受或退还；默认关闭，由服主开启 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
-| OC 六维强化 <!-- catalog: `oc_custom_client`、`oc_custom_server`、`oc_custom_battle` --> | 双系统工厂：原生标签保持原样，旁边的「终极强化」标签由客户端包内原有的 OC 布局组成（OVER CUSTOM 等级栏与 ITEM 栏、在加点六边形上画出全部六个维度、普通点与 Over 点、OVER CUSTOM 终极强化与洗点），战斗中生效 OC 推进力与机动力；与现行改造部件数据并存，切换后两套数据都保留，由服主选择战斗使用哪一套 | [使用说明](docs/over-custom.zh-CN.md) |
+| OC 六维强化（Beta） <!-- catalog: `oc_custom_client`、`oc_custom_server`、`oc_custom_battle` --> | 双系统工厂：原生标签保持原样，旁边的「终极强化」标签由客户端包内原有的 OC 布局组成（OVER CUSTOM 等级栏、显示道具 3D 模型的 ITEM 栏、在加点六边形上画出全部六个维度、普通点与 Over 点、OVER CUSTOM 终极强化与洗点），战斗中生效 OC 推进力与机动力；与现行改造部件数据并存，切换后两套数据都保留，由服主选择战斗使用哪一套 | [使用说明](docs/over-custom.zh-CN.md) |
 | 机体族导入（Beta） <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | 在 Mod Manager 导入机体包、编辑技能／浮游依赖字段、保存脚本声明，制作设计图和活动奖池，并可导入任何来源按协议做好的整套阵容（单形态、互相变形、单向变形、自变形，以及第三形态的入口形态）批量发布，再由 Mod Manager 应用到服务端，并交给商城、扭蛋机和独立活动机选用（活动海报可随时更换） | [使用说明](docs/unit-import.zh-CN.md) |
 
 <!-- /mod-category:gameplay -->

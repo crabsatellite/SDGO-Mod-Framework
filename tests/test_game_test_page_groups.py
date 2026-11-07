@@ -5,6 +5,7 @@ from tests import test_game_test as runner_tests
 
 gt=runner_tests.game_test
 HANGAR=('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel')
+HANGAR_CONFIRM=('pages.hangar.read','pages.hangar.confirm_gb')
 
 class PageGroupTests(unittest.TestCase):
     def setUp(self):
@@ -12,7 +13,7 @@ class PageGroupTests(unittest.TestCase):
         self.fixture.setUp()
         self.addCleanup(self.cleanup_fixture)
         manifest=self.fixture.stage/'client/sdgo/mods/game_test_client/mod.ini'
-        data=gt.read_ini(manifest);data['mod']['version']='0.1.8';gt.write_ini(manifest,data)
+        data=gt.read_ini(manifest);data['mod']['version']='0.1.20';gt.write_ini(manifest,data)
 
     def cleanup_fixture(self):
         try:self.fixture.tearDown()
@@ -36,6 +37,27 @@ class PageGroupTests(unittest.TestCase):
         self.assertIn('pages.storage.claim',gt.required_cases_for_plan(plan['plan']))
         self.assertIn('catalog.capsule',gt.required_cases_for_plan(plan['plan']))
 
+    def test_explicit_gb_confirmation_is_sealed_and_replaces_read_only_preview(self):
+        prepared=self.fixture.prepare(
+            'hangar-confirm-gb',
+            pages_only=True,
+            page_group='hangar',
+            hangar_confirm_gb=True,
+        )
+        plan=json.loads((prepared/'run.json').read_text())
+        self.assertEqual(
+            gt.required_cases_for_plan(plan['plan']),
+            gt.FLOW_CASES[:3]+HANGAR_CONFIRM,
+        )
+        root=self.fixture.root/'hangar-confirm-gb'
+        checked=gt.validate_metadata(root)
+        self.assertTrue(checked['plan']['hangar_confirm_gb'])
+        public=gt.read_public_plan(root/'client')
+        self.assertTrue(public['hangar_confirm_gb'])
+        cases=gt.required_cases_for_plan(public)
+        self.assertNotIn('pages.hangar.preview',cases)
+        self.assertNotIn('pages.hangar.cancel',cases)
+
     def test_group_rejects_unknown_or_mutating_scope(self):
         for options in [dict(page_group='hangar'),dict(pages_only=True,page_group='storage'),
                         dict(pages_only=True,page_group=''),dict(pages_only=True,page_group='hangar',collection_draw=True)]:
@@ -43,6 +65,13 @@ class PageGroupTests(unittest.TestCase):
                 gt.required_flow_cases('1',**options)
         with self.assertRaises(gt.GameTestError):
             gt.required_flow_cases('1',pages_only=True,page_group='hangar',shop_catalog=True)
+        for options in [
+            dict(hangar_confirm_gb=True),
+            dict(pages_only=True,hangar_confirm_gb=True),
+            dict(pages_only=True,page_group='hangar',hangar_confirm_gb=True,oc_panel=True,play_unit_uid=1),
+        ]:
+            with self.subTest(options=options),self.assertRaises(gt.GameTestError):
+                gt.required_flow_cases('1',**options)
 
     def test_metadata_cannot_change_group_after_sealing(self):
         self.fixture.prepare('tampered-group',pages_only=True,page_group='hangar')
@@ -50,6 +79,21 @@ class PageGroupTests(unittest.TestCase):
         path=root/'run.json';data=json.loads(path.read_text())
         del data['plan']['page_group'];path.write_text(json.dumps(data))
         with self.assertRaisesRegex(gt.GameTestError,'sealed page group'):
+            gt.validate_metadata(root)
+
+    def test_metadata_cannot_remove_gb_confirmation_after_sealing(self):
+        self.fixture.prepare(
+            'tampered-confirm-gb',
+            pages_only=True,
+            page_group='hangar',
+            hangar_confirm_gb=True,
+        )
+        root=self.fixture.root/'tampered-confirm-gb'
+        path=root/'client/sdgo/gametest/run.ini'
+        data=gt.read_ini(path)
+        del data['run']['hangar_confirm_gb']
+        gt.write_ini(path,data)
+        with self.assertRaises(gt.GameTestError):
             gt.validate_metadata(root)
 
     def test_native_case_list_cannot_expand_or_shrink(self):
@@ -64,5 +108,16 @@ class PageGroupTests(unittest.TestCase):
         data=gt.read_ini(manifest);data['mod']['version']='0.1.7';gt.write_ini(manifest,data)
         with self.assertRaisesRegex(gt.GameTestError,'0.1.8'):
             self.fixture.prepare('old-observer',pages_only=True,page_group='hangar')
+
+    def test_old_sdk_rejects_gb_confirmation_before_launch(self):
+        manifest=self.fixture.stage/'client/sdgo/mods/game_test_client/mod.ini'
+        data=gt.read_ini(manifest);data['mod']['version']='0.1.19';gt.write_ini(manifest,data)
+        with self.assertRaisesRegex(gt.GameTestError,'0.1.20'):
+            self.fixture.prepare(
+                'old-gb-observer',
+                pages_only=True,
+                page_group='hangar',
+                hangar_confirm_gb=True,
+            )
 
 if __name__=='__main__':unittest.main()

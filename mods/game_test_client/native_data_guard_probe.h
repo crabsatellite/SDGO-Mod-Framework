@@ -14,6 +14,10 @@ class NativeDataGuardProbe {
     using Status = int(__cdecl*)(SdgoNativeDataGuardStatusV1*);
     using StatusV3 = int(__cdecl*)(SdgoNativeDataGuardStatusV3*);
     using StatusV4 = int(__cdecl*)(SdgoNativeDataGuardStatusV4*);
+    using StatusV5 = int(__cdecl*)(SdgoNativeDataGuardStatusV5*);
+    using Material = void*(__thiscall*)(void*, int, uint8_t, uint8_t);
+    using CameraSet = void(__thiscall*)(void*, int32_t);
+    using CameraTick = void(__thiscall*)(void*);
     using Funnel = void*(__thiscall*)(void*, void*, int, int);
     using Format = void*(__thiscall*)(void*, void*, uint32_t, uint32_t, uint8_t);
     using InformationRefresh = void(__thiscall*)(void*);
@@ -34,6 +38,69 @@ class NativeDataGuardProbe {
     };
     static_assert(sizeof(CaptionControl) == 8);
     bool done_ = false;
+
+    static bool ExerciseLoading(const SdgoApi* api, SdgoMod* mod, StatusV5 status,
+                                const SdgoGameTestContextV1* context) {
+        const auto material = reinterpret_cast<Material>(
+            api->Symbol(mod, "test.native_guard_material_lookup"));
+        const auto cameraSet = reinterpret_cast<CameraSet>(
+            api->Symbol(mod, "test.native_guard_camera_set_index"));
+        const auto cameraTick = reinterpret_cast<CameraTick>(
+            api->Symbol(mod, "test.native_guard_camera_update"));
+        SdgoNativeDataGuardStatusV5 before{}; before.size = sizeof(before);
+        if (!material || !cameraSet || !cameraTick || !status(&before)) return false;
+        std::array<uint8_t, 0x180> model{};
+        const auto emptyModel = model;
+        bool valid = material(model.data(), 0, 0, 0) == nullptr &&
+                     material(model.data(), 7, 0, 1) == nullptr && model == emptyModel;
+        std::array<uint8_t, 0x70> firstMaterial{}, secondMaterial{};
+        std::array<void*, 2> slots{firstMaterial.data(), secondMaterial.data()};
+        for (size_t offset : {size_t{0x154}, size_t{0x164}}) {
+            Put(model.data(), offset, slots.data());
+            Put(model.data(), offset + 4, slots.data() + slots.size());
+            Put(model.data(), offset + 8, slots.data() + slots.size());
+        }
+        const auto readyModel = model;
+        valid = valid && material(model.data(), -1, 0, 0) == nullptr &&
+            material(model.data(), 2, 0, 0) == nullptr &&
+            material(model.data(), 9, 0, 1) == nullptr &&
+            material(model.data(), 1, 0, 0) == slots[1] &&
+            material(model.data(), 0, 0, 1) == slots[0] && model == readyModel;
+        std::array<uint8_t, 0x4444> privateSelection{};
+        Put(privateSelection.data(), 0x4440, int32_t{9});
+        const auto priorSelection = privateSelection;
+        for (int32_t index : {INT32_MIN, -1, 30, INT32_MAX}) {
+            cameraSet(privateSelection.data(), index);
+            valid = valid && privateSelection == priorSelection;
+        }
+        cameraSet(privateSelection.data(), 29);
+        auto expectedSelection = priorSelection;
+        Put(expectedSelection.data(), 0x4440, int32_t{29});
+        valid = valid && privateSelection == expectedSelection;
+        std::array<uint8_t, 0x206A> privateRoom{};
+        const auto roomBefore = privateRoom;
+        cameraTick(privateRoom.data());
+        valid = valid && privateRoom == roomBefore;
+        SdgoNativeDataGuardStatusV5 after{}; after.size = sizeof(after);
+        valid = valid && status(&after) &&
+            after.unavailable_material_slots >= before.unavailable_material_slots + 5 &&
+            after.rejected_camera_indices >= before.rejected_camera_indices + 4 &&
+            after.skipped_camera_updates >= before.skipped_camera_updates + 1;
+        context->Assert(valid,
+            "genuine native material and camera entries reject private incomplete data and recover valid inputs");
+        if (valid) context->Observe(
+            "native loading guards accepted empty/short materials and invalid camera indices without changing live game data");
+        return valid;
+    }
+
+    static bool InvokeLoading(const SdgoApi* api, SdgoMod* mod, StatusV5 status,
+                              const SdgoGameTestContextV1* context) {
+        __try { return ExerciseLoading(api, mod, status, context); }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            context->Assert(0, "loading guard probes must not enter unchecked native reads");
+            return false;
+        }
+    }
 
     static bool ExerciseBase(InformationRefresh refresh, StatusV4 status,
                              const SdgoGameTestContextV1* context) {
@@ -229,6 +296,8 @@ public:
             GetProcAddress(module, "SdgoNativeDataGuardGetStatusV3"));
         const auto statusV4 = reinterpret_cast<StatusV4>(
             GetProcAddress(module, "SdgoNativeDataGuardGetStatusV4"));
+        const auto statusV5 = reinterpret_cast<StatusV5>(
+            GetProcAddress(module, "SdgoNativeDataGuardGetStatusV5"));
         const auto baseInformation = reinterpret_cast<InformationRefresh>(
             api->Symbol(mod, "test.native_guard_base_information_refresh"));
         const auto funnel = reinterpret_cast<Funnel>(api->Symbol(mod, "test.native_guard_funnel"));
@@ -238,7 +307,8 @@ public:
         if (!status || !statusV3 || !statusV4 || !baseInformation || !funnel || !format || !information) {
             context->Assert(0, "native guard acceptance requires its observer and verified host bindings"); return false;
         }
-        done_ = InvokeBase(baseInformation, statusV4, context) &&
+        done_ = (!statusV5 || InvokeLoading(api, mod, statusV5, context)) &&
+            InvokeBase(baseInformation, statusV4, context) &&
             Invoke(funnel, format, information, status, statusV3, context);
         return done_;
     }

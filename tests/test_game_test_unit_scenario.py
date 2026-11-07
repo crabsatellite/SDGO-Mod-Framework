@@ -7,6 +7,39 @@ import test_game_test as runner_fixture
 game_test=runner_fixture.game_test
 
 class UnitScenarioTests(unittest.TestCase):
+    def test_early_navigation_is_sealed_first_page_action_with_basic_recovery_suite(self):
+        context={'pages_only':True,'play_unit_uid':17}
+        for target in ('catalog','capsule','room'):
+            with self.subTest(target=target):
+                value={'schema':1,'early_navigation':target}
+                bound=scope.bind(value,context)['unit_scenario']
+                self.assertEqual(scope.settings(bound)['EarlyNavigationTarget'],target)
+                cases=scope.cases(bound)
+                self.assertEqual(cases[:5],(
+                    'framework.bootstrap','flow.login','flow.onboarding',
+                    'pages.loading_navigation','setup.active_unit'))
+                self.assertEqual(cases[-1],'pages.unit_index.close')
+
+    def test_early_navigation_rejects_unsealed_targets_and_mixed_page_scopes(self):
+        context={'pages_only':True,'play_unit_uid':17}
+        for target in ('',0,True,'hangar','Catalog'):
+            with self.assertRaises(ValueError):
+                scope.bind({'schema':1,'early_navigation':target},context)
+        base={'schema':1,'early_navigation':'catalog'}
+        incompatible=(
+            {'portraits':True,'capture_frames':True},
+            {'collection_preview':True},
+            {'acquisition':{'kind':1,'machine_id':7,'unit_id':9}},
+            {'blueprint':{'recipe_id':301,'book_uid':45}},
+            {'native_record_lifecycle':{'ids':[198131]}},
+            {'native_id_probe':{'ids':[35000],'witness_unit_id':10003,'require_absent':True}},
+        )
+        for extra in incompatible:
+            with self.assertRaises(ValueError):
+                scope.bind(base|extra,context)
+        with self.assertRaises(ValueError):
+            scope.bind(base,context|{'page_group':'hangar'})
+
     def test_explicit_encyclopedia_target_is_sealed_separately_from_owned_unit(self):
         context={'pages_only':True,'play_unit_uid':839}
         value={'schema':1,'presentation_target':22150}
@@ -151,7 +184,9 @@ class SealedUnitScenarioTests(unittest.TestCase):
     prepare=runner_fixture.GameTestRunnerTests.prepare
     def test_historical_non_probe_capsules_keep_their_original_sealed_defaults(self):
         from unittest.mock import patch
-        previous={key:value for key,value in scope.SETTINGS.items() if not key.startswith(('NativeIdProbe','NativeRecordLifecycle'))}
+        previous={key:value for key,value in scope.SETTINGS.items()
+            if key!='EarlyNavigationTarget' and
+            not key.startswith(('NativeIdProbe','NativeRecordLifecycle'))}
         with patch.dict(scope.SETTINGS,previous,clear=True):
             run=self.prepare('historical-unit-scope',pages_only=True,play_unit_uid=17,unit_scenario={'schema':1})
         metadata=game_test.validate_metadata(run)
@@ -196,6 +231,24 @@ class SealedUnitScenarioTests(unittest.TestCase):
         self.assertEqual(observer['settings']['UnitPagesOnly'],'1')
         self.assertEqual(observer['settings']['UnitAcquisitionUnit'],'9')
         game_test.verify_hashes(meta)
+
+    def test_prepares_and_seals_each_early_navigation_target(self):
+        for target in ('catalog','capsule','room'):
+            with self.subTest(target=target):
+                run=self.prepare('early-navigation-'+target,pages_only=True,play_unit_uid=17,
+                    unit_scenario={'schema':1,'early_navigation':target})
+                meta=game_test.validate_metadata(run)
+                self.assertEqual(
+                    game_test.required_cases_for_plan(meta['plan'])[:5],
+                    ('framework.bootstrap','flow.login','flow.onboarding',
+                     'pages.loading_navigation','setup.active_unit'))
+                path=run/'client/sdgo/mods/game_test_client/mod.ini'
+                config=game_test.read_ini(path)
+                self.assertEqual(config['settings']['EarlyNavigationTarget'],target)
+                config['settings']['EarlyNavigationTarget']='off'
+                game_test.write_ini(path,config)
+                with self.assertRaises(game_test.GameTestError):
+                    game_test.validate_metadata(run)
 
     def test_activity_confirmation_binds_its_own_native_identity_and_price(self):
         target={'machine_id':7,'price':13,'currency':0}

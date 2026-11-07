@@ -2,7 +2,7 @@
   "schema_version": 1,
   "distribution": "public",
   "id": "oc_custom_server",
-  "title": "OC 六维强化 · World 服务端",
+  "title": "OC 六维强化 · World 服务端（Beta）",
   "category": "gameplay",
   "hosts": [
     "world"

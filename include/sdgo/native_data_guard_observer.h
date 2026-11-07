@@ -53,3 +53,24 @@ typedef struct SdgoNativeDataGuardStatusV4 {
     uint32_t outstanding_deferred_messages;
     uint32_t missing_base_information_records;
 } SdgoNativeDataGuardStatusV4;
+
+// Additive observer ABI for loading-time material and wait-room camera reads.
+typedef struct SdgoNativeDataGuardStatusV5 {
+    uint32_t size;
+    uint32_t version;
+    uint32_t funnel_bounds_corrected;
+    uint32_t missing_names;
+    uint32_t missing_transform_metadata;
+    uint32_t missing_information_records;
+    uint32_t preserved_exception_contexts;
+    uint32_t deferred_message_copies;
+    uint32_t deferred_message_replacements;
+    uint32_t deferred_message_copy_failures;
+    uint32_t deferred_message_completions;
+    uint32_t outstanding_deferred_messages;
+    uint32_t missing_base_information_records;
+    uint32_t unavailable_material_slots;
+    uint32_t skipped_decal_slots;
+    uint32_t rejected_camera_indices;
+    uint32_t skipped_camera_updates;
+} SdgoNativeDataGuardStatusV5;
