@@ -14,7 +14,7 @@ struct SlotAccess {
 };
 struct Context {
     uint8_t* profile=nullptr;uint8_t* room=nullptr;uint32_t local=0;unsigned source=0;
-    uint8_t* model=nullptr;SlotAccess slots;
+    uint8_t* model=nullptr;SlotAccess slots;uint8_t* manager=nullptr;
     uint32_t Owner(size_t slot) const {return model ? slots.owner(model,static_cast<int>(slot)) : Read<uint32_t>(room,kSlotBase+slot*kStride+kOwner);}
     uint8_t* Active(size_t slot) const {return model ? slots.active(model,static_cast<int>(slot)) : room+kSlotBase+slot*kStride+0x49;}
 };
@@ -35,6 +35,7 @@ class CacheSync {
     uint8_t* room_=nullptr;
     uint32_t key_=0;
     uint8_t* model_=nullptr;
+    uint8_t* manager_=nullptr;
     std::array<Pending,kSlots> pending_{};
     std::array<uint32_t,kSlots> expected_{};
     std::array<std::array<uint8_t,0x10F>,kSlots> starts_{};
@@ -47,7 +48,8 @@ class CacheSync {
     bool Deck(const Context& c) const {return c.room[5]==6 || c.room[5]==7;}
     bool SameContext(const Context& c) const {
         return c.profile && c.room && c.local && c.room==room_ &&
-            c.model==model_ && Read<uint32_t>(c.room,0)==key_;
+            c.model==model_ && c.manager==manager_ &&
+            Read<uint32_t>(c.room,0)==key_;
     }
     bool UnitMatches(size_t slot,const Pending& p) const {
         return expected_[slot] && p.unit &&
@@ -94,13 +96,16 @@ public:
     // This is only a candidate captured from a verified native packet context.
     // The caller must resolve its complete live vtable/room identity again.
     uint8_t* ObservedModel() const {return model_;}
+    uint8_t* ObservedManager() const {return manager_;}
     Result Process(const Context& c,uint16_t opcode,const uint8_t* packet) {
         Result result;result.source=c.source;
         if(!c.profile || !c.room || !c.local || !packet) {result.reason=1;return result;}
         if(Read<uint16_t>(packet,0)!=opcode) {result.reason=2;return result;}
         const uint32_t key=Read<uint32_t>(c.room,0);
-        if(c.room!=room_ || key!=key_ || c.model!=model_) {
-            room_=c.room;key_=key;model_=c.model;pending_={};expected_={};
+        if(c.room!=room_ || key!=key_ || c.model!=model_ ||
+           c.manager!=manager_) {
+            room_=c.room;key_=key;model_=c.model;manager_=c.manager;
+            pending_={};expected_={};
             starts_={};constructing_={};humans_={};invalid_={};
             awaiting_={};startSeen_=false;
         }
@@ -197,7 +202,8 @@ public:
         out.owner=Read<uint32_t>(entry,0);
         if(!out.owner || (out.owner&0x80000000u)) return out;
         if(!c.profile || !c.room || c.room!=room_ ||
-           c.model!=model_ || Read<uint32_t>(c.room,0)!=key_) {out.reason=1;return out;}
+           c.model!=model_ || c.manager!=manager_ ||
+           Read<uint32_t>(c.room,0)!=key_) {out.reason=1;return out;}
         if(Read<uint32_t>(source,kOwner)!=out.owner) {out.reason=2;return out;}
         if(deck>1 || bool(deck)!=(c.room[5]==6 || c.room[5]==7)) {out.reason=3;return out;}
         for(size_t slot=0;slot<kSlots;++slot) {

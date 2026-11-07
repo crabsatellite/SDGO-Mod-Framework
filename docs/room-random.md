@@ -84,9 +84,9 @@ builds units from a separate frozen start snapshot, so updating the visible cach
 entry, supplies a private copy of the complete record matched to this round's start entry, room and owner;
 the frozen snapshot is not modified. The 3D path resolves the room through the current 3D manager, not
 the legacy profile room pointer; mission and normal rooms store slots differently. The native human
-converter is a static four-argument function (`RET 10h`) whose `ECX` is scratch, not a room object, and a
-3D start command can advance the app state before conversion; the mod therefore uses the room model observed
-with the actual start packet and revalidates its vtable and room identity. A missing notice or a
+converter is a static four-argument function (`RET 10h`) whose `ECX` is scratch, not a room object. The
+mod revalidates the manager/model generation observed with the actual start packet, including its
+vtable, backpointer and room identity. A missing notice or a
 changed owner, room or start entry leaves the native input unchanged and is logged.
 
 Logs: server `native loadout notices queued`; client `battle start cache` and
@@ -97,9 +97,16 @@ the start notice, it completes only that human's pending construction data. A re
 later selection for one slot does not discard another player's valid start data. In the 3D room,
 the verified active room model takes precedence over a retained legacy cache pointer.
 
-In random rooms, the client also holds the native start transition until every human's complete
-unit record, and the ship record in deck modes, matches this round. It keeps a private packet
-copy and resumes the original parser once when the final matching notice arrives. Duplicate
+In random rooms, the client holds the native start transition until every human's complete
+unit record, and the ship record in deck modes, matches this round. It also waits for each human's
+native unit/ship update tasks to finish. After the genuine start is held, the local room-view request
+queued by the same loadout notice is obsolete. The Mod binds the exact live local state object,
+transfers its queued payload to the native cleanup owner, and returns control to the original scheduler,
+which retires and frees that one request normally without sending another room-view RPC. It keeps a
+private packet copy and resumes the original parser once after the waiting-room manager has processed
+the remaining queues.
+Late notices update the pending records; the packet dispatcher does not reenter the start parser.
+This uses native completion conditions rather than a fixed loading delay. Duplicate
 notices cannot start it again; changing rooms or replacing the start discards the old pending
 transition. Ordinary rooms retain the native timing.
 

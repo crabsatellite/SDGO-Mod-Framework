@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <intrin.h>
 #include <array>
 #include <cstdio>
 #include "sdgo/sdgo_api.h"
@@ -17,17 +18,26 @@ const DWORD g_defaultMxcsr=0x1F80;
 room_random_client::CacheSync g_sync;
 room_random_client::PendingStart g_pending;
 CRITICAL_SECTION g_lock;
+struct alignas(16) NativeFpState {
+    unsigned char bytes[512];
+};
 // The shipped converter is a static four-stack-argument function (RET 10h).
 // ECX is volatile scratch, not a CBaseRoomData receiver.
 using FillFn=void(__stdcall*)(uint8_t*,const uint8_t*,const uint8_t*,uint8_t);
 FillFn g_fill=nullptr;
 using BeginStartFn=void(__thiscall*)(void*,const uint8_t*);
 BeginStartFn g_beginStart=nullptr;
+room_random_client::ManagerUpdateFn g_managerUpdate=nullptr;
+room_random_client::ChangeRoomViewFn g_changeRoomView=nullptr;
 
 bool ParserMatches(void* parser,const room_random_client::Context& context) {
     if(!parser || !context.model)return false;
     auto* owner=room_random_client::Read<uint8_t*>(static_cast<uint8_t*>(parser),0x0C);
-    return owner && room_random_client::Read<uint8_t*>(owner,0x14)==context.model;
+    return owner &&
+        room_random_client::Read<uint8_t*>(owner,0x14)==context.model &&
+        (!context.manager ||
+         room_random_client::Read<uint8_t*>(
+             static_cast<uint8_t*>(parser),0x10)==context.manager);
 }
 bool RandomRoom(const room_random_client::Context& context) {
     if(!context.room)return false;
@@ -44,29 +54,25 @@ bool RandomRoom(const room_random_client::Context& context) {
 }
 struct PacketWork {
     room_random_client::Result result;
-    room_random_client::PendingCall call;
     uint16_t opcode=0;
+    const uint8_t* packet=nullptr;
 };
 PacketWork GuardedPacket(BYTE* frame) {
     PacketWork work;
     __try {
         work.opcode=static_cast<uint16_t>(room_random_client::Read<uint32_t>(frame,0x14));
+        work.packet=room_random_client::Read<const uint8_t*>(frame,0x18);
         const auto context=room_random_client::Resolve(g_bindings);
         if(g_pending.Active() &&
            (!g_pending.Revalidate(context) || !ParserMatches(g_pending.Parser(),context)))
             g_pending.Clear();
         if(work.opcode!=0x0861 && work.opcode!=0x098B && work.opcode!=0x06C3)
             return work;
-        work.result=g_sync.Process(
-            context,work.opcode,room_random_client::Read<const uint8_t*>(frame,0x18));
+        work.result=g_sync.Process(context,work.opcode,work.packet);
         // A new genuine start supersedes any older held parser generation. Its
         // own parser hook below will either forward it or retain a fresh copy.
         if(work.opcode==0x06C3) {
             g_pending.Clear();
-        } else if(g_pending.Active() &&
-                  g_sync.ReadyForStart(context,g_pending.Packet()) &&
-                  ParserMatches(g_pending.Parser(),context)) {
-            work.call=g_pending.Take(context,g_pending.Parser());
         }
         return work;
     } __except(EXCEPTION_EXECUTE_HANDLER) {
@@ -88,13 +94,6 @@ void __stdcall OnPacket(BYTE* frame) {
         g_api->Log(g_mod,result.mismatched ? SDGO_LOG_ERROR : SDGO_LOG_INFO,
             "battle start cache: %u refreshed, %u mismatch; server unit %lu, cached unit %lu",
             result.applied,result.mismatched,static_cast<unsigned long>(result.model),static_cast<unsigned long>(result.cached));
-    if(work.call) {
-        g_api->Log(g_mod,SDGO_LOG_INFO,
-            "random battle start resumed after every human loadout record became complete");
-        SetLastError(error);
-        g_beginStart(work.call.parser,work.call.packet.data());
-        return;
-    }
     SetLastError(error);
 }
 // Interior site +5 coexists with match_ai's function-entry hook: its trampoline
@@ -123,10 +122,14 @@ room_random_client::Construction GuardedConstruction(const uint8_t* source,
     __try {
         auto result=g_sync.PrepareConstruction(room_random_client::Resolve(g_bindings),source,entry,deck);
         if(result.reason==1 && g_sync.ObservedModel()) {
-            // A 3D start command can advance the app state before conversion.
-            // Revalidate the model observed by the actual start packet rather
-            // than interpreting the static converter's unrelated ECX value.
-            result=g_sync.PrepareConstruction(room_random_client::ResolveModel(g_bindings,g_sync.ObservedModel()),source,entry,deck);
+            // The static converter's ECX is not a room receiver. Revalidate
+            // the manager/model generation captured from this start packet;
+            // stale or allocator-reused objects must never authorize a copy.
+            result=g_sync.PrepareConstruction(
+                room_random_client::ResolveModel(
+                    g_bindings,g_sync.ObservedModel(),
+                    g_sync.ObservedManager()),
+                source,entry,deck);
         }
         return result;
     } __except(EXCEPTION_EXECUTE_HANDLER) {
@@ -172,7 +175,9 @@ BeginDecision GuardedBegin(void* self,const uint8_t* packet) {
         if(!context.model || !ParserMatches(self,context)) {
             g_pending.Clear();decision.reason=1;return decision;
         }
-        if(g_sync.ReadyForStart(context,packet)) {
+        if(g_sync.ReadyForStart(context,packet) &&
+           room_random_client::HumanStartTasksSettled(
+               g_bindings,context,packet)) {
             g_pending.Clear();decision.ready=true;return decision;
         }
         if(g_pending.Hold(context,self,packet)) {
@@ -190,7 +195,7 @@ void __fastcall BeginStart(void* self,void*,const uint8_t* packet) {
     LeaveCriticalSection(&g_lock);
     if(decision.held)
         g_api->Log(g_mod,SDGO_LOG_WARN,
-            "random battle start held until every human unit and ship record is complete");
+            "random battle start held until every human loadout is complete and native room tasks settle");
     else if(decision.random && decision.ready)
         g_api->Log(g_mod,SDGO_LOG_INFO,
             "random battle start already has complete human loadout records");
@@ -201,6 +206,74 @@ void __fastcall BeginStart(void* self,void*,const uint8_t* packet) {
     SetLastError(error);
     if(decision.forward)g_beginStart(self,packet);
 }
+bool GuardedChangeRoomView(uint8_t* self) {
+    __try {
+        if(!g_pending.Active())return false;
+        const auto context=room_random_client::Resolve(g_bindings);
+        if(!g_pending.Revalidate(context) ||
+           !ParserMatches(g_pending.Parser(),context))
+            return false;
+        if(room_random_client::CurrentHumanRoomViewState(
+               g_bindings,context,g_pending.Packet())!=self)
+            return false;
+        return room_random_client::PrimeRoomViewPayloadForNativeCleanup(self);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        g_pending.Clear();return false;
+    }
+}
+int __fastcall ChangeRoomView(uint8_t* self,void*) {
+    const DWORD error=GetLastError();
+    NativeFpState fp;
+    _fxsave(fp.bytes);
+    EnterCriticalSection(&g_lock);
+    const bool cancel=GuardedChangeRoomView(self);
+    LeaveCriticalSection(&g_lock);
+    if(cancel)
+        g_api->Log(g_mod,SDGO_LOG_INFO,
+            "random battle start retired one obsolete local room-view request through native state cleanup");
+    SetLastError(error);
+    _fxrstor(fp.bytes);
+    if(cancel)return 0;
+    return g_changeRoomView(self);
+}
+room_random_client::PendingCall GuardedManagerUpdate(uint8_t* self) {
+    room_random_client::PendingCall call;
+    __try {
+        const auto context=room_random_client::Resolve(g_bindings);
+        if(!g_pending.Active())return call;
+        if(!g_pending.Revalidate(context) ||
+           !ParserMatches(g_pending.Parser(),context)) {
+            g_pending.Clear();return call;
+        }
+        if(context.manager==self &&
+           g_sync.ReadyForStart(context,g_pending.Packet()) &&
+           room_random_client::HumanStartTasksSettled(
+               g_bindings,context,g_pending.Packet()))
+            call=g_pending.Take(context,g_pending.Parser());
+        return call;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        g_pending.Clear();return call;
+    }
+}
+void __fastcall ManagerUpdate(uint8_t* self,void*) {
+    g_managerUpdate(self);
+    NativeFpState fp;
+    _fxsave(fp.bytes);
+    const DWORD error=GetLastError();
+    EnterCriticalSection(&g_lock);
+    const auto call=GuardedManagerUpdate(self);
+    LeaveCriticalSection(&g_lock);
+    if(call) {
+        g_api->Log(g_mod,SDGO_LOG_INFO,
+            "random battle start resumed after every human native loadout task and obsolete local room-view cleanup completed");
+        SetLastError(error);
+        _fxrstor(fp.bytes);
+        g_beginStart(call.parser,call.packet.data());
+        return;
+    }
+    SetLastError(error);
+    _fxrstor(fp.bytes);
+}
 }
 SDGO_MOD_ENTRY {
     g_api=api;g_mod=mod;
@@ -209,8 +282,20 @@ SDGO_MOD_ENTRY {
     g_bindings.profile=reinterpret_cast<uint8_t**>(api->Symbol(mod,"room_random.client_profile"));
     g_bindings.app=reinterpret_cast<uint8_t**>(api->Symbol(mod,"room_random.client_app"));
     g_bindings.waitRoomVtable=api->Symbol(mod,"room_random.client_waitroom_vtable");
+    g_bindings.changeRoomViewVtable=
+        api->Symbol(mod,"room_random.client_change_room_view_vtable");
     g_bindings.roomInfo=reinterpret_cast<room_random_client::RoomInfoFn>(api->Symbol(mod,"room_random.client_room_info"));
-    if(!g_bindings.profile || !g_bindings.app || !g_bindings.waitRoomVtable || !g_bindings.roomInfo) return 0;
+    g_bindings.managerUpdate=reinterpret_cast<room_random_client::ManagerUpdateFn>(
+        api->Symbol(mod,"room_random.client_manager_update"));
+    g_bindings.userHasState=reinterpret_cast<room_random_client::UserHasStateFn>(
+        api->Symbol(mod,"room_random.client_user_has_state"));
+    g_bindings.changeRoomView=
+        reinterpret_cast<room_random_client::ChangeRoomViewFn>(
+            api->Symbol(mod,"room_random.client_change_room_view"));
+    if(!g_bindings.profile || !g_bindings.app || !g_bindings.waitRoomVtable ||
+       !g_bindings.changeRoomViewVtable || !g_bindings.changeRoomView ||
+       !g_bindings.roomInfo || !g_bindings.managerUpdate ||
+       !g_bindings.userHasState) return 0;
     auto bindSlots=[&](room_random_client::SlotAccess& s,const char* prefix) {
         char name[96];
         auto symbol=[&](const char* key) {sprintf_s(name,"room_random.client_%s_%s",prefix,key);return api->Symbol(mod,name);};
@@ -226,7 +311,13 @@ SDGO_MOD_ENTRY {
     if(!api->HookSite(mod,"room_random.client_dispatch",reinterpret_cast<void*>(&DispatchSite),&g_original)) return 0;
     if(!api->HookCode(mod,"room_random.client_fill_human",reinterpret_cast<void*>(&FillHuman),reinterpret_cast<void**>(&g_fill))) return 0;
     if(!api->HookCode(mod,"room_random.client_begin_start",reinterpret_cast<void*>(&BeginStart),reinterpret_cast<void**>(&g_beginStart))) return 0;
+    if(!api->HookCode(mod,"room_random.client_manager_update",
+                      reinterpret_cast<void*>(&ManagerUpdate),
+                      reinterpret_cast<void**>(&g_managerUpdate))) return 0;
+    if(!api->HookCode(mod,"room_random.client_change_room_view",
+                      reinterpret_cast<void*>(&ChangeRoomView),
+                      reinterpret_cast<void**>(&g_changeRoomView))) return 0;
     api->Log(mod,SDGO_LOG_INFO,
-        "native random starts wait for complete human loadouts, then execute the original parser exactly once");
+        "native random starts wait for complete human loadouts, retire obsolete local room-view requests through native cleanup, and execute the original parser exactly once");
     return 1;
 }

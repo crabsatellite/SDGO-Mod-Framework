@@ -1,12 +1,16 @@
 #include <windows.h>
+#include <float.h>
+#include <xmmintrin.h>
 #include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 #include "sdgo/sdgo_api.h"
 #include "../mods/room_random/loadout_sync.h"
 #include "../mods/room_random_client/cache_sync.h"
+#include "../mods/room_random_client/context.h"
 #include "room_random_native_copy.h"
 
 namespace {
@@ -17,20 +21,89 @@ std::array<uint8_t,0x4000> room{};
 std::array<uint8_t,0x4C0> app{};
 std::array<uint8_t,0x10> owner{};
 std::array<uint8_t,0x80> manager{},model{},ownerVtable{};
+std::array<uint8_t,0x20> managerVtable{};
 std::array<uint8_t,0xA0> modelVtable{};
 std::array<uint8_t,0x20> startParser{},startParserOwner{};
 std::array<uint8_t,0x4000> missionRoom{};
+std::array<std::array<uint8_t,0x20>,12> userManagers{};
+std::array<uint8_t*,12> userManagerPointers{};
+std::array<std::array<uint8_t*,0x19>,12> userStateServices{};
+std::array<std::vector<int>,12> userStates{};
+std::array<void*,11> roomViewVtable{};
 uint8_t* profilePointer=profile.data();
 uint8_t* appPointer=app.data();
 bool starting=true;
 bool threeD=false;
+bool asyncNativeQueues=false;
+bool autoAckRoomView=true;
+bool rootStartQueued=false;
+bool rootRanWithViewPending=false;
+bool managerStateProbe=false;
+bool roomViewStateProbe=false;
+int rootStateRuns=0,roomViewRuns=0,roomViewRequests=0,managerTicks=0;
+constexpr DWORD kManagerUpdateLastError=0x5A17;
+constexpr DWORD kRoomViewLastError=0x5A18;
+std::array<uint8_t,0xCD4> queuedStart{};
 std::array<std::array<uint8_t,0x48E>,12> frozen{};
 std::array<uint8_t,0x48E> lastConstruction{};
 std::array<uint8_t,0x344> lastOutput{};
 std::array<int,12> startedModels{};
 std::unique_ptr<room_random_native_test::ClientCopies> nativeCopies;
 template<class T> void Put(uint8_t* p,size_t n,T v){std::memcpy(p+n,&v,sizeof(v));}
+struct RoomViewNode {
+    RoomViewNode* next=nullptr;
+    RoomViewNode* previous=nullptr;
+    uint8_t* payload=nullptr;
+};
+struct RoomViewService {
+    alignas(16) std::array<uint8_t,0x24> object{};
+    RoomViewNode sentinel{};
+    std::array<RoomViewNode,8> nodes{};
+    std::array<std::array<uint8_t,2>,8> payloads{};
+    size_t issued=0;
+    int frees=0;
+    void Reset() {
+        object={};sentinel={};nodes={};payloads={};issued=0;frees=0;
+        sentinel.next=&sentinel;sentinel.previous=&sentinel;
+        Put<void*>(object.data(),0,roomViewVtable.data());
+        Put<int>(object.data(),4,0x0C);
+        Put<RoomViewNode*>(object.data(),0x14,&sentinel);
+    }
+    bool Enqueue(uint16_t view) {
+        if(issued>=nodes.size())return false;
+        auto& node=nodes[issued];auto& payload=payloads[issued++];
+        Put<uint16_t>(payload.data(),0,view);
+        node.payload=payload.data();node.next=&sentinel;
+        node.previous=sentinel.previous;
+        sentinel.previous->next=&node;sentinel.previous=&node;
+        Put<uint32_t>(object.data(),0x18,
+            room_random_client::Read<uint32_t>(object.data(),0x18)+1);
+        return true;
+    }
+    bool Cleanup() {
+        if(!room_random_client::Read<uint32_t>(object.data(),0x18) ||
+           sentinel.next==&sentinel)return false;
+        auto* node=sentinel.next;
+        auto* owned=room_random_client::Read<uint8_t*>(object.data(),0x20);
+        if(!owned || owned!=node->payload)return false;
+        sentinel.next=node->next;node->next->previous=&sentinel;
+        Put<uint32_t>(object.data(),0x18,
+            room_random_client::Read<uint32_t>(object.data(),0x18)-1);
+        Put<uint8_t*>(object.data(),0x20,nullptr);
+        Put<int>(object.data(),8,0);
+        ++frees;return true;
+    }
+};
+std::array<RoomViewService,12> roomViewServices{};
 void Check(bool ok,const char* name){std::printf("%s %s\n",ok?"PASS":"FAIL",name);if(!ok)++failures;}
+unsigned short ReadX87Control() {
+    unsigned short control=0;
+    __asm fnstcw control
+    return control;
+}
+void WriteX87Control(unsigned short control) {
+    __asm fldcw control
+}
 __declspec(noinline) void* __cdecl NativeFactory(int type,uint32_t modelId) {
     ++factoryCalls;return type==15 ? reinterpret_cast<void*>(static_cast<uintptr_t>(modelId)+0x1000) : nullptr;
 }
@@ -73,8 +146,12 @@ void SetTitle(const char* title) {
     room[0x79]=static_cast<uint8_t>(length);
     std::memcpy(room.data()+0x7A,title,length);
 }
-__declspec(noinline) void __fastcall FakeStartParser(void*,void*,const uint8_t* packet) {
-    ++startParserCalls;
+bool HasQueuedState(int state) {
+    for(const auto& queue:userStates)
+        if(std::find(queue.begin(),queue.end(),state)!=queue.end())return true;
+    return false;
+}
+void ExecuteQueuedStart(const uint8_t* packet) {
     if(threeD) {
         Put<uint32_t>(app.data(),0x4A0,22);
         const auto deck=room[5]==6 || room[5]==7 ? uint8_t{1} : uint8_t{0};
@@ -88,6 +165,105 @@ __declspec(noinline) void __fastcall FakeStartParser(void*,void*,const uint8_t* 
     } else {
         startedModel=static_cast<int>(room_random_client::Read<uint32_t>(room.data(),0x57C));
         NativeFactory(15,static_cast<uint32_t>(startedModel));
+    }
+}
+__declspec(noinline) void __fastcall FakeStartParser(void*,void*,const uint8_t* packet) {
+    ++startParserCalls;
+    if(asyncNativeQueues) {
+        std::memcpy(queuedStart.data(),packet,queuedStart.size());
+        rootStartQueued=true;
+        return;
+    }
+    ExecuteQueuedStart(packet);
+}
+__declspec(noinline) uint8_t __fastcall NativeUserHasState(
+    uint8_t*,void*,int slot,int state,int remove) {
+    if(slot<0 || slot>=static_cast<int>(userStates.size()))return 0;
+    auto& queue=userStates[static_cast<size_t>(slot)];
+    const auto found=std::find(queue.begin(),queue.end(),state);
+    if(found==queue.end())return 0;
+    if(remove)queue.erase(found);
+    return 1;
+}
+__declspec(noinline) int __fastcall NativeChangeRoomView(uint8_t* self,void*) {
+    const auto count=room_random_client::Read<uint32_t>(self,0x18);
+    auto* sentinel=room_random_client::Read<RoomViewNode*>(self,0x14);
+    auto* payload=(count && sentinel && sentinel->next!=sentinel) ?
+        sentinel->next->payload : nullptr;
+    Put<uint8_t*>(self,0x20,payload);
+    if(!payload) {
+        Put<int>(self,8,0);
+        return 0;
+    }
+    ++roomViewRequests;
+    Put<int>(self,8,2);
+    if(roomViewStateProbe) {
+        WriteX87Control(static_cast<unsigned short>(
+            (ReadX87Control()&~0x0C00u)|0x0800u));
+        _mm_setcsr((_mm_getcsr()&~_MM_ROUND_MASK)|_MM_ROUND_UP);
+        SetLastError(kRoomViewLastError);
+    }
+    return 2;
+}
+void EnqueueUserState(size_t slot,int state,uint16_t view=1) {
+    userStates[slot].push_back(state);
+    if(state==0x0C)
+        Check(roomViewServices[slot].Enqueue(view),
+              "fixture room-view payload queue has capacity");
+}
+void ResetUserQueues() {
+    for(size_t slot=0;slot<userStates.size();++slot) {
+        userStates[slot].clear();
+        roomViewServices[slot].Reset();
+        userStateServices[slot][0x0C]=roomViewServices[slot].object.data();
+    }
+}
+__declspec(noinline) void __fastcall NativeManagerUpdate(uint8_t*,void*) {
+    ++managerTicks;
+    // Shipped GOnline 0x00752AD0 advances the root room state before it
+    // advances one state for each per-player manager. This fixture models
+    // that ordering; it is not a native game execution.
+    if(rootStartQueued) {
+        rootRanWithViewPending=rootRanWithViewPending||HasQueuedState(0x0C);
+        rootStartQueued=false;++rootStateRuns;
+        ExecuteQueuedStart(queuedStart.data());
+    }
+    for(size_t slot=0;slot<userStates.size();++slot) {
+        auto& queue=userStates[slot];
+        if(queue.empty())continue;
+        const int state=queue.front();
+        if(state!=0x0C) {
+            queue.erase(queue.begin());
+            continue;
+        }
+        auto& service=roomViewServices[slot];
+        int result=room_random_client::Read<int>(service.object.data(),8);
+        if(result==0) {
+            Put<int>(service.object.data(),8,1);
+            result=1;
+        } else if(result==1) {
+            auto* vtable=room_random_client::Read<uint8_t*>(
+                service.object.data(),0);
+            auto process=room_random_client::Read<
+                room_random_client::ChangeRoomViewFn>(vtable,8);
+            result=process(service.object.data());
+            if(result && autoAckRoomView) {
+                Put<int>(service.object.data(),8,0);
+                result=0;
+            }
+        }
+        if(result==0) {
+            const bool cleaned=service.Cleanup();
+            Check(cleaned,"native scheduler cleanup owns one room-view payload");
+            queue.erase(queue.begin());
+            ++roomViewRuns;
+        }
+    }
+    if(managerStateProbe) {
+        WriteX87Control(static_cast<unsigned short>(
+            (ReadX87Control()&~0x0C00u)|0x0400u));
+        _mm_setcsr((_mm_getcsr()&~_MM_ROUND_MASK)|_MM_ROUND_TOWARD_ZERO);
+        SetLastError(kManagerUpdateLastError);
     }
 }
 __declspec(noinline) uint8_t* __fastcall NativeRoomInfo(uint8_t* object,void*) {
@@ -105,6 +281,15 @@ SLOT_METHODS(Mission,missionRoom,0x5C6,4)
 void __stdcall QueuedHandler(uint32_t opcode,const uint8_t* packet) {
     // Native 3D room notifications are commands. Starting prevents their cache
     // operation from completing before the start command constructs the mode.
+    if(asyncNativeQueues && (opcode==0x0861 || opcode==0x098B)) {
+        const auto slot=room_random_client::Read<uint32_t>(packet,10);
+        if(slot<userStates.size()) {
+            EnqueueUserState(slot,opcode==0x0861 ? 0x0E : 0x0F);
+            if(room_random_client::Read<uint32_t>(packet,6)==
+               room_random_client::Read<uint32_t>(profile.data(),0x138))
+                EnqueueUserState(slot,0x0C);
+        }
+    }
     if(opcode==0x0861 && !starting)
         std::memcpy(room.data()+0x57C,packet+0x12,0x99);
     if(opcode==0x06C3)
@@ -153,6 +338,10 @@ void Symbols() {
     Symbol(f,"room_random.client_app",&appPointer,"data");
     Symbol(f,"room_random.client_waitroom_vtable",ownerVtable.data(),"data");
     Symbol(f,"room_random.client_room_info",reinterpret_cast<void*>(&NativeRoomInfo),"code");
+    Symbol(f,"room_random.client_manager_update",reinterpret_cast<void*>(&NativeManagerUpdate),"code");
+    Symbol(f,"room_random.client_user_has_state",reinterpret_cast<void*>(&NativeUserHasState),"code");
+    Symbol(f,"room_random.client_change_room_view",reinterpret_cast<void*>(&NativeChangeRoomView),"code");
+    Symbol(f,"room_random.client_change_room_view_vtable",roomViewVtable.data(),"data");
     Symbol(f,"room_random.client_normal_owner",reinterpret_cast<void*>(&NormalOwner),"code");
     Symbol(f,"room_random.client_normal_unit",reinterpret_cast<void*>(&NormalUnit),"code");
     Symbol(f,"room_random.client_normal_ship",reinterpret_cast<void*>(&NormalShip),"code");
@@ -172,6 +361,14 @@ int wmain(int argc,wchar_t** argv) {
         try {nativeCopies=std::make_unique<room_random_native_test::ClientCopies>(argv[2]);}
         catch(const std::exception& e){std::printf("native fixture: %s\n",e.what());return 2;}
         std::printf("Using authenticated GOnline human-source/model/attribute instruction spans\n");
+    }
+    roomViewVtable[2]=reinterpret_cast<void*>(&NativeChangeRoomView);
+    for(size_t slot=0;slot<userManagerPointers.size();++slot) {
+        userManagerPointers[slot]=userManagers[slot].data();
+        roomViewServices[slot].Reset();
+        userStateServices[slot][0x0C]=roomViewServices[slot].object.data();
+        Put<uint8_t**>(userManagers[slot].data(),0x0C,
+                       userStateServices[slot].data());
     }
     Put<uint8_t*>(profile.data(),0xEC,room.data());Put<uint32_t>(profile.data(),0x138,1001);
     Put<uint32_t>(room.data(),0,7);room[4]=2;room[5]=8;
@@ -207,6 +404,11 @@ int wmain(int argc,wchar_t** argv) {
     Put<uint8_t*>(profile.data(),0xEC,nullptr);
     Put<uint32_t>(app.data(),0x4A0,18);Put<uint8_t*>(app.data(),0x4A4,owner.data());
     Put<uint8_t*>(owner.data(),0,ownerVtable.data());Put<uint8_t*>(owner.data(),4,manager.data());
+    Put<uint8_t*>(manager.data(),0,managerVtable.data());
+    Put<void*>(managerVtable.data(),0x10,reinterpret_cast<void*>(&NativeManagerUpdate));
+    Put<void*>(managerVtable.data(),0x1C,reinterpret_cast<void*>(&NativeUserHasState));
+    Put<int>(manager.data(),0x6C,static_cast<int>(userManagerPointers.size()));
+    Put<uint8_t**>(manager.data(),0x70,userManagerPointers.data());
     Put<uint8_t*>(manager.data(),0x38,model.data());Put<uint8_t*>(model.data(),0,modelVtable.data());
     Put<void*>(modelVtable.data(),0x1C,reinterpret_cast<void*>(&NativeRoomInfo));
     Put<void*>(modelVtable.data(),0x20,reinterpret_cast<void*>(&MissionOwner));
@@ -214,6 +416,7 @@ int wmain(int argc,wchar_t** argv) {
     Put<void*>(modelVtable.data(),0x88,reinterpret_cast<void*>(&MissionUnit));
     Put<void*>(modelVtable.data(),0x8C,reinterpret_cast<void*>(&MissionSetShip));
     Put<void*>(modelVtable.data(),0x90,reinterpret_cast<void*>(&MissionShip));
+    Put<uint8_t*>(startParser.data(),0x10,manager.data());
     Put<uint32_t>(missionRoom.data(),0x9EF,1001);Put<uint32_t>(missionRoom.data(),0x60F,15019);threeD=true;
     for(size_t i=0;i<frozen[0].size();++i)frozen[0][i]=static_cast<uint8_t>(i*13);
     Put<uint32_t>(frozen[0].data(),0x429,1001);Put<uint32_t>(frozen[0].data(),0x49,15019);
@@ -263,9 +466,164 @@ int wmain(int argc,wchar_t** argv) {
           "an invalid active 3D model cannot fall back to a stale writable legacy room");
     modelVtable=liveModelVtable;
     Put<uint8_t*>(profile.data(),0xEC,nullptr);
+    // Deterministic model of the shipped 0x00752AD0 ordering:
+    // network dispatch has already queued per-player E then C, while the root
+    // D start state runs before one per-player state on every manager tick.
+    // The disabled case represents the unguarded/0.1.13 ordering. This is a
+    // fixture proof of the race window; the native campaign proves occurrence.
+    asyncNativeQueues=true;starting=false;threeD=true;
+    ResetUserQueues();
+    rootStartQueued=false;rootRanWithViewPending=false;
+    rootStateRuns=0;roomViewRuns=0;roomViewRequests=0;managerTicks=0;
+    Put<uint32_t>(app.data(),0x4A0,18);Put<uint32_t>(room.data(),0,39);
+    room[5]=8;SetTitle("queue !rand");
+    Put<uint32_t>(room.data(),0x95C,1001);Put<uint32_t>(room.data(),0x57C,15019);
+    Put<uint32_t>(frozen[0].data(),0x429,1001);Put<uint32_t>(frozen[0].data(),0x49,15019);
+    startParserCalls=0;startParserConstructions=0;startedModel=0;
+    dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
+    dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
+    Check(userStates[0].size()==2 && userStates[0][0]==0x0E &&
+          userStates[0][1]==0x0C,
+          "fixture queues the native loadout task before its local room-view request");
+    Check(startParserCalls==(enabled?0:1),
+          "guarded random start is retained while native E/C work is pending");
+    auto tick=reinterpret_cast<room_random_client::ManagerUpdateFn>(&NativeManagerUpdate);
+    const DWORD savedError=GetLastError();
+    const unsigned int savedMxcsr=_mm_getcsr();
+    const unsigned short savedControl=ReadX87Control();
+    managerStateProbe=true;
+    tick(manager.data());
+    const DWORD observedError=GetLastError();
+    const unsigned int observedMxcsr=_mm_getcsr();
+    const unsigned short observedControl=ReadX87Control();
+    managerStateProbe=false;
+    _mm_setcsr(savedMxcsr);
+    WriteX87Control(savedControl);
+    SetLastError(savedError);
+    const bool managerStatePreserved=
+        observedError==kManagerUpdateLastError &&
+        (observedMxcsr&_MM_ROUND_MASK)==_MM_ROUND_TOWARD_ZERO &&
+        (observedControl&0x0C00u)==0x0400u;
+    if(!managerStatePreserved)
+        std::printf("manager state: error=%08lX mxcsr=%08X control=%08X\n",
+                    static_cast<unsigned long>(observedError),
+                    observedMxcsr,observedControl);
+    Check(managerStatePreserved,
+          "manager gate preserves the original update LastError and x87/SSE state");
+    Check(rootStateRuns==(enabled?0:1) &&
+          rootRanWithViewPending==(enabled?false:true),
+          "unguarded root D executes before C; guarded root D remains closed");
+    tick(manager.data());
+    Check(roomViewRuns==0 && startParserCalls==(enabled?0:1),
+          "native C first enters its process stage without releasing the held start");
+    const DWORD roomViewEntryError=0x5A19;
+    WriteX87Control(static_cast<unsigned short>(
+        (ReadX87Control()&~0x0C00u)|0x0C00u));
+    _mm_setcsr((_mm_getcsr()&~_MM_ROUND_MASK)|_MM_ROUND_DOWN);
+    SetLastError(roomViewEntryError);
+    roomViewStateProbe=true;
+    tick(manager.data());
+    roomViewStateProbe=false;
+    const DWORD roomViewObservedError=GetLastError();
+    const unsigned int roomViewObservedMxcsr=_mm_getcsr();
+    const unsigned short roomViewObservedControl=ReadX87Control();
+    _mm_setcsr(savedMxcsr);
+    WriteX87Control(savedControl);
+    SetLastError(savedError);
+    const bool roomViewStateCorrect=enabled ?
+        (roomViewObservedError==roomViewEntryError &&
+         (roomViewObservedMxcsr&_MM_ROUND_MASK)==_MM_ROUND_DOWN &&
+         (roomViewObservedControl&0x0C00u)==0x0C00u) :
+        (roomViewObservedError==kRoomViewLastError &&
+         (roomViewObservedMxcsr&_MM_ROUND_MASK)==_MM_ROUND_UP &&
+         (roomViewObservedControl&0x0C00u)==0x0800u);
+    Check(roomViewStateCorrect,
+          "cancel preserves entry state while forwarding preserves native room-view effects");
+    Check(roomViewRuns==1 &&
+          roomViewServices[0].frees==1 &&
+          roomViewRequests==(enabled?0:1) &&
+          startParserCalls==1 &&
+          rootStartQueued==(enabled?true:false),
+          "held random start retires obsolete C through one native cleanup without sending 0972");
+    tick(manager.data());
+    Check(rootStateRuns==1 &&
+          rootRanWithViewPending==(enabled?false:true),
+          "only the guarded root D executes with no pending ChangeRoomView task");
+    ResetUserQueues();
+    roomViewRuns=0;roomViewRequests=0;autoAckRoomView=false;
+    EnqueueUserState(0,0x0C,3);
+    Put<int>(roomViewServices[0].object.data(),8,1);
+    tick(manager.data());
+    Check(roomViewRequests==1 && roomViewRuns==0 &&
+          userStates[0].size()==1 &&
+          room_random_client::Read<uint8_t*>(
+              roomViewServices[0].object.data(),0x20)==
+                  roomViewServices[0].payloads[0].data(),
+          "ordinary waiting-room C forwards to the original 0972 process");
+    Check(roomViewServices[0].Cleanup(),
+          "fixture acknowledges the forwarded ordinary room-view request");
+    userStates[0].clear();autoAckRoomView=true;
+    if(enabled) {
+        // A held start may outlive more than one obsolete local C request.
+        // Each one must use the native payload cleanup exactly once, while
+        // incomplete human records continue to keep the parser closed.
+        ResetUserQueues();rootStartQueued=false;
+        roomViewRuns=0;roomViewRequests=0;startParserCalls=0;
+        Put<uint32_t>(app.data(),0x4A0,18);
+        Put<uint32_t>(room.data(),0,44);room[5]=8;SetTitle("multi !rand");
+        Put<uint32_t>(room.data(),0x95C,1001);
+        Put<uint32_t>(room.data(),0x57C,15019);
+        dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
+        Check(startParserCalls==0,
+              "missing human record holds the random start before C cleanup");
+        EnqueueUserState(0,0x0C,1);
+        EnqueueUserState(0,0x0C,2);
+        tick(manager.data());
+        tick(manager.data());
+        Check(roomViewServices[0].frees==1 &&
+              userStates[0].size()==1 && startParserCalls==0,
+              "first of multiple C requests retires one payload and cannot release an incomplete start");
+        tick(manager.data());
+        tick(manager.data());
+        Check(roomViewServices[0].frees==2 && userStates[0].empty() &&
+              roomViewRequests==0 && startParserCalls==0,
+              "multiple C requests each retire through native cleanup exactly once");
+        dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
+        tick(manager.data());
+        tick(manager.data());
+        tick(manager.data());
+        Check(roomViewServices[0].frees==3 &&
+              roomViewRequests==0 && startParserCalls==1 &&
+              rootStartQueued,
+              "complete late record releases the held parser only after E and the replacement C settle");
+        tick(manager.data());
+
+        // A state from a superseded room generation is ordinary native work.
+        // Revalidation clears the held token and forwards C unchanged.
+        ResetUserQueues();rootStartQueued=false;
+        roomViewRuns=0;roomViewRequests=0;startParserCalls=0;
+        Put<uint32_t>(app.data(),0x4A0,18);
+        Put<uint32_t>(room.data(),0,45);Put<uint32_t>(room.data(),0x57C,15019);
+        dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
+        EnqueueUserState(0,0x0C,4);
+        Put<int>(roomViewServices[0].object.data(),8,1);
+        Put<uint32_t>(room.data(),0,46);
+        autoAckRoomView=false;
+        tick(manager.data());
+        Check(roomViewRequests==1 && roomViewRuns==0 &&
+              userStates[0].size()==1 && startParserCalls==0,
+              "stale room generation passes its C request to the original process");
+        Check(roomViewServices[0].Cleanup(),
+              "fixture acknowledges the stale-generation forwarded request");
+        userStates[0].clear();autoAckRoomView=true;
+    }
+    asyncNativeQueues=false;starting=true;
+    ResetUserQueues();
+    rootStartQueued=false;
+    Put<uint32_t>(app.data(),0x4A0,18);
     // A real four-human random trace can deliver the last full record after
     // 06C3. The production parser must be held and then invoked once by the
-    // final matching native notice; tests do not synthesize another Construct.
+    // manager tick after the final matching native notice and C/E/F work.
     threeD=true;Put<uint32_t>(app.data(),0x4A0,18);
     Put<uint32_t>(room.data(),0,40);room[5]=8;
     SetTitle("1v1 !rand");
@@ -306,9 +664,12 @@ int wmain(int argc,wchar_t** argv) {
     Check(startParserCalls==(enabled?0:2),
           "a replacement 06C3 supersedes the older held parser generation");
     dispatch(dispatcher.data(),0,0,0,0x0861,lateNotices[3].data());
+    Check(startParserCalls==(enabled?0:2),
+          "the last notice cannot resume a parser from inside packet dispatch");
+    tick(manager.data());
     Check(startParserCalls==(enabled?1:2) &&
           startParserConstructions==(enabled?4:8),
-          "the latest original parser runs once when all four humans are complete");
+          "the latest original parser runs once after all four humans are complete");
     for(size_t slot=0;slot<4;++slot) {
         Check(startedModels[slot]==(enabled?static_cast<int>(14001+slot):static_cast<int>(17001+slot)),
               "resumed parser constructs every human from one coherent generation");
@@ -352,6 +713,9 @@ int wmain(int argc,wchar_t** argv) {
     Check(startParserCalls==(enabled?0:1),
           "deck start waits when the matching unit record is still late");
     dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
+    Check(startParserCalls==(enabled?0:1),
+          "late unit completion does not re-enter the parser from dispatch");
+    tick(manager.data());
     Check(startParserCalls==1 && startParserConstructions==1,
           "late unit record releases the original deck parser exactly once");
     expected=original;

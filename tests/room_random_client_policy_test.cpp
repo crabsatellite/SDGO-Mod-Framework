@@ -260,12 +260,13 @@ int main() {
     {
         std::array<uint8_t,0x5DA8> pendingProfile{};
         std::array<uint8_t,0x4000> pendingRoom{};
-        std::array<uint8_t,16> modelA{},modelB{};
+        std::array<uint8_t,16> modelA{},modelB{},managerA{},managerB{};
         Context pendingContext;
         pendingContext.profile=pendingProfile.data();
         pendingContext.room=pendingRoom.data();
         pendingContext.local=4001;
         pendingContext.model=modelA.data();
+        pendingContext.manager=managerA.data();
         Put<uint32_t>(pendingRoom.data(),0,50);
         std::array<uint8_t,kStartPacketSize> first{},replacement{};
         Put<uint16_t>(first.data(),0,0x06C3);first[100]=0x5A;
@@ -294,6 +295,12 @@ int main() {
         pendingContext.model=modelB.data();
         Check(!pending.Revalidate(pendingContext) && !pending.Active(),
               "model generation change clears a held start");
+        pendingContext.model=modelA.data();
+        pendingContext.manager=managerA.data();
+        pending.Hold(pendingContext,&parserA,replacement.data());
+        pendingContext.manager=managerB.data();
+        Check(!pending.Revalidate(pendingContext) && !pending.Active(),
+              "manager generation change clears a held start");
     }
     std::printf("%d CLIENT CACHE POLICY CHECKS, %d failures\n",checks,failures);return failures?1:0;
 }

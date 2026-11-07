@@ -24,6 +24,7 @@ class PendingStart {
     uint8_t* profile_=nullptr;
     uint8_t* room_=nullptr;
     uint8_t* model_=nullptr;
+    uint8_t* manager_=nullptr;
     uint32_t key_=0;
     uint32_t local_=0;
     std::array<uint8_t,kStartPacketSize> packet_{};
@@ -31,20 +32,22 @@ class PendingStart {
     bool Same(const Context& c,void* parser) const {
         return active_ && c.profile && c.room && c.local &&
             c.profile==profile_ && c.room==room_ && c.model==model_ &&
+            c.manager==manager_ &&
             c.local==local_ && Read<uint32_t>(c.room,0)==key_ &&
             (!parser || parser==parser_);
     }
 public:
     void Clear() {
         active_=false;parser_=nullptr;profile_=nullptr;room_=nullptr;
-        model_=nullptr;key_=0;local_=0;packet_={};
+        model_=nullptr;manager_=nullptr;key_=0;local_=0;packet_={};
     }
     bool Hold(const Context& c,void* parser,const uint8_t* packet) {
         Clear();
         if(!c.profile || !c.room || !c.local || !parser || !packet ||
            Read<uint16_t>(packet,0)!=0x06C3) return false;
         active_=true;parser_=parser;profile_=c.profile;room_=c.room;
-        model_=c.model;key_=Read<uint32_t>(c.room,0);local_=c.local;
+        model_=c.model;manager_=c.manager;
+        key_=Read<uint32_t>(c.room,0);local_=c.local;
         std::memcpy(packet_.data(),packet,packet_.size());
         return true;
     }

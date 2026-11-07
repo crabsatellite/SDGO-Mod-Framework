@@ -40,6 +40,7 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 | 异常断线登录恢复 <!-- catalog: `login_recovery`, `login_recovery_client` --> | WorldServer 清理旧会话，客户端等待超时有限重连、清理请求锁，结束后恢复原生登录输入 | [使用说明](docs/login-recovery.zh-CN.md) |
 | 阿普萨拉斯 III 变形卡死修复 <!-- catalog: `transform_input_fix` --> | 缺少变形动画时恢复原生状态退出，解除移动与攻击锁定 | [使用说明](docs/transform-input-fix.zh-CN.md) |
 | Agent 中继日志修复 <!-- catalog: `agent_relay_log_fix` --> | 修复 Agent 中继日志读取无效内存 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
+| Agent 房间视图错误转发修复 <!-- catalog: `agent_room_view_error_fix` --> | 保留完整错误回复，避免客户端越界读取错误码并弹出数据读取失败 | [使用说明](docs/agent-room-view-error-fix.zh-CN.md) |
 | 军衔回退修复 <!-- catalog: `rank_progression_fix` --> | 防止战斗结算降低已有军衔（WorldServer） | [使用说明](docs/rank-progression-fix.zh-CN.md) |
 | 好友列表修复 <!-- catalog: `friend_list_fix`、`friend_list_client_fix` --> | 保留离线好友、当前名字和军衔，恢复主页面 USER LIST 的中文菜单及原生聊天界面 | [使用说明](docs/friend-list-fix.zh-CN.md) |
 | 新账号起始资料修复 <!-- catalog: `new_account_profile` --> | 可配置的初始 GP、点券、军衔和赠送机体，替代原服的 9,999,999 / 15 级 | [使用说明](docs/new-account-profile.zh-CN.md) |
@@ -61,7 +62,7 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 | AI 机体目录（可选） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |
 | 战斗贡献奖励 <!-- catalog: `battle_rewards` --> | 按贡献发放 GB/MB，可配置人数倍率与按账号去重的聚会奖励 | [使用说明](docs/battle-rewards.zh-CN.md) |
 | 收藏扭蛋 <!-- catalog: `collection_capsule` --> | 优先补图鉴的活动机台，安装时补充图鉴获取说明；价格和次数可配置，默认每周 15 次 | [使用说明](docs/collection-capsule.zh-CN.md) |
-| 每局随机机体 <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组 | [使用说明](docs/room-random.zh-CN.md) |
+| 每局随机机体 <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组，原生出击任务收束后开局 | [使用说明](docs/room-random.zh-CN.md) |
 | 完整对战 All Map <!-- catalog: `all_maps` --> | 房间选择 All Map 时从完整原生对战地图目录抽取，任务专用图仍留在任务模式 | [使用说明](docs/all-maps.zh-CN.md) |
 | 登录机体展示 <!-- catalog: `login_showcase` --> | 按等级、全部机体、最近注册或指定名单选择登录展示，默认 SS/SR/SU | [使用](docs/login-showcase.zh-CN.md) |
 | FPS 上限 <!-- catalog: `fps_limit` --> | 提高渲染帧率上限，保留原生游戏速度 | [使用说明](docs/fps-limit.zh-CN.md) |

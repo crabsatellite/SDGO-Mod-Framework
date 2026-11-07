@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "agent_room_view_error_fix",
+  "title": "房间视图错误转发修复",
+  "category": "fixes",
+  "hosts": [
+    "agent"
+  ],
+  "description": "保留原生房间操作错误回复的完整数据，避免客户端读取被截断的数据包并弹出无关错误。",
+  "settings": [],
+  "presentation": "automatic_fix",
+  "mechanism": "仅修正 Agent 对原生 0x0880 回复的固定转发长度；目标玩家、错误码、发送标志和其他数据包保持原生行为。安装后重启 AgentServer 生效。"
+}

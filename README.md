@@ -48,6 +48,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Native login recovery <!-- catalog: `login_recovery`, `login_recovery_client` --> | WorldServer stale-session cleanup plus bounded client reconnect, pending-request cleanup and return to native login input | [Use](docs/login-recovery.md) |
 | Apsalus III transform input fix <!-- catalog: `transform_input_fix` --> | Release the native transform lock when a form has no transform animation | [Use](docs/transform-input-fix.md) |
 | Agent relay log fix <!-- catalog: `agent_relay_log_fix` --> | Fix an Agent relay log that reads invalid memory | [Use](docs/agent-relay-log-fix.md) |
+| Agent room-view error forwarding <!-- catalog: `agent_room_view_error_fix` --> | Preserve complete room-view error replies so the client reads the actual server error | [Use](docs/agent-room-view-error-fix.md) |
 | Battle rank regression fix <!-- catalog: `rank_progression_fix` --> | Stop battle settlement from lowering a pilot's rank (WorldServer) | [Use](docs/rank-progression-fix.md) |
 | Friend list fix <!-- catalog: `friend_list_fix`, `friend_list_client_fix` --> | Keep offline friends, current names and ranks; Chinese actions in the home USER LIST and the built-in messenger | [Use](docs/friend-list-fix.md) |
 | New-account starter profile <!-- catalog: `new_account_profile` --> | Configurable starting GP, cash, rank and unit gifts instead of the stock 9,999,999 / rank 15 | [Use](docs/new-account-profile.md) |
@@ -69,7 +70,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | AI mech catalog (optional) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards <!-- catalog: `battle_rewards` --> | Contribution GB/MB, configurable human multipliers and optional per-account gathering rewards | [Use](docs/battle-rewards.md) |
 | Collection capsule <!-- catalog: `collection_capsule` --> | Missing-unit activity machine with configurable price and limits, plus native encyclopedia acquisition hints; 15 per week by default | [Use](docs/collection-capsule.md) |
-| Per-round random loadouts <!-- catalog: `room_random`, `room_random_client` --> | `!rand` in a room title draws each player's unit or deck from their own hangar every round | [Use](docs/room-random.md) |
+| Per-round random loadouts <!-- catalog: `room_random`, `room_random_client` --> | `!rand` draws owned units or decks each round; native loadout tasks settle before start | [Use](docs/room-random.md) |
 | Complete PvP All Map <!-- catalog: `all_maps` --> | Make the room's All Map choice draw from the complete native PvP map catalog while keeping mission-only maps in missions | [Use](docs/all-maps.md) |
 | Login unit showcase <!-- catalog: `login_showcase` --> | Choose login models by grade, all units, recent registrations or a selected list; SS/SR/SU by default | [Use](docs/login-showcase.md) |
 | FPS cap <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed | [Use](docs/fps-limit.md) |
