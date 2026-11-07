@@ -27,9 +27,22 @@ int wmain(int argc, wchar_t** argv) {
     SetEnvironmentVariableW(L"SDGO_TEST_SQL_REGISTRY", L"Software\\SDGO\\NativeTest\\SDGOGUARDFIXTURE");
     SetEnvironmentVariableW(L"SDGO_TEST_SQL_ROOT", allowed.c_str());
     SetEnvironmentVariableW(L"SDGO_TEST_SQL_RESOURCE_DIR", (allowed / L"resources").c_str());
-    const bool invalid = argc == 4;
+    const bool relocation = argc == 4 && _wcsicmp(argv[3],L"copy-relocation")==0;
+    const bool invalid = argc == 4 && !relocation;
+    if (relocation) {
+        SetEnvironmentVariableW(L"SDGO_TEST_SQL_RELOCATE_SOURCE_DATA",outside.c_str());
+        SetEnvironmentVariableW(L"SDGO_TEST_SQL_DATA_ROOT",(allowed/L"data").c_str());
+    }
     if (invalid && _wcsicmp(argv[3], L"missing-marker") == 0)
         SetEnvironmentVariableW(L"SDGO_TEST_SQL_ROOT", (allowed / L"unmarked").c_str());
+    else if (invalid && _wcsicmp(argv[3],L"outside-relocation-data")==0) {
+        SetEnvironmentVariableW(L"SDGO_TEST_SQL_RELOCATE_SOURCE_DATA",outside.c_str());
+        SetEnvironmentVariableW(L"SDGO_TEST_SQL_DATA_ROOT",outside.c_str());
+    }
+    else if (invalid && _wcsicmp(argv[3],L"inside-relocation-source")==0) {
+        SetEnvironmentVariableW(L"SDGO_TEST_SQL_RELOCATE_SOURCE_DATA",(allowed/L"data").c_str());
+        SetEnvironmentVariableW(L"SDGO_TEST_SQL_DATA_ROOT",(allowed/L"data").c_str());
+    }
     else if (invalid)
         SetEnvironmentVariableW(L"SDGO_TEST_SQL_RESOURCE_DIR", outside.c_str());
     // Preserve an outside directory handle to test RootDirectory-relative NT opens.
@@ -50,6 +63,21 @@ int wmain(int argc, wchar_t** argv) {
         return failures ? 1 : 0;
     }
     if (initialized != ERROR_SUCCESS) { std::cerr << "Initialize failed " << initialized << "\n"; return 6; }
+    if (relocation) {
+        HANDLE alias=open(outside/L"model.mdf",GENERIC_READ|GENERIC_WRITE);
+        expect(alias!=INVALID_HANDLE_VALUE,"declared copied database alias opens destination");
+        if(alias!=INVALID_HANDLE_VALUE) {
+            wchar_t actual[32768]{};
+            const DWORD count=GetFinalPathNameByHandleW(alias,actual,32768,FILE_NAME_NORMALIZED|VOLUME_NAME_DOS);
+            expect(count>0&&count<32768&&fs::equivalent(fs::path(actual),allowed/L"data"/L"model.mdf"),
+                   "alias handle resolves only to owned destination");
+            DWORD written=0;expect(WriteFile(alias,"relocated",9,&written,nullptr)&&written==9,"alias write completes in copy");
+            CloseHandle(alias);
+        }
+        blocked(base/L"allowed-other/model.mdf",GENERIC_WRITE,"undeclared sibling remains denied during relocation");
+        blocked(allowed/L"data/shared.mdf",GENERIC_WRITE,"relocation destination hardlink remains denied");
+        return failures?1:0;
+    }
 
     HANDLE local = open(allowed / L"local.mdf", GENERIC_READ | GENERIC_WRITE);
     expect(local != INVALID_HANDLE_VALUE, "local database read/write");

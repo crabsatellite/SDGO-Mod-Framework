@@ -13,7 +13,7 @@ def main():
         root = Path(temporary).resolve()
         assert root.parent == Path.cwd().resolve() and root.name.startswith("sql-file-guard-")
         allowed, outside = root / "allowed", root / "outside"
-        for directory in (allowed / "resources", allowed / "unmarked", outside, root / "allowed-other"):
+        for directory in (allowed / "resources", allowed / "data", allowed / "unmarked", outside, root / "allowed-other"):
             directory.mkdir(parents=True, exist_ok=True)
         (allowed / "TEST-ONLY.txt").write_text("Native file guard fixture only\n")
         for path in (allowed / "local.mdf", allowed / "rename-inside.mdf", allowed / "delete-inside.mdf",
@@ -22,6 +22,8 @@ def main():
                      allowed / "resources/mssqlsystemresource.mdf", allowed / "resources/mssqlsystemresource.ldf"):
             path.write_bytes(b"original owned fixture bytes\n")
         os.link(outside / "shared-original.mdf", allowed / "shared.mdf")
+        (allowed/'data/model.mdf').write_bytes(b'copied model bytes\n')
+        os.link(outside/'shared-original.mdf',allowed/'data/shared.mdf')
         junction = subprocess.run(["cmd", "/d", "/c", "mklink", "/J", str(allowed / "junction"), str(outside)],
                                   capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
         if junction.returncode:
@@ -34,12 +36,17 @@ def main():
         print(result.stderr, end="", file=sys.stderr)
         if result.returncode:
             return result.returncode
-        for mode in ("missing-marker", "outside-resource"):
+        for mode in ("missing-marker", "outside-resource", "outside-relocation-data", "inside-relocation-source"):
             rejected = subprocess.run([str(probe), str(library), str(root), mode], capture_output=True,
                                       text=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
             if rejected.returncode:
                 print(rejected.stderr, file=sys.stderr)
                 return rejected.returncode
+        relocated=subprocess.run([str(probe),str(library),str(root),'copy-relocation'],capture_output=True,
+                                 text=True,timeout=30,creationflags=subprocess.CREATE_NO_WINDOW)
+        print(relocated.stdout,end='');print(relocated.stderr,end='',file=sys.stderr)
+        if relocated.returncode:return relocated.returncode
+        assert (allowed/'data/model.mdf').read_bytes().startswith(b'relocated')
         for path, expected in before.items():
             assert hashlib.sha256(path.read_bytes()).hexdigest() == expected, path.name
         assert not (outside / "absent.ldf").exists()

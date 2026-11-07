@@ -24,6 +24,7 @@ NtQuery original_query, original_query_full;
 NtSet original_set;
 NtDelete original_delete;
 std::wstring task_root, resource_root, volume_device, volume_drive;
+std::wstring relocation_source, relocation_data;
 thread_local bool resolving = false;
 volatile LONG denied_count = 0, redirected_count = 0;
 HANDLE audit_file = INVALID_HANDLE_VALUE;
@@ -156,6 +157,16 @@ bool check(POBJECT_ATTRIBUTES attributes, bool write, Object& target, bool map_r
         input = resource_root + L"\\" + leaf(input);
         InterlockedIncrement(&redirected_count);
     } else if (!database_file(input) && !database_source) return true;
+    else if (!relocation_source.empty()) {
+        std::wstring source_path;
+        if (!full_path(input, source_path)) return false;
+        if (inside(source_path, relocation_source)) {
+            // A copied master initially names the old test's files. Redirect
+            // declared aliases to this copy; never open the old database.
+            input = relocation_data + L"\\" + leaf(source_path);
+            InterlockedIncrement(&redirected_count);
+        }
+    }
     std::wstring path;
     if (!full_path(input, path) || !confined(path)) return false;
     target.storage = L"\\??\\" + path;
@@ -339,6 +350,14 @@ DWORD PrepareSqlFileGuard() {
     if (!environment(L"SDGO_TEST_SQL_RESOURCE_DIR", resources) ||
         !directory_path(resources, resource_root) || !inside(resource_root, task_root))
         return ERROR_BAD_ENVIRONMENT;
+    std::wstring source_data, destination_data;
+    if (environment(L"SDGO_TEST_SQL_RELOCATE_SOURCE_DATA", source_data)) {
+        if (!directory_path(source_data, relocation_source) ||
+            !environment(L"SDGO_TEST_SQL_DATA_ROOT", destination_data) ||
+            !directory_path(destination_data, relocation_data) ||
+            !inside(relocation_data, task_root) || inside(relocation_source, task_root))
+            return ERROR_BAD_ENVIRONMENT;
+    }
     volume_drive = task_root.substr(0, 2);
     wchar_t device[1024]{};
     if (!QueryDosDeviceW(volume_drive.c_str(), device, 1024)) return ERROR_BAD_ENVIRONMENT;

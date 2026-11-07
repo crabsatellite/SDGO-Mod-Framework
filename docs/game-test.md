@@ -71,6 +71,28 @@ and the observer setting before startup. After real AI movement is observed,
 the case checks 60 Hz gameplay and requires rendering above 60 FPS when selecting
 a higher cap, then continues the ordinary battle, settlement and return flow.
 
+### Whole-battle timing and AI query diagnostics
+
+Quiet PvP runs retain successful native D3D9 Present intervals in
+`sdgo/gametest/present-timings.bin`. After a complete battle, run
+`python tools/game_test_frame_times.py --run-dir <prepared-run>` to validate
+PID, sequence, QPC intervals and native battle boundaries. The report includes
+p50/p95/p99, stall counts and the no-Present tail at the closing boundary.
+Login-page cadence and window-average FPS are separate measurements.
+
+Developer setting `BattleAiPerformance=1` records passive per-unit activity;
+`LogDecisions=1` includes AI query costs. `GeometryBoundsAudit=1` executes
+original predicates for would-be shape culls and logs the first discrepancy
+immediately. Audit runs are correctness evidence and must be excluded from
+timing comparisons. Compare identical rosters, AI counts, native caps, backend
+topology and comparable host load; review activity so stopped bots cannot
+appear as a performance improvement.
+
+The optional `pvp_ai_performance_fixture` and `room_random_performance_fixture`
+targets use a fixed initial seed only in an explicit GameTest server session.
+Their DLLs are written to `performance-fixtures`, never the ordinary stage;
+do not install them in player/server delivery or Release packages.
+
 ### Reuse a local native backend
 
 `tools/game_test_backend.py serve` runs an already configured local test server
@@ -83,8 +105,16 @@ The copied SQL launcher also confines database-file operations to
 the marked test root before resuming the engine. It checks native NT file
 operations, resolved directory links and hard-link counts; registry redirection
 alone does not relocate a copied master's model, msdb or tempdb paths. Relocate
-every catalog path before normal startup. Only the two Resource database files
-are redirected to the copy's own engine directory. An invalid root or rejected
+every catalog path before normal startup. Ordinary startup redirects only the
+two Resource database files to the copy's own engine directory. Initial copy
+relocation can additionally use `start --master-only --relocate-from <marked-source-test-root>`.
+This maps declared old test DATA paths to the same filenames inside the new
+copy's DATA directory; it never opens the old database files. The source must
+be a different marked test copy, and the alias option is rejected for normal
+startup. Relocate the copied catalog, stop that owned SQL process, then start
+normally and verify every physical catalog path belongs to the new copy.
+Copy SQL data only while its source engine is stopped; reuse the resulting
+instance and existing accounts across retries. An invalid root or rejected
 file operation must be diagnosed rather than bypassed. The launcher rejects
 retired registry-only helpers. Windows cryptography providers retain their normal
 certificate-cache access. This is a database-file boundary for the SQL process,
@@ -107,7 +137,9 @@ python tools/game_test.py prepare --client-template D:\SDGO-Test\client --stage 
 python tools/game_test_backend.py serve --work D:\SDGO-Test\server --client-run build/fps-probe --stage build/stage/Release --startup-xml D:\SDGO-Test\server\ServerStartUp\ServerStartUp.xml --lifetime 1800
 ```
 
-Launch selection reads both the native startup XML and channel table. Wait for
+Launch selection reads both the native startup XML and channel table. Selected
+Store/Chat/Agent dependencies start before Battle hosts, with World last;
+ordering does not activate any unselected channel. Wait for
 each Battle's new `Table Download OK.. Time Procedure Ready..` marker and
 `backend_ready` before starting clients; an open TCP port is insufficient.
 The FPS suite needs no account. Other suites bind an existing private account

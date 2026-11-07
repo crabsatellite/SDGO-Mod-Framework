@@ -161,7 +161,11 @@ def require_file_guard(library):
         kernel.FreeLibrary(handle)
 
 
-def start(root, binaries, master_only=False):
+def start(root, binaries, master_only=False, relocate_from=None):
+    if relocate_from is not None:
+        if not master_only:raise RuntimeError('Copy aliases are allowed only for initial master-only relocation.')
+        relocate_from=test_root(str(relocate_from))
+        if relocate_from==root:raise RuntimeError('Relocation source must be a different marked test copy.')
     data = json.loads((root / 'database/native-sql.json').read_text())
     if data['root'] != str(root):
         raise RuntimeError('A copied test needs its own configure step before starting SQL.')
@@ -180,6 +184,9 @@ def start(root, binaries, master_only=False):
         SDGO_TEST_SQL_RESOURCE_DIR=str(engine / 'Binn'),
         TEMP=str(temporary), TMP=str(temporary),
     )
+    environment.pop('SDGO_TEST_SQL_RELOCATE_SOURCE_DATA',None)
+    if relocate_from is not None:
+        environment['SDGO_TEST_SQL_RELOCATE_SOURCE_DATA']=str(relocate_from/'server/LiteSQL/MSSQL/DATA')
     executable = binaries / 'sql_local.exe'
     dll = binaries / 'sql_registry.dll'
     command = [str(executable), str(dll), str(engine / 'Binn/sqlservr.exe'),
@@ -187,7 +194,10 @@ def start(root, binaries, master_only=False):
         '-l' + str(engine / 'DATA/mastlog.ldf'), '-e' + str(engine / 'Log/ERRORLOG'),
         '-T4022']
     if master_only:
-        command.append('-T3608')
+        # A copied model path can prevent tempdb startup on the first query.
+        # Minimal configuration plus master-only recovery permits catalog
+        # relocation without allowing the file guard to touch the old copy.
+        command.extend(('-f', '-T3608'))
     result = subprocess.run(command, cwd=engine / 'Binn', env=environment,
         capture_output=True, text=True, timeout=75, check=True,
         creationflags=subprocess.CREATE_NO_WINDOW)
@@ -213,8 +223,9 @@ def main():
     parser.add_argument('--port', type=int, default=61433)
     parser.add_argument('--binaries', type=Path, default=ROOT / 'build/native-sql/Release')
     parser.add_argument('--master-only', action='store_true', help='first copied-catalog relocation only; never normal gameplay')
+    parser.add_argument('--relocate-from',type=test_root,help='marked source test copy; initial master-only file aliases stay confined to the destination')
     args = parser.parse_args()
-    result = configure(args.root, args.name, args.port) if args.command == 'configure' else start(args.root, args.binaries.resolve(), args.master_only)
+    result = configure(args.root, args.name, args.port) if args.command == 'configure' else start(args.root, args.binaries.resolve(), args.master_only,args.relocate_from)
     print(json.dumps(result))
 
 
