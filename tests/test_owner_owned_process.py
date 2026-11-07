@@ -10,6 +10,22 @@ from manager.owned_process import run
 
 
 class OwnedCommandTests(unittest.TestCase):
+    def test_quiet_transfer_can_be_observed_and_cancelled_without_stderr(self):
+        stop=threading.Event();observed=[]
+        def poll():observed.append(True);stop.set()
+        with self.assertRaises(InterruptedError):
+            run([sys.executable,'-c','import time;time.sleep(30)'],cwd=Path.cwd(),env=dict(os.environ),timeout=None,stop=stop,progress=lambda _:None,poll=poll)
+        self.assertTrue(observed)
+    def test_transfer_without_deadline_streams_progress_and_remains_cancellable(self):
+        stop=threading.Event();seen=[]
+        def progress(raw):
+            if raw:seen.append(raw);stop.set()
+        timer=threading.Timer(15,stop.set);timer.start()
+        try:
+            code='import sys,time;sys.stderr.buffer.write(b"receiving chunk");sys.stderr.flush();time.sleep(30)'
+            with self.assertRaises(InterruptedError):run([sys.executable,'-c',code],cwd=Path.cwd(),env=dict(os.environ),timeout=None,stop=stop,progress=progress)
+            self.assertIn(b'receiving chunk',b''.join(seen))
+        finally:timer.cancel()
     def test_streamed_binary_output_and_stdin_survive_communicate_timeouts(self):
         with tempfile.TemporaryDirectory()as d:
             root=Path(d);output=root/'raw.blob';data=bytes(range(256))*8192

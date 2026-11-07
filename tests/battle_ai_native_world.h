@@ -53,6 +53,7 @@ inline int trackEntries=0,trackUpdates=0,swingEntries=0,rotations=0,faces=0;
 inline uint8_t* volatile lastCallbackSelf=nullptr;
 inline int swingInput=-1;
 inline int attackAdmissions=0;
+inline bool acceptOrdinaryAdmission=false;
 inline int phaseHideCalls=0,phaseUnhideCalls=0;
 inline int levelApplications=0,partApplications=0;
 inline uint32_t lastPart=0;
@@ -85,6 +86,13 @@ template<class T> inline void* Address(T method) {
     static_assert(sizeof(T)==sizeof(void*));void* result;memcpy(&result,&method,sizeof(result));return result;
 }
 struct Callbacks {
+    __declspec(noinline) bool TransformRequest() {
+        auto movement=reinterpret_cast<uint8_t*>(this);
+        Put(movement,0x2F0,*reinterpret_cast<uint32_t*>(movement+0x2F0)+1);
+        if(movement[0x2F4])return false;
+        Put(movement,8,movement+0xD4);
+        return true;
+    }
     __declspec(noinline) void PhaseHide(uint32_t) {++phaseHideCalls;}
     __declspec(noinline) void PhaseUnhide(uint32_t) {++phaseUnhideCalls;}
     __declspec(noinline) bool EffectActive(uint8_t effect) {
@@ -153,7 +161,13 @@ struct Callbacks {
         auto cache=*reinterpret_cast<Vec3*>(unit+0x3090);
         Put(node,0x6C,battle_ai::Horizontal(cache));Put(unit,0xD98,0.0f);
     }
-    __declspec(noinline) void AttackAdmission() {lastCallbackSelf=reinterpret_cast<uint8_t*>(this);++attackAdmissions;}
+    __declspec(noinline) void AttackAdmission() {
+        auto fsm=reinterpret_cast<uint8_t*>(this);
+        lastCallbackSelf=fsm;++attackAdmissions;
+        // Native range/sniper admission queues +34 only after CanAttack.
+        // A refused request leaves the neutral controller unchanged.
+        if(acceptOrdinaryAdmission)Put(fsm,8,fsm+0x34);
+    }
     __declspec(noinline) bool PlayerSpGate() {
         auto owner=*reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(this)+0xB2C);
         return *reinterpret_cast<int*>(owner+0xBC8)>29999;
@@ -505,6 +519,7 @@ inline void Symbols(FILE* f,void(*symbol)(FILE*,const char*,void*,bool)) {
     symbol(f,"npc.facing_update",Address(&Callbacks::FacingUpdate),false);
     symbol(f,"combat.attack_admission",Address(&Callbacks::AttackAdmission),false);
     symbol(f,"combat.select_weapon",Address(&Callbacks::SelectWeapon),false);
+    symbol(f,"combat.transform_request",Address(&Callbacks::TransformRequest),false);
     symbol(f,"combat.player_sp_gate",Address(&Callbacks::PlayerSpGate),false);
     SetRoomTitle(L"",true);symbol(f,"game.app",reinterpret_cast<void*>(&App),false);
     symbol(f,"npc.tracking_entry",Address(&Callbacks::TrackingEntry),false);

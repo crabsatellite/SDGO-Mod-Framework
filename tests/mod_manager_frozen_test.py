@@ -12,7 +12,9 @@ import urllib.request
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True);args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True)
+    parser.add_argument('--version',help='Expected embedded version for a versioned release')
+    args=parser.parse_args()
     repo=Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory(prefix='sdgo-manager-exe-') as temporary:
         root=Path(temporary);state=root/'state';state.mkdir();client=root/'client';client.mkdir();(client/'GOnline.exe').write_bytes(b'fixture')
@@ -43,6 +45,10 @@ def main():
                 request=urllib.request.Request(base+path,None if body is None else json.dumps(body).encode(),values)
                 with urllib.request.urlopen(request,timeout=30) as response:return json.load(response)
             info=call('/api/state');token=info['session_token']
+            if args.version:
+                update=call('/api/updates')
+                assert update['current_version']==args.version,(update['current_version'],args.version)
+                assert update['channel']==('beta' if '-beta.' in args.version else 'stable')
             with urllib.request.urlopen(base+'/',timeout=10) as response:html=response.read().decode('utf-8')
             assert '客户端更新与服主管理' in html and '玩家可以在此更新完整客户端' in html and 'owner-notice' in html
             assert 'href="/brand.svg"' in html

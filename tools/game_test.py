@@ -40,6 +40,7 @@ if str(Path(__file__).resolve().parents[1]) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools import game_test_unit_scenario as unit_scenarios
 from tools import game_test_capsule_package as capsule_packages
+from tools import game_test_operator_scenario as operator_scenarios
 SCHEMA_VERSION = 2
 OWNED_BUILD_ROOT=Path(__file__).resolve().parents[1]/'build'
 OWNED_PROCESS_EXIT_TIMEOUT = 30
@@ -81,6 +82,7 @@ SHOP_PLAN_FIELDS = (
     "shop_display_sha256",
     "shop_revision",
 )
+OPERATOR_PLAN_FIELDS = ("operator_flow", *operator_scenarios.PATH_FIELDS)
 FLOW_CASES = (
     "framework.bootstrap",
     "flow.login",
@@ -199,7 +201,7 @@ def copy_ignore(directory: str, names: list[str]) -> set[str]:
             or Path(lowered).suffix in IGNORED_SUFFIXES
             or "backup" in lowered
             or "澶囦唤" in name
-            or (parent == "sdgo" and lowered == "gametest")
+            or (parent == "sdgo" and lowered in {"gametest", "local-state"})
         ):
             ignored.add(name)
     return ignored
@@ -1660,12 +1662,18 @@ def parse_mode_sequence(value: str) -> tuple[int, ...]:
 
 
 def validate_oc_allocate(value: str | None) -> str | None:
-    """OC acceptance input: '<stat>:<points>' with stat 0..5 and 1..20 normal points."""
+    """OC acceptance input: '<stat>:<points>[,<stat>:<points>...]' with stat 0..5 and 1..20 normal points."""
     if value is None:
         return None
-    if type(value) is not str or not re.fullmatch(r'[0-5]:(?:[1-9]|1[0-9]|20)', value):
-        raise GameTestError("oc_allocate must be '<stat 0-5>:<points 1-20>'")
+    item = r'[0-5]:(?:[1-9]|1[0-9]|20)'
+    if type(value) is not str or not re.fullmatch(item + r'(?:,' + item + r'){0,5}', value):
+        raise GameTestError("oc_allocate must be '<stat 0-5>:<points 1-20>[,...]'")
     return value
+
+
+def oc_mobility_selected(oc_allocate: str | None) -> bool:
+    """The battle checks the OC speed/agility gains when speed (0) or agility (4) is allocated."""
+    return oc_allocate is not None and any(entry.split(':')[0] in ('0', '4') for entry in oc_allocate.split(','))
 
 
 def validate_play_unit_uid(value: int | None) -> int | None:
@@ -1888,14 +1896,26 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
     # The OC panel check runs last, after the settled return to the lobby.
     panel = ('oc.panel',) if (oc_allocate is not None or oc_panel) else ()
     if len(modes) == 1:
-        return prefix + FLOW_CASES[3:] + panel
+        # OC speed/agility: the battle unit exists after the AI spawn check.
+        mobility = ('oc.mobility',) if oc_mobility_selected(oc_allocate) else ()
+        return prefix + FLOW_CASES[3:6] + mobility + FLOW_CASES[6:] + panel
     return prefix + tuple(
         f"pvp.mode{mode}.{step}" for mode in modes for step in MODE_FLOW_STEPS
     ) + panel
 
 
 def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
+    operator_fields = {field for field in OPERATOR_PLAN_FIELDS if field in plan}
+    if operator_fields and operator_fields != set(OPERATOR_PLAN_FIELDS):
+        raise GameTestError("operator flow plan is missing sealed input fields")
+    if operator_fields:
+        try:
+            operator_scenarios.validate(plan["operator_flow"], plan)
+        except ValueError as error:
+            raise GameTestError(str(error)) from error
     if 'unit_scenario' in plan:
+        if operator_fields:
+            raise GameTestError("operator flow cannot be combined with a native unit scenario")
         try:return unit_scenarios.cases(unit_scenarios.validate(plan['unit_scenario'],plan))
         except ValueError as error:raise GameTestError(str(error)) from error
     shop_fields = {field for field in SHOP_PLAN_FIELDS if field in plan}
@@ -1940,7 +1960,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
             or any(type(plan[field]) is not bool or plan[field] for field in MISSION_CLAIM_FIELDS)
         ):
             raise GameTestError("mission smoke plan changes its bounded native scope")
-    return required_flow_cases(
+    required = required_flow_cases(
         plan.get("mode_sequence", "1"),
         plan.get("bootstrap_only", False),
         plan.get("battleship_only", False),
@@ -1964,6 +1984,12 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         oc_panel=plan.get('oc_panel', False),
         oc_challenge=plan.get('oc_challenge', False),
     )
+    if operator_fields:
+        try:
+            return operator_scenarios.cases(required)
+        except ValueError as error:
+            raise GameTestError(str(error)) from error
+    return required
 
 
 def metadata_suite_for_plan(plan: dict) -> str:
@@ -2331,6 +2357,9 @@ def write_job(
         run['run']['oc_challenge'] = '1'
     if 'unit_scenario_sha256' in plan:
         run['run']['unit_scenario_sha256'] = plan['unit_scenario_sha256']
+    if 'operator_flow' in plan:
+        for field, value in operator_scenarios.run_fields(plan).items():
+            run['run'][field] = value
     if 'page_group' in plan:
         run['run']['page_group'] = plan['page_group']
     if plan.get('login_recovery'):
@@ -2379,6 +2408,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 or run["required_cases"] != ",".join(FPS_CASES)
                 or "account_path" in run
                 or "ai_layout" in run
+                or any(field.startswith("operator_") for field in run)
             ):
                 raise ValueError("run contract does not describe the native FPS suite")
             host, port = run["endpoint"].rsplit(":", 1)
@@ -2429,6 +2459,17 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             login_recovery_hold_after_completion = run['login_recovery_hold_after_completion'] == '1'
             if not pages_only or page_group != 'hangar':
                 raise ValueError('login recovery requires the read-only hangar page group')
+        unknown_operator_fields = {
+            field for field in run if field.startswith("operator_")
+        } - set(operator_scenarios.RUN_FIELDS)
+        if unknown_operator_fields:
+            raise ValueError("unknown operator flow run.ini fields are forbidden")
+        operator_fields_present = {
+            field for field in operator_scenarios.RUN_FIELDS if field in run
+        }
+        if operator_fields_present and operator_fields_present != set(operator_scenarios.RUN_FIELDS):
+            raise ValueError("operator flow run.ini must contain every sealed field")
+        operator_present = bool(operator_fields_present)
         preparation_fields = (
             'bootstrap_only', 'battleship_only', 'gift_requests_only',
             'deck_only', 'pages_only', 'friends_only', 'room_titles_only', 'collection_draw', 'random_loadout', 'same_room_rematch',
@@ -2679,9 +2720,13 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 oc_panel=run.get('oc_panel') == '1',
                 oc_challenge=run.get('oc_challenge') == '1',
             )
+            if operator_present:
+                expected_cases = operator_scenarios.cases(expected_cases)
 
         unit_binding={}
         if 'unit_scenario_sha256' in run:
+            if operator_present:
+                raise ValueError("operator flow cannot be combined with a native unit scenario")
             unit_context={'pages_only':pages_only,'play_unit_uid':play_unit_uid,
                 'collection_draw':collection_draw,'bootstrap_only':bootstrap_only,
                 'friends_only':friends_only,'room_titles_only':room_titles_only,
@@ -2884,6 +2929,8 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             if run['review_footage'] != '1' or not plan.get('quiet'):
                 raise ValueError('review footage requires a quiet run')
             plan['review_footage'] = True
+        if operator_present:
+            plan.update(operator_scenarios.read(root, run, plan))
         return plan
     except (KeyError, ValueError) as error:
         raise GameTestError(f"invalid normal-flow run.ini: {error}") from error
@@ -2925,6 +2972,13 @@ def validate_private_account(root: Path, plan: dict) -> Path:
     ):
         raise GameTestError(
             "mission smoke requires a registered or explicitly imported existing account profile"
+        )
+    if (
+        "operator_flow" in plan
+        and registration_state not in MISSION_EXISTING_ACCOUNT_STATES
+    ):
+        raise GameTestError(
+            "operator flow requires a registered or explicitly imported existing account profile"
         )
     if retry_count != plan["retry_count"] or expect_first_fail != plan["expect_first_fail"]:
         raise GameTestError("private GameTest registration plan disagrees with run.ini")
@@ -3011,7 +3065,12 @@ def collect_hashes(root: Path, launcher_path: str = '') -> tuple[dict, dict]:
         if path.is_file() and path.suffix.lower() in {".dll", ".lua", ".ini", ".tsv", ".json",
                                                       ".bin", ".gdt", ".zsd", ".spr", ".txr", ".uir", ".zpk", ".zdx", ".html"}:
             bind(path, immutable)
-    for relative in (SHOP_ASSERTIONS_RELATIVE, SHOP_DISPLAY_RELATIVE):
+    for relative in (
+        SHOP_ASSERTIONS_RELATIVE,
+        SHOP_DISPLAY_RELATIVE,
+        operator_scenarios.SHOP_RELATIVE,
+        operator_scenarios.DISPLAY_RELATIVE,
+    ):
         path = root / relative
         if path.exists():
             bind(path, immutable)
@@ -3138,6 +3197,7 @@ def prepare(
     unit_scenario: dict | None = None,
     login_recovery_min_retries: int | None = None,
     login_recovery_hold_after_completion: bool = False,
+    operator_flow: dict | None = None,
     _owned_client_transfer: tuple[Path, str] | None = None,
 ) -> dict:
     client_template = client_template.resolve()
@@ -3247,6 +3307,7 @@ def prepare(
             or ai_difficulty is not None
             or ai_layout is not None
             or room_style_preview is not None
+            or operator_flow is not None
         ):
             raise GameTestError("native FPS tests cannot request an authenticated account flow")
     elif fps_mod_enabled is not True:
@@ -3268,6 +3329,8 @@ def prepare(
             raise GameTestError('--play-unit-uid requires an existing account and cannot create a test account')
         if mission_mode is not None and create_test_account:
             raise GameTestError('--mission-mode requires an existing account and cannot create a test account')
+        if operator_flow is not None and create_test_account:
+            raise GameTestError('operator flow requires a reused registered account and cannot create a test account')
         if (shop_assertions is None) != (shop_display is None):
             raise GameTestError('--shop-assertions and --shop-display must be provided together')
         if shop_assertions is not None:
@@ -3419,6 +3482,13 @@ def prepare(
                     )
                 if resolved_retry_count != 1 or resolved_expect_first_fail:
                     raise GameTestError('--mission-mode forbids registration retry behavior')
+            if operator_flow is not None:
+                if registration_state not in MISSION_EXISTING_ACCOUNT_STATES:
+                    raise GameTestError(
+                        'operator flow requires a registered or explicitly imported existing account profile'
+                    )
+                if resolved_retry_count != 1 or resolved_expect_first_fail:
+                    raise GameTestError('operator flow forbids registration retry behavior')
 
         if deck_only:
             validate_deck_profile(profile)
@@ -3511,6 +3581,13 @@ def prepare(
                 'login_recovery_hold_after_completion': login_recovery_hold_after_completion,
             })
 
+    if operator_flow is not None:
+        if unit_scenario is not None:
+            raise GameTestError('operator flow cannot be combined with a native unit scenario')
+        try:
+            plan.update(operator_scenarios.bind(operator_flow, plan))
+        except ValueError as error:
+            raise GameTestError(str(error)) from error
     if unit_scenario is not None:
         try:plan.update(unit_scenarios.bind(unit_scenario,plan))
         except ValueError as error:raise GameTestError(str(error)) from error
@@ -3602,6 +3679,15 @@ def prepare(
             )
             if installed_shop != shop_binding:
                 raise GameTestError('installed shop inputs differ from their sealed source bytes')
+        if 'operator_flow' in plan:
+            try:
+                installed_operator = operator_scenarios.install(client, plan, atomic_write)
+            except ValueError as error:
+                raise GameTestError(str(error)) from error
+            if installed_operator != {
+                field: plan[field] for field in OPERATOR_PLAN_FIELDS
+            }:
+                raise GameTestError('installed operator inputs differ from their sealed plan')
         recording = configure_sfx_only(client) if sfx_only else None
         if quiet:configure_muted_audio(client,review_footage=review_footage)
         if fps_only:configure_fps_test(client, fps_cap)
@@ -3738,10 +3824,14 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
     previous_pid=(previous.get('execution') or {}).get('game_pid')
     for row in process_snapshot():
         value=row.get('image_path')
-        # A finished client's PID can be reused by an unrelated process whose
-        # image path is unreadable; only the same executable name keeps the hold.
-        if (value and is_relative_to(Path(value).resolve(),run_dir)) or (
-                row['pid']==previous_pid and not value and str(row.get('name','')).casefold()==image.name.casefold()):
+        # Windows can recycle a completed game's PID into a protected system
+        # process whose full path cannot be queried. Toolhelp still supplies
+        # its native image name. A different name proves this is not our game;
+        # an unknown name or a matching game name remains fail-closed.
+        name=row.get('name')
+        ambiguous_previous=(row['pid']==previous_pid and not value and
+                            (not name or name.casefold()==image.name.casefold()))
+        if (value and is_relative_to(Path(value).resolve(),run_dir)) or ambiguous_previous:
             raise GameTestError('the owned client may still be running; reuse made no changes')
     account_lock_path=None;target_account_lock_path=None;account_rebound=False
     if fps_only:
@@ -3863,6 +3953,23 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
     for field in ('unit_scenario','unit_scenario_sha256'):
         if (field in plan)!=(field in public_plan) or plan.get(field)!=public_plan.get(field):
             raise GameTestError('run.json cannot change the sealed native unit scenario')
+    unknown_operator_fields = {
+        field for field in plan if field.startswith("operator_")
+    } - set(OPERATOR_PLAN_FIELDS)
+    if unknown_operator_fields:
+        raise GameTestError("run.json contains unknown operator flow fields")
+    for field in OPERATOR_PLAN_FIELDS:
+        if (
+            (field in plan) != (field in public_plan)
+            or (
+                field in public_plan
+                and (
+                    type(plan[field]) is not type(public_plan[field])
+                    or plan[field] != public_plan[field]
+                )
+            )
+        ):
+            raise GameTestError("run.json cannot change the sealed operator flow")
     if public_run.get("id") != run_id:
         raise GameTestError("run.json run_id disagrees with run.ini")
     fps_only = "fps_cap" in public_plan
@@ -3988,6 +4095,19 @@ def verify_hashes(metadata: dict, *, for_reuse: bool = False) -> None:
             if hashes.get(relative) != expected:
                 raise GameTestError(
                     f"immutable payload map does not bind sealed shop input: {relative}"
+                )
+    operator_fields = {field for field in OPERATOR_PLAN_FIELDS if field in plan}
+    if operator_fields and operator_fields != set(OPERATOR_PLAN_FIELDS):
+        raise GameTestError("operator flow plan is missing sealed input fields")
+    if operator_fields:
+        required_operator_hashes = {
+            operator_scenarios.SHOP_RELATIVE.as_posix(): plan["operator_shop_sha256"],
+            operator_scenarios.DISPLAY_RELATIVE.as_posix(): plan["operator_shop_display_sha256"],
+        }
+        for relative, expected in required_operator_hashes.items():
+            if hashes.get(relative) != expected:
+                raise GameTestError(
+                    f"immutable payload map does not bind sealed operator input: {relative}"
                 )
     for relative, expected in hashes.items():
         if not isinstance(relative, str) or not relative:
@@ -5007,6 +5127,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                                 help='read-only StockAssertions INI copied into a pages-only GameTest capsule')
     prepare_parser.add_argument('--shop-display',type=Path,
                                 help='matching read-only runtime display INI copied into a pages-only GameTest capsule')
+    prepare_parser.add_argument(
+        '--operator-flow',
+        type=Path,
+        help='sealed JSON for one imported-operator owner-catalog preview and explicitly authorized purchase',
+    )
     prepare_parser.add_argument('--random-loadout',action='store_true',help='use the native !rand room command with the actually owned inventory in the PvP scenario')
     prepare_parser.add_argument('--network-policy',choices=('direct','preserve',ROUTED_LOOPBACK_POLICY),default='direct',
                                 help='direct disables inherited routes; routed_loopback installs a sealed 127/8 profile in the copy; preserve tests owner routes')
@@ -5073,6 +5198,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "prepare":
             preparation = reuse_prepared if args.reuse_client else prepare
+            operator_flow = None
+            if args.operator_flow is not None:
+                try:
+                    operator_flow = operator_scenarios.load(args.operator_flow)
+                except ValueError as error:
+                    raise GameTestError(str(error)) from error
             result = preparation(
                 args.client_template,
                 args.stage,
@@ -5116,6 +5247,7 @@ def main(argv: list[str] | None = None) -> int:
                 collection_draw=args.collection_draw,
                 shop_assertions=args.shop_assertions,
                 shop_display=args.shop_display,
+                operator_flow=operator_flow,
                 random_loadout=args.random_loadout,
                 network_policy=args.network_policy,
                 route_profile=args.route_profile,

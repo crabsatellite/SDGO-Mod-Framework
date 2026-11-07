@@ -57,6 +57,20 @@ python tools/game_test_fps.py --client-template D:\Games\SDGO --stage build/stag
 不使用 Docker，也不在每次重试时复制或还原数据库。后端的 `backend.json`、`private.json`
 和实际 SQL 文件必须绑定同一测试副本；启动前会核对存活的 SQL 进程及数据文件路径。
 
+复制的 SQL 启动器还会在恢复引擎执行前，限制数据库文件操作只能落在
+带标记的测试根目录。检查覆盖原生 NT 文件操作、目录链接的实际目标和硬链接数量。
+仅重定向注册表不会迁移复制的 master 中保存的 model、msdb、tempdb 路径；正常启动前
+必须迁移所有目录项。只有两个 Resource 数据库文件会重定向到副本自己的引擎目录。
+根目录无效或文件访问被拒绝时应定位原因，不应绕过检查。
+启动器会拒绝旧的仅注册表重定向 helper。Windows 加密提供程序保留正常的证书缓存访问。
+这是 SQL 进程内的数据库文件边界，不是通用文件系统沙箱，也不覆盖其子程序；
+测试副本应由本任务独占，运行中不修改目录链接，不通过 SQL 执行外壳命令。
+数据库读取检查覆盖原生 `.mdf`、`.ndf`、`.ldf` 文件名；启动后仍须核对真实目录项和打开文件路径。
+
+单独构建 x64 helper：`cmake -S tools/native_sql -B build/native-sql -G "Visual Studio 17 2022" -A x64`，再构建 Release，并运行
+`ctest --test-dir build/native-sql -C Release --output-on-failure` 验证真实文件 I/O 隔离。
+Python 启动器会自动提供测试根目录、Resource 目录和任务内临时目录。
+
 server stage 须构建 `winmm_shim`、`sdgo_core`、`sdgo_data`、`pvp_ai` 和 `game_test_server`。
 以下示例假设测试副本已经使用 `127.93.0.1`，私有数据库配置也已就绪：
 
@@ -121,6 +135,8 @@ python tools/game_test.py run --run-dir build/gametest/pvp --timeout 3600
 在确认进程已停止、文件完整后复用现有客户端，每轮生成新的运行 ID。
 上一轮回执与二进制哈希集中保存，旧任务及重复文件进入回收站；不会再复制整套客户端。
 被其他任务引用的只读归档基线不能作为复用目标。同一账号禁止并发运行。
+Windows 上若上一局 PID 的完整映像路径不可读，会结合系统提供的原生程序名判断 PID 是否已被其他程序重用。
+确认是不同程序时可继续复用；身份不明或仍与游戏同名时，继续拒绝修改客户端。
 需要换用另一个已有测试账号时，在 `--reuse-client` 后同时指定
 `--rebind-existing-account --account-profile <已有账号配置>`。客户端必须已停止；目标配置须声明
 `registered` 或 `existing_account`，且不使用注册重试。框架同时锁定旧、新账号配置，保留两份配置，

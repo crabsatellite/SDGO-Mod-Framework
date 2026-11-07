@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 import uuid
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +21,8 @@ from owner.rewards.deployment import (
     DeploymentError,
     apply_plan,
     build_plan,
+    database_sections,
+    _connect_game,
     pe_host_key,
     sha256_file,
 )
@@ -30,6 +33,39 @@ TIMESTAMP = 0x548A891D
 IMAGE_SIZE = 0x0046C000
 HOST_KEY = "BattleServer-548A891D-0046C000"
 WALLET_SCOPE = uuid.UUID("12345678-1234-4abc-8def-123456789abc")
+
+
+class NativeIniSectionTests(unittest.TestCase):
+    def test_native_credential_key_spellings_do_not_block_section_discovery(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = server_ini(Path(temporary) / "WorldServer.ini")
+            original = path.read_text(encoding="utf-8")
+            path.write_text(original.replace("ID=test", "id=test\nID=test")
+                            .replace("PWD=not-used", "pwd=not-used\nPWD=not-used"),
+                            encoding="utf-8")
+            before = path.read_bytes()
+            self.assertEqual(database_sections(path), ("DB Game", "DB StoreBilling"))
+            from owner.rewards.boss_catalog import connect_game
+            for connector in (_connect_game, connect_game):
+                connection = mock.Mock()
+                driver = mock.Mock()
+                driver.drivers.return_value = ["SQL Server fixture"]
+                driver.connect.return_value = connection
+                with self.subTest(connector=connector.__name__), mock.patch.dict(
+                        sys.modules, {"pyodbc": driver}):
+                    self.assertIs(connector(path), connection)
+                    text = driver.connect.call_args.args[0]
+                    self.assertIn("UID={test};PWD={not-used};", text)
+                    self.assertEqual(connection.timeout, 15)
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_exact_duplicate_keys_still_reject_ambiguous_ini(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = server_ini(Path(temporary) / "WorldServer.ini")
+            path.write_text(path.read_text(encoding="utf-8").replace(
+                "ID=test", "ID=test\nID=other"), encoding="utf-8")
+            with self.assertRaises(DeploymentError):
+                database_sections(path)
 
 
 def write(path: Path, data: bytes | str) -> Path:

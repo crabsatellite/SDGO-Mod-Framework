@@ -5,6 +5,7 @@ local calls={}
 UNIT_MOVE_DIR_FORWARD=1;UNIT_MOVE_DIR_LEFT=3;UNIT_MOVE_DIR_RIGHT=4;UNIT_MOVE_DIR_BACKWARD=2
 UNIT_MOVE_EVENT_MOVE=2;UNIT_MOVE_EVENT_DASH=3
 function SDGO_BattleAI_Now() return now end
+function SDGO_BattleAI_RequestTransform() calls.transforms=(calls.transforms or 0)+1; if calls.transformQueued~=nil then return calls.transformQueued end; return 1 end
 function SDGO_BattleAI_Authority() return 1 end
 function SDGO_BattleAI_Generation() return generation end
 function SDGO_BattleAI_Observe() return observation end
@@ -1257,6 +1258,113 @@ Reset();observation.targets={};observation.moving=1;Tick(0)
 Check(calls.routes==0 and calls.explores==nil and calls.moves==0 and
       calls.stop==1 and calls.fire==false,
       'no opponent and no native objective stops movement and remains idle')
+Reset({Difficulty=1});observation.targets={Target(1,5000,1000)}
+observation.weapons[2].movingShot=0;observation.movementState=72
+observation.movementPending=0;observation.moving=1;observation.routeActive=1;Tick(0)
+Check(not calls.stop and not calls.routeStops and calls.fire==true,
+      'a ready stationary gun retains native boost startup instead of chaining it immediately into boost end')
+Tick(400);observation.movementState=92;Tick(500)
+Check(not calls.stop and SDGO_BattleAI_Universal.states[20].stationaryBoostAnchor,
+      'a steady boost without its first physical step retains the existing motor rather than inventing progress')
+observation.pos={x=5,y=0,z=0};Tick(516)
+Check(calls.stop and calls.fire==true and not SDGO_BattleAI_Universal.states[20].stationaryBoostAnchor,
+      'the first actual boost step hands a stationary gun back to ordinary braking and fire')
+Reset();observation.targets={Target(1,5000,1000)};observation.weapons[2].movingShot=0
+observation.movementState=32;observation.movementPending=72;observation.moving=1;Tick(0)
+Check(not calls.stop and calls.fire==true,
+      'a queued boost start is preserved before its native Entry consumes the existing movement input')
+Reset();observation.targets={Target(1,5000,1000)};observation.weapons[2].movingShot=0
+observation.movementState=112;observation.moving=1;Tick(0)
+Check(calls.stop and not SDGO_BattleAI_Universal.states[20].stationaryBoostAnchor,
+      'native boost end keeps its normal stop path without an idle exemption')
+Reset();observation.targets={};observation.movementState=72;observation.moving=1;Tick(0)
+Check(calls.stop and calls.fire==false,'no remaining opponent still permits standby during boost startup')
+for _,kind in ipairs({'hitscan','opaque'}) do
+  Reset({Difficulty=1});observation.targets={Target(1,5000,1000)}
+  local weapon=Weapon(2,kind,2400,500,300);weapon.ordinary=1;weapon.movingShot=1
+  observation.weapons={weapon};observation.selectedSlot=2
+  observation.movementState=72;observation.movementPending=0
+  observation.moving=1;observation.routeActive=1;Tick(0)
+  Check(calls.moves==0 and calls.routes==0 and not calls.stop and calls.fire==true,
+        'a mobile '..kind..' gun preserves admitted boost startup before choosing another strafe')
+  Tick(400);observation.movementState=92;Tick(500)
+  Check(calls.moves==0 and SDGO_BattleAI_Universal.states[20].stationaryBoostAnchor,
+        'a mobile '..kind..' gun waits for a physical boost step without crediting animation as movement')
+  observation.pos={x=5,y=0,z=0};Tick(516)
+  Check(calls.fire==true and not SDGO_BattleAI_Universal.states[20].stationaryBoostAnchor,
+        'a mobile '..kind..' gun resumes ordinary moving-fire decisions after its first boost step')
+end
+local function RangedOther()
+  return {unitId=999998,allowed=1,weapons={Weapon(0,'hitscan',2400,500,300)}}
+end
+for _,difficulty in ipairs({1,2}) do
+  Reset({Difficulty=difficulty});observation.targets={Target(1,5000,1000)}
+  observation.weapons={Weapon(0,'melee',250,1200,600)};observation.selectedSlot=0
+  observation.otherForm=RangedOther();Tick(0)
+  Check(calls.transforms==1 and calls.fire==nil,
+        'a distant opponent makes a melee-only form request its native ranged form')
+  observation.transforming=1;observation.weapons=nil;observation.targets=nil
+  local stops=calls.stop or 0;local cancelled=calls.cancelled or 0
+  Tick(20)
+  Check((calls.stop or 0)==stops and (calls.cancelled or 0)==cancelled and calls.fire==nil,
+        'native transformation handoff tolerates an incomplete weapon sample without stopping either controller')
+  observation.transforming=0;observation.unitId=999998;observation.alternate=1
+  observation.formRevision=1;observation.weapons=RangedOther().weapons
+  observation.targets={Target(1,5000,1000)};Tick(100)
+  Check(calls.fire==true and calls.aim==1 and calls.switch~=1,
+        'the committed ranged-only form immediately fires its actual slot instead of retaining the old knife role')
+  observation.otherForm={unitId=999999,allowed=1,weapons={Weapon(0,'melee',250,5000,100)}}
+  observation.targets[1].distance=100;Tick(200)
+  Check(calls.transforms==1,'a new form has a bounded dwell instead of oscillating on the next decision')
+end
+Reset();observation.targets={Target(1,5000,1000)}
+for _,w in pairs(observation.weapons) do w.ammoReady=0;w.ready=0 end
+observation.otherForm=RangedOther();Tick(0)
+Check(calls.transforms==1,'empty current-form weapons select another form with real ammunition')
+Reset();observation.targets={Target(1,5000,1000)}
+observation.weapons[2].ammoReady=0;observation.weapons[2].ready=0
+observation.otherForm=RangedOther();Tick(0)
+Check(calls.transforms==1,'an empty rifle selects a loaded ranged form even while an unlimited knife remains usable')
+Reset();observation.targets={Target(1,5000,1000)}
+observation.weapons={Weapon(0,'melee',250,1200,600)};observation.selectedSlot=0
+observation.otherForm=RangedOther();observation.otherForm.weapons[1].ammoReady=0
+Tick(0)
+Check(not calls.transforms and calls.routes>0,'an empty other form does not replace a usable current melee weapon')
+Reset();observation.targets={Target(1,5000,100)}
+observation.weapons={Weapon(0,'hitscan',2000,300,500)};observation.selectedSlot=0
+observation.otherForm={unitId=999998,allowed=1,weapons={Weapon(0,'melee',250,1500,300)}};Tick(0)
+Check(calls.transforms==1,'a close engagement can select a substantially stronger ready melee form')
+Reset();observation.targets={Target(1,100,100)}
+observation.otherForm={unitId=999998,allowed=1,weapons={Weapon(0,'melee',250,5000,100)}};Tick(0)
+Check(not calls.transforms and calls.fire==true,'an available lethal current weapon finishes its target without a needless transformation')
+Reset({AutoTransform=0});observation.targets={Target(1,5000,1000)}
+observation.weapons={Weapon(0,'melee',250,1200,600)};observation.otherForm=RangedOther();Tick(0)
+Check(not calls.transforms,'the Manager automatic-transformation setting is respected')
+for _,blocked in ipairs({'hurt','meleeBusy','rangedBusy','specialBusy','forcedMoving','transportMotorReserved'}) do
+  Reset();observation.targets={Target(1,5000,1000)}
+  observation.weapons={Weapon(0,'melee',250,1200,600)};observation.selectedSlot=0
+  observation.otherForm=RangedOther();observation[blocked]=1;Tick(0)
+  Check(not calls.transforms,'transformation preserves native action ownership: '..blocked)
+end
+Reset();observation.targets={Target(1,5000,1000)}
+observation.weapons={Weapon(0,'melee',250,1200,600)};observation.selectedSlot=0
+observation.otherForm=RangedOther();observation.otherForm.allowed=0;Tick(0)
+Check(not calls.transforms and calls.routes>0,'a native transformation restriction retains normal pursuit')
+Reset();observation.targets={Target(1,5000,1000)}
+observation.weapons={Weapon(0,'melee',250,1200,600)};observation.selectedSlot=0
+observation.otherForm=RangedOther();calls.transformQueued=0;Tick(0);Tick(100)
+Check(calls.transforms==1 and calls.routes>0,'a rejected transform request keeps combat pursuit running with a bounded retry')
+Tick(500)
+Check(calls.transforms==2,'a rejected request can be retried without inventing a form acknowledgement')
+Reset();observation.formRevision=1;Tick(0)
+local formState=SDGO_BattleAI_Universal.states[20]
+formState.meleeAdvanceTarget=55;formState.meleeAdvanceAt=9999;formState.recoverUntil=9999
+formState.recovering=true;formState.requestedSlot=2;formState.repathAt=9999
+observation.formRevision=2;observation.weapons={Weapon(0,'hitscan',2000,500,300)}
+observation.selectedSlot=0;calls.switch=nil;Tick(100)
+Check(formState.meleeAdvanceTarget==nil and not formState.recovering and
+      formState.requestedSlot==nil and formState.meleeAdvanceAt==0 and calls.fire==true,
+      'a committed weapon-layout revision clears stale knife pursuit, switch and recovery state before firing')
 UNIT_MOVE_EVENT_MOVE=1;UNIT_MOVE_EVENT_DASH=4
 local enumOk,enumError=pcall(dofile,'mods/battle_ai/universal_ai.lua')
 Check(not enumOk and string.find(tostring(enumError),'native locomotion enum mismatch'),

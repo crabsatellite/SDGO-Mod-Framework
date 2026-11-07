@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "operator_catalog_server",
+  "title": "副官能力执行",
+  "category": "gameplay",
+  "hosts": ["battle"],
+  "provider": "operators",
+  "description": "在原生结算时应用当前副官的驾驶员经验能力，保留贡献奖励模式下的原生副官 G 币加成。",
+  "mechanism": "能力配置由副官管理面板生成。已装备副官身份从原生战斗对象读取；经验直接写回同次结算和事件显示，不用额外 SQL 补发。与战斗奖励共享已验证边界；未启用贡献奖励时独立执行。任务机体经验与最终驾驶员经验使用不同阶段。",
+  "settings": [{
+    "id": "trace_settlements",
+    "key": "TraceSettlements",
+    "label": "副官结算诊断",
+    "description": "每次启动最多记录 16 条副官奖励输入与目标值，用于核对能力；不记录账号或昵称。",
+    "type": "boolean",
+    "default": false,
+    "file": "mod.ini",
+    "section": "settings",
+    "audience": "developer",
+    "activation": "restart_required"
+  }],
+  "presentation": "configurable",
+  "developer_protocol": {
+    "format": "sdgo.operator-pack",
+    "format_version": 1,
+    "documentation": "docs/operator-pack-protocol.md",
+    "runtime_configuration": "effects.ini",
+    "reward_sdk": "include/sdgo/operator_reward_filter.h",
+    "effect_sdk": "include/sdgo/operator_effects.h",
+    "asset_distribution": "client-content only; artwork and voices are not part of Manager/framework releases"
+  }
+}

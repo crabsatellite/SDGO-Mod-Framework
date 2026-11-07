@@ -19,7 +19,8 @@ def export(server_ini, output):
         files={}
         target=pending/'GOnlineGame'
         target.mkdir()
-        sources={name:'*' for name in ('tbl_OperatorData','tbl_OperatorDropDice','tbl_ItemCategory',
+        sources={name:'*' for name in ('tbl_OperatorData','tbl_OperatorSkill','tbl_OperatorTime',
+                                     'tbl_OperatorDropDice','tbl_ItemCategory',
                                      'tbl_MixTreeFile','tbl_PaintItem','tbl_StickerItem','tbl_EtcItems')}
         sources['tbl_Units']='UnitNumber'
         for name,columns in sources.items():
@@ -34,6 +35,18 @@ def export(server_ini, output):
             keys=[v[0] for v in cur.description]
             rows=[dict(zip(keys,row)) for row in cur.fetchall()]
             path=target/'dbo.sdgo_OperatorProfiles.json'
+            model.save(path,rows)
+            files[path.relative_to(pending).as_posix()]={'rows':len(rows),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
+        for name in (
+            'sdgo_OperatorSkillRegistry', 'sdgo_OperatorTimeRegistry',
+            'sdgo_OperatorNativeCapabilities', 'sdgo_OperatorAbilityExtensions',
+        ):
+            if cur.execute("SELECT OBJECT_ID(?)", 'dbo.'+name).fetchone()[0] is None:
+                continue
+            cur.execute('SELECT * FROM dbo.['+name+']')
+            keys=[v[0] for v in cur.description]
+            rows=[dict(zip(keys,row)) for row in cur.fetchall()]
+            path=target/('dbo.'+name+'.json')
             model.save(path,rows)
             files[path.relative_to(pending).as_posix()]={'rows':len(rows),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
         model.save(pending/'manifest.json',{'schema_version':1,'scope':'non-user operator configuration','files':files})

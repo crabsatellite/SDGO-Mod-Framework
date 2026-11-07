@@ -146,6 +146,7 @@ public:
 
         lobbyRequestInvoked_ = false;
         unitRadioInvoked_ = false;
+        unitManagerReentryPhases_ = 0;
         unitManagementInvoked_ = false;
         factoryInvoked_ = false;
         factoryTabInvoked_ = false;
@@ -182,13 +183,27 @@ public:
 
             if (lobbyRequestInvoked_)
                 return Publish(kWaitingForHangar);
-            if (appState != kGameRoomAppState)
+            if (appState != kGameRoomAppState &&
+                !(appState == kShopAppState && operatorShopReturnArmed_))
                 return Publish(kWaitingForLobby);
 
             return OpenHangar();
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return Publish(kNativeFault);
         }
+    }
+
+    // A completed original shop purchase leaves app state 9 active. Arm one
+    // real MyRoomRadio return before reading the inventory in the hangar.
+    bool BeginOperatorShopReturn()
+    {
+        if (!bound_ || !native_) return false;
+        if (operatorShopReturnArmed_) return true;
+        if (native_->AppState() != kShopAppState) return false;
+        operatorShopReturnArmed_ = true;
+        lobbyRequestInvoked_ = false;
+        unitRadioInvoked_ = false;
+        return true;
     }
 
     // A successful channel-switch reply can precede reconstruction of the
@@ -260,6 +275,32 @@ public:
             gameRoomInvoked_=true;
             return Publish(kOpeningGameRoom);
         }__except(EXCEPTION_EXECUTE_HANDLER){return Publish(kNativeFault);}
+    }
+
+    enum UnitManagerReentryPhase { kBeforeOperatorShop=1, kAfterOperatorFlow=2 };
+
+    // Arm once per explicitly completed operator-flow phase. This only
+    // resets our previous observer action seal; EnsureHangar still validates
+    // and invokes the original UnitRadio callback when unitmgr is absent.
+    bool AllowUnitManagerReentry(UnitManagerReentryPhase phase=kAfterOperatorFlow)
+    {
+        if (phase!=kBeforeOperatorShop && phase!=kAfterOperatorFlow)return false;
+        const uint32_t bit=1u<<static_cast<unsigned>(phase);
+        if (!bound_ || !native_ || (unitManagerReentryPhases_&bit))return false;
+        __try {
+            if (native_->AppState()!=kHangarAppState)return false;
+            void* current=nullptr;
+            if (ResolveService(L"unitmgr",unitManagerVtable_,&current)==kServiceMismatched)return false;
+            void* mainframe=nullptr;
+            if (ResolveService(L"mainframe",mainframeVtable_,&mainframe)!=kServiceMatched || !mainframe)return false;
+            void* root=*reinterpret_cast<void**>(static_cast<uint8_t*>(mainframe)+kMainframeRoot);
+            void* control=root ? FindControl(root,L"UnitRadio") : nullptr;
+            if (!control || *reinterpret_cast<void**>(static_cast<uint8_t*>(control)+kControlParent)!=root ||
+                !ControlHasName(control,L"UnitRadio"))return false;
+            unitManagerReentryPhases_|=bit;
+            unitRadioInvoked_=false;
+            return true;
+        } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
 
     // UnitRadio selects the 3D unit viewer. The actual unit-management grid
@@ -605,6 +646,7 @@ private:
 
     static constexpr uint32_t kHangarAppState = 5;
     static constexpr uint32_t kGameRoomAppState = 6;
+    static constexpr uint32_t kShopAppState = 9;
     static constexpr uint32_t kRadioMessage = 0x301;
     static constexpr uint16_t kHangarRequestOpcode = 0x0621;
     static constexpr uint32_t kHangarRequestSize = 10;
@@ -977,7 +1019,9 @@ private:
     void* unitManagerVtable_ = nullptr;
     bool bound_ = false;
     bool lobbyRequestInvoked_ = false;
+    bool operatorShopReturnArmed_ = false;
     bool unitRadioInvoked_ = false;
+    uint32_t unitManagerReentryPhases_ = 0;
     bool unitManagementInvoked_ = false;
     bool factoryInvoked_ = false;
     bool factoryTabInvoked_ = false;
