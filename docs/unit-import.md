@@ -163,6 +163,25 @@ ownership ledger at this publication's revision, and the BattleServers that hold
 publication again is safe: owned rows are updated in place through the ownership ledger, so after an interruption the
 batch is simply applied again.
 
+### Offering a batch roster to the shop, capsule machines and activity machines
+
+A successful apply registers the publication automatically. For a publication that was applied another way, choose its
+folder and click **登记给扭蛋机和商城** (register for capsules and shop). The Manager reads back first and registers only
+when every unit, weapon, name, item category and the ownership ledger are at this publication's revision. Registering
+records the publication folder in the unit workspace; it changes no machine, product or game server.
+
+Registered families then appear in the downstream editors exactly like confirmed single-family projects:
+
+- **Shop**: item names and icons come from the publication's own pictures.
+- **Capsule machines**: **同步已确认机体与扭蛋头像** registers them together with single-family projects, and cards are
+  generated from the publication's capsule portraits. For a large roster, synchronize only the roots that go into
+  machines (the `unit_ids` request field) so hundreds of portraits are not written into the capsule catalog.
+- **Activity machines**: under **独立活动扭蛋机**, **批量阵容的 S 级机体** lists the S-rank roots that have no activity machine yet;
+  click one to create its draft. A family without a poster first gets a stand-in poster made from its published picture.
+
+Applying a changed publication changes its revision; a changed publication must be applied and registered again, and an
+old registration is never reused silently. Where a single-family project owns the same root or family, the project wins.
+
 ## Blueprints, projects and activity pools
 
 Blueprint authoring adds editable recipes with explicit recovered,
@@ -208,6 +227,10 @@ reference frequency and most common matching price. The premium preset is
 explicit and uses the native same-tier mean at 99 tokens. A missing ordinary
 reference never silently selects the premium preset.
 Owner machine data, unit content and preset overrides are not framework defaults.
+
+A machine's poster can be replaced at any time: open the machine and click **更换活动海报** (shown as **上传正式海报** while a
+stand-in is in use), then choose a PNG. The Manager scales it to the native 361×322 and keeps the original's hash; the
+pool, price and number stay unchanged, and the new poster appears in game after compile and apply.
 
 Presets fill an editable form with native reference rewards. Adjust currency,
 price, units, blueprints, consumables, amounts and frequencies before saving.

@@ -21,6 +21,49 @@ def _host(provider):
     return units, Path(capsule_ini)
 
 
+def resolve_family(units, project_key, unit_id, ini):
+    """An applied unit family usable as an activity machine root: a Manager project or a registered batch family.
+
+    Returns {'family_key','root_unit_id','category_id','rank','subgrade','name','revision','metadata'}.
+    The caller holds the unit engine lock.
+    """
+    source = units.get_engine()
+    project = next((r for r in source.read()['drafts'].values()
+                    if r['family_key'] == project_key and r['status'] != 'disabled'), None)
+    if project is not None:
+        family = project.get('published')
+        if not family or (unit_id is not None and family['root_unit_id'] != unit_id):
+            raise ValueError('活动机台项目尚未登记或已改变根形态')
+        receipt = project.get('published_server_result', project.get('server_result', {}))
+        if not receipt.get('applied') or receipt.get('server_target') != database_target_key(Path(ini)):
+            raise ValueError('该机体尚未在当前配置的原生服务器完成登记')
+        root = next(r for r in family['forms'] if r['id'] == family['root_unit_id'])['server']
+        return {'family_key': project_key, 'root_unit_id': family['root_unit_id'], 'category_id': family['category_id'],
+                'rank': root['UnitGradeNumber'], 'subgrade': root['UnitGradeNumber2'], 'name': project['name'],
+                'revision': model.content_revision(project), 'metadata': project.get('metadata', {})}
+    row = next((r for r in units.batch_rows(ini) if r['family_key'] == project_key), None)
+    if row is None or (unit_id is not None and row['unit_id'] != unit_id):
+        raise ValueError('活动机台项目尚未登记或已改变根形态')
+    return {'family_key': project_key, 'root_unit_id': row['unit_id'], 'category_id': row['category_id'],
+            'rank': row['rank'], 'subgrade': row['subgrade'], 'name': row['display_name'],
+            'revision': row['revision'], 'metadata': {}}
+
+
+def batch_units(provider):
+    """Registered batch-roster families the activity editor may turn into dedicated machines."""
+    units, ini = _host(provider)
+    app = provider.get_engine()
+    with app.store.lock:
+        catalog, _ = app.store.read()
+    taken = {r['project_key'] for r in catalog.get('activity_machines', []) + catalog.get('activity_drafts', [])}
+    items = [{'family_key': row['family_key'], 'source_revision': row['revision'], 'unit_id': row['unit_id'],
+              'category_id': row['category_id'], 'name': row['display_name'], 'rank': row['rank'],
+              'subgrade': row['subgrade'], 'has_activity_machine': row['family_key'] in taken,
+              'image_url': row['capsule_image_url']}
+             for row in units.batch_rows(ini)]
+    return {'items': items, 'changes_applied': False}
+
+
 def activity_state(provider):
     app = provider.get_engine()
     with app.store.lock:
@@ -39,7 +82,7 @@ def activity_state(provider):
                 'drafts': copy.deepcopy(catalog.get('activity_drafts', [])),
                 'machines': copy.deepcopy(catalog.get('activity_machines', [])),
                 'reward_names': names,
-                'artwork': [{'key': r['key'], 'png_base64': r['png_base64']}
+                'artwork': [{'key': r['key'], 'png_base64': r['png_base64'], 'placeholder': bool(r.get('placeholder'))}
                             for r in catalog.get('project_assets', []) if r['role'] == 'activity_poster']}
 
 
@@ -74,6 +117,11 @@ def activity_items(provider, query=''):
                 text=f"{row['category_id']} {row['name']} {row['reference_id']}".casefold()
                 if row['category_id'] not in known and all(word in text for word in terms):
                     items.append(row);known.add(row['category_id'])
+        for batch in (units.batch_rows(ini) if ini else []):
+            row={'category_id':batch['category_id'],'name':batch['display_name'],'kind':'unit','reference_id':batch['unit_id']}
+            text=f"{row['category_id']} {row['name']} {row['reference_id']}".casefold()
+            if row['category_id'] not in known and all(word in text for word in terms):
+                items.append(row);known.add(row['category_id'])
     return {'items': sorted(items, key=lambda r: (r['kind'], r['category_id']))[:100]}
 
 
@@ -91,16 +139,8 @@ def save_activity(provider, body):
         draft = previous or next((r for r in catalog.get('activity_drafts', []) if r['id'] == body['id']), None)
         if draft is None:
             raise ValueError('请先从已登记的 S 级机体项目生成独立活动机草稿')
-        project = next((r for r in source.read()['drafts'].values()
-                        if r['family_key'] == draft['project_key'] and r['status'] != 'disabled'), None)
-        family = project.get('published') if project else None
-        if not family or family['root_unit_id'] != draft['unit_id']:
-            raise ValueError('活动机台项目尚未登记或已改变根形态')
-        receipt = project.get('published_server_result', project.get('server_result', {}))
-        if not receipt.get('applied') or receipt.get('server_target') != database_target_key(ini):
-            raise ValueError('该机体尚未在当前配置的原生服务器完成登记')
-        root = next(r for r in family['forms'] if r['id'] == family['root_unit_id'])
-        if root['server']['UnitGradeNumber'] != 4:
+        family = resolve_family(units, draft['project_key'], draft['unit_id'], ini)
+        if family['rank'] != 4:
             raise ValueError('独立活动机台只用于 S 级及以上的机库根形态')
         artwork = next((r for r in catalog.get('project_assets', []) if r['key'] == draft['artwork_key']), None)
         if artwork is None:
@@ -173,18 +213,11 @@ def preview_activity_pattern(provider, body):
         row = next((r for r in catalog.get('activity_machines', []) if r['id'] == body['id']), None)
         row = row or next((r for r in catalog.get('activity_drafts', []) if r['id'] == body['id']), None)
         if row is None:raise ValueError('活动机台不存在')
-        project = next((r for r in source.read()['drafts'].values()
-                        if r['family_key'] == row['project_key'] and r['status'] != 'disabled'), None)
-        family = project.get('published') if project else None
-        if not family or family['root_unit_id'] != row['unit_id']:raise ValueError('请先登记对应机体项目')
-        receipt=project.get('published_server_result',project.get('server_result',{}))
-        if not receipt.get('applied') or receipt.get('server_target')!=database_target_key(ini):
-            raise ValueError('该机体尚未在当前配置的原生服务器完成登记')
-        root = next(r for r in family['forms'] if r['id'] == family['root_unit_id'])['server']
+        family = resolve_family(units, row['project_key'], row['unit_id'], ini)
         tables = read_configuration(ini)['tables']
         listed = {r['witness']['machine_id'] for r in activity_grants(units.config['client'], tables)}
         preset = build_pattern(body['pattern_id'],
-            {'unit_id': row['unit_id'], 'rank': root['UnitGradeNumber'], 'subgrade': root['UnitGradeNumber2']},
+            {'unit_id': row['unit_id'], 'rank': family['rank'], 'subgrade': family['subgrade']},
             family['category_id'], units=list(source.repository.catalog['units'].values()),
             categories=tables[('GOnlineGame', 'tbl_ItemCategory')], prices=tables[('GOnlineGame', 'tbl_ItemMachinePrice')],
             pool=tables[('GOnlineGame', 'tbl_ItemMachineList')], listed_machines=listed,
@@ -194,7 +227,7 @@ def preview_activity_pattern(provider, body):
             preset['template_machine_id'] = row['template_machine_id']
         items=source.repository.catalog['items']
         names={r['category_id']:items[r['category_id']]['Name'] for r in preset['pool'] if r['category_id'] in items}
-        names[family['category_id']]=project['name']
+        names[family['category_id']]=family['name']
         return {'preset': preset, 'changes_applied': False, 'reward_names': names}
 
 
