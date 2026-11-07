@@ -131,10 +131,11 @@ enum class Command : std::uint16_t {
     upgrade = 0x1004,
     reset_cost = 0x1005,
     reset = 0x1006,
+    challenge_items = 0x1007, // OC items the account can use in the next challenge
 };
 
 inline constexpr std::uint16_t kFirstCommand = 0x1000;
-inline constexpr std::uint16_t kLastCommand = 0x1006;
+inline constexpr std::uint16_t kLastCommand = 0x1007;
 
 inline friend_unit_gift::Command Wrap(Command command) noexcept {
     return static_cast<friend_unit_gift::Command>(
@@ -485,6 +486,61 @@ inline bool ReadResetReply(const std::uint8_t* in, std::size_t size, ResetReply*
     return true;
 }
 
+// challenge_items: the account's OC challenge items (tbl_EtcItems with a
+// success bonus or level protection) usable at the unit's current level, as
+// listed in the original OC challenge window (ten check boxes).
+inline constexpr std::size_t kChallengeItemMax = 10;
+struct ChallengeItem {
+    std::int32_t item = 0;
+    std::int16_t count = 0;
+    std::int16_t probability_plus = 0;
+    std::uint8_t lv_prevention = 0;
+    std::uint8_t min_level = 0;
+    std::uint8_t max_level = 0;
+};
+inline constexpr std::size_t kChallengeItemBytes = 12;
+struct ChallengeItemsReply {
+    std::int32_t ret_val = 0;
+    std::uint8_t count = 0;
+    std::array<ChallengeItem, kChallengeItemMax> items{};
+};
+inline constexpr std::size_t kChallengeItemsReplyBytes = kReplyHeaderBytes + 4 + kChallengeItemMax * kChallengeItemBytes;
+
+inline void WriteChallengeItemsReply(std::uint8_t* out, const ChallengeItemsReply& reply) noexcept {
+    using friend_unit_gift::wire::Write16;
+    using friend_unit_gift::wire::Write32;
+    std::memset(out, 0, kChallengeItemsReplyBytes);
+    Write32(out, static_cast<std::uint32_t>(reply.ret_val));
+    out[4] = reply.count > kChallengeItemMax ? static_cast<std::uint8_t>(kChallengeItemMax) : reply.count;
+    for (std::size_t i = 0; i < out[4]; ++i) {
+        auto* entry = out + 8 + i * kChallengeItemBytes;
+        Write32(entry, static_cast<std::uint32_t>(reply.items[i].item));
+        Write16(entry + 4, static_cast<std::uint16_t>(reply.items[i].count));
+        Write16(entry + 6, static_cast<std::uint16_t>(reply.items[i].probability_plus));
+        entry[8] = reply.items[i].lv_prevention;
+        entry[9] = reply.items[i].min_level;
+        entry[10] = reply.items[i].max_level;
+    }
+}
+inline bool ReadChallengeItemsReply(const std::uint8_t* in, std::size_t size, ChallengeItemsReply* reply) noexcept {
+    using friend_unit_gift::wire::Read16;
+    using friend_unit_gift::wire::Read32;
+    if (size != kChallengeItemsReplyBytes || in[4] > kChallengeItemMax) return false;
+    reply->ret_val = static_cast<std::int32_t>(Read32(in));
+    reply->count = in[4];
+    for (std::size_t i = 0; i < reply->count; ++i) {
+        const auto* entry = in + 8 + i * kChallengeItemBytes;
+        reply->items[i].item = static_cast<std::int32_t>(Read32(entry));
+        reply->items[i].count = static_cast<std::int16_t>(Read16(entry + 4));
+        reply->items[i].probability_plus = static_cast<std::int16_t>(Read16(entry + 6));
+        reply->items[i].lv_prevention = entry[8];
+        reply->items[i].min_level = entry[9];
+        reply->items[i].max_level = entry[10];
+        if (reply->items[i].item <= 0 || reply->items[i].count <= 0) return false;
+    }
+    return true;
+}
+
 // Return values that the lobby shows (the original procedures' codes).
 enum ResetCode : std::int32_t {
     reset_ok = 0,
@@ -495,5 +551,7 @@ static_assert(kProfileReplyBytes <= friend_unit_gift::kMaximumExtensionPayloadBy
               "profile reply exceeds the extension payload");
 static_assert(kUpgradeReplyBytes <= friend_unit_gift::kMaximumExtensionPayloadBytes,
               "upgrade reply exceeds the extension payload");
+static_assert(kChallengeItemsReplyBytes <= friend_unit_gift::kMaximumExtensionPayloadBytes,
+              "challenge item reply exceeds the extension payload");
 
 } // namespace sdgo::oc_custom

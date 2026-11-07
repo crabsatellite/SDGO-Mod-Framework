@@ -7,13 +7,13 @@
   "hosts": [
     "client"
   ],
-  "description": "在工厂升级页为当前出击机体显示 OC 六维加点面板：分配普通点与 Over 点、OC 挑战、洗点。需要服务器开启 OC 模式。",
-  "mechanism": "面板由原生对话框承载控件，请求通过好友赠送载体的扩展指令发送（需启用好友机体赠送客户端 Mod），服务器返回完整 OC 档并在下一场战斗生效。",
+  "description": "在工厂「经验值转换」页为当前出击机体启用客户端包内原有的 OC 界面：OC 加点窗（推进力、耐久力、攻击力、防御力、机动力、必杀技的强化点数与 Over 点）、OVER CUSTOM 终极强化（OC 挑战）窗与确认框，以及洗点。战斗中本机机体获得 OC 推进力与机动力加成。需要服务器开启 OC 模式。",
+  "mechanism": "由原生页面服务加载包内 uirs\u000794/0813/0819.uir 并按原控件名绑定，文字取自客户端自带的 OC 文本；请求通过好友赠送载体的扩展指令发送（需启用好友机体赠送客户端 Mod）。战斗开始时在原生机体属性初始化中把 OC 推进力、机动力增量加到本机机体的推进等级与机动力上。",
   "settings": [
     {
       "id": "enabled",
       "key": "Enabled",
-      "label": "显示 OC 加点面板",
+      "label": "启用 OC 界面",
       "type": "boolean",
       "default": true,
       "file": "mod.ini",
@@ -22,26 +22,11 @@
       "activation": "restart_required"
     },
     {
-      "id": "panel_left",
-      "key": "PanelLeft",
-      "label": "面板左边距",
-      "type": "integer",
-      "default": 4,
-      "minimum": 0,
-      "maximum": 1024,
-      "file": "mod.ini",
-      "section": "settings",
-      "audience": "developer",
-      "activation": "restart_required"
-    },
-    {
-      "id": "panel_top",
-      "key": "PanelTop",
-      "label": "面板上边距",
-      "type": "integer",
-      "default": 172,
-      "minimum": 0,
-      "maximum": 768,
+      "id": "battle_mobility",
+      "key": "BattleMobility",
+      "label": "战斗中应用 OC 推进力与机动力",
+      "type": "boolean",
+      "default": true,
       "file": "mod.ini",
       "section": "settings",
       "audience": "developer",
