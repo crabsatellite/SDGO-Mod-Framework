@@ -310,10 +310,7 @@ class LoginRecoveryProofTests(unittest.TestCase):
             "active": 0,
         }
         relay = {
-            "mode": (
-                recovery.FaultMode.
-                HOLD_UPSTREAM_ON_CLIENT_CLOSE
-            ),
+            "mode": recovery.FaultMode.HOLD_UPSTREAM_ON_CLIENT_CLOSE,
             "upstream_hold_count": 1,
         }
         self.assertTrue(

@@ -454,6 +454,57 @@ def validate_terminal_relay_evidence(
     }
 
 
+def _cancel_fault_reply_observed(
+    receipt_path: Path,
+    *,
+    run_id: str,
+) -> bool:
+    if not receipt_path.is_file():
+        return False
+    try:
+        events = recovery._read_jsonl(receipt_path)
+    except recovery.LoginRecoveryGameTestError:
+        return False
+    relevant_names = {
+        "server_blackhole_armed",
+        "server_bytes_dropped",
+    }
+    relevant = [
+        event
+        for event in events
+        if event.get("event") in relevant_names
+    ]
+    if any(event.get("run_id") != run_id for event in relevant):
+        raise LoginTerminalGameTestError(
+            "cancel fault evidence contains another run identity"
+        )
+    blackholes = [
+        event
+        for event in relevant
+        if event.get("event") == "server_blackhole_armed"
+        and event.get("generation") == 1
+        and type(event.get("sequence")) is int
+        and type(event.get("client_bytes")) is int
+        and event.get("client_bytes", 0) > 0
+    ]
+    dropped = [
+        event
+        for event in relevant
+        if event.get("event") == "server_bytes_dropped"
+        and event.get("generation") == 1
+        and type(event.get("sequence")) is int
+        and type(event.get("byte_count")) is int
+        and event.get("byte_count", 0) > 0
+        and type(event.get("total_dropped")) is int
+        and event.get("total_dropped", 0) > 0
+    ]
+    return any(
+        blackhole["sequence"] < drop["sequence"]
+        for blackhole in blackholes
+        for drop in dropped
+    )
+
+
 def validate_expected_report_failure(
     report: dict,
     *,
@@ -1276,7 +1327,13 @@ def prepare_and_run(
             if (
                 trigger["generation"] <= 0
                 or trigger["active"] != 1
+                or trigger["retries"] != 0
                 or trigger["state"] not in (1, 2, 3, 4)
+            ):
+                return
+            if not _cancel_fault_reply_observed(
+                relay_receipt,
+                run_id=run_id,
             ):
                 return
             pid = game_process.get("pid")

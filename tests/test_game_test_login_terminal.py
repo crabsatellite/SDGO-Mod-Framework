@@ -154,6 +154,186 @@ class TerminalProofTests(unittest.TestCase):
                 scenario=scenario,
             )
 
+    def test_expected_report_schema_requires_bound_completed_native_failure(
+        self,
+    ) -> None:
+        report = {
+            "status": "fail",
+            "layers": {
+                "source": {"status": "bound"},
+                "launch": {"status": "pass"},
+                "native": {
+                    "status": "fail",
+                    "cases": {
+                        "flow.login": {"status": "fail"},
+                    },
+                },
+            },
+        }
+        with (
+            mock.patch.object(
+                terminal.game_test,
+                "validate_metadata",
+                return_value={
+                    "execution": {"status": "completed"},
+                },
+            ) as validate_metadata,
+            mock.patch.object(
+                terminal.game_test,
+                "verify_hashes",
+            ) as verify_hashes,
+        ):
+            terminal.validate_expected_report_failure(
+                report,
+                run_dir=self.root,
+            )
+        validate_metadata.assert_called_once_with(self.root)
+        verify_hashes.assert_called_once_with({
+            "execution": {"status": "completed"},
+        })
+
+        invalid_reports = (
+            {
+                **report,
+                "layers": {
+                    **report["layers"],
+                    "source": {"status": "pass"},
+                },
+            },
+            {
+                **report,
+                "layers": {
+                    **report["layers"],
+                    "launch": {"status": "fail"},
+                },
+            },
+            {
+                **report,
+                "layers": {
+                    **report["layers"],
+                    "native": {
+                        "status": "pass",
+                        "cases": {
+                            "flow.login": {"status": "fail"},
+                        },
+                    },
+                },
+            },
+            {
+                **report,
+                "layers": {
+                    **report["layers"],
+                    "native": {
+                        "status": "fail",
+                        "cases": {
+                            "flow.login": {"status": "pass"},
+                        },
+                    },
+                },
+            },
+        )
+        for invalid in invalid_reports:
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(
+                    terminal.LoginTerminalGameTestError
+                ):
+                    terminal.validate_expected_report_failure(
+                        invalid,
+                        run_dir=self.root,
+                    )
+        with (
+            mock.patch.object(
+                terminal.game_test,
+                "validate_metadata",
+                return_value={
+                    "execution": {"status": "launch_error"},
+                },
+            ),
+            mock.patch.object(
+                terminal.game_test,
+                "verify_hashes",
+            ),
+        ):
+            with self.assertRaises(
+                terminal.LoginTerminalGameTestError
+            ):
+                terminal.validate_expected_report_failure(
+                    report,
+                    run_dir=self.root,
+                )
+
+
+class CancelFaultReadinessTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.path = Path(self.temporary.name) / "relay.jsonl"
+        self.run_id = "11111111-2222-3333-8444-555555555555"
+
+    def write(self, rows: list[dict]) -> None:
+        self.path.write_text(
+            "".join(
+                json.dumps(
+                    {"run_id": self.run_id, **row},
+                    sort_keys=True,
+                ) + "\n"
+                for row in rows
+            ),
+            encoding="utf-8",
+        )
+
+    def test_cancel_waits_for_positive_ordered_dropped_reply(self) -> None:
+        armed = {
+            "event": "server_blackhole_armed",
+            "generation": 1,
+            "sequence": 4,
+            "client_bytes": 93,
+        }
+        dropped = {
+            "event": "server_bytes_dropped",
+            "generation": 1,
+            "sequence": 5,
+            "byte_count": 41,
+            "total_dropped": 41,
+        }
+        for rows in (
+            [],
+            [armed],
+            [armed, {**dropped, "byte_count": 0}],
+            [armed, {**dropped, "sequence": 3}],
+        ):
+            with self.subTest(rows=rows):
+                self.write(rows)
+                self.assertFalse(
+                    terminal._cancel_fault_reply_observed(
+                        self.path,
+                        run_id=self.run_id,
+                    )
+                )
+        self.write([armed, dropped])
+        self.assertTrue(
+            terminal._cancel_fault_reply_observed(
+                self.path,
+                run_id=self.run_id,
+            )
+        )
+
+    def test_cancel_rejects_foreign_fault_evidence(self) -> None:
+        self.write([{
+            "event": "server_blackhole_armed",
+            "generation": 1,
+            "sequence": 4,
+            "client_bytes": 93,
+            "run_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        }])
+        with self.assertRaises(
+            terminal.LoginTerminalGameTestError
+        ):
+            terminal._cancel_fault_reply_observed(
+                self.path,
+                run_id=self.run_id,
+            )
+
 
 class WrongPasswordProfileTests(unittest.TestCase):
     def setUp(self) -> None:
