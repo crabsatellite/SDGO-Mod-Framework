@@ -23,6 +23,7 @@
 #include "native_terrain_ray.h"
 #include "native_terrain_support.h"
 #include "native_transport_catalog.h"
+#include "native_form_switch.h"
 #include "mission_wingman_scope.h"
 #include "../match_ai/forced_pad_observer.h"
 #include "map_path_search.h"
@@ -76,6 +77,8 @@ std::atomic<uint64_t> g_phaseHideCount{0},g_phaseUnhideCount{0};
 std::atomic<uint64_t> g_phaseEventSequence{0};
 std::atomic<uint32_t> g_phaseLastObject{0},g_phaseLastAction{0};
 using EffectActiveFn=bool(__thiscall*)(uint8_t*,uint8_t);
+using TransformRequestFn=bool(__thiscall*)(uint8_t*);
+TransformRequestFn g_transformRequest=nullptr;
 EffectActiveFn g_effectActive=nullptr;
 void* g_aiBoostPauseReturn=nullptr;
 InitFn g_init = nullptr;
@@ -168,7 +171,7 @@ battle_ai::native::TerrainSupportSampler g_terrainSupport;
 battle_ai::native::MapSphereObbOverlapFn g_mapSphereObb=nullptr;
 battle_ai::native::MapSphereObbContactFn g_mapSphereObbContact=nullptr;
 struct RuntimeSettings {
-    bool generic=true,enabled=true,aim=true,lead=true,logDecisions=false;
+    bool generic=true,enabled=true,aim=true,lead=true,logDecisions=false,autoTransform=true;
     bool terrainRayAudit=false;
     int maxLeadMs=3000,difficulty=1,quickSwing=80,mediumAttackIntervalMs=600;
 } g_runtime;
@@ -295,7 +298,11 @@ struct Actor {
     uint32_t routeStatus=0,followStatus=0,routePointCount=0;
     Vec3 routeStart{},routeGoal{};
     uint32_t roleUnit=0;
-    bool roleAlternate=false,meleeRole=false;
+    bool roleAlternate=false,meleeRole=false,masteryMeleeRole=false;
+    uint32_t weaponSignature=0,formRevision=0;
+    uint64_t formRequests=0,formQueued=0,formCompleted=0;
+    uint32_t pendingFormId=0,lastFormSource=0;
+    ULONGLONG formRequestedAt=0,nextFormAttemptAt=0,formTraceAt=0;
     uint64_t coverQueryFrame=0;
     bool coverQueryUsed=false;
     struct CoverSearch {
@@ -2038,13 +2045,34 @@ bool CaptureUnsafe(Observation& o) {
         actor.path.clear();actor.geometryOwned=false;actor.geometryFinal=false;actor.hasIssuedGoal=false;
     }
     actor.breachAvailable=breachAvailable;
-    if(actor.roleUnit!=o.caps.unitId||actor.roleAlternate!=o.caps.alternate) {
+    uint32_t weaponSignature=2166136261u;
+    for(const auto& weapon:o.caps.weapons) {
+        weaponSignature=(weaponSignature^weapon.id)*16777619u;
+        weaponSignature=(weaponSignature^uint32_t(weapon.kind))*16777619u;
+        weaponSignature=(weaponSignature^uint32_t(weapon.valid&&weapon.ordinary))*16777619u;
+    }
+    if(actor.roleUnit!=o.caps.unitId||actor.roleAlternate!=o.caps.alternate||actor.weaponSignature!=weaponSignature) {
+        if(actor.pendingFormId&&actor.pendingFormId==o.caps.unitId) {
+            ++actor.formCompleted;actor.pendingFormId=0;
+            if(g_runtime.logDecisions)g_api->Log(g_mod,SDGO_LOG_INFO,
+                "native AI form committed object=%u from=%u to=%u alternate=%u completed=%llu weapons=%u,%u,%u",
+                *reinterpret_cast<uint32_t*>(unit+4),actor.lastFormSource,o.caps.unitId,o.caps.alternate?1u:0u,
+                static_cast<unsigned long long>(actor.formCompleted),
+                o.caps.weapons[0].id,o.caps.weapons[1].id,o.caps.weapons[2].id);
+        }
         actor.roleUnit=o.caps.unitId;actor.roleAlternate=o.caps.alternate;
+        actor.weaponSignature=weaponSignature;++actor.formRevision;
         int nativeRole=sdgo::AiCatalogMasteredWeaponType(g_api,g_mod,o.caps.unitId);
         battle_ai::loadout::NativeProfile fallback;
-        actor.meleeRole=nativeRole==0||(nativeRole<0&&ClientLoadoutProfile(unit,nullptr,&fallback)&&
+        actor.masteryMeleeRole=nativeRole==0||(nativeRole<0&&ClientLoadoutProfile(unit,nullptr,&fallback)&&
             fallback.role==battle_ai::loadout::UnitRole::Melee);
     }
+    bool hasMelee=false,hasRanged=false;
+    for(const auto& weapon:o.caps.weapons) if(weapon.valid&&weapon.ordinary) {
+        if(weapon.kind==battle_ai::native::WeaponKind::Melee)hasMelee=true;
+        else if(weapon.rangeType>=2)hasRanged=true;
+    }
+    actor.meleeRole=hasMelee&&(!hasRanged||actor.masteryMeleeRole);
     o.failure="own motion and controller data";
     AdvancePath(unit,actor);
     if(actor.transport.active&&!actor.transport.native&&actor.transport.phase==1)
@@ -2294,7 +2322,55 @@ void PushTarget(lua_State* L,const TargetObservation& t) {
     Vector(L,"forward",t.forward);Number(L,"selectedTarget",t.selectedTarget);
     Number(L,"meleeTracking",t.meleeTracking);Number(L,"meleeSwinging",t.meleeSwinging);
 }
+void PushWeapons(lua_State* L,const char* key,const battle_ai::native::Capabilities& caps,bool rangedBusy) {
+    g_lua.pushstring(L,key);g_lua.newtable(L);
+    int index=0;
+    for(const auto& w:caps.weapons) {
+        if(!w.valid)continue;
+        g_lua.pushnumber(L,++index);g_lua.newtable(L);
+        Number(L,"slot",w.slot);Number(L,"valid",1);Number(L,"range",w.range);Number(L,"damage",w.damage);
+        Number(L,"cycleMs",w.cycleMs);Number(L,"ammoReady",w.ammoReady);Number(L,"ready",w.ready);
+        Number(L,"movingShot",w.movingShot);Number(L,"projectileSpeed",PredictionSpeed(g_current,caps,w));Number(L,"id",w.id);
+        Number(L,"active",rangedBusy&&w.slot==caps.selectedSlot);
+        const char* kind=w.ordinary?"opaque":"other";
+        switch(w.kind) {
+        case battle_ai::native::WeaponKind::Melee:kind="melee";break;
+        case battle_ai::native::WeaponKind::Hitscan:kind="hitscan";break;
+        case battle_ai::native::WeaponKind::Projectile:kind="projectile";break;
+        case battle_ai::native::WeaponKind::Missile:kind="missile";break;
+        default:break;
+        }
+        String(L,"kind",kind);Number(L,"ordinary",w.ordinary);
+        Number(L,"attackStyle",w.attackStyle);Number(L,"rangeType",w.rangeType);
+        g_lua.settable(L,-3);
+    }
+    g_lua.settable(L,-3);
+}
 int __cdecl Observe(lua_State* L) {
+    if(Owned(g_current)&&battle_ai::native::TransformOwnsMotor(g_current)) {
+        auto& actor=ActorFor(g_current);const auto now=GetTickCount64();
+        if(g_runtime.logDecisions&&now>=actor.formTraceAt) {
+            using namespace battle_ai::native::detail;
+            uint8_t *move=nullptr,*active=nullptr,*parked=nullptr;
+            uint32_t current=0,pending=0,mode=0,latch=0,unit=0,peer=0,other=0,animation=0,hurt=0;
+            uint8_t alternate=0,notified=0,committed=0;
+            ReadPointer(g_current,0x9C8,move);ReadPointer(g_current,0x9C4,active);ReadPointer(g_current,0xAB0,parked);
+            Read(move,4,current);Read(move,8,pending);Read(move,0x2C0,mode);Read(move,0x2B0,latch);
+            Read(active,0,unit);Read(active,0x13C,peer);Read(parked,0,other);Read(move,0x1AC,animation);
+            Read(g_current,0x9D8,hurt);Read(g_current,0xE34,alternate);Read(move,0x219,notified);Read(move,0x21A,committed);
+            actor.formTraceAt=now+1000;
+            g_api->Log(g_mod,SDGO_LOG_INFO,
+                "native AI transform state object=%u unit=%u peer=%u parked=%u mode=%u latch=%u current=%X pending=%X animation=%u alternate=%u notified=%u committed=%u hurt=%u",
+                *reinterpret_cast<uint32_t*>(g_current+4),unit,peer,other,mode,latch,
+                move?current-static_cast<uint32_t>(reinterpret_cast<uintptr_t>(move)):0,
+                move&&pending?pending-static_cast<uint32_t>(reinterpret_cast<uintptr_t>(move)):0,
+                animation,alternate,notified,committed,hurt);
+        }
+        g_lua.newtable(L);Number(L,"valid",1);Number(L,"transforming",1);
+        Number(L,"id",*reinterpret_cast<uint32_t*>(g_current+4));
+        Number(L,"generation",static_cast<double>(ActorFor(g_current).generation));
+        return 1;
+    }
     Observation o;
     bool valid=Capture(o);
     g_lua.newtable(L);Number(L,"valid",valid?1:0);
@@ -2306,6 +2382,7 @@ int __cdecl Observe(lua_State* L) {
     Number(L,"id",o.id);Number(L,"generation",static_cast<double>(o.generation));
     Number(L,"hp",o.hp);Number(L,"unitId",o.caps.unitId);Number(L,"alternate",o.caps.alternate);Number(L,"selectedSlot",o.caps.selectedSlot);
     Number(L,"meleeRole",ActorFor(g_current).meleeRole);
+    Number(L,"formRevision",ActorFor(g_current).formRevision);
     Number(L,"moving",o.moving);Number(L,"hurtRecently",o.hurtRecently);
     Number(L,"forcedMoving",o.forcedMoving);
     const auto& trip=ActorFor(g_current).transport;
@@ -2324,6 +2401,15 @@ int __cdecl Observe(lua_State* L) {
         (observedActor.defence.movement.relocate&&!o.hurt&&!o.caps.meleeBusy&&!o.caps.specialBusy)));
     Number(L,"hurt",o.hurt);
     Number(L,"boostFraction",o.caps.boostFraction);
+    auto movementFsm=*reinterpret_cast<uint8_t**>(g_current+0x9C8);
+    if(movementFsm) {
+        const auto base=reinterpret_cast<uintptr_t>(movementFsm);
+        const auto offset=[&](size_t field) {
+            const auto state=reinterpret_cast<uintptr_t>(*reinterpret_cast<uint8_t**>(movementFsm+field));
+            return state>=base&&state<base+0x210?static_cast<uint32_t>(state-base):0u;
+        };
+        Number(L,"movementState",offset(4));Number(L,"movementPending",offset(8));
+    }
     // Lua SetJumpEnable writes +3291. This is permission for native automatic
     // jump requests, not a promise that every form can fly; the motor decides.
     Number(L,"canJump",g_current[0x3291]!=0);
@@ -2381,29 +2467,16 @@ int __cdecl Observe(lua_State* L) {
         g_api->Log(g_mod,SDGO_LOG_INFO,"native steering storage has no finite active destination unit=%u moving=%u raw_goal=%g,%g,%g; observation remains valid",
             o.id,o.moving,o.goal.x,o.goal.y,o.goal.z);
     }
-    g_lua.pushstring(L,"weapons");g_lua.newtable(L);
-    int index=0;
-    for(const auto& w:o.caps.weapons) {
-        if(!w.valid) continue;
-        g_lua.pushnumber(L,++index);g_lua.newtable(L);
-        Number(L,"slot",w.slot);Number(L,"valid",1);Number(L,"range",w.range);Number(L,"damage",w.damage);
-        Number(L,"cycleMs",w.cycleMs);Number(L,"ammoReady",w.ammoReady);Number(L,"ready",w.ready);
-        float speed=PredictionSpeed(g_current,o.caps,w);
-        Number(L,"movingShot",w.movingShot);Number(L,"projectileSpeed",speed);Number(L,"id",w.id);
-        Number(L,"active",o.rangedBusy && w.slot==o.caps.selectedSlot);
-        const char* kind=w.ordinary?"opaque":"other";
-        switch(w.kind) {
-        case battle_ai::native::WeaponKind::Melee:kind="melee";break;
-        case battle_ai::native::WeaponKind::Hitscan:kind="hitscan";break;
-        case battle_ai::native::WeaponKind::Projectile:kind="projectile";break;
-        case battle_ai::native::WeaponKind::Missile:kind="missile";break;
-        default:break;
-        }
-        String(L,"kind",kind);Number(L,"ordinary",w.ordinary);
-        Number(L,"attackStyle",w.attackStyle);Number(L,"rangeType",w.rangeType);
+    PushWeapons(L,"weapons",o.caps,o.rangedBusy);
+    const auto transition=battle_ai::native::ReadFormTransition(g_current);
+    battle_ai::native::Capabilities otherForm{};
+    if(transition.available&&battle_ai::native::ReadOtherFormCapabilities(g_current,otherForm)) {
+        g_lua.pushstring(L,"otherForm");g_lua.newtable(L);
+        Number(L,"unitId",otherForm.unitId);Number(L,"alternate",otherForm.alternate);
+        Number(L,"allowed",transition.allowed&&!ControlBlocked(g_current)&&!o.caps.meleeBusy&&!o.caps.specialBusy&&!o.rangedBusy);
+        PushWeapons(L,"weapons",otherForm,false);
         g_lua.settable(L,-3);
     }
-    g_lua.settable(L,-3);
     g_lua.pushstring(L,"targets");g_lua.newtable(L);
     for(size_t i=0;i<o.count;++i) {
         g_lua.pushnumber(L,static_cast<double>(i+1));PushTarget(L,o.targets[i]);
@@ -2589,6 +2662,41 @@ bool RequestNativeWeapon(uint8_t* unit,int slot) {
             g_selectWeapon(fsm,slot,0,1,0);
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+}
+int __cdecl RequestTransform(lua_State* L) {
+    bool queued=false;
+    if(GetCurrentThreadId()==g_gameThread&&g_runtime.enabled&&g_runtime.autoTransform&&
+       g_runtime.difficulty>=1&&!g_preparationFault&&Owned(g_current)&&PlayerBotRulesMode(g_current)) {
+        __try {
+            auto& actor=ActorFor(g_current);const auto now=GetTickCount64();
+            battle_ai::native::Capabilities caps{};
+            const auto transition=battle_ai::native::ReadFormTransition(g_current);
+            uint8_t* move=nullptr;
+            if(g_transformRequest&&transition.allowed&&now>=actor.nextFormAttemptAt&&
+               *reinterpret_cast<int32_t*>(g_current+0x38)>0&&!ControlBlocked(g_current)&&
+               battle_ai::native::ReadCapabilities(g_current,caps)&&!caps.meleeBusy&&!caps.specialBusy&&
+               battle_ai::native::detail::ReadPointer(g_current,0x9C8,move)&&
+               !battle_ai::native::detail::InState(*reinterpret_cast<uint8_t**>(g_current+0x9CC),0x34)) {
+                actor.nextFormAttemptAt=now+500;++actor.formRequests;
+                actor.lastFormSource=caps.unitId;actor.formRequestedAt=now;
+                // Original request, not a bank/definition/FSM assignment. Its
+                // server packet carries the registered AI actor separately
+                // from the authenticated room host.
+                g_transformRequest(move);
+                queued=battle_ai::native::TransformOwnsMotor(g_current);
+                if(queued) {
+                    ++actor.formQueued;actor.pendingFormId=transition.targetId;
+                    actor.path.clear();actor.geometryOwned=false;actor.geometryFinal=false;
+                    actor.hasIssuedGoal=false;actor.direct={};actor.defenceMoveOwned=false;
+                    if(g_runtime.logDecisions)g_api->Log(g_mod,SDGO_LOG_INFO,
+                        "native AI transform queued object=%u from=%u to=%u requests=%llu queued=%llu",
+                        *reinterpret_cast<uint32_t*>(g_current+4),caps.unitId,transition.targetId,
+                        static_cast<unsigned long long>(actor.formRequests),static_cast<unsigned long long>(actor.formQueued));
+                }
+            }
+        } __except(EXCEPTION_EXECUTE_HANDLER) {queued=false;}
+    }
+    g_lua.pushnumber(L,queued?1:0);return 1;
 }
 int __cdecl RequestWeapon(lua_State* L) {
     double value=g_lua.tonumber(L,1);
@@ -3351,7 +3459,7 @@ void __fastcall AttackIntent(uint8_t* unit,void*) {
     // Pace only fresh ordinary requests. Current/pending actions, melee combo
     // continuation and special admission retain their original native input.
     const int slot=fsm?*reinterpret_cast<int*>(fsm+0x240):-1;
-    const bool ordinary=slot>=0&&slot<3&&record&&record[0x6A]!=2;
+    const bool ordinary=slot>=0&&slot<3&&record&&record[0x69]!=2;
     if(neutral && ordinary && unit[0xDCD]) {
         if(now<a.nextPulse) {
             unit[0xDCD]=0;
@@ -3361,7 +3469,6 @@ void __fastcall AttackIntent(uint8_t* unit,void*) {
                     *reinterpret_cast<uint32_t*>(unit+4),a.intervalMs);
             }
         }
-        else a.nextPulse=now+static_cast<ULONGLONG>(a.intervalMs);
     }
     if(g_runtime.aim) {
         *reinterpret_cast<float*>(unit+0x3204)=0;
@@ -3504,10 +3611,22 @@ void __fastcall FireReceipts(uint8_t* fsm,void*,void* event) {
     __try {g_fireReceipts(fsm,event);} __finally {g_receiptFsm=prior;}
 }
 void __fastcall AttackAdmission(uint8_t* fsm,void*) {
+    uint8_t* pacedOwner=nullptr;
+    uint64_t pacedGeneration=0;
+    int pacedInterval=0;
     if(GetCurrentThreadId()==g_gameThread&&g_runtime.enabled&&g_runtime.difficulty>=1&&!g_preparationFault) {
         __try {
             auto owner=*reinterpret_cast<uint8_t**>(fsm+0xB2C);
             auto record=*reinterpret_cast<uint8_t**>(fsm+0x248);
+            const int selected=*reinterpret_cast<int*>(fsm+0x240);
+            if(WantsGeneric(owner)&&record&&selected>=0&&selected<3&&record[0x69]!=2&&
+               battle_ai::native::detail::Neutral(fsm)) {
+                const auto actor=g_actors.find(owner);
+                if(actor!=g_actors.end()&&actor->second.ownsIntent&&actor->second.intervalMs>0) {
+                    pacedOwner=owner;pacedGeneration=actor->second.generation;
+                    pacedInterval=actor->second.intervalMs;
+                }
+            }
             if(Owned(owner)&&record&&record[0x69]!=2&&(record[0x6A]==1||record[0x6A]==8)) {
                 auto target=FindObject(*reinterpret_cast<uint32_t*>(fsm+0x200));
                 if(target&&!Destroyable(target)) {
@@ -3525,6 +3644,25 @@ void __fastcall AttackAdmission(uint8_t* fsm,void*) {
         } __except(EXCEPTION_EXECUTE_HANDLER) {return;}
     }
     g_attackAdmission(fsm);
+    // Native CanAttack can reject a ready input during boost start/end or
+    // another admission restriction. Only the original controller's newly
+    // committed action starts the interval; a refused input adds no wait.
+    if(pacedOwner) {
+        __try {
+            using namespace battle_ai::native::detail;
+            uint32_t current=0,pending=0;
+            const uintptr_t base=reinterpret_cast<uintptr_t>(fsm);
+            const auto action=[&](uint32_t state) {
+                return state>=base+0x34&&state<base+0x210&&
+                    (state-base-0x20)%0x14==0;
+            };
+            if(Read(fsm,4,current)&&Read(fsm,8,pending)&&(action(pending)||action(current))) {
+                auto actor=g_actors.find(pacedOwner);
+                if(actor!=g_actors.end()&&actor->second.generation==pacedGeneration&&actor->second.ownsIntent)
+                    actor->second.nextPulse=GetTickCount64()+static_cast<ULONGLONG>(pacedInterval);
+            }
+        } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    }
 }
 struct AbsoluteSpMessage {uint16_t type=0x18,padding=0;uint32_t reserved[3]={};int32_t value=0;};
 static_assert(sizeof(AbsoluteSpMessage)==20);
@@ -3975,7 +4113,7 @@ int __cdecl Generation(lua_State* L) {
 }
 struct Option { const wchar_t* name; int def, low, high; };
 const Option kOptions[] = {
-    {L"Enabled",1,0,1}, {L"GenericMode",1,0,1}, {L"DecisionMs",0,0,1000}, {L"ReactionMs",0,0,3000},
+    {L"Enabled",1,0,1}, {L"AutoTransform",1,0,1}, {L"GenericMode",1,0,1}, {L"DecisionMs",0,0,1000}, {L"ReactionMs",0,0,3000},
     {L"StuckMs",1400,300,10000}, {L"ProgressDistance",30,1,300}, {L"ArrivalDistance",100,10,500},
     {L"RecoveryDistance",350,50,1500}, {L"RecoveryMs",650,150,2000}, {L"RecoveryCooldownMs",1000,250,10000},
     {L"RangedMinDistance",450,0,2000}, {L"TacticCooldownMs",0,0,10000}, {L"LogDecisions",0,0,1},
@@ -4040,6 +4178,7 @@ std::string ConfigChunk(RuntimeSettings& next,int roomDifficulty) {
         if(key=="AimAssist"||key=="ProjectileLead") value=next.difficulty>=1?1:0;
         code += key + "=" + std::to_string(value) + ",\n";
         if(key=="Enabled") next.enabled=value!=0;
+        if(key=="AutoTransform") next.autoTransform=value!=0;
         if(key=="GenericMode") next.generic=value!=0;
         if(key=="LogDecisions") next.logDecisions=value!=0;
         if(key=="TerrainRayAudit") next.terrainRayAudit=value!=0;
@@ -4097,6 +4236,7 @@ void Prepare() {
     Register(L,"SDGO_BattleAI_BoundSlot",BoundSlot);
     Register(L,"SDGO_BattleAI_ReleaseHeldIntent",ReleaseHeldIntent);
     Register(L,"SDGO_BattleAI_RequestWeapon",RequestWeapon);
+    Register(L,"SDGO_BattleAI_RequestTransform",RequestTransform);
     RuntimeSettings next;
     next.generic=true;
     if (Run(L, ConfigChunk(next,roomDifficulty) + script + "\n" + universal)) {
@@ -4425,7 +4565,7 @@ SDGO_MOD_ENTRY {
         !Bind(g_document,"game.document") || !Bind(g_findObject,"um.find_object") || !Bind(g_route,"navigation.route") ||
         !Bind(g_navigationNode,"navigation.node_for_point") || !Bind(g_navigationNodeAt,"navigation.node_at") ||
         !Bind(g_startPoint,"um.find_start_point") ||
-        !Bind(g_setIntent,"npc.set_attack_intent") || !Bind(g_selectWeapon,"combat.select_weapon") || !Bind(g_stop,"npc.move_stop") ||
+        !Bind(g_setIntent,"npc.set_attack_intent") || !Bind(g_selectWeapon,"combat.select_weapon") || !Bind(g_transformRequest,"combat.transform_request") || !Bind(g_stop,"npc.move_stop") ||
         !Bind(g_setGoal,"npc.set_move_goal") || !Bind(g_setMoveType,"npc.set_move_type") || !Bind(g_setJumpEnabled,"npc.set_jump_enabled") || !Bind(g_delete,"crt.operator_delete") ||
         !Bind(g_navigation.query,"collision.query") || !Bind(g_navigation.segmentAabb,"collision.segment_aabb") ||
         !Bind(g_navigation.terrainRay,"collision.terrain_ray") || !Bind(g_terrainTriangle,"collision.terrain_triangle") || !Bind(g_navigation.rayObb,"collision.ray_obb") ||
