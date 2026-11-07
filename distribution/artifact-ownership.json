@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "framework_sql": {
+    "manager/engines/hangar/gb.sql": {
+      "ownership": "framework",
+      "kind": "query",
+      "target": "server",
+      "purpose": "Parameterized framework operation; result data remains on the selected server"
+    },
+    "manager/engines/hangar/sort.sql": {
+      "ownership": "framework",
+      "kind": "query",
+      "target": "server",
+      "purpose": "Parameterized framework operation; result data remains on the selected server"
+    },
+    "manager/engines/operators/resources/server/drop.sql": {
+      "ownership": "framework",
+      "kind": "query",
+      "target": "server",
+      "purpose": "Parameterized framework operation; result data remains on the selected server"
+    },
+    "manager/engines/operators/resources/server/free.sql": {
+      "ownership": "framework",
+      "kind": "query",
+      "target": "server",
+      "purpose": "Parameterized framework operation; result data remains on the selected server"
+    },
+    "manager/engines/operators/resources/server/naming.sql": {
+      "ownership": "framework",
+      "kind": "query",
+      "target": "server",
+      "purpose": "Parameterized framework operation; result data remains on the selected server"
+    },
+    "manager/engines/operators/resources/server/random.sql": {
+      "ownership": "framework",
+      "kind": "query",
+      "target": "server",
+      "purpose": "Parameterized framework operation; result data remains on the selected server"
+    },
+    "manager/engines/operators/resources/server/schema.sql": {
+      "ownership": "framework",
+      "kind": "schema",
+      "target": "server",
+      "purpose": "Generic schema, procedure and trigger definitions; server records remain local"
+    },
+    "mods/oc_custom_server/oc_schema.sql": {
+      "ownership": "framework",
+      "kind": "schema",
+      "target": "server",
+      "purpose": "Generic schema, procedure and trigger definitions; server records remain local"
+    },
+    "mods/operator_catalog/server/drop.sql": {
+      "ownership": "framework",
+      "kind": "query",
+      "target": "server",
+      "purpose": "Parameterized framework operation; result data remains on the selected server"
+    },
+    "mods/operator_catalog/server/free.sql": {
+      "ownership": "framework",
+      "kind": "query",
+      "target": "server",
+      "purpose": "Parameterized framework operation; result data remains on the selected server"
+    },
+    "mods/operator_catalog/server/naming.sql": {
+      "ownership": "framework",
+      "kind": "query",
+      "target": "server",
+      "purpose": "Parameterized framework operation; result data remains on the selected server"
+    },
+    "mods/operator_catalog/server/random.sql": {
+      "ownership": "framework",
+      "kind": "query",
+      "target": "server",
+      "purpose": "Parameterized framework operation; result data remains on the selected server"
+    },
+    "mods/operator_catalog/server/schema.sql": {
+      "ownership": "framework",
+      "kind": "schema",
+      "target": "server",
+      "purpose": "Generic schema, procedure and trigger definitions; server records remain local"
+    },
+    "owner/calendar_gifts/schema.sql": {
+      "ownership": "framework",
+      "kind": "schema",
+      "target": "server",
+      "purpose": "Generic schema, procedure and trigger definitions; server records remain local"
+    },
+    "owner/collection_capsule/sql/catalog_drop_items.sql": {
+      "ownership": "framework",
+      "kind": "schema",
+      "target": "server",
+      "purpose": "Generic schema, procedure and trigger definitions; server records remain local"
+    },
+    "owner/collection_capsule/sql/catalog_seed.sql": {
+      "ownership": "framework",
+      "kind": "migration",
+      "target": "server",
+      "purpose": "Generic initialization from this server existing records; no embedded owner/player rows"
+    },
+    "owner/collection_capsule/sql/catalog_units.sql": {
+      "ownership": "framework",
+      "kind": "schema",
+      "target": "server",
+      "purpose": "Generic schema, procedure and trigger definitions; server records remain local"
+    },
+    "owner/collection_capsule/sql/draw.sql": {
+      "ownership": "framework",
+      "kind": "query",
+      "target": "server",
+      "purpose": "Parameterized framework operation; result data remains on the selected server"
+    },
+    "owner/collection_capsule/sql/schema.sql": {
+      "ownership": "framework",
+      "kind": "schema",
+      "target": "server",
+      "purpose": "Generic schema, procedure and trigger definitions; server records remain local"
+    },
+    "owner/rewards/sql/battle_reward_gathering.sql": {
+      "ownership": "framework",
+      "kind": "query",
+      "target": "server",
+      "purpose": "Parameterized framework operation; result data remains on the selected server"
+    },
+    "owner/rewards/sql/battle_reward_progression.sql": {
+      "ownership": "framework",
+      "kind": "query",
+      "target": "server",
+      "purpose": "Parameterized framework operation; result data remains on the selected server"
+    },
+    "owner/rewards/sql/battle_reward_wallet.sql": {
+      "ownership": "framework",
+      "kind": "query",
+      "target": "server",
+      "purpose": "Parameterized framework operation; result data remains on the selected server"
+    }
+  },
+  "owner_content": "Owner profiles, generated client assets and shared configuration; never part of framework Releases",
+  "owner_server_definitions": "Generated unit/shop/reward apply plans; server maintenance only",
+  "local_private_data": "Credentials, birthday rosters, account/inventory/currency databases and recovery state; never player distribution"
+}
