@@ -21,6 +21,9 @@ struct NativeLuaCalls {
 // This does not install a hook. Hook lua.script_load through SdgoApi::HookCode
 // and pass its returned original trampoline to NativeRegistration.
 bool BindNativeLuaCalls(const SdgoApi* api, SdgoMod* mod, NativeLuaCalls& out, std::string& missing);
+// Zero is unavailable, including older cores and dynamic loader entry. Never
+// substitute the current hook/bootstrap thread when this identity is absent.
+std::uint32_t ProcessInitialThreadId(const SdgoApi* api);
 
 struct NativeWideString {
     union { wchar_t small[8]; const wchar_t* pointer; std::uint8_t storage[16]; } value;
@@ -41,6 +44,7 @@ public:
     NativeRegistration(NativeLuaCalls calls, OriginalScriptLoader original,
         std::uint32_t gameMainThreadId, CloseCandidateClient closeClient, void* closeContext);
     Result onOriginalLoad(void* engine, NativeWideString* path, const Candidate& candidate);
+    Result onOriginalLoadBatch(void* engine, NativeWideString* path, const std::vector<Candidate>& candidates);
     bool poisoned() const { return registry_.poisoned(); }
 private:
     NativeLuaCalls calls_;
@@ -52,6 +56,7 @@ private:
     void* currentVm_ = nullptr;
     bool boundary_ = false;
     bool inRoot_ = false;
+    Result load(void* engine, NativeWideString* path, const Candidate* candidates, std::size_t count);
     bool atRootCompletionBoundary() const override;
     std::uintptr_t identity() const override;
     int stackTop() const override;

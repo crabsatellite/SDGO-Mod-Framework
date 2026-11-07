@@ -17,6 +17,10 @@ real battles on a test server to check its weapons, skills and transformation.
 The generic release contains only the tools, never units. Owner drafts, images, publications and install receipts stay
 in the owner's workspace.
 
+Projects can retain initialization-script declarations and their complete program files. Manager displays the
+number of script groups and includes the files in exported projects. Save these projects for editing; units
+requiring newly supplied scripts cannot be published yet.
+
 ## Setup
 
 Open `SDGO Mod Manager.exe`, choose **机体导入** in the sidebar and set:
@@ -83,7 +87,16 @@ ready/selection poses (see [developer notes](#gametest-checks-and-captures)), up
   links and duplicate paths are rejected, and installers or database scripts inside the archive never run.
 - A new unit ID that collides with a stock or other imported unit blocks confirmation; there is no blind binary
   renumbering.
-- Only single-form units or complete, explicit two-form links are supported.
+- Native behavior profiles: single form (`native-single-form-v1`), reciprocal two-form links
+  (`native-linked-forms-v1`), one-way links whose second form transforms back to nothing
+  (`native-one-way-forms-v1`), a record that transforms into itself (`native-self-transform-v1`), and entry forms
+  that transform into one form of an already published reciprocal pair (`native-entry-forms-v1`). An entry form is
+  its own inventory root; its first transform uses the original two-bank mechanism, and the following hops between
+  the pair's two forms need the form-graph runtime: the server Mod composes the third form into the inactive native
+  bank when the installed graph allows the edge, and the client Mod rebases its record/model pair before the native
+  swap. After the entry hop the client also treats the pair form it landed on as the base form (the pair's
+  transform animations belong to the other form), so the next hop plays the pair's own animations. Without the installed graph authority the server keeps refusing the second hop, so the unit stays in the
+  pair's first form.
 - A missing skill blocks confirmation by default. For skill slots 1 and 2 the panel offers **移除缺失技能 … 后导入**
   (remove the missing skill and import): every form referencing it gets `0` on both client and server, the source
   RAR/BIN is kept, earlier preview approvals are invalidated and the skill's effect is gone. Other skills, weapons and
@@ -112,6 +125,43 @@ Publications include every registered unit in the workspace, so a second unit ne
 Import writes only non-player definition tables, this module's ownership ledger and, with the collection capsule
 enabled, family metadata (root form and links) for its live pool. Balances, hangars, grants, native SQL procedures, shop
 prices and capsule odds are untouched.
+
+## Applying a batch roster to the server
+
+A roster made by the [batch publisher](#batch-roster-publication-toolsgunionpublisher) is applied to the server from
+the same panel. Its publication folder holds `server-plan.json`, `form-graph-requests.json` and the client package.
+
+1. Set **WorldServer INI** in the panel settings. The roster is applied to that server group: the WorldServer folder
+   and, in the standard `Server` layout, its sibling BattleServer, AgentServer and StoreServer folders.
+2. Under **批量阵容服务端应用** (batch roster server apply), choose the publication folder (the roster output folder
+   also works) and click **只读预检** (read-only preflight). The preflight only reads. It shows the content counts, how
+   many families are new or already installed, the shared skill, funnel and affiliation rows that would be inserted,
+   updated or kept, every BattleServer and whether it has `unit_catalog_server`, the services that are still running,
+   and every family that would be refused.
+3. Stop every native service of the group yourself. Manager never stops or starts game processes.
+4. Click **停服后应用…** (apply after stopping), review the change dialog and confirm. The panel shows each stage:
+   stopped-server check, ordered family check, shared rows, families (done / total), form graphs and readback.
+5. Restart the group and check readiness in Manager's change list. Players need the matching unit client package.
+
+What the batch apply writes:
+
+- The shared skill, funnel and affiliation rows, in one transaction. An affiliation that already exists keeps its
+  name; a new one whose name the `varchar` column cannot store gets the label `Affiliation <n>` (players see the
+  client's own affiliation record).
+- Every family, through the same transaction a single confirmation uses, in dependency order: a family whose forms
+  use another family's weapon or transform into another family's form is applied after that family. A dependency
+  cycle between families is refused before anything is written. The ordered list is first checked against the live
+  catalog, so a family that would be refused stops the batch before its first write.
+- For a publication with form-graph requests: `form-graphs.bin` in each BattleServer's `unit_catalog_server` folder and
+  `sdgo/install-state/unit-form-authority.bin`, compiled from the installed rows, and `unit_catalog_server` is turned
+  on. Every BattleServer of the group needs the framework's `unit_catalog_server` first. The files they replace are
+  kept beside the change receipt under `sdgo/local-state/changes/backups/`.
+- No grants, products, prices or capsule slots. Acquisition stays with the shop and capsule panels.
+
+**读回核对** (readback) counts the installed units, weapons, names and item categories, the families recorded in the
+ownership ledger at this publication's revision, and the BattleServers that hold the graph files. Applying the same
+publication again is safe: owned rows are updated in place through the ownership ledger, so after an interruption the
+batch is simply applied again.
 
 ## Blueprints, projects and activity pools
 
@@ -241,7 +291,9 @@ some records were inserted, the native tree cannot be rolled back, so the Mod lo
 
 The game does not read new models from the working directory. Client packages carry `resource-overlay.ini`,
 `resources.zdx` and `resources.zpk`, and the game reads models, animations, textures and effects from that archive.
-With the capsule catalog also enabled, both share one resource reader.
+With the capsule catalog also enabled, both share one resource reader. A large archive may be split into parts
+(`resources.zpk`, `resources.1.zpk`, ...) so every file stays below the per-file limit of common Git hosts; the
+index and the archive SHA-256 still describe the parts as one archive.
 
 `registrations.json` and Manager's `/api/providers/units/api/units/registrations` expose stable `unit:<root ID>`
 identities, categories, names, forms and the matching `shop_sprite` / `capsule_sprite`. Capsule machine cards are
@@ -277,13 +329,175 @@ Version 1 stays transport-only.
 
 ### Skill/funnel dependencies and resource depot
 
+**原始形态关系** shows directed targets read from complete unit records and the
+path from the selected root. Other entries sharing later forms remain visible;
+the report never invents reverse edges. It describes record references, not player
+inventory eligibility or native transform behavior. More than two forms still
+require an appropriate runtime adapter.
+
+The linkable `sdgo_unit_form_composition` developer library can compose a process-local
+native form bank in separate memory. It requires verified host symbols, the expected
+read-only registry callbacks and initialized mode data. It copies scalar equipment
+bonuses rather than a player object, and retains FP state and `LastError`. It
+requires a zero pre-initialization weapon bank; an already-used bank is rejected.
+The pre-initialization stat slice remains a separate seed. The resulting bank
+contains borrowed native pointers and cannot be stored in a project or reused after
+the room or catalog is reconstructed. `StageInactive` prepares a separate slot image
+and preserves inventory identity, HP, skills, active-bank selection and the active
+weapon state. These helpers provide no installation authority or live transform
+commit. An existing inactive form is reusable only when its header, weapon pointers
+and stat slice match, while its current ammo/cooldowns are retained. The Manager's
+multi-form publication restrictions still apply.
+
+`StageEquivalentInactive` handles a narrower preparation case: complete fresh
+source/target banks and their stat slices must match except for the unit ID and
+definition pointer. All five live weapon-definition pointers must also match.
+It then prepares only those two identity fields in a separate slot image,
+retaining every runtime byte, SP and modified stat. This comparison does not
+establish unit/skill semantic equivalence, safe form retirement, or death/deck
+restoration; those remain native-adapter requirements before a live commit.
+
+The controller request [`sdgo.unit-form-graphs/1`](unit-form-graphs.schema.json)
+binds declared inventory roots to complete unit-record hashes. The controller reads
+unit and item definitions with their ownership ledgers in one locked transaction;
+entry roots require a matching owned unit item, while shared original nodes require
+independent baseline witnesses. Record keys and rollback JSON enter the snapshot
+fingerprint; audit timestamps do not. The native `sdgo_unit_form_graph` policy permits
+only a recorded directed edge reachable from the inventory root. Auxiliary nodes
+remain inspectable data and are not implicitly selectable entries. Same-ID edges
+are retained as data but need a separate behavior profile before runtime use.
+
+The compiler produces candidate bytes and separate host authority bytes. Install
+authority only through the trusted host controller, outside content packages. The
+parser checks their exact binding and host version; the snapshot fingerprint is
+provenance, not a live database/client drift check. Deployment readback and native
+actor, generation, sender, alive and room-lock checks remain necessary. These
+policy helpers do not enable multi-form publication or activate a native actor.
+
+For native battle-definition witnesses, `prepare_native_from_cursor` reads the
+same locked unit/entry snapshot and the host's `tbl_UnitGradeInfo` mappings. It
+produces the same `SDGOUF1` candidate and independent `SDGOUA2` authority with a
+complete 114-byte expectation for every graph node. The native table payload
+ends with `UserGradeLimit` at `+0x6A` and joined `LevelRating` at `+0x6E`;
+`DailyLimit` and `MonthLimit` are not those tail fields. Missing grade joins are
+rejected. SQL-only fields remain bound by the complete server-row hashes.
+The v2 fingerprint also binds the grade snapshot. The parser checks exact node
+coverage, ordering, identity/edge agreement, payload hashes and host binding.
+Legacy v1 authority remains capture-only and supplies no native expectations.
+These server expectations do not replace complete 4,976-byte client unit records.
+Their independence relies on the controller-managed installation path and write
+boundary; payload hashes are not digital signatures, and content projects cannot
+write host `install-state` files.
+
+Consumers must compare actual current registry data with those host expectations
+before using a definition. `MatchBattleDefinition` permits only the original
+default-weapon normalization from an out-of-range index to `1`; all other bytes
+must match. Allocation padding and intrusive list links are excluded. Neither
+an expectation nor a successful comparison supplies actor/edge/lifecycle
+permission or enables a live multi-form transition.
+
+With v2 authority installed, `unit_catalog_server` checks managed human transform
+requests inside the original authorized room-lock boundary. The inventory UID,
+captured generation, directed edge, current registry bytes and cached definition
+pointers must agree. Refused requests use the original error/unlock path; valid
+cached requests continue through the original transform and notification.
+Unmanaged units and NPCs retain their original path. Unit-table hot rebuilding
+is outside this profile; restart the host after installation changes. An uncached
+directed target is only inspected: this layer does not rebind a bank or migrate
+skills, ammo, cooldowns or in-flight state. v1 authority installs no such gate.
+
+With paired graph inputs, `unit_catalog_server` captures the original human-unit
+constructor's pre-initialization seed and successful output. It uses the shared
+`room_random` lifecycle observer when available; an incompatible or occupied
+observer is rejected. Otherwise it installs the complete native start/build/release
+observation scope. A bounded callback queue defers bookkeeping to a worker. Only an
+accepted start exposes a snapshot; release or a fresh start retires the old room
+epoch and player generation, including when pointers and inventory UIDs are reused.
+Modes 6/7 capture all four deck slots. Provider faults, queue overflow, mismatched
+phases or stale tokens refuse reuse. Captured definitions remain borrowed process
+pointers. Snapshot validity does not authorize an actor mutation: the original
+sender, room lock, current registry, HP, skills and weapon lifecycle still require
+native checks. This consumer currently performs no live transform commits.
+
+`ReadNativeTransformContext` reads the supported host's paired-bank transform
+boundary after the original sender, room, HP and two-definition checks. Its
+source UID, selected deck and native actor identity can be compared with the
+captured start. Returned pointers expire with that locked invocation; readable
+headers do not prove registry freshness. It provides neither a single-bank
+profile nor permission to replace a weapon bank.
+
+The native server accepts unit numbers in `10001..30000`. Unit-number collisions
+need a type-specific relocation range; the larger weapon/skill range cannot be
+used directly for units. Catalog plans and writes reject invalid unit/transform
+numbers before SQL changes. A relocation preview does not reserve numbers or
+complete the related resources, script constants and runtime installation.
+
+The **配套原生资料** (native dependency data) section reads project bindings for
+[`sdgo.unit-native-content/1`](unit-native-content.schema.json). It shows complete
+skill/funnel records, supplied server definitions, atlases and missing or unsupported
+items. Upload a dependency ZIP containing `manifest.json` and its members to add data;
+**更新此组资料** explicitly replaces one group. Existing family records and prior
+publications stay intact, and earlier preview approvals expire.
+
+Each supported skill/funnel record has an **编辑服务端定义** editor. Audited shared
+fields come from the actual client record and remain read-only. Supply the other
+required fields, or search and select a complete stock template from the configured
+server/catalog snapshot. Saving rechecks the template hash and paired fields;
+incompatible templates cannot supply guessed values. Server BattleMode is independent
+of the client's skill dispatch byte. Incomplete entries can be saved and exported as
+drafts; missing values remain visible after re-import. Complete, valid entries become
+explicit definitions. A stale editor cannot replace a newer revision, and original
+source data and prior publications remain intact.
+
+Project export/re-import retains the original bytes, prepared members and source
+evidence. Unknown records and dispatch values stay visible and block admission.
+Saving this authoring data does not enable runtime publication or grant a server
+installation authority.
+
+The publication compiler derives the unit record's model checksum from the final published model bytes,
+including models whose embedded resource paths were prepared. Source records and source assets stay unchanged.
+
+Developer components can prepare an independent skill atlas with
+[`sdgo.unit-skill-atlases/1`](unit-skill-atlases.schema.json). Its sidecar binds complete skill records,
+the catalog and resource archive. Native detail controls and actor skill initialization resolve the declared
+atlas through their original resource consumers. This does not enable ordinary Manager publication of new skills.
+
+Owned funnel definitions use [`sdgo.unit-server-funnels/1`](unit-server-funnels.schema.json), with the same
+transaction and ownership checks as skill data. All six server columns and their paired client fields are checked;
+`pending_funnel_ids` continues to block ordinary publication until runtime admission is complete.
+
+The disabled-by-default `unit_catalog_server` companion consumes controller-generated
+skill bindings and a separate server installation authority. It preserves allocated
+skill IDs while selecting a supported original server branch. See
+[native skill identity selectors](skill-identity.md); the companion contains no
+server owner's content and does not enable ordinary Manager publication of new dependencies.
+
+Developer tools can prepare owned server skill data with
+`owner.units.server_dependencies` and
+[`sdgo.unit-server-dependencies/1`](unit-server-dependencies.schema.json).
+Each entry binds a complete client record and either a hash-pinned existing
+server template or a complete explicitly authored server row. The writer uses
+the caller's catalog transaction, compares live schemas and ownership, verifies
+readback, and refuses baseline adoption or outside edits. It supplies no missing
+values and does not derive server `BattleMode` from the client's effect dispatch.
+Data-only rows remain `pending_skill_ids`; ordinary unit publication still rejects
+them. Native ID-specific behavior, resource bindings and actors are separate
+from successfully storing a server definition.
+
+The developer helper `owner.units.effect_resources` prepares owner-scoped ZFX texture names from typed
+emitter fields. It retains selected JPEG/PNG/DDS/TGA texture variants and original bytes, refuses destination
+conflicts and records source/output hashes. Model edges need a separate adapter. See the
+[script transport contract](script-registration.md#unit-catalog-transport) for project declarations and
+the optional catalog-bound native program consumer. These helpers do not publish script-dependent units.
+
 Developer dependency profiles retain complete skill and funnel source records.
 The skill profile verifies the 882-to-1132-byte projection, explicit ID changes
 and an optional typed linked-skill ID change; the 732-byte funnel profile
 preserves every byte outside its ID word. The native catalog checks fixed
 sizes and typed unit-to-skill, weapon-to-funnel and linked-skill references.
-Manager cannot publish these new dependency definitions yet, because their resources,
-server definitions and actor behavior are not supported.
+Manager cannot publish these new dependency definitions yet. Preparing server data
+and scoped resources does not complete admission for ID-specific behavior, scripts
+and every actor lifecycle.
 The [native ownership test](game-test.md#native-record-ownership-and-shutdown)
 checks complete record bytes and original grid cleanup; it does not cover battle
 activation, transformation, death or respawn.
@@ -295,6 +509,82 @@ memory. Conflicting logical paths retain their variants; baseline reuse and owne
 aliases require target checks. Opaque source game scripts remain data and gain no
 execution permission. This reader does not install resources, register records or
 replace the Manager's unit import workflow.
+
+### Batch roster publication (`tools/gunion/publisher`)
+
+A recovered roster of many families is published in one `unit_catalog` package by the batch publisher instead of
+one Manager import per family. It runs as four stages, each writing a receipt under the configured output root:
+
+```powershell
+python -B -m tools.gunion.publisher families  --config <private-config.json>
+python -B -m tools.gunion.publisher resources --config <private-config.json>
+python -B -m tools.gunion.publisher programs  --config <private-config.json>
+python -B -m tools.gunion.publisher assemble  --config <private-config.json>
+```
+
+- **families** classifies every recovered unit context by its complete records: single form, reciprocal two-form
+  link, one-way link, self-transform loop (`native-self-transform-v1`) or entry variant (a third form that enters
+  one form of a reciprocal pair, `native-entry-forms-v1`). Shapes the native runtime cannot express are listed in
+  `deferred_entries` with a reason; contexts whose models are missing are `excluded_contexts`.
+- **resources** walks each family's resource graph (models, animations, textures, effects, sprites, sounds), keeps
+  baseline-identical files, ships absent files under their logical path and aliases files that differ from the
+  baseline under an owner-hashed name, rewriting every typed reference (records, model materials, effects, sprite
+  frames). Files whose extension the original loader of that root never opens (for example a `.psd` under `txrs`) are
+  recorded as `unsupported` and not shipped. Skill and funnel records are prepared as shared records.
+- **programs** compiles the script closure with the official Lua 5.0 toolchain (LuaJIT dumps are lowered first),
+  scopes exported names under the owner prefix, binds weapon callback fields and writes rewritten weapon records to
+  `programs/weapons/`. Two reviewed, recorded adaptations are read from the config: `script_adaptations` (textual
+  find/replace with an expected count, for Lua 5.1 syntax the 5.0 compiler lacks) and `callback_substitutions`
+  (callback names that no baseline or shipped script defines; the client resolves a callback as a Lua global and a
+  missing one only raises a caught error, so an empty substitution restores the engine's default path and another
+  name rebinds). Every applied adaptation is listed in `programs.json`.
+- **assemble** builds `catalog.bin` (kinds 2, 10, 11, 13, 20, 33, 34, 85), the overlay archive, the native program
+  bundle, the skill atlases and the installer package under `publication/package/`, plus `registrations.json` and
+  `server-plan.json` beside it. It refuses to run when the programs receipt is older than the families or resources
+  receipts. A weapon shared by several families is owned by the first family in publication order and only
+  referenced by the others (`shared_weapon_ids`), because the server ledger keeps one owning family per row. Server
+  `varchar` name columns receive ASCII-folded values (`server_names_normalized`,
+  `server_weapon_names_normalized` in `publication.json`); the client keeps the original wide-character names.
+
+The package is overlay-only: `manifest.json` declares the archive entries in `resource_overlay.paths` and ships no
+loose copies, which the game never reads. The installer accepts both this layout and the Manager's `owned_paths`
+layout. The server side is applied by [the Manager's batch apply](#applying-a-batch-roster-to-the-server)
+(`owner.units.batch_server`): the shared skill, funnel and affiliation rows first, then every family through the
+ordinary repository transaction in dependency order. The native server reads the resulting rows directly, so no
+form-graph or skill-identity authority is required for single-form, reciprocal, one-way or self-transform families.
+The same steps are available from Python; `apply` runs inside the Manager's stopped-server gate:
+
+```python
+from owner.units import batch_server
+batch_server.preflight(publication_folder, world_server_ini)          # read-only report
+batch_server.apply(publication_folder, world_server_ini, progress)    # progress(dict) per stage
+batch_server.readback(publication_folder, world_server_ini)           # counts only
+```
+
+`batch_server.family_order` derives the order from `WeaponNumber_1/2/3`, `WeaponNumber_FatalAttack` and
+`UnitNumber_Transform` references to rows that another family of the plan owns, plus declared `shared_form_ids` and
+`shared_weapon_ids` owners; families without such references keep their publication order.
+
+Entry variants are published as their own families (`native-entry-forms-v1`, or `native-one-way-forms-v1` when they
+enter a one-way terminal form) that share the core family's target form; the shared form's record, row and name stay
+owned by the core family (`shared_form_ids`). Item categories and the owning family of every shared weapon row are
+pinned in `allocations.json` beside the receipts so a republication never shifts an installed family's category or
+moves a weapon row to another family. For every context with entry variants the
+assembler also writes `form-graph-requests.json`: one `sdgo.unit-form-graphs/1` request per context whose `families`
+list groups the core family and its entry families under one graph owner. The batch apply compiles them with
+`owner.units.form_graph_runtime.prepare_native_from_cursor` after the rows are installed and places
+`form-graphs.bin` in the `unit_catalog_server` Mod directory and `sdgo/install-state/unit-form-authority.bin` on
+each battle host; the server Mod then composes an allowed third form into the inactive native bank, and the client's
+`unit_catalog` (`FormChains=1`) rebases its alternate record/model to that form before the native swap. When the
+battle unit is destroyed, the client hands the live pair to the original destructor so it frees exactly the models
+that are in use. `FormChains=0` turns the client part off and leaves entry variants on their native two-form path.
+
+When the config names `existing_catalog` (the `catalog.bin` of an installed `unit_catalog`), the assembler carries
+that installation's records, families, registrations and overlay resources into the new package, so installing the
+roster keeps units imported earlier. The installed overlay must still match its seal. A carried resource that
+differs from a roster resource with the same path stops the assembly instead of replacing either one. The base is the
+installation as it was before the roster: keep a copy of it for republication, because an `existing_catalog` that
+already holds this owner's publication is refused.
 
 ### GameTest checks and captures
 

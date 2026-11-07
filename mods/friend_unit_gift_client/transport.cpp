@@ -283,6 +283,9 @@ bool Transport::SendExpandedProbe(
 bool Transport::CapabilityAllows(Command command) const noexcept {
     if (!(capabilities_ & capability_protocol)) return false;
     if (command == Command::hello) return false;
+    if (IsExtensionCommand(command))
+        return (capabilities_ & capability_expanded_requests) != 0 &&
+               (capabilities_ & capability_agent_validated) != 0;
     if ((command == Command::offer ||
          command == Command::preview_offer) &&
         !(capabilities_ & capability_offer_enabled))

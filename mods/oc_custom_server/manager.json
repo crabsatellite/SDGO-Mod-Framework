@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "oc_custom_server",
+  "title": "OC 六维强化 · World 服务端",
+  "category": "gameplay",
+  "hosts": [
+    "world"
+  ],
+  "description": "恢复原版 OC 六维加点（速度、HP、攻击、防御、敏捷、必杀）：普通点按等级发放，Over 点通过 OC 挑战获得，洗点扣除 GP。OC 档保存在 Mod 自有表中，与现行改造部件数据并存。",
+  "mechanism": "World Mod 在游戏库安装 sdgo_mod_oc_* 表与过程（移植自 2009 年原版存储过程），通过好友赠送载体的扩展指令处理大厅请求。oc 模式下把每台机体的加点增量写入服务端发出的机体记录保留区，并清空记录中的四个改造部件槽位；current 模式下记录保持原生，OC 档只保存不生效。",
+  "settings": [
+    {
+      "id": "enabled",
+      "key": "Enabled",
+      "label": "启用 OC 六维强化",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "mode",
+      "key": "Mode",
+      "label": "生效的强化体系",
+      "type": "choice",
+      "options": [
+        "current",
+        "oc"
+      ],
+      "default": "current",
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "log_fill",
+      "key": "LogFill",
+      "label": "记录记录填充日志",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "reward_item",
+      "key": "RewardItem",
+      "label": "OC 挑战成功奖励道具",
+      "type": "integer",
+      "default": 3240013,
+      "minimum": 0,
+      "maximum": 2147483647,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    }
+  ],
+  "presentation": "configurable"
+}

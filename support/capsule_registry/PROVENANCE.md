@@ -18,16 +18,19 @@ unit-item categories and `0099.gdt` activity machines through the same
 does not count item-category records, so unrelated dynamic type-`0x22`
 registrations remain valid.
 
-The six-table provider ships as component version `1.1.0`. Its startup log
+The six-table provider ships as component version `1.1.1`. Its startup log
 references the stable ASCII marker `SDGO_CAPSULE_REGISTRY_6TABLE_V2`, which
 allows packagers to reject an older four-table DLL before publishing a
 registry containing activity machines or unit-item categories.
 
+The acquisition extension also exposes `SDGO_COLLECTION_ACQUISITION_V1`. It consumes hashed, owner-generated initial-form metadata and updates only the native type-85 completed-product explanation at byte 214. Original source text and blueprint fields are retained; no game archive is rewritten.
+
 | Current file | SHA-256 |
 |---|---|
-| `capsule_catalog.cpp` | `c7c1a08e7cd39aa4df5a194774fd8b84b6b6e0bd981dcbc7b8d95e0b5d0ea2f3` |
-| `capsule_runtime.cpp` | `bf398278544b37f4089aebcab0bacb39da7287b4fdd4fa367b2cd720b6df12be` |
-| `capsule_runtime.h` | `bf07903aae9dc88bc1df48c0b29eab273fc4361059fa648615fecbacdef6af58` |
+| `capsule_catalog.cpp` | `01884256ee891872aeb318b17ca7eccca5cea45c158d39ba3418926b49d7b43c` |
+| `capsule_runtime.cpp` | `69b8909fa89516437324a1bb042cfdd2f3d36d6c7fb45a9efd69673e0d99725f` |
+| `capsule_runtime.h` | `ac6a11a2907489384a59a403175c96c06a584e53ed0f1d8955cc17755a9e1f80` |
+| `acquisition_hints.h` | `eeaae0d3f43b9d4b658bd1a52be20c3456d99f6e403e35408165d300744f4bcc` |
 
 The source repository is MIT licensed. The project root `LICENSE` applies to
 these sources. `Install-Client.ps1` is the matching standalone installer

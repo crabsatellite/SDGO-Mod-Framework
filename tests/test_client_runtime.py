@@ -84,6 +84,16 @@ class CompleteRuntime(unittest.TestCase):
         self.controller.plan(self.host)
         self.assertFalse(any(call.args[1][:1]==['fetch']for call in self.controller.git.call_args_list))
 
+    def test_initial_install_gets_default_config_but_existing_preferences_are_preserved(self):
+        self.write('config.xml',b'distributor starter configuration');self.git('add','config.xml');self.git('commit','-m','Starter config fixture')
+        commit=self.git('rev-parse','HEAD')
+        self.controller.repository=lambda binding:(self.repo,commit,{'runtime':self.contract},self.contract,1)
+        plan=self.controller.plan(self.host);self.assertNotIn('config.xml',plan['files'])
+        self.assertEqual((self.game/'config.xml').read_bytes(),b'personal login and graphics settings')
+        (self.game/'config.xml').unlink();plan=self.controller.plan(self.host)
+        self.assertIn('config.xml',plan['files']);self.controller.install(self.host,plan['digest'])
+        self.assertEqual((self.game/'config.xml').read_bytes(),b'distributor starter configuration')
+
     def test_polling_working_install_does_not_read_the_live_journal(self):
         self.controller.results[self.host['id']]={'status':'working'}
         self.controller.plans[self.host['id']]={'binding':self.binding}
@@ -160,7 +170,7 @@ class CompleteRuntime(unittest.TestCase):
                 if remotes[str(repo)].startswith('ssh:'):raise ValueError('SSH identity unavailable')
                 return b''
             if args[0]=='rev-parse':return self.commit.encode()
-            if args[0]=='show':return storage.json_bytes({'runtime':self.contract})
+            if args[0]=='show':return storage.json_bytes(self.binding if args[1].endswith(':'+c.SOURCE)else{'runtime':self.contract})
             raise AssertionError(args)
         with patch.object(controller,'git',side_effect=git):
             result=controller.repository(self.binding)

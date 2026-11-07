@@ -14,11 +14,23 @@
 #include "sdgo/sdgo_api.h"
 #include "sdgo/mod_settings.h"
 #include "sdgo/random_loadout.h"
+#include "sdgo/battle_human_unit_observer_provider.h"
 #include "inventory.h"
 #include "loadout_sync.h"
 
 namespace {
 namespace policy = sdgo::random_loadout;
+const SdgoApi* g_api=nullptr;
+SdgoMod* g_mod=nullptr;
+sdgo::unit_forms::HumanUnitObserverProvider g_humanObserver;
+bool g_humanObserverReady=false;
+void ObserveHuman(std::uint32_t type,std::uint64_t sequence,const void* room,const void* source,
+                  const void* player,std::uint8_t rule,std::uint8_t mode,std::int32_t result) {
+    const DWORD error=GetLastError();alignas(16) unsigned char fp[512];_fxsave(fp);
+    const auto fault=g_humanObserver.Publish(type,sequence,room,source,player,rule,mode,result);
+    if(fault&&g_api)g_api->Log(g_mod,SDGO_LOG_ERROR,"human unit observer disabled after exception 0x%08lx",static_cast<unsigned long>(fault));
+    _fxrstor(fp);SetLastError(error);
+}
 constexpr size_t kSlotBase=0x533, kSlotStride=0x48E, kOwner=0x429;
 constexpr size_t kActive=0x49, kDeck=0x19E, kActiveSerial=0x162;
 constexpr size_t kShip=0x146, kShipUnitSerials=0x17A;
@@ -40,8 +52,6 @@ using LobbyUnlockFn=void(__thiscall*)(void*,int);
 using InventoryFn=bool(*)(const room_random_inventory::Settings&,const std::vector<uint32_t>&,
                          std::vector<policy::Candidate>&,std::string&);
 
-const SdgoApi* g_api=nullptr;
-SdgoMod* g_mod=nullptr;
 const SdgoRoomTitleApi* g_titleApi=nullptr;
 DispatchFn g_dispatch=nullptr;
 SpecialFn g_special=nullptr;
@@ -212,9 +222,22 @@ struct Attempt {
     uint8_t* actual=nullptr;
     Signature signature;
     std::vector<Player> players;
+    std::vector<uint8_t*> observedRooms;
     std::string error;
 };
 thread_local Attempt* g_attempt=nullptr;
+void ObserveAttemptRoom(Attempt& attempt,uint8_t* room) {
+    try {
+        auto& rooms=attempt.observedRooms;
+        if(std::find(rooms.begin(),rooms.end(),room)==rooms.end()) {
+            rooms.push_back(room);
+            ObserveHuman(SDGO_BATTLE_HUMAN_UNIT_ROOM_INVALIDATED,g_humanObserver.Next(),room,nullptr,nullptr,0,0,0);
+        }
+    } catch(...) {
+        ObserveHuman(SDGO_BATTLE_HUMAN_UNIT_ROOM_INVALIDATED,g_humanObserver.Next(),room,nullptr,nullptr,0,0,0);
+        throw;
+    }
+}
 uint64_t HistoryKey(uint32_t room,uint32_t owner) { return (static_cast<uint64_t>(room)<<32)|owner; }
 void Fail(Attempt& a,const char* message) {
     if(!a.failed) g_api->Log(g_mod,SDGO_LOG_WARN,"random start cancelled: %s",message);
@@ -364,6 +387,9 @@ bool RetirePreviousRound(Attempt& a,uint8_t* room) {
         }
         previous=std::move(found->second);g_saved.erase(found);
     }
+    // Fresh native pilots have already retired the old room generation. Emit
+    // outside g_state, before restoration notices or later policy gates fail.
+    ObserveAttemptRoom(a,room);
     // Never restore an old snapshot over a newly populated native room. Its
     // current records are authoritative, including changed players/selections.
     // A non-random start still needs to undo the previous temporary client view.
@@ -459,6 +485,7 @@ int __fastcall Build(void* proc,void*,uint8_t* room,uint8_t* info,uint8_t* pilot
         Attempt& a=*g_attempt;
         if(!Prepare(a,room)) return 0;
         if(!RetirePreviousRound(a,room)) return 0;
+        ObserveAttemptRoom(a,room);
         if(a.enabled) {
             if(UsesDeck(mode)!=UsesDeck(a.signature.mode)) { Fail(a,"native mode/deck contract mismatch"); return 0; }
             if(!ApplyActual(a,room)) return 0;
@@ -474,7 +501,10 @@ int __fastcall Build(void* proc,void*,uint8_t* room,uint8_t* info,uint8_t* pilot
             }
         }
     }
+    const auto invocation=g_humanObserver.Next();
+    ObserveHuman(SDGO_BATTLE_HUMAN_UNIT_BEFORE,invocation,room,info,pilot,type,mode,0);
     const int result=g_build(proc,room,info,pilot,type,mode);
+    ObserveHuman(SDGO_BATTLE_HUMAN_UNIT_AFTER,invocation,room,info,pilot,type,mode,result);
     if(result && g_attempt && g_attempt->enabled) {
         Attempt& a=*g_attempt;
         for(auto& p:a.players)
@@ -483,6 +513,10 @@ int __fastcall Build(void* proc,void*,uint8_t* room,uint8_t* info,uint8_t* pilot
     }
     return result;
 }
+void InvalidateObservedRooms(const Attempt& attempt) {
+    for(const auto* room:attempt.observedRooms)
+        ObserveHuman(SDGO_BATTLE_HUMAN_UNIT_ROOM_INVALIDATED,g_humanObserver.Next(),room,nullptr,nullptr,0,0,0);
+}
 template<class Call> int RunAttempt(Call&& call) {
     Attempt attempt; attempt.token=++g_token;
     Attempt* parent=g_attempt; g_attempt=&attempt;
@@ -490,10 +524,15 @@ template<class Call> int RunAttempt(Call&& call) {
         const int result=call();
         if(result==0 && attempt.applied && !attempt.failed && attempt.synchronized) Commit(attempt);
         else if(attempt.applied) RestoreActual(attempt.actual,attempt.token);
+        if(result!=0 || attempt.failed || (attempt.applied && !attempt.synchronized))InvalidateObservedRooms(attempt);
+        else for(const auto* room:attempt.observedRooms)
+            ObserveHuman(SDGO_BATTLE_HUMAN_UNIT_START_ACCEPTED,g_humanObserver.Next(),room,nullptr,nullptr,0,0,0);
         g_attempt=parent;
         return attempt.failed ? kStartError : result;
     } catch(...) {
-        if(attempt.applied) RestoreActual(attempt.actual,attempt.token);
+        try { if(attempt.applied) RestoreActual(attempt.actual,attempt.token); }
+        catch(...) { InvalidateObservedRooms(attempt);g_attempt=parent;throw; }
+        InvalidateObservedRooms(attempt);
         g_attempt=parent;
         throw;
     }
@@ -508,6 +547,7 @@ int __fastcall SpecialStart(void* proc,void*,void* source,uintptr_t extra) {
 void __fastcall Release(uint8_t* room,void*) {
     g_release(room);
     RestoreActual(room);
+    ObserveHuman(SDGO_BATTLE_HUMAN_UNIT_ROOM_RELEASED,g_humanObserver.Next(),room,nullptr,nullptr,0,0,0);
 }
 template<class T> bool Bind(T& pointer,const char* symbol) {
     pointer=reinterpret_cast<T>(g_api->Symbol(g_mod,symbol)); return pointer!=nullptr;
@@ -547,7 +587,15 @@ bool LoadSettings() {
 }
 } // namespace
 
+extern "C" __declspec(dllexport) int __cdecl SdgoBattleRegisterHumanUnitObserverV1(const SdgoBattleHumanUnitObserverSinkV1* sink) {
+    return g_humanObserverReady?g_humanObserver.Register(sink):0;
+}
+extern "C" __declspec(dllexport) int __cdecl SdgoBattleReadHumanUnitObserverStatusV1(SdgoBattleHumanUnitObserverStatusV1* status) {
+    return g_humanObserverReady?g_humanObserver.ReadStatus(status):0;
+}
+
 SDGO_MOD_ENTRY {
+    g_humanObserverReady=false;
     g_api=api; g_mod=mod;
     g_titleApi=sdgo::FindRoomTitleApi(api->ModDirectory(mod));
     if(!LoadSettings()) { api->Log(mod,SDGO_LOG_ERROR,"invalid room_random configuration"); return 0; }
@@ -560,6 +608,7 @@ SDGO_MOD_ENTRY {
        || !api->HookCode(mod,"battle.validate_unit",reinterpret_cast<void*>(&Validate),reinterpret_cast<void**>(&g_validate))
        || !api->HookCode(mod,"battle.build_human_unit",reinterpret_cast<void*>(&Build),reinterpret_cast<void**>(&g_build))
        || !api->HookCode(mod,"battle.release_pilots",reinterpret_cast<void*>(&Release),reinterpret_cast<void**>(&g_release))) return 0;
+    g_humanObserverReady=true;
     api->Log(mod,SDGO_LOG_INFO,"ready: !rand / !random assigns owned units once per battle; decks total exactly 10 points");
     return 1;
 }
