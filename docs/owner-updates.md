@@ -51,4 +51,6 @@ Content revisions cannot automatically move backwards or be reused with differen
 
 Check base compatibility, locked program version, content revision and actual installed status. Git failures require checking the reader's existing access; HTTPS failures require checking the complete hosted manifest and payload. Mirrors must serve the same identity and bytes.
 
+On Windows, Manager's Git transfers support deep install and workspace paths. Existing SSH identities and credential helpers are retained; long-path support applies only to Manager-owned Git commands.
+
 Content updates do not require rebuilding the original client. If the base is incompatible, obtain the owner's supported original package. Close the running game and retry a waiting update; use recovery for an interrupted transaction.
