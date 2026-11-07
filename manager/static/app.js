@@ -1,5 +1,5 @@
 import {icon, enhance, chip, led, applyArt} from '/ui.js';
-import {setDisplayUtcOffset} from '/panel_helpers.js';
+import {setDisplayUtcOffset,reviewChange} from '/panel_helpers.js';
 const $=id=>document.getElementById(id);
 const ROLES={client:'客户端',battle:'对战服务器',agent:'中继服务器',world:'世界服务器'};
 const OWNER_KEY='sdgo-manager-owner-tools';
@@ -53,7 +53,9 @@ async function request(path,body,method='POST',extra={}){
  const response=await fetch(path,body===undefined?{}:{method,headers:{'Content-Type':'application/json','X-ModManager-Token':token,...extra},body:JSON.stringify(body)});
  const type=response.headers.get('Content-Type')||'';
  if(!type.includes('json')){if(!response.ok)throw Error('请求失败');return response;}
- const result=await response.json();if(!response.ok)throw Error(result.error||'请求失败');return result;
+ const result=await response.json();
+ if(!response.ok&&result.change_review){if(!await reviewChange(result.change_review))throw Error('已取消，本次没有提交变更');return request(path,body,method,{...extra,'X-Change-Review':result.change_review.review});}
+ if(!response.ok)throw Error(result.error||'请求失败');return result;
 }
 function button(text,fn,cls=''){const b=element('button',text,cls);b.onclick=()=>Promise.resolve().then(fn).catch(e=>message(e.message,true));return b;}
 function clear(){panelCleanup();panelCleanup=()=>{};guard=null;$('content').replaceChildren();message('');}
@@ -133,6 +135,8 @@ function showMods(isArchive=false){
   top.append(locked?chip(mod.enabled?'自动生效':'已关闭',mod.enabled?'green':undefined):toggle);card.append(top,element('p',mod.description||'暂无说明。'));
   const foot=element('div',undefined,'mod-foot'),notes=element('div',undefined,'mod-meta');
   if(mod.blocked_by.length)notes.append(chip('已被批量开关关闭','amber'));
+  const runtimeLabels={active:'已读取配置',disabled:'已确认停用',pending_restart:'待重启或读取确认',stopped:'程序未运行',unknown:'运行状态未确认',failed:'加载失败'};
+  if(mod.runtime)notes.append(chip(runtimeLabels[mod.runtime.status]||'运行状态未确认',mod.runtime.status==='active'?'green':mod.runtime.status==='failed'?'amber':undefined));
   if(!mod.redistributable)notes.append(chip('仅本地 · 禁止导出','amber'));
   const configurable=!archiveView&&mod.settings_count>0;
   const open=button(configurable?'设置':'说明',()=>showSettings(host.id,mod.id),configurable?'ui-btn is-blue is-small':'ui-btn is-ghost is-small');open.prepend(icon(configurable?'settings':'archive'));
@@ -148,6 +152,7 @@ async function showSettings(host,mod){
  const root=$('content');const back=button(archiveView?'返回修复归档':'返回功能列表',()=>leave()&&showMods(archiveView),'back');back.prepend(icon('back'));root.append(back);
  const meta=element('div',undefined,'mod-meta detail-meta');if(entry){meta.append(chip(entry.enabled?'已启用':'已关闭',entry.enabled?'green':undefined));if(entry.version)meta.append(chip('版本 '+entry.version));}if(developer())meta.append(element('code',mod,'field-help'));root.append(meta);
  root.append(element('p',data.contract.description||'调整此功能的设置。','intro'));
+ const runtimeLine=element('p',data.runtime?.message||'等待核实运行状态','muted');root.append(runtimeLine,button('核对运行状态',async()=>{const rows=await request('/api/runtime?'+new URLSearchParams({host}));runtimeLine.textContent=rows[mod]?.message||'等待核实运行状态';},'ui-btn is-ghost is-small'));
  if(data.contract.provider&&ownerTools()){const panel=(state.panels||[]).find(p=>p.id===data.contract.provider);if(panel){const link=button('打开服主管理：'+panel.title,()=>leave()&&showProvider(panel.id),'ui-btn is-ghost is-small');link.prepend(icon(panel.id));root.append(link);}}
  const box=element('section',undefined,'manager-card settings-plate'),fields=element('div',undefined,'settings-grid'),controls={};
  let restart=false;
@@ -172,10 +177,10 @@ async function showSettings(host,mod){
   // Nothing on this form is saved until 保存设置: the bar stays in view and says what is pending.
   const bar=element('div',undefined,'savebar'),status=element('span',undefined,'savebar-status');
   const discard=button('放弃修改',()=>{for(const field of data.contract.settings)write(field,saved[field.id]);justSaved=false;refresh();},'ui-btn is-ghost');
-  const save=button('保存设置',async()=>{const values=Object.fromEntries(data.contract.settings.map(field=>[field.id,read(field)]));const result=await request('/api/settings',{host,mod,values,revisions:data.revisions});data.revisions=result.revisions;saved=values;justSaved=true;refresh();message(restart?'已保存。重新启动对应游戏或服务器后生效。':'已保存，运行中的游戏已生效。');},'ui-btn is-primary');
+  const save=button('保存设置',async()=>{const values=Object.fromEntries(data.contract.settings.map(field=>[field.id,read(field)]));const result=await request('/api/settings',{host,mod,values,revisions:data.revisions});data.revisions=result.revisions;saved=values;justSaved=true;refresh();runtimeLine.textContent=result.runtime?.message||'已保存，等待核实运行状态。';message(runtimeLine.textContent);},'ui-btn is-primary');
   function refresh(){
    const pending=changed().length;bar.classList.toggle('is-dirty',pending>0);bar.classList.toggle('is-saved',!pending&&justSaved);
-   status.textContent=pending?'有 '+pending+' 项修改尚未保存':justSaved?(restart?'已保存 · 重新启动对应游戏或服务器后生效':'已保存 · 运行中的游戏已生效'):(restart?'当前就是已保存的设置。修改后点「保存设置」，重新启动游戏或服务器后生效':'当前就是已保存的设置。修改后点「保存设置」即可生效');
+   status.textContent=pending?'有 '+pending+' 项修改尚未保存':justSaved?(restart?'已保存 · 等待对应程序重启并确认':'已保存 · 等待运行时读取确认'):(restart?'当前显示已保存的设置；运行状态以生效回执为准':'当前显示已保存的设置；保存后由运行时确认读取');
    save.disabled=!pending;discard.disabled=!pending;
   }
   box.addEventListener('input',()=>{justSaved=false;refresh();});box.addEventListener('change',()=>{justSaved=false;refresh();});
@@ -186,9 +191,10 @@ async function showSettings(host,mod){
 }
 async function showProvider(id){
  const sequence=++navigation;const config=await request('/api/providers/'+id+'/config');if(sequence!==navigation)return;clear();activePanel=id;renderFrame();$('page-title').textContent=config.title;document.querySelector('.host-tools').hidden=true;
- const root=$('content'),card=element('section',undefined,'manager-card'),details=element('details');details.open=!config.configured;details.append(element('summary',config.configured?'目录与配置位置':'先选择游戏目录与现有配置'));
- const grid=element('div',undefined,'settings-grid'),inputs={};for(const [key,title] of Object.entries(config.fields)){if(key==='demo'&&!developer())continue;const label=element('label',title),input=document.createElement('input'),line=element('div',undefined,'path-row');input.value=config.config[key]||'';line.append(input);label.append(line);if(key!=='demo')line.append(button('浏览…',async()=>{const value=await request('/api/pick',{kind:['server_ini','rules','previous','catalog','patterns','lookup','profile','module_binary','symbol_fragment','cover'].includes(key)?'file':'directory'});if(value.path)input.value=value.path;},'quiet'));grid.append(label);inputs[key]=input;}
- details.append(grid,button('保存位置设置',async()=>{const data=Object.fromEntries(Object.entries(inputs).map(([k,v])=>[k,v.value.trim()]));await request('/api/providers/'+id+'/config',data);await showProvider(id);},'primary'));card.append(details);root.append(card);
+ const root=$('content'),card=element('section',undefined,'manager-card');
+ if(!config.embedded_configuration){const details=element('details');details.open=!config.configured;details.append(element('summary',config.configured?'目录与配置位置':'先选择游戏目录与现有配置'));
+  const grid=element('div',undefined,'settings-grid'),inputs={};for(const [key,title] of Object.entries(config.fields)){if(key==='demo'&&!developer())continue;const label=element('label',title),input=document.createElement('input'),line=element('div',undefined,'path-row');input.value=config.config[key]||'';line.append(input);label.append(line);if(key!=='demo')line.append(button('浏览…',async()=>{const value=await request('/api/pick',{kind:['server_ini','rules','previous','catalog','patterns','lookup','profile','module_binary','symbol_fragment','cover'].includes(key)?'file':'directory'});if(value.path)input.value=value.path;},'quiet'));grid.append(label);inputs[key]=input;}
+  details.append(grid,button('保存位置设置',async()=>{const data=Object.fromEntries(Object.entries(inputs).map(([k,v])=>[k,v.value.trim()]));await request('/api/providers/'+id+'/config',data);await showProvider(id);},'primary'));card.append(details);root.append(card);}
  if(id==='rewards'&&config.configured){const actions=element('div',undefined,'actions');for(const [action,title] of [['start','启动钱包服务'],['stop','停止钱包服务']])actions.append(button(title,async()=>{const value=await request('/api/services/rewards.wallet',{action});message(value.error|| (value.running?'钱包服务正在运行':'钱包服务已停止'));}));actions.append(button('检查安装 / 更新',async()=>{const value=await request('/api/providers/rewards/api/rewards/install-plan',{});const blocked=value.plan.blockers||[];message(blocked.length?'需要先处理：'+blocked.join('；'):'检查通过。请确认选中的对战服务器已关闭。');if(blocked.length)return;card.append(button('按检查结果安装',async()=>{if(!confirm('按刚才检查的计划安装到选中的服务器？不会停止其他游戏服务。'))return;await request('/api/providers/rewards/api/rewards/install',{review_id:value.review_id});message('安装完成。启动对应服务器后，再查看面板运行状态。');},'primary'));}));card.append(actions);}
  if(id==='operators'&&config.configured)card.append(button('更新本机客户端的副官数据',async()=>{const current=await request('/api/providers/operators/api/operators');await request('/api/providers/operators/api/operators/update-client',{},'POST',{'X-Catalog-Revision':current.revision});message('副官数据已更新，重新打开这个客户端后生效。');}));
  if(developer()&&config.developer_protocol)root.append(developerProtocol(config.developer_protocol));
@@ -254,11 +260,11 @@ async function showUpdates(){
  root.append(timeCard);
  let pending=false;
  const refresh=async()=>{if(pending)return;pending=true;try{
-  const u=await request('/api/updates');card.replaceChildren(element('h2','Manager 与基础整合包更新'),element('p','Stable 提供正式功能；Beta 同时更新正式与测试功能。DIY 与已绑定负责人目录只更新 Manager 程序，运行文件由服主审阅发布。','intro'));
+  const u=await request('/api/updates');if(u.program_managed_by_client){card.replaceChildren(element('h2','Manager 版本'),element('p','当前版本 '+u.current_version+'；程序与运行文件统一跟随上方完整客户端更新。','muted'));return;}card.replaceChildren(element('h2','Manager 与基础整合包更新'),element('p','Stable 提供正式功能；Beta 同时更新正式与测试功能。DIY 与已绑定负责人目录只更新 Manager 程序，运行文件由服主审阅发布。','intro'));
   const channels=element('div',undefined,'actions');
-  for(const [id,label] of [['stable','只更新 Stable（默认）'],['beta','更新 Beta 功能']]){const b=button(label,async()=>{await request('/api/updates',{action:'channel',channel:id});await refresh();},u.channel===id?'ui-btn is-primary':'ui-btn is-ghost');b.setAttribute('aria-pressed',String(u.channel===id));channels.append(b);}
+  for(const [id,label] of (u.git_source?[]:[['stable','只更新 Stable（默认）'],['beta','更新 Beta 功能']])){const b=button(label,async()=>{await request('/api/updates',{action:'channel',channel:id});await refresh();},u.channel===id?'ui-btn is-primary':'ui-btn is-ghost');b.setAttribute('aria-pressed',String(u.channel===id));channels.append(b);}
   const auto=element('input');auto.type='checkbox';auto.className='ui-switch';auto.checked=u.automatic;auto.onchange=async()=>{try{await request('/api/updates',{action:'automatic',enabled:auto.checked});}catch(e){message(e.message,true)}};
-  const autoLabel=element('label',undefined,'update-auto');autoLabel.append(auto,document.createTextNode('自动检查并安装更新'));card.append(channels,autoLabel);
+  const autoLabel=element('label',undefined,'update-auto');autoLabel.append(auto,document.createTextNode('自动检查并安装更新'));if(u.git_source)channels.append(element('p','Git 框架来源 · '+u.git_source.channel+'；修改通道时请同步修改来源分支。','muted'));card.append(channels,autoLabel);
   card.append(element('p','Manager '+u.current_version+(u.latest_version?' · 可用版本 '+u.latest_version:''),'muted'),element('p',u.message,'update-status'));
   if(u.error)card.append(element('p',u.error,'error'));
   const actions=element('div',undefined,'actions');actions.append(button('检查更新',async()=>{await request('/api/updates',{action:'check'});},'ui-btn is-blue'));
@@ -269,7 +275,12 @@ async function showUpdates(){
   if(u.notes){const details=element('details');details.append(element('summary','版本说明'),element('pre',u.notes,'release-notes'));card.append(details);}
   card.append(element('p','保留 Mod 开关、自定义参数、机体资源和本地数据。Beta 通道不会安装开发诊断工具。','muted'));enhance();
  }finally{pending=false;}};
- await refresh();const {mountOwnerUpdates}=await import('/owner_updates.js');const stopOwner=await mountOwnerUpdates({root,request,element,button,message,hostId});const timer=setInterval(()=>refresh().catch(e=>message(e.message,true)),3000);panelCleanup=()=>{clearInterval(timer);stopOwner();};
+ const safety=element('section',undefined,'manager-card');root.append(safety);
+ const safetyRefresh=async()=>{const data=await request('/api/safety');safety.replaceChildren(element('h2','变更与生效检查'),element('p','配置保存与运行生效分别核实；固定目录更新需要维护窗口，现有内容保持原状态。','muted'));
+  if(!data.changes.length)safety.append(element('p','目前没有需要核对的新目录变更。','muted'));
+  const labels={working:'处理中',pending_restart:'待服务重启',active:'已生效',recovery_required:'需恢复发布记录',failed:'未完成',superseded:'已由后续变更替代'};
+  for(const row of data.changes){safety.append(element('h3',row.title+' · '+(labels[row.status]||'待核对')),element('p',row.message||'请核对本次发布记录','muted'));for(const node of row.nodes)safety.append(element('p',node.node+'：'+node.reason,node.ready?'muted':'error'));}};
+ await refresh();await safetyRefresh();const {mountOwnerUpdates}=await import('/owner_updates.js');const stopOwner=await mountOwnerUpdates({root,request,element,button,message,hostId});const timer=setInterval(()=>Promise.all([refresh(),safetyRefresh()]).catch(e=>message(e.message,true)),3000);panelCleanup=()=>{clearInterval(timer);stopOwner();};
 }
 $('nav-updates').onclick=()=>leave()&&showUpdates().catch(e=>message(e.message,true));
 $('create-entrypoints').onclick=async()=>{try{const result=await request('/api/entrypoints',{});message(`已创建 ${result.created} 个快捷入口，保留 ${result.kept} 个已有入口。`);}catch(e){message(e.message,true);}};
@@ -280,4 +291,4 @@ $('owner-show').onclick=()=>{localStorage.setItem(OWNER_KEY,'1');renderFrame();}
 $('confirm-host').onclick=async event=>{event.preventDefault();try{const path=$('host-path').value.trim();$('path-dialog').close();await addHost(path);}catch(e){message(e.message,true);$('path-dialog').showModal();}};
 $('change-mode').onclick=async()=>{if(!leave())return;try{accept(await request('/api/mode',{mode:state.mode==='standard'?'developer':'standard'}));if(activePanel==='updates')await showUpdates();else if(activePanel==='services'&&ownerTools())await showServices();else if(activePanel&&activePanel!=='services'&&ownerTools())await showProvider(activePanel);else showMods(archiveView);}catch(e){message(e.message,true);}};
 $('exit-manager').onclick=async()=>{const pending=guard?guard():'';if(!confirm((pending?pending+'\n\n':'请先保存正在编辑的内容。')+'退出管理器？游戏不会关闭。'))return;try{await request('/api/exit',{});$('content').replaceChildren(element('section','管理器已退出，可以关闭本页。','empty-state'));}catch(e){message(e.message,true);}};
-try{const initial=await request('/api/state');token=initial.session_token;accept(initial);showMods();}catch(e){message(e.message,true);}
+try{const initial=await request('/api/state');token=initial.session_token;accept(initial);if(!ownerTools()&&state.hosts.some(h=>h.complete_runtime))await showUpdates();else showMods();}catch(e){message(e.message,true);}

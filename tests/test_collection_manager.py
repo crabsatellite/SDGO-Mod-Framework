@@ -67,7 +67,7 @@ class CollectionManagerTests(unittest.TestCase):
              patch('owner.collection_capsule.deployment.upgrade_catalog', return_value={'applied':True,'world_restart_required':False}) as upgrade:
             result = self.action('upgrade-catalog')
         self.assertTrue(result['applied']);self.assertFalse(result['world_restart_required'])
-        upgrade.assert_called_once_with(database)
+        upgrade.assert_called_once_with(database, Path(self.provider.config['server_ini']))
         database.close.assert_called_once()
         with self.assertRaises(ValueError):
             self.action('import-history', history={'complete':True})

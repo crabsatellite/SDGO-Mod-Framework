@@ -51,6 +51,8 @@ GAME_EXE = "GOnline.exe"
 STARTUP_EVENT_NAME = "9YOU SDGO"
 TEST_MOD = "game_test_client"
 TARGET_MOD = "match_ai"
+BATTLE_AI_MOD = "battle_ai"
+MISSION_BEHAVIOR_MOD = "mission_behavior"
 FPS_MOD = "fps_limit"
 FPS_SUITE = "native-fps-limit"
 FPS_CASES = (
@@ -101,6 +103,20 @@ MISSION_FLOW_CASES = (
     "mission.combat",
 )
 MISSION_SCOPE = "bounded_native_smoke"
+MISSION_BEHAVIOR_SUITE = "native-mission-behavior"
+MISSION_BEHAVIOR_SCOPE = "sealed_profile_behavior"
+MISSION_BEHAVIOR_PROFILES = ("oc", "gco")
+MISSION_BEHAVIOR_TARGETS = {
+    88006: 5,  # M1 Easy: client Boss AI binding and native map-special behavior
+    88009: 5,  # M2 Easy: server mission table behavior
+}
+MISSION_BEHAVIOR_CASES = MISSION_FLOW_CASES + (
+    "mission.behavior",
+)
+MISSION_BEHAVIOR_FIELDS = (
+    "mission_behavior_profile",
+    "mission_game_mode_id",
+)
 MISSION_AI_COUNT = 3
 MISSION_AI_LEVEL = 2
 MISSION_EXISTING_ACCOUNT_STATES = frozenset(("registered", "existing_account"))
@@ -1645,6 +1661,15 @@ def parse_mode_sequence(value: str) -> tuple[int, ...]:
     return modes
 
 
+def validate_oc_allocate(value: str | None) -> str | None:
+    """OC acceptance input: '<stat>:<points>' with stat 0..5 and 1..20 normal points."""
+    if value is None:
+        return None
+    if type(value) is not str or not re.fullmatch(r'[0-5]:(?:[1-9]|1[0-9]|20)', value):
+        raise GameTestError("oc_allocate must be '<stat 0-5>:<points 1-20>'")
+    return value
+
+
 def validate_play_unit_uid(value: int | None) -> int | None:
     if value is None:
         return None
@@ -1660,6 +1685,68 @@ def validate_mission_mode(value: int | None) -> int | None:
         supported = ",".join(str(mode) for mode in SUPPORTED_MISSION_MODES)
         raise GameTestError(f"mission_mode must be one of: {supported}")
     return value
+
+
+def validate_mission_behavior(
+    profile: str | None,
+    mission_game_mode_id: int | None,
+    mission_mode: int | None,
+) -> tuple[str | None, int | None]:
+    if profile is None and mission_game_mode_id is None:
+        return None, None
+    if profile not in MISSION_BEHAVIOR_PROFILES:
+        raise GameTestError("mission_behavior_profile must be one of: oc,gco")
+    if (
+        isinstance(mission_game_mode_id, bool)
+        or not isinstance(mission_game_mode_id, int)
+        or mission_game_mode_id not in MISSION_BEHAVIOR_TARGETS
+    ):
+        supported = ",".join(str(value) for value in MISSION_BEHAVIOR_TARGETS)
+        raise GameTestError(
+            "mission_game_mode_id must be one of the sealed native targets: "
+            + supported
+        )
+    if mission_mode != MISSION_BEHAVIOR_TARGETS[mission_game_mode_id]:
+        raise GameTestError(
+            "mission_game_mode_id does not belong to the requested mission_mode"
+        )
+    return profile, mission_game_mode_id
+
+
+def configure_mission_behavior_client(
+    client: Path,
+    profile: str,
+) -> dict[str, str | int]:
+    """Seal the selected production Mod profile without editing its manifest."""
+    if profile not in MISSION_BEHAVIOR_PROFILES:
+        raise GameTestError("mission behavior profile must be oc or gco")
+    behavior_directory = client / "sdgo" / "mods" / MISSION_BEHAVIOR_MOD
+    behavior_manifest = behavior_directory / "mod.ini"
+    manifest = read_ini(behavior_manifest)
+    if manifest.get("mod", "id", fallback="") != MISSION_BEHAVIOR_MOD:
+        raise GameTestError("installed mission behavior Mod identity differs")
+
+    behavior_config_path = behavior_directory / "config.ini"
+    behavior_config = (
+        read_ini(behavior_config_path)
+        if behavior_config_path.is_file()
+        else ini_parser()
+    )
+    if not behavior_config.has_section("settings"):
+        behavior_config.add_section("settings")
+    behavior_config["settings"]["Profile"] = profile
+
+    profile_path = behavior_directory / "profile.bin"
+    if profile == "oc" and not profile_path.is_file():
+        raise GameTestError(
+            "OC mission behavior GameTest requires the server owner's profile.bin"
+        )
+    write_ini(behavior_config_path, behavior_config)
+    return {
+        "profile": profile,
+        "profile_data_present": int(profile_path.is_file()),
+        "profile_data_sha256": sha256(profile_path) if profile_path.is_file() else "",
+    }
 
 
 def validate_ai_pool_level(value: int | None) -> int | None:
@@ -1699,12 +1786,30 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                          shop_catalog: bool = False, friends_only: bool = False, room_titles_only: bool = False,
                          room_style_preview: str | None = None,
                          same_room_rematch: bool = False, shop_visual_only: bool = False,
-                         page_group: str | None = None, mission_respawns: str | None = None) -> tuple[str, ...]:
+                         page_group: str | None = None, mission_respawns: str | None = None,
+                         oc_allocate: str | None = None,
+                         mission_behavior_profile: str | None = None,
+                         mission_game_mode_id: int | None = None,
+                         oc_panel: bool = False, oc_challenge: bool = False) -> tuple[str, ...]:
     if mission_respawns is not None and (mission_respawns not in ('player','infinite') or mission_mode is None):
         raise GameTestError('mission_respawns requires a native mission and player or infinite policy')
+    oc_allocate = validate_oc_allocate(oc_allocate)
+    if oc_allocate is not None and (play_unit_uid is None or mission_mode is not None or any((
+            bootstrap_only, battleship_only, gift_requests_only, deck_only, pages_only, friends_only,
+            room_titles_only, collection_draw, same_room_rematch, room_style_preview is not None))):
+        raise GameTestError('oc_allocate requires an ordinary PvP battle with an existing owned play unit')
+    if type(oc_panel) is not bool or type(oc_challenge) is not bool:
+        raise GameTestError('oc_panel and oc_challenge must be booleans')
+    if oc_challenge and not (oc_panel or oc_allocate is not None):
+        raise GameTestError('oc_challenge runs inside the OC panel check')
+    if oc_panel and (play_unit_uid is None or not (oc_allocate is not None or (pages_only and page_group == 'hangar'))):
+        raise GameTestError('oc_panel runs after the OC PvP battle or the read-only hangar pages with an existing owned play unit')
     if page_group is not None and (page_group != 'hangar' or not pages_only or shop_catalog or collection_draw):
         raise GameTestError('page_group=hangar requires read-only pages without shop or collection scope')
     mission_mode = validate_mission_mode(mission_mode)
+    mission_behavior_profile, mission_game_mode_id = validate_mission_behavior(
+        mission_behavior_profile, mission_game_mode_id, mission_mode
+    )
     play_unit_uid = validate_play_unit_uid(play_unit_uid)
     if type(same_room_rematch) is not bool:raise GameTestError('same_room_rematch must be a boolean')
     if same_room_rematch and (mission_mode is not None or any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,friends_only,collection_draw,shop_catalog,room_titles_only,room_style_preview))):
@@ -1737,16 +1842,28 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         selection=('setup.active_unit',) if play_unit_uid is not None else ()
         return FLOW_CASES[:3]+selection+tuple('room_titles.'+x for x in ('pvp.create','pvp.rename','pvp.leave','grid.create','grid.rename','grid.leave','mission.create','mission.rename','mission.leave','team.create','team.native_view','team.leave','start.create','start.rename','start'))
     selection = ('setup.active_unit',) if play_unit_uid is not None else ()
+    if oc_allocate is not None:
+        # Allocate first, then equip: the equip reply is the owned record every
+        # native copy (profile, room pilot) is built from, so it must already
+        # carry the new OC payload before the battle.
+        selection = ('oc.allocate',) + selection
     if mission_mode is not None:
         if mode_sequence != "1":
             raise GameTestError("--mission-mode cannot be combined with a PvP mode sequence")
         if any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,collection_draw)):
             raise GameTestError("--mission-mode cannot be combined with pages or account preparation scopes")
+        if mission_behavior_profile is not None:
+            if mission_respawns is not None:
+                raise GameTestError(
+                    "mission behavior scenarios cannot add the respawn fixture"
+                )
+            return FLOW_CASES[:3] + selection + MISSION_BEHAVIOR_CASES
         return FLOW_CASES[:3] + selection + MISSION_FLOW_CASES + (('mission.respawn',) if mission_respawns else ())
     modes = parse_mode_sequence(mode_sequence)
     if pages_only:
         if page_group == 'hangar':
-            return FLOW_CASES[:3] + selection + ('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel')
+            return FLOW_CASES[:3] + selection + ('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel') + (
+                ('oc.panel',) if oc_panel else ())
         if shop_visual_only:
             return FLOW_CASES[:2] + ('flow.shop_ready',) + selection + ('pages.shop.catalog',)
         shop_cases = ('pages.shop.catalog',) if shop_catalog else ()
@@ -1770,11 +1887,13 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
             cases.extend(f'{name}.{step}' for step in ('room','start','ai_spawn','waiting'))
             cases.extend(f'{name}.rematch.{step}' for step in MODE_FLOW_STEPS)
         return prefix+tuple(cases)
+    # The OC panel check runs last, after the settled return to the lobby.
+    panel = ('oc.panel',) if (oc_allocate is not None or oc_panel) else ()
     if len(modes) == 1:
-        return prefix + FLOW_CASES[3:]
+        return prefix + FLOW_CASES[3:] + panel
     return prefix + tuple(
         f"pvp.mode{mode}.{step}" for mode in modes for step in MODE_FLOW_STEPS
-    )
+    ) + panel
 
 
 def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
@@ -1796,6 +1915,11 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         raise GameTestError("shop GameTest plan is missing sealed input fields")
     shop_catalog = bool(shop_fields)
     if "mission_mode" in plan:
+        behavior_profile, _ = validate_mission_behavior(
+            plan.get("mission_behavior_profile"),
+            plan.get("mission_game_mode_id"),
+            plan.get("mission_mode"),
+        )
         forbidden = {
             "mode_sequence", "expected_ai", "ai_pool_level", "ai_difficulty",
             "ai_layout",
@@ -1810,10 +1934,17 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
             "mission_mode", "mission_scope", "mission_ai_count",
             "mission_ai_level", *MISSION_CLAIM_FIELDS,
         }
+        if behavior_profile is not None:
+            required.update(MISSION_BEHAVIOR_FIELDS)
         if not required.issubset(plan):
             raise GameTestError("mission smoke plan is missing sealed scope fields")
+        expected_scope = (
+            MISSION_BEHAVIOR_SCOPE
+            if behavior_profile is not None
+            else MISSION_SCOPE
+        )
         if (
-            plan["mission_scope"] != MISSION_SCOPE
+            plan["mission_scope"] != expected_scope
             or type(plan["mission_ai_count"]) is not int
             or plan["mission_ai_count"] != MISSION_AI_COUNT
             or type(plan["mission_ai_level"]) is not int
@@ -1839,6 +1970,11 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         shop_visual_only=plan.get('shop_visual_only', False),
         page_group=plan.get('page_group'),
         mission_respawns=plan.get('mission_respawns'),
+        oc_allocate=plan.get('oc_allocate'),
+        mission_behavior_profile=plan.get("mission_behavior_profile"),
+        mission_game_mode_id=plan.get("mission_game_mode_id"),
+        oc_panel=plan.get('oc_panel', False),
+        oc_challenge=plan.get('oc_challenge', False),
     )
     if operator_fields:
         try:
@@ -1856,7 +1992,11 @@ def metadata_suite_for_plan(plan: dict) -> str:
     if plan.get("room_titles_only"):
         return "native-room-titles"
     if "mission_mode" in plan:
-        return MISSION_SUITE
+        return (
+            MISSION_BEHAVIOR_SUITE
+            if "mission_behavior_profile" in plan
+            else MISSION_SUITE
+        )
     if plan.get("bootstrap_only"):
         return "account-bootstrap"
     if plan.get("battleship_only"):
@@ -1931,6 +2071,8 @@ def make_plan(
     ai_difficulty: str | None = None,
     ai_layout: str | None = None,
     mission_respawns: str | None = None,
+    mission_behavior_profile: str | None = None,
+    mission_game_mode_id: int | None = None,
     review_footage: bool = False,
 ) -> dict:
     if mission_respawns is not None and (mission_mode is None or mission_respawns not in ('player','infinite')):
@@ -1950,6 +2092,9 @@ def make_plan(
             ai_allies is not None or random_teams or ai_policy is not None or ai_teams is not None):
         raise GameTestError('AI preset controls cannot be combined with custom population controls')
     mission_mode = validate_mission_mode(mission_mode)
+    mission_behavior_profile, mission_game_mode_id = validate_mission_behavior(
+        mission_behavior_profile, mission_game_mode_id, mission_mode
+    )
     if mission_mode is not None:
         if ai_allies is not None or random_teams or ai_policy is not None or ai_teams is not None:
             raise GameTestError('custom PvP AI teams cannot be used in a mission smoke plan')
@@ -1959,8 +2104,16 @@ def make_plan(
             raise GameTestError("--mission-mode cannot be combined with a PvP mode sequence")
         if expected_ai != 3:
             raise GameTestError("--expected-ai is a PvP setting and cannot change a mission smoke plan")
+        if mission_behavior_profile is not None and mission_respawns is not None:
+            raise GameTestError(
+                "mission behavior scenarios cannot add the respawn fixture"
+            )
         modes = ()
     else:
+        if mission_behavior_profile is not None or mission_game_mode_id is not None:
+            raise GameTestError(
+                "mission behavior scenarios require --mission-mode"
+            )
         if expected_ai < 1 or expected_ai > 7:
             raise GameTestError("expected_ai must be between 1 and 7")
         if ai_pool_level is not None and expected_ai != 1:
@@ -1994,7 +2147,11 @@ def make_plan(
     if mission_mode is not None:
         plan.update({
             "mission_mode": mission_mode,
-            "mission_scope": MISSION_SCOPE,
+            "mission_scope": (
+                MISSION_BEHAVIOR_SCOPE
+                if mission_behavior_profile is not None
+                else MISSION_SCOPE
+            ),
             "mission_ai_count": MISSION_AI_COUNT,
             "mission_ai_level": MISSION_AI_LEVEL,
             "mission_clear_claim": False,
@@ -2002,6 +2159,11 @@ def make_plan(
             "mission_active_exit_claim": False,
             "room_title": mission_room_title(title_nonce, mission_respawns),
         })
+        if mission_behavior_profile is not None:
+            plan.update({
+                "mission_behavior_profile": mission_behavior_profile,
+                "mission_game_mode_id": mission_game_mode_id,
+            })
         if mission_respawns is not None: plan['mission_respawns'] = mission_respawns
     else:
         enemies = (expected_ai + 1) // 2
@@ -2158,6 +2320,11 @@ def write_job(
             "mission_result_claim": "0",
             "mission_active_exit_claim": "0",
         })
+        if "mission_behavior_profile" in plan:
+            run["run"].update({
+                "mission_behavior_profile": plan["mission_behavior_profile"],
+                "mission_game_mode_id": str(plan["mission_game_mode_id"]),
+            })
         if 'mission_respawns' in plan: run['run']['mission_respawns'] = plan['mission_respawns']
     else:
         run["run"]["mode_sequence"] = plan["mode_sequence"]
@@ -2174,6 +2341,12 @@ def write_job(
             run["run"]["ai_layout"] = plan["ai_layout"]
     if 'play_unit_uid' in plan:
         run['run']['play_unit_uid'] = str(plan['play_unit_uid'])
+    if 'oc_allocate' in plan:
+        run['run']['oc_allocate'] = plan['oc_allocate']
+    if plan.get('oc_panel'):
+        run['run']['oc_panel'] = '1'
+    if plan.get('oc_challenge'):
+        run['run']['oc_challenge'] = '1'
     if 'unit_scenario_sha256' in plan:
         run['run']['unit_scenario_sha256'] = plan['unit_scenario_sha256']
     if 'operator_flow' in plan:
@@ -2309,6 +2482,15 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
 
         mission_mode = None
         if mission_plan:
+            behavior_fields = {
+                field for field in MISSION_BEHAVIOR_FIELDS if field in run
+            }
+            if behavior_fields and behavior_fields != set(MISSION_BEHAVIOR_FIELDS):
+                raise ValueError(
+                    "mission behavior plan must seal both profile and GameModeID"
+                )
+            behavior_profile = None
+            behavior_mission_id = None
             required_mission_fields = {
                 'mission_mode', 'mission_scope', 'mission_ai_count',
                 'mission_ai_level', *MISSION_CLAIM_FIELDS,
@@ -2325,7 +2507,26 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             if run['mission_mode'] not in tuple(str(mode) for mode in SUPPORTED_MISSION_MODES):
                 raise ValueError('invalid mission mode')
             mission_mode = validate_mission_mode(int(run['mission_mode']))
-            if run['mission_scope'] != MISSION_SCOPE:
+            if behavior_fields:
+                raw_behavior_id = run["mission_game_mode_id"]
+                if not re.fullmatch(r"[1-9][0-9]*", raw_behavior_id):
+                    raise ValueError(
+                        "mission_game_mode_id must be canonical non-zero decimal"
+                    )
+                try:
+                    behavior_profile, behavior_mission_id = validate_mission_behavior(
+                        run["mission_behavior_profile"],
+                        int(raw_behavior_id),
+                        mission_mode,
+                    )
+                except GameTestError as error:
+                    raise ValueError(str(error)) from error
+            expected_mission_scope = (
+                MISSION_BEHAVIOR_SCOPE
+                if behavior_profile is not None
+                else MISSION_SCOPE
+            )
+            if run['mission_scope'] != expected_mission_scope:
                 raise ValueError('invalid mission smoke scope')
             if (
                 run['mission_ai_count'] != str(MISSION_AI_COUNT)
@@ -2344,11 +2545,17 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             mission_respawns = run.get('mission_respawns')
             if mission_respawns is not None and mission_respawns not in ('player','infinite'):
                 raise ValueError('invalid mission respawn policy')
+            if behavior_profile is not None and mission_respawns is not None:
+                raise ValueError(
+                    "mission behavior plan cannot add the respawn fixture"
+                )
             if run['room_title'] != mission_room_title(run['title_nonce'], mission_respawns):
                 raise ValueError('mission room title differs from the sealed native plan')
             expected_cases = required_flow_cases(
                 '1', play_unit_uid=play_unit_uid, mission_mode=mission_mode,
                 mission_respawns=mission_respawns,
+                mission_behavior_profile=behavior_profile,
+                mission_game_mode_id=behavior_mission_id,
             )
             allowed = {
                 'id', 'role', 'suite', 'normal_flow', 'endpoint',
@@ -2358,6 +2565,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 'account_path', 'retry_count', 'expect_first_fail',
                 'required_cases', 'mission_mode', 'mission_scope',
                 'mission_ai_count', 'mission_ai_level', 'mission_respawns', *MISSION_CLAIM_FIELDS,
+                *MISSION_BEHAVIOR_FIELDS,
                 'play_unit_uid', 'network_policy',
                 *ROUTE_PLAN_FIELDS, 'quiet', 'quiet_loopback', 'review_footage',
             }
@@ -2371,7 +2579,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
         else:
             if any(field in run for field in (
                 'mission_scope', 'mission_ai_count', 'mission_ai_level', 'mission_respawns',
-                *MISSION_CLAIM_FIELDS,
+                *MISSION_CLAIM_FIELDS, *MISSION_BEHAVIOR_FIELDS,
             )):
                 raise ValueError('mission fields require native-mission-smoke suite')
             mode_sequence = ",".join(
@@ -2455,6 +2663,12 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                     )
                 ):
                     raise ValueError('AI difficulty room command differs from the sealed native plan')
+            oc_allocate = run.get('oc_allocate')
+            if oc_allocate is not None:
+                try:
+                    validate_oc_allocate(oc_allocate)
+                except GameTestError as error:
+                    raise ValueError(str(error)) from error
             expected_cases = required_flow_cases(
                 mode_sequence, bootstrap_only, battleship_only,
                 gift_requests_only, deck_only, pages_only, collection_draw,
@@ -2463,6 +2677,9 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 shop_visual_only=bool(shop_plan and shop_plan.get('shop_visual_only')),
                 same_room_rematch=same_room_rematch,
                 page_group=page_group,
+                oc_allocate=oc_allocate,
+                oc_panel=run.get('oc_panel') == '1',
+                oc_challenge=run.get('oc_challenge') == '1',
             )
             if operator_present:
                 expected_cases = operator_scenarios.cases(expected_cases)
@@ -2523,13 +2740,22 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
         if mission_plan:
             plan.update({
                 'mission_mode': mission_mode,
-                'mission_scope': MISSION_SCOPE,
+                'mission_scope': (
+                    MISSION_BEHAVIOR_SCOPE
+                    if behavior_profile is not None
+                    else MISSION_SCOPE
+                ),
                 'mission_ai_count': MISSION_AI_COUNT,
                 'mission_ai_level': MISSION_AI_LEVEL,
                 'mission_clear_claim': False,
                 'mission_result_claim': False,
                 'mission_active_exit_claim': False,
             })
+            if behavior_profile is not None:
+                plan.update({
+                    "mission_behavior_profile": behavior_profile,
+                    "mission_game_mode_id": behavior_mission_id,
+                })
             if mission_respawns is not None: plan['mission_respawns'] = mission_respawns
         else:
             plan['mode_sequence'] = mode_sequence
@@ -2557,6 +2783,12 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 plan['ai_layout'] = ai_layout
         if play_unit_uid is not None:
             plan['play_unit_uid'] = play_unit_uid
+        if run.get('oc_allocate'):
+            plan['oc_allocate'] = validate_oc_allocate(run['oc_allocate'])
+        if run.get('oc_panel') == '1':
+            plan['oc_panel'] = True
+        if run.get('oc_challenge') == '1':
+            plan['oc_challenge'] = True
         plan.update(unit_binding)
         if shop_plan is not None:
             plan.update(shop_plan)
@@ -2873,6 +3105,8 @@ def prepare(
     play_unit_uid: int | None = None,
     mission_mode: int | None = None,
     mission_respawns: str | None = None,
+    mission_behavior_profile: str | None = None,
+    mission_game_mode_id: int | None = None,
     launcher_path: str | None = None,
     account_profile: Path | None = None,
     create_test_account: bool = False,
@@ -2899,7 +3133,13 @@ def prepare(
     extra_mods: tuple[str, ...] = (),
     disabled_mods: tuple[str, ...] = (),
     apsalus_roundtrip: bool = False,
+    unit_transform_roundtrip: bool = False,
+    unit_transform_steps: int | None = None,
+    capture_native_frames: bool = False,
     fps_gameplay_cap: int | None = None,
+    oc_allocate: str | None = None,
+    oc_panel: bool = False,
+    oc_challenge: bool = False,
     server_session: dict | None = None,
     rebind_existing_account: bool = False,
     fps_cap: int | None = None,
@@ -2947,11 +3187,38 @@ def prepare(
         if fps_cap is not None or any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,collection_draw)) or mission_mode is not None:
             raise GameTestError('gameplay FPS checks require a complete native PvP battle')
         extra_mods=tuple(dict.fromkeys((*extra_mods,FPS_MOD)))
-    if apsalus_roundtrip and (mode_sequence != '1' or play_unit_uid is None or any((bootstrap_only,
+    if type(unit_transform_roundtrip) is not bool or type(capture_native_frames) is not bool:
+        raise GameTestError('native unit observation flags must be booleans')
+    if apsalus_roundtrip and unit_transform_roundtrip:
+        raise GameTestError('choose one native transform roundtrip profile')
+    if unit_transform_steps is not None:
+        if type(unit_transform_steps)is not int or not 1<=unit_transform_steps<=16:
+            raise GameTestError('native directed transform steps must be an integer from 1 to 16')
+        if apsalus_roundtrip or unit_transform_roundtrip:
+            raise GameTestError('choose one native transform path profile')
+        if fps_cap is not None or mode_sequence!='1' or play_unit_uid is None or any((bootstrap_only,
+                battleship_only,gift_requests_only,deck_only,pages_only,friends_only,room_titles_only)) or mission_mode is not None:
+            raise GameTestError('native directed transforms require one complete ordinary battle and an existing owned unit UID')
+    if (apsalus_roundtrip or unit_transform_roundtrip) and (mode_sequence != '1' or play_unit_uid is None or any((bootstrap_only,
             battleship_only,gift_requests_only,deck_only,pages_only,friends_only)) or mission_mode is not None):
-        raise GameTestError('Apsalus roundtrip requires one complete ordinary battle and an existing owned unit UID')
+        raise GameTestError('Native transform roundtrip requires one complete ordinary battle and an existing owned unit UID')
+    oc_allocate = validate_oc_allocate(oc_allocate)
+    if oc_allocate is not None and (mode_sequence != '1' or play_unit_uid is None or fps_cap is not None or
+            any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,friends_only,
+                 room_titles_only,collection_draw,same_room_rematch)) or mission_mode is not None):
+        raise GameTestError('--oc-allocate requires one complete ordinary PvP battle and an existing owned unit UID')
+    if type(oc_panel) is not bool:
+        raise GameTestError('--oc-panel must be a flag')
+    if oc_panel and (play_unit_uid is None or fps_cap is not None or mission_mode is not None or
+                     not (oc_allocate is not None or (pages_only and page_group == 'hangar'))):
+        raise GameTestError('--oc-panel requires --play-unit-uid with either --oc-allocate or --pages-only --page-group hangar')
+    if type(oc_challenge) is not bool or (oc_challenge and not (oc_panel or oc_allocate is not None)):
+        raise GameTestError('--oc-challenge runs inside the OC panel check (--oc-panel or --oc-allocate)')
     if review_footage and (not quiet or fps_cap is not None):
         raise GameTestError('review footage is a quiet-lane recording profile; it does not apply to visible or FPS runs')
+    if capture_native_frames and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,
+            battleship_only,gift_requests_only,deck_only,friends_only,room_titles_only))):
+        raise GameTestError('native frame capture requires pages or a complete ordinary battle')
     fps_only = fps_cap is not None
     if fps_only:
         if not quiet or sfx_only:
@@ -2988,6 +3255,15 @@ def prepare(
     if not fps_only:
         play_unit_uid = validate_play_unit_uid(play_unit_uid)
         mission_mode = validate_mission_mode(mission_mode)
+        mission_behavior_profile, mission_game_mode_id = validate_mission_behavior(
+            mission_behavior_profile, mission_game_mode_id, mission_mode
+        )
+        if mission_behavior_profile is not None:
+            extra_mods=tuple(dict.fromkeys((
+                *extra_mods,
+                MISSION_BEHAVIOR_MOD,
+                BATTLE_AI_MOD,
+            )))
         if play_unit_uid is not None and create_test_account:
             raise GameTestError('--play-unit-uid requires an existing account and cannot create a test account')
         if mission_mode is not None and create_test_account:
@@ -3008,6 +3284,9 @@ def prepare(
             shop_binding is not None,friends_only=friends_only, room_titles_only=room_titles_only,
             room_style_preview=room_style_preview,
             page_group=page_group,
+            mission_respawns=mission_respawns,
+            mission_behavior_profile=mission_behavior_profile,
+            mission_game_mode_id=mission_game_mode_id,
         )
         if mission_mode is not None:
             if random_loadout:
@@ -3168,8 +3447,16 @@ def prepare(
             ai_difficulty,
             ai_layout,
             mission_respawns,
+            mission_behavior_profile,
+            mission_game_mode_id,
             review_footage=review_footage,
         )
+        if oc_allocate is not None:
+            plan['oc_allocate'] = oc_allocate
+        if oc_panel:
+            plan['oc_panel'] = True
+        if oc_challenge:
+            plan['oc_challenge'] = True
         if server_session is not None:
             if (not isinstance(server_session,dict) or
                     not re.fullmatch(r'[0-9a-f]{4}' if random_loadout else r'gt[0-9a-f]{4}',str(server_session.get('nonce',''))) or
@@ -3276,6 +3563,11 @@ def prepare(
             bind_staged_loader=bind_staged_loader,
             skip_staged_mods=tuple(name for name,selected in
                 (('unit_catalog',unit_payload is not None),('capsule_catalog',capsule_binding is not None)) if selected))
+        if mission_behavior_profile is not None:
+            configure_mission_behavior_client(
+                client,
+                mission_behavior_profile,
+            )
         capsule_install=None
         if capsule_binding is not None:
             capsule_install=capsule_packages.install(capsule_binding,client)
@@ -3289,9 +3581,13 @@ def prepare(
         observer_config=read_ini(observer_manifest)
         if not observer_config.has_section('settings'):observer_config.add_section('settings')
         observer_config['settings']['ApsalusRoundtrip']='1' if apsalus_roundtrip else '0'
+        observer_config['settings']['UnitTransformRoundtrip']='1' if unit_transform_roundtrip else '0'
+        observer_config['settings']['UnitDirectedTransforms']='1' if unit_transform_steps is not None else '0'
+        observer_config['settings']['UnitTransformSteps']=str(unit_transform_steps or 3)
         observer_config['settings']['FpsGameplayCap']=str(fps_gameplay_cap or 0)
         for key,value in unit_scenarios.settings(plan.get('unit_scenario')).items():
             observer_config['settings'][key]=value
+        if capture_native_frames:observer_config['settings']['CaptureNativeFrames']='1'
         write_ini(observer_manifest,observer_config)
         if 'unit_scenario' in plan:
             atomic_write(client/'sdgo/gametest'/unit_scenarios.INPUT,unit_scenarios.encoded(plan['unit_scenario']).decode('utf-8'))
@@ -3457,7 +3753,10 @@ def reuse_prepared(client_template: Path, stage: Path, run_dir: Path, **options)
     previous_pid=(previous.get('execution') or {}).get('game_pid')
     for row in process_snapshot():
         value=row.get('image_path')
-        if (value and is_relative_to(Path(value).resolve(),run_dir)) or (row['pid']==previous_pid and not value):
+        # A finished client's PID can be reused by an unrelated process whose
+        # image path is unreadable; only the same executable name keeps the hold.
+        if (value and is_relative_to(Path(value).resolve(),run_dir)) or (
+                row['pid']==previous_pid and not value and str(row.get('name','')).casefold()==image.name.casefold()):
             raise GameTestError('the owned client may still be running; reuse made no changes')
     account_lock_path=None;target_account_lock_path=None;account_rebound=False
     if fps_only:
@@ -3629,6 +3928,7 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
         elif any(field in plan for field in (
             "mission_mode", "mission_scope", "mission_ai_count",
             "mission_ai_level", "mission_respawns", *MISSION_CLAIM_FIELDS,
+            *MISSION_BEHAVIOR_FIELDS,
         )):
             raise GameTestError("run.json cannot add mission scope to a non-mission plan")
         for flag in (
@@ -3885,6 +4185,7 @@ def process_snapshot() -> list[dict]:
                     {
                         "pid": pid,
                         "parent_pid": int(entry.th32ParentProcessID),
+                        "name": str(entry.szExeFile),
                         "image_path": process_image_path(pid),
                     }
                 )
@@ -4164,6 +4465,9 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
                 "started_utc": started,
                 "finished_utc": None,
                 "entry_pid": entry_process.pid,
+                # Direct native entry only. A launcher child's initial thread
+                # is a different identity and is deliberately not inferred.
+                "entry_initial_thread_id": getattr(entry_process, 'initial_thread_id', 0),
                 "game_pid": game_process["pid"],
                 "game_image_path": str(Path(game_process["image_path"]).resolve()),
                 "status": "running",
@@ -4578,6 +4882,13 @@ def build_report(run_dir: Path) -> dict:
     if 'mission_mode' in metadata['plan']:
         native['mission_mode'] = metadata['plan']['mission_mode']
         native['mission_scope'] = metadata['plan']['mission_scope']
+        if "mission_behavior_profile" in metadata["plan"]:
+            native["mission_behavior_profile"] = metadata["plan"][
+                "mission_behavior_profile"
+            ]
+            native["mission_game_mode_id"] = metadata["plan"][
+                "mission_game_mode_id"
+            ]
         native['mission_claims'] = {
             'clear': False,
             'result': False,
@@ -4686,6 +4997,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     prepare_parser.add_argument('--mission-respawns',choices=('player','infinite'),help='native mission repeated-death acceptance with the isolated server combat probe')
+    prepare_parser.add_argument(
+        "--mission-behavior-profile",
+        choices=MISSION_BEHAVIOR_PROFILES,
+        help=(
+            "sealed OC or G改 mission behavior acceptance; requires "
+            "--mission-mode and --mission-game-mode-id"
+        ),
+    )
+    prepare_parser.add_argument(
+        "--mission-game-mode-id",
+        type=int,
+        choices=tuple(MISSION_BEHAVIOR_TARGETS),
+        help="exact native GameModeID used by the sealed mission behavior scenario",
+    )
     prepare_parser.add_argument("--retry-count", type=int, choices=(1, 2))
     prepare_parser.add_argument("--expected-ai", type=int, default=3)
     prepare_parser.add_argument('--ai-allies',type=int,help='exact allied AI count for the single host; remaining --expected-ai are enemies')
@@ -4744,6 +5069,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--rebind-existing-account',action='store_true',help='with --reuse-client and --account-profile, switch the stopped client to another already registered account')
     prepare_parser.add_argument('--include-mod',action='append',default=[],help='explicit staged client Mod to install before runtime hashes freeze')
     prepare_parser.add_argument('--fps-gameplay-cap',type=int,help='verify native 60 Hz gameplay and the selected render cap during a full PvP battle')
+    prepare_parser.add_argument('--oc-allocate',help="OC six-stat acceptance '<stat 0-5>:<points>': allocate normal OC points to the --play-unit-uid unit through the production client Mod before the PvP battle")
+    prepare_parser.add_argument('--oc-panel',action='store_true',help='open the original factory upgrade page for the --play-unit-uid unit at the end (after --oc-allocate or the read-only hangar pages) and drive the OC client panel on it: refresh, normal-point reset, one HP point')
+    prepare_parser.add_argument('--oc-challenge',action='store_true',help='inside the OC panel check, also press the OC challenge (can change the unit\'s OC level)')
     prepare_parser.add_argument(
         "--fps-cap",
         type=int,
@@ -4825,6 +5153,8 @@ def main(argv: list[str] | None = None) -> int:
                 play_unit_uid=args.play_unit_uid,
                 mission_mode=args.mission_mode,
                 mission_respawns=args.mission_respawns,
+                mission_behavior_profile=args.mission_behavior_profile,
+                mission_game_mode_id=args.mission_game_mode_id,
                 launcher_path=args.launcher_path,
                 account_profile=args.account_profile,
                 create_test_account=args.create_test_account,
@@ -4852,6 +5182,9 @@ def main(argv: list[str] | None = None) -> int:
                 fps_mod_enabled=not args.fps_mod_disabled,
                 extra_mods=tuple(args.include_mod),
                 fps_gameplay_cap=args.fps_gameplay_cap,
+                oc_allocate=args.oc_allocate,
+                oc_panel=args.oc_panel,
+                oc_challenge=args.oc_challenge,
             )
         elif args.command == "run":
             result = run_prepared(args.run_dir, args.timeout, args.launch_timeout)

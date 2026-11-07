@@ -52,6 +52,19 @@ jobs:
       - name: Native path picker
         timeout-minutes: 3
         run: python -m unittest discover -s tests -p "test_manager_picker.py" -v
+      - name: Manager dependencies, maintenance and complete client updates
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -p "test_manager_safety.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -p "test_unit_batch_server.py" -v
+          python -m unittest discover -s tests -p "test_unit_batch_registry.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -p "test_client_runtime.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -p "test_runtime_layers.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Owner shortcut serialization
         timeout-minutes: 3
         run: python -m unittest discover -s tests -p "test_mod_manager_entrypoints.py" -v
@@ -75,6 +88,15 @@ jobs:
         run: python -m unittest discover -s tests -p "test_calendar*.py" -v
       - name: Build and validate exact release bytes
         run: python tools/build_release.py --build --channel $env:RELEASE_CHANNEL --version $env:RELEASE_VERSION
+      - name: Mission profile configuration and native contracts
+        shell: pwsh
+        run: |
+          python -m unittest tests.test_mission_behavior_profile_codec tests.test_mission_behavior_manager tests.test_game_test_mission_behavior_plan tests.test_game_test_server_report -q
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build --config Release --target mission_behavior_client_policy_test mission_behavior_client_runtime_test mission_behavior_server_test --parallel 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir build -C Release -R '^mission_behavior_' --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Standalone Manager check
         run: python tests/mod_manager_frozen_test.py --exe "build/manager/SDGO Mod Manager.exe"
       - name: Owner publication and player update contracts
@@ -136,3 +158,27 @@ jobs:
           if($env:RELEASE_CHANNEL -eq 'beta'){$options+=@('--prerelease','--latest=false')}else{$options+='--latest'}
           gh release create $tag "dist/SDGO-ModFramework-$env:RELEASE_VERSION.zip" "dist/SDGO-ModFramework-$env:RELEASE_VERSION.sha256" @options
           if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+      - name: Publish verified Git runtime for SSH downloads
+        if: env.PREPARE_ONLY != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release download "v$env:RELEASE_VERSION" --pattern "SDGO-ModFramework-$env:RELEASE_VERSION.zip" --dir published-runtime --clobber
+          if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+          python tools/publish_framework_runtime.py --asset "published-runtime/SDGO-ModFramework-$env:RELEASE_VERSION.zip" --push
+          if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+      - name: Synchronize configured runtime mirror
+        if: env.PREPARE_ONLY != 'true' && vars.RUNTIME_GIT_MIRROR_ENABLED == 'true'
+        env:
+          RUNTIME_GIT_MIRROR_TOKEN: ${{ secrets.RUNTIME_GIT_MIRROR_TOKEN }}
+          RUNTIME_GIT_MIRROR_TARGETS: ${{ secrets.RUNTIME_GIT_MIRROR_TARGETS }}
+          RUNTIME_GITHUB_MIRROR_TOKEN: ${{ secrets.RUNTIME_GITHUB_MIRROR_TOKEN }}
+        run: python tools/sync_runtime_mirror.py
+      - name: Trigger configured pull mirrors
+        if: env.PREPARE_ONLY != 'true' && vars.RUNTIME_GIT_MIRROR_ENABLED == 'true'
+        env:
+          RUNTIME_MIRROR_DISPATCH_PATH: ${{ secrets.RUNTIME_MIRROR_DISPATCH_PATH }}
+          RUNTIME_MIRROR_REPOSITORIES: ${{ secrets.RUNTIME_MIRROR_REPOSITORIES }}
+          RUNTIME_GITHUB_MIRROR_TOKEN: ${{ secrets.RUNTIME_GITHUB_MIRROR_TOKEN }}
+        run: python tools/trigger_runtime_mirrors.py

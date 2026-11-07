@@ -49,7 +49,14 @@ def connection(server_ini: Path, section: str = "DB Game"):
         raise RuntimeError(f"Owner SQL connection failed (SQLSTATE {str(error.args[0])[:5]})") from None
 
 
-def upgrade_catalog(db):
+def upgrade_catalog(db,server_ini):
+    from manager.operations import server_change,backup_tables
+    with server_change(server_ini,'collection_capsule.upgrade',('schema_migration',))as change:
+        backup_tables(db,change,['sdgo_collection_capsule.'+name for name in('Seen','Coverage','DrawLog')])
+        return change.result(_upgrade_catalog(db))
+
+
+def _upgrade_catalog(db):
     """Apply the owned, data-only catalog policy upgrade without a World restart."""
     from .sql import catalog_upgrade
     cursor = db.cursor()
@@ -101,8 +108,21 @@ WHERE class=3 AND major_id=SCHEMA_ID(N'sdgo_collection_capsule') AND name=N'sdgo
                        "FROM dbo.tbl_Units WITH(UPDLOCK,HOLDLOCK) WHERE UnitNumber IN (" + placeholders + ")", *ids)
         columns = [column[0] for column in cursor.description]
         rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        # Transform targets outside this package (an entry variant's shared pair form)
+        # are read for the reference check only; they belong to another package's registration.
+        external = sorted({int(row.get("UnitNumber_Transform") or 0) for row in rows} - set(ids) - {0})
+        registered_elsewhere = set()
+        if external:
+            marks = ",".join("?" for _ in external)
+            cursor.execute("SELECT UnitNumber,UnitNumber_Transform,SallyReady,UnitGradeNumber,UnitGradeNumber2,UnitGraph,UnitModelName "
+                           "FROM dbo.tbl_Units WITH(HOLDLOCK) WHERE UnitNumber IN (" + marks + ")", *external)
+            rows += [dict(zip(columns, row)) for row in cursor.fetchall()]
+            registered_elsewhere = {int(r[0]) for r in cursor.execute(
+                "SELECT UnitID FROM sdgo_collection_capsule.ImportedForms WHERE UnitID IN (" + marks + ") AND PackageID<>?",
+                *external, manifest.get("package_id"))}
         validate_source(rows)
-        roots = imported_roots(rows, [manifest])
+        roots = imported_roots(rows, [manifest], external_forms=frozenset(registered_elsewhere))
+        rows = [row for row in rows if row["UnitNumber"] in ids]
         root = next(iter(roots))
         package = manifest["package_id"]
         revision = roots[root].rsplit(":", 1)[1]

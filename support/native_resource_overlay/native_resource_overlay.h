@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "sdgo/sdgo_api.h"
 
@@ -42,6 +43,12 @@ namespace sdgo::resource_overlay
         std::wstring archivePath;
         uint32_t chunkSize = 0;
         std::unordered_map<std::wstring, OverlayEntry> entries;
+        // A split archive keeps one index whose chunk numbers are global. Part k holds
+        // global chunks [k * partChunks, (k + 1) * partChunks); every part except the
+        // last is exactly partChunks long and no entry crosses a part boundary. Empty
+        // archiveParts means the single archive at archivePath.
+        std::vector<std::wstring> archiveParts;
+        uint32_t partChunks = 0;
     };
 
     // Parses and authenticates a sealed bundle using the strict domain selected
@@ -55,6 +62,15 @@ namespace sdgo::resource_overlay
         const wchar_t* normalized_path,
         void* native_stream,
         void* context);
+
+    // Validate the same sealed unit archive without publishing it or installing
+    // hooks. Consumers can bind optional sidecars to its exact identity/paths.
+    bool InspectUnitBundleFiles(const wchar_t* modDirectory, BundleRegistration& bundle, std::string& error);
+
+    // For a split archive, select the part file that holds an entry and make the
+    // entry's first chunk part-relative. A single archive (no parts) is unchanged.
+    bool ResolveArchivePart(const std::vector<std::wstring>& parts, uint32_t partChunks,
+                            std::wstring& archivePath, NativeFileInfo& info);
 
     class Provider
     {

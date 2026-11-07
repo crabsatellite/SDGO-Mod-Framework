@@ -11,8 +11,10 @@ add_library(sql_registry SHARED registry.cpp file_guard.cpp
 target_include_directories(sql_registry PRIVATE ${MINHOOK}/include)
 target_link_libraries(sql_registry PRIVATE advapi32)
 add_executable(sql_local launch.cpp)
+add_executable(sql_fence_probe fence_probe.cpp)
 target_compile_features(sql_registry PRIVATE cxx_std_17)
 target_compile_features(sql_local PRIVATE cxx_std_17)
+target_compile_features(sql_fence_probe PRIVATE cxx_std_17)
 target_compile_definitions(sql_registry PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_definitions(sql_local PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 

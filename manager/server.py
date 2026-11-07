@@ -8,6 +8,7 @@ import threading
 from urllib.parse import parse_qs, urlsplit
 from . import storage
 from .providers import Binary
+from .change_review import ReviewRequired
 
 
 def make_server(workspace, port=0):
@@ -71,6 +72,11 @@ def make_server(workspace, port=0):
                     if name not in allowed: raise ValueError('面板未登记')
                     return self.response(200, (static / 'panels' / name).read_bytes(), 'text/javascript; charset=utf-8')
                 if method == 'GET' and path == '/api/state': return self.send_json(200, {**workspace.public(), 'session_token': token})
+                if method=='GET'and path=='/api/safety':return self.send_json(200,workspace.change_reviews.state())
+                if method=='GET'and path=='/api/runtime':
+                    from .runtime_state import host_mod_states
+                    host=workspace.host(query['host'][0])
+                    return self.send_json(200,host_mod_states(host,workspace._installed(host)))
                 if method == 'POST' and path == '/api/timezone':
                     return self.send_json(200,{**workspace.set_display_timezone(body.get('utc_offset_minutes')),'session_token':token})
                 if method=='POST' and path=='/api/entrypoints':
@@ -86,7 +92,7 @@ def make_server(workspace, port=0):
                     if method=='GET':return self.send_json(200,updates.state())
                     if method=='POST':
                         action=body.get('action')
-                        if action=='source':return self.send_json(200,updates.source(body.get('repository')))
+                        if action=='source':return self.send_json(200,updates.source(body.get('source',body.get('repository'))))
                         if action=='runtime_plan':return self.send_json(200,updates.runtime_plan(body.get('host')))
                         if action=='adopt':return self.send_json(200,updates.adopt(body.get('host'),body.get('components'),body.get('digest')))
                         if action=='channel':return self.send_json(200,updates.channel(body.get('channel')))
@@ -101,6 +107,15 @@ def make_server(workspace, port=0):
                             self.send_json(200,{'restarting':True})
                             threading.Thread(target=self.server.shutdown,daemon=True).start();return
                         raise ValueError('更新操作无效')
+                if path=='/api/client-updates':
+                    controller=getattr(workspace,'client_runtime',None)
+                    if controller is None:raise ValueError('完整客户端更新尚未初始化')
+                    if method=='GET':return self.send_json(200,controller.state())
+                    if method=='POST':
+                        if body.get('action')=='restart':
+                            controller.restart(body.get('host'));self.send_json(200,{'restarting':True})
+                            threading.Thread(target=self.server.shutdown,daemon=True).start();return
+                        return self.send_json(200,controller.request(body.get('host'),body.get('action'),body.get('digest')))
                 if path=='/api/owner-updates':
                     controller=getattr(workspace,'owner_channels',None)
                     if controller is None:raise ValueError('服主发布组件尚未初始化')
@@ -158,7 +173,7 @@ def make_server(workspace, port=0):
                     if local == 'config':
                         if method == 'GET': return self.send_json(200, provider.describe())
                         if method == 'POST': return self.send_json(200, provider.configure(body))
-                    with provider.lock:
+                    with provider.lock, workspace.change_reviews.execute(provider,method,'/'+local,body,self.headers):
                         result = provider.request(method, '/' + local + ('?' + split.query if split.query else ''), body, self.headers)
                     if isinstance(result, Binary): return self.response(200, result.data, result.mime, result.filename)
                     def urls(value):
@@ -171,6 +186,7 @@ def make_server(workspace, port=0):
                 return self.send_json(404, {'error': '此入口不存在'})
             except (BrokenPipeError,ConnectionAbortedError,ConnectionResetError): return
             except PermissionError as error: self.send_json(403, {'error': str(error)})
+            except ReviewRequired as error:self.send_json(409,{'error':str(error),'change_review':error.plan})
             except storage.Conflict as error: self.send_json(409, {'error': str(error)})
             except (ValueError, KeyError, TypeError, FileNotFoundError) as error: self.send_json(400, {'error': str(error)})
             except Exception as error:

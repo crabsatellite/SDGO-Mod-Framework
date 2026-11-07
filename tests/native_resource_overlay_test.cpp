@@ -1,8 +1,10 @@
 #include <windows.h>
 #include <bcrypt.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <iterator>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -187,6 +189,52 @@ namespace
             << (archiveHash.empty() ? Sha256(fixture.archive) : archiveHash)
             << "\n";
         Check(static_cast<bool>(ini), "operator overlay manifest rewritten");
+    }
+
+    // Split archive: entries = {path, global first chunk, chunk count}; parts hold
+    // partChunks chunks each (the last may be shorter); chunk links are part-relative.
+    struct SplitEntry { std::wstring path; uint32_t first; uint32_t chunks; };
+
+    fs::path MakeSplitFixture(const fs::path& root, const std::vector<SplitEntry>& entries,
+                              uint32_t partChunks, uint32_t totalChunks, size_t truncateLast = 0)
+    {
+        fs::create_directories(root);
+        std::vector<uint8_t> index;
+        for (uint32_t value : {1u, 512u, totalChunks, 0u, static_cast<uint32_t>(entries.size()), 0u})
+            PutU32(index, value);
+        for (const SplitEntry& entry : entries) {
+            for (wchar_t value : entry.path + L'\0') {
+                const uint16_t encoded = static_cast<uint16_t>(value) ^ 0x00aa;
+                const size_t offset = index.size();
+                index.resize(offset + 2);
+                std::memcpy(index.data() + offset, &encoded, sizeof(encoded));
+            }
+            for (uint32_t value : {1u, entry.first, entry.chunks, 0u, 0u, 0u, 0u, 0u, 0u})
+                PutU32(index, value);
+        }
+        std::vector<uint8_t> whole;
+        const uint32_t parts = (totalChunks + partChunks - 1) / partChunks;
+        for (uint32_t part = 0; part < parts; ++part) {
+            const uint32_t count = (std::min)(partChunks, totalChunks - part * partChunks);
+            std::vector<uint8_t> bytes(count * 520u, 0);
+            for (uint32_t local = 0; local < count; ++local) {
+                const uint32_t next = local + 1, previous = local ? local - 1 : 0;
+                std::memcpy(bytes.data() + local * 520u, &next, sizeof(next));
+                std::memcpy(bytes.data() + local * 520u + 4, &previous, sizeof(previous));
+                bytes[local * 520u + 8] = static_cast<uint8_t>(0x60 + part * partChunks + local);
+            }
+            if (part + 1 == parts && truncateLast)
+                bytes.resize(bytes.size() - truncateLast);
+            Write(root / (part ? "resources." + std::to_string(part) + ".zpk" : std::string("resources.zpk")), bytes);
+            whole.insert(whole.end(), bytes.begin(), bytes.end());
+        }
+        Write(root / "resources.zdx", index);
+        std::ofstream ini(root / "resource-overlay.ini", std::ios::binary | std::ios::trunc);
+        ini << "[runtime]\r\nschema=1\r\nindex=resources.zdx\r\nindex_sha256=" << Sha256(index)
+            << "\r\narchive=resources.zpk\r\narchive_sha256=" << Sha256(whole)
+            << "\r\nparts=" << parts << "\r\npart_chunks=" << partChunks << "\r\n";
+        Check(static_cast<bool>(ini), "split overlay fixture manifest written");
+        return root;
     }
 
     void Log(SdgoMod*, int, const char*, ...)
@@ -513,6 +561,70 @@ int main()
         L"sdgo\\optex\\60070\\0.txr", OverlayEntry{});
     Check(LocalProvider().RegisterTrustedBundle(trustedOperatorTexture, error),
           "matching operator owner can claim its canonical short TXR domain");
+
+    // Split archive: three one-chunk entries over parts of two chunks.
+    const auto split = MakeSplitFixture(root / "split",
+        {{L"mdrs\\a.mod", 0, 1}, {L"mdrs\\b.mod", 1, 1}, {L"txrs\\c.txr", 2, 1}}, 2, 3);
+    BundleRegistration inspected;
+    Check(sdgo::resource_overlay::InspectUnitBundleFiles(split.c_str(), inspected, error),
+          "split archive with exact parts is accepted");
+    Check(inspected.archiveParts.size() == 2 && inspected.partChunks == 2 &&
+              inspected.archiveParts[1] == (split / "resources.1.zpk").wstring(),
+          "split archive lists its part files in order");
+    {
+        std::vector<uint8_t> whole;
+        for (const char* name : {"resources.zpk", "resources.1.zpk"}) {
+            std::ifstream stream(split / name, std::ios::binary);
+            whole.insert(whole.end(), std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+        }
+        Check(inspected.identity.substr(inspected.identity.find(':') + 1) == Sha256(whole),
+              "split archive identity hashes the parts as one stream");
+    }
+    {
+        std::wstring path = inspected.archivePath;
+        auto info = inspected.entries.at(L"txrs\\c.txr").info;
+        Check(sdgo::resource_overlay::ResolveArchivePart(inspected.archiveParts, inspected.partChunks, path, info) &&
+                  path == inspected.archiveParts[1] && info.words[1] == 0,
+              "an entry in the second part opens that part at a part-relative chunk");
+        path = inspected.archivePath;
+        info = inspected.entries.at(L"mdrs\\b.mod").info;
+        Check(sdgo::resource_overlay::ResolveArchivePart(inspected.archiveParts, inspected.partChunks, path, info) &&
+                  path == inspected.archiveParts[0] && info.words[1] == 1,
+              "an entry in the first part keeps its chunk");
+        info.words[1] = 9;
+        Check(!sdgo::resource_overlay::ResolveArchivePart(inspected.archiveParts, inspected.partChunks, path, info),
+              "a chunk beyond the last part is refused");
+    }
+    sdgo::resource_overlay::Provider splitProvider;
+    Check(splitProvider.RegisterBundleFiles(split.c_str(), L"resource-overlay.ini", "unit_catalog", error),
+          "split archive registers with a provider");
+    Check(!sdgo::resource_overlay::InspectUnitBundleFiles(
+              MakeSplitFixture(root / "crossing", {{L"mdrs\\a.mod", 0, 1}, {L"mdrs\\b.mod", 1, 2}}, 2, 3).c_str(),
+              inspected, error),
+          "an entry crossing a part boundary is refused");
+    Check(!sdgo::resource_overlay::InspectUnitBundleFiles(
+              MakeSplitFixture(root / "short-part", {{L"mdrs\\a.mod", 0, 1}}, 2, 1, 0).c_str(), inspected, error),
+          "parts=1 is refused (a single archive omits parts)");
+    {
+        const auto shortPart = MakeSplitFixture(root / "short-first",
+            {{L"mdrs\\a.mod", 0, 1}, {L"mdrs\\b.mod", 2, 1}}, 2, 3);
+        fs::resize_file(shortPart / "resources.zpk", 520);
+        std::vector<uint8_t> whole;
+        for (const char* name : {"resources.zpk", "resources.1.zpk"}) {
+            std::ifstream stream(shortPart / name, std::ios::binary);
+            whole.insert(whole.end(), std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+        }
+        std::ifstream indexStream(shortPart / "resources.zdx", std::ios::binary);
+        std::vector<uint8_t> indexBytes((std::istreambuf_iterator<char>(indexStream)), std::istreambuf_iterator<char>());
+        indexStream.close();
+        std::ofstream ini(shortPart / "resource-overlay.ini", std::ios::binary | std::ios::trunc);
+        ini << "[runtime]\r\nschema=1\r\nindex=resources.zdx\r\nindex_sha256=" << Sha256(indexBytes)
+            << "\r\narchive=resources.zpk\r\narchive_sha256=" << Sha256(whole)
+            << "\r\nparts=2\r\npart_chunks=2\r\n";
+        ini.close();
+        Check(!sdgo::resource_overlay::InspectUnitBundleFiles(shortPart.c_str(), inspected, error),
+              "a non-final part shorter than part_chunks is refused even when its hash matches");
+    }
 
     const std::vector<std::wstring> allDomains = {
         L"mdrs\\package\\model.mod", L"anrs\\package\\motion.ani",

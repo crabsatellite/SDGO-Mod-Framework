@@ -165,6 +165,28 @@ def make_snapshot(root: Path, *, skills=True):
 
 
 class SnapshotAndValidationTests(unittest.TestCase):
+    def test_unit_numbers_respect_the_native_server_domain_before_any_write(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);make_snapshot(root);repository=Repository(root,None)
+            for identity in (10000,30001,35000,9000421):
+                value=plan();value['root_unit_id']=identity;value['units'][0]['UnitNumber']=identity
+                value['names'][0]['UnitNumber']=identity;value['item']['RefIndex']=identity
+                with self.subTest(identity=identity),self.assertRaisesRegex(ValueError,'编号范围'):
+                    repository.check_plan(value)
+            value=plan();value['units'][0]['UnitNumber_Transform']=35000
+            with self.assertRaisesRegex(ValueError,'变形目标'):repository.check_plan(value)
+            # A record that transforms into itself is refused unless the plan declares the
+            # self-transform profile; the row itself is otherwise unchanged.
+            value=plan();value['units'][0]['UnitNumber_Transform']=value['units'][0]['UnitNumber']
+            with self.assertRaisesRegex(ValueError,'自身作为变形目标'):repository.check_plan(value)
+            value['behavior_profile']='native-self-transform-v1'
+            repository.check_plan(value)  # accepted with the declared profile
+            class NoSql:
+                def execute(self,*args):raise AssertionError('invalid IDs must fail before SQL')
+            for identity in (35000,9000421):
+                with self.assertRaisesRegex(ValueError,'编号范围'):
+                    unit_repository._write_record(NoSql(),kind='unit',row=unit_row(identity),family='example',revision='test')
+
     def test_only_whitelisted_catalog_files_are_loaded(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -172,7 +194,7 @@ class SnapshotAndValidationTests(unittest.TestCase):
             repository = Repository(root, None)
             self.assertEqual(set(repository.catalog), {
                 "units", "weapons", "items", "names", "grades",
-                "level_indices", "skill_ids", "funnel_ids",
+                "level_indices", "skills", "skill_ids", "pending_skill_ids", "funnels", "funnel_ids", "pending_funnel_ids",
                 "unit_graph_ids",
             })
             self.assertEqual(set(repository.catalog["units"]), {10001})
@@ -271,6 +293,16 @@ class SnapshotAndValidationTests(unittest.TestCase):
             make_snapshot(root)
             with self.assertRaisesRegex(ValueError, "离线模式"):
                 Repository(root, None).apply(plan())
+
+    def test_server_ini_with_case_repeated_credential_keys_is_read(self):
+        """Original WorldServer.ini files carry id/ID and pwd/PWD pairs per DB section."""
+        with tempfile.TemporaryDirectory() as temporary:
+            ini = Path(temporary) / "WorldServer.ini"
+            ini.write_text("[DB Game]\nDBServerName=127.0.0.1,1433\nDBName=GOnlineGame\n"
+                           "id=app\npwd=secret\nID=app\nPWD=secret\n", encoding="utf-8")
+            section = unit_repository._read_ini(ini)["DB Game"]
+            self.assertEqual(("app", "secret", "GOnlineGame"), (section["ID"], section["PWD"], section["DBName"]))
+            self.assertEqual(unit_repository.database_target_key(ini), unit_repository.database_target_key(ini))
 
 
 class Result:
@@ -481,6 +513,12 @@ class FakeConnection:
 
 class TransactionTests(unittest.TestCase):
     def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.server_ini=Path(self.temp.name)/'WorldServer.ini'
+        self.server_ini.write_text('[DB Game]\nDBServerName=127.0.0.1,7\nDBName=fixture\n')
+        self.server_ini.with_name('WorldServer.exe').write_bytes(b'stopped owned transaction fixture')
+        from manager.operations import CORE_CONTRACT
+        (self.server_ini.parent/'sdgo').mkdir();(self.server_ini.parent/'sdgo/core.dll').write_bytes(CORE_CONTRACT)
         target = patch.object(unit_repository, 'database_target_key', return_value='fixture-database')
         target.start();self.addCleanup(target.stop)
 
@@ -488,7 +526,7 @@ class TransactionTests(unittest.TestCase):
         fake = FakeConnection()
         repository = object.__new__(Repository)
         repository.snapshot = None
-        repository.server_ini = Path("private.ini")
+        repository.server_ini = self.server_ini
         repository.catalog, repository._metadata = unit_repository._load_cursor_catalog(
             fake.cursor()
         )
@@ -523,7 +561,7 @@ class TransactionTests(unittest.TestCase):
         fake = FakeConnection()
         repository = object.__new__(Repository)
         repository.snapshot = None
-        repository.server_ini = Path("private.ini")
+        repository.server_ini = self.server_ini
         repository.catalog, repository._metadata = unit_repository._load_cursor_catalog(
             fake.cursor()
         )
@@ -547,7 +585,7 @@ class TransactionTests(unittest.TestCase):
         fake.lossy_table = "tbl_UnitNames"
         repository = object.__new__(Repository)
         repository.snapshot = None
-        repository.server_ini = Path("private.ini")
+        repository.server_ini = self.server_ini
         repository.catalog, repository._metadata = unit_repository._load_cursor_catalog(
             fake.cursor()
         )
@@ -564,7 +602,7 @@ class TransactionTests(unittest.TestCase):
         fake.collection_schema = 7
         repository = object.__new__(Repository)
         repository.snapshot = None
-        repository.server_ini = Path('private.ini')
+        repository.server_ini = self.server_ini
         repository.catalog, repository._metadata = unit_repository._load_cursor_catalog(fake.cursor())
         repository._ownership = {}
         repository._source = 'server'
@@ -588,7 +626,7 @@ class TransactionTests(unittest.TestCase):
         fake.collection_schema = 7
         repository = object.__new__(Repository)
         repository.snapshot = None
-        repository.server_ini = Path('private.ini')
+        repository.server_ini = self.server_ini
         repository.catalog, repository._metadata = unit_repository._load_cursor_catalog(fake.cursor())
         repository._ownership = {}
         repository._source = 'server'

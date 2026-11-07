@@ -38,6 +38,10 @@ public:
         kWaitingForGameRoom = 11,
         kOpeningUnitManagement = 12,
         kWaitingForUnitManagement = 13,
+        kOpeningFactory = 14,
+        kWaitingForFactory = 15,
+        kOpeningFactoryPage = 16,
+        kWaitingForFactoryPage = 17,
 
         kDownmenuServiceMismatch = 0x100,
         kDownmenuControlMismatch = 0x101,
@@ -49,6 +53,11 @@ public:
         kOperatorMenuMismatch = 0x107,
         kOperatorMenuControlMismatch = 0x108,
         kUnitManagementMismatch = 0x109,
+        kFactoryMenuMismatch = 0x10A,
+        kFactoryPageMismatch = 0x10B,
+        kFactoryTabControlMismatch = 0x10C,
+        kFactoryPanelControlMismatch = 0x10D,
+        kUnitManagerControlMismatch = 0x10E,
     };
 
     struct Observation
@@ -139,6 +148,11 @@ public:
         unitRadioInvoked_ = false;
         unitManagerReentryPhases_ = 0;
         unitManagementInvoked_ = false;
+        factoryInvoked_ = false;
+        factoryTabInvoked_ = false;
+        factoryClicks_ = 0;
+        factoryTabClicks_ = 0;
+        lastServiceVtable_ = nullptr;
         InterlockedExchange(
             &lastResult_,
             static_cast<LONG>(kWaitingForLobby));
@@ -314,6 +328,118 @@ public:
         } __except(EXCEPTION_EXECUTE_HANDLER) { return Publish(kNativeFault); }
     }
 
+    // Open the original factory room from the hangar unit manager's FactoryBtn,
+    // select the factory's unit upgrade tab and report kReady with the live
+    // ServiceFactoryUnitUpGrade service once that page exists. Every click goes
+    // through the original callbacks; a click is repeated once more when the
+    // page does not follow.
+    Result EnsureFactoryUpgradePage(void** page)
+    {
+        if(page)*page=nullptr;
+        if(!bound_ || !native_)return Publish(kUnbound);
+        __try {
+            void* pageVtable=Symbol<void*>("test.factory_upgrade_vtable");
+            void* menuVtable=Symbol<void*>("test.factory_tab_menu_vtable");
+            auto menuCallback=Symbol<UiCallbackFn>("test.factory_tab_menu_callback");
+            if(!pageVtable || !menuVtable || !menuCallback)return Publish(kUnbound);
+            if(!CallbackSlotMatches(menuVtable,menuCallback))return Publish(kFactoryMenuMismatch);
+            void* service=nullptr;
+            auto result=ResolveService(L"ServiceFactoryUnitUpGrade",pageVtable,&service);
+            if(result==kServiceMismatched)return Publish(kFactoryPageMismatch);
+            // The upgrade service exists as soon as the factory room opens, but
+            // its page dialog is only shown while the factory tab menu has the
+            // UnitUpRadio tab selected. Always select it once, then require the
+            // dialog to be visible a second after the click.
+            // Factory services set +0xAC once their page is loaded and active;
+            // their UI callbacks ignore input until then.
+            const bool serviceActive=service && static_cast<uint8_t*>(service)[kFactoryServiceActive];
+            auto* dialog=serviceActive ? *reinterpret_cast<uint8_t**>(static_cast<uint8_t*>(service)+kFactoryPageComponent+kFactoryComponentRoot) : nullptr;
+            const bool shown=dialog && dialog[0x162];
+            void* menu=nullptr;
+            result=ResolveService(L"ServiceFactoryRoomMenu",menuVtable,&menu);
+            if(result==kServiceMismatched)return Publish(kFactoryMenuMismatch);
+            const auto now=GetTickCount64();
+            if(menu) {
+                if(factoryTabInvoked_) {
+                    if(shown && now-factoryTabClickedAt_>=1000){if(page)*page=service;return Publish(kReady);}
+                    if(factoryTabClicks_>=2 || now-factoryTabClickedAt_<5000)return Publish(kWaitingForFactoryPage);
+                }
+                auto* bytes=static_cast<uint8_t*>(menu);
+                if(!bytes[kFactoryServiceActive] || now-factoryClickedAt_<1500)return Publish(kWaitingForFactoryPage);
+                auto* root=*reinterpret_cast<uint8_t**>(bytes+kFactoryPageComponent+kFactoryComponentRoot);
+                auto* control=*reinterpret_cast<uint8_t**>(bytes+kFactoryPageComponent+kFactoryMenuUpgradeRadio);
+                if(!root || !control)return Publish(kWaitingForFactoryPage);
+                if(FindControl(root,L"UnitUpRadio")!=control || *reinterpret_cast<void**>(control+kControlParent)!=root ||
+                   !ControlHasName(control,L"UnitUpRadio"))return Publish(kFactoryTabControlMismatch);
+                if(!root[0x162] || !control[0x162] || !control[0x167])return Publish(kWaitingForFactoryPage);
+                factoryTabInvoked_=true;++factoryTabClicks_;factoryTabClickedAt_=now;
+                menuCallback(menu,kRadioMessage,control+kControlName,control);
+                return Publish(kOpeningFactoryPage);
+            }
+            if(service)return Publish(kWaitingForFactoryPage);
+            if(factoryInvoked_ && (factoryClicks_>=2 || now-factoryClickedAt_<10000))return Publish(kWaitingForFactory);
+            const auto hangar=EnsureHangar();
+            if(hangar!=kReady)return hangar;
+            const auto clicked=ClickUnitManagerButton(L"FactoryBtn");
+            if(clicked!=kReady)return clicked;
+            factoryInvoked_=true;++factoryClicks_;factoryClickedAt_=now;
+            return Publish(kOpeningFactory);
+        }__except(EXCEPTION_EXECUTE_HANDLER){return Publish(kNativeFault);}
+    }
+
+    // Press a control hosted on the factory upgrade page dialog through the
+    // page service's original UI callback (button message 0x101).
+    Result ClickFactoryPageControl(void* page,const wchar_t* name)
+    {
+        if(!bound_ || !native_)return Publish(kUnbound);
+        __try {
+            void* pageVtable=Symbol<void*>("test.factory_upgrade_vtable");
+            auto callback=Symbol<UiCallbackFn>("oc_custom.client_upgrade_callback");
+            if(!pageVtable || !callback)return Publish(kUnbound);
+            if(!page || *reinterpret_cast<void**>(page)!=pageVtable || !CallbackSlotMatches(pageVtable,callback))
+                return Publish(kFactoryPageMismatch);
+            auto* bytes=static_cast<uint8_t*>(page);
+            auto* root=*reinterpret_cast<uint8_t**>(bytes+kFactoryPageComponent+kFactoryComponentRoot);
+            if(!root)return Publish(kWaitingForFactoryPage);
+            auto* control=static_cast<uint8_t*>(FindControl(root,name,kButtonControlKind));
+            if(!control || !ControlHasName(control,name) || *reinterpret_cast<void**>(control+kControlParent)!=root)
+                return Publish(kFactoryPanelControlMismatch);
+            lastPageFlags_=(root[0x162]?1u:0u)|(control[0x162]?2u:0u)|(control[0x167]?4u:0u);
+            if(!root[0x162] || !control[0x162] || !control[0x167])return Publish(kWaitingForFactoryPage);
+            callback(page,kButtonMessage,control+kControlName,control);
+            return Publish(kReady);
+        }__except(EXCEPTION_EXECUTE_HANDLER){return Publish(kNativeFault);}
+    }
+
+    // Press a button of the hangar unit manager page (the unitmgr service,
+    // CServiceUnitMgrCB) through its original UI callback, which dispatches
+    // button message 0x101 by control name; FactoryBtn requests the factory
+    // room (app state 0xF) when an active unit is set.
+    Result ClickUnitManagerButton(const wchar_t* name)
+    {
+        if (!bound_ || !native_) return Publish(kUnbound);
+        __try {
+            void* manager=nullptr;
+            const auto result=ResolveService(L"unitmgr",unitManagerVtable_,&manager);
+            if (result==kServiceMismatched) return Publish(kUnitManagerServiceMismatch);
+            if (!manager) return Publish(kWaitingForUnitManager);
+            auto* root=*reinterpret_cast<uint8_t**>(static_cast<uint8_t*>(manager)+kUnitManagerRoot);
+            if (!root) return Publish(kWaitingForUnitManager);
+            auto* control=static_cast<uint8_t*>(FindControl(root,name,kButtonControlKind));
+            if (!control || !ControlHasName(control,name) || *reinterpret_cast<void**>(control+kControlParent)!=root)
+                return Publish(kUnitManagerControlMismatch);
+            if (!root[0x162] || !control[0x162] || !control[0x167]) return Publish(kWaitingForUnitManager);
+            unitManagerCallback_(manager,kButtonMessage,control+kControlName,control);
+            return Publish(kReady);
+        } __except(EXCEPTION_EXECUTE_HANDLER) { return Publish(kNativeFault); }
+    }
+
+    uintptr_t LastServiceVtable() const { return reinterpret_cast<uintptr_t>(lastServiceVtable_); }
+    uint32_t FactoryClicks() const { return factoryClicks_; }
+    // Last page control check: 1 dialog visible, 2 control visible, 4 control enabled.
+    uint32_t LastPageFlags() const { return lastPageFlags_; }
+    uint32_t FactoryTabClicks() const { return factoryTabClicks_; }
+
     // Validate the original service, native button lookup, cached identity,
     // parent, name and input state before invoking its original callback.
     Result ClickOperatorMenuButton(const wchar_t* name,size_t cachedOffset)
@@ -487,6 +613,24 @@ public:
             return "operator-menu-control-mismatch";
         case kUnitManagementMismatch:
             return "unit-management-mismatch";
+        case kOpeningFactory:
+            return "opening-factory";
+        case kWaitingForFactory:
+            return "waiting-for-factory";
+        case kOpeningFactoryPage:
+            return "opening-factory-page";
+        case kWaitingForFactoryPage:
+            return "waiting-for-factory-page";
+        case kFactoryMenuMismatch:
+            return "factory-menu-mismatch";
+        case kFactoryPageMismatch:
+            return "factory-page-mismatch";
+        case kFactoryTabControlMismatch:
+            return "factory-tab-control-mismatch";
+        case kFactoryPanelControlMismatch:
+            return "factory-panel-control-mismatch";
+        case kUnitManagerControlMismatch:
+            return "unit-manager-control-mismatch";
         default:
             return "unknown";
         }
@@ -520,6 +664,14 @@ private:
     static constexpr size_t kNativeStringSize = 0x10;
     static constexpr size_t kNativeStringCapacity = 0x14;
     static constexpr size_t kUiCallbackVtableSlot = 0x38 / sizeof(void*);
+    static constexpr uint32_t kButtonMessage = 0x101;
+    static constexpr uint32_t kButtonControlKind = 4;
+    // Factory services embed their page component at +0xA8: dialog at +0x28,
+    // and for the tab menu its UnitUpRadio at +0x2C.
+    static constexpr size_t kFactoryPageComponent = 0xA8;
+    static constexpr size_t kFactoryComponentRoot = 0x28;
+    static constexpr size_t kFactoryMenuUpgradeRadio = 0x2C;
+    static constexpr size_t kFactoryServiceActive = 0xAC;
 
     using ServiceFindByNameFn =
         void*(__thiscall*)(void*, const void*);
@@ -776,8 +928,8 @@ private:
         if (!service)
             return kServiceAbsent;
         *output = service;
-        return *reinterpret_cast<void**>(service) ==
-                       expectedVtable
+        lastServiceVtable_ = *reinterpret_cast<void**>(service);
+        return lastServiceVtable_ == expectedVtable
                    ? kServiceMatched
                    : kServiceMismatched;
     }
@@ -871,6 +1023,14 @@ private:
     bool unitRadioInvoked_ = false;
     uint32_t unitManagerReentryPhases_ = 0;
     bool unitManagementInvoked_ = false;
+    bool factoryInvoked_ = false;
+    bool factoryTabInvoked_ = false;
+    uint32_t factoryClicks_ = 0;
+    uint32_t factoryTabClicks_ = 0;
+    uint64_t factoryClickedAt_ = 0;
+    uint64_t factoryTabClickedAt_ = 0;
+    uint32_t lastPageFlags_ = 0;
+    mutable void* lastServiceVtable_ = nullptr;
     mutable volatile LONG lastResult_ = kUnbound;
     mutable volatile LONG requestTransportSequence_ = 0;
     mutable volatile LONG unitRadioInvocations_ = 0;

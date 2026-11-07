@@ -153,5 +153,8 @@
     }
   ],
   "presentation": "configurable",
-  "mechanism": "对战服务器按 !ai 指令创建 AI 队友/对手、使用已验证的原生机体构建和生命周期流程，保留比赛与结算规则。"
+  "mechanism": "对战服务器按 !ai 指令创建 AI 队友/对手、使用已验证的原生机体构建和生命周期流程，保留比赛与结算规则。",
+  "provides": {
+    "mission.lifecycle.server": 1
+  }
 }

@@ -40,6 +40,20 @@ enum class Command : std::uint16_t {
     inventory_returns = 12,
 };
 
+// Extension commands let other Mods ride the same authenticated carrier.
+// Their envelope payload is opaque bytes owned by the registered handler; the
+// envelope header fields that gift commands use stay zero. Extension commands
+// are idempotent by contract (the owning Mod carries its own revision), so
+// the transport treats them as read-only and never enters the uncertain state.
+inline constexpr std::uint16_t kExtensionCommandFirst = 0x1000;
+inline constexpr std::uint16_t kExtensionCommandLast = 0x10FF;
+inline constexpr std::size_t kMaximumExtensionPayloadBytes = 1024;
+
+inline bool IsExtensionCommand(Command command) noexcept {
+    const auto value = static_cast<std::uint16_t>(command);
+    return value >= kExtensionCommandFirst && value <= kExtensionCommandLast;
+}
+
 inline bool IsListCommand(Command command) noexcept {
     return command == Command::list_inbox || command == Command::list_returned ||
            command == Command::inventory_returns;
@@ -125,6 +139,9 @@ struct Request {
     std::uint32_t page = 1;
     std::uint16_t note_code_units = 0;
     std::array<char16_t, kMaximumNoteCodeUnits> note{};
+    // Extension commands only.
+    std::uint16_t extension_bytes = 0;
+    std::array<std::uint8_t, kMaximumExtensionPayloadBytes> extension{};
 };
 
 struct GiftSummary {
@@ -169,6 +186,9 @@ struct Reply {
     std::array<char16_t, kMaximumNoteCodeUnits> note{};
     std::uint16_t row_count = 0;
     std::array<GiftSummary, kMaximumRows> rows{};
+    // Extension commands only.
+    std::uint16_t extension_bytes = 0;
+    std::array<std::uint8_t, kMaximumExtensionPayloadBytes> extension{};
 };
 
 namespace wire {
@@ -242,12 +262,14 @@ inline void ReadUtf16(const std::uint8_t* input,
 
 inline bool ValidCommand(Command command) noexcept {
     const auto value = static_cast<std::uint16_t>(command);
-    return value >= static_cast<std::uint16_t>(Command::hello) &&
-           value <= static_cast<std::uint16_t>(Command::inventory_returns);
+    return (value >= static_cast<std::uint16_t>(Command::hello) &&
+            value <= static_cast<std::uint16_t>(Command::inventory_returns)) ||
+           IsExtensionCommand(command);
 }
 
 inline bool ReadOnly(Command command) noexcept {
-    return command == Command::hello ||
+    return IsExtensionCommand(command) ||
+           command == Command::hello ||
            command == Command::list_inbox ||
            command == Command::list_returned ||
            command == Command::inventory_returns ||
@@ -312,6 +334,13 @@ inline bool ValidRequest(const Request& request,
     if (request.command == Command::hello &&
         !agentGeneratedHello && Empty(request.request_id))
         return false;
+    if (IsExtensionCommand(request.command)) {
+        return request.note_code_units == 0 && !request.gift_id &&
+               !request.unit_uid && !request.receiver_id &&
+               request.page == 1 &&
+               request.extension_bytes <= kMaximumExtensionPayloadBytes;
+    }
+    if (request.extension_bytes != 0) return false;
     switch (request.command) {
     case Command::hello:
         return request.note_code_units == 0;
@@ -360,6 +389,12 @@ inline bool ValidReply(const Reply& reply) noexcept {
         !ValidUtf16(reply.peer_name.data(),
                     reply.peer_name_code_units))
         return false;
+    if (IsExtensionCommand(reply.command)) {
+        return reply.row_count == 0 && reply.note_code_units == 0 &&
+               reply.peer_name_code_units == 0 &&
+               reply.extension_bytes <= kMaximumExtensionPayloadBytes;
+    }
+    if (reply.extension_bytes != 0) return false;
     for (std::size_t index = 0; index < reply.row_count; ++index) {
         const auto& row = reply.rows[index];
         if (!row.gift_id || !row.unit_uid ||
@@ -542,8 +577,10 @@ inline bool EncodeRequest(
     if (wire::ReadOnly(request.command))
         flags = static_cast<std::uint16_t>(
             flags | envelope_read_only);
-    const auto payloadBytes =
-        static_cast<std::uint32_t>(request.note_code_units * 2u);
+    const bool extension = IsExtensionCommand(request.command);
+    const auto payloadBytes = extension
+        ? static_cast<std::uint32_t>(request.extension_bytes)
+        : static_cast<std::uint32_t>(request.note_code_units * 2u);
     auto* envelope = output->data() + kRequestEnvelopeOffset;
     if (!wire::WriteEnvelopeHeader(
             envelope, request.command, flags, payloadBytes,
@@ -553,8 +590,12 @@ inline bool EncodeRequest(
             request.note_code_units, 0, 0, 0, 0,
             GiftState::pending, ListDirection::inbox))
         return false;
-    wire::WriteUtf16(envelope + kEnvelopeHeaderBytes,
-                     request.note.data(), request.note_code_units);
+    if (extension)
+        std::memcpy(envelope + kEnvelopeHeaderBytes,
+                    request.extension.data(), request.extension_bytes);
+    else
+        wire::WriteUtf16(envelope + kEnvelopeHeaderBytes,
+                         request.note.data(), request.note_code_units);
     return true;
 }
 
@@ -602,13 +643,24 @@ inline bool DecodeRequest(const std::uint8_t* data,
         ignoredDirection != ListDirection::inbox ||
         (((request.flags & envelope_read_only) != 0) !=
          wire::ReadOnly(request.command)) ||
-        payloadBytes !=
-            static_cast<std::uint32_t>(request.note_code_units * 2u) ||
         request.note_code_units > kMaximumNoteCodeUnits)
         return false;
-    wire::ReadUtf16(
-        data + kRequestEnvelopeOffset + kEnvelopeHeaderBytes,
-        request.note.data(), request.note_code_units);
+    if (IsExtensionCommand(request.command)) {
+        if (request.note_code_units != 0 ||
+            payloadBytes > kMaximumExtensionPayloadBytes)
+            return false;
+        request.extension_bytes = static_cast<std::uint16_t>(payloadBytes);
+        std::memcpy(request.extension.data(),
+                    data + kRequestEnvelopeOffset + kEnvelopeHeaderBytes,
+                    payloadBytes);
+    } else {
+        if (payloadBytes !=
+            static_cast<std::uint32_t>(request.note_code_units * 2u))
+            return false;
+        wire::ReadUtf16(
+            data + kRequestEnvelopeOffset + kEnvelopeHeaderBytes,
+            request.note.data(), request.note_code_units);
+    }
     const bool generatedHello =
         request.command == Command::hello &&
         Empty(request.request_id) &&
@@ -660,7 +712,9 @@ inline bool EncodeReply(
     wire::Write32(output->data() + 6, authenticatedActor);
     wire::Write32(output->data() + 12, 0);
     std::uint32_t payloadBytes = 0;
-    if (IsListCommand(normalized.command)) {
+    if (IsExtensionCommand(normalized.command)) {
+        payloadBytes = normalized.extension_bytes;
+    } else if (IsListCommand(normalized.command)) {
         payloadBytes =
             static_cast<std::uint32_t>(
                 normalized.row_count * kSummaryBytes);
@@ -688,7 +742,10 @@ inline bool EncodeReply(
             normalized.direction))
         return false;
     auto* payload = envelope + kEnvelopeHeaderBytes;
-    if (IsListCommand(normalized.command)) {
+    if (IsExtensionCommand(normalized.command)) {
+        std::memcpy(payload, normalized.extension.data(),
+                    normalized.extension_bytes);
+    } else if (IsListCommand(normalized.command)) {
         for (std::size_t index = 0;
              index < normalized.row_count;
              ++index) {
@@ -757,7 +814,13 @@ inline bool DecodeReply(const std::uint8_t* data,
     reply.status = static_cast<WireStatus>(status);
     const auto* payload =
         data + kReplyEnvelopeOffset + kEnvelopeHeaderBytes;
-    if (IsListCommand(reply.command)) {
+    if (IsExtensionCommand(reply.command)) {
+        if (reply.row_count != 0 || reply.note_code_units != 0 ||
+            payloadBytes > kMaximumExtensionPayloadBytes)
+            return false;
+        reply.extension_bytes = static_cast<std::uint16_t>(payloadBytes);
+        std::memcpy(reply.extension.data(), payload, payloadBytes);
+    } else if (IsListCommand(reply.command)) {
         if (reply.row_count > kMaximumRows ||
             reply.note_code_units != 0 ||
             payloadBytes !=
@@ -828,5 +891,63 @@ static_assert(kMaximumRows * kSummaryBytes <=
                   kCarrierBytes - kReplyEnvelopeOffset -
                       kEnvelopeHeaderBytes,
               "fixed reply carrier row capacity exceeds carrier");
+static_assert(kMaximumExtensionPayloadBytes <=
+                  kCarrierBytes - kReplyEnvelopeOffset -
+                      kEnvelopeHeaderBytes,
+              "extension payload exceeds the reply carrier");
+static_assert(kMaximumExtensionPayloadBytes <=
+                  kCarrierBytes - kRequestEnvelopeOffset -
+                      kEnvelopeHeaderBytes,
+              "extension payload exceeds the request carrier");
+
+// Extension registration on the World host (friend_unit_gift_server.dll).
+// Handlers run on the native request thread with the request's own database
+// sessions; they return a WireStatus value and fill the reply payload.
+using ExtensionHandlerFn = std::int32_t(__cdecl*)(
+    void* user,
+    std::uint32_t authenticated_actor,
+    std::uint16_t command,
+    const std::uint8_t* payload,
+    std::uint32_t payload_bytes,
+    void* member_database,
+    void* game_database,
+    std::uint8_t* reply_payload,
+    std::uint32_t reply_capacity,
+    std::uint32_t* reply_bytes);
+using RegisterExtensionFn = int(__cdecl*)(
+    std::uint16_t first_command,
+    std::uint16_t last_command,
+    ExtensionHandlerFn handler,
+    void* user);
+#define SDGO_FRIEND_UNIT_GIFT_REGISTER_EXTENSION_EXPORT \
+    "SdgoFriendUnitGiftRegisterExtensionV1"
+// While an extension handler runs, the native World request object (CRequest)
+// that carried it; null on any other thread or outside a handler. Handlers use
+// it to call other native request handlers with the same database sessions.
+using CurrentRequestFn = void*(__cdecl*)();
+#define SDGO_FRIEND_UNIT_GIFT_CURRENT_REQUEST_EXPORT \
+    "SdgoFriendUnitGiftCurrentRequestV1"
+
+// Extension sending on the client host (friend_unit_gift_client.dll). The
+// callback runs on the game thread once, with the reply payload on success or
+// a transport WireStatus (and no payload) on failure.
+using ClientExtensionCallbackFn = void(__cdecl*)(
+    void* user,
+    std::uint16_t command,
+    std::int32_t status,
+    const std::uint8_t* payload,
+    std::uint32_t payload_bytes);
+using ClientExtensionSendFn = int(__cdecl*)(
+    std::uint16_t command,
+    const std::uint8_t* payload,
+    std::uint32_t payload_bytes,
+    ClientExtensionCallbackFn callback,
+    void* user);
+// 0 transport not ready, 1 ready and idle, 2 ready with a request outstanding.
+using ClientExtensionStateFn = int(__cdecl*)();
+#define SDGO_FRIEND_UNIT_GIFT_CLIENT_EXTENSION_SEND_EXPORT \
+    "SdgoFriendUnitGiftClientExtensionSendV1"
+#define SDGO_FRIEND_UNIT_GIFT_CLIENT_EXTENSION_STATE_EXPORT \
+    "SdgoFriendUnitGiftClientExtensionStateV1"
 
 } // namespace sdgo::friend_unit_gift

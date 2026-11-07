@@ -29,7 +29,7 @@ import uuid
 import zlib
 
 
-BUILDER_VERSION = 2
+BUILDER_VERSION = 3
 
 def registry_support(stage: Path) -> Path:
     """Locate the provider in an owner kit or an updater-compatible release."""
@@ -734,8 +734,8 @@ def build_client_registry(
 
     ``current_registry`` is an optional prior compiler output.  When supplied,
     all unrelated rows and generated 60000..65535 resources are retained.
-    ``source_units`` remains in the public API for the owner tool, but activity
-    machines have no client-side preview list and therefore ignore it.
+    ``source_units`` identifies the current ownable roots for native acquisition
+    explanations; it does not turn an activity machine into a preview list.
     ``unit_items`` describes stable native gift-item categories.  Existing
     native rows are verified; collection-created rows are added from the
     shipped 1140005 permanent Lv1 unit-item template and are never implicitly
@@ -1047,6 +1047,12 @@ def build_client_registry(
             table: source_table_hashes[table] for table in TABLE_NAMES
         },
     }
+    acquisition=None
+    acquisition_raw=None
+    from .acquisition import encode as encode_acquisition,FILE as acquisition_file
+    if enabled:
+        hints=encode_acquisition(source_units,normalized_items,rules)
+        if hints:acquisition_raw,acquisition=hints
     semantic = {
         "builder_version": BUILDER_VERSION,
         "machine_id": machine_id,
@@ -1055,6 +1061,7 @@ def build_client_registry(
         "enabled": enabled,
         "placement_kind": "activity",
         "unit_items": list(normalized_items),
+        "collection_acquisition_sha256":_sha256(acquisition_raw) if acquisition_raw else None,
         "resources": {
             name: _sha256(raw) for name, raw in sorted(resources.items())
         },
@@ -1108,6 +1115,10 @@ def build_client_registry(
         "",
     ]
     files["runtime.ini"] = "\n".join(runtime_lines).encode("ascii")
+    if acquisition_raw:
+        files[acquisition_file]=acquisition_raw
+        files['runtime.ini']+=("\n[acquisition]\nfile="+acquisition_file+
+            "\nsha256="+_sha256(acquisition_raw)+"\n").encode('ascii')
 
     if enabled:
         native_position = int(owned_index) + 1
@@ -1124,7 +1135,17 @@ def build_client_registry(
         }
     else:
         placement = None
+    # The capsule compiler records which 0099 rows belong to dedicated activity machines.
+    # The rows themselves are retained above, so their ownership record must travel with
+    # them; without it the next capsule compile treats the owner's own machines as foreign.
+    carried = {}
+    previous_manifest = current_path / "manifest.json" if current_path is not None else None
+    if previous_manifest is not None and previous_manifest.is_file():
+        previous = json.loads(previous_manifest.read_text("utf-8-sig"))
+        carried = {key: previous[key] for key in ("activity_ownership", "activity_metadata")
+                   if isinstance(previous, dict) and key in previous}
     manifest = {
+        **carried,
         "schema_version": 1,
         "builder_version": BUILDER_VERSION,
         "catalog_revision": revision,
@@ -1146,6 +1167,7 @@ def build_client_registry(
             "verified_native_category_ids": verified_native_categories,
             "retention": "append_or_update_only",
         },
+        "collection_acquisition": acquisition,
         "files": {name: _sha256(data) for name, data in sorted(files.items())},
         "overlay": overlay_index,
         "source": source_identity,

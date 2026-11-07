@@ -1476,6 +1476,19 @@ function initializeActivityEditor(){
     const art=(snapshot.artwork||[]).find(row=>row.key===machine.artwork_key);
     if(art){const image=el('img');image.src='data:image/png;base64,'+art.png_base64;
       image.alt=machine.name+'活动海报';header.append(image);}
+    const posterFile=el('input');posterFile.type='file';posterFile.accept='image/png';posterFile.hidden=true;
+    const posterButton=el('button',art?.placeholder?'上传正式海报（当前为占位图）':'更换活动海报');posterButton.type='button';
+    posterButton.onclick=()=>{if(state.dirty){showToast('请先保存当前机台修改，再更换海报。');return;}posterFile.click();};
+    posterFile.onchange=async()=>{const file=posterFile.files[0];if(!file)return;posterButton.disabled=true;
+      try{if(file.size>8*1024*1024)throw new Error('海报 PNG 最大为 8 MiB');
+        const dataUrl=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);
+          reader.onerror=reject;reader.readAsDataURL(file);});
+        const result=await apiPost('/api/providers/capsules/api/projects/activity-poster',{
+          expected_revision:state.revision,id:machine.id,filename:file.name,data:String(dataUrl).split(',')[1]});
+        state.revision=result.catalog_revision;if(state.bootstrap)state.bootstrap.catalog_revision=state.revision;
+        $('#revision').textContent='revision '+state.revision.slice(0,12);status.textContent=result.message;await load();
+      }catch(error){status.textContent=error.message;}finally{posterButton.disabled=false;posterFile.value='';}};
+    header.append(posterButton,posterFile);
     const fields=el('div');fields.className='activity-fields';
     const name=el('input');name.value=machine.name;name.maxLength=128;name.setAttribute('aria-label','活动机台名称');
     const currency=el('select');currency.setAttribute('aria-label','活动机台货币');
@@ -1582,10 +1595,28 @@ function initializeActivityEditor(){
         button.type='button';button.onclick=()=>open(row);list.append(button);}
       if(!machines.size)list.append(el('p','请先在机体资料与素材库中生成独立活动机草稿。'));
       if(selected&&machines.has(selected.id))open(machines.get(selected.id));
+      await loadBatch();
     }catch(error){status.textContent=error.message;}finally{refresh.disabled=false;}
   }
+  const batch=el('details');
+  async function loadBatch(){
+    let result;try{result=await apiGet('/api/providers/capsules/api/projects/batch-units');}catch(error){batch.replaceChildren();return;}
+    const eligible=(result.items||[]).filter(item=>item.rank===4&&!item.has_activity_machine);
+    batch.replaceChildren(el('summary','批量阵容的 S 级机体（'+eligible.length+' 个未建活动机）'));
+    if(!eligible.length)return;
+    batch.append(el('p','为登记过的批量阵容机体生成独立活动机草稿。没有海报的机体先使用机体图片生成的占位海报，之后可在机台里更换。'));
+    for(const item of eligible){const button=el('button',item.name+' · 生成活动机草稿');button.type='button';
+      button.onclick=async()=>{if(state.dirty){showToast('请先保存当前机台修改。');return;}button.disabled=true;
+        try{const created=await apiPost('/api/providers/capsules/api/projects/activity-draft',{
+          family_key:item.family_key,source_revision:item.source_revision,expected_revision:state.revision,pattern_id:'gp_rare'});
+          state.revision=created.catalog_revision;if(state.bootstrap)state.bootstrap.catalog_revision=state.revision;
+          $('#revision').textContent='revision '+state.revision.slice(0,12);status.textContent=created.message;
+          selected=created.activity_draft;await load();
+        }catch(error){status.textContent=error.message;button.disabled=false;}};
+      batch.append(button);}
+  }
   refresh.onclick=load;state.reloadActivity=load;
-  panel.append(heading,note,refresh,status,defaults,list,editor);shadow.prepend(panel);
+  panel.append(heading,note,refresh,status,defaults,list,batch,editor);shadow.prepend(panel);
 }
 
 initializeActivityEditor();

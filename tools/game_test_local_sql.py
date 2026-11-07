@@ -176,6 +176,7 @@ def start(root, binaries, master_only=False):
     environment = dict(
         os.environ, SDGO_TEST_SQL_REGISTRY=data['registry'],
         SDGO_TEST_SQL_ROOT=str(root),
+        SDGO_TEST_SQL_DATA_ROOT=str(engine / 'DATA'),
         SDGO_TEST_SQL_RESOURCE_DIR=str(engine / 'Binn'),
         TEMP=str(temporary), TMP=str(temporary),
     )

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "oc_custom_battle",
+  "title": "OC 六维强化 · 对战服务端",
+  "category": "gameplay",
+  "hosts": [
+    "battle"
+  ],
+  "description": "在原生逐形态属性构建之后，把机体记录携带的 OC 加点增量加到 HP、攻击、防御和必杀追加伤害上，并沿用原生按等级的上限表。",
+  "mechanism": "World 端 oc_custom_server 在 oc 模式下把加点结果写入机体记录的保留区；对战服务端读取该记录，在原生 FUN_004D6790 构建每个形态后加上增量。current 模式下记录不携带数据，本 Mod 不改变任何数值。",
+  "settings": [
+    {
+      "id": "enabled",
+      "key": "Enabled",
+      "label": "启用 OC 对战属性",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "log_apply",
+      "key": "LogApply",
+      "label": "记录每次应用的属性",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    }
+  ],
+  "presentation": "configurable"
+}

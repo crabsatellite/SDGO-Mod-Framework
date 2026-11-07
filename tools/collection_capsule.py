@@ -53,9 +53,11 @@ def build(snapshot, output, machine_id, families, framework_stage=None, *, clien
         claimed.update(form["id"] for form in manifest["family"]["forms"])
     native = resolve_native_roots(rows, client_root=client_root, client_gdrs=client_gdrs)
     imported_root_ids = set(existing) | set(explicit)
+    # Published entry variants can contribute several valid inventory roots to
+    # one connected transform component; every member is still verified above.
     missing_native = [item for item in native["audit"].get("unresolved", [])
                       if not (set(item["forms"]) <= claimed
-                              and len(set(item["forms"]) & imported_root_ids) == 1)]
+                              and bool(set(item["forms"]) & imported_root_ids))]
     if missing_native:
         raise ValueError("Initial-form metadata is missing or inconsistent for "
                          + str(len(missing_native)) + " native/imported families")
@@ -242,6 +244,13 @@ class ServerFiles:
 
 
 def install_server(package, server_ini, *, check_only=False):
+    if check_only:return _install_server(package,server_ini,check_only=True)
+    from manager.operations import server_change
+    with server_change(server_ini,'collection_capsule.install')as change:
+        return change.result(_install_server(package,server_ini))
+
+
+def _install_server(package, server_ini, *, check_only=False):
     model, sql = checked_model(package)
     target = server_ini.resolve().parent
     executable = target / "WorldServer.exe"
@@ -371,7 +380,7 @@ def main():
         print(json.dumps({"disabled": True, "catalog_unlocks_preserved": True, "restart_world_required": True}))
     elif args.command == "upgrade-catalog":
         with contextlib.closing(connection(args.server_ini)) as db:
-            print(json.dumps(upgrade_catalog(db)))
+            print(json.dumps(upgrade_catalog(db,args.server_ini)))
     elif args.command == "export":
         with contextlib.closing(connection(args.server_ini)) as db:
             print(json.dumps(export_configuration(db, args.out)))

@@ -11,7 +11,9 @@
 
 #include <windows.h>
 
-void EarlyBootInstall(const char* loaderName);
+// Only a non-null DLL_PROCESS_ATTACH lpvReserved establishes the process's
+// initial thread. Dynamic loaders/fallback calls leave this identity zero.
+void EarlyBootInstall(const char* loaderName, DWORD processInitialThreadId = 0);
 void EarlyBoot();
 void EarlyBootTrace(const wchar_t* message);
 
