@@ -26,6 +26,7 @@ void Put(void* pointer, std::size_t offset, T value) {
 constexpr int kIcon = 1;
 constexpr int kStatic = 3;
 constexpr int kButton = 4;
+constexpr int kRender = 5; // 3DRender
 constexpr int kCheck = 10;
 
 // CControl layout used by the upgrade page and the existing native-UI Mods.
@@ -127,6 +128,27 @@ const Spec kSpecs[] = {
     {window_confirm, L"OvercustomExIcon", kIcon, Action::none},
     {window_confirm, L"OKBtn", kButton, Action::confirm_ok},
     {window_confirm, L"CancelBtn", kButton, Action::confirm_cancel},
+    // 0800: OVER CUSTOM level track (BackIcon0, sprs 8472) with the lit level
+    // icons (sprs 8997..9003) and the ITEM box (BackIcon1, sprs 8485).
+    {window_info, L"BackIcon0", kIcon, Action::none},
+    {window_info, L"BackIcon1", kIcon, Action::none},
+    {window_info, L"OverCustomSlotIcon0", kIcon, Action::none},
+    {window_info, L"OverCustomSlotIcon1", kIcon, Action::none},
+    {window_info, L"OverCustomSlotIcon2", kIcon, Action::none},
+    {window_info, L"OverCustomSlotIcon3", kIcon, Action::none},
+    {window_info, L"OverCustomSlotIcon4", kIcon, Action::none},
+    {window_info, L"OverCustomSlotIcon5", kIcon, Action::none},
+    {window_info, L"OverCustomSlotIcon6", kIcon, Action::none},
+    {window_info, L"OverCustomSlotIcon7", kIcon, Action::none},
+    {window_info, L"NoneIcon0", kIcon, Action::none},
+    {window_info, L"NoneIcon1", kIcon, Action::none},
+    {window_info, L"NoneIcon2", kIcon, Action::none},
+    {window_info, L"ItemNameStatic0", kStatic, Action::none},
+    {window_info, L"ItemNameStatic1", kStatic, Action::none},
+    {window_info, L"ItemNameStatic2", kStatic, Action::none},
+    {window_info, L"Item3DRender0", kRender, Action::none},
+    {window_info, L"Item3DRender1", kRender, Action::none},
+    {window_info, L"Item3DRender2", kRender, Action::none},
 };
 
 struct WindowFile {
@@ -137,6 +159,7 @@ const WindowFile kWindows[window_count] = {
     {L"ocdlg0794", L"uirs\\0794.uir"},
     {L"ocdlg0813", L"uirs\\0813.uir"},
     {L"ocdlg0819", L"uirs\\0819.uir"},
+    {L"ocdlg0800", L"uirs\\0800.uir"},
 };
 
 // Stat order of the protocol (speed, hp, attack, defense, agility, special)
@@ -151,6 +174,7 @@ int WindowIndex(const char* window) noexcept {
     if (!std::strcmp(window, "over")) return window_over;
     if (!std::strcmp(window, "challenge")) return window_challenge;
     if (!std::strcmp(window, "confirm")) return window_confirm;
+    if (!std::strcmp(window, "info")) return window_info;
     return -1;
 }
 
@@ -179,6 +203,7 @@ bool Bindings::Bind(const SdgoApi* api, SdgoMod* mod) noexcept {
     skin = reinterpret_cast<Skin>(api->Symbol(mod, "hangar.ui_add_skin"));
     add_icon = reinterpret_cast<AddIcon>(api->Symbol(mod, "friend_unit_gift.ui_add_icon"));
     button_vtable = api->Symbol(mod, "hangar.ui_button_vtable");
+    refresh = reinterpret_cast<Refresh>(api->Symbol(mod, "friend_unit_gift.ui_refresh_geometry"));
     return add && find && text && skin && add_icon && button_vtable;
 }
 
@@ -212,7 +237,7 @@ bool OriginalUi::Load(void* component, const Bindings& bindings) {
         // Loaded dialogs start visible; keep them closed until the flow opens them.
         Put<std::uint8_t>(dialogs[index], kVisible, 0);
     }
-    std::array<Bound, 80> bound{};
+    std::array<Bound, 100> bound{};
     std::size_t count = 0;
     for (const auto& spec : kSpecs) {
         const std::wstring name = spec.name;
@@ -253,17 +278,20 @@ bool OriginalUi::AttachEntry() {
         last_failure_ = "missing native control constructors";
         return false;
     }
-    // OC-era uirs\0799.uir: BackIcon1 (22,217 84x24, sprs\8525.spr: the dim
-    // OVER CUSTOM label) under OverCustomBtn (18,213 205x30, sprs\8526-8528).
-    const std::wstring label_name = L"BackIcon1";
+    // The OC-era OVER CUSTOM entry: OverCustomBtn (205x30, sprs\8526-8528) over
+    // its dim label (84x24, sprs\8525.spr), offset 4,4 as in the OC-era 0799.
+    // A dual-system factory keeps the 经验值转换 page native, so the entry sits
+    // on the OC tab's own 0800 page, between the level track and the ITEM box.
+    void* info = dialogs_[window_info];
+    const std::wstring label_name = L"OverCustomBackIcon";
     const auto native_label = ViewOf(label_name);
-    bindings_.add_icon(page_dialog_, &native_label, 22, 217, 84, 24);
-    void* label = bindings_.find(page_dialog_, &native_label, kIcon);
+    bindings_.add_icon(info, &native_label, 41, 254, 84, 24);
+    void* label = bindings_.find(info, &native_label, kIcon);
     const std::wstring button_name = L"OverCustomBtn";
     const auto native_button = ViewOf(button_name);
-    bindings_.add(page_dialog_, &native_button, 18, 213, 205, 30, 0);
-    void* button = bindings_.find(page_dialog_, &native_button, kButton);
-    if (!label || !button || Read<void*>(label, kParent) != page_dialog_ || Read<void*>(button, kParent) != page_dialog_ ||
+    bindings_.add(info, &native_button, 37, 250, 205, 30, 0);
+    void* button = bindings_.find(info, &native_button, kButton);
+    if (!label || !button || Read<void*>(label, kParent) != info || Read<void*>(button, kParent) != info ||
         Read<void*>(button) != bindings_.button_vtable) {
         last_failure_ = "the OVER CUSTOM entry could not be created";
         return false;
@@ -285,6 +313,18 @@ bool OriginalUi::AttachEntry() {
     entry_label_ = label;
     entry_button_ = button;
     entry_shown_ = false;
+    // 0800 OverCustomSlotIcon0..6 (sprs 8997..9003, 30x30 from 3,120 in 35 px
+    // steps) and NoneIcon0..2 (sprs 8486, 34x74 at 27/108/186,331).
+    static const wchar_t* const kLevelNames[kLevelIcons] = {L"OcLevelIcon0", L"OcLevelIcon1", L"OcLevelIcon2", L"OcLevelIcon3",
+                                                             L"OcLevelIcon4", L"OcLevelIcon5", L"OcLevelIcon6"};
+    static const wchar_t* const kLevelSprites[kLevelIcons] = {L"sprs\\8997.spr", L"sprs\\8998.spr", L"sprs\\8999.spr", L"sprs\\9000.spr",
+                                                               L"sprs\\9001.spr", L"sprs\\9002.spr", L"sprs\\9003.spr"};
+    for (std::size_t level = 0; level < kLevelIcons; ++level)
+        level_icons_[level] = CreateIcon(info, kLevelNames[level], 3 + 35 * static_cast<int>(level), 120, 30, 30, kLevelSprites[level]);
+    static const wchar_t* const kNoneNames[kInfoItems] = {L"OcNoneIcon0", L"OcNoneIcon1", L"OcNoneIcon2"};
+    static const int kNoneX[kInfoItems] = {27, 108, 186};
+    for (std::size_t slot = 0; slot < kInfoItems; ++slot)
+        none_icons_[slot] = CreateIcon(info, kNoneNames[slot], kNoneX[slot], 331, 34, 74, L"sprs\\8486.spr");
     return true;
 }
 
@@ -296,6 +336,10 @@ void OriginalUi::Detach() noexcept {
     entry_button_ = entry_label_ = nullptr;
     shown_ = {};
     entry_shown_ = false;
+    page_hidden_ = false;
+    page_visible_ = 1;
+    level_icons_ = {};
+    none_icons_ = {};
 }
 
 bool OriginalUi::Alive() const noexcept {
@@ -304,7 +348,7 @@ bool OriginalUi::Alive() const noexcept {
         if (Read<void*>(component_, kComponentDialog) != page_dialog_) return false;
         for (std::size_t index = 0; index < bound_count_; index += 16)
             if (Read<void*>(bound_[index].pointer, kParent) != bound_[index].parent) return false;
-        return !entry_button_ || Read<void*>(entry_button_, kParent) == page_dialog_;
+        return !entry_button_ || Read<void*>(entry_button_, kParent) == dialogs_[window_info];
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
@@ -350,6 +394,23 @@ void OriginalUi::SetStatic(std::uint8_t window, const wchar_t* name, const std::
     control->text_set = true;
 }
 
+// 0800 item names: 200 px wide statics drawn from their left edge above 80 px
+// slots. The name is centred over its slot (the NoneIcon frame) by moving the
+// static; the client font is 12 px for CJK and about 7 px for Latin text.
+void OriginalUi::SetItemName(std::size_t slot, const std::wstring& value) {
+    const std::wstring index = std::to_wstring(slot);
+    auto* control = Find(window_info, (L"ItemNameStatic" + index).c_str());
+    auto* frame = Find(window_info, (L"NoneIcon" + index).c_str());
+    if (!control || (control->text_set && control->text == value)) return;
+    SetStatic(window_info, (L"ItemNameStatic" + index).c_str(), value);
+    if (!frame || !bindings_.refresh) return;
+    int width = 0;
+    for (const wchar_t c : value) width += c >= 0x2E80 ? 12 : 7;
+    const float centre = Read<float>(frame->pointer, 0x148) + static_cast<float>(frame->width) / 2.0f;
+    Put<float>(control->pointer, 0x148, centre - static_cast<float>(width) / 2.0f);
+    bindings_.refresh(control->pointer);
+}
+
 void OriginalUi::SetLabel(Bound& control, const std::wstring& value, int align) {
     if (control.text_set && control.text == value) return;
     // Text item 0 of a button or check box (the same call the native pages
@@ -362,6 +423,31 @@ void OriginalUi::SetLabel(Bound& control, const std::wstring& value, int align) 
                    kShadowColor, 0, 1, align);
     control.text = value;
     control.text_set = true;
+}
+
+void OriginalUi::ShowIcon(void* control, bool visible) noexcept {
+    __try {
+        Put<std::uint8_t>(control, kVisible, visible ? 1 : 0);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+// An icon created on a loaded dialog with its sprite, hidden until shown (the
+// same native calls as the restored OVER CUSTOM entry).
+void* OriginalUi::CreateIcon(void* dialog, const wchar_t* name, int x, int y, int width, int height, const wchar_t* sprite) {
+    const std::wstring icon_name = name;
+    const auto native_name = ViewOf(icon_name);
+    bindings_.add_icon(dialog, &native_name, x, y, width, height);
+    void* icon = bindings_.find(dialog, &native_name, kIcon);
+    if (!icon || Read<void*>(icon, kParent) != dialog) return nullptr;
+    Put<std::uint8_t>(icon, kVisible, 0);
+    Put<std::uint8_t>(icon, kVisible2, 0);
+    Put<std::uint8_t>(icon, kEnabled, 0);
+    Put<std::uint8_t>(icon, kDebugQuad, 0);
+    const std::wstring sprite_path = sprite;
+    const auto native_sprite = ViewOf(sprite_path);
+    bindings_.skin(icon, &native_sprite, 0, 0, 0);
+    return icon;
 }
 
 void OriginalUi::SetState(void* control, bool visible, bool enabled) noexcept {
@@ -396,15 +482,47 @@ void OriginalUi::HideAll() noexcept {
         if (entry_button_) SetState(entry_button_, false, false);
         if (entry_label_) SetState(entry_label_, false, false);
         entry_shown_ = false;
+        if (page_hidden_ && page_dialog_) Put<std::uint8_t>(page_dialog_, kVisible, page_visible_);
+        page_hidden_ = false;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
 }
 
-void OriginalUi::Render(const EntryView& entry, const OverView& over, const ChallengeView& challenge,
-                        const ConfirmView& confirm) {
+void OriginalUi::Render(const EntryView& entry, const OverView& over, const InfoView& info,
+                        const ChallengeView& challenge, const ConfirmView& confirm) {
     if (!Alive()) return;
+    // 0800 takes the upgrade page's place (same frame at 0,100) while the OC
+    // tab is shown; the page dialog keeps its own visibility for the way back.
+    if (info.visible) {
+        if (!page_hidden_) {
+            page_visible_ = Read<std::uint8_t>(page_dialog_, kVisible);
+            page_hidden_ = true;
+        }
+        Put<std::uint8_t>(page_dialog_, kVisible, 0);
+        // The layout's own level icons and NONE frames stay hidden; the
+        // created ones at the same places show the state.
+        for (std::size_t level = 0; level < kLevelIcons; ++level) {
+            const std::wstring name = L"OverCustomSlotIcon" + std::to_wstring(level);
+            if (auto* icon = Find(window_info, name.c_str())) ShowIcon(icon->pointer, false);
+            if (level_icons_[level]) SetState(level_icons_[level], info.level[level], false);
+        }
+        if (auto* spare = Find(window_info, L"OverCustomSlotIcon7")) ShowIcon(spare->pointer, false);
+        for (std::size_t slot = 0; slot < kInfoItems; ++slot) {
+            const std::wstring index = std::to_wstring(slot);
+            SetItemName(slot, info.item[slot] ? info.item_text[slot] : L"");
+            if (auto* none = Find(window_info, (L"NoneIcon" + index).c_str())) ShowIcon(none->pointer, false);
+            if (none_icons_[slot]) SetState(none_icons_[slot], !info.item[slot], false);
+            if (auto* render = Find(window_info, (L"Item3DRender" + index).c_str())) SetState(render->pointer, false, false);
+        }
+    } else if (page_hidden_) {
+        Put<std::uint8_t>(page_dialog_, kVisible, page_visible_);
+        page_hidden_ = false;
+    }
+    if (dialogs_[window_info]) Put<std::uint8_t>(dialogs_[window_info], kVisible, info.visible ? 1 : 0);
+    shown_[window_info] = info.visible;
     if (entry_button_) {
-        SetState(entry_label_, entry.visible, false);
+        // The dim label stands in for the button until the challenge can start.
+        SetState(entry_label_, entry.visible && !entry.lit, false);
         SetState(entry_button_, entry.visible && entry.lit, entry.visible && entry.lit);
         entry_shown_ = entry.visible;
     }
@@ -482,8 +600,8 @@ bool OriginalUi::Visible(const char* window) const noexcept {
     if (!Alive()) return false;
     if (window && !std::strcmp(window, "entry")) {
         __try {
-            return entry_button_ && Read<std::uint8_t>(entry_button_, kVisible) &&
-                   Read<std::uint8_t>(page_dialog_, kVisible);
+            return entry_button_ && shown_[window_info] && Read<std::uint8_t>(entry_button_, kVisible) &&
+                   Read<std::uint8_t>(dialogs_[window_info], kVisible);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return false;
         }

@@ -132,10 +132,11 @@ enum class Command : std::uint16_t {
     reset_cost = 0x1005,
     reset = 0x1006,
     challenge_items = 0x1007, // OC items the account can use in the next challenge
+    owned_items = 0x1008,     // every OC item the account holds (the OC tab's ITEM box)
 };
 
 inline constexpr std::uint16_t kFirstCommand = 0x1000;
-inline constexpr std::uint16_t kLastCommand = 0x1007;
+inline constexpr std::uint16_t kLastCommand = 0x1008;
 
 inline friend_unit_gift::Command Wrap(Command command) noexcept {
     return static_cast<friend_unit_gift::Command>(

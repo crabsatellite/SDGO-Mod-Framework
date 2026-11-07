@@ -2731,8 +2731,10 @@ int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
     static int phase=0;static void* page=nullptr;static uint32_t beforeReplies=0;static uint64_t readyAt=0;
     static int captureState=0;static int afterCapture=0;static HangarNavigation::Result previous=HangarNavigation::kUnbound;
     static uint32_t sumBefore=0,leftBefore=0,revisionBefore=0;static uint8_t speedBefore=0;static uint32_t resetWork=1;static bool agilityNormal=true;
+    static std::array<uint8_t,6> keepNormal{},keepOver{};static uint32_t keepRevision=0,keepLevel=0,keepFrames=0,clicksBefore=0;static std::array<uint16_t,4> keepCustom{};
     if(!context->tick){phase=0;page=nullptr;beforeReplies=0;readyAt=0;captureState=0;afterCapture=0;previous=HangarNavigation::kUnbound;
-        sumBefore=leftBefore=revisionBefore=0;speedBefore=0;resetWork=1;agilityNormal=true;}
+        sumBefore=leftBefore=revisionBefore=0;speedBefore=0;resetWork=1;agilityNormal=true;
+        keepNormal={};keepOver={};keepRevision=keepLevel=keepFrames=clicksBefore=0;keepCustom={};}
     const auto capture=[&](const wchar_t* name)->int {
         if(captureState==0) {
             if(GetTickCount64()-readyAt<1200)return SDGO_GAME_TEST_WAIT;
@@ -2792,23 +2794,43 @@ int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
     if(phase==1 && s.transport_ready && s.reply_count>0 && !s.busy && !s.server_oc_mode) {
         // The server runs the current custom-parts system: the factory stays native.
         if(GetTickCount64()-readyAt<4000)return SDGO_GAME_TEST_WAIT;
-        context->Assert(s.windows==0 && s.hidden_dialogs==0,
+        context->Assert(s.windows==0 && s.hidden_dialogs==0 && !s.page_hidden,
             "with the server in current mode the factory shows no OC tab, entry or window and hides nothing");
-        context->Observe("server runs the current custom-parts system; the factory upgrade page stays native");
+        char current[200];sprintf_s(current,"server runs the current custom-parts system; the factory upgrade page stays native; record_custom=%u/%u/%u/%u (known=%u)",
+            s.record_custom[0],s.record_custom[1],s.record_custom[2],s.record_custom[3],s.record_slots_known);
+        context->Observe(current);
         readyAt=GetTickCount64();phase=60;return SDGO_GAME_TEST_WAIT;
     }
     if(phase==60)return capture(L"oc-current-mode");
     if(phase==1) {
-        const uint32_t wanted=SDGO_OC_WINDOW_ENTRY|SDGO_OC_WINDOW_TAB;
-        if(!s.windows_loaded || !s.profile_present || s.busy || (s.windows&wanted)!=wanted)
-            return timeout(60000,"the OVER CUSTOM entry and the restored OC tab appeared on the factory upgrade page");
-        context->Assert(!(s.windows&SDGO_OC_WINDOW_OVER),"the 经验值转换 page keeps its native layout until the OC tab opens");
+        if(!s.windows_loaded || !s.profile_present || s.busy || !(s.windows&SDGO_OC_WINDOW_TAB))
+            return timeout(60000,"the original OC windows loaded and the 终极强化 tab appeared in the factory tab bar");
+        if(GetTickCount64()-readyAt<1500)return SDGO_GAME_TEST_WAIT;
+        context->Assert(!(s.windows&(SDGO_OC_WINDOW_OVER|SDGO_OC_WINDOW_INFO|SDGO_OC_WINDOW_ENTRY)) && !s.page_hidden && !s.hidden_dialogs,
+            "the native 经验值转换 page stays purely native: no OC page, window or entry on it");
         return press("tab",L"OverCustomRadio",50);
     }
     if(phase==50) {
-        const uint32_t wanted=SDGO_OC_WINDOW_OVER|SDGO_OC_WINDOW_TAB_ACTIVE;
-        if((s.windows&wanted)!=wanted)return timeout(20000,"the OC tab opened the original 0794 allocation window");
+        const uint32_t wanted=SDGO_OC_WINDOW_OVER|SDGO_OC_WINDOW_INFO|SDGO_OC_WINDOW_ENTRY|SDGO_OC_WINDOW_TAB_ACTIVE;
+        if((s.windows&wanted)!=wanted)return timeout(20000,"the OC tab opened its own page: 0800 with the OVER CUSTOM entry and the 0794 allocation window");
         if(!s.hidden_dialogs)return timeout(10000,"the factory inventory under the allocation window is hidden while the OC tab is open");
+        if(!s.page_hidden)return timeout(10000,"the 0800 page took the upgrade page's place");
+        if(!s.oc_title)return timeout(10000,"the factory header names the OC tab 终极强化");
+        if(s.actions_hidden<2)return timeout(10000,"the native page actions under the unit (经验值转换/还原) are hidden on the OC tab");
+        context->Assert(s.upgrade_tab_selected,"the OC tab took over the 经验值转换 slot of the native tab menu");
+        if(s.radar_frames<10)return timeout(10000,"the six-dimension chart is drawn on the 0794 hexagon");
+        if(s.busy)return timeout(20000,"the OC tab's ITEM box request settled");
+        uint32_t levels=0;for(uint32_t level=9;level<=15;++level)levels+=s.oc_level>=level ? 1u:0u;
+        context->Assert(s.info_levels==levels,"the 0800 level track lights OVER CUSTOM 1..EX up to the unit's OC level");
+        bool chart=true;
+        for(int i=0;i<6;++i)chart=chart && s.radar_base[i]>0.0f && s.radar_total[i]>=s.radar_base[i] && s.radar_total[i]<=1.0001f;
+        context->Assert(chart,"all six dimensions are charted: native stats, with OC points on top, within the stat caps");
+        char info[420];sprintf_s(info,"oc tab page: levels=%u owned_items=%u (%d/%d/%d) chart_frames=%u base=%.3f/%.3f/%.3f/%.3f/%.3f/%.3f total=%.3f/%.3f/%.3f/%.3f/%.3f/%.3f record_custom=%u/%u/%u/%u",
+            s.info_levels,s.owned_items,s.owned_item_ids[0],s.owned_item_ids[1],s.owned_item_ids[2],s.radar_frames,
+            s.radar_base[0],s.radar_base[1],s.radar_base[2],s.radar_base[3],s.radar_base[4],s.radar_base[5],
+            s.radar_total[0],s.radar_total[1],s.radar_total[2],s.radar_total[3],s.radar_total[4],s.radar_total[5],
+            s.record_custom[0],s.record_custom[1],s.record_custom[2],s.record_custom[3]);
+        context->Observe(info);
         char attached[300];sprintf_s(attached,"original OC windows shown=0x%X uid=%llu unit=%u oc_level=%u normal=%u/%u/%u/%u/%u/%u over=%u/%u/%u/%u/%u/%u left=%u+%u carrier=%u",
             s.windows,static_cast<unsigned long long>(s.unit_uid),s.unit_number,s.oc_level,s.normal[0],s.normal[1],s.normal[2],s.normal[3],s.normal[4],s.normal[5],
             s.over[0],s.over[1],s.over[2],s.over[3],s.over[4],s.over[5],s.normal_points_left,s.over_points_left,s.carrier_present);
@@ -2968,6 +2990,67 @@ int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
     if(phase==23) {
         if(s.windows&SDGO_OC_WINDOW_CONFIRM)return timeout(10000,"OKBtn closed the result message");
         readyAt=GetTickCount64();phase=30;return SDGO_GAME_TEST_WAIT;
+    }
+    // Switching: leave for the current system's 扩展槽 and 强化部件 pages and come
+    // back to the OC tab. The OC allocation, the unit record's custom part slots
+    // and the native pages all keep their data.
+    if(phase==30) {
+        if(s.busy)return timeout(60000,"the OC requests settled before switching tabs");
+        for(int i=0;i<6;++i){keepNormal[i]=s.normal[i];keepOver[i]=s.over[i];}
+        for(int i=0;i<4;++i)keepCustom[i]=s.record_custom[i];
+        keepRevision=s.revision;keepLevel=s.oc_level;clicksBefore=s.tab_clicks_accepted;
+        return press("tab",L"ExpensionCustomSlotRadio",71);
+    }
+    // The native menu drops a tab click while it is loading or has a message
+    // queued (the OC tab follows it); a player clicks again, so does the test.
+    const auto repress=[&](const char* window,const wchar_t* name)->int {
+        static uint64_t lastPress=0;static int presses=0;
+        if(GetTickCount64()-readyAt<1000){presses=0;lastPress=readyAt;}
+        if(GetTickCount64()-lastPress>4000 && presses<3) {
+            ocObserver.click(window,name);++presses;lastPress=GetTickCount64();
+            char again[128];sprintf_s(again,"the menu dropped the click; pressed %s/%ls again",window,name);context->Observe(again);
+        }
+        return SDGO_GAME_TEST_WAIT;
+    };
+    if(phase==71||phase==73) {
+        const wchar_t* tab=phase==71 ? L"ExpensionCustomSlotRadio":L"SkillPartsRadio";
+        if(s.tab_clicks_accepted<=clicksBefore) {
+            if(timeout(15000,"the native tab menu accepted the tab click")==SDGO_GAME_TEST_FAIL)return SDGO_GAME_TEST_FAIL;
+            return repress("tab",tab);
+        }
+        if((s.windows&(SDGO_OC_WINDOW_TAB_ACTIVE|SDGO_OC_WINDOW_OVER|SDGO_OC_WINDOW_INFO|SDGO_OC_WINDOW_ENTRY|SDGO_OC_WINDOW_CHALLENGE|SDGO_OC_WINDOW_CONFIRM)) ||
+           s.page_hidden || s.hidden_dialogs || s.upgrade_tab_selected || s.oc_title || s.actions_hidden) {
+            return timeout(15000,"a native factory tab shows only its own page: no OC page, window or hidden dialog remains");
+        }
+        if(GetTickCount64()-readyAt<2500)return SDGO_GAME_TEST_WAIT;
+        if(capture(phase==71 ? L"oc-switch-slot-extend":L"oc-switch-skill-parts")!=SDGO_GAME_TEST_PASS)return SDGO_GAME_TEST_WAIT;
+        context->Observe(phase==71 ? "native 扩展槽 page open after the OC tab" : "native 强化部件 page open after 扩展槽");
+        readyAt=GetTickCount64();phase=phase==71 ? 72:74;return SDGO_GAME_TEST_WAIT;
+    }
+    if(phase==72){clicksBefore=s.tab_clicks_accepted;return press("tab",L"SkillPartsRadio",73);}
+    if(phase==74){keepFrames=s.radar_frames;return press("tab",L"OverCustomRadio",75);}
+    if(phase==75) {
+        const uint32_t wanted=SDGO_OC_WINDOW_OVER|SDGO_OC_WINDOW_INFO|SDGO_OC_WINDOW_ENTRY|SDGO_OC_WINDOW_TAB_ACTIVE;
+        if((s.windows&wanted)!=wanted || !s.page_hidden || s.busy || s.radar_frames<keepFrames+10 || !s.upgrade_tab_selected || !s.oc_title) {
+            if(timeout(20000,"from 技能 the OC tab switched the native menu back to its slot and reopened 0800 and 0794 with the chart")==SDGO_GAME_TEST_FAIL)
+                return SDGO_GAME_TEST_FAIL;
+            if(!s.upgrade_tab_selected)return repress("tab",L"OverCustomRadio");
+            return SDGO_GAME_TEST_WAIT;
+        }
+        bool same=s.revision==keepRevision && s.oc_level==keepLevel;
+        for(int i=0;i<6;++i)same=same && s.normal[i]==keepNormal[i] && s.over[i]==keepOver[i];
+        context->Assert(same,"the OC allocation and level are unchanged after switching to the native pages and back");
+        bool slots=true;for(int i=0;i<4;++i)slots=slots && s.record_custom[i]==keepCustom[i];
+        context->Assert(slots,"the unit record's custom part slots are unchanged by the round trip");
+        char back[260];sprintf_s(back,"oc tab reopened: normal=%u/%u/%u/%u/%u/%u over=%u/%u/%u/%u/%u/%u revision=%u level=%u record_custom=%u/%u/%u/%u",
+            s.normal[0],s.normal[1],s.normal[2],s.normal[3],s.normal[4],s.normal[5],s.over[0],s.over[1],s.over[2],s.over[3],s.over[4],s.over[5],
+            s.revision,s.oc_level,s.record_custom[0],s.record_custom[1],s.record_custom[2],s.record_custom[3]);
+        context->Observe(back);
+        readyAt=GetTickCount64();phase=76;return SDGO_GAME_TEST_WAIT;
+    }
+    if(phase==76) {
+        if(capture(L"oc-switch-back")!=SDGO_GAME_TEST_PASS)return SDGO_GAME_TEST_WAIT;
+        readyAt=GetTickCount64();phase=77;return SDGO_GAME_TEST_WAIT;
     }
     return capture(L"oc-panel");
 }

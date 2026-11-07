@@ -13,6 +13,7 @@
 #define SDGO_OC_WINDOW_CONFIRM 0x10u    // uirs\0819.uir confirmation popup
 #define SDGO_OC_WINDOW_TAB 0x20u        // 终极强化 tab restored in the factory tab bar
 #define SDGO_OC_WINDOW_TAB_ACTIVE 0x40u // the upgrade page shows the OC tab content
+#define SDGO_OC_WINDOW_INFO 0x80u       // uirs\0800.uir OC tab page (level track and ITEM box)
 
 struct SdgoOcCustomClientSnapshotV2 {
     uint32_t size;
@@ -60,6 +61,20 @@ struct SdgoOcCustomClientSnapshotV2 {
     int32_t mobility_motive;       // unit +0xB6A after the OC gain
     int32_t mobility_speed_gain;   // carried gains that were added
     int32_t mobility_agility_gain;
+    // The OC tab page (0800) and the six-dimension chart of 0794.
+    uint32_t page_hidden;          // the upgrade page dialog is hidden under 0800
+    uint32_t info_levels;          // OVER CUSTOM level icons lit on 0800
+    uint32_t owned_items;          // OC items the account holds (ITEM box source)
+    int32_t owned_item_ids[3];     // the ITEM box slots
+    uint32_t radar_frames;         // charts drawn on 0794
+    float radar_base[6];           // native stat / cap, protocol stat order
+    float radar_total[6];          // with the normal and Over points
+    uint32_t record_slots_known;   // the active unit record was read
+    uint16_t record_custom[4];     // its four custom part slots (UnitSkill) as the client holds it
+    uint32_t upgrade_tab_selected; // the factory tab menu has the 经验值转换 slot selected
+    uint32_t oc_title;             // the factory header shows 终极强化 for the OC tab
+    uint32_t actions_hidden;       // factory page actions (SaveBtn, ReturnBtn) hidden on the OC tab
+    uint32_t tab_clicks_accepted;  // native tab clicks the menu accepted (it drops some while busy)
 };
 
 // Actions: 1 refresh; 2 save one more normal point on stat (direct request

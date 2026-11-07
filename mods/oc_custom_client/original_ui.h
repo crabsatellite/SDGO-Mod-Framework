@@ -4,7 +4,8 @@
 // The current GOnline.exe no longer creates the OC services, but the package
 // keeps their layouts: uirs\0794.uir (six-stat allocation window),
 // uirs\0813.uir (OC challenge window) and uirs\0819.uir (OC confirmation
-// popup). The page service loads them with its own loader (vtable +0x58, the
+// popup), plus the OC tab's UNIT INFORMATION page (0800: OVER CUSTOM level
+// track and ITEM box). The page service loads them with its own loader (vtable +0x58, the
 // call the upgrade page uses for uirs\0799.uir), so they are native dialogs
 // owned, drawn and destroyed by the service, and their button events reach the
 // service's OnUIEvent. The OVER CUSTOM entry of the OC-era upgrade page
@@ -35,6 +36,8 @@ static_assert(sizeof(NativeString) == 24, "native string ABI");
 NativeString ViewOf(const std::wstring& value);
 
 inline constexpr std::size_t kItemSlots = 10;
+inline constexpr std::size_t kInfoItems = 3;  // 0800 ITEM box
+inline constexpr std::size_t kLevelIcons = 7; // 0800 OVER CUSTOM 1..6 and EX
 
 enum class Action : std::uint8_t {
     none,
@@ -63,7 +66,9 @@ struct Bindings {
                                    std::uint32_t, std::uint8_t, std::uint32_t, int);
     using Skin = void(__thiscall*)(void*, const NativeString*, std::uint8_t, std::uint32_t, std::uint32_t);
     using AddIcon = std::uint32_t(__thiscall*)(void*, const NativeString*, int, int, int, int);
+    using Refresh = void(__thiscall*)(void*); // a control's geometry from its +0x148 position
     Add add = nullptr;
+    Refresh refresh = nullptr;
     Find find = nullptr;
     Text text = nullptr;
     Skin skin = nullptr;
@@ -72,7 +77,7 @@ struct Bindings {
     bool Bind(const SdgoApi* api, SdgoMod* mod) noexcept;
 };
 
-enum Window : std::uint8_t { window_over = 0, window_challenge, window_confirm, window_count };
+enum Window : std::uint8_t { window_over = 0, window_challenge, window_confirm, window_info, window_count };
 
 struct EntryView {
     bool visible = false;
@@ -90,6 +95,14 @@ struct OverView {
     std::wstring reset;
     bool reset_enabled = false;
     bool ex_enabled = false;
+};
+
+// 0800: the left page of the OC tab (replaces the upgrade page 0799 while shown).
+struct InfoView {
+    bool visible = false;
+    std::array<bool, kLevelIcons> level{};          // OverCustomSlotIcon0..6 lit
+    std::array<bool, kInfoItems> item{};            // an OC item fills the slot
+    std::array<std::wstring, kInfoItems> item_text; // ItemNameStatic0..2
 };
 
 struct ChallengeView {
@@ -123,11 +136,11 @@ public:
     bool Alive() const noexcept;
     void* component() const noexcept { return component_; }
     Action Click(void* control) const noexcept;
-    void Render(const EntryView& entry, const OverView& over, const ChallengeView& challenge,
+    void Render(const EntryView& entry, const OverView& over, const InfoView& info, const ChallengeView& challenge,
                 const ConfirmView& confirm);
     void HideAll() noexcept;
-    // GameTest: a bound control by window ("entry", "over", "challenge",
-    // "confirm") and original control name.
+    // GameTest: a bound control by window ("entry", "over", "info",
+    // "challenge", "confirm") and original control name.
     void* Control(const char* window, const wchar_t* name) const noexcept;
     bool Visible(const char* window) const noexcept;
     bool entry_ready() const noexcept { return entry_button_ != nullptr; }
@@ -135,6 +148,8 @@ public:
     void* window_dialog(Window window) const noexcept { return dialogs_[window]; }
     bool window_shown(Window window) const noexcept { return shown_[window]; }
     const char* last_failure() const noexcept { return last_failure_; }
+    // The upgrade page dialog is hidden under the OC tab's 0800 page.
+    bool page_hidden() const noexcept { return page_hidden_; }
 
 private:
     struct Bound {
@@ -151,8 +166,15 @@ private:
     Bound* Find(std::uint8_t window, const wchar_t* name) noexcept;
     const Bound* Find(std::uint8_t window, const wchar_t* name) const noexcept;
     void SetStatic(std::uint8_t window, const wchar_t* name, const std::wstring& value);
+    void SetItemName(std::size_t slot, const std::wstring& value);
+    void* CreateIcon(void* dialog, const wchar_t* name, int x, int y, int width, int height, const wchar_t* sprite);
     void SetLabel(Bound& control, const std::wstring& value, int align);
     void SetState(void* control, bool visible, bool enabled) noexcept;
+    void ShowIcon(void* control, bool visible) noexcept;
+    // 0800 icons the layout keeps hidden draw nothing when shown later, so the
+    // lit level icons and NONE frames are created on the page like the entry.
+    std::array<void*, kLevelIcons> level_icons_{};
+    std::array<void*, kInfoItems> none_icons_{};
     void SetCheck(void* control, bool checked) noexcept;
 
     Bindings bindings_;
@@ -160,12 +182,14 @@ private:
     void* service_ = nullptr;
     void* page_dialog_ = nullptr;
     std::array<void*, window_count> dialogs_{};
-    std::array<Bound, 80> bound_{};
+    std::array<Bound, 100> bound_{};
     std::size_t bound_count_ = 0;
     void* entry_button_ = nullptr;
     void* entry_label_ = nullptr;
     std::array<bool, window_count> shown_{};
     bool entry_shown_ = false;
+    bool page_hidden_ = false;
+    std::uint8_t page_visible_ = 1; // the page dialog's own visibility while hidden
     const char* last_failure_ = nullptr;
     char failure_[256]{};
 };
