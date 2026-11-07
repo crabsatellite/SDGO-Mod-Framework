@@ -40,6 +40,55 @@ void WaitNativeTicks(ULONGLONG milliseconds) {
 void Check(bool ok,const char* what) {
     std::printf("%s %s\n",ok?"PASS":"FAIL",what); if(!ok) ++g_failures;
 }
+std::atomic<ULONGLONG> g_actorClock{0};
+ULONGLONG WINAPI ActorClock() {return g_actorClock.load();}
+// A fixture frame must not age by hundreds of milliseconds just because this
+// process was descheduled. Control only this DLL's imported policy clock while
+// driving a bounded synthetic scenario; actual-game tests retain the real clock.
+class ScopedActorClock {
+    IMAGE_THUNK_DATA* slot_=nullptr;
+    DWORD previous_=0;
+public:
+    ScopedActorClock() {
+        auto module=reinterpret_cast<uint8_t*>(GetModuleHandleW(L"battle_ai.dll"));
+        if(module) {
+            auto dos=reinterpret_cast<IMAGE_DOS_HEADER*>(module);
+            auto nt=reinterpret_cast<IMAGE_NT_HEADERS*>(module+dos->e_lfanew);
+            auto imports=reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(module+
+                nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
+            for(auto descriptor=imports;descriptor->Name&&!slot_;++descriptor) {
+                if(!descriptor->OriginalFirstThunk)continue;
+                auto names=reinterpret_cast<IMAGE_THUNK_DATA*>(module+descriptor->OriginalFirstThunk);
+                auto addresses=reinterpret_cast<IMAGE_THUNK_DATA*>(module+descriptor->FirstThunk);
+                for(;names->u1.AddressOfData;++names,++addresses) {
+                    if(IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal))continue;
+                    auto name=reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(module+names->u1.AddressOfData);
+                    if(std::strcmp(reinterpret_cast<const char*>(name->Name),"GetTickCount64")==0) {
+                        DWORD protection=0;
+                        if(VirtualProtect(&addresses->u1.Function,sizeof(addresses->u1.Function),PAGE_READWRITE,&protection)) {
+                            g_actorClock=GetTickCount64();slot_=addresses;previous_=addresses->u1.Function;
+                            addresses->u1.Function=reinterpret_cast<DWORD>(&ActorClock);
+                            DWORD ignored=0;VirtualProtect(&addresses->u1.Function,sizeof(addresses->u1.Function),protection,&ignored);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        Check(slot_!=nullptr,"synthetic actor frames bind the exact candidate DLL clock import");
+    }
+    void Advance(ULONGLONG milliseconds) {g_actorClock.fetch_add(milliseconds);}
+    ~ScopedActorClock() {
+        if(!slot_)return;
+        // Keep the restored clock monotonic even on an otherwise idle host.
+        while(GetTickCount64()<g_actorClock.load())Sleep(1);
+        DWORD protection=0;
+        if(VirtualProtect(&slot_->u1.Function,sizeof(slot_->u1.Function),PAGE_READWRITE,&protection)) {
+            slot_->u1.Function=previous_;
+            DWORD ignored=0;VirtualProtect(&slot_->u1.Function,sizeof(slot_->u1.Function),protection,&ignored);
+        } else Check(false,"synthetic actor clock import restores after its scenario");
+    }
+};
 bool Eval(const char* s) {
     int top=lua_gettop(g_L);
     bool ok=luaL_loadbuffer(g_L,s,strlen(s),"=native fixture")==0 && lua_pcall(g_L,0,0,0)==0;
@@ -596,10 +645,14 @@ int wmain(int argc,wchar_t** argv) {
             native_world::Put(fsm,0x248,native_world::weapons[1].data());
             auto pressureMotor=native_world::movements[0].data();
             native_world::Put(pressureMotor,4,pressureMotor+0xE8);
-            native_world::Put(unit.bytes,0xBC8,int32_t(30000));unit.Think();
-            Check(*reinterpret_cast<int*>(fsm+0x240)==3&&unit.bytes[0x312A]==0,
-                  "Medium uses full SP for a player-permitted hurt counter through the native weapon-change API");
-            unit.Think();Check(unit.bytes[0x312A]!=0,"Medium waits for special selection commit then requests native attack");
+            {
+                ScopedActorClock clock;
+                native_world::Put(unit.bytes,0xBC8,int32_t(30000));unit.Think();
+                Check(*reinterpret_cast<int*>(fsm+0x240)==3&&unit.bytes[0x312A]==0,
+                      "Medium uses full SP for a player-permitted hurt counter through the native weapon-change API");
+                clock.Advance(16);unit.Think();
+                Check(unit.bytes[0x312A]!=0,"Medium waits for special selection commit then requests native attack");
+            }
             native_world::Put(pressureMotor,4,pressureMotor+0x20);
             requestSpecial();Check(native_world::attackAdmissions==beforeRequests+1,"legal native special request forwards to original authorization path");
             native_world::Put(unit.bytes,0x2B68,uint32_t(0x80000014));
@@ -854,15 +907,19 @@ int wmain(int argc,wchar_t** argv) {
             native_world::Put(unit.bytes,0xBC8,int32_t(30000));unit.Think();unit.Think();
             native_world::Put(pressureMotor,4,pressureMotor+0x20);
             native_world::deferSwitch=true;
-            Config("[settings]\nDifficulty=Easy\n");Sleep(2100);unit.Think();
-            Check(native_world::requestedSlot==1&&*reinterpret_cast<int*>(fsm+0x240)==3,
-                  "profile disable retains a pending restore while the native weapon switch is deferred");
-            native_world::deferSwitch=false;int priorSwitches=native_world::switchRequests;
-            const int priorSelections=native_world::nativeSelections;unit.Think();
-            Check(native_world::nativeSelections==priorSelections+1&&*reinterpret_cast<int*>(fsm+0x240)==1,
-                  "Easy handoff retries the previous weapon until the native selection commits");
-            priorSwitches=native_world::switchRequests;unit.Think();
-            Check(native_world::switchRequests==priorSwitches,"confirmed ordinary slot releases pending restore without repeated commands");
+            Config("[settings]\nDifficulty=Easy\n");Sleep(2100);
+            int priorSwitches=0;
+            {
+                ScopedActorClock clock;unit.Think();
+                Check(native_world::requestedSlot==1&&*reinterpret_cast<int*>(fsm+0x240)==3,
+                      "profile disable retains a pending restore while the native weapon switch is deferred");
+                native_world::deferSwitch=false;priorSwitches=native_world::switchRequests;
+                const int priorSelections=native_world::nativeSelections;clock.Advance(16);unit.Think();
+                Check(native_world::nativeSelections==priorSelections+1&&*reinterpret_cast<int*>(fsm+0x240)==1,
+                      "Easy handoff retries the previous weapon until the native selection commits");
+                priorSwitches=native_world::switchRequests;clock.Advance(16);unit.Think();
+                Check(native_world::switchRequests==priorSwitches,"confirmed ordinary slot releases pending restore without repeated commands");
+            }
             reinterpret_cast<native_world::Callbacks*>(native_world::fsms[0].data())->Ray(&profileRay);
             Check(profileRay.direction.x==0 && *reinterpret_cast<float*>(unit.bytes+0x3204)==0.5f,
                   "Medium to Easy reload restores original aim behavior");
@@ -1843,19 +1900,22 @@ int wmain(int argc,wchar_t** argv) {
             return state;
         };
         native_world::Put(defenceFsm,0x200,uint32_t(1));
-        crossfire();
-        WaitNativeTicks(25);unit.Think();
-        auto movingPosition=location();setPosition(movingPosition+native_world::Vec3{0,0,20});
-        WaitNativeTicks(25);unit.Think();
-        const auto beforeMobileDispatch=readDispatches();
-        reinterpret_cast<native_world::Callbacks*>(defenceFsm)->Receipts(nullptr);
-        const auto mobileDispatch=readDispatches();
-        Check(mobileDispatch.mobile_primary_dispatches==beforeMobileDispatch.mobile_primary_dispatches+2&&
-              mobileDispatch.mobile_defensive_dispatches==beforeMobileDispatch.mobile_defensive_dispatches+2&&
-              mobileDispatch.backward_primary_dispatches==beforeMobileDispatch.backward_primary_dispatches+2,
-              "post-ammo primary dispatches record a bound moving-shot gun with live motor, real defensive motion and physical retreat");
+        SdgoBattleAiUnitSnapshotV1 mobileDispatch{};
+        {
+            ScopedActorClock clock;crossfire();
+            clock.Advance(25);unit.Think();
+            auto movingPosition=location();setPosition(movingPosition+native_world::Vec3{0,0,20});
+            clock.Advance(25);unit.Think();
+            const auto beforeMobileDispatch=readDispatches();
+            reinterpret_cast<native_world::Callbacks*>(defenceFsm)->Receipts(nullptr);
+            mobileDispatch=readDispatches();
+            Check(mobileDispatch.mobile_primary_dispatches==beforeMobileDispatch.mobile_primary_dispatches+2&&
+                  mobileDispatch.mobile_defensive_dispatches==beforeMobileDispatch.mobile_defensive_dispatches+2&&
+                  mobileDispatch.backward_primary_dispatches==beforeMobileDispatch.backward_primary_dispatches+2,
+                  "post-ammo primary dispatches record a bound moving-shot gun with live motor, real defensive motion and physical retreat");
+        }
         native_world::Put(defenceMovement,4,defenceMovement+0xD4);
-        movingPosition=location();setPosition(movingPosition+native_world::Vec3{0,0,20});
+        auto movingPosition=location();setPosition(movingPosition+native_world::Vec3{0,0,20});
         WaitNativeTicks(25);unit.Think();
         reinterpret_cast<native_world::Callbacks*>(defenceFsm)->Receipts(nullptr);
         auto rejectedDispatch=readDispatches();

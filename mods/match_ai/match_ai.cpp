@@ -1689,13 +1689,16 @@ namespace
             uint16_t opcode=0;uint32_t pilot=0,target=0;uint8_t replay=0;
             match_ai::transform::LocalActor actor{};
             if(packet&&Read(packet,0,opcode)&&opcode==0xA44&&Read(packet,6,pilot)&&
-               Read(packet,0xA,target)&&Read(packet,0xE,replay)&&
-               ReadLocalTransformActor(pilot,actor)&&
-               match_ai::transform::ReusesLocalTransform(actor,pilot,target,replay)) {
-                memcpy(adjusted,packet,sizeof(adjusted));adjusted[0xE]=0;delivered=adjusted;
-                if(g_logDiagnostics)g_api->Log(g_mod,SDGO_LOG_INFO,
-                    "native AI same-target transform notice retains its existing controller: pilot=%08X object=%u target=%u",
-                    pilot,actor.object,target);
+               Read(packet,0xA,target)&&Read(packet,0xE,replay)) {
+                const bool owned=ReadLocalTransformActor(pilot,actor);
+                const bool retained=owned&&match_ai::transform::ReusesLocalTransform(actor,pilot,target,replay);
+                if(retained) {
+                    memcpy(adjusted,packet,sizeof(adjusted));adjusted[0xE]=0;delivered=adjusted;
+                }
+                if(g_logDiagnostics&&(pilot&kAiPilotBit))g_api->Log(g_mod,SDGO_LOG_INFO,
+                    "native AI transform notice pilot=%08X object=%u target=%u replay=%u owned=%u transforming=%u latch=%u hurt=%u local=%u remote=%u master=%u retained=%u",
+                    pilot,actor.object,target,replay,owned,actor.transforming,actor.latchedTarget,actor.hurtState,
+                    actor.localControl,actor.remoteCopy,actor.masterNpc,retained);
             }
         } __except(EXCEPTION_EXECUTE_HANDLER) {delivered=packet;}
         SetLastError(savedError);

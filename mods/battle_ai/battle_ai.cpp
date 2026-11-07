@@ -302,7 +302,7 @@ struct Actor {
     uint32_t weaponSignature=0,formRevision=0;
     uint64_t formRequests=0,formQueued=0,formCompleted=0;
     uint32_t pendingFormId=0,lastFormSource=0;
-    ULONGLONG formRequestedAt=0,nextFormAttemptAt=0;
+    ULONGLONG formRequestedAt=0,nextFormAttemptAt=0,formTraceAt=0;
     uint64_t coverQueryFrame=0;
     bool coverQueryUsed=false;
     struct CoverSearch {
@@ -2348,6 +2348,24 @@ void PushWeapons(lua_State* L,const char* key,const battle_ai::native::Capabilit
 }
 int __cdecl Observe(lua_State* L) {
     if(Owned(g_current)&&battle_ai::native::TransformOwnsMotor(g_current)) {
+        auto& actor=ActorFor(g_current);const auto now=GetTickCount64();
+        if(g_runtime.logDecisions&&now>=actor.formTraceAt) {
+            using namespace battle_ai::native::detail;
+            uint8_t *move=nullptr,*active=nullptr,*parked=nullptr;
+            uint32_t current=0,pending=0,mode=0,latch=0,unit=0,peer=0,other=0,animation=0,hurt=0;
+            uint8_t alternate=0,notified=0,committed=0;
+            ReadPointer(g_current,0x9C8,move);ReadPointer(g_current,0x9C4,active);ReadPointer(g_current,0xAB0,parked);
+            Read(move,4,current);Read(move,8,pending);Read(move,0x2C0,mode);Read(move,0x2B0,latch);
+            Read(active,0,unit);Read(active,0x13C,peer);Read(parked,0,other);Read(move,0x1AC,animation);
+            Read(g_current,0x9D8,hurt);Read(g_current,0xE34,alternate);Read(move,0x219,notified);Read(move,0x21A,committed);
+            actor.formTraceAt=now+1000;
+            g_api->Log(g_mod,SDGO_LOG_INFO,
+                "native AI transform state object=%u unit=%u peer=%u parked=%u mode=%u latch=%u current=%X pending=%X animation=%u alternate=%u notified=%u committed=%u hurt=%u",
+                *reinterpret_cast<uint32_t*>(g_current+4),unit,peer,other,mode,latch,
+                move?current-static_cast<uint32_t>(reinterpret_cast<uintptr_t>(move)):0,
+                move&&pending?pending-static_cast<uint32_t>(reinterpret_cast<uintptr_t>(move)):0,
+                animation,alternate,notified,committed,hurt);
+        }
         g_lua.newtable(L);Number(L,"valid",1);Number(L,"transforming",1);
         Number(L,"id",*reinterpret_cast<uint32_t*>(g_current+4));
         Number(L,"generation",static_cast<double>(ActorFor(g_current).generation));
