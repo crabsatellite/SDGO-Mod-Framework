@@ -2835,6 +2835,15 @@ int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
         bool chart=true;
         for(int i=0;i<6;++i)chart=chart && s.radar_base[i]>0.0f && s.radar_total[i]>=s.radar_base[i] && s.radar_total[i]<=1.0001f;
         context->Assert(chart,"all six dimensions are charted: native stats, with OC points on top, within the stat caps");
+        const uint32_t itemSlots=s.owned_items<3u ? s.owned_items:3u;
+        if(s.item_models_shown<itemSlots) {
+            static uint32_t reported=0xFFFFFFFFu;
+            if(reported!=s.item_models_loaded){reported=s.item_models_loaded;char wait[96];sprintf_s(wait,"oc item models pending: shown=%u loaded=%u slots=%u",s.item_models_shown,s.item_models_loaded,itemSlots);context->Observe(wait);}
+            return timeout(10000,"the ITEM box shows each held OC item's own 3D model");
+        }
+        context->Assert(s.item_models_shown==itemSlots,"one item model per filled ITEM box slot");
+        char models[96];sprintf_s(models,"oc item models: shown=%u loaded=%u slots=%u",s.item_models_shown,s.item_models_loaded,itemSlots);
+        context->Observe(models);
         char info[420];sprintf_s(info,"oc tab page: levels=%u owned_items=%u (%d/%d/%d) chart_frames=%u base=%.3f/%.3f/%.3f/%.3f/%.3f/%.3f total=%.3f/%.3f/%.3f/%.3f/%.3f/%.3f record_custom=%u/%u/%u/%u",
             s.info_levels,s.owned_items,s.owned_item_ids[0],s.owned_item_ids[1],s.owned_item_ids[2],s.radar_frames,
             s.radar_base[0],s.radar_base[1],s.radar_base[2],s.radar_base[3],s.radar_base[4],s.radar_base[5],

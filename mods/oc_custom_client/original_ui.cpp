@@ -204,6 +204,13 @@ bool Bindings::Bind(const SdgoApi* api, SdgoMod* mod) noexcept {
     add_icon = reinterpret_cast<AddIcon>(api->Symbol(mod, "friend_unit_gift.ui_add_icon"));
     button_vtable = api->Symbol(mod, "hangar.ui_button_vtable");
     refresh = reinterpret_cast<Refresh>(api->Symbol(mod, "friend_unit_gift.ui_refresh_geometry"));
+    render_lock = reinterpret_cast<RenderVoid>(api->Symbol(mod, "oc_custom.client_render_lock"));
+    render_clear = reinterpret_cast<RenderVoid>(api->Symbol(mod, "oc_custom.client_render_clear"));
+    render_load = reinterpret_cast<RenderLoad>(api->Symbol(mod, "oc_custom.client_render_load"));
+    render_rotation = reinterpret_cast<RenderRotation>(api->Symbol(mod, "oc_custom.client_render_rotation"));
+    render_model = reinterpret_cast<RenderModel>(api->Symbol(mod, "oc_custom.client_render_model"));
+    model_animation = reinterpret_cast<ModelAnimation>(api->Symbol(mod, "oc_custom.client_model_animation"));
+    render_unlock = reinterpret_cast<RenderVoid>(api->Symbol(mod, "oc_custom.client_render_unlock"));
     return add && find && text && skin && add_icon && button_vtable;
 }
 
@@ -340,6 +347,8 @@ void OriginalUi::Detach() noexcept {
     page_visible_ = 1;
     level_icons_ = {};
     none_icons_ = {};
+    models_shown_ = {};
+    renders_prepared_ = false;
 }
 
 bool OriginalUi::Alive() const noexcept {
@@ -473,6 +482,83 @@ void OriginalUi::SetCheck(void* control, bool checked) noexcept {
     }
 }
 
+namespace {
+// The 3DRender camera the upgrade page sets on its Item3DRender controls
+// (0799 Init): eye 0,0,-35 looking at the origin, near 1, far 500.
+void PutCamera(void* control) noexcept {
+    __try {
+        Put<float>(control, 0x234, 0.0f);
+        Put<float>(control, 0x238, 0.0f);
+        Put<float>(control, 0x23C, -35.0f);
+        Put<float>(control, 0x240, 0.0f);
+        Put<float>(control, 0x244, 0.0f);
+        Put<float>(control, 0x248, 0.0f);
+        Put<float>(control, 0x25C, 1.0f);
+        Put<float>(control, 0x260, 500.0f);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+} // namespace
+
+void OriginalUi::PrepareRenders() noexcept {
+    if (renders_prepared_) return;
+    renders_prepared_ = true;
+    static const wchar_t* const kRenders[kInfoItems] = {L"Item3DRender0", L"Item3DRender1", L"Item3DRender2"};
+    for (const auto* name : kRenders) {
+        auto* render = Find(window_info, name);
+        if (render && render->pointer) PutCamera(render->pointer);
+    }
+}
+
+namespace {
+bool LoadModelLocked(const Bindings& bindings, void* render, const NativeString* path, const NativeString* animation) noexcept {
+    void* model = nullptr;
+    __try {
+        bindings.render_clear(render);
+        bindings.render_load(render, path, 0);
+        bindings.render_rotation(render, 0.0f, 0.0f, 0.0f);
+        model = bindings.render_model(render);
+        if (model) {
+            bindings.model_animation(model, animation, 1, 1.0f, 0.1f, 2, 1, 0);
+            Put<float>(model, 0x88, 0.0f);
+            Put<float>(model, 0x8C, -11.0f);
+            Put<float>(model, 0x90, 0.0f);
+            Put<std::uint8_t>(model, 0xA0, 1);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        model = nullptr;
+    }
+    return model != nullptr;
+}
+} // namespace
+
+// FUN_00873B40's sequence: under the control's lock, clear, load the model,
+// reset the rotation and start its "default" animation, then refresh.
+bool OriginalUi::LoadModel(void* render, const NativeString* path) noexcept {
+    NativeString animation{};
+    static constexpr wchar_t kDefault[] = L"default";
+    std::memcpy(animation.data.small, kDefault, sizeof(kDefault));
+    animation.length = 7;
+    animation.capacity = 7;
+    bool loaded = false;
+    __try {
+        bindings_.render_lock(render);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    loaded = LoadModelLocked(bindings_, render, path, &animation);
+    __try {
+        bindings_.render_unlock(render);
+        if (loaded) {
+            auto** vtable = Read<void**>(render);
+            reinterpret_cast<Bindings::RenderVoid>(vtable[0x1C / sizeof(void*)])(render);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        loaded = false;
+    }
+    return loaded;
+}
+
 void OriginalUi::HideAll() noexcept {
     __try {
         for (std::size_t index = 0; index < window_count; ++index) {
@@ -484,6 +570,7 @@ void OriginalUi::HideAll() noexcept {
         entry_shown_ = false;
         if (page_hidden_ && page_dialog_) Put<std::uint8_t>(page_dialog_, kVisible, page_visible_);
         page_hidden_ = false;
+        models_visible_ = 0;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
 }
@@ -507,16 +594,44 @@ void OriginalUi::Render(const EntryView& entry, const OverView& over, const Info
             if (level_icons_[level]) SetState(level_icons_[level], info.level[level], false);
         }
         if (auto* spare = Find(window_info, L"OverCustomSlotIcon7")) ShowIcon(spare->pointer, false);
+        models_visible_ = 0;
         for (std::size_t slot = 0; slot < kInfoItems; ++slot) {
             const std::wstring index = std::to_wstring(slot);
             SetItemName(slot, info.item[slot] ? info.item_text[slot] : L"");
             if (auto* none = Find(window_info, (L"NoneIcon" + index).c_str())) ShowIcon(none->pointer, false);
+            // Item3DRender0..2 show the item's own model, as the factory pages do.
+            const bool model = info.item[slot] && !info.item_model[slot].empty() && bindings_.ItemModels();
+            bool shown = false;
+            if (auto* render = Find(window_info, (L"Item3DRender" + index).c_str())) {
+                if (model && models_shown_[slot] != info.item_model[slot]) {
+                    PrepareRenders();
+                    const auto native_model = ViewOf(info.item_model[slot]);
+                    const bool loaded = LoadModel(render->pointer, &native_model);
+                    if (loaded) {
+                        models_shown_[slot] = info.item_model[slot];
+                        ++models_loaded_;
+                    } else {
+                        models_shown_[slot].clear();
+                    }
+                    if (bindings_.log) {
+                        char line[160];
+                        std::snprintf(line, sizeof(line), "oc item model slot %u %ls %s", static_cast<unsigned>(slot),
+                                      info.item_model[slot].c_str(), loaded ? "loaded" : "did not load");
+                        bindings_.log(line);
+                    }
+                }
+                shown = model && models_shown_[slot] == info.item_model[slot];
+                SetState(render->pointer, shown, false);
+                if (shown) ++models_visible_;
+            }
             if (none_icons_[slot]) SetState(none_icons_[slot], !info.item[slot], false);
-            if (auto* render = Find(window_info, (L"Item3DRender" + index).c_str())) SetState(render->pointer, false, false);
         }
-    } else if (page_hidden_) {
-        Put<std::uint8_t>(page_dialog_, kVisible, page_visible_);
-        page_hidden_ = false;
+    } else {
+        models_visible_ = 0;
+        if (page_hidden_) {
+            Put<std::uint8_t>(page_dialog_, kVisible, page_visible_);
+            page_hidden_ = false;
+        }
     }
     if (dialogs_[window_info]) Put<std::uint8_t>(dialogs_[window_info], kVisible, info.visible ? 1 : 0);
     shown_[window_info] = info.visible;
