@@ -120,6 +120,8 @@ mode's point and unit-count limits. The host runs the AI and other clients displ
 An AI waiting for transformation confirmation uses the native player acknowledgement path to continue
 its current action. Native one-way forms, new skill transitions, deferred special actions
 and respawn handling retain their original rules.
+This includes the completion phase after the model changes while the same animation is still active;
+the native local receiver finishes that transition without replaying its start.
 Grid/Tag modes can use AI decks. The existing dead view can follow AI players. Respawn, life consumption and
 victory conditions follow the selected mode. AI on either team target opposing humans and AI and never their
 teammates, at every difficulty.
