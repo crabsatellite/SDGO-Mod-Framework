@@ -190,26 +190,32 @@ class ClientRuntime:
         from .owner_channel import mode
         host=self.workspace.host(identity)
         if host['role']!='client'or mode(host)!='owner':raise ValueError('服主在自己的编辑客户端发布配置档')
-        updater=self.workspace.updates
-        if not updater.latest:raise ValueError('先检查并选择官方框架版本，再发布服主配置档')
-        configured=self.workspace.settings.get('updates',{}).get('git_source')
-        source_framework=configured or{'schema_version':1,'kind':'sdgo-framework-runtime',
-            'source_id':updates.digest(('sdgo-framework-runtime:'+updater.source_repository()).encode())[:32],
-            'repository':updater.source_repository(),'channel':updater.latest['channel'],'transport':'github-releases'}
-        lock={'version':updater.latest['version'],'sha256':updater.latest['sha256']}
-        release=framework_source.load(self,source_framework,{'minimum_framework':lock['version'],'locked_framework':lock}if not configured else None)
-        publication=host.setdefault('profile_publication',{})
-        publication.setdefault('source_id',host.get('publication',{}).get('publisher_id')or uuid.uuid4().hex)
-        source=server_profiles.binding({'schema_version':3,'kind':'sdgo-client-runtime','source_id':publication['source_id'],
-            'label':host['name'],'feeds':feeds,'framework':source_framework})
         output=Path(directory).expanduser().resolve()
         base=Path(host['path']).resolve()
         if not directory or not Path(directory).is_absolute()or output==output.parent or output.is_relative_to(base)or base.is_relative_to(output):raise ValueError('配置档发布目录须为客户端之外的绝对路径')
+        updater=self.workspace.updates
+        publication=host.setdefault('profile_publication',{})
+        publication.setdefault('source_id',host.get('publication',{}).get('publisher_id')or uuid.uuid4().hex)
+        prior=storage.read_json(output/server_profiles.MANIFEST,{})
+        installed=storage.read_json(base/'sdgo/release.json',{})
+        if not installed.get('version'):installed=storage.read_json(base/RECEIPT,{}).get('framework',{})
+        # Content publication keeps the accepted programme choice. A later
+        # upstream release or a Manager restart does not upgrade that choice.
+        reuse=bool(prior.get('source_id')==publication['source_id']and prior.get('framework',{}).get('version')==installed.get('version')and installed.get('version'))
+        if not reuse and not updater.latest:raise ValueError('先检查并选择官方框架版本，再发布服主配置档')
+        configured=self.workspace.settings.get('updates',{}).get('git_source')
+        source_framework=configured or(prior.get('framework_source')if reuse else None)or{'schema_version':1,'kind':'sdgo-framework-runtime',
+            'source_id':updates.digest(('sdgo-framework-runtime:'+updater.source_repository()).encode())[:32],
+            'repository':updater.source_repository(),'channel':updater.latest['channel'],'transport':'github-releases'}
+        lock=prior['framework']if reuse else{'version':updater.latest['version'],'sha256':updater.latest['sha256']}
+        release=framework_source.load(self,source_framework,{'minimum_framework':lock['version'],'locked_framework':lock}if reuse or not configured else None)
+        source=server_profiles.binding({'schema_version':3,'kind':'sdgo-client-runtime','source_id':publication['source_id'],
+            'label':host['name'],'feeds':feeds,'framework':source_framework})
         if git_remote:
             from .git_source import parse
             parse(('git+ssh://'if git_remote.startswith('ssh://')else'git+')+git_remote.removeprefix('ssh://')+'#'+branch)
             output.mkdir(parents=True,exist_ok=True)
-            self.workspace.owner_channels.git_prepare(output,{'branch':branch,'git_remote':git_remote})
+            self.workspace.owner_channels.git_prepare(output,{'branch':branch,'git_remote':git_remote},git=self.git)
             self.git(output,['sparse-checkout','set','content','releases'])
         result=profile_publish.publish(host,source,release,output,extras or[],publication.get('personal_settings',[]),zip_payload)
         publication.update(directory=str(output),feeds=feeds,revision=result['revision'],git_remote=git_remote,branch=branch,extras=extras or[]);self.workspace.save_workspace()
@@ -225,10 +231,10 @@ class ClientRuntime:
 
     def git(self,repository,args,input=None,output=None):
         from .owned_process import run
-        fetching=args[:1]==['fetch'];key=str(Path(repository).resolve())
+        fetching=args[:1]==['fetch'];network=args[:1]in(['fetch'],['push'],['ls-remote']);key=str(Path(repository).resolve())
         prefix=['-c','fetch.negotiationAlgorithm=noop']if'--stdin'in args else[]
+        if network:prefix+=['-c','http.lowSpeedLimit=0']
         if fetching:
-            prefix+=['-c','http.lowSpeedLimit=0']
             if '--progress'not in args:args=[args[0],'--progress',*args[1:]]
         attempts=[(None,args)]
         if fetching and 'origin'in args:
@@ -247,7 +253,7 @@ class ClientRuntime:
                 except OSError:pass  # A pack can be atomically renamed while sampled.
             try:
                 result=run(
-                    ['git','-C',str(repository),*prefix,*arguments],cwd=repository,timeout=None if fetching else 1200 if output is not None or args[:1]==['cat-file']else 120,
+                    ['git','-C',str(repository),*prefix,*arguments],cwd=repository,timeout=None if network else 1200 if output is not None or args[:1]==['cat-file']else 120,
                     stop=self.operation_stop,env=git_source.environment(),input=input,output=output,**({'progress':self.git_progress,'poll':poll_pack}if fetching else{}))
             except subprocess.TimeoutExpired:
                 errors.append('读取更新仓库超时');continue

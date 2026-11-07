@@ -763,28 +763,29 @@ class OwnerChannels:
         if r.returncode:raise ValueError(failure(r.stderr))
         return r.stdout
 
-    def git_prepare(self,root,cfg):
+    def git_prepare(self,root,cfg,git=None):
+        execute=git or self.git
         if not (root/'.git').exists():
             if any(root.iterdir()):raise ValueError('Git 发布请选择已克隆的干净仓库或空目录')
-            self.git(root,['init','-b',cfg['branch']])
-            self.git(root,['remote','add','origin',cfg['git_remote']])
-            self.git(root,['sparse-checkout','init','--cone'])
-            self.git(root,['sparse-checkout','set','releases'])
+            execute(root,['init','-b',cfg['branch']])
+            execute(root,['remote','add','origin',cfg['git_remote']])
+            execute(root,['sparse-checkout','init','--cone'])
+            execute(root,['sparse-checkout','set','releases'])
             # Reuse existing history and credentials instead of replacing a
             # remote branch with a newly initialized unrelated history.
-            refs=self.git(root,['ls-remote','--heads','origin','refs/heads/'+cfg['branch']])
+            refs=execute(root,['ls-remote','--heads','origin','refs/heads/'+cfg['branch']])
             if refs.strip():
-                self.git(root,['fetch','--filter=blob:none','--depth=64','origin',cfg['branch']])
-                self.git(root,['reset','--hard','FETCH_HEAD'])
-        if self.git(root,['status','--porcelain']).strip():raise storage.Conflict('发布仓库有未提交修改，请先处理')
-        branch=self.git(root,['symbolic-ref','--short','HEAD']).decode().strip()
+                execute(root,['fetch','--filter=blob:none','--depth=64','origin',cfg['branch']])
+                execute(root,['reset','--hard','FETCH_HEAD'])
+        if execute(root,['status','--porcelain']).strip():raise storage.Conflict('发布仓库有未提交修改，请先处理')
+        branch=execute(root,['symbolic-ref','--short','HEAD']).decode().strip()
         if branch!=cfg['branch']:raise ValueError('发布仓库当前分支与所选分支不一致')
-        remote=self.git(root,['config','--get','remote.origin.url']).decode().strip()
+        remote=execute(root,['config','--get','remote.origin.url']).decode().strip()
         if remote!=cfg['git_remote']:raise ValueError('现有发布仓库的上游与所填地址不一致；请选择正确的专用目录')
-        refs=self.git(root,['ls-remote','--heads','origin','refs/heads/'+cfg['branch']])
+        refs=execute(root,['ls-remote','--heads','origin','refs/heads/'+cfg['branch']])
         if refs.strip():
-            self.git(root,['fetch','--filter=blob:none','--depth=64','origin',cfg['branch']])
-            self.git(root,['merge','--ff-only','FETCH_HEAD'])
+            execute(root,['fetch','--filter=blob:none','--depth=64','origin',cfg['branch']])
+            execute(root,['merge','--ff-only','FETCH_HEAD'])
 
     def start(self):
         if self.thread and self.thread.is_alive():return
