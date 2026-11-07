@@ -108,6 +108,7 @@ class ClientRuntime:
         class OperationStop:
             def is_set(token):return self.stop_event.is_set()or self.cancel_event.is_set()
         self.operation_stop=OperationStop()
+        self.binding_requests={}
 
     def report_progress(self,**values):
         if self.active_host:
@@ -120,9 +121,32 @@ class ClientRuntime:
         rows=re.findall(rb', ([0-9.]+) (bytes|KiB|MiB|GiB)',raw)
         if rows:
             amount,unit=rows[-1];scale={b'bytes':1,b'KiB':1024,b'MiB':1024**2,b'GiB':1024**3}[unit]
-            self.report_progress(current_bytes=int(float(amount)*scale))
+            self.git_received=max(getattr(self,'git_received',0),int(float(amount)*scale))
+            self.report_progress(wire_bytes=self.git_received)
 
     def bind_profile(self,identity,urls,offline=None):
+        self.workspace.host(identity)
+        if not self.busy.acquire(blocking=False):raise storage.Conflict('另一个更新正在处理，请等待完成或取消后再导入')
+        self.binding_requests[identity]={'feeds':urls,'offline':offline}
+        with self.lock:self.active_host=identity;self.cancel_event.clear();self.results[identity]={'status':'working','progress':{'phase':'manifest'}}
+        try:
+            self._bind_profile(identity,urls,offline)
+            if self.operation_stop.is_set():raise InterruptedError('配置导入已取消')
+        except InterruptedError:
+            self.workspace.host(identity)['client_updates_paused']=True;self.workspace.save_workspace()
+            with self.lock:self.results[identity]={'status':'cancelled','message':'已取消；尚未安装运行文件，可继续导入'}
+            return self.state()
+        except Exception as error:
+            with self.lock:self.results[identity]={'status':'error','message':str(error)}
+            raise
+        finally:
+            with self.lock:self.active_host=None;self.cancel_event.clear()
+            self.busy.release()
+        self.binding_requests.pop(identity,None)
+        with self.lock:self.jobs.append((identity,'sync',None));self.results[identity]={'status':'queued'}
+        self.start();return self.state()
+
+    def _bind_profile(self,identity,urls,offline=None):
         from . import server_profiles,framework_source
         from .owner_channel import mode
         host=self.workspace.host(identity);root=Path(host['path']).resolve()
@@ -146,12 +170,12 @@ class ClientRuntime:
                 server_profiles.validate(profile,source);server_profiles.base_check(root,profile)
                 old=installed_source(root)
                 if old and old['source_id']!=source['source_id']:raise ValueError('先明确解除原服主绑定，再导入另一服主配置')
+                if self.operation_stop.is_set():raise InterruptedError('配置导入已取消')
                 with lease('host:'+str(root).casefold()):
                     marker=root/SOURCE
                     if marker.is_file():storage.atomic(self.cache/'binding-backups'/uuid.uuid4().hex/'source.json',marker.read_bytes())
                     storage.atomic(marker,storage.json_bytes(source));host['runtime_mode']='player';host['client_updates_paused']=False;self.workspace.save_workspace()
-                with self.lock:self.jobs.append((identity,'sync',None));self.results[identity]={'status':'queued'}
-                self.start();return self.state()
+                return source
             except InterruptedError:raise
             except(OSError,ValueError,subprocess.SubprocessError)as error:errors.append(str(error))
         raise ValueError('无法导入服主配置：'+'；'.join(errors))
@@ -174,7 +198,8 @@ class ClientRuntime:
             'repository':updater.source_repository(),'channel':updater.latest['channel'],'transport':'github-releases'}
         lock={'version':updater.latest['version'],'sha256':updater.latest['sha256']}
         release=framework_source.load(self,source_framework,{'minimum_framework':lock['version'],'locked_framework':lock}if not configured else None)
-        publication=host.setdefault('profile_publication',{});publication.setdefault('source_id',uuid.uuid4().hex)
+        publication=host.setdefault('profile_publication',{})
+        publication.setdefault('source_id',host.get('publication',{}).get('publisher_id')or uuid.uuid4().hex)
         source=server_profiles.binding({'schema_version':3,'kind':'sdgo-client-runtime','source_id':publication['source_id'],
             'label':host['name'],'feeds':feeds,'framework':source_framework})
         output=Path(directory).expanduser().resolve()
@@ -211,10 +236,19 @@ class ClientRuntime:
                 alternate=list(args);alternate[alternate.index('origin')]=remote;attempts.append((index,alternate))
         errors=[]
         for index,arguments in attempts:
+            pack=Path(repository)/'objects/pack'
+            before={p.name:p.stat().st_size for p in pack.glob('*')if p.is_file()}if fetching else{}
+            if fetching:self.git_received=0;self.report_progress(wire_bytes=0)
+            def poll_pack():
+                try:
+                    received=sum(max(0,p.stat().st_size-before.get(p.name,0))for p in pack.glob('*')if p.is_file()and(p.suffix=='.pack'or p.name.startswith('tmp_pack')))
+                    if received>self.git_received:
+                        self.git_received=received;self.report_progress(wire_bytes=received)
+                except OSError:pass  # A pack can be atomically renamed while sampled.
             try:
                 result=run(
                     ['git','-C',str(repository),*prefix,*arguments],cwd=repository,timeout=None if fetching else 1200 if output is not None or args[:1]==['cat-file']else 120,
-                    stop=self.operation_stop,env=git_source.environment(),input=input,output=output,**({'progress':self.git_progress}if fetching else{}))
+                    stop=self.operation_stop,env=git_source.environment(),input=input,output=output,**({'progress':self.git_progress,'poll':poll_pack}if fetching else{}))
             except subprocess.TimeoutExpired:
                 errors.append('读取更新仓库超时');continue
             if result.returncode:
@@ -626,7 +660,7 @@ class ClientRuntime:
                 # Pair journal reads with the worker's transition to working.
                 recovery=False if working else bool(self.unresolved(host['path']))
             from .owner_channel import mode
-            rows.append({'id':host['id'],'name':host['name'],'mode':mode(host),'source':binding,'error':error,'result':result,
+            rows.append({'id':host['id'],'name':host['name'],'mode':mode(host),'source':binding,'pending':self.binding_requests.get(host['id']),'error':error,'result':result,
                          'recovery_required':recovery})
         return {'healthy':True,'running':bool(self.thread and self.thread.is_alive()),'hosts':rows,
                 'automatic':self.workspace.services.desired(SERVICE)if hasattr(self.workspace,'services')else False}

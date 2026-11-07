@@ -44,6 +44,8 @@ def snapshot(host,source,framework,extras=(),personal_settings=()):
         current=updates.read_ini((folder/'mod.ini').read_bytes())
         if current.get('mod','distribution',fallback='public')=='local_only':continue
         if current.get('mod','version',fallback='')!=mod['version']:raise ValueError('先采用所选框架中的 Mod 版本，再发布配置档：'+identity)
+        binary='sdgo/mods/'+identity+'/'+identity+'.dll';expected=official.get(binary)
+        if expected and owner_channel.file_hash(root/binary)!=expected['sha256']:raise ValueError('已安装 Mod 程序与所选发布包不同；先审阅并采用对应程序，不能仅凭版本号发布：'+identity)
         selected[identity]=mod['version'];rows=[]
         if current.has_section('settings'):rows.extend(['settings',key,value]for key,value in current['settings'].items())
         rows.append(['mod','enabled',current.get('mod','enabled',fallback='1')]);patches['sdgo/mods/'+identity+'/mod.ini']=rows

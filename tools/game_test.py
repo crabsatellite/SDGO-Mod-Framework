@@ -199,7 +199,7 @@ def copy_ignore(directory: str, names: list[str]) -> set[str]:
             or Path(lowered).suffix in IGNORED_SUFFIXES
             or "backup" in lowered
             or "澶囦唤" in name
-            or (parent == "sdgo" and lowered == "gametest")
+            or (parent == "sdgo" and lowered in {"gametest", "local-state"})
         ):
             ignored.add(name)
     return ignored

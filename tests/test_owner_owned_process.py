@@ -10,6 +10,12 @@ from manager.owned_process import run
 
 
 class OwnedCommandTests(unittest.TestCase):
+    def test_quiet_transfer_can_be_observed_and_cancelled_without_stderr(self):
+        stop=threading.Event();observed=[]
+        def poll():observed.append(True);stop.set()
+        with self.assertRaises(InterruptedError):
+            run([sys.executable,'-c','import time;time.sleep(30)'],cwd=Path.cwd(),env=dict(os.environ),timeout=None,stop=stop,progress=lambda _:None,poll=poll)
+        self.assertTrue(observed)
     def test_transfer_without_deadline_streams_progress_and_remains_cancellable(self):
         stop=threading.Event();seen=[]
         def progress(raw):

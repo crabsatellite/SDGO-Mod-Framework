@@ -395,7 +395,8 @@ class OwnerChannels:
                 hosts.append({'id':h['id'],'name':h['name'],'role':h['role'],'mode':mode(h),'source':source,
                     'complete_runtime':(Path(h['path'])/'sdgo/client-source.json').is_file(),
                     'automatic':h.get('owner_automatic',True) and self.workspace.services.desired(SERVICE),
-                    'publication':cfg,'result':self.results.get(h['id'],{}) or ({'status':'error','message':error} if error else {}),
+                    'publication':cfg,'profile_publication':copy.deepcopy(h.get('profile_publication',{})),
+                    'result':self.results.get(h['id'],{}) or ({'status':'error','message':error} if error else {}),
                     'installed_revision':installed_revision})
             return {'running':bool(self.thread and self.thread.is_alive()),'healthy':True,'hosts':hosts}
 
