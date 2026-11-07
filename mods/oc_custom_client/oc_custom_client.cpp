@@ -257,6 +257,34 @@ std::wstring ItemLabel(const ChallengeItem& item, bool brief = false) {
     return label.empty() ? std::to_wstring(item.item) : label;
 }
 
+// The item model an ITEM box slot shows: the item table's model path (UTF-16 at
+// record +0x79, the field the factory pages load into their Item3DRender
+// controls). The current client's item table (gdrs\0117) still holds the OC
+// challenge items, but flags them disabled (byte +4 = 1, named 「不可用」) and
+// does not load them into its runtime tables, so those items fall back to the
+// model paths of their rows in that table.
+struct ItemModel {
+    std::int32_t item;
+    const wchar_t* model;
+};
+constexpr ItemModel kOcItemModels[] = {
+    {3240005, L"mdrs\\2977.mod"}, // success rate +100%
+    {3240006, L"mdrs\\2977.mod"}, // success rate +0.01%
+    {3240030, L"mdrs\\2952.mod"}, // level protection
+};
+
+std::wstring ItemModelPath(std::int32_t item) {
+    std::int32_t type = 0;
+    const auto* record = GridEntry(item, &type);
+    if (record && type == 0x39) {
+        auto path = RecordText(record, 0x79, 64);
+        if (!path.empty()) return path;
+    }
+    for (const auto& entry : kOcItemModels)
+        if (entry.item == item) return entry.model;
+    return {};
+}
+
 // --- State ----------------------------------------------------------------
 
 enum class Pending : std::uint8_t { none, mode, profile, set_normal, set_over, reset_cost, reset, challenge, items, owned };
@@ -434,6 +462,7 @@ void Render() {
             const auto& item = s.owned.items[slot];
             info.item[slot] = true;
             info.item_text[slot] = ItemLabel(item, true) + L" x" + std::to_wstring(item.count);
+            info.item_model[slot] = ItemModelPath(item.item);
         }
         // All six dimensions on the 0794 hexagon: the unit's native stats and
         // the stats with its OC points, each against the OC stat cap.
@@ -1785,6 +1814,8 @@ int Snapshot(SdgoOcCustomClientSnapshotV2* output) {
     snapshot.owned_items = s.owned.count;
     for (std::size_t slot = 0; slot < 3 && slot < s.owned.count; ++slot) snapshot.owned_item_ids[slot] = s.owned.items[slot].item;
     snapshot.radar_frames = radar::Frames();
+    snapshot.item_models_shown = g_ui.models_shown();
+    snapshot.item_models_loaded = g_ui.models_loaded();
     const auto& shape = radar::Current();
     for (std::size_t stat = 0; stat < stat_count; ++stat) {
         snapshot.radar_base[stat] = shape.base[stat];
@@ -1891,7 +1922,8 @@ SDGO_MOD_ENTRY {
     g_mod = mod;
     if (!api->SettingInt(mod, "Enabled", 1)) return 0;
     if (!g_bindings.Bind(api, mod)) return 0;
-    g_session = reinterpret_cast<NativeSession>(api->Symbol(mod, "storage.session"));
+    g_bindings.log = [](const char* message) { Log(SDGO_LOG_INFO, message); };
+    g_session =reinterpret_cast<NativeSession>(api->Symbol(mod, "storage.session"));
     g_native_send = reinterpret_cast<NativeSend>(api->Symbol(mod, "net.send_packet"));
     g_profile = reinterpret_cast<std::uint8_t**>(api->Symbol(mod, "hangar.profile_global"));
     g_grid = reinterpret_cast<std::uint8_t**>(api->Symbol(mod, "oc_custom.grid_singleton"));

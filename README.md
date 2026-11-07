@@ -27,7 +27,7 @@ This page is a feature index. Configuration, gameplay instructions, compatibilit
 Beta and Experimental after a feature name mark its release channel; unlabeled features are Stable:
 
 - **Stable**: the basic workflow works; later problems are fixed in new versions. Manager updates install Stable by default.
-- **Beta**: the basic workflow is still under development. Current Beta features include unit family import. Switch Manager updates to the Beta channel to install them.
+- **Beta**: the basic workflow is still under development. Current Beta features include unit family import and over-custom six-stat enhancement. Switch Manager updates to the Beta channel to install them.
 - **Experimental**: development diagnostics. Development tools are not installed by Manager updates.
 
 ## Core fixes
@@ -39,7 +39,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | IME candidates and commit fix <!-- catalog: `ime_fix` --> | Restore Chinese candidates and replace the old preedit range without residual letters | [Use](docs/ime-fix.md) |
 | Activity capsule currency <!-- catalog: `capsule_currency_fix` --> | Show machine 9301 as 99 coins in the list and purchase confirmation | [Use](docs/capsule-currency-fix.md) |
 | Input method freeze fix <!-- catalog: `findwindow_fix` --> | Stop input methods such as iFlytek from freezing or crashing the repack client | [Use](docs/findwindow-fix.md) |
-| Startup crash fix <!-- catalog: `startup_crash_fix` --> | Stop random crashes on the loading screen at game start | [Use](docs/startup-crash-fix.md) |
+| Startup crash fix <!-- catalog: `startup_crash_fix` --> | Stop random crashes on the loading screen; protection stays active if optional showcase fitting is unavailable | [Use](docs/startup-crash-fix.md) |
 | First login lobby music <!-- catalog: `lobby_music_fix` --> | Restore the lobby music on first login | [Use](docs/lobby-music-fix.md) |
 | Wait-room window initialization guard <!-- catalog: `waitroom_window_fix` --> | Fix the client sometimes closing right after a room is created | [Use](docs/waitroom-window-fix.md) |
 | Native data and lifecycle guards <!-- catalog: `native_data_guard` --> | Fix crashes when unit data is missing or unit management is still waiting for data; keep crash logs accurate | [Use](docs/native-data-guard.md) |
@@ -83,7 +83,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Storage claim all <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation | [Use](docs/storage-claim.md) |
 | Chinese shop localization and search <!-- catalog: `shop_localization` --> | Translate shop names, descriptions, options and paint-page unit previews; search by Chinese name combined with rank and payment filters | [Use](docs/shop-localization.md) |
 | Friend unit gifts (optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Right-click a friend (online or offline), pick a unit in unit management, and the friend accepts or returns it in Storage. Off until the owner enables it | [Use](docs/friend-unit-gift.md) |
-| Over-custom six-stat enhancement <!-- catalog: `oc_custom_client`, `oc_custom_server`, `oc_custom_battle` --> | A dual-system factory: a 终极强化 tab next to the untouched native tabs, built from the client package's own OC layouts (OVER CUSTOM level track and ITEM box, all six dimensions drawn on the allocation hexagon, normal/Over points, the OVER CUSTOM challenge and reset), plus OC speed and agility in battle; stored beside the current custom parts, both kept across a switch, and the owner picks which rule set battles use | [Use](docs/over-custom.md) |
+| Over-custom six-stat enhancement (Beta) <!-- catalog: `oc_custom_client`, `oc_custom_server`, `oc_custom_battle` --> | A dual-system factory: a 终极强化 tab next to the untouched native tabs, built from the client package's own OC layouts (OVER CUSTOM level track, ITEM box with the items' 3D models, all six dimensions drawn on the allocation hexagon, normal/Over points, the OVER CUSTOM challenge and reset), plus OC speed and agility in battle; stored beside the current custom parts, both kept across a switch, and the owner picks which rule set battles use | [Use](docs/over-custom.md) |
 | Unit family import (Beta) <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | Import unit archives, edit skill/funnel dependency fields, retain script declarations, author blueprints and activity pools in Mod Manager, import protocol-ready batches of single, reciprocal, one-way and self-transform families plus third-form entry variants, and apply that roster to the server from Mod Manager, then offer it to the shop, capsule machines and dedicated activity machines (activity posters can be replaced at any time) | [Use](docs/unit-import.md) |
 
 <!-- /mod-category:gameplay -->

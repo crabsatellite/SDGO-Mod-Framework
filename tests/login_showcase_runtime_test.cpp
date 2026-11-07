@@ -26,6 +26,7 @@ namespace
         std::array<uint8_t, 0x20E4> screen{};
         std::vector<uint32_t> shown;
         HookFn hook = nullptr;
+        bool modelAvailable = true;
         unsigned checks = 0, revisionCalls = 0, appliedCalls = 0;
 
         void Check(bool condition, const char* message)
@@ -113,7 +114,7 @@ namespace
             return reinterpret_cast<void*>(&Grid);
         if (!std::strcmp(name, "grid.find"))
             return reinterpret_cast<void*>(&Find);
-        if (!std::strcmp(name, "model.commit"))
+        if (!std::strcmp(name, "model.commit") && g.modelAvailable)
             return reinterpret_cast<void*>(&ModelUpdate);
         return nullptr;
     }
@@ -171,9 +172,10 @@ namespace
 
 int wmain(int argc, wchar_t** argv)
 {
-    if (argc != 3)
+    if (argc != 3 && argc != 4)
         return 2;
     try {
+        g.modelAvailable = argc == 3;
         AddUnit(0x375BE1, 20001, 4, 2); // ordinary S, excluded by default
         AddUnit(0x375BE2, 20002, 4, 3); // SS
         AddUnit(0x375BE3, 20003, 4, 4); // SR
@@ -214,6 +216,17 @@ int wmain(int argc, wchar_t** argv)
         showcaseApi.ConfigurationRevision = &Revision;
         showcaseApi.ConfigurationApplied = &Applied;
         showcaseApi.Log = &Log;
+        if (!g.modelAvailable) {
+            g.Check(showcaseEntry(&showcaseApi, nullptr) == 0,
+                    "missing optional fitting refuses the showcase without disabling the startup guard");
+            g.hook(g.screen.data(), nullptr, 73, g.loading.data());
+            g.Check(g.shown == std::vector<uint32_t>{20001},
+                    "unavailable showcase leaves the original guarded presentation active");
+            FreeLibrary(showcase);
+            FreeLibrary(startup);
+            std::printf("%u missing-fitting production DLL checks passed\n", g.checks);
+            return 0;
+        }
         g.Check(showcaseEntry(&showcaseApi, nullptr) != 0,
                 "login showcase registered through the startup-fix broker");
         g.Check(g.revisionCalls == 2 && g.appliedCalls == 0,

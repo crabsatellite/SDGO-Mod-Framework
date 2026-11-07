@@ -44,6 +44,9 @@ function Check-Package([string]$zip, [string[]]$expected) {
         foreach ($required in @('install_common.ps1','CONTENTS.md','client/d3d9.dll','server/winmm.dll','client/sdgo/catalog.json')) {
             if ($names -notcontains $required) { throw "Package lacks $required" }
         }
+        if (-not $archive.GetEntry('client/sdgo/mods/startup_crash_fix/symbols.fragment.ini')) {
+            throw 'Startup protection package lacks the optional showcase symbols'
+        }
         if ($names -match 'stale_fixture_|fixture_.*\.json') { throw 'Unregistered/undeclared payload entered the archive' }
         $reader = New-Object IO.StreamReader ($archive.GetEntry('client/sdgo/catalog.json').Open())
         try { $catalog = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }

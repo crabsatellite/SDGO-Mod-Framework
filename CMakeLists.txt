@@ -220,8 +220,10 @@ if(BUILD_TESTING)
     add_dependencies(login_showcase_runtime_test startup_crash_fix login_showcase)
     add_test(NAME login_showcase_actual_dll COMMAND login_showcase_runtime_test
              "$<TARGET_FILE:startup_crash_fix>" "$<TARGET_FILE:login_showcase>")
+    add_test(NAME login_showcase_missing_fit COMMAND login_showcase_runtime_test
+             "$<TARGET_FILE:startup_crash_fix>" "$<TARGET_FILE:login_showcase>" missing-fit)
     set_tests_properties(login_showcase_fit login_showcase_selection
-                         login_showcase_actual_dll PROPERTIES TIMEOUT 30)
+                         login_showcase_actual_dll login_showcase_missing_fit PROPERTIES TIMEOUT 30)
 endif()
 sdgo_add_mod(lobby_music_fix DESCRIPTION "first login lobby music restoration"
              SOURCES mods/lobby_music_fix/lobby_music_fix.cpp FILES symbols.fragment.ini)
@@ -731,6 +733,7 @@ if(BUILD_TESTING)
     sdgo_strict(automatic_fixes_runtime_test)
     add_dependencies(automatic_fixes_runtime_test startup_crash_fix agent_relay_log_fix)
     add_test(NAME startup_crash_fix_actual_dll COMMAND automatic_fixes_runtime_test gate "$<TARGET_FILE:startup_crash_fix>")
+    add_test(NAME startup_crash_fix_missing_fit COMMAND automatic_fixes_runtime_test gate-no-fit "$<TARGET_FILE:startup_crash_fix>")
     add_test(NAME agent_relay_log_fix_actual_dll COMMAND automatic_fixes_runtime_test relay "$<TARGET_FILE:agent_relay_log_fix>")
     set_tests_properties(startup_crash_fix_actual_dll agent_relay_log_fix_actual_dll PROPERTIES TIMEOUT 30)
     add_executable(game_test_battle_ai_activity_test tests/game_test_battle_ai_activity_test.cpp)
