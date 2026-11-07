@@ -1305,7 +1305,10 @@ int wmain(int argc,wchar_t** argv) {
         native_world::coverWall=true;auto beforeCoverMoves=native_world::moves;
         Eval("SDGO_BattleAI_GenericUpdate=function(n) coverSample=SDGO_BattleAI_Cover(2,1400,100,0); coverRepeat=SDGO_BattleAI_Cover(2,1400,100,0); count80=0; for i=1,1000 do count80=count80+SDGO_BattleAI_Chance(80) end; return 123 end");
         int maxCoverQueries=0;
-        for(int frame=0;frame<6;++frame) {int previousQueries=native_world::queries;unit.Think();maxCoverQueries=(std::max)(maxCoverQueries,native_world::queries-previousQueries);}
+        {
+            ScopedActorClock clock;
+            for(int frame=0;frame<6;++frame) {clock.Advance(20);int previousQueries=native_world::queries;unit.Think();maxCoverQueries=(std::max)(maxCoverQueries,native_world::queries-previousQueries);}
+        }
         Check(maxCoverQueries<=46&&Eval("assert(coverRepeat.pending==1)"),
               "cover geometry is bounded per Think and repeated same-frame calls do not repeat the search");
         Check(Eval("assert(coverSample.valid==1 and coverSample.exposure<=3 and coverSample.peek.z>0)"),"real native bridge samples a minimally exposed fireable cover edge using private collision queries");
@@ -1952,6 +1955,8 @@ int wmain(int argc,wchar_t** argv) {
         setPosition({0,0,0});native_world::Put(unit.bytes,0x3078,native_world::Vec3{0,0,0});unit.bytes[0x30DC]=0;
         native_world::Put(defenceFsm,4,defenceFsm+0x20);native_world::Put(defenceFsm,8,uint32_t(0));
         unit.bytes[0x312A]=0;native_world::Put(unit.bytes,0xDCD,uint16_t(0));
+        {
+        ScopedActorClock clock;
         const auto anchor=location();
         const int radiusStartPaths=native_world::pathCalls;
         crossfire();unit.Think();
@@ -1959,13 +1964,13 @@ int wmain(int argc,wchar_t** argv) {
         Check(unit.bytes[0x30DC]&&native_world::pathCalls>radiusStartPaths&&
               battle_ai::Length(radiusStartGoal-anchor)>25&&battle_ai::Length(radiusStartGoal-anchor)<=radius+0.1,
               "the independent continuous-crossfire fixture starts a bounded native defensive route");
-        crossfire();unit.Think();
+        crossfire();clock.Advance(20);unit.Think();
         radiusStartGoal=*reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078);
         Check(Eval("assert(defenceObservation.routeActive==1 and defenceObservation.defenceMoving==1)"),
               "the independent continuous-crossfire route is observable as adapter-owned on its next policy frame");
         const int goalsBeforeDefence=native_world::goalCalls;
         Eval("savedDefenceProbe=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) advanceResult=SDGO_BattleAI_AdvancePoint(1000,0,0,200,1); return 123 end");
-        unit.Think();
+        clock.Advance(20);unit.Think();
         Check(Eval("assert(advanceResult==0)")&&native_world::goalCalls==goalsBeforeDefence,
               "front/rear defensive route retains motor ownership from a pursuit step");
         Eval("SDGO_BattleAI_GenericUpdate=savedDefenceProbe");
@@ -1973,7 +1978,7 @@ int wmain(int argc,wchar_t** argv) {
         native_world::pathMode=0;
         bool bounded=true;double furthest=0;
         for(int step=0;step<12;++step) {
-            unit.Think();
+            clock.Advance(20);unit.Think();
             if(unit.bytes[0x30DC]) {
                 auto goal=*reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078);
                 double distance=battle_ai::Length(goal-anchor);furthest=(std::max)(furthest,distance);
@@ -1986,6 +1991,7 @@ int wmain(int argc,wchar_t** argv) {
                 location().x,location().y,location().z,static_cast<unsigned>(unit.bytes[0x30DC]));
         Check(bounded&&furthest>radius-1,
               "a continuous crossfire episode reaches but never exceeds its Medium/Hard defensive destination radius");
+        }
         const auto nextAnchor=location();
         native_world::Put(native_world::nodes[1].data(),0x88,nextAnchor+native_world::Vec3{0,0,1000});
         native_world::Put(native_world::nodes[2].data(),0x88,nextAnchor+native_world::Vec3{10,0,1100});

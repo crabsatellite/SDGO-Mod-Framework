@@ -1279,6 +1279,21 @@ Check(calls.stop and not SDGO_BattleAI_Universal.states[20].stationaryBoostAncho
       'native boost end keeps its normal stop path without an idle exemption')
 Reset();observation.targets={};observation.movementState=72;observation.moving=1;Tick(0)
 Check(calls.stop and calls.fire==false,'no remaining opponent still permits standby during boost startup')
+for _,kind in ipairs({'hitscan','opaque'}) do
+  Reset({Difficulty=1});observation.targets={Target(1,5000,1000)}
+  local weapon=Weapon(2,kind,2400,500,300);weapon.ordinary=1;weapon.movingShot=1
+  observation.weapons={weapon};observation.selectedSlot=2
+  observation.movementState=72;observation.movementPending=0
+  observation.moving=1;observation.routeActive=1;Tick(0)
+  Check(calls.moves==0 and calls.routes==0 and not calls.stop and calls.fire==true,
+        'a mobile '..kind..' gun preserves admitted boost startup before choosing another strafe')
+  Tick(400);observation.movementState=92;Tick(500)
+  Check(calls.moves==0 and SDGO_BattleAI_Universal.states[20].stationaryBoostAnchor,
+        'a mobile '..kind..' gun waits for a physical boost step without crediting animation as movement')
+  observation.pos={x=5,y=0,z=0};Tick(516)
+  Check(calls.fire==true and not SDGO_BattleAI_Universal.states[20].stationaryBoostAnchor,
+        'a mobile '..kind..' gun resumes ordinary moving-fire decisions after its first boost step')
+end
 local function RangedOther()
   return {unitId=999998,allowed=1,weapons={Weapon(0,'hitscan',2400,500,300)}}
 end
