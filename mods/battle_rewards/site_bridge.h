@@ -41,18 +41,20 @@ inline void __stdcall Dispatch(unsigned index, BYTE* frame) noexcept {
 SDGO_REWARD_SITE(0) SDGO_REWARD_SITE(1) SDGO_REWARD_SITE(2)
 SDGO_REWARD_SITE(3) SDGO_REWARD_SITE(4) SDGO_REWARD_SITE(5)
 SDGO_REWARD_SITE(6) SDGO_REWARD_SITE(7) SDGO_REWARD_SITE(8)
-SDGO_REWARD_SITE(9)
+SDGO_REWARD_SITE(9) SDGO_REWARD_SITE(10)
 #undef SDGO_REWARD_SITE
 
-inline const std::array<void*, 10> detours = {{
+inline const std::array<void*, 11> detours = {{
     reinterpret_cast<void*>(&Site0), reinterpret_cast<void*>(&Site1),
     reinterpret_cast<void*>(&Site2), reinterpret_cast<void*>(&Site3),
     reinterpret_cast<void*>(&Site4), reinterpret_cast<void*>(&Site5),
     reinterpret_cast<void*>(&Site6), reinterpret_cast<void*>(&Site7),
-    reinterpret_cast<void*>(&Site8), reinterpret_cast<void*>(&Site9)
+    reinterpret_cast<void*>(&Site8), reinterpret_cast<void*>(&Site9),
+    reinterpret_cast<void*>(&Site10)
 }};
-inline const std::array<void**, 10> originals = {{
+inline const std::array<void**, 11> originals = {{
     &original0, &original1, &original2, &original3, &original4,
-    &original5, &original6, &original7, &original8, &original9
+    &original5, &original6, &original7, &original8, &original9,
+    &original10
 }};
 }

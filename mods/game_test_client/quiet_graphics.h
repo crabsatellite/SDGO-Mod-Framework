@@ -128,12 +128,23 @@ public:
     // Explicit test-only observation of the real native backbuffer. Captured
     // immediately before Present, while a DISCARD swap chain is still valid.
     // No desktop capture, alternate renderer, compositing or UI simulation.
+    using CapturePredicateFn=bool(__cdecl*)(void*);
+
     bool CaptureNextFrame(const wchar_t* path) {
+        return CaptureNextFrameWhen(path,nullptr,nullptr);
+    }
+
+    bool CaptureNextFrameWhen(
+        const wchar_t* path,
+        CapturePredicateFn predicate,
+        void* context) {
         if (!installed_ || !path || !*path || wcslen(path)>=MAX_PATH)return false;
         AcquireSRWLockExclusive(&captureLock_);
         const bool free=Read(capturePending_)==0;
         if (free) {
             wcscpy_s(capturePath_,path);
+            capturePredicate_=predicate;
+            capturePredicateContext_=context;
             InterlockedExchange(&captureResult_,E_PENDING);
             InterlockedExchange(&capturePending_,1);
         }
@@ -147,9 +158,16 @@ private:
     void CaptureRequestedFrame(IDirect3DDevice9* device) {
         if (!Read(capturePending_))return;
         AcquireSRWLockExclusive(&captureLock_);
-        if (!InterlockedExchange(&capturePending_,0)) {
+        if (!Read(capturePending_)) {
             ReleaseSRWLockExclusive(&captureLock_);return;
         }
+        if(capturePredicate_ &&
+           !capturePredicate_(capturePredicateContext_)) {
+            ReleaseSRWLockExclusive(&captureLock_);return;
+        }
+        InterlockedExchange(&capturePending_,0);
+        capturePredicate_=nullptr;
+        capturePredicateContext_=nullptr;
         IDirect3DSurface9* source=nullptr;
         IDirect3DSurface9* copy=nullptr;
         D3DSURFACE_DESC desc{};
@@ -1253,6 +1271,8 @@ private:
     SRWLOCK deviceLock_=SRWLOCK_INIT;
     SRWLOCK captureLock_=SRWLOCK_INIT;
     wchar_t capturePath_[MAX_PATH]{};
+    CapturePredicateFn capturePredicate_=nullptr;
+    void* capturePredicateContext_=nullptr;
     mutable volatile LONG capturePending_=0,captureResult_=E_PENDING;
     DeviceVtable deviceVtables_[DeviceVtableCapacity]{};
     uint32_t deviceVtableCount_=0;

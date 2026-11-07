@@ -22,6 +22,12 @@ RECEIPT = 'sdgo/owner-release.json'
 MAINTAINER = 'sdgo/local-state/owner-maintainer.json'
 GLOBAL = 'sdgo/sdgo.ini'
 KIND = 'sdgo-owner-modpack'
+# Content packs carry authored audiovisual resources separately from the
+# framework release. Keep their bounded download allowance independent.
+MAX_CONTENT_ARCHIVE = 512 * 1024 * 1024
+MAX_CONTENT_EXPANDED = 1024 * 1024 * 1024
+MAX_CONTENT_PART = 48 * 1024 * 1024
+MAX_CONTENT_PARTS = 32
 RESOURCE_ROOTS = {'anrs','fxrs','gdrs','mdrs','scp','sdrs','sol','sprs','trns','txrs','uirs'}
 SECRET_KEYS = {'password','passwd','pwd','username','loginaccount','loginpassword',
                'savedaccount','savedpassword','token','secret','apikey','privatekey',
@@ -52,6 +58,56 @@ def feed_url(value):
 def publisher(value):
     if not isinstance(value,str) or not re.fullmatch('[0-9a-f]{32}',value):raise ValueError('服主发布身份无效')
     return value
+
+
+def release_parts(feed):
+    if not isinstance(feed,dict):raise ValueError('服主发布清单无效')
+    asset=feed.get('asset','')
+    updates.safe_name(asset)
+    if '/' not in asset or not asset.endswith('.zip'):raise ValueError('整合包下载路径无效')
+    total_size=feed.get('bytes')
+    if type(total_size)is not int or not 0<total_size<=MAX_CONTENT_ARCHIVE:
+        raise ValueError('服主整合包总长无效')
+    if 'parts' not in feed:return None
+    parts=feed['parts']
+    if not isinstance(parts,list) or not 2<=len(parts)<=MAX_CONTENT_PARTS:
+        raise ValueError('服主整合包分片数量无效')
+    total=0;seen=set();validated=[]
+    for index,part in enumerate(parts):
+        if not isinstance(part,dict) or set(part)!={'path','bytes','sha256'}:
+            raise ValueError('服主整合包分片清单无效')
+        path=part.get('path')
+        updates.safe_name(path)
+        if path!=f'{asset}.part{index:03d}' or path.casefold() in seen:
+            raise ValueError('服主整合包分片路径或顺序无效')
+        size=part.get('bytes')
+        if type(size)is not int or not 0<size<=MAX_CONTENT_PART:
+            raise ValueError('服主整合包分片大小无效')
+        sha=part.get('sha256')
+        if not isinstance(sha,str) or not re.fullmatch('[0-9a-f]{64}',sha):
+            raise ValueError('服主整合包分片校验值无效')
+        total+=size
+        if total>MAX_CONTENT_ARCHIVE:raise ValueError('服主整合包分片总长无效')
+        seen.add(path.casefold());validated.append({'path':path,'bytes':size,'sha256':sha})
+    if total!=total_size:raise ValueError('服主整合包分片总长无效')
+    return validated
+
+
+def assemble_asset(feed,reader):
+    parts=release_parts(feed)
+    if parts is None:
+        raw=reader(feed['asset'],MAX_CONTENT_ARCHIVE)
+    else:
+        chunks=[]
+        for part in parts:
+            raw=reader(part['path'],MAX_CONTENT_PART)
+            if len(raw)!=part['bytes'] or updates.digest(raw)!=part['sha256']:
+                raise ValueError('服主整合包分片校验失败：'+part['path'])
+            chunks.append(raw)
+        raw=b''.join(chunks)
+    if len(raw)!=feed['bytes'] or updates.digest(raw)!=feed['sha256']:
+        raise ValueError('服主整合包校验失败')
+    return raw
 
 
 def binding(value):
@@ -99,6 +155,23 @@ def file_hash(path):
     with path.open('rb') as stream:
         for raw in iter(lambda:stream.read(1024*1024),b''):h.update(raw)
     return h.hexdigest()
+
+
+def write_immutable(path,raw):
+    path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
+    temporary=path.with_name('.'+path.name+'.'+uuid.uuid4().hex+'.tmp')
+    try:
+        with temporary.open('xb') as stream:
+            stream.write(raw);stream.flush();os.fsync(stream.fileno())
+        try:os.link(temporary,path)
+        except FileExistsError:
+            before=path.stat() if path.is_file() else None
+            if (before is None or before.st_size!=len(raw) or file_hash(path)!=updates.digest(raw)):
+                raise storage.Conflict('不可变发布资产已存在且内容不同：'+path.name)
+            after=path.stat()
+            if (before.st_size,before.st_mtime_ns)!=(after.st_size,after.st_mtime_ns):
+                raise storage.Conflict('不可变发布资产正在变化：'+path.name)
+    finally:temporary.unlink(missing_ok=True)
 
 
 def allowed(name):
@@ -224,7 +297,7 @@ def snapshot(host,source,extras):
     global_scope={'mods':sorted(public_ids),'features':sorted(features),'categories':sorted(categories)}
     files[GLOBAL]=shared_ini(files[GLOBAL],global_scope);public_file(GLOBAL,files[GLOBAL])
     files[BINDING]=storage.json_bytes(source)
-    if len(files)>10000 or sum(map(len,files.values()))>updates.MAX_EXPANDED:raise ValueError('整合包超过文件数量或大小限制')
+    if len(files)>10000 or sum(map(len,files.values()))>MAX_CONTENT_EXPANDED:raise ValueError('整合包超过文件数量或大小限制')
     expected={n:{'bytes':len(b),'sha256':updates.digest(b)} for n,b in sorted(files.items())}
     host_id=updates.host_key(root/'GOnline.exe')
     game_base={}
@@ -245,7 +318,7 @@ def unpack(raw,feed,source,destination):
     if len(raw)!=feed['bytes'] or updates.digest(raw)!=feed['sha256']:raise ValueError('服主整合包校验失败')
     with zipfile.ZipFile(io.BytesIO(raw)) as z:
         infos=z.infolist();names=[updates.safe_name(x.filename) for x in infos]
-        if len(names)>10000 or len({n.casefold() for n in names})!=len(names) or sum(x.file_size for x in infos)>updates.MAX_EXPANDED:
+        if len(names)>10000 or len({n.casefold() for n in names})!=len(names) or sum(x.file_size for x in infos)>MAX_CONTENT_EXPANDED:
             raise ValueError('服主整合包文件清单无效')
         if any(x.is_dir() or ((x.external_attr>>16)&0o170000)==0o120000 or x.file_size>64*1024*1024 for x in infos):raise ValueError('整合包含目录、链接或过大文件')
         m=json.loads(z.read('owner-release.json'))
@@ -512,13 +585,11 @@ class OwnerChannels:
                 last=ValueError('更新端点未返回整合包发布清单');continue
             if (feed.get('schema_version')!=1 or feed.get('kind')!=KIND or feed.get('publisher_id')!=source['publisher_id'] or
                 type(feed.get('revision')) is not int or feed['revision']<1 or
-                type(feed.get('bytes')) is not int or not 0<feed['bytes']<=updates.MAX_ARCHIVE or
+                type(feed.get('bytes')) is not int or not 0<feed['bytes']<=MAX_CONTENT_ARCHIVE or
                 not re.fullmatch('[0-9a-f]{64}',str(feed.get('sha256','')))):
                 raise ValueError('服主发布源身份或校验清单无效')
-            asset=feed.get('asset','')
-            updates.safe_name(asset)
-            if '/' not in asset or not asset.endswith('.zip'):raise ValueError('整合包下载路径无效')
-            feed['url']=url if url.startswith(('git+https://','git+ssh://')) else https(urljoin(url,asset));return feed
+            release_parts(feed)
+            feed['url']=url if url.startswith(('git+https://','git+ssh://')) else https(urljoin(url,feed['asset']));return feed
         raise ValueError('服主更新源暂不可用；保留当前版本，不改用官方整合包。'+(str(last)if last else'')) from last
 
     def resolve(self,urls):
@@ -556,9 +627,14 @@ class OwnerChannels:
         # pinned publisher, even when the mirror's latest feed has moved on.
         for url in source['feeds']:
             if self.stop_event.is_set():raise InterruptedError('整合包操作已取消')
-            try:raw=self.read_source(url,feed['asset'],updates.MAX_ARCHIVE)
-            except (OSError,TimeoutError,subprocess.SubprocessError):continue
-            if len(raw)==feed['bytes'] and updates.digest(raw)==feed['sha256']:return raw
+            try:
+                raw=assemble_asset(
+                    feed,
+                    lambda name,limit:self.read_source(url,name,limit),
+                )
+            except (OSError,TimeoutError,ValueError,subprocess.SubprocessError):
+                continue
+            return raw
         raise ValueError('服主包在所选源均不可用或校验失败；保留当前版本')
 
     def read_source(self,url,name,limit,refresh=False):
@@ -605,19 +681,42 @@ class OwnerChannels:
             z.writestr('owner-release.json',storage.json_bytes(manifest))
             for name,data in sorted(files.items()):z.writestr(name,data)
         raw=stream.getvalue()
-        if len(raw)>updates.MAX_ARCHIVE:raise ValueError('整合包超过 128 MiB，请缩小所选共享素材')
+        if len(raw)>MAX_CONTENT_ARCHIVE:raise ValueError('整合包超过 512 MiB，请缩小所选共享素材')
         sha=updates.digest(raw);asset=f'releases/{source["publisher_id"]}-{revision}-{sha[:16]}.zip'
         feed={'schema_version':1,'kind':KIND,'publisher_id':source['publisher_id'],'label':source['label'],
               'revision':revision,'asset':asset,'bytes':len(raw),'sha256':sha}
+        part_payloads=[]
+        if len(raw)>MAX_CONTENT_PART:
+            for index,start in enumerate(range(0,len(raw),MAX_CONTENT_PART)):
+                data=raw[start:start+MAX_CONTENT_PART]
+                path=f'{asset}.part{index:03d}'
+                part_payloads.append((path,data))
+            if len(part_payloads)>MAX_CONTENT_PARTS:raise ValueError('整合包分片数量超过上限')
+            feed['parts']=[
+                {'path':path,'bytes':len(data),'sha256':updates.digest(data)}
+                for path,data in part_payloads
+            ]
+            release_parts(feed)
         # Assets are immutable; the feed pointer is replaced only after validation.
         validate=self.cache/'publish-check'/uuid.uuid4().hex
         unpack(raw,feed,source,validate)
         if self.stop_event.is_set():raise InterruptedError('整合包发布已取消')
-        storage.atomic(updates.child(output,asset),raw)
+        removed_legacy=False
+        if part_payloads:
+            legacy=updates.child(output,asset)
+            if legacy.exists():
+                if not legacy.is_file() or legacy.stat().st_size!=len(raw) or file_hash(legacy)!=sha:
+                    raise ValueError('发布目录的旧整合包路径已被其他内容占用')
+                legacy.unlink()
+                removed_legacy=True
+            for path,data in part_payloads:write_immutable(updates.child(output,path),data)
+        else:write_immutable(updates.child(output,asset),raw)
         if self.stop_event.is_set():raise InterruptedError('整合包发布已取消')
         storage.atomic(feed_path,storage.json_bytes(feed))
         if cfg.get('git_remote'):
-            self.git(output,['add','--','owner-feed.json','releases'])
+            payload=[path for path,_data in part_payloads] if part_payloads else [asset]
+            if removed_legacy:payload.append(asset)
+            self.git(output,['add','--','owner-feed.json',*payload])
             self.git(output,['commit','-m',f'Publish owner Mod pack revision {revision}'])
         return self.verify_publish(host_id)
 
@@ -626,9 +725,22 @@ class OwnerChannels:
         if mode(host)!='owner':raise ValueError('只有服主可以核对发布')
         cfg=host['publication'];source=binding(cfg);output=Path(cfg['directory'])
         feed=storage.read_json(output/'owner-feed.json',{})
-        if feed.get('publisher_id')!=source['publisher_id']:raise ValueError('发布目录身份不匹配')
-        raw=updates.child(output,feed['asset']).read_bytes()
-        if updates.digest(raw)!=feed['sha256']:raise ValueError('本地发布资产已变化')
+        if not isinstance(feed,dict) or feed.get('publisher_id')!=source['publisher_id']:
+            raise ValueError('发布目录身份不匹配')
+        if (feed.get('schema_version')!=1 or feed.get('kind')!=KIND or
+                type(feed.get('revision'))is not int or
+                type(feed.get('bytes'))is not int or not 0<feed['bytes']<=MAX_CONTENT_ARCHIVE or
+                not re.fullmatch('[0-9a-f]{64}',str(feed.get('sha256','')))):
+            raise ValueError('本地发布清单无效')
+        def local(name,limit):
+            path=updates.child(output,name)
+            if not path.is_file() or path.stat().st_size>limit:
+                raise ValueError('本地发布资产缺失或超过大小限制')
+            return path.read_bytes()
+        raw=assemble_asset(
+            feed,
+            local,
+        )
         if cfg.get('git_remote'):
             if self.git(output,['status','--porcelain']).strip():raise ValueError('发布仓库有未提交修改，请先处理')
             self.git(output,['push',cfg['git_remote'],'HEAD:refs/heads/'+cfg['branch']])

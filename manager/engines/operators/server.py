@@ -1,10 +1,11 @@
 """Server-side operator adapter. Store listings and prices are never changed."""
-import configparser
 import hashlib
 import json
 from pathlib import Path
 import re
+from ... import storage
 from .model import registrations, revision, validate
+from . import capabilities, runtime
 
 
 def validate_pools(cur, catalog):
@@ -74,12 +75,23 @@ def install_fixed_name_guard(cur):
     cur.execute(text)
 
 
-def apply_default_mission_parts(cur,catalog):
+def apply_default_mission_parts(cur,catalog,prior_values=None):
     from .presets import fixed_name_ids
-    enabled=fixed_name_ids(catalog)
+    explicit={
+        op["id"] for op in catalog["operators"]
+        if op["managed"] and op["enabled"]
+        and op.get("abilities", {}).get("mode") == "custom"
+        and op["abilities"].get("mission_parts") is not None
+    }
+    enabled=fixed_name_ids(catalog)-explicit
     backups={r[0]:r[1] for r in cur.execute('SELECT OperatorID,OriginalGParts FROM dbo.sdgo_OperatorMissionPartsBackup')}
+    module_created={
+        int(r[0]) for r in cur.execute(
+            "SELECT OperatorID FROM dbo.sdgo_OperatorDataBackup WHERE WasPresent=0"
+        )
+    }
     for identity,original in backups.items():
-        if identity not in enabled:
+        if identity not in enabled and identity not in explicit and identity not in module_created:
             cur.execute('UPDATE dbo.tbl_OperatorData SET GParts=? WHERE OperatorID=?',original,identity)
     changed=0
     for identity in sorted(enabled):
@@ -89,7 +101,8 @@ def apply_default_mission_parts(cur,catalog):
             cur.execute('INSERT dbo.sdgo_OperatorMissionPartsBackup VALUES(?,?)',identity,row[0])
         if row[0]!=1:
             cur.execute('UPDATE dbo.tbl_OperatorData SET GParts=1 WHERE OperatorID=?',identity)
-            changed+=1
+        before=(prior_values or {}).get(identity,row[0])
+        if before!=1:changed+=1
     return changed
 
 
@@ -116,20 +129,21 @@ _ROOT = Path(__file__).resolve().parents[3]
 MODULE_DIR = Path(__file__).with_name('resources')
 WRAPPED = ("sp_OperatorDrop", "sp_GetUserOperatorPage", "sp_GetPilotOperator")
 MARKER = "-- SDGO_OPERATOR_CATALOG_V1"
+OPERATOR_COLUMNS = [
+    "OperatorID", "OperatorName", "TeamWin", "TeamLose", "BattleResult",
+    "ChangeSp", "ServiceType", "AddOn1", "AddOn2", "AddOn3", "AddOn4",
+    "DropType", "GParts",
+]
+BACKUP_COLUMNS = [
+    "OriginalOperatorName", "OriginalTeamWin", "OriginalTeamLose",
+    "OriginalBattleResult", "OriginalChangeSp", "OriginalServiceType",
+    "OriginalAddOn1", "OriginalAddOn2", "OriginalAddOn3", "OriginalAddOn4",
+    "OriginalGParts",
+]
 
 
 def read_ini(server_ini):
-    parser = configparser.ConfigParser(interpolation=None)
-    raw=Path(server_ini).read_bytes()
-    if raw.startswith((b'\xff\xfe',b'\xfe\xff')):
-        text=raw.decode('utf-16')
-    else:
-        try:
-            text=raw.decode('utf-8-sig')
-        except UnicodeDecodeError:
-            text=raw.decode('mbcs')
-    parser.read_string(text)
-    return parser
+    return storage.ini_values(Path(server_ini).read_bytes())
 
 
 def connect(server_ini):
@@ -153,6 +167,73 @@ def connect(server_ini):
 
 def source_hash(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def catalog_status(catalog, server_ini):
+    """Read the saved catalog's exact profile revision/state from the server."""
+    validate(catalog)
+    expected_revision = revision(catalog)
+    expected = {
+        int(operator["id"]): bool(operator["enabled"])
+        for operator in catalog["operators"] if operator["managed"]
+    }
+    cn = connect(server_ini)
+    try:
+        cur = cn.cursor()
+        rows = list(cur.execute(
+            """SELECT OperatorID,Enabled,Revision
+               FROM dbo.sdgo_OperatorProfiles ORDER BY OperatorID"""
+        ))
+        current = {
+            int(identity): {
+                "enabled": bool(enabled),
+                "revision": str(applied_revision),
+            }
+            for identity, enabled, applied_revision in rows
+        }
+        reasons = []
+        for identity, enabled in expected.items():
+            row = current.get(identity)
+            if row is None:
+                reasons.append(f"operator profile {identity} is absent")
+            elif row["revision"] != expected_revision:
+                reasons.append(
+                    f"operator profile {identity} has another catalog revision"
+                )
+            elif row["enabled"] != enabled:
+                reasons.append(
+                    f"operator profile {identity} enabled state differs"
+                )
+        unexpected = sorted(
+            identity for identity, row in current.items()
+            if identity not in expected and row["enabled"]
+        )
+        if unexpected:
+            reasons.append(
+                "other operator profiles remain enabled: "
+                + ",".join(map(str, unexpected))
+            )
+        managed_revisions = {
+            current[identity]["revision"]
+            for identity in expected if identity in current
+        }
+        applied_revision = (
+            next(iter(managed_revisions))
+            if len(managed_revisions) == 1 else None
+        )
+        return {
+            "database_applied": not reasons,
+            "expected_revision": expected_revision,
+            "applied_revision": applied_revision,
+            "managed_profiles": len(expected),
+            "reasons": reasons,
+        }
+    finally:
+        try:
+            cn.rollback()
+        except Exception:
+            pass
+        cn.close()
 
 
 def alter(text):
@@ -226,14 +307,339 @@ def install_procedures(cur):
             cur.execute("INSERT dbo.sdgo_OperatorProcedureBackup VALUES(?,?,?)", name, original, source_hash(installed))
 
 
-def apply_catalog(catalog, server_ini):
+def _operator_row(cur, identity):
+    row = cur.execute(
+        "SELECT " + ",".join(OPERATOR_COLUMNS) +
+        " FROM dbo.tbl_OperatorData WHERE OperatorID=?", identity
+    ).fetchone()
+    return dict(zip(OPERATOR_COLUMNS, row)) if row is not None else None
+
+
+def _template_operator_row(template, identity, operator_name=None, drop_type=0):
+    desired = dict(template)
+    desired["OperatorID"] = identity
+    desired["OperatorName"] = operator_name or f"SDGOop{identity}"
+    desired["DropType"] = drop_type
+    return desired
+
+
+def _retained_operator_plan(identity, has_owners, template, current):
+    """Plan a module-created row without touching any player-owned record."""
+    if not has_owners:
+        return None
+    if template is None:
+        raise ValueError(f"已持有的新增副官 {identity} 缺少原生恢复模板")
+    return _template_operator_row(
+        template, identity,
+        current["OperatorName"] if current is not None else None,
+        0,
+    )
+
+
+def _write_operator_row(cur, desired, current):
+    if current is None:
+        cur.execute(
+            "INSERT dbo.tbl_OperatorData(" + ",".join(OPERATOR_COLUMNS) +
+            ") VALUES(" + ",".join("?" for _ in OPERATOR_COLUMNS) + ")",
+            *(desired[name] for name in OPERATOR_COLUMNS),
+        )
+        return
+    mutable = OPERATOR_COLUMNS[1:]
+    cur.execute(
+        "UPDATE dbo.tbl_OperatorData SET " +
+        ",".join(name + "=?" for name in mutable) +
+        " WHERE OperatorID=?",
+        *(desired[name] for name in mutable), desired["OperatorID"],
+    )
+
+
+def _complete_old_operator_backups(cur):
+    """Finish the one-time migration from the historical DropType-only backup."""
+    rows = list(cur.execute(
+        "SELECT OperatorID,WasPresent,BackupComplete FROM dbo.sdgo_OperatorDataBackup"
+    ))
+    for identity, was_present, complete in rows:
+        if complete:
+            continue
+        if not was_present:
+            cur.execute(
+                "UPDATE dbo.sdgo_OperatorDataBackup SET BackupComplete=1 WHERE OperatorID=?",
+                identity,
+            )
+            continue
+        original = _operator_row(cur, identity)
+        if original is None:
+            raise ValueError(f"副官 {identity} 的原始服务端记录已丢失，不能完成备份迁移")
+        mission = cur.execute(
+            "SELECT OriginalGParts FROM dbo.sdgo_OperatorMissionPartsBackup WHERE OperatorID=?",
+            identity,
+        ).fetchone()
+        if mission is not None:
+            original["GParts"] = mission[0]
+        values = [
+            original["OperatorName"], original["TeamWin"], original["TeamLose"],
+            original["BattleResult"], original["ChangeSp"], original["ServiceType"],
+            original["AddOn1"], original["AddOn2"], original["AddOn3"],
+            original["AddOn4"], original["GParts"], identity,
+        ]
+        cur.execute(
+            """UPDATE dbo.sdgo_OperatorDataBackup SET BackupComplete=1,
+               OriginalOperatorName=?,OriginalTeamWin=?,OriginalTeamLose=?,
+               OriginalBattleResult=?,OriginalChangeSp=?,OriginalServiceType=?,
+               OriginalAddOn1=?,OriginalAddOn2=?,OriginalAddOn3=?,OriginalAddOn4=?,
+               OriginalGParts=? WHERE OperatorID=?""",
+            *values,
+        )
+
+
+def _restore_operator_backups(cur):
+    _complete_old_operator_backups(cur)
+    cur.execute(
+        """UPDATE O SET
+             OperatorName=B.OriginalOperatorName,TeamWin=B.OriginalTeamWin,
+             TeamLose=B.OriginalTeamLose,BattleResult=B.OriginalBattleResult,
+             ChangeSp=B.OriginalChangeSp,ServiceType=B.OriginalServiceType,
+             AddOn1=B.OriginalAddOn1,AddOn2=B.OriginalAddOn2,
+             AddOn3=B.OriginalAddOn3,AddOn4=B.OriginalAddOn4,
+             DropType=B.OriginalDropType,GParts=B.OriginalGParts
+           FROM dbo.tbl_OperatorData O JOIN dbo.sdgo_OperatorDataBackup B
+             ON O.OperatorID=B.OperatorID
+           WHERE B.WasPresent=1 AND B.BackupComplete=1"""
+    )
+    cur.execute(
+        """SELECT B.OperatorID,B.BaselineTemplateID,
+                  CASE WHEN EXISTS(
+                    SELECT 1 FROM dbo.tbl_UserOperators U
+                    WHERE U.OperatorNumber=B.OperatorID
+                  ) THEN 1 ELSE 0 END
+           FROM dbo.sdgo_OperatorDataBackup B
+           WHERE B.WasPresent=0 AND B.BackupComplete=1"""
+    )
+    retained = set()
+    for identity, template_id, has_owners in list(cur.fetchall()):
+        current = _operator_row(cur, identity)
+        if not has_owners:
+            if current is not None:
+                cur.execute(
+                    "DELETE FROM dbo.tbl_OperatorData WHERE OperatorID=?",
+                    identity,
+                )
+            continue
+        if template_id is None:
+            raise ValueError(f"已持有的新增副官 {identity} 缺少持久化原生模板")
+        if int(template_id) == int(identity):
+            raise ValueError(f"已持有的新增副官 {identity} 不能以自身作为恢复模板")
+        template = _operator_row(cur, template_id)
+        desired = _retained_operator_plan(identity, True, template, current)
+        _write_operator_row(cur, desired, current)
+        retained.add(int(identity))
+    return retained
+
+
+def _ensure_operator_backup(cur, identity, template_id):
+    backup = cur.execute(
+        """SELECT WasPresent,OriginalDropType,BackupComplete,BaselineTemplateID
+           FROM dbo.sdgo_OperatorDataBackup WHERE OperatorID=?""",
+        identity,
+    ).fetchone()
+    if backup:
+        if not backup[2]:
+            raise ValueError("副官原始记录备份未完成")
+        if not backup[0] and backup[3] != template_id:
+            cur.execute(
+                """UPDATE dbo.sdgo_OperatorDataBackup
+                   SET BaselineTemplateID=? WHERE OperatorID=?""",
+                template_id, identity,
+            )
+        return bool(backup[0]), backup[1]
+    original = _operator_row(cur, identity)
+    if original is None:
+        cur.execute(
+            """INSERT dbo.sdgo_OperatorDataBackup(
+                 OperatorID,WasPresent,OriginalDropType,BaselineTemplateID,BackupComplete,
+                 OriginalOperatorName,OriginalTeamWin,OriginalTeamLose,
+                 OriginalBattleResult,OriginalChangeSp,OriginalServiceType,
+                 OriginalAddOn1,OriginalAddOn2,OriginalAddOn3,OriginalAddOn4,
+                 OriginalGParts)
+               VALUES(?,0,NULL,?,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)""",
+            identity, template_id,
+        )
+        return False, None
+    cur.execute(
+        """INSERT dbo.sdgo_OperatorDataBackup(
+             OperatorID,WasPresent,OriginalDropType,BaselineTemplateID,BackupComplete,
+             OriginalOperatorName,OriginalTeamWin,OriginalTeamLose,
+             OriginalBattleResult,OriginalChangeSp,OriginalServiceType,
+             OriginalAddOn1,OriginalAddOn2,OriginalAddOn3,OriginalAddOn4,
+             OriginalGParts)
+           VALUES(?,1,?,?,1,?,?,?,?,?,?,?,?,?,?,?)""",
+        identity, original["DropType"], template_id, original["OperatorName"],
+        original["TeamWin"], original["TeamLose"], original["BattleResult"],
+        original["ChangeSp"], original["ServiceType"], original["AddOn1"],
+        original["AddOn2"], original["AddOn3"], original["AddOn4"],
+        original["GParts"],
+    )
+    return True, original["DropType"]
+
+
+def _register_native_capabilities(cur, trusted_runtime):
+    flags = runtime.trusted_capabilities(trusted_runtime)
+    if flags != runtime.TRUSTED_NATIVE_CAPABILITIES:
+        raise ValueError("verified native runtime capability set is incomplete")
+    if (
+        not isinstance(trusted_runtime.evidence, str)
+        or len(trusted_runtime.evidence) > 256
+    ):
+        raise ValueError("verified native runtime evidence is invalid")
+    for name in sorted(flags):
+        cur.execute(
+            """UPDATE dbo.sdgo_OperatorNativeCapabilities
+               SET Verified=1,Evidence=? WHERE CapabilityName=?""",
+            trusted_runtime.evidence, name,
+        )
+
+
+def _ability_plan(cur, catalog, *, trusted_runtime=None):
+    skill_columns = ["SkillNo", "SkillType", "PointAdd", "UnitExpAdd", "EnergySave"]
+    time_columns = ["TimeID", "AddOnID", "OperatorSkill", "StartTime", "CloseTime"]
+    skills = [
+        dict(zip(skill_columns, row))
+        for row in cur.execute("SELECT " + ",".join(skill_columns) + " FROM dbo.tbl_OperatorSkill")
+    ]
+    times = [
+        dict(zip(time_columns, row))
+        for row in cur.execute("SELECT " + ",".join(time_columns) + " FROM dbo.tbl_OperatorTime")
+    ]
+    owned_skills = [
+        dict(zip(skill_columns, row))
+        for row in cur.execute("SELECT " + ",".join(skill_columns) + " FROM dbo.sdgo_OperatorSkillRegistry")
+    ]
+    owned_times = [
+        dict(zip(time_columns, row))
+        for row in cur.execute("SELECT " + ",".join(time_columns) + " FROM dbo.sdgo_OperatorTimeRegistry")
+    ]
+    native_flags = {
+        name: name in runtime.trusted_capabilities(trusted_runtime)
+        for name in runtime.TRUSTED_NATIVE_CAPABILITIES
+    } if trusted_runtime is not None else {
+        name: False for name in runtime.TRUSTED_NATIVE_CAPABILITIES
+    }
+    plan = capabilities.compile_plan(
+        catalog["operators"], skills, times,
+        owned_skills=owned_skills, owned_times=owned_times,
+        allow_new_skill_ids=native_flags.get("custom_skill_ids", False),
+        allow_new_time_ids=native_flags.get("custom_time_ids", False),
+    )
+    required_native = set(plan["required_native_capabilities"])
+    if plan["owned_skills"]:
+        required_native.add("custom_skill_ids")
+    if plan["owned_times"]:
+        required_native.add("custom_time_ids")
+    missing_native = [
+        name for name in sorted(required_native)
+        if not native_flags.get(name, False)
+    ]
+    if missing_native:
+        raise ValueError("副官能力缺少已验证的原生运行能力：" + ",".join(missing_native))
+
+    extension_rows = {
+        str(row[0]): (int(row[1]), bool(row[2]))
+        for row in cur.execute(
+            "SELECT ExtensionName,SchemaVersion,Enabled FROM dbo.sdgo_OperatorAbilityExtensions"
+        )
+    }
+    metadata = catalog.get("registered_ability_extensions", {})
+    for name in plan["required_extensions"]:
+        installed = extension_rows.get(name)
+        if installed is None or not installed[1]:
+            raise ValueError("副官能力扩展执行器未安装：" + name)
+        expected = metadata.get(name) if isinstance(metadata, dict) else None
+        if type(expected) is int and expected != installed[0]:
+            raise ValueError("副官能力扩展版本不匹配：" + name)
+    return plan
+
+
+def _validate_owned_ability_references(cur, managed_ids):
+    owned_skills = {int(row[0]) for row in cur.execute("SELECT SkillNo FROM dbo.sdgo_OperatorSkillRegistry")}
+    owned_add_ons = {int(row[0]) for row in cur.execute("SELECT AddOnID FROM dbo.sdgo_OperatorTimeRegistry")}
+    owned_time_ids = {int(row[0]) for row in cur.execute("SELECT TimeID FROM dbo.sdgo_OperatorTimeRegistry")}
+    if not owned_skills and not owned_add_ons:
+        return
+    for row in cur.execute(
+        "SELECT OperatorID,TeamWin,TeamLose,BattleResult,AddOn1,AddOn2,AddOn3,AddOn4 FROM dbo.tbl_OperatorData"
+    ):
+        if int(row[0]) in managed_ids:
+            continue
+        if any(int(value or 0) in owned_skills for value in row[1:4]):
+            raise ValueError(f"自定义副官技能仍被未托管副官 {row[0]} 引用")
+        if any(int(value or 0) in owned_add_ons for value in row[4:8]):
+            raise ValueError(f"自定义副官时间仍被未托管副官 {row[0]} 引用")
+    for row in cur.execute("SELECT TimeID,OperatorSkill FROM dbo.tbl_OperatorTime"):
+        if int(row[1]) in owned_skills and int(row[0]) not in owned_time_ids:
+            raise ValueError(f"自定义副官技能仍被未托管时间 {row[0]} 引用")
+
+
+def _install_ability_rows(cur, plan, managed_ids):
+    _validate_owned_ability_references(cur, managed_ids)
+    cur.execute(
+        """DELETE T FROM dbo.tbl_OperatorTime T
+           JOIN dbo.sdgo_OperatorTimeRegistry R ON R.TimeID=T.TimeID"""
+    )
+    cur.execute("DELETE FROM dbo.sdgo_OperatorTimeRegistry")
+    cur.execute(
+        """DELETE S FROM dbo.tbl_OperatorSkill S
+           JOIN dbo.sdgo_OperatorSkillRegistry R ON R.SkillNo=S.SkillNo"""
+    )
+    cur.execute("DELETE FROM dbo.sdgo_OperatorSkillRegistry")
+    for row in plan["owned_skills"]:
+        values = tuple(row[name] for name in ("SkillNo", "SkillType", "PointAdd", "UnitExpAdd", "EnergySave"))
+        cur.execute("INSERT dbo.tbl_OperatorSkill VALUES(?,?,?,?,?)", *values)
+        cur.execute("INSERT dbo.sdgo_OperatorSkillRegistry VALUES(?,?,?,?,?)", *values)
+    for row in plan["owned_times"]:
+        values = tuple(row[name] for name in ("TimeID", "AddOnID", "OperatorSkill", "StartTime", "CloseTime"))
+        cur.execute("INSERT dbo.tbl_OperatorTime VALUES(?,?,?,?,?)", *values)
+        cur.execute("INSERT dbo.sdgo_OperatorTimeRegistry VALUES(?,?,?,?,?)", *values)
+
+
+def _operator_data_plan(cur, managed, backups, ability_plan):
+    """Compile complete enabled rows from restored native templates."""
+    result = {}
+    for op in managed:
+        if not op["enabled"]:
+            continue
+        template = _operator_row(cur, op["template_id"])
+        if template is None:
+            raise ValueError("服务端副官技能模板不存在")
+        current = _operator_row(cur, op["id"])
+        desired = _template_operator_row(
+            template, op["id"],
+            (
+                current["OperatorName"] if current is not None and backups[op["id"]][0]
+                else None
+            ),
+            1,
+        )
+        compiled = ability_plan["operators"].get(op["id"])
+        if compiled is not None:
+            for field in (
+                "TeamWin", "TeamLose", "BattleResult",
+                "AddOn1", "AddOn2", "AddOn3", "AddOn4",
+            ):
+                desired[field] = compiled[field]
+            if compiled["mission_parts"] is not None:
+                desired["GParts"] = int(compiled["mission_parts"])
+        result[op["id"]] = {"current": current, "desired": desired}
+    return result
+
+
+def apply_catalog(catalog, server_ini, *, runtime_evidence=None):
     validate(catalog)
     from manager.operations import server_change
     with server_change(server_ini,'operator_catalog.publish',('fixed_catalog','player_migration'))as change:
-        return change.result(_apply_catalog(catalog,server_ini))
+        return change.result(_apply_catalog(catalog,server_ini,runtime_evidence=runtime_evidence))
 
 
-def _apply_catalog(catalog, server_ini):
+def _apply_catalog(catalog, server_ini, *, runtime_evidence=None):
     validate(catalog)
     cn = connect(server_ini)
     try:
@@ -244,10 +650,37 @@ def _apply_catalog(catalog, server_ini):
         if cur.fetchone()[0] < 0:
             raise ValueError("另一项副官更新正在进行，请稍后重试")
         cur.execute((MODULE_DIR / "server" / "schema.sql").read_text(encoding="utf-8"))
+        trusted_runtime = None
+        if runtime_evidence is not None:
+            fingerprints = {
+                name: source_hash(definition(cur, name))
+                for name in ("sp_GetOperatorSkill", "sp_GetOperatorAddOn")
+            }
+            trusted_runtime = runtime.verify_installed_runtime(
+                runtime_evidence, fingerprints
+            )
+            if trusted_runtime.revision != revision(catalog):
+                raise ValueError("installed operator runtime catalog revision differs")
+            _register_native_capabilities(cur, trusted_runtime)
         validate_pools(cur,catalog)
         managed = [o for o in catalog["operators"] if o["managed"]]
-        cur.execute("""UPDATE O SET DropType=CASE WHEN B.WasPresent=1 THEN B.OriginalDropType ELSE 0 END
-                       FROM dbo.tbl_OperatorData O JOIN dbo.sdgo_OperatorDataBackup B ON O.OperatorID=B.OperatorID""")
+        prior_gparts={int(row[0]):int(row[1]) for row in cur.execute(
+            "SELECT OperatorID,GParts FROM dbo.tbl_OperatorData"
+        )}
+        _complete_old_operator_backups(cur)
+        backups = {
+            op["id"]: _ensure_operator_backup(cur, op["id"], op["template_id"])
+            for op in managed
+        }
+        _restore_operator_backups(cur)
+        ability_plan = _ability_plan(
+            cur, catalog, trusted_runtime=trusted_runtime
+        )
+        operator_data_plan = _operator_data_plan(cur, managed, backups, ability_plan)
+        _install_ability_rows(
+            cur, ability_plan,
+            {op["id"] for op in managed if op["enabled"]},
+        )
         for op in managed:
             operator_id, category_id = op["id"], op["category_id"]
             exists = cur.execute("SELECT RefIndex FROM dbo.tbl_ItemCategory WHERE CatalogueID=?", category_id).fetchone()
@@ -262,34 +695,37 @@ def _apply_catalog(catalog, server_ini):
                             category_id, f"SDGOop{operator_id}", operator_id)
             if not owned:
                 cur.execute("INSERT dbo.sdgo_OperatorItemRegistry VALUES(?,?,?)", category_id, operator_id, 0 if exists else 1)
-            backup = cur.execute("SELECT WasPresent,OriginalDropType FROM dbo.sdgo_OperatorDataBackup WHERE OperatorID=?", operator_id).fetchone()
-            original = cur.execute("SELECT DropType FROM dbo.tbl_OperatorData WHERE OperatorID=?", operator_id).fetchone()
-            if not backup:
-                cur.execute("INSERT dbo.sdgo_OperatorDataBackup VALUES(?,?,?)", operator_id, int(original is not None), original[0] if original else None)
-                backup = (int(original is not None), original[0] if original else None)
-            if original is None:
-                # Clone server skill/voice policy from a registered native template.
-                columns = ["OperatorID", "OperatorName", "TeamWin", "TeamLose", "BattleResult", "ChangeSp",
-                           "ServiceType", "AddOn1", "AddOn2", "AddOn3", "AddOn4", "DropType", "GParts"]
-                row = cur.execute("SELECT " + ",".join(columns) + " FROM dbo.tbl_OperatorData WHERE OperatorID=?", op["template_id"]).fetchone()
-                if row is None:
-                    raise ValueError("服务端副官技能模板不存在")
-                values = list(row)
-                values[0], values[1] = operator_id, f"SDGOop{operator_id}"
-                cur.execute("INSERT dbo.tbl_OperatorData(" + ",".join(columns) + ") VALUES(" + ",".join("?" for _ in columns) + ")", *values)
-            drop_type = 1 if op["enabled"] else (backup[1] if backup[0] else 0)
-            cur.execute("UPDATE dbo.tbl_OperatorData SET DropType=? WHERE OperatorID=?", drop_type, operator_id)
+            if not op["enabled"]:
+                continue
+            current = operator_data_plan[operator_id]["current"]
+            desired = operator_data_plan[operator_id]["desired"]
+            _write_operator_row(cur, desired, current)
         cur.execute("UPDATE dbo.sdgo_OperatorProfiles SET Enabled=0")
         rev = revision(catalog)
         from .presets import fixed_name_ids
         fixed_names=fixed_name_ids(catalog)
         for op in managed:
             row = cur.execute("SELECT 1 FROM dbo.sdgo_OperatorProfiles WHERE OperatorID=?", op["id"]).fetchone()
-            values = (op["category_id"], int(op["enabled"]), op["delivery"], op["name"], rev, int(op['id'] in fixed_names), op["id"])
+            compiled = ability_plan["operators"].get(op["id"], {})
+            pilot_exp = compiled.get("pilot_exp_percent", 0)
+            extensions = json.dumps(
+                compiled.get("extensions", {}), ensure_ascii=False,
+                sort_keys=True, separators=(",", ":"), allow_nan=False,
+            )
+            values = (
+                op["category_id"], int(op["enabled"]), op["delivery"], op["name"],
+                rev, int(op['id'] in fixed_names), pilot_exp, extensions, op["id"],
+            )
             if row:
-                cur.execute("UPDATE dbo.sdgo_OperatorProfiles SET CategoryID=?,Enabled=?,DeliveryMode=?,DisplayName=?,Revision=?,FixedName=? WHERE OperatorID=?", *values)
+                cur.execute("""UPDATE dbo.sdgo_OperatorProfiles SET
+                    CategoryID=?,Enabled=?,DeliveryMode=?,DisplayName=?,Revision=?,
+                    FixedName=?,PilotExpPercent=?,AbilityExtensions=?
+                    WHERE OperatorID=?""", *values)
             else:
-                cur.execute("INSERT dbo.sdgo_OperatorProfiles(CategoryID,Enabled,DeliveryMode,DisplayName,Revision,FixedName,OperatorID) VALUES(?,?,?,?,?,?,?)", *values)
+                cur.execute("""INSERT dbo.sdgo_OperatorProfiles(
+                    CategoryID,Enabled,DeliveryMode,DisplayName,Revision,FixedName,
+                    PilotExpPercent,AbilityExtensions,OperatorID)
+                    VALUES(?,?,?,?,?,?,?,?,?)""", *values)
             cur.execute("DELETE FROM dbo.sdgo_OperatorRuleItems WHERE OperatorID=?", op["id"])
             cur.execute("DELETE FROM dbo.sdgo_OperatorRules WHERE OperatorID=?", op["id"])
             cumulative = 0
@@ -309,9 +745,16 @@ def _apply_catalog(catalog, server_ini):
         entitlements=migrate_default_entitlements(cur,catalog)
         fixed_names_changed=migrate_fixed_default_names(cur,catalog)
         install_fixed_name_guard(cur)
-        mission_parts_changed=apply_default_mission_parts(cur,catalog)
+        mission_parts_changed=apply_default_mission_parts(cur,catalog,prior_gparts)
         cur.execute("COMMIT TRANSACTION")
         return {"revision": rev, "managed_operators": len(managed), "storefront_changes": False,
+                "native_capabilities": sorted(
+                    runtime.trusted_capabilities(trusted_runtime)
+                ) if trusted_runtime is not None else [],
+                "native_capability_evidence": (
+                    trusted_runtime.evidence
+                    if trusted_runtime is not None else None
+                ),
                 "free_grant": "on normal native operator login/page reads", "player_nicknames_changed": bool(legacy_aliases or fixed_names_changed),
                 "non_default_nicknames_changed":False,
                 "legacy_script_aliases_cleared":legacy_aliases,

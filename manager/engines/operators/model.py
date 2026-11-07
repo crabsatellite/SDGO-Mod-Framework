@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import threading
 from .assets import OP_SIZE, wchar
+from . import capabilities
 
 LOCK = threading.RLock()
 
@@ -59,6 +60,9 @@ def validate(catalog):
     assets = catalog.get("uploaded_assets", {})
     item_defs = {int(x["id"]): x for x in catalog["items"]}
     pools = catalog.get('drop_pools', {})
+    registered_extensions = catalog.get("registered_ability_extensions", ())
+    # Validate the registry even when no current operator requires it.
+    capabilities.registered_names(registered_extensions)
     if not isinstance(pools, dict) or len(pools) > 128:
         raise ValueError('随机物品池配置无效')
     for key, pool in pools.items():
@@ -84,6 +88,10 @@ def validate(catalog):
         ids.add(identity)
         if op["template_id"] not in templates:
             raise ValueError("技能/动作模板副官不存在")
+        if "abilities" in op:
+            normalized = capabilities.normalize(op["abilities"], registered_extensions)
+            if normalized != op["abilities"]:
+                raise ValueError("副官能力配置未规范化")
         name = op["name"]
         if not isinstance(name, str) or not name.strip() or len(name.encode("utf-16-le")) > 96 or any(ord(ch) < 32 for ch in name):
             raise ValueError("副官名称需为 1–48 个 UTF16 字符且不能包含控制字符")
@@ -91,6 +99,15 @@ def validate(catalog):
             raise ValueError("启用状态必须是布尔值")
         if op["delivery"] not in ("all_players", "product"):
             raise ValueError("发放方式只能是全员免费或注册商品")
+        if 'storefront' in op:
+            shop=op['storefront']
+            if not isinstance(shop,dict) or set(shop)-{'name','label','price','currency','validity'}:raise ValueError('副官商城预填字段无效')
+            for key in ('name','label'):
+                if key in shop and (not isinstance(shop[key],str) or not shop[key].strip() or len(shop[key])>100 or any(ord(c)<32 for c in shop[key])):
+                    raise ValueError('副官商城名称或标签无效')
+            if 'price' in shop and (type(shop['price'])is not int or not 1<=shop['price']<=2147483647):raise ValueError('副官商城售价须为正整数')
+            if 'currency' in shop and shop['currency'] not in ('GB','MB'):raise ValueError('副官商城币种只能是 GB 或 MB')
+            if 'validity' in shop and (type(shop['validity'])is not int or not 1<=shop['validity']<=1000000):raise ValueError('副官商城期限或数量无效')
         avatar = op["avatar"]
         if avatar.get("kind") == "native":
             if avatar.get("operator_id") not in templates:
@@ -98,6 +115,13 @@ def validate(catalog):
         elif avatar.get("kind") == "upload":
             if not re.fullmatch(r"[0-9a-f]{64}", avatar.get("sha256", "")) or avatar["sha256"] not in assets:
                 raise ValueError("上传头像不存在")
+        elif avatar.get('kind')=='pack':
+            packs=catalog.get('imported_packs',{})
+            sha=avatar.get('sha256','')
+            if not re.fullmatch(r'[0-9a-f]{64}',sha) or sha not in packs or avatar.get('operator_id') not in templates:
+                raise ValueError('副官资源包或目标资源模板不存在')
+            if packs[sha].get('distribution')!={'scope':'client-content','bundle_with_manager':False}:
+                raise ValueError('副官素材只能作为独立客户端内容')
         else:
             raise ValueError("无效头像类型")
         total = 0
@@ -127,6 +151,10 @@ def import_catalog(snapshot, assets, *, include_installed=True):
     source = load(root / "dbo.tbl_OperatorData.json")
     drops = load(root / "dbo.tbl_OperatorDropDice.json")
     items = load(root / "dbo.tbl_ItemCategory.json")
+    skills_path = root / "dbo.tbl_OperatorSkill.json"
+    times_path = root / "dbo.tbl_OperatorTime.json"
+    native_skills = load(skills_path) if skills_path.exists() else []
+    native_times = load(times_path) if times_path.exists() else []
     records = assets.records("gdrs/0255.gdt", OP_SIZE)
     sidecar=assets.root/'sdgo/mods/operator_catalog/definitions.json'
     saved=load(sidecar) if include_installed and sidecar.exists() else None
@@ -149,9 +177,11 @@ def import_catalog(snapshot, assets, *, include_installed=True):
                "client_index_sha256": assets.index_hash, "uploaded_assets": saved.get('uploaded_assets',{}) if saved else {},
                "items": [{"id": int(r["CatalogueID"]), "name": str(r["Name"]).split("\0")[0],
                           "ref_index": int(r["RefIndex"]), "time_limit": int(r["TimeLimit"])} for r in items],
-               "native_server_data": {str(r["OperatorID"]): r for r in source}, "operators": []}
+               "native_server_data": {str(r["OperatorID"]): r for r in source},
+               "native_skills": native_skills, "native_operator_times": native_times,
+               "operators": []}
     if saved:
-        for field in ('drop_pools', 'default_pack_version'):
+        for field in ('drop_pools', 'default_pack_version', 'registered_ability_extensions', 'imported_packs'):
             if field in saved:catalog[field]=copy.deepcopy(saved[field])
     for r in source:
         identity = int(r["OperatorID"])
@@ -190,10 +220,12 @@ def update_operator(catalog, identity, value):
     current = next((op for op in result["operators"] if op["id"] == identity), None)
     if current is None:
         raise ValueError("副官不存在")
-    allowed = {"name", "enabled", "delivery", "avatar", "drops", "template_id"}
+    allowed = {"name", "enabled", "delivery", "avatar", "drops", "template_id", "abilities", "storefront"}
     if set(value) - allowed:
         raise ValueError("包含不允许修改的字段")
-    current.update(copy.deepcopy(value))
+    value=copy.deepcopy(value)
+    if 'abilities' in value:value['abilities']=capabilities.normalize(value['abilities'],result.get('registered_ability_extensions',()))
+    current.update(value)
     current["managed"] = True
     validate(result)
     return result
@@ -234,10 +266,23 @@ def choose_drop(profile, roll, quantity_roll=0, *, pools=None, item_roll=0):
 
 
 def registrations(catalog):
+    required_native=set()
+    required_extensions=set()
+    for op in catalog["operators"]:
+        if not op["managed"] or not op["enabled"]:
+            continue
+        abilities=op.get("abilities")
+        required_native.update(capabilities.required_native_capabilities(abilities))
+        required_extensions.update(capabilities.required_extensions(abilities))
     return {"schema_version": 1, "provider": "operator_catalog", "revision": revision(catalog),
             "items": [{"key": f"operator:{o['id']}", "kind": "operator", "operator_id": o["id"],
                        "category_id": o["category_id"], "display_name": o["name"], "avatar": o["avatar"],
                        "drop_rules": copy.deepcopy(o["drops"]),
+                       **({"abilities": copy.deepcopy(o["abilities"])} if "abilities" in o else {}),
+                       **({'storefront':copy.deepcopy(o['storefront'])} if 'storefront' in o else {}),
                        "registration": "product" if o["delivery"] == "product" else "free_for_all",
                        "enabled": o["enabled"]} for o in catalog["operators"] if o["managed"]],
-            "drop_pools":copy.deepcopy(catalog.get('drop_pools',{})), "storefront_changes": False}
+            "drop_pools":copy.deepcopy(catalog.get('drop_pools',{})),
+            "required_native_capabilities":sorted(required_native),
+            "required_extensions":sorted(required_extensions),
+            "storefront_changes": False}

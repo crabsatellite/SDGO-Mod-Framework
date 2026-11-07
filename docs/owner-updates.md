@@ -75,7 +75,7 @@ upstream versions. A newer Manager can review older upstream components without 
    reported as published. **重试推送／核对已有发布** retries the existing revision without creating another one.
 
 Owner revision numbers are independent of the Manager version. A failed publication check leaves the existing
-player release in use. Do not overwrite an immutable ZIP or reuse its revision for different content.
+player release in use. Do not overwrite an immutable ZIP or part, or reuse its revision for different content.
 
 The pack includes framework files, public Mods, shared configuration, hash-verified generated resources and
 explicitly declared authored resources. It fingerprints the required original game base; it does not ship
@@ -85,8 +85,14 @@ the server owner's client package or update.
 Login and display settings, databases, credentials, private birthday/account lists, local-only Mods,
 developer diagnostics, logs and local installation receipts are excluded. The shared `sdgo/sdgo.ini`
 projection carries public Mod/feature/category settings and preserves unrelated local settings. Enabled
-addons need valid distribution declarations. Limits are 10,000 files, 128 MiB compressed, 512 MiB expanded
+addons need valid distribution declarations. Limits are 10,000 files, 512 MiB compressed, 1 GiB expanded
 and 64 MiB per file.
+
+Packs larger than 48 MiB are published as immutable parts of at most 48 MiB each. The feed records their
+order, sizes and SHA-256 values. Manager verifies every part and the complete reconstructed ZIP before
+installation; matching backup sources must provide the same bytes. Existing single-ZIP feeds remain
+supported. Update Manager before following a pack that uses parts. These content-pack limits are
+separate from the generic framework release limits.
 
 ## Bind and update players
 
