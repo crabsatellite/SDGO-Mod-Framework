@@ -53,7 +53,11 @@ typedef struct SdgoPvpAiObserverEventV1 {
     uint8_t active_slots;
     uint8_t reserved;
     char title[21]; // native room title, NUL terminated
-    uint8_t reserved2[3];
+    // Optional extension in the former reserved bytes. Old producers leave
+    // manual_map_valid zero. A random selection does not identify its result.
+    uint8_t map_selection;
+    uint8_t map_number;
+    uint8_t manual_map_valid;
     SdgoPvpAiObserverSlotV1 slots[12]; // fixed native slot order
 } SdgoPvpAiObserverEventV1;
 
@@ -85,6 +89,8 @@ static_assert(offsetof(SdgoPvpAiObserverEventV1, title) == 60,
               "PvP AI observer title offset changed");
 static_assert(offsetof(SdgoPvpAiObserverEventV1, slots) == 84,
               "PvP AI observer slots offset changed");
+static_assert(offsetof(SdgoPvpAiObserverEventV1, manual_map_valid) == 83,
+              "PvP AI observer map extension moved outside its reserved bytes");
 static_assert(sizeof(SdgoPvpAiObserverEventV1) == SDGO_PVP_AI_OBSERVER_EVENT_V1_SIZE,
               "PvP AI observer event ABI changed");
 static_assert(offsetof(SdgoPvpAiObserverSinkV1, callback) == 8,

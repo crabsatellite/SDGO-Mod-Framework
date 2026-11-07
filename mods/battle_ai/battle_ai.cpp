@@ -162,6 +162,17 @@ using QueueStateFn=bool(__thiscall*)(uint8_t*,uint8_t*);
 QueueStateFn g_queueState=nullptr;
 uint8_t** g_document=nullptr;
 battle_ai::native::NavigationApi g_navigation={};
+battle_ai::native::NativeShapeBounds g_shapeBounds;
+void ReportShapeBoundsMismatch() {
+    // Report the first discrepancy immediately, including one after the last
+    // periodic cost summary. The native audit predicate remains authoritative.
+    const auto& shapes=g_shapeBounds.stats;
+    g_api->Log(g_mod,SDGO_LOG_ERROR,
+        "shape bounds tested=%llu culled=%llu rebuilt=%llu unsupported=%llu audited=%llu mismatches=%llu",
+        static_cast<unsigned long long>(shapes.tested),static_cast<unsigned long long>(shapes.culled),
+        static_cast<unsigned long long>(shapes.rebuilt),static_cast<unsigned long long>(shapes.unsupported),
+        static_cast<unsigned long long>(shapes.audited),static_cast<unsigned long long>(shapes.mismatches));
+}
 battle_ai::native::TransportCatalog g_transportCatalog;
 battle_ai::native::TerrainRayIndex g_terrainRays;
 battle_ai::native::TerrainTriangleFn g_terrainTriangle=nullptr;
@@ -173,6 +184,7 @@ battle_ai::native::MapSphereObbContactFn g_mapSphereObbContact=nullptr;
 struct RuntimeSettings {
     bool generic=true,enabled=true,aim=true,lead=true,logDecisions=false,autoTransform=true;
     bool terrainRayAudit=false;
+    bool geometryBoundsAudit=false;
     int maxLeadMs=3000,difficulty=1,quickSwing=80,mediumAttackIntervalMs=600;
 } g_runtime;
 struct DefencePlan {
@@ -901,6 +913,7 @@ battle_ai::native::MapGeometry MapGeometryFor(uint8_t* unit) {
     const Vec3 extent={radius,radius,radius};geometry.bodyBounds={center-extent,center+extent};
     if(!battle_ai::native::detail::Read(sphere,0,geometry.bodySphere))return geometry;
     geometry.sphereObb=g_mapSphereObb;geometry.sphereObbContact=g_mapSphereObbContact;
+    geometry.shapeBounds=&g_shapeBounds;
     geometry.api=g_navigation;geometry.document=*g_document;geometry.api.supportContext=geometry.document;
     geometry.owner=unit;geometry.ownerPosition=Position(unit);
     const auto actor=g_actors.find(unit);
@@ -4118,6 +4131,7 @@ const Option kOptions[] = {
     {L"RecoveryDistance",350,50,1500}, {L"RecoveryMs",650,150,2000}, {L"RecoveryCooldownMs",1000,250,10000},
     {L"RangedMinDistance",450,0,2000}, {L"TacticCooldownMs",0,0,10000}, {L"LogDecisions",0,0,1},
     {L"TerrainRayAudit",0,0,1},
+    {L"GeometryBoundsAudit",0,0,1},
     {L"TargetHoldMs",0,0,5000},{L"FarTargetSlack",900,0,10000},{L"FarTargetRatioPercent",200,100,1000},
     {L"WeaponHoldMs",0,0,5000},{L"AttackIntervalMs",0,0,10000},
     {L"MediumAttackIntervalMs",600,0,2000},
@@ -4182,6 +4196,7 @@ std::string ConfigChunk(RuntimeSettings& next,int roomDifficulty) {
         if(key=="GenericMode") next.generic=value!=0;
         if(key=="LogDecisions") next.logDecisions=value!=0;
         if(key=="TerrainRayAudit") next.terrainRayAudit=value!=0;
+        if(key=="GeometryBoundsAudit") next.geometryBoundsAudit=value!=0;
         if(key=="AimAssist") next.aim=value!=0;
         if(key=="ProjectileLead") next.lead=value!=0;
         if(key=="MaxLeadMs") next.maxLeadMs=static_cast<int>(value);
@@ -4244,6 +4259,7 @@ void Prepare() {
         if(next.difficulty!=g_runtime.difficulty)
             Run(L,"if SDGO_BattleAI_Universal then SDGO_BattleAI_Universal.states={} end");
         g_runtime=next;
+        g_shapeBounds.SetAudit(next.geometryBoundsAudit);
         g_appliedRoomDifficulty=roomDifficulty;
         g_quickSwingPercent=next.quickSwing;
         g_api->Log(g_mod, SDGO_LOG_INFO, "policies loaded (config.ini); difficulty %d, generic %d",next.difficulty,next.generic?1:0);
@@ -4268,7 +4284,8 @@ void DrainPendingInit() {
     {std::lock_guard<std::mutex> lock(g_pendingMutex);pending.swap(g_pendingInit);}
     for(uint8_t* unit:pending) ResetLifecycle(unit);
 }
-bool __fastcall Think(uint8_t* unit, void*) {
+battle_ai::native::profile::Totals g_mapQueryProfile{};
+bool __fastcall ThinkImpl(uint8_t* unit, void*) {
     DWORD thread=GetCurrentThreadId(),expected=0;
     g_gameThread.compare_exchange_strong(expected,thread);
     if(thread!=g_gameThread) return g_think(unit);
@@ -4357,6 +4374,26 @@ bool __fastcall Think(uint8_t* unit, void*) {
                 average(actor.senseCost),actor.senseCost.peak*scale,average(actor.navigationCost),actor.navigationCost.peak*scale,
                 static_cast<unsigned long long>(actor.thinkCost.calls),static_cast<uint32_t>(actor.mapSearch.Nodes()));
             const auto& terrain=g_terrainRays.stats;
+            const auto& shapes=g_shapeBounds.stats;
+            g_api->Log(g_mod,shapes.mismatches?SDGO_LOG_ERROR:SDGO_LOG_INFO,
+                "shape bounds tested=%llu culled=%llu rebuilt=%llu unsupported=%llu audited=%llu mismatches=%llu",
+                static_cast<unsigned long long>(shapes.tested),static_cast<unsigned long long>(shapes.culled),
+                static_cast<unsigned long long>(shapes.rebuilt),static_cast<unsigned long long>(shapes.unsupported),
+                static_cast<unsigned long long>(shapes.audited),static_cast<unsigned long long>(shapes.mismatches));
+            const auto& queries=g_mapQueryProfile;
+            using Work=battle_ai::native::profile::Work;
+            const auto& ground=queries.work[static_cast<size_t>(Work::Ground)];
+            const auto& body=queries.work[static_cast<size_t>(Work::Body)];
+            const auto& obb=queries.work[static_cast<size_t>(Work::Obb)];
+            const auto& visibility=queries.work[static_cast<size_t>(Work::Visibility)];
+            g_api->Log(g_mod,SDGO_LOG_INFO,
+                "map query totals ground_calls=%llu ground_us=%.1f body_calls=%llu body_us=%.1f obb_calls=%llu obb_us=%.1f visibility_calls=%llu visibility_us=%.1f ground_obbs=%llu body_obbs=%llu sphere_overlap=%llu sphere_contact=%llu",
+                static_cast<unsigned long long>(ground.calls),ground.ticks*scale,
+                static_cast<unsigned long long>(body.calls),body.ticks*scale,
+                static_cast<unsigned long long>(obb.calls),obb.ticks*scale,
+                static_cast<unsigned long long>(visibility.calls),visibility.ticks*scale,
+                static_cast<unsigned long long>(queries.groundObbs),static_cast<unsigned long long>(queries.bodyObbs),
+                static_cast<unsigned long long>(queries.sphereOverlap),static_cast<unsigned long long>(queries.sphereContact));
             g_api->Log(g_mod,SDGO_LOG_INFO,"terrain rays indexed=%llu native=%llu triangles=%llu audits=%llu mismatches=%llu layouts=%llu rejected=%llu",
                 static_cast<unsigned long long>(terrain.indexed),static_cast<unsigned long long>(terrain.native),
                 static_cast<unsigned long long>(terrain.triangles),static_cast<unsigned long long>(terrain.audits),
@@ -4373,6 +4410,11 @@ bool __fastcall Think(uint8_t* unit, void*) {
     }
     g_current = prior;
     return result;
+}
+bool __fastcall Think(uint8_t* unit,void*) {
+    battle_ai::native::profile::Scope scope(
+        g_runtime.logDecisions&&GetCurrentThreadId()==g_gameThread?&g_mapQueryProfile:nullptr);
+    return ThinkImpl(unit,nullptr);
 }
 void __fastcall Init(uint8_t* unit, void*, void* data) {
     g_init(unit, data);
@@ -4576,6 +4618,8 @@ SDGO_MOD_ENTRY {
     if(!Bind(g_terrainHeight,"navigation.terrain_height")||!Bind(g_terrainNormal,"navigation.terrain_normal"))return 0;
     g_terrainSupport.Bind(g_terrainHeight,g_terrainNormal);
     g_navigation.support=&PhysicsSupport;
+    g_navigation.shapeBounds=&g_shapeBounds;
+    g_shapeBounds.SetMismatchSink(&ReportShapeBoundsMismatch);
     g_navigation.terrainRay=reinterpret_cast<battle_ai::native::TerrainRayFn>(&IndexedTerrainRay);
     if(!Bind(g_app,"game.app")||!Bind(g_queueSwing,"combat.queue_melee_swing")||!Bind(g_faceTarget,"npc.face_target")||!Bind(g_rotate,"unit.rotate_y")) return 0;
     if(!Bind(g_contactReturn,"combat.melee_contact_return")||!Bind(g_queueState,"fsm.queue_state")||

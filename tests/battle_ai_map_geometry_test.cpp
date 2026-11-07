@@ -2,6 +2,7 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include "../mods/battle_ai/native_map_geometry.h"
 #include "../mods/battle_ai/map_path_search.h"
 namespace {
@@ -191,5 +192,33 @@ int main() {
     check(!geometry.Step({-100,400,0},{300,400,0},grounded));
     check(!geometry.ClearForcedTravel({-100,0,0},{300,0,0},mapBounds)&&
           geometry.lastReject==5);
+    // Broad-phase rejection must not bypass ClearObb's non-geometric sample
+    // budget. The scene envelope crosses the route; its only box is far away.
+    geometry=Geometry();haveHazard=false;haveObstacle=true;objectKind=0x30;
+    geometry.bodySphere.radius=geometry.bodySphere.localRadius=1;
+    geometry.bodyBounds={{-1001,49,-1},{-999,51,1}};
+    Put(obstacle.data(),detail::kSceneAabb,Aabb{{-2000,0,-10000},{10000,300,10000}});
+    Put(obstacleObb.data(),0,Aabb{{2000,20,4990},{2020,120,5010}});
+    Put(obstacleObb.data(),0x3C,Vec3{2010,70,5000});
+    Put(obstacleObb.data(),0x48,Vec3{1,0,0});
+    Put(obstacleObb.data(),0x54,Vec3{0,1,0});
+    Put(obstacleObb.data(),0x60,Vec3{0,0,1});
+    Put(obstacleObb.data(),0x78,Vec3{10,50,10});
+    check(!geometry.ClearBody({-1000,0,0},{4000,0,0}));
+    auto shapeBounds=std::make_unique<NativeShapeBounds>();
+    geometry.shapeBounds=shapeBounds.get();
+    check(!geometry.ClearBody({-1000,0,0},{4000,0,0}));
+    check(geometry.ClearBody({-1000,0,0},{3000,0,0})&&shapeBounds->stats.culled>0);
+    shapeBounds->SetAudit(true);
+    check(!geometry.ClearBody({-1000,0,0},{4000,0,0})&&shapeBounds->stats.mismatches==0);
+    // Deliberately make the exact predicate disagree with the broad phase.
+    // The audit must report this synchronously, before any periodic summary.
+    static int immediateReports=0;
+    shapeBounds->SetMismatchSink([](){++immediateReports;});
+    geometry.api.rayObb=[](const Ray3*,const void*,float* distance){*distance=1;return true;};
+    check(!geometry.ClearBody({-1000,0,0},{3000,0,0})&&
+          shapeBounds->stats.mismatches==1&&immediateReports==1);
+    check(!geometry.ClearBody({-1000,0,0},{3000,0,0})&&
+          shapeBounds->stats.mismatches==2&&immediateReports==1);
     std::printf("%d map geometry checks, %d failures\n",checks,errors);return errors?1:0;
 }

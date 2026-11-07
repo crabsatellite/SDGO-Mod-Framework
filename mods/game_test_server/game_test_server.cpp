@@ -676,6 +676,9 @@ namespace
             ",\"host_pilot_id\":" + std::to_string(event.host_pilot_id) +
             ",\"room_type\":" + std::to_string(event.room_type) +
             ",\"mode\":" + std::to_string(event.mode) +
+            ",\"map_selection\":" + std::to_string(event.map_selection) +
+            ",\"map_number\":" + std::to_string(event.map_number) +
+            ",\"manual_map_valid\":" + std::to_string(event.manual_map_valid) +
             ",\"title\":\"" + EscapeJson(event.title) +
             "\",\"humans_team_1\":" + std::to_string(event.humans_team_1) +
             ",\"humans_team_2\":" + std::to_string(event.humans_team_2) +

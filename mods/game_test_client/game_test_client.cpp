@@ -43,6 +43,7 @@
 #include "sdgo/pvp_ai_client_observer.h"
 #include "scoreboard_actions.h"
 #include "battle_ai_behavior_probe.h"
+#include "battle_ai_performance_probe.h"
 #include "native_death_probe.h"
 #include "native_player_combat_probe.h"
 #include "review_camera.h"
@@ -194,6 +195,7 @@ bool quietLoopback = false;
 QuietSockets quietSockets;
 QuietAudio quietAudio;
 QuietGraphics quietGraphics;
+BattleAiPerformanceProbe battleAiPerformance;
 bool captureNativeFrames=false;
 bool unitPagesOnly=false;
 bool activityDrawOnce=false;
@@ -1195,6 +1197,7 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
 int __cdecl Return(const SdgoGameTestContextV1* context) {
     SdgoPvpAiClientSnapshotV1 live{};
     if(Snapshot(live) && live.native_app_state==22) {
+        battleAiPerformance.Observe(context,live);
         // Review footage: the closing TAB press was delivered on the frame the spawn case passed; release
         // the key now so the native roster animates shut and stays out of the recording.
         if (reviewFootage && rosterClosedForReview) scoreboardInput.Hold(false);
@@ -4139,12 +4142,16 @@ void PublishQuietSocketReceipt(bool force) {
         graphics.dispatch_failures==previousGraphics.dispatch_failures &&
         graphics.dispatch_message_pumps==previousGraphics.dispatch_message_pumps &&
         !graphics.proxy_visible && !graphics.proxy_appwindow)return;
+    const auto timingPath=sdgo_test::directory+L"\\present-timings.bin";
+    quietGraphics.DrainPresentTimings(timingPath.c_str());
     if (written && !memcmp(&previous,&observed,sizeof(observed)) && !memcmp(&previousAudio,&audio,sizeof(audio)) &&
         !memcmp(&previousGraphics,&graphics,sizeof(graphics)))return;
     const auto path=sdgo_test::directory+L"\\quiet-sockets.ini";
     const auto temporary=path+L".tmp";
     FILE* file=_wfopen(temporary.c_str(),L"wb");
     if (!file)return;
+    fprintf(file,"[present_timings]\nversion=1\nlost=%llu\nfailed=%u\n",
+        static_cast<unsigned long long>(quietGraphics.LostPresentTimings()),quietGraphics.FailedPresentTimings()?1u:0u);
     fprintf(file,"[run]\nid=%s\n[policy]\npid=%lu\nactive=%u\nloopback_only=%u\n[sockets]\nbinds=%u\nredirected=%u\nfailed=%u\nescaped=%u\nhost_lookups=%u\nhost_redirected=%u\nhost_delegated=%u\n[audio]\nactive=%u\nopened=%u\nmuted=%u\nfailed=%u\nopen_failed=%u\n",
         sdgo_test::runId.c_str(),GetCurrentProcessId(),observed.active,quietLoopback ? 1u:0u,observed.binds,observed.redirected,observed.failed,observed.escaped,
         observed.host_lookups,observed.host_redirected,observed.host_delegated,
@@ -4312,6 +4319,7 @@ extern "C" __declspec(dllexport) LONG __cdecl SdgoGameTestCaptureStatusV1(HRESUL
 }
 SDGO_MOD_ENTRY {
     if (!sdgo_test::Open(api, mod, "client")) return 0;
+    sdgo_test::beforeFinish=[] {PublishQuietSocketReceipt(true);};
     const bool loaded = LoadPlan();
     if (!nativeRecordLifecycleIds.empty() && !nativeRecordLifecycle.Install(api,mod,
         sdgo_test::runId,sdgo_test::directory+L"\\native-record-lifecycle.json",nativeRecordLifecycleIds))return 0;

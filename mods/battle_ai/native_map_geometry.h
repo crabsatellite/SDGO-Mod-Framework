@@ -1,6 +1,8 @@
 #pragma once
 #include "native_navigation.h"
 #include "native_map_gate.h"
+#include "map_query_profile.h"
+#include "native_shape_bounds.h"
 
 namespace battle_ai::native {
 
@@ -13,6 +15,7 @@ using MapSphereObbContactFn=bool(__cdecl*)(const MapBodySphere*,const void*,cons
 // collision remains authoritative. Ground is always measured from the loaded
 // terrain; authored spawn points are goals, never assumed standable surfaces.
 struct MapGeometry {
+    static constexpr int kMaxObbSamples=4096;
     NavigationApi api{};
     uint8_t* document=nullptr;
     uint8_t* owner=nullptr;
@@ -22,6 +25,7 @@ struct MapGeometry {
     MapBodySphere bodySphere{};
     MapSphereObbOverlapFn sphereObb=nullptr;
     MapSphereObbContactFn sphereObbContact=nullptr;
+    NativeShapeBounds* shapeBounds=nullptr;
     bool deferDestroyables=true;
     mutable uint32_t projections=0,groundMisses=0,blocked=0,lastReject=0;
     mutable uint8_t* rejectedScene=nullptr;
@@ -37,14 +41,17 @@ struct MapGeometry {
             Finite(bodySphere.center)&&std::isfinite(bodySphere.radius)&&bodySphere.radius>0;
     }
     bool ClearObb(Vec3 from,Vec3 to,const void* obb)const {
+        profile::Timer cost(profile::Work::Obb);
         shapeReject=0;initialDepth=rejectedDepth=rejectedRayDistance=0;
         const Vec3 delta=to-from;const double length=Length(delta);
         if(!std::isfinite(length))return false;
         const Vec3 direction=Normalize(delta);
         MapBodySphere start=bodySphere;start.center=start.center+(from-ownerPosition);
         const auto penetration=[&](const MapBodySphere& sphere,float& depth) {
+            if(profile::active)++profile::active->sphereOverlap;
             if(!sphereObb(&sphere,obb)){depth=0;return true;}
             Vec3 contact{};float distance=0;
+            if(profile::active)++profile::active->sphereContact;
             if(!sphereObbContact(&sphere,obb,&direction,&contact,&distance)){depth=0;return true;}
             if(!std::isfinite(distance))return false;
             depth=(std::max)(0.0f,sphere.radius-distance);return true;
@@ -60,7 +67,7 @@ struct MapGeometry {
         }
         const float interval=(std::max)(1.0f,bodySphere.radius*0.25f);
         const int samples=(std::max)(1,static_cast<int>(std::ceil(length/interval)));
-        if(samples>4096)return false;
+        if(samples>kMaxObbSamples)return false;
         for(int sample=1;sample<=samples;++sample) {
             MapBodySphere sphere=start;sphere.center=sphere.center+delta*(static_cast<float>(sample)/static_cast<float>(samples));
             float depth=0;if(!penetration(sphere,depth)){shapeReject=3;return false;}
@@ -79,6 +86,7 @@ struct MapGeometry {
         return Dot(nearest,nearest)>=radius*radius;
     }
     bool Ground(Vec3 desired,float ceiling,float floor,Vec3& grounded,bool terrainRise=false)const {
+        profile::Timer cost(profile::Work::Ground);
         ++projections;
         if(!Valid()||!Finite(desired)||!std::isfinite(ceiling)||!std::isfinite(floor)||ceiling<=floor)return false;
         auto tree=*reinterpret_cast<void**>(document+detail::kDocumentQuadTree);
@@ -119,7 +127,12 @@ struct MapGeometry {
             if(!detail::ValidShapeArray(obbs,obbCount,detail::kObbStride)||
                !detail::ValidShapeArray(spheres,sphereCount,detail::kSphereStride))return false;
             for(int shape=0;shape<obbCount;++shape) {
-                distance=0;contact=api.rayObb(&ray,obbs+size_t(shape)*detail::kObbStride,&distance);recordHit(contact,distance);
+                const auto obb=obbs+size_t(shape)*detail::kObbStride;
+                const bool culled=shapeBounds&&!shapeBounds->MayAffect(obb,ray.origin,{desired.x,floor,desired.z});
+                if(culled&&!shapeBounds->Audit())continue;
+                if(profile::active)++profile::active->groundObbs;
+                distance=0;contact=api.rayObb(&ray,obb,&distance);recordHit(contact,distance);
+                if(culled)shapeBounds->Audited(contact&&std::isfinite(distance)&&distance>=0&&distance<=ceiling-floor);
             }
             for(int shape=0;shape<sphereCount;++shape) {
                 distance=0;contact=api.raySphere(&ray,spheres+size_t(shape)*detail::kSphereStride,&distance);recordHit(contact,distance);
@@ -129,6 +142,7 @@ struct MapGeometry {
         grounded={desired.x,best,desired.z};return Finite(grounded);
     }
     bool ClearBody(Vec3 from,Vec3 to,bool hazardsOnly=false)const {
+        profile::Timer cost(profile::Work::Body);
         using namespace detail;
         if(!Valid()||!Finite(from)||!Finite(to))return false;
         auto tree=*reinterpret_cast<void**>(document+kDocumentQuadTree);if(!tree)return false;
@@ -147,6 +161,10 @@ struct MapGeometry {
         if(count<0||count>=kSceneCapacity)return false;
         const double length=Length(delta);if(!std::isfinite(length))return false;
         if(length<1e-6)return true;
+        // Preserve ClearObb's sample-budget rejection independently of spatial
+        // filtering, including when every box lies outside the swept body.
+        const bool cullBodyShapes=shapeBounds&&
+            std::ceil(length/(std::max)(1.0f,bodySphere.radius*0.25f))<=kMaxObbSamples;
         const Vec3 segmentCenter=(start.min+start.max)*0.5f+delta*0.5f,halfDelta=delta*0.5f;
         const float low=(std::max)(start.min.y+10,from.y+10);
         if(!hazardsOnly&&api.support) {
@@ -216,10 +234,18 @@ struct MapGeometry {
                 // The native wall body is the first sphere. Scene AABBs are
                 // broad-phase envelopes, including empty/rotated model space.
                 if(sceneBounds.max.y<=low)continue;
-                for(int shape=0;shape<obbCount;++shape)
-                    if(!ClearObb(from,to,obbs+size_t(shape)*kObbStride)){
+                for(int shape=0;shape<obbCount;++shape) {
+                    const auto obb=obbs+size_t(shape)*kObbStride;
+                    const auto center=bodySphere.center+(from-ownerPosition);
+                    const bool culled=cullBodyShapes&&!shapeBounds->MayAffect(obb,center,center+delta,bodySphere.radius);
+                    if(culled&&!shapeBounds->Audit())continue;
+                    if(profile::active)++profile::active->bodyObbs;
+                    const bool clear=ClearObb(from,to,obb);
+                    if(culled)shapeBounds->Audited(!clear);
+                    if(!clear){
                         ++blocked;lastReject=6;rejectedScene=scene;rejectedObject=object;rejectedShape=static_cast<uint32_t>(shape);return false;
                     }
+                }
                 for(int shape=0;shape<sphereCount;++shape)
                     if(!ClearSphere(from,to,*reinterpret_cast<MapBodySphere*>(spheres+size_t(shape)*kSphereStride)))
                         {

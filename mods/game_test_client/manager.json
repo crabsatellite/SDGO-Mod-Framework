@@ -80,7 +80,18 @@
       "activation": "restart_required"
     },
     {
-      "id": "battle_ai_activity",
+        "id": "battle_ai_performance",
+        "key": "BattleAiPerformance",
+        "label": "记录 AI 性能对照中的攻击和移动",
+        "type": "boolean",
+        "default": false,
+        "file": "mod.ini",
+        "section": "settings",
+        "audience": "developer",
+        "activation": "restart_required"
+      },
+      {
+        "id": "battle_ai_activity",
       "key": "BattleAiActivity",
       "label": "逐台检查 AI 索敌、行动和持续发呆",
       "type": "boolean",

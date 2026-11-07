@@ -682,6 +682,8 @@ int wmain(int argc,wchar_t** argv) {
 
     SCENARIO("battle-end observer preserves the real battle identity and publishes only after the native end returns");
     Reset(1);
+    room[0x09] = 0;
+    room[0x0A] = 58;
     Human(0, 1);
     Put(room.data(), kRoomHost, 10u);
     Title("T7x !ai");
@@ -689,6 +691,12 @@ int wmain(int argc,wchar_t** argv) {
     const SdgoPvpAiObserverSinkV1 sink = {
         sizeof(sink), SDGO_PVP_AI_OBSERVER_VERSION, &Observe, nullptr};
     CHECK(SdgoPvpAiRegisterObserverV1(&sink) == 1);
+    SdgoPvpAiObserverEventV1 randomSelection = {};
+    room[0x09] = 1;
+    CHECK(ObserverCopyEvent(SDGO_PVP_AI_EVENT_SETUP_COMPLETE, room.data(),
+                            0, true, &randomSelection));
+    CHECK(randomSelection.manual_map_valid == 0);
+    room[0x09] = 0;
     InterlockedExchangePointer(&g_observerActiveRooms[0], room.data());
     clearIdentityAtEnd = true;
     BattleEnd(room.data(), nullptr, 0, 0, 100);
@@ -701,6 +709,9 @@ int wmain(int argc,wchar_t** argv) {
               static_cast<uint32_t>(reinterpret_cast<uintptr_t>(room.data())));
         CHECK(end.host_pilot_id == 10);
         CHECK(end.mode == 1);
+        CHECK(end.manual_map_valid == 1);
+        CHECK(end.map_selection == 0);
+        CHECK(end.map_number == 58);
         CHECK(std::strcmp(end.title, "T7x !ai") == 0);
         CHECK(end.active_slots == 2);
         CHECK(end.ai_team_2 == 1);

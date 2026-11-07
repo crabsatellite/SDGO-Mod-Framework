@@ -101,6 +101,12 @@ double GlobalNumber(const char* name) {
     lua_pop(g_L,1);
     return value;
 }
+const void* GlobalIdentity(const char* name) {
+    lua_getglobal(g_L,name);
+    const void* value=lua_topointer(g_L,-1);
+    lua_pop(g_L,1);
+    return value;
+}
 lua_State* __cdecl State(lua_State* value) { if(value) g_L=value; return g_L; }
 int QueueFixtureSwing(lua_State*) {
     auto fsm=native_world::fsms[0].data();
@@ -1764,10 +1770,23 @@ int wmain(int argc,wchar_t** argv) {
         native_world::Put(native_world::enemy2.data(),0x38,int32_t(500));
         native_world::Put(native_world::enemy2.data(),0xEC4,int32_t(0));
         Eval("SDGO_BattleAI_GenericUpdate=function(n) deadLifecycleObservation=SDGO_BattleAI_Observe(); return 123 end");
+        const void* deadProbeBefore=GlobalIdentity("SDGO_BattleAI_GenericUpdate");
+        const auto deadProbeTick=GetTickCount64();
         unit.Think();
-        Check(Eval(
+        const void* deadProbeAfter=GlobalIdentity("SDGO_BattleAI_GenericUpdate");
+        const bool deadProbeValid=Eval(
                   "for _,candidate in ipairs(deadLifecycleObservation.targets) do "
-                  "assert(candidate.id~=2) end"),
+                  "assert(candidate.id~=2) end");
+        if(!deadProbeValid) {
+            SYSTEMTIME wall{};GetLocalTime(&wall);
+            std::printf("DIAG dead-lifecycle probe policy_before=%p policy_after=%p "
+                        "tick_before=%llu elapsed_ms=%llu wall=%02u:%02u:%02u.%03u\n",
+                        deadProbeBefore,deadProbeAfter,
+                        static_cast<unsigned long long>(deadProbeTick),
+                        static_cast<unsigned long long>(GetTickCount64()-deadProbeTick),
+                        wall.wHour,wall.wMinute,wall.wSecond,wall.wMilliseconds);
+        }
+        Check(deadProbeValid,
               "native-dead lifecycle excludes a positive raw HP object from observation");
         Eval("SDGO_BattleAI_GenericUpdate=zeroHpPolicy; SDGO_BattleAI_Universal.states={}");
         unit.bytes[0x312A]=0;native_world::Put(unit.bytes,0xDCD,uint16_t(0));
