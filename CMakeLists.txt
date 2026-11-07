@@ -418,6 +418,7 @@ foreach(role client server)
     sdgo_strict(${target})
     sdgo_version_resource(${target} ai_catalog.dll "SDGO mod: AI roster (${role})")
     sdgo_stage(${target} "${role}/sdgo/mods/ai_catalog")
+    add_dependencies(release_stable_payload ${target})
     add_custom_command(TARGET ${target} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/mods/ai_catalog/${role}.ini"
@@ -426,6 +427,10 @@ foreach(role client server)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/mods/ai_catalog/manager.json"
             "${SDGO_STAGE}/${role}/sdgo/mods/ai_catalog/manager.json")
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/mod_runtime_contract.py"
+            --manifest "${SDGO_STAGE}/${role}/sdgo/mods/ai_catalog/mod.ini"
+            --contract "${CMAKE_CURRENT_SOURCE_DIR}/mods/ai_catalog/manager.json")
 endforeach()
 add_custom_target(ai_catalog_data ALL
     COMMAND ${CMAKE_COMMAND} -E make_directory "${SDGO_STAGE}/client/sdgo/mods/ai_catalog"

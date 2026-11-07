@@ -42,7 +42,7 @@ def build(channel, release_version, stage, manager, output, commit=None, reposit
     for name,raw in payload.items():require_redistributable(name,raw)
     commit=commit or subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
     manifest={'schema_version':1,'repository':repository,'version':release_version,'channel':channel,
-              'capabilities':{'owner_updates':1,'client_runtime':1,'runtime_safety':1,'runtime_layers':1},
+              'capabilities':{'owner_updates':1,'client_runtime':1,'runtime_safety':1,'runtime_layers':1,'runtime_profiles':1},
               'source_commit':commit,'files':{n:{'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()} for n,b in sorted(payload.items())}}
     output.mkdir(parents=True,exist_ok=True)
     path=output/('SDGO-ModFramework-'+release_version+'.zip')
@@ -50,6 +50,8 @@ def build(channel, release_version, stage, manager, output, commit=None, reposit
     with zipfile.ZipFile(path,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=6) as archive:
         archive.writestr('release.json',json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
         for name,data in sorted(payload.items()):archive.writestr(name,data)
+    from tools.check_artifact_ownership import archive as check_ownership
+    check_ownership(path)
     raw=path.read_bytes();digest=hashlib.sha256(raw).hexdigest()
     # Validate the exact output using the Manager's production package reader.
     check=output/('verified-'+release_version)

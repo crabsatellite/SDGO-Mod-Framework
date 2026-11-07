@@ -6,22 +6,24 @@ from . import storage,updates,framework_source
 SHARED='sdgo/shared-settings.json'
 
 
-def program_files(framework):
+def program_files(framework,selected=None):
     return {n[7:]if n.startswith('client/')else n:{'source':n,**entry}
-            for n,entry in framework['manifest']['files'].items()if n==updates.MANAGER or n.startswith('client/')}
+            for n,entry in framework['manifest']['files'].items()if (n==updates.MANAGER or n.startswith('client/'))
+            and(selected is None or not n.startswith('client/sdgo/mods/')or n.split('/')[3]in selected)}
 
 
-def compose(controller,binding,contract,root,entries,repo,commit):
+def compose(controller,binding,contract,root,entries,repo,commit,shared_data=None):
     spec=contract.get('layers',{})
     if spec.get('schema_version')!=1:raise ValueError('服主内容缺少双源归属声明')
-    framework=framework_source.load(controller,binding['framework'],constraints=spec);manifest=framework['manifest'];files=program_files(framework)
+    framework=framework_source.load(controller,binding['framework'],constraints=spec);manifest=framework['manifest'];files=program_files(framework,spec.get('mod_ids'))
     minimum=spec.get('minimum_framework');maximum=spec.get('maximum_framework')
     current=updates.version(manifest['version'])[:3]
     if minimum is None or current<updates.version(minimum)[:3]or maximum and current>updates.version(maximum)[:3]:raise ValueError('框架版本不符合服主内容的兼容要求')
     catalog=json.loads((Path(framework['bundle'])/'client/sdgo/catalog.json').read_text('utf-8'))
-    mods={m['id']:m for m in catalog['mods'] if m['target']=='client'}
+    mods={m['id']:m for m in catalog['mods'] if m['target']=='client'and(spec.get('mod_ids')is None or m['id']in spec['mod_ids'])}
     for identity,required in spec.get('required_mods',{}).items():
         if identity not in mods or updates.version(mods[identity]['version'])<updates.version(required):raise ValueError('服主内容需要兼容的 Mod：'+identity)
+        if spec.get('locked_framework') and mods[identity]['version']!=required:raise ValueError('服主锁定的 Mod 版本不一致：'+identity)
     allowed={'sdgo/sdgo.ini'}
     for identity,mod in mods.items():
         directory=Path(framework['bundle'])/'client/sdgo/mods'/identity
@@ -36,13 +38,18 @@ def compose(controller,binding,contract,root,entries,repo,commit):
     collisions=(set(entries)&set(files))-set(shared_files)
     if collisions:raise ValueError('服主内容不能替换框架程序或元数据：'+', '.join(sorted(collisions)[:5]))
     if SHARED not in entries:raise ValueError('服主内容缺少共享设置清单')
-    raw=controller.git(repo,['show',commit+':'+SHARED])
+    raw=shared_data if shared_data is not None else controller.git(repo,['show',commit+':'+SHARED])
     if len(raw)>1024*1024:raise ValueError('共享设置清单过大')
     shared=json.loads(raw)
+    from .server_profiles import check_secrets
+    check_secrets(shared)
     if shared.get('schema_version')!=1:raise ValueError('共享设置清单版本无效')
     patches=shared.get('patches',{});personal=shared.get('personal_settings',[])
     if not isinstance(patches,dict)or not isinstance(personal,list):raise ValueError('共享设置格式无效')
     rendered={};effective={n:{k:v for k,v in e.items()if k!='source'}for n,e in files.items()};effective.update(entries)
+    if spec.get('mod_ids')is not None:
+        filtered={**catalog,'mods':[m for m in catalog['mods']if m['target']=='client'and m['id']in mods]}
+        rendered['sdgo/catalog.json']=storage.json_bytes(filtered)
     for name,rows in patches.items():
         updates.safe_name(name)
         if name not in files or not re.fullmatch(r'sdgo/mods/[a-z][a-z0-9_]*/mod\.ini',name):raise ValueError('共享设置只能覆盖 Mod 参数：'+name)
@@ -68,7 +75,7 @@ def compose(controller,binding,contract,root,entries,repo,commit):
     for name,rows in by_file.items():rendered[name]=storage.patch_ini(rendered.get(name,(Path(framework['bundle'])/files[name]['source']).read_bytes()),rows)
     for name,data in rendered.items():effective[name]={'bytes':len(data),'sha256':updates.digest(data)}
     receipt={'schema_version':1,'version':manifest['version'],'channel':manifest['channel'],'source_commit':manifest['source_commit'],
-             'mods':{m['id']:m['version']for m in catalog['mods']}}
+             'mods':{m['id']:m['version']for m in mods.values()}}
     generated={'sdgo/release.json':base64.b64encode(storage.json_bytes(receipt)).decode()}
     combined={**{n:{k:v for k,v in e.items()if k!='source'}for n,e in files.items()},**entries}
     for name,encoded in generated.items():combined[name]=effective[name]={'bytes':len(base64.b64decode(encoded)),'sha256':updates.digest(base64.b64decode(encoded))}
