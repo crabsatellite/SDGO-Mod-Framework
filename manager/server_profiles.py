@@ -304,8 +304,12 @@ def plan(controller,host,source):
     entries={n:dict(e)for n,e in profile['files'].items()};entries={n:{k:e[k]for k in('bytes','sha256')}for n,e in entries.items()}
     # Pass the already verified content file directly rather than changing the
     # controller transport while another UI thread reads state.
-    delegated=framework_source.binding(profile.get('framework_source',source['framework']))
-    if any(delegated[k]!=source['framework'][k]for k in('repository','source_id')):raise ValueError('服主不能静默更换已授权的框架发布者')
+    declared=framework_source.binding(profile.get('framework_source',source['framework']))
+    authorized=framework_source.binding(source['framework'])
+    if any(declared[k]!=authorized[k]for k in('repository','source_id')):raise ValueError('服主不能静默更换已授权的框架发布者')
+    # The owner chooses the pinned programme/channel; an imported binding can
+    # choose matching transport mirrors without being silently overwritten.
+    delegated={**authorized,'channel':declared['channel']}if authorized.get('transport')==declared.get('transport')else declared
     report(phase='framework')
     combined,effective,layers=runtime_layers.compose(controller,{**source,'framework':delegated},contract,root,entries,None,identity,shared_data=(folder/SHARED).read_bytes())
     if layers['framework']['manifest'].get('capabilities',{}).get('runtime_profiles')!=1:raise ValueError('所选框架程序尚不支持通用服主配置档；保留现有客户端')

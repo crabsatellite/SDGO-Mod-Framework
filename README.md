@@ -9,7 +9,7 @@ executables; supported builds are listed under [Installation](docs/setup.md#supp
 does not distribute the pack.
 
 [Installation](docs/setup.md) · [SDGO Mod Manager](docs/mod-manager.md) · [Latest release](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
-Owner profiles combine locked official Mods, owner settings and assets on a compatible original client in one verified installation transaction. Git, HTTPS and offline directories use the same contract; a complete-client repository is optional.
+Owner profiles combine locked official Mods, owner settings and assets on a compatible original client in one verified installation transaction. Later content exports retain the published program lock; program upgrades require explicit adoption. Git, HTTPS and offline directories use the same contract; a complete-client repository is optional.
 
 Server owners and maintainers install, configure and [update](docs/mod-manager.md#updates) features with
 **SDGO Mod Manager**; the **0_更新与管理** entry at the top of the client folder opens it. Players can update
