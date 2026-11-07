@@ -104,6 +104,37 @@ Manager 已内置 Python、Pillow 和 pyodbc；解析 RAR 需要本机安装 7-Z
 导入只写非玩家定义表、本模块的所有权账本，以及启用收藏扭蛋时的机体族元数据（初始形态和变形关系，供它的实时奖池读取）。
 不改玩家余额和机库，不发放机体，不替换原生 SQL 过程，也不设置商城价格或扭蛋概率。
 
+## 把批量阵容应用到服务端
+
+[批量发布器](#批量机体阵容发布toolsgunionpublisher)做出的整套阵容，在同一个面板写入服务端。发布目录里有
+`server-plan.json`、`form-graph-requests.json` 和客户端安装包。
+
+1. 在面板设置里填写 **WorldServer INI**。阵容会应用到这个服务组：WorldServer 所在目录，以及标准 `Server`
+   布局下与它同级的 BattleServer、AgentServer、StoreServer 目录。
+2. 在「批量阵容服务端应用」选择发布目录（也可以选批量发布器的输出目录），点击「只读预检」。预检只读取，
+   列出内容数量、新写入和已安装的机体族数量、共享技能／浮游炮／势力行将新增、更新还是沿用、每个 BattleServer
+   是否已有 `unit_catalog_server`、仍在运行的服务，以及每个会被拒绝的机体族。
+3. 自行停止此服务组的全部原生服务。Manager 不会替你结束或启动游戏进程。
+4. 点击「停服后应用…」，核对变更对话框后确认。面板依次显示：停服检查、按依赖顺序检查机体族、共享行、
+   机体族（已完成／总数）、形态图和读回核对。
+5. 重启此服务组，在 Manager 的变更记录中核对就绪。玩家需要安装同版本的机体客户端包。
+
+批量应用写入的内容：
+
+- 共享的技能、浮游炮和势力行，在同一个事务里写入。已存在的势力保留原名；新势力的名称如果 `varchar` 列存不下，
+  写成 `Affiliation <编号>`（玩家看到的是客户端自己的势力记录）。
+- 每个机体族都走单族确认时的同一个事务，并按依赖顺序写入：机体族的形态用到另一个族的武器、或变形为另一个族的形态时，
+  排在那个族之后。机体族之间的循环依赖在写入任何内容之前就会被拒绝。写入前先按这个顺序对实时目录检查全部机体族，
+  所以会被拒绝的机体族会在第一次写入之前就让批量应用停下。
+- 发布带形态图请求时：根据已写入的行编译形态图，在每个 BattleServer 的 `unit_catalog_server` 目录写入
+  `form-graphs.bin`、写入 `sdgo/install-state/unit-form-authority.bin`，并启用 `unit_catalog_server`。
+  服务组里的每个 BattleServer 都需要先装好框架的 `unit_catalog_server`。被替换的旧文件随变更回执保存在
+  `sdgo/local-state/changes/backups/`。
+- 不发放机体，不创建商品、价格或扭蛋槽位；获取途径仍在商城和扭蛋面板设置。
+
+「读回核对」统计已写入的机体、武器、名称和物品类别，所有权账本中处于本次发布版本的机体族，以及持有形态图文件的
+BattleServer。重复应用同一份发布是安全的：自有行按所有权账本原地更新，中途中断后直接再应用一次即可。
+
 ## 设计图草稿与获取路线
 
 制作面板支持设计图草稿，并区分原始记录、作者设定与未知字段。配方需要设计图物品、目标机体、
@@ -393,14 +424,27 @@ python -B -m tools.gunion.publisher assemble  --config <私有配置.json>
   （`publication.json` 的 `server_names_normalized`、`server_weapon_names_normalized`），客户端仍保留原来的宽字符名。
 
 该包只带归档：`manifest.json` 用 `resource_overlay.paths` 声明归档条目，不带游戏从不读取的松散副本；
-安装器同时接受这种布局和 Manager 的 `owned_paths` 布局。服务端先写共享的技能、浮游炮和势力行，再按族通过
-普通仓库事务写入；原生服务端直接读取这些行，单形态、互相变形、单向变形和自变形的族不需要形态图或技能身份授权。
+安装器同时接受这种布局和 Manager 的 `owned_paths` 布局。服务端由 [Manager 的批量应用](#把批量阵容应用到服务端)
+（`owner.units.batch_server`）写入：先写共享的技能、浮游炮和势力行，再按依赖顺序让每个族通过普通仓库事务写入。
+原生服务端直接读取这些行，单形态、互相变形、单向变形和自变形的族不需要形态图或技能身份授权。
+同样的步骤也可以从 Python 调用，其中 `apply` 在 Manager 的停服闸门内执行：
+
+```python
+from owner.units import batch_server
+batch_server.preflight(publication_folder, world_server_ini)          # 只读报告
+batch_server.apply(publication_folder, world_server_ini, progress)    # 每个阶段回调 progress(dict)
+batch_server.readback(publication_folder, world_server_ini)           # 只统计
+```
+
+`batch_server.family_order` 根据 `WeaponNumber_1/2/3`、`WeaponNumber_FatalAttack` 和 `UnitNumber_Transform`
+对计划中其他族所拥有的行的引用，以及声明的 `shared_form_ids`、`shared_weapon_ids` 所有者推出顺序；
+没有这类引用的族保持发布顺序。
 
 入口形态作为独立的族发布（`native-entry-forms-v1`；变入单向终态时为 `native-one-way-forms-v1`），与核心族共用目标形态：
 共用形态的记录、行和名称仍由核心族拥有（`shared_form_ids`）。物品类别和每个共用武器行的所有者族都固定在回执旁的
 `allocations.json` 里，重新发布不会挪动已安装族的类别，也不会把武器行换到别的族名下。对每个带入口形态的上下文，装配阶段还会写出 `form-graph-requests.json`：
 每个上下文一条 `sdgo.unit-form-graphs/1` 请求，其 `families` 把核心族和入口族归入同一个形态图所有者。
-可信的服务端控制器在行写入后用 `owner.units.form_graph_runtime.prepare_native_from_cursor` 编译它们，把 `form-graphs.bin`
+批量应用在行写入后用 `owner.units.form_graph_runtime.prepare_native_from_cursor` 编译它们，把 `form-graphs.bin`
 放到 `unit_catalog_server` Mod 目录、把 `sdgo/install-state/unit-form-authority.bin` 放到每个战斗主机；
 之后服务端 Mod 会把允许的第三形态写入未激活的原生槽，客户端 `unit_catalog`（`FormChains=1`）在原生交换前
 把备用记录／模型改指向该形态。战斗单位销毁时，客户端把当前使用中的一对形态交给原版析构流程，由它只释放正在使用的模型。

@@ -1359,6 +1359,97 @@ $("sync-capsules").onclick=async()=>{
   }catch(error){message(error.message,true);}
 };
 
+// Batch roster: apply a batch publication's server plan to the configured server group.
+const batchCard=document.createElement("section");
+batchCard.className="panel";batchCard.style.cssText="padding:14px;margin-bottom:16px";
+batchCard.innerHTML='<strong>批量阵容服务端应用（Beta）</strong><p>批量发布器生成的发布目录（含 server-plan.json）在这里写入已配置的 WorldServer 数据库：先写共享技能、浮游炮和势力行，再按依赖顺序写入每个机体族，最后为每个 BattleServer 安装形态图。不发放机体，也不改商城、扭蛋或玩家资产。</p>'
+ +'<div class="template-tool"><label><span>批量发布目录</span><input id="batch-folder" placeholder="批量发布器输出的 publication 目录"></label><button type="button" id="batch-pick">选择目录…</button></div>'
+ +'<div class="actions" style="margin-top:10px"><button type="button" id="batch-preflight">只读预检</button><button type="button" class="primary" id="batch-apply" disabled>停服后应用…</button><button type="button" id="batch-readback">读回核对</button></div>'
+ +'<div class="progress hidden" id="batch-progress"><span id="batch-progress-bar"></span></div>'
+ +'<p class="note" id="batch-status">应用前请先停止此服务组的全部原生服务；Manager 不会替你结束或启动游戏进程。玩家仍需安装同版本的机体客户端包。</p>'
+ +'<div class="requirements" id="batch-details"></div>';
+$("sync-capsules").closest("section").after(batchCard);
+const BATCH_STAGES={gate:"检查停服状态",check:"按依赖顺序检查机体族",shared:"写入共享技能、浮游炮和势力行",families:"写入机体族",graphs:"编译并安装形态图",readback:"读回核对"};
+let batchChecked=null,batchJob={status:"idle"},batchBusy=false;
+function batchMessage(text,isError=false){$("batch-status").textContent=text||"";$("batch-status").style.color=isError?"var(--danger)":"";}
+function batchRunning(){return batchJob.status==="starting"||batchJob.status==="running";}
+function syncBatch(){
+  const folder=$("batch-folder").value.trim(),locked=batchBusy||batchRunning();
+  $("batch-apply").disabled=locked||!batchChecked||batchChecked.folder!==folder||!batchChecked.ready;
+  for(const id of ["batch-preflight","batch-readback","batch-pick"])$(id).disabled=locked;
+  $("batch-folder").disabled=locked;
+}
+function batchRow(level,title,text){
+  const row=document.createElement("div");row.className="requirement "+level;
+  const mark=document.createElement("span");mark.textContent=level==="error"?"✕":level==="required"?"!":"·";
+  const body=document.createElement("div"),strong=document.createElement("strong"),small=document.createElement("small");
+  strong.textContent=title;small.textContent=text;body.append(strong,small);row.append(mark,body);return row;
+}
+function renderBatchPreflight(p){
+  const s=p.publication,rows=[];
+  rows.push(batchRow("warning","发布内容",s.families+" 个机体族 · "+s.units+" 个形态 · "+s.weapons+" 把武器 · "+s.skills+" 个技能 · "+s.funnels+" 个浮游炮 · "+s.affiliations+" 个势力 · "+s.form_graph_requests+" 个形态图请求"));
+  rows.push(batchRow("warning","机体族","新写入 "+p.families_new+" 个；已安装、将按账本重新应用 "+p.families_installed+" 个"));
+  if(p.shared?.skills)rows.push(batchRow("warning","共享行","技能 新增 "+p.shared.skills.inserted+" / 更新 "+p.shared.skills.updated+" / 沿用 "+p.shared.skills.reused
+    +"；浮游炮 新增 "+p.shared.funnels.inserted+" / 更新 "+p.shared.funnels.updated+" / 沿用 "+p.shared.funnels.reused+"；势力 新增 "+p.shared.affiliations.inserted));
+  if(s.form_graph_requests)rows.push(batchRow(p.graph_hosts.length&&p.graph_hosts.every(h=>h.installed)?"warning":"error","形态图主机",
+    p.graph_hosts.length?p.graph_hosts.map(h=>h.host+(h.installed?(h.graph_sha256?"（已有形态图）":"（待写入）"):"（缺少服务端绑定）")).join("、"):"没有 BattleServer"));
+  rows.push(batchRow(p.servers_stopped?"warning":"required","服务状态",p.servers_stopped?"此服务组的原生服务均已停止":"仍在运行："+p.running_services.join("、")+"。停止后重新预检。"));
+  for(const warning of p.warnings||[])rows.push(batchRow("required","提醒",warning));
+  for(const problem of p.problems.slice(0,20))rows.push(batchRow("error",problem.family_key||"发布检查",problem.error));
+  if(p.problems.length>20)rows.push(batchRow("error","其余问题","另有 "+(p.problems.length-20)+" 项未列出"));
+  $("batch-details").replaceChildren(...rows);
+  batchMessage(p.ready?"预检通过：可以应用。":p.problems.length?"预检发现 "+p.problems.length+" 个问题，处理后重新预检。":"预检通过，但服务仍在运行；停止后重新预检。",Boolean(p.problems.length));
+}
+function renderBatchReadback(r,applied){
+  batchMessage((applied?"已应用。":"读回：")+"机体 "+r.units+" / "+r.plan_units+"，武器 "+r.weapons+" / "+r.plan_weapons+"，名称 "+r.names+" / "+r.plan_units
+    +"，物品类别 "+r.items+" / "+r.plan_items+"，本版本账本机体族 "+r.ledger_families_at_revision+" / "+r.plan_families+"，形态图主机 "+r.graph_hosts_installed+" / "+r.graph_hosts+"。"
+    +(r.complete?(applied?"请重启此服务组，并在 Manager 的变更记录中核对就绪。":""):"仍有未对齐的项目。"),!r.complete);
+}
+function renderBatchJob(job){
+  batchJob=job||{status:"idle"};
+  const running=batchRunning();
+  $("batch-progress").classList.toggle("hidden",!running);
+  if(running){
+    const fraction=batchJob.stage==="families"&&batchJob.total?batchJob.done/batchJob.total:batchJob.stage==="graphs"||batchJob.stage==="readback"?1:0;
+    $("batch-progress-bar").style.width=Math.round(fraction*100)+"%";
+    batchMessage((BATCH_STAGES[batchJob.stage]||"准备中")+(batchJob.stage==="families"?"："+batchJob.done+" / "+batchJob.total+(batchJob.detail?" · "+batchJob.detail:""):"")+" …");
+  }else if(batchJob.status==="completed")renderBatchReadback(batchJob.result.readback,true);
+  else if(batchJob.status==="failed")batchMessage("批量应用未完成："+batchJob.error,true);
+  syncBatch();
+}
+$("batch-folder").oninput=()=>syncBatch();
+$("batch-pick").onclick=async()=>{
+  try{
+    const response=await globalThis.fetch("/api/pick",{method:"POST",headers:{"Content-Type":"application/json","X-ModManager-Token":ctx.token},body:JSON.stringify({kind:"directory"})});
+    const data=await response.json();if(!response.ok)throw Error(data.error||"无法打开目录选择，请直接输入路径");
+    if(data.path){$("batch-folder").value=data.path;syncBatch();}
+  }catch(error){batchMessage(error.message,true);}
+};
+$("batch-preflight").onclick=async()=>{
+  const folder=$("batch-folder").value.trim();if(!folder){batchMessage("请先选择批量发布目录。",true);return;}
+  batchBusy=true;batchChecked=null;syncBatch();batchMessage("正在只读预检（读取服务端目录，不写入）…");
+  try{const data=await ctx.request("/api/units/batch/preflight",{publication:folder});batchChecked={folder,ready:data.preflight.ready};renderBatchPreflight(data.preflight);}
+  catch(error){$("batch-details").replaceChildren();batchMessage(error.message,true);}
+  finally{batchBusy=false;syncBatch();}
+};
+$("batch-apply").onclick=async()=>{
+  const folder=$("batch-folder").value.trim();
+  if(!batchChecked||batchChecked.folder!==folder||!batchChecked.ready){batchMessage("请先对当前目录完成只读预检并处理所有问题。",true);return;}
+  batchBusy=true;syncBatch();
+  try{const data=await ctx.request("/api/units/batch/apply",{publication:folder});batchChecked=null;renderBatchJob(data.batch);}
+  catch(error){batchMessage(error.message,true);}
+  finally{batchBusy=false;syncBatch();}
+};
+$("batch-readback").onclick=async()=>{
+  const folder=$("batch-folder").value.trim();if(!folder){batchMessage("请先选择批量发布目录。",true);return;}
+  batchBusy=true;syncBatch();
+  try{const data=await ctx.request("/api/units/batch/readback",{publication:folder});renderBatchReadback(data.readback,false);}
+  catch(error){batchMessage(error.message,true);}
+  finally{batchBusy=false;syncBatch();}
+};
+ctx.request("/api/units/batch",undefined,"GET").then(data=>{if(data.batch.status!=="idle")renderBatchJob(data.batch);}).catch(()=>{});
+ctx.setInterval(async()=>{if(!batchRunning())return;try{const data=await ctx.request("/api/units/batch",undefined,"GET");renderBatchJob(data.batch);}catch{}},1000);
+
 function renderNativePreview(){
  const current=draft?.native_preview||{};
  $("native-preview-status").textContent=current.error||(!current.prepared?"尚未准备原生预览。":current.ready?"已收到原生显示调用回执；请在游戏窗口核对实际画面后勾选确认。":"等待原生界面：商城 "+(current.shop?"已调用":"待查看")+" / 扭蛋 "+(current.capsule?"已调用":"待查看"));

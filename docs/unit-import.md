@@ -126,6 +126,43 @@ Import writes only non-player definition tables, this module's ownership ledger 
 enabled, family metadata (root form and links) for its live pool. Balances, hangars, grants, native SQL procedures, shop
 prices and capsule odds are untouched.
 
+## Applying a batch roster to the server
+
+A roster made by the [batch publisher](#batch-roster-publication-toolsgunionpublisher) is applied to the server from
+the same panel. Its publication folder holds `server-plan.json`, `form-graph-requests.json` and the client package.
+
+1. Set **WorldServer INI** in the panel settings. The roster is applied to that server group: the WorldServer folder
+   and, in the standard `Server` layout, its sibling BattleServer, AgentServer and StoreServer folders.
+2. Under **批量阵容服务端应用** (batch roster server apply), choose the publication folder (the roster output folder
+   also works) and click **只读预检** (read-only preflight). The preflight only reads. It shows the content counts, how
+   many families are new or already installed, the shared skill, funnel and affiliation rows that would be inserted,
+   updated or kept, every BattleServer and whether it has `unit_catalog_server`, the services that are still running,
+   and every family that would be refused.
+3. Stop every native service of the group yourself. Manager never stops or starts game processes.
+4. Click **停服后应用…** (apply after stopping), review the change dialog and confirm. The panel shows each stage:
+   stopped-server check, ordered family check, shared rows, families (done / total), form graphs and readback.
+5. Restart the group and check readiness in Manager's change list. Players need the matching unit client package.
+
+What the batch apply writes:
+
+- The shared skill, funnel and affiliation rows, in one transaction. An affiliation that already exists keeps its
+  name; a new one whose name the `varchar` column cannot store gets the label `Affiliation <n>` (players see the
+  client's own affiliation record).
+- Every family, through the same transaction a single confirmation uses, in dependency order: a family whose forms
+  use another family's weapon or transform into another family's form is applied after that family. A dependency
+  cycle between families is refused before anything is written. The ordered list is first checked against the live
+  catalog, so a family that would be refused stops the batch before its first write.
+- For a publication with form-graph requests: `form-graphs.bin` in each BattleServer's `unit_catalog_server` folder and
+  `sdgo/install-state/unit-form-authority.bin`, compiled from the installed rows, and `unit_catalog_server` is turned
+  on. Every BattleServer of the group needs the framework's `unit_catalog_server` first. The files they replace are
+  kept beside the change receipt under `sdgo/local-state/changes/backups/`.
+- No grants, products, prices or capsule slots. Acquisition stays with the shop and capsule panels.
+
+**读回核对** (readback) counts the installed units, weapons, names and item categories, the families recorded in the
+ownership ledger at this publication's revision, and the BattleServers that hold the graph files. Applying the same
+publication again is safe: owned rows are updated in place through the ownership ledger, so after an interruption the
+batch is simply applied again.
+
 ## Blueprints, projects and activity pools
 
 Blueprint authoring adds editable recipes with explicit recovered,
@@ -511,9 +548,22 @@ python -B -m tools.gunion.publisher assemble  --config <private-config.json>
 
 The package is overlay-only: `manifest.json` declares the archive entries in `resource_overlay.paths` and ships no
 loose copies, which the game never reads. The installer accepts both this layout and the Manager's `owned_paths`
-layout. The server side is applied family by family through the ordinary repository transaction after the shared
-skill, funnel and affiliation rows; the native server reads the resulting rows directly, so no form-graph or
-skill-identity authority is required for single-form, reciprocal, one-way or self-transform families.
+layout. The server side is applied by [the Manager's batch apply](#applying-a-batch-roster-to-the-server)
+(`owner.units.batch_server`): the shared skill, funnel and affiliation rows first, then every family through the
+ordinary repository transaction in dependency order. The native server reads the resulting rows directly, so no
+form-graph or skill-identity authority is required for single-form, reciprocal, one-way or self-transform families.
+The same steps are available from Python; `apply` runs inside the Manager's stopped-server gate:
+
+```python
+from owner.units import batch_server
+batch_server.preflight(publication_folder, world_server_ini)          # read-only report
+batch_server.apply(publication_folder, world_server_ini, progress)    # progress(dict) per stage
+batch_server.readback(publication_folder, world_server_ini)           # counts only
+```
+
+`batch_server.family_order` derives the order from `WeaponNumber_1/2/3`, `WeaponNumber_FatalAttack` and
+`UnitNumber_Transform` references to rows that another family of the plan owns, plus declared `shared_form_ids` and
+`shared_weapon_ids` owners; families without such references keep their publication order.
 
 Entry variants are published as their own families (`native-entry-forms-v1`, or `native-one-way-forms-v1` when they
 enter a one-way terminal form) that share the core family's target form; the shared form's record, row and name stay
@@ -521,8 +571,8 @@ owned by the core family (`shared_form_ids`). Item categories and the owning fam
 pinned in `allocations.json` beside the receipts so a republication never shifts an installed family's category or
 moves a weapon row to another family. For every context with entry variants the
 assembler also writes `form-graph-requests.json`: one `sdgo.unit-form-graphs/1` request per context whose `families`
-list groups the core family and its entry families under one graph owner. The trusted server controller compiles
-them with `owner.units.form_graph_runtime.prepare_native_from_cursor` after the rows are installed and places
+list groups the core family and its entry families under one graph owner. The batch apply compiles them with
+`owner.units.form_graph_runtime.prepare_native_from_cursor` after the rows are installed and places
 `form-graphs.bin` in the `unit_catalog_server` Mod directory and `sdgo/install-state/unit-form-authority.bin` on
 each battle host; the server Mod then composes an allowed third form into the inactive native bank, and the client's
 `unit_catalog` (`FormChains=1`) rebases its alternate record/model to that form before the native swap. When the
