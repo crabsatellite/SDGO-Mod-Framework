@@ -495,6 +495,7 @@ bool LoadPlan() {
     }
     ocPanel=GetPrivateProfileIntW(L"run",L"oc_panel",0,job.c_str())!=0;
     ocChallenge=GetPrivateProfileIntW(L"run",L"oc_challenge",0,job.c_str())!=0;
+    if(hangarConfirmGb && (ocPanel || loginRecovery.Enabled()))return false;
     if(ocChallenge && !ocPanel && ocAllocateStat<0)return false;
     if(ocPanel && (!playUnitUid || (ocAllocateStat<0 && !hangarPagesOnly)))return false;
     if(testUnitPresentations && !playUnitUid)return false;
@@ -1768,8 +1769,8 @@ int __cdecl ConfirmHangarGb(const SdgoGameTestContextV1* context) {
     context->Assert(state.gb_preview_removed>0,
         "the server-backed GB preview selected at least one genuine duplicate before confirmation");
     context->Assert(state.scope==PageTestActions::kScopeGbSubmittedRelogRequired &&
-        state.snapshot.needs_relog && !state.snapshot.visible && !state.snapshot.busy && !state.snapshot.armed,
-        "two original Confirm actions submit once, close the page and require reconnect verification");
+        state.snapshot.needs_relog && !state.snapshot.busy && !state.snapshot.armed,
+        "two original Confirm actions submit once, close the exchange panel and require reconnect verification");
     context->Assert(state.layout_unchanged && state.active_slot_unchanged,
         "the submission receipt retains the exact pre-transaction UID/slot/protection baseline for SQL and reconnect comparison");
     return SDGO_GAME_TEST_PASS;

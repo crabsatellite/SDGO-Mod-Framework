@@ -1024,8 +1024,7 @@ private:
         if (snapshot.busy ||
             !snapshot.needs_relog)
             return kWaitingAction;
-        if (snapshot.visible ||
-            snapshot.armed)
+        if (snapshot.armed)
             return kGbSubmitStateMismatch;
         PushReceipt(
             context,

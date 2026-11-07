@@ -243,7 +243,6 @@ void CompleteGbSubmission()
     g_gbSubmitPending = false;
     g_exchange = false;
     g_snapshot.busy = 0;
-    g_snapshot.visible = 0;
     g_snapshot.needs_relog = 1;
 }
 
@@ -589,7 +588,7 @@ void TestExplicitGbCommitRequiresTwoConfirmsAndRelog()
     Check(
         pages.PollHangarCommitGB(&context) ==
             PageTestActions::kGbSubmittedRelogRequired,
-        "GB submission passes only after the native page closes and requires relog");
+        "GB submission passes after the exchange panel closes and requires relog");
     const auto state = pages.State();
     Check(
         state.scope ==
@@ -597,9 +596,9 @@ void TestExplicitGbCommitRequiresTwoConfirmsAndRelog()
                     kScopeGbSubmittedRelogRequired &&
             state.gb_preview_removed == 1 &&
             state.snapshot.needs_relog &&
-            !state.snapshot.visible &&
+            state.snapshot.visible &&
             !state.snapshot.busy,
-        "explicit GB receipt preserves the reviewed count and final relog state");
+        "explicit GB receipt preserves the reviewed count, native page visibility and final relog state");
     Check(
         g_actionCalls[
             SDGO_HANGAR_GAME_TEST_ACTION_CONFIRM] == 2 &&
