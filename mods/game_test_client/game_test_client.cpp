@@ -22,6 +22,7 @@
 #include "unit_select_actions.h"
 #include "active_selection_observer.h"
 #include "shop_catalog_actions.h"
+#include "operator_session_actions.h"
 #include "sdgo/net_route_observer.h"
 #include "mission_flow_actions.h"
 #include "sdgo/mission_ai_client_observer.h"
@@ -108,6 +109,12 @@ bool randomLoadout=false;
 ShopCatalogActions shopCatalog;
 bool testShopCatalog=false;
 bool shopVisualOnly=false;
+ShopCatalogActions operatorShopCatalog;
+OperatorFlowActions operatorFlow;
+OperatorInventoryActions operatorInventory;
+OperatorSessionActions operatorSession;
+OperatorSessionActions::Config operatorSessionConfig{};
+bool testOperatorFlow=false;
 MissionFlowActions mission;
 uint16_t missionMode=0;
 uint32_t missionGameModeId=0;
@@ -229,8 +236,54 @@ struct MotionSample {
 };
 std::vector<MotionSample> motionSamples;
 
+bool RunKeyPresent(
+    const std::wstring& job,
+    const wchar_t* key) {
+    if(!key || !*key)return false;
+    std::vector<wchar_t> section(65536);
+    const DWORD length=GetPrivateProfileSectionW(
+        L"run",section.data(),static_cast<DWORD>(section.size()),job.c_str());
+    if(length>=section.size()-2)return true;
+    const size_t keyLength=wcslen(key);
+    for(const wchar_t* entry=section.data();*entry;entry+=wcslen(entry)+1) {
+        const wchar_t* equals=wcschr(entry,L'=');
+        const size_t entryLength=equals ? static_cast<size_t>(equals-entry):wcslen(entry);
+        if(entryLength==keyLength && !wmemcmp(entry,key,keyLength))return true;
+    }
+    return false;
+}
+
+bool IsLoopbackEndpoint(const std::wstring& job) {
+    wchar_t endpoint[64]{};
+    const auto length=GetPrivateProfileStringW(L"run",L"endpoint",L"",endpoint,64,job.c_str());
+    if(!length || length>=63)return false;
+    const wchar_t* colon=wcsrchr(endpoint,L':');
+    if(!colon || colon==endpoint || !colon[1])return false;
+    wchar_t* portEnd=nullptr;errno=0;
+    const auto port=wcstoul(colon+1,&portEnd,10);
+    if(errno || !portEnd || *portEnd || port<1 || port>65535)return false;
+    std::wstring address(
+        endpoint,
+        static_cast<size_t>(colon-endpoint));
+    unsigned octets[4]{};size_t part=0,start=0;bool complete=false;
+    while(part<4) {
+        const auto end=address.find(L'.',start);
+        const auto text=address.substr(start,end==std::wstring::npos ? std::wstring::npos:end-start);
+        if(text.empty() || (text.size()>1 && text.front()==L'0') ||
+           text.find_first_not_of(L"0123456789")!=std::wstring::npos)return false;
+        wchar_t* valueEnd=nullptr;errno=0;
+        const auto value=wcstoul(text.c_str(),&valueEnd,10);
+        if(errno || !valueEnd || *valueEnd || value>255)return false;
+        octets[part++]=static_cast<unsigned>(value);
+        if(end==std::wstring::npos){complete=true;break;}
+        start=end+1;
+    }
+    return complete && part==4 && octets[0]==127;
+}
+
 bool LoadPlan() {
     const std::wstring job = sdgo_test::directory + L"\\run.ini";
+    if(!OperatorSessionActions::LoadConfig(job,&operatorSessionConfig,&testOperatorFlow))return false;
     const std::wstring blueprintIni=sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini";
     const auto probeCount=GetPrivateProfileIntW(L"settings",L"NativeIdProbeCount",0,blueprintIni.c_str());
     const auto probeChunks=GetPrivateProfileIntW(L"settings",L"NativeIdProbeChunks",0,blueprintIni.c_str());
@@ -292,6 +345,7 @@ bool LoadPlan() {
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
     captureNativeFrames=GetPrivateProfileIntW(L"settings",L"CaptureNativeFrames",0,
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
+    operatorSessionConfig.capture_frames=captureNativeFrames || testOperatorFlow;
     testUnitPresentations=GetPrivateProfileIntW(L"settings",L"UnitPresentations",0,
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
     unitPresentationTarget=GetPrivateProfileIntW(L"settings",L"UnitPresentationTarget",0,
@@ -332,7 +386,7 @@ bool LoadPlan() {
     reviewFootage=GetPrivateProfileIntW(L"run",L"review_footage",0,job.c_str())!=0;
     quietLoopback=verifyQuietRuntime && GetPrivateProfileIntW(L"run",L"quiet_loopback",0,job.c_str())==1;
     fpsOnly=sdgo_test::suiteId=="native-fps-limit";
-    if(collectionPreviewOnly && fpsOnly)return false;
+    if((collectionPreviewOnly || testOperatorFlow) && fpsOnly)return false;
     if (fpsOnly) {
         fpsRequested=GetPrivateProfileIntW(L"run",L"fps_cap",0,job.c_str());
         const int enabled=GetPrivateProfileIntW(L"run",L"fps_mod_enabled",-1,job.c_str());
@@ -461,6 +515,7 @@ bool LoadPlan() {
     wchar_t registrationState[32] = {};
     GetPrivateProfileStringW(L"registration", L"state", L"", registrationState, 32, accountPath.c_str());
     importedExistingAccount = !wcscmp(registrationState, L"existing_account");
+    const bool operatorAccountEligible=importedExistingAccount || !wcscmp(registrationState,L"registered");
     passwordIsMd5 = !wcscmp(passwordFormat, L"md5");
     if (!passwordIsMd5 && wcscmp(passwordFormat, L"plain")) return false;
     if (passwordIsMd5) {
@@ -546,6 +601,17 @@ bool LoadPlan() {
     expectFirstFailure = GetPrivateProfileIntW(L"run", L"expect_first_fail", 0, job.c_str()) != 0;
     if (importedExistingAccount && (retryCount != 1 || expectFirstFailure)) return false;
     if (expectFirstFailure && retryCount != 2) return false;
+    if(testOperatorFlow) {
+        const bool specialScope=missionMode || bootstrapOnly || battleshipOnly || giftRequestsOnly || deckOnly ||
+            friendsOnly || roomTitlesOnly || roomStylePreview || collectionDraw || collectionPreviewOnly ||
+            activityDrawOnce || hangarPagesOnly || randomLoadout || sameRoomRematch || testShopCatalog ||
+            testUnitPresentations || captureUnitPortraits || unitPagesOnly || unitAcquisitionConfig.machine_kind ||
+            blueprintConfig.recipe || !nativeIdProbeIds.empty() || !nativeRecordLifecycleIds.empty() ||
+            RunKeyPresent(job,L"unit_scenario_sha256") || RunKeyPresent(job,L"ai_pool_level") ||
+            RunKeyPresent(job,L"ai_difficulty") || RunKeyPresent(job,L"ai_layout");
+        if(!operatorAccountEligible || retryCount!=1 || expectFirstFailure || !verifyDirectNetwork ||
+           !IsLoopbackEndpoint(job) || specialScope)return false;
+    }
     if(missionMode) {
         wchar_t forbidden[128]{};
         if(GetPrivateProfileStringW(L"run",L"mode_sequence",L"",forbidden,128,job.c_str()) ||
@@ -2007,6 +2073,357 @@ int ReadShopCatalog(const SdgoGameTestContextV1* context) {
     return SDGO_GAME_TEST_PASS;
 }
 const SdgoGameTestCaseV1 shopCatalogCase{"pages.shop.catalog",300000,&ReadShopCatalog};
+bool __cdecl OperatorConfirmationCaptureReady(
+    void* context) {
+    const auto* flow=
+        static_cast<const OperatorFlowActions*>(context);
+    return flow &&
+        flow->ConfirmationReadyForCapture();
+}
+OperatorSessionActions::CaptureResult __cdecl CaptureOperatorCheckpoint(
+    void* captureContext,
+    OperatorSessionActions::Checkpoint checkpoint,
+    const SdgoGameTestContextV1* context) {
+    static uint32_t completed=0;
+    static OperatorSessionActions::Checkpoint active=
+        static_cast<OperatorSessionActions::Checkpoint>(0);
+    const uint32_t bit=1u<<static_cast<uint32_t>(checkpoint);
+    const wchar_t* name=checkpoint==OperatorSessionActions::kOptionsCheckpoint ? L"operator-options.bmp" :
+        checkpoint==OperatorSessionActions::kConfirmationCheckpoint ? L"operator-confirmation.bmp" :
+        checkpoint==OperatorSessionActions::kNicknameCheckpoint ? L"operator-nickname.bmp" :
+        checkpoint==OperatorSessionActions::kActiveCheckpoint ? L"operator-active.bmp" :
+        checkpoint==OperatorSessionActions::kConfirmationTimeoutCheckpoint ? L"operator-confirmation-timeout.bmp" : nullptr;
+    if(!name)return OperatorSessionActions::kCaptureFailed;
+    const auto folder=sdgo_test::directory+L"\\visual";
+    const auto path=folder+L"\\"+name;
+    if(completed&bit)return OperatorSessionActions::kCaptureReady;
+    if(active && active!=checkpoint)return OperatorSessionActions::kCaptureFailed;
+    if(!active) {
+        if(!CreateDirectoryW(folder.c_str(),nullptr) && GetLastError()!=ERROR_ALREADY_EXISTS)
+            return OperatorSessionActions::kCaptureFailed;
+        const bool queued=
+            checkpoint==OperatorSessionActions::kConfirmationCheckpoint ?
+            quietGraphics.CaptureNextFrameWhen(
+                path.c_str(),
+                &OperatorConfirmationCaptureReady,
+                captureContext) :
+            quietGraphics.CaptureNextFrame(path.c_str());
+        if(!queued)
+            return OperatorSessionActions::kCaptureFailed;
+        active=checkpoint;
+        char message[128]{};sprintf_s(message,"queued native operator checkpoint=%u",static_cast<unsigned>(checkpoint));
+        context->Observe(message);
+        return OperatorSessionActions::kCapturePending;
+    }
+    const HRESULT captured=quietGraphics.CaptureFrameResult();
+    if(captured==E_PENDING)return OperatorSessionActions::kCapturePending;
+    if(FAILED(captured))return OperatorSessionActions::kCaptureFailed;
+    completed|=bit;active=static_cast<OperatorSessionActions::Checkpoint>(0);
+    char message[128]{};sprintf_s(message,"saved native operator checkpoint=%u",static_cast<unsigned>(checkpoint));
+    context->Observe(message);
+    return OperatorSessionActions::kCaptureReady;
+}
+int __cdecl RunOperatorFlow(const SdgoGameTestContextV1* context) {
+    const auto result=operatorSession.Poll(context);
+    const auto state=operatorSession.State();
+    static uint32_t previous=UINT32_MAX,stage=UINT32_MAX,namingReply=UINT32_MAX,activationReply=UINT32_MAX;
+    static uint32_t shopNavigation=UINT32_MAX,shopResult=UINT32_MAX,shopStage=UINT32_MAX;
+    static uint32_t shopFailure=UINT32_MAX,shopProbe=UINT32_MAX,shopReady=UINT32_MAX;
+    static uint32_t shopBriefUnit=UINT32_MAX,shopFullUnit=UINT32_MAX;
+    static uint32_t shopNameStatus=UINT32_MAX,shopNameRow=UINT32_MAX,shopNameOccurrences=UINT32_MAX;
+    static uint32_t purchaseResult=UINT32_MAX,purchaseStage=UINT32_MAX;
+    static uint32_t purchaseOptions=UINT32_MAX,purchaseConfirmation=UINT32_MAX;
+    static uint32_t purchaseMutation=UINT32_MAX,purchaseRequest0931=UINT32_MAX;
+    static uint32_t purchaseActiveCount=UINT32_MAX,purchasePendingCount=UINT32_MAX;
+    static uint32_t purchaseActiveMatches=UINT32_MAX,purchasePendingMatches=UINT32_MAX;
+    static uint32_t purchaseExpectedVtable=UINT32_MAX,purchasePendingVtable=UINT32_MAX;
+    static uint32_t purchasePendingState=UINT32_MAX,purchasePendingExpected=UINT32_MAX;
+    static uint32_t purchaseConfirmationState=UINT32_MAX,purchaseConfirmationProduct=UINT32_MAX;
+    static uint32_t purchaseConfirmationOption=UINT32_MAX,purchaseConfirmationReadiness=UINT32_MAX;
+    static uint32_t purchasePopupDiagnostic=UINT32_MAX;
+    static uint32_t inventoryResult=UINT32_MAX,inventoryCurrentPage=UINT32_MAX;
+    static uint32_t inventoryTargetPage=UINT32_MAX,inventoryPageActions=UINT32_MAX;
+    static uint32_t inventoryReady=UINT32_MAX;
+    static uint32_t inventoryControlMask=UINT32_MAX;
+    static uint32_t inventoryReplySequence=UINT32_MAX,inventoryReplyPage=UINT32_MAX;
+    static uint32_t inventoryReplySize=UINT32_MAX,inventoryReplyCount=UINT32_MAX;
+    static int32_t shopCapacity=INT32_MIN;
+    static uint64_t shopBriefUid=UINT64_MAX,shopFullUid=UINT64_MAX;
+    const auto purchase=operatorFlow.State();
+    const auto inventory=operatorInventory.State();
+    const uint32_t inventoryControl=
+        (inventory.page_control_found?1u:0u) |
+        (inventory.page_control_parent?2u:0u) |
+        (inventory.page_control_name?4u:0u) |
+        (inventory.page_control_visible?8u:0u) |
+        (inventory.page_control_enabled?16u:0u);
+    if(previous!=result || stage!=state.stage || namingReply!=state.naming_reply_sequence ||
+       activationReply!=state.activation_reply_sequence ||
+       shopNavigation!=state.shop_navigation_result || shopResult!=state.shop_result ||
+       shopStage!=state.shop_stage || shopFailure!=state.shop_inventory_failure ||
+       shopProbe!=state.shop_inventory_probe_slot || shopReady!=state.shop_inventory_ready ||
+       shopNameStatus!=state.shop_native_name_status ||
+       shopNameRow!=state.shop_native_name_row_id ||
+       shopNameOccurrences!=state.shop_native_name_occurrences ||
+       shopCapacity!=state.shop_inventory_capacity ||
+       shopBriefUnit!=state.shop_inventory_brief_unit || shopFullUnit!=state.shop_inventory_full_unit ||
+       shopBriefUid!=state.shop_inventory_brief_uid || shopFullUid!=state.shop_inventory_full_uid ||
+       inventoryResult!=inventory.result || inventoryCurrentPage!=inventory.current_page ||
+       inventoryTargetPage!=inventory.target_page || inventoryPageActions!=inventory.page_actions ||
+       inventoryReady!=inventory.inventory_ready || inventoryControlMask!=inventoryControl ||
+       inventoryReplySequence!=inventory.page_reply_sequence ||
+       inventoryReplyPage!=inventory.page_reply_page ||
+       inventoryReplySize!=inventory.page_reply_size ||
+       inventoryReplyCount!=inventory.page_reply_count) {
+        char message[1280]{};
+        sprintf_s(message,
+            "native operator session result=%s stage=%u purchase=%u target=%llu/%u/%u nickname=%u/%u req=%u reply=%04X/%u activation=%u req=%u reply=%04X/%u profile=%u wallet=%u count=%u/%u shopNav=%s shop=%s/%u inventory=%u/%u capacity=%d probe=%u/page%u brief=%u/%u/%llu full=%u/%u/%llu opInv=%u ready=%u page=%u targetPage=%u pageActions=%u pageReply=%u/%u/%u/%u empty=%u pageControl=%02X kind=%u control=%08X parent=%08X root=%08X name=%s",
+            OperatorSessionActions::ResultName(result),state.stage,state.purchase_authorized,
+            static_cast<unsigned long long>(state.target_uid),state.target_slot,state.target_enabled,
+            state.nickname_preserved,state.nickname_submitted,state.naming_request_sequence,
+            state.naming_reply_opcode,state.naming_reply_sequence,state.activation_submitted,
+            state.activation_request_sequence,state.activation_reply_opcode,state.activation_reply_sequence,
+            state.profile_consistent,state.wallet_consistent,state.baseline_operator_count,state.current_operator_count,
+            HangarNavigation::ResultName(static_cast<HangarNavigation::Result>(state.shop_navigation_result)),
+            ShopCatalogActions::ResultName(static_cast<ShopCatalogActions::Result>(state.shop_result)),
+            state.shop_stage,state.shop_inventory_failure,state.shop_inventory_ready,state.shop_inventory_capacity,
+            state.shop_inventory_probe_slot,state.shop_inventory_probe_page,
+            state.shop_inventory_brief_unit,state.shop_inventory_brief_slot,
+            static_cast<unsigned long long>(state.shop_inventory_brief_uid),
+            state.shop_inventory_full_unit,state.shop_inventory_full_slot,
+            static_cast<unsigned long long>(state.shop_inventory_full_uid),
+            inventory.result,inventory.inventory_ready,inventory.current_page,
+            inventory.target_page,inventory.page_actions,
+            inventory.page_reply_sequence,inventory.page_reply_page,
+            inventory.page_reply_size,inventory.page_reply_count,
+            inventory.page_reply_empty,inventoryControl,
+            inventory.page_control_kind,inventory.page_control_address,
+            inventory.page_control_parent_address,inventory.page_control_root_address,
+            inventory.page_control_actual_name);
+        context->Observe(message);
+        if (inventory.result == OperatorInventoryActions::kNamingPopupMismatch) {
+            const auto scan = operatorInventory.InputPopupState();
+            char diagnostic[384]{};
+            sprintf_s(diagnostic, "native operator input popup scan=%u list=%u active=%u pending=%u expectedVtable=%08X actual=%u/%llu state=%u",
+                scan.code, scan.list, scan.active_count, scan.pending_count, scan.expected_vtable,
+                scan.found_operator, static_cast<unsigned long long>(scan.found_uid), scan.native_state);
+            context->Observe(diagnostic);
+        }
+        if(state.shop_product_id || state.shop_native_name_status) {
+            char details[512]{};
+            sprintf_s(details,
+                "native operator shop title product=%u status=%u grid=%u row=%u occurrences=%u scanned=%u stop=%u duplicateRows=%u",
+                state.shop_product_id,state.shop_native_name_status,
+                state.shop_native_name_grid_ready,state.shop_native_name_row_id,
+                state.shop_native_name_occurrences,state.shop_native_name_rows_scanned,
+                state.shop_native_name_scan_stop_id,state.shop_duplicate_native_title_rows);
+            context->Observe(details);
+            const auto observeUtf16=[&](const char* label,const std::wstring& value) {
+                std::string text="native operator shop ";
+                text+=label;
+                text+=" UTF16LE=";
+                for(const wchar_t codeUnit:value) {
+                    char hex[5]{};
+                    sprintf_s(hex,"%02X%02X",
+                        static_cast<unsigned>(codeUnit)&0xFFu,
+                        (static_cast<unsigned>(codeUnit)>>8)&0xFFu);
+                    text+=hex;
+                }
+                context->Observe(text.c_str());
+            };
+            observeUtf16("sealed-name",state.shop_sealed_name);
+            observeUtf16("native-name",state.shop_native_name);
+            observeUtf16("duplicate-native-name",state.shop_duplicate_native_name);
+            observeUtf16("visible-name",state.shop_visible_name);
+        }
+        previous=result;stage=state.stage;namingReply=state.naming_reply_sequence;
+        activationReply=state.activation_reply_sequence;
+        shopNavigation=state.shop_navigation_result;shopResult=state.shop_result;shopStage=state.shop_stage;
+        shopFailure=state.shop_inventory_failure;shopProbe=state.shop_inventory_probe_slot;
+        shopReady=state.shop_inventory_ready;shopCapacity=state.shop_inventory_capacity;
+        shopNameStatus=state.shop_native_name_status;shopNameRow=state.shop_native_name_row_id;
+        shopNameOccurrences=state.shop_native_name_occurrences;
+        shopBriefUnit=state.shop_inventory_brief_unit;shopFullUnit=state.shop_inventory_full_unit;
+        shopBriefUid=state.shop_inventory_brief_uid;shopFullUid=state.shop_inventory_full_uid;
+        inventoryResult=inventory.result;inventoryReady=inventory.inventory_ready;
+        inventoryCurrentPage=inventory.current_page;inventoryTargetPage=inventory.target_page;
+        inventoryPageActions=inventory.page_actions;
+        inventoryControlMask=inventoryControl;
+        inventoryReplySequence=inventory.page_reply_sequence;
+        inventoryReplyPage=inventory.page_reply_page;
+        inventoryReplySize=inventory.page_reply_size;
+        inventoryReplyCount=inventory.page_reply_count;
+    }
+    if(purchaseResult!=purchase.result || purchaseStage!=purchase.stage ||
+       purchaseOptions!=purchase.options_actions ||
+       purchaseConfirmation!=purchase.confirmation_actions ||
+       purchaseMutation!=purchase.mutation_attempted ||
+       purchaseRequest0931!=purchase.request_0931_sequence ||
+       purchaseActiveCount!=purchase.managed_active_count ||
+       purchasePendingCount!=purchase.managed_pending_count ||
+       purchaseActiveMatches!=purchase.managed_active_matches ||
+       purchasePendingMatches!=purchase.managed_pending_matches ||
+       purchaseExpectedVtable!=purchase.managed_expected_vtable_rva ||
+       purchasePendingVtable!=purchase.managed_pending_first_vtable_rva ||
+       purchasePendingState!=purchase.managed_pending_first_native_state ||
+       purchasePendingExpected!=purchase.managed_pending_first_matches_expected ||
+       purchaseConfirmationState!=purchase.confirmation_native_state ||
+       purchaseConfirmationProduct!=purchase.confirmation_product_observed ||
+       purchaseConfirmationOption!=purchase.confirmation_option_observed ||
+       purchaseConfirmationReadiness!=purchase.confirmation_readiness ||
+       purchasePopupDiagnostic!=purchase.popup_scan_diagnostic) {
+        char message[768]{};
+        sprintf_s(message,
+            "native operator purchase result=%s stage=%u options=%u/%u confirmation=%u/%u mutation=%u req0931=%u reply074D=%u req0758=%u reply0574=%u managed=%u/%u matches=%u/%u pendingVtableRva=%08X expectedVtableRva=%08X pendingExpected=%u pendingState=%08X confirmationState=%08X product=%u option=%u ready=%03X popupDiag=%u",
+            OperatorFlowActions::ResultName(
+                static_cast<OperatorFlowActions::Result>(purchase.result)),
+            purchase.stage,purchase.options_validated,purchase.options_actions,
+            purchase.confirmation_validated,purchase.confirmation_actions,
+            purchase.mutation_attempted,purchase.request_0931_sequence,
+            purchase.reply_074d_sequence,purchase.request_0758_sequence,
+            purchase.reply_0574_sequence,purchase.managed_active_count,
+            purchase.managed_pending_count,purchase.managed_active_matches,
+            purchase.managed_pending_matches,purchase.managed_pending_first_vtable_rva,
+            purchase.managed_expected_vtable_rva,
+            purchase.managed_pending_first_matches_expected,
+            purchase.managed_pending_first_native_state,
+            purchase.confirmation_native_state,
+            purchase.confirmation_product_observed,
+            purchase.confirmation_option_observed,
+            purchase.confirmation_readiness,
+            purchase.popup_scan_diagnostic);
+        context->Observe(message);
+        purchaseResult=purchase.result;purchaseStage=purchase.stage;
+        purchaseOptions=purchase.options_actions;
+        purchaseConfirmation=purchase.confirmation_actions;
+        purchaseMutation=purchase.mutation_attempted;
+        purchaseRequest0931=purchase.request_0931_sequence;
+        purchaseActiveCount=purchase.managed_active_count;
+        purchasePendingCount=purchase.managed_pending_count;
+        purchaseActiveMatches=purchase.managed_active_matches;
+        purchasePendingMatches=purchase.managed_pending_matches;
+        purchaseExpectedVtable=purchase.managed_expected_vtable_rva;
+        purchasePendingVtable=purchase.managed_pending_first_vtable_rva;
+        purchasePendingState=purchase.managed_pending_first_native_state;
+        purchasePendingExpected=purchase.managed_pending_first_matches_expected;
+        purchaseConfirmationState=purchase.confirmation_native_state;
+        purchaseConfirmationProduct=purchase.confirmation_product_observed;
+        purchaseConfirmationOption=purchase.confirmation_option_observed;
+        purchaseConfirmationReadiness=purchase.confirmation_readiness;
+        purchasePopupDiagnostic=purchase.popup_scan_diagnostic;
+    }
+    if(result>=OperatorSessionActions::kInvalidContext || result==OperatorSessionActions::kUnbound) {
+        context->Assert(0,"the sealed operator flow preserves original UI, transport, reply and profile ownership");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if(result!=OperatorSessionActions::kComplete)return SDGO_GAME_TEST_WAIT;
+    const bool purchaseGate=!operatorSessionConfig.purchase ||
+        (state.shop_handed_off && purchase.request_0931_sequence && purchase.reply_074d_sequence &&
+         purchase.request_0758_sequence && purchase.reply_0574_sequence &&
+         purchase.original_0574_completed && purchase.wallet_verified && purchase.operator_verified);
+    const bool namingGate=!state.nickname_submitted ||
+        (state.naming_request_sequence && state.naming_reply_opcode==0x08CB && state.naming_reply_sequence);
+    const bool activationGate=!state.activation_submitted ||
+        (state.activation_request_sequence && state.activation_reply_opcode==0x08A0 && state.activation_reply_sequence);
+    const bool captureGate=!operatorSessionConfig.capture_frames ||
+        state.last_checkpoint==OperatorSessionActions::kActiveCheckpoint;
+    const bool accepted=state.target_uid && state.profile_consistent && state.wallet_consistent &&
+        purchaseGate && namingGate && activationGate && captureGate &&
+        (operatorSessionConfig.purchase ? state.shop_handed_off!=0 : state.shop_handed_off==0);
+    context->Assert(accepted,
+        operatorSessionConfig.purchase ?
+        "the original shop purchase, optional native nickname and activation complete for exactly one new operator UID" :
+        "the unique already-owned operator is preserved, optionally named once and activated through original native handlers without another purchase");
+    return accepted ? SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+}
+const SdgoGameTestCaseV1 operatorFlowCase{"setup.operator_flow",300000,&RunOperatorFlow};
+
+bool BindOperatorSession(
+    const SdgoApi* api,
+    SdgoMod* mod) {
+    if(!testOperatorFlow)return true;
+    if(!api || !api->Symbol ||
+       !operatorShopCatalog.Bind(api,mod))
+        return false;
+    if(operatorSessionConfig.purchase &&
+       !operatorShopCatalog.ConfigureOperatorPreview(
+           sdgo_test::directory+L"\\inputs\\operator-shop.ini",
+           sdgo_test::directory+L"\\inputs\\operator-shop-display.ini"))
+        return false;
+
+    const auto& native=operatorShopCatalog.NativeBindings();
+    OperatorInventoryActions::Bindings inventoryBindings{};
+    inventoryBindings.profile_pointer=native.profile_pointer;
+    inventoryBindings.service_managed_pointer=native.service_managed_pointer;
+    inventoryBindings.service_find_by_name=native.service_find_by_name;
+    inventoryBindings.native_wstring_ctor=native.native_wstring_ctor;
+    inventoryBindings.native_wstring_dtor=native.native_wstring_dtor;
+    inventoryBindings.native_ui_find_control=native.native_ui_find_control;
+    inventoryBindings.edit_set_text=native.edit_set_text;
+    inventoryBindings.edit_get_text=native.edit_get_text;
+    inventoryBindings.mainframe_vtable=api->Symbol(mod,"flow.hangar_mainframe_vtable");
+    inventoryBindings.mainframe_callback=
+        reinterpret_cast<OperatorInventoryActions::UiCallbackFn>(
+            api->Symbol(mod,"flow.hangar_mainframe_callback"));
+    inventoryBindings.inventory_vtable=api->Symbol(mod,"flow.operator_inventory_vtable");
+    inventoryBindings.inventory_callback=
+        reinterpret_cast<OperatorInventoryActions::UiCallbackFn>(
+            api->Symbol(mod,"flow.operator_inventory_callback"));
+    inventoryBindings.input_vtable=api->Symbol(mod,"flow.operator_input_vtable");
+    inventoryBindings.input_callback=
+        reinterpret_cast<OperatorInventoryActions::UiCallbackFn>(
+            api->Symbol(mod,"flow.operator_input_callback"));
+    inventoryBindings.list_mouse_business=
+        reinterpret_cast<OperatorInventoryActions::ListMouseBusinessFn>(
+            api->Symbol(mod,"flow.unit_list_mouse_business"));
+    inventoryBindings.list_item_by_index=
+        reinterpret_cast<OperatorInventoryActions::ListItemByIndexFn>(
+            api->Symbol(mod,"flow.unit_list_item_by_index"));
+    if(!operatorInventory.Bind(inventoryBindings,&hangarNavigation))
+        return false;
+
+    OperatorFlowActions::Config purchaseConfig{};
+    purchaseConfig.operator_id=operatorSessionConfig.operator_id;
+    purchaseConfig.product_id=operatorSessionConfig.product_id;
+    purchaseConfig.option_id=operatorSessionConfig.option_id;
+    purchaseConfig.category_id=operatorSessionConfig.category_id;
+    purchaseConfig.price=operatorSessionConfig.price;
+    purchaseConfig.validity=operatorSessionConfig.validity;
+    purchaseConfig.payment=operatorSessionConfig.payment;
+    purchaseConfig.ui_timeout_ms=operatorSessionConfig.ui_timeout_ms;
+    purchaseConfig.network_timeout_ms=operatorSessionConfig.network_timeout_ms;
+    purchaseConfig.readback_timeout_ms=operatorSessionConfig.readback_timeout_ms;
+    OperatorFlowActions::Bindings purchaseBindings{};
+    purchaseBindings.profile_pointer=native.profile_pointer;
+    purchaseBindings.service_managed_pointer=native.service_managed_pointer;
+    purchaseBindings.image_base=
+        reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    purchaseBindings.options_vtable=native.buy_vtable;
+    purchaseBindings.options_callback=native.buy_callback;
+    purchaseBindings.confirmation_vtable=
+        api->Symbol(mod,"flow.shop_confirmation_vtable");
+    purchaseBindings.confirmation_callback=
+        reinterpret_cast<OperatorFlowActions::UiCallbackFn>(
+            api->Symbol(mod,"flow.shop_confirmation_callback"));
+    purchaseBindings.inventory_context=&operatorInventory;
+    purchaseBindings.read_inventory=&OperatorInventoryActions::ReadInventory;
+    if(!operatorFlow.Configure(purchaseConfig) ||
+       !operatorFlow.Bind(purchaseBindings,&actions) ||
+       !operatorSession.Bind(
+           operatorSessionConfig,
+           &actions,
+           &hangarNavigation,
+           &operatorShopCatalog,
+           &operatorFlow,
+           &operatorInventory,
+           native.profile_pointer,
+           &CaptureOperatorCheckpoint,
+           &operatorFlow) ||
+       !operatorSession.InstallHooks(api,mod))
+        return false;
+    return true;
+}
+
 const SdgoGameTestCaseV1 pageCases[]={
     {"pages.hangar.read",120000,&ReadHangarPage},
     {"pages.hangar.preview",60000,&PreviewHangarPage},
@@ -3509,6 +3926,7 @@ void RegisterPlannedCases() {
     }
     if (pagesOnly) {
         plannedCases.assign(realCases,realCases+3);
+        if(testOperatorFlow)plannedCases.push_back(operatorFlowCase);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
         if(hangarPagesOnly) {
             plannedCases.insert(plannedCases.end(),std::begin(pageCases),std::begin(pageCases)+3);
@@ -3554,10 +3972,13 @@ void RegisterPlannedCases() {
     }
     const bool needsShip = battleshipOnly || deckOnly || std::find(requestedModes.begin(),requestedModes.end(),6)!=requestedModes.end() ||
         std::find(requestedModes.begin(),requestedModes.end(),7)!=requestedModes.end();
-    if (requestedModes.size() == 1 && !needsShip && !giftRequestsOnly && !playUnitUid && !sameRoomRematch && ocAllocateStat<0 && !ocPanel) return;
-    const size_t count = 4 + requestedModes.size() * (sameRoomRematch?8:4);
+    if (requestedModes.size() == 1 && !needsShip && !giftRequestsOnly &&
+        !playUnitUid && !sameRoomRematch && !testOperatorFlow && ocAllocateStat<0 && !ocPanel) return;
+    const size_t count = 4 + (testOperatorFlow?1:0) +
+        requestedModes.size() * (sameRoomRematch?8:4);
     caseNames.reserve(count); plannedCases.reserve(count);
     for (unsigned i = 0; i < 3; ++i) plannedCases.push_back(realCases[i]);
+    if(testOperatorFlow)plannedCases.push_back(operatorFlowCase);
     if(playUnitUid && ocAllocateStat>=0)plannedCases.push_back(ocAllocateCase);
     if(playUnitUid)plannedCases.push_back(playUnitCase);
     AppendUnitPresentations();
@@ -3856,6 +4277,7 @@ SDGO_MOD_ENTRY {
         ((randomLoadout || playUnitUid) && !activeSelection.Bind(api,mod)) ||
         (testShopCatalog && (!shopCatalog.Bind(api,mod) || !shopCatalog.Configure(
             sdgo_test::directory+L"\\inputs\\shop-assertions.ini",sdgo_test::directory+L"\\inputs\\shop-runtime-display.ini") || shopCatalog.VisualOnly()!=shopVisualOnly)) ||
+         (testOperatorFlow && !BindOperatorSession(api,mod)) ||
         (roomTitlesOnly && !roomTitles.Bind(api,mod,&actions)) ||
         (!missionMode && !rooms.Bind(api, mod, &actions, config)) ||
         (missionRespawns && !rooms.BindBattleEndObserver(api,mod,&actions)) ||

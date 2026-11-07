@@ -11,6 +11,7 @@ import zlib
 OP_SIZE = 1671
 ITEM_SIZE = 614
 SPRITE_FIELDS = [(205, 54), (313, 54), (421, 54), (533, 50), (633, 50), (733, 50), (833, 50)]
+SPR_TEXTURE_WCHARS = 32
 
 
 def wchar(data, offset, capacity):
@@ -54,7 +55,7 @@ class Assets:
     @functools.lru_cache(maxsize=128)
     def read(self, name):
         name = name.replace("\\", "/").lower()
-        if not re.fullmatch(r"(?:gdrs|sprs|txrs)/[0-9]+\.(?:gdt|spr|txr)", name):
+        if not re.fullmatch(r"(?:gdrs/[0-9]+\.gdt|sprs/[0-9]+\.spr|txrs/[0-9]+\.txr|sdrs/[0-9]+\.zsd)", name):
             raise ValueError("无效资源路径")
         loose = self.root.joinpath(*name.split("/"))
         if loose.exists():
@@ -162,5 +163,5 @@ def validate_png(data):
 def sprite_binary(texture_path, width, height):
     out = bytearray(176)
     struct.pack_into("<5I4f", out, 0, 10000, 1, 20, height, width, 0, 0, 1, 1)
-    put_wchar(out, 44, 66, texture_path)
+    put_wchar(out, 44, SPR_TEXTURE_WCHARS, texture_path)
     return bytes(out)

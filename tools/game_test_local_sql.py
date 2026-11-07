@@ -5,6 +5,7 @@ connection is needed. The caller supplies an already copied TEST-ONLY tree.
 """
 from pathlib import Path
 import argparse
+import ctypes
 import json
 import os
 import re
@@ -139,16 +140,46 @@ def configure(root, name, port):
     return data
 
 
+def require_file_guard(library):
+    """Reject retired registry-only helpers before creating any SQL process."""
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.LoadLibraryExW.argtypes = (ctypes.c_wchar_p, ctypes.c_void_p, ctypes.c_uint32)
+    kernel.LoadLibraryExW.restype = ctypes.c_void_p
+    kernel.GetProcAddress.argtypes = (ctypes.c_void_p, ctypes.c_char_p)
+    kernel.GetProcAddress.restype = ctypes.c_void_p
+    kernel.FreeLibrary.argtypes = (ctypes.c_void_p,)
+    kernel.FreeLibrary.restype = ctypes.c_int
+    # Map the PE for its exports without resolving imports or executing DllMain.
+    handle = kernel.LoadLibraryExW(str(Path(library).resolve(strict=True)), None, 1)
+    if not handle:
+        raise RuntimeError('Cannot inspect the native SQL file-isolation helper.')
+    try:
+        required = (b'InitializeSqlRegistry', b'SqlFileGuardDeniedCount', b'SqlFileGuardRedirectCount')
+        if any(not kernel.GetProcAddress(handle, symbol) for symbol in required):
+            raise RuntimeError('Rebuild the current native SQL helper; registry-only helpers cannot start test SQL.')
+    finally:
+        kernel.FreeLibrary(handle)
+
+
 def start(root, binaries, master_only=False):
     data = json.loads((root / 'database/native-sql.json').read_text())
     if data['root'] != str(root):
         raise RuntimeError('A copied test needs its own configure step before starting SQL.')
+    require_file_guard(binaries / 'sql_registry.dll')
     with socket.socket() as probe:
         if probe.connect_ex(('127.0.0.1', int(data['port']))) == 0:
             raise RuntimeError('The selected test SQL endpoint is already running; reuse it.')
     engine = root / 'server/LiteSQL/MSSQL'
     (engine / 'Log').mkdir(exist_ok=True)
-    environment = dict(os.environ, SDGO_TEST_SQL_REGISTRY=data['registry'],SDGO_TEST_SQL_DATA_ROOT=str(engine/'DATA'))
+    temporary = root / 'database/tmp'
+    temporary.mkdir(parents=True, exist_ok=True)
+    environment = dict(
+        os.environ, SDGO_TEST_SQL_REGISTRY=data['registry'],
+        SDGO_TEST_SQL_ROOT=str(root),
+        SDGO_TEST_SQL_DATA_ROOT=str(engine / 'DATA'),
+        SDGO_TEST_SQL_RESOURCE_DIR=str(engine / 'Binn'),
+        TEMP=str(temporary), TMP=str(temporary),
+    )
     executable = binaries / 'sql_local.exe'
     dll = binaries / 'sql_registry.dll'
     command = [str(executable), str(dll), str(engine / 'Binn/sqlservr.exe'),

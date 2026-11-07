@@ -230,6 +230,9 @@ def _find_section(parser: configparser.ConfigParser, normalized: str) -> str | N
 
 def database_sections(path: Path) -> tuple[str, str]:
     parser = configparser.ConfigParser(interpolation=None, strict=True)
+    # Only discover section names here. Native INIs can contain both ID/id
+    # spellings; preserve their keys instead of treating them as duplicates.
+    parser.optionxform = str
     try:
         parser.read_string(path.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeError, configparser.Error) as error:
@@ -843,7 +846,7 @@ def _revalidate_apply(
 def _connect_section(server_ini: Path, normalized: str, app: str):
     import pyodbc
 
-    parser = configparser.ConfigParser(interpolation=None)
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
     parser.read(server_ini, encoding="utf-8-sig")
     section = _find_section(parser, normalized)
     if section is None:

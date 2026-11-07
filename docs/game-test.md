@@ -79,6 +79,25 @@ restore databases on every retry. The backend's `backend.json`, `private.json`
 and actual SQL files must identify the same test copy; startup checks the live
 SQL process and data-file paths.
 
+The copied SQL launcher also confines database-file operations to
+the marked test root before resuming the engine. It checks native NT file
+operations, resolved directory links and hard-link counts; registry redirection
+alone does not relocate a copied master's model, msdb or tempdb paths. Relocate
+every catalog path before normal startup. Only the two Resource database files
+are redirected to the copy's own engine directory. An invalid root or rejected
+file operation must be diagnosed rather than bypassed. The launcher rejects
+retired registry-only helpers. Windows cryptography providers retain their normal
+certificate-cache access. This is a database-file boundary for the SQL process,
+not a general filesystem sandbox or a boundary for its child programs: keep the task copy exclusive, do not change its directory links
+while it is running, and do not run shell commands through SQL. Database read
+checks cover the native `.mdf`, `.ndf` and `.ldf` filenames; startup still verifies
+the actual catalog and open-file paths.
+
+Build the x64 helper separately with `cmake -S tools/native_sql -B build/native-sql -G "Visual Studio 17 2022" -A x64`, then build Release and run
+`ctest --test-dir build/native-sql -C Release --output-on-failure` for the real
+file-I/O isolation fixture. The Python launcher supplies the root, Resource
+directory and task-local temporary directory automatically.
+
 Build `winmm_shim`, `sdgo_core`, `sdgo_data`, `pvp_ai` and `game_test_server` for
 the server stage. This example assumes the test copy already uses `127.93.0.1`
 and its private database configuration is ready:

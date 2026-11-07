@@ -3,7 +3,8 @@
 // This DLL belongs only in an isolated startup fixture. It denies every
 // outbound connect/WSASendTo call before BattleServer reaches its entry point,
 // then verifies that the real battle_rewards.dll remains loaded and its ten
-// settlement sites plus effective-damage helper are still detoured after
+// early settlement sites, mission-final site, and effective-damage helper are
+// still detoured after
 // SDBattlePlus initialization.
 #include <winsock2.h>
 #include <windows.h>
@@ -27,7 +28,7 @@ SendToFn g_send_to = nullptr;
 volatile LONG g_blocked_connect = 0;
 volatile LONG g_blocked_send_to = 0;
 
-constexpr std::array<const char*, 11> kRewardHooks = {{
+constexpr std::array<const char*, 12> kRewardHooks = {{
     "battle.rewards.augment.personal",
     "battle.rewards.augment.team",
     "battle.rewards.augment.leader",
@@ -38,6 +39,7 @@ constexpr std::array<const char*, 11> kRewardHooks = {{
     "battle.rewards.augment.tag",
     "battle.rewards.augment.death_grid",
     "battle.rewards.augment.mission",
+    "battle.rewards.final.mission",
     "battle.rewards.record_damage",
 }};
 

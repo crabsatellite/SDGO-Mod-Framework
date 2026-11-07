@@ -79,10 +79,16 @@ class SqlFixtureLedger:
         self.scope = self.fixture.scope
         self.applied = set()
         self.allowed = {7001} if mode == 'outage' else {6001} if mode == 'progression' else (
+            {9501}
+            if mode == "filter_failures"
+            else
+            {9001, 9101}
+            if mode == "native"
+            else
             {4001, 5001}
             if mode == "daily"
             else {1001, 1002, 1101, 1201, 1301, 1401, 1501, 1601,
-                  1701, 1801, 1901, 2501, 3001}
+                  1701, 1801, 1901, 2501, 3001, 8801, 8901}
         )
 
     def scope_id(self):
@@ -180,6 +186,9 @@ def run(args):
             worker.last_error='wallet_worker_stopped'
             worker.heartbeat(False)
             (runtime/'worker-offline.ready').write_text('consumer stopped; binding remains verified\n')
+        elif args.mode == "filter_failures":
+            worker.last_error = "wallet_worker_unhealthy_fixture"
+            worker.heartbeat(False)
 
         command = [str(args.exe.resolve()), str(runtime), args.mode]
         host_output = runtime / "fixture-host-output.txt"
@@ -201,6 +210,9 @@ def run(args):
                         raise RuntimeError(
                             "real WalletWorker rejected a native job"
                         )
+                    if args.mode == "filter_failures":
+                        worker.last_error = "wallet_worker_unhealthy_fixture"
+                        worker.heartbeat(False)
                     time.sleep(0.025)
                 if process.poll() is None:
                     raise TimeoutError(
@@ -222,8 +234,11 @@ def run(args):
             )
         if not worker.poll():
             raise RuntimeError("fixture wallet worker ended unhealthy")
+        if args.mode == "filter_failures":
+            worker.last_error = "wallet_worker_unhealthy_fixture"
+            worker.heartbeat(False)
 
-        expected = 1 if args.mode=='outage' else 4 if args.mode == 'progression' else 2 if args.mode == "daily" else 13
+        expected = 1 if args.mode in ('outage', 'filter_failures') else 4 if args.mode == 'progression' else 2 if args.mode in ("daily", "native") else 15
         completed = list((runtime / "jobs-completed").glob("*.ini"))
         receipts = list((runtime / "receipts").glob("*.ini"))
         outbox = list((runtime / "outbox").glob("*.ini"))
@@ -249,7 +264,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--exe", type=Path, required=True)
-    parser.add_argument("--mode", choices=("basic", "daily", "progression", "outage"), required=True)
+    parser.add_argument(
+        "--mode",
+        choices=("basic", "daily", "progression", "outage", "native",
+                 "filter_failures"),
+        required=True)
     parser.add_argument("--timeout", type=float, default=35.0)
     run(parser.parse_args())
 
