@@ -11,6 +11,7 @@
 #include <stdexcept>
 
 #include "sdgo/sdgo_api.h"
+#include "sdgo/login_showcase_api.h"
 
 namespace {
 unsigned checks=0;
@@ -39,6 +40,7 @@ const uint8_t* shown=nullptr;
 void* shownScreen=nullptr;
 int shownArg=0;
 bool missingUnitPointer=false;
+bool modelAvailable=true;
 void* Grid() {return &sets;}
 int __fastcall Find(void* grid,void*,const uint8_t** out,uint32_t id,int type,char logging) {
     Check(grid==&sets && logging==0,"production loading lookup uses its bound native grid");
@@ -54,7 +56,7 @@ void __fastcall ModelUpdate(void*,void*) {}
 void* Symbol(SdgoMod*,const char* name) {
     if(!std::strcmp(name,"grid.data"))return reinterpret_cast<void*>(&Grid);
     if(!std::strcmp(name,"grid.find"))return reinterpret_cast<void*>(&Find);
-    if(!std::strcmp(name,"model.commit"))return reinterpret_cast<void*>(&ModelUpdate);
+    if(!std::strcmp(name,"model.commit") && modelAvailable)return reinterpret_cast<void*>(&ModelUpdate);
     return nullptr;
 }
 int Hook(SdgoMod*,const char* name,void* detour,void** original) {
@@ -131,7 +133,17 @@ int wmain(int argc,wchar_t** argv) {
         HMODULE dll=LoadLibraryW(argv[2]);
         const auto entry=dll ? reinterpret_cast<SdgoModLoadFn>(GetProcAddress(dll,"SdgoModLoad")) : nullptr;
         Check(entry!=nullptr,"actual production DLL exports SdgoModLoad");
-        if(!wcscmp(argv[1],L"gate"))gate::Run(entry);
+        if(!wcscmp(argv[1],L"gate") || !wcscmp(argv[1],L"gate-no-fit")) {
+            gate::modelAvailable=!wcscmp(argv[1],L"gate");
+            const auto broker=reinterpret_cast<SdgoRegisterLoginShowcaseChooserV1Fn>(
+                GetProcAddress(dll,SDGO_LOGIN_SHOWCASE_REGISTER_EXPORT));
+            Check(broker!=nullptr,"startup fix exports its chooser broker");
+            Check(broker(+[]()->uint32_t{return 11;})==0,"chooser cannot register before startup protection is installed");
+            gate::Run(entry);
+            Check(broker(+[]()->uint32_t{return 11;})==int(gate::modelAvailable),
+                  "expanded selection requires fitting while missing fitting retains all original protection checks");
+            Check(broker(nullptr)==1,"chooser can always be unregistered");
+        }
         else if(!wcscmp(argv[1],L"relay"))relay::Run(entry);
         else return 2;
         FreeLibrary(dll);std::printf("%u production DLL ABI checks passed; no game process or UI\n",checks);return 0;

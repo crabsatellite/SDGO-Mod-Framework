@@ -36,6 +36,7 @@ public:
         kCancelAccepted = 10,
         kCancelled = 11,
         kStorageReady = 12,
+        kGbSubmittedRelogRequired = 13,
 
         kInvalidContext = 0x100,
         kSnapshotCallFailed = 0x101,
@@ -50,6 +51,9 @@ public:
         kUnsafeConfirmAccepted = 0x10A,
         kCancelStateMissing = 0x10B,
         kCancelStillVisible = 0x10C,
+        kGbCandidateMissing = 0x10D,
+        kGbArmMismatch = 0x10E,
+        kGbSubmitStateMismatch = 0x10F,
     };
 
     enum Step : uint32_t
@@ -64,6 +68,8 @@ public:
         kStepCancel = 7,
         kStepCancelHiddenProbe = 8,
         kStepStorageBinding = 9,
+        kStepArmGb = 10,
+        kStepSubmitGb = 11,
     };
 
     enum Scope : uint32_t
@@ -71,6 +77,7 @@ public:
         kScopeUnknown = 0,
         kScopeProtectedOrNoDuplicateNegative = 1,
         kScopePreviewCandidatesPresent = 2,
+        kScopeGbSubmittedRelogRequired = 3,
     };
 
     struct Exports
@@ -382,6 +389,100 @@ public:
                 : kWaitingAction);
     }
 
+    Result PollHangarCommitGB(
+        const SdgoGameTestContextV1* context)
+    {
+        Result prepared = PrepareRun(context);
+        if (IsTerminalFailure(prepared) ||
+            prepared == kHangarUnavailable)
+            return Publish(prepared);
+        if (!readReady_) {
+            const Result read = PollHangarRead(context);
+            return Publish(
+                read == kReadReady
+                    ? kWaitingAction
+                    : read);
+        }
+
+        switch (previewStage_) {
+        case kStepOpen:
+            previewStage_ = kWaitOpen;
+            return Publish(
+                IssueAccepted(
+                    context,
+                    kStepOpen,
+                    SDGO_HANGAR_GAME_TEST_ACTION_OPEN));
+        case kWaitOpen:
+            return Publish(
+                CompleteAccepted(
+                    context,
+                    kStepOpen,
+                    kStepPreviewGb,
+                    false));
+        case kStepPreviewGb:
+            previewStage_ = kWaitPreviewGb;
+            return Publish(
+                IssueAccepted(
+                    context,
+                    kStepPreviewGb,
+                    SDGO_HANGAR_GAME_TEST_ACTION_GB));
+        case kWaitPreviewGb: {
+            const Result completed =
+                CompleteAccepted(
+                    context,
+                    kStepPreviewGb,
+                    kStepNone,
+                    true);
+            if (completed != kPreviewStepDone)
+                return Publish(completed);
+            gbPreviewRemoved_ =
+                currentSnapshot_.preview_removed;
+            if (!gbPreviewRemoved_)
+                return Publish(kGbCandidateMissing);
+            scope_ = kScopePreviewCandidatesPresent;
+            previewStage_ = kStepArmGb;
+            return Publish(kPreviewStepDone);
+        }
+        case kStepArmGb:
+            previewStage_ = kWaitArmGb;
+            return Publish(
+                IssueAccepted(
+                    context,
+                    kStepArmGb,
+                    SDGO_HANGAR_GAME_TEST_ACTION_CONFIRM));
+        case kWaitArmGb: {
+            const Result completed =
+                CompleteAccepted(
+                    context,
+                    kStepArmGb,
+                    kStepSubmitGb,
+                    false);
+            if (completed != kPreviewStepDone)
+                return Publish(completed);
+            if (!currentSnapshot_.armed ||
+                currentSnapshot_.busy ||
+                currentSnapshot_.needs_relog)
+                return Publish(kGbArmMismatch);
+            return Publish(kPreviewStepDone);
+        }
+        case kStepSubmitGb:
+            previewStage_ = kWaitSubmitGb;
+            return Publish(
+                IssueAccepted(
+                    context,
+                    kStepSubmitGb,
+                    SDGO_HANGAR_GAME_TEST_ACTION_CONFIRM));
+        case kWaitSubmitGb:
+            return Publish(
+                CompleteGbSubmission(context));
+        case kCommitComplete:
+            return Publish(
+                kGbSubmittedRelogRequired);
+        default:
+            return Publish(kWaitingAction);
+        }
+    }
+
     Result PollStorageBinding(
         const SdgoGameTestContextV1* context)
     {
@@ -522,6 +623,8 @@ public:
             return "cancelled";
         case kStorageReady:
             return "storage-ready";
+        case kGbSubmittedRelogRequired:
+            return "gb-submitted-relog-required";
         case kInvalidContext:
             return "invalid-context";
         case kSnapshotCallFailed:
@@ -548,6 +651,12 @@ public:
             return "cancel-state-missing";
         case kCancelStillVisible:
             return "cancel-still-visible";
+        case kGbCandidateMissing:
+            return "gb-candidate-missing";
+        case kGbArmMismatch:
+            return "gb-arm-mismatch";
+        case kGbSubmitStateMismatch:
+            return "gb-submit-state-mismatch";
         default:
             return "unknown";
         }
@@ -574,6 +683,10 @@ public:
             return "cancel-hidden-probe";
         case kStepStorageBinding:
             return "storage-binding";
+        case kStepArmGb:
+            return "arm-gb";
+        case kStepSubmitGb:
+            return "submit-gb";
         default:
             return "none";
         }
@@ -586,6 +699,8 @@ public:
             return "protected/no-duplicate-negative";
         case kScopePreviewCandidatesPresent:
             return "preview-candidates-present";
+        case kScopeGbSubmittedRelogRequired:
+            return "gb-submitted-relog-required";
         default:
             return "unknown";
         }
@@ -598,6 +713,9 @@ private:
     static constexpr uint32_t kPreviewComplete = 0x1003;
     static constexpr uint32_t kWaitCancel = 0x1004;
     static constexpr uint32_t kCancelComplete = 0x1005;
+    static constexpr uint32_t kWaitArmGb = 0x1006;
+    static constexpr uint32_t kWaitSubmitGb = 0x1007;
+    static constexpr uint32_t kCommitComplete = 0x1008;
 
     static bool IsTerminalFailure(Result result)
     {
@@ -876,6 +994,52 @@ private:
             source.action_sequence)
             return kActionSequenceMismatch;
         return kConfirmRejected;
+    }
+
+    Result CompleteGbSubmission(
+        const SdgoGameTestContextV1* context)
+    {
+        if (pendingStep_ != kStepSubmitGb)
+            return kActionSequenceMismatch;
+        SdgoHangarGameTestSnapshotV1 snapshot = {};
+        snapshot.size = sizeof(snapshot);
+        snapshot.version =
+            SDGO_GAME_TEST_PAGE_OBSERVER_VERSION;
+        if (!exports_.hangar_snapshot(&snapshot))
+            return kSnapshotCallFailed;
+        currentSnapshot_ = snapshot;
+        if (snapshot.process_id !=
+                GetCurrentProcessId())
+            return kProcessMismatch;
+        if (snapshot.ui_thread_id !=
+                GetCurrentThreadId())
+            return kThreadMismatch;
+        if (snapshot.run_hash != runHash_)
+            return kRunMismatch;
+        if (snapshot.action_sequence !=
+                pendingActionSequence_ ||
+            snapshot.last_action !=
+                SDGO_HANGAR_GAME_TEST_ACTION_CONFIRM)
+            return kActionSequenceMismatch;
+        if (snapshot.busy ||
+            !snapshot.needs_relog)
+            return kWaitingAction;
+        if (snapshot.armed)
+            return kGbSubmitStateMismatch;
+        PushReceipt(
+            context,
+            kStepSubmitGb,
+            SDGO_HANGAR_GAME_TEST_ACTION_CONFIRM,
+            true,
+            true,
+            pendingBefore_,
+            snapshot);
+        pendingStep_ = kStepNone;
+        pendingActionSequence_ = 0;
+        scope_ =
+            kScopeGbSubmittedRelogRequired;
+        previewStage_ = kCommitComplete;
+        return kGbSubmittedRelogRequired;
     }
 
     void PushReceipt(

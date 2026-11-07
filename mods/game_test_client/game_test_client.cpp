@@ -9,6 +9,7 @@
 #include "battleship_actions.h"
 #include "battleship_deck_actions.h"
 #include "hangar_navigation.h"
+#include "loading_navigation_actions.h"
 #include "page_test_actions.h"
 #include "operator_catalog_actions.h"
 #include "ai_catalog_actions.h"
@@ -93,6 +94,9 @@ ChannelActions channels;
 BattleShipActions battleships;
 BattleShipDeckActions decks;
 HangarNavigation hangarNavigation;
+LoadingNavigationActions loadingNavigation;
+LoadingNavigationActions::Target earlyNavigationTarget =
+    LoadingNavigationActions::kOff;
 BlueprintActions blueprint;
 BlueprintActions::Config blueprintConfig{};
 std::vector<uint32_t> nativeIdProbeIds;
@@ -211,6 +215,7 @@ UnitAcquisitionActions::Config unitAcquisitionConfig{};
 void PublishQuietSocketReceipt(bool force=false);
 bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false, pagesOnly = false, friendsOnly = false;
 bool hangarPagesOnly = false;
+bool hangarConfirmGb = false;
 uint64_t deckUnitUids[4]{};
 char giftRecipient[17]{};
 uint32_t giftSenderPilot = 0, giftRecipientPilot = 0, giftCount = 0, giftSent = 0;
@@ -351,6 +356,20 @@ bool LoadPlan() {
     }
     unitPagesOnly=GetPrivateProfileIntW(L"settings",L"UnitPagesOnly",0,
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
+    wchar_t earlyNavigation[16]{};
+    const auto earlyNavigationLength=GetPrivateProfileStringW(
+        L"settings",L"EarlyNavigationTarget",L"off",
+        earlyNavigation,static_cast<DWORD>(std::size(earlyNavigation)),
+        blueprintIni.c_str());
+    if(!earlyNavigationLength || earlyNavigationLength>=std::size(earlyNavigation))return false;
+    earlyNavigationTarget=
+        !wcscmp(earlyNavigation,L"off") ? LoadingNavigationActions::kOff :
+        !wcscmp(earlyNavigation,L"catalog") ? LoadingNavigationActions::kCatalog :
+        !wcscmp(earlyNavigation,L"capsule") ? LoadingNavigationActions::kCapsule :
+        !wcscmp(earlyNavigation,L"room") ? LoadingNavigationActions::kRoom :
+        LoadingNavigationActions::kOff;
+    if(earlyNavigationTarget==LoadingNavigationActions::kOff &&
+       wcscmp(earlyNavigation,L"off"))return false;
     captureNativeFrames=GetPrivateProfileIntW(L"settings",L"CaptureNativeFrames",0,
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
     operatorSessionConfig.capture_frames=captureNativeFrames || testOperatorFlow;
@@ -434,6 +453,10 @@ bool LoadPlan() {
            collectionPreviewOnly || testUnitPresentations || captureUnitPortraits || unitAcquisitionConfig.machine_kind)return false;
         hangarPagesOnly=true;
     }
+    const auto hangarConfirmFlag=GetPrivateProfileIntW(L"run",L"hangar_confirm_gb",0,job.c_str());
+    if(hangarConfirmFlag<0 || hangarConfirmFlag>1)return false;
+    hangarConfirmGb=hangarConfirmFlag==1;
+    if(hangarConfirmGb && !hangarPagesOnly)return false;
     if(collectionDraw && !pagesOnly)return false;
     if(collectionPreviewOnly && (!pagesOnly || collectionDraw))return false;
     if(activityDrawOnce && (!unitPagesOnly || !collectionPreviewOnly || collectionDraw || !testUnitPresentations))return false;
@@ -495,10 +518,22 @@ bool LoadPlan() {
     }
     ocPanel=GetPrivateProfileIntW(L"run",L"oc_panel",0,job.c_str())!=0;
     ocChallenge=GetPrivateProfileIntW(L"run",L"oc_challenge",0,job.c_str())!=0;
+    if(hangarConfirmGb && (ocPanel || loginRecovery.Enabled()))return false;
     if(ocChallenge && !ocPanel && ocAllocateStat<0)return false;
     if(ocPanel && (!playUnitUid || (ocAllocateStat<0 && !hangarPagesOnly)))return false;
     if(testUnitPresentations && !playUnitUid)return false;
     if(unitPagesOnly && (!pagesOnly || (!testUnitPresentations && !blueprintConfig.recipe && nativeIdProbeIds.empty() && nativeRecordLifecycleIds.empty()) || collectionDraw || testShopCatalog))return false;
+    if(earlyNavigationTarget!=LoadingNavigationActions::kOff &&
+       (!RunKeyPresent(job,L"unit_scenario_sha256") || !unitPagesOnly ||
+        !pagesOnly || !playUnitUid || !testUnitPresentations ||
+        captureUnitPortraits || hangarPagesOnly || testOperatorFlow ||
+        collectionDraw || collectionPreviewOnly || activityDrawOnce ||
+        unitAcquisitionConfig.machine_kind || blueprintConfig.recipe ||
+        !nativeIdProbeIds.empty() || !nativeRecordLifecycleIds.empty() ||
+        missionMode || roomTitlesOnly || friendsOnly || battleshipOnly ||
+        giftRequestsOnly || deckOnly || ocAllocateStat>=0 || ocPanel ||
+        ocChallenge || testShopCatalog))
+        return false;
     if(!nativeRecordLifecycleIds.empty() && (!verifyQuietRuntime || !unitPagesOnly || !pagesOnly || !playUnitUid ||
         testUnitPresentations || !nativeIdProbeIds.empty() || blueprintConfig.recipe || unitAcquisitionConfig.machine_kind ||
         collectionPreviewOnly || activityDrawOnce || testShopCatalog || captureUnitPortraits || missionMode))return false;
@@ -1342,6 +1377,189 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
     roomRequested = startRequested = leaveRequested = endObserved = false;
     return SDGO_GAME_TEST_PASS;
 }
+int __cdecl EarlyNavigation(const SdgoGameTestContextV1* context) {
+    enum Phase : uint32_t {
+        kEnterTarget,
+        kCreateRoom,
+        kObserveThreeDRoom,
+        kLeaveThreeDRoom,
+        kRecoverPage,
+        kComplete,
+    };
+    static Phase phase=kEnterTarget;
+    static LoadingNavigationActions::Observation previousObservation{};
+    static bool havePreviousObservation=false;
+    static uint32_t capsuleBaseline=0;
+    static uint32_t capsuleObserved=0;
+    static uint32_t roomReadyTick=UINT32_MAX;
+    static uint32_t leaveBaseline=0;
+    static bool leaveIssued=false;
+    if(!context->tick) {
+        phase=kEnterTarget;previousObservation={};havePreviousObservation=false;
+        capsuleBaseline=0;capsuleObserved=0;roomReadyTick=UINT32_MAX;
+        leaveBaseline=0;leaveIssued=false;
+        roomRequested=startRequested=leaveRequested=endObserved=false;
+        loadingNavigation.Reset();
+        if(earlyNavigationTarget==LoadingNavigationActions::kCapsule) {
+            SdgoCapsuleGameTestSnapshotV1 before{};
+            if(!capsules.Currency(before)) {
+                context->Assert(0,"the sealed early capsule target has its native list-load observer");
+                return SDGO_GAME_TEST_FAIL;
+            }
+            capsuleBaseline=before.generation;
+        }
+    }
+    const auto report=[&]() {
+        const auto& s=loadingNavigation.State();
+        if(havePreviousObservation &&
+           !memcmp(&previousObservation,&s,sizeof(s)))return;
+        char message[448]{};
+        sprintf_s(message,
+            "early navigation target=%u result=%u app=%u source=%u clicked=%u click_ms=%u ready_ms=%u recover_ms=%u ready_at_click=%u inventory_complete_at_click=%u service=%u root=%u loading=%u queue=%u items=%u room=%u/%u/%u/%u",
+            s.target,s.result,s.native_app_state,s.source_result,s.clicked,
+            s.click_elapsed_ms,s.ready_elapsed_ms,s.recovered_elapsed_ms,
+            s.target_ready_at_click,s.inventory_complete_at_click,
+            s.target_service_present,s.target_root_visible,
+            s.target_loading_flags,s.target_queue_state,s.target_visible_items,
+            s.room_owner_valid,s.room_manager_valid,s.room_main_ready,
+            s.room_model_present);
+        context->Observe(message);
+        previousObservation=s;havePreviousObservation=true;
+    };
+    const auto fail=[&](LoadingNavigationActions::Result result) {
+        if(result<LoadingNavigationActions::kUnbound)return false;
+        report();
+        context->Assert(0,
+            "sealed early navigation retains the original service, vtable, control and state identities");
+        return true;
+    };
+
+    if(phase==kEnterTarget) {
+        const auto inventory=onboarding.InventoryState();
+        const auto result=loadingNavigation.Poll(
+            earlyNavigationTarget,
+            context->elapsed_ms,
+            inventory.initialized && inventory.scan_complete);
+        report();
+        if(fail(result))return SDGO_GAME_TEST_FAIL;
+        if(earlyNavigationTarget==LoadingNavigationActions::kRoom) {
+            if(result!=LoadingNavigationActions::kRoomNavigationAccepted)
+                return SDGO_GAME_TEST_WAIT;
+            const auto& observed=loadingNavigation.State();
+            context->Observe(
+                "the enabled GameRoomRadio callback was accepted; the existing sealed room flow must still prove the actual room-list and app18 target");
+            context->Observe(observed.inventory_complete_at_click
+                ? "the login inventory scan was already complete at room navigation; no incomplete-inventory timing is claimed"
+                : "the login inventory scan was still incomplete at room navigation");
+            phase=kCreateRoom;
+        } else {
+            if(result!=LoadingNavigationActions::kTargetReady)
+                return SDGO_GAME_TEST_WAIT;
+            const auto& observed=loadingNavigation.State();
+            context->Observe(observed.target_ready_at_click
+                ? "early target was already ready when its enabled native control was invoked; this run does not claim a pending-page click"
+                : "enabled native control was invoked before the target page reported its own ready state");
+            context->Observe(observed.inventory_complete_at_click
+                ? "the login inventory scan was already complete at navigation; no incomplete-inventory timing is claimed"
+                : "the login inventory scan was still incomplete at navigation");
+            if(earlyNavigationTarget==LoadingNavigationActions::kCapsule) {
+                SdgoCapsuleGameTestSnapshotV1 state{};
+                if(!capsules.Currency(state)) {
+                    context->Assert(0,"the early capsule page keeps its native observer binding");
+                    return SDGO_GAME_TEST_FAIL;
+                }
+                if(state.generation<=capsuleBaseline)
+                    return SDGO_GAME_TEST_WAIT;
+                if(capsuleObserved!=state.generation) {
+                    char message[224]{};
+                    sprintf_s(message,
+                        "early capsule native load generation=%u baseline=%u result=%u grid=%u machine=%u process=%u thread=%u",
+                        state.generation,capsuleBaseline,state.result,state.grid_id,
+                        state.machine_id,state.process_id,state.ui_thread_id);
+                    context->Observe(message);capsuleObserved=state.generation;
+                }
+                const bool nativeOwner=
+                    state.process_id==GetCurrentProcessId() &&
+                    state.ui_thread_id==GetCurrentThreadId();
+                context->Assert(nativeOwner,
+                    "the early capsule load completed on this client's genuine native UI thread");
+                if(!nativeOwner)return SDGO_GAME_TEST_FAIL;
+            }
+            phase=kRecoverPage;
+        }
+    }
+
+    if(phase==kCreateRoom) {
+        const int result=Room(context);
+        if(result!=SDGO_GAME_TEST_PASS)return result;
+        phase=kObserveThreeDRoom;
+    }
+
+    if(phase==kObserveThreeDRoom) {
+        const auto result=loadingNavigation.ObserveThreeDRoom(
+            context->elapsed_ms);
+        report();
+        if(fail(result))return SDGO_GAME_TEST_FAIL;
+        if(result!=LoadingNavigationActions::kTargetReady ||
+           !rooms.LeaveReady())
+            return SDGO_GAME_TEST_WAIT;
+        if(roomReadyTick==UINT32_MAX) {
+            roomReadyTick=context->tick;
+            context->Observe(
+                "actual native 3D waiting-room owner, manager, main state and model are ready; retaining one normal client update before leave");
+            return SDGO_GAME_TEST_WAIT;
+        }
+        if(context->tick==roomReadyTick)
+            return SDGO_GAME_TEST_WAIT;
+        phase=kLeaveThreeDRoom;
+    }
+
+    if(phase==kLeaveThreeDRoom) {
+        if(!leaveIssued) {
+            leaveBaseline=rooms.LeaveState().reply_sequence;
+            if(!rooms.Leave())return SDGO_GAME_TEST_WAIT;
+            leaveIssued=true;
+            context->Observe(
+                "queued the actual 3D waiting room's original leave business after its validated main state");
+        }
+        const auto left=rooms.LeaveState();
+        if(left.reply_sequence>leaveBaseline &&
+           left.result==RoomActions::kLeaveRejected) {
+            context->Assert(0,
+                "the backend rejected early-navigation room recovery");
+            return SDGO_GAME_TEST_FAIL;
+        }
+        if(left.reply_sequence<=leaveBaseline ||
+           left.result!=RoomActions::kLeaveAccepted ||
+           actions.AppState()!=6)
+            return SDGO_GAME_TEST_WAIT;
+        loadingNavigation.MarkRoomRecovered(context->elapsed_ms);
+        report();
+        channels.Reset();
+        roomRequested=startRequested=leaveRequested=endObserved=false;
+        activeBattleStartSequence=0;
+        phase=kComplete;
+    }
+
+    if(phase==kRecoverPage) {
+        const auto result=loadingNavigation.Recover(
+            context->elapsed_ms);
+        report();
+        if(fail(result))return SDGO_GAME_TEST_FAIL;
+        if(result!=LoadingNavigationActions::kRecovered)
+            return SDGO_GAME_TEST_WAIT;
+        phase=kComplete;
+    }
+
+    const auto& done=loadingNavigation.State();
+    const bool complete=
+        done.clicked && done.ready_elapsed_ms &&
+        done.recovered_elapsed_ms &&
+        actions.AppState()==6;
+    context->Assert(complete,
+        "the sealed early target reached its native loaded state and recovered through original callbacks and replies");
+    return complete ? SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+}
 int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
     const auto transport = actions.TransportState();
     static uint32_t lastSend = 0;
@@ -1748,6 +1966,32 @@ int __cdecl PreviewHangarPage(const SdgoGameTestContextV1* context) {
 }
 int __cdecl CancelHangarPage(const SdgoGameTestContextV1* context) {
     return PageResult(context,pages.PollHangarCancel(context),PageTestActions::kCancelled);
+}
+int __cdecl ConfirmHangarGb(const SdgoGameTestContextV1* context) {
+    const auto result=pages.PollHangarCommitGB(context);
+    const auto state=pages.State();
+    static uint32_t lastResult=UINT32_MAX,lastReceipt=UINT32_MAX;
+    if(state.result!=lastResult || state.receipt_count!=lastReceipt) {
+        char message[384];
+        sprintf_s(message,"native hangar GB result=%s stage=%u scope=%u units=%u/%u preview=%u armed=%u busy=%u relog=%u actions=%u replies=%u receipts=%u",
+            PageTestActions::ResultName(result),state.stage,state.scope,state.before_unit_count,state.current_unit_count,
+            state.gb_preview_removed,state.snapshot.armed,state.snapshot.busy,state.snapshot.needs_relog,
+            state.snapshot.action_sequence,state.snapshot.reply_sequence,state.receipt_count);
+        context->Observe(message);lastResult=state.result;lastReceipt=state.receipt_count;
+    }
+    if(result>=PageTestActions::kInvalidContext || result==PageTestActions::kHangarUnavailable) {
+        context->Assert(0,"sealed native hangar GB confirmation rejected its candidate, identity, double confirmation or submit state");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if(result!=PageTestActions::kGbSubmittedRelogRequired)return SDGO_GAME_TEST_WAIT;
+    context->Assert(state.gb_preview_removed>0,
+        "the server-backed GB preview selected at least one genuine duplicate before confirmation");
+    context->Assert(state.scope==PageTestActions::kScopeGbSubmittedRelogRequired &&
+        state.snapshot.needs_relog && !state.snapshot.busy && !state.snapshot.armed,
+        "two original Confirm actions submit once, close the exchange panel and require reconnect verification");
+    context->Assert(state.layout_unchanged && state.active_slot_unchanged,
+        "the submission receipt retains the exact pre-transaction UID/slot/protection baseline for SQL and reconnect comparison");
+    return SDGO_GAME_TEST_PASS;
 }
 int __cdecl ReadOperatorCatalog(const SdgoGameTestContextV1* context) {
     if (!GetModuleHandleW(L"operator_catalog.dll")) {
@@ -2451,6 +2695,8 @@ const SdgoGameTestCaseV1 pageCases[]={
     {"catalog.capsule",60000,&ReadCapsuleCatalog},
     {"pages.capsule.currency",60000,&ReadCapsuleCurrency},
 };
+const SdgoGameTestCaseV1 hangarGbCase{
+    "pages.hangar.confirm_gb",120000,&ConfirmHangarGb};
 int CollectionResult(const SdgoGameTestContextV1* context,CapsuleDrawActions::Result result) {
     static uint32_t previous=UINT32_MAX,reply=UINT32_MAX;
     const auto s=collection.State();
@@ -2841,6 +3087,15 @@ int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
         bool chart=true;
         for(int i=0;i<6;++i)chart=chart && s.radar_base[i]>0.0f && s.radar_total[i]>=s.radar_base[i] && s.radar_total[i]<=1.0001f;
         context->Assert(chart,"all six dimensions are charted: native stats, with OC points on top, within the stat caps");
+        const uint32_t itemSlots=s.owned_items<3u ? s.owned_items:3u;
+        if(s.item_models_shown<itemSlots) {
+            static uint32_t reported=0xFFFFFFFFu;
+            if(reported!=s.item_models_loaded){reported=s.item_models_loaded;char wait[96];sprintf_s(wait,"oc item models pending: shown=%u loaded=%u slots=%u",s.item_models_shown,s.item_models_loaded,itemSlots);context->Observe(wait);}
+            return timeout(10000,"the ITEM box shows each held OC item's own 3D model");
+        }
+        context->Assert(s.item_models_shown==itemSlots,"one item model per filled ITEM box slot");
+        char models[96];sprintf_s(models,"oc item models: shown=%u loaded=%u slots=%u",s.item_models_shown,s.item_models_loaded,itemSlots);
+        context->Observe(models);
         char info[420];sprintf_s(info,"oc tab page: levels=%u owned_items=%u (%d/%d/%d) chart_frames=%u base=%.3f/%.3f/%.3f/%.3f/%.3f/%.3f total=%.3f/%.3f/%.3f/%.3f/%.3f/%.3f record_custom=%u/%u/%u/%u",
             s.info_levels,s.owned_items,s.owned_item_ids[0],s.owned_item_ids[1],s.owned_item_ids[2],s.radar_frames,
             s.radar_base[0],s.radar_base[1],s.radar_base[2],s.radar_base[3],s.radar_base[4],s.radar_base[5],
@@ -3875,6 +4130,8 @@ const SdgoGameTestCaseV1 realCases[] = {
     {"pvp.ai_spawn", 60000, &AiSpawn},
     {"pvp.return", 600000, &Return},
 };
+const SdgoGameTestCaseV1 earlyNavigationCase{
+    "pages.loading_navigation",240000,&EarlyNavigation};
 int __cdecl FpsCap(const SdgoGameTestContextV1* context) {
     const auto graphics=quietGraphics.State();
     return fpsActions.Cap(context,graphics.present_qpc_frequency,
@@ -4033,10 +4290,14 @@ void RegisterPlannedCases() {
     }
     if (pagesOnly) {
         plannedCases.assign(realCases,realCases+3);
+        if(earlyNavigationTarget!=LoadingNavigationActions::kOff)
+            plannedCases.push_back(earlyNavigationCase);
         if(testOperatorFlow)plannedCases.push_back(operatorFlowCase);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
         if(hangarPagesOnly) {
-            plannedCases.insert(plannedCases.end(),std::begin(pageCases),std::begin(pageCases)+3);
+            plannedCases.push_back(pageCases[0]);
+            if(hangarConfirmGb)plannedCases.push_back(hangarGbCase);
+            else plannedCases.insert(plannedCases.end(),std::begin(pageCases)+1,std::begin(pageCases)+3);
             if(ocPanel)plannedCases.push_back(ocPanelCase);
             provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
         }
@@ -4371,6 +4632,8 @@ SDGO_MOD_ENTRY {
         !battleships.Bind(api,mod,&actions) || !gifts.Bind(api,mod,&actions) ||
         (deckOnly && !decks.Bind(api,mod,&actions)) ||
         (!hangarNavigation.Bind(api,mod,&actions)) ||
+        (earlyNavigationTarget!=LoadingNavigationActions::kOff &&
+         !loadingNavigation.Bind(api,mod,&actions,&hangarNavigation)) ||
         (blueprintConfig.recipe && !blueprint.Bind(api,mod,&actions,&hangarNavigation,blueprintConfig)) ||
         (testUnitPresentations && !unitPresentations.Bind(api,mod,&hangarNavigation)) ||
         (unitAcquisitionConfig.machine_kind && !unitAcquisition.Bind(api,mod,&hangarNavigation,unitAcquisitionConfig)) ||

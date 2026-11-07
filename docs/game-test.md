@@ -391,6 +391,23 @@ authentication and the server authorize/process the mail; GameTest still waits
 for an independent processing receipt and never grants currency or inventory
 directly. Keep credentials and command configuration local.
 
+### Early page and room navigation
+
+Use `unit_scenario={"schema": 1, "early_navigation": "catalog"}` with
+`pages_only=True` and an existing `play_unit_uid` to request the encyclopedia
+from the first available enabled native control after login/onboarding.
+The other targets are `capsule` and `room`. The setting defaults to `off` and
+is bound to the sealed scenario; an inactive default cannot arm this case.
+
+The observer records whether the target was ready and whether inventory was
+complete at the actual click. It does not delay inventory or manufacture an
+incomplete state. Catalog and capsule acceptance requires the real target to
+finish loading, followed by a genuine return to the room list with an enabled
+room control and no loading modal. A cached widget's visible bit alone does
+not prove recovery. The room target creates and enters an actual 3D wait room,
+checks its owner, manager, main state and model, then leaves through the native
+path; opening the room list is not enough. Normal unit-page checks follow.
+
 ### Blueprint synthesis
 
 The Python `prepare` / `reuse_prepared` API accepts a sealed `unit_scenario`

@@ -12,6 +12,7 @@
 #include <string>
 #include "sdgo/sdgo_api.h"
 #include "sdgo/hangar_model.h"
+#include "sdgo/hangar_rule_catalog.h"
 #include "sdgo/hangar_sort_request.h"
 #include "sdgo/inventory_app_state.h"
 #include "sdgo/game_test_page_observer.h"
@@ -451,6 +452,32 @@ bool LoadRules(const std::wstring& path) {
     }
     return !g_rules.empty();
 }
+bool LoadCatalogRules(
+    const std::wstring& modDirectory,CatalogRuleStats& stats,std::string& error) {
+    std::wstring directory=modDirectory;
+    while(!directory.empty() && (directory.back()==L'\\' || directory.back()==L'/'))
+        directory.pop_back();
+    const auto separator=directory.find_last_of(L"\\/");
+    if(separator==std::wstring::npos)return false;
+    const std::wstring path=directory.substr(0,separator)+
+        L"\\unit_catalog\\catalog.bin";
+    const DWORD attributes=GetFileAttributesW(path.c_str());
+    if(attributes==INVALID_FILE_ATTRIBUTES) {
+        const DWORD code=GetLastError();
+        if(code==ERROR_FILE_NOT_FOUND || code==ERROR_PATH_NOT_FOUND)return false;
+        error="cannot inspect imported unit catalog; Win32="+std::to_string(code);
+        return true;
+    }
+    if(attributes&FILE_ATTRIBUTE_DIRECTORY) {
+        error="imported unit catalog path is not a file";
+        return true;
+    }
+    sdgo::unit_catalog::Catalog catalog;
+    if(!catalog.Load(path,error))return true;
+    try {stats=MergeCatalogRules(g_rules,catalog);}
+    catch(const std::exception& exception){error=exception.what();}
+    return true;
+}
 template<class T>bool Bind(T& fn,const char* name){fn=reinterpret_cast<T>(g_api->Symbol(g_mod,name));return fn!=nullptr;}
 
 void ObserverBasicUnsafe(SdgoHangarGameTestSnapshotV1* output) {
@@ -604,7 +631,20 @@ SDGO_MOD_ENTRY {
     char rules[256]={};api->SettingString(mod,"RulesFile","units.tsv",rules,sizeof(rules));
     std::string relative=rules;
     if(relative.empty() || relative.find(':')!=std::string::npos || relative.find("..")!=std::string::npos || relative[0]=='/' || relative[0]=='\\')return 0;
-    try {if(!LoadRules(std::wstring(api->ModDirectory(mod))+L"\\"+Wide(relative)))return 0;}catch(const std::exception&){return 0;}
+    const std::wstring modDirectory=api->ModDirectory(mod);
+    try {if(!LoadRules(modDirectory+L"\\"+Wide(relative)))return 0;}catch(const std::exception&){return 0;}
+    CatalogRuleStats catalogStats;std::string catalogError;
+    const bool catalogPresent=LoadCatalogRules(modDirectory,catalogStats,catalogError);
+    if(catalogPresent && !catalogError.empty())
+        api->Log(mod,SDGO_LOG_WARN,"imported unit rules skipped: %s; using %u explicit rules",
+            catalogError.c_str(),static_cast<unsigned>(g_rules.size()));
+    else if(catalogPresent)
+        api->Log(mod,SDGO_LOG_INFO,
+            "imported unit rules: %u added, %u explicit overrides, %u unknown grades, %u ambiguous grades",
+            static_cast<unsigned>(catalogStats.added),
+            static_cast<unsigned>(catalogStats.explicitRules),
+            static_cast<unsigned>(catalogStats.unknownGrades),
+            static_cast<unsigned>(catalogStats.ambiguousGrades));
     if(!g_ui.Bind(api,mod))return 0;
     if(!api->HookCode(mod,"hangar.init",reinterpret_cast<void*>(&Init),reinterpret_cast<void**>(&g_init)) ||
        !api->HookCode(mod,"hangar.button_clicked",reinterpret_cast<void*>(&ButtonClicked),reinterpret_cast<void**>(&g_button)) ||

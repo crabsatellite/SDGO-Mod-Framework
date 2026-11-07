@@ -17,6 +17,8 @@ English: [startup-crash-fix.md](startup-crash-fix.md)
 
 无。
 
+即使可选的登录机体展示缩放能力不可用，本防护仍会启用。此时扩展展示停用，原有读取组继续接受机体缺失检查。
+
 ## 日志与排错
 
 第一次进入读取界面时，mod 会列出机体缺失的读取组（具体编号取决于客户端数据）：
@@ -34,6 +36,7 @@ startup_crash_fix: loading set <组编号> picked: its unit <机体编号> is mi
 | `... no set has a known unit; shown as the game would` | 当前客户端数据中没有可替换的组 |
 | 点登录时闪退，`access violation at 008FEE6B` | 安装的是 1.0.0 版本 mod，请更新框架 |
 | `required symbol gate.show_set_unit ...` | 客户端版本不受支持，本 mod 不启用 |
+| `login showcase fitting unavailable; original startup crash protection remains active` | 更新框架可恢复扩展展示；启动防崩保护已生效 |
 
 ## 原理
 

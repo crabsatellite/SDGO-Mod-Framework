@@ -27,7 +27,7 @@ This page is a feature index. Configuration, gameplay instructions, compatibilit
 Beta and Experimental after a feature name mark its release channel; unlabeled features are Stable:
 
 - **Stable**: the basic workflow works; later problems are fixed in new versions. Manager updates install Stable by default.
-- **Beta**: the basic workflow is still under development. Current Beta features include unit family import. Switch Manager updates to the Beta channel to install them.
+- **Beta**: the basic workflow is still under development. Current Beta features include unit family import and over-custom six-stat enhancement. Switch Manager updates to the Beta channel to install them.
 - **Experimental**: development diagnostics. Development tools are not installed by Manager updates.
 
 ## Core fixes
@@ -39,10 +39,10 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | IME candidates and commit fix <!-- catalog: `ime_fix` --> | Restore Chinese candidates and replace the old preedit range without residual letters | [Use](docs/ime-fix.md) |
 | Activity capsule currency <!-- catalog: `capsule_currency_fix` --> | Show machine 9301 as 99 coins in the list and purchase confirmation | [Use](docs/capsule-currency-fix.md) |
 | Input method freeze fix <!-- catalog: `findwindow_fix` --> | Stop input methods such as iFlytek from freezing or crashing the repack client | [Use](docs/findwindow-fix.md) |
-| Startup crash fix <!-- catalog: `startup_crash_fix` --> | Stop random crashes on the loading screen at game start | [Use](docs/startup-crash-fix.md) |
+| Startup crash fix <!-- catalog: `startup_crash_fix` --> | Stop random crashes on the loading screen; protection stays active if optional showcase fitting is unavailable | [Use](docs/startup-crash-fix.md) |
 | First login lobby music <!-- catalog: `lobby_music_fix` --> | Restore the lobby music on first login | [Use](docs/lobby-music-fix.md) |
 | Wait-room window initialization guard <!-- catalog: `waitroom_window_fix` --> | Fix the client sometimes closing right after a room is created | [Use](docs/waitroom-window-fix.md) |
-| Native data and lifecycle guards <!-- catalog: `native_data_guard` --> | Fix crashes when unit data is missing or unit management is still waiting for data; keep crash logs accurate | [Use](docs/native-data-guard.md) |
+| Native data and lifecycle guards <!-- catalog: `native_data_guard` --> | Guard missing unit data, loading-time model materials, room cameras and deferred unit-management requests; keep crash logs accurate | [Use](docs/native-data-guard.md) |
 | Scene registration lifecycle fix <!-- catalog: `scene_lifecycle_fix` --> | Fix an occasional cleanup crash after a scene object moves to another area | [Use](docs/scene-lifecycle-fix.md) |
 | Multiplayer loading synchronization <!-- catalog: `loading_sync_fix` --> | Fix multiplayer starts that occasionally hang on the loading screen (BattleServer) | [Use](docs/loading-sync-fix.md) |
 | Native login recovery <!-- catalog: `login_recovery`, `login_recovery_client` --> | WorldServer stale-session cleanup plus bounded client reconnect, pending-request cleanup and return to native login input | [Use](docs/login-recovery.md) |
@@ -77,14 +77,14 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Extended room titles <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Enter up to 128 characters in normal, AI, team and mission room creation, settings and rename controls | [Use](docs/room-titles.md) |
 | Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Easy / Medium / Hard, native weapon and form selection, shared contacts and map propulsion routes | [Use](docs/battle-ai.md) |
 | Automatic hangar capacity <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) | [Use](docs/hangar-capacity.md) |
-| Hangar manager <!-- catalog: `hangar_manager` --> | One-click sorting and duplicate exchange on the unit-management page, with server-side GB batches | [Use](docs/hangar-manager.md) |
+| Hangar manager <!-- catalog: `hangar_manager` --> | Sort and exchange duplicates, including imported units; server batches preserve ownership and keep deletion history | [Use](docs/hangar-manager.md) |
 | Operator supplies, resources, and abilities <!-- catalog: `operator_catalog`, `operator_catalog_server` --> | Five free supply officers plus independent resource packs, numeric abilities, drops, and shop drafts | [Use](docs/operator-assistant.md) |
 | Capsule catalog editor <!-- catalog: `capsule_catalog` --> | Create, edit and retire machines, pools, prices and weights; renumber unused dedicated activities in the Manager | [Use](docs/capsule-catalog.md) |
 | Daily double rewards <!-- catalog: `daily_rewards` --> | Double battle GB and EXP in a daily window (default 18:00–22:00) | [Use](docs/daily-rewards.md) |
 | Storage claim all <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation | [Use](docs/storage-claim.md) |
 | Chinese shop localization and search <!-- catalog: `shop_localization` --> | Translate shop names, descriptions, options and paint-page unit previews; search by Chinese name combined with rank and payment filters | [Use](docs/shop-localization.md) |
 | Friend unit gifts (optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Right-click a friend (online or offline), pick a unit in unit management, and the friend accepts or returns it in Storage. Off until the owner enables it | [Use](docs/friend-unit-gift.md) |
-| Over-custom six-stat enhancement <!-- catalog: `oc_custom_client`, `oc_custom_server`, `oc_custom_battle` --> | A dual-system factory: a 终极强化 tab next to the untouched native tabs, built from the client package's own OC layouts (OVER CUSTOM level track and ITEM box, all six dimensions drawn on the allocation hexagon, normal/Over points, the OVER CUSTOM challenge and reset), plus OC speed and agility in battle; stored beside the current custom parts, both kept across a switch, and the owner picks which rule set battles use | [Use](docs/over-custom.md) |
+| Over-custom six-stat enhancement (Beta) <!-- catalog: `oc_custom_client`, `oc_custom_server`, `oc_custom_battle` --> | A dual-system factory: a 终极强化 tab next to the untouched native tabs, built from the client package's own OC layouts (OVER CUSTOM level track, ITEM box with the items' 3D models, all six dimensions drawn on the allocation hexagon, normal/Over points, the OVER CUSTOM challenge and reset), plus OC speed and agility in battle; stored beside the current custom parts, both kept across a switch, and the owner picks which rule set battles use | [Use](docs/over-custom.md) |
 | Unit family import (Beta) <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | Import unit archives, edit skill/funnel dependency fields, retain script declarations, author blueprints and activity pools in Mod Manager, import protocol-ready batches of single, reciprocal, one-way and self-transform families plus third-form entry variants, and apply that roster to the server from Mod Manager, then offer it to the shop, capsule machines and dedicated activity machines (activity posters can be replaced at any time) | [Use](docs/unit-import.md) |
 
 <!-- /mod-category:gameplay -->

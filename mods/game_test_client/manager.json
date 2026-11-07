@@ -231,6 +231,24 @@
       "activation": "restart_required"
     },
     {
+      "id": "early_navigation_target",
+      "key": "EarlyNavigationTarget",
+      "label": "封存的早期页面导航目标",
+      "description": "仅由开发测试任务启用；在登录与新手流程后立即调用可用的原生控件，并记录页面加载与恢复。",
+      "type": "choice",
+      "default": "off",
+      "options": [
+        "off",
+        "catalog",
+        "capsule",
+        "room"
+      ],
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
       "id": "unit_acquisition_kind",
       "key": "UnitAcquisitionKind",
       "label": "机体候选检查（0关闭、1固定、3自定义）",

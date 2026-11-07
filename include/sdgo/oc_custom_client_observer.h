@@ -75,6 +75,8 @@ struct SdgoOcCustomClientSnapshotV2 {
     uint32_t oc_title;             // the factory header shows 终极强化 for the OC tab
     uint32_t actions_hidden;       // factory page actions (SaveBtn, ReturnBtn) hidden on the OC tab
     uint32_t tab_clicks_accepted;  // native tab clicks the menu accepted (it drops some while busy)
+    uint32_t item_models_shown;    // ITEM box slots showing their item's 3D model
+    uint32_t item_models_loaded;   // item models loaded into the ITEM box so far
 };
 
 // Actions: 1 refresh; 2 save one more normal point on stat (direct request

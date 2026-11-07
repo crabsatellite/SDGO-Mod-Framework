@@ -53,6 +53,7 @@ namespace
     GridDataFn g_gridData = nullptr;
     GridFindFn g_gridFind = nullptr;
     ModelUpdateFn g_modelUpdate = nullptr;
+    bool g_guardReady = false;
     bool g_listed = false;
     PVOID volatile g_showcaseChooser = nullptr;
     bool g_showcaseFaultLogged = false;
@@ -324,6 +325,10 @@ int __cdecl SdgoRegisterLoginShowcaseChooserV1(SdgoLoginShowcaseChooseUnitV1Fn c
         InterlockedExchangePointer(&g_showcaseChooser, nullptr);
         return 1;
     }
+    // Optional presentation capabilities must never disable the original
+    // missing-unit guard. Refuse expanded selection when fitting is unavailable.
+    if (!g_guardReady || !g_modelUpdate)
+        return 0;
     return InterlockedCompareExchangePointer(
                &g_showcaseChooser, reinterpret_cast<void*>(chooser), nullptr) == nullptr;
 }
@@ -349,9 +354,14 @@ SDGO_MOD_ENTRY
     g_api = api;
     g_mod = mod;
     if (!Bind(g_gridData, "grid.data") ||
-        !Bind(g_gridFind, "grid.find") ||
-        !Bind(g_modelUpdate, "model.commit"))
+        !Bind(g_gridFind, "grid.find"))
         return 0;
-    return api->HookCode(mod, "gate.show_set_unit", reinterpret_cast<void*>(&ShowSetUnit),
-                         reinterpret_cast<void**>(&g_original));
+    g_guardReady = api->HookCode(mod, "gate.show_set_unit", reinterpret_cast<void*>(&ShowSetUnit),
+                                 reinterpret_cast<void**>(&g_original)) != 0;
+    if (!g_guardReady)
+        return 0;
+    if (!Bind(g_modelUpdate, "model.commit"))
+        api->Log(mod, SDGO_LOG_WARN,
+                 "login showcase fitting unavailable; original startup crash protection remains active");
+    return 1;
 }

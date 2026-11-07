@@ -20,7 +20,9 @@ After submitting, **log in again** to see the result.
 - Copies are counted by unit number; at least two of each are kept by default (`KeepCopies`, 1–20),
   and protected copies count toward that. Paint variants count as the same unit; lock any copy you
   want to keep.
-- Locked, sortie, deck, rental and trained units are never exchanged; unknown units are skipped.
+- Locked, sortie, deck, rental and trained units are never exchanged. Units loaded by the installed
+  `unit_catalog` are added automatically when their native grade has one unambiguous reward rule;
+  unknown or conflicting grades are skipped.
 - Choose native GB or the native item reward (usually experience capsules). The server's
   `tbl_UnitGradeInfo` and native dismantling decide the actual reward.
 - Preview and the first confirmation delete nothing; two confirmations are required.
@@ -40,8 +42,12 @@ starts again from the preview.
 
 **Server:** in SDGO Mod Manager open **机库整理与批量回收服务端** (hangar server), choose the server INI
 containing `DB Game` and `DB Member` (same SQL instance) and install or update. Normal native mail keeps
-working; the panel can check the installed procedure hashes and restore the original procedure. No game
-server restart is needed.
+working. The same installation adds a server-side deletion guard: one SQL `DELETE` statement may remove
+units from only one account. Every allowed deletion writes the complete original unit row, UTC time and
+bounded SQL session/application/host metadata to a dedicated audit table. The panel reports only the
+guard state and audit-row count. Removing the adapter preserves that audit history. The panel can check
+the installed procedure and trigger hashes and restore the original mail procedure. No game server
+restart is needed.
 
 **Client:** players receive it with the server owner's client package or update. The Full framework package includes this mod
 (Base does not). Alternatively import the mod's overlay with **导入客户端配置包** in the Manager, or close
@@ -52,8 +58,12 @@ the client and run `install_hangar.ps1 -GameDir "D:\Games\SDGO"` from the standa
 
 Under **机库整理与回收** in the Manager: **至少保留机体份数** (`KeepCopies`, default 2) and **回收后整理机库**
 (`SortAfterExchange`, default 1). `RequestIntervalMs`, `ReplyTimeoutMs`, `MaxSlots` and `RulesFile` are
-developer settings. The rules file only affects the preview; it cannot raise server rewards. Owners can
-export it read-only with `python export_hangar_rules.py --server-ini "D:\Server\StoreServer.ini" --output units.tsv`
+developer settings. The rules file only affects the preview; it cannot raise server rewards. Explicit
+rows in it take priority. At client startup, the Mod validates the installed `unit_catalog/catalog.bin`
+and supplements missing imported unit numbers by matching their verified native grade to an unambiguous
+rule in this file. A corrupt catalog is ignored, and a grade with conflicting reward rows is never
+guessed. Owners can export the base rules read-only with
+`python export_hangar_rules.py --server-ini "D:\Server\StoreServer.ini" --output units.tsv`
 (needs `pyodbc`; `--snapshot` reads table JSON instead).
 
 ## Developer notes
@@ -62,6 +72,9 @@ export it read-only with `python export_hangar_rules.py --server-ini "D:\Server\
   from its own session. Native mail has no completion acknowledgement, so the client only reports
   "submitted"; the server writes a separate receipt that the Manager reads back.
 - The sort transaction changes only `tbl_UserUnits.UserUnitSlotNumber` and verifies all other columns.
+- The deletion trigger rejects a statement whose `deleted` set contains more than one `AccountNumber`.
+  Its audit insert participates in the caller's transaction, so a failed or rolled-back native operation
+  leaves neither an inventory change nor a misleading audit row. It records no SQL text or credentials.
 - Item exchange uses native dismantle `0x06D2` (19 bytes; reward 1 = GB, 2 = item) and detail `0x078B`
   (14 bytes), always addressed by the stable `UserUnitNumber`.
 

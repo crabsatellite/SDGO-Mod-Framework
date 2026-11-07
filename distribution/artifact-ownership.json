@@ -1,6 +1,12 @@
 {
   "schema_version": 1,
   "framework_sql": {
+    "manager/engines/hangar/guard.sql": {
+      "ownership": "framework",
+      "kind": "schema",
+      "target": "server",
+      "purpose": "Generic inventory deletion protection and audit schema; inventory rows remain on the selected server"
+    },
     "manager/engines/hangar/gb.sql": {
       "ownership": "framework",
       "kind": "query",
