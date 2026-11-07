@@ -245,7 +245,19 @@ LONG WINAPI OriginalExceptionWriter(EXCEPTION_POINTERS* pointers) {
     writerAfter = *pointers->ContextRecord;
     return 1;
 }
+#include "native_camera_guard_cases.h"
+
+void* __fastcall UnusedMaterialLookup(void*, void*, int, uint8_t, uint8_t) {
+    return nullptr;
+}
+
 void* Symbol(SdgoMod*, const char* key) {
+    if (void* camera = CameraSymbol(key)) return camera;
+    if (!std::strcmp(key, "native_data_guard.material_lookup"))
+        return reinterpret_cast<void*>(&UnusedMaterialLookup);
+    if (!std::strcmp(key, "native_data_guard.decal_material_result") ||
+        !std::strcmp(key, "native_data_guard.decal_material_next"))
+        return reinterpret_cast<void*>(&OriginalInformationSite);
     if (!std::strcmp(key, "grid.data")) return reinterpret_cast<void*>(&Grid);
     if (!std::strcmp(key, "grid.find")) return missingSymbol ? nullptr : reinterpret_cast<void*>(&Find);
     if (!std::strcmp(key, "native_data_guard.funnel_bounds")) return bounds + 6;
@@ -267,6 +279,12 @@ void* Symbol(SdgoMod*, const char* key) {
     return nullptr;
 }
 int HookCode(SdgoMod*, const char* key, void* detour, void** original) {
+    if (CameraHook(key, detour, original)) return 1;
+    if (!std::strcmp(key, "native_data_guard.material_lookup")) {
+        Check(detour != nullptr, "production material lookup guard is installed");
+        *original = reinterpret_cast<void*>(&UnusedMaterialLookup);
+        return 1;
+    }
     if (!std::strcmp(key, "native_data_guard.information_refresh")) {
         informationRefreshHook = detour;
         *original = reinterpret_cast<void*>(&OriginalInformationRefresh);
@@ -290,6 +308,11 @@ int HookCode(SdgoMod*, const char* key, void* detour, void** original) {
     exceptionHook = detour; *original = reinterpret_cast<void*>(&OriginalExceptionWriter); return 1;
 }
 int HookSite(SdgoMod*, const char* key, void* detour, void** original) {
+    if (!std::strcmp(key, "native_data_guard.decal_material_result")) {
+        Check(detour != nullptr, "production decal result guard is installed");
+        *original = reinterpret_cast<void*>(&OriginalInformationSite);
+        return 1;
+    }
     if (!std::strcmp(key, "native_data_guard.unit_transform")) {
         unitHook = detour; *original = reinterpret_cast<void*>(&OriginalUnitSite); return 1;
     }
@@ -583,6 +606,7 @@ void Run(SdgoModLoadFn entry, HMODULE dll) {
     snapshotV4.size = sizeof(snapshotV3);
     Check(!statusV4(&snapshotV4), "V4 observer rejects V3-sized output");
     Check(gridCalls > 0 && warnings == 11, "warnings are emitted only for missing data or failed ownership copy");
+    ExerciseCameraGuards(dll);
     VirtualFree(code, 0, MEM_RELEASE); VirtualFree(bounds, 0, MEM_RELEASE);
 }
 }

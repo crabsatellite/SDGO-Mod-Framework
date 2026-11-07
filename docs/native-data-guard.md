@@ -13,6 +13,8 @@ Fixes client crashes when unit data is missing or unit management is still waiti
 - When a model has no optional transform metadata, its base-model loading continues through the original finalization and completion steps.
 - Native exception reporting walks a separate context copy, so its exception address, access type, module range and registers remain the original pre-walk values.
 - When unit management waits for inventory data, the service keeps its own native-cloned message instead of retaining the dispatcher's temporary object.
+- Model material lookups check the actual native container before reading a slot. Missing optional decal materials advance to the next slot while retaining the model's original commit and finalization path. This shared lookup protects unit presentations used by the encyclopedia, capsule previews and other native pages.
+- Room cameras accept only the native 0–29 sample range. An invalid drag or slider result retains the prior selection. A missing model or invalid camera state skips that frame's camera update; later ready frames use the original update normally.
 
 These protections do not supply missing models, add units, change weapons, or alter battle rewards. They cover the named data paths; unrelated client faults need their own diagnosis.
 
@@ -29,6 +31,8 @@ The framework log contains `native data guards active` when activation succeeds.
 `base information unavailable` identifies a skipped primary-record refresh and includes the unit ID. After loading, select the unit again or reopen unit management. If the warning persists, the server owner needs to check the unit's client resources; the guard does not create missing content.
 
 For another crash, retain the current native exception log and both current and previous framework logs before restarting repeatedly. Match the session and timestamps; copied client folders can contain historical exception records from another installation.
+
+`wait-room camera sample` identifies a rejected camera index. `wait-room camera data is not ready` means the current update was deferred until a later frame. Both warnings are bounded. Missing material slots are counted by the developer observer without logging every lookup.
 
 ## Developer notes
 
@@ -49,3 +53,9 @@ The exception-report guard wraps the native writer and, only for that thread and
 `native_data_guard_actual_dll` exercises the built DLL and its actual site stubs, including deferred-message save, replacement, service copy, normal completion and teardown. When this Mod is installed, the native GameTest bootstrap also exercises the host's funnel, name-format and information-refresh functions before continuing through its authenticated room/battle flow. The information refresh uses private display receivers and checks the original default-percentage output without editing a live unit or table. `SdgoNativeDataGuardGetStatusV1` and `V2` preserve their existing observer ABIs; `SdgoNativeDataGuardGetStatusV3` adds read-only counters for deferred native message copies, replacements, copy failures, native completions and currently outstanding owned messages.
 
 The actual-DLL test also covers missing primary records in both detail modes, an unavailable grid, an empty lookup result, unchanged page state, and resumption on a later valid callback. The native bootstrap invokes the real whole-detail entry with private receivers and an unavailable key in both modes. `SdgoNativeDataGuardGetStatusV4` adds the skipped primary-record count while retaining the earlier exports.
+
+The material guard validates the two native CModel vector triplets and delegates valid lookups, including the separate shared-resource branch, once to the original implementation. Its decal-result site skips only the unavailable slot and continues at the original loop increment, before the original finalizers. It does not replace materials or alter asset identifiers. `native_material_guard_actual_dll` executes the built lookup and x86 result-site branches with empty, short, malformed and valid containers.
+
+The wait-room camera reads a 30-sample table. Both the selection setter and frame update enforce that range; no out-of-range value is written back and no fallback sample is invented. The camera model must also exist before the native update runs. The same update is reached by the native wait-room main states rather than being restricted to a single menu button.
+
+`SdgoNativeDataGuardGetStatusV5` adds unavailable-material, skipped-decal, rejected-camera-index and skipped-camera-update counters while retaining V1–V4. The native bootstrap exercises the genuine hooked entries with private material, selection and unloaded-room receivers; it does not modify a live unit, camera selection or data table. Normal page and room acceptance remains separate from those primitive checks.
