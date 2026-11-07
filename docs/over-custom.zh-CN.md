@@ -1,4 +1,4 @@
-# OC 六维强化（Beta）
+# OC 六维强化
 
 [English](over-custom.md) · [返回功能目录](../README.zh-CN.md) · [好友机体赠送](friend-unit-gift.zh-CN.md)
 
@@ -19,7 +19,7 @@
 | --- | --- | --- |
 | `oc_custom_server` | World 服务端 | 在游戏库安装 `sdgo_mod_oc_*` 表与过程，通过好友赠送载体处理大厅请求；`oc` 模式下把 OC 数据写入发出的每条机体记录 |
 | `oc_custom_battle` | 对战服务端 | 在原生逐形态属性构建之后，把记录中的 OC 增量加到 HP、攻击、防御和必杀追加伤害上，沿用原生按等级的上限 |
-| `oc_custom_client` | 客户端 | 在工厂「经验值转换」页为当前出击机体加入 OC 面板，发送加点、挑战和洗点请求 |
+| `oc_custom_client` | 客户端 | 在工厂「经验值转换」页为当前出击机体启用客户端包内原有的 OC 界面（加点窗、OVER CUSTOM 终极强化窗与确认框），发送加点、挑战和洗点请求；战斗中为本机机体加上 OC 推进力与机动力 |
 
 `oc_custom_server` 需要 Agent 与 World 服务端上的 `friend_unit_gift_server`，`oc_custom_client` 需要 `friend_unit_gift_client`：OC 请求借用该已认证载体传输。赠送功能本身可以保持关闭。
 
@@ -31,53 +31,56 @@
 
 ## 使用
 
-把要强化的机体设为出击机体，进入工厂并选择「经验值转换」页。经验条下方会多出「OC 六维强化」按钮，点击后在道具栏位置打开 OC 面板；「收起 OC」关闭面板，原生页面保持不变。
+客户端包里保留着原版 OC 的界面文件，Mod 直接使用它们：加点窗 `uirs\0794.uir`、终极强化（OC 挑战）窗 `uirs\0813.uir` 和确认框 `uirs\0819.uir`，以及 OC 年代升级页上的 OVER CUSTOM 按钮。窗口里的文字也是客户端自带的原版 OC 文本。
 
-面板显示 OC 等级、机体原生等级、剩余普通点和 Over 点，每项属性一行：先是已分配的普通点和 Over 点，然后是「基础 + 普通加成 + Over 加成 = 合计」。合计超过属性上限时显示为红色。
+把要强化的机体设为出击机体并进入工厂。服务器处于 `oc` 模式时，工厂标签栏在「经验值转换」之后恢复 OC 年代的「终极强化」标签，其余标签依次右移。
 
-- `+`、`-` 调整待分配点数，「确认加点」发送完整的分配向量。服务器校验预算和属性上限（速度 100、HP 23800、攻击 169、防御 169、敏捷 100、必杀 7950）后保存，下一场战斗生效。
+- 点击「终极强化」切到经验值转换页，并在右侧打开 OC 加点窗；被它盖住的库存窗口暂时隐藏，点击任意其他标签即离开并恢复。顶部是「强化点数」和剩余的普通点 + Over 点。推进力、耐久力、攻击力、防御力、机动力、必杀技六项各显示已分配的普通点 + Over 点。
+- 点击某项的箭头按钮，弹出原版确认框「在使用强化点数之前再仔细考虑下如何？确定要强化这项性能吗?」。确认后服务器按原表校验预算和属性上限（推进力 100、耐久力 23800、攻击力 169、防御力 169、机动力 100、必杀技 7950），保存一点。普通点用完且 OC 等级达到 9 以上时，箭头改为分配 Over 点。没有可用点数或超过上限时，弹出原版提示「无法使用强化点数.」或「不能再使用.超过了最大能力值.」。
 - 普通点随 OC 等级发放：从 5 级起每级 1 点，直到该机体的普通上限等级（按机体为 6 到 8 级）。OC 等级在 9 级以下时跟随机体原生等级。
-- 「编辑 Over 点」切换为 Over 点分配。Over 加点要求 OC 等级 9 以上并且普通点已用完。
-- 「OC 挑战」在普通上限等级已到且经验条已满时，按原版概率挑战下一个 OC 等级（9 到 15）。成功获得 Over 点和奖励道具；失败时 OC 等级退回普通上限，除非使用了防掉级道具。机体原生等级和经验不会改变。
-- 「洗普通点」或「洗 Over 点」先按原表显示所需 GP，十五秒内再次点击确认扣除 GP 并清空该项分配。
-- 「刷新」重新向服务器读取 OC 档。
+- 加点窗底部的长按钮是洗点。OC 等级 9 以下显示「基本强化点数还原」，洗普通点；9 以上显示「终极强化还原」，洗 Over 点。点击后确认框显示所需 G币，确认后扣除并清空该项分配。G币不足时提示「初始化费用不足.」。
+- 经验条下方的 OVER CUSTOM 按钮在可以挑战时发光，否则显示为暗色标签。普通上限等级已到且经验条已满时即可挑战。点击后打开终极强化窗：显示机体名、对战次数、目标等级（OVER CUSTOM1 到 OVER CUSTOM EX）、挑战条件和失败规则，并列出账号里可在当前等级使用的终极强化道具，最多勾选三个（例如提高成功率或防止掉级的道具）。现行客户端已把这些道具的名称改为「不可用」，窗口改用道具数据中的效果显示它们，例如「成功率+100%」「等级保护」。「开始」弹出「进行终极强化.使用道具 : …」确认框，确认后按原版概率挑战。成功获得 Over 点和奖励道具，显示「[ OVER CUSTOMn ]强化成功!」。失败时 OC 等级退回普通上限，使用了防掉级道具时保留等级；两种情况分别显示原版的失败提示。机体原生等级和经验不会改变。
 
-`oc` 模式下，现行改造部件仍保存在数据库中，但在记录里被隐藏，战斗中不生效；切回 `current` 后恢复。
+每次保存都会刷新出击机体记录，下一场战斗即生效。`oc` 模式下，现行改造部件仍保存在数据库中，但在记录里被隐藏，战斗中不生效；切回 `current` 后恢复。服务器处于 `current` 模式时，页面保持原生样子，不显示 OC 窗口。
 
 ## 范围与兼容性
 
 - World 服务端把 OC 数据写入机体页、出击机体回复、机体信息回复、用户信息和战斗结束用户更新中的机体记录；这些记录的所有原生拷贝都保留它，包括对战服务端构建房间飞行员时使用的记录。
 - 保存加点、洗点或挑战后无需重新登录，下一场战斗即生效：World 服务端把更新后的用户信息推送给玩家所在频道的对战服务端；玩家已在房间内时同时更新房间飞行员。
-- 对战服务端应用 HP（第一形态）、攻击、防御和必杀追加伤害（按形态）。速度和敏捷是客户端侧的移动数值，增量随记录传输并在面板显示，本版本客户端 Mod 不改变移动表现。
+- 对战服务端应用 HP（第一形态）、攻击、防御和必杀追加伤害（按形态）。推进力和机动力是客户端侧的移动数值：战斗开始时客户端 Mod 把出击机体记录中的增量加到本机机体的推进等级和机动力上，与现行体系的属性加成作用在同一位置，可变形机体的两个形态都生效。每台机体的移动由其所属客户端计算，其他玩家看到的是该玩家自己客户端的结果。
+- OC 年代的 EX 能力（终极强化 EX 等级的附加能力）不在本 Mod 范围内，加点窗上的 Ex 按钮保持不可用。
 - 洗点扣除的 GP 在客户端下一次原生 GP 刷新后显示。
 - 机体成长映射对 472 台机体使用原版 OC 目录；其余现行机体使用同等级的平衡成长行。
 
 ## 排错
 
-- 面板提示服务器未启用 OC 模式：World Mod 未启用、模式为 `current`，或表安装失败；World 日志中有 `oc schema` 相关记录。
-- 面板一直显示等待能力握手：缺少好友赠送客户端或服务端 Mod，OC 载体需要两者都在。
-- 战斗数值没有变化：房间开始后查看对战服务端日志中的 `oc applied uid=...` 行，对战 Mod 会记录每次应用的加点。
-- 页面上没有「OC 六维强化」按钮：查看客户端日志中的 `oc panel` 行，客户端 Mod 会记录附着到的页面或无法附着的原因。
+- 「经验值转换」页没有 OC 窗口：服务器未启用 OC 模式（World Mod 未启用、模式为 `current`，或表安装失败；World 日志中有 `oc schema` 相关记录），或缺少好友赠送客户端或服务端 Mod，OC 载体需要两者都在。客户端日志中的 `oc original windows` 行记录窗口是否加载、绑定。
+- 战斗数值没有变化：房间开始后查看对战服务端日志中的 `oc applied uid=...` 行，对战 Mod 会记录每次应用的加点。推进力和机动力看客户端日志中的 `oc mobility applied` 行。
+- OVER CUSTOM 按钮一直是暗色：机体尚未达到普通上限等级，或已经是 OVER CUSTOM EX。
 
 ## 开发者说明
 
 **记录载体。** 机体记录（`_UnitData`，0x99 字节）在 +21..+45 有 25 字节保留区。`oc` 模式下 World Mod 在此写入 `'O' 'C'`、版本 1、标志（1 = OC 模式，2 = 已有 OC 档）、OC 等级、普通点与 Over 点总数、六个有符号 16 位属性增量（速度、HP、攻击、防御、敏捷、必杀）、修订号和校验和，并清空 +138 的四个改造部件槽。World 发包钩子（`oc_custom.world_send`）在构建这些包的请求处理之后修补 0x8F2、0x9B4、0x699 和 0x5C1。
 
-**大厅请求。** OC 指令使用好友赠送载体的不透明扩展区间 0x1000..0x10FF：0x1000 模式、0x1001 读取 OC 档、0x1002 普通点分配、0x1003 Over 点分配、0x1004 挑战、0x1005 洗点费用、0x1006 洗点。服务端通过 `SdgoFriendUnitGiftRegisterExtensionV1` 注册，客户端通过 `SdgoFriendUnitGiftClientExtensionSendV1` 发送。处理函数执行期间，`SdgoFriendUnitGiftCurrentRequestV1` 返回承载该请求的原生 World 请求对象。
+**大厅请求。** OC 指令使用好友赠送载体的不透明扩展区间 0x1000..0x10FF：0x1000 模式、0x1001 读取 OC 档、0x1002 普通点分配、0x1003 Over 点分配、0x1004 挑战、0x1005 洗点费用、0x1006 洗点、0x1007 列出账号可用于下一次挑战的终极强化道具（`tbl_EtcItems` 中带成功率加成或防掉级、且使用等级覆盖当前 OC 等级的类型 3 道具，最多 10 个）。服务端通过 `SdgoFriendUnitGiftRegisterExtensionV1` 注册，客户端通过 `SdgoFriendUnitGiftClientExtensionSendV1` 发送。处理函数执行期间，`SdgoFriendUnitGiftCurrentRequestV1` 返回承载该请求的原生 World 请求对象。
 
 **对战服务端的拷贝。** 玩家进入频道时，对战服务端请求用户信息（请求 0x6B3，回复 0x5C1）并保存该账号的出击机体记录，房间飞行员从这份拷贝复制。它的 0x5C1 处理在房间外更新缓存的用户，在房间内更新飞行员并广播 0x861。加点、洗点或挑战成功后，World Mod 把原生用户信息处理（`oc_custom.world_req_user_info`）对该账号重放给所有收到过其用户信息的对端（承载本次请求的 Agent 除外），重放时复制请求对象，只替换目标和包缓冲区。战斗结束用户更新（请求 0x68D，`oc_custom.world_req_battle_end_user`，回复 0x4A9，记录位于 +0x2B）同样被填充，因为对战服务端会把这条记录保存为该账号的出击机体记录。客户端保存后也用同一个用户信息请求刷新自己的出击机体记录。
 
 **对战。** `oc_custom.battle_set_unit_stat` 挂接原生属性分派函数（`__stdcall`，七个参数，`RET 0x1C`）。原函数执行后按形态加上增量，并以等级上限表（`oc_custom.battle_grade_caps`）截断；必杀追加伤害以致命武器的伤害尺寸（`oc_custom.battle_weapon_lookup`）为上限。
 
-**客户端页面。** `CServiceFactoryRoomUnitUpGrade`（服务名 `ServiceFactoryUnitUpGrade`）在 +0xA8 内嵌页面组件。
+**客户端界面。** `CServiceFactoryRoomUnitUpGrade`（服务名 `ServiceFactoryUnitUpGrade`）在 +0xA8 内嵌页面组件。现行 `GOnline.exe` 已没有 OC 服务类，但包内的 OC 布局完整：`0794`（加点窗）、`0813`（终极强化窗）、`0819`（确认框）与 OC 年代客户端逐字节或控件一致；当前 `0799` 去掉了 OC 年代的 `OverCustomBtn`，其精灵 `sprs\8525-8528.spr` 仍在包内。
 
 | 符号 | 作用 |
 | --- | --- |
-| `oc_custom.client_upgrade_init` | 页面组件 Init：加载 `uirs\0799.uir`，把出击机体记录复制到组件 +0x6C。`__thiscall`，带一个未使用的栈参数（`RET 4`），在资源加载线程执行 |
-| `oc_custom.client_upgrade_update` | 服务逐帧更新（虚表第 12 项），游戏线程。面板控件在这里为 Init 通报的页面创建 |
-| `oc_custom.client_upgrade_callback` | 服务 UI 回调（虚表第 14 项），`__stdcall(service, event, second, control)`；按钮点击为 0x101 |
-| `oc_custom.client_upgrade_vtable` | 服务虚表，创建面板前核对 |
+| `oc_custom.client_upgrade_init` | 页面组件 Init：加载 `uirs\0799.uir`，把出击机体记录复制到组件 +0x6C。`__thiscall`，带一个未使用的栈参数（`RET 4`），在资源加载线程执行。Mod 在其后用同一线程加载 OC 布局 |
+| `oc_custom.client_upgrade_update` | 服务逐帧更新（虚表第 12 项），游戏线程。Mod 在这里接管加载好的窗口，并在页面上重建 `OverCustomBtn` |
+| `oc_custom.client_upgrade_callback` | 服务 UI 回调（虚表第 14 项），`__stdcall(service, event, second, control)`；按钮点击为 0x101，复选框为 0x401 |
+| `oc_custom.client_upgrade_vtable` | 服务虚表，接管窗口前核对 |
+| `oc_custom.client_tab_menu_update`、`oc_custom.client_tab_menu_callback`、`oc_custom.client_tab_menu_vtable` | 工厂标签菜单（`ServiceFactoryRoomMenu`）的逐帧更新、UI 回调与虚表。Mod 在七个原生标签（缓存在服务 +0xD4）之间、经验值转换之后放回 `OverCustomRadio`，使用原生标签的皮肤和文字样式，标题为文本 126631；标签栏按每格 125 像素重新排布。点击它时先用原生 0x301 选中经验值转换页，再显示加点窗；点击原生标签离开 |
+| `oc_custom.grid_singleton` | 客户端表管理器（`DAT_01005608`）。+4 是以 id 为键的 `std::map`，值为 {类型, 记录}；类型 0x3B 是界面文本（记录 +5 起为 UTF-16），类型 2 是机体表 |
 
-页面对话框只在工厂页签菜单（`ServiceFactoryRoomMenu`，`CServiceFactoryRoomTabMenu`）选中 `UnitUpRadio` 时显示；两个服务在页面加载并激活后把 +0xAC 置位。面板按钮使用客户端自带的蓝色按钮精灵 `sprs\17530-17532.spr`，按控件尺寸从原始 82×28 缩放；背景为 `sprs\17459.spr`（262×61），同样缩放。
+窗口由服务自己的加载函数（虚表 +0x58，`Load(name, path)`，页面加载 `0799` 用的同一调用）创建，归服务所有、绘制和销毁，控件事件进入服务 UI 回调。服务按名字登记对话框，所以三个窗口使用各自的登记名。控件按原名字和类型查找（`FindControl`，静态文本 3、按钮 4、图标 1、复选框 10）；静态文本和复选框分别通过虚表 +0x88 的 `SetText` 与 `SetCheck` 设置，复选框勾选状态在 +0x21C。工厂的对话框都是顶层对话框。OC 窗口打开期间，工厂库存服务（`CServiceFactoryRoomInventory`，`oc_custom.client_inventory_update` 记下该服务）登记在服务对话框映射（服务 +0x30）里、且大部分落在窗口下方的对话框被暂时隐藏，窗口关闭或离开页面时恢复原来的可见状态。加点窗比 OC 年代布局上移 40 像素，避开现行页面底部的视角按钮。`OverCustomBtn`（18,213，205×30，精灵 8526-8528）和其暗色标签 `BackIcon1`（22,217，84×24，精灵 8525）按 OC 年代 `0799` 的记录重建。窗口文字取自文本表 126262..127192 中的原版 OC 文本（例如 126631「终极强化」、126638..126643 六项属性名、126644「强化点数」、126646/126647 洗点、126683..126685 挑战确认）。
 
-**GameTest。** `tools/game_test.py prepare` 支持 `--oc-allocate STAT:POINTS`（配合 `--play-unit-uid`，在普通 PvP 战斗前通过客户端 Mod 加点）、`--oc-panel`（在 `--oc-allocate` 之后，或配合 `--pages-only --page-group hangar`：从机体管理进入工厂、选中升级页签，并经页面原生 UI 回调操作面板：刷新、洗普通点、加 1 点 HP）和 `--oc-challenge`（同时按下 OC 挑战，可能改变 OC 等级）。
+**战斗中的推进力与机动力。** 机体属性初始化 `FUN_00676C70` 把机体表的 DashLevel（+0x21E）和 MotivePower（+0x221）复制到机体对象 +0xB64、+0xB6A，加上现行体系的属性加成，再调用 `FUN_00675850` 由这两个等级推算移动数值。`oc_custom.client_unit_derive_call`（该调用处的 site 挂钩）在推算前把增量加到本机机体的这两个等级及其恢复副本 +0xD5C、+0xD5E 上。本机机体由机体管理器 +0x88 标识；开战时机体可能先完成初始化，再由 `oc_custom.client_add_player`（`AddPlayer`，`__thiscall(manager, unit, local, player)`，`RET 0xC`）标记为本机，此时补加增量并调用 `oc_custom.client_unit_derive` 重新推算。
+
+**GameTest。** `tools/game_test.py prepare` 支持 `--oc-allocate STAT:POINTS[,STAT:POINTS...]`（配合 `--play-unit-uid`，在普通 PvP 战斗前直接保存普通点）、`--oc-panel` 和 `--oc-challenge`。分配了推进力（0）或机动力（4）时，`oc.mobility` 在开战后核对本机机体的推进等级和机动力正好增加了保存的增量。`oc.panel` 在战斗结束后从机体管理进入工厂「经验值转换」页，等待原版 OC 窗口出现，再通过客户端 Mod 的 `SdgoOcCustomClientClickV2` 把 UI 事件送进页面服务的原生回调，先按「终极强化」标签打开加点窗并核对其下的库存窗口已隐藏，再按原控件名操作：洗点（`ResetBtn` → 确认框 `OKBtn`）、加推进力（`SpeedUpBtn`）、加机动力（`AgiUpBtn`）、普通点用完后加 Over 点并执行终极强化还原，配合 `--oc-challenge` 时再按 OVER CUSTOM、勾选道具并开始终极强化。各步骤的画面保存在运行目录的 `visual\` 下。
