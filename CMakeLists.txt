@@ -1,7 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" SDGO_VERSION LIMIT_COUNT 1)
-project(sdgo_mod_framework VERSION ${SDGO_VERSION} LANGUAGES C CXX RC)
+# CMake's project VERSION is numeric; package and file-version strings retain
+# the complete release identity, including a candidate's Beta suffix.
+string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" SDGO_PROJECT_VERSION "${SDGO_VERSION}")
+project(sdgo_mod_framework VERSION ${SDGO_PROJECT_VERSION} LANGUAGES C CXX RC)
 find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
 set(SDGO_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
 set(SDGO_VERSION_MINOR ${PROJECT_VERSION_MINOR})
@@ -77,9 +80,18 @@ sdgo_version_resource(winmm_shim winmm.dll "SDGO mod framework loader (server)")
 sdgo_stage(winmm_shim "server")
 
 # ---- core: sdgo/core.dll ----------------------------------------------------------
-add_library(sdgo_core SHARED core/core.cpp core/hooks.cpp core/log.cpp core/symbols.cpp)
+add_library(sdgo_core SHARED core/core.cpp core/hooks.cpp core/log.cpp core/symbols.cpp core/runtime_state.cpp)
 set_target_properties(sdgo_core PROPERTIES OUTPUT_NAME core)
-target_link_libraries(sdgo_core PRIVATE sdgo_api minhook)
+target_link_libraries(sdgo_core PRIVATE sdgo_api minhook bcrypt)
+if(BUILD_TESTING)
+    add_library(manager_safety_fixture SHARED tests/manager_safety_fixture.cpp)
+    target_link_libraries(manager_safety_fixture PRIVATE sdgo_api)
+    sdgo_strict(manager_safety_fixture)
+    add_executable(manager_safety_host tests/manager_safety_host.cpp)
+    target_link_libraries(manager_safety_host PRIVATE sdgo_api)
+    sdgo_strict(manager_safety_host)
+    add_dependencies(manager_safety_host sdgo_core manager_safety_fixture)
+endif()
 sdgo_strict(sdgo_core)
 sdgo_version_resource(sdgo_core core.dll "SDGO mod framework core")
 sdgo_stage(sdgo_core "client/sdgo")
@@ -117,6 +129,8 @@ function(sdgo_add_mod id)
         list(APPEND mod_data_commands COMMAND "${CMAKE_COMMAND}" -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/mods/${id}/${file}" "${SDGO_STAGE}/${root}/mods/${id}/${file}")
     endforeach()
+    list(APPEND mod_data_commands COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/mod_runtime_contract.py"
+        --manifest "${SDGO_STAGE}/${root}/mods/${id}/mod.ini" --contract "${CMAKE_CURRENT_SOURCE_DIR}/mods/${id}/manager.json")
     add_custom_target(${id}_data ${mod_data_commands} VERBATIM)
     add_dependencies(${id} ${id}_data)
     file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/mods/${id}/mod.ini" release_channel REGEX "^channel=")
@@ -132,6 +146,37 @@ endfunction()
 
 sdgo_add_mod(mission_ai DESCRIPTION "co-op mission wingmen (client)"
              SOURCES mods/mission_ai/mission_ai.cpp FILES mission_ai.lua)
+sdgo_add_mod(mission_behavior DESCRIPTION "OC and current mission behavior (client)"
+             SOURCES mods/mission_behavior/client.cpp FILES symbols.fragment.ini)
+sdgo_add_mod(mission_behavior_server SERVER DESCRIPTION "OC and current mission behavior (server)"
+             SOURCES mods/mission_behavior_server/mission_behavior_server.cpp FILES symbols.fragment.ini)
+if(BUILD_TESTING)
+    add_executable(mission_behavior_client_policy_test
+        mods/mission_behavior/tests/client_policy_test.cpp)
+    target_link_libraries(mission_behavior_client_policy_test PRIVATE sdgo_api)
+    sdgo_strict(mission_behavior_client_policy_test)
+    add_test(NAME mission_behavior_client_policy
+        COMMAND mission_behavior_client_policy_test)
+
+    add_executable(mission_behavior_client_runtime_test
+        mods/mission_behavior/tests/client_runtime_test.cpp)
+    target_link_libraries(mission_behavior_client_runtime_test PRIVATE sdgo_api)
+    sdgo_strict(mission_behavior_client_runtime_test)
+    add_dependencies(mission_behavior_client_runtime_test mission_behavior)
+    add_test(NAME mission_behavior_client_runtime
+        COMMAND mission_behavior_client_runtime_test
+            $<TARGET_FILE:mission_behavior>)
+
+    add_executable(mission_behavior_server_test tests/mission_behavior_server_test.cpp)
+    target_link_libraries(mission_behavior_server_test PRIVATE sdgo_api)
+    target_include_directories(mission_behavior_server_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(mission_behavior_server_test)
+    add_dependencies(mission_behavior_server_test mission_behavior_server)
+    foreach(profile_case default oc gco conflict corrupt)
+        add_test(NAME mission_behavior_server_${profile_case}
+            COMMAND mission_behavior_server_test $<TARGET_FILE:mission_behavior_server> ${profile_case})
+    endforeach()
+endif()
 sdgo_add_mod(ime_fix DESCRIPTION "Chinese IME candidate and commit fixes" SOURCES mods/ime_fix/ime_fix.cpp FILES symbols.fragment.ini)
 sdgo_add_mod(findwindow_fix DESCRIPTION "FindWindowW fix" SOURCES mods/findwindow_fix/findwindow_fix.cpp LIBS user32)
 sdgo_add_mod(startup_crash_fix DESCRIPTION "random crash at game start fix" SOURCES mods/startup_crash_fix/startup_crash_fix.cpp)
@@ -1331,7 +1376,7 @@ if(BUILD_TESTING)
         set_tests_properties(installer_offline PROPERTIES TIMEOUT 180)
         add_test(NAME mod_staging_offline COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/staging_test.ps1"
-            -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
+            -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}" -Python "${Python3_EXECUTABLE}")
         set_tests_properties(mod_staging_offline PROPERTIES TIMEOUT 90)
     endif()
 

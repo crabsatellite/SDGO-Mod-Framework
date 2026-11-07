@@ -21,7 +21,7 @@ FAMILY_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 MANAGED_ITEM_FIRST = 1_119_000
 MANAGED_ITEM_LAST = 1_119_999
 OWNER_KEY = "sdgo-unit-catalog"
-APP_LOCK = "SDGO:unit-import-catalog"
+APP_LOCK = "SDGO:catalog-change"
 
 UNIT_COLUMNS = (
     "UnitNumber", "Influence1", "Influence2", "UnitModelName",
@@ -930,6 +930,13 @@ class Repository:
         }
 
     def apply(self, plan: Any) -> dict[str, Any]:
+        if self.server_ini is None:raise ValueError('未配置服务端 INI，离线模式不能执行 apply')
+        self.check_plan(plan)
+        from manager.operations import server_change
+        with server_change(self.server_ini,'unit_catalog.fixed_tables')as change:
+            return change.result(self._apply(plan))
+
+    def _apply(self, plan: Any) -> dict[str, Any]:
         """Apply all fixed definitions together; never restart game services."""
         if self.server_ini is None:
             raise ValueError("未配置服务端 INI，离线模式不能执行 apply")

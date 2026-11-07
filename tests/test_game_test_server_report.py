@@ -1,9 +1,11 @@
 import copy
+import hashlib
 import json
 from pathlib import Path
 import tempfile
 import unittest
 
+from manager.engines.mission_behavior import profile_codec
 from tools import game_test_server_report as report
 
 
@@ -43,6 +45,114 @@ class ServerReportTests(unittest.TestCase):
     def evaluate(self,events,**kwargs):
         self.path.write_text('\n'.join(json.dumps(e) for e in events)+'\n',encoding='utf-8')
         return report.evaluate(self.metadata,[self.path],9229,**kwargs)
+
+    @staticmethod
+    def mission_row(identity, mission, npc):
+        return dict(zip(
+            profile_codec.FIELDS,
+            (identity,mission,1,1,npc,-10,20,30,0,0,0,1,1,0)))
+
+    def mission_stream(self, profile='oc'):
+        mission_id=88009
+        current=[
+            self.mission_row(101,mission_id,201),
+            self.mission_row(102,99001,202),
+        ]
+        old=[
+            self.mission_row(101,mission_id,301),
+            self.mission_row(102,99001,302),
+        ]
+        raw=profile_codec.compile_reference(
+            current,old,profile_codec.OC_BINDINGS,label='synthetic')
+        client=Path(self.temp.name)/f'client-{profile}'
+        bundle=client/report.MISSION_PROFILE_RELATIVE
+        bundle.parent.mkdir(parents=True,exist_ok=True)
+        bundle.write_bytes(raw)
+        self.metadata={
+            'run_id':'6fd7578d-1e08-4a50-b2af-9dd44382b260',
+            'plan':{
+                'mission_behavior_profile':profile,
+                'mission_game_mode_id':mission_id,
+            },
+            'client':{
+                'root':str(client),
+                'immutable_hashes':{
+                    report.MISSION_PROFILE_RELATIVE:
+                        hashlib.sha256(raw).hexdigest(),
+                },
+            },
+        }
+        sealed=report.sealed_mission_profile(self.metadata,profile,mission_id)
+        profile_value=1 if profile=='oc' else 2
+        selected=sealed['selected_rows'][101]
+        common={
+            'run_id':self.metadata['run_id'],
+            'role':'server',
+            'suite':'native-mission-behavior',
+        }
+        events=[
+            dict(common,event=report.MISSION_PROFILE_EVENT,
+                 profile=profile_value,state=profile_value,
+                 entries=sealed['entry_count'],
+                 applied=sealed['entry_count'] if profile=='oc' else 0,
+                 baseline_matches=sealed['entry_count'],
+                 payload_crc32=sealed['payload_crc32'],
+                 native_rows_crc32=sealed['native_rows_crc32'],
+                 verified_rows=sealed['entry_count'],
+                 verified_rows_crc32=sealed['native_rows_crc32'],
+                 selected_mission_rows=sealed['selected_mission_rows'],
+                 ready_epochs=1),
+            dict(common,event='observer_ready',host_key=report.BATTLE_HOST,
+                 pid=123,normal_server_main=True),
+            dict(common,event=report.MISSION_CREATION_EVENT,sequence=1,
+                 profile=profile_value,original_result=1,tracked=1,
+                 profile_match=1,mission_npc_id=101,mission_id=mission_id,
+                 difficulty=1,part=1,npc_id=selected['NpcID'],
+                 native_pilot_id=9001,native_unit_hp=5000),
+        ]
+        return events,bundle,sealed
+
+    def test_synthetic_mission_bundle_binds_dynamic_counts_crcs_and_profiles(self):
+        for profile in ('oc','gco'):
+            with self.subTest(profile=profile):
+                events,_,sealed=self.mission_stream(profile)
+                result=self.evaluate(events)
+                self.assertEqual(result['status'],'pass',result['errors'])
+                self.assertEqual(result['profiles'][0]['entries'],2)
+                self.assertEqual(
+                    result['profiles'][0]['selected_mission_rows'],1)
+                self.assertEqual(
+                    result['profiles'][0]['native_rows_crc32'],
+                    sealed['native_rows_crc32'])
+
+    def test_synthetic_mission_bundle_rejects_unsealed_or_forged_evidence(self):
+        mutations=(
+            lambda events:events[0].update(entries=1198),
+            lambda events:events[0].update(selected_mission_rows=1058),
+            lambda events:events[0].update(
+                native_rows_crc32=1,verified_rows_crc32=1),
+            lambda events:events[0].update(payload_crc32=1),
+            lambda events:events[0].update(state=4),
+            lambda events:events[2].update(npc_id=9999),
+            lambda events:events[2].update(mission_npc_id=9999),
+        )
+        for mutate in mutations:
+            events,_,_=self.mission_stream()
+            mutate(events)
+            with self.subTest(mutate=mutate):
+                self.assertEqual(self.evaluate(events)['status'],'fail')
+
+        events,bundle,_=self.mission_stream()
+        self.metadata['client']['immutable_hashes'][
+            report.MISSION_PROFILE_RELATIVE]='0'*64
+        self.assertEqual(self.evaluate(events)['status'],'fail')
+
+        events,bundle,_=self.mission_stream()
+        corrupt=bytearray(bundle.read_bytes());corrupt[-1]^=1
+        bundle.write_bytes(corrupt)
+        self.metadata['client']['immutable_hashes'][
+            report.MISSION_PROFILE_RELATIVE]=hashlib.sha256(corrupt).hexdigest()
+        self.assertEqual(self.evaluate(events)['status'],'fail')
 
     def test_real_matrix_requires_every_mode_not_only_first_server_summary(self):
         self.metadata['plan']['mode_sequence']='1,3,6,7,9'

@@ -1,6 +1,15 @@
 export function e(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
 export function button(text,fn,ctx,cls=''){const n=e('button',text,cls);n.onclick=async()=>{n.disabled=true;try{await fn();}catch(error){ctx.message(error.message,true);}finally{n.disabled=false;}};return n;}
 export function field(label,value,type='text'){const box=e('label',label),input=document.createElement('input');input.type=type;if(type==='checkbox')input.checked=!!value;else input.value=value??'';box.append(input);return {box,input};}
+export function reviewChange(plan){
+ return new Promise(resolve=>{const dialog=e('dialog'),list=e('ul'),actions=e('div',undefined,'actions');
+  dialog.append(e('h2',plan.title),e('p',plan.maintenance));for(const effect of plan.effects)list.append(e('li',effect));dialog.append(list);
+  if(plan.nodes?.length)dialog.append(e('p','涉及服务：'+plan.nodes.join('、'),'muted'));
+  let accepted=false;const close=()=>dialog.close();
+  actions.append(button('返回修改',close,{message:()=>{}},'ui-btn is-ghost'),button('确认本次变更',()=>{accepted=true;close();},{message:()=>{}},'ui-btn is-primary'));
+  dialog.append(actions);dialog.onclose=()=>{dialog.remove();resolve(accepted);};dialog.oncancel=()=>{accepted=false;};document.body.append(dialog);dialog.showModal();
+ });
+}
 // A panel's edits that wait for explicit saves: one bar, kept in view at the bottom of the page, lists each
 // save scope ({title, snapshot(), jump?()}) as saved or unsaved and holds the save buttons ({label, run, covers:
 // scope indexes, primary}; run returning false means cancelled). A scope with jump() is a link to its section,

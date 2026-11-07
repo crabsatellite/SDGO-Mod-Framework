@@ -20,7 +20,8 @@
     [mod] section is the mod's manifest: version, requires, ...), and the server's own
     [mod] enabled and [settings] values are written back into it. -OverwriteConfig installs
     both as they are in the package.
-  * -Only limits the install to the named subfolders; -Uninstall removes the framework.
+  * -Only limits the install to the named subfolders; -Uninstall removes framework runtime
+    files and keeps each Mod's declared config_files in place.
   * -Role Agent selects AgentServer.exe folders for agent_udp_pool. The default
     remains Battle (BattleServer.exe), so existing commands keep their meaning.
   * -Role World selects WorldServer.exe for rank and new-account profile fixes.
@@ -168,14 +169,16 @@ foreach ($target in $targets) {
     $iniPath = Join-Path $sdgoDir "sdgo.ini"
 
     if ($Uninstall) {
+        $retainedConfigs = Get-ModConfigBytes $dir
         $chainName = ""
         if (Test-Path -LiteralPath $iniPath) { $chainName = Get-IniValue $iniPath "loader" $ChainKey }
         if ((Test-Path -LiteralPath $loaderPath) -and (Test-OurLoader $loaderPath)) { Remove-ToRecycleBin $loaderPath }
         Remove-ToRecycleBin $sdgoDir
+        Restore-ModConfigBytes $dir $retainedConfigs
         if ($chainName -and -not (Test-Path -LiteralPath $loaderPath) -and (Test-Path -LiteralPath (Join-Path $dir $chainName))) {
             Rename-Item -LiteralPath (Join-Path $dir $chainName) -NewName $Loader
         }
-        Write-Host "$name : removed"
+        Write-Host "$name : removed; retained $($retainedConfigs.Count) declared Mod configuration file(s)"
         continue
     }
 
