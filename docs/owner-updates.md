@@ -29,6 +29,8 @@ Choose owner DIY for your editing client. Review and adopt the intended upstream
 
 Choose an absolute output directory outside the client, player-readable feeds and any extra asset paths relative to the client. Registered generator outputs and declared Mod configuration files are included automatically.
 
+Previously published content and content recorded by an installed profile remain part of that inventory while their files exist. Taking over an installed client does not require its former private generator workspace. These files still pass content and privacy validation; deleted files retire through the normal update transaction.
+
 Export the profile. With no Git publication address, the directory is ready for an existing HTTPS host or offline transfer. With a Git SSH/HTTPS remote and content branch, Manager commits, pushes and reads back the remote commit using your existing identity. Hosting and mirror services remain the owner's responsibility; Manager does not start a public file server.
 
 The export contains server-profile.json, profile-source.json and content/. Framework DLLs, Mod identity and interfaces remain in the independent program source. Generic AI catalog providers come from that source; generated catalog.bin comes only from owner content. An unchanged export reuses its revision; configuration or asset changes increment content revisions independently of framework versions.
