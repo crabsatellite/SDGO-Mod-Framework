@@ -34,6 +34,22 @@ def load(root):
             client_xml_setting = location == CLIENT_XML_SETTING and value.get('hosts') == ['client']
             if not ini_setting and not client_xml_setting:
                 raise ValueError('字段不能写入运行代码或任意文件：' + identity)
+            activation=field.get('activation','restart_required')
+            if activation not in ('restart','restart_required','hot_reload'):
+                raise ValueError('配置生效方式无效：'+identity)
+            field['activation']='restart_required'if activation=='restart'else activation
+        from .dependencies import validate
+        validate(value)
+        from .configuration import relative
+        if not isinstance(value.get('configuration_files',[]),list):raise ValueError('运行配置文件列表无效')
+        for name in value.get('configuration_files',[]):relative(name)
+        retirement=value.get('retirement',{})
+        if not isinstance(retirement,dict)or set(retirement)-{'content_files'}:
+            raise ValueError('内容停用声明无效：'+identity)
+        if not isinstance(retirement.get('content_files',[]),list):raise ValueError('内容引用文件列表无效')
+        for name in retirement.get('content_files',[]):
+            if not isinstance(name,str)or not re.fullmatch(r'[A-Za-z0-9_.-]+',name)or name in('.','..'):
+                raise ValueError('内容引用文件无效：'+identity)
         records[identity] = value
     return records
 

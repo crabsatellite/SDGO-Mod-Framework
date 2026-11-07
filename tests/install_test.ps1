@@ -58,6 +58,7 @@ function New-Package([string]$dir, [string]$loader, [string]$hostName, [string]$
     Set-Content -LiteralPath (Join-Path $dir "sdgo\mods\demo\mod.ini") -Value $modIni -Encoding Ascii
     Set-Content -LiteralPath (Join-Path $dir "sdgo\mods\demo\config.ini") -Value '[owner] mode=package' -Encoding Ascii
     Set-Content -LiteralPath (Join-Path $dir "sdgo\mods\demo\roster.json") -Value '{"pool":"package"}' -Encoding Ascii
+    [IO.File]::WriteAllBytes((Join-Path $dir "sdgo\mods\demo\profile.bin"), [byte[]](10,20,30,40))
     Set-Content -LiteralPath (Join-Path $dir "sdgo\mods\demo\config.example.ini") -Value $modIni.Split("`n")[0] -Encoding Ascii
 }
 
@@ -67,7 +68,7 @@ $modIni1 = @'
 id=demo
 category=fixes
 feature=demo
-config_files=config.ini,roster.json
+config_files=config.ini,roster.json,profile.bin
 version=1.0.0
 enabled=0
 requires=old.symbol
@@ -84,7 +85,7 @@ $modIni2 = @'
 id=demo
 category=gameplay
 feature=demo
-config_files=config.ini,roster.json
+config_files=config.ini,roster.json,profile.bin
 version=2.0.0
 enabled=0
 requires=old.symbol,new.symbol
@@ -118,6 +119,7 @@ function Edit-Settings([string]$modIniPath, [string]$sdgoIniPath) {
     $folder = Split-Path -Parent $modIniPath
     Set-Content -LiteralPath (Join-Path $folder 'config.ini') -Value '[owner] mode=custom' -Encoding Ascii
     Set-Content -LiteralPath (Join-Path $folder 'roster.json') -Value '{"pool":"custom"}' -Encoding Ascii
+    [IO.File]::WriteAllBytes((Join-Path $folder 'profile.bin'), [byte[]](1,2,3,4,5))
 }
 
 function Check-Update([string]$side, [string]$modIniPath, [string]$sdgoIniPath) {
@@ -135,6 +137,7 @@ function Check-Update([string]$side, [string]$modIniPath, [string]$sdgoIniPath) 
     $folder = Split-Path -Parent $modIniPath
     Check "$side user config kept" (Get-Content -LiteralPath (Join-Path $folder 'config.ini') -TotalCount 1) '[owner] mode=custom'
     Check "$side user roster kept" (Get-Content -LiteralPath (Join-Path $folder 'roster.json') -TotalCount 1) '{"pool":"custom"}'
+    Check "$side compiled owner profile kept" ([BitConverter]::ToString([IO.File]::ReadAllBytes((Join-Path $folder 'profile.bin')))) '01-02-03-04-05'
     Check "$side example updates" (Get-Content -LiteralPath (Join-Path $folder 'config.example.ini') -TotalCount 1) '; demo 2.0.0'
 }
 
@@ -165,7 +168,7 @@ Check 'client explicit config overwrite' (Get-Content -LiteralPath (Join-Path $g
 $sourceIni = Join-Path $client2 'sdgo\mods\demo\mod.ini'
 $originalManifest = [IO.File]::ReadAllText($sourceIni)
 foreach ($bad in @('../outside.ini','C:\outside.ini','demo.dll','mod.ini')) {
-    [IO.File]::WriteAllText($sourceIni, $originalManifest.Replace('config_files=config.ini,roster.json', "config_files=$bad"))
+    [IO.File]::WriteAllText($sourceIni, $originalManifest.Replace('config_files=config.ini,roster.json,profile.bin', "config_files=$bad"))
     $ErrorActionPreference = 'Continue'
     $badOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'tools\install_client.ps1') -GameDir $game -Source $client2 2>&1
     $badExit = $LASTEXITCODE
@@ -173,6 +176,10 @@ foreach ($bad in @('../outside.ini','C:\outside.ini','demo.dll','mod.ini')) {
     Check "unsafe config rejected: $bad" ([string]($badExit -ne 0)) 'True'
 }
 [IO.File]::WriteAllText($sourceIni, $originalManifest)
+[IO.File]::WriteAllBytes((Join-Path $game 'sdgo\mods\demo\profile.bin'), [byte[]](91,92,93))
+Install "install_client.ps1" @("-GameDir", $game, "-Uninstall")
+Check 'client uninstall retains compiled owner profile' ([BitConverter]::ToString([IO.File]::ReadAllBytes((Join-Path $game 'sdgo\mods\demo\profile.bin')))) '5B-5C-5D'
+Check 'client uninstall removes Mod program' ([string](Test-Path -LiteralPath (Join-Path $game 'sdgo\mods\demo\demo.dll'))) 'False'
 
 # ---- battle server
 $server1 = Join-Path $work "package1\server"
@@ -189,6 +196,10 @@ Install "install_server.ps1" @("-ServerRoot", $serverRoot, "-Source", $server1)
 Edit-Settings $serverModIni $serverSdgoIni
 Install "install_server.ps1" @("-ServerRoot", $serverRoot, "-Source", $server2)
 Check-Update "server" $serverModIni $serverSdgoIni
+[IO.File]::WriteAllBytes((Join-Path $serverRoot 'BattleServer1\sdgo\mods\demo\profile.bin'), [byte[]](81,82,83))
+Install "install_server.ps1" @("-ServerRoot", $serverRoot, "-Uninstall")
+Check 'server uninstall retains compiled owner profile' ([BitConverter]::ToString([IO.File]::ReadAllBytes((Join-Path $serverRoot 'BattleServer1\sdgo\mods\demo\profile.bin')))) '51-52-53'
+Check 'server uninstall removes Mod program' ([string](Test-Path -LiteralPath (Join-Path $serverRoot 'BattleServer1\sdgo\mods\demo\demo.dll'))) 'False'
 
 # World uses the same updater, including owner-config preservation.
 foreach ($version in 1,2) {

@@ -18,7 +18,8 @@
     [mod] section is the mod's manifest: version, requires, ...), and the player's own
     [mod] enabled and [settings] values are written back into it. -OverwriteConfig installs
     both as they are in the package.
-  * -Uninstall removes d3d9.dll and sdgo\ (to the Recycle Bin) and puts a chained d3d9.dll back.
+  * -Uninstall removes runtime files (to the Recycle Bin), keeps each Mod's declared
+    config_files in place, and puts a chained d3d9.dll back.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File install_client.ps1 -GameDir "D:\Games\SDGO"
@@ -140,6 +141,7 @@ $sdgoDir = Join-Path $game "sdgo"
 $iniPath = Join-Path $sdgoDir "sdgo.ini"
 
 if ($Uninstall) {
+    $retainedConfigs = Get-ModConfigBytes $game
     $chainName = ""
     if (Test-Path -LiteralPath $iniPath) { $chainName = Get-IniValue $iniPath "loader" $ChainKey }
     if ((Test-Path -LiteralPath $loaderPath) -and (Test-OurLoader $loaderPath)) {
@@ -148,6 +150,10 @@ if ($Uninstall) {
     }
     Remove-ToRecycleBin $sdgoDir
     Write-Host "removed  sdgo\"
+    Restore-ModConfigBytes $game $retainedConfigs
+    if ($retainedConfigs.Count) {
+        Write-Host "retained $($retainedConfigs.Count) declared Mod configuration file(s)"
+    }
     if ($chainName -and -not (Test-Path -LiteralPath $loaderPath)) {
         $chainPath = Join-Path $game $chainName
         if (Test-Path -LiteralPath $chainPath) {
@@ -155,7 +161,7 @@ if ($Uninstall) {
             Write-Host "restored $Loader (was $chainName)"
         }
     }
-    Write-Host "SDGO mod framework removed from $game (files are in the Recycle Bin)"
+    Write-Host "SDGO mod framework removed from $game (runtime files are in the Recycle Bin)"
     return
 }
 
