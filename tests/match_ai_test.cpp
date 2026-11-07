@@ -570,6 +570,24 @@ int main() {
             CHECK(deliveredTransformMessage[0x18]==0&&Get<uint32_t>(deliveredTransformMessage.data(),0x14)==10209);
             CHECK(!g_transformConfirmation.active&&notice[0xE]==replay);
         }
+        // TransformInit can switch the active definition before D4 Release.
+        // The native notice then emits mode2 for this same in-flight target.
+        const auto previousDefinition=Get<uint8_t*>(unit,0x9C4);
+        std::array<uint8_t,4> committedDefinition{};
+        Put(committedDefinition.data(),0,uint32_t(10209));Put(unit,0x9C4,committedDefinition.data());
+        transformMessageMode=2;localTransformMessages=networkTransformMessages=0;
+        Put(movement.data(),0x2C0,uint32_t(0));Put(movement.data(),8,uint32_t(0));
+        CHECK(TransformNotice(notice.data())==0x3344);
+        CHECK(localTransformMessages==1&&networkTransformMessages==0);
+        CHECK(Get<uint32_t>(movement.data(),0x2C0)==2&&Get<uint32_t>(movement.data(),8)==0);
+        CHECK(Get<uint32_t>(deliveredTransformMessage.data(),0x10)==2&&
+              Get<uint32_t>(deliveredTransformMessage.data(),0x14)==10209);
+        CHECK(Get<uint8_t*>(unit,0x9C4)==committedDefinition.data()&&Get<uint32_t>(committedDefinition.data(),0)==10209);
+        Put(committedDefinition.data(),0,uint32_t(10208));
+        localTransformMessages=networkTransformMessages=0;Put(movement.data(),0x2C0,uint32_t(0));
+        CHECK(TransformNotice(notice.data())==0x3344);
+        CHECK(localTransformMessages==0&&networkTransformMessages==1&&Get<uint32_t>(movement.data(),0x2C0)==0);
+        Put(unit,0x9C4,previousDefinition);transformMessageMode=1;
         for(int negative=0;negative<3;++negative) {
             localTransformMessages=networkTransformMessages=0;
             transformMessageMode=negative==0?2u:1u;
