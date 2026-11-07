@@ -67,13 +67,30 @@ struct Bindings {
     using Skin = void(__thiscall*)(void*, const NativeString*, std::uint8_t, std::uint32_t, std::uint32_t);
     using AddIcon = std::uint32_t(__thiscall*)(void*, const NativeString*, int, int, int, int);
     using Refresh = void(__thiscall*)(void*); // a control's geometry from its +0x148 position
+    // 3DRender item display (the factory pages' FUN_00873B40 sequence).
+    using RenderVoid = void(__thiscall*)(void*);
+    using RenderLoad = void(__thiscall*)(void*, const NativeString*, int);
+    using RenderRotation = void(__thiscall*)(void*, float, float, float);
+    using RenderModel = void*(__thiscall*)(void*);
+    using ModelAnimation = void(__thiscall*)(void*, const NativeString*, int, float, float, int, int, int);
     Add add = nullptr;
     Refresh refresh = nullptr;
+    RenderVoid render_lock = nullptr;
+    RenderVoid render_clear = nullptr;
+    RenderLoad render_load = nullptr;
+    RenderRotation render_rotation = nullptr;
+    RenderModel render_model = nullptr;
+    ModelAnimation model_animation = nullptr;
+    RenderVoid render_unlock = nullptr;
+    bool ItemModels() const noexcept {
+        return render_lock && render_clear && render_load && render_rotation && render_model && model_animation && render_unlock;
+    }
     Find find = nullptr;
     Text text = nullptr;
     Skin skin = nullptr;
     AddIcon add_icon = nullptr;
     void* button_vtable = nullptr;
+    void (*log)(const char* message) = nullptr; // the Mod's log, for one line per item model load
     bool Bind(const SdgoApi* api, SdgoMod* mod) noexcept;
 };
 
@@ -103,6 +120,7 @@ struct InfoView {
     std::array<bool, kLevelIcons> level{};          // OverCustomSlotIcon0..6 lit
     std::array<bool, kInfoItems> item{};            // an OC item fills the slot
     std::array<std::wstring, kInfoItems> item_text; // ItemNameStatic0..2
+    std::array<std::wstring, kInfoItems> item_model; // item model (item table +0x79) for Item3DRender0..2
 };
 
 struct ChallengeView {
@@ -175,7 +193,21 @@ private:
     // lit level icons and NONE frames are created on the page like the entry.
     std::array<void*, kLevelIcons> level_icons_{};
     std::array<void*, kInfoItems> none_icons_{};
+    // Item models shown in Item3DRender0..2 (loaded once per change).
+    std::array<std::wstring, kInfoItems> models_shown_{};
+    std::uint32_t models_loaded_ = 0;
+    bool renders_prepared_ = false;
+    void PrepareRenders() noexcept;
+    bool LoadModel(void* render, const NativeString* path) noexcept;
     void SetCheck(void* control, bool checked) noexcept;
+
+    std::uint32_t models_visible_ = 0;
+
+public:
+    std::uint32_t models_loaded() const noexcept { return models_loaded_; }
+    std::uint32_t models_shown() const noexcept { return models_visible_; }
+
+private:
 
     Bindings bindings_;
     void* component_ = nullptr;

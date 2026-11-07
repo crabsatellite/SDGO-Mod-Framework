@@ -203,6 +203,11 @@ class CatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Build/catalog"):
             catalog.read_catalog(self.root)
 
+    def test_staged_startup_symbols_must_also_enter_the_release(self):
+        self.replace("mods/startup_crash_fix/mod.ini", "files=symbols.fragment.ini\n", "")
+        with self.assertRaisesRegex(ValueError, "Build payload missing from manifest: startup_crash_fix"):
+            catalog.read_catalog(self.root)
+
     def test_missing_guide_fails(self):
         (self.root / "docs/pvp-ai.md").unlink()
         with self.assertRaisesRegex(ValueError, "guide"):
