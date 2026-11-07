@@ -819,6 +819,12 @@ def prepare_and_run(
         scenario=scenario,
         run_id=run_id,
     )
+    hold_integrity_verified = False
+    if scenario.hold_after_completion:
+        game_test.verify_hashes(
+            game_test.validate_metadata(run_dir)
+        )
+        hold_integrity_verified = True
     if scenario.arm_after_client_bytes:
         try:
             ack = json.loads(
@@ -865,6 +871,7 @@ def prepare_and_run(
         "native_recovery": native_proof,
         "relay": relay_proof,
         "hold_termination": hold_termination,
+        "hold_integrity_verified": hold_integrity_verified,
     }
     summary_path = receipt_dir / "login-recovery-report.json"
     summary_path.write_text(
