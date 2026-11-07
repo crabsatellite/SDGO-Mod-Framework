@@ -36,6 +36,8 @@ def snapshot(host,source,framework,extras=(),personal_settings=()):
     legacy={'publisher_id':source['source_id'],'label':source['label'],'feeds':[]}
     files,_,_=owner_channel.snapshot(host,legacy,list(extras),max_file_bytes=512*1024*1024,include_game_base=False)
     official=runtime_layers.program_files(framework);catalog=storage.read_json(Path(framework['bundle'])/'client/sdgo/catalog.json')
+    for name in('d3d9.dll','sdgo/core.dll'):
+        if name not in official or not(root/name).is_file()or owner_channel.file_hash(root/name)!=official[name]['sha256']:raise ValueError('框架程序与所选发布包不同；先审阅并采用对应程序：'+name)
     programs={m['id']:m for m in catalog['mods']if m['target']=='client'}
     selected={};patches={};shared_files=[];content={}
     for identity,mod in programs.items():
