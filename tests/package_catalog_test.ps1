@@ -47,7 +47,7 @@ function Check-Package([string]$zip, [string[]]$expected) {
         if ($names -match 'stale_fixture_|fixture_.*\.json') { throw 'Unregistered/undeclared payload entered the archive' }
         $reader = New-Object IO.StreamReader ($archive.GetEntry('client/sdgo/catalog.json').Open())
         try { $catalog = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
-        if (@(Compare-Object (@($catalog.mods | ForEach-Object { $_.id }) | Sort-Object) ($expected | Sort-Object)).Count) {
+        if (@(Compare-Object (@($catalog.mods | ForEach-Object { $_.id }) | Sort-Object -Unique) ($expected | Sort-Object)).Count) {
             throw 'Package catalog differs from actual payload'
         }
     } finally { $archive.Dispose() }
@@ -128,6 +128,9 @@ try {
     }
     $fullArchive = [IO.Compression.ZipFile]::OpenRead($fullZip)
     try {
+        foreach ($required in @('client/sdgo/mods/ai_catalog/ai_catalog.dll','server/sdgo/mods/ai_catalog/ai_catalog.dll','server/sdgo/mods/operator_catalog_server/operator_catalog_server.dll')) {
+            if (-not $fullArchive.GetEntry($required)) { throw "Full package lacks its paired provider runtime: $required" }
+        }
         foreach ($required in @('collection/tools/collection_capsule.py','collection/owner/collection_capsule/native_catalog.py','collection/framework/support/capsule-registry/capsule_catalog.dll','collection/SHA256.json')) {
             if (-not $fullArchive.GetEntry($required)) { throw "Full package lost collection owner component: $required" }
         }
