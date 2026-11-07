@@ -1135,7 +1135,17 @@ def build_client_registry(
         }
     else:
         placement = None
+    # The capsule compiler records which 0099 rows belong to dedicated activity machines.
+    # The rows themselves are retained above, so their ownership record must travel with
+    # them; without it the next capsule compile treats the owner's own machines as foreign.
+    carried = {}
+    previous_manifest = current_path / "manifest.json" if current_path is not None else None
+    if previous_manifest is not None and previous_manifest.is_file():
+        previous = json.loads(previous_manifest.read_text("utf-8-sig"))
+        carried = {key: previous[key] for key in ("activity_ownership", "activity_metadata")
+                   if isinstance(previous, dict) and key in previous}
     manifest = {
+        **carried,
         "schema_version": 1,
         "builder_version": BUILDER_VERSION,
         "catalog_revision": revision,

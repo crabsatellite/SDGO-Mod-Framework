@@ -96,6 +96,11 @@ class Units(Provider):
                 outcome = {'status': 'failed', 'error': '批量阵容应用未完成，请查看本机 Manager 日志；已提交的机体族可直接重新应用'}
             else:
                 outcome = {'status': 'completed', 'result': result}
+                try:  # make the applied families available to the capsule and shop editors
+                    from owner.units import batch_registry
+                    outcome['registered'] = batch_registry.register(self._units_root(), folder, ini)['families']
+                except (ValueError, OSError) as error:
+                    outcome['registration_error'] = str(error)[:400]
             with self._batch_lock:
                 self._batch.update(outcome, finished_at=time.time())
             decided.set()
@@ -110,10 +115,48 @@ class Units(Provider):
             raise ValueError(state['batch']['error'])
         return state
 
+    def _units_root(self):
+        return Path(self.config.get('workspace') or self.workspace.root / 'data/units')
+
+    def batch_rows(self, ini=None):
+        """Registered batch-roster families for the configured database (Manager project row shape)."""
+        from owner.units import batch_registry
+        ini = ini or self.config.get('server_ini')
+        rows = batch_registry.rows(self._units_root(), ini) if ini else []
+        for row in rows:
+            query = f'unit={row["unit_id"]}&revision={row["revision"]}'
+            row.update(shop_image_sha256=None, shop_source_sha256=None, capsule_image_sha256=None,
+                       shop_image_url=f'/api/providers/units/api/units/batch/image?{query}&role=shop',
+                       capsule_image_url=f'/api/providers/units/api/units/batch/image?{query}&role=capsule')
+        return rows
+
+    def batch_image(self, row, role='capsule'):
+        from owner.units import batch_registry
+        return batch_registry.sprite_png(row, {'shop': 'shop_sprite', 'capsule': 'capsule_sprite'}[role])
+
+    def register_batch(self, folder):
+        from owner.units import batch_registry
+        return {'registered': batch_registry.register(self._units_root(), folder, self._batch_server_ini()),
+                'publications': batch_registry.load(self._units_root()), 'changes_applied': False,
+                'message': '批量阵容已登记：扭蛋机、活动机和商城可以选用这些机体；未改变任何机台、商品或游戏服务器'}
+
     def _batch_request(self, method, path, body):
-        from owner.units import batch_server
+        from owner.units import batch_server, batch_registry
+        from urllib.parse import urlsplit, parse_qs
+        split = urlsplit(path)
+        if method == 'GET' and split.path == '/api/units/batch/image':
+            query = parse_qs(split.query)
+            unit, revision, role = (query.get(name, [''])[0] for name in ('unit', 'revision', 'role'))
+            row = next((r for r in self.batch_rows() if str(r['unit_id']) == unit and r['revision'] == revision), None)
+            if row is None or role not in ('shop', 'capsule'):
+                raise ValueError('批量机体图片不存在或版本已变化')
+            return Binary(self.batch_image(row, role), 'image/png')
         if method == 'GET' and path == '/api/units/batch':
-            return self.batch_state()
+            state = self.batch_state()
+            state['publications'] = batch_registry.load(self._units_root())
+            return state
+        if method == 'POST' and path == '/api/units/batch/register':
+            return self.register_batch(self._batch_folder(body))
         if method == 'POST' and path == '/api/units/batch/preflight':
             return {'preflight': batch_server.preflight(self._batch_folder(body), self._batch_server_ini()), 'changes_applied': False}
         if method == 'POST' and path == '/api/units/batch/readback':
@@ -179,6 +222,10 @@ class Units(Provider):
                     'server_target': draft.get('published_server_result', draft.get('server_result', {})).get('server_target'),
                     'shop_image_url': f'/api/providers/units/api/units/published/{draft["id"]}/presentation/shop?revision={content_revision(family)}&image={shop_sha}',
                     'capsule_image_url': f'/api/providers/units/api/units/assets/{family["presentation"]["capsule"]["asset_sha"]}'})
+            # A Manager project owns its own family keys; a batch family never shadows one.
+            owned = {row['family_key'] for row in result} | {row['unit_id'] for row in result}
+            result += [row for row in self.batch_rows()
+                       if row['family_key'] not in owned and row['unit_id'] not in owned]
             return result
 
     def for_server(self, ini):
@@ -371,13 +418,26 @@ class Units(Provider):
             raise storage.Conflict(str(error)) from None
 
 
-def sync_capsule_units(provider, expected):
-    """Explicitly add approved definitions/images; never change machine economics."""
+def sync_capsule_units(provider, expected, unit_ids=None):
+    """Explicitly add approved definitions/images; never change machine economics.
+
+    unit_ids limits the synchronization to the listed roots (a batch roster can hold hundreds
+    of families while only a few go into capsule machines); None synchronizes every root.
+    """
     from .engines.capsules.capsule_catalog import grade
+    if unit_ids is not None and (not isinstance(unit_ids, list) or not unit_ids
+                                 or any(type(uid) is not int for uid in unit_ids) or len(unit_ids) > 4096):
+        raise ValueError('同步机体清单无效')
     source = provider.workspace.providers['units']
     engine = provider.get_engine()
     with engine.store.lock, source.lock:
         rows = source.for_server(provider.config.get('server_ini'))
+        if unit_ids is not None:
+            wanted = set(unit_ids)
+            missing = wanted - {row['unit_id'] for row in rows}
+            if missing:
+                raise ValueError('这些机体尚未登记到同一服务器：' + '、'.join(map(str, sorted(missing)[:10])))
+            rows = [row for row in rows if row['unit_id'] in wanted]
         if not rows:
             raise ValueError('没有已应用到同一 WorldServer 的机体发布。请先确认机体导入并选择相同服务器 INI')
         catalog, raw = engine.store.read()
@@ -389,12 +449,15 @@ def sync_capsule_units(provider, expected):
             old = by_id.get(uid)
             if old and old.get('unit_import', {}).get('family_key') != row['family_key']:
                 raise ValueError(f'扭蛋目录已有非本机体模块拥有的编号：{uid}')
-            png = source.get_engine().blob(row['capsule_image_sha256'])
-            if row['rank']==4:
+            if row.get('batch'):
+                png = source.batch_image(row, 'capsule')
+            elif row['rank']==4:
                 from owner.units.presentation import capsule_source
                 published=next(d['published'] for d in source.get_engine().read()['drafts'].values()
                                if d.get('published',{}).get('root_unit_id')==uid)
                 png=capsule_source(source.get_engine(),published)
+            else:
+                png = source.get_engine().blob(row['capsule_image_sha256'])
             import hashlib
             image_sha=hashlib.sha256(png).hexdigest()
             unit = {'id': uid, 'name': row['display_name'], 'rank': row['rank'], 'subgrade': row['subgrade'],
@@ -459,38 +522,98 @@ def import_project_media(provider,body):
         'message':'资料与图片已复制到扭蛋制作项目；尚未改变奖池、价格或上架状态'}
 
 
+def _poster_asset(key,project_key,project_revision,name,unit_id,raw,metadata,source_sha=None):
+    from owner.units.project import normalize_metadata
+    from owner.collection_capsule.client import normalize_activity_cover
+    normalized=normalize_activity_cover(raw)
+    return {'key':key,'project_key':project_key,'project_revision':project_revision,'name':name,'role':'activity_poster',
+            'unit_id':unit_id,'asset_sha256':hashlib.sha256(normalized).hexdigest(),
+            'source_asset_sha256':source_sha or hashlib.sha256(raw).hexdigest(),'original_sha256':hashlib.sha256(raw).hexdigest(),
+            'png_base64':base64.b64encode(normalized).decode('ascii'),'metadata':normalize_metadata(metadata or {})}
+
+
+def _put_poster(candidate,value):
+    """Store a poster asset and repoint every draft/machine that uses its key."""
+    from owner.units import model
+    target=candidate.setdefault('project_assets',[])
+    existing=next((row for row in target if row['key']==value['key']),None)
+    if existing is None:target.append(value)
+    else:target[target.index(existing)]=value
+    for draft_machine in candidate.get('activity_drafts',[]):
+        if draft_machine.get('artwork_key')==value['key']:
+            draft_machine['artwork_sha256']=value['asset_sha256'];draft_machine['artwork_review_required']=True
+    for machine in candidate.get('activity_machines',[]):
+        if machine.get('artwork_key')==value['key']:
+            machine['artwork_sha256']=value['asset_sha256']
+            machine['revision']=model.revision({k:v for k,v in machine.items() if k!='revision'})
+
+
+def store_activity_poster(provider,body):
+    """Upload or replace the poster of an activity draft or machine; pool, price and number stay unchanged."""
+    from owner.units import model
+    from .engines.capsules.capsule_catalog import validate
+    if not isinstance(body,dict) or set(body)!={'expected_revision','id','filename','data'}:
+        raise ValueError('活动海报上传请求无效')
+    _,raw=decode_upload(body)
+    app=provider.get_engine()
+    with app.store.lock:
+        catalog,previous=app.store.read();app.store._expect(catalog,body['expected_revision'])
+        row=next((r for r in catalog.get('activity_machines',[])+catalog.get('activity_drafts',[]) if r['id']==body['id']),None)
+        if row is None:raise ValueError('活动机台不存在')
+        key=row.get('artwork_key') or row['project_key']+':activity_poster'
+        old=next((r for r in catalog.get('project_assets',[]) if r['key']==key),{})
+        candidate=copy.deepcopy(catalog)
+        value=_poster_asset(key,row['project_key'],old.get('project_revision') or row.get('project_revision',''),
+                            old.get('name') or row.get('name',''),row['unit_id'],raw,old.get('metadata'))
+        value['uploaded']=True
+        _put_poster(candidate,value)
+        validate(candidate)
+        if candidate!=catalog:app.store._save(candidate,previous)
+    return {'catalog_revision':model.revision(candidate),'project_asset_key':key,'changes_applied':False,
+            'message':'活动海报已更换；编译并应用后游戏内才会显示新海报'}
+
+
 def create_project_activity_draft(provider,body):
-    """Reviewable dedicated machine; disabled until paired native application."""
+    """Reviewable dedicated machine; disabled until paired native application.
+
+    The root is a Manager unit project (project_id) or a registered batch-roster family (family_key).
+    A batch family without a poster gets a generated stand-in poster that the owner replaces later.
+    """
     from owner.units import model
     from owner.units.project import normalize_metadata
     from owner.units.activity_patterns import build_pattern
     from owner.units.acquisition_host import read_configuration,activity_grants
     from owner.units.repository import database_target_key
-    if not isinstance(body,dict) or set(body)-{'project_id','source_revision','expected_revision','pattern_id'}:
+    from .unit_activity import resolve_family
+    if not isinstance(body,dict) or set(body)-{'project_id','family_key','source_revision','expected_revision','pattern_id'}:
         raise ValueError('活动机台草稿请求无效')
+    if bool(body.get('project_id'))==bool(body.get('family_key')):
+        raise ValueError('请选择一个机体项目或批量阵容机体')
     units=provider.workspace.providers['units'];engine=units.get_engine()
     ini=units.config.get('server_ini');capsule_ini=provider.config.get('server_ini')
     if not ini or not capsule_ini or database_target_key(Path(ini))!=database_target_key(Path(capsule_ini)):
         raise ValueError('活动机台与机体资料必须配置同一宿主；先生成草稿，不会更改宿主')
     app=provider.get_engine()
     with app.store.lock,engine.lock:
-        source=engine._get(engine.read(),body.get('project_id'))
-        if source['status']=='disabled' or model.content_revision(source)!=body.get('source_revision'):
-            raise ValueError('机体项目已变化或停用，请刷新后重选')
-        family=source.get('published')
-        if not family or not source.get('published_server_result',source.get('server_result',{})).get('applied'):
-            raise ValueError('先完成机体的宿主登记，再生成以该机体为奖品的活动草稿；图片仍可提前复用')
-        receipt=source.get('published_server_result',source.get('server_result',{}))
-        if receipt.get('server_target')!=database_target_key(Path(ini)):
-            raise ValueError('该机体尚未在当前配置的原生服务器完成登记')
-        root=family['root_unit_id'];form=next(r for r in family['forms'] if r['id']==root)
-        if form['server']['UnitGradeNumber']!=4:raise ValueError('S级以下请检查设计图闭环或使用普通扭蛋机')
+        if body.get('project_id'):
+            source=engine._get(engine.read(),body.get('project_id'))
+            if source['status']=='disabled' or model.content_revision(source)!=body.get('source_revision'):
+                raise ValueError('机体项目已变化或停用，请刷新后重选')
+            if not source.get('published') or not source.get('published_server_result',source.get('server_result',{})).get('applied'):
+                raise ValueError('先完成机体的宿主登记，再生成以该机体为奖品的活动草稿；图片仍可提前复用')
+            family=resolve_family(units,source['family_key'],None,ini)
+        else:
+            family=resolve_family(units,body['family_key'],None,ini)
+            if family['revision']!=body.get('source_revision'):
+                raise ValueError('批量阵容已变化，请刷新后重选')
+        root=family['root_unit_id']
+        if family['rank']!=4:raise ValueError('S级以下请检查设计图闭环或使用普通扭蛋机')
         catalog,previous=app.store.read();app.store._expect(catalog,body.get('expected_revision'))
         configuration=read_configuration(ini);tables=configuration['tables']
         listed={r['witness']['machine_id'] for r in activity_grants(units.config['client'],tables)}
         configuration_units=list(engine.repository.catalog['units'].values())
         preset=build_pattern(body.get('pattern_id','gp_rare'),
-            {'unit_id':root,'rank':4,'subgrade':form['server']['UnitGradeNumber2']},family['category_id'],
+            {'unit_id':root,'rank':4,'subgrade':family['subgrade']},family['category_id'],
             units=configuration_units,categories=tables[('GOnlineGame','tbl_ItemCategory')],
             prices=tables[('GOnlineGame','tbl_ItemMachinePrice')],pool=tables[('GOnlineGame','tbl_ItemMachineList')],
             listed_machines=listed,preferences=catalog.get('activity_preferences'),
@@ -498,20 +621,27 @@ def create_project_activity_draft(provider,body):
         balance=preset['balance']
         candidate=copy.deepcopy(catalog)
         drafts=candidate.setdefault('activity_drafts',[])
-        existing=next((r for r in drafts if r['project_key']==source['family_key'] and r['unit_id']==root),None)
+        existing=next((r for r in drafts if r['project_key']==family['family_key'] and r['unit_id']==root),None)
         occupied={r['MachineID'] for r in tables[('GOnlineGame','tbl_ItemMachinePrice')]}|{r['id'] for r in drafts}
         from owner.units.activity_ids import allocate_activity_id
         authored_ids={r['id'] for r in drafts+candidate.get('activity_machines',[])}
         occupied.update(authored_ids)
         machine_id=existing['id'] if existing else allocate_activity_id(occupied,listed=listed|authored_ids)
-        poster_key=source['family_key']+':activity_poster'
+        poster_key=family['family_key']+':activity_poster'
         artwork=next((r for r in candidate.get('project_assets',[]) if r['key']==poster_key),None)
+        if not artwork and body.get('family_key'):
+            from owner.units.activity_poster import placeholder
+            row=next(r for r in units.batch_rows(ini) if r['family_key']==family['family_key'])
+            artwork=_poster_asset(poster_key,family['family_key'],family['revision'],family['name'],root,
+                                  placeholder(units.batch_image(row,'capsule'),family['name']),{})
+            artwork['placeholder']=True
+            _put_poster(candidate,artwork)
         if not artwork:raise ValueError('请先将该项目的活动海报存入扭蛋制作素材')
-        draft={'schema_version':1,'id':machine_id,'project_key':source['family_key'],
-            'project_revision':model.content_revision(source),'unit_id':root,'unit_category_id':family['category_id'],
-            'name':source['name']+'活动扭蛋机','enabled':False,'status':'draft',
+        draft={'schema_version':1,'id':machine_id,'project_key':family['family_key'],
+            'project_revision':family['revision'],'unit_id':root,'unit_category_id':family['category_id'],
+            'name':family['name']+'活动扭蛋机','enabled':False,'status':'draft',
             'artwork_key':poster_key,'artwork_sha256':artwork['asset_sha256'],
-            'metadata':normalize_metadata(source.get('metadata',{})),
+            'metadata':normalize_metadata(family.get('metadata',{})),
             'currency_type':preset['currency_type'],'price':preset['price'],
             'pattern_id':preset['pattern_id'],'pool':preset['pool'],'template_machine_id':preset['template_machine_id'],
             'artwork_review_required':True,
