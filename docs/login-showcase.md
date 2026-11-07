@@ -13,4 +13,4 @@ Oversized replacement units are reduced when needed to fit the original login pr
 
 Imported units become candidates when their paired client content is installed and active. This setting does not grant units or change their battle properties. Remove unavailable units from a selected list, or choose another mode, when changing content packs.
 
-The startup crash fix remains the owner of the native loading hook. If optional model fitting is missing or fails verification, the expanded showcase stays off while the original missing-unit protection continues working. Update the complete framework package to restore the showcase.
+The startup crash fix remains the owner of the native loading hook. If optional model fitting symbols are missing, the expanded showcase stays off while the original missing-unit protection continues working. Update the complete framework package to restore the showcase.
