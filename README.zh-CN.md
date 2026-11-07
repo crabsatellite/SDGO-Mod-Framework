@@ -79,7 +79,7 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 
 <!-- /mod-category:gameplay -->
 
-服主还可以使用独立的 Manager 模块[节日与生日赠礼](docs/calendar-gifts.zh-CN.md)：在 14 个常见节日、玩家生日或指定日期把机体和道具送进保管库。
+服主还可以使用独立的 Manager 模块[节日与生日赠礼](docs/calendar-gifts.zh-CN.md)：在 14 个常见节日、玩家生日或指定日期把机体和道具送进每位符合条件玩家的保管库。
 
 <a id="long-room-title-commands"></a>
 
