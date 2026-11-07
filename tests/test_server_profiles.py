@@ -155,7 +155,21 @@ class Profiles(unittest.TestCase):
         self.assertEqual(result['revision'],1);self.assertEqual(exported['mods'],{'example':'2.0.0'})
         self.assertNotIn('GOnline.exe',exported['files']);self.assertNotIn('sdgo/core.dll',exported['files'])
         self.assertNotIn('sdgo/mods/example/example.dll',exported['files']);self.assertIn('sprs/new-unit.spr',exported['files'])
-        self.assertEqual(profile_publish.publish(host,self.source,self.framework,directory,extras=['sprs/new-unit.spr'])['revision'],1)
+        self.assertEqual(profile_publish.publish(host,self.source,self.framework,directory)['revision'],1)
+        self.assertIn('sprs/new-unit.spr',storage.read_json(directory/p.MANIFEST)['files'])
+
+    def test_owner_export_preserves_installed_content_without_private_generator_state(self):
+        plan=self.controller.plan(self.host);self.controller.install(self.host,plan['digest'])
+        directory=self.root/'portable-owner'
+        profile_publish.publish({**self.host,'runtime_mode':'owner'},self.source,self.framework,directory)
+        manifest=storage.read_json(directory/p.MANIFEST)
+        self.assertIn('sprs/new-unit.spr',manifest['files'])
+        self.assertNotIn('sdgo/core.dll',manifest['files'])
+        self.assertNotIn('sdgo/local-state/client-runtime.json',manifest['files'])
+        (self.game/'sprs/new-unit.spr').unlink()
+        result=profile_publish.publish({**self.host,'runtime_mode':'owner'},self.source,self.framework,directory)
+        self.assertEqual(result['revision'],2)
+        self.assertNotIn('sprs/new-unit.spr',storage.read_json(directory/p.MANIFEST)['files'])
 
     def test_owner_program_drift_is_refused_even_when_version_number_matches(self):
         plan=self.controller.plan(self.host);self.controller.install(self.host,plan['digest'])
