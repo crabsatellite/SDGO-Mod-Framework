@@ -63,13 +63,13 @@ class WindowsJob:
             finally:self.kernel.CloseHandle(self.handle);self.handle=None
 
 
-def run(args,*,cwd,env,timeout=900,stop=None,input=None,output=None,progress=None):
+def run(args,*,cwd,env,timeout=900,stop=None,input=None,output=None,progress=None,poll=None):
     with ExitStack()as files:
         destination=files.enter_context(open(output,'wb'))if output is not None else subprocess.PIPE
-        return _run(args,cwd=cwd,env=env,timeout=timeout,stop=stop,input=input,stdout=destination,progress=progress)
+        return _run(args,cwd=cwd,env=env,timeout=timeout,stop=stop,input=input,stdout=destination,progress=progress,poll=poll)
 
 
-def _run(args,*,cwd,env,timeout,stop,input,stdout,progress=None):
+def _run(args,*,cwd,env,timeout,stop,input,stdout,progress=None,poll=None):
     windows=os.name=='nt'
     process=subprocess.Popen(args,cwd=cwd,env=env,stdin=subprocess.PIPE if input is not None else None,stdout=stdout,stderr=subprocess.PIPE,
         creationflags=(subprocess.CREATE_NO_WINDOW|0x00000004)if windows else 0,
@@ -102,10 +102,13 @@ def _run(args,*,cwd,env,timeout,stop,input,stdout,progress=None):
             if stdout==subprocess.PIPE:threads.append(threading.Thread(target=reader,args=(process.stdout,outputs),daemon=True))
             if input is not None:threads.append(threading.Thread(target=writer,daemon=True))
             for thread in threads:thread.start()
+            last_poll=0
             while process.poll()is None:
                 if stop is not None and stop.is_set():raise InterruptedError('Manager operation cancelled')
                 if deadline is not None and time.monotonic()>=deadline:raise subprocess.TimeoutExpired(args,timeout)
                 if failures:raise failures[0]
+                if poll and time.monotonic()-last_poll>=.5:
+                    last_poll=time.monotonic();poll()
                 time.sleep(.05)
             terminate()
             for thread in threads:thread.join(timeout=5)

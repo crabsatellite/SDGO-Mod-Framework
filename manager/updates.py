@@ -472,6 +472,9 @@ class Updates:
                     'automatic':self.workspace.services.desired(SERVICE),'current_version':self.current,
                     'channel':self.workspace.settings.get('updates',{}).get('channel','stable'),
                     'repository':self.source_repository(),'git_source':self.workspace.settings.get('updates',{}).get('git_source'),
+                    'framework_source':self.workspace.settings.get('updates',{}).get('git_source')or{
+                        'schema_version':1,'kind':'sdgo-framework-runtime','source_id':digest(('sdgo-framework-runtime:'+self.source_repository()).encode())[:32],
+                        'repository':self.source_repository(),'channel':self.workspace.settings.get('updates',{}).get('channel','stable'),'transport':'github-releases','feeds':[]},
                     'latest_version':self.latest['version'] if self.latest else None,
                     'release_url':self.latest['page'] if self.latest else None,
                     'notes':self.latest['notes'] if self.latest else ''}

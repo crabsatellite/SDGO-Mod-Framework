@@ -94,7 +94,15 @@ def read(controller,url,name,limit,refresh=True):
         if not(repo/'HEAD').is_file():controller.git(repo,['init','--bare']);controller.git(repo,['remote','add','origin',remote])
         if controller.git(repo,['config','--get','remote.origin.url']).decode().strip()!=remote:raise ValueError('内容缓存身份不一致')
         if refresh:controller.git(repo,['fetch','--filter=blob:none','--no-tags','--depth=1','origin','refs/heads/'+ref])
-        commit=controller.git(repo,['rev-parse','FETCH_HEAD']).decode().strip();raw=controller.git(repo,['show',commit+':'+name])
+        commit=controller.git(repo,['rev-parse','FETCH_HEAD']).decode().strip()
+        tree=controller.git(repo,['ls-tree','-z',commit,'--',name]).split(b'\0')[0]
+        if not tree:raise ValueError('内容源缺少配置清单')
+        head,leaf=tree.split(b'\t',1);mode,kind,oid=head.split()
+        if kind!=b'blob'or mode not in(b'100644',b'100755')or leaf.decode()!=name:raise ValueError('内容源清单不是普通文件')
+        cached={r.split()[0]for r in controller.git(repo,['cat-file','--batch-all-objects','--batch-check','--unordered']).splitlines()if r}
+        if oid not in cached:controller.git(repo,['fetch','--no-tags','--no-write-fetch-head','--recurse-submodules=no','--filter=blob:none','--stdin','origin'],input=oid+b'\n')
+        if int(controller.git(repo,['cat-file','-s',oid.decode()]))>limit:raise ValueError('服主清单超过限制')
+        raw=controller.git(repo,['cat-file','blob',oid.decode()])
         if len(raw)>limit:raise ValueError('服主清单超过限制')
         return raw,{'type':'git','repo':str(repo),'commit':commit,'feed':url}
     if url.startswith('local+file:'):
@@ -106,17 +114,25 @@ def read(controller,url,name,limit,refresh=True):
 
 
 def resolve(controller,source):
-    errors=[]
+    errors=[];available=[]
     for index,url in enumerate(source['feeds']):
         try:
             raw,transport=read(controller,url,MANIFEST,16*1024*1024)
             profile=validate(json.loads(raw),source)
-            if transport['type']=='git':
-                controller.fetch_mirrors[str(Path(transport['repo']).resolve())]=[(i+1,git_source.parse(v)[0])for i,v in enumerate(source['feeds'])if i!=index and v.startswith(('git+ssh://','git+https://'))]
-            return profile,transport,index+1
+            available.append((profile,transport,index+1))
         except InterruptedError:raise
         except(OSError,ValueError,subprocess.SubprocessError)as error:errors.append(str(error))
-    raise ValueError('服主配置源暂不可用；保留当前安装。'+'；'.join(errors))
+    if not available:raise ValueError('服主配置源暂不可用；保留当前安装。'+'；'.join(errors))
+    revisions={}
+    for profile,transport,index in available:
+        fingerprint=updates.digest(storage.json_bytes(profile));prior=revisions.setdefault(profile['revision'],fingerprint)
+        if prior!=fingerprint:raise ValueError('同一服主修订在不同来源提供了不同清单；拒绝安装')
+    # Prefer the configured first source among identical heads, but a lagging
+    # mirror must not conceal a newer valid owner revision before it is pinned.
+    profile,transport,index=max(available,key=lambda row:row[0]['revision'])
+    if transport['type']=='git':
+        controller.fetch_mirrors[str(Path(transport['repo']).resolve())]=[(i+1,git_source.parse(v)[0])for i,v in enumerate(source['feeds'])if i+1!=index and v.startswith(('git+ssh://','git+https://'))]
+    return profile,transport,index
 
 
 def base_check(root,profile):
@@ -148,7 +164,7 @@ def payload(controller,profile,transport,folder):
     total=sum(e['bytes']for e in profile['files'].values());done=0;count=0
     def start_file(name,entry):
         if stop.is_set():raise InterruptedError('下载已取消')
-        report(phase='content',step='downloading',file=name,current_bytes=0,current_total=entry['bytes'],verified_bytes=done,total_bytes=total,verified_files=count,total_files=len(profile['files']))
+        report(phase='content',step='downloading',file=name,current_bytes=0,wire_bytes=0,current_total=entry['bytes'],verified_bytes=done,total_bytes=total,verified_files=count,total_files=len(profile['files']))
     def finish_file(path,name,entry):
         nonlocal done,count
         report(step='verifying')
@@ -182,7 +198,7 @@ def payload(controller,profile,transport,folder):
             group=[];group_bytes=0
             while pending and(not group or group_bytes+pending[0][1]['bytes']<=8*1024*1024):
                 name,entry=pending.pop(0);group.append((name,entry));group_bytes+=entry['bytes']
-            report(phase='content',step='downloading',file=group[0][0]if len(group)==1 else'一组内容文件（'+str(len(group))+' 个）',current_bytes=0,current_total=group_bytes,verified_bytes=done,total_bytes=total,verified_files=count,total_files=len(profile['files']))
+            report(phase='content',step='downloading',file=group[0][0]if len(group)==1 else'一组内容文件（'+str(len(group))+' 个）',current_bytes=0,wire_bytes=0,current_total=group_bytes,verified_bytes=done,total_bytes=total,verified_files=count,total_files=len(profile['files']))
             wanted=list(dict.fromkeys(objects[CONTENT_PREFIX+n]for n,e in group if objects[CONTENT_PREFIX+n]not in cached))
             if wanted:
                 controller.git(repo,['fetch','--no-tags','--no-write-fetch-head','--recurse-submodules=no','--filter=blob:none','--stdin','origin'],input=''.join(oid+'\n'for oid in wanted).encode())

@@ -80,8 +80,26 @@ class Profiles(unittest.TestCase):
                 if 'backup.invalid'in url:profile['revision']+=1
                 return storage.json_bytes(profile)
             raise OSError('unavailable')
-        with patch.object(updates,'fetch',side_effect=fetch),self.assertRaisesRegex(ValueError,'保留当前安装'):self.controller.plan(self.host)
+        pinned={'type':'https','feed':source['feeds'][0]}
+        with patch.object(p,'resolve',return_value=(self.profile,pinned,1)),patch.object(updates,'fetch',side_effect=fetch),self.assertRaisesRegex(ValueError,'保留当前安装'):self.controller.plan(self.host)
         self.assertFalse((self.game/'d3d9.dll').exists())
+
+    def test_lagging_mirror_does_not_hide_a_newer_revision_before_locking(self):
+        source={**self.source,'feeds':['https://first.invalid/server-profile.json','https://newer.invalid/server-profile.json']}
+        def fetch(url,limit,stop=None):
+            profile=copy.deepcopy(self.profile)
+            if 'newer.invalid'in url:profile['revision']=2
+            return storage.json_bytes(profile)
+        with patch.object(updates,'fetch',side_effect=fetch):profile,_,mirror=p.resolve(self.controller,source)
+        self.assertEqual(profile['revision'],2);self.assertEqual(mirror,2)
+
+    def test_same_revision_with_different_manifests_is_refused(self):
+        source={**self.source,'feeds':['https://first.invalid/server-profile.json','https://other.invalid/server-profile.json']}
+        def fetch(url,limit,stop=None):
+            profile=copy.deepcopy(self.profile)
+            if 'other.invalid'in url:profile['label']='Different same-revision bytes'
+            return storage.json_bytes(profile)
+        with patch.object(updates,'fetch',side_effect=fetch),self.assertRaisesRegex(ValueError,'不同清单'):p.resolve(self.controller,source)
 
     def test_failed_download_keeps_verified_files_and_new_revision_reuses_installed_content(self):
         source={**self.source,'feeds':['https://owner.invalid/server-profile.json']}
@@ -124,6 +142,27 @@ class Profiles(unittest.TestCase):
         self.assertNotIn('sdgo/mods/example/example.dll',exported['files']);self.assertIn('sprs/new-unit.spr',exported['files'])
         self.assertEqual(profile_publish.publish(host,self.source,self.framework,directory,extras=['sprs/new-unit.spr'])['revision'],1)
 
+    def test_owner_program_drift_is_refused_even_when_version_number_matches(self):
+        plan=self.controller.plan(self.host);self.controller.install(self.host,plan['digest'])
+        (self.game/'sdgo/mods/example/example.dll').write_bytes(b'unpublished program with the same version')
+        with self.assertRaisesRegex(ValueError,'程序与所选发布包不同'):
+            profile_publish.snapshot({**self.host,'runtime_mode':'owner'},self.source,self.framework)
+
+    def test_owner_api_keeps_existing_identity_and_returns_saved_publication(self):
+        from types import SimpleNamespace
+        from manager.owner_channel import OwnerChannels
+        plan=self.controller.plan(self.host);self.controller.install(self.host,plan['digest'])
+        self.host['runtime_mode']='owner';self.host['publication']={'publisher_id':self.source['source_id']}
+        self.workspace.host=lambda identity:self.host;self.workspace.save_workspace=lambda:None
+        self.workspace.services=SimpleNamespace(desired=lambda _:False)
+        self.workspace.updates=SimpleNamespace(latest={'version':self.framework['version'],'sha256':self.framework['sha256'],'channel':'stable'},source_repository=lambda:updates.REPOSITORY)
+        destination=self.root/'api-export'
+        result=self.controller.publish_profile(self.host['id'],str(destination),self.source['feeds'],['sprs/new-unit.spr'])
+        self.assertEqual(result['revision'],1)
+        self.assertEqual(storage.read_json(destination/p.MANIFEST)['source_id'],self.source['source_id'])
+        state=OwnerChannels(self.workspace).state()['hosts'][0]['profile_publication']
+        self.assertEqual(state['directory'],str(destination.resolve()));self.assertEqual(state['feeds'],self.source['feeds'])
+
     def test_git_publication_preserves_crlf_unicode_and_binary_bytes(self):
         import subprocess
         from types import SimpleNamespace
@@ -141,6 +180,15 @@ class Profiles(unittest.TestCase):
         self.assertEqual(git('show',':content/sprs/new-unit.spr'),(self.game/'sprs/new-unit.spr').read_bytes())
         git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');git('commit','-m','Fixture profile')
         commit=git('rev-parse','HEAD').decode().strip()
+        import shutil
+        uri='git+ssh://git@example.invalid/profile.git#content'
+        cache=self.controller.cache/'git'/updates.digest(uri.encode())
+        shutil.copytree(directory/'.git',cache)
+        subprocess.check_call(['git','-C',str(cache),'config','core.bare','true'],stdout=subprocess.DEVNULL)
+        subprocess.check_call(['git','-C',str(cache),'remote','add','origin','ssh://git@example.invalid/profile.git'],stdout=subprocess.DEVNULL)
+        (cache/'FETCH_HEAD').write_text(commit+'\n',encoding='ascii')
+        raw_manifest,resolved=p.read(self.controller,uri,p.MANIFEST,16*1024*1024)
+        self.assertEqual(json.loads(raw_manifest),manifest);self.assertEqual(resolved['commit'],commit)
         fresh=self.root/'fresh';fake_exe(fresh/'GOnline.exe')
         (fresh/'sdgo').mkdir();(fresh/'sdgo/client-source.json').write_bytes(storage.json_bytes(self.source))
         host={**self.host,'id':'fresh','path':str(fresh)}
@@ -197,6 +245,23 @@ class Profiles(unittest.TestCase):
         self.assertEqual(result['hosts'][0]['result']['status'],'queued')
         self.assertEqual(self.controller.jobs,[(self.host['id'],'sync',None)])
         self.assertEqual(storage.read_json(self.game/'sdgo/client-source.json')['schema_version'],3)
+
+    def test_initial_manifest_resolution_reports_progress_and_can_be_cancelled(self):
+        import threading,time
+        self.workspace.host=lambda identity:self.host;self.workspace.save_workspace=lambda:None
+        entered=threading.Event();outcome=[]
+        def resolve(*_):
+            entered.set()
+            while not self.controller.operation_stop.is_set():time.sleep(.01)
+            raise InterruptedError('cancelled')
+        with patch.object(self.controller,'_bind_profile',side_effect=resolve),patch.object(self.controller,'start')as start:
+            thread=threading.Thread(target=lambda:outcome.append(self.controller.bind_profile(self.host['id'],self.source['feeds'])))
+            thread.start();self.assertTrue(entered.wait(10))
+            row=self.controller.state()['hosts'][0]
+            self.assertEqual(row['result']['progress']['phase'],'manifest');self.assertEqual(row['pending']['feeds'],self.source['feeds'])
+            self.controller.cancel(self.host['id']);thread.join(10)
+            self.assertFalse(thread.is_alive());self.assertFalse(self.controller.stop_event.is_set());self.assertTrue(self.host['client_updates_paused'])
+            self.assertEqual(outcome[0]['hosts'][0]['result']['status'],'cancelled');start.assert_not_called();self.assertEqual(self.controller.jobs,[])
 
     def test_profile_does_not_downgrade_the_independently_updated_manager(self):
         from manager.workspace import Workspace
