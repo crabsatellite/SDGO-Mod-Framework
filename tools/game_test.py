@@ -2333,6 +2333,13 @@ def write_job(
         run['run']['unit_scenario_sha256'] = plan['unit_scenario_sha256']
     if 'page_group' in plan:
         run['run']['page_group'] = plan['page_group']
+    if plan.get('login_recovery'):
+        run['run'].update({
+            'login_recovery': '1',
+            'login_recovery_min_retries': str(plan['login_recovery_min_retries']),
+            'login_recovery_hold_after_completion':
+                '1' if plan['login_recovery_hold_after_completion'] else '0',
+        })
     if all(field in plan for field in SHOP_PLAN_FIELDS):
         for field in SHOP_PLAN_FIELDS:
             run['run'][field] = str(plan[field])
@@ -2400,6 +2407,28 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             raise ValueError('room-style preview cannot be a mission combat plan')
         collection_draw = run.get('collection_draw', '0') == '1'
         same_room_rematch = run.get('same_room_rematch','0')=='1'
+        recovery_fields = {
+            'login_recovery',
+            'login_recovery_min_retries',
+            'login_recovery_hold_after_completion',
+        }
+        present_recovery_fields = recovery_fields.intersection(run.keys())
+        login_recovery = bool(present_recovery_fields)
+        login_recovery_min_retries = None
+        login_recovery_hold_after_completion = False
+        if login_recovery:
+            if present_recovery_fields != recovery_fields:
+                raise ValueError('login recovery plan must seal every recovery field')
+            if run['login_recovery'] != '1':
+                raise ValueError('login_recovery must be canonical enabled boolean')
+            if run['login_recovery_min_retries'] not in ('0','1'):
+                raise ValueError('login_recovery_min_retries must be canonical 0 or 1')
+            if run['login_recovery_hold_after_completion'] not in ('0','1'):
+                raise ValueError('login recovery hold must be canonical boolean')
+            login_recovery_min_retries = int(run['login_recovery_min_retries'])
+            login_recovery_hold_after_completion = run['login_recovery_hold_after_completion'] == '1'
+            if not pages_only or page_group != 'hangar':
+                raise ValueError('login recovery requires the read-only hangar page group')
         preparation_fields = (
             'bootstrap_only', 'battleship_only', 'gift_requests_only',
             'deck_only', 'pages_only', 'friends_only', 'room_titles_only', 'collection_draw', 'random_loadout', 'same_room_rematch',
@@ -2449,6 +2478,8 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
 
         mission_mode = None
         if mission_plan:
+            if login_recovery:
+                raise ValueError('login recovery cannot be a mission plan')
             behavior_fields = {
                 field for field in MISSION_BEHAVIOR_FIELDS if field in run
             }
@@ -2746,6 +2777,14 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 plan['ai_layout'] = ai_layout
         if play_unit_uid is not None:
             plan['play_unit_uid'] = play_unit_uid
+        if login_recovery:
+            if plan['retry_count'] != 1 or plan['expect_first_fail']:
+                raise ValueError('login recovery requires one native existing-account attempt')
+            plan.update({
+                'login_recovery': True,
+                'login_recovery_min_retries': login_recovery_min_retries,
+                'login_recovery_hold_after_completion': login_recovery_hold_after_completion,
+            })
         if run.get('oc_allocate'):
             plan['oc_allocate'] = validate_oc_allocate(run['oc_allocate'])
         if run.get('oc_panel') == '1':
@@ -3097,6 +3136,8 @@ def prepare(
     unit_package: Path | None = None,
     capsule_package: Path | None = None,
     unit_scenario: dict | None = None,
+    login_recovery_min_retries: int | None = None,
+    login_recovery_hold_after_completion: bool = False,
     _owned_client_transfer: tuple[Path, str] | None = None,
 ) -> dict:
     client_template = client_template.resolve()
@@ -3117,6 +3158,18 @@ def prepare(
         parsed=re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:[-+].*)?',sdk)
         if not parsed or tuple(map(int,parsed.groups())) < (0,1,8):
             raise GameTestError('the sealed hangar page group requires native observer 0.1.8 or newer')
+    if login_recovery_min_retries is None:
+        if login_recovery_hold_after_completion:
+            raise GameTestError('login recovery hold requires a sealed recovery scenario')
+    else:
+        if (type(login_recovery_min_retries) is not int or
+                login_recovery_min_retries not in (0,1)):
+            raise GameTestError('login_recovery_min_retries must be integer 0 or 1')
+        if type(login_recovery_hold_after_completion) is not bool:
+            raise GameTestError('login_recovery_hold_after_completion must be boolean')
+        if not pages_only or page_group != 'hangar' or create_test_account or mission_mode is not None:
+            raise GameTestError('login recovery requires read-only hangar pages and an existing account')
+        extra_mods=tuple(dict.fromkeys((*extra_mods,'login_recovery_client')))
     if type(same_room_rematch) is not bool or (same_room_rematch and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only)))):
         raise GameTestError('same-room rematch requires complete PvP without preparation-only scopes')
     if rebind_existing_account:
@@ -3353,6 +3406,10 @@ def prepare(
                 resolved_retry_count != 1 or resolved_expect_first_fail
             ):
                 raise GameTestError('registered accounts cannot use registration retries')
+            if login_recovery_min_retries is not None and (
+                    registration_state not in MISSION_EXISTING_ACCOUNT_STATES or
+                    resolved_retry_count != 1 or resolved_expect_first_fail):
+                raise GameTestError('login recovery requires one native attempt with a registered existing account')
             if play_unit_uid is not None and pending_first_login:
                 raise GameTestError('--play-unit-uid requires an already registered account profile')
             if mission_mode is not None:
@@ -3447,6 +3504,12 @@ def prepare(
             if value:plan[flag] = True
         if page_group is not None:
             plan['page_group'] = page_group
+        if login_recovery_min_retries is not None:
+            plan.update({
+                'login_recovery': True,
+                'login_recovery_min_retries': login_recovery_min_retries,
+                'login_recovery_hold_after_completion': login_recovery_hold_after_completion,
+            })
 
     if unit_scenario is not None:
         try:plan.update(unit_scenarios.bind(unit_scenario,plan))

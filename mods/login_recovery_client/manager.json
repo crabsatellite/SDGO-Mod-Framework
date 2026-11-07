@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "login_recovery_client",
+  "title": "登录等待自动恢复",
+  "category": "fixes",
+  "hosts": ["client"],
+  "description": "登录连接中断或长时间无进展时，使用游戏原生重连流程有限重试。",
+  "presentation": "automatic_fix",
+  "mechanism": "按实际时间检查登录进度，最多自动重试三次；原生重建连接前丢弃旧回包。密码错误和封禁终止自动重试，Escape 取消。登录凭据仅暂存在当前进程内，不写日志或配置。",
+  "settings": []
+}

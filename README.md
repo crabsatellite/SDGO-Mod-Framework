@@ -45,7 +45,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Native data and lifecycle guards <!-- catalog: `native_data_guard` --> | Fix crashes when unit data is missing or unit management is still waiting for data; keep crash logs accurate | [Use](docs/native-data-guard.md) |
 | Scene registration lifecycle fix <!-- catalog: `scene_lifecycle_fix` --> | Fix an occasional cleanup crash after a scene object moves to another area | [Use](docs/scene-lifecycle-fix.md) |
 | Multiplayer loading synchronization <!-- catalog: `loading_sync_fix` --> | Fix multiplayer starts that occasionally hang on the loading screen (BattleServer) | [Use](docs/loading-sync-fix.md) |
-| Native login recovery <!-- catalog: `login_recovery` --> | When a reconnect after a dropped connection is refused as already online, clear the old session and retry once (WorldServer) | [Use](docs/login-recovery.md) |
+| Native login recovery <!-- catalog: `login_recovery`, `login_recovery_client` --> | WorldServer stale-session cleanup plus bounded client reconnect, pending-request cleanup and return to native login input | [Use](docs/login-recovery.md) |
 | Apsalus III transform input fix <!-- catalog: `transform_input_fix` --> | Release the native transform lock when a form has no transform animation | [Use](docs/transform-input-fix.md) |
 | Agent relay log fix <!-- catalog: `agent_relay_log_fix` --> | Fix an Agent relay log that reads invalid memory | [Use](docs/agent-relay-log-fix.md) |
 | Battle rank regression fix <!-- catalog: `rank_progression_fix` --> | Stop battle settlement from lowering a pilot's rank (WorldServer) | [Use](docs/rank-progression-fix.md) |
