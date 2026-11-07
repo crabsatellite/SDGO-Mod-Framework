@@ -68,7 +68,7 @@ def publish(path, rows):
 
 def connect_game(server_ini):
     import pyodbc
-    parser = configparser.ConfigParser(interpolation=None)
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
     parser.read(server_ini, encoding="utf-8-sig")
     section = next((name for name in parser.sections() if name.lower().replace(" ", "") == "dbgame"), None)
     if section is None:

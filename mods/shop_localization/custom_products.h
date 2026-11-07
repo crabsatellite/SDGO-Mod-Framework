@@ -15,6 +15,12 @@
 
 namespace sdgo::shop_localization {
 constexpr size_t kProductBytes = 1279;
+constexpr size_t kProductArtOffsets[] = {0x36F, 0x3D3, 0x437, 0x49B};
+constexpr size_t kOperatorSpriteOffsets[] = {205, 313, 421, 533, 633, 733, 833};
+constexpr size_t kOperatorSpriteCapacities[] = {54, 54, 54, 50, 50, 50, 50};
+// The native 97x97 operator icon role matches both proven shop consumers:
+// the list/search thumbnail and the BUY/confirmation preview.
+constexpr size_t kShopOperatorSpriteRoles[] = {5, 5};
 struct CustomProduct {
     uint32_t id = 0, templateId = 0, category = 0;
     int price = 0, payment = 0, validity = 0;
@@ -36,7 +42,20 @@ inline bool CategoryIdBeforeName(const wchar_t* text,uint32_t* out)
     __try {memcpy(out,reinterpret_cast<const uint8_t*>(text)-5,4);return *out>=1000000&&*out<2400000;}
     __except(EXCEPTION_EXECUTE_HANDLER){return false;}
 }
-inline std::array<uint8_t,kProductBytes> ProductRecord(uint32_t nativeId,const CustomProduct& product,const uint8_t* source)
+inline bool WriteProductArt(
+    std::array<uint8_t,kProductBytes>& data,
+    const std::array<std::wstring,2>& art)
+{
+    for(size_t i=0;i<art.size();++i) {
+        if(art[i].empty()||art[i].size()>=50)return false;
+        std::memset(data.data()+kProductArtOffsets[i],0,100);
+        std::memcpy(data.data()+kProductArtOffsets[i],art[i].data(),art[i].size()*sizeof(wchar_t));
+    }
+    return true;
+}
+inline std::array<uint8_t,kProductBytes> ProductRecord(
+    uint32_t nativeId,const CustomProduct& product,const uint8_t* source,
+    const std::array<std::wstring,2>* operatorArt=nullptr)
 {
     std::array<uint8_t,kProductBytes> data{};
     Put32(data.data(),nativeId);Put32(data.data()+5,product.id);
@@ -45,6 +64,8 @@ inline std::array<uint8_t,kProductBytes> ProductRecord(uint32_t nativeId,const C
     const wchar_t neutral[]=L"自定义商品";
     memcpy(data.data()+9,neutral,sizeof(neutral));
     if(source)memcpy(data.data()+0x36F,source+0x36F,400); // native template's four sprite paths
+    if(operatorArt&&!WriteProductArt(data,*operatorArt))
+        throw std::runtime_error("operator storefront art path exceeds native product capacity");
     return data;
 }
 
@@ -74,10 +95,40 @@ class CustomProducts {
         if(!text[0]||!end||*end||n<1||n>2147483647)throw std::runtime_error("invalid custom product display guard");
         return static_cast<int>(n);
     }
-    bool Row(uint32_t id,const uint8_t** out) const
+    bool Row(uint32_t id,uint32_t type,const uint8_t** out) const
     {
-        __try {void* raw=nullptr;if(!find(data(),&raw,static_cast<int>(id),0x23,0)||!raw||Read32(static_cast<uint8_t*>(raw))!=id)return false;*out=static_cast<uint8_t*>(raw);return true;}
+        __try {void* raw=nullptr;if(!find(data(),&raw,static_cast<int>(id),static_cast<int>(type),0)||!raw||Read32(static_cast<uint8_t*>(raw))!=id)return false;*out=static_cast<uint8_t*>(raw);return true;}
         __except(EXCEPTION_EXECUTE_HANDLER){return false;}
+    }
+    bool NativeText(const uint8_t* row,size_t offset,size_t capacity,std::wstring* out) const
+    {
+        __try {
+            const auto* text=reinterpret_cast<const wchar_t*>(row+offset);size_t length=0;
+            while(length<capacity&&text[length])++length;
+            if(length==capacity)return false;
+            out->assign(text,length);return true;
+        } __except(EXCEPTION_EXECUTE_HANDLER){return false;}
+    }
+    bool OperatorArt(const CustomProduct& product,std::array<std::wstring,2>* art,bool* replace) const
+    {
+        *replace=false;
+        // Type 12 is the native operator/item family. Wait for its category
+        // table instead of permanently registering a template-only product
+        // while operator_catalog is still applying later in the load order.
+        if(product.category/100000!=12)return true;
+        const uint8_t* category=nullptr;
+        if(!Row(product.category,0x22,&category))return false;
+        const uint32_t operatorId=Read32(category+105);
+        if(operatorId<60001||operatorId>60999)return false;
+        const uint8_t* operatorRow=nullptr;
+        if(!Row(operatorId,0x2C,&operatorRow))return false;
+        for(size_t i=0;i<art->size();++i) {
+            const size_t role=kShopOperatorSpriteRoles[i];
+            if(!NativeText(operatorRow,kOperatorSpriteOffsets[role],kOperatorSpriteCapacities[role],&(*art)[i])||
+               (*art)[i].size()<4||_wcsicmp((*art)[i].c_str()+(*art)[i].size()-4,L".spr")||(*art)[i].size()>=50)
+                return false;
+        }
+        *replace=true;return true;
     }
     bool Occupied(uint32_t id) const
     {
@@ -132,13 +183,15 @@ public:
         if(installed||Empty())return true;
         std::map<uint32_t,const uint8_t*> native;
         uint32_t next=210001;
-        for(;next<260001;++next){const uint8_t* row=nullptr;if(!Row(next,&row))break;native.emplace(Read32(row+5),row);}
+        for(;next<260001;++next){const uint8_t* row=nullptr;if(!Row(next,0x23,&row))break;native.emplace(Read32(row+5),row);}
         if(next==210001||next>=260001)return false;
         std::vector<std::pair<uint32_t,std::array<uint8_t,kProductBytes>>> additions;
         for(const auto& entry:products) {
             if(native.count(entry.first))continue;
             if(Occupied(next)||!native.count(entry.second.templateId))return false;
-            additions.emplace_back(next,ProductRecord(next,entry.second,native.at(entry.second.templateId)));++next;
+            std::array<std::wstring,2> art{};bool replace=false;
+            if(!OperatorArt(entry.second,&art,&replace))return false;
+            additions.emplace_back(next,ProductRecord(next,entry.second,native.at(entry.second.templateId),replace?&art:nullptr));++next;
         }
         struct Pending {
             uint8_t* row=nullptr;Box* box=nullptr;void* node=nullptr;Delete free=nullptr;
@@ -154,7 +207,7 @@ public:
         for(size_t i=0;i<pending.size();++i){auto& item=*pending[i];auto* row=item.row;auto* node=item.node;item.node=nullptr;InsertResult result{};insert(data(),&result,node,0);
             if(!result.inserted)return false;
             item.row=nullptr;item.box=nullptr;integrity(data(),row,static_cast<uint32_t>(kProductBytes),0x23);
-            const uint8_t* found=nullptr;if(!Row(additions[i].first,&found)||found!=row)return false;
+            const uint8_t* found=nullptr;if(!Row(additions[i].first,0x23,&found)||found!=row)return false;
         }
         installed=true;api->Log(mod,SDGO_LOG_INFO,"custom Chinese product display records registered: %u; existing native rows preserved",static_cast<unsigned>(additions.size()));return true;
     }

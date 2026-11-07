@@ -9,7 +9,7 @@
 [安装说明](docs/setup.zh-CN.md) · [统一 Mod Manager](docs/mod-manager.zh-CN.md) · [最新发布](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
 
 服主与维护人员通过 **SDGO Mod Manager** 安装、配置和[更新](docs/mod-manager.zh-CN.md#更新)功能，
-客户端目录顶部的「0_更新与管理」可直接打开它。玩家可在 Manager 更新服主提供的完整客户端，游戏仍使用原来的启动入口；共享配置由服主维护。双源更新分别跟随框架程序与服主机体／配置内容，统一校验和回滚。
+客户端目录顶部的「0_更新与管理」可直接打开它。玩家取得兼容原版客户端后，可在 Manager 一键安装服主配置档：按锁定清单组合官方 Mod、服主共享配置和自定义素材，统一校验与回滚。Git、HTTPS 和离线目录使用同一内容契约；完整客户端仓库仅是服主可选备份。
 服主自己的「仅本地」扩展也可以放进 Manager 管理，它们不会被打包或导出分发。
 默认跟随我们提供的基础整合包。服主需要自行维护时，明确选择「服主 DIY」接管；接管后由服主维护配置、脚本、素材、兼容性与发布版本。
 [服主整合包更新](docs/owner-updates.zh-CN.md)支持审阅并采用上游组件、发布服主确认的版本，玩家只跟随该服主的来源。
@@ -58,7 +58,7 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 | 任务 AI 僚机 <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai`，AI 按玩家生命额度复活；`!ai3 inf` 开启 AI 无限复活 | [使用说明](docs/coop-wingmen.zh-CN.md) |
 | 任务行为版本 <!-- catalog: `mission_behavior`、`mission_behavior_server` --> | 为一个客户端和服务端组全部 Battle 频道统一选择 OC 默认行为或 G改现有行为 | [使用说明](docs/mission-behavior.zh-CN.md) |
 | 对战 AI <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友；可让真人自动同队，选择双方补位、只补对面或指定数量 | [使用说明](docs/pvp-ai.zh-CN.md) |
-| AI 机体目录（独立附加包） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |
+| AI 机体目录（可选） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |
 | 战斗贡献奖励 <!-- catalog: `battle_rewards` --> | 按贡献发放 GB/MB，可配置人数倍率与按账号去重的聚会奖励 | [使用说明](docs/battle-rewards.zh-CN.md) |
 | 收藏扭蛋 <!-- catalog: `collection_capsule` --> | 优先补图鉴的活动机台，安装时补充图鉴获取说明；价格和次数可配置，默认每周 15 次 | [使用说明](docs/collection-capsule.zh-CN.md) |
 | 每局随机机体 <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组 | [使用说明](docs/room-random.zh-CN.md) |
@@ -68,7 +68,7 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 | 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | Easy / Medium / Hard 三档、按原生武装选择形态、共享敌情和地图推进装置寻路 | [使用说明](docs/battle-ai.zh-CN.md) |
 | 自动机库容量 <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） | [使用说明](docs/hangar-capacity.zh-CN.md) |
 | 机库管理 <!-- catalog: `hangar_manager` --> | 机体管理页内一键整理和重复机体兑换（GB 服务端批量入账） | [使用说明](docs/hangar-manager.zh-CN.md) |
-| 副官补给与管理 <!-- catalog: `operator_catalog` --> | 五位免费补给副官，以及副官名称、头像和掉落的管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
+| 副官补给、资源与能力 <!-- catalog: `operator_catalog`、`operator_catalog_server` --> | 五位免费补给副官，以及独立资源包、数值能力、掉落和商城草稿管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
 | 扭蛋机编辑器 <!-- catalog: `capsule_catalog` --> | 在 Manager 中新增、修改、下架扭蛋机，设置奖池、价格和权重，为未使用的独立活动机改号 | [使用说明](docs/capsule-catalog.zh-CN.md) |
 | 每日双倍时间 <!-- catalog: `daily_rewards` --> | 每天固定时段（默认 18:00–22:00）战斗 GB 和经验翻倍 | [使用说明](docs/daily-rewards.zh-CN.md) |
 | 保管库一键领取 <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
@@ -115,3 +115,5 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 [构建与开发接口](docs/framework.md) · [贡献与 AI 披露规则](docs/contributing.zh-CN.md) · [配置与排错](docs/setup.zh-CN.md)
 
 MIT，见 [LICENSE](LICENSE)。第三方许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+框架、SQL、服主内容和个人数据的归属见[内容边界](docs/content-boundaries.zh-CN.md)。

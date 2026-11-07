@@ -93,6 +93,19 @@ function howItWorks(steps){
  for(const [title,text] of steps){const step=element('div',undefined,'how-step');step.append(element('b',title),element('span',text));box.append(step);}
  return box;
 }
+function developerProtocol(value){
+ const card=element('section',undefined,'manager-card developer-protocol'),details=element('details'),summary=element('summary','开发者协议');
+ const body=element('div',undefined,'settings-grid');
+ const add=(key,item)=>{
+  const box=element('div',undefined,'settings-field'),label=element('span',key,'field-head');
+  if(item!==null&&typeof item==='object'){
+   const nested=element('details');nested.append(element('summary',Array.isArray(item)?item.length+' 项':'查看结构'),element('pre',JSON.stringify(item,null,2),'release-notes'));box.append(label,nested);
+  }else box.append(label,element('code',item===null?'null':String(item),'field-help'));
+  body.append(box);
+ };
+ if(value&&typeof value==='object')for(const [key,item] of Object.entries(value))add(key,item);else add('value',value);
+ details.append(summary,body);card.append(details);return card;
+}
 function categorySwitches(host){
  const box=element('details',undefined,'manager-card batch-switches');box.append(element('summary','批量开关'));
  box.append(element('p','一次关闭这个目录里的全部游戏扩展或联机功能，单个功能的开关保持不变。','muted'));
@@ -184,9 +197,10 @@ async function showProvider(id){
   details.append(grid,button('保存位置设置',async()=>{const data=Object.fromEntries(Object.entries(inputs).map(([k,v])=>[k,v.value.trim()]));await request('/api/providers/'+id+'/config',data);await showProvider(id);},'primary'));card.append(details);root.append(card);}
  if(id==='rewards'&&config.configured){const actions=element('div',undefined,'actions');for(const [action,title] of [['start','启动钱包服务'],['stop','停止钱包服务']])actions.append(button(title,async()=>{const value=await request('/api/services/rewards.wallet',{action});message(value.error|| (value.running?'钱包服务正在运行':'钱包服务已停止'));}));actions.append(button('检查安装 / 更新',async()=>{const value=await request('/api/providers/rewards/api/rewards/install-plan',{});const blocked=value.plan.blockers||[];message(blocked.length?'需要先处理：'+blocked.join('；'):'检查通过。请确认选中的对战服务器已关闭。');if(blocked.length)return;card.append(button('按检查结果安装',async()=>{if(!confirm('按刚才检查的计划安装到选中的服务器？不会停止其他游戏服务。'))return;await request('/api/providers/rewards/api/rewards/install',{review_id:value.review_id});message('安装完成。启动对应服务器后，再查看面板运行状态。');},'primary'));}));card.append(actions);}
  if(id==='operators'&&config.configured)card.append(button('更新本机客户端的副官数据',async()=>{const current=await request('/api/providers/operators/api/operators');await request('/api/providers/operators/api/operators/update-client',{},'POST',{'X-Catalog-Revision':current.revision});message('副官数据已更新，重新打开这个客户端后生效。');}));
+ if(developer()&&config.developer_protocol)root.append(developerProtocol(config.developer_protocol));
  if(!config.configured){root.append(element('p','先选择已有配置的位置。这一步不会导入或重置数据库。','intro'),supportActions({provider:id}));return;}
  const mount=element('section',undefined,'provider-root');root.append(mount);
- const timers=new Set(),listeners=[];const ctx={token,request:(path,body,method='POST',headers={})=>request('/api/providers/'+id+path,body,method,headers),fetch:async(path,options={})=>{const headers=new Headers(options.headers);headers.set('X-ModManager-Token',token);return fetch(String(path).startsWith('/api/providers/')?path:'/api/providers/'+id+path,{...options,headers});},setInterval:(fn,ms)=>{const t=setInterval(fn,ms);timers.add(t);return t;},onWindow:(name,fn)=>{window.addEventListener(name,fn);listeners.push([name,fn]);},message,
+ const timers=new Set(),listeners=[];const ctx={token,developer:developer(),pick:opts=>request('/api/pick',opts),openProvider:id=>leave()&&showProvider(id),request:(path,body,method='POST',headers={})=>request('/api/providers/'+id+path,body,method,headers),fetch:async(path,options={})=>{const headers=new Headers(options.headers);headers.set('X-ModManager-Token',token);return fetch(String(path).startsWith('/api/providers/')?path:'/api/providers/'+id+path,{...options,headers});},setInterval:(fn,ms)=>{const t=setInterval(fn,ms);timers.add(t);return t;},onWindow:(name,fn)=>{window.addEventListener(name,fn);listeners.push([name,fn]);},message,
   // A panel with unsaved edits registers a description of them; leaving the page asks first.
   guard:fn=>{if(sequence===navigation)guard=fn;}};
  message('正在读取…');const module=await import('/panels/'+id+'.js');if(sequence!==navigation)return;const dispose=await module.mount(mount,ctx);if(sequence===navigation){message('');mount.dataset.ready='1';root.append(supportActions({provider:id}));}

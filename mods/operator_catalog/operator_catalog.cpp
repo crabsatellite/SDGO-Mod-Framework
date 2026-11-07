@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <intrin.h>
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -8,6 +9,7 @@
 #include <vector>
 #include "sdgo/sdgo_api.h"
 #include "sdgo/operator_model.h"
+#include "../../support/native_resource_overlay/native_resource_overlay.h"
 
 namespace {
 using namespace sdgo::operators;
@@ -22,7 +24,13 @@ struct Pair { uint32_t id; Box* box; };
 struct InsertResult { void* node; uint8_t inserted; uint8_t padding[3]; };
 using MakeFn = void*(__thiscall*)(void*, const Pair*);
 using InsertFn = void(__thiscall*)(void*, InsertResult*, void*, char);
-struct Entry { uint32_t id, category, source, avatar; std::wstring name, sprite; bool fixedName = false, missionParts = false; };
+struct Entry {
+    uint32_t id, category, source, avatar;
+    std::wstring name, sprite, dialogue, intro;
+    std::array<std::wstring,7> sprites;
+    bool fixedName=false,resources=false,enabled=true;
+    int missionParts=-1;
+};
 using ConvertFn = int(WINAPI*)(UINT,DWORD,LPCCH,int,LPWSTR,int);
 ConvertFn g_convert = nullptr;
 uintptr_t g_nameDecoder = 0;
@@ -162,10 +170,19 @@ void Apply()
         return;
     }
     for (const Entry& e : g_entries) {
+        std::array<uint8_t,kOperatorSize> nativeExisting{};
+        if(!e.enabled && ReadRecord(e.id,0x2C,nativeExisting.data(),nativeExisting.size()))continue;
         auto row = source.at(e.source);
         auto category = categoryTemplate;
         if (!PatchOperator(row.data(), row.size(), e.id, e.name, source.at(e.avatar).data(), e.sprite)) continue;
-        if (e.missionParts) row[kMissionPartsOffset]=1;
+        if(e.enabled && e.missionParts>=0)row[kMissionPartsOffset]=static_cast<uint8_t>(e.missionParts);
+        if(e.resources) {
+            if(!Text(row.data()+105,50,e.dialogue) || !Text(row.data()+933,50,e.intro))continue;
+            bool valid=true;
+            for(size_t i=0;i<e.sprites.size();++i)
+                valid=Text(row.data()+kAvatarOffsets[i],50,e.sprites[i])&&valid;
+            if(!valid)continue;
+        }
         std::array<uint8_t, kCategorySize> registered = {};
         const bool exists = ReadRecord(e.category, 0x22, registered.data(), registered.size());
         uint32_t ref = 0;
@@ -198,7 +215,8 @@ bool ReadConfig(const wchar_t* dir)
 {
     const std::wstring file = std::wstring(dir) + L"\\display.ini";
     if (GetFileAttributesW(file.c_str()) == INVALID_FILE_ATTRIBUTES) return true;
-    if (GetPrivateProfileIntW(L"catalog", L"Version", 0, file.c_str()) != 1) return false;
+    const unsigned version=GetPrivateProfileIntW(L"catalog",L"Version",0,file.c_str());
+    if(version!=1 && version!=2)return false;
     std::vector<wchar_t> sections(65536);
     const DWORD count = GetPrivateProfileSectionNamesW(sections.data(), static_cast<DWORD>(sections.size()), file.c_str());
     if (count >= sections.size() - 2) return false;
@@ -211,11 +229,14 @@ bool ReadConfig(const wchar_t* dir)
         seen[static_cast<uint32_t>(id)] = true;
         Entry e = {};
         e.id = static_cast<uint32_t>(id);
+        if(version==2)e.enabled=GetPrivateProfileIntW(section,L"Enabled",1,file.c_str())!=0;
         e.category = GetPrivateProfileIntW(section, L"Category", 0, file.c_str());
         e.source = GetPrivateProfileIntW(section, L"Template", 0, file.c_str());
         e.avatar = GetPrivateProfileIntW(section, L"AvatarProfile", 0, file.c_str());
         const bool defaultId=e.id==60003 || e.id==60013 || e.id==60018 || e.id==60025 || e.id==60041;
-        e.missionParts=GetPrivateProfileIntW(section,L"MissionParts",defaultId?1:0,file.c_str())!=0;
+        const int parts=static_cast<int>(GetPrivateProfileIntW(section,L"MissionParts",defaultId?1:-1,file.c_str()));
+        if(version==1)e.missionParts=parts>0?1:-1;
+        else {if(parts < -1 || parts>1)return false;e.missionParts=parts;}
         // Older Manager exports omit this optional field. Their default entries
         // still resolve the server's fixed-name tokens after a client DLL update.
         e.fixedName = GetPrivateProfileIntW(section,L"FixedName",defaultId?1:0,file.c_str())!=0;
@@ -254,8 +275,195 @@ bool ReadConfig(const wchar_t* dir)
             const std::wstring expected = L"sdgo\\mods\\operator_catalog\\assets\\" + std::to_wstring(e.id) + L".spr";
             if (e.sprite != expected) return false;
         }
+        if(version==2) {
+            wchar_t value[128]{};
+            const DWORD got=GetPrivateProfileStringW(section,L"Dialogue",L"\x1",value,128,file.c_str());
+            e.resources=!(got==1 && value[0]==1);
+            if(e.resources) {
+                const std::wstring own=L"sdgo\\mods\\operator_catalog\\assets\\"+std::to_wstring(e.id)+L"\\";
+                auto resource=[&](const wchar_t* key,const wchar_t* native,const wchar_t* suffix,std::wstring& output) {
+                    const DWORD length=GetPrivateProfileStringW(section,key,L"\x1",value,128,file.c_str());
+                    if(length>=50 || (length==1 && value[0]==1))return false;
+                    output=value;if(output.empty())return true;
+                    const std::wstring ending=suffix;
+                    if(output.size()<ending.size() || output.substr(output.size()-ending.size())!=ending ||
+                       output.find(L"..")!=std::wstring::npos || output.find(L':')!=std::wstring::npos)return false;
+                    if(output.rfind(own,0)==0)return true;
+                    const std::wstring prefix=native;
+                    if(output.rfind(prefix,0)!=0)return false;
+                    const std::wstring number=output.substr(prefix.size(),output.size()-prefix.size()-ending.size());
+                    return !number.empty() && number.find_first_not_of(L"0123456789")==std::wstring::npos;
+                };
+                if(!resource(L"Dialogue",L"gdrs\\",L".gdt",e.dialogue) ||
+                   !resource(L"IntroVoice",L"sdrs\\",L".zsd",e.intro))return false;
+                for(size_t i=0;i<e.sprites.size();++i) {
+                    const std::wstring key=L"Sprite"+std::to_wstring(i);
+                    if(!resource(key.c_str(),L"sprs\\",L".spr",e.sprites[i]))return false;
+                }
+            }
+        }
         g_entries.push_back(std::move(e));
     }
+    return true;
+}
+
+void AddRequired(std::vector<std::wstring>& paths, const std::wstring& path)
+{
+    if (std::find(paths.begin(), paths.end(), path) == paths.end())
+        paths.push_back(path);
+}
+
+void CollectRequiredBundles(
+    std::map<uint32_t, std::vector<std::wstring>>& required)
+{
+    for (const Entry& entry : g_entries) {
+        const std::wstring base =
+            L"sdgo\\mods\\operator_catalog\\assets\\" +
+            std::to_wstring(entry.id);
+        if (!entry.sprite.empty()) {
+            auto& paths = required[entry.id];
+            AddRequired(paths, base + L".txr");
+            for (uint32_t frame = 0; frame < 7; ++frame)
+                AddRequired(paths, base + L"_" + std::to_wstring(frame) + L".spr");
+        }
+        if (!entry.resources)
+            continue;
+        const std::wstring prefix = base + L"\\";
+        const auto collect = [&](const std::wstring& path) {
+            if (!path.empty() && path.rfind(prefix, 0) == 0)
+                AddRequired(required[entry.id], path);
+        };
+        collect(entry.dialogue);
+        collect(entry.intro);
+        for (const std::wstring& sprite : entry.sprites)
+            collect(sprite);
+    }
+}
+
+struct PreparedBundle
+{
+    std::wstring configName;
+    sdgo::resource_overlay::BundleRegistration bundle;
+};
+
+bool RegisterResourceOverlays()
+{
+    std::map<uint32_t, std::vector<std::wstring>> required;
+    CollectRequiredBundles(required);
+    if (required.empty())
+        return true;
+
+    const wchar_t* modDirectory = g_api->ModDirectory(g_mod);
+    if (!modDirectory || !*modDirectory) {
+        g_api->Log(g_mod, SDGO_LOG_ERROR,
+                   "operator resource directory is unavailable");
+        return false;
+    }
+
+    std::vector<PreparedBundle> prepared;
+    prepared.reserve(required.size());
+    for (const auto& item : required) {
+        PreparedBundle candidate;
+        const std::wstring id = std::to_wstring(item.first);
+        candidate.configName =
+            L"assets\\" + id + L"\\resource-overlay.ini";
+        const std::string owner = "operator_catalog:" +
+                                  std::to_string(item.first);
+        std::string error;
+        if (!sdgo::resource_overlay::LoadBundleFiles(
+                modDirectory, candidate.configName.c_str(), owner.c_str(),
+                candidate.bundle, error)) {
+            g_api->Log(g_mod, SDGO_LOG_ERROR,
+                       "sealed operator %lu resources rejected before publication: %s",
+                       static_cast<unsigned long>(item.first), error.c_str());
+            return false;
+        }
+        for (const std::wstring& path : item.second) {
+            if (candidate.bundle.entries.find(path) !=
+                candidate.bundle.entries.end())
+                continue;
+            g_api->Log(g_mod, SDGO_LOG_ERROR,
+                       "sealed operator %lu bundle is missing required resource %ls",
+                       static_cast<unsigned long>(item.first), path.c_str());
+            return false;
+        }
+        prepared.push_back(std::move(candidate));
+    }
+
+    using GetBroker = const SdgoResourceOverlayBrokerApiV1*(__cdecl*)();
+    const SdgoResourceOverlayBrokerApiV1* shared = nullptr;
+    const wchar_t* sharedModule = nullptr;
+    for (const wchar_t* moduleName :
+         {L"capsule_catalog.dll", L"unit_catalog.dll"}) {
+        HMODULE module = GetModuleHandleW(moduleName);
+        if (!module)
+            continue;
+        auto getter = reinterpret_cast<GetBroker>(
+            GetProcAddress(module, "SdgoGetResourceOverlayBrokerV1"));
+        if (!getter) {
+            g_api->Log(g_mod, SDGO_LOG_ERROR,
+                       "loaded %ls is incompatible: "
+                       "SdgoGetResourceOverlayBrokerV1 is missing",
+                       moduleName);
+            return false;
+        }
+        const SdgoResourceOverlayBrokerApiV1* broker = getter();
+        if (!broker)
+            continue;
+        if (broker->size < sizeof(SdgoResourceOverlayBrokerApiV1) ||
+            broker->version != 1 || !broker->RegisterBundle) {
+            g_api->Log(g_mod, SDGO_LOG_ERROR,
+                       "loaded %ls has an incompatible resource broker ABI",
+                       moduleName);
+            return false;
+        }
+        if (shared && shared != broker) {
+            g_api->Log(g_mod, SDGO_LOG_ERROR,
+                       "multiple native resource brokers are active");
+            return false;
+        }
+        shared = broker;
+        sharedModule = moduleName;
+    }
+
+    if (shared) {
+        for (const PreparedBundle& candidate : prepared) {
+            char error[512] = {};
+            if (!shared->RegisterBundle(
+                    modDirectory, candidate.configName.c_str(),
+                    candidate.bundle.owner.c_str(), error,
+                    static_cast<uint32_t>(sizeof(error)))) {
+                g_api->Log(g_mod, SDGO_LOG_ERROR,
+                           "%ls resource broker rejected %s: %s",
+                           sharedModule, candidate.bundle.owner.c_str(),
+                           error[0] ? error : "unknown broker error");
+                return false;
+            }
+        }
+        g_api->Log(g_mod, SDGO_LOG_INFO,
+                   "sealed operator resources registered with %ls",
+                   sharedModule);
+        return true;
+    }
+
+    auto& provider = sdgo::resource_overlay::LocalProvider();
+    std::string error;
+    for (const PreparedBundle& candidate : prepared) {
+        if (!provider.RegisterTrustedBundle(candidate.bundle, error)) {
+            g_api->Log(g_mod, SDGO_LOG_ERROR,
+                       "standalone operator resource broker rejected %s: %s",
+                       candidate.bundle.owner.c_str(), error.c_str());
+            return false;
+        }
+    }
+    if (!provider.Start(g_api, g_mod, nullptr, nullptr, error)) {
+        g_api->Log(g_mod, SDGO_LOG_ERROR,
+                   "standalone operator resource broker failed to start: %s",
+                   error.c_str());
+        return false;
+    }
+    g_api->Log(g_mod, SDGO_LOG_INFO,
+               "sealed operator resources registered with standalone resource broker");
     return true;
 }
 }
@@ -271,8 +479,10 @@ SDGO_MOD_ENTRY
     g_insert = reinterpret_cast<InsertFn>(api->Symbol(mod, "operator.grid_insert"));
     g_new = reinterpret_cast<NewFn>(api->Symbol(mod, "operator.native_new"));
     g_delete = reinterpret_cast<DeleteFn>(api->Symbol(mod, "operator.native_delete"));
-    if (!g_data || !g_find || !g_make || !g_insert || !g_new || !g_delete || !ReadConfig(api->ModDirectory(mod))) return 0;
+    if (!g_data || !g_find || !g_make || !g_insert || !g_new || !g_delete ||
+        !ReadConfig(api->ModDirectory(mod))) return 0;
     if (g_entries.empty()) { api->Log(mod, SDGO_LOG_INFO, "no operator overrides configured"); return 1; }
+    if (!RegisterResourceOverlays()) return 0;
     for (const Entry& entry:g_entries) {
         if (!entry.fixedName) continue;
         g_nameDecoder=reinterpret_cast<uintptr_t>(api->Symbol(mod,"operator.native_name_decode"));
