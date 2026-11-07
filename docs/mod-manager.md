@@ -2,9 +2,7 @@
 
 [简体中文](mod-manager.zh-CN.md) · [Back to the feature index](../README.md)
 
-Manager handles client updates, Mod configuration and owner tools. Players use the server owner's client package or update.
-A client with a complete-runtime source opens the update page directly. Shared Mods and content remain the owner's responsibility;
-the game keeps its normal launch entry.
+Manager installs programs from the official or imported Mod source, and shared configuration plus custom content from the owner source. Start with a compatible original client, install Manager, then import the owner profile. See [the installation flow](owner-updates.md). The game keeps its normal launch entry.
 
 Open Manager from **0_更新与管理** at the top of the client folder, or from **SDGO Mod Manager.exe** in the
 framework package. The first normal launch creates the folder entry; **创建目录入口** (create folder entry) restores a
@@ -68,17 +66,13 @@ new receipt retains its legacy status. Interrupted changes keep recovery records
 
 ## Updates
 
-### Complete clients
+### Owner profiles and content
 
-The server owner's client package or update can provide `sdgo/client-source.json`. A dual-source installation binds a framework/Mod program source and an owner content source separately. Both support credential-free Git SSH/HTTPS mirrors using existing local Git identities and SSH configuration.
+Players prepare a compatible original client, enter an owner profile URL or choose an offline manifest, and use the one-step install action. Framework programs come from the official/selected source; the profile selects exact Mods, shared parameters and added-unit assets. Manager verifies locks, digests and dependencies before one install or rollback transaction.
 
-The framework source supplies Manager, the core, Mod programs, interface declarations and defaults. The content source supplies original client resources, added units, models, textures, generated catalogs and shared settings. Its manifest declares the minimum framework version and required Mods. Dedicated Git runtime branches distribute the same verified ZIP format as Releases; a source-code mirror alone is insufficient.
+Git SSH/HTTPS, HTTPS manifests and offline directories use the same contract. Complete-client repositories are optional. Framework version, owner revision and the running Manager version are distinct; new program bytes still require a restart. Original games, player accounts/databases, secret rosters and local recovery state are not profile payloads.
 
-Review both layers in **完整客户端更新** before installing. Manager downloads and verifies both, checks compatibility and commits one transaction, rolling both back on failure. An unavailable source preserves the installation. Transfers and archive segments try later mirrors of the same identity. Updating Manager uses its normal restart handoff and waits for the game to close.
-
-Shared configuration follows the owner, including declared configuration files, scripts and Mod parameters; old local values do not suppress owner updates. Login, display/FPS preferences, explicitly declared personal parameters, local-only Mods and non-retired extra custom files remain local. Receipts record framework version, framework commit and content commit separately. Framework updates perform no server database migration.
-
-A standalone Manager can configure a Git framework source. A bound client uses the combined transaction instead of two independent installers. New program bytes on disk still require the running Manager to restart; that state is not reported as current.
+Owners check the upstream release, export the profile and `content/` from their authoring client and publish using their own channel. Complete snapshots are optional outputs. See [content ownership and SQL boundaries](content-boundaries.md).
 
 ### Framework and Mod Releases
 
