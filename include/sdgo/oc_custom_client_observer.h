@@ -1,14 +1,21 @@
-// GameTest observer for the OC client panel. Exported by oc_custom_client.dll.
+// GameTest observer for the OC client Mod. Exported by oc_custom_client.dll.
 #pragma once
 
 #include <cstdint>
 
-#define SDGO_OC_CUSTOM_CLIENT_OBSERVER_VERSION 1u
+#define SDGO_OC_CUSTOM_CLIENT_OBSERVER_VERSION 2u
 
-struct SdgoOcCustomClientSnapshotV1 {
+// Window bits of SdgoOcCustomClientSnapshotV2::windows.
+#define SDGO_OC_WINDOW_ENTRY 0x01u      // OVER CUSTOM entry shown on the upgrade page
+#define SDGO_OC_WINDOW_ENTRY_LIT 0x02u  // the entry is the glowing (usable) button
+#define SDGO_OC_WINDOW_OVER 0x04u       // uirs\0794.uir allocation window
+#define SDGO_OC_WINDOW_CHALLENGE 0x08u  // uirs\0813.uir challenge window
+#define SDGO_OC_WINDOW_CONFIRM 0x10u    // uirs\0819.uir confirmation popup
+
+struct SdgoOcCustomClientSnapshotV2 {
     uint32_t size;
     uint32_t version;
-    uint32_t panel_attached;   // the factory upgrade page holds the panel
+    uint32_t windows_loaded;   // the original OC layouts are loaded and bound on the page
     uint32_t transport_ready;  // gift carrier usable for OC requests
     uint32_t server_oc_mode;   // mode reply said oc
     uint32_t profile_present;
@@ -27,22 +34,35 @@ struct SdgoOcCustomClientSnapshotV1 {
     uint32_t over_points_left;
     uint8_t normal[6];
     uint8_t over[6];
-    uint8_t pending_normal[6];
-    uint8_t pending_over[6];
     int32_t base[6];
     int32_t normal_gain[6];
     int32_t over_gain[6];
-    uint32_t over_mode;
-    uint32_t carrier_present;  // the page record carries an OC payload
+    uint32_t carrier_present;  // the active record carries an OC payload
     int32_t carrier_delta[6];
     uint32_t last_upgrade_success;
     uint32_t last_reset_gp;
+    uint32_t windows;          // SDGO_OC_WINDOW_* bits currently shown
+    uint32_t confirm_text_id;  // client text id shown in the confirmation popup (0 none)
+    uint32_t challenge_items;  // OC items listed in the challenge window
+    int32_t challenge_item_ids[10];
+    uint32_t challenge_selected; // bit per listed item that is checked
+    // Battle: the local unit's mobility after the OC gains (stat setup hook).
+    uint32_t mobility_applied;   // number of local stat setups that received gains
+    uint32_t mobility_unit_number;
+    int32_t mobility_dash_base;    // DashLevel of the unit data
+    int32_t mobility_dash_before;  // unit +0xB64 as the native setup left it (with its own bonus)
+    int32_t mobility_dash;         // unit +0xB64 after the OC gain
+    int32_t mobility_motive_base;  // MotivePower of the unit data
+    int32_t mobility_motive_before;
+    int32_t mobility_motive;       // unit +0xB6A after the OC gain
+    int32_t mobility_speed_gain;   // carried gains that were added
+    int32_t mobility_agility_gain;
 };
 
-// Drives the same handlers the panel buttons use. action values:
-//   1 refresh, 2 plus(stat), 3 minus(stat), 4 apply, 5 reset cost, 6 reset,
-//   7 challenge, 8 toggle over mode, 9 select unit by uid (argument64).
-struct SdgoOcCustomClientActionV1 {
+// Actions: 1 refresh; 2 save one more normal point on stat (direct request
+// without the windows, GameTest preparation); 9 select unit by uid
+// (argument64, without the page).
+struct SdgoOcCustomClientActionV2 {
     uint32_t size;
     uint32_t version;
     uint32_t action;
@@ -50,5 +70,10 @@ struct SdgoOcCustomClientActionV1 {
     uint64_t argument64;
 };
 
-using SdgoOcCustomClientGetSnapshotV1Fn = int(__cdecl*)(SdgoOcCustomClientSnapshotV1*);
-using SdgoOcCustomClientActionV1Fn = int(__cdecl*)(const SdgoOcCustomClientActionV1*);
+// SdgoOcCustomClientClickV2 delivers a real UI event for an original control
+// to the page service's OnUIEvent (button 0x101, check box 0x401), exactly as
+// a mouse click does. window: "entry", "over", "challenge" or "confirm";
+// control: the original control name (for example L"SpeedUpBtn").
+using SdgoOcCustomClientGetSnapshotV2Fn = int(__cdecl*)(SdgoOcCustomClientSnapshotV2*);
+using SdgoOcCustomClientActionV2Fn = int(__cdecl*)(const SdgoOcCustomClientActionV2*);
+using SdgoOcCustomClientClickV2Fn = int(__cdecl*)(const char* window, const wchar_t* control);

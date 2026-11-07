@@ -1660,12 +1660,18 @@ def parse_mode_sequence(value: str) -> tuple[int, ...]:
 
 
 def validate_oc_allocate(value: str | None) -> str | None:
-    """OC acceptance input: '<stat>:<points>' with stat 0..5 and 1..20 normal points."""
+    """OC acceptance input: '<stat>:<points>[,<stat>:<points>...]' with stat 0..5 and 1..20 normal points."""
     if value is None:
         return None
-    if type(value) is not str or not re.fullmatch(r'[0-5]:(?:[1-9]|1[0-9]|20)', value):
-        raise GameTestError("oc_allocate must be '<stat 0-5>:<points 1-20>'")
+    item = r'[0-5]:(?:[1-9]|1[0-9]|20)'
+    if type(value) is not str or not re.fullmatch(item + r'(?:,' + item + r'){0,5}', value):
+        raise GameTestError("oc_allocate must be '<stat 0-5>:<points 1-20>[,...]'")
     return value
+
+
+def oc_mobility_selected(oc_allocate: str | None) -> bool:
+    """The battle checks the OC speed/agility gains when speed (0) or agility (4) is allocated."""
+    return oc_allocate is not None and any(entry.split(':')[0] in ('0', '4') for entry in oc_allocate.split(','))
 
 
 def validate_play_unit_uid(value: int | None) -> int | None:
@@ -1888,7 +1894,9 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
     # The OC panel check runs last, after the settled return to the lobby.
     panel = ('oc.panel',) if (oc_allocate is not None or oc_panel) else ()
     if len(modes) == 1:
-        return prefix + FLOW_CASES[3:] + panel
+        # OC speed/agility: the battle unit exists after the AI spawn check.
+        mobility = ('oc.mobility',) if oc_mobility_selected(oc_allocate) else ()
+        return prefix + FLOW_CASES[3:6] + mobility + FLOW_CASES[6:] + panel
     return prefix + tuple(
         f"pvp.mode{mode}.{step}" for mode in modes for step in MODE_FLOW_STEPS
     ) + panel
