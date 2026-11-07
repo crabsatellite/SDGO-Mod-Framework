@@ -140,7 +140,8 @@ async function showSettings(host,mod){
  const meta=element('div',undefined,'mod-meta detail-meta');if(entry){meta.append(chip(entry.enabled?'已启用':'已关闭',entry.enabled?'green':undefined));if(entry.version)meta.append(chip('版本 '+entry.version));}if(developer())meta.append(element('code',mod,'field-help'));root.append(meta);
  root.append(element('p',data.contract.description||'调整此功能的设置。','intro'));
  const runtimeLine=element('p',data.runtime?.message||'等待核实运行状态','muted');root.append(runtimeLine,button('核对运行状态',async()=>{const rows=await request('/api/runtime?'+new URLSearchParams({host}));runtimeLine.textContent=rows[mod]?.message||'等待核实运行状态';},'ui-btn is-ghost is-small'));
- if(data.contract.provider&&ownerTools()){const panel=(state.panels||[]).find(p=>p.id===data.contract.provider);if(panel){const link=button('打开服主管理：'+panel.title,()=>leave()&&showProvider(panel.id),'ui-btn is-ghost is-small');link.prepend(icon(panel.id));root.append(link);}}
+ const userProvider=data.contract.provider_audience==='user';
+ if(data.contract.provider&&(ownerTools()||userProvider)){const panel=(state.panels||[]).find(p=>p.id===data.contract.provider);if(panel){const link=button((userProvider?'打开详细配置：':'打开服主管理：')+panel.title,()=>leave()&&showProvider(panel.id),'ui-btn is-ghost is-small');link.prepend(icon(panel.id));root.append(link);}}
  const box=element('section',undefined,'manager-card settings-plate'),fields=element('div',undefined,'settings-grid'),controls={};
  let restart=false;
  for(const field of data.contract.settings){const label=element('label',undefined,'settings-field'),head=element('span',undefined,'field-head'),input=document.createElement(field.type==='choice'?'select':'input');input.dataset.key=field.id;

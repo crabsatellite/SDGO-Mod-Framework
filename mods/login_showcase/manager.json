@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "login_showcase",
+  "title": "登录页面机体展示",
+  "category": "gameplay",
+  "hosts": ["client"],
+  "provider": "login_showcase",
+  "provider_audience": "user",
+  "presentation": "configurable",
+  "description": "从当前客户端机体中按等级、全部机体、最近注册数量或指定名单选择登录页面的展示机体；默认选择 SS、SR、SU。",
+  "mechanism": "候选来自实际载入的原生机体图鉴，保留登录页面的原生模型展示流程；配置在下次启动游戏时生效。",
+  "dependencies": {
+    "required": [
+      {
+        "id": "startup_crash_fix",
+        "minimum": "1.0.2",
+        "capability": "login.showcase.selector",
+        "capability_version": 1
+      }
+    ]
+  },
+  "settings": [
+    {"id":"enabled","key":"Enabled","label":"启用登录机体选择","type":"boolean","default":true,"file":"mod.ini","section":"settings","audience":"user","activation":"restart_required"},
+    {"id":"mode","key":"Mode","label":"机体选择方式","type":"choice","options":["grades","all","recent","units"],"default":"grades","file":"mod.ini","section":"settings","audience":"user","activation":"restart_required"},
+    {"id":"grades","key":"Grades","label":"展示等级","type":"string","default":"SS,SR,SU","pattern":"(?:C|CS|CR|CU|B|BS|BR|BU|A|AS|AR|AU|S|SS|SR|SU)(?:\\s*,\\s*(?:C|CS|CR|CU|B|BS|BR|BU|A|AS|AR|AU|S|SS|SR|SU))*","file":"mod.ini","section":"settings","audience":"user","activation":"restart_required"},
+    {"id":"recent_count","key":"RecentCount","label":"最近注册机体数量","type":"integer","minimum":1,"maximum":20000,"default":10,"file":"mod.ini","section":"settings","audience":"user","activation":"restart_required"},
+    {"id":"unit_ids","key":"UnitIDs","label":"指定展示机体","type":"integer_list","max_length":22528,"default":"","file":"mod.ini","section":"settings","audience":"user","activation":"restart_required"}
+  ]
+}
