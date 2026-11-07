@@ -172,3 +172,10 @@ jobs:
           RUNTIME_GIT_MIRROR_TARGETS: ${{ secrets.RUNTIME_GIT_MIRROR_TARGETS }}
           RUNTIME_GITHUB_MIRROR_TOKEN: ${{ secrets.RUNTIME_GITHUB_MIRROR_TOKEN }}
         run: python tools/sync_runtime_mirror.py
+      - name: Trigger configured pull mirrors
+        if: env.PREPARE_ONLY != 'true' && vars.RUNTIME_GIT_MIRROR_ENABLED == 'true'
+        env:
+          RUNTIME_MIRROR_DISPATCH_PATH: ${{ secrets.RUNTIME_MIRROR_DISPATCH_PATH }}
+          RUNTIME_MIRROR_REPOSITORIES: ${{ secrets.RUNTIME_MIRROR_REPOSITORIES }}
+          RUNTIME_GITHUB_MIRROR_TOKEN: ${{ secrets.RUNTIME_GITHUB_MIRROR_TOKEN }}
+        run: python tools/trigger_runtime_mirrors.py

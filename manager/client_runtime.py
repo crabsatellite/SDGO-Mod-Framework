@@ -192,8 +192,9 @@ class ClientRuntime:
         for raw in self.git(repo,['ls-tree','-r','-z',commit]).split(b'\0'):
             if not raw:continue
             header,name=raw.split(b'\t',1);name=name.decode('utf-8')
-            if name=='config.xml':continue
-            if not runtime_path(name,contract):continue
+            if name=='config.xml':
+                if (root/name).is_file():continue
+            elif not runtime_path(name,contract):continue
             if any(name==p or name.startswith(p+'/')for p in excluded):raise ValueError('上游与仅本地 Mod 冲突：'+name)
             match=re.fullmatch(rb'100(?:644|755) blob ([a-f0-9]{40})',header)
             if not match or name.casefold()in case:raise ValueError('客户端清单包含链接或重复路径')
