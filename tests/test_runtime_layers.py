@@ -68,6 +68,18 @@ class DualRuntime(unittest.TestCase):
         self.assertEqual(receipt['content_commit'],self.git('rev-parse','HEAD'));self.assertFalse(receipt['data_migrations'])
         self.assertEqual(self.controller.plan(self.host)['status'],'current')
 
+    def test_mixed_framework_catalog_uses_only_client_mod_configuration(self):
+        catalog_path=Path(self.framework['bundle'])/'client/sdgo/catalog.json'
+        catalog=storage.read_json(catalog_path)
+        server=copy.deepcopy(catalog['mods'][0]);server.update(id='server_only',target='server')
+        catalog['mods'].append(server);storage.atomic(catalog_path,storage.json_bytes(catalog))
+        self.framework['manifest']['files']['client/sdgo/catalog.json']={'bytes':catalog_path.stat().st_size,'sha256':updates.digest(catalog_path.read_bytes())}
+        plan=self.controller.plan(self.host)
+        result=self.controller.install(self.host,plan['digest'])
+        self.assertEqual(result['status'],'installed')
+        self.assertTrue((self.game/'sdgo/mods/example/example.dll').is_file())
+        self.assertFalse((self.game/'sdgo/mods/server_only').exists())
+
     def test_content_cannot_replace_program_dll_or_mod_identity(self):
         self.write('sdgo/core.dll',b'owner program override');self.commit_all()
         with self.assertRaisesRegex(ValueError,'不能替换框架'):self.controller.plan(self.host)

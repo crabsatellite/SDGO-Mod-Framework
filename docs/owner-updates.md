@@ -16,7 +16,7 @@ Changing the Manager program upstream does not change a player's owner binding.
 
 ### Complete client sources
 
-The dual-source format uses `schema_version=2` in `sdgo/client-source.json`. The content source keeps its pinned publisher, label and mirror `feeds`; `framework` declares a separate identity, repository, channel and Git mirrors. Mirrors within each source serve the same content, while the two layers retain independent versions and commits.
+The dual-source format uses `schema_version=2` in `sdgo/client-source.json`. The content source keeps its pinned publisher, label and mirror `feeds`; `framework` declares a separate identity, repository, channel and Git mirrors. Mirrors within each source serve the same content, while the two layers retain independent versions and commits. Client synchronization reads configuration only for client Mods; server components stay in their server payload.
 
 A `framework-feed.json` references an immutable `SDGO-ModFramework-<version>.zip`. Publish Git runtime branches with `tools/publish_framework_runtime.py`; mirror delivery first copies runtime refs to configured GitHub distribution repositories and then requests the existing pull-mirror automation. Imported mirrors keep their normal synchronization path instead of becoming separate direct-push targets. Keep private endpoints and identities out of public packages.
 

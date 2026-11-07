@@ -19,7 +19,7 @@ def compose(controller,binding,contract,root,entries,repo,commit):
     current=updates.version(manifest['version'])[:3]
     if minimum is None or current<updates.version(minimum)[:3]or maximum and current>updates.version(maximum)[:3]:raise ValueError('框架版本不符合服主内容的兼容要求')
     catalog=json.loads((Path(framework['bundle'])/'client/sdgo/catalog.json').read_text('utf-8'))
-    mods={m['id']:m for m in catalog['mods']}
+    mods={m['id']:m for m in catalog['mods'] if m['target']=='client'}
     for identity,required in spec.get('required_mods',{}).items():
         if identity not in mods or updates.version(mods[identity]['version'])<updates.version(required):raise ValueError('服主内容需要兼容的 Mod：'+identity)
     allowed={'sdgo/sdgo.ini'}
