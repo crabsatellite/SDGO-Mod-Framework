@@ -101,6 +101,8 @@ std::array<void*,2> comboTextSlots{};
 Bytes comboDescriptor(0x20);
 std::array<uint8_t, 0x70> categoryPermanent = {};
 std::array<uint8_t, 0x70> categoryRental = {};
+uint32_t categoryPermanentId = 1100001;
+uint32_t categoryRentalId = 1100002;
 std::array<uint8_t, 128> nameAlpha = {};
 std::array<uint8_t, 128> nameBravo = {};
 std::array<std::array<uint8_t, 128>, 4> extraNames = {};
@@ -112,6 +114,7 @@ std::array<uint8_t, 0x99> fullUnit = {};
 Control* shopRadio = nullptr;
 Control* allRadio = nullptr;
 Control* filterButton = nullptr;
+Control* searchEdit = nullptr;
 Control* rightButton = nullptr;
 std::array<Control*,5> pageButtons{};
 Control* buyButton = nullptr;
@@ -312,7 +315,9 @@ void PreparePopup(
         gift ? giftCombo : buyCombo;
     Control* labelButton=gift ? giftOptionText : buyOptionText;
     const std::wstring duration =
-        product == 1019001
+        popupOptions[0].category/100000==12
+            ? L"Permanent"
+            : product == 1019001
             ? L"永久"
             : L"租赁 7 天";
     const auto caption=duration+L":"+std::to_wstring(popupOptions[0].price)+
@@ -353,6 +358,26 @@ void* __fastcall NativeStringCtor(
 
 void __fastcall NativeStringDtor(void*, void*)
 {
+}
+
+void __fastcall EditSetText(
+    void* self,
+    void*,
+    const void* value,
+    int)
+{
+    const std::wstring text=HostString(value);
+    SetHostString(
+        self,
+        kControlText,
+        text.c_str());
+}
+
+const void* __fastcall EditGetText(
+    void* self,
+    void*)
+{
+    return static_cast<uint8_t*>(self)+kControlText;
 }
 
 void Check(bool,const char*);
@@ -434,9 +459,9 @@ uint8_t __fastcall GridFind(
     char)
 {
     *output = nullptr;
-    if (type == 0x22 && id == 1100001)
+    if (type == 0x22 && id == categoryPermanentId)
         *output = categoryPermanent.data();
-    else if (type == 0x22 && id == 1100002)
+    else if (type == 0x22 && id == categoryRentalId)
         *output = categoryRental.data();
     else if (type == 0x23 && id == 210001)
         *output = nameAlpha.data();
@@ -844,6 +869,14 @@ ShopCatalogActions::Bindings Bindings()
             ShopCatalogActions::
                 ButtonTextItemFn>(
             &ButtonTextItem);
+    value.edit_set_text=
+        reinterpret_cast<
+            ShopCatalogActions::EditSetTextFn>(
+            &EditSetText);
+    value.edit_get_text=
+        reinterpret_cast<
+            ShopCatalogActions::EditGetTextFn>(
+            &EditGetText);
     value.downmenu_vtable =
         downmenuVtable.data();
     value.downmenu_callback =
@@ -992,6 +1025,8 @@ void Setup()
         L"AllSerchRadio");
     filterButton=AddControl(searchRoot.get(),L"FilterBtn");
     Put(search.get(),0xB8,filterButton->bytes.data());
+    searchEdit=AddControl(searchRoot.get(),L"SearchEdit");
+    Put(search.get(),0xB4,searchEdit->bytes.data());
     rightButton = AddControl(
         roomRoot.get(),
         L"RightBtn");
@@ -1077,14 +1112,16 @@ void Setup()
 
     categoryPermanent.fill(0);
     categoryRental.fill(0);
+    categoryPermanentId = 1100001;
+    categoryRentalId = 1100002;
     Put(
         categoryPermanent.data(),
         0,
-        uint32_t{1100001});
+        categoryPermanentId);
     Put(
         categoryRental.data(),
         0,
-        uint32_t{1100002});
+        categoryRentalId);
     categoryPermanent[0x6D] = 0;
     categoryRental[0x6D] = 1;
 
@@ -1170,7 +1207,39 @@ int wmain(int argc, wchar_t** argv)
         TemporaryFile(L"-stock-assertions.ini");
     const std::wstring display =
         TemporaryFile(L"-display.ini");
+    const std::wstring operatorCatalog =
+        TemporaryFile(L"-operator-catalog.ini");
+    const std::wstring operatorDisplay =
+        TemporaryFile(L"-operator-display.ini");
     WriteConfiguration(assertions, display);
+    WriteUtf8(
+        operatorCatalog,
+        "[shop]\n"
+        "Schema=1\n"
+        "Scope=OwnerCatalog\n"
+        "CatalogId=operator-flow\n"
+        "Revision=operator-flow-v1\n"
+        "[product:operator]\n"
+        "ProductId=1019001\n"
+        "ItemId=290001\n"
+        "TemplateId=1010001\n"
+        "Category=1200001\n"
+        "Price=500\n"
+        "Currency=GB\n"
+        "Validity=1\n"
+        "Enabled=1\n"
+        "Name=Alpha\n"
+        "Label=Permanent\n");
+    WriteUtf8(
+        operatorDisplay,
+        "[shop]\n"
+        "Revision=operator-flow-v1\n"
+        "[option:3001]\n"
+        "Category=1200001\n"
+        "Validity=1\n"
+        "Payment=1\n"
+        "Price=500\n"
+        "Text=Permanent\n");
 
     Setup();
     auto actions = Driver(assertions, display);
@@ -1199,12 +1268,89 @@ int wmain(int argc, wchar_t** argv)
             state.inventory_unchanged,
         "exact wallet and full inventory image remain unchanged");
     Check(
+        state.product_id == 1019002 &&
+            state.native_name_status ==
+                ShopCatalogActions::kNativeNameReady &&
+            state.native_name_grid_ready == 1 &&
+            state.native_name_row_id == 210002 &&
+            state.native_name_occurrences == 1 &&
+            state.native_name_rows_scanned == 2 &&
+            state.native_name_scan_stop_id == 210003 &&
+            state.sealed_name == L"Bravo" &&
+            state.native_name == L"Bravo" &&
+            state.duplicate_native_name.empty() &&
+            state.visible_name == L"Bravo",
+        "successful native title receipt records exact target, grid getter boundary and both names");
+    Check(
         downmenuCalls == 1 &&
             roomCalls == 5 && numericPageCalls == 1 &&
             searchCalls == 1 &&
             buyCancelCalls == 2 &&
             giftCancelCalls == 2,
         "one original action per transition without retries");
+
+    Setup();
+    categoryPermanentId=1200001;
+    Put(categoryPermanent.data(),0,categoryPermanentId);
+    roomOptions[0].category=categoryPermanentId;
+    const wchar_t neutralTitle[]=L"自定义商品";
+    std::memset(nameAlpha.data()+9,0,100);
+    std::memcpy(nameAlpha.data()+9,neutralTitle,sizeof(neutralTitle));
+    ShopCatalogActions operatorActions;
+    Check(
+        operatorActions.Bind(Bindings()) &&
+            operatorActions.ConfigureOperatorPreview(
+                operatorCatalog,
+                operatorDisplay),
+        "operator preview accepts one owner SKU with independent runtime option identity");
+    uint64_t operatorElapsed=0;
+    ShopCatalogActions::Result operatorResult=
+        ShopCatalogActions::kUnbound;
+    for(unsigned iteration=0;iteration<100;++iteration) {
+        auto operatorContext=Context(operatorElapsed);
+        operatorResult=operatorActions.Poll(&operatorContext);
+        operatorElapsed+=100;
+        if(operatorActions.State().stage==
+               ShopCatalogActions::kStageCancelBuy ||
+           operatorResult>=ShopCatalogActions::kInvalidContext)
+            break;
+    }
+    void* operatorPopup=nullptr;
+    const auto operatorState=operatorActions.State();
+    const bool operatorHandoff=
+        operatorActions.HandoffBuyOptions(
+            1019001,
+            categoryPermanentId,
+            &operatorPopup);
+    if(!operatorHandoff) {
+        std::printf(
+            "operator preview result=%s stage=%u status=%u product=%u option=%u category=%u previews=%u/%u row=%u raw=%u visible=%u\n",
+            ShopCatalogActions::ResultName(operatorResult),
+            operatorState.stage,
+            operatorState.native_name_status,
+            operatorState.product_id,
+            operatorState.option_id,
+            operatorState.category,
+            operatorState.buy_previews,
+            operatorState.gift_previews,
+            operatorState.native_name_row_id,
+            static_cast<unsigned>(operatorState.native_name.size()),
+            static_cast<unsigned>(operatorState.visible_name.size()));
+    }
+    Check(
+        operatorResult<
+                ShopCatalogActions::kInvalidContext &&
+            operatorHandoff &&
+            operatorPopup==buyPopup.get() &&
+            operatorState.native_name_status==
+                ShopCatalogActions::
+                    kNativeNameGuardedNeutral &&
+            operatorState.sealed_name==L"Alpha" &&
+            operatorState.native_name==L"自定义商品" &&
+            operatorState.visible_name==L"Alpha" &&
+            operatorState.buy_previews==1 &&
+            operatorState.gift_previews==0,
+        "operator owner SKU requires exact neutral raw row, guarded visible author title and live option tuple before handoff");
     Setup();deferPopupReady=true;
     actions=Driver(assertions,display);uint64_t modalElapsed=0;
     Check(PollTo(actions,ShopCatalogActions::kOpeningBuyPreview,&modalElapsed)==ShopCatalogActions::kOpeningBuyPreview,
@@ -1583,9 +1729,18 @@ int wmain(int argc, wchar_t** argv)
         targetDuplicateResult ==
                 ShopCatalogActions::
                     kNativeNameMismatch &&
+            actions.State().product_id == 1019001 &&
+            actions.State().native_name_status ==
+                ShopCatalogActions::
+                    kNativeNameTargetDuplicate &&
+            actions.State().native_name_row_id == 210001 &&
+            actions.State().native_name_occurrences == 2 &&
+            actions.State().sealed_name == L"Alpha" &&
+            actions.State().native_name == L"Alpha" &&
+            actions.State().duplicate_native_name == L"Alpha" &&
             actions.State().buy_previews == 0 &&
             actions.State().gift_previews == 0,
-        "duplicate target ProductId fails closed before any preview even when both titles match");
+        "duplicate target ProductId fails closed with both exact row occurrences before any preview");
 
     Setup();
     actions = Driver(assertions, display);
@@ -1595,7 +1750,7 @@ int wmain(int argc, wchar_t** argv)
         L"Wrong");
     // AllSearch repaints the fixture name, so change the native catalog name
     // instead; production requires native and visible sources to agree.
-    const wchar_t wrongName[] = L"Other";
+    const wchar_t wrongName[] = L"自定义商品";
     std::memcpy(
         nameAlpha.data() + 9,
         wrongName,
@@ -1607,12 +1762,23 @@ int wmain(int argc, wchar_t** argv)
                 kNativeNameMismatch);
     Check(
         wrongNameResult ==
-            ShopCatalogActions::
-                kNativeNameMismatch,
-        "asserted stock name must agree with the shipped native catalog");
+                ShopCatalogActions::
+                    kNativeNameMismatch &&
+            actions.State().product_id == 1019001 &&
+            actions.State().native_name_status ==
+                ShopCatalogActions::
+                    kNativeNameValueMismatch &&
+            actions.State().native_name_row_id == 210001 &&
+            actions.State().native_name_occurrences == 1 &&
+            actions.State().sealed_name == L"Alpha" &&
+            actions.State().native_name == L"自定义商品" &&
+            actions.State().visible_name == L"Alpha",
+        "ordinary stock remains strict when a neutral raw title differs from its assertion");
 
     DeleteFileW(assertions.c_str());
     DeleteFileW(display.c_str());
+    DeleteFileW(operatorCatalog.c_str());
+    DeleteFileW(operatorDisplay.c_str());
     DeleteFileW(malformed.c_str());
     DeleteFileW(misdeclaredStock.c_str());
     DeleteFileW(stale.c_str());

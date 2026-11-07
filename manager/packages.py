@@ -24,15 +24,19 @@ def import_client(workspace, host_id, encoded):
     if host['role']!='client': raise ValueError('玩家配置包只能安装到客户端')
     root=Path(host['path']).resolve()
     if _running(root/'GOnline.exe'): raise ValueError('请先关闭这个客户端，再导入配置包')
-    if not isinstance(encoded,str) or len(encoded)>224*1024*1024:raise ValueError('客户端配置包过大')
+    if not isinstance(encoded,str) or len(encoded)>352*1024*1024:raise ValueError('客户端配置包过大')
     raw=base64.b64decode(encoded,validate=True)
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
         if 'manifest.json' in archive.namelist():
             if archive.getinfo('manifest.json').file_size > 2*1024*1024:raise ValueError('发布清单过大')
             manifest=json.loads(archive.read('manifest.json'))
             if manifest.get('module')=='unit_catalog':
+                if len(encoded)>224*1024*1024:raise ValueError('客户端配置包过大')
                 from owner.units.deployment import install_package
                 return {**install_package(root,raw),'state':workspace.public()}
+            if manifest.get('module')=='operator_catalog':
+                from .engines.operators.install_package import install_client
+                return install_client(workspace,host,raw)
     if len(encoded)>96*1024*1024:raise ValueError('客户端配置包过大')
     pending={};package_files={};total=0
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:

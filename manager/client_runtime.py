@@ -22,6 +22,9 @@ HASH=re.compile('[0-9a-f]{64}');OID=re.compile('[0-9a-f]{40}')
 
 
 def source(value):
+    if isinstance(value,dict)and value.get('schema_version')==3:
+        from .server_profiles import binding
+        return binding(value)
     if(not isinstance(value,dict)or value.get('schema_version')not in(1,2) or value.get('kind')!='sdgo-client-runtime'or
        not re.fullmatch('[0-9a-f]{32}',str(value.get('source_id','')))):
         raise ValueError('完整客户端更新源身份无效')
@@ -100,22 +103,152 @@ class ClientRuntime:
         self.workspace=workspace;self.cache=workspace.root/'client-updates';self.stop_event=threading.Event()
         self.lock=threading.RLock();self.busy=threading.Lock();self.thread=None;self.jobs=[];self.results={};self.plans={}
         self.fetch_mirrors={};self.fetch_mirror={}
+        self.active_host=None
+        self.cancel_event=threading.Event()
+        class OperationStop:
+            def is_set(token):return self.stop_event.is_set()or self.cancel_event.is_set()
+        self.operation_stop=OperationStop()
+        self.binding_requests={}
+
+    def report_progress(self,**values):
+        if self.active_host:
+            with self.lock:
+                row=self.results.setdefault(self.active_host,{'status':'working'})
+                if values.get('phase')!=row.get('progress',{}).get('phase')and 'phase'in values:row['progress']={}
+                row.setdefault('progress',{}).update(values)
+
+    def git_progress(self,raw):
+        rows=re.findall(rb', ([0-9.]+) (bytes|KiB|MiB|GiB)',raw)
+        if rows:
+            amount,unit=rows[-1];scale={b'bytes':1,b'KiB':1024,b'MiB':1024**2,b'GiB':1024**3}[unit]
+            self.git_received=max(getattr(self,'git_received',0),int(float(amount)*scale))
+            self.report_progress(wire_bytes=self.git_received)
+
+    def bind_profile(self,identity,urls,offline=None):
+        self.workspace.host(identity)
+        if not self.busy.acquire(blocking=False):raise storage.Conflict('另一个更新正在处理，请等待完成或取消后再导入')
+        self.binding_requests[identity]={'feeds':urls,'offline':offline}
+        with self.lock:self.active_host=identity;self.cancel_event.clear();self.results[identity]={'status':'working','progress':{'phase':'manifest'}}
+        try:
+            self._bind_profile(identity,urls,offline)
+            if self.operation_stop.is_set():raise InterruptedError('配置导入已取消')
+        except InterruptedError:
+            self.workspace.host(identity)['client_updates_paused']=True;self.workspace.save_workspace()
+            with self.lock:self.results[identity]={'status':'cancelled','message':'已取消；尚未安装运行文件，可继续导入'}
+            return self.state()
+        except Exception as error:
+            with self.lock:self.results[identity]={'status':'error','message':str(error)}
+            raise
+        finally:
+            with self.lock:self.active_host=None;self.cancel_event.clear()
+            self.busy.release()
+        self.binding_requests.pop(identity,None)
+        with self.lock:self.jobs.append((identity,'sync',None));self.results[identity]={'status':'queued'}
+        self.start();return self.state()
+
+    def _bind_profile(self,identity,urls,offline=None):
+        from . import server_profiles,framework_source
+        from .owner_channel import mode
+        host=self.workspace.host(identity);root=Path(host['path']).resolve()
+        if host['role']!='client'or mode(host)=='owner':raise ValueError('在玩家客户端安装服主配置；服主编辑目录不会被覆盖')
+        if offline:urls=['local+'+Path(offline).expanduser().resolve().as_uri()]
+        if not isinstance(urls,list)or not 1<=len(urls)<=3:raise ValueError('填写服主配置地址或选择离线配置文件')
+        errors=[]
+        for url in urls:
+            try:
+                url=server_profiles.feed(url);raw,_=server_profiles.read(self,url,server_profiles.MANIFEST,16*1024*1024)
+                profile=json.loads(raw)
+                if profile.get('kind')=='sdgo-client-runtime':
+                    imported=server_profiles.binding(profile)
+                    profile,_,_=server_profiles.resolve(self,imported);urls=imported['feeds']
+                    profile={**profile,'framework_source':imported['framework']}
+                framework=profile.get('framework_source')or{'schema_version':1,'kind':'sdgo-framework-runtime',
+                    'source_id':updates.digest(('sdgo-framework-runtime:'+updates.REPOSITORY).encode())[:32],
+                    'repository':updates.REPOSITORY,'channel':'stable','transport':'github-releases'}
+                source=server_profiles.binding({'schema_version':3,'kind':'sdgo-client-runtime','source_id':profile.get('source_id'),
+                    'label':profile.get('label'),'feeds':urls,'framework':framework})
+                server_profiles.validate(profile,source);server_profiles.base_check(root,profile)
+                old=installed_source(root)
+                if old and old['source_id']!=source['source_id']:raise ValueError('先明确解除原服主绑定，再导入另一服主配置')
+                if self.operation_stop.is_set():raise InterruptedError('配置导入已取消')
+                with lease('host:'+str(root).casefold()):
+                    marker=root/SOURCE
+                    if marker.is_file():storage.atomic(self.cache/'binding-backups'/uuid.uuid4().hex/'source.json',marker.read_bytes())
+                    storage.atomic(marker,storage.json_bytes(source));host['runtime_mode']='player';host['client_updates_paused']=False;self.workspace.save_workspace()
+                return source
+            except InterruptedError:raise
+            except(OSError,ValueError,subprocess.SubprocessError)as error:errors.append(str(error))
+        raise ValueError('无法导入服主配置：'+'；'.join(errors))
+
+    def publish_profile(self,identity,directory,feeds,extras=None,zip_payload=False,git_remote='',branch='content'):
+        host=self.workspace.host(identity)
+        with self.busy,lease('host:'+str(Path(host['path']).resolve()).casefold()):
+            return self._publish_profile(identity,directory,feeds,extras,zip_payload,git_remote,branch)
+
+    def _publish_profile(self,identity,directory,feeds,extras,zip_payload,git_remote,branch):
+        from . import server_profiles,profile_publish,framework_source
+        from .owner_channel import mode
+        host=self.workspace.host(identity)
+        if host['role']!='client'or mode(host)!='owner':raise ValueError('服主在自己的编辑客户端发布配置档')
+        updater=self.workspace.updates
+        if not updater.latest:raise ValueError('先检查并选择官方框架版本，再发布服主配置档')
+        configured=self.workspace.settings.get('updates',{}).get('git_source')
+        source_framework=configured or{'schema_version':1,'kind':'sdgo-framework-runtime',
+            'source_id':updates.digest(('sdgo-framework-runtime:'+updater.source_repository()).encode())[:32],
+            'repository':updater.source_repository(),'channel':updater.latest['channel'],'transport':'github-releases'}
+        lock={'version':updater.latest['version'],'sha256':updater.latest['sha256']}
+        release=framework_source.load(self,source_framework,{'minimum_framework':lock['version'],'locked_framework':lock}if not configured else None)
+        publication=host.setdefault('profile_publication',{})
+        publication.setdefault('source_id',host.get('publication',{}).get('publisher_id')or uuid.uuid4().hex)
+        source=server_profiles.binding({'schema_version':3,'kind':'sdgo-client-runtime','source_id':publication['source_id'],
+            'label':host['name'],'feeds':feeds,'framework':source_framework})
+        output=Path(directory).expanduser().resolve()
+        base=Path(host['path']).resolve()
+        if not directory or not Path(directory).is_absolute()or output==output.parent or output.is_relative_to(base)or base.is_relative_to(output):raise ValueError('配置档发布目录须为客户端之外的绝对路径')
+        if git_remote:
+            from .git_source import parse
+            parse(('git+ssh://'if git_remote.startswith('ssh://')else'git+')+git_remote.removeprefix('ssh://')+'#'+branch)
+            output.mkdir(parents=True,exist_ok=True)
+            self.workspace.owner_channels.git_prepare(output,{'branch':branch,'git_remote':git_remote})
+            self.git(output,['sparse-checkout','set','content','releases'])
+        result=profile_publish.publish(host,source,release,output,extras or[],publication.get('personal_settings',[]),zip_payload)
+        publication.update(directory=str(output),feeds=feeds,revision=result['revision'],git_remote=git_remote,branch=branch,extras=extras or[]);self.workspace.save_workspace()
+        if git_remote:
+            profile_publish.git_stage(self,output,storage.read_json(output/server_profiles.MANIFEST),zip_payload)
+            if self.git(output,['diff','--cached','--name-only']).strip():self.git(output,['commit','-m','Publish owner content revision '+str(result['revision'])])
+            self.git(output,['push','origin','HEAD:refs/heads/'+branch])
+            expected=self.git(output,['rev-parse','HEAD']).decode().strip()
+            actual=self.git(output,['ls-remote','origin','refs/heads/'+branch]).decode().split()
+            if actual[:1]!=[expected]:raise ValueError('内容已生成，但远程发布提交尚未核验；重试发布会复用当前修订')
+            result.update(status='published',commit=expected)
+        return result
 
     def git(self,repository,args,input=None,output=None):
         from .owned_process import run
         fetching=args[:1]==['fetch'];key=str(Path(repository).resolve())
         prefix=['-c','fetch.negotiationAlgorithm=noop']if'--stdin'in args else[]
-        if fetching:prefix+=['-c','http.lowSpeedLimit=1024','-c','http.lowSpeedTime=60']
+        if fetching:
+            prefix+=['-c','http.lowSpeedLimit=0']
+            if '--progress'not in args:args=[args[0],'--progress',*args[1:]]
         attempts=[(None,args)]
         if fetching and 'origin'in args:
             for index,remote in self.fetch_mirrors.get(key,[]):
                 alternate=list(args);alternate[alternate.index('origin')]=remote;attempts.append((index,alternate))
         errors=[]
         for index,arguments in attempts:
+            pack=Path(repository)/'objects/pack'
+            before={p.name:p.stat().st_size for p in pack.glob('*')if p.is_file()}if fetching else{}
+            if fetching:self.git_received=0;self.report_progress(wire_bytes=0)
+            def poll_pack():
+                try:
+                    received=sum(max(0,p.stat().st_size-before.get(p.name,0))for p in pack.glob('*')if p.is_file()and(p.suffix=='.pack'or p.name.startswith('tmp_pack')))
+                    if received>self.git_received:
+                        self.git_received=received;self.report_progress(wire_bytes=received)
+                except OSError:pass  # A pack can be atomically renamed while sampled.
             try:
                 result=run(
-                    ['git','-C',str(repository),*prefix,*arguments],cwd=repository,timeout=180 if fetching else 1200 if output is not None or args[:1]==['cat-file']else 120,
-                    stop=self.stop_event,env=git_source.environment(),input=input,output=output)
+                    ['git','-C',str(repository),*prefix,*arguments],cwd=repository,timeout=None if fetching else 1200 if output is not None or args[:1]==['cat-file']else 120,
+                    stop=self.operation_stop,env=git_source.environment(),input=input,output=output,**({'progress':self.git_progress,'poll':poll_pack}if fetching else{}))
             except subprocess.TimeoutExpired:
                 errors.append('读取更新仓库超时');continue
             if result.returncode:
@@ -181,6 +314,9 @@ class ClientRuntime:
         if root==root.parent:raise ValueError('请选择独立的客户端文件夹，不使用磁盘根目录')
         if self.unresolved(root):raise ValueError('上次完整更新未完成；请先使用「恢复未完成更新」核对并恢复原文件')
         if binding is None:raise ValueError('这个客户端未配置完整运行更新源，请使用服主提供的客户端包或更新')
+        if binding['schema_version']==3:
+            from .server_profiles import plan
+            return plan(self,host,binding)
         from .owner_channel import installed_binding
         old_binding=installed_binding(root)
         if old_binding and old_binding['publisher_id']!=binding['source_id']:
@@ -272,6 +408,9 @@ class ClientRuntime:
     def stage(self,plan,run,root):
         repo=Path(plan['repository']);commit=plan['commit'];stage=run/'payload';stage.mkdir(parents=True)
         needed=[n for n in plan['needed']if n!='GPackData.zpk'and(not plan.get('framework')or n in plan['content_files'])]
+        if plan.get('profile'):
+            from .server_profiles import stage as stage_profile
+            stage_profile(plan,stage);needed=[]
         if needed:
             # Read raw objects. git archive/checkouts can apply EOL or export
             # attributes and therefore do not prove byte-identical delivery.
@@ -298,7 +437,7 @@ class ClientRuntime:
             destination=stage/'GPackData.zpk'
             with destination.open('xb')as output:
                 for part in base['parts']:
-                    if self.stop_event.is_set():raise InterruptedError('客户端更新已取消')
+                    if self.operation_stop.is_set():raise InterruptedError('客户端更新已取消')
                     segment=self.cache/'segments'/(part['sha256']+'.zip');segment.parent.mkdir(parents=True,exist_ok=True)
                     with lease('client-segment:'+str(segment.resolve())):
                         if not segment.is_file()or segment.stat().st_size!=part['bytes']or file_hash(segment)!=part['sha256']:
@@ -344,6 +483,7 @@ class ClientRuntime:
             if installed_source(root)!=plan['binding']:raise storage.Conflict('更新源已变化，请重新检查')
             if updates.running(root/'GOnline.exe'):return {'status':'waiting','message':'请关闭这个客户端后重试；不会结束游戏进程'}
             identity=uuid.uuid4().hex;run=self.cache/'runs'/identity;run.mkdir(parents=True)
+            self.report_progress(phase='staging',total_files=len(plan['needed']))
             stage=self.stage(plan,run,root)
             # Finish from a verified copy of the same Manager, so its installed
             # executable can be replaced together with the rest of the runtime.
@@ -378,9 +518,10 @@ class ClientRuntime:
             enforce_install(root,metadata,'client')
             journal={'schema_version':1,'status':'working','host':str(root),'source_id':plan['source_id'],'commit':plan['commit'],'changes':changes}
             storage.atomic(run/'transaction.json',storage.json_bytes(journal))
+            self.report_progress(phase='install',total_files=len(plan['needed'])+len(plan['retired']),verified_files=0)
             try:
                 for name in [*plan['retired'],*sorted(plan['needed'],key=lambda n:n==updates.MANAGER)]:
-                    if self.stop_event.is_set():raise InterruptedError('客户端更新已取消')
+                    if self.operation_stop.is_set():raise InterruptedError('客户端更新已取消')
                     target=updates.child(root,name);saved=updates.child(backup,name);saved.parent.mkdir(parents=True,exist_ok=True)
                     old=plan['snapshot'][name]
                     if(file_hash(target)if target.is_file()else None)!=old:raise storage.Conflict('文件已被外部修改：'+name)
@@ -388,6 +529,7 @@ class ClientRuntime:
                         shutil.copy2(target,saved)
                         if file_hash(saved)!=old:raise storage.Conflict('备份期间文件已改变：'+name)
                     row={'path':name,'previous':old,'installed':None};changes.append(row)
+                    self.report_progress(verified_files=len(changes),file=name)
                     storage.atomic(run/'transaction.json',storage.json_bytes(journal))
                     if name in plan['retired']:target.unlink()
                     else:
@@ -406,6 +548,7 @@ class ClientRuntime:
                          'files':plan['entries'],'effective_files':plan['effective'],'personal_state_preserved':True,'data_migrations':False,'backup':str(backup),
                          'framework':{k:v for k,v in plan.get('framework',{}).items()if k not in('bundle','manifest')},
                          'content_commit':plan['commit'],'shared_files':plan.get('shared_files',[])}
+                if plan.get('profile'):receipt['profile']=plan['profile']
                 marker=root/RECEIPT;marker_before=file_hash(marker)if marker.is_file()else None
                 if marker.is_file():
                     saved=updates.child(backup,RECEIPT);saved.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(marker,saved)
@@ -491,10 +634,19 @@ class ClientRuntime:
                          creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0),close_fds=True)
 
     def request(self,identity,action,digest=None):
-        if action not in('check','install','recover'):raise ValueError('客户端更新操作无效')
-        self.workspace.host(identity)
+        if action not in('check','install','recover','sync'):raise ValueError('客户端更新操作无效')
+        self.workspace.host(identity)['client_updates_paused']=False
+        self.workspace.save_workspace()
         with self.lock:self.jobs.append((identity,action,digest));self.results[identity]={'status':'queued'}
         self.start();return self.state()
+
+    def cancel(self,identity):
+        host=self.workspace.host(identity);host['client_updates_paused']=True;self.workspace.save_workspace()
+        with self.lock:
+            self.jobs=[job for job in self.jobs if job[0]!=identity]
+            if self.active_host==identity:self.cancel_event.set()
+            else:self.results[identity]={'status':'cancelled','message':'下载已取消；已校验文件保留，可继续下载'}
+        return self.state()
 
     def state(self):
         rows=[]
@@ -507,7 +659,8 @@ class ClientRuntime:
                 except (ValueError,OSError)as e:binding=None;error=str(e)
                 # Pair journal reads with the worker's transition to working.
                 recovery=False if working else bool(self.unresolved(host['path']))
-            rows.append({'id':host['id'],'name':host['name'],'source':binding,'error':error,'result':result,
+            from .owner_channel import mode
+            rows.append({'id':host['id'],'name':host['name'],'mode':mode(host),'source':binding,'pending':self.binding_requests.get(host['id']),'error':error,'result':result,
                          'recovery_required':recovery})
         return {'healthy':True,'running':bool(self.thread and self.thread.is_alive()),'hosts':rows,
                 'automatic':self.workspace.services.desired(SERVICE)if hasattr(self.workspace,'services')else False}
@@ -523,7 +676,7 @@ class ClientRuntime:
                     next_check=time.monotonic()+3600
                     from .owner_channel import mode
                     for host in self.workspace.settings['hosts']:
-                        if host['role']=='client'and mode(host)!='owner'and(Path(host['path'])/SOURCE).is_file():
+                        if host['role']=='client'and mode(host)!='owner'and not host.get('client_updates_paused')and(Path(host['path'])/SOURCE).is_file():
                             with self.lock:self.jobs.append((host['id'],'sync',None))
                     continue
                 if job is None:
@@ -535,13 +688,14 @@ class ClientRuntime:
                 if job:
                     identity,action,digest=job
                     with self.busy:
-                        with self.lock:self.results[identity]={'status':'working'}
+                        with self.lock:self.active_host=identity;self.cancel_event.clear();self.results[identity]={'status':'working'}
                         try:
                             host=self.workspace.host(identity)
                             result=self.recover(host)if action=='recover'else self.plan(host)if action in('check','sync')else self.install(host,digest)
                             if action=='sync'and result['status']=='available':result=self.install(host,result['digest'])
+                        except InterruptedError:result={'status':'cancelled','message':'操作已取消，已校验文件保留；缺失或不完整内容不会安装'}
                         except Exception as e:result={'status':'error','message':str(e)}
-                        with self.lock:self.results[identity]=result
+                        with self.lock:self.results[identity]=result;self.active_host=None;self.cancel_event.clear()
                 self.stop_event.wait(.25)
         self.thread=threading.Thread(target=loop,name='client-runtime-updates',daemon=True);self.thread.start()
 

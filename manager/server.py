@@ -46,7 +46,7 @@ def make_server(workspace, port=0):
                         raise PermissionError('请求不属于当前 Manager 会话')
                     if self.headers.get('Content-Type', '').split(';')[0] != 'application/json': raise ValueError('需要 JSON 请求')
                     length = int(self.headers.get('Content-Length', '0'))
-                    limit = 46 if path.startswith('/api/providers/units/') else 64 if path.startswith('/api/providers/capsules/') else 224 if path == '/api/import' else 16
+                    limit = 176 if path=='/api/providers/operators/api/operators/import-preview' else 46 if path.startswith('/api/providers/units/') else 64 if path.startswith('/api/providers/capsules/') else 352 if path == '/api/import' else 16
                     if not 0 < length <= limit * 1024 * 1024: raise ValueError('请求大小无效')
                     body = json.loads(self.rfile.read(length))
                     if not isinstance(body, dict): raise ValueError('请求必须是 JSON 对象')
@@ -68,6 +68,7 @@ def make_server(workspace, port=0):
                     allowed={key + '.js' for key in workspace.providers}
                     if 'rewards' in workspace.providers:allowed.add('reward_social.js')
                     if 'announcements' in workspace.providers:allowed.add('announcement_news.js')
+                    if 'operators' in workspace.providers:allowed.add('operator_protocol_ui.js')
                     if name not in allowed: raise ValueError('面板未登记')
                     return self.response(200, (static / 'panels' / name).read_bytes(), 'text/javascript; charset=utf-8')
                 if method == 'GET' and path == '/api/state': return self.send_json(200, {**workspace.public(), 'session_token': token})
@@ -111,6 +112,11 @@ def make_server(workspace, port=0):
                     if controller is None:raise ValueError('完整客户端更新尚未初始化')
                     if method=='GET':return self.send_json(200,controller.state())
                     if method=='POST':
+                        if body.get('action')=='cancel':return self.send_json(200,controller.cancel(body.get('host')))
+                        if body.get('action')=='profile_install':
+                            return self.send_json(200,controller.bind_profile(body.get('host'),body.get('feeds',[]),body.get('offline')))
+                        if body.get('action')=='profile_publish':
+                            return self.send_json(200,controller.publish_profile(body.get('host'),body.get('directory'),body.get('feeds',[]),body.get('extras',[]),body.get('zip_payload',False),body.get('git_remote',''),body.get('branch','content')))
                         if body.get('action')=='restart':
                             controller.restart(body.get('host'));self.send_json(200,{'restarting':True})
                             threading.Thread(target=self.server.shutdown,daemon=True).start();return

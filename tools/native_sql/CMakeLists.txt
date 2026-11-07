@@ -5,7 +5,7 @@ if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
 endif()
 set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
 set(MINHOOK ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/minhook)
-add_library(sql_registry SHARED registry.cpp
+add_library(sql_registry SHARED registry.cpp file_guard.cpp
   ${MINHOOK}/src/buffer.c ${MINHOOK}/src/hook.c
   ${MINHOOK}/src/trampoline.c ${MINHOOK}/src/hde/hde64.c)
 target_include_directories(sql_registry PRIVATE ${MINHOOK}/include)
@@ -17,3 +17,14 @@ target_compile_features(sql_local PRIVATE cxx_std_17)
 target_compile_features(sql_fence_probe PRIVATE cxx_std_17)
 target_compile_definitions(sql_registry PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_definitions(sql_local PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+include(CTest)
+if(BUILD_TESTING)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_executable(sql_file_guard_test file_guard_test.cpp)
+  target_compile_features(sql_file_guard_test PRIVATE cxx_std_17)
+  target_compile_definitions(sql_file_guard_test PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+  add_test(NAME native_sql_file_guard
+    COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/test_file_guard.py
+      $<TARGET_FILE:sql_file_guard_test> $<TARGET_FILE:sql_registry>)
+endif()

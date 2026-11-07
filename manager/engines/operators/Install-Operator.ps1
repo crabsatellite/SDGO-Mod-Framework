@@ -25,13 +25,51 @@ foreach ($property in $manifest.files.PSObject.Properties) {
 $symbolFile=Join-Path $client 'sdgo\symbols\GOnline-54BE1568-00C97000.ini'
 if (-not (Test-Path -LiteralPath $symbolFile)) { throw 'The framework symbol file is missing.' }
 $fragment=Get-Content -LiteralPath (Join-Path $package 'symbols.fragment.ini') -Raw -Encoding UTF8
+$trusted=@(
+    'operator.load_data','operator.grid_data','operator.grid_find','operator.grid_make_node',
+    'operator.grid_insert','operator.native_new','operator.native_delete','operator.native_name_decode',
+    'capsule.main.open_file','capsule.main.file_ctor','capsule.main.operator_new','capsule.main.wfopen'
+)
+$trustedCapsule=@{
+    'capsule.main.open_file'=@(
+        'kind=code','rva=0x007E5600',
+        'expect=55 8B EC 6A FF 68 D3 3D E1 00 64 A1 00 00 00 00 50 83 EC 50 A1 10 71 FF'
+    )
+    'capsule.main.file_ctor'=@(
+        'kind=code','rva=0x007E95E0',
+        'expect=55 8B EC 6A FF 68 AB 40 E1 00 64 A1 00 00 00 00 50 83 EC 14 A1 10 71 FF'
+    )
+    'capsule.main.operator_new'=@(
+        'kind=code','rva=0x006F481C',
+        'expect=8B FF 55 8B EC 56 EB 13 A1 58 2A FE 00 85 C0 74 19 FF 75 08 FF D0 59 85'
+    )
+    'capsule.main.wfopen'=@(
+        'kind=code','rva=0x00887D78',
+        'expect=8B FF 55 8B EC 6A 40 FF 75 0C FF 75 08 E8 30 FF FF FF 83 C4 0C 5D C3'
+    )
+}
 $sections=[ordered]@{}
 $current=''
 foreach ($line in ($fragment -split '\r?\n')) {
-    if ($line -match '^\[(.+)\]$') { $current=$Matches[1]; if ($current -like 'operator.*') { $sections[$current]=@($line) } }
-    elseif ($current -like 'operator.*') { $sections[$current]+=$line }
+    if ($line -match '^\[(.+)\]$') {
+        $current=$Matches[1]
+        if ($current -eq 'host') { continue }
+        if ($trusted -notcontains $current -or $sections.Contains($current)) {
+            throw 'The operator symbol fragment contains an untrusted or duplicate alias.'
+        }
+        $sections[$current]=@($line)
+    }
+    elseif ($sections.Contains($current)) { $sections[$current]+=$line }
 }
-if ($sections.Count -ne 8) { throw 'The operator symbol fragment is incomplete.' }
+if ($sections.Count -ne $trusted.Count -or @($trusted | Where-Object { -not $sections.Contains($_) }).Count) {
+    throw 'The operator symbol fragment is incomplete.'
+}
+foreach ($alias in $trustedCapsule.Keys) {
+    $actual=@($sections[$alias] | Select-Object -Skip 1 | Where-Object { $_ -and -not $_.StartsWith(';') })
+    if (($actual -join "`n") -cne ($trustedCapsule[$alias] -join "`n")) {
+        throw 'The operator capsule symbol fragment differs from its trusted definition.'
+    }
+}
 $old=[IO.File]::ReadAllText($symbolFile)
 $lines=New-Object 'System.Collections.Generic.List[string]'
 $skip=$false

@@ -401,8 +401,12 @@ class Updates:
     def managed_by_client(self):
         if self.manager_exe is None:return False
         from .owner_channel import mode
+        def portable(host):
+            try:return storage.read_json(Path(host['path'])/'sdgo/client-source.json',{}).get('schema_version')==3
+            except(ValueError,OSError):return False
         return any(h['role']=='client'and Path(h['path']).resolve()==self.manager_exe.parent and
-                   (Path(h['path'])/'sdgo/client-source.json').is_file()and mode(h)!='owner'for h in self.workspace.settings['hosts'])
+                   (Path(h['path'])/'sdgo/client-source.json').is_file()and mode(h)!='owner'and
+                   not portable(h)for h in self.workspace.settings['hosts'])
 
     def source(self,value):
         git_binding=None
@@ -468,6 +472,9 @@ class Updates:
                     'automatic':self.workspace.services.desired(SERVICE),'current_version':self.current,
                     'channel':self.workspace.settings.get('updates',{}).get('channel','stable'),
                     'repository':self.source_repository(),'git_source':self.workspace.settings.get('updates',{}).get('git_source'),
+                    'framework_source':self.workspace.settings.get('updates',{}).get('git_source')or{
+                        'schema_version':1,'kind':'sdgo-framework-runtime','source_id':digest(('sdgo-framework-runtime:'+self.source_repository()).encode())[:32],
+                        'repository':self.source_repository(),'channel':self.workspace.settings.get('updates',{}).get('channel','stable'),'transport':'github-releases','feeds':[]},
                     'latest_version':self.latest['version'] if self.latest else None,
                     'release_url':self.latest['page'] if self.latest else None,
                     'notes':self.latest['notes'] if self.latest else ''}
@@ -478,11 +485,13 @@ class Updates:
     def channel(self,value):
         if value not in ('stable','beta'):raise ValueError('更新通道无效')
         git_source=self.workspace.settings.get('updates',{}).get('git_source')
-        if git_source and git_source['channel']!=value:raise ValueError('这个 Git 来源固定通道；请同时修改来源通道和对应分支')
+        if git_source and git_source.get('transport')!='github-releases'and git_source['channel']!=value:raise ValueError('这个 Git 来源固定通道；请同时修改来源通道和对应分支')
         if not self.busy.acquire(blocking=False):raise storage.Conflict('正在处理更新，请完成后切换通道')
         try:
             with storage.LOCK:
                 self.workspace.settings.setdefault('updates',{})['channel']=value;self.workspace.save_workspace()
+                if git_source and git_source.get('transport')=='github-releases':
+                    git_source['channel']=value;self.workspace.save_workspace()
             self.latest=None;self.manifest=None;self.bundle=None
             self.change(phase='idle',message='已切换到 '+value.title(),hosts=[],manager_restart=False,error='')
         finally:self.busy.release()
@@ -579,6 +588,8 @@ class Updates:
                 raise ValueError('此 Manager 更新缺少完整客户端或数据维护协议，保留现有更新入口和配置')
             if any((installed_source(h['path'])or{}).get('schema_version')==2 for h in self.workspace.settings['hosts']if h['role']=='client')and self.manifest.get('capabilities',{}).get('runtime_layers')!=1:
                 raise ValueError('此 Manager 更新不支持双源安装，保留当前程序与来源配置')
+            if any((installed_source(h['path'])or{}).get('schema_version')==3 for h in self.workspace.settings['hosts']if h['role']=='client')and self.manifest.get('capabilities',{}).get('runtime_profiles')!=1:
+                raise ValueError('此 Manager 更新不支持通用服主配置档，保留当前程序和内容绑定')
         if (self.manager_exe and program_eligible and any(mode(h)!='starter' for h in self.workspace.settings['hosts']) and
                 self.manifest.get('capabilities',{}).get('owner_updates')!=1):
             raise ValueError('这个上游 Manager 未声明服主更新协议支持，保留当前 Manager 与维护边界')
