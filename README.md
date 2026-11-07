@@ -68,7 +68,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | PvP AI <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` in a room title adds AI opponents and teammates; optionally group all humans, fill both sides, fill opponents only or add exact counts | [Use](docs/pvp-ai.md) |
 | AI mech catalog (separate addon) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards <!-- catalog: `battle_rewards` --> | Contribution GB/MB, configurable human multipliers and optional per-account gathering rewards | [Use](docs/battle-rewards.md) |
-| Collection capsule <!-- catalog: `collection_capsule` --> | Missing-unit activity machine with configurable price and successful-draw limits; 15 per week by default | [Use](docs/collection-capsule.md) |
+| Collection capsule <!-- catalog: `collection_capsule` --> | Missing-unit activity machine with configurable price and limits, plus native encyclopedia acquisition hints; 15 per week by default | [Use](docs/collection-capsule.md) |
 | Per-round random loadouts <!-- catalog: `room_random`, `room_random_client` --> | `!rand` in a room title draws each player's unit or deck from their own hangar every round | [Use](docs/room-random.md) |
 | Complete PvP All Map <!-- catalog: `all_maps` --> | Make the room's All Map choice draw from the complete native PvP map catalog while keeping mission-only maps in missions | [Use](docs/all-maps.md) |
 | FPS cap <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed | [Use](docs/fps-limit.md) |
@@ -83,7 +83,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Chinese shop localization and search <!-- catalog: `shop_localization` --> | Translate shop names, descriptions, options and paint-page unit previews; search by Chinese name combined with rank and payment filters | [Use](docs/shop-localization.md) |
 | Friend unit gifts (optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Right-click a friend (online or offline), pick a unit in unit management, and the friend accepts or returns it in Storage. Off until the owner enables it | [Use](docs/friend-unit-gift.md) |
 | Over-custom six-stat enhancement (Beta) <!-- catalog: `oc_custom_client`, `oc_custom_server`, `oc_custom_battle` --> | The client package's own OC windows on the factory upgrade page: normal/Over points, the OVER CUSTOM challenge and reset, plus OC speed and agility in battle; stored beside the current custom parts, and the owner picks which rule set battles use | [Use](docs/over-custom.md) |
-| Unit family import (Beta) <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | Import unit archives, edit skill/funnel dependency fields, retain script declarations, author blueprints and activity pools in Mod Manager, and batch-publish a recovered roster of single, reciprocal, one-way and self-transform families plus third-form entry variants | [Use](docs/unit-import.md) |
+| Unit family import (Beta) <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | Import unit archives, edit skill/funnel dependency fields, retain script declarations, author blueprints and activity pools in Mod Manager, batch-publish a recovered roster of single, reciprocal, one-way and self-transform families plus third-form entry variants, and apply that roster to the server from Mod Manager | [Use](docs/unit-import.md) |
 
 <!-- /mod-category:gameplay -->
 

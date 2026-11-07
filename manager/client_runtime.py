@@ -152,6 +152,8 @@ class ClientRuntime:
                 if not OID.fullmatch(commit):raise ValueError('客户端提交身份无效')
                 manifest=json.loads(self.git(repo,['show',commit+':player-package.json']))
                 contract=validate_contract(manifest,binding)
+                incoming=source(json.loads(self.git(repo,['show',commit+':'+SOURCE])))
+                if incoming!=binding:raise ValueError('这个镜像的来源绑定尚未同步，继续检查同身份备用源')
                 key=str(repo.resolve());self.fetch_mirror[key]=index+1
                 self.fetch_mirrors[key]=[(i+1,git_source.parse(value)[0])for i,value in enumerate(binding['feeds'])if i>index]
                 return repo,commit,manifest,contract,index+1
@@ -190,8 +192,9 @@ class ClientRuntime:
         for raw in self.git(repo,['ls-tree','-r','-z',commit]).split(b'\0'):
             if not raw:continue
             header,name=raw.split(b'\t',1);name=name.decode('utf-8')
-            if name=='config.xml':continue
-            if not runtime_path(name,contract):continue
+            if name=='config.xml':
+                if (root/name).is_file():continue
+            elif not runtime_path(name,contract):continue
             if any(name==p or name.startswith(p+'/')for p in excluded):raise ValueError('上游与仅本地 Mod 冲突：'+name)
             match=re.fullmatch(rb'100(?:644|755) blob ([a-f0-9]{40})',header)
             if not match or name.casefold()in case:raise ValueError('客户端清单包含链接或重复路径')

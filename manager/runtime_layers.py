@@ -12,14 +12,14 @@ def program_files(framework):
 
 
 def compose(controller,binding,contract,root,entries,repo,commit):
-    framework=framework_source.load(controller,binding['framework']);manifest=framework['manifest'];files=program_files(framework)
     spec=contract.get('layers',{})
     if spec.get('schema_version')!=1:raise ValueError('服主内容缺少双源归属声明')
+    framework=framework_source.load(controller,binding['framework'],constraints=spec);manifest=framework['manifest'];files=program_files(framework)
     minimum=spec.get('minimum_framework');maximum=spec.get('maximum_framework')
     current=updates.version(manifest['version'])[:3]
     if minimum is None or current<updates.version(minimum)[:3]or maximum and current>updates.version(maximum)[:3]:raise ValueError('框架版本不符合服主内容的兼容要求')
     catalog=json.loads((Path(framework['bundle'])/'client/sdgo/catalog.json').read_text('utf-8'))
-    mods={m['id']:m for m in catalog['mods']}
+    mods={m['id']:m for m in catalog['mods'] if m['target']=='client'}
     for identity,required in spec.get('required_mods',{}).items():
         if identity not in mods or updates.version(mods[identity]['version'])<updates.version(required):raise ValueError('服主内容需要兼容的 Mod：'+identity)
     allowed={'sdgo/sdgo.ini'}

@@ -7,6 +7,15 @@ import test_game_test as runner_fixture
 game_test=runner_fixture.game_test
 
 class UnitScenarioTests(unittest.TestCase):
+    def test_explicit_encyclopedia_target_is_sealed_separately_from_owned_unit(self):
+        context={'pages_only':True,'play_unit_uid':839}
+        value={'schema':1,'presentation_target':22150}
+        bound=scope.bind(value,context)['unit_scenario']
+        self.assertEqual(scope.settings(bound)['UnitPresentationTarget'],'22150')
+        self.assertIn('pages.unit_index.detail',scope.cases(bound))
+        for target in [0,-1,True,2**31,'22150']:
+            with self.assertRaises(ValueError):scope.bind(value|{'presentation_target':target},context)
+
     def test_native_record_lifecycle_is_sealed_bounded_and_does_not_add_gameplay_actions(self):
         context={'pages_only':True,'play_unit_uid':17}
         value={'schema':1,'native_record_lifecycle':{'ids':[9_100_001,198131]}}

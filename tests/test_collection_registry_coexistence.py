@@ -62,6 +62,9 @@ class CollectionRegistryCoexistenceTests(unittest.TestCase):
             old_meta = json.loads((initial / 'manifest.json').read_text(encoding='utf-8'))['unit_items']
             new_meta = json.loads((ordinary / 'manifest.json').read_text(encoding='utf-8'))['unit_items']
             self.assertEqual(old_meta, new_meta)
+            self.assertEqual((initial/'collection-acquisition.bin').read_bytes(),
+                             (ordinary/'collection-acquisition.bin').read_bytes())
+            self.assertIn('[acquisition]',(ordinary/'runtime.ini').read_text())
             shutil.copytree(ordinary, resident, dirs_exist_ok=True)
             self.assertEqual(compiler.extension_fingerprint(client), fingerprint)
             Image.new('RGB', (361, 322), '#b04020').save(cover)

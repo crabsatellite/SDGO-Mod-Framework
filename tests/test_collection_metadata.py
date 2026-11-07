@@ -1,5 +1,9 @@
 import unittest
-from owner.collection_capsule.metadata import imported_roots, validate_source
+import hashlib
+import json
+import tempfile
+from pathlib import Path
+from owner.collection_capsule.metadata import imported_roots, registered_imports, validate_source
 from owner.collection_capsule.pool import build_pool
 
 
@@ -56,6 +60,26 @@ class MetadataTests(unittest.TestCase):
         # The same reference is refused when the pair form is not registered elsewhere.
         with self.assertRaises(ValueError):
             imported_roots(rows, [entry])
+
+    def test_published_entry_variant_can_reference_another_verified_import_family(self):
+        rows = self.rows + [unit(90003, 90001)]
+        registry = [dict(UnitID=row["UnitNumber"], RootUnitID=90003 if row["UnitNumber"] == 90003 else 90002,
+                         PackageID="fixture.entry" if row["UnitNumber"] == 90003 else "fixture.base", RevisionHash="a"*64,
+                         TransformTo=row["UnitNumber_Transform"], Ready=1, UnitRank=4, UnitSubgrade=4, UnitGraph=row["UnitGraph"])
+                    for row in rows]
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);path=root/"GOnlineGame/collection.imported-forms.json";path.parent.mkdir()
+            def save(entries):
+                raw=json.dumps(entries).encode();path.write_bytes(raw)
+                (root/"_meta.json").write_text(json.dumps({"files":{"GOnlineGame/collection.imported-forms.json":{"sha256":hashlib.sha256(raw).hexdigest()}}}))
+            save(registry)
+            roots,claimed=registered_imports(rows,root)
+            self.assertEqual(set(roots),{90002,90003})
+            self.assertEqual(claimed,{90001,90002,90003})
+            # A reference to an unregistered form remains incomplete.
+            save([registry[0],registry[2]])
+            with self.assertRaisesRegex(ValueError,"incomplete"):
+                registered_imports(rows,root)
 
     def test_sql_source_fields_cannot_inject_statements(self):
         self.rows[0]["UnitGraph"] = "0);DROP TABLE dbo.tbl_Users;--"

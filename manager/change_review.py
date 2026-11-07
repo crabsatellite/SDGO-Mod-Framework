@@ -18,6 +18,11 @@ def operation(provider,method,path):
     if method!='POST':return None
     if provider=='units'and re.fullmatch(r'/api/units/drafts/[0-9a-f]{32}/confirm',path):
         return {'title':'发布机体定义','effects':['写入固定机体、武器及物品定义','保留现有玩家资产；服务重启确认后开放新内容'],'kind':'fixed_catalog'}
+    if provider=='units'and path=='/api/units/batch/apply':
+        # The batch job enters the same server_change gate in its own thread.
+        return {'title':'应用批量机体阵容','effects':['写入共享技能、浮游炮和势力行，再按依赖顺序写入每个机体族的固定定义',
+                '为每个 BattleServer 编译形态图并启用机体导入服务端绑定','不发放机体，不改商城、扭蛋或玩家资产；服务重启并核对就绪后生效'],
+                'kind':'fixed_catalog','background':True}
     if provider=='capsules'and path=='/api/apply':
         return {'title':'发布扭蛋目录','effects':['同步客户端资源及服务端固定目录','保留玩家资产和现有记录；需要维护窗口'],'kind':'fixed_catalog'}
     if provider=='operators'and path=='/api/operators/apply':
@@ -60,6 +65,9 @@ class ChangeReviews:
                 key=secrets.token_urlsafe(24);self.reviews[key]={'digest':plan['digest'],'expires':time.monotonic()+300}
                 raise ReviewRequired({**plan,'review':key})
             del self.reviews[key]
+        if plan.get('background'):
+            # A background operation holds the gate for its whole run, not for this request.
+            yield;return
         with operations.server_change(provider.config['server_ini'],provider.id+':'+path,(plan['kind'],)):
             yield
     def state(self):
