@@ -15,6 +15,31 @@ from unit_import_support import Baseline,Repository,archive,png,publisher,comple
 
 
 class WorkspaceTests(unittest.TestCase):
+    def test_three_form_authoring_shows_directed_graph_without_dropping_entry_or_opening_runtime(self):
+        from unit_import_support import unit
+        with zipfile.ZipFile(io.BytesIO(archive())) as source:
+            files={name:source.read(name) for name in source.namelist()}
+        files['gdrs/unit.bin']=unit(90001,90002)
+        files['gdrs/alternate.bin']=unit(90002,90003)
+        files['gdrs/third.bin']=unit(90003,90002)
+        out=io.BytesIO()
+        with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as target:
+            for name,raw in files.items():target.writestr(name,raw)
+        state=self.workspace.inspect('three.zip',out.getvalue(),self.workspace.public()['revision'])
+        identity=state['draft']['id']
+        state=self.workspace.update(identity,{'root_unit_id':90001,'behavior_profile':'native-linked-forms-v1'},state['revision'])
+        graph=state['draft']['form_graph']
+        self.assertEqual([90001,90002,90003],graph['root_routes'][0]['path'])
+        self.assertEqual([90002,90003],graph['root_routes'][0]['cycle'])
+        self.assertEqual(3,len(state['draft']['forms']));self.assertFalse(state['draft']['can_confirm'])
+        self.assertTrue(any(row['code']=='unsupported_forms' for row in state['draft']['requirements']))
+        from owner.units.project import export_project
+        other=Workspace(Path(self.tmp.name)/'receiver',baseline=Baseline(),repository=Repository(),publisher=publisher)
+        try:
+            imported=other.inspect('project.zip',export_project(self.workspace,state['draft']),other.public()['revision'])
+            self.assertEqual(graph,imported['draft']['form_graph'])
+        finally:other.close()
+
     def test_user_grade_limit_keeps_sql_int_width_and_byte_fields_stay_bounded(self):
         self.assertEqual(model.field_value('UserGradeLimit',0x01000000),0x01000000)
         with self.assertRaises(ValueError):model.field_value('UserGradeLimit',0x80000000)

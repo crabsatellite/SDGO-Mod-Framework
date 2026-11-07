@@ -166,7 +166,7 @@ class CollectionCapsule(Provider):
         if path == '/api/upgrade-catalog':
             from owner.collection_capsule.deployment import connection, upgrade_catalog
             with contextlib.closing(connection(Path(self.config['server_ini']))) as db:
-                return {**upgrade_catalog(db), 'revision': self.revision()}
+                return {**upgrade_catalog(db,Path(self.config['server_ini'])), 'revision': self.revision()}
         if path == '/api/register-family':
             from owner.collection_capsule.deployment import connection, register_unit_family
             with contextlib.closing(connection(Path(self.config['server_ini']))) as db:

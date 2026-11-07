@@ -10,5 +10,13 @@
   "provider": "capsules",
   "description": "显示服主配置的扭蛋机和奖池，需要服主生成的配套资源。",
   "settings": [],
-  "presentation": "configurable"
+  "presentation": "configurable",
+  "configuration_files": [
+    "runtime.ini"
+  ],
+  "retirement": {
+    "content_files": [
+      "runtime.ini"
+    ]
+  }
 }

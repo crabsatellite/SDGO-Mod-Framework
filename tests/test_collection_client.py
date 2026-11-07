@@ -290,6 +290,27 @@ class CollectionClientRegistryTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(client.ClientRegistryError):
                 client.build_archive({name: b"x"})
 
+    def test_rebuild_keeps_dedicated_activity_ownership_of_the_prior_registry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = make_client(root / "game")
+            cover = root / "cover.png"
+            make_cover(cover)
+            first, second = root / "first", root / "second"
+            build_registry(game, cover, first)
+            ownership = [{"schema_version": 1, "owner": "unit_import/activity/v1", "machine_id": 9401,
+                          "project_key": "fixture.project", "unit_id": 25061}]
+            metadata = {"9401": {"name": "fixture"}}
+            manifest = json.loads((first / "manifest.json").read_text("utf-8"))
+            manifest.update(activity_ownership=ownership, activity_metadata=metadata)
+            (first / "manifest.json").write_text(json.dumps(manifest), "utf-8")
+            build_registry(game, cover, second, current=first)
+            rebuilt = json.loads((second / "manifest.json").read_text("utf-8"))
+            self.assertEqual(rebuilt["activity_ownership"], ownership)
+            self.assertEqual(rebuilt["activity_metadata"], metadata)
+            fresh = json.loads((first / "manifest.json").read_text("utf-8"))
+            self.assertIn("collection_acquisition", fresh)
+
     def test_add_repeat_and_disable_preserve_unrelated_registry(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -557,7 +578,7 @@ class CollectionClientPackageTests(unittest.TestCase):
             (stage / "sdgo/symbols" / packaging.HOST_SYMBOL).write_bytes(symbol_profile())
             support = root / "capsule_catalog.dll"
             support.write_bytes(
-                b"CURRENT CAPSULE SUPPORT SDGO_CAPSULE_REGISTRY_6TABLE_V2"
+                b"CURRENT CAPSULE SUPPORT SDGO_CAPSULE_REGISTRY_6TABLE_V2 SDGO_COLLECTION_ACQUISITION_V1"
             )
             output = root / "player"
             result = packaging.package_client_registry(
@@ -574,7 +595,7 @@ class CollectionClientPackageTests(unittest.TestCase):
             )
             self.assertEqual(
                 (output / "client/sdgo/mods/capsule_catalog/capsule_catalog.dll").read_bytes(),
-                b"CURRENT CAPSULE SUPPORT SDGO_CAPSULE_REGISTRY_6TABLE_V2",
+                b"CURRENT CAPSULE SUPPORT SDGO_CAPSULE_REGISTRY_6TABLE_V2 SDGO_COLLECTION_ACQUISITION_V1",
             )
             manifest = json.loads(
                 (output / "package-manifest.json").read_text(encoding="utf-8")

@@ -10,6 +10,42 @@ export async function mountOwnerUpdates(ctx){
  program.append(element('h2','程序上游'),element('p','基础整合包可作为起点。进入 DIY 后，配置、脚本、素材与发布版本由服主维护；切换程序上游不会解除玩家绑定。','muted'),repo.wrap,
   button('保存程序上游',run(async()=>{await request('/api/updates',{action:'source',repository:repo.input.value.trim()});message('已保存程序上游，维护方式与玩家绑定保持不变。');}),'ui-btn is-blue'));
  root.append(program);
+ const gitSource=field('框架 Git 来源（JSON；支持现有 SSH 配置）',JSON.stringify(upstream.git_source||{schema_version:1,kind:'sdgo-framework-runtime',source_id:'',repository:upstream.repository,channel:upstream.channel,feeds:[]},null,2),true);program.append(gitSource.wrap,button('保存 Git 程序来源',run(async()=>{await request('/api/updates',{action:'source',source:JSON.parse(gitSource.input.value)});message('已保存框架 Git 来源，复用本机已有 Git 身份。');}),'ui-btn is-blue'));
+ if(upstream.program_managed_by_client){program.replaceChildren(element('h2','Manager 程序上游'),element('p','这个 Manager 随完整客户端来源更新，避免独立升级与整合包修复互相覆盖。DIY 维护者可以明确接管后审阅上游。','muted'));}
+ const runtimeCard=element('section',undefined,'manager-card');
+ runtimeCard.append(element('h2','完整客户端更新'),element('p','由 Manager 校验并同步原版程序、资源归档和配套 Mod。登录与画面设置、仅本地内容和数据库保留；服主 DIY 目录需要自行审阅维护。','muted'));
+ const runtimeRows=element('div');runtimeCard.append(runtimeRows);root.prepend(runtimeCard);
+ let runtimeDisposed=false,runtimeFingerprint='';
+ async function refreshRuntime(){
+  const state=await request('/api/client-updates');if(runtimeDisposed)return;
+  const fingerprint=JSON.stringify(state);if(fingerprint===runtimeFingerprint)return;runtimeFingerprint=fingerprint;
+  runtimeRows.replaceChildren();
+  if(state.hosts.some(h=>h.source)){
+   const automatic=element('input');automatic.type='checkbox';automatic.checked=state.automatic;
+   automatic.onchange=run(async()=>{await request('/api/services/manager.client_updates',{action:automatic.checked?'start':'stop'});});
+   const label=element('label');label.append(automatic,document.createTextNode('Manager 运行期间自动同步完整客户端；游戏运行时等待关闭'));runtimeRows.append(label);
+  }
+  for(const host of state.hosts){
+   const row=element('div',undefined,'manager-card'),r=host.result||{};
+   row.append(element('h3',host.name),element('p',host.source?.label||host.error||'由服主提供的客户端包配置完整更新来源','muted'));
+   if(host.source){
+    if(host.source.framework)row.append(element('p','框架源：'+host.source.framework.repository+' · '+host.source.framework.channel+'；内容源：'+host.source.label,'muted'));
+    if(r.framework_version)row.append(element('p','已检查框架 '+r.framework_version+' · 内容提交 '+r.commit.slice(0,12),'muted'));
+    if(host.recovery_required)row.append(button('恢复未完成更新',run(async()=>{await request('/api/client-updates',{action:'recover',host:host.id});await refreshRuntime();}),'ui-btn is-blue'));
+    const busy=['queued','working'].includes(r.status),check=button('检查完整客户端更新',run(async()=>{await request('/api/client-updates',{action:'check',host:host.id});await refreshRuntime();}),'ui-btn is-blue');check.disabled=busy;row.append(check);
+    if(r.status==='available'){
+     const details=element('details');details.append(element('summary','查看更新与退役文件'),element('pre',[...(r.files||[]),...(r.retired||[]).map(n=>'退役：'+n)].join('\n')));
+     row.append(element('p',r.changed_files+' 个文件需要更新，'+r.retired_files+' 个旧文件将保留到恢复目录；保留 '+(r.preserved_settings||0)+' 项已有配置。','muted'),details,button('确认更新完整客户端',run(async()=>{await request('/api/client-updates',{action:'install',host:host.id,digest:r.digest});await refreshRuntime();}),'ui-btn is-primary'));
+    }
+    if(r.status==='restart_required')row.append(button('重启 Manager 完成客户端更新',run(async()=>{await request('/api/client-updates',{action:'restart',host:host.id});message('正在交接，更新完成后 Manager 会重新打开。');}),'ui-btn is-primary'));
+    const label={queued:'已排队',working:'正在校验和同步',current:'完整客户端已是当前版本',installed:'完整客户端已同步并核验',recovered:'原文件已恢复',waiting:'等待游戏关闭',error:'更新未完成',restart_required:'等待重启 Manager'}[r.status]||'';
+    row.append(element('p',label+(r.message?' · '+r.message:'')+(r.commit?' · '+r.commit.slice(0,8):''),r.status==='error'?'error':'muted'));
+   }
+   runtimeRows.append(row);
+  }
+ }
+ await refreshRuntime();
+ const runtimeTimer=setInterval(()=>refreshRuntime().catch(e=>message(e.message,true)),2000);
  const card=element('section',undefined,'manager-card');root.append(card);
  let data=await request('/api/owner-updates'),chosen=ctx.hostId||data.hosts[0]?.id,disposed=false;
  let resultNode=null,lastResult='';
@@ -23,11 +59,17 @@ export async function mountOwnerUpdates(ctx){
   const select=element('select');select.className='ui-input';
   for(const h of data.hosts){const o=element('option',h.name+' · '+({starter:'基础整合包',owner:'服主 DIY',player:'跟随服主'}[h.mode]||h.mode));o.value=h.id;select.append(o);}
   select.value=chosen;select.onchange=()=>{chosen=select.value;draw();};card.append(select);
-  const h=data.hosts.find(h=>h.id===chosen),modes=element('select');modes.className='ui-input';modes.style.marginTop='12px';
+  const h=data.hosts.find(h=>h.id===chosen);
+  if(h.complete_runtime&&h.mode!=='owner'){
+   card.append(element('p','此目录由上方的完整客户端更新统一同步。共享程序、资源和 Mod 跟随同一个发布者。','muted'),
+    button('接管为服主 DIY',run(async()=>{await request('/api/owner-updates',{action:'configure',host:h.id,mode:'owner'});await reload();message('已接管维护；自动运行文件更新会保留此目录。');}),'ui-btn is-blue'));
+   return;
+  }
+  const modes=element('select');modes.className='ui-input';modes.style.marginTop='12px';
   for(const [id,title]of [['starter','基础整合包（默认）：接受上游运行更新'],['owner','服主 DIY：自行接管维护与发布'],...(h.role==='client'?[['player','玩家：仅跟随指定负责人']]:[])]){const o=element('option',title);o.value=id;modes.append(o);}
   modes.value=h.mode;card.append(modes,element('p','DIY 和玩家目录不会被程序上游自动覆盖。明确切回基础模式会解除原负责人绑定；已有文件不会因此立即改变。','muted'));
   card.append(element('p','默认跟随基础整合包。服主需要自行维护时，明确选择「服主 DIY」并保存；已绑定负责人的玩家继续跟随该负责人。','muted'),button('保存维护方式',run(async()=>{if(modes.value==='player'){message('请在下方校验并绑定负责人更新地址。');return;}await request('/api/owner-updates',{action:'configure',host:h.id,mode:modes.value});await reload();message('维护边界已保存。');}),'ui-btn is-blue'));
-  if(h.role==='client'){
+  if(h.role==='client'&&!h.complete_runtime){
    const feeds=field('负责人更新地址（HTTPS 清单或 git+https://仓库.git#分支，每行一个）',(h.source?.feeds||[]).join('\n'),true),bindingBox=element('div');
    card.append(element('h3','跟随负责人'),element('p','私有 Git 源复用本机已有的 Git HTTPS 凭据；不在绑定文件中保存服主令牌。可填写同一负责人的备用源。','muted'),feeds.wrap,bindingBox);
    let resolved=null;const autoBind=element('input');autoBind.type='checkbox';autoBind.checked=true;const autoBindLabel=element('label');autoBindLabel.append(autoBind,document.createTextNode('绑定后自动跟随（Manager 运行期间）'));card.append(autoBindLabel);
@@ -47,7 +89,8 @@ export async function mountOwnerUpdates(ctx){
     for(const c of plan.components){const details=element('details'),summary=element('summary'),box=element('input');box.type='checkbox';box.onchange=()=>{box.checked?selected.add(c.id):selected.delete(c.id);apply.disabled=!selected.size;};summary.append(box,document.createTextNode(' '+c.title+' · '+c.files.length+' 个文件'));details.append(summary,element('pre',c.files.join('\n')));review.append(details);}
     if(!plan.components.length)review.append(element('p','上游文件与当前目录一致。','muted'));else review.append(apply);
    }),'ui-btn is-blue'),review);
-   if(h.role==='client'){
+   if(h.complete_runtime)card.append(element('p','完整客户端发布由这套整合包的维护流程提供。DIY 修改在发布之前只影响本机；此处可以审阅采用上游 Mod 组件。','muted'));
+   if(h.role==='client'&&!h.complete_runtime){
     const p=h.publication||{},label=field('整合包名称',p.label||''),directory=field('专用发布目录（与游戏目录分开）',p.directory||''),urls=field('玩家读取地址（HTTPS 清单或 git+https://仓库.git#分支，每行一个）',(p.feeds||[]).join('\n'),true),remote=field('Git 发布仓库（HTTPS，可留空用于现有静态站点）',p.git_remote||''),branch=field('Git 分支',p.branch||'main'),extras=field('额外共享素材（客户端相对路径，每行一项）',(p.extras||[]).join('\n'),true),preview=element('div');
     card.append(element('h3','发布你维护的整合包'),element('p','只打包框架、公开 Mod、共享配置及声明的生成素材；原版游戏、账号、数据库、生日名单和仅本地 Mod 留在本机。静态发布目录应由现有 HTTPS 站点托管；填写 Git 仓库时，Manager 使用已有 Git 凭据提交推送。','muted'));
     for(const x of [label,directory,urls,remote,branch,extras])card.append(x.wrap);
@@ -60,5 +103,5 @@ export async function mountOwnerUpdates(ctx){
  }
  draw();
  const timer=setInterval(async()=>{if(disposed)return;try{const latest=await request('/api/owner-updates');result(latest.hosts.find(h=>h.id===chosen));}catch(e){if(resultNode)resultNode.textContent=e.message;}},2000);
- return ()=>{disposed=true;clearInterval(timer);};
+ return ()=>{disposed=true;runtimeDisposed=true;clearInterval(timer);clearInterval(runtimeTimer);};
 }

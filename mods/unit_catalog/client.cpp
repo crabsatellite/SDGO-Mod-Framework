@@ -4,9 +4,13 @@
 #include <string>
 #include <vector>
 #include "sdgo/sdgo_api.h"
+#include "sdgo/collection_acquisition.h"
 #include "sdgo/unit_catalog_format.h"
 #include "preview_runtime.h"
 #include "skill_presentation.h"
+#include "program_runtime.h"
+#include "skill_atlas_runtime.h"
+#include "form_chain_runtime.h"
 #include "../../support/native_resource_overlay/native_resource_overlay.h"
 
 namespace {
@@ -50,6 +54,7 @@ InsertNode g_insertNode = nullptr;
 RegisterRecord g_registerRecord = nullptr;
 MapFind g_mapFind = nullptr;
 bool g_attempted = false;
+bool g_recordsReady = false;
 uint32_t g_addedThisAttempt = 0;
 
 struct Allocation {
@@ -219,6 +224,12 @@ int InstallRecords(void* grid) {
     g_api->Log(g_mod, SDGO_LOG_INFO, "native record context pid=%lu grid=%p",
                static_cast<unsigned long>(GetCurrentProcessId()), grid);
 
+    // Optional collection hints are applied to our own record copies before
+    // preflight, preserving exact duplicate checks and native allocation ABI.
+    auto provider=GetModuleHandleW(L"capsule_catalog.dll");
+    const auto hint=provider?reinterpret_cast<SdgoCollectionAcquisitionApplyV1Fn>(GetProcAddress(provider,SDGO_COLLECTION_ACQUISITION_APPLY_EXPORT)):nullptr;
+    if(hint)for(auto& entry:g_catalog.records)
+        if(entry.kind==kUnitIndexType)hint(entry.bytes.data(),static_cast<uint32_t>(entry.bytes.size()));
     std::vector<const Entry*> pending;
     int existing = 0;
     for (const auto& entry : g_catalog.records) {
@@ -345,6 +356,7 @@ void __fastcall LoadLast(void* self, void*, const wchar_t* file, uint32_t type) 
         TerminateProcess(GetCurrentProcess(), status);
         ExitProcess(status);
     }
+    g_recordsReady = true;
 }
 
 template<class T>
@@ -432,6 +444,9 @@ SDGO_MOD_ENTRY {
     }
     if (!sdgo::unit_preview::Attach(api, mod, g_catalog)) return 0;
     if (!sdgo::unit_skill_presentation::Attach(api, mod, g_catalog, g_data, g_find)) return 0;
+    if (!sdgo::unit_skill_atlas::Attach(api, mod, g_catalog, g_data, g_find)) return 0;
+    if (!sdgo::unit_form_chain::Attach(api, mod, g_catalog, g_data, g_find)) return 0;
+    if (!sdgo::unit_programs::Attach(api, mod, g_catalog, &g_recordsReady)) return 0;
     if (!RegisterResourceOverlay()) return 0;
     api->Log(mod, SDGO_LOG_INFO,
              "ready: %u validated native records; registration deferred to final data table",

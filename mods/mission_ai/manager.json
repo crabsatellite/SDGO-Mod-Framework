@@ -46,5 +46,17 @@
     }
   ],
   "presentation": "configurable",
-  "mechanism": "客户端在任务模式生成并更新 AI 队友，使用原生机体和 AI 行为；对应服务端由 coop_ai 添加真实 AI 席位。部分脚本参数支持运行中重新读取。"
+  "mechanism": "客户端在任务模式生成并更新 AI 队友，使用原生机体和 AI 行为；对应服务端由 coop_ai 添加真实 AI 席位。部分脚本参数支持运行中重新读取。",
+  "configuration_files": [
+    "mission_ai.lua"
+  ],
+  "dependencies": {
+    "optional": [
+      {
+        "id": "match_ai",
+        "capability": "mission.lifecycle.client",
+        "capability_version": 1
+      }
+    ]
+  }
 }

@@ -23,6 +23,10 @@ PROGRAMS = frozenset(BASE + name for name in ('unit_catalog.dll', 'mod.ini', 'ma
 OPTIONAL_PROGRAMS = frozenset({BASE+'symbols.fragment.ini'})
 CONTENT = frozenset(BASE + name for name in (
     'catalog.bin', 'definitions.json', 'resource-overlay.ini', 'resources.zdx', 'resources.zpk'))
+# Optional sealed content a package may add: native Lua programs, skill atlases and the
+# further parts of a split overlay archive. Like CONTENT they are never changed here.
+OPTIONAL_CONTENT = frozenset({BASE + 'native-programs.bin', BASE + 'skill-atlases.bin'} |
+                             {BASE + f'resources.{part}.zpk' for part in range(1, 32)})
 RESOURCE_ROOTS = {'anrs', 'fxrs', 'mdrs', 'scp', 'sdrs', 'sol', 'sprs', 'trns', 'txrs', 'uirs'}
 BLOCKED = {'.bat', '.cmd', '.com', '.dll', '.exe', '.js', '.lnk', '.msi', '.ps1', '.scr', '.vbs'}
 HASH = re.compile('[0-9a-f]{64}\\Z')
@@ -78,7 +82,7 @@ def _relative(value):
         or re.search(r'[\x00-\x1f:*?"<>|]', name)):
         raise ValueError('机体安装收据路径无效')
     key = name.casefold()
-    if key not in PROGRAMS | OPTIONAL_PROGRAMS | CONTENT:
+    if key not in PROGRAMS | OPTIONAL_PROGRAMS | CONTENT | OPTIONAL_CONTENT:
         if key.split('/', 1)[0] not in RESOURCE_ROOTS or Path(key).suffix in BLOCKED:
             raise ValueError('机体收据包含其所有权范围以外的文件')
     return name, key

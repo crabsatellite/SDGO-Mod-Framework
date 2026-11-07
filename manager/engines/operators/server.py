@@ -634,12 +634,19 @@ def _operator_data_plan(cur, managed, backups, ability_plan):
 
 def apply_catalog(catalog, server_ini, *, runtime_evidence=None):
     validate(catalog)
+    from manager.operations import server_change
+    with server_change(server_ini,'operator_catalog.publish',('fixed_catalog','player_migration'))as change:
+        return change.result(_apply_catalog(catalog,server_ini))
+
+
+def _apply_catalog(catalog, server_ini):
+    validate(catalog)
     cn = connect(server_ini)
     try:
         cur = cn.cursor()
         cur.execute("SET XACT_ABORT ON; BEGIN TRANSACTION")
         # Serialize only this module's changes; no unrelated configuration is reset.
-        cur.execute("DECLARE @R INT; EXEC @R=sys.sp_getapplock @Resource=N'SDGO:operator-catalog',@LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=5000; SELECT @R")
+        cur.execute("DECLARE @R INT; EXEC @R=sys.sp_getapplock @Resource=N'SDGO:catalog-change',@LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=5000; SELECT @R")
         if cur.fetchone()[0] < 0:
             raise ValueError("另一项副官更新正在进行，请稍后重试")
         cur.execute((MODULE_DIR / "server" / "schema.sql").read_text(encoding="utf-8"))

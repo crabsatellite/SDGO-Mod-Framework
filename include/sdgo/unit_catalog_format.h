@@ -14,6 +14,7 @@ constexpr uint32_t kUnitType = 2;
 constexpr uint32_t kWeaponType = 10;
 constexpr uint32_t kFunnelType = 11;
 constexpr uint32_t kSkillType = 13;
+constexpr uint32_t kAffiliationType = 20;
 constexpr uint32_t kBlueprintType = 0x21;
 constexpr uint32_t kItemCategoryType = 0x22;
 constexpr uint32_t kUnitIndexType = 0x55;
@@ -21,6 +22,8 @@ constexpr size_t kUnitBytes = 4976;
 constexpr size_t kWeaponBytes = 1871;
 constexpr size_t kFunnelBytes = 732;
 constexpr size_t kSkillBytes = 1132;
+constexpr size_t kAffiliationBytes = 106;
+constexpr uint32_t kAffiliationFirstKey = 125501;
 constexpr size_t kBlueprintBytes = 1197;
 constexpr size_t kItemCategoryBytes = 614;
 constexpr size_t kUnitIndexBytes = 614;
@@ -101,6 +104,7 @@ inline size_t ExpectedBytes(uint32_t kind) {
     case kWeaponType: return kWeaponBytes;
     case kFunnelType: return kFunnelBytes;
     case kSkillType: return kSkillBytes;
+    case kAffiliationType: return kAffiliationBytes;
     case kBlueprintType: return kBlueprintBytes;
     case kItemCategoryType: return kItemCategoryBytes;
     case kUnitIndexType: return kUnitIndexBytes;
@@ -289,6 +293,12 @@ private:
                 !std::all_of(entry.bytes.begin()+931,entry.bytes.begin()+1131,
                              [](uint8_t value){return value==0;}))
                 return Fail(error,"skill record does not match native-type13-1132-v1");
+        } else if (entry.kind == kAffiliationType) {
+            // Affiliation dictionary rows carry a fixed computed global key
+            // (first key plus the influence number) and a localized name.
+            if (entry.id < kAffiliationFirstKey || entry.id > kAffiliationFirstKey + 1000 ||
+                !ValidateUtf16Text(entry.bytes.data() + 5, 100))
+                return Fail(error, "affiliation key or name is invalid");
         } else if (entry.kind == kItemCategoryType) {
             if (!ValidateUtf16Text(entry.bytes.data() + kItemCategoryNameOffset,
                                    kItemCategoryNameBytes) ||

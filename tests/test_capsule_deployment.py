@@ -134,7 +134,7 @@ def make_stage(root):
         encoding="utf-8",
     )
     (stage / "sdgo/mods/capsule_catalog/capsule_catalog.dll").write_bytes(
-        b"CAPSULE MOD DLL SDGO_CAPSULE_REGISTRY_6TABLE_V2"
+        b"CAPSULE MOD DLL SDGO_CAPSULE_REGISTRY_6TABLE_V2 SDGO_COLLECTION_ACQUISITION_V1"
     )
     (stage / "sdgo/mods/capsule_catalog/manager.json").write_text(
         '{"schema_version":1,"id":"capsule_catalog","settings":[]}',
@@ -404,6 +404,12 @@ class DeploymentTests(unittest.TestCase):
         )
 
     def apply(self, client, server_ini=None, connection=None):
+        if server_ini is not None:
+            from manager.operations import CORE_CONTRACT
+            server_ini=Path(server_ini)
+            server_ini.write_text(server_ini.read_text('utf-8').replace('DBServerName=local\n','DBServerName=127.0.0.1,7\n'),encoding='utf-8')
+            server_ini.with_name('WorldServer.exe').write_bytes(b'stopped owned capsule transaction fixture')
+            core=server_ini.parent/'sdgo/core.dll';core.parent.mkdir(exist_ok=True);core.write_bytes(CORE_CONTRACT)
         patches = [
             patch.object(deployment, "_product_name", side_effect=product_name),
             patch.object(deployment, "_running_gonline_paths", return_value=[]),

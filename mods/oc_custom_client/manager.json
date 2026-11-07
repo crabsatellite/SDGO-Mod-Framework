@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "oc_custom_client",
+  "title": "OC 六维强化 · 客户端",
+  "category": "gameplay",
+  "hosts": [
+    "client"
+  ],
+  "description": "在工厂升级页为当前出击机体显示 OC 六维加点面板：分配普通点与 Over 点、OC 挑战、洗点。需要服务器开启 OC 模式。",
+  "mechanism": "面板由原生对话框承载控件，请求通过好友赠送载体的扩展指令发送（需启用好友机体赠送客户端 Mod），服务器返回完整 OC 档并在下一场战斗生效。",
+  "settings": [
+    {
+      "id": "enabled",
+      "key": "Enabled",
+      "label": "显示 OC 加点面板",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "panel_left",
+      "key": "PanelLeft",
+      "label": "面板左边距",
+      "type": "integer",
+      "default": 4,
+      "minimum": 0,
+      "maximum": 1024,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "panel_top",
+      "key": "PanelTop",
+      "label": "面板上边距",
+      "type": "integer",
+      "default": 172,
+      "minimum": 0,
+      "maximum": 768,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    }
+  ],
+  "presentation": "configurable"
+}

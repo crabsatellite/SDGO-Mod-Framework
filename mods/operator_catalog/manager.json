@@ -36,5 +36,12 @@
     "documentation": "docs/operator-pack-protocol.md",
     "distribution": "client-content only; no operator art or voices bundled with Manager/framework releases",
     "native_reward_extension": "include/sdgo/operator_reward_filter.h"
-  }
+  },
+  "retirement": {
+    "content_files": [
+      "definitions.json",
+      "display.ini"
+    ]
+  },
+  "runtime_enabled_setting": "enabled"
 }

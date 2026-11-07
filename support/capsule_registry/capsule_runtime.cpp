@@ -484,6 +484,18 @@ bool capsule_catalog::LoadBundle(const std::wstring& modDirectory, Bundle& out, 
         if (!VerifyDeclaredFile(modDirectory, relative, IniValue(ini, L"gdt", key.c_str()), nullptr, error))
             return false;
     }
+    const auto hintFile=IniValue(ini,L"acquisition",L"file");
+    const auto hintHash=IniValue(ini,L"acquisition",L"sha256");
+    if(!hintFile.empty() || !hintHash.empty()) {
+        if(hintFile!=L"collection-acquisition.bin" ||
+           !VerifyDeclaredFile(modDirectory,hintFile,hintHash,nullptr,error)) {
+            error="invalid collection acquisition declaration: "+error;return false;
+        }
+        std::vector<uint8_t> raw;
+        if(!ReadFileBytes(Join(modDirectory,hintFile),128u*1024u,raw,error) || !candidate.acquisition.Decode(raw)) {
+            error="invalid collection acquisition metadata";return false;
+        }
+    }
     const std::wstring uiRelative = IniValue(ini, L"ui", L"1161");
     const bool declaredUi = !uiRelative.empty();
     if (declaredUi) {

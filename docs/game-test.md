@@ -443,6 +443,29 @@ modified or duplicate evidence fails even when the login cases passed. This
 tests raw-record registration and native grid destruction; it does not cover skill/funnel
 actor activation, battle behavior or transform/death/respawn cleanup. The probe does not create server rows or player inventory.
 
+### Directed native transformation paths
+
+The Python `prepare` / `reuse_prepared` API accepts `unit_transform_steps=1..16`
+for a complete ordinary battle with an existing owned `play_unit_uid`. It is
+mutually exclusive with the Apsalus and generic two-form roundtrip options.
+Preparation seals `UnitDirectedTransforms` and `UnitTransformSteps` in the copied
+observer manifest; ordinary runs explicitly disable this scenario.
+
+The observer derives every next identity from the actual native unit record's
+`+316` field, including one-way entries into later cycles. Each step uses the
+original transform request and waits for the expected actual actor definition and
+released movement mode, then verifies mapped movement and primary attack. Missing
+records, self loops, exhausted paths and unexpected identities fail the check.
+This test does not create form records, alter eligibility or supply reverse edges.
+The default two-form scenario still requires the original reciprocal pair.
+
+Local admission is distinct from a successful transform. The observer waits for
+normal reload/cooldown eligibility after a denied local request; it never fills
+ammunition or overrides the condition. Directed runs also observe the original
+reply and notification handlers, recording their error words and target IDs
+without modifying a packet. Actor and registry targets are reported separately
+so a native rejection is distinguishable from stale actor bindings.
+
 ### Coordinated multiplayer
 
 Prepare one quiet `--friends-only` run for each distinct existing account, using
