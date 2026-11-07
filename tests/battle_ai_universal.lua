@@ -1349,6 +1349,16 @@ for _,difficulty in ipairs({1,2}) do
   observation.targets[1].distance=100;Tick(16)
   Check(calls.transforms==1,
         'the same empty ranged form can select that loaded knife once its target actually enters melee range')
+  Reset({Difficulty=difficulty});observation.targets={Target(1,5000,2000)}
+  observation.unitId=13012;observation.weapons=RangedOther().weapons;observation.selectedSlot=0
+  observation.weapons[1].ammoReady=0;observation.weapons[1].ready=0
+  observation.otherForm={unitId=13011,allowed=1,weapons={Weapon(0,'melee',250,1500,300),Weapon(1,'hitscan',1200,500,300)}}
+  Tick(0)
+  Check(not calls.transforms and calls.routes>0,
+        'a loaded but shorter ranged peer does not trigger a dry-gun reversal outside its own reach')
+  observation.weapons[1].ammoReady=1;observation.weapons[1].ready=1;Tick(100)
+  Check(not calls.transforms and calls.fire==true,
+        'the retained ranged form resumes actual fire when its native ammunition becomes available')
 end
 Reset();observation.targets={Target(1,5000,1000)}
 observation.weapons[2].ammoReady=0;observation.weapons[2].ready=0

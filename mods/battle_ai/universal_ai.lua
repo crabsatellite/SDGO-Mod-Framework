@@ -303,17 +303,14 @@ local function ChangeForm(o,s,t,now)
   -- an empty ranged form to an equally unusable distant melee form.
   local empty=not current.ammo and nextForm.engage
   local usableRange=not current.engage and nextForm.engage
-  -- Empty ranged slots must not pull an AI out of a form that can already
-  -- attack at this distance. In particular, a close-range melee form and a
-  -- loaded ranged peer would otherwise reverse each other's decisions after
-  -- every dwell interval instead of committing to its usable close weapon.
-  local rangedDry=current.ranged and not current.rangedAmmo and not current.engage and nextForm.rangedAmmo
+  -- Ammunition in the parked bank is not by itself an engagement gain.
+  -- A shorter gun outside its reach must not reverse a useful form choice.
   local distantMelee=not current.rangedAmmo and current.melee>0 and
     (t.meleeDistance or t.distance)>current.melee*1.5 and nextForm.rangedAmmo and nextForm.range>current.range+200
   local closeMelee=nextForm.melee>0 and (t.meleeDistance or t.distance)<=nextForm.melee*0.9 and
     nextForm.meleeValue>current.rangedValue*1.5 and nextForm.meleeValue>current.meleeValue
-  if not empty and not rangedDry and current.finisher then return false end
-  if not (empty or usableRange or rangedDry or distantMelee or closeMelee) then return false end
+  if current.finisher then return false end
+  if not (usableRange or distantMelee or closeMelee) then return false end
   s.formAttemptAt=now+500
   assert(SDGO_BattleAI_RequestTransform,'native transform request unavailable')
   local queued=SDGO_BattleAI_RequestTransform()==1
