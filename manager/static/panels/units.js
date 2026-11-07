@@ -1364,10 +1364,11 @@ const batchCard=document.createElement("section");
 batchCard.className="panel";batchCard.style.cssText="padding:14px;margin-bottom:16px";
 batchCard.innerHTML='<strong>批量阵容服务端应用（Beta）</strong><p>批量发布器生成的发布目录（含 server-plan.json）在这里写入已配置的 WorldServer 数据库：先写共享技能、浮游炮和势力行，再按依赖顺序写入每个机体族，最后为每个 BattleServer 安装形态图。不发放机体，也不改商城、扭蛋或玩家资产。</p>'
  +'<div class="template-tool"><label><span>批量发布目录</span><input id="batch-folder" placeholder="批量发布器输出的 publication 目录"></label><button type="button" id="batch-pick">选择目录…</button></div>'
- +'<div class="actions" style="margin-top:10px"><button type="button" id="batch-preflight">只读预检</button><button type="button" class="primary" id="batch-apply" disabled>停服后应用…</button><button type="button" id="batch-readback">读回核对</button></div>'
+ +'<div class="actions" style="margin-top:10px"><button type="button" id="batch-preflight">只读预检</button><button type="button" class="primary" id="batch-apply" disabled>停服后应用…</button><button type="button" id="batch-readback">读回核对</button><button type="button" id="batch-register">登记给扭蛋机和商城</button></div>'
  +'<div class="progress hidden" id="batch-progress"><span id="batch-progress-bar"></span></div>'
  +'<p class="note" id="batch-status">应用前请先停止此服务组的全部原生服务；Manager 不会替你结束或启动游戏进程。玩家仍需安装同版本的机体客户端包。</p>'
- +'<div class="requirements" id="batch-details"></div>';
+ +'<div class="requirements" id="batch-details"></div>'
+ +'<p class="note" id="batch-publications"></p>';
 $("sync-capsules").closest("section").after(batchCard);
 const BATCH_STAGES={gate:"检查停服状态",check:"按依赖顺序检查机体族",shared:"写入共享技能、浮游炮和势力行",families:"写入机体族",graphs:"编译并安装形态图",readback:"读回核对"};
 let batchChecked=null,batchJob={status:"idle"},batchBusy=false;
@@ -1376,7 +1377,7 @@ function batchRunning(){return batchJob.status==="starting"||batchJob.status==="
 function syncBatch(){
   const folder=$("batch-folder").value.trim(),locked=batchBusy||batchRunning();
   $("batch-apply").disabled=locked||!batchChecked||batchChecked.folder!==folder||!batchChecked.ready;
-  for(const id of ["batch-preflight","batch-readback","batch-pick"])$(id).disabled=locked;
+  for(const id of ["batch-preflight","batch-readback","batch-pick","batch-register"])$(id).disabled=locked;
   $("batch-folder").disabled=locked;
 }
 function batchRow(level,title,text){
@@ -1447,7 +1448,17 @@ $("batch-readback").onclick=async()=>{
   catch(error){batchMessage(error.message,true);}
   finally{batchBusy=false;syncBatch();}
 };
-ctx.request("/api/units/batch",undefined,"GET").then(data=>{if(data.batch.status!=="idle")renderBatchJob(data.batch);}).catch(()=>{});
+function renderBatchPublications(rows){
+  $("batch-publications").textContent=rows?.length?"已登记给扭蛋机和商城："+rows.map(row=>row.owner+"（"+row.families+" 个机体族，"+row.registered_at+"）").join("；"):"";
+}
+$("batch-register").onclick=async()=>{
+  const folder=$("batch-folder").value.trim();if(!folder){batchMessage("请先选择批量发布目录。",true);return;}
+  batchBusy=true;syncBatch();batchMessage("正在读回核对并登记…");
+  try{const data=await ctx.request("/api/units/batch/register",{publication:folder});renderBatchPublications(data.publications);batchMessage(data.message);}
+  catch(error){batchMessage(error.message,true);}
+  finally{batchBusy=false;syncBatch();}
+};
+ctx.request("/api/units/batch",undefined,"GET").then(data=>{renderBatchPublications(data.publications);if(data.batch.status!=="idle")renderBatchJob(data.batch);}).catch(()=>{});
 ctx.setInterval(async()=>{if(!batchRunning())return;try{const data=await ctx.request("/api/units/batch",undefined,"GET");renderBatchJob(data.batch);}catch{}},1000);
 
 function renderNativePreview(){
