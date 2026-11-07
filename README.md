@@ -87,7 +87,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 
 <!-- /mod-category:gameplay -->
 
-Owners can also use the separate Manager module [holiday and birthday gifts](docs/calendar-gifts.md) to put units and items into players' Storage on 14 common holidays, birthdays or chosen dates.
+Owners can also use the separate Manager module [holiday and birthday gifts](docs/calendar-gifts.md) to put units and items into every eligible player's Storage on 14 common holidays, birthdays or chosen dates.
 
 <a id="long-room-title-commands"></a>
 

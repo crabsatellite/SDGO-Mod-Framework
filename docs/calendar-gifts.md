@@ -33,6 +33,8 @@ Private player groups support anniversaries and one-time events. February 29 bir
 
 Each event identity, year and account has one final delivery receipt. Editing the date or rewards of an already-delivered event does not issue another bundle. Creating a new event identity creates a separate event; do not use that to retry an uncertain result.
 
+Each event processes every eligible account. An empty audience leaves the worker healthy and does not block later events. Pending catalog changes defer delivery until the next retry; the worker checks existing receipts before continuing.
+
 Native item rewards retain their category and quantity. Unit rewards use the unit selector and cannot bypass ownership checks through the ordinary item list. This module does not directly change GB, MB or capsule-coin balances; available items and reward packs depend on the server's existing native definitions.
 
 ## Public rules and private rosters
