@@ -148,6 +148,13 @@ def read_catalog(root: Path, *, check_build: bool = True) -> dict:
         declared = {mod["id"] for mod in mods}
         if built != declared:
             raise ValueError(f"Build/catalog mismatch: built-only={sorted(built-declared)}, manifest-only={sorted(declared-built)}")
+        by_id = {mod["id"]: mod for mod in mods}
+        for identity, arguments in re.findall(r"\bsdgo_add_mod\(([a-z][a-z0-9_]*)\s+([^)]*)\)", cmake):
+            payload = re.search(r"\bFILES\s+(.*?)(?=\b(?:LIBS|SOURCES|DESCRIPTION)\b|$)", arguments, re.S)
+            if payload:
+                missing = set(payload.group(1).split()) - set(by_id[identity]["files"])
+                if missing:
+                    raise ValueError(f"Build payload missing from manifest: {identity}: {sorted(missing)}")
     features = {}
     for mod in mods:
         old = features.setdefault(mod["feature"], {"category": mod["category"], "channel": mod["channel"],
