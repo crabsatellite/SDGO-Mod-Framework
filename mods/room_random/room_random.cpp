@@ -217,11 +217,13 @@ std::atomic<uint64_t> g_token{0};
 
 struct Attempt {
     uint64_t token=0;
-    bool checked=false,enabled=false,prepared=false,applied=false,failed=false,synchronized=false,cleanupChecked=false;
+    bool checked=false,enabled=false,prepared=false,applied=false,failed=false,cleanupChecked=false;
+    bool noticesPrepared=false,startSubmitted=false,noticesAttempted=false,noticesQueued=false,noticeFailure=false;
     uint8_t* preview=nullptr;
     uint8_t* actual=nullptr;
     Signature signature;
     std::vector<Player> players;
+    std::vector<std::vector<uint8_t>> notices;
     std::vector<uint8_t*> observedRooms;
     std::string error;
 };
@@ -344,9 +346,9 @@ bool ApplyActual(Attempt& a,uint8_t* room) {
     return true;
 }
 template<size_t N> bool Broadcast(uint8_t* room,std::array<uint8_t,N>& packet,unsigned humans) {
-    uint32_t recipients=0;
-    return g_broadcast && g_broadcast(room,packet.data(),static_cast<uint32_t>(packet.size()),&recipients)!=0
-        && recipients>=humans;
+    uint32_t attemptedRoutes=0;
+    return g_broadcast && g_broadcast(room,packet.data(),static_cast<uint32_t>(packet.size()),&attemptedRoutes)!=0
+        && attemptedRoutes>=humans;
 }
 bool Notify(uint8_t* room,int slot,const Source& source,bool deck,unsigned humans) {
     if(deck) {
@@ -411,16 +413,25 @@ bool RetirePreviousRound(Attempt& a,uint8_t* room) {
     g_api->Log(g_mod,SDGO_LOG_INFO,"retired round %llu after verified native pilot reset; fresh room records retained",previous.token);
     a.cleanupChecked=true;return true;
 }
-bool Synchronize(Attempt& a,uint8_t* room) {
-    if(a.synchronized) return true;
-    if(!std::all_of(a.players.begin(),a.players.end(),[](const Player& p){return p.built;})) return true;
-    std::vector<std::pair<int,Source>> updates;
+bool PrepareNotices(Attempt& a,uint8_t* room) {
+    if(a.noticesPrepared) return true;
+    if(!std::all_of(a.players.begin(),a.players.end(),[](const Player& p){return p.built;})) {
+        Fail(a,"native start broadcast preceded complete human construction"); return false;
+    }
+    std::vector<std::vector<uint8_t>> notices;
     for(const auto& p:a.players) {
         Source source;
         if(!Capture(room+kSlotBase+p.slot*kSlotStride,&source) || source.owner!=p.owner) {
             Fail(a,"cannot read the completed random loadout for client synchronization"); return false;
         }
-        updates.emplace_back(p.slot,source);
+        if(UsesDeck(a.signature.mode)) {
+            auto ship=room_random_sync::Packet(room_random_sync::kShipOpcode,source.owner,
+                                               static_cast<uint32_t>(p.slot),Get<uint32_t>(room,0),source.ship);
+            notices.emplace_back(ship.begin(),ship.end());
+        }
+        auto active=room_random_sync::Packet(room_random_sync::kUnitOpcode,source.owner,
+                                             static_cast<uint32_t>(p.slot),Get<uint32_t>(room,0),source.active);
+        notices.emplace_back(active.begin(),active.end());
     }
     {
         std::lock_guard<std::mutex> lock(g_state);
@@ -428,15 +439,52 @@ bool Synchronize(Attempt& a,uint8_t* room) {
         if(saved==g_saved.end() || saved->second.token!=a.token) {
             Fail(a,"random room was replaced before client synchronization"); return false;
         }
-        // A partial send must also restore every original client record.
+    }
+    a.notices=std::move(notices);
+    a.noticesPrepared=true;
+    return true;
+}
+void SendPreparedNotices(Attempt& a,uint8_t* room) {
+    {
+        std::lock_guard<std::mutex> lock(g_state);
+        auto saved=g_saved.find(room);
+        if(saved==g_saved.end() || saved->second.token!=a.token) {
+            a.noticeFailure=true;
+            g_api->Log(g_mod,SDGO_LOG_WARN,"native start submitted but its random room was replaced before loadout notices");
+            return;
+        }
+        // Any partial send must restore every original client record on release.
         saved->second.clientsTouched=true;
     }
-    for(const auto& update:updates)
-        if(!Notify(room,update.first,update.second,UsesDeck(a.signature.mode),static_cast<unsigned>(a.players.size()))) {
-            Fail(a,"native loadout notification did not find all human routes"); return false;
-        }
-    a.synchronized=true;
-    return true;
+    a.noticesAttempted=true;
+    bool allQueued=true;
+    for(auto& packet:a.notices) {
+        uint32_t attemptedRoutes=0;
+        const bool queued=g_broadcast
+            && g_broadcast(room,packet.data(),static_cast<uint32_t>(packet.size()),&attemptedRoutes)!=0
+            && attemptedRoutes>=a.players.size();
+        allQueued=queued&&allQueued;
+    }
+    a.noticesQueued=allQueued;
+    if(!allQueued) {
+        a.noticeFailure=true;
+        g_api->Log(g_mod,SDGO_LOG_WARN,
+                   "native start submitted; one or more loadout notices did not report every human route");
+    }
+}
+int __fastcall BroadcastStart(uint8_t* room,void*,uint8_t* packet,uint32_t length,uint32_t* attemptedRoutes) {
+    Attempt* attempt=g_attempt;
+    const bool genuineStart=attempt && attempt->enabled && attempt->applied && attempt->actual==room
+        && packet && length==0xCD4 && Get<uint16_t>(packet,0)==0x06C3;
+    if(!genuineStart || attempt->startSubmitted)
+        return g_broadcast(room,packet,length,attemptedRoutes);
+    if(attempt->failed || !PrepareNotices(*attempt,room)) return 0;
+    // Entering the native announcer is the point of no rollback: it may have
+    // already queued the genuine start even if a later route reports failure.
+    attempt->startSubmitted=true;
+    const int result=g_broadcast(room,packet,length,attemptedRoutes);
+    SendPreparedNotices(*attempt,room);
+    return result;
 }
 void RestoreActual(uint8_t* room,uint64_t token=0) {
     SavedRoom saved;
@@ -465,10 +513,11 @@ void Commit(const Attempt& a) {
                       static_cast<unsigned long>(u.unit),u.points));
                 points+=u.points;
             }
-            g_api->Log(g_mod,SDGO_LOG_INFO,"round %llu owner %lu: %s; %u points%s; room type %u mode %u; native loadout notices queued",a.token,
+            g_api->Log(g_mod,SDGO_LOG_INFO,"round %llu owner %lu: %s; %u points%s; room type %u mode %u; native start submitted; loadout notices %s",a.token,
                 static_cast<unsigned long>(p.owner),message,points,
                 p.selection.alternativeToPrevious?"":" (only one feasible model set)",
-                static_cast<unsigned>(a.signature.type),static_cast<unsigned>(a.signature.mode));
+                static_cast<unsigned>(a.signature.type),static_cast<unsigned>(a.signature.mode),
+                a.noticesQueued?"queued":"incomplete");
         }
     }
     while(g_history.size()>8192) {
@@ -509,7 +558,6 @@ int __fastcall Build(void* proc,void*,uint8_t* room,uint8_t* info,uint8_t* pilot
         Attempt& a=*g_attempt;
         for(auto& p:a.players)
             if(room+kSlotBase+p.slot*kSlotStride==info) p.built=true;
-        if(!Synchronize(a,room)) return 0;
     }
     return result;
 }
@@ -522,14 +570,31 @@ template<class Call> int RunAttempt(Call&& call) {
     Attempt* parent=g_attempt; g_attempt=&attempt;
     try {
         const int result=call();
-        if(result==0 && attempt.applied && !attempt.failed && attempt.synchronized) Commit(attempt);
-        else if(attempt.applied) RestoreActual(attempt.actual,attempt.token);
-        if(result!=0 || attempt.failed || (attempt.applied && !attempt.synchronized))InvalidateObservedRooms(attempt);
+        if(attempt.startSubmitted) {
+            if(attempt.applied) Commit(attempt);
+            for(const auto* room:attempt.observedRooms)
+                ObserveHuman(SDGO_BATTLE_HUMAN_UNIT_START_ACCEPTED,g_humanObserver.Next(),room,nullptr,nullptr,0,0,0);
+            g_attempt=parent;
+            return result;
+        }
+        if(result==0 && attempt.enabled && attempt.applied && !attempt.failed)
+            Fail(attempt,"native start returned without its genuine start broadcast");
+        if(attempt.applied) RestoreActual(attempt.actual,attempt.token);
+        if(result!=0 || attempt.failed || attempt.applied) InvalidateObservedRooms(attempt);
         else for(const auto* room:attempt.observedRooms)
             ObserveHuman(SDGO_BATTLE_HUMAN_UNIT_START_ACCEPTED,g_humanObserver.Next(),room,nullptr,nullptr,0,0,0);
         g_attempt=parent;
         return attempt.failed ? kStartError : result;
     } catch(...) {
+        if(attempt.startSubmitted) {
+            try {
+                if(attempt.applied) Commit(attempt);
+                for(const auto* room:attempt.observedRooms)
+                    ObserveHuman(SDGO_BATTLE_HUMAN_UNIT_START_ACCEPTED,g_humanObserver.Next(),room,nullptr,nullptr,0,0,0);
+            } catch(...) {}
+            g_attempt=parent;
+            throw;
+        }
         try { if(attempt.applied) RestoreActual(attempt.actual,attempt.token); }
         catch(...) { InvalidateObservedRooms(attempt);g_attempt=parent;throw; }
         InvalidateObservedRooms(attempt);
@@ -607,6 +672,7 @@ SDGO_MOD_ENTRY {
        || !api->HookCode(mod,"battle.start_special",reinterpret_cast<void*>(&SpecialStart),reinterpret_cast<void**>(&g_special))
        || !api->HookCode(mod,"battle.validate_unit",reinterpret_cast<void*>(&Validate),reinterpret_cast<void**>(&g_validate))
        || !api->HookCode(mod,"battle.build_human_unit",reinterpret_cast<void*>(&Build),reinterpret_cast<void**>(&g_build))
+       || !api->HookCode(mod,"battle.room_random_broadcast",reinterpret_cast<void*>(&BroadcastStart),reinterpret_cast<void**>(&g_broadcast))
        || !api->HookCode(mod,"battle.release_pilots",reinterpret_cast<void*>(&Release),reinterpret_cast<void**>(&g_release))) return 0;
     g_humanObserverReady=true;
     api->Log(mod,SDGO_LOG_INFO,"ready: !rand / !random assigns owned units once per battle; decks total exactly 10 points");

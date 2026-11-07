@@ -16,6 +16,7 @@ namespace fixture {
 std::vector<uint8_t> room(0x33000),preview(0x33000),lobby(0x2218),lobbyProc(0x100);
 std::vector<uint8_t> client(0x4000);
 std::vector<std::vector<uint8_t>> notices;
+std::vector<uint16_t> transmissions;
 int noticeCalls=0,failNotice=0;
 using CopyNoticeFn=std::function<void(std::vector<uint8_t>&,const uint8_t*,uint16_t)>;
 CopyNoticeFn nativeCopyNotice;
@@ -124,11 +125,21 @@ int __fastcall BuildNative(void*,void*,uint8_t*,uint8_t* info,uint8_t* pilot,uin
     return 1;
 }
 int __fastcall BroadcastNative(uint8_t* actual,void*,uint8_t* packet,uint32_t length,uint32_t* sent) {
-    ++noticeCalls;*sent=0;
-    if(failNotice==noticeCalls) return 0;
     const uint16_t opcode=Get<uint16_t>(packet,0);
+    transmissions.push_back(opcode);
+    *sent=0;
+    for(unsigned i=0;i<12;++i) {
+        const uint32_t id=Get<uint32_t>(actual,kSlotBase+i*kSlotStride+kOwner);
+        if(id && !(id&kAiBit)) ++*sent;
+    }
+    if(opcode==0x06C3) {
+        CHECK(length==0xCD4u);
+        return 1;
+    }
+    ++noticeCalls;
     CHECK(opcode==0x0861 || opcode==0x098B);
     CHECK(length==(opcode==0x0861 ? 0xABu : 0x2CEu));
+    if(failNotice==noticeCalls) { *sent=0;return 0; }
     const uint32_t slot=Get<uint32_t>(packet,10),owner=Get<uint32_t>(packet,6);
     CHECK(slot<12);CHECK((owner&kAiBit)==0);
     CHECK(Get<uint32_t>(actual+kSlotBase+slot*kSlotStride,kOwner)==owner);
@@ -137,10 +148,6 @@ int __fastcall BroadcastNative(uint8_t* actual,void*,uint8_t* packet,uint32_t le
     if(nativeCopyNotice) nativeCopyNotice(client,packet,opcode);
     else std::memcpy(client.data()+0x5D7+slot*0x48E+(opcode==0x0861 ? 0x49 : 0x146),
                      packet+0x12,opcode==0x0861 ? 0x99 : 0x2BC);
-    for(unsigned i=0;i<12;++i) {
-        const uint32_t id=Get<uint32_t>(actual,kSlotBase+i*kSlotStride+kOwner);
-        if(id && !(id&kAiBit)) ++*sent;
-    }
     Put<uint32_t>(packet,2,1001); // the native broadcaster rewrites recipient routing
     return 1;
 }
@@ -166,6 +173,11 @@ int __fastcall DispatchNative(void* proc,void*,int,void*,uint32_t*,uint32_t*) {
         if(!Build(proc,nullptr,room.data(),Info(slot),room.data()+0x3CE4+slot*0x1F54,room[4],buildMode)) return kStartError;
         if(failAfter && builds>=failAfter) return kStartError;
     }
+    std::array<uint8_t,0xCD4> start{};
+    Put<uint16_t>(start.data(),0,0x06C3);
+    uint32_t attemptedRoutes=0;
+    if(!BroadcastStart(room.data(),nullptr,start.data(),static_cast<uint32_t>(start.size()),&attemptedRoutes))
+        return kStartError;
     return 0;
 }
 int __fastcall SpecialNative(void* proc,void*,void*,uintptr_t) {
@@ -181,7 +193,7 @@ void Reset(uint8_t mode=1,const char* title="!rand") {
     g_saved.clear();g_history.clear();g_attempt=nullptr;g_token=0;
     std::fill(room.begin(),room.end(),uint8_t{0});std::fill(lobby.begin(),lobby.end(),uint8_t{0});
     inventory.clear();metadata.clear();built.clear();requestedOwners.clear();ai_test::logs.clear();
-    notices.clear();noticeCalls=failNotice=0;
+    notices.clear();transmissions.clear();noticeCalls=failNotice=0;
     freshNativeSetup=true;
     nativeModeMismatch=false;
     std::fill(client.begin(),client.end(),uint8_t{0xCC});
@@ -233,6 +245,7 @@ int Hook(SdgoMod*,const char* key,void*,void** original) {
     else if(std::strcmp(key,"battle.start_special")==0) *original=reinterpret_cast<void*>(&SpecialNative);
     else if(std::strcmp(key,"battle.validate_unit")==0) *original=reinterpret_cast<void*>(&ValidateNative);
     else if(std::strcmp(key,"battle.build_human_unit")==0) *original=reinterpret_cast<void*>(&BuildNative);
+    else if(std::strcmp(key,"battle.room_random_broadcast")==0) *original=reinterpret_cast<void*>(&BroadcastNative);
     else if(std::strcmp(key,"battle.release_pilots")==0) *original=reinterpret_cast<void*>(&ReleaseNative);
     else return 0;
     return 1;
@@ -278,6 +291,11 @@ int wmain(int argc,wchar_t** argv) {
         Reset(mode,"!ai !rand");const auto originalClient=client;
         CHECK(Start()==0);
         CHECK(notices.size()==(UsesDeck(mode)?4u:2u));
+        CHECK(!transmissions.empty() && transmissions.front()==0x06C3);
+        CHECK(std::count(transmissions.begin(),transmissions.end(),0x06C3)==1);
+        CHECK(std::all_of(transmissions.begin()+1,transmissions.end(),[](uint16_t opcode) {
+            return opcode==0x0861 || opcode==0x098B;
+        }));
         for(unsigned i=0;i<2;++i) {
             const uint8_t* cached=client.data()+0x5D7+i*0x48E;
             CHECK(Get<uint32_t>(cached,0x49)==built.at(1001+i).front());
@@ -291,11 +309,14 @@ int wmain(int argc,wchar_t** argv) {
         Release(room.data(),nullptr);CHECK(client==originalClient);
     }
 
-    SCENARIO("partial notification and failure after the final build restore every client");
+    SCENARIO("post-submit notification failure retains the accepted random room until release");
     for(int failure:{1,2,3,4}) {
         Reset(7);const auto originalClient=client,originalSource=Sources();failNotice=failure;
-        CHECK(Start()==kStartError);CHECK(client==originalClient);CHECK(Sources()==originalSource);
-        CHECK(g_saved.empty());CHECK(g_history.empty());
+        CHECK(Start()==0);CHECK(Sources()!=originalSource);
+        CHECK(g_saved.size()==1);CHECK(g_history.size()==2);
+        CHECK(!transmissions.empty() && transmissions.front()==0x06C3);
+        Release(room.data(),nullptr);
+        CHECK(client==originalClient);CHECK(Sources()==originalSource);CHECK(g_saved.empty());
     }
     Reset(5);const auto lateClient=client,lateSource=Sources();failAfter=2;
     CHECK(Start()==kStartError);CHECK(client==lateClient);CHECK(Sources()==lateSource);
@@ -574,17 +595,17 @@ int wmain(int argc,wchar_t** argv) {
     Reset(14);nativeOverrideSecond=true;CHECK(Start()==0);CHECK(builds==2);CHECK(reads==1);
     Release(room.data(),nullptr);
 
-    SCENARIO("module entry owns five unique sites, separate from both AI mods");
+    SCENARIO("module entry owns six unique sites, separate from both AI mods");
     Reset();hooks.clear();
     SdgoApi api=ai_test::api;api.ModDirectory=&fixture::Directory;api.SettingString=&fixture::Setting;
     api.Symbol=&fixture::Symbol;api.HookCode=&fixture::Hook;
     CHECK(SdgoModLoad(&api,nullptr)==1);
-    CHECK(hooks==std::vector<std::string>({"battle.start_dispatch","battle.start_special","battle.validate_unit","battle.build_human_unit","battle.release_pilots"}));
+    CHECK(hooks==std::vector<std::string>({"battle.start_dispatch","battle.start_special","battle.validate_unit","battle.build_human_unit","battle.room_random_broadcast","battle.release_pilots"}));
     for(const auto& hook:hooks) {
         CHECK(hook!="battle.setup_humans");CHECK(hook!="battle.start_notify");
         CHECK(hook!="battle.end");CHECK(hook!="battle.room_tick");
     }
-    SCENARIO("human observer sees final random inputs and native results before synchronization in all modes");
+    SCENARIO("human observer sees final random inputs before the submitted start and notices in all modes");
     SdgoBattleHumanUnitObserverSinkV1 sink{sizeof(sink),1,&ObserveHumanEvent,nullptr};
     CHECK(SdgoBattleRegisterHumanUnitObserverV1(&sink)==1);
     for(uint8_t mode=1;mode<=14;++mode) {
@@ -619,17 +640,20 @@ int wmain(int argc,wchar_t** argv) {
     CHECK(std::all_of(humanObservations.begin(),humanObservations.end(),[](const auto& event) {
         return event.event.type==SDGO_BATTLE_HUMAN_UNIT_ROOM_INVALIDATED;
     }));
-    SCENARIO("post-build start rollback invalidates every already-observed room generation");
-    for(bool lateFailure:{false,true}) {
-        Reset();observeHumans=true;
-        if(lateFailure)failAfter=1;else failNotice=1;
-        CHECK(Start()==kStartError);CHECK(humanObservations.size()>=3);
-        CHECK(std::any_of(humanObservations.begin(),humanObservations.end(),[](const auto& event) {
-            return event.event.type==SDGO_BATTLE_HUMAN_UNIT_AFTER && event.event.native_result==1;
-        }));
-        CHECK(humanObservations.back().event.type==SDGO_BATTLE_HUMAN_UNIT_ROOM_INVALIDATED);
-        CHECK(humanObservations.back().event.room==room.data() && !humanObservations.back().event.source);
-    }
+    SCENARIO("pre-submit native failure invalidates the observed room generation");
+    Reset();observeHumans=true;failAfter=1;
+    CHECK(Start()==kStartError);CHECK(humanObservations.size()>=3);
+    CHECK(std::any_of(humanObservations.begin(),humanObservations.end(),[](const auto& event) {
+        return event.event.type==SDGO_BATTLE_HUMAN_UNIT_AFTER && event.event.native_result==1;
+    }));
+    CHECK(humanObservations.back().event.type==SDGO_BATTLE_HUMAN_UNIT_ROOM_INVALIDATED);
+    CHECK(humanObservations.back().event.room==room.data() && !humanObservations.back().event.source);
+    SCENARIO("post-submit notice failure keeps the accepted observer generation");
+    Reset();observeHumans=true;failNotice=1;
+    CHECK(Start()==0);CHECK(humanObservations.back().event.type==SDGO_BATTLE_HUMAN_UNIT_START_ACCEPTED);
+    CHECK(std::none_of(humanObservations.begin(),humanObservations.end(),[](const auto& event) {
+        return event.event.type==SDGO_BATTLE_HUMAN_UNIT_ROOM_INVALIDATED && event.builds>0;
+    }));
     SCENARIO("nonrandom direct builds preserve native FP/error and report even native zero results");
     Reset();g_build=reinterpret_cast<BuildFn>(&ContractBuild);observeHumans=observerChangesFp=true;
     for(int result:{0,1}) {
