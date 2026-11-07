@@ -71,6 +71,21 @@ class Profiles(unittest.TestCase):
         receipt=storage.read_json(self.game/'sdgo/local-state/client-runtime.json')
         self.assertEqual(receipt['source_id'],source['source_id']);self.assertEqual(receipt['mirror'],2)
 
+    def test_imported_programme_mirrors_are_used_with_the_owners_channel_and_lock(self):
+        self.profile['framework_source']=copy.deepcopy(self.source['framework'])
+        self.profile['framework_source']['channel']='beta'
+        self.profile['framework']['version']='1.7.10-beta.1'
+        self.source['framework']['feeds']=['git+https://selected.invalid/framework.git#runtime/stable']
+        (self.repo/p.MANIFEST).write_bytes(storage.json_bytes(self.profile))
+        (self.game/'sdgo/client-source.json').write_bytes(storage.json_bytes(self.source))
+        chosen={**self.framework,'version':'1.7.10-beta.1','channel':'beta'}
+        with patch('manager.framework_source.load',return_value=chosen)as load:
+            plan=self.controller.plan(self.host)
+        self.assertEqual(load.call_args.args[1]['feeds'],self.source['framework']['feeds'])
+        self.assertEqual(load.call_args.args[1]['channel'],'beta')
+        self.assertEqual(load.call_args.kwargs['constraints']['locked_framework'],self.profile['framework'])
+        self.assertEqual(plan['framework_version'],'1.7.10-beta.1')
+
     def test_different_revision_is_not_accepted_as_a_payload_backup(self):
         source={**self.source,'feeds':['https://first.invalid/server-profile.json','https://backup.invalid/server-profile.json']}
         (self.game/'sdgo/client-source.json').write_bytes(storage.json_bytes(source))
@@ -140,7 +155,21 @@ class Profiles(unittest.TestCase):
         self.assertEqual(result['revision'],1);self.assertEqual(exported['mods'],{'example':'2.0.0'})
         self.assertNotIn('GOnline.exe',exported['files']);self.assertNotIn('sdgo/core.dll',exported['files'])
         self.assertNotIn('sdgo/mods/example/example.dll',exported['files']);self.assertIn('sprs/new-unit.spr',exported['files'])
-        self.assertEqual(profile_publish.publish(host,self.source,self.framework,directory,extras=['sprs/new-unit.spr'])['revision'],1)
+        self.assertEqual(profile_publish.publish(host,self.source,self.framework,directory)['revision'],1)
+        self.assertIn('sprs/new-unit.spr',storage.read_json(directory/p.MANIFEST)['files'])
+
+    def test_owner_export_preserves_installed_content_without_private_generator_state(self):
+        plan=self.controller.plan(self.host);self.controller.install(self.host,plan['digest'])
+        directory=self.root/'portable-owner'
+        profile_publish.publish({**self.host,'runtime_mode':'owner'},self.source,self.framework,directory)
+        manifest=storage.read_json(directory/p.MANIFEST)
+        self.assertIn('sprs/new-unit.spr',manifest['files'])
+        self.assertNotIn('sdgo/core.dll',manifest['files'])
+        self.assertNotIn('sdgo/local-state/client-runtime.json',manifest['files'])
+        (self.game/'sprs/new-unit.spr').unlink()
+        result=profile_publish.publish({**self.host,'runtime_mode':'owner'},self.source,self.framework,directory)
+        self.assertEqual(result['revision'],2)
+        self.assertNotIn('sprs/new-unit.spr',storage.read_json(directory/p.MANIFEST)['files'])
 
     def test_owner_program_drift_is_refused_even_when_version_number_matches(self):
         plan=self.controller.plan(self.host);self.controller.install(self.host,plan['digest'])
@@ -162,6 +191,44 @@ class Profiles(unittest.TestCase):
         self.assertEqual(storage.read_json(destination/p.MANIFEST)['source_id'],self.source['source_id'])
         state=OwnerChannels(self.workspace).state()['hosts'][0]['profile_publication']
         self.assertEqual(state['directory'],str(destination.resolve()));self.assertEqual(state['feeds'],self.source['feeds'])
+
+    def test_owner_content_export_keeps_programme_lock_after_restart_or_new_upstream(self):
+        from types import SimpleNamespace
+        plan=self.controller.plan(self.host);self.controller.install(self.host,plan['digest'])
+        self.host['runtime_mode']='owner';self.host['publication']={'publisher_id':self.source['source_id']}
+        self.workspace.host=lambda _:self.host;self.workspace.save_workspace=lambda:None
+        self.workspace.updates=SimpleNamespace(latest={'version':self.framework['version'],'sha256':self.framework['sha256'],'channel':'stable'},source_repository=lambda:updates.REPOSITORY)
+        directory=self.root/'retained-lock'
+        self.controller.publish_profile(self.host['id'],str(directory),self.source['feeds'],['sprs/new-unit.spr'])
+        accepted=storage.read_json(directory/p.MANIFEST)['framework']
+        for latest in(None,{'version':'99.0.0','sha256':'f'*64,'channel':'stable'}):
+            with self.subTest(latest=latest):
+                self.workspace.updates.latest=latest
+                (self.game/'sdgo/mods/example/config.ini').write_bytes(('[settings]\nvalue=changed '+str(latest is None)+'\n').encode())
+                with patch('manager.framework_source.load',return_value=self.framework)as load:
+                    result=self.controller.publish_profile(self.host['id'],str(directory),self.source['feeds'],['sprs/new-unit.spr'])
+                self.assertEqual(load.call_args.args[2],{'minimum_framework':accepted['version'],'locked_framework':accepted})
+                self.assertEqual(storage.read_json(directory/p.MANIFEST)['framework'],accepted)
+                self.assertGreater(result['revision'],1)
+        storage.atomic(self.game/'sdgo/release.json',storage.json_bytes({'version':'99.0.0'}))
+        self.workspace.updates.latest=None
+        with self.assertRaisesRegex(ValueError,'先检查并选择'):
+            self.controller.publish_profile(self.host['id'],str(directory),self.source['feeds'])
+
+    def test_owner_content_export_refuses_unpublished_framework_bytes(self):
+        plan=self.controller.plan(self.host);self.controller.install(self.host,plan['digest'])
+        (self.game/'sdgo/core.dll').write_bytes(b'unpublished core with unchanged metadata')
+        with self.assertRaisesRegex(ValueError,'框架程序与所选发布包不同'):
+            profile_publish.snapshot({**self.host,'runtime_mode':'owner'},self.source,self.framework)
+
+    def test_publication_network_commands_do_not_have_total_transfer_deadlines(self):
+        from types import SimpleNamespace
+        from manager.client_runtime import ClientRuntime
+        for args in(['fetch','origin'],['push','origin','HEAD:content'],['ls-remote','origin']):
+            with self.subTest(command=args[0]),patch('manager.owned_process.run',return_value=SimpleNamespace(returncode=0,stdout=b'',stderr=b''))as run:
+                ClientRuntime.git(self.controller,self.repo,args)
+                self.assertIsNone(run.call_args.kwargs['timeout'])
+                self.assertIs(run.call_args.kwargs['stop'],self.controller.operation_stop)
 
     def test_git_publication_preserves_crlf_unicode_and_binary_bytes(self):
         import subprocess

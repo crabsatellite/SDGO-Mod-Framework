@@ -20,7 +20,15 @@ def environment():
     import os
     # Keep configured SSH commands/identity agents intact. Replacing them with
     # plain ssh can discard the very credentials that made the source readable.
-    return {**os.environ,'GIT_TERMINAL_PROMPT':'0','GCM_INTERACTIVE':'Never','SSH_ASKPASS_REQUIRE':'never'}
+    env={**os.environ,'GIT_TERMINAL_PROMPT':'0','GCM_INTERACTIVE':'Never','SSH_ASKPASS_REQUIRE':'never'}
+    if os.name=='nt':
+        # Deep workspaces can exceed Git for Windows' default path limit.
+        # Keep this opt-in local to managed commands and retain existing config.
+        slot=int(env.get('GIT_CONFIG_COUNT')or'0')
+        env['GIT_CONFIG_COUNT']=str(slot+1)
+        env['GIT_CONFIG_KEY_'+str(slot)]='core.longpaths'
+        env['GIT_CONFIG_VALUE_'+str(slot)]='true'
+    return env
 
 
 def failure(stderr):

@@ -29,13 +29,15 @@ def git_stage(controller,directory,manifest,zip_payload=False):
     if any(indexed.get(name)!=oid for name,oid in expected.items()):raise ValueError('Git 过滤规则改变了锁定内容的原始字节；拒绝发布')
 
 
-def snapshot(host,source,framework,extras=(),personal_settings=()):
+def snapshot(host,source,framework,extras=(),personal_settings=(),previous=None):
     root=Path(host['path']).resolve();source=server_profiles.binding(source)
     # Existing providers already register their exact generated outputs and
     # receipts. Reuse that inventory instead of diffing an entire client tree.
     legacy={'publisher_id':source['source_id'],'label':source['label'],'feeds':[]}
     files,_,_=owner_channel.snapshot(host,legacy,list(extras),max_file_bytes=512*1024*1024,include_game_base=False)
     official=runtime_layers.program_files(framework);catalog=storage.read_json(Path(framework['bundle'])/'client/sdgo/catalog.json')
+    for name in('d3d9.dll','sdgo/core.dll'):
+        if name not in official or not(root/name).is_file()or owner_channel.file_hash(root/name)!=official[name]['sha256']:raise ValueError('框架程序与所选发布包不同；先审阅并采用对应程序：'+name)
     programs={m['id']:m for m in catalog['mods']if m['target']=='client'}
     selected={};patches={};shared_files=[];content={}
     for identity,mod in programs.items():
@@ -61,6 +63,22 @@ def snapshot(host,source,framework,extras=(),personal_settings=()):
                 if len(raw)>512*1024*1024:raise ValueError('共享配置超过文件限制：'+relative)
                 owner_channel.public_file(relative,raw);files[relative]=raw
             if relative in files:shared_files.append(relative)
+    # The accepted install receipt and the previous publication are registered
+    # inventories too. A portable client has no private generator workspace.
+    receipt=storage.read_json(root/'sdgo/local-state/client-runtime.json',{})
+    known=set((previous or{}).get('files',{}))
+    if receipt.get('profile'):known.update(receipt.get('files',{}))
+    for name in sorted(known-set(files)):
+        if name==server_profiles.SHARED:continue  # Rebuilt below from current settings and policy.
+        try:server_profiles.content_name(name)
+        except ValueError:continue  # Programme, binding and recovery records are not content.
+        if name in official and name not in shared_files and name!='sdgo/sdgo.ini':continue
+        path=updates.child(root,name)
+        if not path.is_file():continue
+        before=path.stat();raw=path.read_bytes();after=path.stat()
+        if(before.st_mtime_ns,before.st_size)!=(after.st_mtime_ns,after.st_size):raise storage.Conflict('共享内容正在变化：'+name)
+        if len(raw)>512*1024*1024:raise ValueError('共享内容超过文件限制：'+name)
+        owner_channel.public_file(name,raw);files[name]=raw
     for name,raw in files.items():
         if name in(owner_channel.BINDING,owner_channel.RECEIPT):continue
         if name in official and name not in shared_files and name!='sdgo/sdgo.ini':continue
@@ -82,9 +100,10 @@ def snapshot(host,source,framework,extras=(),personal_settings=()):
 def publish(host,source,framework,directory,extras=(),personal_settings=(),zip_payload=False):
     root=Path(host['path']).resolve();directory=Path(directory).resolve()
     if directory==directory.parent or directory.is_relative_to(root)or root.is_relative_to(directory):raise ValueError('配置档发布目录须与客户端目录分开')
-    content,manifest=snapshot(host,source,framework,extras,personal_settings)
-    directory.mkdir(parents=True,exist_ok=True);marker=directory/server_profiles.MANIFEST;prior=storage.read_json(marker,{})
+    source=server_profiles.binding(source);marker=directory/server_profiles.MANIFEST;prior=storage.read_json(marker,{})
     if prior and prior.get('source_id')!=source['source_id']:raise ValueError('发布目录属于另一服主')
+    content,manifest=snapshot(host,source,framework,extras,personal_settings,prior)
+    directory.mkdir(parents=True,exist_ok=True)
     old={k:v for k,v in prior.items()if k not in('revision','payload')};new={k:v for k,v in manifest.items()if k not in('revision','payload')}
     manifest['revision']=prior.get('revision',0)+(old!=new or not prior)
     for name,raw in content.items():storage.atomic(updates.child(directory,server_profiles.CONTENT_PREFIX+name),raw)

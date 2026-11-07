@@ -9,7 +9,7 @@ executables; supported builds are listed under [Installation](docs/setup.md#supp
 does not distribute the pack.
 
 [Installation](docs/setup.md) · [SDGO Mod Manager](docs/mod-manager.md) · [Latest release](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
-Owner profiles combine locked official Mods, owner settings and assets on a compatible original client in one verified installation transaction. Git, HTTPS and offline directories use the same contract; a complete-client repository is optional.
+Owner profiles combine locked official Mods, owner settings and assets on a compatible original client in one verified installation transaction. Later content exports retain the published program lock; program upgrades require explicit adoption. Git, HTTPS and offline directories use the same contract; a complete-client repository is optional.
 
 Server owners and maintainers install, configure and [update](docs/mod-manager.md#updates) features with
 **SDGO Mod Manager**; the **0_更新与管理** entry at the top of the client folder opens it. Players can update
@@ -45,7 +45,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Native data and lifecycle guards <!-- catalog: `native_data_guard` --> | Fix crashes when unit data is missing or unit management is still waiting for data; keep crash logs accurate | [Use](docs/native-data-guard.md) |
 | Scene registration lifecycle fix <!-- catalog: `scene_lifecycle_fix` --> | Fix an occasional cleanup crash after a scene object moves to another area | [Use](docs/scene-lifecycle-fix.md) |
 | Multiplayer loading synchronization <!-- catalog: `loading_sync_fix` --> | Fix multiplayer starts that occasionally hang on the loading screen (BattleServer) | [Use](docs/loading-sync-fix.md) |
-| Native login recovery <!-- catalog: `login_recovery` --> | When a reconnect after a dropped connection is refused as already online, clear the old session and retry once (WorldServer) | [Use](docs/login-recovery.md) |
+| Native login recovery <!-- catalog: `login_recovery`, `login_recovery_client` --> | WorldServer stale-session cleanup plus bounded client reconnect, pending-request cleanup and return to native login input | [Use](docs/login-recovery.md) |
 | Apsalus III transform input fix <!-- catalog: `transform_input_fix` --> | Release the native transform lock when a form has no transform animation | [Use](docs/transform-input-fix.md) |
 | Agent relay log fix <!-- catalog: `agent_relay_log_fix` --> | Fix an Agent relay log that reads invalid memory | [Use](docs/agent-relay-log-fix.md) |
 | Battle rank regression fix <!-- catalog: `rank_progression_fix` --> | Stop battle settlement from lowering a pilot's rank (WorldServer) | [Use](docs/rank-progression-fix.md) |
@@ -71,6 +71,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Collection capsule <!-- catalog: `collection_capsule` --> | Missing-unit activity machine with configurable price and limits, plus native encyclopedia acquisition hints; 15 per week by default | [Use](docs/collection-capsule.md) |
 | Per-round random loadouts <!-- catalog: `room_random`, `room_random_client` --> | `!rand` in a room title draws each player's unit or deck from their own hangar every round | [Use](docs/room-random.md) |
 | Complete PvP All Map <!-- catalog: `all_maps` --> | Make the room's All Map choice draw from the complete native PvP map catalog while keeping mission-only maps in missions | [Use](docs/all-maps.md) |
+| Login unit showcase <!-- catalog: `login_showcase` --> | Choose login models by grade, all units, recent registrations or a selected list; SS/SR/SU by default | [Use](docs/login-showcase.md) |
 | FPS cap <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed | [Use](docs/fps-limit.md) |
 | Extended room titles <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Enter up to 128 characters in normal, AI, team and mission room creation, settings and rename controls | [Use](docs/room-titles.md) |
 | Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Easy / Medium / Hard, native weapon and form selection, shared contacts and map propulsion routes | [Use](docs/battle-ai.md) |

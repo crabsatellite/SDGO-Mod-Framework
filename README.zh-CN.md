@@ -9,7 +9,7 @@
 [安装说明](docs/setup.zh-CN.md) · [统一 Mod Manager](docs/mod-manager.zh-CN.md) · [最新发布](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
 
 服主与维护人员通过 **SDGO Mod Manager** 安装、配置和[更新](docs/mod-manager.zh-CN.md#更新)功能，
-客户端目录顶部的「0_更新与管理」可直接打开它。玩家取得兼容原版客户端后，可在 Manager 一键安装服主配置档：按锁定清单组合官方 Mod、服主共享配置和自定义素材，统一校验与回滚。Git、HTTPS 和离线目录使用同一内容契约；完整客户端仓库仅是服主可选备份。
+客户端目录顶部的「0_更新与管理」可直接打开它。玩家取得兼容原版客户端后，可在 Manager 一键安装服主配置档：按锁定清单组合官方 Mod、服主共享配置和自定义素材，统一校验与回滚。后续内容发布沿用已有程序锁，更换程序需先明确采用。Git、HTTPS 和离线目录使用同一内容契约；完整客户端仓库仅是服主可选备份。
 服主自己的「仅本地」扩展也可以放进 Manager 管理，它们不会被打包或导出分发。
 默认跟随我们提供的基础整合包。服主需要自行维护时，明确选择「服主 DIY」接管；接管后由服主维护配置、脚本、素材、兼容性与发布版本。
 [服主整合包更新](docs/owner-updates.zh-CN.md)支持审阅并采用上游组件、发布服主确认的版本，玩家只跟随该服主的来源。
@@ -37,7 +37,7 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 | 场景登记生命周期修复 <!-- catalog: `scene_lifecycle_fix` --> | 修复场景对象切换区域后偶发的清理闪退 | [使用说明](docs/scene-lifecycle-fix.zh-CN.md) |
 | 多人加载同步修复 <!-- catalog: `loading_sync_fix` --> | 修复多人开局时偶发卡在加载画面（BattleServer） | [使用说明](docs/loading-sync-fix.zh-CN.md) |
 | 首次登录大厅音乐 <!-- catalog: `lobby_music_fix` --> | 恢复首次登录时的大厅音乐 | [使用说明](docs/lobby-music-fix.zh-CN.md) |
-| 异常断线登录恢复 <!-- catalog: `login_recovery` --> | 异常断线后重新登录被判为“账号已在线”时，清理旧会话并自动重试一次（WorldServer） | [使用说明](docs/login-recovery.zh-CN.md) |
+| 异常断线登录恢复 <!-- catalog: `login_recovery`, `login_recovery_client` --> | WorldServer 清理旧会话，客户端等待超时有限重连、清理请求锁，结束后恢复原生登录输入 | [使用说明](docs/login-recovery.zh-CN.md) |
 | 阿普萨拉斯 III 变形卡死修复 <!-- catalog: `transform_input_fix` --> | 缺少变形动画时恢复原生状态退出，解除移动与攻击锁定 | [使用说明](docs/transform-input-fix.zh-CN.md) |
 | Agent 中继日志修复 <!-- catalog: `agent_relay_log_fix` --> | 修复 Agent 中继日志读取无效内存 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
 | 军衔回退修复 <!-- catalog: `rank_progression_fix` --> | 防止战斗结算降低已有军衔（WorldServer） | [使用说明](docs/rank-progression-fix.zh-CN.md) |
@@ -63,6 +63,7 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 | 收藏扭蛋 <!-- catalog: `collection_capsule` --> | 优先补图鉴的活动机台，安装时补充图鉴获取说明；价格和次数可配置，默认每周 15 次 | [使用说明](docs/collection-capsule.zh-CN.md) |
 | 每局随机机体 <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组 | [使用说明](docs/room-random.zh-CN.md) |
 | 完整对战 All Map <!-- catalog: `all_maps` --> | 房间选择 All Map 时从完整原生对战地图目录抽取，任务专用图仍留在任务模式 | [使用说明](docs/all-maps.zh-CN.md) |
+| 登录机体展示 <!-- catalog: `login_showcase` --> | 按等级、全部机体、最近注册或指定名单选择登录展示，默认 SS/SR/SU | [使用](docs/login-showcase.zh-CN.md) |
 | FPS 上限 <!-- catalog: `fps_limit` --> | 提高渲染帧率上限，保留原生游戏速度 | [使用说明](docs/fps-limit.zh-CN.md) |
 | 长房名 <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 普通、AI、队伍及任务房的建房、设置和改名入口支持最长 128 字 | [使用说明](docs/room-titles.zh-CN.md) |
 | 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | Easy / Medium / Hard 三档、按原生武装选择形态、共享敌情和地图推进装置寻路 | [使用说明](docs/battle-ai.zh-CN.md) |
