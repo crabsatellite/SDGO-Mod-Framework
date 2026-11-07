@@ -6,16 +6,17 @@ from . import storage,updates,framework_source
 SHARED='sdgo/shared-settings.json'
 
 
-def program_files(framework,selected=None):
+def program_files(framework,selected=None,include_manager=True):
     return {n[7:]if n.startswith('client/')else n:{'source':n,**entry}
             for n,entry in framework['manifest']['files'].items()if (n==updates.MANAGER or n.startswith('client/'))
+            and(include_manager or n!=updates.MANAGER)
             and(selected is None or not n.startswith('client/sdgo/mods/')or n.split('/')[3]in selected)}
 
 
 def compose(controller,binding,contract,root,entries,repo,commit,shared_data=None):
     spec=contract.get('layers',{})
     if spec.get('schema_version')!=1:raise ValueError('服主内容缺少双源归属声明')
-    framework=framework_source.load(controller,binding['framework'],constraints=spec);manifest=framework['manifest'];files=program_files(framework,spec.get('mod_ids'))
+    framework=framework_source.load(controller,binding['framework'],constraints=spec);manifest=framework['manifest'];files=program_files(framework,spec.get('mod_ids'),not spec.get('separate_manager'))
     minimum=spec.get('minimum_framework');maximum=spec.get('maximum_framework')
     current=updates.version(manifest['version'])[:3]
     if minimum is None or current<updates.version(minimum)[:3]or maximum and current>updates.version(maximum)[:3]:raise ValueError('框架版本不符合服主内容的兼容要求')

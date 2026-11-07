@@ -401,8 +401,12 @@ class Updates:
     def managed_by_client(self):
         if self.manager_exe is None:return False
         from .owner_channel import mode
+        def portable(host):
+            try:return storage.read_json(Path(host['path'])/'sdgo/client-source.json',{}).get('schema_version')==3
+            except(ValueError,OSError):return False
         return any(h['role']=='client'and Path(h['path']).resolve()==self.manager_exe.parent and
-                   (Path(h['path'])/'sdgo/client-source.json').is_file()and mode(h)!='owner'for h in self.workspace.settings['hosts'])
+                   (Path(h['path'])/'sdgo/client-source.json').is_file()and mode(h)!='owner'and
+                   not portable(h)for h in self.workspace.settings['hosts'])
 
     def source(self,value):
         git_binding=None

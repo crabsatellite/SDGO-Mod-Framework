@@ -4,6 +4,31 @@ import hashlib,json,shutil,time,uuid,zipfile
 from . import storage,updates,owner_channel,server_profiles,runtime_layers
 
 
+def git_stage(controller,directory,manifest,zip_payload=False):
+    directory=Path(directory)
+    attributes=directory/'.gitattributes';prior=attributes.read_bytes()if attributes.is_file()else b''
+    marker=b'# SDGO owner profile: preserve the declared bytes\n'
+    if marker not in prior:
+        rules=b'\n'+marker+b'.gitattributes -text\nserver-profile.json -text -filter -ident\nprofile-source.json -text -filter -ident\ncontent/** -text -filter -ident\nreleases/** -text -filter -ident\n'
+        storage.atomic(attributes,prior+rules)
+    paths=['.gitattributes','server-profile.json','profile-source.json','content']
+    if zip_payload:paths.append('releases')
+    controller.git(directory,['add','--',*paths])
+    # Existing tracked files may still have stat records from an earlier text
+    # conversion. Re-normalize after installing the narrow binary rules.
+    controller.git(directory,['add','--renormalize','--','server-profile.json','profile-source.json','content'])
+    indexed={}
+    for row in controller.git(directory,['ls-files','--stage','-z']).split(b'\0'):
+        if not row:continue
+        header,name=row.split(b'\t',1);mode,oid,stage=header.split()
+        if stage!=b'0':raise storage.Conflict('发布目录有未解决的 Git 冲突')
+        indexed[name.decode('utf-8')]=oid.decode()
+    expected={server_profiles.CONTENT_PREFIX+n:e['git_blob']for n,e in manifest['files'].items()}
+    for name in('server-profile.json','profile-source.json'):
+        raw=(directory/name).read_bytes();expected[name]=hashlib.sha1(('blob '+str(len(raw))+'\0').encode()+raw).hexdigest()
+    if any(indexed.get(name)!=oid for name,oid in expected.items()):raise ValueError('Git 过滤规则改变了锁定内容的原始字节；拒绝发布')
+
+
 def snapshot(host,source,framework,extras=(),personal_settings=()):
     root=Path(host['path']).resolve();source=server_profiles.binding(source)
     # Existing providers already register their exact generated outputs and

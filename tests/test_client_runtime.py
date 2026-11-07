@@ -200,8 +200,18 @@ class CompleteRuntime(unittest.TestCase):
                 self.assertEqual(result,b'objects');self.assertEqual(controller.fetch_mirror[key],2)
                 self.assertEqual(run.call_args_list[1].args[0][-1],'https://example.invalid/fallback.git')
                 self.assertEqual(run.call_args_list[0].kwargs['input'],run.call_args_list[1].kwargs['input'])
-                self.assertIn('http.lowSpeedTime=60',run.call_args_list[0].args[0])
-                self.assertEqual(run.call_args_list[0].kwargs['timeout'],180)
+                self.assertIn('http.lowSpeedLimit=0',run.call_args_list[0].args[0])
+                self.assertIsNone(run.call_args_list[0].kwargs['timeout'])
+
+    def test_network_transfers_have_no_total_deadline_and_keep_cancellation(self):
+        from manager import owned_process
+        controller=c.ClientRuntime(self.workspace)
+        with patch.object(owned_process,'run',return_value=subprocess.CompletedProcess([],0,b'objects',b''))as run:
+            controller.git(self.repo,['fetch','--stdin','origin'],input=b'1'*40+b'\n')
+            self.assertIsNone(run.call_args.kwargs['timeout'])
+            self.assertIs(run.call_args.kwargs['stop'],controller.operation_stop)
+            controller.git(self.repo,['fetch','origin','refs/heads/main'])
+            self.assertIsNone(run.call_args.kwargs['timeout'])
 
     def test_cancelled_blob_fetch_does_not_start_another_mirror(self):
         from manager import owned_process

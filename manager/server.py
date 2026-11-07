@@ -111,6 +111,7 @@ def make_server(workspace, port=0):
                     if controller is None:raise ValueError('完整客户端更新尚未初始化')
                     if method=='GET':return self.send_json(200,controller.state())
                     if method=='POST':
+                        if body.get('action')=='cancel':return self.send_json(200,controller.cancel(body.get('host')))
                         if body.get('action')=='profile_install':
                             return self.send_json(200,controller.bind_profile(body.get('host'),body.get('feeds',[]),body.get('offline')))
                         if body.get('action')=='profile_publish':

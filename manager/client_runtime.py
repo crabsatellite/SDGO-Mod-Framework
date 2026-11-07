@@ -103,6 +103,24 @@ class ClientRuntime:
         self.workspace=workspace;self.cache=workspace.root/'client-updates';self.stop_event=threading.Event()
         self.lock=threading.RLock();self.busy=threading.Lock();self.thread=None;self.jobs=[];self.results={};self.plans={}
         self.fetch_mirrors={};self.fetch_mirror={}
+        self.active_host=None
+        self.cancel_event=threading.Event()
+        class OperationStop:
+            def is_set(token):return self.stop_event.is_set()or self.cancel_event.is_set()
+        self.operation_stop=OperationStop()
+
+    def report_progress(self,**values):
+        if self.active_host:
+            with self.lock:
+                row=self.results.setdefault(self.active_host,{'status':'working'})
+                if values.get('phase')!=row.get('progress',{}).get('phase')and 'phase'in values:row['progress']={}
+                row.setdefault('progress',{}).update(values)
+
+    def git_progress(self,raw):
+        rows=re.findall(rb', ([0-9.]+) (bytes|KiB|MiB|GiB)',raw)
+        if rows:
+            amount,unit=rows[-1];scale={b'bytes':1,b'KiB':1024,b'MiB':1024**2,b'GiB':1024**3}[unit]
+            self.report_progress(current_bytes=int(float(amount)*scale))
 
     def bind_profile(self,identity,urls,offline=None):
         from . import server_profiles,framework_source
@@ -131,7 +149,7 @@ class ClientRuntime:
                 with lease('host:'+str(root).casefold()):
                     marker=root/SOURCE
                     if marker.is_file():storage.atomic(self.cache/'binding-backups'/uuid.uuid4().hex/'source.json',marker.read_bytes())
-                    storage.atomic(marker,storage.json_bytes(source));host['runtime_mode']='player';self.workspace.save_workspace()
+                    storage.atomic(marker,storage.json_bytes(source));host['runtime_mode']='player';host['client_updates_paused']=False;self.workspace.save_workspace()
                 with self.lock:self.jobs.append((identity,'sync',None));self.results[identity]={'status':'queued'}
                 self.start();return self.state()
             except InterruptedError:raise
@@ -171,8 +189,7 @@ class ClientRuntime:
         result=profile_publish.publish(host,source,release,output,extras or[],publication.get('personal_settings',[]),zip_payload)
         publication.update(directory=str(output),feeds=feeds,revision=result['revision'],git_remote=git_remote,branch=branch,extras=extras or[]);self.workspace.save_workspace()
         if git_remote:
-            self.git(output,['add','--','server-profile.json','profile-source.json','content'])
-            if zip_payload:self.git(output,['add','--','releases'])
+            profile_publish.git_stage(self,output,storage.read_json(output/server_profiles.MANIFEST),zip_payload)
             if self.git(output,['diff','--cached','--name-only']).strip():self.git(output,['commit','-m','Publish owner content revision '+str(result['revision'])])
             self.git(output,['push','origin','HEAD:refs/heads/'+branch])
             expected=self.git(output,['rev-parse','HEAD']).decode().strip()
@@ -185,7 +202,9 @@ class ClientRuntime:
         from .owned_process import run
         fetching=args[:1]==['fetch'];key=str(Path(repository).resolve())
         prefix=['-c','fetch.negotiationAlgorithm=noop']if'--stdin'in args else[]
-        if fetching:prefix+=['-c','http.lowSpeedLimit=1024','-c','http.lowSpeedTime=60']
+        if fetching:
+            prefix+=['-c','http.lowSpeedLimit=0']
+            if '--progress'not in args:args=[args[0],'--progress',*args[1:]]
         attempts=[(None,args)]
         if fetching and 'origin'in args:
             for index,remote in self.fetch_mirrors.get(key,[]):
@@ -194,8 +213,8 @@ class ClientRuntime:
         for index,arguments in attempts:
             try:
                 result=run(
-                    ['git','-C',str(repository),*prefix,*arguments],cwd=repository,timeout=180 if fetching else 1200 if output is not None or args[:1]==['cat-file']else 120,
-                    stop=self.stop_event,env=git_source.environment(),input=input,output=output)
+                    ['git','-C',str(repository),*prefix,*arguments],cwd=repository,timeout=None if fetching else 1200 if output is not None or args[:1]==['cat-file']else 120,
+                    stop=self.operation_stop,env=git_source.environment(),input=input,output=output,**({'progress':self.git_progress}if fetching else{}))
             except subprocess.TimeoutExpired:
                 errors.append('读取更新仓库超时');continue
             if result.returncode:
@@ -384,7 +403,7 @@ class ClientRuntime:
             destination=stage/'GPackData.zpk'
             with destination.open('xb')as output:
                 for part in base['parts']:
-                    if self.stop_event.is_set():raise InterruptedError('客户端更新已取消')
+                    if self.operation_stop.is_set():raise InterruptedError('客户端更新已取消')
                     segment=self.cache/'segments'/(part['sha256']+'.zip');segment.parent.mkdir(parents=True,exist_ok=True)
                     with lease('client-segment:'+str(segment.resolve())):
                         if not segment.is_file()or segment.stat().st_size!=part['bytes']or file_hash(segment)!=part['sha256']:
@@ -430,6 +449,7 @@ class ClientRuntime:
             if installed_source(root)!=plan['binding']:raise storage.Conflict('更新源已变化，请重新检查')
             if updates.running(root/'GOnline.exe'):return {'status':'waiting','message':'请关闭这个客户端后重试；不会结束游戏进程'}
             identity=uuid.uuid4().hex;run=self.cache/'runs'/identity;run.mkdir(parents=True)
+            self.report_progress(phase='staging',total_files=len(plan['needed']))
             stage=self.stage(plan,run,root)
             # Finish from a verified copy of the same Manager, so its installed
             # executable can be replaced together with the rest of the runtime.
@@ -464,9 +484,10 @@ class ClientRuntime:
             enforce_install(root,metadata,'client')
             journal={'schema_version':1,'status':'working','host':str(root),'source_id':plan['source_id'],'commit':plan['commit'],'changes':changes}
             storage.atomic(run/'transaction.json',storage.json_bytes(journal))
+            self.report_progress(phase='install',total_files=len(plan['needed'])+len(plan['retired']),verified_files=0)
             try:
                 for name in [*plan['retired'],*sorted(plan['needed'],key=lambda n:n==updates.MANAGER)]:
-                    if self.stop_event.is_set():raise InterruptedError('客户端更新已取消')
+                    if self.operation_stop.is_set():raise InterruptedError('客户端更新已取消')
                     target=updates.child(root,name);saved=updates.child(backup,name);saved.parent.mkdir(parents=True,exist_ok=True)
                     old=plan['snapshot'][name]
                     if(file_hash(target)if target.is_file()else None)!=old:raise storage.Conflict('文件已被外部修改：'+name)
@@ -474,6 +495,7 @@ class ClientRuntime:
                         shutil.copy2(target,saved)
                         if file_hash(saved)!=old:raise storage.Conflict('备份期间文件已改变：'+name)
                     row={'path':name,'previous':old,'installed':None};changes.append(row)
+                    self.report_progress(verified_files=len(changes),file=name)
                     storage.atomic(run/'transaction.json',storage.json_bytes(journal))
                     if name in plan['retired']:target.unlink()
                     else:
@@ -578,10 +600,19 @@ class ClientRuntime:
                          creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0),close_fds=True)
 
     def request(self,identity,action,digest=None):
-        if action not in('check','install','recover'):raise ValueError('客户端更新操作无效')
-        self.workspace.host(identity)
+        if action not in('check','install','recover','sync'):raise ValueError('客户端更新操作无效')
+        self.workspace.host(identity)['client_updates_paused']=False
+        self.workspace.save_workspace()
         with self.lock:self.jobs.append((identity,action,digest));self.results[identity]={'status':'queued'}
         self.start();return self.state()
+
+    def cancel(self,identity):
+        host=self.workspace.host(identity);host['client_updates_paused']=True;self.workspace.save_workspace()
+        with self.lock:
+            self.jobs=[job for job in self.jobs if job[0]!=identity]
+            if self.active_host==identity:self.cancel_event.set()
+            else:self.results[identity]={'status':'cancelled','message':'下载已取消；已校验文件保留，可继续下载'}
+        return self.state()
 
     def state(self):
         rows=[]
@@ -611,7 +642,7 @@ class ClientRuntime:
                     next_check=time.monotonic()+3600
                     from .owner_channel import mode
                     for host in self.workspace.settings['hosts']:
-                        if host['role']=='client'and mode(host)!='owner'and(Path(host['path'])/SOURCE).is_file():
+                        if host['role']=='client'and mode(host)!='owner'and not host.get('client_updates_paused')and(Path(host['path'])/SOURCE).is_file():
                             with self.lock:self.jobs.append((host['id'],'sync',None))
                     continue
                 if job is None:
@@ -623,13 +654,14 @@ class ClientRuntime:
                 if job:
                     identity,action,digest=job
                     with self.busy:
-                        with self.lock:self.results[identity]={'status':'working'}
+                        with self.lock:self.active_host=identity;self.cancel_event.clear();self.results[identity]={'status':'working'}
                         try:
                             host=self.workspace.host(identity)
                             result=self.recover(host)if action=='recover'else self.plan(host)if action in('check','sync')else self.install(host,digest)
                             if action=='sync'and result['status']=='available':result=self.install(host,result['digest'])
+                        except InterruptedError:result={'status':'cancelled','message':'操作已取消，已校验文件保留；缺失或不完整内容不会安装'}
                         except Exception as e:result={'status':'error','message':str(e)}
-                        with self.lock:self.results[identity]=result
+                        with self.lock:self.results[identity]=result;self.active_host=None;self.cancel_event.clear()
                 self.stop_event.wait(.25)
         self.thread=threading.Thread(target=loop,name='client-runtime-updates',daemon=True);self.thread.start()
 

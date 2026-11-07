@@ -27,10 +27,23 @@ export async function mountOwnerUpdates(ctx){
   }
   for(const host of state.hosts){
    const row=element('div',undefined,'manager-card'),r=host.result||{};
+   const downloading=['queued','working'].includes(r.status);
    row.append(element('h3',host.name),element('p',host.source?.label||host.error||'粘贴服主提供的配置地址，或导入离线配置文件','muted'));
    const sourceInput=field('服主配置地址（HTTPS 或 Git 地址）',host.source?.schema_version===3?(host.source.feeds||[]).join('\n'):'',true),offline=field('或离线 server-profile.json 的本地路径','');
+   sourceInput.input.disabled=downloading;offline.input.disabled=downloading;
    if(host.mode!=='owner')row.append(sourceInput.wrap,offline.wrap,button('一键安装／跟随服主配置',run(async()=>{await request('/api/client-updates',{action:'profile_install',host:host.id,feeds:lines(sourceInput.input.value),offline:offline.input.value.trim()||null});message('已绑定服主配置，正在从程序源和内容源统一安装。');await refreshRuntime();}),'ui-btn is-primary'));
    if(host.source){
+    if(r.progress){
+     const p=r.progress,phases={manifest:'检查锁定配置',reuse:'校验本地可复用内容',mirror:'核对备用源的同一内容',content:'下载并校验服主内容',content_archive:'下载服主内容包',framework:'下载并校验模组包',staging:'暂存并完整校验',install:'安装已校验文件'};
+     const total=p.total_bytes||0,received=p.verified_bytes===undefined?(p.current_bytes||0):p.verified_bytes+(p.step==='verified'?0:Math.min(p.current_bytes||0,p.current_total||0));
+     const bar=element('progress');bar.style.width='100%';bar.style.accentColor='#2d8bd2';bar.max=total||p.total_files||1;
+     if(total)bar.value=Math.min(total,received);else if(p.phase==='install')bar.value=p.verified_files||0;
+     const size=n=>(n/1048576).toFixed(1)+' MiB';
+     row.append(element('p',(phases[p.phase]||'处理中')+(total?' · '+size(received)+' / '+size(total):'')+(p.verified_files!==undefined?' · 已校验 '+p.verified_files+' / '+p.total_files+' 个文件':''),'muted'),bar);
+     if(p.file)row.append(element('p',p.file.split('/').slice(-2).join('/'),'muted'));
+    }
+    if(downloading)row.append(button('取消本次更新',run(async()=>{await request('/api/client-updates',{action:'cancel',host:host.id});message('正在取消；保留已校验下载，缺失文件不会安装。');await refreshRuntime();}),'ui-btn is-ghost'));
+    if(['cancelled','error'].includes(r.status))row.append(button('继续下载并安装',run(async()=>{await request('/api/client-updates',{action:'sync',host:host.id});await refreshRuntime();}),'ui-btn is-primary'));
     if(host.source.framework)row.append(element('p','框架源：'+host.source.framework.repository+' · '+host.source.framework.channel+'；内容源：'+host.source.label,'muted'));
     if(r.framework_version)row.append(element('p','已检查框架 '+r.framework_version+' · 内容提交 '+r.commit.slice(0,12),'muted'));
     if(host.recovery_required)row.append(button('恢复未完成更新',run(async()=>{await request('/api/client-updates',{action:'recover',host:host.id});await refreshRuntime();}),'ui-btn is-blue'));
@@ -40,7 +53,7 @@ export async function mountOwnerUpdates(ctx){
      row.append(element('p',r.changed_files+' 个文件需要更新，'+r.retired_files+' 个旧文件将保留到恢复目录；保留 '+(r.preserved_settings||0)+' 项已有配置。','muted'),details,button('确认安装更新',run(async()=>{await request('/api/client-updates',{action:'install',host:host.id,digest:r.digest});await refreshRuntime();}),'ui-btn is-primary'));
     }
     if(r.status==='restart_required')row.append(button('重启 Manager 完成客户端更新',run(async()=>{await request('/api/client-updates',{action:'restart',host:host.id});message('正在交接，更新完成后 Manager 会重新打开。');}),'ui-btn is-primary'));
-    const label={queued:'已排队',working:'正在校验和同步',current:'已安装的 Mod、服主配置和内容已核对',installed:'服主配置已安装并核验',recovered:'原文件已恢复',waiting:'等待游戏关闭',error:'更新未完成',restart_required:'等待重启 Manager'}[r.status]||'';
+    const label={queued:'已排队',working:'正在校验和同步',cancelled:'已取消，可继续下载',current:'已安装的 Mod、服主配置和内容已核对',installed:'服主配置已安装并核验',recovered:'原文件已恢复',waiting:'等待游戏关闭',error:'更新未完成，未接受不完整内容',restart_required:'等待重启 Manager'}[r.status]||'';
     row.append(element('p',label+(r.message?' · '+r.message:'')+(r.commit?' · '+r.commit.slice(0,8):''),r.status==='error'?'error':'muted'));
    }
    runtimeRows.append(row);
