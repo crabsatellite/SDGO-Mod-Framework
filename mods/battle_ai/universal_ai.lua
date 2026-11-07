@@ -298,9 +298,16 @@ local function ChangeForm(o,s,t,now)
      now<(s.formAttemptAt or 0) then return false end
   local current=FormWeapons(o.weapons,t)
   local nextForm=FormWeapons(other.weapons,t)
-  local empty=not current.ammo and nextForm.ammo
+  -- A loaded knife in the parked form is not a firing opportunity while the
+  -- enemy is far away. Keep pursuing/reloading instead of bouncing back from
+  -- an empty ranged form to an equally unusable distant melee form.
+  local empty=not current.ammo and nextForm.engage
   local usableRange=not current.engage and nextForm.engage
-  local rangedDry=current.ranged and not current.rangedAmmo and nextForm.rangedAmmo
+  -- Empty ranged slots must not pull an AI out of a form that can already
+  -- attack at this distance. In particular, a close-range melee form and a
+  -- loaded ranged peer would otherwise reverse each other's decisions after
+  -- every dwell interval instead of committing to its usable close weapon.
+  local rangedDry=current.ranged and not current.rangedAmmo and not current.engage and nextForm.rangedAmmo
   local distantMelee=not current.rangedAmmo and current.melee>0 and
     (t.meleeDistance or t.distance)>current.melee*1.5 and nextForm.rangedAmmo and nextForm.range>current.range+200
   local closeMelee=nextForm.melee>0 and (t.meleeDistance or t.distance)<=nextForm.melee*0.9 and

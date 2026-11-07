@@ -37,6 +37,10 @@ and cooldowns of each native form. It can change a melee-only form to a usable r
 opponent, choose a stronger melee form at close range, or use another form when its current ranged
 ammunition runs out. A ready current weapon that can finish the opponent takes priority.
 
+A loaded melee weapon in the other form is a reason to leave an empty form only when it can reach
+the target. Otherwise the bot keeps approaching or reloading. An available in-range weapon also
+prevents empty guns in the current form from immediately reversing a useful form choice.
+
 The **自动选择战斗形态** setting in Manager controls this behavior. Transformation uses the original
 request and server acknowledgement, including native health, ammunition and action restrictions.
 AI preserves native control during the animation, then reads the committed form's actual weapon bank

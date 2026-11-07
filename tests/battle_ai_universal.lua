@@ -1298,6 +1298,21 @@ local function RangedOther()
   return {unitId=999998,allowed=1,weapons={Weapon(0,'hitscan',2400,500,300)}}
 end
 for _,difficulty in ipairs({1,2}) do
+  Reset({Difficulty=difficulty});observation.targets={Target(1,5000,100)}
+  observation.unitId=13012;observation.weapons=RangedOther().weapons;observation.selectedSlot=0
+  local knife=Weapon(0,'melee',250,1500,300)
+  local dryGun=Weapon(1,'hitscan',2400,500,300);dryGun.ammoReady=0;dryGun.ready=0
+  observation.otherForm={unitId=13011,allowed=1,weapons={knife,dryGun}}
+  Tick(0)
+  Check(calls.transforms==1,'a close target admits the stronger native melee form before testing dry-gun reversal')
+  observation.unitId=13011;observation.alternate=1;observation.formRevision=1
+  observation.weapons={knife,dryGun};observation.otherForm=RangedOther()
+  Tick(100)
+  calls.fire=nil;Tick(1101)
+  Check(calls.transforms==1 and calls.fire==true,
+        'an in-range loaded knife keeps attacking after form dwell even when that form has an empty rifle')
+end
+for _,difficulty in ipairs({1,2}) do
   Reset({Difficulty=difficulty});observation.targets={Target(1,5000,1000)}
   observation.weapons={Weapon(0,'melee',250,1200,600)};observation.selectedSlot=0
   observation.otherForm=RangedOther();Tick(0)
@@ -1321,6 +1336,20 @@ Reset();observation.targets={Target(1,5000,1000)}
 for _,w in pairs(observation.weapons) do w.ammoReady=0;w.ready=0 end
 observation.otherForm=RangedOther();Tick(0)
 Check(calls.transforms==1,'empty current-form weapons select another form with real ammunition')
+for _,difficulty in ipairs({1,2}) do
+  Reset({Difficulty=difficulty});observation.targets={Target(1,5000,1000)}
+  observation.unitId=13012;observation.weapons=RangedOther().weapons;observation.selectedSlot=0
+  observation.weapons[1].ammoReady=0;observation.weapons[1].ready=0
+  local knife=Weapon(0,'melee',250,1500,300)
+  local dryGun=Weapon(1,'hitscan',2400,500,300);dryGun.ammoReady=0;dryGun.ready=0
+  observation.otherForm={unitId=13011,allowed=1,weapons={knife,dryGun}}
+  Tick(0)
+  Check(not calls.transforms and calls.routes>0,
+        'an empty ranged form pursues instead of switching to an out-of-range knife and empty rifle')
+  observation.targets[1].distance=100;Tick(16)
+  Check(calls.transforms==1,
+        'the same empty ranged form can select that loaded knife once its target actually enters melee range')
+end
 Reset();observation.targets={Target(1,5000,1000)}
 observation.weapons[2].ammoReady=0;observation.weapons[2].ready=0
 observation.otherForm=RangedOther();Tick(0)
@@ -1334,6 +1363,13 @@ Reset();observation.targets={Target(1,5000,100)}
 observation.weapons={Weapon(0,'hitscan',2000,300,500)};observation.selectedSlot=0
 observation.otherForm={unitId=999998,allowed=1,weapons={Weapon(0,'melee',250,1500,300)}};Tick(0)
 Check(calls.transforms==1,'a close engagement can select a substantially stronger ready melee form')
+observation.unitId=999998;observation.alternate=1;observation.formRevision=1
+observation.weapons={Weapon(0,'melee',250,1500,300),Weapon(1,'hitscan',2000,300,500)}
+observation.weapons[2].ammoReady=0;observation.weapons[2].ready=0;observation.selectedSlot=0
+observation.otherForm={unitId=999999,allowed=1,weapons={Weapon(0,'hitscan',2000,300,500)}}
+Tick(100);Tick(1100)
+Check(calls.transforms==1 and calls.fire==true,
+      'an in-range melee form does not reverse into a loaded gun form after its dwell')
 Reset();observation.targets={Target(1,100,100)}
 observation.otherForm={unitId=999998,allowed=1,weapons={Weapon(0,'melee',250,5000,100)}};Tick(0)
 Check(not calls.transforms and calls.fire==true,'an available lethal current weapon finishes its target without a needless transformation')
