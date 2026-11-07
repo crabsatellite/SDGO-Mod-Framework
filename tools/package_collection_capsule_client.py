@@ -15,10 +15,12 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import sys
 import uuid
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 HOST_SYMBOL = "GOnline-54BE1568-00C97000.ini"
 PACKAGE_ID = "collection-capsule-client"
 SUPPORT_MARKER = b'SDGO_CAPSULE_REGISTRY_6TABLE_V2'
