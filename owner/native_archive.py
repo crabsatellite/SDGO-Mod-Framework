@@ -100,39 +100,71 @@ class _Parts:
         for file in self.files:file.close()
 
 
-def read_archive(index: bytes, archive_path, parts: int = 1, part_chunks: int = 0) -> dict[str, bytes]:
-    """Read every entry of an existing overlay (index bytes + archive file or parts) back to raw bytes."""
+def _parse_index(index: bytes) -> tuple[int, dict[str, tuple[int, int, int]]]:
     if len(index)<24 or len(index)>MAX_INDEX_BYTES:
         raise ValueError('Native overlay index size is unsupported')
     version,chunk_size,chunk_count,_,count,_=struct.unpack_from('<6I',index,0)
     if version!=1 or chunk_size!=CHUNK_SIZE or count>MAX_ENTRIES:
         raise ValueError('Native overlay index header is unsupported')
-    if parts!=1 and (parts<2 or parts>MAX_PARTS or part_chunks<1):
-        raise ValueError('Native overlay archive parts are invalid')
-    cursor=24;result={}
-    archive=_Parts(part_paths(archive_path,parts),part_chunks if parts>1 else 0,chunk_count)
-    try:
-        for _ in range(count):
-            name=[]
-            while True:
-                if cursor+2>len(index):raise ValueError('Truncated native overlay index')
-                character=struct.unpack_from('<H',index,cursor)[0]^0xAA;cursor+=2
-                if character==0:break
-                name.append(chr(character))
-            if cursor+36>len(index):raise ValueError('Truncated native overlay index')
-            zsize,start,chunks=struct.unpack_from('<III',index,cursor);cursor+=36
-            path=''.join(name).replace('\\','/').lower()
-            if path in result or start+chunks>chunk_count or chunks*CHUNK_SIZE<zsize or zsize<12:
-                raise ValueError('Native overlay entry is invalid: '+path)
-            packed=archive.read(start,chunks)[:zsize]
-            if packed[:8]!=b'ZOAGZIP1':raise ValueError('Native overlay entry encoding is unsupported: '+path)
-            raw=gzip.decompress(packed[12:])
-            if len(raw)!=struct.unpack_from('<I',packed,8)[0]:raise ValueError('Native overlay entry size differs: '+path)
-            result[path]=raw
-    finally:
-        archive.close()
+    cursor=24;entries={}
+    for _ in range(count):
+        name=[]
+        while True:
+            if cursor+2>len(index):raise ValueError('Truncated native overlay index')
+            character=struct.unpack_from('<H',index,cursor)[0]^0xAA;cursor+=2
+            if character==0:break
+            name.append(chr(character))
+        if cursor+36>len(index):raise ValueError('Truncated native overlay index')
+        zsize,start,chunks=struct.unpack_from('<III',index,cursor);cursor+=36
+        path=''.join(name).replace('\\','/').lower()
+        if path in entries or start+chunks>chunk_count or chunks*CHUNK_SIZE<zsize or zsize<12:
+            raise ValueError('Native overlay entry is invalid: '+path)
+        entries[path]=(zsize,start,chunks)
     if cursor!=len(index):raise ValueError('Native overlay index has trailing bytes')
-    return result
+    return chunk_count,entries
+
+
+def _unpack(packed: bytes, path: str) -> bytes:
+    if packed[:8]!=b'ZOAGZIP1':raise ValueError('Native overlay entry encoding is unsupported: '+path)
+    raw=gzip.decompress(packed[12:])
+    if len(raw)!=struct.unpack_from('<I',packed,8)[0]:raise ValueError('Native overlay entry size differs: '+path)
+    return raw
+
+
+class OverlayReader:
+    """Read single entries of an existing overlay on demand; close() releases the archive files."""
+    def __init__(self, index: bytes, archive_path, parts: int = 1, part_chunks: int = 0):
+        if parts!=1 and (parts<2 or parts>MAX_PARTS or part_chunks<1):
+            raise ValueError('Native overlay archive parts are invalid')
+        chunk_count,self.entries=_parse_index(index)
+        self._archive=_Parts(part_paths(archive_path,parts),part_chunks if parts>1 else 0,chunk_count)
+
+    def names(self):
+        return list(self.entries)
+
+    def has(self, name: str) -> bool:
+        return name.replace('\\','/').lower() in self.entries
+
+    def read(self, name: str) -> bytes:
+        path=name.replace('\\','/').lower()
+        if path not in self.entries:raise ValueError('Native overlay resource is missing: '+path)
+        zsize,start,chunks=self.entries[path]
+        return _unpack(self._archive.read(start,chunks)[:zsize],path)
+
+    def close(self):
+        self._archive.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
+
+def read_archive(index: bytes, archive_path, parts: int = 1, part_chunks: int = 0) -> dict[str, bytes]:
+    """Read every entry of an existing overlay (index bytes + archive file or parts) back to raw bytes."""
+    with OverlayReader(index, archive_path, parts, part_chunks) as reader:
+        return {path: reader.read(path) for path in reader.names()}
 
 
 def build_archive_file(resources, allowed: Callable[[str], bool], archive_path, part_chunks: int = 0) -> tuple[bytes, dict]:

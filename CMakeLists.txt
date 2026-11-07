@@ -379,7 +379,7 @@ sdgo_add_mod(oc_custom_server SERVER DESCRIPTION "over-custom six-stat enhanceme
 sdgo_add_mod(oc_custom_battle SERVER DESCRIPTION "over-custom six-stat enhancement (Battle)"
              SOURCES mods/oc_custom_battle/oc_custom_battle.cpp)
 sdgo_add_mod(oc_custom_client DESCRIPTION "over-custom six-stat enhancement (client)"
-             SOURCES mods/oc_custom_client/oc_custom_client.cpp mods/oc_custom_client/native_ui.cpp
+             SOURCES mods/oc_custom_client/oc_custom_client.cpp mods/oc_custom_client/original_ui.cpp
              LIBS user32)
 
 
