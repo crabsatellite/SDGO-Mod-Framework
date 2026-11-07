@@ -17,6 +17,10 @@ The default Mod source uses official GitHub Releases. Compatible Git SSH/HTTPS f
 
 The binding is sdgo/client-source.json schema_version=3; the content manifest is server-profile.json. Git reuses the reader's existing credentials, SSH keys and agent; bindings never store passwords or tokens.
 
+The page reports the current file, received bytes, verified file counts, staging and installation. Slow transfers have no fixed total duration. Cancel and continue preserve verified files; later content revisions also reuse identical installed files. HTTPS resumes partial files when the server supports Range; Git preserves completed objects and files.
+
+A backup source must supply the same locked manifest and file digests. Download failure cannot switch the attempt to another revision, content set or official defaults. Installation begins only after all required files verify. Missing, corrupted, cancelled or interrupted content is never reported as success; installation failure restores the original files.
+
 ## Owner publication
 
 Choose owner DIY for your editing client. Review and adopt the intended upstream programs, set shared parameters and generate custom content. Check the program upstream before using the owner profile export form.

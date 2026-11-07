@@ -1,7 +1,7 @@
 """Verified framework release artifacts transported through configured Git mirrors."""
 from pathlib import Path
 import json,re,subprocess
-from . import git_source,storage,updates
+from . import git_source,storage,updates,transfers
 
 FEED='framework-feed.json'
 
@@ -25,9 +25,10 @@ def binding(value):
 def load(controller,source,constraints=None):
     """Pin a feed commit and verify the same ZIP format as the Release updater."""
     source=binding(source);errors=[];lock=(constraints or{}).get('locked_framework',{})
+    stop=getattr(controller,'operation_stop',controller.stop_event)
     if source.get('transport')=='github-releases':
         suffix='/releases/tags/v'+lock['version']if lock.get('version')else'/releases/latest'if source['channel']=='stable'else'/releases?per_page=30'
-        data=json.loads(updates.fetch('https://api.github.com/repos/'+source['repository']+suffix,2*1024*1024,controller.stop_event))
+        data=json.loads(updates.fetch('https://api.github.com/repos/'+source['repository']+suffix,2*1024*1024,stop))
         if isinstance(data,list):
             choices=[]
             for item in data:
@@ -38,7 +39,10 @@ def load(controller,source,constraints=None):
         else:asset=updates.release_asset(data,source['channel'],source['repository'])
         if lock and(asset['sha256']!=lock.get('sha256')or asset['version']!=lock.get('version')):raise ValueError('锁定的官方框架 Release 版本或摘要不一致')
         folder=controller.cache/'framework'/(asset['version']+'-'+asset['sha256']);archive=folder.parent/(folder.name+'.zip');archive.parent.mkdir(parents=True,exist_ok=True)
-        if not archive.is_file()or updates.digest(archive.read_bytes())!=asset['sha256']:storage.atomic(archive,updates.fetch(asset['url'],updates.MAX_ARCHIVE,controller.stop_event))
+        if not archive.is_file()or updates.digest(archive.read_bytes())!=asset['sha256']:
+            report=getattr(controller,'report_progress',lambda **values:None)
+            report(phase='framework',current_bytes=0,total_bytes=asset['bytes'])
+            transfers.download(asset['url'],archive,asset,stop,lambda n:report(current_bytes=n))
         manifest=updates.unpack(archive.read_bytes(),asset,folder,source['repository'])
         return {'source_id':source['source_id'],'commit':manifest['source_commit'],'version':manifest['version'],'channel':manifest['channel'],'sha256':asset['sha256'],'mirror':1,'bundle':str(folder),'manifest':manifest}
     for index,url in enumerate(source['feeds']):
@@ -64,6 +68,8 @@ def load(controller,source,constraints=None):
                or type(entry.get('bytes'))is not int or not 0<entry['bytes']<=updates.MAX_ARCHIVE):raise ValueError('框架发布资产命名或摘要无效')
             folder=controller.cache/'framework'/(label+'-'+entry['sha256']);archive=folder.parent/(folder.name+'.zip')
             if not archive.is_file()or archive.stat().st_size!=entry['bytes']or updates.digest(archive.read_bytes())!=entry['sha256']:
+                report=getattr(controller,'report_progress',lambda **values:None)
+                report(phase='framework',current_bytes=0,total_bytes=entry['bytes'])
                 key=str(repo.resolve());controller.fetch_mirrors[key]=[(i+1,git_source.parse(v)[0])for i,v in enumerate(source['feeds'])if i>index]
                 oid=controller.git(repo,['rev-parse',commit+':'+entry['path']]).decode().strip()
                 if not re.fullmatch('[0-9a-f]{40}',oid):raise ValueError('框架资产对象无效')

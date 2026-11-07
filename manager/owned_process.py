@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import threading
 import time
 from contextlib import ExitStack
 
@@ -62,13 +63,13 @@ class WindowsJob:
             finally:self.kernel.CloseHandle(self.handle);self.handle=None
 
 
-def run(args,*,cwd,env,timeout=900,stop=None,input=None,output=None):
+def run(args,*,cwd,env,timeout=900,stop=None,input=None,output=None,progress=None):
     with ExitStack()as files:
         destination=files.enter_context(open(output,'wb'))if output is not None else subprocess.PIPE
-        return _run(args,cwd=cwd,env=env,timeout=timeout,stop=stop,input=input,stdout=destination)
+        return _run(args,cwd=cwd,env=env,timeout=timeout,stop=stop,input=input,stdout=destination,progress=progress)
 
 
-def _run(args,*,cwd,env,timeout,stop,input,stdout):
+def _run(args,*,cwd,env,timeout,stop,input,stdout,progress=None):
     windows=os.name=='nt'
     process=subprocess.Popen(args,cwd=cwd,env=env,stdin=subprocess.PIPE if input is not None else None,stdout=stdout,stderr=subprocess.PIPE,
         creationflags=(subprocess.CREATE_NO_WINDOW|0x00000004)if windows else 0,
@@ -82,20 +83,62 @@ def _run(args,*,cwd,env,timeout,stop,input,stdout):
         if process.poll()is None:process.kill()
     try:
         if windows:job=WindowsJob(process)
-        deadline=time.monotonic()+timeout
+        deadline=None if timeout is None else time.monotonic()+timeout
+        if progress:
+            outputs=[];errors=[];failures=[];threads=[]
+            def reader(stream,parts,notify=None):
+                try:
+                    while True:
+                        block=stream.read1(64*1024)
+                        if not block:break
+                        parts.append(block)
+                        if notify:notify(block)
+                except Exception as error:failures.append(error)
+            def writer():
+                try:process.stdin.write(input);process.stdin.close()
+                except BrokenPipeError:pass
+                except Exception as error:failures.append(error)
+            threads.append(threading.Thread(target=reader,args=(process.stderr,errors,progress),daemon=True))
+            if stdout==subprocess.PIPE:threads.append(threading.Thread(target=reader,args=(process.stdout,outputs),daemon=True))
+            if input is not None:threads.append(threading.Thread(target=writer,daemon=True))
+            for thread in threads:thread.start()
+            while process.poll()is None:
+                if stop is not None and stop.is_set():raise InterruptedError('Manager operation cancelled')
+                if deadline is not None and time.monotonic()>=deadline:raise subprocess.TimeoutExpired(args,timeout)
+                if failures:raise failures[0]
+                time.sleep(.05)
+            terminate()
+            for thread in threads:thread.join(timeout=5)
+            if any(thread.is_alive()for thread in threads):raise TimeoutError('Owned progress streams did not close')
+            if failures:raise failures[0]
+            return subprocess.CompletedProcess(args,process.returncode,b''.join(outputs)if stdout==subprocess.PIPE else None,b''.join(errors))
+        observed=0
+        def report(stderr):
+            nonlocal observed
+            if progress:
+                data=stderr or b'';progress(data[observed:]);observed=len(data)
         while True:
             if stop is not None and stop.is_set():
                 terminate();raise InterruptedError('Manager operation cancelled')
-            remaining=deadline-time.monotonic()
-            if remaining<=0:
+            remaining=None if deadline is None else deadline-time.monotonic()
+            if remaining is not None and remaining<=0:
                 terminate();raise subprocess.TimeoutExpired(args,timeout)
             try:
-                try:out,err=process.communicate(input=input,timeout=min(.25,remaining))
+                try:out,err=process.communicate(input=input,timeout=.25 if remaining is None else min(.25,remaining))
                 finally:input=None
+                report(err)
                 return subprocess.CompletedProcess(args,process.returncode,out,err)
-            except subprocess.TimeoutExpired:continue
+            except subprocess.TimeoutExpired as waiting:report(waiting.stderr)
     finally:
         terminate()
-        try:process.communicate(timeout=5)
-        except subprocess.TimeoutExpired:pass
+        if progress:
+            try:process.wait(timeout=5)
+            except subprocess.TimeoutExpired:pass
+            for stream in(process.stdin,process.stdout,process.stderr):
+                if stream:
+                    try:stream.close()
+                    except OSError:pass
+        else:
+            try:process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:pass
 

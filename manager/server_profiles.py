@@ -2,7 +2,7 @@
 from __future__ import annotations
 from pathlib import Path
 from urllib.parse import urlsplit,unquote,urljoin,quote
-import hashlib,json,re,shutil,subprocess,uuid,zipfile
+import hashlib,json,re,shutil,subprocess,uuid,zipfile,os
 from . import storage,updates,git_source,framework_source,runtime_layers
 
 KIND='sdgo-server-profile'
@@ -101,7 +101,7 @@ def read(controller,url,name,limit,refresh=True):
         path=local_path(url);path=path if name==MANIFEST else updates.child(path.parent,name)
         if not path.is_file()or path.stat().st_size>limit:raise ValueError('离线配置文件无效或过大')
         return path.read_bytes(),{'type':'local','root':str(local_path(url).parent),'feed':url}
-    path=url if name==MANIFEST else urljoin(url,name);raw=updates.fetch(path,limit,controller.stop_event)
+    path=url if name==MANIFEST else urljoin(url,name);raw=updates.fetch(path,limit,getattr(controller,'operation_stop',controller.stop_event))
     return raw,{'type':'https','feed':url}
 
 
@@ -111,6 +111,8 @@ def resolve(controller,source):
         try:
             raw,transport=read(controller,url,MANIFEST,16*1024*1024)
             profile=validate(json.loads(raw),source)
+            if transport['type']=='git':
+                controller.fetch_mirrors[str(Path(transport['repo']).resolve())]=[(i+1,git_source.parse(v)[0])for i,v in enumerate(source['feeds'])if i!=index and v.startswith(('git+ssh://','git+https://'))]
             return profile,transport,index+1
         except InterruptedError:raise
         except(OSError,ValueError,subprocess.SubprocessError)as error:errors.append(str(error))
@@ -130,26 +132,94 @@ def base_check(root,profile):
 
 
 def payload(controller,profile,transport,folder):
+    from . import transfers
     folder.mkdir(parents=True,exist_ok=True)
+    report=getattr(controller,'report_progress',lambda **values:None)
+    stop=getattr(controller,'operation_stop',controller.stop_event)
+    def object_path(entry):return controller.cache/'profile-objects'/entry['sha256']
+    def reuse(path,entry):
+        if transfers.verify(path,entry):return True
+        saved=object_path(entry)
+        if not transfers.verify(saved,entry):return False
+        path.parent.mkdir(parents=True,exist_ok=True);path.unlink(missing_ok=True)
+        try:os.link(saved,path)
+        except OSError:shutil.copyfile(saved,path)
+        return True
+    total=sum(e['bytes']for e in profile['files'].values());done=0;count=0
+    def start_file(name,entry):
+        if stop.is_set():raise InterruptedError('下载已取消')
+        report(phase='content',step='downloading',file=name,current_bytes=0,current_total=entry['bytes'],verified_bytes=done,total_bytes=total,verified_files=count,total_files=len(profile['files']))
+    def finish_file(path,name,entry):
+        nonlocal done,count
+        report(step='verifying')
+        if not transfers.verify(path,entry):raise ValueError('服主内容文件校验失败：'+name)
+        saved=object_path(entry)
+        if not transfers.verify(saved,entry):
+            saved.parent.mkdir(parents=True,exist_ok=True);saved.unlink(missing_ok=True)
+            try:os.link(path,saved)
+            except OSError:shutil.copyfile(path,saved)
+        done+=entry['bytes'];count+=1
+        report(verified_bytes=done,verified_files=count,current_bytes=entry['bytes'],step='verified')
     if transport['type']=='git':
         repo=Path(transport['repo']);commit=transport['commit']
-        wants=[entry['git_blob']for entry in profile['files'].values()if re.fullmatch('[0-9a-f]{40}',str(entry.get('git_blob','')))]
-        if wants:
-            cached={r.split()[0].decode()for r in controller.git(repo,['cat-file','--batch-all-objects','--batch-check','--unordered']).splitlines()if r}
-            missing=b''.join((oid+'\n').encode()for oid in wants if oid not in cached)
-            if missing:controller.git(repo,['fetch','--no-tags','--no-write-fetch-head','--recurse-submodules=no','--filter=blob:none','--stdin','origin'],input=missing)
+        cached={r.split()[0].decode()for r in controller.git(repo,['cat-file','--batch-all-objects','--batch-check','--unordered']).splitlines()if r}
+        pending=[]
         for name,entry in profile['files'].items():
+            start_file(name,entry)
             path=updates.child(folder,name)
-            if path.is_file()and path.stat().st_size==entry['bytes']and hashlib.sha256(path.read_bytes()).hexdigest()==entry['sha256']:continue
-            path.parent.mkdir(parents=True,exist_ok=True);controller.git(repo,['show',commit+':'+CONTENT_PREFIX+name],output=path)
+            if reuse(path,entry):finish_file(path,name,entry)
+            else:pending.append((name,entry))
+        objects={}
+        if pending:
+            for row in controller.git(repo,['ls-tree','-r','-z',commit,'--',CONTENT_PREFIX]).split(b'\0'):
+                if not row:continue
+                head,name=row.split(b'\t',1);mode,kind,oid=head.split()
+                if kind==b'blob'and mode in(b'100644',b'100755'):objects[name.decode('utf-8')]=oid.decode()
+            for name,entry in pending:
+                oid=objects.get(CONTENT_PREFIX+name)
+                if oid is None or entry.get('git_blob',oid)!=oid:raise ValueError('服主内容 Git 对象与锁定清单不一致：'+name)
+        while pending:
+            group=[];group_bytes=0
+            while pending and(not group or group_bytes+pending[0][1]['bytes']<=8*1024*1024):
+                name,entry=pending.pop(0);group.append((name,entry));group_bytes+=entry['bytes']
+            report(phase='content',step='downloading',file=group[0][0]if len(group)==1 else'一组内容文件（'+str(len(group))+' 个）',current_bytes=0,current_total=group_bytes,verified_bytes=done,total_bytes=total,verified_files=count,total_files=len(profile['files']))
+            wanted=list(dict.fromkeys(objects[CONTENT_PREFIX+n]for n,e in group if objects[CONTENT_PREFIX+n]not in cached))
+            if wanted:
+                controller.git(repo,['fetch','--no-tags','--no-write-fetch-head','--recurse-submodules=no','--filter=blob:none','--stdin','origin'],input=''.join(oid+'\n'for oid in wanted).encode())
+                cached.update(wanted)
+            batch=folder.parent/(uuid.uuid4().hex+'.batch')
+            try:
+                requests=''.join(objects[CONTENT_PREFIX+n]+'\n'for n,e in group).encode()
+                controller.git(repo,['cat-file','--batch'],input=requests,output=batch)
+                with batch.open('rb')as stream:
+                    for name,entry in group:
+                        start_file(name,entry);oid=objects[CONTENT_PREFIX+name]
+                        if stream.readline(200)!=(oid+' blob '+str(entry['bytes'])+'\n').encode():raise ValueError('Git 内容对象大小或身份不一致')
+                        path=updates.child(folder,name);path.parent.mkdir(parents=True,exist_ok=True);temporary=path.with_name(path.name+'.download')
+                        remaining=entry['bytes']
+                        with temporary.open('wb')as output:
+                            while remaining:
+                                if stop.is_set():raise InterruptedError('下载已取消')
+                                block=stream.read(min(remaining,1024*1024))
+                                if not block:raise ValueError('Git 内容未完整接收')
+                                output.write(block);remaining-=len(block);report(current_bytes=entry['bytes']-remaining)
+                        if stream.read(1)!=b'\n'or not transfers.verify(temporary,entry):raise ValueError('服主内容文件校验失败：'+name)
+                        temporary.replace(path);finish_file(path,name,entry)
+                    if stream.read(1):raise ValueError('Git 返回了额外内容')
+            finally:batch.unlink(missing_ok=True)
     elif not profile.get('payload'):
         for name,entry in profile['files'].items():
+            start_file(name,entry)
             path=updates.child(folder,name)
-            if path.is_file()and path.stat().st_size==entry['bytes']and hashlib.sha256(path.read_bytes()).hexdigest()==entry['sha256']:continue
-            if transport['type']=='local':raw=updates.child(Path(transport['root']),CONTENT_PREFIX+name).read_bytes()
-            else:raw=updates.fetch(urljoin(transport['feed'],CONTENT_PREFIX+quote(name,safe='/')),entry['bytes']+1,controller.stop_event)
-            if len(raw)!=entry['bytes']or hashlib.sha256(raw).hexdigest()!=entry['sha256']:raise ValueError('服主内容文件校验失败：'+name)
-            storage.atomic(path,raw)
+            if not reuse(path,entry):
+                if transport['type']=='local':
+                    raw=updates.child(Path(transport['root']),CONTENT_PREFIX+name).read_bytes()
+                    if len(raw)!=entry['bytes']or hashlib.sha256(raw).hexdigest()!=entry['sha256']:raise ValueError('服主内容文件校验失败：'+name)
+                    storage.atomic(path,raw)
+                else:
+                    transfers.download(urljoin(transport['feed'],CONTENT_PREFIX+quote(name,safe='/')),object_path(entry),entry,stop,lambda n:report(current_bytes=n))
+                    reuse(path,entry)
+            finish_file(path,name,entry)
     else:
         asset=profile.get('payload',{});name=asset.get('path');updates.safe_name(name)
         if not name.endswith('.zip')or not HASH.fullmatch(str(asset.get('sha256',''))):raise ValueError('服主内容包清单无效')
@@ -157,9 +227,12 @@ def payload(controller,profile,transport,folder):
         archive=folder.parent/(asset['sha256']+'.zip')
         if not archive.is_file()or hashlib.sha256(archive.read_bytes()).hexdigest()!=asset['sha256']:
             if transport['type']=='local':raw=updates.child(Path(transport['root']),name).read_bytes()
-            else:raw=updates.fetch(urljoin(transport['feed'],name),updates.MAX_ARCHIVE,controller.stop_event)
-            if len(raw)!=asset['bytes']or hashlib.sha256(raw).hexdigest()!=asset['sha256']:raise ValueError('服主内容包摘要不一致')
-            storage.atomic(archive,raw)
+            else:
+                report(phase='content_archive',current_bytes=0,total_bytes=asset['bytes'])
+                transfers.download(urljoin(transport['feed'],name),archive,asset,stop,lambda n:report(current_bytes=n));raw=None
+            if raw is not None:
+                if len(raw)!=asset['bytes']or hashlib.sha256(raw).hexdigest()!=asset['sha256']:raise ValueError('服主内容包摘要不一致')
+                storage.atomic(archive,raw)
         with zipfile.ZipFile(archive)as z:
             if set(z.namelist())!=set(profile['files'])or len(z.namelist())!=len(profile['files']):raise ValueError('服主内容包文件清单不一致')
             for name,entry in profile['files'].items():
@@ -178,12 +251,37 @@ def payload(controller,profile,transport,folder):
 
 def plan(controller,host,source):
     from .client_runtime import file_hash,matches,RECEIPT,SOURCE
+    report=getattr(controller,'report_progress',lambda **values:None)
+    report(phase='manifest',source=source['label'])
     root=Path(host['path']).resolve();profile,transport,index=resolve(controller,source);base_check(root,profile)
     identity=updates.digest(storage.json_bytes(profile));folder=controller.cache/'profiles'/source['source_id']/identity/'content'
-    payload(controller,profile,transport,folder)
+    # A new content revision reuses byte-identical installed files as well as
+    # completed downloads. Never download the whole resource set for one edit.
+    report(phase='reuse',total_files=len(profile['files']),verified_files=0)
+    for number,(name,entry)in enumerate(profile['files'].items(),1):
+        if getattr(controller,'operation_stop',controller.stop_event).is_set():raise InterruptedError('更新已取消')
+        cached=updates.child(folder,name);installed=updates.child(root,name)
+        if not matches(cached,entry)and matches(installed,entry):
+            cached.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(installed,cached)
+        report(verified_files=number,file=name)
+    try:payload(controller,profile,transport,folder)
+    except InterruptedError:raise
+    except(OSError,ValueError,subprocess.SubprocessError)as first:
+        for fallback_index,url in enumerate(source['feeds']):
+            if url==transport['feed']:continue
+            try:
+                raw,alternate=read(controller,url,MANIFEST,16*1024*1024)
+                mirrored=validate(json.loads(raw),source)
+                if updates.digest(storage.json_bytes(mirrored))!=identity:continue
+                report(phase='mirror',message='备用源已匹配同一配置修订和摘要，继续缺失文件')
+                payload(controller,profile,alternate,folder);transport=alternate;index=fallback_index+1;break
+            except InterruptedError:raise
+            except(OSError,ValueError,subprocess.SubprocessError):continue
+        else:raise ValueError('服主内容在配置的镜像均不可用或校验失败；保留当前安装：'+str(first))from first
     # Compose uses the same ownership, dependency and one-transaction installer
     # as complete-runtime updates, without requiring any original-game payload.
     contract={'layers':{'schema_version':1,'minimum_framework':profile['framework']['version'],
+        'separate_manager':True,
         'locked_framework':profile['framework'],'required_mods':profile['mods'],'mod_ids':list(profile['mods']),
         'shared_files':profile.get('shared_files',[])},'root_extensions':[],'entrypoints':[],
         'trees':['sdgo/mods','anrs','fxrs','gdrs','mdrs','scp','sdrs','sol','sprs','trns','txrs','uirs']}
@@ -192,6 +290,7 @@ def plan(controller,host,source):
     # controller transport while another UI thread reads state.
     delegated=framework_source.binding(profile.get('framework_source',source['framework']))
     if any(delegated[k]!=source['framework'][k]for k in('repository','source_id')):raise ValueError('服主不能静默更换已授权的框架发布者')
+    report(phase='framework')
     combined,effective,layers=runtime_layers.compose(controller,{**source,'framework':delegated},contract,root,entries,None,identity,shared_data=(folder/SHARED).read_bytes())
     if layers['framework']['manifest'].get('capabilities',{}).get('runtime_profiles')!=1:raise ValueError('所选框架程序尚不支持通用服主配置档；保留现有客户端')
     needed=[n for n,e in effective.items()if not matches(updates.child(root,n),e)]
