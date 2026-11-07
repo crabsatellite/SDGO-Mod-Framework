@@ -3,7 +3,13 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+static size_t memoryQueries=0;
+static SIZE_T WINAPI CountedVirtualQuery(LPCVOID address,PMEMORY_BASIC_INFORMATION info,SIZE_T size) {
+    ++memoryQueries;return ::VirtualQuery(address,info,size);
+}
+#define VirtualQuery CountedVirtualQuery
 #include "../mods/battle_ai/native_terrain_support.h"
+#undef VirtualQuery
 namespace {
 using namespace battle_ai;
 using namespace battle_ai::native;
@@ -45,6 +51,49 @@ int main() {
           observed.x==25&&observed.y==out.height&&observed.z==-25&&out.normal.y==1,
           "native thiscall height and normal use supported root coordinates");
     check(Cache()==0x7FC12345&&heightCalls==1&&normalCalls==1,"a valid query restores the exact native cache payload including NaN bits");
+    Reset();memoryQueries=0;
+    check(sampler.Sample(document.data(),{},out)==TerrainSupportStatus::Valid&&memoryQueries>0&&memoryQueries<=3,
+          "a standalone native terrain sample validates each live memory region once");
+    std::printf("standalone sample memory queries=%zu\n",memoryQueries);
+    Reset();memoryQueries=0;Aabb bounds{};
+    check(sampler.Bounds(document.data(),bounds)&&memoryQueries>0&&memoryQueries<=3,
+          "standalone terrain bounds validation avoids repeated region syscalls");
+    std::printf("standalone bounds memory queries=%zu\n",memoryQueries);
+    Reset();
+    {
+        detail::ReadableRegionCache parent{};detail::ScopedReadableRegionCache scope(parent);
+        sampler.Sample(document.data(),{},out);memoryQueries=0;
+        check(sampler.Sample(document.data(),{},out)==TerrainSupportStatus::Valid&&memoryQueries==0,
+              "terrain sampling retains an existing synchronous caller cache");
+    }
+    check(detail::g_readableRegionCache==nullptr,"standalone and nested terrain calls restore the caller cache scope");
+    Reset();sampler.Bounds(document.data(),bounds);Put(terrain.data(),0x3C,50.0f);
+    check(sampler.Bounds(document.data(),bounds)&&bounds.max.x==50&&
+          sampler.Sample(document.data(),{75,0,0},out)==TerrainSupportStatus::Outside&&heightCalls==0,
+          "terrain dimensions and support limits remain live between calls");
+    Reset();auto page=static_cast<float*>(VirtualAlloc(nullptr,4096,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE));
+    check(page!=nullptr,"terrain protection fixture owns a separate memory region");
+    if(page) {
+        for(size_t i=0;i<9;++i)page[i]=1;
+        Put(terrain.data(),0x10,page);
+        check(sampler.Sample(document.data(),{},out)==TerrainSupportStatus::Valid,"a readable terrain page reaches the native sampler");
+        DWORD prior=0;check(VirtualProtect(page,4096,PAGE_NOACCESS,&prior)!=0,"terrain page becomes unreadable between sampling calls");
+        const int before=heightCalls;
+        check(sampler.Sample(document.data(),{},out)==TerrainSupportStatus::Invalid&&heightCalls==before,
+              "a later sampling call rejects changed memory protection before native execution");
+        DWORD ignored=0;VirtualProtect(page,4096,PAGE_READWRITE|PAGE_GUARD,&ignored);
+        check(sampler.Sample(document.data(),{},out)==TerrainSupportStatus::Invalid&&heightCalls==before,
+              "guarded terrain remains unavailable to the native sampler");
+        MEMORY_BASIC_INFORMATION info{};VirtualQuery(page,&info,sizeof(info));
+        check((info.Protect&PAGE_GUARD)!=0,"terrain validation preserves the one-shot page guard");
+        VirtualProtect(page,4096,prior,&ignored);
+        check(sampler.Sample(document.data(),{},out)==TerrainSupportStatus::Valid&&heightCalls==before+1,
+              "restored terrain protection is observed by the next sampling call");
+        page[4]=NAN;
+        check(sampler.Sample(document.data(),{},out)==TerrainSupportStatus::Invalid&&heightCalls==before+1,
+              "sampled height values remain live after earlier successful calls");
+        VirtualFree(page,0,MEM_RELEASE);
+    }
     for(Vec3 point:{Vec3{-100.01f,0,0},Vec3{100,0,0},Vec3{0,0,-100},Vec3{0,0,100.01f}}) {
         Reset();check(sampler.Sample(document.data(),point,out)==TerrainSupportStatus::Outside&&heightCalls==0&&normalCalls==0,
                       "outside and exclusive upper cell boundaries never invoke native fallback or normal");
@@ -70,7 +119,8 @@ int main() {
     Reset();normalScale=0.7f;
     check(sampler.Sample(document.data(),{},out)==TerrainSupportStatus::Invalid&&Cache()==0x7FC12345,"a materially non-unit normal cannot alter the native slope threshold");
     Reset();throwHeight=true;
-    check(sampler.Sample(document.data(),{},out)==TerrainSupportStatus::Invalid&&Cache()==0x7FC12345,"native execution fault restores the cache through SEH finally");
+    check(sampler.Sample(document.data(),{},out)==TerrainSupportStatus::Invalid&&Cache()==0x7FC12345&&detail::g_readableRegionCache==nullptr,
+          "native execution fault restores engine state and the caller memory-check scope");
     Reset();Put(document.data(),0x82C0,uint32_t(0));
     check(sampler.Sample(document.data(),{},out)==TerrainSupportStatus::Missing&&heightCalls==0,"model-only worlds have an explicit absent-terrain state");
     std::printf("%d native support checks, %d failures\n",checks,failures);return failures?1:0;
