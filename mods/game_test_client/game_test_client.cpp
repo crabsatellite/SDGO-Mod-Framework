@@ -2370,9 +2370,15 @@ int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
     const auto sumNormal=[&](){uint32_t total=0;for(int i=0;i<6;++i)total+=s.normal[i];return total;};
     const auto sumOver=[&](){uint32_t total=0;for(int i=0;i<6;++i)total+=s.over[i];return total;};
     if(phase==1) {
-        const uint32_t wanted=SDGO_OC_WINDOW_ENTRY|SDGO_OC_WINDOW_OVER;
+        const uint32_t wanted=SDGO_OC_WINDOW_ENTRY|SDGO_OC_WINDOW_TAB;
         if(!s.windows_loaded || !s.profile_present || s.busy || (s.windows&wanted)!=wanted)
-            return timeout(60000,"the original OC windows (0794, OVER CUSTOM entry) opened on the factory upgrade page");
+            return timeout(60000,"the OVER CUSTOM entry and the restored OC tab appeared on the factory upgrade page");
+        context->Assert(!(s.windows&SDGO_OC_WINDOW_OVER),"the 经验值转换 page keeps its native layout until the OC tab opens");
+        return press("tab",L"OverCustomRadio",50);
+    }
+    if(phase==50) {
+        const uint32_t wanted=SDGO_OC_WINDOW_OVER|SDGO_OC_WINDOW_TAB_ACTIVE;
+        if((s.windows&wanted)!=wanted)return timeout(20000,"the OC tab opened the original 0794 allocation window");
         char attached[300];sprintf_s(attached,"original OC windows shown=0x%X uid=%llu unit=%u oc_level=%u normal=%u/%u/%u/%u/%u/%u over=%u/%u/%u/%u/%u/%u left=%u+%u carrier=%u",
             s.windows,static_cast<unsigned long long>(s.unit_uid),s.unit_number,s.oc_level,s.normal[0],s.normal[1],s.normal[2],s.normal[3],s.normal[4],s.normal[5],
             s.over[0],s.over[1],s.over[2],s.over[3],s.over[4],s.over[5],s.normal_points_left,s.over_points_left,s.carrier_present);
@@ -2383,7 +2389,8 @@ int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
     if(phase==2) {
         if(capture(L"oc-original-windows")!=SDGO_GAME_TEST_PASS)return SDGO_GAME_TEST_WAIT;
         // Reset first when points are allocated, so the allocation presses have points.
-        readyAt=GetTickCount64();phase=(sumNormal()+sumOver())>0 ? 8:3;return SDGO_GAME_TEST_WAIT;
+        // The reset button clears normal points below OC 9 and Over points from OC 9.
+        readyAt=GetTickCount64();phase=(s.oc_level>=9 ? sumOver():sumNormal())>0 ? 8:3;return SDGO_GAME_TEST_WAIT;
     }
     // Allocation: SpeedUpBtn -> 0819 with the client's confirmation text -> OKBtn.
     if(phase==3) {
@@ -2449,6 +2456,37 @@ int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
         const auto r=replied(resetWork==1 || !s.over_points_left ? 0x1002u:0x1003u,"the confirmed agility allocation produced a save reply");
         if(r!=SDGO_GAME_TEST_PASS)return r;
         context->Assert(s.last_status==0 && s.last_ret_val==0 && s.revision>revisionBefore,"AgiUpBtn saved one agility point through the original procedure");
+        readyAt=GetTickCount64();
+        phase=s.oc_level>=9 && s.normal_points_left==0 && s.over_points_left>0 ? 40:(ocChallenge ? 15:30);
+        return SDGO_GAME_TEST_WAIT;
+    }
+    // Over points: with the normal points spent at OC 9+, the arrow saves an Over point,
+    // and the reset button (终极强化还原) clears the Over allocation.
+    if(phase==40){speedBefore=s.over[0];revisionBefore=s.revision;return press("over",L"SpeedUpBtn",41);}
+    if(phase==41) {
+        const auto r=confirmShown(126262,126262,"SpeedUpBtn opened the confirmation for an Over point");if(r!=SDGO_GAME_TEST_PASS)return r;
+        return press("confirm",L"OKBtn",42);
+    }
+    if(phase==42) {
+        const auto r=replied(0x1003,"the confirmed Over allocation produced a save reply");if(r!=SDGO_GAME_TEST_PASS)return r;
+        context->Assert(s.last_status==0 && s.last_ret_val==0 && s.over[0]==speedBefore+1 && s.revision>revisionBefore,
+            "the original Over allocation procedure saved one speed Over point from the 0794 window");
+        char message[160];sprintf_s(message,"oc window over allocation saved over=%u/%u/%u/%u/%u/%u over_left=%u",
+            s.over[0],s.over[1],s.over[2],s.over[3],s.over[4],s.over[5],s.over_points_left);
+        context->Observe(message);
+        sumBefore=sumOver();leftBefore=s.over_points_left;readyAt=GetTickCount64();phase=43;return SDGO_GAME_TEST_WAIT;
+    }
+    if(phase==43)return press("over",L"ResetBtn",44);
+    if(phase==44) {
+        const auto r=replied(0x1005,"the Over reset produced a reset cost reply");if(r!=SDGO_GAME_TEST_PASS)return r;
+        const auto c=confirmShown(126647,126647,"the Over reset cost opened the confirmation titled 终极强化还原");if(c!=SDGO_GAME_TEST_PASS)return c;
+        return press("confirm",L"OKBtn",45);
+    }
+    if(phase==45) {
+        const auto r=replied(0x1006,"the confirmed Over reset produced a reset reply");if(r!=SDGO_GAME_TEST_PASS)return r;
+        context->Assert(s.last_status==0 && s.last_ret_val==0 && sumOver()==0 && s.over_points_left==leftBefore+sumBefore,
+            "every Over point returned to the unit's Over budget after 终极强化还原");
+        char message[96];sprintf_s(message,"oc over reset done gp=%u over_left=%u",s.last_reset_gp,s.over_points_left);context->Observe(message);
         readyAt=GetTickCount64();phase=ocChallenge ? 15:30;return SDGO_GAME_TEST_WAIT;
     }
     // Challenge: OVER CUSTOM (lit) -> 0813 with the account's OC items -> StartBtn -> 0819 -> OKBtn -> result.
