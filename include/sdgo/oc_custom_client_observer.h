@@ -48,6 +48,7 @@ struct SdgoOcCustomClientSnapshotV2 {
     uint32_t challenge_items;  // OC items listed in the challenge window
     int32_t challenge_item_ids[10];
     uint32_t challenge_selected; // bit per listed item that is checked
+    uint32_t hidden_dialogs;     // native dialogs (factory inventory) hidden under open OC windows
     // Battle: the local unit's mobility after the OC gains (stat setup hook).
     uint32_t mobility_applied;   // number of local stat setups that received gains
     uint32_t mobility_unit_number;
