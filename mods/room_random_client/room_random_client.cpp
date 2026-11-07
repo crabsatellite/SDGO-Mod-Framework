@@ -71,7 +71,11 @@ PacketWork GuardedPacket(BYTE* frame) {
             return work;
         work.strict=context.model && RandomRoom(context);
         work.result=g_sync.Process(context,work.opcode,work.packet,work.strict);
-        if((work.opcode==0x0861 || work.opcode==0x098B) && work.packet) {
+        if(work.opcode==0x06C3 && work.packet) {
+            work.packet[room_random_sync::kStartParticipantCountOffset]=
+                room_random_sync::StartParticipantCount(
+                    work.packet[room_random_sync::kStartParticipantCountOffset]);
+        } else if((work.opcode==0x0861 || work.opcode==0x098B) && work.packet) {
             const uint32_t route=room_random_client::Read<uint32_t>(work.packet,14);
             if(room_random_sync::HasRoundSignature(route)) {
                 const uint32_t nativeRoute=route&0xFFFFu;
@@ -99,11 +103,11 @@ void __stdcall OnPacket(BYTE* frame) {
         g_api->Log(g_mod,SDGO_LOG_WARN,"native %04X cache update skipped: context reason %u",opcode,result.reason);
     if(result.protocolMismatch)
         g_api->Log(g_mod,SDGO_LOG_ERROR,
-            "random loadout protocol mismatch for native %04X epoch %u; using the native start path",
+            "random loadout protocol mismatch for native %04X round %u; using the native start path",
             opcode,result.epoch);
     if(opcode==0x06C3 && (result.applied || result.mismatched))
         g_api->Log(g_mod,result.mismatched && !work.strict ? SDGO_LOG_ERROR : SDGO_LOG_INFO,
-            "battle start cache epoch %u: %u refreshed, %u mismatch; server unit %lu, cached unit %lu",
+            "battle start cache round %u: %u refreshed, %u mismatch; server unit %lu, cached unit %lu",
             result.epoch,result.applied,result.mismatched,
             static_cast<unsigned long>(result.model),static_cast<unsigned long>(result.cached));
     SetLastError(error);
@@ -172,9 +176,7 @@ struct BeginDecision {
     bool ready=false;
     bool held=false;
     bool duplicate=false;
-    bool canonical=false;
     unsigned reason=0;
-    std::array<uint8_t,room_random_client::kStartPacketSize> packet{};
 };
 BeginDecision GuardedBegin(void* self,const uint8_t* packet) {
     BeginDecision decision;
@@ -188,15 +190,11 @@ BeginDecision GuardedBegin(void* self,const uint8_t* packet) {
             g_sync.AbandonRoomViewPermits(context);
             return decision;
         }
-        std::memcpy(decision.packet.data(),packet,decision.packet.size());
-        decision.packet[room_random_sync::kStartEpochOffset]=0;
-        decision.canonical=true;
         if(!context.model || !ParserMatches(self,context)) {
             g_pending.Clear();g_sync.AbandonRoomViewPermits(context);
             decision.reason=1;return decision;
         }
-        if(!packet[room_random_sync::kStartEpochOffset] ||
-           g_sync.ProtocolMismatch(context,packet)) {
+        if(g_sync.ProtocolMismatch(context,packet)) {
             g_pending.Clear();
             if(!g_sync.ReleaseStart(context,packet))
                 g_sync.AbandonRoomViewPermits(context);
@@ -237,7 +235,7 @@ void __fastcall BeginStart(void* self,void*,const uint8_t* packet) {
     if(decision.held)
         g_api->Log(g_mod,decision.duplicate ? SDGO_LOG_INFO : SDGO_LOG_WARN,
             decision.duplicate ?
-                "duplicate random battle start retained by the existing epoch" :
+                "duplicate random battle start retained by the existing round" :
                 "random battle start held until every human loadout is complete and native room tasks settle");
     else if(decision.random && decision.ready)
         g_api->Log(g_mod,SDGO_LOG_INFO,
@@ -247,8 +245,7 @@ void __fastcall BeginStart(void* self,void*,const uint8_t* packet) {
             "random battle start uses native fallback after protocol/context validation reason %u",
             decision.reason);
     SetLastError(error);
-    if(decision.forward)
-        g_beginStart(self,decision.canonical ? decision.packet.data() : packet);
+    if(decision.forward)g_beginStart(self,packet);
 }
 bool GuardedChangeRoomView(uint8_t* self) {
     __try {
@@ -325,7 +322,6 @@ void __fastcall ManagerUpdate(uint8_t* self,void*) {
                 "random battle start resumed after every human native loadout task and obsolete local room-view cleanup completed");
         SetLastError(error);
         _fxrstor(fp.bytes);
-        call.packet[room_random_sync::kStartEpochOffset]=0;
         g_beginStart(call.parser,call.packet.data());
         return;
     }

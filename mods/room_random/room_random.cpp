@@ -59,6 +59,8 @@ ValidateFn g_validate=nullptr;
 BuildFn g_build=nullptr;
 ReleaseFn g_release=nullptr;
 BroadcastFn g_broadcast=nullptr;
+void* g_broadcastCallOriginal=nullptr;
+uint8_t* g_broadcastContinue=nullptr;
 UnitLookupFn g_lookup=nullptr;
 void* g_unitTable=nullptr;
 void* g_lobby=nullptr;
@@ -363,7 +365,7 @@ bool Notify(uint8_t* room,int slot,const Source& source,bool deck,unsigned human
     return Broadcast(room,active,humans);
 }
 uint8_t NextWireEpoch(uint8_t previous) {
-    return previous==0 || previous==255 ? 1 : static_cast<uint8_t>(previous+1);
+    return previous==0 || previous==15 ? 1 : static_cast<uint8_t>(previous+1);
 }
 bool PrepareWireEpoch(Attempt& a,uint8_t* room) {
     const uint32_t key=Get<uint32_t>(room,0);
@@ -508,20 +510,30 @@ int __fastcall BroadcastStart(uint8_t* room,void*,uint8_t* packet,uint32_t lengt
     if(!genuineStart || attempt->startSubmitted)
         return g_broadcast(room,packet,length,attemptedRoutes);
     if(attempt->failed || !PrepareNotices(*attempt,room)) return 0;
-    if(packet[room_random_sync::kStartEpochOffset]!=0) {
-        Fail(*attempt,"native start reserved epoch byte is not canonical");return 0;
+    const uint8_t nativeCount=
+        packet[room_random_sync::kStartParticipantCountOffset];
+    if((nativeCount&room_random_sync::kStartEpochMask)!=0 ||
+       room_random_sync::StartParticipantCount(nativeCount)>12) {
+        Fail(*attempt,"native start participant count is not canonical");return 0;
     }
     if(!CommitWireEpoch(*attempt,room)) {
         Fail(*attempt,"random room epoch changed before native start submission");return 0;
     }
     // Entering the native announcer is the point of no rollback: it may have
     // already queued the genuine start even if a later route reports failure.
-    packet[room_random_sync::kStartEpochOffset]=attempt->wireEpoch;
+    packet[room_random_sync::kStartParticipantCountOffset]=
+        room_random_sync::TaggedStartCount(nativeCount,attempt->wireEpoch);
     attempt->startSubmitted=true;
     const int result=g_broadcast(room,packet,length,attemptedRoutes);
-    packet[room_random_sync::kStartEpochOffset]=0;
+    packet[room_random_sync::kStartParticipantCountOffset]=nativeCount;
     SendPreparedNotices(*attempt,room);
     return result;
+}
+__declspec(naked) void BroadcastStartSite() {
+    __asm {
+        call BroadcastStart
+        jmp dword ptr [g_broadcastContinue]
+    }
 }
 void RestoreActual(uint8_t* room,uint64_t token=0) {
     SavedRoom saved;
@@ -705,11 +717,17 @@ SDGO_MOD_ENTRY {
        || !Bind(g_broadcast,"battle.room_random_broadcast")
        || !Bind(g_lobby,"battle.lobby_proc") || !Bind(g_lobbyFind,"battle.lobby_map_find")
        || !Bind(g_lobbyRoom,"battle.lobby_room") || !Bind(g_lobbyUnlock,"battle.lobby_release")) return 0;
+    auto* broadcastCall=static_cast<uint8_t*>(
+        api->Symbol(mod,"battle.room_random_start_broadcast_call"));
+    if(!broadcastCall)return 0;
+    g_broadcastContinue=broadcastCall+5;
     if(!api->HookCode(mod,"battle.start_dispatch",reinterpret_cast<void*>(&Dispatch),reinterpret_cast<void**>(&g_dispatch))
        || !api->HookCode(mod,"battle.start_special",reinterpret_cast<void*>(&SpecialStart),reinterpret_cast<void**>(&g_special))
        || !api->HookCode(mod,"battle.validate_unit",reinterpret_cast<void*>(&Validate),reinterpret_cast<void**>(&g_validate))
        || !api->HookCode(mod,"battle.build_human_unit",reinterpret_cast<void*>(&Build),reinterpret_cast<void**>(&g_build))
-       || !api->HookCode(mod,"battle.room_random_broadcast",reinterpret_cast<void*>(&BroadcastStart),reinterpret_cast<void**>(&g_broadcast))
+       || !api->HookSite(mod,"battle.room_random_start_broadcast_call",
+                         reinterpret_cast<void*>(&BroadcastStartSite),
+                         &g_broadcastCallOriginal)
        || !api->HookCode(mod,"battle.release_pilots",reinterpret_cast<void*>(&Release),reinterpret_cast<void**>(&g_release))) return 0;
     g_humanObserverReady=true;
     api->Log(mod,SDGO_LOG_INFO,"ready: !rand / !random assigns owned units once per battle; decks total exactly 10 points");

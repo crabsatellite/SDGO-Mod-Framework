@@ -17,7 +17,7 @@ namespace {
 int failures=0,startedModel=0,factoryCalls=0,fillCalls=0;
 int startParserCalls=0,startParserConstructions=0;
 uint32_t nativeNoticeRoute=0;
-uint8_t nativeParserEpoch=0;
+uint8_t nativeParserParticipantCount=0;
 std::array<uint8_t,0x5DA8> profile{};
 std::array<uint8_t,0x4000> room{};
 std::array<uint8_t,0x4C0> app{};
@@ -172,7 +172,8 @@ void ExecuteQueuedStart(const uint8_t* packet) {
 }
 __declspec(noinline) void __fastcall FakeStartParser(void*,void*,const uint8_t* packet) {
     ++startParserCalls;
-    nativeParserEpoch=packet[room_random_sync::kStartEpochOffset];
+    nativeParserParticipantCount=
+        packet[room_random_sync::kStartParticipantCountOffset];
     if(asyncNativeQueues) {
         std::memcpy(queuedStart.data(),packet,queuedStart.size());
         rootStartQueued=true;
@@ -365,8 +366,9 @@ template<size_t N>
 void TagNotice(std::array<uint8_t,N>& packet,uint16_t roomIndex,uint8_t epoch) {
     Put<uint32_t>(packet.data(),14,room_random_sync::TaggedRoute(roomIndex,epoch));
 }
-void TagStart(std::array<uint8_t,0xCD4>& packet,uint8_t epoch) {
-    packet[room_random_sync::kStartEpochOffset]=epoch;
+void TagStart(std::array<uint8_t,0xCD4>& packet,uint8_t count,uint8_t epoch) {
+    packet[room_random_sync::kStartParticipantCountOffset]=
+        room_random_sync::TaggedStartCount(count,epoch);
 }
 }
 int wmain(int argc,wchar_t** argv) {
@@ -391,7 +393,7 @@ int wmain(int argc,wchar_t** argv) {
     auto notice=room_random_sync::Packet(
         0x0861,1001,0,room_random_sync::TaggedRoute(7,1),unit);
     std::array<uint8_t,0xCD4> start{};Put<uint16_t>(start.data(),0,0x06C3);
-    TagStart(start,1);
+    TagStart(start,1,1);
     Put<uint32_t>(start.data(),0x20,1001);Put<uint32_t>(start.data(),0x2E,11032);
     std::array<uint8_t,0x50> dispatcher{};void* head=nullptr;Put<void*>(dispatcher.data(),0x44,&head);
     Put<uint8_t*>(startParser.data(),0x0C,startParserOwner.data());
@@ -404,20 +406,24 @@ int wmain(int argc,wchar_t** argv) {
     auto init=reinterpret_cast<SdgoCoreInitFn>(GetProcAddress(core,"SdgoCoreInit"));
     SdgoBoot boot{sizeof(SdgoBoot),"room_random_client_runtime_test",GetModuleHandleW(nullptr)};
     Check(init && init(&boot),"real core initializes both entry and interior hook owners");
-    startedModel=0;factoryCalls=0;nativeNoticeRoute=0;nativeParserEpoch=0;
+    startedModel=0;factoryCalls=0;nativeNoticeRoute=0;
+    nativeParserParticipantCount=0;
     SetTitle("fixture !rand");
     TagNotice(notice,7,1);
-    dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
+    dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
+    dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
     Check(startedModel==(enabled?11032:15019),"start uses the authoritative model only when synchronization is enabled");
     Check(factoryCalls==1,"native factory still executes once");
     Check(nativeNoticeRoute==(enabled ? 7u :
               room_random_sync::TaggedRoute(7,1)),
           "enabled hook strips the private epoch signature before the native notice handler");
-    if(nativeParserEpoch!=(enabled ? 0u : 1u))
-        std::printf("parser epoch observed: %u\n",
-                    static_cast<unsigned>(nativeParserEpoch));
-    Check(nativeParserEpoch==(enabled ? 0u : 1u),
-          "enabled hook passes a canonical zero reserved byte to the original parser");
+    const auto expectedParserCount=enabled ? 1u :
+        static_cast<unsigned>(room_random_sync::TaggedStartCount(1,1));
+    if(nativeParserParticipantCount!=expectedParserCount)
+        std::printf("parser participant count observed: %u\n",
+                    static_cast<unsigned>(nativeParserParticipantCount));
+    Check(nativeParserParticipantCount==expectedParserCount,
+          "enabled hook preserves the native participant count");
     Put<uint32_t>(frozen[0].data(),0x429,1001);Put<uint32_t>(frozen[0].data(),0x49,15019);
     Construct(start.data()+0x20,frozen[0].data(),0);
     Check(startedModel==(enabled?11032:15019),"the static converter's unrelated ECX cannot replace the verified lobby packet context");
@@ -451,7 +457,7 @@ int wmain(int argc,wchar_t** argv) {
     const auto original=frozen[0];
     Put<uint32_t>(room.data(),0x57C,15019);startedModel=0;
     fillCalls=0;
-    TagStart(start,1);TagNotice(notice,7,1);
+    TagStart(start,1,1);TagNotice(notice,7,1);
     dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
     dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
     reinterpret_cast<room_random_client::ManagerUpdateFn>(&NativeManagerUpdate)(manager.data());
@@ -474,7 +480,7 @@ int wmain(int argc,wchar_t** argv) {
     Put<void*>(modelVtable.data(),0x8C,reinterpret_cast<void*>(&NormalSetShip));
     Put<void*>(modelVtable.data(),0x90,reinterpret_cast<void*>(&NormalShip));
     Put<uint32_t>(app.data(),0x4A0,18);room[5]=1;startedModel=0;
-    TagStart(start,2);TagNotice(notice,7,2);
+    TagStart(start,1,2);TagNotice(notice,7,2);
     dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
     dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
     reinterpret_cast<room_random_client::ManagerUpdateFn>(&NativeManagerUpdate)(manager.data());
@@ -516,7 +522,7 @@ int wmain(int argc,wchar_t** argv) {
     Put<uint32_t>(room.data(),0x95C,1001);Put<uint32_t>(room.data(),0x57C,15019);
     Put<uint32_t>(frozen[0].data(),0x429,1001);Put<uint32_t>(frozen[0].data(),0x49,15019);
     startParserCalls=0;startParserConstructions=0;startedModel=0;
-    TagStart(start,3);TagNotice(notice,39,3);
+    TagStart(start,1,3);TagNotice(notice,39,3);
     dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
     dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
     Check(userStates[0].size()==2 && userStates[0][0]==0x0E &&
@@ -610,7 +616,7 @@ int wmain(int argc,wchar_t** argv) {
         Put<uint32_t>(room.data(),0,44);room[5]=8;SetTitle("multi !rand");
         Put<uint32_t>(room.data(),0x95C,1001);
         Put<uint32_t>(room.data(),0x57C,15019);
-        TagStart(start,4);
+        TagStart(start,1,4);
         dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
         Check(startParserCalls==0,
               "missing human record holds the random start before C cleanup");
@@ -636,10 +642,10 @@ int wmain(int argc,wchar_t** argv) {
         Put<uint32_t>(room.data(),0x95C,1001);
         Put<uint32_t>(room.data(),0x57C,15019);
         TagNotice(notice,49,13);
-        TagStart(start,13);
+        TagStart(start,1,13);
         skipNativeRoomViewQueue=true;
-        dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
         dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
+        dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());
         Check(userStates[0].size()==1 && userStates[0][0]==0x0E &&
               startParserCalls==0,
               "native flag-4 fixture queues E without a synthetic local C");
@@ -673,7 +679,7 @@ int wmain(int argc,wchar_t** argv) {
         auto sameStart=start;
         Put<uint32_t>(sameStart.data(),0x20,1001);
         Put<uint32_t>(sameStart.data(),0x2E,11032);
-        TagStart(sameStart,5);
+        TagStart(sameStart,1,5);
         std::array<uint8_t,0x99> firstRoundUnit{};
         Put<uint32_t>(firstRoundUnit.data(),0,11032);
         Put<uint64_t>(firstRoundUnit.data(),8,0x111111111111ULL);
@@ -696,7 +702,7 @@ int wmain(int argc,wchar_t** argv) {
         roomViewRuns=0;roomViewRequests=0;startParserCalls=0;
         startParserConstructions=0;startedModels={};
         Put<uint32_t>(app.data(),0x4A0,18);
-        TagStart(sameStart,6);
+        TagStart(sameStart,1,6);
         dispatch(dispatcher.data(),0,0,0,0x06C3,sameStart.data());
         for(int i=0;i<2;++i)tick(manager.data());
         Check(startParserCalls==0 && roomViewServices[0].frees==0,
@@ -728,7 +734,7 @@ int wmain(int argc,wchar_t** argv) {
         Put<uint32_t>(room.data(),0,48);room[5]=8;SetTitle("duplicate !rand");
         std::array<uint8_t,0xCD4> duplicateStart{};
         Put<uint16_t>(duplicateStart.data(),0,0x06C3);
-        TagStart(duplicateStart,7);
+        TagStart(duplicateStart,2,7);
         std::array<std::array<uint8_t,0x99>,2> duplicateUnits{};
         std::array<std::array<uint8_t,room_random_sync::kPayload+
             room_random_sync::kUnitSize>,2> duplicateNotices{};
@@ -756,6 +762,7 @@ int wmain(int argc,wchar_t** argv) {
         }
         dispatch(dispatcher.data(),0,0,0,0x06C3,duplicateStart.data());
         dispatch(dispatcher.data(),0,0,0,0x0861,duplicateNotices[0].data());
+        TagStart(duplicateStart,2,7); // a fresh wire copy; the hook canonicalized the first
         dispatch(dispatcher.data(),0,0,0,0x06C3,duplicateStart.data());
         dispatch(dispatcher.data(),0,0,0,0x0861,duplicateNotices[1].data());
         for(int i=0;i<3;++i)tick(manager.data());
@@ -784,7 +791,7 @@ int wmain(int argc,wchar_t** argv) {
         roomViewRuns=0;roomViewRequests=0;startParserCalls=0;
         Put<uint32_t>(app.data(),0x4A0,18);
         Put<uint32_t>(room.data(),0,45);Put<uint32_t>(room.data(),0x57C,15019);
-        TagStart(start,8);
+        TagStart(start,1,8);
         dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
         EnqueueUserState(0,0x0C,4);
         Put<int>(roomViewServices[0].object.data(),8,1);
@@ -811,7 +818,7 @@ int wmain(int argc,wchar_t** argv) {
     std::array<std::array<uint8_t,0x99>,4> lateUnits{};
     std::array<std::array<uint8_t,room_random_sync::kPayload+room_random_sync::kUnitSize>,4> lateNotices{};
     std::array<uint8_t,0xCD4> lateStart{};Put<uint16_t>(lateStart.data(),0,0x06C3);
-    TagStart(lateStart,9);
+    TagStart(lateStart,4,9);
     for(size_t slot=0;slot<4;++slot) {
         const auto pilot=static_cast<uint32_t>(4101+slot);
         const auto oldModel=static_cast<uint32_t>(17001+slot);
@@ -844,7 +851,7 @@ int wmain(int argc,wchar_t** argv) {
     Check(startParserCalls==(enabled?0:1),
           "rejected and duplicate notices cannot release an incomplete start");
     auto replacementStart=lateStart;replacementStart[0x20+5]=0x33;
-    TagStart(replacementStart,10);
+    TagStart(replacementStart,4,10);
     dispatch(dispatcher.data(),0,0,0,0x06C3,replacementStart.data());
     Check(startParserCalls==(enabled?0:2),
           "a replacement 06C3 supersedes the older held parser generation");
@@ -865,13 +872,13 @@ int wmain(int argc,wchar_t** argv) {
     // A held parser belongs to one room/model generation. Once that identity
     // changes, a later record must not replay the stale packet or parser.
     Put<uint32_t>(app.data(),0x4A0,18);Put<uint32_t>(room.data(),0,41);
+    auto generationStart=replacementStart;
+    TagStart(generationStart,4,11);
+    dispatch(dispatcher.data(),0,0,0,0x06C3,generationStart.data());
     for(size_t slot=0;slot<3;++slot) {
         TagNotice(lateNotices[slot],41,11);
         dispatch(dispatcher.data(),0,0,0,0x0861,lateNotices[slot].data());
     }
-    auto generationStart=replacementStart;
-    TagStart(generationStart,11);
-    dispatch(dispatcher.data(),0,0,0,0x06C3,generationStart.data());
     const auto beforeGeneration=startParserCalls;
     Put<uint32_t>(room.data(),0,42);
     std::array<uint8_t,2> irrelevant{};Put<uint16_t>(irrelevant.data(),0,0x7777);
@@ -897,7 +904,7 @@ int wmain(int argc,wchar_t** argv) {
     Put<uint64_t>(ship.data(),0x1C,0x100000001ULL);
     auto deck=room_random_sync::Packet(
         0x098B,1001,0,room_random_sync::TaggedRoute(43,12),ship);
-    TagStart(start,12);TagNotice(notice,43,12);
+    TagStart(start,1,12);TagNotice(notice,43,12);
     startParserCalls=0;startParserConstructions=0;startedModels={};
     dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
     dispatch(dispatcher.data(),0,0,0,0x098B,deck.data());

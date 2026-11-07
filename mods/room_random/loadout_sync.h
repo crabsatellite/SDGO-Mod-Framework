@@ -4,14 +4,32 @@
 #include <cstdint>
 #include <cstring>
 
-// Native client notifications with a bounded random-round marker in unused
-// route bits. Patched clients restore the native route before dispatch.
+// Native client notifications carry a bounded random-round marker in route
+// bits that the patched client restores before native dispatch. Native 06C3
+// byte +0x1F contains a 0..12 participant count. Its otherwise-unused high
+// nibble carries the same 1..15 round only on the wire; patched clients retain
+// that identity privately and clear the high nibble before native consumers.
+// The first 0x10F-byte participant record follows at +0x20.
 // The broadcaster replaces header +2 with each recipient's pilot ID.
 namespace room_random_sync {
 constexpr size_t kUnitSize=0x99, kShipSize=0x2BC, kPayload=0x12;
 constexpr uint16_t kUnitOpcode=0x0861, kShipOpcode=0x098B;
-constexpr size_t kStartEpochOffset=0x1F;
+constexpr size_t kStartParticipantCountOffset=0x1F;
+constexpr uint8_t kStartParticipantCountMask=0x0F;
+constexpr uint8_t kStartEpochMask=0xF0;
 constexpr uint16_t kRoundSignature=0xA500;
+
+inline uint8_t StartParticipantCount(uint8_t value) {
+    return value&kStartParticipantCountMask;
+}
+inline uint8_t StartEpoch(uint8_t value) {
+    return static_cast<uint8_t>((value&kStartEpochMask)>>4);
+}
+inline uint8_t TaggedStartCount(uint8_t participants,uint8_t epoch) {
+    return static_cast<uint8_t>(
+        (participants&kStartParticipantCountMask)|
+        ((epoch&kStartParticipantCountMask)<<4));
+}
 
 struct Route {
     uint16_t room=0;

@@ -114,9 +114,12 @@ which retires and frees that one request normally without sending another room-v
 private packet copy and resumes the original parser once after the waiting-room manager has processed
 the remaining queues.
 Late notices update the pending records; the packet dispatcher does not reenter the start parser.
-The server advances a per-room marker from 1 through 255, wrapping to 1. It uses the native start
-packet's reserved byte and unused high bits of the loadout route field; the client restores the native
-values before original processing. Missing or incompatible markers use the native fallback and are
+The server advances a per-room marker from 1 through 15, wrapping to 1. The native start packet's
+byte at `+0x1F` remains a 0..12 participant count in its low nibble; its high nibble and the unused
+high bits of the loadout route field carry the marker only on the wire. The client saves that identity
+privately and clears the high bits before every original consumer. The server owns only the exact
+common 06C3 broadcast call site, so other Mods may still hook the native broadcast function.
+Missing or incompatible markers use the native fallback and are
 reported as a component-version mismatch. This uses native completion conditions rather than a fixed loading delay. Duplicate
 notices cannot start it again; changing rooms or replacing the start discards the old pending
 transition. Ordinary rooms retain the native timing.

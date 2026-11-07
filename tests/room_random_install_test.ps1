@@ -40,6 +40,7 @@ Assert ([IO.File]::ReadAllText($symbol).Contains('[other_agent.fixture]')) 'unre
 Assert ([IO.File]::ReadAllText($symbol).Contains('原有注释')) 'Unicode symbol comments preserved'
 Assert ([IO.File]::ReadAllText($symbol).Contains('[battle.build_human_unit]')) 'new symbols added'
 Assert ([IO.File]::ReadAllText($symbol).Contains('[battle.room_random_broadcast]')) 'native loadout notification symbol added'
+Assert ([IO.File]::ReadAllText($symbol).Contains('[battle.room_random_start_broadcast_call]')) 'unique native start broadcast call symbol added'
 Assert (Test-Path -LiteralPath (Join-Path $target 'sdgo\mods\room_random\manager.json')) 'Manager metadata installed'
 $config=Join-Path $target 'sdgo\mods\room_random\config.ini'
 Assert ((Value $config 'settings' 'DatabaseIni') -eq $nativeIni) 'Unicode database reference round trips'

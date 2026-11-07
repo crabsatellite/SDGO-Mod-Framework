@@ -12,8 +12,9 @@ template<size_t N>
 void TagNotice(std::array<uint8_t,N>& packet,uint16_t room,uint8_t epoch) {
     Put<uint32_t>(packet.data(),14,room_random_sync::TaggedRoute(room,epoch));
 }
-void TagStart(std::array<uint8_t,0xCD4>& packet,uint8_t epoch) {
-    packet[room_random_sync::kStartEpochOffset]=epoch;
+void TagStart(std::array<uint8_t,0xCD4>& packet,uint8_t count,uint8_t epoch) {
+    packet[room_random_sync::kStartParticipantCountOffset]=
+        room_random_sync::TaggedStartCount(count,epoch);
 }
 }
 int main() {
@@ -275,49 +276,54 @@ int main() {
         Put<uint32_t>(epochUnit.data(),0,15001);
         Put<uint64_t>(epochUnit.data(),8,0x700000001ULL);
         auto epochNotice=room_random_sync::Packet(
-            0x0861,5001,0,room_random_sync::TaggedRoute(60,255),epochUnit);
+            0x0861,5001,0,room_random_sync::TaggedRoute(60,15),epochUnit);
         std::array<uint8_t,0xCD4> epochStart{};
         Put<uint16_t>(epochStart.data(),0,0x06C3);
         Put<uint32_t>(epochStart.data(),0x20,5001);
         Put<uint32_t>(epochStart.data(),0x2E,15001);
-        TagStart(epochStart,255);
+        TagStart(epochStart,1,15);
         CacheSync epochs;
         auto epochResult=epochs.Process(
+            epochContext,0x06C3,epochStart.data(),true);
+        Check(epochResult.newStart && epochResult.epoch==15 &&
+              !epochs.ReadyForStart(epochContext,epochStart.data()),
+              "tagged native start waits for its exact round record");
+        epochResult=epochs.Process(
             epochContext,0x0861,epochNotice.data(),true);
         auto roomView=epochs.PendingRoomView(epochContext);
         Check(epochResult.applied==1 && epochResult.tagged &&
-              epochResult.epoch==255 && roomView && roomView.future,
-              "tagged notice may arrive before its matching start epoch");
+              epochResult.epoch==15 && roomView && !roomView.future &&
+              epochs.ReadyForStart(epochContext,epochStart.data()),
+              "matching notice completes the explicitly tagged held round");
         Check(epochs.ConsumeRoomView(roomView) &&
               !epochs.PendingRoomView(epochContext),
-              "local C cleanup can finish before the matching 06C3 callback");
-        epochResult=epochs.Process(
-            epochContext,0x06C3,epochStart.data(),true);
-        Check(epochResult.newStart && epochResult.epoch==255 &&
-              epochResult.applied==1 &&
-              epochs.ReadyForStart(epochContext,epochStart.data()),
-              "pre-start record is promoted into the exact epoch");
+              "local C cleanup consumes only the bound round permit");
+        Check(epochs.ClaimStart(epochContext,epochStart.data()),
+              "held start is claimed exactly once");
         const auto duplicate=epochs.Process(
             epochContext,0x06C3,epochStart.data(),true);
         Check(duplicate.duplicate && !duplicate.newStart &&
               epochs.ReadyForStart(epochContext,epochStart.data()),
               "byte-identical duplicate 06C3 preserves the completed cohort");
-        Check(epochs.ClaimStart(epochContext,epochStart.data()) &&
-              epochs.ReleaseStart(epochContext,epochStart.data()) &&
+        Check(epochs.ReleaseStart(epochContext,epochStart.data()) &&
               !epochs.PendingRoomView(epochContext),
               "released start expires only its local C cleanup permit");
 
         Put<uint64_t>(epochUnit.data(),8,0x800000001ULL);
         epochNotice=room_random_sync::Packet(
             0x0861,5001,0,room_random_sync::TaggedRoute(60,1),epochUnit);
-        epochResult=epochs.Process(
-            epochContext,0x0861,epochNotice.data(),true);
-        TagStart(epochStart,1);
+        TagStart(epochStart,1,1);
         epochResult=epochs.Process(
             epochContext,0x06C3,epochStart.data(),true);
         Check(epochResult.newStart && epochResult.epoch==1 &&
+              !epochs.ReadyForStart(
+                  epochContext,epochStart.data()),
+              "same native body with a new high-nibble epoch starts a fresh round");
+        epochResult=epochs.Process(
+            epochContext,0x0861,epochNotice.data(),true);
+        Check(epochResult.epoch==1 &&
               epochs.ReadyForStart(epochContext,epochStart.data()),
-              "wire epoch wraps from 255 to 1 without reusing the old cohort");
+              "notice epoch wraps from fifteen to one without reusing records");
         std::array<uint8_t,kStride> epochSource{};
         Put<uint32_t>(epochSource.data(),kOwner,5001);
         Put<uint32_t>(epochSource.data(),0x49,17001);
@@ -342,7 +348,7 @@ int main() {
         Put<uint16_t>(mismatchStart.data(),0,0x06C3);
         Put<uint32_t>(mismatchStart.data(),0x20,5101);
         Put<uint32_t>(mismatchStart.data(),0x2E,15101);
-        TagStart(mismatchStart,7);
+        TagStart(mismatchStart,1,7);
         CacheSync mismatch;
         mismatch.Process(mismatchContext,0x06C3,mismatchStart.data(),true);
         const auto mismatchResult=mismatch.Process(
@@ -353,12 +359,12 @@ int main() {
               !mismatch.ReadyForStart(mismatchContext,mismatchStart.data()),
               "matching untagged record triggers explicit native fallback");
         CacheSync missingEpoch;
-        mismatchStart[room_random_sync::kStartEpochOffset]=0;
+        mismatchStart[room_random_sync::kStartParticipantCountOffset]=1;
         const auto missingResult=missingEpoch.Process(
             mismatchContext,0x06C3,mismatchStart.data(),true);
         Check(missingResult.reason==9 && missingResult.protocolMismatch &&
               !missingEpoch.ReadyForStart(mismatchContext,mismatchStart.data()),
-              "strict random start with no epoch cannot enter an indefinite hold");
+              "strict random start without a high-nibble epoch cannot hang");
     }
     {
         std::array<uint8_t,0x5DA8> coherentProfile{};
@@ -387,22 +393,19 @@ int main() {
         auto wrongEpochShip=room_random_sync::Packet(
             0x098B,5201,0,room_random_sync::TaggedRoute(62,10),
             coherentShip);
-        TagStart(coherentStart,9);
+        TagStart(coherentStart,1,9);
         CacheSync coherent;
         coherent.Process(
-            coherentContext,0x0861,coherentUnitPacket.data(),true);
-        coherent.Process(
-            coherentContext,0x098B,wrongEpochShip.data(),true);
-        coherent.Process(
             coherentContext,0x06C3,coherentStart.data(),true);
-        Check(!coherent.ReadyForStart(
-                  coherentContext,coherentStart.data()),
+        coherent.Process(
+            coherentContext,0x0861,coherentUnitPacket.data(),true);
+        const auto wrongEpoch=coherent.Process(
+            coherentContext,0x098B,wrongEpochShip.data(),true);
+        Check(!wrongEpoch.protocolMismatch &&
+              !coherent.ReadyForStart(coherentContext,coherentStart.data()),
               "unit and ship components from different epochs never combine");
-        TagNotice(coherentUnitPacket,62,9);
         auto coherentShipPacket=wrongEpochShip;
         TagNotice(coherentShipPacket,62,9);
-        coherent.Process(
-            coherentContext,0x0861,coherentUnitPacket.data(),true);
         coherent.Process(
             coherentContext,0x098B,coherentShipPacket.data(),true);
         Check(coherent.ReadyForStart(

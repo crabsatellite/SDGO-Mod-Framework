@@ -75,6 +75,15 @@ class CacheSync {
             c.model==model_ && c.manager==manager_ &&
             Read<uint32_t>(c.room,0)==key_;
     }
+    bool SameStartPacket(const uint8_t* packet) const {
+        if(!packet)return false;
+        constexpr size_t at=room_random_sync::kStartParticipantCountOffset;
+        return std::memcmp(packet,startPacket_.data(),at)==0 &&
+            room_random_sync::StartParticipantCount(packet[at])==
+                room_random_sync::StartParticipantCount(startPacket_[at]) &&
+            std::memcmp(packet+at+1,startPacket_.data()+at+1,
+                        startPacket_.size()-at-1)==0;
+    }
     void ResetContext(const Context& c,uint32_t key) {
         room_=c.room;key_=key;model_=c.model;manager_=c.manager;
         pending_={};future_={};legacy_={};untagged_={};
@@ -226,9 +235,12 @@ class CacheSync {
     }
     Result Start(const Context& c,const uint8_t* packet,bool strict) {
         Result result;result.source=c.source;
-        const uint8_t epoch=strict ? packet[room_random_sync::kStartEpochOffset] : 0;
+        const uint8_t encoded=
+            packet[room_random_sync::kStartParticipantCountOffset];
+        const uint8_t count=room_random_sync::StartParticipantCount(encoded);
+        const uint8_t epoch=strict ? room_random_sync::StartEpoch(encoded) : 0;
         result.epoch=epoch;result.tagged=!strict || epoch!=0;
-        if(strict && !epoch) {
+        if(strict && (!epoch || count>12)) {
             incompatible_=true;result.protocolMismatch=true;result.reason=9;
             return result;
         }
@@ -301,21 +313,21 @@ public:
     }
     bool ProtocolMismatch(const Context& c,const uint8_t* packet) const {
         return packet && SameContext(c) && startSeen_ && strict_ &&
-            packet[room_random_sync::kStartEpochOffset]==epoch_ && incompatible_;
+            SameStartPacket(packet) && incompatible_;
     }
     bool ClaimStart(const Context& c,const uint8_t* packet) {
         if(!packet || !SameContext(c) || !startSeen_ ||
-           std::memcmp(packet,startPacket_.data(),startPacket_.size())!=0 ||
+           !SameStartPacket(packet) ||
            claimed_)return false;
         claimed_=true;return true;
     }
     bool StartClaimed(const Context& c,const uint8_t* packet) const {
         return claimed_ && packet && SameContext(c) && startSeen_ &&
-            std::memcmp(packet,startPacket_.data(),startPacket_.size())==0;
+            SameStartPacket(packet);
     }
     bool ReleaseStart(const Context& c,const uint8_t* packet) {
         if(!packet || !SameContext(c) || !startSeen_ ||
-           std::memcmp(packet,startPacket_.data(),startPacket_.size())!=0)
+           !SameStartPacket(packet))
             return false;
         if(local_.epoch==epoch_)local_.Clear();
         return true;
@@ -328,7 +340,7 @@ public:
     bool ReadyForStart(const Context& c,const uint8_t* packet) const {
         if(!packet || !startSeen_ || incompatible_ || !SameContext(c) ||
            Read<uint16_t>(packet,0)!=0x06C3 ||
-           (strict_ && packet[room_random_sync::kStartEpochOffset]!=epoch_))
+           !SameStartPacket(packet) || (strict_ && !epoch_))
             return false;
         bool anyHuman=false;
         for(size_t slot=0;slot<kSlots;++slot) {
