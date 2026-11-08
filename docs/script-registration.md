@@ -1,5 +1,7 @@
 # Original-VM script registration
 
+[Back to unit family import](unit-import.md)
+
 `sdgo_script_registration` is a static library for an importer or owner module.
 It carries no game scripts and does not create a Lua VM. The module supplies
 authenticated external chunks and symbol-profile-verified original VM calls.
@@ -33,8 +35,7 @@ Use `NativeRegistration::onOriginalLoad` from the original file-loader hook.
 Supply the framework's original trampoline, the game main thread identified by
 `ProcessInitialThreadId(api)`, and a mandatory candidate-client close callback. A
 zero identity must refuse admission; the current callback thread is not a fallback.
-The adapter
-passes ordinary loads through. For the original root, it first invokes the
+The adapter passes ordinary loads through. For the original root, it first invokes the
 unmodified loader and only then admits registration on that same main thread.
 The engine's first state pointer must equal the original state getter. A newly
 initialized VM requires a fresh registry instance.
@@ -72,8 +73,8 @@ receipt.
 `onOriginalLoadBatch` admits multiple owners at one original root completion.
 It checks every owner's program bytes, resource/export names and existing VM
 globals before executing the first owner. A failure after any owner executes
-quarantines the whole candidate client. It does not rerun the original root once
-per owner or claim to roll back published closures.
+quarantines the whole candidate client. The original root runs once for all
+owners, and published closures are not rolled back.
 
 ## Unit catalog transport
 
@@ -112,9 +113,9 @@ The initializer field is consumed by the native weapon family. The bytes at
 `0x6E9` and `0x6EA` are separate native fields; do not interpret them as one
 16-bit initializer type or change them to force a callback. Native Fang state
 initialization and legacy funnel/missile initialization use different consumers.
-Manager can preserve/export declarations in a project and show its script-group
-count. Its ordinary publisher remains blocked for projects that require the
-unfinished actor admission path.
+Manager keeps these declarations in exported projects and shows the script-group
+count. Its ordinary publisher rejects projects that need actor admission, which
+is not available yet.
 
 ## Verification
 
@@ -136,5 +137,5 @@ owned child and invokes six original Lua stack/state/type/lookup/identity APIs
 against the official VM fixture. It reserves the fixed source image range before
 the child's CRT heap exists. No executable entry, TLS callback, import resolver,
 game window or game process runs. The original file/root loader and buffer
-execution remain separate from that six-API replay; it must not be reported as
-an original-client gameplay or native registration pass.
+execution remain separate from that six-API replay, which does not cover
+original-client gameplay or native registration.

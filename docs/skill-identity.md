@@ -1,5 +1,7 @@
 # Native skill identity selectors
 
+[Back to unit family import](unit-import.md)
+
 `sdgo_skill_identity` is a linkable importer component. It preserves an imported
 skill's allocated ID while selecting an audited stock branch in the server's
 supplemental enable/disable dispatchers. It carries no content or installation
@@ -80,10 +82,10 @@ The borrowed definition and its first DWORD remain unchanged; the generic
 state-notification path continues reading the allocated ID. This is not a
 global ID rewrite or a temporary mutation of shared records.
 
-The original flag is at actor offset `0x1CDE`. Matching this branch does not
-establish all downstream gameplay, packet, effect, transformation or cleanup
-behavior. The importer must still connect its resource/server admission and
-exercise the actual actor.
+The original flag is at actor offset `0x1CDE`. Selecting this branch covers only
+that flag; downstream gameplay, packets, effects, transformation and cleanup are
+handled elsewhere. The importer still connects its resource/server admission, and
+the unit should be tried in real battles on a test server.
 
 ## Developer checks
 
@@ -94,4 +96,4 @@ authenticated bytes into an owned child and invoke only the audited dispatcher
 functions against scratch storage. They exercise original and allocated IDs,
 enable/disable symmetry, pointer rejection, code/table changes and state
 preservation. They do not run the original server entry point, create a room,
-send a packet or establish actual actor behavior.
+send a packet or exercise actual actor behavior.
