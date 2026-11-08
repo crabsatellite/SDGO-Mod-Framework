@@ -1684,6 +1684,19 @@ namespace
         return true;
     }
 
+    bool MatchesLocalTransformMode(uint8_t* unit,uint32_t mode,uint32_t target)
+    {
+        if(mode==1)return true;
+        if(mode!=2||!target)return false;
+        // TransformInit may already have swapped the definition while D4
+        // still owns the animation. The native notice then produces mode2;
+        // only the local receiver consumes that completion phase.
+        using namespace battle_ai::native::detail;
+        uint8_t* definition=nullptr;uint32_t current=0;
+        return ReadPointer(unit,kActiveUnitDefinition,definition)&&
+            Read(definition,kUnitId,current)&&current==target;
+    }
+
     void __fastcall UnitNetworkMessage(uint8_t* unit,void*,const uint8_t* message)
     {
         if(!g_transformConfirmation.active) {g_originalUnitNetworkMessage(unit,message);return;}
@@ -1693,14 +1706,17 @@ namespace
             uint16_t type=0;uint32_t object=0,mode=0,target=0;
             match_ai::transform::LocalActor actor{};
             local=Read(unit,kUnitObjectId,object)&&object==g_transformConfirmation.object&&
-                Read(message,0,type)&&type==0x1D&&Read(message,0x10,mode)&&mode==1&&
+                Read(message,0,type)&&type==0x1D&&Read(message,0x10,mode)&&
                 Read(message,0x14,target)&&target==g_transformConfirmation.target&&
+                MatchesLocalTransformMode(unit,mode,target)&&
                 ReadLocalTransformActor(g_transformConfirmation.pilot,actor)&&
                 match_ai::transform::ReusesLocalTransform(actor,actor.pilot,target,0);
+            if(local&&mode==2&&g_logDiagnostics)g_api->Log(g_mod,SDGO_LOG_INFO,
+                "native AI transform completion object=%u target=%u mode=2 via local receiver",object,target);
         } __except(EXCEPTION_EXECUTE_HANDLER) {local=false;}
         SetLastError(savedError);
-        // The local receiver accepts this original Msg1D and starts mode1.
-        // The generic receiver instead queues D4 again, even for replay0 ACKs.
+        // The local receiver consumes the original phase1/phase2 Msg1D.
+        // The generic receiver requeues D4 for phase1 and ignores phase2.
         // The native receiver owns every FSM/model change.
         if(local)g_unitCombatEvent(unit,message);
         else g_originalUnitNetworkMessage(unit,message);

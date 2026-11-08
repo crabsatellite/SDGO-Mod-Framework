@@ -380,6 +380,27 @@ sdgo_add_mod(room_random SERVER DESCRIPTION "per-round random owned human loadou
              SOURCES mods/room_random/room_random.cpp mods/room_random/inventory.cpp
              LIBS odbc32 bcrypt FILES config.example.ini)
 
+if(BUILD_TESTING)
+    # Explicit benchmark-only DLLs. They are never copied into a release stage.
+    add_library(pvp_ai_performance_fixture SHARED tests/pvp_ai_performance_fixture.cpp)
+    add_executable(battle_ai_shape_bounds_test tests/battle_ai_shape_bounds_test.cpp)
+    sdgo_strict(battle_ai_shape_bounds_test)
+    add_test(NAME battle_ai_shape_bounds_offline COMMAND battle_ai_shape_bounds_test)
+    target_link_libraries(pvp_ai_performance_fixture PRIVATE sdgo_api)
+    sdgo_strict(pvp_ai_performance_fixture)
+    set_target_properties(pvp_ai_performance_fixture PROPERTIES OUTPUT_NAME pvp_ai
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/performance-fixtures/$<CONFIG>/pvp_ai"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/performance-fixtures/$<CONFIG>/pvp_ai"
+        PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/performance-fixtures/$<CONFIG>/pvp_ai")
+    add_library(room_random_performance_fixture SHARED tests/room_random_performance_fixture.cpp mods/room_random/inventory.cpp)
+    target_link_libraries(room_random_performance_fixture PRIVATE sdgo_api odbc32 bcrypt)
+    sdgo_strict(room_random_performance_fixture)
+    set_target_properties(room_random_performance_fixture PROPERTIES OUTPUT_NAME room_random
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/performance-fixtures/$<CONFIG>/room_random"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/performance-fixtures/$<CONFIG>/room_random"
+        PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/performance-fixtures/$<CONFIG>/room_random")
+endif()
+
 sdgo_add_mod(net_route DESCRIPTION "configured network endpoint routes" SOURCES mods/net_route/net_route.cpp LIBS ws2_32 shell32 FILES config.example.ini)
 sdgo_add_mod(agent_udp_pool SERVER DESCRIPTION "native Agent UDP port pool" SOURCES mods/agent_udp_pool/agent_udp_pool.cpp LIBS ws2_32 FILES config.example.ini)
 sdgo_add_mod(agent_relay_log_fix SERVER DESCRIPTION "native Agent relay printf fix" SOURCES mods/agent_relay_log_fix/agent_relay_log_fix.cpp)

@@ -49,7 +49,9 @@ def main():
             if args.version:
                 update=call('/api/updates')
                 assert update['current_version']==args.version,(update['current_version'],args.version)
-                assert update['channel']==('beta' if '-beta.' in args.version else 'stable')
+                # The workspace chooses its update channel independently of
+                # the executable's version. Fresh installations use Stable.
+                assert update['channel']=='stable'
             with urllib.request.urlopen(base+'/',timeout=10) as response:html=response.read().decode('utf-8')
             assert '客户端更新与服主管理' in html and '玩家可以在此更新完整客户端' in html and 'owner-notice' in html
             assert 'href="/brand.svg"' in html

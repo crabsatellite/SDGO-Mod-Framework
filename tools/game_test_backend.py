@@ -25,6 +25,19 @@ DATABASES=('GameRank','GDClan','GDCommon','GDGameLogView','GDLogDB','GDLongTermG
 DEFAULT_IMAGE='mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718'
 
 
+def ordered_native_services(selected):
+    """Order only the XML/database-selected hosts by native dependencies."""
+    def rank(spec):
+        folder=spec['folder']
+        if folder=='StoreServer':return 0
+        if folder=='ChattingServer':return 1
+        if folder.startswith('AgentServer'):return 2
+        if folder.startswith('BattleServer'):return 3
+        if folder=='WorldServer':return 5
+        return 4
+    return sorted(selected,key=rank)
+
+
 class BackendBackgroundProcess(WindowsBackgroundProcess):
     """Private-desktop server owner with an explicit locked-session audit."""
 
@@ -632,7 +645,7 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
         selected=[spec for spec in manifest['services'] if spec['folder'] in configured and
             (not spec['folder'].startswith('Battle') or spec['port'] in enabled_ports)]
         if native_local:
-            selected.sort(key=lambda spec: spec['folder']=='WorldServer')
+            selected=ordered_native_services(selected)
         skipped=[spec['folder'] for spec in manifest['services'] if spec not in selected]
         login_port=int(client['plan']['login_port'])
         assert_listener_endpoints_free(

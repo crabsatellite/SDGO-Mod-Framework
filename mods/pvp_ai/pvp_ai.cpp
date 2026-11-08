@@ -1063,6 +1063,9 @@ namespace
         event->score_team_2 = *reinterpret_cast<int32_t*>(room + kRoomScoreTeam2);
         event->room_type = room[kRoomType];
         event->mode = room[kRoomMode];
+        event->map_selection = room[0x09];
+        event->map_number = room[0x0A];
+        event->manual_map_valid = event->map_selection == 0 ? 1 : 0;
 
         const RoomView view = ViewRoom(room);
         event->humans_team_1 = static_cast<uint8_t>((std::min)(view.humans[1], 255));

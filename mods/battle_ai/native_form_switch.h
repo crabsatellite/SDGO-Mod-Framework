@@ -11,6 +11,8 @@ struct FormTransition {
 
 inline bool TransformOwnsMotor(std::uint8_t* unit) noexcept {
     using namespace detail;
+    ReadableRegionCache regions{};
+    ScopedReadableRegionCache scope(g_readableRegionCache?*g_readableRegionCache:regions);
     std::uint8_t *move=nullptr,*owner=nullptr;
     std::uint32_t current=0,pending=0,mode=0;
     return ReadPointer(unit,0x9C8,move)&&ReadPointer(move,0x21C,owner)&&owner==unit&&
@@ -23,6 +25,8 @@ inline bool TransformOwnsMotor(std::uint8_t* unit) noexcept {
 // current-or-pending action-ownership check. This is read-only.
 inline bool TransformInputAllowed(std::uint8_t* move,std::uint8_t* attack) noexcept {
     using namespace detail;
+    ReadableRegionCache regions{};
+    ScopedReadableRegionCache scope(g_readableRegionCache?*g_readableRegionCache:regions);
     std::uint8_t* secondary=nullptr;
     std::uint8_t cancelOpen=0;
     std::uint32_t mc=0,mp=0,ac=0,ap=0,sc=0,sp=0;
@@ -41,6 +45,10 @@ inline bool TransformInputAllowed(std::uint8_t* move,std::uint8_t* attack) noexc
 // define this directed transition. Native request/Entry/Release own the commit.
 inline FormTransition ReadFormTransition(std::uint8_t* unit) noexcept {
     using namespace detail;
+    // These pure reads call no engine code. Reuse validation for this snapshot
+    // while retaining every live field read and Copy's fault guard.
+    ReadableRegionCache regions{};
+    ScopedReadableRegionCache scope(g_readableRegionCache?*g_readableRegionCache:regions);
     FormTransition result{};
     std::uint8_t *move=nullptr,*attack=nullptr,*current=nullptr,*parked=nullptr,*owner=nullptr,*boundAttack=nullptr;
     std::uint8_t attackBlocked=1,currentCondition=0,attackInput=1;

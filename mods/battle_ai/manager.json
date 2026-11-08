@@ -548,7 +548,19 @@
       "activation": "restart_required"
     },
     {
-      "id": "terrainrayaudit",
+        "id": "geometryboundsaudit",
+        "key": "GeometryBoundsAudit",
+        "label": "碰撞盒筛选原生校验",
+        "description": "开发诊断：对已筛除的候选继续执行原生碰撞检查，报告任何不一致；性能对照时应关闭。",
+        "type": "boolean",
+        "default": false,
+        "file": "config.ini",
+        "section": "settings",
+        "audience": "developer",
+        "activation": "restart_required"
+      },
+      {
+        "id": "terrainrayaudit",
       "key": "TerrainRayAudit",
       "label": "地形射线原生对照审计",
       "description": "开发诊断：逐条对照索引射线与原生遍历，复杂地图开销较高；日常日志无需开启。",

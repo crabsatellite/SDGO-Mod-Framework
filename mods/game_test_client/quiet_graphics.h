@@ -8,6 +8,7 @@
 #include <new>
 #include "quiet_frame_capture.h"
 #include "quiet_recorder.h"
+#include "present_timing_capture.h"
 #include "sdgo/sdgo_api.h"
 
 // Direct3D 9 cannot enumerate or create a device on a non-input WinSta0
@@ -17,6 +18,11 @@
 // genuine multithreaded device and genuine HRESULTs are returned to the game.
 class QuietGraphics {
 public:
+    bool DrainPresentTimings(const wchar_t* path) {
+        return presentTimings_.Drain(path,Read64(presentQpcFrequency_));
+    }
+    uint64_t LostPresentTimings()const{return presentTimings_.Lost();}
+    bool FailedPresentTimings()const{return presentTimings_.Failed();}
     bool RequestFrameCapture(const wchar_t* path) { return frameCapture_.Request(path); }
     LONG FrameCaptureState(HRESULT* result = nullptr) const { return frameCapture_.State(result); }
     using Create9Fn=IDirect3D9*(WINAPI*)(UINT);
@@ -536,6 +542,7 @@ private:
         const LONG64 previous=InterlockedExchange64(&lastSuccessfulPresentQpc_,invocation);
         if (previous<=0 || invocation<=previous)return;
         const LONG64 gap=invocation-previous;
+        presentTimings_.Record(GetTickCount64(),static_cast<uint64_t>(invocation),static_cast<uint64_t>(gap));
         UpdateMinimum(successfulPresentMinGap_,gap);
         UpdateMaximum(successfulPresentMaxGap_,gap);
     }
@@ -1395,4 +1402,5 @@ private:
     mutable volatile LONG lastRenderTargetResult_=E_PENDING;
     alignas(8) mutable volatile LONG64 presentQpcFrequency_=0,lastSuccessfulPresentQpc_=0;
     alignas(8) mutable volatile LONG64 successfulPresentMinGap_=0,successfulPresentMaxGap_=0;
+    PresentTimingCapture presentTimings_;
 };

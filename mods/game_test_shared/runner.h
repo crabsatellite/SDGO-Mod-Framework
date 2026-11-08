@@ -27,6 +27,7 @@ inline bool caseFailed, finished, discovered;
 // its normal WM_CLOSE/final-release path can run. Ordinary suites still exit
 // immediately, and failed suites never continue into native gameplay.
 inline bool nativeShutdownAfterSuccess=false;
+inline void(*beforeFinish)()=nullptr;
 
 inline std::string Escape(const char* s) {
     std::string out;
@@ -51,7 +52,8 @@ inline void Emit(const char* event, const char* status, const char* message) {
         "\",\"status\":\"" + Escape(status) + "\",\"message\":\"" + Escape(message) +
         "\",\"host_key\":\"" + Escape(api->host_key) + "\",\"pid\":" +
         std::to_string(GetCurrentProcessId()) + ",\"image_path\":\"" + Escape(imagePath.c_str()) + "\",\"duration_ms\":" +
-        std::to_string(current.empty() ? 0 : GetTickCount64() - started) + "}\n";
+        std::to_string(current.empty() ? 0 : GetTickCount64() - started) +
+        ",\"uptime_ms\":"+std::to_string(GetTickCount64())+"}\n";
     DWORD written = 0;
     if (events == INVALID_HANDLE_VALUE || !WriteFile(events, line.data(), static_cast<DWORD>(line.size()), &written, nullptr)
         || written != line.size()) ExitProcess(3);
@@ -70,6 +72,7 @@ inline void __cdecl Observe(const char* message) { Emit("observation", "info", m
 inline void Finish(bool passed, const char* why) {
     if (finished) return;
     finished = true;
+    if(beforeFinish)beforeFinish();
     Emit("run_end", passed && !failures ? "pass" : "fail", why);
     CloseHandle(events); events = INVALID_HANDLE_VALUE;
     if (!nativeShutdownAfterSuccess || !passed || failures)

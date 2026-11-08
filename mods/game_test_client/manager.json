@@ -10,6 +10,17 @@
   "description": "开发测试组件，默认关闭。支持原生登录、入房、Ready、单人及多客户端协同对战、页面检查，以及无需登录的 FPS 测试。仅在显式测试任务中运行，安装或启用本身不会开始测试。",
   "settings": [
     {
+      "id": "log_native_packet_ingress",
+      "key": "LogNativePacketIngress",
+      "label": "原生包入口诊断（与登录恢复分开使用）",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
       "id": "fps_gameplay_cap",
       "key": "FpsGameplayCap",
       "label": "对局 FPS 回归上限（0 关闭）",
@@ -72,6 +83,17 @@
       "id": "battle_ai_behavior",
       "key": "BattleAiBehavior",
       "label": "要求必杀恢复、移动开火及远距追敌实测",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "battle_ai_performance",
+      "key": "BattleAiPerformance",
+      "label": "记录 AI 性能对照中的攻击和移动",
       "type": "boolean",
       "default": false,
       "file": "mod.ini",

@@ -23,6 +23,11 @@ class TerrainRayIndex {
     TerrainRayFn original_=nullptr;
     TerrainTriangleFn triangle_=nullptr;
     static bool ReadLayout(void* opaque,Layout& result) {
+        // Keep standalone ray callbacks from repeating the same region query.
+        // End this scope before any unguarded native collision callback.
+        detail::ReadableRegionCache regions{};
+        detail::ScopedReadableRegionCache scope(
+            detail::g_readableRegionCache?*detail::g_readableRegionCache:regions);
         auto scene=static_cast<uint8_t*>(opaque);
         if(!detail::ReadPointer(scene,0x194,result.vertices)||!detail::ReadPointer(scene,0x1D0,result.definition)||
            !detail::Read(result.definition,0x34,result.width)||!detail::Read(result.definition,0x38,result.height)||

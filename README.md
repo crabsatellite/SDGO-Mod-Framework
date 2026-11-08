@@ -66,16 +66,16 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Announcements <!-- catalog: `announcements` --> | Show a news digest once at login; optional in-game owner notices by time and event | [Use](docs/announcements.md) |
 | Mission AI wingmen <!-- catalog: `coop_ai`, `mission_ai` --> | `!ai` adds mission wingmen with the player life allowance; `!ai3 inf` allows unlimited AI respawns | [Use](docs/coop-wingmen.md) |
 | Mission behavior profiles <!-- catalog: `mission_behavior`, `mission_behavior_server` --> | Select paired OC-default or current GCO mission behavior for one client and every Battle channel in a server group | [Use](docs/mission-behavior.md) |
-| PvP AI <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` in a room title adds AI opponents and teammates; optionally group all humans, fill both sides, fill opponents only or add exact counts | [Use](docs/pvp-ai.md) |
+| PvP AI <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` adds AI opponents and teammates with synchronized starts, transformations and scoreboards; group humans or choose fill rules and counts | [Use](docs/pvp-ai.md) |
 | AI mech catalog (optional) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards <!-- catalog: `battle_rewards` --> | Contribution GB/MB, configurable human multipliers and optional per-account gathering rewards | [Use](docs/battle-rewards.md) |
 | Collection capsule <!-- catalog: `collection_capsule` --> | Missing-unit activity machine with configurable price and limits, plus native encyclopedia acquisition hints; 15 per week by default | [Use](docs/collection-capsule.md) |
 | Per-round random loadouts <!-- catalog: `room_random`, `room_random_client` --> | `!rand` draws owned units or decks each round; native loadout tasks settle before start | [Use](docs/room-random.md) |
 | Complete PvP All Map <!-- catalog: `all_maps` --> | Make the room's All Map choice draw from the complete native PvP map catalog while keeping mission-only maps in missions | [Use](docs/all-maps.md) |
 | Login unit showcase <!-- catalog: `login_showcase` --> | Choose login models by grade, all units, recent registrations or a selected list; SS/SR/SU by default | [Use](docs/login-showcase.md) |
-| FPS cap <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed | [Use](docs/fps-limit.md) |
+| FPS cap <!-- catalog: `fps_limit` --> | Set the render cap and keep battle frames updating during simulation catch-up, at native gameplay speed | [Use](docs/fps-limit.md) |
 | Extended room titles <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Enter up to 128 characters in normal, AI, team and mission room creation, settings and rename controls | [Use](docs/room-titles.md) |
-| Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Easy / Medium / Hard, native weapon and form selection, shared contacts and map propulsion routes | [Use](docs/battle-ai.md) |
+| Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Easy / Medium / Hard, weapon and form choices based on actual reach, shared contacts and map propulsion routes | [Use](docs/battle-ai.md) |
 | Automatic hangar capacity <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) | [Use](docs/hangar-capacity.md) |
 | Hangar manager <!-- catalog: `hangar_manager` --> | Sort and exchange duplicates, including imported units; server batches preserve ownership and keep deletion history | [Use](docs/hangar-manager.md) |
 | Operator supplies, resources, and abilities <!-- catalog: `operator_catalog`, `operator_catalog_server` --> | Five free supply officers plus independent resource packs, numeric abilities, drops, and shop drafts | [Use](docs/operator-assistant.md) |

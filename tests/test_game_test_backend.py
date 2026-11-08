@@ -48,6 +48,22 @@ def valid_backup_rows(root: Path) -> list[dict]:
     return rows
 
 
+class NativeServiceOrderTest(unittest.TestCase):
+    def test_dependencies_precede_battle_without_changing_selection(self):
+        names=['WorldServer','BattleServer6','AgentServer3','StoreServer','AgentServer1','ChattingServer']
+        selected=[{'folder':name,'sentinel':index} for index,name in enumerate(names)]
+        ordered=backend.ordered_native_services(selected)
+        self.assertEqual([s['folder'] for s in ordered],
+                         ['StoreServer','ChattingServer','AgentServer3','AgentServer1','BattleServer6','WorldServer'])
+        self.assertEqual([s['folder'] for s in selected],names)
+        self.assertEqual({id(s) for s in ordered},{id(s) for s in selected})
+
+    def test_inactive_channels_are_never_added(self):
+        selected=[{'folder':'BattleServer6'},{'folder':'AgentServer3'},{'folder':'WorldServer'}]
+        self.assertEqual([s['folder'] for s in backend.ordered_native_services(selected)],
+                         ['AgentServer3','BattleServer6','WorldServer'])
+
+
 class FakeProcess:
     def __init__(self, *, exit_after_kill=True):
         self.pid = 41001

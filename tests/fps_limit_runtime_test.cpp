@@ -29,6 +29,12 @@ namespace {
     constexpr BYTE kNativeRenderSyncSite[] = {
         0x80, 0xBE, 0x4A, 0x04, 0x00, 0x00, 0x01 // cmp byte ptr [esi+44Ah],1
     };
+    constexpr BYTE kNativeBacklogSite[] = {
+        0x0F,0x2F,0xC8,                          // comiss xmm1,xmm0
+        0x0F,0x87,0x06,0x00,0x00,0x00,           // ja skip_render
+        0xB8,0x01,0x00,0x00,0x00,0xC3,           // render: mov eax,1; ret
+        0x33,0xC0,0xC3                           // skip_render: xor eax,eax; ret
+    };
     constexpr DWORD kExpectedError = 0x5A160F5;
     constexpr DWORD kNativeInitError = 0x51A7E112;
     constexpr DWORD kNativeIdleError = 0x1D1ECA11;
@@ -38,7 +44,7 @@ namespace {
     constexpr uintptr_t kFirstArgument = 0x13579BDF;
     constexpr uintptr_t kSecondArgument = 0x2468ACE0;
 
-    __declspec(align(16)) BYTE g_code[32];
+    __declspec(align(16)) BYTE g_code[64];
     __declspec(align(16)) BYTE g_beforeFx[512], g_afterFx[512];
     __declspec(align(16)) BYTE g_xmm[8][16];
     BYTE g_beforeApp[kAppBytes];
@@ -48,6 +54,7 @@ namespace {
     BYTE g_stateBeforeTimer[kTimerBytes];
     void* g_site = g_code;
     void* g_renderSyncSite = g_code + 16;
+    void* g_backlogSite = g_code + 32;
     void* g_initEntry = nullptr;
     void* g_idleEntry = nullptr;
     void* g_presentEntry = nullptr;
@@ -363,6 +370,35 @@ namespace {
         SetTimer(nullptr);
         g_app[kRenderSyncOffset] = 0;
         RunIdleOnce("Idle without native timer", false, true);
+    }
+
+    __declspec(naked) int __cdecl RenderAdmission(float) {
+        __asm { push esi }
+        __asm { mov esi,dword ptr [g_app] }
+        __asm { movss xmm1,dword ptr [esp+8] }
+        __asm { xorps xmm0,xmm0 }
+        __asm { call dword ptr [g_backlogSite] }
+        __asm { pop esi }
+        __asm { ret }
+    }
+    void RunBacklogSuite() {
+        const DWORD priorState=*reinterpret_cast<DWORD*>(g_app+0x4A0);
+        *reinterpret_cast<DWORD*>(g_app+0x4A0)=22;
+        BYTE appBefore[kAppBytes],timerBefore[kTimerBytes];
+        memcpy(appBefore,g_app,sizeof(appBefore));memcpy(timerBefore,g_timer,sizeof(timerBefore));
+        Check(RenderAdmission(0)==1&&RenderAdmission(-0.1f)==1,
+              "native rendering remains admitted when simulation has no update debt");
+        Check(RenderAdmission(0.25f)==(g_active?1:0)&&RenderAdmission(1.9f)==(g_active?1:0),
+              g_active?"rendering continues while the native simulation catches up":
+                       "disabled or rejected Mod preserves the original backlog render gate");
+        Check(memcmp(appBefore,g_app,sizeof(appBefore))==0&&memcmp(timerBefore,g_timer,sizeof(timerBefore))==0,
+              "backlog rendering never clears simulation debt, changes timer cadence or writes app state");
+        for(const DWORD state:{DWORD(1),DWORD(18),DWORD(40)}) {
+            *reinterpret_cast<DWORD*>(g_app+0x4A0)=state;
+            Check(RenderAdmission(0.25f)==0&&RenderAdmission(0)==1,
+                  "loading, result and menu transitions retain native render admission");
+        }
+        *reinterpret_cast<DWORD*>(g_app+0x4A0)=priorState;
     }
 
     void __stdcall ObservePresent()
@@ -683,6 +719,7 @@ int wmain(int argc, wchar_t** argv)
     memset(g_code, 0xCC, sizeof(g_code));
     memcpy(g_code, kNativeSite, sizeof(kNativeSite));
     memcpy(g_renderSyncSite, kNativeRenderSyncSite, sizeof(kNativeRenderSyncSite));
+    memcpy(g_backlogSite,kNativeBacklogSite,sizeof(kNativeBacklogSite));
     FlushInstructionCache(GetCurrentProcess(), g_code, sizeof(g_code));
 
     const auto root = Root();
@@ -716,6 +753,10 @@ int wmain(int argc, wchar_t** argv)
               "kind=site\n"
               "rva=0x%08X\n"
                "expect=80 BE 4A 04 00 00 01\n"
+               "[fps.app.render_backlog]\n"
+               "kind=site\n"
+               "rva=0x%08X\n"
+               "expect=0F 2F C8 0F 87 06 00 00 00\n"
                "[fps.device.present]\n"
                "kind=code\n"
                "rva=0x%08X\n"
@@ -729,6 +770,7 @@ int wmain(int argc, wchar_t** argv)
               static_cast<unsigned>(static_cast<BYTE*>(g_idleEntry) - base),
               idleExpected.c_str(),
                static_cast<unsigned>(static_cast<BYTE*>(g_renderSyncSite) - base),
+               static_cast<unsigned>(static_cast<BYTE*>(g_backlogSite) - base),
                static_cast<unsigned>(static_cast<BYTE*>(g_presentEntry) - base),
                presentExpected.c_str());
     CreateDirectoryW((root + L"\\sdgo\\symbols").c_str(), nullptr);
@@ -754,6 +796,7 @@ int wmain(int argc, wchar_t** argv)
     SetLastError(kExpectedError);
     Invoke(g_app);
     RunIdleSuite();
+    RunBacklogSuite();
     RunPresentSuite(active && mode == L"160", snapshot);
     puts(g_failures ? "FPS LIMIT RUNTIME CHECKS FAILED"
                     : "ALL FPS LIMIT RUNTIME CHECKS PASSED");

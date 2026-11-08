@@ -51,6 +51,26 @@ python tools/game_test_fps.py --client-template D:\Games\SDGO --stage build/stag
 运行前会封存渲染上限与观察器配置。实际 AI 移动后，场景核对 60 Hz 逻辑更新；
 选择高于 60 的上限时，渲染还必须实测超过 60 FPS，之后继续正常对战、结算和返回流程。
 
+### 整局帧时间和 AI 查询诊断
+
+`LogNativePacketIngress=1` 为随机机体测试开启原生包入口诊断，默认 `0`。
+登录恢复组件占用同一入口时保持关闭；常规战斗断言和性能观察不依赖此诊断。
+
+安静运行的对战会把成功的原生 D3D9 Present 间隔保存在
+`sdgo/gametest/present-timings.bin`。完整战斗结束后运行
+`python tools/game_test_frame_times.py --run-dir <已准备的运行目录>`，核对 PID、序号、
+QPC 间隔和原生战斗边界。报告包含 p50/p95/p99、卡顿次数及结束边界处尚无 Present 的尾段。
+登录页帧率和时间窗口平均 FPS 是另外的测量。
+
+开发者参数 `BattleAiPerformance=1` 记录被动的逐机活动状态；`LogDecisions=1` 包含 AI 查询耗时。
+`GeometryBoundsAudit=1` 会对准备排除的碰撞盒继续执行原生谓词，并立即记录第一次差异。
+审计局只证明正确性，必须排除在性能对照之外。对照保持相同阵容、AI 数量、原生帧率限制、
+后端拓扑及可比后台负载，并核对活动记录，防止把 AI 停止工作误当成性能提升。
+
+可选目标 `pvp_ai_performance_fixture` 和 `room_random_performance_fixture` 只在明确的
+GameTest 服务端会话中固定初始随机种子，DLL 输出到 `performance-fixtures`，不进入常规 stage。
+这些测试 DLL 不得安装到玩家、正式服务端交付或 Release 包。
+
 ### 复用本地原生后端
 
 `tools/game_test_backend.py serve` 运行已经配置的本地测试服务端，复用其独立原生 SQL 实例，
@@ -60,7 +80,12 @@ python tools/game_test_fps.py --client-template D:\Games\SDGO --stage build/stag
 复制的 SQL 启动器还会在恢复引擎执行前，限制数据库文件操作只能落在
 带标记的测试根目录。检查覆盖原生 NT 文件操作、目录链接的实际目标和硬链接数量。
 仅重定向注册表不会迁移复制的 master 中保存的 model、msdb、tempdb 路径；正常启动前
-必须迁移所有目录项。只有两个 Resource 数据库文件会重定向到副本自己的引擎目录。
+必须迁移所有目录项。正常启动只把两个 Resource 数据库文件重定向到副本自己的引擎目录。
+首次复制迁移可额外使用 `start --master-only --relocate-from <带标记的源测试根目录>`，
+把明确声明的旧测试 DATA 路径映射为新副本 DATA 目录内的同名文件，不打开旧数据库文件。
+源必须是另一个带标记的测试副本；正常启动拒绝此别名参数。迁移副本目录项、停止所属
+SQL 进程后，改用正常启动，并回读所有物理文件路径均属于新副本。
+只在源 SQL 引擎停止时复制数据文件，随后重试复用该实例和已有账号。
 根目录无效或文件访问被拒绝时应定位原因，不应绕过检查。
 启动器会拒绝旧的仅注册表重定向 helper。Windows 加密提供程序保留正常的证书缓存访问。
 这是 SQL 进程内的数据库文件边界，不是通用文件系统沙箱，也不覆盖其子程序；
@@ -79,7 +104,8 @@ python tools/game_test.py prepare --client-template D:\SDGO-Test\client --stage 
 python tools/game_test_backend.py serve --work D:\SDGO-Test\server --client-run build/fps-probe --stage build/stage/Release --startup-xml D:\SDGO-Test\server\ServerStartUp\ServerStartUp.xml --lifetime 1800
 ```
 
-启动集合同时读取原生启动 XML 和频道表；等待本次启动各 Battle 的
+启动集合同时读取原生启动 XML 和频道表。选中的 Store、Chat、Agent 依赖先于 Battle，
+World 最后启动；排序不会激活未选中的频道。等待本次启动各 Battle 的
 `Table Download OK.. Time Procedure Ready..` 及 `backend_ready` 后再运行客户端。
 TCP 端口开放不能代替原生表加载完成。FPS 套件无需账号；其他套件绑定已有私有账号配置，
 后端观察器另需 `serve --host-pilot-id <实际原生驾驶员 ID>`，工具不固定账号 ID。

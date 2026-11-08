@@ -11,6 +11,9 @@ struct DamageProtection {
 // Pure observations of the supported client's authoritative hurt state and
 // movement FSM. Do not call CheckHurt: that API consumes the damage latch.
 inline DamageProtection ReadDamageProtection(const std::uint8_t* unit) noexcept {
+    detail::ReadableRegionCache regions{};
+    detail::ScopedReadableRegionCache scope(
+        detail::g_readableRegionCache?*detail::g_readableRegionCache:regions);
     std::uint8_t invulnerable=0;
     std::uint32_t hurtState=0;
     if(!detail::Read(unit,0xEB4,invulnerable)||!detail::Read(unit,0x9D8,hurtState)) return {};

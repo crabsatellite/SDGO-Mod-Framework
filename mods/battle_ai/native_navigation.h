@@ -1,4 +1,6 @@
 #pragma once
+#include "map_query_profile.h"
+#include "native_shape_bounds.h"
 
 #include <algorithm>
 #include <cmath>
@@ -47,6 +49,7 @@ struct NavigationApi {
     RaySphereFn raySphere = nullptr;
     TerrainSupportFn support=nullptr;
     void* supportContext=nullptr;
+    NativeShapeBounds* shapeBounds=nullptr;
 };
 
 enum class MotionSafety {
@@ -225,6 +228,7 @@ inline bool FreshLineClearUnsafe(const NavigationApi& api, std::uint8_t* documen
                                  std::uint8_t* owner, std::uint32_t targetId,
                                  Vec3 from, Vec3 to,
                                  bool ignoreFriendly = false) noexcept {
+    profile::Timer cost(profile::Work::Visibility);
     if (!api.query || !api.segmentAabb || !api.terrainRay || !api.rayObb ||
         !api.raySphere || !document || !owner || targetId == 0 ||
         !Finite(from) || !Finite(to)) {
@@ -308,10 +312,14 @@ inline bool FreshLineClearUnsafe(const NavigationApi& api, std::uint8_t* documen
         auto* obbs = *reinterpret_cast<std::uint8_t**>(scene + kObbArray);
         if (!ValidShapeArray(obbs, obbCount, kObbStride)) return false;
         for (int obbIndex = 0; obbIndex < obbCount; ++obbIndex) {
+            const auto obb=obbs+static_cast<std::size_t>(obbIndex)*kObbStride;
+            const bool culled=api.shapeBounds&&!api.shapeBounds->MayAffect(obb,from,to);
+            if(culled&&!api.shapeBounds->Audit())continue;
             distance = 0.0f;
             const bool hit =
-                api.rayObb(&ray, obbs + static_cast<std::size_t>(obbIndex) * kObbStride,
+                api.rayObb(&ray, obb,
                            &distance);
+            if(culled)api.shapeBounds->Audited(BlockingHit(hit,distance,length));
             if (BlockingHit(hit, distance, length)) {
                 return false;
             }

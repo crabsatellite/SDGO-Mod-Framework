@@ -62,6 +62,9 @@ class TerrainSupportSampler {
 public:
     void Bind(TerrainHeightFn height,TerrainNormalFn normal)noexcept {height_=height;normal_=normal;}
     bool Bounds(uint8_t* document,Aabb& output)const noexcept {
+        detail::ReadableRegionCache regions{};
+        detail::ScopedReadableRegionCache scope(
+            detail::g_readableRegionCache?*detail::g_readableRegionCache:regions);
         Layout layout{};if(ReadLayout(document,layout)!=TerrainSupportStatus::Valid)return false;
         const double x=double(layout.spacingX)*layout.width*0.5,z=double(layout.spacingZ)*layout.height*0.5;
         if(!std::isfinite(x)||!std::isfinite(z)||x<=0||z<=0||x>1000000||z>1000000)return false;
@@ -70,6 +73,12 @@ public:
     }
     TerrainSupportStatus Sample(uint8_t* document,Vec3 point,TerrainSupportSample& output)const noexcept {
         if(!height_||!normal_||!Finite(point))return TerrainSupportStatus::Invalid;
+        // Calls outside perception/path-search scopes still validate the same
+        // live regions repeatedly. Reuse only this synchronous call's region
+        // checks (or its existing caller scope), never terrain values/results.
+        detail::ReadableRegionCache regions{};
+        detail::ScopedReadableRegionCache scope(
+            detail::g_readableRegionCache?*detail::g_readableRegionCache:regions);
         Layout layout{};const auto status=ReadLayout(document,layout);
         if(status!=TerrainSupportStatus::Valid)return status;
         // The original stores both numerator and quotient as float before

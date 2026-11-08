@@ -32,7 +32,7 @@ foreach ($mode in @('160','120','60','min','max','zero','over','negative',
     $log = [IO.File]::ReadAllText((Join-Path $dir 'sdgo\logs\sdgo.log'))
     $shouldLoad = $mode -notin @('disabled','badbytes','wrongkind')
     if ($shouldLoad) {
-        if (-not $log.Contains('loaded Configured FPS limit 1.0.3')) {
+        if (-not $log.Contains('loaded Configured FPS limit 1.0.4')) {
             throw "FPS Mod was not active in $mode"
         }
         if (-not $log.Contains('effective FPS cap=')) {
@@ -53,7 +53,7 @@ foreach ($mode in @('160','120','60','min','max','zero','over','negative',
         if ($applications -ne $expectedApplications) {
             throw "FPS Mod applied the Idle cap $applications times in $mode; expected $expectedApplications"
         }
-    } elseif ($log.Contains('loaded Configured FPS limit 1.0.3')) {
+    } elseif ($log.Contains('loaded Configured FPS limit 1.0.4')) {
         throw "Disabled or rejected FPS Mod unexpectedly loaded in $mode"
     }
     Write-Host "$mode : native site, Idle repair, and Present pacing/ABI/observer checks passed"

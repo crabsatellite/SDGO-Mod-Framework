@@ -3,12 +3,21 @@
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
+#include <new>
+#include <windows.h>
+
+static unsigned memoryQueries=0;
+static SIZE_T WINAPI CountedVirtualQuery(LPCVOID address,PMEMORY_BASIC_INFORMATION info,SIZE_T size) {
+    ++memoryQueries;return ::VirtualQuery(address,info,size);
+}
+#define VirtualQuery CountedVirtualQuery
 
 #include "../mods/battle_ai/native_capabilities.h"
 #include "../mods/battle_ai/difficulty.h"
 #include "../mods/battle_ai/native_defence.h"
 #include "../mods/battle_ai/native_protection.h"
 #include "../mods/battle_ai/native_form_switch.h"
+#undef VirtualQuery
 
 namespace {
 
@@ -113,6 +122,53 @@ struct Fixture {
 
 int main() {
     static_assert(sizeof(void*) == 4, "GOnline capability fixture is Win32");
+    auto stateRegion=VirtualAlloc(nullptr,sizeof(Fixture),MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE);
+    Check(stateRegion!=nullptr,"state query fixture allocates one stable private region");
+    if(stateRegion) {
+        auto& forms=*new(stateRegion) Fixture;forms.PrepareOtherForm();
+        memoryQueries=0;
+        Check(!battle_ai::native::TransformOwnsMotor(forms.unit)&&memoryQueries==1,
+              "standalone motor ownership reads validate their shared memory region once");
+        memoryQueries=0;
+        Check(battle_ai::native::ReadFormTransition(forms.unit).allowed&&memoryQueries==1,
+              "standalone form admission validates its shared memory region once");
+        memoryQueries=0;
+        const bool inputAllowed=battle_ai::native::TransformInputAllowed(forms.movement,forms.fsm);
+        // VirtualQuery describes the requested page and following pages. This
+        // reader visits movement, then the two lower attack-controller pages.
+        Check(inputAllowed&&memoryQueries==3,
+              "standalone transform input reads validate each newly reached page range once");
+        memoryQueries=0;
+        const auto protection=battle_ai::native::ReadDamageProtection(forms.unit);
+        Check(protection.known&&!protection.active&&memoryQueries==1,
+              "standalone damage protection reads validate their shared memory region once");
+        Check(battle_ai::native::detail::g_readableRegionCache==nullptr,
+              "pure state readers restore their standalone memory scope");
+        Put(forms.unit,0x9D8,std::uint32_t(2));
+        Check(battle_ai::native::ReadDamageProtection(forms.unit).active,
+              "later state reads observe protection changes without retaining snapshot values");
+        battle_ai::native::detail::ReadableRegionCache parent{};
+        {
+            battle_ai::native::detail::ScopedReadableRegionCache scope(parent);
+            Check(battle_ai::native::detail::Readable(forms.unit,sizeof(forms.unit)),
+                  "caller validates the native state region before nested reads");
+            memoryQueries=0;
+            battle_ai::native::TransformOwnsMotor(forms.unit);
+            battle_ai::native::ReadFormTransition(forms.unit);
+            battle_ai::native::TransformInputAllowed(forms.movement,forms.fsm);
+            battle_ai::native::ReadDamageProtection(forms.unit);
+            Check(memoryQueries==0&&battle_ai::native::detail::g_readableRegionCache==&parent,
+                  "nested pure state readers reuse and restore the caller memory scope");
+        }
+        DWORD prior=0;
+        const bool inaccessible=VirtualProtect(stateRegion,sizeof(Fixture),PAGE_NOACCESS,&prior)!=0;
+        Check(inaccessible&&!battle_ai::native::ReadFormTransition(forms.unit).known&&
+                  !battle_ai::native::ReadDamageProtection(forms.unit).known,
+              "standalone state readers revalidate page access on the next call");
+        DWORD ignored=0;
+        if(inaccessible)VirtualProtect(stateRegion,sizeof(Fixture),prior,&ignored);
+        forms.~Fixture();VirtualFree(stateRegion,0,MEM_RELEASE);
+    }
     {
         Fixture forms;forms.PrepareOtherForm();
         std::uint8_t unitBefore[sizeof(forms.unit)],fsmBefore[sizeof(forms.fsm)];

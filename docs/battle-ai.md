@@ -37,11 +37,17 @@ and cooldowns of each native form. It can change a melee-only form to a usable r
 opponent, choose a stronger melee form at close range, or use another form when its current ranged
 ammunition runs out. A ready current weapon that can finish the opponent takes priority.
 
+A loaded melee weapon in the other form is a reason to leave an empty form only when it can reach
+the target. Otherwise the bot keeps approaching or reloading. An available in-range weapon also
+prevents empty guns in the current form from immediately reversing a useful form choice.
+
 The **自动选择战斗形态** setting in Manager controls this behavior. Transformation uses the original
 request and server acknowledgement, including native health, ammunition and action restrictions.
 AI preserves native control during the animation, then reads the committed form's actual weapon bank
 and clears its previous pursuit and weapon-switch state. Requests are retried at most every 500 ms;
 a committed form is retained for at least one second. A refused request leaves ordinary combat running.
+Locally controlled AI also consumes the native completion acknowledgement when its model has already
+changed but the same transformation animation still owns control.
 Each committed form supplies its own outgoing native transformation link. One-way armor removal stays
 one-way, and forms excluded from ordinary R input retain their native skill or timed control. Respawn
 recovery and native action admission finish before AI can request another transformation.
