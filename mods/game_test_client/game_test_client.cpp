@@ -4685,7 +4685,8 @@ SDGO_MOD_ENTRY {
     getSnapshot = reinterpret_cast<SdgoPvpAiClientGetSnapshotV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_SNAPSHOT_EXPORT));
     api->HookCode(mod,"game.error_name",reinterpret_cast<void*>(&ObserveNativeErrorName),reinterpret_cast<void**>(&originalErrorName));
     if(!nativePopupProbe.Install(api,mod))return 0;
-    if(randomLoadout && !nativePacketIngressProbe.Install(api,mod))return 0;
+    if(randomLoadout && api->SettingInt(mod,"LogNativePacketIngress",0)!=0 &&
+       !nativePacketIngressProbe.Install(api,mod))return 0;
     getStartStatus = reinterpret_cast<SdgoPvpAiClientGetStartStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_START_STATUS_EXPORT));
     getScoreboardStatus = reinterpret_cast<SdgoPvpAiClientGetScoreboardStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_SCOREBOARD_STATUS_EXPORT));
     if (!fpsOnly && !bootstrapOnly && !pagesOnly && !scoreboardInput.Install(api, mod)) return 0;
