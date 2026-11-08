@@ -65,7 +65,7 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 | 每局随机机体 <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组，原生出击任务收束后开局 | [使用说明](docs/room-random.zh-CN.md) |
 | 完整对战 All Map <!-- catalog: `all_maps` --> | 房间选择 All Map 时从完整原生对战地图目录抽取，任务专用图仍留在任务模式 | [使用说明](docs/all-maps.zh-CN.md) |
 | 登录机体展示 <!-- catalog: `login_showcase` --> | 按等级、全部机体、最近注册或指定名单选择登录展示，默认 SS/SR/SU | [使用](docs/login-showcase.zh-CN.md) |
-| FPS 上限 <!-- catalog: `fps_limit` --> | 设置渲染上限，逻辑追赶时仍刷新画面，保留原生游戏速度 | [使用说明](docs/fps-limit.zh-CN.md) |
+| FPS 上限 <!-- catalog: `fps_limit` --> | 设置渲染上限，战斗逻辑追赶时仍刷新画面，保留原生游戏速度 | [使用说明](docs/fps-limit.zh-CN.md) |
 | 长房名 <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 普通、AI、队伍及任务房的建房、设置和改名入口支持最长 128 字 | [使用说明](docs/room-titles.zh-CN.md) |
 | 战斗 AI 难度 <!-- catalog: `battle_ai`、`battle_ai_server` --> | Easy / Medium / Hard 三档、按实际攻击距离选择武装和形态、共享敌情和地图推进装置寻路 | [使用说明](docs/battle-ai.zh-CN.md) |
 | 自动机库容量 <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） | [使用说明](docs/hangar-capacity.zh-CN.md) |
