@@ -9,18 +9,19 @@ executables; supported builds are listed under [Installation](docs/setup.md#supp
 does not distribute the pack.
 
 [Installation](docs/setup.md) · [SDGO Mod Manager](docs/mod-manager.md) · [Latest release](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
-Owner profiles combine locked official Mods, owner settings and assets on a compatible original client in one verified installation transaction. Later content exports retain the published program lock; program upgrades require explicit adoption. Git, HTTPS and offline directories use the same contract; a complete-client repository is optional.
 
 Server owners and maintainers install, configure and [update](docs/mod-manager.md#updates) features with
-**SDGO Mod Manager**; the **0_更新与管理** entry at the top of the client folder opens it. Players can update
-an owner-provided client in Manager. Bound player clients opened through `GOnline.exe` show update progress, synchronize both sources and start after verification. Concurrent clicks share one pending launch. Shared Mod configuration
-remains the server owner's responsibility.
+**SDGO Mod Manager**; the **0_更新与管理** entry at the top of the client folder opens it.
+
+Players with a compatible original client can install the server owner's profile (the owner's chosen Mods, shared
+settings and assets) in Manager in one step. Once bound, players keep opening `GOnline.exe`: Manager first
+synchronizes and verifies the owner's content, then starts the game. Personal settings and existing content are kept
+during updates.
+
+Installations follow the official curated starter pack by default. Owners who take over maintenance choose DIY in
+Manager and then maintain its configuration, scripts, resources, compatibility and releases;
+[owner-managed updates](docs/owner-updates.md) explains reviewing upstream components and publishing to players.
 Owners can also manage their own **local-only** addons in Manager; those are never packaged or exported.
-Installations follow the official curated starter pack by default. Owners explicitly choose DIY when taking over
-maintenance. Once an owner starts DIY, they maintain its configuration,
-scripts, resources, compatibility and releases. [Owner-managed updates](docs/owner-updates.md) let owners review
-upstream components and publish their confirmed pack; players follow only that owner's source.
-Manager checks dependencies, data impact and content retirement, separates saved settings from observed activation, and can update an owner-provided complete client while preserving existing configuration and content. See [Manager safety and updates](docs/mod-manager.md#dependencies-data-and-activation).
 
 This page is a feature index. Configuration, gameplay instructions, compatibility and troubleshooting are in each feature's documentation.
 
@@ -39,16 +40,16 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | IME candidates and commit fix <!-- catalog: `ime_fix` --> | Restore Chinese candidates and replace the old preedit range without residual letters | [Use](docs/ime-fix.md) |
 | Activity capsule currency <!-- catalog: `capsule_currency_fix` --> | Show machine 9301 as 99 coins in the list and purchase confirmation | [Use](docs/capsule-currency-fix.md) |
 | Input method freeze fix <!-- catalog: `findwindow_fix` --> | Stop input methods such as iFlytek from freezing or crashing the repack client | [Use](docs/findwindow-fix.md) |
-| Startup crash fix <!-- catalog: `startup_crash_fix` --> | Stop random crashes on the loading screen; protection stays active if optional showcase fitting is unavailable | [Use](docs/startup-crash-fix.md) |
+| Startup crash fix <!-- catalog: `startup_crash_fix` --> | Stop random crashes on the loading screen at game start | [Use](docs/startup-crash-fix.md) |
 | First login lobby music <!-- catalog: `lobby_music_fix` --> | Restore the lobby music on first login | [Use](docs/lobby-music-fix.md) |
 | Wait-room window initialization guard <!-- catalog: `waitroom_window_fix` --> | Fix the client sometimes closing right after a room is created | [Use](docs/waitroom-window-fix.md) |
-| Native data and lifecycle guards <!-- catalog: `native_data_guard` --> | Guard native data and deferred messages; wait for initial inventory before page changes and retain accurate crash logs | [Use](docs/native-data-guard.md) |
+| Native data and lifecycle guards <!-- catalog: `native_data_guard` --> | Fix crashes when unit data is missing or unit management is still waiting for data; keep crash logs accurate | [Use](docs/native-data-guard.md) |
 | Scene registration lifecycle fix <!-- catalog: `scene_lifecycle_fix` --> | Fix an occasional cleanup crash after a scene object moves to another area | [Use](docs/scene-lifecycle-fix.md) |
 | Multiplayer loading synchronization <!-- catalog: `loading_sync_fix` --> | Fix multiplayer starts that occasionally hang on the loading screen (BattleServer) | [Use](docs/loading-sync-fix.md) |
-| Native login recovery <!-- catalog: `login_recovery`, `login_recovery_client` --> | WorldServer stale-session cleanup plus bounded client reconnect, pending-request cleanup and return to native login input | [Use](docs/login-recovery.md) |
+| Native login recovery <!-- catalog: `login_recovery`, `login_recovery_client` --> | When a reconnect after a dropped connection is refused or stalls, clear the old session and retry a limited number of times | [Use](docs/login-recovery.md) |
 | Apsalus III transform input fix <!-- catalog: `transform_input_fix` --> | Release the native transform lock when a form has no transform animation | [Use](docs/transform-input-fix.md) |
 | Agent relay log fix <!-- catalog: `agent_relay_log_fix` --> | Fix an Agent relay log that reads invalid memory | [Use](docs/agent-relay-log-fix.md) |
-| Agent room-view error forwarding <!-- catalog: `agent_room_view_error_fix` --> | Preserve complete room-view error replies so the client reads the actual server error | [Use](docs/agent-room-view-error-fix.md) |
+| Agent room-view error forwarding <!-- catalog: `agent_room_view_error_fix` --> | Fix unrelated error pop-ups during room actions (AgentServer) | [Use](docs/agent-room-view-error-fix.md) |
 | Battle rank regression fix <!-- catalog: `rank_progression_fix` --> | Stop battle settlement from lowering a pilot's rank (WorldServer) | [Use](docs/rank-progression-fix.md) |
 | Friend list fix <!-- catalog: `friend_list_fix`, `friend_list_client_fix` --> | Keep offline friends, current names and ranks; Chinese actions in the home USER LIST and the built-in messenger | [Use](docs/friend-list-fix.md) |
 | New-account starter profile <!-- catalog: `new_account_profile` --> | Configurable starting GP, cash, rank and unit gifts instead of the stock 9,999,999 / rank 15 | [Use](docs/new-account-profile.md) |
@@ -65,28 +66,28 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 |---|---|---|
 | Announcements <!-- catalog: `announcements` --> | Show a news digest once at login; optional in-game owner notices by time and event | [Use](docs/announcements.md) |
 | Mission AI wingmen <!-- catalog: `coop_ai`, `mission_ai` --> | `!ai` adds mission wingmen with the player life allowance; `!ai3 inf` allows unlimited AI respawns | [Use](docs/coop-wingmen.md) |
-| Mission behavior profiles <!-- catalog: `mission_behavior`, `mission_behavior_server` --> | Select paired OC-default or current GCO mission behavior for one client and every Battle channel in a server group | [Use](docs/mission-behavior.md) |
-| PvP AI <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` adds AI opponents and teammates with synchronized starts, transformations and scoreboards; group humans or choose fill rules and counts | [Use](docs/pvp-ai.md) |
+| Mission behavior profiles <!-- catalog: `mission_behavior`, `mission_behavior_server` --> | Choose original OC or current mission AI and spawn behavior, applied together to the client and every Battle channel | [Use](docs/mission-behavior.md) |
+| PvP AI <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` in a room title adds AI opponents and teammates; optionally group all humans, fill both sides, fill opponents only or add exact counts | [Use](docs/pvp-ai.md) |
 | AI mech catalog (optional) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools | [Use](docs/ai-catalog.md) |
-| AI pilot dialogue (optional) <!-- catalog: `ai_dialogue` --> | Battle-aware character replies and verified teammate suggestions; your DeepSeek key, off by default, local or addressed room broadcasts | [Use](docs/ai-dialogue.md) |
+| AI pilot dialogue (optional) <!-- catalog: `ai_dialogue` --> | AI pilots speak lines and suggest tactics based on the battle and their character; your own DeepSeek key, off by default | [Use](docs/ai-dialogue.md) |
 | Battle contribution rewards <!-- catalog: `battle_rewards` --> | Contribution GB/MB, configurable human multipliers and optional per-account gathering rewards | [Use](docs/battle-rewards.md) |
 | Collection capsule <!-- catalog: `collection_capsule` --> | Missing-unit activity machine with configurable price and limits, plus native encyclopedia acquisition hints; 15 per week by default | [Use](docs/collection-capsule.md) |
-| Per-round random loadouts <!-- catalog: `room_random`, `room_random_client` --> | `!rand` draws owned units or decks each round; native loadout tasks settle before start | [Use](docs/room-random.md) |
+| Per-round random loadouts <!-- catalog: `room_random`, `room_random_client` --> | `!rand` in a room title draws each player's unit or deck from their own hangar every round | [Use](docs/room-random.md) |
 | Complete PvP All Map <!-- catalog: `all_maps` --> | Make the room's All Map choice draw from the complete native PvP map catalog while keeping mission-only maps in missions | [Use](docs/all-maps.md) |
-| Login unit showcase <!-- catalog: `login_showcase` --> | Choose login models by grade, all units, recent registrations or a selected list; SS/SR/SU by default | [Use](docs/login-showcase.md) |
-| FPS cap <!-- catalog: `fps_limit` --> | Set the render cap and keep battle frames updating during simulation catch-up, at native gameplay speed | [Use](docs/fps-limit.md) |
+| Login unit showcase <!-- catalog: `login_showcase` --> | Choose which units appear on the login screen: by grade, all, recently registered or a chosen list; SS/SR/SU by default | [Use](docs/login-showcase.md) |
+| FPS cap <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed | [Use](docs/fps-limit.md) |
 | Extended room titles <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Enter up to 128 characters in normal, AI, team and mission room creation, settings and rename controls | [Use](docs/room-titles.md) |
-| Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Easy / Medium / Hard, weapon and form choices based on actual reach, shared contacts and map propulsion routes | [Use](docs/battle-ai.md) |
+| Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Easy / Medium / Hard for PvP AI, chosen in the room title | [Use](docs/battle-ai.md) |
 | Automatic hangar capacity <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) | [Use](docs/hangar-capacity.md) |
-| Hangar manager <!-- catalog: `hangar_manager` --> | Sort and exchange duplicates, including imported units; server batches preserve ownership and keep deletion history | [Use](docs/hangar-manager.md) |
+| Hangar manager <!-- catalog: `hangar_manager` --> | One-click sorting and duplicate exchange on the unit-management page, with server-side GB batches; imported units included | [Use](docs/hangar-manager.md) |
 | Operator supplies, resources, and abilities <!-- catalog: `operator_catalog`, `operator_catalog_server` --> | Five free supply officers plus independent resource packs, numeric abilities, drops, and shop drafts | [Use](docs/operator-assistant.md) |
 | Capsule catalog editor <!-- catalog: `capsule_catalog` --> | Create, edit and retire machines, pools, prices and weights; renumber unused dedicated activities in the Manager | [Use](docs/capsule-catalog.md) |
 | Daily double rewards <!-- catalog: `daily_rewards` --> | Double battle GB and EXP in a daily window (default 18:00–22:00) | [Use](docs/daily-rewards.md) |
 | Storage claim all <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation | [Use](docs/storage-claim.md) |
 | Chinese shop localization and search <!-- catalog: `shop_localization` --> | Translate shop names, descriptions, options and paint-page unit previews; search by Chinese name combined with rank and payment filters | [Use](docs/shop-localization.md) |
 | Friend unit gifts (optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Right-click a friend (online or offline), pick a unit in unit management, and the friend accepts or returns it in Storage. Off until the owner enables it | [Use](docs/friend-unit-gift.md) |
-| Over-custom six-stat enhancement (Beta) <!-- catalog: `oc_custom_client`, `oc_custom_server`, `oc_custom_battle` --> | A dual-system factory: a 终极强化 tab next to the untouched native tabs, built from the client package's own OC layouts (OVER CUSTOM level track, ITEM box with the items' 3D models, all six dimensions drawn on the allocation hexagon, normal/Over points, the OVER CUSTOM challenge and reset), plus OC speed and agility in battle; stored beside the current custom parts, both kept across a switch, and the owner picks which rule set battles use | [Use](docs/over-custom.md) |
-| Unit family import (Beta) <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | Import unit archives, edit skill/funnel dependency fields, retain script declarations, author blueprints and activity pools in Mod Manager, import protocol-ready batches of single, reciprocal, one-way and self-transform families plus graph-defined entry variants (a later roster carries the installed one, including its scripts and skill icons, within one catalog of up to 8,192 records), and apply that roster to the server from Mod Manager, then offer it to the shop, capsule machines and dedicated activity machines (activity posters can be replaced at any time) | [Use](docs/unit-import.md) |
+| Over-custom six-stat enhancement (Beta) <!-- catalog: `oc_custom_client`, `oc_custom_server`, `oc_custom_battle` --> | Adds an Ultimate Enhancement (终极强化) tab beside unit customization with OC levels, six-stat points and resets that apply in battle; kept alongside the current parts data, with the owner choosing which set battles use | [Use](docs/over-custom.md) |
+| Unit family import (Beta) <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | Import protocol unit packages or whole rosters from any source in Mod Manager, completing definitions and generating paired data, encyclopedia and shop/capsule resources | [Use](docs/unit-import.md) |
 
 <!-- /mod-category:gameplay -->
 
