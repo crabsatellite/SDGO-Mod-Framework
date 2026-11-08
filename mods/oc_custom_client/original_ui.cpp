@@ -160,6 +160,48 @@ const WindowFile kWindows[window_count] = {
     {L"ocdlg0813", L"uirs\\0813.uir"},
     {L"ocdlg0819", L"uirs\\0819.uir"},
     {L"ocdlg0800", L"uirs\\0800.uir"},
+    {L"ocdlg1252", L"uirs\\1252.uir"}, // G改 1.0 page: the package's attribute page layout
+};
+
+// G改 1.0 page controls of 1252 that the Mod drives. The page is optional: when
+// the layout or a control is missing the OC tab keeps working without it.
+const Spec kG1Specs[] = {
+    {window_g1, L"SaveBtn", kButton, Action::g1_save},
+    {window_g1, L"SelectSkillResetBtn", kButton, Action::g1_revert},
+    {window_g1, L"AllSkillResetBtn", kButton, Action::g1_reset},
+    {window_g1, L"UnitLevelStatic", kStatic, Action::none},
+    {window_g1, L"TypeStatic", kStatic, Action::none},
+};
+
+// The current system's controls of 1252 (weapon effects, the slot list, its
+// tabs and totals), hidden on the G改 1.0 page.
+const wchar_t* const kG1HiddenNames[] = {
+    L"EmphasizeSkill2Icon0", L"EmphasizeSkill2Icon1", L"EmphasizeSkill2Icon2", L"EmphasizeSkill2Icon3",
+    L"EmphasizeSkillIcon0", L"EmphasizeSkillIcon1", L"EmphasizeSkillIcon2", L"EmphasizeSkillIcon3",
+    L"BeforeBgIcon0", L"BeforeBgIcon1", L"BeforeBgIcon2", L"BeforeBgIcon3",
+    L"AfterBgIcon0", L"AfterBgIcon1", L"AfterBgIcon2", L"AfterBgIcon3", L"TotalBgIcon",
+    L"BeforeIcon0", L"BeforeIcon1", L"BeforeIcon2", L"BeforeIcon3",
+    L"AfterIcon0", L"AfterIcon1", L"AfterIcon2", L"AfterIcon3",
+    L"SelectSkillSlotIcon0", L"SelectSkillSlotIcon1", L"SelectSkillSlotIcon2", L"SelectSkillSlotIcon3",
+    L"SelectSkillSlotOutlineIcon0", L"SelectSkillSlotOutlineIcon1", L"SelectSkillSlotOutlineIcon2",
+    L"SelectSkillSlotOutlineIcon3", L"AfterBlindIcon",
+    L"MouseCheckIcon_0", L"MouseCheckIcon_1", L"MouseCheckIcon_2", L"MouseCheckIcon_3",
+    L"XIcon0", L"XIcon1", L"XIcon2", L"XIcon3", L"GBlindIcon", L"GBlindStatic",
+    L"SkillSlotNameStatic", L"BeforeStatic", L"AfterStatic", L"TabRadio0", L"TabRadio1",
+    L"SelectSkill1Static0", L"SelectSkill1Static1", L"SelectSkill1Static2", L"SelectSkill1Static3",
+    L"SelectSkill1Static4", L"SelectSkill1Static5", L"SelectSkill1Static6", L"SelectSkill1Static7",
+    L"SelectSkill2Static0", L"SelectSkill2Static1", L"SelectSkill2Static2", L"SelectSkill2Static3",
+    L"SelectSkill2Static4", L"SelectSkill2Static5", L"SelectSkill2Static6", L"SelectSkill2Static7",
+    L"SelectSkill3Static0", L"SelectSkill3Static1", L"SelectSkill3Static2", L"SelectSkill3Static3",
+    L"SelectSkill3Static4", L"SelectSkill3Static5", L"SelectSkill3Static6", L"SelectSkill3Static7",
+    L"SelectSkill4Static0", L"SelectSkill4Static1", L"SelectSkill4Static2", L"SelectSkill4Static3",
+    L"SelectSkill4Static4", L"SelectSkill4Static5", L"SelectSkill4Static6", L"SelectSkill4Static7",
+    L"TotalStaticL0", L"TotalStaticL1", L"TotalStaticL2", L"TotalStaticL3", L"TotalStaticL4", L"TotalStaticL5",
+    L"TotalStaticL6", L"TotalStaticL7", L"TotalStaticL8", L"TotalStaticL9", L"TotalStaticL10", L"TotalStaticL11",
+    L"TotalStaticL12", L"TotalStaticL13", L"TotalStaticL14", L"TotalStaticL15",
+    L"TotalStaticR0", L"TotalStaticR1", L"TotalStaticR2", L"TotalStaticR3", L"TotalStaticR4", L"TotalStaticR5",
+    L"TotalStaticR6", L"TotalStaticR7", L"TotalStaticR8", L"TotalStaticR9", L"TotalStaticR10", L"TotalStaticR11",
+    L"TotalStaticR12", L"TotalStaticR13", L"TotalStaticR14", L"TotalStaticR15",
 };
 
 // Stat order of the protocol (speed, hp, attack, defense, agility, special)
@@ -175,6 +217,7 @@ int WindowIndex(const char* window) noexcept {
     if (!std::strcmp(window, "challenge")) return window_challenge;
     if (!std::strcmp(window, "confirm")) return window_confirm;
     if (!std::strcmp(window, "info")) return window_info;
+    if (!std::strcmp(window, "g1")) return window_g1;
     return -1;
 }
 
@@ -231,7 +274,7 @@ bool OriginalUi::Load(void* component, const Bindings& bindings) {
     auto** vtable = Read<void**>(service);
     auto load = reinterpret_cast<LoadDialogFn>(vtable[kLoadDialogSlot / sizeof(void*)]);
     std::array<void*, window_count> dialogs{};
-    for (std::size_t index = 0; index < window_count; ++index) {
+    for (std::size_t index = 0; index < window_g1; ++index) {
         const std::wstring name = kWindows[index].registry;
         const std::wstring path = kWindows[index].path;
         const auto native_name = ViewOf(name);
@@ -269,6 +312,43 @@ bool OriginalUi::Load(void* component, const Bindings& bindings) {
         entry.pointer = control;
         entry.parent = parent;
         entry.width = Read<int>(control, 0x154);
+    }
+    // G改 1.0 page (optional).
+    {
+        const std::wstring name = kWindows[window_g1].registry;
+        const std::wstring path = kWindows[window_g1].path;
+        const auto native_name = ViewOf(name);
+        const auto native_path = ViewOf(path);
+        void* dialog = load(service, &native_name, &native_path);
+        std::size_t added = 0;
+        bool complete = dialog != nullptr;
+        if (dialog) Put<std::uint8_t>(dialog, kVisible, 0);
+        for (const auto& spec : kG1Specs) {
+            if (!complete) break;
+            const std::wstring control_name = spec.name;
+            const auto native = ViewOf(control_name);
+            void* control = bindings_.find(dialog, &native, spec.type);
+            void* parent = control ? Read<void*>(control, kParent) : nullptr;
+            const bool owned = parent && (parent == dialog || Read<void*>(parent, kParent) == dialog);
+            if (!control || !owned || count + added >= bound.size()) {
+                complete = false;
+                break;
+            }
+            auto& entry = bound[count + added++];
+            entry.window = spec.window;
+            entry.name = spec.name;
+            entry.type = spec.type;
+            entry.action = spec.action;
+            entry.pointer = control;
+            entry.parent = parent;
+            entry.width = Read<int>(control, 0x154);
+        }
+        if (complete) {
+            dialogs[window_g1] = dialog;
+            count += added;
+        } else {
+            for (std::size_t index = count; index < count + added; ++index) bound[index] = Bound{};
+        }
     }
     component_ = component;
     service_ = service;
@@ -332,7 +412,137 @@ bool OriginalUi::AttachEntry() {
     static const int kNoneX[kInfoItems] = {27, 108, 186};
     for (std::size_t slot = 0; slot < kInfoItems; ++slot)
         none_icons_[slot] = CreateIcon(info, kNoneNames[slot], kNoneX[slot], 331, 34, 74, L"sprs\\8486.spr");
+    AttachG1(); // optional
     return true;
+}
+
+// A button the Mod adds to a loaded dialog: with sprites (three states) it is a
+// clickable button, without them a caption holder drawn with its text item.
+void* OriginalUi::CreateButton(std::uint8_t window, const wchar_t* name, int x, int y, int width, int height,
+                               const wchar_t* sprite_base, int first_sprite, Action action) {
+    void* dialog = dialogs_[window];
+    if (!dialog || created_count_ >= created_.size()) return nullptr;
+    const std::wstring control_name = name;
+    const auto native_name = ViewOf(control_name);
+    void* control = bindings_.find(dialog, &native_name, kButton);
+    if (!control) {
+        bindings_.add(dialog, &native_name, x, y, width, height, 0);
+        control = bindings_.find(dialog, &native_name, kButton);
+    }
+    if (!control || Read<void*>(control, kParent) != dialog || Read<void*>(control) != bindings_.button_vtable) return nullptr;
+    Put<std::uint8_t>(control, kVisible, 0);
+    Put<std::uint8_t>(control, kVisible2, 0);
+    Put<std::uint8_t>(control, kEnabled, 0);
+    Put<std::uint8_t>(control, kDebugQuad, 0);
+    if (sprite_base) {
+        for (int state = 0; state < 3; ++state) {
+            const std::wstring sprite = std::wstring(sprite_base) + std::to_wstring(first_sprite + state) + L".spr";
+            const auto native_sprite = ViewOf(sprite);
+            bindings_.skin(control, &native_sprite, 0, 0, 0);
+        }
+    }
+    if (bindings_.refresh) {
+        bindings_.refresh(control);
+        bindings_.refresh(dialog);
+    }
+    auto& created = created_[created_count_++];
+    created.name = name;
+    created.pointer = control;
+    created.action = action;
+    created.window = window;
+    created.width = width;
+    created.height = height;
+    return control;
+}
+
+void OriginalUi::SetCreatedText(const wchar_t* name, const std::wstring& value, int align) {
+    for (std::size_t index = 0; index < created_count_; ++index) {
+        auto& created = created_[index];
+        if (std::wcscmp(created.name, name) || (created.text_set && created.text == value)) continue;
+        const auto native = ViewOf(value);
+        bindings_.text(created.pointer, 0, &native, 2, std::max(0, (created.height - 14) / 2), std::max(1, created.width - 4),
+                       14, kLabelColor, kShadowColor, 0, 1, align);
+        created.text = value;
+        created.text_set = true;
+    }
+}
+
+void OriginalUi::SetCreatedState(const wchar_t* name, bool visible, bool enabled) {
+    for (std::size_t index = 0; index < created_count_; ++index)
+        if (!std::wcscmp(created_[index].name, name)) SetState(created_[index].pointer, visible, enabled);
+}
+
+// The G改 1.0 page's own rows, laid out between the 1252 header statics and
+// its buttons: the style button on 0800 (below the ITEM box), then on 1252 a
+// category row and four slot rows (the create window's selector arrows,
+// sprs\17915-17920) and a notice line, and the way back to the OC page above
+// 设置保存 (the page's own button sprites, sprs\16819-16821).
+bool OriginalUi::AttachG1() {
+    if (g1_attached_ || !dialogs_[window_g1] || !bindings_.add || !bindings_.skin || !bindings_.text) return g1_attached_;
+    auto* save = Find(window_g1, L"SaveBtn");
+    auto* level = Find(window_g1, L"UnitLevelStatic");
+    auto* type = Find(window_g1, L"TypeStatic");
+    if (!save || !level || !type) return false;
+    const int left = static_cast<int>(Read<float>(level->pointer, 0x148));
+    int width = Read<int>(level->pointer, 0x154);
+    if (width < 200 || width > 320) width = 280;
+    const int save_y = static_cast<int>(Read<float>(save->pointer, 0x14C));
+    const int arrow = 19;
+    if (!CreateButton(window_info, L"OcG1StyleBtn", 20, 430, 138, 22, L"sprs\\", 16819, Action::g1_style)) return false;
+    // The header's type line is the 类型 selector; the notice and the way back
+    // to the OC page sit on the two rows above the 强化槽 frame (the layout's
+    // weapon-effect rows, empty on this page).
+    const int type_y = static_cast<int>(Read<float>(type->pointer, 0x14C));
+    const int type_height = Read<int>(type->pointer, 0x158);
+    const int arrow_y = type_y + std::max(0, (type_height - arrow) / 2);
+    if (!CreateButton(window_g1, L"OcG1CategoryLeftBtn", left + 4, arrow_y, arrow, arrow, L"sprs\\", 17915,
+                      Action::g1_category_prev) ||
+        !CreateButton(window_g1, L"OcG1CategoryRightBtn", left + width - arrow - 4, arrow_y, arrow, arrow, L"sprs\\", 17918,
+                      Action::g1_category_next))
+        return false;
+    if (!CreateButton(window_g1, L"OcG1Notice", left, save_y - 326, width, 18, nullptr, 0, Action::none)) return false;
+    if (!CreateButton(window_g1, L"OcStyleBackBtn", left + (width - 138) / 2, save_y - 281, 138, 22, L"sprs\\", 16819,
+                      Action::oc_style))
+        return false;
+    // Inside the frame, next to its slot numbers 1..4.
+    static const int kSlotOffsets[4] = {200, 148, 95, 42};
+    static const wchar_t* const kSlots[4][4] = {
+        {L"OcG1Slot0Label", L"OcG1Slot0LeftBtn", L"OcG1Slot0Value", L"OcG1Slot0RightBtn"},
+        {L"OcG1Slot1Label", L"OcG1Slot1LeftBtn", L"OcG1Slot1Value", L"OcG1Slot1RightBtn"},
+        {L"OcG1Slot2Label", L"OcG1Slot2LeftBtn", L"OcG1Slot2Value", L"OcG1Slot2RightBtn"},
+        {L"OcG1Slot3Label", L"OcG1Slot3LeftBtn", L"OcG1Slot3Value", L"OcG1Slot3RightBtn"},
+    };
+    const int slot_arrow_x = left + 56;
+    const int slot_value_x = slot_arrow_x + arrow + 2;
+    const int slot_value_width = left + width - arrow - 4 - slot_value_x;
+    for (int slot = 0; slot < 4; ++slot) {
+        const int y = save_y - kSlotOffsets[slot];
+        if (!CreateButton(window_g1, kSlots[slot][0], left, y, 50, 18, nullptr, 0, Action::none) ||
+            !CreateButton(window_g1, kSlots[slot][1], slot_arrow_x, y - 1, arrow, arrow, L"sprs\\", 17915,
+                          static_cast<Action>(static_cast<int>(Action::g1_slot_prev0) + slot)) ||
+            !CreateButton(window_g1, kSlots[slot][2], slot_value_x, y, slot_value_width, 18, nullptr, 0, Action::none) ||
+            !CreateButton(window_g1, kSlots[slot][3], slot_value_x + slot_value_width + 2, y - 1, arrow, arrow, L"sprs\\",
+                          17918, static_cast<Action>(static_cast<int>(Action::g1_slot_next0) + slot)))
+            return false;
+    }
+    g1_attached_ = true;
+    return true;
+}
+
+void OriginalUi::HideG1Native() {
+    if (g1_native_hidden_ || !dialogs_[window_g1]) return;
+    // Controls sit on the loaded dialog or on the layout's inner Dlg record.
+    void* dialog = dialogs_[window_g1];
+    for (const auto* name : kG1HiddenNames) {
+        const std::wstring control_name = name;
+        const auto native = ViewOf(control_name);
+        for (int type = 0; type <= 20; ++type) {
+            void* control = bindings_.find(dialog, &native, type);
+            void* parent = control ? Read<void*>(control, kParent) : nullptr;
+            if (control && parent && (parent == dialog || Read<void*>(parent, kParent) == dialog)) SetState(control, false, false);
+        }
+    }
+    g1_native_hidden_ = true;
 }
 
 void OriginalUi::Detach() noexcept {
@@ -349,6 +559,10 @@ void OriginalUi::Detach() noexcept {
     none_icons_ = {};
     models_shown_ = {};
     renders_prepared_ = false;
+    created_ = {};
+    created_count_ = 0;
+    g1_attached_ = false;
+    g1_native_hidden_ = false;
 }
 
 bool OriginalUi::Alive() const noexcept {
@@ -381,6 +595,21 @@ Action OriginalUi::Click(void* control) const noexcept {
         if (control == entry_button_)
             return Read<std::uint8_t>(control, kVisible) && Read<std::uint8_t>(control, kEnabled) ? Action::entry
                                                                                                    : Action::none;
+        for (std::size_t index = 0; index < created_count_; ++index) {
+            const auto& created = created_[index];
+            if (created.pointer != control || created.action == Action::none) continue;
+            if (!shown_[created.window] || !Read<std::uint8_t>(control, kVisible) || !Read<std::uint8_t>(control, kEnabled)) {
+                if (bindings_.log) {
+                    char line[160];
+                    std::snprintf(line, sizeof(line), "g1 page control %ls refused: shown=%u visible=%u enabled=%u", created.name,
+                                  shown_[created.window] ? 1u : 0u, Read<std::uint8_t>(control, kVisible),
+                                  Read<std::uint8_t>(control, kEnabled));
+                    bindings_.log(line);
+                }
+                return Action::none;
+            }
+            return created.action;
+        }
         for (std::size_t index = 0; index < bound_count_; ++index) {
             const auto& entry = bound_[index];
             if (entry.pointer != control || entry.action == Action::none) continue;
@@ -576,16 +805,20 @@ void OriginalUi::HideAll() noexcept {
 }
 
 void OriginalUi::Render(const EntryView& entry, const OverView& over, const InfoView& info,
-                        const ChallengeView& challenge, const ConfirmView& confirm) {
+                        const ChallengeView& challenge, const ConfirmView& confirm, const G1View& g1) {
     if (!Alive()) return;
-    // 0800 takes the upgrade page's place (same frame at 0,100) while the OC
-    // tab is shown; the page dialog keeps its own visibility for the way back.
-    if (info.visible) {
+    // 0800 (or the G改 1.0 page) takes the upgrade page's place (same frame at
+    // 0,100) while the OC tab is shown; the page dialog keeps its own
+    // visibility for the way back.
+    const bool g1_page = g1.visible && dialogs_[window_g1] && g1_attached_;
+    if (info.visible || g1_page) {
         if (!page_hidden_) {
             page_visible_ = Read<std::uint8_t>(page_dialog_, kVisible);
             page_hidden_ = true;
         }
         Put<std::uint8_t>(page_dialog_, kVisible, 0);
+    }
+    if (info.visible) {
         // The layout's own level icons and NONE frames stay hidden; the
         // created ones at the same places show the state.
         for (std::size_t level = 0; level < kLevelIcons; ++level) {
@@ -626,7 +859,8 @@ void OriginalUi::Render(const EntryView& entry, const OverView& over, const Info
             }
             if (none_icons_[slot]) SetState(none_icons_[slot], !info.item[slot], false);
         }
-    } else {
+    }
+    if (!info.visible && !g1_page) {
         models_visible_ = 0;
         if (page_hidden_) {
             Put<std::uint8_t>(page_dialog_, kVisible, page_visible_);
@@ -635,6 +869,50 @@ void OriginalUi::Render(const EntryView& entry, const OverView& over, const Info
     }
     if (dialogs_[window_info]) Put<std::uint8_t>(dialogs_[window_info], kVisible, info.visible ? 1 : 0);
     shown_[window_info] = info.visible;
+    // The style button on 0800 opens the G改 1.0 page.
+    if (g1_attached_) {
+        SetCreatedText(L"OcG1StyleBtn", g1.style_label, 2);
+        SetCreatedState(L"OcG1StyleBtn", info.visible && g1.offered, info.visible && g1.offered && !confirm.visible);
+    }
+    // The G改 1.0 page (1252 with the Mod's rows).
+    if (g1_page) {
+        HideG1Native();
+        SetStatic(window_g1, L"UnitLevelStatic", g1.header);
+        SetStatic(window_g1, L"TypeStatic", g1.type);
+        SetCreatedText(L"OcStyleBackBtn", g1.back_label, 2);
+        SetCreatedState(L"OcStyleBackBtn", true, !confirm.visible);
+        SetCreatedText(L"OcG1CategoryLabel", L"类型", 0);
+        SetCreatedState(L"OcG1CategoryLabel", true, false);
+        SetCreatedText(L"OcG1CategoryValue", g1.category, 2);
+        SetCreatedState(L"OcG1CategoryValue", true, false);
+        SetCreatedState(L"OcG1CategoryLeftBtn", true, g1.category_arrows && !confirm.visible);
+        SetCreatedState(L"OcG1CategoryRightBtn", true, g1.category_arrows && !confirm.visible);
+        for (std::size_t slot = 0; slot < kG1Slots; ++slot) {
+            const std::wstring index = std::to_wstring(slot);
+            SetCreatedText((L"OcG1Slot" + index + L"Label").c_str(), g1.slot_label[slot], 0);
+            SetCreatedState((L"OcG1Slot" + index + L"Label").c_str(), true, false);
+            SetCreatedText((L"OcG1Slot" + index + L"Value").c_str(), g1.slot_value[slot], 2);
+            SetCreatedState((L"OcG1Slot" + index + L"Value").c_str(), true, false);
+            SetCreatedState((L"OcG1Slot" + index + L"LeftBtn").c_str(), true, g1.slot_arrows[slot] && !confirm.visible);
+            SetCreatedState((L"OcG1Slot" + index + L"RightBtn").c_str(), true, g1.slot_arrows[slot] && !confirm.visible);
+        }
+        SetCreatedText(L"OcG1Notice", g1.notice, 2);
+        SetCreatedState(L"OcG1Notice", true, false);
+        if (auto* save = Find(window_g1, L"SaveBtn")) {
+            SetLabel(*save, L"设置保存", 2);
+            SetState(save->pointer, true, g1.save_enabled && !confirm.visible);
+        }
+        if (auto* revert = Find(window_g1, L"SelectSkillResetBtn")) {
+            SetLabel(*revert, L"还原", 2);
+            SetState(revert->pointer, true, g1.revert_enabled && !confirm.visible);
+        }
+        if (auto* reset = Find(window_g1, L"AllSkillResetBtn")) {
+            SetLabel(*reset, L"强化槽初始化", 2);
+            SetState(reset->pointer, true, g1.reset_enabled && !confirm.visible);
+        }
+    }
+    if (dialogs_[window_g1]) Put<std::uint8_t>(dialogs_[window_g1], kVisible, g1_page ? 1 : 0);
+    shown_[window_g1] = g1_page;
     if (entry_button_) {
         // The dim label stands in for the button until the challenge can start.
         SetState(entry_label_, entry.visible && !entry.lit, false);
@@ -708,7 +986,10 @@ void* OriginalUi::Control(const char* window, const wchar_t* name) const noexcep
     const int index = WindowIndex(window);
     if (index < 0) return nullptr;
     const auto* control = Find(static_cast<std::uint8_t>(index), name);
-    return control ? control->pointer : nullptr;
+    if (control) return control->pointer;
+    for (std::size_t created = 0; created < created_count_; ++created)
+        if (created_[created].window == index && !std::wcscmp(created_[created].name, name)) return created_[created].pointer;
+    return nullptr;
 }
 
 bool OriginalUi::Visible(const char* window) const noexcept {

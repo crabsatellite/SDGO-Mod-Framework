@@ -11,6 +11,12 @@
 // service's OnUIEvent. The OVER CUSTOM entry of the OC-era upgrade page
 // (OverCustomBtn and its BackIcon1 label, removed from the current 0799) is
 // re-created on the page with the same position and sprites.
+//
+// G改 1.0 (room systems): the OC tab also hosts the G改 1.0 attribute page,
+// switched with a style button. It is the package's own attribute page layout
+// (uirs\1252.uir: the panel frame, 设置保存, 还原 and 强化槽初始化) with the
+// current system's controls hidden and the Mod's own category and slot rows
+// drawn with the client's native controls.
 #pragma once
 
 #include <array>
@@ -48,7 +54,21 @@ enum class Action : std::uint8_t {
     challenge_start, challenge_close, challenge_left, challenge_right,
     item0, item1, item2, item3, item4, item5, item6, item7, item8, item9,
     confirm_ok, confirm_cancel,
+    // G改 1.0 page
+    g1_style, oc_style,
+    g1_category_prev, g1_category_next,
+    g1_slot_prev0, g1_slot_prev1, g1_slot_prev2, g1_slot_prev3,
+    g1_slot_next0, g1_slot_next1, g1_slot_next2, g1_slot_next3,
+    g1_save, g1_revert, g1_reset,
 };
+
+inline constexpr std::size_t kG1Slots = 4;
+inline bool IsG1SlotPrev(Action action) noexcept { return action >= Action::g1_slot_prev0 && action <= Action::g1_slot_prev3; }
+inline bool IsG1SlotNext(Action action) noexcept { return action >= Action::g1_slot_next0 && action <= Action::g1_slot_next3; }
+inline std::size_t G1Slot(Action action) noexcept {
+    return IsG1SlotPrev(action) ? static_cast<std::size_t>(action) - static_cast<std::size_t>(Action::g1_slot_prev0)
+                                : static_cast<std::size_t>(action) - static_cast<std::size_t>(Action::g1_slot_next0);
+}
 
 inline bool IsUp(Action action) noexcept { return action >= Action::up0 && action <= Action::up5; }
 inline std::size_t UpStat(Action action) noexcept {
@@ -94,7 +114,7 @@ struct Bindings {
     bool Bind(const SdgoApi* api, SdgoMod* mod) noexcept;
 };
 
-enum Window : std::uint8_t { window_over = 0, window_challenge, window_confirm, window_info, window_count };
+enum Window : std::uint8_t { window_over = 0, window_challenge, window_confirm, window_info, window_g1, window_count };
 
 struct EntryView {
     bool visible = false;
@@ -135,6 +155,25 @@ struct ChallengeView {
     std::array<bool, kItemSlots> item_checked{};
 };
 
+// The G改 1.0 page (uirs\1252 in 0800's place, 0794 closed).
+struct G1View {
+    bool offered = false;            // the G改 1.0 style button on 0800
+    bool visible = false;            // the G改 1.0 page is shown
+    std::wstring style_label;        // caption of the style button on 0800
+    std::wstring back_label;         // caption of the way back to the OC page
+    std::wstring header;             // UnitLevelStatic
+    std::wstring type;               // TypeStatic
+    std::wstring category;           // category row value
+    bool category_arrows = false;
+    std::array<std::wstring, kG1Slots> slot_label;
+    std::array<std::wstring, kG1Slots> slot_value;
+    std::array<bool, kG1Slots> slot_arrows{};
+    std::wstring notice;
+    bool save_enabled = false;
+    bool revert_enabled = false;
+    bool reset_enabled = false;
+};
+
 struct ConfirmView {
     bool visible = false;
     std::wstring line0, line1;
@@ -155,10 +194,12 @@ public:
     void* component() const noexcept { return component_; }
     Action Click(void* control) const noexcept;
     void Render(const EntryView& entry, const OverView& over, const InfoView& info, const ChallengeView& challenge,
-                const ConfirmView& confirm);
+                const ConfirmView& confirm, const G1View& g1);
     void HideAll() noexcept;
     // GameTest: a bound control by window ("entry", "over", "info",
-    // "challenge", "confirm") and original control name.
+    // "challenge", "confirm", "g1") and original control name; the G改 1.0
+    // page's own controls are OcG1StyleBtn, OcStyleBackBtn, OcG1CategoryLeftBtn,
+    // OcG1CategoryRightBtn and OcG1Slot<n>LeftBtn / OcG1Slot<n>RightBtn.
     void* Control(const char* window, const wchar_t* name) const noexcept;
     bool Visible(const char* window) const noexcept;
     bool entry_ready() const noexcept { return entry_button_ != nullptr; }
@@ -203,7 +244,31 @@ private:
 
     std::uint32_t models_visible_ = 0;
 
+    // G改 1.0 page: the Mod's controls on 0800 and 1252.
+    struct Created {
+        const wchar_t* name = nullptr;
+        void* pointer = nullptr;
+        Action action = Action::none;
+        std::uint8_t window = 0;
+        std::wstring text;
+        bool text_set = false;
+        int width = 0;
+        int height = 0;
+    };
+    std::array<Created, 24> created_{};
+    std::size_t created_count_ = 0;
+    bool g1_attached_ = false;
+    bool g1_native_hidden_ = false;
+    bool AttachG1();
+    void* CreateButton(std::uint8_t window, const wchar_t* name, int x, int y, int width, int height,
+                       const wchar_t* sprite_base, int first_sprite, Action action);
+    void SetCreatedText(const wchar_t* name, const std::wstring& value, int align);
+    void SetCreatedState(const wchar_t* name, bool visible, bool enabled);
+    void HideG1Native();
+
 public:
+    bool g1_attached() const noexcept { return g1_attached_; }
+
     std::uint32_t models_loaded() const noexcept { return models_loaded_; }
     std::uint32_t models_shown() const noexcept { return models_visible_; }
 

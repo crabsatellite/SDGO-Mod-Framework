@@ -442,7 +442,7 @@ sdgo_add_mod(friend_unit_gift_server SERVER DESCRIPTION "optional authenticated 
              LIBS ole32 oleaut32 bcrypt uuid)
 sdgo_add_mod(oc_custom_server SERVER DESCRIPTION "over-custom six-stat enhancement (World)"
              SOURCES mods/oc_custom_server/oc_custom_server.cpp
-             LIBS ole32 oleaut32 uuid FILES oc_schema.sql oc_unit_rev.tsv)
+             LIBS ole32 oleaut32 uuid FILES oc_schema.sql oc_unit_rev.tsv g1_schema.sql)
 sdgo_add_mod(oc_custom_battle SERVER DESCRIPTION "over-custom six-stat enhancement (Battle)"
              SOURCES mods/oc_custom_battle/oc_custom_battle.cpp)
 sdgo_add_mod(oc_custom_client DESCRIPTION "over-custom six-stat enhancement (client)"

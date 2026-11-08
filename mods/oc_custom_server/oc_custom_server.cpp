@@ -19,6 +19,10 @@
 //      replayed to every peer that holds that account's user info, which is the
 //      native refresh path (outside a room it updates the cached user, inside a
 //      room it updates the pilot and broadcasts it).
+//   4. G改 1.0 ("room" mode with the server owner's g1_attributes.tsv): every
+//      unit can keep a second, G改 1.0 attribute loadout (g1_schema.sql) next to
+//      its current custom skills (G改 2.0). The loadout rides the record
+//      carrier (version 2) and rooms with the !g1 command use it.
 #include <windows.h>
 
 #include <algorithm>
@@ -56,8 +60,16 @@ struct Settings {
     bool room_mode = false; // both systems kept in the records; the room decides
     bool log_fill = false;
     std::int32_t reward_item = 3240013;
+    bool g1 = false; // room mode with a G改 1.0 rule set
 };
 Settings g_settings;
+
+// The G改 1.0 rule set from g1_attributes.tsv (loaded once at start).
+std::vector<G1Rule> g_g1_rules;
+std::vector<std::u16string> g_g1_categories;
+std::wstring g_g1_digest;
+std::atomic<int> g_g1_state{0}; // 0 unknown, 1 ready, 2 failed
+std::mutex g_g1_gate;
 std::wstring g_game_db;
 std::wstring g_billing_db;
 std::wstring g_mod_directory;
@@ -216,6 +228,129 @@ std::vector<UnitRevRow> ParseUnitRev(const std::string& text) {
     return rows;
 }
 
+// g1_attributes.tsv (UTF-8, tab separated, # comments):
+//   category <index> <name>
+//   skill <skill id> <category> <type> <unit level> <user level> <premium> <reset cost>
+// Skill ids lie in 30001..31023 (the record carrier's range); categories are
+// numbered from 0 without gaps.
+bool ParseG1Rules(const std::string& text, std::vector<G1Rule>* rules, std::vector<std::u16string>* categories,
+                  std::string* error) {
+    rules->clear();
+    categories->clear();
+    std::vector<std::pair<int, std::u16string>> named;
+    std::size_t start = 0;
+    unsigned line_number = 0;
+    while (start < text.size()) {
+        auto end = text.find('\n', start);
+        if (end == std::string::npos) end = text.size();
+        std::string line = text.substr(start, end - start);
+        start = end + 1;
+        ++line_number;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (line.empty() || line[0] == '#') continue;
+        std::vector<std::string> fields;
+        std::size_t field = 0;
+        while (true) {
+            const auto tab = line.find('\t', field);
+            fields.push_back(line.substr(field, tab == std::string::npos ? std::string::npos : tab - field));
+            if (tab == std::string::npos) break;
+            field = tab + 1;
+        }
+        auto number = [](const std::string& value, long low, long high, long* out) {
+            char* end_ptr = nullptr;
+            const long parsed = std::strtol(value.c_str(), &end_ptr, 10);
+            if (value.empty() || !end_ptr || *end_ptr || parsed < low || parsed > high) return false;
+            *out = parsed;
+            return true;
+        };
+        if (fields[0] == "category" && fields.size() == 3) {
+            long index = 0;
+            const std::wstring wide = Widen(fields[2]);
+            if (!number(fields[1], 0, static_cast<long>(kG1CategoryMax) - 1, &index) || wide.empty() ||
+                wide.size() >= kG1CategoryNameUnits) {
+                *error = "line " + std::to_string(line_number) + ": bad category";
+                return false;
+            }
+            named.emplace_back(static_cast<int>(index), std::u16string(wide.begin(), wide.end()));
+            continue;
+        }
+        if (fields[0] == "skill" && fields.size() == 8) {
+            long values[7] = {};
+            const long limits[7][2] = {{kG1SkillBase + 1, kG1SkillBase + kG1SkillSpan}, {0, kG1CategoryMax - 1},
+                                       {0, 255}, {0, 255}, {0, 255}, {0, 1}, {0, 32767}};
+            for (std::size_t index = 0; index < 7; ++index)
+                if (!number(fields[index + 1], limits[index][0], limits[index][1], &values[index])) {
+                    *error = "line " + std::to_string(line_number) + ": bad skill field " + std::to_string(index + 1);
+                    return false;
+                }
+            G1Rule rule;
+            rule.skill = static_cast<std::uint16_t>(values[0]);
+            rule.category = static_cast<std::uint8_t>(values[1]);
+            rule.type = static_cast<std::uint8_t>(values[2]);
+            rule.unit_level = static_cast<std::uint8_t>(values[3]);
+            rule.user_level = static_cast<std::uint8_t>(values[4]);
+            rule.premium = static_cast<std::uint8_t>(values[5]);
+            rule.reset_cost = static_cast<std::uint16_t>(values[6]);
+            for (const auto& existing : *rules)
+                if (existing.skill == rule.skill) {
+                    *error = "line " + std::to_string(line_number) + ": duplicate skill";
+                    return false;
+                }
+            rules->push_back(rule);
+            continue;
+        }
+        *error = "line " + std::to_string(line_number) + ": unknown row";
+        return false;
+    }
+    std::sort(named.begin(), named.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (std::size_t index = 0; index < named.size(); ++index) {
+        if (named[index].first != static_cast<int>(index)) {
+            *error = "categories must be numbered 0.." + std::to_string(named.size() - 1);
+            return false;
+        }
+        categories->push_back(named[index].second);
+    }
+    for (const auto& rule : *rules)
+        if (rule.category >= categories->size()) {
+            *error = "skill " + std::to_string(rule.skill) + " names an undefined category";
+            return false;
+        }
+    if (rules->empty() || categories->empty()) {
+        *error = "no skills or no categories";
+        return false;
+    }
+    if (rules->size() > 0xFFFF) {
+        *error = "too many skills";
+        return false;
+    }
+    return true;
+}
+
+std::wstring Digest(const std::string& text) {
+    std::uint64_t hash = 1469598103934665603ULL;
+    for (unsigned char c : text) {
+        hash ^= c;
+        hash *= 1099511628211ULL;
+    }
+    wchar_t buffer[24];
+    swprintf_s(buffer, L"%016llx", static_cast<unsigned long long>(hash));
+    return buffer;
+}
+
+bool LoadG1Rules() {
+    std::string text;
+    if (!ReadFileUtf8(g_mod_directory + L"\\g1_attributes.tsv", &text)) return false;
+    std::string error;
+    if (!ParseG1Rules(text, &g_g1_rules, &g_g1_categories, &error)) {
+        Log(SDGO_LOG_ERROR, "g1_attributes.tsv rejected (%s); G改 1.0 rooms stay unavailable", error.c_str());
+        g_g1_rules.clear();
+        g_g1_categories.clear();
+        return false;
+    }
+    g_g1_digest = Digest(text);
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Database
 
@@ -330,6 +465,88 @@ bool SchemaReady() noexcept {
     return g_schema_state.load(std::memory_order_acquire) == 1;
 }
 
+bool G1SchemaPresent(Session& session) {
+    ResultSets sets;
+    if (!session.Query(
+            L"SET NOCOUNT ON; SELECT [Value] FROM dbo.sdgo_mod_oc_Meta WHERE [Key] = N'G1Rules'; "
+            L"SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name LIKE N'sdgo[_]mod[_]g1[_]%'; "
+            L"SELECT COUNT(*) FROM dbo.sdgo_mod_g1_Rule",
+            &sets) ||
+        sets.size() != 3 || sets[1].size() != 1 || sets[2].size() != 1)
+        return false;
+    return sets[0].size() == 1 && sets[0][0].size() == 1 && sets[0][0][0] == g_g1_digest &&
+           Int64Or(sets[1][0], 0) >= 4 && Int64Or(sets[2][0], 0) == static_cast<std::int64_t>(g_g1_rules.size());
+}
+
+bool InstallG1Schema(Session& session) {
+    std::string script;
+    if (!ReadFileUtf8(g_mod_directory + L"\\g1_schema.sql", &script)) {
+        Log(SDGO_LOG_ERROR, "g1_schema.sql is missing from the mod directory");
+        return false;
+    }
+    const auto batches = SplitBatches(Widen(script));
+    for (std::size_t index = 0; index < batches.size(); ++index)
+        if (!session.Execute(batches[index])) {
+            Log(SDGO_LOG_ERROR, "g1 schema batch %u of %u failed", static_cast<unsigned>(index + 1),
+                static_cast<unsigned>(batches.size()));
+            return false;
+        }
+    // The rule table mirrors the file: replaced whenever the file changes.
+    if (!session.Execute(L"SET NOCOUNT ON; DELETE FROM dbo.sdgo_mod_g1_Rule;")) return false;
+    for (std::size_t start = 0; start < g_g1_rules.size(); start += 200) {
+        std::wstring sql = L"SET NOCOUNT ON; INSERT INTO dbo.sdgo_mod_g1_Rule (UnitSkillID, Category, SkillType, UseUnitLv, "
+                           L"UseUserLv, Premium, ResetCost) VALUES ";
+        const auto end = (std::min)(g_g1_rules.size(), start + 200);
+        for (std::size_t index = start; index < end; ++index) {
+            const auto& rule = g_g1_rules[index];
+            if (index != start) sql += L",";
+            sql += L"(" + std::to_wstring(rule.skill) + L"," + std::to_wstring(rule.category) + L"," +
+                   std::to_wstring(rule.type) + L"," + std::to_wstring(rule.unit_level) + L"," +
+                   std::to_wstring(rule.user_level) + L"," + std::to_wstring(rule.premium) + L"," +
+                   std::to_wstring(rule.reset_cost) + L")";
+        }
+        if (!session.Execute(sql)) {
+            Log(SDGO_LOG_ERROR, "g1 rule seed failed at row %u", static_cast<unsigned>(start));
+            return false;
+        }
+    }
+    if (!session.Execute(
+            L"SET NOCOUNT ON; MERGE dbo.sdgo_mod_oc_Meta AS t USING (SELECT N'G1Rules' AS [Key], N'" + g_g1_digest +
+            L"' AS [Value]) AS s ON t.[Key] = s.[Key] "
+            L"WHEN MATCHED THEN UPDATE SET [Value] = s.[Value], UpdatedAt = GETDATE() "
+            L"WHEN NOT MATCHED THEN INSERT ([Key], [Value]) VALUES (s.[Key], s.[Value]);"))
+        return false;
+    Log(SDGO_LOG_INFO, "g1 schema installed in %ls with %u rule(s) in %u categor(ies)", g_game_db.c_str(),
+        static_cast<unsigned>(g_g1_rules.size()), static_cast<unsigned>(g_g1_categories.size()));
+    return true;
+}
+
+// The G改 1.0 schema and rule table, installed once through a separate session
+// after the OC schema is ready (the caller's open session is left alone).
+bool EnsureG1Schema(void* connection) {
+    if (!g_settings.g1 || !SchemaReady()) return false;
+    if (g_g1_state.load(std::memory_order_acquire) == 1) return true;
+    if (g_g1_state.load(std::memory_order_acquire) == 2) return false;
+    std::lock_guard<std::mutex> lock(g_g1_gate);
+    const int state = g_g1_state.load(std::memory_order_relaxed);
+    if (state == 1) return true;
+    if (state == 2) return false;
+    Session installer(120);
+    if (!installer.Open(connection)) return false;
+    const bool ready = G1SchemaPresent(installer) || (InstallG1Schema(installer) && G1SchemaPresent(installer));
+    g_g1_state.store(ready ? 1 : 2, std::memory_order_release);
+    if (!ready) Log(SDGO_LOG_ERROR, "g1 schema unavailable; G改 1.0 loadouts stay inactive until restart");
+    return ready;
+}
+
+bool OpenG1Session(void* connection, Session& session) {
+    return g_settings.g1 && OpenGameSession(connection, session) && EnsureG1Schema(connection);
+}
+
+bool G1Ready() noexcept {
+    return g_g1_state.load(std::memory_order_acquire) == 1;
+}
+
 // ---------------------------------------------------------------------------
 // Outgoing owned-unit records
 
@@ -379,6 +596,39 @@ bool LoadCarriers(Session& session, const std::vector<std::uint64_t>& uids, std:
             if (value < -32768) value = -32768;
             entry.carrier.delta[stat] = static_cast<std::int16_t>(value);
         }
+        output->push_back(entry);
+    }
+    return true;
+}
+
+struct G1Row {
+    std::uint64_t uid = 0;
+    std::array<std::uint16_t, 4> skills{};
+};
+
+bool LoadG1Loadouts(Session& session, const std::vector<std::uint64_t>& uids, std::vector<G1Row>* output) {
+    output->clear();
+    if (uids.empty()) return true;
+    std::wstring list;
+    for (std::size_t index = 0; index < uids.size(); ++index) {
+        if (index) list += L",";
+        list += std::to_wstring(uids[index]);
+    }
+    ResultSets sets;
+    if (!session.Query(
+            L"SET NOCOUNT ON; SELECT G.UserUnitNumber, G.Skill_1, G.Skill_2, G.Skill_3, G.Skill_4 "
+            L"FROM dbo.sdgo_mod_g1_UserUnitSkill G "
+            L"INNER JOIN dbo.tbl_UserUnits UU ON UU.UserUnitNumber = G.UserUnitNumber AND UU.UnitNumber = G.UnitNumber AND UU.AccountNumber = G.AccountNumber "
+            L"WHERE (G.Skill_1 <> 0 OR G.Skill_2 <> 0 OR G.Skill_3 <> 0 OR G.Skill_4 <> 0) AND G.UserUnitNumber IN (" + list + L")",
+            &sets) ||
+        sets.size() != 1)
+        return false;
+    for (const auto& row : sets[0]) {
+        if (row.size() != 5) return false;
+        G1Row entry;
+        entry.uid = static_cast<std::uint64_t>(Int64Or(row, 0));
+        for (std::size_t slot = 0; slot < 4; ++slot)
+            entry.skills[slot] = static_cast<std::uint16_t>(Int64Or(row, 1 + slot));
         output->push_back(entry);
     }
     return true;
@@ -461,6 +711,9 @@ void PatchPacket(std::uint8_t* packet, int size, std::uint32_t destination) {
         Log(SDGO_LOG_WARN, "oc carrier query failed for opcode 0x%X; records sent unchanged", opcode);
         return;
     }
+    std::vector<G1Row> g1_rows;
+    if (g_settings.g1 && g_settings.room_mode && EnsureG1Schema(connection) && !LoadG1Loadouts(session, uids, &g1_rows))
+        Log(SDGO_LOG_WARN, "g1 loadout query failed for opcode 0x%X; records carry no G改 1.0 loadout", opcode);
     unsigned filled = 0;
     std::uint64_t first_uid = 0;
     Carrier first{};
@@ -472,6 +725,11 @@ void PatchPacket(std::uint8_t* packet, int size, std::uint32_t destination) {
         carrier.flags = g_settings.room_mode ? carrier_room_rule : carrier_oc_mode;
         for (const auto& row : rows)
             if (row.uid == uid) carrier = row.carrier;
+        for (const auto& row : g1_rows)
+            if (row.uid == uid) {
+                carrier.flags = static_cast<std::uint8_t>(carrier.flags | carrier_g1_profile);
+                carrier.g1_skills = row.skills;
+            }
         std::uint8_t copy[kUnitRecordBytes];
         if (!CopyBytes(copy, record, sizeof(copy))) continue;
         WriteCarrier(copy, carrier);
@@ -487,9 +745,11 @@ void PatchPacket(std::uint8_t* packet, int size, std::uint32_t destination) {
     }
     if (g_settings.log_fill && filled && InterlockedDecrement(&g_fill_log_budget) >= 0)
         Log(SDGO_LOG_INFO,
-            "oc carrier filled %u record(s) in opcode 0x%X (%u with a profile) to 0x%X; first uid=%llu revision=%u hp=%d",
-            filled, opcode, static_cast<unsigned>(rows.size()), destination,
-            static_cast<unsigned long long>(first_uid), first.revision, first.delta[stat_hp]);
+            "oc carrier filled %u record(s) in opcode 0x%X (%u with a profile, %u with a G1 loadout) to 0x%X; first uid=%llu "
+            "revision=%u hp=%d g1=%u/%u/%u/%u",
+            filled, opcode, static_cast<unsigned>(rows.size()), static_cast<unsigned>(g1_rows.size()), destination,
+            static_cast<unsigned long long>(first_uid), first.revision, first.delta[stat_hp], first.g1_skills[0],
+            first.g1_skills[1], first.g1_skills[2], first.g1_skills[3]);
 }
 
 int __fastcall SendHook(void* network, void*, std::uint32_t destination, std::uint8_t* packet, int size,
@@ -773,6 +1033,124 @@ std::int32_t HandleReset(Session& session, std::uint32_t account, const std::uin
     return static_cast<std::int32_t>(WireStatus::success);
 }
 
+// --- G改 1.0 commands ---------------------------------------------------------
+
+std::int32_t HandleG1Rules(const std::uint8_t* payload, std::uint32_t bytes, std::uint8_t* reply,
+                           std::uint32_t* produced) {
+    G1RulesRequest request;
+    if (!ReadG1RulesRequest(payload, bytes, &request)) return static_cast<std::int32_t>(WireStatus::invalid_argument);
+    G1RulesReply result;
+    result.ret_val = g_settings.g1 ? g1_ok : g1_unavailable;
+    result.total = static_cast<std::uint16_t>(g_g1_rules.size());
+    result.page = request.page;
+    result.categories = static_cast<std::uint8_t>(g_g1_categories.size());
+    const std::size_t first = static_cast<std::size_t>(request.page) * kG1RulesPerPage;
+    for (std::size_t index = first; index < g_g1_rules.size() && result.count < kG1RulesPerPage; ++index)
+        result.rules[result.count++] = g_g1_rules[index];
+    WriteG1RulesReply(reply, result);
+    *produced = static_cast<std::uint32_t>(kG1RulesReplyBytes);
+    return static_cast<std::int32_t>(WireStatus::success);
+}
+
+std::int32_t HandleG1Categories(std::uint8_t* reply, std::uint32_t* produced) {
+    G1CategoriesReply result;
+    result.ret_val = g_settings.g1 ? g1_ok : g1_unavailable;
+    for (const auto& name : g_g1_categories) {
+        if (result.count >= kG1CategoryMax) break;
+        auto& slot = result.names[result.count++];
+        for (std::size_t c = 0; c < name.size() && c + 1 < kG1CategoryNameUnits; ++c) slot[c] = name[c];
+    }
+    WriteG1CategoriesReply(reply, result);
+    *produced = static_cast<std::uint32_t>(kG1CategoriesReplyBytes);
+    return static_cast<std::int32_t>(WireStatus::success);
+}
+
+// Runs sdgo_mod_g1_Get; false on a database failure.
+bool QueryG1(Session& session, std::uint32_t account, std::uint64_t uid, std::int32_t* ret_val, G1Loadout* loadout) {
+    ResultSets sets;
+    if (!session.Query(L"SET NOCOUNT ON; DECLARE @r INT; EXEC dbo.sdgo_mod_g1_Get " + std::to_wstring(account) + L", " +
+                           std::to_wstring(uid) + L", @r OUTPUT; SELECT @r;",
+                       &sets) ||
+        sets.empty() || sets.back().size() != 1)
+        return false;
+    *ret_val = static_cast<std::int32_t>(Int64Or(sets.back()[0], 0, g1_unit_missing));
+    *loadout = {};
+    loadout->unit_uid = uid;
+    if (*ret_val != 0) return true;
+    if (sets.size() != 2 || sets[0].size() != 1 || sets[0][0].size() != 12) return false;
+    const auto& row = sets[0][0];
+    for (std::size_t slot = 0; slot < 4; ++slot) loadout->skills[slot] = static_cast<std::uint16_t>(Int64Or(row, 1 + slot));
+    loadout->reset_count = static_cast<std::uint16_t>(Int64Or(row, 5));
+    loadout->normal_max = static_cast<std::uint8_t>(Int64Or(row, 6));
+    loadout->unit_level = static_cast<std::uint8_t>(Int64Or(row, 7));
+    loadout->user_level = static_cast<std::uint8_t>(Int64Or(row, 8));
+    loadout->category = static_cast<std::uint8_t>(Int64Or(row, 9, 255));
+    loadout->revision = static_cast<std::uint32_t>(Int64Or(row, 10));
+    loadout->reset_cost = static_cast<std::int32_t>(Int64Or(row, 11, -1));
+    return true;
+}
+
+std::int32_t FinishG1(Session& session, std::uint32_t account, std::uint64_t uid, G1Reply* result,
+                      std::uint8_t* reply, std::uint32_t* produced) {
+    std::int32_t get_ret = 0;
+    if (!QueryG1(session, account, uid, &get_ret, &result->loadout))
+        return static_cast<std::int32_t>(WireStatus::database_unavailable);
+    if (result->ret_val == 0 && get_ret != 0) result->ret_val = get_ret;
+    WriteG1Reply(reply, *result);
+    *produced = static_cast<std::uint32_t>(kG1ReplyBytes);
+    return static_cast<std::int32_t>(WireStatus::success);
+}
+
+std::int32_t HandleG1Get(Session& session, std::uint32_t account, const std::uint8_t* payload, std::uint32_t bytes,
+                         std::uint8_t* reply, std::uint32_t* produced) {
+    UnitRequest request;
+    if (!ReadUnitRequest(payload, bytes, &request)) return static_cast<std::int32_t>(WireStatus::invalid_argument);
+    G1Reply result;
+    return FinishG1(session, account, request.unit_uid, &result, reply, produced);
+}
+
+std::int32_t HandleG1Set(Session& session, std::uint32_t account, const std::uint8_t* payload, std::uint32_t bytes,
+                         std::uint8_t* reply, std::uint32_t* produced) {
+    G1SetRequest request;
+    if (!ReadG1SetRequest(payload, bytes, &request)) return static_cast<std::int32_t>(WireStatus::invalid_argument);
+    std::wstring sql = L"SET NOCOUNT ON; DECLARE @r INT; EXEC dbo.sdgo_mod_g1_Set " + Num(account) + L", " +
+                       Num(static_cast<std::int64_t>(request.unit_uid));
+    for (auto skill : request.skills) sql += L", " + Num(skill);
+    sql += L", " + Num(request.revision) + L", @r OUTPUT; SELECT @r;";
+    ResultSets sets;
+    if (!session.Query(sql, &sets) || sets.size() != 1 || sets[0].size() != 1 || sets[0][0].size() != 1)
+        return static_cast<std::int32_t>(WireStatus::database_unavailable);
+    G1Reply result;
+    result.ret_val = static_cast<std::int32_t>(Int64Or(sets[0][0], 0, g1_unit_missing));
+    return FinishG1(session, account, request.unit_uid, &result, reply, produced);
+}
+
+std::int32_t HandleG1Reset(Session& session, std::uint32_t account, const std::uint8_t* payload, std::uint32_t bytes,
+                           std::uint8_t* reply, std::uint32_t* produced) {
+    UnitRequest request;
+    if (!ReadUnitRequest(payload, bytes, &request)) return static_cast<std::int32_t>(WireStatus::invalid_argument);
+    const std::wstring billing = L"[" + g_billing_db + L"]";
+    const std::wstring uid = Num(static_cast<std::int64_t>(request.unit_uid));
+    const std::wstring sql =
+        L"SET NOCOUNT ON; SET XACT_ABORT ON; DECLARE @r INT, @gp INT, @charged INT; SET @charged = 0; "
+        L"EXEC dbo.sdgo_mod_g1_GetResetCost " + Num(account) + L", " + uid + L", @gp OUTPUT, @r OUTPUT; "
+        L"IF @r = 101 SET @r = " + Num(g1_reset_unit_level) + L"; IF @r = 102 SET @r = " + Num(g1_nothing_to_reset) + L"; "
+        L"IF @r = 0 BEGIN BEGIN TRAN; IF ISNULL(@gp, 0) > 0 BEGIN "
+        L"UPDATE " + billing + L".dbo.tbls_AccountPocket SET f_GP = f_GP - @gp WHERE f_idx = " + Num(account) +
+        L" AND f_GP >= @gp; IF @@ROWCOUNT <> 1 BEGIN ROLLBACK TRAN; SET @r = " + Num(reset_insufficient_gp) +
+        L"; END ELSE SET @charged = @gp; END "
+        L"IF @r = 0 BEGIN EXEC dbo.sdgo_mod_g1_Reset " + Num(account) + L", " + uid +
+        L", @r OUTPUT; IF @r = 0 COMMIT TRAN ELSE BEGIN ROLLBACK TRAN; SET @charged = 0; END END END "
+        L"SELECT @r, @charged;";
+    ResultSets sets;
+    if (!session.Query(sql, &sets) || sets.size() != 1 || sets[0].size() != 1 || sets[0][0].size() != 2)
+        return static_cast<std::int32_t>(WireStatus::database_unavailable);
+    G1Reply result;
+    result.ret_val = static_cast<std::int32_t>(Int64Or(sets[0][0], 0, g1_unit_missing));
+    result.charged_gp = static_cast<std::int32_t>(Int64Or(sets[0][0], 1));
+    return FinishG1(session, account, request.unit_uid, &result, reply, produced);
+}
+
 std::int32_t HandleMode(std::uint8_t* reply, std::uint32_t* produced) {
     ModeReply mode;
     mode.enabled = g_settings.enabled ? 1 : 0;
@@ -781,7 +1159,8 @@ std::int32_t HandleMode(std::uint8_t* reply, std::uint32_t* produced) {
     mode.oc_mode = g_settings.enabled && (g_settings.oc_mode || g_settings.room_mode) ? 1 : 0;
     mode.schema_version = kSchemaVersion;
     mode.flags = (SchemaReady() ? kModeFlagSchemaReady : 0u) |
-                 (g_settings.enabled && g_settings.room_mode ? kModeFlagRoomRule : 0u);
+                 (g_settings.enabled && g_settings.room_mode ? kModeFlagRoomRule : 0u) |
+                 (g_settings.enabled && g_settings.room_mode && g_settings.g1 ? kModeFlagG1 : 0u);
     WriteModeReply(reply, 0, mode);
     *produced = static_cast<std::uint32_t>(kModeReplyBytes);
     return static_cast<std::int32_t>(WireStatus::success);
@@ -834,15 +1213,30 @@ unsigned RefreshUserInfo(std::uint32_t account) {
 std::int32_t __cdecl ExtensionHandler(void*, std::uint32_t actor, std::uint16_t command, const std::uint8_t* payload,
                                       std::uint32_t payload_bytes, void*, void* game_database,
                                       std::uint8_t* reply, std::uint32_t reply_capacity, std::uint32_t* produced) {
-    if (!reply || !produced || reply_capacity < kUpgradeReplyBytes || !actor)
+    if (!reply || !produced || reply_capacity < (std::max)(kUpgradeReplyBytes, kG1RulesReplyBytes) || !actor)
         return static_cast<std::int32_t>(WireStatus::transport_invalid);
     *produced = 0;
     const auto wrapped = static_cast<Command>(command);
     if (wrapped == Command::mode) return HandleMode(reply, produced);
     if (!g_settings.enabled || !(g_settings.oc_mode || g_settings.room_mode))
         return static_cast<std::int32_t>(WireStatus::disabled);
+    if (wrapped == Command::g1_rules) return HandleG1Rules(payload, payload_bytes, reply, produced);
+    if (wrapped == Command::g1_categories) return HandleG1Categories(reply, produced);
     std::int32_t status = static_cast<std::int32_t>(WireStatus::invalid_argument);
-    {
+    if (wrapped == Command::g1_get || wrapped == Command::g1_set || wrapped == Command::g1_reset) {
+        if (!g_settings.g1) {
+            G1Reply result;
+            result.ret_val = g1_unavailable;
+            WriteG1Reply(reply, result);
+            *produced = static_cast<std::uint32_t>(kG1ReplyBytes);
+            return static_cast<std::int32_t>(WireStatus::success);
+        }
+        Session session(20);
+        if (!OpenG1Session(game_database, session)) return static_cast<std::int32_t>(WireStatus::database_unavailable);
+        if (wrapped == Command::g1_get) return HandleG1Get(session, actor, payload, payload_bytes, reply, produced);
+        status = wrapped == Command::g1_set ? HandleG1Set(session, actor, payload, payload_bytes, reply, produced)
+                                            : HandleG1Reset(session, actor, payload, payload_bytes, reply, produced);
+    } else {
         Session session(20);
         if (!OpenGameSession(game_database, session))
             return static_cast<std::int32_t>(WireStatus::database_unavailable);
@@ -871,7 +1265,7 @@ std::int32_t __cdecl ExtensionHandler(void*, std::uint32_t actor, std::uint16_t 
             return static_cast<std::int32_t>(WireStatus::invalid_argument);
         }
     }
-    // A changed profile reaches the Battle servers through the native user info.
+    // A changed profile or loadout reaches the Battle servers through the native user info.
     std::int32_t ret_val = -1;
     if (status == static_cast<std::int32_t>(WireStatus::success) && *produced >= sizeof(ret_val))
         std::memcpy(&ret_val, reply, sizeof(ret_val));
@@ -941,6 +1335,7 @@ SDGO_MOD_ENTRY {
     const wchar_t* directory = api->ModDirectory(mod);
     if (!directory) return 0;
     g_mod_directory = directory;
+    if (g_settings.enabled && g_settings.room_mode) g_settings.g1 = LoadG1Rules();
     if (!g_settings.enabled) {
         api->Log(mod, SDGO_LOG_INFO, "over-custom disabled; records and lobby requests stay native");
         return 0;
@@ -975,8 +1370,9 @@ SDGO_MOD_ENTRY {
         api->Log(mod, SDGO_LOG_WARN,
                  "friend_unit_gift_server is not loaded; OC lobby requests are unavailable (records still carry "
                  "existing allocations)");
-    api->Log(mod, SDGO_LOG_INFO, "ready: mode=%s lobby=%s game=%ls",
+    api->Log(mod, SDGO_LOG_INFO, "ready: mode=%s lobby=%s game=%ls g1=%u skill(s) in %u categor(ies)",
              g_settings.room_mode ? "room" : g_settings.oc_mode ? "oc" : "current",
-             lobby ? "carrier" : "none", g_game_db.c_str());
+             lobby ? "carrier" : "none", g_game_db.c_str(), static_cast<unsigned>(g_g1_rules.size()),
+             static_cast<unsigned>(g_g1_categories.size()));
     return 1;
 }

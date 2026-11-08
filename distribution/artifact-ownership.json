@@ -49,6 +49,12 @@
       "target": "server",
       "purpose": "Generic schema, procedure and trigger definitions; server records remain local"
     },
+    "mods/oc_custom_server/g1_schema.sql": {
+      "ownership": "framework",
+      "kind": "schema",
+      "target": "server",
+      "purpose": "Generic schema, procedure and trigger definitions; server records remain local"
+    },
     "mods/oc_custom_server/oc_schema.sql": {
       "ownership": "framework",
       "kind": "schema",

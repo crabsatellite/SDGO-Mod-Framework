@@ -81,7 +81,7 @@ struct SdgoOcCustomClientSnapshotV2 {
     // current custom skills (room title command !oc).
     uint32_t server_room_rule;     // mode reply: each room decides the system
     uint32_t room_known;           // the current room's system has been read
-    uint32_t room_system;          // 0 current custom skills, 1 OC
+    uint32_t room_system;          // 0 G改 2.0 (current custom skills), 1 OC, 2 G改 1.0
     uint32_t mobility_room_skips;  // local stat setups left native because the room plays the current system
     uint32_t room_list_marks;      // room list rows marked with their room's system
     uint32_t title_marks;          // waiting-room system labels set
@@ -115,6 +115,59 @@ struct SdgoOcCustomClientActionV2 {
 // a mouse click does. window: "tab", "entry", "over", "challenge", "confirm"
 // or "create" (the open PvP create window: its 体系 row arrows and native buttons);
 // control: the original control name (for example L"SpeedUpBtn").
+// G改 1.0 attribute loadouts (room mode with the server owner's G改 1.0 rule
+// set): the rule set, category names and the active unit's loadout as the
+// client read them, and the record carrier's copy of the loadout.
+#define SDGO_OC_CUSTOM_CLIENT_G1_VERSION 1u
+struct SdgoOcCustomClientG1SnapshotV1 {
+    uint32_t size;
+    uint32_t version;
+    uint32_t available;        // mode reply: the server offers G改 1.0 rooms
+    uint32_t rules_loaded;     // every rule page read
+    uint32_t rule_count;
+    uint32_t category_count;   // category names read
+    uint32_t loadout_known;
+    uint64_t unit_uid;
+    uint16_t skills[4];
+    uint32_t normal_max;
+    uint32_t unit_level;
+    uint32_t user_level;
+    uint32_t category;         // of the equipped skills, 255 none
+    uint32_t reset_count;
+    int32_t reset_cost;        // GP of the next reset, -1 not resettable
+    uint32_t revision;
+    uint32_t busy;
+    uint32_t replies;          // G改 1.0 replies since load
+    int32_t last_ret_val;
+    int32_t last_charged_gp;
+    uint32_t last_command;
+    uint32_t carrier_g1;       // the active unit record carries a G改 1.0 loadout
+    uint16_t carrier_skills[4];
+    // The G改 1.0 page on the OC tab (window "g1"; the style button is
+    // "info"/OcG1StyleBtn).
+    uint32_t page_shown;       // the page is on screen
+    uint32_t page_category;    // category the player browses
+    uint16_t page_pending[4];  // slots as the page shows them (picks included)
+    uint32_t page_saves;       // 设置保存 requests sent from the page
+    uint32_t page_resets;      // 强化槽初始化 confirmations sent from the page
+};
+struct SdgoOcCustomClientG1RuleV1 {
+    uint16_t skill;
+    uint8_t category;
+    uint8_t type;
+    uint8_t unit_level;
+    uint8_t user_level;
+    uint8_t premium;
+    uint8_t reserved;
+    uint16_t reset_cost;
+};
+// Actions: 1 read the rule set, categories and the active unit's loadout;
+// 2 equip skills[4]; 3 reset the loadout (charges its GP); 4 re-read the loadout.
+using SdgoOcCustomClientG1SnapshotV1Fn = int(__cdecl*)(SdgoOcCustomClientG1SnapshotV1*);
+using SdgoOcCustomClientG1ActionV1Fn = int(__cdecl*)(uint32_t action, const uint16_t* skills);
+using SdgoOcCustomClientG1RuleV1Fn = int(__cdecl*)(uint32_t index, SdgoOcCustomClientG1RuleV1*);
+using SdgoOcCustomClientG1CategoryV1Fn = int(__cdecl*)(uint32_t index, wchar_t* name, uint32_t capacity);
+
 using SdgoOcCustomClientGetSnapshotV2Fn = int(__cdecl*)(SdgoOcCustomClientSnapshotV2*);
 using SdgoOcCustomClientActionV2Fn = int(__cdecl*)(const SdgoOcCustomClientActionV2*);
 using SdgoOcCustomClientClickV2Fn = int(__cdecl*)(const char* window, const wchar_t* control);

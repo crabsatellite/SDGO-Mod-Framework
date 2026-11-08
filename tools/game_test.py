@@ -1796,6 +1796,7 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                          mission_respawns: str | None = None,
                          oc_allocate: str | None = None,
                          oc_room: bool = False,
+                         g1_room: bool = False,
                          mission_behavior_profile: str | None = None,
                          mission_game_mode_id: int | None = None,
                          oc_panel: bool = False, oc_challenge: bool = False) -> tuple[str, ...]:
@@ -1858,7 +1859,10 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         # Allocate first, then equip: the equip reply is the owned record every
         # native copy (profile, room pilot) is built from, so it must already
         # carry the new OC payload before the battle.
-        selection = ('oc.allocate',) + selection + (('oc.create',) if oc_room else ())
+        # G改 1.0 rooms equip the play unit's G改 1.0 loadout once it is the
+        # active unit, so the refreshed record carries it into the room.
+        selection = ('oc.allocate',) + selection + (('g1.loadout',) if g1_room else ()) + (
+            ('oc.create',) if oc_room or g1_room else ())
     if mission_mode is not None:
         if mode_sequence != "1":
             raise GameTestError("--mission-mode cannot be combined with a PvP mode sequence")
@@ -1880,7 +1884,7 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                 ('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel')
             )
             return FLOW_CASES[:3] + selection + hangar_cases + (
-                ('oc.panel',) if oc_panel else ())
+                ('oc.panel',) if oc_panel else ()) + (('g1.page',) if g1_room and oc_panel else ())
         if shop_visual_only:
             return FLOW_CASES[:2] + ('flow.shop_ready',) + selection + ('pages.shop.catalog',)
         shop_cases = ('pages.shop.catalog',) if shop_catalog else ()
@@ -1905,7 +1909,7 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
             cases.extend(f'{name}.rematch.{step}' for step in MODE_FLOW_STEPS)
         return prefix+tuple(cases)
     # The OC panel check runs last, after the settled return to the lobby.
-    panel = ('oc.panel',) if (oc_allocate is not None or oc_panel) else ()
+    panel = (('oc.panel',) if (oc_allocate is not None or oc_panel) else ()) + (('g1.page',) if g1_room else ())
     if len(modes) == 1:
         # OC speed/agility: the battle unit exists after the AI spawn check.
         mobility = ('oc.mobility',) if oc_mobility_selected(oc_allocate) else ()
@@ -1992,6 +1996,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         mission_respawns=plan.get('mission_respawns'),
         oc_allocate=plan.get('oc_allocate'),
         oc_room=plan.get('oc_room', False),
+        g1_room=plan.get('g1_room', False),
         mission_behavior_profile=plan.get("mission_behavior_profile"),
         mission_game_mode_id=plan.get("mission_game_mode_id"),
         oc_panel=plan.get('oc_panel', False),
@@ -2380,6 +2385,8 @@ def write_job(
         run['run']['oc_allocate'] = plan['oc_allocate']
     if plan.get('oc_room'):
         run['run']['oc_room'] = '1'
+    if plan.get('g1_room'):
+        run['run']['g1_room'] = '1'
     if plan.get('oc_panel'):
         run['run']['oc_panel'] = '1'
     if plan.get('oc_challenge'):
@@ -2757,6 +2764,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 hangar_confirm_gb=hangar_confirm_gb,
                 oc_allocate=oc_allocate,
                 oc_room=run.get('oc_room') == '1',
+                g1_room=run.get('g1_room') == '1',
                 oc_panel=run.get('oc_panel') == '1',
                 oc_challenge=run.get('oc_challenge') == '1',
             )
@@ -2876,6 +2884,11 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             if not run.get('oc_allocate') or not run['room_title'].endswith(' !oc'):
                 raise ValueError('OC room-system run lacks its sealed !oc room command')
             plan['oc_room'] = True
+        if run.get('g1_room') == '1':
+            if (run.get('oc_allocate') and not run['room_title'].endswith(' !g1')) or (
+                    not run.get('oc_allocate') and run.get('oc_panel') != '1'):
+                raise ValueError('G改 1.0 room-system run lacks its sealed !g1 room command')
+            plan['g1_room'] = True
         if run.get('oc_panel') == '1':
             plan['oc_panel'] = True
         if run.get('oc_challenge') == '1':
@@ -3235,6 +3248,7 @@ def prepare(
     oc_panel: bool = False,
     oc_challenge: bool = False,
     oc_room: bool = False,
+    g1_room: bool = False,
     server_session: dict | None = None,
     rebind_existing_account: bool = False,
     fps_cap: int | None = None,
@@ -3340,6 +3354,11 @@ def prepare(
         raise GameTestError('--oc-challenge runs inside the OC panel check (--oc-panel or --oc-allocate)')
     if type(oc_room) is not bool or (oc_room and (oc_allocate is None or random_loadout)):
         raise GameTestError('--oc-room marks the --oc-allocate PvP room with the !oc room-system command')
+    if type(g1_room) is not bool or (g1_room and not (
+            (oc_allocate is not None and not random_loadout and not oc_room) or
+            (pages_only and page_group == 'hangar' and oc_panel))):
+        raise GameTestError('--g1-room marks the --oc-allocate PvP room with the !g1 room-system command (not with --oc-room), '
+                            'or adds the G改 1.0 page check to the hangar pages with --oc-panel')
     if review_footage and (not quiet or fps_cap is not None):
         raise GameTestError('review footage is a quiet-lane recording profile; it does not apply to visible or FPS runs')
     if capture_native_frames and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,
@@ -3622,6 +3641,11 @@ def prepare(
             # whose OC World Mod runs in room mode.
             plan['room_title']+=' !oc'
             plan['oc_room']=True
+        if g1_room:
+            # G改 1.0: the play unit's G改 1.0 loadout replaces its custom skills.
+            if oc_allocate is not None:
+                plan['room_title']+=' !g1'
+            plan['g1_room']=True
         if len(plan['room_title'].encode('utf-8'))>20:
             raise GameTestError('Native GameTest room title exceeds twenty bytes; use a shorter rule or separate scenarios')
         plan['network_policy']=network_policy
@@ -5275,6 +5299,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--fps-gameplay-cap',type=int,help='verify native 60 Hz gameplay and the selected render cap during a full PvP battle')
     prepare_parser.add_argument('--oc-allocate',help="OC six-stat acceptance '<stat 0-5>:<points>': allocate normal OC points to the --play-unit-uid unit through the production client Mod before the PvP battle")
     prepare_parser.add_argument('--oc-panel',action='store_true',help='open the original factory upgrade page for the --play-unit-uid unit at the end (after --oc-allocate or the read-only hangar pages) and drive the OC client panel on it: refresh, normal-point reset, one HP point')
+    prepare_parser.add_argument('--g1-room',action='store_true',help='room systems: add the !g1 command to the --oc-allocate PvP room title and equip the play unit\'s G改 1.0 loadout first (World OC Mod in room mode with a G改 1.0 rule set)')
     prepare_parser.add_argument('--oc-room',action='store_true',help='room systems: add the !oc command to the --oc-allocate PvP room title so the battle plays OC (World OC Mod in room mode); without it the room plays the current custom skills')
     prepare_parser.add_argument('--oc-challenge',action='store_true',help='inside the OC panel check, also press the OC challenge (can change the unit\'s OC level)')
     prepare_parser.add_argument(
@@ -5393,6 +5418,7 @@ def main(argv: list[str] | None = None) -> int:
                 oc_panel=args.oc_panel,
                 oc_challenge=args.oc_challenge,
                 oc_room=args.oc_room,
+                g1_room=args.g1_room,
             )
         elif args.command == "run":
             result = run_prepared(args.run_dir, args.timeout, args.launch_timeout)
