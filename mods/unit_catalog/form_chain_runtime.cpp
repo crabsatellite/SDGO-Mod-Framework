@@ -114,7 +114,7 @@ void __fastcall OnSwap(std::uint8_t* unit,void* edx){
             else{
                 EnterCriticalSection(&g_lock);
                 auto& chain=(*g_chains)[unit];
-                if(chain.model&&chain.form!=hop.target){ // A different third form is impossible for a two-hop chain; refuse rather than guess.
+                if(chain.model&&chain.form!=hop.target){ // A cached model must match the resolved chain target; reject conflicting reuse.
                     LeaveCriticalSection(&g_lock);InterlockedExchange(&g_lastRefusal,2);InterlockedIncrement64(&g_refused);
                     g_swap(unit,edx);return;
                 }

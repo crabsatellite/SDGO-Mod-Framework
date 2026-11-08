@@ -94,7 +94,7 @@ ready/selection poses (see [developer notes](#gametest-checks-and-captures)), up
   (`native-one-way-forms-v1`), a record that transforms into itself (`native-self-transform-v1`), and entry forms
   that transform into one form of an already published reciprocal pair (`native-entry-forms-v1`). An entry form is
   its own inventory root; its first transform uses the original two-bank mechanism, and the following hops between
-  the pair's two forms need the form-graph runtime: the server Mod composes the third form into the inactive native
+  the pair's two forms need the form-graph runtime: the server Mod composes the graph-selected target into the inactive native
   bank when the installed graph allows the edge, and the client Mod rebases its record/model pair before the native
   swap. After the entry hop the client also treats the pair form it landed on as the base form (the pair's
   transform animations belong to the other form), so the next hop plays the pair's own animations. Without the installed graph authority the server keeps refusing the second hop, so the unit stays in the

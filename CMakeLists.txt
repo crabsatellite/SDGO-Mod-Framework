@@ -1891,7 +1891,7 @@ if(BUILD_TESTING)
     add_library(native_unit_form_gate_probe SHARED tests/native_unit_form_gate_probe.cpp)
     target_link_libraries(native_unit_form_gate_probe PRIVATE sdgo_api)
     sdgo_strict(native_unit_form_gate_probe)
-    # Test build of the server Mod with the same third-form composition as the shipped one.
+    # Test build of the server Mod with the same protocol-defined form composition as the shipped one.
     add_library(unit_catalog_server_form_test SHARED EXCLUDE_FROM_ALL mods/unit_catalog_server/server.cpp
         mods/unit_catalog_server/human_build_capture.cpp mods/unit_catalog_server/native_form_gate.cpp)
     target_compile_definitions(unit_catalog_server_form_test PRIVATE SDGO_TEST_NATIVE_FORM_REBIND=1)

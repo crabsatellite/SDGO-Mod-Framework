@@ -2,16 +2,14 @@
 #include "sdgo/sdgo_api.h"
 #include "sdgo/unit_catalog_format.h"
 
-// Third-form transform chains (entry form E -> A <-> B) for imported units.
+// Protocol-defined transform chains for imported unit families.
 //
 // The original client keeps exactly one (current, alternate) record/model pair
-// per battle unit and only ever swaps the two. An imported entry variant starts
-// as E with A as its alternate; after E -> A the native code would swap back to
-// E on the next request because B is unknown to the pair. This runtime rebases
-// the alternate pair to B right before the native swap whenever the move
-// controller's cached target is the current record's transform target but not
-// the alternate record, rebuilds the attack controller's weapon tables and
-// restores the deck-owned pair before the unit is destroyed.
+// per battle unit and only ever swaps the two. When a validated chain target
+// is outside that pair, this runtime rebases the alternate record/model before
+// the native swap. The move controller's cached target must match the current
+// record's transform target. Rebuild the attack controller's weapon tables and
+// restore the deck-owned pair before the unit is destroyed.
 namespace sdgo::unit_form_chain {
 using GridData=void*(__cdecl*)();
 using GridFind=bool(__thiscall*)(void*,const std::uint8_t**,std::uint32_t,int,char);

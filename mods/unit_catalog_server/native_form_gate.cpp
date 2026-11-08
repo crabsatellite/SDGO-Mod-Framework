@@ -43,11 +43,11 @@ bool CopySlot(const void* address,Slot* output){
     __try{std::memcpy(output->data(),address,output->size());return true;}
     __except(EXCEPTION_EXECUTE_HANDLER){return false;}
 }
-// A graph-allowed target that is in neither native bank (the third form of an
-// E -> A <-> B chain) is composed as a fresh bank and written over the inactive
-// bank, which holds the retired form. The original handler then accepts it as a
-// cached transform. The retired form's ammo/cooldown state is discarded; the
-// active bank, HP, skills and inventory identity are untouched.
+// A graph-allowed target absent from the cached native banks is composed as a
+// fresh bank and written over the inactive bank, replacing the retired form.
+// The original handler then accepts it as a cached transform. The retired
+// form's ammo/cooldown state is discarded; the active bank, HP, skills and
+// inventory identity are untouched.
 bool ComposeInactive(const NativeTransformContext& context,const HumanUnitCaptureSnapshot& snapshot){
     // The native callbacks' cross-room reentrancy is not established. Refuse
     // a concurrent composition rather than wait while holding room locks.
@@ -175,7 +175,7 @@ bool InstallFormGate(const SdgoApi* api,SdgoMod* mod,std::shared_ptr<const Graph
        hash!=base+0x321b30||compare!=base+0x321ae0){
         error="native form gate symbol boundaries differ";return false;}
     graphs=std::move(bindings);expected=definitions;capture=lifecycle;rejected=failure;lookup.registry=registry;lookup.query=reinterpret_cast<Lookup::Find>(find);lookup.hash=hash;lookup.compare=compare;
-    // Third-form composition needs the composer symbols; without them the gate
+    // Composing uncached graph targets needs the composer symbols; without them the gate
     // still runs its preflight and the original handler keeps refusing uncached forms.
     const auto symbol=[&](const char* name,std::uint32_t rva){auto* value=api->Symbol(mod,name);return value==base+rva?value:nullptr;};
     composer.unit_registry=registry;composer.find=lookup.query;composer.map_hash=hash;composer.map_compare=compare;
@@ -200,7 +200,7 @@ SdgoUnitFormGateStateV1 ReadFormGateState(){
     state.definition_checks=Counter(&checks);state.normalization_observations=Counter(&normalized);state.actor_writes=Counter(&rebound);return state;
 }
 SdgoUnitFormRebindStateV1 ReadFormRebindState(){
-    // compiled_for_testing now reports whether third-form composition is available.
+    // compiled_for_testing reports whether native bank composition is available.
     SdgoUnitFormRebindStateV1 state{};state.size=sizeof(state);state.version=1;state.compiled_for_testing=composerReady?1u:0u;
     const auto word=[](volatile LONG* value){return static_cast<std::uint32_t>(InterlockedCompareExchange(value,0,0));};
     state.last_root=word(&lastRoot);state.last_current=word(&lastCurrent);state.last_target=word(&lastTarget);
