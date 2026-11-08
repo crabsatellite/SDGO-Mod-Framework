@@ -7,8 +7,9 @@
 // Native client notifications carry a bounded random-round marker in route
 // bits that the patched client restores before native dispatch. Native 06C3
 // byte +0x1F contains a 0..12 participant count. Its otherwise-unused high
-// nibble carries the same 1..15 round only on the wire; patched clients retain
-// that identity privately and clear the high nibble before native consumers.
+// nibble carries the same 1..15 round only on the wire; epoch zero is reserved
+// for post-settlement restore notices. Patched clients retain that identity
+// privately and clear the added bits before native consumers.
 // The first 0x10F-byte participant record follows at +0x20.
 // The broadcaster replaces header +2 with each recipient's pilot ID.
 namespace room_random_sync {
@@ -42,6 +43,9 @@ constexpr uint32_t TaggedRoute(uint16_t room,uint8_t epoch) {
 }
 constexpr bool HasRoundSignature(uint32_t value) {
     return static_cast<uint8_t>(value>>24)==static_cast<uint8_t>(kRoundSignature>>8);
+}
+constexpr bool IsRestoreRoute(uint32_t value) {
+    return static_cast<uint16_t>(value>>16)==kRoundSignature;
 }
 constexpr Route DecodeRoute(uint32_t value) {
     const auto tag=static_cast<uint16_t>(value>>16);

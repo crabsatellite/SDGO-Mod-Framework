@@ -78,6 +78,10 @@ respawns do not redraw. Decks are enumerated by dynamic programming over exact t
 native human start paths (normal/mission, AI 11, AI 12, 13/14, the last with its own outer entry) are
 covered. If a disconnect skipped the release callback, the previous round's cache is retired only after
 the native start has cleared the human pilot records, which prevents `ERR_BATTLE_START_FAIL` on re-entry.
+Post-settlement restore notices use the reserved round-zero marker. The client removes that marker before
+the original `0x0861`/`0x098B` handlers, keeps their native E/F redraw work, and suppresses only the
+nested local view-1 request. Ordinary notices and unrelated room-view requests still follow the native
+path. This prevents a completed round's restore work from invalidating the next pooled-room generation.
 
 After every human has been built, the server prepares all complete loadout notices while the native room
 lock is still held. It submits the genuine `0x06C3` battle start exactly once, then sends native `0x0861`

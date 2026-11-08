@@ -19,6 +19,7 @@ std::array<uint8_t,5> broadcastCallSite{};
 std::vector<std::vector<uint8_t>> notices;
 std::vector<uint16_t> transmissions;
 std::vector<uint8_t> startCounts,startEpochs,noticeEpochs;
+std::vector<uint32_t> noticeRoutes;
 int noticeCalls=0,failNotice=0;
 using CopyNoticeFn=std::function<void(std::vector<uint8_t>&,const uint8_t*,uint16_t)>;
 CopyNoticeFn nativeCopyNotice;
@@ -28,6 +29,8 @@ std::vector<std::string> hooks;
 std::vector<uint32_t> requestedOwners;
 std::map<uint32_t,std::vector<uint32_t>> built;
 int reads=0,builds=0,releases=0,failAfter=0,validationError=0;
+bool releaseEntered=false;
+uint32_t settlementActiveUnit=0;
 bool readFailure=false,changeOwner=false;
 bool changeReady=false;
 bool addAiAfterValidation=false;
@@ -151,8 +154,14 @@ int __fastcall BroadcastNative(uint8_t* actual,void*,uint8_t* packet,uint32_t le
     const uint32_t slot=Get<uint32_t>(packet,10),owner=Get<uint32_t>(packet,6);
     CHECK(slot<12);CHECK((owner&kAiBit)==0);
     CHECK(Get<uint32_t>(actual+kSlotBase+slot*kSlotStride,kOwner)==owner);
-    const auto route=room_random_sync::DecodeRoute(Get<uint32_t>(packet,14));
-    if(route.tagged) {
+    const uint32_t routeValue=Get<uint32_t>(packet,14);
+    noticeRoutes.push_back(routeValue);
+    const auto route=room_random_sync::DecodeRoute(routeValue);
+    if(room_random_sync::IsRestoreRoute(routeValue)) {
+        CHECK(static_cast<uint16_t>(routeValue)==
+              static_cast<uint16_t>(Get<uint32_t>(actual,0)));
+        CHECK(releaseEntered);
+    } else if(route.tagged) {
         CHECK(route.room==Get<uint32_t>(actual,0));
         CHECK(g_wireEpochs.at(Get<uint32_t>(actual,0))==route.epoch);
         noticeEpochs.push_back(route.epoch);
@@ -166,7 +175,10 @@ int __fastcall BroadcastNative(uint8_t* actual,void*,uint8_t* packet,uint32_t le
     Put<uint32_t>(packet,2,1001); // the native broadcaster rewrites recipient routing
     return 1;
 }
-void __fastcall ReleaseNative(uint8_t*,void*) { ++releases; }
+void __fastcall ReleaseNative(uint8_t*,void*) {
+    ++releases;releaseEntered=true;
+    settlementActiveUnit=Get<uint32_t>(Info(0),kActive);
+}
 int __fastcall DispatchNative(void* proc,void*,int,void*,uint32_t*,uint32_t*) {
     preview=room;
     for(int slot=0;slot<12;++slot) {
@@ -219,11 +231,13 @@ void Reset(uint8_t mode=1,const char* title="!rand") {
     std::fill(room.begin(),room.end(),uint8_t{0});std::fill(lobby.begin(),lobby.end(),uint8_t{0});
     inventory.clear();metadata.clear();built.clear();requestedOwners.clear();ai_test::logs.clear();
     notices.clear();transmissions.clear();startCounts.clear();startEpochs.clear();
-    noticeEpochs.clear();noticeCalls=failNotice=0;
+    noticeEpochs.clear();noticeRoutes.clear();noticeCalls=failNotice=0;
     freshNativeSetup=true;
     nativeModeMismatch=false;
     std::fill(client.begin(),client.end(),uint8_t{0xCC});
-    reads=builds=releases=failAfter=validationError=0;readFailure=changeOwner=changeReady=addAiAfterValidation=nativeOverrideSecond=false;
+    reads=builds=releases=failAfter=validationError=0;
+    releaseEntered=false;settlementActiveUnit=0;
+    readFailure=changeOwner=changeReady=addAiAfterValidation=nativeOverrideSecond=false;
     Put<uint32_t>(room.data(),0,0x77); room[4]=1;room[5]=mode;
     Title(room,title);
     for(int s=0;s<2;++s) {
@@ -357,6 +371,22 @@ int wmain(int argc,wchar_t** argv) {
     CHECK(startEpochs.empty());
     CHECK(noticeEpochs.empty());
     CHECK(g_wireEpochs.empty());
+
+    SCENARIO("settlement sees the random record before marked restore notices");
+    Reset(7);const auto settlementOriginal=Sources();
+    CHECK(Start()==0);
+    const uint32_t randomizedAtSettlement=Get<uint32_t>(Info(0),kActive);
+    CHECK(randomizedAtSettlement!=Get<uint32_t>(settlementOriginal.data(),kActive));
+    const size_t noticesBeforeSettlement=noticeRoutes.size();
+    Release(room.data(),nullptr);
+    CHECK(settlementActiveUnit==randomizedAtSettlement);
+    CHECK(Sources()==settlementOriginal);
+    CHECK(noticeRoutes.size()>noticesBeforeSettlement);
+    for(size_t index=noticesBeforeSettlement;index<noticeRoutes.size();++index) {
+        CHECK(room_random_sync::IsRestoreRoute(noticeRoutes[index]));
+        CHECK(static_cast<uint16_t>(noticeRoutes[index])==
+              static_cast<uint16_t>(Get<uint32_t>(room.data(),0)));
+    }
 
     SCENARIO("post-submit notification failure retains the accepted random room until release");
     for(int failure:{1,2,3,4}) {

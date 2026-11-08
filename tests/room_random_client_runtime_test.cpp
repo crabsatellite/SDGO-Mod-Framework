@@ -44,6 +44,9 @@ bool rootRanWithViewPending=false;
 bool managerStateProbe=false;
 bool roomViewStateProbe=false;
 int rootStateRuns=0,roomViewRuns=0,roomViewRequests=0,managerTicks=0;
+int nativeUnitNoticeCalls=0,nativeShipNoticeCalls=0;
+int nativeRoomViewRequestCalls=0;
+uint32_t activeNoticeSlot=0;
 constexpr DWORD kManagerUpdateLastError=0x5A17;
 constexpr DWORD kRoomViewLastError=0x5A18;
 std::array<uint8_t,0xCD4> queuedStart{};
@@ -223,6 +226,35 @@ void ResetUserQueues() {
         userStateServices[slot][0x0C]=roomViewServices[slot].object.data();
     }
 }
+__declspec(noinline) void __fastcall NativeRoomViewRequest(
+    void*,void*,uint16_t view) {
+    ++nativeRoomViewRequestCalls;
+    if(asyncNativeQueues && activeNoticeSlot<userStates.size())
+        EnqueueUserState(activeNoticeSlot,0x0C,view);
+}
+void NativeNotice(uint16_t opcode,const uint8_t* packet) {
+    const auto slot=room_random_client::Read<uint32_t>(packet,10);
+    activeNoticeSlot=slot;
+    if(asyncNativeQueues && slot<userStates.size())
+        EnqueueUserState(slot,opcode==0x0861 ? 0x0E : 0x0F);
+    if(opcode==0x0861 && !starting)
+        std::memcpy(room.data()+0x57C,packet+0x12,0x99);
+    nativeNoticeRoute=room_random_client::Read<uint32_t>(packet,14);
+    if(room_random_client::Read<uint32_t>(packet,6)==
+       room_random_client::Read<uint32_t>(profile.data(),0x138) &&
+       !skipNativeRoomViewQueue) {
+        using RequestFn=void(__thiscall*)(void*,uint16_t);
+        reinterpret_cast<RequestFn>(&NativeRoomViewRequest)(manager.data(),1);
+    }
+}
+__declspec(noinline) void __fastcall NativeUnitNotice(
+    void*,void*,const uint8_t* packet) {
+    ++nativeUnitNoticeCalls;NativeNotice(0x0861,packet);
+}
+__declspec(noinline) void __fastcall NativeShipNotice(
+    void*,void*,const uint8_t* packet) {
+    ++nativeShipNoticeCalls;NativeNotice(0x098B,packet);
+}
 __declspec(noinline) void __fastcall NativeManagerUpdate(uint8_t*,void*) {
     ++managerTicks;
     // Shipped GOnline 0x00752AD0 advances the root room state before it
@@ -284,23 +316,14 @@ SLOT_METHODS(Normal,room,0x533,12)
 SLOT_METHODS(Mission,missionRoom,0x5C6,4)
 #undef SLOT_METHODS
 void __stdcall QueuedHandler(uint32_t opcode,const uint8_t* packet) {
-    // Native 3D room notifications are commands. Starting prevents their cache
-    // operation from completing before the start command constructs the mode.
-    if(asyncNativeQueues && (opcode==0x0861 || opcode==0x098B)) {
-        const auto slot=room_random_client::Read<uint32_t>(packet,10);
-        if(slot<userStates.size()) {
-            EnqueueUserState(slot,opcode==0x0861 ? 0x0E : 0x0F);
-            if(room_random_client::Read<uint32_t>(packet,6)==
-               room_random_client::Read<uint32_t>(profile.data(),0x138) &&
-               !skipNativeRoomViewQueue)
-                EnqueueUserState(slot,0x0C);
-        }
-    }
-    if(opcode==0x0861 && !starting)
-        std::memcpy(room.data()+0x57C,packet+0x12,0x99);
-    if(opcode==0x0861 || opcode==0x098B)
-        nativeNoticeRoute=room_random_client::Read<uint32_t>(packet,14);
-    if(opcode==0x06C3)
+    // Native 3D room notifications retain their original E/F redraw handlers.
+    // Each handler may then request local view 1 through 0x00730B00.
+    using NoticeFn=void(__thiscall*)(void*,const uint8_t*);
+    if(opcode==0x0861)
+        reinterpret_cast<NoticeFn>(&NativeUnitNotice)(manager.data(),packet);
+    else if(opcode==0x098B)
+        reinterpret_cast<NoticeFn>(&NativeShipNotice)(manager.data(),packet);
+    else if(opcode==0x06C3)
         FakeStartParser(startParser.data(),nullptr,packet);
 }
 __declspec(naked) int NativeDispatch() {
@@ -343,6 +366,9 @@ void Symbols() {
     Symbol(f,"room_random.client_profile",&profilePointer,"data");
     Symbol(f,"room_random.client_fill_human",reinterpret_cast<void*>(&NativeFill),"code");
     Symbol(f,"room_random.client_begin_start",reinterpret_cast<void*>(&FakeStartParser),"code");
+    Symbol(f,"room_random.client_unit_notice",reinterpret_cast<void*>(&NativeUnitNotice),"code");
+    Symbol(f,"room_random.client_ship_notice",reinterpret_cast<void*>(&NativeShipNotice),"code");
+    Symbol(f,"room_random.client_room_view_request",reinterpret_cast<void*>(&NativeRoomViewRequest),"code");
     Symbol(f,"room_random.client_app",&appPointer,"data");
     Symbol(f,"room_random.client_waitroom_vtable",ownerVtable.data(),"data");
     Symbol(f,"room_random.client_room_info",reinterpret_cast<void*>(&NativeRoomInfo),"code");
@@ -430,9 +456,13 @@ int wmain(int argc,wchar_t** argv) {
     if(enabled) {
         Check(room_random_client::Read<uint64_t>(profile.data(),0x1B1)==0x123456789ABCULL,"own profile receives the complete 64-bit inventory identity");
         Put<uint32_t>(unit.data(),0,15019);Put<uint64_t>(unit.data(),8,777);
-        auto restore=room_random_sync::Packet(0x0861,1001,0,7,unit);
+        auto restore=room_random_sync::Packet(
+            0x0861,1001,0,room_random_sync::TaggedRoute(7,0),unit);
+        const int restoreHelpers=nativeRoomViewRequestCalls;
         dispatch(dispatcher.data(),0,0,0,0x0861,restore.data());
-        Check(room_random_client::Read<uint32_t>(room.data(),0x57C)==15019,"restore notice updates the room cache without a UI queue tick");
+        Check(nativeNoticeRoute==7 &&
+              nativeRoomViewRequestCalls==restoreHelpers,
+              "tagged restore reaches native 0861 with a canonical route and no view-1 request while start state is frozen");
     }
     Put<uint8_t*>(profile.data(),0xEC,nullptr);
     Put<uint32_t>(app.data(),0x4A0,18);Put<uint8_t*>(app.data(),0x4A4,owner.data());
@@ -508,6 +538,73 @@ int wmain(int argc,wchar_t** argv) {
           "an invalid active 3D model cannot fall back to a stale writable legacy room");
     modelVtable=liveModelVtable;
     Put<uint8_t*>(profile.data(),0xEC,nullptr);
+    if(enabled) {
+        // Settlement restores are complete authoritative E/F redraw commands,
+        // but their local C request races the next pooled-room generation.
+        // Only the epoch-zero restore marker suppresses that nested view-1
+        // helper; ordinary notices and direct helper calls still forward.
+        asyncNativeQueues=true;starting=false;threeD=true;
+        ResetUserQueues();
+        Put<uint32_t>(app.data(),0x4A0,18);
+        Put<uint32_t>(room.data(),0,38);room[5]=7;SetTitle("restore !rand");
+        Put<uint32_t>(room.data(),0x95C,1001);
+        Put<uint32_t>(room.data(),0x57C,11032);
+        std::array<uint8_t,0x99> restoreUnitData{};
+        Put<uint32_t>(restoreUnitData.data(),0,15019);
+        std::array<uint8_t,0x2BC> restoreShipData{};
+        Put<uint32_t>(restoreShipData.data(),0x58,15019);
+        auto restoreUnit=room_random_sync::Packet(
+            0x0861,1001,0,room_random_sync::TaggedRoute(38,0),
+            restoreUnitData);
+        auto restoreShip=room_random_sync::Packet(
+            0x098B,1001,0,room_random_sync::TaggedRoute(38,0),
+            restoreShipData);
+        const int unitCalls=nativeUnitNoticeCalls;
+        const int shipCalls=nativeShipNoticeCalls;
+        const int helperCalls=nativeRoomViewRequestCalls;
+        const DWORD restoreEntryError=0x5A1A;
+        const unsigned int restoreSavedMxcsr=_mm_getcsr();
+        const unsigned short restoreSavedControl=ReadX87Control();
+        WriteX87Control(static_cast<unsigned short>(
+            (restoreSavedControl&~0x0C00u)|0x0C00u));
+        _mm_setcsr((_mm_getcsr()&~_MM_ROUND_MASK)|_MM_ROUND_DOWN);
+        SetLastError(restoreEntryError);
+        dispatch(dispatcher.data(),0,0,0,0x098B,restoreShip.data());
+        dispatch(dispatcher.data(),0,0,0,0x0861,restoreUnit.data());
+        const DWORD restoreObservedError=GetLastError();
+        const unsigned int restoreObservedMxcsr=_mm_getcsr();
+        const unsigned short restoreObservedControl=ReadX87Control();
+        _mm_setcsr(restoreSavedMxcsr);
+        WriteX87Control(restoreSavedControl);
+        Check(nativeUnitNoticeCalls==unitCalls+1 &&
+              nativeShipNoticeCalls==shipCalls+1 &&
+              nativeRoomViewRequestCalls==helperCalls &&
+              userStates[0]==std::vector<int>({0x0F,0x0E}) &&
+              nativeNoticeRoute==38 &&
+              room_random_client::Read<uint32_t>(room.data(),0x57C)==15019,
+              "tagged restore keeps native F/E redraws and suppresses every nested C request");
+        Check(restoreObservedError==restoreEntryError &&
+              (restoreObservedMxcsr&_MM_ROUND_MASK)==_MM_ROUND_DOWN &&
+              (restoreObservedControl&0x0C00u)==0x0C00u,
+              "tagged restore wrappers preserve LastError and x87/SSE state");
+
+        ResetUserQueues();
+        auto ordinary=room_random_sync::Packet(
+            0x0861,1001,0,room_random_sync::TaggedRoute(38,14),
+            restoreUnitData);
+        dispatch(dispatcher.data(),0,0,0,0x0861,ordinary.data());
+        Check(nativeRoomViewRequestCalls==helperCalls+1 &&
+              userStates[0]==std::vector<int>({0x0E,0x0C}),
+              "ordinary tagged notice retains its native E and C requests");
+
+        ResetUserQueues();activeNoticeSlot=0;
+        using RequestFn=void(__thiscall*)(void*,uint16_t);
+        reinterpret_cast<RequestFn>(&NativeRoomViewRequest)(manager.data(),1);
+        Check(nativeRoomViewRequestCalls==helperCalls+2 &&
+              userStates[0]==std::vector<int>({0x0C}),
+              "unrelated native view-1 request outside a restore scope always forwards");
+        ResetUserQueues();
+    }
     // Deterministic model of the shipped 0x00752AD0 ordering:
     // network dispatch has already queued per-player E then C, while the root
     // D start state runs before one per-player state on every manager tick.

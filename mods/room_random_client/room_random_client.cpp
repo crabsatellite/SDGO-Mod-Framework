@@ -27,8 +27,37 @@ using FillFn=void(__stdcall*)(uint8_t*,const uint8_t*,const uint8_t*,uint8_t);
 FillFn g_fill=nullptr;
 using BeginStartFn=void(__thiscall*)(void*,const uint8_t*);
 BeginStartFn g_beginStart=nullptr;
+using NoticeFn=void(__thiscall*)(void*,const uint8_t*);
+NoticeFn g_unitNotice=nullptr;
+NoticeFn g_shipNotice=nullptr;
+using RoomViewRequestFn=void(__thiscall*)(void*,uint16_t);
+RoomViewRequestFn g_roomViewRequest=nullptr;
 room_random_client::ManagerUpdateFn g_managerUpdate=nullptr;
 room_random_client::ChangeRoomViewFn g_changeRoomView=nullptr;
+struct NoticeTls {
+    const uint8_t* packet=nullptr;
+    uint16_t opcode=0;
+    bool restore=false;
+    unsigned restoreDepth=0;
+};
+thread_local NoticeTls g_noticeTls;
+
+void ClearPendingNotice() {
+    g_noticeTls.packet=nullptr;
+    g_noticeTls.opcode=0;
+    g_noticeTls.restore=false;
+}
+bool EnterNoticeScope(uint16_t opcode,const uint8_t* packet) {
+    const bool restore=g_noticeTls.packet==packet &&
+        g_noticeTls.opcode==opcode && g_noticeTls.restore;
+    ClearPendingNotice();
+    if(restore)++g_noticeTls.restoreDepth;
+    return restore;
+}
+void LeaveNoticeScope(bool restore) {
+    if(restore && g_noticeTls.restoreDepth)--g_noticeTls.restoreDepth;
+    ClearPendingNotice();
+}
 
 bool ParserMatches(void* parser,const room_random_client::Context& context) {
     if(!parser || !context.model)return false;
@@ -57,18 +86,32 @@ struct PacketWork {
     uint16_t opcode=0;
     uint8_t* packet=nullptr;
     bool strict=false;
+    bool restore=false;
 };
 PacketWork GuardedPacket(BYTE* frame) {
     PacketWork work;
+    ClearPendingNotice();
     __try {
         work.opcode=static_cast<uint16_t>(room_random_client::Read<uint32_t>(frame,0x14));
         work.packet=room_random_client::Read<uint8_t*>(frame,0x18);
+        if(work.opcode!=0x0861 && work.opcode!=0x098B && work.opcode!=0x06C3)
+            return work;
+        if((work.opcode==0x0861 || work.opcode==0x098B) && work.packet) {
+            const uint32_t route=room_random_client::Read<uint32_t>(work.packet,14);
+            work.restore=room_random_sync::IsRestoreRoute(route);
+            g_noticeTls.packet=work.packet;
+            g_noticeTls.opcode=work.opcode;
+            g_noticeTls.restore=work.restore;
+            if(work.restore) {
+                const uint32_t nativeRoute=route&0xFFFFu;
+                std::memcpy(work.packet+14,&nativeRoute,sizeof(nativeRoute));
+                return work;
+            }
+        }
         const auto context=room_random_client::Resolve(g_bindings);
         if(g_pending.Active() &&
            (!g_pending.Revalidate(context) || !ParserMatches(g_pending.Parser(),context)))
             g_pending.Clear();
-        if(work.opcode!=0x0861 && work.opcode!=0x098B && work.opcode!=0x06C3)
-            return work;
         work.strict=context.model && RandomRoom(context);
         work.result=g_sync.Process(context,work.opcode,work.packet,work.strict);
         if(work.opcode==0x06C3 && work.packet) {
@@ -87,7 +130,7 @@ PacketWork GuardedPacket(BYTE* frame) {
         if(work.opcode==0x06C3 && work.result.newStart)g_pending.Clear();
         return work;
     } __except(EXCEPTION_EXECUTE_HANDLER) {
-        g_pending.Clear();work.result.reason=5;return work;
+        ClearPendingNotice();g_pending.Clear();work.result.reason=5;return work;
     }
 }
 void __stdcall OnPacket(BYTE* frame) {
@@ -111,6 +154,41 @@ void __stdcall OnPacket(BYTE* frame) {
             result.epoch,result.applied,result.mismatched,
             static_cast<unsigned long>(result.model),static_cast<unsigned long>(result.cached));
     SetLastError(error);
+}
+void CallNotice(NoticeFn original,void* self,const uint8_t* packet,
+                uint16_t opcode) {
+    NativeFpState entryFp;
+    _fxsave(entryFp.bytes);
+    const DWORD entryError=GetLastError();
+    const bool restore=EnterNoticeScope(opcode,packet);
+    SetLastError(entryError);
+    _fxrstor(entryFp.bytes);
+    __try {
+        original(self,packet);
+    } __finally {
+        NativeFpState exitFp;
+        _fxsave(exitFp.bytes);
+        const DWORD exitError=GetLastError();
+        LeaveNoticeScope(restore);
+        SetLastError(exitError);
+        _fxrstor(exitFp.bytes);
+    }
+}
+void __fastcall UnitNotice(void* self,void*,const uint8_t* packet) {
+    CallNotice(g_unitNotice,self,packet,room_random_sync::kUnitOpcode);
+}
+void __fastcall ShipNotice(void* self,void*,const uint8_t* packet) {
+    CallNotice(g_shipNotice,self,packet,room_random_sync::kShipOpcode);
+}
+void __fastcall RoomViewRequest(void* self,void*,uint16_t view) {
+    NativeFpState fp;
+    _fxsave(fp.bytes);
+    const DWORD error=GetLastError();
+    const bool suppress=g_noticeTls.restoreDepth && view==1;
+    ClearPendingNotice();
+    SetLastError(error);
+    _fxrstor(fp.bytes);
+    if(!suppress)g_roomViewRequest(self,view);
 }
 // Interior site +5 coexists with match_ai's function-entry hook: its trampoline
 // resumes at this site. Preserve the full native context before forwarding.
@@ -365,6 +443,15 @@ SDGO_MOD_ENTRY {
     if(!api->HookSite(mod,"room_random.client_dispatch",reinterpret_cast<void*>(&DispatchSite),&g_original)) return 0;
     if(!api->HookCode(mod,"room_random.client_fill_human",reinterpret_cast<void*>(&FillHuman),reinterpret_cast<void**>(&g_fill))) return 0;
     if(!api->HookCode(mod,"room_random.client_begin_start",reinterpret_cast<void*>(&BeginStart),reinterpret_cast<void**>(&g_beginStart))) return 0;
+    if(!api->HookCode(mod,"room_random.client_unit_notice",
+                      reinterpret_cast<void*>(&UnitNotice),
+                      reinterpret_cast<void**>(&g_unitNotice))) return 0;
+    if(!api->HookCode(mod,"room_random.client_ship_notice",
+                      reinterpret_cast<void*>(&ShipNotice),
+                      reinterpret_cast<void**>(&g_shipNotice))) return 0;
+    if(!api->HookCode(mod,"room_random.client_room_view_request",
+                      reinterpret_cast<void*>(&RoomViewRequest),
+                      reinterpret_cast<void**>(&g_roomViewRequest))) return 0;
     if(!api->HookCode(mod,"room_random.client_manager_update",
                       reinterpret_cast<void*>(&ManagerUpdate),
                       reinterpret_cast<void**>(&g_managerUpdate))) return 0;
@@ -372,6 +459,6 @@ SDGO_MOD_ENTRY {
                       reinterpret_cast<void*>(&ChangeRoomView),
                       reinterpret_cast<void**>(&g_changeRoomView))) return 0;
     api->Log(mod,SDGO_LOG_INFO,
-        "native random starts wait for complete human loadouts, retire obsolete local room-view requests through native cleanup, and execute the original parser exactly once");
+        "native random starts wait for complete human loadouts, suppress only tagged post-settlement restore view requests, retire obsolete start requests through native cleanup, and execute the original parser exactly once");
     return 1;
 }

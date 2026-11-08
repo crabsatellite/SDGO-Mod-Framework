@@ -354,14 +354,19 @@ template<size_t N> bool Broadcast(uint8_t* room,std::array<uint8_t,N>& packet,un
     return g_broadcast && g_broadcast(room,packet.data(),static_cast<uint32_t>(packet.size()),&attemptedRoutes)!=0
         && attemptedRoutes>=humans;
 }
-bool Notify(uint8_t* room,int slot,const Source& source,bool deck,unsigned humans) {
+bool Notify(uint8_t* room,int slot,const Source& source,bool deck,unsigned humans,
+            bool restore=false) {
+    const uint32_t roomIndex=Get<uint32_t>(room,0);
+    const uint32_t route=restore ?
+        room_random_sync::TaggedRoute(static_cast<uint16_t>(roomIndex),0) :
+        roomIndex;
     if(deck) {
         auto ship=room_random_sync::Packet(room_random_sync::kShipOpcode,source.owner,
-                                          static_cast<uint32_t>(slot),Get<uint32_t>(room,0),source.ship);
+                                          static_cast<uint32_t>(slot),route,source.ship);
         if(!Broadcast(room,ship,humans)) return false;
     }
     auto active=room_random_sync::Packet(room_random_sync::kUnitOpcode,source.owner,
-                                        static_cast<uint32_t>(slot),Get<uint32_t>(room,0),source.active);
+                                        static_cast<uint32_t>(slot),route,source.active);
     return Broadcast(room,active,humans);
 }
 uint8_t NextWireEpoch(uint8_t previous) {
@@ -548,7 +553,8 @@ void RestoreActual(uint8_t* room,uint64_t token=0) {
         for(const auto& entry:saved.players)
             if(Restore(room+kSlotBase+entry.first*kSlotStride,entry.second,saved.deck,saved.alternateAnnouncement)
                && saved.clientsTouched
-               && !Notify(room,entry.first,entry.second,saved.deck,static_cast<unsigned>(saved.players.size())))
+               && !Notify(room,entry.first,entry.second,saved.deck,
+                          static_cast<unsigned>(saved.players.size()),true))
                 g_api->Log(g_mod,SDGO_LOG_WARN,"native restore notification could not reach every remaining human route");
 }
 void Commit(const Attempt& a) {
