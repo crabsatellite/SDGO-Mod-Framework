@@ -50,7 +50,7 @@ the installed procedure and trigger hashes and restore the original mail procedu
 restart is needed.
 
 **Client:** players receive it with the server owner's client package or update. The Full framework package includes this mod
-(Base does not). Alternatively import the mod's overlay with **导入客户端配置包** in the Manager, or close
+(Base does not). Alternatively import the mod's overlay with **导入配置包** in the Manager, or close
 the client and run `install_hangar.ps1 -GameDir "D:\Games\SDGO"` from the standalone package
 (`-RefreshRules` refreshes the reward preview rules). Supported client: `GOnline-54BE1568-00C97000`.
 

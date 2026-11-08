@@ -13,7 +13,7 @@ in its purchase confirmation. The server already charges coins (`tbl_ItemMachine
 
 Nothing to do: it is one of the core fixes installed with the client framework, so players receive
 it with their server owner's client package or update. A client that only needs this fix can import
-`SDGO-CapsuleCurrencyFix-<version>.zip` with Mod Manager's **导入客户端配置包** while that game is
+`SDGO-CapsuleCurrencyFix-<version>.zip` with Mod Manager's **导入配置包** while that game is
 closed. The Manager lists it under **修复归档** (fix archive). Restart the client after installing;
 a running game does not reload it.
 

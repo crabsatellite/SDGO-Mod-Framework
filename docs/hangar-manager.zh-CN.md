@@ -43,7 +43,7 @@
 重启游戏服务器。
 
 **客户端：** 玩家通过服主提供的客户端包或更新获得。完整框架包中已包含本 Mod（Base 包不含）；也可以用 Manager 的
-「导入客户端配置包」导入本 Mod 的增量包，或关闭目标客户端后运行独立包中的：
+「导入配置包」导入本 Mod 的增量包，或关闭目标客户端后运行独立包中的：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File install_hangar.ps1 -GameDir "D:\Games\SDGO"

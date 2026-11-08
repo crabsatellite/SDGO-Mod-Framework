@@ -265,7 +265,7 @@ After confirmation, download the **玩家客户端包** (player client package) 
 contains the matching DLL, native records, resource archive, public definitions and installer, and no server
 passwords, player data, logs or full game files. It is for deployment only and cannot be imported as a source archive.
 
-With the game closed, players choose their client under **游戏功能** in Manager and click **导入客户端配置包**. Manager
+With the game closed, players choose their client under **游戏功能** in Manager and click **导入配置包**. Manager
 uses its built-in installer and never runs scripts from the ZIP. Offline installation:
 
 ```powershell
