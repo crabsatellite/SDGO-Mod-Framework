@@ -61,6 +61,13 @@ class Session:
         self.result={'status':'queued','message':'正在连接 Manager'};self.lock=threading.Lock();self.stop=threading.Event()
         self.retry=threading.Event();self.cancel=threading.Event();self.url=None;self.secret=None;self.host=None
 
+    def completed(self):
+        try:result=launch.state(self.root,self.token)
+        except(OSError,ValueError):return False
+        if result.get('status')not in('launched','cancelled'):return False
+        with self.lock:self.result=result
+        return True
+
     def api(self,path,body=None):
         request=urllib.request.Request(self.url+path)
         if body is not None:
@@ -96,6 +103,7 @@ class Session:
         submitted=False;restarting=False
         while not self.stop.is_set():
             try:
+                if self.completed():return
                 if not self.url:self.connect();submitted=False
                 if self.cancel.is_set():
                     if self.host:self.api('api/client-updates',{'action':'cancel','host':self.host})
@@ -118,15 +126,12 @@ class Session:
                 if result.get('status')in('launched','cancelled'):return
                 self.stop.wait(.3)
             except(OSError,ValueError)as error:
-                try:completed=launch.state(self.root,self.token)
-                except(OSError,ValueError):completed={}
-                if completed.get('status')in('launched','cancelled'):
-                    with self.lock:self.result=completed
-                    return
+                if self.completed():return
                 if restarting:
                     self.url=None;restarting=False;continue
                 with self.lock:self.result={'status':'error','message':str(error)}
                 while not self.stop.is_set()and not self.retry.wait(.25):
+                    if self.completed():return
                     if self.cancel.is_set():
                         with self.lock:self.result={'status':'cancelled'}
                         return
@@ -167,6 +172,7 @@ def dialog(session):
         nonlocal previous,closing
         try:
             if msg in(0,4):
+                session.completed()
                 with session.lock:result=dict(session.result)
                 status=result.get('status')
                 if status in('launched','cancelled'):
