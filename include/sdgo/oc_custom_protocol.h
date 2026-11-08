@@ -8,6 +8,9 @@
 //      in the current servers and clients, so the World Mod writes the payload
 //      there before the record leaves the server. Every native copy of the
 //      record (lobby pages, active-unit replies, room pilots) keeps it intact.
+//      Version 2 of the carrier packs the deltas tighter and adds the unit's
+//      G改 1.0 attribute loadout (four skills) for room systems; version 1 is
+//      still written for every unit without that loadout.
 //   2. Lobby requests (query, allocate, challenge, reset) ride the friend-gift
 //      extension command range. See friend_unit_gift_protocol.h.
 #pragma once
@@ -27,6 +30,11 @@ inline constexpr std::size_t kCarrierBytes = 25;
 inline constexpr std::size_t kCustomSkillOffset = 138; // four u16 UnitSkill slots
 inline constexpr std::size_t kCustomSkillCount = 4;
 inline constexpr std::uint8_t kCarrierVersion = 1;
+inline constexpr std::uint8_t kCarrierVersion2 = 2;
+// G改 1.0 loadout skills travel as 10-bit offsets from this base (skills
+// 30001..31023); 0 is an empty slot.
+inline constexpr std::uint16_t kG1SkillBase = 30000;
+inline constexpr std::uint16_t kG1SkillSpan = 1023;
 // Bytes 'O','C' at the start of the reserved gap.
 inline constexpr std::uint8_t kCarrierMagic0 = 0x4F;
 inline constexpr std::uint8_t kCarrierMagic1 = 0x43;
@@ -54,11 +62,17 @@ enum CarrierFlag : std::uint8_t {
     // custom skills are ignored in its battles); every other room plays the
     // current custom-skill system. See oc_room_system.h.
     carrier_room_rule = 1u << 2,
+    // The unit has a G改 1.0 attribute loadout (carrier version 2): rooms with
+    // the !g1 command build its battle unit with these skills instead of the
+    // record's current custom skills.
+    carrier_g1_profile = 1u << 3,
 };
 
 // ModeReply.flags
 inline constexpr std::uint32_t kModeFlagSchemaReady = 1u << 0;
 inline constexpr std::uint32_t kModeFlagRoomRule = 1u << 1;
+// Room mode also offers G改 1.0 rooms: the World Mod loaded a G改 1.0 rule set.
+inline constexpr std::uint32_t kModeFlagG1 = 1u << 2;
 
 struct Carrier {
     std::uint8_t flags = 0;
@@ -67,6 +81,7 @@ struct Carrier {
     std::uint8_t over_points = 0;
     std::array<std::int16_t, stat_count> delta{};
     std::uint32_t revision = 0;
+    std::array<std::uint16_t, 4> g1_skills{}; // carrier_g1_profile only
 };
 
 namespace detail {
@@ -76,6 +91,64 @@ inline std::uint8_t Checksum(const std::uint8_t* carrier) noexcept {
         value = static_cast<std::uint8_t>(value ^ carrier[index]);
     return value;
 }
+inline std::uint8_t ClampByte(std::int32_t value) noexcept {
+    return static_cast<std::uint8_t>(value < 0 ? 0 : value > 255 ? 255 : value);
+}
+inline std::uint16_t ClampWord(std::int32_t value) noexcept {
+    return static_cast<std::uint16_t>(value < 0 ? 0 : value > 32767 ? 32767 : value);
+}
+inline std::uint16_t G1Offset(std::uint16_t skill) noexcept {
+    return skill > kG1SkillBase && skill <= kG1SkillBase + kG1SkillSpan
+               ? static_cast<std::uint16_t>(skill - kG1SkillBase) : 0;
+}
+
+// Version 2: the same header, OC deltas as speed, attack, defense, agility
+// bytes and HP, special words (allocations only add), a 24-bit revision and the
+// four G改 1.0 skills as 10-bit offsets.
+inline void WriteCarrier2(std::uint8_t* out, const Carrier& carrier) noexcept {
+    using friend_unit_gift::wire::Write16;
+    out[2] = kCarrierVersion2;
+    out[3] = carrier.flags;
+    out[4] = carrier.oc_level;
+    out[5] = carrier.normal_points;
+    out[6] = carrier.over_points;
+    out[7] = ClampByte(carrier.delta[stat_speed]);
+    Write16(out + 8, ClampWord(carrier.delta[stat_hp]));
+    out[10] = ClampByte(carrier.delta[stat_attack]);
+    out[11] = ClampByte(carrier.delta[stat_defense]);
+    out[12] = ClampByte(carrier.delta[stat_agility]);
+    Write16(out + 13, ClampWord(carrier.delta[stat_special]));
+    out[15] = static_cast<std::uint8_t>(carrier.revision);
+    out[16] = static_cast<std::uint8_t>(carrier.revision >> 8);
+    out[17] = static_cast<std::uint8_t>(carrier.revision >> 16);
+    std::uint64_t bits = 0;
+    for (std::size_t index = 0; index < 4; ++index)
+        bits |= static_cast<std::uint64_t>(G1Offset(carrier.g1_skills[index]) & 0x3FF) << (index * 10);
+    for (std::size_t index = 0; index < 5; ++index) out[18 + index] = static_cast<std::uint8_t>(bits >> (index * 8));
+}
+
+inline void ReadCarrier2(const std::uint8_t* in, Carrier* carrier) noexcept {
+    using friend_unit_gift::wire::Read16;
+    carrier->flags = in[3];
+    carrier->oc_level = in[4];
+    carrier->normal_points = in[5];
+    carrier->over_points = in[6];
+    carrier->delta = {};
+    carrier->delta[stat_speed] = in[7];
+    carrier->delta[stat_hp] = static_cast<std::int16_t>(Read16(in + 8));
+    carrier->delta[stat_attack] = in[10];
+    carrier->delta[stat_defense] = in[11];
+    carrier->delta[stat_agility] = in[12];
+    carrier->delta[stat_special] = static_cast<std::int16_t>(Read16(in + 13));
+    carrier->revision = static_cast<std::uint32_t>(in[15]) | static_cast<std::uint32_t>(in[16]) << 8 |
+                        static_cast<std::uint32_t>(in[17]) << 16;
+    std::uint64_t bits = 0;
+    for (std::size_t index = 0; index < 5; ++index) bits |= static_cast<std::uint64_t>(in[18 + index]) << (index * 8);
+    for (std::size_t index = 0; index < 4; ++index) {
+        const auto offset = static_cast<std::uint16_t>((bits >> (index * 10)) & 0x3FF);
+        carrier->g1_skills[index] = offset ? static_cast<std::uint16_t>(kG1SkillBase + offset) : 0;
+    }
+}
 } // namespace detail
 
 // record points at the first byte of the 0x99-byte owned-unit record.
@@ -83,6 +156,15 @@ inline void WriteCarrier(std::uint8_t* record, const Carrier& carrier) noexcept 
     using friend_unit_gift::wire::Write16;
     using friend_unit_gift::wire::Write32;
     auto* out = record + kCarrierOffset;
+    if (carrier.flags & carrier_g1_profile) {
+        std::memset(out, 0, kCarrierBytes);
+        out[0] = kCarrierMagic0;
+        out[1] = kCarrierMagic1;
+        detail::WriteCarrier2(out, carrier);
+        out[23] = detail::Checksum(out);
+        out[24] = 0;
+        return;
+    }
     std::memset(out, 0, kCarrierBytes);
     out[0] = kCarrierMagic0;
     out[1] = kCarrierMagic1;
@@ -105,9 +187,15 @@ inline bool ReadCarrier(const std::uint8_t* record, Carrier* carrier) noexcept {
     if (!record || !carrier) return false;
     const auto* in = record + kCarrierOffset;
     if (in[0] != kCarrierMagic0 || in[1] != kCarrierMagic1 ||
-        in[2] != kCarrierVersion || in[24] != 0 ||
+        (in[2] != kCarrierVersion && in[2] != kCarrierVersion2) || in[24] != 0 ||
         in[23] != detail::Checksum(in))
         return false;
+    if (in[2] == kCarrierVersion2) {
+        Carrier decoded;
+        detail::ReadCarrier2(in, &decoded);
+        *carrier = decoded;
+        return true;
+    }
     Carrier decoded;
     decoded.flags = in[3];
     decoded.oc_level = in[4];
@@ -142,10 +230,16 @@ enum class Command : std::uint16_t {
     reset = 0x1006,
     challenge_items = 0x1007, // OC items the account can use in the next challenge
     owned_items = 0x1008,     // every OC item the account holds (the OC tab's ITEM box)
+    // G改 1.0 attribute loadouts (room mode with a G改 1.0 rule set).
+    g1_rules = 0x1009,      // one page of the rule set (skill, category, levels, reset cost)
+    g1_categories = 0x100A, // category names
+    g1_get = 0x100B,        // a unit's loadout and reset cost
+    g1_set = 0x100C,        // equip skills (the native custom-skill rules)
+    g1_reset = 0x100D,      // empty the loadout, charging the reset GP
 };
 
 inline constexpr std::uint16_t kFirstCommand = 0x1000;
-inline constexpr std::uint16_t kLastCommand = 0x1008;
+inline constexpr std::uint16_t kLastCommand = 0x100D;
 
 inline friend_unit_gift::Command Wrap(Command command) noexcept {
     return static_cast<friend_unit_gift::Command>(
@@ -550,6 +644,223 @@ inline bool ReadChallengeItemsReply(const std::uint8_t* in, std::size_t size, Ch
     }
     return true;
 }
+
+// ---------------------------------------------------------------------------
+// G改 1.0 attribute loadouts.
+//
+// A G改 1.0 rule set lists the attribute skills of that era: per skill its
+// category, a type, the unit and user levels it needs, a premium flag and its
+// reset cost, the shape of the native tbl_UnitCustomSkillRev. The World Mod
+// loads it from the server owner's rule file; clients read it page by page.
+
+struct G1Rule {
+    std::uint16_t skill = 0;
+    std::uint8_t category = 0;
+    std::uint8_t type = 0;
+    std::uint8_t unit_level = 0;
+    std::uint8_t user_level = 0;
+    std::uint8_t premium = 0;
+    std::uint16_t reset_cost = 0;
+};
+inline constexpr std::size_t kG1RuleBytes = 10;
+inline constexpr std::size_t kG1RulesPerPage = 100;
+struct G1RulesRequest {
+    std::uint16_t page = 0;
+};
+inline constexpr std::size_t kG1RulesRequestBytes = 4;
+struct G1RulesReply {
+    std::int32_t ret_val = 0;
+    std::uint16_t total = 0;
+    std::uint16_t page = 0;
+    std::uint8_t count = 0;
+    std::uint8_t categories = 0;
+    std::array<G1Rule, kG1RulesPerPage> rules{};
+};
+inline constexpr std::size_t kG1RulesReplyBytes = kReplyHeaderBytes + 8 + kG1RulesPerPage * kG1RuleBytes;
+
+inline constexpr std::size_t kG1CategoryMax = 12;
+inline constexpr std::size_t kG1CategoryNameUnits = 15;
+struct G1CategoriesReply {
+    std::int32_t ret_val = 0;
+    std::uint8_t count = 0;
+    std::array<std::array<char16_t, kG1CategoryNameUnits>, kG1CategoryMax> names{};
+};
+inline constexpr std::size_t kG1CategoriesReplyBytes =
+    kReplyHeaderBytes + 4 + kG1CategoryMax * kG1CategoryNameUnits * 2;
+
+struct G1Loadout {
+    std::uint64_t unit_uid = 0;
+    std::array<std::uint16_t, 4> skills{};
+    std::uint16_t reset_count = 0;
+    std::uint8_t normal_max = 0; // native Normal_MaxLv: slots 3 and 4 need 3 and 4
+    std::uint8_t unit_level = 0;
+    std::uint8_t user_level = 0;
+    std::uint8_t category = 0xFF; // of the equipped skills; 0xFF none
+    std::uint32_t revision = 0;
+    std::int32_t reset_cost = 0; // GP the next reset charges
+};
+inline constexpr std::size_t kG1LoadoutBytes = 32;
+
+struct G1SetRequest {
+    std::uint64_t unit_uid = 0;
+    std::array<std::uint16_t, 4> skills{};
+    std::uint32_t revision = 0; // 0 skips the stale check
+};
+inline constexpr std::size_t kG1SetRequestBytes = 20;
+
+struct G1Reply { // g1_get, g1_set, g1_reset
+    std::int32_t ret_val = 0;
+    std::int32_t charged_gp = 0;
+    G1Loadout loadout{};
+};
+inline constexpr std::size_t kG1ReplyBytes = kReplyHeaderBytes + 4 + kG1LoadoutBytes;
+
+// Return values of the G改 1.0 commands (the native custom-skill codes where
+// they exist).
+enum G1Code : std::int32_t {
+    g1_ok = 0,
+    g1_unit_missing = 2002,
+    g1_not_reset = 2003,      // a filled slot changes only after a reset
+    g1_overlap = 2004,        // the same skill twice
+    g1_wrong_skill = 2005,    // not in the rule set, or the unit or user level is too low
+    g1_category_diff = 2006,  // every equipped skill shares one category
+    g1_slot_locked = 2007,    // slots 3 and 4 need Normal_MaxLv 3 and 4
+    g1_stale = 2010,          // the loadout changed since the client read it
+    g1_nothing_to_reset = 2011,
+    g1_reset_unit_level = 2012, // the native reset needs unit level 3
+    g1_unavailable = 3001,    // the server has no G改 1.0 rule set
+};
+
+inline void WriteG1RulesRequest(std::uint8_t* out, const G1RulesRequest& request) noexcept {
+    std::memset(out, 0, kG1RulesRequestBytes);
+    friend_unit_gift::wire::Write16(out, request.page);
+}
+inline bool ReadG1RulesRequest(const std::uint8_t* in, std::size_t size, G1RulesRequest* request) noexcept {
+    if (size != kG1RulesRequestBytes || in[2] || in[3]) return false;
+    request->page = friend_unit_gift::wire::Read16(in);
+    return true;
+}
+
+inline void WriteG1RulesReply(std::uint8_t* out, const G1RulesReply& reply) noexcept {
+    using friend_unit_gift::wire::Write16;
+    std::memset(out, 0, kG1RulesReplyBytes);
+    friend_unit_gift::wire::Write32(out, static_cast<std::uint32_t>(reply.ret_val));
+    Write16(out + 4, reply.total);
+    Write16(out + 6, reply.page);
+    out[8] = reply.count > kG1RulesPerPage ? static_cast<std::uint8_t>(kG1RulesPerPage) : reply.count;
+    out[9] = reply.categories;
+    for (std::size_t i = 0; i < out[8]; ++i) {
+        auto* entry = out + 12 + i * kG1RuleBytes;
+        Write16(entry, reply.rules[i].skill);
+        entry[2] = reply.rules[i].category;
+        entry[3] = reply.rules[i].type;
+        entry[4] = reply.rules[i].unit_level;
+        entry[5] = reply.rules[i].user_level;
+        entry[6] = reply.rules[i].premium;
+        Write16(entry + 7, reply.rules[i].reset_cost);
+    }
+}
+inline bool ReadG1RulesReply(const std::uint8_t* in, std::size_t size, G1RulesReply* reply) noexcept {
+    using friend_unit_gift::wire::Read16;
+    if (size != kG1RulesReplyBytes || in[8] > kG1RulesPerPage) return false;
+    reply->ret_val = static_cast<std::int32_t>(friend_unit_gift::wire::Read32(in));
+    reply->total = Read16(in + 4);
+    reply->page = Read16(in + 6);
+    reply->count = in[8];
+    reply->categories = in[9];
+    for (std::size_t i = 0; i < reply->count; ++i) {
+        const auto* entry = in + 12 + i * kG1RuleBytes;
+        reply->rules[i].skill = Read16(entry);
+        reply->rules[i].category = entry[2];
+        reply->rules[i].type = entry[3];
+        reply->rules[i].unit_level = entry[4];
+        reply->rules[i].user_level = entry[5];
+        reply->rules[i].premium = entry[6];
+        reply->rules[i].reset_cost = Read16(entry + 7);
+    }
+    return true;
+}
+
+inline void WriteG1CategoriesReply(std::uint8_t* out, const G1CategoriesReply& reply) noexcept {
+    std::memset(out, 0, kG1CategoriesReplyBytes);
+    friend_unit_gift::wire::Write32(out, static_cast<std::uint32_t>(reply.ret_val));
+    out[4] = reply.count > kG1CategoryMax ? static_cast<std::uint8_t>(kG1CategoryMax) : reply.count;
+    for (std::size_t i = 0; i < out[4]; ++i)
+        for (std::size_t c = 0; c < kG1CategoryNameUnits; ++c)
+            friend_unit_gift::wire::Write16(out + 8 + (i * kG1CategoryNameUnits + c) * 2,
+                                            static_cast<std::uint16_t>(reply.names[i][c]));
+}
+inline bool ReadG1CategoriesReply(const std::uint8_t* in, std::size_t size, G1CategoriesReply* reply) noexcept {
+    if (size != kG1CategoriesReplyBytes || in[4] > kG1CategoryMax) return false;
+    reply->ret_val = static_cast<std::int32_t>(friend_unit_gift::wire::Read32(in));
+    reply->count = in[4];
+    for (std::size_t i = 0; i < reply->count; ++i)
+        for (std::size_t c = 0; c < kG1CategoryNameUnits; ++c)
+            reply->names[i][c] = static_cast<char16_t>(
+                friend_unit_gift::wire::Read16(in + 8 + (i * kG1CategoryNameUnits + c) * 2));
+    return true;
+}
+
+inline void WriteG1Loadout(std::uint8_t* out, const G1Loadout& loadout) noexcept {
+    using friend_unit_gift::wire::Write16;
+    using friend_unit_gift::wire::Write32;
+    std::memset(out, 0, kG1LoadoutBytes);
+    friend_unit_gift::wire::Write64(out, loadout.unit_uid);
+    for (std::size_t i = 0; i < 4; ++i) Write16(out + 8 + i * 2, loadout.skills[i]);
+    Write16(out + 16, loadout.reset_count);
+    out[18] = loadout.normal_max;
+    out[19] = loadout.unit_level;
+    out[20] = loadout.user_level;
+    out[21] = loadout.category;
+    Write32(out + 24, loadout.revision);
+    Write32(out + 28, static_cast<std::uint32_t>(loadout.reset_cost));
+}
+inline void ReadG1Loadout(const std::uint8_t* in, G1Loadout* loadout) noexcept {
+    using friend_unit_gift::wire::Read16;
+    using friend_unit_gift::wire::Read32;
+    loadout->unit_uid = friend_unit_gift::wire::Read64(in);
+    for (std::size_t i = 0; i < 4; ++i) loadout->skills[i] = Read16(in + 8 + i * 2);
+    loadout->reset_count = Read16(in + 16);
+    loadout->normal_max = in[18];
+    loadout->unit_level = in[19];
+    loadout->user_level = in[20];
+    loadout->category = in[21];
+    loadout->revision = Read32(in + 24);
+    loadout->reset_cost = static_cast<std::int32_t>(Read32(in + 28));
+}
+
+inline void WriteG1SetRequest(std::uint8_t* out, const G1SetRequest& request) noexcept {
+    std::memset(out, 0, kG1SetRequestBytes);
+    friend_unit_gift::wire::Write64(out, request.unit_uid);
+    for (std::size_t i = 0; i < 4; ++i) friend_unit_gift::wire::Write16(out + 8 + i * 2, request.skills[i]);
+    friend_unit_gift::wire::Write32(out + 16, request.revision);
+}
+inline bool ReadG1SetRequest(const std::uint8_t* in, std::size_t size, G1SetRequest* request) noexcept {
+    if (size != kG1SetRequestBytes) return false;
+    request->unit_uid = friend_unit_gift::wire::Read64(in);
+    for (std::size_t i = 0; i < 4; ++i) request->skills[i] = friend_unit_gift::wire::Read16(in + 8 + i * 2);
+    request->revision = friend_unit_gift::wire::Read32(in + 16);
+    return request->unit_uid != 0;
+}
+
+inline void WriteG1Reply(std::uint8_t* out, const G1Reply& reply) noexcept {
+    std::memset(out, 0, kG1ReplyBytes);
+    friend_unit_gift::wire::Write32(out, static_cast<std::uint32_t>(reply.ret_val));
+    friend_unit_gift::wire::Write32(out + 4, static_cast<std::uint32_t>(reply.charged_gp));
+    WriteG1Loadout(out + 8, reply.loadout);
+}
+inline bool ReadG1Reply(const std::uint8_t* in, std::size_t size, G1Reply* reply) noexcept {
+    if (size != kG1ReplyBytes) return false;
+    reply->ret_val = static_cast<std::int32_t>(friend_unit_gift::wire::Read32(in));
+    reply->charged_gp = static_cast<std::int32_t>(friend_unit_gift::wire::Read32(in + 4));
+    ReadG1Loadout(in + 8, &reply->loadout);
+    return true;
+}
+
+static_assert(kG1RulesReplyBytes <= friend_unit_gift::kMaximumExtensionPayloadBytes,
+              "G改 1.0 rule page exceeds the extension payload");
+static_assert(kG1CategoriesReplyBytes <= friend_unit_gift::kMaximumExtensionPayloadBytes,
+              "G改 1.0 category reply exceeds the extension payload");
 
 // Return values that the lobby shows (the original procedures' codes).
 enum ResetCode : std::int32_t {

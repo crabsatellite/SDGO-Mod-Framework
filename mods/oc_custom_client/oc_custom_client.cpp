@@ -21,12 +21,14 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdarg>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <cwchar>
 #include <string>
+#include <vector>
 
 #include "original_ui.h"
 #include "radar.h"
@@ -223,6 +225,8 @@ std::wstring UnitName(std::uint32_t unit_number) {
 }
 
 void Log(int level, const char* message);
+void LogF(int level, const char* format, ...);
+void ArmTimer();
 
 std::wstring ItemName(std::int32_t item) {
     // Item records carry their name at +5 like the other client tables.
@@ -290,8 +294,11 @@ std::wstring ItemModelPath(std::int32_t item) {
 
 // --- State ----------------------------------------------------------------
 
-enum class Pending : std::uint8_t { none, mode, profile, set_normal, set_over, reset_cost, reset, challenge, items, owned };
-enum class Confirm : std::uint8_t { none, message, allocate, reset, challenge };
+enum class Pending : std::uint8_t {
+    none, mode, profile, set_normal, set_over, reset_cost, reset, challenge, items, owned,
+    g1_rules, g1_categories, g1_get, g1_set, g1_reset,
+};
+enum class Confirm : std::uint8_t { none, message, allocate, reset, challenge, g1_reset };
 
 struct State {
     std::uint64_t unit_uid = 0;
@@ -302,6 +309,7 @@ struct State {
     bool mode_known = false;
     bool server_oc_mode = false;
     bool room_rule = false; // "room" mode: the room title decides OC or the custom skills
+    bool mode_reply_seen = false; // the mode reply's flags (G改 1.0) were read, not only a record carrier
     bool profile_present = false;
     Profile profile{};
     Pending outstanding = Pending::none;
@@ -330,6 +338,44 @@ struct State {
 };
 State g_state_data;
 
+// G改 1.0: the server's rule set and the active unit's loadout. Requests share
+// the OC command queue and wait while it is busy.
+struct G1Client {
+    bool available = false;
+    std::vector<G1Rule> rules;
+    std::uint16_t total = 0;
+    std::uint16_t next_page = 0;
+    bool rules_done = false;
+    std::vector<std::wstring> categories;
+    bool categories_done = false;
+    bool loadout_known = false;
+    G1Loadout loadout{};
+    bool want_rules = false;
+    bool want_categories = false;
+    bool want_loadout = false;
+    Pending action = Pending::none; // g1_set or g1_reset waiting to be sent
+    std::array<std::uint16_t, 4> set_skills{};
+    std::int32_t last_ret = 0;
+    std::int32_t last_charged = 0;
+    std::uint32_t replies = 0;
+    std::uint32_t last_command = 0;
+    bool mode_asked = false;
+};
+G1Client g_g1;
+
+// The G改 1.0 page on the OC tab: the style switch, the category the player
+// browses and the skills picked for empty slots before 设置保存.
+struct G1Page {
+    bool shown = false;              // the player switched the OC tab to G改 1.0
+    std::uint8_t category = 0;
+    std::array<std::uint16_t, 4> pending{};
+    std::uint64_t pending_uid = 0;
+    std::uint32_t pending_revision = 0xFFFFFFFF;
+    std::uint32_t saves = 0;         // 设置保存 presses sent
+    std::uint32_t resets = 0;        // 强化槽初始化 confirmations sent
+};
+G1Page g_g1_page;
+
 struct Mobility {
     std::uint32_t applied = 0;
     std::uint32_t unit_number = 0;
@@ -338,6 +384,15 @@ struct Mobility {
     std::int32_t speed = 0, agility = 0;
 };
 Mobility g_mobility;
+
+void LogF(int level, const char* format, ...) {
+    char buffer[384];
+    va_list args;
+    va_start(args, format);
+    _vsnprintf_s(buffer, sizeof(buffer), _TRUNCATE, format, args);
+    va_end(args);
+    Log(level, buffer);
+}
 
 void Log(int level, const char* message) {
     if (g_api && g_api->Log) {
@@ -366,6 +421,9 @@ bool ChallengeAvailable(const State& s) {
     return s.profile_present && s.profile.oc_level >= s.profile.normal_max_lv + 4 && s.profile.oc_level < 15;
 }
 bool Busy(const State& s) { return s.outstanding != Pending::none || s.queued != Pending::none; }
+bool G1Busy() {
+    return g_g1.want_rules || g_g1.want_categories || g_g1.want_loadout || g_g1.action != Pending::none;
+}
 std::int32_t StatValue(const State& s, std::size_t stat, int extra_normal, int extra_over) {
     const auto& p = s.profile;
     return p.base[stat] + (p.normal[stat] + extra_normal) * p.normal_stat[stat] +
@@ -398,9 +456,9 @@ bool PageActive() {
 }
 
 void RenderWindows(bool active, const ui::EntryView& entry, const ui::OverView& over, const ui::InfoView& info,
-                   const ui::ChallengeView& challenge, const ui::ConfirmView& confirm) noexcept {
+                   const ui::ChallengeView& challenge, const ui::ConfirmView& confirm, const ui::G1View& g1) noexcept {
     __try {
-        if (active) g_ui.Render(entry, over, info, challenge, confirm);
+        if (active) g_ui.Render(entry, over, info, challenge, confirm, g1);
         else g_ui.HideAll();
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
@@ -415,6 +473,91 @@ bool UpgradeTabSelected() noexcept;
 void ApplyOcTitle(bool oc_tab) noexcept;
 bool g_oc_page_shown = false; // the OC tab page is on screen (factory actions hidden)
 
+// A custom skill's name from the client's own skill table (gdrs\0234, name at +5).
+std::wstring SkillName(std::uint16_t skill) {
+    std::int32_t type = 0;
+    auto name = RecordText(GridEntry(static_cast<std::int32_t>(skill), &type), 5, 50);
+    return name.empty() ? L"#" + std::to_wstring(skill) : name;
+}
+
+// Skills of one category the unit and user levels allow, in rule order.
+std::vector<std::uint16_t> G1Eligible(std::uint8_t category) {
+    std::vector<std::uint16_t> skills;
+    const auto& g = g_g1;
+    for (const auto& rule : g.rules)
+        if (rule.category == category && rule.unit_level <= g.loadout.unit_level && rule.user_level <= g.loadout.user_level)
+            skills.push_back(rule.skill);
+    return skills;
+}
+
+bool G1SlotOpen(std::size_t slot) {
+    return slot < 2 || g_g1.loadout.normal_max >= slot + 1;
+}
+
+// Keeps the picks in step with the server's loadout: a filled slot shows its
+// skill, a new loadout revision drops the picks.
+void SyncG1Pending() {
+    auto& page = g_g1_page;
+    const auto& g = g_g1;
+    if (!g.loadout_known || g.loadout.unit_uid != g_state_data.unit_uid) return;
+    if (page.pending_uid != g.loadout.unit_uid || page.pending_revision != g.loadout.revision) {
+        LogF(SDGO_LOG_INFO, "g1 page follows the loadout uid=%llu revision=%u (was %llu/%u)",
+             static_cast<unsigned long long>(g.loadout.unit_uid), g.loadout.revision,
+             static_cast<unsigned long long>(page.pending_uid), page.pending_revision);
+        page.pending = g.loadout.skills;
+        page.pending_uid = g.loadout.unit_uid;
+        page.pending_revision = g.loadout.revision;
+        if (g.loadout.category != 0xFF) page.category = g.loadout.category;
+    }
+}
+
+// arrows: the page's own picks (no request); idle: no G改 1.0 request waits.
+ui::G1View BuildG1View(bool oc_tab, bool arrows, bool idle) {
+    ui::G1View view;
+    const auto& g = g_g1;
+    auto& page = g_g1_page;
+    view.offered = oc_tab && g.available;
+    view.style_label = L"G改 1.0";
+    view.back_label = Text(126631, L"终极强化");
+    view.visible = oc_tab && g.available && page.shown;
+    if (!view.visible) return view;
+    SyncG1Pending();
+    const bool ready = g.rules_done && !g.rules.empty() && g.categories_done && g.loadout_known &&
+                       g.loadout.unit_uid == g_state_data.unit_uid;
+    const bool filled = ready && (g.loadout.skills[0] || g.loadout.skills[1] || g.loadout.skills[2] || g.loadout.skills[3]);
+    const bool picked = ready && page.pending != g.loadout.skills;
+    view.header = ready ? L"机体等级 " + std::to_wstring(g.loadout.unit_level) + L" · 用户等级 " +
+                              std::to_wstring(g.loadout.user_level)
+                        : L"G改 1.0";
+    const std::wstring category_name =
+        page.category < g.categories.size() ? g.categories[page.category] : std::wstring(L"-");
+    // The type line is the 类型 selector: the browsed type (fixed while skills are equipped).
+    view.type = L"G改 1.0 · " + (ready ? category_name : std::wstring(L"读取中…"));
+    view.category = ready ? category_name : L"读取中…";
+    // One category for every slot: it is chosen while the loadout is empty.
+    view.category_arrows = ready && arrows && !filled && !picked && g.categories.size() > 1;
+    for (std::size_t slot = 0; slot < 4; ++slot) {
+        view.slot_label[slot] = L""; // the frame numbers its slots
+        if (!ready) continue;
+        const auto skill = page.pending[slot];
+        if (!G1SlotOpen(slot)) view.slot_value[slot] = L"（未开放）";
+        else view.slot_value[slot] = skill ? SkillName(skill) : L"（空）";
+        view.slot_arrows[slot] = arrows && G1SlotOpen(slot) && !g.loadout.skills[slot];
+    }
+    if (!ready) view.notice = L"正在读取 G改 1.0 数据…";
+    else if (g.last_ret == g1_ok && filled) view.notice = L"初始化费用 " + std::to_wstring((std::max)(0, g.loadout.reset_cost)) + L" GP";
+    else if (g.last_ret == g1_not_reset) view.notice = L"已装备的强化槽需初始化后才能更换";
+    else if (g.last_ret == g1_wrong_skill) view.notice = L"机体或用户等级不足";
+    else if (g.last_ret == g1_category_diff) view.notice = L"所有强化槽须为同一类型";
+    else if (g.last_ret == g1_slot_locked) view.notice = L"该强化槽尚未开放";
+    else if (g.last_ret == reset_insufficient_gp) view.notice = L"G币不足";
+    else view.notice = L"选择类型和技能后点击设置保存";
+    view.save_enabled = ready && idle && picked;
+    view.revert_enabled = ready && idle && picked;
+    view.reset_enabled = ready && idle && filled;
+    return view;
+}
+
 void Render() {
     if (!g_ui.Alive()) return;
     const auto& s = g_state_data;
@@ -428,12 +571,17 @@ void Render() {
     // OC tab shows only OC content (0800 in the upgrade page's place with the
     // OVER CUSTOM entry, 0794 beside it), as in the dual-system factory.
     const bool oc_tab = oc && OcModeActive(active);
+    // The page's arrows only change local picks; saves and resets wait for the
+    // G改 1.0 requests, not for the OC page's background refreshes.
+    const ui::G1View g1 = BuildG1View(oc_tab, s.confirm == Confirm::none, s.confirm == Confirm::none && !G1Busy());
+    // The G改 1.0 page takes the OC tab's place while it is selected.
+    const bool oc_content = oc_tab && !g1.visible;
     ui::EntryView entry;
-    entry.visible = oc_tab;
+    entry.visible = oc_content;
     entry.lit = entry.visible && ChallengeAvailable(s) && !s.challenge_open;
     ui::OverView over;
     // The allocation window is the OC tab's content; it never showed with the challenge window.
-    over.visible = oc_tab && !s.challenge_open;
+    over.visible = oc_content && !s.challenge_open;
     if (oc) {
         static const std::uint32_t kLabels[stat_count] = {126638, 126639, 126640, 126641, 126642, 126643};
         static const wchar_t* kFallback[stat_count] = {L"推进力", L"耐久力", L"攻击力", L"防御力", L"机动力", L"必杀技"};
@@ -457,7 +605,7 @@ void Render() {
     // The OC tab's left page: OVER CUSTOM 1..6 and EX lit up to the unit's OC
     // level (OC level 9 is OVER CUSTOM1), and the OC items the account holds.
     ui::InfoView info;
-    info.visible = oc_tab; // stays while the challenge window covers 0794
+    info.visible = oc_content; // stays while the challenge window covers 0794
     radar::Shape shape;
     shape.visible = over.visible;
     if (oc_tab) {
@@ -502,7 +650,7 @@ void Render() {
     confirm.line0 = s.confirm_line0;
     confirm.line1 = s.confirm_line1;
     confirm.cancel = s.confirm != Confirm::message;
-    RenderWindows(active, entry, over, info, challenge, confirm);
+    RenderWindows(active, entry, over, info, challenge, confirm, g1);
     if (active) {
         SetTabLook(oc_tab);
         HideUnderWindows(oc_tab);
@@ -558,11 +706,90 @@ void RefreshActiveUnit() {
                             : "oc change saved; the unit is not the active unit, no record refresh");
 }
 
+void HandleG1Reply(Command command, std::int32_t status, const std::uint8_t* payload, std::uint32_t bytes) {
+    auto& g = g_g1;
+    ++g.replies;
+    g.last_command = static_cast<std::uint32_t>(command);
+    if (static_cast<WireStatus>(status) != WireStatus::success || !payload) {
+        g.last_ret = status;
+        if (command == Command::g1_rules) g.rules_done = true; // stop paging
+        LogF(SDGO_LOG_WARN, "g1 command 0x%X failed with wire status %d", static_cast<unsigned>(command), status);
+        return;
+    }
+    switch (command) {
+    case Command::g1_rules: {
+        G1RulesReply reply;
+        if (!ReadG1RulesReply(payload, bytes, &reply)) break;
+        g.last_ret = reply.ret_val;
+        if (reply.ret_val != 0 || reply.page != g.next_page) {
+            g.rules_done = true;
+            break;
+        }
+        g.total = reply.total;
+        for (std::size_t index = 0; index < reply.count; ++index) g.rules.push_back(reply.rules[index]);
+        ++g.next_page;
+        if (g.rules.size() >= g.total || !reply.count) {
+            g.rules_done = true;
+            LogF(SDGO_LOG_INFO, "g1 rule set read: %u skill(s) in %u categor(ies)", static_cast<unsigned>(g.rules.size()),
+                static_cast<unsigned>(reply.categories));
+        } else {
+            g.want_rules = true;
+        }
+        break;
+    }
+    case Command::g1_categories: {
+        G1CategoriesReply reply;
+        if (!ReadG1CategoriesReply(payload, bytes, &reply)) break;
+        g.last_ret = reply.ret_val;
+        g.categories.clear();
+        for (std::size_t index = 0; index < reply.count; ++index) {
+            const auto& name = reply.names[index];
+            std::wstring text;
+            for (auto c : name) {
+                if (!c) break;
+                text += static_cast<wchar_t>(c);
+            }
+            g.categories.push_back(text);
+        }
+        g.categories_done = true;
+        break;
+    }
+    case Command::g1_get:
+    case Command::g1_set:
+    case Command::g1_reset: {
+        G1Reply reply;
+        if (!ReadG1Reply(payload, bytes, &reply)) break;
+        g.last_ret = reply.ret_val;
+        g.last_charged = reply.charged_gp;
+        if (reply.loadout.unit_uid == g_state_data.unit_uid) {
+            g.loadout = reply.loadout;
+            g.loadout_known = true;
+        }
+        if (command != Command::g1_get) {
+            LogF(SDGO_LOG_INFO, "g1 %s ret=%d skills=%u/%u/%u/%u charged=%d", command == Command::g1_set ? "set" : "reset",
+                reply.ret_val, reply.loadout.skills[0], reply.loadout.skills[1], reply.loadout.skills[2],
+                reply.loadout.skills[3], reply.charged_gp);
+            // The records the World server sends carry the new loadout.
+            if (reply.ret_val == 0) RefreshActiveUnit();
+        }
+        break;
+    }
+    default:
+        break;
+    }
+}
+
 void __cdecl OnReply(void*, std::uint16_t command, std::int32_t status, const std::uint8_t* payload,
                      std::uint32_t bytes) {
     auto& s = g_state_data;
     const auto finished = s.outstanding;
     s.outstanding = Pending::none;
+    if (command >= static_cast<std::uint16_t>(Command::g1_rules) &&
+        command <= static_cast<std::uint16_t>(Command::g1_reset)) {
+        HandleG1Reply(static_cast<Command>(command), status, payload, bytes);
+        Render();
+        return;
+    }
     // The ITEM box refresh is background bookkeeping: it never replaces the
     // result of the player's last OC command.
     if (static_cast<Command>(command) == Command::owned_items) {
@@ -592,6 +819,9 @@ void __cdecl OnReply(void*, std::uint16_t command, std::int32_t status, const st
             s.mode_known = true;
             s.server_oc_mode = mode.enabled && mode.oc_mode;
             s.room_rule = mode.enabled && (mode.flags & kModeFlagRoomRule) != 0;
+            g_g1.available = s.room_rule && (mode.flags & kModeFlagG1) != 0;
+            s.mode_reply_seen = true;
+            room_marks::SetG1Available(g_g1.available);
             if (s.server_oc_mode && s.unit_uid) s.queued = Pending::profile;
         }
         break;
@@ -706,6 +936,27 @@ void PumpQueue() {
         s.queued = Pending::owned;
         s.owned_wanted = false;
     }
+    // A mode learnt from a record carrier lacks the reply's flags: ask once.
+    if (s.queued == Pending::none && s.mode_known && s.room_rule && !s.mode_reply_seen && !g_g1.mode_asked) {
+        s.queued = Pending::mode;
+        g_g1.mode_asked = true;
+    }
+    if (s.queued == Pending::none && g_g1.available) {
+        auto& g = g_g1;
+        if (g.action != Pending::none && s.unit_uid) {
+            s.queued = g.action;
+            g.action = Pending::none;
+        } else if (g.want_categories) {
+            s.queued = Pending::g1_categories;
+            g.want_categories = false;
+        } else if (g.want_rules) {
+            s.queued = Pending::g1_rules;
+            g.want_rules = false;
+        } else if (g.want_loadout && s.unit_uid) {
+            s.queued = Pending::g1_get;
+            g.want_loadout = false;
+        }
+    }
     if (s.queued == Pending::none || s.outstanding != Pending::none || !TransportIdle()) return;
     const auto next = s.queued;
     s.queued = Pending::none;
@@ -745,6 +996,33 @@ void PumpQueue() {
         WriteWorkRequest(payload.data(), request);
         SendCommand(next == Pending::reset ? Command::reset : Command::reset_cost, payload.data(), kWorkRequestBytes,
                     next);
+        break;
+    }
+    case Pending::g1_rules: {
+        G1RulesRequest request;
+        request.page = g_g1.next_page;
+        WriteG1RulesRequest(payload.data(), request);
+        SendCommand(Command::g1_rules, payload.data(), kG1RulesRequestBytes, next);
+        break;
+    }
+    case Pending::g1_categories:
+        SendCommand(Command::g1_categories, nullptr, 0, next);
+        break;
+    case Pending::g1_get:
+    case Pending::g1_reset: {
+        UnitRequest request;
+        request.unit_uid = s.unit_uid;
+        WriteUnitRequest(payload.data(), request);
+        SendCommand(next == Pending::g1_get ? Command::g1_get : Command::g1_reset, payload.data(), kUnitRequestBytes, next);
+        break;
+    }
+    case Pending::g1_set: {
+        G1SetRequest request;
+        request.unit_uid = s.unit_uid;
+        request.skills = g_g1.set_skills;
+        request.revision = g_g1.loadout_known && g_g1.loadout.unit_uid == s.unit_uid ? g_g1.loadout.revision : 0;
+        WriteG1SetRequest(payload.data(), request);
+        SendCommand(Command::g1_set, payload.data(), kG1SetRequestBytes, next);
         break;
     }
     case Pending::challenge: {
@@ -790,6 +1068,99 @@ std::wstring SelectedItemNames(std::size_t* count) {
     return Lines(Text(126683, L"进行终极强化.\n使用道具 : %s")).first;
 }
 
+// The G改 1.0 page's actions: picks change only the page, saves and resets
+// queue their own request. True when the action was the page's.
+bool HandleG1Action(ui::Action action) {
+    switch (action) {
+    case ui::Action::g1_style: case ui::Action::oc_style: case ui::Action::g1_category_prev: case ui::Action::g1_category_next:
+    case ui::Action::g1_slot_prev0: case ui::Action::g1_slot_prev1: case ui::Action::g1_slot_prev2: case ui::Action::g1_slot_prev3:
+    case ui::Action::g1_slot_next0: case ui::Action::g1_slot_next1: case ui::Action::g1_slot_next2: case ui::Action::g1_slot_next3:
+    case ui::Action::g1_save: case ui::Action::g1_revert: case ui::Action::g1_reset:
+        break;
+    default:
+        return false;
+    }
+    if (action == ui::Action::g1_style || action == ui::Action::oc_style) {
+        g_g1_page.shown = action == ui::Action::g1_style;
+        if (g_g1_page.shown && g_g1.available) {
+            // Read the rule set once, the loadout every time the page opens.
+            if (!g_g1.rules_done || g_g1.rules.empty() || !g_g1.categories_done) {
+                g_g1.rules.clear();
+                g_g1.total = 0;
+                g_g1.next_page = 0;
+                g_g1.rules_done = false;
+                g_g1.want_rules = true;
+                g_g1.want_categories = true;
+            }
+            g_g1.want_loadout = true;
+            ArmTimer();
+            PumpQueue();
+        }
+        Log(SDGO_LOG_INFO, g_g1_page.shown ? "g1 page opened on the OC tab" : "OC page shown again on the OC tab");
+        Render();
+        return true;
+    }
+    if (action == ui::Action::g1_category_prev || action == ui::Action::g1_category_next) {
+        const auto count = static_cast<int>(g_g1.categories.size());
+        if (count > 0) {
+            const int step = action == ui::Action::g1_category_next ? 1 : -1;
+            g_g1_page.category = static_cast<std::uint8_t>((g_g1_page.category + step + count) % count);
+            g_g1_page.pending = g_g1.loadout.skills;
+        }
+        Render();
+        return true;
+    }
+    if (ui::IsG1SlotPrev(action) || ui::IsG1SlotNext(action)) {
+        const auto slot = ui::G1Slot(action);
+        auto& page = g_g1_page;
+        if (slot < 4 && G1SlotOpen(slot) && !g_g1.loadout.skills[slot]) {
+            // The slot's choices: empty, then every skill of the category that
+            // no other slot holds.
+            std::vector<std::uint16_t> choices{0};
+            for (const auto skill : G1Eligible(page.category)) {
+                bool taken = false;
+                for (std::size_t other = 0; other < 4; ++other) taken = taken || (other != slot && page.pending[other] == skill);
+                if (!taken) choices.push_back(skill);
+            }
+            std::size_t at = 0;
+            for (std::size_t index = 0; index < choices.size(); ++index)
+                if (choices[index] == page.pending[slot]) at = index;
+            const std::size_t count = choices.size();
+            at = ui::IsG1SlotNext(action) ? (at + 1) % count : (at + count - 1) % count;
+            page.pending[slot] = choices[at];
+            LogF(SDGO_LOG_INFO, "g1 page slot %u pick %u of %u choices: skill %u", static_cast<unsigned>(slot + 1),
+                 static_cast<unsigned>(at), static_cast<unsigned>(count), page.pending[slot]);
+        } else {
+            LogF(SDGO_LOG_INFO, "g1 page slot %u is not open for picks (open=%u filled=%u)", static_cast<unsigned>(slot + 1),
+                 G1SlotOpen(slot) ? 1u : 0u, slot < 4 ? g_g1.loadout.skills[slot] : 0u);
+        }
+        Render();
+        return true;
+    }
+    if (action == ui::Action::g1_revert) {
+        g_g1_page.pending = g_g1.loadout.skills;
+        Render();
+        return true;
+    }
+    if (action == ui::Action::g1_save) {
+        if (g_g1.action == Pending::none && g_g1_page.pending != g_g1.loadout.skills) {
+            g_g1.set_skills = g_g1_page.pending;
+            g_g1.action = Pending::g1_set;
+            ++g_g1_page.saves;
+            PumpQueue();
+        }
+        Render();
+        return true;
+    }
+    if (action == ui::Action::g1_reset) {
+        ShowConfirm(Confirm::g1_reset, 0,
+                    L"强化槽初始化\n" + Text(126649, L"G币:") + L" " + std::to_wstring((std::max)(0, g_g1.loadout.reset_cost)));
+        Render();
+        return true;
+    }
+    return true;
+}
+
 void HandleAction(ui::Action action) {
     auto& s = g_state_data;
     if (!s.unit_uid || !s.profile_present) return;
@@ -801,10 +1172,16 @@ void HandleAction(ui::Action action) {
             if (kind == Confirm::allocate) Queue(s.request_over ? Pending::set_over : Pending::set_normal);
             else if (kind == Confirm::reset) Queue(Pending::reset, s.reset_work);
             else if (kind == Confirm::challenge) Queue(Pending::challenge);
+            else if (kind == Confirm::g1_reset && g_g1.action == Pending::none) {
+                g_g1.action = Pending::g1_reset;
+                ++g_g1_page.resets;
+                PumpQueue();
+            }
         }
         Render();
         return;
     }
+    if (s.confirm == Confirm::none && HandleG1Action(action)) return;
     if (s.confirm != Confirm::none || Busy(s)) return;
     if (ui::IsUp(action)) {
         const auto stat = ui::UpStat(action);
@@ -1992,7 +2369,7 @@ int Snapshot(SdgoOcCustomClientSnapshotV2* output) {
     snapshot.item_models_loaded = g_ui.models_loaded();
     snapshot.server_room_rule = s.mode_known && s.room_rule ? 1u : 0u;
     snapshot.room_known = g_room_view.known ? 1u : 0u;
-    snapshot.room_system = g_room_view.known && g_room_view.system == RoomSystem::oc ? 1u : 0u;
+    snapshot.room_system = g_room_view.known ? static_cast<std::uint32_t>(g_room_view.system) : 0u;
     snapshot.mobility_room_skips = g_mobility_room_skips;
     snapshot.room_list_marks = room_marks::ListMarks();
     snapshot.title_marks = room_marks::TitleMarks();
@@ -2050,6 +2427,108 @@ int Action(const SdgoOcCustomClientActionV2& request) {
     }
 }
 
+int G1Snapshot(SdgoOcCustomClientG1SnapshotV1* output) {
+    if (!output || output->size < sizeof(SdgoOcCustomClientG1SnapshotV1) || output->version != SDGO_OC_CUSTOM_CLIENT_G1_VERSION)
+        return 0;
+    const auto& g = g_g1;
+    const auto& s = g_state_data;
+    SdgoOcCustomClientG1SnapshotV1 snapshot{};
+    snapshot.size = sizeof(snapshot);
+    snapshot.version = SDGO_OC_CUSTOM_CLIENT_G1_VERSION;
+    snapshot.available = g.available ? 1u : 0u;
+    snapshot.rules_loaded = g.rules_done && !g.rules.empty() ? 1u : 0u;
+    snapshot.rule_count = static_cast<std::uint32_t>(g.rules.size());
+    snapshot.category_count = g.categories_done ? static_cast<std::uint32_t>(g.categories.size()) : 0u;
+    const bool current = g.loadout_known && g.loadout.unit_uid == s.unit_uid;
+    snapshot.loadout_known = current ? 1u : 0u;
+    snapshot.unit_uid = s.unit_uid;
+    if (current) {
+        for (std::size_t slot = 0; slot < 4; ++slot) snapshot.skills[slot] = g.loadout.skills[slot];
+        snapshot.normal_max = g.loadout.normal_max;
+        snapshot.unit_level = g.loadout.unit_level;
+        snapshot.user_level = g.loadout.user_level;
+        snapshot.category = g.loadout.category;
+        snapshot.reset_count = g.loadout.reset_count;
+        snapshot.reset_cost = g.loadout.reset_cost;
+        snapshot.revision = g.loadout.revision;
+    }
+    snapshot.busy = G1Busy() || Busy(s) ? 1u : 0u;
+    snapshot.replies = g.replies;
+    snapshot.last_ret_val = g.last_ret;
+    snapshot.last_charged_gp = g.last_charged;
+    snapshot.last_command = g.last_command;
+    snapshot.page_shown = g_ui.Visible("g1") ? 1u : 0u;
+    snapshot.page_category = g_g1_page.category;
+    for (std::size_t slot = 0; slot < 4; ++slot) snapshot.page_pending[slot] = g_g1_page.pending[slot];
+    snapshot.page_saves = g_g1_page.saves;
+    snapshot.page_resets = g_g1_page.resets;
+    // The account profile's active-unit record, as the native pilot copies get it.
+    if (g_profile && *g_profile) {
+        std::uint8_t record[kUnitRecordBytes];
+        std::memcpy(record, *g_profile + kProfileActiveRecord, sizeof(record));
+        Carrier carrier{};
+        if (Read<std::uint64_t>(record, 8) == s.unit_uid && ReadCarrier(record, &carrier) &&
+            (carrier.flags & carrier_g1_profile)) {
+            snapshot.carrier_g1 = 1u;
+            for (std::size_t slot = 0; slot < 4; ++slot) snapshot.carrier_skills[slot] = carrier.g1_skills[slot];
+        }
+    }
+    std::memcpy(output, &snapshot, sizeof(snapshot));
+    return 1;
+}
+
+int G1Action(std::uint32_t action, const std::uint16_t* skills) {
+    if (GetCurrentThreadId() != g_ui_thread && g_ui_thread) return 0;
+    auto& g = g_g1;
+    if (!g.available) return 0;
+    switch (action) {
+    case 1:
+        g.rules.clear();
+        g.total = 0;
+        g.next_page = 0;
+        g.rules_done = false;
+        g.categories_done = false;
+        g.want_categories = true;
+        g.want_rules = true;
+        g.want_loadout = true;
+        break;
+    case 2:
+        if (!skills || g.action != Pending::none) return 0;
+        for (std::size_t slot = 0; slot < 4; ++slot) g.set_skills[slot] = skills[slot];
+        g.action = Pending::g1_set;
+        break;
+    case 3:
+        if (g.action != Pending::none) return 0;
+        g.action = Pending::g1_reset;
+        break;
+    case 4:
+        g.want_loadout = true;
+        break;
+    default:
+        return 0;
+    }
+    ArmTimer();
+    PumpQueue();
+    return 1;
+}
+
+int G1RuleAt(std::uint32_t index, SdgoOcCustomClientG1RuleV1* output) {
+    if (!output || index >= g_g1.rules.size()) return 0;
+    const auto& rule = g_g1.rules[index];
+    *output = SdgoOcCustomClientG1RuleV1{rule.skill, rule.category, rule.type, rule.unit_level, rule.user_level,
+                                         rule.premium, 0, rule.reset_cost};
+    return 1;
+}
+
+int G1CategoryAt(std::uint32_t index, wchar_t* name, std::uint32_t capacity) {
+    if (!name || !capacity || index >= g_g1.categories.size()) return 0;
+    const auto& text = g_g1.categories[index];
+    const std::size_t length = (std::min)(text.size(), static_cast<std::size_t>(capacity - 1));
+    std::wmemcpy(name, text.c_str(), length);
+    name[length] = 0;
+    return static_cast<int>(length);
+}
+
 int Click(const char* window, const wchar_t* name) {
     if (GetCurrentThreadId() != g_ui_thread && g_ui_thread) return 0;
     if (window && !std::strcmp(window, "create")) return room_marks::ClickCreate(name) ? 1 : 0;
@@ -2090,6 +2569,39 @@ extern "C" __declspec(dllexport) int __cdecl SdgoOcCustomClientActionV2(const Sd
         return 0;
     __try {
         return Action(*request);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+extern "C" __declspec(dllexport) int __cdecl SdgoOcCustomClientG1SnapshotV1(SdgoOcCustomClientG1SnapshotV1* output) {
+    __try {
+        return G1Snapshot(output);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+extern "C" __declspec(dllexport) int __cdecl SdgoOcCustomClientG1ActionV1(std::uint32_t action, const std::uint16_t* skills) {
+    __try {
+        return G1Action(action, skills);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+extern "C" __declspec(dllexport) int __cdecl SdgoOcCustomClientG1RuleV1(std::uint32_t index, SdgoOcCustomClientG1RuleV1* output) {
+    __try {
+        return G1RuleAt(index, output);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+extern "C" __declspec(dllexport) int __cdecl SdgoOcCustomClientG1CategoryV1(std::uint32_t index, wchar_t* name,
+                                                                          std::uint32_t capacity) {
+    __try {
+        return G1CategoryAt(index, name, capacity);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return 0;
     }

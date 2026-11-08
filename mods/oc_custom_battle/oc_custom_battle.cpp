@@ -56,6 +56,7 @@ bool g_log_apply = true;
 LONG g_applied = 0;
 LONG g_oc_room_builds = 0;
 LONG g_parts_room_builds = 0;
+LONG g_g1_room_builds = 0;
 LONG g_room_log_budget = 64;
 
 // Room context of the current stat-builder call (set by the naked entry).
@@ -321,6 +322,16 @@ bool ReadSkills(const std::uint8_t* source, std::size_t offset, std::uint8_t (&s
     }
 }
 
+// G改 1.0 rooms: the unit's G改 1.0 loadout replaces the record's custom skills.
+bool WriteUnitSkills(std::uint8_t* unit, const std::array<std::uint16_t, 4>& skills) noexcept {
+    __try {
+        std::memcpy(unit + kUnitCustomSkills, skills.data(), kCustomSkillCount * 2);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 bool ClearUnitSkills(std::uint8_t* unit) noexcept {
     __try {
         std::memset(unit + kUnitCustomSkills, 0, kCustomSkillCount * 2);
@@ -350,7 +361,9 @@ void LogNative(RoomSystem system, const std::uint8_t* room, const char* title, c
                "skills=%u/%u/%u/%u%s",
                RoomSystemName(system), key, title, static_cast<unsigned long long>(uid), form, hp, attack, defense,
                slot[0], slot[1], slot[2], slot[3],
-               system == RoomSystem::oc ? " (cleared from the battle unit)" : " (kept)");
+               system == RoomSystem::oc   ? " (cleared from the battle unit)"
+               : system == RoomSystem::g1 ? " (replaced by the G1 loadout)"
+                                          : " (kept)");
 }
 
 int __stdcall BuildStatsHook(
@@ -385,6 +398,15 @@ int __stdcall BuildStatsHook(
             InterlockedIncrement(&g_oc_room_builds);
             ClearUnitSkills(unit);
             ApplyUnsafe(unit, record, definition, form, true);
+        } else if (system == RoomSystem::g1) {
+            InterlockedIncrement(&g_g1_room_builds);
+            // A unit without a G改 1.0 loadout plays without attributes.
+            const std::array<std::uint16_t, 4> loadout =
+                (carrier.flags & carrier_g1_profile) ? carrier.g1_skills : std::array<std::uint16_t, 4>{};
+            WriteUnitSkills(unit, loadout);
+            if (g_log_apply && InterlockedDecrement(&g_room_log_budget) >= 0)
+                g_api->Log(g_mod, SDGO_LOG_INFO, "oc room system=g1 form=%d g1 skills=%u/%u/%u/%u", form, loadout[0],
+                           loadout[1], loadout[2], loadout[3]);
         } else {
             InterlockedIncrement(&g_parts_room_builds);
         }
@@ -423,12 +445,21 @@ extern "C" __declspec(dllexport) unsigned __cdecl SdgoOcCustomBattleAppliedCount
     return static_cast<unsigned>(g_applied);
 }
 
-// Stat builds decided by a room in "room" mode: [0] OC rooms, [1] current-system rooms.
+// Stat builds decided by a room in "room" mode: [0] OC rooms, [1] G改 2.0
+// (current-system) rooms, [2] G改 1.0 rooms when the caller passes three slots.
 extern "C" __declspec(dllexport) unsigned __cdecl SdgoOcCustomBattleRoomBuildsV1(unsigned* builds) {
     if (!builds) return 0;
     builds[0] = static_cast<unsigned>(g_oc_room_builds);
     builds[1] = static_cast<unsigned>(g_parts_room_builds);
     return 2;
+}
+
+extern "C" __declspec(dllexport) unsigned __cdecl SdgoOcCustomBattleRoomBuildsV2(unsigned* builds, unsigned capacity) {
+    if (!builds || capacity < 3) return 0;
+    builds[0] = static_cast<unsigned>(g_oc_room_builds);
+    builds[1] = static_cast<unsigned>(g_parts_room_builds);
+    builds[2] = static_cast<unsigned>(g_g1_room_builds);
+    return 3;
 }
 
 SDGO_MOD_ENTRY {
@@ -462,6 +493,6 @@ SDGO_MOD_ENTRY {
     api->Log(mod, SDGO_LOG_INFO,
              "ready: owned-unit OC stat deltas apply to HP, attack, defense and "
              "special damage after the native per-form builder; room systems %s",
-             g_human_build ? "read from the building room's title (!oc)" : "unavailable");
+             g_human_build ? "read from the building room's title (!oc, !g1)" : "unavailable");
     return 1;
 }

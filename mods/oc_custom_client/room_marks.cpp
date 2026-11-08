@@ -61,7 +61,18 @@ constexpr std::uint32_t kShadowColor = 0xFF000000;
 constexpr int kLabelWidth = 132;
 
 constexpr wchar_t kMarkOc[] = L"【OC】";
-constexpr wchar_t kMarkParts[] = L"【G改】";
+constexpr wchar_t kMarkG1[] = L"【G改1】";
+constexpr wchar_t kMarkG2[] = L"【G改2】";
+bool g_g1_available = false; // the server offers G改 1.0 rooms
+
+const wchar_t* MarkOf(RoomSystem system) {
+    return system == RoomSystem::oc ? kMarkOc : system == RoomSystem::g1 ? kMarkG1 : kMarkG2;
+}
+
+// 「体系：…」 for the title bar and the create row.
+void SystemLabel(RoomSystem system, wchar_t (&text)[24]) {
+    std::swprintf(text, 24, L"体系：%ls", RoomSystemLabel(system));
+}
 constexpr wchar_t kLabelName[] = L"OcRoomSystemStatic";
 constexpr wchar_t kTitleButton[] = L"TitleChangeBtn";
 constexpr std::size_t kTextMax = 1024;
@@ -227,8 +238,9 @@ void MarkRoomList(void* service) {
         wchar_t text[kTextMax];
         std::size_t length = 0;
         if (!CopyString(item, text, kTextMax, &length)) continue;
-        if (StartsWith(text, length, kMarkOc) || StartsWith(text, length, kMarkParts)) continue;
-        const wchar_t* mark = SystemOfText(text, length) == RoomSystem::oc ? kMarkOc : kMarkParts;
+        if (StartsWith(text, length, kMarkOc) || StartsWith(text, length, kMarkG1) || StartsWith(text, length, kMarkG2))
+            continue;
+        const wchar_t* mark = MarkOf(SystemOfText(text, length));
         const std::size_t mark_length = std::wcslen(mark);
         if (mark_length + length + 1 > kTextMax) continue;
         wchar_t marked[kTextMax];
@@ -259,7 +271,9 @@ void MarkTitleBar(void* title_bar, RoomSystem system) {
     }
     const auto wanted = static_cast<std::int32_t>(system);
     if (g_label_system == wanted) return;
-    if (!SetLabel(g_label, system == RoomSystem::oc ? L"体系：OC" : L"体系：G改 1.0")) return;
+    wchar_t label_text[24];
+    SystemLabel(system, label_text);
+    if (!SetLabel(g_label, label_text)) return;
     g_label_system = wanted;
     g_title_system = wanted;
     ++g_title_marks;
@@ -277,9 +291,10 @@ void MarkTitleBar(void* title_bar, RoomSystem system) {
 // SettingBtn (top 211), drawn like the window's own selectors: the left and
 // right arrows use the game-mode arrows' sprites (sprs\17915-17917,
 // sprs\17918-17920, 19x19) and the value sits between them. The row edits
-// the room name: OC adds the !oc command, G改 1.0 removes it; typing the
-// command by hand shows the same value. Services: dialog root +0x50,
-// room-name edit +0x54, ready from state (+0x44) 4.
+// the room name: the arrows step through G改 2.0 (no command), OC (!oc) and,
+// when the server offers it, G改 1.0 (!g1); typing a command by hand shows
+// the same value. Services: dialog root +0x50, room-name edit +0x54, ready from
+// state (+0x44) 4.
 namespace {
 
 using ServiceFindFn = void*(__thiscall*)(void*, const void*);
@@ -434,16 +449,19 @@ void* EnsureButton(void* root, const wchar_t* name, int x, int y, int width, int
     return control;
 }
 
-// Removes every standalone !oc token (and the space before it) from text.
-std::size_t WithoutOc(const wchar_t* text, std::size_t length, wchar_t* out) {
+bool SameLetter(wchar_t value, wchar_t lower) { return value == lower || value == lower - (L'a' - L'A'); }
+
+// Removes every standalone system command (!oc, !g1, !g2) and the space before
+// it from text.
+std::size_t WithoutSystem(const wchar_t* text, std::size_t length, wchar_t* out) {
     std::size_t size = 0;
     for (std::size_t index = 0; index < length;) {
         const bool start = index == 0 || text[index - 1] == L' ';
-        const bool token = start && index + 3 <= length && text[index] == L'!' &&
-                           (text[index + 1] == L'o' || text[index + 1] == L'O') &&
-                           (text[index + 2] == L'c' || text[index + 2] == L'C') &&
-                           (index + 3 == length || text[index + 3] == L' ');
-        if (token) {
+        const bool command = start && index + 3 <= length && text[index] == L'!' &&
+                             (index + 3 == length || text[index + 3] == L' ') &&
+                             ((SameLetter(text[index + 1], L'o') && SameLetter(text[index + 2], L'c')) ||
+                              (SameLetter(text[index + 1], L'g') && (text[index + 2] == L'1' || text[index + 2] == L'2')));
+        if (command) {
             if (size && out[size - 1] == L' ') --size;
             index += 3;
             continue;
@@ -461,14 +479,25 @@ std::size_t NativeBytes(const wchar_t* text, std::size_t length) {
     return bytes;
 }
 
-bool ToggleCreate(const CreateWindow& window) {
+// The arrows' order: G改 2.0, OC, then G改 1.0 when the server offers it.
+RoomSystem StepSystem(RoomSystem current, int direction) {
+    RoomSystem order[3] = {RoomSystem::parts, RoomSystem::oc, RoomSystem::g1};
+    const int count = g_g1_available ? 3 : 2;
+    int index = 0;
+    for (int i = 0; i < count; ++i)
+        if (order[i] == current) index = i;
+    return order[(index + direction + count) % count];
+}
+
+bool StepCreate(const CreateWindow& window, int direction) {
     wchar_t text[kTextMax];
     std::size_t length = 0;
     if (!EditText(window.edit, text, kTextMax, &length)) return false;
-    const bool oc = SystemOfText(text, length) == RoomSystem::oc;
+    const RoomSystem target = StepSystem(SystemOfText(text, length), direction);
+    const wchar_t* command = target == RoomSystem::oc ? L"!oc" : target == RoomSystem::g1 ? L"!g1" : nullptr;
     wchar_t updated[kTextMax];
-    std::size_t size = WithoutOc(text, length, updated);
-    if (!oc) {
+    std::size_t size = WithoutSystem(text, length, updated);
+    if (command) {
         // The native field holds 20 bytes unless the long-title Mod widened the
         // edit (UTF-16 byte limit at +0x2A0); keep the command inside it.
         std::uint32_t limit = 0;
@@ -478,13 +507,17 @@ bool ToggleCreate(const CreateWindow& window) {
         while (size && (wide ? (size + suffix) * 2 > limit : NativeBytes(updated, size) + suffix > 20)) --size;
         while (size && updated[size - 1] == L' ') --size;
         if (size) updated[size++] = L' ';
-        std::wmemcpy(updated + size, L"!oc", 3);
+        std::wmemcpy(updated + size, command, 3);
         size += 3;
         updated[size] = 0;
     }
     if (!SetEditText(window.edit, updated, size)) return false;
     ++g_create_toggles;
-    if (g_log) g_log(oc ? "oc create window: system set to the current custom parts" : "oc create window: system set to OC (!oc)");
+    if (g_log) {
+        char line[96];
+        std::snprintf(line, sizeof(line), "oc create window: system set to %s", RoomSystemName(target));
+        g_log(line);
+    }
     return true;
 }
 
@@ -565,7 +598,8 @@ void UpdateCreateWindow() {
     const auto system = static_cast<std::int32_t>(SystemOfText(text, length));
     g_create_system = system;
     if (system == g_create_label_system) return;
-    const wchar_t* label = system == static_cast<std::int32_t>(RoomSystem::oc) ? L"体系：OC" : L"体系：G改 1.0";
+    wchar_t label[24];
+    SystemLabel(static_cast<RoomSystem>(system), label);
     const HostString view = View(label, std::wcslen(label));
     __try {
         g_set_text_item(value, 0, &view, 0, 0, kRowValueWidth, kRowValueHeight, kLabelColor, kShadowColor, 0, 1, 2);
@@ -582,7 +616,7 @@ bool HandleCreateEvent(void* service, std::uint32_t event, void* control) {
     void* left = FindControl(window.root, kCreateLeft, kButton);
     void* right = FindControl(window.root, kCreateRight, kButton);
     if (control != left && control != right) return false;
-    ToggleCreate(window);
+    StepCreate(window, control == right ? 1 : -1);
     g_create_label_system = -1; // refresh the value on the next update
     return true;
 }
@@ -609,6 +643,7 @@ bool CreateOpen() {
     return FindReadyWindow(&window);
 }
 
+void SetG1Available(bool available) { g_g1_available = available; }
 std::uint32_t CreateShown() { return g_create_shown; }
 std::uint32_t CreateToggles() { return g_create_toggles; }
 std::int32_t CreateSystem() { return g_create_system; }
