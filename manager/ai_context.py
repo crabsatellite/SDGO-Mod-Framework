@@ -38,6 +38,7 @@ def build(workspace, base_url, *, host_id=None, mod_id=None, provider_id=None, k
         stories['mission_behavior']='在一个页面选择 OC 或 G改任务行为，并把同一选择和同一份服主任务配置同步到客户端及所选服务端组的全部 Battle 频道。OC 是默认值；只覆盖已经核实的早期行为，OC 缺少的数据继续使用 G改现有实现，不改奖励或数据库。'
         stories['collection_capsule']='活动收藏扭蛋固定100,000 GP，先补图鉴未解锁机体，全解锁后补当前永久机库与领取箱缺少的机体。候选来自可用数据库初始机体，包含无原生图鉴条目的合法新内容；过滤训练、占位、不可出击和不可独立持有的变形态。当前阶段C/B/A/S按35/30/20/15加权并按可用等级归一，通过原生奖品箱发放永久1级机体。Mod仅保留最小图鉴解锁标记；无完整历史证明或导入门槛，Manager安装更新自动处理SQL，玩家不运行SQL。生成、安装、真人领取和扣费验收是不同状态。'
         stories['calendar_gifts']='独立的日期赠礼模块由 Manager 统一管理后台任务。公开默认关闭；节日一台未拥有机体，生日12档各一台，支持按节日调整机体和原生道具。年度与账号回执和原生保管库写入共用事务；重启或结果未知时先查原回执。私人生日、玩家分组、定向日期及发放记录不能进入通用规则导出，也不能复制进 AI 问题说明。'
+        stories['ai_dialogue']='可选 AI 机师台词组件复制原生击破、阵容与生命状态，由 Manager 的 battle.ai_dialogue 服务异步请求快速模型。默认关闭，只响应与本机玩家有关的战果和分配的队友建议；支持仅自己或本局战斗频道。提示词和机师设定可以编辑，本机 DPAPI API 密钥不能读取、复制给 AI、导出或随程序分发。原生事件、HTTP 成功、实际游戏文字显示和多人接收分别验收。'
         mechanism=stories.get(provider_id,'此功能由登记的业务模块提供配置和管理操作。')
         settings=redact(provider.config)
         capabilities={
@@ -54,6 +55,7 @@ def build(workspace, base_url, *, host_id=None, mod_id=None, provider_id=None, k
         capabilities['mission_behavior']={'operations':['GET /api/mission-behavior','POST /api/mission-behavior/preview','POST /api/mission-behavior/import','POST /api/mission-behavior/apply','POST /api/mission-behavior/export-client'],'editable':['OC（默认）或 G改（现有）','客户端','包含全部 Battle 频道的服务端组'],'scope':'OC 缺少有效服主任务配置时拒绝应用；客户端与整组 Battle 配置原子同步，运行中的目标不切换；重启后生效。'}
         capabilities['collection_capsule']={'operations':['POST /api/generate','POST /api/check-install','POST /api/install-server','POST /api/install-client','POST /api/export','POST /api/import-history','POST /api/register-family'],'editable':['目标 WorldServer INI','配套客户端','完整框架/服主工具包','361x322 活动海报'],'scope':'所有写操作需当前 revision；只操作选定目标。不得伪造完整历史、重置 Seen 或猜测双向形态。永久单位分类是交付元数据，不是奖品白名单；旧分类须保留供历史奖品领取。游戏程序由用户关闭，Manager 不管理其进程。'}
         capabilities['calendar_gifts']={'operations':['GET /api/calendar-gifts','POST /api/calendar-gifts/policy','POST /api/calendar-gifts/private','POST /api/calendar-gifts/preview','GET /api/calendar-gifts/export','GET/POST /api/services/calendar.gifts'],'editable':['节日与指定日期','机体等级、固定机体及原生道具','本服私有生日与玩家分组'],'revision_field':'revision','scope':'自动发放仅由 Manager 注册的后台任务执行。预览不发礼物，导出强制关闭并排除定向活动、私人名单、回执和凭据。AI 说明不读取私人名单。'}
+        capabilities['ai_dialogue']={'operations':['GET/POST /api/ai-dialogue','POST /api/ai-dialogue/key','GET/POST /api/services/battle.ai_dialogue'],'editable':['当前客户端','触发方式与概率','可见范围、间隔、每局调用上限','快速模型、语言、提示词和机师设定'],'revision_field':'revisions and content_revisions','scope':'密钥只通过本机专用写入入口保存，读接口仅返回 has_api_key。不得将密钥放入普通 Mod 设置、提示词、日志、共享配置或 AI 问题说明。'}
         settings={**settings,'管理操作契约':capabilities.get(provider_id,{})}
         paths=[str(value) for key,value in settings.items() if isinstance(value,str) and key not in ('demo',) and value]
         addresses=[base_url+'/api/providers/'+provider_id+'/config']

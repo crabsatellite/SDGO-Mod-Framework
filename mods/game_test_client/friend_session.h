@@ -1,4 +1,5 @@
 #pragma once
+#include "sdgo/ai_dialogue_observer.h"
 #include <algorithm>
 #include <cstdio>
 #include <string>
@@ -196,6 +197,14 @@ class FriendSession {
         if(storageWrite_)storageWrite_(f);
         fprintf(f,"[capture]\npending=%u\nhresult=%lu\n",capturePending_?1u:0u,static_cast<unsigned long>(captureResult_));
         if(pvpActions_)pvpActions_->Append(f);
+        if(const auto library=GetModuleHandleW(L"ai_dialogue.dll")) {
+            const auto get=reinterpret_cast<SdgoAiDialogueGetStatusV1Fn>(GetProcAddress(library,SDGO_AI_DIALOGUE_OBSERVER_EXPORT));
+            SdgoAiDialogueStatusV1 value{};value.size=sizeof(value);value.version=1;
+            if(get&&get(&value)) {
+                char line[1600]{};WideCharToMultiByte(CP_UTF8,0,value.last_line,-1,line,sizeof(line),nullptr,nullptr);
+                fprintf(f,"[ai_dialogue]\nenabled=%u\nroom_visibility=%u\nbattle=%u\nrequests=%u\ncompleted=%u\nreceived=%u\nfailures=%u\nlast_line=%s\n",value.enabled,value.room_visibility,value.battle,value.requests,value.completed,value.received,value.failures,line);
+            }
+        }
         if(const auto module=GetModuleHandleW(L"scene_lifecycle_fix.dll")) {
             const auto status=reinterpret_cast<SdgoSceneLifecycleGetStatusV1Fn>(
                 GetProcAddress(module,SDGO_SCENE_LIFECYCLE_STATUS_EXPORT));

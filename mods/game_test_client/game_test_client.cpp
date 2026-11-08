@@ -26,6 +26,29 @@
 #include "shop_catalog_actions.h"
 #include "operator_session_actions.h"
 #include "sdgo/net_route_observer.h"
+#include "sdgo/ai_dialogue_observer.h"
+
+namespace {
+void CaptureOptionalDialogueFrame(uint32_t number);
+void ObserveOptionalDialogue(const SdgoGameTestContextV1* context,bool finish=false) {
+    const auto library=GetModuleHandleW(L"ai_dialogue.dll");
+    const auto get=library?reinterpret_cast<SdgoAiDialogueGetStatusV1Fn>(GetProcAddress(library,SDGO_AI_DIALOGUE_OBSERVER_EXPORT)):nullptr;
+    if(!get)return;
+    SdgoAiDialogueStatusV1 status{};status.size=sizeof(status);status.version=1;
+    if(!get(&status)||!status.enabled)return;
+    static uint32_t seen=0;
+    if(status.completed>seen) {
+        char line[1800]{};WideCharToMultiByte(CP_UTF8,0,status.last_line,-1,line,sizeof(line),nullptr,nullptr);
+        char message[2000]{};sprintf_s(message,"AI dialogue native dispatch battle=%u completed=%u kind=%u speaker=%08X target=%u line=%s",status.battle,status.completed,status.last_kind,status.last_speaker,status.last_target,line);
+        context->Observe(message);seen=status.completed;
+        CaptureOptionalDialogueFrame(status.completed);
+    }
+    if(finish) {
+        context->Assert(status.failures==0,"optional AI dialogue copied native battle facts and dispatched replies without a bridge fault");
+        context->Assert(status.requests>0&&status.completed>0,"optional AI dialogue completed a background reply in this genuine native battle");
+    }
+}
+}
 #include "mission_flow_actions.h"
 #include "sdgo/mission_ai_client_observer.h"
 #include "sdgo/battle_ai_observer.h"
@@ -206,6 +229,10 @@ QuietSockets quietSockets;
 QuietAudio quietAudio;
 QuietGraphics quietGraphics;
 BattleAiPerformanceProbe battleAiPerformance;
+void CaptureOptionalDialogueFrame(uint32_t number) {
+    const auto path=sdgo_test::directory+L"\\ai-dialogue-"+std::to_wstring(number)+L".bmp";
+    quietGraphics.CaptureNextFrame(path.c_str());
+}
 bool captureNativeFrames=false;
 bool unitPagesOnly=false;
 bool activityDrawOnce=false;
@@ -1277,6 +1304,7 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
         if (reviewFootage && rosterClosedForReview) scoreboardInput.Hold(false);
         if(!battleAiBehavior.Observe(context,live)) return SDGO_GAME_TEST_FAIL;
         if(!nativeDeathProbe.Observe(context)) return SDGO_GAME_TEST_FAIL;
+        ObserveOptionalDialogue(context);
         SdgoPvpAiClientStartStatusV1 nativeControl{};
         nativeControl.size=sizeof(nativeControl);nativeControl.version=SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
         if(getStartStatus) getStartStatus(&nativeControl);
@@ -1331,6 +1359,7 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
         context->Assert(1, "Lua observation stayed available with zero errors through the entire real battle");
         battleAiBehavior.Finish(context);
         nativeDeathProbe.Finish(context);
+        ObserveOptionalDialogue(context,true);
         nativePlayerCombat.Finish(context,scoreboardInput);
         context->Assert(reviewFootage || (scoreboardCombatSequence == activeBattleStartSequence && scoreboardCombatChanges > 0),
             "the native TAB kill/assist/points renderer reflected actual AI combat-counter changes during this full battle");

@@ -10,6 +10,14 @@
 
 #include "sdgo/sdgo_api.h"
 #include "sdgo/shop_labels.h"
+#include "sdgo/native_text_decoders.h"
+
+namespace {SdgoNativeTextDecoderV1 g_decoders[8]{};unsigned g_decoderCount=0;}
+extern "C" __declspec(dllexport) int __cdecl SdgoRegisterNativeTextDecoderV1(const SdgoNativeTextDecoderV1* sink) {
+    if(!sink||sink->size!=sizeof(*sink)||sink->version!=1||!sink->decode)return 0;
+    for(unsigned i=0;i<g_decoderCount;++i)if(g_decoders[i].decode==sink->decode&&g_decoders[i].user==sink->user)return 1;
+    if(g_decoderCount>=8)return 0;g_decoders[g_decoderCount++]=*sink;return 1;
+}
 
 namespace {
 using sdgo::shop::Option;
@@ -96,6 +104,8 @@ const wchar_t* Borrow(std::wstring text)
 
 const wchar_t* __cdecl Convert(UINT codePage, const char* text)
 {
+    for(unsigned i=0;i<g_decoderCount;++i)
+        if(const auto* decoded=g_decoders[i].decode(codePage,text,g_decoders[i].user))return decoded;
     Option option = {};
     if (codePage == 874 && ReadOption(text, &option)) {
         // A host caption must never hide the actual rental/permanent status.

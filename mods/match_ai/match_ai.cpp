@@ -75,6 +75,28 @@ extern "C" __declspec(dllexport) int __cdecl SdgoMatchAiRegisterMissionV1(
 #include "transform_notice.h"
 #include "gate_status_observer.h"
 #include "room_host.h"
+#include "sdgo/match_ai_events.h"
+
+namespace {
+    SdgoMatchAiEventsV1 g_eventSinks[8]{};
+    unsigned g_eventSinkCount=0;
+    void NotifyTick(uint8_t* mode,uint32_t sequence) {
+        for(unsigned i=0;i<g_eventSinkCount;++i)if(g_eventSinks[i].tick)
+            g_eventSinks[i].tick(mode,sequence,g_eventSinks[i].user);
+    }
+    void NotifyPacket(uint16_t opcode,const uint8_t* packet) {
+        for(unsigned i=0;i<g_eventSinkCount;++i)if(g_eventSinks[i].packet)
+            g_eventSinks[i].packet(opcode,packet,g_eventSinks[i].user);
+    }
+}
+extern "C" __declspec(dllexport) int __cdecl SdgoMatchAiRegisterEventsV1(const SdgoMatchAiEventsV1* sink) {
+    if(!sink||sink->size!=sizeof(*sink)||sink->version!=1||(!sink->tick&&!sink->packet))return 0;
+    for(unsigned i=0;i<g_eventSinkCount;++i)
+        if(g_eventSinks[i].tick==sink->tick&&g_eventSinks[i].packet==sink->packet&&g_eventSinks[i].user==sink->user)return 1;
+    if(g_eventSinkCount>=8)return 0;
+    // Registration happens during queued Mod load, before native startup.
+    g_eventSinks[g_eventSinkCount++]=*sink;return 1;
+}
 
 namespace
 {
@@ -588,6 +610,9 @@ namespace
     int __fastcall ServicePacket(void* self, void* /*edx*/, int a, int b, int c, int opcode, void* packet)
     {
         const uint16_t operation = static_cast<uint16_t>(opcode);
+        // Battle combat packets have their own master dispatcher. The service
+        // dispatcher observes lobby/start traffic, not authoritative kills.
+        if(operation!=0x0570)NotifyPacket(operation,static_cast<const uint8_t*>(packet));
         bool createReply = false;
         uint32_t createdRoom = 0;
         uint16_t createError = 0;
@@ -1024,6 +1049,7 @@ namespace
     int __fastcall ModeUpdate(uint8_t* mode,void*)
     {
         const int result=g_classes[I].updateOriginal(mode);
+        NotifyTick(mode,static_cast<uint32_t>(InterlockedCompareExchange(&g_receivedBattleStartCount,0,0)));
         if(mode==g_botMode&&g_aiEnabled) {
             InterlockedIncrement(&g_forcedPadTicks);
             GuardedUpdateForcedPads();
@@ -2821,6 +2847,8 @@ namespace
     int __fastcall PacketDispatch(void* self, void* /*edx*/, int a, int b, int c, int opcode, void* packet)
     {
         int op = opcode & 0xFFFF;
+        // 004DC16C dispatches 0570 to the original 004D8AC0 death consumer.
+        if(op==0x0570)NotifyPacket(static_cast<uint16_t>(op),static_cast<const uint8_t*>(packet));
         if (g_logPackets && g_packetLines < 3000) {
             if (op == g_lastOpcode) {
                 ++g_opcodeRepeat;
@@ -2972,12 +3000,22 @@ namespace
 
 #include "observer.inl"
 
+extern "C" __declspec(dllexport) uint32_t __cdecl SdgoMatchAiGetLifeCostV1(uint32_t pilot) {
+    for(const auto& bot:g_botTable)if(bot.pilotId==pilot) {
+        const auto* deck=FindStartDeck(pilot);
+        const int form=bot.form>=0&&bot.form<4?bot.form:0;
+        return deck&&deck->lifeCost[form]>0?deck->lifeCost[form]:0;
+    }
+    return 0;
+}
+
 extern "C" __declspec(dllexport) int __cdecl
 SdgoMatchAiMissionTickV1(uint8_t* mode)
 {
     if (!mode || !g_api)
         return 0;
     __try {
+        NotifyTick(mode,static_cast<uint32_t>(InterlockedCompareExchange(&g_receivedBattleStartCount,0,0)));
         InterlockedIncrement(
             &g_missionForcedPadTicks);
         UpdateMissionForcedPads(mode);
@@ -3629,10 +3667,9 @@ SDGO_MOD_ENTRY
         InstallFaultLogger();
         if (!api->HookCode(mod, "game.log", reinterpret_cast<void*>(&GameLog), reinterpret_cast<void**>(&g_originalGameLog)))
             api->Log(mod, SDGO_LOG_WARN, "game log copy not available");
-        if (!api->HookCode(mod, "game.packet_dispatch", reinterpret_cast<void*>(&PacketDispatch),
-                           reinterpret_cast<void**>(&g_originalPacketDispatch)))
-            api->Log(mod, SDGO_LOG_WARN, "packet logging not available");
     }
+    if (!api->HookCode(mod, "game.packet_dispatch", reinterpret_cast<void*>(&PacketDispatch),
+                       reinterpret_cast<void**>(&g_originalPacketDispatch)))return 0;
     // Without this an AI player of modes 6 and 7 has one unit, and in mode 7 its team gauge
     // counts only that.
     if (!api->HookCode(mod, "service.dispatch_packet", reinterpret_cast<void*>(&ServicePacket),

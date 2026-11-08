@@ -44,5 +44,8 @@
       "activation": "restart_required"
     }
   ],
-  "presentation": "configurable"
+  "presentation": "configurable",
+  "provides": {
+    "native.text_decoder": 1
+  }
 }

@@ -68,6 +68,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Mission behavior profiles <!-- catalog: `mission_behavior`, `mission_behavior_server` --> | Select paired OC-default or current GCO mission behavior for one client and every Battle channel in a server group | [Use](docs/mission-behavior.md) |
 | PvP AI <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` adds AI opponents and teammates with synchronized starts, transformations and scoreboards; group humans or choose fill rules and counts | [Use](docs/pvp-ai.md) |
 | AI mech catalog (optional) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools | [Use](docs/ai-catalog.md) |
+| AI pilot dialogue (optional) <!-- catalog: `ai_dialogue` --> | Battle-aware character replies and teammate suggestions; your DeepSeek key, off by default, local or room visibility | [Use](docs/ai-dialogue.md) |
 | Battle contribution rewards <!-- catalog: `battle_rewards` --> | Contribution GB/MB, configurable human multipliers and optional per-account gathering rewards | [Use](docs/battle-rewards.md) |
 | Collection capsule <!-- catalog: `collection_capsule` --> | Missing-unit activity machine with configurable price and limits, plus native encyclopedia acquisition hints; 15 per week by default | [Use](docs/collection-capsule.md) |
 | Per-round random loadouts <!-- catalog: `room_random`, `room_random_client` --> | `!rand` draws owned units or decks each round; native loadout tasks settle before start | [Use](docs/room-random.md) |

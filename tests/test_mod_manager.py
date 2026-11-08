@@ -224,7 +224,7 @@ class ManagerTests(unittest.TestCase):
     def test_services_have_one_manager_api_and_legacy_worker_api_is_gone(self):
         status,data=self.call('GET','/api/services')
         self.assertEqual(status,200)
-        self.assertEqual([service['id'] for service in data['services']],['rewards.wallet','calendar.gifts','announcements.news'])
+        self.assertEqual([service['id'] for service in data['services']],['rewards.wallet','calendar.gifts','announcements.news','battle.ai_dialogue'])
         self.assertTrue(all(service['owner']=='manager' for service in data['services']))
         self.assertFalse(data['services'][1]['desired'])
         self.assertFalse(data['services'][1]['running'])

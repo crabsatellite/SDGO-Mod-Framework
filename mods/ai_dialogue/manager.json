@@ -1,0 +1,170 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "ai_dialogue",
+  "title": "AI 机师互动台词",
+  "category": "gameplay",
+  "hosts": [
+    "client"
+  ],
+  "presentation": "configurable",
+  "provider": "ai_dialogue",
+  "provider_audience": "user",
+  "configuration_files": [
+    "personas.json",
+    "prompt.txt"
+  ],
+  "description": "以当前战况和机师人设生成短句，支持概率或每次触发，仅自己可见或发到战斗频道。默认关闭，API 密钥仅保存在本机。",
+  "mechanism": "读取原生击破通知及本局阵容，Manager 在后台异步调用快速模型；按场次和请求标识丢弃过期回复。只响应与本机玩家有关的击破，队友建议按真人确定归属。公开包不包含 API 密钥。",
+  "dependencies": {
+    "required": [
+      {
+        "id": "match_ai",
+        "minimum": "0.1.15",
+        "capability": "battle.events.client",
+        "capability_version": 1,
+        "when": {
+          "setting": "enabled",
+          "equals": true
+        }
+      }
+    ],
+    "optional": [
+      {
+        "id": "shop_labels",
+        "minimum": "0.1.2",
+        "capability": "native.text_decoder",
+        "capability_version": 1
+      }
+    ]
+  },
+  "settings": [
+    {
+      "id": "enabled",
+      "key": "Enabled",
+      "label": "启用 AI 互动台词",
+      "type": "boolean",
+      "default": false,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "hot_reload"
+    },
+    {
+      "id": "trigger",
+      "key": "Trigger",
+      "label": "触发方式",
+      "type": "choice",
+      "default": "probability",
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "hot_reload",
+      "options": [
+        "always",
+        "probability"
+      ]
+    },
+    {
+      "id": "probability_percent",
+      "key": "ProbabilityPercent",
+      "label": "每次事件触发概率（%）",
+      "type": "integer",
+      "default": 35,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "hot_reload",
+      "minimum": 0,
+      "maximum": 100
+    },
+    {
+      "id": "visibility",
+      "key": "Visibility",
+      "label": "可见范围",
+      "type": "choice",
+      "default": "local",
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "hot_reload",
+      "options": [
+        "local",
+        "room"
+      ]
+    },
+    {
+      "id": "cooldown_seconds",
+      "key": "CooldownSeconds",
+      "label": "发言最短间隔（秒，0 为不限制）",
+      "type": "integer",
+      "default": 8,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "hot_reload",
+      "minimum": 0,
+      "maximum": 300
+    },
+    {
+      "id": "max_lines",
+      "key": "MaxLines",
+      "label": "每局最多调用次数（含失败）",
+      "type": "integer",
+      "default": 24,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "hot_reload",
+      "minimum": 1,
+      "maximum": 1000
+    },
+    {
+      "id": "team_talk",
+      "key": "TeamTalk",
+      "label": "启用队友集火和掩护建议",
+      "type": "boolean",
+      "default": true,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "hot_reload"
+    },
+    {
+      "id": "endpoint",
+      "key": "Endpoint",
+      "label": "DeepSeek API 地址",
+      "type": "string",
+      "default": "https://api.deepseek.com",
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "hot_reload",
+      "max_length": 512
+    },
+    {
+      "id": "model",
+      "key": "Model",
+      "label": "快速模型名称",
+      "type": "string",
+      "default": "deepseek-flash",
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "hot_reload",
+      "max_length": 100
+    },
+    {
+      "id": "language",
+      "key": "Language",
+      "label": "台词语言",
+      "type": "string",
+      "default": "简体中文",
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "hot_reload",
+      "max_length": 100
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "personas": [
+    {
+      "unit_ids": [],
+      "name_patterns": [
+        "强袭自由",
+        "攻擊自由",
+        "Strike Freedom",
+        "自由高达",
+        "自由鋼彈",
+        "Freedom Gundam"
+      ],
+      "pilot": "基拉·大和",
+      "series": "机动战士高达 SEED",
+      "personality": "温和克制，珍惜生命；认可对手，不以杀人为乐，遇到围攻会冷静应对"
+    },
+    {
+      "unit_ids": [],
+      "name_patterns": [
+        "无限正义",
+        "無限正義",
+        "Infinite Justice",
+        "正义高达",
+        "Justice Gundam"
+      ],
+      "pilot": "阿斯兰·萨拉",
+      "series": "机动战士高达 SEED",
+      "personality": "认真稳重，重视同伴，偶尔严厉指出对方的战术问题"
+    },
+    {
+      "unit_ids": [],
+      "name_patterns": [
+        "命运高达",
+        "命運鋼彈",
+        "Destiny Gundam"
+      ],
+      "pilot": "真·飞鸟",
+      "series": "机动战士高达 SEED DESTINY",
+      "personality": "直率急躁，好胜心强，失利时容易不服气，但在乎队友"
+    }
+  ]
+}
