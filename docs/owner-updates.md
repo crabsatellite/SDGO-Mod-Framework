@@ -13,7 +13,7 @@ The default Mod source uses official GitHub Releases. Compatible Git SSH/HTTPS f
 1. Place Manager from the official release in the compatible client folder and launch it, or add that folder in Manager.
 2. Under owner configuration and content updates, enter the owner's URL or the local path to server-profile.json / profile-source.json.
 3. Select the one-click install/follow action. Manager imports both bindings, fetches the locked programs and owner content separately, verifies them and installs them in one transaction.
-4. Start the game through its original entry. While Manager runs, automatic following checks for updates and waits for the game to close. If the running Manager needs replacement, use the displayed restart action.
+4. Double-click `GOnline.exe`. Manager shows startup progress, synchronizes the locked programs and content, verifies the installation and then opens the game.
 
 The binding is sdgo/client-source.json schema_version=3; the content manifest is server-profile.json. Git reuses the reader's existing credentials, SSH keys and agent; bindings never store passwords or tokens.
 
@@ -22,6 +22,16 @@ The page reports the current file, received bytes, verified file counts, staging
 A backup source must supply the same locked manifest and file digests. Download failure cannot switch the attempt to another revision, content set or official defaults. Installation begins only after all required files verify. Missing, corrupted, cancelled or interrupted content is never reported as success; installation failure restores the original files.
 
 An imported binding can select program mirrors for the same publisher and transport. The owner still controls the locked program version and channel. If the owner migrates the transport type, Manager uses that declared transport with the same integrity checks.
+
+## Updates before launch
+
+Bound player clients use the framework loader and the same Manager update worker. Install a matching Manager and loader from the current release; no separate gameplay Mod, launcher or replacement original executable is needed. Unbound clients and directories explicitly maintained as owner DIY retain their ordinary startup behavior.
+
+Each launch checks the selected owner's current profile, downloads required program and content files, commits the verified installation and checks the remote revision again. The game opens after the effective managed files match. The official program source does not override the owner's version lock or shared settings. Background automatic following and this startup check are separate: stopping periodic following does not bypass startup verification.
+
+Progress includes checking, received bytes or file counts, installation and launch. Slow downloads have no total-time or minimum-speed limit. An error leaves the game closed and offers Retry or Cancel; verified downloads remain available. Repeated clicks during one pending launch share one update and launch. If an update requires a running game or Manager to close, the progress window waits for normal exit or the existing Manager restart transaction; it never terminates a player's game.
+
+The loader exits the initial process before replacement and accepts a single-use, short-lived launch permit bound to this client, its source and its verified receipt. Manager preserves the original arguments. A missing or outdated Manager shows an actionable error; incomplete content cannot be used as an offline success path. Explicitly imported offline profiles verify their declared local source.
 
 ## Owner publication
 

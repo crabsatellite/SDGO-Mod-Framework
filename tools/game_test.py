@@ -4391,7 +4391,7 @@ def has_run_end(path: Path) -> bool:
     return False
 
 
-def spawn_entry(metadata: dict, receipt_dir: Path, quiet_runtime=None):
+def spawn_entry(metadata: dict, receipt_dir: Path, quiet_runtime=None, *, through_manager=False):
     client = metadata["client"]
     plan = metadata["plan"]
     entry = Path(client["entry"])
@@ -4401,6 +4401,9 @@ def spawn_entry(metadata: dict, receipt_dir: Path, quiet_runtime=None):
         arguments.extend([plan["target_host"], str(plan["login_port"])])
     environment = os.environ.copy()
     environment["SDGO_GAME_TEST_RUN"] = metadata["run_id"]
+    environment.pop('SDGO_LAUNCH_PERMIT',None)
+    environment.pop('SDGO_GAME_TEST_LAUNCH_GATE',None)
+    if through_manager:environment['SDGO_GAME_TEST_LAUNCH_GATE']=metadata['run_id']
     environment["SDGO_GAME_TEST_ROLE"] = "client"
     environment["SDGO_GAME_TEST_PLAN"] = str(
         Path(client["root"]) / "sdgo" / "gametest" / "run.ini"
@@ -4513,7 +4516,37 @@ def native_record_lifecycle_proof(metadata):
         raise GameTestError('native record lifecycle verification failed: '+str(error)) from error
 
 
-def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 30.0, *, on_process=None, on_poll=None) -> dict:
+def wait_for_manager_game_process(entry_process, expected_game: Path, timeout: float) -> dict | None:
+    """Observe a root-bound startup receipt instead of mistaking the gate for the game."""
+    from manager import launch
+    root=expected_game.parent.resolve();deadline=time.monotonic()+timeout
+    handle=getattr(entry_process,'_process_handle',None)or getattr(entry_process,'_handle',None)
+    if not handle:raise GameTestError('Manager startup observation requires the held entry process identity')
+    kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+    kernel.GetProcessTimes.argtypes=(wintypes.HANDLE,*([ctypes.POINTER(wintypes.FILETIME)]*4))
+    times=[wintypes.FILETIME()for _ in range(4)]
+    if not kernel.GetProcessTimes(handle,*[ctypes.byref(value)for value in times]):raise ctypes.WinError(ctypes.get_last_error())
+    created=(times[0].dwHighDateTime<<32)|times[0].dwLowDateTime
+    while time.monotonic()<deadline:
+        for path in launch.folder(root).glob('*.result.json'):
+            value=storage_json(path)
+            if(value.get('origin_pid')!=entry_process.pid or value.get('origin_created')!=created or
+               value.get('status')!='launched'or not re.fullmatch('[0-9a-f]{64}',str(value.get('request_sha256','')))):continue
+            pid=value.get('pid');image=process_image_path(pid)if type(pid)is int else None
+            if image and Path(image).resolve()==expected_game.resolve():
+                return {'pid':pid,'image_path':image,'manager_startup':value}
+        time.sleep(.1)
+    return None
+
+
+def storage_json(path):
+    # A receipt can be replaced between existence and read; malformed JSON is
+    # never a matching startup proof.
+    try:return json.loads(Path(path).read_bytes())
+    except(OSError,ValueError):return {}
+
+
+def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 30.0, *, on_process=None, on_poll=None, through_manager=False) -> dict:
     run_dir = run_dir.resolve()
     validate_metadata(run_dir)
     lock, token = acquire_lock(run_dir)
@@ -4537,6 +4570,8 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
     game_process = None
     quiet_runtime = None
     native_exit_waiter = None
+    manager_exit_waiter = None
+    manager_child_exited = False
     handles = []
     started = utc_now()
     try:
@@ -4550,7 +4585,7 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
             quiet_runtime.start()
         with NamedStartupEvent():
             try:
-                entry_process, stdout, stderr = spawn_entry(metadata, receipt_dir,quiet_runtime)
+                entry_process, stdout, stderr = spawn_entry(metadata, receipt_dir,quiet_runtime,through_manager=through_manager)
                 handles.extend((stdout, stderr))
                 if on_process:
                     on_process(entry_process.pid, Path(metadata['client']['entry']))
@@ -4568,7 +4603,7 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
                 atomic_write(run_dir / "run.json", json.dumps(metadata, indent=2, sort_keys=True))
                 return build_report(run_dir)
 
-            game_process = wait_for_owned_game_process(
+            game_process = wait_for_manager_game_process(entry_process,Path(metadata['client']['game']),launch_timeout)if through_manager else wait_for_owned_game_process(
                 entry_process,
                 Path(metadata["client"]["entry"]),
                 Path(metadata["client"]["game"]),
@@ -4601,8 +4636,12 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
                 "timed_out": False,
                 "error": None,
             }
+            if through_manager:
+                metadata['execution']['entry_initial_thread_id']=0
+                metadata['execution']['manager_startup']=game_process['manager_startup']
             if metadata['plan'].get('unit_scenario',{}).get('native_record_lifecycle'):
                 native_exit_waiter=NativeClientExitWaiter(game_process['pid'])
+            if through_manager:manager_exit_waiter=NativeClientExitWaiter(game_process['pid'])
             if on_process:
                 on_process(game_process['pid'], Path(game_process['image_path']))
             metadata["status"] = "running"
@@ -4665,6 +4704,13 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
                 metadata['execution']['entry_stop_wait_retried']=True
         if game_process and (not entry_process or game_process['pid'] != entry_process.pid):
             cleanup('verified child stop',lambda:terminate_verified_process(game_process["pid"], Path(metadata["client"]["game"])))
+        if manager_exit_waiter:
+            def confirm_manager_child_exit():
+                nonlocal manager_child_exited
+                metadata['execution']['manager_child_exit_code']=manager_exit_waiter.wait()
+                manager_child_exited=True
+            cleanup('Manager-launched child exit',confirm_manager_child_exit)
+            cleanup('Manager-launched child observation handle close',manager_exit_waiter.close)
         cleanup('owned entry stop',stop_entry)
         if native_exit_waiter:cleanup('native exit observation handle close',native_exit_waiter.close)
         for handle in handles:
@@ -4676,7 +4722,7 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
         owned_alive=True
         try:
             owned_alive=bool(entry_process and entry_process.poll() is None)
-            if game_process and (not entry_process or game_process['pid']!=entry_process.pid):
+            if game_process and not manager_child_exited and (not entry_process or game_process['pid']!=entry_process.pid):
                 owned_alive=owned_alive or any(row['pid']==game_process['pid'] for row in process_snapshot())
         except Exception as error:cleanup_errors.append(f'owned exit readback: {type(error).__name__}: {error}')
         if not owned_alive:

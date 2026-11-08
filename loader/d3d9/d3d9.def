@@ -10,3 +10,4 @@ EXPORTS
     D3DPERF_SetOptions = Shim_D3DPERF_SetOptions
     D3DPERF_SetRegion = Shim_D3DPERF_SetRegion
     SdgoDirect3DCreate9Target = Shim_SdgoDirect3DCreate9Target
+    SdgoLaunchGateProtocol = Shim_SdgoLaunchGateProtocol

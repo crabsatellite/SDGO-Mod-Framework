@@ -41,6 +41,8 @@ extern "C" FARPROC WINAPI Shim_SdgoDirect3DCreate9Target()
     return Real<FARPROC>("Direct3DCreate9");
 }
 
+extern "C" DWORD WINAPI Shim_SdgoLaunchGateProtocol() { return 1; }
+
 extern "C" IDirect3D9* WINAPI Shim_Direct3DCreate9(UINT sdkVersion)
 {
     EarlyBoot();
