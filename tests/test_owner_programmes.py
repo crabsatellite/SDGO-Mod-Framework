@@ -222,7 +222,7 @@ class OwnerProgrammes(unittest.TestCase):
         directory=self.root/'approved-programmes'
         with patch('manager.framework_source.load',return_value=self.framework)as load:
             self.controller.publish_programmes('client',str(directory),['local+'+(directory/p.MANIFEST).as_uri()],[],channel='stable')
-        self.assertEqual(load.call_args.kwargs['constraints']['locked_framework']['commit'],self.framework['commit'])
+        self.assertEqual(load.call_args.args[2]['locked_framework']['commit'],self.framework['commit'])
 
 
 if __name__ == '__main__': unittest.main()
