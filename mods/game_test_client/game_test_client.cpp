@@ -77,6 +77,7 @@ void ObserveOptionalDialogue(const SdgoGameTestContextV1* context,bool finish=fa
 #include "native_error_popup_probe.h"
 #include "native_packet_ingress_probe.h"
 #include <cwchar>
+#include <algorithm>
 #include <array>
 
 namespace {
@@ -173,6 +174,8 @@ int ocAllocateStat=-1,ocAllocatePoints=0; // first entry
 bool ocMobility=false;
 // Open the original factory upgrade page at the end and check the OC panel.
 bool ocPanel=false;
+// Room systems: the PvP room title carries !oc, so the battle plays OC.
+bool ocRoom=false;
 // Also press the panel's OC challenge (it can change the unit's OC level).
 bool ocChallenge=false;
 bool collectionDraw=false;
@@ -579,6 +582,7 @@ bool LoadPlan() {
         ocAllocateStat=ocAllocations.front().stat;ocAllocatePoints=ocAllocations.front().points;
     }
     ocPanel=GetPrivateProfileIntW(L"run",L"oc_panel",0,job.c_str())!=0;
+    ocRoom=GetPrivateProfileIntW(L"run",L"oc_room",0,job.c_str())!=0;
     ocChallenge=GetPrivateProfileIntW(L"run",L"oc_challenge",0,job.c_str())!=0;
     if(hangarConfirmGb && (ocPanel || loginRecovery.Enabled()))return false;
     if(ocChallenge && !ocPanel && ocAllocateStat<0)return false;
@@ -3405,6 +3409,8 @@ int __cdecl OcAllocate(const SdgoGameTestContextV1* context) {
     bool match=true;for(size_t i=0;i<6;++i)match=match && s.normal[i]==expected[i];
     context->Assert(match,"the stored OC allocation increased by exactly the requested points");
     context->Assert(s.revision>beforeRevision,"the OC profile revision advanced after the saves");
+    if(s.record_custom[0]||s.record_custom[1]||s.record_custom[2]||s.record_custom[3])
+        nativePacketIngressProbe.SetNeedle(reinterpret_cast<const uint8_t*>(s.record_custom),sizeof(s.record_custom));
     char message[256];sprintf_s(message,"oc allocation saved uid=%llu normal=%u/%u/%u/%u/%u/%u revision=%u->%u normal_left=%u",
         static_cast<unsigned long long>(s.unit_uid),s.normal[0],s.normal[1],s.normal[2],s.normal[3],s.normal[4],s.normal[5],beforeRevision,s.revision,s.normal_points_left);
     context->Observe(message);
@@ -3414,13 +3420,52 @@ const SdgoGameTestCaseV1 ocAllocateCase{"oc.allocate",180000,&OcAllocate};
 // Battle: the local unit received the play unit's OC speed and agility gains in
 // the native stat setup (DashLevel at unit +0xB64, MotivePower at +0xB6A,
 // before the movement values are derived from them).
+void ObserveSkillPackets(const SdgoGameTestContextV1* context) {
+    NativePacketIngressProbe::NeedleMatch matches[NativePacketIngressProbe::NeedleCapacity]{};
+    const auto count=nativePacketIngressProbe.NeedleMatches(matches,NativePacketIngressProbe::NeedleCapacity);
+    std::string line="oc custom skills found in inbound packets:";
+    if(!count)line+=" none";
+    for(uint32_t i=0;i<count;++i){
+        char item[80];sprintf_s(item," %04X size=%u offset=%u x%u",matches[i].opcode,matches[i].size,matches[i].offset,matches[i].count);
+        line+=item;
+    }
+    context->Observe(line.c_str());
+}
 int __cdecl OcMobility(const SdgoGameTestContextV1* context) {
     if(!ocObserver.Bind()){context->Assert(0,"the OC client Mod exposes its observer exports");return SDGO_GAME_TEST_FAIL;}
     SdgoOcCustomClientSnapshotV2 s{};
     if(!ocObserver.Read(s)){context->Assert(0,"the OC client observer snapshot is readable");return SDGO_GAME_TEST_FAIL;}
+    if(s.server_room_rule && (s.mobility_room_skips || s.mobility_applied))ObserveSkillPackets(context);
+    if(s.server_room_rule && !ocRoom) {
+        // Room systems: a room without !oc plays the current custom skills, so
+        // the local unit keeps its native levels even with OC points saved.
+        if(!s.mobility_room_skips && context->elapsed_ms<45000)return SDGO_GAME_TEST_WAIT;
+        char message[240];sprintf_s(message,"oc room system room_known=%u system=%u skips=%u applied=%u custom=%u/%u/%u/%u",
+            s.room_known,s.room_system,s.mobility_room_skips,s.mobility_applied,
+            s.record_custom[0],s.record_custom[1],s.record_custom[2],s.record_custom[3]);
+        context->Observe(message);
+        context->Assert(s.room_known && s.room_system==0,"the client read the battle room as a current-system (custom skill) room");
+        context->Assert(s.mobility_room_skips>0 && s.mobility_applied==0,
+            "the saved OC speed/agility gains stayed out of the local unit in a current-system room");
+        char skills[200];sprintf_s(skills,"oc battle unit skills searched=%u offset=%d skills=%u/%u/%u/%u record=%u/%u/%u/%u",s.battle_skills_seen,
+            s.battle_skills_offset,s.battle_skills[0],s.battle_skills[1],s.battle_skills[2],s.battle_skills[3],
+            s.record_custom[0],s.record_custom[1],s.record_custom[2],s.record_custom[3]);
+        context->Observe(skills);
+        return SDGO_GAME_TEST_PASS;
+    }
     if(!s.mobility_applied) {
         if(context->elapsed_ms>45000){context->Assert(0,"the local battle unit received the OC speed/agility gains in its native stat setup");return SDGO_GAME_TEST_FAIL;}
         return SDGO_GAME_TEST_WAIT;
+    }
+    if(s.server_room_rule) {
+        context->Assert(ocRoom && s.room_known && s.room_system==1,"the client read the battle room as an OC room (!oc)");
+        char skills[200];sprintf_s(skills,"oc battle unit skills searched=%u offset=%d skills=%u/%u/%u/%u record=%u/%u/%u/%u",s.battle_skills_seen,
+            s.battle_skills_offset,s.battle_skills[0],s.battle_skills[1],s.battle_skills[2],s.battle_skills[3],
+            s.record_custom[0],s.record_custom[1],s.record_custom[2],s.record_custom[3]);
+        context->Observe(skills);
+        (void)0;
+        context->Assert(s.record_custom[0]||s.record_custom[1]||s.record_custom[2]||s.record_custom[3],
+            "the unit's record still holds its custom skills for current-system rooms");
     }
     const int speed=s.normal[0]*s.normal_gain[0]+s.over[0]*s.over_gain[0];
     const int agility=s.normal[4]*s.normal_gain[4]+s.over[4]*s.over_gain[4];
@@ -5136,7 +5181,7 @@ SDGO_MOD_ENTRY {
     getSnapshot = reinterpret_cast<SdgoPvpAiClientGetSnapshotV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_SNAPSHOT_EXPORT));
     api->HookCode(mod,"game.error_name",reinterpret_cast<void*>(&ObserveNativeErrorName),reinterpret_cast<void**>(&originalErrorName));
     if(!nativePopupProbe.Install(api,mod))return 0;
-    if((earlyNavigationBeforeInventory ||
+    if((earlyNavigationBeforeInventory || ocAllocateStat>=0 ||
         (randomLoadout && api->SettingInt(mod,"LogNativePacketIngress",0)!=0)) &&
        !nativePacketIngressProbe.Install(api,mod))return 0;
     getStartStatus = reinterpret_cast<SdgoPvpAiClientGetStartStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_START_STATUS_EXPORT));

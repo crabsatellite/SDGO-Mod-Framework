@@ -108,6 +108,38 @@ public:
             std::is_standard_layout<PacketPrefix>::value,
         "native packet prefix must remain POD");
 
+    // Optional byte-sequence search (OC room systems): every inbound packet is
+    // searched within its native size; the first match per opcode is kept.
+    struct NeedleMatch
+    {
+        std::uint16_t opcode;
+        std::uint32_t size;
+        std::uint32_t offset;
+        std::uint32_t count;
+    };
+    static constexpr std::uint32_t NeedleCapacity = 16;
+
+    void SetNeedle(const std::uint8_t* bytes, std::uint32_t length)
+    {
+        AcquireSRWLockExclusive(&needleLock_);
+        needleLength_ = length <= sizeof(needle_) ? length : 0;
+        if (needleLength_)
+            std::memcpy(needle_, bytes, needleLength_);
+        matchCount_ = 0;
+        ReleaseSRWLockExclusive(&needleLock_);
+    }
+
+    std::uint32_t NeedleMatches(NeedleMatch* out, std::uint32_t capacity)
+    {
+        AcquireSRWLockShared(&needleLock_);
+        const std::uint32_t count = matchCount_ < capacity ? matchCount_ : capacity;
+        std::memcpy(out, matches_, count * sizeof(NeedleMatch));
+        ReleaseSRWLockShared(&needleLock_);
+        return count;
+    }
+
+    bool Installed() const { return api_ != nullptr; }
+
     bool Install(
         const SdgoApi* api,
         SdgoMod* mod,
@@ -175,6 +207,7 @@ private:
         // This is the only packet-data copy performed by the probe. Never read
         // beyond the native size, including the short two-byte 0880 case.
         std::memcpy(&prefix, packet, copiedBytes);
+        SearchNeedle(static_cast<const std::uint8_t*>(packet), size, prefix.opcode);
         if (!Tracked(prefix.opcode))
             return;
 
@@ -250,9 +283,35 @@ private:
         }
     }
 
+    void SearchNeedle(const std::uint8_t* packet, std::uint32_t size, std::uint16_t opcode) noexcept
+    {
+        AcquireSRWLockExclusive(&needleLock_);
+        if (needleLength_ && size >= needleLength_) {
+            for (std::uint32_t offset = 0; offset + needleLength_ <= size; ++offset) {
+                if (std::memcmp(packet + offset, needle_, needleLength_) != 0)
+                    continue;
+                std::uint32_t slot = 0;
+                while (slot < matchCount_ && matches_[slot].opcode != opcode)
+                    ++slot;
+                if (slot < matchCount_) {
+                    ++matches_[slot].count;
+                } else if (matchCount_ < NeedleCapacity) {
+                    matches_[matchCount_++] = NeedleMatch{opcode, size, offset, 1};
+                }
+                break;
+            }
+        }
+        ReleaseSRWLockExclusive(&needleLock_);
+    }
+
     const SdgoApi* api_ = nullptr;
     SdgoMod* mod_ = nullptr;
     volatile LONG sequence_ = 0;
+    SRWLOCK needleLock_ = SRWLOCK_INIT;
+    std::uint8_t needle_[16] = {};
+    std::uint32_t needleLength_ = 0;
+    NeedleMatch matches_[NeedleCapacity] = {};
+    std::uint32_t matchCount_ = 0;
 };
 
 inline void __cdecl native_packet_ingress_bridge::Dispatch(

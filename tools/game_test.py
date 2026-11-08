@@ -2376,6 +2376,8 @@ def write_job(
         run['run']['play_unit_uid'] = str(plan['play_unit_uid'])
     if 'oc_allocate' in plan:
         run['run']['oc_allocate'] = plan['oc_allocate']
+    if plan.get('oc_room'):
+        run['run']['oc_room'] = '1'
     if plan.get('oc_panel'):
         run['run']['oc_panel'] = '1'
     if plan.get('oc_challenge'):
@@ -2867,6 +2869,10 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             })
         if run.get('oc_allocate'):
             plan['oc_allocate'] = validate_oc_allocate(run['oc_allocate'])
+        if run.get('oc_room') == '1':
+            if not run.get('oc_allocate') or not run['room_title'].endswith(' !oc'):
+                raise ValueError('OC room-system run lacks its sealed !oc room command')
+            plan['oc_room'] = True
         if run.get('oc_panel') == '1':
             plan['oc_panel'] = True
         if run.get('oc_challenge') == '1':
@@ -3225,6 +3231,7 @@ def prepare(
     oc_allocate: str | None = None,
     oc_panel: bool = False,
     oc_challenge: bool = False,
+    oc_room: bool = False,
     server_session: dict | None = None,
     rebind_existing_account: bool = False,
     fps_cap: int | None = None,
@@ -3324,6 +3331,8 @@ def prepare(
         raise GameTestError('--oc-panel requires --play-unit-uid with either --oc-allocate or --pages-only --page-group hangar')
     if type(oc_challenge) is not bool or (oc_challenge and not (oc_panel or oc_allocate is not None)):
         raise GameTestError('--oc-challenge runs inside the OC panel check (--oc-panel or --oc-allocate)')
+    if type(oc_room) is not bool or (oc_room and (oc_allocate is None or random_loadout)):
+        raise GameTestError('--oc-room marks the --oc-allocate PvP room with the !oc room-system command')
     if review_footage and (not quiet or fps_cap is not None):
         raise GameTestError('review footage is a quiet-lane recording profile; it does not apply to visible or FPS runs')
     if capture_native_frames and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,
@@ -3601,6 +3610,11 @@ def prepare(
             plan['room_title']=random_loadout_room_title(plan['title_nonce'], plan)
             plan['random_loadout']=True
         if same_room_rematch:plan['same_room_rematch']=True
+        if oc_room:
+            # Room systems: the !oc command makes the battle play OC on a server
+            # whose OC World Mod runs in room mode.
+            plan['room_title']+=' !oc'
+            plan['oc_room']=True
         if len(plan['room_title'].encode('utf-8'))>20:
             raise GameTestError('Native GameTest room title exceeds twenty bytes; use a shorter rule or separate scenarios')
         plan['network_policy']=network_policy
@@ -5246,6 +5260,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--fps-gameplay-cap',type=int,help='verify native 60 Hz gameplay and the selected render cap during a full PvP battle')
     prepare_parser.add_argument('--oc-allocate',help="OC six-stat acceptance '<stat 0-5>:<points>': allocate normal OC points to the --play-unit-uid unit through the production client Mod before the PvP battle")
     prepare_parser.add_argument('--oc-panel',action='store_true',help='open the original factory upgrade page for the --play-unit-uid unit at the end (after --oc-allocate or the read-only hangar pages) and drive the OC client panel on it: refresh, normal-point reset, one HP point')
+    prepare_parser.add_argument('--oc-room',action='store_true',help='room systems: add the !oc command to the --oc-allocate PvP room title so the battle plays OC (World OC Mod in room mode); without it the room plays the current custom skills')
     prepare_parser.add_argument('--oc-challenge',action='store_true',help='inside the OC panel check, also press the OC challenge (can change the unit\'s OC level)')
     prepare_parser.add_argument(
         "--fps-cap",
@@ -5361,6 +5376,7 @@ def main(argv: list[str] | None = None) -> int:
                 oc_allocate=args.oc_allocate,
                 oc_panel=args.oc_panel,
                 oc_challenge=args.oc_challenge,
+                oc_room=args.oc_room,
             )
         elif args.command == "run":
             result = run_prepared(args.run_dir, args.timeout, args.launch_timeout)

@@ -77,6 +77,21 @@ struct SdgoOcCustomClientSnapshotV2 {
     uint32_t tab_clicks_accepted;  // native tab clicks the menu accepted (it drops some while busy)
     uint32_t item_models_shown;    // ITEM box slots showing their item's 3D model
     uint32_t item_models_loaded;   // item models loaded into the ITEM box so far
+    // Room systems: the server's "room" mode lets each room choose OC or the
+    // current custom skills (room title command !oc).
+    uint32_t server_room_rule;     // mode reply: each room decides the system
+    uint32_t room_known;           // the current room's system has been read
+    uint32_t room_system;          // 0 current custom skills, 1 OC
+    uint32_t mobility_room_skips;  // local stat setups left native because the room plays the current system
+    uint32_t room_list_marks;      // room list rows marked with their room's system
+    uint32_t title_marks;          // waiting-room system labels set
+    int32_t title_mark_system;     // system of the label last shown: 0 current custom skills, 1 OC, -1 none
+    // Whether the local battle unit carries the record's own custom skills:
+    // the client unit (first 16 KB) is searched for the record's four
+    // UnitSkill values at every local stat setup.
+    uint32_t battle_skills_seen;    // local stat setups searched
+    int32_t battle_skills_offset;   // where the record's skills were found, -1 absent
+    uint16_t battle_skills[4];      // the record's custom skills that were searched for
 };
 
 // Actions: 1 refresh; 2 save one more normal point on stat (direct request
