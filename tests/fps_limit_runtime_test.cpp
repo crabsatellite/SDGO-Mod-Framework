@@ -373,12 +373,17 @@ namespace {
     }
 
     __declspec(naked) int __cdecl RenderAdmission(float) {
-        __asm { movss xmm1,dword ptr [esp+4] }
+        __asm { push esi }
+        __asm { mov esi,dword ptr [g_app] }
+        __asm { movss xmm1,dword ptr [esp+8] }
         __asm { xorps xmm0,xmm0 }
         __asm { call dword ptr [g_backlogSite] }
+        __asm { pop esi }
         __asm { ret }
     }
     void RunBacklogSuite() {
+        const DWORD priorState=*reinterpret_cast<DWORD*>(g_app+0x4A0);
+        *reinterpret_cast<DWORD*>(g_app+0x4A0)=22;
         BYTE appBefore[kAppBytes],timerBefore[kTimerBytes];
         memcpy(appBefore,g_app,sizeof(appBefore));memcpy(timerBefore,g_timer,sizeof(timerBefore));
         Check(RenderAdmission(0)==1&&RenderAdmission(-0.1f)==1,
@@ -388,6 +393,12 @@ namespace {
                        "disabled or rejected Mod preserves the original backlog render gate");
         Check(memcmp(appBefore,g_app,sizeof(appBefore))==0&&memcmp(timerBefore,g_timer,sizeof(timerBefore))==0,
               "backlog rendering never clears simulation debt, changes timer cadence or writes app state");
+        for(const DWORD state:{DWORD(1),DWORD(18),DWORD(40)}) {
+            *reinterpret_cast<DWORD*>(g_app+0x4A0)=state;
+            Check(RenderAdmission(0.25f)==0&&RenderAdmission(0)==1,
+                  "loading, result and menu transitions retain native render admission");
+        }
+        *reinterpret_cast<DWORD*>(g_app+0x4A0)=priorState;
     }
 
     void __stdcall ObservePresent()

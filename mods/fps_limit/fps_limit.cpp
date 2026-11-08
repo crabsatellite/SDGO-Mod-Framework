@@ -155,12 +155,20 @@ namespace {
 
     // CApplication::Idle otherwise suppresses every render while the native
     // update timer has positive debt. A sustained slow update can therefore
-    // hide many seconds of otherwise continuing gameplay. Retain the compare
-    // and all timer state, but admit rendering; Present still owns the cap.
+    // hide many seconds of otherwise continuing gameplay. Only bypass this
+    // gate in the native battle state (22): loading/reset and menu transitions
+    // retain their original render admission. All timer state stays intact.
     __declspec(naked) void RenderDuringCatchUp()
     {
+        __asm { pushfd }
+        __asm { cmp dword ptr [esi+4A0h],22 }
+        __asm { jne nativeAdmission }
+        __asm { popfd }
         __asm { comiss xmm1,xmm0 }
         __asm { jmp dword ptr [g_backlogResume] }
+    nativeAdmission:
+        __asm { popfd }
+        __asm { jmp dword ptr [g_backlogOriginal] }
     }
 }
 

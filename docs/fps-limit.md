@@ -35,10 +35,11 @@ Only the rendering ceiling follows this setting. Logic updates remain at the
 native 60 Hz for every cap, including 30, 60, 120 and 160. Resolution, aspect
 ratio and the native clock source are unchanged.
 
-Rendering continues while the simulation catches up after a slow update. This
+In battle, rendering continues while the simulation catches up after a slow update. This
 prevents update debt from hiding otherwise continuing gameplay for several
 seconds in a busy AI battle. The original update scheduling and accumulated
 time are retained; the configured cap still limits actual Present calls.
+Loading and menu transitions retain their original render admission.
 
 The cap is a maximum. Rendering load, vertical sync and display refresh rate
 can reduce the rate you see. Raising the cap does not guarantee higher performance.
