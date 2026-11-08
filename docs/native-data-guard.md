@@ -59,7 +59,7 @@ The material guard validates the two native CModel vector triplets and delegates
 
 The wait-room camera reads a 30-sample table. Both the selection setter and frame update enforce that range; no out-of-range value is written back and no fallback sample is invented. The camera model must also exist before the native update runs. The same update is reached by the native wait-room main states rather than being restricted to a single menu button.
 
-`SdgoNativeDataGuardGetStatusV5` adds unavailable-material, skipped-decal, rejected-camera-index and skipped-camera-update counters while retaining V1–V4. The native bootstrap exercises the genuine hooked entries with private material, selection and unloaded-room receivers; it does not modify a live unit, camera selection or data table. Normal page and room acceptance remains separate from those primitive checks.
+`SdgoNativeDataGuardGetStatusV5` adds unavailable-material, skipped-decal, rejected-camera-index and skipped-camera-update counters while retaining V1–V4. The native bootstrap exercises the genuine hooked entries with private material, selection and unloaded-room receivers; it does not modify a live unit, camera selection or data table.
 
 The initial-inventory guard reads the native `CUnitInfo+0x20` completion flag. It acts at the bottom-menu business and the separate encyclopedia entry, before navigation commands and network requests can replace the initial packet consumer. MyRoom's native inventory bootstrap remains available. The guard does not coalesce inventory requests, fabricate replies or accept `0x279A` and other server errors. Existing scene-transition and music hooks retain their separate ownership.
 

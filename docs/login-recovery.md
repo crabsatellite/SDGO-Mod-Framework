@@ -5,13 +5,13 @@
 ## What it does
 
 After a dropped connection, the original server can reject the player's next login as already
-online. `login_recovery` completes the server's own recovery in that case. After the original authenticated login has
+online, and the client can stay on the login wait. `login_recovery` completes the server's own recovery in that case. After the original authenticated login has
 cleared the previous session, it notifies the old Agent connection and repeats
 the native authentication once in the same request.
 
 Normal logins, incorrect passwords, bans and other authentication failures keep
 their original handling. The Mod does not create accounts or change inventory,
-currencies or credentials. The server and matching client components are Stable.
+currencies or credentials, and it does not repair unrelated network interruptions.
 
 `login_recovery_client` adds bounded recovery for a pending login that stops
 progressing or loses its connection. It uses the native logout and reconnect

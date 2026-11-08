@@ -1,5 +1,7 @@
 # Login unit showcase
 
+[简体中文](login-showcase.zh-CN.md) · [Back to the feature index](../README.md)
+
 Choose the units shown by the original login page in **SDGO Mod Manager → Login unit showcase**.
 
 - **Grades:** choose one or more exact grades. The default is **SS, SR and SU**; ordinary S is a separate choice.

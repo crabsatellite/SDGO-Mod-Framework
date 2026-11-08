@@ -1,17 +1,19 @@
 # Agent room-view error forwarding fix
 
-The original AgentServer routes native room-view error reply `0x0880` to the
-correct authenticated client, but forwards only the first four bytes of the
-eight-byte BattleServer reply. The missing error field makes the client read
-unrelated memory and can produce a misleading error dialog during room
-operations.
+[简体中文](agent-room-view-error-fix.zh-CN.md) · [Back to the feature index](../README.md)
 
-This automatic server fix preserves the complete eight-byte reply at that one
-verified Agent forwarding call. It does not change the destination player,
-native error code, send flags, room logic, or any other packet. The Mod is
-enabled by default and has no settings.
+Fixes occasional error dialogs during room actions that have nothing to do with what actually happened.
 
-Install the Mod on every AgentServer that serves players, then restart those
-AgentServer processes. Clients do not need a matching client-side component.
-If a native room operation really fails, the client still receives and shows
-the original native error.
+## Use
+
+This automatic AgentServer fix is enabled by default, has no settings and is listed under **修复归档** (fix archive)
+in SDGO Mod Manager. Install it on every AgentServer that serves players, then restart those AgentServer processes;
+clients need no matching component. If a room operation really fails, the client still receives and shows the
+original native error.
+
+## Developer notes
+
+The original AgentServer routes native room-view error reply `0x0880` to the correct authenticated client, but
+forwards only the first four bytes of the eight-byte BattleServer reply, so the client reads unrelated memory for the
+missing error field. The Mod preserves the complete eight-byte reply at that one verified Agent forwarding call; the
+destination player, native error code, send flags, room logic and every other packet are unchanged.

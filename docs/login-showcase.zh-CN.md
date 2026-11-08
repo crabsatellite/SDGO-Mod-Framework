@@ -1,5 +1,7 @@
 # 登录页面机体展示
 
+[English](login-showcase.md) · [返回功能目录](../README.zh-CN.md)
+
 在 **SDGO Mod Manager → 登录页面机体展示** 中选择登录页面展示的机体。
 
 - **按等级选择：** 可以同时勾选多个等级。默认勾选 **SS、SR、SU**，普通 S 需要单独选择。

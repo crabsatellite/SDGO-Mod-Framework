@@ -1,6 +1,6 @@
 # 服主配置与内容更新
 
-[English](owner-updates.md) · [统一 Manager](mod-manager.zh-CN.md) · [归属与 SQL 边界](content-boundaries.zh-CN.md)
+[English](owner-updates.md) · [返回功能目录](../README.zh-CN.md) · [统一 Manager](mod-manager.zh-CN.md) · [归属与 SQL 边界](content-boundaries.zh-CN.md)
 
 ## 两条来源
 

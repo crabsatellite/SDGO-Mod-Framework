@@ -1,6 +1,6 @@
 # Owner configuration and content updates
 
-[中文](owner-updates.zh-CN.md) · [Manager](mod-manager.md) · [Content and SQL ownership](content-boundaries.md)
+[简体中文](owner-updates.zh-CN.md) · [Back to the feature index](../README.md) · [Manager](mod-manager.md) · [Content and SQL ownership](content-boundaries.md)
 
 ## Two independent sources
 
