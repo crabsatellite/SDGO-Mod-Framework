@@ -36,6 +36,7 @@ class LaunchGate(unittest.TestCase):
         self.assertEqual(launch.read_request(self.game,self.token)['command'],command)
         self.assertEqual(kwargs['executable'],str(self.game/'GOnline.exe'))
         self.assertEqual(kwargs['env']['SDGO_LAUNCH_PERMIT'],self.token)
+        self.assertIn('RunAsInvoker',kwargs['env']['__COMPAT_LAYER'].split())
         raw=launch.item(self.game,self.token,'permit').read_bytes();magic,expiry,receipt,source,n=launch.PERMIT.unpack_from(raw)
         self.assertEqual(magic,b'SDGOLP01');self.assertEqual(receipt,hashlib.sha256((self.game/client_runtime.RECEIPT).read_bytes()).digest())
         self.assertEqual(source,hashlib.sha256((self.game/client_runtime.SOURCE).read_bytes()).digest())
@@ -55,6 +56,15 @@ class LaunchGate(unittest.TestCase):
         with patch('manager.server_profiles.resolve',wraps=__import__('manager.server_profiles',fromlist=['resolve']).resolve)as resolve:
             self.run_launch();self.assertGreaterEqual(resolve.call_count,2)
         self.assertEqual((self.game/'sprs/new-unit.spr').read_bytes(),b'new custom unit')
+
+    def test_original_handoff_keeps_graphics_compatibility_without_requesting_elevation(self):
+        environment={'__COMPAT_LAYER':'HIGHDPIAWARE RunAsAdmin Win7RTM','SDGO_LAUNCH_PERMIT':self.token}
+        original=environment.copy()
+        with patch.object(launch.subprocess,'Popen',return_value=object())as spawned:
+            launch.start_original('original arguments',self.game,environment)
+        self.assertEqual(environment,original)
+        self.assertEqual(spawned.call_args.kwargs['env']['__COMPAT_LAYER'],'HIGHDPIAWARE Win7RTM RunAsInvoker')
+        self.assertEqual(spawned.call_args.kwargs['env']['SDGO_LAUNCH_PERMIT'],self.token)
 
     def test_correct_snapshot_without_receipt_gets_verified_receipt_before_launch(self):
         plan=self.controller.plan(self.host);self.controller.install(self.host,plan['digest'])

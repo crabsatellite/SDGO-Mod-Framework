@@ -105,6 +105,13 @@ def grant(root,token):
 
 
 def start_original(command,root,env):
+    # A previously opened Manager can have a standard token even when the
+    # original host requests elevation. Keep its current token for this finite
+    # handoff; native hosts must not require another UAC hop to consume a permit.
+    env=dict(env)
+    compatibility=[flag for flag in env.get('__COMPAT_LAYER','').split()
+                   if flag.casefold()not in('runasadmin','runashighest','runasinvoker')]
+    env['__COMPAT_LAYER']=' '.join((*compatibility,'RunAsInvoker'))
     # The frozen Manager's private DLL search directory belongs to Python,
     # not the original game. Restore it for Manager after CreateProcess.
     kernel=None
