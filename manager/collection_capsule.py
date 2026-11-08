@@ -226,10 +226,10 @@ class CollectionCapsule(Provider):
                 result = replace(db, body.get('entries'), dry_run=dry_run)
             result.pop('eligible_roots', None)
             if not dry_run:
-                try:
+                try:  # the list is already committed; a refresh failure is reported, not raised
                     result['hints'] = self.sync_hints()
-                except (OSError, ValueError, RuntimeError) as error:
-                    result['hints'] = {'status': 'failed', 'message': str(error)}
+                except Exception as error:  # noqa: BLE001
+                    result['hints'] = {'status': 'failed', 'message': str(error)[:400]}
             return {**result, 'revision': self.revision()}
         if path == '/api/sync-hints':
             return {**self.sync_hints(), 'revision': self.revision()}

@@ -636,8 +636,8 @@ class CatalogStore:
             if self.before_compile is not None:
                 try:
                     collection_hints = self.before_compile(self.client_path)
-                except (OSError, ValueError, RuntimeError) as error:
-                    collection_hints = {"status": "failed", "message": str(error)}
+                except Exception as error:  # noqa: BLE001 - advisory; never blocks a compile
+                    collection_hints = {"status": "failed", "message": str(error)[:400]}
             from .capsule_client_compile import COMPILER_VERSION, extension_fingerprint
             extension_signature = extension_fingerprint(self.client_path)
             output = runtime_root / f"client-v{COMPILER_VERSION}-{extension_signature[:12]}"

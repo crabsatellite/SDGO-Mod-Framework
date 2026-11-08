@@ -117,13 +117,17 @@ class Units(Provider):
         return state
 
     def _sync_collection_hints(self):
-        """Newly applied families join the collection draw at once; mark them in the catalog too."""
-        collection = self.workspace.providers.get('collection_capsule')
-        if collection is None or not collection.config.get('server_ini'):
-            return {'status': 'not_configured'}
+        """Newly applied families join the collection draw at once; mark them in the catalog too.
+
+        This is an advisory follow-up: it never changes the outcome of the unit
+        operation that already committed.
+        """
         try:
+            collection = (getattr(self.workspace, 'providers', None) or {}).get('collection_capsule')
+            if collection is None or not collection.config.get('server_ini'):
+                return {'status': 'not_configured'}
             return collection.sync_hints()
-        except (OSError, ValueError, RuntimeError) as error:
+        except Exception as error:  # noqa: BLE001 - reported, never raised into the unit job
             return {'status': 'failed', 'message': str(error)[:400]}
 
     def _units_root(self):
