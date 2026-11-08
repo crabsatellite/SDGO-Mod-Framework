@@ -97,6 +97,7 @@ HangarNavigation hangarNavigation;
 LoadingNavigationActions loadingNavigation;
 LoadingNavigationActions::Target earlyNavigationTarget =
     LoadingNavigationActions::kOff;
+bool earlyNavigationBeforeInventory = false;
 BlueprintActions blueprint;
 BlueprintActions::Config blueprintConfig{};
 std::vector<uint32_t> nativeIdProbeIds;
@@ -248,6 +249,31 @@ struct MotionSample {
 };
 std::vector<MotionSample> motionSamples;
 
+enum InventoryGuardStatusRead : uint32_t {
+    kInventoryGuardUnavailable,
+    kInventoryGuardRead,
+    kInventoryGuardInvalid,
+};
+
+InventoryGuardStatusRead ReadInventoryGuardStatus(
+    SdgoNativeDataGuardStatusV6& out) {
+    out = {};
+    const HMODULE module =
+        GetModuleHandleW(L"native_data_guard.dll");
+    if(!module)return kInventoryGuardUnavailable;
+    using StatusFn =
+        int(__cdecl*)(SdgoNativeDataGuardStatusV6*);
+    const auto status=reinterpret_cast<StatusFn>(
+        GetProcAddress(
+            module,
+            "SdgoNativeDataGuardGetStatusV6"));
+    if(!status)return kInventoryGuardUnavailable;
+    out.size=sizeof(out);
+    return status(&out)
+        ? kInventoryGuardRead
+        : kInventoryGuardInvalid;
+}
+
 bool RunKeyPresent(
     const std::wstring& job,
     const wchar_t* key) {
@@ -370,6 +396,13 @@ bool LoadPlan() {
         LoadingNavigationActions::kOff;
     if(earlyNavigationTarget==LoadingNavigationActions::kOff &&
        wcscmp(earlyNavigation,L"off"))return false;
+    const int earlyNavigationTiming=GetPrivateProfileIntW(
+        L"settings",L"EarlyNavigationBeforeInventory",0,
+        blueprintIni.c_str());
+    if(earlyNavigationTiming<0 || earlyNavigationTiming>1)return false;
+    earlyNavigationBeforeInventory=earlyNavigationTiming==1;
+    if(earlyNavigationBeforeInventory &&
+       earlyNavigationTarget==LoadingNavigationActions::kOff)return false;
     captureNativeFrames=GetPrivateProfileIntW(L"settings",L"CaptureNativeFrames",0,
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
     operatorSessionConfig.capture_frames=captureNativeFrames || testOperatorFlow;
@@ -1415,10 +1448,11 @@ int __cdecl EarlyNavigation(const SdgoGameTestContextV1* context) {
            !memcmp(&previousObservation,&s,sizeof(s)))return;
         char message[448]{};
         sprintf_s(message,
-            "early navigation target=%u result=%u app=%u source=%u clicked=%u click_ms=%u ready_ms=%u recover_ms=%u ready_at_click=%u inventory_complete_at_click=%u service=%u root=%u loading=%u queue=%u items=%u room=%u/%u/%u/%u",
+            "early navigation target=%u result=%u app=%u source=%u clicked=%u click_ms=%u ready_ms=%u recover_ms=%u ready_at_click=%u inventory_initialized_at_click=%u inventory_complete_at_click=%u service=%u root=%u loading=%u queue=%u items=%u room=%u/%u/%u/%u",
             s.target,s.result,s.native_app_state,s.source_result,s.clicked,
             s.click_elapsed_ms,s.ready_elapsed_ms,s.recovered_elapsed_ms,
-            s.target_ready_at_click,s.inventory_complete_at_click,
+            s.target_ready_at_click,s.inventory_initialized_at_click,
+            s.inventory_complete_at_click,
             s.target_service_present,s.target_root_visible,
             s.target_loading_flags,s.target_queue_state,s.target_visible_items,
             s.room_owner_valid,s.room_manager_valid,s.room_main_ready,
@@ -1439,6 +1473,7 @@ int __cdecl EarlyNavigation(const SdgoGameTestContextV1* context) {
         const auto result=loadingNavigation.Poll(
             earlyNavigationTarget,
             context->elapsed_ms,
+            inventory.initialized != 0,
             inventory.initialized && inventory.scan_complete);
         report();
         if(fail(result))return SDGO_GAME_TEST_FAIL;
@@ -1561,6 +1596,59 @@ int __cdecl EarlyNavigation(const SdgoGameTestContextV1* context) {
     return complete ? SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
 }
 int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
+    enum EarlyInventoryNavigationPhase : uint32_t {
+        kEarlyAwaitingClick,
+        kEarlyAwaitingTarget,
+        kEarlyRecovering,
+        kEarlyRoomCreate,
+        kEarlyRoomObserve,
+        kEarlyRoomLeave,
+        kEarlyComplete,
+    };
+    static EarlyInventoryNavigationPhase earlyPhase=kEarlyAwaitingClick;
+    static LoadingNavigationActions::Observation previousEarlyObservation{};
+    static bool havePreviousEarlyObservation=false;
+    static uint32_t earlyPopupCursor=0;
+    static InventoryGuardStatusRead earlyGuardRead=
+        kInventoryGuardUnavailable;
+    static SdgoNativeDataGuardStatusV6 earlyGuardBaseline{};
+    static SdgoNativeDataGuardStatusV6 earlyGuardLast{};
+    static bool earlyGuardLastValid=false;
+    static SdgoNativeDataGuardStatusV6 earlyGuardLastReported{};
+    static bool earlyGuardLastReportedValid=false;
+    static uint64_t earlyGuardLastReportElapsedMs=0;
+    static EarlyInventoryNavigationPhase earlyGuardLastReportedPhase=
+        kEarlyAwaitingClick;
+    static bool earlyGuardUnavailableReported=false;
+    static bool earlyGuardTriggerAsserted=false;
+    static uint32_t earlyRoomReadyTick=UINT32_MAX;
+    static uint32_t earlyRoomLeaveBaseline=0;
+    static bool earlyRoomLeaveIssued=false;
+    if(!context->tick && earlyNavigationBeforeInventory) {
+        earlyPhase=kEarlyAwaitingClick;
+        previousEarlyObservation={};
+        havePreviousEarlyObservation=false;
+        earlyPopupCursor=nativePopupProbe.Sequence();
+        earlyGuardRead=
+            ReadInventoryGuardStatus(
+                earlyGuardBaseline);
+        earlyGuardLast={};
+        earlyGuardLastValid=false;
+        earlyGuardLastReported={};
+        earlyGuardLastReportedValid=false;
+        earlyGuardLastReportElapsedMs=0;
+        earlyGuardLastReportedPhase=kEarlyAwaitingClick;
+        earlyGuardUnavailableReported=false;
+        earlyGuardTriggerAsserted=false;
+        earlyRoomReadyTick=UINT32_MAX;
+        earlyRoomLeaveBaseline=0;
+        earlyRoomLeaveIssued=false;
+        if(earlyNavigationTarget==LoadingNavigationActions::kRoom) {
+            roomRequested=startRequested=leaveRequested=endObserved=false;
+            activeBattleStartSequence=0;
+        }
+        loadingNavigation.Reset();
+    }
     const auto transport = actions.TransportState();
     static uint32_t lastSend = 0;
     if (transport.send_sequence != lastSend) {
@@ -1726,6 +1814,335 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
     if (inventory.native_fault) {
         context->Assert(0, "the read-only native inventory observation failed"); return SDGO_GAME_TEST_FAIL;
     }
+    if(earlyNavigationBeforeInventory) {
+        const auto reportEarly=[&]() {
+            const auto& observed=loadingNavigation.State();
+            if(havePreviousEarlyObservation &&
+               !memcmp(&previousEarlyObservation,&observed,sizeof(observed)))
+                return;
+            char message[480]{};
+            sprintf_s(message,
+                "pre-inventory navigation target=%u phase=%u result=%u app=%u source=%u clicked=%u click_ms=%u ready_ms=%u recover_ms=%u ready_at_click=%u inventory_initialized_at_click=%u inventory_complete_at_click=%u inventory_now=%u/%u pages=%u tail=%u cursor=%u:%u service=%u root=%u loading=%u queue=%u items=%u",
+                observed.target,static_cast<uint32_t>(earlyPhase),
+                observed.result,observed.native_app_state,
+                observed.source_result,observed.clicked,
+                observed.click_elapsed_ms,observed.ready_elapsed_ms,
+                observed.recovered_elapsed_ms,
+                observed.target_ready_at_click,
+                observed.inventory_initialized_at_click,
+                observed.inventory_complete_at_click,
+                inventory.initialized,inventory.scan_complete,
+                inventory.page_count,inventory.tail_count,
+                inventory.last_uid_cursor_high,
+                inventory.last_uid_cursor_low,
+                observed.target_service_present,
+                observed.target_root_visible,
+                observed.target_loading_flags,
+                observed.target_queue_state,
+                observed.target_visible_items);
+            context->Observe(message);
+            previousEarlyObservation=observed;
+            havePreviousEarlyObservation=true;
+        };
+        const auto failEarly=[&](LoadingNavigationActions::Result result) {
+            if(result<LoadingNavigationActions::kUnbound)return false;
+            reportEarly();
+            context->Assert(0,
+                "pre-inventory navigation retained the original service, vtable, control and state identities");
+            return true;
+        };
+        const auto observeEarlyGuard=[&]() {
+            if(earlyGuardRead==kInventoryGuardInvalid) {
+                context->Assert(0,
+                    "the available native inventory-boundary observer returned a valid V6 snapshot before the early click");
+                return false;
+            }
+            if(earlyGuardRead==kInventoryGuardUnavailable) {
+                if(!earlyGuardUnavailableReported) {
+                    context->Observe(
+                        "native inventory-boundary observer V6 is unavailable in this baseline; trigger-counter acceptance is skipped");
+                    earlyGuardUnavailableReported=true;
+                }
+                return true;
+            }
+            SdgoNativeDataGuardStatusV6 current{};
+            if(ReadInventoryGuardStatus(current)!=
+               kInventoryGuardRead) {
+                context->Assert(0,
+                    "the available native inventory-boundary observer remained readable throughout early navigation");
+                return false;
+            }
+            const bool monotonic=
+                current.deferred_inventory_transition_calls>=
+                    earlyGuardBaseline.deferred_inventory_transition_calls &&
+                current.resumed_inventory_transitions>=
+                    earlyGuardBaseline.resumed_inventory_transitions &&
+                current.deferred_inventory_catalog_requests>=
+                    earlyGuardBaseline.deferred_inventory_catalog_requests &&
+                current.resumed_inventory_catalog_requests>=
+                    earlyGuardBaseline.resumed_inventory_catalog_requests &&
+                current.cancelled_inventory_catalog_requests>=
+                    earlyGuardBaseline.cancelled_inventory_catalog_requests;
+            if(!monotonic) {
+                context->Assert(0,
+                    "native inventory-boundary observer counters remained monotonic after the early click");
+                return false;
+            }
+            const bool changed=
+                !earlyGuardLastValid ||
+                memcmp(
+                    &earlyGuardLast,
+                    &current,
+                    sizeof(current));
+            earlyGuardLast=current;
+            earlyGuardLastValid=true;
+            const bool phaseChanged=
+                !earlyGuardLastReportedValid ||
+                earlyGuardLastReportedPhase!=earlyPhase;
+            const bool resumedOrCancelledChanged=
+                !earlyGuardLastReportedValid ||
+                current.resumed_inventory_transitions!=
+                    earlyGuardLastReported.
+                        resumed_inventory_transitions ||
+                current.resumed_inventory_catalog_requests!=
+                    earlyGuardLastReported.
+                        resumed_inventory_catalog_requests ||
+                current.cancelled_inventory_catalog_requests!=
+                    earlyGuardLastReported.
+                        cancelled_inventory_catalog_requests;
+            const bool deferredChanged=
+                !earlyGuardLastReportedValid ||
+                current.deferred_inventory_transition_calls!=
+                    earlyGuardLastReported.
+                        deferred_inventory_transition_calls ||
+                current.deferred_inventory_catalog_requests!=
+                    earlyGuardLastReported.
+                        deferred_inventory_catalog_requests;
+            const bool deferredReportDue=
+                deferredChanged &&
+                (!earlyGuardLastReportedValid ||
+                 context->elapsed_ms>=
+                    earlyGuardLastReportElapsedMs+1000);
+            if(phaseChanged ||
+               (changed &&
+                (resumedOrCancelledChanged ||
+                 deferredReportDue))) {
+                char message[384]{};
+                sprintf_s(message,
+                    "native inventory-boundary guard v6 target=%u phase=%u transition_deferred=%u(+%u) transition_resumed=%u(+%u) catalog_deferred=%u(+%u) catalog_resumed=%u(+%u) catalog_cancelled=%u(+%u)",
+                    static_cast<unsigned>(
+                        earlyNavigationTarget),
+                    static_cast<unsigned>(earlyPhase),
+                    current.deferred_inventory_transition_calls,
+                    current.deferred_inventory_transition_calls-
+                        earlyGuardBaseline.deferred_inventory_transition_calls,
+                    current.resumed_inventory_transitions,
+                    current.resumed_inventory_transitions-
+                        earlyGuardBaseline.resumed_inventory_transitions,
+                    current.deferred_inventory_catalog_requests,
+                    current.deferred_inventory_catalog_requests-
+                        earlyGuardBaseline.deferred_inventory_catalog_requests,
+                    current.resumed_inventory_catalog_requests,
+                    current.resumed_inventory_catalog_requests-
+                        earlyGuardBaseline.resumed_inventory_catalog_requests,
+                    current.cancelled_inventory_catalog_requests,
+                    current.cancelled_inventory_catalog_requests-
+                        earlyGuardBaseline.cancelled_inventory_catalog_requests);
+                context->Observe(message);
+                earlyGuardLastReported=current;
+                earlyGuardLastReportedValid=true;
+                earlyGuardLastReportElapsedMs=context->elapsed_ms;
+                earlyGuardLastReportedPhase=earlyPhase;
+            }
+            return true;
+        };
+        if(!observeEarlyGuard())
+            return SDGO_GAME_TEST_FAIL;
+        if(earlyPhase!=kEarlyAwaitingClick) {
+            NativeErrorPopupProbe::Observation popups[
+                NativeErrorPopupProbe::EventCapacity]{};
+            uint32_t oldestPopup=0,newestPopup=0;
+            const auto popupCount=nativePopupProbe.CopyAfter(
+                earlyPopupCursor,
+                popups,
+                NativeErrorPopupProbe::EventCapacity,
+                &oldestPopup,
+                &newestPopup);
+            if(newestPopup>earlyPopupCursor) {
+                nativePopupProbe.ObserveSince(
+                    context,
+                    nativePopupCursor);
+                const bool lostHistory=
+                    oldestPopup &&
+                    earlyPopupCursor+1<oldestPopup;
+                earlyPopupCursor=newestPopup;
+                if(lostHistory) {
+                    context->Assert(0,
+                        "the bounded native popup history retained every event raised after the pre-inventory click");
+                    return SDGO_GAME_TEST_FAIL;
+                }
+                for(uint32_t index=0;index<popupCount;++index) {
+                    const auto& popup=popups[index];
+                    if(!popup.error)continue;
+                    char message[240]{};
+                    const auto code=
+                        static_cast<uint32_t>(popup.error);
+                    sprintf_s(message,
+                        "pre-inventory navigation raised nonzero native server-error popup opcode=%04X error=%d/0x%08X exact_loading_warning=%u caller=%p",
+                        static_cast<unsigned>(popup.opcode),
+                        popup.error,
+                        static_cast<unsigned>(popup.error),
+                        static_cast<unsigned>(
+                            code==0x279A || code==0x27A4),
+                        reinterpret_cast<void*>(popup.caller));
+                    context->Observe(message);
+                    context->Assert(0,
+                        "the genuine early navigation path must not open a nonzero native server-error popup");
+                    return SDGO_GAME_TEST_FAIL;
+                }
+            }
+        }
+        if(earlyPhase==kEarlyAwaitingClick) {
+            if(inventory.initialized) {
+                context->Assert(0,
+                    "the genuine UnitInfo +0x20 ready flag became set before the enabled navigation control could be invoked; this run missed the pre-inventory timing window");
+                return SDGO_GAME_TEST_FAIL;
+            }
+            const auto result=loadingNavigation.Poll(
+                earlyNavigationTarget,
+                context->elapsed_ms,
+                inventory.initialized!=0,
+                inventory.initialized && inventory.scan_complete);
+            reportEarly();
+            if(failEarly(result))return SDGO_GAME_TEST_FAIL;
+            if(loadingNavigation.State().clicked) {
+                const auto& clicked=loadingNavigation.State();
+                const bool beforeReady=
+                    !inventory.initialized &&
+                    !clicked.inventory_initialized_at_click &&
+                    !clicked.inventory_complete_at_click;
+                context->Assert(beforeReady,
+                    "the real enabled navigation callback was invoked before the native UnitInfo +0x20 ready flag and complete inventory scan");
+                if(!beforeReady)return SDGO_GAME_TEST_FAIL;
+                earlyPhase=kEarlyAwaitingTarget;
+            }
+        }
+        if(earlyPhase==kEarlyAwaitingTarget) {
+            const auto result=loadingNavigation.Poll(
+                earlyNavigationTarget,
+                context->elapsed_ms,
+                inventory.initialized!=0,
+                inventory.initialized && inventory.scan_complete);
+            reportEarly();
+            if(failEarly(result))return SDGO_GAME_TEST_FAIL;
+            const bool inventoryFinished=
+                inventory.initialized && inventory.scan_complete;
+            if(earlyNavigationTarget==
+               LoadingNavigationActions::kRoom) {
+                if(result==
+                       LoadingNavigationActions::
+                           kRoomNavigationAccepted &&
+                   inventoryFinished) {
+                    context->Observe(
+                        "the deferred GameRoomRadio callback returned after inventory readiness; the sealed room lifecycle must now prove the actual room list, server create reply, app18 owner and native leave reply");
+                    earlyPhase=kEarlyRoomCreate;
+                }
+            } else if(result==
+                      LoadingNavigationActions::kTargetReady) {
+                context->Assert(inventoryFinished,
+                    "the native target became ready only after the original paginated inventory stream set UnitInfo +0x20 and completed its read-only scan");
+                if(!inventoryFinished)return SDGO_GAME_TEST_FAIL;
+                earlyPhase=kEarlyRecovering;
+            }
+        }
+        if(earlyPhase==kEarlyRecovering) {
+            const auto result=loadingNavigation.Recover(context->elapsed_ms);
+            reportEarly();
+            if(failEarly(result))return SDGO_GAME_TEST_FAIL;
+            if(result==LoadingNavigationActions::kRecovered)
+                earlyPhase=kEarlyComplete;
+        }
+        if(earlyPhase==kEarlyRoomCreate) {
+            const int result=Room(context);
+            if(result==SDGO_GAME_TEST_FAIL)
+                return SDGO_GAME_TEST_FAIL;
+            if(result==SDGO_GAME_TEST_PASS)
+                earlyPhase=kEarlyRoomObserve;
+        }
+        if(earlyPhase==kEarlyRoomObserve) {
+            const auto result=loadingNavigation.ObserveThreeDRoom(
+                context->elapsed_ms);
+            reportEarly();
+            if(failEarly(result))return SDGO_GAME_TEST_FAIL;
+            if(result==
+                   LoadingNavigationActions::kTargetReady &&
+               rooms.LeaveReady()) {
+                if(earlyRoomReadyTick==UINT32_MAX) {
+                    earlyRoomReadyTick=context->tick;
+                    context->Observe(
+                        "the pre-inventory room path reached the actual native app18 owner, manager, main state and model; retaining one normal client update before leave");
+                } else if(context->tick!=earlyRoomReadyTick) {
+                    earlyPhase=kEarlyRoomLeave;
+                }
+            }
+        }
+        if(earlyPhase==kEarlyRoomLeave) {
+            if(!earlyRoomLeaveIssued) {
+                earlyRoomLeaveBaseline=
+                    rooms.LeaveState().reply_sequence;
+                if(!rooms.Leave())
+                    return SDGO_GAME_TEST_WAIT;
+                earlyRoomLeaveIssued=true;
+                context->Observe(
+                    "queued the pre-inventory room path's original leave business after its validated app18 main state");
+            }
+            const auto left=rooms.LeaveState();
+            if(left.reply_sequence>earlyRoomLeaveBaseline &&
+               left.result==RoomActions::kLeaveRejected) {
+                context->Assert(0,
+                    "the backend rejected pre-inventory room recovery");
+                return SDGO_GAME_TEST_FAIL;
+            }
+            if(left.reply_sequence>earlyRoomLeaveBaseline &&
+               left.result==RoomActions::kLeaveAccepted &&
+               actions.AppState()==6) {
+                loadingNavigation.MarkRoomRecovered(
+                    context->elapsed_ms);
+                reportEarly();
+                channels.Reset();
+                roomRequested=startRequested=
+                    leaveRequested=endObserved=false;
+                activeBattleStartSequence=0;
+                earlyPhase=kEarlyComplete;
+            }
+        }
+        if(earlyPhase==kEarlyComplete &&
+           earlyGuardRead==kInventoryGuardRead &&
+           !earlyGuardTriggerAsserted) {
+            if(!observeEarlyGuard())
+                return SDGO_GAME_TEST_FAIL;
+            const bool guardTriggered=
+                earlyNavigationTarget==
+                    LoadingNavigationActions::kCatalog
+                    ? earlyGuardLast.
+                          deferred_inventory_catalog_requests>
+                          earlyGuardBaseline.
+                              deferred_inventory_catalog_requests
+                    : earlyGuardLast.
+                          deferred_inventory_transition_calls>
+                          earlyGuardBaseline.
+                              deferred_inventory_transition_calls;
+            context->Assert(
+                guardTriggered,
+                earlyNavigationTarget==
+                    LoadingNavigationActions::kCatalog
+                    ? "the candidate guard deferred the genuine unit-catalog request until inventory readiness"
+                    : "the candidate guard deferred the genuine capsule or room transition until inventory readiness");
+            if(!guardTriggered)
+                return SDGO_GAME_TEST_FAIL;
+            earlyGuardTriggerAsserted=true;
+        }
+    }
     const std::array<uint32_t,12> gate{
         starter.result_popup_clone_sequence,starter.result_popup_captured_app_state,
         starter.result_popup_captured,starter.result_popup_ready,starter.result_confirm_attempted,
@@ -1758,7 +2175,8 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
         authenticatedPilot,
         state.profile_pilot_id,
     };
-    if (sdgo_game_test::IsOnboardingComplete(completion)) {
+    if (sdgo_game_test::IsOnboardingComplete(completion) &&
+        (!earlyNavigationBeforeInventory || earlyPhase==kEarlyComplete)) {
         if (loginRecovery.Enabled()) {
             const int recovery = loginRecovery.VerifyCompletion(context, actions, authenticatedPilot);
             if (recovery != SDGO_GAME_TEST_PASS) return recovery;
@@ -1766,6 +2184,9 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
         context->Assert(1, "the authenticated account has a real initialized inventory containing an owned unit");
         context->Assert(authenticatedPilot && state.profile_pilot_id == authenticatedPilot, "onboarding retains the real profile loaded after the accepted login");
         context->Assert(1, "every attempted one-time native onboarding action completed before the lobby");
+        if(earlyNavigationBeforeInventory)
+            context->Assert(1,
+                "pre-inventory navigation completed through the genuine target and recovery path without a nonzero native server-error popup");
         return SDGO_GAME_TEST_PASS;
     }
     // Continue only after the normal tutorial/starter-unit/window workflow has
@@ -4290,7 +4711,8 @@ void RegisterPlannedCases() {
     }
     if (pagesOnly) {
         plannedCases.assign(realCases,realCases+3);
-        if(earlyNavigationTarget!=LoadingNavigationActions::kOff)
+        if(earlyNavigationTarget!=LoadingNavigationActions::kOff &&
+           !earlyNavigationBeforeInventory)
             plannedCases.push_back(earlyNavigationCase);
         if(testOperatorFlow)plannedCases.push_back(operatorFlowCase);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
@@ -4677,7 +5099,8 @@ SDGO_MOD_ENTRY {
     getSnapshot = reinterpret_cast<SdgoPvpAiClientGetSnapshotV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_SNAPSHOT_EXPORT));
     api->HookCode(mod,"game.error_name",reinterpret_cast<void*>(&ObserveNativeErrorName),reinterpret_cast<void**>(&originalErrorName));
     if(!nativePopupProbe.Install(api,mod))return 0;
-    if(randomLoadout && !nativePacketIngressProbe.Install(api,mod))return 0;
+    if((randomLoadout || earlyNavigationBeforeInventory) &&
+       !nativePacketIngressProbe.Install(api,mod))return 0;
     getStartStatus = reinterpret_cast<SdgoPvpAiClientGetStartStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_START_STATUS_EXPORT));
     getScoreboardStatus = reinterpret_cast<SdgoPvpAiClientGetScoreboardStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_SCOREBOARD_STATUS_EXPORT));
     if (!fpsOnly && !bootstrapOnly && !pagesOnly && !scoreboardInput.Install(api, mod)) return 0;

@@ -42,7 +42,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Startup crash fix <!-- catalog: `startup_crash_fix` --> | Stop random crashes on the loading screen; protection stays active if optional showcase fitting is unavailable | [Use](docs/startup-crash-fix.md) |
 | First login lobby music <!-- catalog: `lobby_music_fix` --> | Restore the lobby music on first login | [Use](docs/lobby-music-fix.md) |
 | Wait-room window initialization guard <!-- catalog: `waitroom_window_fix` --> | Fix the client sometimes closing right after a room is created | [Use](docs/waitroom-window-fix.md) |
-| Native data and lifecycle guards <!-- catalog: `native_data_guard` --> | Guard missing unit data, loading-time model materials, room cameras and deferred unit-management requests; keep crash logs accurate | [Use](docs/native-data-guard.md) |
+| Native data and lifecycle guards <!-- catalog: `native_data_guard` --> | Guard native data and deferred messages; wait for initial inventory before page changes and retain accurate crash logs | [Use](docs/native-data-guard.md) |
 | Scene registration lifecycle fix <!-- catalog: `scene_lifecycle_fix` --> | Fix an occasional cleanup crash after a scene object moves to another area | [Use](docs/scene-lifecycle-fix.md) |
 | Multiplayer loading synchronization <!-- catalog: `loading_sync_fix` --> | Fix multiplayer starts that occasionally hang on the loading screen (BattleServer) | [Use](docs/loading-sync-fix.md) |
 | Native login recovery <!-- catalog: `login_recovery`, `login_recovery_client` --> | WorldServer stale-session cleanup plus bounded client reconnect, pending-request cleanup and return to native login input | [Use](docs/login-recovery.md) |

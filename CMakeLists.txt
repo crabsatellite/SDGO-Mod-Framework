@@ -257,7 +257,7 @@ if(BUILD_TESTING)
              COMMAND scene_lifecycle_fix_dll_test "$<TARGET_FILE:scene_lifecycle_fix>")
     set_tests_properties(scene_lifecycle_fix_actual_dll PROPERTIES TIMEOUT 30)
 endif()
-sdgo_add_mod(native_data_guard DESCRIPTION "verified native battle data guards"
+sdgo_add_mod(native_data_guard DESCRIPTION "native data and loading lifecycle guards"
              SOURCES mods/native_data_guard/native_data_guard.cpp FILES symbols.fragment.ini)
 sdgo_add_mod(loading_sync_fix SERVER DESCRIPTION "AI-safe native loading timeout participants"
              SOURCES mods/loading_sync_fix/loading_sync_fix.cpp FILES symbols.fragment.ini)

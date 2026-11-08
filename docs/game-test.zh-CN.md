@@ -360,3 +360,9 @@ AI 断言通过本身不代表画面适合剪辑。
 此开战检查不覆盖战斗表现、结算或自然返回，结束时由运行器退出所属测试客户端。
 完整运行要求后端已启用配套长房名
 Agent/Battle Mod；窗口输入通过与服务端标题确认分别断言。测试账号配置和回执继续留在本地，不进入玩家分发包。
+
+### 初始库存未完成时切换页面
+
+使用密封配置 `unit_scenario={"schema":1,"early_navigation_before_inventory":"capsule"}`，配合 `pages_only=True` 和已有出击机体 UID。目标可选 `catalog`、`capsule` 或 `room`，不能与登录完成后的 `early_navigation` 混用。
+
+该场景在 onboarding 内调用真实已启用控件，并要求点击时原生 `CUnitInfo+0x20` 尚未置位。若错过这个窗口则明确失败，不把加载完成后的点击算作通过。随后观察真实分页、原生错误、目标页面就绪及正常返回，并继续原有 onboarding 验收；不改写库存状态、不伪造回包，也不用固定等待秒数代替收包证据。

@@ -150,7 +150,10 @@ private:
         return opcode == 0x0880 ||
             opcode == 0x0A2D ||
             opcode == 0x069C ||
-            opcode == 0x0883;
+            opcode == 0x0883 ||
+            opcode == 0x096F ||
+            opcode == 0x087D ||
+            opcode == 0x087E;
     }
 
     void Observe(

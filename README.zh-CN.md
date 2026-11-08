@@ -33,7 +33,7 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 | 输入法卡死修复 <!-- catalog: `findwindow_fix` --> | 防止讯飞等输入法让整合包客户端卡死或崩溃 | [使用说明](docs/findwindow-fix.zh-CN.md) |
 | 启动崩溃修复 <!-- catalog: `startup_crash_fix` --> | 修复读取界面随机闪退，可选展示缩放不可用时仍保留防护 | [使用说明](docs/startup-crash-fix.zh-CN.md) |
 | 房间窗口初始化保护 <!-- catalog: `waitroom_window_fix` --> | 修复建房成功后客户端偶尔直接退出 | [使用说明](docs/waitroom-window-fix.zh-CN.md) |
-| 原生数据与生命周期修复 <!-- catalog: `native_data_guard` --> | 保护缺失机体数据、加载期模型材质、房间相机和机体管理延迟请求，并保留真实崩溃现场 | [使用说明](docs/native-data-guard.zh-CN.md) |
+| 原生数据与生命周期修复 <!-- catalog: `native_data_guard` --> | 保护原生数据和延迟消息；初始库存完成后再切换页面，并保留真实崩溃现场 | [使用说明](docs/native-data-guard.zh-CN.md) |
 | 场景登记生命周期修复 <!-- catalog: `scene_lifecycle_fix` --> | 修复场景对象切换区域后偶发的清理闪退 | [使用说明](docs/scene-lifecycle-fix.zh-CN.md) |
 | 多人加载同步修复 <!-- catalog: `loading_sync_fix` --> | 修复多人开局时偶发卡在加载画面（BattleServer） | [使用说明](docs/loading-sync-fix.zh-CN.md) |
 | 首次登录大厅音乐 <!-- catalog: `lobby_music_fix` --> | 恢复首次登录时的大厅音乐 | [使用说明](docs/lobby-music-fix.zh-CN.md) |

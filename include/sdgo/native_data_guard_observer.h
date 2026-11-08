@@ -74,3 +74,29 @@ typedef struct SdgoNativeDataGuardStatusV5 {
     uint32_t rejected_camera_indices;
     uint32_t skipped_camera_updates;
 } SdgoNativeDataGuardStatusV5;
+
+// Additive observer for the native login inventory / pending-menu boundary.
+typedef struct SdgoNativeDataGuardStatusV6 {
+    uint32_t size;
+    uint32_t version;
+    uint32_t funnel_bounds_corrected;
+    uint32_t missing_names;
+    uint32_t missing_transform_metadata;
+    uint32_t missing_information_records;
+    uint32_t preserved_exception_contexts;
+    uint32_t deferred_message_copies;
+    uint32_t deferred_message_replacements;
+    uint32_t deferred_message_copy_failures;
+    uint32_t deferred_message_completions;
+    uint32_t outstanding_deferred_messages;
+    uint32_t missing_base_information_records;
+    uint32_t unavailable_material_slots;
+    uint32_t skipped_decal_slots;
+    uint32_t rejected_camera_indices;
+    uint32_t skipped_camera_updates;
+    uint32_t deferred_inventory_transition_calls;
+    uint32_t resumed_inventory_transitions;
+    uint32_t deferred_inventory_catalog_requests;
+    uint32_t resumed_inventory_catalog_requests;
+    uint32_t cancelled_inventory_catalog_requests;
+} SdgoNativeDataGuardStatusV6;

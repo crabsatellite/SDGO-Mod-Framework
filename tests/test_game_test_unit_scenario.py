@@ -40,6 +40,27 @@ class UnitScenarioTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             scope.bind(base,context|{'page_group':'hangar'})
 
+    def test_pre_inventory_navigation_is_sealed_inside_onboarding(self):
+        context={'pages_only':True,'play_unit_uid':17}
+        for target in ('catalog','capsule','room'):
+            with self.subTest(target=target):
+                value={'schema':1,'early_navigation_before_inventory':target}
+                bound=scope.bind(value,context)['unit_scenario']
+                settings=scope.settings(bound)
+                self.assertEqual(settings['EarlyNavigationTarget'],target)
+                self.assertEqual(settings['EarlyNavigationBeforeInventory'],'1')
+                cases=scope.cases(bound)
+                self.assertEqual(cases[:4],(
+                    'framework.bootstrap','flow.login','flow.onboarding',
+                    'setup.active_unit'))
+                self.assertNotIn('pages.loading_navigation',cases)
+        with self.assertRaises(ValueError):
+            scope.bind({
+                'schema':1,
+                'early_navigation':'capsule',
+                'early_navigation_before_inventory':'capsule',
+            },context)
+
     def test_explicit_encyclopedia_target_is_sealed_separately_from_owned_unit(self):
         context={'pages_only':True,'play_unit_uid':839}
         value={'schema':1,'presentation_target':22150}
@@ -185,7 +206,7 @@ class SealedUnitScenarioTests(unittest.TestCase):
     def test_historical_non_probe_capsules_keep_their_original_sealed_defaults(self):
         from unittest.mock import patch
         previous={key:value for key,value in scope.SETTINGS.items()
-            if key!='EarlyNavigationTarget' and
+            if key not in ('EarlyNavigationTarget','EarlyNavigationBeforeInventory') and
             not key.startswith(('NativeIdProbe','NativeRecordLifecycle'))}
         with patch.dict(scope.SETTINGS,previous,clear=True):
             run=self.prepare('historical-unit-scope',pages_only=True,play_unit_uid=17,unit_scenario={'schema':1})
@@ -249,6 +270,33 @@ class SealedUnitScenarioTests(unittest.TestCase):
                 game_test.write_ini(path,config)
                 with self.assertRaises(game_test.GameTestError):
                     game_test.validate_metadata(run)
+
+    def test_prepares_and_seals_pre_inventory_navigation_timing(self):
+        run=self.prepare(
+            'pre-inventory-navigation-capsule',
+            pages_only=True,
+            play_unit_uid=17,
+            unit_scenario={
+                'schema':1,
+                'early_navigation_before_inventory':'capsule',
+            })
+        meta=game_test.validate_metadata(run)
+        self.assertEqual(
+            game_test.required_cases_for_plan(meta['plan'])[:4],
+            ('framework.bootstrap','flow.login','flow.onboarding',
+             'setup.active_unit'))
+        self.assertNotIn(
+            'pages.loading_navigation',
+            game_test.required_cases_for_plan(meta['plan']))
+        path=run/'client/sdgo/mods/game_test_client/mod.ini'
+        config=game_test.read_ini(path)
+        self.assertEqual(config['settings']['EarlyNavigationTarget'],'capsule')
+        self.assertEqual(
+            config['settings']['EarlyNavigationBeforeInventory'],'1')
+        config['settings']['EarlyNavigationBeforeInventory']='0'
+        game_test.write_ini(path,config)
+        with self.assertRaises(game_test.GameTestError):
+            game_test.validate_metadata(run)
 
     def test_activity_confirmation_binds_its_own_native_identity_and_price(self):
         target={'machine_id':7,'price':13,'currency':0}

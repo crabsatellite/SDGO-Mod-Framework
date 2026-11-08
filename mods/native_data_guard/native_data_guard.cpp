@@ -11,6 +11,7 @@
 #include "sdgo/native_data_guard_observer.h"
 #include "camera_guard.h"
 #include "material_guard.h"
+#include "inventory_loading_guard.h"
 
 namespace {
 const SdgoApi* g_api = nullptr;
@@ -519,6 +520,28 @@ extern "C" __declspec(dllexport) int __cdecl SdgoNativeDataGuardGetStatusV5(
     return 1;
 }
 
+extern "C" __declspec(dllexport) int __cdecl SdgoNativeDataGuardGetStatusV6(
+    SdgoNativeDataGuardStatusV6* out) {
+    if (!out || out->size < sizeof(*out)) return 0;
+    const uint32_t size = out->size;
+    SdgoNativeDataGuardStatusV5 previous{};
+    previous.size = sizeof(previous);
+    if (!SdgoNativeDataGuardGetStatusV5(&previous)) return 0;
+    std::memcpy(out, &previous, sizeof(previous));
+    out->size = size; out->version = 6;
+    out->deferred_inventory_transition_calls = static_cast<uint32_t>(InterlockedCompareExchange(
+        &sdgo::native_inventory_guard::deferredCalls, 0, 0));
+    out->resumed_inventory_transitions = static_cast<uint32_t>(InterlockedCompareExchange(
+        &sdgo::native_inventory_guard::resumedTransitions, 0, 0));
+    out->deferred_inventory_catalog_requests = static_cast<uint32_t>(InterlockedCompareExchange(
+        &sdgo::native_inventory_guard::deferredCatalog, 0, 0));
+    out->resumed_inventory_catalog_requests = static_cast<uint32_t>(InterlockedCompareExchange(
+        &sdgo::native_inventory_guard::resumedCatalog, 0, 0));
+    out->cancelled_inventory_catalog_requests = static_cast<uint32_t>(InterlockedCompareExchange(
+        &sdgo::native_inventory_guard::cancelledCatalog, 0, 0));
+    return 1;
+}
+
 SDGO_MOD_ENTRY {
     if (!api || api->size < offsetof(SdgoApi, HookImport) + sizeof(api->HookImport) ||
         !api->Symbol || !api->HookCode || !api->HookSite || !api->HookImport || !api->Log) return 0;
@@ -567,7 +590,8 @@ SDGO_MOD_ENTRY {
                          reinterpret_cast<void*>(&PreservedStackWalk),
                          reinterpret_cast<void**>(&g_stackWalk))) return 0;
     if (!native_data_guard_material::Attach(api, mod) ||
-        !sdgo::native_camera_guard::Attach(api, mod)) return 0;
+        !sdgo::native_camera_guard::Attach(api, mod) ||
+        !sdgo::native_inventory_guard::Attach(api, mod)) return 0;
     if (!CorrectBounds(bounds)) return 0;
     g_boundsCorrected = true;
     api->Log(mod, SDGO_LOG_INFO,

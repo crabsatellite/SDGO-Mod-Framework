@@ -56,6 +56,7 @@ public:
         uint32_t target_visible_items = 0;
         uint8_t clicked = 0;
         uint8_t target_ready_at_click = 0;
+        uint8_t inventory_initialized_at_click = 0;
         uint8_t inventory_complete_at_click = 0;
         uint8_t target_service_present = 0;
         uint8_t target_root_visible = 0;
@@ -125,6 +126,7 @@ public:
     Result Poll(
         Target target,
         uint64_t elapsedMs,
+        bool inventoryInitialized,
         bool inventoryComplete)
     {
         if (!bound_ || !native_ || !navigation_)
@@ -152,6 +154,8 @@ public:
                         target_ != kRoom &&
                         !before.mismatch &&
                         before.ready);
+                state_.inventory_initialized_at_click =
+                    static_cast<uint8_t>(inventoryInitialized);
                 state_.inventory_complete_at_click =
                     static_cast<uint8_t>(inventoryComplete);
                 const HangarNavigation::Result source =
@@ -178,10 +182,15 @@ public:
                 return Publish(kClicked);
             }
 
-            if (target_ == kRoom)
-                return state_.native_app_state == kGameRoomAppState
-                    ? Publish(kRoomNavigationAccepted)
-                    : Publish(kWaitingForTarget);
+            if (target_ == kRoom) {
+                if (state_.native_app_state != kGameRoomAppState)
+                    return Publish(kWaitingForTarget);
+                // App state 6 is also the source lobby. It proves only that
+                // the enabled radio callback returned without immediately
+                // leaving the lobby; the actual room-list, server create
+                // reply, and app-18 owner are verified by the caller.
+                return Publish(kRoomNavigationAccepted);
+            }
             const TargetState current = ReadTarget();
             CopyTarget(current);
             // roommgr is also a genuine source-lobby service. While entering

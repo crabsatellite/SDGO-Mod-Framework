@@ -408,6 +408,14 @@ not prove recovery. The room target creates and enters an actual 3D wait room,
 checks its owner, manager, main state and model, then leaves through the native
 path; opening the room list is not enough. Normal unit-page checks follow.
 
+For the distinct initial-inventory window, use `early_navigation_before_inventory`
+instead of `early_navigation`, with the same `catalog`, `capsule` or `room` target.
+This sealed case clicks during onboarding only while the genuine `CUnitInfo+0x20`
+ready flag is unset. It fails if the timing window was missed, records native
+packet/error observations, then requires real inventory completion, target
+readiness and native recovery before normal onboarding can pass. It neither
+creates an incomplete inventory nor substitutes a fixed delay.
+
 ### Blueprint synthesis
 
 The Python `prepare` / `reuse_prepared` API accepts a sealed `unit_scenario`

@@ -7,6 +7,7 @@ from pathlib import Path
 INPUT = 'inputs/unit-scenario.json'
 SETTINGS = {'UnitPagesOnly':'0','UnitPresentations':'0','UnitPortraits':'0','UnitPresentationTarget':'0',
     'CaptureNativeFrames':'0','CollectionPreviewOnly':'0','EarlyNavigationTarget':'off',
+    'EarlyNavigationBeforeInventory':'0',
     'UnitAcquisitionKind':'0','UnitAcquisitionMachine':'0','UnitAcquisitionUnit':'0',
     'CapsulePreviewMachine':'990001','CapsulePreviewPrice':'100000','CapsulePreviewCurrency':'0',
     'ActivityDrawOnce':'0','ActivityRewardCount':'0','BlueprintRecipe':'0','BlueprintBookUid':'0',
@@ -19,7 +20,7 @@ INDEX_CASES = ('pages.unit_index.list','pages.unit_index.detail',
 PORTRAIT_CASES = ('pages.unit_index.pose_wait','pages.unit_index.pose_ready')
 
 def validate(value, plan):
-    if not isinstance(value,dict) or set(value)-{'schema','capture_frames','portraits','presentation_target','acquisition','collection_preview','activity_target','activity_draw','reward_pairs','blueprint','native_id_probe','native_record_lifecycle','early_navigation'}:
+    if not isinstance(value,dict) or set(value)-{'schema','capture_frames','portraits','presentation_target','acquisition','collection_preview','activity_target','activity_draw','reward_pairs','blueprint','native_id_probe','native_record_lifecycle','early_navigation','early_navigation_before_inventory'}:
         raise ValueError('invalid native unit scenario fields')
     if type(value.get('schema')) is not int or value['schema']!=1:
         raise ValueError('unsupported native unit scenario schema')
@@ -39,8 +40,12 @@ def validate(value, plan):
         if field!='activity_draw' or field in value:result[field]=flag
     if result['portraits'] and not result['capture_frames']:
         raise ValueError('native portraits require genuine frame capture')
-    if 'early_navigation' in value:
-        target=value['early_navigation']
+    early_fields=tuple(field for field in
+        ('early_navigation','early_navigation_before_inventory') if field in value)
+    if len(early_fields)>1:
+        raise ValueError('early navigation timing must be selected exactly once')
+    if early_fields:
+        field=early_fields[0];target=value[field]
         if target not in ('catalog','capsule','room'):
             raise ValueError('early navigation target must be catalog, capsule or room')
         if (plan.get('page_group') or result['portraits'] or result['collection_preview'] or
@@ -48,7 +53,7 @@ def validate(value, plan):
                 ('acquisition','activity_target','reward_pairs','blueprint',
                  'native_id_probe','native_record_lifecycle'))):
             raise ValueError('early navigation is a separate basic unit-page loading scope')
-        result['early_navigation']=target
+        result[field]=target
     if 'native_id_probe' in value:
         probe=value['native_id_probe']
         if (not isinstance(probe,dict) or set(probe)!={'ids','witness_unit_id','require_absent'} or
@@ -140,7 +145,11 @@ def settings(value=None):
         UnitPresentationTarget=str(value.get('presentation_target',0)),
         UnitPortraits=str(int(value['portraits'])),CaptureNativeFrames=str(int(value['capture_frames'])),
         CollectionPreviewOnly=str(int(value['collection_preview'])),
-        EarlyNavigationTarget=value.get('early_navigation','off'))
+        EarlyNavigationTarget=value.get(
+            'early_navigation',
+            value.get('early_navigation_before_inventory','off')),
+        EarlyNavigationBeforeInventory=str(
+            int('early_navigation_before_inventory' in value)))
     if value.get('native_id_probe'):
         probe=value['native_id_probe'];ids=probe['ids']
         result.update(UnitPresentations='0',NativeIdProbeCount=str(len(ids)),
@@ -209,7 +218,11 @@ def read(root, digest, plan, read_ini):
         # defaults cannot arm a probe; active probes require every exact key.
         if ((key.startswith('NativeIdProbe') and 'native_id_probe' not in value) or
                 (key.startswith('NativeRecordLifecycle') and 'native_record_lifecycle' not in value) or
-                (key=='EarlyNavigationTarget' and 'early_navigation' not in value)):
+                (key=='EarlyNavigationTarget' and
+                 'early_navigation' not in value and
+                 'early_navigation_before_inventory' not in value) or
+                (key=='EarlyNavigationBeforeInventory' and
+                 'early_navigation_before_inventory' not in value)):
             fallback=SETTINGS.get(key)
         if config.get('settings',key,fallback=fallback)!=expected:
             raise ValueError('native unit observer settings disagree with sealed scenario: '+key)

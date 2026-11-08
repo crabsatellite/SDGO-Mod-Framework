@@ -314,6 +314,46 @@ int main()
                 "the complete observation reports raw16 without reinterpreting it");
         }
 
+        const std::uint16_t loadingOpcodes[] = {
+            0x096F,
+            0x087D,
+            0x087E,
+        };
+        for (const std::uint16_t loadingOpcode : loadingOpcodes) {
+            std::uint8_t loadingPacket[8] = {};
+            loadingPacket[6] = 0x40;
+            std::memcpy(
+                loadingPacket,
+                &loadingOpcode,
+                sizeof(loadingOpcode));
+            Invoke(
+                0x61626364,
+                0x71727374,
+                0x81828384,
+                loadingPacket,
+                sizeof(loadingPacket),
+                0x51A70010 + loadingOpcode);
+        }
+        Check(
+            g_logs.size() == 5,
+            "inventory count, page, and error replies are observed");
+        if (g_logs.size() >= 5) {
+            Check(
+                Contains(
+                    g_logs[2],
+                    "sequence=3 opcode=096F size=8") &&
+                Contains(
+                    g_logs[2],
+                    "bytes=6F/09/00/00/00/00/40/00"),
+                "the inventory page reply retains its native count byte");
+            Check(
+                Contains(g_logs[3], "sequence=4 opcode=087D size=8"),
+                "the inventory count reply is retained");
+            Check(
+                Contains(g_logs[4], "sequence=5 opcode=087E size=8"),
+                "the inventory error reply is retained");
+        }
+
         std::uint8_t ignoredPacket[2] = {};
         const std::uint16_t ignoredOpcode = 0x1234;
         std::memcpy(
@@ -328,7 +368,7 @@ int main()
             sizeof(ignoredPacket),
             0x51A70003);
         Check(
-            g_logs.size() == 2,
+            g_logs.size() == 5,
             "an untracked opcode is forwarded without a diagnostic record");
     }
 
