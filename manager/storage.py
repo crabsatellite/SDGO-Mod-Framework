@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import threading
 import uuid
+import time
 import xml.etree.ElementTree as ET
 
 LOCK = threading.RLock()
@@ -21,6 +22,19 @@ def revision(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def sharing_retry(action):
+    """Windows readers briefly deny rename/delete; persistent errors still fail."""
+    for attempt in range(20):
+        try:return action()
+        except PermissionError as error:
+            if os.name!='nt'or getattr(error,'winerror',None)not in(None,5,32,33)or attempt==19:raise
+            time.sleep(.025)
+
+
+def remove(path):return sharing_retry(lambda:Path(path).unlink(missing_ok=True))
+def read_bytes(path):return sharing_retry(lambda:Path(path).read_bytes())
+
+
 def atomic(path: Path, raw: bytes):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name('.' + path.name + '.' + uuid.uuid4().hex + '.tmp')
@@ -29,7 +43,7 @@ def atomic(path: Path, raw: bytes):
             stream.write(raw)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        sharing_retry(lambda:os.replace(temporary, path))
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -39,7 +53,8 @@ def json_bytes(value):
 
 
 def read_json(path, default=None):
-    return json.loads(Path(path).read_text(encoding='utf-8-sig')) if Path(path).exists() else default
+    try:return json.loads(read_bytes(path).decode('utf-8-sig'))
+    except FileNotFoundError:return default
 
 
 def decode_ini(raw):

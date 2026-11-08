@@ -40,6 +40,7 @@ def host_mod_states(host,mods):
         result={}
         for mod in mods:
             identity=mod['id'];enabled=mod.get('runtime_enabled',mod['enabled']);raw=Path(host['path'])/'sdgo/mods'/identity/'mod.ini'
+            if not raw.exists():raw=Path(host['path'])/'sdgo/owner-mods'/identity/'mod.ini'
             if not raw.exists():raw=Path(host['path'])/'sdgo/local-mods'/identity/'mod.ini'
             from .configuration import files,fingerprint
             contract=storage.read_json(raw.parent/'manager.json',{})

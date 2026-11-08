@@ -19,7 +19,7 @@ import tempfile
 import zipfile
 
 PUBLIC = "public"
-ALLOWED = {PUBLIC, "local_only"}
+ALLOWED = {PUBLIC, "owner", "local_only"}
 # Construct private markers so this public scanner does not contain either
 # complete marker in its own source bytes.
 NONREDISTRIBUTABLE_MARKER = b"".join(
@@ -28,6 +28,9 @@ NONREDISTRIBUTABLE_MARKER = b"".join(
 LOCAL_SOURCE_MARKER = b"".join(
     (b"// SDGO_LOCAL_ONLY_", b"SOURCE_FILE")
 )
+OWNER_MARKER = b"".join((b"SDGO_OWNER_", b"ONLY_REDISTRIBUTABLE"))
+OWNER_SOURCE_MARKER = b"".join((b"// SDGO_OWNER_", b"SOURCE_FILE"))
+PUBLIC_BLOCKED_MARKERS = (NONREDISTRIBUTABLE_MARKER, OWNER_MARKER, OWNER_SOURCE_MARKER)
 POLICY_LIMIT = 2 * 1024 * 1024
 NESTED_ARCHIVE_LIMIT = 512 * 1024 * 1024
 ZIP_TAIL_LIMIT = 65_557
@@ -41,6 +44,8 @@ def normalized(name: str) -> str:
     value = str(PurePosixPath(name.replace("\\", "/")))
     if value.startswith("/") or any(part in {"", ".", ".."} for part in value.split("/")):
         raise ValueError("Unsafe payload path: " + name)
+    if any(part.casefold()in('owner-mods','local-mods')for part in value.split('/')):
+        raise ValueError('Private programme directory cannot enter public payload: '+name)
     return value
 
 
@@ -117,12 +122,12 @@ def _check_distribution_file(name: str, raw: bytes) -> None:
     value = json.loads(raw.decode("utf-8-sig"))
     if not isinstance(value, dict):
         raise ValueError(name + ": distribution.json must be an object")
-    if value.get("distribution") == "local_only" or value.get("redistributable") is False:
+    if value.get("distribution") in ("local_only", "owner") or value.get("redistributable") is False:
         raise ValueError(name + ": local-only repository cannot enter public distribution")
 
 
 def _check_marker_bytes(name: str, raw: bytes) -> None:
-    if NONREDISTRIBUTABLE_MARKER in raw:
+    if any(marker in raw for marker in PUBLIC_BLOCKED_MARKERS):
         raise ValueError("Non-redistributable marker found in public bytes: " + name)
     for line in raw.splitlines():
         if line.strip() == LOCAL_SOURCE_MARKER:
@@ -166,11 +171,11 @@ class _StreamScanner:
 
     def feed(self, chunk: bytes) -> None:
         combined = self.overlap + chunk
-        if NONREDISTRIBUTABLE_MARKER in combined:
+        if any(marker in combined for marker in PUBLIC_BLOCKED_MARKERS):
             raise ValueError(
                 "Non-redistributable marker found in public bytes: " + self.name
             )
-        keep = max(0, len(NONREDISTRIBUTABLE_MARKER) - 1)
+        keep = max(0, max(map(len, PUBLIC_BLOCKED_MARKERS)) - 1)
         self.overlap = combined[-keep:] if keep else b""
         lines = (self.line + chunk).split(b"\n")
         self.line = lines.pop()
@@ -665,6 +670,8 @@ def check_git(
         repo, tree, LOCAL_SOURCE_MARKER,
         "Local-only source marker found in public Git bytes",
     )
+    for marker in (OWNER_MARKER,OWNER_SOURCE_MARKER):
+        _git_grep(repo,tree,marker,'Owner-only bytes cannot enter public Git')
     records = _git_records(repo, tree)
     checked_archives = _audit_git_blob_contents(
         repo, records, allow_legacy_public=allow_legacy_public

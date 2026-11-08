@@ -13,6 +13,8 @@ does not distribute the pack.
 Server owners and maintainers install, configure and [update](docs/mod-manager.md#updates) features with
 **SDGO Mod Manager**; the **0_更新与管理** entry at the top of the client folder opens it.
 
+[Owner programme packages](docs/owner-programmes.md) keep official programmes, private owner patches and shared content separate. Players follow one configuration address and subsequent game launches update the approved combination automatically.
+
 Players with a compatible original client can install the server owner's profile (the owner's chosen Mods, shared
 settings and assets) in Manager in one step. Once bound, players keep opening `GOnline.exe`: Manager first
 synchronizes and verifies the owner's content, then starts the game. Personal settings and existing content are kept

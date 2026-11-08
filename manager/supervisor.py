@@ -36,6 +36,12 @@ class ServiceRegistry:
     def desired(self, identity):
         return self.workspace.settings.get('services', {}).get(identity, {}).get('enabled', False) is True
 
+    def _state(self,entry):
+        try:return entry['controller'].state()
+        except Exception as error:
+            entry['error']='服务状态暂不可用（'+type(error).__name__+'）'
+            return {'running':False,'healthy':False,'error':entry['error'],'state_error':True}
+
     def _desired(self, identity, enabled):
         with storage.LOCK:
             self.workspace.settings.setdefault('services', {})[identity] = {'enabled': enabled}
@@ -43,7 +49,7 @@ class ServiceRegistry:
 
     def describe(self, identity=None):
         def one(key, entry):
-            status = entry['controller'].state()
+            status = self._state(entry)
             return {**status, 'id': key, 'title': entry['title'], 'desired': self.desired(key),
                     'error': status.get('error') or entry['error'], 'owner': 'manager'}
         with self.lock:
@@ -90,13 +96,15 @@ class ServiceRegistry:
             while not self.stop_event.is_set():
                 for identity, entry in list(self.entries.items()):
                     if self.stop_event.is_set(): break
-                    status=entry['controller'].state()
+                    status=self._state(entry)
+                    if status.get('state_error'):continue
                     if self.desired(identity) and status.get('running') and status.get('healthy') is False and not status.get('recovering'):
                         if entry['unhealthy_since'] is None:entry['unhealthy_since']=time.monotonic()
                         elif time.monotonic()-entry['unhealthy_since']>=15:
                             self.stop(identity,persist=False);entry['unhealthy_since']=None
                     else:entry['unhealthy_since']=None
-                    if self.desired(identity) and not entry['controller'].state().get('running') and time.monotonic() >= entry['retry_at']:
+                    status=self._state(entry)
+                    if self.desired(identity) and not status.get('state_error')and not status.get('running') and time.monotonic() >= entry['retry_at']:
                         try: self.start(identity, persist=False)
                         except Exception: pass  # The registered service reports the bounded error.
                 self.stop_event.wait(2)
@@ -106,8 +114,20 @@ class ServiceRegistry:
     def close(self):
         self.stop_event.set()
         if self.thread: self.thread.join(timeout=25)
-        for identity in list(self.entries): self.stop(identity, persist=False)
-        for identity in list(self.resources): self.release_resource(identity)
+        self.close_errors=[]
+        # Shutdown does not need a display/state refresh. A malformed installed
+        # addon must not interrupt cleanup or strand the upgrade successor.
+        for identity,entry in list(self.entries.items()):
+            try:
+                with entry['lock']:entry['controller'].stop()
+            except Exception as error:self.close_errors.append(identity+': '+str(error))
+        for identity in list(self.resources):
+            try:self.release_resource(identity)
+            except Exception as error:self.close_errors.append(identity+': '+str(error))
+        if self.close_errors:
+            self.workspace.root.mkdir(parents=True,exist_ok=True)
+            with(self.workspace.root/'manager-errors.log').open('a',encoding='utf-8')as stream:
+                stream.write('Manager shutdown: '+'; '.join(self.close_errors)+'\n')
 
     def prepare_restart(self):
         """Let registered controllers hand off only their existing bounded leases."""

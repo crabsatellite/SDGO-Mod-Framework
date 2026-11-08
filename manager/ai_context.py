@@ -69,13 +69,13 @@ def build(workspace, base_url, *, host_id=None, mod_id=None, provider_id=None, k
         host=workspace.host(host_id)
         installed=next((mod for mod in workspace._installed(host) if mod['id']==mod_id),None)
         if installed is None: raise ValueError('当前宿主没有这个功能')
+        root=workspace._mod_directory(host,mod_id)
         contract=workspace.contracts.get(mod_id,{})
         if not contract:
             from .registry import load
-            contract=load(Path(host['path'])/'sdgo/mods').get(mod_id,{})
+            contract=load(root.parent).get(mod_id,{})
         title=installed['title'];version=installed['version']
         mechanism=contract.get('mechanism',contract.get('description','通过已安装的 Mod 及框架提供此功能。'))
-        root=storage.safe_child(host['path'],'sdgo/mods/'+mod_id)
         paths=[str(root),str(root/'mod.ini')]
         for name in ('config.ini',mod_id+'.dll'):
             if (root/name).is_file():paths.append(str(root/name))
@@ -91,6 +91,19 @@ def build(workspace, base_url, *, host_id=None, mod_id=None, provider_id=None, k
             item['current']=redact(value if value is not None else field.get('default'))
             settings['可调设置'].append(item)
         addresses=[base_url+'/api/settings?host='+host_id+'&mod='+mod_id]
+        if installed.get('distribution')in('owner','local_only'):
+            scope=installed['distribution'];label='本服程序'if scope=='owner'else'仅本机插件'
+            lines=[f'# {title} · {label}',f'Mod 版本：{version}',
+                '此功能来自私有模块，不应直接向公共框架仓库提交其源码、配置或日志。']
+            if kind=='bug':
+                lines+=['请先整理脱敏复现步骤、预期／实际结果和版本，由服主或该私有模块维护者处理。',
+                    '我描述的问题：'+redact(problem.strip()),
+                    '不要上传账号、凭据、游戏资源、私有快照或本机绝对路径。']
+            else:
+                lines+=['更新应跟随服主配置中的完整程序锁，不要独立替换 DLL。'if scope=='owner'else'仅本机插件只使用其维护者明确提供的私有包，不随服主内容分发。',
+                    '以下内容只用于已授权的本机配置／排查：',*paths,*addresses,
+                    json.dumps(redact(settings),ensure_ascii=False,indent=2)]
+            return {'title':title,'text':'\n'.join(lines),'repository':None,'kind':kind}
     else: raise ValueError('请选择一个具体功能再复制 AI 说明')
     executable=str(Path(sys.executable).resolve()) if getattr(sys,'frozen',False) else str(Path(__file__).resolve().parents[1]/'tools/mod_manager.py')
     lines=[f'# SDGO Mod Framework · {title}',f'项目仓库：{repo["url"]}',f'Issue 地址：{repo["issues"]}',

@@ -2,11 +2,13 @@
 
 [English](owner-updates.md) · [返回功能目录](../README.zh-CN.md) · [统一 Manager](mod-manager.zh-CN.md) · [归属与 SQL 边界](content-boundaries.zh-CN.md)
 
-## 两条来源
+## 程序源与服主来源
 
 玩家先取得兼容的原版客户端，再安装官方发布的 Manager。模组源提供 Manager、核心、Mod 程序和通用默认值；服主内容源提供 Mod 选择、精确版本、共享参数和全部自定义机体、素材及生成目录。原版程序和归档独立取得。
 
 默认模组源为官方 GitHub Releases，也可导入兼容框架源配置，使用自己的 Git SSH/HTTPS 镜像。服主内容可经 Git SSH/HTTPS、HTTPS 清单与文件、离线目录或 ZIP 发布。完整客户端仓库和固定分支布局都是可选保存方式。
+
+需要私有补丁时，可另行发布[本服程序包](owner-programmes.zh-CN.md)，将明确允许分发的补丁加入锁定的官方基线。服主配置引用该程序修订和内容，玩家仍只导入一个地址；本服正式／测试通道与官方 Stable／Beta 分开记录。
 
 ## 玩家首次安装
 

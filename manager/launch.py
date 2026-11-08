@@ -79,7 +79,7 @@ def read_request(root,token):
 def accept(root,token):
     request=read_request(root,token);accepted=item(root,token,'accepted')
     if accepted.exists():
-        if accepted.read_text(encoding='ascii')!=request['sha256']:raise ValueError('已接受的启动请求被修改')
+        if storage.read_bytes(accepted).decode('ascii')!=request['sha256']:raise ValueError('已接受的启动请求被修改')
     else:
         if creation(request['pid'])!=(request['created'],Path(root).resolve()/'GOnline.exe'):raise ValueError('原始启动进程已结束或身份不符，请重新打开游戏')
         storage.atomic(accepted,request['sha256'].encode('ascii'))
@@ -166,6 +166,9 @@ def run(controller,host,token):
                 if controller.operation_stop.is_set():raise InterruptedError('启动已取消')
                 if not matches(updates.child(root,name),entry):raise storage.Conflict('启动前文件已变化，请重试：'+name)
                 controller.report_progress(verified_files=number,file=name)
+            if plan.get('owner_programme'):
+                from .owner_programmes import unknown_files
+                if unknown_files(root,plan['effective']):raise storage.Conflict('启动前出现未登记的 Mod，请重新校验并隔离后启动')
             # A loader without the protocol would silently skip the next check.
             # Fail here instead of claiming an automatic workflow was installed.
             if b'SdgoLaunchGateProtocol'not in(root/'d3d9.dll').read_bytes():raise ValueError('服主选定的框架尚不支持启动前校验，请服主发布配套框架')
@@ -182,5 +185,10 @@ def run(controller,host,token):
             if item(root,token,'ack').read_bytes()!=PROTOCOL:raise ValueError('游戏启动确认无效')
             result=save(root,token,status='launched',pid=process.pid,origin_pid=request['pid'],origin_created=request['created'],
                         request_sha256=request['sha256'],commit=plan['commit'],message='校验通过，游戏已启动')
-            for suffix in('request','accepted','ack'):item(root,token,suffix).unlink(missing_ok=True)
+            for suffix in('request','accepted','ack'):
+                try:storage.remove(item(root,token,suffix))
+                except OSError:result.setdefault('cleanup_pending',[]).append(suffix)
+            if result.get('cleanup_pending'):
+                try:save(root,token,**result)
+                except OSError:pass  # The persisted terminal result is already valid.
             return result

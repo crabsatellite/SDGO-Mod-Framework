@@ -57,5 +57,31 @@ class ServiceTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.workspace.services.start('missing')
         with self.assertRaises(ValueError):self.workspace.services.register('fixture.worker','Other',self.controller,self.controller.start)
 
+    def test_bad_display_state_does_not_prevent_shutdown_or_other_resources(self):
+        class Bad(Controller):
+            def state(self):raise ValueError('malformed addon metadata')
+        class Resource:
+            closed=False
+            def close(self):self.closed=True
+        bad=Bad();resource=Resource();registry=self.workspace.services
+        registry.register('fixture.bad','Bad display',bad,bad.start)
+        registry.resource('fixture.resource',lambda:resource)
+        self.assertTrue(registry.describe('fixture.bad')['state_error'])
+        registry.restore();time.sleep(.1)
+        self.assertTrue(registry.thread.is_alive())
+        registry.close()
+        self.assertGreaterEqual(bad.stops,1)
+        self.assertGreaterEqual(self.controller.stops,1)
+        self.assertTrue(resource.closed)
+
+    def test_failed_stop_is_recorded_after_other_services_are_closed(self):
+        class Bad(Controller):
+            def stop(self):raise OSError('fixture close failure')
+        bad=Bad();self.workspace.services.register('fixture.bad','Bad close',bad,bad.start)
+        self.workspace.services.close()
+        self.assertGreaterEqual(self.controller.stops,1)
+        self.assertTrue(self.workspace.services.close_errors)
+        self.assertIn('fixture.bad',(self.root/'manager-errors.log').read_text(encoding='utf-8'))
+
 
 if __name__=='__main__':unittest.main()

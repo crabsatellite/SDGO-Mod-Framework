@@ -1,6 +1,7 @@
 """One explicit local workspace, defaulting to the ordinary player view."""
 from __future__ import annotations
 import copy
+import configparser
 from pathlib import Path
 import re
 import uuid
@@ -90,14 +91,14 @@ class Workspace:
 
     def _mod_directory(self, host, identity):
         candidates = [storage.safe_child(host['path'], 'sdgo/'+tree+'/'+identity)
-                      for tree in ('mods','local-mods')]
+                      for tree in ('mods','owner-mods','local-mods')]
         installed = [path for path in candidates if (path/'mod.ini').is_file()]
         if len(installed)>1:raise ValueError('Mod 标识在共享目录与本地目录中重复：'+identity)
         return installed[0] if installed else candidates[0]
 
     def _installed(self, host, all_mods=False):
         result = []
-        roots = [Path(host['path'])/'sdgo'/tree for tree in ('mods','local-mods')]
+        roots = [Path(host['path'])/'sdgo'/tree for tree in ('mods','owner-mods','local-mods')]
         folders = [folder for root in roots if root.is_dir() for folder in sorted(root.iterdir())]
         for folder in folders:
             root = folder.parent
@@ -117,6 +118,7 @@ class Workspace:
             manager_raw = (folder / 'manager.json').read_bytes() if (folder / 'manager.json').is_file() else None
             scope = distribution.resolve(raw, manager_raw, allow_legacy_public=True)
             if root.name=='local-mods':scope=distribution.LOCAL_ONLY
+            if root.name=='owner-mods' and scope!=distribution.OWNER:raise ValueError('本服 Mod 分发声明与安装目录不一致：'+folder.name)
             global_path = Path(host['path']) / 'sdgo/sdgo.ini'
             global_raw = global_path.read_bytes() if global_path.exists() else b''
             global_ini = storage.ini_values(global_raw)
@@ -159,7 +161,7 @@ class Workspace:
     def dependency_nodes(self):
         nodes=[]
         for host in self.settings['hosts']:
-            roots={tree:Path(host['path'])/'sdgo'/tree for tree in ('mods','local-mods')}
+            roots={tree:Path(host['path'])/'sdgo'/tree for tree in ('mods','owner-mods','local-mods')}
             contracts={tree:registry.load(path)for tree,path in roots.items()}
             for mod in self._installed(host,True):
                 root=self._mod_directory(host,mod['id']);contract=contracts[root.parent.name].get(mod['id'],{})
@@ -202,19 +204,25 @@ class Workspace:
             raise ValueError('Mod 未安装：' + '、'.join(sorted(unknown)))
         blocked = [identity for identity in mod_ids if not installed[identity]['redistributable']]
         if blocked:
+            if all(installed[identity]['distribution']==distribution.OWNER for identity in blocked):
+                raise ValueError('本服程序通过发布页分发，不进入公共导出包：'+'、'.join(blocked))
             raise ValueError('仅本地 Mod 禁止导出：' + '、'.join(blocked))
 
     def public(self):
         hosts = []
         for host in self.settings['hosts']:
             path = Path(host['path']) / 'sdgo/sdgo.ini'
-            mods=self._installed(host)
+            raw=path.read_bytes()if path.exists()else b'';inventory_error=''
+            try:
+                mods=self._installed(host);global_ini=storage.ini_values(raw)
+            except(OSError,ValueError,KeyError,TypeError,configparser.Error):
+                mods=[];global_ini=storage.ini_values(b'')
+                inventory_error='已安装插件的清单不完整；先通过服主配置更新修复，原文件会保留在恢复目录'
             from .runtime_state import host_mod_states
             observed=host_mod_states(host,mods)
             for mod in mods:
                 mod['runtime']=observed[mod['id']];mod['runtime_status']=mod['runtime']['status']
-            raw=path.read_bytes() if path.exists() else b'';global_ini=storage.ini_values(raw)
-            hosts.append({**host,'complete_runtime':host['role']=='client'and(Path(host['path'])/'sdgo/client-source.json').is_file(), 'mods': [m for m in mods if not m['archived']], 'archive':[m for m in mods if m['archived']], 'global_revision': storage.revision(raw),
+            hosts.append({**host,'inventory_error':inventory_error,'complete_runtime':host['role']=='client'and(Path(host['path'])/'sdgo/client-source.json').is_file(), 'mods': [m for m in mods if not m['archived']], 'archive':[m for m in mods if m['archived']], 'global_revision': storage.revision(raw),
                           'categories':{key:global_ini.get('categories',key,fallback='1')!='0' for key in ('gameplay','network')}})
         display_offset=self.settings.get('display_utc_offset_minutes')
         result = {'mode': self.mode, 'hosts': hosts, 'schema_version': 1,

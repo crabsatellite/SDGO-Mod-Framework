@@ -2,11 +2,13 @@
 
 [简体中文](owner-updates.zh-CN.md) · [Back to the feature index](../README.md) · [Manager](mod-manager.md) · [Content and SQL ownership](content-boundaries.md)
 
-## Two independent sources
+## Programme and owner sources
 
 Start with a compatible original client and install the official Manager. The Mod source supplies Manager, core, Mod programs and generic defaults. The owner content source supplies Mod selection, exact versions, shared settings, custom units, assets and generated catalogs. Original programs and archives are obtained separately.
 
 The default Mod source uses official GitHub Releases. Compatible Git SSH/HTTPS framework mirrors can also be imported. Owner content supports Git SSH/HTTPS, HTTPS manifests and files, offline directories and ZIP payloads. A complete-client repository and a particular branch layout are optional owner choices.
+
+Owners can also publish [separate owner programme packages](owner-programmes.md). These add explicitly distributable patches to a locked official baseline. The owner configuration references the programme revision and content; players still import one address. Formal and test owner channels remain separate from official Stable/Beta channels.
 
 ## Player installation
 

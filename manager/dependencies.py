@@ -1,6 +1,7 @@
 """Versioned Mod relationships. No runtime, configuration or database writes."""
 from __future__ import annotations
 import re
+import configparser
 
 ID=re.compile(r'[a-z][a-z0-9_-]{0,63}\Z')
 CAP=re.compile(r'[a-z][a-z0-9_.-]{0,95}\Z')
@@ -126,15 +127,23 @@ def enforce_install(root,changes,role):
         def raw(name):
             if candidate and name in changes:return changes[name]or b''
             path=root/name;return path.read_bytes()if path.is_file()else b''
-        folders={p.parent.relative_to(root).as_posix()for tree in('mods','local-mods')for p in(root/'sdgo'/tree).glob('*/mod.ini')}
-        if candidate:folders.update(n.rsplit('/',1)[0]for n in changes if n.endswith('/mod.ini')and n.startswith(('sdgo/mods/','sdgo/local-mods/')))
-        global_ini=storage.ini_values(raw('sdgo/sdgo.ini'));result=[]
+        folders={p.parent.relative_to(root).as_posix()for tree in('mods','owner-mods','local-mods')for p in(root/'sdgo'/tree).glob('*/mod.ini')}
+        if candidate:folders.update(n.rsplit('/',1)[0]for n in changes if n.endswith('/mod.ini')and n.startswith(('sdgo/mods/','sdgo/owner-mods/','sdgo/local-mods/')))
+        try:global_ini=storage.ini_values(raw('sdgo/sdgo.ini'))
+        except configparser.Error:
+            if candidate or 'sdgo/sdgo.ini'not in changes:raise
+            global_ini=storage.ini_values(b'')
+        result=[]
         for folder in folders:
             data=raw(folder+'/mod.ini')
             if not data:continue
-            cfg=storage.ini_values(data);identity=cfg.get('mod','id',fallback=folder.split('/')[-1]);registration=raw(folder+'/manager.json')
-            contract=json.loads(registration)if registration else {'id':identity}
-            validate(contract);contract=copy.deepcopy(contract)
+            try:
+                cfg=storage.ini_values(data);identity=cfg.get('mod','id',fallback=folder.split('/')[-1]);registration=raw(folder+'/manager.json')
+                contract=json.loads(registration)if registration else {'id':identity}
+                validate(contract);contract=copy.deepcopy(contract)
+            except(ValueError,KeyError,TypeError,configparser.Error):
+                if not candidate and any(folder+'/'+leaf in changes for leaf in('mod.ini','manager.json')):continue
+                raise
             contract['dependencies']={kind:[row for row in rows if row.get('scope','host')in('host',role)]for kind,rows in contract.get('dependencies',{}).items()}
             category=cfg.get('mod','category',fallback='other');feature=cfg.get('mod','feature',fallback=identity)
             enabled=cfg.get('mod','enabled',fallback='1')!='0'and all(global_ini.get(section,key,fallback='1')!='0'for section,key in(('categories',category),('features',feature),('mods',identity)))

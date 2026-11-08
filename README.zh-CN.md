@@ -11,6 +11,8 @@
 服主与维护人员通过 **SDGO Mod Manager** 安装、配置和[更新](docs/mod-manager.zh-CN.md#更新)功能，
 客户端目录顶部的「0_更新与管理」可直接打开它。
 
+[本服程序包](docs/owner-programmes.zh-CN.md) 将官方程序、本服补丁和共享内容分开维护。玩家只跟随一个配置地址，后续启动自动更新服主验收过的组合。
+
 玩家取得兼容的原版客户端后，可在 Manager 一键安装服主配置档，即服主选定的 Mod、共享配置和素材。
 绑定后，玩家照常双击 `GOnline.exe`：Manager 先同步服主内容并完成校验，再启动游戏，见[启动前更新](docs/owner-updates.zh-CN.md#启动前更新)。
 更新时保留个人配置和已有内容。

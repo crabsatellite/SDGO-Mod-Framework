@@ -8,11 +8,12 @@ Manager composes a portable content contract rather than requiring a particular 
 
 The official catalog lists available Mods. An owner profile records the selected programs, exact versions, shared parameters and content digests. Players resolve that profile rather than independently selecting whatever version is newest. Initial installation and updates share compatibility checks, staging, recovery and commit semantics.
 
-Manager updates itself from its own program upstream. Owners lock the game framework and Mod runtime files, so an older content package cannot downgrade a newer Manager. Shared content never overwrites Manager and does not affect its existing source bindings or download recovery.
+Profiles with [owner programmes](owner-programmes.md) lock the matching Manager, official baseline and owner patches together. Their content layer still contains no executable files. Ordinary profiles without that layer retain their independent Manager policy.
 
 | Ownership | Contents | Distribution |
 | --- | --- | --- |
 | Framework | Manager, core, Mod programs, interfaces, generic defaults, configuration contracts and SQL templates | Framework source and the appropriate program channel |
+| Owner programmes | Explicitly owner-distributable compiled client patches and their official baseline lock | Separate owner programme endpoint; source remains private; local-only work stays excluded |
 | Owner shared content | Mod selection/version lock, shared settings, added units, models, textures and generated catalogs | Owner-selected private Git, HTTPS or offline directory/package |
 | Owner server definitions | Concrete unit, shop and reward records and generated server apply plans | Server maintenance workflow, never executed by a player profile |
 | Private/runtime data | Credentials, tokens, birthday rosters, real accounts, inventory, currency, databases, logs and recovery state | Appropriate local/server private workspace, never player distribution |
@@ -32,6 +33,6 @@ Concrete INSERT/UPDATE plans generated from owner unit, shop or reward edits are
 
 A profile records base-client compatibility, an exact framework version/digest, selected Mods, shared configuration and content hashes. Git, HTTPS manifests/resources and offline directories use the same profile contract and installer.
 
-Framework identities, DLLs and interface declarations belong to the program source. Owner content changes declared settings and assets only. Login, display/FPS and explicitly declared personal preferences remain local; shared gameplay settings follow the owner. Source, digest or dependency failures preserve the existing installation.
+Official and owner programme identities, DLLs and interface declarations belong to their respective programme sources. Owner content changes declared settings and assets only. Login, display/FPS and explicitly declared personal preferences remain local; shared gameplay settings follow the owner. Source, digest or dependency failures preserve the existing installation.
 
 An optional complete-client snapshot can be assembled from the same lockfile for backup or initial distribution. It is an output, not a separately maintained source of configuration or a requirement imposed on other owners.

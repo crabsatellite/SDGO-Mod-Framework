@@ -6,7 +6,7 @@ import re
 
 ID = re.compile(r'[a-z][a-z0-9_-]{0,63}\Z')
 ROLES = {'client', 'battle', 'agent', 'world'}
-DISTIBUTIONS = {'public', 'local_only'}
+DISTIBUTIONS = {'public', 'owner', 'local_only'}
 CLIENT_XML_SETTING = ('config.xml', 'Framework/Timer', 'updatefps')
 
 

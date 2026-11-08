@@ -32,11 +32,15 @@ def main(argv=None):
         parser.add_argument('--launch-game',type=Path,required=True);parser.add_argument('--launch-request',required=True)
         parser.add_argument('--launch-worker',action='store_true');args=parser.parse_args(effective)
         try:
+            if launch.state(args.launch_game,args.launch_request).get('status')in('launched','cancelled'):return 0
             launch.accept(args.launch_game,args.launch_request)
             if getattr(sys,'frozen',False)and not args.launch_worker:launch_ui.detach(args.launch_game,args.launch_request)
             else:launch_ui.run(args.launch_game,args.launch_request)
             return 0
         except Exception as error:
+            try:
+                storage.atomic(launch.folder(args.launch_game)/'bootstrap-error.json',storage.json_bytes({'token':args.launch_request,'error':type(error).__name__,'message':str(error)}))
+            except(OSError,ValueError):pass
             if os.name=='nt':
                 import ctypes
                 ctypes.windll.user32.MessageBoxW(None,str(error),'SDGO Mod Manager',0x10)
@@ -97,8 +101,21 @@ def main(argv=None):
     try: server.serve_forever()
     finally:
         server.server_close()
-        workspace.close()
+        trace=None
+        if os.environ.get('SDGO_MANAGER_SHUTDOWN_TRACE')=='1':
+            import faulthandler
+            trace=(workspace.root/'shutdown-stacks.log').open('w',encoding='utf-8')
+            trace.write('server closed; stopping workspace\n');trace.flush()
+            faulthandler.dump_traceback_later(10,repeat=True,file=trace)
+        try:workspace.close()
+        finally:
+            if trace:
+                import threading
+                trace.write('workspace closed; threads='+repr([(t.name,t.ident,t.daemon)for t in threading.enumerate()])+'\n');trace.flush()
+                faulthandler.dump_traceback(file=trace)
+                globals()['_shutdown_trace_file']=trace
         lease.close()
+        if trace:trace.write('lease closed; returning main\n');trace.flush()
 
 
 if __name__ == '__main__': raise SystemExit(main())

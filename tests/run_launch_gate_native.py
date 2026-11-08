@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import struct
 import sys
 import time
 import urllib.request
@@ -22,7 +23,7 @@ import uuid
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-from manager import storage,updates,launch
+from manager import storage,updates,launch,owner_programmes,distribution
 from tests.test_manager_updates import bundle
 from tools.game_test_windows import WindowsBackgroundProcess
 from tools.game_test import process_snapshot
@@ -31,7 +32,8 @@ from tools.game_test import process_snapshot
 def wait(check,seconds=90):
     deadline=time.monotonic()+seconds
     while time.monotonic()<deadline:
-        value=check()
+        try:value=check()
+        except(FileNotFoundError,PermissionError):value=None
         if value:return value
         time.sleep(.1)
     raise AssertionError('native startup condition timed out')
@@ -61,7 +63,7 @@ def close_error(process):
     user.EnumDesktopWindows(process._desktop_handle,window,0);return bool(found)
 
 
-def prepare(base,build):
+def prepare(base,build,with_owner=False,manager_handoff=False):
     game=base/'client';game.mkdir(parents=True)
     shutil.copyfile(build/'Release/launch_gate_host.exe',game/'GOnline.exe')
     shutil.copyfile(build/'Release/d3d9.dll',game/'d3d9.dll')
@@ -71,7 +73,9 @@ def prepare(base,build):
         manifest=json.loads(z.read('release.json'))
         payload={n:z.read(n)for n in manifest['files']}
     payload['client/d3d9.dll']=(game/'d3d9.dll').read_bytes()
+    if with_owner:payload[updates.MANAGER]=(game/updates.MANAGER).read_bytes()
     manifest['capabilities']={'runtime_profiles':1,'runtime_safety':1,'launch_gate':1}
+    if with_owner:manifest['capabilities']['owner_programmes']=1
     manifest['files']={n:{'bytes':len(raw),'sha256':updates.digest(raw)}for n,raw in payload.items()}
     archive=io.BytesIO()
     with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_DEFLATED)as z:
@@ -94,15 +98,35 @@ def prepare(base,build):
         'framework':{'version':'1.14.0','sha256':updates.digest(raw),'commit':commit},'mods':{'example':'2.0.0'},
         'shared_files':[],'files':{n:{'bytes':len(raw),'sha256':updates.digest(raw)}for n,raw in content.items()}}
     for n,raw in content.items():storage.atomic(profile_dir/'content'/n,raw)
+    if with_owner:
+        editor=base/'owner-editor';mod=editor/'sdgo/owner-mods/fixture_owner';mod.mkdir(parents=True)
+        storage.atomic(mod/'fixture_owner.dll',b'owner programme revision 1 '+distribution.OWNER_MARKER)
+        storage.atomic(mod/'mod.ini',b'[mod]\nid=fixture_owner\nname=Owner fixture\nversion=0.1.0\ndll=fixture_owner.dll\ndistribution=owner\nenabled=1\n')
+        with(mod/'mod.ini').open('ab')as stream:stream.write(('hosts='+profile['base']['host_key']+'\n').encode())
+        storage.atomic(mod/'manager.json',storage.json_bytes({'schema_version':1,'id':'fixture_owner','title':'Owner fixture','distribution':'owner','hosts':['client'],'settings':[]}))
+        owner_dir=base/'owner-programme'
+        programme=owner_programmes.publish({'path':str(editor)},{'source_id':profile['source_id'],'channel':'stable',
+            'feeds':['local+'+(owner_dir/owner_programmes.MANIFEST).as_uri()]},profile['framework'],owner_dir,['fixture_owner'])
+        profile.update(schema_version=2,channel='stable',owner_programme=programme)
+        storage.atomic(game/'sdgo/local-mods/unknown/mod.ini',b'[mod]\nid=unknown\n')
+        storage.atomic(game/'sdgo/local-mods/unknown/unknown.dll',b'personal addon bytes')
     storage.atomic(profile_dir/'server-profile.json',storage.json_bytes(profile))
     binding={'schema_version':3,'kind':'sdgo-client-runtime','source_id':'a'*32,'label':profile['label'],
         'feeds':['local+'+(profile_dir/'server-profile.json').as_uri()],
         'framework':{'schema_version':1,'kind':'sdgo-framework-runtime','source_id':source_id,'repository':updates.REPOSITORY,'channel':'stable',
             'feeds':['git+https://startup-fixture.invalid/framework.git#runtime/stable']}}
+    if with_owner:binding.update(channel='stable',manager_policy='owner')
     storage.atomic(game/'sdgo/client-source.json',storage.json_bytes(binding))
+    if manager_handoff:
+        # Only the fixture's initial EXE timestamp differs. Its frozen code is
+        # unchanged; the approved programme contains the exact original build.
+        manager=game/updates.MANAGER;changed=bytearray(manager.read_bytes())
+        pe=struct.unpack_from('<I',changed,0x3c)[0]
+        stamp=struct.unpack_from('<I',changed,pe+8)[0]
+        struct.pack_into('<I',changed,pe+8,stamp^1);manager.write_bytes(changed)
     # Only this test process tree receives the fixture transport mapping.
     env=dict(os.environ,GIT_CONFIG_COUNT='2',GIT_CONFIG_KEY_0='url.'+repo.as_uri()+'.insteadOf',GIT_CONFIG_VALUE_0='https://startup-fixture.invalid/framework.git',
-        GIT_CONFIG_KEY_1='protocol.file.allow',GIT_CONFIG_VALUE_1='always')
+        GIT_CONFIG_KEY_1='protocol.file.allow',GIT_CONFIG_VALUE_1='always',SDGO_MANAGER_SHUTDOWN_TRACE='1')
     return game,profile_dir,profile,env
 
 
@@ -139,9 +163,9 @@ def run_sealed(base,build):
     return {'status':'pass','checks':checks}
 
 
-def run(base,build):
+def run(base,build,with_owner=False,manager_handoff=False):
     sealed=run_sealed(base,build)
-    game,profile_dir,profile,env=prepare(base,build);checks=[];owned=[]
+    game,profile_dir,profile,env=prepare(base,build,with_owner,manager_handoff);checks=[];owned=[]
     checks.extend(sealed['checks'])
     def start(**extra):
         process=WindowsBackgroundProcess([str(game/'GOnline.exe'),'--example','中文 参数'],cwd=game,env={**env,**extra},
@@ -158,6 +182,18 @@ def run(base,build):
         assert (game/'sprs/fixture.spr').read_bytes()==b'native startup content revision 1'
         assert first.wait(10)==0 and second.wait(10)==0
         checks+=['frozen_manager_native_handoff','one_launch_for_double_click','original_executable_and_arguments_preserved','content_installed_before_native_entry']
+        if with_owner:
+            assert(game/'sdgo/owner-mods/fixture_owner/fixture_owner.dll').is_file()
+            receipt=storage.read_json(game/'sdgo/local-state/client-runtime.json')
+            assert receipt['owner_programme']['revision']==1
+            assert not(game/'sdgo/local-mods/unknown/mod.ini').exists()
+            assert(Path(receipt['backup'])/'sdgo/local-mods/unknown/unknown.dll').read_bytes()==b'personal addon bytes'
+            checks+=['owner_programme_installed_before_entry','unknown_addon_preserved_outside_load_path']
+        if manager_handoff:
+            assert(game/updates.MANAGER).read_bytes()==(build/'manager'/updates.MANAGER).read_bytes()
+            jobs=game/'sdgo/local-state/manager/client-updates/runs'
+            assert any(storage.read_json(p,{}).get('status')=='installed'for p in jobs.glob('*/result.json'))
+            checks+=['approved_manager_replaces_changed_initial_exe','self_update_handoff_resumes_original_launch']
         wait(lambda:not(launch.folder(game)/'ui.json').exists(),15)
         (game/'native-entry.txt').unlink()
         # Native rejection must not hand back to Manager or reach main.
@@ -175,8 +211,31 @@ def run(base,build):
         (game/'native-entry.txt').unlink();replay=start(SDGO_LAUNCH_PERMIT=token)
         wait(lambda:close_error(replay),10);replay.kill();assert replay.wait(10)!=0
         assert not(game/'native-entry.txt').exists();checks.append('native_permit_is_single_use')
+        if with_owner:
+            revised=b'native startup content revision 2';profile['revision']+=1
+            profile['files']['sprs/fixture.spr']={'bytes':len(revised),'sha256':updates.digest(revised)}
+            storage.atomic(profile_dir/'content/sprs/fixture.spr',revised)
+            storage.atomic(profile_dir/'server-profile.json',storage.json_bytes(profile))
+            changed=start();assert changed.wait(40)==0
+            wait(lambda:(game/'native-entry.txt').exists(),90)
+            assert(game/'sprs/fixture.spr').read_bytes()==revised
+            assert storage.read_json(game/'sdgo/local-state/client-runtime.json')['owner_programme']['revision']==1
+            (game/'native-entry.txt').unlink();checks.append('next_launch_updates_content_without_changing_programme')
+            mod=base/'owner-editor/sdgo/owner-mods/fixture_owner'
+            storage.atomic(mod/'fixture_owner.dll',b'owner programme revision 2 '+distribution.OWNER_MARKER)
+            storage.atomic(mod/'mod.ini',(mod/'mod.ini').read_bytes().replace(b'version=0.1.0',b'version=0.1.1'))
+            programme=owner_programmes.publish({'path':str(base/'owner-editor')},{'source_id':profile['source_id'],'channel':'stable',
+                'feeds':['local+'+(base/'owner-programme'/owner_programmes.MANIFEST).as_uri()]},profile['framework'],base/'owner-programme',['fixture_owner'])
+            profile.update(revision=profile['revision']+1,owner_programme=programme)
+            storage.atomic(profile_dir/'server-profile.json',storage.json_bytes(profile))
+            changed=start();assert changed.wait(40)==0
+            wait(lambda:(game/'native-entry.txt').exists(),90)
+            assert(game/'sdgo/owner-mods/fixture_owner/fixture_owner.dll').read_bytes()==b'owner programme revision 2 '+distribution.OWNER_MARKER
+            assert storage.read_json(game/'sdgo/local-state/client-runtime.json')['owner_programme']['revision']==2
+            (game/'native-entry.txt').unlink();checks.append('next_launch_updates_locked_owner_programme')
         # Unavailable content never reaches native main; cancellation closes UI.
-        profile['revision']=2;profile['files']['sprs/fixture.spr']={'bytes':5,'sha256':updates.digest(b'wrong')}
+        previous_content=(game/'sprs/fixture.spr').read_bytes()
+        profile['revision']+=1;profile['files']['sprs/fixture.spr']={'bytes':5,'sha256':updates.digest(b'wrong')}
         storage.atomic(profile_dir/'server-profile.json',storage.json_bytes(profile))
         failed=start();assert failed.wait(20)==0
         def error():
@@ -185,7 +244,7 @@ def run(base,build):
         host=wait(error,60);assert not(game/'native-entry.txt').exists()
         api(game,'api/client-updates',{'action':'cancel','host':host['id']})
         wait(lambda:any(storage.read_json(p,{}).get('status')=='cancelled'for p in launch.folder(game).glob('*.result.json')),15)
-        assert (game/'sprs/fixture.spr').read_bytes()==b'native startup content revision 1'
+        assert (game/'sprs/fixture.spr').read_bytes()==previous_content
         checks+=['failed_content_blocks_game','cancel_preserves_installed_content']
         return {'status':'pass','checks':checks}
     finally:
@@ -202,11 +261,12 @@ def run(base,build):
                 try:process.wait(5)
                 except subprocess.TimeoutExpired:process.kill();process.wait(10)
             process.close()
-        wait(lambda:not any(row.get('image_path')and Path(row['image_path']).resolve().is_relative_to(game)for row in process_snapshot()),30)
+        wait(lambda:not any(row.get('image_path')and Path(row['image_path']).resolve().is_relative_to(game)for row in process_snapshot()),90)
 
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--build',type=Path,default=ROOT/'build');parser.add_argument('--work',type=Path,required=True)
-    parser.add_argument('--sealed-only',action='store_true');args=parser.parse_args()
+    parser.add_argument('--sealed-only',action='store_true');parser.add_argument('--owner-programmes',action='store_true');parser.add_argument('--manager-handoff',action='store_true');args=parser.parse_args()
     args.work.mkdir(parents=True,exist_ok=False)
-    result=(run_sealed if args.sealed_only else run)(args.work.resolve(),args.build.resolve());storage.atomic(args.work/'native-result.json',storage.json_bytes(result));print(json.dumps(result))
+    result=run_sealed(args.work.resolve(),args.build.resolve())if args.sealed_only else run(args.work.resolve(),args.build.resolve(),args.owner_programmes,args.manager_handoff)
+    storage.atomic(args.work/'native-result.json',storage.json_bytes(result));print(json.dumps(result))

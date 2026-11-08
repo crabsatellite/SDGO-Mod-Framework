@@ -29,7 +29,7 @@ def git_stage(controller,directory,manifest,zip_payload=False):
     if any(indexed.get(name)!=oid for name,oid in expected.items()):raise ValueError('Git 过滤规则改变了锁定内容的原始字节；拒绝发布')
 
 
-def snapshot(host,source,framework,extras=(),personal_settings=(),previous=None):
+def snapshot(host,source,framework,extras=(),personal_settings=(),previous=None,owner_programme=None):
     root=Path(host['path']).resolve();source=server_profiles.binding(source)
     # Existing providers already register their exact generated outputs and
     # receipts. Reuse that inventory instead of diffing an entire client tree.
@@ -85,6 +85,17 @@ def snapshot(host,source,framework,extras=(),personal_settings=(),previous=None)
         if name.endswith(('/mod.ini','/manager.json'))or name.startswith('sdgo/symbols/'):continue
         server_profiles.content_name(name);content[name]=raw
     if 'sdgo/sdgo.ini'in content:shared_files.append('sdgo/sdgo.ini')
+    if owner_programme:
+        from . import owner_programmes
+        owner_programmes.binding(owner_programme,source['source_id'])
+        for folder in (root/'sdgo/owner-mods').glob('*'):
+            if folder.name not in owner_programme.get('mods',{}):continue
+            if not(folder/'mod.ini').is_file():continue
+            current=updates.read_ini((folder/'mod.ini').read_bytes())
+            if current.get('mod','distribution',fallback='')!='owner':raise ValueError('本服 Mod 分发声明无效')
+            rows=[['mod','enabled',current.get('mod','enabled',fallback='1')]]
+            if current.has_section('settings'):rows.extend(['settings',key,value]for key,value in current['settings'].items())
+            patches['sdgo/owner-mods/'+folder.name+'/mod.ini']=rows
     shared={'schema_version':1,'patches':patches,'personal_settings':list(personal_settings)}
     server_profiles.check_secrets(shared);content[server_profiles.SHARED]=storage.json_bytes(shared)
     manifest={'schema_version':1,'kind':server_profiles.KIND,'source_id':source['source_id'],'label':source['label'],
@@ -93,16 +104,17 @@ def snapshot(host,source,framework,extras=(),personal_settings=(),previous=None)
               'framework':{k:framework[k]for k in('version','sha256','commit')},'mods':selected,
               'shared_files':sorted(set(shared_files)),
               'files':{n:{'bytes':len(raw),'sha256':updates.digest(raw),'git_blob':hashlib.sha1(('blob '+str(len(raw))+'\0').encode()+raw).hexdigest()}for n,raw in content.items()}}
+    if owner_programme:manifest.update(schema_version=2,channel=owner_programme['channel'],owner_programme=owner_programme)
     server_profiles.validate(manifest,source)
     return content,manifest
 
 
-def publish(host,source,framework,directory,extras=(),personal_settings=(),zip_payload=False):
+def publish(host,source,framework,directory,extras=(),personal_settings=(),zip_payload=False,owner_programme=None):
     root=Path(host['path']).resolve();directory=Path(directory).resolve()
     if directory==directory.parent or directory.is_relative_to(root)or root.is_relative_to(directory):raise ValueError('配置档发布目录须与客户端目录分开')
     source=server_profiles.binding(source);marker=directory/server_profiles.MANIFEST;prior=storage.read_json(marker,{})
     if prior and prior.get('source_id')!=source['source_id']:raise ValueError('发布目录属于另一服主')
-    content,manifest=snapshot(host,source,framework,extras,personal_settings,prior)
+    content,manifest=snapshot(host,source,framework,extras,personal_settings,prior,owner_programme)
     directory.mkdir(parents=True,exist_ok=True)
     old={k:v for k,v in prior.items()if k not in('revision','payload')};new={k:v for k,v in manifest.items()if k not in('revision','payload')}
     manifest['revision']=prior.get('revision',0)+(old!=new or not prior)

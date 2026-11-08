@@ -3,7 +3,7 @@
 [简体中文](mod-manager.zh-CN.md) · [Back to the feature index](../README.md)
 
 Manager installs programs from the official or imported Mod source, and shared configuration plus custom content from the owner source. Start with a compatible original client, install Manager, then import the owner profile. See [the installation flow](owner-updates.md). The game keeps its normal launch entry.
-Bound player clients opened through `GOnline.exe` show Manager progress and synchronize both sources before launching. See [updates before launch](owner-updates.md#updates-before-launch).
+Bound player clients opened through `GOnline.exe` show progress and synchronize the official baseline, optional owner patches and content locked by one configuration. See [owner programme packages](owner-programmes.md) and [updates before launch](owner-updates.md#updates-before-launch).
 
 Open Manager from **0_更新与管理** at the top of the client folder, or from **SDGO Mod Manager.exe** in the
 framework package. The first normal launch creates the folder entry; **创建目录入口** (create folder entry) restores a
@@ -122,7 +122,7 @@ local addons do not need individual exclusion rules.
 These guards compare reserved directory and manifest names without regard to case,
 matching Windows paths; changing letter case does not make the contents exportable.
 
-An owner-only Mod stays in a separate private repository. Its `[mod]` manifest uses
+A personal-only Mod stays in a separate private repository. Its `[mod]` manifest uses
 `distribution=local_only`, its `manager.json` uses `"distribution": "local_only"`,
 the repository `distribution.json` uses `{"distribution":"local_only",
 "redistributable":false}`, every private `.cpp`/`.h` starts with the framework's

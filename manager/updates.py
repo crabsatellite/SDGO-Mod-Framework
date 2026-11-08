@@ -402,7 +402,10 @@ class Updates:
         if self.manager_exe is None:return False
         from .owner_channel import mode
         def portable(host):
-            try:return storage.read_json(Path(host['path'])/'sdgo/client-source.json',{}).get('schema_version')==3
+            try:
+                root=Path(host['path']);source=storage.read_json(root/'sdgo/client-source.json',{})
+                owner=source.get('manager_policy')=='owner'or bool(storage.read_json(root/'sdgo/local-state/client-runtime.json',{}).get('owner_programme'))
+                return source.get('schema_version')==3 and not owner
             except(ValueError,OSError):return False
         return any(h['role']=='client'and Path(h['path']).resolve()==self.manager_exe.parent and
                    (Path(h['path'])/'sdgo/client-source.json').is_file()and mode(h)!='owner'and

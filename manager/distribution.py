@@ -10,8 +10,9 @@ import stat
 import tempfile
 import zipfile
 
-ALLOWED = {"public", "local_only"}
+ALLOWED = {"public", "owner", "local_only"}
 PUBLIC = "public"
+OWNER = "owner"
 LOCAL_ONLY = "local_only"
 # Keep the complete marker out of the public Manager executable itself.
 NONREDISTRIBUTABLE_MARKER = b"".join(
@@ -20,6 +21,9 @@ NONREDISTRIBUTABLE_MARKER = b"".join(
 LOCAL_SOURCE_MARKER = b"".join(
     (b"// SDGO_LOCAL_ONLY_", b"SOURCE_FILE")
 )
+OWNER_MARKER = b"".join((b"SDGO_OWNER_", b"ONLY_REDISTRIBUTABLE"))
+OWNER_SOURCE_MARKER = b"".join((b"// SDGO_OWNER_", b"SOURCE_FILE"))
+PUBLIC_BLOCKED_MARKERS = (NONREDISTRIBUTABLE_MARKER, OWNER_MARKER, OWNER_SOURCE_MARKER)
 
 
 def _decode_ini(raw: bytes) -> str:
@@ -78,7 +82,7 @@ def require_public(mod_raw: bytes, manager_raw: bytes | None) -> None:
 
 
 def require_redistributable(name: str, raw: bytes) -> None:
-    if NONREDISTRIBUTABLE_MARKER in raw:
+    if any(marker in raw for marker in PUBLIC_BLOCKED_MARKERS):
         raise ValueError(
             "Non-redistributable marker found in public payload: " + name
         )
@@ -97,11 +101,11 @@ def _scan_public_stream(name: str, stream, *, capture: bool, copy_to=None) -> by
             break
         total += len(chunk)
         combined = overlap + chunk
-        if NONREDISTRIBUTABLE_MARKER in combined:
+        if any(marker in combined for marker in PUBLIC_BLOCKED_MARKERS):
             raise ValueError(
                 "Non-redistributable marker found in public payload: " + name
             )
-        overlap = combined[-(len(NONREDISTRIBUTABLE_MARKER) - 1):]
+        overlap = combined[-(max(map(len, PUBLIC_BLOCKED_MARKERS)) - 1):]
         lines = (line + chunk).split(b"\n")
         line = lines.pop()
         if any(item.rstrip(b"\r").strip() == LOCAL_SOURCE_MARKER for item in lines):
@@ -121,6 +125,8 @@ def _normalized(name: str) -> str:
     value = str(PurePosixPath(name.replace("\\", "/")))
     if value.startswith("/") or any(part in {"", ".", ".."} for part in value.split("/")):
         raise ValueError("Unsafe public payload path: " + name)
+    if any(part.casefold()in('owner-mods','local-mods')for part in value.split('/')):
+        raise ValueError('Private programme directory cannot enter public payload: '+name)
     return value
 
 
@@ -157,7 +163,7 @@ def _require_redistributable_archive(archive: zipfile.ZipFile, *, depth: int) ->
                 manifests.setdefault("/".join(parts[:-1]), {})[parts[-1]] = data or b""
             if parts[-1] == "distribution.json" and len(parts) <= 2:
                 policy = manager_json(data or b"")
-                if (policy.get("distribution") == LOCAL_ONLY
+                if (policy.get("distribution") in (LOCAL_ONLY, OWNER)
                         or policy.get("redistributable") is False):
                     raise ValueError("Local-only repository cannot enter public payload")
             temporary.seek(0)
@@ -200,3 +206,12 @@ def require_redistributable_payload(name: str, raw: bytes) -> None:
             require_redistributable_archive(raw)
         except zipfile.BadZipFile as error:
             raise ValueError("Invalid ZIP payload: " + name) from error
+
+
+def require_owner_payload(name: str, raw: bytes) -> None:
+    """An owner package never grants permission to export local-only work."""
+    if NONREDISTRIBUTABLE_MARKER in raw or LOCAL_SOURCE_MARKER in raw:
+        raise ValueError('仅本地文件不能进入本服程序包：' + name)
+    if OWNER_SOURCE_MARKER in raw:raise ValueError('本服源码不能进入玩家程序包：'+name)
+    if name.endswith('.dll') and OWNER_MARKER not in raw:
+        raise ValueError('本服 DLL 缺少明确的分发标记：' + name)

@@ -465,10 +465,20 @@ class OwnerChannels:
                     if not isinstance(receipt,dict):raise ValueError('receipt')
                     installed_revision=receipt.get('revision')
                 except (ValueError,OSError):installed_revision=None;error='本地安装收据损坏；请先明确解除绑定，再重新绑定负责人'
+                owner_mods=[];owner_mods_error=''
+                try:
+                    for folder in sorted((Path(h['path'])/'sdgo/owner-mods').glob('*')):
+                        if not(folder/'mod.ini').is_file():continue
+                        cfg=distribution.mod_ini((folder/'mod.ini').read_bytes())
+                        registration=storage.read_json(folder/'manager.json',{})
+                        if distribution.resolve((folder/'mod.ini').read_bytes(),(folder/'manager.json').read_bytes())!=distribution.OWNER:raise ValueError('owner declaration')
+                        owner_mods.append({'id':folder.name,'title':registration.get('title')or cfg.get('mod','name',fallback=folder.name),'version':cfg.get('mod','version',fallback='')})
+                except(OSError,ValueError):owner_mods_error='本服补丁登记不完整，请重新导入配套程序后发布'
                 hosts.append({'id':h['id'],'name':h['name'],'role':h['role'],'mode':mode(h),'source':source,
                     'complete_runtime':(Path(h['path'])/'sdgo/client-source.json').is_file(),
                     'automatic':h.get('owner_automatic',True) and self.workspace.services.desired(SERVICE),
                     'publication':cfg,'profile_publication':copy.deepcopy(h.get('profile_publication',{})),
+                    'owner_mods':owner_mods,'owner_mods_error':owner_mods_error,
                     'result':self.results.get(h['id'],{}) or ({'status':'error','message':error} if error else {}),
                     'installed_revision':installed_revision})
             return {'running':bool(self.thread and self.thread.is_alive()),'healthy':True,'hosts':hosts}

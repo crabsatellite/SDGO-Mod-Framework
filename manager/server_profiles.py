@@ -38,8 +38,15 @@ def binding(value):
     if not isinstance(value,dict)or value.get('schema_version')!=3 or value.get('kind')!='sdgo-client-runtime'or not ID.fullmatch(str(value.get('source_id',''))):raise ValueError('服主配置绑定无效')
     label=value.get('label');feeds=value.get('feeds')
     if not isinstance(label,str)or not 1<=len(label.strip())<=80 or not isinstance(feeds,list)or not 1<=len(feeds)<=3 or len(set(feeds))!=len(feeds):raise ValueError('服主配置名称或镜像清单无效')
-    return {'schema_version':3,'kind':'sdgo-client-runtime','source_id':value['source_id'],'label':label.strip(),
+    result={'schema_version':3,'kind':'sdgo-client-runtime','source_id':value['source_id'],'label':label.strip(),
             'feeds':[feed(url)for url in feeds],'framework':framework_source.binding(value.get('framework'))}
+    if value.get('manager_policy') is not None:
+        if value['manager_policy']!='owner':raise ValueError('Manager 更新归属无效')
+        result['manager_policy']='owner'
+    if value.get('channel') is not None:
+        if value['channel']not in('stable','beta'):raise ValueError('服主配置通道无效')
+        result['channel']=value['channel']
+    return result
 
 
 def content_name(name):
@@ -63,7 +70,15 @@ def check_secrets(value):
 
 
 def validate(value,source):
-    if not isinstance(value,dict)or value.get('schema_version')!=1 or value.get('kind')!=KIND or value.get('source_id')!=source['source_id']:raise ValueError('服主配置身份不一致')
+    if not isinstance(value,dict)or value.get('schema_version')not in(1,2) or value.get('kind')!=KIND or value.get('source_id')!=source['source_id']:raise ValueError('服主配置身份不一致')
+    if value.get('owner_programme'):
+        if value['schema_version']!=2:raise ValueError('本服程序须使用新版配置档；旧 Manager 不得跳过补丁')
+        from . import owner_programmes
+        owner_programmes.binding(value['owner_programme'],source['source_id'])
+        if value.get('channel')not in('stable','beta')or value['channel']!=value['owner_programme']['channel']:
+            raise ValueError('本服程序与内容的发布通道不一致')
+        if source.get('channel',value['channel'])!=value['channel']:raise ValueError('配置镜像与玩家选择的本服通道不一致')
+    elif value['schema_version']==2:raise ValueError('新版配置档缺少本服程序版本锁')
     if type(value.get('revision'))is not int or value['revision']<1:raise ValueError('服主配置修订无效')
     base=value.get('base',{});updates.safe_name(base.get('executable',''))
     if base.get('executable')!='GOnline.exe'or not re.fullmatch('GOnline-[0-9A-F]{8}-[0-9A-F]{8}',str(base.get('host_key',''))):raise ValueError('服主配置须声明兼容的原版客户端')
@@ -297,10 +312,11 @@ def plan(controller,host,source):
     # Compose uses the same ownership, dependency and one-transaction installer
     # as complete-runtime updates, without requiring any original-game payload.
     contract={'layers':{'schema_version':1,'minimum_framework':profile['framework']['version'],
-        'separate_manager':True,
+        'separate_manager':profile['schema_version']!=2,
         'locked_framework':profile['framework'],'required_mods':profile['mods'],'mod_ids':list(profile['mods']),
         'shared_files':profile.get('shared_files',[])},'root_extensions':[],'entrypoints':[],
         'trees':['sdgo/mods','anrs','fxrs','gdrs','mdrs','scp','sdrs','sol','sprs','trns','txrs','uirs']}
+    if profile.get('owner_programme'):contract['layers']['owner_programme']=profile['owner_programme']
     entries={n:dict(e)for n,e in profile['files'].items()};entries={n:{k:e[k]for k in('bytes','sha256')}for n,e in entries.items()}
     # Pass the already verified content file directly rather than changing the
     # controller transport while another UI thread reads state.
@@ -313,24 +329,35 @@ def plan(controller,host,source):
     report(phase='framework')
     combined,effective,layers=runtime_layers.compose(controller,{**source,'framework':delegated},contract,root,entries,None,identity,shared_data=(folder/SHARED).read_bytes())
     if layers['framework']['manifest'].get('capabilities',{}).get('runtime_profiles')!=1:raise ValueError('所选框架程序尚不支持通用服主配置档；保留现有客户端')
+    if layers.get('owner_programme'):
+        for identity in layers['owner_programme']['manifest']['mods']:
+            cfg=updates.read_ini((Path(layers['owner_programme']['bundle'])/'sdgo/owner-mods'/identity/'mod.ini').read_bytes())
+            if profile['base']['host_key']not in[h.strip()for h in cfg.get('mod','hosts',fallback='').split(',')]:raise ValueError('本服补丁与当前原版客户端不兼容：'+identity)
     needed=[n for n,e in effective.items()if not matches(updates.child(root,n),e)]
     prior=storage.read_json(root/RECEIPT,{})
     if prior and prior.get('source_id')!=source['source_id']:raise ValueError('这个客户端已有不同服主的安装记录')
     prior_profile=prior.get('profile',{});previous_files=prior['files']if prior_profile else{}
-    if prior_profile.get('revision',0)>profile['revision']:raise ValueError('拒绝自动回退到较旧的服主配置')
-    if prior_profile.get('revision')==profile['revision']and prior_profile.get('sha256')!=identity:raise ValueError('服主不能重复使用同一修订号发布不同内容')
+    same_channel=prior_profile.get('channel','stable')==profile.get('channel','stable')
+    if same_channel and prior_profile.get('revision',0)>profile['revision']:raise ValueError('拒绝自动回退到较旧的服主配置')
+    if same_channel and prior_profile.get('revision')==profile['revision']and prior_profile.get('sha256')!=identity:raise ValueError('服主不能重复使用同一修订号发布不同内容')
     retired=[n for n in previous_files if n not in combined and n!=SOURCE and updates.child(root,n).is_file()]
+    quarantined=[]
+    if profile['schema_version']==2:
+        from .owner_programmes import unknown_files
+        quarantined=unknown_files(root,effective)
+        retired=sorted(set(retired)|set(quarantined))
     snapshot={n:file_hash(updates.child(root,n))if updates.child(root,n).is_file()else None for n in set(needed)|set(retired)}
     snapshot[RECEIPT]=file_hash(root/RECEIPT)if(root/RECEIPT).is_file()else None
     value={'source_id':source['source_id'],'commit':identity,'entries':combined,'needed':needed,'retired':retired,'snapshot':snapshot,
            'binding':source,'mirror':index,'contract':contract,'repository':'','effective':effective,'preserved':{},'merged':[],
-           'profile':{'revision':profile['revision'],'sha256':identity,'transport':transport['type'],'base':profile['base']},
-           'profile_payload':str(folder),**layers}
+           'profile':{'revision':profile['revision'],'channel':profile.get('channel','stable'),'sha256':identity,'transport':transport['type'],'base':profile['base']},
+           'profile_payload':str(folder),'quarantined':quarantined,**layers}
     value['digest']=updates.digest(storage.json_bytes(value));controller.plans[host['id']]=value
     return {'status':'available'if needed or retired else'current','commit':identity,'source':source['label'],'changed_files':len(needed),
             'retired_files':len(retired),'bytes':sum(combined[n]['bytes']for n in needed),'preserved_settings':len(profile.get('personal_settings',[])),
             'digest':value['digest'],'files':needed,'retired':retired,'data_migrations':False,'framework_version':layers['framework']['version'],
-            'framework_commit':layers['framework']['commit'],'profile_revision':profile['revision'],'profile_transport':transport['type']}
+            'framework_commit':layers['framework']['commit'],'profile_revision':profile['revision'],'profile_transport':transport['type'],
+            'owner_programme_revision':profile.get('owner_programme',{}).get('revision'),'quarantined':quarantined}
 
 
 def stage(plan,destination):

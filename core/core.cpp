@@ -430,7 +430,7 @@ namespace
 
     void LoadMods()
     {
-        const wchar_t* modRoots[] = {L"mods", L"local-mods"};
+        const wchar_t* modRoots[] = {L"mods", L"owner-mods", L"local-mods"};
         for (const wchar_t* modRoot : modRoots) {
             WIN32_FIND_DATAW entry = {};
             const std::wstring root = g_root + L"\\" + modRoot;
@@ -441,6 +441,14 @@ namespace
                     (entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) continue;
                 const std::wstring directory = root + L"\\" + entry.cFileName;
                 if (GetFileAttributesW((directory + L"\\mod.ini").c_str()) == INVALID_FILE_ATTRIBUTES) continue;
+                if (wcscmp(modRoot, L"owner-mods") == 0) {
+                    wchar_t scope[32]{};
+                    GetPrivateProfileStringW(L"mod", L"distribution", L"", scope, 32, (directory + L"\\mod.ini").c_str());
+                    if (wcscmp(scope, L"owner") != 0) {
+                        sdgo::log::Writef("core", SDGO_LOG_ERROR, "owner Mod directory requires explicit owner distribution");
+                        continue;
+                    }
+                }
                 SdgoMod* candidate = ReadManifest(directory, entry.cFileName);
                 const bool duplicate = std::any_of(g_mods.begin(), g_mods.end(), [candidate](const SdgoMod* existing) {
                     return existing->id == candidate->id;

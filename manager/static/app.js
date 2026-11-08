@@ -122,6 +122,7 @@ function showMods(isArchive=false){
  const summary=element('section',undefined,'hangar-summary'),info=element('div',undefined,'summary-info');
  info.append(element('strong',host.name),chip(ROLES[host.role]||host.role,'blue'),element('span',archiveView?listed.length+' 项自动修复':'已启用 '+enabled+' / '+listed.length,'muted'));
  summary.append(info);if(host.role==='client'&&!archiveView)summary.append(importButton(host));root.append(summary);
+ if(host.inventory_error)root.append(element('p',host.inventory_error,'error'));
  if(archiveView)root.append(element('p','这些修复随框架自动生效，不需要设置。排查问题时可以查看说明；如需临时关闭，先点左下角“显示开发信息”。','intro'));
  else root.append(howItWorks([['开关','点一下立即保存，不需要再按保存'],['生效','重新启动对应的游戏或服务器后生效'],['设置','进入详细参数，改完点「保存设置」']]));
  const grid=element('div',undefined,'mod-grid');
@@ -137,7 +138,8 @@ function showMods(isArchive=false){
   if(mod.blocked_by.length)notes.append(chip('已被批量开关关闭','amber'));
   const runtimeLabels={active:'已读取配置',disabled:'已确认停用',pending_restart:'待重启或读取确认',stopped:'程序未运行',unknown:'运行状态未确认',failed:'加载失败'};
   if(mod.runtime)notes.append(chip(runtimeLabels[mod.runtime.status]||'运行状态未确认',mod.runtime.status==='active'?'green':mod.runtime.status==='failed'?'amber':undefined));
-  if(!mod.redistributable)notes.append(chip('仅本地 · 禁止导出','amber'));
+  if(mod.distribution==='owner')notes.append(chip('本服程序 · 按配置分发','blue'));
+  else if(!mod.redistributable)notes.append(chip('仅本地 · 禁止导出','amber'));
   const configurable=!archiveView&&mod.settings_count>0;
   const open=button(configurable?'设置':'说明',()=>showSettings(host.id,mod.id),configurable?'ui-btn is-blue is-small':'ui-btn is-ghost is-small');open.prepend(icon(configurable?'settings':'archive'));
   foot.append(notes,open);card.append(foot);grid.append(card);

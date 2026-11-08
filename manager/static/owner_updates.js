@@ -35,7 +35,7 @@ export async function mountOwnerUpdates(ctx){
    const bind=button('一键安装／跟随服主配置',run(async()=>{bind.disabled=true;try{const result=await request('/api/client-updates',{action:'profile_install',host:host.id,feeds:lines(sourceInput.input.value),offline:offline.input.value.trim()||null});const cancelled=result.hosts.find(h=>h.id===host.id)?.result?.status==='cancelled';message(cancelled?'导入已取消，可继续。':'已绑定服主配置，正在从程序源和内容源统一安装。');await refreshRuntime();}finally{bind.disabled=false;}}),'ui-btn is-primary');bind.disabled=downloading;
    if(host.mode!=='owner')row.append(sourceInput.wrap,offline.wrap,bind);
     if(r.progress){
-     const p=r.progress,phases={manifest:'检查锁定配置',reuse:'校验本地可复用内容',mirror:'核对备用源的同一内容',content:'下载并校验服主内容',content_archive:'下载服主内容包',framework:'下载并校验模组包',staging:'暂存并完整校验',install:'安装已校验文件'};
+     const p=r.progress,phases={manifest:'检查锁定配置',reuse:'校验本地可复用内容',mirror:'核对备用源的同一内容',content:'下载并校验服主内容',content_archive:'下载服主内容包',framework:'下载并校验官方模组',owner_programme:'下载并校验本服补丁',staging:'暂存并完整校验',install:'安装已校验文件'};
      const total=p.total_bytes||0,received=p.verified_bytes===undefined?(p.current_bytes||0):p.verified_bytes;
      const bar=element('progress');bar.style.width='100%';bar.style.accentColor='#2d8bd2';bar.max=total||p.total_files||1;
      if(total)bar.value=Math.min(total,received);else if(p.phase==='install')bar.value=p.verified_files||0;
@@ -50,6 +50,8 @@ export async function mountOwnerUpdates(ctx){
    if(host.source){
     if(host.source.framework)row.append(element('p','框架源：'+host.source.framework.repository+' · '+host.source.framework.channel+'；内容源：'+host.source.label,'muted'));
     if(r.framework_version)row.append(element('p','已检查框架 '+r.framework_version+' · 内容提交 '+r.commit.slice(0,12),'muted'));
+    if(r.owner_programme_revision)row.append(element('p','本服程序修订 '+r.owner_programme_revision+'；官方基线与内容按同一配置锁定','muted'));
+    if(r.quarantined?.length)row.append(element('p',r.quarantined.length+' 个未登记的 Mod 文件将保留到本地恢复目录并移出加载路径。','muted'));
     if(host.recovery_required)row.append(button('恢复未完成更新',run(async()=>{await request('/api/client-updates',{action:'recover',host:host.id});await refreshRuntime();}),'ui-btn is-blue'));
     const busy=['queued','working'].includes(r.status),check=button('检查配置与内容更新',run(async()=>{await request('/api/client-updates',{action:'check',host:host.id});await refreshRuntime();}),'ui-btn is-blue');check.disabled=busy;row.append(check);
     if(r.status==='available'){
@@ -95,7 +97,15 @@ export async function mountOwnerUpdates(ctx){
     for(const c of plan.components){const details=element('details'),summary=element('summary'),box=element('input');box.type='checkbox';box.onchange=()=>{box.checked?selected.add(c.id):selected.delete(c.id);apply.disabled=!selected.size;};summary.append(box,document.createTextNode(' '+c.title+' · '+c.files.length+' 个文件'));details.append(summary,element('pre',c.files.join('\n')));review.append(details);}
     if(!plan.components.length)review.append(element('p','上游文件与当前目录一致。','muted'));else review.append(apply);
    }),'ui-btn is-blue'),review);
-   const profileDirectory=field('配置档导出／发布目录（与客户端分开）',h.profile_publication?.directory||''),profileFeeds=field('玩家读取配置档的地址（HTTPS、Git 或离线 local+file 地址）',(h.profile_publication?.feeds||[]).join('\n'),true),profileRemote=field('Git 发布地址（可选；留空则仅导出）',h.profile_publication?.git_remote||''),profileBranch=field('Git 内容分支',h.profile_publication?.branch||'content'),profileExtras=field('额外共享内容的客户端相对路径（每行一项）',(h.profile_publication?.extras||[]).join('\n'),true);
+   const pub=h.profile_publication||{};
+   const programmeDirectory=field('本服程序发布目录',pub.programme_directory||''),programmeFeeds=field('本服程序镜像地址（每行一项）',(pub.programme_feeds||[]).join('\n'),true),programmeRemote=field('本服程序 Git 发布地址（可选）',pub.programme_git_remote||''),programmeBranch=field('本服程序分支',pub.programme_branch||'owner-runtime/beta');
+   const programmeChoices=element('div'),programmeSelected=new Set((pub.programme_mods||[]).filter(id=>(h.owner_mods||[]).some(m=>m.id===id)));
+   for(const mod of h.owner_mods||[]){const check=element('input');check.type='checkbox';check.checked=programmeSelected.has(mod.id);check.onchange=()=>check.checked?programmeSelected.add(mod.id):programmeSelected.delete(mod.id);const label=element('label');label.style.display='block';label.append(check,document.createTextNode(' '+mod.title+' · '+mod.version));programmeChoices.append(label);}
+   if(!(h.owner_mods||[]).length)programmeChoices.append(element('p','尚未安装可向本服玩家分发的补丁，可以只锁定官方基线。','muted'));
+   if(h.owner_mods_error)programmeChoices.append(element('p',h.owner_mods_error,'error'));
+   const programmeChannel=element('select');programmeChannel.className='ui-input';for(const name of ['beta','stable']){const option=element('option',name==='beta'?'本服测试版':'本服正式版');option.value=name;programmeChannel.append(option);}programmeChannel.value=pub.owner_programme?.channel||'beta';
+   card.append(element('h3','发布本服程序'),element('p','官方程序保留原发布身份。本服补丁单独发布，内容档锁定两者版本；仅本机插件不会进入玩家包。先选择官方基线，再发布本服程序，最后发布配置与内容。','muted'),programmeDirectory.wrap,programmeFeeds.wrap,programmeRemote.wrap,programmeBranch.wrap,programmeChoices,programmeChannel,button('保存并发布本服程序',run(async()=>{const result=await request('/api/client-updates',{action:'programme_publish',host:h.id,directory:programmeDirectory.input.value.trim(),feeds:lines(programmeFeeds.input.value),mods:[...programmeSelected],channel:programmeChannel.value,git_remote:programmeRemote.input.value.trim(),branch:programmeBranch.input.value.trim()});message('本服程序修订 '+result.revision+' 已锁定官方基线 '+result.framework+'，请继续发布配置档。');}),'ui-btn is-blue'));
+   const profileDirectory=field('配置档导出／发布目录（与客户端分开）',pub.directory||''),profileFeeds=field('玩家读取配置档的地址（HTTPS、Git 或离线 local+file 地址）',(pub.feeds||[]).join('\n'),true),profileRemote=field('Git 发布地址（可选；留空则仅导出）',pub.git_remote||''),profileBranch=field('Git 内容分支',pub.branch||'content'),profileExtras=field('额外共享内容的客户端相对路径（每行一项）',(pub.extras||[]).join('\n'),true);
    card.append(element('h3','发布服主配置与内容'),element('p','先在程序上游检查版本。导出包记录选定 Mod 的精确版本、共享配置与生成素材；不含框架 DLL、原版游戏、SQL、密码、名单或玩家数据。目录可交给现有 HTTPS／Git 发布流程，离线使用目录中的清单。','muted'),profileDirectory.wrap,profileFeeds.wrap,profileRemote.wrap,profileBranch.wrap,profileExtras.wrap,button('保存并导出服主配置档',run(async()=>{const result=await request('/api/client-updates',{action:'profile_publish',host:h.id,directory:profileDirectory.input.value.trim(),feeds:lines(profileFeeds.input.value),extras:lines(profileExtras.input.value),git_remote:profileRemote.input.value.trim(),branch:profileBranch.input.value.trim()});message('已导出配置修订 '+result.revision+'，'+result.files+' 个内容文件；框架 '+result.framework+'。');}),'ui-btn is-primary'));
    if(h.complete_runtime)card.append(element('p','完整客户端发布由这套整合包的维护流程提供。DIY 修改在发布之前只影响本机；此处可以审阅采用上游 Mod 组件。','muted'));
 

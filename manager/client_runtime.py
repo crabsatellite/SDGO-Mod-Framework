@@ -119,7 +119,7 @@ class ClientRuntime:
             self.workspace.add_host(str(root))
             host=next(h for h in self.workspace.settings['hosts']if Path(h['path']).resolve()==root and h['role']=='client')
         completed=launch.state(root,token)
-        if completed.get('status')=='launched':return completed
+        if completed.get('status')in('launched','cancelled'):return completed
         launch.accept(root,token)
         with self.lock:
             existing=self.launch_tokens.get(host['id'])
@@ -196,7 +196,8 @@ class ClientRuntime:
                     'source_id':updates.digest(('sdgo-framework-runtime:'+updates.REPOSITORY).encode())[:32],
                     'repository':updates.REPOSITORY,'channel':'stable','transport':'github-releases'}
                 source=server_profiles.binding({'schema_version':3,'kind':'sdgo-client-runtime','source_id':profile.get('source_id'),
-                    'label':profile.get('label'),'feeds':urls,'framework':framework})
+                    'label':profile.get('label'),'feeds':urls,'framework':framework,
+                    **({'manager_policy':'owner','channel':profile['channel']}if profile.get('schema_version')==2 else{})})
                 server_profiles.validate(profile,source);server_profiles.base_check(root,profile)
                 old=installed_source(root)
                 if old and old['source_id']!=source['source_id']:raise ValueError('先明确解除原服主绑定，再导入另一服主配置')
@@ -239,15 +240,19 @@ class ClientRuntime:
             'repository':updater.source_repository(),'channel':updater.latest['channel'],'transport':'github-releases'}
         lock=prior['framework']if reuse else{'version':updater.latest['version'],'sha256':updater.latest['sha256']}
         release=framework_source.load(self,source_framework,{'minimum_framework':lock['version'],'locked_framework':lock}if reuse or not configured else None)
+        if publication.get('programme_framework'):
+            source_framework=publication['programme_framework_source'];lock=publication['programme_framework']
+            release=framework_source.load(self,source_framework,{'minimum_framework':lock['version'],'locked_framework':lock})
         source=server_profiles.binding({'schema_version':3,'kind':'sdgo-client-runtime','source_id':publication['source_id'],
-            'label':host['name'],'feeds':feeds,'framework':source_framework})
+            'label':host['name'],'feeds':feeds,'framework':source_framework,
+            **({'manager_policy':'owner','channel':publication['owner_programme']['channel']}if publication.get('owner_programme')else{})})
         if git_remote:
             from .git_source import parse
             parse(('git+ssh://'if git_remote.startswith('ssh://')else'git+')+git_remote.removeprefix('ssh://')+'#'+branch)
             output.mkdir(parents=True,exist_ok=True)
             self.workspace.owner_channels.git_prepare(output,{'branch':branch,'git_remote':git_remote},git=self.git)
             self.git(output,['sparse-checkout','set','content','releases'])
-        result=profile_publish.publish(host,source,release,output,extras or[],publication.get('personal_settings',[]),zip_payload)
+        result=profile_publish.publish(host,source,release,output,extras or[],publication.get('personal_settings',[]),zip_payload,publication.get('owner_programme'))
         publication.update(directory=str(output),feeds=feeds,revision=result['revision'],git_remote=git_remote,branch=branch,extras=extras or[]);self.workspace.save_workspace()
         if git_remote:
             profile_publish.git_stage(self,output,storage.read_json(output/server_profiles.MANIFEST),zip_payload)
@@ -258,6 +263,54 @@ class ClientRuntime:
             if actual[:1]!=[expected]:raise ValueError('内容已生成，但远程发布提交尚未核验；重试发布会复用当前修订')
             result.update(status='published',commit=expected)
         return result
+
+    def publish_programmes(self,identity,directory,feeds,selected,channel='beta',git_remote='',branch='owner-runtime/beta'):
+        from . import owner_programmes,framework_source
+        from .owner_channel import mode
+        host=self.workspace.host(identity)
+        if host['role']!='client'or mode(host)!='owner':raise ValueError('只在维护者客户端发布本服程序')
+        if not directory or not Path(directory).is_absolute():raise ValueError('选择客户端之外的程序发布目录')
+        if not self.busy.acquire(blocking=False):raise ValueError('正在执行更新或发布，请稍后再试')
+        try:
+            publication=host.setdefault('profile_publication',{})
+            publication.setdefault('source_id',host.get('publication',{}).get('publisher_id')or uuid.uuid4().hex)
+            updater=self.workspace.updates
+            if not updater.latest:raise ValueError('先在 Manager 检查并选择官方基线版本')
+            source=self.workspace.settings.get('updates',{}).get('git_source')or{'schema_version':1,'kind':'sdgo-framework-runtime',
+                'source_id':updates.digest(('sdgo-framework-runtime:'+updater.source_repository()).encode())[:32],
+                'repository':updater.source_repository(),'channel':updater.latest['channel'],'transport':'github-releases'}
+            framework=framework_source.load(self,source,{'minimum_framework':updater.latest['version'],
+                'locked_framework':{k:updater.latest[k]for k in('version','sha256')}})
+            if framework['manifest'].get('capabilities',{}).get('owner_programmes')!=1:raise ValueError('选择支持独立本服程序的官方基线')
+            output=Path(directory).resolve()
+            client=Path(host['path']).resolve()
+            if output==output.parent or output.is_relative_to(client)or client.is_relative_to(output):raise ValueError('程序发布目录须与客户端分开')
+            output.mkdir(parents=True,exist_ok=True)
+            if git_remote:
+                from .git_source import parse
+                parse(('git+ssh://'if git_remote.startswith('ssh://')else'git+')+git_remote.removeprefix('ssh://')+'#'+branch)
+                self.workspace.owner_channels.git_prepare(output,{'branch':branch,'git_remote':git_remote},git=self.git)
+                self.git(output,['sparse-checkout','set','programmes','revisions'])
+            lock={k:framework[k]for k in('version','sha256','commit')}
+            result=owner_programmes.publish(host,{'source_id':publication['source_id'],'channel':channel,'feeds':feeds},lock,output,selected)
+            if git_remote:
+                attributes=output/'.gitattributes';rules=b'owner-programme.json -text -filter -ident\nprogrammes/** -text -filter -ident\nrevisions/** -text -filter -ident\n'
+                original=attributes.read_bytes()if attributes.is_file()else b''
+                if rules not in original:storage.atomic(attributes,original+b'\n'+rules)
+                self.git(output,['add','--','.gitattributes',owner_programmes.MANIFEST])
+                if (output/'programmes').exists():self.git(output,['add','--','programmes'])
+                self.git(output,['add','--','revisions'])
+                if self.git(output,['diff','--cached','--name-only']).strip():self.git(output,['commit','-m','Publish owner programme revision '+str(result['revision'])])
+                result['commit']=self.git(output,['rev-parse','HEAD']).decode().strip()
+                self.git(output,['push','origin','HEAD:refs/heads/'+branch])
+                if self.git(output,['ls-remote','origin','refs/heads/'+branch]).decode().split()[:1]!=[result['commit']]:raise ValueError('本服程序远程提交未核验')
+            # Re-read the actual published artifact with the player resolver.
+            owner_programmes.load(self,result,lock)
+            publication.update(owner_programme=result,programme_framework=lock,programme_framework_source=source,
+                programme_directory=str(output),programme_git_remote=git_remote,programme_branch=branch,programme_mods=selected,programme_feeds=feeds)
+            self.workspace.save_workspace()
+            return {'revision':result['revision'],'mods':selected,'framework':lock['version'],'source':result}
+        finally:self.busy.release()
 
     def git(self,repository,args,input=None,output=None):
         from .owned_process import run
@@ -584,6 +637,8 @@ class ClientRuntime:
                          'files':plan['entries'],'effective_files':plan['effective'],'personal_state_preserved':True,'data_migrations':False,'backup':str(backup),
                          'framework':{k:v for k,v in plan.get('framework',{}).items()if k not in('bundle','manifest')},
                          'content_commit':plan['commit'],'shared_files':plan.get('shared_files',[])}
+                if plan.get('owner_programme'):receipt['owner_programme']=plan['owner_programme']['source']
+                if plan.get('quarantined'):receipt['quarantined_files']=plan['quarantined']
                 if plan.get('profile'):receipt['profile']=plan['profile']
                 marker=root/RECEIPT;marker_before=file_hash(marker)if marker.is_file()else None
                 if marker.is_file():

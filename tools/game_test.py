@@ -3095,8 +3095,8 @@ def collect_hashes(root: Path, launcher_path: str = '') -> tuple[dict, dict]:
     for path in sorted(symbols.iterdir(), key=lambda item: item.name.lower()):
         if path.is_file() and path.suffix.lower() == ".ini":
             bind(path, immutable)
-    mods = root / "sdgo" / "mods"
-    for path in sorted(mods.rglob("*"), key=lambda item: item.as_posix().lower()):
+    mod_files=(path for tree in ('mods','owner-mods','local-mods')for path in(root/'sdgo'/tree).rglob('*'))
+    for path in sorted(mod_files, key=lambda item: item.as_posix().lower()):
         if path.relative_to(root).as_posix().lower() in RUNTIME_OUTPUTS:
             continue
         if path.is_file() and path.suffix.lower() in {".dll", ".lua", ".ini", ".tsv", ".json",
@@ -3230,6 +3230,7 @@ def prepare(
     fps_cap: int | None = None,
     fps_mod_enabled: bool = True,
     bind_staged_loader: bool = False,
+    client_packages: tuple[Path, ...] = (),
     unit_package: Path | None = None,
     capsule_package: Path | None = None,
     unit_scenario: dict | None = None,
@@ -3249,6 +3250,9 @@ def prepare(
         if not unit_package.is_file() or not 0<unit_package.stat().st_size<=160*1024*1024:
             raise GameTestError('unit package is missing or exceeds the trusted installer limit')
         unit_payload=unit_package.read_bytes()
+    for package in client_packages:
+        path=Path(package)
+        if not path.is_file()or path.stat().st_size>72*1024*1024:raise GameTestError('client package is missing or exceeds the import limit')
     if page_group is not None:
         if page_group != 'hangar' or not pages_only:
             raise GameTestError('page_group=hangar requires --pages-only')
@@ -3686,6 +3690,13 @@ def prepare(
             bind_staged_loader=bind_staged_loader,
             skip_staged_mods=tuple(name for name,selected in
                 (('unit_catalog',unit_payload is not None),('capsule_catalog',capsule_binding is not None)) if selected))
+        for package in client_packages:
+            from types import SimpleNamespace
+            import base64
+            from manager.packages import import_client
+            host={'id':'candidate','role':'client','path':str(client)}
+            package_workspace=SimpleNamespace(host=lambda identity:host,public=lambda:{})
+            import_client(package_workspace,'candidate',base64.b64encode(Path(package).read_bytes()).decode('ascii'))
         if mission_behavior_profile is not None:
             configure_mission_behavior_client(
                 client,
@@ -5243,6 +5254,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--reuse-client',action='store_true',help='reuse the stopped owned run-dir client in place with a fresh run UUID and compact prior receipt; no full client copy')
     prepare_parser.add_argument('--rebind-existing-account',action='store_true',help='with --reuse-client and --account-profile, switch the stopped client to another already registered account')
     prepare_parser.add_argument('--include-mod',action='append',default=[],help='explicit staged client Mod to install before runtime hashes freeze')
+    prepare_parser.add_argument('--client-package',type=Path,action='append',default=[],help='explicit client package imported into the owned copy before sealing')
     prepare_parser.add_argument('--fps-gameplay-cap',type=int,help='verify native 60 Hz gameplay and the selected render cap during a full PvP battle')
     prepare_parser.add_argument('--oc-allocate',help="OC six-stat acceptance '<stat 0-5>:<points>': allocate normal OC points to the --play-unit-uid unit through the production client Mod before the PvP battle")
     prepare_parser.add_argument('--oc-panel',action='store_true',help='open the original factory upgrade page for the --play-unit-uid unit at the end (after --oc-allocate or the read-only hangar pages) and drive the OC client panel on it: refresh, normal-point reset, one HP point')
@@ -5357,6 +5369,7 @@ def main(argv: list[str] | None = None) -> int:
                 fps_cap=args.fps_cap,
                 fps_mod_enabled=not args.fps_mod_disabled,
                 extra_mods=tuple(args.include_mod),
+                client_packages=tuple(args.client_package),
                 fps_gameplay_cap=args.fps_gameplay_cap,
                 oc_allocate=args.oc_allocate,
                 oc_panel=args.oc_panel,

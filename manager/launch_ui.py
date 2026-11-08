@@ -25,6 +25,7 @@ def command():
 
 def cache_manager(target,raw):
     """Serialize writers before a second click can map the shared helper EXE."""
+    from . import storage
     target=Path(target)
     k=c.WinDLL('kernel32',use_last_error=True)
     k.CreateMutexW.argtypes=(c.c_void_p,w.BOOL,w.LPCWSTR);k.CreateMutexW.restype=w.HANDLE
@@ -36,8 +37,7 @@ def cache_manager(target,raw):
         if k.WaitForSingleObject(mutex,0xffffffff)not in(0,0x80):raise c.WinError(c.get_last_error())
         held=True
         target.parent.mkdir(parents=True,exist_ok=True)
-        if not target.is_file()or hashlib.sha256(target.read_bytes()).digest()!=hashlib.sha256(raw).digest():
-            from . import storage
+        if not target.is_file()or hashlib.sha256(storage.read_bytes(target)).digest()!=hashlib.sha256(raw).digest():
             storage.atomic(target,raw)
     finally:
         if held:k.ReleaseMutex(mutex)
@@ -46,7 +46,8 @@ def cache_manager(target,raw):
 
 def detach(root,token):
     """Run the same distributed Manager from local state to unlock its EXE."""
-    source=Path(sys.executable);raw=source.read_bytes()
+    from . import storage
+    source=Path(sys.executable);raw=storage.read_bytes(source)
     target=launch.folder(root)/'manager'/hashlib.sha256(raw).hexdigest()/source.name
     cache_manager(target,raw)
     subprocess.Popen([str(target),'--launch-game',str(root),'--launch-request',token,'--launch-worker'],cwd=root,
@@ -117,6 +118,11 @@ class Session:
                 if result.get('status')in('launched','cancelled'):return
                 self.stop.wait(.3)
             except(OSError,ValueError)as error:
+                try:completed=launch.state(self.root,self.token)
+                except(OSError,ValueError):completed={}
+                if completed.get('status')in('launched','cancelled'):
+                    with self.lock:self.result=completed
+                    return
                 if restarting:
                     self.url=None;restarting=False;continue
                 with self.lock:self.result={'status':'error','message':str(error)}
@@ -130,7 +136,7 @@ class Session:
 def progress_text(result):
     p=result.get('progress',{});phase=p.get('phase');status=result.get('status')
     names={'manifest':'检查服主配置','reuse':'校验可复用内容','mirror':'核对同一修订的备用源','content':'下载服主内容',
-        'content_archive':'下载服主内容包','framework':'下载并校验模组程序','staging':'暂存文件','install':'安装已校验文件',
+        'content_archive':'下载服主内容包','framework':'下载并校验官方模组','owner_programme':'下载并校验本服补丁','staging':'暂存文件','install':'安装已校验文件',
         'handoff':'准备安全更新','waiting':'等待客户端关闭','recheck':'核对最新远端修订','verify':'启动前完整校验','launch':'正在启动游戏'}
     title='更新未完成'if status=='error'else'正在重启 Manager'if status=='restart_required'else names.get(phase,'准备游戏')
     text=result.get('message')or p.get('message')or'正在同步模组程序与服主配置，请稍候。'
@@ -213,5 +219,5 @@ def run(root,token):
     finally:
         session.stop.set();worker.join(timeout=6)
         current=storage.read_json(launch.folder(root)/'ui.json',{})
-        if current.get('pid')==os.getpid():(launch.folder(root)/'ui.json').unlink(missing_ok=True)
+        if current.get('pid')==os.getpid():storage.remove(launch.folder(root)/'ui.json')
         k.ReleaseMutex(mutex);k.CloseHandle(mutex)
