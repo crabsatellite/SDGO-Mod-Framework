@@ -29,3 +29,9 @@ See `docs/mod-manager.zh-CN.md`, `docs/mod-manager-design.zh-CN.md` and `docs/co
 - Owner profiles select and lock actual Mod versions and shared settings. Git SSH/HTTPS, HTTPS manifests/files and offline directories share the same resolver, ownership checks and installation transaction. Original game programs/archives are not owner-profile payloads.
 - Public SQL implementation ownership is declared in `distribution/artifact-ownership.json`. Generated owner definition/apply plans and live account/inventory/currency data stay separate. A player profile does not execute SQL or ship credentials, private rosters, databases or local recovery state.
 - Keep README, `docs/content-boundaries*`, Manager/owner guides and packaging guards consistent with these boundaries. Private deployment repositories/mirrors remain configuration outside the public framework.
+
+## Protocol import boundary
+
+- Public source, tests, documentation, release tags and runtime packages provide the protocol import side. Packages prepared from any source must satisfy the same contracts and destination runtime checks.
+- Keep source-specific resource extraction, source-format recovery, script conversion and content acquisition/publishing tools in separate private tooling. Do not add those implementations, fixtures or instructions to this repository.
+- Preserve the Manager import, validation, installation and server-application interfaces. Historical protocol identifiers retained for compatibility do not grant rights to source content or require a particular content provider.
