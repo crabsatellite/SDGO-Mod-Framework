@@ -280,7 +280,7 @@ class ClientRuntime:
                 'source_id':updates.digest(('sdgo-framework-runtime:'+updater.source_repository()).encode())[:32],
                 'repository':updater.source_repository(),'channel':updater.latest['channel'],'transport':'github-releases'}
             framework=framework_source.load(self,source,{'minimum_framework':updater.latest['version'],
-                'locked_framework':{k:updater.latest[k]for k in('version','sha256')}})
+                'locked_framework':{k:updater.latest[k]for k in('version','sha256','commit')if k in updater.latest}})
             if framework['manifest'].get('capabilities',{}).get('owner_programmes')!=1:raise ValueError('选择支持独立本服程序的官方基线')
             output=Path(directory).resolve()
             client=Path(host['path']).resolve()

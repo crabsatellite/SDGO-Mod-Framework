@@ -212,5 +212,17 @@ class OwnerProgrammes(unittest.TestCase):
         self.assertEqual(state['hosts'][0]['owner_mods'][0]['version'],'0.1.0')
         self.assertIsInstance(state['hosts'][0]['publication'],dict)
 
+    def test_programme_publication_keeps_the_approved_feed_commit(self):
+        from types import SimpleNamespace
+        self.host.update(runtime_mode='owner',runtime_mode_source='explicit',profile_publication={'source_id':self.source['source_id']})
+        self.workspace.host=lambda identity:self.host
+        self.workspace.save_workspace=lambda:None
+        self.workspace.settings['updates']={'git_source':self.source['framework']}
+        self.workspace.updates=SimpleNamespace(latest={k:self.framework[k]for k in('version','sha256','commit')},source_repository=lambda:updates.REPOSITORY)
+        directory=self.root/'approved-programmes'
+        with patch('manager.framework_source.load',return_value=self.framework)as load:
+            self.controller.publish_programmes('client',str(directory),['local+'+(directory/p.MANIFEST).as_uri()],[],channel='stable')
+        self.assertEqual(load.call_args.kwargs['constraints']['locked_framework']['commit'],self.framework['commit'])
+
 
 if __name__ == '__main__': unittest.main()

@@ -546,7 +546,7 @@ class Updates:
                 folder=self.cache/'releases'/(release['version']+'-'+release['sha256'][:12])
                 shutil.copytree(release['bundle'],folder,dirs_exist_ok=True)
                 self.bundle=folder;self.manifest=release['manifest']
-                latest={'version':release['version'],'channel':release['channel'],'sha256':release['sha256'],
+                latest={'version':release['version'],'channel':release['channel'],'sha256':release['sha256'],'commit':release['commit'],
                         'page':'https://github.com/'+selected_repository+'/releases/tag/v'+release['version'],
                         'notes':'框架运行包通过已配置的 Git 来源校验下载'}
             else:
