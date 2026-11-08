@@ -269,6 +269,28 @@ def _product_name(path):
     return product_name(path)
 
 
+def _product_version(path):
+    """Framework programmes carry the framework version as their ProductVersion (e.g. 1.13.7)."""
+    from manager.windows import product_version
+    return product_version(path)
+
+
+def _version_tuple(value):
+    match = re.fullmatch(r"\s*(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?\s*", str(value or ""))
+    return tuple(int(part or 0) for part in match.groups()) if match else None
+
+
+def _installed_is_current(installed, packaged):
+    """True when the client's framework programme is at least as new as the packaged one.
+
+    A capsule deployment carries the Manager's bundled framework programmes so a client without the framework can
+    run the catalog. It must never replace newer programmes that the client's own framework update installed;
+    unknown versions keep the previous behaviour (install the packaged programme).
+    """
+    current, incoming = _version_tuple(_product_version(installed)), _version_tuple(_product_version(packaged))
+    return current is not None and incoming is not None and current >= incoming
+
+
 def _running_gonline_paths():
     """Return exact executable paths for running GOnline.exe processes."""
     from manager.windows import process_image_paths
@@ -528,7 +550,9 @@ def _build_player_symbol_fragment(stage_symbol, fragment):
     ).encode("utf-8")
 
 
-def _merge_symbols(existing_raw, package_raw):
+def _merge_symbols(existing_raw, package_raw, keep_capsule_sections=False):
+    """Merge the packaged host symbols into the client's. Capsule sections follow the capsule programme that stays
+    installed: the packaged ones replace the client's, unless the client keeps its own (newer) capsule DLL."""
     if existing_raw is None:
         return package_raw
     existing = _parse_symbol_sections(existing_raw, "existing host symbol file")
@@ -541,7 +565,8 @@ def _merge_symbols(existing_raw, package_raw):
         if current is None:
             missing.append(incoming)
         elif name.startswith("capsule."):
-            replacements[name] = _render_symbol_section(incoming)
+            if not keep_capsule_sections:
+                replacements[name] = _render_symbol_section(incoming)
         elif current["values"] != incoming["values"]:
             raise ValueError(f"Existing non-capsule symbol section conflicts: [{incoming['name']}]")
 
@@ -1249,19 +1274,6 @@ class _ClientTransaction:
                 "existing sdgo.ini",
             )
 
-        package_symbol = self._package_file(
-            f"sdgo/symbols/{HOST_SYMBOL_NAME}"
-        ).read_bytes()
-        target_symbol = self._target_file(f"sdgo/symbols/{HOST_SYMBOL_NAME}")
-        if target_symbol.exists() and (
-            not target_symbol.is_file() or _is_reparse(target_symbol)
-        ):
-            raise ValueError("Existing host symbol file is unsafe")
-        symbol_raw = _merge_symbols(
-            target_symbol.read_bytes() if target_symbol.exists() else None,
-            package_symbol,
-        )
-
         package_mod = _safe_join(
             self.package_client, "sdgo/mods/capsule_catalog"
         )
@@ -1274,22 +1286,68 @@ class _ClientTransaction:
         old_mod_ini = target_mod / "mod.ini"
         old_mod_raw = old_mod_ini.read_bytes() if old_mod_ini.is_file() else None
 
+        # A client whose own framework update installed programmes at least as new as the packaged (Manager-bundled)
+        # ones keeps them: the catalog deployment only writes catalog data then. The capsule DLL is kept with its
+        # mod.ini, manager.json and capsule symbol sections, and only if it reads the six-table registry.
+        self.kept_programmes = []
+        keep_loader = loader.is_file() and not self.foreign_loader and _installed_is_current(loader, package_loader)
+        keep_core = core.is_file() and _installed_is_current(core, package_core)
+        target_capsule = target_mod / "capsule_catalog.dll"
+        package_capsule = package_mod / "capsule_catalog.dll"
+        keep_capsule = (
+            target_capsule.is_file() and package_capsule.is_file()
+            and b"SDGO_CAPSULE_REGISTRY_6TABLE_V2" in target_capsule.read_bytes()
+            and _installed_is_current(target_capsule, package_capsule)
+        )
+
+        package_symbol = self._package_file(
+            f"sdgo/symbols/{HOST_SYMBOL_NAME}"
+        ).read_bytes()
+        target_symbol = self._target_file(f"sdgo/symbols/{HOST_SYMBOL_NAME}")
+        if target_symbol.exists() and (
+            not target_symbol.is_file() or _is_reparse(target_symbol)
+        ):
+            raise ValueError("Existing host symbol file is unsafe")
+        symbol_raw = _merge_symbols(
+            target_symbol.read_bytes() if target_symbol.exists() else None,
+            package_symbol,
+            keep_capsule_sections=keep_capsule,
+        )
+
         self.prepared = {
-            "d3d9.dll": package_loader.read_bytes(),
-            "sdgo/core.dll": package_core.read_bytes(),
             "sdgo/sdgo.ini": ini_raw,
             f"sdgo/symbols/{HOST_SYMBOL_NAME}": symbol_raw,
         }
+        if keep_loader:
+            self.kept_programmes.append("d3d9.dll")
+        else:
+            self.prepared["d3d9.dll"] = package_loader.read_bytes()
+        if keep_core:
+            self.kept_programmes.append("sdgo/core.dll")
+        else:
+            self.prepared["sdgo/core.dll"] = package_core.read_bytes()
         if self.foreign_loader:
             self.prepared["d3d9_chain.dll"] = loader.read_bytes()
+        kept_mod = {}
+        if keep_capsule:
+            for name in ("capsule_catalog.dll", "mod.ini", "manager.json"):
+                path = target_mod / name
+                if path.is_file():
+                    kept_mod[name] = path.read_bytes()
+            if "mod.ini" in kept_mod:  # applying a catalog activates the feature (as _merge_mod_ini does)
+                kept_mod["mod.ini"] = _set_ini_value(kept_mod["mod.ini"], "mod", "enabled", "1", "existing capsule mod.ini")
+            self.kept_programmes.extend("sdgo/mods/capsule_catalog/" + name for name in sorted(kept_mod))
         self.mod_files = {}
         for source in sorted(package_mod.rglob("*"), key=lambda item: item.as_posix()):
             if source.is_file():
                 relative = source.relative_to(package_mod).as_posix()
+                if relative in kept_mod:
+                    continue
                 data = source.read_bytes()
                 if relative.lower() == "mod.ini":
                     data = _merge_mod_ini(data, old_mod_raw)
                 self.mod_files[relative] = data
+        self.mod_files.update(kept_mod)
         self.prepared_hashes = {
             relative: _sha256_bytes(data) for relative, data in self.prepared.items()
         }
@@ -1369,6 +1427,7 @@ class _ClientTransaction:
                     for relative, state in sorted(self.touched.items())
                 },
                 "retained_previous_mod": self.old_mod is not None,
+                "kept_programmes": list(self.kept_programmes),
             }
             _atomic_write(self.backup_root / "receipt.json", _json_bytes(receipt))
             return {
@@ -1561,6 +1620,7 @@ class DeploymentTarget:
                 "package_path": str(package_root),
                 "package_manifest": str(package_root / "manifest.json"),
                 "package_files": len(package_manifest["files"]),
+                "kept_programmes": list(transaction.kept_programmes),
                 **client_result,
             }
         finally:

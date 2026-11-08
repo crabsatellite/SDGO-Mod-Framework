@@ -132,7 +132,10 @@ class Units(Provider):
 
     def batch_image(self, row, role='capsule'):
         from owner.units import batch_registry
-        return batch_registry.sprite_png(row, {'shop': 'shop_sprite', 'capsule': 'capsule_sprite'}[role])
+        # Baseline-identical sprites are not shipped by the publisher; the matching client's archive holds them.
+        client = self.config.get('client')
+        return batch_registry.sprite_png(row, {'shop': 'shop_sprite', 'capsule': 'capsule_sprite'}[role],
+                                         baseline_client=client if client and Path(client).is_dir() else None)
 
     def register_batch(self, folder):
         from owner.units import batch_registry

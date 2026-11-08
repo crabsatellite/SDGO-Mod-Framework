@@ -175,6 +175,18 @@ class PublicationTests(unittest.TestCase):
             self.assertEqual(publication.summary()['families'], 3)
             self.assertEqual(publication.unit_ids(), [25070, 25080, 25090])
 
+    def test_publications_with_the_earlier_schema_identifiers_still_load(self):
+        folder = write_publication(self.root, ordered_families())
+        plan = storage.read_json(folder / 'server-plan.json')
+        for schema, loads in (('sdgo.gunion-roster-server-plan/1', True), ('sdgo.other-server-plan/1', False)):
+            plan['schema'] = schema
+            (folder / 'server-plan.json').write_bytes(storage.json_bytes(plan))
+            if loads:
+                self.assertEqual(batch_server.load_publication(folder).summary()['families'], 3)
+            else:
+                with self.assertRaisesRegex(ValueError, '不支持的批量服务端计划版本'):
+                    batch_server.load_publication(folder)
+
     def test_tampered_catalog_or_duplicate_ownership_is_refused(self):
         folder = write_publication(self.root / 'tampered', ordered_families())
         catalog = folder / batch_server.CATALOG

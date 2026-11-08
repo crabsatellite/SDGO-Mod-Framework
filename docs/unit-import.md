@@ -177,6 +177,9 @@ Registered families then appear in the downstream editors exactly like confirmed
 - **Capsule machines**: **同步已确认机体与扭蛋头像** registers them together with single-family projects, and cards are
   generated from the publication's capsule portraits. For a large roster, synchronize only the roots that go into
   machines (the `unit_ids` request field) so hundreds of portraits are not written into the capsule catalog.
+  Pictures the publication does not ship because they are identical to the baseline client are read from the
+  client folder configured in the unit module, and a sprite rectangle that overruns its texture by up to two texels
+  is clamped to the texture edge, as the game does.
 - **Activity machines**: under **独立活动扭蛋机**, **批量阵容的 S 级机体** lists the S-rank roots that have no activity machine yet;
   click one to create its draft. A family without a poster first gets a stand-in poster made from its published picture.
 
@@ -313,8 +316,8 @@ native table loads, it registers complete unit/weapon/item records with the nati
 collisions in the data tree. Everything is prechecked and allocated first; if native registration still fails after
 some records were inserted, the native tree cannot be rolled back, so the Mod logs diagnostics and ends that client.
 One installed catalog holds at most 8,192 records with a 64 MiB payload, counting every kind and every owner it
-carries; the installer, the Manager and the roster publisher apply the same bounds, and a client whose framework is
-older than that bound rejects a larger catalog at startup, so update the framework before installing it.
+carries; the installer and the Manager apply the same bounds, which a batch publication must also respect. A client
+whose framework is older than that bound rejects a larger catalog at startup, so update the framework before installing it.
 
 The game does not read new models from the working directory. Client packages carry `resource-overlay.ini`,
 `resources.zdx` and `resources.zpk`, and the game reads models, animations, textures and effects from that archive.

@@ -603,6 +603,72 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual((client / "d3d9.dll").read_bytes(), original)
         self.assertFalse((client / "sdgo/mods/capsule_catalog").exists())
 
+    def test_newer_installed_framework_programmes_are_kept(self):
+        client = make_client(self.root, own_loader=True, own_core=True)
+        mod = client / "sdgo/mods/capsule_catalog"
+        mod.mkdir()
+        (mod / "capsule_catalog.dll").write_bytes(
+            b"FRAMEWORK capsule newer SDGO_CAPSULE_REGISTRY_6TABLE_V2"
+        )
+        (mod / "mod.ini").write_text(
+            "[mod]\nid=capsule_catalog\nenabled=0\nversion=1.1.1\n"
+            "requires=capsule.main.open_file\n[settings]\npreview=1\n",
+            encoding="utf-8",
+        )
+        (mod / "manager.json").write_text(
+            '{"schema_version":1,"id":"capsule_catalog","settings":[],"build":"newer"}',
+            encoding="utf-8",
+        )
+
+        def product_version(path):
+            data = Path(path).read_bytes()
+            if data.startswith((b"FRAMEWORK loader old", b"FRAMEWORK core old", b"FRAMEWORK capsule newer")):
+                return "1.13.7"
+            return "1.13.5" if data.startswith((b"FRAMEWORK", b"CAPSULE MOD DLL")) else None
+
+        with patch.object(deployment, "_product_version", side_effect=product_version):
+            result = self.apply(client)
+        self.assertTrue(result["applied"])
+        self.assertEqual((client / "d3d9.dll").read_bytes(), b"FRAMEWORK loader old")
+        self.assertEqual((client / "sdgo/core.dll").read_bytes(), b"FRAMEWORK core old")
+        self.assertTrue(
+            (mod / "capsule_catalog.dll").read_bytes().startswith(b"FRAMEWORK capsule newer")
+        )
+        self.assertIn('"build":"newer"', (mod / "manager.json").read_text(encoding="utf-8"))
+        mod_ini = (mod / "mod.ini").read_text(encoding="utf-8")
+        self.assertIn("enabled=1", mod_ini)
+        self.assertIn("version=1.1.1", mod_ini)
+        self.assertIn("preview=1", mod_ini)
+        symbols = (client / "sdgo/symbols" / deployment.HOST_SYMBOL_NAME).read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("rva=0xDEAD", symbols)  # the kept DLL keeps its own capsule symbol sections
+        self.assertTrue((mod / "runtime.ini").is_file())  # catalog data is still installed
+        self.assertEqual(
+            sorted(result["kept_programmes"]),
+            [
+                "d3d9.dll",
+                "sdgo/core.dll",
+                "sdgo/mods/capsule_catalog/capsule_catalog.dll",
+                "sdgo/mods/capsule_catalog/manager.json",
+                "sdgo/mods/capsule_catalog/mod.ini",
+            ],
+        )
+        receipt = json.loads((Path(result["backup_path"]) / "receipt.json").read_text(encoding="utf-8"))
+        self.assertEqual(sorted(receipt["kept_programmes"]), sorted(result["kept_programmes"]))
+
+    def test_older_installed_framework_programmes_are_still_upgraded(self):
+        client = make_client(self.root, own_loader=True, own_core=True)
+
+        def product_version(path):
+            return "1.10.0" if b"old" in Path(path).read_bytes() else "1.13.5"
+
+        with patch.object(deployment, "_product_version", side_effect=product_version):
+            result = self.apply(client)
+        self.assertEqual((client / "d3d9.dll").read_bytes(), b"FRAMEWORK loader v2")
+        self.assertEqual((client / "sdgo/core.dll").read_bytes(), b"FRAMEWORK core v2")
+        self.assertEqual(result["kept_programmes"], [])
+
     def test_foreign_core_is_rejected(self):
         client = make_client(self.root, own_loader=True)
         (client / "sdgo/core.dll").write_bytes(b"FOREIGN core")

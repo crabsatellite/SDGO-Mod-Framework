@@ -175,21 +175,37 @@ def _overlay(folder: Path):
                          parts, int(runtime.get('part_chunks', '0')) if parts > 1 else 0)
 
 
-def sprite_png(row: dict, field: str = 'capsule_sprite') -> bytes:
-    """Render one of a batch family's published sprites to PNG from the publication's own archive."""
-    from owner.units.assets import render_portrait
+def sprite_png(row: dict, field: str = 'capsule_sprite', baseline_client=None) -> bytes:
+    """Render one of a batch family's published sprites to PNG from the publication's own archive.
+
+    The publisher does not ship resources that are byte-identical to the baseline client (the game reads those from
+    its own archive), so a sprite or texture missing from the publication is read from `baseline_client`'s archive
+    when one is configured.
+    """
+    from owner.units.assets import Baseline, render_portrait
     if field not in ('capsule_sprite', 'custom_candidate_sprite', 'unit_primary_sprite', 'shop_sprite'):
         raise ValueError('批量机体图片类型无效')
     batch = row.get('batch')
     if not isinstance(batch, dict):
         raise ValueError('该机体不是批量阵容登记')
-    key = ('png', batch['folder'].casefold(), batch['revision'], row[field])
+    key = ('png', batch['folder'].casefold(), batch['revision'], row[field], str(baseline_client or '').casefold())
     with _lock:
         cached = _cache.get(key)
     if cached is not None:
         return cached
+    baseline = []
     with _overlay(Path(batch['folder'])) as reader:
-        raw = render_portrait(row[field], reader.read)
+        def read(path):
+            if reader.has(path) or not baseline_client:
+                return reader.read(path)
+            if not baseline:
+                archive = Baseline(Path(baseline_client))
+                archive._loose_roots = []  # archive only, like the publisher's baseline comparison
+                baseline.append(archive)
+            if not baseline[0].exists(path):
+                return reader.read(path)  # reports the missing resource
+            return baseline[0].read(path)
+        raw = render_portrait(row[field], read)
     with _lock:
         if sum(1 for k in _cache if k[0] == 'png') >= 512:
             for stale in [k for k in _cache if k[0] == 'png'][:128]:

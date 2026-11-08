@@ -336,6 +336,15 @@ class UnitImportArchiveTests(unittest.TestCase):
             with Image.open(io.BytesIO(package_png)) as image:
                 self.assertEqual(image.size, (4, 4))
                 self.assertEqual(image.format, "PNG")
+            # Authored sprites may start a texel outside the texture (native UVs clamp to the edge): clamp, do not refuse.
+            struct.pack_into("<4f", cropped_sprite, 20, 0.25, -0.125, 0.75, 0.75)
+            overlay["sprs/package.spr"] = bytes(cropped_sprite)
+            with Image.open(io.BytesIO(assets.render_portrait("sprs/package.spr", overlay.__getitem__))) as image:
+                self.assertEqual(image.size, (4, 6))
+            struct.pack_into("<4f", cropped_sprite, 20, 0.25, -0.5, 0.75, 0.75)  # 4 texels outside: refused
+            overlay["sprs/package.spr"] = bytes(cropped_sprite)
+            with self.assertRaisesRegex(ValueError, "invalid portrait crop"):
+                assets.render_portrait("sprs/package.spr", overlay.__getitem__)
             info = baseline.public_info()
             self.assertEqual(info["native_id_coverage"]["strict_record_types"], {"unit": 2, "weapon": 10, "item": 34,"unit_index":85,"blueprint":33})
             self.assertTrue(info["native_id_coverage"]["all_gdrs_ids_scanned"])

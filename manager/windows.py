@@ -22,6 +22,17 @@ def powershell_executable():
 
 def product_name(path):
     """Read a PE's version resource without executing it or starting a shell."""
+    return version_string(path,'ProductName')
+
+
+def product_version(path):
+    """ProductVersion of a PE (framework programmes carry the framework version, e.g. 1.13.7), or None."""
+    return version_string(path,'ProductVersion')
+
+
+def version_string(path,field):
+    """One StringFileInfo value of a PE's version resource, read without loading or executing the file."""
+    if field not in ('ProductName','ProductVersion','FileVersion'):raise ValueError('Unsupported version field')
     if os.name!='nt':return None
     import ctypes
     from ctypes import wintypes
@@ -45,9 +56,9 @@ def product_name(path):
     import struct
     for offset in range(0,len(translations),4):
         language,codepage=struct.unpack_from('<HH',translations,offset)
-        key=rf'\StringFileInfo\{language:04x}{codepage:04x}\ProductName'
+        key=rf'\StringFileInfo\{language:04x}{codepage:04x}\{field}'
         if not query(buffer,key,ctypes.byref(pointer),ctypes.byref(length)):continue
-        if not pointer.value or not 0<length.value<=32768:raise ValueError('Invalid product-name version string')
+        if not pointer.value or not 0<length.value<=32768:raise ValueError('Invalid version string')
         return ctypes.wstring_at(pointer,length.value).split('\0',1)[0].strip() or None
     return None
 

@@ -88,6 +88,35 @@ class RegistryTests(ServerGroup):
         with Image.open(io.BytesIO(batch_registry.sprite_png(row))) as image:
             self.assertEqual(image.size, (64, 48))
 
+    def test_baseline_identical_sprite_is_read_from_the_client_archive(self):
+        # The publisher does not ship sprites that are byte-identical to the baseline client; the game reads them
+        # from its own archive, and the Manager must render them from there too.
+        self.apply()
+        batch_registry.register(self.workspace, self.folder, self.ini)
+        row = next(row for row in batch_registry.rows(self.workspace, self.ini) if row['unit_id'] == 25080)
+        row = dict(row, capsule_sprite='sprs/baseline.spr')
+        baseline_files = {'sprs/baseline.spr': sprite_binary('txrs\\baseline.txr', 40, 30),
+                          'txrs/baseline.txr': png((40, 30))}
+
+        class FakeBaseline:
+            def __init__(self, root):
+                self.root, self._loose_roots = root, [root]
+
+            def exists(self, path):
+                return path in baseline_files
+
+            def read(self, path):
+                return baseline_files[path]
+
+        with self.assertRaisesRegex(ValueError, 'missing'):
+            batch_registry.sprite_png(row)
+        with patch('owner.units.assets.Baseline', FakeBaseline):
+            with Image.open(io.BytesIO(batch_registry.sprite_png(row, baseline_client=self.root))) as image:
+                self.assertEqual(image.size, (40, 30))
+            row = dict(row, capsule_sprite='sprs/nowhere.spr')
+            with self.assertRaisesRegex(ValueError, 'missing'):
+                batch_registry.sprite_png(row, baseline_client=self.root)
+
     def test_reregistering_replaces_the_owner_entry(self):
         self.apply()
         batch_registry.register(self.workspace, self.folder, self.ini)

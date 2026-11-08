@@ -33,6 +33,12 @@ back SQL. Existing Mods and player history are preserved. Close the target game
 before installation. The tool does not restart unrelated servers.
 Applying a complete capsule package enables this feature's own switches, including
 a disabled stub from an earlier framework installation; other Mod switches are retained.
+The package also carries the framework loader, core and capsule programme so that a
+client without the framework can run the catalog. A client that already runs the same
+or a newer framework version keeps its own programmes (and the capsule symbol
+definitions that belong to them) and receives only the catalog data; the apply result
+and the backup receipt list them under `kept_programmes`. Older programmes are updated
+as before.
 
 For an A/B/C portrait, upload a finished PNG, drag the fixed-aspect crop frame,
 resize its corners or use the zoom slider, and preview the native card. Save

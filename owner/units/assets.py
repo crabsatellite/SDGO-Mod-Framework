@@ -25,6 +25,7 @@ RECORD_FILES = {"unit": (UNIT_FILES, codec.UNIT_SIZE), "weapon": (WEAPON_FILES, 
 RUNTIME_TYPES = {"unit": 2, "weapon": 10, "item": 34, "unit_index":85, "blueprint":33}
 
 MAX_RESOURCE_BYTES = 64 * 1024 * 1024
+CROP_TOLERANCE_TEXELS = 2  # authored sprite rectangles may overrun the texture by this much (native UV clamp)
 MAX_INDEX_BYTES = 16 * 1024 * 1024
 MAX_GDT_RECORDS = 1_000_000
 MAX_GDT_SIZE = 1024 * 1024
@@ -117,15 +118,25 @@ def _image_to_png(raw: bytes, *, require_png: bool, crop: tuple[float, float, fl
             image.load()
             if crop is not None:
                 u0, v0, u1, v1 = crop
-                if not all(math.isfinite(value) and 0 <= value <= 1 for value in crop) or u1 <= u0 or v1 <= v0:
+                if not all(math.isfinite(value) for value in crop) or u1 <= u0 or v1 <= v0:
                     raise ValueError("invalid portrait crop")
-                box = (
+                box = [
                     round(u0 * image.width),
                     round(v0 * image.height),
                     round(u1 * image.width),
                     round(v1 * image.height),
-                )
-                image = image.crop(box)
+                ]
+                # The native sprite sampler clamps UVs to the texture edge, so authored sprites whose rectangle starts
+                # a texel or two outside the texture (e.g. v0 = -1/128) display normally. Clamp such small overruns
+                # the same way; anything further outside is still refused.
+                limits = (image.width, image.height, image.width, image.height)
+                if any(value < -CROP_TOLERANCE_TEXELS or value > limit + CROP_TOLERANCE_TEXELS
+                       for value, limit in zip(box, limits)):
+                    raise ValueError("invalid portrait crop")
+                box = [min(max(value, 0), limit) for value, limit in zip(box, limits)]
+                if box[2] <= box[0] or box[3] <= box[1]:
+                    raise ValueError("invalid portrait crop")
+                image = image.crop(tuple(box))
             if not 1 <= image.width <= 2048 or not 1 <= image.height <= 2048:
                 raise ValueError("normalized image dimensions must be 1..2048 pixels")
             target = image.convert("RGBA" if "A" in image.getbands() or "transparency" in image.info else "RGB")

@@ -29,8 +29,11 @@ from . import repository
 from .compiler import CATALOG_RECORD_LIMIT
 from .repository import FAMILY_KEY, ITEM_COLUMNS
 
-PLAN_SCHEMA = 'sdgo.gunion-roster-server-plan/1'
-GRAPH_SCHEMA = 'sdgo.gunion-roster-form-graphs/1'
+PLAN_SCHEMA = 'sdgo.unit-roster-server-plan/1'
+GRAPH_SCHEMA = 'sdgo.unit-roster-form-graphs/1'
+# Publications written before the format was named neutrally carry these identifiers; they are the same format.
+LEGACY_PLAN_SCHEMAS = frozenset({'sdgo.gunion-roster-server-plan/1'})
+LEGACY_GRAPH_SCHEMAS = frozenset({'sdgo.gunion-roster-form-graphs/1'})
 ACTION = 'unit_catalog.batch_roster'
 GRAPH_MOD = 'unit_catalog_server'
 CATALOG = 'package/client/sdgo/mods/unit_catalog/catalog.bin'
@@ -153,7 +156,7 @@ def _catalog_records(root: Path) -> dict[int, dict[int, bytes]]:
 def _validate_plan(plan: Any) -> dict:
     if not isinstance(plan, dict) or set(plan) != {'schema', 'owner', 'revision', 'families', 'skills', 'funnels', 'affiliations'}:
         raise ValueError('server-plan.json 结构不是批量阵容服务端计划')
-    if plan['schema'] != PLAN_SCHEMA:
+    if plan['schema'] != PLAN_SCHEMA and plan['schema'] not in LEGACY_PLAN_SCHEMAS:
         raise ValueError('不支持的批量服务端计划版本：' + str(plan['schema'])[:80])
     if not isinstance(plan['owner'], str) or not re.fullmatch('[a-z0-9][a-z0-9._-]{0,63}', plan['owner']):
         raise ValueError('批量服务端计划的所有者无效')
@@ -215,7 +218,8 @@ def _validate_plan(plan: Any) -> dict:
 def _validate_graphs(value: Any, plan: dict, records: dict[int, dict[int, bytes]]) -> list:
     if value is None:
         return []
-    if not isinstance(value, dict) or set(value) != {'schema', 'owner', 'revision', 'requests'} or value['schema'] != GRAPH_SCHEMA:
+    if (not isinstance(value, dict) or set(value) != {'schema', 'owner', 'revision', 'requests'}
+            or (value['schema'] != GRAPH_SCHEMA and value['schema'] not in LEGACY_GRAPH_SCHEMAS)):
         raise ValueError('form-graph-requests.json 结构无效')
     if value['owner'] != plan['owner'] or value['revision'] != plan['revision']:
         raise ValueError('形态图请求与服务端计划不是同一次发布')
