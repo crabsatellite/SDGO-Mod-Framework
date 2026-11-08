@@ -638,6 +638,10 @@ void PublishMissionBossSpecial(
     }
 }
 bool ControlBlocked(uint8_t* unit) {
+    battle_ai::native::detail::ReadableRegionCache regions{};
+    battle_ai::native::detail::ScopedReadableRegionCache scope(
+        battle_ai::native::detail::g_readableRegionCache?
+            *battle_ai::native::detail::g_readableRegionCache:regions);
     uint8_t* movement=nullptr;
     if(!battle_ai::native::detail::ReadPointer(unit,0x9C8,movement)) return true;
     for(size_t offset:{size_t(0xD4),size_t(0xE8),size_t(0xFC),size_t(0x110),size_t(0x138)})
