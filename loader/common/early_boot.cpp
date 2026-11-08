@@ -1,5 +1,6 @@
 #include "early_boot.h"
 #include "launcher_handshake.h"
+#include "launch_gate.h"
 
 #include "sdgo/sdgo_api.h"
 
@@ -22,6 +23,7 @@ namespace
 
     BOOL CALLBACK BootCallback(PINIT_ONCE, PVOID, PVOID*)
     {
+        ClientLaunchGate(g_loaderName);
         auto host = reinterpret_cast<const BYTE*>(GetModuleHandleW(nullptr));
         auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(host);
         if (dos->e_magic == IMAGE_DOS_SIGNATURE) {

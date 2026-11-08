@@ -85,7 +85,11 @@ def make_server(workspace, port=0):
                     from .entrypoints import create
                     rows=create(workspace,executable)
                     return self.send_json(200,{'created':sum(r['status']=='created' for r in rows),'kept':sum(r['status']=='kept' for r in rows)})
-                if method == 'GET' and path == '/api/identity': return self.send_json(200, {'application': 'sdgo_mod_manager', 'workspace_id': storage.revision(str(workspace.root).encode())})
+                if method == 'GET' and path == '/api/identity': return self.send_json(200, {'application': 'sdgo_mod_manager', 'workspace_id': storage.revision(str(workspace.root).encode()),'session_token':token,'launch_gate':1})
+                if path=='/api/launch':
+                    controller=workspace.client_runtime
+                    if method=='POST':return self.send_json(200,controller.launch(body.get('root'),body.get('token')))
+                    if method=='GET':return self.send_json(200,controller.launch_state(query['root'][0],query['token'][0]))
                 if path=='/api/updates':
                     updates=getattr(workspace,'updates',None)
                     if updates is None:raise ValueError('当前管理器没有更新组件，请安装新版')

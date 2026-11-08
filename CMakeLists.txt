@@ -62,8 +62,8 @@ function(sdgo_strict target)
 endfunction()
 
 # ---- loader shims: d3d9.dll next to GOnline.exe, winmm.dll next to BattleServer.exe --
-add_library(early_boot STATIC loader/common/early_boot.cpp)
-target_link_libraries(early_boot PUBLIC sdgo_api)
+add_library(early_boot STATIC loader/common/early_boot.cpp loader/common/launch_gate.cpp)
+target_link_libraries(early_boot PUBLIC sdgo_api bcrypt)
 sdgo_strict(early_boot)
 
 add_library(d3d9_shim SHARED loader/d3d9/d3d9_shim.cpp loader/d3d9/d3d9.def)
@@ -72,6 +72,11 @@ target_link_libraries(d3d9_shim PRIVATE early_boot)
 sdgo_strict(d3d9_shim)
 sdgo_version_resource(d3d9_shim d3d9.dll "SDGO mod framework loader (client)")
 sdgo_stage(d3d9_shim "client")
+if(BUILD_TESTING)
+    add_executable(launch_gate_host tests/launch_gate_host.cpp)
+    target_link_libraries(launch_gate_host PRIVATE d3d9_shim)
+    sdgo_strict(launch_gate_host)
+endif()
 
 add_library(winmm_shim SHARED loader/winmm/winmm_shim.cpp loader/winmm/winmm.def)
 set_target_properties(winmm_shim PROPERTIES OUTPUT_NAME winmm)

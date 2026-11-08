@@ -109,6 +109,36 @@ class ClientRuntime:
             def is_set(token):return self.stop_event.is_set()or self.cancel_event.is_set()
         self.operation_stop=OperationStop()
         self.binding_requests={}
+        self.launch_tokens={}
+
+    def launch(self,root,token):
+        from . import launch
+        root=Path(root).resolve()
+        host=next((h for h in self.workspace.settings['hosts']if Path(h['path']).resolve()==root and h['role']=='client'),None)
+        if host is None:
+            self.workspace.add_host(str(root))
+            host=next(h for h in self.workspace.settings['hosts']if Path(h['path']).resolve()==root and h['role']=='client')
+        completed=launch.state(root,token)
+        if completed.get('status')=='launched':return completed
+        launch.accept(root,token)
+        with self.lock:
+            existing=self.launch_tokens.get(host['id'])
+            if existing and self.results.get(host['id'],{}).get('status')in('queued','working','restart_required'):
+                return {'token':existing,'host':host['id'],'status':'queued'}
+            self.launch_tokens[host['id']]=token
+            self.jobs=[j for j in self.jobs if j[0]!=host['id']]
+            self.jobs.insert(0,(host['id'],'launch',token))
+            self.results[host['id']]={'status':'queued','launch_token':token}
+        self.start();return {'token':token,'host':host['id'],'status':'queued'}
+
+    def launch_state(self,root,token):
+        from . import launch
+        root=Path(root).resolve()
+        with self.lock:
+            for h in self.workspace.settings['hosts']:
+                result=self.results.get(h['id'],{})
+                if Path(h['path']).resolve()==root and result.get('launch_token')==token:return {**result,'host':h['id'],'token':token}
+        return {**launch.state(root,token),'token':token}
 
     def report_progress(self,**values):
         if self.active_host:
@@ -641,6 +671,10 @@ class ClientRuntime:
 
     def request(self,identity,action,digest=None):
         if action not in('check','install','recover','sync'):raise ValueError('客户端更新操作无效')
+        with self.lock:
+            result=self.results.get(identity,{})
+            if result.get('launch_token')and result.get('status')in('queued','working','restart_required'):
+                raise storage.Conflict('正在准备启动游戏，请等待或在启动窗口取消后再手动更新')
         self.workspace.host(identity)['client_updates_paused']=False
         self.workspace.save_workspace()
         with self.lock:self.jobs.append((identity,action,digest));self.results[identity]={'status':'queued'}
@@ -651,7 +685,13 @@ class ClientRuntime:
         with self.lock:
             self.jobs=[job for job in self.jobs if job[0]!=identity]
             if self.active_host==identity:self.cancel_event.set()
-            else:self.results[identity]={'status':'cancelled','message':'下载已取消；已校验文件保留，可继续下载'}
+            else:
+                self.results[identity]={'status':'cancelled','message':'下载已取消；已校验文件保留，可继续下载'}
+                token=self.launch_tokens.get(identity)
+                if token:
+                    from .launch import save
+                    self.results[identity]['launch_token']=token
+                    save(host['path'],token,**self.results[identity])
         return self.state()
 
     def state(self):
@@ -694,13 +734,22 @@ class ClientRuntime:
                 if job:
                     identity,action,digest=job
                     with self.busy:
-                        with self.lock:self.active_host=identity;self.cancel_event.clear();self.results[identity]={'status':'working'}
+                        with self.lock:self.active_host=identity;self.cancel_event.clear();self.results[identity]={'status':'working',**({'launch_token':digest}if action=='launch'else{})}
                         try:
                             host=self.workspace.host(identity)
-                            result=self.recover(host)if action=='recover'else self.plan(host)if action in('check','sync')else self.install(host,digest)
+                            if action=='launch':
+                                from .launch import run
+                                result=run(self,host,digest)
+                            else:result=self.recover(host)if action=='recover'else self.plan(host)if action in('check','sync')else self.install(host,digest)
                             if action=='sync'and result['status']=='available':result=self.install(host,result['digest'])
                         except InterruptedError:result={'status':'cancelled','message':'操作已取消，已校验文件保留；缺失或不完整内容不会安装'}
                         except Exception as e:result={'status':'error','message':str(e)}
+                        if action=='launch':
+                            from .launch import save
+                            result['launch_token']=digest
+                            try:save(host['path'],digest,**{k:v for k,v in result.items()if k!='handoff'})
+                            except(OSError,ValueError)as error:
+                                result={**result,'status':'error','message':'无法保存启动结果：'+str(error)}
                         with self.lock:self.results[identity]=result;self.active_host=None;self.cancel_event.clear()
                 self.stop_event.wait(.25)
         self.thread=threading.Thread(target=loop,name='client-runtime-updates',daemon=True);self.thread.start()
@@ -755,6 +804,6 @@ def finish(job,launch=True):
     finally:workspace.close()
     if result['status']in('installed','recovered'):
         Path(job).unlink()
-        if launch:subprocess.Popen([str(Path(value['host']['path'])/updates.MANAGER),'--workspace',value['workspace']],
+        if launch:subprocess.Popen([str(Path(value['host']['path'])/updates.MANAGER),'--workspace',value['workspace'],*(['--no-browser']if value.get('launch_request')else[])],
             cwd=value['host']['path'],creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0),close_fds=True)
     return result

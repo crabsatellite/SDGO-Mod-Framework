@@ -26,6 +26,22 @@ def announce(url):
 
 def main(argv=None):
     effective=sys.argv[1:] if argv is None else argv
+    if effective[:1]==['--launch-game']:
+        from manager import launch,launch_ui
+        parser=argparse.ArgumentParser(description='Verify the bound runtime before starting the game')
+        parser.add_argument('--launch-game',type=Path,required=True);parser.add_argument('--launch-request',required=True)
+        parser.add_argument('--launch-worker',action='store_true');args=parser.parse_args(effective)
+        try:
+            launch.accept(args.launch_game,args.launch_request)
+            if getattr(sys,'frozen',False)and not args.launch_worker:launch_ui.detach(args.launch_game,args.launch_request)
+            else:launch_ui.run(args.launch_game,args.launch_request)
+            return 0
+        except Exception as error:
+            if os.name=='nt':
+                import ctypes
+                ctypes.windll.user32.MessageBoxW(None,str(error),'SDGO Mod Manager',0x10)
+            else:announce(str(error))
+            return 1
     if effective[:1]==['--finish-client-update']:
         from manager.client_runtime import finish
         if len(effective)!=2:raise ValueError('客户端更新交接参数无效')
@@ -47,6 +63,7 @@ def main(argv=None):
     parser.add_argument('--workspace', type=Path, default=default_workspace)
     parser.add_argument('--port', type=int, default=0)
     parser.add_argument('--no-browser', action='store_true')
+    parser.add_argument('--startup-client',type=Path,help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if not 0 <= args.port <= 65535: parser.error('port must be 0..65535')
     lease=Lease(args.workspace)
@@ -56,11 +73,16 @@ def main(argv=None):
         announce(url)
         return
     workspace = Workspace(args.workspace, ROOT / 'mods')
+    if args.startup_client:
+        root=args.startup_client.resolve(strict=True)
+        if args.workspace.resolve()!=root/'sdgo/local-state/manager':raise ValueError('启动工作区不属于这个客户端')
+        if not any(Path(h['path']).resolve()==root for h in workspace.settings['hosts']):workspace.add_host(root)
     if local_client and not any(Path(h['path']).resolve()==sibling.resolve()for h in workspace.settings['hosts']):
         workspace.add_host(sibling)
     attach(workspace)
     from manager.updates import attach as attach_updates
     executable=Path(sys.executable) if getattr(sys,'frozen',False) else None
+    if executable and args.startup_client:executable=args.startup_client.resolve()/'SDGO Mod Manager.exe'
     attach_updates(workspace,ROOT,executable)
     if executable and not args.no_browser:
         from manager.entrypoints import create

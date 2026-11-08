@@ -13,7 +13,7 @@ Owner profiles combine locked official Mods, owner settings and assets on a comp
 
 Server owners and maintainers install, configure and [update](docs/mod-manager.md#updates) features with
 **SDGO Mod Manager**; the **0_更新与管理** entry at the top of the client folder opens it. Players can update
-an owner-provided complete client in Manager and keep using their normal game launcher. Shared Mod configuration
+an owner-provided client in Manager. Bound player clients opened through `GOnline.exe` show update progress, synchronize both sources and start after verification. Shared Mod configuration
 remains the server owner's responsibility.
 Owners can also manage their own **local-only** addons in Manager; those are never packaged or exported.
 Installations follow the official curated starter pack by default. Owners explicitly choose DIY when taking over

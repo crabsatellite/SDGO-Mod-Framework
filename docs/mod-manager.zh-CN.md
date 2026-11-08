@@ -3,6 +3,7 @@
 [English](mod-manager.md) · [返回功能目录](../README.zh-CN.md)
 
 Manager 从官方或导入的模组源安装程序，从服主内容源安装共享配置和全部自定义内容。玩家先取得兼容的原版客户端，安装 Manager 后导入服主配置；详见[安装流程](owner-updates.zh-CN.md)。游戏仍从原来的入口启动。
+绑定服主配置后双击 `GOnline.exe`，Manager 会显示进度并同步两条来源，校验通过后自动打开游戏。详见[启动前更新](owner-updates.zh-CN.md#启动前更新)。
 
 可以从客户端目录顶部的 **0_更新与管理**，或包里的 **SDGO Mod Manager.exe** 打开 Manager。
 第一次正常打开时会创建目录入口；入口丢失时，点击提示栏的「创建目录入口」补建，已有入口及其工作区保持不变。

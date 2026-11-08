@@ -3,6 +3,7 @@
 [简体中文](mod-manager.zh-CN.md) · [Back to the feature index](../README.md)
 
 Manager installs programs from the official or imported Mod source, and shared configuration plus custom content from the owner source. Start with a compatible original client, install Manager, then import the owner profile. See [the installation flow](owner-updates.md). The game keeps its normal launch entry.
+Bound player clients opened through `GOnline.exe` show Manager progress and synchronize both sources before launching. See [updates before launch](owner-updates.md#updates-before-launch).
 
 Open Manager from **0_更新与管理** at the top of the client folder, or from **SDGO Mod Manager.exe** in the
 framework package. The first normal launch creates the folder entry; **创建目录入口** (create folder entry) restores a

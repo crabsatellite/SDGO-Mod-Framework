@@ -14,6 +14,7 @@ export async function mountOwnerUpdates(ctx){
  if(upstream.program_managed_by_client){program.replaceChildren(element('h2','Manager 程序上游'),element('p','这个 Manager 随服主选择的模组版本更新，避免独立升级与整合包修复互相覆盖。DIY 维护者可以明确接管后审阅上游。','muted'));}
  const runtimeCard=element('section',undefined,'manager-card');
  runtimeCard.append(element('h2','服主配置与内容更新'),element('p','在兼容的原版客户端上安装服主选定的 Mod、共享参数和自定义内容。配置源支持 HTTPS、Git SSH/HTTPS 和离线目录；完整客户端仓库不是必需条件。','muted'));
+ runtimeCard.append(element('p','安装配套的新版本 Manager 与框架后，绑定的玩家双击 GOnline.exe 即会显示更新进度，校验程序及服主内容后自动打开游戏。','muted'));
  const runtimeRows=element('div');runtimeCard.append(runtimeRows);root.prepend(runtimeCard);
  let runtimeDisposed=false,runtimeFingerprint='';
  async function refreshRuntime(){
