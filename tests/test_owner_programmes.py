@@ -68,6 +68,16 @@ class OwnerProgrammes(unittest.TestCase):
         self.assertFalse(any(n.endswith('.dll') for n in plan['files']))
         self.assertEqual(self.controller.plans[self.host['id']]['owner_programme']['source'], self.published)
 
+    def test_owner_profile_receipt_keeps_its_digest_and_rejects_same_revision_rewrites(self):
+        self.install()
+        receipt=storage.read_json(self.game/'sdgo/local-state/client-runtime.json')
+        expected=updates.digest(storage.json_bytes(self.profile))
+        self.assertEqual(receipt['profile']['sha256'],expected)
+        self.assertEqual(receipt['content_commit'],expected)
+        self.profile['label']='Changed bytes without a new revision';self.save_profile()
+        with self.assertRaisesRegex(ValueError,'同一修订号'):
+            self.controller.plan(self.host)
+
     def test_foreign_publisher_wrong_framework_and_tampering_fail_before_install(self):
         for key, value in [('source_id', 'f'*32), ('sha256', '0'*64)]:
             with self.subTest(key=key):

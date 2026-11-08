@@ -352,9 +352,9 @@ def plan(controller,host,source):
     combined,effective,layers=runtime_layers.compose(controller,{**source,'framework':delegated},contract,root,entries,None,identity,shared_data=(folder/SHARED).read_bytes())
     if layers['framework']['manifest'].get('capabilities',{}).get('runtime_profiles')!=1:raise ValueError('所选框架程序尚不支持通用服主配置档；保留现有客户端')
     if layers.get('owner_programme'):
-        for identity in layers['owner_programme']['manifest']['mods']:
-            cfg=updates.read_ini((Path(layers['owner_programme']['bundle'])/'sdgo/owner-mods'/identity/'mod.ini').read_bytes())
-            if profile['base']['host_key']not in[h.strip()for h in cfg.get('mod','hosts',fallback='').split(',')]:raise ValueError('本服补丁与当前原版客户端不兼容：'+identity)
+        for mod_id in layers['owner_programme']['manifest']['mods']:
+            cfg=updates.read_ini((Path(layers['owner_programme']['bundle'])/'sdgo/owner-mods'/mod_id/'mod.ini').read_bytes())
+            if profile['base']['host_key']not in[h.strip()for h in cfg.get('mod','hosts',fallback='').split(',')]:raise ValueError('本服补丁与当前原版客户端不兼容：'+mod_id)
     needed=[n for n,e in effective.items()if not matches(updates.child(root,n),e)]
     prior=storage.read_json(root/RECEIPT,{})
     if prior and prior.get('source_id')!=source['source_id']:raise ValueError('这个客户端已有不同服主的安装记录')
