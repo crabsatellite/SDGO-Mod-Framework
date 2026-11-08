@@ -73,6 +73,10 @@ a higher cap, then continues the ordinary battle, settlement and return flow.
 
 ### Whole-battle timing and AI query diagnostics
 
+`LogNativePacketIngress=1` enables packet-entry diagnostics for random-loadout
+runs. It defaults to `0`; leave it off when login recovery owns that native
+entry. Normal battle assertions and performance observations do not require it.
+
 Quiet PvP runs retain successful native D3D9 Present intervals in
 `sdgo/gametest/present-timings.bin`. After a complete battle, run
 `python tools/game_test_frame_times.py --run-dir <prepared-run>` to validate

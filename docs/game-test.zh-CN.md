@@ -53,6 +53,9 @@ python tools/game_test_fps.py --client-template D:\Games\SDGO --stage build/stag
 
 ### 整局帧时间和 AI 查询诊断
 
+`LogNativePacketIngress=1` 为随机机体测试开启原生包入口诊断，默认 `0`。
+登录恢复组件占用同一入口时保持关闭；常规战斗断言和性能观察不依赖此诊断。
+
 安静运行的对战会把成功的原生 D3D9 Present 间隔保存在
 `sdgo/gametest/present-timings.bin`。完整战斗结束后运行
 `python tools/game_test_frame_times.py --run-dir <已准备的运行目录>`，核对 PID、序号、
