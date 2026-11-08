@@ -61,7 +61,7 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 | 任务行为版本 <!-- catalog: `mission_behavior`、`mission_behavior_server` --> | 为一个客户端和服务端组全部 Battle 频道统一选择 OC 默认行为或 G改现有行为 | [使用说明](docs/mission-behavior.zh-CN.md) |
 | 对战 AI <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友，同步开局、变形和战绩；可让真人同队并选择补位方式与数量 | [使用说明](docs/pvp-ai.zh-CN.md) |
 | AI 机体目录（可选） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |
-| AI 机师互动台词（可选） <!-- catalog: `ai_dialogue` --> | 按战况与机体人设生成回应和队友建议；自填 DeepSeek 密钥，默认关闭，可选本局广播 | [使用说明](docs/ai-dialogue.zh-CN.md) |
+| AI 机师互动台词（可选） <!-- catalog: `ai_dialogue` --> | 按战况与机体人设生成回应，核验敌友关系后给队友建议；自填 DeepSeek 密钥，默认关闭，广播固定点名对象 | [使用说明](docs/ai-dialogue.zh-CN.md) |
 | 战斗贡献奖励 <!-- catalog: `battle_rewards` --> | 按贡献发放 GB/MB，可配置人数倍率与按账号去重的聚会奖励 | [使用说明](docs/battle-rewards.zh-CN.md) |
 | 收藏扭蛋 <!-- catalog: `collection_capsule` --> | 优先补图鉴的活动机台，安装时补充图鉴获取说明；价格和次数可配置，默认每周 15 次 | [使用说明](docs/collection-capsule.zh-CN.md) |
 | 每局随机机体 <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组，原生出击任务收束后开局 | [使用说明](docs/room-random.zh-CN.md) |

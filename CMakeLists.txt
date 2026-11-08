@@ -673,6 +673,12 @@ sdgo_strict(daily_rewards_runtime_test)
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(ai_dialogue_policy_test tests/ai_dialogue_policy_test.cpp)
+    sdgo_strict(ai_dialogue_policy_test)
+    target_compile_options(ai_dialogue_policy_test PRIVATE /UNDEBUG)
+    add_test(NAME ai_dialogue_policy COMMAND ai_dialogue_policy_test)
+endif()
+if(BUILD_TESTING)
     add_executable(native_resource_overlay_test tests/native_resource_overlay_test.cpp
         support/native_resource_overlay/native_resource_overlay.cpp)
     target_link_libraries(native_resource_overlay_test PRIVATE sdgo_api)

@@ -26,7 +26,9 @@ Manager performs HTTP work asynchronously. The game never waits for it. Each cli
 
 Enemy AI responds only when you defeat it or it defeats you. Unrelated kills between other players do not use your API. Autonomous allied comments are deterministically assigned among allied humans so clients do not all generate the same comment.
 
-The original battle text area displays `Rick Dias: line`, using the actual unit name without object numbers or arrows. In multiplayer the line naturally addresses the target player by name. Local visibility sends no chat packet. Room visibility uses the player's normal room chat connection with a clear unit-name prefix; it does not impersonate a server pilot. Compatible receiving components restore Unicode even with their generation setting off. This is battle-room chat, not lobby, world or clan chat.
+Relationships follow the native battle player records used by the team HUD, with player and slot identities checked. A reply is checked again before dispatch: an opposing AI cannot send a teammate suggestion, and a focus target must still be a living enemy. The prompt explicitly identifies whether the speaker and addressee are allies or opponents.
+
+The original battle text area displays `Rick Dias: line`, using the actual unit name without object numbers or arrows. A room broadcast always names its actual addressee, resolved by the game rather than left to the model. Other players, including opponents, can see it; a suggestion addressed to an AI's ally is not an invitation to every viewer. Local visibility sends no chat packet. Room visibility uses the player's normal room chat connection with a clear unit-name prefix; it does not impersonate a server pilot. Compatible receiving components restore Unicode even with their generation setting off. This is battle-room chat, not lobby, world or clan chat.
 
 ## Context and pilot profiles
 

@@ -70,6 +70,8 @@ class DialogueTests(unittest.TestCase):
             result=dialogue.event_context(fixture(kind),self.rules)
             self.assertEqual(result['addressee']['pilot_id'],101)
             self.assertEqual(result['kind'],kind)
+            self.assertEqual(result['speaker_relation_to_addressee'],'enemy')
+            self.assertIn('不能把对方当队友',dialogue.messages(result,dialogue.DEFAULT_PROMPT)[0]['content'])
             self.assertNotIn(result['victim'],result['alive_allies']+result['alive_enemies'])
 
     def test_unrelated_players_and_friendly_fire_refused(self):
@@ -95,6 +97,7 @@ class DialogueTests(unittest.TestCase):
         event['roster'][2]['unit_name']='扎古II'
         context=dialogue.event_context(event,self.rules)
         self.assertEqual(context['speaker']['team'],context['addressee']['team'])
+        self.assertEqual(context['speaker_relation_to_addressee'],'ally')
         self.assertIn('推测',context['speaker']['persona']['pilot'])
         self.assertIn('普通士兵',context['speaker']['persona']['personality'])
         event['focus']=101
@@ -111,6 +114,16 @@ class DialogueTests(unittest.TestCase):
             with self.assertRaises(ValueError):dialogue.line(value)
         self.assertEqual(dialogue.line('“这次算你运气好。”'),'这次算你运气好。')
         self.assertEqual(dialogue.line('test[VIP], lucky shot!'),'test[VIP], lucky shot!')
+
+    def test_same_ai_has_opposite_roles_for_opposing_humans(self):
+        event=fixture('ally_focus');event.update(speaker=0x80000003,killer=0,victim=0,focus=102)
+        self.assertEqual(dialogue.event_context(event,self.rules)['speaker_relation_to_addressee'],'ally')
+        event.update(local_pilot=102,target=102)
+        with self.assertRaises(ValueError):dialogue.event_context(event,self.rules)
+        event.update(kind='ai_kill',killer=event['speaker'],victim=102,focus=0)
+        result=dialogue.event_context(event,self.rules)
+        self.assertEqual(result['speaker_relation_to_addressee'],'enemy')
+        self.assertEqual(result['addressee']['name'],'玩家乙')
 
     def test_https_no_embedded_secrets_or_redirect_destinations(self):
         for url in ('http://api.deepseek.com','https://user:key@evil.test','https://api.deepseek.com/?key=secret','https://api.deepseek.com/#x'):

@@ -134,6 +134,7 @@ def event_context(event, rules):
     if kind == 'ally_focus' and (not focus or not focus['alive'] or focus['team'] == speaker['team']):
         raise ValueError('集火目标无效')
     return {'kind': kind, 'speaker': {**speaker, 'persona': persona(speaker, rules)}, 'addressee': target,
+            'speaker_relation_to_addressee': 'ally' if speaker['team'] == target['team'] else 'enemy',
             'killer': killer, 'victim': victim, 'weapon': weapon, 'focus': focus,
             'alive_allies': [r for r in alive if r['team'] == speaker['team'] and r != speaker],
             'alive_enemies': [r for r in alive if r['team'] != speaker['team']],
@@ -147,7 +148,14 @@ def messages(context, prompt, language='简体中文', history=()):
         raise ValueError('提示词长度无效')
     payload = {'language': text(language, 40), 'battle': context,
                'recent_lines_from_this_speaker': [text(s, 48) for s in list(history)[-4:]]}
-    return [{'role': 'system', 'content': prompt}, {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)}]
+    # Relationship facts are independent of an editable persona's tone and of
+    # the other people who can see a room-wide broadcast.
+    relation = context.get('speaker_relation_to_addressee')
+    rule = ('本次对话对象是你的敌人。可以调侃、认可或约战，但不能把对方当队友，不能请对方配合你集火或协同作战。'
+            if relation == 'enemy' else '本次对话对象是你的队友。集火建议只能针对 focus 指定的敌人，不能把队友当敌人。'
+            if relation == 'ally' else '')
+    guard = '\n战斗关系以 JSON 的 speaker_relation_to_addressee 为准。旁观这条广播的人不一定是对话对象。'+rule
+    return [{'role': 'system', 'content': prompt + guard}, {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)}]
 
 
 def line(value):

@@ -15,6 +15,7 @@
 #include "sdgo/native_text_decoders.h"
 #include "../battle_ai/native_capabilities.h"
 #include "protocol.h"
+#include "policy.h"
 
 namespace {
 using namespace sdgo::ai_dialogue;
@@ -109,12 +110,20 @@ bool Capture(uint8_t* mode,Request& output) {
             row.object=objectForPilot(*units,row.pilot);auto* unit=row.object?findObject(*units,row.object):nullptr;
             if(!unit)continue;
             uint32_t own=0;if(!Read(unit,4,own)||own!=row.object||!Read(unit,0x2B68,own)||own!=row.pilot)continue;
-            int32_t hp=0;uint8_t* definition=nullptr;
+            int32_t hp=0;uint8_t* definition=nullptr;uint8_t roomTeam=0;
             if(!ReadPointer(unit,0x9C4,definition)||!Read(definition,0,row.unit)||!row.unit||
-               !Read(unit,0x20,row.team)||!Read(unit,0x38,hp))continue;
+               !Read(reinterpret_cast<void*>(record),0x19,roomTeam)||roomTeam<1||roomTeam>2||!Read(unit,0x38,hp))continue;
+            // CalculateTeam (0049E0F0) and the original HUD group participants
+            // by the battle player record, not an NPC's transient actor team.
+            row.team=roomTeam;
             row.ai=group?1u:0u;row.alive=hp>0?1u:0u;row.stockPoints=-1;
             row.deaths=deaths[row.pilot];row.lifeIndex=std::max(1u,row.deaths+(row.alive?1u:0u));
-            auto* slot=playerSlot(*units,static_cast<int>(row.object-1));
+            uint8_t* slot=nullptr;
+            for(int index=0;index<12;++index) {
+                auto* candidate=playerSlot(*units,index);uint32_t object=0,pilot=0;uint8_t slotTeam=0;uint8_t* copy=nullptr;
+                if(candidate&&Read(candidate,4,object)&&object==row.object&&ReadPointer(candidate,0x44,copy)&&
+                   Read(copy,0,pilot)&&pilot==row.pilot&&Read(copy,0x19,slotTeam)&&slotTeam==roomTeam){slot=candidate;break;}
+            }
             if(!slot||!OldString(slot+8,row.name,32)||!CopyWide(reinterpret_cast<const wchar_t*>(definition+5),row.unitName,50))continue;
             if(!row.name[0]||!row.unitName[0])continue;
             if(result.limitedLives==1) {
@@ -133,6 +142,10 @@ bool Capture(uint8_t* mode,Request& output) {
     }
     for(unsigned i=0;i<result.count;++i)for(unsigned j=0;j<result.count;++j)
         if(result.roster[j].alive&&result.roster[j].team!=result.roster[i].team&&result.roster[j].target==result.roster[i].object)++result.roster[i].targetedBy;
+    int32_t localIndex=-1;uint8_t* localRecord=nullptr;uint32_t localPilot=0;
+    if(!Read(*units,0x90,localIndex)||localIndex<0||localIndex>=12)return false;
+    auto* localSlot=playerSlot(*units,localIndex);
+    if(!localSlot||!ReadPointer(localSlot,0x44,localRecord)||!Read(localRecord,0,localPilot)||localPilot!=result.local)return false;
     output=result;return result.count>=2;
 }
 const Participant* Find(const Request& event,uint32_t pilot) {for(unsigned i=0;i<event.count;++i)if(event.roster[i].pilot==pilot)return &event.roster[i];return nullptr;}
@@ -143,8 +156,8 @@ bool Allowed(uint64_t now) {
     return probability==100||(probability&&sample<static_cast<uint32_t>((0x100000000ULL*probability)/100));
 }
 void Queue(Request event,uint32_t kind,uint32_t speaker,uint32_t killer,uint32_t victim,uint32_t focus=0) {
-    const auto now=GetTickCount64();if(!Allowed(now))return;
     event.kind=kind;event.speaker=speaker;event.target=event.local;event.killer=killer;event.victim=victim;event.focus=focus;
+    const auto now=GetTickCount64();if(!CanAddress(event,snapshot)||!Allowed(now))return;
     if(const auto* who=Find(event,killer)) {
         auto* unit=findObject(*units,who->object);battle_ai::native::Capabilities caps{};
         if(unit&&battle_ai::native::ReadCapabilities(unit,caps)&&caps.selectedSlot>=0&&caps.selectedSlot<4) {
@@ -193,7 +206,9 @@ const wchar_t* __cdecl DecodeChat(unsigned page,const char* input) {
     wchar_t body[80]{};const int count=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,input+23,static_cast<int>(length-23),body,79);
     if(count<=0)return originalWide?originalWide(page,input):nullptr;
     for(int i=0;i<count;++i)if(body[i]<32||body[i]==L'<'||body[i]==L'>')return originalWide?originalWide(page,input):nullptr;
-    body[count]=0;const auto joined=caption+body;if(joined.size()>=384)return originalWide?originalWide(page,input):nullptr;
+    body[count]=0;const auto* addressee=Find(snapshot,target);if(!addressee||addressee->ai)return L"";
+    const auto addressed=AddressBody(addressee->name,body);if(addressed.empty())return L"";
+    const auto joined=caption+addressed;if(joined.size()>=384)return originalWide?originalWide(page,input):nullptr;
     wcscpy_s(decoded,joined.c_str());lastDisplayed=joined;++received;
     decodedLines.push_back(joined);if(decodedLines.size()>16)decodedLines.pop_front();return decoded;
 }
@@ -234,7 +249,9 @@ bool RoomLine(uint32_t speaker,uint32_t target,std::wstring line) {
 }
 void Replies(uint64_t now) {
     if(!waiting)return;
-    if(!enabled||now-pending.created>10000){waiting=false;DeleteFileW((folder+L"\\request.bin").c_str());return;}
+    if(!enabled||now-pending.created>10000||!CanAddress(pending,snapshot)){
+        waiting=false;DeleteFileW((folder+L"\\request.bin").c_str());DeleteFileW((folder+L"\\reply.bin").c_str());return;
+    }
     const auto raw=Load(folder+L"\\reply.bin",124);if(raw.size()<sizeof(Reply))return;
     Reply reply{};memcpy(&reply,raw.data(),sizeof(reply));
     if(memcmp(reply.magic,"SDGODLR1",8)||reply.session!=session||reply.sequence!=pending.sequence||reply.battle!=battle||reply.length<1||reply.length>48||raw.size()!=sizeof(reply)+reply.length*2)return;
