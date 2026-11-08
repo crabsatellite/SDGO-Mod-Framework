@@ -9,6 +9,7 @@ static SIZE_T WINAPI CountedVirtualQuery(LPCVOID address,PMEMORY_BASIC_INFORMATI
 }
 #define VirtualQuery CountedVirtualQuery
 #include "../mods/battle_ai/native_terrain_support.h"
+#include "../mods/battle_ai/native_terrain_ray.h"
 #undef VirtualQuery
 namespace {
 using namespace battle_ai;
@@ -17,6 +18,9 @@ alignas(16) std::array<uint8_t,0x8500> document{};
 alignas(16) std::array<uint8_t,0xD200> terrain{};
 std::array<float,9> heights{};
 int heightCalls=0,normalCalls=0;
+int originalRayCalls=0,triangleCalls=0;
+bool sawLiveHeight=false,nativeRaySawLocalScope=false;
+void* originalRayScene=nullptr;const Ray3* originalRayArgument=nullptr;
 bool throwHeight=false,nanHeight=false,nanNormal=false;
 float normalScale=1;
 Vec3 observed{};
@@ -24,6 +28,9 @@ template<class T>void Put(uint8_t* base,size_t offset,T value){memcpy(base+offse
 uint32_t Cache(){uint32_t value;memcpy(&value,terrain.data()+0xD1E8,4);return value;}
 template<class T>void* Address(T method){static_assert(sizeof(T)==sizeof(void*));void* value;memcpy(&value,&method,sizeof(value));return value;}
 struct Native {
+    __declspec(noinline) bool Ray(const Ray3* ray,float* distance) {
+        ++originalRayCalls;originalRayScene=this;originalRayArgument=ray;*distance=77;return true;
+    }
     __declspec(noinline) float Height(float x,float z) {
         ++heightCalls;Put(reinterpret_cast<uint8_t*>(this),0xD1E8,321.0f);
         if(throwHeight)RaiseException(0xE0424242,0,0,nullptr);
@@ -33,6 +40,12 @@ struct Native {
         ++normalCalls;observed=*point;*out=nanNormal?Vec3{NAN,1,0}:Vec3{0,normalScale,0};return out;
     }
 };
+bool __cdecl Triangle(const Ray3*,const Vec3* a,const Vec3* b,const Vec3* c,float*) {
+    ++triangleCalls;
+    sawLiveHeight=sawLiveHeight||a->y==42||b->y==42||c->y==42;
+    nativeRaySawLocalScope=nativeRaySawLocalScope||detail::g_readableRegionCache!=nullptr;
+    return false;
+}
 void Reset() {
     document.fill(0);terrain.fill(0);heights.fill(1);
     Put(document.data(),0x82C0,terrain.data());Put(terrain.data(),0x10,heights.data());
@@ -123,5 +136,37 @@ int main() {
           "native execution fault restores engine state and the caller memory-check scope");
     Reset();Put(document.data(),0x82C0,uint32_t(0));
     check(sampler.Sample(document.data(),{},out)==TerrainSupportStatus::Missing&&heightCalls==0,"model-only worlds have an explicit absent-terrain state");
+    {
+        alignas(16) std::array<uint8_t,0x200> scene{};
+        alignas(16) std::array<uint8_t,0x40> definition{};
+        alignas(16) std::array<uint8_t,9*0x2C> vertices{};
+        Put(scene.data(),0x194,vertices.data());Put(scene.data(),0x1D0,definition.data());
+        Put(definition.data(),0x34,uint32_t(2));Put(definition.data(),0x38,uint32_t(2));
+        for(size_t row=0;row<3;++row)for(size_t column=0;column<3;++column)
+            Put(vertices.data(),(row*3+column)*0x2C,Vec3{float(column*100),0,float(row*100)});
+        TerrainRayIndex index;index.Bind(reinterpret_cast<TerrainRayFn>(Address(&Native::Ray)),&Triangle);
+        Ray3 ray{{100,100,100},{0,-1,0}};float distance=0;
+        memoryQueries=0;originalRayCalls=triangleCalls=0;sawLiveHeight=nativeRaySawLocalScope=false;
+        check(!index.Query(scene.data(),&ray,&distance,false)&&index.stats.indexed==1&&originalRayCalls==0&&
+              triangleCalls>0&&memoryQueries>0&&memoryQueries<=3,
+              "standalone terrain-ray layout validation checks each live memory region once");
+        std::printf("standalone terrain ray memory queries=%zu\n",memoryQueries);
+        check(!nativeRaySawLocalScope&&detail::g_readableRegionCache==nullptr,
+              "ray layout validation releases its local scope before native collision callbacks");
+        const int beforeTriangles=triangleCalls;Put(vertices.data(),4*0x2C+4,42.0f);memoryQueries=0;
+        check(!index.Query(scene.data(),&ray,&distance,false)&&sawLiveHeight&&triangleCalls>beforeTriangles&&
+              index.stats.layouts==1&&memoryQueries>0,
+              "terrain rays keep the index but revalidate memory and read changed vertex heights");
+        {
+            detail::ReadableRegionCache parent{};detail::ScopedReadableRegionCache scope(parent);
+            index.Query(scene.data(),&ray,&distance,false);memoryQueries=0;
+            check(!index.Query(scene.data(),&ray,&distance,false)&&memoryQueries==0&&detail::g_readableRegionCache==&parent,
+                  "terrain-ray validation reuses its existing synchronous caller scope");
+        }
+        Put(definition.data(),0x34,uint32_t(0));distance=0;
+        check(index.Query(scene.data(),&ray,&distance,false)&&distance==77&&originalRayCalls==1&&
+              originalRayScene==scene.data()&&originalRayArgument==&ray&&detail::g_readableRegionCache==nullptr,
+              "unsupported ray layout retains the exact native query and caller scope");
+    }
     std::printf("%d native support checks, %d failures\n",checks,failures);return failures?1:0;
 }
