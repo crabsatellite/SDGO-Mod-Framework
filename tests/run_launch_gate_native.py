@@ -106,8 +106,43 @@ def prepare(base,build):
     return game,profile_dir,profile,env
 
 
+def run_sealed(base,build):
+    """A matching sealed run keeps candidates; other IDs still enter the gate."""
+    game=base/'sealed-client';game.mkdir(parents=True)
+    for source,name in [('launch_gate_host.exe','GOnline.exe'),('d3d9.dll','d3d9.dll')]:
+        shutil.copyfile(build/'Release'/source,game/name)
+    storage.atomic(game/'sdgo/client-source.json',b'{}')
+    storage.atomic(game/'sdgo/gametest/run.ini',b'[run]\nid=sealed-native-fixture\n')
+    checks=[]
+    for name,run_id,forced,allowed in [
+        ('matching_sealed_run_preserves_candidates','sealed-native-fixture','',True),
+        ('different_run_cannot_bypass_manager','different-native-fixture','',False),
+        ('forced_startup_test_enters_manager','sealed-native-fixture','sealed-native-fixture',False)]:
+        env={**os.environ,'SDGO_GAME_TEST_RUN':run_id,'SDGO_GAME_TEST_LAUNCH_GATE':forced}
+        env.pop('SDGO_LAUNCH_PERMIT',None)
+        process=WindowsBackgroundProcess([str(game/'GOnline.exe')],cwd=game,env=env,
+            stdout=None,stderr=None,run_id='launch-sealed-'+uuid.uuid4().hex,allow_named_desktop_fallback=True)
+        try:
+            if allowed:
+                assert process.wait(10)==0
+                assert(game/'native-entry.txt').is_file()
+                (game/'native-entry.txt').unlink()
+            else:
+                wait(lambda:close_error(process),10)
+                if process.poll()is None:process.kill()
+                assert process.wait(10)!=0
+                assert not(game/'native-entry.txt').exists()
+            checks.append(name)
+        finally:
+            if process.poll()is None:process.kill();process.wait(10)
+            process.close()
+    return {'status':'pass','checks':checks}
+
+
 def run(base,build):
+    sealed=run_sealed(base,build)
     game,profile_dir,profile,env=prepare(base,build);checks=[];owned=[]
+    checks.extend(sealed['checks'])
     def start(**extra):
         process=WindowsBackgroundProcess([str(game/'GOnline.exe'),'--example','中文 参数'],cwd=game,env={**env,**extra},
             stdout=None,stderr=None,run_id='launch-gate-'+uuid.uuid4().hex,allow_named_desktop_fallback=True)
@@ -171,6 +206,7 @@ def run(base,build):
 
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--build',type=Path,default=ROOT/'build');parser.add_argument('--work',type=Path,required=True);args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--build',type=Path,default=ROOT/'build');parser.add_argument('--work',type=Path,required=True)
+    parser.add_argument('--sealed-only',action='store_true');args=parser.parse_args()
     args.work.mkdir(parents=True,exist_ok=False)
-    result=run(args.work.resolve(),args.build.resolve());storage.atomic(args.work/'native-result.json',storage.json_bytes(result));print(json.dumps(result))
+    result=(run_sealed if args.sealed_only else run)(args.work.resolve(),args.build.resolve());storage.atomic(args.work/'native-result.json',storage.json_bytes(result));print(json.dumps(result))

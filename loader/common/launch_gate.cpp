@@ -95,7 +95,7 @@ void ClientLaunchGate(const char* loaderName) {
     // the owner's published runtime over the test. Startup tests use a permit.
     wchar_t run[256]{}, expected[256]{}, throughManager[256]{};
     if (GetEnvironmentVariableW(L"SDGO_GAME_TEST_RUN", run, 256) > 0) {
-        GetPrivateProfileStringW(L"run", L"run_id", L"", expected, 256, (root + L"\\sdgo\\gametest\\run.ini").c_str());
+        GetPrivateProfileStringW(L"run", L"id", L"", expected, 256, (root + L"\\sdgo\\gametest\\run.ini").c_str());
         GetEnvironmentVariableW(L"SDGO_GAME_TEST_LAUNCH_GATE", throughManager, 256);
         if (run[0] && wcscmp(run, expected) == 0 && wcscmp(run, throughManager) != 0) return;
     }

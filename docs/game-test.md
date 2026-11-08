@@ -526,9 +526,17 @@ The default two-form scenario still requires the original reciprocal pair.
 Local admission is distinct from a successful transform. The observer waits for
 normal reload/cooldown eligibility after a denied local request; it never fills
 ammunition or overrides the condition. Directed runs also observe the original
-reply and notification handlers, recording their error words and target IDs
-without modifying a packet. Actor and registry targets are reported separately
+reply and notification packets through the read-only `match_ai` event fanout,
+recording their error words and target IDs without installing a second handler
+hook or modifying a packet. This scope requires the matching `match_ai` provider.
+Actor and registry targets are reported separately
 so a native rejection is distinguishable from stale actor bindings.
+
+When the loader recognizes the matching `[run] id` and `SDGO_GAME_TEST_RUN`,
+it preserves the sealed candidate runtime instead of invoking the ordinary
+Manager update. Startup-gate tests explicitly set `SDGO_GAME_TEST_LAUNCH_GATE`
+to that same ID to exercise the real Manager path. A different or absent run ID
+does not enable this candidate bypass.
 
 ### Coordinated multiplayer
 
