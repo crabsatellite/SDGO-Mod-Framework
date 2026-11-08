@@ -165,9 +165,9 @@ def campaign(host:Path,peers:list[Path],pilots:list[int],events:list[Path],outpu
                 state=actor.wait(clean_waiting_room,60)
                 check('settlement removed every AI room slot',clean_waiting_room(state),
                       round=round_number,pilot=pilot,room=room)
-        # Guests leave first so the original human host is still available.
-        for actor in [*actors[1:],actors[0]]:
-            assert_receipt(actor.command('room_leave',channel_id=channel,room_id=room,timeout=90))
+        # The campaign ends in the real settled waiting room. Finish each SDK
+        # session here; its owned process shutdown releases the connection.
+        # Native room-leave actions belong to their own focused scenario.
         for actor in actors:assert_receipt(actor.command('finish',timeout=30))
         reports=[future.result(timeout=90) for future in futures]
         check('all actor launch/native reports pass',all(r['status']=='pass' for r in reports))

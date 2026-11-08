@@ -676,6 +676,15 @@ private:
         const int result =
             actions->networkSend_(network, stream, packet, size, flag);
         const DWORD error = GetLastError();
+        if ((opcode == 0x0972 || opcode == 0x066D || opcode == 0x0487) &&
+            actions->api_ && actions->api_->Log) {
+            PVOID frames[6] = {};
+            const USHORT count = CaptureStackBackTrace(0, 6, frames, nullptr);
+            actions->api_->Log(actions->mod_, SDGO_LOG_INFO,
+                "original room transport opcode=%04X bytes=%d result=%d thread=%lu frames=%u stack=%p/%p/%p/%p/%p/%p",
+                opcode, size, result, GetCurrentThreadId(), count,
+                frames[0], frames[1], frames[2], frames[3], frames[4], frames[5]);
+        }
         if (opcode==0x08A7 && packet && size>=8 && actions->api_ && actions->api_->Log) {
             uint32_t pilot=0;uint8_t mode=0;
             __try {memcpy(&pilot,static_cast<const uint8_t*>(packet)+2,4);mode=static_cast<const uint8_t*>(packet)[7];}

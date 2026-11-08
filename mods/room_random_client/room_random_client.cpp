@@ -185,6 +185,8 @@ void __fastcall RoomViewRequest(void* self,void*,uint16_t view) {
     _fxsave(fp.bytes);
     const DWORD error=GetLastError();
     const bool suppress=g_noticeTls.restoreDepth && view==1;
+    if(suppress)g_api->Log(g_mod,SDGO_LOG_DEBUG,
+        "tagged loadout restore omitted redundant native room-view request");
     ClearPendingNotice();
     SetLastError(error);
     _fxrstor(fp.bytes);
