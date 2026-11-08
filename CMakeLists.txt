@@ -173,6 +173,9 @@ endfunction()
 
 sdgo_add_mod(mission_ai DESCRIPTION "co-op mission wingmen (client)"
              SOURCES mods/mission_ai/mission_ai.cpp FILES mission_ai.lua)
+sdgo_add_mod(ai_dialogue DESCRIPTION "optional asynchronous AI pilot battle dialogue"
+             SOURCES mods/ai_dialogue/ai_dialogue.cpp
+             FILES symbols.fragment.ini config.ini personas.json prompt.txt LIBS bcrypt)
 sdgo_add_mod(mission_behavior DESCRIPTION "OC and current mission behavior (client)"
              SOURCES mods/mission_behavior/client.cpp FILES symbols.fragment.ini)
 sdgo_add_mod(mission_behavior_server SERVER DESCRIPTION "OC and current mission behavior (server)"
