@@ -243,6 +243,75 @@ def compile_bundle(manifests, catalog_sha256, files, weapons):
             bytes.fromhex(_digest(catalog_sha256)) + bytes(8) + payload)
 
 
+def decode_bundle(raw):
+    """Read a compiled sidecar back into owner declarations (the inverse of compile_bundle).
+
+    The container does not record archive member names, so each program gets a synthetic
+    ``installed/<owner>/<n>.scp`` member. A v2 container decodes as callback-schema declarations
+    (initializer-only owners keep the ``initializer`` role). Recompiling the returned manifests and
+    files against the same catalog and weapon records reproduces ``raw`` exactly.
+    """
+    if not isinstance(raw, bytes) or not 64 <= len(raw) <= 64 + MAX_BYTES:
+        raise ValueError('native program bundle byte extent')
+    magic, version, header, count, extent = struct.unpack_from('<8s4I', raw)
+    if (magic != MAGIC or version not in (1, 2) or header != 64 or not 1 <= count <= 128 or
+            extent != len(raw) - 64 or raw[56:64] != bytes(8)):
+        raise ValueError('native program bundle header')
+    roles = {number: name for name, (number, _) in CALLBACK_ROLES.items()}
+    position = 64
+
+    def take(size):
+        nonlocal position
+        if size > len(raw) - position:
+            raise ValueError('truncated native program bundle')
+        position += size
+        return raw[position - size:position]
+
+    def word():
+        return struct.unpack('<I', take(4))[0]
+
+    def text(maximum):
+        size = word()
+        if not 1 <= size <= maximum:
+            raise ValueError('native program bundle text extent')
+        try:
+            return take(size).decode('ascii')
+        except UnicodeError as error:
+            raise ValueError('native program bundle text encoding') from error
+
+    manifests, files = [], {}
+    for _ in range(count):
+        owner, revision = text(48), text(128)
+        programs = []
+        for index in range(word()):
+            resource, digest = text(240), take(32).hex()
+            exports = [text(255) for _ in range(word())]
+            member = 'installed/%s/%04d.scp' % (owner, index + 1)
+            if member in files:
+                raise ValueError('duplicate native program owner')
+            files[member] = take(word())
+            programs.append({'resource': resource, 'member': member, 'sha256': digest, 'exports': exports})
+        bindings = []
+        for _ in range(word()):
+            identity = word()
+            role = roles.get(word()) if version == 2 else 'initializer'
+            if role is None:
+                raise ValueError('unsupported native weapon callback role')
+            bindings.append({'weapon_id': identity, 'weapon_sha256': take(32).hex(), 'role': role, 'export': text(49)})
+        manifest = {'schema': CALLBACK_SCHEMA if version == 2 else SCHEMA, 'owner': owner, 'revision': revision,
+                    'vm_abi': 'lua50-x86-double64', 'phase': 'after-original-root-loader',
+                    'root_profile': 'closure-publications-only-v1', 'programs': programs}
+        if version == 2:
+            manifest['weapon_callbacks'] = bindings
+        else:
+            manifest['weapon_initializers'] = [{key: row[key] for key in ('weapon_id', 'weapon_sha256', 'export')}
+                                               for row in bindings]
+        manifests.append(manifest)
+    if position != len(raw):
+        raise ValueError('native program bundle trailing bytes')
+    return {'catalog_sha256': raw[24:56].hex(), 'version': version, 'manifests': manifests, 'files': files}
+
+
 def normalize_bindings(value):
     if not isinstance(value, list) or len(value) > 128:
         raise ValueError('native program binding count budget')

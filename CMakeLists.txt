@@ -667,7 +667,8 @@ if(BUILD_TESTING)
     foreach(scenario success conflict missing_reference partial_failure index_reference_missing index_conflict
                      skill_reference_missing funnel_reference_missing linked_skill_reference_missing dependency_records_success
                      blueprint_output_missing blueprint_material_missing
-                     blueprint_item_reference_missing index_blueprint_reference_missing index_blueprint_output_mismatch)
+                     blueprint_item_reference_missing index_blueprint_reference_missing index_blueprint_output_mismatch
+                     large_catalog)
         add_test(NAME unit_catalog_${scenario}_offline COMMAND unit_catalog_test $<TARGET_FILE:unit_catalog> ${scenario})
         set_tests_properties(unit_catalog_${scenario}_offline PROPERTIES TIMEOUT 30)
     endforeach()
@@ -1931,6 +1932,7 @@ if(BUILD_TESTING)
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_skill_atlases.py" -v)
     set_tests_properties(unit_skill_atlases_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         ENVIRONMENT "SDGO_SKILL_ATLAS_VALIDATOR=$<TARGET_FILE:skill_atlas_format_test>" TIMEOUT 60)
+
     add_executable(skill_identity_test tests/skill_identity_test.cpp)
     target_link_libraries(skill_identity_test PRIVATE sdgo_skill_identity)
     sdgo_strict(skill_identity_test)

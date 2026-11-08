@@ -15,6 +15,9 @@ from . import model
 ROOT=Path(__file__).resolve().parents[2]
 HOST='GOnline-54BE1568-00C97000'
 HOST_SHA256='e2dba73c10302b50cb0e6f2e58dd0a14effa8d224989ae570a7f8e05af79ff92'
+# Native unit_catalog container bounds (include/sdgo/unit_catalog_format.h kMaxRecords/kMaxPayloadBytes).
+CATALOG_RECORD_LIMIT=8192
+CATALOG_PAYLOAD_LIMIT=64*1024*1024
 UNIT_PATCHES={'UnitGradeNumber':(308,'B'),'UnitGradeNumber2':(309,'B'),'MasteredWeaponType':(310,'B'),
     'BattleCost':(311,'H'),'Star':(313,'B'),'UnitNumber_Transform':(316,'I'),'HP':(321,'I'),
     'Shield':(325,'I'),'ShieldType':(329,'B'),'ShieldRate':(330,'I'),
@@ -39,7 +42,7 @@ def native_catalog(records):
         seen.add(identity);parts.append(struct.pack('<6I',kind,identity,len(raw),fnv(raw),0,0)+raw)
     if not seen:raise ValueError('没有可以发布的机体记录')
     payload=b''.join(parts)
-    if len(parts)>4096 or len(payload)>64*1024*1024:raise ValueError('发布目录超过原生适配器的容量限制')
+    if len(parts)>CATALOG_RECORD_LIMIT or len(payload)>CATALOG_PAYLOAD_LIMIT:raise ValueError('发布目录超过原生适配器的容量限制')
     return struct.pack('<8s6I',b'SDGOUN1\0',1,32,len(parts),len(payload),fnv(payload),0)+payload
 
 
