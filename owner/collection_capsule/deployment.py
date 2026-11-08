@@ -24,7 +24,9 @@ def connection(server_ini: Path, section: str = "DB Game"):
             if os.name != "nt":
                 raise ValueError("Server INI must be UTF-8/UTF-16 on this platform") from None
             text = raw.decode("mbcs")
-    cfg = configparser.ConfigParser(interpolation=None)
+    # Native server INIs may repeat a key in different case (ID/id, PWD/pwd);
+    # the later value wins, as in the Manager's shared database reader.
+    cfg = configparser.ConfigParser(interpolation=None, strict=False)
     try:
         cfg.read_string(text)
         selected = next((name for name in cfg.sections()
@@ -194,6 +196,10 @@ FROM sdgo_collection_capsule.ImportedForms f JOIN sdgo_collection_capsule.UnitSo
             keys = [column[0] for column in cursor.description]
             owned = [dict(zip(keys, row)) for row in cursor.fetchall()]
         save('collection.unit-items.json', owned)
+        excluded = []
+        if cursor.execute("SELECT CASE WHEN OBJECT_ID(N'sdgo_collection_capsule.ExcludedUnits',N'U') IS NULL THEN 0 ELSE 1 END").fetchone()[0]:
+            excluded = [{'UnitID': int(r[0])} for r in cursor.execute('SELECT UnitID FROM sdgo_collection_capsule.ExcludedUnits')]
+        save('collection.excluded-units.json', excluded)
     finally:
         cursor.close()
     meta = {"schema_version": 1, "scope": "public unit and machine definitions only; no player data",

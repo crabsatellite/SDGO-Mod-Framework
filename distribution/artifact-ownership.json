@@ -115,6 +115,18 @@
       "target": "server",
       "purpose": "Parameterized framework operation; result data remains on the selected server"
     },
+    "owner/collection_capsule/sql/eligible_roots.sql": {
+      "ownership": "framework",
+      "kind": "query",
+      "target": "server",
+      "purpose": "Parameterized framework operation; result data remains on the selected server"
+    },
+    "owner/collection_capsule/sql/pool.sql": {
+      "ownership": "framework",
+      "kind": "query",
+      "target": "server",
+      "purpose": "Parameterized framework operation; result data remains on the selected server"
+    },
     "owner/collection_capsule/sql/schema.sql": {
       "ownership": "framework",
       "kind": "schema",

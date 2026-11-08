@@ -195,6 +195,7 @@ class CatalogStore:
         lookup_path=None,
         report_path=None,
         apply_callback=None,
+        before_compile=None,
     ):
         self.catalog_path = Path(catalog_path).resolve()
         self.patterns_path = Path(patterns_path).resolve() if patterns_path else None
@@ -215,6 +216,11 @@ class CatalogStore:
         self.apply_callback = apply_callback
         if self.apply_callback is not None and not callable(self.apply_callback):
             raise ValueError("apply_callback must be callable")
+        # Derived registry state owned by other providers (the collection
+        # machine's catalog explanation) is refreshed before the fingerprint.
+        self.before_compile = before_compile
+        if self.before_compile is not None and not callable(self.before_compile):
+            raise ValueError("before_compile must be callable")
         if self.snapshot_path is not None and self.client_path is None:
             raise ValueError("--snapshot requires --client")
         if self.lookup_path is not None and self.client_path is None:
@@ -626,6 +632,12 @@ class CatalogStore:
             catalog, _ = self.read()
             revision = self._expect(catalog, expected_revision)
             runtime_root = (self.bundle_path / "runtime" / revision[:16]).resolve()
+            collection_hints = None
+            if self.before_compile is not None:
+                try:
+                    collection_hints = self.before_compile(self.client_path)
+                except Exception as error:  # noqa: BLE001 - advisory; never blocks a compile
+                    collection_hints = {"status": "failed", "message": str(error)[:400]}
             from .capsule_client_compile import COMPILER_VERSION, extension_fingerprint
             extension_signature = extension_fingerprint(self.client_path)
             output = runtime_root / f"client-v{COMPILER_VERSION}-{extension_signature[:12]}"
@@ -673,6 +685,8 @@ class CatalogStore:
                 "reused": reused,
                 "placements": placements["machines"],
             }
+            if collection_hints is not None:
+                result["collection_hints"] = collection_hints
             if isinstance(selected, dict):
                 match = next(
                     (

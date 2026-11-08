@@ -17,7 +17,7 @@ The active tier is chosen before rank selection. Ranks with no candidate in that
 tier leave the lottery and the remaining weights are renormalized; the number of
 units in a rank does not multiply its total probability.
 
-Installing or updating the paired player package adds a collection-capsule explanation to the native encyclopedia's completed-product acquisition panel for eligible initial forms. It uses the built price and successful-draw limit, retains every original source and blueprint field, and uses a short hint when the original explanation nearly fills the native text field. Ordinary capsule recompilation retains this metadata. Installing a disabled registry or uninstalling the package restores the original explanations after a client restart. A server-only disable cannot update an already distributed client hint; rebuild and distribute paired resources after content or rule changes.
+The native encyclopedia's completed-product acquisition panel shows a collection-capsule explanation for every initial form the collection machine can currently award. Manager maintains that list from the target server's actual pool: saving the exclusion list, compiling or publishing the ordinary capsule catalog, and applying unit imports through Manager refresh the local client's explanation automatically, without regenerating the paired package. Players receive it with the server owner's next ordinary content update. The text uses the machine's current server price and successful-draw limit, retains every original source and blueprint field, and uses a short hint when the original explanation nearly fills the native text field. Installing a disabled registry or uninstalling the package restores the original explanations after a client restart.
 
 Native activity draws deliver to the **prize box**. The awarded item represents a
 permanent level-1 initial-form unit, created when the player claims it. The family
@@ -81,12 +81,48 @@ not change the running server. Keep the client price and server price synchroniz
 Ordinary capsule updates preserve activity posters, generated resources and unit
 gift categories. Publishing requires the current six-table shared provider; an
 older four-table provider is rejected. Regenerate and distribute matched resources
-after changing the collection poster or importing new content.
+after changing the collection poster. New units and exclusion-list changes need no
+regeneration; the encyclopedia explanation follows automatically.
 Enable or disable the gameplay Mod on its World feature card and restart that
 World; the minimal catalog unlock set and quota records are retained.
 The internal machine ID is developer information and must match SQL and client resources.
 All paths remain in the owner's local workspace. There is no additional UI,
 server or game launcher.
+
+## Exclusion list
+
+The exclusion list keeps chosen units out of the collection machine, for example
+withdrawn, test-only or not-yet-released units.
+
+- In the **Exclusion list** area of the Collection capsule panel, enter one unit ID
+  per line, optionally followed by a note, for example `10008 not yet released`.
+- Any form is enough. Drawing a base form grants its whole transform chain, so a
+  family is excluded when any form in its chain is listed.
+- **Preview** shows which drawable units would be removed and how many remain,
+  without writing anything. **Save** applies the list to the target WorldServer's
+  database immediately; no regeneration and no World restart are needed.
+- The list affects only the collection machine. Ordinary capsule machines, the
+  shop, units players already own, pending prize-box items and catalog unlocks are
+  unchanged. Removing an entry returns that family to the pool at once.
+- Saving is rejected without any change when the list would empty the pool or names
+  an ID that is not in the target database.
+- When a newly imported reciprocal family lacks its initial-form registration, the
+  whole machine rejects draws and refunds. Listing that family quarantines it so other
+  draws continue; remove it after registering its initial form. The quarantine cannot
+  be lifted before registration.
+
+After saving, the local client's encyclopedia explanation is refreshed automatically,
+and excluded units no longer mention the collection capsule. A running game is not
+modified; close it and use **Sync encyclopedia hints**. The panel shows whether the
+installed explanation matches the server pool. Players receive the refreshed
+explanation with the server owner's next content update.
+
+Automation uses the same interface: `owner.collection_capsule.exclusions.read(db)`
+reads the list and pool, and `replace(db, entries, dry_run=False)` replaces the list
+atomically (`dry_run=True` previews and rolls back). The read-only database procedure
+`sdgo_collection_capsule.EligibleRoots` shares the draw's pool calculation and returns
+each initial form with its excluded and deliverable state; the encyclopedia explanation
+is generated from it.
 
 ## Developer and automation commands
 
@@ -330,6 +366,8 @@ metadata to server and client. Once published, new units participate dynamically
 A raw unit row without delivery metadata rejects the draw through the refund path
 instead of being silently excluded. A new build automatically supplies missing
 categories, and its matching client resources must be distributed to players.
+Applying unit imports through Manager adds newly drawable units to the encyclopedia
+explanation automatically; list any unit that should stay unavailable.
 
 For existing native units, the builder resolves reciprocal forms from enabled
 entries in the client's `0220.gdt`, checked against all six unit tables and the
