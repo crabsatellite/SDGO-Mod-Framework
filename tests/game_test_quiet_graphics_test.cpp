@@ -1,10 +1,14 @@
+#define SDGO_QUIET_GRAPHICS_TEST 1
 #include "../mods/game_test_client/quiet_graphics.h"
 #include <cstdio>
 #include <cwchar>
 #include <cstring>
+#include <cstdarg>
 
 namespace {
 QuietGraphics::Create9Fn detour=nullptr;
+QuietGraphics::Create9Fn realDetour=nullptr;
+HMODULE realD3d9=nullptr;
 int failures=0;
 bool factoryUnavailable=false;
 unsigned factoryDestroyed=0;
@@ -58,6 +62,10 @@ bool cooperativeSentCompleted=false;
 WNDPROC cooperativeFloodOriginalProc=nullptr;
 HANDLE cooperativeFloodStarted=nullptr,cooperativeFloodStop=nullptr;
 volatile LONG cooperativeFloodEnabled=0,cooperativeFloodMessages=0;
+WNDPROC cooperativeGateOriginalProc=nullptr;
+HANDLE cooperativeGateEntered=nullptr,cooperativeGateRelease=nullptr;
+volatile LONG cooperativeGateMarkerMessages=0,cooperativeGateRequireMarker=0;
+volatile LONG cooperativeGateObservedMarker=0;
 LRESULT CALLBACK CooperativeWindowProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam) {
     if(message==WM_APP+71){InterlockedIncrement(&cooperativeSentCallbacks);return 0x53;}
     if(message==WM_APP+72){InterlockedIncrement(&cooperativePostedCallbacks);return 0;}
@@ -75,6 +83,20 @@ LRESULT CALLBACK CooperativeFloodWindowProc(HWND window,UINT message,WPARAM wpar
         ? CallWindowProcW(cooperativeFloodOriginalProc,window,message,wparam,lparam)
         : DefWindowProcW(window,message,wparam,lparam);
 }
+LRESULT CALLBACK CooperativeGateWindowProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam) {
+    if(message==WM_APP+74) {
+        if(cooperativeGateEntered)SetEvent(cooperativeGateEntered);
+        if(cooperativeGateRelease)WaitForSingleObject(cooperativeGateRelease,2000);
+        return 0;
+    }
+    if(message==WM_APP+75) {
+        InterlockedIncrement(&cooperativeGateMarkerMessages);
+        return 0;
+    }
+    return cooperativeGateOriginalProc
+        ? CallWindowProcW(cooperativeGateOriginalProc,window,message,wparam,lparam)
+        : DefWindowProcW(window,message,wparam,lparam);
+}
 DWORD WINAPI StopCooperativeFlood(void*) {
     if(cooperativeFloodStop)WaitForSingleObject(cooperativeFloodStop,2000);
     else Sleep(2000);
@@ -83,12 +105,26 @@ DWORD WINAPI StopCooperativeFlood(void*) {
 }
 HRESULT STDMETHODCALLTYPE FakeCooperativeLevel(IDirect3DDevice9*) {
     lastWorkerThread=GetCurrentThreadId();
+    if(InterlockedCompareExchange(&cooperativeGateRequireMarker,0,0))
+        InterlockedExchange(&cooperativeGateObservedMarker,
+            InterlockedCompareExchange(&cooperativeGateMarkerMessages,0,0)>0 ? 1:0);
     if(cooperativeCallbackWindow) {
         DWORD_PTR reply=0;
         cooperativeSentCompleted=SendMessageTimeoutW(cooperativeCallbackWindow,WM_APP+71,0,0,
             SMTO_ABORTIFHUNG|SMTO_BLOCK,2000,&reply)!=0 && reply==0x53;
     }
     return cooperativeResult;
+}
+struct CooperativeRequest {
+    IDirect3DDevice9* device;
+    HANDLE entered;
+    HRESULT result;
+};
+DWORD WINAPI RunCooperativeRequest(void* raw) {
+    auto* request=static_cast<CooperativeRequest*>(raw);
+    SetEvent(request->entered);
+    request->result=request->device->TestCooperativeLevel();
+    return 0;
 }
 HRESULT STDMETHODCALLTYPE FakeGetBackBuffer(IDirect3DDevice9*,UINT,UINT,D3DBACKBUFFER_TYPE,
                                              IDirect3DSurface9** surface) {
@@ -246,6 +282,149 @@ int __cdecl Hook(SdgoMod*,const char* library,const char* name,void* replacement
     *original=reinterpret_cast<void*>(&ForwardedCreate);return 1;
 }
 
+void RealLog(SdgoMod*,int,const char* format,...) {
+    va_list arguments;
+    va_start(arguments,format);
+    std::vfprintf(stderr,format,arguments);
+    std::fputc('\n',stderr);
+    std::fflush(stderr);
+    va_end(arguments);
+}
+
+int __cdecl RealHook(SdgoMod*,const char* library,const char* name,void* replacement,void** original) {
+    if (std::strcmp(library,"d3d9.dll") || std::strcmp(name,"Direct3DCreate9"))return 0;
+    if(!realD3d9)
+        realD3d9=LoadLibraryExW(L"d3d9.dll",nullptr,LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if(!realD3d9)return 0;
+    const auto create=GetProcAddress(realD3d9,"Direct3DCreate9");
+    if(!create)return 0;
+    realDetour=reinterpret_cast<QuietGraphics::Create9Fn>(replacement);
+    *original=reinterpret_cast<void*>(create);
+    return 1;
+}
+
+bool TouchRealBackBuffer(IDirect3DDevice9* device,UINT expectedWidth,UINT expectedHeight) {
+    IDirect3DSurface9* surface=nullptr;
+    const HRESULT result=device->GetBackBuffer(0,0,D3DBACKBUFFER_TYPE_MONO,&surface);
+    if(FAILED(result) || !surface) {
+        std::fprintf(stderr,"real HAL GetBackBuffer failed hr=0x%08lX\n",
+            static_cast<unsigned long>(result));
+        return false;
+    }
+    D3DSURFACE_DESC description{};
+    const HRESULT descriptionResult=surface->GetDesc(&description);
+    const ULONG remaining=surface->Release();
+    std::fprintf(stderr,
+        "real HAL backbuffer hr=0x%08lX size=%ux%u release=%lu\n",
+        static_cast<unsigned long>(descriptionResult),description.Width,description.Height,
+        static_cast<unsigned long>(remaining));
+    return SUCCEEDED(descriptionResult) &&
+        description.Width==expectedWidth && description.Height==expectedHeight;
+}
+
+int RunRealHalProbe() {
+    wchar_t desktopName[96]{};
+    swprintf_s(desktopName,L"SDGO.QuietGraphics.HAL.%lu.%llu",
+        static_cast<unsigned long>(GetCurrentProcessId()),
+        static_cast<unsigned long long>(GetTickCount64()));
+    HDESK privateDesktop=CreateDesktopW(
+        desktopName,nullptr,nullptr,0,GENERIC_ALL,nullptr);
+    if(!privateDesktop || !SetThreadDesktop(privateDesktop)) {
+        std::fprintf(stderr,"real HAL private desktop failed error=%lu\n",
+            static_cast<unsigned long>(GetLastError()));
+        return 2;
+    }
+
+    HWND gameWindow=CreateWindowExW(
+        WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,L"STATIC",L"",
+        WS_POPUP|WS_DISABLED,0,0,1024,768,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
+    if(!gameWindow) {
+        std::fprintf(stderr,"real HAL private window failed error=%lu\n",
+            static_cast<unsigned long>(GetLastError()));
+        return 2;
+    }
+
+    SdgoApi api{};
+    api.Log=&RealLog;
+    api.HookImport=&RealHook;
+    QuietGraphics quiet;
+    if(!quiet.Install(&api,reinterpret_cast<SdgoMod*>(1),false) || !realDetour) {
+        std::fprintf(stderr,"real HAL quiet proxy install failed\n");
+        return 2;
+    }
+    const auto proxyState=quiet.State();
+    std::fprintf(stderr,
+        "real HAL proxy desktop=%ls thread=%lu hwnd=%p private_desktop=%ls\n",
+        proxyState.proxy_desktop,static_cast<unsigned long>(proxyState.proxy_thread_id),
+        proxyState.proxy_hwnd,desktopName);
+
+    IDirect3D9* d3d=realDetour(D3D_SDK_VERSION);
+    if(!d3d) {
+        std::fprintf(stderr,"real HAL Direct3DCreate9 failed\n");
+        return 2;
+    }
+    D3DPRESENT_PARAMETERS parameters{};
+    parameters.BackBufferWidth=1024;
+    parameters.BackBufferHeight=768;
+    parameters.BackBufferFormat=D3DFMT_UNKNOWN;
+    parameters.BackBufferCount=1;
+    parameters.MultiSampleType=D3DMULTISAMPLE_NONE;
+    parameters.SwapEffect=D3DSWAPEFFECT_DISCARD;
+    parameters.hDeviceWindow=gameWindow;
+    parameters.Windowed=TRUE;
+    parameters.PresentationInterval=D3DPRESENT_INTERVAL_IMMEDIATE;
+    IDirect3DDevice9* device=nullptr;
+    const HRESULT realCreateResult=d3d->CreateDevice(
+        D3DADAPTER_DEFAULT,D3DDEVTYPE_HAL,gameWindow,
+        D3DCREATE_HARDWARE_VERTEXPROCESSING,&parameters,&device);
+    std::fprintf(stderr,"real HAL CreateDevice hr=0x%08lX device=%p\n",
+        static_cast<unsigned long>(realCreateResult),device);
+    if(FAILED(realCreateResult) || !device)return 2;
+
+    constexpr UINT widths[2]={1024,2389};
+    constexpr UINT heights[2]={768,1344};
+    for(unsigned cycle=0;cycle<8;++cycle) {
+        for(unsigned resetIndex=0;resetIndex<2;++resetIndex) {
+            parameters.BackBufferWidth=widths[resetIndex];
+            parameters.BackBufferHeight=heights[resetIndex];
+            parameters.hDeviceWindow=gameWindow;
+            const HRESULT realResetResult=device->Reset(&parameters);
+            std::fprintf(stderr,
+                "real HAL Reset cycle=%u step=%u size=%ux%u hr=0x%08lX\n",
+                cycle,resetIndex,widths[resetIndex],heights[resetIndex],
+                static_cast<unsigned long>(realResetResult));
+            if(FAILED(realResetResult))return 2;
+            if(!TouchRealBackBuffer(device,widths[resetIndex],heights[resetIndex]))
+                return 2;
+            const HRESULT clearResult=device->Clear(
+                0,nullptr,D3DCLEAR_TARGET,D3DCOLOR_XRGB(0,0,0),1.0f,0);
+            const HRESULT realPresentResult=device->Present(nullptr,nullptr,nullptr,nullptr);
+            std::fprintf(stderr,
+                "real HAL render cycle=%u step=%u clear=0x%08lX present=0x%08lX\n",
+                cycle,resetIndex,static_cast<unsigned long>(clearResult),
+                static_cast<unsigned long>(realPresentResult));
+            if(FAILED(clearResult) || FAILED(realPresentResult))return 2;
+            for(unsigned check=0;check<128;++check) {
+                const HRESULT realCooperativeResult=device->TestCooperativeLevel();
+                if(realCooperativeResult!=S_OK) {
+                    std::fprintf(stderr,
+                        "real HAL TestCooperativeLevel cycle=%u step=%u check=%u hr=0x%08lX\n",
+                        cycle,resetIndex,check,
+                        static_cast<unsigned long>(realCooperativeResult));
+                    return 2;
+                }
+            }
+        }
+    }
+    const ULONG deviceReferences=device->Release();
+    const ULONG factoryReferences=d3d->Release();
+    std::fprintf(stderr,
+        "real HAL probe passed device_release=%lu factory_release=%lu\n",
+        static_cast<unsigned long>(deviceReferences),
+        static_cast<unsigned long>(factoryReferences));
+    return deviceReferences || factoryReferences ? 2:0;
+}
+
 void InitializeDeviceTable(void** table) {
     table[2]=reinterpret_cast<void*>(&FakeDeviceRelease);
     table[3]=reinterpret_cast<void*>(&FakeCooperativeLevel);
@@ -277,7 +456,9 @@ extern "C" __declspec(dllexport) FARPROC WINAPI ResolveQuietFactory() {
     return reinterpret_cast<FARPROC>(&Create);
 }
 
-int main() {
+int main(int argc,char** argv) {
+    if(argc==2 && !std::strcmp(argv[1],"--real-hal-probe"))
+        return RunRealHalProbe();
     {
     // Verify native readback encoding, padded rows, top-down orientation, and
     // refusing an existing file before exercising the real graphics proxy.
@@ -335,6 +516,11 @@ int main() {
     if (!state.active || !state.worker_ready || !state.ime_disabled || !state.proxy_hwnd || state.proxy_visible ||
         !state.proxy_noactivate || !state.proxy_toolwindow || state.proxy_appwindow ||
         std::wcscmp(state.proxy_class,QuietGraphics::ProxyClassName()) || !*state.proxy_desktop)++failures;
+    QuietGraphics::WorkerSnapshot workerSnapshot{};
+    if(!quiet.CaptureWorkerSnapshotForTest(&workerSnapshot) ||
+       !workerSnapshot.instruction || !workerSnapshot.stack ||
+       !workerSnapshot.stack_word_count || workerSnapshot.suspend_depth)
+        ++failures;
     HDESK input=state.named_desktop_fallback ? OpenDesktopW(L"Default",0,FALSE,DESKTOP_READOBJECTS):
         OpenInputDesktop(0,FALSE,DESKTOP_READOBJECTS);
     if (state.named_desktop_fallback && std::wcscmp(state.proxy_desktop,L"Default"))++failures;
@@ -458,6 +644,51 @@ int main() {
         if(cooperativeFloodStop)CloseHandle(cooperativeFloodStop);
         cooperativeFloodOriginalProc=nullptr;
         cooperativeFloodStarted=nullptr;cooperativeFloodStop=nullptr;
+
+        SetLastError(ERROR_SUCCESS);
+        cooperativeGateOriginalProc=reinterpret_cast<WNDPROC>(SetWindowLongPtrW(
+            state.proxy_hwnd,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(&CooperativeGateWindowProc)));
+        const DWORD gateSubclassError=GetLastError();
+        cooperativeGateEntered=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+        cooperativeGateRelease=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+        HANDLE cooperativeCallerEntered=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+        HANDLE cooperativeCaller=nullptr;
+        CooperativeRequest cooperativeRequest{device,cooperativeCallerEntered,D3DERR_NOTAVAILABLE};
+        bool gateReady=(cooperativeGateOriginalProc || gateSubclassError==ERROR_SUCCESS) &&
+            cooperativeGateEntered && cooperativeGateRelease && cooperativeCallerEntered &&
+            PostMessageW(state.proxy_hwnd,WM_APP+74,0,0) &&
+            WaitForSingleObject(cooperativeGateEntered,500)==WAIT_OBJECT_0;
+        if(gateReady) {
+            InterlockedExchange(&cooperativeGateMarkerMessages,0);
+            InterlockedExchange(&cooperativeGateObservedMarker,0);
+            InterlockedExchange(&cooperativeGateRequireMarker,1);
+            cooperativeCaller=CreateThread(nullptr,0,&RunCooperativeRequest,&cooperativeRequest,0,nullptr);
+            gateReady=cooperativeCaller &&
+                WaitForSingleObject(cooperativeCallerEntered,500)==WAIT_OBJECT_0;
+            if(gateReady) {
+                Sleep(50);
+                gateReady=PostMessageW(state.proxy_hwnd,WM_APP+75,0,0)!=FALSE;
+            }
+        }
+        if(cooperativeGateRelease)SetEvent(cooperativeGateRelease);
+        if(cooperativeCaller) {
+            if(WaitForSingleObject(cooperativeCaller,3000)!=WAIT_OBJECT_0)++failures;
+            CloseHandle(cooperativeCaller);
+        }
+        InterlockedExchange(&cooperativeGateRequireMarker,0);
+        if(!gateReady || cooperativeRequest.result!=cooperativeResult ||
+           !InterlockedCompareExchange(&cooperativeGateObservedMarker,0,0) ||
+           InterlockedCompareExchange(&cooperativeGateMarkerMessages,0,0)!=1 ||
+           lastWorkerThread!=state.proxy_thread_id)++failures;
+        if(cooperativeGateOriginalProc)
+            SetWindowLongPtrW(state.proxy_hwnd,GWLP_WNDPROC,
+                reinterpret_cast<LONG_PTR>(cooperativeGateOriginalProc));
+        if(cooperativeGateEntered)CloseHandle(cooperativeGateEntered);
+        if(cooperativeGateRelease)CloseHandle(cooperativeGateRelease);
+        if(cooperativeCallerEntered)CloseHandle(cooperativeCallerEntered);
+        cooperativeGateOriginalProc=nullptr;
+        cooperativeGateEntered=nullptr;cooperativeGateRelease=nullptr;
+
         lastWindow=nullptr;
         presentLastError=ERROR_RETRY;
         SetLastError(ERROR_ACCESS_DENIED);
@@ -581,7 +812,7 @@ int main() {
     state=quiet.State();
     if (state.factory_calls!=2 || state.factories!=1 || state.create_attempts!=4 ||
         state.created_devices!=1 || state.failed_devices!=3 || state.resets!=14 ||
-        state.presents!=4 || state.successful_presents!=3 || state.cooperative_checks!=4 || state.last_create_hresult!=S_OK ||
+        state.presents!=4 || state.successful_presents!=3 || state.cooperative_checks!=5 || state.last_create_hresult!=S_OK ||
         state.last_reset_hresult!=resetResult || state.last_present_hresult!=presentResult ||
         state.last_cooperative_hresult!=cooperativeResult || state.last_backbuffer_hresult!=S_OK ||
         state.last_actual_width!=640 || state.last_actual_height!=480 ||

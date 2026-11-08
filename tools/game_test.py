@@ -2070,6 +2070,20 @@ def planned_ai_room_command(plan: dict) -> str:
                            plan.get('ai_policy'), plan.get('ai_teams'))
 
 
+def random_loadout_room_title(nonce: str, plan: dict) -> str:
+    title = f"{nonce} {planned_ai_room_command(plan)} !rand"
+    # A reused observer adds a fresh nonce nibble. Use the equivalent native
+    # enemy-count alias when necessary, retaining ally counts and the nonce.
+    presets = ('ai_policy', 'ai_teams', 'ai_layout', 'ai_pool_level', 'ai_difficulty')
+    allies=plan.get('ai_allies',plan['expected_ai']//2)
+    enemies=plan['expected_ai']-allies
+    if (len(title.encode('utf-8')) > 20 and enemies > 0 and
+            not any(plan.get(k) for k in presets)):
+        command=f'!ai{enemies}'+(f' a{allies}'if allies else'')
+        return f"{nonce} {command} !rand"
+    return title
+
+
 def make_plan(
     target_host: str,
     login_port: int,
@@ -2895,7 +2909,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 if (
                     not re.fullmatch(r'[0-9a-f]{4,5}', nonce)
                     or run['room_title'] !=
-                    f"{nonce} {planned_ai_room_command(plan)} !rand"
+                    random_loadout_room_title(nonce, plan)
                 ):
                     raise ValueError('random native room command differs')
                 plan['random_loadout'] = True
@@ -3584,7 +3598,7 @@ def prepare(
             # sixteen random bits as the ordinary gt-prefixed nonce.
             plan['title_nonce']=(server_session['nonce']+server_session['room_suffix']) if server_session else secrets.token_hex(2)
             allies=plan.get('ai_allies',expected_ai//2)
-            plan['room_title']=f"{plan['title_nonce']} {planned_ai_room_command(plan)} !rand"
+            plan['room_title']=random_loadout_room_title(plan['title_nonce'], plan)
             plan['random_loadout']=True
         if same_room_rematch:plan['same_room_rematch']=True
         if len(plan['room_title'].encode('utf-8'))>20:

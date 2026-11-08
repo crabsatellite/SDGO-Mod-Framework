@@ -51,6 +51,8 @@
 #include "native_data_guard_probe.h"
 #include "native_record_lifecycle_probe.h"
 #include "sealed_room_title.h"
+#include "native_error_popup_probe.h"
+#include "native_packet_ingress_probe.h"
 #include <cwchar>
 #include <array>
 
@@ -65,6 +67,9 @@ using MessageBoxAFn=int(WINAPI*)(HWND,LPCSTR,LPCSTR,UINT);
 AppMethod originalUpdate;
 using ErrorNameFn = const char*(__cdecl*)(int);
 ErrorNameFn originalErrorName = nullptr;
+NativeErrorPopupProbe nativePopupProbe;
+NativePacketIngressProbe nativePacketIngressProbe;
+uint32_t nativePopupCursor=0;
 volatile LONG nativeErrorSequence=0,nativeLastError=0;
 const char* __cdecl ObserveNativeErrorName(int code) {
     const char* name=originalErrorName(code);
@@ -677,6 +682,7 @@ bool LoadPlan() {
 #include "login_showcase_probe.h"
 
 int __cdecl Bootstrap(const SdgoGameTestContextV1* context) {
+    nativePopupProbe.ObserveSince(context,nativePopupCursor);
     const uint32_t state = fpsOnly ? fpsActions.State():actions.AppState();
     if (state == UINT32_MAX || state < 4) return SDGO_GAME_TEST_WAIT;
     if (verifyQuietRuntime) {
@@ -4214,6 +4220,14 @@ friends::FriendActions::Result CreateFriendInviteRoom(void*,const SdgoGameTestCo
         result==SDGO_GAME_TEST_FAIL ? friends::FriendActions::kNativeRequestNotSent : friends::FriendActions::kWaitingForReply;
 }
 int __cdecl FriendFlow(const SdgoGameTestContextV1* context) {
+    NativeErrorPopupProbe::Observation popups[NativeErrorPopupProbe::EventCapacity]{};
+    const auto popupCount=nativePopupProbe.CopyAfter(nativePopupCursor,popups,
+        NativeErrorPopupProbe::EventCapacity);
+    nativePopupProbe.ObserveSince(context,nativePopupCursor);
+    if(randomLoadout)for(uint32_t i=0;i<popupCount;++i)if(popups[i].error) {
+        context->Assert(0,"random loadout play must not open a native server-error popup");
+        return SDGO_GAME_TEST_FAIL;
+    }
     static bool hangarExitRequested=false;
     if(!friendSession.Ready() && actions.AppState()==5) {
         if(!hangarExitRequested) {
@@ -4670,6 +4684,8 @@ SDGO_MOD_ENTRY {
     if (!roomListVtable)sdgo_test::Fail("native Game Room page identity is unavailable");
     getSnapshot = reinterpret_cast<SdgoPvpAiClientGetSnapshotV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_SNAPSHOT_EXPORT));
     api->HookCode(mod,"game.error_name",reinterpret_cast<void*>(&ObserveNativeErrorName),reinterpret_cast<void**>(&originalErrorName));
+    if(!nativePopupProbe.Install(api,mod))return 0;
+    if(randomLoadout && !nativePacketIngressProbe.Install(api,mod))return 0;
     getStartStatus = reinterpret_cast<SdgoPvpAiClientGetStartStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_START_STATUS_EXPORT));
     getScoreboardStatus = reinterpret_cast<SdgoPvpAiClientGetScoreboardStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_SCOREBOARD_STATUS_EXPORT));
     if (!fpsOnly && !bootstrapOnly && !pagesOnly && !scoreboardInput.Install(api, mod)) return 0;

@@ -8,6 +8,14 @@ namespace {
 int checks=0,failures=0;
 void Check(bool ok,const char* text){++checks;if(!ok){++failures;std::printf("FAIL %s\n",text);}}
 template<class T> void Put(uint8_t* p,size_t n,T v){std::memcpy(p+n,&v,sizeof(v));}
+template<size_t N>
+void TagNotice(std::array<uint8_t,N>& packet,uint16_t room,uint8_t epoch) {
+    Put<uint32_t>(packet.data(),14,room_random_sync::TaggedRoute(room,epoch));
+}
+void TagStart(std::array<uint8_t,0xCD4>& packet,uint8_t count,uint8_t epoch) {
+    packet[room_random_sync::kStartParticipantCountOffset]=
+        room_random_sync::TaggedStartCount(count,epoch);
+}
 }
 int main() {
     using namespace room_random_client;
@@ -258,14 +266,162 @@ int main() {
               "unit-first deck becomes globally ready after the ship record");
     }
     {
+        std::array<uint8_t,0x5DA8> epochProfile{};
+        std::array<uint8_t,0x4000> epochRoom{};
+        Context epochContext{epochProfile.data(),epochRoom.data(),5001};
+        Put<uint32_t>(epochRoom.data(),0,60);epochRoom[5]=8;
+        Put<uint32_t>(epochRoom.data(),kSlotBase+kOwner,5001);
+        Put<uint32_t>(epochRoom.data(),kSlotBase+0x49,17001);
+        std::array<uint8_t,0x99> epochUnit{};
+        Put<uint32_t>(epochUnit.data(),0,15001);
+        Put<uint64_t>(epochUnit.data(),8,0x700000001ULL);
+        auto epochNotice=room_random_sync::Packet(
+            0x0861,5001,0,room_random_sync::TaggedRoute(60,15),epochUnit);
+        std::array<uint8_t,0xCD4> epochStart{};
+        Put<uint16_t>(epochStart.data(),0,0x06C3);
+        Put<uint32_t>(epochStart.data(),0x20,5001);
+        Put<uint32_t>(epochStart.data(),0x2E,15001);
+        TagStart(epochStart,1,15);
+        CacheSync epochs;
+        auto epochResult=epochs.Process(
+            epochContext,0x06C3,epochStart.data(),true);
+        Check(epochResult.newStart && epochResult.epoch==15 &&
+              !epochs.ReadyForStart(epochContext,epochStart.data()),
+              "tagged native start waits for its exact round record");
+        epochResult=epochs.Process(
+            epochContext,0x0861,epochNotice.data(),true);
+        auto roomView=epochs.PendingRoomView(epochContext);
+        Check(epochResult.applied==1 && epochResult.tagged &&
+              epochResult.epoch==15 && roomView && !roomView.future &&
+              epochs.ReadyForStart(epochContext,epochStart.data()),
+              "matching notice completes the explicitly tagged held round");
+        Check(epochs.ConsumeRoomView(roomView) &&
+              !epochs.PendingRoomView(epochContext),
+              "local C cleanup consumes only the bound round permit");
+        Check(epochs.ClaimStart(epochContext,epochStart.data()),
+              "held start is claimed exactly once");
+        const auto duplicate=epochs.Process(
+            epochContext,0x06C3,epochStart.data(),true);
+        Check(duplicate.duplicate && !duplicate.newStart &&
+              epochs.ReadyForStart(epochContext,epochStart.data()),
+              "byte-identical duplicate 06C3 preserves the completed cohort");
+        Check(epochs.ReleaseStart(epochContext,epochStart.data()) &&
+              !epochs.PendingRoomView(epochContext),
+              "released start expires only its local C cleanup permit");
+
+        Put<uint64_t>(epochUnit.data(),8,0x800000001ULL);
+        epochNotice=room_random_sync::Packet(
+            0x0861,5001,0,room_random_sync::TaggedRoute(60,1),epochUnit);
+        TagStart(epochStart,1,1);
+        epochResult=epochs.Process(
+            epochContext,0x06C3,epochStart.data(),true);
+        Check(epochResult.newStart && epochResult.epoch==1 &&
+              !epochs.ReadyForStart(
+                  epochContext,epochStart.data()),
+              "same native body with a new high-nibble epoch starts a fresh round");
+        epochResult=epochs.Process(
+            epochContext,0x0861,epochNotice.data(),true);
+        Check(epochResult.epoch==1 &&
+              epochs.ReadyForStart(epochContext,epochStart.data()),
+              "notice epoch wraps from fifteen to one without reusing records");
+        std::array<uint8_t,kStride> epochSource{};
+        Put<uint32_t>(epochSource.data(),kOwner,5001);
+        Put<uint32_t>(epochSource.data(),0x49,17001);
+        const auto wrapped=epochs.PrepareConstruction(
+            epochContext,epochSource.data(),epochStart.data()+0x20,0);
+        Check(wrapped.applied &&
+              Read<uint64_t>(wrapped.pilot.data(),0x49+8)==0x800000001ULL,
+              "wrapped epoch constructs from its fresh serial and attributes");
+    }
+    {
+        std::array<uint8_t,0x5DA8> mismatchProfile{};
+        std::array<uint8_t,0x4000> mismatchRoom{};
+        Context mismatchContext{mismatchProfile.data(),mismatchRoom.data(),5101};
+        Put<uint32_t>(mismatchRoom.data(),0,61);mismatchRoom[5]=8;
+        Put<uint32_t>(mismatchRoom.data(),kSlotBase+kOwner,5101);
+        Put<uint32_t>(mismatchRoom.data(),kSlotBase+0x49,17101);
+        std::array<uint8_t,0x99> mismatchUnit{};
+        Put<uint32_t>(mismatchUnit.data(),0,15101);
+        auto untagged=room_random_sync::Packet(
+            0x0861,5101,0,61,mismatchUnit);
+        std::array<uint8_t,0xCD4> mismatchStart{};
+        Put<uint16_t>(mismatchStart.data(),0,0x06C3);
+        Put<uint32_t>(mismatchStart.data(),0x20,5101);
+        Put<uint32_t>(mismatchStart.data(),0x2E,15101);
+        TagStart(mismatchStart,1,7);
+        CacheSync mismatch;
+        mismatch.Process(mismatchContext,0x06C3,mismatchStart.data(),true);
+        const auto mismatchResult=mismatch.Process(
+            mismatchContext,0x0861,untagged.data(),true);
+        Check(mismatchResult.reason==8 &&
+              mismatchResult.protocolMismatch &&
+              mismatch.ProtocolMismatch(mismatchContext,mismatchStart.data()) &&
+              !mismatch.ReadyForStart(mismatchContext,mismatchStart.data()),
+              "matching untagged record triggers explicit native fallback");
+        CacheSync missingEpoch;
+        mismatchStart[room_random_sync::kStartParticipantCountOffset]=1;
+        const auto missingResult=missingEpoch.Process(
+            mismatchContext,0x06C3,mismatchStart.data(),true);
+        Check(missingResult.reason==9 && missingResult.protocolMismatch &&
+              !missingEpoch.ReadyForStart(mismatchContext,mismatchStart.data()),
+              "strict random start without a high-nibble epoch cannot hang");
+    }
+    {
+        std::array<uint8_t,0x5DA8> coherentProfile{};
+        std::array<uint8_t,0x4000> coherentRoom{};
+        Context coherentContext{coherentProfile.data(),coherentRoom.data(),5201};
+        Put<uint32_t>(coherentRoom.data(),0,62);coherentRoom[5]=7;
+        Put<uint32_t>(coherentRoom.data(),kSlotBase+kOwner,5201);
+        Put<uint32_t>(coherentRoom.data(),kSlotBase+0x49,17201);
+        std::array<uint8_t,0x99> coherentUnit{};
+        std::array<uint8_t,0x2BC> coherentShip{};
+        std::array<uint8_t,0xCD4> coherentStart{};
+        Put<uint16_t>(coherentStart.data(),0,0x06C3);
+        Put<uint32_t>(coherentStart.data(),0x20,5201);
+        for(size_t i=0;i<4;++i) {
+            const auto model=static_cast<uint32_t>(15201+i);
+            Put<uint32_t>(coherentShip.data(),0x58+i*0x99,model);
+            Put<uint64_t>(coherentShip.data(),0x60+i*0x99,
+                          0x900000001ULL+i);
+            Put<uint32_t>(coherentStart.data(),0x2E+i*0x32,model);
+        }
+        Put<uint32_t>(coherentUnit.data(),0,15201);
+        Put<uint64_t>(coherentUnit.data(),8,0x900000001ULL);
+        auto coherentUnitPacket=room_random_sync::Packet(
+            0x0861,5201,0,room_random_sync::TaggedRoute(62,9),
+            coherentUnit);
+        auto wrongEpochShip=room_random_sync::Packet(
+            0x098B,5201,0,room_random_sync::TaggedRoute(62,10),
+            coherentShip);
+        TagStart(coherentStart,1,9);
+        CacheSync coherent;
+        coherent.Process(
+            coherentContext,0x06C3,coherentStart.data(),true);
+        coherent.Process(
+            coherentContext,0x0861,coherentUnitPacket.data(),true);
+        const auto wrongEpoch=coherent.Process(
+            coherentContext,0x098B,wrongEpochShip.data(),true);
+        Check(!wrongEpoch.protocolMismatch &&
+              !coherent.ReadyForStart(coherentContext,coherentStart.data()),
+              "unit and ship components from different epochs never combine");
+        auto coherentShipPacket=wrongEpochShip;
+        TagNotice(coherentShipPacket,62,9);
+        coherent.Process(
+            coherentContext,0x098B,coherentShipPacket.data(),true);
+        Check(coherent.ReadyForStart(
+                  coherentContext,coherentStart.data()),
+              "matching unit and ship components complete the held deck epoch");
+    }
+    {
         std::array<uint8_t,0x5DA8> pendingProfile{};
         std::array<uint8_t,0x4000> pendingRoom{};
-        std::array<uint8_t,16> modelA{},modelB{};
+        std::array<uint8_t,16> modelA{},modelB{},managerA{},managerB{};
         Context pendingContext;
         pendingContext.profile=pendingProfile.data();
         pendingContext.room=pendingRoom.data();
         pendingContext.local=4001;
         pendingContext.model=modelA.data();
+        pendingContext.manager=managerA.data();
         Put<uint32_t>(pendingRoom.data(),0,50);
         std::array<uint8_t,kStartPacketSize> first{},replacement{};
         Put<uint16_t>(first.data(),0,0x06C3);first[100]=0x5A;
@@ -294,6 +450,12 @@ int main() {
         pendingContext.model=modelB.data();
         Check(!pending.Revalidate(pendingContext) && !pending.Active(),
               "model generation change clears a held start");
+        pendingContext.model=modelA.data();
+        pendingContext.manager=managerA.data();
+        pending.Hold(pendingContext,&parserA,replacement.data());
+        pendingContext.manager=managerB.data();
+        Check(!pending.Revalidate(pendingContext) && !pending.Active(),
+              "manager generation change clears a held start");
     }
     std::printf("%d CLIENT CACHE POLICY CHECKS, %d failures\n",checks,failures);return failures?1:0;
 }

@@ -415,6 +415,15 @@ std::vector<uint8_t> MakeNativeFixture(const std::string& scenario) {
     for (Entry* entry : {&first, &second, &weapon, &blueprint, &category,
                          &blueprintCategory, &index})
         entry->recordHash = Hash32(entry->bytes.data(), entry->bytes.size());
+    if (scenario == "large_catalog") {
+        // Fill the container to the exact runtime record limit, well past the former 4096 bound.
+        std::vector<Entry> entries{first, second, weapon, blueprint, category, blueprintCategory, index};
+        for (uint32_t id = 300001; entries.size() < kMaxRecords; ++id)
+            entries.push_back(MakeRecord(kFunnelType, id));
+        std::sort(entries.begin(), entries.end(),
+                  [](const Entry& left, const Entry& right) { return left.id < right.id; });
+        return Encode(entries);
+    }
     return Encode({first, second, weapon, blueprint, category, blueprintCategory, index});
 }
 
@@ -429,7 +438,7 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
           scenario=="blueprint_material_missing" ||
           scenario=="blueprint_item_reference_missing" ||
           scenario=="index_blueprint_reference_missing" ||
-          scenario=="index_blueprint_output_mismatch",
+          scenario=="index_blueprint_output_mismatch" || scenario=="large_catalog",
           "native fixture scenario is supported");
     g_nodes.clear();
     g_nativeUnits.clear();
@@ -490,8 +499,9 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
           "catalog waits for the exact final native table");
     reinterpret_cast<Detour>(g_loadDetour)(g_grid, nullptr, L"gdrs\\0280.gdt", 0x0d);
     Check(g_loadCalls == 2, "original native table loader called before both detours");
-    if (scenario == "success" || scenario=="dependency_records_success") {
-        const size_t expected=scenario=="dependency_records_success" ? 10u:7u;
+    if (scenario == "success" || scenario=="dependency_records_success" || scenario=="large_catalog") {
+        const size_t expected=scenario=="dependency_records_success" ? 10u:
+                              scenario=="large_catalog" ? static_cast<size_t>(kMaxRecords) : 7u;
         Check(g_nodes.size() == expected && static_cast<size_t>(g_integrityRecords) == expected,
                "all unit, weapon, blueprint, item-category and encyclopedia records entered the native tree");
         Catalog parsed;
@@ -776,6 +786,23 @@ int ParserFixture() {
         Check(catalog.records.empty(), "semantic failure remains atomic");
     }
 
+    {
+        // Record-count bound: the exact runtime limit parses, one more record is refused.
+        Check(kMaxRecords == 8192, "native catalog record limit is 8192");
+        std::vector<Entry> bounded;
+        bounded.reserve(kMaxRecords + 1);
+        for (uint32_t id = 300001; bounded.size() < kMaxRecords; ++id)
+            bounded.push_back(MakeRecord(kFunnelType, id));
+        Check(catalog.Parse(Encode(bounded), error) && catalog.records.size() == kMaxRecords,
+              "a catalog with exactly kMaxRecords records is accepted");
+        Check(catalog.Contains(300001 + 4096, kFunnelType) &&
+                  catalog.Contains(300001 + kMaxRecords - 1, kFunnelType),
+              "records past the former 4096 bound stay addressable");
+        bounded.push_back(MakeRecord(kFunnelType, 300001 + kMaxRecords));
+        Check(!catalog.Parse(Encode(bounded), error) && catalog.records.empty(),
+              "one record over kMaxRecords is refused atomically");
+    }
+
     auto trailing = valid;
     trailing.push_back(0);
     auto* trailingHeader = reinterpret_cast<Header*>(trailing.data());
@@ -843,7 +870,7 @@ int main(int argc, char** argv) {
                   "<success|conflict|missing_reference|partial_failure|"
                   "blueprint_output_missing|blueprint_material_missing|"
                   "blueprint_item_reference_missing|index_blueprint_reference_missing|"
-                  "index_blueprint_output_mismatch> | "
+                  "index_blueprint_output_mismatch|large_catalog> | "
                   "<production-unit_catalog.dll> old_capsule <old-capsule.dll>]\n");
     return 2;
 }

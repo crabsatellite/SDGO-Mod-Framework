@@ -40,6 +40,7 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 | 异常断线登录恢复 <!-- catalog: `login_recovery`, `login_recovery_client` --> | WorldServer 清理旧会话，客户端等待超时有限重连、清理请求锁，结束后恢复原生登录输入 | [使用说明](docs/login-recovery.zh-CN.md) |
 | 阿普萨拉斯 III 变形卡死修复 <!-- catalog: `transform_input_fix` --> | 缺少变形动画时恢复原生状态退出，解除移动与攻击锁定 | [使用说明](docs/transform-input-fix.zh-CN.md) |
 | Agent 中继日志修复 <!-- catalog: `agent_relay_log_fix` --> | 修复 Agent 中继日志读取无效内存 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
+| Agent 房间视图错误转发修复 <!-- catalog: `agent_room_view_error_fix` --> | 保留完整错误回复，避免客户端越界读取错误码并弹出数据读取失败 | [使用说明](docs/agent-room-view-error-fix.zh-CN.md) |
 | 军衔回退修复 <!-- catalog: `rank_progression_fix` --> | 防止战斗结算降低已有军衔（WorldServer） | [使用说明](docs/rank-progression-fix.zh-CN.md) |
 | 好友列表修复 <!-- catalog: `friend_list_fix`、`friend_list_client_fix` --> | 保留离线好友、当前名字和军衔，恢复主页面 USER LIST 的中文菜单及原生聊天界面 | [使用说明](docs/friend-list-fix.zh-CN.md) |
 | 新账号起始资料修复 <!-- catalog: `new_account_profile` --> | 可配置的初始 GP、点券、军衔和赠送机体，替代原服的 9,999,999 / 15 级 | [使用说明](docs/new-account-profile.zh-CN.md) |
@@ -61,7 +62,7 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 | AI 机体目录（可选） <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 | [使用说明](docs/ai-catalog.zh-CN.md) |
 | 战斗贡献奖励 <!-- catalog: `battle_rewards` --> | 按贡献发放 GB/MB，可配置人数倍率与按账号去重的聚会奖励 | [使用说明](docs/battle-rewards.zh-CN.md) |
 | 收藏扭蛋 <!-- catalog: `collection_capsule` --> | 优先补图鉴的活动机台，安装时补充图鉴获取说明；价格和次数可配置，默认每周 15 次 | [使用说明](docs/collection-capsule.zh-CN.md) |
-| 每局随机机体 <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组 | [使用说明](docs/room-random.zh-CN.md) |
+| 每局随机机体 <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组，原生出击任务收束后开局 | [使用说明](docs/room-random.zh-CN.md) |
 | 完整对战 All Map <!-- catalog: `all_maps` --> | 房间选择 All Map 时从完整原生对战地图目录抽取，任务专用图仍留在任务模式 | [使用说明](docs/all-maps.zh-CN.md) |
 | 登录机体展示 <!-- catalog: `login_showcase` --> | 按等级、全部机体、最近注册或指定名单选择登录展示，默认 SS/SR/SU | [使用](docs/login-showcase.zh-CN.md) |
 | FPS 上限 <!-- catalog: `fps_limit` --> | 提高渲染帧率上限，保留原生游戏速度 | [使用说明](docs/fps-limit.zh-CN.md) |
@@ -76,7 +77,7 @@ Manager 会检查模块依赖、内容退役和数据变更影响，区分配置
 | 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化商品名称、说明、选项和涂装机体预览，可用中文名称搜索并组合等级、币种筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
 | 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 右键好友（在线或离线均可），在机体管理中选机赠送，对方在保管库接受或退还；默认关闭，由服主开启 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
 | OC 六维强化（Beta） <!-- catalog: `oc_custom_client`、`oc_custom_server`、`oc_custom_battle` --> | 双系统工厂：原生标签保持原样，旁边的「终极强化」标签由客户端包内原有的 OC 布局组成（OVER CUSTOM 等级栏、显示道具 3D 模型的 ITEM 栏、在加点六边形上画出全部六个维度、普通点与 Over 点、OVER CUSTOM 终极强化与洗点），战斗中生效 OC 推进力与机动力；与现行改造部件数据并存，切换后两套数据都保留，由服主选择战斗使用哪一套 | [使用说明](docs/over-custom.zh-CN.md) |
-| 机体族导入（Beta） <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | 在 Mod Manager 导入机体包、编辑技能／浮游依赖字段、保存脚本声明，制作设计图和活动奖池，并可导入任何来源按协议做好的整套阵容（单形态、互相变形、单向变形、自变形，以及第三形态的入口形态）批量发布，再由 Mod Manager 应用到服务端，并交给商城、扭蛋机和独立活动机选用（活动海报可随时更换） | [使用说明](docs/unit-import.zh-CN.md) |
+| 机体族导入（Beta） <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | 在 Mod Manager 导入机体包、编辑技能／浮游依赖字段、保存脚本声明，制作设计图和活动奖池，并可导入任何来源按协议做好的整套阵容（单形态、互相变形、单向变形、自变形，以及第三形态的入口形态）（之后的阵容会连同已安装阵容的脚本和技能图标一起承接，单个目录最多 8192 条记录），再由 Mod Manager 应用到服务端，并交给商城、扭蛋机和独立活动机选用（活动海报可随时更换） | [使用说明](docs/unit-import.zh-CN.md) |
 
 <!-- /mod-category:gameplay -->
 

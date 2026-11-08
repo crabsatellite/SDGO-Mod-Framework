@@ -312,6 +312,9 @@ editable without them; confirmation lists the missing component as blocking.
 native table loads, it registers complete unit/weapon/item records with the native allocator and checks cross-kind ID
 collisions in the data tree. Everything is prechecked and allocated first; if native registration still fails after
 some records were inserted, the native tree cannot be rolled back, so the Mod logs diagnostics and ends that client.
+One installed catalog holds at most 8,192 records with a 64 MiB payload, counting every kind and every owner it
+carries; the installer, the Manager and the roster publisher apply the same bounds, and a client whose framework is
+older than that bound rejects a larger catalog at startup, so update the framework before installing it.
 
 The game does not read new models from the working directory. Client packages carry `resource-overlay.ini`,
 `resources.zdx` and `resources.zpk`, and the game reads models, animations, textures and effects from that archive.

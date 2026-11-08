@@ -277,7 +277,7 @@ function Assert-CatalogHeader([string]$Path) {
         [void]$reader.ReadUInt32()
         $reserved = $reader.ReadUInt32()
         if ($magic -cne "SDGOUN1" -or $version -ne 1 -or $headerBytes -ne 32 -or
-            $count -lt 1 -or $count -gt 4096 -or $payloadBytes -gt 67108864 -or
+            $count -lt 1 -or $count -gt 8192 -or $payloadBytes -gt 67108864 -or
             $reserved -ne 0 -or $stream.Length -ne 32 + $payloadBytes) {
             throw "catalog.bin header is unsupported or inconsistent"
         }

@@ -180,7 +180,8 @@ class MultiplayerAdmissionTests(unittest.TestCase):
         self.assertEqual(result['status'], 'pass')
         self.assertEqual(result['expected_rounds'], 2)
         self.assertEqual(evaluated['rounds'], 2)
-        self.assertEqual([index for index, operation, _ in calls if operation == 'room_leave'], [1, 2, 0])
+        self.assertEqual([index for index, operation, _ in calls if operation == 'room_leave'], [])
+        self.assertEqual([index for index, operation, _ in calls if operation == 'finish'], [0, 1, 2])
         starts = [i for i, (_, operation, _) in enumerate(calls) if operation == 'room_start']
         self.assertEqual(len(starts), 2)
         self.assertEqual([sum(operation == 'room_ready' for _, operation, _ in calls[:start])

@@ -47,7 +47,7 @@ def _name(raw: bytes, identity: int) -> str:
 
 def _installed_records(path: Path) -> dict[tuple[int, int], bytes]:
     """Read and verify the exact container accepted by the native unit-catalog Mod."""
-    from owner.units.compiler import native_catalog
+    from owner.units.compiler import CATALOG_RECORD_LIMIT, native_catalog
 
     raw = path.read_bytes()
     if len(raw) < 32 or raw[:8] != b"SDGOUN1\0":
@@ -56,7 +56,7 @@ def _installed_records(path: Path) -> dict[tuple[int, int], bytes]:
     if (
         version != 1
         or header_bytes != 32
-        or count > 4096
+        or count > CATALOG_RECORD_LIMIT
         or payload_bytes > 64 * 1024 * 1024
         or reserved != 0
         or len(raw) != header_bytes + payload_bytes

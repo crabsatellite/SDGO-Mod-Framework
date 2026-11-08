@@ -31,7 +31,7 @@ constexpr uint32_t kUnitIndexFirstId = 0x375BE1;
 constexpr size_t kUnitIndexRefOffset = 6;
 constexpr size_t kUnitIndexBlueprintRefOffset = 10;
 constexpr uint32_t kMaxId = 9999999;
-constexpr uint32_t kMaxRecords = 4096;
+constexpr uint32_t kMaxRecords = 8192;
 constexpr uint32_t kMaxPayloadBytes = 64u * 1024u * 1024u;
 
 constexpr size_t kUnitNameOffset = 5;
