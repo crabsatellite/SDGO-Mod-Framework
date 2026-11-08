@@ -1,10 +1,14 @@
+#define SDGO_QUIET_GRAPHICS_TEST 1
 #include "../mods/game_test_client/quiet_graphics.h"
 #include <cstdio>
 #include <cwchar>
 #include <cstring>
+#include <cstdarg>
 
 namespace {
 QuietGraphics::Create9Fn detour=nullptr;
+QuietGraphics::Create9Fn realDetour=nullptr;
+HMODULE realD3d9=nullptr;
 int failures=0;
 bool factoryUnavailable=false;
 unsigned factoryDestroyed=0;
@@ -278,6 +282,149 @@ int __cdecl Hook(SdgoMod*,const char* library,const char* name,void* replacement
     *original=reinterpret_cast<void*>(&ForwardedCreate);return 1;
 }
 
+void RealLog(SdgoMod*,int,const char* format,...) {
+    va_list arguments;
+    va_start(arguments,format);
+    std::vfprintf(stderr,format,arguments);
+    std::fputc('\n',stderr);
+    std::fflush(stderr);
+    va_end(arguments);
+}
+
+int __cdecl RealHook(SdgoMod*,const char* library,const char* name,void* replacement,void** original) {
+    if (std::strcmp(library,"d3d9.dll") || std::strcmp(name,"Direct3DCreate9"))return 0;
+    if(!realD3d9)
+        realD3d9=LoadLibraryExW(L"d3d9.dll",nullptr,LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if(!realD3d9)return 0;
+    const auto create=GetProcAddress(realD3d9,"Direct3DCreate9");
+    if(!create)return 0;
+    realDetour=reinterpret_cast<QuietGraphics::Create9Fn>(replacement);
+    *original=reinterpret_cast<void*>(create);
+    return 1;
+}
+
+bool TouchRealBackBuffer(IDirect3DDevice9* device,UINT expectedWidth,UINT expectedHeight) {
+    IDirect3DSurface9* surface=nullptr;
+    const HRESULT result=device->GetBackBuffer(0,0,D3DBACKBUFFER_TYPE_MONO,&surface);
+    if(FAILED(result) || !surface) {
+        std::fprintf(stderr,"real HAL GetBackBuffer failed hr=0x%08lX\n",
+            static_cast<unsigned long>(result));
+        return false;
+    }
+    D3DSURFACE_DESC description{};
+    const HRESULT descriptionResult=surface->GetDesc(&description);
+    const ULONG remaining=surface->Release();
+    std::fprintf(stderr,
+        "real HAL backbuffer hr=0x%08lX size=%ux%u release=%lu\n",
+        static_cast<unsigned long>(descriptionResult),description.Width,description.Height,
+        static_cast<unsigned long>(remaining));
+    return SUCCEEDED(descriptionResult) &&
+        description.Width==expectedWidth && description.Height==expectedHeight;
+}
+
+int RunRealHalProbe() {
+    wchar_t desktopName[96]{};
+    swprintf_s(desktopName,L"SDGO.QuietGraphics.HAL.%lu.%llu",
+        static_cast<unsigned long>(GetCurrentProcessId()),
+        static_cast<unsigned long long>(GetTickCount64()));
+    HDESK privateDesktop=CreateDesktopW(
+        desktopName,nullptr,nullptr,0,GENERIC_ALL,nullptr);
+    if(!privateDesktop || !SetThreadDesktop(privateDesktop)) {
+        std::fprintf(stderr,"real HAL private desktop failed error=%lu\n",
+            static_cast<unsigned long>(GetLastError()));
+        return 2;
+    }
+
+    HWND gameWindow=CreateWindowExW(
+        WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,L"STATIC",L"",
+        WS_POPUP|WS_DISABLED,0,0,1024,768,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
+    if(!gameWindow) {
+        std::fprintf(stderr,"real HAL private window failed error=%lu\n",
+            static_cast<unsigned long>(GetLastError()));
+        return 2;
+    }
+
+    SdgoApi api{};
+    api.Log=&RealLog;
+    api.HookImport=&RealHook;
+    QuietGraphics quiet;
+    if(!quiet.Install(&api,reinterpret_cast<SdgoMod*>(1),false) || !realDetour) {
+        std::fprintf(stderr,"real HAL quiet proxy install failed\n");
+        return 2;
+    }
+    const auto proxyState=quiet.State();
+    std::fprintf(stderr,
+        "real HAL proxy desktop=%ls thread=%lu hwnd=%p private_desktop=%ls\n",
+        proxyState.proxy_desktop,static_cast<unsigned long>(proxyState.proxy_thread_id),
+        proxyState.proxy_hwnd,desktopName);
+
+    IDirect3D9* d3d=realDetour(D3D_SDK_VERSION);
+    if(!d3d) {
+        std::fprintf(stderr,"real HAL Direct3DCreate9 failed\n");
+        return 2;
+    }
+    D3DPRESENT_PARAMETERS parameters{};
+    parameters.BackBufferWidth=1024;
+    parameters.BackBufferHeight=768;
+    parameters.BackBufferFormat=D3DFMT_UNKNOWN;
+    parameters.BackBufferCount=1;
+    parameters.MultiSampleType=D3DMULTISAMPLE_NONE;
+    parameters.SwapEffect=D3DSWAPEFFECT_DISCARD;
+    parameters.hDeviceWindow=gameWindow;
+    parameters.Windowed=TRUE;
+    parameters.PresentationInterval=D3DPRESENT_INTERVAL_IMMEDIATE;
+    IDirect3DDevice9* device=nullptr;
+    const HRESULT realCreateResult=d3d->CreateDevice(
+        D3DADAPTER_DEFAULT,D3DDEVTYPE_HAL,gameWindow,
+        D3DCREATE_HARDWARE_VERTEXPROCESSING,&parameters,&device);
+    std::fprintf(stderr,"real HAL CreateDevice hr=0x%08lX device=%p\n",
+        static_cast<unsigned long>(realCreateResult),device);
+    if(FAILED(realCreateResult) || !device)return 2;
+
+    constexpr UINT widths[2]={1024,2389};
+    constexpr UINT heights[2]={768,1344};
+    for(unsigned cycle=0;cycle<8;++cycle) {
+        for(unsigned resetIndex=0;resetIndex<2;++resetIndex) {
+            parameters.BackBufferWidth=widths[resetIndex];
+            parameters.BackBufferHeight=heights[resetIndex];
+            parameters.hDeviceWindow=gameWindow;
+            const HRESULT realResetResult=device->Reset(&parameters);
+            std::fprintf(stderr,
+                "real HAL Reset cycle=%u step=%u size=%ux%u hr=0x%08lX\n",
+                cycle,resetIndex,widths[resetIndex],heights[resetIndex],
+                static_cast<unsigned long>(realResetResult));
+            if(FAILED(realResetResult))return 2;
+            if(!TouchRealBackBuffer(device,widths[resetIndex],heights[resetIndex]))
+                return 2;
+            const HRESULT clearResult=device->Clear(
+                0,nullptr,D3DCLEAR_TARGET,D3DCOLOR_XRGB(0,0,0),1.0f,0);
+            const HRESULT realPresentResult=device->Present(nullptr,nullptr,nullptr,nullptr);
+            std::fprintf(stderr,
+                "real HAL render cycle=%u step=%u clear=0x%08lX present=0x%08lX\n",
+                cycle,resetIndex,static_cast<unsigned long>(clearResult),
+                static_cast<unsigned long>(realPresentResult));
+            if(FAILED(clearResult) || FAILED(realPresentResult))return 2;
+            for(unsigned check=0;check<128;++check) {
+                const HRESULT realCooperativeResult=device->TestCooperativeLevel();
+                if(realCooperativeResult!=S_OK) {
+                    std::fprintf(stderr,
+                        "real HAL TestCooperativeLevel cycle=%u step=%u check=%u hr=0x%08lX\n",
+                        cycle,resetIndex,check,
+                        static_cast<unsigned long>(realCooperativeResult));
+                    return 2;
+                }
+            }
+        }
+    }
+    const ULONG deviceReferences=device->Release();
+    const ULONG factoryReferences=d3d->Release();
+    std::fprintf(stderr,
+        "real HAL probe passed device_release=%lu factory_release=%lu\n",
+        static_cast<unsigned long>(deviceReferences),
+        static_cast<unsigned long>(factoryReferences));
+    return deviceReferences || factoryReferences ? 2:0;
+}
+
 void InitializeDeviceTable(void** table) {
     table[2]=reinterpret_cast<void*>(&FakeDeviceRelease);
     table[3]=reinterpret_cast<void*>(&FakeCooperativeLevel);
@@ -309,7 +456,9 @@ extern "C" __declspec(dllexport) FARPROC WINAPI ResolveQuietFactory() {
     return reinterpret_cast<FARPROC>(&Create);
 }
 
-int main() {
+int main(int argc,char** argv) {
+    if(argc==2 && !std::strcmp(argv[1],"--real-hal-probe"))
+        return RunRealHalProbe();
     {
     // Verify native readback encoding, padded rows, top-down orientation, and
     // refusing an existing file before exercising the real graphics proxy.
@@ -367,6 +516,11 @@ int main() {
     if (!state.active || !state.worker_ready || !state.ime_disabled || !state.proxy_hwnd || state.proxy_visible ||
         !state.proxy_noactivate || !state.proxy_toolwindow || state.proxy_appwindow ||
         std::wcscmp(state.proxy_class,QuietGraphics::ProxyClassName()) || !*state.proxy_desktop)++failures;
+    QuietGraphics::WorkerSnapshot workerSnapshot{};
+    if(!quiet.CaptureWorkerSnapshotForTest(&workerSnapshot) ||
+       !workerSnapshot.instruction || !workerSnapshot.stack ||
+       !workerSnapshot.stack_word_count || workerSnapshot.suspend_depth)
+        ++failures;
     HDESK input=state.named_desktop_fallback ? OpenDesktopW(L"Default",0,FALSE,DESKTOP_READOBJECTS):
         OpenInputDesktop(0,FALSE,DESKTOP_READOBJECTS);
     if (state.named_desktop_fallback && std::wcscmp(state.proxy_desktop,L"Default"))++failures;

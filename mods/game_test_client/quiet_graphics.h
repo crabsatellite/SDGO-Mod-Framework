@@ -50,6 +50,15 @@ public:
         uint32_t dispatch_message_pumps;
         uint32_t worker_messages,worker_last_message,worker_requests,worker_busy;
     };
+    struct WorkerSnapshot {
+        DWORD suspend_depth;
+        DWORD error;
+        uintptr_t instruction;
+        uintptr_t stack;
+        uintptr_t frame;
+        uint32_t stack_word_count;
+        uintptr_t stack_words[24];
+    };
 
     bool Install(const SdgoApi* api,SdgoMod* mod,bool allowNamedDesktopFallback=false) {
         if (installed_)return true;
@@ -112,6 +121,12 @@ public:
             Read(workerMessages_),Read(workerLastMessage_),Read(workerRequests_),Read(workerBusy_)
         };
     }
+
+#if defined(SDGO_QUIET_GRAPHICS_TEST)
+    bool CaptureWorkerSnapshotForTest(WorkerSnapshot* snapshot) {
+        return CaptureWorkerSnapshot(snapshot);
+    }
+#endif
 
     bool RefreshDeviceHooks() {
         if (!installed_)return false;
@@ -320,6 +335,7 @@ private:
                 static_cast<unsigned long>(Read(workerLastMessage_)),static_cast<unsigned long>(Read(workerRequests_)),
                 static_cast<unsigned long>(Read(workerBusy_)),milliseconds(kernel),milliseconds(user),
                 __FUNCSIG__,active ? active:"none");
+            LogWorkerTimeoutSnapshot();
         }
         InterlockedExchange(&dispatchCallerThread_,0);
         LeaveCriticalSection(&dispatchLock_);
@@ -334,6 +350,70 @@ private:
     static void Complete(DispatchItem* item) {
         SetEvent(item->done);
         ReleaseItem(item);
+    }
+    bool CaptureWorkerSnapshot(WorkerSnapshot* snapshot) {
+        if(!snapshot)return false;
+        *snapshot={};
+        if(!worker_) {
+            snapshot->error=ERROR_INVALID_HANDLE;
+            return false;
+        }
+        const DWORD depth=SuspendThread(worker_);
+        if(depth==static_cast<DWORD>(-1)) {
+            snapshot->error=GetLastError();
+            return false;
+        }
+        snapshot->suspend_depth=depth;
+        CONTEXT context{};
+        context.ContextFlags=CONTEXT_CONTROL|CONTEXT_INTEGER;
+        const bool captured=GetThreadContext(worker_,&context)!=FALSE;
+        if(captured) {
+            snapshot->instruction=context.Eip;
+            snapshot->stack=context.Esp;
+            snapshot->frame=context.Ebp;
+            SIZE_T bytes=0;
+            if(ReadProcessMemory(GetCurrentProcess(),
+                    reinterpret_cast<const void*>(context.Esp),snapshot->stack_words,
+                    sizeof(snapshot->stack_words),&bytes))
+                snapshot->stack_word_count=static_cast<uint32_t>(
+                    bytes/sizeof(snapshot->stack_words[0]));
+            else snapshot->error=GetLastError();
+        } else snapshot->error=GetLastError();
+        if(ResumeThread(worker_)==static_cast<DWORD>(-1) && !snapshot->error)
+            snapshot->error=GetLastError();
+        return captured && snapshot->instruction && snapshot->stack;
+    }
+    void LogWorkerImageAddress(const char* label,uint32_t index,uintptr_t address) {
+        if(!api_ || !api_->Log || !address)return;
+        MEMORY_BASIC_INFORMATION memory{};
+        if(!VirtualQuery(reinterpret_cast<const void*>(address),&memory,sizeof(memory)) ||
+           memory.Type!=MEM_IMAGE || !memory.AllocationBase)return;
+        char path[MAX_PATH]{};
+        GetModuleFileNameA(static_cast<HMODULE>(memory.AllocationBase),path,MAX_PATH);
+        api_->Log(mod_,SDGO_LOG_ERROR,
+            "quiet graphics worker timeout image %s[%lu]=%p module=%p offset=0x%08lX path=%s",
+            label,static_cast<unsigned long>(index),reinterpret_cast<void*>(address),
+            memory.AllocationBase,static_cast<unsigned long>(
+                address-reinterpret_cast<uintptr_t>(memory.AllocationBase)),
+            path[0] ? path:"unknown");
+    }
+    void LogWorkerTimeoutSnapshot() {
+        WorkerSnapshot snapshot{};
+        const bool captured=CaptureWorkerSnapshot(&snapshot);
+        if(!api_ || !api_->Log)return;
+        api_->Log(mod_,captured ? SDGO_LOG_ERROR:SDGO_LOG_WARN,
+            "quiet graphics worker timeout context captured=%u suspend_depth=%lu error=%lu "
+            "eip=%p esp=%p ebp=%p stack_words=%lu",
+            captured ? 1u:0u,static_cast<unsigned long>(snapshot.suspend_depth),
+            static_cast<unsigned long>(snapshot.error),
+            reinterpret_cast<void*>(snapshot.instruction),
+            reinterpret_cast<void*>(snapshot.stack),
+            reinterpret_cast<void*>(snapshot.frame),
+            static_cast<unsigned long>(snapshot.stack_word_count));
+        if(!captured)return;
+        LogWorkerImageAddress("eip",0,snapshot.instruction);
+        for(uint32_t i=0;i<snapshot.stack_word_count;++i)
+            LogWorkerImageAddress("stack",i,snapshot.stack_words[i]);
     }
     bool PumpWorkerMessage(MSG& message) {
         if(!PeekMessageW(&message,nullptr,0,0,PM_REMOVE))return false;
