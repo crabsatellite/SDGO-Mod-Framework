@@ -56,7 +56,7 @@ function Check-Package([string]$zip, [string[]]$expected) {
     } finally { $archive.Dispose() }
 }
 try {
-    $baseMods = @('capsule_currency_fix','findwindow_fix','ime_fix','startup_crash_fix','lobby_music_fix','agent_relay_log_fix','rank_progression_fix','new_account_profile','shop_labels','shop_art_localization','friend_list_fix','friend_list_client_fix','transform_input_fix','login_recovery','login_recovery_client','native_data_guard','waitroom_window_fix','scene_lifecycle_fix','loading_sync_fix')
+    $baseMods = @('capsule_currency_fix','findwindow_fix','ime_fix','startup_crash_fix','lobby_music_fix','agent_relay_log_fix','agent_room_view_error_fix','rank_progression_fix','new_account_profile','shop_labels','shop_art_localization','friend_list_fix','friend_list_client_fix','transform_input_fix','login_recovery','login_recovery_client','native_data_guard','waitroom_window_fix','scene_lifecycle_fix','loading_sync_fix')
     $baseZip = Invoke-Package 'Base' '' (Join-Path $work 'base')
     Check-Package $baseZip $baseMods
     $customZip = Invoke-Package 'Full' 'pvp-ai' (Join-Path $work 'custom')
