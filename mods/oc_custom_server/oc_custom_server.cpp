@@ -10,7 +10,9 @@
 //      pages, active-unit replies, unit info, user info, end-of-battle user
 //      update) carries the allocation's stat deltas in its reserved gap, and
 //      the four current custom-skill slots are blanked so only one rule set is
-//      active.
+//      active. In "room" mode the records carry the deltas and keep their
+//      custom skills; each room's title selects the system that its battles
+//      use (oc_room_system.h), so both systems run on one server.
 //   3. Battle servers keep a per-account copy of the user info (requested when
 //      the player enters their channel) and build room pilots from it. After a
 //      saved allocation, reset or challenge the native user-info handler is
@@ -51,6 +53,7 @@ SdgoMod* g_mod = nullptr;
 struct Settings {
     bool enabled = false;
     bool oc_mode = false;
+    bool room_mode = false; // both systems kept in the records; the room decides
     bool log_fill = false;
     std::int32_t reward_item = 3240013;
 };
@@ -364,7 +367,8 @@ bool LoadCarriers(Session& session, const std::vector<std::uint64_t>& uids, std:
         if (row.size() != 11) return false;
         CarrierRow entry;
         entry.uid = static_cast<std::uint64_t>(Int64Or(row, 0));
-        entry.carrier.flags = carrier_oc_mode | carrier_profile;
+        entry.carrier.flags = static_cast<std::uint8_t>(
+            (g_settings.room_mode ? carrier_room_rule : carrier_oc_mode) | carrier_profile);
         entry.carrier.oc_level = static_cast<std::uint8_t>(Int64Or(row, 1));
         entry.carrier.normal_points = static_cast<std::uint8_t>(Int64Or(row, 2));
         entry.carrier.over_points = static_cast<std::uint8_t>(Int64Or(row, 3));
@@ -465,13 +469,14 @@ void PatchPacket(std::uint8_t* packet, int size, std::uint32_t destination) {
         std::uint64_t uid = 0;
         if (!ReadAt(record, 8, &uid) || !uid) continue;
         Carrier carrier;
-        carrier.flags = carrier_oc_mode;
+        carrier.flags = g_settings.room_mode ? carrier_room_rule : carrier_oc_mode;
         for (const auto& row : rows)
             if (row.uid == uid) carrier = row.carrier;
         std::uint8_t copy[kUnitRecordBytes];
         if (!CopyBytes(copy, record, sizeof(copy))) continue;
         WriteCarrier(copy, carrier);
-        ClearCustomSkills(copy);
+        // "room" mode keeps the custom skills: rooms of the current system use them.
+        if (!g_settings.room_mode) ClearCustomSkills(copy);
         if (CopyBytes(record, copy, sizeof(copy))) {
             if (!filled) {
                 first_uid = uid;
@@ -489,7 +494,7 @@ void PatchPacket(std::uint8_t* packet, int size, std::uint32_t destination) {
 
 int __fastcall SendHook(void* network, void*, std::uint32_t destination, std::uint8_t* packet, int size,
                         std::uint32_t flags) {
-    if (g_request && g_settings.enabled && g_settings.oc_mode) {
+    if (g_request && g_settings.enabled && (g_settings.oc_mode || g_settings.room_mode)) {
         const DWORD error = GetLastError();
         PatchPacket(packet, size, destination);
         __try {
@@ -771,9 +776,12 @@ std::int32_t HandleReset(Session& session, std::uint32_t account, const std::uin
 std::int32_t HandleMode(std::uint8_t* reply, std::uint32_t* produced) {
     ModeReply mode;
     mode.enabled = g_settings.enabled ? 1 : 0;
-    mode.oc_mode = g_settings.enabled && g_settings.oc_mode ? 1 : 0;
+    // "room" mode also reports oc_mode: the OC pages and requests are available,
+    // and kModeFlagRoomRule tells newer clients that the room decides battles.
+    mode.oc_mode = g_settings.enabled && (g_settings.oc_mode || g_settings.room_mode) ? 1 : 0;
     mode.schema_version = kSchemaVersion;
-    mode.flags = SchemaReady() ? 1u : 0u;
+    mode.flags = (SchemaReady() ? kModeFlagSchemaReady : 0u) |
+                 (g_settings.enabled && g_settings.room_mode ? kModeFlagRoomRule : 0u);
     WriteModeReply(reply, 0, mode);
     *produced = static_cast<std::uint32_t>(kModeReplyBytes);
     return static_cast<std::int32_t>(WireStatus::success);
@@ -831,7 +839,8 @@ std::int32_t __cdecl ExtensionHandler(void*, std::uint32_t actor, std::uint16_t 
     *produced = 0;
     const auto wrapped = static_cast<Command>(command);
     if (wrapped == Command::mode) return HandleMode(reply, produced);
-    if (!g_settings.enabled || !g_settings.oc_mode) return static_cast<std::int32_t>(WireStatus::disabled);
+    if (!g_settings.enabled || !(g_settings.oc_mode || g_settings.room_mode))
+        return static_cast<std::int32_t>(WireStatus::disabled);
     std::int32_t status = static_cast<std::int32_t>(WireStatus::invalid_argument);
     {
         Session session(20);
@@ -926,6 +935,7 @@ SDGO_MOD_ENTRY {
     char mode[32] = {};
     api->SettingString(mod, "Mode", "current", mode, sizeof(mode));
     g_settings.oc_mode = _stricmp(mode, "oc") == 0;
+    g_settings.room_mode = _stricmp(mode, "room") == 0;
     g_settings.log_fill = api->SettingInt(mod, "LogFill", 1) != 0;
     g_settings.reward_item = api->SettingInt(mod, "RewardItem", 3240013);
     const wchar_t* directory = api->ModDirectory(mod);
@@ -965,7 +975,8 @@ SDGO_MOD_ENTRY {
         api->Log(mod, SDGO_LOG_WARN,
                  "friend_unit_gift_server is not loaded; OC lobby requests are unavailable (records still carry "
                  "existing allocations)");
-    api->Log(mod, SDGO_LOG_INFO, "ready: mode=%s lobby=%s game=%ls", g_settings.oc_mode ? "oc" : "current",
+    api->Log(mod, SDGO_LOG_INFO, "ready: mode=%s lobby=%s game=%ls",
+             g_settings.room_mode ? "room" : g_settings.oc_mode ? "oc" : "current",
              lobby ? "carrier" : "none", g_game_db.c_str());
     return 1;
 }

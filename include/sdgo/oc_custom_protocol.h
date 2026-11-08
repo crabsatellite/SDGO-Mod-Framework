@@ -49,7 +49,16 @@ inline constexpr std::array<std::int32_t, stat_count> kStatCaps = {
 enum CarrierFlag : std::uint8_t {
     carrier_oc_mode = 1u << 0, // the server applies OC and ignores custom skills
     carrier_profile = 1u << 1, // an allocation profile exists for this unit
+    // Room systems ("room" mode): the record keeps its custom skills and the
+    // room decides. A room whose title carries the !oc command plays OC (the
+    // custom skills are ignored in its battles); every other room plays the
+    // current custom-skill system. See oc_room_system.h.
+    carrier_room_rule = 1u << 2,
 };
+
+// ModeReply.flags
+inline constexpr std::uint32_t kModeFlagSchemaReady = 1u << 0;
+inline constexpr std::uint32_t kModeFlagRoomRule = 1u << 1;
 
 struct Carrier {
     std::uint8_t flags = 0;

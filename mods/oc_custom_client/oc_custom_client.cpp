@@ -30,8 +30,11 @@
 
 #include "original_ui.h"
 #include "radar.h"
+#include "room_marks.h"
 #include "sdgo/oc_custom_client_observer.h"
 #include "sdgo/oc_custom_protocol.h"
+#include "sdgo/oc_room_system.h"
+#include "sdgo/room_titles_current.h"
 #include "sdgo/sdgo_api.h"
 
 namespace {
@@ -298,6 +301,7 @@ struct State {
     Carrier carrier{};
     bool mode_known = false;
     bool server_oc_mode = false;
+    bool room_rule = false; // "room" mode: the room title decides OC or the custom skills
     bool profile_present = false;
     Profile profile{};
     Pending outstanding = Pending::none;
@@ -587,6 +591,7 @@ void __cdecl OnReply(void*, std::uint16_t command, std::int32_t status, const st
         if (ReadModeReply(payload, bytes, &ret_val, &mode)) {
             s.mode_known = true;
             s.server_oc_mode = mode.enabled && mode.oc_mode;
+            s.room_rule = mode.enabled && (mode.flags & kModeFlagRoomRule) != 0;
             if (s.server_oc_mode && s.unit_uid) s.queued = Pending::profile;
         }
         break;
@@ -875,9 +880,10 @@ void AdoptRecord(void* component) {
     s.unit_number = Read<std::uint32_t>(record, 0);
     s.record_level = record[16];
     s.carrier_present = ReadCarrier(record, &s.carrier);
-    if (s.carrier_present && (s.carrier.flags & carrier_oc_mode) && !s.mode_known) {
+    if (s.carrier_present && (s.carrier.flags & (carrier_oc_mode | carrier_room_rule)) && !s.mode_known) {
         s.mode_known = true;
         s.server_oc_mode = true;
+        s.room_rule = (s.carrier.flags & carrier_room_rule) != 0;
     }
 }
 
@@ -901,11 +907,83 @@ void TraceActiveRecord() {
     Log(SDGO_LOG_INFO, line);
 }
 
+// --- Room systems -------------------------------------------------------------
+//
+// The account profile (CAccountData) points at the current room's data at
+// +0xEC (title length +0x79, native title +0x7A). The long-title Mod, when
+// present, provides the full confirmed title. The last room read stays known
+// until the room is left, so the battle start (stat setup) still sees it.
+constexpr std::size_t kProfileRoom = 0xEC;
+constexpr std::size_t kRoomTitleLength = 0x79, kRoomTitle = 0x7A, kRoomTitleMax = 20;
+
+struct RoomView {
+    std::uint8_t* room = nullptr;
+    bool known = false;
+    RoomSystem system = RoomSystem::parts;
+};
+RoomView g_room_view;
+std::uint32_t g_mobility_room_skips = 0;
+
+std::uint8_t* CurrentRoomData() noexcept {
+    __try {
+        return g_profile && *g_profile ? Read<std::uint8_t*>(*g_profile, kProfileRoom) : nullptr;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
+std::uint32_t NativeRoomTitle(const std::uint8_t* room, char* text) noexcept {
+    __try {
+        const std::uint32_t length = room[kRoomTitleLength];
+        if (length > kRoomTitleMax) return 0;
+        std::memcpy(text, room + kRoomTitle, length);
+        text[length] = 0;
+        return length;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+std::uint32_t FullRoomTitle(char* text, std::uint32_t capacity) {
+    if (!g_api || !g_api->ModDirectory) return 0;
+    const std::uint32_t length = sdgo::CurrentRoomTitle(g_api->ModDirectory(g_mod), text, capacity);
+    return length && length < capacity && text[length] == 0 ? length : 0;
+}
+
+void RefreshRoomView() {
+    std::uint8_t* room = CurrentRoomData();
+    if (!room) {
+        g_room_view = RoomView{};
+        return;
+    }
+    char title[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
+    std::uint32_t length = FullRoomTitle(title, sizeof(title));
+    if (!length) length = NativeRoomTitle(room, title);
+    if (!length && !title[0]) {
+        if (g_room_view.room != room) g_room_view = RoomView{room, false, RoomSystem::parts};
+        return;
+    }
+    const RoomSystem system = RoomSystemOfTitle(g_api, title, length);
+    if (g_room_view.room != room || !g_room_view.known || g_room_view.system != system) {
+        char line[200];
+        std::snprintf(line, sizeof(line), "oc room view system=%s room=%p", RoomSystemName(system), room);
+        Log(SDGO_LOG_INFO, line);
+    }
+    g_room_view = RoomView{room, true, system};
+}
+
+// In "room" mode the OC gains apply only in a room that plays OC.
+bool RoomPlaysOc() {
+    RefreshRoomView();
+    return g_room_view.known && g_room_view.system == RoomSystem::oc;
+}
+
 void CALLBACK Tick(HWND, UINT, UINT_PTR, DWORD) {
     if (g_tick_active || GetCurrentThreadId() != g_ui_thread) return;
     g_tick_active = true;
     __try {
         TraceActiveRecord();
+        RefreshRoomView();
         if (g_ui.Loaded() && !g_ui.Alive()) {
             ForgetHidden(); // the page and its siblings are gone
             radar::Forget();
@@ -1055,8 +1133,14 @@ bool GainFor(const std::uint8_t* unit, std::int16_t* speed, std::int16_t* agilit
     std::uint8_t record[kUnitRecordBytes];
     std::memcpy(record, *g_profile + kProfileActiveRecord, sizeof(record));
     Carrier carrier{};
-    if (!ReadCarrier(record, &carrier) || !(carrier.flags & carrier_oc_mode) || !(carrier.flags & carrier_profile))
-        return false;
+    if (!ReadCarrier(record, &carrier) || !(carrier.flags & carrier_profile)) return false;
+    if (!(carrier.flags & carrier_oc_mode)) {
+        if (!(carrier.flags & carrier_room_rule)) return false;
+        if (!RoomPlaysOc()) {
+            ++g_mobility_room_skips;
+            return false;
+        }
+    }
     *speed = carrier.delta[stat_speed];
     *agility = carrier.delta[stat_agility];
     *revision = carrier.revision;
@@ -1113,9 +1197,98 @@ SetupMark* MarkFor(std::uint8_t* unit) {
     return &(g_setups.back() = SetupMark{unit, false});
 }
 
+// Diagnostic for room systems: does the local battle unit carry the record's
+// own custom skills? The battle server copies them into the battle unit it
+// sends (server +0x644) unless the room plays OC; the client unit is searched
+// for the record's four UnitSkill values.
+constexpr std::size_t kUnitScanBytes = 0x4000;
+std::uint32_t g_battle_skills_seen = 0;
+std::int32_t g_battle_skills_offset = -1;
+std::array<std::uint16_t, kCustomSkillCount> g_battle_skills{};
+std::uint8_t g_unit_scan[kUnitScanBytes];
+
+std::size_t CopyUnitBytes(const std::uint8_t* unit) noexcept {
+    std::size_t copied = 0;
+    for (; copied < kUnitScanBytes; copied += 0x1000) {
+        __try {
+            std::memcpy(g_unit_scan + copied, unit + copied, 0x1000);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            break;
+        }
+    }
+    return copied;
+}
+
+void NoteBattleSkills(const std::uint8_t* unit) noexcept {
+    if (!g_profile || !*g_profile) return;
+    std::array<std::uint16_t, kCustomSkillCount> wanted{};
+    std::memcpy(wanted.data(), *g_profile + kProfileActiveRecord + kCustomSkillOffset, sizeof(wanted));
+    if (!wanted[0] && !wanted[1] && !wanted[2] && !wanted[3]) return;
+    const std::size_t copied = CopyUnitBytes(unit);
+    std::int32_t found = -1;
+    for (std::size_t offset = 0; offset + sizeof(wanted) <= copied; offset += 2)
+        if (std::memcmp(g_unit_scan + offset, wanted.data(), sizeof(wanted)) == 0) {
+            found = static_cast<std::int32_t>(offset);
+            break;
+        }
+    if (!g_battle_skills_seen || found != g_battle_skills_offset || wanted != g_battle_skills) {
+        char line[200];
+        std::snprintf(line, sizeof(line), "oc battle unit custom skills %u/%u/%u/%u %s offset=%d (searched %u bytes)",
+                      wanted[0], wanted[1], wanted[2], wanted[3], found >= 0 ? "present" : "absent", found,
+                      static_cast<unsigned>(copied));
+        Log(SDGO_LOG_INFO, line);
+    }
+    g_battle_skills = wanted;
+    g_battle_skills_offset = found;
+    ++g_battle_skills_seen;
+}
+
+// --- Room-system marks (room list and waiting room) ------------------------------
+
+using ServiceUpdateFn = void(__thiscall*)(void*);
+ServiceUpdateFn g_room_list_update_original = nullptr;
+ServiceUpdateFn g_titlebar_update_original = nullptr;
+
+bool RoomRuleKnown() {
+    const auto& s = g_state_data;
+    return s.mode_known && s.room_rule;
+}
+
+void LogMark(const char* message) { Log(SDGO_LOG_INFO, message); }
+
+void __fastcall RoomListUpdateHook(void* service, void*) {
+    g_room_list_update_original(service);
+    if (!RoomRuleKnown()) return;
+    room_marks::MarkRoomList(service);
+    room_marks::UpdateCreateWindow();
+}
+
+// UI events of the PvP create windows (vtable slot 14): the 体系 row arrows.
+using CreateEventFn = void(__stdcall*)(void*, std::uint32_t, std::uintptr_t, void*);
+CreateEventFn g_make_room_event_original = nullptr;
+CreateEventFn g_make_room_ai_event_original = nullptr;
+
+void __stdcall MakeRoomEventHook(void* service, std::uint32_t event, std::uintptr_t second, void* control) {
+    if (RoomRuleKnown() && room_marks::HandleCreateEvent(service, event, control)) return;
+    g_make_room_event_original(service, event, second, control);
+}
+
+void __stdcall MakeRoomAiEventHook(void* service, std::uint32_t event, std::uintptr_t second, void* control) {
+    if (RoomRuleKnown() && room_marks::HandleCreateEvent(service, event, control)) return;
+    g_make_room_ai_event_original(service, event, second, control);
+}
+
+void __fastcall TitleBarUpdateHook(void* title_bar, void*) {
+    g_titlebar_update_original(title_bar);
+    if (!RoomRuleKnown()) return;
+    RefreshRoomView();
+    if (g_room_view.known) room_marks::MarkTitleBar(title_bar, g_room_view.system);
+}
+
 extern "C" void __cdecl ApplyMobility(std::uint8_t* unit) {
     __try {
         auto* manager = g_unit_manager ? *g_unit_manager : nullptr;
+        if (unit && manager && Read<std::uint8_t*>(manager, kUnitManagerLocal) == unit) NoteBattleSkills(unit);
         std::int16_t speed = 0, agility = 0;
         std::uint32_t revision = 0;
         if (!unit || !manager || !GainFor(unit, &speed, &agility, &revision)) return;
@@ -1137,6 +1310,7 @@ DeriveFn g_derive = nullptr;
 
 void ApplyAfterAddPlayer(std::uint8_t* unit) noexcept {
     __try {
+        NoteBattleSkills(unit);
         std::int16_t speed = 0, agility = 0;
         std::uint32_t revision = 0;
         for (auto& mark : g_setups) {
@@ -1816,6 +1990,20 @@ int Snapshot(SdgoOcCustomClientSnapshotV2* output) {
     snapshot.radar_frames = radar::Frames();
     snapshot.item_models_shown = g_ui.models_shown();
     snapshot.item_models_loaded = g_ui.models_loaded();
+    snapshot.server_room_rule = s.mode_known && s.room_rule ? 1u : 0u;
+    snapshot.room_known = g_room_view.known ? 1u : 0u;
+    snapshot.room_system = g_room_view.known && g_room_view.system == RoomSystem::oc ? 1u : 0u;
+    snapshot.mobility_room_skips = g_mobility_room_skips;
+    snapshot.room_list_marks = room_marks::ListMarks();
+    snapshot.title_marks = room_marks::TitleMarks();
+    snapshot.title_mark_system = room_marks::TitleSystem();
+    snapshot.create_open = room_marks::CreateOpen() ? 1u : 0u;
+    snapshot.create_shown = room_marks::CreateShown();
+    snapshot.create_toggles = room_marks::CreateToggles();
+    snapshot.create_system = room_marks::CreateSystem();
+    snapshot.battle_skills_seen = g_battle_skills_seen;
+    snapshot.battle_skills_offset = g_battle_skills_offset;
+    for (std::size_t slot = 0; slot < kCustomSkillCount; ++slot) snapshot.battle_skills[slot] = g_battle_skills[slot];
     const auto& shape = radar::Current();
     for (std::size_t stat = 0; stat < stat_count; ++stat) {
         snapshot.radar_base[stat] = shape.base[stat];
@@ -1864,6 +2052,7 @@ int Action(const SdgoOcCustomClientActionV2& request) {
 
 int Click(const char* window, const wchar_t* name) {
     if (GetCurrentThreadId() != g_ui_thread && g_ui_thread) return 0;
+    if (window && !std::strcmp(window, "create")) return room_marks::ClickCreate(name) ? 1 : 0;
     if (window && !std::strcmp(window, "tab")) {
         if (!g_tab.button || !g_tab.service || !g_tab.dialog || !name) return 0;
         if (!std::wcscmp(name, L"OverCustomRadio")) {
@@ -1988,7 +2177,20 @@ SDGO_MOD_ENTRY {
             Log(SDGO_LOG_WARN, "oc: the battle unit setup hooks are unavailable; speed and agility gains inactive");
         }
     }
+    if (!api->HookSlot || !room_marks::Bind(api, mod, &LogMark) ||
+        !api->HookSlot(mod, "oc_custom.client_room_list_update", reinterpret_cast<void*>(&RoomListUpdateHook),
+                       reinterpret_cast<void**>(&g_room_list_update_original)) ||
+        !api->HookSlot(mod, "oc_custom.client_titlebar_update", reinterpret_cast<void*>(&TitleBarUpdateHook),
+                       reinterpret_cast<void**>(&g_titlebar_update_original)))
+        Log(SDGO_LOG_WARN, "oc: room-system marks unavailable; rooms still play the system their title selects");
+    if (!room_marks::BindCreate(api, mod) ||
+        !api->HookSlot(mod, "oc_custom.client_make_room_event", reinterpret_cast<void*>(&MakeRoomEventHook),
+                       reinterpret_cast<void**>(&g_make_room_event_original)) ||
+        !api->HookSlot(mod, "oc_custom.client_make_room_ai_event", reinterpret_cast<void*>(&MakeRoomAiEventHook),
+                       reinterpret_cast<void**>(&g_make_room_ai_event_original)))
+        Log(SDGO_LOG_WARN, "oc: the create-window 体系 row is unavailable; the room title's !oc still selects OC");
     api->Log(mod, SDGO_LOG_INFO,
-             "ready: original OC windows on the factory upgrade page; battle speed/agility gains on the local unit");
+             "ready: original OC windows on the factory upgrade page; battle speed/agility gains on the local unit; "
+             "room systems follow the room title (!oc) when the server runs room mode");
     return 1;
 }

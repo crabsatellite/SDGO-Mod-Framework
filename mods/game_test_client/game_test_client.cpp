@@ -77,6 +77,7 @@ void ObserveOptionalDialogue(const SdgoGameTestContextV1* context,bool finish=fa
 #include "native_error_popup_probe.h"
 #include "native_packet_ingress_probe.h"
 #include <cwchar>
+#include <algorithm>
 #include <array>
 
 namespace {
@@ -173,6 +174,8 @@ int ocAllocateStat=-1,ocAllocatePoints=0; // first entry
 bool ocMobility=false;
 // Open the original factory upgrade page at the end and check the OC panel.
 bool ocPanel=false;
+// Room systems: the PvP room title carries !oc, so the battle plays OC.
+bool ocRoom=false;
 // Also press the panel's OC challenge (it can change the unit's OC level).
 bool ocChallenge=false;
 bool collectionDraw=false;
@@ -579,6 +582,7 @@ bool LoadPlan() {
         ocAllocateStat=ocAllocations.front().stat;ocAllocatePoints=ocAllocations.front().points;
     }
     ocPanel=GetPrivateProfileIntW(L"run",L"oc_panel",0,job.c_str())!=0;
+    ocRoom=GetPrivateProfileIntW(L"run",L"oc_room",0,job.c_str())!=0;
     ocChallenge=GetPrivateProfileIntW(L"run",L"oc_challenge",0,job.c_str())!=0;
     if(hangarConfirmGb && (ocPanel || loginRecovery.Enabled()))return false;
     if(ocChallenge && !ocPanel && ocAllocateStat<0)return false;
@@ -3405,22 +3409,238 @@ int __cdecl OcAllocate(const SdgoGameTestContextV1* context) {
     bool match=true;for(size_t i=0;i<6;++i)match=match && s.normal[i]==expected[i];
     context->Assert(match,"the stored OC allocation increased by exactly the requested points");
     context->Assert(s.revision>beforeRevision,"the OC profile revision advanced after the saves");
+    if(s.record_custom[0]||s.record_custom[1]||s.record_custom[2]||s.record_custom[3])
+        nativePacketIngressProbe.SetNeedle(reinterpret_cast<const uint8_t*>(s.record_custom),sizeof(s.record_custom));
     char message[256];sprintf_s(message,"oc allocation saved uid=%llu normal=%u/%u/%u/%u/%u/%u revision=%u->%u normal_left=%u",
         static_cast<unsigned long long>(s.unit_uid),s.normal[0],s.normal[1],s.normal[2],s.normal[3],s.normal[4],s.normal[5],beforeRevision,s.revision,s.normal_points_left);
     context->Observe(message);
     return SDGO_GAME_TEST_PASS;
 }
 const SdgoGameTestCaseV1 ocAllocateCase{"oc.allocate",180000,&OcAllocate};
+// Room systems: the 体系 row of the original PvP create window. Opens the
+// window from the room list (MakeRoomBtn, as a click delivers it), checks the
+// row starts on the current custom parts, switches it to OC and back with
+// its arrows (the room name gains and loses !oc), then cancels the window;
+// the PvP room is created afterwards as usual.
+struct OcCreateWindow {
+    using Find=void*(__thiscall*)(void*,const void*,int);
+    using Notify=void(__thiscall*)(void*,uint32_t,int,void*);
+    struct WString {union {wchar_t inlineText[8];const wchar_t* pointer;};uint32_t size,capacity;};
+    void** manager=nullptr;const void* listVtable=nullptr;const void* createVtable=nullptr;const uint32_t* listMode=nullptr;Find find=nullptr;Notify notify=nullptr;
+    bool Bind(const SdgoApi* api,SdgoMod* mod){
+        manager=static_cast<void**>(api->Symbol(mod,"flow.service_managed_pointer"));
+        listVtable=api->Symbol(mod,"flow.native_room_list_vtable");
+        createVtable=api->Symbol(mod,"title_test.pvp_create_vtable");
+        listMode=static_cast<const uint32_t*>(api->Symbol(mod,"title_test.room_list_mode"));
+        find=reinterpret_cast<Find>(api->Symbol(mod,"room_titles.ui_find_control"));
+        notify=reinterpret_cast<Notify>(api->Symbol(mod,"title_test.dialog_notify"));
+        return manager&&listVtable&&createVtable&&listMode&&find&&notify;
+    }
+    // The first (or last, the newest) live service with this vtable; count receives the matches.
+    void* Service(const void* table,bool last=false,unsigned* count=nullptr)const{
+        void* found=nullptr;unsigned matches=0;
+        __try{
+            if(manager&&*manager){
+                auto* head=*reinterpret_cast<uint8_t**>(static_cast<uint8_t*>(*manager)+0x44);
+                auto* node=head?*reinterpret_cast<uint8_t**>(head):nullptr;
+                for(unsigned n=0;node&&node!=head&&n<512;++n){
+                    void* service=*reinterpret_cast<void**>(node+8);
+                    if(service&&*reinterpret_cast<const void* const*>(service)==table){++matches;if(!found||last)found=service;}
+                    node=*reinterpret_cast<uint8_t**>(node);
+                }
+            }
+        }__except(EXCEPTION_EXECUTE_HANDLER){}
+        if(count)*count=matches;
+        return found;
+    }
+    unsigned CreateWindows()const{unsigned count=0;Service(createVtable,true,&count);return count;}
+    // The dialog's own notify, as the room-title tests deliver native clicks
+    // (0x101 button, 0x301 radio), only for a visible, enabled control.
+    bool Click(void* owner,void* root,const wchar_t* name,int type=4)const{
+        if(!owner||!root)return false;
+        WString text{};const size_t n=wcslen(name);text.size=static_cast<uint32_t>(n);
+        if(n<8){wmemcpy(text.inlineText,name,n+1);text.capacity=7;}else{text.pointer=name;text.capacity=text.size;}
+        __try{
+            void* control=find(root,&text,type);if(!control)return false;
+            auto* bytes=static_cast<uint8_t*>(control);
+            if(!bytes[0x162]||!bytes[0x167]||*reinterpret_cast<void**>(bytes+0x15C)!=root||!static_cast<uint8_t*>(root)[0x162])return false;
+            notify(root,type==12?0x301:0x101,1,control);
+            return true;
+        }__except(EXCEPTION_EXECUTE_HANDLER){return false;}
+    }
+    // A control of the open PvP create window (dialog root +0x50), clicked as a mouse click is.
+    bool ClickInCreate(const wchar_t* name)const{
+        void* create=Service(createVtable,true);
+        void* root=nullptr;
+        __try{root=create?*reinterpret_cast<void**>(static_cast<uint8_t*>(create)+0x50):nullptr;}__except(EXCEPTION_EXECUTE_HANDLER){return false;}
+        return Click(create,root,name);
+    }
+    // Opens the ordinary PvP create window from the native room list.
+    bool Open()const{
+        void* list=Service(listVtable);if(!list)return false;
+        auto root=[](void* object,size_t offset)->void*{__try{return object?*reinterpret_cast<void**>(static_cast<uint8_t*>(object)+offset):nullptr;}__except(EXCEPTION_EXECUTE_HANDLER){return nullptr;}};
+        if(*listMode!=1){void* radio=root(list,0x68);return Click(list,root(radio,0x15C),L"Radio3",12)&&false;}
+        void* button=root(list,0x84);return Click(list,root(button,0x15C),L"MakeRoomBtn");
+    }
+};
+OcCreateWindow ocCreateWindow;
+int __cdecl OcCreate(const SdgoGameTestContextV1* context) {
+    static int phase=0;static uint64_t mark=0;static uint32_t togglesBefore=0;static int captureState=0;static uint32_t opens=0;
+    if(!context->tick){phase=0;mark=0;togglesBefore=0;captureState=0;opens=0;}
+    if(!ocObserver.Bind()){context->Assert(0,"the OC client Mod exposes its observer exports");return SDGO_GAME_TEST_FAIL;}
+    SdgoOcCustomClientSnapshotV2 s{};
+    if(!ocObserver.Read(s)){context->Assert(0,"the OC client observer snapshot is readable");return SDGO_GAME_TEST_FAIL;}
+    const auto capture=[&](const wchar_t* name)->bool {
+        if(captureState==0){
+            if(GetTickCount64()-mark<800)return false;
+            const auto folder=sdgo_test::directory+L"\\visual";CreateDirectoryW(folder.c_str(),nullptr);
+            captureState=quietGraphics.CaptureNextFrame((folder+L"\\"+name+L".bmp").c_str())?1:2;
+            if(captureState==2)context->Observe("native frame capture unavailable for the create window");
+            return false;
+        }
+        if(captureState==1){
+            const auto captured=quietGraphics.CaptureFrameResult();
+            if(captured==E_PENDING)return false;
+            char saved[160];sprintf_s(saved,FAILED(captured)?"native frame capture of %ls failed":"native frame %ls saved under visual\\",name);
+            context->Observe(saved);
+        }
+        captureState=0;return true;
+    };
+    if(!s.server_room_rule){
+        if(context->elapsed_ms>60000){context->Assert(0,"the server reports OC room systems before the create window check");return SDGO_GAME_TEST_FAIL;}
+        return SDGO_GAME_TEST_WAIT;
+    }
+    if(phase==0){
+        if(s.create_open){phase=1;mark=GetTickCount64();return SDGO_GAME_TEST_WAIT;}
+        if(!ocCreateWindow.manager&&!ocCreateWindow.Bind(sdgo_test::api,sdgo_test::mod)){context->Assert(0,"the native room list and control bindings are available");return SDGO_GAME_TEST_FAIL;}
+        // Same entry as the room-title create tests: back to the Game Room
+        // page, a server-provided VS channel, then the native room list.
+        if(actions.AppState()==5){
+            static bool requested=false;
+            if(!requested){
+                const auto result=hangarNavigation.ClickBottomRadio(L"GameRoomRadio",0x48);
+                if(result>=HangarNavigation::kDownmenuServiceMismatch||result==HangarNavigation::kUnbound){context->Assert(0,"native GameRoomRadio returns from the hangar before the create window check");return SDGO_GAME_TEST_FAIL;}
+                if(result==HangarNavigation::kReady){requested=true;context->Observe("native GameRoomRadio requested before the create window check");}
+            }
+            return SDGO_GAME_TEST_WAIT;
+        }
+        if(actions.AppState()==4||actions.AppState()==25)return SDGO_GAME_TEST_WAIT;
+        {
+            static uint32_t lastChannel=UINT32_MAX,lastPage=UINT32_MAX;
+            const auto channel=channels.EnsureVsType(1);
+            if(channel!=lastChannel){char line[128];sprintf_s(line,"native VS channel for the create window check=%s app=%u",ChannelActions::ResultName(channel),actions.AppState());context->Observe(line);lastChannel=channel;}
+            if(channel==ChannelActions::kAccepted&&channels.TakeSceneReloadRequirement()){hangarNavigation.RequireGameRoomReentry(rooms.NativeRoomPageGeneration());return SDGO_GAME_TEST_WAIT;}
+            if(channel==ChannelActions::kWaitingForLobby||channel==ChannelActions::kSelectorOpened||channel==ChannelActions::kPaging||
+               channel==ChannelActions::kNativeRequestPending||channel==ChannelActions::kRequestSent)return SDGO_GAME_TEST_WAIT;
+            if(channel!=ChannelActions::kAccepted&&channel!=ChannelActions::kAlreadySelected){context->Assert(0,"native PvP channel selection for the create window check");return SDGO_GAME_TEST_FAIL;}
+            const auto page=hangarNavigation.EnsureGameRoom(roomListVtable,modalLoadingVtable,rooms.NativeRoomPageGeneration());
+            if(page!=lastPage){char line[128];sprintf_s(line,"native Game Room page for the create window check=%s",HangarNavigation::ResultName(page));context->Observe(line);lastPage=page;}
+            if(page>=HangarNavigation::kDownmenuServiceMismatch||page==HangarNavigation::kUnbound){context->Assert(0,"native Game Room page entry for the create window check");return SDGO_GAME_TEST_FAIL;}
+            if(page!=HangarNavigation::kReady)return SDGO_GAME_TEST_WAIT;
+        }
+        // One click per attempt, as the room-title tests open it: every
+        // accepted MakeRoomBtn click creates another native create window.
+        static uint64_t openedAt=0;
+        if((!opens||(GetTickCount64()-openedAt>5000&&!ocCreateWindow.CreateWindows()))&&ocCreateWindow.Open()){++opens;openedAt=GetTickCount64();context->Observe("pressed original control MakeRoomBtn on the room list");}
+        {
+            static uint32_t lastMode=UINT32_MAX;static bool lastList=false;
+            const bool list=ocCreateWindow.Service(ocCreateWindow.listVtable)!=nullptr;const uint32_t mode=*ocCreateWindow.listMode;
+            if(list!=lastList||mode!=lastMode){char line[128];sprintf_s(line,"native room list present=%u mode=%u opens=%u",list?1u:0u,mode,opens);context->Observe(line);lastList=list;lastMode=mode;}
+        }
+        if(context->elapsed_ms>150000){context->Assert(0,"the original PvP create window opened from the room list");return SDGO_GAME_TEST_FAIL;}
+        return SDGO_GAME_TEST_WAIT;
+    }
+    if(phase==1){
+        if(!s.create_shown||s.create_system<0){
+            if(GetTickCount64()-mark>20000){context->Assert(0,"the create window shows the 体系 row");return SDGO_GAME_TEST_FAIL;}
+            return SDGO_GAME_TEST_WAIT;
+        }
+        if(!capture(L"oc-create-row-parts"))return SDGO_GAME_TEST_WAIT;
+        {char line[96];sprintf_s(line,"native create windows open=%u",ocCreateWindow.CreateWindows());context->Observe(line);}
+        context->Assert(s.create_system==0,"a new room name starts on the current custom parts (no !oc)");
+        togglesBefore=s.create_toggles;
+        if(!ocCreateWindow.ClickInCreate(L"OcSystemRightBtn")){context->Assert(0,"the 体系 row's right arrow is a visible, enabled control that accepts a click");return SDGO_GAME_TEST_FAIL;}
+        context->Observe("pressed 体系 row control OcSystemRightBtn");
+        phase=2;mark=GetTickCount64();return SDGO_GAME_TEST_WAIT;
+    }
+    if(phase==2){
+        if(s.create_toggles<=togglesBefore||s.create_system!=1){
+            if(GetTickCount64()-mark>10000){context->Assert(0,"the right arrow switched the room to OC");return SDGO_GAME_TEST_FAIL;}
+            return SDGO_GAME_TEST_WAIT;
+        }
+        if(!capture(L"oc-create-row-oc"))return SDGO_GAME_TEST_WAIT;
+        context->Assert(true,"the right arrow added !oc to the room name and the row shows OC");
+        togglesBefore=s.create_toggles;
+        if(!ocCreateWindow.ClickInCreate(L"OcSystemLeftBtn")){context->Assert(0,"the 体系 row's left arrow is a visible, enabled control that accepts a click");return SDGO_GAME_TEST_FAIL;}
+        context->Observe("pressed 体系 row control OcSystemLeftBtn");
+        phase=3;mark=GetTickCount64();return SDGO_GAME_TEST_WAIT;
+    }
+    if(phase==3){
+        if(s.create_toggles<=togglesBefore||s.create_system!=0){
+            if(GetTickCount64()-mark>10000){context->Assert(0,"the left arrow switched the room back to the current custom parts");return SDGO_GAME_TEST_FAIL;}
+            return SDGO_GAME_TEST_WAIT;
+        }
+        context->Assert(true,"the left arrow removed !oc from the room name and the row shows G改 1.0");
+        if(!ocCreateWindow.ClickInCreate(L"MakeCancelBtnW")){context->Assert(0,"the create window's cancel button accepts a click");return SDGO_GAME_TEST_FAIL;}
+        phase=4;mark=GetTickCount64();return SDGO_GAME_TEST_WAIT;
+    }
+    if(s.create_open){
+        if(GetTickCount64()-mark>15000){context->Assert(0,"the create window closed after cancel");return SDGO_GAME_TEST_FAIL;}
+        return SDGO_GAME_TEST_WAIT;
+    }
+    char line[160];sprintf_s(line,"oc create window row: shown=%u toggles=%u",s.create_shown,s.create_toggles);context->Observe(line);
+    return SDGO_GAME_TEST_PASS;
+}
+const SdgoGameTestCaseV1 ocCreateCase{"oc.create",180000,&OcCreate};
 // Battle: the local unit received the play unit's OC speed and agility gains in
 // the native stat setup (DashLevel at unit +0xB64, MotivePower at +0xB6A,
 // before the movement values are derived from them).
+void ObserveSkillPackets(const SdgoGameTestContextV1* context) {
+    NativePacketIngressProbe::NeedleMatch matches[NativePacketIngressProbe::NeedleCapacity]{};
+    const auto count=nativePacketIngressProbe.NeedleMatches(matches,NativePacketIngressProbe::NeedleCapacity);
+    std::string line="oc custom skills found in inbound packets:";
+    if(!count)line+=" none";
+    for(uint32_t i=0;i<count;++i){
+        char item[80];sprintf_s(item," %04X size=%u offset=%u x%u",matches[i].opcode,matches[i].size,matches[i].offset,matches[i].count);
+        line+=item;
+    }
+    context->Observe(line.c_str());
+}
 int __cdecl OcMobility(const SdgoGameTestContextV1* context) {
     if(!ocObserver.Bind()){context->Assert(0,"the OC client Mod exposes its observer exports");return SDGO_GAME_TEST_FAIL;}
     SdgoOcCustomClientSnapshotV2 s{};
     if(!ocObserver.Read(s)){context->Assert(0,"the OC client observer snapshot is readable");return SDGO_GAME_TEST_FAIL;}
+    if(s.server_room_rule && (s.mobility_room_skips || s.mobility_applied))ObserveSkillPackets(context);
+    if(s.server_room_rule && !ocRoom) {
+        // Room systems: a room without !oc plays the current custom skills, so
+        // the local unit keeps its native levels even with OC points saved.
+        if(!s.mobility_room_skips && context->elapsed_ms<45000)return SDGO_GAME_TEST_WAIT;
+        char message[240];sprintf_s(message,"oc room system room_known=%u system=%u skips=%u applied=%u custom=%u/%u/%u/%u",
+            s.room_known,s.room_system,s.mobility_room_skips,s.mobility_applied,
+            s.record_custom[0],s.record_custom[1],s.record_custom[2],s.record_custom[3]);
+        context->Observe(message);
+        context->Assert(s.room_known && s.room_system==0,"the client read the battle room as a current-system (custom skill) room");
+        context->Assert(s.mobility_room_skips>0 && s.mobility_applied==0,
+            "the saved OC speed/agility gains stayed out of the local unit in a current-system room");
+        char skills[200];sprintf_s(skills,"oc battle unit skills searched=%u offset=%d skills=%u/%u/%u/%u record=%u/%u/%u/%u",s.battle_skills_seen,
+            s.battle_skills_offset,s.battle_skills[0],s.battle_skills[1],s.battle_skills[2],s.battle_skills[3],
+            s.record_custom[0],s.record_custom[1],s.record_custom[2],s.record_custom[3]);
+        context->Observe(skills);
+        return SDGO_GAME_TEST_PASS;
+    }
     if(!s.mobility_applied) {
         if(context->elapsed_ms>45000){context->Assert(0,"the local battle unit received the OC speed/agility gains in its native stat setup");return SDGO_GAME_TEST_FAIL;}
         return SDGO_GAME_TEST_WAIT;
+    }
+    if(s.server_room_rule) {
+        context->Assert(ocRoom && s.room_known && s.room_system==1,"the client read the battle room as an OC room (!oc)");
+        char skills[200];sprintf_s(skills,"oc battle unit skills searched=%u offset=%d skills=%u/%u/%u/%u record=%u/%u/%u/%u",s.battle_skills_seen,
+            s.battle_skills_offset,s.battle_skills[0],s.battle_skills[1],s.battle_skills[2],s.battle_skills[3],
+            s.record_custom[0],s.record_custom[1],s.record_custom[2],s.record_custom[3]);
+        context->Observe(skills);
+        (void)0;
+        context->Assert(s.record_custom[0]||s.record_custom[1]||s.record_custom[2]||s.record_custom[3],
+            "the unit's record still holds its custom skills for current-system rooms");
     }
     const int speed=s.normal[0]*s.normal_gain[0]+s.over[0]*s.over_gain[0];
     const int agility=s.normal[4]*s.normal_gain[4]+s.over[4]*s.over_gain[4];
@@ -4803,6 +5023,7 @@ void RegisterPlannedCases() {
     if(testOperatorFlow)plannedCases.push_back(operatorFlowCase);
     if(playUnitUid && ocAllocateStat>=0)plannedCases.push_back(ocAllocateCase);
     if(playUnitUid)plannedCases.push_back(playUnitCase);
+    if(playUnitUid && ocAllocateStat>=0 && ocRoom)plannedCases.push_back(ocCreateCase);
     AppendUnitPresentations();
     if (giftRequestsOnly) plannedCases.push_back(giftCase);
     else if (needsShip) plannedCases.push_back(battleshipCase);
@@ -5136,7 +5357,7 @@ SDGO_MOD_ENTRY {
     getSnapshot = reinterpret_cast<SdgoPvpAiClientGetSnapshotV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_SNAPSHOT_EXPORT));
     api->HookCode(mod,"game.error_name",reinterpret_cast<void*>(&ObserveNativeErrorName),reinterpret_cast<void**>(&originalErrorName));
     if(!nativePopupProbe.Install(api,mod))return 0;
-    if((earlyNavigationBeforeInventory ||
+    if((earlyNavigationBeforeInventory || ocAllocateStat>=0 ||
         (randomLoadout && api->SettingInt(mod,"LogNativePacketIngress",0)!=0)) &&
        !nativePacketIngressProbe.Install(api,mod))return 0;
     getStartStatus = reinterpret_cast<SdgoPvpAiClientGetStartStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_START_STATUS_EXPORT));

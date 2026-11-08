@@ -7,8 +7,8 @@
   "hosts": [
     "world"
   ],
-  "description": "恢复原版 OC 六维加点（速度、HP、攻击、防御、敏捷、必杀）：普通点按等级发放，Over 点通过 OC 挑战获得，洗点扣除 GP。OC 档保存在 Mod 自有表中，与现行改造部件数据并存。",
-  "mechanism": "World Mod 在游戏库安装 sdgo_mod_oc_* 表与过程（移植自 2009 年原版存储过程），通过好友赠送载体的扩展指令处理大厅请求。oc 模式下把每台机体的加点增量写入服务端发出的机体记录保留区，并清空记录中的四个改造部件槽位；current 模式下记录保持原生，OC 档只保存不生效。",
+  "description": "恢复原版 OC 六维加点（速度、HP、攻击、防御、敏捷、必杀）：普通点按等级发放，Over 点通过 OC 挑战获得，洗点扣除 GP。OC 档保存在 Mod 自有表中，与现行改造部件（G改 1.0）数据并存，可以整服只用一套，也可以按房间选择体系。",
+  "mechanism": "World Mod 在游戏库安装 sdgo_mod_oc_* 表与过程（移植自 2009 年原版存储过程），通过好友赠送载体的扩展指令处理大厅请求。oc 模式下把每台机体的加点增量写入服务端发出的机体记录保留区，并清空记录中的四个改造部件槽位；room 模式下记录同时保留加点增量和改造部件，由房名中的 !oc 指令决定该房战斗使用哪套体系；current 模式下记录保持原生，OC 档只保存不生效。",
   "settings": [
     {
       "id": "enabled",
@@ -28,13 +28,15 @@
       "type": "choice",
       "options": [
         "current",
-        "oc"
+        "oc",
+        "room"
       ],
       "default": "current",
       "file": "mod.ini",
       "section": "settings",
       "audience": "user",
-      "activation": "restart_required"
+      "activation": "restart_required",
+      "description": "current：只用现行改造部件（G改 1.0）。oc：整服只用 OC。room：两套体系同时可用，房名带 !oc 的房间用 OC，其余房间用现行改造部件；建房窗口可以直接选择。"
     },
     {
       "id": "log_fill",
