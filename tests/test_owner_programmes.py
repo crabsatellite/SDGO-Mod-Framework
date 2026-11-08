@@ -48,6 +48,18 @@ class OwnerProgrammes(unittest.TestCase):
         self.assertEqual(receipt['owner_programme']['sha256'], self.published['sha256'])
         self.assertEqual(self.controller.plan(self.host)['status'], 'current')
 
+    def test_single_url_binding_preserves_owner_policy_and_refuses_another_channel(self):
+        source={**self.source,'manager_policy':'owner','channel':'stable'}
+        marker=self.repo/'profile-source.json';storage.atomic(marker,storage.json_bytes(source))
+        self.workspace.host=lambda identity:self.host;self.workspace.save_workspace=lambda:None
+        with patch.object(self.controller,'start'):
+            self.controller.bind_profile(self.host['id'],self.source['feeds'])
+        self.assertEqual(storage.read_json(self.game/'sdgo/client-source.json'),source)
+        source['channel']='beta';storage.atomic(marker,storage.json_bytes(source))
+        with self.assertRaisesRegex(ValueError,'通道'):
+            self.controller.bind_profile(self.host['id'],self.source['feeds'])
+        self.assertEqual(storage.read_json(self.game/'sdgo/client-source.json')['channel'],'stable')
+
     def test_content_revision_keeps_the_same_programme_lock(self):
         self.install()
         self.profile['revision'] += 1

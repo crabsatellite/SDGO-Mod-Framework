@@ -2,6 +2,7 @@
 from __future__ import annotations
 from pathlib import Path
 from urllib.parse import urlsplit,unquote,urljoin,quote
+from urllib.error import HTTPError
 import hashlib,json,re,shutil,subprocess,uuid,zipfile,os
 from . import storage,updates,git_source,framework_source,runtime_layers
 
@@ -103,7 +104,7 @@ def validate(value,source):
     return value
 
 
-def read(controller,url,name,limit,refresh=True):
+def read(controller,url,name,limit,refresh=True,optional=False):
     if url.startswith(('git+ssh://','git+https://')):
         remote,ref=git_source.parse(url);repo=controller.cache/'git'/updates.digest(url.encode());repo.mkdir(parents=True,exist_ok=True)
         if not(repo/'HEAD').is_file():controller.git(repo,['init','--bare']);controller.git(repo,['remote','add','origin',remote])
@@ -111,7 +112,9 @@ def read(controller,url,name,limit,refresh=True):
         if refresh:controller.git(repo,['fetch','--filter=blob:none','--no-tags','--depth=1','origin','refs/heads/'+ref])
         commit=controller.git(repo,['rev-parse','FETCH_HEAD']).decode().strip()
         tree=controller.git(repo,['ls-tree','-z',commit,'--',name]).split(b'\0')[0]
-        if not tree:raise ValueError('内容源缺少配置清单')
+        if not tree:
+            if optional:return None,{'type':'git','repo':str(repo),'commit':commit,'feed':url}
+            raise ValueError('内容源缺少配置清单')
         head,leaf=tree.split(b'\t',1);mode,kind,oid=head.split()
         if kind!=b'blob'or mode not in(b'100644',b'100755')or leaf.decode()!=name:raise ValueError('内容源清单不是普通文件')
         cached={r.split()[0]for r in controller.git(repo,['cat-file','--batch-all-objects','--batch-check','--unordered']).splitlines()if r}
@@ -122,10 +125,29 @@ def read(controller,url,name,limit,refresh=True):
         return raw,{'type':'git','repo':str(repo),'commit':commit,'feed':url}
     if url.startswith('local+file:'):
         path=local_path(url);path=path if name==MANIFEST else updates.child(path.parent,name)
+        if optional and not path.exists():return None,{'type':'local','root':str(local_path(url).parent),'feed':url}
         if not path.is_file()or path.stat().st_size>limit:raise ValueError('离线配置文件无效或过大')
         return path.read_bytes(),{'type':'local','root':str(local_path(url).parent),'feed':url}
-    path=url if name==MANIFEST else urljoin(url,name);raw=updates.fetch(path,limit,getattr(controller,'operation_stop',controller.stop_event))
+    path=url if name==MANIFEST else urljoin(url,name)
+    try:raw=updates.fetch(path,limit,getattr(controller,'operation_stop',controller.stop_event))
+    except HTTPError as error:
+        if not optional or error.code!=404:raise
+        return None,{'type':'https','feed':url}
     return raw,{'type':'https','feed':url}
+
+
+def discover_binding(controller,url,profile):
+    """Import publisher-declared mirrors from the same pinned content endpoint."""
+    raw,_=read(controller,url,'profile-source.json',2*1024*1024,refresh=False,optional=True)
+    if raw is None:return None  # A legacy endpoint may genuinely lack a descriptor.
+    source=binding(json.loads(raw))
+    if source['source_id']!=profile.get('source_id'):raise ValueError('配置来源描述与内容发布者身份不一致')
+    if profile.get('framework_source'):
+        expected=framework_source.binding(profile['framework_source'])
+        if any(source['framework'].get(key)!=expected.get(key)for key in('source_id','repository','channel')):
+            raise ValueError('配置来源描述与内容的官方程序身份或通道不一致')
+    validate(profile,source)
+    return source
 
 
 def resolve(controller,source):

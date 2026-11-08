@@ -294,6 +294,76 @@ class Profiles(unittest.TestCase):
         imported=storage.read_json(self.game/'sdgo/client-source.json')
         self.assertEqual(imported['feeds'],self.source['feeds']);self.assertEqual(imported['source_id'],self.source['source_id'])
 
+    def test_single_content_url_imports_published_backup_mirrors(self):
+        published={**self.source,'feeds':[self.source['feeds'][0],'https://backup.invalid/server-profile.json']}
+        storage.atomic(self.repo/'profile-source.json',storage.json_bytes(published))
+        self.workspace.host=lambda identity:self.host;self.workspace.save_workspace=lambda:None
+        with patch.object(self.controller,'start'),patch.object(p,'resolve',return_value=(self.profile,{},1))as resolve:
+            self.controller.bind_profile(self.host['id'],[self.source['feeds'][0]])
+        self.assertEqual(resolve.call_args.args[1],published)
+        self.assertEqual(storage.read_json(self.game/'sdgo/client-source.json'),published)
+        self.assertEqual(self.controller.jobs,[(self.host['id'],'sync',None)])
+
+    def test_missing_optional_descriptor_keeps_the_legacy_content_url(self):
+        self.workspace.host=lambda identity:self.host;self.workspace.save_workspace=lambda:None
+        self.assertFalse((self.repo/'profile-source.json').exists())
+        with patch.object(self.controller,'start'):
+            self.controller.bind_profile(self.host['id'],[self.source['feeds'][0]])
+        self.assertEqual(storage.read_json(self.game/'sdgo/client-source.json')['feeds'],self.source['feeds'])
+
+    def test_bad_publisher_or_framework_descriptor_cannot_change_the_binding(self):
+        original=(self.game/'sdgo/client-source.json').read_bytes()
+        self.profile['framework_source']=self.source['framework'];storage.atomic(self.repo/p.MANIFEST,storage.json_bytes(self.profile))
+        self.workspace.host=lambda identity:self.host;self.workspace.save_workspace=lambda:None
+        for key in('source_id','framework'):
+            published=copy.deepcopy(self.source)
+            if key=='source_id':published[key]='f'*32
+            else:published[key]['source_id']='f'*32
+            storage.atomic(self.repo/'profile-source.json',storage.json_bytes(published))
+            with self.subTest(key=key),patch.object(self.controller,'start')as start,self.assertRaisesRegex(ValueError,'身份'):
+                self.controller.bind_profile(self.host['id'],self.source['feeds'])
+            start.assert_not_called();self.assertEqual(self.controller.jobs,[])
+            self.assertEqual((self.game/'sdgo/client-source.json').read_bytes(),original)
+
+    def test_malformed_or_unreadable_descriptor_is_not_treated_as_missing(self):
+        self.workspace.host=lambda identity:self.host;self.workspace.save_workspace=lambda:None
+        marker=self.repo/'profile-source.json';original=(self.game/'sdgo/client-source.json').read_bytes()
+        marker.write_bytes(b'{broken json')
+        with patch.object(self.controller,'start'),self.assertRaises(ValueError):
+            self.controller.bind_profile(self.host['id'],self.source['feeds'])
+        marker.unlink();marker.mkdir()
+        with patch.object(self.controller,'start'),self.assertRaisesRegex(ValueError,'离线配置文件无效'):
+            self.controller.bind_profile(self.host['id'],self.source['feeds'])
+        self.assertEqual((self.game/'sdgo/client-source.json').read_bytes(),original)
+
+    def test_https_optional_descriptor_only_404_means_absent(self):
+        from urllib.error import HTTPError
+        url='https://owner.invalid/server-profile.json'
+        for code in(404,401,502):
+            error=HTTPError(url,code,'fixture',{},None)
+            self.addCleanup(error.close)
+            with self.subTest(code=code),patch.object(updates,'fetch',side_effect=error):
+                if code==404:self.assertIsNone(p.read(self.controller,url,'profile-source.json',100,optional=True)[0])
+                else:
+                    with self.assertRaises(HTTPError):p.read(self.controller,url,'profile-source.json',100,optional=True)
+        with patch.object(updates,'fetch',side_effect=OSError('transport interrupted')),self.assertRaises(OSError):
+            p.read(self.controller,url,'profile-source.json',100,optional=True)
+
+    def test_git_descriptor_uses_the_same_pinned_commit_as_the_initial_profile(self):
+        import shutil,subprocess
+        uri='git+https://owner.invalid/profile.git#content'
+        published={**self.source,'feeds':[uri,'https://backup.invalid/server-profile.json']}
+        storage.atomic(self.repo/'profile-source.json',storage.json_bytes(published));self.commit_all()
+        commit=self.git('rev-parse','HEAD');cache=self.controller.cache/'git'/updates.digest(uri.encode())
+        shutil.copytree(self.repo/'.git',cache)
+        subprocess.check_call(['git','-C',str(cache),'remote','add','origin','https://owner.invalid/profile.git'],stdout=subprocess.DEVNULL)
+        (cache/'FETCH_HEAD').write_text(commit+'\n',encoding='ascii')
+        with patch.object(self.controller,'git',wraps=self.controller.git)as git:
+            raw,transport=p.read(self.controller,uri,p.MANIFEST,16*1024*1024)
+            imported=p.discover_binding(self.controller,uri,json.loads(raw))
+        self.assertEqual(transport['commit'],commit);self.assertEqual(imported,published)
+        self.assertEqual(sum(call.args[1][0]=='fetch'for call in git.call_args_list),1)
+
     def test_framework_program_selection_does_not_install_unselected_mods(self):
         catalog_path=Path(self.framework['bundle'])/'client/sdgo/catalog.json';catalog=storage.read_json(catalog_path)
         other={**catalog['mods'][0],'id':'unused'};catalog['mods'].append(other);catalog_path.write_bytes(storage.json_bytes(catalog))

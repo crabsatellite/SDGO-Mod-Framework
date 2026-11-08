@@ -188,16 +188,17 @@ class ClientRuntime:
             try:
                 url=server_profiles.feed(url);raw,_=server_profiles.read(self,url,server_profiles.MANIFEST,16*1024*1024)
                 profile=json.loads(raw)
-                if profile.get('kind')=='sdgo-client-runtime':
-                    imported=server_profiles.binding(profile)
+                imported=server_profiles.binding(profile)if profile.get('kind')=='sdgo-client-runtime'else server_profiles.discover_binding(self,url,profile)
+                if imported:
                     profile,_,_=server_profiles.resolve(self,imported);urls=imported['feeds']
                     profile={**profile,'framework_source':imported['framework']}
                 framework=profile.get('framework_source')or{'schema_version':1,'kind':'sdgo-framework-runtime',
                     'source_id':updates.digest(('sdgo-framework-runtime:'+updates.REPOSITORY).encode())[:32],
                     'repository':updates.REPOSITORY,'channel':'stable','transport':'github-releases'}
-                source=server_profiles.binding({'schema_version':3,'kind':'sdgo-client-runtime','source_id':profile.get('source_id'),
+                source=server_profiles.binding(imported or {'schema_version':3,'kind':'sdgo-client-runtime','source_id':profile.get('source_id'),
                     'label':profile.get('label'),'feeds':urls,'framework':framework,
                     **({'manager_policy':'owner','channel':profile['channel']}if profile.get('schema_version')==2 else{})})
+                if profile.get('schema_version')==2:source={**source,'manager_policy':'owner','channel':profile['channel']}
                 server_profiles.validate(profile,source);server_profiles.base_check(root,profile)
                 old=installed_source(root)
                 if old and old['source_id']!=source['source_id']:raise ValueError('先明确解除原服主绑定，再导入另一服主配置')

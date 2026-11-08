@@ -6,6 +6,8 @@ An owner programme package locks an official framework baseline and adds explici
 
 The owner chooses the combination. Players import one owner configuration address and then start `GOnline.exe`: Manager downloads and verifies the locked programmes and content, commits them together, rechecks the remote configuration and starts the original game. A failed download or digest check preserves the installation and blocks launch. Matching mirrors can resume the same release; they cannot substitute another publisher or default content.
 
+When importing a content address, Manager also reads that endpoint's `profile-source.json`, checks publisher identity and channel, and saves the owner's declared mirror list. Legacy endpoints may omit this file. An invalid or unreadable descriptor reports an error instead of silently discarding backup sources.
+
 ## Publish from Manager
 
 1. Use a maintainer client and review the official baseline in **Updates and management**. Development clients keep their previews and do not follow player updates.
