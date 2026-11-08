@@ -1,10 +1,14 @@
 # Framework, owner content and local state
 
-[简体中文](content-boundaries.zh-CN.md) · [Manager](mod-manager.md) · [Owner publication](owner-updates.md)
+[简体中文](content-boundaries.zh-CN.md) · [Back to the feature index](../README.md) · [Manager](mod-manager.md) · [Owner publication](owner-updates.md)
+
+## Design principles
 
 Manager composes a portable content contract rather than requiring a particular complete-client repository or branch layout. Players obtain a compatible original client, import an owner profile and install its locked framework programs and owner content through one verified transaction.
 
 The official catalog lists available Mods. An owner profile records the selected programs, exact versions, shared parameters and content digests. Players resolve that profile rather than independently selecting whatever version is newest. Initial installation and updates share compatibility checks, staging, recovery and commit semantics.
+
+Manager updates itself from its own program upstream. Owners lock the game framework and Mod runtime files, so an older content package cannot downgrade a newer Manager. Shared content never overwrites Manager and does not affect its existing source bindings or download recovery.
 
 | Ownership | Contents | Distribution |
 | --- | --- | --- |

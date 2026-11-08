@@ -2,12 +2,14 @@
 
 [简体中文](operator-pack-protocol.zh-CN.md) · [Operator feature guide](operator-assistant.md)
 
-`sdgo.operator-pack` version 1, normally stored as `.opack`, exchanges operator client resources,
-ability drafts, acquisition rules, and shop draft defaults. Pack data never executes itself and does
-not directly apply server or shop changes.
+`sdgo.operator-pack` version 1, normally stored as `.opack`, lets server owners exchange operator client
+resources, ability drafts, acquisition rules, and shop draft defaults. This reference describes the
+format and validation rules SDGO Mod Manager accepts when importing such a pack, how imported resources
+are compiled, the Manager API, and the ability extension ABI, for developers who build packs or
+extension Mods. Pack data never executes itself and does not directly apply server or shop changes.
 
-Voice, artwork, and other game assets are always **client content**. Hong Kong Cantonese assets and
-their `.opack` files may be delivered only through the server owner's client package or update. They
+Voice, artwork, and other game assets are always **client content**. These assets and the `.opack` files
+that contain them may be delivered only through the server owner's client package or update. They
 must not be embedded in the SDGO Mod Manager executable, public framework releases, source repository,
 or generic server package. Manager and public framework artifacts contain only the common protocol,
 importer, compiler, and ability runtime.
@@ -78,8 +80,9 @@ The following 32-wchar text field and remaining frame bytes are preserved indepe
 
 Dialogue records are 710 bytes. The importer preserves `event` at `+0`, a separate `event_variant`
 field at `+50`, the caption at `+100`, and two independent 50-wchar voice references at `+502` and
-`+602`. Extraction traverses every dialogue row and both voice variants. The report's 39 known
-row/variant roles are an availability diagnostic, not a required file count or a complete event limit.
+`+602`. The importer traverses every dialogue row and both voice variants; there is no fixed number of
+voice files or events. ZSD keeps natively playable MP3, WAVE, or MPEG sync-stream bytes without an
+external transcoder.
 
 `voice_policy` is either:
 
@@ -87,14 +90,12 @@ row/variant roles are an availability diagnostic, not a required file count or a
   when `locale` is present.
 - `native_fallback`: keep references to matching resources in the target client.
 
-A localized Cantonese or other language pack should use `provided_only` and include the full dependency
-closure, so missing assets cannot silently substitute another language.
+A separately localized pack should use `provided_only` and include the full dependency closure, so
+missing assets cannot silently substitute another language.
 
-Preview exposes `base_dependencies`, `voice_events`, `sprite_frames`, and `ignored_files`. Source
-inspection additionally separates missing dependencies, invalid dependencies, unavailable profile
-roles, dependency roles, and known voice-slot availability. Extraction rejects missing dependencies by
-default. Explicit fallback still reports every omission; invalid formats and a missing dialogue table
-always fail.
+Preview exposes `base_dependencies` (missing dependencies the target client must provide),
+`voice_events`, `sprite_frames`, and `ignored_files`. Resources with an invalid format are always
+rejected.
 
 Provided resources are rewritten into the imported operator's private client namespace. They do not
 replace the template's GDT, SPR, TXR, or ZSD files.
@@ -211,9 +212,9 @@ the body key `sha256`, with optional `name`, `template_id`, and `source_template
 Catalog writes require the current `X-Catalog-Revision` and use the Manager session token and same-origin
 protection.
 
-## Activation evidence
+## Activation states
 
-Keep these states separate:
+These states are independent:
 
 1. package preview and validation;
 2. saved operator draft;
@@ -224,7 +225,6 @@ Keep these states separate:
 7. live status whose PID, module version, catalog revision, loaded profile count, and hook mode match
    the intended host.
 
-Ability configuration is loaded at BattleServer process startup. Writing files therefore does not prove
-that the current process uses them. Manager status readback rejects stale PIDs, mismatched versions or
-revisions, and status that cannot be tied to the current host process. Offline tests, builds, and static
-validation are separate from actual gameplay evidence.
+Ability configuration is loaded at BattleServer process startup, so installed files take effect only
+after the relevant host restarts. Manager status readback rejects stale PIDs, mismatched versions or
+revisions, and status that cannot be tied to the current host process.

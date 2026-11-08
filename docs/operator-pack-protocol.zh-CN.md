@@ -3,9 +3,11 @@
 [English](operator-pack-protocol.md) · [副官功能说明](operator-assistant.zh-CN.md)
 
 `sdgo.operator-pack` version 1（通常使用 `.opack` 扩展名）用于在服主之间交换副官的客户端资源、
-能力草稿、获取规则和商城预填。包内数据不会自行执行，也不会直接应用服务端或商城。
+能力草稿、获取规则和商城预填。本文说明 SDGO Mod Manager 导入这类分享包时接受的格式与校验规则、
+导入后的编译方式、Manager 接口和能力扩展 ABI，供制作分享包或编写扩展 Mod 的开发者参考。
+包内数据不会自行执行，也不会直接应用服务端或商城。
 
-副官语音、图片和其他游戏素材始终属于 **client-content**。港服粤语素材及其 `.opack` 只能随服主
+副官语音、图片和其他游戏素材始终属于 **client-content**。这些素材及包含它们的 `.opack` 只能随服主
 提供的客户端包或更新交付，不能捆绑进 SDGO Mod Manager EXE、公开框架 Release、源码仓库或通用
 服务端包。Manager 和公开框架发行物只提供通用协议、导入器、编译器和能力运行代码。
 
@@ -171,31 +173,20 @@ SPR 支持 version `10000`/`11000`、kind `20`、1–1024 帧。导入器保留�
 | `+502` | 50 wchar | 语音变体 0 |
 | `+602` | 50 wchar | 语音变体 1 |
 
-提取器遍历所有台词行和两个语音字段。报告中的 39 个 `row/variant` 是已知副官语音角色的可用性检查，
-不是“必须正好有 39 个文件”，也不是事件总数上限。ZSD 保留原生可播放的 MP3、WAVE 或 MPEG
-同步流字节，不调用外部转码器。
+导入器遍历所有台词行和两个语音字段，语音文件数和事件数没有固定要求。ZSD 保留原生可播放的 MP3、
+WAVE 或 MPEG 同步流字节，不调用外部转码器。
 
 `voice_policy`：
 
 - `provided_only`：未打包的台词语音引用会被清空；带 `locale` 的包默认使用此策略。
 - `native_fallback`：允许保留目标客户端已有的原生语音引用。
 
-粤语或其他独立本地化包应显式使用 `provided_only` 并打包完整依赖，避免把缺失资源静默替换为目标
-客户端的其他语言内容。
+独立本地化包应显式使用 `provided_only` 并打包完整依赖，避免把缺失资源静默替换为目标客户端的
+其他语言内容。
 
-预览返回 `base_dependencies`、`voice_events`、`sprite_frames` 和 `ignored_files`。来源提取报告还会
-分别列出：
-
-- `missing_dependencies`
-- `profile_missing_dependencies`
-- `native_fallback_dependencies`
-- `unavailable_profile_roles`
-- `invalid_dependencies`
-- `dependency_roles`
-- `operator_voice_slots` 与可用数量
-
-默认提取拒绝任何缺失依赖。显式允许来源回退时，缺失项仍必须完整报告；格式无效的资源始终拒绝，
-而且台词表不能缺失。导入编译后，已提供资源会改写到新副官自己的客户端资源目录，不覆盖模板资源。
+预览返回 `base_dependencies`（目标客户端需自备的缺失依赖）、`voice_events`、`sprite_frames` 和
+`ignored_files`。格式无效的资源始终拒绝。导入编译后，已提供资源会改写到新副官自己的客户端资源目录，
+不覆盖模板资源。
 
 客户端编译器为每名副官生成 `resources.zdx`/`resources.zpk` 和带哈希的 `resource-overlay.ini`，
 通过共享原生资源代理向游戏原有文件流提供这些虚拟路径。仅复制生成的松散文件不能完成运行时安装。
@@ -232,7 +223,7 @@ pilot_exp_percent, mission_parts, extensions
 布尔值不会被当成整数。`general`、`victory`、`defeat` 分别编译到 `BattleResult`、`TeamWin`、
 `TeamLose`。`ChangeSp`、`ServiceType` 等未确认字段继续从模板继承，协议不为它们杜撰语义。
 
-`timed` 最多四项，按 `start` 升序，时间严格使用 `HH:MM`。开始和结束边界都包含；暂不支持跨午夜。
+`timed` 最多四项，按 `start` 升序，时间严格使用 `HH:MM`。开始和结束边界都包含；不支持跨午夜。
 重叠时原生按 `AddOn1` 到 `AddOn4` 取第一个命中的时段，因此作者不应依赖后面的重叠项覆盖前项。
 
 ```json
@@ -328,7 +319,7 @@ JSON；目前没有全局参数 schema 注册器。扩展作者必须在自己�
 - 可返回的目标字段只有驾驶员经验、机体经验和 GP
 
 每个顶层扩展键都是必需命名空间。任一处理器缺失时，整个 profile 返回 `NO_CHANGE`，不会只执行内置
-部分。回调收到的 `current_*` 已包含内置能力和此前处理结果，扩展不得自行重复结算。
+部分。回调收到的 `current_*` 已包含内置能力和先执行的扩展结果，扩展不得自行重复结算。
 
 共享结算过滤 ABI 位于
 [`include/sdgo/operator_reward_filter.h`](../include/sdgo/operator_reward_filter.h)。任务结算的早期
@@ -383,9 +374,9 @@ JSON；目前没有全局参数 schema 注册器。扩展作者必须在自己�
 
 所有目录写入都要求当前 `X-Catalog-Revision`，并沿用 Manager 会话令牌和同源保护。
 
-## 应用与生效证据
+## 应用与生效状态
 
-以下状态必须分开：
+以下状态彼此独立：
 
 1. `.opack` 通过预览和校验；
 2. 副官草稿已保存；
@@ -395,6 +386,5 @@ JSON；目前没有全局参数 schema 注册器。扩展作者必须在自己�
 6. 相关主机已重启并载入配置；
 7. 实时状态中的 PID、模块版本、目录 revision、已载入 profile 数和 hook 模式与目标一致。
 
-能力配置在 BattleServer 进程启动时载入，因此只写入文件不代表当前进程已经生效。Manager 的实时状态
-读取会拒绝陈旧 PID、版本不符、revision 不符或无法对应当前主机进程的 `status.json`。离线测试、构建
-成功和静态校验也不能单独当作实际游戏效果证明。
+能力配置在 BattleServer 进程启动时载入，写入文件后需重启对应主机，当前进程才会使用新配置。Manager 的
+实时状态读取会拒绝陈旧 PID、版本不符、revision 不符或无法对应当前主机进程的 `status.json`。

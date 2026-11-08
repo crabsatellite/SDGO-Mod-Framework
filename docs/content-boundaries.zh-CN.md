@@ -1,6 +1,6 @@
 # 框架、服主内容与本地状态
 
-[English](content-boundaries.md) · [Manager](mod-manager.zh-CN.md) · [服主发布](owner-updates.zh-CN.md)
+[English](content-boundaries.md) · [返回功能目录](../README.zh-CN.md) · [Manager](mod-manager.zh-CN.md) · [服主发布](owner-updates.zh-CN.md)
 
 ## 设计原则
 
