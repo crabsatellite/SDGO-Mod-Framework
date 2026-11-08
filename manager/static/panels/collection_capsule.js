@@ -42,7 +42,7 @@ export async function mount(root,ctx){
  excluded.append(e('h2','除外名单'),
   e('p','名单里的机体不会从收藏扭蛋抽出，图鉴里也不再显示“可从收藏扭蛋获得”。填任一形态即可：含有该形态的整套机体都会移出。只影响收藏扭蛋，普通扭蛋机、商城、已持有的机体和领取箱都不变。'),
   e('p','保存后立即对目标 WorldServer 生效，不需要重新生成或重启。本机客户端的图鉴说明会自动同步；要让其他玩家看到，照常发布服主内容更新。','muted section-scope-note'));
- const list=e('textarea');list.rows=8;list.placeholder='每行一个：机体ID 备注\n例如：26187 已下架';list.style.width='100%';
+ const list=e('textarea');list.rows=8;list.placeholder='每行一个：机体ID 备注\n例如：10008 暂不开放';list.style.width='100%';
  const excludedSummary=e('p'),excludedResult=e('div'),excludedActions=e('div',undefined,'actions');
  excluded.append(list,excludedSummary,excludedActions,excludedResult);root.append(excluded);
  let savedList='';

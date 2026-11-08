@@ -95,7 +95,7 @@ The exclusion list keeps chosen units out of the collection machine, for example
 withdrawn, test-only or not-yet-released units.
 
 - In the **Exclusion list** area of the Collection capsule panel, enter one unit ID
-  per line, optionally followed by a note, for example `26187 withdrawn`.
+  per line, optionally followed by a note, for example `10008 not yet released`.
 - Any form is enough. Drawing a base form grants its whole transform chain, so a
   family is excluded when any form in its chain is listed.
 - **Preview** shows which drawable units would be removed and how many remain,

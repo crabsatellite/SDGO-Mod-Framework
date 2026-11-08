@@ -45,9 +45,9 @@ def registry(client, roots):
 
 class ExclusionListTests(unittest.TestCase):
     def test_entries_are_normalized_sorted_and_validated(self):
-        self.assertEqual(exclusions.normalize([26187, {'unit_id': 15171, 'note': ' 测试机 '}, 26187]),
-                         [{'unit_id': 15171, 'note': '测试机'}, {'unit_id': 26187, 'note': ''}])
-        for bad in ({'unit_id': 1}, [0], [-5], ['26187'], [{'unit_id': 1, 'note': 'a\nb'}],
+        self.assertEqual(exclusions.normalize([10008, {'unit_id': 10003, 'note': ' 测试机 '}, 10008]),
+                         [{'unit_id': 10003, 'note': '测试机'}, {'unit_id': 10008, 'note': ''}])
+        for bad in ({'unit_id': 1}, [0], [-5], ['10008'], [{'unit_id': 1, 'note': 'a\nb'}],
                     [{'unit_id': 1, 'extra': 2}], [{'unit_id': 1, 'note': 'x' * 101}],
                     [{'unit_id': 1, 'note': 'a'}, {'unit_id': 1, 'note': 'b'}], list(range(1, 5002))):
             with self.assertRaises(ValueError, msg=repr(bad)[:60]):
@@ -173,8 +173,8 @@ class ManagerEntryTests(unittest.TestCase):
         with patch('owner.collection_capsule.deployment.connection', return_value=database), \
              patch('owner.collection_capsule.exclusions.replace', return_value=dict(written)) as replace, \
              patch.object(self.provider, 'sync_hints', return_value={'status': 'updated'}) as refresh:
-            result = self.post('/api/exclusions', entries=[{'unit_id': 26187, 'note': '已下架'}])
-        replace.assert_called_once_with(database, [{'unit_id': 26187, 'note': '已下架'}], dry_run=False)
+            result = self.post('/api/exclusions', entries=[{'unit_id': 10008, 'note': '暂不开放'}])
+        replace.assert_called_once_with(database, [{'unit_id': 10008, 'note': '暂不开放'}], dry_run=False)
         refresh.assert_called_once_with()
         self.assertEqual(result['hints'], {'status': 'updated'})
         self.assertNotIn('eligible_roots', result)
