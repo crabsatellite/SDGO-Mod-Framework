@@ -107,3 +107,56 @@ def compile_bundle(manifests,catalog_sha256,index_sha256,archive_sha256,records,
     return (struct.pack('<8s4I',MAGIC,1,128,len(entries),len(payload))+
             b''.join(bytes.fromhex(_digest(value)) for value in (catalog_sha256,index_sha256,archive_sha256))+
             bytes(8)+payload)
+
+
+def decode_bundle(raw):
+    """Read a compiled sidecar's bindings and entries back (the inverse of compile_bundle)."""
+    if not isinstance(raw,bytes) or not 128<=len(raw)<=128+MAX_BYTES:raise ValueError('skill atlas sidecar byte extent')
+    magic,version,header,count,extent=struct.unpack_from('<8s4I',raw)
+    if magic!=MAGIC or version!=1 or header!=128 or not 1<=count<=4096 or extent!=len(raw)-128 or raw[120:128]!=bytes(8):
+        raise ValueError('skill atlas sidecar header')
+    position=128
+    def take(size):
+        nonlocal position
+        if size>len(raw)-position:raise ValueError('truncated skill atlas sidecar')
+        position+=size;return raw[position-size:position]
+    def text(maximum):
+        size=struct.unpack('<I',take(4))[0]
+        if not 1<=size<=maximum:raise ValueError('skill atlas sidecar text extent')
+        try:return take(size).decode('ascii')
+        except UnicodeError as error:raise ValueError('skill atlas sidecar text encoding') from error
+    entries=[]
+    for _ in range(count):
+        identity=struct.unpack('<I',take(4))[0];digest=take(32).hex()
+        owner,revision,sprite=text(64),text(64),text(80)
+        entries.append({'id':identity,'record_sha256':digest,'owner':owner,'revision':revision,'sprite':sprite,
+                        'frame_count':struct.unpack('<I',take(4))[0]})
+    if position!=len(raw):raise ValueError('skill atlas sidecar trailing bytes')
+    return {'catalog_sha256':raw[24:56].hex(),'index_sha256':raw[56:88].hex(),'archive_sha256':raw[88:120].hex(),
+            'entries':entries}
+
+
+def carried_manifests(decoded,resources):
+    """Owner manifests that recompile a decoded sidecar's entries in their original order.
+
+    ``resources`` maps archive paths to bytes of the sealed overlay the sidecar was bound to.
+    Each sprite lists its own typed frame textures, as validate_manifest requires.
+    """
+    manifests=[];by_owner={}
+    for entry in decoded['entries']:
+        manifest=by_owner.get(entry['owner'])
+        if manifest is None:
+            manifest={'schema':SCHEMA,'owner':entry['owner'],'revision':entry['revision'],'sprites':[],'skills':[]}
+            by_owner[entry['owner']]=manifest;manifests.append(manifest)
+        elif manifest is not manifests[-1] or manifest['revision']!=entry['revision']:
+            raise ValueError('skill atlas sidecar owner entries are not contiguous')
+        if all(row['path']!=entry['sprite'] for row in manifest['sprites']):
+            sprite=resources.get(entry['sprite'])
+            if not isinstance(sprite,bytes):raise ValueError('skill atlas sprite is absent from the sealed overlay: '+entry['sprite'])
+            textures=sorted({frame['texture'] for frame in sprite_frames(sprite)['frames']})
+            missing=[path for path in textures if not isinstance(resources.get(path),bytes)]
+            if missing:raise ValueError('skill atlas texture is absent from the sealed overlay: '+missing[0])
+            manifest['sprites'].append({'path':entry['sprite'],'sha256':_hash(sprite),
+                                        'textures':[{'path':path,'sha256':_hash(resources[path])} for path in textures]})
+        manifest['skills'].append({'id':entry['id'],'record_sha256':entry['record_sha256'],'sprite':entry['sprite']})
+    return manifests

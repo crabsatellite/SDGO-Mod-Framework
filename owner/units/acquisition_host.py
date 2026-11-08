@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import struct
 
+from .compiler import CATALOG_RECORD_LIMIT
 from .repository import _connect,database_target_key
 
 
@@ -89,7 +90,7 @@ def installed_item_records(client):
             raise ValueError('已安装机体目录的数据哈希与收据不一致')
         if len(raw)<32 or raw[:8]!=b'SDGOUN1\0':raise ValueError('已安装机体目录容器无效')
         count=struct.unpack_from('<I',raw,16)[0]
-        if count>4096:raise ValueError('已安装机体目录超过容量')
+        if count>CATALOG_RECORD_LIMIT:raise ValueError('已安装机体目录超过容量')
         cursor=32;records=[]
         for index in range(count):
             if cursor+24>len(raw):raise ValueError('机体目录记录头截断')

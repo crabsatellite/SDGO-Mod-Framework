@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import unittest
 
-from owner.units.native_programs import compile_bundle, inspect_chunk, validate_manifest, validate_project_bindings, CALLBACK_SCHEMA, CALLBACK_ROLES
+from owner.units.native_programs import compile_bundle, decode_bundle, inspect_chunk, validate_manifest, validate_project_bindings, CALLBACK_SCHEMA, CALLBACK_ROLES
 
 
 def chunk(name='example_Init'):
@@ -99,6 +99,27 @@ class NativePrograms(unittest.TestCase):
         second['weapon_callbacks']=[{'weapon_id':90001,'weapon_sha256':digest,'role':'special_ranged','export':name}]
         with self.assertRaisesRegex(ValueError,'owners share a weapon'):
             compile_bundle([manifest,second],'a'*64,{**files,**other_files},{90001:bytes(raw)})
+
+    def test_installed_bundle_decodes_back_to_declarations_that_recompile_byte_identically(self):
+        manifest, files, weapons = fixture()
+        legacy = compile_bundle([manifest], 'a' * 64, files, weapons)
+        decoded = decode_bundle(legacy)
+        self.assertEqual(('a' * 64, 1, ['example']), (decoded['catalog_sha256'], decoded['version'],
+                                                      [row['owner'] for row in decoded['manifests']]))
+        self.assertEqual(legacy, compile_bundle(decoded['manifests'], 'a' * 64, decoded['files'], weapons))
+        # A v2 container keeps every owner's roles, including an initializer-only owner.
+        second, other_files, other_weapons = callback_fixture('second', 90002)
+        mixed = compile_bundle([manifest, second], 'b' * 64, {**files, **other_files}, {**weapons, **other_weapons})
+        decoded = decode_bundle(mixed)
+        self.assertEqual((2, ['example', 'second']), (decoded['version'], [row['owner'] for row in decoded['manifests']]))
+        self.assertEqual(['initializer'], [row['role'] for row in decoded['manifests'][0]['weapon_callbacks']])
+        self.assertEqual(mixed, compile_bundle(decoded['manifests'], 'b' * 64, decoded['files'], {**weapons, **other_weapons}))
+        # Recompiling for another catalog keeps the declarations and only rebinds the header.
+        rebound = compile_bundle(decoded['manifests'], 'c' * 64, decoded['files'], {**weapons, **other_weapons})
+        self.assertEqual((bytes.fromhex('c' * 64), mixed[56:]), (rebound[24:56], rebound[56:]))
+        for bad in (mixed + b'\0', mixed[:-1], b'SDGOPR2\0' + mixed[8:], mixed[:56] + b'\1' + mixed[57:]):
+            with self.subTest(size=len(bad)), self.assertRaises(ValueError):
+                decode_bundle(bad)
 
     def test_complete_chunk_inspection_and_catalog_bound_container(self):
         manifest, files, weapons = fixture()

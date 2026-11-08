@@ -26,6 +26,7 @@ import struct
 from typing import Any, Callable
 
 from . import repository
+from .compiler import CATALOG_RECORD_LIMIT
 from .repository import FAMILY_KEY, ITEM_COLUMNS
 
 PLAN_SCHEMA = 'sdgo.gunion-roster-server-plan/1'
@@ -126,7 +127,7 @@ def _catalog_records(root: Path) -> dict[int, dict[int, bytes]]:
     if len(raw) < 32 or raw[:8] != b'SDGOUN1\0':
         raise ValueError('客户端机体目录容器无效')
     version, header, count, extent, _, reserved = struct.unpack_from('<6I', raw, 8)
-    if version != 1 or header != 32 or reserved or len(raw) != 32 + extent or count > 4096:
+    if version != 1 or header != 32 or reserved or len(raw) != 32 + extent or count > CATALOG_RECORD_LIMIT:
         raise ValueError('客户端机体目录头部无效')
     cursor, result = 32, {}
     for _ in range(count):

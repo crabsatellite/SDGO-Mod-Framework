@@ -10,7 +10,7 @@ import unittest
 from PIL import Image
 
 from owner.units.assets import sprite_binary
-from owner.units.skill_atlases import compile_bundle,validate_manifest
+from owner.units.skill_atlases import carried_manifests,compile_bundle,decode_bundle,validate_manifest
 from owner.units.compiler import fnv
 from owner.native_archive import build_archive
 
@@ -51,6 +51,22 @@ class SkillAtlases(unittest.TestCase):
         binary=compile_bundle([manifest],'b'*64,'c'*64,'d'*64,records,resources)
         self.assertEqual((b'SDGOAT1\0',1,128,1,len(binary)-128),struct.unpack_from('<8s4I',binary))
         self.assertEqual(bytes.fromhex('b'*64+'c'*64+'d'*64),binary[24:120])
+
+    def test_installed_sidecar_decodes_back_to_manifests_that_recompile_byte_identically(self):
+        manifest,records,resources=fixture()
+        binary=compile_bundle([manifest],'b'*64,'c'*64,'d'*64,records,resources)
+        decoded=decode_bundle(binary)
+        self.assertEqual(('b'*64,'c'*64,'d'*64),(decoded['catalog_sha256'],decoded['index_sha256'],decoded['archive_sha256']))
+        self.assertEqual([(9800123,'example','a'*64,'sprs/owner_atlas.spr',1)],
+                         [(row['id'],row['owner'],row['revision'],row['sprite'],row['frame_count']) for row in decoded['entries']])
+        carried=carried_manifests(decoded,resources)
+        self.assertEqual([manifest],carried)
+        self.assertEqual(binary,compile_bundle(carried,'b'*64,'c'*64,'d'*64,records,resources))
+        missing=dict(resources);missing.pop('txrs/owner_atlas.txr')
+        with self.assertRaisesRegex(ValueError,'texture is absent'):carried_manifests(decoded,missing)
+        with self.assertRaisesRegex(ValueError,'sprite is absent'):carried_manifests(decoded,{})
+        for bad in (binary+b'\0',binary[:-1],binary[:120]+b'\1'+binary[121:]):
+            with self.subTest(size=len(bad)),self.assertRaises(ValueError):decode_bundle(bad)
 
     def test_owner_atlas_does_not_reuse_the_global_sprite_name(self):
         manifest,records,resources=fixture();sprite=resources['sprs/owner_atlas.spr']
