@@ -23,14 +23,32 @@ def command():
     return [sys.executable]if getattr(sys,'frozen',False)else[sys.executable,str(Path(__file__).resolve().parents[1]/'tools/mod_manager.py')]
 
 
+def cache_manager(target,raw):
+    """Serialize writers before a second click can map the shared helper EXE."""
+    target=Path(target)
+    k=c.WinDLL('kernel32',use_last_error=True)
+    k.CreateMutexW.argtypes=(c.c_void_p,w.BOOL,w.LPCWSTR);k.CreateMutexW.restype=w.HANDLE
+    k.WaitForSingleObject.argtypes=(w.HANDLE,w.DWORD);k.ReleaseMutex.argtypes=(w.HANDLE,);k.CloseHandle.argtypes=(w.HANDLE,)
+    mutex=k.CreateMutexW(None,False,'Local\\SDGO.HelperCopy.'+hashlib.sha256(str(target.resolve()).casefold().encode()).hexdigest())
+    if not mutex:raise c.WinError(c.get_last_error())
+    held=False
+    try:
+        if k.WaitForSingleObject(mutex,0xffffffff)not in(0,0x80):raise c.WinError(c.get_last_error())
+        held=True
+        target.parent.mkdir(parents=True,exist_ok=True)
+        if not target.is_file()or hashlib.sha256(target.read_bytes()).digest()!=hashlib.sha256(raw).digest():
+            from . import storage
+            storage.atomic(target,raw)
+    finally:
+        if held:k.ReleaseMutex(mutex)
+        k.CloseHandle(mutex)
+
+
 def detach(root,token):
-    """Run the same signed/distributed Manager from local state to unlock its EXE."""
+    """Run the same distributed Manager from local state to unlock its EXE."""
     source=Path(sys.executable);raw=source.read_bytes()
     target=launch.folder(root)/'manager'/hashlib.sha256(raw).hexdigest()/source.name
-    target.parent.mkdir(parents=True,exist_ok=True)
-    if not target.is_file()or hashlib.sha256(target.read_bytes()).digest()!=hashlib.sha256(raw).digest():
-        from . import storage
-        storage.atomic(target,raw)
+    cache_manager(target,raw)
     subprocess.Popen([str(target),'--launch-game',str(root),'--launch-request',token,'--launch-worker'],cwd=root,
                      env=dict(os.environ,PYINSTALLER_RESET_ENVIRONMENT='1'),
                      creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0),close_fds=True)

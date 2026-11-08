@@ -32,6 +32,7 @@ Each launch checks the selected owner's current profile, downloads required prog
 Progress includes checking, received bytes or file counts, installation and launch. Slow downloads have no total-time or minimum-speed limit. An error leaves the game closed and offers Retry or Cancel; verified downloads remain available. Repeated clicks during one pending launch share one update and launch. If an update requires a running game or Manager to close, the progress window waits for normal exit or the existing Manager restart transaction; it never terminates a player's game.
 
 The loader exits the initial process before replacement and accepts a single-use, short-lived launch permit bound to this client, its source and its verified receipt. Manager preserves the original arguments. A missing or outdated Manager shows an actionable error; incomplete content cannot be used as an offline success path. Explicitly imported offline profiles verify their declared local source.
+Concurrent clicks share a verified helper copy. Its executable is written by one process at a time, so another click cannot replace it while Windows is starting it.
 
 ## Owner publication
 

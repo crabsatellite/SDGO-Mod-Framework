@@ -131,6 +131,23 @@ class LaunchGate(unittest.TestCase):
 
 
 class LaunchSession(unittest.TestCase):
+    @unittest.skipUnless(os.name=='nt','Windows helper copy mutex')
+    def test_concurrent_helper_copies_share_one_complete_file(self):
+        import time
+        with tempfile.TemporaryDirectory()as temp:
+            root=Path(temp);source=root/'source.exe';source.write_bytes(os.urandom(1024*1024));target=root/'cache/Manager.exe'
+            script='from pathlib import Path;import sys,time;from manager.launch_ui import cache_manager;r=Path(sys.argv[1]);(r/(sys.argv[2]+".ready")).touch();\nwhile not(r/"start").exists():time.sleep(.01)\ncache_manager(r/"cache/Manager.exe",(r/"source.exe").read_bytes())'
+            processes=[subprocess.Popen([sys.executable,'-c',script,str(root),str(i)])for i in range(4)]
+            try:
+                deadline=time.monotonic()+15
+                while len(list(root.glob('*.ready')))<4 and time.monotonic()<deadline:time.sleep(.02)
+                self.assertEqual(len(list(root.glob('*.ready'))),4);(root/'start').touch()
+                self.assertEqual([p.wait(timeout=15)for p in processes],[0]*4)
+                self.assertEqual(source.read_bytes(),target.read_bytes())
+            finally:
+                for p in processes:
+                    if p.poll()is None:p.kill();p.wait(timeout=10)
+
     @unittest.skipUnless(os.name=='nt','Windows process identity')
     def test_exited_process_with_a_held_handle_is_not_an_origin(self):
         process=subprocess.Popen([sys.executable,'-c','pass']);process.wait(timeout=10)
