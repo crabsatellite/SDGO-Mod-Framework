@@ -4,7 +4,7 @@ Set the rendering ceiling in **SDGO Mod Manager** while keeping the game's
 native speed. For example, 160 allows rendering up to 160 FPS; logic updates
 remain at the original 60 Hz so movement and AI do not accelerate.
 
-Independent rendering with native gameplay speed requires `fps_limit` 1.0.3 or newer.
+Independent rendering with native gameplay speed requires `fps_limit` 1.0.4 or newer.
 Update older versions before selecting a higher cap.
 
 [简体中文](fps-limit.zh-CN.md)
@@ -35,6 +35,11 @@ Only the rendering ceiling follows this setting. Logic updates remain at the
 native 60 Hz for every cap, including 30, 60, 120 and 160. Resolution, aspect
 ratio and the native clock source are unchanged.
 
+Rendering continues while the simulation catches up after a slow update. This
+prevents update debt from hiding otherwise continuing gameplay for several
+seconds in a busy AI battle. The original update scheduling and accumulated
+time are retained; the configured cap still limits actual Present calls.
+
 The cap is a maximum. Rendering load, vertical sync and display refresh rate
 can reduce the rate you see. Raising the cap does not guarantee higher performance.
 
@@ -53,6 +58,7 @@ the startup log includes `effective FPS cap=160`.
 | `invalid value; using 60` | Enter an integer from 1 to 1000 |
 | Required symbol did not verify | Use a supported client and matching framework files |
 | Rendering stays below the limit | Check scene complexity, AI load, vertical sync and display settings |
+| AI keeps moving while the picture freezes for seconds | Update and enable `fps_limit` 1.0.4 or newer, then restart the client |
 
 For performance diagnosis, enable **帧率采样日志** under **Show developer information**
 and restart the client. `render FPS sample` records a five-second average of

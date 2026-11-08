@@ -73,7 +73,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Per-round random loadouts <!-- catalog: `room_random`, `room_random_client` --> | `!rand` draws owned units or decks each round; native loadout tasks settle before start | [Use](docs/room-random.md) |
 | Complete PvP All Map <!-- catalog: `all_maps` --> | Make the room's All Map choice draw from the complete native PvP map catalog while keeping mission-only maps in missions | [Use](docs/all-maps.md) |
 | Login unit showcase <!-- catalog: `login_showcase` --> | Choose login models by grade, all units, recent registrations or a selected list; SS/SR/SU by default | [Use](docs/login-showcase.md) |
-| FPS cap <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed | [Use](docs/fps-limit.md) |
+| FPS cap <!-- catalog: `fps_limit` --> | Set the render cap and keep frames updating during simulation catch-up, at native gameplay speed | [Use](docs/fps-limit.md) |
 | Extended room titles <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Enter up to 128 characters in normal, AI, team and mission room creation, settings and rename controls | [Use](docs/room-titles.md) |
 | Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Easy / Medium / Hard, weapon and form choices based on actual reach, shared contacts and map propulsion routes | [Use](docs/battle-ai.md) |
 | Automatic hangar capacity <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) | [Use](docs/hangar-capacity.md) |
