@@ -10,6 +10,8 @@ namespace {
     SdgoMod* g_mod;
     void* g_resume;
     void* g_original;
+    void* g_backlogOriginal;
+    void* g_backlogResume;
     using IdleFn = void(__thiscall*)(uint8_t*);
     IdleFn g_idle;
     using PresentFn=HRESULT(__thiscall*)(void*,HWND);
@@ -150,6 +152,16 @@ namespace {
         __asm { popfd }
         __asm { jmp dword ptr [g_resume] }
     }
+
+    // CApplication::Idle otherwise suppresses every render while the native
+    // update timer has positive debt. A sustained slow update can therefore
+    // hide many seconds of otherwise continuing gameplay. Retain the compare
+    // and all timer state, but admit rendering; Present still owns the cap.
+    __declspec(naked) void RenderDuringCatchUp()
+    {
+        __asm { comiss xmm1,xmm0 }
+        __asm { jmp dword ptr [g_backlogResume] }
+    }
 }
 
 SDGO_MOD_ENTRY
@@ -158,17 +170,21 @@ SDGO_MOD_ENTRY
         api->size < offsetof(SdgoApi, HookSite) + sizeof(api->HookSite) || !api->HookSite)
         return 0;
     auto* site = static_cast<uint8_t*>(api->Symbol(mod, "fps.config.force60"));
-    if (!site || !api->Symbol(mod, "fps.app.render_sync")) return 0;
+    auto* backlog = static_cast<uint8_t*>(api->Symbol(mod,"fps.app.render_backlog"));
+    if (!site || !backlog || !api->Symbol(mod, "fps.app.render_sync")) return 0;
     if (!QueryPerformanceFrequency(&g_frequency) || g_frequency.QuadPart<=0)return 0;
     g_api = api;
     g_mod = mod;
     g_logFps=api->SettingInt(mod,"LogFps",0)!=0;
     g_resume = site + 10; // whole verified native instruction; never execute it
+    g_backlogResume=backlog+9; // COMISS and the complete six-byte JA
     if (!api->HookSite(mod, "fps.config.force60", reinterpret_cast<void*>(&PreserveConfiguredCap), &g_original))
         return 0;
     if (!api->HookCode(mod, "fps.app.idle", reinterpret_cast<void*>(&Idle),
                        reinterpret_cast<void**>(&g_idle)))
         return 0;
+    if (!api->HookSite(mod,"fps.app.render_backlog",reinterpret_cast<void*>(&RenderDuringCatchUp),
+                      &g_backlogOriginal))return 0;
     if (!api->HookCode(mod, "fps.device.present", reinterpret_cast<void*>(&Present),
                        reinterpret_cast<void**>(&g_present)))return 0;
     using CreateTimerFn=HANDLE(WINAPI*)(LPSECURITY_ATTRIBUTES,LPCWSTR,DWORD,DWORD);
