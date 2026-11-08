@@ -1795,6 +1795,7 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                          page_group: str | None = None, hangar_confirm_gb: bool = False,
                          mission_respawns: str | None = None,
                          oc_allocate: str | None = None,
+                         oc_room: bool = False,
                          mission_behavior_profile: str | None = None,
                          mission_game_mode_id: int | None = None,
                          oc_panel: bool = False, oc_challenge: bool = False) -> tuple[str, ...]:
@@ -1857,7 +1858,7 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         # Allocate first, then equip: the equip reply is the owned record every
         # native copy (profile, room pilot) is built from, so it must already
         # carry the new OC payload before the battle.
-        selection = ('oc.allocate',) + selection
+        selection = ('oc.allocate',) + selection + (('oc.create',) if oc_room else ())
     if mission_mode is not None:
         if mode_sequence != "1":
             raise GameTestError("--mission-mode cannot be combined with a PvP mode sequence")
@@ -1990,6 +1991,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         hangar_confirm_gb=plan.get('hangar_confirm_gb', False),
         mission_respawns=plan.get('mission_respawns'),
         oc_allocate=plan.get('oc_allocate'),
+        oc_room=plan.get('oc_room', False),
         mission_behavior_profile=plan.get("mission_behavior_profile"),
         mission_game_mode_id=plan.get("mission_game_mode_id"),
         oc_panel=plan.get('oc_panel', False),
@@ -2754,6 +2756,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 page_group=page_group,
                 hangar_confirm_gb=hangar_confirm_gb,
                 oc_allocate=oc_allocate,
+                oc_room=run.get('oc_room') == '1',
                 oc_panel=run.get('oc_panel') == '1',
                 oc_challenge=run.get('oc_challenge') == '1',
             )

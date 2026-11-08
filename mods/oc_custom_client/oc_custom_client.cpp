@@ -1258,7 +1258,24 @@ void LogMark(const char* message) { Log(SDGO_LOG_INFO, message); }
 
 void __fastcall RoomListUpdateHook(void* service, void*) {
     g_room_list_update_original(service);
-    if (RoomRuleKnown()) room_marks::MarkRoomList(service);
+    if (!RoomRuleKnown()) return;
+    room_marks::MarkRoomList(service);
+    room_marks::UpdateCreateWindow();
+}
+
+// UI events of the PvP create windows (vtable slot 14): the 体系 row arrows.
+using CreateEventFn = void(__stdcall*)(void*, std::uint32_t, std::uintptr_t, void*);
+CreateEventFn g_make_room_event_original = nullptr;
+CreateEventFn g_make_room_ai_event_original = nullptr;
+
+void __stdcall MakeRoomEventHook(void* service, std::uint32_t event, std::uintptr_t second, void* control) {
+    if (RoomRuleKnown() && room_marks::HandleCreateEvent(service, event, control)) return;
+    g_make_room_event_original(service, event, second, control);
+}
+
+void __stdcall MakeRoomAiEventHook(void* service, std::uint32_t event, std::uintptr_t second, void* control) {
+    if (RoomRuleKnown() && room_marks::HandleCreateEvent(service, event, control)) return;
+    g_make_room_ai_event_original(service, event, second, control);
 }
 
 void __fastcall TitleBarUpdateHook(void* title_bar, void*) {
@@ -1980,6 +1997,10 @@ int Snapshot(SdgoOcCustomClientSnapshotV2* output) {
     snapshot.room_list_marks = room_marks::ListMarks();
     snapshot.title_marks = room_marks::TitleMarks();
     snapshot.title_mark_system = room_marks::TitleSystem();
+    snapshot.create_open = room_marks::CreateOpen() ? 1u : 0u;
+    snapshot.create_shown = room_marks::CreateShown();
+    snapshot.create_toggles = room_marks::CreateToggles();
+    snapshot.create_system = room_marks::CreateSystem();
     snapshot.battle_skills_seen = g_battle_skills_seen;
     snapshot.battle_skills_offset = g_battle_skills_offset;
     for (std::size_t slot = 0; slot < kCustomSkillCount; ++slot) snapshot.battle_skills[slot] = g_battle_skills[slot];
@@ -2031,6 +2052,7 @@ int Action(const SdgoOcCustomClientActionV2& request) {
 
 int Click(const char* window, const wchar_t* name) {
     if (GetCurrentThreadId() != g_ui_thread && g_ui_thread) return 0;
+    if (window && !std::strcmp(window, "create")) return room_marks::ClickCreate(name) ? 1 : 0;
     if (window && !std::strcmp(window, "tab")) {
         if (!g_tab.button || !g_tab.service || !g_tab.dialog || !name) return 0;
         if (!std::wcscmp(name, L"OverCustomRadio")) {
@@ -2161,6 +2183,12 @@ SDGO_MOD_ENTRY {
         !api->HookSlot(mod, "oc_custom.client_titlebar_update", reinterpret_cast<void*>(&TitleBarUpdateHook),
                        reinterpret_cast<void**>(&g_titlebar_update_original)))
         Log(SDGO_LOG_WARN, "oc: room-system marks unavailable; rooms still play the system their title selects");
+    if (!room_marks::BindCreate(api, mod) ||
+        !api->HookSlot(mod, "oc_custom.client_make_room_event", reinterpret_cast<void*>(&MakeRoomEventHook),
+                       reinterpret_cast<void**>(&g_make_room_event_original)) ||
+        !api->HookSlot(mod, "oc_custom.client_make_room_ai_event", reinterpret_cast<void*>(&MakeRoomAiEventHook),
+                       reinterpret_cast<void**>(&g_make_room_ai_event_original)))
+        Log(SDGO_LOG_WARN, "oc: the create-window 体系 row is unavailable; the room title's !oc still selects OC");
     api->Log(mod, SDGO_LOG_INFO,
              "ready: original OC windows on the factory upgrade page; battle speed/agility gains on the local unit; "
              "room systems follow the room title (!oc) when the server runs room mode");

@@ -270,6 +270,349 @@ void MarkTitleBar(void* title_bar, RoomSystem system) {
     }
 }
 
+// --- Room creation: the 体系 row ---------------------------------------------------
+//
+// The PvP create windows (CServiceMakeRoom, CServiceMakeRoomAI; uirs\1304)
+// get a 体系 row in the left panel between the minimap (bottom 177) and
+// SettingBtn (top 211), drawn like the window's own selectors: the left and
+// right arrows use the game-mode arrows' sprites (sprs\17915-17917,
+// sprs\17918-17920, 19x19) and the value sits between them. The row edits
+// the room name: OC adds the !oc command, G改 1.0 removes it; typing the
+// command by hand shows the same value. Services: dialog root +0x50,
+// room-name edit +0x54, ready from state (+0x44) 4.
+namespace {
+
+using ServiceFindFn = void*(__thiscall*)(void*, const void*);
+using EditGetTextFn = const HostString*(__thiscall*)(void*);
+using EditSetTextFn = void(__thiscall*)(void*, const HostString*, int);
+using SkinFn = void(__thiscall*)(void*, const HostString*, std::uint8_t, std::uint32_t, std::uint32_t);
+using RefreshFn = void(__thiscall*)(void*);
+
+void** g_service_manager = nullptr;
+const void* g_create_vtables[2] = {};
+const void* g_edit_vtable = nullptr;
+EditGetTextFn g_edit_get_text = nullptr;
+EditSetTextFn g_edit_set_text = nullptr;
+SkinFn g_skin = nullptr;
+RefreshFn g_refresh = nullptr;
+std::uint8_t** g_input_context = nullptr; // shared native text input; HWND at +0x134
+std::uint32_t g_create_shown = 0;
+std::uint32_t g_create_toggles = 0;
+std::int32_t g_create_system = -1;
+void* g_create_root = nullptr;
+std::int32_t g_create_label_system = -1;
+
+constexpr std::size_t kServiceState = 0x44, kServiceRoot = 0x50, kServiceEdit = 0x54;
+constexpr std::size_t kEditLimitBytes = 0x2A0;
+constexpr std::size_t kEditFocused = 0x165, kInputWindow = 0x134;
+constexpr std::size_t kEnabled = 0x167, kDebugQuad = 0x168;
+constexpr wchar_t kCreateLeft[] = L"OcSystemLeftBtn";
+constexpr wchar_t kCreateRight[] = L"OcSystemRightBtn";
+constexpr wchar_t kCreateValue[] = L"OcSystemStatic";
+constexpr int kRowArrowY = 186, kRowLeftX = 41, kRowRightX = 180, kArrowSize = 19;
+constexpr int kRowValueX = 62, kRowValueY = 189, kRowValueWidth = 116, kRowValueHeight = 15;
+constexpr std::uint32_t kButtonClick = 0x101;
+
+void* FindServiceByVtable(const void* vtable) noexcept {
+    __try {
+        if (!vtable || !g_service_manager || !*g_service_manager) return nullptr;
+        auto* owner = static_cast<std::uint8_t*>(*g_service_manager);
+        auto* head = *reinterpret_cast<std::uint8_t**>(owner + 0x44);
+        if (!head) return nullptr;
+        auto* node = *reinterpret_cast<std::uint8_t**>(head);
+        for (unsigned count = 0; node && node != head && count < 512; ++count) {
+            void* service = *reinterpret_cast<void**>(node + 8);
+            if (service && *static_cast<const void* const*>(service) == vtable) return service;
+            node = *reinterpret_cast<std::uint8_t**>(node);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return nullptr;
+}
+
+struct CreateWindow {
+    void* service = nullptr;
+    void* root = nullptr;
+    void* edit = nullptr;
+};
+
+bool ReadyWindow(void* service, CreateWindow* window) noexcept {
+    std::uint32_t state = 0;
+    void* root = nullptr;
+    void* edit = nullptr;
+    std::uint8_t visible = 0;
+    const void* edit_vtable = nullptr;
+    if (!ReadAt(service, kServiceState, &state) || state < 4 || !ReadAt(service, kServiceRoot, &root) || !root ||
+        !ReadAt(root, kVisible, &visible) || !visible || !ReadAt(service, kServiceEdit, &edit) || !edit ||
+        !ReadAt(edit, 0, &edit_vtable) || edit_vtable != g_edit_vtable)
+        return false;
+    *window = CreateWindow{service, root, edit};
+    return true;
+}
+
+bool EditText(void* edit, wchar_t* text, std::size_t capacity, std::size_t* length) noexcept {
+    const HostString* value = nullptr;
+    __try {
+        value = g_edit_get_text(edit);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return value && CopyString(value, text, capacity, length);
+}
+
+// While the edit has focus the shared native input window holds the text the
+// player types and the edit shows; it is replaced too, caret at the end.
+HWND FocusedInputWindow(void* edit) noexcept {
+    std::uint8_t focused = 0;
+    if (!g_input_context || !ReadAt(edit, kEditFocused, &focused) || !focused) return nullptr;
+    __try {
+        auto* input = *g_input_context;
+        HWND window = input ? *reinterpret_cast<HWND*>(input + kInputWindow) : nullptr;
+        return window && IsWindow(window) ? window : nullptr;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
+bool SetEditText(void* edit, const wchar_t* text, std::size_t length) noexcept {
+    const HostString view = View(text, length);
+    __try {
+        g_edit_set_text(edit, &view, 0);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    if (HWND window = FocusedInputWindow(edit)) {
+        SendMessageW(window, WM_SETTEXT, 0, reinterpret_cast<LPARAM>(text));
+        SendMessageW(window, EM_SETSEL, static_cast<WPARAM>(length), static_cast<LPARAM>(length));
+    }
+    return true;
+}
+
+bool Skin(void* control, const wchar_t* sprite) noexcept {
+    const HostString view = View(sprite, std::wcslen(sprite));
+    __try {
+        g_skin(control, &view, 0, 0, 0);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+void* EnsureButton(void* root, const wchar_t* name, int x, int y, int width, int height, const wchar_t* sprite_base,
+                   int first_sprite) noexcept {
+    void* control = FindControl(root, name, kButton);
+    if (control) return control;
+    const HostString view = View(name, std::wcslen(name));
+    __try {
+        g_add(root, &view, x, y, width, height, 0);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+    control = FindControl(root, name, kButton);
+    void* parent = nullptr;
+    if (!control || !ReadAt(control, kParent, &parent) || parent != root) return nullptr;
+    // +0x162 visible, +0x163 drawn, +0x167 interactive; appended controls also
+    // clear the debug rectangle (+0x168) that loaded controls turn off.
+    WriteAt<std::uint8_t>(control, kVisible, 1);
+    WriteAt<std::uint8_t>(control, kVisible2, 1);
+    WriteAt<std::uint8_t>(control, kEnabled, sprite_base ? 1 : 0);
+    WriteAt<std::uint8_t>(control, kDebugQuad, 0);
+    if (sprite_base) {
+        for (int state = 0; state < 3; ++state) {
+            wchar_t sprite[48];
+            std::swprintf(sprite, 48, L"%ls%d.spr", sprite_base, first_sprite + state);
+            Skin(control, sprite);
+        }
+    }
+    __try {
+        if (g_refresh) {
+            g_refresh(control);
+            g_refresh(root);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return control;
+}
+
+// Removes every standalone !oc token (and the space before it) from text.
+std::size_t WithoutOc(const wchar_t* text, std::size_t length, wchar_t* out) {
+    std::size_t size = 0;
+    for (std::size_t index = 0; index < length;) {
+        const bool start = index == 0 || text[index - 1] == L' ';
+        const bool token = start && index + 3 <= length && text[index] == L'!' &&
+                           (text[index + 1] == L'o' || text[index + 1] == L'O') &&
+                           (text[index + 2] == L'c' || text[index + 2] == L'C') &&
+                           (index + 3 == length || text[index + 3] == L' ');
+        if (token) {
+            if (size && out[size - 1] == L' ') --size;
+            index += 3;
+            continue;
+        }
+        out[size++] = text[index++];
+    }
+    out[size] = 0;
+    return size;
+}
+
+// Bytes the title takes in the native narrow field (ASCII 1, others 2).
+std::size_t NativeBytes(const wchar_t* text, std::size_t length) {
+    std::size_t bytes = 0;
+    for (std::size_t index = 0; index < length; ++index) bytes += text[index] < 0x80 ? 1 : 2;
+    return bytes;
+}
+
+bool ToggleCreate(const CreateWindow& window) {
+    wchar_t text[kTextMax];
+    std::size_t length = 0;
+    if (!EditText(window.edit, text, kTextMax, &length)) return false;
+    const bool oc = SystemOfText(text, length) == RoomSystem::oc;
+    wchar_t updated[kTextMax];
+    std::size_t size = WithoutOc(text, length, updated);
+    if (!oc) {
+        // The native field holds 20 bytes unless the long-title Mod widened the
+        // edit (UTF-16 byte limit at +0x2A0); keep the command inside it.
+        std::uint32_t limit = 0;
+        ReadAt(window.edit, kEditLimitBytes, &limit);
+        const bool wide = limit >= 128;
+        const std::size_t suffix = size ? 4 : 3; // " !oc" or "!oc"
+        while (size && (wide ? (size + suffix) * 2 > limit : NativeBytes(updated, size) + suffix > 20)) --size;
+        while (size && updated[size - 1] == L' ') --size;
+        if (size) updated[size++] = L' ';
+        std::wmemcpy(updated + size, L"!oc", 3);
+        size += 3;
+        updated[size] = 0;
+    }
+    if (!SetEditText(window.edit, updated, size)) return false;
+    ++g_create_toggles;
+    if (g_log) g_log(oc ? "oc create window: system set to the current custom parts" : "oc create window: system set to OC (!oc)");
+    return true;
+}
+
+// Every live service with one of the create-window vtables (diagnostic list).
+std::size_t CreateServices(void** found, std::size_t capacity) noexcept {
+    std::size_t count = 0;
+    __try {
+        if (!g_service_manager || !*g_service_manager) return 0;
+        auto* owner = static_cast<std::uint8_t*>(*g_service_manager);
+        auto* head = *reinterpret_cast<std::uint8_t**>(owner + 0x44);
+        auto* node = head ? *reinterpret_cast<std::uint8_t**>(head) : nullptr;
+        for (unsigned n = 0; node && node != head && n < 512; ++n) {
+            void* service = *reinterpret_cast<void**>(node + 8);
+            const void* vtable = service ? *static_cast<const void* const*>(service) : nullptr;
+            if (vtable && (vtable == g_create_vtables[0] || vtable == g_create_vtables[1]) && count < capacity)
+                found[count++] = service;
+            node = *reinterpret_cast<std::uint8_t**>(node);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return count;
+}
+
+// The newest ready create window. The native page normally keeps one; when
+// several are open the topmost (the most recently created) is the one shown.
+bool FindReadyWindow(CreateWindow* window) {
+    void* found[16] = {};
+    const std::size_t count = CreateServices(found, 16);
+    static std::size_t logged = 0;
+    if (count != logged && g_log) {
+        logged = count;
+        char line[96];
+        std::snprintf(line, sizeof(line), "oc create window services=%u", static_cast<unsigned>(count));
+        g_log(line);
+    }
+    for (std::size_t index = count; index-- > 0;)
+        if (ReadyWindow(found[index], window)) return true;
+    return false;
+}
+
+} // namespace
+
+bool BindCreate(const SdgoApi* api, SdgoMod* mod) {
+    g_service_manager = static_cast<void**>(api->Symbol(mod, "flow.service_managed_pointer"));
+    g_create_vtables[0] = api->Symbol(mod, "oc_custom.client_make_room_vtable");
+    g_create_vtables[1] = api->Symbol(mod, "oc_custom.client_make_room_ai_vtable");
+    g_edit_vtable = api->Symbol(mod, "oc_custom.client_edit_vtable");
+    g_edit_get_text = reinterpret_cast<EditGetTextFn>(api->Symbol(mod, "oc_custom.client_edit_get_text"));
+    g_edit_set_text = reinterpret_cast<EditSetTextFn>(api->Symbol(mod, "oc_custom.client_edit_set_text"));
+    g_skin = reinterpret_cast<SkinFn>(api->Symbol(mod, "hangar.ui_add_skin"));
+    g_refresh = reinterpret_cast<RefreshFn>(api->Symbol(mod, "friend_unit_gift.ui_refresh_geometry"));
+    g_input_context = static_cast<std::uint8_t**>(api->Symbol(mod, "room_titles.ui_input_context"));
+    return g_service_manager && g_create_vtables[0] && g_create_vtables[1] && g_edit_vtable && g_edit_get_text &&
+           g_edit_set_text && g_skin && g_refresh && g_input_context && g_add && g_find && g_set_text_item;
+}
+
+void UpdateCreateWindow() {
+    CreateWindow window;
+    if (!FindReadyWindow(&window)) {
+        g_create_root = nullptr;
+        g_create_label_system = -1;
+        return;
+    }
+    void* left = EnsureButton(window.root, kCreateLeft, kRowLeftX, kRowArrowY, kArrowSize, kArrowSize, L"sprs\\", 17915);
+    void* right = EnsureButton(window.root, kCreateRight, kRowRightX, kRowArrowY, kArrowSize, kArrowSize, L"sprs\\", 17918);
+    void* value = EnsureButton(window.root, kCreateValue, kRowValueX, kRowValueY, kRowValueWidth, kRowValueHeight,
+                               nullptr, 0);
+    if (!left || !right || !value) return;
+    if (window.root != g_create_root) {
+        g_create_root = window.root;
+        g_create_label_system = -1;
+        ++g_create_shown;
+        if (g_log) g_log("oc create window: 体系 row shown");
+    }
+    wchar_t text[kTextMax];
+    std::size_t length = 0;
+    if (!EditText(window.edit, text, kTextMax, &length)) return;
+    const auto system = static_cast<std::int32_t>(SystemOfText(text, length));
+    g_create_system = system;
+    if (system == g_create_label_system) return;
+    const wchar_t* label = system == static_cast<std::int32_t>(RoomSystem::oc) ? L"体系：OC" : L"体系：G改 1.0";
+    const HostString view = View(label, std::wcslen(label));
+    __try {
+        g_set_text_item(value, 0, &view, 0, 0, kRowValueWidth, kRowValueHeight, kLabelColor, kShadowColor, 0, 1, 2);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return;
+    }
+    g_create_label_system = system;
+}
+
+bool HandleCreateEvent(void* service, std::uint32_t event, void* control) {
+    if (event != kButtonClick || !control) return false;
+    CreateWindow window;
+    if (!service || !ReadyWindow(service, &window)) return false;
+    void* left = FindControl(window.root, kCreateLeft, kButton);
+    void* right = FindControl(window.root, kCreateRight, kButton);
+    if (control != left && control != right) return false;
+    ToggleCreate(window);
+    g_create_label_system = -1; // refresh the value on the next update
+    return true;
+}
+
+bool ClickCreate(const wchar_t* name) {
+    CreateWindow window;
+    if (!name || !FindReadyWindow(&window)) return false;
+    void* control = FindControl(window.root, name, kButton);
+    if (!control) return false;
+    // The window's own UI callback (vtable slot 14), as a mouse click delivers it.
+    using Callback = void(__stdcall*)(void*, std::uint32_t, std::uintptr_t, void*);
+    Callback callback = nullptr;
+    __try {
+        callback = (*static_cast<Callback* const*>(window.service))[14];
+        callback(window.service, kButtonClick, 0, control);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+bool CreateOpen() {
+    CreateWindow window;
+    return FindReadyWindow(&window);
+}
+
+std::uint32_t CreateShown() { return g_create_shown; }
+std::uint32_t CreateToggles() { return g_create_toggles; }
+std::int32_t CreateSystem() { return g_create_system; }
+
 std::uint32_t ListMarks() { return g_list_marks; }
 std::uint32_t TitleMarks() { return g_title_marks; }
 std::int32_t TitleSystem() { return g_title_system; }

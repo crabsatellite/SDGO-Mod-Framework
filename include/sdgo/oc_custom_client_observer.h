@@ -92,6 +92,11 @@ struct SdgoOcCustomClientSnapshotV2 {
     uint32_t battle_skills_seen;    // local stat setups searched
     int32_t battle_skills_offset;   // where the record's skills were found, -1 absent
     uint16_t battle_skills[4];      // the record's custom skills that were searched for
+    // The 体系 row of the PvP create window (room systems).
+    uint32_t create_open;           // a PvP create window is open and ready
+    uint32_t create_shown;          // create windows that showed the row
+    uint32_t create_toggles;        // system changes made with the row's arrows
+    int32_t create_system;          // system of the open window's room name: 0 current, 1 OC, -1 none
 };
 
 // Actions: 1 refresh; 2 save one more normal point on stat (direct request
@@ -107,7 +112,8 @@ struct SdgoOcCustomClientActionV2 {
 
 // SdgoOcCustomClientClickV2 delivers a real UI event for an original control
 // to the page service's OnUIEvent (button 0x101, check box 0x401), exactly as
-// a mouse click does. window: "tab", "entry", "over", "challenge" or "confirm";
+// a mouse click does. window: "tab", "entry", "over", "challenge", "confirm"
+// or "create" (the open PvP create window: its 体系 row arrows and native buttons);
 // control: the original control name (for example L"SpeedUpBtn").
 using SdgoOcCustomClientGetSnapshotV2Fn = int(__cdecl*)(SdgoOcCustomClientSnapshotV2*);
 using SdgoOcCustomClientActionV2Fn = int(__cdecl*)(const SdgoOcCustomClientActionV2*);

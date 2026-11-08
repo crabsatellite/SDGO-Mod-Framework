@@ -21,6 +21,17 @@ void MarkRoomList(void* service);
 // button shows the current room's system.
 void MarkTitleBar(void* title_bar, RoomSystem system);
 
+// Room creation windows (CServiceMakeRoom / CServiceMakeRoomAI): a 体系 row
+// whose arrows add or remove the title's !oc command.
+bool BindCreate(const SdgoApi* api, SdgoMod* mod);
+void UpdateCreateWindow();                      // per frame while the lobby room list updates
+bool HandleCreateEvent(void* service, std::uint32_t event, void* control); // true: the row consumed it
+bool ClickCreate(const wchar_t* control);       // GameTest: a click on a row arrow
+std::uint32_t CreateShown();                    // create windows that showed the row
+std::uint32_t CreateToggles();                  // system changes made with the row
+std::int32_t CreateSystem();                    // system of the open window's title (-1 none)
+bool CreateOpen();                              // a PvP create window is open and ready
+
 std::uint32_t ListMarks();    // room list rows marked since load
 std::uint32_t TitleMarks();   // title bar labels set since load
 std::int32_t TitleSystem();   // system of the label last shown (-1 none)
