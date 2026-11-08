@@ -87,8 +87,8 @@ Login-page cadence and window-average FPS are separate measurements.
 Developer setting `BattleAiPerformance=1` records passive per-unit activity;
 `LogDecisions=1` includes AI query costs. `GeometryBoundsAudit=1` executes
 original predicates for would-be shape culls and logs the first discrepancy
-immediately. Audit runs are correctness evidence and must be excluded from
-timing comparisons. Compare identical rosters, AI counts, native caps, backend
+immediately. Audit runs check correctness only; exclude them from timing
+comparisons. Compare identical rosters, AI counts, native caps, backend
 topology and comparable host load; review activity so stopped bots cannot
 appear as a performance improvement.
 
@@ -120,7 +120,7 @@ normally and verify every physical catalog path belongs to the new copy.
 Copy SQL data only while its source engine is stopped; reuse the resulting
 instance and existing accounts across retries. An invalid root or rejected
 file operation must be diagnosed rather than bypassed. The launcher rejects
-retired registry-only helpers. Windows cryptography providers retain their normal
+registry-only redirect helpers. Windows cryptography providers retain their normal
 certificate-cache access. This is a database-file boundary for the SQL process,
 not a general filesystem sandbox or a boundary for its child programs: keep the task copy exclusive, do not change its directory links
 while it is running, and do not run shell commands through SQL. Database read
@@ -128,7 +128,7 @@ checks cover the native `.mdf`, `.ndf` and `.ldf` filenames; startup still verif
 the actual catalog and open-file paths.
 
 Build the x64 helper separately with `cmake -S tools/native_sql -B build/native-sql -G "Visual Studio 17 2022" -A x64`, then build Release and run
-`ctest --test-dir build/native-sql -C Release --output-on-failure` for the real
+`ctest --test-dir build/native-sql -C Release --output-on-failure` to run the real
 file-I/O isolation fixture. The Python launcher supplies the root, Resource
 directory and task-local temporary directory automatically.
 
@@ -406,7 +406,7 @@ and gift previews, and compares the complete inventory and wallet. It does
 not install products, purchase or send gifts.
 The adapter opens the native search view, clicks its original `FilterBtn`, and
 waits for native query completion. Selecting `AllSerchRadio` alone opens an
-empty view and is not evidence that a stock query succeeded.
+empty view and does not count as a successful stock query.
 
 `--play-unit-uid` selects a genuinely owned unit through the native hangar
 before page, PvP or mission cases. The adapter waits for the full native unit
@@ -437,10 +437,10 @@ is bound to the sealed scenario; an inactive default cannot arm this case.
 
 The observer records whether the target was ready and whether inventory was
 complete at the actual click. It does not delay inventory or manufacture an
-incomplete state. Catalog and capsule acceptance requires the real target to
+incomplete state. The `catalog` and `capsule` targets require the real target to
 finish loading, followed by a genuine return to the room list with an enabled
 room control and no loading modal. A cached widget's visible bit alone does
-not prove recovery. The room target creates and enters an actual 3D wait room,
+not count as recovery. The room target creates and enters an actual 3D wait room,
 checks its owner, manager, main state and model, then leaves through the native
 path; opening the room list is not enough. Normal unit-page checks follow.
 
@@ -632,5 +632,4 @@ default 6) points the native tracking camera at one AI unit at a time during a
 battle, so the recording follows the AI fighting rather than the idle test
 pilot. In such runs the native TAB roster is opened only for its spawn check and
 released afterwards, and the roster-render part of the return check is skipped.
-Both are review aids for the development lane: they assert nothing and are not
-part of any acceptance.
+Both are development review aids and assert nothing.

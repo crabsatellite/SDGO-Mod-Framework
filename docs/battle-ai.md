@@ -1,6 +1,6 @@
 # Battle AI difficulty
 
-[简体中文](battle-ai.zh-CN.md)
+[简体中文](battle-ai.zh-CN.md) · [Back to the feature index](../README.md)
 
 Easy, Medium and Hard AI for the bots of [PvP AI](pvp-ai.md), choosing tactics from each bot's current
 unit, form and weapons. It starts with the game and stores no FRP address, account or local path.
@@ -32,8 +32,9 @@ full title, e.g. `Friends practicing together !ai e2 a1 lv4 hard !rand`.
 
 ## Medium and Hard
 
-Automatic form selection is enabled by default (`AutoTransform=1`). AI reads the weapons, ammunition
-and cooldowns of each native form. It can change a melee-only form to a usable ranged form for a distant
+Medium and Hard select a combat form automatically by default; adjust this with **自动选择战斗形态**
+in Manager. AI reads the weapons, ammunition and cooldowns of each native form. It can change a
+melee-only form to a usable ranged form for a distant
 opponent, choose a stronger melee form at close range, or use another form when its current ranged
 ammunition runs out. A ready current weapon that can finish the opponent takes priority.
 
@@ -41,18 +42,11 @@ A loaded melee weapon in the other form is a reason to leave an empty form only 
 the target. Otherwise the bot keeps approaching or reloading. An available in-range weapon also
 prevents empty guns in the current form from immediately reversing a useful form choice.
 
-The **自动选择战斗形态** setting in Manager controls this behavior. Transformation uses the original
-request and server acknowledgement, including native health, ammunition and action restrictions.
-AI preserves native control during the animation, then reads the committed form's actual weapon bank
-and clears its previous pursuit and weapon-switch state. Requests are retried at most every 500 ms;
-a committed form is retained for at least one second. A refused request leaves ordinary combat running.
-Locally controlled AI also consumes the native completion acknowledgement when its model has already
-changed but the same transformation animation still owns control.
-Each committed form supplies its own outgoing native transformation link. One-way armor removal stays
-one-way, and forms excluded from ordinary R input retain their native skill or timed control. Respawn
-recovery and native action admission finish before AI can request another transformation.
-This applies to the enhanced Medium/Hard controller; Easy keeps its existing behavior. Install the
-matching client package and restart the game to activate the updated adapter.
+Transformation uses the original request and server acknowledgement, including native health,
+ammunition and action restrictions. A refused request leaves ordinary combat running. One-way armor
+removal stays one-way, and forms excluded from ordinary R input retain their native skill or timed
+control. This applies to the enhanced Medium/Hard controller; Easy keeps its existing behavior.
+Restart the game after installing the server owner's client package or update.
 
 Both levels keep continuous combat and movement decisions, accurate aim, native ammo, cooldowns,
 physics and damage. Medium defaults to a **600 ms minimum between fresh ordinary attacks admitted by the native controller**.
@@ -88,8 +82,7 @@ Devices are selected for a useful route, so a bot need not use one in every batt
 
 Enemy life is read from the native unit lifecycle, separately from the HP sample. A living,
 attackable opponent with a zero HP reading remains a target; actual death, knockdown and get-up
-protection still apply. Observation and attack resolve the same current registered object, so an
-older object with the same ID cannot retain a stale protection state for its replacement.
+protection still apply.
 
 | | Medium: skilled player | Hard: expert player |
 |---|---|---|
@@ -175,7 +168,8 @@ installed mission AI and catalog runtimes are preserved.
 In SDGO Mod Manager, **战斗 AI 难度** (client) has **启用战斗 AI** (enable), **默认战斗难度** (default
 difficulty), and **中等：普通攻击最短间隔（毫秒）** (Medium minimum ordinary attack interval).
 The latter maps to `MediumAttackIntervalMs`, defaults to `600`, and accepts `0`–`2000` ms; `0` restores
-continuous starts and Hard ignores it. Existing configurations without this key receive the new default.
+continuous starts and Hard ignores it. Configurations without this key use `600`.
+**自动选择战斗形态** maps to `AutoTransform`, defaults to `1` and applies to Medium and Hard.
 Changes apply within two seconds. Other tuning parameters and the decision log appear after
 **显示开发信息**. Values live in `sdgo/mods/battle_ai/config.ini`, with defaults in `config.example.ini`;
 see the Chinese guide for the full list. The server part **战斗 AI 资源规则** only has an enable switch.
@@ -216,6 +210,17 @@ Terrain sight queries visit the ray's intersected grid cells and use the origina
 triangle predicate. The layout is validated before indexing; only layout information is retained,
 so current heights, teammate contacts and firing visibility are still read live. Inactive native
 steering storage is represented as no movement destination instead of invalidating the whole observation.
+
+During automatic form selection, AI preserves native control during the animation, then reads the
+committed form's actual weapon bank and clears its previous pursuit and weapon-switch state. Requests
+are retried at most every 500 ms; a committed form is retained for at least one second. Locally
+controlled AI also consumes the native completion acknowledgement when its model has already changed
+but the same transformation animation still owns control. Each committed form supplies its own
+outgoing native transformation link. Respawn recovery and native action admission finish before AI
+can request another transformation.
+
+For enemy life checks, observation and attack resolve the same current registered object, so an older
+object with the same ID cannot retain a stale protection state for its replacement.
 
 Only locally simulated bots in the reserved AI NPC range are controlled; remote copies, humans and mission
 bosses are not. The Easy-path target search fix in `match_ai` (native enumeration of `1..playerCount`

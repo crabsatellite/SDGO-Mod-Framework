@@ -1,5 +1,7 @@
 # AI pilot battle dialogue
 
+[简体中文](ai-dialogue.zh-CN.md) · [Back to the feature index](../README.md)
+
 AI pilots can react to your kills and defeats, or suggest focus fire as teammates. The feature is off by default and requires your own DeepSeek API key and a running Mod Manager.
 
 ## Setup
@@ -17,7 +19,7 @@ Keys use Windows current-user DPAPI encryption in the Manager's private workspac
 | Cooldown | 8 seconds | Zero allows consecutive events, subject to concurrency and quota |
 | Calls per battle | 24 | Failed calls also consume the limit |
 | Teammate suggestions | On | Assigned allied AI can suggest focus fire |
-| Model | `deepseek-flash` | Fast model, with thinking disabled |
+| Model | `deepseek-flash` | Fast model, with thinking disabled; a compatible fast model name can be configured |
 | Language | Simplified Chinese | Editable |
 
 Manager performs HTTP work asynchronously. The game never waits for it. Each client has one outstanding request; busy, expired and over-quota events are skipped. Replies are discarded after leaving the battle, changing scenes or configuration, disabling the feature or reaching the deadline.
@@ -38,7 +40,11 @@ The selected weapon is observational context, not proof of the fatal weapon. AI 
 
 Edit `personas.json` in the same Manager panel to map unit IDs or name fragments to pilots, series and personalities. Explicit IDs win. Unmapped units let the model infer an appropriate original-series voice; mass-produced units can use an ordinary soldier persona without asserting an uncertain named identity. Edit `prompt.txt` to change tone.
 
-Check the service, local key, restart requirement, probability, cooldown and quota when no line appears. HTTP 402 is a provider billing refusal; check the DeepSeek account balance. Enabling the feature submits the selected battle fields to the configured API. Account passwords, keys, database settings and general chat history are excluded.
+## Troubleshooting
+
+Check the service, local key, restart requirement, probability, cooldown and quota when no line appears. HTTP 402 is a provider billing refusal; check the DeepSeek account balance.
+
+Enabling the feature submits the selected battle fields to the configured API. Account passwords, keys, database settings and general chat history are excluded.
 
 ## Developer notes
 

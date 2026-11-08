@@ -1,6 +1,6 @@
 # Per-round random owned loadouts
 
-[简体中文](room-random.zh-CN.md)
+[简体中文](room-random.zh-CN.md) · [Back to the feature index](../README.md)
 
 Add the standalone token `!rand` or `!random` to a room title. Every human in the room gets a new
 loadout from **their own hangar** each round, without leaving or recreating the room. Commands are
@@ -12,9 +12,8 @@ case-insensitive.
 | `room_random_client` | client | applies the round's result to the client's start data |
 
 Both are required: `room_random` on BattleServer and `room_random_client` on every participating client.
-This ordering fix requires `room_random` 0.1.8 or later on BattleServer together with
-`room_random_client` 0.1.14 or later on every participating client. With AI, Battle servers also need
-`pvp_ai` 0.3.2 or later.
+BattleServer needs `room_random` 0.1.8 or later, and every participating client needs `room_random_client`
+0.1.14 or later. With AI, Battle servers also need `pvp_ai` 0.3.2 or later.
 
 ## Room-title commands
 
@@ -111,7 +110,7 @@ unit record, and the ship record in deck modes, carries the same round marker as
 Native callbacks may deliver records before, after or interleaved with that notice. A previous round's
 record cannot satisfy the wait, even when the model is identical. Repeated start notices for the
 same round keep the matching records already received. It also waits for each human's
-native unit/ship update tasks to finish. A tagged random-loadout notice proves that the server has submitted this round's start, so its local
+native unit/ship update tasks to finish. A tagged random-loadout notice shows that the server has submitted this round's start, so its local
 room-view request is obsolete even if the start callback has not run yet. The Mod binds the exact live local state object,
 transfers its queued payload to the native cleanup owner, and returns control to the original scheduler,
 which retires and frees that one request normally without sending another room-view RPC. It keeps a
@@ -128,9 +127,7 @@ reported as a component-version mismatch. This uses native completion conditions
 notices cannot start it again; changing rooms or replacing the start discards the old pending
 transition. Ordinary rooms retain the native timing.
 
-Tests: `ctest`, plus `room_random_test.exe <BattleServer.exe> <GOnline.exe>`,
-`tests/room_random_client_runtime_test.ps1 -GameExe <GOnline.exe>` and
-`tests/room_random_install_test.ps1 -NativeExe <BattleServer.exe>` with locally supplied executables.
+### Human construction observer
 
 Developer consumers can observe human construction through
 `sdgo/battle_human_unit_observer.h`. The loaded server Mod exports V1 registration
@@ -139,13 +136,20 @@ the room generation, then each final rewritten input has paired BEFORE/AFTER
 events around exactly one native constructor call. START_ACCEPTED follows submission of
 the genuine native start. A failure before that boundary rolls back and invalidates the
 room; after submission, temporary random records remain until native release invalidates them.
-These events do not prove packet delivery or gameplay acceptance.
+These events report construction only; they do not show that notices reached clients or that the
+battle ran normally.
 
 Callbacks may interleave across native threads and must not block, mutate native
 data or reenter the provider. Copy bounded preimages before returning; AFTER data
 is usable only on native success. The provider preserves FP/SSE state and
 `LastError`, and disables a faulting sink. Consumers must check registered status
-before using cached generations; the sequence watermark does not prove callback
-completion. Register only as the consumer's final load action and retain the sink
+before using cached generations; the sequence watermark does not mean that callbacks
+have completed. Register only as the consumer's final load action and retain the sink
 for the process lifetime. A loaded incompatible provider must fail closed rather
 than be bypassed by another hook at the same native address.
+
+## Development tests
+
+Run `ctest`, plus `room_random_test.exe <BattleServer.exe> <GOnline.exe>`,
+`tests/room_random_client_runtime_test.ps1 -GameExe <GOnline.exe>` and
+`tests/room_random_install_test.ps1 -NativeExe <BattleServer.exe>` with locally supplied executables.
