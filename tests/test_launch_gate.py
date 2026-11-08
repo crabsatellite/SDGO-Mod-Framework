@@ -141,6 +141,26 @@ class LaunchGate(unittest.TestCase):
 
 
 class LaunchSession(unittest.TestCase):
+    def test_a_late_terminal_receipt_finishes_ui_after_a_transient_session_error(self):
+        from manager.launch_ui import Session
+        import time
+        with tempfile.TemporaryDirectory()as temporary:
+            session=Session(Path(temporary),'a'*32);session.url='http://127.0.0.1:1/'
+            failed=threading.Event()
+            def api(*args):failed.set();raise ValueError('temporary restart transport error')
+            with patch.object(session,'api',side_effect=api):
+                worker=threading.Thread(target=session.work);worker.start()
+                try:
+                    self.assertTrue(failed.wait(3))
+                    deadline=time.monotonic()+3
+                    while session.result.get('status')!='error'and time.monotonic()<deadline:time.sleep(.01)
+                    self.assertEqual(session.result.get('status'),'error')
+                    launch.save(session.root,session.token,status='launched',pid=123)
+                    worker.join(2)
+                    self.assertFalse(worker.is_alive(),'completed launch must not wait for a retry click')
+                    self.assertEqual(session.result['status'],'launched')
+                finally:session.stop.set();worker.join(3)
+
     @unittest.skipUnless(os.name=='nt','Windows helper copy mutex')
     def test_concurrent_helper_copies_share_one_complete_file(self):
         import time

@@ -8,6 +8,8 @@ The owner chooses the combination. Players import one owner configuration addres
 
 When importing a content address, Manager also reads that endpoint's `profile-source.json`, checks publisher identity and channel, and saves the owner's declared mirror list. Legacy endpoints may omit this file. An invalid or unreadable descriptor reports an error instead of silently discarding backup sources.
 
+An already open Manager can handle the launch using its current Windows privilege context. During self-replacement, the progress window continues to track the request's persisted completion receipt across a temporary session interruption and closes when the launch finishes.
+
 ## Publish from Manager
 
 1. Use a maintainer client and review the official baseline in **Updates and management**. Development clients keep their previews and do not follow player updates.
