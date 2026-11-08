@@ -25,6 +25,7 @@ sys.path.insert(0, str(ROOT))
 from owner.collection_capsule.pool import build_pool
 from owner.collection_capsule.sql import installation, disable, catalog_upgrade
 from owner.collection_capsule.deployment import register_unit_family
+from owner.collection_capsule import exclusions
 
 spec = importlib.util.spec_from_file_location("starter_bridge", ROOT / "tests/run_new_account_sql_test.py")
 bridge_module = importlib.util.module_from_spec(spec)
@@ -443,6 +444,41 @@ SELECT @r,@slot,@instance,@serial,@max;
             check(all(r[0] == 0 and unit_for(r[1]) != 100 for r in results),
                   "ownership of a transformed form counts toward its base family")
 
+            # Owner exclusions: listing any form removes every base whose chain contains it.
+            with contextlib.closing(connect()) as owner_db:
+                preview = exclusions.replace(owner_db, [{"unit_id": 104, "note": "fixture form"}, 102], dry_run=True)
+            check(preview["eligible"] == 1 and {r["unit_id"] for r in preview["excluded_roots"]} == {102, 103}
+                  and scalar("SELECT COUNT(*) FROM sdgo_collection_capsule.ExcludedUnits") == 0,
+                  "exclusion preview reports the reduced pool and rolls back")
+            with contextlib.closing(connect()) as owner_db:
+                rejected = False
+                try:
+                    exclusions.replace(owner_db, [100, 102, 103])
+                except ValueError:
+                    rejected = True
+            check(rejected and scalar("SELECT COUNT(*) FROM sdgo_collection_capsule.ExcludedUnits") == 0,
+                  "an exclusion list that empties the pool is refused without changes")
+            with contextlib.closing(connect()) as owner_db:
+                saved = exclusions.replace(owner_db, [{"unit_id": 104, "note": "fixture form"}, 102])
+                live = exclusions.eligible_roots(owner_db)
+            check(saved["applied"] and live == [100]
+                  and scalar("SELECT COUNT(*) FROM sdgo_collection_capsule.ExcludedUnits") == 2,
+                  "saved exclusions and the read-only pool view agree")
+            account(21)
+            first_excluded = draw(21)
+            second_excluded = draw(21)
+            check(first_excluded[0] == 0 and unit_for(first_excluded[1]) == 100
+                  and second_excluded[0] != 0
+                  and scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=21") == 900000,
+                  "draws award only non-excluded families and refund once the remaining pool is held")
+            with contextlib.closing(connect()) as owner_db:
+                exclusions.replace(owner_db, [102])
+            lifted = draw(21)
+            check(lifted[0] == 0 and unit_for(lifted[1]) == 103,
+                  "removing a form from the list returns its family to the pool immediately")
+            with contextlib.closing(connect()) as owner_db:
+                exclusions.replace(owner_db, [])
+
             # No pool rebuild: a newly imported standalone unit is discovered live.
             execute("INSERT dbo.tbl_Units VALUES(110,0,1,2,2,1000110,N'Imported base')")
             before = scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=7")
@@ -463,6 +499,20 @@ SELECT @r,@slot,@instance,@serial,@max;
             before = scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=7")
             check(draw(7)[0] == 3008 and scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=7") == before,
                   "missing imported reciprocal-root metadata is reported, not silently omitted or charged")
+            with contextlib.closing(connect()) as owner_db:
+                exclusions.replace(owner_db, [{"unit_id": 120, "note": "quarantined import"}])
+            account(22)
+            quarantined = draw(22)
+            check(quarantined[0] == 0 and unit_for(quarantined[1]) not in {120, 121},
+                  "excluding an unregistered reciprocal import quarantines it instead of failing every draw")
+            with contextlib.closing(connect()) as owner_db:
+                refused = False
+                try:
+                    exclusions.replace(owner_db, [])
+                except ValueError:
+                    refused = True
+            check(refused and scalar("SELECT COUNT(*) FROM sdgo_collection_capsule.ExcludedUnits WHERE UnitID=120") == 1,
+                  "the quarantine cannot be lifted while the family is still unregistered")
             declaration = {"protocol": "sdgo.unit-family", "protocol_version": 1, "installable": True,
                            "package_id": "fixture.imported-family", "family": {"root_form": "base", "forms": [
                                {"id": 121, "key": "base", "transform_target": 120},
@@ -471,6 +521,10 @@ SELECT @r,@slot,@instance,@serial,@max;
                 importer.cursor().execute("BEGIN TRANSACTION;")
                 register_unit_family(importer, declaration, in_transaction=True)
                 importer.cursor().execute("COMMIT TRANSACTION;")
+            with contextlib.closing(connect()) as owner_db:
+                lifted = exclusions.replace(owner_db, [])
+            check(lifted["applied"] and not lifted["pool_error"] and lifted["entries"] == [],
+                  "after registration the quarantine lifts and the family rejoins the pool")
             # Replaying an older feature package must not erase later unit imports.
             execute(install)
             imported = draw(7)

@@ -213,9 +213,13 @@ class Capsules(Provider):
                     framework_stage=c.get('framework_stage') or c.get('client') or c['install_client'],
                     symbol_fragment=c.get('symbol_fragment') or
                         Path(__file__).resolve().parents[1]/'mods/capsule_catalog/symbol-proposal.ini').apply
+            collection = self.workspace.providers.get('collection_capsule')
+            hints = None
+            if collection is not None and collection.config.get('server_ini'):
+                hints = lambda client: collection.sync_hints(client)
             store = CatalogStore(c['catalog'], patterns_path=c.get('patterns'), assets_path=c.get('assets'),
                 bundle_path=c.get('bundle_output'), snapshot_path=c.get('snapshot'), client_path=c.get('client'),
-                lookup_path=c.get('lookup'), apply_callback=callback)
+                lookup_path=c.get('lookup'), apply_callback=callback, before_compile=hints)
             self.engine = CapsuleApplication(store)
         return self.engine
 

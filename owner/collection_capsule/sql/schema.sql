@@ -83,6 +83,14 @@ IF OBJECT_ID(N'sdgo_collection_capsule.Modules',N'U') IS NULL
         InstalledHash char(64) NOT NULL,
         InstalledDefinition nvarchar(max) NOT NULL
     );
+-- Owner policy: forms listed here keep every family that contains them out of
+-- the draw and out of the catalog explanation. Units and inventories are untouched.
+IF OBJECT_ID(N'sdgo_collection_capsule.ExcludedUnits',N'U') IS NULL
+    CREATE TABLE sdgo_collection_capsule.ExcludedUnits (
+        UnitID int NOT NULL PRIMARY KEY CHECK(UnitID>0),
+        Note nvarchar(100) NOT NULL DEFAULT N'',
+        UpdatedUtc datetime NOT NULL DEFAULT GETUTCDATE()
+    );
 IF OBJECT_ID(N'sdgo_collection_capsule.CatalogUnlocks',N'U') IS NULL
     CREATE TABLE sdgo_collection_capsule.CatalogUnlocks (
         AccountNumber int NOT NULL,

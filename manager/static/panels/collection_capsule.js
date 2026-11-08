@@ -36,6 +36,51 @@ export async function mount(root,ctx){
    else {report(({'upgrade-catalog':'图鉴规则已更新，旧账号可直接使用；本次仅更新 SQL，无需重启 World。','generate':'配套资源已生成。接下来检查安装条件，并分别安装服务端和客户端。','check-install':'安装条件检查通过。此检查不会写入服务端或客户端。','install-server':'服务端已安装。现在可以启动选定的 WorldServer。','install-client':'客户端资源已安装。请使用原来的方式启动游戏。'})[id]);state=await ctx.request('/api/state',undefined);render();}
   },ctx,id==='generate'?'primary':''));
  }
+ // Exclusions are live server policy: saved straight to the selected World's
+ // database, no rebuild or restart. The catalog explanation follows automatically.
+ const excluded=e('section',undefined,'manager-card');
+ excluded.append(e('h2','除外名单'),
+  e('p','名单里的机体不会从收藏扭蛋抽出，图鉴里也不再显示“可从收藏扭蛋获得”。填任一形态即可：含有该形态的整套机体都会移出。只影响收藏扭蛋，普通扭蛋机、商城、已持有的机体和领取箱都不变。'),
+  e('p','保存后立即对目标 WorldServer 生效，不需要重新生成或重启。本机客户端的图鉴说明会自动同步；要让其他玩家看到，照常发布服主内容更新。','muted section-scope-note'));
+ const list=e('textarea');list.rows=8;list.placeholder='每行一个：机体ID 备注\n例如：26187 已下架';list.style.width='100%';
+ const excludedSummary=e('p'),excludedResult=e('div'),excludedActions=e('div',undefined,'actions');
+ excluded.append(list,excludedSummary,excludedActions,excludedResult);root.append(excluded);
+ let savedList='';
+ ctx.guard?.(()=>list.value.trim()!==savedList.trim()?'「收藏扭蛋」的除外名单有未保存的修改。':'');
+ const parse=()=>list.value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean).map(line=>{
+  const match=line.match(/^(\d+)\s*(.*)$/);
+  if(!match)throw new Error('无法识别这一行（应以机体ID开头）：'+line);
+  return {unit_id:Number(match[1]),note:match[2].trim()};
+ });
+ const hintText=h=>({current:'图鉴获取说明与服务端一致。',stale:`图鉴获取说明待同步：缺 ${h.missing} 项、多 ${h.extra} 项。`,not_installed:'本机客户端还没有安装收藏扭蛋客户端资源。',
+  updated:'图鉴获取说明已同步到本机客户端。',client_running:'本机客户端正在运行，图鉴获取说明未改动；关闭游戏后点「同步图鉴说明」。',
+  not_configured:'未配置本机客户端，图鉴获取说明未同步。',failed:'图鉴获取说明同步失败：'+(h.message||'')})[h.status]||'';
+ const showEffect=(value,label)=>{
+  excludedResult.replaceChildren();
+  const removed=value.excluded_roots||[];
+  excludedResult.append(e('p',`${label}名单 ${value.entries.length} 项，移出 ${removed.length} 个可抽机体，剩余 ${value.eligible} 个可抽。`));
+  if(removed.length)excludedResult.append(e('p','移出：'+removed.map(r=>`${r.unit_id}${r.name?' '+r.name:''}`).join('、'),'muted'));
+  if(value.undeliverable?.length)excludedResult.append(e('p',`有 ${value.undeliverable.length} 个可抽机体缺少永久机体奖品定义，抽到时会失败退款：`+value.undeliverable.slice(0,20).join('、')));
+  if(value.hints)excludedResult.append(e('p',hintText(value.hints)));
+ };
+ const loadExcluded=async()=>{
+  try{
+   const value=await ctx.request('/api/exclusions',undefined);
+   list.value=value.entries.map(r=>r.note?`${r.unit_id} ${r.note}`:String(r.unit_id)).join('\n');savedList=list.value;
+   excludedSummary.textContent=`当前名单 ${value.entries.length} 项；服务端可抽 ${value.eligible} 个（共 ${value.bases} 个初始形态）。`+hintText(value.hints);
+   showEffect(value,'当前');
+  }catch(error){excludedSummary.textContent='无法读取除外名单：'+error.message;}
+ };
+ excludedActions.append(
+  button('预览影响',async()=>{const value=await ctx.request('/api/exclusions',{revision:state.revision,entries:parse(),dry_run:true});showEffect(value,'预览：');report('已按当前输入预览；尚未保存。');},ctx),
+  button('保存除外名单',async()=>{
+   const entries=parse();
+   if(!confirm(`把除外名单保存到目标 WorldServer 数据库（${entries.length} 项）？立即生效，不影响玩家已持有的机体。`))return;
+   const value=await ctx.request('/api/exclusions',{revision:state.revision,entries});
+   savedList=list.value;showEffect(value,'已保存：');report('除外名单已保存并立即生效。'+hintText(value.hints||{}));await loadExcluded();
+  },ctx,'primary'),
+  button('同步图鉴说明',async()=>{const value=await ctx.request('/api/sync-hints',{revision:state.revision});report(hintText(value));await loadExcluded();},ctx));
+ loadExcluded();
  const family=e('input');family.type='file';family.accept='.json';family.hidden=true;
  family.onchange=async()=>{try{
   const payload=JSON.parse(await family.files[0].text());
@@ -44,5 +89,5 @@ export async function mount(root,ctx){
   report('初始形态已登记，可重新生成配套资源。');
  }catch(error){ctx.message(error.message,true);}finally{family.value='';}};
  root.append(family,button('登记导入机体的初始形态',()=>family.click(),ctx));
- root.append(e('p','安装时会以当前永久机体和领取箱内尚未领取的永久机体建立最小图鉴解锁基线。Mod 只保存账号与已解锁机体 ID，不导入旧版完整获得历史，也不记录时间、来源或抽取事件。普通扭蛋目录另行更新后，请在本页重新生成并安装客户端资源，再导出最新玩家包。','intro'));
+ root.append(e('p','安装时会以当前永久机体和领取箱内尚未领取的永久机体建立最小图鉴解锁基线。Mod 只保存账号与已解锁机体 ID，不导入旧版完整获得历史，也不记录时间、来源或抽取事件。可抽机体随目标数据库动态变化：新导入的机体自动加入，除外名单立即生效。图鉴里的“可从收藏扭蛋获得”说明在保存除外名单、编译或发布普通扭蛋目录、应用机体导入时自动按服务端同步；照常发布服主内容更新即可送达玩家。','intro'));
 }

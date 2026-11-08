@@ -101,6 +101,7 @@ class Units(Provider):
                     outcome['registered'] = batch_registry.register(self._units_root(), folder, ini)['families']
                 except (ValueError, OSError) as error:
                     outcome['registration_error'] = str(error)[:400]
+                outcome['collection_hints'] = self._sync_collection_hints()
             with self._batch_lock:
                 self._batch.update(outcome, finished_at=time.time())
             decided.set()
@@ -114,6 +115,16 @@ class Units(Provider):
         if state['batch'].get('status') == 'failed' and state['batch'].get('stage') in ('gate', 'check'):
             raise ValueError(state['batch']['error'])
         return state
+
+    def _sync_collection_hints(self):
+        """Newly applied families join the collection draw at once; mark them in the catalog too."""
+        collection = self.workspace.providers.get('collection_capsule')
+        if collection is None or not collection.config.get('server_ini'):
+            return {'status': 'not_configured'}
+        try:
+            return collection.sync_hints()
+        except (OSError, ValueError, RuntimeError) as error:
+            return {'status': 'failed', 'message': str(error)[:400]}
 
     def _units_root(self):
         return Path(self.config.get('workspace') or self.workspace.root / 'data/units')
@@ -408,7 +419,10 @@ class Units(Provider):
                     if proof.get('ready'):
                         body['_native_ui']={'method':'existing_game_ui_calls','content_revision':proof.get('content_revision'),
                                             'shop':True,'capsule':True}
-                    return engine.confirm(identity, body, expected)
+                    confirmed = engine.confirm(identity, body, expected)
+                    if isinstance(confirmed, dict):
+                        confirmed = {**confirmed, 'collection_hints': self._sync_collection_hints()}
+                    return confirmed
                 if method == 'POST' and action == 'drop-missing-skills':
                     return engine.drop_missing_skills(identity, body.get('skill_ids'), expected)
                 if method == 'POST' and action in ('native-preview','launch-preview'):

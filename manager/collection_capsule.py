@@ -110,11 +110,12 @@ class CollectionCapsule(Provider):
         client = Path(self.config['client'])
         server = build(snapshot, output / 'server-package', machine_id, [], stage / 'server', client_root=client,rules=self.rules())
         model = storage.read_json(output / 'server-package/model.json')
+        explained = self.explained_roots(model, snapshot)
         current = client / 'sdgo/mods/capsule_catalog'
         cover = Path(self.config['cover']) if self.config.get('cover') else ROOT / 'mods/collection_capsule/assets/cover-base.png'
         registry = build_client_registry(client_root=client,
             current_registry=current if (current / 'runtime.ini').is_file() else None,
-            source_units=model['pool']['units'], unit_items=model['unit_items'], machine_id=machine_id, cover=cover,
+            source_units=explained, unit_items=model['unit_items'], machine_id=machine_id, cover=cover,
             output=output / 'client-registry',rules=self.rules())
         package_client_registry(registry=output / 'client-registry', framework_stage=stage / 'client',
             support_dll=registry_support(stage), output=output / 'player')
@@ -123,6 +124,52 @@ class CollectionCapsule(Provider):
             'machine_id': machine_id, 'machine_kind': 'activity', 'eligible_roots': server['resolved_roots'],
             'catalog_revision': registry['catalog_revision'], 'placement': registry.get('placement'),'rules':self.rules()}))
         return self.public()
+
+    def explained_roots(self, model, snapshot):
+        """Roots marked obtainable in the catalog: the live draw pool after exclusions."""
+        if not self.config.get('snapshot'):
+            from owner.collection_capsule.deployment import connection
+            from owner.collection_capsule.exclusions import eligible_roots
+            try:
+                with contextlib.closing(connection(Path(self.config['server_ini']))) as db:
+                    return eligible_roots(db)
+            except ValueError:
+                pass  # first installation: the pool procedure arrives with this build
+        from owner.collection_capsule.exclusions import excluded_roots
+        listed = storage.read_json(Path(snapshot) / 'GOnlineGame/collection.excluded-units.json', [])
+        removed = excluded_roots(model['pool'], {row['UnitID'] for row in listed})
+        return [unit['unit_id'] for unit in model['pool']['units'] if unit['unit_id'] not in removed]
+
+    def sync_hints(self, client=None):
+        """Refresh the installed catalog explanation from the selected World's pool."""
+        from owner.collection_capsule.deployment import connection
+        from owner.collection_capsule.exclusions import eligible_roots
+        from owner.collection_capsule.hints import live_rules, sync
+        from .engines.capsules.capsule_deployment import _assert_client_stopped
+        client = client or self.config.get('client')
+        if not self.config.get('server_ini') or not client:
+            return {'status': 'not_configured'}
+        with contextlib.closing(connection(Path(self.config['server_ini']))) as db:
+            roots, rules = eligible_roots(db), live_rules(db)
+        def running(target):
+            if (Path(target) / 'GOnline.exe').is_file():
+                _assert_client_stopped(target)
+        return {**sync(client, roots, rules, client_running=running), 'client': str(client)}
+
+    def exclusions(self):
+        from owner.collection_capsule.deployment import connection
+        from owner.collection_capsule.exclusions import read
+        from owner.collection_capsule.hints import installed
+        if not self.config.get('server_ini'):
+            raise ValueError('请先选择目标 WorldServer 配置文件')
+        with contextlib.closing(connection(Path(self.config['server_ini']))) as db:
+            value = read(db)
+        live = value.pop('eligible_roots')
+        current = installed(self.config['client']) if self.config.get('client') else None
+        hint = {'status': 'not_installed'} if current is None else {
+            'status': 'current' if set(current['roots']) == set(live) and current['consistent'] else 'stale',
+            'missing': len(set(live) - set(current['roots'])), 'extra': len(set(current['roots']) - set(live))}
+        return {**value, 'hints': hint, 'revision': self.revision()}
 
     def client_install(self, output, check_only=False):
         args = ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
@@ -154,6 +201,8 @@ class CollectionCapsule(Provider):
     def request(self, method, path, body, headers):
         if method == 'GET' and path == '/api/state':
             return self.public()
+        if method == 'GET' and path == '/api/exclusions':
+            return self.exclusions()
         if method != 'POST':
             raise ValueError('收藏扭蛋操作未登记')
         self.check_revision(body)
@@ -167,6 +216,23 @@ class CollectionCapsule(Provider):
             from owner.collection_capsule.deployment import connection, upgrade_catalog
             with contextlib.closing(connection(Path(self.config['server_ini']))) as db:
                 return {**upgrade_catalog(db,Path(self.config['server_ini'])), 'revision': self.revision()}
+        if path == '/api/exclusions':
+            from owner.collection_capsule.deployment import connection
+            from owner.collection_capsule.exclusions import replace
+            if not self.config.get('server_ini'):
+                raise ValueError('请先选择目标 WorldServer 配置文件')
+            dry_run = body.get('dry_run') is True
+            with contextlib.closing(connection(Path(self.config['server_ini']))) as db:
+                result = replace(db, body.get('entries'), dry_run=dry_run)
+            result.pop('eligible_roots', None)
+            if not dry_run:
+                try:
+                    result['hints'] = self.sync_hints()
+                except (OSError, ValueError, RuntimeError) as error:
+                    result['hints'] = {'status': 'failed', 'message': str(error)}
+            return {**result, 'revision': self.revision()}
+        if path == '/api/sync-hints':
+            return {**self.sync_hints(), 'revision': self.revision()}
         if path == '/api/register-family':
             from owner.collection_capsule.deployment import connection, register_unit_family
             with contextlib.closing(connection(Path(self.config['server_ini']))) as db:

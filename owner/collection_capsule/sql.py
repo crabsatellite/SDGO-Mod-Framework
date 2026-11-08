@@ -11,7 +11,9 @@ MODULES = {
     "dbo.sdgo_collection_catalog_units": "catalog_units.sql",
     "dbo.sdgo_collection_catalog_drop_items": "catalog_drop_items.sql",
     "sdgo_collection_capsule.Draw": "draw.sql",
+    "sdgo_collection_capsule.EligibleRoots": "eligible_roots.sql",
 }
+POOL_MARKER = "-- SDGO_COLLECTION_POOL --"
 
 
 def literal(value: str) -> str:
@@ -254,10 +256,22 @@ DELETE sdgo_collection_capsule.Modules WHERE ObjectName={literal(name)};
 """
 
 
+def module_body(filename: str) -> str:
+    """Compose a module; the draw and its read-only pool view share one pool fragment."""
+    body = HERE.joinpath(filename).read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+    if POOL_MARKER in body:
+        if body.count(POOL_MARKER) != 1:
+            raise ValueError("Collection module has more than one pool fragment marker")
+        fragment = HERE.joinpath("pool.sql").read_text(encoding="utf-8").replace("\r\n", "\n").strip("\n")
+        line = next(row for row in body.split("\n") if POOL_MARKER in row)
+        body = body.replace(line, fragment, 1)
+    return body
+
+
 def module_updates():
     sql = ""
     for name, filename in MODULES.items():
-        body = HERE.joinpath(filename).read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+        body = module_body(filename)
         kind = "TRIGGER" if filename.startswith("catalog_") else "PROCEDURE"
         sha = hashlib.sha256(body.encode("utf-16-le")).hexdigest()
         sql += _remove_owned_module(name, kind) + dynamic(body)
