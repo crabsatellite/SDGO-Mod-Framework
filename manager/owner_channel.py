@@ -469,10 +469,10 @@ class OwnerChannels:
                 try:
                     for folder in sorted((Path(h['path'])/'sdgo/owner-mods').glob('*')):
                         if not(folder/'mod.ini').is_file():continue
-                        cfg=distribution.mod_ini((folder/'mod.ini').read_bytes())
+                        mod_cfg=distribution.mod_ini((folder/'mod.ini').read_bytes())
                         registration=storage.read_json(folder/'manager.json',{})
                         if distribution.resolve((folder/'mod.ini').read_bytes(),(folder/'manager.json').read_bytes())!=distribution.OWNER:raise ValueError('owner declaration')
-                        owner_mods.append({'id':folder.name,'title':registration.get('title')or cfg.get('mod','name',fallback=folder.name),'version':cfg.get('mod','version',fallback='')})
+                        owner_mods.append({'id':folder.name,'title':registration.get('title')or mod_cfg.get('mod','name',fallback=folder.name),'version':mod_cfg.get('mod','version',fallback='')})
                 except(OSError,ValueError):owner_mods_error='本服补丁登记不完整，请重新导入配套程序后发布'
                 hosts.append({'id':h['id'],'name':h['name'],'role':h['role'],'mode':mode(h),'source':source,
                     'complete_runtime':(Path(h['path'])/'sdgo/client-source.json').is_file(),

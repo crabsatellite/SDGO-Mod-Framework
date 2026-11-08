@@ -201,5 +201,16 @@ class OwnerProgrammes(unittest.TestCase):
         self.assertTrue((self.owner/'owner_fix.dll').is_file());self.assertFalse(old.exists())
         self.assertEqual((Path(result['scope_recovery'])/'local-mods/owner_fix/private.note').read_bytes(),b'old personal module data')
 
+    def test_publisher_state_with_installed_owner_mods_is_json_serializable(self):
+        from manager.workspace import Workspace
+        from manager.owner_channel import OwnerChannels
+        self.install()
+        workspace=Workspace(self.root/'publisher-state',Path(__file__).resolve().parents[1]/'mods')
+        self.addCleanup(workspace.close);workspace.settings['hosts']=[self.host]
+        controller=OwnerChannels(workspace)
+        state=controller.state();storage.json_bytes(state)
+        self.assertEqual(state['hosts'][0]['owner_mods'][0]['version'],'0.1.0')
+        self.assertIsInstance(state['hosts'][0]['publication'],dict)
+
 
 if __name__ == '__main__': unittest.main()
