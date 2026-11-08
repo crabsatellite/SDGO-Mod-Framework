@@ -54,6 +54,15 @@ def init_repo(repo: Path) -> None:
 
 
 class DistributionGuardTests(unittest.TestCase):
+    def test_legacy_settings_sections_do_not_hide_distribution_policy(self):
+        raw=b'[mod]\nid=example\n[settings]\nAmount=1\n[settings]\nAmount=2\n'
+        guard._require_public('example',raw,b'{"id":"example"}',allow_legacy_public=True)
+        with self.assertRaises(Exception):guard._require_public('example',raw,b'{"id":"example"}')
+        for policy in (b'\n[mod]\ndistribution=local_only\n',b'\n[other]\nkey=1\n[other]\nkey=2\n'):
+            with self.assertRaises(Exception):guard._require_public('example',raw+policy,b'{"id":"example"}',allow_legacy_public=True)
+        private=raw.replace(b'id=example',b'id=example\ndistribution=local_only')
+        with self.assertRaises(ValueError):guard._require_public('example',private,b'{"id":"example","distribution":"local_only"}',allow_legacy_public=True)
+
     def test_local_directory_is_private_with_any_path_case(self):
         for folder in ("local-mods", "LOCAL-MODS", "Local-Mods"):
             for leaf in ("mod.ini", "settings.dat"):

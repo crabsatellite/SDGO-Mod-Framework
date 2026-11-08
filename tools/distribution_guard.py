@@ -49,7 +49,7 @@ def normalized(name: str) -> str:
     return value
 
 
-def _mod_ini(raw: bytes) -> configparser.ConfigParser:
+def _mod_ini(raw: bytes, *, allow_duplicate_settings: bool = False) -> configparser.ConfigParser:
     value = configparser.ConfigParser(interpolation=None, strict=True)
     if raw.startswith(b"\xff\xfe"):
         text = raw[2:].decode("utf-16-le")
@@ -62,6 +62,16 @@ def _mod_ini(raw: bytes) -> configparser.ConfigParser:
             text = raw.decode("utf-8")
         except UnicodeDecodeError:
             text = raw.decode("mbcs" if os.name == "nt" else "cp1252")
+    if allow_duplicate_settings:
+        # Historical native INIs can repeat the non-policy [settings] section.
+        # Every other section/key, especially [mod] distribution, remains strict.
+        policy=[];settings=False
+        for line in text.splitlines(keepends=True):
+            section=configparser.ConfigParser.SECTCRE.match(line.strip())
+            if section:settings=section.group('header').casefold()=='settings'
+            if not settings:policy.append(line)
+        configparser.ConfigParser(interpolation=None,strict=True).read_string(''.join(policy))
+        value=configparser.ConfigParser(interpolation=None,strict=False)
     value.read_string(text)
     if not value.has_section("mod"):
         raise ValueError("Mod manifest has no [mod] section")
@@ -88,7 +98,7 @@ def _require_public(
             raise ValueError(base + ": unknown Mod distribution: " + str(registered))
         if registered != PUBLIC:
             raise ValueError(base + ": Manager-only contract must declare public distribution")
-    manifest = _mod_ini(mod_raw)
+    manifest = _mod_ini(mod_raw,allow_duplicate_settings=allow_legacy_public)
     declared = manifest.get("mod", "distribution", fallback=None)
     for value in (declared, registered):
         if value is not None and value not in ALLOWED:
@@ -602,7 +612,7 @@ def _check_history_policy(
     if manifest:
         base, leaf = manifest
         if leaf == "mod.ini":
-            value = _mod_ini(raw).get("mod", "distribution", fallback=None)
+            value = _mod_ini(raw,allow_duplicate_settings=allow_legacy_public).get("mod", "distribution", fallback=None)
         else:
             value = _manager_json(raw).get("distribution")
         if value != PUBLIC and not (allow_legacy_public and value is None):
