@@ -71,7 +71,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | AI mech catalog (optional) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools | [Use](docs/ai-catalog.md) |
 | AI pilot dialogue (optional) <!-- catalog: `ai_dialogue` --> | AI pilots speak lines and suggest tactics based on the battle and their character; your own DeepSeek key, off by default | [Use](docs/ai-dialogue.md) |
 | Battle contribution rewards <!-- catalog: `battle_rewards` --> | Contribution GB/MB, configurable human multipliers and optional per-account gathering rewards | [Use](docs/battle-rewards.md) |
-| Collection capsule <!-- catalog: `collection_capsule` --> | Missing-unit activity machine with configurable price and limits, plus native encyclopedia acquisition hints; 15 per week by default | [Use](docs/collection-capsule.md) |
+| Collection capsule <!-- catalog: `collection_capsule` --> | Missing-unit activity machine with configurable price and limits, an owner exclusion list, and encyclopedia acquisition hints that follow the live pool; 15 per week by default | [Use](docs/collection-capsule.md) |
 | Per-round random loadouts <!-- catalog: `room_random`, `room_random_client` --> | `!rand` in a room title draws each player's unit or deck from their own hangar every round | [Use](docs/room-random.md) |
 | Complete PvP All Map <!-- catalog: `all_maps` --> | Make the room's All Map choice draw from the complete native PvP map catalog while keeping mission-only maps in missions | [Use](docs/all-maps.md) |
 | Login unit showcase <!-- catalog: `login_showcase` --> | Choose which units appear on the login screen: by grade, all, recently registered or a chosen list; SS/SR/SU by default | [Use](docs/login-showcase.md) |

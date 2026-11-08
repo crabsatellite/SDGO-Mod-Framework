@@ -75,6 +75,23 @@ class ExclusionListTests(unittest.TestCase):
         self.assertEqual(tail.count('FROM @eligible u'), 2)
 
 
+class ServerIniTests(unittest.TestCase):
+    def test_case_duplicate_native_keys_use_the_later_value(self):
+        import sys
+        from owner.collection_capsule.deployment import connection
+        with tempfile.TemporaryDirectory() as folder:
+            ini = Path(folder) / 'WorldServer.ini'
+            lines = ['[DB Game]', 'DBServerName=127.0.0.1,1433', 'DBName=GOnlineGame',
+                     'id=sa', 'pwd=old', 'ID=sa', 'PWD=new']
+            ini.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+            fake = Mock()
+            with patch.dict(sys.modules, {'pyodbc': fake}):
+                connection(ini)
+        value = fake.connect.call_args.args[0]
+        self.assertIn('PWD={new}', value)
+        self.assertIn('DATABASE={GOnlineGame}', value)
+
+
 class CatalogExplanationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

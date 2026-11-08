@@ -13,7 +13,7 @@
 class UnitPresentationsActions {
 public:
     enum Result : uint32_t { Waiting=1,Ready=2,Submitted=3,Invalid=0x100,
-        ServiceMismatch,ControlMismatch,MissingIndex,WrongDetail,NativeFault };
+        ServiceMismatch,ControlMismatch,MissingIndex,WrongDetail,NativeFault,CollectionHintMismatch };
     struct Observation {
         uint32_t unit=0,index_id=0,slot=0,form=0,selection_calls=0,form_calls=0,pose_handle=0;
         uintptr_t list=0,detail=0,model=0;
@@ -302,7 +302,30 @@ private:
         using Expected=const wchar_t*(__cdecl*)(uint32_t);
         auto module=GetModuleHandleW(L"capsule_catalog.dll");
         auto expected=module?reinterpret_cast<Expected>(GetProcAddress(module,"SdgoCollectionAcquisitionExpectedV1")):nullptr;
-        if(expected && expected(state_.unit)) {
+        const bool hinted=expected && expected(state_.unit);
+        if(!hinted) {
+            // A unit outside the loaded collection list (for example an owner
+            // exclusion) keeps its original record text and panel strings.
+            const uint8_t* index=nullptr;
+            if(!state_.index_id || !find_(grid_(),&index,state_.index_id,0x55,0) || !index)return MissingIndex;
+            wchar_t original[101]{};std::memcpy(original,index+214,200);
+            if(wcsstr(original,L"收藏扭蛋"))return CollectionHintMismatch;
+            for(unsigned slot=0;slot<10;++slot) {
+                wchar_t name[64]{};swprintf_s(name,L"FinishedProduct%u",slot);
+                auto* source=Resolve(name);
+                if(!source || Read<uint32_t>(source+0x44)!=state_.unit)continue;
+                const auto first=Read<uintptr_t>(source+0x178),last=Read<uintptr_t>(source+0x17C);
+                if(!first || last<first || last-first>28*256 || (last-first)%28)continue;
+                for(auto at=first;at<last;at+=28) {
+                    const auto* value=reinterpret_cast<const uint8_t*>(at);
+                    const auto length=Read<uint32_t>(value+16),capacity=Read<uint32_t>(value+20);
+                    if(!length || length>512 || capacity<length)continue;
+                    const auto* text=capacity<8?reinterpret_cast<const wchar_t*>(value):Read<const wchar_t*>(value);
+                    if(text && wcsstr(text,L"收藏扭蛋"))return CollectionHintMismatch;
+                }
+            }
+        }
+        if(hinted) {
             // Observe the original FinishedProduct service's own copied event
             // strings after its native type-85 consumer populated the panel.
             bool copied=false;

@@ -24,7 +24,9 @@ def connection(server_ini: Path, section: str = "DB Game"):
             if os.name != "nt":
                 raise ValueError("Server INI must be UTF-8/UTF-16 on this platform") from None
             text = raw.decode("mbcs")
-    cfg = configparser.ConfigParser(interpolation=None)
+    # Native server INIs may repeat a key in different case (ID/id, PWD/pwd);
+    # the later value wins, as in the Manager's shared database reader.
+    cfg = configparser.ConfigParser(interpolation=None, strict=False)
     try:
         cfg.read_string(text)
         selected = next((name for name in cfg.sections()

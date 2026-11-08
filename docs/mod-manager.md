@@ -41,7 +41,8 @@ How saving works is stated on every page:
   preview sections say they save nothing. The bottom bar lists unsaved parts and jumps to them. Saving one part
   reloads the page from the saved configuration, so Manager asks first when another part has unsaved changes.
 - FRP keeps **保存配置** (save) and **导出玩家配置包（先保存）** (export, saving first) in the bottom bar; the
-  collection capsule page numbers its generate, check, install and export steps.
+  collection capsule page numbers its generate, check, install and export steps and keeps its exclusion list
+  in a separate section that applies to the selected World immediately.
 - Save results appear at the bottom right of the window, wherever the page is scrolled; errors stay until closed.
 - Long pages list their sections under the title for one-click jumps, with a back-to-top button.
 - The capsule machine list and editor scroll separately; the editor's save button and the footer's export and
