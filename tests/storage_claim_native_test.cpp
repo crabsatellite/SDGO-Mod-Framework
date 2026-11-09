@@ -2,6 +2,7 @@
 #include "storage_ui_fixture.h"
 #include <array>
 #include <cassert>
+#include <deque>
 #include <iostream>
 #include <thread>
 namespace fixture {
@@ -9,48 +10,54 @@ using namespace storage_fixture;
 using storage_fixture::Put;
 std::array<uint8_t,0x80> connection{};
 std::array<uint8_t,0x500> app{};
-std::vector<Entry> rewards;std::vector<uint8_t> pending;
-std::vector<uint8_t> rows;uint32_t total=0;int sends=0,grants=0,nativeChecks=0,manual=0;
-int appCalls=0;
-bool rejected=false,selection=false;
+std::vector<Entry> rewards;std::deque<std::vector<uint8_t>> pending;
+std::vector<uint8_t> rows;uint32_t total=0;int sends=0,grants=0,nativeChecks=0,nativeErrors=0,manual=0;
+int appCalls=0;size_t maxPending=0;
+bool rejected=false,selection=false,claimRefused=false;
 std::vector<uint32_t> originalReplySequences;
 void __cdecl Log(SdgoMod*,int,const char*,...){}
 uint8_t* __cdecl Session(){return connection.data();}
 uint8_t* __cdecl App(){++appCalls;return app.data();}
 void __fastcall FakeInit(void*,void*){}
 uint8_t __fastcall Busy(void*,void*){return 0;}
-int __fastcall Send(void*,void*,int socket,const uint8_t* data,int size,int flags){assert(socket==7 && !flags && pending.empty());pending.assign(data,data+size);++sends;return 1;}
+int __fastcall Send(void*,void*,int socket,const uint8_t* data,int size,int flags) {
+    assert(socket==7 && !flags);pending.emplace_back(data,data+size);++sends;maxPending=std::max(maxPending,pending.size());return 1;
+}
 uint32_t __fastcall Event(void*,void*,void*,uint32_t,uintptr_t,void*){++manual;return 0;}
 uint32_t __fastcall Original(void* self,void*,uintptr_t,uintptr_t,uintptr_t,uint32_t opcode,const uint8_t* data) {
     if(opcode==0x7BD || opcode==0x7BE || opcode==0x7E8 || opcode==0xA23)
         originalReplySequences.push_back(g_testObserver.replySequence);
     if(opcode==0x4E7 || opcode==0x722){++nativeChecks;return 0;}
+    if(opcode==0x8DA || opcode==0x53E || opcode==0x5D9 || opcode==0x814){++nativeErrors;return 0;}
     if(opcode==0x7E8 || opcode==0xA23){++grants;return 0;}
     if(opcode==0x7BD || opcode==0x7BE) {
         const auto tab=opcode==0x7BD?Tab::Items:Tab::Gifts;const auto stride=tab==Tab::Items?28u:402u;
         rows.assign(static_cast<size_t>(data[0])*stride,0);
         for(size_t i=0;i<data[0];++i){const auto key=Read<Key>(data,1+i*sizeof(Entry));auto* p=rows.data()+i*stride;if(tab==Tab::Items)Put(p,0,key.id);else{Put(p,0,static_cast<uint32_t>(key.id));Put(p,0x166,key.stamp);Put<uint16_t>(p,0x156,Read<Entry>(data,1+i*sizeof(Entry)).claimed?1:0);}}
         Put(self,tab==Tab::Items?0x180:0x170,rows.data());Put(self,tab==Tab::Items?0x184:0x174,rows.data()+rows.size());Put(self,0x168,total);
+        Put<uint8_t>(self,0x190,1); // the stock list handlers mark the page loaded
     }
     return 0;
 }
 SdgoApi api{};
-void Setup(Tab tab=Tab::Items) {
+void Setup(Tab tab=Tab::Items,uint64_t count=12) {
     if(g_timer){KillTimer(nullptr,g_timer);g_timer=0;}g_ui.Detach();storage_fixture::Setup();
-    rewards.clear();for(uint64_t i=1;i<=12;++i)rewards.push_back({{i+(tab==Tab::Items?0x100000000ULL:0),tab==Tab::Gifts?i*1234567890123ULL:0},false});
-    total=12;pending.clear();sends=grants=nativeChecks=manual=appCalls=0;rejected=selection=false;g_retiredChecks.clear();originalReplySequences.clear();
+    rewards.clear();for(uint64_t i=1;i<=count;++i)rewards.push_back({{i+(tab==Tab::Items?0x100000000ULL:0),tab==Tab::Gifts?i*1234567890123ULL:0},false});
+    total=static_cast<uint32_t>(count);pending.clear();sends=grants=nativeChecks=nativeErrors=manual=appCalls=0;maxPending=0;
+    rejected=selection=claimRefused=false;g_retiredChecks.clear();originalReplySequences.clear();
     app={};connection={};Put(app.data(),0x4A0,uint32_t{6});Put(app.data(),0x4A4,reinterpret_cast<void*>(1));
     Put(connection.data(),0x14,7);Put(service.data(),0x15C,static_cast<int>(tab));Put(service.data(),0x168,total);
     g_session=&Session;g_app=&App;g_busy=reinterpret_cast<NativeBusy>(&Busy);g_send=reinterpret_cast<NativeSend>(&Send);
     g_event=reinterpret_cast<NativeUI>(&Event);g_packet=reinterpret_cast<NativePacket>(&Original);
-    api.Log=&Log;g_api=&api;g_mod=nullptr;g_batch=Batch{};g_owner=nullptr;g_service=service.data();g_thread=GetCurrentThreadId();g_pumping=g_armed=false;g_observedSession=g_nextSend=0;g_interval=200;
+    api.Log=&Log;g_api=&api;g_mod=nullptr;g_batch=Batch{};g_owner=nullptr;g_service=service.data();g_thread=GetCurrentThreadId();g_pumping=g_armed=false;g_observedSession=0;g_depth=8;
     assert(g_ui.Attach(service.data(),Bind()));
 }
 void Click(){UIEvent(nullptr,nullptr,service.data(),0x101,0,Pointer(L"ModStorageClaimAll"));}
-void Start(){Click();assert(g_armed && sends==0);Click();assert(!g_armed && g_batch.Busy() && sends==0);}
-void Step(){g_nextSend=0;PumpUnsafe();}
+void Start(){Click();assert(g_armed && sends==0);Click();assert(!g_armed && g_batch.Busy() && sends==1);}
+void Step(){PumpUnsafe();}
+uint16_t Next(){assert(!pending.empty());return Read<uint16_t>(pending.front().data());}
 void Deliver() {
-    assert(!pending.empty());auto request=pending;pending.clear();const uint16_t op=Read<uint16_t>(request.data());
+    assert(!pending.empty());auto request=pending.front();pending.pop_front();const uint16_t op=Read<uint16_t>(request.data());
     const auto tab=(op==0x9A1 || op==0x6CB || op==0x9CC)?Tab::Items:Tab::Gifts;
     std::vector<uint8_t> reply(64,0);uint32_t command=0;
     if(op==0x9A1 || op==0x9A2) {
@@ -64,7 +71,9 @@ void Deliver() {
             command=tab==Tab::Items?0x4E7:0x722;
             if(selection)reply[0x32]=1;
             if(rejected){command=tab==Tab::Items?0x5D9:0x814;Put<uint16_t>(reply.data(),6,900);}
-        }else{
+        }else if(claimRefused) {
+            command=tab==Tab::Items?0x8DA:0x53E;Put<uint16_t>(reply.data(),6,2209);
+        }else {
             assert(op==(tab==Tab::Items?0x9CC:0x630));command=tab==Tab::Items?0x7E8:0xA23;
             const auto i=std::find_if(rewards.begin(),rewards.end(),[&](const Entry& e){return e.key==key;});assert(i!=rewards.end());
             if(tab==Tab::Items)rewards.erase(i);else{i->claimed=true;Put(reply.data(),6,static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(key.id))));}
@@ -72,28 +81,55 @@ void Deliver() {
     }
     Receive(service.data(),nullptr,0,0,0,command,reply.data());
 }
-void Run(){for(int n=0;n<300 && g_batch.Busy();++n){Step();if(!pending.empty())Deliver();}assert(!g_batch.Busy());}
+template<class P>void DeliverUntil(P done){for(int n=0;n<1000 && !done();++n){Step();assert(!pending.empty());Deliver();}assert(done());}
+void Run(){for(int n=0;n<1000 && (g_batch.Busy() || g_batch.Outstanding());++n){Step();if(!pending.empty())Deliver();}assert(!g_batch.Busy() && pending.empty());}
 }
 int main() {
     using namespace fixture;
     fixture::Setup();auto* button=Pointer(L"ModStorageClaimAll");assert(storage_fixture::Get<uint8_t>(button,0x168)==0);
     assert(children.at(L"ModStorageClaimAll")->skins.size()==3 && storage_fixture::Get<float>(button,0x148)==291.0f && storage_fixture::Get<float>(button,0x14C)==64.0f);
     assert(storage_fixture::Get<float>(Pointer(L"ModStorageClaimStatus"),0x14C)==520.0f);
-    Start();Run();assert(g_batch.phase()==Phase::Complete && grants==12 && rewards.empty() && nativeChecks==0);
+    // One confirmation: three page reads, then eight requests in flight at once,
+    // all twelve grants through the stock handler, and one refreshing read.
+    Start();Run();assert(g_batch.phase()==Phase::Complete && grants==12 && rewards.empty() && nativeChecks==0 && maxPending==8);
+    assert(sends==3+12+12+1 && g_batch.collected()==12);
     fixture::Setup(Tab::Gifts);rewards[0].claimed=true;Start();Run();assert(g_batch.phase()==Phase::Complete && grants==11 && nativeChecks==0);
-    fixture::Setup();Start();Step();Deliver();Step();assert(g_batch.Waiting(Operation::Check));Click();Deliver();Step();assert(grants==0 && !g_batch.Outstanding() && pending.empty());
-    fixture::Setup();Start();Step();Deliver();Step();Deliver();Step();assert(g_batch.Waiting(Operation::Claim));Click();Deliver();Step();assert(grants==1 && pending.empty() && g_batch.phase()==Phase::Stopped);
-    fixture::Setup();rejected=true;Start();Run();assert(grants==0 && g_batch.reason()==Reason::Rejected && rewards.size()==12);
-    fixture::Setup(Tab::Gifts);selection=true;Start();Run();assert(grants==0 && g_batch.reason()==Reason::Selection);
-    fixture::Setup();Start();Step();Deliver();Step();storage_fixture::Put<uint8_t>(dialog.data(),0x162,0);Step();Deliver();Step();assert(grants==0 && pending.empty());
-    fixture::Setup();Start();Step();Deliver();Step();Deliver();Step();g_batch.Tick(GetTickCount64()+20000,10000);assert(g_batch.phase()==Phase::Unknown);Click();assert(sends==3);Deliver();Step();assert(grants==1 && !g_batch.Busy() && pending.empty());
-    fixture::Setup();Start();Step();Deliver();Step();storage_fixture::Put(connection.data(),0x14,8);Step();assert(!g_batch.Busy() && g_retiredChecks.size()==1);
-    Deliver();Step();assert(nativeChecks==0 && grants==0 && g_retiredChecks.empty());
-    fixture::Setup();Start();Step();Deliver();Step();storage_fixture::Put(connection.data(),0x14,8);
-    Deliver();Step();assert(nativeChecks==0 && grants==0 && !g_batch.Busy()); // reply before the next timer tick
-    fixture::Setup();Start();Step();Deliver();
+    // Stop while preflights are out: nothing is claimed, late preflights are absorbed.
+    fixture::Setup();Start();DeliverUntil([]{return g_batch.Waiting(Operation::Check);});Click();
+    assert(g_batch.phase()==Phase::Stopped && g_batch.Outstanding());while(!pending.empty())Deliver();
+    assert(grants==0 && nativeChecks==0 && !g_batch.Outstanding());
+    // Stop while claims are out: those finish, nothing new is sent.
+    fixture::Setup();Start();DeliverUntil([]{return g_batch.Waiting(Operation::Claim);});const auto inFlight=pending.size();Click();
+    assert(g_batch.Busy() && pending.size()==inFlight);while(!pending.empty())Deliver();Step();
+    assert(grants==static_cast<int>(inFlight) && pending.empty() && g_batch.phase()==Phase::Stopped && rewards.size()==12-inFlight);
+    // Refused preflights and claims are counted, never shown as twelve native dialogs.
+    fixture::Setup();rejected=true;Start();Run();assert(grants==0 && g_batch.phase()==Phase::Complete && g_batch.skipped()==12 && rewards.size()==12 && nativeErrors==0);
+    fixture::Setup();claimRefused=true;Start();Run();assert(grants==0 && g_batch.skipped()==12 && g_batch.error()==2209 && nativeErrors==0 && rewards.size()==12);
+    fixture::Setup(Tab::Gifts);selection=true;Start();Run();assert(grants==0 && g_batch.manual()==12 && g_batch.phase()==Phase::Complete);
+    // Hidden page while preflights are out: stop, absorb, no claim.
+    fixture::Setup();Start();DeliverUntil([]{return g_batch.Waiting(Operation::Check);});storage_fixture::Put<uint8_t>(dialog.data(),0x162,0);Step();
+    while(!pending.empty())Deliver();Step();assert(grants==0 && pending.empty() && !g_batch.Busy());
+    // A claim without an answer is Unknown; the button stays inert until late grants arrive.
+    fixture::Setup();Start();DeliverUntil([]{return g_batch.Waiting(Operation::Claim);});const auto unanswered=pending.size();
+    g_batch.Tick(GetTickCount64()+20000,10000);assert(g_batch.phase()==Phase::Unknown);const auto before=sends;Click();assert(sends==before);
+    while(!pending.empty())Deliver();Step();assert(grants==static_cast<int>(unanswered) && !g_batch.Busy() && pending.empty());
+    // A replaced connection retires every preflight in flight; late replies never reach native auto-claim.
+    fixture::Setup();Start();DeliverUntil([]{return g_batch.Waiting(Operation::Check);});const auto retired=pending.size();
+    storage_fixture::Put(connection.data(),0x14,8);Step();assert(!g_batch.Busy() && g_retiredChecks.size()==retired);
+    while(!pending.empty())Deliver();Step();assert(nativeChecks==0 && grants==0 && g_retiredChecks.empty());
+    fixture::Setup();Start();DeliverUntil([]{return g_batch.Waiting(Operation::Check);});storage_fixture::Put(connection.data(),0x14,8);
+    while(!pending.empty())Deliver();Step();assert(nativeChecks==0 && grants==0 && !g_batch.Busy()); // replies before the next timer tick
+    // The refreshing read waits while a stock list request is still loading.
+    fixture::Setup();Start();DeliverUntil([]{return g_batch.Waiting(Operation::Claim);});storage_fixture::Put<uint8_t>(service.data(),0x190,0);
+    while(!pending.empty())Deliver();
+    storage_fixture::Put<uint8_t>(service.data(),0x190,0);Step();assert(pending.empty() && g_batch.Busy());
+    storage_fixture::Put<uint8_t>(service.data(),0x190,1);Step();assert(pending.size()==1 && Next()==0x9A1);Run();assert(g_batch.phase()==Phase::Complete);
+    // An invalid native page while the timer sends the next preflight disables the added UI.
+    fixture::Setup();g_depth=1;Start();DeliverUntil([]{return g_batch.Waiting(Operation::Check);});
+    g_thread=0;Deliver();g_thread=GetCurrentThreadId();assert(pending.empty() && g_batch.Next());
     storage_fixture::Put(service.data(),0x180,reinterpret_cast<uint8_t*>(1));storage_fixture::Put(service.data(),0x184,reinterpret_cast<uint8_t*>(29));
-    g_nextSend=0;Timer(nullptr,WM_TIMER,0,0);assert(!g_ui.Owns(service.data()) && storage_fixture::Get<uint8_t>(Pointer(L"ModStorageClaimAll"),0x162)==0 && sends==1);
+    const auto sentBeforeTimer=sends;Timer(nullptr,WM_TIMER,0,0);
+    assert(!g_ui.Owns(service.data()) && storage_fixture::Get<uint8_t>(Pointer(L"ModStorageClaimAll"),0x162)==0 && sends==sentBeforeTimer);
     fixture::Setup();g_ui.Detach();UIEvent(nullptr,nullptr,service.data(),0x101,0,Pointer(L"CloseBtn1"));assert(manual==1 && !sends);
     fixture::Setup();Click();assert(g_armed);
     for(uint32_t event:{0x102u,0x103u})UIEvent(nullptr,nullptr,service.data(),event,0,Pointer(L"ModStorageClaimAll"));
@@ -158,27 +194,21 @@ int main() {
     assert(SdgoStorageGameTestActionV1(runHash,SDGO_STORAGE_GAME_TEST_ACTION_CLAIM_ALL));
     observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
     assert(SdgoStorageGameTestGetSnapshotV1(&observed) && observed.action_sequence==2 &&
-           observed.busy && !observed.completed && !observed.reply_sequence);
-
-    Step();
-    observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
-    assert(SdgoStorageGameTestGetSnapshotV1(&observed) && observed.outstanding &&
-           observed.pending_operation==1 && !observed.reply_sequence);
+           observed.busy && observed.outstanding && observed.pending_operation==1 &&
+           !observed.completed && !observed.reply_sequence);
     Deliver();
     observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
+    // The reply was recorded after the stock handler, and the next page was requested at once.
     assert(SdgoStorageGameTestGetSnapshotV1(&observed) && observed.reply_sequence==1 &&
-           observed.page_entry_count==5 && originalReplySequences.size()==1 &&
-           originalReplySequences[0]==0);
-    Step();Deliver();
+           !observed.loaded && observed.outstanding && originalReplySequences.size()==1 &&
+           originalReplySequences[0]==0 && pending.size()==1 && Next()==0x9A1);
+    Run();
     observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
-    assert(SdgoStorageGameTestGetSnapshotV1(&observed) && observed.reply_sequence==1 &&
-           observed.preflight_reply_sequence==1);
-    Step();Deliver();
-    observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
-    assert(SdgoStorageGameTestGetSnapshotV1(&observed) && observed.completed==1 &&
-           observed.reply_sequence==2 && observed.preflight_reply_sequence==1 &&
-           originalReplySequences.size()==2 && originalReplySequences[1]==1);
+    assert(SdgoStorageGameTestGetSnapshotV1(&observed) && observed.completed==12 && observed.collected==12 &&
+           !observed.skipped && !observed.manual && observed.rounds==1 &&
+           observed.reply_sequence==3+12+1 && observed.preflight_reply_sequence==12 &&
+           observed.batch_phase==SDGO_STORAGE_GAME_TEST_PHASE_COMPLETE);
     SetEnvironmentVariableA("SDGO_GAME_TEST_RUN",nullptr);
     SetEnvironmentVariableA("SDGO_GAME_TEST_ROLE",nullptr);
-    std::cout<<"STORAGE NATIVE ADAPTER PASSED: native page placement/skins, one confirmation, 12-item and gift pagination, preflight cancellation, in-flight stop, choice/capacity refusal, hidden page, timeout/late grant and original UI fallback\n";
+    std::cout<<"STORAGE NATIVE ADAPTER PASSED: native page placement/skins, one confirmation, whole-tab pipelined preflight/claim window, stock grants, gift pagination, stop before/after claims, counted refusals/selections, hidden page, timeout/late grant, retired preflights, stock reload wait and original UI fallback\n";
 }

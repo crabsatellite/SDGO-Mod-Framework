@@ -230,55 +230,67 @@ private:
     bool custom_view_ = false;
 };
 
+// Gift origin on the unit-indexing unit-information page (1334). Nothing is
+// shown for ordinary units. For a unit the server confirms as a received gift,
+// a compact native panel sits on the lower edge of the 3D viewport with the
+// sender and dates, and a native blue button opens the full received card.
+struct OriginLayout {
+    int panel_x=0,panel_y=0,panel_width=0,panel_height=0;
+    int text_x=0,title_y=0,dates_y=0,text_width=0,text_height=0;
+    int button_x=0,button_y=0,button_width=0,button_height=0;
+    bool valid=false;
+};
+// The viewport is the native 3D render control of the page.
+inline OriginLayout OriginLayoutFor(int x,int y,int width,int height) {
+    OriginLayout l;
+    l.panel_x=x+4;l.panel_width=width-8;l.panel_height=46;l.panel_y=y+height-l.panel_height-4;
+    l.button_width=72;l.button_height=24;
+    l.button_x=l.panel_x+l.panel_width-l.button_width-8;l.button_y=l.panel_y+(l.panel_height-l.button_height)/2;
+    l.text_x=l.panel_x+10;l.text_width=l.button_x-8-l.text_x;l.text_height=15;
+    l.title_y=l.panel_y+6;l.dates_y=l.panel_y+25;
+    l.valid=width>=200 && height>=120 && x>=0 && y>=0 && l.text_width>=120;
+    return l;
+}
+
 class UnitDetailView {
 public:
     bool Attach(
         void* service,
         void* root,
-        void* skinSource,
         const Bindings& bindings);
     // Invalidates cached references; the native owner may already have
     // destroyed the unit-detail page and all of its child controls.
     void Detach(void* service) noexcept;
-    void SetUnit(
-        std::uint64_t unitUid,
-        bool visible,
-        bool enabled,
-        const std::wstring& caption);
-    void SetDetail(
-        const std::wstring& detail,
-        bool visible);
-    void ToggleDetail();
+    // A different unit is displayed: the origin of the previous one is hidden.
+    void SetUnit(std::uint64_t unitUid);
+    void ShowOrigin(
+        const std::wstring& title,
+        const std::wstring& dates,
+        bool enabled);
+    void HideOrigin() noexcept;
     bool Click(void* service, void* control) const noexcept;
     void* service() const noexcept { return service_; }
     void* button() const noexcept { return button_; }
-    void* detail() const noexcept { return detail_; }
+    void* panel() const noexcept { return panel_; }
+    void* title() const noexcept { return title_; }
+    void* dates() const noexcept { return dates_; }
     std::uint64_t unit_uid() const noexcept { return unit_uid_; }
-    bool detail_visible() const noexcept {
-        return detail_visible_;
-    }
+    bool origin_visible() const noexcept { return visible_; }
     bool ready() const noexcept {
-        return service_ && root_ && button_ && detail_ && render_ &&
-               unit_uid_ && available_;
+        return service_ && root_ && button_ && unit_uid_ && visible_ && enabled_;
     }
 
 private:
-    void ApplyDetailVisibility(bool visible) noexcept;
-
     const Bindings* bindings_ = nullptr;
     void* service_ = nullptr;
     void* root_ = nullptr;
+    void* panel_ = nullptr;
+    void* title_ = nullptr;
+    void* dates_ = nullptr;
     void* button_ = nullptr;
-    void* detail_ = nullptr;
-    void* render_ = nullptr;
     std::uint64_t unit_uid_ = 0;
-    std::uint8_t render_visible_ = 0;
-    std::uint8_t render_enabled_ = 0;
-    std::uint8_t render_hit_test_ = 0;
-    bool render_state_captured_ = false;
-    bool detail_visible_ = false;
-    bool shown_ = false;
-    bool available_ = false;
+    bool visible_ = false;
+    bool enabled_ = false;
 };
 
 } // namespace sdgo::friend_unit_gift::client::ui

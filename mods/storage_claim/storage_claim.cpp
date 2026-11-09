@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -52,8 +53,8 @@ ui::Page g_ui;Batch g_batch;void* g_service=nullptr;void* g_owner=nullptr;
 sdgo::storage::extension::Registry g_extensions;
 UINT_PTR g_timer=0;DWORD g_thread=0;bool g_armed=false,g_pumping=false;
 bool g_timerObserved=false;
-Tab g_armTab=Tab::Items;uint64_t g_armSession=0,g_nextSend=0,g_observedSession=0;
-uint32_t g_interval=200,g_timeout=10000,g_limit=5000;uint16_t g_error=0;
+Tab g_armTab=Tab::Items;uint64_t g_armSession=0,g_observedSession=0;
+uint32_t g_depth=8,g_timeout=10000,g_limit=5000;uint16_t g_error=0;
 uint32_t g_generation=0;
 struct RetiredCheck {Tab tab;Key key;};
 std::vector<RetiredCheck> g_retiredChecks;
@@ -118,30 +119,43 @@ bool SendUnsafe(const Request& request,const uint8_t* data,int size) {
     return g_send(session,Read<int>(session,0x14),data,size,0)!=0;
 }
 bool Send(const Request& request,const std::vector<uint8_t>& bytes){__try{return SendUnsafe(request,bytes.data(),static_cast<int>(bytes.size()));}__except(EXCEPTION_EXECUTE_HANDLER){return false;}}
+std::wstring Summary() {
+    std::wstring text=L"已领取 "+std::to_wstring(g_batch.completed())+L" 项";
+    if(g_batch.skipped())text+=L"，服务器拒绝 "+std::to_wstring(g_batch.skipped())+L" 项（"+std::to_wstring(g_batch.error())+L"）";
+    if(g_batch.manual())text+=L"，"+std::to_wstring(g_batch.manual())+L" 个礼包需手动选择";
+    return text;
+}
 void DisplayState() {
-    const auto count=std::to_wstring(g_batch.completed());std::wstring text;
-    if(g_batch.Busy()){g_ui.Display(L"停止领取",L"已领取 "+count+L" 项；正在等待服务器确认。");return;}
+    std::wstring text;
+    if(g_batch.Busy()) {
+        const auto phase=g_batch.phase();
+        if(phase==Phase::NeedList || phase==Phase::List)
+            text=g_batch.completed()?L"正在刷新列表；"+Summary()+L"。":L"正在读取第 "+std::to_wstring(g_batch.page()+1)+L" 页，读完后一次领取。";
+        else if(phase==Phase::NeedCheck || phase==Phase::Check)text=L"正在一次领取 "+std::to_wstring(g_batch.collected())+L" 项：服务器预检中。";
+        else text=L"正在一次领取 "+std::to_wstring(g_batch.collected())+L" 项：已到账 "+std::to_wstring(g_batch.completed())+L" 项。";
+        g_ui.Display(L"停止领取",text);return;
+    }
     if(g_batch.Outstanding()) {
-        if(g_batch.phase()==Phase::Unknown)text=L"最后一笔结果未知，请重新登录核对；不会重试。";
+        if(g_batch.phase()==Phase::Unknown)text=L"领取结果未能全部确认，请重新登录核对；不会重试。";
         else if(g_batch.reason()==Reason::Timeout || g_batch.reason()==Reason::Disconnected)text=L"回应状态未能确认，请重新登录后再领取。";
-        else text=L"正在停止；等待最后回应，不再追加领取。";
+        else text=L"正在停止；等待已发出的请求回应，不再追加领取。";
         g_ui.Display(L"等待回应",text,false);return;
     }
-    if(g_batch.phase()==Phase::Complete)text=L"已完成：领取 "+count+L" 项。";
-    else if(g_batch.phase()==Phase::Stopped) {
+    if(g_batch.phase()==Phase::Complete)
+        text=g_batch.completed()||g_batch.skipped()||g_batch.manual()?L"已完成："+Summary()+L"。":L"当前页签没有可领取的奖品。";
+    else if(g_batch.phase()==Phase::Stopped || g_batch.phase()==Phase::Unknown) {
         switch(g_batch.reason()) {
-        case Reason::Selection:text=L"遇到需手动选择的礼包，请单独领取。";break;
-        case Reason::Rejected:text=L"服务器拒绝领取（"+std::to_wstring(g_error)+L"）；已领取 "+count+L" 项。";break;
-        case Reason::Limit:text=L"达到本次领取上限，可再次领取；已领取 "+count+L" 项。";break;
-        case Reason::PageLimit:text=L"礼物超出原生分页范围，请先清理已领取的信件。";break;
-        case Reason::Changed:text=L"列表或页签已变化，已停止；请重新确认。";break;
-        case Reason::Timeout:text=L"回应超时，已停止；请重新打开保管库核对。";break;
-        case Reason::Disconnected:text=L"连接或页面已变化，已停止；请核对已领物品。";break;
-        case Reason::SendFailed:text=L"请求未能确认，已停止；请核对后重试。";break;
-        default:text=L"已停止，已确认领取 "+count+L" 项。";break;
+        case Reason::Limit:text=L"达到本次领取上限，可再次领取；"+Summary()+L"。";break;
+        case Reason::PageLimit:text=L"礼物超出原生分页范围，请先清理已领取的信件；"+Summary()+L"。";break;
+        case Reason::Changed:text=L"列表或页签已变化，已停止；"+Summary()+L"，请重新确认。";break;
+        case Reason::Timeout:text=L"回应超时，已停止；"+Summary()+L"，请重新打开保管库核对。";break;
+        case Reason::Disconnected:text=L"连接或页面已变化，已停止；"+Summary()+L"，请核对已领物品。";break;
+        case Reason::SendFailed:text=L"请求未能确认，已停止；"+Summary()+L"，请核对后重试。";break;
+        case Reason::Rejected:text=L"服务器拒绝读取列表（"+std::to_wstring(g_error)+L"）；"+Summary()+L"。";break;
+        default:text=L"已停止；"+Summary()+L"。";break;
         }
-    }else text=L"领取当前页签全部分页；限时物品可能开始计时。";
-    g_ui.Display(g_armed?L"确认领取":L"一键领取",g_armed?L"再次点击确认：领取当前页签所有奖品。":text);
+    }else text=L"一次领取当前页签全部分页；限时物品可能开始计时。";
+    g_ui.Display(g_armed?L"确认领取":L"一键领取",g_armed?L"再次点击确认：一次领取当前页签所有奖品。":text);
 }
 void PumpUnsafe() {
     if(GetCurrentThreadId()!=g_thread || g_pumping)return;
@@ -149,9 +163,9 @@ void PumpUnsafe() {
     try {
         const auto session=Session();
         if(session && g_observedSession && session!=g_observedSession) {
-            if(g_batch.Waiting(Operation::Check)) {
-                if(g_retiredChecks.size()>=32)throw std::runtime_error("too many unresolved preflight sessions");
-                g_retiredChecks.push_back({g_batch.tab(),g_batch.pending()});
+            for(const auto& key:g_batch.InFlight(Operation::Check)) {
+                if(g_retiredChecks.size()>=64)throw std::runtime_error("too many unresolved preflight sessions");
+                g_retiredChecks.push_back({g_batch.tab(),key});
             }
             g_batch=Batch{};g_armed=false;g_owner=nullptr;
         }
@@ -160,17 +174,21 @@ void PumpUnsafe() {
             if(g_batch.Busy())g_batch.Disconnect();g_armed=false;
         }else {
             const auto now=GetTickCount64();g_batch.Tick(now,g_timeout);
-            if(now>=g_nextSend)if(const auto request=g_batch.Next()) {
+            for(uint32_t n=0;n<Batch::kMaxDepth;++n) {
+                const auto request=g_batch.Next();if(!request)break;
+                // The stock claim handler may still be reloading the list itself.
+                if(request->operation==Operation::List && !Read<uint8_t>(g_service,0x190))break;
                 if(request->operation!=Operation::List) {
                     uint32_t total=0;const auto entries=Snapshot(g_service,request->tab,total);
                     const auto entry=std::find_if(entries.begin(),entries.end(),[&](const Entry& e){return e.key==request->key && !e.claimed;});
-                    if(entry==entries.end()){g_batch.Reject(Reason::Changed);DisplayState();g_pumping=false;return;}
-                    // Native failure dialogs also consult this row index.
-                    Put(g_service,0x16C,static_cast<int>(entry-entries.begin()));
+                    // Native failure dialogs consult this row index; keep it on a real row.
+                    if(entry!=entries.end())Put(g_service,0x16C,static_cast<int>(entry-entries.begin()));
                 }
                 const auto bytes=Packet(*request);const bool sent=Send(*request,bytes);
-                g_batch.Sent(*request,now,sent);g_nextSend=now+g_interval;
-                if(sent)g_api->Log(g_mod,SDGO_LOG_DEBUG,"native storage request %d, page %u",static_cast<int>(request->operation),request->page+1);
+                g_batch.Sent(*request,now,sent);
+                if(!sent)break;
+                // Mirror the stock list sender: the page is reloading until its reply.
+                if(request->operation==Operation::List)Put<uint8_t>(g_service,0x190,0);
             }
             DisplayState();
         }
@@ -227,8 +245,9 @@ uint32_t HandleUI(void* handler,void* self,uint32_t event,uintptr_t second,void*
                 g_armed=true;g_armTab=tab;g_armSession=session;DisplayState();return 0;
             }
             g_armed=false;g_error=0;g_owner=self;
-            if(g_batch.Start(tab,session,Read<uint32_t>(self,0x168),g_limit,GetTickCount64()))g_nextSend=0;
-            DisplayState();return 0;
+            if(g_batch.Start(tab,session,Read<uint32_t>(self,0x168),g_limit,GetTickCount64(),g_depth))
+                g_api->Log(g_mod,SDGO_LOG_INFO,"storage claim batch started: tab %d, pipeline %u",static_cast<int>(tab),g_depth);
+            PumpUnsafe();DisplayState();return 0;
         }
         // The close buttons still work. Mutating rows, tab changes and native
         // pagination cannot race a batch; a stopped batch restores native input.
@@ -305,7 +324,12 @@ uint32_t PacketUnsafe(void* self,uintptr_t a,uintptr_t b,uintptr_t c,uint32_t co
                 // fall through to the game's automatic claim sender.
                 return 0;
             }
-            if(error){g_error=Read<uint16_t>(data,6);g_batch.Reject();RecordTestPreflightReply();return 0;}
+            if(error){g_error=Read<uint16_t>(data,6);g_batch.CheckReply({},false,false,g_error);RecordTestPreflightReply();return 0;}
+        }
+        // A refused claim changed nothing. Count it instead of opening one
+        // native failure dialog per refused reward.
+        if(g_batch.Waiting(Operation::Claim) && op==(tab==Tab::Items?0x8DA:0x53E)) {
+            g_error=Read<uint16_t>(data,6);g_batch.ClaimReply({},false,g_error);RecordTestReply();return 0;
         }
     }
     const bool owned=OwnsReply(self);const auto tab=g_batch.tab();
@@ -321,14 +345,18 @@ uint32_t PacketUnsafe(void* self,uintptr_t a,uintptr_t b,uintptr_t c,uint32_t co
         if(g_batch.ClaimReply(ReplyKey(tab,data,g_batch.pending(),tab==Tab::Gifts),true))RecordTestReply();
     }
     else if(owned) {
-        const bool error=(g_batch.Waiting(Operation::List) && op==(tab==Tab::Items?0x8AF:0x8B0)) ||
-                         (g_batch.Waiting(Operation::Claim) && op==(tab==Tab::Items?0x8DA:0x53E));
+        const bool error=g_batch.Waiting(Operation::List) && op==(tab==Tab::Items?0x8AF:0x8B0);
         if(error){g_error=Read<uint16_t>(data,6);g_batch.Reject();RecordTestReply();}
     }
     return result;
 }
 uint32_t PacketGuard(void* self,uintptr_t a,uintptr_t b,uintptr_t c,uint32_t command,const uint8_t* data) {
-    try{return PacketUnsafe(self,a,b,c,command,data);}catch(const std::exception&){g_batch.Disconnect();return 0;}
+    const bool owned=OwnsReply(self);
+    uint32_t result=0;
+    try{result=PacketUnsafe(self,a,b,c,command,data);}catch(const std::exception&){g_batch.Disconnect();return 0;}
+    // Send the next pipelined request now instead of waiting for the next timer tick.
+    if(owned && GetCurrentThreadId()==g_thread)PumpUnsafe();
+    return result;
 }
 uint32_t __fastcall Receive(void* self,void*,uintptr_t a,uintptr_t b,uintptr_t c,uint32_t command,const uint8_t* data) {
     __try{return PacketGuard(self,a,b,c,command,data);}__except(EXCEPTION_EXECUTE_HANDLER){g_batch.Disconnect();return 0;}
@@ -380,6 +408,7 @@ static int StorageGameTestGetSnapshot(
     result.armed=g_armed?1u:0u;result.outstanding=g_batch.Outstanding()?1u:0u;
     result.timer_observed=g_timerObserved?1u:0u;result.pending_operation=PendingOperation();
     const auto pending=g_batch.pending();result.pending_id=pending.id;result.pending_stamp=pending.stamp;
+    result.collected=g_batch.collected();result.skipped=g_batch.skipped();result.manual=g_batch.manual();result.rounds=g_batch.rounds();
     ObserverBasic(&result);
     if(result.visible && result.loaded && g_thread && GetCurrentThreadId()==g_thread) {
         try {
@@ -449,13 +478,13 @@ const SdgoStorageExtensionApiV1* __cdecl SdgoStorageGetExtensionApiV1() {
 
 SDGO_MOD_ENTRY {
     g_api=api;g_mod=mod;
-    const int interval=api->SettingInt(mod,"RequestIntervalMs",200),timeout=api->SettingInt(mod,"ReplyTimeoutMs",10000),limit=api->SettingInt(mod,"MaxClaims",5000);
-    if(interval<100 || interval>10000 || timeout<1000 || timeout>60000 || limit<1 || limit>100000)return 0;
-    g_interval=static_cast<uint32_t>(interval);g_timeout=static_cast<uint32_t>(timeout);g_limit=static_cast<uint32_t>(limit);
+    const int depth=api->SettingInt(mod,"PipelineDepth",8),timeout=api->SettingInt(mod,"ReplyTimeoutMs",10000),limit=api->SettingInt(mod,"MaxClaims",5000);
+    if(depth<1 || depth>static_cast<int>(Batch::kMaxDepth) || timeout<1000 || timeout>60000 || limit<1 || limit>100000)return 0;
+    g_depth=static_cast<uint32_t>(depth);g_timeout=static_cast<uint32_t>(timeout);g_limit=static_cast<uint32_t>(limit);
     if(!Bind(g_session,"storage.session") || !Bind(g_app,"game.app") || !Bind(g_send,"net.send_packet") || !Bind(g_busy,"storage.native_busy") || !g_ui.Bind(api,mod))return 0;
     if(!api->HookCode(mod,"storage.init",reinterpret_cast<void*>(&Init),reinterpret_cast<void**>(&g_init)) ||
        !api->HookCode(mod,"storage.ui_event",reinterpret_cast<void*>(&UIEvent),reinterpret_cast<void**>(&g_event)) ||
        !api->HookCode(mod,"storage.packet",reinterpret_cast<void*>(&Receive),reinterpret_cast<void**>(&g_packet)))return 0;
-    api->Log(mod,SDGO_LOG_INFO,"ready: native storage claim-all UI; original authenticated preflight/grant protocol, no SQL or shared message-loop hook");
+    api->Log(mod,SDGO_LOG_INFO,"ready: native storage claim-all UI; one confirmation reads every page, then pipelines the original preflight/grant requests (depth %u); no SQL or shared message-loop hook",g_depth);
     return 1;
 }

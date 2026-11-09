@@ -36,7 +36,7 @@ Equipped skill parts remain attached to the unit. The client reads the selected 
 
 ## Provenance and configuration
 
-Accepted units provide a provenance entry in their details, showing the sender, server-recorded gift time and note. This metadata belongs to the instance and does not replace the shared description for that unit type. The original acquisition date remains separate.
+When a unit is selected in the unit list (机体一览), the client asks the server whether it was received as a friend gift. Only units actually received and accepted as gifts show a native blue strip on the lower edge of the left 3D view, with "好友赠送  来自 …" and the gift and acceptance dates; its **查看寄语** button opens the native unit information card with the full note and times. Ordinary units show nothing. Each unit is checked once per login. This metadata belongs to the instance and does not replace the shared description for that unit type. The original acquisition date remains separate.
 
 Install matching `friend_unit_gift_client` and Agent/World `friend_unit_gift_server` components through the existing runtime distribution. The server uses native database sessions and automatically maintains its owned schema. Players need no database credentials or companion service.
 

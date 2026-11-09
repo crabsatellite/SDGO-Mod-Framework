@@ -58,7 +58,7 @@
 |---|---|
 | [FPS 上限](docs/fps-limit.zh-CN.md) <!-- catalog: `fps_limit` --> | 提高渲染帧率上限，保留原生游戏速度 |
 | [机库管理](docs/hangar-manager.zh-CN.md) <!-- catalog: `hangar_manager` --> | 在机体管理页整理机库、预览并兑换重复机体，支持导入机体 |
-| [保管库一键领取](docs/storage-claim.zh-CN.md) <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 |
+| [保管库一键领取](docs/storage-claim.zh-CN.md) <!-- catalog: `storage_claim` --> | 保管库页内确认一次，一次领取当前页签全部分页的物品或礼物 |
 | [自动机库容量](docs/hangar-capacity.zh-CN.md) <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） |
 | [商城汉化与中文检索](docs/shop-localization.zh-CN.md) <!-- catalog: `shop_localization` --> | 汉化商品名称、说明、选项和涂装机体预览，可用中文名称搜索并组合等级、币种筛选 |
 | [原生界面中文汉化](docs/ui-localization.zh-CN.md) <!-- catalog: `ui_localization` --> | 汉化原版泰文按钮与较长系统提示，保留简单英语和原版图片；自定义内容随内容包分发 |

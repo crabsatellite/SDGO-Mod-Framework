@@ -986,54 +986,71 @@ void StorageView::RestoreStockControls(bool render) noexcept {
 bool UnitDetailView::Attach(
     void* service,
     void* root,
-    void* skinSource,
     const Bindings& bindings) {
-    if (!service || !root || !skinSource ||
-        Read<void*>(skinSource) != bindings.button_vtable ||
-        !Read<void*>(skinSource, 0x15C)) {
-        return false;
-    }
+    if (!service || !root || !bindings.add_icon || !bindings.skin) return false;
     if (service_ && service_ != service) {
         Detach(service_);
     }
     auto* render = Read<void*>(service, 0x4C);
     if (!ChildOf(render, root)) return false;
-    auto* button = bindings.AddButton(
-        root,
-        L"ModFriendUnitGiftProvenance",
-        118,
-        268,
-        284,
-        15,
-        skinSource,
-        L"查看赠送来源");
-    auto* detail = bindings.AddTextButton(
-        root,
-        L"ModFriendUnitGiftProvenanceDetail",
-        118,
-        41,
-        284,
-        227,
-        L"");
-    if (!button || !detail) {
+    const auto layout = OriginLayoutFor(
+        static_cast<int>(Read<float>(render, 0x148)),
+        static_cast<int>(Read<float>(render, 0x14C)),
+        Read<int>(render, 0x154), Read<int>(render, 0x158));
+    if (!layout.valid) return false;
+    // The stock blue information panel used by the received-gift card. Only
+    // this sprite instance is scaled; cached frames and archives stay intact.
+    const std::wstring panelName = L"ModFriendUnitGiftOriginPanel";
+    const std::wstring panelPath = L"sprs\\17459.spr";
+    void* panel = bindings.FindNamed(root, panelName.c_str(), 1);
+    if (!panel) {
+        const auto key = View(panelName);
+        bindings.add_icon(root, &key, layout.panel_x, layout.panel_y,
+                          layout.panel_width, layout.panel_height);
+        panel = bindings.FindNamed(root, panelName.c_str(), 1);
+        if (!panel || !ChildOf(panel, root)) return false;
+        const auto skin = View(panelPath);
+        bindings.skin(panel, &skin, 0, 0, 0);
+        auto** skins = Read<std::uint8_t**>(panel, 0x1A4);
+        auto* sprite = skins && *skins ? Read<std::uint8_t*>(*skins) : nullptr;
+        if (!sprite) return false;
+        Put<float>(sprite, 0x94, static_cast<float>(layout.panel_width) / 262.0f);
+        Put<float>(sprite, 0x98, static_cast<float>(layout.panel_height) / 61.0f);
+        Put<std::uint8_t>(sprite, 0xA0, 1);
+        Put<std::uint8_t>(panel, 0x168, 0);
+    }
+    auto* title = bindings.AddTextButton(root, L"ModFriendUnitGiftOriginTitle",
+        layout.text_x, layout.title_y, layout.text_width, layout.text_height, L"");
+    auto* dates = bindings.AddTextButton(root, L"ModFriendUnitGiftOriginDates",
+        layout.text_x, layout.dates_y, layout.text_width, layout.text_height, L"");
+    auto* button = bindings.AddTextButton(root, L"ModFriendUnitGiftOriginOpen",
+        layout.button_x, layout.button_y, layout.button_width, layout.button_height, L"查看寄语");
+    if (!title || !dates || !button) {
+        bindings.SetState(panel, false, false);
+        bindings.SetState(title, false, false);
+        bindings.SetState(dates, false, false);
         bindings.SetState(button, false, false);
-        bindings.SetState(detail, false, false);
         return false;
+    }
+    if (!HasThreeButtonSkins(button)) {
+        // The same native blue button skins as the received-gift card.
+        for (int index = 0; index < 3; ++index) {
+            const std::wstring path = L"sprs\\" + std::to_wstring(17530 + index) + L".spr";
+            const auto skin = View(path);
+            bindings.skin(button, &skin, 0, index == 1 ? 4u : 0u, index == 1 ? 4u : 0u);
+        }
+        if (!HasThreeButtonSkins(button)) return false;
     }
     bindings_ = &bindings;
     service_ = service;
     root_ = root;
+    panel_ = panel;
+    title_ = title;
+    dates_ = dates;
     button_ = button;
-    detail_ = detail;
-    render_ = render;
-    render_visible_ = 0;
-    render_enabled_ = 0;
-    render_hit_test_ = 0;
-    render_state_captured_ = false;
-    detail_visible_ = false;
-    shown_ = false;
-    SetUnit(0, false, false, L"查看赠送来源");
-    bindings.SetState(detail_, false, false);
+    unit_uid_ = 0;
+    visible_ = enabled_ = false;
+    HideOrigin();
     return true;
 }
 
@@ -1041,55 +1058,46 @@ void UnitDetailView::Detach(void* service) noexcept {
     if (service != service_) return;
     // Unit-detail init can replace the service only after its previous native
     // owner has released the page and children. Detach is therefore
-    // invalidation only. Live visibility restoration belongs to SetUnit and
-    // ApplyDetailVisibility while the page is still known to be owned.
+    // invalidation only.
     bindings_ = nullptr;
     service_ = nullptr;
     root_ = nullptr;
+    panel_ = nullptr;
+    title_ = nullptr;
+    dates_ = nullptr;
     button_ = nullptr;
-    detail_ = nullptr;
-    render_ = nullptr;
     unit_uid_ = 0;
-    render_visible_ = 0;
-    render_enabled_ = 0;
-    render_hit_test_ = 0;
-    render_state_captured_ = false;
-    detail_visible_ = false;
-    shown_ = false;
-    available_ = false;
+    visible_ = enabled_ = false;
 }
 
-void UnitDetailView::SetUnit(
-    std::uint64_t unitUid,
-    bool visible,
-    bool enabled,
-    const std::wstring& caption) {
-    if (unit_uid_ != unitUid) {
-        ApplyDetailVisibility(false);
-        if (bindings_) bindings_->SetText(detail_, L"", 1);
-    }
+void UnitDetailView::SetUnit(std::uint64_t unitUid) {
+    if (unit_uid_ == unitUid) return;
     unit_uid_ = unitUid;
-    const bool shown = visible && unitUid != 0;
-    shown_ = shown;
-    available_ = shown && enabled;
+    HideOrigin();
+}
+
+void UnitDetailView::ShowOrigin(
+    const std::wstring& title,
+    const std::wstring& dates,
+    bool enabled) {
+    if (!bindings_ || !unit_uid_) return;
+    bindings_->SetText(title_, title, 1);
+    bindings_->SetText(dates_, dates, 1);
+    bindings_->SetState(panel_, true, false);
+    bindings_->SetState(title_, true, false);
+    bindings_->SetState(dates_, true, false);
+    bindings_->SetState(button_, true, enabled);
+    visible_ = true;
+    enabled_ = enabled;
+}
+
+void UnitDetailView::HideOrigin() noexcept {
+    visible_ = enabled_ = false;
     if (!bindings_) return;
-    if (!shown) ApplyDetailVisibility(false);
-    bindings_->SetText(button_, caption, 1);
-    bindings_->SetState(
-        button_, shown, available_);
-}
-
-void UnitDetailView::SetDetail(
-    const std::wstring& detail,
-    bool visible) {
-    if (!bindings_ || !detail_) return;
-    bindings_->SetText(detail_, detail, 1);
-    ApplyDetailVisibility(
-        visible && shown_ && unit_uid_ != 0);
-}
-
-void UnitDetailView::ToggleDetail() {
-    ApplyDetailVisibility(!detail_visible_);
+    bindings_->SetState(panel_, false, false);
+    bindings_->SetState(title_, false, false);
+    bindings_->SetState(dates_, false, false);
+    bindings_->SetState(button_, false, false);
 }
 
 bool UnitDetailView::Click(
@@ -1097,54 +1105,6 @@ bool UnitDetailView::Click(
     void* control) const noexcept {
     return ready() && service == service_ &&
            control && control == button_;
-}
-
-void UnitDetailView::ApplyDetailVisibility(
-    bool visible) noexcept {
-    if (!bindings_ || !detail_ || !render_) return;
-    if (visible) {
-        if (!render_state_captured_) {
-            __try {
-                render_visible_ =
-                    Read<std::uint8_t>(render_, 0x162);
-                render_enabled_ =
-                    Read<std::uint8_t>(render_, 0x163);
-                render_hit_test_ =
-                    Read<std::uint8_t>(render_, 0x167);
-                render_state_captured_ = true;
-            } __except (EXCEPTION_EXECUTE_HANDLER) {
-                return;
-            }
-        }
-        __try {
-            Put<std::uint8_t>(render_, 0x162, 0);
-            Put<std::uint8_t>(render_, 0x163, 0);
-            Put<std::uint8_t>(render_, 0x167, 0);
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            return;
-        }
-        bindings_->SetState(detail_, true, false);
-        detail_visible_ = true;
-        return;
-    }
-
-    bindings_->SetState(detail_, false, false);
-    if (render_state_captured_) {
-        __try {
-            Put<std::uint8_t>(
-                render_, 0x162, render_visible_);
-            Put<std::uint8_t>(
-                render_, 0x163, render_enabled_);
-            Put<std::uint8_t>(
-                render_, 0x167, render_hit_test_);
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-        }
-    }
-    render_visible_ = 0;
-    render_enabled_ = 0;
-    render_hit_test_ = 0;
-    render_state_captured_ = false;
-    detail_visible_ = false;
 }
 
 } // namespace sdgo::friend_unit_gift::client::ui

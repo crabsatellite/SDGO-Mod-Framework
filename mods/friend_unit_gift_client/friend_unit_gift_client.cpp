@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cwchar>
 #include <cstring>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -115,6 +116,7 @@ UnitCardCtor g_unit_card_ctor=nullptr;
 UnitCardDtor g_unit_card_dtor=nullptr;
 std::uint64_t g_unit_card_requested=0;
 std::uint64_t g_provenance_target_uid=0;
+bool g_provenance_select_only=false;
 std::uint64_t g_provenance_target_session=0;
 std::uint64_t g_provenance_target_deadline=0;
 std::uint64_t g_provenance_next_action=0;
@@ -938,80 +940,117 @@ std::wstring ProvenanceText(const Detail& provenance) {
     return result;
 }
 
-std::wstring ProvenanceDetailText(
-    const Detail& provenance) {
-    std::wstring peer;
-    peer.reserve(provenance.peer_name_code_units);
-    for (std::size_t index = 0;
-         index < provenance.peer_name_code_units;
-         ++index) {
-        peer.push_back(static_cast<wchar_t>(
-            provenance.peer_name[index]));
-    }
-    if (peer.empty()) peer = L"未知发送方";
-
-    std::wstring note;
-    note.reserve(provenance.note_code_units);
-    for (std::size_t index = 0;
-         index < provenance.note_code_units;
-         ++index) {
-        note.push_back(static_cast<wchar_t>(
-            provenance.note[index]));
-    }
-    if (note.empty()) note = L"无留言";
-
-    std::wstring result =
-        L"发送方：" + peer +
-        L"\n赠送时间：" +
-        FormatUnixMillis(provenance.offered_unix_millis);
-    if (provenance.accepted_unix_millis) {
-        result +=
-            L"\n接收时间：" +
-            FormatUnixMillis(
-                provenance.accepted_unix_millis);
-    }
-    result += L"\n\n留言：\n" + note;
-    return result;
+// Gift origin of units shown on the unit-information page, per login session.
+// Ordinary units are remembered as such so the server is asked once per unit.
+bool g_unit_detail_view_vtable_ok(void* service) {
+    return g_unit_detail_service_vtable &&
+           Read<void*>(service) == g_unit_detail_service_vtable;
 }
+
+struct GiftOrigin {
+    enum class State : std::uint8_t {unknown, gifted, plain};
+    State state = State::unknown;
+    Detail detail{};
+    ULONGLONG retry_at = 0;
+};
+std::map<std::uint64_t, GiftOrigin> g_gift_origins;
+std::uint64_t g_gift_origin_session = 0;
+ULONGLONG g_gift_origin_next_refresh = 0;
+
+void SyncGiftOrigins() {
+    const auto session = CurrentSessionKey();
+    if (session != g_gift_origin_session) {
+        g_gift_origins.clear();
+        g_gift_origin_session = session;
+    }
+    if (g_gift_origins.size() > 512) g_gift_origins.clear();
+}
+
+std::wstring PeerName(const Detail& detail) {
+    std::wstring peer;
+    for (std::size_t index = 0; index < detail.peer_name_code_units; ++index)
+        peer.push_back(static_cast<wchar_t>(detail.peer_name[index]));
+    return peer.empty() ? std::wstring(L"未知好友") : peer;
+}
+
+std::wstring OriginTitle(const Detail& detail) {
+    return L"好友赠送  来自 " + PeerName(detail);
+}
+
+std::wstring OriginDates(const Detail& detail) {
+    // Dates only: the full times, note and actions are on the received card.
+    const auto day = [](std::uint64_t millis) {
+        auto text = FormatUnixMillis(millis);
+        return text.size() >= 10 ? text.substr(0, 10) : text;
+    };
+    std::wstring text = L"赠送 " + day(detail.offered_unix_millis);
+    if (detail.accepted_unix_millis)
+        text += L"    接收 " + day(detail.accepted_unix_millis);
+    return text;
+}
+
+bool BeginUnitDetailProvenance(std::uint64_t unitUid);
 
 void RefreshUnitDetailViewUnsafe() {
     auto* service = g_unit_detail_view.service();
     if (!service) return;
-    if (!g_unit_detail_service_vtable ||
-        Read<void*>(service) !=
-            g_unit_detail_service_vtable) {
+    if (!g_unit_detail_view_vtable_ok(service)) {
         g_unit_detail_view.Detach(service);
         return;
     }
     const auto unitUid =
         Read<std::uint64_t>(service, 0x9C);
+    g_unit_detail_view.SetUnit(unitUid);
     const bool capable =
         g_native_ready && g_transport.Ready() &&
         g_model.CanReadProvenance();
-    const auto& pending = g_model.pending_request();
-    const bool waiting =
-        pending &&
-        pending->command == Command::provenance &&
-        pending->unit_uid == unitUid;
-    const bool busy =
-        pending.has_value() ||
-        g_transport.MutationUncertain();
-
-    std::wstring caption = L"查看赠送来源";
-    const auto& cached = g_model.provenance();
-    if (cached.present &&
-        cached.unit_uid == unitUid) {
-        caption = g_unit_detail_view.detail_visible()
-                      ? L"收起赠送来源"
-                      : L"展开赠送来源";
-    } else if (waiting) {
-        caption = L"正在读取赠送来源…";
+    if (!unitUid || !capable) {
+        g_unit_detail_view.HideOrigin();
+        return;
     }
-    g_unit_detail_view.SetUnit(
-        unitUid,
-        capable,
-        capable && !busy,
-        caption);
+    SyncGiftOrigins();
+    const auto found = g_gift_origins.find(unitUid);
+    if (found != g_gift_origins.end() &&
+        found->second.state == GiftOrigin::State::gifted) {
+        const bool busy =
+            g_model.pending() ||
+            g_transport.MutationUncertain() || g_composer;
+        g_unit_detail_view.ShowOrigin(
+            OriginTitle(found->second.detail),
+            OriginDates(found->second.detail),
+            !busy);
+        return;
+    }
+    g_unit_detail_view.HideOrigin();
+    if (found != g_gift_origins.end() &&
+        (found->second.state == GiftOrigin::State::plain ||
+         GetTickCount64() < found->second.retry_at)) {
+        return;
+    }
+    // Ask the server once for the displayed unit; ordinary units stay plain.
+    if (!g_model.pending() && !g_transport.MutationUncertain() &&
+        !g_picker_selecting && !g_composer)
+        BeginUnitDetailProvenance(unitUid);
+}
+
+void RecordGiftOrigin(std::uint64_t unitUid, WireStatus status) {
+    if (!unitUid) return;
+    SyncGiftOrigins();
+    auto& origin = g_gift_origins[unitUid];
+    const auto& provenance = g_model.provenance();
+    if (status == WireStatus::success && provenance.present &&
+        provenance.unit_uid == unitUid) {
+        origin.state = GiftOrigin::State::gifted;
+        origin.detail = provenance;
+    } else if (status == WireStatus::not_authorized ||
+               (status == WireStatus::success && !provenance.present)) {
+        // No accepted gift owns this unit for the current pilot.
+        origin.state = GiftOrigin::State::plain;
+        origin.detail = {};
+    } else {
+        origin.state = GiftOrigin::State::unknown;
+        origin.retry_at = GetTickCount64() + 30000;
+    }
 }
 
 void RefreshUnitDetailView() {
@@ -1019,6 +1058,13 @@ void RefreshUnitDetailView() {
         RefreshUnitDetailViewUnsafe();
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
+}
+
+void PumpUnitDetailOrigin() {
+    const auto now = GetTickCount64();
+    if (!g_unit_detail_view.service() || now < g_gift_origin_next_refresh) return;
+    g_gift_origin_next_refresh = now + 250;
+    RefreshUnitDetailView();
 }
 
 const GiftSummary* SelectedGift() {
@@ -1133,7 +1179,6 @@ bool BeginUnitDetailProvenance(std::uint64_t unitUid) {
         g_provenance_request_uid = 0;
         return false;
     }
-    RefreshUnitDetailView();
     return true;
 }
 
@@ -1213,6 +1258,10 @@ void __cdecl OnTransport(
         } else {
             if (event->status == WireStatus::success)
                 ScheduleInventoryMutation(event->command, event->reply->unit_uid);
+            // Accepting, returning or taking back changes which units are gifts.
+            if ((event->command==Command::accept || event->command==Command::return_to_sender ||
+                 event->command==Command::takeback || event->command==Command::offer) &&
+                event->status!=WireStatus::outcome_unknown) g_gift_origins.clear();
             if (g_composer_received && event->reply->gift_id==g_received_detail.gift_id &&
                 (event->command==Command::accept || event->command==Command::return_to_sender || event->command==Command::takeback) &&
                 (event->status==WireStatus::success || event->status==WireStatus::returning_waiting_capacity)) CloseComposer();
@@ -1359,15 +1408,9 @@ void __cdecl OnTransport(
                 event->command == Command::provenance) {
                 if (g_provenance_origin ==
                     ProvenanceOrigin::unit_detail) {
-                    const auto& provenance =
-                        g_model.provenance();
-                    if (provenance.present &&
-                        provenance.unit_uid ==
-                            g_provenance_request_uid &&
-                        g_unit_detail_view.unit_uid() ==
-                            g_provenance_request_uid) {
-                        OpenReceivedInfo(provenance);
-                    }
+                    RecordGiftOrigin(g_provenance_request_uid, event->status);
+                    g_provenance_origin = ProvenanceOrigin::none;
+                    g_provenance_request_uid = 0;
                     RefreshUnitDetailView();
                 } else {
                     const auto& provenance =
@@ -1437,15 +1480,10 @@ void __cdecl OnTransport(
             event->command == Command::provenance) {
             if (g_provenance_origin ==
                 ProvenanceOrigin::unit_detail) {
-                if (g_unit_detail_view.unit_uid() ==
-                    g_provenance_request_uid) {
-                    g_unit_detail_view.SetUnit(
-                        g_provenance_request_uid,
-                        g_model.CanReadProvenance(),
-                        g_model.CanReadProvenance() &&
-                            g_transport.Ready(),
-                        StatusText(event->status));
-                }
+                RecordGiftOrigin(g_provenance_request_uid, event->status);
+                g_provenance_origin = ProvenanceOrigin::none;
+                g_provenance_request_uid = 0;
+                RefreshUnitDetailView();
             } else {
                 g_storage_view.ShowStatus(
                     StatusText(event->status), true);
@@ -1796,21 +1834,6 @@ void RefreshNativeInventoryView() {
     g_inventory_page(service);
 }
 
-void* UnitDetailSkinSource() {
-    auto* service =
-        FindServiceByName(L"UnitIndexingCubbyhole");
-    if (!service) return nullptr;
-    auto* root = Read<void*>(service, 0x44);
-    auto* source = Read<void*>(service, 0x4C);
-    if (!root || !source ||
-        Read<void*>(source) != g_ui.button_vtable ||
-        Read<void*>(source, 0x15C) != root ||
-        g_ui.FindNamed(root, L"UnitDeleteBtn", 4) != source) {
-        return nullptr;
-    }
-    return source;
-}
-
 void* FindFriendRecord(std::uint32_t receiver) {
     if (!receiver || !g_player_data || !*g_player_data) return nullptr;
     auto* data = *g_player_data;
@@ -2077,7 +2100,6 @@ void __fastcall UnitDetailInitHook(
         if (!g_unit_detail_view.Attach(
                 service,
                 root,
-                UnitDetailSkinSource(),
                 g_ui)) {
             g_unit_detail_view.Detach(service);
             return;
@@ -2108,24 +2130,13 @@ void UnitDetailEventUnsafe(
             service, control)) {
         return;
     }
-    const auto unitUid =
-        g_unit_detail_view.unit_uid();
-    const auto& cached = g_model.provenance();
-    if (cached.present &&
-        cached.unit_uid == unitUid) {
-        g_unit_detail_view.ToggleDetail();
-        RefreshUnitDetailView();
+    const auto found =
+        g_gift_origins.find(g_unit_detail_view.unit_uid());
+    if (found == g_gift_origins.end() ||
+        found->second.state != GiftOrigin::State::gifted) {
         return;
     }
-    if (!BeginUnitDetailProvenance(unitUid)) {
-        g_unit_detail_view.SetUnit(
-            unitUid,
-            g_model.CanReadProvenance(),
-            g_model.CanReadProvenance() &&
-                g_transport.Ready() &&
-                !g_model.pending(),
-            StatusText(g_model.last_status()));
-    }
+    OpenReceivedInfo(found->second.detail);
 }
 
 void __stdcall UnitDetailEventHook(
@@ -2536,10 +2547,18 @@ void PumpOwnedUnitProvenance() {
         !OwnBriefContains(g_provenance_target_uid)) return;
     auto* service=g_unit_detail_view.service();
     auto* button=g_unit_detail_view.button();
-    if (service && g_unit_detail_view.unit_uid()==g_provenance_target_uid && ControlReady(button)) {
-        UnitDetailEventHook(service,0x101,static_cast<std::uint8_t*>(button)+0x118,
-            reinterpret_cast<std::uintptr_t>(button));
-        if (g_model.pending()) g_provenance_target_uid=0;
+    if (service && g_unit_detail_view.unit_uid()==g_provenance_target_uid) {
+        // The page asks the server by itself; wait until the origin is known.
+        const auto found=g_gift_origins.find(g_provenance_target_uid);
+        if (found==g_gift_origins.end() || found->second.state==GiftOrigin::State::unknown) return;
+        if (found->second.state==GiftOrigin::State::plain || g_provenance_select_only) {
+            g_provenance_target_uid=0;return;
+        }
+        if (g_unit_detail_view.ready() && ControlReady(button)) {
+            UnitDetailEventHook(service,0x101,static_cast<std::uint8_t*>(button)+0x118,
+                reinterpret_cast<std::uintptr_t>(button));
+            if (g_composer) g_provenance_target_uid=0;
+        }
         return;
     }
     auto* grid=ResolveService(L"UnitIndexingCubbyhole",g_inventory_service_vtable);
@@ -2585,6 +2604,7 @@ void CALLBACK Tick(HWND, UINT, UINT_PTR, DWORD) {
         PumpInventorySync();
         PumpGiftPicker();
         PumpOwnedUnitProvenance();
+        PumpUnitDetailOrigin();
         if (g_composer_opening && g_inventory_sync.HasFull(g_selected_unit.uid))
             CreateComposerCard(g_selected_unit.uid);
         if (g_composer_reload_uid && g_inventory_sync.HasFull(g_composer_reload_uid))
@@ -2698,12 +2718,13 @@ bool InvokeComposerButton(void* control) {
     return true;
 }
 
-bool InvokeOwnedUnitProvenance(std::uint64_t unitUid) {
+bool InvokeOwnedUnitProvenance(std::uint64_t unitUid, bool selectOnly) {
     if (!unitUid ||
         g_picker_selecting || g_composer || !g_management_callback) return false;
     if (g_storage_view.custom_view() &&
         !InvokeStorageAction(ui::StorageView::Action::toggle)) return false;
     g_provenance_target_uid=unitUid;
+    g_provenance_select_only=selectOnly;
     g_provenance_target_session=CurrentSessionKey();
     g_provenance_target_deadline=GetTickCount64()+90000;
     g_provenance_next_action=0;
@@ -2846,9 +2867,11 @@ bool ExecuteObserverAction(
             InvokeStorageAction(ui::StorageView::Action::takeback);
         break;
     case SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_PROVENANCE:
+        // With a unit: select it on the unit-information page; gift_id!=0
+        // stops once its origin is shown instead of opening the card.
         accepted = request.unit_uid
                        ? InvokeOwnedUnitProvenance(
-                             request.unit_uid)
+                             request.unit_uid, request.gift_id != 0)
                        : InvokeStorageAction(
                              ui::StorageView::Action::provenance);
         break;
@@ -3124,11 +3147,16 @@ static int GetSnapshot(
             receivedDisplayed=true;
         }
     }
-    const bool displayed = provenance.present && (receivedDisplayed ||
-        ((g_unit_detail_view.unit_uid()==provenance.unit_uid && g_unit_detail_view.detail_visible() &&
-          g_ui.ReadText(g_unit_detail_view.detail(),&text)) ||
-         (g_storage_view.custom_view() && g_ui.ReadText(g_storage_view.status_control(),&text) &&
-          text==ProvenanceText(provenance))));
+    bool originDisplayed=false;
+    if (!receivedDisplayed && g_unit_detail_view.origin_visible()) {
+        std::wstring title,dates;
+        if (g_ui.ReadText(g_unit_detail_view.title(),&title) && g_ui.ReadText(g_unit_detail_view.dates(),&dates)) {
+            text=title+L"\n"+dates;originDisplayed=true;
+        }
+    }
+    const bool displayed = receivedDisplayed || originDisplayed ||
+        (provenance.present && g_storage_view.custom_view() &&
+         g_ui.ReadText(g_storage_view.status_control(),&text) && text==ProvenanceText(provenance));
     if (displayed) {
         snapshot.provenance_present = 1;
         const auto length = std::min<std::size_t>(

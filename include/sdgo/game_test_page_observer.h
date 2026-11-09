@@ -153,7 +153,10 @@ typedef struct SdgoStorageGameTestSnapshotV1 {
     uint32_t pending_operation;
     uint64_t pending_id;
     uint64_t pending_stamp;
-    uint32_t reserved[4];
+    uint32_t collected;
+    uint32_t skipped;
+    uint32_t manual;
+    uint32_t rounds;
 } SdgoStorageGameTestSnapshotV1;
 #pragma pack(pop)
 

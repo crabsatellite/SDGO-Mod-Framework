@@ -30,6 +30,19 @@ class PageGroupTests(unittest.TestCase):
         self.assertEqual(public['page_group'],'hangar')
         self.assertNotIn('pages.storage.claim',gt.required_cases_for_plan(public))
 
+    def test_storage_gift_group_claims_once_then_checks_gift_origins(self):
+        prepared=self.fixture.prepare('storage-gift',pages_only=True,page_group='storage_gift')
+        plan=json.loads((prepared/'run.json').read_text())
+        self.assertEqual(
+            gt.required_cases_for_plan(plan['plan']),
+            gt.FLOW_CASES[:3]+('pages.storage.read','pages.storage.claim','pages.hangar.gift_origin','pages.hangar.gift_plain'),
+        )
+        public=gt.read_public_plan(self.fixture.root/'storage-gift'/'client')
+        self.assertEqual(public['page_group'],'storage_gift')
+        self.assertNotIn('pages.hangar.preview',gt.required_cases_for_plan(public))
+        with self.assertRaises(gt.GameTestError):
+            self.fixture.prepare('storage-gift-gb',pages_only=True,page_group='storage_gift',hangar_confirm_gb=True)
+
     def test_existing_full_page_group_is_unchanged(self):
         prepared=self.fixture.prepare('all-pages',pages_only=True)
         plan=json.loads((prepared/'run.json').read_text())

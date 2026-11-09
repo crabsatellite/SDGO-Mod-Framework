@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -19,98 +20,207 @@ enum class Phase { Idle, NeedList, List, NeedCheck, Check, NeedClaim, Claim, Com
 enum class Reason { None, Cancelled, Rejected, Selection, Changed, Timeout, SendFailed, Limit, Disconnected, PageLimit };
 enum class Operation { List, Check, Claim };
 struct Request {Operation operation;Tab tab;uint32_t page;Key key;};
+
+// One confirmation claims the whole tab at once:
+//  1. read every list page (one request at a time, the native cache holds one page),
+//  2. send the original preflight for every unclaimed reward, pipelined,
+//  3. send the original claim for every reward the server allowed, pipelined,
+//  4. read the first page once more and stop, or start another round when the
+//     first pass was cut short by the native page range.
+// The server answers one request at a time and in order, so error replies (which
+// carry no reward ID) belong to the oldest request of their kind. Success replies
+// carry the reward ID and are matched exactly. A refused reward is skipped and
+// reported; it is never retried inside the batch. A claim whose answer is missing
+// leaves the batch Unknown and nothing is retried.
 class Batch {
 public:
-    bool Start(Tab tab,uint64_t session,uint32_t total,uint32_t limit,uint64_t now) {
-        if(Busy() || outstanding_ || !session || !limit)return false;
-        *this=Batch{};tab_=tab;session_=session;limit_=limit;
-        // Gift list page numbers are native one-based bytes, never wrap at 256.
-        lastPage_=total?std::min<uint32_t>((total-1)/5,254):0;
-        phase_=Phase::NeedList;since_=now;return true;
+    static constexpr uint32_t kMaxDepth=32;
+    static constexpr uint32_t kMaxRounds=8;
+    bool Start(Tab tab,uint64_t session,uint32_t total,uint32_t limit,uint64_t now,uint32_t depth=8) {
+        if(Busy() || Outstanding() || !session || !limit || !depth || depth>kMaxDepth)return false;
+        *this=Batch{};tab_=tab;session_=session;limit_=limit;depth_=depth;
+        lastPage_=LastPage(total);stage_=Stage::List;since_=now;rounds_=1;return true;
     }
-    bool Busy()const{return phase_>=Phase::NeedList && phase_<=Phase::Claim;}
-    bool Outstanding()const{return outstanding_;}
-    Phase phase()const{return phase_;}
+    bool Busy()const{const auto p=phase();return p>=Phase::NeedList && p<=Phase::Claim;}
+    bool Outstanding()const{return !inflight_.empty();}
+    Phase phase()const {
+        switch(stage_) {
+        case Stage::Idle:return Phase::Idle;
+        case Stage::List:return inflight_.empty()?Phase::NeedList:Phase::List;
+        case Stage::Check:return Next()?Phase::NeedCheck:Phase::Check;
+        case Stage::Claim:return Next()?Phase::NeedClaim:Phase::Claim;
+        case Stage::Complete:return Phase::Complete;
+        case Stage::Stopped:return Phase::Stopped;
+        default:return Phase::Unknown;
+        }
+    }
     Reason reason()const{return reason_;}
     Tab tab()const{return tab_;}
     uint64_t session()const{return session_;}
     uint32_t completed()const{return completed_;}
+    uint32_t skipped()const{return skipped_;}
+    uint32_t manual()const{return manual_;}
+    uint32_t collected()const{return collected_;}
     uint32_t total()const{return total_;}
     uint32_t page()const{return page_;}
-    Key pending()const{return target_;}
+    uint32_t rounds()const{return rounds_;}
+    uint32_t depth()const{return depth_;}
+    uint16_t error()const{return error_;}
+    Key pending()const{return inflight_.empty()?Key{}:inflight_.front().key;}
+    std::vector<Key> InFlight(Operation op)const {
+        std::vector<Key> keys;for(const auto& f:inflight_)if(f.operation==op)keys.push_back(f.key);return keys;
+    }
     void Stop(Reason reason) {
         cancel_=true;reason_=reason;
-        if(outstanding_ && pending_==Operation::Claim){phase_=Phase::Claim;return;}
-        phase_=Phase::Stopped;
+        if(ClaimsInFlight()){stage_=Stage::Claim;return;}
+        if(stage_!=Stage::Unknown)stage_=Stage::Stopped;
     }
-    void Disconnect(){reason_=Reason::Disconnected;phase_=outstanding_ && pending_==Operation::Claim?Phase::Unknown:Phase::Stopped;cancel_=true;}
+    void Disconnect() {
+        reason_=Reason::Disconnected;cancel_=true;
+        stage_=ClaimsInFlight()?Stage::Unknown:Stage::Stopped;
+    }
     void Tick(uint64_t now,uint64_t timeout) {
-        if(outstanding_ && now>=since_ && now-since_>=timeout && phase_!=Phase::Unknown) {
+        if(inflight_.empty() || stage_==Stage::Unknown)return;
+        const auto sent=inflight_.front().sent;
+        if(now>=sent && now-sent>=timeout) {
             reason_=Reason::Timeout;cancel_=true;
-            phase_=pending_==Operation::Claim?Phase::Unknown:Phase::Stopped;
+            stage_=ClaimsInFlight()?Stage::Unknown:Stage::Stopped;
         }
     }
     std::optional<Request> Next()const {
-        if(outstanding_)return {};
-        if(phase_==Phase::NeedList)return Request{Operation::List,tab_,page_,{}};
-        if(phase_==Phase::NeedCheck)return Request{Operation::Check,tab_,page_,target_};
-        if(phase_==Phase::NeedClaim)return Request{Operation::Claim,tab_,page_,target_};
+        if(cancel_)return {};
+        if(stage_==Stage::List)return inflight_.empty()?std::optional<Request>(Request{Operation::List,tab_,page_,{}}):std::nullopt;
+        if(inflight_.size()>=depth_)return {};
+        if(stage_==Stage::Check && checkIndex_<queue_.size())return Request{Operation::Check,tab_,0,queue_[checkIndex_]};
+        if(stage_==Stage::Claim && claimIndex_<approved_.size())return Request{Operation::Claim,tab_,0,approved_[claimIndex_]};
         return {};
     }
     void Sent(const Request& request,uint64_t now,bool success) {
-        if(!Next() || request.operation!=Next()->operation || request.tab!=tab_ || request.page!=page_ || !(request.key==Next()->key))throw std::runtime_error("stale storage request");
-        pending_=request.operation;since_=now;
+        const auto next=Next();
+        if(!next || request.operation!=next->operation || request.tab!=tab_ || request.page!=next->page || !(request.key==next->key))
+            throw std::runtime_error("stale storage request");
+        if(request.operation==Operation::Check)++checkIndex_;
+        if(request.operation==Operation::Claim)++claimIndex_;
         // A failed native send may still have queued a mutation. Never retry it.
-        if(!success){cancel_=true;reason_=Reason::SendFailed;phase_=pending_==Operation::Claim?Phase::Unknown:Phase::Stopped;outstanding_=pending_==Operation::Claim;return;}
-        outstanding_=true;phase_=pending_==Operation::List?Phase::List:pending_==Operation::Check?Phase::Check:Phase::Claim;
+        if(!success) {
+            cancel_=true;reason_=Reason::SendFailed;
+            if(request.operation==Operation::Claim){inflight_.push_back({request.operation,request.key,now});stage_=Stage::Unknown;}
+            else if(!ClaimsInFlight())stage_=Stage::Stopped;
+            return;
+        }
+        inflight_.push_back({request.operation,request.key,now});since_=now;
     }
-    bool Waiting(Operation op)const{return outstanding_ && pending_==op;}
+    bool Waiting(Operation op)const{return !inflight_.empty() && inflight_.front().operation==op;}
     bool ListReply(Tab tab,uint32_t total,const std::vector<Entry>& entries) {
         if(!Waiting(Operation::List) || tab!=tab_)return false;
-        outstanding_=false;if(cancel_)return true;
+        inflight_.pop_front();
+        if(cancel_){Settle();return true;}
         if(entries.size()>5 || total>1000000){Fail(Reason::Changed);return true;}
-        total_=total;if(!scopeSet_){lastPage_=total?std::min<uint32_t>((total-1)/5,254):0;scopeSet_=true;}
         std::set<Key> ids;
         for(const auto& entry:entries) {
             if(!entry.key.id || !ids.insert(entry.key).second){Fail(Reason::Changed);return true;}
-            if(entry.claimed)continue;
-            if(done_.count(entry.key)){Fail(Reason::Changed);return true;}
+            // The server removed (items) or marked (gifts) every reward it granted.
+            if(!entry.claimed && done_.count(entry.key)){Fail(Reason::Changed);return true;}
         }
-        for(const auto& entry:entries)if(!entry.claimed) {
-            if(completed_>=limit_){Fail(Reason::Limit);return true;}
-            target_=entry.key;phase_=Phase::NeedCheck;return true;
+        if(refreshing_)return Refreshed(total,entries);
+        if(page_==0){total_=total;lastPage_=LastPage(total);}
+        if(tab_==Tab::Items && page_==0 && total && entries.empty()){Fail(Reason::Changed);return true;}
+        for(const auto& entry:entries) {
+            if(entry.claimed || refused_.count(entry.key) || !seen_.insert(entry.key).second)continue;
+            if(completed_+static_cast<uint32_t>(queue_.size())>=limit_){limitHit_=true;break;}
+            queue_.push_back(entry.key);++collected_;
         }
-        if(tab_==Tab::Gifts && page_<lastPage_ && (page_+1)*5<total_){++page_;phase_=Phase::NeedList;return true;}
-        if(tab_==Tab::Gifts && page_==254 && (page_+1)*5<total_){Fail(Reason::PageLimit);return true;}
-        if(tab_==Tab::Items && total_ && entries.empty()){Fail(Reason::Changed);return true;}
-        phase_=Phase::Complete;return true;
+        if(!limitHit_ && page_<lastPage_ && (page_+1)*5<total_){++page_;return true;}
+        if((page_+1)*5<total_ && page_>=254) {
+            if(tab_==Tab::Gifts)pageLimited_=true;else truncated_=true;
+        }
+        if(queue_.empty()){Finish();return true;}
+        stage_=Stage::Check;return true;
     }
-    bool CheckReply(Key key,bool allowed,bool choice=false) {
+    // Preflight reply. A refusal carries no reward ID: it belongs to the oldest
+    // outstanding preflight. A success must name exactly that reward.
+    bool CheckReply(Key key,bool allowed,bool choice=false,uint16_t error=0) {
         if(!Waiting(Operation::Check))return false;
-        if(!(key==target_)){Fail(Reason::Changed);return true;}
-        outstanding_=false;
-        if(cancel_)return true;
-        if(!allowed){Fail(Reason::Rejected);return true;}
-        if(choice){Fail(Reason::Selection);return true;}
-        phase_=Phase::NeedClaim;return true;
+        const auto front=inflight_.front();
+        if(allowed && !(key==front.key)){inflight_.pop_front();Fail(Reason::Changed);return true;}
+        inflight_.pop_front();
+        if(!allowed){++skipped_;error_=error;refused_.insert(front.key);}
+        else if(choice){++manual_;refused_.insert(front.key);}
+        else if(!cancel_)approved_.push_back(front.key);
+        if(cancel_){Settle();return true;}
+        if(inflight_.empty() && checkIndex_>=queue_.size()) {
+            if(approved_.empty()){Finish();return true;}
+            stage_=Stage::Claim;
+        }
+        return true;
     }
-    bool ClaimReply(Key key,bool success) {
+    // Claim reply. Success names the granted reward; refusal belongs to the
+    // oldest outstanding claim and changed nothing on the server.
+    bool ClaimReply(Key key,bool success,uint16_t error=0) {
         if(!Waiting(Operation::Claim))return false;
-        if(!(key==target_)){cancel_=true;reason_=Reason::Changed;phase_=Phase::Unknown;return true;}
-        outstanding_=false;
-        if(!success){Fail(Reason::Rejected);return true;}
-        if(!done_.insert(key).second){Fail(Reason::Changed);return true;}
-        ++completed_;
-        if(cancel_){phase_=Phase::Stopped;return true;}
-        phase_=Phase::NeedList;return true;
+        if(success) {
+            const auto match=std::find_if(inflight_.begin(),inflight_.end(),[&](const InFlightRequest& f){return f.operation==Operation::Claim && f.key==key;});
+            if(match==inflight_.end()){cancel_=true;reason_=Reason::Changed;stage_=Stage::Unknown;return true;}
+            const bool inOrder=match==inflight_.begin();
+            inflight_.erase(match);
+            if(!done_.insert(key).second){Fail(Reason::Changed);return true;}
+            ++completed_;++roundCompleted_;
+            if(!inOrder){cancel_=true;reason_=Reason::Changed;stage_=Stage::Unknown;}
+        }else {
+            const auto front=inflight_.front();inflight_.pop_front();
+            ++skipped_;error_=error;refused_.insert(front.key);
+        }
+        if(cancel_){Settle();return true;}
+        if(inflight_.empty() && claimIndex_>=approved_.size()){refreshing_=true;page_=0;stage_=Stage::List;}
+        return true;
     }
-    void Reject(Reason reason=Reason::Rejected) {outstanding_=false;Fail(reason);}
+    void Reject(Reason reason=Reason::Rejected) {
+        if(!inflight_.empty() && inflight_.front().operation!=Operation::Claim)inflight_.pop_front();
+        Fail(reason);
+    }
 private:
-    void Fail(Reason reason){phase_=Phase::Stopped;reason_=reason;cancel_=true;}
-    Phase phase_=Phase::Idle;Reason reason_=Reason::None;
-    Tab tab_=Tab::Items;Operation pending_=Operation::List;
-    uint64_t session_=0,since_=0;uint32_t page_=0,lastPage_=0,completed_=0,total_=0,limit_=5000;
-    Key target_;std::set<Key> done_;bool outstanding_=false,cancel_=false,scopeSet_=false;
+    enum class Stage { Idle, List, Check, Claim, Complete, Stopped, Unknown };
+    struct InFlightRequest {Operation operation;Key key;uint64_t sent;};
+    static uint32_t LastPage(uint32_t total){return total?std::min<uint32_t>((total-1)/5,254):0;}
+    bool ClaimsInFlight()const{return std::any_of(inflight_.begin(),inflight_.end(),[](const InFlightRequest& f){return f.operation==Operation::Claim;});}
+    void Fail(Reason reason) {
+        cancel_=true;reason_=reason;
+        if(ClaimsInFlight()){stage_=Stage::Unknown;return;}
+        if(stage_!=Stage::Unknown)stage_=Stage::Stopped;
+    }
+    // After cancellation: wait for claims already sent, then rest.
+    void Settle() {
+        if(ClaimsInFlight())return;
+        if(stage_!=Stage::Unknown)stage_=Stage::Stopped;
+        else if(inflight_.empty())stage_=Stage::Stopped;
+    }
+    void Finish() {
+        if(limitHit_){Fail(Reason::Limit);return;}
+        if(pageLimited_){Fail(Reason::PageLimit);return;}
+        stage_=Stage::Complete;reason_=Reason::None;
+    }
+    bool Refreshed(uint32_t total,const std::vector<Entry>& entries) {
+        refreshing_=false;total_=total;
+        bool more=truncated_;
+        for(const auto& entry:entries)
+            if(!entry.claimed && !refused_.count(entry.key) && !done_.count(entry.key))more=true;
+        // Items are removed when granted: another pass picks up what the native
+        // page range or new arrivals left. Gifts stay listed and were all read.
+        if(tab_==Tab::Items && more && !limitHit_ && roundCompleted_ && rounds_<kMaxRounds) {
+            ++rounds_;roundCompleted_=0;truncated_=false;page_=0;
+            queue_.clear();approved_.clear();seen_.clear();checkIndex_=claimIndex_=0;
+            lastPage_=LastPage(total);stage_=Stage::List;return true;
+        }
+        Finish();return true;
+    }
+    Stage stage_=Stage::Idle;Reason reason_=Reason::None;Tab tab_=Tab::Items;
+    uint64_t session_=0,since_=0;
+    uint32_t page_=0,lastPage_=0,completed_=0,skipped_=0,manual_=0,collected_=0,total_=0,limit_=5000,depth_=8;
+    uint32_t rounds_=0,roundCompleted_=0;uint16_t error_=0;
+    std::vector<Key> queue_,approved_;size_t checkIndex_=0,claimIndex_=0;
+    std::deque<InFlightRequest> inflight_;
+    std::set<Key> done_,seen_,refused_;
+    bool cancel_=false,refreshing_=false,limitHit_=false,pageLimited_=false,truncated_=false;
 };
 
 // Host wire formats: original authenticated requests; no account identity field.

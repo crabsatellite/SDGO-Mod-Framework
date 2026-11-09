@@ -111,6 +111,8 @@ std::map<
     g_added_skin_entries;
 std::map<void*, std::array<std::uint8_t*, 16>>
     g_added_skin_pointers;
+std::map<void*, std::array<std::array<std::uint8_t, 0x100>, 16>>
+    g_added_sprites;
 void* g_button_vtable = reinterpret_cast<void*>(0x12345678);
 void* g_static_vtable = reinterpret_cast<void*>(0x1234ABCD);
 void* g_input_seen = nullptr;
@@ -215,10 +217,12 @@ void __fastcall SkinShim(
     auto& count = g_skin_calls[control];
     if (count >= 16) return;
     auto& entry = g_added_skin_entries[control][count];
+    auto& sprite = g_added_sprites[control][count];
+    sprite.fill(0);
     Put<void*>(
         entry.data(),
         0,
-        reinterpret_cast<void*>(0x2000 + count));
+        sprite.data());
     auto& pointers = g_added_skin_pointers[control];
     pointers[count] = entry.data();
     ++count;
@@ -601,266 +605,144 @@ int main() {
     Control detailService;
     Control detailRoot;
     Control detailRender;
-    Put<void*>(
-        detailRender.bytes.data(),
-        0x15C,
-        detailRoot.bytes.data());
-    Put<std::uint8_t>(
-        detailRender.bytes.data(), 0x162, 1);
-    Put<std::uint8_t>(
-        detailRender.bytes.data(), 0x163, 1);
-    Put<std::uint8_t>(
-        detailRender.bytes.data(), 0x167, 1);
-    Put<void*>(
-        detailService.bytes.data(),
-        0x4C,
-        detailRender.bytes.data());
-    auto* detailSkin =
-        NewControl(L"UnitDeleteBtn", detailRoot.bytes.data());
-    PrepareSkinSource(detailSkin);
+    const auto prepareRender = [&](Control& render, Control& root, Control& owner) {
+        Put<void*>(render.bytes.data(), 0x15C, root.bytes.data());
+        Put<float>(render.bytes.data(), 0x148, 118.0f);
+        Put<float>(render.bytes.data(), 0x14C, 41.0f);
+        Put<int>(render.bytes.data(), 0x154, 284);
+        Put<int>(render.bytes.data(), 0x158, 227);
+        for (const std::size_t flag : {0x162u, 0x163u, 0x167u})
+            Put<std::uint8_t>(render.bytes.data(), flag, 1);
+        Put<void*>(owner.bytes.data(), 0x4C, render.bytes.data());
+    };
+    prepareRender(detailRender, detailRoot, detailService);
+    const auto renderBefore = detailRender.bytes;
     UnitDetailView detailView;
     Check(
         detailView.Attach(
             detailService.bytes.data(),
             detailRoot.bytes.data(),
-            detailSkin->bytes.data(),
             bindings),
-        "unit detail provenance entry attaches without loose resources");
+        "gift origin attaches to the native unit-information page");
+    const auto rect = [](void* control) {
+        return std::array<int, 4>{static_cast<int>(Read<float>(control, 0x148)),
+            static_cast<int>(Read<float>(control, 0x14C)),
+            Read<int>(control, 0x154), Read<int>(control, 0x158)};
+    };
     Check(
-        g_skin_calls[detailView.button()] == 3,
-        "unit detail provenance entry clones three stock button skins "
-        "for native mouse input");
-    detailView.SetUnit(
-        0x1122334455667788ull,
-        true,
-        true,
-        L"查看赠送来源");
+        rect(detailView.panel()) == std::array<int, 4>{122, 218, 276, 46} &&
+            rect(detailView.title()) == std::array<int, 4>{132, 224, 178, 15} &&
+            rect(detailView.dates()) == std::array<int, 4>{132, 243, 178, 15} &&
+            rect(detailView.button()) == std::array<int, 4>{318, 229, 72, 24},
+        "origin panel sits on the lower edge of the 1334 viewport with a native-size button");
+    {
+        auto** skins = Read<std::uint8_t**>(detailView.panel(), 0x1A4);
+        auto* sprite = Read<std::uint8_t*>(*skins);
+        Check(
+            g_skin_calls[detailView.panel()] == 1 &&
+                Read<float>(sprite, 0x94) == 276.0f / 262.0f &&
+                Read<float>(sprite, 0x98) == 46.0f / 61.0f &&
+                Read<std::uint8_t>(sprite, 0xA0) == 1 &&
+                Read<std::uint8_t>(detailView.panel(), 0x168) == 0,
+            "only the added panel instance scales the stock blue panel sprite");
+        Check(
+            g_skin_calls[detailView.button()] == 3,
+            "the open button carries the three stock blue button states");
+    }
+    const auto hidden = [&]() {
+        for (void* control : {detailView.panel(), detailView.title(), detailView.dates(), detailView.button()})
+            if (Read<std::uint8_t>(control, 0x162) || Read<std::uint8_t>(control, 0x167)) return false;
+        return true;
+    };
+    Check(hidden() && !detailView.ready() && detailRender.bytes == renderBefore,
+          "nothing is shown before the server identifies a gift");
+    detailView.SetUnit(0x1122334455667788ull);
+    Check(hidden() && !detailView.ready() &&
+              !detailView.Click(detailService.bytes.data(), detailView.button()),
+          "an ordinary or not yet checked unit shows no gift origin");
+    detailView.ShowOrigin(L"好友赠送  来自 好友", L"赠送 2026-11-03    接收 2026-11-03", true);
     Check(
-        detailView.ready() &&
-            Read<float>(
-                detailView.button(), 0x148) == 118.0f &&
-            Read<float>(
-                detailView.button(), 0x14C) == 268.0f &&
-            Read<int>(detailView.button(), 0x154) == 284 &&
-            Read<int>(detailView.button(), 0x158) == 15 &&
-            Read<float>(detailView.detail(), 0x148) == 118.0f &&
-            Read<float>(detailView.detail(), 0x14C) == 41.0f &&
-            Read<int>(detailView.detail(), 0x154) == 284 &&
-            Read<int>(detailView.detail(), 0x158) == 227,
-        "provenance entry and detail layer use native 1334 geometry");
-    Check(
-        detailView.Click(
-            detailService.bytes.data(),
-            detailView.button()),
-        "provenance entry routes through its product control");
-    detailView.SetUnit(
-        0x1122334455667788ull,
-        true,
-        false,
-        L"正在读取赠送来源…");
-    Check(
-        Read<std::uint8_t>(
-            detailView.button(), 0x162) == 1 &&
-            Read<std::uint8_t>(
-                detailView.button(), 0x167) == 0,
-        "provenance entry remains visible and disabled while querying");
-    const std::wstring fullDetail =
-        L"发送方：好友\n赠送时间：2026-11-03 00:00 UTC"
-        L"\n接收时间：2026-11-03 00:01 UTC\n\n留言：\n"
-        L"第一行\n第二行 Unicode 好友";
-    detailView.SetDetail(fullDetail, true);
-    Check(
-        detailView.detail_visible() &&
-            g_captions[detailView.detail()] == fullDetail &&
-            Read<std::uint8_t>(
-                detailView.detail(), 0x162) == 1 &&
-            Read<std::uint8_t>(
-                detailView.detail(), 0x163) == 1 &&
-            Read<std::uint8_t>(
-                detailView.detail(), 0x167) == 0 &&
-            Read<std::uint8_t>(
-                detailRender.bytes.data(), 0x162) == 0 &&
-            Read<std::uint8_t>(
-                detailRender.bytes.data(), 0x163) == 0 &&
-            Read<std::uint8_t>(
-                detailRender.bytes.data(), 0x167) == 0,
-        "full Unicode provenance replaces only the native 3D viewport");
-    detailView.ToggleDetail();
-    Check(
-        !detailView.detail_visible() &&
-            Read<std::uint8_t>(
-                detailView.detail(), 0x162) == 0 &&
-            Read<std::uint8_t>(
-                detailRender.bytes.data(), 0x162) == 1 &&
-            Read<std::uint8_t>(
-                detailRender.bytes.data(), 0x163) == 1 &&
-            Read<std::uint8_t>(
-                detailRender.bytes.data(), 0x167) == 1,
-        "closing provenance restores the exact 3D viewport state");
-    detailView.SetDetail(fullDetail, true);
-    detailView.SetUnit(
-        0x1122334455667788ull,
-        false,
-        false,
-        L"查看赠送来源");
-    Check(
-        !detailView.detail_visible() &&
-            Read<std::uint8_t>(
-                detailRender.bytes.data(), 0x162) == 1 &&
-            Read<std::uint8_t>(
-                detailRender.bytes.data(), 0x163) == 1 &&
-            Read<std::uint8_t>(
-                detailRender.bytes.data(), 0x167) == 1,
-        "capability loss closes provenance and restores 3D");
-    detailView.SetUnit(
-        0x1122334455667788ull,
-        true,
-        true,
-        L"展开赠送来源");
-    detailView.SetDetail(fullDetail, true);
+        detailView.ready() && detailView.origin_visible() &&
+            Read<std::uint8_t>(detailView.panel(), 0x162) == 1 &&
+            Read<std::uint8_t>(detailView.title(), 0x162) == 1 &&
+            Read<std::uint8_t>(detailView.title(), 0x167) == 0 &&
+            Read<std::uint8_t>(detailView.button(), 0x167) == 1 &&
+            g_captions[detailView.title()] == L"好友赠送  来自 好友" &&
+            g_captions[detailView.dates()] == L"赠送 2026-11-03    接收 2026-11-03" &&
+            g_captions[detailView.button()] == L"查看寄语" &&
+            detailView.Click(detailService.bytes.data(), detailView.button()) &&
+            !detailView.Click(detailService.bytes.data(), detailView.title()),
+        "a gifted unit shows sender, dates and one native open button");
+    Check(detailRender.bytes == renderBefore,
+          "the 3D viewport keeps its own state while the origin is shown");
+    detailView.ShowOrigin(L"好友赠送  来自 好友", L"赠送 2026-11-03", false);
+    Check(!detailView.ready() && detailView.origin_visible() &&
+              Read<std::uint8_t>(detailView.button(), 0x162) == 1 &&
+              Read<std::uint8_t>(detailView.button(), 0x167) == 0,
+          "the open button stays visible and disabled while a gift request is busy");
+    detailView.SetUnit(0x1122334455667799ull);
+    Check(hidden() && !detailView.origin_visible(),
+          "switching to another unit hides the previous unit's origin");
+    detailView.SetUnit(0x1122334455667788ull);
+    detailView.ShowOrigin(L"好友赠送  来自 好友", L"赠送 2026-11-03", true);
     auto* retiredDetailButton = detailView.button();
-    auto* retiredDetailText = detailView.detail();
+    auto* retiredDetailTitle = detailView.title();
     std::array<std::uint8_t, sizeof(Control)> retiredButtonBytes{};
-    std::array<std::uint8_t, sizeof(Control)> retiredTextBytes{};
-    std::memcpy(
-        retiredButtonBytes.data(),
-        retiredDetailButton,
-        retiredButtonBytes.size());
-    std::memcpy(
-        retiredTextBytes.data(),
-        retiredDetailText,
-        retiredTextBytes.size());
+    std::array<std::uint8_t, sizeof(Control)> retiredTitleBytes{};
+    std::memcpy(retiredButtonBytes.data(), retiredDetailButton, retiredButtonBytes.size());
+    std::memcpy(retiredTitleBytes.data(), retiredDetailTitle, retiredTitleBytes.size());
     const auto retiredRenderBytes = detailRender.bytes;
     DWORD retiredButtonProtection = 0;
-    DWORD retiredTextProtection = 0;
+    DWORD retiredTitleProtection = 0;
     Check(
-        VirtualProtect(
-            retiredDetailButton,
-            sizeof(Control),
-            PAGE_NOACCESS,
-            &retiredButtonProtection) != 0 &&
-            VirtualProtect(
-                retiredDetailText,
-                sizeof(Control),
-                PAGE_NOACCESS,
-                &retiredTextProtection) != 0,
+        VirtualProtect(retiredDetailButton, sizeof(Control), PAGE_NOACCESS, &retiredButtonProtection) != 0 &&
+            VirtualProtect(retiredDetailTitle, sizeof(Control), PAGE_NOACCESS, &retiredTitleProtection) != 0,
         "retired unit-detail children are inaccessible");
-    auto* retiredFaultHandler =
-        AddVectoredExceptionHandler(
-            1, &CountRetiredAccessFault);
-    Check(
-        retiredFaultHandler != nullptr,
-        "retired unit-detail access observer is installed");
+    auto* retiredFaultHandler = AddVectoredExceptionHandler(1, &CountRetiredAccessFault);
+    Check(retiredFaultHandler != nullptr, "retired unit-detail access observer is installed");
     InterlockedExchange(&g_retired_access_faults, 0);
     InterlockedExchange(&g_watch_retired_access, 1);
-    const bool detachedRetiredDetail =
-        DetachRetiredUnitDetail(
-            &detailView, detailService.bytes.data());
+    const bool detachedRetiredDetail = DetachRetiredUnitDetail(&detailView, detailService.bytes.data());
     InterlockedExchange(&g_watch_retired_access, 0);
+    Check(RemoveVectoredExceptionHandler(retiredFaultHandler) != 0, "retired unit-detail access observer is removed");
+    DWORD restoredProtection = 0;
     Check(
-        RemoveVectoredExceptionHandler(
-            retiredFaultHandler) != 0,
-        "retired unit-detail access observer is removed");
-    DWORD ignoredButtonProtection = 0;
-    DWORD ignoredTextProtection = 0;
-    Check(
-        VirtualProtect(
-            retiredDetailButton,
-            sizeof(Control),
-            retiredButtonProtection,
-            &ignoredButtonProtection) != 0 &&
-            VirtualProtect(
-                retiredDetailText,
-                sizeof(Control),
-                retiredTextProtection,
-                &ignoredTextProtection) != 0,
+        VirtualProtect(retiredDetailButton, sizeof(Control), retiredButtonProtection, &restoredProtection) != 0 &&
+            VirtualProtect(retiredDetailTitle, sizeof(Control), retiredTitleProtection, &restoredProtection) != 0,
         "fixture restores retired unit-detail allocations");
     Check(
-        detachedRetiredDetail &&
-            InterlockedCompareExchange(
-                &g_retired_access_faults, 0, 0) == 0,
-        "retired unit-detail detach does not attempt "
-        "SetState or any other child access");
+        detachedRetiredDetail && InterlockedCompareExchange(&g_retired_access_faults, 0, 0) == 0,
+        "retired unit-detail detach does not attempt SetState or any other child access");
     Check(
-        detailView.service() == nullptr &&
-            detailView.button() == nullptr &&
-            detailView.detail() == nullptr &&
-            !detailView.ready(),
+        detailView.service() == nullptr && detailView.button() == nullptr &&
+            detailView.title() == nullptr && !detailView.ready(),
         "retired unit-detail detach invalidates every cached owner handle");
     Check(
-        std::memcmp(
-            retiredButtonBytes.data(),
-            retiredDetailButton,
-            retiredButtonBytes.size()) == 0 &&
-            std::memcmp(
-                retiredTextBytes.data(),
-                retiredDetailText,
-                retiredTextBytes.size()) == 0 &&
+        std::memcmp(retiredButtonBytes.data(), retiredDetailButton, retiredButtonBytes.size()) == 0 &&
+            std::memcmp(retiredTitleBytes.data(), retiredDetailTitle, retiredTitleBytes.size()) == 0 &&
             detailRender.bytes == retiredRenderBytes,
         "retired unit-detail detach performs no UI writes");
 
     Control freshDetailService;
     Control freshDetailRoot;
     Control freshDetailRender;
-    Put<void*>(
-        freshDetailRender.bytes.data(),
-        0x15C,
-        freshDetailRoot.bytes.data());
-    Put<std::uint8_t>(
-        freshDetailRender.bytes.data(), 0x162, 1);
-    Put<std::uint8_t>(
-        freshDetailRender.bytes.data(), 0x163, 1);
-    Put<std::uint8_t>(
-        freshDetailRender.bytes.data(), 0x167, 1);
-    Put<void*>(
-        freshDetailService.bytes.data(),
-        0x4C,
-        freshDetailRender.bytes.data());
-    auto* freshDetailSkin =
-        NewControl(
-            L"FreshUnitDeleteBtn",
-            freshDetailRoot.bytes.data());
-    PrepareSkinSource(freshDetailSkin);
+    prepareRender(freshDetailRender, freshDetailRoot, freshDetailService);
     Check(
-        detailView.Attach(
-            freshDetailService.bytes.data(),
-            freshDetailRoot.bytes.data(),
-            freshDetailSkin->bytes.data(),
-            bindings),
+        detailView.Attach(freshDetailService.bytes.data(), freshDetailRoot.bytes.data(), bindings),
         "unit-detail view rebuilds on a fresh native page");
-    detailView.SetUnit(
-        0x8877665544332211ull,
-        true,
-        true,
-        L"查看新赠送来源");
-    detailView.SetDetail(
-        L"发送方：新好友",
-        true);
+    detailView.SetUnit(0x8877665544332211ull);
+    detailView.ShowOrigin(L"好友赠送  来自 新好友", L"赠送 2026-11-04", true);
     Check(
-        detailView.ready() &&
-            detailView.service() ==
-                freshDetailService.bytes.data() &&
-            detailView.button() != retiredDetailButton &&
-            detailView.detail() != retiredDetailText &&
-            detailView.detail_visible() &&
-            Read<std::uint8_t>(
-                freshDetailRender.bytes.data(), 0x162) == 0,
+        detailView.ready() && detailView.service() == freshDetailService.bytes.data() &&
+            detailView.button() != retiredDetailButton && detailView.title() != retiredDetailTitle,
         "fresh unit-detail controls accept normal state after retirement");
-    detailView.SetUnit(
-        0x8877665544332211ull,
-        false,
-        false,
-        L"查看赠送来源");
-    Check(
-        Read<std::uint8_t>(
-            freshDetailRender.bytes.data(), 0x162) == 1 &&
-            Read<std::uint8_t>(
-                freshDetailRender.bytes.data(), 0x163) == 1 &&
-            Read<std::uint8_t>(
-                freshDetailRender.bytes.data(), 0x167) == 1,
-        "verified live close restores the fresh native viewport");
-    detailView.Detach(
-        freshDetailService.bytes.data());
+    Control smallRoot, smallRender, smallService;
+    prepareRender(smallRender, smallRoot, smallService);
+    Put<int>(smallRender.bytes.data(), 0x154, 150);
+    UnitDetailView smallView;
+    Check(!smallView.Attach(smallService.bytes.data(), smallRoot.bytes.data(), bindings),
+          "an unexpected viewport size keeps the stock page unchanged");
+    detailView.Detach(freshDetailService.bytes.data());
 
     Control service;
     Control dialog;

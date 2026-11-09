@@ -16,6 +16,7 @@
 #include "operator_catalog_actions.h"
 #include "ai_catalog_actions.h"
 #include "storage_test_actions.h"
+#include "sdgo/friend_unit_gift_client_observer.h"
 #include "capsule_catalog_actions.h"
 #include "battle_combat_actions.h"
 #include "apsalus_transform_probe.h"
@@ -267,6 +268,8 @@ void PublishQuietSocketReceipt(bool force=false);
 bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false, pagesOnly = false, friendsOnly = false;
 bool hangarPagesOnly = false;
 bool previewGuardOnly=false;
+bool storageGiftOnly=false;
+uint64_t giftOriginUid=0,giftPlainUid=0;
 HangarPreviewGuardFaultProbe previewGuardFaults;
 HangarPreviewGuardActions previewGuardActions;
 SpecialTargetGuardActions specialTargetGuardActions;
@@ -540,9 +543,11 @@ bool LoadPlan() {
     wchar_t pageGroup[16]{};
     const auto pageGroupChars=GetPrivateProfileStringW(L"run",L"page_group",L"",pageGroup,16,job.c_str());
     if(pageGroupChars) {
-        if(pageGroupChars>=15 || (wcscmp(pageGroup,L"hangar")&&wcscmp(pageGroup,L"preview_guard")) || !pagesOnly || testShopCatalog || collectionDraw ||
+        if(pageGroupChars>=15 || (wcscmp(pageGroup,L"hangar")&&wcscmp(pageGroup,L"preview_guard")&&wcscmp(pageGroup,L"storage_gift")) ||
+           !pagesOnly || testShopCatalog || collectionDraw ||
            collectionPreviewOnly || testUnitPresentations || captureUnitPortraits || unitAcquisitionConfig.machine_kind)return false;
-        hangarPagesOnly=true;
+        storageGiftOnly=wcscmp(pageGroup,L"storage_gift")==0;
+        hangarPagesOnly=!storageGiftOnly;
         previewGuardOnly=wcscmp(pageGroup,L"preview_guard")==0;
     }
     const auto hangarConfirmFlag=GetPrivateProfileIntW(L"run",L"hangar_confirm_gb",0,job.c_str());
@@ -659,6 +664,13 @@ bool LoadPlan() {
     std::wstring accountPath = relative;
     if (accountPath.find(L':') == std::wstring::npos && accountPath[0] != L'\\')
         accountPath = sdgo_test::directory + L"\\" + accountPath;
+    if(storageGiftOnly) {
+        // Existing private test-account units: one with an accepted friend gift, one ordinary.
+        wchar_t value[32]{};
+        GetPrivateProfileStringW(L"gift_origin",L"gifted_uid",L"",value,32,accountPath.c_str());giftOriginUid=_wcstoui64(value,nullptr,10);
+        GetPrivateProfileStringW(L"gift_origin",L"plain_uid",L"",value,32,accountPath.c_str());giftPlainUid=_wcstoui64(value,nullptr,10);
+        if(!giftOriginUid || !giftPlainUid || giftOriginUid==giftPlainUid)return false;
+    }
     GetPrivateProfileStringW(L"account", L"username", L"", user, 32, accountPath.c_str());
     GetPrivateProfileStringW(L"account", L"password", L"", password, 128, accountPath.c_str());
     wchar_t passwordFormat[16] = {};
@@ -2692,6 +2704,14 @@ int __cdecl ClaimStoragePage(const SdgoGameTestContextV1* context) {
     if(result!=StorageTestActions::Complete)return SDGO_GAME_TEST_WAIT;
     context->Assert(state.action_sequence==2 && state.reply_sequence>0 && !state.outstanding,
         "exactly two original button actions confirm one native list/claim batch and retain its server replies");
+    {
+        char batch[192];sprintf_s(batch,"native storage one-shot batch collected=%u completed=%u skipped=%u manual=%u rounds=%u remaining=%u",
+            state.collected,state.completed,state.skipped,state.manual,state.rounds,state.total);context->Observe(batch);
+        context->Assert(state.completed+state.skipped+state.manual==state.collected && state.rounds>=1,
+            "one confirmation settles every reward collected from all pages: claimed, refused or left for manual selection");
+        if(state.current_tab==SDGO_STORAGE_GAME_TEST_TAB_ITEMS)
+            context->Assert(state.total==state.skipped,"after the single refresh only refused items remain in the item tab");
+    }
     context->Observe(state.completed?"positive native storage claim completed; delivery/readback is a separate assertion":"empty native storage list completed without any item claim; positive delivery remains untested");
     if(state.completed) {
         beforeClaim=pages.BaselineUnits();
@@ -3247,6 +3267,76 @@ const SdgoGameTestCaseV1 pageCases[]={
     {"pages.storage.claim",120000,&ClaimStoragePage},
     {"catalog.capsule",60000,&ReadCapsuleCatalog},
     {"pages.capsule.currency",60000,&ReadCapsuleCurrency},
+};
+int GiftOriginCase(const SdgoGameTestContextV1* context,bool gifted) {
+    static uint32_t stages[2]{};
+    auto& stage=stages[gifted?0:1];
+    const auto target=gifted?giftOriginUid:giftPlainUid;
+    auto* module=GetModuleHandleW(L"friend_unit_gift_client.dll");
+    const auto snapshotFn=module?reinterpret_cast<SdgoFriendUnitGiftClientGetSnapshotV1Fn>(GetProcAddress(module,SDGO_FRIEND_UNIT_GIFT_CLIENT_SNAPSHOT_EXPORT)):nullptr;
+    const auto actionFn=module?reinterpret_cast<SdgoFriendUnitGiftClientActionV1Fn>(GetProcAddress(module,SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_EXPORT)):nullptr;
+    if(!snapshotFn || !actionFn){context->Assert(0,"the friend unit gift client exports its native observer");return SDGO_GAME_TEST_FAIL;}
+    const auto runHash=friends::UnitGiftActions::RunHash(context);
+    if(!runHash){context->Assert(0,"gift origin checks run inside a canonical client run");return SDGO_GAME_TEST_FAIL;}
+    if(stage==0) {
+        const auto closed=storage.Close(context);
+        if(closed>=StorageTestActions::Invalid){context->Assert(0,"the storage page closes through its original button");return SDGO_GAME_TEST_FAIL;}
+        if(closed!=StorageTestActions::Complete)return SDGO_GAME_TEST_WAIT;
+        stage=1;
+    }
+    if(stage==1) {
+        const auto navigation=hangarNavigation.EnsureUnitManagementPage();
+        if(navigation>=HangarNavigation::kDownmenuServiceMismatch || navigation==HangarNavigation::kUnbound) {
+            context->Assert(0,"the original unit-indexing page opens for the gift origin check");return SDGO_GAME_TEST_FAIL;
+        }
+        if(navigation!=HangarNavigation::kReady)return SDGO_GAME_TEST_WAIT;
+        // Select the unit with the native grid callback; stop once its origin is known.
+        SdgoFriendUnitGiftClientActionRequestV1 request{};request.size=sizeof(request);request.version=SDGO_FRIEND_UNIT_GIFT_CLIENT_OBSERVER_VERSION;
+        request.run_hash=runHash;request.action=SDGO_FRIEND_UNIT_GIFT_CLIENT_ACTION_PROVENANCE;request.unit_uid=target;request.gift_id=1;
+        if(!actionFn(&request))return SDGO_GAME_TEST_WAIT;
+        stage=2;return SDGO_GAME_TEST_WAIT;
+    }
+    SdgoFriendUnitGiftClientSnapshotV1 snapshot{};snapshot.size=sizeof(snapshot);snapshot.version=SDGO_FRIEND_UNIT_GIFT_CLIENT_OBSERVER_VERSION;
+    if(!snapshotFn(&snapshot) || snapshot.run_hash!=runHash || snapshot.process_id!=GetCurrentProcessId()) {
+        context->Assert(0,"the gift observer belongs to this run and process");return SDGO_GAME_TEST_FAIL;
+    }
+    const bool replied=snapshot.last_reply_command==9 && snapshot.last_reply_unit_uid==target;
+    const bool shown=(snapshot.control_flags&SDGO_FRIEND_UNIT_GIFT_CLIENT_CONTROL_PROVENANCE)!=0 && snapshot.provenance_present;
+    std::wstring text;
+    for(uint32_t i=0;i<snapshot.provenance_text_code_units && i<std::size(snapshot.provenance_text);++i)text.push_back(static_cast<wchar_t>(snapshot.provenance_text[i]));
+    static uint32_t previous[2]{UINT32_MAX,UINT32_MAX};
+    const uint32_t signature=(replied?1u:0u)|(shown?2u:0u)|(static_cast<uint32_t>(snapshot.last_reply_status)<<8);
+    if(previous[gifted?0:1]!=signature) {
+        previous[gifted?0:1]=signature;
+        char message[192];sprintf_s(message,"native gift origin target=%llu reply=%u/%llu status=%d flags=%08X present=%u",
+            static_cast<unsigned long long>(target),snapshot.last_reply_command,static_cast<unsigned long long>(snapshot.last_reply_unit_uid),
+            snapshot.last_reply_status,snapshot.control_flags,snapshot.provenance_present);context->Observe(message);
+    }
+    if(!replied)return SDGO_GAME_TEST_WAIT;
+    if(gifted) {
+        if(snapshot.last_reply_status!=0) {
+            context->Assert(0,"the server confirms the accepted gift of the selected unit");return SDGO_GAME_TEST_FAIL;
+        }
+        if(!shown)return SDGO_GAME_TEST_WAIT;
+        const int length=WideCharToMultiByte(CP_UTF8,0,text.data(),static_cast<int>(text.size()),nullptr,0,nullptr,nullptr);
+        std::string utf8(static_cast<size_t>(length),'\0');
+        if(length)WideCharToMultiByte(CP_UTF8,0,text.data(),static_cast<int>(text.size()),utf8.data(),length,nullptr,nullptr);
+        context->Observe(("native gift origin text: "+utf8).c_str());
+        context->Assert(text.rfind(L"好友赠送  来自 ",0)==0 && text.find(L"\n赠送 ")!=std::wstring::npos,
+            "the gifted unit shows its sender and gift date on the native unit-information page");
+        return SDGO_GAME_TEST_PASS;
+    }
+    if(snapshot.last_reply_status!=9) {
+        context->Assert(0,"the server reports no accepted gift for the ordinary unit");return SDGO_GAME_TEST_FAIL;
+    }
+    context->Assert(!shown && !snapshot.provenance_present,"an ordinary unit shows no gift origin or gift note");
+    return SDGO_GAME_TEST_PASS;
+}
+int __cdecl ReadGiftOrigin(const SdgoGameTestContextV1* context){return GiftOriginCase(context,true);}
+int __cdecl ReadGiftPlain(const SdgoGameTestContextV1* context){return GiftOriginCase(context,false);}
+const SdgoGameTestCaseV1 giftOriginCases[]={
+    {"pages.hangar.gift_origin",120000,&ReadGiftOrigin},
+    {"pages.hangar.gift_plain",120000,&ReadGiftPlain},
 };
 const SdgoGameTestCaseV1 hangarGbCase{
     "pages.hangar.confirm_gb",120000,&ConfirmHangarGb};
@@ -5500,6 +5590,11 @@ void RegisterPlannedCases() {
             plannedCases.push_back(earlyNavigationCase);
         if(testOperatorFlow)plannedCases.push_back(operatorFlowCase);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
+        if(storageGiftOnly) {
+            plannedCases.push_back(pageCases[5]);plannedCases.push_back(pageCases[6]);
+            plannedCases.insert(plannedCases.end(),std::begin(giftOriginCases),std::end(giftOriginCases));
+            provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+        }
         if(hangarPagesOnly) {
             if(previewGuardOnly) {
                 plannedCases.push_back({"pages.hangar.preview_guard",600000,&PreviewGuardFlow});
