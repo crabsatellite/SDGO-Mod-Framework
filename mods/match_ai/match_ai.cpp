@@ -2348,6 +2348,84 @@ namespace
         }
     }
 
+    // The native life-cache pass (0x5394E0) has its own NPC filter, separate
+    // from the roster and teammate HUD. Its result is unit+0x2F9C, read by
+    // the original TAB renderer at 0x532E64. Keep the original calculation,
+    // slot remapping and deck rules; admit only our registered participants.
+    int __stdcall ScoreboardLifeCost(uint8_t* unit, int nativeCost)
+    {
+        if (!ScoreboardParticipant(unit))
+            return nativeCost;
+        __try {
+            const Bot* bot = BotByObject(*g_game.unitManager,
+                *reinterpret_cast<uint32_t*>(unit + kUnitObjectId));
+            const StartDeck* deck = bot ? FindStartDeck(bot->pilotId) : nullptr;
+            const int form = bot && bot->form >= 0 && bot->form < 4 ? bot->form : 0;
+            return deck && deck->lifeCost[form] > 0 ? deck->lifeCost[form] : nativeCost;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return nativeCost;
+        }
+    }
+
+    int __stdcall ScoreboardLifeParticipant(uint8_t* unit, uint8_t* hud)
+    {
+        if (!hud || !ScoreboardParticipant(unit))
+            return 0;
+        __try {
+            // The death-match branch dereferences unit data before dividing.
+            // An invalid record must not introduce a new native zero divisor.
+            if (*reinterpret_cast<uint32_t*>(hud + 0x30) == 3) {
+                const uint8_t* data = *reinterpret_cast<uint8_t**>(unit + 0x9C4);
+                if (!data)
+                    return 0;
+                const int nativeCost = *reinterpret_cast<const int16_t*>(data + 0x137);
+                if (ScoreboardLifeCost(unit, nativeCost) <= 0)
+                    return 0;
+            }
+            return 1;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return 0;
+        }
+    }
+
+    void* g_scoreboardLifeNpcOriginal = nullptr;
+    void* g_scoreboardLifeCostOriginal = nullptr;
+
+    __declspec(naked) void ScoreboardLifeNpcGate()
+    {
+        __asm {
+            pushfd
+            pushad
+            push ebx
+            push esi
+            call ScoreboardLifeParticipant
+            test eax, eax
+            jz native_filter
+            mov byte ptr [esp+28], 0
+        native_filter:
+            popad
+            popfd
+            jmp dword ptr [g_scoreboardLifeNpcOriginal]
+        }
+    }
+
+    __declspec(naked) void ScoreboardLifeCostGate()
+    {
+        __asm {
+            pushfd
+            pushad
+            push ebx
+            push esi
+            call ScoreboardLifeCost
+            // Only EBX, the divisor about to be saved by the native pass,
+            // changes. Preserve the slot's power in EDI and all other state.
+            mov dword ptr [esp+16], eax
+            popad
+            popfd
+            jmp dword ptr [g_scoreboardLifeCostOriginal]
+        }
+    }
+
     __declspec(naked) void ScoreboardNpcGate()
     {
         __asm {
@@ -3577,6 +3655,11 @@ SDGO_MOD_ENTRY
         return 0;
     if (!api->HookSite(mod, "hud.scoreboard_npc_gate", reinterpret_cast<void*>(&ScoreboardNpcGate),
                        &g_scoreboardNpcGateOriginal))
+        return 0;
+    if (!api->HookSite(mod, "hud.scoreboard_life_npc_gate", reinterpret_cast<void*>(&ScoreboardLifeNpcGate),
+                       &g_scoreboardLifeNpcOriginal) ||
+        !api->HookSite(mod, "hud.scoreboard_life_cost", reinterpret_cast<void*>(&ScoreboardLifeCostGate),
+                       &g_scoreboardLifeCostOriginal))
         return 0;
     if (!api->HookSite(mod, "game.teleport_relocation_npc_gate",
                        reinterpret_cast<void*>(&TeleportNpcGate),

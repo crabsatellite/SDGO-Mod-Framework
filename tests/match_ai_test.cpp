@@ -31,6 +31,8 @@ uint32_t scoreboardFrameFlags = 0, scoreboardFrameEax = 0, scoreboardFrameEbx = 
 uint32_t scoreboardFrameEcx = 0, scoreboardFrameEdx = 0, scoreboardFrameEsi = 0, scoreboardFrameEdi = 0;
 uint32_t scoreboardFrameEbp = 0, scoreboardExpectedEbp = 0;
 uint8_t* scoreboardFrameUnit = nullptr;
+uint32_t lifeCostFrameFlags = 0, lifeCostFrameEax = 0, lifeCostFrameEcx = 0, lifeCostFrameEdx = 0;
+uint32_t lifeCostFrameEdi = 0, lifeCostNativePower = 0, lifeCostNativeDivisor = 0;
 uint32_t teleportFrameFlags = 0, teleportFrameEax = 0, teleportFrameEbx = 0;
 uint32_t teleportFrameEcx = 0, teleportFrameEdx = 0, teleportFrameEsi = 0, teleportFrameEdi = 0;
 uint32_t teleportFrameEbp = 0, teleportExpectedEbp = 0;
@@ -224,6 +226,97 @@ __declspec(naked) int InvokeScoreboardGate(uint8_t*, int) {
         mov edi, 33445566h
         stc
         call ScoreboardNpcGate
+        pop edi
+        pop esi
+        pop ebx
+        mov esp, ebp
+        pop ebp
+        ret
+    }
+}
+__declspec(naked) int LifeGateContinuation() {
+    __asm {
+        push eax
+        pushfd
+        pop eax
+        mov scoreboardFrameFlags, eax
+        pop eax
+        mov scoreboardFrameEax, eax
+        mov scoreboardFrameEbx, ebx
+        mov scoreboardFrameEcx, ecx
+        mov scoreboardFrameEdx, edx
+        mov scoreboardFrameEsi, esi
+        mov scoreboardFrameEdi, edi
+        mov scoreboardFrameEbp, ebp
+        mov scoreboardFrameUnit, esi
+        test al, al
+        jne hide_npc
+        mov eax, 1
+        ret
+    hide_npc:
+        xor eax, eax
+        ret
+    }
+}
+__declspec(naked) int InvokeLifeGate(uint8_t*, uint8_t*, int) {
+    __asm {
+        push ebp
+        mov ebp, esp
+        push ebx
+        push esi
+        push edi
+        mov scoreboardExpectedEbp, ebp
+        mov esi, [ebp+8]
+        mov ebx, [ebp+0Ch]
+        mov eax, 0A5A5A500h
+        mov al, byte ptr [ebp+10h]
+        mov ecx, 55667788h
+        mov edx, 22334455h
+        mov edi, 33445566h
+        stc
+        call ScoreboardLifeNpcGate
+        pop edi
+        pop esi
+        pop ebx
+        pop ebp
+        ret
+    }
+}
+__declspec(naked) int LifeCostContinuation() {
+    __asm {
+        // Exact instructions relocated from 0x5395FD.
+        mov [ebp-18h], edi
+        mov [ebp-1Ch], ebx
+        mov lifeCostFrameEax, eax
+        mov lifeCostFrameEcx, ecx
+        mov lifeCostFrameEdx, edx
+        mov lifeCostFrameEdi, edi
+        pushfd
+        pop eax
+        mov lifeCostFrameFlags, eax
+        mov eax, [ebp-18h]
+        mov lifeCostNativePower, eax
+        mov eax, [ebp-1Ch]
+        mov lifeCostNativeDivisor, eax
+        ret
+    }
+}
+__declspec(naked) int InvokeLifeCostGate(uint8_t*, int, int) {
+    __asm {
+        push ebp
+        mov ebp, esp
+        sub esp, 30h
+        push ebx
+        push esi
+        push edi
+        mov esi, [ebp+8]
+        mov ebx, [ebp+0Ch]
+        mov edi, [ebp+10h]
+        mov eax, 0A5A5A5A5h
+        mov ecx, 55667788h
+        mov edx, 22334455h
+        stc
+        call ScoreboardLifeCostGate
         pop edi
         pop esi
         pop ebx
@@ -439,6 +532,8 @@ void Reset(int classIndex = 0, int roomMode = 1) {
     g_targetTeamOriginal = fixtureTeamTrampoline ? fixtureTeamTrampoline : reinterpret_cast<void*>(&NativeTeamOnlyGate);
     g_targetParticipants = reinterpret_cast<void*>(&NativeParticipantContinuation);
     g_scoreboardNpcGateOriginal = reinterpret_cast<void*>(&ScoreboardGateContinuation);
+    g_scoreboardLifeNpcOriginal = reinterpret_cast<void*>(&LifeGateContinuation);
+    g_scoreboardLifeCostOriginal = reinterpret_cast<void*>(&LifeCostContinuation);
     g_teleportNpcGateOriginal = reinterpret_cast<void*>(&TeleportGateContinuation);
     network = true; observer = failAppend = throwCamera = throwUdp = false; starts.clear();
 }
@@ -768,6 +863,81 @@ int main() {
     const Bot staleScoreboardBot = g_botTable[0];
     Put<uint32_t>(slots[staleScoreboardBot.slot].data(), kSlotObjectId, 9999);
     CHECK(InvokeScoreboardGate(staleScoreboardBot.unit, 1) == 0);
+
+    SCENARIO("the separate native life-cache pass admits both AI teams and preserves the native filter ABI");
+    Spawn(1, 3, 1, 2);
+    Put<uint32_t>(hud.data(), 0x30, 3);
+    std::array<uint8_t, 0x200> lifeData{};
+    Put<int16_t>(lifeData.data(), 0x137, 500);
+    for (const Bot& lifeParticipant : g_botTable) {
+        Put(lifeParticipant.unit, kUnitData, lifeData.data());
+        CHECK(InvokeLifeGate(lifeParticipant.unit, hud.data(), 1) == 1);
+        CHECK(scoreboardFrameUnit == lifeParticipant.unit && scoreboardFrameEbp == scoreboardExpectedEbp);
+        CHECK(scoreboardFrameEax == 0xA5A5A500 && scoreboardFrameEbx == reinterpret_cast<uint32_t>(hud.data()));
+        CHECK(scoreboardFrameEsi == reinterpret_cast<uint32_t>(lifeParticipant.unit));
+        CHECK(scoreboardFrameEcx == 0x55667788 && scoreboardFrameEdx == 0x22334455);
+        CHECK(scoreboardFrameEdi == 0x33445566 && (scoreboardFrameFlags & 1));
+    }
+    Put<uint32_t>(units[10].data(), kUnitObjectId, 1011);
+    CHECK(InvokeLifeGate(units[10].data(), hud.data(), 1) == 0);
+    CHECK(scoreboardFrameEax == 0xA5A5A501);
+    CHECK(InvokeLifeGate(searchHumans[0].data(), hud.data(), 0) == 1);
+    auto lifeBot = g_botTable[0];
+    StartEntry(0, lifeBot.pilotId, 1, {100});
+    ReadStartDecks(packet.data());
+    CHECK(ScoreboardLifeCost(lifeBot.unit, 500) == 455);
+    CHECK(AiDeathCost(lifeBot.unit, 500) == 455);
+    CHECK(ScoreboardLifeCost(units[10].data(), 606) == 606);
+    CHECK(ScoreboardLifeCost(searchHumans[0].data(), 331) == 331);
+    CHECK(InvokeLifeCostGate(lifeBot.unit, 500, 1000) == 455);
+    CHECK(lifeCostNativePower == 1000 && lifeCostNativeDivisor == 455);
+    CHECK(lifeCostFrameEax == 0xA5A5A5A5 && lifeCostFrameEcx == 0x55667788);
+    CHECK(lifeCostFrameEdx == 0x22334455 && lifeCostFrameEdi == 1000 && (lifeCostFrameFlags & 1));
+    CHECK(InvokeLifeCostGate(searchHumans[0].data(), 331, 669) == 331);
+
+    SCENARIO("native life-cache calculation follows server power across deaths without a respawn refund");
+    int priorLives = -1;
+    for (const int power : {1000, 545, 90, 0}) {
+        Put<int32_t>(slots[lifeBot.slot].data(), kSlotScore, power);
+        Put<int32_t>(lifeBot.unit, 0x2F9C, 2); // native CNPC constructor's old, stale value
+        if (InvokeLifeGate(lifeBot.unit, hud.data(), 1)) {
+            const int divisor = InvokeLifeCostGate(lifeBot.unit, 500, power);
+            // The unchanged native pass divides slot power by its cost and
+            // rounds a remainder up before writing this display cache.
+            Put<int32_t>(lifeBot.unit, 0x2F9C, power / divisor + (power % divisor != 0));
+        }
+        const int lives = Get<int32_t>(lifeBot.unit, 0x2F9C);
+        CHECK(lives == (power == 1000 ? 3 : power == 545 ? 2 : power == 90 ? 1 : 0));
+        CHECK(priorLives < 0 || lives < priorLives);
+        priorLives = lives;
+    }
+    const int depleted = Get<int32_t>(slots[lifeBot.slot].data(), kSlotScore);
+    SetSlotColour(um, nullptr, static_cast<int>(lifeBot.objectId - 1), 0);
+    CHECK(Get<int32_t>(slots[lifeBot.slot].data(), kSlotScore) == depleted);
+    Put<uint32_t>(slots[lifeBot.slot].data(), kSlotObjectId, 9999);
+    CHECK(InvokeLifeGate(lifeBot.unit, hud.data(), 1) == 0);
+    CHECK(ScoreboardLifeCost(lifeBot.unit, 500) == 500);
+
+    SCENARIO("native life-cache branches keep deck and configured-life calculations and reject invalid divisors");
+    Spawn(1, 3, 1, 1);
+    auto freshLifeBot = g_botTable[0];
+    Put<uint32_t>(hud.data(), 0x30, 3);
+    Put(freshLifeBot.unit, kUnitData, lifeData.data());
+    Put<int16_t>(lifeData.data(), 0x137, 0);
+    CHECK(InvokeLifeGate(freshLifeBot.unit, hud.data(), 1) == 0);
+    StartEntry(0, freshLifeBot.pilotId, 1, {100});
+    ReadStartDecks(packet.data());
+    CHECK(InvokeLifeGate(freshLifeBot.unit, hud.data(), 1) == 1);
+    CHECK(InvokeLifeCostGate(freshLifeBot.unit, 0, 1000) == 455);
+    for (uint32_t displayMode : {4u, 7u}) {
+        Put<uint32_t>(hud.data(), 0x30, displayMode);
+        CHECK(InvokeLifeGate(freshLifeBot.unit, hud.data(), 1) == 1);
+    }
+    Put<uint32_t>(hud.data(), 0x30, 3);
+    Put<uint8_t*>(freshLifeBot.unit, kUnitData, nullptr);
+    CHECK(InvokeLifeGate(freshLifeBot.unit, hud.data(), 1) == 0);
+    Spawn(1, 3, 1, 1);
+    CHECK(Get<int32_t>(slots[g_botTable[0].slot].data(), kSlotScore) == 1000);
 
     SCENARIO("Teleport relocation uses the native player path only for the exact local PvP AI");
     Spawn();

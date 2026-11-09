@@ -1,5 +1,6 @@
 #include "../mods/hangar_manager/hangar_manager.cpp"
 #include "hangar_page_fixture.h"
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <iostream>
@@ -16,7 +17,8 @@ uint8_t* infoPointer=info.data();uint8_t* profilePointer=profile.data();
 std::vector<Unit> owned;
 std::vector<uint8_t> pending;
 std::vector<std::vector<uint8_t>> mailRequests;
-int sends=0,paints=0,gb=0,items=0,nativeClicks=0;
+std::vector<uint32_t> pageRequests;
+int sends=0,paints=0,gb=0,items=0,nativeClicks=0,userInfo=0;
 std::string refreshOrder;
 bool rejected=false;
 template<class T>void Put(void* p,size_t offset,T value){memcpy(static_cast<uint8_t*>(p)+offset,&value,sizeof(value));}
@@ -30,7 +32,18 @@ void __fastcall Page(void*,void*){++paints;refreshOrder+='P';}
 void __fastcall View(void*,void*){refreshOrder+='V';}
 void __fastcall Redraw(void*,void*){refreshOrder+='R';}
 void __fastcall Clear(void*,void*){owned.clear();}
-void __fastcall Sync(void*,void*,const uint8_t*){}
+void __fastcall Sync(void*,void*,const uint8_t* record){
+    uint32_t type=0;uint16_t slot=0;uint64_t uid=0;
+    memcpy(&type,record,4);memcpy(&slot,record+4,2);memcpy(&uid,record+8,8);
+    if(!type)return;
+    Unit unit=Make(uid,type,slot);
+    for(const auto& u:owned)if(u.uid==uid){unit=u;unit.slot=slot;memcpy(unit.full.data(),record,153);}
+    owned.erase(std::remove_if(owned.begin(),owned.end(),[&](const Unit& u){return u.slot==slot;}),owned.end());
+    owned.push_back(unit);
+}
+void __fastcall SlotClear(void*,void*,const void* brief,uint16_t slot){
+    assert(!brief);owned.erase(std::remove_if(owned.begin(),owned.end(),[&](const Unit& u){return u.slot==slot;}),owned.end());
+}
 void __fastcall NativeClick(void*,void*,void*){++nativeClicks;}
 void __fastcall Brief(void*,void*,void* out,uint16_t slot){
     memset(out,0,25);
@@ -42,7 +55,10 @@ void __fastcall Brief(void*,void*,void* out,uint16_t slot){
 void __fastcall Full(void*,void*,void* out,uint16_t slot){memset(out,0,153);for(const auto& u:owned)if(u.slot==slot && u.fullReady)memcpy(out,u.full.data(),153);}
 int __fastcall Send(void*,void*,int connection,const uint8_t* data,int size,int flags){
     assert(connection==7 && flags==0);
-    if(Read<uint16_t>(data)==0x891)mailRequests.emplace_back(data,data+size);else assert(pending.empty());
+    const auto opcode=Read<uint16_t>(data);
+    if(opcode==0x4FF){assert(size==10 && Read<uint32_t>(data,2)==0);pageRequests.push_back(Read<uint32_t>(data,6));return 1;}
+    if(opcode==0x6B3){assert(size==6 && Read<uint32_t>(data,2)==4242);++userInfo;return 1;}
+    if(opcode==0x891)mailRequests.emplace_back(data,data+size);else assert(pending.empty());
     pending.assign(data,data+size);++sends;return 1;
 }
 void __cdecl Log(SdgoMod*,int,const char*,...){}
@@ -50,7 +66,9 @@ SdgoApi api{};
 void Setup(){
     g_ui.Detach();
     owned={Make(101,10,1),Make(102,40,3),Make(103,10,4),Make(104,10,5),Make(105,20,8)};
-    pending.clear();mailRequests.clear();sends=paints=gb=items=nativeClicks=0;rejected=false;refreshOrder.clear();
+    pending.clear();mailRequests.clear();pageRequests.clear();sends=paints=gb=items=nativeClicks=userInfo=0;rejected=false;refreshOrder.clear();
+    g_live=sdgo::hangar::live::Refresh{};StopListening();g_liveInbox.clear();g_slotClear=reinterpret_cast<SlotClearFn>(&SlotClear);
+    Put(profile.data(),0x138,uint32_t{4242});
     Put(info.data(),4,1);Put(info.data(),0x0C,8);info[0x20]=1;Put(profile.data(),0x1AD,uint16_t{8});
     memcpy(profile.data()+0x161,"NativeFixture",14);
     Put(app.data(),0x4A0,uint32_t{6});Put(app.data(),0x4A4,mode.data());Put(mode.data(),0x0C,reinterpret_cast<void*>(0xBAADF00D));
@@ -66,6 +84,17 @@ void Setup(){
     g_rules.clear();for(uint32_t i=1;i<=4;++i){Rule r;r.unit=i*10;r.rank=static_cast<int>(i);r.subrank=2;r.gb=static_cast<int>(i*400);r.item=2220008;r.amount=static_cast<int>(i*3);r.name=L"Synthetic unit";g_rules[r.unit]=r;}
 }
 Snapshot Capture(){Snapshot s;assert(GetSnapshot(s));return s;}
+// World answers as the receive pre-handler would copy them.
+void Reply(uint16_t opcode){
+    uint8_t bytes[8]={};memcpy(bytes,&opcode,2);
+    sdgo::hangar::live::Packet packet;assert(CaptureReply(opcode,bytes,&packet));QueueReply(packet);
+}
+struct Row{uint64_t uid;uint32_t type;uint16_t slot;};
+void ReplyPage(const std::vector<Row>& rows){
+    std::vector<uint8_t> bytes(7+rows.size()*153,0);Put(bytes.data(),0,uint16_t{0x8F2});bytes[6]=static_cast<uint8_t>(rows.size());
+    for(size_t i=0;i<rows.size();++i){auto* r=bytes.data()+7+i*153;Put(r,0,rows[i].type);Put(r,4,rows[i].slot);Put(r,8,rows[i].uid);r[16]=1;}
+    sdgo::hangar::live::Packet packet;assert(CaptureReply(0x8F2,bytes.data(),&packet));QueueReply(packet);
+}
 void Deliver(){
     assert(!pending.empty());const auto opcode=Read<uint16_t>(pending.data());
     if(opcode==0x78B){
@@ -128,16 +157,42 @@ int main(){
     assert(!g_ui.Attach(fixture::grid.data(),page_fixture::Bind()));
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"UnitDeleteBtn"));
     assert(fixture::nativeClicks==1 && fixture::sends==0);
-    // Sorting submits exactly one native authenticated server request. It never
-    // moves client-only slots or reports transport acceptance as completion.
+    // Sorting submits exactly one native authenticated server request, waits
+    // for the World's answer and reloads every slot page in the same session.
     fixture::Setup();page_fixture::Setup(fixture::grid.data());assert(g_ui.Attach(fixture::grid.data(),page_fixture::Bind()));
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarSort"));
-    assert(!g_mutating && g_needsRelog && !g_ui.Exchange() && page_fixture::Shown(L"UnitDeleteBtn"));
+    assert(!g_mutating && !g_needsRelog && Busy() && !g_ui.Exchange() && page_fixture::Shown(L"UnitDeleteBtn"));
     assert(fixture::sends==1 && fixture::pending.size()==0x159 && Read<uint16_t>(fixture::pending.data())==0x891);
     assert(!memcmp(fixture::pending.data()+0x1B,kSortRecipient,sizeof(kSortRecipient)-1));
     assert(fixture::refreshOrder.empty() && ById(fixture::Capture(),102)->slot==3);
-    assert(page_fixture::children.at(L"ModHangarNotice0")->text.find(L"已提交")!=std::wstring::npos);
+    assert(page_fixture::children.at(L"ModHangarNotice0")->text.find(L"正在服务器整理")!=std::wstring::npos);
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarSort"));assert(fixture::sends==1);
+    g_nextTick=0;Pump();assert(Busy() && fixture::pageRequests.empty());
+    fixture::Reply(0x6AD);g_nextTick=0;Pump();
+    assert(Busy() && fixture::pageRequests==std::vector<uint32_t>({0,1}));
+    // Server order after the sort; the former slot 8 is now empty.
+    fixture::ReplyPage({{102,40,1},{105,20,2},{104,10,3},{103,10,4},{101,10,5}});fixture::ReplyPage({});
+    g_nextTick=0;Pump();
+    // The active-unit slot and GB follow the 0x05C1 user-info reply; success is
+    // reported one pump after the reply was copied off the receive path.
+    assert(Busy() && fixture::userInfo==1 && g_live.state()==sdgo::hangar::live::State::AwaitInfo);
+    fixture::Reply(0x5C1);g_nextTick=0;Pump();assert(Busy());
+    g_nextTick=0;Pump();
+    assert(!Busy() && !g_needsRelog && g_live.result()==sdgo::hangar::live::Result::Refreshed && g_live.cleared()==1);
+    s=fixture::Capture();
+    assert(s.units.size()==5 && ById(s,102)->slot==1 && ById(s,105)->slot==2 && ById(s,104)->slot==3 && ById(s,101)->slot==5);
+    assert(fixture::userInfo==1 && fixture::refreshOrder.find('V')!=std::string::npos);
+    assert(page_fixture::children.at(L"ModHangarNotice0")->text.find(L"整理完成")!=std::wstring::npos);
+    // A refused sort changes nothing and needs no re-login.
+    fixture::Setup();page_fixture::Setup(fixture::grid.data());assert(g_ui.Attach(fixture::grid.data(),page_fixture::Bind()));
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarSort"));
+    fixture::Reply(0x79F);g_nextTick=0;Pump();
+    assert(!Busy() && !g_needsRelog && fixture::pageRequests.empty() && ById(fixture::Capture(),102)->slot==3);
+    assert(page_fixture::children.at(L"ModHangarNotice0")->text.find(L"服务器未执行整理")!=std::wstring::npos);
+    // No answer: the old re-login path.
+    fixture::Setup();page_fixture::Setup(fixture::grid.data());assert(g_ui.Attach(fixture::grid.data(),page_fixture::Bind()));
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarSort"));
+    g_live.Abort();g_nextTick=0;Pump();assert(!Busy());
     // Exercise the production native page event handler all the way through
     // detail requests, preview, both confirmations and synthetic native replies.
     fixture::Setup();page_fixture::Setup(fixture::grid.data());assert(g_ui.Attach(fixture::grid.data(),page_fixture::Bind()));
@@ -151,8 +206,23 @@ int main(){
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarConfirm"));
     assert(g_submittingGB && !g_mutating && fixture::sends==beforeConfirm);
     for(int i=0;i<30 && g_submittingGB;++i){g_nextTick=0;Pump();}
-    assert(!g_submittingGB && g_needsRelog && fixture::mailRequests.size()==3 && fixture::gb==0 && fixture::owned.size()==5);
+    assert(!g_submittingGB && !g_needsRelog && Busy() && fixture::mailRequests.size()==3 && fixture::gb==0 && fixture::owned.size()==5);
     assert(std::string(reinterpret_cast<const char*>(fixture::mailRequests.back().data()+0x2C)).back()=='C');
+    {
+        // One answer per batch message; the reload follows the last one.
+        const auto removed=g_preview.actions.front().first;
+        fixture::Reply(0x6AD);fixture::Reply(0x6AD);g_nextTick=0;Pump();assert(Busy() && fixture::pageRequests.empty());
+        fixture::Reply(0x6AD);g_nextTick=0;Pump();assert(fixture::pageRequests==std::vector<uint32_t>({0,1}));
+        std::vector<fixture::Row> rows;
+        for(const auto& u:fixture::owned)if(u.uid!=removed)rows.push_back({u.uid,u.type,u.slot});
+        std::vector<fixture::Row> first,second;
+        for(const auto& r:rows)(r.slot<=6?first:second).push_back(r);
+        fixture::ReplyPage(first);fixture::ReplyPage(second);g_nextTick=0;Pump();
+        assert(Busy() && fixture::userInfo==1);
+        fixture::Reply(0x5C1);g_nextTick=0;Pump();g_nextTick=0;Pump();
+        assert(!Busy() && !g_needsRelog && fixture::owned.size()==4 && !ById(fixture::Capture(),removed) && fixture::userInfo==1);
+        assert(page_fixture::children.at(L"ModHangarNotice0")->text.find(L"已回收 1 台")!=std::wstring::npos);
+    }
     fixture::Setup();page_fixture::Setup(fixture::grid.data());assert(g_ui.Attach(fixture::grid.data(),page_fixture::Bind()));
     g_ui.Open();BeginScan(Kind::GB);g_ui.Arm(true);SubmitGB();
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarCancel"));g_nextTick=0;Pump();

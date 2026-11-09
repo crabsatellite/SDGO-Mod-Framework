@@ -51,7 +51,7 @@
 
 | 功能 | 简介 |
 |---|---|
-| [对战 AI](docs/pvp-ai.zh-CN.md) <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友；可让真人自动同队，选择双方补位、只补对面或指定数量 |
+| [对战 AI](docs/pvp-ai.zh-CN.md) <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友，TAB 战绩与剩余生命随对局更新；可让真人同队、双方或对面补位、指定数量 |
 | [任务 AI 僚机](docs/coop-wingmen.zh-CN.md) <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai`，AI 按玩家生命额度复活；`!ai3 inf` 开启 AI 无限复活 |
 | [战斗 AI 难度](docs/battle-ai.zh-CN.md) <!-- catalog: `battle_ai`、`battle_ai_server` --> | 在房名中选择 Easy／Medium／Hard 三档对战 AI 难度 |
 | [任务行为版本](docs/mission-behavior.zh-CN.md) <!-- catalog: `mission_behavior`、`mission_behavior_server` --> | 统一选择任务 AI 与刷怪使用 OC 原版行为或现有行为，客户端与全部 Battle 频道同步 |
@@ -75,7 +75,7 @@
 | 功能 | 简介 |
 |---|---|
 | [FPS 上限](docs/fps-limit.zh-CN.md) <!-- catalog: `fps_limit` --> | 提高渲染帧率上限，保留原生游戏速度 |
-| [机库管理](docs/hangar-manager.zh-CN.md) <!-- catalog: `hangar_manager` --> | 在机体管理页整理机库、预览并兑换重复机体，支持导入机体 |
+| [机库管理](docs/hangar-manager.zh-CN.md) <!-- catalog: `hangar_manager` --> | 在机体管理页整理机库、预览并兑换重复机体，结果当场刷新、无需重新登录，支持导入机体 |
 | [保管库一键领取](docs/storage-claim.zh-CN.md) <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 |
 | [自动机库容量](docs/hangar-capacity.zh-CN.md) <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） |
 | [商城汉化与中文检索](docs/shop-localization.zh-CN.md) <!-- catalog: `shop_localization` --> | 汉化商品名称、说明、选项和涂装机体预览，可用中文名称搜索并组合等级、币种筛选 |

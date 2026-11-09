@@ -18,6 +18,7 @@
 #include "sdgo/game_test_page_observer.h"
 #include "sdgo/localization.h"
 #include "native_ui.h"
+#include "live_refresh.h"
 
 namespace {
 using namespace sdgo::hangar;
@@ -35,6 +36,8 @@ using SessionFn=uint8_t*(__cdecl*)();
 using NativeSend=int(__thiscall*)(void*,int,const uint8_t*,int,int);
 using ButtonFn=void(__thiscall*)(void*,void*);
 using PeekFn=BOOL(WINAPI*)(LPMSG,HWND,UINT,UINT,UINT);
+using PacketPreFn=int(__thiscall*)(void*,uint32_t,uint32_t,uint32_t,uint32_t,const uint8_t*);
+using SlotClearFn=void(__thiscall*)(void*,const void*,uint16_t);
 const SdgoApi* g_api=nullptr;
 SdgoMod* g_mod=nullptr;
 NativeVoid g_page=nullptr,g_view=nullptr,g_redraw=nullptr,g_clear=nullptr,g_init=nullptr;
@@ -45,6 +48,17 @@ NativeSync g_sync=nullptr;
 SessionFn g_session=nullptr,g_app=nullptr;
 NativeSend g_send=nullptr;
 PeekFn g_peek=nullptr;
+PacketPreFn g_packetPre=nullptr;
+SlotClearFn g_slotClear=nullptr;
+// Live refresh: replies copied off the receive path, consumed on the UI thread.
+namespace live=sdgo::hangar::live;
+live::Refresh g_live;
+SRWLOCK g_liveLock=SRWLOCK_INIT;
+std::vector<live::Packet> g_liveInbox;
+volatile LONG g_liveListening=0;
+enum class LiveKind{Sort,GB} g_liveKind=LiveKind::Sort;
+size_t g_liveRemoved=0;
+int64_t g_liveExpectedGB=0;
 uint8_t** g_info=nullptr;
 uint8_t** g_profile=nullptr;
 uint8_t* g_grid=nullptr;
@@ -104,7 +118,7 @@ std::wstring Wide(const std::string& s) {
     MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,s.data(),static_cast<int>(s.size()),w.data(),n);return w;
 }
 void Status(const std::wstring& s) {g_ui.Status(s);}
-bool Busy(){return g_scanning || g_mutating || g_submittingGB;}
+bool Busy(){return g_scanning || g_mutating || g_submittingGB || g_live.state()!=live::State::Idle;}
 void Stop(const wchar_t* text) {
     g_scanning=false;g_detailPending=0;g_hasPreview=false;
     g_submittingGB=false;g_gbRequests.clear();
@@ -168,6 +182,74 @@ bool SendUnsafe(const uint8_t* bytes,int size) {
 bool Send(const uint8_t* bytes,int size) {
     __try{return SendUnsafe(bytes,size);}__except(EXCEPTION_EXECUTE_HANDLER){return false;}
 }
+bool SendSessionUnsafe(const uint8_t* bytes,int size) {
+    auto* session=g_session();
+    if(!session || Read<int>(session,0x14)<0)return false;
+    ++*reinterpret_cast<uint32_t*>(session+0x58);
+    *reinterpret_cast<uint32_t*>(session+0x5C)+=static_cast<uint32_t>(size);
+    return g_send(session,Read<int>(session,0x14),bytes,size,0)!=0;
+}
+bool LiveSend(void*,const uint8_t* bytes,int size) {
+    __try{return SendSessionUnsafe(bytes,size);}__except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+void LiveWrite(void*,const uint8_t* record) {
+    __try{if(g_info && *g_info)g_sync(*g_info,record);}__except(EXCEPTION_EXECUTE_HANDLER){}
+}
+bool LiveOccupied(void*,uint16_t slot) {
+    __try {
+        if(!g_info || !*g_info)return false;
+        uint8_t brief[25]={};g_brief(*g_info,brief,slot);
+        return Read<uint32_t>(brief)!=0;
+    }__except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+void LiveClear(void*,uint16_t slot) {
+    __try{if(g_info && *g_info)g_slotClear(*g_info,nullptr,slot);}__except(EXCEPTION_EXECUTE_HANDLER){}
+}
+bool LiveUserInfo(void*) {
+    // The client's own user-info request: its 0x05C1 reply rebuilds the
+    // active-unit record (with its new slot) and the GB balance.
+    __try {
+        if(!g_profile || !*g_profile)return false;
+        const auto account=Read<uint32_t>(*g_profile,0x138);
+        if(!account)return false;
+        uint8_t packet[6]={};
+        packet[0]=static_cast<uint8_t>(live::kUserInfoRequest&0xFF);packet[1]=static_cast<uint8_t>(live::kUserInfoRequest>>8);
+        memcpy(packet+2,&account,sizeof(account));
+        return SendSessionUnsafe(packet,sizeof(packet));
+    }__except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+uint32_t LiveCapacity() {
+    __try {
+        if(!g_info || !*g_info || Read<uint8_t>(*g_info,0x20)!=1)return 0;
+        const int capacity=Read<int>(*g_info,0x0C);
+        return capacity>0 && capacity<=g_maxSlots && capacity<=static_cast<int>(live::kMaxSlots)?static_cast<uint32_t>(capacity):0;
+    }__except(EXCEPTION_EXECUTE_HANDLER){return 0;}
+}
+bool CaptureReply(uint32_t opcode,const uint8_t* packet,live::Packet* out) {
+    __try{return live::Capture(static_cast<uint16_t>(opcode),packet,out);}__except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+void QueueReply(const live::Packet& packet) {
+    AcquireSRWLockExclusive(&g_liveLock);
+    if(g_liveInbox.size()<512)g_liveInbox.push_back(packet);
+    ReleaseSRWLockExclusive(&g_liveLock);
+}
+// Every decoded server packet passes this native pre-handler before dispatch.
+// The hook only copies the replies a pending refresh consumes, then continues.
+int __fastcall PacketPre(void* self,void*,uint32_t a,uint32_t b,uint32_t c,uint32_t opcode,const uint8_t* packet) {
+    if(InterlockedCompareExchange(&g_liveListening,0,0)) {
+        live::Packet copy;
+        if(CaptureReply(opcode,packet,&copy))QueueReply(copy);
+    }
+    return g_packetPre(self,a,b,c,opcode,packet);
+}
+void StartLive(LiveKind kind,size_t expectedAcks) {
+    AcquireSRWLockExclusive(&g_liveLock);g_liveInbox.clear();ReleaseSRWLockExclusive(&g_liveLock);
+    g_liveKind=kind;
+    const auto now=GetTickCount64();
+    g_live.Begin(expectedAcks,now,std::max<uint64_t>(g_timeout,15000)+expectedAcks*500ull,std::max<uint64_t>(g_timeout,20000));
+    InterlockedExchange(&g_liveListening,1);
+}
+void StopListening(){InterlockedExchange(&g_liveListening,0);}
 void RedrawUnsafe() {if(VisibleUnsafe()){g_ui.BeforeNativeRefresh();g_view(g_grid);g_redraw(g_grid);g_page(g_grid);g_ui.AfterNativeRefresh();}}
 void RedrawNow() {__try{RedrawUnsafe();}__except(EXCEPTION_EXECUTE_HANDLER){}}
 std::wstring Label(const Unit& u) {
@@ -246,6 +328,8 @@ void SubmitGB() {
     const auto id=NewRequestId();
     auto requests=ServerGBRequests(sender,id,g_preview,g_keep,g_sortAfter);
     g_gbBefore=g_preview.before;g_gbRequests=std::move(requests);g_gbIndex=0;
+    g_liveRemoved=g_preview.removed;g_liveExpectedGB=g_preview.expectedGB;
+    StartLive(LiveKind::GB,g_gbRequests.size());
     g_submittingGB=true;g_hasPreview=false;g_ui.Arm(false);
     Status(L"正在提交服务端批量回收；完成提交前可以停止。");
     g_api->Log(g_mod,SDGO_LOG_INFO,"server GB batch queued: %s; %u selected units, %u messages; no per-unit detail requests",id.c_str(),static_cast<unsigned>(g_preview.removed),static_cast<unsigned>(g_gbRequests.size()));
@@ -258,12 +342,12 @@ void BeginSort() {
         char sender[17]={};if(!Sender(sender)){Status(L"无法准备服务端请求，尚未发送。");return;}
         const auto id=NewRequestId();
         const auto bytes=ServerSortRequest(sender,id);
-        if(!Send(bytes.data(),static_cast<int>(bytes.size()))){Status(L"无法提交服务端整理，请检查连接。");return;}
-        // The native mail transport has no proven client acknowledgement.
-        // A send is a submission, never proof that the server committed it.
-        g_needsRelog=true;g_hasPreview=false;
-        Status(L"已提交服务器整理，请退出并重新登录查看。");
-        g_api->Log(g_mod,SDGO_LOG_INFO,"server sort request submitted: %s; persistence requires server receipt; relog required",id.c_str());
+        // The World answers this send only after the mail procedure returned:
+        // 0x06AD once the sort committed, 0x079F when it was refused.
+        StartLive(LiveKind::Sort,1);g_live.SendsDone();g_hasPreview=false;
+        if(!Send(bytes.data(),static_cast<int>(bytes.size()))){g_live.Abort();StopListening();Status(L"无法提交服务端整理，请检查连接。");return;}
+        Status(L"正在服务器整理机库……");
+        g_api->Log(g_mod,SDGO_LOG_INFO,"server sort request submitted: %s; waiting for the server's answer",id.c_str());
     }catch(const std::exception&){Status(L"服务端整理请求未完成，请重新登录核对。");}
 }
 
@@ -302,7 +386,11 @@ void HandleButton(void* self,void* control) {
         return;
     }
     if(action==ui::Action::Cancel) {
-        if(g_submittingGB){g_submittingGB=false;g_gbRequests.clear();Status(L"已停止提交，没有发送批量执行指令。");}
+        if(g_submittingGB){
+            // Without the final commit message the server executes nothing.
+            g_submittingGB=false;g_gbRequests.clear();g_live.Abort();StopListening();
+            Status(L"已停止提交，没有发送批量执行指令。");
+        }
         else if(g_scanning){g_scanning=false;g_detailPending=0;Status(L"预览已取消，没有发送兑换请求。");}
         else if(g_mutating){g_runner.Cancel();Status(L"停止追加请求；等待最后一笔已发送请求的结果。");}
         else {g_hasPreview=false;g_ui.Close();RedrawNow();}
@@ -341,6 +429,38 @@ void __fastcall Redraw(void* self,void*) {
     g_redraw(self);
     if(g_ui.Owns(self))UiRefresh();
 }
+void FinishLive() {
+    StopListening();
+    const auto result=g_live.result();
+    const bool sort=g_liveKind==LiveKind::Sort;
+    if(result==live::Result::Refreshed) {
+        g_needsRelog=false;RedrawNow();
+        if(sort)Status(L"整理完成，机库已刷新。");
+        else Status(L"已回收 "+std::to_wstring(g_liveRemoved)+L" 台，机库与 GB 已刷新（奖励以服务器配置为准）。");
+        g_api->Log(g_mod,SDGO_LOG_INFO,"%s committed; hangar refreshed live: %u pages, %u records, %u stale slots cleared",
+            sort?"server sort":"server GB batch",g_live.pages(),g_live.written(),g_live.cleared());
+    } else if(result==live::Result::Refused) {
+        g_needsRelog=false;
+        Status(sort?L"服务器未执行整理，机库保持不变。":L"服务器未执行回收，机体与 GB 保持不变。");
+        g_api->Log(g_mod,SDGO_LOG_WARN,"%s refused by the server; nothing changed",sort?"server sort":"server GB batch");
+    } else {
+        g_needsRelog=true;
+        Status(sort?L"未能确认整理结果，请退出并重新登录查看。":L"未能确认回收结果，请退出并重新登录查看 GB。");
+        g_api->Log(g_mod,SDGO_LOG_WARN,"%s: server answer or slot pages incomplete (%u/%u acknowledged, %u/%u pages); relog required",
+            sort?"server sort":"server GB batch",static_cast<unsigned>(g_live.acknowledged()),static_cast<unsigned>(g_live.expected()),
+            g_live.replies(),g_live.pages());
+    }
+    RecordTestReply();
+}
+void PumpLive() {
+    if(g_live.state()==live::State::Idle)return;
+    std::vector<live::Packet> packets;
+    AcquireSRWLockExclusive(&g_liveLock);packets.swap(g_liveInbox);ReleaseSRWLockExclusive(&g_liveLock);
+    const uint32_t capacity=LiveCapacity();
+    if(!capacity && g_live.state()==live::State::AwaitAck && packets.empty())return;
+    live::Io io;io.send=&LiveSend;io.write=&LiveWrite;io.occupied=&LiveOccupied;io.clear=&LiveClear;io.user_info=&LiveUserInfo;
+    if(g_live.Tick(GetTickCount64(),capacity,packets,io))FinishLive();
+}
 void Pump() {
     const auto now=GetTickCount64();
     if(g_pumping || now<g_nextTick || (g_thread && GetCurrentThreadId()!=g_thread))return;
@@ -354,19 +474,22 @@ void Pump() {
         if(g_submittingGB) {
             Snapshot current;
             if(!GetSnapshot(current) || !SameGBPreview(g_gbBefore,current)) {
-                g_submittingGB=false;g_gbRequests.clear();Status(L"机库已变化，取消批量提交；请重新预览。");
+                // The commit message is last; without it the server executes nothing.
+                g_submittingGB=false;g_gbRequests.clear();g_live.Abort();StopListening();
+                Status(L"机库已变化，取消批量提交；请重新预览。");
             }else {
                 for(int sent=0;sent<4 && g_submittingGB && g_gbIndex<g_gbRequests.size();++sent) {
                     const auto& packet=g_gbRequests[g_gbIndex];
-                    if(!Send(packet.data(),static_cast<int>(packet.size()))){Stop(L"提交状态不明，请重新登录核对；不会自动重试。");break;}
+                    if(!Send(packet.data(),static_cast<int>(packet.size()))){g_live.Abort();StopListening();Stop(L"提交状态不明，请重新登录核对；不会自动重试。");break;}
                     ++g_gbIndex;
                 }
                 if(g_submittingGB && g_gbIndex==g_gbRequests.size()) {
-                    g_submittingGB=false;g_gbRequests.clear();g_needsRelog=true;
-                    CloseUi();Status(L"已提交服务端批量回收，请退出并重新登录查看 GB。");
+                    g_submittingGB=false;g_gbRequests.clear();g_live.SendsDone();
+                    CloseUi();Status(L"已提交服务端批量回收，正在等待服务器确认……");
                 }
             }
         }
+        PumpLive();
         if(g_scanning || g_mutating) {
             Snapshot s;
             if(!GetSnapshot(s)){Stop(L"已停止：已离开机库或连接发生变化。请重新登录核对最后一笔状态。");g_pumping=false;return;}
@@ -424,6 +547,7 @@ void __fastcall Page(void* self,void*) {
     if(g_ui.Owns(self))UiRefresh();
 }
 void __fastcall Clear(void* self,void*) {
+    if(g_live.state()!=live::State::Idle){g_live.Abort();StopListening();}
     ++g_epoch;g_hasPreview=false;g_scanning=false;g_detailPending=0;
     g_submittingGB=false;g_gbRequests.clear();
     if(g_mutating){g_runner.Disconnect();g_mutating=false;Status(L"连接或机库缓存已重建，请重新预览。");}
@@ -561,6 +685,9 @@ static int HangarGameTestGetSnapshot(
     result.runner_state=static_cast<uint32_t>(g_runner.state());
     result.runner_completed=Count32(g_runner.completed());result.runner_total=Count32(g_runner.total());
     result.submit_index=Count32(g_gbIndex);result.submit_total=Count32(g_gbRequests.size());
+    result.live_state=static_cast<uint32_t>(g_live.state());result.live_generation=g_live.generation();
+    result.live_result=static_cast<uint32_t>(g_live.result());result.live_pages=g_live.pages();
+    result.live_cleared=g_live.cleared();
     ObserverBasic(&result);
     if(result.visible && g_thread && GetCurrentThreadId()==g_thread) {
         Snapshot snapshot;
@@ -622,7 +749,8 @@ extern "C" __declspec(dllexport) int __cdecl SdgoHangarGameTestActionV1(
 
 SDGO_MOD_ENTRY {
     g_api=api;g_mod=mod;
-    bool bound=Bind(g_view,"hangar.view_list") && Bind(g_redraw,"hangar.redraw") && Bind(g_info,"hangar.info_global") && Bind(g_profile,"hangar.profile_global") && Bind(g_brief,"hangar.brief") && Bind(g_full,"hangar.full") && Bind(g_session,"hangar.session") && Bind(g_send,"net.send_packet") && Bind(g_app,"game.app");
+
+    bool bound=Bind(g_slotClear,"hangar.slot_clear") && Bind(g_view,"hangar.view_list") && Bind(g_redraw,"hangar.redraw") && Bind(g_info,"hangar.info_global") && Bind(g_profile,"hangar.profile_global") && Bind(g_brief,"hangar.brief") && Bind(g_full,"hangar.full") && Bind(g_session,"hangar.session") && Bind(g_send,"net.send_packet") && Bind(g_app,"game.app");
     if(!bound)return 0;
     g_keep=api->SettingInt(mod,"KeepCopies",2);g_maxSlots=api->SettingInt(mod,"MaxSlots",1200);
     int interval=api->SettingInt(mod,"RequestIntervalMs",150),timeout=api->SettingInt(mod,"ReplyTimeoutMs",10000);
@@ -653,7 +781,8 @@ SDGO_MOD_ENTRY {
        !api->HookCode(mod,"hangar.page_frame",reinterpret_cast<void*>(&Page),reinterpret_cast<void**>(&g_page)) ||
        !api->HookCode(mod,"hangar.clear",reinterpret_cast<void*>(&Clear),reinterpret_cast<void**>(&g_clear)) ||
        !api->HookCode(mod,"hangar.sync_full",reinterpret_cast<void*>(&Sync),reinterpret_cast<void**>(&g_sync)) ||
+       !api->HookCode(mod,"hangar.packet_prehandler",reinterpret_cast<void*>(&PacketPre),reinterpret_cast<void**>(&g_packetPre)) ||
        !api->HookImport(mod,"user32.dll","PeekMessageW",reinterpret_cast<void*>(&Peek),reinterpret_cast<void**>(&g_peek)))return 0;
-    api->Log(mod,SDGO_LOG_INFO,"ready: in-game unit-management page, native authenticated hangar actions, %u unit rules; no SQL credentials",static_cast<unsigned>(g_rules.size()));
+    api->Log(mod,SDGO_LOG_INFO,"ready: in-game unit-management page, native authenticated hangar actions with live refresh, %u unit rules; no SQL credentials",static_cast<unsigned>(g_rules.size()));
     return 1;
 }

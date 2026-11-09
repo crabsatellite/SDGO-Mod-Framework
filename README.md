@@ -53,7 +53,7 @@ Battle rules, AI, progression, rewards and interactions between players.
 
 | Feature | Overview |
 |---|---|
-| [PvP AI](docs/pvp-ai.md) <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` in a room title adds AI opponents and teammates; optionally group all humans, fill both sides, fill opponents only or add exact counts |
+| [PvP AI](docs/pvp-ai.md) <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` adds AI opponents and teammates with live TAB stats and remaining lives; group humans, fill either side or add exact counts |
 | [Mission AI wingmen](docs/coop-wingmen.md) <!-- catalog: `coop_ai`, `mission_ai` --> | `!ai` adds mission wingmen with the player life allowance; `!ai3 inf` allows unlimited AI respawns |
 | [Battle AI difficulty](docs/battle-ai.md) <!-- catalog: `battle_ai`, `battle_ai_server` --> | Choose Easy, Medium or Hard PvP AI in the room title |
 | [Mission behavior profiles](docs/mission-behavior.md) <!-- catalog: `mission_behavior`, `mission_behavior_server` --> | Choose original OC or current mission AI and spawn behavior, applied together to the client and every Battle channel |
@@ -77,7 +77,7 @@ Everyday frame-rate, display, hangar and claim controls.
 | Feature | Overview |
 |---|---|
 | [FPS cap](docs/fps-limit.md) <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed |
-| [Hangar manager](docs/hangar-manager.md) <!-- catalog: `hangar_manager` --> | Sort the hangar, preview and exchange duplicate units on the unit-management page; imported units included |
+| [Hangar manager](docs/hangar-manager.md) <!-- catalog: `hangar_manager` --> | Sort the hangar, preview and exchange duplicate units on the unit-management page; results appear at once without a re-login; imported units included |
 | [Storage claim all](docs/storage-claim.md) <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation |
 | [Automatic hangar capacity](docs/hangar-capacity.md) <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) |
 | [Chinese shop localization and search](docs/shop-localization.md) <!-- catalog: `shop_localization` --> | Translate shop names, descriptions, options and paint-page unit previews; search by Chinese name combined with rank and payment filters |
