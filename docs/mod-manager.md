@@ -50,6 +50,17 @@ How saving works is stated on every page:
 - The capsule machine list and editor scroll separately; the editor's save button and the footer's export and
   **导入到游戏** (apply to game) stay in view.
 
+## What the game loads
+
+- Every entry under game features and the fix archive is a runtime Mod. A client or server loads only the Mods that
+  are switched on; a Mod that is off is not loaded and its log line reads `disabled by configuration`.
+- The owner tools, such as the shop, unit import and capsule pages, run only inside Manager; the game never loads
+  them. The data they produce is read by the matching runtime Mods.
+- Some runtime Mods are installed switched off and are turned on by the owner's publication, for example unit
+  import's `unit_catalog` and `unit_catalog_server`.
+- Developer diagnostics start switched off and appear only in the developer view; normal updates and owner profiles
+  never install them.
+
 ## Dependencies, data and activation
 
 Manager checks required and optional dependencies, interface versions, conflicts and loading cycles before toggles,

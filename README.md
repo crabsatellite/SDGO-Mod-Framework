@@ -75,7 +75,7 @@ Edit and publish server content in SDGO Mod Manager for players to install.
 |---|---|
 | [Shop catalog manager](docs/shop-catalog.md) <!-- catalog: `shop_catalog` --> | List, price and retire the owner's own shop offers from the Manager (WorldServer) |
 | [Capsule catalog editor](docs/capsule-catalog.md) <!-- catalog: `capsule_catalog` --> | Create, edit and retire machines, pools, prices and weights; renumber unused dedicated activities in the Manager |
-| [Unit family import (Beta)](docs/unit-import.md) <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | Import protocol unit packages or whole rosters from any source in Mod Manager, completing definitions and generating paired data, encyclopedia and shop/capsule resources |
+| [Unit family import](docs/unit-import.md) <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | Import protocol unit packages or whole rosters from any source in Mod Manager, completing definitions and generating paired data, encyclopedia and shop/capsule resources |
 | [Operator and ability management](docs/operator-assistant.md) <!-- catalog: `operator_catalog`, `operator_catalog_server` --> | Edit operator appearance, abilities, supply drops and shop drafts in Manager; import shareable packs and publish matching content |
 | [AI mech catalog (optional)](docs/ai-catalog.md) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools |
 | [Announcements](docs/announcements.md) <!-- catalog: `announcements` --> | Show a news digest once at login; optional in-game owner notices by time and event |

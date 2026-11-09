@@ -147,6 +147,13 @@ Categories are `fixes`, `gameplay`, `network`, and `development`; release channe
 share one feature id: for example `coop_ai` and `mission_ai` both belong to
 `coop-wingmen`. Their category/channel/activation must agree.
 
+`activation` (`automatic`, `room-title` or `manual`) is catalog metadata describing how players
+reach a loaded feature. It never decides whether a DLL loads: loading depends only on `enabled`,
+the `sdgo.ini` switches, `hosts`, `api` and `requires`, as described below. Every bundled Mod is a game
+runtime DLL with exactly one install target. Manager-only owner tools are Manager providers
+(`provider` in `manager.json`, or a contract under `manager/addons/`); they ship no game DLL and no
+game host loads them.
+
 `tools/mod_catalog.py` validates these declarations against CMake registration,
 feature guides and both README category tables. Builds generate
 `sdgo/catalog.json`; publishers use the same catalog for complete-feature package

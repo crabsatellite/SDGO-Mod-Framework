@@ -218,8 +218,8 @@ class CatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "README"):
             catalog.read_catalog(self.root)
 
-    def test_readme_beta_label_is_checked(self):
-        self.replace("README.md", "Unit family import (Beta)", "Unit family import")
+    def test_readme_preview_channel_label_is_checked(self):
+        self.replace("README.md", "Native GameTest (Experimental)", "Native GameTest")
         with self.assertRaisesRegex(ValueError, "channel"):
             catalog.read_catalog(self.root)
 
