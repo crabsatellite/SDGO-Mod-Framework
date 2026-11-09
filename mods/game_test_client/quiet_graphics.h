@@ -1060,6 +1060,16 @@ private:
         if (!owner || !owner->CopyDeviceVtable(device,&record))return D3DERR_INVALIDCALL;
         const LONG callNumber=InterlockedIncrement(&owner->cooperativeChecks_);
         const uintptr_t returnAddress=reinterpret_cast<uintptr_t>(_ReturnAddress());
+        // While presents succeed the hidden device is not lost: answer from the
+        // last real check instead of blocking the game thread on the graphics
+        // worker. A battle start can hold the device lock on a loader thread
+        // that waits for the game thread, so a dispatched check deadlocks there.
+        // A failed present makes the next check ask the driver again.
+        if (InterlockedCompareExchange(&owner->lastPresentResult_,0,0)==D3D_OK &&
+            InterlockedCompareExchange(&owner->lastCooperativeResult_,0,0)==D3D_OK) {
+            InterlockedIncrement(&owner->cachedCooperativeChecks_);
+            return D3D_OK;
+        }
         struct R{IDirect3DDevice9* device;DeviceCooperativeFn original;HRESULT result;};
         R r{device,record.cooperative,D3DERR_NOTAVAILABLE};
         if (!owner->Dispatch(r,[](QuietGraphics*,R* v){v->result=v->original(v->device);}))
@@ -1399,6 +1409,7 @@ private:
     mutable PVOID volatile lastRenderTargetReturnAddress_=nullptr;
     mutable volatile LONG lastCreateResult_=E_PENDING,lastResetResult_=E_PENDING,lastPresentResult_=E_PENDING;
     mutable volatile LONG lastCooperativeResult_=E_PENDING,lastBackbufferResult_=E_PENDING;
+    mutable volatile LONG cachedCooperativeChecks_=0;
     mutable volatile LONG lastRenderTargetResult_=E_PENDING;
     alignas(8) mutable volatile LONG64 presentQpcFrequency_=0,lastSuccessfulPresentQpc_=0;
     alignas(8) mutable volatile LONG64 successfulPresentMinGap_=0,successfulPresentMaxGap_=0;
