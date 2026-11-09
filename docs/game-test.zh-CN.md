@@ -429,3 +429,23 @@ Agent/Battle Mod；窗口输入通过与服务端标题确认分别断言。测�
 更新覆盖测试输入。验证启动更新本身时，将 `SDGO_GAME_TEST_LAUNCH_GATE` 也设为同一运行编号，
 继续走真实 Manager 流程；缺少或不匹配的编号不能启用候选程序旁路。
 
+### 页面功能短片
+
+构建当前客户端观察器，准备隐藏、静音的页面场景。隔离后端就绪后运行：
+
+```powershell
+python -m tools.game_test_release_demo --run-dir build/gametest/hangar --output build/review/hangar
+```
+
+工具根据真实 SDK 的 `case_begin`／`case_end` 事件录制原生 backbuffer，以最多 12 FPS 直接写入 MKV。
+录制时，已完成的读取／预览页面会在下一测试动作前保留三秒，原生业务操作与断言保持不变。
+每段最多 20 秒，只有原生场景通过后才生成待目视检查的片段。检查画面，裁掉账号名及部署信息后再导出：
+
+```powershell
+ffmpeg -i capture.mkv -t 12 -an -vf "fps=12,scale=900:-2" -c:v libwebp_anim -quality 76 -loop 0 demonstration.webp
+```
+
+可发布短片直接嵌入对应 Mod 的中英文介绍页，参照 PvP／任务 AI 页面，并登记到
+`docs/feature-demos.json`，不另建功能展示汇总页。Release 按实际程序包选择适用演示，保留中英文说明；
+媒体作为独立附件发布，不混入程序 ZIP。
+

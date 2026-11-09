@@ -8,6 +8,7 @@
 #include "cache_sync.h"
 #include "context.h"
 #include "pending_start.h"
+#include "skill_part_notice.h"
 
 namespace {
 const SdgoApi* g_api=nullptr;
@@ -41,6 +42,68 @@ struct NoticeTls {
     unsigned restoreDepth=0;
 };
 thread_local NoticeTls g_noticeTls;
+using UserInfoBeginFn=int(__thiscall*)(void*);
+using SkillPartNoticeFn=void(__thiscall*)(void*,const uint8_t*);
+UserInfoBeginFn g_userInfoBegin=nullptr;
+SkillPartNoticeFn g_skillPartNotice=nullptr;
+const void* g_userInfoVtable=nullptr;
+room_random_client::SkillPartReads g_skillPartReads;
+
+void CaptureSkillPartRead(void* self) {
+    room_random_client::SkillPartSnapshot snapshot;
+    __try {
+        const auto* reader=static_cast<const uint8_t*>(self);
+        const auto* profile=g_bindings.profile ? *g_bindings.profile : nullptr;
+        if(reader && profile &&
+           room_random_client::Read<const void*>(reader,0)==g_userInfoVtable &&
+           room_random_client::Read<uint16_t>(reader,0x18)==0x16) {
+            snapshot.owner=room_random_client::Read<uint32_t>(profile,0x138);
+            snapshot.unit=room_random_client::Read<uint64_t>(profile,0x1B1);
+            snapshot.part=room_random_client::Read<uint32_t>(profile,0x1FB);
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {snapshot={};}
+    EnterCriticalSection(&g_lock);
+    g_skillPartReads.Begin(self,snapshot);
+    LeaveCriticalSection(&g_lock);
+}
+int __fastcall UserInfoBegin(void* self,void*) {
+    NativeFpState fp;_fxsave(fp.bytes);
+    const DWORD error=GetLastError();
+    CaptureSkillPartRead(self);
+    SetLastError(error);_fxrstor(fp.bytes);
+    return g_userInfoBegin(self);
+}
+bool ReconcileSkillPartRead(void* self,const uint8_t* packet) {
+    EnterCriticalSection(&g_lock);
+    const auto snapshot=g_skillPartReads.Take(self);
+    LeaveCriticalSection(&g_lock);
+    __try {
+        auto* reader=static_cast<uint8_t*>(self);
+        const auto* profile=g_bindings.profile ? *g_bindings.profile : nullptr;
+        if(!reader || !packet || !profile ||
+           room_random_client::Read<const void*>(reader,0)!=g_userInfoVtable ||
+           room_random_client::Read<uint16_t>(reader,0x18)!=0x16 ||
+           room_random_client::Read<uint16_t>(packet,0)!=0x05C1 ||
+           room_random_client::Read<int16_t>(packet,6)!=0)return false;
+        if(!room_random_client::DifferentSkillPartInstance(
+                snapshot,room_random_client::Read<uint32_t>(profile,0x138),
+                room_random_client::Read<int32_t>(reader,0x14),
+                room_random_client::Read<uint64_t>(packet,0x59),
+                room_random_client::Read<uint32_t>(packet,0xA3)))return false;
+        const int32_t retired=-1;
+        std::memcpy(reader+0x14,&retired,sizeof(retired));
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+}
+void __fastcall SkillPartNotice(void* self,void*,const uint8_t* packet) {
+    NativeFpState fp;_fxsave(fp.bytes);
+    const DWORD error=GetLastError();
+    if(ReconcileSkillPartRead(self,packet))
+        g_api->Log(g_mod,SDGO_LOG_INFO,
+            "profile refresh changed inventory instance; retired stale skill-part consumption comparison");
+    SetLastError(error);_fxrstor(fp.bytes);
+    g_skillPartNotice(self,packet);
+}
 
 void ClearPendingNotice() {
     g_noticeTls.packet=nullptr;
@@ -426,10 +489,11 @@ SDGO_MOD_ENTRY {
     g_bindings.changeRoomView=
         reinterpret_cast<room_random_client::ChangeRoomViewFn>(
             api->Symbol(mod,"room_random.client_change_room_view"));
+    g_userInfoVtable=api->Symbol(mod,"room_random.client_user_info_vtable");
     if(!g_bindings.profile || !g_bindings.app || !g_bindings.waitRoomVtable ||
        !g_bindings.changeRoomViewVtable || !g_bindings.changeRoomView ||
        !g_bindings.roomInfo || !g_bindings.managerUpdate ||
-       !g_bindings.userHasState) return 0;
+       !g_bindings.userHasState || !g_userInfoVtable) return 0;
     auto bindSlots=[&](room_random_client::SlotAccess& s,const char* prefix) {
         char name[96];
         auto symbol=[&](const char* key) {sprintf_s(name,"room_random.client_%s_%s",prefix,key);return api->Symbol(mod,name);};
@@ -460,6 +524,12 @@ SDGO_MOD_ENTRY {
     if(!api->HookCode(mod,"room_random.client_change_room_view",
                       reinterpret_cast<void*>(&ChangeRoomView),
                       reinterpret_cast<void**>(&g_changeRoomView))) return 0;
+    if(!api->HookCode(mod,"room_random.client_user_info_begin",
+                      reinterpret_cast<void*>(&UserInfoBegin),
+                      reinterpret_cast<void**>(&g_userInfoBegin))) return 0;
+    if(!api->HookCode(mod,"room_random.client_skill_part_notice",
+                      reinterpret_cast<void*>(&SkillPartNotice),
+                      reinterpret_cast<void**>(&g_skillPartNotice))) return 0;
     api->Log(mod,SDGO_LOG_INFO,
         "native random starts wait for complete human loadouts, suppress only tagged post-settlement restore view requests, retire obsolete start requests through native cleanup, and execute the original parser exactly once");
     return 1;

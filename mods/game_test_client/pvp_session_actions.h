@@ -50,6 +50,9 @@ public:
             if(state_.pilot==command.target_id||group>3||!channel||!Title(command.body))return Fail();
             targetGroup_=group;targetChannel_=channel;
             joinStarted_=false;
+            // page=2: open the room list on the room's channel and stop once
+            // its row is listed (a viewer for the list's own marks), no join.
+            viewOnly_=command.page==2;
         } else if(op_==Ready) {
             if(state_.pilot==command.target_id||!joined_||!CleanHumanRoster(current))return Fail();
             BeginRound();
@@ -73,6 +76,10 @@ public:
                 const int channel=channel_(targetGroup_,targetChannel_);
                 if(channel==SDGO_GAME_TEST_FAIL){Fail();return;}
                 if(channel!=SDGO_GAME_TEST_PASS)return;
+                if(viewOnly_) {
+                    if(join_->TitleVisible(title_))Complete();
+                    return;
+                }
                 joinStarted_=join_->JoinExactTitle(title_);
             }
             state_.join_stage=join_->SelectionStage();
@@ -218,6 +225,6 @@ private:
     std::array<Sample,12> samples_{};
     BattleCombatActions combat_;
     char title_[128]{};wchar_t wideTitle_[32]{};
-    bool active_=false,joined_=false,joinStarted_=false,readyStarted_=false,startAccepted_=false;uint64_t at_=0,ticks_=0;
+    bool active_=false,joined_=false,joinStarted_=false,readyStarted_=false,startAccepted_=false,viewOnly_=false;uint64_t at_=0,ticks_=0;
 };
 using PvpSessionActions=PvpSessionActionsT<>;

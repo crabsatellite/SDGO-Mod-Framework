@@ -2,6 +2,8 @@
 
 [English](hangar-manager.md) · [返回功能目录](../README.zh-CN.md)
 
+![重复机体兑换预览与取消](hangar-manager-demo.webp)
+
 客户端 Mod `hangar_manager` 在游戏「机体管理」页的「机体锁定/解除」「机体解体」旁增加「一键整理」和「重复兑换」按钮。
 操作全部在原游戏页内完成，没有独立窗口、悬浮工具条或热键，也不要求 Manager 常驻。
 整理和 GB 批量回收由服务端执行，服主需要先安装服务端通道。

@@ -196,6 +196,20 @@ public:
         }
     }
 
+    // The room list shows the exact title as a joinable row (nothing is sent).
+    bool TitleVisible(const char* exactTitle)
+    {
+        if (!bound_ || !native_ || !ValidExactTitle(exactTitle) ||
+            native_->AppState() != kRoomListAppState)
+            return false;
+        __try {
+            RoomSelection selection = {};
+            return ResolveRoomSelection(exactTitle, selection);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
     bool Ready() {
         if(!bound_||InterlockedCompareExchange(&joinResult_,0,0)!=kJoinAccepted)return false;
         if(!readyBindAttempted_) {

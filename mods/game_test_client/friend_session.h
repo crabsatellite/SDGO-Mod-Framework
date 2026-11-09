@@ -234,6 +234,10 @@ public:
     void BindStorageActions(int (*action)(const SdgoGameTestContextV1*,uint32_t),void (*write)(FILE*)) {
         storageAction_=action;storageWrite_=write;
     }
+    // room_create may carry a room-system command in its body ("", "!oc",
+    // "!g1" or "!g2"); the callback applies it to the sealed room title.
+    bool (*roomTitle_)(const char*)=nullptr;
+    void BindRoomTitle(bool (*apply)(const char*)) {roomTitle_=apply;}
     void BindFrameCapture(bool (*request)(const wchar_t*),HRESULT (*status)()) {
         captureRequest_=request;captureStatus_=status;
     }
@@ -335,6 +339,10 @@ public:
             return SDGO_GAME_TEST_WAIT;
         }
         if(!wcscmp(op,L"snapshot")){++completed_;Write(context,true);return SDGO_GAME_TEST_WAIT;}
+        if(!wcscmp(op,L"messenger_close")) {
+            if(!actions_||!actions_->CloseMessenger()){context->Assert(0,"the messenger closes through its CloseBtn");return SDGO_GAME_TEST_FAIL;}
+            ++completed_;Write(context,true);return SDGO_GAME_TEST_WAIT;
+        }
         storageCommand_=!wcscmp(op,L"storage_open")||!wcscmp(op,L"storage_claim")||!wcscmp(op,L"storage_hangar");
         if(storageCommand_) {
             if(!storageAction_){context->Assert(0,"native storage adapter is absent");return SDGO_GAME_TEST_FAIL;}
@@ -364,6 +372,7 @@ public:
             !Text(commandPath.c_str(),L"body",command.body,sizeof(command.body))) {
             context->Assert(0,"friend command is malformed");return SDGO_GAME_TEST_FAIL;
         }
+        if(command.operation==12&&roomTitle_&&!roomTitle_(command.body)){context->Assert(0,"friend room_create body is not a supported room command");return SDGO_GAME_TEST_FAIL;}
         pvpCommand_=command.operation>=34&&command.operation<=37;
         giftCommand_=(command.operation>=18&&command.operation<=33)||(command.operation>=38&&command.operation<=42);
         roomCommand_=command.operation>=12&&!giftCommand_&&!pvpCommand_;

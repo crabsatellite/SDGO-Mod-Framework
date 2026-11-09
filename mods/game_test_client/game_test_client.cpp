@@ -182,6 +182,17 @@ bool ocRoom=false;
 // unit's G改 1.0 loadout (g1.loadout equips it first).
 bool g1Room=false;
 std::array<uint16_t,4> g1Expected{};
+// Room systems: one client plays an OC room, a G改 1.0 room and a G改 2.0 room
+// back to back; each round sets ocRoom/g1Room and its room title before the
+// room is created, and its system check counts only that round's battle.
+bool roomSwitch=false;
+char roomSwitchBase[21]={};
+constexpr uint8_t kRoomSwitchSystems[3]={1,2,0};
+const char* const kRoomSwitchNames[3]={"oc","g1","g2"};
+const char* const kRoomSwitchSuffixes[3]={" !oc"," !g1",""};
+size_t roomSwitchRound=SIZE_MAX;
+uint32_t roundRoomSkips=0,roundMobilityApplied=0;
+void BeginRoomSwitchRound(size_t round);
 // Also press the panel's OC challenge (it can change the unit's OC level).
 bool ocChallenge=false;
 bool collectionDraw=false;
@@ -595,6 +606,8 @@ bool LoadPlan() {
     ocPanel=GetPrivateProfileIntW(L"run",L"oc_panel",0,job.c_str())!=0;
     ocRoom=GetPrivateProfileIntW(L"run",L"oc_room",0,job.c_str())!=0;
     g1Room=GetPrivateProfileIntW(L"run",L"g1_room",0,job.c_str())!=0;
+    roomSwitch=GetPrivateProfileIntW(L"run",L"room_switch",0,job.c_str())!=0;
+    if(roomSwitch && (ocRoom || g1Room || ocAllocateStat<0 || !playUnitUid))return false;
     ocChallenge=GetPrivateProfileIntW(L"run",L"oc_challenge",0,job.c_str())!=0;
     if(hangarConfirmGb && (ocPanel || loginRecovery.Enabled()))return false;
     if(ocChallenge && !ocPanel && ocAllocateStat<0)return false;
@@ -717,6 +730,12 @@ bool LoadPlan() {
     }
     if (!missionMode && !ReadPvpRoomTitle(job,narrowNonce,randomLoadout,expectedEnemies,expectedAllies,roomTitle)) return false;
     if (!missionMode && !ReadSealedAiTeamCounts(job,expectedAi,roomTitle,expectedAllies,expectedEnemies)) return false;
+    if (roomSwitch) {
+        // The sealed title is the plain (G改 2.0) round; every round's title fits
+        // the native twenty bytes.
+        if (missionMode || randomLoadout || sameRoomRematch || strlen(roomTitle)+4>20) return false;
+        strcpy_s(roomSwitchBase,roomTitle);
+    }
     retryCount = static_cast<unsigned>(GetPrivateProfileIntW(L"run", L"retry_count", 1, job.c_str()));
     if (retryCount < 1 || retryCount > 2) return false;
     expectFirstFailure = GetPrivateProfileIntW(L"run", L"expect_first_fail", 0, job.c_str()) != 0;
@@ -752,6 +771,10 @@ bool LoadPlan() {
         if (*p++ != L',' || !*p) return false;
     }
     if (requestedModes.empty()) return false;
+    if (roomSwitch) {
+        if (requestedModes.size()!=1 || requestedModes[0]!=1) return false;
+        requestedModes.assign(3,1);
+    }
     return true;
 }
 
@@ -885,6 +908,12 @@ bool Snapshot(SdgoPvpAiClientSnapshotV1& snapshot) {
     return getSnapshot && getSnapshot(&snapshot) != 0;
 }
 int __cdecl Room(const SdgoGameTestContextV1* context) {
+    if(roomSwitch && roomSwitchRound!=modeIndex) {
+        BeginRoomSwitchRound(modeIndex);
+        char line[96];sprintf_s(line,"room switch round %u: system %s, room title \"%s\"",
+            static_cast<unsigned>(modeIndex+1),kRoomSwitchNames[modeIndex%3],roomTitle);
+        context->Observe(line);
+    }
     if(sameRoomRematch && sameRoomRound==1) {
         const auto waiting=rooms.NativeRoomState();
         if((actions.AppState()!=18 && actions.AppState()!=20) || !waiting.model_present)return SDGO_GAME_TEST_WAIT;
@@ -1377,8 +1406,16 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
         nativeDeathProbe.Finish(context);
         ObserveOptionalDialogue(context,true);
         nativePlayerCombat.Finish(context,scoreboardInput);
-        context->Assert(reviewFootage || (scoreboardCombatSequence == activeBattleStartSequence && scoreboardCombatChanges > 0),
-            "the native TAB kill/assist/points renderer reflected actual AI combat-counter changes during this full battle");
+        const bool scoreboardCombat=scoreboardCombatSequence == activeBattleStartSequence && scoreboardCombatChanges > 0;
+        if(roomSwitch && !scoreboardCombat) {
+            // The room-system switch checks which system each battle plays; the
+            // AI scoreboard is covered by the ordinary PvP runs, and three short
+            // battles in a row may end before the AI scores.
+            context->Observe("no AI combat-counter change on the native TAB renderer this round (not part of the room-system switch)");
+        } else {
+            context->Assert(reviewFootage || scoreboardCombat,
+                "the native TAB kill/assist/points renderer reflected actual AI combat-counter changes during this full battle");
+        }
         const auto combat=battleCombat.State();char evidence[256];
         sprintf_s(evidence,"native combat frames=%u targets=%u moved=%u hp_events=%u hp_total=%llu witness=%u:%d->%d",
             combat.validated_frame_count,combat.target_acquisition_events,combat.moved_identity_count,combat.hp_decrease_events,
@@ -2394,6 +2431,22 @@ int __cdecl ConfigureDeck(const SdgoGameTestContextV1* context) {
 const SdgoGameTestCaseV1 deckCase{"setup.deck",180000,&ConfigureDeck};
 const SdgoGameTestCaseV1 battleshipCase{"flow.battleship",180000,&AcquireBattleship};
 const SdgoGameTestCaseV1 giftCase{"setup.gift_requests",360000,&SendGiftRequests};
+// Review recordings can keep a completed native page visible before the next
+// test action. This delays only the developer test scheduler; the game keeps
+// rendering and all original page assertions are still evaluated afterwards.
+bool HoldReviewPage(const SdgoGameTestContextV1* context) {
+    static const DWORD hold=[] {
+        wchar_t folder[MAX_PATH]{},value[16]{};
+        if(!GetEnvironmentVariableW(L"SDGO_GAME_TEST_RECORD_DIR",folder,MAX_PATH) ||
+           !GetEnvironmentVariableW(L"SDGO_GAME_TEST_REVIEW_HOLD_MS",value,16))return DWORD(0);
+        wchar_t* end=nullptr;const auto n=wcstoul(value,&end,10);
+        return end && !*end && n<=5000 ? static_cast<DWORD>(n):DWORD(0);
+    }();
+    if(!hold || !context || !context->case_id)return false;
+    static std::string previous;static ULONGLONG ready=0;
+    if(previous!=context->case_id){previous=context->case_id;ready=GetTickCount64();}
+    return GetTickCount64()-ready<hold;
+}
 int PageResult(const SdgoGameTestContextV1* context,PageTestActions::Result result,
                PageTestActions::Result expected) {
     const auto state=pages.State();
@@ -2411,6 +2464,7 @@ int PageResult(const SdgoGameTestContextV1* context,PageTestActions::Result resu
         return SDGO_GAME_TEST_FAIL;
     }
     if (result!=expected)return SDGO_GAME_TEST_WAIT;
+    if (expected!=PageTestActions::kCancelled && HoldReviewPage(context))return SDGO_GAME_TEST_WAIT;
     context->Assert(state.snapshot.loaded && state.snapshot.visible && state.current_unit_count>0,
         "the authenticated native unit-management page exposes genuine inventory through the Mod observer");
     context->Assert(state.layout_unchanged && state.active_slot_unchanged,
@@ -2523,6 +2577,7 @@ int __cdecl ReadStoragePage(const SdgoGameTestContextV1* context) {
         clicked=false;
         const auto state=storage.State();
         if(!state.timer_observed)return SDGO_GAME_TEST_WAIT;
+        if(HoldReviewPage(context))return SDGO_GAME_TEST_WAIT;
         char message[192];
         sprintf_s(message,"native storage tab=%u total=%u entries=%u loaded=%u visible=%u generation=%u",
             state.current_tab,state.total,state.page_entry_count,state.loaded,state.visible,state.generation);
@@ -3374,6 +3429,17 @@ struct OcObserver {
     }
 };
 OcObserver ocObserver;
+void BeginRoomSwitchRound(size_t round) {
+    roomSwitchRound=round;
+    const size_t index=round%3;
+    sprintf_s(roomTitle,"%s%s",roomSwitchBase,kRoomSwitchSuffixes[index]);
+    ocRoom=kRoomSwitchSystems[index]==1;
+    g1Room=kRoomSwitchSystems[index]==2;
+    SdgoOcCustomClientSnapshotV2 s{};
+    const bool read=ocObserver.Bind() && ocObserver.Read(s);
+    roundRoomSkips=read?s.mobility_room_skips:0;
+    roundMobilityApplied=read?s.mobility_applied:0;
+}
 // G改 1.0 exports of the OC client Mod.
 struct G1Observer {
     SdgoOcCustomClientG1SnapshotV1Fn snapshot=nullptr;
@@ -3777,6 +3843,11 @@ int __cdecl OcMobility(const SdgoGameTestContextV1* context) {
     if(!ocObserver.Bind()){context->Assert(0,"the OC client Mod exposes its observer exports");return SDGO_GAME_TEST_FAIL;}
     SdgoOcCustomClientSnapshotV2 s{};
     if(!ocObserver.Read(s)){context->Assert(0,"the OC client observer snapshot is readable");return SDGO_GAME_TEST_FAIL;}
+    if(roomSwitch) {
+        // Counters run for the whole session; a round sees only its own battle.
+        s.mobility_room_skips-=roundRoomSkips;
+        s.mobility_applied-=roundMobilityApplied;
+    }
     if(s.server_room_rule && (s.mobility_room_skips || s.mobility_applied))ObserveSkillPackets(context);
     if(s.server_room_rule && g1Room) {
         // G改 1.0 rooms: no OC gains; the unit's record carries its G改 1.0 loadout.
@@ -3840,137 +3911,209 @@ int __cdecl OcMobility(const SdgoGameTestContextV1* context) {
     return SDGO_GAME_TEST_PASS;
 }
 const SdgoGameTestCaseV1 ocMobilityCase{"oc.mobility",60000,&OcMobility};
-// The G改 1.0 page on the OC tab (after oc.panel, which ends on the OC tab):
-// open it with its style button, pick a skill for an empty slot and save it,
-// reset every slot through the confirmation, browse to another category and
-// equip from it, then switch back to the OC page. Every step goes through the
-// page's controls as a mouse click delivers it, and the server's loadout is
-// read back after each save and reset.
+// G改 1.0 on the native 强化部件 page (after oc.panel): open the 强化部件 tab,
+// switch the page to G改 1.0 with its system switch, then use the page as a
+// player does: pick a type on the category bar, double-click a skill in the
+// list, 设置保存 and the save popup's OK; 强化槽初始化, the reset popup and its
+// confirmation; finally switch back to G改 2.0. Each step goes through the
+// owning native service's UI event handler with its own control, and the
+// server's loadout is read back after the save and the reset.
+struct G1NativeObserver {
+    SdgoOcCustomClientG1NativeV1Fn read=nullptr;
+    bool Bind() {
+        if(read)return true;
+        const HMODULE module=GetModuleHandleW(L"oc_custom_client.dll");
+        read=module?reinterpret_cast<SdgoOcCustomClientG1NativeV1Fn>(GetProcAddress(module,"SdgoOcCustomClientG1NativeV1")):nullptr;
+        return read!=nullptr;
+    }
+    bool Read(SdgoOcCustomClientG1NativeV1& n) const {
+        n={};n.size=sizeof(n);n.version=SDGO_OC_CUSTOM_CLIENT_G1_NATIVE_VERSION;return read && read(&n)!=0;
+    }
+};
+G1NativeObserver g1Native;
+struct HostUiName {
+    union { wchar_t inline_text[8]; const wchar_t* pointer; } data{};
+    uint32_t size=0,capacity=7;
+};
+using UiEventFn=void(__stdcall*)(void*,uint32_t,const void*,void*);
+bool UiEventRaw(void* service,uint32_t code,const HostUiName* name,void* control) {
+    __try {
+        auto** vtable=*reinterpret_cast<void***>(service);
+        reinterpret_cast<UiEventFn>(vtable[14])(service,code,name,control);
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+// The native slot-14 UI event: page services match the control, popups the name.
+bool NativeUiEvent(void* service,uint32_t code,const std::wstring& name,void* control) {
+    if(!service)return false;
+    HostUiName text;
+    text.size=static_cast<uint32_t>(name.size());
+    if(name.size()<8)wcscpy_s(text.data.inline_text,name.c_str());
+    else{text.data.pointer=name.c_str();text.capacity=static_cast<uint32_t>(name.size());}
+    return UiEventRaw(service,code,&text,control);
+}
+template<class T> T ReadOr(const void* base,size_t offset,T fallback) {
+    __try {return *reinterpret_cast<const T*>(static_cast<const uint8_t*>(base)+offset);}
+    __except(EXCEPTION_EXECUTE_HANDLER) {return fallback;}
+}
+bool ControlShown(const void* control) {return control && ReadOr<uint8_t>(control,0x162,0)!=0;}
+void WriteChecked(void* control,bool checked) {
+    __try {*reinterpret_cast<uint16_t*>(static_cast<uint8_t*>(control)+0x21C)=checked?1:0;}
+    __except(EXCEPTION_EXECUTE_HANDLER) {}
+}
 int __cdecl G1Page(const SdgoGameTestContextV1* context) {
-    static int phase=0;static uint64_t mark=0;static uint32_t replies=0,saves=0,resets=0;static int captureState=0;
+    static int phase=0;static uint64_t mark=0;static int captureState=0;
+    static uint32_t savesBefore=0,resetsBefore=0;static bool saved=false;
     static std::array<uint16_t,4> expected{};
-    if(!context->tick){phase=0;mark=0;replies=0;saves=0;resets=0;captureState=0;expected={};}
-    if(!ocObserver.Bind()||!g1Observer.Bind()){context->Assert(0,"the OC client Mod exposes its observer and G改 1.0 exports");return SDGO_GAME_TEST_FAIL;}
-    SdgoOcCustomClientSnapshotV2 s{};SdgoOcCustomClientG1SnapshotV1 g{};
-    if(!ocObserver.Read(s)||!g1Observer.Read(g)){context->Assert(0,"the OC and G改 1.0 snapshots are readable");return SDGO_GAME_TEST_FAIL;}
+    if(!context->tick){phase=0;mark=0;captureState=0;savesBefore=resetsBefore=0;saved=false;expected={};}
+    if(!ocObserver.Bind()||!g1Observer.Bind()||!g1Native.Bind()){context->Assert(0,"the OC client Mod exposes its observer and G改 1.0 exports");return SDGO_GAME_TEST_FAIL;}
+    SdgoOcCustomClientG1SnapshotV1 g{};SdgoOcCustomClientG1NativeV1 n{};
+    if(!g1Observer.Read(g)||!g1Native.Read(n)){context->Assert(0,"the G改 1.0 snapshots are readable");return SDGO_GAME_TEST_FAIL;}
     const auto capture=[&](const wchar_t* name)->bool {
         if(captureState==0){
             const auto folder=sdgo_test::directory+L"\\visual";CreateDirectoryW(folder.c_str(),nullptr);
             captureState=quietGraphics.CaptureNextFrame((folder+L"\\"+name+L".bmp").c_str())?1:2;
-            if(captureState==2){context->Observe("native frame capture unavailable for the G改 1.0 page");captureState=0;return true;}
+            if(captureState==2){context->Observe("native frame capture unavailable for the 强化部件 page");captureState=0;return true;}
             return false;
         }
         const auto captured=quietGraphics.CaptureFrameResult();
         if(captured==E_PENDING)return false;
-        char saved[160];sprintf_s(saved,FAILED(captured)?"native frame %ls failed":"native frame %ls saved under visual\\",name);
-        context->Observe(saved);captureState=0;return true;
-    };
-    const auto press=[&](const char* window,const wchar_t* name,int next)->int {
-        if(!ocObserver.click(window,name)){
-            char failure[160];sprintf_s(failure,"the G改 1.0 page control %s/%ls is visible, enabled and accepts a click",window,name);
-            context->Assert(0,failure);return SDGO_GAME_TEST_FAIL;
-        }
-        char line[160];sprintf_s(line,"pressed %s/%ls",window,name);context->Observe(line);
-        phase=next;mark=GetTickCount64();return SDGO_GAME_TEST_WAIT;
+        char line[160];sprintf_s(line,FAILED(captured)?"native frame %ls failed":"native frame %ls saved under visual\\",name);
+        context->Observe(line);captureState=0;return true;
     };
     const auto waited=[&](uint64_t limit,const char* what)->int {
         if(GetTickCount64()-mark>limit){context->Assert(0,what);return SDGO_GAME_TEST_FAIL;}
         return SDGO_GAME_TEST_WAIT;
     };
+    const auto event=[&](void* service,uint32_t code,const std::wstring& name,void* control,int next,const char* what)->int {
+        if(!NativeUiEvent(service,code,name,control)){context->Assert(0,what);return SDGO_GAME_TEST_FAIL;}
+        char line[160];sprintf_s(line,"native UI event 0x%X on %ls",code,name.c_str());context->Observe(line);
+        phase=next;mark=GetTickCount64();return SDGO_GAME_TEST_WAIT;
+    };
+    // The page takes a click only while it is idle (no state, no pending reply).
+    const auto settled=[&](uint64_t ms){return GetTickCount64()-mark>=ms && n.page_idle;};
+    auto* page=static_cast<uint8_t*>(n.page);
+    const auto pending=[&](size_t slot){return ReadOr<uint16_t>(page,0x15A+slot*2,0);};
+    const auto shown=[&](const std::array<uint16_t,4>& skills){
+        for(size_t slot=0;slot<4;++slot)if(n.shown[slot]!=skills[slot])return false;return true;};
+    std::array<uint16_t,4> server{};for(size_t slot=0;slot<4;++slot)server[slot]=g.skills[slot];
     if(phase==0){
-        if(!g.available){context->Assert(0,"the server offers G改 1.0 for the page");return SDGO_GAME_TEST_FAIL;}
-        if(!(s.windows&SDGO_OC_WINDOW_INFO)||s.busy){mark=mark?mark:GetTickCount64();return waited(30000,"the OC tab page is open before the G改 1.0 page");}
-        return press("info",L"OcG1StyleBtn",1);
+        if(!g.available||!n.bound){context->Assert(0,"the server offers G改 1.0 and the native 强化部件 page hooks are installed");return SDGO_GAME_TEST_FAIL;}
+        if(!ocObserver.click("tab",L"StatusRadio")){context->Assert(0,"the 强化部件 tab radio accepts a click");return SDGO_GAME_TEST_FAIL;}
+        context->Observe("pressed tab/StatusRadio");phase=1;mark=GetTickCount64();return SDGO_GAME_TEST_WAIT;
     }
     if(phase==1){
-        if(!g.page_shown||g.busy||!g.rules_loaded||!g.loadout_known||(s.windows&(SDGO_OC_WINDOW_INFO|SDGO_OC_WINDOW_OVER)))
-            return waited(60000,"the G改 1.0 page replaced the OC page and read the rule set and the unit's loadout");
-        if(!capture(L"g1-page-open"))return SDGO_GAME_TEST_WAIT;
-        char line[220];sprintf_s(line,"g1 page open category=%u loadout=%u/%u/%u/%u slots=%u reset_gp=%d",g.page_category,
-            g.skills[0],g.skills[1],g.skills[2],g.skills[3],g.normal_max,g.reset_cost);
-        context->Observe(line);
-        context->Assert(g.page_pending[0]==g.skills[0]&&g.page_pending[1]==g.skills[1]&&g.page_pending[2]==g.skills[2]&&g.page_pending[3]==g.skills[3],
-            "the page's slots show the unit's G改 1.0 loadout");
-        // The first empty, open slot.
-        int slot=-1;for(int i=0;i<4;++i)if(!g.skills[i]&&(i<2||g.normal_max>=static_cast<uint32_t>(i+1))){slot=i;break;}
-        if(slot<0)return press("g1",L"AllSkillResetBtn",6); // nothing empty: start with the reset
-        expected={g.skills[0],g.skills[1],g.skills[2],g.skills[3]};mark=GetTickCount64();
-        wchar_t name[32];swprintf_s(name,L"OcG1Slot%dRightBtn",slot);
-        phase=2;return press("g1",name,2);
+        void* dialog=page?ReadOr<void*>(page,0x3C0,nullptr):nullptr;
+        if(!n.tab_shown||!page||!n.switch_g1||!ControlShown(dialog)||!ControlShown(n.switch_g1)||
+           !ReadOr<uint8_t>(n.switch_g1,0x167,0)||!settled(1500))
+            return waited(30000,"the native 强化部件 page is on screen with the Mod's G改 2.0 / G改 1.0 switch, its G改 1.0 button visible and enabled");
+        if(!capture(L"attr-g2-page"))return SDGO_GAME_TEST_WAIT;
+        char line[200];sprintf_s(line,"强化部件 G改 2.0: categories=%u shown=%u/%u/%u/%u title=%ls",n.categories,
+            n.shown[0],n.shown[1],n.shown[2],n.shown[3],n.title);context->Observe(line);
+        context->Assert(!n.active&&!wcscmp(n.title,L"强化部件 · G改 2.0"),"the page shows the native G改 2.0 data and says so in the factory title");
+        return event(page,0x101,L"OcAttrG1Btn",n.switch_g1,2,"the page switch's G改 1.0 button accepts a click");
     }
     if(phase==2){
-        int slot=-1;for(int i=0;i<4;++i)if(g.page_pending[i]!=expected[i]){slot=i;break;}
-        if(slot<0){
-            if(GetTickCount64()-mark>10000){
-                char failure[200];sprintf_s(failure,"the slot's right arrow picked a skill of the category (page=%u/%u/%u/%u shown=%u)",
-                    g.page_pending[0],g.page_pending[1],g.page_pending[2],g.page_pending[3],g.page_shown);
-                context->Assert(0,failure);return SDGO_GAME_TEST_FAIL;
-            }
-            return SDGO_GAME_TEST_WAIT;
-        }
-        expected=std::array<uint16_t,4>{g.page_pending[0],g.page_pending[1],g.page_pending[2],g.page_pending[3]};
-        phase=21;return SDGO_GAME_TEST_WAIT;
-    }
-    if(phase==21){
-        if(!capture(L"g1-page-pick"))return SDGO_GAME_TEST_WAIT;
-        replies=g.replies;saves=g.page_saves;
-        return press("g1",L"SaveBtn",3);
+        if(!n.active||!n.rules||!g.loadout_known||n.categories!=1+g.category_count||!n.entries||!settled(1200))
+            return waited(60000,"the page switched to G改 1.0: the data manager holds the G改 1.0 types and entries");
+        if(!capture(L"attr-g1-page"))return SDGO_GAME_TEST_WAIT;
+        char line[240];sprintf_s(line,"强化部件 G改 1.0: categories=%u entries=%u loads=%u shown=%u/%u/%u/%u server=%u/%u/%u/%u title=%ls",
+            n.categories,n.entries,n.loads,n.shown[0],n.shown[1],n.shown[2],n.shown[3],server[0],server[1],server[2],server[3],n.title);
+        context->Observe(line);
+        context->Assert(!wcscmp(n.title,L"强化部件 · G改 1.0"),"the factory title names G改 1.0");
+        context->Assert(shown(server),"the page shows the unit's G改 1.0 loadout");
+        phase=server[0]||server[1]||server[2]||server[3] ? 10:3;mark=GetTickCount64();return SDGO_GAME_TEST_WAIT;
     }
     if(phase==3){
-        if(g.page_saves<=saves||g.busy||g.replies<=replies)return waited(20000,"设置保存 sent the picked skill to the server");
-        char line[200];sprintf_s(line,"g1 page save ret=%d loadout=%u/%u/%u/%u",g.last_ret_val,g.skills[0],g.skills[1],g.skills[2],g.skills[3]);
-        context->Observe(line);
-        if(g.last_ret_val!=0||g.skills[0]!=expected[0]||g.skills[1]!=expected[1]||g.skills[2]!=expected[2]||g.skills[3]!=expected[3]){
-            context->Assert(0,"the server equipped the picked skill and the page shows it");return SDGO_GAME_TEST_FAIL;}
-        context->Assert(true,"设置保存 equipped the picked G改 1.0 skill");
-        return press("g1",L"AllSkillResetBtn",6);
+        if(!n.bar||!settled(800))return waited(15000,"the category bar is available");
+        // A type with a skill the unit and user levels allow.
+        int category=-1;
+        for(uint32_t index=0;index<g.rule_count&&category<0;++index){
+            SdgoOcCustomClientG1RuleV1 rule{};
+            if(g1Observer.rule(index,&rule)&&rule.unit_level<=g.unit_level&&rule.user_level<=g.user_level)category=rule.category;
+        }
+        if(category<0||category>7){context->Assert(0,"a G改 1.0 type has a skill the unit can equip");return SDGO_GAME_TEST_FAIL;}
+        void* radio=ReadOr<void*>(n.bar,0x178+static_cast<size_t>(category)*4,nullptr);
+        // A click checks the radio before the bar's handler sees the selection.
+        for(size_t index=0;index<8;++index) {
+            void* other=ReadOr<void*>(n.bar,0x178+index*4,nullptr);
+            if(other)WriteChecked(other,other==radio);
+        }
+        return event(n.bar,0x301,L"Radio"+std::to_wstring(category),radio,4,"the category bar's type button accepts the selection");
+    }
+    if(phase==4){
+        void* listDialog=n.list?ReadOr<void*>(n.list,0x4A4,nullptr):nullptr;
+        if(!n.list||ReadOr<uint8_t>(n.list,0x490,0)!=1||!ControlShown(listDialog)||!settled(1000))
+            return waited(20000,"the skill list opened for the selected G改 1.0 type");
+        int cell=-1;
+        for(int index=0;index<49&&cell<0;++index){
+            void* icon=ReadOr<void*>(n.list,0x87C+static_cast<size_t>(index)*4,nullptr);
+            void* blind=ReadOr<void*>(n.list,0x6F4+static_cast<size_t>(index)*4,nullptr);
+            if(ControlShown(icon)&&!ControlShown(blind))cell=index;
+        }
+        if(cell<0){context->Assert(0,"the list shows an equippable skill");return SDGO_GAME_TEST_FAIL;}
+        if(!capture(L"attr-g1-list"))return SDGO_GAME_TEST_WAIT;
+        void* icon=ReadOr<void*>(n.list,0x87C+static_cast<size_t>(cell)*4,nullptr);
+        return event(n.list,0x803,L"SkillIcon"+std::to_wstring(cell),icon,5,"the list cell accepts a double click");
+    }
+    if(phase==5){
+        if(!pending(0))return waited(10000,"the double-clicked skill went into the first empty slot");
+        if(!settled(600))return SDGO_GAME_TEST_WAIT;
+        for(size_t slot=0;slot<4;++slot)expected[slot]=pending(slot);
+        char line[120];sprintf_s(line,"picked %u/%u/%u/%u",expected[0],expected[1],expected[2],expected[3]);context->Observe(line);
+        return event(page,0x101,L"SaveBtn",ReadOr<void*>(page,0x550,nullptr),6,"设置保存 accepts a click");
     }
     if(phase==6){
-        if(!(s.windows&SDGO_OC_WINDOW_CONFIRM))return waited(10000,"强化槽初始化 asks for confirmation with the reset GP");
-        replies=g.replies;resets=g.page_resets;
-        return press("confirm",L"OKBtn",7);
+        if(!n.save_popup)return waited(10000,"设置保存 opened the native save popup");
+        if(GetTickCount64()-mark<500)return SDGO_GAME_TEST_WAIT;
+        savesBefore=n.saves;
+        return event(n.save_popup,0x101,L"OkBtn",nullptr,7,"the save popup's OK accepts a click");
     }
     if(phase==7){
-        if(g.page_resets<=resets||g.busy||g.replies<=replies)return waited(20000,"the confirmed reset reached the server");
-        char line[200];sprintf_s(line,"g1 page reset ret=%d charged_gp=%d loadout=%u/%u/%u/%u resets=%u",g.last_ret_val,g.last_charged_gp,
-            g.skills[0],g.skills[1],g.skills[2],g.skills[3],g.reset_count);
-        context->Observe(line);
-        if(g.last_ret_val!=0||g.skills[0]||g.skills[1]||g.skills[2]||g.skills[3]){context->Assert(0,"强化槽初始化 emptied every slot");return SDGO_GAME_TEST_FAIL;}
-        context->Assert(true,"强化槽初始化 emptied every slot through the reset rule");
-        expected={};
-        return press("g1",L"OcG1CategoryRightBtn",8);
-    }
-    if(phase==8){
-        if(g.page_category==0)return waited(10000,"the category arrow moved to the next G改 1.0 category");
-        return press("g1",L"OcG1Slot0RightBtn",9);
-    }
-    if(phase==9){
-        if(!g.page_pending[0])return waited(10000,"the first slot picked a skill of the new category");
-        expected={g.page_pending[0],0,0,0};
-        phase=91;return SDGO_GAME_TEST_WAIT;
-    }
-    if(phase==91){
-        if(!capture(L"g1-page-category"))return SDGO_GAME_TEST_WAIT;
-        replies=g.replies;saves=g.page_saves;
-        return press("g1",L"SaveBtn",10);
+        if(n.saves<=savesBefore||server!=expected||!shown(expected)||!settled(800))
+            return waited(30000,"the save went to the server and the page shows the saved G改 1.0 loadout");
+        if(!capture(L"attr-g1-saved"))return SDGO_GAME_TEST_WAIT;
+        char line[120];sprintf_s(line,"saved %u/%u/%u/%u (server)",server[0],server[1],server[2],server[3]);context->Observe(line);
+        saved=true;phase=10;mark=GetTickCount64();return SDGO_GAME_TEST_WAIT;
     }
     if(phase==10){
-        if(g.page_saves<=saves||g.busy||g.replies<=replies)return waited(20000,"设置保存 sent the new category's skill");
-        char line[200];sprintf_s(line,"g1 page save ret=%d category=%u loadout=%u/%u/%u/%u",g.last_ret_val,g.category,g.skills[0],g.skills[1],g.skills[2],g.skills[3]);
+        if(!settled(1500))return waited(30000,"the page settled before 强化槽初始化");
+        resetsBefore=n.resets;
+        return event(page,0x101,L"AllSkillResetBtn",ReadOr<void*>(page,0x558,nullptr),11,"强化槽初始化 accepts a click");
+    }
+    if(phase==11){
+        if(!n.reset_popup||GetTickCount64()-mark<1500)return waited(15000,"强化槽初始化 opened the native reset popup with its cost");
+        if(!capture(L"attr-g1-reset"))return SDGO_GAME_TEST_WAIT;
+        char line[120];sprintf_s(line,"reset popup cost=%u (G改 1.0 cost %d)",ReadOr<uint16_t>(n.reset_popup,0x58,0),g.reset_cost);
         context->Observe(line);
-        if(g.last_ret_val!=0||g.skills[0]!=expected[0]||g.category!=g.page_category){context->Assert(0,"the server equipped the skill of the browsed category");return SDGO_GAME_TEST_FAIL;}
-        g1Expected={g.skills[0],g.skills[1],g.skills[2],g.skills[3]};
-        phase=101;return SDGO_GAME_TEST_WAIT;
+        return event(n.reset_popup,0x101,L"ResetBtn",nullptr,12,"the reset popup's button accepts a click");
     }
-    if(phase==101){
-        if(!capture(L"g1-page-saved"))return SDGO_GAME_TEST_WAIT;
-        return press("g1",L"OcStyleBackBtn",11);
+    if(phase==12){
+        if(!n.reset_check_popup)return waited(10000,"the reset confirmation popup opened");
+        if(GetTickCount64()-mark<500)return SDGO_GAME_TEST_WAIT;
+        return event(n.reset_check_popup,0x101,L"OkBtn",nullptr,13,"the confirmation's OK accepts a click");
     }
-    if(g.page_shown||!(s.windows&SDGO_OC_WINDOW_INFO))return waited(15000,"the style button went back to the OC page");
-    context->Assert(true,"the OC tab switches between the OC page and the G改 1.0 page");
+    if(phase==13){
+        const std::array<uint16_t,4> empty{};
+        if(n.resets<=resetsBefore||server!=empty||!shown(empty)||!settled(800))
+            return waited(30000,"the reset went to the server and the page shows empty slots");
+        context->Observe("G改 1.0 slots reset on the server");
+        phase=saved?20:3;mark=GetTickCount64();return SDGO_GAME_TEST_WAIT;
+    }
+    if(phase==20){
+        if(!settled(800))return SDGO_GAME_TEST_WAIT;
+        return event(page,0x101,L"OcAttrG2Btn",n.switch_g2,21,"the page switch's G改 2.0 button accepts a click");
+    }
+    if(n.active||!n.left||!settled(1200))return waited(30000,"the page switched back to the native G改 2.0 data");
+    if(!capture(L"attr-g2-back"))return SDGO_GAME_TEST_WAIT;
+    char line[200];sprintf_s(line,"back to G改 2.0: categories=%u shown=%u/%u/%u/%u title=%ls",n.categories,
+        n.shown[0],n.shown[1],n.shown[2],n.shown[3],n.title);context->Observe(line);
+    context->Assert(!wcscmp(n.title,L"强化部件 · G改 2.0")&&(n.shown[0]||n.shown[1]),"the page shows the unit's G改 2.0 parts again");
     return SDGO_GAME_TEST_PASS;
 }
-const SdgoGameTestCaseV1 g1PageCase{"g1.page",240000,&G1Page};
+const SdgoGameTestCaseV1 g1PageCase{"g1.page",300000,&G1Page};
 // Real factory round trip through the original OC windows after the battle:
 // open the factory upgrade page, wait for the client package's own OC layouts
 // (0794 allocation, 0819 confirmation, 0813 challenge) and the restored OVER
@@ -5200,6 +5343,15 @@ void WrapNativeCaptures() {
     provider.cases=capturedCases.data();
 }
 
+// SDK room_create: the sealed title plus an optional room-system command.
+char friendRoomBase[21]={};
+bool ApplyFriendRoomCommand(const char* body) {
+    if(!friendRoomBase[0])strcpy_s(friendRoomBase,roomTitle);
+    if(!body||!*body){strcpy_s(roomTitle,friendRoomBase);return true;}
+    if(strcmp(body,"!oc")&&strcmp(body,"!g1")&&strcmp(body,"!g2"))return false;
+    if(strlen(friendRoomBase)+1+strlen(body)>20)return false;
+    return sprintf_s(roomTitle,"%s %s",friendRoomBase,body)>0;
+}
 friends::FriendActions::Result CreateFriendInviteRoom(void*,const SdgoGameTestContextV1* context) {
     const auto result=Room(context);
     return result==SDGO_GAME_TEST_PASS ? friends::FriendActions::kReady :
@@ -5340,22 +5492,35 @@ void RegisterPlannedCases() {
     if (requestedModes.size() == 1 && !needsShip && !giftRequestsOnly &&
         !playUnitUid && !sameRoomRematch && !testOperatorFlow && ocAllocateStat<0 && !ocPanel) return;
     const size_t count = 4 + (testOperatorFlow?1:0) +
-        requestedModes.size() * (sameRoomRematch?8:4);
+        requestedModes.size() * (sameRoomRematch?8:roomSwitch?5:4);
     caseNames.reserve(count); plannedCases.reserve(count);
     for (unsigned i = 0; i < 3; ++i) plannedCases.push_back(realCases[i]);
     if(testOperatorFlow)plannedCases.push_back(operatorFlowCase);
     if(playUnitUid && ocAllocateStat>=0)plannedCases.push_back(ocAllocateCase);
     if(playUnitUid)plannedCases.push_back(playUnitCase);
-    if(playUnitUid && ocAllocateStat>=0 && g1Room)plannedCases.push_back(g1LoadoutCase);
-    if(playUnitUid && ocAllocateStat>=0 && (ocRoom || g1Room))plannedCases.push_back(ocCreateCase);
+    if(playUnitUid && ocAllocateStat>=0 && (g1Room || roomSwitch))plannedCases.push_back(g1LoadoutCase);
+    if(playUnitUid && ocAllocateStat>=0 && (ocRoom || g1Room || roomSwitch))plannedCases.push_back(ocCreateCase);
     AppendUnitPresentations();
     if (giftRequestsOnly) plannedCases.push_back(giftCase);
     else if (needsShip) plannedCases.push_back(battleshipCase);
     if (deckOnly) plannedCases.push_back(deckCase);
     const char* suffixes[] = {"room", "start", "ai_spawn", "return"};
+    size_t modeSlot=0;
     if (!giftRequestsOnly && !battleshipOnly && !deckOnly) for (const auto mode : requestedModes) {
+      const size_t slot=modeSlot++;
       for(unsigned round=0;round<(sameRoomRematch?2u:1u);++round) {
         for (unsigned i = 0; i < 4; ++i) {
+            if (roomSwitch) {
+                // pvp.<system>.room/start/ai_spawn/system/return
+                const std::string prefix=std::string("pvp.")+kRoomSwitchNames[slot%3]+".";
+                caseNames.push_back(prefix+suffixes[i]);
+                auto test=realCases[3+i];test.id=caseNames.back().c_str();plannedCases.push_back(test);
+                if(i==2) {
+                    caseNames.push_back(prefix+"system");
+                    auto check=ocMobilityCase;check.id=caseNames.back().c_str();plannedCases.push_back(check);
+                }
+                continue;
+            }
             if (requestedModes.size()==1 && !sameRoomRematch) {
                 plannedCases.push_back(realCases[3+i]);
                 // OC speed/agility: the battle unit exists after the AI spawn check.
@@ -5670,6 +5835,7 @@ SDGO_MOD_ENTRY {
             sdgo_test::Fail("coordinated native PvP operation bindings are unavailable");
         friendSession.Bind(&friendActions,&friendExtras,api,mod,&friendRoomActions);
         friendSession.BindPvp(&pvpSession);
+        friendSession.BindRoomTitle(&ApplyFriendRoomCommand);
         friendSession.BindStorageActions(&FriendStorageAction,&FriendStorageWrite);
         friendSession.BindFrameCapture(
             [](const wchar_t* path){return quietGraphics.RequestFrameCapture(path);},

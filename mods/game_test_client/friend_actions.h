@@ -420,6 +420,26 @@ public:
         }
     }
 
+    // Closes the messenger popup through its own CloseBtn (true when it is
+    // closed or was not open), for views that need the lobby unobstructed.
+    bool CloseMessenger()
+    {
+        void* service = ResolveMessengerService();
+        if (!service)
+            return false;
+        void* popup = ResolveMessenger(service);
+        if (!popup)
+            return true;
+        void* root = nullptr;
+        __try {
+            root = *reinterpret_cast<void**>(static_cast<uint8_t*>(popup) + 0x4C);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+        ButtonState button = {};
+        return InvokeButtonCallback(popup, messengerVtable_, root, L"CloseBtn", button);
+    }
+
 private:
     static constexpr uint32_t kLobbyAppState = 6;
     static constexpr size_t kNativeWStringSize = 0x1C;

@@ -73,6 +73,59 @@ class CollectionRegistryCoexistenceTests(unittest.TestCase):
             shutil.copytree(updated, resident, dirs_exist_ok=True)
             self.assertNotEqual(compiler.extension_fingerprint(client), fingerprint)
 
+    def test_recompile_drops_superseded_generated_cards(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            client = make_client(root / 'client')
+            reader = ArchiveReader(client / 'GPackData.zdx', client / 'GPackData.zpk')
+            resources = {name: reader.read(name) for name in reader.entries}
+            candidate = bytearray(18)
+            struct.pack_into('<I', candidate, 0, 3520001)
+            struct.pack_into('<III', candidate, 5, 1, 7, 100)
+            resources['gdrs/0155.gdt'] = encode_gdt(18, [bytes(candidate)], extra=35)
+            zdx, zpk, _ = build_archive(resources)
+            (client / 'GPackData.zdx').write_bytes(zdx)
+            (client / 'GPackData.zpk').write_bytes(zpk)
+            cover = root / 'cover.png'; make_cover(cover)
+            initial = root / 'initial'
+            build_registry(client, cover, initial)
+            resident = client / 'sdgo/mods/capsule_catalog'
+            shutil.copytree(initial, resident)
+            fingerprint = compiler.extension_fingerprint(client)
+            poster =ArchiveReader(initial / 'overlay.zdx', initial / 'overlay.zpk')
+            catalog = fixture_catalog()
+            for unit in catalog['units']:
+                unit['capsule_sprites'] = []
+
+            def compile_into(name):
+                with patch.object(compiler, 'Assets', FakeArt), patch.object(
+                    compiler, 'patch_capsule_price_defaults', return_value=(b'fixture-ui', {'fixture': True})
+                ):
+                    result = compiler.compile_catalog(catalog, client, root / 'unused.json', root / name)
+                shutil.rmtree(resident)
+                shutil.copytree(root / name, resident)
+                manifest = json.loads((root / name / 'manifest.json').read_text(encoding='utf-8'))
+                result = {**result, 'generated_cards': manifest['generated_cards']}
+                return result, ArchiveReader(root / name / 'overlay.zdx', root / name / 'overlay.zpk')
+
+            def reserved(archive):
+                return {name for name in archive.entries if name.startswith(('sprs/', 'txrs/'))
+                        and Path(name).stem.isdecimal() and 60000 <= int(Path(name).stem) <= 65535}
+
+            first, first_archive = compile_into('first')
+            self.assertTrue(first['generated_cards'])
+            for name in ('second', 'third'):
+                result, archive = compile_into(name)
+                # The poster an extension row shows survives every recompile unchanged.
+                for path in ('sprs/65534.spr', 'txrs/65534.txr'):
+                    self.assertEqual(poster.read(path), archive.read(path))
+                # Only the current card set and the extension art remain; nothing accumulates.
+                cards = {card['sprite'] for card in result['generated_cards']}
+                textures = {sprite.replace('sprs/', 'txrs/').replace('.spr', '.txr') for sprite in cards}
+                self.assertEqual(reserved(archive), cards | textures | {'sprs/65534.spr', 'txrs/65534.txr'})
+                self.assertEqual(len(archive.entries), len(first_archive.entries))
+                self.assertEqual(result['preserved_extensions_signature'], fingerprint)
+
 
 if __name__ == '__main__':
     unittest.main()

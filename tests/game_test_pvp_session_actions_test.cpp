@@ -18,8 +18,9 @@ struct Room {
 struct Joiner {
     enum {kJoinRejected=2,kJoinAccepted=3,kReadyRejected=2,kReadyAccepted=3};
     RoomJoinActions::JoinObservation join{};RoomJoinActions::ReadyObservation ready{};
-    unsigned joins=0,readies=0;bool canReady=true;
+    unsigned joins=0,readies=0,views=0;bool canReady=true,listed=false;
     bool JoinExactTitle(const char*){++joins;return true;}
+    bool TitleVisible(const char*){++views;return listed;}
     bool Ready(){++readies;return canReady;}
     uint32_t SelectionStage()const{return 8;}
     uint32_t SelectionControlFlags()const{return 31;}
@@ -65,6 +66,15 @@ void RemoteSnapshot(uint32_t sequence=7,bool local=false,uint32_t pilot=32){
 }
 int main(){
     context.Assert=&Assert;
+    {
+        // page=2: view the room's row on the list without joining it.
+        World w;
+        F::Command c{};c.sequence=1;c.operation=Driver::Join;c.target_id=31;c.page=2;strcpy_s(c.body,"gt-peer !ai5");
+        w.driver.Submit(c,3,&context,1,9304);w.driver.Tick(&context);
+        Check(w.join.views==1&&w.join.joins==0&&w.driver.State().result!=F::kReady,"a view-only join waits until the room is listed");
+        w.join.listed=true;w.driver.Tick(&context);
+        Check(w.join.joins==0&&w.driver.State().result==F::kReady,"a listed room completes the view without a join request");
+    }
     {
         World w;channelReady=false;w.Joined();
         Check(w.join.joins==0,"guest does not search or join another channel before the original selector completes");

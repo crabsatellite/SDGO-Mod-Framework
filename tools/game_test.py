@@ -94,6 +94,17 @@ FLOW_CASES = (
 )
 SUPPORTED_PVP_MODES = (1, 3, 6, 7, 9)
 MODE_FLOW_STEPS = ("room", "start", "ai_spawn", "return")
+# Room-system switching: one client plays an OC room, a G改 1.0 room and a
+# G改 2.0 room back to back. The G改 2.0 round uses the plain title (the default
+# system); each round checks the system the client and Battle applied.
+ROOM_SWITCH_SYSTEMS = ("oc", "g1", "g2")
+ROOM_SWITCH_SUFFIXES = {"oc": " !oc", "g1": " !g1", "g2": ""}
+ROOM_SWITCH_STEPS = ("room", "start", "ai_spawn", "system", "return")
+
+
+def room_switch_titles(base: str) -> tuple[str, ...]:
+    """The sealed per-round room titles of a room-switch run, in play order."""
+    return tuple(base + ROOM_SWITCH_SUFFIXES[system] for system in ROOM_SWITCH_SYSTEMS)
 MISSION_SUITE = "native-mission-smoke"
 SUPPORTED_MISSION_MODES = (5, 8)
 MISSION_FLOW_CASES = (
@@ -766,9 +777,14 @@ def configure_sfx_only(root: Path) -> dict:
 
 
 REVIEW_FOOTAGE_SCREEN_RES = 12   # the native 1920x1080 battle resolution
+# Quiet sessions that play several battles keep the hidden device's battle
+# resets small: the template's desktop-sized level resets a 2389x1344 back
+# buffer at every battle start, and the second such reset can stall the
+# driver's TestCooperativeLevel on the graphics worker.
+SEVERAL_BATTLES_SCREEN_RES = 0
 
 
-def configure_muted_audio(root: Path, *, review_footage: bool = False) -> dict:
+def configure_muted_audio(root: Path, *, review_footage: bool = False, battle_screen_res: int | None = None) -> dict:
     path=root/'config.xml'
     try:
         tree=ET.parse(path)
@@ -777,12 +793,12 @@ def configure_muted_audio(root: Path, *, review_footage: bool = False) -> dict:
         screen=video.find('ScreenMode')
         if screen is None:screen=ET.SubElement(video,'ScreenMode',{'width':'1024','height':'768','bpp':'32'})
         screen.set('mode','window');screen.set('windowFull','0')
-        if review_footage:
+        if review_footage or battle_screen_res is not None:
             # Review footage keeps the template's post-processing and plays battles at 1920x1080.
             resolution=video.find('GameScreenRes')
             if resolution is None:resolution=ET.SubElement(video,'GameScreenRes')
-            resolution.set('level',str(REVIEW_FOOTAGE_SCREEN_RES))
-        else:
+            resolution.set('level',str(REVIEW_FOOTAGE_SCREEN_RES if review_footage else battle_screen_res))
+        if not review_footage:
             effects=video.find('PostEffect')
             if effects is None:effects=ET.SubElement(video,'PostEffect')
             for key,level in (('MotionBlur','MotionBlurLevel'),('HeatHaze','HeatHazeLevel'),
@@ -1797,12 +1813,15 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                          oc_allocate: str | None = None,
                          oc_room: bool = False,
                          g1_room: bool = False,
+                         room_switch: bool = False,
                          mission_behavior_profile: str | None = None,
                          mission_game_mode_id: int | None = None,
                          oc_panel: bool = False, oc_challenge: bool = False) -> tuple[str, ...]:
     if mission_respawns is not None and (mission_respawns not in ('player','infinite') or mission_mode is None):
         raise GameTestError('mission_respawns requires a native mission and player or infinite policy')
     oc_allocate = validate_oc_allocate(oc_allocate)
+    if type(room_switch) is not bool or (room_switch and (oc_allocate is None or oc_room or g1_room or same_room_rematch)):
+        raise GameTestError('room_switch plays the --oc-allocate PvP battle once per room system (not with --oc-room or --g1-room)')
     if oc_allocate is not None and (play_unit_uid is None or mission_mode is not None or any((
             bootstrap_only, battleship_only, gift_requests_only, deck_only, pages_only, friends_only,
             room_titles_only, collection_draw, same_room_rematch, room_style_preview is not None))):
@@ -1861,8 +1880,8 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         # carry the new OC payload before the battle.
         # G改 1.0 rooms equip the play unit's G改 1.0 loadout once it is the
         # active unit, so the refreshed record carries it into the room.
-        selection = ('oc.allocate',) + selection + (('g1.loadout',) if g1_room else ()) + (
-            ('oc.create',) if oc_room or g1_room else ())
+        selection = ('oc.allocate',) + selection + (('g1.loadout',) if g1_room or room_switch else ()) + (
+            ('oc.create',) if oc_room or g1_room or room_switch else ())
     if mission_mode is not None:
         if mode_sequence != "1":
             raise GameTestError("--mission-mode cannot be combined with a PvP mode sequence")
@@ -1912,6 +1931,11 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         return prefix+tuple(cases)
     # The OC panel check runs last, after the settled return to the lobby.
     panel = (('oc.panel',) if (oc_allocate is not None or oc_panel) else ()) + (('g1.page',) if g1_room else ())
+    if room_switch:
+        if modes != (1,):
+            raise GameTestError('room_switch plays three ordinary mode 1 battles')
+        return prefix + tuple(f'pvp.{system}.{step}' for system in ROOM_SWITCH_SYSTEMS
+                              for step in ROOM_SWITCH_STEPS) + panel
     if len(modes) == 1:
         # OC speed/agility: the battle unit exists after the AI spawn check.
         mobility = ('oc.mobility',) if oc_mobility_selected(oc_allocate) else ()
@@ -1999,6 +2023,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         oc_allocate=plan.get('oc_allocate'),
         oc_room=plan.get('oc_room', False),
         g1_room=plan.get('g1_room', False),
+        room_switch=plan.get('room_switch', False),
         mission_behavior_profile=plan.get("mission_behavior_profile"),
         mission_game_mode_id=plan.get("mission_game_mode_id"),
         oc_panel=plan.get('oc_panel', False),
@@ -2389,6 +2414,8 @@ def write_job(
         run['run']['oc_room'] = '1'
     if plan.get('g1_room'):
         run['run']['g1_room'] = '1'
+    if plan.get('room_switch'):
+        run['run']['room_switch'] = '1'
     if plan.get('oc_panel'):
         run['run']['oc_panel'] = '1'
     if plan.get('oc_challenge'):
@@ -2767,6 +2794,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 oc_allocate=oc_allocate,
                 oc_room=run.get('oc_room') == '1',
                 g1_room=run.get('g1_room') == '1',
+                room_switch=run.get('room_switch') == '1',
                 oc_panel=run.get('oc_panel') == '1',
                 oc_challenge=run.get('oc_challenge') == '1',
             )
@@ -2891,6 +2919,12 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                     not run.get('oc_allocate') and run.get('oc_panel') != '1'):
                 raise ValueError('G改 1.0 room-system run lacks its sealed !g1 room command')
             plan['g1_room'] = True
+        if run.get('room_switch') == '1':
+            if (not run.get('oc_allocate') or run.get('oc_room') == '1' or run.get('g1_room') == '1' or
+                    run['room_title'].endswith((' !oc', ' !g1', ' !g2')) or
+                    any(len(title.encode('utf-8')) > 20 for title in room_switch_titles(run['room_title']))):
+                raise ValueError('room-switch run lacks its plain sealed base room title')
+            plan['room_switch'] = True
         if run.get('oc_panel') == '1':
             plan['oc_panel'] = True
         if run.get('oc_challenge') == '1':
@@ -3251,6 +3285,7 @@ def prepare(
     oc_challenge: bool = False,
     oc_room: bool = False,
     g1_room: bool = False,
+    room_switch: bool = False,
     server_session: dict | None = None,
     rebind_existing_account: bool = False,
     fps_cap: int | None = None,
@@ -3361,6 +3396,9 @@ def prepare(
             (pages_only and page_group == 'hangar' and oc_panel))):
         raise GameTestError('--g1-room marks the --oc-allocate PvP room with the !g1 room-system command (not with --oc-room), '
                             'or adds the G改 1.0 page check to the hangar pages with --oc-panel')
+    if type(room_switch) is not bool or (room_switch and (oc_allocate is None or random_loadout or oc_room or g1_room)):
+        raise GameTestError('--room-switch plays the --oc-allocate PvP battle in an OC, a G改 1.0 and a G改 2.0 room '
+                            'back to back (not with --oc-room, --g1-room or --random-loadout)')
     if review_footage and (not quiet or fps_cap is not None):
         raise GameTestError('review footage is a quiet-lane recording profile; it does not apply to visible or FPS runs')
     if capture_native_frames and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,
@@ -3648,7 +3686,12 @@ def prepare(
             if oc_allocate is not None:
                 plan['room_title']+=' !g1'
             plan['g1_room']=True
-        if len(plan['room_title'].encode('utf-8'))>20:
+        if room_switch:
+            # The base title is the G改 2.0 round; the OC and G改 1.0 rounds add
+            # their command to it.
+            plan['room_switch']=True
+        if any(len(title.encode('utf-8'))>20 for title in (
+                room_switch_titles(plan['room_title']) if room_switch else (plan['room_title'],))):
             raise GameTestError('Native GameTest room title exceeds twenty bytes; use a shorter rule or separate scenarios')
         plan['network_policy']=network_policy
         if route_binding is not None:
@@ -3795,7 +3838,8 @@ def prepare(
             }:
                 raise GameTestError('installed operator inputs differ from their sealed plan')
         recording = configure_sfx_only(client) if sfx_only else None
-        if quiet:configure_muted_audio(client,review_footage=review_footage)
+        if quiet:configure_muted_audio(client,review_footage=review_footage,
+                                       battle_screen_res=SEVERAL_BATTLES_SCREEN_RES if room_switch else None)
         if fps_only:configure_fps_test(client, fps_cap)
         if room_titles_only:
             # Bind protocol diagnostics before collecting immutable hashes.
@@ -5302,6 +5346,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--oc-allocate',help="OC six-stat acceptance '<stat 0-5>:<points>': allocate normal OC points to the --play-unit-uid unit through the production client Mod before the PvP battle")
     prepare_parser.add_argument('--oc-panel',action='store_true',help='open the original factory upgrade page for the --play-unit-uid unit at the end (after --oc-allocate or the read-only hangar pages) and drive the OC client panel on it: refresh, normal-point reset, one HP point')
     prepare_parser.add_argument('--g1-room',action='store_true',help='room systems: add the !g1 command to the --oc-allocate PvP room title and equip the play unit\'s G改 1.0 loadout first (World OC Mod in room mode with a G改 1.0 rule set)')
+    prepare_parser.add_argument('--room-switch',action='store_true',help='room systems: play the --oc-allocate PvP battle three times in one client session, in an !oc room, a !g1 room and a plain (G改 2.0) room, checking the system each battle applied (World OC Mod in room mode with a G改 1.0 rule set)')
     prepare_parser.add_argument('--oc-room',action='store_true',help='room systems: add the !oc command to the --oc-allocate PvP room title so the battle plays OC (World OC Mod in room mode); without it the room plays the current custom skills')
     prepare_parser.add_argument('--oc-challenge',action='store_true',help='inside the OC panel check, also press the OC challenge (can change the unit\'s OC level)')
     prepare_parser.add_argument(
@@ -5421,6 +5466,7 @@ def main(argv: list[str] | None = None) -> int:
                 oc_challenge=args.oc_challenge,
                 oc_room=args.oc_room,
                 g1_room=args.g1_room,
+                room_switch=args.room_switch,
             )
         elif args.command == "run":
             result = run_prepared(args.run_dir, args.timeout, args.launch_timeout)

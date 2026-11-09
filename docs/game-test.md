@@ -641,3 +641,29 @@ battle, so the recording follows the AI fighting rather than the idle test
 pilot. In such runs the native TAB roster is opened only for its spawn check and
 released afterwards, and the roster-render part of the return check is skipped.
 Both are development review aids and assert nothing.
+
+### Short page demonstrations
+
+Build the current client observer and prepare a quiet page scenario. With its
+isolated backend ready, run:
+
+```powershell
+python -m tools.game_test_release_demo --run-dir build/gametest/hangar --output build/review/hangar
+```
+
+The tool follows the SDK's real `case_begin`/`case_end` events and records the
+genuine backbuffer at up to 12 FPS directly into MKV. For review, completed
+read/preview pages remain visible for three seconds before the next test action;
+native page operations and assertions remain intact. Recording is capped at
+20 seconds, and only a passed native run becomes a visual-review candidate.
+Review the clip and crop out account names or deployment details before export:
+
+```powershell
+ffmpeg -i capture.mkv -t 12 -an -vf "fps=12,scale=900:-2" -c:v libwebp_anim -quality 76 -loop 0 demonstration.webp
+```
+
+Embed publishable clips in the corresponding Mod's Chinese and English guides,
+following the PvP AI and mission wingmen pages, and register them in
+`docs/feature-demos.json`. Do not create a separate demonstration gallery page. Release notes select
+only demonstrations applicable to the programme package, retain Chinese and
+English descriptions, and publish media separately from programme ZIPs.

@@ -2,6 +2,8 @@
 
 [English](mod-manager.md) · [返回功能目录](../README.zh-CN.md)
 
+![检查、下载和安装程序更新](manager-updates-demo.webp)
+
 Manager 从官方或导入的模组源安装程序，从服主内容源安装共享配置和全部自定义内容。玩家先取得兼容的原版客户端，安装 Manager 后导入服主配置；详见[安装流程](owner-updates.zh-CN.md)。游戏仍从原来的入口启动。
 绑定服主配置后双击 `GOnline.exe`，Manager 会显示进度，同步配置中锁定的官方基线、本服补丁和内容，校验通过后自动打开游戏。详见[本服程序包](owner-programmes.zh-CN.md)和[启动前更新](owner-updates.zh-CN.md#启动前更新)。
 

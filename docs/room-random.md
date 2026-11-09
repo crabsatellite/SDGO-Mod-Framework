@@ -13,7 +13,11 @@ case-insensitive.
 
 Both are required: `room_random` on BattleServer and `room_random_client` on every participating client.
 BattleServer needs `room_random` 0.1.8 or later, and every participating client needs `room_random_client`
-0.1.14 or later. With AI, Battle servers also need `pvp_ai` 0.3.2 or later.
+0.1.15 or later. With AI, Battle servers also need `pvp_ai` 0.3.2 or later.
+
+On return, skill-part consumption checks use the inventory instance identity. Switching from a temporary
+random loadout back to another owned unit does not count as consuming that unit's skill part. A genuine
+removal on the same inventory instance retains its native notice.
 
 ## Room-title commands
 

@@ -102,6 +102,8 @@ jobs:
         run: python -m unittest discover -s tests -p "test_calendar*.py" -v
       - name: Build and validate exact release bytes
         run: python tools/build_release.py --build --channel $env:RELEASE_CHANNEL --version $env:RELEASE_VERSION
+      - name: Prepare bilingual notes and applicable demonstrations
+        run: python tools/release_notes.py --asset "dist/SDGO-ModFramework-$env:RELEASE_VERSION.zip" --output dist/release-notes.md --media-list dist/release-media.json --require-authored
       - name: Mission profile configuration and native contracts
         shell: pwsh
         run: |
@@ -147,6 +149,8 @@ jobs:
           path: |
             dist/SDGO-ModFramework-*.zip
             dist/SDGO-ModFramework-*.sha256
+            dist/release-notes.md
+            dist/release-media.json
           retention-days: 3
           if-no-files-found: error
       - name: AI dialogue relationship and addressing policy
@@ -176,11 +180,26 @@ jobs:
         shell: pwsh
         run: |
           $tag='v'+$env:RELEASE_VERSION
-          if (gh release view $tag --json tagName 2>$null) { exit 0 }
-          $options=@('--target','${{ github.sha }}','--title',('SDGO Mod Manager '+$env:RELEASE_VERSION),'--generate-notes')
-          if($env:RELEASE_CHANNEL -eq 'beta'){$options+=@('--prerelease','--latest=false')}else{$options+='--latest'}
-          gh release create $tag "dist/SDGO-ModFramework-$env:RELEASE_VERSION.zip" "dist/SDGO-ModFramework-$env:RELEASE_VERSION.sha256" @options
+          $media=@(Get-Content dist/release-media.json -Raw | ConvertFrom-Json)
+          $existing=gh release view $tag --json tagName 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            $options=@('--target','${{ github.sha }}','--title',('SDGO Mod Manager '+$env:RELEASE_VERSION),'--generate-notes','--notes-file','dist/release-notes.md')
+            if($env:RELEASE_CHANNEL -eq 'beta'){$options+=@('--prerelease','--latest=false')}else{$options+='--latest'}
+            $assets=@("dist/SDGO-ModFramework-$env:RELEASE_VERSION.zip","dist/SDGO-ModFramework-$env:RELEASE_VERSION.sha256")+@($media | ForEach-Object {$_.file})
+            gh release create $tag @assets @options
+            if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+          }
+          $release=gh release view $tag --json assets | ConvertFrom-Json
           if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+          foreach($demo in $media) {
+            $known=$release.assets | Where-Object {$_.name -eq $demo.asset}
+            if($known) {
+              if($known.digest -ne ('sha256:'+$demo.sha256)){throw 'Published demonstration assets are immutable'}
+            } else {
+              gh release upload $tag $demo.file
+              if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+            }
+          }
       - name: Publish verified Git runtime for SSH downloads
         if: env.PREPARE_ONLY != 'true'
         env:

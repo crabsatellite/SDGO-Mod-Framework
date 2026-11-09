@@ -2,6 +2,8 @@
 
 [简体中文](hangar-manager.zh-CN.md)
 
+![Duplicate-unit exchange preview and cancellation](hangar-manager-demo.webp)
+
 The client mod `hangar_manager` adds **Sort** and **Exchange duplicates** buttons next to the lock and
 dismantle buttons on the game's unit-management page. Everything happens in that native page; there is
 no separate window, overlay or hotkey, and the Manager does not need to stay open. Sorting and GB batch

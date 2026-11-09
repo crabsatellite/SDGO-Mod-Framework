@@ -804,7 +804,7 @@ uint32_t Delta(uint32_t before, uint32_t after) {
     return after - before;
 }
 
-void ResetFixture(Scenario next, uint32_t unit) {
+void ResetFixture(Scenario next, uint32_t unit, uint16_t slot = 0) {
     scenario = next;
     rowOwner.fill(0);
     rowRecord.fill(0);
@@ -819,6 +819,7 @@ void ResetFixture(Scenario next, uint32_t unit) {
     indexBuffer.fill(0);
     Put(definition.data(), 0, unit);
     Put(rowRecord.data(), 4, definition.data());
+    Put(rowRecord.data(), 8, slot);
     candidate.table = candidateTable.data();
     root.table = rootTable.data();
     nestedRoot.table = rootTable.data();
@@ -872,7 +873,7 @@ struct Expected {
 };
 
 void VerifyCommonScoped(
-    const char* name, uint32_t unit,
+    const char* name, uint32_t unit, uint16_t slot,
     const SdgoHangarPreviewGuardStatusV1& before,
     const SdgoHangarPreviewGuardStatusV1& after,
     const Expected& expected) {
@@ -913,10 +914,12 @@ void VerifyCommonScoped(
                   parserStageSamples == expected.parserCalls,
               name, "observer stage flags cover only the active preview and parser frames");
     if (failed) {
-        CheckCase(after.last_unit == unit && after.last_failure == expected.failure,
-                  name, "observer identifies the rejected unit and first failure");
+        CheckCase(after.last_unit == unit && after.last_failed_slot == slot &&
+                      after.last_failure == expected.failure,
+                  name, "observer identifies the rejected unit, native inventory slot and first failure");
     } else {
         CheckCase(after.last_unit == before.last_unit &&
+                      after.last_failed_slot == before.last_failed_slot &&
                       after.last_failure == before.last_failure,
                   name, "clean preview does not replace the last failure");
     }
@@ -1041,8 +1044,9 @@ void VerifyScenarioSites(const char* name, Scenario next) {
 }
 
 void RunScopedCase(
-    const char* name, Scenario next, uint32_t unit, const Expected& expected) {
-    ResetFixture(next, unit);
+    const char* name, Scenario next, uint32_t unit, const Expected& expected,
+    uint16_t slot = 0) {
+    ResetFixture(next, unit, slot);
     expectScopedStages = true;
     const auto before = Snapshot();
     const DWORD error = 0x51000000u + unit;
@@ -1052,7 +1056,7 @@ void RunScopedCase(
     CheckCase(GetLastError() == error, name,
               "destructors, renderer release and warning preserve LastError");
     const auto after = Snapshot();
-    VerifyCommonScoped(name, unit, before, after, expected);
+    VerifyCommonScoped(name, unit, slot, before, after, expected);
     VerifyScenarioSites(name, next);
     const bool warningExpected =
         expected.failure != NoFailure &&
@@ -1232,6 +1236,45 @@ void Run(SdgoModLoadFn entry, HMODULE dll) {
     missing32.vertex24Failures = 0;
     missing32.vertex32Failures = 1;
     RunScopedCase("missing VB32", Scenario::MissingVertex32, 72032, missing32);
+
+    constexpr uint32_t duplicateUnit = 72932;
+    constexpr uint16_t failedSlot = 7;
+    constexpr uint16_t duplicateSlot = 19;
+    const auto beforeDuplicateFailure = Snapshot();
+    RunScopedCase(
+        "duplicate definition failed cell", Scenario::MissingVertex32,
+        duplicateUnit, missing32, failedSlot);
+    const auto afterDuplicateFailure = Snapshot();
+    Check(Delta(
+              beforeDuplicateFailure.recovered_previews,
+              afterDuplicateFailure.recovered_previews) == 0 &&
+              afterDuplicateFailure.last_unit == duplicateUnit &&
+              afterDuplicateFailure.last_failed_slot == failedSlot,
+          "failed duplicate-definition cell records its exact native inventory slot without recovery");
+
+    const auto beforeOtherSlot = afterDuplicateFailure;
+    RunScopedCase(
+        "duplicate definition other cell", Scenario::Success,
+        duplicateUnit, Expected{}, duplicateSlot);
+    const auto afterOtherSlot = Snapshot();
+    Check(Delta(
+              beforeOtherSlot.recovered_previews,
+              afterOtherSlot.recovered_previews) == 0 &&
+              afterOtherSlot.last_unit == duplicateUnit &&
+              afterOtherSlot.last_failed_slot == failedSlot,
+          "same definition in another native inventory slot cannot satisfy the failed cell recovery");
+
+    const auto beforeSameSlot = afterOtherSlot;
+    RunScopedCase(
+        "duplicate definition same-cell retry", Scenario::Success,
+        duplicateUnit, Expected{}, failedSlot);
+    const auto afterSameSlot = Snapshot();
+    Check(Delta(
+              beforeSameSlot.recovered_previews,
+              afterSameSlot.recovered_previews) == 1 &&
+              afterSameSlot.last_unit == duplicateUnit &&
+              afterSameSlot.last_failed_slot == failedSlot,
+          "successful production setter retry for the exact failed unit and slot records one recovery");
 
     Expected failed32 = failed24;
     failed32.vertex24Failures = 0;

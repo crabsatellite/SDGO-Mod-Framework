@@ -72,7 +72,7 @@
 | AI 机师互动台词（可选） <!-- catalog: `ai_dialogue` --> | AI 机师按战况和机体人设说台词、给队友建议；需自填 DeepSeek 密钥，默认关闭 | [使用说明](docs/ai-dialogue.zh-CN.md) |
 | 战斗贡献奖励 <!-- catalog: `battle_rewards` --> | 按贡献发放 GB/MB，可配置人数倍率与按账号去重的聚会奖励 | [使用说明](docs/battle-rewards.zh-CN.md) |
 | 收藏扭蛋 <!-- catalog: `collection_capsule` --> | 优先补图鉴的活动机台；服主可设除外名单，图鉴获取说明随实际奖池自动更新；价格和次数可配置，默认每周 15 次 | [使用说明](docs/collection-capsule.zh-CN.md) |
-| 每局随机机体 <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组 | [使用说明](docs/room-random.zh-CN.md) |
+| 每局随机机体 <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机出击机体或卡组；返回时核对库存身份，避免换机误报技能零件耗尽 | [使用说明](docs/room-random.zh-CN.md) |
 | 完整对战 All Map <!-- catalog: `all_maps` --> | 房间选择 All Map 时从完整原生对战地图目录抽取，任务专用图仍留在任务模式 | [使用说明](docs/all-maps.zh-CN.md) |
 | 登录机体展示 <!-- catalog: `login_showcase` --> | 选择登录页面展示哪些机体：按等级、全部、最近注册或指定名单，默认 SS/SR/SU | [使用说明](docs/login-showcase.zh-CN.md) |
 | FPS 上限 <!-- catalog: `fps_limit` --> | 提高渲染帧率上限，保留原生游戏速度 | [使用说明](docs/fps-limit.zh-CN.md) |
@@ -86,7 +86,7 @@
 | 保管库一键领取 <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
 | 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化商品名称、说明、选项和涂装机体预览，可用中文名称搜索并组合等级、币种筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
 | 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 右键好友（在线或离线均可），在机体管理中选机赠送，对方在保管库接受或退还；默认关闭，由服主开启 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
-| OC 六维强化（Beta） <!-- catalog: `oc_custom_client`、`oc_custom_server`、`oc_custom_battle` --> | 在机体改造页旁增加「终极强化」标签，提供 OC 等级、六维加点与洗点并在战斗中生效；与现行改造部件（G改 2.0）数据并存，由服主选择整服使用哪一套，或按房间选择 OC、G改 2.0，以及服主提供规则文件后的 G改 1.0（建房窗口的「体系」行或房名 `!oc`、`!g1`，房间列表和房内标出体系） | [使用说明](docs/over-custom.zh-CN.md) |
+| OC 六维强化（Beta） <!-- catalog: `oc_custom_client`、`oc_custom_server`、`oc_custom_battle` --> | 在机体改造页旁增加「终极强化」标签，提供 OC 等级、六维加点与洗点并在战斗中生效；与现行改造部件（G改 2.0）数据并存，由服主选择整服使用哪一套，或按房间选择 OC、G改 2.0，以及服主提供规则文件后的 G改 1.0（建房窗口的「体系」行或房名 `!oc`、`!g1`，房间列表和房内标出体系）；G改 1.0 在原版「强化部件」页面上通过「G改 2.0 / G改 1.0」切换编辑，工厂页面的英文标签显示为中文 | [使用说明](docs/over-custom.zh-CN.md) |
 | 机体族导入（Beta） <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | 在 Mod Manager 导入任何来源按协议制作的机体包或整套阵容，补齐定义并生成两端数据、图鉴和商城／扭蛋资源 | [使用说明](docs/unit-import.zh-CN.md) |
 
 <!-- /mod-category:gameplay -->

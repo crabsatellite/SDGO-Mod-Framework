@@ -313,43 +313,8 @@ bool OriginalUi::Load(void* component, const Bindings& bindings) {
         entry.parent = parent;
         entry.width = Read<int>(control, 0x154);
     }
-    // G改 1.0 page (optional).
-    {
-        const std::wstring name = kWindows[window_g1].registry;
-        const std::wstring path = kWindows[window_g1].path;
-        const auto native_name = ViewOf(name);
-        const auto native_path = ViewOf(path);
-        void* dialog = load(service, &native_name, &native_path);
-        std::size_t added = 0;
-        bool complete = dialog != nullptr;
-        if (dialog) Put<std::uint8_t>(dialog, kVisible, 0);
-        for (const auto& spec : kG1Specs) {
-            if (!complete) break;
-            const std::wstring control_name = spec.name;
-            const auto native = ViewOf(control_name);
-            void* control = bindings_.find(dialog, &native, spec.type);
-            void* parent = control ? Read<void*>(control, kParent) : nullptr;
-            const bool owned = parent && (parent == dialog || Read<void*>(parent, kParent) == dialog);
-            if (!control || !owned || count + added >= bound.size()) {
-                complete = false;
-                break;
-            }
-            auto& entry = bound[count + added++];
-            entry.window = spec.window;
-            entry.name = spec.name;
-            entry.type = spec.type;
-            entry.action = spec.action;
-            entry.pointer = control;
-            entry.parent = parent;
-            entry.width = Read<int>(control, 0x154);
-        }
-        if (complete) {
-            dialogs[window_g1] = dialog;
-            count += added;
-        } else {
-            for (std::size_t index = count; index < count + added; ++index) bound[index] = Bound{};
-        }
-    }
+    // G改 1.0 lives on the native 强化部件 page (g1_native.h); the OC page no
+    // longer loads a copy of its layout.
     component_ = component;
     service_ = service;
     page_dialog_ = page;
@@ -365,8 +330,11 @@ bool OriginalUi::AttachEntry() {
         last_failure_ = "missing native control constructors";
         return false;
     }
-    // The OC-era OVER CUSTOM entry: OverCustomBtn (205x30, sprs\8526-8528) over
-    // its dim label (84x24, sprs\8525.spr), offset 4,4 as in the OC-era 0799.
+    // The OC challenge entry: OverCustomBtn on the client's text-free glass
+    // button (sprs\17454 normal, 17457 hover and pressed, 180x46; the
+    // category bar's own button art) with a Chinese caption, where the OC-era
+    // OVER CUSTOM banner (sprs\8526-8528, English art) stood. The label icon
+    // stays empty.
     // A dual-system factory keeps the 经验值转换 page native, so the entry sits
     // on the OC tab's own 0800 page, between the level track and the ITEM box.
     void* info = dialogs_[window_info];
@@ -376,7 +344,7 @@ bool OriginalUi::AttachEntry() {
     void* label = bindings_.find(info, &native_label, kIcon);
     const std::wstring button_name = L"OverCustomBtn";
     const auto native_button = ViewOf(button_name);
-    bindings_.add(info, &native_button, 37, 250, 205, 30, 0);
+    bindings_.add(info, &native_button, 49, 242, 180, 46, 0);
     void* button = bindings_.find(info, &native_button, kButton);
     if (!label || !button || Read<void*>(label, kParent) != info || Read<void*>(button, kParent) != info ||
         Read<void*>(button) != bindings_.button_vtable) {
@@ -389,11 +357,9 @@ bool OriginalUi::AttachEntry() {
         Put<std::uint8_t>(control, kEnabled, 0);
         Put<std::uint8_t>(control, kDebugQuad, 0);
     }
-    const std::wstring label_sprite = L"sprs\\8525.spr";
-    const auto native_label_sprite = ViewOf(label_sprite);
-    bindings_.skin(label, &native_label_sprite, 0, 0, 0);
+    static const int kEntrySprites[3] = {17454, 17457, 17457};
     for (int state = 0; state < 3; ++state) {
-        const std::wstring sprite = L"sprs\\" + std::to_wstring(8526 + state) + L".spr";
+        const std::wstring sprite = L"sprs\\" + std::to_wstring(kEntrySprites[state]) + L".spr";
         const auto native_sprite = ViewOf(sprite);
         bindings_.skin(button, &native_sprite, 0, 0, 0);
     }
@@ -409,9 +375,16 @@ bool OriginalUi::AttachEntry() {
     for (std::size_t level = 0; level < kLevelIcons; ++level)
         level_icons_[level] = CreateIcon(info, kLevelNames[level], 3 + 35 * static_cast<int>(level), 120, 30, 30, kLevelSprites[level]);
     static const wchar_t* const kNoneNames[kInfoItems] = {L"OcNoneIcon0", L"OcNoneIcon1", L"OcNoneIcon2"};
-    static const int kNoneX[kInfoItems] = {27, 108, 186};
-    for (std::size_t slot = 0; slot < kInfoItems; ++slot)
-        none_icons_[slot] = CreateIcon(info, kNoneNames[slot], kNoneX[slot], 331, 34, 74, L"sprs\\8486.spr");
+    // An empty ITEM slot: the 强化部件 page's own empty-slot frame (sprs\16827,
+    // 54x54) centred on the slot's 3D render, with 无 (the OC-era NONE art,
+    // sprs\8486, is English).
+    static const int kNoneX[kInfoItems] = {15, 95, 175};
+    static const wchar_t* const kNoneTexts[kInfoItems] = {L"OcNoneText0", L"OcNoneText1", L"OcNoneText2"};
+    for (std::size_t slot = 0; slot < kInfoItems; ++slot) {
+        none_icons_[slot] = CreateIcon(info, kNoneNames[slot], kNoneX[slot], 341, 54, 54, L"sprs\\16827.spr");
+        none_texts_[slot] = CreateButton(window_info, kNoneTexts[slot], kNoneX[slot], 359, 54, 18, nullptr, 0, Action::none);
+        SetCreatedText(kNoneTexts[slot], L"无", 2);
+    }
     AttachG1(); // optional
     return true;
 }
@@ -858,6 +831,7 @@ void OriginalUi::Render(const EntryView& entry, const OverView& over, const Info
                 if (shown) ++models_visible_;
             }
             if (none_icons_[slot]) SetState(none_icons_[slot], !info.item[slot], false);
+            if (none_texts_[slot]) SetState(none_texts_[slot], !info.item[slot], false);
         }
     }
     if (!info.visible && !g1_page) {
@@ -914,9 +888,17 @@ void OriginalUi::Render(const EntryView& entry, const OverView& over, const Info
     if (dialogs_[window_g1]) Put<std::uint8_t>(dialogs_[window_g1], kVisible, g1_page ? 1 : 0);
     shown_[window_g1] = g1_page;
     if (entry_button_) {
-        // The dim label stands in for the button until the challenge can start.
-        SetState(entry_label_, entry.visible && !entry.lit, false);
-        SetState(entry_button_, entry.visible && entry.lit, entry.visible && entry.lit);
+        // The button is shown with the page; it is enabled (and its caption
+        // lit) once the challenge can start.
+        SetState(entry_label_, false, false);
+        SetState(entry_button_, entry.visible, entry.visible && entry.lit);
+        if (entry.visible && (!entry_caption_set_ || entry_caption_lit_ != entry.lit)) {
+            const std::wstring caption = L"终极强化挑战";
+            const auto native = ViewOf(caption);
+            bindings_.text(entry_button_, 0, &native, 2, 16, 176, 14, entry.lit ? 0xFFFFE680 : 0xFF8FA7B8, kShadowColor, 0, 1, 2);
+            entry_caption_set_ = true;
+            entry_caption_lit_ = entry.lit;
+        }
         entry_shown_ = entry.visible;
     }
     // 0794: allocation window.

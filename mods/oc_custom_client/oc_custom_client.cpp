@@ -30,6 +30,8 @@
 #include <string>
 #include <vector>
 
+#include "factory_l10n.h"
+#include "g1_native.h"
 #include "original_ui.h"
 #include "radar.h"
 #include "room_marks.h"
@@ -376,6 +378,15 @@ struct G1Page {
 };
 G1Page g_g1_page;
 
+// G改 1.0 on the native 强化部件 page (g1_native.h): the player's choice on
+// the page's system switch, and the save or reset the native page asked for.
+bool g_g1_want = false;
+bool g_g1_native_rules_set = false;
+Pending g_g1_native_pending = Pending::none;
+std::uint32_t g_g1_switch_clicks = 0;
+
+std::wstring G1ErrorText(std::int32_t ret);
+
 struct Mobility {
     std::uint32_t applied = 0;
     std::uint32_t unit_number = 0;
@@ -516,10 +527,13 @@ ui::G1View BuildG1View(bool oc_tab, bool arrows, bool idle) {
     ui::G1View view;
     const auto& g = g_g1;
     auto& page = g_g1_page;
-    view.offered = oc_tab && g.available;
+    // G改 1.0 lives on the native 强化部件 page now (g1_native.h); the OC tab
+    // shows OC only.
+    view.offered = false;
     view.style_label = L"G改 1.0";
     view.back_label = Text(126631, L"终极强化");
-    view.visible = oc_tab && g.available && page.shown;
+    view.visible = false;
+    (void)page;
     if (!view.visible) return view;
     SyncG1Pending();
     const bool ready = g.rules_done && !g.rules.empty() && g.categories_done && g.loadout_known &&
@@ -713,6 +727,13 @@ void HandleG1Reply(Command command, std::int32_t status, const std::uint8_t* pay
     if (static_cast<WireStatus>(status) != WireStatus::success || !payload) {
         g.last_ret = status;
         if (command == Command::g1_rules) g.rules_done = true; // stop paging
+        if ((command == Command::g1_set && g_g1_native_pending == Pending::g1_set) ||
+            (command == Command::g1_reset && g_g1_native_pending == Pending::g1_reset)) {
+            g_g1_native_pending = Pending::none;
+            if (command == Command::g1_set) g1_native::SaveResult(false, {});
+            else g1_native::ResetResult(false, 0);
+            g1_native::SetNotice(L"请求失败，请稍后再试");
+        }
         LogF(SDGO_LOG_WARN, "g1 command 0x%X failed with wire status %d", static_cast<unsigned>(command), status);
         return;
     }
@@ -771,6 +792,14 @@ void HandleG1Reply(Command command, std::int32_t status, const std::uint8_t* pay
                 reply.loadout.skills[3], reply.charged_gp);
             // The records the World server sends carry the new loadout.
             if (reply.ret_val == 0) RefreshActiveUnit();
+            const Pending native = command == Command::g1_set ? Pending::g1_set : Pending::g1_reset;
+            if (g_g1_native_pending == native) {
+                g_g1_native_pending = Pending::none;
+                const bool ok = reply.ret_val == 0;
+                if (command == Command::g1_set) g1_native::SaveResult(ok, reply.loadout.skills);
+                else g1_native::ResetResult(ok, reply.charged_gp);
+                g1_native::SetNotice(ok ? std::wstring() : G1ErrorText(reply.ret_val));
+            }
         }
         break;
     }
@@ -1633,8 +1662,27 @@ bool RoomRuleKnown() {
 
 void LogMark(const char* message) { Log(SDGO_LOG_INFO, message); }
 
+// The lobby asks the World server for its mode itself: a player who goes
+// straight to the room list (never through the factory) still gets the room
+// marks and the create window's 体系 row.
+void AskModeFromLobby() noexcept {
+    static std::uint64_t last = 0;
+    auto& s = g_state_data;
+    const auto now = GetTickCount64();
+    if (s.mode_known || now - last < 3000) return;
+    last = now;
+    __try {
+        if (!TransportReady() || s.queued != Pending::none || s.outstanding != Pending::none) return;
+        s.queued = Pending::mode;
+        ArmTimer();
+        PumpQueue();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
 void __fastcall RoomListUpdateHook(void* service, void*) {
     g_room_list_update_original(service);
+    AskModeFromLobby();
     if (!RoomRuleKnown()) return;
     room_marks::MarkRoomList(service);
     room_marks::UpdateCreateWindow();
@@ -1745,6 +1793,7 @@ struct OcTab {
     void* dialog = nullptr;
     void* button = nullptr;
     void* unit_up = nullptr;
+    void* status = nullptr;   // StatusRadio: the 强化部件 (custom-skill attribute) tab
     void* selected = nullptr; // the native tab radio the menu last selected
     float top = 0.0f;         // the tab row's y; a selected tab stands 16 px higher
     bool raised = false;
@@ -1869,6 +1918,8 @@ void __fastcall HeaderUpdateHook(void* service, void*) {
         if (g_header != service) g_title_applied = false;
         g_header = service;
         g_header_tick = GetTickCount64();
+        l10n::PatchTexts();
+        l10n::Header(Read<void*>(service, kHeaderTitle));
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
 }
@@ -1902,8 +1953,12 @@ void RestoreFactoryActions() noexcept {
     }
 }
 
+void ExitButtonOf(void* service);
+void** g_service_list = nullptr; // flow.service_managed_pointer
+
 void __fastcall FactoryUpdateHook(void* service, void*) {
     g_factory_update_original(service);
+    ExitButtonOf(service);
     __try {
         if (Read<void*>(service) != g_factory_vtable) return;
         if (!g_oc_page_shown) {
@@ -2209,6 +2264,12 @@ bool CreateTab(void* service) {
     g_tab.dialog = dialog;
     g_tab.button = button;
     g_tab.unit_up = unit_up;
+    {
+        const std::wstring status_name = L"StatusRadio";
+        const auto native_status = ui::ViewOf(status_name);
+        void* status = g_bindings.find(dialog, &native_status, 12);
+        g_tab.status = status && Read<void*>(status, 0x15C) == dialog ? status : nullptr;
+    }
     g_tab.top = top;
     g_tab.raised = false;
     // The radio the menu shows checked is the page on screen.
@@ -2219,6 +2280,101 @@ bool CreateTab(void* service) {
                   static_cast<unsigned>(count), GridRecord(126631, 0x3B) ? "126631" : "fallback");
     Log(SDGO_LOG_INFO, line);
     return true;
+}
+
+// The 强化部件 tab is on screen (its radio is the one the menu selected and the
+// OC content is not shown in the 经验值转换 slot).
+bool AttributeTabSelected() noexcept {
+    return g_tab.service && g_tab.status && g_tab.selected == g_tab.status && !g_tab.mode;
+}
+
+std::wstring G1ErrorText(std::int32_t ret) {
+    switch (ret) {
+    case g1_not_reset: return L"已装备的强化槽需初始化后才能更换";
+    case g1_wrong_skill: return L"机体或用户等级不足";
+    case g1_category_diff: return L"所有强化槽须为同一类型";
+    case g1_slot_locked: return L"该强化槽尚未开放";
+    case reset_insufficient_gp: return L"G币不足";
+    default: return L"G改 1.0 设置失败（" + std::to_wstring(ret) + L"）";
+    }
+}
+
+std::wstring g_attr_title;      // the title the Mod set on the 强化部件 tab
+std::uint64_t g_attr_title_tick = 0;
+
+void ApplyAttributeTitle(bool shown) noexcept {
+    void* title = nullptr;
+    const int state = shown ? HeaderTitle(&title) : 0;
+    if (!shown || state == 1) {
+        g_attr_title.clear();
+        return;
+    }
+    if (state != 2) return;
+    const std::wstring text = g1_native::Active() ? L"强化部件 · G改 1.0" : L"强化部件 · G改 2.0";
+    // The tab switch can write the native title after the Mod's; set it again
+    // now and then while the tab is on screen.
+    const auto now = GetTickCount64();
+    if (text == g_attr_title && now - g_attr_title_tick < 1000) return;
+    const auto native = ui::ViewOf(text);
+    if (SetControlText(title, &native)) {
+        g_attr_title = text;
+        g_attr_title_tick = now;
+    }
+}
+
+// Game thread, every tab menu frame: G改 1.0 on the native 强化部件 page.
+void UpdateAttributePage() noexcept {
+    if (!g1_native::Bound()) return;
+    auto& g = g_g1;
+    const bool shown = AttributeTabSelected();
+    void* page = shown ? g1_native::FindPage() : nullptr;
+    if (page && g_g1_want && g.available) {
+        bool ask = false;
+        if ((!g.rules_done || g.rules.empty() || !g.categories_done) && !g.want_rules && g.next_page == 0) {
+            g.rules.clear();
+            g.total = 0;
+            g.want_rules = true;
+            g.want_categories = true;
+            ask = true;
+        }
+        if ((!g.loadout_known || g.loadout.unit_uid != g_state_data.unit_uid) && !g.want_loadout) {
+            g.want_loadout = true;
+            ask = true;
+        }
+        if (ask) {
+            ArmTimer();
+            PumpQueue();
+        }
+    }
+    if (g.rules_done && g.categories_done && !g.rules.empty() && !g_g1_native_rules_set) {
+        g1_native::SetRules(g.rules, g.categories);
+        g_g1_native_rules_set = true;
+    }
+    g1_native::SetResetCost(g.loadout.reset_cost);
+    const bool current = g.loadout_known && g.loadout.unit_uid == g_state_data.unit_uid;
+    g1_native::Update(page, g.available, g_g1_want, current ? &g.loadout : nullptr);
+    if (page) l10n::CategoryBar(g1_native::CategoryBarService(), g1_native::CategoryNewMask());
+    std::array<std::uint16_t, 4> skills{};
+    if (g1_native::TakeSave(&skills)) {
+        if (g.action == Pending::none && g_g1_native_pending == Pending::none) {
+            g.set_skills = skills;
+            g.action = Pending::g1_set;
+            g_g1_native_pending = Pending::g1_set;
+            PumpQueue();
+        } else {
+            g1_native::SaveResult(false, {});
+        }
+    }
+    if (g1_native::TakeReset()) {
+        if (g.action == Pending::none && g_g1_native_pending == Pending::none) {
+            g.action = Pending::g1_reset;
+            g_g1_native_pending = Pending::g1_reset;
+            PumpQueue();
+        } else {
+            g1_native::ResetResult(false, 0);
+        }
+    }
+    ApplyAttributeTitle(shown && page);
 }
 
 void __fastcall TabUpdateHook(void* service, void*) {
@@ -2235,11 +2391,47 @@ void __fastcall TabUpdateHook(void* service, void*) {
                 const auto& s = g_state_data;
                 if (s.mode_known && s.server_oc_mode) CreateTab(service);
             }
+            UpdateAttributePage();
+            if (g_ui.Alive()) l10n::InfoPage(g_ui.window_dialog(ui::window_info), g_ui.window_shown(ui::window_info));
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         g_tab = OcTab{};
     }
     SetLastError(error);
+}
+
+// The attribute page's UI events (vtable slot 14, FUN_008AE9F0): the Mod's
+// system switch under its left panel.
+using AttrEvent = void(__stdcall*)(void*, std::uint32_t, std::uintptr_t, void*);
+AttrEvent g_attr_event_original = nullptr;
+using AttrDestroy = void*(__thiscall*)(void*, std::uint32_t);
+AttrDestroy g_attr_destroy_original = nullptr;
+
+void __stdcall AttrEventHook(void* page, std::uint32_t event, std::uintptr_t second, void* control) {
+    const int which = g1_native::SwitchOf(control);
+    if (which) {
+        if (event == kButtonClickEvent) {
+            const bool want = which == 2;
+            if (want != g_g1_want) {
+                g_g1_want = want;
+                ++g_g1_switch_clicks;
+                g1_native::SetNotice(std::wstring());
+                if (want) g_g1.want_loadout = true;
+                LogF(SDGO_LOG_INFO, "attribute page switched to %s", want ? "G改 1.0" : "G改 2.0");
+                PumpQueue();
+            }
+        }
+        return;
+    }
+    g_attr_event_original(page, event, second, control);
+}
+
+void* __fastcall AttrDestroyHook(void* page, void*, std::uint32_t flags) {
+    // The factory closes: the shared data manager and the unit record go back
+    // to the native data before the page is gone.
+    g1_native::Leave();
+    g_attr_title.clear();
+    return g_attr_destroy_original(page, flags);
 }
 
 // The menu callback (FUN_008975C0) ignores tab events unless the menu is
@@ -2289,6 +2481,82 @@ void __stdcall TabCallbackHook(void* service, std::uint32_t event, std::uintptr_
         ++g_tab_clicks_accepted;
     }
     g_tab_callback_original(service, event, second, control);
+}
+
+// The factory's exit button sits in one of the factory main service's dialogs.
+std::size_t FactoryDialogs(void* service, void** out, std::size_t capacity) noexcept {
+    __try {
+        if (Read<void*>(service) != g_factory_vtable) return 0;
+        return ServiceDialogs(service, out, capacity);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+void* FindButton(void* dialog, const ui::NativeString* name) noexcept {
+    __try {
+        return g_bindings.find(dialog, name, 4);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
+// Every live service (the service manager's list at +0x44).
+std::size_t LiveServices(void** out, std::size_t capacity) noexcept {
+    std::size_t count = 0;
+    __try {
+        if (!g_service_list || !*g_service_list) return 0;
+        auto* owner = static_cast<std::uint8_t*>(*g_service_list);
+        auto* head = Read<std::uint8_t*>(owner, 0x44);
+        if (!head) return 0;
+        auto* node = Read<std::uint8_t*>(head, 0);
+        for (unsigned guard = 0; node && node != head && guard < 512 && count < capacity; ++guard) {
+            if (void* service = Read<void*>(node, 8)) out[count++] = service;
+            node = Read<std::uint8_t*>(node, 0);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return count;
+}
+
+std::size_t AnyServiceDialogs(void* service, void** out, std::size_t capacity) noexcept {
+    __try {
+        return ServiceDialogs(service, out, capacity);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+// The factory's exit button (uirs\0802 ExitBtn) belongs to one of the services
+// that run with the factory; it is looked up once per factory visit.
+void ExitButtonOf(void* service) {
+    static void* done = nullptr;
+    static std::uint64_t last = 0;
+    static std::uint32_t tries = 0;
+    if (!service || service == done) return;
+    // The exit button's service can start after the factory; look again about
+    // once a second for a while.
+    const auto now = GetTickCount64();
+    if (now - last < 1000 || tries >= 120) return;
+    last = now;
+    ++tries;
+    void* services[256] = {};
+    const std::size_t count = LiveServices(services, 256);
+    const std::wstring name = L"ExitBtn";
+    const auto native = ui::ViewOf(name);
+    for (std::size_t index = 0; index < count; ++index) {
+        void* dialogs[16] = {};
+        const std::size_t dialog_count = AnyServiceDialogs(services[index], dialogs, 16);
+        for (std::size_t at = 0; at < dialog_count; ++at) {
+            if (void* control = FindButton(dialogs[at], &native)) {
+                l10n::ExitButton(control);
+                done = service;
+                tries = 0;
+                return;
+            }
+        }
+    }
+    if (tries == 120) Log(SDGO_LOG_INFO, "factory l10n: no exit button among the live services");
 }
 
 // --- Observer ---------------------------------------------------------------------
@@ -2607,6 +2875,45 @@ extern "C" __declspec(dllexport) int __cdecl SdgoOcCustomClientG1CategoryV1(std:
     }
 }
 
+int G1NativeSnapshot(SdgoOcCustomClientG1NativeV1* out) {
+    if (!out || out->size < sizeof(SdgoOcCustomClientG1NativeV1) || out->version != SDGO_OC_CUSTOM_CLIENT_G1_NATIVE_VERSION)
+        return 0;
+    const auto stats = g1_native::GetStats();
+    out->bound = g1_native::Bound() ? 1 : 0;
+    out->tab_shown = AttributeTabSelected() ? 1 : 0;
+    out->want = g_g1_want ? 1 : 0;
+    out->active = g1_native::Active() ? 1 : 0;
+    out->rules = g1_native::HasRules() ? 1 : 0;
+    out->categories = stats.categories;
+    out->entries = stats.entries;
+    out->loads = stats.loads;
+    out->entered = stats.entered;
+    out->left = stats.left;
+    out->saves = stats.saves;
+    out->resets = stats.resets;
+    out->switch_clicks = g_g1_switch_clicks;
+    for (std::size_t slot = 0; slot < 4; ++slot) out->shown[slot] = stats.shown[slot];
+    out->page = g1_native::FindPage();
+    out->switch_g2 = g1_native::SwitchControl(1);
+    out->switch_g1 = g1_native::SwitchControl(2);
+    out->bar = g1_native::NativeService(1);
+    out->list = g1_native::NativeService(2);
+    out->save_popup = g1_native::NativeService(3);
+    out->reset_popup = g1_native::NativeService(4);
+    out->reset_check_popup = g1_native::NativeService(5);
+    out->page_idle = g1_native::PageReady() ? 1 : 0;
+    wcsncpy_s(out->title, g_attr_title.c_str(), _TRUNCATE);
+    return 1;
+}
+
+extern "C" __declspec(dllexport) int __cdecl SdgoOcCustomClientG1NativeV1(SdgoOcCustomClientG1NativeV1* out) {
+    __try {
+        return G1NativeSnapshot(out);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
 extern "C" __declspec(dllexport) int __cdecl SdgoOcCustomClientClickV2(const char* window, const wchar_t* control) {
     __try {
         return Click(window, control);
@@ -2629,6 +2936,7 @@ SDGO_MOD_ENTRY {
     g_profile = reinterpret_cast<std::uint8_t**>(api->Symbol(mod, "hangar.profile_global"));
     g_grid = reinterpret_cast<std::uint8_t**>(api->Symbol(mod, "oc_custom.grid_singleton"));
     g_unit_manager = reinterpret_cast<std::uint8_t**>(api->Symbol(mod, "game.unit_manager"));
+    g_service_list = static_cast<void**>(api->Symbol(mod, "flow.service_managed_pointer"));
     if (!g_session || !g_native_send || !g_profile || !g_grid || !g_unit_manager) return 0;
     radar::SetRenderer(reinterpret_cast<void* const*>(api->Symbol(mod, "oc_custom.client_renderer")));
     HMODULE gift = GetModuleHandleW(L"friend_unit_gift_client.dll");
@@ -2695,6 +3003,14 @@ SDGO_MOD_ENTRY {
         !api->HookSlot(mod, "oc_custom.client_titlebar_update", reinterpret_cast<void*>(&TitleBarUpdateHook),
                        reinterpret_cast<void**>(&g_titlebar_update_original)))
         Log(SDGO_LOG_WARN, "oc: room-system marks unavailable; rooms still play the system their title selects");
+    if (!l10n::Bind(api, mod, &g_bindings, &LogMark, g_grid))
+        Log(SDGO_LOG_WARN, "oc: factory Chinese labels unavailable");
+    if (!g1_native::Bind(api, mod, &LogMark, &g_bindings) ||
+        !api->HookSlot(mod, "oc_custom.attr_page_event", reinterpret_cast<void*>(&AttrEventHook),
+                       reinterpret_cast<void**>(&g_attr_event_original)) ||
+        !api->HookSlot(mod, "oc_custom.attr_page_destroy", reinterpret_cast<void*>(&AttrDestroyHook),
+                       reinterpret_cast<void**>(&g_attr_destroy_original)))
+        Log(SDGO_LOG_WARN, "oc: G改 1.0 on the native 强化部件 page is unavailable");
     if (!room_marks::BindCreate(api, mod) ||
         !api->HookSlot(mod, "oc_custom.client_make_room_event", reinterpret_cast<void*>(&MakeRoomEventHook),
                        reinterpret_cast<void**>(&g_make_room_event_original)) ||

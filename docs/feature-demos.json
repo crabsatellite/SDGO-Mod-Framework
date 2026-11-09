@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "demos": [
+    {
+      "id": "manager-updates",
+      "path": "docs/manager-updates-demo.webp",
+      "since": "1.15.7",
+      "mods": [],
+      "title_zh": "Manager：检查、下载并安装程序更新",
+      "title_en": "Manager: check, download and install programme updates",
+      "guide_zh": "docs/mod-manager.zh-CN.md",
+      "guide_en": "docs/mod-manager.md"
+    },
+    {
+      "id": "manager-settings",
+      "path": "docs/mod-manager-demo.webp",
+      "since": "1.15.7",
+      "mods": [
+        "fps_limit"
+      ],
+      "title_zh": "Manager：修改帧率设置并保存，重启后生效",
+      "title_en": "Manager: save an FPS setting for the next game start",
+      "guide_zh": "docs/fps-limit.zh-CN.md",
+      "guide_en": "docs/fps-limit.md"
+    },
+    {
+      "id": "hangar-manager",
+      "path": "docs/hangar-manager-demo.webp",
+      "since": "1.15.7",
+      "mods": [
+        "hangar_manager"
+      ],
+      "title_zh": "机库：查看重复机体兑换预览并取消",
+      "title_en": "Hangar: preview duplicate-unit exchange and cancel",
+      "guide_zh": "docs/hangar-manager.zh-CN.md",
+      "guide_en": "docs/hangar-manager.md"
+    },
+    {
+      "id": "pvp-ai",
+      "path": "docs/pvp-ai-demo.webp",
+      "since": "1.15.7",
+      "mods": [
+        "match_ai",
+        "pvp_ai"
+      ],
+      "title_zh": "对战 AI：队友与敌人交战",
+      "title_en": "PvP AI: teammates and opponents in battle",
+      "guide_zh": "docs/pvp-ai.zh-CN.md",
+      "guide_en": "docs/pvp-ai.md"
+    },
+    {
+      "id": "coop-wingmen",
+      "path": "docs/coop-wingmen-demo.webp",
+      "since": "1.15.7",
+      "mods": [
+        "coop_ai",
+        "mission_ai"
+      ],
+      "title_zh": "合作任务：AI 僚机参与战斗",
+      "title_en": "Cooperative missions: AI wingmen in combat",
+      "guide_zh": "docs/coop-wingmen.zh-CN.md",
+      "guide_en": "docs/coop-wingmen.md"
+    },
+    {
+      "id": "room-systems",
+      "path": "docs/room-systems-demo.webp",
+      "since": "1.15.8",
+      "mods": [
+        "oc_custom_client"
+      ],
+      "title_zh": "整备室：终极强化（OC）页面与强化部件页面的 G改 2.0 / G改 1.0 切换",
+      "title_en": "Factory: the OC page and the 强化部件 page switching between G改 2.0 and G改 1.0",
+      "guide_zh": "docs/over-custom.zh-CN.md",
+      "guide_en": "docs/over-custom.md"
+    }
+  ]
+}

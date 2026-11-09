@@ -32,6 +32,8 @@ std::array<uint8_t*,12> userManagerPointers{};
 std::array<std::array<uint8_t*,0x19>,12> userStateServices{};
 std::array<std::vector<int>,12> userStates{};
 std::array<void*,11> roomViewVtable{};
+std::array<void*,8> userInfoVtable{};
+int nativeSkillPartCalls=0,nativeSkillPartShown=0;
 uint8_t* profilePointer=profile.data();
 uint8_t* appPointer=app.data();
 bool starting=true;
@@ -56,6 +58,20 @@ std::array<uint8_t,0x344> lastOutput{};
 std::array<int,12> startedModels{};
 std::unique_ptr<room_random_native_test::ClientCopies> nativeCopies;
 template<class T> void Put(uint8_t* p,size_t n,T v){std::memcpy(p+n,&v,sizeof(v));}
+__declspec(noinline) int __fastcall NativeUserInfoBegin(uint8_t* self,void*) {
+    if(room_random_client::Read<uint16_t>(self,0x18)==0x16)
+        Put<int32_t>(self,0x14,room_random_client::Read<int32_t>(profile.data(),0x1FB));
+    SetLastError(0x6A51);return 41;
+}
+__declspec(noinline) void __fastcall NativeSkillPartNotice(
+    uint8_t* self,void*,const uint8_t* packet) {
+    ++nativeSkillPartCalls;
+    if(room_random_client::Read<int32_t>(self,0x14)>0 &&
+       room_random_client::Read<int32_t>(packet,0xA3)<=0) {
+        ++nativeSkillPartShown;Put<int32_t>(self,0x14,-1);
+    }
+    SetLastError(0x6A52);
+}
 struct RoomViewNode {
     RoomViewNode* next=nullptr;
     RoomViewNode* previous=nullptr;
@@ -376,6 +392,9 @@ void Symbols() {
     Symbol(f,"room_random.client_user_has_state",reinterpret_cast<void*>(&NativeUserHasState),"code");
     Symbol(f,"room_random.client_change_room_view",reinterpret_cast<void*>(&NativeChangeRoomView),"code");
     Symbol(f,"room_random.client_change_room_view_vtable",roomViewVtable.data(),"data");
+    Symbol(f,"room_random.client_user_info_begin",reinterpret_cast<void*>(&NativeUserInfoBegin),"code");
+    Symbol(f,"room_random.client_skill_part_notice",reinterpret_cast<void*>(&NativeSkillPartNotice),"code");
+    Symbol(f,"room_random.client_user_info_vtable",userInfoVtable.data(),"data");
     Symbol(f,"room_random.client_normal_owner",reinterpret_cast<void*>(&NormalOwner),"code");
     Symbol(f,"room_random.client_normal_unit",reinterpret_cast<void*>(&NormalUnit),"code");
     Symbol(f,"room_random.client_normal_ship",reinterpret_cast<void*>(&NormalShip),"code");
@@ -1027,5 +1046,29 @@ int wmain(int argc,wchar_t** argv) {
     auto changedNotice=notice;TagNotice(changedNotice,43,12);changedNotice[0x12+8]^=1;
     dispatch(dispatcher.data(),0,0,0,0x0861,changedNotice.data());Construct(start.data()+0x20,frozen[0].data(),1);
     Check(lastConstruction==original,"a later loadout notice invalidates previous construction authority");
+    std::array<uint8_t,0x20> userInfo{};std::array<uint8_t,0xEA> userInfoAck{};
+    Put<void*>(userInfo.data(),0,userInfoVtable.data());Put<uint16_t>(userInfo.data(),0x18,0x16);
+    Put<uint16_t>(userInfoAck.data(),0,0x05C1);
+    Put<uint32_t>(profile.data(),0x138,1001);
+    Put<uint64_t>(profile.data(),0x1B1,0x100000001ULL);Put<uint32_t>(profile.data(),0x1FB,765432);
+    Put<uint64_t>(userInfoAck.data(),0x59,0x200000001ULL);
+    Check(NativeUserInfoBegin(userInfo.data(),nullptr)==41 && GetLastError()==0x6A51,
+          "native profile refresh preserves its result and last error");
+    NativeSkillPartNotice(userInfo.data(),nullptr,userInfoAck.data());
+    Check(nativeSkillPartCalls==1 && nativeSkillPartShown==(enabled?0:1) && GetLastError()==0x6A52,
+          "real DLL prevents cross-instance false consumption while the native notice helper still runs once");
+    const int shownBefore=nativeSkillPartShown;
+    Put<uint64_t>(profile.data(),0x1B1,0x300000001ULL);
+    Put<uint64_t>(userInfoAck.data(),0x59,0x300000001ULL);
+    NativeUserInfoBegin(userInfo.data(),nullptr);
+    NativeSkillPartNotice(userInfo.data(),nullptr,userInfoAck.data());
+    Check(nativeSkillPartShown==shownBefore+1,
+          "real consumption on the same inventory instance retains the original notice");
+    NativeUserInfoBegin(userInfo.data(),nullptr);
+    Put<uint32_t>(profile.data(),0x138,1002);
+    Put<uint64_t>(userInfoAck.data(),0x59,0x400000001ULL);
+    NativeSkillPartNotice(userInfo.data(),nullptr,userInfoAck.data());
+    Check(nativeSkillPartShown==shownBefore+2,
+          "an account generation change cannot silence a native notice");
     std::printf("%s CLIENT START-STATE RUNTIME CHECKS\n",failures?"FAILED":"PASSED");return failures?1:0;
 }

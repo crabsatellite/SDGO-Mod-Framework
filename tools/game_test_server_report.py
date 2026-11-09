@@ -257,6 +257,39 @@ def evaluate_mission_behavior(metadata: dict, paths: list[Path]) -> dict:
     }
 
 
+ROOM_SYSTEM_IDS = {'oc': 1, 'g1': 2, 'g2': 0}
+
+
+def room_system_errors(battle: dict, system: str, uid: int) -> list[str]:
+    """Checks the OC Battle Mod's decisions for the play unit in one room-switch battle."""
+    title = battle.get('title')
+    decisions = [d for d in battle.get('oc_room') or [] if isinstance(d, dict) and d.get('uid') == uid]
+    if not decisions:
+        return [f'room {title!r}: the OC Battle Mod reported no stat build for unit {uid}']
+    errors = []
+    for decision in decisions:
+        native = decision.get('native_skills')
+        applied = decision.get('battle_skills')
+        if (decision.get('system') != ROOM_SYSTEM_IDS[system] or not isinstance(native, list) or
+                not isinstance(applied, list) or len(native) != 4 or len(applied) != 4):
+            errors.append(f'room {title!r}: unit {uid} was built as system {decision.get("system")}, expected {system}')
+            continue
+        if system == 'oc' and (any(applied) or decision.get('oc_applied') != 1):
+            errors.append(f'room {title!r}: the OC room kept custom skills {applied} or skipped the OC gains')
+        if system == 'g1' and (not any(applied) or decision.get('g1_profile') != 1):
+            errors.append(f'room {title!r}: the G改 1.0 room did not swap in the unit\'s G改 1.0 loadout ({native} -> {applied})')
+        if system == 'g2' and (not any(native) or applied != native or decision.get('oc_applied')):
+            errors.append(f'room {title!r}: the G改 2.0 room changed the custom skills ({native} -> {applied})')
+    # Later forms of a transformable unit start from the first form's battle
+    # unit, so the swap shows on the first build; every form plays the same set.
+    if system == 'g1' and not errors:
+        first = min(decisions, key=lambda d: d.get('sequence', 0))
+        if first.get('native_skills') == first.get('battle_skills') or any(
+                d.get('battle_skills') != first.get('battle_skills') for d in decisions):
+            errors.append(f'room {title!r}: the G改 1.0 room kept the record custom skills {first.get("native_skills")}')
+    return errors
+
+
 def evaluate(metadata: dict, paths: list[Path], pilot: int, *, expected_humans: list[int] | None = None,
              expected_rounds: int | None = None) -> dict:
     integer(pilot,'expected host pilot',1)
@@ -266,8 +299,11 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int, *, expected_humans: 
             raise ValueError('mission behavior server reports do not accept PvP overrides')
         return evaluate_mission_behavior(metadata,paths)
     rounds=2 if plan.get('same_room_rematch') else 1
+    room_switch=bool(plan.get('room_switch'))
+    titles=game_test.room_switch_titles(plan['room_title']) if room_switch else (plan['room_title'],)
+    if room_switch:rounds=len(titles)
     if expected_rounds is not None:
-        if type(expected_rounds) is not int or expected_rounds not in (1,2) or expected_rounds<rounds:
+        if room_switch or type(expected_rounds) is not int or expected_rounds not in (1,2) or expected_rounds<rounds:
             raise ValueError('expected_rounds must be one or two complete battles and cannot reduce sealed scope')
         rounds=expected_rounds
     session=metadata.get('server_session')
@@ -312,7 +348,7 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int, *, expected_humans: 
             for event in records[1:]:
                 # A reusable server keeps earlier rooms in its append-only
                 # native log. The current sealed title contains a fresh nonce.
-                if session and event.get('title')!=plan['room_title']:continue
+                if session and event.get('title') not in titles:continue
                 name=event.get('event')
                 if damage_diagnostic(event,ready,pilot,modes):continue
                 if name not in STEPS:raise ValueError('unexpected or failed native observer event')
@@ -323,15 +359,17 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int, *, expected_humans: 
                 last_sequence=sequence;last_qpc=qpc
                 mode=integer(event.get('mode'),'native room mode',1)
                 cookie=integer(event.get('room_cookie'),'native room cookie',1)
-                if (mode not in modes or event.get('title')!=plan['room_title'] or
+                if (mode not in modes or event.get('title') not in titles or
                     integer(event.get('host_pilot_id'),'room host',1)!=pilot or integer(event.get('status_code'),'native result')!=0):
                     raise ValueError('native room identity, result or mode does not match plan')
                 if name==STEPS[0]:
                     if cookie in current and current[cookie]['phase']!=4:raise ValueError('room identity reused before battle ended')
-                    battle={'mode':mode,'room_cookie':cookie,'pid':pid,'phase':0,'events':[], 'qpc_begin':qpc}
+                    battle={'mode':mode,'room_cookie':cookie,'pid':pid,'phase':0,'events':[], 'qpc_begin':qpc,
+                            'title':event.get('title')}
                     current[cookie]=battle;battles.append(battle)
                 battle=current.get(cookie)
-                if not battle or battle['mode']!=mode or battle['phase']>=4 or STEPS[battle['phase']]!=name:
+                if (not battle or battle['mode']!=mode or battle['phase']>=4 or STEPS[battle['phase']]!=name or
+                        battle['title']!=event.get('title')):
                     raise ValueError('native battle lifecycle is missing a step or out of order')
                 ids=participants(event,pilot,expected_ai,name!=STEPS[0],plan.get('ai_allies'),
                     expected_humans,plan.get('ai_teams')=='coop',layout=layout)
@@ -347,6 +385,7 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int, *, expected_humans: 
                 if name==STEPS[3]:
                     battle['qpc_end']=qpc
                     battle['scores']=[integer(event.get(f'score_team_{team}'),'final native score') for team in (1,2)]
+                    if room_switch:battle['oc_room']=event.get('oc_room')
         except (OSError,UnicodeError,json.JSONDecodeError,ValueError,TypeError,KeyError) as error:
             errors.append(f'{path}: {error}')
     for mode in modes:
@@ -354,6 +393,16 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int, *, expected_humans: 
         expected=rounds
         if len(matches)!=expected or any(b['phase']!=4 for b in matches):
             errors.append(f'mode {mode} requires exactly {expected} complete four-event native battle lifecycle(s)')
+    if room_switch:
+        # One battle per room system, played in the sealed order.
+        played=sorted((b for b in battles if b['phase']==4),key=lambda b:b['qpc_begin'])
+        if [b['title'] for b in played]!=list(titles):
+            errors.append('room-switch battles did not play the sealed OC, G改 1.0 and G改 2.0 rooms in order')
+        else:
+            uid=integer(plan.get('play_unit_uid'),'room-switch play unit',1)
+            for battle,system in zip(played,game_test.ROOM_SWITCH_SYSTEMS):
+                battle['room_system']=system
+                errors.extend(room_system_errors(battle,system,uid))
     return {'schema':1,'run_id':run_id,'scope':'passive_native_server_lifecycle',
             'status':'fail' if errors else 'pass','expected_host_pilot_id':pilot,
             'expected_human_pilot_ids':sorted(human_roster(pilot,expected_humans)),

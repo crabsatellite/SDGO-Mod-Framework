@@ -2,6 +2,8 @@
 
 [简体中文](mod-manager.zh-CN.md) · [Back to the feature index](../README.md)
 
+![Check, download and install programme updates](manager-updates-demo.webp)
+
 Manager installs programs from the official or imported Mod source, and shared configuration plus custom content from the owner source. Start with a compatible original client, install Manager, then import the owner profile. See [the installation flow](owner-updates.md). The game keeps its normal launch entry.
 Bound player clients opened through `GOnline.exe` show progress and synchronize the official baseline, optional owner patches and content locked by one configuration. See [owner programme packages](owner-programmes.md) and [updates before launch](owner-updates.md#updates-before-launch).
 

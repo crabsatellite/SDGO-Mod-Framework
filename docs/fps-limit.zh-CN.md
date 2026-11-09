@@ -8,6 +8,10 @@
 
 [English](fps-limit.md)
 
+在 Manager 修改 FPS 上限，保存后按界面提示重启游戏。
+
+![修改并保存 FPS 设置](mod-manager-demo.webp)
+
 | Mod | 安装位置 | 作用 |
 |---|---|---|
 | `fps_limit` | 客户端 | 独立设置渲染上限，游戏逻辑保持 60 Hz |

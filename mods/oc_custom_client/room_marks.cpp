@@ -139,7 +139,11 @@ bool Assign(HostString* item, const wchar_t* text, std::size_t length) noexcept 
 
 HostString* TitleItem(void* control) noexcept {
     __try {
-        if (!control || *static_cast<const void* const*>(control) != g_button_vtable) return nullptr;
+        // Room list rows are button subclasses: they share the button's text
+        // item getter (vtable +0x70), not its vtable.
+        if (!control) return nullptr;
+        const auto* vtable = *static_cast<void* const* const*>(control);
+        if (!vtable || vtable[0x70 / sizeof(void*)] != reinterpret_cast<void*>(g_text_item)) return nullptr;
         std::uintptr_t begin = 0, end = 0;
         std::memcpy(&begin, static_cast<std::uint8_t*>(control) + kItemsBegin, sizeof(begin));
         std::memcpy(&end, static_cast<std::uint8_t*>(control) + kItemsEnd, sizeof(end));
