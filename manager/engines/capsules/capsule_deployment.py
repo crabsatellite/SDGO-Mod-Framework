@@ -48,6 +48,9 @@ CAPSULE_SYMBOLS = (
     "capsule.main.wfopen",
     "capsule.grid_verify_checksum",
     "capsule.grid_load_all",
+    "capsule.source_formatter",
+    "capsule.source_format_return",
+    "capsule.localization_context",
 )
 SUPPLEMENTAL_COMPILED_FILES = (
     "runtime.ini",

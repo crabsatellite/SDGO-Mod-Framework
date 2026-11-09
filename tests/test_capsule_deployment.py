@@ -116,11 +116,13 @@ def symbol_fragment():
         "capsule.main.wfopen": ("0x00887D78", "8B FF 55"),
         "capsule.grid_verify_checksum": ("0x00014980", "55 8B EC"),
         "capsule.grid_load_all": ("0x00031E50", "56 8B F1"),
+        "capsule.source_formatter": ("0x002EC6D0", "55 8B EC"),
+        "capsule.source_format_return": ("0x001EB640", "83 C4 10"),
     }
     return "\n".join(
         f"[{name}]\nkind=code\nrva={rva}\nexpect={expect}\n"
         for name, (rva, expect) in sections.items()
-    )
+    ) + "\n[capsule.localization_context]\nkind=data\nrva=0x00C05614\n"
 
 
 def make_stage(root):
