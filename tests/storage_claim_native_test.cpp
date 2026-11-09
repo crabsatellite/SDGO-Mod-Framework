@@ -89,20 +89,14 @@ int main() {
     using namespace fixture;
     fixture::Setup();auto* button=Pointer(L"ModStorageClaimAll");assert(storage_fixture::Get<uint8_t>(button,0x168)==0);
     assert(children.at(L"ModStorageClaimAll")->skins.size()==3 && storage_fixture::Get<float>(button,0x148)==291.0f && storage_fixture::Get<float>(button,0x14C)==64.0f);
-    // The status takes the native expiry notice's place while it has something to say.
-    assert(storage_fixture::Get<float>(Pointer(L"ModStorageClaimStatus"),0x148)==35.0f &&
-           storage_fixture::Get<float>(Pointer(L"ModStorageClaimStatus"),0x14C)==448.0f &&
-           storage_fixture::Get<int>(Pointer(L"ModStorageClaimStatus"),0x154)==380);
-    assert(storage_fixture::Get<uint8_t>(Pointer(L"ModStorageClaimStatus"),0x162)==0 &&
-           storage_fixture::Get<uint8_t>(Pointer(L"ExpiryNotice"),0x162)==1); // idle: native notice only
-    Click();assert(storage_fixture::Get<uint8_t>(Pointer(L"ModStorageClaimStatus"),0x162)==1 &&
-                   storage_fixture::Get<uint8_t>(Pointer(L"ExpiryNotice"),0x162)==0);
-    g_ui.Display(L"一键领取",L"");assert(storage_fixture::Get<uint8_t>(Pointer(L"ExpiryNotice"),0x162)==1);
-    Click();g_ui.Unpublish();assert(storage_fixture::Get<uint8_t>(Pointer(L"ExpiryNotice"),0x162)==1);fixture::Setup();
+    // No extra text line: the claim button's own caption carries the state.
+    assert(children.find(L"ModStorageClaimStatus")==children.end());
+    Click();assert(children.at(L"ModStorageClaimAll")->caption==L"确认领取");fixture::Setup();
     // One confirmation: three page reads, then every preflight and claim back to
     // back with one request outstanding (the World refuses overlapping requests
     // of an account), all twelve grants through the stock handler, one refresh.
     Start();Run();assert(g_batch.phase()==Phase::Complete && grants==12 && rewards.empty() && nativeChecks==0 && maxPending==1);
+    assert(children.at(L"ModStorageClaimAll")->caption==L"已领取 12 项");
     assert(sends==3+12+12+1 && g_batch.collected()==12);
     // After a grant the next request waits for the game's own follow-up traffic to go quiet.
     fixture::Setup();g_settleMs=80;Start();DeliverUntil([]{return g_batch.Waiting(Operation::Claim);});Deliver();

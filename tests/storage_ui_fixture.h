@@ -54,7 +54,6 @@ inline void Setup() {
     auto& a=Create(L"TabRadio0",12,35,64,124,23);auto& b=Create(L"TabRadio1",12,158,64,124,23);
     for(size_t i=0;i<4;++i)AddSkin(a,L"synthetic/storage-tab-"+std::to_wstring(i),0,0,0);
     auto& close=Create(L"CloseBtn1",4,120,484,220,31);auto& cross=Create(L"CloseBtn0",4,413,14,22,23);
-    auto& notice=Create(L"ExpiryNotice",3,35,448,380,14);Put(service.data(),0x98,notice.memory.data());
     Put(service.data(),0x70,dialog.data());Put(service.data(),0xB4,a.memory.data());Put(service.data(),0xB8,b.memory.data());
     Put(service.data(),0xA0,close.memory.data());Put(service.data(),0x9C,cross.memory.data());Put<uint8_t>(service.data(),0x190,1);
 }

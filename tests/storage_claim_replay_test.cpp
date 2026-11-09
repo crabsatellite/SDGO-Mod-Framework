@@ -35,7 +35,7 @@ int wmain(int argc,wchar_t** argv) {
         auto* control=storage_fixture::Pointer(L"ModStorageClaimAll");std::array<void*,34> table{};table[24]=reinterpret_cast<void*>(&Hit);storage_fixture::Put(control,0,table.data());
         auto nativeMouse=mouse.Function<Mouse>();auto nativeUpdate=update.Function<Update>();
         nativeMouse(control,0x200,4,4,0,0);nativeUpdate(control);nativeMouse(control,0x201,4,4,0,0);nativeUpdate(control);nativeMouse(control,0x202,4,4,0,0);assert(clicks==1);
-        ui.Display(L"等待回应",L"最后一笔仍在等待回执。",false);nativeMouse(control,0x201,4,4,0,0);nativeUpdate(control);nativeMouse(control,0x202,4,4,0,0);assert(clicks==1);
+        ui.Display(L"结果待确认",false);nativeMouse(control,0x201,4,4,0,0);nativeUpdate(control);nativeMouse(control,0x202,4,4,0,0);assert(clicks==1);
         // Execute the native storage dispatcher with synthetic handler sinks.
         // This checks the real five-stack-argument ABI and success/error routes.
         Snippet dispatch(bytes,0x57F570,768,"ee3582d8812c8782d93706b5b1e117e920bbf07918e0e726364d0aa7ce0f0d1f");

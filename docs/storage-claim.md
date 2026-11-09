@@ -8,7 +8,8 @@ Select the items or gifts tab, click the new button, then **确认领取** once 
 the entire batch. Timed rewards may begin their validity period when claimed.
 The whole tab is claimed in one go: the Mod works through it page by page,
 claiming every reward on a page back to back before reading the next five.
-Progress and the result appear at the bottom. Click **停止领取** to stop
+Progress and the result appear on that button itself (for example 领取中 3/12,
+已领取 12 项); click it while claiming to stop
 subsequent requests. Already submitted claims remain subject to the server's
 final result.
 
@@ -19,8 +20,9 @@ five), so dozens of rewards usually finish within seconds. Claiming only rewards
 of the page the game has loaded keeps the game's own grant handler from
 reloading the list and showing empty error boxes. Stable IDs distinguish separate copies of the same item; gift
 letters already claimed are skipped. A reward the server refuses (for example a
-full hangar) is skipped and counted while the rest is claimed; the summary shows
-the count and server code instead of one native failure dialog per reward.
+full hangar) is skipped and counted while the rest is claimed; the button then
+shows 已领 N · 拒 K (or 待选 K for choice gifts) instead of one native failure
+dialog per reward.
 Choice-required gifts are left for individual native handling. Disconnect, page
 closure and timeout stop the batch. Unconfirmed claims are never retried
 automatically.
@@ -37,7 +39,7 @@ preserving the original controls. Developer settings are `ReplyTimeoutMs=10000` 
 it stop with a notice.
 
 The 450×540 native `1396.uir` layout places the new 124×23 button at (291,64)
-and the status line at y=467 between the expiry warning and Close (shown only while confirming or claiming), clear of existing rows, pagination, expiration
+and lets its caption carry progress and results, adding no text line, clear of existing rows, pagination, expiration
 warning and close controls. The Mod uses host-allocated skins and controls.
 Each preflight and claim is a self-contained stored-procedure call that does not
 depend on a preceding preflight, so requests can be submitted back to back. The

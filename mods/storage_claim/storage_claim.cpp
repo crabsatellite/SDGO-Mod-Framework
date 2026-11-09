@@ -123,43 +123,44 @@ bool SendUnsafe(const Request& request,const uint8_t* data,int size) {
     return g_send(session,Read<int>(session,0x14),data,size,0)!=0;
 }
 bool Send(const Request& request,const std::vector<uint8_t>& bytes){__try{return SendUnsafe(request,bytes.data(),static_cast<int>(bytes.size()));}__except(EXCEPTION_EXECUTE_HANDLER){return false;}}
-std::wstring Summary() {
-    std::wstring text=L"已领取 "+std::to_wstring(g_batch.completed())+L" 项";
-    if(g_batch.skipped())text+=L"，服务器拒绝 "+std::to_wstring(g_batch.skipped())+L" 项（"+std::to_wstring(g_batch.error())+L"）";
-    if(g_batch.manual())text+=L"，"+std::to_wstring(g_batch.manual())+L" 个礼包需手动选择";
-    return text;
+// Short enough for the 124-pixel tab-row button that carries the whole state.
+std::wstring Claimed(){return std::to_wstring(g_batch.completed());}
+std::wstring Result() {
+    const auto left=g_batch.skipped()+g_batch.manual();
+    if(!g_batch.completed() && !left)return L"无可领取";
+    if(!left)return L"已领取 "+Claimed()+L" 项";
+    if(!g_batch.manual())return L"已领 "+Claimed()+L" · 拒 "+std::to_wstring(g_batch.skipped());
+    if(!g_batch.skipped())return L"已领 "+Claimed()+L" · 待选 "+std::to_wstring(g_batch.manual());
+    return L"已领 "+Claimed()+L" · 余 "+std::to_wstring(left);
 }
 void DisplayState() {
-    std::wstring text;
     if(g_batch.Busy()) {
         const auto phase=g_batch.phase();
-        if(phase==Phase::NeedList || phase==Phase::List)
-            text=g_batch.completed()?L"正在刷新列表；"+Summary()+L"。":L"正在读取第 "+std::to_wstring(g_batch.page()+1)+L" 页。";
-        else if(phase==Phase::NeedCheck || phase==Phase::Check)text=L"正在一次领取 "+std::to_wstring(g_batch.collected())+L" 项：服务器预检中。";
-        else text=L"正在一次领取 "+std::to_wstring(g_batch.collected())+L" 项：已到账 "+std::to_wstring(g_batch.completed())+L" 项。";
-        g_ui.Display(L"停止领取",text);return;
+        if((phase==Phase::NeedList || phase==Phase::List) && !g_batch.completed())g_ui.Display(L"读取中…");
+        else g_ui.Display(L"领取中 "+Claimed()+L"/"+std::to_wstring(g_batch.collected()));
+        return;
     }
     if(g_batch.Outstanding()) {
-        if(g_batch.phase()==Phase::Unknown)text=L"领取结果未能全部确认，请重新登录核对；不会重试。";
-        else if(g_batch.reason()==Reason::Timeout || g_batch.reason()==Reason::Disconnected)text=L"回应状态未能确认，请重新登录后再领取。";
-        else text=L"正在停止；等待已发出的请求回应，不再追加领取。";
-        g_ui.Display(L"等待回应",text,false);return;
+        g_ui.Display(g_batch.phase()==Phase::Unknown?L"结果待确认":
+                     g_batch.reason()==Reason::Timeout || g_batch.reason()==Reason::Disconnected?L"回应未确认":L"停止中…",false);
+        return;
     }
-    if(g_batch.phase()==Phase::Complete)
-        text=g_batch.completed()||g_batch.skipped()||g_batch.manual()?L"已完成："+Summary()+L"。":L"当前页签没有可领取的奖品。";
+    if(g_armed){g_ui.Display(L"确认领取");return;}
+    std::wstring caption=L"一键领取";
+    if(g_batch.phase()==Phase::Complete)caption=Result();
     else if(g_batch.phase()==Phase::Stopped || g_batch.phase()==Phase::Unknown) {
         switch(g_batch.reason()) {
-        case Reason::Limit:text=L"达到本次领取上限，可再次领取；"+Summary()+L"。";break;
-        case Reason::PageLimit:text=L"礼物超出原生分页范围，请先清理已领取的信件；"+Summary()+L"。";break;
-        case Reason::Changed:text=L"列表或页签已变化，已停止；"+Summary()+L"，请重新确认。";break;
-        case Reason::Timeout:text=L"回应超时，已停止；"+Summary()+L"，请重新打开保管库核对。";break;
-        case Reason::Disconnected:text=L"连接或页面已变化，已停止；"+Summary()+L"，请核对已领物品。";break;
-        case Reason::SendFailed:text=L"请求未能确认，已停止；"+Summary()+L"，请核对后重试。";break;
-        case Reason::Rejected:text=L"服务器拒绝读取列表（"+std::to_wstring(g_error)+L"）；"+Summary()+L"。";break;
-        default:text=L"已停止；"+Summary()+L"。";break;
+        case Reason::Limit:caption=L"已领 "+Claimed()+L" · 达上限";break;
+        case Reason::PageLimit:caption=L"已领 "+Claimed()+L" · 页数过多";break;
+        case Reason::Changed:caption=L"列表有变化";break;
+        case Reason::Timeout:caption=L"回应超时";break;
+        case Reason::Disconnected:caption=L"连接中断";break;
+        case Reason::SendFailed:caption=L"发送失败";break;
+        case Reason::Rejected:caption=L"读取被拒";break;
+        default:caption=L"已停 · 领 "+Claimed()+L" 项";break;
         }
-    }else text=L"";
-    g_ui.Display(g_armed?L"确认领取":L"一键领取",g_armed?L"再次点击确认：一次领取当前页签所有奖品。":text);
+    }
+    g_ui.Display(caption);
 }
 void PumpUnsafe() {
     if(GetCurrentThreadId()!=g_thread || g_pumping)return;
@@ -230,7 +231,7 @@ uint32_t HandleUI(void* handler,void* self,uint32_t event,uintptr_t second,void*
     if(g_extensions.UiEvent(handler,self,event,second,control,&extensionResult))return extensionResult;
     if(self!=g_service && event==0x101 && g_ui.Click(control))g_api->Log(g_mod,SDGO_LOG_WARN,"storage button receiver does not match attached page");
     if(self==g_service && event==0x101 && g_ui.Click(control) && !Available()) {
-        g_ui.Display(L"一键领取",L"当前不是可操作的大厅状态，请返回大厅后重试。");
+        g_ui.Display(L"回大厅领取");
         g_api->Log(g_mod,SDGO_LOG_WARN,"storage claim click ignored: native menu state unavailable");
         return 0;
     }
@@ -239,13 +240,13 @@ uint32_t HandleUI(void* handler,void* self,uint32_t event,uintptr_t second,void*
             g_api->Log(g_mod,SDGO_LOG_INFO,"storage claim button received; app state %u, armed %d",sdgo::inventory::AppState(g_app()),g_armed?1:0);
             if(CurrentTab()==Tab::Gifts && g_extensions.BlockClaimAll(self)) {
                 g_armed=false;
-                g_ui.Display(L"一键领取",L"当前礼物包含需要单独接受或退回的机体，请先处理。");
+                g_ui.Display(L"先处理赠礼");
                 return 0;
             }
             if(g_batch.Busy()){g_batch.Stop(Reason::Cancelled);DisplayState();return 0;}
             if(g_batch.Outstanding()){DisplayState();return 0;}
             const auto session=Session();const auto tab=CurrentTab();
-            if(!session || !Read<uint8_t>(self,0x190) || g_busy(self)) {g_ui.Display(L"一键领取",L"原生操作仍在处理，请稍候再领取。");return 0;}
+            if(!session || !Read<uint8_t>(self,0x190) || g_busy(self)) {g_ui.Display(L"请稍候");return 0;}
             if(!g_armed || g_armTab!=tab || g_armSession!=session) {
                 g_armed=true;g_armTab=tab;g_armSession=session;DisplayState();return 0;
             }

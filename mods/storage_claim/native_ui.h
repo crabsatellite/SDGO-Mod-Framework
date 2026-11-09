@@ -27,12 +27,13 @@ public:
     bool Click(void* pointer)const;
     bool Visible()const;
     void* Button()const{return button_;}
-    void Display(const std::wstring& caption,const std::wstring& status,bool enabled=true);
+    // The button caption carries the whole state; the page gets no extra text line.
+    void Display(const std::wstring& caption,bool enabled=true);
 private:
     Bindings bindings_;void* service_=nullptr;void* dialog_=nullptr;void* identity_=nullptr;
-    void* button_=nullptr;void* status_=nullptr;void* notice_=nullptr;bool noticeHidden_=false;
+    void* button_=nullptr;
     uint32_t font_=1,color_=0xFF9CB8C8,shadow_=0xFF000000;
     int width_=0;bool published_=false;
-    std::wstring caption_,message_;
+    std::wstring caption_;
 };
 }
