@@ -71,6 +71,7 @@ void ObserveOptionalDialogue(const SdgoGameTestContextV1* context,bool finish=fa
 #include "battle_ai_behavior_probe.h"
 #include "battle_ai_performance_probe.h"
 #include "native_death_probe.h"
+#include "native_ai_lives_probe.h"
 #include "native_player_combat_probe.h"
 #include "review_camera.h"
 #include "native_data_guard_probe.h"
@@ -224,6 +225,7 @@ SdgoPvpAiClientGetScoreboardStatusV1Fn getScoreboardStatus;
 ScoreboardActions scoreboardInput;
 BattleAiBehaviorProbe battleAiBehavior;
 NativeDeathProbe nativeDeathProbe;
+NativeAiLivesProbe nativeAiLives;
 NativePlayerCombatProbe nativePlayerCombat;
 uint32_t scoreboardCombatSequence = 0, scoreboardCombatChanges = 0;
 SdgoPvpAiClientScoreboardStatusV1 scoreboardLast{};
@@ -1381,6 +1383,7 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
         SdgoPvpAiClientScoreboardStatusV1 roster{};
         roster.size = sizeof(roster); roster.version = SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
         if (getScoreboardStatus && getScoreboardStatus(&roster) && roster.battle_start_sequence == activeBattleStartSequence) {
+            if (!nativeAiLives.Observe(context, live, roster, RequestedMode())) return SDGO_GAME_TEST_FAIL;
             if (scoreboardCombatSequence != activeBattleStartSequence) {
                 scoreboardCombatSequence = activeBattleStartSequence; scoreboardCombatChanges = 0; scoreboardLast = {};
             }
@@ -1426,6 +1429,7 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
         context->Assert(1, "Lua observation stayed available with zero errors through the entire real battle");
         battleAiBehavior.Finish(context);
         nativeDeathProbe.Finish(context);
+        nativeAiLives.Finish(context);
         ObserveOptionalDialogue(context,true);
         nativePlayerCombat.Finish(context,scoreboardInput);
         const bool scoreboardCombat=scoreboardCombatSequence == activeBattleStartSequence && scoreboardCombatChanges > 0;
@@ -5863,6 +5867,7 @@ SDGO_MOD_ENTRY {
         sdgo_test::runId,sdgo_test::directory+L"\\native-record-lifecycle.json",nativeRecordLifecycleIds))return 0;
     sdgo_test::nativeShutdownAfterSuccess=!nativeRecordLifecycleIds.empty();
     if (!nativeDeathProbe.Install(api,mod)) return 0;
+    if (!nativeAiLives.Install(api,mod)) return 0;
     if (!nativePlayerCombat.Install(api,mod)) return 0;
     reviewCamera.Install(api,mod);
     if (!apsalus_probe::packetObserver.Install(api,mod)) return 0;
