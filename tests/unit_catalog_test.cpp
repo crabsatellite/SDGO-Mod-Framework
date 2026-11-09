@@ -98,10 +98,9 @@ Entry MakeRecord(uint32_t kind, uint32_t id) {
         Put32(result.bytes.data() + kUnitTransformOffset, 0);
         Put32(result.bytes.data() + kUnitWeaponOffsets[0], 61165);
     } else if (kind == kWeaponType) {
+        // A native weapon row has one text field, its name. The bytes after it are
+        // numeric data (special feature at 132) and effect paths (from 164).
         PutUtf16(result.bytes.data() + 5, 100, "Fixture Weapon Name");
-        PutUtf16(result.bytes.data() + 105, 100, "Fixture Weapon Detail");
-        PutUtf16(result.bytes.data() + 205, 100,
-                 "Fixture Weapon\\nDisplay");
     } else if (kind == kSkillType) {
         PutUtf16(result.bytes.data()+5,100,"Fixture Skill");
         PutUtf16(result.bytes.data()+0x213,600,
@@ -792,8 +791,7 @@ int ParserFixture() {
              {L"Fixture Unit Name", L"Fixture Unit Detail",
               L"Fixture Unit\\nDisplay\\tMode",
               L"Fixture Unit\nDisplay\tMode", L"Fixture Weapon Name",
-              L"Fixture Weapon Detail", L"Fixture Weapon\\nDisplay",
-              L"Fixture Weapon\nDisplay", L"Fixture Skill",
+              L"Fixture Skill",
               L"Fixture Skill\\nDescription\\tTabbed",
               L"Fixture Skill\nDescription\tTabbed",
               L"Fixture Item Category"}) {
