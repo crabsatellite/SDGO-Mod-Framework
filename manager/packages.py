@@ -36,6 +36,9 @@ def import_client(workspace, host_id, encoded):
                 if len(encoded)>224*1024*1024:raise ValueError('客户端配置包过大')
                 from owner.units.deployment import install_package
                 return {**install_package(root,raw),'state':workspace.public()}
+            if manifest.get('module')=='map_catalog':
+                from owner.maps.deployment import install_package as install_maps
+                return {**install_maps(root,raw),'state':workspace.public()}
             if manifest.get('module')=='operator_catalog':
                 from .engines.operators.install_package import install_client
                 return install_client(workspace,host,raw)
