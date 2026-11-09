@@ -920,6 +920,9 @@ void OriginalUi::Render(const EntryView& entry, const OverView& over, const Info
             SetState(reset->pointer, true, over.reset_enabled && !confirm.visible);
         }
         if (auto* ex = Find(window_over, L"ExBtn")) SetState(ex->pointer, true, over.ex_enabled && !confirm.visible);
+        // The layout's light sheet (BackIcon1, sprs\8536) lit a fixed corner
+        // over the chart; the OC chart lights only the Over gain (radar.h).
+        if (auto* sheet = Find(window_over, L"BackIcon1")) ShowIcon(sheet->pointer, false);
     }
     if (dialogs_[window_over]) Put<std::uint8_t>(dialogs_[window_over], kVisible, over.visible ? 1 : 0);
     shown_[window_over] = over.visible;
