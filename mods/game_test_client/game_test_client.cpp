@@ -599,8 +599,12 @@ bool LoadPlan() {
         !wcscmp(missionProfile,L"oc") ? 1u :
         !wcscmp(missionProfile,L"gco") ? 2u : 0u;
     if(missionProfile[0] || missionGameModeId) {
-        if(!missionBehaviorProfile || missionMode!=5 ||
-           (missionGameModeId!=88006 && missionGameModeId!=88009))
+        // Any listed mission without a behavior profile (e.g. an imported one):
+        // the create dialog must select exactly this GameModeID.
+        const bool importedMission=!missionProfile[0] &&
+            missionMode==(missionGameModeId<=0x313990u ? 5u : 8u);
+        if(!importedMission && (!missionBehaviorProfile || missionMode!=5 ||
+           (missionGameModeId!=88006 && missionGameModeId!=88009)))
             return false;
     }
     wchar_t playUid[32]{};
@@ -4965,7 +4969,21 @@ int __cdecl CreateMission(const SdgoGameTestContextV1* context) {
             "the real mission create dialog and accepted room retain the sealed exact GameModeID");
     return SDGO_GAME_TEST_PASS;
 }
+// Imported missions: review frames of the real backbuffer (opening, banners, speech, ending) every
+// 2.5 s while the battle scene is active, from the start command to the natural end.
+void CaptureImportedReviewFrame(const SdgoGameTestContextV1* context) {
+    static uint64_t lastFrame=0;static uint32_t frames=0;
+    if(!missionGameModeId || missionBehaviorProfile || missionRespawns)return;
+    const uint64_t now=GetTickCount64();
+    if(actions.OnboardingState().native_app_state!=22 || frames>=240 || now-lastFrame<2500)return;
+    const std::wstring folder=sdgo_test::directory+L"\\import-frames";
+    CreateDirectoryW(folder.c_str(),nullptr);
+    wchar_t name[32];swprintf_s(name,L"\\frame-%04u.bmp",frames);
+    if(quietGraphics.CaptureNextFrame((folder+name).c_str())){++frames;lastFrame=now;}
+    (void)context;
+}
 int __cdecl StartMission(const SdgoGameTestContextV1* context) {
+    CaptureImportedReviewFrame(context);
     const auto result=mission.Start();const auto pending=MissionProgress(context,result);
     if(pending==SDGO_GAME_TEST_FAIL || result!=MissionFlowActions::kBattleStartConsumed)return pending;
     const auto s=mission.PollSnapshot();
@@ -4984,6 +5002,7 @@ bool MissionSnapshot(SdgoMissionAiClientSnapshotV1& s) {
     s={};s.size=sizeof(s);s.version=SDGO_MISSION_AI_CLIENT_OBSERVER_VERSION;return getMissionSnapshot && getMissionSnapshot(&s)!=0;
 }
 int __cdecl SpawnMissionAi(const SdgoGameTestContextV1* context) {
+    CaptureImportedReviewFrame(context);
     SdgoMissionAiClientSnapshotV1 s{};if(!MissionSnapshot(s) || !s.active)return SDGO_GAME_TEST_WAIT;
     if(s.room_mode!=missionMode || !s.exact_plain_mission || !s.room_records_valid || s.lua_pcall_error_count || s.native_exception_count) {
         context->Assert(0,"the exact current native mission and whole-generation Lua/native observer remain valid");return SDGO_GAME_TEST_FAIL;
@@ -4998,6 +5017,7 @@ int __cdecl SpawnMissionAi(const SdgoGameTestContextV1* context) {
     return SDGO_GAME_TEST_PASS;
 }
 int __cdecl ObserveMissionCombat(const SdgoGameTestContextV1* context) {
+    CaptureImportedReviewFrame(context);
     SdgoMissionAiClientSnapshotV1 s{};
     const bool missionSnapshotAvailable=MissionSnapshot(s);
     const auto player=actions.OnboardingState();
@@ -5297,6 +5317,43 @@ int __cdecl ObserveMissionRespawns(const SdgoGameTestContextV1* context) {
     context->Assert(0,"same-run respawn probe identifies a real wingman of this exact mission");return SDGO_GAME_TEST_FAIL;
 }
 const SdgoGameTestCaseV1 missionRespawnCase={"mission.respawn",360000,&ObserveMissionRespawns};
+// Imported missions: after the bounded combat smoke, follow the genuine mission to its natural
+// end (all phases, cutscenes and the native result) and the return to the wait room.
+int __cdecl ObserveImportedMissionFlow(const SdgoGameTestContextV1* context) {
+    static bool ended=false;
+    static uint64_t lastProgress=0;
+    SdgoMissionAiClientSnapshotV1 s{};
+    const bool snapshot=MissionSnapshot(s);
+    if(snapshot && s.active && (s.lua_pcall_error_count || s.native_exception_count)) {
+        char failure[160];sprintf_s(failure,"imported mission error lua=%u exception=%u",s.lua_pcall_error_count,s.native_exception_count);
+        context->Observe(failure);
+        context->Assert(0,"the imported mission runs to its end without Lua errors or native exceptions");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    const auto player=actions.OnboardingState();
+    const auto end=rooms.BattleEndState();
+    CaptureImportedReviewFrame(context);
+    if(!ended) {
+        if(end.sequence<=observedMissionEndBaseline || !end.original_handler_completed) {
+            if(context->elapsed_ms-lastProgress>=30000) {
+                lastProgress=context->elapsed_ms;
+                char progress[160];sprintf_s(progress,"imported mission running elapsed=%llu app=%u active=%u",
+                    static_cast<unsigned long long>(context->elapsed_ms),player.native_app_state,snapshot?s.active:0u);
+                context->Observe(progress);
+            }
+            return SDGO_GAME_TEST_WAIT;
+        }
+        ended=true;
+        char message[160];sprintf_s(message,"imported mission natural end opcode=%04X result=%u app=%u",
+            end.reply_opcode,end.result_type,end.native_app_state);
+        context->Observe(message);
+        context->Assert(end.reply_opcode==0x0871,"the original client consumes the imported mission's genuine end reply");
+    }
+    if(player.native_app_state!=18)return SDGO_GAME_TEST_WAIT;
+    context->Observe("imported mission returned to the native wait room");
+    return SDGO_GAME_TEST_PASS;
+}
+const SdgoGameTestCaseV1 missionImportFlowCase={"mission.import_flow",1800000,&ObserveImportedMissionFlow};
 const SdgoGameTestCaseV1 collectionCases[]={
     {"pages.collection.preview",120000,&PreviewCollection},
     {"pages.collection.draw",120000,&DrawCollection},
@@ -5619,6 +5676,7 @@ void RegisterPlannedCases() {
                 plannedCases.end(),
                 std::begin(missionBehaviorCases),
                 std::end(missionBehaviorCases));
+        if(missionGameModeId && !missionBehaviorProfile && !missionRespawns)plannedCases.push_back(missionImportFlowCase);
         if(missionRespawns)plannedCases.push_back(missionRespawnCase);
         provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
     }
@@ -6049,7 +6107,7 @@ SDGO_MOD_ENTRY {
          (testOperatorFlow && !BindOperatorSession(api,mod)) ||
         (roomTitlesOnly && !roomTitles.Bind(api,mod,&actions)) ||
         (!missionMode && !rooms.Bind(api, mod, &actions, config)) ||
-        (missionRespawns && !rooms.BindBattleEndObserver(api,mod,&actions)) ||
+        ((missionRespawns || (missionGameModeId && !missionBehaviorProfile)) && !rooms.BindBattleEndObserver(api,mod,&actions)) ||
         !tutorial.Bind(api, mod, &actions) || !onboarding.Bind(api, mod, &actions))
         sdgo_test::Fail("normal-flow native request bindings or private account configuration are unavailable");
     if (friendsOnly) {

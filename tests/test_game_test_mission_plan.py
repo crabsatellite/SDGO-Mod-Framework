@@ -154,6 +154,16 @@ class MissionPlanContractTests(unittest.TestCase):
         self.mutate_run_ini(run,'mission_respawns','infinite')
         with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run)
 
+    def test_imported_mission_follows_the_flow_to_its_natural_end(self):
+        plan = game_test.make_plan('127.0.0.1', 5001, '1', '1', '1', 1, False, 3, None,
+                                   mission_mode=5, mission_game_mode_id=88072)
+        self.assertEqual(plan['mission_game_mode_id'], 88072)
+        self.assertEqual(game_test.required_cases_for_plan(plan),
+                         game_test.FLOW_CASES[:3] + game_test.MISSION_FLOW_CASES + ('mission.import_flow',))
+        with self.assertRaises(game_test.GameTestError):  # a GameModeID above the mode-5 range is a mode-8 mission
+            game_test.make_plan('127.0.0.1', 5001, '1', '1', '1', 1, False, 3, None,
+                                mission_mode=5, mission_game_mode_id=0x313991)
+
     def test_respawn_probe_requires_a_mission(self):
         with self.assertRaises(game_test.GameTestError):
             game_test.make_plan('127.0.0.1',5001,'1','1','1',1,False,3,None,mission_respawns='infinite')

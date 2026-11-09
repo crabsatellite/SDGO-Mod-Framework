@@ -1717,6 +1717,14 @@ def validate_mission_behavior(
 ) -> tuple[str | None, int | None]:
     if profile is None and mission_game_mode_id is None:
         return None, None
+    if (profile is None and type(mission_game_mode_id) is int and mission_game_mode_id > 0
+            and mission_game_mode_id not in MISSION_BEHAVIOR_TARGETS):
+        # Any other listed mission (e.g. one registered by the map import protocol): the observer
+        # selects the exact GameModeID in the real create dialog; room mode follows the native rule.
+        # Sealed behavior targets still need their profile.
+        if mission_mode != (5 if mission_game_mode_id <= 0x313990 else 8):
+            raise GameTestError("mission_game_mode_id does not belong to the requested mission_mode")
+        return None, mission_game_mode_id
     if profile not in MISSION_BEHAVIOR_PROFILES:
         raise GameTestError("mission_behavior_profile must be one of: oc,gco")
     if (
@@ -1895,7 +1903,11 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                     "mission behavior scenarios cannot add the respawn fixture"
                 )
             return FLOW_CASES[:3] + selection + MISSION_BEHAVIOR_CASES
-        return FLOW_CASES[:3] + selection + MISSION_FLOW_CASES + (('mission.respawn',) if mission_respawns else ())
+        # An imported mission (exact GameModeID without a sealed behavior profile) is followed to its
+        # natural end: phase events, cutscenes, the native result and the return to the wait room.
+        imported = (('mission.import_flow',) if mission_game_mode_id is not None and mission_respawns is None
+                    else ())
+        return FLOW_CASES[:3] + selection + MISSION_FLOW_CASES + imported + (('mission.respawn',) if mission_respawns else ())
     modes = parse_mode_sequence(mode_sequence)
     if pages_only:
         if page_group == 'preview_guard':
@@ -2239,6 +2251,9 @@ def make_plan(
                 "mission_behavior_profile": mission_behavior_profile,
                 "mission_game_mode_id": mission_game_mode_id,
             })
+        elif mission_game_mode_id is not None:
+            # exact listed mission without a behavior scenario (e.g. an imported mission)
+            plan["mission_game_mode_id"] = mission_game_mode_id
         if mission_respawns is not None: plan['mission_respawns'] = mission_respawns
     else:
         enemies = (expected_ai + 1) // 2
@@ -2400,6 +2415,8 @@ def write_job(
                 "mission_behavior_profile": plan["mission_behavior_profile"],
                 "mission_game_mode_id": str(plan["mission_game_mode_id"]),
             })
+        elif plan.get("mission_game_mode_id"):
+            run["run"]["mission_game_mode_id"] = str(plan["mission_game_mode_id"])
         if 'mission_respawns' in plan: run['run']['mission_respawns'] = plan['mission_respawns']
     else:
         run["run"]["mode_sequence"] = plan["mode_sequence"]
@@ -2613,7 +2630,8 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             behavior_fields = {
                 field for field in MISSION_BEHAVIOR_FIELDS if field in run
             }
-            if behavior_fields and behavior_fields != set(MISSION_BEHAVIOR_FIELDS):
+            if (behavior_fields and behavior_fields != set(MISSION_BEHAVIOR_FIELDS)
+                    and behavior_fields != {"mission_game_mode_id"}):
                 raise ValueError(
                     "mission behavior plan must seal both profile and GameModeID"
                 )
@@ -2643,7 +2661,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                     )
                 try:
                     behavior_profile, behavior_mission_id = validate_mission_behavior(
-                        run["mission_behavior_profile"],
+                        run.get("mission_behavior_profile"),
                         int(raw_behavior_id),
                         mission_mode,
                     )
@@ -2889,6 +2907,8 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                     "mission_behavior_profile": behavior_profile,
                     "mission_game_mode_id": behavior_mission_id,
                 })
+            elif behavior_mission_id is not None:
+                plan["mission_game_mode_id"] = behavior_mission_id
             if mission_respawns is not None: plan['mission_respawns'] = mission_respawns
         else:
             plan['mode_sequence'] = mode_sequence
@@ -3311,6 +3331,7 @@ def prepare(
     fps_mod_enabled: bool = True,
     bind_staged_loader: bool = False,
     client_packages: tuple[Path, ...] = (),
+    battle_map: int = 0,
     unit_package: Path | None = None,
     capsule_package: Path | None = None,
     unit_scenario: dict | None = None,
@@ -3843,6 +3864,9 @@ def prepare(
         observer_config['settings']['UnitDirectedTransforms']='1' if unit_transform_steps is not None else '0'
         observer_config['settings']['UnitTransformSteps']=str(unit_transform_steps or 3)
         observer_config['settings']['FpsGameplayCap']=str(fps_gameplay_cap or 0)
+        # PvP map number selected on the native room page; 0 keeps the quick-room random-map policy.
+        if type(battle_map) is not int or not 0<=battle_map<=255:raise GameTestError('--battle-map must be a MapNo in 0..255')
+        observer_config['settings']['BattleMap']=str(battle_map)
         for key,value in unit_scenarios.settings(plan.get('unit_scenario')).items():
             observer_config['settings'][key]=value
         if capture_native_frames:observer_config['settings']['CaptureNativeFrames']='1'
@@ -5317,8 +5341,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument(
         "--mission-game-mode-id",
         type=int,
-        choices=tuple(MISSION_BEHAVIOR_TARGETS),
-        help="exact native GameModeID used by the sealed mission behavior scenario",
+        help="exact native GameModeID: a sealed mission behavior target, or an imported mission (map import range)",
     )
     prepare_parser.add_argument("--retry-count", type=int, choices=(1, 2))
     prepare_parser.add_argument("--expected-ai", type=int, default=3)
@@ -5383,6 +5406,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--rebind-existing-account',action='store_true',help='with --reuse-client and --account-profile, switch the stopped client to another already registered account')
     prepare_parser.add_argument('--include-mod',action='append',default=[],help='explicit staged client Mod to install before runtime hashes freeze')
     prepare_parser.add_argument('--client-package',type=Path,action='append',default=[],help='explicit client package imported into the owned copy before sealing')
+    prepare_parser.add_argument('--battle-map',type=int,default=0,help='PvP MapNo chosen on the native room page (0 = quick-room random map)')
+    prepare_parser.add_argument('--disable-mod',action='append',default=[],help='explicit client Mod switched off in the owned copy before sealing')
     prepare_parser.add_argument('--fps-gameplay-cap',type=int,help='verify native 60 Hz gameplay and the selected render cap during a full PvP battle')
     prepare_parser.add_argument('--oc-allocate',help="OC six-stat acceptance '<stat 0-5>:<points>': allocate normal OC points to the --play-unit-uid unit through the production client Mod before the PvP battle")
     prepare_parser.add_argument('--oc-panel',action='store_true',help='open the original factory upgrade page for the --play-unit-uid unit at the end (after --oc-allocate or the read-only hangar pages) and drive the OC client panel on it: refresh, normal-point reset, one HP point')
@@ -5503,6 +5528,8 @@ def main(argv: list[str] | None = None) -> int:
                 fps_mod_enabled=not args.fps_mod_disabled,
                 extra_mods=tuple(args.include_mod),
                 client_packages=tuple(args.client_package),
+                battle_map=args.battle_map,
+                disabled_mods=tuple(args.disable_mod),
                 fps_gameplay_cap=args.fps_gameplay_cap,
                 oc_allocate=args.oc_allocate,
                 oc_panel=args.oc_panel,
