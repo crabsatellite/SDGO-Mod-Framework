@@ -1813,8 +1813,8 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         raise GameTestError('oc_challenge runs inside the OC panel check')
     if oc_panel and (play_unit_uid is None or not (oc_allocate is not None or (pages_only and page_group == 'hangar'))):
         raise GameTestError('oc_panel runs after the OC PvP battle or the read-only hangar pages with an existing owned play unit')
-    if page_group is not None and (page_group != 'hangar' or not pages_only or shop_catalog or collection_draw):
-        raise GameTestError('page_group=hangar requires bounded hangar pages without shop or collection scope')
+    if page_group is not None and (page_group not in ('hangar','preview_guard') or not pages_only or shop_catalog or collection_draw):
+        raise GameTestError('page_group requires bounded hangar pages without shop or collection scope')
     if type(hangar_confirm_gb) is not bool:
         raise GameTestError('hangar_confirm_gb must be a boolean')
     if hangar_confirm_gb and (page_group != 'hangar' or not pages_only or oc_panel):
@@ -1877,6 +1877,8 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         return FLOW_CASES[:3] + selection + MISSION_FLOW_CASES + (('mission.respawn',) if mission_respawns else ())
     modes = parse_mode_sequence(mode_sequence)
     if pages_only:
+        if page_group == 'preview_guard':
+            return FLOW_CASES[:1] + ('framework.special_target_guard',) + FLOW_CASES[1:3] + selection + ('pages.hangar.preview_guard',)
         if page_group == 'hangar':
             hangar_cases = (
                 ('pages.hangar.read','pages.hangar.confirm_gb')
@@ -3278,8 +3280,8 @@ def prepare(
         path=Path(package)
         if not path.is_file()or path.stat().st_size>72*1024*1024:raise GameTestError('client package is missing or exceeds the import limit')
     if page_group is not None:
-        if page_group != 'hangar' or not pages_only:
-            raise GameTestError('page_group=hangar requires --pages-only')
+        if page_group not in ('hangar','preview_guard') or not pages_only:
+            raise GameTestError('page_group requires --pages-only')
         sdk=manifest_mod(stage/'client/sdgo/mods/game_test_client/mod.ini').get('version','')
         parsed=re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:[-+].*)?',sdk)
         if not parsed or tuple(map(int,parsed.groups())) < (0,1,8):
@@ -5270,7 +5272,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--room-titles-only',action='store_true',help='test all live room-title inputs, reopen and full server-confirmed titles')
     prepare_parser.add_argument('--room-style-preview', choices=('pvp', 'mission'), help='capture the genuine legacy room after native creation; requires --room-titles-only and a preview Mod')
     prepare_parser.add_argument('--pages-only', action='store_true',help='visit the real hangar and verify Mod inventory, preview and cancel without exchanging units')
-    prepare_parser.add_argument('--page-group', choices=('hangar',), help='with --pages-only, seal only the bounded native hangar checks')
+    prepare_parser.add_argument('--page-group', choices=('hangar','preview_guard'), help='with --pages-only, seal bounded native hangar or preview-failure checks')
     prepare_parser.add_argument('--hangar-confirm-gb', action='store_true',
                                 help='task-owned test SQL only: seal the hangar GB preview and two original Confirm actions, then require reconnect verification')
     prepare_parser.add_argument('--friends-only',action='store_true',help='run the real multi-client native friend session')

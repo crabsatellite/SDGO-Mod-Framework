@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "hangar_preview_guard",
+  "title": "机体列表三维预览加载保护",
+  "category": "fixes",
+  "hosts": ["client"],
+  "presentation": "automatic_fix",
+  "description": "机体列表的模型或图形缓冲加载失败时，按原生所有权清理并退回现有二维缩略图。",
+  "mechanism": "仅在机体列表的三维预览加载作用域检查顶点、索引缓冲失败；拒绝失败模型，保留原生临时字符串清理、渲染锁配对和缩略图分支。",
+  "settings": []
+}

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "special_target_guard",
+  "title": "特殊目标随机选择保护",
+  "category": "fixes",
+  "hosts": ["client"],
+  "description": "特殊目标数量损坏并超出原生 12 项列表范围时，返回原生零向量失败结果，避免越界取项。",
+  "settings": [],
+  "presentation": "automatic_fix",
+  "mechanism": "仅检查随机选择使用的有符号数量；非随机选择、空列表以及 1 至 12 项的有效列表完整保留原生函数。"
+}

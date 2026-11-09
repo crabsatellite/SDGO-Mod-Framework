@@ -9,6 +9,8 @@
 #include "battleship_actions.h"
 #include "battleship_deck_actions.h"
 #include "hangar_navigation.h"
+#include "hangar_preview_guard_actions.h"
+#include "special_target_guard_actions.h"
 #include "loading_navigation_actions.h"
 #include "page_test_actions.h"
 #include "operator_catalog_actions.h"
@@ -252,6 +254,10 @@ UnitAcquisitionActions::Config unitAcquisitionConfig{};
 void PublishQuietSocketReceipt(bool force=false);
 bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false, pagesOnly = false, friendsOnly = false;
 bool hangarPagesOnly = false;
+bool previewGuardOnly=false;
+HangarPreviewGuardFaultProbe previewGuardFaults;
+HangarPreviewGuardActions previewGuardActions;
+SpecialTargetGuardActions specialTargetGuardActions;
 bool hangarConfirmGb = false;
 uint64_t deckUnitUids[4]{};
 char giftRecipient[17]{};
@@ -518,9 +524,10 @@ bool LoadPlan() {
     wchar_t pageGroup[16]{};
     const auto pageGroupChars=GetPrivateProfileStringW(L"run",L"page_group",L"",pageGroup,16,job.c_str());
     if(pageGroupChars) {
-        if(pageGroupChars>=15 || wcscmp(pageGroup,L"hangar") || !pagesOnly || testShopCatalog || collectionDraw ||
+        if(pageGroupChars>=15 || (wcscmp(pageGroup,L"hangar")&&wcscmp(pageGroup,L"preview_guard")) || !pagesOnly || testShopCatalog || collectionDraw ||
            collectionPreviewOnly || testUnitPresentations || captureUnitPortraits || unitAcquisitionConfig.machine_kind)return false;
         hangarPagesOnly=true;
+        previewGuardOnly=wcscmp(pageGroup,L"preview_guard")==0;
     }
     const auto hangarConfirmFlag=GetPrivateProfileIntW(L"run",L"hangar_confirm_gb",0,job.c_str());
     if(hangarConfirmFlag<0 || hangarConfirmFlag>1)return false;
@@ -2413,6 +2420,18 @@ int PageResult(const SdgoGameTestContextV1* context,PageTestActions::Result resu
     if (expected==PageTestActions::kPreviewReady && state.scope==PageTestActions::kScopeProtectedOrNoDuplicateNegative)
         context->Assert(state.confirm_rejections==2,"both empty exchange previews reject confirmation through the original in-game handlers");
     return SDGO_GAME_TEST_PASS;
+}
+int __cdecl PreviewGuardFlow(const SdgoGameTestContextV1* context) {
+    return previewGuardActions.Poll(context,actions,hangarNavigation,previewGuardFaults,quietGraphics);
+}
+int __cdecl SpecialTargetGuardFlow(const SdgoGameTestContextV1* context) {
+    return specialTargetGuardActions.Poll(context);
+}
+bool BindPreviewGuard(const SdgoApi* api,SdgoMod* mod) {
+    if(!previewGuardActions.Bind(api,mod)||!previewGuardFaults.Install(api,mod)||
+       !specialTargetGuardActions.Bind(api,mod))return false;
+    previewGuardFaults.Arm(5);
+    return true;
 }
 int __cdecl ReadHangarPage(const SdgoGameTestContextV1* context) {
     const auto navigation=hangarNavigation.EnsureUnitManagementPage();
@@ -5260,12 +5279,18 @@ void RegisterPlannedCases() {
     }
     if (pagesOnly) {
         plannedCases.assign(realCases,realCases+3);
+        if(previewGuardOnly)plannedCases.insert(plannedCases.begin()+1,
+            {"framework.special_target_guard",30000,&SpecialTargetGuardFlow});
         if(earlyNavigationTarget!=LoadingNavigationActions::kOff &&
            !earlyNavigationBeforeInventory)
             plannedCases.push_back(earlyNavigationCase);
         if(testOperatorFlow)plannedCases.push_back(operatorFlowCase);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
         if(hangarPagesOnly) {
+            if(previewGuardOnly) {
+                plannedCases.push_back({"pages.hangar.preview_guard",600000,&PreviewGuardFlow});
+                provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+            }
             plannedCases.push_back(pageCases[0]);
             if(hangarConfirmGb)plannedCases.push_back(hangarGbCase);
             else plannedCases.insert(plannedCases.end(),std::begin(pageCases)+1,std::begin(pageCases)+3);
@@ -5612,6 +5637,7 @@ SDGO_MOD_ENTRY {
         !battleships.Bind(api,mod,&actions) || !gifts.Bind(api,mod,&actions) ||
         (deckOnly && !decks.Bind(api,mod,&actions)) ||
         (!hangarNavigation.Bind(api,mod,&actions)) ||
+        (previewGuardOnly&&!BindPreviewGuard(api,mod)) ||
         (earlyNavigationTarget!=LoadingNavigationActions::kOff &&
          !loadingNavigation.Bind(api,mod,&actions,&hangarNavigation)) ||
         (blueprintConfig.recipe && !blueprint.Bind(api,mod,&actions,&hangarNavigation,blueprintConfig)) ||

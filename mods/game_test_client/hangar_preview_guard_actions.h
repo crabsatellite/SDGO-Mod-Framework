@@ -1,0 +1,245 @@
+#pragma once
+#include <windows.h>
+#include <algorithm>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
+#include "native_actions.h"
+#include "hangar_navigation.h"
+#include "hangar_preview_guard_probe.h"
+#include "sdgo/game_test.h"
+#include "sdgo/game_test_page_observer.h"
+#include "sdgo/hangar_preview_guard_observer.h"
+
+// One owned native session: stock navigation, scoped graphics faults, stock
+// thumbnail fallback, successful retry, then real logout/login in the same PID.
+class HangarPreviewGuardActions {
+    template<class T>static T Read(const void* p,size_t n=0){T v{};std::memcpy(&v,static_cast<const uint8_t*>(p)+n,sizeof(v));return v;}
+    using Method=void(__thiscall*)(void*);
+    using Getter=void*(__cdecl*)();
+    using Find=void*(__thiscall*)(void*,const void*);
+    using Ctor=void*(__thiscall*)(void*,const wchar_t*);
+    using Send=void(__thiscall*)(void*,void*,char);
+    const SdgoApi* api_=nullptr;SdgoMod* mod_=nullptr;
+    void** manager_=nullptr;Find find_=nullptr;Ctor string_=nullptr;Method destroy_string_=nullptr;
+    void* grid_vtable_=nullptr;
+    Method view_=nullptr,redraw_=nullptr,frame_=nullptr;
+    Getter app_=nullptr,service_=nullptr;Method suspend_=nullptr,msg_ctor_=nullptr,msg_dtor_=nullptr;Send send_=nullptr;
+    SdgoHangarPreviewGuardGetStatusV1Fn get_=nullptr;
+    SdgoHangarGameTestGetSnapshotV1Fn hangar_=nullptr;
+    SdgoHangarGameTestGetUnitsV1Fn units_=nullptr;
+    std::vector<SdgoHangarGameTestUnitV1> before_;
+    SdgoHangarGameTestSnapshotV1 baseline_{};
+    SdgoHangarPreviewGuardStatusV1 cold_before_{};
+    unsigned phase_=0,capture_=0;
+    uint64_t mark_=0,turn_=0;
+    uint32_t recovered_before_=0,auth_before_=0,pilot_=0,failed_unit_=0;
+    bool login_sent_=false;
+    template<class T>bool Bind(T& value,const char* name){value=reinterpret_cast<T>(api_->Symbol(mod_,name));return value!=nullptr;}
+    void* Service(const wchar_t* name,void* expected) {
+        if(!manager_||!*manager_)return nullptr;
+        alignas(4)uint8_t native[0x1C]{};string_(native,name);
+        void* result=find_(*manager_,native);destroy_string_(native);
+        return result&&Read<void*>(result)==expected?result:nullptr;
+    }
+    bool Hangar(SdgoHangarGameTestSnapshotV1& out) {
+        out={};out.size=sizeof(out);out.version=1;
+        return hangar_&&hangar_(&out)&&out.loaded&&out.visible&&out.unit_count;
+    }
+    bool Guard(SdgoHangarPreviewGuardStatusV1& out) {
+        out={};out.size=sizeof(out);out.version=1;return get_&&get_(&out)!=0;
+    }
+    bool Inventory(SdgoHangarGameTestSnapshotV1& info,std::vector<SdgoHangarGameTestUnitV1>& out) {
+        if(!Hangar(info)||info.unit_count>1200)return false;
+        out.resize(info.unit_count);
+        return units_(info.run_hash,0,out.data(),sizeof(out[0]),static_cast<uint32_t>(out.size()))==static_cast<int>(out.size());
+    }
+    static bool Equal(const std::vector<SdgoHangarGameTestUnitV1>& a,const std::vector<SdgoHangarGameTestUnitV1>& b) {
+        if(a.size()!=b.size())return false;
+        for(size_t i=0;i<a.size();++i)if(a[i].uid!=b[i].uid||a[i].unit_id!=b[i].unit_id||a[i].slot!=b[i].slot||
+            a[i].level!=b[i].level||a[i].flags!=b[i].flags||a[i].protection_flags!=b[i].protection_flags)return false;
+        return true;
+    }
+    bool Refresh() {
+        auto* grid=Service(L"UnitIndexingCubbyhole",grid_vtable_);if(!grid)return false;
+        void* panel=Read<void*>(grid,0x44);if(!panel||!Read<uint8_t>(panel,0x162))return false;
+        view_(grid);redraw_(grid);frame_(grid);return true;
+    }
+    bool Logout() {
+        alignas(4)uint8_t message[0x30]{};
+        suspend_(app_());msg_ctor_(message);
+        *reinterpret_cast<uint32_t*>(message+0x0C)=0x13;
+        *reinterpret_cast<uint32_t*>(message+0x2C)=6;
+        send_(service_(),message,1);msg_dtor_(message);return true;
+    }
+    static bool __cdecl CaptureReady(void* value) {
+        auto* self=static_cast<HangarPreviewGuardActions*>(value);
+        SdgoHangarGameTestSnapshotV1 info{};return self->Hangar(info)&&info.process_id==GetCurrentProcessId();
+    }
+    static bool __cdecl FallbackCaptureReady(void* value) {
+        auto* self=static_cast<HangarPreviewGuardActions*>(value);
+        SdgoHangarPreviewGuardStatusV1 state{};
+        return CaptureReady(value)&&self->Guard(state)&&state.last_unit==self->failed_unit_&&
+            state.recovered_previews==self->recovered_before_;
+    }
+    template<class Graphics>bool Capture(const SdgoGameTestContextV1* context,Graphics& graphics,const wchar_t* name,
+                                         bool require_fallback=false) {
+        if(!capture_) {
+            const auto folder=std::wstring(context->directory)+L"\\visual";CreateDirectoryW(folder.c_str(),nullptr);
+            const auto path=folder+L"\\"+name;
+            const auto ready=require_fallback?&FallbackCaptureReady:&CaptureReady;
+            if(!graphics.CaptureNextFrameWhen(path.c_str(),ready,this)){
+                context->Assert(0,"native hangar frame capture is available");capture_=2;return true;
+            }
+            capture_=1;return false;
+        }
+        if(capture_==1) {
+            const auto result=graphics.CaptureFrameResult();if(result==E_PENDING)return false;
+            context->Assert(SUCCEEDED(result),"predicate-bound genuine hangar backbuffer capture completed");
+        }
+        capture_=0;return true;
+    }
+    int Fail(const SdgoGameTestContextV1* context,const char* message) {context->Assert(0,message);return SDGO_GAME_TEST_FAIL;}
+public:
+    bool Bind(const SdgoApi* api,SdgoMod* mod) {
+        api_=api;mod_=mod;
+        auto guard=GetModuleHandleW(L"hangar_preview_guard.dll");auto hangar=GetModuleHandleW(L"hangar_manager.dll");
+        get_=guard?reinterpret_cast<SdgoHangarPreviewGuardGetStatusV1Fn>(GetProcAddress(guard,SDGO_HANGAR_PREVIEW_GUARD_STATUS_EXPORT)):nullptr;
+        hangar_=hangar?reinterpret_cast<SdgoHangarGameTestGetSnapshotV1Fn>(GetProcAddress(hangar,SDGO_HANGAR_GAME_TEST_SNAPSHOT_EXPORT)):nullptr;
+        units_=hangar?reinterpret_cast<SdgoHangarGameTestGetUnitsV1Fn>(GetProcAddress(hangar,SDGO_HANGAR_GAME_TEST_UNITS_EXPORT)):nullptr;
+        const bool bound=get_&&hangar_&&units_&&Bind(manager_,"flow.service_managed_pointer")&&Bind(find_,"flow.service_find_by_name")&&
+            Bind(string_,"flow.native_wstring_ctor")&&Bind(destroy_string_,"flow.native_wstring_dtor")&&
+            Bind(grid_vtable_,"flow.unit_management_vtable")&&Bind(view_,"hangar.view_list")&&Bind(redraw_,"hangar.redraw")&&
+            Bind(frame_,"hangar.page_frame")&&Bind(app_,"test.preview_guard.logout_app")&&Bind(service_,"test.preview_guard.logout_manager")&&
+            Bind(suspend_,"test.preview_guard.logout_suspend")&&Bind(msg_ctor_,"test.preview_guard.logout_ctor")&&
+            Bind(msg_dtor_,"test.preview_guard.logout_dtor")&&Bind(send_,"test.preview_guard.logout_send");
+        return bound&&Guard(cold_before_);
+    }
+    template<class Graphics>int Poll(const SdgoGameTestContextV1* context,NativeActions& actions,HangarNavigation& navigation,
+                                     HangarPreviewGuardFaultProbe& probe,Graphics& graphics) {
+        const uint64_t now=GetTickCount64();
+        SdgoHangarPreviewGuardStatusV1 state{};if(!Guard(state))return Fail(context,"production hangar preview guard observer is available");
+        if(!context->tick){phase_=0;capture_=0;mark_=now;turn_=0;login_sent_=false;}
+        if(phase_==0) {
+            const auto result=navigation.EnsureUnitManagementPage();
+            if(result==HangarNavigation::kUnbound||result>=HangarNavigation::kDownmenuServiceMismatch)return Fail(context,"stock native management navigation is valid");
+            const auto observed=probe.State();
+            if(observed.errors)return Fail(context,"cold native preview fault probe remains error-free");
+            if(!observed.hits) {
+                if(now-mark_>45000)return Fail(context,"the pre-armed cold VB32 creation fault was reached before native resource caching");
+                return SDGO_GAME_TEST_WAIT;
+            }
+            if(observed.kind!=5||observed.hits!=1||observed.armed||!observed.last_unit)
+                return Fail(context,"exactly one cold VB32 creation call consumed the pre-armed one-shot fault");
+            if(state.fallbacks<cold_before_.fallbacks+1||state.discarded_models<cold_before_.discarded_models+1||
+               state.lock_releases<cold_before_.lock_releases+1||state.discarded_roots<cold_before_.discarded_roots+1||
+               state.closed_sources<cold_before_.closed_sources+1) {
+                if(now-mark_>60000)return Fail(context,"the cold VB32 rejection completes its native ownership cleanup and thumbnail fallback");
+                return SDGO_GAME_TEST_WAIT;
+            }
+            if(state.fallbacks!=cold_before_.fallbacks+1||state.discarded_models!=cold_before_.discarded_models+1||
+               state.lock_releases!=cold_before_.lock_releases+1||state.discarded_roots!=cold_before_.discarded_roots+1||
+               state.closed_sources!=cold_before_.closed_sources+1||state.missing_vertex!=cold_before_.missing_vertex+1||
+               state.vertex32_failures!=cold_before_.vertex32_failures+1||state.failed_vertex_lock!=cold_before_.failed_vertex_lock||
+               state.missing_index!=cold_before_.missing_index||state.failed_index_lock!=cold_before_.failed_index_lock||
+               state.failed_model_load!=cold_before_.failed_model_load||
+               state.recovered_previews!=cold_before_.recovered_previews||state.last_failure!=1||
+               state.last_unit!=observed.last_unit)
+            {
+                char details[512]{};
+                sprintf_s(details,"preview rejection counters: fallback=%u model=%u release=%u root=%u source=%u vertex=%u vb24=%u vb32=%u lock=%u index=%u ilock=%u mload=%u recovered=%u last=%u reason=%u probe_unit=%u",
+                    state.fallbacks,state.discarded_models,state.lock_releases,state.discarded_roots,state.closed_sources,
+                    state.missing_vertex,state.vertex24_failures,state.vertex32_failures,state.failed_vertex_lock,
+                    state.missing_index,state.failed_index_lock,state.failed_model_load,state.recovered_previews,
+                    state.last_unit,state.last_failure,observed.last_unit);
+                context->Observe(details);
+                return Fail(context,"cold VB32 failure records one exclusive parser rejection, source close and thumbnail fallback");
+            }
+            if(result!=HangarNavigation::kReady||!Inventory(baseline_,before_)||!state.loaded) {
+                if(now-mark_>60000)return Fail(context,"the cold fallback remains visible with a readable native inventory");
+                return SDGO_GAME_TEST_WAIT;
+            }
+            pilot_=actions.OnboardingState().profile_pilot_id;
+            if(!pilot_) {
+                if(now-mark_>60000)return Fail(context,"the native onboarding profile identifies the authenticated pilot");
+                return SDGO_GAME_TEST_WAIT;
+            }
+            failed_unit_=state.last_unit;recovered_before_=state.recovered_previews;
+            context->Assert(baseline_.process_id==GetCurrentProcessId(),
+                "cold VB32 failure completed in the authenticated native inventory process");
+            char line[288];sprintf_s(line,"cold native VB32 fault hits=%u unit=%u inventory=%u roots=%u candidates=%u sources=%u fallback=%u",
+                observed.hits,failed_unit_,baseline_.unit_count,state.discarded_roots,state.discarded_models,state.closed_sources,state.fallbacks);
+            context->Observe(line);phase_=1;mark_=now;
+        }
+        if(phase_==1) {
+            if(state.last_unit!=failed_unit_||state.recovered_previews!=recovered_before_)
+                return Fail(context,"the cold native thumbnail fallback remains active until its evidence frame is captured");
+            if(now-mark_<700||!Capture(context,graphics,L"preview-vb32-fallback.bmp",true))return SDGO_GAME_TEST_WAIT;
+            probe.Arm(0);
+            if(!Refresh())return SDGO_GAME_TEST_WAIT;
+            phase_=2;mark_=now;
+        }
+        if(phase_==2) {
+            if(state.recovered_previews<=recovered_before_) {
+                if(now-mark_>15000)return Fail(context,"the same failed unit definition reloads after removing the graphics fault");
+                return SDGO_GAME_TEST_WAIT;
+            }
+            const auto observed=probe.State();
+            // Arm(0) clears kind; recovered_previews advances only when the
+            // production setter succeeds for exactly its last failed unit.
+            // Other cells may finish later and replace last_loaded_unit.
+            if(observed.kind!=0||observed.hits!=1||observed.armed||observed.errors||
+               observed.last_unit!=failed_unit_||state.last_unit!=failed_unit_)
+                return Fail(context,"unarmed retry preserves the failed unit identity without another injected operation");
+            context->Assert(1,"the same rejected unit definition completes an unarmed native preview load/activation path");
+            std::vector<SdgoHangarGameTestUnitV1> inventory;SdgoHangarGameTestSnapshotV1 info{};
+            if(!Inventory(info,inventory)) {
+                if(now-mark_>30000)return Fail(context,"the recovered preview retains a readable native inventory");
+                return SDGO_GAME_TEST_WAIT;
+            }
+            if(!Equal(before_,inventory)||info.active_slot!=baseline_.active_slot)return Fail(context,"graphics failures preserve every inventory identity, slot, protection and active unit");
+            context->Assert(1,"one cold VB32 fallback and same-unit retry preserved the complete native inventory");
+            phase_=3;mark_=now;return SDGO_GAME_TEST_WAIT;
+        }
+        if(phase_==3) {
+            if(now-mark_<700||!Capture(context,graphics,L"preview-vb32-recovered.bmp"))return SDGO_GAME_TEST_WAIT;
+            auth_before_=actions.LoginState().reply_sequence;Logout();phase_=8;mark_=now;return SDGO_GAME_TEST_WAIT;
+        }
+        if(phase_==8) {
+            if(actions.AppState()!=4) {
+                if(now-mark_>30000)return Fail(context,"original logout reaches the account login gate");
+                return SDGO_GAME_TEST_WAIT;
+            }
+            navigation.RearmAfterLogout();phase_=9;mark_=now;turn_=0;
+            context->Assert(1,"native account-return cleanup completed in the original process");
+        }
+        if(phase_==9) {
+            if(!login_sent_&&now-turn_>500){login_sent_=actions.Login();turn_=now;}
+            const auto auth=actions.LoginState();
+            const auto profile=actions.OnboardingState();
+            if(!login_sent_||auth.reply_sequence<=auth_before_||auth.result!=NativeActions::kAuthAccepted||profile.profile_pilot_id!=pilot_) {
+                if(now-mark_>60000)return Fail(context,"the original login protocol authenticates the same existing pilot again");
+                return SDGO_GAME_TEST_WAIT;
+            }
+            phase_=10;mark_=now;
+        }
+        if(phase_==10) {
+            const auto result=navigation.EnsureUnitManagementPage();
+            if(result==HangarNavigation::kUnbound||result>=HangarNavigation::kDownmenuServiceMismatch)return Fail(context,"native navigation reopens management after account return");
+            std::vector<SdgoHangarGameTestUnitV1> inventory;SdgoHangarGameTestSnapshotV1 info{};
+            if(result!=HangarNavigation::kReady||!Inventory(info,inventory)) {
+                if(now-mark_>60000)return Fail(context,"same-PID relogin reopens the readable native management inventory");
+                return SDGO_GAME_TEST_WAIT;
+            }
+            if(actions.OnboardingState().profile_pilot_id!=pilot_||info.process_id!=baseline_.process_id||
+               info.generation<=baseline_.generation||info.session==baseline_.session||
+               info.active_slot!=baseline_.active_slot||!Equal(before_,inventory))return Fail(context,"same-PID relogin has a new native inventory generation and identical actual inventory");
+            if(!Capture(context,graphics,L"preview-relogin.bmp"))return SDGO_GAME_TEST_WAIT;
+            context->Assert(1,"same PID, same pilot and inventory survived real account return, relogin and reopened management");
+            return SDGO_GAME_TEST_PASS;
+        }
+        return SDGO_GAME_TEST_WAIT;
+    }
+};

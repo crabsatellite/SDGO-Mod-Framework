@@ -79,6 +79,12 @@ public:
         uint8_t reserved_bytes[2];
     };
 
+    void RearmAfterLogout() {
+        lobbyRequestInvoked_=false;unitRadioInvoked_=false;unitManagementInvoked_=false;
+        unitManagerReentryPhases_=0;operatorShopReturnArmed_=false;
+        factoryInvoked_=false;factoryTabInvoked_=false;lastServiceVtable_=nullptr;
+    }
+
     bool Bind(
         const SdgoApi* api,
         SdgoMod* mod,
