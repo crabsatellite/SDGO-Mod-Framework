@@ -99,11 +99,6 @@ int main() {
     assert(sends==3+12+12+1 && g_batch.collected()==12);
     // The World may answer concurrent preflights out of send order.
     fixture::Setup();newestFirst=true;Start();Run();assert(g_batch.phase()==Phase::Complete && grants==12 && rewards.empty() && !g_batch.Outstanding());
-    // A stock list reload answered with a list error while claims run is absorbed.
-    fixture::Setup();Start();DeliverUntil([]{return g_batch.Waiting(Operation::Claim);});
-    {std::vector<uint8_t> error(64,0);storage_fixture::Put<uint16_t>(error.data(),6,2110);const int before=nativeErrors;
-     Receive(service.data(),nullptr,0,0,0,0x8AF,error.data());assert(nativeErrors==before && g_batch.Busy());}
-    Run();assert(g_batch.phase()==Phase::Complete && grants==12);
     fixture::Setup(Tab::Gifts);rewards[0].claimed=true;Start();Run();assert(g_batch.phase()==Phase::Complete && grants==11 && nativeChecks==0);
     // Stop while preflights are out: nothing is claimed, late preflights are absorbed.
     fixture::Setup();Start();DeliverUntil([]{return g_batch.Waiting(Operation::Check);});Click();
@@ -209,17 +204,17 @@ int main() {
            !observed.completed && !observed.reply_sequence);
     Deliver();
     observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
-    // The reply was recorded after the stock handler, and the next page was requested at once.
+    // The reply was recorded after the stock handler, and the first preflight went out at once.
     assert(SdgoStorageGameTestGetSnapshotV1(&observed) && observed.reply_sequence==1 &&
-           !observed.loaded && observed.outstanding && originalReplySequences.size()==1 &&
-           originalReplySequences[0]==0 && pending.size()==1 && Next()==0x9A1);
+           observed.loaded && observed.outstanding && originalReplySequences.size()==1 &&
+           originalReplySequences[0]==0 && pending.size()==1 && Next()==0x6CB);
     Run();
     observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
     assert(SdgoStorageGameTestGetSnapshotV1(&observed) && observed.completed==12 && observed.collected==12 &&
-           !observed.skipped && !observed.manual && observed.rounds==1 &&
+           !observed.skipped && !observed.manual && observed.rounds==4 &&
            observed.reply_sequence==3+12+1 && observed.preflight_reply_sequence==12 &&
            observed.batch_phase==SDGO_STORAGE_GAME_TEST_PHASE_COMPLETE);
     SetEnvironmentVariableA("SDGO_GAME_TEST_RUN",nullptr);
     SetEnvironmentVariableA("SDGO_GAME_TEST_ROLE",nullptr);
-    std::cout<<"STORAGE NATIVE ADAPTER PASSED: native page placement/skins, one confirmation, whole-tab pipelined preflight/claim window, stock grants, gift pagination, stop before/after claims, counted refusals/selections, hidden page, timeout/late grant, retired preflights, stock reload wait and original UI fallback\n";
+    std::cout<<"STORAGE NATIVE ADAPTER PASSED: native page placement/skins, one confirmation, whole tab page by page with one request outstanding, stock grants, gift pagination, stop before/after claims, counted refusals/selections, hidden page, timeout/late grant, retired preflights, stock reload wait and original UI fallback\n";
 }

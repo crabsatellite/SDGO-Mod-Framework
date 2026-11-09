@@ -133,7 +133,7 @@ void DisplayState() {
     if(g_batch.Busy()) {
         const auto phase=g_batch.phase();
         if(phase==Phase::NeedList || phase==Phase::List)
-            text=g_batch.completed()?L"正在刷新列表；"+Summary()+L"。":L"正在读取第 "+std::to_wstring(g_batch.page()+1)+L" 页，读完后一次领取。";
+            text=g_batch.completed()?L"正在刷新列表；"+Summary()+L"。":L"正在读取第 "+std::to_wstring(g_batch.page()+1)+L" 页。";
         else if(phase==Phase::NeedCheck || phase==Phase::Check)text=L"正在一次领取 "+std::to_wstring(g_batch.collected())+L" 项：服务器预检中。";
         else text=L"正在一次领取 "+std::to_wstring(g_batch.collected())+L" 项：已到账 "+std::to_wstring(g_batch.completed())+L" 项。";
         g_ui.Display(L"停止领取",text);return;
@@ -336,11 +336,6 @@ uint32_t PacketUnsafe(void* self,uintptr_t a,uintptr_t b,uintptr_t c,uint32_t co
         }
     }
     const bool owned=OwnsReply(self);const auto tab=g_batch.tab();
-    // During a batch the stock grant handler reloads the item list by itself when
-    // the granted item is not on the cached page. Once fewer items remain, that
-    // page no longer exists and the server answers with a list error, which the
-    // stock handler shows as an empty message box. It is not a batch result.
-    if(self==g_owner && g_batch.Busy() && !g_batch.Waiting(Operation::List) && op==(tab==Tab::Items?0x8AF:0x8B0))return 0;
     const bool list=owned && g_batch.Waiting(Operation::List) && op==(tab==Tab::Items?0x7BD:0x7BE);
     const bool claim=owned && g_batch.Waiting(Operation::Claim) && op==(tab==Tab::Items?0x7E8:0xA23);
     const auto result=g_packet(self,a,b,c,command,data); // native grants, inventory/UI refresh and ownership checks
@@ -493,6 +488,6 @@ SDGO_MOD_ENTRY {
     if(!api->HookCode(mod,"storage.init",reinterpret_cast<void*>(&Init),reinterpret_cast<void**>(&g_init)) ||
        !api->HookCode(mod,"storage.ui_event",reinterpret_cast<void*>(&UIEvent),reinterpret_cast<void**>(&g_event)) ||
        !api->HookCode(mod,"storage.packet",reinterpret_cast<void*>(&Receive),reinterpret_cast<void**>(&g_packet)))return 0;
-    api->Log(mod,SDGO_LOG_INFO,"ready: native storage claim-all UI; one confirmation reads every page, then sends the original preflight/claim requests back to back with one final list reload; no SQL or shared message-loop hook");
+    api->Log(mod,SDGO_LOG_INFO,"ready: native storage claim-all UI; one confirmation claims the tab page by page with the original preflight/claim requests back to back; no SQL or shared message-loop hook");
     return 1;
 }

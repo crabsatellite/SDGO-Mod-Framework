@@ -6,16 +6,18 @@ Client Mod `storage_claim` adds **一键领取** beside the two native storage t
 
 Select the items or gifts tab, click the new button, then **确认领取** once for
 the entire batch. Timed rewards may begin their validity period when claimed.
-The whole tab is claimed at once: the Mod first reads every page, then submits
-every reward to the server back to back and reloads the list a single time.
+The whole tab is claimed in one go: the Mod works through it page by page,
+claiming every reward on a page back to back before reading the next five.
 Progress and the result appear at the bottom. Click **停止领取** to stop
 subsequent requests. Already submitted claims remain subject to the server's
 final result.
 
 Each reward still uses the original authenticated preflight and claim protocol,
 sent back to back: the next request goes out as soon as the previous answer
-arrives, with no list reload or pause in between, so dozens of rewards usually
-finish within seconds. Stable IDs distinguish separate copies of the same item; gift
+arrives, with no pause and no list reload between rewards (only one per page of
+five), so dozens of rewards usually finish within seconds. Claiming only rewards
+of the page the game has loaded keeps the game's own grant handler from
+reloading the list and showing empty error boxes. Stable IDs distinguish separate copies of the same item; gift
 letters already claimed are skipped. A reward the server refuses (for example a
 full hangar) is skipped and counted while the rest is claimed; the summary shows
 the count and server code instead of one native failure dialog per reward.
