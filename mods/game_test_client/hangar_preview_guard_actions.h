@@ -21,11 +21,11 @@ class HangarPreviewGuardActions {
     using Getter=void*(__cdecl*)();
     using Find=void*(__thiscall*)(void*,const void*);
     using Ctor=void*(__thiscall*)(void*,const wchar_t*);
+    using Page=void(__thiscall*)(void*,int,uint8_t);
     using Send=void(__thiscall*)(void*,void*,char);
     const SdgoApi* api_=nullptr;SdgoMod* mod_=nullptr;
     void** manager_=nullptr;Find find_=nullptr;Ctor string_=nullptr;Method destroy_string_=nullptr;
-    void* grid_vtable_=nullptr;
-    Method view_=nullptr,redraw_=nullptr,frame_=nullptr;
+    void* pager_vtable_=nullptr;Page page_=nullptr;
     Getter app_=nullptr,service_=nullptr;Method suspend_=nullptr,msg_ctor_=nullptr,msg_dtor_=nullptr;Send send_=nullptr;
     SdgoHangarPreviewGuardGetStatusV1Fn get_=nullptr;
     SdgoHangarGameTestGetSnapshotV1Fn hangar_=nullptr;
@@ -35,13 +35,16 @@ class HangarPreviewGuardActions {
     SdgoHangarPreviewGuardStatusV1 cold_before_{};
     unsigned phase_=0,capture_=0;
     uint64_t mark_=0,turn_=0;
-    uint32_t recovered_before_=0,auth_before_=0,pilot_=0,failed_unit_=0;
+    uint32_t recovered_before_=0,auth_before_=0,pilot_=0,failed_unit_=0,failed_slot_=0;
+    int target_page_=0,away_page_=0;
     bool login_sent_=false;
     template<class T>bool Bind(T& value,const char* name){value=reinterpret_cast<T>(api_->Symbol(mod_,name));return value!=nullptr;}
     void* Service(const wchar_t* name,void* expected) {
         if(!manager_||!*manager_)return nullptr;
-        alignas(4)uint8_t native[0x1C]{};string_(native,name);
-        void* result=find_(*manager_,native);destroy_string_(native);
+        // ServiceFind consumes a kind tag followed by the native wstring.
+        alignas(4)uint8_t native[0x20]{};*reinterpret_cast<uint32_t*>(native)=1;
+        string_(native+4,name);
+        void* result=find_(*manager_,native);destroy_string_(native+4);
         return result&&Read<void*>(result)==expected?result:nullptr;
     }
     bool Hangar(SdgoHangarGameTestSnapshotV1& out) {
@@ -62,10 +65,14 @@ class HangarPreviewGuardActions {
             a[i].level!=b[i].level||a[i].flags!=b[i].flags||a[i].protection_flags!=b[i].protection_flags)return false;
         return true;
     }
-    bool Refresh() {
-        auto* grid=Service(L"UnitIndexingCubbyhole",grid_vtable_);if(!grid)return false;
-        void* panel=Read<void*>(grid,0x44);if(!panel||!Read<uint8_t>(panel,0x162))return false;
-        view_(grid);redraw_(grid);frame_(grid);return true;
+    int NavigatePage(int target) {
+        auto* pager=Service(L"UnitIndexingPage",pager_vtable_);if(!pager)return -1;
+        const int count=Read<int>(pager,0xD4),current=Read<int>(pager,0xDC);
+        if(target<0||target>=count||current<0||current>=count)return -1;
+        if(current==target)return 1;
+        if(current/10!=target/10)page_(pager,-1,static_cast<uint8_t>(target>current));
+        else page_(pager,target%10,0);
+        return 0;
     }
     bool Logout() {
         alignas(4)uint8_t message[0x30]{};
@@ -78,19 +85,11 @@ class HangarPreviewGuardActions {
         auto* self=static_cast<HangarPreviewGuardActions*>(value);
         SdgoHangarGameTestSnapshotV1 info{};return self->Hangar(info)&&info.process_id==GetCurrentProcessId();
     }
-    static bool __cdecl FallbackCaptureReady(void* value) {
-        auto* self=static_cast<HangarPreviewGuardActions*>(value);
-        SdgoHangarPreviewGuardStatusV1 state{};
-        return CaptureReady(value)&&self->Guard(state)&&state.last_unit==self->failed_unit_&&
-            state.recovered_previews==self->recovered_before_;
-    }
-    template<class Graphics>bool Capture(const SdgoGameTestContextV1* context,Graphics& graphics,const wchar_t* name,
-                                         bool require_fallback=false) {
+    template<class Graphics>bool Capture(const SdgoGameTestContextV1* context,Graphics& graphics,const wchar_t* name) {
         if(!capture_) {
             const auto folder=std::wstring(context->directory)+L"\\visual";CreateDirectoryW(folder.c_str(),nullptr);
             const auto path=folder+L"\\"+name;
-            const auto ready=require_fallback?&FallbackCaptureReady:&CaptureReady;
-            if(!graphics.CaptureNextFrameWhen(path.c_str(),ready,this)){
+            if(!graphics.CaptureNextFrameWhen(path.c_str(),&CaptureReady,this)){
                 context->Assert(0,"native hangar frame capture is available");capture_=2;return true;
             }
             capture_=1;return false;
@@ -111,8 +110,8 @@ public:
         units_=hangar?reinterpret_cast<SdgoHangarGameTestGetUnitsV1Fn>(GetProcAddress(hangar,SDGO_HANGAR_GAME_TEST_UNITS_EXPORT)):nullptr;
         const bool bound=get_&&hangar_&&units_&&Bind(manager_,"flow.service_managed_pointer")&&Bind(find_,"flow.service_find_by_name")&&
             Bind(string_,"flow.native_wstring_ctor")&&Bind(destroy_string_,"flow.native_wstring_dtor")&&
-            Bind(grid_vtable_,"flow.unit_management_vtable")&&Bind(view_,"hangar.view_list")&&Bind(redraw_,"hangar.redraw")&&
-            Bind(frame_,"hangar.page_frame")&&Bind(app_,"test.preview_guard.logout_app")&&Bind(service_,"test.preview_guard.logout_manager")&&
+            Bind(pager_vtable_,"friend_unit_gift.management_pager_vtable")&&Bind(page_,"friend_unit_gift.management_page_change")&&
+            Bind(app_,"test.preview_guard.logout_app")&&Bind(service_,"test.preview_guard.logout_manager")&&
             Bind(suspend_,"test.preview_guard.logout_suspend")&&Bind(msg_ctor_,"test.preview_guard.logout_ctor")&&
             Bind(msg_dtor_,"test.preview_guard.logout_dtor")&&Bind(send_,"test.preview_guard.logout_send");
         return bound&&Guard(cold_before_);
@@ -144,8 +143,7 @@ public:
                state.closed_sources!=cold_before_.closed_sources+1||state.missing_vertex!=cold_before_.missing_vertex+1||
                state.vertex32_failures!=cold_before_.vertex32_failures+1||state.failed_vertex_lock!=cold_before_.failed_vertex_lock||
                state.missing_index!=cold_before_.missing_index||state.failed_index_lock!=cold_before_.failed_index_lock||
-               state.failed_model_load!=cold_before_.failed_model_load||
-               state.recovered_previews!=cold_before_.recovered_previews||state.last_failure!=1||
+               state.failed_model_load!=cold_before_.failed_model_load||state.last_failure!=1||
                state.last_unit!=observed.last_unit)
             {
                 char details[512]{};
@@ -166,19 +164,33 @@ public:
                 if(now-mark_>60000)return Fail(context,"the native onboarding profile identifies the authenticated pilot");
                 return SDGO_GAME_TEST_WAIT;
             }
-            failed_unit_=state.last_unit;recovered_before_=state.recovered_previews;
+            failed_unit_=state.last_unit;failed_slot_=state.last_failed_slot;recovered_before_=state.recovered_previews;
             context->Assert(baseline_.process_id==GetCurrentProcessId(),
                 "cold VB32 failure completed in the authenticated native inventory process");
-            char line[288];sprintf_s(line,"cold native VB32 fault hits=%u unit=%u inventory=%u roots=%u candidates=%u sources=%u fallback=%u",
-                observed.hits,failed_unit_,baseline_.unit_count,state.discarded_roots,state.discarded_models,state.closed_sources,state.fallbacks);
+            char line[320];sprintf_s(line,"cold native VB32 fault hits=%u unit=%u slot=%u inventory=%u roots=%u candidates=%u sources=%u fallback=%u automatic_same_slot_retries=%u",
+                observed.hits,failed_unit_,failed_slot_,baseline_.unit_count,state.discarded_roots,state.discarded_models,state.closed_sources,state.fallbacks,state.recovered_previews);
             context->Observe(line);phase_=1;mark_=now;
         }
         if(phase_==1) {
-            if(state.last_unit!=failed_unit_||state.recovered_previews!=recovered_before_)
-                return Fail(context,"the cold native thumbnail fallback remains active until its evidence frame is captured");
-            if(now-mark_<700||!Capture(context,graphics,L"preview-vb32-fallback.bmp",true))return SDGO_GAME_TEST_WAIT;
+            if(state.last_unit!=failed_unit_||state.last_failed_slot!=failed_slot_)
+                return Fail(context,"the transient fault retains its failed inventory-cell identity");
+            // Native page construction may automatically retry the same cell
+            // before a frame is presented. Cleanup/fallback is proved above;
+            // this frame records the genuine post-fault UI, possibly recovered.
+            if(now-mark_<700||!Capture(context,graphics,L"preview-after-vb32-fault.bmp"))return SDGO_GAME_TEST_WAIT;
+            recovered_before_=state.recovered_previews;
             probe.Arm(0);
-            if(!Refresh())return SDGO_GAME_TEST_WAIT;
+            target_page_=static_cast<int>(failed_slot_/36);away_page_=target_page_?0:1;
+            phase_=11;mark_=now;turn_=0;
+        }
+        if(phase_==11||phase_==12) {
+            if(now-mark_>30000)return Fail(context,"native page navigation completes the same-cell retry route");
+            if(now-turn_<700)return SDGO_GAME_TEST_WAIT;
+            turn_=now;
+            const int result=NavigatePage(phase_==11?away_page_:target_page_);
+            if(result<0)return Fail(context,"the original management pager resolves with a valid existing target page");
+            if(!result||now-mark_<700)return SDGO_GAME_TEST_WAIT;
+            if(phase_==11){phase_=12;mark_=now;turn_=now;return SDGO_GAME_TEST_WAIT;}
             phase_=2;mark_=now;
         }
         if(phase_==2) {
@@ -188,10 +200,10 @@ public:
             }
             const auto observed=probe.State();
             // Arm(0) clears kind; recovered_previews advances only when the
-            // production setter succeeds for exactly its last failed unit.
+            // production setter succeeds for its last failed unit and slot.
             // Other cells may finish later and replace last_loaded_unit.
             if(observed.kind!=0||observed.hits!=1||observed.armed||observed.errors||
-               observed.last_unit!=failed_unit_||state.last_unit!=failed_unit_)
+               observed.last_unit!=failed_unit_||state.last_unit!=failed_unit_||state.last_failed_slot!=failed_slot_)
                 return Fail(context,"unarmed retry preserves the failed unit identity without another injected operation");
             context->Assert(1,"the same rejected unit definition completes an unarmed native preview load/activation path");
             std::vector<SdgoHangarGameTestUnitV1> inventory;SdgoHangarGameTestSnapshotV1 info{};
