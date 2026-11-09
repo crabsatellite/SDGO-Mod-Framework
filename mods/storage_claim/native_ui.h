@@ -30,7 +30,8 @@ public:
     void Display(const std::wstring& caption,const std::wstring& status,bool enabled=true);
 private:
     Bindings bindings_;void* service_=nullptr;void* dialog_=nullptr;void* identity_=nullptr;
-    void* button_=nullptr;void* status_=nullptr;uint32_t font_=1,color_=0xFF9CB8C8,shadow_=0xFF000000;
+    void* button_=nullptr;void* status_=nullptr;void* notice_=nullptr;bool noticeHidden_=false;
+    uint32_t font_=1,color_=0xFF9CB8C8,shadow_=0xFF000000;
     int width_=0;bool published_=false;
     std::wstring caption_,message_;
 };

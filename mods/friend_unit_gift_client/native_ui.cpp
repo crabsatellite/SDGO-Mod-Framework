@@ -651,8 +651,27 @@ bool StorageView::Attach(void* service,void* root,const Bindings& bindings) {
     if (!service || !root || Read<void*>(service,0x70)!=root) return false;
     auto* source=Read<void*>(service,0xB8);
     if (!ChildOf(source,root) || !ChildOf(Read<void*>(service,0xB4),root)) return false;
-    auto* button=bindings.AddButton(root,L"ModFriendUnitGifts",282,32,124,23,source,L"机体赠礼");
+    // A text link at the right end of the native count line (整体数量), in the
+    // page's label blue; the header art above the tabs stays untouched.
+    auto* count=Read<void*>(service,0x94);
+    if (!ChildOf(count,root)) return false;
+    const float countX=Read<float>(count,0x148),countY=Read<float>(count,0x14C);
+    const int countW=Read<int>(count,0x154),countH=Read<int>(count,0x158);
+    if (!std::isfinite(countX) || !std::isfinite(countY) || countW<200 || countH<10 || countH>40) return false;
+    const int linkW=96,linkH=17;
+    auto* button=bindings.AddTextButton(root,L"ModFriendUnitGifts",
+        static_cast<int>(countX)+countW-linkW-4,static_cast<int>(countY)+(countH-linkH)/2,linkW,linkH,L"");
     if (!button) return false;
+    if (!HasThreeButtonSkins(button)) {
+        bindings.empty_skin(button);
+        for (int index=1;index<3;++index) {
+            const std::wstring path=L"sprs\\"+std::to_wstring(17530+index)+L".spr";
+            const auto skin=View(path);
+            bindings.skin(button,&skin,0,index==1 ? 4u:0u,index==1 ? 4u:0u);
+        }
+        if (!HasThreeButtonSkins(button)) return false;
+    }
+    bindings.SetCaption(button,L"机体赠礼 >",kOriginTextColor,2);
     bindings_=&bindings;service_=service;dialog_=root;button_=button;
     returned_button_=Read<void*>(service,0xB8);
     status_=Read<void*>(service,0x98);
@@ -789,7 +808,7 @@ void StorageView::RenderRows(const GiftSummary* rows,std::size_t count,std::uint
         bindings_->set_number(current,page);bindings_->set_number(maximum,total ? (total+4u)/5u:1u);
         bindings_->SetState(current,true,false);bindings_->SetState(maximum,true,false);
     }
-    bindings_->SetText(button_,L"普通保管库");
+    bindings_->SetCaption(button_,L"普通保管库 >",kOriginTextColor,2);
     bindings_->SetText(Read<void*>(service_,0xB4),L"收到的机体");
     bindings_->SetText(Read<void*>(service_,0xB8),L"退回的机体");
     bindings_->SetState(Read<void*>(service_,0xB4),true,true);bindings_->SetState(Read<void*>(service_,0xB8),true,true);
@@ -911,7 +930,7 @@ void StorageView::ApplyClaimAllVisibility(bool visible) noexcept {
 }
 
 void StorageView::ApplyCustomVisibility(bool visible) noexcept {
-    if (bindings_) bindings_->SetText(button_,visible ? L"普通保管库" : L"机体赠礼");
+    if (bindings_) bindings_->SetCaption(button_,visible ? L"普通保管库 >" : L"机体赠礼 >",kOriginTextColor,2);
 }
 
 void StorageView::HideStockControls() noexcept {

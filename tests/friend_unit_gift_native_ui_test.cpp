@@ -763,6 +763,10 @@ int main() {
              0x94u, 0x98u, 0xA4u, 0xA8u, 0xACu, 0xB0u, 0xB4u}) {
         installStock(offset);
     }
+    {
+        auto* count=Read<void*>(service.bytes.data(),0x94);
+        Put<float>(count,0x148,35.0f);Put<float>(count,0x14C,86.0f);Put<int>(count,0x154,380);Put<int>(count,0x158,15);
+    }
     for (std::size_t row = 0; row < 5; ++row) {
         for (std::size_t field = 0; field < 8; ++field) {
             installStock(0xBC + row * 0x20 + field * 4);
@@ -786,6 +790,13 @@ int main() {
     Check(
         storageAttached,
         "storage companion attaches to the native page");
+    Check(
+        storageAttached &&
+            static_cast<int>(Read<float>(view.button(),0x148))==35+380-96-4 &&
+            static_cast<int>(Read<float>(view.button(),0x14C))==85 &&
+            Read<int>(view.button(),0x154)==96 &&
+            g_captions[view.button()]==L"机体赠礼 >",
+        "storage entry is a text link at the right end of the native count line");
     view.SetAvailable(true);
     Check(view.ready(), "storage entry is ready");
 

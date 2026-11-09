@@ -16,8 +16,9 @@ bool Page::Bind(const SdgoApi* api,SdgoMod* mod) {
     bindings_.buttonVtable=api->Symbol(mod,"storage.ui_button_vtable");
     return bindings_.add && bindings_.find && bindings_.text && bindings_.skin && bindings_.buttonVtable;
 }
-void Page::Detach(){service_=dialog_=identity_=button_=status_=nullptr;published_=false;caption_.clear();message_.clear();}
-void Page::Unpublish(){if(button_){Put<uint8_t>(button_,0x162,0);Put<uint8_t>(button_,0x167,0);}if(status_)Put<uint8_t>(status_,0x162,0);published_=false;}
+void Page::Detach(){service_=dialog_=identity_=button_=status_=notice_=nullptr;noticeHidden_=false;published_=false;caption_.clear();message_.clear();}
+void Page::Unpublish(){if(button_){Put<uint8_t>(button_,0x162,0);Put<uint8_t>(button_,0x167,0);}if(status_)Put<uint8_t>(status_,0x162,0);
+    if(notice_ && noticeHidden_){Put<uint8_t>(notice_,0x162,1);noticeHidden_=false;}published_=false;}
 bool Page::Attach(void* service) {
     Detach();if(!service || !bindings_.add || !bindings_.find || !bindings_.text || !bindings_.skin)return false;
     auto* dialog=Read<void*>(service,0x70);auto* source=Read<void*>(service,0xB4); // TabRadio0
@@ -48,9 +49,17 @@ bool Page::Attach(void* service) {
     auto** skins=Read<uint8_t**>(button,0x1A4);auto** end=Read<uint8_t**>(button,0x1A8);
     if(!skins || reinterpret_cast<uintptr_t>(end)-reinterpret_cast<uintptr_t>(skins)!=3*sizeof(void*))return false;
     for(size_t i=0;i<3;++i)if(!skins[i] || !Read<void*>(skins[i]))return false;
-    // Inside the frame, between the native expiry notice (y=448) and Close (y=484).
-    auto* status=add(L"ModStorageClaimStatus",12,h-73,w-24,14);if(!status)return false;
-    service_=service;dialog_=dialog;identity_=Read<void*>(dialog);button_=button;status_=status;width_=bw;
+    // While there is a batch to describe, the status takes the place of the
+    // native expiry notice line (inside the list frame); the notice returns after.
+    auto* notice=Read<void*>(service,0x98);
+    int sx=12,sy=h-73,sw=w-24;
+    if(notice && Read<void*>(notice,0x15C)==dialog) {
+        const float nx=Read<float>(notice,0x148),ny=Read<float>(notice,0x14C);const int nw=Read<int>(notice,0x154);
+        if(std::isfinite(nx) && std::isfinite(ny) && nx>=0 && ny>y+bh && ny<h-40 && nw>=150 && nx+nw<=w){sx=static_cast<int>(nx);sy=static_cast<int>(ny);sw=nw;}
+        else notice=nullptr;
+    }else notice=nullptr;
+    auto* status=add(L"ModStorageClaimStatus",sx,sy,sw,14);if(!status)return false;
+    service_=service;dialog_=dialog;identity_=Read<void*>(dialog);button_=button;status_=status;notice_=notice;noticeHidden_=false;width_=bw;
     Display(L"一键领取",L"");
     published_=true;Put<uint8_t>(button_,0x162,1);return true;
 }
@@ -64,8 +73,15 @@ void Page::Display(const std::wstring& caption,const std::wstring& status,bool e
     if(!button_ || !status_)return;
     if(caption_!=caption){const auto text=View(caption);bindings_.text(button_,0,&text,2,3,width_-4,14,color_,shadow_,0,font_,2);caption_=caption;}
     if(message_!=status){const auto text=View(status);bindings_.text(status_,0,&text,0,0,Read<int>(status_,0x154),14,color_,shadow_,0,font_,2);message_=status;}
-    // The status line only appears while there is a batch to describe.
-    if(published_)Put<uint8_t>(status_,0x162,status.empty()?0:1);
+    // The status line only appears while there is a batch to describe; it then
+    // covers the native expiry notice, which comes back once the status clears.
+    if(published_) {
+        Put<uint8_t>(status_,0x162,status.empty()?0:1);
+        if(notice_) {
+            if(!status.empty() && !noticeHidden_ && Read<uint8_t>(notice_,0x162)){Put<uint8_t>(notice_,0x162,0);noticeHidden_=true;}
+            else if(status.empty() && noticeHidden_){Put<uint8_t>(notice_,0x162,1);noticeHidden_=false;}
+        }
+    }
     Put<uint8_t>(button_,0x167,enabled?1:0);
     if(!enabled){Put<uint16_t>(button_,0x21C,0);Put<uint8_t>(button_,0x164,0);Put<uint32_t>(button_,0x18C,0);}
 }
