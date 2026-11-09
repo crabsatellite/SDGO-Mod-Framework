@@ -310,6 +310,18 @@
       "activation": "restart_required"
     },
     {
+      "id": "unit_acquisition_ui_preview_only",
+      "key": "UnitAcquisitionUiPreviewOnly",
+      "label": "仅检查候选原生预览（跳过目录与百科）",
+      "description": "只由封存测试任务启用；完成登录、初始化和真实持有机体选择后，直接打开目标机台与 0x01F8 原生机体预览，不执行抽取。",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
       "id": "collection_preview_only",
       "key": "CollectionPreviewOnly",
       "label": "仅检查收藏扭蛋原生预览（不抽取）",

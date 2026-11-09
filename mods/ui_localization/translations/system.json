@@ -1,0 +1,830 @@
+{
+  "schema_version": 1,
+  "language": "system",
+  "entries": [
+    {
+      "id": 126003,
+      "source": "NONE",
+      "target": "NONE",
+      "status": "keep"
+    },
+    {
+      "id": 126009,
+      "source": "%dG币",
+      "target": "%dG币",
+      "status": "keep",
+      "note": "保留游戏既有G币单位名。"
+    },
+    {
+      "id": 126010,
+      "source": "%dG币",
+      "target": "%dG币",
+      "status": "keep",
+      "note": "保留游戏既有G币单位名。"
+    },
+    {
+      "id": 126011,
+      "source": "%dM币",
+      "target": "%dM币",
+      "status": "keep",
+      "note": "保留游戏既有M币单位名。"
+    },
+    {
+      "id": 126012,
+      "source": "%dM币",
+      "target": "%dM币",
+      "status": "keep",
+      "note": "保留游戏既有M币单位名。"
+    },
+    {
+      "id": 126048,
+      "source": "GM",
+      "target": "GM",
+      "status": "keep",
+      "note": "保留通用GM角色缩写。"
+    },
+    {
+      "id": 126077,
+      "source": "All",
+      "target": "All",
+      "status": "keep"
+    },
+    {
+      "id": 126126,
+      "source": "积蓄SP可以使出强力的必杀技.",
+      "target": "积蓄SP可发动强力必杀技。",
+      "status": "ready"
+    },
+    {
+      "id": 126142,
+      "source": "获得了%dG币.",
+      "target": "获得了%dG币.",
+      "status": "keep"
+    },
+    {
+      "id": 126187,
+      "source": "SD高达OL",
+      "target": "SD高达OL",
+      "status": "keep",
+      "note": "保留游戏品牌名。"
+    },
+    {
+      "id": 126189,
+      "source": "增加了%dG币.",
+      "target": "增加了%dG币.",
+      "status": "keep"
+    },
+    {
+      "id": 126232,
+      "source": "SSOWebBrowsermodul初始化失败.",
+      "target": "SSO网页浏览模块初始化失败。",
+      "status": "ready"
+    },
+    {
+      "id": 126250,
+      "source": "装备在MS上的道具已经到达使用时效，不久就会消失.",
+      "target": "装备在机体上的道具已到期，即将消失。",
+      "status": "ready"
+    },
+    {
+      "id": 126265,
+      "source": "SP不受影响",
+      "target": "SP不受影响",
+      "status": "keep",
+      "note": "保留游戏既有SP能量缩写。"
+    },
+    {
+      "id": 126266,
+      "source": "SP%d阶段",
+      "target": "SP第%d阶段",
+      "status": "ready"
+    },
+    {
+      "id": 126267,
+      "source": "HP%d%%以上",
+      "target": "耐久力%d%%以上",
+      "status": "ready"
+    },
+    {
+      "id": 126268,
+      "source": "HP%d%%以下",
+      "target": "耐久力%d%%以下",
+      "status": "ready"
+    },
+    {
+      "id": 126302,
+      "source": "请输入设置键.按ESC键取消.",
+      "target": "请输入按键。按ESC键取消。",
+      "status": "ready"
+    },
+    {
+      "id": 126305,
+      "source": "DolbySurround",
+      "target": "杜比环绕声",
+      "status": "ready"
+    },
+    {
+      "id": 126306,
+      "source": "MilesEmulated3D",
+      "target": "Miles模拟3D",
+      "status": "ready"
+    },
+    {
+      "id": 126307,
+      "source": "Eax",
+      "target": "Eax",
+      "status": "keep",
+      "note": "保留EAX音频标准缩写。"
+    },
+    {
+      "id": 126341,
+      "source": "GB剩余数量不足",
+      "target": "G币余额不足",
+      "status": "ready"
+    },
+    {
+      "id": 126352,
+      "source": "%s:%dG币",
+      "target": "%s:%dG币",
+      "status": "keep"
+    },
+    {
+      "id": 126353,
+      "source": "%s:%dM币",
+      "target": "%s:%dM币",
+      "status": "keep"
+    },
+    {
+      "id": 126512,
+      "source": "-按Tab进行确认-",
+      "target": "-按Tab键确认-",
+      "status": "ready"
+    },
+    {
+      "id": 126526,
+      "source": "将消耗%dG币的充电费用.\\n确定充电吗?",
+      "target": "充电将消耗%dG币。\\n确定充电吗？",
+      "status": "ready"
+    },
+    {
+      "id": 126628,
+      "source": "您的IP不在服务范围內.",
+      "target": "您的IP不在服务范围内。",
+      "status": "ready"
+    },
+    {
+      "id": 126637,
+      "source": "%s RANK",
+      "target": "%s级",
+      "status": "ready"
+    },
+    {
+      "id": 126687,
+      "source": "请在机体性能栏中设置EX能力",
+      "target": "请在机体性能栏设置EX能力",
+      "status": "ready"
+    },
+    {
+      "id": 126695,
+      "source": "终极强化 EX能力",
+      "target": "终极强化 EX能力",
+      "status": "keep"
+    },
+    {
+      "id": 126698,
+      "source": "可选择一项提高机体性能的EX能力",
+      "target": "可选择一项提高机体性能的EX能力",
+      "status": "keep"
+    },
+    {
+      "id": 126711,
+      "source": "%s\\nG币:%d\\n使用在扭蛋机的G币:%d\\n破坏机体获得G币:%d\\n扭蛋机抽取次数:%d\\n强化等级:%d\\n获得机体:%s",
+      "target": "%s\\nG币：%d\\n扭蛋机消耗G币：%d\\n机体解体获得G币：%d\\n扭蛋次数：%d\\n强化等级：%d\\n获得机体：%s",
+      "status": "ready"
+    },
+    {
+      "id": 126722,
+      "source": "未达到终极强化EX等级.",
+      "target": "尚未达到终极强化EX等级。",
+      "status": "ready"
+    },
+    {
+      "id": 126723,
+      "source": "可以使用EX能力修改器进行设置.",
+      "target": "可使用EX能力修改器进行设置。",
+      "status": "ready"
+    },
+    {
+      "id": 126724,
+      "source": "使用时会消耗EX能力修改器.\"",
+      "target": "使用时会消耗EX能力修改器。",
+      "status": "ready"
+    },
+    {
+      "id": 126725,
+      "source": "EX能力已更改.\\n%s",
+      "target": "EX能力已更改。\\n%s",
+      "status": "ready"
+    },
+    {
+      "id": 126726,
+      "source": "与当前EX能力效果重复.\\n请重新选择.",
+      "target": "与当前EX能力效果重复。\\n请重新选择。",
+      "status": "ready"
+    },
+    {
+      "id": 126734,
+      "source": "GAME START",
+      "target": "GAME START",
+      "status": "keep"
+    },
+    {
+      "id": 126781,
+      "source": "未连接到Pad.",
+      "target": "未连接手柄。",
+      "status": "ready"
+    },
+    {
+      "id": 126782,
+      "source": "MISSION SERVER",
+      "target": "MISSION SERVER",
+      "status": "keep"
+    },
+    {
+      "id": 126783,
+      "source": "VS SERVER",
+      "target": "VS SERVER",
+      "status": "keep"
+    },
+    {
+      "id": 126784,
+      "source": "CLAN SERVER",
+      "target": "CLAN SERVER",
+      "status": "keep"
+    },
+    {
+      "id": 126819,
+      "source": "BLUE",
+      "target": "BLUE",
+      "status": "keep"
+    },
+    {
+      "id": 126820,
+      "source": "RED",
+      "target": "RED",
+      "status": "keep"
+    },
+    {
+      "id": 126834,
+      "source": "READY",
+      "target": "READY",
+      "status": "keep"
+    },
+    {
+      "id": 126835,
+      "source": "MASTER",
+      "target": "MASTER",
+      "status": "keep"
+    },
+    {
+      "id": 126892,
+      "source": "No.",
+      "target": "No.",
+      "status": "keep"
+    },
+    {
+      "id": 126894,
+      "source": "MASTER",
+      "target": "MASTER",
+      "status": "keep"
+    },
+    {
+      "id": 126895,
+      "source": "READY",
+      "target": "READY",
+      "status": "keep"
+    },
+    {
+      "id": 126896,
+      "source": "READY",
+      "target": "READY",
+      "status": "keep"
+    },
+    {
+      "id": 126897,
+      "source": "READY",
+      "target": "READY",
+      "status": "keep"
+    },
+    {
+      "id": 126898,
+      "source": "LOADING",
+      "target": "LOADING",
+      "status": "keep"
+    },
+    {
+      "id": 126899,
+      "source": "CHANGE",
+      "target": "CHANGE",
+      "status": "keep"
+    },
+    {
+      "id": 126900,
+      "source": "QUEST",
+      "target": "QUEST",
+      "status": "keep"
+    },
+    {
+      "id": 126901,
+      "source": "ITEM",
+      "target": "ITEM",
+      "status": "keep"
+    },
+    {
+      "id": 126902,
+      "source": "MAP",
+      "target": "MAP",
+      "status": "keep"
+    },
+    {
+      "id": 126910,
+      "source": "IP",
+      "target": "IP",
+      "status": "keep",
+      "note": "保留通用网络缩写。"
+    },
+    {
+      "id": 126911,
+      "source": "Yes",
+      "target": "Yes",
+      "status": "keep"
+    },
+    {
+      "id": 126912,
+      "source": "No",
+      "target": "No",
+      "status": "keep"
+    },
+    {
+      "id": 126921,
+      "source": "Where is",
+      "target": "Where is",
+      "status": "keep"
+    },
+    {
+      "id": 126922,
+      "source": "Kick",
+      "target": "Kick",
+      "status": "keep"
+    },
+    {
+      "id": 126923,
+      "source": "Recall",
+      "target": "Recall",
+      "status": "keep"
+    },
+    {
+      "id": 126937,
+      "source": "WEB专用商品在官网受令确认及可以使用",
+      "target": "官网专用商品在官网领取后即可使用",
+      "status": "ready"
+    },
+    {
+      "id": 126956,
+      "source": "Does not match the version. To end the game",
+      "target": "版本不匹配，游戏即将结束。",
+      "status": "ready"
+    },
+    {
+      "id": 126983,
+      "source": "终极强化 On/Off",
+      "target": "终极强化 On/Off",
+      "status": "keep"
+    },
+    {
+      "id": 126984,
+      "source": "ON",
+      "target": "ON",
+      "status": "keep"
+    },
+    {
+      "id": 126985,
+      "source": "OFF",
+      "target": "OFF",
+      "status": "keep"
+    },
+    {
+      "id": 127002,
+      "source": "支付了%dG币.",
+      "target": "支付了%dG币.",
+      "status": "keep"
+    },
+    {
+      "id": 127105,
+      "source": "如果想在战斗辅助系统指定机体在 战斗辅助系统License连续进行任务.",
+      "target": "如需指定战斗辅助机体，请使用战斗辅助系统许可证连续执行任务。",
+      "status": "ready"
+    },
+    {
+      "id": 127117,
+      "source": "[BOSS]?",
+      "target": "[BOSS]?",
+      "status": "keep"
+    },
+    {
+      "id": 127158,
+      "source": "机体等级不足. (可以从OVER CUSTOM1开始使用)",
+      "target": "机体等级不足。（终极强化1级起可用）",
+      "status": "ready"
+    },
+    {
+      "id": 127159,
+      "source": "Custom Slot",
+      "target": "强化槽位",
+      "status": "ready"
+    },
+    {
+      "id": 127160,
+      "source": "Item Slot",
+      "target": "道具槽位",
+      "status": "ready"
+    },
+    {
+      "id": 127189,
+      "source": "HP",
+      "target": "耐久力",
+      "status": "ready"
+    },
+    {
+      "id": 127215,
+      "source": "ALL MISSION",
+      "target": "ALL MISSION",
+      "status": "keep"
+    },
+    {
+      "id": 127222,
+      "source": "锁定或者出击机体和SOLT是不能变更的.",
+      "target": "锁定、出击中的机体及其槽位不能变更。",
+      "status": "ready"
+    },
+    {
+      "id": 127238,
+      "source": "AI对战",
+      "target": "AI对战",
+      "status": "keep",
+      "note": "保留通用AI缩写。"
+    },
+    {
+      "id": 127255,
+      "source": "击落boss数",
+      "target": "击落首领数",
+      "status": "ready"
+    },
+    {
+      "id": 127349,
+      "source": "%dG币 + %d张",
+      "target": "%dG币 + %d张",
+      "status": "keep"
+    },
+    {
+      "id": 127351,
+      "source": "Normal",
+      "target": "Normal",
+      "status": "keep"
+    },
+    {
+      "id": 127352,
+      "source": "Secret",
+      "target": "Secret",
+      "status": "keep"
+    },
+    {
+      "id": 127353,
+      "source": "Rare",
+      "target": "Rare",
+      "status": "keep"
+    },
+    {
+      "id": 127354,
+      "source": "User",
+      "target": "User",
+      "status": "review",
+      "note": "位于机体目录分类，与Normal、Secret、Rare并列；现有UIR和原生消费者未说明该分类的准确含义，保留原文并排除运行时翻译。"
+    },
+    {
+      "id": 127434,
+      "source": "Key机体",
+      "target": "关键机体",
+      "status": "ready"
+    },
+    {
+      "id": 127441,
+      "source": "EXPERT",
+      "target": "EXPERT",
+      "status": "keep"
+    },
+    {
+      "id": 127442,
+      "source": "HARD",
+      "target": "HARD",
+      "status": "keep"
+    },
+    {
+      "id": 127443,
+      "source": "HARD~EXPERT",
+      "target": "HARD~EXPERT",
+      "status": "keep"
+    },
+    {
+      "id": 127444,
+      "source": "NORMAL",
+      "target": "NORMAL",
+      "status": "keep"
+    },
+    {
+      "id": 127445,
+      "source": "NORMAL~HARD",
+      "target": "NORMAL~HARD",
+      "status": "keep"
+    },
+    {
+      "id": 127446,
+      "source": "NORMAL~EXPERT",
+      "target": "NORMAL~EXPERT",
+      "status": "keep"
+    },
+    {
+      "id": 127447,
+      "source": "EASY",
+      "target": "EASY",
+      "status": "keep"
+    },
+    {
+      "id": 127448,
+      "source": "EASY~NORMAL",
+      "target": "EASY~NORMAL",
+      "status": "keep"
+    },
+    {
+      "id": 127449,
+      "source": "EASY~HARD",
+      "target": "EASY~HARD",
+      "status": "keep"
+    },
+    {
+      "id": 127450,
+      "source": "EASY~EXPERT",
+      "target": "EASY~EXPERT",
+      "status": "keep"
+    },
+    {
+      "id": 127451,
+      "source": "VERYEASY",
+      "target": "VERYEASY",
+      "status": "keep"
+    },
+    {
+      "id": 127452,
+      "source": "VERYEASY~EASY",
+      "target": "VERYEASY~EASY",
+      "status": "keep"
+    },
+    {
+      "id": 127453,
+      "source": "VERYEASY~NORMAL",
+      "target": "VERYEASY~NORMAL",
+      "status": "keep"
+    },
+    {
+      "id": 127454,
+      "source": "VERYEASY~HARD",
+      "target": "VERYEASY~HARD",
+      "status": "keep"
+    },
+    {
+      "id": 127466,
+      "source": "获得Mission战奖励",
+      "target": "获得Mission战奖励",
+      "status": "keep"
+    },
+    {
+      "id": 127471,
+      "source": "协同Mission任务",
+      "target": "协同Mission任务",
+      "status": "keep"
+    },
+    {
+      "id": 127472,
+      "source": "原作Mission任务",
+      "target": "原作Mission任务",
+      "status": "keep"
+    },
+    {
+      "id": 127473,
+      "source": "单人Mission任务",
+      "target": "单人Mission任务",
+      "status": "keep"
+    },
+    {
+      "id": 127491,
+      "source": "(所属势力胜利) %dG币 + 光荣的标志 %d张",
+      "target": "(所属势力胜利) %dG币 + 光荣的标志 %d张",
+      "status": "keep"
+    },
+    {
+      "id": 127492,
+      "source": "(所属势力失败) %dG币 + 光荣的标志 %d张",
+      "target": "(所属势力失败) %dG币 + 光荣的标志 %d张",
+      "status": "keep"
+    },
+    {
+      "id": 127553,
+      "source": "SHOP",
+      "target": "SHOP",
+      "status": "keep"
+    },
+    {
+      "id": 127604,
+      "source": "%dLv",
+      "target": "等级%d",
+      "status": "ready"
+    },
+    {
+      "id": 127671,
+      "source": "G币：%dG币",
+      "target": "G币：%d",
+      "status": "ready"
+    },
+    {
+      "id": 127673,
+      "source": "是否要解体机体？\\nG币：%dG币\\n解体时获得奖励。",
+      "target": "是否解体机体？\\n可获得：%dG币\\n解体时获得奖励。",
+      "status": "ready"
+    },
+    {
+      "id": 127675,
+      "source": "是否要解体%d个机体？\\nG币：%dG币\\n解体时获得奖励。",
+      "target": "是否解体%d个机体？\\n可获得：%dG币\\n解体时获得奖励。",
+      "status": "ready"
+    },
+    {
+      "id": 127677,
+      "source": "%d Toon",
+      "target": "%d台",
+      "status": "ready"
+    },
+    {
+      "id": 127678,
+      "source": "%s : %d Toon",
+      "target": "%s：%d台",
+      "status": "ready"
+    },
+    {
+      "id": 127679,
+      "source": "Toon",
+      "target": "机体数",
+      "status": "ready"
+    },
+    {
+      "id": 127723,
+      "source": "Clan战绩",
+      "target": "Clan战绩",
+      "status": "keep"
+    },
+    {
+      "id": 127724,
+      "source": "Clan排行",
+      "target": "Clan排行",
+      "status": "keep"
+    },
+    {
+      "id": 127725,
+      "source": "Clan等级",
+      "target": "Clan等级",
+      "status": "keep"
+    },
+    {
+      "id": 127726,
+      "source": "Clan经验值",
+      "target": "Clan经验值",
+      "status": "keep"
+    },
+    {
+      "id": 127727,
+      "source": "Clan币",
+      "target": "Clan币",
+      "status": "keep"
+    },
+    {
+      "id": 127728,
+      "source": "Clan势力",
+      "target": "Clan势力",
+      "status": "keep"
+    },
+    {
+      "id": 127729,
+      "source": "Clan领地",
+      "target": "Clan领地",
+      "status": "keep"
+    },
+    {
+      "id": 127748,
+      "source": "Item",
+      "target": "Item",
+      "status": "keep"
+    },
+    {
+      "id": 127767,
+      "source": "Clan信息",
+      "target": "Clan信息",
+      "status": "keep"
+    },
+    {
+      "id": 127770,
+      "source": "选择Mission",
+      "target": "选择Mission",
+      "status": "keep"
+    },
+    {
+      "id": 127794,
+      "source": "Mission列表",
+      "target": "Mission列表",
+      "status": "keep"
+    },
+    {
+      "id": 127801,
+      "source": "LvEx",
+      "target": "等级EX",
+      "status": "ready"
+    },
+    {
+      "id": 127803,
+      "source": "Ex",
+      "target": "Ex",
+      "status": "keep",
+      "note": "保留游戏既有EX等级缩写。"
+    },
+    {
+      "id": 127815,
+      "source": "4VS4小队战",
+      "target": "4VS4小队战",
+      "status": "keep"
+    },
+    {
+      "id": 127816,
+      "source": "AI对战",
+      "target": "AI对战",
+      "status": "keep",
+      "note": "保留通用AI缩写。"
+    },
+    {
+      "id": 127863,
+      "source": "Mission专用",
+      "target": "Mission专用",
+      "status": "keep"
+    },
+    {
+      "id": 127879,
+      "source": "AI对战",
+      "target": "AI对战",
+      "status": "keep",
+      "note": "保留通用AI缩写。"
+    },
+    {
+      "id": 127926,
+      "source": "token服务器登录超时,请重试.",
+      "target": "令牌服务器登录超时，请重试。",
+      "status": "ready"
+    },
+    {
+      "id": 127955,
+      "source": "Player %d",
+      "target": "Player %d",
+      "status": "keep"
+    },
+    {
+      "id": 127960,
+      "source": "观战对象(User)",
+      "target": "观战对象(User)",
+      "status": "keep"
+    },
+    {
+      "id": 127961,
+      "source": "观战者(GM)",
+      "target": "观战者(GM)",
+      "status": "keep"
+    },
+    {
+      "id": 127985,
+      "source": "暴走启动增加HP",
+      "target": "暴走启动时增加耐久力",
+      "status": "ready"
+    },
+    {
+      "id": 127991,
+      "source": "等级Ex以上",
+      "target": "等级EX以上",
+      "status": "ready"
+    }
+  ]
+}

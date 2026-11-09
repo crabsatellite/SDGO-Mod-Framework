@@ -16,6 +16,11 @@ public:
         bool SameSelection(const Snapshot& other) const {
             return pilot==other.pilot && unit==other.unit && uid==other.uid && slot==other.slot;
         }
+        bool MatchesOwnedSelection(uint32_t expectedPilot,uint64_t expectedUid) const {
+            return inventory_matches && pilot==expectedPilot &&
+                uid==expectedUid && inventory_uid==expectedUid &&
+                unit==inventory_unit && slot==inventory_slot;
+        }
     };
     using BriefFn=void(__thiscall*)(void*,void*,uint16_t);
     bool Bind(const SdgoApi* api,SdgoMod* mod) {

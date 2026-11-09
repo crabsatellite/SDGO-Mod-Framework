@@ -16,6 +16,8 @@ Both data sets coexist. The server owner chooses which one the whole server uses
 
 Switching the mode or disabling the Mods leaves every table in place. Nothing is deleted or rewritten in the native tables, so removing the Mods restores the native behaviour immediately.
 
+Unit and item names can use the enabled shop localization service, falling back to their source text. Existing native Chinese messages are preserved; untranslated fixed prompts use reviewed Chinese. Custom-unit wording remains supplied by its content package.
+
 ## Components
 
 | Mod | Host | Role |

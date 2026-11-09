@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "ui_localization",
+  "title": "原生界面中文汉化",
+  "category": "fixes",
+  "hosts": ["client"],
+  "settings": [
+    {
+      "id": "trace_known_sources",
+      "key": "TraceKnownSources",
+      "file": "mod.ini",
+      "section": "settings",
+      "type": "boolean",
+      "default": false,
+      "audience": "developer",
+      "label": "记录已知界面词条调用位置",
+      "description": "记录匹配词条的编号与原生调用位置，用于排查界面汉化。",
+      "activation": "restart"
+    }
+  ],
+  "description": "将已核实原生界面的静态标签和系统提示显示为中文，保持玩家姓名、聊天与原生交互。",
+  "mechanism": "按受支持的客户端签名和静态界面入口替换已审定短语；系统文字仅在记录编号和原文均匹配时返回文字副本。不会修改原版资源归档。启停后重启客户端生效。",
+  "presentation": "configurable"
+}

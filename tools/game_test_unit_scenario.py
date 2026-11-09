@@ -9,6 +9,7 @@ SETTINGS = {'UnitPagesOnly':'0','UnitPresentations':'0','UnitPortraits':'0','Uni
     'CaptureNativeFrames':'0','CollectionPreviewOnly':'0','EarlyNavigationTarget':'off',
     'EarlyNavigationBeforeInventory':'0',
     'UnitAcquisitionKind':'0','UnitAcquisitionMachine':'0','UnitAcquisitionUnit':'0',
+    'UnitAcquisitionUiPreviewOnly':'0',
     'CapsulePreviewMachine':'990001','CapsulePreviewPrice':'100000','CapsulePreviewCurrency':'0',
     'ActivityDrawOnce':'0','ActivityRewardCount':'0','BlueprintRecipe':'0','BlueprintBookUid':'0',
     'BlueprintMaterialCount':'0','BlueprintSynthesize':'0','BlueprintOutputUnit':'0',
@@ -123,11 +124,23 @@ def validate(value, plan):
     elif pairs:raise ValueError('reward expectations require the explicit native draw scope')
     if 'acquisition' in value:
         item=value['acquisition']
-        if not isinstance(item,dict) or set(item)!={'kind','machine_id','unit_id'}:
+        if (not isinstance(item,dict) or
+            not {'kind','machine_id','unit_id'}<=set(item) or
+            set(item)-{'kind','machine_id','unit_id','ui_preview_only'}):
             raise ValueError('native acquisition needs kind, machine_id and unit_id')
-        if any(type(v) is not int or not 0<v<2**32 for v in item.values()) or item['kind'] not in (1,3):
+        if (any(type(item[key]) is not int or not 0<item[key]<2**32
+                for key in ('kind','machine_id','unit_id')) or item['kind'] not in (1,3)):
             raise ValueError('unsupported native acquisition identity or machine kind')
+        if 'ui_preview_only' in item and item['ui_preview_only'] is not True:
+            raise ValueError('native acquisition UI preview must be explicitly enabled')
         if result['collection_preview']:raise ValueError('choose one native capsule preview scope')
+        if item.get('ui_preview_only') and (
+            plan.get('page_group') or result['portraits'] or
+            'presentation_target' in result or
+            any(field in value for field in
+                ('activity_target','activity_draw','reward_pairs','blueprint',
+                 'native_id_probe','native_record_lifecycle'))):
+            raise ValueError('native acquisition UI preview is a separate read-only page scope')
         result['acquisition']=dict(item)
     return result
 
@@ -173,7 +186,9 @@ def settings(value=None):
             result['BlueprintMaterialUid'+str(index)]=str(material['uid'])
     if value.get('acquisition'):
         a=value['acquisition'];result.update(UnitAcquisitionKind=str(a['kind']),
-            UnitAcquisitionMachine=str(a['machine_id']),UnitAcquisitionUnit=str(a['unit_id']))
+            UnitAcquisitionMachine=str(a['machine_id']),UnitAcquisitionUnit=str(a['unit_id']),
+            UnitAcquisitionUiPreviewOnly=str(int(a.get('ui_preview_only',False))))
+        if a.get('ui_preview_only'):result['UnitPresentations']='0'
     if value.get('activity_target'):
         a=value['activity_target'];result.update(CapsulePreviewMachine=str(a['machine_id']),
             CapsulePreviewPrice=str(a['price']),CapsulePreviewCurrency=str(a['currency']))
@@ -187,7 +202,10 @@ def settings(value=None):
 def cases(value):
     result=('framework.bootstrap','flow.login','flow.onboarding')
     if value.get('early_navigation'):result+=('pages.loading_navigation',)
-    result+=('setup.active_unit',)+INDEX_CASES[:2]
+    result+=('setup.active_unit',)
+    if value.get('acquisition',{}).get('ui_preview_only'):
+        return result+('pages.unit_acquisition',)
+    result+=INDEX_CASES[:2]
     if value.get('native_id_probe'):return result[:4]+('catalog.native_id_occupancy',)
     if value.get('native_record_lifecycle'):return result[:4]
     if value.get('blueprint'):
@@ -222,7 +240,9 @@ def read(root, digest, plan, read_ini):
                  'early_navigation' not in value and
                  'early_navigation_before_inventory' not in value) or
                 (key=='EarlyNavigationBeforeInventory' and
-                 'early_navigation_before_inventory' not in value)):
+                 'early_navigation_before_inventory' not in value) or
+                (key=='UnitAcquisitionUiPreviewOnly' and
+                 not value.get('acquisition',{}).get('ui_preview_only'))):
             fallback=SETTINGS.get(key)
         if config.get('settings',key,fallback=fallback)!=expected:
             raise ValueError('native unit observer settings disagree with sealed scenario: '+key)

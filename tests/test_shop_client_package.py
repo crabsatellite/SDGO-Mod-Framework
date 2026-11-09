@@ -18,6 +18,22 @@ ROOT = Path(__file__).resolve().parents[1]
 HOST = 'GOnline-54BE1568-00C97000'
 REVISION = '7' * 64
 PUBLISHED_REVISION = '8' * 64
+UNIT_NAME_DISPLAY_SYMBOLS = {
+    'shop_localization.unit_name_display.unit_name_5',
+    'shop_localization.unit_name_display.unit_name_105',
+    'shop_localization.unit_name_display.unit_name_205',
+    'shop_localization.unit_name_display.call.0083A5A4',
+    'shop_localization.unit_name_display.call.00970764',
+    'shop_localization.unit_name_display.call.00812654',
+    'shop_localization.unit_name_display.call.0089751A',
+    'shop_localization.unit_name_display.call.008C051C',
+    'shop_localization.unit_name_display.call.009CA9D4',
+    'shop_localization.unit_name_display.call.005F6BFD',
+    'shop_localization.unit_name_display.call.00620E58',
+    'shop_localization.unit_name_display.assign_call.006EF1F4',
+    'shop_localization.unit_name_display.assign_call.006EF31D',
+    'shop_localization.unit_name_display.assign_call.006EF404',
+}
 
 
 class ShopClientPackageTests(unittest.TestCase):
@@ -115,6 +131,7 @@ class ShopClientPackageTests(unittest.TestCase):
             fragment = storage.ini_values(archive.read('symbols.fragment.ini'))
         self.assertIn('shop_localization.call.009C038C', fragment)
         self.assertEqual(fragment['shop_localization.call.009C038C']['rva'], '0x005C038C')
+        self.assertTrue(UNIT_NAME_DISPLAY_SYMBOLS.issubset(fragment.sections()))
         self.assertIn('shop.buy_options.populate', fragment)
         self.assertIn('text.ansi_to_wide', fragment)
         self.assertNotIn('unrelated.private', fragment)
@@ -223,6 +240,7 @@ class ShopClientPackageTests(unittest.TestCase):
                              (self.client / 'sdgo/mods/shop_localization/symbols.fragment.ini').read_bytes())
             installed_symbols = storage.ini_values((target / ('sdgo/symbols/' + HOST + '.ini')).read_bytes())
             self.assertIn('shop_localization.call.009C038C', installed_symbols)
+            self.assertTrue(UNIT_NAME_DISPLAY_SYMBOLS.issubset(installed_symbols.sections()))
             self.assertEqual(installed_symbols['other.mod']['rva'], '0x7654')
             self.assertFalse(any(path.suffix.lower() in {'.exe', '.ps1', '.py'}
                                  for path in (target / 'sdgo').rglob('*')))
@@ -240,6 +258,7 @@ class ShopClientPackageTests(unittest.TestCase):
                               archive.namelist())
                 second_symbols = storage.ini_values(archive.read('symbols.fragment.ini'))
                 self.assertIn('shop_localization.call.009C038C', second_symbols)
+                self.assertTrue(UNIT_NAME_DISPLAY_SYMBOLS.issubset(second_symbols.sections()))
         finally:
             player.services.close()
 

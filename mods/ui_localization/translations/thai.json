@@ -1,0 +1,712 @@
+{
+  "schema_version": 1,
+  "language": "th",
+  "entries": [
+    {
+      "source": "< คำเตือน >\\nเมื่อระยะเวลาในการ",
+      "target": "< 警告 >\\n当……的期限…",
+      "note": "原始文本槽在此处截断；译文以省略号保留未完语义。",
+      "status": "ready"
+    },
+    {
+      "source": "Exp.สะสม",
+      "target": "累计经验",
+      "status": "ready"
+    },
+    {
+      "source": "Point ทั้งหมด :",
+      "target": "总点数：",
+      "status": "ready"
+    },
+    {
+      "source": "Point ที่ได้ :",
+      "target": "获得点数：",
+      "status": "ready"
+    },
+    {
+      "source": "Point ในการรีเซ็ทค่าสถานะ",
+      "target": "属性重置点数",
+      "status": "ready"
+    },
+    {
+      "source": "Pointในการต่อสู้",
+      "target": "战斗点数",
+      "status": "ready"
+    },
+    {
+      "source": "Pop Upช่วงเตรียมตัว",
+      "target": "准备阶段弹窗",
+      "status": "ready"
+    },
+    {
+      "source": "Unit ที่เลือก",
+      "target": "已选机体",
+      "status": "ready"
+    },
+    {
+      "source": "การย่อยสลายหุ่นจะได้รับ 500 Poi",
+      "target": "分解机体可获得500……",
+      "note": "原始文本槽在此处截断；译文以省略号保留未完语义。",
+      "status": "ready"
+    },
+    {
+      "source": "การรับช่วยเหลือ",
+      "target": "获得援助",
+      "status": "ready"
+    },
+    {
+      "source": "การร้อง",
+      "target": "喊话",
+      "status": "ready"
+    },
+    {
+      "source": "การลบ Unit",
+      "target": "删除机体",
+      "status": "ready"
+    },
+    {
+      "source": "การแข่งแบบแคลนเริ่มแล้ว",
+      "target": "战队战开始",
+      "status": "ready"
+    },
+    {
+      "source": "การโอนแคลนถูกยกเลิกโดยอัตโนมัติ",
+      "target": "战队转让已自动取消",
+      "status": "ready"
+    },
+    {
+      "source": "กิจกรรมพิเศษ",
+      "target": "特别活动",
+      "status": "ready"
+    },
+    {
+      "source": "ของที่ซื้อ",
+      "target": "已购商品",
+      "status": "ready"
+    },
+    {
+      "source": "ของรางวัล :",
+      "target": "奖励：",
+      "status": "ready"
+    },
+    {
+      "source": "ข้อมูล Emblem",
+      "target": "徽章信息",
+      "status": "ready"
+    },
+    {
+      "source": "ข้อมูล Unit",
+      "target": "机体信息",
+      "status": "ready"
+    },
+    {
+      "source": "ข้อมูลผู้เล่น",
+      "target": "玩家信息",
+      "status": "ready"
+    },
+    {
+      "source": "ข้อมูลยูนิต",
+      "target": "机体信息",
+      "status": "ready"
+    },
+    {
+      "source": "ข้อมูลหุ่น",
+      "target": "机体信息",
+      "status": "ready"
+    },
+    {
+      "source": "ข้อมูลแคลน",
+      "target": "战队信息",
+      "status": "ready"
+    },
+    {
+      "source": "ข้าม Intro Movie",
+      "target": "跳过开场动画",
+      "status": "ready"
+    },
+    {
+      "source": "คำร้องขอสำหรับสมัครเข้าแคลน",
+      "target": "申请加入战队",
+      "status": "ready"
+    },
+    {
+      "source": "คืนค่าเดิม",
+      "target": "恢复默认",
+      "status": "ready"
+    },
+    {
+      "source": "คุณสมบัติ",
+      "target": "属性",
+      "status": "ready"
+    },
+    {
+      "source": "ค่าใช้จ่ายในการเติมพลัง",
+      "target": "能量补充费用",
+      "status": "ready"
+    },
+    {
+      "source": "ค้นหาทีมที่ทัดเทียมกัน",
+      "target": "匹配实力相当的队伍",
+      "status": "ready"
+    },
+    {
+      "source": "จัดเรียง Unit",
+      "target": "整理机体",
+      "status": "ready"
+    },
+    {
+      "source": "จำนวน",
+      "target": "数量",
+      "status": "ready"
+    },
+    {
+      "source": "จำนวนการแข่งขัน",
+      "target": "比赛次数",
+      "status": "ready"
+    },
+    {
+      "source": "จำนวนคน",
+      "target": "人数",
+      "status": "ready"
+    },
+    {
+      "source": "จำนวนสมาชิกที่กำหนด",
+      "target": "指定成员数",
+      "status": "ready"
+    },
+    {
+      "source": "ฉันมีเพื่อใช้สำหรับตระกูลที่ตระ",
+      "target": "我拥有可供战队使用的…",
+      "note": "原始文本槽在此处截断；译文以省略号保留未完语义。",
+      "status": "ready"
+    },
+    {
+      "source": "ชั่วโมง",
+      "target": "小时",
+      "status": "ready"
+    },
+    {
+      "source": "ชิ้นส่วนเสริมพลัง",
+      "target": "强化部件",
+      "status": "ready"
+    },
+    {
+      "source": "ชื่อ Clan",
+      "target": "战队名称",
+      "status": "ready"
+    },
+    {
+      "source": "ชื่อสินค้า",
+      "target": "商品名称",
+      "status": "ready"
+    },
+    {
+      "source": "ชื่อสินค้า :",
+      "target": "商品名称：",
+      "status": "ready"
+    },
+    {
+      "source": "ชื่อห้อง",
+      "target": "房间名称",
+      "status": "ready"
+    },
+    {
+      "source": "ชื่อโอเปอร์เรเตอร์:",
+      "target": "副官名称：",
+      "status": "ready"
+    },
+    {
+      "source": "ชุมชน",
+      "target": "社区",
+      "status": "ready"
+    },
+    {
+      "source": "ซื้อ",
+      "target": "购买",
+      "status": "ready"
+    },
+    {
+      "source": "ดำเนินการได้",
+      "target": "副官",
+      "status": "ready"
+    },
+    {
+      "source": "ตั้งค่า Rank",
+      "target": "设置级别",
+      "status": "ready"
+    },
+    {
+      "source": "ติดตั้งหุ่น",
+      "target": "装备机体",
+      "status": "ready"
+    },
+    {
+      "source": "ติดตั้งไอเท็ม",
+      "target": "装备道具",
+      "status": "ready"
+    },
+    {
+      "source": "ต้องการ EXP",
+      "target": "所需经验",
+      "status": "ready"
+    },
+    {
+      "source": "ต้องการเข้าร่วมเกมส์หรือไม่?",
+      "target": "要加入游戏吗？",
+      "status": "ready"
+    },
+    {
+      "source": "ถึง",
+      "target": "至",
+      "status": "ready"
+    },
+    {
+      "source": "ท่าโจมตีพิเศษ",
+      "target": "必杀技",
+      "status": "ready"
+    },
+    {
+      "source": "ธรรมดา Battle",
+      "target": "普通对战",
+      "status": "ready"
+    },
+    {
+      "source": "นาที",
+      "target": "分钟",
+      "status": "ready"
+    },
+    {
+      "source": "นาฬิกา",
+      "target": "时",
+      "status": "ready"
+    },
+    {
+      "source": "บังคับให้ออก",
+      "target": "踢出",
+      "status": "ready"
+    },
+    {
+      "source": "บังคับให้ออกจาการแข่งขัน",
+      "target": "踢出比赛",
+      "status": "ready"
+    },
+    {
+      "source": "ปฏิเสธสงคราม",
+      "target": "拒绝战队战",
+      "status": "ready"
+    },
+    {
+      "source": "ประสบการณ์",
+      "target": "经验",
+      "status": "ready"
+    },
+    {
+      "source": "ปลดล็อคยูนิต",
+      "target": "解锁机体",
+      "status": "ready"
+    },
+    {
+      "source": "ปิด",
+      "target": "关闭",
+      "status": "ready"
+    },
+    {
+      "source": "ปี",
+      "target": "年",
+      "status": "ready"
+    },
+    {
+      "source": "ผลการ Battle",
+      "target": "对战结果",
+      "status": "ready"
+    },
+    {
+      "source": "ผู้ส่ง",
+      "target": "发件人",
+      "status": "ready"
+    },
+    {
+      "source": "พลังงาน",
+      "target": "能量",
+      "status": "ready"
+    },
+    {
+      "source": "พื้นที่จัดเก็บ",
+      "target": "保管库",
+      "status": "ready"
+    },
+    {
+      "source": "ฟังก์ชั่นสนับสนุนการรบ",
+      "target": "战斗辅助功能",
+      "status": "ready"
+    },
+    {
+      "source": "ภูมิประเทศ",
+      "target": "地形",
+      "status": "ready"
+    },
+    {
+      "source": "มีคำเชิญมาจาก",
+      "target": "收到来自以下玩家的邀请",
+      "status": "ready"
+    },
+    {
+      "source": "มีอิทธิพล 1",
+      "target": "势力1",
+      "status": "ready"
+    },
+    {
+      "source": "มีอิทธิพล 2",
+      "target": "势力2",
+      "status": "ready"
+    },
+    {
+      "source": "ยกเลิก",
+      "target": "取消",
+      "status": "ready"
+    },
+    {
+      "source": "ยกเลิกรายการ",
+      "target": "删除",
+      "status": "ready"
+    },
+    {
+      "source": "ยอมรับสงคราม",
+      "target": "接受战队战",
+      "status": "ready"
+    },
+    {
+      "source": "ยินดีด้วย!",
+      "target": "恭喜！",
+      "status": "ready"
+    },
+    {
+      "source": "ยินดีด้วย~! คุณทำการผสมยูนิตสำเ",
+      "target": "恭喜！机体合成……",
+      "note": "原始文本槽在此处截断；译文以省略号保留未完语义。",
+      "status": "ready"
+    },
+    {
+      "source": "ยืนยัน",
+      "target": "确认",
+      "status": "ready"
+    },
+    {
+      "source": "ยืนยันการดำเนินการผสม Unit ?",
+      "target": "确认进行机体合成？",
+      "status": "ready"
+    },
+    {
+      "source": "ย้ายไปหมวดร้านค้า",
+      "target": "前往商城分类",
+      "status": "ready"
+    },
+    {
+      "source": "ระดับ",
+      "target": "等级",
+      "status": "ready"
+    },
+    {
+      "source": "ระยะเวลาสิ้นสุด",
+      "target": "到期时间",
+      "status": "ready"
+    },
+    {
+      "source": "รับรางวัล",
+      "target": "领取奖励",
+      "status": "ready"
+    },
+    {
+      "source": "รับรางวัลForce Battle",
+      "target": "领取势力战奖励",
+      "status": "ready"
+    },
+    {
+      "source": "ราคาสินค้า",
+      "target": "商品价格",
+      "status": "ready"
+    },
+    {
+      "source": "รายการภารกิจ",
+      "target": "任务列表",
+      "status": "ready"
+    },
+    {
+      "source": "รายชื่อทีมแข่งขัน",
+      "target": "比赛队伍列表",
+      "status": "ready"
+    },
+    {
+      "source": "รายชื่อห้องทั้งหมด",
+      "target": "全部房间",
+      "status": "ready"
+    },
+    {
+      "source": "รายชื่อห้องรอ ",
+      "target": "等待中的房间",
+      "status": "ready"
+    },
+    {
+      "source": "รายชื่อเพื่อน",
+      "target": "好友列表",
+      "status": "ready"
+    },
+    {
+      "source": "รายละเอียด Cost",
+      "target": "Cost详情",
+      "status": "ready"
+    },
+    {
+      "source": "รายละเอียด Cost ของแต่ละ Rank",
+      "target": "各级别Cost详情",
+      "status": "ready"
+    },
+    {
+      "source": "รายละเอียด:",
+      "target": "详情：",
+      "status": "ready"
+    },
+    {
+      "source": "รายละเอียดสินค้า",
+      "target": "商品详情",
+      "status": "ready"
+    },
+    {
+      "source": "รายละเอียดไอเท็ม :",
+      "target": "道具详情：",
+      "status": "ready"
+    },
+    {
+      "source": "รีเซ็ท",
+      "target": "重置",
+      "status": "ready"
+    },
+    {
+      "source": "ร้านค้า",
+      "target": "商城",
+      "status": "ready"
+    },
+    {
+      "source": "ลงทะเบียนทีม",
+      "target": "登记队伍",
+      "status": "ready"
+    },
+    {
+      "source": "ลงทะเบียนเพื่อน",
+      "target": "添加好友",
+      "status": "ready"
+    },
+    {
+      "source": "ล็อคยูนิต/ปลดล็อค",
+      "target": "锁定／解锁机体",
+      "status": "ready"
+    },
+    {
+      "source": "วัน",
+      "target": "天",
+      "status": "ready"
+    },
+    {
+      "source": "วันที่",
+      "target": "日期",
+      "status": "ready"
+    },
+    {
+      "source": "วันที่บล็อค",
+      "target": "屏蔽日期",
+      "status": "ready"
+    },
+    {
+      "source": "สกิล",
+      "target": "技能",
+      "status": "ready"
+    },
+    {
+      "source": "สกิลพิเศษ",
+      "target": "特殊技能",
+      "status": "ready"
+    },
+    {
+      "source": "สถานะ",
+      "target": "状态",
+      "status": "ready"
+    },
+    {
+      "source": "สถานะปัจจุบันForce Battle",
+      "target": "当前势力战状态",
+      "status": "ready"
+    },
+    {
+      "source": "สมาชิกแคลน",
+      "target": "战队成员",
+      "status": "ready"
+    },
+    {
+      "source": "สร้างห้อง",
+      "target": "创建房间",
+      "status": "ready"
+    },
+    {
+      "source": "สังกัด : ",
+      "target": "所属势力：",
+      "status": "ready"
+    },
+    {
+      "source": "ส่งกระซิบ",
+      "target": "悄悄话",
+      "status": "ready"
+    },
+    {
+      "source": "ส่งข้อความ",
+      "target": "发送消息",
+      "status": "ready"
+    },
+    {
+      "source": "หมายเลขห้อง",
+      "target": "房间编号",
+      "status": "ready"
+    },
+    {
+      "source": "หากไม่ [ตอบรับการต่อสู้] ใน 7 ว",
+      "target": "若未在7…内[接受战斗]",
+      "note": "原始文本槽在此处截断；译文以省略号保留未完语义。",
+      "status": "ready"
+    },
+    {
+      "source": "ห้อง PC",
+      "target": "网吧",
+      "status": "ready"
+    },
+    {
+      "source": "ห้องส่วนตัว",
+      "target": "个人房间",
+      "status": "ready"
+    },
+    {
+      "source": "ห้องเปิดแคปซูล",
+      "target": "扭蛋室",
+      "status": "ready"
+    },
+    {
+      "source": "ห้องเล่นเกมส์",
+      "target": "游戏房间",
+      "status": "ready"
+    },
+    {
+      "source": "ห้องแคลน",
+      "target": "战队房间",
+      "status": "ready"
+    },
+    {
+      "source": "อยู่ระหว่างดำเนินการ : ",
+      "target": "进行中：",
+      "status": "ready"
+    },
+    {
+      "source": "ออพชั่น",
+      "target": "选项",
+      "status": "ready"
+    },
+    {
+      "source": "อิทธิพล:",
+      "target": "势力：",
+      "status": "ready"
+    },
+    {
+      "source": "เข้าสู่ระบบ",
+      "target": "登录",
+      "status": "ready"
+    },
+    {
+      "source": "เดือน",
+      "target": "月",
+      "status": "ready"
+    },
+    {
+      "source": "เติม Cash",
+      "target": "充值Cash",
+      "status": "ready"
+    },
+    {
+      "source": "เติมพลังงาน",
+      "target": "补充能量",
+      "status": "ready"
+    },
+    {
+      "source": "เติมพลังให้เต็ม",
+      "target": "补满能量",
+      "status": "ready"
+    },
+    {
+      "source": "เพื่อน",
+      "target": "好友",
+      "status": "ready"
+    },
+    {
+      "source": "เริ่มทำสงคราม หาก MASTER ยอมรับ",
+      "target": "战队长同意后开始战队战",
+      "status": "ready"
+    },
+    {
+      "source": "เลือกกองกำลัง",
+      "target": "选择势力",
+      "status": "ready"
+    },
+    {
+      "source": "เลือกภารกิจ",
+      "target": "选择任务",
+      "status": "ready"
+    },
+    {
+      "source": "เลเวล",
+      "target": "等级",
+      "status": "ready"
+    },
+    {
+      "source": "เวลาที่ให้เช่า",
+      "target": "租用期限",
+      "status": "ready"
+    },
+    {
+      "source": "โหมด",
+      "target": "模式",
+      "status": "ready"
+    },
+    {
+      "source": "ในการบรรจุ",
+      "target": "填充中",
+      "status": "ready"
+    },
+    {
+      "source": "ได้รับ",
+      "target": "领取",
+      "status": "ready"
+    },
+    {
+      "source": "ไม่สามารถคืนสินค้าที่ซื้อไปแล้ว",
+      "target": "已购商品无法退还",
+      "status": "ready"
+    },
+    {
+      "source": "ไม่สามารถย่อยสลายหุ่นที่ยังไม่ฟ",
+      "target": "尚未……的机体无法分解",
+      "note": "原始文本槽在此处截断；译文以省略号保留未完语义。",
+      "status": "ready"
+    },
+    {
+      "source": "ไม่สามารถใช้ AUTO JOIN ได้'",
+      "target": "无法使用AUTO JOIN",
+      "status": "ready"
+    },
+    {
+      "source": "ไอเท็มที่ใช้หมดเวลาการใช้งาน",
+      "target": "道具使用期限已结束",
+      "status": "ready"
+    },
+    {
+      "source": "ไอเท็มที่ได้:",
+      "target": "获得道具：",
+      "status": "ready"
+    }
+  ]
+}

@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "../mods/oc_custom_client/display_text.h"
 #include "sdgo/localization.h"
 
 namespace {
@@ -25,6 +26,18 @@ int wmain(int argc, wchar_t** argv)
                                              L"Gundam", &translated) &&
                   translated == L"unchanged",
               "missing optional provider preserves caller output");
+        Check(sdgo::oc_custom::client::display::FixedChinese(L"开始") == L"开始" &&
+                  sdgo::oc_custom::client::display::FixedChinese(L"第一行\\n第二行") ==
+                      L"第一行\n第二行",
+              "OC fixed controls retain reviewed Chinese and normalize line breaks");
+        Check(sdgo::oc_custom::client::display::ReviewedUiText(
+                  L"原生中文\\n详细说明",L"简短后备") == L"原生中文\n详细说明",
+              "OC keeps the existing localized native prose rather than replacing good wording");
+        Check(sdgo::oc_custom::client::display::ReviewedUiText(L"ยกเลิก",L"取消") == L"取消",
+              "untranslated native text uses the reviewed Chinese fallback");
+        Check(sdgo::oc_custom::client::display::LocalizedName(
+                  sdgo::localization::Kind::UnitName, 42, L"Gundam") == L"Gundam",
+              "OC dynamic names retain native text without the optional provider");
 
         const HMODULE fixture = LoadLibraryW(argv[1]);
         Check(fixture != nullptr, "test fixture loaded explicitly by the harness");
@@ -39,6 +52,15 @@ int wmain(int argc, wchar_t** argv)
                                             L"EXP Capsule 200 (Full)", &translated) &&
                   translated == L"经验胶囊 200（满）",
               "item category lookup reaches the optional provider");
+        Check(sdgo::oc_custom::client::display::LocalizedName(
+                  sdgo::localization::Kind::UnitName, 42, L"Gundam") == L"高达" &&
+                  sdgo::oc_custom::client::display::LocalizedName(
+                      sdgo::localization::Kind::ItemName, 200,
+                      L"EXP Capsule 200 (Full)") == L"经验胶囊 200（满）",
+              "OC dynamic unit and item names reuse the optional provider");
+        Check(sdgo::oc_custom::client::display::LocalizedName(
+                  sdgo::localization::Kind::UnitName, 43, L"Unknown") == L"Unknown",
+              "OC dynamic names preserve native text when the provider declines");
         Check(sdgo::localization::TryLookup(sdgo::localization::Kind::UiText, 0,
                                             L"The room title could not be sent.", &translated) &&
                   translated == L"无法发送房间标题。",

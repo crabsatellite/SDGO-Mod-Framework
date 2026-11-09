@@ -72,6 +72,18 @@
       "title_en": "Factory: the OC page and the 强化部件 page switching between G改 2.0 and G改 1.0",
       "guide_zh": "docs/over-custom.zh-CN.md",
       "guide_en": "docs/over-custom.md"
+    },
+    {
+      "id": "ui-localization",
+      "path": "docs/ui-localization-demo.webp",
+      "since": "1.16.0",
+      "mods": [
+        "ui_localization"
+      ],
+      "title_zh": "原生扭蛋界面：中文按钮与原有图片",
+      "title_en": "Native capsule UI: Chinese controls with original artwork",
+      "guide_zh": "docs/ui-localization.zh-CN.md",
+      "guide_en": "docs/ui-localization.md"
     }
   ]
 }
