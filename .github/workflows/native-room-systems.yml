@@ -1,0 +1,52 @@
+name: Native room-system switching GameTest
+
+# The live GameTest needs an original client, the native servers and their test
+# database, which only the maintainer's self-hosted runner (label sdgo-native)
+# has. It plays an OC, a G改 1.0 and a G改 2.0 room back to back in one client
+# session and requires the server report's per-room build decisions. The
+# runner's own gate (SDGO_NATIVE_GATE) prepares and restores its test server.
+# Never triggered by pull requests.
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'mods/oc_custom_*/**'
+      - 'mods/game_test_client/**'
+      - 'mods/game_test_server/**'
+      - 'include/sdgo/oc_*'
+      - 'include/sdgo/room_commands.h'
+      - 'tools/game_test.py'
+      - 'tools/game_test_server_report.py'
+      - 'tools/game_test_backend.py'
+      - 'symbols/**'
+      - '.github/workflows/native-room-systems.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: sdgo-native-gametest
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  room-switch:
+    if: github.repository == 'crabsatellite/SDGO-Mod-Framework' && github.event_name != 'pull_request'
+    runs-on: [self-hosted, Windows, sdgo-native]
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+      - name: Configure native framework
+        run: cmake -S . -B build -A Win32
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Room-system switching on the native test server
+        run: |
+          if (-not $env:SDGO_NATIVE_GATE) { throw 'the runner has no native GameTest gate' }
+          python -I $env:SDGO_NATIVE_GATE $env:GITHUB_WORKSPACE
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
