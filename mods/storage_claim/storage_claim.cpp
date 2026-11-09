@@ -157,7 +157,7 @@ void DisplayState() {
         case Reason::Rejected:text=L"服务器拒绝读取列表（"+std::to_wstring(g_error)+L"）；"+Summary()+L"。";break;
         default:text=L"已停止；"+Summary()+L"。";break;
         }
-    }else text=L"一次领取当前页签全部分页；限时物品可能开始计时。";
+    }else text=L"";
     g_ui.Display(g_armed?L"确认领取":L"一键领取",g_armed?L"再次点击确认：一次领取当前页签所有奖品。":text);
 }
 void PumpUnsafe() {

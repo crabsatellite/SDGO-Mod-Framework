@@ -48,10 +48,11 @@ bool Page::Attach(void* service) {
     auto** skins=Read<uint8_t**>(button,0x1A4);auto** end=Read<uint8_t**>(button,0x1A8);
     if(!skins || reinterpret_cast<uintptr_t>(end)-reinterpret_cast<uintptr_t>(skins)!=3*sizeof(void*))return false;
     for(size_t i=0;i<3;++i)if(!skins[i] || !Read<void*>(skins[i]))return false;
-    auto* status=add(L"ModStorageClaimStatus",12,h-20,w-24,14);if(!status)return false;
+    // Inside the frame, between the native expiry notice (y=448) and Close (y=484).
+    auto* status=add(L"ModStorageClaimStatus",12,h-73,w-24,14);if(!status)return false;
     service_=service;dialog_=dialog;identity_=Read<void*>(dialog);button_=button;status_=status;width_=bw;
-    Display(L"一键领取",L"领取当前页签全部分页；点击后确认一次，限时物品可能开始计时。");
-    published_=true;Put<uint8_t>(button_,0x162,1);Put<uint8_t>(status_,0x162,1);return true;
+    Display(L"一键领取",L"");
+    published_=true;Put<uint8_t>(button_,0x162,1);return true;
 }
 bool Page::Visible()const {
     if(!published_)return false;
@@ -62,7 +63,9 @@ bool Page::Click(void* control)const{return Visible() && control==button_ && Rea
 void Page::Display(const std::wstring& caption,const std::wstring& status,bool enabled) {
     if(!button_ || !status_)return;
     if(caption_!=caption){const auto text=View(caption);bindings_.text(button_,0,&text,2,3,width_-4,14,color_,shadow_,0,font_,2);caption_=caption;}
-    if(message_!=status){const auto text=View(status);bindings_.text(status_,0,&text,0,0,Read<int>(status_,0x154),14,color_,shadow_,0,font_,1);message_=status;}
+    if(message_!=status){const auto text=View(status);bindings_.text(status_,0,&text,0,0,Read<int>(status_,0x154),14,color_,shadow_,0,font_,2);message_=status;}
+    // The status line only appears while there is a batch to describe.
+    if(published_)Put<uint8_t>(status_,0x162,status.empty()?0:1);
     Put<uint8_t>(button_,0x167,enabled?1:0);
     if(!enabled){Put<uint16_t>(button_,0x21C,0);Put<uint8_t>(button_,0x164,0);Put<uint32_t>(button_,0x18C,0);}
 }

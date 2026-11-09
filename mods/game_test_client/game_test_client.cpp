@@ -3358,7 +3358,7 @@ int GiftOriginCase(const SdgoGameTestContextV1* context,bool gifted) {
         std::string utf8(static_cast<size_t>(length),'\0');
         if(length)WideCharToMultiByte(CP_UTF8,0,text.data(),static_cast<int>(text.size()),utf8.data(),length,nullptr,nullptr);
         context->Observe(("native gift origin text: "+utf8).c_str());
-        context->Assert(text.rfind(L"好友赠送  来自 ",0)==0 && text.find(L"\n赠送 ")!=std::wstring::npos,
+        context->Assert(text.rfind(L"好友赠送\n来自 ",0)==0 && text.find(L" · 20")!=std::wstring::npos,
             "the gifted unit shows its sender and gift date on the native unit-information page");
         return SDGO_GAME_TEST_PASS;
     }

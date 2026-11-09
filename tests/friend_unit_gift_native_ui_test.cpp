@@ -630,27 +630,15 @@ int main() {
             Read<int>(control, 0x154), Read<int>(control, 0x158)};
     };
     Check(
-        rect(detailView.panel()) == std::array<int, 4>{122, 218, 276, 46} &&
-            rect(detailView.title()) == std::array<int, 4>{132, 224, 178, 15} &&
-            rect(detailView.dates()) == std::array<int, 4>{132, 243, 178, 15} &&
-            rect(detailView.button()) == std::array<int, 4>{318, 229, 72, 24},
-        "origin panel sits on the lower edge of the 1334 viewport with a native-size button");
-    {
-        auto** skins = Read<std::uint8_t**>(detailView.panel(), 0x1A4);
-        auto* sprite = Read<std::uint8_t*>(*skins);
-        Check(
-            g_skin_calls[detailView.panel()] == 1 &&
-                Read<float>(sprite, 0x94) == 276.0f / 262.0f &&
-                Read<float>(sprite, 0x98) == 46.0f / 61.0f &&
-                Read<std::uint8_t>(sprite, 0xA0) == 1 &&
-                Read<std::uint8_t>(detailView.panel(), 0x168) == 0,
-            "only the added panel instance scales the stock blue panel sprite");
-        Check(
-            g_skin_calls[detailView.button()] == 3,
-            "the open button carries the three stock blue button states");
-    }
+        rect(detailView.title()) == std::array<int, 4>{126, 232, 186, 15} &&
+            rect(detailView.dates()) == std::array<int, 4>{126, 249, 186, 15} &&
+            rect(detailView.button()) == std::array<int, 4>{318, 248, 76, 17},
+        "origin caption sits in the lower corners of the 1334 viewport like its rank caption");
+    Check(
+        g_skin_calls[detailView.button()] == 3,
+        "the link keeps a transparent normal state and stock blue hover/pressed skins");
     const auto hidden = [&]() {
-        for (void* control : {detailView.panel(), detailView.title(), detailView.dates(), detailView.button()})
+        for (void* control : {detailView.title(), detailView.dates(), detailView.button()})
             if (Read<std::uint8_t>(control, 0x162) || Read<std::uint8_t>(control, 0x167)) return false;
         return true;
     };
@@ -660,22 +648,21 @@ int main() {
     Check(hidden() && !detailView.ready() &&
               !detailView.Click(detailService.bytes.data(), detailView.button()),
           "an ordinary or not yet checked unit shows no gift origin");
-    detailView.ShowOrigin(L"好友赠送  来自 好友", L"赠送 2026-11-03    接收 2026-11-03", true);
+    detailView.ShowOrigin(L"好友赠送", L"来自 好友 · 2026-11-03", true);
     Check(
         detailView.ready() && detailView.origin_visible() &&
-            Read<std::uint8_t>(detailView.panel(), 0x162) == 1 &&
             Read<std::uint8_t>(detailView.title(), 0x162) == 1 &&
             Read<std::uint8_t>(detailView.title(), 0x167) == 0 &&
             Read<std::uint8_t>(detailView.button(), 0x167) == 1 &&
-            g_captions[detailView.title()] == L"好友赠送  来自 好友" &&
-            g_captions[detailView.dates()] == L"赠送 2026-11-03    接收 2026-11-03" &&
-            g_captions[detailView.button()] == L"查看寄语" &&
+            g_captions[detailView.title()] == L"好友赠送" &&
+            g_captions[detailView.dates()] == L"来自 好友 · 2026-11-03" &&
+            g_captions[detailView.button()] == L"查看寄语 >" &&
             detailView.Click(detailService.bytes.data(), detailView.button()) &&
             !detailView.Click(detailService.bytes.data(), detailView.title()),
-        "a gifted unit shows sender, dates and one native open button");
+        "a gifted unit shows the caption, sender, date and one open link");
     Check(detailRender.bytes == renderBefore,
           "the 3D viewport keeps its own state while the origin is shown");
-    detailView.ShowOrigin(L"好友赠送  来自 好友", L"赠送 2026-11-03", false);
+    detailView.ShowOrigin(L"好友赠送", L"来自 好友 · 2026-11-03", false);
     Check(!detailView.ready() && detailView.origin_visible() &&
               Read<std::uint8_t>(detailView.button(), 0x162) == 1 &&
               Read<std::uint8_t>(detailView.button(), 0x167) == 0,
@@ -684,7 +671,7 @@ int main() {
     Check(hidden() && !detailView.origin_visible(),
           "switching to another unit hides the previous unit's origin");
     detailView.SetUnit(0x1122334455667788ull);
-    detailView.ShowOrigin(L"好友赠送  来自 好友", L"赠送 2026-11-03", true);
+    detailView.ShowOrigin(L"好友赠送", L"来自 好友 · 2026-11-03", true);
     auto* retiredDetailButton = detailView.button();
     auto* retiredDetailTitle = detailView.title();
     std::array<std::uint8_t, sizeof(Control)> retiredButtonBytes{};
@@ -731,7 +718,7 @@ int main() {
         detailView.Attach(freshDetailService.bytes.data(), freshDetailRoot.bytes.data(), bindings),
         "unit-detail view rebuilds on a fresh native page");
     detailView.SetUnit(0x8877665544332211ull);
-    detailView.ShowOrigin(L"好友赠送  来自 新好友", L"赠送 2026-11-04", true);
+    detailView.ShowOrigin(L"好友赠送", L"来自 新好友 · 2026-11-04", true);
     Check(
         detailView.ready() && detailView.service() == freshDetailService.bytes.data() &&
             detailView.button() != retiredDetailButton && detailView.title() != retiredDetailTitle,

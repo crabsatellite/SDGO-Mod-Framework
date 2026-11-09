@@ -62,6 +62,12 @@ struct Bindings {
         void* control,
         const std::wstring& value,
         int align = 2) const;
+    // Caption with an explicit colour and the stock black shadow.
+    void SetCaption(
+        void* control,
+        const std::wstring& value,
+        std::uint32_t color,
+        int align) const;
     void SetState(
         void* control,
         bool visible,
@@ -232,25 +238,27 @@ private:
 
 // Gift origin on the unit-indexing unit-information page (1334). Nothing is
 // shown for ordinary units. For a unit the server confirms as a received gift,
-// a compact native panel sits on the lower edge of the 3D viewport with the
-// sender and dates, and a native blue button opens the full received card.
+// the lower corners of the 3D viewport carry a text caption in the page's own
+// style (like the BR RANK caption above it): "好友赠送" and the sender/date on
+// the left, and a "查看寄语" text link on the right that opens the native
+// received card. No panel or stretched skin is added.
 struct OriginLayout {
-    int panel_x=0,panel_y=0,panel_width=0,panel_height=0;
-    int text_x=0,title_y=0,dates_y=0,text_width=0,text_height=0;
-    int button_x=0,button_y=0,button_width=0,button_height=0;
+    int text_x=0,title_y=0,detail_y=0,text_width=0,text_height=0;
+    int link_x=0,link_y=0,link_width=0,link_height=0;
     bool valid=false;
 };
 // The viewport is the native 3D render control of the page.
 inline OriginLayout OriginLayoutFor(int x,int y,int width,int height) {
     OriginLayout l;
-    l.panel_x=x+4;l.panel_width=width-8;l.panel_height=46;l.panel_y=y+height-l.panel_height-4;
-    l.button_width=72;l.button_height=24;
-    l.button_x=l.panel_x+l.panel_width-l.button_width-8;l.button_y=l.panel_y+(l.panel_height-l.button_height)/2;
-    l.text_x=l.panel_x+10;l.text_width=l.button_x-8-l.text_x;l.text_height=15;
-    l.title_y=l.panel_y+6;l.dates_y=l.panel_y+25;
-    l.valid=width>=200 && height>=120 && x>=0 && y>=0 && l.text_width>=120;
+    const int bottom=y+height;
+    l.text_height=15;l.text_x=x+8;l.title_y=bottom-36;l.detail_y=bottom-19;
+    l.link_width=76;l.link_height=17;l.link_x=x+width-8-l.link_width;l.link_y=bottom-20;
+    l.text_width=l.link_x-6-l.text_x;
+    l.valid=width>=200 && height>=120 && x>=0 && y>=0 && l.text_width>=150;
     return l;
 }
+constexpr std::uint32_t kOriginTitleColor=0xFFEBE100;  // the page's rank-caption yellow
+constexpr std::uint32_t kOriginTextColor=0xFF7DC3EB;   // the page's label blue
 
 class UnitDetailView {
 public:
@@ -265,15 +273,14 @@ public:
     void SetUnit(std::uint64_t unitUid);
     void ShowOrigin(
         const std::wstring& title,
-        const std::wstring& dates,
+        const std::wstring& detail,
         bool enabled);
     void HideOrigin() noexcept;
     bool Click(void* service, void* control) const noexcept;
     void* service() const noexcept { return service_; }
     void* button() const noexcept { return button_; }
-    void* panel() const noexcept { return panel_; }
     void* title() const noexcept { return title_; }
-    void* dates() const noexcept { return dates_; }
+    void* dates() const noexcept { return detail_; }
     std::uint64_t unit_uid() const noexcept { return unit_uid_; }
     bool origin_visible() const noexcept { return visible_; }
     bool ready() const noexcept {
@@ -284,9 +291,8 @@ private:
     const Bindings* bindings_ = nullptr;
     void* service_ = nullptr;
     void* root_ = nullptr;
-    void* panel_ = nullptr;
     void* title_ = nullptr;
-    void* dates_ = nullptr;
+    void* detail_ = nullptr;
     void* button_ = nullptr;
     std::uint64_t unit_uid_ = 0;
     bool visible_ = false;

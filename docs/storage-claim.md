@@ -35,7 +35,7 @@ preserving the original controls. Developer settings are `ReplyTimeoutMs=10000` 
 it stop with a notice.
 
 The 450×540 native `1396.uir` layout places the new 124×23 button at (291,64)
-and the status line at y=520, clear of existing rows, pagination, expiration
+and the status line at y=467 between the expiry warning and Close (shown only while confirming or claiming), clear of existing rows, pagination, expiration
 warning and close controls. The Mod uses host-allocated skins and controls.
 Each preflight and claim is a self-contained stored-procedure call that does not
 depend on a preceding preflight, so requests can be submitted back to back. The

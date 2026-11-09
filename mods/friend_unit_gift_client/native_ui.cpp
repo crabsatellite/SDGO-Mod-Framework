@@ -370,6 +370,19 @@ void Bindings::SetText(
         color, shadow, 0, font, align);
 }
 
+void Bindings::SetCaption(
+    void* control,
+    const std::wstring& value,
+    std::uint32_t color,
+    int align) const {
+    if (!control || !text) return;
+    const auto native = View(value);
+    text(control, 0, &native, 2, 1,
+         std::max(1, Read<int>(control, 0x154) - 4),
+         std::max(12, Read<int>(control, 0x158) - 2),
+         color, 0xFF000000u, 0, 1, align);
+}
+
 void Bindings::SetState(
     void* control,
     bool visible,
@@ -987,7 +1000,7 @@ bool UnitDetailView::Attach(
     void* service,
     void* root,
     const Bindings& bindings) {
-    if (!service || !root || !bindings.add_icon || !bindings.skin) return false;
+    if (!service || !root || !bindings.skin || !bindings.empty_skin) return false;
     if (service_ && service_ != service) {
         Detach(service_);
     }
@@ -998,43 +1011,23 @@ bool UnitDetailView::Attach(
         static_cast<int>(Read<float>(render, 0x14C)),
         Read<int>(render, 0x154), Read<int>(render, 0x158));
     if (!layout.valid) return false;
-    // The stock blue information panel used by the received-gift card. Only
-    // this sprite instance is scaled; cached frames and archives stay intact.
-    const std::wstring panelName = L"ModFriendUnitGiftOriginPanel";
-    const std::wstring panelPath = L"sprs\\17459.spr";
-    void* panel = bindings.FindNamed(root, panelName.c_str(), 1);
-    if (!panel) {
-        const auto key = View(panelName);
-        bindings.add_icon(root, &key, layout.panel_x, layout.panel_y,
-                          layout.panel_width, layout.panel_height);
-        panel = bindings.FindNamed(root, panelName.c_str(), 1);
-        if (!panel || !ChildOf(panel, root)) return false;
-        const auto skin = View(panelPath);
-        bindings.skin(panel, &skin, 0, 0, 0);
-        auto** skins = Read<std::uint8_t**>(panel, 0x1A4);
-        auto* sprite = skins && *skins ? Read<std::uint8_t*>(*skins) : nullptr;
-        if (!sprite) return false;
-        Put<float>(sprite, 0x94, static_cast<float>(layout.panel_width) / 262.0f);
-        Put<float>(sprite, 0x98, static_cast<float>(layout.panel_height) / 61.0f);
-        Put<std::uint8_t>(sprite, 0xA0, 1);
-        Put<std::uint8_t>(panel, 0x168, 0);
-    }
     auto* title = bindings.AddTextButton(root, L"ModFriendUnitGiftOriginTitle",
         layout.text_x, layout.title_y, layout.text_width, layout.text_height, L"");
-    auto* dates = bindings.AddTextButton(root, L"ModFriendUnitGiftOriginDates",
-        layout.text_x, layout.dates_y, layout.text_width, layout.text_height, L"");
+    auto* detail = bindings.AddTextButton(root, L"ModFriendUnitGiftOriginDetail",
+        layout.text_x, layout.detail_y, layout.text_width, layout.text_height, L"");
     auto* button = bindings.AddTextButton(root, L"ModFriendUnitGiftOriginOpen",
-        layout.button_x, layout.button_y, layout.button_width, layout.button_height, L"查看寄语");
-    if (!title || !dates || !button) {
-        bindings.SetState(panel, false, false);
+        layout.link_x, layout.link_y, layout.link_width, layout.link_height, L"");
+    if (!title || !detail || !button) {
         bindings.SetState(title, false, false);
-        bindings.SetState(dates, false, false);
+        bindings.SetState(detail, false, false);
         bindings.SetState(button, false, false);
         return false;
     }
     if (!HasThreeButtonSkins(button)) {
-        // The same native blue button skins as the received-gift card.
-        for (int index = 0; index < 3; ++index) {
+        // A text link like the stock context menus: transparent normal state,
+        // the stock blue button only while pointed at or pressed.
+        bindings.empty_skin(button);
+        for (int index = 1; index < 3; ++index) {
             const std::wstring path = L"sprs\\" + std::to_wstring(17530 + index) + L".spr";
             const auto skin = View(path);
             bindings.skin(button, &skin, 0, index == 1 ? 4u : 0u, index == 1 ? 4u : 0u);
@@ -1044,9 +1037,8 @@ bool UnitDetailView::Attach(
     bindings_ = &bindings;
     service_ = service;
     root_ = root;
-    panel_ = panel;
     title_ = title;
-    dates_ = dates;
+    detail_ = detail;
     button_ = button;
     unit_uid_ = 0;
     visible_ = enabled_ = false;
@@ -1062,9 +1054,8 @@ void UnitDetailView::Detach(void* service) noexcept {
     bindings_ = nullptr;
     service_ = nullptr;
     root_ = nullptr;
-    panel_ = nullptr;
     title_ = nullptr;
-    dates_ = nullptr;
+    detail_ = nullptr;
     button_ = nullptr;
     unit_uid_ = 0;
     visible_ = enabled_ = false;
@@ -1078,14 +1069,14 @@ void UnitDetailView::SetUnit(std::uint64_t unitUid) {
 
 void UnitDetailView::ShowOrigin(
     const std::wstring& title,
-    const std::wstring& dates,
+    const std::wstring& detail,
     bool enabled) {
     if (!bindings_ || !unit_uid_) return;
-    bindings_->SetText(title_, title, 1);
-    bindings_->SetText(dates_, dates, 1);
-    bindings_->SetState(panel_, true, false);
+    bindings_->SetCaption(title_, title, kOriginTitleColor, 1);
+    bindings_->SetCaption(detail_, detail, kOriginTextColor, 1);
+    bindings_->SetCaption(button_, L"查看寄语 >", kOriginTextColor, 2);
     bindings_->SetState(title_, true, false);
-    bindings_->SetState(dates_, true, false);
+    bindings_->SetState(detail_, true, false);
     bindings_->SetState(button_, true, enabled);
     visible_ = true;
     enabled_ = enabled;
@@ -1094,9 +1085,8 @@ void UnitDetailView::ShowOrigin(
 void UnitDetailView::HideOrigin() noexcept {
     visible_ = enabled_ = false;
     if (!bindings_) return;
-    bindings_->SetState(panel_, false, false);
     bindings_->SetState(title_, false, false);
-    bindings_->SetState(dates_, false, false);
+    bindings_->SetState(detail_, false, false);
     bindings_->SetState(button_, false, false);
 }
 

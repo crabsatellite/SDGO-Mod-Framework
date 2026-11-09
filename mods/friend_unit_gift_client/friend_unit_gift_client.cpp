@@ -973,20 +973,15 @@ std::wstring PeerName(const Detail& detail) {
     return peer.empty() ? std::wstring(L"未知好友") : peer;
 }
 
-std::wstring OriginTitle(const Detail& detail) {
-    return L"好友赠送  来自 " + PeerName(detail);
+std::wstring OriginTitle(const Detail&) {
+    return L"好友赠送";
 }
 
 std::wstring OriginDates(const Detail& detail) {
-    // Dates only: the full times, note and actions are on the received card.
-    const auto day = [](std::uint64_t millis) {
-        auto text = FormatUnixMillis(millis);
-        return text.size() >= 10 ? text.substr(0, 10) : text;
-    };
-    std::wstring text = L"赠送 " + day(detail.offered_unix_millis);
-    if (detail.accepted_unix_millis)
-        text += L"    接收 " + day(detail.accepted_unix_millis);
-    return text;
+    // Sender and gift day; full times, note and actions are on the received card.
+    auto day = FormatUnixMillis(detail.offered_unix_millis);
+    if (day.size() >= 10) day = day.substr(0, 10);
+    return L"来自 " + PeerName(detail) + L" · " + day;
 }
 
 bool BeginUnitDetailProvenance(std::uint64_t unitUid);

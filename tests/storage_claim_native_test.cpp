@@ -89,7 +89,9 @@ int main() {
     using namespace fixture;
     fixture::Setup();auto* button=Pointer(L"ModStorageClaimAll");assert(storage_fixture::Get<uint8_t>(button,0x168)==0);
     assert(children.at(L"ModStorageClaimAll")->skins.size()==3 && storage_fixture::Get<float>(button,0x148)==291.0f && storage_fixture::Get<float>(button,0x14C)==64.0f);
-    assert(storage_fixture::Get<float>(Pointer(L"ModStorageClaimStatus"),0x14C)==520.0f);
+    assert(storage_fixture::Get<float>(Pointer(L"ModStorageClaimStatus"),0x14C)==467.0f);
+    assert(storage_fixture::Get<uint8_t>(Pointer(L"ModStorageClaimStatus"),0x162)==0); // idle: no status line
+    Click();assert(storage_fixture::Get<uint8_t>(Pointer(L"ModStorageClaimStatus"),0x162)==1);fixture::Setup();
     // One confirmation: three page reads, then every preflight and claim back to
     // back with one request outstanding (the World refuses overlapping requests
     // of an account), all twelve grants through the stock handler, one refresh.
