@@ -86,7 +86,10 @@ All declared bytes must match their manifest hashes before hooks are enabled.
 
 Generated SPR/TXR IDs currently use 60000–65535. Other Mods must avoid that range
 or coordinate a shared allocation before combining output. A compiler should
-fail rather than wrap or overwrite IDs. Prefer verified native two-state cards;
+fail rather than wrap or overwrite IDs. Each compile allocates its generated
+cards afresh; from the installed runtime it carries only the reserved-range art
+that a `0099` extension row shows (event posters and activity covers, with their
+textures), so superseded cards never accumulate in the overlay. Prefer verified native two-state cards;
 render reconstructed heads into the native frame and picture window. Do not
 treat a local generated sprite lookup as proof of authentic native artwork.
 
