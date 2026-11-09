@@ -186,6 +186,41 @@ class UnitScenarioTests(unittest.TestCase):
         self.assertNotIn('pvp.start',cases)
         self.assertEqual(len(cases),11)
 
+    def test_acquisition_ui_preview_is_an_explicit_read_only_page_scope(self):
+        plan={'pages_only':True,'play_unit_uid':17}
+        acquisition={'kind':3,'machine_id':7,'unit_id':9,'ui_preview_only':True}
+        value=scope.bind({'schema':1,'capture_frames':True,'acquisition':acquisition},plan)['unit_scenario']
+        self.assertEqual(scope.cases(value),(
+            'framework.bootstrap','flow.login','flow.onboarding',
+            'setup.active_unit','pages.unit_acquisition'))
+        settings=scope.settings(value)
+        self.assertEqual(settings['UnitAcquisitionUiPreviewOnly'],'1')
+        self.assertEqual(settings['UnitPresentations'],'0')
+        self.assertNotIn('catalog.capsule',scope.cases(value))
+        self.assertFalse(any('unit_index' in case or 'draw' in case for case in scope.cases(value)))
+        normal=scope.bind({'schema':1,'acquisition':{
+            'kind':3,'machine_id':7,'unit_id':9}},plan)['unit_scenario']
+        self.assertEqual(scope.cases(normal)[-2:],('catalog.capsule','pages.unit_acquisition'))
+        self.assertEqual(scope.settings(normal)['UnitAcquisitionUiPreviewOnly'],'0')
+        self.assertEqual(scope.settings(normal)['UnitPresentations'],'1')
+
+    def test_acquisition_ui_preview_rejects_false_or_mixed_scopes(self):
+        plan={'pages_only':True,'play_unit_uid':17}
+        acquisition={'kind':3,'machine_id':7,'unit_id':9,'ui_preview_only':True}
+        with self.assertRaises(ValueError):
+            scope.bind({'schema':1,'acquisition':acquisition|{'ui_preview_only':False}},plan)
+        for extra in (
+            {'portraits':True,'capture_frames':True},
+            {'presentation_target':9},
+            {'collection_preview':True},
+            {'blueprint':{'recipe_id':301,'book_uid':45}},
+            {'native_id_probe':{'ids':[35000],'witness_unit_id':10003,'require_absent':True}},
+        ):
+            with self.assertRaises(ValueError):
+                scope.bind({'schema':1,'acquisition':acquisition}|extra,plan)
+        with self.assertRaises(ValueError):
+            scope.bind({'schema':1,'acquisition':acquisition},plan|{'page_group':'hangar'})
+
     def test_rejects_scope_conflicts_and_untyped_ids(self):
         good={'pages_only':True,'play_unit_uid':17}
         for plan in ({}, {'pages_only':True}, {**good,'collection_draw':True}, {**good,'shop_revision':'x'}):
@@ -206,7 +241,8 @@ class SealedUnitScenarioTests(unittest.TestCase):
     def test_historical_non_probe_capsules_keep_their_original_sealed_defaults(self):
         from unittest.mock import patch
         previous={key:value for key,value in scope.SETTINGS.items()
-            if key not in ('EarlyNavigationTarget','EarlyNavigationBeforeInventory') and
+            if key not in ('EarlyNavigationTarget','EarlyNavigationBeforeInventory',
+                           'UnitAcquisitionUiPreviewOnly') and
             not key.startswith(('NativeIdProbe','NativeRecordLifecycle'))}
         with patch.dict(scope.SETTINGS,previous,clear=True):
             run=self.prepare('historical-unit-scope',pages_only=True,play_unit_uid=17,unit_scenario={'schema':1})
@@ -252,6 +288,24 @@ class SealedUnitScenarioTests(unittest.TestCase):
         self.assertEqual(observer['settings']['UnitPagesOnly'],'1')
         self.assertEqual(observer['settings']['UnitAcquisitionUnit'],'9')
         game_test.verify_hashes(meta)
+
+    def test_prepares_and_seals_read_only_acquisition_ui_preview(self):
+        scenario={'schema':1,'capture_frames':True,'acquisition':{
+            'kind':3,'machine_id':7,'unit_id':9,'ui_preview_only':True}}
+        run=self.prepare('unit-acquisition-ui-preview',pages_only=True,
+            play_unit_uid=17,unit_scenario=scenario)
+        meta=game_test.validate_metadata(run)
+        self.assertEqual(game_test.required_cases_for_plan(meta['plan']),(
+            'framework.bootstrap','flow.login','flow.onboarding',
+            'setup.active_unit','pages.unit_acquisition'))
+        path=run/'client/sdgo/mods/game_test_client/mod.ini'
+        config=game_test.read_ini(path)
+        self.assertEqual(config['settings']['UnitAcquisitionUiPreviewOnly'],'1')
+        self.assertEqual(config['settings']['UnitPresentations'],'0')
+        config['settings']['UnitAcquisitionUiPreviewOnly']='0'
+        game_test.write_ini(path,config)
+        with self.assertRaises(game_test.GameTestError):
+            game_test.validate_metadata(run)
 
     def test_prepares_and_seals_each_early_navigation_target(self):
         for target in ('catalog','capsule','room'):

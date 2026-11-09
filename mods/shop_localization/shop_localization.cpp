@@ -8,10 +8,12 @@
 #include <string>
 #include <vector>
 #include "sdgo/sdgo_api.h"
+#include "sdgo/content_localization_boundary.h"
 #include "dictionary.h"
 #include "sites.h"
 #include "custom_products.h"
 #include "shop_search.h"
+#include "unit_name_display.h"
 
 namespace {
 using namespace sdgo::shop_localization;
@@ -105,6 +107,15 @@ const std::wstring* Lookup(const wchar_t* source, uint32_t length, uintptr_t cal
     }
     std::wstring text(length, L'\0');
     if (!CopyText(source, length, text.data()) || text.find(L'\0') != std::wstring::npos) return nullptr;
+    const bool productCaller=std::binary_search(g_productReturns.begin(),g_productReturns.end(),caller);
+    uint32_t product=0;
+    const bool hasProduct=productCaller && ProductIdBeforeName(source,&product);
+    // Authored content supplies its own display text before the stock dictionary.
+    if(hasProduct) {
+        if(const auto* custom=g_custom.Title(product))return custom;
+    }
+    if(sdgo::content_localization_boundary::Query(0,0,text.data(),length)!=
+       SDGO_CONTENT_LOCALIZATION_NOT_OWNED)return nullptr;
     if(g_names) {
         uint32_t category=0;
         if(CategoryIdBeforeName(source,&category)) {
@@ -112,10 +123,8 @@ const std::wstring* Lookup(const wchar_t* source, uint32_t length, uintptr_t cal
             if(exact!=g_words.end())return &exact->second.text;
         }
     }
-    if(std::binary_search(g_productReturns.begin(),g_productReturns.end(),caller)) {
-        uint32_t product=0;
-        if(ProductIdBeforeName(source,&product)) {
-            if(const auto* custom=g_custom.Title(product))return custom;
+    if(productCaller) {
+        if(hasProduct) {
             if(g_names) {
                 const auto localized=g_words.find(L"@product:"+std::to_wstring(product)+L":"+text);
                 if(localized!=g_words.end())return &localized->second.text;
@@ -136,9 +145,42 @@ const std::wstring* Lookup(const wchar_t* source, uint32_t length, uintptr_t cal
     }
     return nullptr;
 }
+const std::wstring* StableText(uint32_t kind, uint32_t id, const std::wstring& source);
+
+bool CleanChinese(const wchar_t* text,uint32_t length)
+{
+    bool chinese=false;
+    for(uint32_t i=0;i<length;++i) {
+        const auto ch=static_cast<uint16_t>(text[i]);
+        if((ch>=0x0E00&&ch<=0x0E7F)||(ch>=0x1100&&ch<=0x11FF)||
+           (ch>=0x3040&&ch<=0x30FF)||(ch>=0x3130&&ch<=0x318F)||
+           (ch>=0xAC00&&ch<=0xD7AF)||(ch>=0xFF65&&ch<=0xFFDC))return false;
+        chinese=chinese||(ch>=0x3400&&ch<=0x9FFF);
+    }
+    return chinese;
+}
+
 void* __fastcall Assign(void* self, void*, const wchar_t* source, uint32_t length)
 {
     const auto caller = reinterpret_cast<uintptr_t>(_ReturnAddress());
+    sdgo::unit_name_display::ContextView context{};
+    if(sdgo::unit_name_display::CurrentUnitNameContext(
+           reinterpret_cast<const void*>(caller),&context)) {
+        if(g_names&&source&&length&&length<=kMaxText) {
+            std::wstring original(length,L'\0');
+            if(CopyText(source,length,original.data())&&
+               original.find(L'\0')==std::wstring::npos&&
+               sdgo::content_localization_boundary::Query(2,context.unit_id,original.data(),length)==
+                   SDGO_CONTENT_LOCALIZATION_NOT_OWNED&&
+               !CleanChinese(original.data(),length)) {
+                if(const auto* translated=StableText(1,context.unit_id,original))
+                    return g_assign(self,translated->data(),static_cast<uint32_t>(translated->size()));
+                if(CleanChinese(context.primary_name,context.primary_chars))
+                    return g_assign(self,context.primary_name,context.primary_chars);
+            }
+        }
+        return g_assign(self,source,length);
+    }
     if (std::binary_search(g_returns.begin(), g_returns.end(), caller)) {
         if (const auto* text = Lookup(source, length, caller)) return g_assign(self, text->data(), static_cast<uint32_t>(text->size()));
     }
@@ -176,6 +218,12 @@ const std::wstring* StableText(uint32_t kind, uint32_t id, const std::wstring& s
 {
     if ((kind == 1 || kind == 2) && !g_names) return nullptr;
     if (kind == 3 && !g_interfaces) return nullptr;
+    if(kind==1 || kind==2) {
+        const uint32_t recordKind=kind==1?2u:0x22u;
+        if(sdgo::content_localization_boundary::Query(
+               id?recordKind:0u,id,source.data(),static_cast<uint32_t>(source.size()))!=
+           SDGO_CONTENT_LOCALIZATION_NOT_OWNED)return nullptr;
+    }
     auto get = [&](const std::wstring& key, Kind type) -> const std::wstring* {
         const auto found = g_words.find(key);
         return found != g_words.end() && found->second.kind == type ? &found->second.text : nullptr;
@@ -241,6 +289,7 @@ SDGO_MOD_ENTRY
         std::sort(g_returns.begin(), g_returns.end()); std::sort(g_optionReturns.begin(), g_optionReturns.end());std::sort(g_productReturns.begin(),g_productReturns.end());
         if (!api->HookCode(mod, "shop_localization.assign", reinterpret_cast<void*>(&Assign), reinterpret_cast<void**>(&g_assign)) ||
             !api->HookCode(mod, "shop_localization.copy", reinterpret_cast<void*>(&Copy), reinterpret_cast<void**>(&g_copy))) return 0;
+        if (!sdgo::unit_name_display::Attach(api,mod)) return 0;
         if (!BindSearchHooks(api, mod, &g_searchChinese, &g_interfaces)) return 0;
         if(!g_custom.Empty()&&(!api->HookCode(mod,"shop_localization.load_store",reinterpret_cast<void*>(&LoadStore),reinterpret_cast<void**>(&g_load))||
            !api->HookCode(mod,"shop_localization.render_list",reinterpret_cast<void*>(&RenderList),reinterpret_cast<void**>(&g_render))||

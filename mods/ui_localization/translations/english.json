@@ -1,0 +1,596 @@
+{
+  "schema_version": 1,
+  "language": "en",
+  "entries": [
+    {
+      "source": " (GM)",
+      "target": " (GM)",
+      "status": "keep",
+      "note": "保留通用GM缩写及原文前导空格。"
+    },
+    {
+      "source": " (User)",
+      "target": " (User)",
+      "status": "keep"
+    },
+    {
+      "source": "(ESC)",
+      "target": "(ESC)",
+      "status": "keep",
+      "note": "保留键盘按键名称。"
+    },
+    {
+      "source": "(TEAM)",
+      "target": "(TEAM)",
+      "status": "keep"
+    },
+    {
+      "source": "4 VS 4 Team Battle",
+      "target": "4对4团队战",
+      "status": "ready"
+    },
+    {
+      "source": "Agillity",
+      "target": "机动力",
+      "status": "ready"
+    },
+    {
+      "source": "AI Battle",
+      "target": "AI对战",
+      "status": "ready"
+    },
+    {
+      "source": "ALL",
+      "target": "ALL",
+      "status": "keep"
+    },
+    {
+      "source": "All",
+      "target": "All",
+      "status": "keep"
+    },
+    {
+      "source": "ALL MISSION",
+      "target": "全部任务",
+      "status": "ready"
+    },
+    {
+      "source": "ATK",
+      "target": "攻击力",
+      "status": "ready"
+    },
+    {
+      "source": "AUTO JOIN",
+      "target": "AUTO JOIN",
+      "status": "keep"
+    },
+    {
+      "source": "Battle",
+      "target": "Battle",
+      "status": "keep"
+    },
+    {
+      "source": "Battle Graphics",
+      "target": "Battle Graphics",
+      "status": "keep"
+    },
+    {
+      "source": "Battle record",
+      "target": "Battle record",
+      "status": "keep"
+    },
+    {
+      "source": "Battleship Skill parts",
+      "target": "战舰技能部件",
+      "status": "ready"
+    },
+    {
+      "source": "BGM",
+      "target": "BGM",
+      "status": "keep"
+    },
+    {
+      "source": "Caps Lock",
+      "target": "Caps Lock",
+      "status": "keep",
+      "note": "保留键盘按键名称。"
+    },
+    {
+      "source": "Capsule Research",
+      "target": "扭蛋研究",
+      "status": "ready"
+    },
+    {
+      "source": "CAPSULE ROOM",
+      "target": "CAPSULE ROOM",
+      "status": "keep"
+    },
+    {
+      "source": "Cash",
+      "target": "点券",
+      "status": "ready"
+    },
+    {
+      "source": "Cash Refill",
+      "target": "Cash Refill",
+      "status": "keep"
+    },
+    {
+      "source": "Channel",
+      "target": "Channel",
+      "status": "keep"
+    },
+    {
+      "source": "Clan",
+      "target": "公会",
+      "status": "ready"
+    },
+    {
+      "source": "Class",
+      "target": "等级",
+      "status": "ready"
+    },
+    {
+      "source": "Coin",
+      "target": "硬币",
+      "status": "ready"
+    },
+    {
+      "source": "Condition",
+      "target": "Condition",
+      "status": "keep"
+    },
+    {
+      "source": "Custom Point",
+      "target": "强化点数",
+      "status": "ready"
+    },
+    {
+      "source": "Custom Point:",
+      "target": "强化点数：",
+      "status": "ready"
+    },
+    {
+      "source": "Custom Slot",
+      "target": "强化槽位",
+      "status": "ready"
+    },
+    {
+      "source": "Defense",
+      "target": "防御力",
+      "status": "ready"
+    },
+    {
+      "source": "EASY",
+      "target": "EASY",
+      "status": "keep"
+    },
+    {
+      "source": "EMBLEM",
+      "target": "徽章室",
+      "status": "ready"
+    },
+    {
+      "source": "Emblem",
+      "target": "徽章",
+      "status": "ready"
+    },
+    {
+      "source": "EVENT",
+      "target": "EVENT",
+      "status": "keep"
+    },
+    {
+      "source": "EXP",
+      "target": "经验值",
+      "status": "ready"
+    },
+    {
+      "source": "Expension Slot",
+      "target": "扩展槽位",
+      "status": "ready"
+    },
+    {
+      "source": "EXPERT",
+      "target": "EXPERT",
+      "status": "keep"
+    },
+    {
+      "source": "Find ID/PW",
+      "target": "Find ID/PW",
+      "status": "keep"
+    },
+    {
+      "source": "Force Battle",
+      "target": "势力战",
+      "status": "ready"
+    },
+    {
+      "source": "Force Point",
+      "target": "势力点数",
+      "status": "ready"
+    },
+    {
+      "source": "Friends",
+      "target": "Friends",
+      "status": "keep"
+    },
+    {
+      "source": "Full",
+      "target": "Full",
+      "status": "keep"
+    },
+    {
+      "source": "GAME START",
+      "target": "GAME START",
+      "status": "keep"
+    },
+    {
+      "source": "GM Mode",
+      "target": "GM Mode",
+      "status": "keep"
+    },
+    {
+      "source": "Handicap Unit",
+      "target": "限制机体",
+      "status": "ready"
+    },
+    {
+      "source": "HARD",
+      "target": "HARD",
+      "status": "keep"
+    },
+    {
+      "source": "HOT",
+      "target": "HOT",
+      "status": "keep"
+    },
+    {
+      "source": "HP",
+      "target": "耐久力",
+      "status": "ready"
+    },
+    {
+      "source": "hr.",
+      "target": "hr.",
+      "status": "keep"
+    },
+    {
+      "source": "ID",
+      "target": "ID",
+      "status": "keep"
+    },
+    {
+      "source": "ID/PW",
+      "target": "ID/PW",
+      "status": "keep"
+    },
+    {
+      "source": "Item",
+      "target": "Item",
+      "status": "keep"
+    },
+    {
+      "source": "Join",
+      "target": "Join",
+      "status": "keep"
+    },
+    {
+      "source": "Kick",
+      "target": "Kick",
+      "status": "keep"
+    },
+    {
+      "source": "Level",
+      "target": "等级",
+      "status": "ready"
+    },
+    {
+      "source": "LOG IN",
+      "target": "LOG IN",
+      "status": "keep"
+    },
+    {
+      "source": "Log out",
+      "target": "Log out",
+      "status": "keep"
+    },
+    {
+      "source": "min.",
+      "target": "min.",
+      "status": "keep"
+    },
+    {
+      "source": "Mission",
+      "target": "Mission",
+      "status": "keep"
+    },
+    {
+      "source": "Mix",
+      "target": "合成",
+      "status": "ready"
+    },
+    {
+      "source": "Mix Info",
+      "target": "合成信息",
+      "status": "ready"
+    },
+    {
+      "source": "Mode",
+      "target": "Mode",
+      "status": "keep"
+    },
+    {
+      "source": "Movie",
+      "target": "Movie",
+      "status": "keep"
+    },
+    {
+      "source": "MY ROOM",
+      "target": "MY ROOM",
+      "status": "keep"
+    },
+    {
+      "source": "Name",
+      "target": "Name",
+      "status": "keep"
+    },
+    {
+      "source": "NEW",
+      "target": "NEW",
+      "status": "keep"
+    },
+    {
+      "source": "nickname",
+      "target": "nickname",
+      "status": "keep"
+    },
+    {
+      "source": "No",
+      "target": "No",
+      "status": "keep"
+    },
+    {
+      "source": "No.",
+      "target": "No.",
+      "status": "keep"
+    },
+    {
+      "source": "NONE",
+      "target": "NONE",
+      "status": "keep"
+    },
+    {
+      "source": "NORMAL",
+      "target": "NORMAL",
+      "status": "keep"
+    },
+    {
+      "source": "NPC",
+      "target": "NPC",
+      "status": "keep",
+      "note": "保留通用游戏缩写。"
+    },
+    {
+      "source": "On",
+      "target": "On",
+      "status": "keep"
+    },
+    {
+      "source": "Part",
+      "target": "部件",
+      "status": "ready"
+    },
+    {
+      "source": "password",
+      "target": "password",
+      "status": "keep"
+    },
+    {
+      "source": "Password",
+      "target": "Password",
+      "status": "keep"
+    },
+    {
+      "source": "Point",
+      "target": "Point",
+      "status": "keep"
+    },
+    {
+      "source": "Qualification",
+      "target": "获得条件",
+      "status": "ready"
+    },
+    {
+      "source": "QuickStart",
+      "target": "QuickStart",
+      "status": "keep"
+    },
+    {
+      "source": "Random Team",
+      "target": "随机分队",
+      "status": "ready"
+    },
+    {
+      "source": "RANK",
+      "target": "军衔",
+      "status": "ready"
+    },
+    {
+      "source": "Rank",
+      "target": "军衔",
+      "status": "ready"
+    },
+    {
+      "source": "Recall",
+      "target": "Recall",
+      "status": "keep"
+    },
+    {
+      "source": "Register",
+      "target": "Register",
+      "status": "keep"
+    },
+    {
+      "source": "Reset",
+      "target": "Reset",
+      "status": "keep"
+    },
+    {
+      "source": "Retal",
+      "target": "租赁",
+      "status": "ready"
+    },
+    {
+      "source": "Room",
+      "target": "Room",
+      "status": "keep"
+    },
+    {
+      "source": "Scramble",
+      "target": "出击",
+      "status": "ready"
+    },
+    {
+      "source": "Screen",
+      "target": "Screen",
+      "status": "keep"
+    },
+    {
+      "source": "Screen Mode",
+      "target": "Screen Mode",
+      "status": "keep"
+    },
+    {
+      "source": "Search",
+      "target": "Search",
+      "status": "keep"
+    },
+    {
+      "source": "Shift",
+      "target": "Shift",
+      "status": "keep",
+      "note": "保留键盘按键名称。"
+    },
+    {
+      "source": "SHOPPING ROOM",
+      "target": "SHOPPING ROOM",
+      "status": "keep"
+    },
+    {
+      "source": "Skill 1",
+      "target": "技能1",
+      "status": "ready"
+    },
+    {
+      "source": "Skill 2",
+      "target": "技能2",
+      "status": "ready"
+    },
+    {
+      "source": "Skill1",
+      "target": "技能1",
+      "status": "ready"
+    },
+    {
+      "source": "Skill2",
+      "target": "技能2",
+      "status": "ready"
+    },
+    {
+      "source": "SOUND",
+      "target": "SOUND",
+      "status": "keep"
+    },
+    {
+      "source": "Spawn Point",
+      "target": "出生点",
+      "status": "ready"
+    },
+    {
+      "source": "Speed",
+      "target": "推进力",
+      "status": "ready"
+    },
+    {
+      "source": "TAG",
+      "target": "换机赛",
+      "status": "ready"
+    },
+    {
+      "source": "Team",
+      "target": "Team",
+      "status": "keep"
+    },
+    {
+      "source": "Unit List",
+      "target": "机体列表",
+      "status": "ready"
+    },
+    {
+      "source": "Unit View",
+      "target": "机体显示",
+      "status": "ready"
+    },
+    {
+      "source": "VERY EASY",
+      "target": "VERY EASY",
+      "status": "keep"
+    },
+    {
+      "source": "Very easy",
+      "target": "Very easy",
+      "status": "keep"
+    },
+    {
+      "source": "VERYEASY",
+      "target": "VERYEASY",
+      "status": "keep"
+    },
+    {
+      "source": "Weapon 1",
+      "target": "武器1",
+      "status": "ready"
+    },
+    {
+      "source": "Weapon 2",
+      "target": "武器2",
+      "status": "ready"
+    },
+    {
+      "source": "Weapon 3",
+      "target": "武器3",
+      "status": "ready"
+    },
+    {
+      "source": "Where is",
+      "target": "Where is",
+      "status": "keep"
+    },
+    {
+      "source": "Where Is",
+      "target": "Where Is",
+      "status": "keep"
+    },
+    {
+      "source": "Whole",
+      "target": "Whole",
+      "status": "keep"
+    },
+    {
+      "source": "LeagueMap",
+      "target": "联赛地图",
+      "status": "ready"
+    },
+    {
+      "source": "METAL",
+      "target": "金属",
+      "status": "ready"
+    },
+    {
+      "source": "VS SERVER",
+      "target": "VS SERVER",
+      "status": "keep"
+    }
+  ]
+}

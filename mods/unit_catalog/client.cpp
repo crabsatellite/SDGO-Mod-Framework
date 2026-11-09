@@ -1,11 +1,14 @@
 #include <windows.h>
+#include <atomic>
 #include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
+#include "sdgo/content_localization_boundary.h"
 #include "sdgo/sdgo_api.h"
 #include "sdgo/collection_acquisition.h"
 #include "sdgo/unit_catalog_format.h"
+#include "content_localization_boundary_index.h"
 #include "preview_runtime.h"
 #include "skill_presentation.h"
 #include "program_runtime.h"
@@ -56,6 +59,8 @@ MapFind g_mapFind = nullptr;
 bool g_attempted = false;
 bool g_recordsReady = false;
 uint32_t g_addedThisAttempt = 0;
+std::shared_ptr<const ContentLocalizationBoundaryIndex>
+    g_localizationBoundary;
 
 struct Allocation {
     uint8_t* record = nullptr;
@@ -415,9 +420,69 @@ bool RegisterResourceOverlay() {
                "sealed unit resources registered with standalone resource broker");
     return true;
 }
+
+bool CopyBoundarySource(const wchar_t* source, uint32_t chars,
+                        wchar_t* output) noexcept {
+    if (!source) return chars == 0;
+    __try {
+        for (uint32_t index = 0; index < chars; ++index) {
+            const wchar_t value = source[index];
+            if (!value) return false;
+            output[index] = value;
+        }
+        output[chars] = L'\0';
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
 } // namespace
 
+extern "C" __declspec(dllexport) uint32_t __cdecl
+SdgoUnitCatalogLocalizationBoundaryV1(uint32_t recordKind, uint32_t recordId,
+                                      const wchar_t* source,
+                                      uint32_t sourceChars) {
+    const auto boundary =
+        std::atomic_load_explicit(&g_localizationBoundary,
+                                  std::memory_order_acquire);
+    if (!boundary) return SDGO_CONTENT_LOCALIZATION_INDETERMINATE;
+
+    const bool hasKind = recordKind != 0;
+    const bool hasId = recordId != 0;
+    if (hasKind != hasId ||
+        (hasKind &&
+         !ContentLocalizationBoundaryIndex::SupportedKind(recordKind))) {
+        return SDGO_CONTENT_LOCALIZATION_INDETERMINATE;
+    }
+    if (hasKind && boundary->ContainsRecord(recordKind, recordId))
+        return SDGO_CONTENT_LOCALIZATION_OWNED;
+
+    if (!source) {
+        if (sourceChars)
+            return SDGO_CONTENT_LOCALIZATION_INDETERMINATE;
+        return hasKind ? SDGO_CONTENT_LOCALIZATION_STOCK_OR_UNKNOWN
+                       : SDGO_CONTENT_LOCALIZATION_INDETERMINATE;
+    }
+    if (sourceChars > SDGO_CONTENT_LOCALIZATION_MAX_SOURCE_CHARS)
+        return SDGO_CONTENT_LOCALIZATION_INDETERMINATE;
+
+    wchar_t safeSource[SDGO_CONTENT_LOCALIZATION_MAX_SOURCE_CHARS + 1] = {};
+    if (!CopyBoundarySource(source, sourceChars, safeSource))
+        return SDGO_CONTENT_LOCALIZATION_INDETERMINATE;
+    try {
+        return boundary->ContainsText(safeSource, sourceChars)
+                   ? SDGO_CONTENT_LOCALIZATION_OWNED
+                   : SDGO_CONTENT_LOCALIZATION_STOCK_OR_UNKNOWN;
+    } catch (...) {
+        return SDGO_CONTENT_LOCALIZATION_INDETERMINATE;
+    }
+}
+
 SDGO_MOD_ENTRY {
+    std::atomic_store_explicit(
+        &g_localizationBoundary,
+        std::shared_ptr<const ContentLocalizationBoundaryIndex>{},
+        std::memory_order_release);
     g_api = api;
     g_mod = mod;
     if (!api || api->version != SDGO_API_VERSION || !api->SettingInt(mod, "Enabled", 1)) return 0;
@@ -426,6 +491,22 @@ SDGO_MOD_ENTRY {
     if (!g_catalog.Load(std::wstring(api->ModDirectory(mod)) + L"\\catalog.bin", error)) {
         api->Log(mod, SDGO_LOG_ERROR, "%s", error.c_str());
         return 0;
+    }
+    std::shared_ptr<ContentLocalizationBoundaryIndex> boundary;
+    try {
+        auto candidate =
+            std::make_shared<ContentLocalizationBoundaryIndex>();
+        if (candidate->Build(g_catalog)) {
+            boundary = std::move(candidate);
+        } else {
+            api->Log(mod, SDGO_LOG_WARN,
+                     "unit catalog display-text ownership index is invalid; "
+                     "localization ownership remains indeterminate");
+        }
+    } catch (const std::exception& exception) {
+        api->Log(mod, SDGO_LOG_WARN,
+                 "unit catalog display-text ownership index failed: %s",
+                 exception.what());
     }
     if (!Bind(g_data, "grid.data") ||
         !Bind(g_find, "grid.find") ||
@@ -448,8 +529,19 @@ SDGO_MOD_ENTRY {
     if (!sdgo::unit_form_chain::Attach(api, mod, g_catalog, g_data, g_find)) return 0;
     if (!sdgo::unit_programs::Attach(api, mod, g_catalog, &g_recordsReady)) return 0;
     if (!RegisterResourceOverlay()) return 0;
+    const unsigned protectedTextCount = boundary
+        ? static_cast<unsigned>(boundary->TextCount()) : 0;
+    if (boundary) {
+        std::atomic_store_explicit(
+            &g_localizationBoundary,
+            std::shared_ptr<const ContentLocalizationBoundaryIndex>(
+                std::move(boundary)),
+            std::memory_order_release);
+    }
     api->Log(mod, SDGO_LOG_INFO,
-             "ready: %u validated native records; registration deferred to final data table",
-             static_cast<unsigned>(g_catalog.records.size()));
+             "ready: %u validated native records and %u protected display texts; "
+             "registration deferred to final data table",
+             static_cast<unsigned>(g_catalog.records.size()),
+             protectedTextCount);
     return 1;
 }

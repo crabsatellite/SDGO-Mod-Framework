@@ -262,6 +262,7 @@ bool captureUnitPortraits=false;
 UnitPresentationsActions unitPresentations;
 UnitAcquisitionActions unitAcquisition;
 UnitAcquisitionActions::Config unitAcquisitionConfig{};
+bool unitAcquisitionUiPreviewOnly=false;
 void PublishQuietSocketReceipt(bool force=false);
 bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false, pagesOnly = false, friendsOnly = false;
 bool hangarPagesOnly = false;
@@ -491,6 +492,10 @@ bool LoadPlan() {
     unitAcquisitionConfig.machine_kind=GetPrivateProfileIntW(L"settings",L"UnitAcquisitionKind",0,acquisitionIni.c_str());
     unitAcquisitionConfig.machine_id=GetPrivateProfileIntW(L"settings",L"UnitAcquisitionMachine",0,acquisitionIni.c_str());
     unitAcquisitionConfig.unit_id=GetPrivateProfileIntW(L"settings",L"UnitAcquisitionUnit",0,acquisitionIni.c_str());
+    const auto acquisitionUiPreview=GetPrivateProfileIntW(
+        L"settings",L"UnitAcquisitionUiPreviewOnly",0,acquisitionIni.c_str());
+    if(acquisitionUiPreview<0 || acquisitionUiPreview>1)return false;
+    unitAcquisitionUiPreviewOnly=acquisitionUiPreview==1;
     wchar_t networkPolicy[24]{};
     GetPrivateProfileStringW(L"run",L"network_policy",L"legacy",networkPolicy,24,job.c_str());
     verifyRoutedNetwork=!wcscmp(networkPolicy,L"routed_loopback");
@@ -550,9 +555,18 @@ bool LoadPlan() {
     if((capsuleTarget.machine!=990001 || capsuleTarget.price!=100000 || capsuleTarget.currency!=0) &&
         (!collectionPreviewOnly || collectionDraw))return false;
     if(unitAcquisitionConfig.machine_kind && (!pagesOnly || collectionDraw || collectionPreviewOnly ||
-        !testUnitPresentations || !unitAcquisitionConfig.machine_id || !unitAcquisitionConfig.unit_id ||
+        (!testUnitPresentations && !unitAcquisitionUiPreviewOnly) ||
+        !unitAcquisitionConfig.machine_id || !unitAcquisitionConfig.unit_id ||
         (unitAcquisitionConfig.machine_kind!=UnitAcquisitionActions::kFixedMachine &&
          unitAcquisitionConfig.machine_kind!=UnitAcquisitionActions::kCustomMachine)))return false;
+    if(unitAcquisitionUiPreviewOnly &&
+       (!RunKeyPresent(job,L"unit_scenario_sha256") ||
+        !unitAcquisitionConfig.machine_kind || testUnitPresentations ||
+        unitPresentationTarget || captureUnitPortraits || collectionPreviewOnly ||
+        activityDrawOnce || collectionDraw || blueprintConfig.recipe ||
+        !nativeIdProbeIds.empty() || !nativeRecordLifecycleIds.empty() ||
+        earlyNavigationTarget!=LoadingNavigationActions::kOff))
+        return false;
     missionMode=static_cast<uint16_t>(GetPrivateProfileIntW(L"run",L"mission_mode",0,job.c_str()));
     if(missionMode && (missionMode!=5 && missionMode!=8))return false;
     wchar_t missionProfile[8]{};
@@ -613,7 +627,10 @@ bool LoadPlan() {
     if(ocChallenge && !ocPanel && ocAllocateStat<0)return false;
     if(ocPanel && (!playUnitUid || (ocAllocateStat<0 && !hangarPagesOnly)))return false;
     if(testUnitPresentations && !playUnitUid)return false;
-    if(unitPagesOnly && (!pagesOnly || (!testUnitPresentations && !blueprintConfig.recipe && nativeIdProbeIds.empty() && nativeRecordLifecycleIds.empty()) || collectionDraw || testShopCatalog))return false;
+    if(unitAcquisitionUiPreviewOnly && (!unitPagesOnly || !playUnitUid))return false;
+    if(unitPagesOnly && (!pagesOnly || (!testUnitPresentations && !blueprintConfig.recipe &&
+        nativeIdProbeIds.empty() && nativeRecordLifecycleIds.empty() &&
+        !unitAcquisitionUiPreviewOnly) || collectionDraw || testShopCatalog))return false;
     if(earlyNavigationTarget!=LoadingNavigationActions::kOff &&
        (!RunKeyPresent(job,L"unit_scenario_sha256") || !unitPagesOnly ||
         !pagesOnly || !playUnitUid || !testUnitPresentations ||
@@ -4663,12 +4680,34 @@ int __cdecl ImportedAlternate(const SdgoGameTestContextV1* context){return Impor
 int __cdecl ImportedBase(const SdgoGameTestContextV1* context){return ImportedForm(context,0);}
 int __cdecl ImportedClose(const SdgoGameTestContextV1* context){return PresentationResult(context,unitPresentations.Close());}
 int __cdecl ImportedAcquisition(const SdgoGameTestContextV1* context) {
-    if(unitPresentations.State().unit!=unitAcquisitionConfig.unit_id) {
+    static uint32_t previous=UINT32_MAX,sequence=UINT32_MAX;
+    static uint64_t customWaitSince=UINT64_MAX;
+    static uint32_t customManagerCapture=0;
+    if(!context->tick) {
+        previous=sequence=UINT32_MAX;
+        customWaitSince=UINT64_MAX;
+        customManagerCapture=0;
+    }
+    if(customManagerCapture==1) {
+        const auto captured=quietGraphics.CaptureFrameResult();
+        if(captured==E_PENDING)return SDGO_GAME_TEST_WAIT;
+        context->Observe(SUCCEEDED(captured)?
+            "native custom acquisition manager intermediate frame saved under visual\\":
+            "native custom acquisition manager intermediate frame capture failed");
+        customManagerCapture=2;
+    }
+    if(unitAcquisitionUiPreviewOnly) {
+        ActiveSelectionObserver::Snapshot selected;
+        if(!activeSelection.Read(authenticatedPilot,&selected) ||
+           !selected.MatchesOwnedSelection(authenticatedPilot,playUnitUid)) {
+            context->Assert(0,"the authenticated pilot's sealed play UID matches its genuinely equipped owned inventory record independently of the acquisition preview target");
+            return SDGO_GAME_TEST_FAIL;
+        }
+    } else if(unitPresentations.State().unit!=unitAcquisitionConfig.unit_id) {
         context->Assert(0,"the sealed acquisition target matches the genuinely owned unit already inspected");
         return SDGO_GAME_TEST_FAIL;
     }
     const auto result=unitAcquisition.Poll();const auto s=unitAcquisition.State();
-    static uint32_t previous=UINT32_MAX,sequence=UINT32_MAX;
     if(previous!=result || sequence!=s.unitview_event_sequence) {
         char message[512];sprintf_s(message,"native acquisition result=%u kind=%u machine=%u unit=%u machine_page=%u slot=%u candidate_page=%u slot=%u control=%08X view=%08X event=%u/%u model=%08X dimensions=%d/%d",
             static_cast<unsigned>(result),s.machine_kind,s.machine_id,s.unit_id,s.machine_page,s.machine_slot,
@@ -4676,11 +4715,34 @@ int __cdecl ImportedAcquisition(const SdgoGameTestContextV1* context) {
             s.unitview_event_sequence,s.unitview_event_unit,s.unitview_model_pointer,s.render_width,s.render_height);
         context->Observe(message);previous=result;sequence=s.unitview_event_sequence;
     }
+    if(unitAcquisitionUiPreviewOnly && captureNativeFrames &&
+       unitAcquisitionConfig.machine_kind==UnitAcquisitionActions::kCustomMachine) {
+        if(result==UnitAcquisitionActions::kWaitingForCustomManager) {
+            if(customWaitSince==UINT64_MAX)customWaitSince=context->elapsed_ms;
+            if(customManagerCapture==0 &&
+               context->elapsed_ms-customWaitSince>=1000) {
+                const auto folder=sdgo_test::directory+L"\\visual";
+                if((CreateDirectoryW(folder.c_str(),nullptr) ||
+                    GetLastError()==ERROR_ALREADY_EXISTS) &&
+                   quietGraphics.CaptureNextFrame(
+                       (folder+L"\\ui-acquisition-manager.bmp").c_str())) {
+                    customManagerCapture=1;
+                    context->Observe("queued native custom acquisition manager intermediate frame after one second of genuine waiting");
+                    return SDGO_GAME_TEST_WAIT;
+                }
+                customManagerCapture=2;
+                context->Observe("native custom acquisition manager intermediate frame was unavailable");
+            }
+        } else if(customManagerCapture==0) {
+            customWaitSince=UINT64_MAX;
+        }
+    }
     if(result==UnitAcquisitionActions::kUnbound || result>=UnitAcquisitionActions::kInvalidConfig) {
         context->Assert(0,"the native capsule machine, candidate control and unitview consumer identities remain valid");
         return SDGO_GAME_TEST_FAIL;
     }
     if(result!=UnitAcquisitionActions::kReady)return SDGO_GAME_TEST_WAIT;
+    if(HoldReviewPage(context))return SDGO_GAME_TEST_WAIT;
     context->Assert(s.unitview_event_consumed && s.unitview_event_unit==unitAcquisitionConfig.unit_id &&
         s.unitview_model_ready && s.unitview_dialog_visible && s.unitview_render_visible,
         "the original candidate callback reached its actual unitview consumer and visible native model without purchasing");
@@ -5471,6 +5533,10 @@ void RegisterPlannedCases() {
         if(!nativeRecordLifecycleIds.empty()) {
             provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
         }
+        if(unitAcquisitionUiPreviewOnly) {
+            plannedCases.push_back(unitAcquisitionCase);
+            provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+        }
         AppendUnitPresentations();
         if(unitPagesOnly) {
             if(unitAcquisitionConfig.machine_kind || collectionPreviewOnly)plannedCases.push_back(pageCases[7]);
@@ -5796,6 +5862,7 @@ SDGO_MOD_ENTRY {
         static_cast<uint16_t>(loaded ? (missionMode?missionMode:RequestedMode()) : 1),
         static_cast<uint32_t>(battleMap),
         passwordIsMd5,randomTeams};
+    const bool bindPageCatalogObservers=pagesOnly && !unitAcquisitionUiPreviewOnly;
     if (!loaded || !actions.Bind(api, mod, config) ||
         (!missionMode && !channels.Bind(api, mod, &actions)) ||
         ((missionMode || roomTitlesOnly) && !mission.Bind(api,mod,&actions)) ||
@@ -5808,11 +5875,11 @@ SDGO_MOD_ENTRY {
         (blueprintConfig.recipe && !blueprint.Bind(api,mod,&actions,&hangarNavigation,blueprintConfig)) ||
         (testUnitPresentations && !unitPresentations.Bind(api,mod,&hangarNavigation)) ||
         (unitAcquisitionConfig.machine_kind && !unitAcquisition.Bind(api,mod,&hangarNavigation,unitAcquisitionConfig)) ||
-        (pagesOnly && !pages.Bind()) ||
-        (pagesOnly && !operatorCatalog.Bind(api,mod)) ||
-        (pagesOnly && !aiCatalog.Bind(api,mod)) ||
-        (pagesOnly && !storage.Bind()) ||
-        (pagesOnly && !capsules.Bind(api,mod)) ||
+        (bindPageCatalogObservers && !pages.Bind()) ||
+        (bindPageCatalogObservers && !operatorCatalog.Bind(api,mod)) ||
+        (bindPageCatalogObservers && !aiCatalog.Bind(api,mod)) ||
+        (bindPageCatalogObservers && !storage.Bind()) ||
+        (bindPageCatalogObservers && !capsules.Bind(api,mod)) ||
         ((collectionDraw || collectionPreviewOnly) && !collection.Bind(api,mod,&actions)) ||
         (playUnitUid && !unitSelection.Bind(api,mod,&actions)) ||
         ((randomLoadout || playUnitUid) && !activeSelection.Bind(api,mod)) ||

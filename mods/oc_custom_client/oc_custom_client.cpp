@@ -30,6 +30,7 @@
 #include <string>
 #include <vector>
 
+#include "display_text.h"
 #include "factory_l10n.h"
 #include "g1_native.h"
 #include "original_ui.h"
@@ -173,15 +174,10 @@ std::wstring RecordText(const std::uint8_t* record, std::size_t offset, std::siz
     return std::wstring(buffer, count);
 }
 
-// The client's own OC strings. The fallback is the same Chinese text, used only
-// when the table lookup fails.
-std::wstring Text(std::uint32_t id, const wchar_t* fallback) {
-    auto text = RecordText(GridRecord(static_cast<std::int32_t>(id), 0x3B), 5, 512);
-    if (text.empty()) text = fallback;
-    // The client table keeps line breaks as the two characters backslash and n.
-    for (std::size_t at = text.find(L"\\n"); at != std::wstring::npos; at = text.find(L"\\n", at))
-        text.replace(at, 2, L"\n");
-    return text;
+// Keep localized native prose and use reviewed text for untranslated rows.
+std::wstring Text(std::uint32_t id, const wchar_t* chinese) {
+    return display::ReviewedUiText(
+        RecordText(GridRecord(static_cast<std::int32_t>(id),0x3B),5,100),chinese);
 }
 
 // Formats a table string that carries exactly the listed conversions.
@@ -224,7 +220,8 @@ std::wstring LevelName(std::uint8_t level) {
 }
 
 std::wstring UnitName(std::uint32_t unit_number) {
-    return RecordText(GridRecord(static_cast<std::int32_t>(unit_number), 2), 5, 50);
+    const auto source = RecordText(GridRecord(static_cast<std::int32_t>(unit_number), 2), 5, 50);
+    return display::LocalizedName(sdgo::localization::Kind::UnitName, unit_number, source);
 }
 
 void Log(int level, const char* message);
@@ -243,7 +240,9 @@ std::wstring ItemName(std::int32_t item) {
                       name.empty() ? "missing" : "found");
         Log(SDGO_LOG_INFO, line);
     }
-    return name.empty() ? std::to_wstring(item) : name;
+    if (name.empty()) return std::to_wstring(item);
+    return display::LocalizedName(sdgo::localization::Kind::ItemName,
+                                  static_cast<std::uint32_t>(item), name);
 }
 
 // The current client retired the OC challenge items: their table entries read
@@ -485,10 +484,10 @@ bool UpgradeTabSelected() noexcept;
 void ApplyOcTitle(bool oc_tab) noexcept;
 bool g_oc_page_shown = false; // the OC tab page is on screen (factory actions hidden)
 
-// A custom skill's name from the client's own skill table (gdrs\0234, name at +5).
+// A custom skill's name from the native skill table. The shared localization
+// service has no stable skill-name kind, so this text remains unchanged.
 std::wstring SkillName(std::uint16_t skill) {
-    std::int32_t type = 0;
-    auto name = RecordText(GridEntry(static_cast<std::int32_t>(skill), &type), 5, 50);
+    auto name = RecordText(GridRecord(static_cast<std::int32_t>(skill),0x62),5,50);
     return name.empty() ? L"#" + std::to_wstring(skill) : name;
 }
 

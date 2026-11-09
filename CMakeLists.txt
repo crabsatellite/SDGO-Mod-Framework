@@ -332,9 +332,12 @@ sdgo_add_mod(unit_catalog_server SERVER DESCRIPTION "owned imported-unit runtime
                                              sdgo_unit_form_composition sdgo_native_unit_form_commit)
 
 sdgo_add_mod(shop_labels DESCRIPTION "shop rental and Unicode labels" SOURCES mods/shop_labels/shop_labels.cpp FILES display.example.ini)
-sdgo_add_mod(shop_localization DESCRIPTION "Chinese shop localization" SOURCES mods/shop_localization/shop_localization.cpp mods/shop_localization/shop_search.cpp FILES zh-CN.ini symbols.fragment.ini LIBS user32)
+sdgo_add_mod(shop_localization DESCRIPTION "Chinese shop localization" SOURCES mods/shop_localization/shop_localization.cpp mods/shop_localization/shop_search.cpp mods/shop_localization/unit_name_display.cpp FILES zh-CN.ini symbols.fragment.ini LIBS user32)
 sdgo_add_mod(shop_art_localization DESCRIPTION "Chinese labels over verified shop artwork"
              SOURCES mods/shop_art_localization/shop_art_localization.cpp mods/shop_art_localization/native_ui.cpp
+             FILES symbols.fragment.ini LIBS user32)
+sdgo_add_mod(ui_localization DESCRIPTION "Chinese native interface labels and system text"
+             SOURCES mods/ui_localization/ui_localization.cpp mods/ui_localization/system_text.cpp
              FILES symbols.fragment.ini LIBS user32)
 add_library(shop_catalog_engine STATIC mods/shop_catalog/catalog_runtime.cpp)
 target_include_directories(shop_catalog_engine PUBLIC mods/shop_catalog)
@@ -839,20 +842,36 @@ if(BUILD_TESTING)
     set_tests_properties(capsule_currency_actual_dll PROPERTIES TIMEOUT 30)
 endif()
 if(BUILD_TESTING)
+    add_executable(unit_name_display_test tests/unit_name_display_test.cpp mods/shop_localization/unit_name_display.cpp)
+    target_link_libraries(unit_name_display_test PRIVATE sdgo_api)
+    sdgo_strict(unit_name_display_test)
+    add_test(NAME unit_name_display COMMAND unit_name_display_test)
+    foreach(fixture shop_localization_origin_fixture shop_localization_legacy_origin_fixture)
+        add_library(${fixture} SHARED tests/${fixture}.cpp)
+        target_link_libraries(${fixture} PRIVATE sdgo_api)
+        sdgo_strict(${fixture})
+        set_target_properties(${fixture} PROPERTIES OUTPUT_NAME unit_catalog
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${fixture}/$<CONFIG>"
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${fixture}/$<CONFIG>"
+            ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${fixture}/$<CONFIG>")
+    endforeach()
     add_executable(shop_localization_test tests/shop_localization_test.cpp)
     target_link_libraries(shop_localization_test PRIVATE sdgo_api)
     sdgo_strict(shop_localization_test)
-    add_dependencies(shop_localization_test shop_localization)
+    add_dependencies(shop_localization_test shop_localization shop_localization_origin_fixture shop_localization_legacy_origin_fixture)
     foreach(case RANGE 0 5)
         add_test(NAME shop_localization_${case} COMMAND shop_localization_test "$<TARGET_FILE:shop_localization>"
-            "${CMAKE_BINARY_DIR}/shop-localization-case-${case}" "${case}")
+            "${CMAKE_BINARY_DIR}/shop-localization-case-${case}" "${case}"
+            "$<TARGET_FILE:shop_localization_origin_fixture>" "$<TARGET_FILE:shop_localization_legacy_origin_fixture>")
         set_tests_properties(shop_localization_${case} PROPERTIES TIMEOUT 30)
     endforeach()
     add_test(NAME shop_localization_custom_scope COMMAND shop_localization_test "$<TARGET_FILE:shop_localization>"
-        "${CMAKE_BINARY_DIR}/shop-localization-custom/mods/shop_localization" "7")
+        "${CMAKE_BINARY_DIR}/shop-localization-custom/mods/shop_localization" "7"
+        "$<TARGET_FILE:shop_localization_origin_fixture>" "$<TARGET_FILE:shop_localization_legacy_origin_fixture>")
     set_tests_properties(shop_localization_custom_scope PROPERTIES TIMEOUT 30)
     add_test(NAME shop_localization_dictionary COMMAND shop_localization_test "$<TARGET_FILE:shop_localization>"
-        "${CMAKE_BINARY_DIR}/shop-localization-case-bank" "6" "${CMAKE_CURRENT_SOURCE_DIR}/mods/shop_localization/zh-CN.ini")
+        "${CMAKE_BINARY_DIR}/shop-localization-case-bank" "6" "${CMAKE_CURRENT_SOURCE_DIR}/mods/shop_localization/zh-CN.ini"
+        "$<TARGET_FILE:shop_localization_origin_fixture>" "$<TARGET_FILE:shop_localization_legacy_origin_fixture>")
     add_library(localization_service_fixture SHARED tests/localization_service_fixture.cpp)
     target_link_libraries(localization_service_fixture PRIVATE sdgo_api)
     set_target_properties(localization_service_fixture PROPERTIES OUTPUT_NAME shop_localization
@@ -1149,6 +1168,18 @@ if(BUILD_TESTING)
     sdgo_strict(shop_art_localization_ui_test)
     target_compile_options(shop_art_localization_ui_test PRIVATE /UNDEBUG)
     add_test(NAME shop_art_localization_ui_offline COMMAND shop_art_localization_ui_test)
+    add_executable(ui_localization_dictionary_test tests/ui_localization_dictionary_test.cpp)
+    target_include_directories(ui_localization_dictionary_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(ui_localization_dictionary_test)
+    target_compile_options(ui_localization_dictionary_test PRIVATE /UNDEBUG)
+    add_test(NAME ui_localization_dictionary COMMAND ui_localization_dictionary_test)
+    add_executable(ui_localization_system_text_test tests/ui_localization_system_text_test.cpp
+                   mods/ui_localization/system_text.cpp)
+    target_include_directories(ui_localization_system_text_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(ui_localization_system_text_test PRIVATE sdgo_api)
+    sdgo_strict(ui_localization_system_text_test)
+    target_compile_options(ui_localization_system_text_test PRIVATE /UNDEBUG)
+    add_test(NAME ui_localization_system_text COMMAND ui_localization_system_text_test)
     add_executable(shop_catalog_mod_test tests/shop_catalog_mod_test.cpp)
     target_link_libraries(shop_catalog_mod_test PRIVATE sdgo_api)
     sdgo_strict(shop_catalog_mod_test)

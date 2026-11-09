@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -11,8 +12,10 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "sdgo/content_localization_boundary.h"
 #include "sdgo/sdgo_api.h"
 #include "sdgo/unit_catalog_format.h"
+#include "../mods/unit_catalog/content_localization_boundary_index.h"
 
 #pragma comment(lib, "bcrypt.lib")
 
@@ -84,16 +87,28 @@ Entry MakeRecord(uint32_t kind, uint32_t id) {
     Put32(result.bytes.data(), id);
     result.bytes[4] = 0;
     if (kind == kUnitType) {
+        PutUtf16(result.bytes.data() + 5, 100, "Fixture Unit Name");
+        PutUtf16(result.bytes.data() + 105, 100, "Fixture Unit Detail");
+        PutUtf16(result.bytes.data() + 205, 100,
+                 "Fixture Unit\\nDisplay\\tMode");
         PutUtf16(result.bytes.data() + kUnitModelPathOffset, kUnitModelPathBytes, "mdrs\\fixture.mod");
         PutUtf16(result.bytes.data() + kUnitPreviewPathOffsets[0], kUnitPreviewPathBytes, "sprs\\shop.spr");
         PutUtf16(result.bytes.data() + kUnitPreviewPathOffsets[1], kUnitPreviewPathBytes, "sprs\\capsule.spr");
         PutUtf16(result.bytes.data() + kUnitPreviewPathOffsets[2], kUnitPreviewPathBytes, "sprs\\room.spr");
         Put32(result.bytes.data() + kUnitTransformOffset, 0);
         Put32(result.bytes.data() + kUnitWeaponOffsets[0], 61165);
+    } else if (kind == kWeaponType) {
+        PutUtf16(result.bytes.data() + 5, 100, "Fixture Weapon Name");
+        PutUtf16(result.bytes.data() + 105, 100, "Fixture Weapon Detail");
+        PutUtf16(result.bytes.data() + 205, 100,
+                 "Fixture Weapon\\nDisplay");
     } else if (kind == kSkillType) {
         PutUtf16(result.bytes.data()+5,100,"Fixture Skill");
+        PutUtf16(result.bytes.data()+0x213,600,
+                 "Fixture Skill\\nDescription\\tTabbed");
     } else if (kind == kItemCategoryType) {
-        PutUtf16(result.bytes.data() + kItemCategoryNameOffset, kItemCategoryNameBytes, "Fixture Unit");
+        PutUtf16(result.bytes.data() + kItemCategoryNameOffset,
+                 kItemCategoryNameBytes, "Fixture Item Category");
         Put32(result.bytes.data() + kItemCategoryRefOffset,
               id / kItemCategoryClassDivisor == kBlueprintItemClass ? 200001u : 25060u);
     } else if (kind == kBlueprintType) {
@@ -412,6 +427,8 @@ std::vector<uint8_t> MakeNativeFixture(const std::string& scenario) {
     Put32(second.bytes.data() + kUnitWeaponOffsets[0],
           scenario == "missing_reference" ? 999999u : 45082u);
     Put32(category.bytes.data() + kItemCategoryRefOffset, first.id);
+    if (scenario == "conflict")
+        std::memset(first.bytes.data() + 205, 0x41, 100);
     for (Entry* entry : {&first, &second, &weapon, &blueprint, &category,
                          &blueprintCategory, &index})
         entry->recordHash = Hash32(entry->bytes.data(), entry->bytes.size());
@@ -478,6 +495,19 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
 
     const HMODULE module = LoadLibraryW(dll.c_str());
     Check(module != nullptr, "production unit_catalog DLL loaded");
+    const auto localizationBoundary =
+        reinterpret_cast<SdgoUnitCatalogLocalizationBoundaryV1Fn>(
+            GetProcAddress(
+                module,
+                SDGO_UNIT_CATALOG_LOCALIZATION_BOUNDARY_V1_EXPORT));
+    Check(localizationBoundary != nullptr,
+          "production unit_catalog exports the optional localization boundary");
+    Check(localizationBoundary(kUnitType, 25060, nullptr, 0) ==
+              SDGO_CONTENT_LOCALIZATION_INDETERMINATE &&
+          sdgo::content_localization_boundary::Query(
+              kUnitType, 25060, nullptr, 0) ==
+              SDGO_CONTENT_LOCALIZATION_INDETERMINATE,
+          "loaded provider remains indeterminate before validated catalog initialization");
     const auto load = reinterpret_cast<SdgoModLoadFn>(GetProcAddress(module, "SdgoModLoad"));
     Check(load != nullptr, "production unit_catalog entry found");
     SdgoApi api{};
@@ -489,6 +519,67 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
     api.SettingInt = &SettingInt;
     api.ModDirectory = &ModDirectory;
     Check(load(&api, reinterpret_cast<SdgoMod*>(1)) != 0, "production unit_catalog accepts native fixture");
+    if (scenario == "conflict") {
+        Check(localizationBoundary(kUnitType, 25060, nullptr, 0) ==
+                  SDGO_CONTENT_LOCALIZATION_INDETERMINATE &&
+              sdgo::content_localization_boundary::Query(
+                  0, 0, L"Fixture Weapon Name", 19) ==
+                  SDGO_CONTENT_LOCALIZATION_INDETERMINATE,
+              "invalid protected text leaves ownership indeterminate without blocking catalog load");
+    } else {
+        Check(localizationBoundary(kUnitType, 25060, nullptr, 0) ==
+                  SDGO_CONTENT_LOCALIZATION_OWNED &&
+              localizationBoundary(kWeaponType, 61165, nullptr, 0) ==
+                  SDGO_CONTENT_LOCALIZATION_OWNED &&
+              localizationBoundary(kItemCategoryType, 1250600, nullptr, 0) ==
+                  SDGO_CONTENT_LOCALIZATION_OWNED,
+              "validated current-package record identities are protected before native publication");
+        Check(localizationBoundary(0, 0, L"Fixture Unit Name", 17) ==
+                  SDGO_CONTENT_LOCALIZATION_OWNED &&
+              localizationBoundary(kUnitType, 999999,
+                                   L"Fixture Unit Name", 17) ==
+                  SDGO_CONTENT_LOCALIZATION_OWNED &&
+              localizationBoundary(0, 0,
+                                   L"Fixture Unit\nDisplay\tMode", 25) ==
+                  SDGO_CONTENT_LOCALIZATION_OWNED &&
+              localizationBoundary(0, 0, L"Fixture Item Category", 21) ==
+                  SDGO_CONTENT_LOCALIZATION_OWNED,
+              "raw and display-expanded current-package text is protected exactly");
+        Check(localizationBoundary(kUnitType, 999999, nullptr, 0) ==
+                  SDGO_CONTENT_LOCALIZATION_STOCK_OR_UNKNOWN &&
+              localizationBoundary(0, 0, L"fixture unit name", 17) ==
+                  SDGO_CONTENT_LOCALIZATION_STOCK_OR_UNKNOWN &&
+              localizationBoundary(0, 0, L" Fixture Unit Name", 18) ==
+                  SDGO_CONTENT_LOCALIZATION_STOCK_OR_UNKNOWN,
+              "unknown identity, case changes and whitespace changes remain unowned");
+        const wchar_t embeddedNull[] = {L'F', L'\0', L'X'};
+        Check(localizationBoundary(kUnitType, 0, nullptr, 0) ==
+                  SDGO_CONTENT_LOCALIZATION_INDETERMINATE &&
+              localizationBoundary(99, 1, nullptr, 0) ==
+                  SDGO_CONTENT_LOCALIZATION_INDETERMINATE &&
+              localizationBoundary(0, 0, embeddedNull, 3) ==
+                  SDGO_CONTENT_LOCALIZATION_INDETERMINATE &&
+              localizationBoundary(0, 0,
+                                   reinterpret_cast<const wchar_t*>(1), 1) ==
+                  SDGO_CONTENT_LOCALIZATION_INDETERMINATE &&
+              localizationBoundary(
+                  0, 0, L"x",
+                  SDGO_CONTENT_LOCALIZATION_MAX_SOURCE_CHARS + 1) ==
+                  SDGO_CONTENT_LOCALIZATION_INDETERMINATE,
+              "invalid, unbounded and unreadable queries fail closed without crashing");
+        Check(sdgo::content_localization_boundary::Query(
+                  0, 0, L"Fixture Weapon Name", 19) ==
+                  SDGO_CONTENT_LOCALIZATION_OWNED,
+              "shared optional helper reaches the initialized provider without loading it");
+        if (scenario == "dependency_records_success") {
+            Check(localizationBoundary(kSkillType, 9000001, nullptr, 0) ==
+                      SDGO_CONTENT_LOCALIZATION_OWNED &&
+                  localizationBoundary(
+                      0, 0, L"Fixture Skill\nDescription\tTabbed", 32) ==
+                      SDGO_CONTENT_LOCALIZATION_OWNED,
+                  "actual DLL protects imported kind-13 identity and display-expanded description");
+        }
+    }
     Check(g_loadDetour != nullptr, "final native loader detour registered");
     Check(g_openDetour != nullptr && g_openHooks == 1,
           "standalone unit provider owns exactly one native resource hook");
@@ -650,6 +741,10 @@ uint8_t* RecordAt(std::vector<uint8_t>& bytes, size_t index) {
 } // namespace
 
 int ParserFixture() {
+    Check(sdgo::content_localization_boundary::Query(
+              0, 0, L"provider absent", 15) ==
+              SDGO_CONTENT_LOCALIZATION_STOCK_OR_UNKNOWN,
+          "absent optional unit catalog leaves stock localization eligible");
     Check(Hash32("hello", 5) == 0x4f9f2cabu, "FNV-1a matches independent test vector");
     const std::vector<Entry> source{
         MakeRecord(kUnitType, 25060),
@@ -667,6 +762,52 @@ int ParserFixture() {
           catalog.Contains(200001, kBlueprintType) &&
           catalog.Contains(1250600, kItemCategoryType), "typed lookup succeeds");
     Check(catalog.Find(7) == catalog.records.size(), "missing lookup is bounded");
+    {
+        Catalog owned;
+        std::string boundaryError;
+        Check(owned.Parse(
+                  Encode({MakeRecord(kUnitType, 25060),
+                          MakeRecord(kWeaponType, 61165),
+                          MakeRecord(kItemCategoryType, 1250600),
+                          MakeRecord(kSkillType, 9000001)}),
+                  boundaryError),
+              "display ownership fixture is a validated catalog");
+        ContentLocalizationBoundaryIndex boundary;
+        Check(boundary.Build(owned) && boundary.RecordCount() == 4,
+              "display ownership index covers all supported native record kinds");
+        Check(boundary.ContainsRecord(kUnitType, 25060) &&
+                  boundary.ContainsRecord(kWeaponType, 61165) &&
+                  boundary.ContainsRecord(kSkillType, 9000001) &&
+                  boundary.ContainsRecord(kItemCategoryType, 1250600) &&
+                  !boundary.ContainsRecord(kSkillType, 25060),
+              "display ownership identity requires the exact native kind and id");
+        for (const wchar_t* text :
+             {L"Fixture Unit Name", L"Fixture Unit Detail",
+              L"Fixture Unit\\nDisplay\\tMode",
+              L"Fixture Unit\nDisplay\tMode", L"Fixture Weapon Name",
+              L"Fixture Weapon Detail", L"Fixture Weapon\\nDisplay",
+              L"Fixture Weapon\nDisplay", L"Fixture Skill",
+              L"Fixture Skill\\nDescription\\tTabbed",
+              L"Fixture Skill\nDescription\tTabbed",
+              L"Fixture Item Category"}) {
+            Check(boundary.ContainsText(text, std::wcslen(text)),
+                  "every protected raw or display-expanded field is indexed");
+        }
+        Check(!boundary.ContainsText(L"fixture unit name", 17) &&
+                  !boundary.ContainsText(L" Fixture Unit Name", 18) &&
+                  !boundary.ContainsText(L"Fixture Unit Name ", 18),
+              "display ownership text remains case and whitespace exact");
+
+        Catalog unterminated;
+        Entry invalid = MakeRecord(kUnitType, 25060);
+        std::memset(invalid.bytes.data() + 205, 0x41, 100);
+        Check(unterminated.Parse(Encode({invalid}), boundaryError),
+              "catalog parser independently accepts the unrelated display-field fixture");
+        Check(!boundary.Build(unterminated) &&
+                  boundary.RecordCount() == 0 &&
+                  boundary.TextCount() == 0,
+              "unterminated protected text refuses the complete index without stale ownership");
+    }
     {
         Entry skill=MakeRecord(kSkillType,9000001);
         Entry funnel=MakeRecord(kFunnelType,198131);

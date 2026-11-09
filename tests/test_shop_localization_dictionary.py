@@ -33,6 +33,130 @@ class WordCompiler(unittest.TestCase):
         self.assertEqual(coverage['missing_known_names'],0)
         self.assertEqual(coverage['missing_known_prose'],0)
         self.assertEqual(coverage['native_category_names'],3299)
+
+    def test_audited_long_native_slots_have_exact_runtime_coverage(self):
+        thai=(
+            'รูปแบบที่ซ่อมแซมและเปลี่ยนแปลงของ DYNAMES '
+            'ที่ถูกทำลายจากการต่อสู้กับ United Nations Army (国連軍)'
+        )
+        authored=json.loads((
+            ROOT/'mods/shop_localization/translations/prose-native-gaps.json'
+        ).read_text(encoding='utf-8'))
+        self.assertEqual(
+            authored,
+            {
+                'schema_version':1,
+                'description':{
+                    thai:'在与联合国军的战斗中被摧毁的力天使高达的修复改造型。',
+                },
+            },
+        )
+
+        parser=configparser.ConfigParser(interpolation=None)
+        parser.read(ROOT/'mods/shop_localization/zh-CN.ini',encoding='utf-8')
+        generated={}
+        for section in parser.sections():
+            source=parser[section]['source']
+            self.assertNotIn(source,generated)
+            generated[source]=(parser[section]['kind'],parser[section]['text'])
+
+        # One Thai description had no exact dictionary key. The other eleven
+        # source strings occur twice across native description/usage slots and
+        # already share the exact product-name translation used by Lookup.
+        expected={
+            thai:('description','在与联合国军的战斗中被摧毁的力天使高达的修复改造型。'),
+            'Happy Newyear 2012  Festival':('name','2012新年庆典'),
+            'Happy Newyear 2012  Festival  Key':('name','2012新年庆典钥匙'),
+            'Valentine 2012  Festival  Key':('name','2012情人节庆典钥匙'),
+            'Celebrete 1 year Anniversery Key':('name','1周年庆钥匙'),
+            'Celebrete 1 year Anniversery Box':('name','1周年庆礼盒'),
+            'Harvest moon festival Key':('name','中秋节钥匙'),
+            'Harvest moon festival Box':('name','中秋节礼盒'),
+            "Funny 's Capsule Point Hammer":('name','趣味扭蛋点数锤'),
+            'Celebrete 3 year Anniversery Hammer':('name','3周年庆锤'),
+            'Celebrete 3 year Anniversery Capsule':('name','3周年庆扭蛋'),
+            "New Year 2015 's Capsule Hammer":('name','2015新年扭蛋锤'),
+        }
+        self.assertEqual(sum(1 if source==thai else 2 for source in expected),23)
+        for source,value in expected.items():
+            self.assertEqual(generated.get(source),value)
+
+    def test_stock_native_unit_aliases_are_authored_and_generated(self):
+        authored=json.loads((
+            ROOT/'mods/shop_localization/translations/stock-native-unit-names.json'
+        ).read_text(encoding='utf-8'))
+        self.assertEqual(authored['schema_version'],1)
+        self.assertEqual(
+            authored['comment'],
+            'Original client unit-label aliases with one unambiguous Chinese '
+            'display name. Ambiguous and unloaded sources are intentionally omitted.',
+        )
+        names=authored['name']
+        self.assertEqual(len(names),432)
+        self.assertEqual(
+            names['ZAKU PHANTOM (SLASH WIZARD) (YZAK CUSTOM)'],
+            '斩击型扎古幻影（伊扎克专用）',
+        )
+        self.assertEqual(
+            names['BUSTER GUNDAM/DUEL GUNDAM ASSAULTSHROUD'],
+            '暴风高达/决斗高达（突击护甲）',
+        )
+
+        parser=configparser.ConfigParser(interpolation=None)
+        parser.read(ROOT/'mods/shop_localization/zh-CN.ini',encoding='utf-8')
+        generated={}
+        for section in parser.sections():
+            source=parser[section]['source']
+            self.assertNotIn(source,generated)
+            generated[source]=(parser[section]['kind'],parser[section]['text'])
+        for source,target in names.items():
+            self.assertEqual(
+                generated.get(compiler.escape(source)),
+                ('name',compiler.escape(target)),
+            )
+
+        # Sources with conflicting stock meanings, unloaded-only sources and
+        # custom-content aliases stay outside the global runtime dictionary.
+        excluded=(
+            'FULL ARMOR HYAKU SHIKI CUSTOM',
+            'GUNDAM KYRIOS (TAIL UNIT)',
+            'Homming Missile Pod (M7E)',
+            '마라사이',
+            'Big Zam (T1) - Stand',
+            'Big Zam (T2) - Invincible',
+            'Big Zam (T3) - Weak',
+            'Twin GN Drive System',
+            'Core Change',
+            '自由敢达（HiMat模式）（武装变更后）변경 후) 스페셜',
+            '건담 AGE-FX (버스터 모드) 特殊',
+            'GN SwordIV (Rifle Mode)',
+            'GN Gunblade Twin Edge',
+        )
+        for source in excluded:
+            self.assertNotIn(source,names)
+            self.assertNotIn(compiler.escape(source),generated)
+
+    def test_room_title_fixed_notices_are_all_authored_and_generated(self):
+        source=(ROOT/'mods/room_titles/room_titles.cpp').read_text(encoding='utf-8')
+        prepare=source[source.index('bool Prepare('):source.index('\nvoid Submit(',source.index('bool Prepare('))]
+        fixed=set(re.findall(r'ExplainFixed\(L"([^"\\]*(?:\\.[^"\\]*)*)"\)',source))
+        fixed.update(re.findall(r'L"([^"\\]*(?:\\.[^"\\]*)*)"',prepare))
+        self.assertGreater(len(fixed),10)
+
+        authored=json.loads((
+            ROOT/'mods/shop_localization/translations/mod-ui.json'
+        ).read_text(encoding='utf-8'))['option']
+        generated=configparser.ConfigParser(interpolation=None)
+        generated.read(ROOT/'mods/shop_localization/zh-CN.ini',encoding='utf-8')
+        generated_sources={
+            generated[section]['source']:generated[section]['text']
+            for section in generated.sections()
+        }
+        for notice in fixed:
+            key='@ui:'+notice
+            self.assertIn(key,authored)
+            self.assertEqual(generated_sources.get(key),authored[key])
+
     def terms(self):
         return {'schema_version':1,'unit_records':[
             {'unit_id':10001,'chinese':{'value':'高达'},'original_0011':{'slots':['GUNDAM']},'alias_0237_slot2':'GUNDAM'},

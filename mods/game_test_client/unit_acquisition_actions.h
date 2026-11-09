@@ -397,6 +397,15 @@ public:
     }
 
 private:
+    static bool ShouldOpenCustomManager(
+        bool serviceMatched,
+        bool rootVisible,
+        bool alreadyInvoked)
+    {
+        return !alreadyInvoked &&
+            (!serviceMatched || !rootVisible);
+    }
+
     using ServiceFindByNameFn =
         void*(__thiscall*)(void*, const void*);
     using NativeWStringCtorFn =
@@ -721,9 +730,27 @@ private:
                 &custom);
         if (customService == kServiceMismatched)
             return Publish(kCustomServiceMismatch);
-        if (customService == kServiceAbsent) {
-            if (customOpenInvoked_)
-                return Publish(kWaitingForCustomManager);
+
+        uint8_t* bytes = nullptr;
+        uint8_t* root = nullptr;
+        bool rootVisible = false;
+        if (customService == kServiceMatched) {
+            bytes =
+                static_cast<uint8_t*>(custom);
+            state_.candidate_service_pointer =
+                PointerValue(custom);
+            root =
+                Read<uint8_t*>(
+                    bytes + kCustomRoot);
+            rootVisible =
+                root &&
+                root[kControlVisible];
+        }
+
+        if (ShouldOpenCustomManager(
+                customService == kServiceMatched,
+                rootVisible,
+                customOpenInvoked_)) {
             auto* button =
                 static_cast<uint8_t*>(
                     FindControl(
@@ -747,16 +774,8 @@ private:
                 button);
             return Publish(kOpeningCustomManager);
         }
-
-        auto* bytes =
-            static_cast<uint8_t*>(custom);
-        state_.candidate_service_pointer =
-            PointerValue(custom);
-        auto* root =
-            Read<uint8_t*>(
-                bytes + kCustomRoot);
-        if (!root ||
-            !root[kControlVisible])
+        if (customService == kServiceAbsent ||
+            !rootVisible)
             return Publish(kWaitingForCustomManager);
         if (Read<uint32_t>(
                 bytes + kCustomMachineId) !=

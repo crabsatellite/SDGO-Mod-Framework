@@ -11,6 +11,8 @@
     "@ui:This room title control is not compatible with the installed Mod. The title was not submitted.": "此房间标题控件与已安装的 Mod 不兼容，标题未提交。",
     "@ui:There is not enough memory to submit the room title. Your text was not truncated.": "内存不足，无法提交房间标题。你输入的文字未被截断。",
     "@ui:The room identity is no longer available. Your title was not submitted.": "房间身份已失效，标题未提交。",
+    "@ui:The room title is still updating. Your text was kept; reopen the title editor to retry.": "房间标题仍在更新。已保留你输入的文字；请重新打开标题编辑器后重试。",
+    "@ui:The room-title control could not queue the change. Your text was kept; reopen the title editor to retry.": "房间标题控件无法将本次更改加入待处理队列。已保留你输入的文字；请重新打开标题编辑器后重试。",
     "@ui:The full room title has not been confirmed. Reopen the title settings to retry or resolve the saved draft before starting.": "完整房间标题尚未确认。开始前请重新打开标题设置重试，或处理已保存的草稿。",
     "@ui:The room title could not be sent. Your text was kept; reopen the title settings to retry.": "无法发送房间标题。已保留你输入的文字；请重新打开标题设置后重试。",
     "@ui:The server did not confirm this room title. Your text was kept; reopen the title settings to retry.": "服务器未确认此房间标题。已保留你输入的文字；请重新打开标题设置后重试。"
